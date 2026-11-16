@@ -85,6 +85,7 @@ export function CustomIconNameDialog({
               <Input
                 id="custom-icon-name"
                 autoFocus
+                data-unsaved-ignore
                 value={name}
                 maxLength={MAX_CUSTOM_ICON_NAME_CHARS}
                 placeholder={t("iconPicker.namePlaceholder")}

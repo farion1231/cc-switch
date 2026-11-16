@@ -16,7 +16,8 @@ export type AppType =
   | "kimi"
   | "dsh"
   | "agy"
-  | "omp";
+  | "omp"
+  | "copilot";
 
 /** Skill 应用启用状态 */
 export interface SkillApps {
@@ -34,6 +35,8 @@ export interface SkillApps {
   dsh?: boolean;
   agy?: boolean;
   omp?: boolean;
+  copilot?: boolean;
+  workbuddy?: boolean;
 }
 
 /** 已安装的 Skill（v3.10.0+ 统一结构） */
@@ -201,6 +204,11 @@ export const skillsApi = {
     return await invoke("get_installed_skills");
   },
 
+  /** 刷新本地 Skill 的过期元数据，返回实际更新的数量 */
+  async refreshLocalMetadata(): Promise<number> {
+    return await invoke("refresh_local_skill_metadata");
+  },
+
   /** 获取可恢复的 Skill 备份列表 */
   async getBackups(): Promise<SkillBackupEntry[]> {
     return await invoke("get_skill_backups");
@@ -249,9 +257,20 @@ export const skillsApi = {
     return await invoke("import_skills_from_apps", { imports });
   },
 
-  /** 发现可安装的 Skills（从仓库获取），附带没读到的仓库 */
-  async discoverAvailable(): Promise<SkillDiscoveryResult> {
-    return await invoke("discover_available_skills");
+  /**
+   * 发现可安装的 Skills（从仓库获取），附带没读到的仓库。
+   * 后端按仓库缓存发现结果，forceRefresh 绕过缓存（手动刷新用）。
+   */
+  async discoverAvailable(forceRefresh = false): Promise<SkillDiscoveryResult> {
+    return await invoke("discover_available_skills", { forceRefresh });
+  },
+
+  /** 只发现一个已保存的仓库；仓库不存在或已停用时结果为空 */
+  async discoverRepo(
+    owner: string,
+    name: string,
+  ): Promise<SkillDiscoveryResult> {
+    return await invoke("discover_repo_skills", { owner, name });
   },
 
   /** 检查 Skills 更新，附带没读到的仓库 */

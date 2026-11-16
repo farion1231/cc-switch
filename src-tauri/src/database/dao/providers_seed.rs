@@ -45,7 +45,7 @@ pub(crate) const OFFICIAL_SEEDS: &[OfficialProviderSeed] = &[
         id: CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID,
         app_type: AppType::ClaudeDesktop,
         name: "Claude Desktop Official",
-        website_url: "https://claude.ai/download",
+        website_url: "https://claude.com/download",
         icon: "anthropic",
         icon_color: "#D4915D",
         // 空 env 只是占位；切换该 provider 时会恢复 Claude Desktop 1P 模式

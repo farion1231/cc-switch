@@ -209,8 +209,11 @@ pub fn build_copilot_request_headers(
 /// Copilot 使用量响应
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CopilotUsageResponse {
-    /// Copilot 计划类型
+    /// Copilot 计划类型（Free 也报 `individual`，认套餐要先看 `access_type_sku`）
     pub copilot_plan: String,
+    /// 订阅 SKU：`free_limited_copilot`（Free）、`max_monthly_subscriber_quota`（Max）…
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access_type_sku: Option<String>,
     /// 配额重置日期
     pub quota_reset_date: String,
     /// 配额快照
@@ -252,6 +255,10 @@ pub struct QuotaDetail {
     pub percent_remaining: f64,
     /// 是否无限
     pub unlimited: bool,
+    /// 当前计划是否含这一项：Free 的 premium_interactions 是 false（总额 0，不是用完了）；
+    /// 旧响应没有这个字段
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub has_quota: Option<bool>,
 }
 
 /// Copilot 可用模型
@@ -274,6 +281,9 @@ pub struct CopilotModel {
     /// Whether the model supports parallel tool calls.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub supports_parallel_tool_calls: Option<bool>,
+    /// Copilot-reported image-input support; absence means unknown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_vision: Option<bool>,
     /// Copilot-reported reasoning effort levels supported by this model.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<Vec<CopilotReasoningEffort>>,
@@ -328,6 +338,10 @@ fn extract_copilot_parallel_tool_calls(capabilities: Option<&Value>) -> Option<b
     capabilities?
         .pointer("/supports/parallel_tool_calls")?
         .as_bool()
+}
+
+fn extract_copilot_vision(capabilities: Option<&Value>) -> Option<bool> {
+    capabilities?.pointer("/supports/vision")?.as_bool()
 }
 
 fn extract_copilot_reasoning_effort(
@@ -615,6 +629,18 @@ impl CopilotAuthManager {
     pub async fn get_account(&self, account_id: &str) -> Option<GitHubAccount> {
         let accounts = self.accounts.read().await;
         accounts.get(account_id).map(GitHubAccount::from)
+    }
+
+    /// 指定账号的 GitHub OAuth Token 和域名，给 Copilot CLI 的 `COPILOT_GITHUB_TOKEN` 用。
+    /// 只在打开终端时经子进程环境传出，不写进任何文件或命令行。
+    pub async fn github_credentials_for_account(
+        &self,
+        account_id: &str,
+    ) -> Option<(String, String)> {
+        let accounts = self.accounts.read().await;
+        accounts
+            .get(account_id)
+            .map(|account| (account.github_token.clone(), account.github_domain.clone()))
     }
 
     /// 移除指定账号
@@ -938,12 +964,27 @@ impl CopilotAuthManager {
         &self,
         account_id: &str,
     ) -> Result<Vec<CopilotModel>, CopilotAuthError> {
-        Ok(self
-            .fetch_all_models_for_account(account_id)
-            .await?
-            .into_iter()
+        let all_models = self.fetch_all_models_for_account(account_id).await?;
+        let total = all_models.len();
+        let picker_models: Vec<CopilotModel> = all_models
+            .iter()
             .filter(|model| model.model_picker_enabled)
-            .collect())
+            .cloned()
+            .collect();
+        // Copilot Free / Student 账号的模型通常全部 model_picker_enabled=false，这里记录两个数便于排查
+        log::info!(
+            "[CopilotAuth] 账号 {account_id} 共 {total} 个模型，其中可在模型选择器使用的 {} 个",
+            picker_models.len()
+        );
+        if picker_models.is_empty() && total > 0 {
+            // 全被筛掉时列出模型 ID（不含隐私），用户贴一次日志就能看出账号拿到的是哪类模型
+            let ids: Vec<&str> = all_models.iter().map(|model| model.id.as_str()).collect();
+            log::info!(
+                "[CopilotAuth] 账号 {account_id} 没有可在模型选择器使用的模型，接口返回的模型 ID: {}",
+                ids.join(", ")
+            );
+        }
+        Ok(picker_models)
     }
 
     async fn fetch_all_models_for_account(
@@ -1021,11 +1062,15 @@ impl CopilotAuthManager {
                 supports_parallel_tool_calls: extract_copilot_parallel_tool_calls(
                     m.capabilities.as_ref(),
                 ),
+                supports_vision: extract_copilot_vision(m.capabilities.as_ref()),
                 reasoning_effort: extract_copilot_reasoning_effort(m.capabilities.as_ref()),
             })
             .collect();
 
-        log::info!("[CopilotAuth] 获取到 {} 个可用模型", models.len());
+        log::info!(
+            "[CopilotAuth] 从 /models 获取到 {} 个模型（未按模型选择器过滤）",
+            models.len()
+        );
 
         Ok(models)
     }
@@ -1037,6 +1082,26 @@ impl CopilotAuthManager {
     ) -> Result<Option<String>, CopilotAuthError> {
         let models = self.fetch_all_models_for_account(account_id).await?;
         Ok(super::copilot_model_map::resolve_model(model_id, &models).map(|model| model.vendor))
+    }
+
+    /// Vendor and upstream endpoints Copilot advertises for `model_id`.
+    pub async fn get_model_record_for_account(
+        &self,
+        account_id: &str,
+        model_id: &str,
+    ) -> Result<Option<CopilotModel>, CopilotAuthError> {
+        let models = self.fetch_all_models_for_account(account_id).await?;
+        Ok(super::copilot_model_map::resolve_model_record(model_id, &models).cloned())
+    }
+
+    pub async fn get_model_record(
+        &self,
+        model_id: &str,
+    ) -> Result<Option<CopilotModel>, CopilotAuthError> {
+        match self.resolve_default_account_id().await {
+            Some(id) => self.get_model_record_for_account(&id, model_id).await,
+            None => Err(CopilotAuthError::GitHubTokenInvalid),
+        }
     }
 
     pub async fn resolve_model_for_account(
@@ -1135,8 +1200,9 @@ impl CopilotAuthManager {
         }
 
         log::info!(
-            "[CopilotAuth] 获取使用量成功，计划: {}, 重置日期: {}",
+            "[CopilotAuth] 获取使用量成功，计划: {}, SKU: {}, 重置日期: {}",
             usage.copilot_plan,
+            usage.access_type_sku.as_deref().unwrap_or("未返回"),
             usage.quota_reset_date
         );
 
@@ -1713,6 +1779,7 @@ mod tests {
                 },
                 "supports": {
                     "parallel_tool_calls": true,
+                    "vision": true,
                     "reasoning_effort": ["none", "low", "turbo", "max", 7]
                 }
             }
@@ -1728,6 +1795,10 @@ mod tests {
             Some(true)
         );
         assert_eq!(
+            extract_copilot_vision(item.capabilities.as_ref()),
+            Some(true)
+        );
+        assert_eq!(
             extract_copilot_reasoning_effort(item.capabilities.as_ref()),
             Some(vec![
                 CopilotReasoningEffort::None,
@@ -1739,6 +1810,36 @@ mod tests {
             item.supported_endpoints,
             vec!["/responses", "/chat/completions"]
         );
+    }
+
+    #[test]
+    fn vision_capability_preserves_false_and_unknown() {
+        assert_eq!(extract_copilot_vision(None), None);
+        for (capabilities, expected) in [
+            (serde_json::json!({}), None),
+            (serde_json::json!({ "supports": {} }), None),
+            (
+                serde_json::json!({ "supports": { "vision": true } }),
+                Some(true),
+            ),
+            (
+                serde_json::json!({ "supports": { "vision": false } }),
+                Some(false),
+            ),
+            (serde_json::json!({ "supports": { "vision": null } }), None),
+            (
+                serde_json::json!({ "supports": { "vision": "true" } }),
+                None,
+            ),
+            (serde_json::json!({ "supports": { "vision": 1 } }), None),
+            (serde_json::json!({ "supports": { "vision": [] } }), None),
+        ] {
+            assert_eq!(
+                extract_copilot_vision(Some(&capabilities)),
+                expected,
+                "{capabilities}"
+            );
+        }
     }
 
     #[test]
@@ -1777,6 +1878,7 @@ mod tests {
             context_window: Some(922_000),
             supported_endpoints: vec!["/responses".to_string()],
             supports_parallel_tool_calls: Some(true),
+            supports_vision: Some(true),
             reasoning_effort: Some(vec![
                 CopilotReasoningEffort::None,
                 CopilotReasoningEffort::Xhigh,
@@ -1794,8 +1896,35 @@ mod tests {
                 "context_window": 922000,
                 "supported_endpoints": ["/responses"],
                 "supports_parallel_tool_calls": true,
+                "supports_vision": true,
                 "reasoning_effort": ["none", "xhigh", "max"]
             })
+        );
+    }
+
+    #[test]
+    fn vision_capability_serialization_preserves_false_and_unknown() {
+        let mut model: CopilotModel = serde_json::from_value(serde_json::json!({
+            "id": "copilot-model",
+            "name": "Copilot Model",
+            "vendor": "OpenAI",
+            "model_picker_enabled": true
+        }))
+        .unwrap();
+        assert_eq!(model.supports_vision, None);
+        assert!(serde_json::to_value(&model)
+            .unwrap()
+            .get("supports_vision")
+            .is_none());
+
+        model.supports_vision = Some(false);
+        let serialized = serde_json::to_value(model).unwrap();
+        assert_eq!(serialized["supports_vision"], serde_json::json!(false));
+        assert_eq!(
+            serde_json::from_value::<CopilotModel>(serialized)
+                .unwrap()
+                .supports_vision,
+            Some(false)
         );
     }
 
@@ -2043,6 +2172,7 @@ mod tests {
                         context_window: None,
                         supported_endpoints: Vec::new(),
                         supports_parallel_tool_calls: None,
+                        supports_vision: None,
                         reasoning_effort: None,
                     },
                     CopilotModel {
@@ -2053,6 +2183,7 @@ mod tests {
                         context_window: None,
                         supported_endpoints: Vec::new(),
                         supports_parallel_tool_calls: None,
+                        supports_vision: None,
                         reasoning_effort: None,
                     },
                     CopilotModel {
@@ -2066,6 +2197,7 @@ mod tests {
                             "/responses".to_string(),
                         ],
                         supports_parallel_tool_calls: None,
+                        supports_vision: None,
                         reasoning_effort: None,
                     },
                 ],
@@ -2149,6 +2281,7 @@ mod tests {
                 .map(|endpoint| endpoint.to_string())
                 .collect(),
             supports_parallel_tool_calls: None,
+            supports_vision: None,
             reasoning_effort: None,
         };
         manager.copilot_models.write().await.extend([

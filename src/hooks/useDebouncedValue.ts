@@ -17,16 +17,17 @@ export function useDebouncedValue<T>(
   options?: UseDebouncedValueOptions<T>,
 ): T {
   const [debouncedValue, setDebouncedValue] = useState<T>(value);
+  const immediate = options?.immediateIf?.(value) ?? false;
 
   useEffect(() => {
-    if (options?.immediateIf?.(value)) {
+    if (immediate) {
       setDebouncedValue(value);
       return;
     }
 
     const timer = setTimeout(() => setDebouncedValue(value), delay);
     return () => clearTimeout(timer);
-  }, [value, delay, options?.immediateIf]);
+  }, [value, delay, immediate]);
 
   return debouncedValue;
 }

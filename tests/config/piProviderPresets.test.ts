@@ -194,4 +194,20 @@ describe("Pi provider presets", () => {
       expect(item.compat).toBeUndefined();
     }
   });
+  it("never labels a model with a different model's ID", () => {
+    // A name that is itself a raw model ID must be this model's ID; otherwise
+    // the picker shows one model while requests go to another.
+    const looksLikeModelId = /^[a-z0-9][a-z0-9._:/-]*$/;
+    const mislabeled = piProviderPresets.flatMap((preset) =>
+      preset.settingsConfig.models
+        .filter(
+          (model) =>
+            looksLikeModelId.test(model.name) &&
+            model.name !== model.id &&
+            model.name !== model.id.split("/").pop(),
+        )
+        .map((model) => `${preset.name}: ${model.id} is named ${model.name}`),
+    );
+    expect(mislabeled).toEqual([]);
+  });
 });

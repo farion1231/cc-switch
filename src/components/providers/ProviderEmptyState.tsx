@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { HelpTip } from "@/components/ui/help-tip";
 import { Button } from "@/components/ui/button";
 import type { AppId } from "@/lib/api/types";
+import { appHas } from "@/config/appSpecs";
 
 interface ProviderEmptyStateProps {
   appId: AppId;
@@ -26,17 +27,15 @@ export function ProviderEmptyState({
   const emptyCopyNs =
     appId === "pi" ||
     appId === "mcode" ||
-    appId === "dsh" ||
     appId === "kimi" ||
-    appId === "omp"
+    appId === "omp" ||
+    appId === "workbuddy"
       ? appId
-      : null;
+      : appId === "dsh"
+        ? "dsh"
+        : null;
   // Antigravity 没有切换，这句「切换只替换关键字段」对它不成立
-  const showKeyFieldsHint =
-    appId === "claude" ||
-    appId === "codex" ||
-    appId === "gemini" ||
-    appId === "grokbuild";
+  const showKeyFieldsHint = appHas(appId, "editorView");
 
   return (
     <div className="flex flex-col items-center justify-center px-6 py-16 text-center">

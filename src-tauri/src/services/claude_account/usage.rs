@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
-use super::login::clear_account_env;
+use super::login::{apply_global_proxy_env, clear_account_env};
 
 /// 同一个账号两次 `/usage` 至少隔这么久（失败也算）：令牌刷新后就能直接查，用不着再跑。
 const RUN_INTERVAL: Duration = Duration::from_secs(10 * 60);
@@ -95,6 +95,7 @@ fn run_usage(config_dir: Option<&Path>) -> Result<(), String> {
         Some(dir) => cmd.env("CLAUDE_CONFIG_DIR", dir),
         None => cmd.env_remove("CLAUDE_CONFIG_DIR"),
     };
+    apply_global_proxy_env(&mut cmd);
     // 设了它，/usage 不联网、只打印一小时内别处留下的读数
     cmd.env_remove("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC")
         // 不在共享的 projects/ 里给工作目录建记忆目录

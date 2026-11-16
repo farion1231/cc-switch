@@ -1,7 +1,7 @@
 import React from "react";
 import type { AppId } from "@/lib/api/types";
-import type { PiFamilyAppId } from "@/lib/api/pi";
 import type { VisibleApps } from "@/types";
+import { APP_IDS } from "./appSpecs";
 import {
   ClaudeIcon,
   CodexIcon,
@@ -17,39 +17,9 @@ export interface AppConfig {
   badgeClass: string;
 }
 
-export const APP_IDS: AppId[] = [
-  "claude",
-  "claude-desktop",
-  "codex",
-  "gemini",
-  "grokbuild",
-  "opencode",
-  "openclaw",
-  "hermes",
-  "pi",
-  "mcode",
-  "kimi",
-  "dsh",
-  "agy",
-  "omp",
-];
-
-export const DEFAULT_VISIBLE_APPS: VisibleApps = {
-  claude: true,
-  "claude-desktop": true,
-  codex: true,
-  gemini: true,
-  grokbuild: true,
-  opencode: true,
-  openclaw: true,
-  hermes: true,
-  pi: true,
-  mcode: true,
-  kimi: true,
-  dsh: true,
-  agy: true,
-  omp: true,
-};
+export const DEFAULT_VISIBLE_APPS = Object.fromEntries(
+  APP_IDS.map((app) => [app, true]),
+) as VisibleApps;
 
 /**
  * 应用页和侧栏的应用顺序：先按用户拖出来的顺序（`settings.appOrder`，不认识的 ID 忽略），
@@ -72,130 +42,6 @@ export function orderAppIds(saved: readonly string[] | undefined): AppId[] {
     ordered.splice(previous ? ordered.indexOf(previous) + 1 : 0, 0, app);
   });
   return ordered;
-}
-
-/** App IDs shown in Skills panels. */
-export const SKILLS_APP_IDS: AppId[] = [
-  "claude",
-  "codex",
-  "gemini",
-  "grokbuild",
-  "opencode",
-  "hermes",
-  "pi",
-  "mcode",
-  "kimi",
-  "dsh",
-  "agy",
-  "omp",
-];
-
-export type ProxyAppId = Extract<
-  AppId,
-  "claude" | "codex" | "gemini" | "grokbuild"
->;
-
-/** Apps with a complete local gateway + failover data plane. */
-export const PROXY_APP_IDS: ProxyAppId[] = [
-  "claude",
-  "codex",
-  "gemini",
-  "grokbuild",
-];
-
-export function isProxyAppId(appId: string): appId is ProxyAppId {
-  return (PROXY_APP_IDS as string[]).includes(appId);
-}
-
-/**
- * 有直连 / 路由模式的应用（后端 `AppType::has_route_mode`）：上面四个，加上 Claude Desktop。
- * Desktop 经同一个路由服务转发，但没有故障转移和路由设置（不在 `PROXY_APP_IDS` 里）。
- */
-export type ModeAppId = ProxyAppId | "claude-desktop";
-
-export const MODE_APP_IDS: ModeAppId[] = [...PROXY_APP_IDS, "claude-desktop"];
-
-export function isModeAppId(appId: string): appId is ModeAppId {
-  return (MODE_APP_IDS as string[]).includes(appId);
-}
-
-/** 支持 Stack 模式的应用（后端 `mode::stack::supports_stack` 的镜像）。 */
-export type StackAppId = Extract<
-  ModeAppId,
-  "claude" | "codex" | "claude-desktop"
->;
-
-export const STACK_APP_IDS: StackAppId[] = [
-  "claude",
-  "codex",
-  "claude-desktop",
-];
-
-export function isStackAppId(appId: string): appId is StackAppId {
-  return (STACK_APP_IDS as string[]).includes(appId);
-}
-
-export type AdditiveAppId = Extract<
-  AppId,
-  "opencode" | "openclaw" | "hermes" | "pi" | "mcode" | "kimi" | "dsh" | "omp"
->;
-
-export const ADDITIVE_APP_IDS: AdditiveAppId[] = [
-  "mcode",
-  "kimi",
-  "dsh",
-  "opencode",
-  "openclaw",
-  "hermes",
-  "pi",
-  "omp",
-];
-
-export function isAdditiveAppId(appId: string): appId is AdditiveAppId {
-  return (ADDITIVE_APP_IDS as string[]).includes(appId);
-}
-
-/** Oh My Pi 是 Pi 的分支：供应商表单、启用状态和用量脚本命令与 Pi 共用。 */
-export const PI_FAMILY_APP_IDS: PiFamilyAppId[] = ["pi", "omp"];
-
-export function isPiFamilyApp(appId: string): appId is PiFamilyAppId {
-  return (PI_FAMILY_APP_IDS as string[]).includes(appId);
-}
-
-/**
- * 切换只替换关键字段的应用：供应商编辑器显示「切到这个供应商之后配置文件的样子」，由后端
- * `ProviderService::editor_view` 投影。
- */
-export const EDITOR_VIEW_APP_IDS: AppId[] = [
-  "claude",
-  "codex",
-  "gemini",
-  "grokbuild",
-];
-
-export function usesEditorView(appId: AppId): boolean {
-  return EDITOR_VIEW_APP_IDS.includes(appId);
-}
-
-/** Claude Desktop、OpenClaw 不由 CC Switch 管理 MCP；Pi 1.0 起内置 MCP（`~/.pi/agent/mcp.json`） */
-export type McpAppId = Exclude<AppId, "claude-desktop" | "openclaw">;
-export const MCP_APP_IDS: McpAppId[] = [
-  "claude",
-  "codex",
-  "gemini",
-  "grokbuild",
-  "opencode",
-  "hermes",
-  "pi",
-  "mcode",
-  "kimi",
-  "dsh",
-  "agy",
-  "omp",
-];
-
-export function isMcpAppId(appId: string): appId is McpAppId {
-  return (MCP_APP_IDS as string[]).includes(appId);
 }
 
 export function usesGeminiStyleForm(appId: string): boolean {
@@ -317,6 +163,14 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
     badgeClass:
       "bg-fuchsia-500/10 text-fuchsia-700 dark:text-fuchsia-300 hover:bg-fuchsia-500/20 border-0 gap-1.5",
   },
+  workbuddy: {
+    label: "WorkBuddy",
+    icon: <ProviderIcon icon="workbuddy" name="WorkBuddy" size={14} />,
+    activeClass:
+      "bg-teal-500/10 ring-1 ring-teal-500/20 hover:bg-teal-500/20 text-teal-600 dark:text-teal-400",
+    badgeClass:
+      "bg-teal-500/10 text-teal-700 dark:text-teal-300 hover:bg-teal-500/20 border-0 gap-1.5",
+  },
   agy: {
     label: "Antigravity",
     icon: (
@@ -341,6 +195,21 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
       "bg-cyan-500/10 ring-1 ring-cyan-500/20 hover:bg-cyan-500/20 text-cyan-600 dark:text-cyan-400",
     badgeClass:
       "bg-cyan-500/10 text-cyan-700 dark:text-cyan-300 hover:bg-cyan-500/20 border-0 gap-1.5",
+  },
+  copilot: {
+    label: "Copilot CLI",
+    icon: (
+      <ProviderIcon
+        icon="githubcopilot"
+        name="GitHub Copilot CLI"
+        size={14}
+        showFallback={false}
+      />
+    ),
+    activeClass:
+      "bg-slate-500/10 ring-1 ring-slate-500/20 hover:bg-slate-500/20 text-slate-700 dark:text-slate-300",
+    badgeClass:
+      "bg-slate-500/10 text-slate-700 dark:text-slate-300 hover:bg-slate-500/20 border-0 gap-1.5",
   },
 };
 

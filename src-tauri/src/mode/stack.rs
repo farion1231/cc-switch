@@ -50,14 +50,6 @@ const KEY_MAX_LEN: usize = 24;
 /// Claude Code 在没有 `CLAUDE_CODE_MAX_CONTEXT_TOKENS` 时按这个窗口算。
 pub const CLAUDE_DEFAULT_WINDOW: u64 = 200_000;
 
-/// 支持 Stack 模型的应用。
-pub fn supports_stack(app: &AppType) -> bool {
-    matches!(
-        app,
-        AppType::Claude | AppType::Codex | AppType::ClaudeDesktop
-    )
-}
-
 /// 给 `provider` 一个 key：登记过就用原来的（移除后重新加入，旧会话里的 id 继续有效），
 /// 没有就按图标、名称生成一个新的写进登记簿。
 ///
@@ -355,7 +347,7 @@ fn stack_models(key: &str, provider: &Provider, found: Vec<Found>) -> Vec<StackM
                 id: encode(&AppType::Claude, key, &found.model, found.one_m),
                 display_name: display_name(&name, &provider.name),
                 name,
-                description: model_description(&found.model, shown_window),
+                description: provider_model_description(&provider.name, &found.model, shown_window),
                 upstream: found.upstream,
                 one_m: found.one_m,
                 window,
@@ -387,6 +379,8 @@ pub struct DesktopStackModel {
     pub upstream: String,
     /// 选择器里显示的名字（`labelOverride`）：`<供应商名> / <模型显示名>`。
     pub label: String,
+    /// 供应商名（模型说明里用）。
+    pub provider_name: String,
     /// 映射表里这个模型标了 1M。
     pub supports_1m: bool,
 }
@@ -412,6 +406,7 @@ pub fn desktop_models(key: &str, provider: &Provider) -> Vec<DesktopStackModel> 
         models.push(DesktopStackModel {
             id: encode(&AppType::ClaudeDesktop, key, &route.upstream_model, false),
             label: format!("{} / {name}", provider.name),
+            provider_name: provider.name.clone(),
             upstream: route.upstream_model,
             supports_1m: route.supports_1m,
         });
@@ -446,13 +441,23 @@ pub fn display_name(model: &str, provider_name: &str) -> String {
     format!("{model}（{provider_name}）")
 }
 
-/// 选择器里 Stack 模型的说明：`<上游模型名> · <窗口>`。显示名可以是用户自己起的，id 又带着
+/// Codex Stack 模型的说明：`<上游模型名> · <窗口>`。显示名可以是用户自己起的，id 又带着
 /// 前缀，上游真正的模型名只有这里看得到；供应商名已经在显示名里，不再重复。窗口未知
 /// （`0`）时只写模型名。
 pub fn model_description(model: &str, window: u64) -> String {
     match window_label(window) {
         Some(window) => format!("{model} · {window}"),
         None => model.to_string(),
+    }
+}
+
+/// Claude Code、Claude Desktop 里模型的说明：`<供应商名> · <上游模型名> · <窗口>`。路由那家的
+/// 档位、聚合模式的模型、「打开终端」的菜单都用它。供应商名为空时同 [`model_description`]。
+pub fn provider_model_description(provider_name: &str, model: &str, window: u64) -> String {
+    let description = model_description(model, window);
+    match provider_name.trim() {
+        "" => description,
+        name => format!("{name} · {description}"),
     }
 }
 
@@ -539,7 +544,7 @@ pub fn published_members(
     stack: &StackState,
     route: Option<&str>,
 ) -> Result<Vec<Member>, AppError> {
-    if !stack.enabled || stack.members.is_empty() || !supports_stack(app) {
+    if !stack.enabled || stack.members.is_empty() || !app.spec().stack {
         return Ok(Vec::new());
     }
     let mut members = members(db, app, stack, route)?;
@@ -568,7 +573,7 @@ pub fn claude_route_default(members: &[Member]) -> Option<StackModel> {
 
 /// 这个应用在 Stack 模式（代理模式且 Stack 模式开着）。读不出状态按不在处理。
 pub fn stack_mode_now(app: &AppType) -> bool {
-    if !supports_stack(app) {
+    if !app.spec().stack {
         return false;
     }
     state::stack_mode(&DeviceStore::for_device(), app.as_str()).unwrap_or_else(|error| {
@@ -582,7 +587,7 @@ pub fn stack_mode_now(app: &AppType) -> bool {
 
 /// 在 Stack 名单里（不管什么模式）。
 pub fn is_member(app: &AppType, provider_id: &str) -> Result<bool, AppError> {
-    if !supports_stack(app) {
+    if !app.spec().stack {
         return Ok(false);
     }
     Ok(state::stack(&DeviceStore::for_device(), app.as_str())?.is_member(provider_id))
@@ -1014,7 +1019,7 @@ mod tests {
                     upstream: "glm-5.2[1M]".to_string(),
                     name: "GLM 5.2".to_string(),
                     display_name: "GLM 5.2（Zhipu）".to_string(),
-                    description: "glm-5.2 · 1M".to_string(),
+                    description: "Zhipu · glm-5.2 · 1M".to_string(),
                     one_m: true,
                     window: 128_000,
                 },
@@ -1023,7 +1028,7 @@ mod tests {
                     upstream: "glm-4.7-air".to_string(),
                     name: "glm-4.7-air".to_string(),
                     display_name: "glm-4.7-air（Zhipu）".to_string(),
-                    description: "glm-4.7-air · 128K".to_string(),
+                    description: "Zhipu · glm-4.7-air · 128K".to_string(),
                     one_m: false,
                     window: 128_000,
                 },
@@ -1045,6 +1050,12 @@ mod tests {
         assert_eq!(model_description("glm-5.2", 1_000_000), "glm-5.2 · 1M");
         assert_eq!(model_description("glm-5.2", 1_050_000), "glm-5.2 · 1050K");
         assert_eq!(model_description("m", 0), "m");
+        // Claude Code、Claude Desktop 的说明带供应商名。
+        assert_eq!(
+            provider_model_description("Kimi", "kimi-k3", 256_000),
+            "Kimi · kimi-k3 · 256K"
+        );
+        assert_eq!(provider_model_description(" ", "m", 0), "m");
     }
 
     fn with_stack_models(mut provider: Provider, models: Value) -> Provider {

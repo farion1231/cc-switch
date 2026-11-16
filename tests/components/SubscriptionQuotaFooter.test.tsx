@@ -216,6 +216,19 @@ describe("Antigravity quota groups", () => {
     expect(screen.getByText("2d12h")).toBeInTheDocument();
   });
 
+  it("counts the Argon weekly window in the Gemini line, so the card stays two rows", () => {
+    // 按后端排好的顺序：Argon 在 Gemini 每周之后、Claude/GPT 之前
+    renderQuota([
+      ...agyTiers.slice(0, 2),
+      { name: "agy_gemini_argon_weekly", utilization: 70, resetsAt: null },
+      ...agyTiers.slice(2),
+    ]);
+    const lines = screen.getByRole("button", { name: "查看各档额度" }).children;
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toHaveTextContent("Gemini 剩余 30%");
+    expect(lines[1]).toHaveTextContent("Claude/GPT 剩余 5%");
+  });
+
   it("opens one dropdown listing all four windows; ↻ still refreshes", async () => {
     const refetch = vi.fn();
     renderQuota(agyTiers, true, {}, refetch);
@@ -276,6 +289,36 @@ describe("credential failures", () => {
   it("still says the login expired when it really did", () => {
     failed("expired");
     expect(screen.getByText("登录已过期")).toBeInTheDocument();
+  });
+
+  it("names the CLI command to run for a CLI login", () => {
+    renderQuota([], false, { success: false, credentialStatus: "expired" });
+    expect(screen.getByText("请运行 claude 命令刷新登录")).toBeInTheDocument();
+  });
+
+  it("points accounts CC Switch manages to Accounts instead of a command", () => {
+    render(
+      <I18nextProvider i18n={i18n}>
+        <SubscriptionQuotaView
+          quota={{
+            tool: "codex_oauth",
+            credentialStatus: "expired",
+            credentialMessage: null,
+            success: false,
+            tiers: [],
+            extraUsage: null,
+            error: null,
+            queriedAt: now,
+          }}
+          loading={false}
+          refetch={vi.fn()}
+        />
+      </I18nextProvider>,
+    );
+    expect(
+      screen.getByText("请在授权中心重新登录这个账号"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/codex_oauth/)).not.toBeInTheDocument();
   });
 });
 

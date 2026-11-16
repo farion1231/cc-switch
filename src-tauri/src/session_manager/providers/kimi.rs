@@ -84,11 +84,7 @@ fn scan(home: &Path) -> Vec<SessionMeta> {
 }
 
 fn resume_command(home: &Path, id: &str) -> Option<String> {
-    if id.is_empty()
-        || !id
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
-    {
+    if !is_valid_session_id(id) {
         return None;
     }
     #[cfg(windows)]
@@ -307,6 +303,71 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
     Ok(messages)
 }
 
+fn is_valid_session_id(id: &str) -> bool {
+    !id.is_empty()
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
+}
+
+/// Mirror Kimi Code's native delete: remove `sessions/<workspace>/<id>/`, then append the
+/// `{sessionId, deleted}` tombstone to `session_index.jsonl` and drop an `.index-dirty` mark
+/// so a running Kimi reconciles its index. Kimi also compacts stale index entries on its own,
+/// so the index updates are best-effort once the directory is gone.
+pub fn delete_session(root: &Path, path: &Path, session_id: &str) -> Result<bool, String> {
+    if !is_valid_session_id(session_id) {
+        return Err("Invalid Kimi session ID".into());
+    }
+    let session_dir = path
+        .strip_prefix(root)
+        .ok()
+        .filter(|rel| {
+            let parts: Vec<_> = rel.components().map(|c| c.as_os_str()).collect();
+            parts.len() == 5 && parts[2..] == ["agents", "main", "wire.jsonl"]
+        })
+        .and_then(|_| path.ancestors().nth(3))
+        .ok_or_else(|| format!("Unexpected Kimi session source: {}", path.display()))?;
+    if session_dir.file_name().and_then(|name| name.to_str()) != Some(session_id) {
+        return Err(format!(
+            "Kimi session directory does not match session ID: {}",
+            session_dir.display()
+        ));
+    }
+    fs::remove_dir_all(session_dir).map_err(|e| {
+        format!(
+            "Failed to delete Kimi session directory {}: {e}",
+            session_dir.display()
+        )
+    })?;
+
+    if let Err(e) = append_index_tombstone(root, session_id) {
+        log::warn!("Failed to record Kimi session deletion in session_index.jsonl: {e}");
+    }
+    let mark = root.join(".index-dirty").join(format!(
+        "{session_id}.{}",
+        chrono::Utc::now().timestamp_millis()
+    ));
+    if let Err(e) =
+        fs::create_dir_all(root.join(".index-dirty")).and_then(|_| fs::write(&mark, b""))
+    {
+        log::warn!("Failed to mark Kimi session index dirty: {e}");
+    }
+    Ok(true)
+}
+
+fn append_index_tombstone(root: &Path, session_id: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    let Some(home) = root.parent() else {
+        return Ok(());
+    };
+    let line = serde_json::json!({ "sessionId": session_id, "deleted": true });
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(home.join("session_index.jsonl"))?;
+    writeln!(file, "{line}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -400,5 +461,75 @@ mod tests {
         assert_eq!(meta.model.as_deref(), Some("actual-model"));
         assert_eq!(meta.duration_ms, Some(10_000));
         assert_eq!(meta.output_tokens, Some(900));
+    }
+
+    #[test]
+    fn kimi_delete_removes_session_dir_and_records_tombstone() {
+        let home = tempfile::tempdir().unwrap();
+        let root = home.path().join("sessions");
+        let dir = root.join("wd_project_123/session_abc-1");
+        let sibling = root.join("wd_project_123/session_keep");
+        fs::create_dir_all(dir.join("agents/main")).unwrap();
+        fs::create_dir_all(sibling.join("agents/main")).unwrap();
+        let wire = dir.join("agents/main/wire.jsonl");
+        fs::write(
+            &wire, "{}
+",
+        )
+        .unwrap();
+        fs::write(
+            sibling.join("agents/main/wire.jsonl"),
+            "{}
+",
+        )
+        .unwrap();
+        fs::write(
+            home.path().join("session_index.jsonl"),
+            "{\"sessionId\":\"session_abc-1\",\"sessionDir\":\"x\",\"workDir\":\"/p\"}
+",
+        )
+        .unwrap();
+
+        assert!(delete_session(&root, &wire, "session_abc-1").unwrap());
+
+        assert!(!dir.exists());
+        assert!(sibling.exists());
+        let index = fs::read_to_string(home.path().join("session_index.jsonl")).unwrap();
+        let last: Value = serde_json::from_str(index.lines().last().unwrap()).unwrap();
+        assert_eq!(last, json!({"sessionId":"session_abc-1","deleted":true}));
+        let marks: Vec<_> = fs::read_dir(root.join(".index-dirty"))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(marks.len(), 1);
+        assert!(marks[0].starts_with("session_abc-1."));
+    }
+
+    #[test]
+    fn kimi_delete_rejects_unexpected_layout_or_mismatched_id() {
+        let home = tempfile::tempdir().unwrap();
+        let root = home.path().join("sessions");
+        let dir = root.join("wd_project_123/session_abc");
+        fs::create_dir_all(dir.join("agents/sub")).unwrap();
+        let sub_wire = dir.join("agents/sub/wire.jsonl");
+        fs::write(
+            &sub_wire, "{}
+",
+        )
+        .unwrap();
+        fs::create_dir_all(dir.join("agents/main")).unwrap();
+        let wire = dir.join("agents/main/wire.jsonl");
+        fs::write(
+            &wire, "{}
+",
+        )
+        .unwrap();
+
+        assert!(delete_session(&root, &sub_wire, "session_abc").is_err());
+        assert!(delete_session(&root, &wire, "session_other").is_err());
+        assert!(delete_session(&root, &wire, "../session_abc").is_err());
+        assert!(delete_session(&root.join("wd_project_123"), &wire, "session_abc").is_err());
+        assert!(dir.exists());
+        assert!(!home.path().join("session_index.jsonl").exists());
     }
 }

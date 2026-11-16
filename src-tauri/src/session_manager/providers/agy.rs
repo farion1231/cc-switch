@@ -64,34 +64,30 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
     scan_roots(&session_sources())
 }
 
-/// Missing roots are tolerated; a session id found in several roots is reported once (first wins).
-fn scan_roots(sources: &[(PathBuf, Option<PathBuf>)]) -> Vec<SessionMeta> {
+/// Enumerate `(session_id, transcript_path)` across all Antigravity roots without opening
+/// `conversation_summaries.db` or parsing transcript contents for session-list metadata.
+pub(crate) fn transcript_files() -> Vec<(String, PathBuf)> {
+    transcript_files_in_roots(&session_sources())
+}
+
+pub(crate) fn transcript_files_in_roots(
+    sources: &[(PathBuf, Option<PathBuf>)],
+) -> Vec<(String, PathBuf)> {
     let mut seen = std::collections::HashSet::new();
-    let mut sessions = Vec::new();
-    for (root, gemini_dir) in sources {
-        for meta in scan_root(root, gemini_dir.as_deref()) {
-            if seen.insert(meta.session_id.clone()) {
-                sessions.push(meta);
+    let mut files = Vec::new();
+    for (root, _) in sources {
+        for (id, path) in transcripts_in_root(root) {
+            if seen.insert(id.clone()) {
+                files.push((id, path));
             }
         }
     }
-    sessions
+    files
 }
 
-fn valid_session_id(id: &str) -> bool {
-    !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
-}
-
-fn scan_root(root: &Path, gemini_dir: Option<&Path>) -> Vec<SessionMeta> {
-    let mut summaries = read_summaries(
-        &root
-            .parent()
-            .unwrap_or(root)
-            .join("conversation_summaries.db"),
-        gemini_dir,
-    );
+fn transcripts_in_root(root: &Path) -> Vec<(String, PathBuf)> {
     let canonical_root = root.canonicalize().ok();
-    let mut sessions = Vec::new();
+    let mut files = Vec::new();
     if let Ok(entries) = fs::read_dir(root) {
         for entry in entries.flatten() {
             if !entry.file_type().is_ok_and(|t| t.is_dir()) {
@@ -117,32 +113,75 @@ fn scan_root(root: &Path, gemini_dir: Option<&Path>) -> Vec<SessionMeta> {
             {
                 continue;
             }
-            let summary = summaries.remove(&id);
-            // Avoid parsing every transcript on list refresh when agy's own index is available.
-            let mut meta = if let Some(meta) = summary {
-                meta
-            } else {
-                let Ok(rows) = records(&path) else { continue };
-                let first = rows
-                    .iter()
-                    .find(|v| v["type"] == "USER_INPUT")
-                    .and_then(|v| v["content"].as_str())
-                    .map(user_request);
-                SessionMeta {
-                    provider_id: "agy".into(),
-                    session_id: id.clone(),
-                    title: first.map(|s| truncate_summary(s, 80)),
-                    summary: first.map(|s| truncate_summary(s, 160)),
-                    project_dir: None,
-                    created_at: rows.iter().find_map(timestamp),
-                    last_active_at: rows.iter().filter_map(timestamp).max(),
-                    source_path: None,
-                    resume_command: Some(crate::agy_config::resume_command(gemini_dir, &id)),
-                }
-            };
-            meta.source_path = Some(path.to_string_lossy().into_owned());
-            sessions.push(meta);
+            files.push((id, path));
         }
+    }
+    files
+}
+
+/// Missing roots are tolerated; a session id found in several roots is reported once. The first
+/// root wins, except that an index-only entry yields to a later root holding the transcript: the
+/// IDE can continue a conversation the CLI index also lists, and only the transcript has usage.
+fn scan_roots(sources: &[(PathBuf, Option<PathBuf>)]) -> Vec<SessionMeta> {
+    let mut seen = std::collections::HashMap::new();
+    let mut sessions: Vec<SessionMeta> = Vec::new();
+    for (root, gemini_dir) in sources {
+        for meta in scan_root(root, gemini_dir.as_deref()) {
+            match seen.get(&meta.session_id) {
+                None => {
+                    seen.insert(meta.session_id.clone(), sessions.len());
+                    sessions.push(meta);
+                }
+                // Replace the whole entry so its resume command matches the transcript's root.
+                Some(&i) if sessions[i].source_path.is_none() && meta.source_path.is_some() => {
+                    sessions[i] = meta;
+                }
+                Some(_) => {}
+            }
+        }
+    }
+    sessions
+}
+
+fn valid_session_id(id: &str) -> bool {
+    !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+}
+
+fn scan_root(root: &Path, gemini_dir: Option<&Path>) -> Vec<SessionMeta> {
+    let mut summaries = read_summaries(
+        &root
+            .parent()
+            .unwrap_or(root)
+            .join("conversation_summaries.db"),
+        gemini_dir,
+    );
+    let mut sessions = Vec::new();
+    for (id, path) in transcripts_in_root(root) {
+        let summary = summaries.remove(&id);
+        // Avoid parsing every transcript on list refresh when agy's own index is available.
+        let mut meta = if let Some(meta) = summary {
+            meta
+        } else {
+            let Ok(rows) = records(&path) else { continue };
+            let first = rows
+                .iter()
+                .find(|v| v["type"] == "USER_INPUT")
+                .and_then(|v| v["content"].as_str())
+                .map(user_request);
+            SessionMeta {
+                provider_id: "agy".into(),
+                session_id: id.clone(),
+                title: first.map(|s| truncate_summary(s, 80)),
+                summary: first.map(|s| truncate_summary(s, 160)),
+                project_dir: None,
+                created_at: rows.iter().find_map(timestamp),
+                last_active_at: rows.iter().filter_map(timestamp).max(),
+                source_path: None,
+                resume_command: Some(crate::agy_config::resume_command(gemini_dir, &id)),
+            }
+        };
+        meta.source_path = Some(path.to_string_lossy().into_owned());
+        sessions.push(meta);
     }
     // A binary-only conversation can still be found and resumed, but has no readable transcript.
     sessions.extend(summaries.into_values());
@@ -266,6 +305,9 @@ mod tests {
     use super::*;
     #[test]
     fn agy_binary_only_sessions_keep_index_metadata_without_fabricated_transcripts() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let dir = tempfile::tempdir().unwrap();
         let project = dir.path().join("project space");
         let workspace_uris =
@@ -326,6 +368,43 @@ mod tests {
             .collect();
         ids.sort();
         assert_eq!(ids, ["cli-1", "ide-1"]);
+    }
+
+    #[test]
+    fn agy_index_only_entry_yields_to_a_later_root_with_the_transcript() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        let home = tempfile::tempdir().unwrap();
+        let cli = home.path().join("antigravity-cli");
+        fs::create_dir_all(&cli).unwrap();
+        let db = rusqlite::Connection::open(cli.join("conversation_summaries.db")).unwrap();
+        db.execute_batch("CREATE TABLE conversation_summaries(conversation_id TEXT,title TEXT,workspace_uris TEXT,preview TEXT,last_modified_time TEXT);").unwrap();
+        db.execute(
+            "INSERT INTO conversation_summaries VALUES ('shared-1','CLI title','[]','','2026-10-13T17:26:12Z')",
+            [],
+        )
+        .unwrap();
+        let logs = home
+            .path()
+            .join("antigravity/brain/shared-1/.system_generated/logs");
+        fs::create_dir_all(&logs).unwrap();
+        fs::write(
+            logs.join("transcript_full.jsonl"),
+            r#"{"step_index":0,"type":"USER_INPUT","content":"hi"}"#,
+        )
+        .unwrap();
+        let roots = vec![
+            (cli.join("brain"), None),
+            (home.path().join("antigravity/brain"), None),
+        ];
+        let sessions = scan_roots(&roots);
+        assert_eq!(sessions.len(), 1);
+        // Compare as paths: on Windows the joined segments mix `/` and `\`.
+        assert_eq!(
+            sessions[0].source_path.as_deref().map(Path::new),
+            Some(logs.join("transcript_full.jsonl").as_path())
+        );
     }
 
     #[test]

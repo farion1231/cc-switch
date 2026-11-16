@@ -110,4 +110,31 @@ describe("useDebouncedValue", () => {
       vi.advanceTimersByTime(300);
     }).not.toThrow();
   });
+
+  it("keeps the deadline across unrelated renders with an inline predicate", () => {
+    const { result, rerender } = renderHook(
+      ({ val }: { val: string }) =>
+        useDebouncedValue(val, 300, { immediateIf: (v) => !v.trim() }),
+      { initialProps: { val: "" } },
+    );
+    rerender({ val: "search" });
+    act(() => vi.advanceTimersByTime(200));
+    rerender({ val: "search" });
+    act(() => vi.advanceTimersByTime(100));
+    expect(result.current).toBe("search");
+  });
+
+  it("cancels a pending search when cleared, including whitespace", () => {
+    const { result, rerender } = renderHook(
+      ({ val }: { val: string }) =>
+        useDebouncedValue(val, 300, { immediateIf: (v) => !v.trim() }),
+      { initialProps: { val: "initial" } },
+    );
+    rerender({ val: "pending" });
+    act(() => vi.advanceTimersByTime(100));
+    rerender({ val: "   " });
+    expect(result.current).toBe("   ");
+    act(() => vi.advanceTimersByTime(300));
+    expect(result.current).toBe("   ");
+  });
 });

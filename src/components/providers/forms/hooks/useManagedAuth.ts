@@ -2,10 +2,12 @@ import { useState, useCallback, useRef, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "@/lib/toast";
-import { authApi, settingsApi } from "@/lib/api";
+import { authApi } from "@/lib/api";
 import { CODEX_OAUTH_DUPLICATE_ACCOUNT_ERROR } from "@/lib/api/auth";
-import type { CodexLoginMethod } from "@/lib/api/auth";
+import type { CodexLoginMethod, ManagedLoginMethod } from "@/lib/api/auth";
+import { deliverLoginLink, readAuthOpenBrowser } from "@/lib/authLoginLink";
 import { copyText } from "@/lib/clipboard";
+import { subscriptionKeys } from "@/lib/query/subscription";
 import type {
   ManagedAuthProvider,
   ManagedAuthStatus,
@@ -16,7 +18,7 @@ type PollingState = "idle" | "polling" | "success" | "error";
 type LoginRequest = {
   targetAccountId?: string;
   generation: number;
-  loginMethod?: CodexLoginMethod;
+  loginMethod?: ManagedLoginMethod;
 };
 
 export function useManagedAuth(
@@ -55,7 +57,15 @@ export function useManagedAuth(
     // A rejected xAI refresh token is persisted as `requires_reauth` by the
     // proxy hot path. Periodically refresh local status so an already-open Auth
     // Center stops showing the account as logged in without requiring a reload.
-    refetchInterval: authProvider === "xai_oauth" ? 15_000 : false,
+    // WorkBuddy auto-absorbs the desktop app's current sign-in on every status
+    // read, so poll while the Auth Center is open to surface a freshly logged-in
+    // account (and refresh its snapshot) without a manual "import" click.
+    refetchInterval:
+      authProvider === "xai_oauth"
+        ? 15_000
+        : authProvider === "workbuddy_account"
+          ? 5_000
+          : false,
   });
 
   const stopPolling = useCallback(() => {
@@ -142,22 +152,20 @@ export function useManagedAuth(
       setPollingState("polling");
       setError(null);
 
+      // 按授权中心的偏好打开浏览器，或只复制登录链接
+      const linkOnly = response.browser_opened
+        ? false
+        : (await deliverLoginLink(response.verification_uri, t)).linkOnly;
+      if (request.generation !== flowGenerationRef.current) return;
+
       // Browser login has no verification code; leave the clipboard untouched.
+      // 只复制了链接时也不复制验证码，免得盖掉剪贴板里的链接（等待块里有复制按钮）
       const browserFlow = !response.user_code;
-      if (!browserFlow) {
+      if (!browserFlow && !linkOnly) {
         try {
           await copyText(response.user_code);
         } catch (e) {
           console.debug("[ManagedAuth] Failed to copy user code:", e);
-        }
-      }
-      if (request.generation !== flowGenerationRef.current) return;
-
-      if (!response.browser_opened) {
-        try {
-          await settingsApi.openExternal(response.verification_uri);
-        } catch (e) {
-          console.debug("[ManagedAuth] Failed to open browser:", e);
         }
       }
       if (request.generation !== flowGenerationRef.current) return;
@@ -339,6 +347,12 @@ export function useManagedAuth(
       }
       await refetchStatus();
       await queryClient.invalidateQueries({ queryKey });
+      // 没绑账号的 Antigravity 官方卡查的是「agy 现在登着的号」，切完重查，别留着上个号的额度
+      if (authProvider === "agy_oauth") {
+        await queryClient.invalidateQueries({
+          queryKey: subscriptionKeys.quota("agy"),
+        });
+      }
     },
     onError: (e) => {
       console.error("[ManagedAuth] Failed to set default account:", e);
@@ -359,10 +373,25 @@ export function useManagedAuth(
       stopPolling();
       void queueBackendCancellation(previousDeviceCode).then(() => {
         if (generation !== flowGenerationRef.current) return;
-        startLoginMutation.mutate({ targetAccountId, generation, loginMethod });
+        // Claude 官方账号在 Windows 上由 Claude Code 自己开浏览器：不打开时要告诉后端
+        const method: ManagedLoginMethod | undefined =
+          authProvider === "claude_official" && !readAuthOpenBrowser()
+            ? "copy_link"
+            : loginMethod;
+        startLoginMutation.mutate({
+          targetAccountId,
+          generation,
+          loginMethod: method,
+        });
       });
     },
-    [queueBackendCancellation, startLoginMutation, stopPolling, loginMethod],
+    [
+      authProvider,
+      queueBackendCancellation,
+      startLoginMutation,
+      stopPolling,
+      loginMethod,
+    ],
   );
 
   const startAuth = useCallback(() => beginLogin(), [beginLogin]);

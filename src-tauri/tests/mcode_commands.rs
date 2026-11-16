@@ -2,7 +2,7 @@ use cc_switch_lib::{AppType, Prompt, PromptService, Provider, ProviderService};
 use serde_json::json;
 use std::fs;
 
-#[path = "support.rs"]
+#[path = "support/mod.rs"]
 mod support;
 use support::{create_test_state, ensure_test_home, reset_test_fs, test_mutex};
 

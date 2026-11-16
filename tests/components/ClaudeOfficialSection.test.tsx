@@ -128,6 +128,35 @@ describe("ClaudeOfficialSection", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("says the link was copied when the browser is not to be opened", () => {
+    window.localStorage.setItem("cc-switch.authCenter.openBrowser", "0");
+    const auth = baseAuth();
+    Object.assign(auth, {
+      isPolling: true,
+      isAddingAccount: true,
+      pollingState: "polling",
+      deviceCode: {
+        device_code: "flow-1",
+        user_code: "",
+        verification_uri: "https://claude.com/cai/oauth/authorize?state=s",
+      },
+    });
+    mocks.useManagedAuth.mockReturnValue(auth);
+    renderSection();
+    expect(
+      screen.getByText(
+        "登录链接已复制。在你要用的浏览器里打开，登录并同意授权后这里会自动更新。",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "复制登录链接" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "重新打开登录页" }),
+    ).not.toBeInTheDocument();
+    window.localStorage.removeItem("cc-switch.authCenter.openBrowser");
+  });
+
   it("offers re-login once the login has expired", async () => {
     const auth = baseAuth();
     auth.accounts = [

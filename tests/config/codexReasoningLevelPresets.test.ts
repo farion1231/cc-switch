@@ -84,6 +84,15 @@ describe("Codex preset pre-filled reasoning levels", () => {
     // xAI Reasoning guide 模型级枚举；grok-4.5 不可关思考故无 none
     ["xAI (Grok)", "grok-4.5", ["low", "medium", "high", "xhigh"]],
     ["xAI (Grok) OAuth", "grok-4.5", ["low", "medium", "high", "xhigh"]],
+    // grok-4.7（docs.x.ai，2026-11-03 复核）：官方默认 high ≠ 回落档
+    // （子集最高档 xhigh）→ 显式声明
+    ["xAI (Grok)", "grok-4.7", ["low", "medium", "high", "xhigh"], "high"],
+    [
+      "xAI (Grok) OAuth",
+      "grok-4.7",
+      ["low", "medium", "high", "xhigh"],
+      "high",
+    ],
     // DeepSeek 直连照抄官方 catalog 镜像（Jason 2026-08-15 拍板：表单可见性
     // 优先，接受快照过时风险——官方目录变更时须同步）
     ["DeepSeek", "deepseek-flash", ["low", "high", "max"]],
@@ -359,8 +368,9 @@ describe("Codex preset pre-filled reasoning levels", () => {
       // DeepInfra GLM-5.2 曾在此列（平台未声明、各处口径不一）；2026-10-24
       // 已从 DeepInfra 目录移除，不再断言
       // Mistral AI：开推理后流式 content 为分块数组、转换层暂不解析，且
-      // 现有 effortValueMode 发不出 "none"，第一版不下发推理参数、不填档位
-      ["Mistral AI", "mistral-medium-3-5"],
+      // 现有 effortValueMode 发不出 Small 4 的 "none"，第一版不下发推理参数、
+      // 不填档位
+      ["Mistral AI", "mistral-large-4"],
       ["Mistral AI", "mistral-small-2603"],
     ];
     for (const [presetName, modelId] of UNFILLED) {
