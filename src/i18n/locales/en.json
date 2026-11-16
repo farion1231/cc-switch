@@ -222,7 +222,14 @@
     "form": {
       "agy": {
         "endpointHelp": "Leave empty for Google's default API. Third-party endpoints must support the Gemini API and agy's built-in Gemini models.",
-        "modelHelp": "Use the display name from the model list (Fetch Models). Applies to that session only.",
+        "modelHelp": "Use the display name from agy's model catalog. Applies to that session only.",
+        "readModelCatalog": "Read agy Model Catalog",
+        "modelCatalogSuccess": "Read {{count}} models from agy",
+        "modelCatalogEmpty": "agy returned no models.",
+        "modelCatalogError": "Could not read agy's model catalog. Check that agy runs normally; if using native sign-in, check its sign-in status.",
+        "modelCatalogKeyHint": "The list comes from your local agy and only shows models it recognizes. It does not verify support by this provider or API key. No generation request has been tested.",
+        "modelCatalogEmptyKeyHint": "Without an API key, this reads the native sign-in catalog from your local agy. Once an API key is entered, it reads in API key mode without verifying provider support.",
+        "modelCatalogLoginHint": "Native sign-in mode: this list is returned by your local agy. No generation request has been tested.",
         "keyFieldsHint": "The model, key and endpoint are only used by \"Open Terminal\" and are never written to Antigravity's own settings.",
         "envFile": "Launcher environment variables",
         "envFileHint": "When agy is started from the card's \"Open Terminal\", CC Switch passes the API key and endpoint to that one agy process only and never writes them to a file. Other environment variables are not applied.",

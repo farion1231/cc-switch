@@ -220,7 +220,14 @@
     "form": {
       "agy": {
         "endpointHelp": "비워 두면 Google 기본 API를 사용합니다. 타사 엔드포인트는 Gemini API와 호환되어야 하며 agy에 내장된 Gemini 모델을 지원해야 합니다.",
-        "modelHelp": "모델 목록에 표시되는 이름을 입력하세요. ‘모델 목록 가져오기’를 눌러 선택할 수 있습니다. 해당 세션에만 적용됩니다.",
+        "modelHelp": "agy 모델 카탈로그의 표시 이름을 입력하세요. 해당 세션에만 적용됩니다.",
+        "readModelCatalog": "agy 모델 카탈로그 읽기",
+        "modelCatalogSuccess": "agy에서 모델 {{count}}개를 읽었습니다",
+        "modelCatalogEmpty": "agy가 모델을 반환하지 않았습니다.",
+        "modelCatalogError": "agy 모델 카탈로그를 읽지 못했습니다. agy가 정상적으로 실행되는지 확인하고, 기본 로그인 모드에서는 로그인 상태도 확인하세요.",
+        "modelCatalogKeyHint": "목록은 로컬 agy가 인식하는 모델만 보여 줍니다. 현재 공급자나 API 키의 지원 여부는 확인하지 않았으며, 생성 요청으로 검증하지도 않았습니다.",
+        "modelCatalogEmptyKeyHint": "API 키를 입력하지 않으면 로컬 agy의 기본 로그인 카탈로그를 읽습니다. 키를 입력하면 API 키 모드로 읽으며 공급자 지원 여부는 확인하지 않습니다.",
+        "modelCatalogLoginHint": "기본 로그인 모드입니다. 목록은 로컬 agy가 반환한 것이며, 생성 요청으로 검증하지 않았습니다.",
         "keyFieldsHint": "모델, API 키 및 엔드포인트는 ‘터미널 열기’ 실행 시에만 사용되며 Antigravity 자체 설정에는 저장하지 않습니다.",
         "envFile": "실행 환경 변수",
         "envFileHint": "카드의 ‘터미널 열기’로 agy를 실행하면 CC Switch는 API 키와 엔드포인트를 해당 agy 프로세스에만 전달하고 어떤 파일에도 저장하지 않습니다. 다른 환경 변수는 적용되지 않습니다.",

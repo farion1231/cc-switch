@@ -222,7 +222,14 @@
     "form": {
       "agy": {
         "endpointHelp": "Google'ın varsayılan API'sini kullanmak için boş bırakın. Üçüncü taraf uç noktalar Gemini API'sini ve agy'nin yerleşik Gemini modellerini desteklemelidir.",
-        "modelHelp": "Model listesindeki görünen adı kullanın (Modelleri Getir). Yalnızca bu oturum için geçerlidir.",
+        "modelHelp": "agy model kataloğundaki görünen adı kullanın. Yalnızca o oturum için geçerlidir.",
+        "readModelCatalog": "agy Model Kataloğunu Oku",
+        "modelCatalogSuccess": "agy üzerinden {{count}} model okundu",
+        "modelCatalogEmpty": "agy herhangi bir model döndürmedi.",
+        "modelCatalogError": "agy model kataloğu okunamadı. agy uygulamasının normal çalıştığını; yerel oturum açma modunda oturum durumunu da kontrol edin.",
+        "modelCatalogKeyHint": "Liste, yerel agy uygulamasının tanıdığı modelleri gösterir. Bu sağlayıcının veya API anahtarının desteği doğrulanmamıştır. Herhangi bir üretim isteğiyle test yapılmamıştır.",
+        "modelCatalogEmptyKeyHint": "API anahtarı girilmeden yerel agy uygulamasının yerel oturum açma kataloğu okunur. Anahtar girildikten sonra sağlayıcı desteği doğrulanmadan API anahtarı modunda okunur.",
+        "modelCatalogLoginHint": "Yerel oturum açma modu: Bu liste yerel agy tarafından döndürülür. Herhangi bir üretim isteğiyle test yapılmamıştır.",
         "keyFieldsHint": "Model, anahtar ve uç nokta yalnızca \"Terminal Aç\" tarafından kullanılır ve Antigravity’nin kendi ayarlarına hiçbir zaman yazılmaz.",
         "envFile": "Başlatıcı ortam değişkenleri",
         "envFileHint": "agy, sağlayıcı kartındaki \"Terminal Aç\" seçeneğiyle başlatıldığında CC Switch API anahtarını ve uç noktasını yalnızca o agy sürecine iletir; hiçbir dosyaya yazmaz. Diğer ortam değişkenleri uygulanmaz.",

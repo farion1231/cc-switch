@@ -81,7 +81,7 @@ export function GeminiFormFields({
   const [isFetchingModels, setIsFetchingModels] = useState(false);
 
   const handleFetchModels = useCallback(() => {
-    // agy 两种模式都只认它自己清单里的显示名，接口的模型 ID 对不上，所以一律问本机 agy。
+    // agy 两种模式都读取原生目录并保存显示名；这不验证当前供应商或 Key 的可用性。
     const agy = appId === "agy";
     const modelBaseUrl = baseUrl.trim();
     if (!agy && (!modelBaseUrl || !apiKey)) {
@@ -110,16 +110,31 @@ export function GeminiFormFields({
       .then((models) => {
         setFetchedModels(models);
         if (models.length === 0) {
-          toast.info(t("providerForm.fetchModelsEmpty"));
+          toast.info(
+            t(
+              agy
+                ? "provider.form.agy.modelCatalogEmpty"
+                : "providerForm.fetchModelsEmpty",
+            ),
+          );
         } else {
           toast.success(
-            t("providerForm.fetchModelsSuccess", { count: models.length }),
+            t(
+              agy
+                ? "provider.form.agy.modelCatalogSuccess"
+                : "providerForm.fetchModelsSuccess",
+              { count: models.length },
+            ),
           );
         }
       })
       .catch((err) => {
         console.warn("[ModelFetch] Failed:", err);
-        showFetchModelsError(err, t);
+        if (agy) {
+          toast.error(t("provider.form.agy.modelCatalogError"));
+        } else {
+          showFetchModelsError(err, t);
+        }
       })
       .finally(() => setIsFetchingModels(false));
   }, [appId, baseUrl, apiKey, t]);
@@ -215,7 +230,11 @@ export function GeminiFormFields({
               ) : (
                 <Download className="h-3.5 w-3.5" />
               )}
-              {t("providerForm.fetchModels")}
+              {t(
+                appId === "agy"
+                  ? "provider.form.agy.readModelCatalog"
+                  : "providerForm.fetchModels",
+              )}
             </Button>
           </div>
           <ModelInputWithFetch
@@ -223,13 +242,20 @@ export function GeminiFormFields({
             value={model}
             onChange={onModelChange}
             placeholder={
-              appId === "agy" && !apiKey
-                ? "Gemini 3.8 Flash (High)"
-                : "gemini-3.6-flash"
+              appId === "agy" ? "Gemini 3.8 Flash (High)" : "gemini-3.6-flash"
             }
             fetchedModels={fetchedModels}
             isLoading={isFetchingModels}
           />
+          {appId === "agy" && (
+            <p className="text-xs text-fg-3">
+              {apiKey.trim()
+                ? t("provider.form.agy.modelCatalogKeyHint")
+                : shouldShowApiKey && !isGoogleOfficial
+                  ? t("provider.form.agy.modelCatalogEmptyKeyHint")
+                  : t("provider.form.agy.modelCatalogLoginHint")}
+            </p>
+          )}
         </div>
       )}
 

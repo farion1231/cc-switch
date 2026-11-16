@@ -222,7 +222,14 @@
     "form": {
       "agy": {
         "endpointHelp": "留空用 Google 默认 API。第三方地址须兼容 Gemini API，并支持 agy 内置的 Gemini 模型。",
-        "modelHelp": "填模型列表里的显示名称，可点「获取模型列表」选择。只对那次会话生效。",
+        "modelHelp": "填写 agy 模型目录中的显示名称，仅对那次会话生效。",
+        "readModelCatalog": "读取 agy 模型目录",
+        "modelCatalogSuccess": "已从 agy 读取 {{count}} 个模型",
+        "modelCatalogEmpty": "agy 未返回任何模型。",
+        "modelCatalogError": "无法读取 agy 模型目录，请检查 agy 是否能正常运行；原生登录模式下也请检查其登录状态。",
+        "modelCatalogKeyHint": "列表来自本机 agy，仅表示它能识别这些模型，不代表当前供应商或 API Key 支持；未执行生成请求验证。",
+        "modelCatalogEmptyKeyHint": "未填写 API Key 时将读取本机 agy 的原生登录目录；填写 Key 后按 API Key 模式读取，且不校验当前供应商支持。",
+        "modelCatalogLoginHint": "当前为原生登录模式，列表由本机 agy 返回，未执行生成请求验证。",
         "keyFieldsHint": "模型、Key 和地址都只在「打开终端」时使用，不写进 Antigravity 自己的设置。",
         "envFile": "启动环境变量",
         "envFileHint": "从卡片「打开终端」启动 agy 时，CC Switch 只把 API Key 和请求地址传给那一个 agy 进程，不写进任何文件。其他环境变量不会应用。",
