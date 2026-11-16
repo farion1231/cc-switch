@@ -420,8 +420,13 @@ export function ProviderList({
           .map((model) => ({ id: model.id, name: model.name }));
       },
       hermesCurrentId: hermesModelConfig?.provider ?? null,
+      // Hermes 删掉的 dict 条目不再归它管（导入不会清理，只读就删不掉）；
+      // 读不到 Hermes 配置时无从判断，仍按托管处理
       isHermesManaged: (provider) =>
-        isHermesReadOnlyProvider(provider.settingsConfig),
+        isHermesReadOnlyProvider(provider.settingsConfig) &&
+        (!hermesLiveIds ||
+          !!hermesLiveIdsError ||
+          hermesLiveIds.includes(provider.id)),
       piStateUnavailable: appHas(appId, "piFamily") && !isPiStateReady,
       kimiCurrentId: currentProviderId,
       workbuddyOfficial,
@@ -455,6 +460,8 @@ export function ProviderList({
     isInConfig,
     currentOmoId,
     currentOmoSlimId,
+    hermesLiveIds,
+    hermesLiveIdsError,
     hermesModelConfig?.provider,
     isPiStateReady,
     currentProviderId,

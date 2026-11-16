@@ -464,6 +464,10 @@ pub struct UsageDisplaySettings {
     pub rate_provider: Option<String>,
 }
 
+/// 界面支持的语言，顺序同设置页下拉。前端 `src/i18n/languages.ts` 的 `LANGUAGES`
+/// 由 `tray::tests::languages_match_shared_fixture` 生成的 `tests/config/languages.json` 比对。
+pub(crate) const LANGUAGES: &[&str] = &["zh", "zh-TW", "en", "de", "ja", "ko", "ru", "tr"];
+
 /// 应用设置结构
 ///
 /// 存储设备级别设置，保存在本地 `~/.cc-switch/settings.json`，不随数据库同步。
@@ -900,7 +904,7 @@ impl AppSettings {
             .language
             .as_ref()
             .map(|s| s.trim())
-            .filter(|s| matches!(*s, "en" | "zh" | "zh-TW" | "de" | "ja" | "tr" | "ko" | "ru"))
+            .filter(|s| LANGUAGES.contains(s))
             .map(|s| s.to_string());
 
         self.quota_display = self
