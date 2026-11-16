@@ -43,6 +43,7 @@ pub mod subscription_agy;
 pub mod subscription_grok;
 pub mod sync_protocol;
 pub mod usage_cache;
+pub(crate) mod usage_http;
 pub mod usage_stats;
 pub mod webdav;
 pub mod webdav_auto_sync;

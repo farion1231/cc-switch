@@ -1,10 +1,10 @@
 //! Exact counters exported by agy; absent models remain unknown (never use today's provider).
 //! Amounts are the matching Gemini API prices, like every other session-log import.
 use super::{
-    session_usage::{load_sync_cursors, metadata_modified_nanos, SessionSyncResult},
+    session_usage::{cost_columns, load_sync_cursors, metadata_modified_nanos, SessionSyncResult},
     sql_helpers::INPUT_TOKEN_SEMANTICS_FRESH,
 };
-use crate::proxy::usage::calculator::{CostCalculator, ModelPricing};
+use crate::proxy::usage::calculator::ModelPricing;
 use crate::proxy::usage::parser::TokenUsage;
 use crate::{
     database::{lock_conn, Database},
@@ -164,24 +164,7 @@ fn costs(
     let pricing = pricing_cache
         .entry(model.to_string())
         .or_insert_with(|| crate::services::usage_stats::find_model_pricing(conn, model));
-    match pricing {
-        Some(pricing) => {
-            let cost = CostCalculator::calculate_for_app(
-                "agy",
-                &usage,
-                pricing,
-                rust_decimal::Decimal::from(1),
-            );
-            [
-                cost.input_cost.to_string(),
-                cost.output_cost.to_string(),
-                cost.cache_read_cost.to_string(),
-                cost.cache_creation_cost.to_string(),
-                cost.total_cost.to_string(),
-            ]
-        }
-        None => std::array::from_fn(|_| "0".to_string()),
-    }
+    cost_columns("agy", &usage, pricing.as_ref(), rust_decimal::Decimal::ONE)
 }
 
 #[cfg(test)]

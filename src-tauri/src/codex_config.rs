@@ -974,21 +974,46 @@ pub fn extract_codex_api_key(auth: Option<&Value>, config_text: Option<&str>) ->
 /// section unrelated to the active provider must not leak into `{{baseUrl}}`.
 pub fn extract_codex_base_url(config_text: &str) -> Option<String> {
     let doc = config_text.parse::<toml::Value>().ok()?;
+    active_provider_str(&doc, "base_url").map(str::to_string)
+}
 
-    if let Some(active_provider) = doc.get("model_provider").and_then(|v| v.as_str()) {
-        if let Some(base_url) = doc
-            .get("model_providers")
-            .and_then(|providers| providers.get(active_provider))
-            .and_then(|provider| provider.get("base_url"))
-            .and_then(|v| v.as_str())
-        {
-            return Some(base_url.to_string());
-        }
-    }
-
-    doc.get("base_url")
+/// A string field of the active Codex provider: the active
+/// `[model_providers.<model_provider>].<key>`, falling back to a top-level
+/// `<key>`. A non-active `[model_providers.*]` section is never read.
+pub fn active_provider_str<'a>(doc: &'a toml::Value, key: &str) -> Option<&'a str> {
+    doc.get("model_provider")
         .and_then(|v| v.as_str())
-        .map(ToString::to_string)
+        .and_then(|active| doc.get("model_providers")?.get(active)?.get(key)?.as_str())
+        .or_else(|| doc.get(key)?.as_str())
+}
+
+/// `wire_api` values that mean OpenAI Chat Completions, matched trimmed and
+/// case-insensitively. The frontend copy is checked against
+/// `tests/config/backendConstants.json`.
+pub const CHAT_WIRE_APIS: &[&str] = &[
+    "chat",
+    "chat_completions",
+    "chat-completions",
+    "openai_chat",
+    "openai-chat",
+    "openai_chat_completions",
+];
+
+/// `wire_api` values that mean Anthropic Messages, matched like [`CHAT_WIRE_APIS`].
+pub const ANTHROPIC_WIRE_APIS: &[&str] = &[
+    "anthropic",
+    "anthropic_messages",
+    "anthropic-messages",
+    "messages",
+    "claude",
+];
+
+pub fn is_chat_wire_api(value: &str) -> bool {
+    CHAT_WIRE_APIS.contains(&value.trim().to_ascii_lowercase().as_str())
+}
+
+pub fn is_anthropic_wire_api(value: &str) -> bool {
+    ANTHROPIC_WIRE_APIS.contains(&value.trim().to_ascii_lowercase().as_str())
 }
 
 pub fn codex_auth_has_login_material(auth: &Value) -> bool {
