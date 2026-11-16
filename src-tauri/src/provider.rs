@@ -513,6 +513,9 @@ impl LocalProxyRequestOverrides {
 /// 供应商元数据
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProviderMeta {
+    /// 从哪个配置目标导入；用于按 WSL 运行状态显示导入的卡片，不写入客户端配置。
+    #[serde(rename = "importedFromTarget", skip_serializing_if = "Option::is_none")]
+    pub imported_from_target: Option<String>,
     /// 自定义端点列表（按 URL 去重存储）
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub custom_endpoints: HashMap<String, crate::settings::CustomEndpoint>,

@@ -1,6 +1,7 @@
 #![allow(non_snake_case)]
 
 mod agy_account;
+mod app_targets;
 mod auth;
 mod balance;
 mod claude_account;
@@ -50,6 +51,7 @@ mod provider_concurrency_tests;
 mod startup_tests;
 
 pub use agy_account::*;
+pub use app_targets::*;
 pub use auth::*;
 pub use balance::*;
 pub use claude_account::*;

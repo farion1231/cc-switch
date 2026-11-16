@@ -52,6 +52,15 @@ export const handlers = [
     success(JSON.stringify({})),
   ),
   http.post(`${TAURI_ENDPOINT}/get_migration_result`, () => success(false)),
+  // 多环境写入目标：测试环境不是 Windows，没有 WSL 发行版
+  http.post(`${TAURI_ENDPOINT}/get_app_targets_overview`, () =>
+    success({
+      inventory: { hostWindows: false, wslAvailable: false, distros: [] },
+      installs: {},
+      multiEnv: false,
+      apps: [],
+    }),
+  ),
   http.post(`${TAURI_ENDPOINT}/get_skills_migration_result`, () =>
     success(null),
   ),

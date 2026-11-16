@@ -373,13 +373,22 @@ impl McpService {
     }
 
     fn sync_server_to_app_no_config(server: &McpServer, app: &AppType) -> Result<(), AppError> {
+        // 写进 WSL 目标时，Windows 专用的命令和路径不能照搬到 Linux：跳过并提示，不删
+        // 那个环境里的同名条目。
+        if crate::app_targets::scope::is_wsl() && windows_only_mcp_spec(&server.server) {
+            crate::app_targets::scope::note(format!("mcp_skipped_windows_only:{}", server.id));
+            return Ok(());
+        }
         match app {
             AppType::Claude => {
                 mcp::sync_single_server_to_claude(&Default::default(), &server.id, &server.server)?;
                 // 各官方账号目录镜像默认 .claude.json 的 mcpServers
-                crate::services::claude_account::sync_all_shared(
-                    &crate::config::get_app_config_dir(),
-                );
+                // 托管账号目录只跟着主环境的 ~/.claude.json 走。
+                if !crate::app_targets::scope::active() {
+                    crate::services::claude_account::sync_all_shared(
+                        &crate::config::get_app_config_dir(),
+                    );
+                }
             }
             AppType::ClaudeDesktop => {
                 log::debug!("Claude Desktop 3P profiles do not use CC Switch MCP sync, skipping");
@@ -455,9 +464,12 @@ impl McpService {
         match app {
             AppType::Claude => {
                 mcp::remove_server_from_claude(id)?;
-                crate::services::claude_account::sync_all_shared(
-                    &crate::config::get_app_config_dir(),
-                );
+                // 托管账号目录只跟着主环境的 ~/.claude.json 走。
+                if !crate::app_targets::scope::active() {
+                    crate::services::claude_account::sync_all_shared(
+                        &crate::config::get_app_config_dir(),
+                    );
+                }
             }
             AppType::ClaudeDesktop => {
                 log::debug!("Claude Desktop 3P profiles do not use CC Switch MCP sync, skipping");
@@ -941,5 +953,92 @@ impl McpService {
                 failures.join("; ")
             )))
         }
+    }
+}
+
+/// stdio MCP 的命令、参数、工作目录或环境变量里有 Windows 专用的可执行文件或绝对路径。
+fn windows_only_mcp_spec(spec: &serde_json::Value) -> bool {
+    fn windows_path(text: &str) -> bool {
+        let bytes = text.as_bytes();
+        let drive = bytes.len() >= 3
+            && bytes[0].is_ascii_alphabetic()
+            && bytes[1] == b':'
+            && (bytes[2] == b'\\' || bytes[2] == b'/');
+        drive || text.starts_with("\\\\")
+    }
+    fn windows_command(text: &str) -> bool {
+        let lower = text.trim().to_ascii_lowercase();
+        let name = lower.rsplit(['/', '\\']).next().unwrap_or(&lower);
+        windows_path(text)
+            || text.contains('\\')
+            || [".exe", ".cmd", ".bat", ".ps1"]
+                .iter()
+                .any(|ext| name.ends_with(ext))
+            || matches!(name, "cmd" | "powershell" | "pwsh")
+    }
+    let Some(obj) = spec.as_object() else {
+        return false;
+    };
+    let kind = obj.get("type").and_then(|v| v.as_str()).unwrap_or("stdio");
+    if kind != "stdio" && obj.get("command").is_none() {
+        return false;
+    }
+    if obj
+        .get("command")
+        .and_then(|v| v.as_str())
+        .is_some_and(windows_command)
+    {
+        return true;
+    }
+    let strings_in = |key: &str| -> Vec<String> {
+        match obj.get(key) {
+            Some(serde_json::Value::Array(items)) => items
+                .iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect(),
+            Some(serde_json::Value::Object(map)) => map
+                .values()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect(),
+            Some(serde_json::Value::String(text)) => vec![text.clone()],
+            _ => Vec::new(),
+        }
+    };
+    strings_in("args")
+        .iter()
+        .chain(strings_in("env").iter())
+        .chain(strings_in("cwd").iter())
+        .any(|text| windows_path(text))
+}
+
+#[cfg(test)]
+mod windows_only_mcp_tests {
+    use super::windows_only_mcp_spec;
+    use serde_json::json;
+
+    #[test]
+    fn detects_windows_only_stdio_servers() {
+        assert!(windows_only_mcp_spec(
+            &json!({"command": "C:\\tools\\mcp.exe"})
+        ));
+        assert!(windows_only_mcp_spec(
+            &json!({"command": "cmd", "args": ["/c", "npx", "x"]})
+        ));
+        assert!(windows_only_mcp_spec(&json!({"command": "npx.cmd"})));
+        assert!(windows_only_mcp_spec(
+            &json!({"command": "node", "args": ["D:/mcp/server.js"]})
+        ));
+        assert!(windows_only_mcp_spec(
+            &json!({"command": "npx", "env": {"ROOT": "C:\\data"}})
+        ));
+        assert!(!windows_only_mcp_spec(
+            &json!({"command": "npx", "args": ["-y", "@modelcontextprotocol/server-everything"]})
+        ));
+        assert!(!windows_only_mcp_spec(
+            &json!({"type": "http", "url": "https://x/mcp"})
+        ));
+        assert!(!windows_only_mcp_spec(
+            &json!({"command": "/usr/bin/node", "args": ["/srv/a.js"]})
+        ));
     }
 }

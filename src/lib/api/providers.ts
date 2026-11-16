@@ -33,6 +33,8 @@ export interface CodexHistorySplitHint {
 
 export interface SwitchResult {
   warnings: string[];
+  /** 多环境写入：各跟随环境的结果（没有跟随环境时不出现） */
+  targets?: import("./appTargets").TargetReport[];
   route?: RouteSwitchResult;
   codexHistorySplit?: CodexHistorySplitHint;
 }

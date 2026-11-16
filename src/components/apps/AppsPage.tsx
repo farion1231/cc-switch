@@ -8,7 +8,7 @@ import {
   type CSSProperties,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   closestCenter,
   DndContext,
@@ -49,6 +49,19 @@ import type { VisibleApps } from "@/types";
 import { DEFAULT_VISIBLE_APPS, orderAppIds } from "@/config/appConfig";
 import { useSettings } from "@/hooks/useSettings";
 import { isUpdateAvailable } from "@/lib/version";
+import { WslInstallRows } from "@/components/apps/WslInstallRows";
+import { InstallTargetsDialog } from "@/components/apps/InstallTargetsDialog";
+import {
+  appTargetsApi,
+  installedIn,
+  installOf,
+  isAppTargetApp,
+  runningWslDistros,
+} from "@/lib/api/appTargets";
+import {
+  APP_TARGETS_QUERY_KEY,
+  useAppTargetsOverview,
+} from "@/hooks/useAppTargets";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -148,6 +161,9 @@ type DragHandle = {
   isDragging: boolean;
 };
 
+/** 一行的安装状态：`null` 还没探测完（暂不分组），`"unchecked"` 某个 WSL 还没检测出来。 */
+type RowInstallState = boolean | "unchecked" | null;
+
 /** 可拖动的行把拖动把手交给里面的 `AppRow`（ToolRow 自己渲染 AppRow，不必逐层传参）。 */
 const DragHandleContext = createContext<DragHandle | null>(null);
 
@@ -198,9 +214,27 @@ export function AppsPage() {
       staleTime: 30_000,
     });
 
-  // 按「已安装 / 未安装」分两组。Claude Desktop 没有命令可探，用后端按数据目录 / 应用包推断的结果。
-  // 首次探测还没出结果时不分组，免得各行探完一个跳一个；之后重新检查时沿用上次结果，位置不动。
-  const rowInstalled = (row: Row): boolean | null => {
+  // 各 WSL 发行版里四个客户端的安装情况（只有 Windows 上才有发行版）。
+  const targetsOverview = useAppTargetsOverview();
+  const queryClient = useQueryClient();
+  // 「检查更新」顺带重新检测运行中的 WSL 发行版（不启动停止的），不另设按钮。
+  const refreshWslInstalls = async () => {
+    if (!targetsOverview.data?.inventory.hostWindows) return;
+    try {
+      queryClient.setQueryData(
+        APP_TARGETS_QUERY_KEY,
+        await appTargetsApi.overview(false, true),
+      );
+    } catch (error) {
+      console.warn("[AppsPage] Failed to refresh WSL installs", error);
+    }
+  };
+
+  // 按「已安装 / 未安装 / 未检测」分组。Claude Desktop 没有命令可探，用后端按数据目录 / 应用包
+  // 推断的结果。首次探测还没出结果时不分组，免得各行探完一个跳一个；之后重新检查时沿用上次
+  // 结果，位置不动。支持多环境的客户端：任一环境（Windows 或某个 WSL）装了就算已安装；所有
+  // 环境都确认没装才算未安装；某个 WSL 还没检测出来（或探测失败）时归「未检测」。
+  const rowInstalled = (row: Row): RowInstallState => {
     if (row.kind === "desktop") {
       return isDesktopStatusPending ? null : Boolean(desktopStatus?.installed);
     }
@@ -210,7 +244,21 @@ export function AppsPage() {
     }
     const info = tools.toolVersionByName.get(row.tool);
     if (!info && tools.isLoadingTools) return null;
-    return isToolPresent(info, tools.installReports?.[row.tool]);
+    const windowsPresent = isToolPresent(
+      info,
+      tools.installReports?.[row.tool],
+    );
+    if (windowsPresent || !isAppTargetApp(row.tool)) return windowsPresent;
+    if (targetsOverview.isPending) return null;
+    const overview = targetsOverview.data;
+    if (!overview?.inventory.hostWindows) return false;
+    const wsl = runningWslDistros(overview.inventory).map((env) =>
+      installedIn(overview.installs, env.distro, row.tool),
+    );
+    if (wsl.some((installed) => installed === true)) return true;
+    return wsl.some((installed) => installed === undefined)
+      ? "unchecked"
+      : false;
   };
   // 两组共用一份顺序（拖动后写进设置，侧栏也按它排），每组只是按装没装过滤
   const appOrder = orderAppIds(settings?.appOrder);
@@ -223,30 +271,35 @@ export function AppsPage() {
     ? [{ key: "all", title: t("appsPage.columnApp"), rows: orderedRows }]
     : (
         [
-          { key: "installed", installed: true },
-          { key: "notInstalled", installed: false },
+          {
+            key: "installed",
+            installed: true,
+            title: "appsPage.sectionInstalled",
+          },
+          {
+            key: "notInstalled",
+            installed: false,
+            title: "appsPage.sectionNotInstalled",
+          },
+          {
+            key: "unchecked",
+            installed: "unchecked",
+            title: "appsPage.sectionUnchecked",
+          },
         ] as const
       )
-        .map(({ key, installed }) => {
+        .map(({ key, installed, title }) => {
           const rows = rowStates
             .filter((s) => s.installed === installed)
             .map((s) => s.row);
-          return {
-            key,
-            title: t(
-              installed
-                ? "appsPage.sectionInstalled"
-                : "appsPage.sectionNotInstalled",
-              { count: rows.length },
-            ),
-            rows,
-          };
+          return { key, title: t(title, { count: rows.length }), rows };
         })
         .filter((section) => section.rows.length > 0);
   // 行换组会重新挂载，操作列的量宽要跟着重新观察新节点
-  const sectionLayoutKey = sections
+  // WSL 子行的操作按钮也参与量宽：检测结果变了要重新观察
+  const sectionLayoutKey = `${sections
     .map((section) => `${section.key}:${section.rows.map(rowKey).join(",")}`)
-    .join("|");
+    .join("|")}#${targetsOverview.dataUpdatedAt}`;
 
   useLayoutEffect(() => {
     const table = tableRef.current;
@@ -451,7 +504,10 @@ export function AppsPage() {
               variant="neutral"
               size="regular"
               disabled={tools.isLoadingTools || tools.isAnyBusy}
-              onClick={() => void tools.checkForUpdates()}
+              onClick={() => {
+                void tools.checkForUpdates();
+                void refreshWslInstalls();
+              }}
             >
               <RefreshCw
                 className={cn(
@@ -662,20 +718,26 @@ function AppRow({
   app,
   name,
   meta,
+  envLabel,
   version,
   action,
   visibility,
   menu,
   footer,
+  subRows,
 }: {
   app: AppId;
   name: React.ReactNode;
   meta?: React.ReactNode;
+  /** 有其他环境（WSL）的安装时，主行这一处的环境标签：单独一行，和下面 WSL 子行的标签对齐 */
+  envLabel?: React.ReactNode;
   version?: React.ReactNode;
   action?: React.ReactNode;
   visibility: React.ReactNode;
   menu?: React.ReactNode;
   footer?: React.ReactNode;
+  /** 同一个应用的其他安装位置（各 WSL 发行版），和主行同一套列 */
+  subRows?: React.ReactNode;
 }) {
   const { t } = useTranslation();
   const dragHandle = useContext(DragHandleContext);
@@ -697,12 +759,22 @@ function AppRow({
         </button>
       )}
       <div className={cn(APP_ROW_GRID, "min-h-10")}>
-        <div className="flex min-w-0 items-center gap-4">
+        <div
+          className={cn(
+            "flex min-w-0 gap-4",
+            envLabel ? "items-start" : "items-center",
+          )}
+        >
           <AppGlyph app={app} size={20} badgeClassName="bg-surface" />
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 items-center gap-1.5 text-strong text-fg-1">
               {name}
             </div>
+            {envLabel && (
+              <div className="mt-2 flex min-w-0 items-center gap-1.5">
+                {envLabel}
+              </div>
+            )}
             {meta && (
               <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-caption text-fg-2">
                 {meta}
@@ -720,6 +792,7 @@ function AppRow({
         <div className="flex justify-end">{visibility}</div>
         <div className="flex justify-end">{menu}</div>
       </div>
+      {subRows}
       {footer && <div className="ms-9 mt-2">{footer}</div>}
     </div>
   );
@@ -780,8 +853,36 @@ function ToolRow({
   const sourceLabel = defaultInstall
     ? SOURCE_LABEL[defaultInstall.source]
     : undefined;
+  // 这个客户端在某个 WSL 里也有条目时，主行标明是 Windows（版本列说的是 Windows 这一处）
+  const wslOverview = useAppTargetsOverview(isAppTargetApp(tool));
+  // 有 WSL 发行版时，安装先确认装到哪些环境（Windows / 各发行版）
+  const hasWsl =
+    isAppTargetApp(tool) &&
+    Boolean(wslOverview.data?.inventory.hostWindows) &&
+    runningWslDistros(wslOverview.data?.inventory).length > 0;
+  const [installTargetsOpen, setInstallTargetsOpen] = useState(false);
+  const windowsBadge =
+    isAppTargetApp(tool) &&
+    info?.env_type === "windows" &&
+    runningWslDistros(wslOverview.data?.inventory).some((env) => {
+      const status = installOf(
+        wslOverview.data?.installs,
+        env.distro,
+        tool,
+      )?.status;
+      return status === "installed" || status === "broken";
+    })
+      ? "Windows"
+      : null;
   const envBadge =
-    info?.env_type === "wsl" && ENV_BADGE_CONFIG.wsl
+    info?.env_type === "wsl" &&
+    ENV_BADGE_CONFIG.wsl &&
+    (!wslOverview.data?.inventory.hostWindows ||
+      runningWslDistros(wslOverview.data?.inventory).some(
+        (env) =>
+          !info.wsl_distro ||
+          env.distro.toLowerCase() === info.wsl_distro.toLowerCase(),
+      ))
       ? `${t(ENV_BADGE_CONFIG.wsl.labelKey)}${info.wsl_distro ? ` · ${info.wsl_distro}` : ""}`
       : null;
 
@@ -817,7 +918,11 @@ function ToolRow({
     <Button
       variant="neutral"
       size="compact"
-      onClick={() => void tools.handleRunToolAction([tool], action)}
+      onClick={() =>
+        action === "install" && hasWsl
+          ? setInstallTargetsOpen(true)
+          : void tools.handleRunToolAction([tool], action)
+      }
       disabled={isVersionLoading || isBusy}
       aria-busy={isBusy}
     >
@@ -881,7 +986,7 @@ function ToolRow({
   ) : null;
 
   const wslControls =
-    info?.env_type === "wsl" ? (
+    info?.env_type === "wsl" && envBadge ? (
       <div className="flex items-center gap-2 text-caption text-fg-2">
         <span>Shell</span>
         <Select
@@ -969,56 +1074,91 @@ function ToolRow({
       </div>
     ) : undefined;
 
-  return (
-    <AppRow
-      app={TOOL_APP_IDS[tool]}
-      name={
-        <>
-          <span className="truncate">{toolDisplayName(tool)}</span>
-          {sourceLabel && <Pill>{sourceLabel}</Pill>}
-          {envBadge && <Pill>{envBadge}</Pill>}
-        </>
-      }
-      meta={meta}
-      version={version}
-      action={actionButton}
-      visibility={visibility}
-      menu={
-        (canUninstall || busyAction === "uninstall") && (
-          <DropdownMenu>
-            <HoverTip content={t("common.more")}>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="quiet"
-                  size="icon-compact"
-                  aria-label={t("appPage.moreActions", {
-                    name: toolDisplayName(tool),
-                  })}
-                  disabled={isVersionLoading || isBusy}
-                  aria-busy={busyAction === "uninstall"}
-                >
-                  {busyAction === "uninstall" ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <MoreHorizontal className="h-4 w-4" strokeWidth={1.5} />
-                  )}
-                </Button>
-              </DropdownMenuTrigger>
-            </HoverTip>
-            <DropdownMenuContent align="end" className="min-w-[160px]">
-              <DropdownMenuItem
-                onSelect={onUninstall}
-                className="text-danger-text focus:text-danger-text"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-                {t("settings.toolUninstall")}
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        )
-      }
-      footer={footer}
+  // 四个支持多环境的客户端：各 WSL 发行版里的安装作为子行，和 Windows 那一处同一套列。
+  const subRows = isAppTargetApp(tool) ? (
+    <WslInstallRows
+      tool={tool}
+      appName={toolDisplayName(tool)}
+      latestVersion={info?.latest_version}
+      gridClassName={APP_ROW_GRID}
     />
+  ) : null;
+
+  return (
+    <>
+      <AppRow
+        app={TOOL_APP_IDS[tool]}
+        name={
+          <>
+            <span className="truncate">{toolDisplayName(tool)}</span>
+            {sourceLabel && <Pill>{sourceLabel}</Pill>}
+            {envBadge && <Pill>{envBadge}</Pill>}
+          </>
+        }
+        meta={meta}
+        envLabel={windowsBadge ? <Pill>{windowsBadge}</Pill> : undefined}
+        version={version}
+        action={actionButton}
+        visibility={visibility}
+        menu={
+          (canUninstall || busyAction === "uninstall" || hasWsl) && (
+            <DropdownMenu>
+              <HoverTip content={t("common.more")}>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="quiet"
+                    size="icon-compact"
+                    aria-label={t("appPage.moreActions", {
+                      name: toolDisplayName(tool),
+                    })}
+                    disabled={isVersionLoading || isBusy}
+                    aria-busy={busyAction === "uninstall"}
+                  >
+                    {busyAction === "uninstall" ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <MoreHorizontal className="h-4 w-4" strokeWidth={1.5} />
+                    )}
+                  </Button>
+                </DropdownMenuTrigger>
+              </HoverTip>
+              <DropdownMenuContent align="end" className="min-w-[160px]">
+                {hasWsl && (
+                  <DropdownMenuItem
+                    onSelect={() => setInstallTargetsOpen(true)}
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    {t("appTargets.installTargets.menu")}
+                  </DropdownMenuItem>
+                )}
+                {(canUninstall || busyAction === "uninstall") && (
+                  <DropdownMenuItem
+                    onSelect={onUninstall}
+                    className="text-danger-text focus:text-danger-text"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    {t("settings.toolUninstall")}
+                  </DropdownMenuItem>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )
+        }
+        footer={footer}
+        subRows={subRows}
+      />
+      {isAppTargetApp(tool) && (
+        <InstallTargetsDialog
+          open={installTargetsOpen}
+          tool={tool}
+          appName={toolDisplayName(tool)}
+          windowsInstalled={Boolean(info?.version || broken)}
+          windowsVersion={info?.version}
+          onClose={() => setInstallTargetsOpen(false)}
+          onInstallWindows={() => tools.handleRunToolAction([tool], "install")}
+        />
+      )}
+    </>
   );
 }
 

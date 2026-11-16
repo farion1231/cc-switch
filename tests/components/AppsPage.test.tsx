@@ -25,6 +25,8 @@ import type {
 } from "@/lib/api/settings";
 import type { DndContextProps, DragEndEvent } from "@dnd-kit/core";
 import { emitTauriEvent } from "../msw/tauriMocks";
+import { http, HttpResponse } from "msw";
+import { server } from "../msw/server";
 import { APP_IDS } from "@/config/appSpecs";
 
 type ToolVersions = Awaited<ReturnType<typeof settingsApi.getToolVersions>>;
@@ -696,6 +698,179 @@ describe("AppsPage concurrent CLI upgrades", () => {
     expect(installed.queryByText("Codex")).toBeNull();
     expect(notInstalled.getByText("Codex")).toBeInTheDocument();
     expect(notInstalled.queryByText("Claude Code")).toBeNull();
+  });
+
+  it("counts WSL installs when grouping and keeps undetected WSL apart", async () => {
+    missing.add("codex");
+    missing.add("gemini");
+    missing.add("opencode");
+    const refreshCalls: unknown[] = [];
+    let wslRunning = true;
+    server.use(
+      http.post(
+        "http://tauri.local/get_app_targets_overview",
+        async ({ request }) => {
+          const body = (await request.json()) as { refreshInstalls?: boolean };
+          refreshCalls.push(body.refreshInstalls);
+          return HttpResponse.json({
+            inventory: {
+              hostWindows: true,
+              wslAvailable: true,
+              distros: [
+                {
+                  distro: "Alpine",
+                  available: true,
+                  running: wslRunning,
+                  cached: false,
+                },
+              ],
+            },
+            installs: {
+              Alpine: {
+                codex: {
+                  status: "installed",
+                  version: "0.167.2",
+                  path: "/usr/local/bin/codex",
+                  detectedAt: 1,
+                  cached: false,
+                },
+                gemini: { status: "unknown", detectedAt: 1, cached: false },
+                opencode: {
+                  status: "notInstalled",
+                  detectedAt: 1,
+                  cached: false,
+                },
+              },
+            },
+            multiEnv: true,
+            apps: [],
+          });
+        },
+      ),
+    );
+    await renderApps();
+    await waitFor(() =>
+      expect(rowApps("appsPage.sectionInstalled")).toContain("codex"),
+    );
+    expect(rowApps("appsPage.sectionUnchecked")).toEqual(["gemini"]);
+    expect(rowApps("appsPage.sectionNotInstalled")).toContain("opencode");
+    // WSL 条目是应用行里的子行：环境标签 + 路径 / 版本，和 Windows 那一处同一套列
+    const wslRow = card("Codex")
+      .getByText("WSL · Alpine")
+      .closest("[data-wsl-install]") as HTMLElement;
+    expect(
+      within(wslRow).getByText("/usr/local/bin/codex"),
+    ).toBeInTheDocument();
+    expect(within(wslRow).getByText("0.167.2")).toBeInTheDocument();
+    // 没装在 WSL 里的不占行
+    expect(card("OpenCode").queryByText("WSL · Alpine")).toBeNull();
+    expect(screen.queryByText("appTargets.installs.detect")).toBeNull();
+    // Windows 标签单独一行（不挤在名称后面），和 WSL 子行的标签对齐
+    const windowsPill = card("Codex").getByText("Windows");
+    expect(windowsPill.closest(".text-strong")).toBeNull();
+
+    // 「检查更新」顺带重新检测运行中的 WSL，不另设按钮
+    fireEvent.click(screen.getByText("appsPage.checkUpdates"));
+    await waitFor(() => expect(refreshCalls).toContainEqual(true));
+
+    wslRunning = false;
+    await waitFor(() =>
+      expect(
+        screen.getByText("appsPage.checkUpdates").closest("button"),
+      ).toBeEnabled(),
+    );
+    fireEvent.click(screen.getByText("appsPage.checkUpdates"));
+    await waitFor(() =>
+      expect(card("Codex").queryByText("WSL · Alpine")).toBeNull(),
+    );
+    expect(rowApps("appsPage.sectionNotInstalled")).toContain("codex");
+    expect(card("Codex").queryByText("Windows")).toBeNull();
+
+    wslRunning = true;
+    await waitFor(() =>
+      expect(
+        screen.getByText("appsPage.checkUpdates").closest("button"),
+      ).toBeEnabled(),
+    );
+    fireEvent.click(screen.getByText("appsPage.checkUpdates"));
+    await waitFor(() =>
+      expect(card("Codex").getByText("WSL · Alpine")).toBeInTheDocument(),
+    );
+    expect(rowApps("appsPage.sectionInstalled")).toContain("codex");
+  });
+
+  it("asks which environments to install into when WSL distros exist", async () => {
+    missing.add("opencode");
+    const wslInstalls: unknown[] = [];
+    server.use(
+      http.post("http://tauri.local/get_app_targets_overview", () =>
+        HttpResponse.json({
+          inventory: {
+            hostWindows: true,
+            wslAvailable: true,
+            distros: [
+              {
+                distro: "Alpine",
+                available: true,
+                running: true,
+                cached: false,
+              },
+              {
+                distro: "Debian",
+                available: true,
+                running: false,
+                cached: true,
+              },
+            ],
+          },
+          installs: {
+            Alpine: {
+              opencode: {
+                status: "notInstalled",
+                detectedAt: 1,
+                cached: false,
+              },
+            },
+          },
+          multiEnv: true,
+          apps: [],
+        }),
+      ),
+      http.post(
+        "http://tauri.local/run_wsl_tool_lifecycle_action",
+        async ({ request }) => {
+          wslInstalls.push(await request.json());
+          return HttpResponse.json(null);
+        },
+      ),
+    );
+    await renderApps();
+    await waitFor(() =>
+      expect(card("OpenCode").queryByText("WSL · Alpine")).toBeNull(),
+    );
+    fireEvent.click(
+      card("OpenCode").getByRole("button", { name: /settings\.toolInstall/ }),
+    );
+    const dialog = within(await screen.findByRole("dialog"));
+    expect(
+      await dialog.findByRole("checkbox", { name: "WSL · Alpine" }),
+    ).not.toBeChecked();
+    expect(dialog.getByRole("checkbox", { name: "Windows" })).toBeChecked();
+    // 未运行的发行版不再显示，即使有缓存也不能作为安装目标。
+    expect(dialog.queryByRole("checkbox", { name: "WSL · Debian" })).toBeNull();
+    expect(mocks.runToolLifecycleAction).not.toHaveBeenCalled();
+
+    fireEvent.click(dialog.getByRole("checkbox", { name: "Windows" }));
+    fireEvent.click(dialog.getByRole("checkbox", { name: "WSL · Alpine" }));
+    await act(async () => {
+      fireEvent.click(dialog.getByText("appTargets.installTargets.confirm"));
+    });
+    await waitFor(() =>
+      expect(wslInstalls).toEqual([
+        { tool: "opencode", distro: "Alpine", action: "install" },
+      ]),
+    );
+    expect(mocks.runToolLifecycleAction).not.toHaveBeenCalled();
   });
 
   it("groups Claude Desktop by whether it is installed, not whether it is connected", async () => {
@@ -1482,6 +1657,27 @@ describe("AppsPage concurrent CLI upgrades", () => {
   });
 
   it("preserves WSL execution and refresh parameters when confirming a mixed batch after remount", async () => {
+    server.use(
+      http.post("http://tauri.local/get_app_targets_overview", () =>
+        HttpResponse.json({
+          inventory: {
+            hostWindows: true,
+            wslAvailable: true,
+            distros: [
+              {
+                distro: "Ubuntu",
+                available: true,
+                running: true,
+                cached: false,
+              },
+            ],
+          },
+          installs: {},
+          multiEnv: false,
+          apps: [],
+        }),
+      ),
+    );
     const preflight = deferred<ToolInstallationReport[]>();
     const getVersions = mocks.getToolVersions.getMockImplementation()!;
     mocks.getToolVersions.mockImplementation(async (tools: string[]) =>
