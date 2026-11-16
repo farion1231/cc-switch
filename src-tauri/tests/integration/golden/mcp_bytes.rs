@@ -8,11 +8,11 @@ use serde_json::json;
 
 use cc_switch_lib::{AppType, McpService, ProviderService};
 
-use crate::support::{create_test_state, reset_test_fs, test_mutex};
-use crate::util::{
+use crate::golden::util::{
     assert_golden, mcp_server, provider, read_home_file, read_home_json, seed_providers,
     sort_objects, stable_json_file, toml_section, write_home_file,
 };
+use crate::support::{create_test_state, reset_test_fs, test_mutex};
 
 const CLAUDE_JSON: &str = ".claude.json";
 const CODEX_CONFIG: &str = ".codex/config.toml";

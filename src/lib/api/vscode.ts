@@ -58,18 +58,6 @@ export const vscodeApi = {
     });
   },
 
-  async updateEndpointLastUsed(
-    appId: AppId,
-    providerId: string,
-    url: string,
-  ): Promise<void> {
-    await invoke("update_endpoint_last_used", {
-      app: appId,
-      providerId: providerId,
-      url,
-    });
-  },
-
   async exportConfigToFile(filePath: string) {
     return await invoke("export_config_to_file", {
       filePath,

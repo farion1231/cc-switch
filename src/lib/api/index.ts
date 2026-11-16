@@ -19,11 +19,7 @@ export * as copilotApi from "./copilot";
 export type { ProviderSwitchEvent } from "./providers";
 export type { Prompt } from "./prompts";
 export type { Profile, ProfilePayload, ProfilesResponse } from "./profiles";
-export type {
-  CopilotDeviceCodeResponse,
-  CopilotAuthStatus,
-  GitHubAccount,
-} from "./copilot";
+export type { GitHubAccount } from "./copilot";
 export type {
   AuthCenterTarget,
   ManagedAuthProvider,

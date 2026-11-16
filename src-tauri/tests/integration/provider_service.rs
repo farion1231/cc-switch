@@ -6,9 +6,7 @@ use cc_switch_lib::{
     ProviderMeta, ProviderService,
 };
 
-#[path = "support/mod.rs"]
-mod support;
-use support::{
+use crate::support::{
     create_test_state, create_test_state_with_config, enable_codex_official_auth_preservation,
     ensure_test_home, reset_test_fs, test_mutex,
 };
@@ -2604,11 +2602,14 @@ fn claude_row(state: &cc_switch_lib::AppState, id: &str) -> serde_json::Value {
         .settings_config
 }
 
+/// 落定后的 Claude live：切换给开着的会话写的空值墓碑几秒后才删，先删完再读。
 fn claude_live_text() -> String {
+    cc_switch_lib::settle_claude_tombstones().expect("settle claude tombstones");
     std::fs::read_to_string(get_claude_settings_path()).expect("read claude live")
 }
 
 fn claude_live() -> serde_json::Value {
+    cc_switch_lib::settle_claude_tombstones().expect("settle claude tombstones");
     read_json_file(&get_claude_settings_path()).expect("read claude live")
 }
 

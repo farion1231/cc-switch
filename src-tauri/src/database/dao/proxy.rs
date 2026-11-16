@@ -493,21 +493,6 @@ impl Database {
         }
     }
 
-    /// 更新Provider健康状态
-    ///
-    /// 使用默认阈值（5）判断是否健康，建议使用 `update_provider_health_with_threshold` 传入配置的阈值
-    pub async fn update_provider_health(
-        &self,
-        provider_id: &str,
-        app_type: &str,
-        success: bool,
-        error_msg: Option<String>,
-    ) -> Result<(), AppError> {
-        // 默认阈值与 CircuitBreakerConfig::default() 保持一致
-        self.update_provider_health_with_threshold(provider_id, app_type, success, error_msg, 5)
-            .await
-    }
-
     /// 更新Provider健康状态（带阈值参数）
     ///
     /// # Arguments
@@ -621,45 +606,6 @@ impl Database {
     }
 
     // ==================== Circuit Breaker Config (Legacy Compatibility) ====================
-
-    /// 获取熔断器配置（兼容旧接口，从 claude 行读取）
-    ///
-    /// 熔断器配置已合并到 proxy_config 表，每 app 独立
-    /// 此方法保留用于兼容旧代码，建议使用 get_proxy_config_for_app
-    pub async fn get_circuit_breaker_config(
-        &self,
-    ) -> Result<crate::proxy::circuit_breaker::CircuitBreakerConfig, AppError> {
-        // 使用 block 限制 conn 的作用域，避免跨 await 持有锁
-        let result = {
-            let conn = lock_conn!(self.conn);
-            conn.query_row(
-                "SELECT circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
-                        circuit_error_rate_threshold, circuit_min_requests
-                 FROM proxy_config WHERE app_type = 'claude'",
-                [],
-                |row| {
-                    Ok(crate::proxy::circuit_breaker::CircuitBreakerConfig {
-                        failure_threshold: row.get::<_, i32>(0)? as u32,
-                        success_threshold: row.get::<_, i32>(1)? as u32,
-                        timeout_seconds: row.get::<_, i64>(2)? as u64,
-                        error_rate_threshold: row.get(3)?,
-                        min_requests: row.get::<_, i32>(4)? as u32,
-                    })
-                },
-            )
-        };
-        // conn 已在 block 结束时释放
-
-        match result {
-            Ok(config) => Ok(config),
-            Err(rusqlite::Error::QueryReturnedNoRows) => {
-                // 如果不存在，初始化默认配置
-                self.init_proxy_config_rows().await?;
-                Ok(crate::proxy::circuit_breaker::CircuitBreakerConfig::default())
-            }
-            Err(e) => Err(AppError::Database(e.to_string())),
-        }
-    }
 
     /// 更新熔断器配置（兼容旧接口，更新所有三行）
     ///

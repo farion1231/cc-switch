@@ -39,6 +39,11 @@
     "https://api.commandcode.ai/provider": "command_code",
     "https://api.commandcode.ai/provider/v1": "command_code",
     "https://api.commandcode.ai/providers": null,
+    "https://ollama.com": "ollama_cloud",
+    "https://ollama.com/v1": "ollama_cloud",
+    "http://localhost:11434": null,
+    "https://ollama.com.example.com/v1": null,
+    "https://proxy.example.com/ollama.com/v1": null,
     "https://api.openai.com/v1": null
   }
 }
