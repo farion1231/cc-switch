@@ -2,9 +2,7 @@ use cc_switch_lib::{
     get_pricing_model_source_test_hook, set_pricing_model_source_test_hook, AppError,
 };
 
-#[path = "support/mod.rs"]
-mod support;
-use support::{create_test_state, ensure_test_home, reset_test_fs, test_mutex};
+use crate::support::{create_test_state, ensure_test_home, reset_test_fs, test_mutex};
 
 // 测试使用 Mutex 进行串行化，跨 await 持锁是预期行为
 #[allow(clippy::await_holding_lock)]

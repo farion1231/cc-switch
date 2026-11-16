@@ -19,6 +19,7 @@ pub mod shared;
 pub mod snapshot;
 pub mod usage;
 
+use crate::sync_utils::MutexExt;
 use std::collections::{BTreeMap, HashMap};
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -141,9 +142,7 @@ pub struct ClaudeAccountManager {
 static STORE_FILE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn store_file_guard() -> std::sync::MutexGuard<'static, ()> {
-    STORE_FILE
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
+    STORE_FILE.lock_recover()
 }
 
 fn persist_store(data_dir: &Path, store: &StoreFile) -> Result<(), AppError> {
@@ -339,9 +338,7 @@ impl ClaudeAccountManager {
     }
 
     fn ended_flows(&self) -> std::sync::MutexGuard<'_, HashMap<String, FlowEnd>> {
-        self.ended
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+        self.ended.lock_recover()
     }
 
     /// 登录进程结束之后：成功就读身份、收录账号；失败就删掉目录。

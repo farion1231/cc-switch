@@ -4,6 +4,7 @@
 //! 进入 / 退出代理）都走这里：先拿应用写锁，再经 `mode::operation` 记下 pending、发布。
 //! 不回填、不合并通用配置片段、不注入上下文默认值：用户的设置本来就留在 live 里。
 
+use crate::sync_utils::MutexExt;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
@@ -283,7 +284,7 @@ static SCHEDULED: Mutex<Vec<(u64, Sweep)>> = Mutex::new(Vec::new());
 static NEXT_SWEEP: AtomicU64 = AtomicU64::new(0);
 
 fn scheduled() -> std::sync::MutexGuard<'static, Vec<(u64, Sweep)>> {
-    SCHEDULED.lock().unwrap_or_else(|e| e.into_inner())
+    SCHEDULED.lock_recover()
 }
 
 /// 取走所有安排下的删除（不做）。

@@ -840,11 +840,6 @@ mod tests {
 }
 
 #[tauri::command]
-pub async fn get_auto_launch_status() -> Result<bool, String> {
-    crate::auto_launch::is_auto_launch_enabled().map_err(|e| format!("获取开机自启状态失败: {e}"))
-}
-
-#[tauri::command]
 pub async fn get_rectifier_config(
     state: tauri::State<'_, crate::AppState>,
 ) -> Result<crate::proxy::types::RectifierConfig, String> {
@@ -905,28 +900,6 @@ pub async fn set_privacy_filter_config(
         // 规则编译有一次性耗时，开关打开时在后台预热，不压到第一个请求上
         std::thread::spawn(crate::proxy::privacy_filter::warm_up);
     }
-    Ok(true)
-}
-
-#[tauri::command]
-pub async fn get_copilot_optimizer_config(
-    state: tauri::State<'_, crate::AppState>,
-) -> Result<crate::proxy::types::CopilotOptimizerConfig, String> {
-    state
-        .db
-        .get_copilot_optimizer_config()
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub async fn set_copilot_optimizer_config(
-    state: tauri::State<'_, crate::AppState>,
-    config: crate::proxy::types::CopilotOptimizerConfig,
-) -> Result<bool, String> {
-    state
-        .db
-        .set_copilot_optimizer_config(&config)
-        .map_err(|e| e.to_string())?;
     Ok(true)
 }
 
