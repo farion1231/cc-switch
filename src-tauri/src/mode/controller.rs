@@ -884,7 +884,7 @@ fn spawn_loopback_check(state: &AppState, app: &AppType, notify: bool) {
 }
 
 async fn warn_if_official_route(state: &AppState, app: &AppType, route: &Provider) {
-    if route.category.as_deref() == Some("official")
+    if route.has_official_category()
         && !crate::services::provider::official_provider_supports_proxy_takeover(app, route)
     {
         state
@@ -1225,7 +1225,7 @@ pub async fn set_route(
 
 /// 代理模式下不能切到不支持代理的官方供应商（Codex 官方账号走客户端自己的登录，除外）。
 pub fn reject_unsupported_official(app: &AppType, provider: &Provider) -> Result<(), String> {
-    if provider.category.as_deref() == Some("official")
+    if provider.has_official_category()
         && !crate::services::provider::official_provider_supports_proxy_takeover(app, provider)
     {
         return Err(
@@ -1261,7 +1261,7 @@ impl StackWriteError {
 fn check_stack_member(app: &AppType, provider: &Provider) -> Result<(), String> {
     let official = match app {
         AppType::Codex => codex_direct::is_official(provider),
-        _ => provider.category.as_deref() == Some("official"),
+        _ => provider.has_official_category(),
     };
     if official {
         return Err(

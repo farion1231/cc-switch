@@ -238,6 +238,10 @@ export const settingsApi = {
     });
   },
 
+  async s3SyncClearSettings(): Promise<{ success: boolean }> {
+    return await invoke("s3_sync_clear_settings");
+  },
+
   async s3SyncFetchRemoteInfo(): Promise<RemoteSnapshotInfo | { empty: true }> {
     return await invoke("s3_sync_fetch_remote_info");
   },

@@ -860,7 +860,7 @@ fn migrate_codex_provider_templates_to_custom(
     let mut migrated_provider_ids = Vec::new();
 
     for (_, provider) in providers {
-        if provider.category.as_deref() == Some("official")
+        if provider.has_official_category()
             || is_official_seed_id(&provider.id)
             || provider.is_codex_oauth()
         {
@@ -905,7 +905,7 @@ fn collect_source_model_provider_ids(db: &Database) -> Result<BTreeSet<String>, 
     let mut ids = BTreeSet::new();
 
     for provider in providers.values() {
-        if provider.category.as_deref() == Some("official")
+        if provider.has_official_category()
             || is_official_seed_id(&provider.id)
             || provider.is_codex_oauth()
         {

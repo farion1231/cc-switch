@@ -4,12 +4,6 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { HoverTip } from "@/components/ui/hover-tip";
 import { useTranslation } from "react-i18next";
-import type { AppId } from "@/lib/api";
-
-export type DirectoryAppId = Exclude<
-  AppId,
-  "claude-desktop" | "mcode" | "agy" | "kimi" | "copilot" | "workbuddy"
->;
 
 export interface DirectoryInputProps {
   label: string;

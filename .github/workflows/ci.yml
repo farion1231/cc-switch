@@ -320,7 +320,7 @@ jobs:
           TMP: ${{ runner.temp }}
         shell: pwsh
         run: |
-          $testName = "commands::misc::tests::claude_update_wsl::wsl_claude_update_preserves_scope_and_fallback"
+          $testName = "commands::misc::tool_lifecycle_command::tests::claude_update_wsl::wsl_claude_update_preserves_scope_and_fallback"
           $testList = & $env:CC_SWITCH_TEST_EXE --list --ignored
           if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
