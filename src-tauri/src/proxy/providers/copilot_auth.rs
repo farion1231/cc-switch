@@ -1368,12 +1368,6 @@ impl CopilotAuthManager {
         }
     }
 
-    /// 检查是否已认证（有任意账号）
-    pub async fn is_authenticated(&self) -> bool {
-        let accounts = self.accounts.read().await;
-        !accounts.is_empty()
-    }
-
     /// 清除所有认证（登出所有账号）
     pub async fn clear_auth(&self) -> Result<(), CopilotAuthError> {
         log::info!("[CopilotAuth] 清除所有认证");

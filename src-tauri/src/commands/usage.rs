@@ -312,18 +312,6 @@ pub async fn fetch_models_dev() -> Result<String, String> {
 }
 
 #[tauri::command]
-pub async fn check_provider_limits(
-    state: State<'_, AppState>,
-    provider_id: String,
-    app_type: String,
-) -> Result<crate::services::usage_stats::ProviderLimitStatus, AppError> {
-    run_db_query(&state, move |db| {
-        db.check_provider_limits(&provider_id, &app_type)
-    })
-    .await
-}
-
-#[tauri::command]
 pub async fn delete_model_pricing(
     state: State<'_, AppState>,
     model_id: String,
@@ -386,17 +374,6 @@ pub async fn rebuild_codex_usage(
     })
     .await
     .map_err(|error| AppError::Message(format!("Codex 用量重建任务失败: {error}")))?
-}
-
-#[tauri::command]
-pub async fn get_usage_data_sources(
-    state: State<'_, AppState>,
-) -> Result<Vec<crate::services::session_usage::DataSourceSummary>, AppError> {
-    run_db_query(
-        &state,
-        crate::services::session_usage::get_data_source_breakdown,
-    )
-    .await
 }
 
 /// 取 USD 对各显示币种的汇率：主源 open.er-api.com，失败退 floatrates.com。

@@ -8201,16 +8201,6 @@ impl ProviderService {
         endpoints::remove_custom_endpoint(state, app_type, provider_id, url)
     }
 
-    /// Update endpoint last used timestamp (re-export)
-    pub fn update_endpoint_last_used(
-        state: &AppState,
-        app_type: AppType,
-        provider_id: &str,
-        url: String,
-    ) -> Result<(), AppError> {
-        endpoints::update_endpoint_last_used(state, app_type, provider_id, url)
-    }
-
     /// Update provider sort order
     pub fn update_sort_order(
         state: &AppState,
