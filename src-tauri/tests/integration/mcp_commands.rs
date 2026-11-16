@@ -9,9 +9,7 @@ use cc_switch_lib::{
     AppSettings, AppType, McpApps, McpServer, McpService, MultiAppConfig, ProviderService,
 };
 
-#[path = "support/mod.rs"]
-mod support;
-use support::{
+use crate::support::{
     create_test_state, create_test_state_with_config, ensure_test_home, reset_test_fs, test_mutex,
 };
 
@@ -671,7 +669,7 @@ fn import_default_config_grokbuild_broken_custom_live_still_errors() {
 
 #[test]
 fn import_default_config_without_live_file_returns_error() {
-    use support::create_test_state;
+    use crate::support::create_test_state;
 
     let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
@@ -911,7 +909,7 @@ command = "echo"
 
 #[test]
 fn import_mcp_from_claude_invalid_json_preserves_state() {
-    use support::create_test_state;
+    use crate::support::create_test_state;
 
     let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
@@ -946,7 +944,7 @@ fn import_mcp_from_claude_invalid_json_preserves_state() {
 /// 坏 config.toml 只会表现为"导入成功 0 个"，用户无从得知出了什么问题。
 #[test]
 fn import_from_all_apps_reports_broken_app_but_imports_the_rest() {
-    use support::create_test_state;
+    use crate::support::create_test_state;
 
     let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
@@ -1072,7 +1070,7 @@ fn set_mcp_enabled_for_codex_writes_live_config() {
 
 #[test]
 fn enabling_codex_mcp_skips_when_codex_dir_missing() {
-    use support::create_test_state;
+    use crate::support::create_test_state;
 
     let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
@@ -1141,7 +1139,7 @@ fn upsert_mcp_server_disabling_app_removes_from_claude_live_config() {
     fs::create_dir_all(home.join(".claude")).expect("create ~/.claude dir");
 
     // 先创建一个启用 Claude 的 MCP 服务器
-    let state = support::create_test_state().expect("create test state");
+    let state = create_test_state().expect("create test state");
     McpService::upsert_server(
         &state,
         McpServer {
@@ -1241,7 +1239,7 @@ fn projecting_an_app_continues_past_a_server_that_cannot_be_written() {
     )
     .expect("seed ~/.claude.json");
 
-    let state = support::create_test_state().expect("create test state");
+    let state = create_test_state().expect("create test state");
     // 直接入库，绕过面板校验：规范不是对象的行可能来自云同步或旧数据。
     for (id, server, claude) in [
         ("a-broken", json!("not an object"), true),
@@ -1309,7 +1307,7 @@ command = "echo"
     )
     .expect("seed ~/.codex/config.toml");
 
-    let state = support::create_test_state().expect("create test state");
+    let state = create_test_state().expect("create test state");
 
     McpService::import_from_claude(&state).expect("import from claude");
     McpService::import_from_codex(&state).expect("import from codex");
@@ -1345,7 +1343,7 @@ fn import_mcp_from_gemini_sse_url_only_is_valid() {
     )
     .expect("seed ~/.gemini/settings.json");
 
-    let state = support::create_test_state().expect("create test state");
+    let state = create_test_state().expect("create test state");
     let changed = McpService::import_from_gemini(&state).expect("import from gemini");
     assert!(changed > 0, "should import at least 1 server");
 
@@ -1361,7 +1359,7 @@ fn import_mcp_from_gemini_sse_url_only_is_valid() {
 
 #[test]
 fn enabling_gemini_mcp_skips_when_gemini_dir_missing() {
-    use support::create_test_state;
+    use crate::support::create_test_state;
 
     let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
@@ -1422,7 +1420,7 @@ fn enabling_gemini_mcp_skips_when_gemini_dir_missing() {
 
 #[test]
 fn enabling_claude_mcp_skips_when_claude_config_absent() {
-    use support::create_test_state;
+    use crate::support::create_test_state;
 
     let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();

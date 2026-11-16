@@ -117,7 +117,7 @@ pub async fn get_opencode_models() -> Result<Vec<OpenCodeModelRef>, String> {
             ("OPENCODE_CONFIG_DIR", config_dir_env),
             ("OPENCODE_DISABLE_PROJECT_CONFIG", "true".to_string()),
         ];
-        let output = super::misc::run_detected_tool_command_with_timeout(
+        let output = super::misc::tool_process::run_detected_tool_command_with_timeout(
             "opencode",
             &["models"],
             Some(OPENCODE_MODELS_TIMEOUT),

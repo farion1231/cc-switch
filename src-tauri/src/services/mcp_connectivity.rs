@@ -4,7 +4,7 @@ use std::{
     process::Stdio,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc,
+        Arc, PoisonError,
     },
     time::Duration,
 };
@@ -88,7 +88,10 @@ pub fn start_checks(
 ) -> String {
     let id = uuid::Uuid::new_v4().to_string();
     let (abort, registration) = AbortHandle::new_pair();
-    BATCHES.lock().unwrap().insert(id.clone(), abort);
+    BATCHES
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .insert(id.clone(), abort);
     let batch_id = id.clone();
     tauri::async_runtime::spawn(async move {
         let checks = async move {
@@ -108,13 +111,20 @@ pub fn start_checks(
             }
         };
         let _ = Abortable::new(checks, registration).await;
-        BATCHES.lock().unwrap().remove(&batch_id);
+        BATCHES
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&batch_id);
     });
     id
 }
 
 pub fn cancel_checks(batch_id: &str) {
-    if let Some(abort) = BATCHES.lock().unwrap().remove(batch_id) {
+    if let Some(abort) = BATCHES
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .remove(batch_id)
+    {
         abort.abort();
     }
 }

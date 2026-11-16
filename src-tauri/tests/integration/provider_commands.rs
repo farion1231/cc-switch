@@ -7,13 +7,11 @@ use cc_switch_lib::{
     MultiAppConfig, Provider, ProviderService,
 };
 
-#[path = "support/mod.rs"]
-mod support;
-use std::collections::HashMap;
-use support::{
+use crate::support::{
     create_test_state, create_test_state_with_config, enable_codex_official_auth_preservation,
     ensure_test_home, reset_test_fs, test_mutex,
 };
+use std::collections::HashMap;
 
 fn settings_path(home: &Path) -> PathBuf {
     home.join(".cc-switch").join("settings.json")

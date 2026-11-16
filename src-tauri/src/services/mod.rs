@@ -60,8 +60,8 @@ pub use speedtest::{EndpointLatency, SpeedtestService};
 pub use usage_cache::UsageCache;
 #[allow(unused_imports)]
 pub use usage_stats::{
-    DailyStats, LogFilters, ModelStats, PaginatedLogs, ProviderLimitStatus, ProviderStats,
-    RequestLogDetail, UsageSummary, UsageSummaryByApp,
+    DailyStats, LogFilters, ModelStats, PaginatedLogs, ProviderStats, RequestLogDetail,
+    UsageSummary, UsageSummaryByApp,
 };
 
 pub mod session_usage_copilot;
