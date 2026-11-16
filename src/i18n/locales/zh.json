@@ -54,42 +54,50 @@
   },
   "firstRunNotice": {
     "title": "欢迎使用 CC Switch",
-    "bodyDefault": "CC Switch 可以帮你在 Claude Code / Codex / Gemini CLI 的多个供应商之间一键切换。如果你之前已经配置过这些工具，CC Switch 会自动把现有设置保存为名为 “default” 的供应商，保证你的配置不会丢失。",
-    "bodyOfficial": "列表里还预置了 “官方（Official）” 供应商，随时点一下即可切回官方默认配置。切换前 CC Switch 会自动把当前配置备份回 default，可以放心来回切。CC Switch 就是这样工作的 😊"
+    "bodyDefault": "CC Switch 可以帮你在 Claude Code、Codex、Gemini CLI 等 AI 编程工具的多个供应商之间一键切换，并统一管理 MCP、Skills 与历史会话。",
+    "bodyBackup": "如果你之前已经配置过这些工具，CC Switch 已自动把现有设置保存为名为 “default” 的供应商，可以放心试用，原有配置不会丢失。",
+    "bodyOfficial": "列表里还预置了 “官方（Official）” 供应商，随时可切回官方配置；每次切换前 CC Switch 都会先把当前配置自动备份到 default，可以放心来回切。"
   },
   "tutorial": {
     "open": "使用教程",
     "progress": "第 {{current}} 步，共 {{total}} 步",
+    "stepCounter": "{{current}} / {{total}}",
     "skip": "跳过",
     "back": "上一步",
     "next": "下一步",
     "done": "开始使用",
     "apps": {
       "title": "选择应用",
-      "body": "侧栏这一列是 CC Switch 管理的应用（Claude Code、Codex、Gemini CLI 等）。选中一个，右边就显示它的供应商。想调整显示哪些应用，可以点底部的「应用」。"
+      "body": "侧栏这一列是 CC Switch 管理的应用（Claude Code、Codex、Gemini CLI 等），点选后右侧就会显示它的供应商。想安装应用或调整侧栏显示哪些应用，可点底部的「应用」。"
     },
     "providers": {
-      "title": "启用供应商",
-      "body": "每张卡片是一个供应商。点卡片上的「启用」，CC Switch 就会把它写进这个应用的配置文件；托盘菜单里也能快速切换。",
-      "empty": "这个应用还没有供应商。添加之后，每个供应商都会以卡片显示在这里；点卡片上的「启用」，CC Switch 就会把它写进这个应用的配置文件。"
+      "title": "切换与管理供应商",
+      "body": "每张卡片是一个供应商。点击卡片右侧的操作图标（如「切换 ▶」或「启用」）即可写入该应用的配置文件；系统托盘菜单里也能快速切换。",
+      "empty": "这个应用还没有供应商。可以先点击下方的「导入当前配置」或「添加供应商」创建第一张卡片，之后在卡片右侧即可一键切换或启用。"
     },
     "add": {
       "title": "添加供应商",
-      "body": "点这里填好请求地址和 API Key，就能新增一个供应商；常见服务商都有现成的预设可选。"
+      "body": "点这里新增供应商。常见服务商都准备好了预设，选中后只需填入 API Key；也支持自定义请求地址与模型。"
     },
     "modes": {
-      "title": "直连、路由与聚合",
-      "body": "默认是直连：应用直接请求当前供应商。开始路由后，请求先经过本机的路由服务，可以按队列做故障转移，并记录用量。Claude Code 和 Codex 还可以在设置里打开聚合模式，把多家供应商的模型同时放进客户端的模型列表。",
-      "unavailable": "当前应用没有这组切换。选中 Claude Code、Codex、Gemini CLI 或 Grok Build 等应用，页面顶部就会出现「直连 / 路由」切换。"
+      "title": "连接模式：直连、路由与聚合",
+      "body": "部分应用支持在顶部切换请求方式，按需选择即可：",
+      "directTitle": "直连",
+      "directDesc": "默认模式。应用直接请求当前供应商，不经过本地代理。",
+      "routeTitle": "路由",
+      "routeDesc": "请求先经过本机的路由服务，支持热切换、按队列做故障转移并记录用量。",
+      "stackTitle": "聚合",
+      "stackDesc": "Claude Code、Codex 和 Claude Desktop 可直接在顶部切到「聚合」，把多家供应商的模型同时放进模型列表。",
+      "unavailable": "当前应用没有连接模式切换。选中 Claude Code、Codex、Gemini CLI、Grok Build 或 Claude Desktop，页面顶部就会出现模式标签。"
     },
     "shared": {
-      "title": "MCP、Skills 与提示词",
-      "body": "侧栏里的 MCP、Skills、提示词页面集中管理这些配置，每一项都可以选择同步到哪些应用。会话页可以浏览和恢复各个应用的历史对话。"
+      "title": "MCP、Skills、提示词与会话",
+      "body": "MCP、Skills 和提示词页面集中管理跨应用的共享配置，每一项都可以选择同步到哪些应用；「会话」页面可以浏览并恢复各个应用的历史对话。"
     },
     "more": {
-      "title": "用量、授权与设置",
-      "body": "用量统计页查看请求次数、Token 和费用；授权中心管理 GitHub Copilot、ChatGPT 等订阅账号的登录；设置里可以调整通用偏好、配置目录、本地路由、网络和数据备份。",
-      "replay": "想再看一遍，可以在「设置 → 关于」里重新打开这份教程。"
+      "title": "授权、用量与设置",
+      "body": "「授权中心」管理 GitHub Copilot、ChatGPT 等订阅账号的登录；「用量统计」查看请求次数、Token 与费用；「设置」里可调整偏好、配置目录、本地路由和数据备份。",
+      "replay": "想随时重温这份教程，可以在「设置 → 关于」里重新打开。"
     }
   },
   "apiKeyInput": {

@@ -148,8 +148,12 @@ describe("OnboardingTour", () => {
     document.querySelectorAll("[data-tour]").forEach((el) => el.remove());
   });
 
-  const spotlight = () =>
-    screen.getByTestId("onboarding-tour").children[1] as HTMLElement;
+  const spotlights = () => screen.queryAllByTestId("tour-spotlight");
+  const spotlight = () => {
+    const list = spotlights();
+    expect(list.length).toBeGreaterThan(0);
+    return list[0];
+  };
 
   it("restarts from the first step when reopened", () => {
     const onClose = vi.fn();
@@ -177,8 +181,8 @@ describe("OnboardingTour", () => {
     document.body.appendChild(anchor);
 
     render(<OnboardingTour open onClose={vi.fn()} />);
-    // 欢迎页没有要圈的元素：亮框缩成一个点
-    expect(spotlight().style.width).toBe("0px");
+    // 欢迎页没有要圈的元素：不渲染亮框
+    expect(spotlights()).toHaveLength(0);
 
     next();
     expect(screen.getByText("tutorial.apps.title")).toBeInTheDocument();
@@ -189,7 +193,11 @@ describe("OnboardingTour", () => {
     expect(spotlight().style.height).toBe("212px");
   });
 
-  const addAnchor = (id: string, rect: Partial<DOMRect>) => {
+  const addAnchor = (
+    id: string,
+    rect: Partial<DOMRect>,
+    parent: HTMLElement = document.body,
+  ) => {
     const el = document.createElement("div");
     el.setAttribute("data-tour", id);
     el.getBoundingClientRect = () =>
@@ -202,7 +210,7 @@ describe("OnboardingTour", () => {
         height: 0,
         ...rect,
       }) as DOMRect;
-    document.body.appendChild(el);
+    parent.appendChild(el);
     return el;
   };
   const goTo = (stepId: string) => {
@@ -226,7 +234,7 @@ describe("OnboardingTour", () => {
 
     next();
     expect(screen.getByText("tutorial.modes.title")).toBeInTheDocument();
-    expect(spotlight().style.width).toBe("0px");
+    expect(spotlights()).toHaveLength(0);
     expect(screen.getByText("tutorial.modes.unavailable")).toBeInTheDocument();
   });
 
@@ -242,12 +250,12 @@ describe("OnboardingTour", () => {
     const onClose = vi.fn();
     const { rerender } = render(<OnboardingTour open onClose={onClose} />);
     goTo("more");
-    expect(spotlight().style.width).not.toBe("0px");
+    expect(spotlights()).toHaveLength(1);
 
     rerender(<OnboardingTour open={false} onClose={onClose} />);
     rerender(<OnboardingTour open onClose={onClose} />);
     expect(screen.getByText("firstRunNotice.title")).toBeInTheDocument();
-    expect(spotlight().style.width).toBe("0px");
+    expect(spotlights()).toHaveLength(0);
   });
 
   it("points at the first provider card, or the empty list on a fresh install", () => {
@@ -265,6 +273,9 @@ describe("OnboardingTour", () => {
     expect(
       screen.queryByText("tutorial.providers.body"),
     ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("firstRunNotice.bodyOfficial"),
+    ).not.toBeInTheDocument();
     expect(spotlight().style.top).toBe("94px");
     unmount();
     empty.remove();
@@ -280,6 +291,7 @@ describe("OnboardingTour", () => {
     render(<OnboardingTour open onClose={vi.fn()} />);
     goTo("providers");
     expect(screen.getByText("tutorial.providers.body")).toBeInTheDocument();
+    expect(screen.getByText("firstRunNotice.bodyOfficial")).toBeInTheDocument();
     expect(
       screen.queryByText("tutorial.providers.empty"),
     ).not.toBeInTheDocument();
@@ -298,6 +310,9 @@ describe("OnboardingTour", () => {
     render(<OnboardingTour open onClose={vi.fn()} />);
     goTo("modes");
     expect(spotlight().style.width).toBe("212px");
+    expect(screen.getByText("tutorial.modes.directTitle")).toBeInTheDocument();
+    expect(screen.getByText("tutorial.modes.routeTitle")).toBeInTheDocument();
+    expect(screen.getByText("tutorial.modes.stackTitle")).toBeInTheDocument();
     expect(
       screen.queryByText("tutorial.modes.unavailable"),
     ).not.toBeInTheDocument();
@@ -307,6 +322,92 @@ describe("OnboardingTour", () => {
     render(<OnboardingTour open onClose={vi.fn()} />);
     next();
     expect(screen.getByText("tutorial.apps.title")).toBeInTheDocument();
-    expect(spotlight().style.width).toBe("0px");
+    expect(spotlights()).toHaveLength(0);
+  });
+
+  it("allows closing via the header close button on any step", () => {
+    const onClose = vi.fn();
+    render(<OnboardingTour open onClose={onClose} />);
+    goTo("add");
+    fireEvent.click(screen.getByRole("button", { name: "common.close" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("jumps directly to a step when clicking progress dots", () => {
+    render(<OnboardingTour open onClose={vi.fn()} />);
+    const dots = screen.getByRole("group").querySelectorAll("button");
+    expect(dots).toHaveLength(TOUR_STEPS.length);
+    fireEvent.click(dots[3]);
+    expect(screen.getByText(TOUR_STEPS[3].titleKey)).toBeInTheDocument();
+  });
+
+  it("renders separate spotlight boxes for distinct anchor groups on the last step", () => {
+    addAnchor("nav-auth", {
+      top: 400,
+      left: 8,
+      right: 192,
+      bottom: 428,
+      width: 184,
+      height: 28,
+    });
+    addAnchor("nav-usage", {
+      top: 428,
+      left: 8,
+      right: 192,
+      bottom: 456,
+      width: 184,
+      height: 28,
+    });
+    addAnchor("nav-settings", {
+      top: 470,
+      left: 102,
+      right: 192,
+      bottom: 498,
+      width: 90,
+      height: 28,
+    });
+
+    render(<OnboardingTour open onClose={vi.fn()} />);
+    goTo("more");
+    const list = spotlights();
+    expect(list).toHaveLength(2);
+    expect(list[0].style.top).toBe("394px");
+    expect(list[0].style.height).toBe("68px");
+    expect(list[1].style.left).toBe("96px");
+    expect(list[1].style.width).toBe("102px");
+  });
+
+  it("clips overflowing anchors to their scrollable ancestor bounds", () => {
+    const scroller = document.createElement("div");
+    scroller.style.overflowY = "auto";
+    scroller.getBoundingClientRect = () =>
+      ({
+        top: 44,
+        left: 0,
+        right: 200,
+        bottom: 300,
+        width: 200,
+        height: 256,
+      }) as DOMRect;
+    document.body.appendChild(scroller);
+
+    addAnchor(
+      "apps",
+      {
+        top: 44,
+        left: 8,
+        right: 192,
+        bottom: 480,
+        width: 184,
+        height: 436,
+      },
+      scroller,
+    );
+
+    render(<OnboardingTour open onClose={vi.fn()} />);
+    next();
+    expect(spotlight().style.top).toBe("38px");
+    expect(spotlight().style.height).toBe("268px");
+    scroller.remove();
   });
 });
