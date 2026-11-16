@@ -52,6 +52,10 @@ fn backend_constants_match_shared_fixture() {
     let constants = json!({
         "copilotReasoningEfforts": crate::copilot_config::REASONING_EFFORTS,
         "codexReservedModelProviderIds": crate::codex_config::CODEX_RESERVED_MODEL_PROVIDER_IDS,
+        "codexWireApis": {
+            "chat": crate::codex_config::CHAT_WIRE_APIS,
+            "anthropic": crate::codex_config::ANTHROPIC_WIRE_APIS,
+        },
         "hermesProviderSource": {
             "field": crate::hermes_config::PROVIDER_SOURCE_FIELD,
             "customList": crate::hermes_config::PROVIDER_SOURCE_CUSTOM_LIST,
