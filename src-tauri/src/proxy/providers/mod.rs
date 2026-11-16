@@ -60,6 +60,24 @@ pub fn is_mistral_api(base_url: &str) -> bool {
     url::Url::parse(base_url).is_ok_and(|url| url.host_str() == Some("api.mistral.ai"))
 }
 
+/// 上游主机是 `suffixes` 里的某一个，或是它的子域名（按标签边界比，不按子串）。
+/// 解析不了或没有主机时为 false。
+fn url_host_is_or_under(base_url: &str, suffixes: &[&str]) -> bool {
+    let Ok(url) = url::Url::parse(base_url.trim()) else {
+        return false;
+    };
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    let host = host.to_ascii_lowercase();
+    suffixes.iter().any(|suffix| {
+        host == *suffix
+            || host
+                .strip_suffix(suffix)
+                .is_some_and(|prefix| prefix.ends_with('.'))
+    })
+}
+
 // 公开导出
 pub use adapter::ProviderAdapter;
 pub use auth::{AuthInfo, AuthStrategy};
