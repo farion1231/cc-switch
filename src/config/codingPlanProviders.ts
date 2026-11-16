@@ -23,7 +23,8 @@ export interface CodingPlanProviderEntry {
     | "zenmux"
     | "volcengine"
     | "opencode_go"
-    | "command_code";
+    | "command_code"
+    | "ollama_cloud";
   /** UsageScriptModal 下拉显示用 */
   label: string;
   /** base_url 匹配规则 */
@@ -87,6 +88,14 @@ export const CODING_PLAN_PROVIDERS: readonly CodingPlanProviderEntry[] = [
     id: "command_code",
     label: "Command Code",
     pattern: /api\.commandcode\.ai\/provider(?:[/?#]|$)/i,
+  },
+  {
+    // Ollama Cloud（GET https://ollama.com/api/balance，Bearer Key）。按 host
+    // 标签匹配（同后端 codex_url_host_matches_any），本地 localhost:11434 不命中。
+    id: "ollama_cloud",
+    label: "Ollama Cloud",
+    pattern:
+      /^(?:https?:\/\/)?(?:[^/?#@]*@)?(?:[\w-]+\.)*ollama\.com(?=[:/?#]|$)/i,
   },
 ] as const;
 
