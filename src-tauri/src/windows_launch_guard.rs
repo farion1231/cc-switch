@@ -2,24 +2,19 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-/// One-shot marker passed when relaunching via the Windows desktop shell so
-/// an OS/user-enforced RedirectionGuard policy (e.g. Exploit Protection)
-/// cannot trigger a relaunch loop.
-pub(crate) const RG_RELAUNCHED_ARG: &str = "--cc-switch-rg-relaunched";
-
-const FALLBACK_STAMP_NAME: &str = "cc-switch-rg-relaunch.stamp";
-const FALLBACK_GUARD_WINDOW: Duration = Duration::from_secs(15);
+const RELAUNCH_STAMP_NAME: &str = "cc-switch-rg-relaunch.stamp";
+const RELAUNCH_GUARD_WINDOW: Duration = Duration::from_secs(15);
 
 /// Escapes `msiexec`'s inherited RedirectionGuard (`ProcessRedirectionTrustPolicy`)
 /// by delegating a fresh launch to the desktop `explorer.exe` shell and exiting
 /// the restricted process before acquiring single-instance locks or starting Tauri.
+///
+/// Loop prevention uses a short-lived temp-dir timestamp stamp rather than a CLI
+/// flag because `tauri-plugin-updater` forwards `std::env::args_os()` into
+/// `LAUNCHAPPARGS` on subsequent in-app updates (and `tauri::process::restart`
+/// preserves args too), which would otherwise disable the guard after one update.
 pub(crate) fn maybe_relaunch_without_redirection_guard() {
     if std::env::var_os("CC_SWITCH_SKIP_RG_RELAUNCH").is_some() {
-        return;
-    }
-
-    let raw_args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
-    if has_rg_relaunch_arg(&raw_args) {
         return;
     }
 
@@ -27,15 +22,27 @@ pub(crate) fn maybe_relaunch_without_redirection_guard() {
         return;
     }
 
+    let stamp = std::env::temp_dir().join(RELAUNCH_STAMP_NAME);
+    let now = SystemTime::now();
+    if should_skip_relaunch_by_stamp(&stamp, now, RELAUNCH_GUARD_WINDOW) {
+        return;
+    }
+
     let Ok(exe) = std::env::current_exe() else {
         return;
     };
+    // Refuse to relaunch unless the loop-prevention stamp can actually be persisted.
+    if write_relaunch_stamp(&stamp, now).is_err() {
+        return;
+    }
+
     let exe = crate::commands::windows_shell_compatible_path(&exe);
     let working_dir = std::env::current_dir()
         .ok()
         .map(|dir| crate::commands::windows_shell_compatible_path(&dir))
         .or_else(|| exe.parent().map(Path::to_path_buf))
         .unwrap_or_else(|| PathBuf::from("."));
+    let raw_args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
     let args_line = build_relaunch_args_line(&raw_args);
 
     if relaunch_via_desktop_shell(&exe, &args_line, &working_dir).is_ok() {
@@ -43,12 +50,12 @@ pub(crate) fn maybe_relaunch_without_redirection_guard() {
     }
 
     // `explorer.exe <exe>` cannot forward arbitrary CLI arguments, so only use it
-    // when no extra arguments need to be preserved and guard against loops with a
-    // short-lived timestamp stamp.
-    let has_extra_args = raw_args.iter().any(|arg| arg != RG_RELAUNCHED_ARG);
-    if !has_extra_args && relaunch_via_explorer_fallback(&exe).is_ok() {
+    // when no extra arguments need to be preserved.
+    if raw_args.is_empty() && relaunch_via_explorer_fallback(&exe).is_ok() {
         std::process::exit(0);
     }
+
+    let _ = std::fs::remove_file(&stamp);
 }
 
 fn is_redirection_trust_enforced() -> bool {
@@ -154,13 +161,6 @@ fn relaunch_via_desktop_shell(
 }
 
 fn relaunch_via_explorer_fallback(exe: &Path) -> Result<(), String> {
-    let stamp = std::env::temp_dir().join(FALLBACK_STAMP_NAME);
-    let now = SystemTime::now();
-    if should_skip_relaunch_by_stamp(&stamp, now, FALLBACK_GUARD_WINDOW) {
-        return Err("recent fallback relaunch stamp exists".to_string());
-    }
-    write_fallback_stamp(&stamp, now);
-
     let explorer = PathBuf::from(
         std::env::var_os("SystemRoot").unwrap_or_else(|| std::ffi::OsString::from(r"C:\Windows")),
     )
@@ -173,18 +173,12 @@ fn relaunch_via_explorer_fallback(exe: &Path) -> Result<(), String> {
         .map_err(|e| format!("failed to spawn explorer.exe: {e}"))
 }
 
-fn has_rg_relaunch_arg<S: AsRef<OsStr>>(args: &[S]) -> bool {
-    args.iter().any(|arg| arg.as_ref() == RG_RELAUNCHED_ARG)
-}
-
 fn build_relaunch_args_line<S: AsRef<OsStr>>(raw_args: &[S]) -> String {
-    let mut parts: Vec<String> = raw_args
+    raw_args
         .iter()
-        .filter(|arg| arg.as_ref() != RG_RELAUNCHED_ARG)
         .map(|arg| quote_windows_command_arg(&arg.as_ref().to_string_lossy()))
-        .collect();
-    parts.push(RG_RELAUNCHED_ARG.to_string());
-    parts.join(" ")
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Quotes an argument following `CommandLineToArgvW` rules.
@@ -219,19 +213,21 @@ fn should_skip_relaunch_by_stamp(stamp: &Path, now: SystemTime, window: Duration
     let Ok(contents) = std::fs::read_to_string(stamp) else {
         return false;
     };
-    let Ok(secs) = contents.trim().parse::<u64>() else {
+    let Ok(millis) = contents.trim().parse::<u64>() else {
         return false;
     };
-    let recorded = UNIX_EPOCH + Duration::from_secs(secs);
+    let recorded = UNIX_EPOCH + Duration::from_millis(millis);
     now.duration_since(recorded)
         .map(|elapsed| elapsed < window)
         .unwrap_or(false)
 }
 
-fn write_fallback_stamp(stamp: &Path, now: SystemTime) {
-    if let Ok(elapsed) = now.duration_since(UNIX_EPOCH) {
-        let _ = std::fs::write(stamp, elapsed.as_secs().to_string());
-    }
+fn write_relaunch_stamp(stamp: &Path, now: SystemTime) -> std::io::Result<()> {
+    let millis = now
+        .duration_since(UNIX_EPOCH)
+        .map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+        .unwrap_or(0);
+    std::fs::write(stamp, millis.to_string())
 }
 
 #[cfg(test)]
@@ -239,53 +235,46 @@ mod tests {
     use super::*;
 
     #[test]
-    fn has_rg_relaunch_arg_detects_sentinel() {
-        assert!(!has_rg_relaunch_arg(&["--silent", "ccswitch://open"]));
-        assert!(has_rg_relaunch_arg(&[
-            "--silent",
-            RG_RELAUNCHED_ARG,
-            "ccswitch://open"
-        ]));
-    }
-
-    #[test]
-    fn build_relaunch_args_line_preserves_and_quotes_args_without_duplicating_sentinel() {
+    fn build_relaunch_args_line_preserves_and_quotes_original_args_cleanly() {
+        assert_eq!(build_relaunch_args_line::<&str>(&[]), "");
         let line = build_relaunch_args_line(&[
             r"C:\Program Files\Test\",
             r#"say "hi""#,
-            RG_RELAUNCHED_ARG,
             "ccswitch://import?name=foo",
         ]);
         assert_eq!(
             line,
-            format!(
-                r#""C:\Program Files\Test\\" "say \"hi\"" ccswitch://import?name=foo {RG_RELAUNCHED_ARG}"#
-            )
+            r#""C:\Program Files\Test\\" "say \"hi\"" ccswitch://import?name=foo"#
         );
     }
 
     #[test]
-    fn fallback_stamp_prevents_recent_relaunch_loop() {
+    fn relaunch_stamp_prevents_loop_within_window_and_allows_later_updates() {
         let dir = tempfile::tempdir().unwrap();
-        let stamp = dir.path().join(FALLBACK_STAMP_NAME);
+        let stamp = dir.path().join(RELAUNCH_STAMP_NAME);
         let now = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
 
         assert!(!should_skip_relaunch_by_stamp(
             &stamp,
             now,
-            FALLBACK_GUARD_WINDOW
+            RELAUNCH_GUARD_WINDOW
         ));
 
-        write_fallback_stamp(&stamp, now);
+        write_relaunch_stamp(&stamp, now).unwrap();
+        assert!(should_skip_relaunch_by_stamp(
+            &stamp,
+            now + Duration::from_millis(50),
+            RELAUNCH_GUARD_WINDOW
+        ));
         assert!(should_skip_relaunch_by_stamp(
             &stamp,
             now + Duration::from_secs(5),
-            FALLBACK_GUARD_WINDOW
+            RELAUNCH_GUARD_WINDOW
         ));
         assert!(!should_skip_relaunch_by_stamp(
             &stamp,
             now + Duration::from_secs(20),
-            FALLBACK_GUARD_WINDOW
+            RELAUNCH_GUARD_WINDOW
         ));
     }
 
