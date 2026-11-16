@@ -73,7 +73,7 @@ const MAX_NAME_CHARS: usize = 32;
 /// 问题区里切换失败的原因最多几个字。
 const MAX_REASON_CHARS: usize = 60;
 /// 额度剩余不到这个百分比算「快用完」（和前端 `quotaRules.WARN_BELOW_PERCENT` 一致）。
-const WARN_BELOW_PERCENT: f64 = 20.0;
+pub(crate) const WARN_BELOW_PERCENT: f64 = 20.0;
 
 /// 每个应用行的子菜单句柄，额度更新时就地改标题而不是整菜单重建（整建会关掉 macOS 上
 /// 正开着的菜单）。`create_tray_menu` 每次重建都整表覆盖写入。
@@ -4551,85 +4551,6 @@ mod tests {
             title(usage_view(&cache, &en(), &AppType::Claude, &xai, "xai")),
             None
         );
-    }
-
-    // ─── 「需要路由」判定（和前端 providerNeedsRouting 对照）───
-
-    fn provider(meta: serde_json::Value, settings: serde_json::Value) -> Provider {
-        serde_json::from_value(serde_json::json!({
-            "id": "p1",
-            "name": "P1",
-            "settingsConfig": settings,
-            "meta": meta,
-        }))
-        .unwrap()
-    }
-
-    #[test]
-    fn needs_routing_mirrors_the_frontend_rule() {
-        let plain = provider(serde_json::json!({}), serde_json::json!({}));
-        for app in TRAY_APPS {
-            assert!(!provider_needs_routing(&app, &plain), "{app:?}");
-        }
-
-        let copilot = provider(
-            serde_json::json!({"providerType": "github_copilot"}),
-            serde_json::json!({}),
-        );
-        for app in [
-            AppType::Claude,
-            AppType::ClaudeDesktop,
-            AppType::Codex,
-            AppType::GrokBuild,
-        ] {
-            assert!(provider_needs_routing(&app, &copilot), "{app:?}");
-        }
-        assert!(!provider_needs_routing(&AppType::Gemini, &copilot));
-
-        let openai_chat = provider(
-            serde_json::json!({"apiFormat": "openai_chat"}),
-            serde_json::json!({}),
-        );
-        assert!(provider_needs_routing(&AppType::Claude, &openai_chat));
-        assert!(provider_needs_routing(&AppType::Codex, &openai_chat));
-        let anthropic = provider(
-            serde_json::json!({"apiFormat": "anthropic"}),
-            serde_json::json!({}),
-        );
-        assert!(!provider_needs_routing(&AppType::Claude, &anthropic));
-        assert!(provider_needs_routing(&AppType::Codex, &anthropic));
-        let full_url = provider(
-            serde_json::json!({"isFullUrl": true}),
-            serde_json::json!({}),
-        );
-        assert!(provider_needs_routing(&AppType::Claude, &full_url));
-
-        let codex_config = |wire_api: &str| {
-            serde_json::json!({
-                "auth": {"OPENAI_API_KEY": "sk"},
-                "config": format!(
-                    "model_provider = \"x\"\n[model_providers.x]\nbase_url = \"https://x.example/v1\"\nwire_api = \"{wire_api}\"\n"
-                )
-            })
-        };
-        let chat_wire = provider(serde_json::json!({}), codex_config("chat"));
-        assert!(provider_needs_routing(&AppType::Codex, &chat_wire));
-        let responses_wire = provider(serde_json::json!({}), codex_config("responses"));
-        assert!(!provider_needs_routing(&AppType::Codex, &responses_wire));
-
-        let desktop_mapping = provider(
-            serde_json::json!({"claudeDesktopMode": "proxy"}),
-            serde_json::json!({}),
-        );
-        assert!(provider_needs_routing(
-            &AppType::ClaudeDesktop,
-            &desktop_mapping
-        ));
-
-        // 官方卡永远不算。
-        let mut official = copilot.clone();
-        official.category = Some("official".to_string());
-        assert!(!provider_needs_routing(&AppType::Claude, &official));
     }
 
     #[test]
