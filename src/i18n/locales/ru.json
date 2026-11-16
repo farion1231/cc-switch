@@ -61,7 +61,9 @@
   "apiKeyInput": {
     "placeholder": "Введите API-ключ",
     "show": "Показать API-ключ",
-    "hide": "Скрыть API-ключ"
+    "hide": "Скрыть API-ключ",
+    "copied": "API-ключ скопирован",
+    "copyFailed": "Не удалось скопировать API-ключ"
   },
   "jsonEditor": {
     "mustBeObject": "Конфигурация должна быть JSON-объектом, а не массивом или другим типом",

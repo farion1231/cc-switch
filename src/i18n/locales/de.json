@@ -61,7 +61,9 @@
   "apiKeyInput": {
     "placeholder": "API-Schlüssel eingeben",
     "show": "API-Schlüssel anzeigen",
-    "hide": "API-Schlüssel ausblenden"
+    "hide": "API-Schlüssel ausblenden",
+    "copied": "API-Schlüssel kopiert",
+    "copyFailed": "API-Schlüssel konnte nicht kopiert werden"
   },
   "jsonEditor": {
     "mustBeObject": "Die Konfiguration muss ein JSON-Objekt sein, kein Array oder anderer Typ",

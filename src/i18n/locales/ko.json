@@ -61,7 +61,9 @@
   "apiKeyInput": {
     "placeholder": "API 키를 입력하세요",
     "show": "API 키 표시",
-    "hide": "API 키 숨기기"
+    "hide": "API 키 숨기기",
+    "copied": "API 키가 복사되었습니다",
+    "copyFailed": "API 키 복사에 실패했습니다"
   },
   "jsonEditor": {
     "mustBeObject": "설정은 배열이나 다른 유형이 아닌 JSON 객체여야 합니다.",
