@@ -46,6 +46,14 @@ pub(crate) fn unified(native: &Value) -> Result<Value, AppError> {
 }
 
 fn native_spec(spec: &Value) -> Result<Value, AppError> {
+    // Specs saved with only `url` (no `type`) are HTTP servers; make the inferred
+    // transport explicit so validation does not treat them as stdio.
+    let transport = super::validation::spec_transport_type(spec).to_string();
+    let mut normalized = spec.clone();
+    if let Some(obj) = normalized.as_object_mut() {
+        obj.entry("type").or_insert_with(|| json!(transport));
+    }
+    let spec = &normalized;
     super::validation::validate_server_spec(spec)?;
     for key in ["env", "headers"] {
         if spec.get(key).is_some_and(|v| {
@@ -72,7 +80,7 @@ fn native_spec(spec: &Value) -> Result<Value, AppError> {
         }
     }
     let mut out = serde_json::Map::new();
-    match spec.get("type").and_then(Value::as_str).unwrap_or("stdio") {
+    match transport.as_str() {
         "stdio" => {
             let command = spec
                 .get("command")
@@ -308,6 +316,15 @@ mod tests {
             transport(&json!({"command":"my-mcp","args":["x"]})),
             transport(&json!({"command":"my-mcp"}))
         );
+    }
+
+    #[test]
+    fn url_only_spec_is_written_as_http() {
+        // Saved specs may carry only `url`; validation infers http, so the
+        // native writer must not fall back to stdio and demand a command.
+        let native = native_spec(&json!({"url":"https://example.com/mcp"})).unwrap();
+        assert_eq!(native["url"], "https://example.com/mcp");
+        assert!(native.get("command").is_none());
     }
 
     #[test]

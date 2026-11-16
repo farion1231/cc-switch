@@ -978,6 +978,7 @@ describe("UnifiedSkillsPanel", () => {
           workbuddy: false,
           agy: false,
           copilot: false,
+          liveagent: false,
         },
       },
     ]);
