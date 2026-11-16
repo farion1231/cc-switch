@@ -1,0 +1,116 @@
+name: Usage Sync
+
+# Extra coverage for cross-device usage sync that the main CI does not vary:
+# the usage statistics/sync/rollup tests under several process time zones
+# (half-hour, 45-minute and 30-minute-DST offsets), plus a Windows run.
+# The full backend suite on Linux/macOS/Windows still runs in ci.yml.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "src-tauri/src/services/usage_sync/**"
+      - "src-tauri/src/services/usage_stats.rs"
+      - "src-tauri/src/services/webdav.rs"
+      - "src-tauri/src/services/s3.rs"
+      - "src-tauri/src/database/**"
+      - ".github/workflows/usage-sync.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  time-zones:
+    name: Usage tests (${{ matrix.os }}, ${{ matrix.tz }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-latest]
+        tz:
+          - UTC
+          - America/New_York
+          - Asia/Kathmandu
+          - Australia/Lord_Howe
+          - Pacific/Chatham
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Read pinned Rust toolchain
+        id: rust-toolchain
+        shell: bash
+        run: |
+          channel=$(sed -nE 's/^channel *= *"([^"]+)".*/\1/p' rust-toolchain.toml)
+          test -n "$channel"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+
+      - name: Install Linux system deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config libssl-dev \
+            libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev \
+            libwebkit2gtk-4.1-dev libsoup-3.0-dev
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: src-tauri -> target
+          shared-key: backend
+
+      - name: Create frontend dist placeholder
+        shell: bash
+        run: mkdir -p dist
+
+      - name: Run usage tests in ${{ matrix.tz }}
+        shell: bash
+        env:
+          TZ: ${{ matrix.tz }}
+        run: |
+          export CC_SWITCH_TEST_HOME="$(mktemp -d)"
+          cargo test --manifest-path src-tauri/Cargo.toml --lib -- usage_sync usage_stats usage_rollup
+
+  windows:
+    name: Usage tests (windows-latest)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Read pinned Rust toolchain
+        id: rust-toolchain
+        shell: bash
+        run: |
+          channel=$(sed -nE 's/^channel *= *"([^"]+)".*/\1/p' rust-toolchain.toml)
+          test -n "$channel"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: src-tauri -> target
+          shared-key: backend
+
+      - name: Create frontend dist placeholder
+        shell: bash
+        run: mkdir -p dist
+
+      - name: Run usage tests
+        shell: bash
+        run: |
+          export CC_SWITCH_TEST_HOME="$(mktemp -d)"
+          cargo test --manifest-path src-tauri/Cargo.toml --lib -- usage_sync usage_stats usage_rollup

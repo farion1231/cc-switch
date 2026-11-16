@@ -56,6 +56,8 @@ export const usageApi = {
     appType?: string,
     providerName?: string,
     model?: string,
+    /** Device scope: undefined = this device, "all", or a remote device id */
+    device?: string,
   ): Promise<UsageSummary> => {
     return invoke("get_usage_summary", {
       startDate,
@@ -63,6 +65,7 @@ export const usageApi = {
       appType,
       providerName,
       model,
+      device,
     });
   },
 
@@ -78,12 +81,15 @@ export const usageApi = {
     endDate?: number,
     providerName?: string,
     model?: string,
+    /** Device scope: undefined = this device, "all", or a remote device id */
+    device?: string,
   ): Promise<UsageSummaryByApp[]> => {
     return invoke("get_usage_summary_by_app", {
       startDate,
       endDate,
       providerName,
       model,
+      device,
     });
   },
 
@@ -93,6 +99,8 @@ export const usageApi = {
     appType?: string,
     providerName?: string,
     model?: string,
+    /** Device scope: undefined = this device, "all", or a remote device id */
+    device?: string,
   ): Promise<DailyStats[]> => {
     return invoke("get_usage_trends", {
       startDate,
@@ -100,6 +108,7 @@ export const usageApi = {
       appType,
       providerName,
       model,
+      device,
     });
   },
 
@@ -108,11 +117,14 @@ export const usageApi = {
     appType?: string,
     providerName?: string,
     model?: string,
+    /** Device scope: undefined = this device, "all", or a remote device id */
+    device?: string,
   ): Promise<string | null> => {
     return invoke("get_usage_first_date", {
       appType,
       providerName,
       model,
+      device,
     });
   },
 
@@ -122,6 +134,8 @@ export const usageApi = {
     appType?: string,
     providerName?: string,
     model?: string,
+    /** Device scope: undefined = this device, "all", or a remote device id */
+    device?: string,
   ): Promise<ProviderStats[]> => {
     return invoke("get_provider_stats", {
       startDate,
@@ -129,6 +143,7 @@ export const usageApi = {
       appType,
       providerName,
       model,
+      device,
     });
   },
 
@@ -138,6 +153,8 @@ export const usageApi = {
     appType?: string,
     providerName?: string,
     model?: string,
+    /** Device scope: undefined = this device, "all", or a remote device id */
+    device?: string,
   ): Promise<ModelStats[]> => {
     return invoke("get_model_stats", {
       startDate,
@@ -145,6 +162,7 @@ export const usageApi = {
       appType,
       providerName,
       model,
+      device,
     });
   },
 
@@ -160,8 +178,11 @@ export const usageApi = {
     });
   },
 
-  getRequestDetail: async (requestId: string): Promise<RequestLog | null> => {
-    return invoke("get_request_detail", { requestId });
+  getRequestDetail: async (
+    requestId: string,
+    device?: string,
+  ): Promise<RequestLog | null> => {
+    return invoke("get_request_detail", { requestId, device });
   },
 
   getModelPricing: async (): Promise<ModelPricing[]> => {

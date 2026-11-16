@@ -1188,6 +1188,7 @@ mod tests {
             let db = Database {
                 conn: std::sync::Mutex::new(rusqlite::Connection::open(path).unwrap()),
                 log_count_cache: std::sync::Mutex::new(None),
+                usage_sync_enabled_override: std::sync::Mutex::new(None),
             };
             db.create_tables().unwrap();
             db
