@@ -90,6 +90,7 @@ import {
   WindowControlsContext,
 } from "@/components/shell/AppPageHeader";
 import { WindowControls } from "@/components/shell/WindowControls";
+import { DesktopAppControls } from "@/components/shell/DesktopAppControls";
 import { APP_DISPLAY_NAME, AppGlyph } from "@/components/shell/AppGlyph";
 import { ProfileSwitcher } from "@/components/profiles/ProfileSwitcher";
 import { ProviderList } from "@/components/providers/ProviderList";
@@ -1588,6 +1589,7 @@ function App() {
               <HermesMemorySaveButton />
             </Suspense>
           )}
+          <DesktopAppControls app={activeApp} />
           {appMenu}
         </>
       }
