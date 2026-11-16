@@ -751,14 +751,6 @@ fn chat_delta_reasoning_text(delta: &Value) -> Option<String> {
     extract_reasoning_field_text(delta)
 }
 
-/// Create a stream that converts Chat Completions SSE chunks into Responses SSE events.
-#[allow(dead_code)]
-pub fn create_responses_sse_stream_from_chat<E: std::error::Error + Send + 'static>(
-    stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
-) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
-    create_responses_sse_stream_from_chat_with_context(stream, CodexToolContext::default())
-}
-
 /// Create a stream that converts Chat Completions SSE chunks into Responses SSE
 /// events while restoring Codex tool namespace/custom/tool_search metadata.
 pub fn create_responses_sse_stream_from_chat_with_context<E: std::error::Error + Send + 'static>(
@@ -1458,7 +1450,10 @@ mod tests {
         let upstream = stream::iter(vec![Err::<Bytes, std::io::Error>(std::io::Error::other(
             "boom",
         ))]);
-        let converted = create_responses_sse_stream_from_chat(upstream);
+        let converted = create_responses_sse_stream_from_chat_with_context(
+            upstream,
+            CodexToolContext::default(),
+        );
         let bytes: Vec<Bytes> = converted.map(|item| item.unwrap()).collect().await;
         let output = String::from_utf8(bytes.concat()).unwrap();
 
@@ -1663,11 +1658,14 @@ mod tests {
             Some(data) => chunks.push(Ok(Bytes::from(data.to_owned()))),
             None => {}
         }
-        create_responses_sse_stream_from_chat(futures::stream::iter(chunks))
-            .map(|chunk| String::from_utf8(chunk.unwrap().to_vec()).unwrap())
-            .collect::<Vec<_>>()
-            .await
-            .concat()
+        create_responses_sse_stream_from_chat_with_context(
+            futures::stream::iter(chunks),
+            CodexToolContext::default(),
+        )
+        .map(|chunk| String::from_utf8(chunk.unwrap().to_vec()).unwrap())
+        .collect::<Vec<_>>()
+        .await
+        .concat()
     }
 
     #[tokio::test]
@@ -1714,7 +1712,11 @@ mod tests {
         .chain(futures::stream::pending());
         tokio::time::timeout(
             std::time::Duration::from_secs(1),
-            create_responses_sse_stream_from_chat(upstream).collect::<Vec<_>>(),
+            create_responses_sse_stream_from_chat_with_context(
+                upstream,
+                CodexToolContext::default(),
+            )
+            .collect::<Vec<_>>(),
         )
         .await
         .expect("a terminal response must not await another upstream chunk");

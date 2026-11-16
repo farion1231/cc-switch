@@ -13,6 +13,7 @@
 //! 面板只换了外观：每一行沿用原生菜单的事件 id，点击走 `tray::handle_tray_menu_event`，
 //! 切换、路由、故障转移的行为和原生菜单一致。窗口懒创建，之后只隐藏不销毁；失焦即隐藏。
 
+use crate::sync_utils::MutexExt;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -320,10 +321,6 @@ static APPLIED_DARK: Mutex<Option<Option<bool>>> = Mutex::new(None);
 /// 这次弹出里上次摆的窗口位置和大小；没变就不动窗口，只挪玻璃（展开子面板不跳）。
 static APPLIED_FRAME: Mutex<Option<Frame>> = Mutex::new(None);
 
-fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|e| e.into_inner())
-}
-
 /// 主面板放在图标旁边：水平居中于图标、不出工作区；图标在屏幕下半（Windows 任务栏）时向上弹出。
 /// 子面板默认向右展开，右边放不下就向左。`icon` 和 `work` 是同一显示器上的逻辑坐标。
 fn place(
@@ -433,7 +430,7 @@ fn ensure_window(app: &AppHandle) -> Option<WebviewWindow> {
 
 fn create_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
     // 新窗口还没套过深浅色（轻量模式下面板收起即销毁，会反复新建）。
-    *lock(&APPLIED_DARK) = None;
+    *APPLIED_DARK.lock_recover() = None;
     let window =
         WebviewWindowBuilder::new(app, PANEL_LABEL, WebviewUrl::App("tray-panel.html".into()))
             .title("CC Switch")
@@ -458,7 +455,7 @@ fn create_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
     let handle = window.clone();
     window.on_window_event(move |event| match event {
         tauri::WindowEvent::Focused(false) if handle.is_visible().unwrap_or(false) => {
-            *lock(&LAST_BLUR_HIDE) = Some(Instant::now());
+            *LAST_BLUR_HIDE.lock_recover() = Some(Instant::now());
             hide_window(&handle);
         }
         tauri::WindowEvent::CloseRequested { api, .. } => {
@@ -534,14 +531,14 @@ fn show_at(app: &AppHandle, window: &WebviewWindow, icon: (f64, f64, f64, f64)) 
         scale,
         PanelTexts::current(),
     );
-    *lock(&ANCHOR) = Some(Anchor {
+    *ANCHOR.lock_recover() = Some(Anchor {
         x,
         y,
         scale,
         placement: placement.clone(),
     });
     PENDING_REVEAL.store(true, Ordering::Release);
-    *lock(&APPLIED_FRAME) = None;
+    *APPLIED_FRAME.lock_recover() = None;
     let _ = window.emit_to(PANEL_LABEL, SHOW_EVENT, placement);
 
     let fallback = window.clone();
@@ -575,7 +572,8 @@ pub fn toggle(app: &AppHandle, rect: &tauri::Rect) {
             return;
         }
     }
-    let just_blurred = lock(&LAST_BLUR_HIDE)
+    let just_blurred = LAST_BLUR_HIDE
+        .lock_recover()
         .take()
         .is_some_and(|at| at.elapsed() < BLUR_CLICK_GRACE);
     if just_blurred {
@@ -617,7 +615,7 @@ pub fn notify_changed(app: &AppHandle) {
         return;
     }
     let wait = {
-        let mut state = lock(&CHANGED_STATE);
+        let mut state = CHANGED_STATE.lock_recover();
         if state.1 {
             return;
         }
@@ -640,7 +638,7 @@ pub fn notify_changed(app: &AppHandle) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(wait).await;
-        *lock(&CHANGED_STATE) = (Some(Instant::now()), false);
+        *CHANGED_STATE.lock_recover() = (Some(Instant::now()), false);
         let _ = app.emit_to(PANEL_LABEL, CHANGED_EVENT, ());
     });
 }
@@ -1190,7 +1188,8 @@ pub fn tray_panel_placement(app: AppHandle) -> Option<PanelPlacement> {
     if !PENDING_REVEAL.load(Ordering::Acquire) && !visible {
         return None;
     }
-    lock(&ANCHOR)
+    ANCHOR
+        .lock_recover()
         .as_ref()
         .map(|anchor| anchor.placement.clone())
 }
@@ -1213,7 +1212,7 @@ pub struct PanelLayout {
 /// 前端排好版后回报尺寸：摆好窗口和玻璃；这次弹出还没显示的话随即显示。
 #[tauri::command]
 pub fn tray_panel_layout(app: AppHandle, layout: PanelLayout) {
-    let Some(anchor) = lock(&ANCHOR).clone() else {
+    let Some(anchor) = ANCHOR.lock_recover().clone() else {
         return;
     };
     if layout.seq != anchor.placement.seq || layout.width <= 0.0 || layout.height <= 0.0 {
@@ -1223,7 +1222,7 @@ pub fn tray_panel_layout(app: AppHandle, layout: PanelLayout) {
         return;
     };
     {
-        let mut applied = lock(&APPLIED_DARK);
+        let mut applied = APPLIED_DARK.lock_recover();
         if *applied != Some(layout.dark) {
             *applied = Some(layout.dark);
             platform::set_dark(&window, layout.dark);
@@ -1236,7 +1235,7 @@ pub fn tray_panel_layout(app: AppHandle, layout: PanelLayout) {
         height: layout.height,
     };
     let move_window = {
-        let mut applied = lock(&APPLIED_FRAME);
+        let mut applied = APPLIED_FRAME.lock_recover();
         let changed = *applied != Some(frame);
         *applied = Some(frame);
         changed

@@ -6,6 +6,7 @@
 //! 只缓存在内存里（十几 MB），不落盘：落盘的包下次启动要重新验签、还要处理残留，换来的只是
 //! 退出后不用再下一次，不值。
 
+use crate::sync_utils::MutexExt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
@@ -82,7 +83,7 @@ fn enabled() -> bool {
 }
 
 fn pending_guard() -> std::sync::MutexGuard<'static, Option<PendingUpdate>> {
-    PENDING.lock().unwrap_or_else(|e| e.into_inner())
+    PENDING.lock_recover()
 }
 
 /// 已下载、待安装的版本；开关关着时视为没有。

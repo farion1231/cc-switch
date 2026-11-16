@@ -4,9 +4,7 @@ use cc_switch_lib::{
     migrate_skills_to_ssot, AppType, ImportSkillSelection, InstalledSkill, SkillApps, SkillService,
 };
 
-#[path = "support/mod.rs"]
-mod support;
-use support::{create_test_state, ensure_test_home, reset_test_fs, test_mutex};
+use crate::support::{create_test_state, ensure_test_home, reset_test_fs, test_mutex};
 
 fn write_skill(dir: &std::path::Path, name: &str) {
     fs::create_dir_all(dir).expect("create skill dir");

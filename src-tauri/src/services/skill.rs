@@ -5,6 +5,7 @@
 //! - 安装时下载到 SSOT，按需同步到各应用目录
 //! - 数据库存储安装记录和启用状态
 
+use crate::sync_utils::MutexExt;
 use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -2137,42 +2138,6 @@ impl SkillService {
         Ok(refreshed)
     }
 
-    /// 为缺少 content_hash 的已安装 Skill 补算哈希
-    pub fn backfill_content_hashes(db: &Arc<Database>) -> Result<usize> {
-        let _state_guard = skill_state_write_guard();
-        let skills = db.get_all_installed_skills()?;
-        let ssot_dir = Self::get_ssot_dir()?;
-        let mut count = 0;
-
-        for skill in skills.values() {
-            if skill.content_hash.is_some() {
-                continue;
-            }
-            let Ok(directory) = Self::require_valid_directory(&skill.directory) else {
-                log::warn!("跳过非法 directory 的哈希回填: {:?}", skill.directory);
-                continue;
-            };
-            let skill_dir = ssot_dir.join(&directory);
-            if !skill_dir.exists() {
-                continue;
-            }
-            match Self::compute_dir_hash(&skill_dir) {
-                Ok(hash) => {
-                    let _ = db.update_skill_hash(&skill.id, &hash, 0);
-                    count += 1;
-                }
-                Err(e) => {
-                    log::warn!("补算哈希失败 {}: {e}", skill.id);
-                }
-            }
-        }
-
-        if count > 0 {
-            log::info!("已为 {count} 个 Skill 补算内容哈希");
-        }
-        Ok(count)
-    }
-
     /// 迁移 Skill 存储位置（在两个 SSOT 目录间移动文件）
     ///
     /// 安全策略：先移文件，后改设置。中途崩溃时设置仍指向旧目录。
@@ -3124,12 +3089,6 @@ impl SkillService {
         Ok(())
     }
 
-    /// 复制 Skill 到应用目录（保留用于向后兼容）
-    #[deprecated(note = "请使用 sync_to_app_dir() 代替")]
-    pub fn copy_to_app(directory: &str, app: &AppType) -> Result<()> {
-        Self::sync_to_app_dir(directory, app)
-    }
-
     /// 删除路径（支持 symlink 和真实目录）
     fn remove_path(path: &Path) -> Result<()> {
         if Self::is_symlink(path) {
@@ -3552,10 +3511,7 @@ impl SkillService {
     ) -> Result<Vec<DiscoverableSkill>> {
         let key = Self::discovery_cache_key(repo);
         if !force_refresh {
-            let cache = self
-                .discovery_cache
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
+            let cache = self.discovery_cache.lock_recover();
             if let Some((fetched_at, skills)) = cache.get(&key) {
                 if fetched_at.elapsed() < DISCOVERY_CACHE_TTL {
                     return Ok(skills.clone());
@@ -3565,10 +3521,7 @@ impl SkillService {
 
         let started_at = Instant::now();
         let skills = self.fetch_repo_skills(repo).await?;
-        let mut cache = self
-            .discovery_cache
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let mut cache = self.discovery_cache.lock_recover();
         if cache
             .get(&key)
             .is_none_or(|(fetched_at, _)| *fetched_at <= started_at)
@@ -5024,37 +4977,6 @@ impl SkillService {
                 }
             }
         }
-
-        Ok(())
-    }
-
-    // ========== 仓库管理（保留原有逻辑）==========
-
-    /// 列出仓库
-    pub fn list_repos(&self, store: &SkillStore) -> Vec<SkillRepo> {
-        store.repos.clone()
-    }
-
-    /// 添加仓库
-    pub fn add_repo(&self, store: &mut SkillStore, repo: SkillRepo) -> Result<()> {
-        if let Some(pos) = store
-            .repos
-            .iter()
-            .position(|r| r.owner == repo.owner && r.name == repo.name)
-        {
-            store.repos[pos] = repo;
-        } else {
-            store.repos.push(repo);
-        }
-
-        Ok(())
-    }
-
-    /// 删除仓库
-    pub fn remove_repo(&self, store: &mut SkillStore, owner: String, name: String) -> Result<()> {
-        store
-            .repos
-            .retain(|r| !(r.owner == owner && r.name == name));
 
         Ok(())
     }
