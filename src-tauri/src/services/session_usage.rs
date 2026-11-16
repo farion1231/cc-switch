@@ -1180,19 +1180,34 @@ fn session_costs(
         model: Some(msg.model.clone()),
         message_id: None,
     };
-    match pricing_cache.get(conn, &msg.model) {
-        Some(pricing) => {
-            let cost = CostCalculator::calculate(&usage, pricing, Decimal::from(1));
-            [
-                cost.input_cost.to_string(),
-                cost.output_cost.to_string(),
-                cost.cache_read_cost.to_string(),
-                cost.cache_creation_cost.to_string(),
-                cost.total_cost.to_string(),
-            ]
-        }
-        None => std::array::from_fn(|_| "0".to_string()),
-    }
+    cost_columns(
+        "claude",
+        &usage,
+        pricing_cache.get(conn, &msg.model),
+        Decimal::ONE,
+    )
+}
+
+/// 五个金额列（输入、输出、缓存读、缓存写、合计）。查不到价格的全记 "0"，
+/// 表示没有定价，不代表免费。
+pub(crate) fn cost_columns(
+    app_type: &str,
+    usage: &TokenUsage,
+    pricing: Option<&ModelPricing>,
+    multiplier: Decimal,
+) -> [String; 5] {
+    let Some(pricing) = pricing else {
+        return std::array::from_fn(|_| "0".to_string());
+    };
+    let cost = CostCalculator::calculate_for_app(app_type, usage, pricing, multiplier);
+    [
+        cost.input_cost,
+        cost.output_cost,
+        cost.cache_read_cost,
+        cost.cache_creation_cost,
+        cost.total_cost,
+    ]
+    .map(|value| value.to_string())
 }
 
 /// 补全一条已经入库的回复。

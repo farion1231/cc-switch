@@ -10,6 +10,7 @@
 //! (lookup failure, expired login, no 5-hour or weekly window) the request goes
 //! upstream unchanged. It cannot reserve quota for requests already admitted.
 
+use crate::sync_utils::MutexExt;
 use std::{
     collections::HashMap,
     future::Future,
@@ -185,7 +186,7 @@ impl Default for QuotaCache {
 
 impl QuotaCache {
     fn fresh(&self, key: &str, now: i64) -> Option<Snapshot> {
-        let accounts = self.accounts.lock().unwrap_or_else(|e| e.into_inner());
+        let accounts = self.accounts.lock_recover();
         accounts
             .get(key)
             .filter(|snapshot| snapshot.is_fresh(now))
@@ -193,14 +194,14 @@ impl QuotaCache {
     }
 
     fn store(&self, key: String, snapshot: Snapshot) {
-        let mut accounts = self.accounts.lock().unwrap_or_else(|e| e.into_inner());
+        let mut accounts = self.accounts.lock_recover();
         Self::insert(&mut accounts, key, snapshot);
     }
 
     /// Stores a lookup result unless a fresh reading arrived while it was in
     /// flight (response headers or a concurrent lookup); the newer one wins.
     fn store_lookup(&self, key: String, snapshot: Snapshot, now: i64) -> Snapshot {
-        let mut accounts = self.accounts.lock().unwrap_or_else(|e| e.into_inner());
+        let mut accounts = self.accounts.lock_recover();
         if let Some(newer) = accounts.get(&key).filter(|cached| cached.is_fresh(now)) {
             return newer.clone();
         }

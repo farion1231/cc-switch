@@ -9,6 +9,7 @@
 //! - 浏览器回不到本机时，替用户把回调地址转交给本机端口，或把页面上的代码写进 stdin。
 //! - 等它退出，退出码 0 就是登录成功。
 
+use crate::sync_utils::MutexExt;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Stdio};
@@ -95,7 +96,7 @@ impl RunningLogin {
             let stdin = Arc::clone(&self.stdin);
             let line = format!("{raw}\n");
             return tokio::task::spawn_blocking(move || {
-                let mut guard = stdin.lock().unwrap_or_else(|e| e.into_inner());
+                let mut guard = stdin.lock_recover();
                 let Some(stdin) = guard.as_mut() else {
                     return Err(login_over());
                 };
@@ -233,11 +234,11 @@ pub async fn start(
             let outcome = supervise(&mut child, &cancel, timeout);
             exited.store(true, Ordering::SeqCst);
             // 关掉 stdin，读输出的线程会在管道关闭后结束
-            stdin.lock().unwrap_or_else(|e| e.into_inner()).take();
+            stdin.lock_recover().take();
             for reader in readers {
                 let _ = reader.join();
             }
-            let said = last_line.lock().unwrap_or_else(|e| e.into_inner()).clone();
+            let said = last_line.lock_recover().clone();
             let exit = match outcome {
                 Supervised::Exited(true) => LoginExit {
                     success: true,
@@ -339,7 +340,7 @@ fn read_output(
             .trim_start_matches("Paste code here if prompted >")
             .trim();
         if !line.is_empty() {
-            *last_line.lock().unwrap_or_else(|e| e.into_inner()) = line.to_string();
+            *last_line.lock_recover() = line.to_string();
         }
     }
 }

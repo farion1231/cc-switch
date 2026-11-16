@@ -315,7 +315,7 @@ fn has_explicit_codex_third_party_upstream(provider: &Provider) -> bool {
 /// backend. The fixed legacy card keeps its existing behavior.
 pub fn is_codex_official_provider(provider: &Provider) -> bool {
     let is_fixed_official_id = provider.id == crate::database::CODEX_OFFICIAL_PROVIDER_ID;
-    if is_fixed_official_id && provider.category.as_deref() == Some("official") {
+    if is_fixed_official_id && provider.has_official_category() {
         return true;
     }
 
@@ -354,7 +354,7 @@ pub fn is_codex_official_provider(provider: &Provider) -> bool {
         return false;
     }
 
-    is_fixed_official_id || provider.category.as_deref() == Some("official")
+    is_fixed_official_id || provider.has_official_category()
 }
 
 /// Vendors whose OFFICIAL Codex integration is a native `/responses` gateway that
