@@ -317,9 +317,7 @@ fn should_preserve_reasoning_content_for_openai_chat(provider: &Provider, body: 
     // over model-name hints; retain the existing behavior for other gateways.
     if ClaudeAdapter::new()
         .extract_base_url(provider)
-        .ok()
-        .and_then(|base_url| url::Url::parse(&base_url).ok())
-        .is_some_and(|url| url.host_str() == Some("api.mistral.ai"))
+        .is_ok_and(|base_url| super::is_mistral_api(&base_url))
     {
         return false;
     }

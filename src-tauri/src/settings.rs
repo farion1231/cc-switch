@@ -837,75 +837,24 @@ impl AppSettings {
     }
 
     fn normalize_paths(&mut self) {
-        self.claude_config_dir = self
-            .claude_config_dir
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-
-        self.codex_config_dir = self
-            .codex_config_dir
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-
-        self.gemini_config_dir = self
-            .gemini_config_dir
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-
-        self.grok_config_dir = self
-            .grok_config_dir
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-
-        self.opencode_config_dir = self
-            .opencode_config_dir
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-
-        self.openclaw_config_dir = self
-            .openclaw_config_dir
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-
-        self.hermes_config_dir = self
-            .hermes_config_dir
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-
-        self.pi_config_dir = self
-            .pi_config_dir
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-
-        self.omp_config_dir = self
-            .omp_config_dir
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-
-        self.dsh_config_dir = self
-            .dsh_config_dir
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
+        for dir in [
+            &mut self.claude_config_dir,
+            &mut self.codex_config_dir,
+            &mut self.gemini_config_dir,
+            &mut self.grok_config_dir,
+            &mut self.opencode_config_dir,
+            &mut self.openclaw_config_dir,
+            &mut self.hermes_config_dir,
+            &mut self.pi_config_dir,
+            &mut self.omp_config_dir,
+            &mut self.dsh_config_dir,
+        ] {
+            *dir = dir
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string);
+        }
 
         self.language = self
             .language
@@ -1766,6 +1715,36 @@ mod tests {
         };
         settings.normalize_paths();
         assert_eq!(settings.language.as_deref(), Some("ko"));
+    }
+
+    #[test]
+    fn every_directory_override_is_trimmed_and_a_blank_one_is_cleared() {
+        let keys = [
+            "claudeConfigDir",
+            "codexConfigDir",
+            "geminiConfigDir",
+            "grokConfigDir",
+            "opencodeConfigDir",
+            "openclawConfigDir",
+            "hermesConfigDir",
+            "piConfigDir",
+            "ompConfigDir",
+            "dshConfigDir",
+        ];
+        for key in keys {
+            let mut padded: AppSettings =
+                serde_json::from_value(serde_json::json!({ key: "  /custom/dir \n" }))
+                    .expect("settings");
+            padded.normalize_paths();
+            let saved = serde_json::to_value(&padded).expect("serialize");
+            assert_eq!(saved[key], "/custom/dir", "{key}");
+
+            let mut blank: AppSettings =
+                serde_json::from_value(serde_json::json!({ key: "   " })).expect("settings");
+            blank.normalize_paths();
+            let saved = serde_json::to_value(&blank).expect("serialize");
+            assert!(saved.get(key).is_none(), "{key}");
+        }
     }
 
     #[test]

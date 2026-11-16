@@ -6,9 +6,7 @@ use cc_switch_lib::{
     ProviderMeta, ProviderService,
 };
 
-#[path = "support/mod.rs"]
-mod support;
-use support::{
+use crate::support::{
     create_test_state, create_test_state_with_config, enable_codex_official_auth_preservation,
     ensure_test_home, reset_test_fs, test_mutex,
 };

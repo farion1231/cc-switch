@@ -430,7 +430,7 @@ fn dedup_app_type_match_sql(left: &str, right: &str) -> String {
 ///
 /// 注意：包裹后该列上的索引在此比较中失效，但这些都是已带时间过滤的聚合扫描，
 /// app_type 本就不是主访问路径，可接受。仅用于读侧；跨源去重使用更窄的
-/// [`dedup_app_type_match_sql`]，额度检查（`check_provider_limits`）仍保留原始精确比较。
+/// [`dedup_app_type_match_sql`]。
 fn folded_app_type_sql(column: &str) -> String {
     format!("CASE WHEN {column} = 'claude-desktop' THEN 'claude' ELSE {column} END")
 }
@@ -2295,108 +2295,6 @@ impl Database {
             Err(e) => Err(AppError::Database(e.to_string())),
         }
     }
-
-    /// 检查 Provider 使用限额
-    pub fn check_provider_limits(
-        &self,
-        provider_id: &str,
-        app_type: &str,
-    ) -> Result<ProviderLimitStatus, AppError> {
-        let conn = lock_conn!(self.conn);
-
-        // 获取 provider 的限额设置
-        let (limit_daily, limit_monthly) = conn
-            .query_row(
-                "SELECT meta FROM providers WHERE id = ? AND app_type = ?",
-                params![provider_id, app_type],
-                |row| {
-                    let meta_str: String = row.get(0)?;
-                    Ok(meta_str)
-                },
-            )
-            .ok()
-            .and_then(|meta_str| serde_json::from_str::<serde_json::Value>(&meta_str).ok())
-            .map(|meta| {
-                let daily = meta
-                    .get("limitDailyUsd")
-                    .and_then(|v| v.as_str())
-                    .and_then(|s| s.parse::<f64>().ok());
-                let monthly = meta
-                    .get("limitMonthlyUsd")
-                    .and_then(|v| v.as_str())
-                    .and_then(|s| s.parse::<f64>().ok());
-                (daily, monthly)
-            })
-            .unwrap_or((None, None));
-
-        // 计算今日使用量 (detail logs + rollup)
-        let daily_usage: f64 = conn
-            .query_row(
-                "SELECT COALESCE(SUM(cost), 0) FROM (
-                    SELECT CAST(total_cost_usd AS REAL) as cost
-                    FROM proxy_request_logs
-                    WHERE provider_id = ? AND app_type = ?
-                      AND date(datetime(created_at, 'unixepoch', 'localtime')) = date('now', 'localtime')
-                    UNION ALL
-                    SELECT CAST(total_cost_usd AS REAL)
-                    FROM usage_daily_rollups
-                    WHERE provider_id = ? AND app_type = ?
-                      AND date = date('now', 'localtime')
-                )",
-                params![provider_id, app_type, provider_id, app_type],
-                |row| row.get(0),
-            )
-            .unwrap_or(0.0);
-
-        // 计算本月使用量 (detail logs + rollup)
-        let monthly_usage: f64 = conn
-            .query_row(
-                "SELECT COALESCE(SUM(cost), 0) FROM (
-                    SELECT CAST(total_cost_usd AS REAL) as cost
-                    FROM proxy_request_logs
-                    WHERE provider_id = ? AND app_type = ?
-                      AND strftime('%Y-%m', datetime(created_at, 'unixepoch', 'localtime')) = strftime('%Y-%m', 'now', 'localtime')
-                    UNION ALL
-                    SELECT CAST(total_cost_usd AS REAL)
-                    FROM usage_daily_rollups
-                    WHERE provider_id = ? AND app_type = ?
-                      AND strftime('%Y-%m', date) = strftime('%Y-%m', 'now', 'localtime')
-                )",
-                params![provider_id, app_type, provider_id, app_type],
-                |row| row.get(0),
-            )
-            .unwrap_or(0.0);
-
-        let daily_exceeded = limit_daily
-            .map(|limit| daily_usage >= limit)
-            .unwrap_or(false);
-        let monthly_exceeded = limit_monthly
-            .map(|limit| monthly_usage >= limit)
-            .unwrap_or(false);
-
-        Ok(ProviderLimitStatus {
-            provider_id: provider_id.to_string(),
-            daily_usage: format!("{daily_usage:.6}"),
-            daily_limit: limit_daily.map(|l| format!("{l:.2}")),
-            daily_exceeded,
-            monthly_usage: format!("{monthly_usage:.6}"),
-            monthly_limit: limit_monthly.map(|l| format!("{l:.2}")),
-            monthly_exceeded,
-        })
-    }
-}
-
-/// Provider 限额状态
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ProviderLimitStatus {
-    pub provider_id: String,
-    pub daily_usage: String,
-    pub daily_limit: Option<String>,
-    pub daily_exceeded: bool,
-    pub monthly_usage: String,
-    pub monthly_limit: Option<String>,
-    pub monthly_exceeded: bool,
 }
 
 #[derive(Clone)]
@@ -3753,7 +3651,7 @@ mod tests {
     }
 
     #[test]
-    fn test_backfill_new_anthropic_openai_pricing_after_upgrade() -> Result<(), AppError> {
+    fn test_backfill_new_model_pricing_after_upgrade() -> Result<(), AppError> {
         let db = Database::memory()?;
         let cases = [
             (
@@ -3812,6 +3710,12 @@ mod tests {
                 3_000_000,
                 ["0.150000", "0.600000", "0.075000", "0.000000", "0.825000"],
             ),
+            (
+                "qwen/qwen4-max",
+                "claude",
+                1_000_000,
+                ["1.500000", "4.500000", "0.075000", "1.875000", "7.950000"],
+            ),
         ];
         {
             let conn = lock_conn!(db.conn);
@@ -3819,7 +3723,7 @@ mod tests {
             conn.execute(
                 "DELETE FROM model_pricing WHERE model_id IN
                  ('claude-opus-5-5', 'gpt-6-sol', 'gpt-6.1-sol', 'gpt-6-luna', 'gpt-5.6-cyber',
-                  'gpt-5.5-pro', 'gpt-4o-mini')",
+                  'gpt-5.5-pro', 'gpt-4o-mini', 'qwen4-max')",
                 [],
             )?;
             for (model, app, input, _) in &cases {
@@ -4972,28 +4876,6 @@ mod tests {
         assert!(!request_ids.contains(&"codex-session-dup"));
         assert!(!request_ids.contains(&"claude-session-dup"));
         assert!(!request_ids.contains(&"gemini-session-dup"));
-
-        let breakdown = crate::services::session_usage::get_data_source_breakdown(&db)?;
-        let proxy_count = breakdown
-            .iter()
-            .find(|item| item.data_source == "proxy")
-            .map(|item| item.request_count);
-        let codex_session_count = breakdown
-            .iter()
-            .find(|item| item.data_source == "codex_session")
-            .map(|item| item.request_count);
-        let gemini_session_count = breakdown
-            .iter()
-            .find(|item| item.data_source == "gemini_session")
-            .map(|item| item.request_count);
-        let session_log_count = breakdown
-            .iter()
-            .find(|item| item.data_source == "session_log")
-            .map(|item| item.request_count);
-        assert_eq!(proxy_count, Some(3));
-        assert_eq!(codex_session_count, Some(1));
-        assert_eq!(gemini_session_count, None);
-        assert_eq!(session_log_count, None);
 
         Ok(())
     }

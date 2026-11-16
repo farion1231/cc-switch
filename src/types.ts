@@ -971,19 +971,6 @@ export interface OpenCodeProviderConfig {
   models: Record<string, OpenCodeModel>;
 }
 
-// OpenCode MCP 服务器配置（与统一格式不同）
-export interface OpenCodeMcpServerSpec {
-  type: "local" | "remote";
-  // local 类型字段
-  command?: string[]; // 与统一格式不同：命令和参数合并为数组
-  environment?: Record<string, string>; // 与统一格式不同：使用 environment 而非 env
-  // remote 类型字段
-  url?: string;
-  headers?: Record<string, string>;
-  // 通用字段
-  enabled?: boolean;
-}
-
 // ============================================================================
 // OpenClaw 专属配置（v3.11.0+）
 // ============================================================================

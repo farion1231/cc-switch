@@ -411,17 +411,6 @@ pub async fn ensure_claude_desktop_official_provider(
 }
 
 #[tauri::command]
-pub async fn ensure_codex_official_provider(state: State<'_, AppState>) -> Result<bool, String> {
-    run_db_task(&state, |state| {
-        state
-            .db
-            .ensure_official_seed_by_id(crate::database::CODEX_OFFICIAL_PROVIDER_ID, AppType::Codex)
-            .map_err(|e| e.to_string())
-    })
-    .await
-}
-
-#[tauri::command]
 pub async fn ensure_grokbuild_official_provider(
     state: State<'_, AppState>,
 ) -> Result<bool, String> {
@@ -980,21 +969,6 @@ pub async fn remove_custom_endpoint(
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     run_db_task(&state, move |state| {
         ProviderService::remove_custom_endpoint(state, app_type, &providerId, url)
-            .map_err(|e| e.to_string())
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn update_endpoint_last_used(
-    state: State<'_, AppState>,
-    app: String,
-    #[allow(non_snake_case)] providerId: String,
-    url: String,
-) -> Result<(), String> {
-    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    run_db_task(&state, move |state| {
-        ProviderService::update_endpoint_last_used(state, app_type, &providerId, url)
             .map_err(|e| e.to_string())
     })
     .await

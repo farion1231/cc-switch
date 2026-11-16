@@ -38,14 +38,6 @@ pub fn get_hermes_live_provider_ids() -> Result<Vec<String>, String> {
         .map_err(|e| e.to_string())
 }
 
-/// Get a single Hermes provider fragment from live config.
-#[tauri::command]
-pub fn get_hermes_live_provider(
-    #[allow(non_snake_case)] providerId: String,
-) -> Result<Option<serde_json::Value>, String> {
-    hermes_config::get_provider(&providerId).map_err(|e| e.to_string())
-}
-
 // ============================================================================
 // Model Configuration Commands
 // ============================================================================
