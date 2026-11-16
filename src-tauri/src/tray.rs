@@ -1138,8 +1138,7 @@ fn tray_usage_source(app_type: &AppType, provider: &Provider) -> Option<TrayUsag
         return Some(TrayUsageSource::Subscription);
     }
     (provider.has_usage_script_enabled()
-        && (provider.category.as_deref() != Some("official")
-            || provider_uses_official_subscription(provider)))
+        && (!provider.has_official_category() || provider_uses_official_subscription(provider)))
     .then_some(TrayUsageSource::Script)
 }
 
@@ -1210,7 +1209,7 @@ fn cached_usage_view(
 
 /// 官方账号卡（同前端 `isOfficialAccount`）：Codex 早期绑定托管账号的官方卡没有 category，按身份认。
 fn is_official_account(app: &AppType, provider: &Provider) -> bool {
-    provider.category.as_deref() == Some("official")
+    provider.has_official_category()
         || (*app == AppType::Codex && crate::proxy::providers::is_codex_official_provider(provider))
 }
 

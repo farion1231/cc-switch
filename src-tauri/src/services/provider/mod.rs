@@ -5621,7 +5621,7 @@ impl ProviderService {
                 provider.settings_config.clone(),
                 Self::provider_live_config_managed(provider),
             );
-            if provider.category.as_deref() != Some("official") {
+            if !provider.has_official_category() {
                 if let Some(converted) =
                     crate::copilot_config::convert_legacy_settings(&provider.settings_config)
                 {
@@ -6459,7 +6459,7 @@ impl ProviderService {
         // Normalize Claude model keys
         Self::normalize_provider_if_claude(&app_type, &mut provider);
         Self::validate_provider_settings(&app_type, &provider)?;
-        if matches!(app_type, AppType::Codex) && provider.category.as_deref() == Some("official") {
+        if matches!(app_type, AppType::Codex) && provider.has_official_category() {
             crate::codex_config::strip_codex_unified_session_bucket_from_settings(
                 &mut provider.settings_config,
             )?;
@@ -7194,7 +7194,7 @@ impl ProviderService {
         if crate::mode::current::is_proxy(&app_type) {
             // 代理模式：只换代理路由，直连指针不变。契约没变时客户端文件不读也不写；
             // 变了在同一个操作里先改写客户端，再发布路由。
-            if _provider.category.as_deref() == Some("official")
+            if _provider.has_official_category()
                 && !official_provider_supports_proxy_takeover(&app_type, _provider)
             {
                 return Err(AppError::localized(
@@ -8349,7 +8349,7 @@ impl ProviderService {
                             "Grok Build configuration is missing the config field",
                         )
                     })?;
-                if provider.category.as_deref() == Some("official") {
+                if provider.has_official_category() {
                     // 官方条目走 Grok CLI 自带 OAuth：空 config 合法，
                     // 其余内容只要求 TOML 语法合法。
                     crate::grok_config::validate_config_toml_syntax(config)?;
