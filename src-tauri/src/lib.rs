@@ -78,8 +78,7 @@ pub use grok_config::get_grok_config_path;
 pub use mcp::{
     import_from_claude, import_from_codex, import_from_gemini, import_from_grokbuild,
     remove_server_from_claude, remove_server_from_codex, remove_server_from_gemini,
-    remove_server_from_grokbuild, sync_enabled_to_claude, sync_enabled_to_codex,
-    sync_enabled_to_gemini, sync_single_server_to_claude, sync_single_server_to_codex,
+    remove_server_from_grokbuild, sync_single_server_to_claude, sync_single_server_to_codex,
     sync_single_server_to_gemini, sync_single_server_to_grokbuild,
 };
 pub use prompt::Prompt;
@@ -1132,52 +1131,21 @@ pub fn run() {
             if app_state.db.is_mcp_table_empty().unwrap_or(false) {
                 log::info!("MCP table empty, importing from live configurations...");
 
-                match crate::services::mcp::McpService::import_from_claude(&app_state) {
-                    Ok(count) if count > 0 => {
-                        log::info!("✓ Imported {count} MCP server(s) from Claude");
+                for (app, label) in [
+                    (crate::app_config::AppType::Claude, "Claude"),
+                    (crate::app_config::AppType::Codex, "Codex"),
+                    (crate::app_config::AppType::Gemini, "Gemini"),
+                    (crate::app_config::AppType::GrokBuild, "Grok Build"),
+                    (crate::app_config::AppType::OpenCode, "OpenCode"),
+                    (crate::app_config::AppType::Hermes, "Hermes"),
+                ] {
+                    match crate::services::mcp::McpService::import_from_app(&app_state, &app) {
+                        Ok(count) if count > 0 => {
+                            log::info!("✓ Imported {count} MCP server(s) from {label}");
+                        }
+                        Ok(_) => log::debug!("○ No {label} MCP servers found to import"),
+                        Err(e) => log::warn!("✗ Failed to import {label} MCP: {e}"),
                     }
-                    Ok(_) => log::debug!("○ No Claude MCP servers found to import"),
-                    Err(e) => log::warn!("✗ Failed to import Claude MCP: {e}"),
-                }
-
-                match crate::services::mcp::McpService::import_from_codex(&app_state) {
-                    Ok(count) if count > 0 => {
-                        log::info!("✓ Imported {count} MCP server(s) from Codex");
-                    }
-                    Ok(_) => log::debug!("○ No Codex MCP servers found to import"),
-                    Err(e) => log::warn!("✗ Failed to import Codex MCP: {e}"),
-                }
-
-                match crate::services::mcp::McpService::import_from_gemini(&app_state) {
-                    Ok(count) if count > 0 => {
-                        log::info!("✓ Imported {count} MCP server(s) from Gemini");
-                    }
-                    Ok(_) => log::debug!("○ No Gemini MCP servers found to import"),
-                    Err(e) => log::warn!("✗ Failed to import Gemini MCP: {e}"),
-                }
-
-                match crate::services::mcp::McpService::import_from_grokbuild(&app_state) {
-                    Ok(count) if count > 0 => {
-                        log::info!("✓ Imported {count} MCP server(s) from Grok Build");
-                    }
-                    Ok(_) => log::debug!("○ No Grok Build MCP servers found to import"),
-                    Err(e) => log::warn!("✗ Failed to import Grok Build MCP: {e}"),
-                }
-
-                match crate::services::mcp::McpService::import_from_opencode(&app_state) {
-                    Ok(count) if count > 0 => {
-                        log::info!("✓ Imported {count} MCP server(s) from OpenCode");
-                    }
-                    Ok(_) => log::debug!("○ No OpenCode MCP servers found to import"),
-                    Err(e) => log::warn!("✗ Failed to import OpenCode MCP: {e}"),
-                }
-
-                match crate::services::mcp::McpService::import_from_hermes(&app_state) {
-                    Ok(count) if count > 0 => {
-                        log::info!("✓ Imported {count} MCP server(s) from Hermes");
-                    }
-                    Ok(_) => log::debug!("○ No Hermes MCP servers found to import"),
-                    Err(e) => log::warn!("✗ Failed to import Hermes MCP: {e}"),
                 }
             }
 

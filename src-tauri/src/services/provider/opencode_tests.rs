@@ -327,7 +327,7 @@ fn opencode_jsonc_provider_and_mcp_workflows_preserve_comments() {
             json!({"type":"http","url":"https://example.com/mcp"}),
         ),
     ] {
-        crate::mcp::sync_single_server_to_opencode(&config, id, &spec).unwrap();
+        crate::mcp::sync_single_server_to_opencode(id, &spec).unwrap();
     }
     let servers = opencode_config::get_mcp_servers().unwrap();
     assert_eq!(servers["existing"]["command"], json!(["npx", "updated"]));
