@@ -44,8 +44,10 @@ import {
   copilotEnvOf,
   isCopilotByok,
 } from "@/config/copilotConfig";
-import { resolveManagedAccountId } from "@/lib/authBinding";
-import { isMac } from "@/lib/platform";
+import {
+  canSwitchAgyAccount,
+  resolveManagedAccountId,
+} from "@/lib/authBinding";
 import {
   isOfficialAccount,
   resolveCodexOfficialIdentity,
@@ -372,9 +374,9 @@ export function ProviderCard({
   );
   // xAI OAuth (SuperGrok 反代)：额度经自管 OAuth token 自动显示，与 codex_oauth 同构
   const isXaiOauth = provider.meta?.providerType === PROVIDER_TYPES.XAI_OAUTH;
-  // Antigravity 官方卡绑了授权中心的账号：额度查绑定的号（只有 macOS 能切号，其他平台忽略绑定）
+  // Antigravity 官方卡绑了授权中心的账号：额度查绑定的号（只有 macOS、Windows 能切号，其他平台忽略绑定）
   const agyBoundAccountId =
-    appId === "agy" && isOfficial && isMac()
+    appId === "agy" && isOfficial && canSwitchAgyAccount()
       ? resolveManagedAccountId(provider.meta, "agy_oauth")?.trim() || null
       : null;
   // 副标题末尾的套餐：读右边额度那个查询的缓存（键和各额度 footer 一致），额度查到才有。
