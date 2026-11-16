@@ -1049,6 +1049,17 @@
     "github": "GitHub",
     "starPrompt": "如果 CC Switch 幫到了你，請在 GitHub 點個 Star，這對我們意義重大",
     "starOnGithub": "去點 Star",
+    "feedback": {
+      "button": "問題回報",
+      "title": "問題回報",
+      "message": "將從應用程式日誌中擷取今天的內容，連同版本和系統資訊一起填入 GitHub Issue 頁面。受連結長度限制，只能附帶今天最近的一部分日誌。日誌中的電子郵件、手機號碼、證件號碼、銀行卡號、IP 和金鑰會被自動替換為佔位符。\n\n不會自動提交，請在瀏覽器中檢查內容、補充問題描述後再自行提交。",
+      "confirm": "開啟 Issue 頁面",
+      "opened": "已開啟 Issue 頁面，附帶了今天全部 {{total}} 行日誌",
+      "openedPartial": "已開啟 Issue 頁面，附帶了今天最近 {{included}} 行日誌（共 {{total}} 行）",
+      "openedWithoutLog": "今天還沒有日誌紀錄，已開啟 Issue 頁面",
+      "reviewHint": "請檢查內容並補充問題描述後再提交",
+      "failed": "準備問題回報失敗"
+    },
     "manualInstallCommands": "手動安裝指令",
     "manualUninstallCommands": "手動解除安裝指令",
     "manualUninstallHint": "預設自動偵測各應用程式的執行環境，也可手動切換。請選擇安裝時使用的方式，再複製所需應用程式的指令到終端機執行。完成後點選「檢查更新」重新整理安裝狀態。",

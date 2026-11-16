@@ -1049,6 +1049,17 @@
     "github": "GitHub",
     "starPrompt": "CC Switch size yardımcı olduysa lütfen GitHub’da bize yıldız verin — bu bizim için çok şey ifade ediyor",
     "starOnGithub": "GitHub’da yıldız",
+    "feedback": {
+      "button": "Hata Bildir",
+      "title": "Hata Bildir",
+      "message": "Uygulama günlüğündeki bugünkü kayıtlar, sürüm ve sistem bilgileriyle birlikte bir GitHub Issue sayfasına doldurulacak. URL uzunluğu sınırı nedeniyle bugünkü günlüğün yalnızca en yeni kısmı eklenebilir. Günlükteki e-posta adresleri, telefon numaraları, kimlik ve banka kartı numaraları, IP adresleri ve gizli anahtarlar yer tutucularla değiştirilir.\n\nHiçbir şey otomatik gönderilmez. İçeriği inceleyip sorunu tarayıcıda açıkladıktan sonra kendiniz gönderin.",
+      "confirm": "Issue Sayfasını Aç",
+      "opened": "Bugünün {{total}} günlük satırının tamamıyla issue sayfası açıldı",
+      "openedPartial": "Bugünün {{total}} günlük satırından en yeni {{included}} tanesiyle issue sayfası açıldı",
+      "openedWithoutLog": "Bugün henüz günlük kaydı yok. Issue sayfası açıldı",
+      "reviewHint": "Göndermeden önce içeriği inceleyin ve sorunu açıklayın",
+      "failed": "Hata bildirimi hazırlanamadı"
+    },
     "manualInstallCommands": "Manuel Kurulum Komutları",
     "manualUninstallCommands": "Manuel kaldırma komutları",
     "manualUninstallHint": "Her uygulamanın ortamı varsayılan olarak otomatik algılanır; isterseniz farklı bir ortamı elle seçebilirsiniz. Özgün kurulum yöntemini seçin, ardından kaldırmak istediğiniz uygulamanın komutunu kopyalayıp bir terminalde çalıştırın. Durumunu yenilemek için sonrasında “Güncellemeleri kontrol et” seçeneğine tıklayın.",
