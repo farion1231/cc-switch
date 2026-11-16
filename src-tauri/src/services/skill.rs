@@ -687,8 +687,14 @@ impl SkillService {
     pub fn get_app_skills_dir(app: &AppType) -> Result<PathBuf> {
         // 目录覆盖：优先使用用户在 settings.json 中配置的 override 目录
         match app {
-            AppType::Claude => {
-                if let Some(custom) = crate::settings::get_claude_override_dir() {
+            AppType::Claude
+            | AppType::Codex
+            | AppType::Gemini
+            | AppType::GrokBuild
+            | AppType::OpenCode
+            | AppType::OpenClaw
+            | AppType::Hermes => {
+                if let Some(custom) = crate::settings::get_override_dir(app) {
                     return Ok(custom.join("skills"));
                 }
             }
@@ -698,36 +704,6 @@ impl SkillService {
             | AppType::Dsh
             | AppType::Copilot
             | AppType::WorkBuddy => {}
-            AppType::Codex => {
-                if let Some(custom) = crate::settings::get_codex_override_dir() {
-                    return Ok(custom.join("skills"));
-                }
-            }
-            AppType::Gemini => {
-                if let Some(custom) = crate::settings::get_gemini_override_dir() {
-                    return Ok(custom.join("skills"));
-                }
-            }
-            AppType::GrokBuild => {
-                if let Some(custom) = crate::settings::get_grok_override_dir() {
-                    return Ok(custom.join("skills"));
-                }
-            }
-            AppType::OpenCode => {
-                if let Some(custom) = crate::settings::get_opencode_override_dir() {
-                    return Ok(custom.join("skills"));
-                }
-            }
-            AppType::OpenClaw => {
-                if let Some(custom) = crate::settings::get_openclaw_override_dir() {
-                    return Ok(custom.join("skills"));
-                }
-            }
-            AppType::Hermes => {
-                if let Some(custom) = crate::settings::get_hermes_override_dir() {
-                    return Ok(custom.join("skills"));
-                }
-            }
             AppType::Pi => {
                 return Ok(crate::pi_config::get_pi_agent_dir()?.join("skills"));
             }

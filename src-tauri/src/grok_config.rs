@@ -23,7 +23,8 @@ pub struct GrokModelConfig {
 
 /// Grok Build configuration directory (`~/.grok`).
 pub fn get_grok_config_dir() -> PathBuf {
-    crate::settings::get_grok_override_dir().unwrap_or_else(|| get_home_dir().join(".grok"))
+    crate::settings::get_override_dir(&crate::app_config::AppType::GrokBuild)
+        .unwrap_or_else(|| get_home_dir().join(".grok"))
 }
 
 /// Grok Build live configuration path (`~/.grok/config.toml`).
