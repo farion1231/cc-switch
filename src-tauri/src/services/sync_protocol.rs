@@ -57,6 +57,29 @@ pub(crate) fn transfer_timeout(len: u64) -> Duration {
     Duration::from_secs(TRANSFER_BASE_TIMEOUT_SECS.saturating_add(len / TRANSFER_MIN_BYTES_PER_SEC))
 }
 
+/// Describe a WebDAV/S3 transport failure as `(zh, en)`: a short category plus
+/// the reqwest cause chain (URL stripped).
+///
+/// `is_request()` means the request was built but failed while being sent
+/// (connection reset or closed mid-body, TLS / HTTP-2 errors…); only
+/// `is_builder()` is a request build failure. Labelling the former "request
+/// build failed" and dropping the cause left users with nothing to act on (#9559).
+pub(crate) fn transport_failure_reason(err: reqwest::Error) -> (String, String) {
+    let (zh, en) = if err.is_timeout() {
+        ("请求超时", "request timed out")
+    } else if err.is_connect() {
+        ("连接失败", "connection failed")
+    } else if err.is_builder() {
+        ("请求构造失败", "request build failed")
+    } else if err.is_request() {
+        ("发送失败", "failed to send")
+    } else {
+        ("网络请求失败", "network request failed")
+    };
+    let detail = crate::proxy::error::describe_reqwest_error(err);
+    (format!("{zh}: {detail}"), format!("{en}: {detail}"))
+}
+
 // ─── Sync operation lock ────────────────────────────────────
 
 /// Serialize every snapshot upload/download across all transports.
@@ -481,6 +504,40 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn transport_failure_reason_reports_send_failure_with_cause() {
+        // #9559: a server dropping the connection mid-PUT is a send failure, not a
+        // request build failure, and the cause must survive into the message.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            if let Ok((socket, _)) = listener.accept().await {
+                drop(socket);
+            }
+        });
+
+        let err = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .unwrap()
+            .put(format!(
+                "http://127.0.0.1:{port}/dav/db.sql?token=secret-token"
+            ))
+            .body(vec![0u8; 64 * 1024])
+            .send()
+            .await
+            .expect_err("connection is dropped before a response");
+        assert!(err.is_request() && !err.is_connect() && !err.is_builder());
+
+        let (zh, en) = transport_failure_reason(err);
+        assert!(zh.starts_with("发送失败: error sending request"), "{zh}");
+        assert!(
+            en.starts_with("failed to send: error sending request: "),
+            "{en}"
+        );
+        assert!(!en.contains("secret-token"), "{en}");
+    }
 
     #[test]
     fn transfer_timeout_grows_with_payload_size() {
