@@ -14,14 +14,12 @@
 //! redirects; responses are `{code: 0, data: {biz_code, biz_data}}`.
 
 use crate::error::AppError;
+use crate::sync_utils::MutexExt;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use serde::Serialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::{
-    sync::{Mutex, PoisonError},
-    time::Duration,
-};
+use std::{sync::Mutex, time::Duration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -462,16 +460,13 @@ pub async fn start_login() -> Result<DshLoginStart, String> {
         let _ = sender.send(outcome);
     });
 
-    let previous = PENDING
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .replace(PendingLogin {
-            flow_id: pkce.state.clone(),
-            result: receiver,
-            task: task.abort_handle(),
-            authorize_id,
-            verifier: pkce.verifier,
-        });
+    let previous = PENDING.lock_recover().replace(PendingLogin {
+        flow_id: pkce.state.clone(),
+        result: receiver,
+        task: task.abort_handle(),
+        authorize_id,
+        verifier: pkce.verifier,
+    });
     if let Some(previous) = previous {
         abandon(previous);
     }
@@ -638,7 +633,7 @@ const PAGE_FAILED: &str = "<!doctype html><meta charset=utf-8><title>CC Switch</
 
 /// `Ok(false)` while waiting for the browser; `Ok(true)` once the login is stored.
 pub fn poll_login(flow_id: &str) -> Result<bool, String> {
-    let mut pending = PENDING.lock().unwrap_or_else(PoisonError::into_inner);
+    let mut pending = PENDING.lock_recover();
     let Some(login) = pending.as_mut().filter(|login| login.flow_id == flow_id) else {
         return Err(login_error(
             "dsh.account.error_flow_ended",
@@ -666,7 +661,7 @@ pub fn poll_login(flow_id: &str) -> Result<bool, String> {
 /// Stop waiting and withdraw the attempt at Platform (best effort, like DSH's `auth_cancel`).
 pub fn cancel_login(flow_id: &str) {
     let login = {
-        let mut pending = PENDING.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut pending = PENDING.lock_recover();
         if pending
             .as_ref()
             .is_none_or(|login| login.flow_id != flow_id)
