@@ -256,16 +256,6 @@ impl Database {
         }
     }
 
-    /// 更新 Copilot 优化器配置
-    pub fn set_copilot_optimizer_config(
-        &self,
-        config: &crate::proxy::types::CopilotOptimizerConfig,
-    ) -> Result<(), AppError> {
-        let json = serde_json::to_string(config)
-            .map_err(|e| AppError::Database(format!("序列化 Copilot 优化器配置失败: {e}")))?;
-        self.set_setting("copilot_optimizer_config", &json)
-    }
-
     // --- 日志配置 ---
 
     /// 获取日志配置

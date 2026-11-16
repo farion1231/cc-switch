@@ -436,16 +436,6 @@ impl ProxyServer {
         *self.state.config.write().await = config.clone();
     }
 
-    /// 热更新熔断器配置
-    ///
-    /// 将新配置应用到所有已创建的熔断器实例
-    pub async fn update_circuit_breaker_configs(
-        &self,
-        config: super::circuit_breaker::CircuitBreakerConfig,
-    ) {
-        self.state.provider_router.update_all_configs(config).await;
-    }
-
     pub async fn update_circuit_breaker_config_for_app(
         &self,
         app_type: &str,
@@ -454,14 +444,6 @@ impl ProxyServer {
         self.state
             .provider_router
             .update_app_configs(app_type, config)
-            .await;
-    }
-
-    /// 重置指定 Provider 的熔断器
-    pub async fn reset_provider_circuit_breaker(&self, provider_id: &str, app_type: &str) {
-        self.state
-            .provider_router
-            .reset_provider_breaker(provider_id, app_type)
             .await;
     }
 }

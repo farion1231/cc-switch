@@ -14,7 +14,7 @@ const UPDATE_ENV: &str = "CC_SWITCH_UPDATE_GOLDEN";
 /// Windows 上 checkout 出来不会变成 CRLF。
 pub fn assert_golden(name: &str, actual: &str) {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/golden/snapshots")
+        .join("tests/integration/golden/snapshots")
         .join(name);
     if std::env::var_os(UPDATE_ENV).is_some() {
         std::fs::create_dir_all(path.parent().expect("snapshot dir")).expect("create snapshot dir");

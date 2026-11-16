@@ -5432,6 +5432,8 @@
     "readyBodyRouting": "现在安装吗？CC Switch 会重启，正在经本地路由的请求会中断。",
     "later": "稍后",
     "installNow": "安装并重启",
-    "installFailed": "安装更新失败"
+    "installFailed": "安装更新失败",
+    "downloadingInline": "正在后台下载新版本…",
+    "downloadedInline": "已下载完毕"
   }
 }

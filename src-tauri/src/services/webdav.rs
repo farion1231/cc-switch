@@ -8,7 +8,9 @@ use std::time::Duration;
 
 use crate::error::AppError;
 use crate::proxy::http_client;
-use crate::services::sync_protocol::{transfer_timeout, TRANSFER_IDLE_TIMEOUT};
+use crate::services::sync_protocol::{
+    transfer_timeout, transport_failure_reason, TRANSFER_IDLE_TIMEOUT,
+};
 use futures::StreamExt;
 
 const DEFAULT_TIMEOUT_SECS: u64 = 30;
@@ -105,17 +107,9 @@ fn webdav_transport_error(
     op_zh: &str,
     op_en: &str,
     target_url: &str,
-    err: &reqwest::Error,
+    err: reqwest::Error,
 ) -> AppError {
-    let (zh_reason, en_reason) = if err.is_timeout() {
-        ("请求超时", "request timed out")
-    } else if err.is_connect() {
-        ("连接失败", "connection failed")
-    } else if err.is_request() {
-        ("请求构造失败", "request build failed")
-    } else {
-        ("网络请求失败", "network request failed")
-    };
+    let (zh_reason, en_reason) = transport_failure_reason(err);
 
     let safe_url = redact_url(target_url);
     AppError::localized(
@@ -157,7 +151,7 @@ pub async fn test_connection(base_url: &str, auth: &WebDavAuth) -> Result<(), Ap
             "连接",
             "connection",
             base_url,
-            &e,
+            e,
         )
     })?;
 
@@ -204,7 +198,7 @@ pub async fn ensure_remote_directories(
                 "MKCOL 请求",
                 "MKCOL request",
                 &dir_url,
-                &e,
+                e,
             )
         })?;
 
@@ -254,7 +248,7 @@ pub async fn put_bytes(
     )
     .send()
     .await
-    .map_err(|e| webdav_transport_error("webdav.put_failed", "PUT 请求", "PUT request", url, &e))?;
+    .map_err(|e| webdav_transport_error("webdav.put_failed", "PUT 请求", "PUT request", url, e))?;
 
     if resp.status().is_success() {
         return Ok(());
@@ -279,7 +273,7 @@ pub async fn get_bytes(
         .await
         .map_err(|_| webdav_stalled_error("webdav.get_failed", "GET 请求", "GET request", url))?
         .map_err(|e| {
-            webdav_transport_error("webdav.get_failed", "GET 请求", "GET request", url, &e)
+            webdav_transport_error("webdav.get_failed", "GET 请求", "GET request", url, e)
         })?;
 
     if resp.status() == StatusCode::NOT_FOUND {
@@ -336,7 +330,7 @@ pub async fn head_etag(url: &str, auth: &WebDavAuth) -> Result<Option<String>, A
     .send()
     .await
     .map_err(|e| {
-        webdav_transport_error("webdav.head_failed", "HEAD 请求", "HEAD request", url, &e)
+        webdav_transport_error("webdav.head_failed", "HEAD 请求", "HEAD request", url, e)
     })?;
 
     if resp.status() == StatusCode::NOT_FOUND {
