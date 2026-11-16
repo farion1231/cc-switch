@@ -233,6 +233,7 @@ mod tests {
     use crate::provider::{ClaudeDesktopMode, ClaudeDesktopModelRoute};
     use crate::proxy::types::ProxyConfig;
     use crate::store::AppState;
+    use crate::sync_utils::MutexExt;
     use serde_json::json;
     use serial_test::serial;
     use std::env;
@@ -349,9 +350,7 @@ mod tests {
 
     fn test_guard() -> std::sync::MutexGuard<'static, ()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|err| err.into_inner())
+        LOCK.get_or_init(|| Mutex::new(())).lock_recover()
     }
 
     fn with_test_home<T>(test: impl FnOnce(&AppState, &Path) -> T) -> T {

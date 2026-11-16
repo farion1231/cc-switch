@@ -5,6 +5,7 @@
 //! - 安装时下载到 SSOT，按需同步到各应用目录
 //! - 数据库存储安装记录和启用状态
 
+use crate::sync_utils::MutexExt;
 use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -3510,10 +3511,7 @@ impl SkillService {
     ) -> Result<Vec<DiscoverableSkill>> {
         let key = Self::discovery_cache_key(repo);
         if !force_refresh {
-            let cache = self
-                .discovery_cache
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
+            let cache = self.discovery_cache.lock_recover();
             if let Some((fetched_at, skills)) = cache.get(&key) {
                 if fetched_at.elapsed() < DISCOVERY_CACHE_TTL {
                     return Ok(skills.clone());
@@ -3523,10 +3521,7 @@ impl SkillService {
 
         let started_at = Instant::now();
         let skills = self.fetch_repo_skills(repo).await?;
-        let mut cache = self
-            .discovery_cache
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let mut cache = self.discovery_cache.lock_recover();
         if cache
             .get(&key)
             .is_none_or(|(fetched_at, _)| *fetched_at <= started_at)

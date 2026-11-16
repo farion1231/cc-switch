@@ -8,6 +8,7 @@
 //! 分三层：`collect_*` 从数据库和设备状态读出快照，`build_menu_model` 把快照变成纯数据的菜单
 //! 模型（单测覆盖这一层），`attach_*` 把模型挂到 Tauri 原生菜单上。
 
+use crate::sync_utils::MutexExt;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -1540,16 +1541,10 @@ static SWITCH_FAILURES: Lazy<Mutex<Vec<SwitchFailure>>> = Lazy::new(|| Mutex::ne
 /// 上一次建菜单时菜单上会自己过时的那部分，悬停图标 / 路由服务启停时比一下，变了才重建。
 static LAST_STATUS: Lazy<Mutex<MenuStatus>> = Lazy::new(|| Mutex::new(MenuStatus::default()));
 
-fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
-
 /// 启动流程走完：记下启动时退回直连的应用，重建一次菜单。
 pub fn mark_startup_settled(app: &tauri::AppHandle) {
     {
-        let mut failures = lock(&ATTACH_FAILURES);
+        let mut failures = ATTACH_FAILURES.lock_recover();
         for failure in crate::mode::controller::startup_attach_failures_snapshot() {
             if let Ok(app_type) = failure.app_type.parse::<AppType>() {
                 if !failures.iter().any(|(existing, _)| *existing == app_type) {
@@ -1564,8 +1559,8 @@ pub fn mark_startup_settled(app: &tauri::AppHandle) {
 
 /// 清掉某个应用的问题行，返回有没有清掉东西。
 fn clear_app_problems(app: &AppType) -> bool {
-    let mut attach = lock(&ATTACH_FAILURES);
-    let mut switch = lock(&SWITCH_FAILURES);
+    let mut attach = ATTACH_FAILURES.lock_recover();
+    let mut switch = SWITCH_FAILURES.lock_recover();
     let before = attach.len() + switch.len();
     attach.retain(|(existing, _)| existing != app);
     switch.retain(|failure| failure.app != *app);
@@ -1584,7 +1579,7 @@ pub fn tray_app_page_seen(app: tauri::AppHandle, app_type: String) {
 }
 
 fn record_switch_failure(app: &AppType, reason: String) {
-    let mut failures = lock(&SWITCH_FAILURES);
+    let mut failures = SWITCH_FAILURES.lock_recover();
     failures.retain(|failure| failure.app != *app);
     failures.push(SwitchFailure {
         app: app.clone(),
@@ -1609,7 +1604,7 @@ fn collect_problems(
         problems.push(TrayProblem::ServiceDown { port });
     }
     {
-        let mut failures = lock(&ATTACH_FAILURES);
+        let mut failures = ATTACH_FAILURES.lock_recover();
         // 已经重新进入路由 / 聚合的应用不再报。
         failures.retain(|(app, _)| {
             visible
@@ -1627,7 +1622,7 @@ fn collect_problems(
         }
     }
     {
-        let failures = lock(&SWITCH_FAILURES);
+        let failures = SWITCH_FAILURES.lock_recover();
         for failure in failures.iter() {
             if visible.iter().any(|(app, _)| *app == failure.app) {
                 problems.push(TrayProblem::SwitchFailed {
@@ -1705,7 +1700,7 @@ fn switch_feedback(app: &AppType, mode: TrayMode, name: String) -> Option<TrayFe
 
 /// 记下最近一次托盘操作的结果（覆盖上一条）。调用方随后会重建菜单。
 fn record_feedback(app: &tauri::AppHandle, feedback: TrayFeedback) {
-    *lock(&FEEDBACK) = Some(FeedbackRecord {
+    *FEEDBACK.lock_recover() = Some(FeedbackRecord {
         feedback,
         at: std::time::Instant::now(),
         seen: false,
@@ -1726,7 +1721,7 @@ fn record_feedback(app: &tauri::AppHandle, feedback: TrayFeedback) {
 
 /// 现在该显示的反馈：没过期、也还没在打开的菜单里显示过。
 fn current_feedback() -> Option<TrayFeedback> {
-    let mut record = lock(&FEEDBACK);
+    let mut record = FEEDBACK.lock_recover();
     if record
         .as_ref()
         .is_some_and(|r| r.seen || r.at.elapsed() >= FEEDBACK_TTL)
@@ -1738,7 +1733,7 @@ fn current_feedback() -> Option<TrayFeedback> {
 
 /// 托盘面板收起：面板里已经显示过反馈行了，下次弹出时不再显示。
 pub fn mark_feedback_seen() {
-    if let Some(record) = lock(&FEEDBACK).as_mut() {
+    if let Some(record) = FEEDBACK.lock_recover().as_mut() {
         record.seen = true;
     }
 }
@@ -2639,9 +2634,9 @@ pub fn create_tray_menu(
     #[cfg(target_os = "windows")]
     crate::tray_compat::remember_native_menu(&menu);
 
-    *lock(&TRAY_SECTION_SUBMENUS) = handles;
+    *TRAY_SECTION_SUBMENUS.lock_recover() = handles;
     update_problem_indicator(app, &texts, &model.status.problems);
-    *lock(&LAST_STATUS) = model.status;
+    *LAST_STATUS.lock_recover() = model.status;
     Ok(menu)
 }
 
@@ -2650,7 +2645,7 @@ pub fn sync_tray_status(app: &tauri::AppHandle, app_state: &AppState) -> Result<
     let texts = TrayTexts::current();
     let (_, status) = collect_status(app_state, &texts)?;
     update_problem_indicator(app, &texts, &status.problems);
-    *lock(&LAST_STATUS) = status;
+    *LAST_STATUS.lock_recover() = status;
     Ok(())
 }
 
@@ -2767,7 +2762,7 @@ fn update_problem_indicator(app: &tauri::AppHandle, texts: &TrayTexts, problems:
     };
     // 只在锁里比对和记账：换图标要回主线程执行，不能拿着锁等。
     let icon_changed = {
-        let mut applied = lock(&APPLIED_INDICATOR);
+        let mut applied = APPLIED_INDICATOR.lock_recover();
         if applied.as_ref() == Some(&(has_dot, tooltip.clone())) {
             return;
         }
@@ -2824,7 +2819,7 @@ fn update_tray_usage_labels(app: &tauri::AppHandle) {
             return;
         };
         // 先拷出句柄再改标题：`set_text` 要回主线程执行，不能拿着锁等。
-        let handles = lock(&TRAY_SECTION_SUBMENUS).clone();
+        let handles = TRAY_SECTION_SUBMENUS.lock_recover().clone();
         for snapshot in &snapshots {
             let Some(submenu) = handles.get(&snapshot.app) else {
                 continue;
@@ -2871,7 +2866,7 @@ pub fn apply_tray_style(app: &tauri::AppHandle) {
                 log::error!("摘掉托盘菜单失败: {e}");
             }
             // 菜单没了，旧句柄不再更新标题。
-            lock(&TRAY_SECTION_SUBMENUS).clear();
+            TRAY_SECTION_SUBMENUS.lock_recover().clear();
         }
         if let Err(e) = tray.set_show_menu_on_left_click(native_menu_on_left_click(native)) {
             log::warn!("设置托盘左键行为失败: {e}");
@@ -2928,7 +2923,7 @@ pub fn native_menu_on_left_click(native: bool) -> bool {
 pub fn refresh_tray_if_problems_changed(app: &tauri::AppHandle) {
     static LAST_CHECK: Mutex<Option<std::time::Instant>> = Mutex::new(None);
     {
-        let mut last = lock(&LAST_CHECK);
+        let mut last = LAST_CHECK.lock_recover();
         if last.is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(1)) {
             return;
         }
@@ -2952,7 +2947,7 @@ fn refresh_tray_if_status_changed(app: &tauri::AppHandle) {
     let Ok((_, status)) = collect_status(state.inner(), &texts) else {
         return;
     };
-    if *lock(&LAST_STATUS) != status {
+    if *LAST_STATUS.lock_recover() != status {
         refresh_tray_menu(app);
     }
 }
@@ -3026,7 +3021,7 @@ fn parse_nav_id(id: &str) -> Option<TrayNavigation> {
 /// 主界面取走托盘留下的导航（取一次就清空）。
 #[tauri::command]
 pub fn take_tray_navigation() -> Option<TrayNavigation> {
-    lock(&PENDING_NAVIGATION).take()
+    PENDING_NAVIGATION.lock_recover().take()
 }
 
 fn navigate(app: &tauri::AppHandle, navigation: TrayNavigation) {
@@ -3040,7 +3035,7 @@ fn navigate(app: &tauri::AppHandle, navigation: TrayNavigation) {
     }
     let pending = !navigation.is_empty();
     if pending {
-        *lock(&PENDING_NAVIGATION) = Some(navigation);
+        *PENDING_NAVIGATION.lock_recover() = Some(navigation);
     }
     show_main_window(app);
     if pending {
@@ -3410,7 +3405,7 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
     use futures::future::join_all;
 
     {
-        let mut guard = lock(&LAST_TRAY_USAGE_REFRESH);
+        let mut guard = LAST_TRAY_USAGE_REFRESH.lock_recover();
         let now = std::time::Instant::now();
         if let Some(last) = *guard {
             if now.duration_since(last) < MIN_TRAY_USAGE_REFRESH_INTERVAL {
@@ -3561,7 +3556,7 @@ pub(crate) async fn refresh_panel_provider_usage(app: &tauri::AppHandle) {
                 .with_script(app_type, id, |_| ())
                 .is_some();
             let key = (app_type.clone(), id.clone());
-            let mut queried = lock(&PANEL_SCRIPT_QUERIES);
+            let mut queried = PANEL_SCRIPT_QUERIES.lock_recover();
             let is_due = match queried.get(&key) {
                 Some(at) => at.elapsed() >= interval,
                 // 主界面已经查过（缓存里有）：从现在起算间隔
@@ -5259,7 +5254,7 @@ mod tests {
     #[test]
     fn feedback_goes_away_after_the_panel_showed_it_or_two_minutes() {
         let record = |at: std::time::Instant| {
-            *lock(&FEEDBACK) = Some(FeedbackRecord {
+            *FEEDBACK.lock_recover() = Some(FeedbackRecord {
                 feedback: TrayFeedback::Switched {
                     app: AppType::Codex,
                     name: "DeepSeek".to_string(),
@@ -5273,7 +5268,7 @@ mod tests {
         // 面板收起 = 这次面板里已经显示过。
         mark_feedback_seen();
         assert!(current_feedback().is_none());
-        assert!(lock(&FEEDBACK).is_none());
+        assert!(FEEDBACK.lock_recover().is_none());
 
         if let Some(at) = std::time::Instant::now().checked_sub(FEEDBACK_TTL) {
             record(at);
@@ -5329,9 +5324,11 @@ mod tests {
 
     #[test]
     fn problems_drop_attach_failures_once_the_app_routes_again() {
-        lock(&ATTACH_FAILURES).clear();
-        lock(&SWITCH_FAILURES).clear();
-        lock(&ATTACH_FAILURES).push((AppType::Claude, false));
+        ATTACH_FAILURES.lock_recover().clear();
+        SWITCH_FAILURES.lock_recover().clear();
+        ATTACH_FAILURES
+            .lock_recover()
+            .push((AppType::Claude, false));
         record_switch_failure(&AppType::Codex, "boom".to_string());
         let visible = [(AppType::Claude, true), (AppType::Codex, true)];
         assert_eq!(collect_problems(None, &visible).len(), 2);
