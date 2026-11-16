@@ -468,8 +468,6 @@ impl CopilotToken {
 struct CopilotTokenResponse {
     token: String,
     expires_at: i64,
-    #[allow(dead_code)]
-    refresh_in: Option<i64>,
 }
 
 /// GitHub 用户信息
@@ -623,12 +621,6 @@ impl CopilotAuthManager {
         let accounts = self.accounts.read().await.clone();
         let default_account_id = self.resolve_default_account_id().await;
         Self::sorted_accounts(&accounts, default_account_id.as_deref())
-    }
-
-    /// 获取指定账号信息
-    pub async fn get_account(&self, account_id: &str) -> Option<GitHubAccount> {
-        let accounts = self.accounts.read().await;
-        accounts.get(account_id).map(GitHubAccount::from)
     }
 
     /// 指定账号的 GitHub OAuth Token 和域名，给 Copilot CLI 的 `COPILOT_GITHUB_TOKEN` 用。
