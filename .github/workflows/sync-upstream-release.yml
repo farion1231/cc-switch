@@ -3,7 +3,7 @@
 #
 # - 上游有新 tag 才会合并 + 构建；没有新变化的日常运行直接跳过（除非手动触发勾选 force_build）。
 # - 合并不上（冲突）时整个 workflow 失败，run summary 里列出冲突文件，等人工解决后重新触发。
-# - 发布 tag 形如 v4.0.31-s3.1：原版 tag + s3 后缀 + 序号，同一上游 tag 重复构建时序号递增；
+# - 发布 tag 直接沿用原版 tag（如 v4.0.33），应用内版本号与原版保持一致；
 #   同时把 tauri.conf.json / package.json 的 version 写成同一版本，供 latest.json 使用。
 # - 构建时用 TAURI_SIGNING_PRIVATE_KEY 签出 .sig，发布时生成 latest.json，
 #   供应用内自动更新（endpoints 指向本仓库 releases/latest）使用。
@@ -81,22 +81,19 @@ jobs:
           # 2. 把该 tag 的 commit 拉到专用 ref，不动本地已有的同名 tag
           git fetch --no-tags "$UPSTREAM_URL" "+refs/tags/$UP_TAG:refs/upstream-tags/$UP_TAG"
 
-          # 3. 本仓库已有的 v4.0.25-s3.N 发布 tag，取最大序号
-          max_n=0
-          for ref in $(git ls-remote --tags --refs origin "refs/tags/${UP_TAG}-s3.*" | awk '{print $2}'); do
-            n="${ref##*.}"
-            if [ "$n" -gt "$max_n" ] 2>/dev/null; then
-              max_n="$n"
-            fi
-          done
+          # 3. 本仓库是否已有同名发布 tag（发布 tag 沿用原版 tag，不再加 s3 后缀）
+          released=no
+          if [ -n "$(git ls-remote --tags --refs origin "refs/tags/${UP_TAG}" | awk '{print $2}')" ]; then
+            released=yes
+          fi
 
           # 4. 上游 tag 已合并且已发布过，又没勾选强制构建 → 无事可做
           merged=no
           if git merge-base --is-ancestor "refs/upstream-tags/$UP_TAG" HEAD; then
             merged=yes
           fi
-          if [ "$merged" = yes ] && [ "$max_n" -ge 1 ] && [ "$FORCE_BUILD" != "true" ]; then
-            echo "Upstream tag $UP_TAG already merged and released (s3.$max_n); nothing to do."
+          if [ "$merged" = yes ] && [ "$released" = yes ] && [ "$FORCE_BUILD" != "true" ]; then
+            echo "Upstream tag $UP_TAG already merged and released; nothing to do."
             echo "has_update=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -121,10 +118,10 @@ jobs:
             fi
           fi
 
-          # 6. 发布 tag：上游 tag + s3 序号；应用版本号与 tag 保持一致
+          # 6. 发布 tag 直接沿用上游 tag；应用版本号与 tag 保持一致
           #    （tauri.conf.json 的 version 决定 latest.json 的版本，两者不一致会让
           #     应用内更新反复提示或永不提示）
-          release_tag="${UP_TAG}-s3.$((max_n + 1))"
+          release_tag="$UP_TAG"
           app_version="${release_tag#v}"
           node -e '
             const fs = require("fs");
@@ -254,23 +251,8 @@ jobs:
 
       - name: Build Tauri App (Windows)
         if: runner.os == 'Windows'
-        shell: pwsh
-        env:
-          RELEASE_TAG: ${{ needs.sync.outputs.release_tag }}
         run: |
-          $ErrorActionPreference = 'Stop'
-          # WiX 的 ProductVersion 只接受纯数字（major.minor.patch.build），
-          # 4.0.31-s3.1 这种 prerelease 会让 MSI 构建失败；这里把 s3 序号映射到
-          # 第 4 段：v4.0.31-s3.1 -> 4.0.31.1。应用内版本仍是 4.0.31-s3.1。
-          $ver = $env:RELEASE_TAG.TrimStart('v')
-          $parts = $ver.Split('-')
-          $base = $parts[0]
-          $n = $parts[1].Replace('s3.', '')
-          $wixVersion = "$base.$n"
-          @{ bundle = @{ windows = @{ wix = @{ version = $wixVersion } } } } |
-            ConvertTo-Json -Depth 10 | Set-Content -Path wix-version.json -Encoding utf8
-          Write-Host "MSI ProductVersion: $wixVersion"
-          pnpm tauri build --bundles msi --config wix-version.json
+          pnpm tauri build --bundles msi
 
       - name: Build Tauri App (Linux)
         if: runner.os == 'Linux'

@@ -1051,6 +1051,7 @@
     "viewCurrentReleaseNotes": "查看当前版本更新日志",
     "officialWebsite": "官方网站",
     "github": "GitHub",
+    "unofficialBuildNotice": "本版本为自行构建，非官方发布。",
     "starPrompt": "如果 CC Switch 帮到了你，请在 GitHub 点个 Star，这对我们意义重大",
     "starOnGithub": "去点 Star",
     "manualInstallCommands": "手动安装命令",

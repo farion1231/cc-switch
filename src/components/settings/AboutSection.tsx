@@ -256,6 +256,9 @@ export function AboutSection({
               </Badge>
             )}
           </div>
+          <p className="mt-1 text-caption text-fg-2">
+            {t("settings.unofficialBuildNotice")}
+          </p>
         </div>
         <Button
           type="button"

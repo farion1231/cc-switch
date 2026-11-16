@@ -1051,6 +1051,7 @@
     "viewCurrentReleaseNotes": "View current version release notes",
     "officialWebsite": "Official Website",
     "github": "GitHub",
+    "unofficialBuildNotice": "This is a self-built version, not an official release.",
     "starPrompt": "If CC Switch has helped you, please star us on GitHub — it means a lot to us",
     "starOnGithub": "Star on GitHub",
     "manualInstallCommands": "Manual Install Commands",
