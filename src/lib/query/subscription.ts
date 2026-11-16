@@ -87,24 +87,37 @@ function useQuotaKeepLastGood(
   };
 }
 
+/**
+ * 开了自动查询时按 `minutes` 分钟轮询（至少 1 分钟），后台和窗口聚焦时也重取；没开或间隔为 0 时都不重取。
+ */
+function autoRefetch(
+  autoQuery: boolean,
+  minutes: number,
+): {
+  refetchInterval: number | false;
+  refetchIntervalInBackground: boolean;
+  refetchOnWindowFocus: boolean;
+} {
+  const refetchInterval =
+    autoQuery && minutes > 0 ? Math.max(minutes, 1) * 60 * 1000 : false;
+  return {
+    refetchInterval,
+    refetchIntervalInBackground: Boolean(refetchInterval),
+    refetchOnWindowFocus: Boolean(refetchInterval),
+  };
+}
+
 export function useSubscriptionQuota(
   appId: AppId,
   enabled: boolean,
   autoQuery = false,
   autoQueryIntervalMinutes = 5,
 ) {
-  const refetchInterval =
-    autoQuery && autoQueryIntervalMinutes > 0
-      ? Math.max(autoQueryIntervalMinutes, 1) * 60 * 1000
-      : false;
-
   const query = useQuery({
     queryKey: subscriptionKeys.quota(appId),
     queryFn: () => subscriptionApi.getQuota(appId),
     enabled: enabled && appHas(appId, "officialSubscription"),
-    refetchInterval,
-    refetchIntervalInBackground: Boolean(refetchInterval),
-    refetchOnWindowFocus: Boolean(refetchInterval),
+    ...autoRefetch(autoQuery, autoQueryIntervalMinutes),
     staleTime:
       autoQueryIntervalMinutes > 0
         ? Math.max(autoQueryIntervalMinutes, 1) * 60 * 1000
@@ -139,17 +152,11 @@ export function useCodexOauthQuotaByAccountId(
     autoQuery = false,
     autoQueryIntervalMinutes = 5,
   } = options;
-  const refetchInterval =
-    autoQuery && autoQueryIntervalMinutes > 0
-      ? Math.max(autoQueryIntervalMinutes, 1) * 60 * 1000
-      : false;
   const query = useQuery({
     queryKey: ["codex_oauth", "quota", accountId ?? "default"],
     queryFn: () => subscriptionApi.getCodexOauthQuota(accountId),
     enabled,
-    refetchInterval,
-    refetchIntervalInBackground: Boolean(refetchInterval),
-    refetchOnWindowFocus: Boolean(refetchInterval),
+    ...autoRefetch(autoQuery, autoQueryIntervalMinutes),
     staleTime:
       autoQueryIntervalMinutes > 0
         ? Math.max(autoQueryIntervalMinutes, 1) * 60 * 1000
@@ -226,17 +233,11 @@ export function useAgyAccountQuota(
     autoQuery = false,
     autoQueryIntervalMinutes = 5,
   } = options;
-  const refetchInterval =
-    autoQuery && autoQueryIntervalMinutes > 0
-      ? Math.max(autoQueryIntervalMinutes, 1) * 60 * 1000
-      : false;
   const query = useQuery({
     queryKey: ["agy_oauth", "quota", accountId],
     queryFn: () => subscriptionApi.getAgyAccountQuota(accountId),
     enabled,
-    refetchInterval,
-    refetchIntervalInBackground: Boolean(refetchInterval),
-    refetchOnWindowFocus: Boolean(refetchInterval),
+    ...autoRefetch(autoQuery, autoQueryIntervalMinutes),
     staleTime: REFETCH_INTERVAL,
     retry: 1,
   });
@@ -257,17 +258,11 @@ export function useKimiAccountQuota(
     autoQuery = false,
     autoQueryIntervalMinutes = 5,
   } = options;
-  const refetchInterval =
-    autoQuery && autoQueryIntervalMinutes > 0
-      ? Math.max(autoQueryIntervalMinutes, 1) * 60 * 1000
-      : false;
   const query = useQuery({
     queryKey: ["kimi_oauth", "quota", accountId],
     queryFn: () => kimiOAuthApi.quota(accountId),
     enabled,
-    refetchInterval,
-    refetchIntervalInBackground: Boolean(refetchInterval),
-    refetchOnWindowFocus: Boolean(refetchInterval),
+    ...autoRefetch(autoQuery, autoQueryIntervalMinutes),
     staleTime: REFETCH_INTERVAL,
     retry: 1,
   });
@@ -288,10 +283,6 @@ export function useClaudeAccountQuota(
     autoQuery = false,
     autoQueryIntervalMinutes = 5,
   } = options;
-  const refetchInterval =
-    autoQuery && autoQueryIntervalMinutes > 0
-      ? Math.max(autoQueryIntervalMinutes, 1) * 60 * 1000
-      : false;
   const queryClient = useQueryClient();
   const query = useQuery({
     queryKey: ["claude_official", "quota", accountId],
@@ -301,9 +292,7 @@ export function useClaudeAccountQuota(
       return quota;
     },
     enabled,
-    refetchInterval,
-    refetchIntervalInBackground: Boolean(refetchInterval),
-    refetchOnWindowFocus: Boolean(refetchInterval),
+    ...autoRefetch(autoQuery, autoQueryIntervalMinutes),
     staleTime: REFETCH_INTERVAL,
     retry: 1,
   });
