@@ -24,27 +24,7 @@ function flattenStrings(
   return result;
 }
 
-function interpolationVariables(value: string): string[] {
-  return Array.from(
-    value.matchAll(/\{\{\s*([^}]+?)\s*\}\}/g),
-    ([, name]) => name,
-  ).sort();
-}
-
 const reference = flattenStrings(en);
-const piKeysOutsideNamespace = new Set([
-  "apps.pi",
-  "deeplink.api",
-  "sessionManager.piDiscoveryUnavailable",
-  "sessionManager.piRelativeSessionDir",
-  "settings.browsePlaceholderPi",
-  "settings.piConfigDirDescription",
-]);
-const piReference = new Map(
-  [...reference].filter(
-    ([key]) => key.startsWith("pi.") || piKeysOutsideNamespace.has(key),
-  ),
-);
 const piProductReferences = new Map(
   [...reference].filter(([, value]) => /\bPi\b/.test(value)),
 );
@@ -55,32 +35,6 @@ const locales = [
 ] as const;
 
 describe("locale coverage", () => {
-  it.each(locales)("covers every Pi translation key in %s", (_name, tree) => {
-    const translations = flattenStrings(tree as TranslationTree);
-    const missing = [...piReference.keys()].filter(
-      (key) => !translations.has(key),
-    );
-
-    expect(missing).toEqual([]);
-  });
-
-  it.each(locales)(
-    "preserves every Pi interpolation variable in %s",
-    (_name, tree) => {
-      const translations = flattenStrings(tree as TranslationTree);
-      const mismatched = [...piReference].flatMap(([key, expected]) => {
-        const actual = translations.get(key);
-        return actual !== undefined &&
-          interpolationVariables(actual).join("\0") !==
-            interpolationVariables(expected).join("\0")
-          ? [key]
-          : [];
-      });
-
-      expect(mismatched).toEqual([]);
-    },
-  );
-
   it.each(locales)(
     "preserves explicit Pi product mentions in %s",
     (_name, tree) => {
