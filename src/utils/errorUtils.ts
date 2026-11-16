@@ -81,8 +81,9 @@ export const translateKimiProviderMutationError = (
 };
 
 /**
- * AtomCode 的默认模型可能正在被使用（在 AtomCode 内选中），
- * 后端按 config.toml 现读拒绝删除/改名，把这条英文原因换成说明。
+ * AtomCode 后端（atomcode_config.rs / services 层）返回的用户可见英文错误
+ * → i18n 文案。新增后端错误串时同步补这里的匹配与 5 个核心语言的
+ * `atomcode.error.*` 键；未识别的消息返回空串，调用方回退原文。
  */
 export const translateAtomcodeProviderMutationError = (
   message: string,
@@ -94,6 +95,62 @@ export const translateAtomcodeProviderMutationError = (
     message.includes("while it is selected")
   ) {
     return t("atomcode.error.defaultModelInUse");
+  }
+  if (message.includes("Select another provider in AtomCode before removing")) {
+    return t("atomcode.error.removeSelected");
+  }
+  if (
+    message.includes("legacy [providers.*] configuration") &&
+    message.includes("run AtomCode once to migrate it")
+  ) {
+    return t("atomcode.error.legacyRemoveUnsupported");
+  }
+  if (message.includes("already exists") && message.includes("AtomCode account key")) {
+    return t("atomcode.error.accountKeyExists");
+  }
+  if (message.includes("Enter an AtomCode account key")) {
+    return t("atomcode.error.accountKeyRequired");
+  }
+  if (
+    message.includes("AtomCode account key") &&
+    message.includes("may only contain")
+  ) {
+    return t("atomcode.error.accountKeyInvalid");
+  }
+  if (message.includes("Select a supported AtomCode provider")) {
+    return t("atomcode.error.providerUnsupported");
+  }
+  if (message.includes("Enter a valid AtomCode endpoint URL")) {
+    return t("atomcode.error.endpointInvalid");
+  }
+  if (
+    message.includes("Add at least one AtomCode model") ||
+    message.includes("The AtomCode provider has no models")
+  ) {
+    return t("atomcode.error.noModels");
+  }
+  if (
+    message.includes("AtomCode models need a key, model ID and matching account")
+  ) {
+    return t("atomcode.error.modelInvalid");
+  }
+  if (
+    message.includes("AtomCode model context_window") &&
+    message.includes("must be positive")
+  ) {
+    return t("atomcode.error.contextWindowInvalid");
+  }
+  if (
+    message.includes("AtomCode model key") &&
+    message.includes("belongs to another provider")
+  ) {
+    return t("atomcode.error.modelKeyBelongsToAnother");
+  }
+  if (
+    message.includes("Invalid AtomCode TOML configuration") ||
+    message.includes("provider_accounts and models must be objects")
+  ) {
+    return t("atomcode.error.tomlInvalid");
   }
   return "";
 };

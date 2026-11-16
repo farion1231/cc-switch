@@ -5263,7 +5263,19 @@
       "removeModel": "移除模型"
     },
     "error": {
-      "defaultModelInUse": "AtomCode 正在使用此供應商的模型，請先在 AtomCode 中用 /model 切換到其他模型"
+      "defaultModelInUse": "AtomCode 正在使用此供應商的模型，請先在 AtomCode 中用 /model 切換到其他模型",
+      "removeSelected": "AtomCode 正在選中此供應商，請先在 AtomCode 中切換到其他供應商再移除",
+      "legacyRemoveUnsupported": "該卡片來自舊版 [providers.*] 設定，唯讀展示無法直接移除；請先執行一次 AtomCode 讓它自動遷移為新格式，之後即可正常刪除",
+      "accountKeyExists": "AtomCode 帳號鍵已存在",
+      "accountKeyRequired": "請輸入 AtomCode 帳號鍵",
+      "accountKeyInvalid": "AtomCode 帳號鍵只能使用字母、數字、-、_ 和 .",
+      "providerUnsupported": "不支援該介面類型，請選擇受支援的 AtomCode 供應商",
+      "endpointInvalid": "請輸入有效的 AtomCode 請求位址（http/https）",
+      "noModels": "請至少新增一個模型",
+      "modelInvalid": "AtomCode 模型需要鍵、模型 ID，且 account 與本帳號一致",
+      "contextWindowInvalid": "上下文視窗必須是正整數",
+      "modelKeyBelongsToAnother": "該模型鍵已屬於其他供應商",
+      "tomlInvalid": "AtomCode 設定檔格式無效，請檢查 config.toml"
     }
   },
   "dsh": {

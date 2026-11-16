@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   extractErrorMessage,
+  translateAtomcodeProviderMutationError,
   translateMcpBackendError,
   translateKimiProviderMutationError,
   translatePiProviderMutationError,
@@ -75,5 +76,93 @@ describe("error utilities", () => {
       ),
     ).toBe("kimi.error.secondaryModelInUse");
     expect(translateKimiProviderMutationError("other failure", t)).toBe("");
+  });
+
+  it("maps AtomCode backend mutation errors to i18n keys", () => {
+    const t = vi.fn((key: string) => key);
+
+    expect(
+      translateAtomcodeProviderMutationError(
+        "Cannot delete or rename the default model 'acct-key-a' while it is selected",
+        t,
+      ),
+    ).toBe("atomcode.error.defaultModelInUse");
+    expect(
+      translateAtomcodeProviderMutationError(
+        "Select another provider in AtomCode before removing this one",
+        t,
+      ),
+    ).toBe("atomcode.error.removeSelected");
+    expect(
+      translateAtomcodeProviderMutationError(
+        "This provider comes from a legacy [providers.*] configuration; run AtomCode once to migrate it, then remove it",
+        t,
+      ),
+    ).toBe("atomcode.error.legacyRemoveUnsupported");
+    expect(
+      translateAtomcodeProviderMutationError(
+        "AtomCode account key 'acct' already exists",
+        t,
+      ),
+    ).toBe("atomcode.error.accountKeyExists");
+    expect(
+      translateAtomcodeProviderMutationError("Enter an AtomCode account key", t),
+    ).toBe("atomcode.error.accountKeyRequired");
+    expect(
+      translateAtomcodeProviderMutationError(
+        "AtomCode account key may only contain letters, digits, '-', '_' or '.'",
+        t,
+      ),
+    ).toBe("atomcode.error.accountKeyInvalid");
+    expect(
+      translateAtomcodeProviderMutationError(
+        "Select a supported AtomCode provider",
+        t,
+      ),
+    ).toBe("atomcode.error.providerUnsupported");
+    expect(
+      translateAtomcodeProviderMutationError(
+        "Enter a valid AtomCode endpoint URL",
+        t,
+      ),
+    ).toBe("atomcode.error.endpointInvalid");
+    expect(
+      translateAtomcodeProviderMutationError(
+        "Add at least one AtomCode model",
+        t,
+      ),
+    ).toBe("atomcode.error.noModels");
+    expect(
+      translateAtomcodeProviderMutationError(
+        "The AtomCode provider has no models",
+        t,
+      ),
+    ).toBe("atomcode.error.noModels");
+    expect(
+      translateAtomcodeProviderMutationError(
+        "AtomCode models need a key, model ID and matching account",
+        t,
+      ),
+    ).toBe("atomcode.error.modelInvalid");
+    expect(
+      translateAtomcodeProviderMutationError(
+        "AtomCode model context_window must be positive",
+        t,
+      ),
+    ).toBe("atomcode.error.contextWindowInvalid");
+    expect(
+      translateAtomcodeProviderMutationError(
+        "AtomCode model key 'm' belongs to another provider",
+        t,
+      ),
+    ).toBe("atomcode.error.modelKeyBelongsToAnother");
+    expect(
+      translateAtomcodeProviderMutationError(
+        "Invalid AtomCode TOML configuration",
+        t,
+      ),
+    ).toBe("atomcode.error.tomlInvalid");
+    // 未识别的消息回退原文（返回空串由调用方兜底）
+    expect(translateAtomcodeProviderMutationError("other failure", t)).toBe("");
   });
 });

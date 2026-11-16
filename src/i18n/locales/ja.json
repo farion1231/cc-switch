@@ -5262,7 +5262,19 @@
       "removeModel": "モデルを削除"
     },
     "error": {
-      "defaultModelInUse": "AtomCode がこのプロバイダーのモデルを使用中です。先に AtomCode の /model でほかのモデルに切り替えてください。"
+      "defaultModelInUse": "AtomCode がこのプロバイダーのモデルを使用中です。先に AtomCode の /model でほかのモデルに切り替えてください。",
+      "removeSelected": "AtomCode がこのプロバイダーを選択中です。先に AtomCode でほかのプロバイダーに切り替えてから削除してください。",
+      "legacyRemoveUnsupported": "このカードは旧形式の [providers.*] 設定由来で、読み取り専用のため直接削除できません。先に AtomCode を一度実行して新形式へ自動移行させてから削除してください。",
+      "accountKeyExists": "この AtomCode アカウントキーは既に存在します",
+      "accountKeyRequired": "AtomCode アカウントキーを入力してください",
+      "accountKeyInvalid": "AtomCode アカウントキーには英数字と - _ . のみ使用できます",
+      "providerUnsupported": "サポートされていないプロバイダー種別です。対応する AtomCode プロバイダーを選択してください",
+      "endpointInvalid": "有効な AtomCode エンドポイント URL（http/https）を入力してください",
+      "noModels": "AtomCode のモデルを 1 つ以上追加してください",
+      "modelInvalid": "AtomCode モデルにはキー・モデル ID、およびこのアカウントと一致する account が必要です",
+      "contextWindowInvalid": "コンテキストウィンドウは正の整数である必要があります",
+      "modelKeyBelongsToAnother": "このモデルキーは別のプロバイダーに属しています",
+      "tomlInvalid": "AtomCode の設定ファイルが無効です。config.toml を確認してください"
     }
   },
   "dsh": {

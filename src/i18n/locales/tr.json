@@ -5173,7 +5173,19 @@
       "removeModel": "Modeli kaldır"
     },
     "error": {
-      "defaultModelInUse": "AtomCode bu sağlayıcıdaki bir modeli kullanıyor. Önce AtomCode'da /model komutuyla başka bir modele geçin."
+      "defaultModelInUse": "AtomCode bu sağlayıcının modelini kullanıyor; önce AtomCode'da /model komutuyla başka bir modele geçin",
+      "removeSelected": "AtomCode şu anda bu sağlayıcıyı seçiyor; kaldırmadan önce AtomCode'da başka bir sağlayıcıya geçin",
+      "legacyRemoveUnsupported": "Bu kart eski [providers.*] yapılandırmasından geliyor ve salt okunur gösteriliyor; önce AtomCode'u bir kez çalıştırıp yeni biçime otomatik geçmesini sağlayın, sonra normal şekilde kaldırın",
+      "accountKeyExists": "Bu AtomCode hesap anahtarı zaten mevcut",
+      "accountKeyRequired": "Bir AtomCode hesap anahtarı girin",
+      "accountKeyInvalid": "AtomCode hesap anahtarı yalnızca harf, rakam, '-', '_' ve '.' içerebilir",
+      "providerUnsupported": "Desteklenmeyen sağlayıcı türü; desteklenen bir AtomCode sağlayıcısı seçin",
+      "endpointInvalid": "Geçerli bir AtomCode uç nokta URL'si (http/https) girin",
+      "noModels": "En az bir AtomCode modeli ekleyin",
+      "modelInvalid": "AtomCode modelleri bir anahtar, model kimliği ve bu hesapla eşleşen bir account gerektirir",
+      "contextWindowInvalid": "Bağlam penceresi pozitif bir tam sayı olmalıdır",
+      "modelKeyBelongsToAnother": "Bu model anahtarı başka bir sağlayıcıya ait",
+      "tomlInvalid": "AtomCode yapılandırma dosyası geçersiz; config.toml dosyasını kontrol edin"
     }
   },
   "dsh": {

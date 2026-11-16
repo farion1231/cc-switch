@@ -5262,7 +5262,19 @@
       "removeModel": "Remove model"
     },
     "error": {
-      "defaultModelInUse": "AtomCode is using a model from this provider. Switch to another model with /model in AtomCode first."
+      "defaultModelInUse": "AtomCode is using a model from this provider. Switch to another model with /model in AtomCode first.",
+      "removeSelected": "AtomCode is currently selecting this provider; switch to another provider in AtomCode before removing it.",
+      "legacyRemoveUnsupported": "This card comes from a legacy [providers.*] configuration and is shown read-only; run AtomCode once to migrate it to the new format, then remove it normally.",
+      "accountKeyExists": "This AtomCode account key already exists.",
+      "accountKeyRequired": "Enter an AtomCode account key.",
+      "accountKeyInvalid": "An AtomCode account key may only contain letters, digits, '-', '_' or '.'.",
+      "providerUnsupported": "Unsupported provider type; select a supported AtomCode provider.",
+      "endpointInvalid": "Enter a valid AtomCode endpoint URL (http/https).",
+      "noModels": "Add at least one AtomCode model.",
+      "modelInvalid": "AtomCode models need a key, a model ID and an account matching this one.",
+      "contextWindowInvalid": "The context window must be a positive integer.",
+      "modelKeyBelongsToAnother": "This model key belongs to another provider.",
+      "tomlInvalid": "The AtomCode configuration file is invalid; check config.toml."
     }
   },
   "dsh": {

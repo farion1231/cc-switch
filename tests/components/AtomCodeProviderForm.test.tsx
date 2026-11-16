@@ -133,11 +133,16 @@ describe("AtomCodeProviderForm", () => {
     const keyInputs = screen.getAllByLabelText("atomcode.form.modelKey");
     fireEvent.change(keyInputs[1], { target: { value: "m1" } });
     expect(screen.getByText("atomcode.form.modelKeyDuplicate")).toBeTruthy();
+    // 冲突未解决时禁止保存：保存会写入与界面显示不符的旧键
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(submit).not.toHaveBeenCalled();
+    // 解决冲突（改成不重复的新键）后恢复可保存
+    fireEvent.change(keyInputs[1], { target: { value: "m2new" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(submit).toHaveBeenCalledOnce());
     const saved = JSON.parse(submit.mock.calls[0][0].settingsConfig);
     expect(saved.models.m1).toEqual({ model: "m1-model" });
-    expect(saved.models.m2).toEqual({ model: "m2-model" });
+    expect(saved.models.m2new).toEqual({ model: "m2-model" });
   });
 
   it("normalizes a legacy wire name to the AtomCode preset id on save", async () => {

@@ -204,6 +204,39 @@ pub async fn fetch_models_for_config(
     .await
 }
 
+/// AtomCode 账号 base_url 为空时的预设默认端点。
+///
+/// AtomCode 原生预设自带默认端点，base_url 留空表示用它。厂商端点与前端
+/// `atomcodeProviderPresets.ts` 一一对应——两处清单改动须同步（漂移风险：
+/// AtomCode 源码 provider_preset.rs 为第三份）。早期 cc-switch 写过的
+/// wire 名（claude / gemini …）也照旧支持；未收录的 id 原样返回。
+fn atomcode_effective_base_url<'a>(provider: &str, base_url: &'a str) -> &'a str {
+    match provider {
+        "claude" | "anthropic" | "anthropic-compatible" => "https://api.anthropic.com",
+        "openai" | "openai-responses" => "https://api.openai.com/v1",
+        "deepseek" => "https://api.deepseek.com/v1",
+        "deepseek-messages" => "https://api.deepseek.com/anthropic",
+        "ollama" => "http://localhost:11434",
+        "gemini" => "https://generativelanguage.googleapis.com/v1beta",
+        // 以下厂商预设 id 与 atomcodeProviderPresets.ts 逐一对应
+        "zhipu" => "https://open.bigmodel.cn/api/paas/v4",
+        "zhipu-coding" => "https://open.bigmodel.cn/api/coding/paas/v4",
+        "aliyun" => "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "moonshot" => "https://api.moonshot.cn/v1",
+        "minimax" => "https://api.minimaxi.com/v1",
+        "minimax-token-plan" => "https://api.minimax.cn/v1",
+        "xiaomi-mimo" => "https://api.xiaomimimo.com/v1",
+        "longcat" => "https://api.longcat.chat/openai/v1",
+        "volcengine" => "https://ark.cn-beijing.volces.com/api/v3",
+        "volcengine-coding" => "https://ark.cn-beijing.volces.com/api/coding/v3",
+        "siliconflow" => "https://api.siliconflow.cn/v1",
+        "openrouter" => "https://openrouter.ai/api/v1",
+        "taotoken" => "https://taotoken.net/api/v1",
+        "opencode" => "https://opencode.ai/zen/v1",
+        _ => base_url,
+    }
+}
+
 /// 获取 AtomCode 供应商的可用模型列表
 ///
 /// 使用 OpenAI 兼容的 GET /v1/models 端点。根据 AtomCode 账号配置
@@ -214,19 +247,8 @@ pub async fn fetch_atomcode_models(
     base_url: String,
     api_key: String,
 ) -> Result<Vec<FetchedModel>, String> {
-    // AtomCode 原生预设自带默认端点，base_url 为空时用预设默认值（协议 id 与
-    // 厂商 id 混用；厂商预设由前端带上 base_url，这里只兜底通用协议）。
-    // 早期 cc-switch 写过的 wire 名（claude / gemini …）也照旧支持。
     let effective_base_url = if base_url.trim().is_empty() {
-        match provider.as_str() {
-            "claude" | "anthropic" | "anthropic-compatible" => "https://api.anthropic.com",
-            "openai" | "openai-responses" => "https://api.openai.com/v1",
-            "deepseek" => "https://api.deepseek.com/v1",
-            "deepseek-messages" => "https://api.deepseek.com/anthropic",
-            "ollama" => "http://localhost:11434",
-            "gemini" => "https://generativelanguage.googleapis.com/v1beta",
-            _ => base_url.as_str(),
-        }
+        atomcode_effective_base_url(&provider, &base_url)
     } else {
         base_url.as_str()
     };
@@ -253,6 +275,46 @@ pub async fn fetch_atomcode_models(
 #[cfg(test)]
 mod tests {
     use super::{parse_opencode_models, OpenCodeModelRef};
+
+    #[test]
+    fn atomcode_empty_base_url_falls_back_to_preset_endpoints() {
+        // 协议 id
+        assert_eq!(
+            super::atomcode_effective_base_url("anthropic-compatible", ""),
+            "https://api.anthropic.com"
+        );
+        assert_eq!(
+            super::atomcode_effective_base_url("ollama", "  "),
+            "http://localhost:11434"
+        );
+        // 厂商预设 id（导入 AtomCode 原生 TUI 建的账号通常不写 base_url）
+        assert_eq!(
+            super::atomcode_effective_base_url("zhipu", ""),
+            "https://open.bigmodel.cn/api/paas/v4"
+        );
+        assert_eq!(
+            super::atomcode_effective_base_url("zhipu-coding", ""),
+            "https://open.bigmodel.cn/api/coding/paas/v4"
+        );
+        assert_eq!(
+            super::atomcode_effective_base_url("volcengine-coding", ""),
+            "https://ark.cn-beijing.volces.com/api/coding/v3"
+        );
+        assert_eq!(
+            super::atomcode_effective_base_url("opencode", ""),
+            "https://opencode.ai/zen/v1"
+        );
+        // 早期 wire 名
+        assert_eq!(
+            super::atomcode_effective_base_url("gemini", ""),
+            "https://generativelanguage.googleapis.com/v1beta"
+        );
+        // 未收录 id：原样返回（交给后续 URL 校验报错）
+        assert_eq!(
+            super::atomcode_effective_base_url("unknown-vendor", ""),
+            ""
+        );
+    }
 
     #[test]
     fn parses_sorts_and_deduplicates_models() {

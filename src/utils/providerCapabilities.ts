@@ -130,6 +130,9 @@ export function supportsConnectivityCheck(
   provider: Pick<Provider, "category">,
 ): boolean {
   if (appId === "mcode" || appId === "dsh" || appId === "kimi") return false;
+  // atomcode 与 mcode/dsh/kimi 同为 live-managed：原生预设账号允许 base_url
+  // 留空（走 AtomCode 内置端点），无探测目标，不提供连通性检查。
+  if (appId === "atomcode") return false;
   return (
     provider.category !== "official" &&
     provider.category !== "omo" &&

@@ -165,7 +165,9 @@ export function AtomCodeProviderForm({
       name.trim() &&
       (isEdit || (providerKey && !keyInvalid && !keyTaken)) &&
       hasModels &&
-      modelsValid,
+      modelsValid &&
+      // 改键重名未解决时禁止保存：draft 从未提交，保存会写入与界面显示不符的旧键
+      !keyConflict,
   );
   useEffect(() => {
     onSubmitReadyChange?.(ready);
@@ -176,8 +178,17 @@ export function AtomCodeProviderForm({
     syncRowIds(next.models);
     setJsonText(text ?? JSON.stringify(next, null, 2));
     setJsonValid(true);
-    setKeyConflict(false); // Clear conflict warning when config changes
-    setConflictKey(undefined);
+    // 只在模型键集合变化时清冲突：改其他字段（显示名 / 上下文 / base_url 等）
+    // 不应抹掉「该模型键已存在」的红框与提示——draft 还停在冲突键上
+    const prevKeys = Object.keys(config.models ?? {});
+    const nextKeys = Object.keys(next.models ?? {});
+    if (
+      prevKeys.length !== nextKeys.length ||
+      prevKeys.some((k) => !nextKeys.includes(k))
+    ) {
+      setKeyConflict(false);
+      setConflictKey(undefined);
+    }
   };
   const updateAccount = (next: Partial<AtomCodeConfig["account"]>) =>
     update({
@@ -314,11 +325,13 @@ export function AtomCodeProviderForm({
     }
     // 添加新勾选的模型
     for (const modelId of selection.add) {
-      // 生成唯一键
-      let key = modelId.replace(/[^a-zA-Z0-9._-]/g, "-");
+      // 生成唯一键；模型 id 全为非法字符时 sanitize 会产出空键，
+      // 回退到 model-N 兜底，避免「点了没反应」
+      const sanitized = modelId.replace(/[^a-zA-Z0-9._-]/g, "-");
+      let key = sanitized || "model";
       let index = 1;
       while (models[key]) {
-        key = `${modelId.replace(/[^a-zA-Z0-9._-]/g, "-")}-${index}`;
+        key = `${sanitized || "model"}-${index}`;
         index += 1;
       }
       models[key] = { model: modelId };
@@ -530,7 +543,7 @@ export function AtomCodeProviderForm({
                   {t("atomcode.form.modelId")}
                 </div>
                 <div className="min-w-0 flex-1 text-xs text-fg-2">
-                  {t("atomcode.form.modelName")}
+                  {t("atomcode.form.modelKey")}
                 </div>
                 <div className="w-36 shrink-0 text-xs text-fg-2">
                   {t("atomcode.form.contextWindow")}

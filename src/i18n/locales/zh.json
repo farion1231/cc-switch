@@ -5262,7 +5262,19 @@
       "removeModel": "移除模型"
     },
     "error": {
-      "defaultModelInUse": "AtomCode 正在使用该供应商的模型，请先在 AtomCode 中用 /model 切换到其他模型"
+      "defaultModelInUse": "AtomCode 正在使用该供应商的模型，请先在 AtomCode 中用 /model 切换到其他模型",
+      "removeSelected": "AtomCode 正在选中该供应商，请先在 AtomCode 中切换到其他供应商再移除",
+      "legacyRemoveUnsupported": "该卡片来自旧版 [providers.*] 配置，只读展示无法直接移除；请先运行一次 AtomCode 让它自动迁移为新格式，之后即可正常删除",
+      "accountKeyExists": "AtomCode 账号键已存在",
+      "accountKeyRequired": "请输入 AtomCode 账号键",
+      "accountKeyInvalid": "AtomCode 账号键只能使用字母、数字、-、_ 和 .",
+      "providerUnsupported": "不支持该接口类型，请选择受支持的 AtomCode 供应商",
+      "endpointInvalid": "请输入有效的 AtomCode 请求地址（http/https）",
+      "noModels": "请至少添加一个模型",
+      "modelInvalid": "AtomCode 模型需要键、模型 ID，且 account 与本账号一致",
+      "contextWindowInvalid": "上下文窗口必须是正整数",
+      "modelKeyBelongsToAnother": "该模型键已属于其他供应商",
+      "tomlInvalid": "AtomCode 配置文件格式无效，请检查 config.toml"
     }
   },
   "dsh": {

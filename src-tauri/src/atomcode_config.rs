@@ -352,6 +352,18 @@ fn apply_provider(
         .and_then(|accounts| accounts.get(id))
         .is_some();
     if config.is_none() && !exists {
+        // legacy `[providers.*]` 投影出来的卡不在 provider_accounts 里，删除只动
+        // 新 schema 节点 → 静默无效、下次启动又回来。明确拒绝并指路：先在
+        // AtomCode 里跑一次让它自己迁移成新格式，之后正常删。
+        if document
+            .get("providers")
+            .and_then(Value::as_object)
+            .is_some_and(|legacy| legacy.contains_key(id))
+        {
+            return Err(AppError::InvalidInput(
+                "This provider comes from a legacy [providers.*] configuration; run AtomCode once to migrate it, then remove it".into(),
+            ));
+        }
         return Ok(before.clone());
     }
     if create && exists {
@@ -387,7 +399,9 @@ fn apply_provider(
             }
         }
         // Editing the current account must not delete or rename the default model.
-        if let Some(default_key) = document.get("default_model").and_then(Value::as_str) {
+        // 与 current_provider 同一 dual-field 口径：default_model 优先，回退 legacy
+        // default_provider——只写了 legacy 字段的配置同样受保护，不留悬空选择。
+        if let Some(default_key) = effective_default_model_key(&document) {
             if document["models"]
                 .as_object()
                 .unwrap()
@@ -447,10 +461,22 @@ fn apply_provider(
     Ok(document)
 }
 
+/// 按 AtomCode `effective_model_selection()` 的口径解析当前选中的模型键：
+/// `default_model` 优先，回退 legacy `default_provider`。守卫与选中判定
+/// 必须用同一口径，否则只写 legacy 字段的配置会漏拦、留下悬空选择。
+fn effective_default_model_key(document: &Value) -> Option<&str> {
+    ["default_model", "default_provider"]
+        .iter()
+        .find_map(|field| {
+            document
+                .get(*field)
+                .and_then(Value::as_str)
+                .filter(|key| !key.is_empty())
+        })
+}
+
 fn selected_model_belongs_to(document: &Value, id: &str) -> bool {
-    document
-        .get("default_model")
-        .and_then(Value::as_str)
+    effective_default_model_key(document)
         .and_then(|key| document.get("models").and_then(|models| models.get(key)))
         .and_then(|model| model.get("account"))
         .and_then(Value::as_str)
@@ -1031,5 +1057,100 @@ model = "m1"
             "models": {"other-new": {"model": "deepseek-reasoner"}}  // renamed model
         });
         save_at_and_commit(&path, "other", Some(edit_other), false, || Ok(())).unwrap();
+    }
+
+    /// dual-field 口径：只写 legacy `default_provider`（无 `default_model`）时，
+    /// 删除/改名选中账号的默认模型同样要被拦，不留悬空的 legacy 选择。
+    #[test]
+    fn legacy_default_provider_only_config_is_guarded_too() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+default_provider = "acct-key-a"
+
+[provider_accounts.acct]
+provider = "openai"
+
+[models."acct-key-a"]
+account = "acct"
+model = "key-a"
+"#,
+        )
+        .unwrap();
+        // 改名默认模型 → 拒绝
+        let renamed = json!({
+            "account": {"provider": "openai"},
+            "models": {"acct-key-renamed": {"model": "key-a"}}
+        });
+        let result = save_at_and_commit(&path, "acct", Some(renamed), false, || Ok(()));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("default model"));
+        // 删除选中的默认模型 → 拒绝
+        let deleted = json!({
+            "account": {"provider": "openai"},
+            "models": {}
+        });
+        let result = save_at_and_commit(&path, "acct", Some(deleted), false, || Ok(()));
+        assert!(result.is_err());
+        // 删除被选中的账号 → 拒绝（selected_model_belongs_to 走同一解析）
+        let result = save_at_and_commit(&path, "acct", None, false, || Ok(()));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("another"));
+    }
+
+    /// legacy `[providers.*]` 投影卡：删除必须明确拒绝（只删库会静默无效、
+    /// 下次启动复活），错误信息指路「先在 AtomCode 里跑一次完成迁移」。
+    #[test]
+    #[serial]
+    fn legacy_projection_cannot_be_removed() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let _home = AtomcodeHomeGuard::set(dir.path());
+        fs::write(
+            &path,
+            r#"
+default_provider = "deepseek"
+
+[providers.deepseek]
+type = "openai"
+api_key = "sk-xxx"
+model = "deepseek-chat"
+base_url = "https://api.deepseek.com/v1"
+"#,
+        )
+        .unwrap();
+        // 投影卡在导入列表里可见
+        assert!(get_providers().unwrap().contains_key("deepseek"));
+        // 删除被明确拒绝，错误指路迁移
+        let result = save_at_and_commit(&path, "deepseek", None, false, || Ok(()));
+        let error = result.unwrap_err().to_string();
+        assert!(error.contains("legacy [providers.*]"));
+        assert!(error.contains("run AtomCode once to migrate it"));
+        // 配置文件原样保留（只读投影未被写盘改动）
+        assert!(fs::read_to_string(&path)
+            .unwrap()
+            .contains("[providers.deepseek]"));
+        // 迁移成新格式后即可正常删除（先不在 AtomCode 里选中该账号，
+        // 否则触发的会是 removeSelected 而不是迁移指路）
+        fs::write(
+            &path,
+            r#"
+default_model = ""
+
+[provider_accounts.deepseek]
+provider = "openai"
+
+[models."acct/new"]
+account = "deepseek"
+model = "deepseek-chat"
+"#,
+        )
+        .unwrap();
+        save_at_and_commit(&path, "deepseek", None, false, || Ok(())).unwrap();
+        assert!(read(&path).unwrap()["provider_accounts"]
+            .get("deepseek")
+            .is_none());
     }
 }
