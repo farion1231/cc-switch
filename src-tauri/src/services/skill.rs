@@ -1753,7 +1753,9 @@ impl SkillService {
         }
 
         // 备份旧文件
-        let _ = Self::create_uninstall_backup(&skill);
+        if let Err(e) = Self::create_uninstall_backup(&skill) {
+            log::warn!("更新前备份 Skill {} 失败: {e}", skill.directory);
+        }
 
         if !(skill.apps.mcode
             || skill.apps.agy
@@ -1762,10 +1764,7 @@ impl SkillService {
             || skill.apps.copilot
             || skill.apps.workbuddy)
         {
-            if dest.exists() {
-                fs::remove_dir_all(&dest)?;
-            }
-            Self::copy_dir_recursive(&source, &dest)?;
+            Self::replace_dir_staged(&source, &dest)?;
         }
 
         // 计算新哈希 + 解析新元数据
@@ -1874,6 +1873,47 @@ impl SkillService {
 
         log::info!("Skill {} 更新成功", updated_skill.name);
         Ok(updated_skill)
+    }
+
+    /// Copy `source` into a sibling staging directory first and only then swap it
+    /// in for `dest`, so a copy that fails part-way (I/O error, permissions, path
+    /// length) leaves the installed skill untouched instead of deleting it (#9521).
+    fn replace_dir_staged(source: &Path, dest: &Path) -> Result<()> {
+        let parent = dest.parent().context("Skill destination has no parent")?;
+        fs::create_dir_all(parent)?;
+        let staging = tempfile::Builder::new()
+            .prefix(".skill-update-")
+            .tempdir_in(parent)?;
+        let replacement = staging.path().join("new");
+        Self::copy_dir_recursive(source, &replacement)?;
+
+        let previous = staging.path().join("old");
+        let existed = dest.exists() || Self::is_symlink(dest);
+        if existed {
+            fs::rename(dest, &previous)?;
+        }
+        if let Err(error) = fs::rename(&replacement, dest) {
+            if existed {
+                if let Err(restore_error) = fs::rename(&previous, dest) {
+                    let kept = staging.keep();
+                    return Err(anyhow!(
+                        "{error}; restoring the previous skill failed: {restore_error}; previous copy kept at {}",
+                        kept.join("old").display()
+                    ));
+                }
+            }
+            return Err(error.into());
+        }
+        // The new copy is in place; a leftover staging dir is hidden from skill
+        // scans, so failing to delete it only warrants a warning.
+        let staging_path = staging.path().to_path_buf();
+        if let Err(error) = staging.close() {
+            log::warn!(
+                "Skill updated, but removing staging dir {} failed: {error}",
+                staging_path.display()
+            );
+        }
+        Ok(())
     }
 
     // Keep the old SSOT and native copies until metadata is committed. In particular,
@@ -5322,6 +5362,48 @@ mod tests {
         drop(second_reader);
         drop(first_reader);
         assert!(skill_state_lock().try_write().is_ok());
+    }
+
+    #[test]
+    fn replace_dir_staged_keeps_installed_skill_when_copy_fails() {
+        let root = tempdir().expect("tempdir");
+        let dest = root.path().join("skills").join("demo");
+        fs::create_dir_all(&dest).unwrap();
+        fs::write(dest.join("SKILL.md"), "old").unwrap();
+
+        let missing_source = root.path().join("missing");
+        assert!(SkillService::replace_dir_staged(&missing_source, &dest).is_err());
+
+        assert_eq!(fs::read_to_string(dest.join("SKILL.md")).unwrap(), "old");
+        let leftovers: Vec<_> = fs::read_dir(dest.parent().unwrap())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .filter(|name| name != "demo")
+            .collect();
+        assert!(leftovers.is_empty(), "staging left behind: {leftovers:?}");
+    }
+
+    #[test]
+    fn replace_dir_staged_swaps_in_new_contents() {
+        let root = tempdir().expect("tempdir");
+        let source = root.path().join("source");
+        fs::create_dir_all(source.join("nested")).unwrap();
+        fs::write(source.join("SKILL.md"), "new").unwrap();
+        fs::write(source.join("nested").join("a.txt"), "a").unwrap();
+        let dest = root.path().join("skills").join("demo");
+        fs::create_dir_all(&dest).unwrap();
+        fs::write(dest.join("SKILL.md"), "old").unwrap();
+        fs::write(dest.join("stale.txt"), "stale").unwrap();
+
+        SkillService::replace_dir_staged(&source, &dest).unwrap();
+
+        assert_eq!(fs::read_to_string(dest.join("SKILL.md")).unwrap(), "new");
+        assert_eq!(
+            fs::read_to_string(dest.join("nested").join("a.txt")).unwrap(),
+            "a"
+        );
+        assert!(!dest.join("stale.txt").exists());
+        assert_eq!(fs::read_dir(dest.parent().unwrap()).unwrap().count(), 1);
     }
 
     #[test]

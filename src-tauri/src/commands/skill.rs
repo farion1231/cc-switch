@@ -112,7 +112,6 @@ pub async fn restore_skill_backup(
     .await
 }
 
-/// 切换 Skill 的应用启用状态
 #[tauri::command]
 pub async fn toggle_skill_app(
     id: String,
@@ -128,7 +127,6 @@ pub async fn toggle_skill_app(
     .await
 }
 
-/// 扫描未管理的 Skills
 #[tauri::command]
 pub async fn scan_unmanaged_skills(
     app_state: State<'_, AppState>,
@@ -214,7 +212,6 @@ pub async fn resync_skills_to_apps(
         .map_err(|e| format!("重新同步 Skill 失败: {e}"))
 }
 
-/// 更新单个 Skill
 #[tauri::command]
 pub async fn update_skill(
     id: String,
@@ -405,7 +402,6 @@ pub async fn uninstall_skill_for_app(
 
 // ========== 仓库管理命令 ==========
 
-/// 获取技能仓库列表
 #[tauri::command]
 pub async fn get_skill_repos(app_state: State<'_, AppState>) -> Result<Vec<SkillRepo>, String> {
     run_db_task(&app_state, |state| {
@@ -414,7 +410,6 @@ pub async fn get_skill_repos(app_state: State<'_, AppState>) -> Result<Vec<Skill
     .await
 }
 
-/// 添加技能仓库
 #[tauri::command]
 pub async fn add_skill_repo(
     repo: SkillRepo,
@@ -431,7 +426,6 @@ pub async fn add_skill_repo(
     .await
 }
 
-/// 删除技能仓库
 #[tauri::command]
 pub async fn remove_skill_repo(
     owner: String,

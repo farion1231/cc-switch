@@ -45,15 +45,14 @@ use super::operation;
 use super::stack::{self, StackModel, StackView};
 use super::state::{op, Contract, Mode, ModeState, PendingTarget, StackState};
 
-/// 有路由模式的应用（[`AppType::has_route_mode`]）。Claude Desktop 也在内：它经同一个路由
-/// 服务转发，只是没有故障转移。
-pub const PROXY_APPS: [AppType; 5] = [
-    AppType::Claude,
-    AppType::Codex,
-    AppType::Gemini,
-    AppType::GrokBuild,
-    AppType::ClaudeDesktop,
-];
+/// 有路由模式的应用（[`AppSpec::route_mode`](crate::app_config::AppSpec::route_mode)）：本地路由的
+/// 在前，Claude Desktop 在最后（它经同一个路由服务转发，只是没有故障转移）。
+fn route_mode_apps() -> impl Iterator<Item = AppType> {
+    let apps = || AppType::all().filter(|app| app.spec().route_mode);
+    apps()
+        .filter(|app| app.spec().local_proxy)
+        .chain(apps().filter(|app| !app.spec().local_proxy))
+}
 
 fn err(error: impl std::fmt::Display) -> String {
     error.to_string()
@@ -668,7 +667,7 @@ fn usable_direct<'a>(app: &AppType, direct: Option<&'a Provider>) -> Option<&'a 
 }
 
 fn require_proxy_app(app: &AppType) -> Result<(), String> {
-    if app.has_route_mode() {
+    if app.spec().route_mode {
         Ok(())
     } else {
         Err(format!("{} 不支持本地路由", app.as_str()))
@@ -708,7 +707,7 @@ pub(crate) fn lock_settled_blocking(
     state: &AppState,
     app: &AppType,
 ) -> Result<Option<OwnedMutexGuard<()>>, AppError> {
-    if !app.has_route_mode() {
+    if !app.spec().route_mode {
         return Ok(None);
     }
     futures::executor::block_on(lock_settled(state, app)).map(Some)
@@ -750,7 +749,7 @@ async fn try_enter_with_route(
     route: Option<&str>,
 ) -> Result<(), String> {
     require_proxy_app(app)?;
-    if stack_mode && !stack::supports_stack(app) {
+    if stack_mode && !app.spec().stack {
         return Err(format!(
             "{} 不支持聚合模式 ({} does not support the Aggregation mode)",
             app.as_str(),
@@ -915,7 +914,7 @@ pub async fn exit(state: &AppState, app: &AppType) -> Result<(), String> {
 /// Codex 退回直连，名单留着。返回退回直连的应用。
 pub async fn exit_apps_in_mode(state: &AppState, stack: bool) -> Result<Vec<String>, String> {
     let mut exited = Vec::new();
-    for app in PROXY_APPS.into_iter().filter(stack::supports_stack) {
+    for app in route_mode_apps().filter(|app| app.spec().stack) {
         {
             let _guard = lock_settled(state, &app).await.map_err(|e| e.to_string())?;
             if !current::is_proxy(&app) || settled_stack(&app)?.enabled != stack {
@@ -1000,7 +999,7 @@ fn write_direct_for_exit(
 
 /// 没有应用在代理模式（含 Claude Desktop 的路由模式）时，停掉代理服务。
 async fn stop_server_if_unused(state: &AppState) {
-    if current::proxy_flags(PROXY_APPS).contains(&true) {
+    if current::any_proxy() {
         return;
     }
     if state.proxy_service.is_running().await {
@@ -1013,7 +1012,7 @@ async fn stop_server_if_unused(state: &AppState) {
 /// 「关闭本地路由」：全部退回直连，再停掉代理服务。
 pub async fn exit_all(state: &AppState) -> Result<(), String> {
     let mut errors = Vec::new();
-    for app in PROXY_APPS {
+    for app in route_mode_apps() {
         let result = match lock_settled(state, &app).await {
             Ok(_guard) => exit_locked(state, &app, false),
             Err(error) => Err(error.to_string()),
@@ -1044,10 +1043,7 @@ pub async fn exit_all(state: &AppState) -> Result<(), String> {
 /// 分离反而会在 CC Switch 关着时把 Desktop 换成直连那家（映射卡写不进去时是官方登录），
 /// 下次打开 CC Switch 又换回来，每次都要重启 Desktop。
 pub async fn detach_all(state: &AppState) {
-    for app in PROXY_APPS
-        .into_iter()
-        .filter(|app| *app != AppType::ClaudeDesktop)
-    {
+    for app in route_mode_apps().filter(|app| *app != AppType::ClaudeDesktop) {
         let result = match lock_settled(state, &app).await {
             Ok(_guard) => exit_locked(state, &app, true),
             Err(error) => Err(error.to_string()),
@@ -1319,7 +1315,7 @@ pub async fn set_stack_member(
     provider_id: &str,
     enabled: bool,
 ) -> Result<Option<&'static str>, StackWriteError> {
-    if !stack::supports_stack(app) {
+    if !app.spec().stack {
         return Err(StackWriteError::unchanged(format!(
             "{} 不支持聚合的模型 ({} does not support aggregated models)",
             app.as_str(),
@@ -1403,7 +1399,7 @@ async fn publish_stack(state: &AppState, app: &AppType, next: StackState) -> Res
 /// 模型目录等），界面「已添加」却按 `sort_index` 排。只重排已有成员，不增删；顺序没变就什么
 /// 都不写。不在库里的成员（理论上不会有）排到最后，保持原相对顺序。
 pub async fn sync_stack_order(state: &AppState, app: &AppType) -> Result<(), String> {
-    if !stack::supports_stack(app) {
+    if !app.spec().stack {
         return Ok(());
     }
     let _guard = lock_settled(state, app).await.map_err(err)?;
@@ -1428,7 +1424,7 @@ pub async fn sync_stack_order(state: &AppState, app: &AppType) -> Result<(), Str
 
 /// Stack 模式的状态、名单里的每一家和它发布的模型 id（给前端）。
 pub fn stack_views(state: &AppState, app: &AppType) -> Result<StackView, String> {
-    if !stack::supports_stack(app) {
+    if !app.spec().stack {
         return Ok(StackView::default());
     }
     let stack = settled_stack(app)?;
@@ -1685,7 +1681,7 @@ fn codex_official_login_now(
 /// 不了）不影响其余应用：旧地址已经没人监听，跳过的应用会一直连不上。失败的汇总报错。
 pub async fn resync_routes(state: &AppState) -> Result<(), String> {
     let mut failures = Vec::new();
-    for app in PROXY_APPS {
+    for app in route_mode_apps() {
         if let Err(error) = resync_route(state, &app).await {
             log::warn!("按新的代理地址重写 {} 失败: {error}", app.as_str());
             failures.push(format!("{}: {error}", app.as_str()));
@@ -1751,7 +1747,7 @@ pub async fn record_failover_route(
 /// 有遗留物时以 `enabled` 为准（旧版是最后一个写入者）；没有时以 `live-state.json`
 /// 为准，它还没有值就按 `enabled` 定。
 pub async fn startup(state: &AppState) {
-    for app in PROXY_APPS {
+    for app in route_mode_apps() {
         let result = match lock_settled(state, &app).await {
             Ok(_guard) => startup_app(state, &app).await,
             Err(error) => Err(error.to_string()),
@@ -1808,7 +1804,7 @@ async fn startup_app(state: &AppState, app: &AppType) -> Result<(), String> {
             Ok(()) => return Ok(()),
             Err(error) => {
                 log::error!("启动时接上 {} 的代理失败，退回直连: {error}", app.as_str());
-                let stack = stack::supports_stack(app)
+                let stack = app.spec().stack
                     && settled_stack(app)
                         .map(|stack| stack.enabled)
                         .unwrap_or(false);
@@ -1962,7 +1958,7 @@ pub fn app_mode_view(state: &AppState, app: &AppType) -> Result<AppModeView, Str
     let mode = current::mode_state(app);
     let name = if !mode.is_proxy() {
         "direct"
-    } else if stack::supports_stack(app) && settled_stack(app)?.enabled {
+    } else if app.spec().stack && settled_stack(app)?.enabled {
         "stack"
     } else {
         "route"
@@ -2014,6 +2010,21 @@ mod tests {
     use crate::provider::ProviderMeta;
     use serde_json::Map;
     use std::path::Path;
+
+    /// 启动、退出、重写路由按这个顺序处理各应用，Claude Desktop 在最后。
+    #[test]
+    fn route_mode_apps_keep_desktop_last() {
+        assert_eq!(
+            route_mode_apps().collect::<Vec<_>>(),
+            [
+                AppType::Claude,
+                AppType::Codex,
+                AppType::Gemini,
+                AppType::GrokBuild,
+                AppType::ClaudeDesktop,
+            ]
+        );
+    }
 
     fn assert_env_str(env: &Map<String, Value>, key: &str, expected: Option<&str>) {
         assert_eq!(env.get(key).and_then(Value::as_str), expected, "{key}");
@@ -2726,8 +2737,19 @@ mod mode_tests {
         fs::write(path, text).unwrap();
     }
 
+    /// 落定后的 `settings.json`：切换写进去的空值墓碑几秒后才删（见 `claude_direct`），
+    /// 这里先把它们删完再读。
+    fn settled_bytes() -> Vec<u8> {
+        crate::services::provider::claude_direct::settle_tombstones();
+        fs::read(settings_path()).unwrap()
+    }
+
+    fn settled_string() -> String {
+        String::from_utf8(settled_bytes()).unwrap()
+    }
+
     fn settings() -> Value {
-        serde_json::from_slice(&fs::read(settings_path()).unwrap()).unwrap()
+        serde_json::from_slice(&settled_bytes()).unwrap()
     }
 
     fn mode(app: &AppType) -> ModeState {
@@ -2815,12 +2837,12 @@ mod mode_tests {
         exit(&state, &AppType::Claude).await.expect("exit");
         assert_back_to_user_settings();
         // 第一次写入可能挪动关键字段的位置，之后的往返字节稳定。
-        let settled = fs::read(settings_path()).unwrap();
+        let settled = settled_bytes();
         enter(&state, &AppType::Claude, false)
             .await
             .expect("enter again");
         exit(&state, &AppType::Claude).await.expect("exit again");
-        assert_eq!(fs::read(settings_path()).unwrap(), settled);
+        assert_eq!(settled_bytes(), settled);
         let left = mode(&AppType::Claude);
         assert_eq!(left.mode, Some(Mode::Direct));
         assert_eq!(left.proxy_route.as_deref(), Some("a"), "the route is kept");
@@ -2867,7 +2889,7 @@ mod mode_tests {
             "a",
         )
         .await;
-        let unchanged = fs::read(settings_path()).unwrap();
+        let unchanged = settled_bytes();
         for _ in 0..2 {
             let result = set_route(&state, &AppType::Claude, "b").await.unwrap();
             assert_eq!(
@@ -2878,7 +2900,7 @@ mod mode_tests {
                 }
             );
         }
-        assert_eq!(fs::read(settings_path()).unwrap(), unchanged);
+        assert_eq!(settled_bytes(), unchanged);
         assert!(!current::is_proxy(&AppType::Claude));
         enter(&state, &AppType::Claude, false).await.unwrap();
         let result = set_route(&state, &AppType::Claude, "a").await.unwrap();
@@ -2925,7 +2947,7 @@ mod mode_tests {
         )
         .await;
         enter(&state, &AppType::Claude, false).await.expect("enter");
-        let before = fs::read(settings_path()).unwrap();
+        let before = settled_bytes();
         let mtime = fs::metadata(settings_path()).unwrap().modified().unwrap();
 
         // 契约相同时客户端文件不读也不写：连读权限都拿掉，换路由照样成功。
@@ -2941,7 +2963,7 @@ mod mode_tests {
             fs::set_permissions(settings_path(), fs::Permissions::from_mode(0o600)).unwrap();
         }
 
-        assert_eq!(fs::read(settings_path()).unwrap(), before);
+        assert_eq!(settled_bytes(), before);
         assert_eq!(
             fs::metadata(settings_path()).unwrap().modified().unwrap(),
             mtime
@@ -3182,12 +3204,12 @@ mod mode_tests {
         )
         .await;
         enter(&state, &AppType::Claude, false).await.expect("enter");
-        let before = fs::read(settings_path()).unwrap();
+        let before = settled_bytes();
 
         assert!(record_failover_route(&state, &AppType::Claude, "b")
             .await
             .expect("record failover"));
-        assert_eq!(fs::read(settings_path()).unwrap(), before);
+        assert_eq!(settled_bytes(), before);
         assert_eq!(in_use(&state, &AppType::Claude).as_deref(), Some("b"));
         assert_eq!(direct(&state, &AppType::Claude).as_deref(), Some("a"));
         exit(&state, &AppType::Claude).await.expect("exit");
@@ -3226,7 +3248,7 @@ mod mode_tests {
                 .unwrap()
                 .is_none());
             if !expect_proxy {
-                assert_eq!(fs::read_to_string(settings_path()).unwrap(), USER_SETTINGS);
+                assert_eq!(settled_string(), USER_SETTINGS);
             }
             if state.proxy_service.is_running().await {
                 state.proxy_service.stop().await.unwrap();
@@ -3253,6 +3275,8 @@ mod mode_tests {
 
         crate::mode::operation::recover_on_startup(&state.db);
         assert_eq!(mode(&AppType::Claude).mode, Some(Mode::Direct));
+        // 补完的是崩溃前备好的文件，带着给开着的会话看的空值墓碑：写之前记下了，启动时接着删
+        crate::services::provider::claude_direct::resume_tombstone_sweep();
         assert_back_to_user_settings();
         if state.proxy_service.is_running().await {
             state.proxy_service.stop().await.unwrap();
@@ -3417,7 +3441,7 @@ mod mode_tests {
         enter(&state, &AppType::Claude, false)
             .await
             .expect("enter claude");
-        let routed = fs::read_to_string(settings_path()).unwrap();
+        let routed = settled_string();
 
         fs::write(settings_path(), "not json").unwrap();
         crate::commands::save_proxy_client_host(&state, " 172.25.144.1 ")
@@ -3434,7 +3458,7 @@ mod mode_tests {
         crate::commands::save_proxy_client_host(&state, "172.25.144.1")
             .await
             .expect("retry the same save");
-        let settings = fs::read_to_string(settings_path()).unwrap();
+        let settings = settled_string();
         assert!(settings.contains("http://172.25.144.1:"), "{settings}");
         assert!(
             crate::claude_desktop_config::proxy_gateway_base_url_from_db(&state.db)
@@ -3446,7 +3470,7 @@ mod mode_tests {
             .await
             .expect("clear the client host");
         assert_eq!(crate::settings::get_proxy_client_host(), None);
-        let settings = fs::read_to_string(settings_path()).unwrap();
+        let settings = settled_string();
         assert!(settings.contains("http://127.0.0.1:"), "{settings}");
         state.proxy_service.stop().await.unwrap();
     }
@@ -5980,7 +6004,7 @@ model_provider = "c"
         seed_settings(USER_SETTINGS);
         let state = state_with(AppType::Claude, &stack_rows(), "a").await;
         enter(&state, &AppType::Claude, true).await.expect("enter");
-        let only_default_bytes = fs::read(settings_path()).unwrap();
+        let only_default_bytes = settled_bytes();
         let only_default_contract = mode(&AppType::Claude).contract.unwrap();
 
         // 进入 Stack 模式时默认那家（a）已经在名单里，照常发布；四档都指向它的第一个模型。
@@ -6046,7 +6070,7 @@ model_provider = "c"
 
         // 只剩默认那家：客户端文件和契约回到刚进入时的样子，登记簿保留。
         set_member(&state, "zhipu", false).await;
-        assert_eq!(fs::read(settings_path()).unwrap(), only_default_bytes);
+        assert_eq!(settled_bytes(), only_default_bytes);
         assert_eq!(
             mode(&AppType::Claude).contract.unwrap(),
             only_default_contract
@@ -6108,7 +6132,7 @@ model_provider = "c"
 
         // 不在代理模式：只存名单，客户端文件不动。
         set_member(&state, "kimi", true).await;
-        assert_eq!(fs::read_to_string(settings_path()).unwrap(), USER_SETTINGS);
+        assert_eq!(settled_string(), USER_SETTINGS);
         assert!(stack_state().is_member("kimi"));
 
         enter(&state, &AppType::Claude, true).await.expect("enter");
@@ -6130,17 +6154,17 @@ model_provider = "c"
         seed_settings(USER_SETTINGS);
         let state = state_with(AppType::Claude, &stack_rows(), "a").await;
         enter(&state, &AppType::Claude, true).await.expect("enter");
-        let before = fs::read(settings_path()).unwrap();
+        let before = settled_bytes();
 
         // 路由那家已经在名单里：再加一次什么都不变。
         let views = set_member(&state, "a", true).await;
         assert_eq!(views.len(), 1);
-        assert_eq!(fs::read(settings_path()).unwrap(), before);
+        assert_eq!(settled_bytes(), before);
 
         set_member(&state, "kimi", true).await;
-        let with_kimi = fs::read(settings_path()).unwrap();
+        let with_kimi = settled_bytes();
         set_member(&state, "kimi", true).await;
-        assert_eq!(fs::read(settings_path()).unwrap(), with_kimi);
+        assert_eq!(settled_bytes(), with_kimi);
         assert_eq!(stack_state().members, vec!["a", "kimi"]);
 
         // 换默认到名单里的 kimi：四档跟着指向 kimi 的第一个模型，两家都照常发布。
@@ -6894,7 +6918,7 @@ model_provider = "c"
         seed_settings(USER_SETTINGS);
         let state = state_with(AppType::Claude, &stack_rows(), "a").await;
         enter(&state, &AppType::Claude, true).await.expect("enter");
-        let before = fs::read(settings_path()).unwrap();
+        let before = settled_bytes();
 
         // 进入 Stack 模式之前发出的路由请求，这时才转移到 kimi 成功。
         assert!(!record_failover_route(&state, &AppType::Claude, "kimi")
@@ -6902,7 +6926,7 @@ model_provider = "c"
             .expect("record failover"));
         assert_eq!(in_use(&state, &AppType::Claude).as_deref(), Some("a"));
         assert_eq!(stack_state().members, vec!["a"]);
-        assert_eq!(fs::read(settings_path()).unwrap(), before);
+        assert_eq!(settled_bytes(), before);
     }
 
     #[tokio::test]
