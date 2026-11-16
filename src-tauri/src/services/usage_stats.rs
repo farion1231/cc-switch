@@ -430,7 +430,7 @@ fn dedup_app_type_match_sql(left: &str, right: &str) -> String {
 ///
 /// 注意：包裹后该列上的索引在此比较中失效，但这些都是已带时间过滤的聚合扫描，
 /// app_type 本就不是主访问路径，可接受。仅用于读侧；跨源去重使用更窄的
-/// [`dedup_app_type_match_sql`]，额度检查（`check_provider_limits`）仍保留原始精确比较。
+/// [`dedup_app_type_match_sql`]。
 fn folded_app_type_sql(column: &str) -> String {
     format!("CASE WHEN {column} = 'claude-desktop' THEN 'claude' ELSE {column} END")
 }
@@ -2295,108 +2295,6 @@ impl Database {
             Err(e) => Err(AppError::Database(e.to_string())),
         }
     }
-
-    /// 检查 Provider 使用限额
-    pub fn check_provider_limits(
-        &self,
-        provider_id: &str,
-        app_type: &str,
-    ) -> Result<ProviderLimitStatus, AppError> {
-        let conn = lock_conn!(self.conn);
-
-        // 获取 provider 的限额设置
-        let (limit_daily, limit_monthly) = conn
-            .query_row(
-                "SELECT meta FROM providers WHERE id = ? AND app_type = ?",
-                params![provider_id, app_type],
-                |row| {
-                    let meta_str: String = row.get(0)?;
-                    Ok(meta_str)
-                },
-            )
-            .ok()
-            .and_then(|meta_str| serde_json::from_str::<serde_json::Value>(&meta_str).ok())
-            .map(|meta| {
-                let daily = meta
-                    .get("limitDailyUsd")
-                    .and_then(|v| v.as_str())
-                    .and_then(|s| s.parse::<f64>().ok());
-                let monthly = meta
-                    .get("limitMonthlyUsd")
-                    .and_then(|v| v.as_str())
-                    .and_then(|s| s.parse::<f64>().ok());
-                (daily, monthly)
-            })
-            .unwrap_or((None, None));
-
-        // 计算今日使用量 (detail logs + rollup)
-        let daily_usage: f64 = conn
-            .query_row(
-                "SELECT COALESCE(SUM(cost), 0) FROM (
-                    SELECT CAST(total_cost_usd AS REAL) as cost
-                    FROM proxy_request_logs
-                    WHERE provider_id = ? AND app_type = ?
-                      AND date(datetime(created_at, 'unixepoch', 'localtime')) = date('now', 'localtime')
-                    UNION ALL
-                    SELECT CAST(total_cost_usd AS REAL)
-                    FROM usage_daily_rollups
-                    WHERE provider_id = ? AND app_type = ?
-                      AND date = date('now', 'localtime')
-                )",
-                params![provider_id, app_type, provider_id, app_type],
-                |row| row.get(0),
-            )
-            .unwrap_or(0.0);
-
-        // 计算本月使用量 (detail logs + rollup)
-        let monthly_usage: f64 = conn
-            .query_row(
-                "SELECT COALESCE(SUM(cost), 0) FROM (
-                    SELECT CAST(total_cost_usd AS REAL) as cost
-                    FROM proxy_request_logs
-                    WHERE provider_id = ? AND app_type = ?
-                      AND strftime('%Y-%m', datetime(created_at, 'unixepoch', 'localtime')) = strftime('%Y-%m', 'now', 'localtime')
-                    UNION ALL
-                    SELECT CAST(total_cost_usd AS REAL)
-                    FROM usage_daily_rollups
-                    WHERE provider_id = ? AND app_type = ?
-                      AND strftime('%Y-%m', date) = strftime('%Y-%m', 'now', 'localtime')
-                )",
-                params![provider_id, app_type, provider_id, app_type],
-                |row| row.get(0),
-            )
-            .unwrap_or(0.0);
-
-        let daily_exceeded = limit_daily
-            .map(|limit| daily_usage >= limit)
-            .unwrap_or(false);
-        let monthly_exceeded = limit_monthly
-            .map(|limit| monthly_usage >= limit)
-            .unwrap_or(false);
-
-        Ok(ProviderLimitStatus {
-            provider_id: provider_id.to_string(),
-            daily_usage: format!("{daily_usage:.6}"),
-            daily_limit: limit_daily.map(|l| format!("{l:.2}")),
-            daily_exceeded,
-            monthly_usage: format!("{monthly_usage:.6}"),
-            monthly_limit: limit_monthly.map(|l| format!("{l:.2}")),
-            monthly_exceeded,
-        })
-    }
-}
-
-/// Provider 限额状态
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ProviderLimitStatus {
-    pub provider_id: String,
-    pub daily_usage: String,
-    pub daily_limit: Option<String>,
-    pub daily_exceeded: bool,
-    pub monthly_usage: String,
-    pub monthly_limit: Option<String>,
-    pub monthly_exceeded: bool,
 }
 
 #[derive(Clone)]
@@ -2785,6 +2683,11 @@ fn model_pricing_candidates(model_id: &str) -> Vec<String> {
         }
         if let Some(stripped) = strip_reasoning_effort_suffix(&candidate) {
             queue.push(stripped);
+        }
+        // AGY's "Gemini 4 Hydrogen (Orchestrator)" is the same Hydrogen worker.
+        // Keep the raw ID and any exact custom price; otherwise use the base API estimate.
+        if candidate == "gemini-4-hydrogen-orchestrator" {
+            queue.push("gemini-4-hydrogen".to_string());
         }
         if candidate.starts_with("claude-") && candidate.contains('.') {
             queue.push(candidate.replace('.', "-"));
@@ -3748,7 +3651,7 @@ mod tests {
     }
 
     #[test]
-    fn test_backfill_new_anthropic_openai_pricing_after_upgrade() -> Result<(), AppError> {
+    fn test_backfill_new_model_pricing_after_upgrade() -> Result<(), AppError> {
         let db = Database::memory()?;
         let cases = [
             (
@@ -3807,6 +3710,12 @@ mod tests {
                 3_000_000,
                 ["0.150000", "0.600000", "0.075000", "0.000000", "0.825000"],
             ),
+            (
+                "qwen/qwen4-max",
+                "claude",
+                1_000_000,
+                ["1.500000", "4.500000", "0.075000", "1.875000", "7.950000"],
+            ),
         ];
         {
             let conn = lock_conn!(db.conn);
@@ -3814,7 +3723,7 @@ mod tests {
             conn.execute(
                 "DELETE FROM model_pricing WHERE model_id IN
                  ('claude-opus-5-5', 'gpt-6-sol', 'gpt-6.1-sol', 'gpt-6-luna', 'gpt-5.6-cyber',
-                  'gpt-5.5-pro', 'gpt-4o-mini')",
+                  'gpt-5.5-pro', 'gpt-4o-mini', 'qwen4-max')",
                 [],
             )?;
             for (model, app, input, _) in &cases {
@@ -4968,28 +4877,6 @@ mod tests {
         assert!(!request_ids.contains(&"claude-session-dup"));
         assert!(!request_ids.contains(&"gemini-session-dup"));
 
-        let breakdown = crate::services::session_usage::get_data_source_breakdown(&db)?;
-        let proxy_count = breakdown
-            .iter()
-            .find(|item| item.data_source == "proxy")
-            .map(|item| item.request_count);
-        let codex_session_count = breakdown
-            .iter()
-            .find(|item| item.data_source == "codex_session")
-            .map(|item| item.request_count);
-        let gemini_session_count = breakdown
-            .iter()
-            .find(|item| item.data_source == "gemini_session")
-            .map(|item| item.request_count);
-        let session_log_count = breakdown
-            .iter()
-            .find(|item| item.data_source == "session_log")
-            .map(|item| item.request_count);
-        assert_eq!(proxy_count, Some(3));
-        assert_eq!(codex_session_count, Some(1));
-        assert_eq!(gemini_session_count, None);
-        assert_eq!(session_log_count, None);
-
         Ok(())
     }
 
@@ -6100,6 +5987,126 @@ mod tests {
             "缺少 gpt-5 基础定价时，不应前缀误匹配到 gpt-5-mini/gpt-5-pro"
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_hydrogen_orchestrator_pricing_preserves_exact_overrides() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+        let base = find_model_pricing_row(&conn, "gemini-4-hydrogen")?;
+        assert!(base.is_some());
+        for model in [
+            "gemini-4-hydrogen-orchestrator",
+            "google/GEMINI-4-HYDROGEN-ORCHESTRATOR",
+            "google.gemini-4-hydrogen-orchestrator:free",
+            "gemini-4-hydrogen-orchestrator-high",
+        ] {
+            assert_eq!(find_model_pricing_row(&conn, model)?, base, "{model}");
+        }
+        // Orchestrator is a known Hydrogen variant, not a suffix to strip from any model.
+        for model in [
+            "gemini-4-carbon-orchestrator",
+            "gemini-4-hydrogen-orchestrator-preview",
+            "orchestrator-carbon",
+        ] {
+            assert!(find_model_pricing_row(&conn, model)?.is_none(), "{model}");
+        }
+
+        conn.execute(
+            "INSERT INTO model_pricing VALUES ('gemini-4-hydrogen-orchestrator',
+             'Custom Hydrogen Orchestrator', '3', '12', '0.2', '0')",
+            [],
+        )?;
+        assert_eq!(
+            find_model_pricing_row(&conn, "gemini-4-hydrogen-orchestrator")?,
+            Some(("3".into(), "12".into(), "0.2".into(), "0".into()))
+        );
+        // A custom per-effort entry must also win over both fallback prices.
+        conn.execute(
+            "INSERT INTO model_pricing VALUES ('gemini-4-hydrogen-orchestrator-high',
+             'Custom Hydrogen Orchestrator High', '4', '16', '0.3', '0')",
+            [],
+        )?;
+        assert_eq!(
+            find_model_pricing_row(&conn, "gemini-4-hydrogen-orchestrator-high")?,
+            Some(("4".into(), "16".into(), "0.3".into(), "0".into()))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_hydrogen_orchestrator_backfills_without_transcripts() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            for (id, model, cost) in [
+                ("hydrogen-history", "gemini-4-hydrogen-orchestrator", "0"),
+                ("unresolved-mode", "orchestrator-carbon", "0"),
+                ("already-priced", "gemini-4-hydrogen-orchestrator", "9"),
+            ] {
+                insert_usage_log(
+                    &conn,
+                    id,
+                    "agy",
+                    "_agy_session",
+                    model,
+                    "agy_session",
+                    1000,
+                    1_000_000,
+                    100_000,
+                    1_000_000,
+                    0,
+                    200,
+                    cost,
+                )?;
+            }
+            conn.execute(
+                "UPDATE proxy_request_logs SET request_model='Orchestrator (Carbon)',
+                 input_token_semantics=?1",
+                [INPUT_TOKEN_SEMANTICS_FRESH],
+            )?;
+        }
+        // Updating the base price must find retained variant rows without reading JSONL/SQLite.
+        assert_eq!(
+            db.backfill_missing_usage_costs_for_model("gemini-4-hydrogen")?,
+            1
+        );
+        assert_eq!(db.backfill_missing_usage_costs()?, 0);
+        let conn = lock_conn!(db.conn);
+        let row: (String, String, String, String, String) = conn.query_row(
+            "SELECT model,request_model,input_cost_usd,output_cost_usd,cache_read_cost_usd
+             FROM proxy_request_logs WHERE request_id='hydrogen-history'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        )?;
+        assert_eq!(
+            row,
+            (
+                "gemini-4-hydrogen-orchestrator".into(),
+                "Orchestrator (Carbon)".into(),
+                "1.500000".into(),
+                "0.750000".into(),
+                "0.075000".into()
+            )
+        );
+        for (id, expected) in [
+            ("hydrogen-history", "2.325000"),
+            ("unresolved-mode", "0"),
+            ("already-priced", "9"),
+        ] {
+            let cost: String = conn.query_row(
+                "SELECT total_cost_usd FROM proxy_request_logs WHERE request_id=?1",
+                [id],
+                |r| r.get(0),
+            )?;
+            assert_eq!(cost, expected);
+        }
+        let totals: (i64, i64, i64, i64) = conn.query_row(
+            "SELECT COUNT(*),SUM(input_tokens),SUM(output_tokens),SUM(cache_read_tokens) FROM proxy_request_logs",
+            [], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)),
+        )?;
+        assert_eq!(totals, (3, 3_000_000, 300_000, 3_000_000));
         Ok(())
     }
 

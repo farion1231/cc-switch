@@ -995,28 +995,18 @@
         }
       }
     },
-    "configDirectoryOverride": "設定目錄覆寫（進階）",
     "configDirectoryDescription": "在 WSL 等環境使用 Claude Code 或 Codex 的時候，可手動指定為 WSL 裡的設定目錄，供應商資料與主環境保持一致。",
     "appConfigDir": "CC Switch 設定目錄",
     "appConfigDirDescription": "自訂 CC Switch 的設定儲存位置（指定至雲端同步資料夾即可雲端同步設定）",
     "browsePlaceholderApp": "例如：C:\\Users\\Administrator\\.cc-switch",
-    "claudeConfigDir": "Claude Code 設定目錄",
     "claudeConfigDirDescription": "覆寫 Claude 設定目錄 (settings.json)。真正自訂目錄會在目錄內存放 Claude MCP 的 .claude.json；預設 ~/.claude 目錄仍使用 Claude 預設的 ~/.claude.json。",
-    "codexConfigDir": "Codex 設定目錄",
     "codexConfigDirDescription": "覆寫 Codex 設定目錄。",
-    "geminiConfigDir": "Gemini 設定目錄",
     "geminiConfigDirDescription": "覆寫 Gemini 設定目錄 (.env)。",
-    "grokConfigDir": "Grok Build 設定目錄",
     "grokConfigDirDescription": "覆寫 Grok Build 設定目錄 (config.toml)。",
-    "opencodeConfigDir": "OpenCode 設定目錄",
     "opencodeConfigDirDescription": "覆寫 OpenCode 設定目錄 (opencode.json / opencode.jsonc)。",
-    "openclawConfigDir": "OpenClaw 設定目錄",
     "openclawConfigDirDescription": "覆寫 OpenClaw 設定目錄 (openclaw.json)。",
-    "hermesConfigDir": "Hermes 設定目錄",
     "hermesConfigDirDescription": "覆寫 Hermes 設定目錄 (config.yaml)。",
-    "piConfigDir": "Pi 設定目錄",
     "piConfigDirDescription": "覆寫 Pi 設定目錄（models.json、指示檔案、提示、Skills 與工作階段）。",
-    "ompConfigDir": "Oh My Pi 設定目錄",
     "browsePlaceholderClaude": "例如：/home/<您的帳號>/.claude",
     "browsePlaceholderCodex": "例如：/home/<您的帳號>/.codex",
     "browsePlaceholderGemini": "例如：/home/<您的帳號>/.gemini",
@@ -1171,6 +1161,46 @@
     },
     "data": {
       "location": "儲存位置"
+    },
+    "ipDiagnostics": {
+      "title": "IP 檢測",
+      "scope": "檢查所選網路路徑的出口資訊。取樣無法驗證 DNS 或瀏覽器隔離，也無法預測帳號限制。",
+      "exitScope": "這裡測的是 CC Switch 經所選路徑存取檢測服務時的出口，不一定等於其他應用程式的出口：直連模式下，Claude Code、Codex 等用戶端使用各自的代理設定；代理工具依網域分流時，存取 AI 服務和存取檢測服務也可能走不同節點。",
+      "route": "檢測網路",
+      "saved": "已儲存的全域代理",
+      "custom": "臨時代理",
+      "proxyUrl": "臨時代理位址",
+      "explicitRoute": "檢測透過此代理傳送，不修改已儲存的設定。代理失敗時不會退回直連。",
+      "systemRoute": "未指定代理：遵循 CC Switch 的系統代理行為，可能透過系統代理或直連。",
+      "settingsError": "無法讀取已儲存的代理，請重試或選擇臨時代理。",
+      "privacy": "僅在點擊檢測後執行。請求 icanhazip.com 和 ipify.org，再將測得的 IP 提交給 ipwho.is 查詢位置及網路資訊。",
+      "run": "檢測 IP",
+      "running": "檢測中…",
+      "invalidProxy": "代理位址無效，請使用 HTTP、HTTPS、SOCKS5 或 SOCKS5H。",
+      "failed": "無法執行檢測，請重試。",
+      "unknown": "未知",
+      "checkedAt": "檢測時間",
+      "incomplete": "出口取樣不完整。檢測失敗無法證明網路路徑安全。",
+      "consistent": "兩個服務測得相同的出口 IP，此結果僅代表本次請求。",
+      "different": "兩個服務測得不同的 IP，可能由分流規則或動態代理造成，請檢查代理設定。",
+      "locationError": "位置查詢失敗",
+      "locationIp": "查詢的 IP",
+      "country": "國家或地區",
+      "region": "州或省",
+      "city": "城市",
+      "asn": "ASN",
+      "isp": "網路業者",
+      "organization": "組織",
+      "exitTimezone": "IP 所在時區",
+      "utcOffset": "UTC 偏移",
+      "localTimezone": "本機時區",
+      "locationSource": "位置與網路資料來自 ipwho.is，資料庫估算可能存在誤差。",
+      "errors": {
+        "network": "連線失敗或逾時",
+        "http": "服務回傳 HTTP 錯誤",
+        "invalidResponse": "服務回傳無效資料",
+        "unavailable": "服務無法提供資料"
+      }
     }
   },
   "apps": {
@@ -2636,9 +2666,9 @@
         "manual": "手動填寫"
       },
       "rateAutoHint": "每天自動取得一次，只用於換算顯示；費用仍以美元記錄。",
-      "rateAutoUpdated": "上次更新：{{time}}",
-      "rateAutoNever": "尚未取得匯率",
-      "rateAutoFailed": "自動取得失敗，暫用上次的匯率",
+      "rateAutoUpdated": "上次更新：{{time}}。",
+      "rateAutoNever": "尚未取得匯率。",
+      "rateAutoFailed": "自動取得失敗，暫用上次的匯率。",
       "rateAttribution": "匯率資料由 {{provider}} 提供。",
       "rateRefresh": "立即更新",
       "rateHint": "手動填寫，只用於換算顯示；費用仍以美元記錄。",
@@ -5382,5 +5412,18 @@
       "managedHint": "帳號在授權中心管理：登出後這張卡會自動消失。"
     },
     "deleteSessionHint": "請在 DeepSeek Harness 中刪除此工作階段，以保持原生歷史記錄一致。"
+  },
+  "autoUpdate": {
+    "toggle": "自動下載更新",
+    "toggleHelp": "在背景下載新版本，下載完成後詢問是否安裝，不會未經確認就安裝。",
+    "unsupported": "可攜版和 Linux 的 deb / rpm 安裝套件不支援自動更新",
+    "readyTitle": "新版本 v{{version}} 已下載完成",
+    "readyBody": "現在安裝嗎？CC Switch 會重新啟動。",
+    "readyBodyRouting": "現在安裝嗎？CC Switch 會重新啟動，正在經本地路由的請求會中斷。",
+    "later": "稍後",
+    "installNow": "安裝並重新啟動",
+    "installFailed": "安裝更新失敗",
+    "downloadingInline": "正在背景下載新版本…",
+    "downloadedInline": "已下載完畢"
   }
 }

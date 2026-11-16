@@ -9,6 +9,12 @@ use serde::Serialize;
 use std::net::{Ipv4Addr, SocketAddrV4, TcpStream};
 use std::time::{Duration, Instant};
 
+/// Inspect the selected outbound route without persisting or changing it.
+#[tauri::command]
+pub async fn diagnose_ip(url: String) -> Result<crate::services::ip_diagnostics::IpReport, String> {
+    crate::services::ip_diagnostics::diagnose(&url).await
+}
+
 /// 获取全局代理 URL
 ///
 /// 返回当前配置的代理 URL，null 表示直连。
@@ -168,18 +174,6 @@ pub async fn test_proxy_url(url: String) -> Result<ProxyTestResult, String> {
         latency_ms: latency,
         error: Some(error_msg),
     })
-}
-
-/// 获取当前出站代理状态
-///
-/// 返回当前是否启用了出站代理以及代理 URL。
-#[tauri::command]
-pub fn get_upstream_proxy_status() -> UpstreamProxyStatus {
-    let url = http_client::get_current_proxy_url();
-    UpstreamProxyStatus {
-        enabled: url.is_some(),
-        proxy_url: url,
-    }
 }
 
 /// 出站代理状态信息

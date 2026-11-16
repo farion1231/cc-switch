@@ -1,4 +1,5 @@
 pub mod agy_account;
+pub mod auto_sync;
 pub mod backup_storage;
 pub mod balance;
 pub mod claude_account;
@@ -10,6 +11,7 @@ pub mod dsh_account;
 pub mod env_checker;
 pub mod env_manager;
 pub mod exchange_rates;
+pub mod ip_diagnostics;
 pub mod kimi_oauth;
 pub mod mcp;
 pub mod mcp_connectivity;
@@ -58,8 +60,8 @@ pub use speedtest::{EndpointLatency, SpeedtestService};
 pub use usage_cache::UsageCache;
 #[allow(unused_imports)]
 pub use usage_stats::{
-    DailyStats, LogFilters, ModelStats, PaginatedLogs, ProviderLimitStatus, ProviderStats,
-    RequestLogDetail, UsageSummary, UsageSummaryByApp,
+    DailyStats, LogFilters, ModelStats, PaginatedLogs, ProviderStats, RequestLogDetail,
+    UsageSummary, UsageSummaryByApp,
 };
 
 pub mod session_usage_copilot;

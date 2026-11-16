@@ -10,6 +10,7 @@
 //!
 //! 文件是设备本地的（0600，不同步），路径见 [`DeviceStore`]。
 
+use crate::sync_utils::MutexExt;
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::ErrorKind;
@@ -334,7 +335,7 @@ pub fn update<R>(
     store: &DeviceStore,
     change: impl FnOnce(&mut LiveState) -> R,
 ) -> Result<R, AppError> {
-    let _guard = state_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = state_lock().lock_recover();
     let mut state = load(store)?;
     let result = change(&mut state);
     state.apps.retain(|_, app| !app.is_empty());
@@ -343,7 +344,7 @@ pub fn update<R>(
 }
 
 pub fn pending(store: &DeviceStore, app: &str) -> Result<Option<Pending>, AppError> {
-    let _guard = state_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = state_lock().lock_recover();
     Ok(load(store)?
         .apps
         .get(app)
@@ -366,7 +367,7 @@ pub fn mode_states<const N: usize>(
     store: &DeviceStore,
     apps: [&str; N],
 ) -> Result<[ModeState; N], AppError> {
-    let _guard = state_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = state_lock().lock_recover();
     let state = load(store)?;
     Ok(apps.map(|app| {
         state
@@ -384,7 +385,7 @@ pub fn mode_state(store: &DeviceStore, app: &str) -> Result<ModeState, AppError>
 
 /// 这个应用的写入记录；`None` 表示新版还没写过。
 pub fn written(store: &DeviceStore, app: &str) -> Result<Option<Written>, AppError> {
-    let _guard = state_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = state_lock().lock_recover();
     Ok(load(store)?
         .apps
         .get(app)
@@ -393,7 +394,7 @@ pub fn written(store: &DeviceStore, app: &str) -> Result<Option<Written>, AppErr
 
 /// 这个应用的 Stack 模型（成员和 key 登记簿）。
 pub fn stack(store: &DeviceStore, app: &str) -> Result<StackState, AppError> {
-    let _guard = state_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = state_lock().lock_recover();
     Ok(load(store)?
         .apps
         .get(app)
@@ -403,7 +404,7 @@ pub fn stack(store: &DeviceStore, app: &str) -> Result<StackState, AppError> {
 
 /// 这个应用在 Stack 模式（代理模式且 Stack 模式开着），状态文件只读一次。
 pub fn stack_mode(store: &DeviceStore, app: &str) -> Result<bool, AppError> {
-    let _guard = state_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = state_lock().lock_recover();
     Ok(load(store)?
         .apps
         .get(app)
@@ -412,7 +413,7 @@ pub fn stack_mode(store: &DeviceStore, app: &str) -> Result<bool, AppError> {
 
 /// 有未完成操作的应用。
 pub fn apps_with_pending(store: &DeviceStore) -> Result<Vec<String>, AppError> {
-    let _guard = state_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = state_lock().lock_recover();
     Ok(load(store)?
         .apps
         .into_iter()

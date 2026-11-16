@@ -48,13 +48,6 @@ vi.mock("@/components/settings/LogConfigPanel", () => ({
   LogConfigPanel: () => <div>log-config-panel</div>,
 }));
 
-vi.mock("@/components/settings/DirectorySettings", async () => {
-  const actual = await vi.importActual<
-    typeof import("@/components/settings/DirectorySettings")
-  >("@/components/settings/DirectorySettings");
-  return actual;
-});
-
 vi.mock("@/components/settings/ImportExportSection", () => ({
   ImportExportSection: ({
     status,

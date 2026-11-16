@@ -17,10 +17,6 @@ concurrency:
   group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-env:
-  # 测试失败时有文件名和行号就够了。完整调试信息让链接变慢（Windows 尤甚）、target 和缓存变大。
-  CARGO_PROFILE_DEV_DEBUG: line-tables-only
-
 jobs:
   changes:
     name: Detect changed areas

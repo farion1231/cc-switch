@@ -11,7 +11,7 @@ use tauri::Emitter;
 fn require_failover_app(app_type: &str) -> Result<(), String> {
     let app = crate::app_config::AppType::from_str(app_type)
         .map_err(|error| format!("无效的应用类型: {error}"))?;
-    if !app.supports_local_proxy() {
+    if !app.spec().local_proxy {
         return Err(format!("{} 不支持故障转移", app.as_str()));
     }
     Ok(())
@@ -92,25 +92,6 @@ pub async fn get_failover_queue(
             providers.get(&item.provider_id).is_some_and(|provider| {
                 crate::proxy::provider_router::provider_supports_failover(&app_type, provider)
             })
-        })
-        .collect())
-}
-
-/// 获取可添加到故障转移队列的供应商（不在队列中的）
-#[tauri::command]
-pub async fn get_available_providers_for_failover(
-    state: tauri::State<'_, AppState>,
-    app_type: String,
-) -> Result<Vec<Provider>, String> {
-    require_failover_app(&app_type)?;
-    let providers = state
-        .db
-        .get_available_providers_for_failover(&app_type)
-        .map_err(|e| e.to_string())?;
-    Ok(providers
-        .into_iter()
-        .filter(|provider| {
-            crate::proxy::provider_router::provider_supports_failover(&app_type, provider)
         })
         .collect())
 }

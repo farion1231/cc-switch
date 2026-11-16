@@ -5,6 +5,7 @@
 //! - 安装时下载到 SSOT，按需同步到各应用目录
 //! - 数据库存储安装记录和启用状态
 
+use crate::sync_utils::MutexExt;
 use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -1753,7 +1754,9 @@ impl SkillService {
         }
 
         // 备份旧文件
-        let _ = Self::create_uninstall_backup(&skill);
+        if let Err(e) = Self::create_uninstall_backup(&skill) {
+            log::warn!("更新前备份 Skill {} 失败: {e}", skill.directory);
+        }
 
         if !(skill.apps.mcode
             || skill.apps.agy
@@ -1762,10 +1765,7 @@ impl SkillService {
             || skill.apps.copilot
             || skill.apps.workbuddy)
         {
-            if dest.exists() {
-                fs::remove_dir_all(&dest)?;
-            }
-            Self::copy_dir_recursive(&source, &dest)?;
+            Self::replace_dir_staged(&source, &dest)?;
         }
 
         // 计算新哈希 + 解析新元数据
@@ -1874,6 +1874,47 @@ impl SkillService {
 
         log::info!("Skill {} 更新成功", updated_skill.name);
         Ok(updated_skill)
+    }
+
+    /// Copy `source` into a sibling staging directory first and only then swap it
+    /// in for `dest`, so a copy that fails part-way (I/O error, permissions, path
+    /// length) leaves the installed skill untouched instead of deleting it (#9521).
+    fn replace_dir_staged(source: &Path, dest: &Path) -> Result<()> {
+        let parent = dest.parent().context("Skill destination has no parent")?;
+        fs::create_dir_all(parent)?;
+        let staging = tempfile::Builder::new()
+            .prefix(".skill-update-")
+            .tempdir_in(parent)?;
+        let replacement = staging.path().join("new");
+        Self::copy_dir_recursive(source, &replacement)?;
+
+        let previous = staging.path().join("old");
+        let existed = dest.exists() || Self::is_symlink(dest);
+        if existed {
+            fs::rename(dest, &previous)?;
+        }
+        if let Err(error) = fs::rename(&replacement, dest) {
+            if existed {
+                if let Err(restore_error) = fs::rename(&previous, dest) {
+                    let kept = staging.keep();
+                    return Err(anyhow!(
+                        "{error}; restoring the previous skill failed: {restore_error}; previous copy kept at {}",
+                        kept.join("old").display()
+                    ));
+                }
+            }
+            return Err(error.into());
+        }
+        // The new copy is in place; a leftover staging dir is hidden from skill
+        // scans, so failing to delete it only warrants a warning.
+        let staging_path = staging.path().to_path_buf();
+        if let Err(error) = staging.close() {
+            log::warn!(
+                "Skill updated, but removing staging dir {} failed: {error}",
+                staging_path.display()
+            );
+        }
+        Ok(())
     }
 
     // Keep the old SSOT and native copies until metadata is committed. In particular,
@@ -2095,42 +2136,6 @@ impl SkillService {
             }
         }
         Ok(refreshed)
-    }
-
-    /// 为缺少 content_hash 的已安装 Skill 补算哈希
-    pub fn backfill_content_hashes(db: &Arc<Database>) -> Result<usize> {
-        let _state_guard = skill_state_write_guard();
-        let skills = db.get_all_installed_skills()?;
-        let ssot_dir = Self::get_ssot_dir()?;
-        let mut count = 0;
-
-        for skill in skills.values() {
-            if skill.content_hash.is_some() {
-                continue;
-            }
-            let Ok(directory) = Self::require_valid_directory(&skill.directory) else {
-                log::warn!("跳过非法 directory 的哈希回填: {:?}", skill.directory);
-                continue;
-            };
-            let skill_dir = ssot_dir.join(&directory);
-            if !skill_dir.exists() {
-                continue;
-            }
-            match Self::compute_dir_hash(&skill_dir) {
-                Ok(hash) => {
-                    let _ = db.update_skill_hash(&skill.id, &hash, 0);
-                    count += 1;
-                }
-                Err(e) => {
-                    log::warn!("补算哈希失败 {}: {e}", skill.id);
-                }
-            }
-        }
-
-        if count > 0 {
-            log::info!("已为 {count} 个 Skill 补算内容哈希");
-        }
-        Ok(count)
     }
 
     /// 迁移 Skill 存储位置（在两个 SSOT 目录间移动文件）
@@ -3084,12 +3089,6 @@ impl SkillService {
         Ok(())
     }
 
-    /// 复制 Skill 到应用目录（保留用于向后兼容）
-    #[deprecated(note = "请使用 sync_to_app_dir() 代替")]
-    pub fn copy_to_app(directory: &str, app: &AppType) -> Result<()> {
-        Self::sync_to_app_dir(directory, app)
-    }
-
     /// 删除路径（支持 symlink 和真实目录）
     fn remove_path(path: &Path) -> Result<()> {
         if Self::is_symlink(path) {
@@ -3512,10 +3511,7 @@ impl SkillService {
     ) -> Result<Vec<DiscoverableSkill>> {
         let key = Self::discovery_cache_key(repo);
         if !force_refresh {
-            let cache = self
-                .discovery_cache
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
+            let cache = self.discovery_cache.lock_recover();
             if let Some((fetched_at, skills)) = cache.get(&key) {
                 if fetched_at.elapsed() < DISCOVERY_CACHE_TTL {
                     return Ok(skills.clone());
@@ -3525,10 +3521,7 @@ impl SkillService {
 
         let started_at = Instant::now();
         let skills = self.fetch_repo_skills(repo).await?;
-        let mut cache = self
-            .discovery_cache
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let mut cache = self.discovery_cache.lock_recover();
         if cache
             .get(&key)
             .is_none_or(|(fetched_at, _)| *fetched_at <= started_at)
@@ -4988,37 +4981,6 @@ impl SkillService {
         Ok(())
     }
 
-    // ========== 仓库管理（保留原有逻辑）==========
-
-    /// 列出仓库
-    pub fn list_repos(&self, store: &SkillStore) -> Vec<SkillRepo> {
-        store.repos.clone()
-    }
-
-    /// 添加仓库
-    pub fn add_repo(&self, store: &mut SkillStore, repo: SkillRepo) -> Result<()> {
-        if let Some(pos) = store
-            .repos
-            .iter()
-            .position(|r| r.owner == repo.owner && r.name == repo.name)
-        {
-            store.repos[pos] = repo;
-        } else {
-            store.repos.push(repo);
-        }
-
-        Ok(())
-    }
-
-    /// 删除仓库
-    pub fn remove_repo(&self, store: &mut SkillStore, owner: String, name: String) -> Result<()> {
-        store
-            .repos
-            .retain(|r| !(r.owner == owner && r.name == name));
-
-        Ok(())
-    }
-
     // ========== skills.sh 搜索 ==========
 
     /// 搜索 skills.sh 公共目录
@@ -5322,6 +5284,48 @@ mod tests {
         drop(second_reader);
         drop(first_reader);
         assert!(skill_state_lock().try_write().is_ok());
+    }
+
+    #[test]
+    fn replace_dir_staged_keeps_installed_skill_when_copy_fails() {
+        let root = tempdir().expect("tempdir");
+        let dest = root.path().join("skills").join("demo");
+        fs::create_dir_all(&dest).unwrap();
+        fs::write(dest.join("SKILL.md"), "old").unwrap();
+
+        let missing_source = root.path().join("missing");
+        assert!(SkillService::replace_dir_staged(&missing_source, &dest).is_err());
+
+        assert_eq!(fs::read_to_string(dest.join("SKILL.md")).unwrap(), "old");
+        let leftovers: Vec<_> = fs::read_dir(dest.parent().unwrap())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .filter(|name| name != "demo")
+            .collect();
+        assert!(leftovers.is_empty(), "staging left behind: {leftovers:?}");
+    }
+
+    #[test]
+    fn replace_dir_staged_swaps_in_new_contents() {
+        let root = tempdir().expect("tempdir");
+        let source = root.path().join("source");
+        fs::create_dir_all(source.join("nested")).unwrap();
+        fs::write(source.join("SKILL.md"), "new").unwrap();
+        fs::write(source.join("nested").join("a.txt"), "a").unwrap();
+        let dest = root.path().join("skills").join("demo");
+        fs::create_dir_all(&dest).unwrap();
+        fs::write(dest.join("SKILL.md"), "old").unwrap();
+        fs::write(dest.join("stale.txt"), "stale").unwrap();
+
+        SkillService::replace_dir_staged(&source, &dest).unwrap();
+
+        assert_eq!(fs::read_to_string(dest.join("SKILL.md")).unwrap(), "new");
+        assert_eq!(
+            fs::read_to_string(dest.join("nested").join("a.txt")).unwrap(),
+            "a"
+        );
+        assert!(!dest.join("stale.txt").exists());
+        assert_eq!(fs::read_dir(dest.parent().unwrap()).unwrap().count(), 1);
     }
 
     #[test]

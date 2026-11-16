@@ -48,6 +48,7 @@ use super::{
 };
 use crate::app_config::AppType;
 use crate::database::PRICING_SOURCE_REQUEST;
+use crate::provider_kind::ProviderKind;
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 use bytes::Bytes;
 use futures::StreamExt;
@@ -629,12 +630,7 @@ async fn handle_claude_transform(
     connection_guard: Option<ActiveConnectionGuard>,
 ) -> Result<axum::response::Response, ProxyError> {
     let status = response.status();
-    let is_codex_oauth = ctx
-        .provider
-        .meta
-        .as_ref()
-        .and_then(|meta| meta.provider_type.as_deref())
-        == Some("codex_oauth");
+    let is_codex_oauth = ProviderKind::declared(&ctx.provider) == Some(ProviderKind::CodexOAuth);
     // Claude 的模型验证要求非流式 JSON，并直接读取 usage.input_tokens。
     // Chat/Responses 上游即使强制返回 SSE，也必须聚合后再交给非流客户端。
     // Codex OAuth 强制 SSE，但可能不标 Content-Type，保留这个额外识别条件。
@@ -1289,12 +1285,7 @@ fn codex_native_responses_stream(
 ) -> std::pin::Pin<Box<dyn futures::Stream<Item = Result<Bytes, std::io::Error>> + Send>> {
     let stream = response.bytes_stream();
     if matches!(ctx.app_type, AppType::Codex)
-        && ctx
-            .provider
-            .meta
-            .as_ref()
-            .and_then(|meta| meta.provider_type.as_deref())
-            == Some("github_copilot")
+        && ProviderKind::declared(&ctx.provider) == Some(ProviderKind::GitHubCopilot)
     {
         Box::pin(super::providers::copilot_responses::create_stable_item_id_stream(stream))
     } else {
@@ -2592,12 +2583,11 @@ fn codex_proxy_error_code(error: &ProxyError) -> &'static str {
         ProxyError::CodexQuotaProtection(_) => "cc_switch_codex_quota_protection",
         ProxyError::CodexOfficialLoginPaused => "cc_switch_codex_official_login_paused",
         ProxyError::ForwardFailed(_) => "cc_switch_forward_failed",
-        ProxyError::Timeout(_) | ProxyError::StreamIdleTimeout(_) => "cc_switch_timeout",
+        ProxyError::Timeout(_) => "cc_switch_timeout",
         ProxyError::NoAvailableProvider => "cc_switch_no_available_provider",
         ProxyError::AllProvidersCircuitOpen => "cc_switch_all_providers_circuit_open",
         ProxyError::NoProvidersConfigured => "cc_switch_no_providers_configured",
         ProxyError::MaxRetriesExceeded => "cc_switch_max_retries_exceeded",
-        ProxyError::ProviderUnhealthy(_) => "cc_switch_provider_unhealthy",
         ProxyError::ConfigError(_) => "cc_switch_config_error",
         ProxyError::TransformError(_) => "cc_switch_transform_error",
         ProxyError::InvalidRequest(_) => "cc_switch_invalid_request",
