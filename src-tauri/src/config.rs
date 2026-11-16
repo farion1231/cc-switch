@@ -582,7 +582,7 @@ pub(crate) fn stage_write(
 /// 不碰路径里的目录软链；除相对目标带 `..` 外不做 `canonicalize`（Windows 上会把路径
 /// 改写成 `\\?\` 形式），普通文件原样返回。
 /// 悬空链接照样返回它指向的路径，写入时会在那里新建文件、链接保留。
-fn resolve_symlink_target(path: &Path) -> PathBuf {
+pub(crate) fn resolve_symlink_target(path: &Path) -> PathBuf {
     // 与 Linux 的 MAXSYMLINKS 一致，防止链接成环时死循环。
     const MAX_HOPS: usize = 40;
     let mut current = path.to_path_buf();

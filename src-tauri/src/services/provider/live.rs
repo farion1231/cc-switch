@@ -923,7 +923,7 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
         ) {
             continue;
         }
-        let result = if app_type.is_additive_mode() {
+        let result = if app_type.spec().additive {
             // Additive mode: sync ALL providers
             sync_all_providers_to_live(state, &app_type)
         } else {
@@ -1273,7 +1273,7 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
 
     state.db.save_provider(app_type.as_str(), &provider)?;
     // Copilot 是累加式，没有直连指针：「默认」看 Copilot 自己的 settings.json。
-    if !app_type.is_additive_mode() {
+    if !app_type.spec().additive {
         state
             .db
             .set_current_provider(app_type.as_str(), &provider.id)?;
@@ -1300,7 +1300,7 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
 /// 这个应用是否从 live 导入 `default` 供应商：切换式应用都导入；累加式应用里只有 Copilot
 /// （它的官方登录卡是启动式，从 settings.json 的模型导入，自带模型卡才是累加式）。
 pub(crate) fn imports_default_config(app_type: &AppType) -> bool {
-    !app_type.is_additive_mode() || matches!(app_type, AppType::Copilot)
+    !app_type.spec().additive || matches!(app_type, AppType::Copilot)
 }
 
 /// Decide whether startup should auto-import the current live config as `default`.
