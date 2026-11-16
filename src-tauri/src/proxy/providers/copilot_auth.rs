@@ -967,14 +967,23 @@ impl CopilotAuthManager {
         let all_models = self.fetch_all_models_for_account(account_id).await?;
         let total = all_models.len();
         let picker_models: Vec<CopilotModel> = all_models
-            .into_iter()
+            .iter()
             .filter(|model| model.model_picker_enabled)
+            .cloned()
             .collect();
-        // Copilot Free 账号的模型通常全部 model_picker_enabled=false，这里记录两个数便于排查
+        // Copilot Free / Student 账号的模型通常全部 model_picker_enabled=false，这里记录两个数便于排查
         log::info!(
             "[CopilotAuth] 账号 {account_id} 共 {total} 个模型，其中可在模型选择器使用的 {} 个",
             picker_models.len()
         );
+        if picker_models.is_empty() && total > 0 {
+            // 全被筛掉时列出模型 ID（不含隐私），用户贴一次日志就能看出账号拿到的是哪类模型
+            let ids: Vec<&str> = all_models.iter().map(|model| model.id.as_str()).collect();
+            log::info!(
+                "[CopilotAuth] 账号 {account_id} 没有可在模型选择器使用的模型，接口返回的模型 ID: {}",
+                ids.join(", ")
+            );
+        }
         Ok(picker_models)
     }
 
@@ -1191,8 +1200,9 @@ impl CopilotAuthManager {
         }
 
         log::info!(
-            "[CopilotAuth] 获取使用量成功，计划: {}, 重置日期: {}",
+            "[CopilotAuth] 获取使用量成功，计划: {}, SKU: {}, 重置日期: {}",
             usage.copilot_plan,
+            usage.access_type_sku.as_deref().unwrap_or("未返回"),
             usage.quota_reset_date
         );
 
