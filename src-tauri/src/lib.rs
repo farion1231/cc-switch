@@ -1668,10 +1668,6 @@ pub fn run() {
             commands::apply_claude_onboarding_skip,
             commands::clear_claude_onboarding_skip,
             // Claude MCP management
-            commands::get_claude_mcp_status,
-            commands::read_claude_mcp_config,
-            commands::delete_claude_mcp_server,
-            commands::validate_mcp_command,
             // usage query
             commands::queryProviderUsage,
             commands::testUsageScript,
@@ -1684,7 +1680,6 @@ pub fn run() {
             commands::get_coding_plan_quota,
             commands::get_balance,
             // New MCP via config.json (SSOT)
-            commands::get_mcp_config,
             // Unified MCP management
             commands::get_mcp_servers,
             commands::start_mcp_connectivity_checks,
@@ -1795,12 +1790,6 @@ pub fn run() {
             commands::open_skill_dir,
             commands::search_skills_sh,
             // Skill management (legacy API compatibility)
-            commands::get_skills,
-            commands::get_skills_for_app,
-            commands::install_skill,
-            commands::install_skill_for_app,
-            commands::uninstall_skill,
-            commands::uninstall_skill_for_app,
             commands::get_skill_repos,
             commands::add_skill_repo,
             commands::remove_skill_repo,
@@ -1895,7 +1884,6 @@ pub fn run() {
             commands::open_provider_terminal,
             // Universal Provider management
             commands::get_universal_providers,
-            commands::get_universal_provider,
             commands::upsert_universal_provider,
             commands::delete_universal_provider,
             commands::sync_universal_provider,

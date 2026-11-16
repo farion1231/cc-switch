@@ -996,17 +996,6 @@ pub async fn get_universal_providers(
     run_db_task(&state, ProviderService::list_universal).await
 }
 
-#[tauri::command]
-pub async fn get_universal_provider(
-    state: State<'_, AppState>,
-    id: String,
-) -> Result<Option<UniversalProvider>, String> {
-    run_db_task(&state, move |state| {
-        ProviderService::get_universal(state, &id)
-    })
-    .await
-}
-
 /// 保存 / 删除是读整份映射再写回，同步按映射重写子供应商：主线程不再替它们排队，
 /// 连点「复制」会读到同一份旧映射、后写者覆盖前者，同步与删除交错会留下孤儿子供应商。
 pub(super) static UNIVERSAL_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());

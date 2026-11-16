@@ -8505,14 +8505,6 @@ impl ProviderService {
         state.db.get_all_universal_providers()
     }
 
-    /// 获取单个统一供应商
-    pub fn get_universal(
-        state: &AppState,
-        id: &str,
-    ) -> Result<Option<UniversalProvider>, AppError> {
-        state.db.get_universal_provider(id)
-    }
-
     /// 添加或更新统一供应商（不自动同步，需手动调用 sync_universal_to_apps）
     pub fn upsert_universal(
         state: &AppState,

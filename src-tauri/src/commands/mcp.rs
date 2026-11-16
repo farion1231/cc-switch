@@ -2,14 +2,12 @@
 
 use crate::error::AppError;
 use indexmap::IndexMap;
-use std::collections::HashMap;
+use std::str::FromStr;
 
-use serde::Serialize;
 use tauri::State;
 
 use super::run_db_task;
 use crate::app_config::AppType;
-use crate::claude_mcp;
 use crate::services::McpService;
 use crate::store::AppState;
 
@@ -36,54 +34,6 @@ pub async fn start_mcp_connectivity_checks(
 #[tauri::command]
 pub fn cancel_mcp_connectivity_checks(batch_id: String) {
     crate::services::mcp_connectivity::cancel_checks(&batch_id);
-}
-
-#[tauri::command]
-pub async fn get_claude_mcp_status() -> Result<claude_mcp::McpStatus, AppError> {
-    claude_mcp::get_mcp_status()
-}
-
-/// 读取 mcp.json 文本内容
-#[tauri::command]
-pub async fn read_claude_mcp_config() -> Result<Option<String>, AppError> {
-    claude_mcp::read_mcp_json()
-}
-
-#[tauri::command]
-pub async fn delete_claude_mcp_server(id: String) -> Result<bool, AppError> {
-    claude_mcp::delete_mcp_server(&id)
-}
-
-/// 校验命令是否在 PATH 中可用（不执行）
-#[tauri::command]
-pub async fn validate_mcp_command(cmd: String) -> Result<bool, AppError> {
-    claude_mcp::validate_command_in_path(&cmd)
-}
-
-#[derive(Serialize)]
-pub struct McpConfigResponse {
-    pub config_path: String,
-    pub servers: HashMap<String, serde_json::Value>,
-}
-
-/// 获取 MCP 配置（来自 ~/.cc-switch/config.json）
-use std::str::FromStr;
-
-#[tauri::command]
-#[allow(deprecated)] // 兼容层命令，内部调用已废弃的 Service 方法
-pub async fn get_mcp_config(
-    state: State<'_, AppState>,
-    app: String,
-) -> Result<McpConfigResponse, String> {
-    let config_path = crate::config::get_app_config_path()
-        .to_string_lossy()
-        .to_string();
-    let app_ty = AppType::from_str(&app)?;
-    let servers = McpService::get_servers(&state, app_ty)?;
-    Ok(McpConfigResponse {
-        config_path,
-        servers,
-    })
 }
 
 // ============================================================================
