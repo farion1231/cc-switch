@@ -25,7 +25,6 @@
     "success": "Успешно",
     "error": "Ошибка",
     "unknown": "Неизвестно",
-    "enterValidValue": "Введите корректное значение",
     "clear": "Очистить",
     "format": "Форматировать",
     "formatSuccess": "Форматирование выполнено",
@@ -281,8 +280,7 @@
     "editCurrentNotice": "Это используемый провайдер. Сохранение вступает в силу сразу: следующий запрос использует новые настройки."
   },
   "claudeCode": {
-    "needsRouting": "Требуется маршрутизация",
-    "noRoutingSupport": "Маршрутизация не поддерживается"
+    "needsRouting": "Требуется маршрутизация"
   },
   "codex": {
     "needsRouting": "Требуется маршрутизация",
@@ -343,8 +341,6 @@
   },
   "notifications": {
     "providerAdded": "Провайдер добавлен",
-    "providerSaved": "Конфигурация провайдера сохранена",
-    "providerDeleted": "Провайдер успешно удалён",
     "switchSuccess": "Переключение выполнено успешно!",
     "codexRestartRequired": "Переключение выполнено. Перезапустите клиент, чтобы применить изменения.",
     "geminiRestartRequired": "Переключение выполнено. Перезапустите Gemini CLI, чтобы применить изменения.",
@@ -355,12 +351,9 @@
     "removeFromConfigFailed": "Не удалось удалить провайдера",
     "switchFailedTitle": "Не удалось переключить",
     "switchFailed": "Не удалось переключить: {{error}}",
-    "autoImported": "Провайдер по умолчанию создан из существующей конфигурации",
     "addFailed": "Не удалось добавить провайдера: {{error}}",
     "saveFailed": "Не удалось сохранить: {{error}}",
     "saveFailedGeneric": "Не удалось сохранить, попробуйте ещё раз",
-    "appliedToClaudePlugin": "Применено к плагину Claude",
-    "removedFromClaudePlugin": "Удалено из плагина Claude",
     "syncClaudePluginFailed": "Не удалось синхронизировать плагин Claude",
     "skipClaudeOnboardingFailed": "Не удалось пропустить первичное подтверждение Claude Code",
     "clearClaudeOnboardingSkipFailed": "Не удалось восстановить первичное подтверждение Claude Code",
@@ -379,8 +372,6 @@
     "proxyReasonDesktopMapping": "использует сопоставление моделей (Claude Desktop принимает только имена моделей Claude)",
     "proxyReasonManagedOAuth": "использует управляемый вход через OAuth (токен подставляется локальной маршрутизацией)",
     "proxyReasonRoutingRequired": "требует локальной маршрутизации для обработки запросов",
-    "openAIFormatHint": "Этот провайдер использует формат, совместимый с OpenAI, и требует включённой маршрутизации",
-    "copilotProxyHint": "GitHub Copilot как провайдер Claude всегда требует локальной маршрутизации; маршрут автоматически выбирает Chat Completions или Responses в зависимости от текущей модели.",
     "openLinkFailed": "Не удалось открыть ссылку",
     "openclawModelsRegistered": "Модели зарегистрированы в списке /model",
     "openclawDefaultModelSet": "Установлено как модель по умолчанию",
@@ -1742,22 +1733,9 @@
     }
   },
   "console": {
-    "providerSwitchReceived": "Получено событие переключения провайдера:",
-    "setupListenerFailed": "Не удалось настроить обработчик переключения провайдера:",
-    "updateProviderFailed": "Не удалось обновить провайдера:",
-    "autoImportFailed": "Не удалось автоматически импортировать конфигурацию по умолчанию:",
     "openLinkFailed": "Не удалось открыть ссылку:",
-    "getVersionFailed": "Не удалось получить информацию о версии:",
-    "loadSettingsFailed": "Не удалось загрузить настройки:",
-    "getConfigPathFailed": "Не удалось получить путь к конфигурации:",
-    "getConfigDirFailed": "Не удалось получить каталог конфигурации:",
-    "detectPortableFailed": "Не удалось определить портативный режим:",
-    "saveSettingsFailed": "Не удалось сохранить настройки:",
     "updateFailed": "Не удалось выполнить обновление:",
     "checkUpdateFailed": "Не удалось проверить обновления:",
-    "openConfigFolderFailed": "Не удалось открыть папку конфигурации:",
-    "selectConfigDirFailed": "Не удалось выбрать каталог конфигурации:",
-    "getDefaultConfigDirFailed": "Не удалось получить каталог конфигурации по умолчанию:",
     "openReleaseNotesFailed": "Не удалось открыть примечания к выпуску:"
   },
   "providerForm": {
@@ -2077,7 +2055,6 @@
     "enterCode": "Введите код в браузере:",
     "accountCount": "Аккаунтов: {{count}}",
     "selectAccount": "Выберите аккаунт",
-    "chatgptAccount": "Аккаунт ChatGPT",
     "accountToUse": "Используемый аккаунт",
     "signInMethod": "Способ входа",
     "manageAccounts": "Управление аккаунтами",
@@ -2087,18 +2064,14 @@
     "explicitSelectionRequired": "Выберите способ входа",
     "useDefaultAccount": "Использовать аккаунт по умолчанию",
     "noneOptionLabel": "Следовать входу Codex",
-    "reauthDescription": "Чтобы соответствовать поведению входа через браузер, этим аккаунтам нужно войти снова и восстановить учётные данные (id_token). После повторной аутентификации их можно использовать для управляемой привязки.",
     "reauthBadge": "Требуется повторный вход",
-    "reauthLogin": "Войти снова",
     "reauthSelectHint": "Этому аккаунту нужно войти снова, чтобы включить управляемую привязку.",
     "reauthNow": "Войти сейчас",
     "duplicateAccount": "Этот аккаунт ChatGPT уже добавлен. Используйте существующий.",
-    "loggedInAccounts": "Вошедшие аккаунты",
     "defaultAccount": "По умолчанию",
     "selected": "Выбрано",
     "removeAccount": "Удалить аккаунт",
     "setAsDefault": "Сделать по умолчанию",
-    "addAnotherAccount": "Добавить ещё аккаунт",
     "logoutAll": "Выйти из всех аккаунтов",
     "retry": "Повторить",
     "copyCode": "Скопировать код",
@@ -2107,7 +2080,6 @@
     "loginMethod": "Способ входа",
     "browserLogin": "Вход через браузер",
     "deviceCodeLogin": "Вход по коду устройства",
-    "openBrowserLogin": "Открыть вход в браузере",
     "loginExpired": "Срок входа истёк. Попробуйте снова."
   },
   "xaiOauth": {
@@ -2161,7 +2133,6 @@
     "testing": "Проверка",
     "addEndpointPlaceholder": "https://api.example.com",
     "done": "Готово",
-    "noEndpoints": "Endpoint'ы отсутствуют",
     "failed": "Ошибка",
     "enterValidUrl": "Введите действительный URL",
     "invalidUrlFormat": "Неверный формат URL",
@@ -2169,12 +2140,7 @@
     "urlExists": "Этот URL уже существует",
     "saveFailed": "Не удалось сохранить, попробуйте ещё раз",
     "loadEndpointsFailed": "Не удалось загрузить пользовательские endpoint'ы:",
-    "addEndpointFailed": "Не удалось добавить пользовательский endpoint:",
-    "removeEndpointFailed": "Не удалось удалить пользовательский endpoint:",
-    "removeFailed": "Не удалось удалить: {{error}}",
-    "updateLastUsedFailed": "Не удалось обновить время последнего использования endpoint'а",
     "pleaseAddEndpoint": "Сначала добавьте endpoint",
-    "testUnavailable": "Проверка скорости недоступна",
     "noResult": "Результат не получен",
     "testFailed": "Не удалось проверить скорость: {{error}}",
     "empty": "Endpoint'ы отсутствуют"
@@ -2941,8 +2907,6 @@
   "presetSelector": {
     "title": "Выберите тип конфигурации",
     "custom": "Пользовательская",
-    "customDescription": "Настройка провайдера вручную, требуется полная конфигурация",
-    "officialDescription": "Официальный вход, API-ключ не требуется",
     "presetDescription": "Использовать готовый пресет, требуется только API-ключ"
   },
   "mcp": {
@@ -3825,7 +3789,6 @@
   },
   "providerIcon": {
     "label": "Иконка",
-    "colorLabel": "Цвет иконки",
     "selectIcon": "Выбрать иконку",
     "preview": "Предпросмотр",
     "clickToChange": "Нажмите, чтобы изменить иконку",
@@ -4039,13 +4002,10 @@
   },
   "proxyConfig": {
     "proxyEnabled": "Главный переключатель маршрутизации",
-    "appTakeover": "Маршрутизация включена",
-    "perAppConfig": "Конфигурация по приложениям",
     "circuitBreaker": "Предохранитель",
     "circuitBreakerSettings": "Настройки предохранителя",
     "failureThreshold": "Порог отказов",
     "successThreshold": "Порог успешности",
-    "recoveryTimeout": "Тайм-аут восстановления",
     "errorRateThreshold": "Порог частоты ошибок",
     "minRequests": "Минимум запросов",
     "timeoutConfig": "Настройки тайм-аутов",
