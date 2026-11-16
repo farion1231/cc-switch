@@ -1225,6 +1225,9 @@
       "modelsHint": "Fügen Sie mindestens ein Modell hinzu. Die Modell-ID wird unverändert an die API gesendet. WorkBuddy unterstützt es noch nicht, dasselbe Modell mehrfach hinzuzufügen, daher kann eine Modell-ID nur in einer Karte vorkommen. Bleibt der Name leer, zeigt das Menü von WorkBuddy „Hersteller-Label:Modell-ID“ an.",
       "maxInputTokens": "Max. Eingabe-Token",
       "maxOutputTokens": "Max. Ausgabe-Token",
+      "thinkingEfforts": "Denkaufwand",
+      "thinkingEffortsHint": "Ausgewählte Stufen erscheinen im Modellmenü von WorkBuddy; die gewählte wird als reasoning_effort an die API gesendet. Ohne Auswahl gibt es nur einen Ein/Aus-Schalter für das Denken.",
+      "canDisableThinking": "Denken kann ausgeschaltet werden",
       "modelIdTaken": "WorkBuddy unterstützt es noch nicht, dasselbe Modell mehrfach hinzuzufügen, und dieses Modell befindet sich bereits in „{{owner}}“. Um es in diese Karte zu verschieben, entfernen Sie es zuerst dort.",
       "modelOwnerUser": "ein Modell, das in WorkBuddy selbst hinzugefügt wurde",
       "presetModelsSkipped": "WorkBuddy unterstützt es noch nicht, dasselbe Modell mehrfach hinzuzufügen, daher wurden Modelle übersprungen, die bereits in anderen Karten vorhanden sind: {{models}}. Um eines in diese Karte zu verschieben, entfernen Sie es zuerst aus seiner aktuellen Karte und fügen Sie es dann hier wieder hinzu."

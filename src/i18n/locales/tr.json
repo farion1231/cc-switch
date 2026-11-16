@@ -5236,6 +5236,9 @@
       "modelsHint": "En az bir model ekleyin. Model kimliği API'ye olduğu gibi gönderilir. WorkBuddy henüz aynı modelin birden fazla kez eklenmesini desteklemediğinden bir model kimliği yalnızca bir kartta olabilir. Ad boş bırakılırsa WorkBuddy menüsünde \"sağlayıcı etiketi:model kimliği\" gösterilir.",
       "maxInputTokens": "Maks. giriş token'ı",
       "maxOutputTokens": "Maks. çıkış token'ı",
+      "thinkingEfforts": "Düşünme yoğunluğu",
+      "thinkingEffortsHint": "Seçilen seviyeler WorkBuddy'nin model menüsünde listelenir; seçilen seviye API'ye reasoning_effort olarak gönderilir. Hiçbiri seçilmezse yalnızca düşünmeyi açıp kapatan bir anahtar gösterilir.",
+      "canDisableThinking": "Düşünme kapatılabilir",
       "modelIdTaken": "WorkBuddy henüz aynı modelin birden fazla kez eklenmesini desteklemiyor ve bu model zaten \"{{owner}}\" içinde. Bu karta taşımak için önce oradan kaldırın.",
       "modelOwnerUser": "WorkBuddy'nin kendisinde eklenen bir model",
       "presetModelsSkipped": "WorkBuddy henüz aynı modelin birden fazla kez eklenmesini desteklemediğinden başka kartlarda zaten bulunan modeller atlandı: {{models}}. Birini bu karta taşımak için önce mevcut kartından kaldırın, sonra burada yeniden ekleyin."

@@ -1225,6 +1225,9 @@
       "modelsHint": "至少添加一个模型。模型 ID 会原样发给接口。WorkBuddy 暂时不支持同一个模型添加多次，同一个模型 ID 只能放在一张卡里。名称留空时，WorkBuddy 菜单显示「厂商标签:模型 ID」。",
       "maxInputTokens": "最大输入 Token",
       "maxOutputTokens": "最大输出 Token",
+      "thinkingEfforts": "思考强度",
+      "thinkingEffortsHint": "选中的强度会列在 WorkBuddy 的模型菜单里，选哪档就把对应的值作为 reasoning_effort 发给接口。都不选时只显示思考开关。",
+      "canDisableThinking": "可以关闭思考",
       "modelIdTaken": "WorkBuddy 暂时不支持同一个模型添加多次，这个模型已经在「{{owner}}」里了。想换到这张卡，先从那边删掉。",
       "modelOwnerUser": "WorkBuddy 里自己加的模型",
       "presetModelsSkipped": "WorkBuddy 暂时不支持同一个模型添加多次，这些模型已经在别的卡里，已跳过：{{models}}。想换到这张卡，先从原来的卡里删掉，再在这里加回来。"
