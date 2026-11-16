@@ -434,6 +434,16 @@ mod tests {
                         "nothing may be uploaded after sync is disabled"
                     );
                 }
+
+                #[tokio::test]
+                #[serial]
+                async fn queued_upload_is_dropped_after_config_is_cleared() {
+                    let requests = requests(UserChange::Clear).await;
+                    assert_eq!(
+                        requests, 0,
+                        "nothing may be uploaded after the config is cleared"
+                    );
+                }
             }
         };
     }
@@ -445,20 +455,4 @@ mod tests {
         webdav_settings
     );
     queued_upload_tests!(s3, S3AutoSync, settings::set_s3_sync_settings, s3_settings);
-
-    /// "Clear config" exists only for WebDAV (`webdav_sync_clear_settings`).
-    #[tokio::test]
-    #[serial]
-    async fn webdav_queued_upload_is_dropped_after_config_is_cleared() {
-        let requests = requests_after_queued_upload::<WebDavAutoSync>(
-            settings::set_webdav_sync_settings,
-            webdav_settings,
-            UserChange::Clear,
-        )
-        .await;
-        assert_eq!(
-            requests, 0,
-            "nothing may be uploaded after the config is cleared"
-        );
-    }
 }

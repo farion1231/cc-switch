@@ -866,6 +866,15 @@
       "incompatibleVersion": "远端数据版本不兼容（版本 {{version}}），当前支持协议 v2 / db-v6",
       "unsaved": "未保存",
       "saved": "已保存",
+      "clear": "清除配置",
+      "clearing": "清除中...",
+      "clearSuccess": "已清除本机的 S3 配置",
+      "clearFailed": "清除配置失败：{{error}}",
+      "clearConfirm": {
+        "title": "清除 S3 配置",
+        "message": "将从本机删除已保存的 S3 区域、存储桶、Access Key、Secret Key、端点和远程目录，并停止自动同步。存储桶中已上传的数据不会被删除。",
+        "confirm": "清除"
+      },
       "unsavedChanges": "请先保存配置",
       "saveBeforeSync": "请先保存配置，再使用上传/下载。",
       "fetchingRemote": "获取远端信息...",

@@ -866,6 +866,15 @@
       "incompatibleVersion": "Remote data is incompatible (version {{version}}). This client supports protocol v2 / db-v6.",
       "unsaved": "Unsaved",
       "saved": "Saved",
+      "clear": "Clear config",
+      "clearing": "Clearing...",
+      "clearSuccess": "S3 config cleared on this device",
+      "clearFailed": "Failed to clear config: {{error}}",
+      "clearConfirm": {
+        "title": "Clear S3 config",
+        "message": "This removes the saved S3 region, bucket, access key, secret key, endpoint and remote folder from this device and stops auto sync. Data already uploaded to the bucket is not deleted.",
+        "confirm": "Clear"
+      },
       "unsavedChanges": "Please save config first",
       "saveBeforeSync": "Save configuration first to enable upload/download.",
       "fetchingRemote": "Fetching remote info...",

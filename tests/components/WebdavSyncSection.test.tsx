@@ -4,7 +4,7 @@ import "@testing-library/jest-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { WebdavSyncSection } from "@/components/settings/WebdavSyncSection";
-import type { WebDavSyncSettings } from "@/types";
+import type { S3SyncSettings, WebDavSyncSettings } from "@/types";
 
 const toastSuccessMock = vi.fn();
 const toastErrorMock = vi.fn();
@@ -82,6 +82,8 @@ const { settingsApiMock } = vi.hoisted(() => ({
     webdavSyncUpload: vi.fn(),
     webdavSyncDownload: vi.fn(),
     webdavSyncClearSettings: vi.fn(),
+    s3SyncSaveSettings: vi.fn(),
+    s3SyncClearSettings: vi.fn(),
   },
 }));
 
@@ -99,6 +101,34 @@ const baseConfig: WebDavSyncSettings = {
   autoSync: false,
   status: {},
 };
+
+const baseS3Config: S3SyncSettings = {
+  enabled: true,
+  region: "us-east-1",
+  bucket: "my-bucket",
+  accessKeyId: "AKIDEXAMPLE",
+  secretAccessKey: "s3-secret",
+  endpoint: "",
+  remoteRoot: "cc-switch-sync",
+  profile: "default",
+  autoSync: false,
+  status: {},
+};
+
+function renderS3Section(s3Config: S3SyncSettings | undefined) {
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false },
+    },
+  });
+  const view = render(
+    <QueryClientProvider client={client}>
+      <WebdavSyncSection s3Config={s3Config} />
+    </QueryClientProvider>,
+  );
+  return { ...view, client };
+}
 
 function renderSection(config?: WebDavSyncSettings) {
   const client = new QueryClient({
@@ -130,6 +160,9 @@ describe("WebdavSyncSection", () => {
     settingsApiMock.webdavSyncClearSettings.mockResolvedValue({
       success: true,
     });
+    settingsApiMock.s3SyncSaveSettings.mockReset();
+    settingsApiMock.s3SyncClearSettings.mockReset();
+    settingsApiMock.s3SyncClearSettings.mockResolvedValue({ success: true });
 
     settingsApiMock.webdavSyncSaveSettings.mockResolvedValue({ success: true });
     settingsApiMock.webdavTestConnection.mockResolvedValue({
@@ -263,6 +296,76 @@ describe("WebdavSyncSection", () => {
     ).not.toBeInTheDocument();
     expect(screen.queryByDisplayValue("alice")).not.toBeInTheDocument();
     expect(screen.queryByDisplayValue("bob")).not.toBeInTheDocument();
+  });
+
+  it("hides the S3 clear button when no bucket is saved", () => {
+    renderS3Section({ enabled: true });
+
+    expect(
+      screen.queryByRole("button", { name: "settings.s3Sync.clear" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("clears the saved S3 config after confirmation and empties the form", async () => {
+    renderS3Section(baseS3Config);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "settings.s3Sync.clear" }),
+    );
+    expect(settingsApiMock.s3SyncClearSettings).not.toHaveBeenCalled();
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "settings.s3Sync.clearConfirm.confirm",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(settingsApiMock.s3SyncClearSettings).toHaveBeenCalledTimes(1);
+    });
+    await waitFor(() => {
+      expect(toastSuccessMock).toHaveBeenCalledWith(
+        "settings.s3Sync.clearSuccess",
+      );
+    });
+    expect(screen.queryByDisplayValue("my-bucket")).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue("AKIDEXAMPLE")).not.toBeInTheDocument();
+    expect(settingsApiMock.s3SyncSaveSettings).not.toHaveBeenCalled();
+    expect(settingsApiMock.webdavSyncClearSettings).not.toHaveBeenCalled();
+  });
+
+  it("does not refill the S3 form from the stale config after clearing unsaved edits", async () => {
+    const view = renderS3Section(baseS3Config);
+    // The refetch resolves before the parent settings form passes the
+    // cleared config down; the prop only changes afterwards.
+    vi.spyOn(view.client, "invalidateQueries").mockResolvedValue(undefined);
+
+    fireEvent.change(screen.getByDisplayValue("my-bucket"), {
+      target: { value: "other-bucket" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "settings.s3Sync.clear" }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "settings.s3Sync.clearConfirm.confirm",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(toastSuccessMock).toHaveBeenCalledWith(
+        "settings.s3Sync.clearSuccess",
+      );
+    });
+    expect(screen.queryByDisplayValue("my-bucket")).not.toBeInTheDocument();
+    view.rerender(
+      <QueryClientProvider client={view.client}>
+        <WebdavSyncSection s3Config={undefined} />
+      </QueryClientProvider>,
+    );
+    expect(screen.queryByDisplayValue("my-bucket")).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue("other-bucket")).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue("AKIDEXAMPLE")).not.toBeInTheDocument();
   });
 
   it("shows validation error when saving without base url", async () => {
