@@ -1,6 +1,6 @@
 import { http, HttpResponse } from "msw";
 import type { AppId } from "@/lib/api/types";
-import type { McpServer, Provider, Settings } from "@/types";
+import type { Provider, Settings } from "@/types";
 import {
   addProvider,
   deleteProvider,
@@ -24,9 +24,6 @@ import {
   getAppConfigDirOverride,
   setAppConfigDirOverrideState,
   getMcpConfig,
-  setMcpServerEnabled,
-  upsertMcpServer,
-  deleteMcpServer,
   listCustomIcons,
   addCustomIcon,
   renameCustomIcon,
@@ -274,38 +271,6 @@ export const handlers = [
     success(null),
   ),
 
-  http.post(`${TAURI_ENDPOINT}/set_mcp_enabled`, async ({ request }) => {
-    const { app, id, enabled } = await withJson<{
-      app: AppId;
-      id: string;
-      enabled: boolean;
-    }>(request);
-    setMcpServerEnabled(app, id, enabled);
-    return success(true);
-  }),
-
-  http.post(
-    `${TAURI_ENDPOINT}/upsert_mcp_server_in_config`,
-    async ({ request }) => {
-      const { app, id, spec } = await withJson<{
-        app: AppId;
-        id: string;
-        spec: McpServer;
-      }>(request);
-      upsertMcpServer(app, id, spec);
-      return success(true);
-    },
-  ),
-
-  http.post(
-    `${TAURI_ENDPOINT}/delete_mcp_server_in_config`,
-    async ({ request }) => {
-      const { app, id } = await withJson<{ app: AppId; id: string }>(request);
-      deleteMcpServer(app, id);
-      return success(true);
-    },
-  ),
-
   http.post(`${TAURI_ENDPOINT}/restart_app`, () => success(true)),
 
   http.post(`${TAURI_ENDPOINT}/get_settings`, () => success(getSettings())),
@@ -437,8 +402,6 @@ export const handlers = [
     }),
   ),
 
-  http.post(`${TAURI_ENDPOINT}/get_direct_provider`, () => success(null)),
-
   http.post(`${TAURI_ENDPOINT}/get_proxy_stack`, () =>
     success({ active: false, members: [] }),
   ),
@@ -466,8 +429,6 @@ export const handlers = [
     }),
   ),
 
-  http.post(`${TAURI_ENDPOINT}/is_live_takeover_active`, () => success(false)),
-
   // Failover / circuit breaker defaults
   http.post(`${TAURI_ENDPOINT}/get_auto_failover_enabled`, () =>
     success(false),
@@ -490,9 +451,6 @@ export const handlers = [
   ),
   http.post(`${TAURI_ENDPOINT}/take_tray_navigation`, () => success(null)),
   http.post(`${TAURI_ENDPOINT}/tray_app_page_seen`, () => success(null)),
-  http.post(`${TAURI_ENDPOINT}/get_available_providers_for_failover`, () =>
-    success([]),
-  ),
   http.post(`${TAURI_ENDPOINT}/add_to_failover_queue`, () => success(true)),
   http.post(`${TAURI_ENDPOINT}/remove_from_failover_queue`, () =>
     success(true),
@@ -500,18 +458,6 @@ export const handlers = [
   http.post(`${TAURI_ENDPOINT}/reorder_failover_queue`, () => success(true)),
   http.post(`${TAURI_ENDPOINT}/set_failover_item_enabled`, () => success(true)),
 
-  http.post(`${TAURI_ENDPOINT}/get_circuit_breaker_config`, () =>
-    success({
-      failureThreshold: 3,
-      successThreshold: 2,
-      timeoutSeconds: 60,
-      errorRateThreshold: 50,
-      minRequests: 5,
-    }),
-  ),
-  http.post(`${TAURI_ENDPOINT}/update_circuit_breaker_config`, () =>
-    success(true),
-  ),
   http.post(`${TAURI_ENDPOINT}/get_provider_health`, () =>
     success({
       provider_id: "mock-provider",
@@ -524,8 +470,6 @@ export const handlers = [
       updated_at: new Date().toISOString(),
     }),
   ),
-  http.post(`${TAURI_ENDPOINT}/reset_circuit_breaker`, () => success(true)),
-  http.post(`${TAURI_ENDPOINT}/get_circuit_breaker_stats`, () => success(null)),
 
   // 侧栏：今日花费、授权中心提醒；「应用」页：Claude Desktop 接入状态
   http.post(`${TAURI_ENDPOINT}/get_usage_summary`, () =>

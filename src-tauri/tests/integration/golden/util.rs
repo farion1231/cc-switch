@@ -14,7 +14,7 @@ const UPDATE_ENV: &str = "CC_SWITCH_UPDATE_GOLDEN";
 /// Windows 上 checkout 出来不会变成 CRLF。
 pub fn assert_golden(name: &str, actual: &str) {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/golden/snapshots")
+        .join("tests/integration/golden/snapshots")
         .join(name);
     if std::env::var_os(UPDATE_ENV).is_some() {
         std::fs::create_dir_all(path.parent().expect("snapshot dir")).expect("create snapshot dir");
@@ -62,7 +62,10 @@ pub fn write_home_file(rel: &str, content: &str) -> PathBuf {
     path
 }
 
+/// 读之前先删完切换给开着的 Claude Code 会话写的空值墓碑（它们几秒后才删），读到的是
+/// 落定的文件。
 pub fn read_home_file(rel: &str) -> String {
+    cc_switch_lib::settle_claude_tombstones().expect("settle claude tombstones");
     std::fs::read_to_string(home().join(rel)).unwrap_or_else(|e| panic!("read {rel}: {e}"))
 }
 

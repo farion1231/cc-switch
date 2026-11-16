@@ -7,8 +7,8 @@ use cc_switch_lib::{
     import_default_config_test_hook, import_provider_from_deeplink, parse_deeplink_url, AppType,
 };
 
+use crate::golden::util::{assert_golden, dump_provider_rows, write_home_file};
 use crate::support::{create_test_state, reset_test_fs, test_mutex};
-use crate::util::{assert_golden, dump_provider_rows, write_home_file};
 
 /// 深链生成的 id 是「名称-毫秒时间戳」，快照里换成固定写法。
 fn stable_deeplink_id(id: &str) -> String {
@@ -137,7 +137,7 @@ fn deeplink_grokbuild_config_rows() {
 /// live 里供应商以外的部分进了通用配置片段，片段也一起锁。关键字段（模型名、推理档位
 /// 等）不进片段、留在 `default` 行里：片段已冻结，收进去就再也写不回 live。
 ///
-/// `settings_sort` 见 [`crate::util::sort_objects`]：Gemini 的 `.env` 解析顺序不稳定。
+/// `settings_sort` 见 [`crate::golden::util::sort_objects`]：Gemini 的 `.env` 解析顺序不稳定。
 fn first_run_import(app: AppType, snapshot: &str, settings_sort: &[&str]) {
     let state = create_test_state().expect("create test state");
     import_default_config_test_hook(&state, app.clone()).expect("import live config");

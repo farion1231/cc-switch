@@ -1,7 +1,7 @@
 //! Token Plan / 编程套餐额度查询服务
 //!
-//! 支持 Kimi For Coding、智谱 GLM、MiniMax、ZenMux、火山方舟、OpenCode Go、Command Code
-//! 的套餐额度查询。复用 subscription 模块的 SubscriptionQuota / QuotaTier 类型。
+//! 支持 Kimi For Coding、智谱 GLM、MiniMax、ZenMux、火山方舟、OpenCode Go、Command Code、
+//! Ollama Cloud 的套餐额度查询。复用 subscription 模块的 SubscriptionQuota / QuotaTier 类型。
 
 use super::subscription::{
     CredentialStatus, QuotaTier, SubscriptionQuota, TIER_FIVE_HOUR, TIER_MONTHLY, TIER_WEEKLY_LIMIT,
@@ -27,6 +27,9 @@ enum CodingPlanProvider {
     OpencodeGo,
     /// Command Code（Claude 使用 `/provider`，Codex 使用 `/provider/v1`）。
     CommandCode,
+    /// Ollama Cloud（Claude 端 `https://ollama.com`，OpenAI 端 `https://ollama.com/v1`）。
+    /// 本地 Ollama（localhost:11434）没有额度，不命中。
+    OllamaCloud,
 }
 
 fn detect_provider(base_url: &str) -> Option<CodingPlanProvider> {
@@ -59,6 +62,8 @@ fn detect_provider(base_url: &str) -> Option<CodingPlanProvider> {
         // 额度，不在此命中。用量探测本身是双 plan 自动探测（GetAFPUsage →
         // GetCodingPlanUsage），无需在此区分两种订阅。
         Some(CodingPlanProvider::Volcengine)
+    } else if crate::codex_config::codex_url_host_matches_any(base_url, &["ollama.com"]) {
+        Some(CodingPlanProvider::OllamaCloud)
     } else {
         None
     }
@@ -89,6 +94,7 @@ pub(crate) fn detect_provider_id(base_url: &str) -> Option<&'static str> {
         CodingPlanProvider::Volcengine => "volcengine",
         CodingPlanProvider::OpencodeGo => "opencode_go",
         CodingPlanProvider::CommandCode => "command_code",
+        CodingPlanProvider::OllamaCloud => "ollama_cloud",
     })
 }
 
@@ -968,6 +974,135 @@ async fn query_opencode_go(api_key: &str) -> Result<SubscriptionQuota, String> {
     // 变形），明确报错而不是渲染一张空卡片。
     if tiers.is_empty() {
         return Ok(make_error("Unexpected usage response shape".to_string()));
+    }
+
+    Ok(SubscriptionQuota {
+        tool: "coding_plan".to_string(),
+        credential_status: CredentialStatus::Valid,
+        credential_message: None,
+        success: true,
+        tiers,
+        extra_usage: None,
+        reset_credits: None,
+        credits_balance: None,
+        plan_name: None,
+        error: None,
+        queried_at: Some(now_millis()),
+    })
+}
+
+// ── Ollama Cloud ─────────────────────────────────────────────
+
+/// 解析 `GET https://ollama.com/api/balance`（docs.ollama.com/api/balance）。
+///
+/// 现行套餐：`included.balance_usd`（本期剩余）/ `included.allowance_usd`（本期总额），
+/// 本期截止 `included.period.until`，折成一档月度百分比。旧套餐 `included` 下是
+/// `session` / `weekly` 两档，各带 `remaining_percent`（0–100）与 `resets_at`。
+/// `purchased.balance_usd`（另购余额）不进额度档：卡片的余额行只认 Codex Credits。
+fn parse_ollama_cloud_tiers(body: &serde_json::Value) -> Vec<QuotaTier> {
+    let Some(included) = body.get("included") else {
+        return Vec::new();
+    };
+    let balance = included.get("balance_usd").and_then(parse_f64);
+    let allowance = included.get("allowance_usd").and_then(parse_f64);
+    if let (Some(balance), Some(allowance)) = (balance, allowance) {
+        if allowance > 0.0 {
+            let used = (allowance - balance).clamp(0.0, allowance);
+            return vec![QuotaTier {
+                name: TIER_MONTHLY.to_string(),
+                utilization: used / allowance * 100.0,
+                resets_at: included
+                    .get("period")
+                    .and_then(|period| period.get("until"))
+                    .and_then(extract_reset_time),
+                used_value_usd: None,
+                max_value_usd: None,
+            }];
+        }
+    }
+
+    let mut tiers = Vec::new();
+    for (key, tier_name) in [("session", TIER_FIVE_HOUR), ("weekly", TIER_WEEKLY_LIMIT)] {
+        let Some(window) = included.get(key) else {
+            continue;
+        };
+        let Some(remaining) = window.get("remaining_percent").and_then(parse_f64) else {
+            continue;
+        };
+        tiers.push(QuotaTier {
+            name: tier_name.to_string(),
+            utilization: (100.0 - remaining).clamp(0.0, 100.0),
+            resets_at: window.get("resets_at").and_then(extract_reset_time),
+            used_value_usd: None,
+            max_value_usd: None,
+        });
+    }
+    tiers
+}
+
+async fn query_ollama_cloud(api_key: &str) -> Result<SubscriptionQuota, String> {
+    let client = crate::proxy::http_client::get();
+    let resp = client
+        .get("https://ollama.com/api/balance")
+        .header("Authorization", format!("Bearer {api_key}"))
+        .header("Accept", "application/json")
+        .timeout(std::time::Duration::from_secs(15))
+        .send()
+        .await;
+
+    let resp = match resp {
+        Ok(r) => r,
+        Err(e) => return Err(format!("Network error: {e}")),
+    };
+
+    let status = resp.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED {
+        return Ok(SubscriptionQuota {
+            tool: "coding_plan".to_string(),
+            credential_status: CredentialStatus::Expired,
+            credential_message: Some("Invalid API key".to_string()),
+            success: false,
+            tiers: vec![],
+            extra_usage: None,
+            reset_credits: None,
+            credits_balance: None,
+            plan_name: None,
+            error: Some(format!("Authentication failed (HTTP {status})")),
+            queried_at: Some(now_millis()),
+        });
+    }
+    if status == reqwest::StatusCode::FORBIDDEN {
+        return Ok(make_error(
+            "Ollama account is suspended (HTTP 403)".to_string(),
+        ));
+    }
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Ok(make_error(format!("API error (HTTP {status}): {body}")));
+    }
+
+    let raw = match resp.bytes().await {
+        Ok(b) => b,
+        Err(e) => return Err(format!("Failed to read response: {e}")),
+    };
+    let body: serde_json::Value = match serde_json::from_slice(&raw) {
+        Ok(v) => v,
+        Err(e) => return Ok(make_error(format!("Failed to parse response: {e}"))),
+    };
+
+    let tiers = parse_ollama_cloud_tiers(&body);
+    if tiers.is_empty() {
+        // 按量付费账户 allowance_usd 为 0，没有套餐额度可显示
+        let no_plan = body
+            .get("included")
+            .and_then(|included| included.get("allowance_usd"))
+            .and_then(parse_f64)
+            .is_some_and(|allowance| allowance <= 0.0);
+        return Ok(make_error(if no_plan {
+            "No included Ollama Cloud credits on this account (pay-as-you-go)".to_string()
+        } else {
+            "Unexpected balance response shape".to_string()
+        }));
     }
 
     Ok(SubscriptionQuota {
@@ -1938,6 +2073,7 @@ pub(crate) async fn query_coding_plan(
         CodingPlanProvider::ZenMux => query_zenmux(base_url, api_key).await,
         CodingPlanProvider::OpencodeGo => query_opencode_go(api_key).await,
         CodingPlanProvider::CommandCode => query_command_code(api_key).await,
+        CodingPlanProvider::OllamaCloud => query_ollama_cloud(api_key).await,
         // 火山已在上面的 AK/SK 分支提前返回，此处不可达。
         CodingPlanProvider::Volcengine => {
             unreachable!("volcengine handled via AK/SK branch above")
@@ -1950,11 +2086,12 @@ pub(crate) async fn query_coding_plan(
 mod tests {
     use super::{
         detect_provider, parse_afp_tiers, parse_coding_plan_tiers, parse_command_code_quota,
-        parse_minimax_tiers, parse_opencode_go_tiers, parse_zhipu_token_tiers,
-        query_command_code_at, query_zhipu_at, query_zhipu_team_at, volcengine_canonical_query,
-        volcengine_is_auth_error_code, volcengine_region, volcengine_response_error,
-        volcengine_sign, zhipu_outcome_from_body, zhipu_quota_base, CodingPlanOutcome,
-        CodingPlanProvider, CredentialStatus, TIER_FIVE_HOUR, TIER_MONTHLY, TIER_WEEKLY_LIMIT,
+        parse_minimax_tiers, parse_ollama_cloud_tiers, parse_opencode_go_tiers,
+        parse_zhipu_token_tiers, query_command_code_at, query_zhipu_at, query_zhipu_team_at,
+        volcengine_canonical_query, volcengine_is_auth_error_code, volcengine_region,
+        volcengine_response_error, volcengine_sign, zhipu_outcome_from_body, zhipu_quota_base,
+        CodingPlanOutcome, CodingPlanProvider, CredentialStatus, TIER_FIVE_HOUR, TIER_MONTHLY,
+        TIER_WEEKLY_LIMIT,
     };
     use serde_json::json;
 
@@ -2407,6 +2544,61 @@ mod tests {
         ));
         assert!(detect_provider("https://opencode.ai/zen/v1").is_none());
         assert!(detect_provider("https://opencode.ai/inference/v1").is_none());
+    }
+
+    #[test]
+    fn ollama_cloud_detects_cloud_host_only() {
+        for base_url in [
+            "https://ollama.com",
+            "https://ollama.com/v1",
+            "https://OLLAMA.com/",
+        ] {
+            assert!(matches!(
+                detect_provider(base_url),
+                Some(CodingPlanProvider::OllamaCloud)
+            ));
+        }
+        assert!(detect_provider("http://localhost:11434").is_none());
+        assert!(detect_provider("http://127.0.0.1:11434/v1").is_none());
+        assert!(detect_provider("https://ollama.com.example.com/v1").is_none());
+    }
+
+    #[test]
+    fn ollama_cloud_current_plan_maps_included_credit_to_monthly() {
+        let body = json!({
+            "included": {
+                "balance_usd": 72.5,
+                "allowance_usd": 100,
+                "period": {
+                    "from": "2026-11-01T00:00:00Z",
+                    "until": "2026-12-01T00:00:00Z"
+                }
+            },
+            "purchased": { "balance_usd": 25 }
+        });
+        let tiers = parse_ollama_cloud_tiers(&body);
+        assert_eq!(tiers.len(), 1);
+        assert_eq!(tiers[0].name, TIER_MONTHLY);
+        assert!((tiers[0].utilization - 27.5).abs() < 1e-9);
+        assert_eq!(tiers[0].resets_at.as_deref(), Some("2026-12-01T00:00:00Z"));
+    }
+
+    #[test]
+    fn ollama_cloud_legacy_plan_maps_session_and_weekly() {
+        let body = json!({
+            "included": {
+                "session": { "remaining_percent": 80, "resets_at": "2026-11-10T13:00:00Z" },
+                "weekly": { "remaining_percent": 35.5, "resets_at": "2026-11-14T00:00:00Z" }
+            }
+        });
+        let tiers = parse_ollama_cloud_tiers(&body);
+        assert_eq!(tiers.len(), 2);
+        assert_eq!(tiers[0].name, TIER_FIVE_HOUR);
+        assert!((tiers[0].utilization - 20.0).abs() < 1e-9);
+        assert_eq!(tiers[1].name, TIER_WEEKLY_LIMIT);
+        assert!((tiers[1].utilization - 64.5).abs() < 1e-9);
+        assert_eq!(tiers[1].resets_at.as_deref(), Some("2026-11-14T00:00:00Z"));
+        assert!(parse_ollama_cloud_tiers(&json!({})).is_empty());
     }
 
     #[test]

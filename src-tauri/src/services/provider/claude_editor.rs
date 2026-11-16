@@ -414,27 +414,38 @@ pub(crate) fn write_live(
         super::claude_official::strip_from_patch(&mut patch);
         patch
     });
+    let op_name = if pointer.is_some() {
+        op::SWITCH
+    } else {
+        op::APPLY
+    };
     let patch = EditorPatch {
         changes: &plan.changes,
         on_conflict,
-        key_fields: key_patch,
+        // 和切换一样：删掉的连接字段先写成空串，开着的会话才跟得上
+        key_fields: key_patch.map(|patch| claude_direct::for_live(op_name, &patch)),
     };
 
     // 关键字段的补丁是按调用方读到的行算的：先补完上一次的操作。
     super::claude_official::with_login_switch(login_target, || {
         AppWrite::begin(db, AppType::Claude.as_str()).and_then(|write| {
-            write.run(
-                if pointer.is_some() {
-                    op::SWITCH
-                } else {
-                    op::APPLY
-                },
+            let tombstones =
+                claude_direct::note_tombstones(&write.store, patch.key_fields.as_ref());
+            let result = write.run(
+                op_name,
                 &[FileChange {
                     file: claude_direct::settings_file(),
                     patch: &patch,
                 }],
                 PendingTarget::pointer(pointer),
-            )
+            );
+            claude_direct::after_live_write(
+                &write.guard,
+                patch.key_fields.as_ref(),
+                result.as_ref().ok(),
+                tombstones,
+            );
+            result
         })
     })?;
     // 账号目录里的设置是默认 settings.json 的镜像：写完再同步，编辑器里改的 hooks、
