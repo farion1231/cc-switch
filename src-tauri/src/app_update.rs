@@ -45,6 +45,8 @@ pub struct ReadyUpdate {
 pub struct AutoUpdateStatus {
     /// 这台机器能不能自动安装（便携版、Linux 非 AppImage 不行）。
     pub supported: bool,
+    /// 自动下载开关（设备级）。前端查到新版本时据此立刻触发下载，不用等后台循环。
+    pub enabled: bool,
     pub downloading: bool,
     /// 已下载、待安装的版本。开关关着时不报（关掉即视为不要了）。
     pub ready: Option<ReadyUpdate>,
@@ -97,6 +99,7 @@ pub fn ready() -> Option<ReadyUpdate> {
 pub fn status(routing_in_use: bool) -> AutoUpdateStatus {
     AutoUpdateStatus {
         supported: auto_install_supported(),
+        enabled: enabled(),
         downloading: DOWNLOADING.load(Ordering::SeqCst),
         ready: ready(),
         routing_in_use,

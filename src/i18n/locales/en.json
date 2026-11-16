@@ -5432,6 +5432,8 @@
     "readyBodyRouting": "Install it now? CC Switch will restart, and requests in progress through local routing will be cut off.",
     "later": "Later",
     "installNow": "Install and restart",
-    "installFailed": "Update installation failed"
+    "installFailed": "Update installation failed",
+    "downloadingInline": "Downloading the new version in the background…",
+    "downloadedInline": "Downloaded"
   }
 }

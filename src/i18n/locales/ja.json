@@ -5432,6 +5432,8 @@
     "readyBodyRouting": "今すぐインストールしますか？CC Switch が再起動し、ローカルルーティングを経由中のリクエストは中断されます。",
     "later": "後で",
     "installNow": "インストールして再起動",
-    "installFailed": "アップデートのインストールに失敗しました"
+    "installFailed": "アップデートのインストールに失敗しました",
+    "downloadingInline": "新しいバージョンをバックグラウンドでダウンロード中…",
+    "downloadedInline": "ダウンロード完了"
   }
 }

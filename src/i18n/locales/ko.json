@@ -5432,6 +5432,8 @@
     "readyBodyRouting": "지금 설치할까요? CC Switch가 다시 시작되며, 로컬 라우팅을 거쳐 진행 중인 요청이 중단됩니다.",
     "later": "나중에",
     "installNow": "설치 후 다시 시작",
-    "installFailed": "업데이트 설치에 실패했습니다"
+    "installFailed": "업데이트 설치에 실패했습니다",
+    "downloadingInline": "새 버전을 백그라운드에서 다운로드하는 중…",
+    "downloadedInline": "다운로드 완료"
   }
 }
