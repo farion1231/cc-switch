@@ -5432,6 +5432,8 @@
     "readyBodyRouting": "Şimdi kurulsun mu? CC Switch yeniden başlatılacak ve yerel yönlendirme üzerinden devam eden istekler kesilecek.",
     "later": "Daha sonra",
     "installNow": "Kur ve yeniden başlat",
-    "installFailed": "Güncelleme kurulamadı"
+    "installFailed": "Güncelleme kurulamadı",
+    "downloadingInline": "Yeni sürüm arka planda indiriliyor…",
+    "downloadedInline": "İndirildi"
   }
 }
