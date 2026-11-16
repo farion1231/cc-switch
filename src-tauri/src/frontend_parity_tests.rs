@@ -28,6 +28,13 @@ const CODING_PLAN_URLS: &[&str] = &[
     // /providers continues past the /provider path boundary, so detection
     // must return null (same rule as the frontend regex).
     "https://api.commandcode.ai/providers",
+    "https://ollama.com",
+    "https://ollama.com/v1",
+    // Local Ollama has no plan quota; a look-alike host or ollama.com in a
+    // path must not be mistaken for Ollama Cloud.
+    "http://localhost:11434",
+    "https://ollama.com.example.com/v1",
+    "https://proxy.example.com/ollama.com/v1",
     "https://api.openai.com/v1",
 ];
 
