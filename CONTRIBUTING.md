@@ -113,7 +113,7 @@ Backend (Tauri 2 + Rust)
 
 - **SSOT** (single source of truth): providers, MCP, prompts, Skills, projects, usage, and other data are all stored in `~/.cc-switch/cc-switch.db` (SQLite)
 - **Device-level settings**: settings that belong to this machine only, such as directory overrides and backup policy, are stored in `~/.cc-switch/settings.json` and are not cloud-synced
-- **Two write modes**: for switch-mode tools (such as Claude Code and Codex), direct switching updates provider-owned fields in the live config while preserving unrelated settings, without backfilling the previous live config into the previous provider; for coexist-mode tools (such as OpenCode and Hermes), all providers coexist in a single live file and nothing is backfilled. Each tool's mode is the `additive` flag of its `AppSpec` in `src-tauri/src/app_config.rs`
+- **Two write modes**: for switch-mode tools (such as Claude Code and Codex), direct switching updates provider-owned fields in the live config while preserving unrelated settings, without backfilling the previous live config into the previous provider; for coexist-mode tools (such as OpenCode and Hermes), all providers coexist in a single live file and nothing is backfilled. Each tool's mode is the `additive` flag of its `AppSpec` in `src-tauri/src/app_config.rs`. The flag does not cover launch-only cards, which write no config file and only open a terminal with the card's settings: Antigravity CLI (`additive` is false, yet it is not switch-mode) and GitHub Copilot CLI's official sign-in card (Copilot is `additive`, but only its bring-your-own-model cards coexist)
 - **Atomic writes**: all live configs are written via "temp file + rename" to avoid corruption
 - **Concurrency safety**: the database connection is protected by a Mutex to avoid race conditions
 - **Layered architecture**: Commands (parameter validation and forwarding) → Services (business logic) → DAO → Database; the Commands layer stays thin
@@ -370,7 +370,7 @@ Backend (Tauri 2 + Rust)
 
 - **SSOT**（单一事实源）：供应商、MCP、提示词、Skills、项目和用量等数据都存储在 `~/.cc-switch/cc-switch.db`（SQLite）
 - **设备级设置**：目录覆盖、备份策略等只属于本机的设置存放在 `~/.cc-switch/settings.json`，不参与云同步
-- **两种写入模式**：切换式工具（如 Claude Code、Codex）在直连模式下切换时，只更新 live 配置中归供应商所有的字段，保留其他设置，不再把原 live 配置回填到原供应商；共存式工具（如 OpenCode、Hermes）的所有供应商共存于同一个 live 文件，不做回填。每个工具属于哪种，以 `src-tauri/src/app_config.rs` 里它的 `AppSpec` 的 `additive` 字段为准
+- **两种写入模式**：切换式工具（如 Claude Code、Codex）在直连模式下切换时，只更新 live 配置中归供应商所有的字段，保留其他设置，不再把原 live 配置回填到原供应商；共存式工具（如 OpenCode、Hermes）的所有供应商共存于同一个 live 文件，不做回填。每个工具属于哪种，以 `src-tauri/src/app_config.rs` 里它的 `AppSpec` 的 `additive` 字段为准。这个字段不涵盖启动式卡片（不写配置文件，只带着卡片参数打开终端）：Antigravity CLI（`additive` 为 false，但不是切换式），以及 GitHub Copilot CLI 的官方登录卡（Copilot 的 `additive` 为 true，但只有自带模型卡是共存式）
 - **原子写入**：所有 live 配置都通过“临时文件 + 重命名”写入，避免配置损坏
 - **并发安全**：数据库连接由 Mutex 保护，避免竞态条件
 - **分层架构**：Commands（参数校验与转发）→ Services（业务逻辑）→ DAO → Database，Commands 层保持精简
