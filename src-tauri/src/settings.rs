@@ -240,6 +240,11 @@ pub struct S3SyncSettings {
     pub remote_root: String,
     #[serde(default = "default_profile")]
     pub profile: String,
+    /// Selected S3 provider preset shown in the settings UI. Purely presentational,
+    /// but persisted so an explicit choice (e.g. MinIO, whose endpoint cannot be
+    /// inferred) survives reopening the page (#6663).
+    #[serde(default)]
+    pub preset: String,
     #[serde(default)]
     pub status: WebDavSyncStatus,
 }
@@ -256,6 +261,7 @@ impl Default for S3SyncSettings {
             endpoint: String::new(),
             remote_root: default_remote_root(),
             profile: default_profile(),
+            preset: String::new(),
             status: WebDavSyncStatus::default(),
         }
     }
@@ -301,6 +307,7 @@ impl S3SyncSettings {
         self.endpoint = self.endpoint.trim().to_string();
         self.remote_root = self.remote_root.trim().to_string();
         self.profile = self.profile.trim().to_string();
+        self.preset = self.preset.trim().to_string();
         if self.remote_root.is_empty() {
             self.remote_root = default_remote_root();
         }
@@ -467,6 +474,10 @@ pub struct UsageDisplaySettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rate_provider: Option<String>,
 }
+
+/// 界面支持的语言，顺序同设置页下拉。前端 `src/i18n/languages.ts` 的 `LANGUAGES`
+/// 由 `tray::tests::languages_match_shared_fixture` 生成的 `tests/config/languages.json` 比对。
+pub(crate) const LANGUAGES: &[&str] = &["zh", "zh-TW", "en", "de", "ja", "ko", "ru", "tr"];
 
 /// 应用设置结构
 ///
@@ -830,81 +841,30 @@ impl AppSettings {
     }
 
     fn normalize_paths(&mut self) {
-        self.claude_config_dir = self
-            .claude_config_dir
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-
-        self.codex_config_dir = self
-            .codex_config_dir
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-
-        self.gemini_config_dir = self
-            .gemini_config_dir
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-
-        self.grok_config_dir = self
-            .grok_config_dir
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-
-        self.opencode_config_dir = self
-            .opencode_config_dir
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-
-        self.openclaw_config_dir = self
-            .openclaw_config_dir
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-
-        self.hermes_config_dir = self
-            .hermes_config_dir
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-
-        self.pi_config_dir = self
-            .pi_config_dir
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-
-        self.omp_config_dir = self
-            .omp_config_dir
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-
-        self.dsh_config_dir = self
-            .dsh_config_dir
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
+        for dir in [
+            &mut self.claude_config_dir,
+            &mut self.codex_config_dir,
+            &mut self.gemini_config_dir,
+            &mut self.grok_config_dir,
+            &mut self.opencode_config_dir,
+            &mut self.openclaw_config_dir,
+            &mut self.hermes_config_dir,
+            &mut self.pi_config_dir,
+            &mut self.omp_config_dir,
+            &mut self.dsh_config_dir,
+        ] {
+            *dir = dir
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string);
+        }
 
         self.language = self
             .language
             .as_ref()
             .map(|s| s.trim())
-            .filter(|s| matches!(*s, "en" | "zh" | "zh-TW" | "de" | "ja" | "tr" | "ko" | "ru"))
+            .filter(|s| LANGUAGES.contains(s))
             .map(|s| s.to_string());
 
         self.quota_display = self
@@ -1761,6 +1721,56 @@ mod tests {
         };
         settings.normalize_paths();
         assert_eq!(settings.language.as_deref(), Some("ko"));
+    }
+
+    #[test]
+    fn every_directory_override_is_trimmed_and_a_blank_one_is_cleared() {
+        let keys = [
+            "claudeConfigDir",
+            "codexConfigDir",
+            "geminiConfigDir",
+            "grokConfigDir",
+            "opencodeConfigDir",
+            "openclawConfigDir",
+            "hermesConfigDir",
+            "piConfigDir",
+            "ompConfigDir",
+            "dshConfigDir",
+        ];
+        for key in keys {
+            let mut padded: AppSettings =
+                serde_json::from_value(serde_json::json!({ key: "  /custom/dir \n" }))
+                    .expect("settings");
+            padded.normalize_paths();
+            let saved = serde_json::to_value(&padded).expect("serialize");
+            assert_eq!(saved[key], "/custom/dir", "{key}");
+
+            let mut blank: AppSettings =
+                serde_json::from_value(serde_json::json!({ key: "   " })).expect("settings");
+            blank.normalize_paths();
+            let saved = serde_json::to_value(&blank).expect("serialize");
+            assert!(saved.get(key).is_none(), "{key}");
+        }
+    }
+
+    #[test]
+    fn s3_preset_round_trips_and_stays_absent_from_old_files() {
+        // Files written before the preset was persisted must still load; the
+        // frontend then derives the preset from the endpoint.
+        let old: S3SyncSettings =
+            serde_json::from_value(serde_json::json!({ "endpoint": "https://minio.local:9000" }))
+                .expect("old s3 settings");
+        assert!(old.preset.is_empty());
+
+        let mut settings = S3SyncSettings {
+            preset: "  s3-minio  ".to_string(),
+            ..S3SyncSettings::default()
+        };
+        settings.normalize();
+        assert_eq!(settings.preset, "s3-minio");
+
+        let saved = serde_json::to_value(&settings).expect("serialize");
+        assert_eq!(saved["preset"], "s3-minio");
     }
 
     #[test]

@@ -1246,6 +1246,32 @@ fn model_pricing_refresh_finishes_old_repair_chains_and_preserves_custom_prices(
 }
 
 #[test]
+fn model_pricing_seed_includes_qwen4_max() {
+    let db = Database::memory().expect("create memory db");
+    let conn = db.conn.lock().expect("lock conn");
+
+    let price: (String, String, String, String) = conn
+        .query_row(
+            "SELECT input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+             FROM model_pricing WHERE model_id = 'qwen4-max'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("query Qwen4 Max price");
+
+    assert_eq!(
+        price,
+        (
+            "1.50".to_string(),
+            "4.50".to_string(),
+            "0.075".to_string(),
+            "1.875".to_string(),
+        )
+    );
+}
+
+#[test]
 fn model_pricing_seed_includes_gpt_6_astra() {
     let db = Database::memory().expect("create memory db");
     let conn = db.conn.lock().expect("lock conn");
