@@ -15,6 +15,23 @@
     "ollama",
     "lmstudio"
   ],
+  "codexWireApis": {
+    "chat": [
+      "chat",
+      "chat_completions",
+      "chat-completions",
+      "openai_chat",
+      "openai-chat",
+      "openai_chat_completions"
+    ],
+    "anthropic": [
+      "anthropic",
+      "anthropic_messages",
+      "anthropic-messages",
+      "messages",
+      "claude"
+    ]
+  },
   "hermesProviderSource": {
     "field": "_cc_source",
     "customList": "custom_providers",

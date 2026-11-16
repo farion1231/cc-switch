@@ -10,7 +10,7 @@ use crate::provider::Provider;
 
 pub(crate) fn is_official(provider: &Provider) -> bool {
     // Provider names are user editable and must never silently select OAuth.
-    provider.category.as_deref() == Some("official")
+    provider.has_official_category()
         || provider
             .meta
             .as_ref()

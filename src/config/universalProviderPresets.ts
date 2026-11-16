@@ -121,12 +121,3 @@ export function createUniversalProviderFromPreset(
 export function getPresetDisplayName(preset: UniversalProviderPreset): string {
   return preset.name;
 }
-
-/**
- * 根据类型查找预设
- */
-export function findPresetByType(
-  providerType: string,
-): UniversalProviderPreset | undefined {
-  return universalProviderPresets.find((p) => p.providerType === providerType);
-}
