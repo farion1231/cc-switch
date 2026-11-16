@@ -294,6 +294,9 @@ pub(crate) fn validate_provider(id: &str, config: &Value) -> Result<(), AppError
 }
 
 /// Preserve TOML comments and all tables outside the edited account's nodes.
+/// `providers` 是 legacy `[providers.*]` 兼容表：升格/删除会移除其中的同名
+/// 节点（`apply_provider`），这里必须一并同步，否则清理只发生在内存里、
+/// 文件上的 legacy 节点依旧残留并复活。
 fn write(path: &Path, before: &Value, after: &Value) -> Result<(), AppError> {
     let text = {
         let original = fs::read_to_string(path).unwrap_or_default();
@@ -304,7 +307,7 @@ fn write(path: &Path, before: &Value, after: &Value) -> Result<(), AppError> {
         let next = serialized
             .parse::<toml_edit::DocumentMut>()
             .map_err(|e| AppError::Config(e.to_string()))?;
-        for section in ["provider_accounts", "models"] {
+        for section in ["provider_accounts", "models", "providers"] {
             let old = before.get(section).and_then(Value::as_object);
             let new = after.get(section).and_then(Value::as_object);
             if old == new {
@@ -425,6 +428,15 @@ fn apply_provider(
         .as_object_mut()
         .unwrap()
         .retain(|_, model| model.get("account").and_then(Value::as_str) != Some(id));
+    // 升格（switch/add 写入新节点）或删除后，同 id 的 legacy `[providers.<id>]`
+    // 节点必须一并清除：删除守卫只挡纯投影卡（`!exists` 且 legacy 存在），
+    // 一旦 `exists == true` 就走正常路径只删新 schema 节点，legacy 节点残留
+    // 会在下次启动/导入重新投影出同名卡（账号复活）。投影覆盖 legacy 条目的
+    // 全部官方字段（type/model/base_url/api_key/context_window），且模型键
+    // 沿用 provider 名，legacy `default_provider` 指向它时仍能按 dual-field
+    // 口径解析到新 models 表。
+    let promoted = config.is_some() && !exists;
+    let removing = config.is_none();
     if let Some(config) = config {
         // An empty base_url means "use the provider's built-in endpoint"; writing
         // `base_url = ""` into config.toml would override that default with an invalid URL.
@@ -457,6 +469,12 @@ fn apply_provider(
             .as_object_mut()
             .unwrap()
             .remove(id);
+    }
+    // removing 时必然 exists（纯投影卡在上面已早退），即删除路径。
+    if promoted || removing {
+        if let Some(legacy) = document.get_mut("providers").and_then(Value::as_object_mut) {
+            legacy.remove(id);
+        }
     }
     Ok(document)
 }
@@ -724,6 +742,129 @@ context_window = 262144
         save_at_and_commit(&path, "acct", None, false, || Ok(())).unwrap();
         let document = read(&path).unwrap();
         assert!(document["provider_accounts"].get("acct").is_none());
+        assert_eq!(document["default_model"], json!("b-m"));
+    }
+
+    /// 升格 legacy 投影卡后，同 id 的 `[providers.*]` 节点必须随批清除；
+    /// 否则 exists == true 后删除守卫不再触发，卡会复活。
+    #[test]
+    fn switch_promotes_legacy_card_and_delete_sticks() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+default_provider = "deepseek"
+
+[providers.deepseek]
+type = "openai"
+api_key = "sk-legacy"
+model = "deepseek-chat"
+base_url = "https://api.deepseek.example/v1"
+"#,
+        )
+        .unwrap();
+        let archived = json!({
+            "account": {
+                "provider": "openai-compatible",
+                "base_url": "https://api.deepseek.example/v1",
+                "api_key": "sk-legacy"
+            },
+            "models": {"deepseek": {"model": "deepseek-chat"}}
+        });
+        switch_at_and_commit(&path, "deepseek", archived, |_| Ok(())).unwrap();
+        let document = read(&path).unwrap();
+        assert_eq!(
+            document["provider_accounts"]["deepseek"]["api_key"],
+            json!("sk-legacy")
+        );
+        assert!(document["providers"].get("deepseek").is_none());
+        assert_eq!(document["default_model"], json!("deepseek"));
+
+        // 切走后删除：走正常删除路径，legacy 节点不复活
+        let other = json!({
+            "account": {"provider": "openai", "base_url": "https://b.example/v1"},
+            "models": {"b-m": {"model": "m"}}
+        });
+        switch_at_and_commit(&path, "other", other, |_| Ok(())).unwrap();
+        save_at_and_commit(&path, "deepseek", None, false, || Ok(())).unwrap();
+        let document = read(&path).unwrap();
+        assert!(document["provider_accounts"].get("deepseek").is_none());
+        assert!(document["providers"].get("deepseek").is_none());
+        assert!(document["models"].get("deepseek").is_none());
+        assert_eq!(document["default_model"], json!("b-m"));
+    }
+
+    /// add 路径不改选择，但升格清掉 legacy 节点后 `default_provider` 仍指向
+    /// 同名模型键：模型键沿用 provider 名，dual-field 解析不受影响。
+    #[test]
+    fn add_promotes_legacy_card_and_selection_still_resolves() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+default_provider = "deepseek"
+
+[providers.deepseek]
+type = "openai"
+api_key = "sk-legacy"
+model = "deepseek-chat"
+"#,
+        )
+        .unwrap();
+        let archived = json!({
+            "account": {"provider": "openai-compatible", "api_key": "sk-legacy"},
+            "models": {"deepseek": {"model": "deepseek-chat"}}
+        });
+        add_at_and_commit(&path, "deepseek", archived, || Ok(())).unwrap();
+        let document = read(&path).unwrap();
+        assert!(document["providers"].get("deepseek").is_none());
+        assert!(document["provider_accounts"].get("deepseek").is_some());
+        assert_eq!(document["default_provider"], json!("deepseek"));
+        assert_eq!(document["models"]["deepseek"]["account"], json!("deepseek"));
+    }
+
+    /// 新 schema 与 legacy 同名并存（legacy 被投影跳过）时，删除必须连
+    /// shadow 的 legacy 节点一起清掉，否则下次导入复活。
+    #[test]
+    fn delete_clears_shadowed_legacy_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+default_model = "acct-key-a"
+default_provider = "deepseek"
+
+[providers.deepseek]
+type = "openai"
+api_key = "sk-legacy"
+model = "deepseek-chat"
+
+[provider_accounts.acct]
+provider = "openai"
+base_url = "https://api.example.com/v1"
+
+[models."acct-key-a"]
+account = "acct"
+model = "key-a"
+
+[provider_accounts.deepseek]
+provider = "openai-compatible"
+api_key = "sk-new"
+"#,
+        )
+        .unwrap();
+        let other = json!({
+            "account": {"provider": "openai", "base_url": "https://b.example/v1"},
+            "models": {"b-m": {"model": "m"}}
+        });
+        switch_at_and_commit(&path, "other", other, |_| Ok(())).unwrap();
+        save_at_and_commit(&path, "deepseek", None, false, || Ok(())).unwrap();
+        let document = read(&path).unwrap();
+        assert!(document["provider_accounts"].get("deepseek").is_none());
+        assert!(document["providers"].get("deepseek").is_none());
         assert_eq!(document["default_model"], json!("b-m"));
     }
 

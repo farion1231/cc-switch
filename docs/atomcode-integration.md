@@ -130,12 +130,21 @@ CREATE TABLE providers (
    schema entries win: ids already present in `[provider_accounts.*]` are
    never overwritten, and nothing is written back to config.toml (AtomCode
    itself migrates legacy entries in place, `config/mod.rs:1459`).
-   **Removal**: a legacy-projected card cannot be removed from the live
-   config — deletion only touches `[provider_accounts.*]` / `[models.*]`,
-   so it would silently do nothing and the entry would come back on the
-   next import. The backend refuses the request (`apply_provider`) and the
-   toast points the user to run AtomCode once so it migrates the entry to
-   the new format in place; after that, removal works normally.
+   **Removal**: a legacy-projected card that was never promoted cannot be
+   removed from the live config — deletion only touches
+   `[provider_accounts.*]` / `[models.*]`, so it would silently do nothing
+   and the entry would come back on the next import. The backend refuses
+   the request (`apply_provider`) and the toast points the user to run
+   AtomCode once so it migrates the entry to the new format in place; after
+   that, removal works normally. Two paths clear the legacy entry so the
+   card cannot resurrect: **switch/add on a projected card** writes the
+   new-schema account and removes the same-id `[providers.<name>]` node in
+   the same atomic write (the projection covers every documented legacy
+   field, and the model key keeps the provider name so a legacy
+   `default_provider` still resolves through the new `[models.*]` table);
+   **deleting an account** also clears a same-id legacy node left shadowed
+   behind `[provider_accounts.<id>]` (`write` syncs the legacy `providers`
+   table alongside the new-schema tables).
 
 2. **Version Compatibility**: Verified against AtomCode source at v5.2.7
    (`0c0512143`, 2026-11-13). Future versions may introduce breaking changes to

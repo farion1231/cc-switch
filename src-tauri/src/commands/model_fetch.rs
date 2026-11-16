@@ -310,10 +310,7 @@ mod tests {
             "https://generativelanguage.googleapis.com/v1beta"
         );
         // 未收录 id：原样返回（交给后续 URL 校验报错）
-        assert_eq!(
-            super::atomcode_effective_base_url("unknown-vendor", ""),
-            ""
-        );
+        assert_eq!(super::atomcode_effective_base_url("unknown-vendor", ""), "");
     }
 
     #[test]
