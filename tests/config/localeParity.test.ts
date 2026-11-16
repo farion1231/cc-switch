@@ -75,6 +75,21 @@ describe("locale parity", () => {
     ).toEqual([]);
   });
 
+  // The check above uses English as the reference, so an emptied English
+  // string would slip through it. These placeholders are empty on purpose.
+  const intentionallyEmpty = new Set([
+    "providerForm.modelPlaceholder",
+    "providerForm.smallModelPlaceholder",
+    "providerForm.haikuModelPlaceholder",
+  ]);
+  it("keeps every English string non-empty", () => {
+    expect(
+      [...reference]
+        .filter(([key, value]) => !value.trim() && !intentionallyEmpty.has(key))
+        .map(([key]) => key),
+    ).toEqual([]);
+  });
+
   // A few locales use variables English does not (zh passes {{labelSp}}, zh/ja
   // split dates into {{day}}/{{month}}), so a variable is valid when any other
   // locale uses it too. A variable no other locale uses is a typo or a leftover
