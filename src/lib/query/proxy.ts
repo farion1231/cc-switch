@@ -141,7 +141,7 @@ export function useSetProxyStackMember() {
     onError: (error: unknown) => {
       if (isStackWriteError(error) && error.partial) {
         toast.warning(t("provider.stackPartial"), {
-          description: error.message,
+          description: extractErrorMessage(error),
           closeButton: true,
         });
         return;
