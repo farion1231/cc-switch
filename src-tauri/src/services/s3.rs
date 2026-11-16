@@ -10,7 +10,9 @@ use url::Url;
 
 use crate::error::AppError;
 use crate::proxy::http_client;
-use crate::services::sync_protocol::{transfer_timeout, TRANSFER_IDLE_TIMEOUT};
+use crate::services::sync_protocol::{
+    transfer_timeout, transport_failure_reason, TRANSFER_IDLE_TIMEOUT,
+};
 use futures::StreamExt;
 
 const DEFAULT_TIMEOUT_SECS: u64 = 30;
@@ -250,17 +252,9 @@ fn s3_transport_error(
     key: &'static str,
     op_zh: &str,
     op_en: &str,
-    err: &reqwest::Error,
+    err: reqwest::Error,
 ) -> AppError {
-    let (zh_reason, en_reason) = if err.is_timeout() {
-        ("请求超时", "request timed out")
-    } else if err.is_connect() {
-        ("连接失败", "connection failed")
-    } else if err.is_request() {
-        ("请求构造失败", "request build failed")
-    } else {
-        ("网络请求失败", "network request failed")
-    };
+    let (zh_reason, en_reason) = transport_failure_reason(err);
 
     AppError::localized(
         key,
@@ -358,7 +352,7 @@ pub(crate) async fn test_connection(creds: &S3Credentials) -> Result<(), AppErro
         .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS))
         .send()
         .await
-        .map_err(|e| s3_transport_error("s3.connection_failed", "连接", "connection", &e))?;
+        .map_err(|e| s3_transport_error("s3.connection_failed", "连接", "connection", e))?;
 
     if resp.status().is_success() {
         return Ok(());
@@ -402,7 +396,7 @@ pub(crate) async fn put_object(
         .body(bytes)
         .send()
         .await
-        .map_err(|e| s3_transport_error("s3.put_failed", "PUT 请求", "PUT request", &e))?;
+        .map_err(|e| s3_transport_error("s3.put_failed", "PUT 请求", "PUT request", e))?;
 
     if resp.status().is_success() {
         return Ok(());
@@ -446,7 +440,7 @@ pub(crate) async fn get_object(
     let resp = tokio::time::timeout(TRANSFER_IDLE_TIMEOUT, request.send())
         .await
         .map_err(|_| s3_stalled_error("s3.get_failed", "GET 请求", "GET request"))?
-        .map_err(|e| s3_transport_error("s3.get_failed", "GET 请求", "GET request", &e))?;
+        .map_err(|e| s3_transport_error("s3.get_failed", "GET 请求", "GET request", e))?;
 
     if resp.status() == StatusCode::NOT_FOUND {
         return Ok(None);
@@ -516,7 +510,7 @@ pub(crate) async fn head_object(
         .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS))
         .send()
         .await
-        .map_err(|e| s3_transport_error("s3.head_failed", "HEAD 请求", "HEAD request", &e))?;
+        .map_err(|e| s3_transport_error("s3.head_failed", "HEAD 请求", "HEAD request", e))?;
 
     if resp.status() == StatusCode::NOT_FOUND {
         return Ok(None);

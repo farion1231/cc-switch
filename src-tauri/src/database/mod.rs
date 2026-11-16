@@ -130,8 +130,9 @@ fn register_db_change_hook(conn: &Connection) {
     conn.update_hook(Some(
         |action: Action, _database: &str, table: &str, _row_id: i64| match action {
             Action::SQLITE_INSERT | Action::SQLITE_UPDATE | Action::SQLITE_DELETE => {
-                crate::services::webdav_auto_sync::notify_db_changed(table);
-                crate::services::s3_auto_sync::notify_db_changed(table);
+                use crate::services::{auto_sync, s3_auto_sync, webdav_auto_sync};
+                auto_sync::notify_db_changed::<webdav_auto_sync::WebDavAutoSync>(table);
+                auto_sync::notify_db_changed::<s3_auto_sync::S3AutoSync>(table);
             }
             _ => {}
         },
