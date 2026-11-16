@@ -37,6 +37,9 @@ use crate::error::AppError;
 
 const STORE_FILENAME: &str = "codebuddy_accounts.json";
 const STASH_FILENAME: &str = "codebuddy-login-stash.json";
+/// 进行中的终端登录写下的登出标记内容。归属原本只记在内存里，CC Switch 中途退出后
+/// 就认不出那份标记了；落盘后启动时还能把它收回去（见 [`CodebuddyAccountManager::recover_stale_marker`]）。
+const MARKER_RECORD_FILENAME: &str = "codebuddy-login-marker.txt";
 /// 暂存最多留这么多份（同样的内容只留一份）
 const STASH_LIMIT: usize = 5;
 
@@ -449,6 +452,8 @@ impl CodebuddyAccountManager {
         }
         pending.remove(flow_id);
         drop(pending);
+        // 登上新号时 CLI 自己删了标记，记录也就没用了
+        self.forget_marker_record();
         let (current, changed) = absorb(&mut store, &live, true);
         if changed {
             self.persist(&store)?;
@@ -618,6 +623,14 @@ impl CodebuddyAccountManager {
         let content = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
         let marker = self.auth_dir.join(LOGGED_OUT_FILENAME);
         crate::config::atomic_write_private(&marker, content.as_bytes())?;
+        if let Err(error) = crate::config::atomic_write_private(
+            &self.data_dir.join(MARKER_RECORD_FILENAME),
+            content.as_bytes(),
+        ) {
+            log::warn!(
+                "[CodebuddyAccount] 记录登出标记失败，CC Switch 退出后将无法自动恢复: {error}"
+            );
+        }
         let credential = std::fs::read_to_string(self.credential_path()).ok();
         if credential.as_deref() != Some(raw) {
             log::warn!("[CodebuddyAccount] 写登出标记时凭据文件被别人改了");
@@ -631,6 +644,36 @@ impl CodebuddyAccountManager {
         let Some(ours) = entry.marker.as_deref() else {
             return Ok(false);
         };
+        let restored = self.remove_marker_if(ours).await?;
+        self.forget_marker_record();
+        Ok(restored)
+    }
+
+    /// 启动时调用：上次 CC Switch 退出时还有没登完的终端登录，它写的登出标记还在、内容也没变，
+    /// 就删掉它，原来的登录回来（CLI 已登上新号或用户自己 /logout 过时标记不是这份，不碰）。
+    pub async fn recover_stale_marker(&self) -> Result<bool, AppError> {
+        let record = self.data_dir.join(MARKER_RECORD_FILENAME);
+        let ours = match std::fs::read_to_string(&record) {
+            Ok(content) => content,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(AppError::io(&record, error)),
+        };
+        let restored = self.remove_marker_if(&ours).await?;
+        self.forget_marker_record();
+        Ok(restored)
+    }
+
+    fn forget_marker_record(&self) {
+        let record = self.data_dir.join(MARKER_RECORD_FILENAME);
+        match std::fs::remove_file(&record) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => log::warn!("[CodebuddyAccount] 删除登出标记记录失败: {error}"),
+        }
+    }
+
+    /// 标记内容还是 `ours` 时删掉它（拿目录锁）。
+    async fn remove_marker_if(&self, ours: &str) -> Result<bool, AppError> {
         let _lock = DirLock::acquire(&self.auth_dir).await?;
         let marker = self.auth_dir.join(LOGGED_OUT_FILENAME);
         match std::fs::read_to_string(&marker) {

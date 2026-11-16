@@ -403,6 +403,58 @@ async fn cancelling_a_login_restores_the_original_sign_in() {
 }
 
 #[tokio::test]
+async fn a_restart_mid_login_restores_the_original_sign_in() {
+    let fx = Fixture::new();
+    let alice = credential("100", CN, "a1", "s1");
+    fx.set_live(&alice);
+    fx.manager.start_login().await.unwrap();
+    assert!(fx.marker().exists());
+    // CC Switch 退出：进行中的登录只在内存里，重开后靠落盘的记录认出自己的标记
+    let reopened = CodebuddyAccountManager::with_auth_dir(fx.data_dir.clone(), fx.auth_dir.clone());
+    assert!(reopened.recover_stale_marker().await.unwrap());
+    assert!(!fx.marker().exists());
+    assert!(!fx.data_dir.join(MARKER_RECORD_FILENAME).exists());
+    assert_eq!(fx.live(), alice);
+    // 只恢复一次
+    assert!(!reopened.recover_stale_marker().await.unwrap());
+}
+
+#[tokio::test]
+async fn a_restart_leaves_a_marker_that_is_no_longer_ours() {
+    let fx = Fixture::new();
+    fx.set_live(&credential("100", CN, "a1", "s1"));
+    fx.manager.start_login().await.unwrap();
+    // 退出期间用户在 CLI 里自己 /logout 了：标记换成了别人的
+    std::fs::write(fx.marker(), "2026-01-01T00:00:00.000Z").unwrap();
+    let reopened = CodebuddyAccountManager::with_auth_dir(fx.data_dir.clone(), fx.auth_dir.clone());
+    assert!(!reopened.recover_stale_marker().await.unwrap());
+    assert!(fx.marker().exists());
+    assert!(!fx.data_dir.join(MARKER_RECORD_FILENAME).exists());
+}
+
+#[tokio::test]
+async fn finishing_or_cancelling_a_login_drops_the_marker_record() {
+    let fx = Fixture::new();
+    fx.set_live(&credential("100", CN, "a1", "s1"));
+    let start = fx.manager.start_login().await.unwrap();
+    assert!(fx.data_dir.join(MARKER_RECORD_FILENAME).exists());
+    fx.manager.cancel_login(&start.flow_id).await.unwrap();
+    assert!(!fx.data_dir.join(MARKER_RECORD_FILENAME).exists());
+
+    let start = fx.manager.start_login().await.unwrap();
+    // CLI 登上新号：写新凭据、删标记
+    fx.set_live(&credential("200", CN, "b1", "s2"));
+    std::fs::remove_file(fx.marker()).unwrap();
+    assert!(fx
+        .manager
+        .poll_login(&start.flow_id)
+        .await
+        .unwrap()
+        .is_some());
+    assert!(!fx.data_dir.join(MARKER_RECORD_FILENAME).exists());
+}
+
+#[tokio::test]
 async fn cancel_leaves_a_marker_that_is_not_ours() {
     let fx = Fixture::new();
     fx.set_live(&credential("100", CN, "a1", "s1"));

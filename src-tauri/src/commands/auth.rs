@@ -336,9 +336,8 @@ pub async fn auth_start_login(
         // CLI 才会直接进登录界面（见 `CodebuddyAccountManager::start_login`）。
         // 既没有用户码也没有授权页，device_code 放这次登录的 id。
         AUTH_PROVIDER_CODEBUDDY_OAUTH => {
-            if target_account_id.is_some() {
-                return Err("Targeted re-authentication is only supported for Codex OAuth".into());
-            }
+            // 重新登录就是普通的终端登录：收录时按 uid + 站点覆盖旧副本，
+            // 所以 target_account_id 不需要单独处理。
             let start = codebuddy_state
                 .0
                 .start_login()

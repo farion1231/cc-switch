@@ -164,6 +164,14 @@ fn sync_file(path: &Path, id: &str, spec: Option<&Value>) -> Result<(), AppError
             }
             object.extend(unified_spec(spec).as_object().cloned().unwrap_or_default());
             servers.insert(id.into(), merged);
+            // Enabled in CC Switch means loaded by CodeBuddy: an id still listed in
+            // the native `disabledMcpServers` would keep it off.
+            if let Some(disabled) = desired
+                .get_mut("disabledMcpServers")
+                .and_then(Value::as_array_mut)
+            {
+                disabled.retain(|entry| entry.as_str() != Some(id));
+            }
         }
         None => {
             servers.remove(id);
@@ -344,6 +352,33 @@ mod tests {
         let value = read(&path).unwrap();
         assert!(value["mcpServers"].get("server").is_none());
         assert_eq!(unified_spec(&value["mcpServers"]["other"])["type"], "stdio");
+    }
+
+    #[test]
+    fn codebuddy_mcp_enabling_drops_the_id_from_native_disabled_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp.json");
+        fs::write(
+            &path,
+            json!({
+                "disabledMcpServers": ["server", "other"],
+                "mcpServers": {
+                    "server": {"command":"node","args":["a.js"]},
+                    "other": {"command":"node","args":["b.js"]}
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        sync_file(
+            &path,
+            "server",
+            Some(&json!({"type":"stdio","command":"node","args":["a.js"]})),
+        )
+        .unwrap();
+        let value = read(&path).unwrap();
+        assert_eq!(value["disabledMcpServers"], json!(["other"]));
+        assert_eq!(value["mcpServers"]["server"]["command"], "node");
     }
 
     #[test]

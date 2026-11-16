@@ -122,24 +122,33 @@ pub fn sync_codebuddy_usage(db: &Database) -> Result<SessionSyncResult, AppError
     )
 }
 
-fn usage_files(projects: &Path) -> Vec<PathBuf> {
-    let mut files = crate::session_manager::providers::codebuddy::session_files(projects);
-    let subagents: Vec<PathBuf> = files
+/// Main transcripts, then sub-agent transcripts paired with their parent session id
+/// (the `<session>` directory name): sub-agent records carry their own `sessionId`,
+/// but their requests belong to the parent session.
+fn usage_files(projects: &Path) -> Vec<(PathBuf, Option<String>)> {
+    let mains = crate::session_manager::providers::codebuddy::session_files(projects);
+    let subagents: Vec<(PathBuf, Option<String>)> = mains
         .iter()
         .filter_map(|main| {
             let stem = main.file_stem()?;
-            Some(main.with_file_name(stem).join("subagents"))
+            Some((
+                main.with_file_name(stem).join("subagents"),
+                stem.to_string_lossy().into_owned(),
+            ))
         })
-        .flat_map(|dir| {
+        .flat_map(|(dir, parent)| {
             fs::read_dir(dir)
                 .into_iter()
                 .flatten()
                 .flatten()
                 .map(|entry| entry.path())
                 .filter(|path| path.extension().and_then(|e| e.to_str()) == Some("jsonl"))
+                .map(|path| (path, Some(parent.clone())))
                 .collect::<Vec<_>>()
         })
         .collect();
+    let mut files: Vec<(PathBuf, Option<String>)> =
+        mains.into_iter().map(|path| (path, None)).collect();
     files.extend(subagents);
     files
 }
@@ -147,7 +156,7 @@ fn usage_files(projects: &Path) -> Vec<PathBuf> {
 fn sync_projects(db: &Database, projects: &Path) -> Result<SessionSyncResult, AppError> {
     let mut result = SessionSyncResult::default();
     let cursors = load_sync_cursors(db)?;
-    for path in usage_files(projects) {
+    for (path, parent_session) in usage_files(projects) {
         let Ok(meta) = fs::metadata(&path) else {
             continue;
         };
@@ -165,7 +174,7 @@ fn sync_projects(db: &Database, projects: &Path) -> Result<SessionSyncResult, Ap
             .map(|c| c.last_line_offset)
             .filter(|offset| *offset >= 0 && *offset <= meta.len() as i64)
             .unwrap_or(0);
-        match sync_file(db, &path, &key, modified, offset) {
+        match sync_file(db, &path, parent_session.as_deref(), &key, modified, offset) {
             Ok(part) => result.merge(part),
             Err(error) => result.errors.push(format!(
                 "CodeBuddy Code session {}: {error}",
@@ -184,7 +193,9 @@ struct Entry {
     created_ms: i64,
 }
 
-fn entry(record: &Value) -> Option<Entry> {
+/// `parent_session`: the parent of a sub-agent transcript; the record's own
+/// `sessionId` is the sub-agent's and only keys the request receipt.
+fn entry(record: &Value, parent_session: Option<&str>) -> Option<Entry> {
     match record.get("type").and_then(Value::as_str) {
         Some("message") if record.get("role").and_then(Value::as_str) == Some("assistant") => {}
         Some("function_call") => {}
@@ -216,7 +227,7 @@ fn entry(record: &Value) -> Option<Entry> {
     let to_u32 = |n: u64| n.min(u32::MAX as u64) as u32;
     Some(Entry {
         request_id: request,
-        session_id: session,
+        session_id: parent_session.map(str::to_string).unwrap_or(session),
         usage: TokenUsage {
             input_tokens: to_u32(counts.input),
             output_tokens: to_u32(counts.output),
@@ -234,6 +245,7 @@ fn entry(record: &Value) -> Option<Entry> {
 fn sync_file(
     db: &Database,
     path: &Path,
+    parent_session: Option<&str>,
     key: &str,
     modified: i64,
     offset: i64,
@@ -262,7 +274,7 @@ fn sync_file(
         if let Some(entry) = serde_json::from_slice::<Value>(&buffer)
             .ok()
             .as_ref()
-            .and_then(entry)
+            .and_then(|record| entry(record, parent_session))
         {
             entries.push(entry);
         }
@@ -438,13 +450,29 @@ mod tests {
         fs::write(&path, format!("{}\n", call("c1", "m1", 1, 100, 0, 1))).unwrap();
         let subagents = path.with_file_name("s1").join("subagents");
         fs::create_dir_all(&subagents).unwrap();
+        // Sub-agent records carry the sub-agent's own sessionId.
         fs::write(
             subagents.join("agent-1.jsonl"),
-            format!("{}\n", call("c9", "m9", 1, 50, 10, 2)),
+            format!(
+                "{}\n",
+                call("c9", "m9", 1, 50, 10, 2).replace("\"s1\"", "\"agent-1-session\"")
+            ),
         )
         .unwrap();
         let db = Database::memory().unwrap();
         assert_eq!(sync_projects(&db, dir.path()).unwrap().imported, 2);
+        // Both requests count toward the parent session shown in the session reader.
+        let sessions: Vec<String> = {
+            let conn = db.conn.lock().unwrap();
+            let mut stmt = conn
+                .prepare("SELECT DISTINCT session_id FROM proxy_request_logs WHERE app_type = 'codebuddy'")
+                .unwrap();
+            stmt.query_map([], |row| row.get(0))
+                .unwrap()
+                .map(Result::unwrap)
+                .collect()
+        };
+        assert_eq!(sessions, vec!["s1".to_string()]);
         // Rewriting the file resets the cursor, but receipts are permanent.
         fs::write(&path, format!("{}\n", call("c1", "m1", 1, 100, 0, 1))).unwrap();
         let file = fs::OpenOptions::new().append(true).open(&path).unwrap();
