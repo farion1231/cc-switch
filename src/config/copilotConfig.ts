@@ -56,7 +56,7 @@ export interface CopilotByokConfig {
   reasoningEffort?: string;
 }
 
-/** Copilot CLI `--reasoning-effort` 的取值（与后端 `REASONING_EFFORTS` 一致）。 */
+/** Copilot CLI `--reasoning-effort` 的取值（与后端 `REASONING_EFFORTS` 一致，tests/config/backendConstants.test.ts 校验）。 */
 export const COPILOT_REASONING_EFFORTS = [
   "none",
   "minimal",

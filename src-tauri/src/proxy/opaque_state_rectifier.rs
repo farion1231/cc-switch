@@ -186,6 +186,32 @@ pub fn carries_encrypted_agent_task(request: &Value) -> bool {
     })
 }
 
+/// 请求里有没有上游可能验不了的状态：推理条目（密文、思考原文或要回查的 id）、函数输出与
+/// agent_message 里的加密片段、压缩条目，也就是 [`rectify_opaque_state`] 能处理的那些。
+///
+/// 有这些状态时，原样转发的流要先压到第一个输出事件再交出去：上游可能先回 HTTP 200、
+/// 再在输出之前用 `response.failed` 说解不开（#9476），流交出去之后就回不到重试循环了。
+pub fn carries_opaque_state(request: &Value) -> bool {
+    let Some(items) = request.get("input").and_then(Value::as_array) else {
+        return false;
+    };
+    let has_encrypted_part = |parts: Option<&Value>| {
+        parts
+            .and_then(Value::as_array)
+            .is_some_and(|parts| parts.iter().any(is_encrypted_part))
+    };
+    items
+        .iter()
+        .any(|item| match item.get("type").and_then(Value::as_str) {
+            Some("reasoning") => true,
+            Some("function_call_output" | "custom_tool_call_output") => {
+                has_encrypted_part(item.get("output"))
+            }
+            Some("agent_message") => has_encrypted_part(item.get("content")),
+            _ => is_compaction_item(item),
+        })
+}
+
 /// 子 agent 读不到任务：上游解不开请求末尾那条任务的密文。HTTP 400，Codex 不会重试。
 pub fn unreadable_agent_task_error() -> ProxyError {
     ProxyError::UpstreamError {
@@ -218,9 +244,12 @@ fn error_messages(payload: &Value) -> Vec<&str> {
     .collect()
 }
 
+/// 中转转述时常在原话前加自己的前缀（如 "OpenAI Responses bad request: "），按整句包含认。
 fn is_encrypted_function_output_rejection(body: &str, messages: &[&str]) -> bool {
     body.trim() == ENCRYPTED_FUNCTION_OUTPUT_REJECTION
-        || messages.contains(&ENCRYPTED_FUNCTION_OUTPUT_REJECTION)
+        || messages
+            .iter()
+            .any(|message| message.contains(ENCRYPTED_FUNCTION_OUTPUT_REJECTION))
 }
 
 fn is_coded_rejection(payload: &Value) -> bool {
@@ -984,6 +1013,31 @@ mod tests {
         let before = plain.clone();
         assert!(!rectify_claude_responses_replay(&mut plain, ALL_STATE).applied);
         assert_eq!(plain, before);
+    }
+
+    #[test]
+    fn carries_opaque_state_covers_what_rectify_can_strip() {
+        let with = |item: Value| json!({ "input": [item] });
+        assert!(carries_opaque_state(&mixed_history()));
+        assert!(carries_opaque_state(&with(
+            json!({ "type": "reasoning", "id": "rs_1", "summary": [] })
+        )));
+        assert!(carries_opaque_state(&with(json!({
+            "type": "function_call_output", "call_id": "c",
+            "output": [{ "type": "encrypted_content", "encrypted_content": "enc" }]
+        }))));
+        assert!(carries_opaque_state(&with(
+            json!({ "type": "compaction", "encrypted_content": "gAAAA" })
+        )));
+
+        assert!(!carries_opaque_state(&json!({ "input": "hi" })));
+        assert!(!carries_opaque_state(&with(json!({
+            "type": "message", "role": "user",
+            "content": [{ "type": "input_text", "text": "hi" }]
+        }))));
+        assert!(!carries_opaque_state(&with(json!({
+            "type": "function_call_output", "call_id": "c", "output": "plain"
+        }))));
     }
 
     #[test]

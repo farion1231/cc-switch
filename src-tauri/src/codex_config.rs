@@ -257,8 +257,9 @@ impl CodexCatalogToolProfile {
 /// exactly these five; 0.148 is the same minus `amazon-bedrock-runtime`).
 /// `oss` / `ollama-chat` are NOT reserved on 0.148/0.149 — both load as
 /// ordinary custom tables — so listing them here would strand their bearer
-/// token in the ignored top level. Mirror: providerConfigUtils.ts.
-const CODEX_RESERVED_MODEL_PROVIDER_IDS: &[&str] = &[
+/// token in the ignored top level. The frontend copy in providerConfigUtils.ts
+/// is checked against this by `frontend_parity_tests`.
+pub(crate) const CODEX_RESERVED_MODEL_PROVIDER_IDS: &[&str] = &[
     "amazon-bedrock",
     "amazon-bedrock-runtime",
     "openai",
@@ -947,7 +948,6 @@ pub(crate) fn is_custom_codex_model_provider_id(id: &str) -> bool {
     // Exact match, mirroring upstream: both the built-in provider lookup and
     // validate_reserved_model_provider_ids are case-sensitive, so `OpenAI`
     // etc. are legitimate custom ids whose tables must receive the token.
-    // Keep in sync with the frontend list in src/utils/providerConfigUtils.ts.
     let id = id.trim();
     !id.is_empty() && !CODEX_RESERVED_MODEL_PROVIDER_IDS.contains(&id)
 }
@@ -4590,6 +4590,43 @@ experimental_bearer_token = "stale-table-key"
                 "explicit provider metadata must override the text-only registry"
             );
             assert_eq!(modalities("custom-text-alias"), json!(["text"]));
+        }
+    }
+
+    #[test]
+    fn copilot_catalog_uses_declared_vision_capabilities_and_infers_unknowns() {
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    { "model": "gpt-5.6-sol", "inputModalities": ["text", "image"] },
+                    { "model": "gpt-5.6-terra", "inputModalities": ["text"] },
+                    { "model": "copilot-unknown" },
+                    { "model": "qwen3-coder-plus", "inputModalities": ["text", "image"] }
+                ]
+            }
+        });
+        let template = json!({
+            "input_modalities": ["text"],
+            "supports_image_detail_original": true
+        });
+        let specs = codex_catalog_model_specs(&settings);
+        let catalog = codex_model_catalog_from_specs(
+            &specs,
+            &template,
+            CodexCatalogToolProfile::Copilot,
+            128_000,
+        );
+        let models = catalog["models"].as_array().unwrap();
+        assert_eq!(models.len(), 4);
+        for (model, expected) in [
+            ("gpt-5.6-sol", json!(["text", "image"])),
+            ("gpt-5.6-terra", json!(["text"])),
+            ("copilot-unknown", json!(["text", "image"])),
+            ("qwen3-coder-plus", json!(["text", "image"])),
+        ] {
+            let entry = models.iter().find(|entry| entry["slug"] == model).unwrap();
+            assert_eq!(entry["input_modalities"], expected, "{model}");
+            assert_eq!(entry["supports_image_detail_original"], json!(false));
         }
     }
 

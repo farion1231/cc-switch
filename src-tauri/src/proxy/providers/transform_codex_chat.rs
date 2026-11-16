@@ -268,14 +268,22 @@ pub(crate) fn build_codex_tool_context_from_request(body: &Value) -> CodexToolCo
 /// Convert an OpenAI Responses request into an OpenAI Chat Completions request.
 #[allow(dead_code)]
 pub fn responses_to_chat_completions(body: Value) -> Result<Value, ProxyError> {
-    responses_to_chat_completions_with_reasoning(body, None)
+    responses_to_chat_completions_with_reasoning(body, None, true)
 }
 
 /// Convert an OpenAI Responses request into an OpenAI Chat Completions request,
 /// using provider-declared Codex Chat reasoning capabilities when available.
+///
+/// `preserve_reasoning_content` mirrors the Claude → Chat path
+/// (`should_preserve_reasoning_content_for_openai_chat`): `reasoning_content`
+/// is a DeepSeek / Kimi compatibility field that third-party gateways expect on
+/// assistant history, and strict OpenAI-compatible upstreams such as Mistral
+/// reject it with HTTP 422 (`extra_forbidden`). Callers pass `false` for those
+/// upstreams so the field never reaches them.
 pub fn responses_to_chat_completions_with_reasoning(
     body: Value,
     reasoning_config: Option<&CodexChatReasoningConfig>,
+    preserve_reasoning_content: bool,
 ) -> Result<Value, ProxyError> {
     let mut result = json!({});
     let tool_context = build_codex_tool_context_from_request(&body);
@@ -312,6 +320,14 @@ pub fn responses_to_chat_completions_with_reasoning(
         coalesce_replayed_tool_turn_messages(&mut messages);
     }
     backfill_tool_call_reasoning_placeholders(&mut messages);
+    if !preserve_reasoning_content {
+        let stripped = strip_assistant_reasoning_content(&mut messages);
+        if stripped > 0 {
+            log::debug!(
+                "[Codex Chat] Dropped reasoning_content from {stripped} assistant message(s)"
+            );
+        }
+    }
     let messages = collapse_system_messages_to_head(messages);
     result["messages"] = json!(messages);
 
@@ -356,6 +372,7 @@ pub fn responses_to_chat_completions_with_reasoning(
             result[*key] = value.clone();
         }
     }
+    drop_responses_only_stream_options(&mut result);
 
     // Strict OpenAI-compatible upstreams (vLLM, enterprise gateways) reject
     // requests that carry tool_choice or parallel_tool_calls without a non-empty
@@ -378,6 +395,26 @@ pub fn responses_to_chat_completions_with_reasoning(
     super::transform::inject_openai_stream_include_usage(&mut result);
 
     Ok(result)
+}
+
+/// `stream_options.reasoning_summary_delivery` 是 Responses 协议的字段（Codex 以为在跟
+/// 内置 openai 说话时才发，聚合模式就是这样），Chat Completions 没有它；严格校验的
+/// 上游（Mistral）收到会整条 422（#9507）。只删这一项，删完为空时整个键删掉，流式时
+/// 下面照常补 `include_usage`。
+fn drop_responses_only_stream_options(result: &mut Value) {
+    let Some(obj) = result.as_object_mut() else {
+        return;
+    };
+    let Some(stream_options) = obj.get_mut("stream_options").and_then(Value::as_object_mut) else {
+        return;
+    };
+    if stream_options
+        .remove("reasoning_summary_delivery")
+        .is_some()
+        && stream_options.is_empty()
+    {
+        obj.remove("stream_options");
+    }
 }
 
 fn apply_reasoning_options(
@@ -1562,6 +1599,29 @@ fn ensure_tool_call_reasoning_content(message: &mut Value) {
     }
 }
 
+/// 移除 assistant 历史里的 `reasoning_content`，返回被移除的消息条数。
+///
+/// 该字段是 DeepSeek / Kimi 经第三方网关时的兼容约定，严格校验的
+/// OpenAI 兼容上游（Mistral）会以 `extra_forbidden` 整条 422 拒收。所有注入点
+/// （真实思考回填、`"tool call"` 占位）都在本模块内，出口统一剥离比逐个给注入点
+/// 加门控更不容易漏。与 `claude.rs` 的
+/// `should_preserve_reasoning_content_for_openai_chat` 同口径。
+fn strip_assistant_reasoning_content(messages: &mut [Value]) -> usize {
+    let mut stripped = 0;
+    for message in messages.iter_mut() {
+        let is_assistant = message.get("role").and_then(Value::as_str) == Some("assistant");
+        if !is_assistant {
+            continue;
+        }
+        if let Some(obj) = message.as_object_mut() {
+            if obj.remove("reasoning_content").is_some() {
+                stripped += 1;
+            }
+        }
+    }
+    stripped
+}
+
 /// 将仍未消费的 pending reasoning 回溯附挂到上一条 assistant 消息。
 ///
 /// 只允许两种「真正的尾部」场景调用：
@@ -1775,24 +1835,94 @@ fn serialize_tool_definition_for_description(tool: &Value) -> String {
     canonical_json_string(tool)
 }
 
-/// Normalize a function's `parameters` JSON Schema so `type` is always `"object"`.
+/// Normalize a function's `parameters` JSON Schema for strict Chat Completions
+/// providers while preserving the schema's validation semantics.
 ///
-/// Some Responses tools carry `parameters: null` or `parameters: {"type": null}`,
-/// but OpenAI Chat Completions strictly requires `{"type": "object", "properties": {...}}`.
+/// Some Responses tools carry `parameters: null`, `parameters: {"type": null}`
+/// or `required: null`. A few strict OpenAI-compatible gateways also require
+/// `required` to be an array whenever `additionalProperties` is `false`.
 fn normalize_function_parameters(params: Option<&Value>) -> Value {
     let mut params = match params {
         Some(Value::Object(obj)) => Value::Object(obj.clone()),
         _ => json!({"type": "object", "properties": {}}),
     };
-    if let Some(obj) = params.as_object_mut() {
-        match obj.get("type").and_then(|v| v.as_str()) {
-            Some("object") => {}
-            _ => {
-                obj.insert("type".to_string(), json!("object"));
+    sanitize_parameter_schema(&mut params, true);
+    params
+}
+
+fn sanitize_parameter_schema(schema: &mut Value, is_root: bool) {
+    let Value::Object(obj) = schema else {
+        return;
+    };
+
+    if is_root && obj.get("type").and_then(Value::as_str) != Some("object") {
+        obj.insert("type".to_string(), json!("object"));
+    }
+
+    let invalid_required = obj
+        .get("required")
+        .is_some_and(|required| !required.is_array());
+    let strict_object_without_required = obj.get("required").is_none()
+        && obj.get("additionalProperties") == Some(&Value::Bool(false));
+    if invalid_required || strict_object_without_required {
+        obj.insert("required".to_string(), json!([]));
+    }
+
+    // Recurse only through keywords whose values are themselves schemas. This
+    // avoids rewriting arbitrary JSON objects in `default` or `examples`.
+    for key in [
+        "properties",
+        "patternProperties",
+        "$defs",
+        "definitions",
+        "dependentSchemas",
+        "dependencies",
+    ] {
+        if let Some(children) = obj.get_mut(key).and_then(Value::as_object_mut) {
+            for child in children.values_mut() {
+                sanitize_parameter_schema_value(child, false);
             }
         }
     }
-    params
+
+    for key in [
+        "items",
+        "additionalItems",
+        "contains",
+        "propertyNames",
+        "additionalProperties",
+        "unevaluatedItems",
+        "unevaluatedProperties",
+        "contentSchema",
+        "not",
+        "if",
+        "then",
+        "else",
+    ] {
+        if let Some(child) = obj.get_mut(key) {
+            sanitize_parameter_schema_value(child, false);
+        }
+    }
+
+    for key in ["prefixItems", "allOf", "anyOf", "oneOf"] {
+        if let Some(children) = obj.get_mut(key).and_then(Value::as_array_mut) {
+            for child in children {
+                sanitize_parameter_schema_value(child, false);
+            }
+        }
+    }
+}
+
+fn sanitize_parameter_schema_value(value: &mut Value, is_root: bool) {
+    match value {
+        Value::Object(_) => sanitize_parameter_schema(value, is_root),
+        Value::Array(children) => {
+            for child in children {
+                sanitize_parameter_schema_value(child, false);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn responses_function_tool_to_chat_tool(tool: &Value, chat_name: &str) -> Option<Value> {
@@ -1809,7 +1939,7 @@ fn responses_function_tool_to_chat_tool(tool: &Value, chat_name: &str) -> Option
             .get_mut("function")
             .and_then(|value| value.as_object_mut())
         {
-            // Ensure parameters.type is "object" for strict OpenAI-compatible providers
+            // Normalize parameters for strict OpenAI-compatible providers.
             let parameters = normalize_function_parameters(obj.get("parameters"));
             obj.insert("parameters".to_string(), parameters);
 
@@ -3512,6 +3642,171 @@ mod tests {
     }
 
     #[test]
+    fn responses_request_to_chat_normalizes_null_required_and_preserves_closed_schema() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "tools": [{
+                "type": "function",
+                "name": "search",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"query": {"type": "string"}},
+                    "required": null,
+                    "additionalProperties": false
+                }
+            }],
+            "input": "hi"
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let parameters = &result["tools"][0]["function"]["parameters"];
+
+        assert_eq!(parameters["required"], json!([]));
+        assert_eq!(parameters["additionalProperties"], json!(false));
+        assert_eq!(parameters["properties"]["query"]["type"], json!("string"));
+    }
+
+    #[test]
+    fn responses_request_to_chat_adds_required_for_closed_nested_schemas() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "tools": [{
+                "type": "function",
+                "name": "inspect",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "options": {
+                            "type": "object",
+                            "properties": {"verbose": {"type": "boolean"}},
+                            "additionalProperties": false
+                        },
+                        "entries": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {"id": {"type": "string"}},
+                                "required": null,
+                                "additionalProperties": false
+                            }
+                        }
+                    },
+                    "required": ["options", "entries"]
+                }
+            }],
+            "input": "hi"
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let parameters = &result["tools"][0]["function"]["parameters"];
+
+        assert_eq!(parameters["properties"]["options"]["required"], json!([]));
+        assert_eq!(
+            parameters["properties"]["options"]["additionalProperties"],
+            json!(false)
+        );
+        assert_eq!(
+            parameters["properties"]["entries"]["items"]["required"],
+            json!([])
+        );
+        assert_eq!(
+            parameters["properties"]["entries"]["items"]["additionalProperties"],
+            json!(false)
+        );
+    }
+
+    #[test]
+    fn responses_request_to_chat_sanitizes_schema_combinators_and_defs() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "tools": [{
+                "type": "function",
+                "name": "choose",
+                "parameters": {
+                    "type": "object",
+                    "oneOf": [{
+                        "type": "object",
+                        "required": null,
+                        "additionalProperties": false
+                    }],
+                    "$defs": {
+                        "payload": {
+                            "type": "object",
+                            "required": null,
+                            "additionalProperties": false
+                        }
+                    }
+                }
+            }],
+            "input": "hi"
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        let parameters = &result["tools"][0]["function"]["parameters"];
+
+        assert_eq!(parameters["oneOf"][0]["required"], json!([]));
+        assert_eq!(parameters["oneOf"][0]["additionalProperties"], json!(false));
+        assert_eq!(parameters["$defs"]["payload"]["required"], json!([]));
+        assert_eq!(
+            parameters["$defs"]["payload"]["additionalProperties"],
+            json!(false)
+        );
+    }
+
+    #[test]
+    fn responses_request_to_chat_preserves_valid_and_unconstrained_schemas() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "tools": [{
+                "type": "function",
+                "name": "lookup",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "default": {"required": null}
+                        }
+                    },
+                    "required": ["query"],
+                    "additionalProperties": false
+                }
+            }, {
+                "type": "function",
+                "name": "open_lookup",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"query": {"type": "string"}}
+                }
+            }],
+            "input": "hi"
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+        assert_eq!(
+            result["tools"][0]["function"]["parameters"],
+            json!({
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "default": {"required": null}
+                    }
+                },
+                "required": ["query"],
+                "additionalProperties": false
+            })
+        );
+        assert_eq!(
+            result["tools"][1]["function"]["parameters"],
+            json!({
+                "type": "object",
+                "properties": {"query": {"type": "string"}}
+            })
+        );
+    }
+
+    #[test]
     fn responses_request_to_chat_defaults_top_level_one_of_tool_parameters_to_object() {
         let input = json!({
             "model": "gpt-5.4",
@@ -3682,6 +3977,41 @@ mod tests {
     }
 
     #[test]
+    fn responses_request_to_chat_drops_responses_only_stream_options() {
+        // 聚合模式下 Codex 以为在跟内置 openai 说话，会带上 Responses 专有的
+        // reasoning_summary_delivery；Chat 没有这个字段，Mistral 会 422（#9507）。
+        let input = json!({
+            "model": "deepseek-v4-1-flash-1017",
+            "input": "hello",
+            "stream": true,
+            "stream_options": {"reasoning_summary_delivery": "sequential_cutoff"},
+            "tools": [{"type": "web_search"}]
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+
+        assert_eq!(result["stream_options"], json!({"include_usage": true}));
+        // 托管 web_search 在 Chat 路径上本来就丢掉。
+        assert!(result.get("tools").is_none());
+
+        let non_stream = responses_to_chat_completions(json!({
+            "model": "m",
+            "input": "hello",
+            "stream_options": {"reasoning_summary_delivery": "sequential_cutoff", "other": 1}
+        }))
+        .unwrap();
+        assert_eq!(non_stream["stream_options"], json!({"other": 1}));
+
+        let only_private = responses_to_chat_completions(json!({
+            "model": "m",
+            "input": "hello",
+            "stream_options": {"reasoning_summary_delivery": "sequential_cutoff"}
+        }))
+        .unwrap();
+        assert!(only_private.get("stream_options").is_none());
+    }
+
+    #[test]
     fn responses_request_to_chat_uses_provider_reasoning_effort_for_deepseek_model() {
         let input = json!({
             "model": "deepseek-v4-pro",
@@ -3698,11 +4028,100 @@ mod tests {
             effort_levels: None,
         };
 
-        let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+        let result =
+            responses_to_chat_completions_with_reasoning(input, Some(&config), true).unwrap();
 
         assert_eq!(result["thinking"]["type"], "enabled");
         // DeepSeek 官方服务端把 xhigh 当 high。
         assert_eq!(result["reasoning_effort"], "high");
+    }
+
+    /// 严格上游（Mistral）拒收 assistant 历史里的 `reasoning_content`：转换出口按
+    /// `preserve_reasoning_content` 剥离，真实思考回填与 `"tool call"` 占位两种来源
+    /// 都要覆盖。回归锁：issue #9507。
+    #[test]
+    fn responses_request_to_chat_drops_reasoning_content_for_strict_upstream() {
+        let input = json!({
+            "model": "deepseek-v4-1-flash-1017",
+            "input": [
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "list files"}]
+                },
+                {
+                    "type": "reasoning",
+                    "summary": [{"type": "summary_text", "text": "need ls"}]
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "c1",
+                    "name": "shell",
+                    "arguments": "{\"cmd\":\"ls\"}"
+                },
+                {"type": "function_call_output", "call_id": "c1", "output": "a.txt"},
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "thanks"}]
+                },
+                // 第二轮没有思考内容：只会拿到 "tool call" 占位。
+                {
+                    "type": "function_call",
+                    "call_id": "c2",
+                    "name": "shell",
+                    "arguments": "{\"cmd\":\"pwd\"}"
+                },
+                {"type": "function_call_output", "call_id": "c2", "output": "/tmp"}
+            ],
+            "reasoning": {"effort": "high"}
+        });
+        let config = CodexChatReasoningConfig {
+            supports_thinking: Some(false),
+            supports_effort: Some(true),
+            thinking_param: Some("none".to_string()),
+            effort_param: Some("reasoning_effort".to_string()),
+            effort_value_mode: Some("deepseek".to_string()),
+            output_format: Some("reasoning_content".to_string()),
+            effort_levels: None,
+        };
+
+        // 保持原行为：第三方网关仍要这个字段，两种来源都在。
+        let preserved =
+            responses_to_chat_completions_with_reasoning(input.clone(), Some(&config), true)
+                .unwrap();
+        let preserved_reasoning: Vec<&str> = result_messages(&preserved)
+            .iter()
+            .filter_map(|message| message.get("reasoning_content")?.as_str())
+            .collect();
+        assert!(
+            preserved_reasoning.contains(&"need ls"),
+            "preserve=true 时应保留真实思考: {preserved}"
+        );
+        assert!(
+            preserved_reasoning.contains(&"tool call"),
+            "preserve=true 时应保留占位: {preserved}"
+        );
+
+        // 严格上游：assistant 消息上不得残留该字段，其余内容不变。
+        let stripped =
+            responses_to_chat_completions_with_reasoning(input, Some(&config), false).unwrap();
+        let stripped_has_reasoning = result_messages(&stripped)
+            .iter()
+            .any(|message| message.get("reasoning_content").is_some());
+        assert!(
+            !stripped_has_reasoning,
+            "preserve=false 时应剥离 reasoning_content: {stripped}"
+        );
+        let stripped_has_tool_calls = result_messages(&stripped)
+            .iter()
+            .any(|message| message.get("tool_calls").is_some());
+        assert!(
+            stripped_has_tool_calls,
+            "工具调用本身不能被剥离: {stripped}"
+        );
+        // 非 assistant 消息不受影响。
+        assert_eq!(result_messages(&stripped)[0]["role"], "user");
     }
 
     #[test]
@@ -3767,7 +4186,8 @@ mod tests {
             "input": "hello",
             "reasoning": {"effort": "max"}
         });
-        let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+        let result =
+            responses_to_chat_completions_with_reasoning(input, Some(&config), true).unwrap();
 
         assert_eq!(result["reasoning"]["effort"], "xhigh");
         assert!(result.get("reasoning_effort").is_none());
@@ -3782,7 +4202,7 @@ mod tests {
             "reasoning": {"effort": "high"}
         });
         let result_high =
-            responses_to_chat_completions_with_reasoning(input_high, Some(&config)).unwrap();
+            responses_to_chat_completions_with_reasoning(input_high, Some(&config), true).unwrap();
         assert_eq!(result_high["reasoning"]["effort"], "high");
         assert!(result_high.get("reasoning_effort").is_none());
     }
@@ -3807,7 +4227,8 @@ mod tests {
             "input": "hello",
             "reasoning": {"effort": "none"}
         });
-        let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+        let result =
+            responses_to_chat_completions_with_reasoning(input, Some(&config), true).unwrap();
 
         assert_eq!(result["reasoning"]["effort"], "none");
         // none 不是 OpenAI 顶层 reasoning_effort 的合法枚举，不写顶层别名；也不写 thinking。
@@ -3835,7 +4256,8 @@ mod tests {
             "input": "hello",
             "reasoning": {"effort": "none"}
         });
-        let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+        let result =
+            responses_to_chat_completions_with_reasoning(input, Some(&config), true).unwrap();
 
         // thinking 关闭信号照发；但不写 reasoning_effort，也不写原生 reasoning 对象。
         assert_eq!(result["thinking"]["type"], "disabled");
@@ -3874,7 +4296,7 @@ mod tests {
                 "reasoning": {"effort": input_effort}
             });
             let result =
-                responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+                responses_to_chat_completions_with_reasoning(input, Some(&config), true).unwrap();
             assert_eq!(
                 result["reasoning_effort"], expected,
                 "effort={input_effort}"
@@ -3916,7 +4338,7 @@ mod tests {
                 "reasoning": {"effort": input_effort}
             });
             let result =
-                responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+                responses_to_chat_completions_with_reasoning(input, Some(&config), true).unwrap();
             assert_eq!(
                 result["reasoning_effort"], expected,
                 "effort={input_effort}"
@@ -3945,7 +4367,7 @@ mod tests {
                 "reasoning": {"effort": input_effort}
             });
             let result =
-                responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+                responses_to_chat_completions_with_reasoning(input, Some(&config), true).unwrap();
             assert_eq!(result["reasoning_effort"], "max", "effort={input_effort}");
         }
     }
@@ -3969,7 +4391,8 @@ mod tests {
             "input": "hello",
             "reasoning": {"effort": "medium"}
         });
-        let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+        let result =
+            responses_to_chat_completions_with_reasoning(input, Some(&config), true).unwrap();
 
         assert!(result.get("reasoning_effort").is_none());
         assert!(result.get("thinking").is_none());
@@ -3992,7 +4415,8 @@ mod tests {
             effort_levels: None,
         };
 
-        let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+        let result =
+            responses_to_chat_completions_with_reasoning(input, Some(&config), true).unwrap();
 
         assert_eq!(result["thinking"]["type"], "enabled");
         assert!(result.get("reasoning_effort").is_none());
@@ -4015,7 +4439,8 @@ mod tests {
             effort_levels: None,
         };
 
-        let result = responses_to_chat_completions_with_reasoning(input, Some(&config)).unwrap();
+        let result =
+            responses_to_chat_completions_with_reasoning(input, Some(&config), true).unwrap();
 
         assert_eq!(result["enable_thinking"], true);
         assert!(result.get("reasoning_effort").is_none());
