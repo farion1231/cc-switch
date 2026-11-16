@@ -78,10 +78,11 @@ describe("frontend copies of backend constants", () => {
   });
 
   it("offers USD plus exactly the currencies the backend fetches rates for", () => {
-    expect(DISPLAY_CURRENCIES).toEqual([
-      "USD",
-      ...backend.exchangeRateCurrencies,
-    ]);
+    // Compared as sets: the menu order is a UI choice, not the backend's
+    // fetch order.
+    expect([...DISPLAY_CURRENCIES].sort()).toEqual(
+      ["USD", ...backend.exchangeRateCurrencies].sort(),
+    );
   });
 
   it("produces custom icons the backend accepts", () => {
