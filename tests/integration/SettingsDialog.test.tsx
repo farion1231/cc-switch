@@ -333,6 +333,22 @@ describe("SettingsPage integration", () => {
   );
 
   it.each([
+    ["claude", "claudeConfigDir", "settings.browsePlaceholderClaude", "/env/c"],
+    ["codex", "codexConfigDir", "settings.browsePlaceholderCodex", "/env/x"],
+    ["gemini", "geminiConfigDir", "settings.browsePlaceholderGemini", "/env/g"],
+    ["grokbuild", "grokConfigDir", "settings.browsePlaceholderGrok", "/env/k"],
+    [
+      "opencode",
+      "opencodeConfigDir",
+      "settings.browsePlaceholderOpencode",
+      "/env/o",
+    ],
+    [
+      "openclaw",
+      "openclawConfigDir",
+      "settings.browsePlaceholderOpenclaw",
+      "/env/w",
+    ],
     [
       "hermes",
       "hermesConfigDir",
@@ -340,6 +356,8 @@ describe("SettingsPage integration", () => {
       "/env/hermes-home",
     ],
     ["pi", "piConfigDir", "settings.browsePlaceholderPi", "/env/pi-agent"],
+    ["omp", "ompConfigDir", "settings.browsePlaceholderOmp", "/env/omp-agent"],
+    ["dsh", "dshConfigDir", "settings.browsePlaceholderDsh", "/env/dsh-home"],
   ] as const)(
     "restores backend-resolved %s default after draft discard",
     async (targetApp, field, placeholder, backendDefault) => {
