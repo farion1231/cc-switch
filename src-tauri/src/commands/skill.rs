@@ -7,6 +7,7 @@
 use super::run_db_task;
 use crate::app_config::{AppType, InstalledSkill, UnmanagedSkill};
 use crate::error::format_skill_error;
+use crate::error::AppError;
 use crate::services::skill::{
     DiscoverableSkill, ImportSkillSelection, MigrationResult, Skill, SkillAppSyncOutcome,
     SkillBackupEntry, SkillDiscoveryResult, SkillRepo, SkillService, SkillStorageLocation,
@@ -22,8 +23,8 @@ use tauri_plugin_opener::OpenerExt;
 pub struct SkillServiceState(pub Arc<SkillService>);
 
 /// 解析 app 参数为 AppType
-fn parse_app_type(app: &str) -> Result<AppType, String> {
-    AppType::from_str(app).map_err(|e| e.to_string())
+fn parse_app_type(app: &str) -> Result<AppType, AppError> {
+    AppType::from_str(app)
 }
 
 // ========== 统一管理命令 ==========
@@ -122,7 +123,7 @@ pub async fn toggle_skill_app(
     let app_type = parse_app_type(&app)?;
     run_db_task(&app_state, move |state| {
         SkillService::toggle_app(&state.db, &id, &app_type, enabled).map_err(|e| e.to_string())?;
-        Ok(true)
+        Ok::<_, String>(true)
     })
     .await
 }
@@ -160,7 +161,7 @@ pub async fn discover_available_skills(
     service: State<'_, SkillServiceState>,
     app_state: State<'_, AppState>,
 ) -> Result<SkillDiscoveryResult, String> {
-    let repos = app_state.db.get_skill_repos().map_err(|e| e.to_string())?;
+    let repos = app_state.db.get_skill_repos()?;
     service
         .0
         .discover_available_report(repos, force_refresh.unwrap_or(false))
@@ -177,7 +178,7 @@ pub async fn discover_repo_skills(
     service: State<'_, SkillServiceState>,
     app_state: State<'_, AppState>,
 ) -> Result<SkillDiscoveryResult, String> {
-    let repos = app_state.db.get_skill_repos().map_err(|e| e.to_string())?;
+    let repos = app_state.db.get_skill_repos()?;
     let Some(repo) = repos
         .into_iter()
         .find(|repo| repo.owner == owner && repo.name == name)
@@ -293,7 +294,7 @@ pub async fn get_skills(
     service: State<'_, SkillServiceState>,
     app_state: State<'_, AppState>,
 ) -> Result<Vec<Skill>, String> {
-    let repos = app_state.db.get_skill_repos().map_err(|e| e.to_string())?;
+    let repos = app_state.db.get_skill_repos()?;
     service
         .0
         .list_skills(repos, &app_state.db)
@@ -334,7 +335,7 @@ pub async fn install_skill_for_app(
     let app_type = parse_app_type(&app)?;
 
     // 先获取技能信息
-    let repos = app_state.db.get_skill_repos().map_err(|e| e.to_string())?;
+    let repos = app_state.db.get_skill_repos()?;
     let skills = service
         .0
         .discover_available(repos)
@@ -404,10 +405,7 @@ pub async fn uninstall_skill_for_app(
 
 #[tauri::command]
 pub async fn get_skill_repos(app_state: State<'_, AppState>) -> Result<Vec<SkillRepo>, String> {
-    run_db_task(&app_state, |state| {
-        state.db.get_skill_repos().map_err(|e| e.to_string())
-    })
-    .await
+    run_db_task(&app_state, |state| state.db.get_skill_repos()).await
 }
 
 #[tauri::command]
@@ -420,8 +418,8 @@ pub async fn add_skill_repo(
     SkillService::validate_repo_ref(&repo.owner, &repo.name, &repo.branch)
         .map_err(|e| e.to_string())?;
     run_db_task(&app_state, move |state| {
-        state.db.save_skill_repo(&repo).map_err(|e| e.to_string())?;
-        Ok(true)
+        state.db.save_skill_repo(&repo)?;
+        Ok::<_, AppError>(true)
     })
     .await
 }
@@ -433,11 +431,8 @@ pub async fn remove_skill_repo(
     app_state: State<'_, AppState>,
 ) -> Result<bool, String> {
     run_db_task(&app_state, move |state| {
-        state
-            .db
-            .delete_skill_repo(&owner, &name)
-            .map_err(|e| e.to_string())?;
-        Ok(true)
+        state.db.delete_skill_repo(&owner, &name)?;
+        Ok::<_, AppError>(true)
     })
     .await
 }
