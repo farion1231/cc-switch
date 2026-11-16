@@ -5,6 +5,7 @@
 //! 恢复到同一位置，底部按钮（例如更新弹窗的按钮）一直被挡住。
 //! 插件也会原样恢复异常小的非零尺寸（#9496），不能只依赖系统的最小尺寸限制。
 
+use tauri::utils::config::WindowConfig;
 use tauri::{LogicalSize, Manager, PhysicalPosition, PhysicalSize, Runtime, WebviewWindow};
 
 /// 物理像素下的矩形。
@@ -23,7 +24,7 @@ struct WindowGeometry {
     size: PhysicalSize<u32>,
 }
 
-/// 配置是逻辑内容区尺寸；工作区和窗口外框是物理像素。
+/// 将默认内容区尺寸转换为物理外框尺寸。
 fn outer_size(
     logical: LogicalSize<f64>,
     scale: f64,
@@ -34,6 +35,23 @@ fn outer_size(
         inner.width.saturating_add(frame.width),
         inner.height.saturating_add(frame.height),
     )
+}
+
+/// 判定下限不加外框，恢复目标仍按默认内容区尺寸加外框。
+fn size_bounds(
+    config: &WindowConfig,
+    scale: f64,
+    frame: PhysicalSize<u32>,
+) -> (PhysicalSize<u32>, PhysicalSize<u32>) {
+    // Windows 无边框窗口的系统最小尺寸约束整窗，阴影 inset 不能再加到阈值上。
+    // macOS / Linux 的最小内容区外还可能有边框，用这个保守下限也不会误判。
+    let minimum = LogicalSize::new(
+        config.min_width.unwrap_or(0.0),
+        config.min_height.unwrap_or(0.0),
+    )
+    .to_physical(scale);
+    let default = outer_size(LogicalSize::new(config.width, config.height), scale, frame);
+    (minimum, default)
 }
 
 /// 过小的维度恢复默认值，过大的缩到工作区，再把位置夹到工作区内。
@@ -123,15 +141,7 @@ pub fn fit_to_work_area<R: Runtime>(window: &WebviewWindow<R>) {
         size.width.saturating_sub(inner.width),
         size.height.saturating_sub(inner.height),
     );
-    let minimum = outer_size(
-        LogicalSize::new(
-            config.min_width.unwrap_or(0.0),
-            config.min_height.unwrap_or(0.0),
-        ),
-        scale,
-        frame,
-    );
-    let default = outer_size(LogicalSize::new(config.width, config.height), scale, frame);
+    let (minimum, default) = size_bounds(config, scale, frame);
     let Some(fitted) = fit_into(current, work, minimum, default) else {
         return;
     };
@@ -178,6 +188,76 @@ mod tests {
     const WORK: Rect = rect(0, 0, 1920, 1032);
     const MINIMUM: PhysicalSize<u32> = PhysicalSize::new(1000, 640);
     const DEFAULT: PhysicalSize<u32> = PhysicalSize::new(1100, 650);
+
+    fn windows_size_bounds(
+        scale: f64,
+        frame: PhysicalSize<u32>,
+    ) -> (PhysicalSize<u32>, PhysicalSize<u32>) {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.windows.conf.json")).unwrap();
+        let window = serde_json::from_value(config["app"]["windows"][0].clone()).unwrap();
+        size_bounds(&window, scale, frame)
+    }
+
+    #[test]
+    fn system_minimum_window_with_shadow_insets_is_left_alone() {
+        let work = rect(0, 0, 3840, 2160);
+        for (scale, frame_width, frame_height) in
+            [(1.0, 16, 9), (1.25, 20, 11), (1.5, 24, 14), (2.0, 32, 18)]
+        {
+            let frame = PhysicalSize::new(frame_width, frame_height);
+            let (minimum, default) = windows_size_bounds(scale, frame);
+            // Windows 的无边框最小整窗不包含 WM_NCCALCSIZE 扣掉的阴影 inset。
+            let system_minimum = LogicalSize::new(1000.0, 640.0).to_physical::<u32>(scale);
+            for size in [
+                system_minimum,
+                PhysicalSize::new(system_minimum.width, default.height),
+                PhysicalSize::new(default.width, system_minimum.height),
+                PhysicalSize::new(
+                    system_minimum.width + frame.width,
+                    system_minimum.height + frame.height,
+                ),
+            ] {
+                for position in [Some(PhysicalPosition::new(100, 100)), None] {
+                    assert_eq!(
+                        fit_into(WindowGeometry { position, size }, work, minimum, default),
+                        None,
+                        "normal minimum window changed at scale {scale}, size {size:?}",
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn undersized_dimensions_with_shadow_insets_still_recover() {
+        let (minimum, default) = windows_size_bounds(1.25, PhysicalSize::new(20, 11));
+        assert_eq!(default, PhysicalSize::new(1395, 824));
+        for (width, height, expected_width, expected_height) in [
+            (180, 30, 1395, 824),
+            (0, 0, 1395, 824),
+            (1249, 900, 1395, 900),
+            (1500, 799, 1500, 824),
+        ] {
+            for position in [Some(PhysicalPosition::new(100, 100)), None] {
+                assert_eq!(
+                    fit_into(
+                        WindowGeometry {
+                            position,
+                            size: PhysicalSize::new(width, height),
+                        },
+                        WORK,
+                        minimum,
+                        default,
+                    ),
+                    Some(WindowGeometry {
+                        position,
+                        size: PhysicalSize::new(expected_width, expected_height),
+                    }),
+                );
+            }
+        }
+    }
 
     #[test]
     fn corrupted_saved_strip_recovers_to_default_size() {
@@ -326,9 +406,8 @@ mod tests {
     #[test]
     fn logical_bounds_account_for_dpi_and_window_frame() {
         let frame = PhysicalSize::new(16, 39);
-        let minimum = outer_size(LogicalSize::new(1000.0, 640.0), 1.5, frame);
-        let default = outer_size(LogicalSize::new(1100.0, 650.0), 1.5, frame);
-        assert_eq!(minimum, PhysicalSize::new(1516, 999));
+        let (minimum, default) = windows_size_bounds(1.5, frame);
+        assert_eq!(minimum, PhysicalSize::new(1500, 960));
         assert_eq!(default, PhysicalSize::new(1666, 1014));
         assert_eq!(
             fit_into(geometry(100, 100, 180, 30), WORK, minimum, default),
