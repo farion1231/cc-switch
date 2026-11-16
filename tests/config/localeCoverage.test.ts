@@ -99,29 +99,6 @@ describe("locale coverage", () => {
 // Key coverage and interpolation for every locale live in localeParity.test.ts;
 // these blocks pin literals that must survive translation verbatim.
 describe("Turkish locale", () => {
-  it("keeps every existing translation non-empty", () => {
-    expect(
-      [...flattenStrings(tr)].filter(
-        ([key, value]) => reference.get(key)?.trim() && !value.trim(),
-      ),
-    ).toEqual([]);
-  });
-
-  it("preserves interpolation variables in existing translations", () => {
-    expect(
-      [...flattenStrings(tr)]
-        .filter(([key, value]) => {
-          const expected = reference.get(key);
-          return (
-            expected !== undefined &&
-            interpolationVariables(value).join("\0") !==
-              interpolationVariables(expected).join("\0")
-          );
-        })
-        .map(([key]) => key),
-    ).toEqual([]);
-  });
-
   it("preserves protocol fields, configuration literals, and commands", () => {
     const translations = flattenStrings(tr);
     const exactLiterals = [
@@ -180,29 +157,6 @@ describe("Korean locale", () => {
         expect(value, `${key}: ${identifier}`).toContain(identifier);
       }
     }
-  });
-
-  it("keeps every existing translation non-empty", () => {
-    expect(
-      [...flattenStrings(ko)].filter(
-        ([key, value]) => reference.get(key)?.trim() && !value.trim(),
-      ),
-    ).toEqual([]);
-  });
-
-  it("preserves interpolation variables in existing translations", () => {
-    expect(
-      [...flattenStrings(ko)]
-        .filter(([key, value]) => {
-          const expected = reference.get(key);
-          return (
-            expected !== undefined &&
-            interpolationVariables(value).join("\0") !==
-              interpolationVariables(expected).join("\0")
-          );
-        })
-        .map(([key]) => key),
-    ).toEqual([]);
   });
 
   it("preserves protocol fields, configuration literals, and commands", () => {
@@ -270,35 +224,6 @@ describe("Korean locale", () => {
 
 describe("Russian locale", () => {
   const translations = flattenStrings(ru);
-
-  it("only keeps keys that still exist in English", () => {
-    expect([...translations.keys()].filter((key) => !reference.has(key))).toEqual(
-      [],
-    );
-  });
-
-  it("keeps every existing translation non-empty", () => {
-    expect(
-      [...translations].filter(
-        ([key, value]) => reference.get(key)?.trim() && !value.trim(),
-      ),
-    ).toEqual([]);
-  });
-
-  it("preserves interpolation variables in existing translations", () => {
-    expect(
-      [...translations]
-        .filter(([key, value]) => {
-          const expected = reference.get(key);
-          return (
-            expected !== undefined &&
-            interpolationVariables(value).join("\0") !==
-              interpolationVariables(expected).join("\0")
-          );
-        })
-        .map(([key]) => key),
-    ).toEqual([]);
-  });
 
   it("preserves protocol fields, configuration literals, and commands", () => {
     const exactLiterals = [
