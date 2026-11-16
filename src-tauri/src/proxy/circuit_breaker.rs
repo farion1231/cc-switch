@@ -352,6 +352,7 @@ impl CircuitBreaker {
     }
 
     /// 重置熔断器（手动恢复）
+    #[cfg(test)]
     pub async fn reset(&self) {
         log::info!(
             "[{}] 熔断器 [{}] 手动重置 → Closed",
@@ -449,6 +450,7 @@ fn split_half_open_slots(slots: u64) -> (u32, u32) {
 }
 
 /// 熔断器统计信息
+#[cfg(test)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CircuitBreakerStats {
