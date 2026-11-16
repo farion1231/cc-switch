@@ -16,7 +16,7 @@ pub struct CodebuddyAccountState(pub Arc<CodebuddyAccountManager>);
 /// 终端里跑的命令：没登录时 CLI 直接进登录界面。优先用解析出的绝对路径，绕开终端 PATH 里
 /// 已失效的版本管理器 shim；找不到安装时退回裸命令名。
 fn login_command() -> String {
-    let program = crate::commands::misc::locate_cli_for_terminal("codebuddy");
+    let program = crate::commands::misc::tool_discovery::locate_cli_for_terminal("codebuddy");
     login_command_for(program.as_deref())
 }
 
@@ -48,7 +48,10 @@ fn login_command_for(program: Option<&std::path::Path>) -> String {
 /// 打开用户首选终端运行 `codebuddy`，让用户在里面登录。
 pub(crate) async fn open_codebuddy_login_terminal() -> Result<(), String> {
     tokio::task::spawn_blocking(|| {
-        crate::commands::misc::launch_terminal_running(&login_command(), "codebuddy_login")
+        crate::commands::terminal_launch::launch_terminal_running(
+            &login_command(),
+            "codebuddy_login",
+        )
     })
     .await
     .map_err(|e| format!("launch task join error: {e}"))?

@@ -1,7 +1,6 @@
-use super::run_db_task;
 use crate::deeplink::{
     import_mcp_from_deeplink, import_prompt_from_deeplink, import_provider_from_deeplink,
-    import_skill_from_deeplink, parse_deeplink_url, DeepLinkImportRequest, PendingDeepLinkEntry,
+    import_skill_from_deeplink, DeepLinkImportRequest, PendingDeepLinkEntry,
 };
 use crate::store::AppState;
 use tauri::State;
@@ -16,13 +15,6 @@ pub fn peek_pending_deeplink() -> Option<PendingDeepLinkEntry> {
 #[tauri::command]
 pub fn ack_pending_deeplink(id: u64) {
     crate::deeplink::ack_pending_deeplink(id);
-}
-
-/// Parse a deep link URL and return the parsed request for frontend confirmation
-#[tauri::command]
-pub fn parse_deeplink(url: String) -> Result<DeepLinkImportRequest, String> {
-    log::info!("Parsing deep link URL: {}", crate::url_for_log(&url));
-    parse_deeplink_url(&url).map_err(|e| e.to_string())
 }
 
 /// Merge configuration from Base64/URL into a deep link request
@@ -40,28 +32,6 @@ pub fn merge_deeplink_config(
 #[tauri::command]
 pub async fn fetch_deeplink_icon(url: String) -> Option<String> {
     crate::deeplink::fetch_deeplink_icon(&url).await
-}
-
-/// Import a provider from a deep link request (legacy, kept for compatibility)
-#[tauri::command]
-pub async fn import_from_deeplink(
-    state: State<'_, AppState>,
-    request: DeepLinkImportRequest,
-) -> Result<String, String> {
-    log::info!(
-        "Importing provider from deep link: {:?} for app {:?}",
-        request.name,
-        request.app
-    );
-
-    let provider_id = run_db_task(&state, move |state| {
-        import_provider_from_deeplink(state, request).map_err(|e| e.to_string())
-    })
-    .await?;
-
-    log::info!("Successfully imported provider with ID: {provider_id}");
-
-    Ok(provider_id)
 }
 
 /// Import resource from a deep link request (unified handler)

@@ -96,25 +96,6 @@ pub async fn get_failover_queue(
         .collect())
 }
 
-/// 获取可添加到故障转移队列的供应商（不在队列中的）
-#[tauri::command]
-pub async fn get_available_providers_for_failover(
-    state: tauri::State<'_, AppState>,
-    app_type: String,
-) -> Result<Vec<Provider>, String> {
-    require_failover_app(&app_type)?;
-    let providers = state
-        .db
-        .get_available_providers_for_failover(&app_type)
-        .map_err(|e| e.to_string())?;
-    Ok(providers
-        .into_iter()
-        .filter(|provider| {
-            crate::proxy::provider_router::provider_supports_failover(&app_type, provider)
-        })
-        .collect())
-}
-
 /// 添加供应商到故障转移队列。托盘的故障转移子菜单只列队列成员：队列一变就重建。
 #[tauri::command]
 pub async fn add_to_failover_queue(

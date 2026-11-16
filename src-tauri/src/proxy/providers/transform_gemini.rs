@@ -43,15 +43,6 @@ pub(crate) fn is_synthesized_tool_call_id(id: &str) -> bool {
     id.starts_with(SYNTHESIZED_ID_PREFIX)
 }
 
-/// Anthropic 请求 → Gemini 原生请求。
-///
-/// 转换工具库 API：当前无生产调用方（连通性检查不再发真实请求，曾是其唯一 crate 内
-/// 消费者），但保留其转换逻辑与下方测试套件，供代理转换路径复用 / 未来接线。
-#[allow(dead_code)]
-pub fn anthropic_to_gemini(body: Value) -> Result<Value, ProxyError> {
-    anthropic_to_gemini_with_shadow(body, None, None, None)
-}
-
 pub fn anthropic_to_gemini_with_shadow(
     body: Value,
     shadow_store: Option<&GeminiShadowStore>,
@@ -132,28 +123,6 @@ pub fn anthropic_to_gemini_with_shadow(
     }
 
     Ok(result)
-}
-
-/// Convenience wrapper over [`gemini_to_anthropic_with_shadow_and_hints`]
-/// with no shadow store or schema hints. Used by the shared
-/// `ProviderAdapter::transform_response` path and by tests.
-#[allow(dead_code)] // kept as public API for non-streaming transform paths
-pub fn gemini_to_anthropic(body: Value) -> Result<Value, ProxyError> {
-    gemini_to_anthropic_with_shadow(body, None, None, None)
-}
-
-/// Convenience wrapper for callers that have a shadow store but no tool
-/// schema hints. Production call sites funnel through
-/// [`gemini_to_anthropic_with_shadow_and_hints`] directly; this helper exists
-/// for test ergonomics and future external callers.
-#[allow(dead_code)] // kept as public API for shadow-only transform paths
-pub fn gemini_to_anthropic_with_shadow(
-    body: Value,
-    shadow_store: Option<&GeminiShadowStore>,
-    provider_id: Option<&str>,
-    session_id: Option<&str>,
-) -> Result<Value, ProxyError> {
-    gemini_to_anthropic_with_shadow_and_hints(body, shadow_store, provider_id, session_id, None)
 }
 
 pub fn gemini_to_anthropic_with_shadow_and_hints(
@@ -1679,7 +1648,7 @@ mod tests {
             ]
         });
 
-        let result = anthropic_to_gemini(input).unwrap();
+        let result = anthropic_to_gemini_with_shadow(input, None, None, None).unwrap();
         assert_eq!(
             result["systemInstruction"]["parts"][0]["text"],
             "You are helpful."
@@ -1698,7 +1667,7 @@ mod tests {
         for (key, value) in thinking.as_object().unwrap() {
             body[key] = value.clone();
         }
-        anthropic_to_gemini(body).unwrap()["generationConfig"]
+        anthropic_to_gemini_with_shadow(body, None, None, None).unwrap()["generationConfig"]
             .get("thinkingConfig")
             .cloned()
     }
@@ -1937,8 +1906,9 @@ mod tests {
         with_thinking["thinking"] = json!({ "type": "adaptive" });
         with_thinking["output_config"] = json!({ "effort": "medium" });
 
-        let mut plain = anthropic_to_gemini(base).unwrap();
-        let mut converted = anthropic_to_gemini(with_thinking).unwrap();
+        let mut plain = anthropic_to_gemini_with_shadow(base, None, None, None).unwrap();
+        let mut converted =
+            anthropic_to_gemini_with_shadow(with_thinking, None, None, None).unwrap();
         assert_eq!(
             converted["generationConfig"]
                 .as_object_mut()
@@ -1949,11 +1919,16 @@ mod tests {
         assert_eq!(converted, plain);
 
         // 没有别的生成参数时，generationConfig 只放 thinkingConfig。
-        plain = anthropic_to_gemini(json!({
-            "model": "gemini-2.5-flash",
-            "thinking": { "type": "disabled" },
-            "messages": [{ "role": "user", "content": "Hi" }]
-        }))
+        plain = anthropic_to_gemini_with_shadow(
+            json!({
+                "model": "gemini-2.5-flash",
+                "thinking": { "type": "disabled" },
+                "messages": [{ "role": "user", "content": "Hi" }]
+            }),
+            None,
+            None,
+            None,
+        )
         .unwrap();
         assert_eq!(
             plain["generationConfig"],
@@ -1979,7 +1954,8 @@ mod tests {
             Some("claude-opus-5-5"),
         );
         assert_eq!(
-            anthropic_to_gemini(body).unwrap()["generationConfig"]["thinkingConfig"],
+            anthropic_to_gemini_with_shadow(body, None, None, None).unwrap()["generationConfig"]
+                ["thinkingConfig"],
             json!({ "thinkingLevel": "high" })
         );
     }
@@ -1999,7 +1975,7 @@ mod tests {
             ]
         });
 
-        let result = anthropic_to_gemini(input).unwrap();
+        let result = anthropic_to_gemini_with_shadow(input, None, None, None).unwrap();
 
         assert_eq!(
             result["systemInstruction"]["parts"][0]["text"],
@@ -2033,8 +2009,8 @@ mod tests {
             }),
         ]);
 
-        let first = anthropic_to_gemini(first).unwrap();
-        let second = anthropic_to_gemini(second).unwrap();
+        let first = anthropic_to_gemini_with_shadow(first, None, None, None).unwrap();
+        let second = anthropic_to_gemini_with_shadow(second, None, None, None).unwrap();
 
         assert_eq!(
             first["systemInstruction"]["parts"][0]["text"],
@@ -2082,7 +2058,7 @@ mod tests {
             ]
         });
 
-        let result = anthropic_to_gemini(input).unwrap();
+        let result = anthropic_to_gemini_with_shadow(input, None, None, None).unwrap();
         let contents = result["contents"].as_array().unwrap();
 
         assert_eq!(contents.len(), 4);
@@ -2121,7 +2097,7 @@ mod tests {
             "tool_choice": { "type": "tool", "name": "get_weather" }
         });
 
-        let result = anthropic_to_gemini(input).unwrap();
+        let result = anthropic_to_gemini_with_shadow(input, None, None, None).unwrap();
         assert_eq!(
             result["tools"][0]["functionDeclarations"][0]["name"],
             "get_weather"
@@ -2168,7 +2144,7 @@ mod tests {
             ]
         });
 
-        let result = anthropic_to_gemini(input).unwrap();
+        let result = anthropic_to_gemini_with_shadow(input, None, None, None).unwrap();
         let contents = result["contents"].as_array().unwrap();
 
         assert_eq!(contents.len(), 4);
@@ -2222,7 +2198,7 @@ mod tests {
             ]
         });
 
-        let result = anthropic_to_gemini(input).unwrap();
+        let result = anthropic_to_gemini_with_shadow(input, None, None, None).unwrap();
         let contents = result["contents"].as_array().unwrap();
 
         assert_eq!(contents.len(), 6);
@@ -2271,7 +2247,7 @@ mod tests {
             std::borrow::Cow::Borrowed(_)
         ));
 
-        let result = anthropic_to_gemini(input).unwrap();
+        let result = anthropic_to_gemini_with_shadow(input, None, None, None).unwrap();
         let contents = result["contents"].as_array().unwrap();
         assert_eq!(contents.len(), 5);
         assert_eq!(contents[0]["parts"], json!([{ "text": "first" }]));
@@ -2314,7 +2290,7 @@ mod tests {
             ]
         });
 
-        let result = anthropic_to_gemini(input).unwrap();
+        let result = anthropic_to_gemini_with_shadow(input, None, None, None).unwrap();
         let parts = result["contents"][1]["parts"].as_array().unwrap();
         let response = &parts[0]["functionResponse"]["response"]["content"];
 
@@ -2375,7 +2351,7 @@ mod tests {
             ]
         });
 
-        let result = anthropic_to_gemini(input).unwrap();
+        let result = anthropic_to_gemini_with_shadow(input, None, None, None).unwrap();
         let serialized = result.to_string();
 
         assert!(serialized.contains("[cc-switch: omitted 20000 bytes]"));
@@ -2417,7 +2393,7 @@ mod tests {
             ]
         });
 
-        let result = anthropic_to_gemini(input).unwrap();
+        let result = anthropic_to_gemini_with_shadow(input, None, None, None).unwrap();
         let parts = result["contents"][1]["parts"].as_array().unwrap();
 
         assert_eq!(parts.len(), 1);
@@ -2461,7 +2437,7 @@ mod tests {
             ]
         });
 
-        let result = anthropic_to_gemini(input).unwrap();
+        let result = anthropic_to_gemini_with_shadow(input, None, None, None).unwrap();
         let parts = result["contents"][1]["parts"].as_array().unwrap();
 
         assert_eq!(parts.len(), 1);
@@ -2506,7 +2482,7 @@ mod tests {
             ]
         });
 
-        let result = anthropic_to_gemini(input).unwrap();
+        let result = anthropic_to_gemini_with_shadow(input, None, None, None).unwrap();
         let parts = result["contents"][1]["parts"].as_array().unwrap();
         let response = &parts[0]["functionResponse"]["response"]["content"];
 
@@ -2549,7 +2525,7 @@ mod tests {
             ]
         });
 
-        let result = anthropic_to_gemini(input).unwrap();
+        let result = anthropic_to_gemini_with_shadow(input, None, None, None).unwrap();
         let parts = result["contents"][1]["parts"].as_array().unwrap();
         let function_response = &parts[0]["functionResponse"];
 
@@ -2663,7 +2639,13 @@ mod tests {
 
     #[test]
     fn anthropic_to_gemini_fills_skip_signature_on_first_call_of_current_turn_steps() {
-        let result = anthropic_to_gemini(skip_signature_request("gemini-3.8-flash")).unwrap();
+        let result = anthropic_to_gemini_with_shadow(
+            skip_signature_request("gemini-3.8-flash"),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
         let contents = result["contents"].as_array().unwrap();
         let model_turns: Vec<&Value> = contents
             .iter()
@@ -2723,7 +2705,13 @@ mod tests {
 
     #[test]
     fn anthropic_to_gemini_skips_placeholder_for_pre_gemini_3_models() {
-        let result = anthropic_to_gemini(skip_signature_request("gemini-2.5-flash")).unwrap();
+        let result = anthropic_to_gemini_with_shadow(
+            skip_signature_request("gemini-2.5-flash"),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
         let has_placeholder = result["contents"]
             .as_array()
             .unwrap()
@@ -2856,7 +2844,7 @@ mod tests {
             ]
         });
 
-        let error = anthropic_to_gemini(input).unwrap_err();
+        let error = anthropic_to_gemini_with_shadow(input, None, None, None).unwrap_err();
         assert!(error
             .to_string()
             .contains("Unable to resolve Gemini functionResponse.name"));
@@ -2882,7 +2870,7 @@ mod tests {
             ]
         });
 
-        let result = anthropic_to_gemini(input).unwrap();
+        let result = anthropic_to_gemini_with_shadow(input, None, None, None).unwrap();
         let declaration = &result["tools"][0]["functionDeclarations"][0];
 
         assert!(declaration.get("parameters").is_none());
@@ -2912,7 +2900,8 @@ mod tests {
             }
         });
 
-        let result = gemini_to_anthropic(input).unwrap();
+        let result =
+            gemini_to_anthropic_with_shadow_and_hints(input, None, None, None, None).unwrap();
         assert_eq!(result["id"], "resp_1");
         assert_eq!(result["content"][0]["type"], "text");
         assert_eq!(result["content"][0]["text"], "Hello from Gemini");
@@ -2949,7 +2938,8 @@ mod tests {
             }
         });
 
-        let result = gemini_to_anthropic(input).unwrap();
+        let result =
+            gemini_to_anthropic_with_shadow_and_hints(input, None, None, None, None).unwrap();
         assert_eq!(result["content"][0]["type"], "tool_use");
         assert_eq!(result["content"][0]["id"], "call_1");
         assert_eq!(result["stop_reason"], "tool_use");
@@ -3067,7 +3057,8 @@ mod tests {
             }
         });
 
-        let result = gemini_to_anthropic(input).unwrap();
+        let result =
+            gemini_to_anthropic_with_shadow_and_hints(input, None, None, None, None).unwrap();
         assert_eq!(result["stop_reason"], "refusal");
         assert_eq!(result["content"][0]["type"], "text");
         assert!(result["content"][0]["text"]
@@ -3395,7 +3386,8 @@ mod tests {
             }]
         });
 
-        let result = gemini_to_anthropic(input).unwrap();
+        let result =
+            gemini_to_anthropic_with_shadow_and_hints(input, None, None, None, None).unwrap();
         let id0 = result["content"][0]["id"].as_str().unwrap();
         let id1 = result["content"][1]["id"].as_str().unwrap();
         assert!(is_synthesized_tool_call_id(id0));
@@ -3426,7 +3418,7 @@ mod tests {
             ]
         });
 
-        let result = anthropic_to_gemini(input).unwrap();
+        let result = anthropic_to_gemini_with_shadow(input, None, None, None).unwrap();
         let fc = &result["contents"][0]["parts"][0]["functionCall"];
         assert!(
             fc.get("id").is_none(),
@@ -3462,7 +3454,7 @@ mod tests {
             ]
         });
 
-        let result = anthropic_to_gemini(input).unwrap();
+        let result = anthropic_to_gemini_with_shadow(input, None, None, None).unwrap();
         assert_eq!(
             result["contents"][0]["parts"][0]["functionCall"]["id"],
             "call_real_1"

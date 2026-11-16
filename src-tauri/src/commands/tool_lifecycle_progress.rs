@@ -4,6 +4,7 @@
 //! 排队等待；安装脚本又是静默执行的。没有这些事件时界面上只有转圈，用户分不清
 //! 「在下载一个 100 MB 的包」「排在别人后面」和「真卡住了」。
 
+use crate::sync_utils::MutexExt;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::Serialize;
@@ -253,7 +254,7 @@ impl LineThrottle {
 
     fn offer(&self, line: String, progress: &ToolLifecycleProgress) {
         let send_now = {
-            let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+            let mut state = self.state.lock_recover();
             let due = state
                 .last_sent
                 .is_none_or(|sent| sent.elapsed() >= self.interval);
@@ -271,12 +272,7 @@ impl LineThrottle {
     }
 
     fn flush(&self, progress: &ToolLifecycleProgress) {
-        let held = self
-            .state
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .held
-            .take();
+        let held = self.state.lock_recover().held.take();
         if let Some(line) = held {
             progress.output(line);
         }

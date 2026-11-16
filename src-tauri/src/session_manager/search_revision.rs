@@ -1,6 +1,7 @@
 //! SQLite 正文来源的会话级 revision。不能用整库 mtime，也不能仅依赖心跳时间。
 //! 每轮复用只读连接，在同一快照内散列该会话的原始行；不解析消息或重写 FTS。
 
+use crate::sync_utils::MutexExt;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{LazyLock, Mutex};
@@ -44,7 +45,7 @@ impl SqliteRevisions {
             if !self.databases.contains_key(db) {
                 let fingerprint =
                     cache::fingerprint(&source.location).map_err(|e| e.to_string())?;
-                let previous = CACHE.lock().unwrap_or_else(|e| e.into_inner()).remove(db);
+                let previous = CACHE.lock_recover().remove(db);
                 let cached = previous
                     .filter(|cached| cached.fingerprint == fingerprint)
                     .unwrap_or_else(|| CachedDatabase {
@@ -77,7 +78,7 @@ impl SqliteRevisions {
 
 impl Drop for SqliteRevisions {
     fn drop(&mut self) {
-        let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        let mut cache = CACHE.lock_recover();
         // This is an optional in-memory optimization; bound obsolete DB paths
         // after settings changes instead of retaining them for the app lifetime.
         if cache.len() + self.databases.len() > 8 {
