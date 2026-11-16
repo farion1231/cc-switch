@@ -195,28 +195,6 @@ impl ProviderRouter {
         Ok(())
     }
 
-    /// 重置熔断器（手动恢复）
-    pub async fn reset_circuit_breaker(&self, circuit_key: &str) {
-        let breakers = self.circuit_breakers.read().await;
-        if let Some(breaker) = breakers.get(circuit_key) {
-            breaker.reset().await;
-        }
-    }
-
-    /// 重置指定供应商的熔断器
-    pub async fn reset_provider_breaker(&self, provider_id: &str, app_type: &str) {
-        let circuit_key = format!("{app_type}:{provider_id}");
-        self.reset_circuit_breaker(&circuit_key).await;
-    }
-
-    /// 更新所有熔断器的配置（热更新）
-    pub async fn update_all_configs(&self, config: CircuitBreakerConfig) {
-        let breakers = self.circuit_breakers.read().await;
-        for breaker in breakers.values() {
-            breaker.update_config(config.clone()).await;
-        }
-    }
-
     /// 更新指定应用已创建熔断器的配置（热更新）
     pub async fn update_app_configs(&self, app_type: &str, config: CircuitBreakerConfig) {
         let prefix = format!("{app_type}:");
@@ -229,7 +207,7 @@ impl ProviderRouter {
     }
 
     /// 获取熔断器状态
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub async fn get_circuit_breaker_stats(
         &self,
         provider_id: &str,

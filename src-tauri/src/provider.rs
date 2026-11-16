@@ -45,7 +45,17 @@ pub struct Provider {
     pub in_failover_queue: bool,
 }
 
+/// `category` 是否标着官方卡。这是唯一比较 `"official"` 的地方；各应用的
+/// `is_official*` 在此之外还各有自己的认法。
+pub fn is_official_category(category: Option<&str>) -> bool {
+    category == Some("official")
+}
+
 impl Provider {
+    pub fn has_official_category(&self) -> bool {
+        is_official_category(self.category.as_deref())
+    }
+
     /// 从现有ID创建供应商
     pub fn with_id(
         id: String,

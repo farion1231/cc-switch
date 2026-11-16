@@ -2,7 +2,6 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 import type {
   McpConfigResponse,
   McpServer,
-  McpServerSpec,
   McpServersMap,
   McpStatus,
 } from "@/types";
@@ -39,13 +38,6 @@ export const mcpApi = {
     return await invoke("read_claude_mcp_config");
   },
 
-  async upsertServer(
-    id: string,
-    spec: McpServerSpec | Record<string, any>,
-  ): Promise<boolean> {
-    return await invoke("upsert_claude_mcp_server", { id, spec });
-  },
-
   async deleteServer(id: string): Promise<boolean> {
     return await invoke("delete_claude_mcp_server", { id });
   },
@@ -59,51 +51,6 @@ export const mcpApi = {
    */
   async getConfig(app: AppId = "claude"): Promise<McpConfigResponse> {
     return await invoke("get_mcp_config", { app });
-  },
-
-  /**
-   * @deprecated 使用 upsertUnifiedServer() 代替（v3.7.0+）
-   */
-  async upsertServerInConfig(
-    app: AppId,
-    id: string,
-    spec: McpServer,
-    options?: { syncOtherSide?: boolean },
-  ): Promise<boolean> {
-    const payload = {
-      app,
-      id,
-      spec,
-      ...(options?.syncOtherSide !== undefined
-        ? { syncOtherSide: options.syncOtherSide }
-        : {}),
-    };
-    return await invoke("upsert_mcp_server_in_config", payload);
-  },
-
-  /**
-   * @deprecated 使用 deleteUnifiedServer() 代替（v3.7.0+）
-   */
-  async deleteServerInConfig(
-    app: AppId,
-    id: string,
-    options?: { syncOtherSide?: boolean },
-  ): Promise<boolean> {
-    const payload = {
-      app,
-      id,
-      ...(options?.syncOtherSide !== undefined
-        ? { syncOtherSide: options.syncOtherSide }
-        : {}),
-    };
-    return await invoke("delete_mcp_server_in_config", payload);
-  },
-
-  /**
-   * @deprecated 使用 toggleApp() 代替（v3.7.0+）
-   */
-  async setEnabled(app: AppId, id: string, enabled: boolean): Promise<boolean> {
-    return await invoke("set_mcp_enabled", { app, id, enabled });
   },
 
   // ========================================================================

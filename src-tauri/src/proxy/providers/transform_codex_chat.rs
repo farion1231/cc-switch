@@ -265,12 +265,6 @@ pub(crate) fn build_codex_tool_context_from_request(body: &Value) -> CodexToolCo
     context
 }
 
-/// Convert an OpenAI Responses request into an OpenAI Chat Completions request.
-#[allow(dead_code)]
-pub fn responses_to_chat_completions(body: Value) -> Result<Value, ProxyError> {
-    responses_to_chat_completions_with_reasoning(body, None, true)
-}
-
 /// Convert an OpenAI Responses request into an OpenAI Chat Completions request,
 /// using provider-declared Codex Chat reasoning capabilities when available.
 ///
@@ -1835,24 +1829,94 @@ fn serialize_tool_definition_for_description(tool: &Value) -> String {
     canonical_json_string(tool)
 }
 
-/// Normalize a function's `parameters` JSON Schema so `type` is always `"object"`.
+/// Normalize a function's `parameters` JSON Schema for strict Chat Completions
+/// providers while preserving the schema's validation semantics.
 ///
-/// Some Responses tools carry `parameters: null` or `parameters: {"type": null}`,
-/// but OpenAI Chat Completions strictly requires `{"type": "object", "properties": {...}}`.
+/// Some Responses tools carry `parameters: null`, `parameters: {"type": null}`
+/// or `required: null`. A few strict OpenAI-compatible gateways also require
+/// `required` to be an array whenever `additionalProperties` is `false`.
 fn normalize_function_parameters(params: Option<&Value>) -> Value {
     let mut params = match params {
         Some(Value::Object(obj)) => Value::Object(obj.clone()),
         _ => json!({"type": "object", "properties": {}}),
     };
-    if let Some(obj) = params.as_object_mut() {
-        match obj.get("type").and_then(|v| v.as_str()) {
-            Some("object") => {}
-            _ => {
-                obj.insert("type".to_string(), json!("object"));
+    sanitize_parameter_schema(&mut params, true);
+    params
+}
+
+fn sanitize_parameter_schema(schema: &mut Value, is_root: bool) {
+    let Value::Object(obj) = schema else {
+        return;
+    };
+
+    if is_root && obj.get("type").and_then(Value::as_str) != Some("object") {
+        obj.insert("type".to_string(), json!("object"));
+    }
+
+    let invalid_required = obj
+        .get("required")
+        .is_some_and(|required| !required.is_array());
+    let strict_object_without_required = obj.get("required").is_none()
+        && obj.get("additionalProperties") == Some(&Value::Bool(false));
+    if invalid_required || strict_object_without_required {
+        obj.insert("required".to_string(), json!([]));
+    }
+
+    // Recurse only through keywords whose values are themselves schemas. This
+    // avoids rewriting arbitrary JSON objects in `default` or `examples`.
+    for key in [
+        "properties",
+        "patternProperties",
+        "$defs",
+        "definitions",
+        "dependentSchemas",
+        "dependencies",
+    ] {
+        if let Some(children) = obj.get_mut(key).and_then(Value::as_object_mut) {
+            for child in children.values_mut() {
+                sanitize_parameter_schema_value(child, false);
             }
         }
     }
-    params
+
+    for key in [
+        "items",
+        "additionalItems",
+        "contains",
+        "propertyNames",
+        "additionalProperties",
+        "unevaluatedItems",
+        "unevaluatedProperties",
+        "contentSchema",
+        "not",
+        "if",
+        "then",
+        "else",
+    ] {
+        if let Some(child) = obj.get_mut(key) {
+            sanitize_parameter_schema_value(child, false);
+        }
+    }
+
+    for key in ["prefixItems", "allOf", "anyOf", "oneOf"] {
+        if let Some(children) = obj.get_mut(key).and_then(Value::as_array_mut) {
+            for child in children {
+                sanitize_parameter_schema_value(child, false);
+            }
+        }
+    }
+}
+
+fn sanitize_parameter_schema_value(value: &mut Value, is_root: bool) {
+    match value {
+        Value::Object(_) => sanitize_parameter_schema(value, is_root),
+        Value::Array(children) => {
+            for child in children {
+                sanitize_parameter_schema_value(child, false);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn responses_function_tool_to_chat_tool(tool: &Value, chat_name: &str) -> Option<Value> {
@@ -1869,7 +1933,7 @@ fn responses_function_tool_to_chat_tool(tool: &Value, chat_name: &str) -> Option
             .get_mut("function")
             .and_then(|value| value.as_object_mut())
         {
-            // Ensure parameters.type is "object" for strict OpenAI-compatible providers
+            // Normalize parameters for strict OpenAI-compatible providers.
             let parameters = normalize_function_parameters(obj.get("parameters"));
             obj.insert("parameters".to_string(), parameters);
 
@@ -2001,12 +2065,6 @@ fn responses_tool_choice_to_chat(tool_choice: &Value, tool_context: &CodexToolCo
         }
         _ => tool_choice.clone(),
     }
-}
-
-/// Convert a non-streaming Chat Completions response into a Responses response.
-#[allow(dead_code)]
-pub fn chat_completion_to_response(body: Value) -> Result<Value, ProxyError> {
-    chat_completion_to_response_with_context(body, &CodexToolContext::default())
 }
 
 /// Convert a non-streaming Chat Completions response into a Responses response,
@@ -2641,10 +2699,14 @@ mod tests {
     }
 
     fn convert_test_input(items: Vec<Value>) -> Value {
-        responses_to_chat_completions(json!({
-            "model": "kimi-k3",
-            "input": items
-        }))
+        responses_to_chat_completions_with_reasoning(
+            json!({
+                "model": "kimi-k3",
+                "input": items
+            }),
+            None,
+            true,
+        )
         .unwrap()
     }
 
@@ -2653,10 +2715,14 @@ mod tests {
     }
 
     fn convert_deepseek_test_input(items: Vec<Value>) -> Value {
-        responses_to_chat_completions(json!({
-            "model": "deepseek/deepseek-v4-flash",
-            "input": items
-        }))
+        responses_to_chat_completions_with_reasoning(
+            json!({
+                "model": "deepseek/deepseek-v4-flash",
+                "input": items
+            }),
+            None,
+            true,
+        )
         .unwrap()
     }
 
@@ -2679,15 +2745,19 @@ mod tests {
             ("deepseek/gpt-5.4", false),
             ("not-deepseek-v4-flash", false),
         ] {
-            let result = responses_to_chat_completions(json!({
-                "model": model,
-                "input": [
-                    test_function_call("call_1"),
-                    {"type": "message", "role": "assistant", "content": "Replay text.",
-                        "reasoning_content": "replay thought"},
-                    test_function_output("call_1", json!("ok"))
-                ]
-            }))
+            let result = responses_to_chat_completions_with_reasoning(
+                json!({
+                    "model": model,
+                    "input": [
+                        test_function_call("call_1"),
+                        {"type": "message", "role": "assistant", "content": "Replay text.",
+                            "reasoning_content": "replay thought"},
+                        test_function_output("call_1", json!("ok"))
+                    ]
+                }),
+                None,
+                true,
+            )
             .unwrap();
 
             if repair {
@@ -3249,7 +3319,7 @@ mod tests {
             "stream": true
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
 
         assert_eq!(result["stream"], true);
         assert_eq!(result["stream_options"]["include_usage"], true);
@@ -3262,7 +3332,7 @@ mod tests {
             "input": [{"role": "user", "content": [{"type": "input_text", "text": "hi"}]}]
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
 
         assert!(result.get("stream_options").is_none());
     }
@@ -3276,7 +3346,7 @@ mod tests {
             "stream_options": {"continuous_usage_stats": true}
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
 
         // 既补上 include_usage，又保留客户端原有的 stream_options 字段。
         assert_eq!(result["stream_options"]["include_usage"], true);
@@ -3308,7 +3378,7 @@ mod tests {
             }]
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
         let content = result["messages"][0]["content"].as_array().unwrap();
 
         assert_eq!(content[0]["type"], "text");
@@ -3336,7 +3406,7 @@ mod tests {
             }]
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
 
         assert_eq!(result["messages"][0]["content"], "Summarize this URL file.");
     }
@@ -3354,7 +3424,7 @@ mod tests {
             ]
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
         let content = result["messages"][0]["content"].as_array().unwrap();
 
         assert_eq!(result["messages"][0]["role"], "user");
@@ -3390,7 +3460,7 @@ mod tests {
             }]
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
         let messages = result["messages"].as_array().unwrap();
 
         assert_eq!(messages[0]["role"], "user");
@@ -3438,7 +3508,7 @@ mod tests {
             "stream": true
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
 
         assert_eq!(result["model"], "gpt-5.4");
         assert_eq!(result["messages"][0]["role"], "system");
@@ -3472,7 +3542,7 @@ mod tests {
             ]
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
         let tools = result["tools"].as_array().unwrap();
         assert_eq!(tools.len(), 2);
         assert!(tools[0]["function"].get("description").is_none());
@@ -3492,7 +3562,7 @@ mod tests {
             "input": "hi"
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
 
         assert_eq!(
             result["tools"][0]["function"]["parameters"],
@@ -3515,7 +3585,7 @@ mod tests {
             "input": "hi"
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
 
         assert_eq!(
             result["tools"][0]["function"]["parameters"],
@@ -3537,7 +3607,7 @@ mod tests {
             "input": "hi"
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
 
         assert_eq!(
             result["tools"][0]["function"]["parameters"],
@@ -3563,12 +3633,177 @@ mod tests {
             "input": "hi"
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
         let parameters = &result["tools"][0]["function"]["parameters"];
 
         assert_eq!(parameters["type"], "object");
         assert_eq!(parameters["properties"]["query"]["type"], "string");
         assert_eq!(parameters["required"], json!(["query"]));
+    }
+
+    #[test]
+    fn responses_request_to_chat_normalizes_null_required_and_preserves_closed_schema() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "tools": [{
+                "type": "function",
+                "name": "search",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"query": {"type": "string"}},
+                    "required": null,
+                    "additionalProperties": false
+                }
+            }],
+            "input": "hi"
+        });
+
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
+        let parameters = &result["tools"][0]["function"]["parameters"];
+
+        assert_eq!(parameters["required"], json!([]));
+        assert_eq!(parameters["additionalProperties"], json!(false));
+        assert_eq!(parameters["properties"]["query"]["type"], json!("string"));
+    }
+
+    #[test]
+    fn responses_request_to_chat_adds_required_for_closed_nested_schemas() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "tools": [{
+                "type": "function",
+                "name": "inspect",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "options": {
+                            "type": "object",
+                            "properties": {"verbose": {"type": "boolean"}},
+                            "additionalProperties": false
+                        },
+                        "entries": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {"id": {"type": "string"}},
+                                "required": null,
+                                "additionalProperties": false
+                            }
+                        }
+                    },
+                    "required": ["options", "entries"]
+                }
+            }],
+            "input": "hi"
+        });
+
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
+        let parameters = &result["tools"][0]["function"]["parameters"];
+
+        assert_eq!(parameters["properties"]["options"]["required"], json!([]));
+        assert_eq!(
+            parameters["properties"]["options"]["additionalProperties"],
+            json!(false)
+        );
+        assert_eq!(
+            parameters["properties"]["entries"]["items"]["required"],
+            json!([])
+        );
+        assert_eq!(
+            parameters["properties"]["entries"]["items"]["additionalProperties"],
+            json!(false)
+        );
+    }
+
+    #[test]
+    fn responses_request_to_chat_sanitizes_schema_combinators_and_defs() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "tools": [{
+                "type": "function",
+                "name": "choose",
+                "parameters": {
+                    "type": "object",
+                    "oneOf": [{
+                        "type": "object",
+                        "required": null,
+                        "additionalProperties": false
+                    }],
+                    "$defs": {
+                        "payload": {
+                            "type": "object",
+                            "required": null,
+                            "additionalProperties": false
+                        }
+                    }
+                }
+            }],
+            "input": "hi"
+        });
+
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
+        let parameters = &result["tools"][0]["function"]["parameters"];
+
+        assert_eq!(parameters["oneOf"][0]["required"], json!([]));
+        assert_eq!(parameters["oneOf"][0]["additionalProperties"], json!(false));
+        assert_eq!(parameters["$defs"]["payload"]["required"], json!([]));
+        assert_eq!(
+            parameters["$defs"]["payload"]["additionalProperties"],
+            json!(false)
+        );
+    }
+
+    #[test]
+    fn responses_request_to_chat_preserves_valid_and_unconstrained_schemas() {
+        let input = json!({
+            "model": "gpt-5.4",
+            "tools": [{
+                "type": "function",
+                "name": "lookup",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "default": {"required": null}
+                        }
+                    },
+                    "required": ["query"],
+                    "additionalProperties": false
+                }
+            }, {
+                "type": "function",
+                "name": "open_lookup",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"query": {"type": "string"}}
+                }
+            }],
+            "input": "hi"
+        });
+
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
+        assert_eq!(
+            result["tools"][0]["function"]["parameters"],
+            json!({
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "default": {"required": null}
+                    }
+                },
+                "required": ["query"],
+                "additionalProperties": false
+            })
+        );
+        assert_eq!(
+            result["tools"][1]["function"]["parameters"],
+            json!({
+                "type": "object",
+                "properties": {"query": {"type": "string"}}
+            })
+        );
     }
 
     #[test]
@@ -3594,7 +3829,7 @@ mod tests {
             "input": "hi"
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
         let parameters = &result["tools"][0]["function"]["parameters"];
 
         assert_eq!(parameters["type"], "object");
@@ -3659,7 +3894,7 @@ mod tests {
             ]
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
         let tools = result["tools"].as_array().unwrap();
         let tool_names = tools
             .iter()
@@ -3699,7 +3934,7 @@ mod tests {
             }]
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
 
         assert_eq!(result["tools"][0]["function"]["name"], "apply_patch");
         assert_eq!(
@@ -3729,7 +3964,7 @@ mod tests {
             }]
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
         let description = result["tools"][0]["function"]["description"]
             .as_str()
             .unwrap();
@@ -3753,25 +3988,33 @@ mod tests {
             "tools": [{"type": "web_search"}]
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
 
         assert_eq!(result["stream_options"], json!({"include_usage": true}));
         // 托管 web_search 在 Chat 路径上本来就丢掉。
         assert!(result.get("tools").is_none());
 
-        let non_stream = responses_to_chat_completions(json!({
-            "model": "m",
-            "input": "hello",
-            "stream_options": {"reasoning_summary_delivery": "sequential_cutoff", "other": 1}
-        }))
+        let non_stream = responses_to_chat_completions_with_reasoning(
+            json!({
+                "model": "m",
+                "input": "hello",
+                "stream_options": {"reasoning_summary_delivery": "sequential_cutoff", "other": 1}
+            }),
+            None,
+            true,
+        )
         .unwrap();
         assert_eq!(non_stream["stream_options"], json!({"other": 1}));
 
-        let only_private = responses_to_chat_completions(json!({
-            "model": "m",
-            "input": "hello",
-            "stream_options": {"reasoning_summary_delivery": "sequential_cutoff"}
-        }))
+        let only_private = responses_to_chat_completions_with_reasoning(
+            json!({
+                "model": "m",
+                "input": "hello",
+                "stream_options": {"reasoning_summary_delivery": "sequential_cutoff"}
+            }),
+            None,
+            true,
+        )
         .unwrap();
         assert!(only_private.get("stream_options").is_none());
     }
@@ -4230,7 +4473,8 @@ mod tests {
             }]
         });
 
-        let result = chat_completion_to_response(input).unwrap();
+        let result =
+            chat_completion_to_response_with_context(input, &CodexToolContext::default()).unwrap();
 
         assert_eq!(result["output"][0]["type"], "reasoning");
         assert_eq!(
@@ -4257,7 +4501,8 @@ mod tests {
             }
         });
 
-        let result = chat_completion_to_response(input).unwrap();
+        let result =
+            chat_completion_to_response_with_context(input, &CodexToolContext::default()).unwrap();
 
         assert_eq!(result["model"], "cline-pass/deepseek-v4.1-flash");
         assert_eq!(result["created_at"], 1_700_000_000);
@@ -4292,7 +4537,7 @@ mod tests {
             ]
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
         let messages = result["messages"].as_array().unwrap();
 
         assert_eq!(messages[0]["role"], "system");
@@ -4318,7 +4563,7 @@ mod tests {
             ]
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
         let messages = result["messages"].as_array().unwrap();
 
         for (idx, msg) in messages.iter().enumerate() {
@@ -4360,7 +4605,7 @@ mod tests {
 
         let convert = |input: Vec<Value>| {
             let body = json!({"model": "k3", "instructions": "You are Codex.", "input": input});
-            responses_to_chat_completions(body).unwrap()["messages"]
+            responses_to_chat_completions_with_reasoning(body, None, true).unwrap()["messages"]
                 .as_array()
                 .unwrap()
                 .clone()
@@ -4416,7 +4661,7 @@ mod tests {
             ]
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
         let messages = result["messages"].as_array().unwrap();
 
         // The carrier is not a message: every emitted message must carry
@@ -4467,7 +4712,7 @@ mod tests {
             ]
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
 
         let tools = result["tools"].as_array().unwrap();
         assert_eq!(tools.len(), 1, "duplicate carried tool must be dropped");
@@ -4487,7 +4732,7 @@ mod tests {
             ]
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
         let messages = result["messages"].as_array().unwrap();
 
         assert_eq!(messages.len(), 2);
@@ -4560,7 +4805,7 @@ mod tests {
             ]
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
         let messages = result["messages"].as_array().unwrap();
 
         assert_eq!(messages[0]["role"], "assistant");
@@ -4597,7 +4842,7 @@ mod tests {
             ]
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
         let messages = result["messages"].as_array().unwrap();
 
         assert_eq!(messages[0]["role"], "assistant");
@@ -4624,7 +4869,7 @@ mod tests {
             ]
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
         let messages = result["messages"].as_array().unwrap();
 
         assert_eq!(messages[0]["role"], "assistant");
@@ -4660,7 +4905,7 @@ mod tests {
             ]
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
         let messages = result["messages"].as_array().unwrap();
 
         assert_eq!(messages[0]["role"], "assistant");
@@ -4696,7 +4941,7 @@ mod tests {
             ]
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
         let messages = result["messages"].as_array().unwrap();
 
         assert_eq!(messages[0]["role"], "assistant");
@@ -4725,7 +4970,7 @@ mod tests {
             ]
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
         let messages = result["messages"].as_array().unwrap();
 
         assert_eq!(messages[0]["role"], "assistant");
@@ -4755,7 +5000,7 @@ mod tests {
             ]
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
         let messages = result["messages"].as_array().unwrap();
 
         assert_eq!(messages[0]["role"], "assistant");
@@ -4787,7 +5032,7 @@ mod tests {
             ]
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
         let messages = result["messages"].as_array().unwrap();
 
         assert_eq!(messages[0]["role"], "assistant");
@@ -4829,7 +5074,7 @@ mod tests {
             ]
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
         let messages = result["messages"].as_array().unwrap();
 
         assert_eq!(messages[0]["role"], "assistant");
@@ -4882,7 +5127,7 @@ mod tests {
             ]
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
         let messages = result["messages"].as_array().unwrap();
 
         assert_eq!(messages[0]["role"], "assistant");
@@ -4930,7 +5175,7 @@ mod tests {
             ]
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
         let messages = result["messages"].as_array().unwrap();
 
         assert_eq!(messages.len(), 4);
@@ -4964,7 +5209,7 @@ mod tests {
             ]
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
         let messages = result["messages"].as_array().unwrap();
 
         assert_eq!(
@@ -4993,7 +5238,7 @@ mod tests {
             ]
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
         let messages = result["messages"].as_array().unwrap();
 
         assert_eq!(messages[0]["tool_calls"][0]["function"]["arguments"], "{}");
@@ -5022,7 +5267,12 @@ mod tests {
     #[test]
     fn malformed_history_arguments_preserve_attempt_and_error_as_text() {
         let raw = r#"{"query":"unfinished"#;
-        let result = responses_to_chat_completions(malformed_history_request(json!(raw))).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(
+            malformed_history_request(json!(raw)),
+            None,
+            true,
+        )
+        .unwrap();
         let messages = result_messages(&result);
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[0]["role"], "assistant");
@@ -5047,8 +5297,12 @@ mod tests {
     #[test]
     fn malformed_history_arguments_recover_non_object_json_without_guessing() {
         for arguments in ["not json", "[]", "42", "true", "null", "\"text\""] {
-            let result =
-                responses_to_chat_completions(malformed_history_request(json!(arguments))).unwrap();
+            let result = responses_to_chat_completions_with_reasoning(
+                malformed_history_request(json!(arguments)),
+                None,
+                true,
+            )
+            .unwrap();
             let messages = result_messages(&result);
             assert!(messages
                 .iter()
@@ -5074,7 +5328,7 @@ mod tests {
                     "type": "function_call_output", "call_id": "call_ok", "output": "sunny"
                 }),
             );
-            let result = responses_to_chat_completions(body).unwrap();
+            let result = responses_to_chat_completions_with_reasoning(body, None, true).unwrap();
             let messages = result_messages(&result);
             assert_eq!(messages.len(), 3);
             assert_eq!(
@@ -5105,8 +5359,12 @@ mod tests {
             json!("{}"),
             json!(""),
         ] {
-            let result =
-                responses_to_chat_completions(malformed_history_request(arguments)).unwrap();
+            let result = responses_to_chat_completions_with_reasoning(
+                malformed_history_request(arguments),
+                None,
+                true,
+            )
+            .unwrap();
             let messages = result_messages(&result);
             assert_eq!(messages.len(), 3);
             assert_eq!(messages[0]["tool_calls"][0]["id"], "call_broken");
@@ -5126,7 +5384,7 @@ mod tests {
             {"type": "input_text", "text": "failed to parse function arguments"},
             {"type": "input_image", "image_url": image_url}
         ]);
-        let result = responses_to_chat_completions(body).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(body, None, true).unwrap();
         let messages = result_messages(&result);
         assert!(messages
             .iter()
@@ -5145,7 +5403,7 @@ mod tests {
     fn malformed_history_arguments_without_a_result_remain_visible_as_context() {
         let mut body = malformed_history_request(json!("{broken"));
         body["input"].as_array_mut().unwrap().remove(2);
-        let result = responses_to_chat_completions(body).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(body, None, true).unwrap();
         let messages = result_messages(&result);
         assert!(messages
             .iter()
@@ -5880,7 +6138,7 @@ mod tests {
             ]
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
         let messages = result["messages"].as_array().unwrap();
 
         assert_eq!(message_roles(&result), vec!["assistant", "tool"]);
@@ -6047,8 +6305,9 @@ mod tests {
             ]
         });
 
-        let first = responses_to_chat_completions(input.clone()).unwrap();
-        let second = responses_to_chat_completions(input).unwrap();
+        let first =
+            responses_to_chat_completions_with_reasoning(input.clone(), None, true).unwrap();
+        let second = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
 
         assert_eq!(first, second);
     }
@@ -6145,7 +6404,8 @@ mod tests {
             }
         });
 
-        let result = chat_completion_to_response(input).unwrap();
+        let result =
+            chat_completion_to_response_with_context(input, &CodexToolContext::default()).unwrap();
 
         assert_eq!(result["id"], "resp_chatcmpl_1");
         assert_eq!(result["status"], "completed");
@@ -6499,7 +6759,8 @@ mod tests {
             }]
         });
 
-        let result = chat_completion_to_response(input).unwrap();
+        let result =
+            chat_completion_to_response_with_context(input, &CodexToolContext::default()).unwrap();
 
         assert_eq!(result["output"][0]["type"], "function_call");
         assert_eq!(result["output"][0]["arguments"], r#"{"a":1,"b":2}"#);
@@ -6527,7 +6788,8 @@ mod tests {
             }
         });
 
-        let result = chat_completion_to_response(input).unwrap();
+        let result =
+            chat_completion_to_response_with_context(input, &CodexToolContext::default()).unwrap();
 
         assert_eq!(result["output"][0]["type"], "reasoning");
         assert_eq!(
@@ -6553,7 +6815,8 @@ mod tests {
             }]
         });
 
-        let result = chat_completion_to_response(input).unwrap();
+        let result =
+            chat_completion_to_response_with_context(input, &CodexToolContext::default()).unwrap();
 
         assert_eq!(result["status"], "incomplete");
         assert_eq!(result["incomplete_details"]["reason"], "max_output_tokens");
@@ -6670,7 +6933,7 @@ mod tests {
             "input": "hi"
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
 
         assert!(
             result.get("tool_choice").is_none(),
@@ -6690,7 +6953,7 @@ mod tests {
             "input": "hi"
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
 
         assert!(
             result.get("tool_choice").is_none(),
@@ -6713,7 +6976,7 @@ mod tests {
             "input": "hi"
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
 
         assert!(
             result.get("tool_choice").is_none(),
@@ -6738,7 +7001,7 @@ mod tests {
             "input": "hi"
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
 
         assert!(
             result.get("tool_choice").is_none(),
@@ -6766,7 +7029,7 @@ mod tests {
             "input": "hi"
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
 
         assert!(
             result.get("tool_choice").is_some(),
@@ -6802,7 +7065,7 @@ mod tests {
             "input": "hi"
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
 
         assert!(
             result.get("tool_choice").is_some(),
@@ -6820,7 +7083,7 @@ mod tests {
             "input": "hi"
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
 
         assert!(
             result.get("tool_choice").is_none(),
@@ -6843,7 +7106,7 @@ mod tests {
             "input": "hi"
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
 
         assert!(
             result.get("tool_choice").is_none(),
@@ -6876,7 +7139,7 @@ mod tests {
             }]
         });
 
-        let result = responses_to_chat_completions(input).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
 
         assert!(
             result.get("tool_choice").is_some(),
@@ -6909,7 +7172,7 @@ mod tests {
             "tool_choice": "auto",
             "parallel_tool_calls": true
         });
-        let result = responses_to_chat_completions(body).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(body, None, true).unwrap();
         assert!(result.get("tools").is_none());
         assert!(result.get("tool_choice").is_none());
         assert!(result.get("parallel_tool_calls").is_none());
@@ -6937,7 +7200,7 @@ mod tests {
                 { "type": "message", "role": "user", "content": "continue" }
             ]
         });
-        let result = responses_to_chat_completions(body).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(body, None, true).unwrap();
         let rendered = serde_json::to_string(&result["messages"]).unwrap();
         assert!(rendered.contains(codex_compaction::OPAQUE_COMPACTION_NOTE));
         assert!(!rendered.contains("gAAAAB-openai-blob"));
@@ -6961,7 +7224,7 @@ mod tests {
             ]
         });
 
-        let result = responses_to_chat_completions(body).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(body, None, true).unwrap();
         let messages = result["messages"].as_array().unwrap();
         let roles: Vec<&str> = messages
             .iter()
@@ -7002,7 +7265,7 @@ mod tests {
             ]
         });
 
-        let result = responses_to_chat_completions(body).unwrap();
+        let result = responses_to_chat_completions_with_reasoning(body, None, true).unwrap();
         let messages = result["messages"].as_array().unwrap();
         let roles: Vec<&str> = messages
             .iter()

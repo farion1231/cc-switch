@@ -8,6 +8,7 @@ pub mod search;
 mod search_revision;
 pub mod terminal;
 
+use crate::sync_utils::MutexExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -64,7 +65,7 @@ pub struct DeleteSessionOutcome {
 pub fn scan_sessions() -> Vec<SessionMeta> {
     let scan = scan_sessions_with_status();
     let sessions = scan.sessions.clone();
-    *RECENT_SCAN.lock().unwrap_or_else(|e| e.into_inner()) = Some((Instant::now(), scan));
+    *RECENT_SCAN.lock_recover() = Some((Instant::now(), scan));
     sessions
 }
 
@@ -82,8 +83,7 @@ fn take_recent_scan(
     slot: &Mutex<Option<(Instant, SessionScan)>>,
     now: Instant,
 ) -> Option<SessionScan> {
-    slot.lock()
-        .unwrap_or_else(|e| e.into_inner())
+    slot.lock_recover()
         .take()
         .filter(|(created, _)| now.saturating_duration_since(*created) <= SCAN_REUSE_WINDOW)
         .map(|(_, scan)| scan)

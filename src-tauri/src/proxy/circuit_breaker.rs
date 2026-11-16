@@ -334,13 +334,13 @@ impl CircuitBreaker {
     }
 
     /// 获取当前状态
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub async fn get_state(&self) -> CircuitState {
         *self.state.read().await
     }
 
     /// 获取统计信息
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub async fn get_stats(&self) -> CircuitBreakerStats {
         CircuitBreakerStats {
             state: *self.state.read().await,
@@ -352,7 +352,7 @@ impl CircuitBreaker {
     }
 
     /// 重置熔断器（手动恢复）
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub async fn reset(&self) {
         log::info!(
             "[{}] 熔断器 [{}] 手动重置 → Closed",
@@ -450,6 +450,7 @@ fn split_half_open_slots(slots: u64) -> (u32, u32) {
 }
 
 /// 熔断器统计信息
+#[cfg(test)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CircuitBreakerStats {
