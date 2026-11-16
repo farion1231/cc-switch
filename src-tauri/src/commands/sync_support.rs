@@ -461,9 +461,7 @@ mod tests {
         assert_eq!(without_status(&settings), without_status(&sample(true)));
     }
 
-    async fn clear_settings_waits_for_the_sync_lock_then_forgets_the_config<B: SyncBackend>(
-        sample: fn(bool) -> B::Settings,
-    ) {
+    async fn clear_waits_for_lock_then_forgets<B: SyncBackend>(sample: fn(bool) -> B::Settings) {
         use_test_home::<B>("clear");
         B::store(Some(sample(true))).expect("seed settings");
 
@@ -531,10 +529,7 @@ mod tests {
                 #[tokio::test]
                 #[serial]
                 async fn clear_settings_waits_for_the_sync_lock_then_forgets_the_config() {
-                    super::clear_settings_waits_for_the_sync_lock_then_forgets_the_config::<
-                                    $backend,
-                                >($sample)
-                                .await;
+                    super::clear_waits_for_lock_then_forgets::<$backend>($sample).await;
                 }
             }
         };
