@@ -1,0 +1,33 @@
+{
+  "version": "4.0.33",
+  "items": [
+    {
+      "type": "new",
+      "zh": "套餐额度查询新增 Ollama Cloud",
+      "zh-TW": "方案額度查詢新增 Ollama Cloud",
+      "en": "Token Plan quota now covers Ollama Cloud",
+      "ja": "プラン残量の確認に Ollama Cloud を追加"
+    },
+    {
+      "type": "new",
+      "zh": "Windows 上也能切换 Antigravity 账号",
+      "zh-TW": "Windows 上也能切換 Antigravity 帳號",
+      "en": "Antigravity accounts can be switched on Windows too",
+      "ja": "Windows でも Antigravity アカウントを切り替え可能に"
+    },
+    {
+      "type": "fix",
+      "zh": "切回 Claude 官方后，开着的 Claude Code 会话不再用上一家",
+      "zh-TW": "切回 Claude 官方後，開著的 Claude Code 對話不再用上一家",
+      "en": "Open Claude Code sessions follow a switch back to Claude Official",
+      "ja": "Claude 公式に戻すと、開いている Claude Code セッションも追従"
+    },
+    {
+      "type": "fix",
+      "zh": "修复 Gemini Native 格式获取模型列表报 Key 无效",
+      "zh-TW": "修正 Gemini Native 格式取得模型列表報 Key 無效",
+      "en": "Gemini Native cards can now fetch their model list",
+      "ja": "Gemini Native 形式でモデル一覧の取得に失敗する問題を修正"
+    }
+  ]
+}

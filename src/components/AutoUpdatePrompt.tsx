@@ -81,47 +81,47 @@ export function AutoUpdatePrompt() {
     <div
       role="status"
       aria-live="polite"
-      className="absolute bottom-4 end-4 z-30 w-[264px] max-w-[calc(100%-2rem)] rounded-panel border border-border bg-surface px-3 py-2.5 shadow-v7-lg duration-200 animate-in fade-in slide-in-from-bottom-2"
+      className="absolute bottom-4 end-4 z-30 w-[264px] max-w-[calc(100%-2rem)] rounded-panel border border-border bg-surface px-3 pb-3 pt-2 shadow-v7-lg duration-200 animate-in fade-in slide-in-from-bottom-2"
     >
-      <div className="flex items-start gap-2">
-        <Download className="mt-0.5 h-3.5 w-3.5 shrink-0 text-action-text" />
-        <div className="min-w-0 flex-1 space-y-0.5">
-          <p className="text-body font-medium text-fg-1">
-            {t("autoUpdate.readyTitle", { version })}
-          </p>
-          <p className="text-caption text-fg-2">
-            {routingInUse
-              ? t("autoUpdate.readyBodyRouting")
-              : t("autoUpdate.readyBody")}
-          </p>
+      {/* 图标放进标题行，文字和按钮共用卡片的左右内边距：两个按钮等宽铺满，左右两边都对齐 */}
+      <div className="flex flex-col gap-0.5">
+        <p className="flex items-center gap-1.5 text-body font-medium text-fg-1">
+          <Download className="h-3.5 w-3.5 shrink-0 text-action-text" />
+          {t("autoUpdate.readyTitle", { version })}
+        </p>
+        {/* 缩进 = 图标宽 14px + 间距 6px，和标题文字左对齐 */}
+        <p className="ps-5 text-caption text-fg-2">
+          {routingInUse
+            ? t("autoUpdate.readyBodyRouting")
+            : t("autoUpdate.readyBody")}
+        </p>
+        <div className="grid grid-cols-2 gap-1.5 pt-2">
+          <Button
+            type="button"
+            variant="neutral"
+            size="compact"
+            onClick={handleLater}
+            disabled={installing}
+          >
+            {t("autoUpdate.later")}
+          </Button>
+          <Button
+            type="button"
+            variant="solid"
+            size="compact"
+            onClick={() => void handleInstall()}
+            disabled={installing}
+          >
+            {installing ? (
+              <>
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                {t("settings.updating")}
+              </>
+            ) : (
+              t("autoUpdate.installNow")
+            )}
+          </Button>
         </div>
-      </div>
-      <div className="mt-2 flex justify-end gap-1.5">
-        <Button
-          type="button"
-          variant="neutral"
-          size="compact"
-          onClick={handleLater}
-          disabled={installing}
-        >
-          {t("autoUpdate.later")}
-        </Button>
-        <Button
-          type="button"
-          variant="solid"
-          size="compact"
-          onClick={() => void handleInstall()}
-          disabled={installing}
-        >
-          {installing ? (
-            <>
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              {t("settings.updating")}
-            </>
-          ) : (
-            t("autoUpdate.installNow")
-          )}
-        </Button>
       </div>
     </div>
   );

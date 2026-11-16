@@ -23,11 +23,12 @@ export interface CodingPlanProviderEntry {
     | "zenmux"
     | "volcengine"
     | "opencode_go"
-    | "command_code";
+    | "command_code"
+    | "ollama_cloud";
   /** UsageScriptModal 下拉显示用 */
   label: string;
-  /** base_url 匹配规则 */
-  pattern: RegExp;
+  /** base_url 匹配规则；null 表示不参与自动检测，只能由用户手动选择 */
+  pattern: RegExp | null;
 }
 
 export const CODING_PLAN_PROVIDERS: readonly CodingPlanProviderEntry[] = [
@@ -39,13 +40,11 @@ export const CODING_PLAN_PROVIDERS: readonly CodingPlanProviderEntry[] = [
   },
   {
     // 智谱团队套餐（Team Plan）。base_url 与个人版智谱（open.bigmodel.cn）相同，
-    // 无法靠 base_url 自动区分——靠显式 codingPlanProvider === "zhipu_team" 路由。
-    // 个人版 zhipu 排在前面，detectCodingPlanProvider 首匹配仍命中个人版，
-    // 故团队版永不被 injectCodingPlanUsageScript 自动注入（必须用户手动选）。
-    // pattern 仅占位（下拉展示用），实际不参与自动检测。
+    // 无法靠 base_url 自动区分——靠显式 codingPlanProvider === "zhipu_team" 路由，
+    // 只能由用户手动选择。
     id: "zhipu_team",
     label: "Zhipu GLM Team (智谱团队)",
-    pattern: /bigmodel\.cn/i,
+    pattern: null,
   },
   {
     // 按 host 标签边界匹配（同后端 codex_url_host_matches_any），不认
@@ -88,6 +87,14 @@ export const CODING_PLAN_PROVIDERS: readonly CodingPlanProviderEntry[] = [
     label: "Command Code",
     pattern: /api\.commandcode\.ai\/provider(?:[/?#]|$)/i,
   },
+  {
+    // Ollama Cloud（GET https://ollama.com/api/balance，Bearer Key）。按 host
+    // 标签匹配（同后端 codex_url_host_matches_any），本地 localhost:11434 不命中。
+    id: "ollama_cloud",
+    label: "Ollama Cloud",
+    pattern:
+      /^(?:https?:\/\/)?(?:[^/?#@]*@)?(?:[\w-]+\.)*ollama\.com(?=[:/?#]|$)/i,
+  },
 ] as const;
 
 /** 根据 Base URL 自动检测 Coding Plan 供应商；未命中返回 null */
@@ -96,7 +103,7 @@ export function detectCodingPlanProvider(
 ): CodingPlanProviderEntry["id"] | null {
   if (!baseUrl) return null;
   for (const cp of CODING_PLAN_PROVIDERS) {
-    if (cp.pattern.test(baseUrl)) return cp.id;
+    if (cp.pattern?.test(baseUrl)) return cp.id;
   }
   return null;
 }

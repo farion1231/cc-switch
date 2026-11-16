@@ -9,25 +9,6 @@ const isPlainObject = (value: unknown): value is Record<string, any> => {
   return Object.prototype.toString.call(value) === "[object Object]";
 };
 
-// 验证JSON配置格式
-export const validateJsonConfig = (
-  value: string,
-  fieldName: string = "配置",
-): string => {
-  if (!value.trim()) {
-    return "";
-  }
-  try {
-    const parsed = JSON.parse(value);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return `${fieldName}必须是 JSON 对象`;
-    }
-    return "";
-  } catch {
-    return `${fieldName}JSON格式错误，请检查语法`;
-  }
-};
-
 // 读取配置中的 API Key（支持 Claude, Codex, Gemini）
 export const getApiKeyFromConfig = (
   jsonString: string,
@@ -701,31 +682,37 @@ const unescapeTomlBasicString = (value: string): string =>
     },
   );
 
-const CODEX_CHAT_WIRE_API_VALUES = new Set([
+// 后端 codex_config::CHAT_WIRE_APIS / ANTHROPIC_WIRE_APIS 的前端副本，
+// tests/config/backendConstants.test.ts 核对两边一致。
+export const CODEX_CHAT_WIRE_API_VALUES: readonly string[] = [
   "chat",
   "chat_completions",
   "chat-completions",
   "openai_chat",
   "openai-chat",
   "openai_chat_completions",
-]);
+];
+
+export const CODEX_ANTHROPIC_WIRE_API_VALUES: readonly string[] = [
+  "anthropic",
+  "anthropic_messages",
+  "anthropic-messages",
+  "messages",
+  "claude",
+];
 
 // 判断给定的 wire_api 字符串是否表示 Codex 的 Chat Completions 协议
 export const isCodexChatWireApi = (
   wireApi: string | undefined | null,
 ): boolean =>
-  CODEX_CHAT_WIRE_API_VALUES.has((wireApi ?? "").trim().toLowerCase());
+  CODEX_CHAT_WIRE_API_VALUES.includes((wireApi ?? "").trim().toLowerCase());
 
 export const isCodexAnthropicWireApi = (
   wireApi: string | undefined | null,
 ): boolean =>
-  [
-    "anthropic",
-    "anthropic_messages",
-    "anthropic-messages",
-    "messages",
-    "claude",
-  ].includes((wireApi ?? "").trim().toLowerCase());
+  CODEX_ANTHROPIC_WIRE_API_VALUES.includes(
+    (wireApi ?? "").trim().toLowerCase(),
+  );
 
 export const codexApiFormatFromWireApi = (
   wireApi: string | undefined | null,
@@ -1144,21 +1131,6 @@ export const updateCodexExperimentalBearerToken = (
       : `experimental_bearer_token = "${escaped}"`;
   }
   return finalizeTomlText(lines);
-};
-
-// 从 Provider 对象中提取 Codex base_url（当 settingsConfig.config 为 TOML 字符串时）
-export const getCodexBaseUrl = (
-  provider: { settingsConfig?: Record<string, any> } | undefined | null,
-): string | undefined => {
-  try {
-    const text =
-      typeof provider?.settingsConfig?.config === "string"
-        ? (provider as any).settingsConfig.config
-        : "";
-    return extractCodexBaseUrl(text);
-  } catch {
-    return undefined;
-  }
 };
 
 // 从任一应用的 settingsConfig 中取出请求地址：各应用存法不同（env 变量 / baseUrl /

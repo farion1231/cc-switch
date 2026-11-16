@@ -62,7 +62,6 @@ pub struct RequestContext {
     /// 应用类型字符串（如 "claude"、"codex"、"gemini"）
     pub app_type_str: &'static str,
     /// 应用类型（预留，目前通过 app_type_str 使用）
-    #[allow(dead_code)]
     pub app_type: AppType,
     /// Session ID（从客户端请求提取或新生成）
     pub session_id: String,
