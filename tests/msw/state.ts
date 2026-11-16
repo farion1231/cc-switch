@@ -398,15 +398,6 @@ export const setCurrentProviderId = (appType: AppId, providerId: string) => {
   current[appType] = providerId;
 };
 
-export const updateProviders = (
-  appType: AppId,
-  data: Record<string, Provider>,
-) => {
-  providers[appType] = cloneProviders({ [appType]: data } as ProvidersByApp)[
-    appType
-  ];
-};
-
 export const setProviders = (
   appType: AppId,
   data: Record<string, Provider>,
@@ -473,41 +464,6 @@ export const getMcpConfig = (appType: AppId) => {
     configPath: `/mock/${appType}.mcp.json`,
     servers,
   };
-};
-
-export const setMcpConfig = (
-  appType: AppId,
-  value: Record<string, McpServer>,
-) => {
-  mcpConfigs[appType] = deepClone(value) as Record<string, McpServer>;
-};
-
-export const setMcpServerEnabled = (
-  appType: AppId,
-  id: string,
-  enabled: boolean,
-) => {
-  if (!mcpConfigs[appType]?.[id]) return;
-  mcpConfigs[appType][id] = {
-    ...mcpConfigs[appType][id],
-    enabled,
-  };
-};
-
-export const upsertMcpServer = (
-  appType: AppId,
-  id: string,
-  server: McpServer,
-) => {
-  if (!mcpConfigs[appType]) {
-    mcpConfigs[appType] = {};
-  }
-  mcpConfigs[appType][id] = deepClone(server) as McpServer;
-};
-
-export const deleteMcpServer = (appType: AppId, id: string) => {
-  if (!mcpConfigs[appType]) return;
-  delete mcpConfigs[appType][id];
 };
 
 export const listSessions = () => deepClone(sessionsState) as SessionMeta[];

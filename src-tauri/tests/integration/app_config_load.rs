@@ -3,8 +3,7 @@ use std::path::PathBuf;
 
 use cc_switch_lib::{AppError, MultiAppConfig};
 
-mod support;
-use support::{ensure_test_home, reset_test_fs, test_mutex};
+use crate::support::{ensure_test_home, reset_test_fs, test_mutex};
 
 fn cfg_path() -> PathBuf {
     let home = std::env::var("HOME").expect("HOME should be set by ensure_test_home");

@@ -84,11 +84,6 @@ export const proxyApi = {
     return invoke("exit_proxy_apps_in_mode", { stack });
   },
 
-  // 直连供应商：路由模式下退出路由时写回的那家（和路由到的那家互相独立）
-  async getDirectProvider(appType: string): Promise<string | null> {
-    return invoke("get_direct_provider", { appType });
-  },
-
   // ========== Stack 模型 API ==========
 
   // Stack 模型名单：每一家和它发布的模型 id，以及提示

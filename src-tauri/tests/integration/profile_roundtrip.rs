@@ -11,9 +11,7 @@ use cc_switch_lib::{
     Prompt, PromptService, Provider, ProviderService, SkillApps, SkillService, NO_ACTIVE_PROMPT,
 };
 
-#[path = "support/mod.rs"]
-mod support;
-use support::{create_test_state, ensure_test_home, reset_test_fs, test_mutex};
+use crate::support::{create_test_state, ensure_test_home, reset_test_fs, test_mutex};
 
 fn claude_provider(id: &str, token: &str) -> Provider {
     Provider::with_id(

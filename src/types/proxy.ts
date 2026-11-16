@@ -1,16 +1,3 @@
-export interface ProxyConfig {
-  listen_address: string;
-  listen_port: number;
-  max_retries: number;
-  request_timeout: number;
-  enable_logging: boolean;
-  live_takeover_active?: boolean;
-  // 超时配置
-  streaming_first_byte_timeout: number;
-  streaming_idle_timeout: number;
-  non_streaming_timeout: number;
-}
-
 export interface ProxyStatus {
   running: boolean;
   address: string;
@@ -177,24 +164,7 @@ export interface ProviderHealth {
   updated_at: string;
 }
 
-// 熔断器相关类型
-export interface CircuitBreakerConfig {
-  failureThreshold: number;
-  successThreshold: number;
-  timeoutSeconds: number;
-  errorRateThreshold: number;
-  minRequests: number;
-}
-
 export type CircuitState = "closed" | "open" | "half_open";
-
-export interface CircuitBreakerStats {
-  state: CircuitState;
-  consecutiveFailures: number;
-  consecutiveSuccesses: number;
-  totalRequests: number;
-  failedRequests: number;
-}
 
 // 供应商健康状态枚举
 export enum ProviderHealthStatus {
@@ -202,24 +172,6 @@ export enum ProviderHealthStatus {
   Degraded = "degraded",
   Failed = "failed",
   Unknown = "unknown",
-}
-
-// 扩展 ProviderHealth 以包含前端计算的状态
-export interface ProviderHealthWithStatus extends ProviderHealth {
-  status: ProviderHealthStatus;
-  circuitState?: CircuitState;
-}
-
-export interface ProxyUsageRecord {
-  provider_id: string;
-  app_type: string;
-  endpoint: string;
-  request_tokens: number | null;
-  response_tokens: number | null;
-  status_code: number;
-  latency_ms: number;
-  error: string | null;
-  timestamp: string;
 }
 
 // 故障转移队列条目
