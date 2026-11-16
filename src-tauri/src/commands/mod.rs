@@ -35,6 +35,7 @@ pub mod skill;
 mod stream_check;
 mod subscription;
 mod sync_support;
+mod terminal_launch;
 mod xai_oauth;
 
 mod lightweight;
@@ -83,6 +84,7 @@ pub use settings::*;
 pub use skill::*;
 pub use stream_check::*;
 pub use subscription::*;
+pub use terminal_launch::*;
 pub use xai_oauth::*;
 
 pub use lightweight::*;
@@ -110,4 +112,9 @@ where
 }
 
 #[cfg(not(target_os = "windows"))]
-pub(crate) use misc::{login_shell_path, merge_path_segments, CommandDeadline};
+pub(crate) use misc::tool_process::CommandDeadline;
+pub(crate) use misc::tool_process::{
+    detected_tool_command, run_detected_tool_command_with_timeout, terminate_child_tree,
+};
+#[cfg(not(target_os = "windows"))]
+pub(crate) use misc::{login_shell_path, merge_path_segments};
