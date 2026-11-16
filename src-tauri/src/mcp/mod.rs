@@ -19,6 +19,7 @@ pub(crate) mod dsh;
 mod gemini;
 mod grokbuild;
 mod hermes;
+mod json_file;
 pub(crate) mod omp;
 mod opencode;
 pub(crate) mod validation;
