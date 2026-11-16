@@ -51,6 +51,19 @@ pub enum XaiOAuthError {
     AccountNotFound(String),
 }
 
+impl XaiOAuthError {
+    /// 网络 / 刷新端点暂时失败：不代表登录失效，调用方应让用户稍后重试而不是重新登录
+    pub(crate) fn is_transient(&self) -> bool {
+        matches!(
+            self,
+            Self::NetworkError(_)
+                | Self::TokenFetchFailed(_)
+                | Self::ParseError(_)
+                | Self::IoError(_)
+        )
+    }
+}
+
 impl From<reqwest::Error> for XaiOAuthError {
     fn from(err: reqwest::Error) -> Self {
         Self::NetworkError(err.to_string())

@@ -112,13 +112,24 @@ fn absorb_then_login(
                 return Ok(None);
             };
             manager.grok_cli_login(&account_id).await.map(Some).map_err(|e| {
-                AppError::localized(
-                    "grokbuild.login.account_unavailable",
-                    format!("授权中心的 xAI 账号不可用，请在授权中心重新登录：{e}"),
-                    format!(
-                        "The xAI account in the auth center is unavailable; sign in again there: {e}"
-                    ),
-                )
+                // 刷新令牌时网络 / 端点暂时失败不代表登录失效，别让用户白白去重新登录
+                if e.is_transient() {
+                    AppError::localized(
+                        "grokbuild.login.refresh_unavailable",
+                        format!("暂时无法刷新授权中心 xAI 账号的令牌，本次没有切换，请稍后重试：{e}"),
+                        format!(
+                            "Could not refresh the auth center's xAI account token right now, so nothing was switched; try again later: {e}"
+                        ),
+                    )
+                } else {
+                    AppError::localized(
+                        "grokbuild.login.account_unavailable",
+                        format!("授权中心的 xAI 账号不可用，请在授权中心重新登录：{e}"),
+                        format!(
+                            "The xAI account in the auth center is unavailable; sign in again there: {e}"
+                        ),
+                    )
+                }
             })
         })
     })

@@ -109,9 +109,19 @@ pub(crate) async fn query_grokbuild_quota_with_managed_fallback(
     let (Some(state), Some(live)) = (state, crate::grok_auth::read_live_login_from_disk()) else {
         return Ok(primary);
     };
-    // 授权中心没有这个号或要重新登录时查不成功，照样回到 Grok CLI 凭据的结果
-    match query_xai_oauth_quota_for(state, Some(live.user_id), false).await {
-        Ok(mut quota) if quota.success => {
+    let managed = query_xai_oauth_quota_for(state, Some(live.user_id), false).await;
+    pick_grokbuild_quota(primary, managed)
+}
+
+/// 兜底查询的取舍：授权中心查到了就用它；没有这个号或要重新登录（`Ok` 但不成功）时回到
+/// Grok CLI 凭据的结果；兜底时网络 / 刷新端点暂时失败（`Err`）照样往上传，前端 retry
+/// 并保留上次成功值，不用 Grok CLI 那份「令牌过期」盖掉。
+fn pick_grokbuild_quota(
+    primary: SubscriptionQuota,
+    managed: Result<SubscriptionQuota, String>,
+) -> Result<SubscriptionQuota, String> {
+    match managed? {
+        mut quota if quota.success => {
             quota.tool = "grokbuild".to_string();
             Ok(quota)
         }
@@ -204,13 +214,7 @@ pub async fn get_xai_oauth_models(
 }
 
 fn is_transient_token_error(error: &XaiOAuthError) -> bool {
-    matches!(
-        error,
-        XaiOAuthError::NetworkError(_)
-            | XaiOAuthError::TokenFetchFailed(_)
-            | XaiOAuthError::ParseError(_)
-            | XaiOAuthError::IoError(_)
-    )
+    error.is_transient()
 }
 
 #[cfg(test)]
@@ -241,6 +245,42 @@ mod tests {
             }
         });
         format!("http://{addr}/oauth2/token")
+    }
+
+    #[test]
+    fn grokbuild_fallback_propagates_transient_errors_and_keeps_cli_result_otherwise() {
+        let primary = || {
+            SubscriptionQuota::error(
+                "grokbuild",
+                CredentialStatus::Expired,
+                "cli token expired".to_string(),
+            )
+        };
+
+        let err = pick_grokbuild_quota(
+            primary(),
+            Err("xAI OAuth token unavailable: timeout".into()),
+        )
+        .expect_err("transient managed failure must propagate");
+        assert!(err.contains("timeout"));
+
+        let kept = pick_grokbuild_quota(
+            primary(),
+            Ok(SubscriptionQuota::error(
+                "xai_oauth",
+                CredentialStatus::Expired,
+                "reauth".to_string(),
+            )),
+        )
+        .unwrap();
+        assert_eq!(kept.tool, "grokbuild");
+        assert_eq!(kept.error.as_deref(), Some("cli token expired"));
+
+        let mut managed = SubscriptionQuota::not_found("xai_oauth");
+        managed.success = true;
+        let used = pick_grokbuild_quota(primary(), Ok(managed)).unwrap();
+        assert!(used.success);
+        assert_eq!(used.tool, "grokbuild");
     }
 
     #[test]
