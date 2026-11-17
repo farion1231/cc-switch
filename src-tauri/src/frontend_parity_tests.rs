@@ -37,6 +37,16 @@ const CODING_PLAN_URLS: &[&str] = &[
     "https://ollama.com.example.com/v1",
     "https://proxy.example.com/ollama.com/v1",
     "https://api.openai.com/v1",
+    // Hosts are matched on label boundaries (port and trailing dot allowed);
+    // a plan host inside a relay's path or query, or a look-alike suffix, is not.
+    "https://api.kimi.com:443/coding/v1",
+    "https://opencode.ai./zen/go",
+    "https://relay.example.com/api.kimi.com/coding/v1",
+    "https://relay.example.com/v1?upstream=https://open.bigmodel.cn",
+    "https://api.z.ai.relay.example.com/api/anthropic",
+    "https://zenmux.example.com/api",
+    "https://relay.example.com/ark.cn-beijing.volces.com/api/plan/v3",
+    "https://relay.example.com/api.commandcode.ai/provider",
 ];
 
 /// Header values whose validity both sides must agree on: trimmed-empty means

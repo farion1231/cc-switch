@@ -61,7 +61,15 @@
     "http://localhost:11434": null,
     "https://ollama.com.example.com/v1": null,
     "https://proxy.example.com/ollama.com/v1": null,
-    "https://api.openai.com/v1": null
+    "https://api.openai.com/v1": null,
+    "https://api.kimi.com:443/coding/v1": "kimi",
+    "https://opencode.ai./zen/go": "opencode_go",
+    "https://relay.example.com/api.kimi.com/coding/v1": null,
+    "https://relay.example.com/v1?upstream=https://open.bigmodel.cn": null,
+    "https://api.z.ai.relay.example.com/api/anthropic": null,
+    "https://zenmux.example.com/api": null,
+    "https://relay.example.com/ark.cn-beijing.volces.com/api/plan/v3": null,
+    "https://relay.example.com/api.commandcode.ai/provider": null
   },
   "quotaWarnBelowPercent": 20.0,
   "exchangeRateCurrencies": [
