@@ -8,7 +8,7 @@ const CLAUDE_CONFIG_FILE: &str = "config.json";
 
 fn claude_dir() -> Result<PathBuf, AppError> {
     // 优先使用设置中的覆盖目录
-    if let Some(dir) = crate::settings::get_claude_override_dir() {
+    if let Some(dir) = crate::settings::get_override_dir(&crate::app_config::AppType::Claude) {
         return Ok(dir);
     }
     let home = dirs::home_dir().ok_or_else(|| AppError::Config("无法获取用户主目录".into()))?;
@@ -34,17 +34,6 @@ pub fn read_claude_config() -> Result<Option<String>, AppError> {
         Ok(Some(content))
     } else {
         Ok(None)
-    }
-}
-
-fn is_managed_config(content: &str) -> bool {
-    match serde_json::from_str::<serde_json::Value>(content) {
-        Ok(value) => value
-            .get("primaryApiKey")
-            .and_then(|v| v.as_str())
-            .map(|val| val == "any")
-            .unwrap_or(false),
-        Err(_) => false,
     }
 }
 
@@ -116,16 +105,4 @@ pub fn clear_claude_config() -> Result<bool, AppError> {
         serde_json::to_string_pretty(&value).map_err(|e| AppError::JsonSerialize { source: e })?;
     fs::write(&path, format!("{serialized}\n")).map_err(|e| AppError::io(&path, e))?;
     Ok(true)
-}
-
-pub fn claude_config_status() -> Result<(bool, PathBuf), AppError> {
-    let path = claude_config_path()?;
-    Ok((path.exists(), path))
-}
-
-pub fn is_claude_config_applied() -> Result<bool, AppError> {
-    match read_claude_config()? {
-        Some(content) => Ok(is_managed_config(&content)),
-        None => Ok(false),
-    }
 }

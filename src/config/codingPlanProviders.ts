@@ -27,8 +27,8 @@ export interface CodingPlanProviderEntry {
     | "ollama_cloud";
   /** UsageScriptModal 下拉显示用 */
   label: string;
-  /** base_url 匹配规则 */
-  pattern: RegExp;
+  /** base_url 匹配规则；null 表示不参与自动检测，只能由用户手动选择 */
+  pattern: RegExp | null;
 }
 
 export const CODING_PLAN_PROVIDERS: readonly CodingPlanProviderEntry[] = [
@@ -40,13 +40,11 @@ export const CODING_PLAN_PROVIDERS: readonly CodingPlanProviderEntry[] = [
   },
   {
     // 智谱团队套餐（Team Plan）。base_url 与个人版智谱（open.bigmodel.cn）相同，
-    // 无法靠 base_url 自动区分——靠显式 codingPlanProvider === "zhipu_team" 路由。
-    // 个人版 zhipu 排在前面，detectCodingPlanProvider 首匹配仍命中个人版，
-    // 故团队版永不被 injectCodingPlanUsageScript 自动注入（必须用户手动选）。
-    // pattern 仅占位（下拉展示用），实际不参与自动检测。
+    // 无法靠 base_url 自动区分——靠显式 codingPlanProvider === "zhipu_team" 路由，
+    // 只能由用户手动选择。
     id: "zhipu_team",
     label: "Zhipu GLM Team (智谱团队)",
-    pattern: /bigmodel\.cn/i,
+    pattern: null,
   },
   {
     // 按 host 标签边界匹配（同后端 codex_url_host_matches_any），不认
@@ -105,7 +103,7 @@ export function detectCodingPlanProvider(
 ): CodingPlanProviderEntry["id"] | null {
   if (!baseUrl) return null;
   for (const cp of CODING_PLAN_PROVIDERS) {
-    if (cp.pattern.test(baseUrl)) return cp.id;
+    if (cp.pattern?.test(baseUrl)) return cp.id;
   }
   return null;
 }

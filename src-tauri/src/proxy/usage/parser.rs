@@ -156,7 +156,6 @@ impl TokenUsage {
     }
 
     /// 从 Claude API 流式响应解析
-    #[allow(dead_code)]
     pub fn from_claude_stream_events(events: &[Value]) -> Option<Self> {
         let mut usage = Self::default();
         let mut model: Option<String> = None;

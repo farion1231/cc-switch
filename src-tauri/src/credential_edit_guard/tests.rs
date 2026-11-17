@@ -118,9 +118,7 @@ fn credential_guard_ordinary_save_cannot_drop_protection_or_rename_binding() {
     }
     let mut renamed = original.clone();
     renamed.id = "different".into();
-    assert!(db
-        .replace_provider_id("claude", &original.id, &renamed)
-        .is_err());
+    assert!(validate_update(&AppType::Claude, &original, &renamed).is_err());
     assert!(db
         .get_provider_by_id("different", "claude")
         .unwrap()
