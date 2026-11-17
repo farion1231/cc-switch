@@ -71,7 +71,14 @@ fn sync_file(path: &Path, id: &str, spec: Option<&Value>) -> Result<(), AppError
         object.extend(native.as_object().unwrap().clone());
         servers.insert(id.into(), merged);
     } else {
-        servers.remove(id);
+        // 关闭时对齐 AtomCode 原生语义（config::set_mcp_server_disabled_in_json_file）：
+        // 写 `disabled: true` 保留整条条目，而不是删除。这样 AtomCode 自管条目携带的
+        // managedBy / trust / autoApprove / timeout_ms 等原生元数据不会丢失，且重新
+        // 启用（spec=Some 时 remove("disabled")）可无损恢复。仅作用于已存在条目，
+        // 从不凭空新增一个空的 disabled 条目。
+        if let Some(entry) = servers.get_mut(id).and_then(Value::as_object_mut) {
+            entry.insert("disabled".into(), json!(true));
+        }
     }
     atomic_write_private(
         path,
@@ -190,11 +197,50 @@ mod tests {
         assert_eq!(value["mcpServers"]["other"]["command"], "node");
         assert_eq!(value["custom"], "keep");
 
-        // 删除：整条移除，不动其他条目
+        // 关闭：对齐 AtomCode 原生语义，写 disabled:true 保留整条条目与原生选项
         sync_file(&path, "server", None).unwrap();
         let value = read(&path).unwrap();
-        assert!(value["mcpServers"].get("server").is_none());
+        assert_eq!(value["mcpServers"]["server"]["disabled"], true);
+        assert_eq!(value["mcpServers"]["server"]["url"], "https://example.com");
+        assert_eq!(value["mcpServers"]["server"]["timeout_ms"], 1234);
         assert_eq!(value["mcpServers"]["other"]["command"], "node");
+        assert_eq!(value["custom"], "keep");
+
+        // 重新启用后 disabled 被移除，条目其余字段保持不变
+        sync_file(
+            &path,
+            "server",
+            Some(&json!({"type":"http","url":"https://example.com"})),
+        )
+        .unwrap();
+        let value = read(&path).unwrap();
+        assert!(value["mcpServers"]["server"].get("disabled").is_none());
+        assert_eq!(value["mcpServers"]["server"]["timeout_ms"], 1234);
+
+        // 关闭一个不存在的条目：不凭空新增空条目
+        sync_file(&path, "never-defined", None).unwrap();
+        let value = read(&path).unwrap();
+        assert!(value["mcpServers"].get("never-defined").is_none());
+    }
+
+    #[test]
+    fn atomcode_mcp_disable_preserves_native_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp.json");
+        fs::write(
+            &path,
+            json!({"mcpServers":{"huaweicloud":{"command":"node","args":["srv.mjs"],"managedBy":"atomcode-huaweicloud-v1","trust":false,"autoApprove":[],"timeout_ms":300000}}}).to_string(),
+        )
+        .unwrap();
+        sync_file(&path, "huaweicloud", None).unwrap();
+        let value = read(&path).unwrap();
+        let entry = &value["mcpServers"]["huaweicloud"];
+        assert_eq!(entry["disabled"], true);
+        assert_eq!(entry["managedBy"], "atomcode-huaweicloud-v1");
+        assert_eq!(entry["trust"], false);
+        assert_eq!(entry["autoApprove"], json!([]));
+        assert_eq!(entry["timeout_ms"], 300000);
+        assert_eq!(entry["command"], "node");
     }
 
     #[test]
