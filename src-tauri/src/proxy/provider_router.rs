@@ -474,14 +474,6 @@ mod tests {
         let _home = temp_home();
         let db = Arc::new(Database::memory().unwrap());
 
-        db.update_circuit_breaker_config(&CircuitBreakerConfig {
-            failure_threshold: 1,
-            timeout_seconds: 0,
-            ..Default::default()
-        })
-        .await
-        .unwrap();
-
         let provider_a =
             Provider::with_id("a".to_string(), "Provider A".to_string(), json!({}), None);
         let provider_b =
@@ -495,6 +487,12 @@ mod tests {
 
         // 启用自动故障转移（使用新的 proxy_config API）
         let mut config = db.get_proxy_config_for_app("claude").await.unwrap();
+        // 1 次失败即熔断，0 秒超时立即进入 HalfOpen
+        config.circuit_failure_threshold = 1;
+        config.circuit_success_threshold = 2;
+        config.circuit_timeout_seconds = 0;
+        config.circuit_error_rate_threshold = 0.6;
+        config.circuit_min_requests = 10;
         config.auto_failover_enabled = true;
         db.update_proxy_config_for_app(config).await.unwrap();
 
@@ -517,15 +515,6 @@ mod tests {
         let _home = temp_home();
         let db = Arc::new(Database::memory().unwrap());
 
-        // 配置熔断器：1 次失败即熔断，0 秒超时立即进入 HalfOpen
-        db.update_circuit_breaker_config(&CircuitBreakerConfig {
-            failure_threshold: 1,
-            timeout_seconds: 0,
-            ..Default::default()
-        })
-        .await
-        .unwrap();
-
         let provider_a =
             Provider::with_id("a".to_string(), "Provider A".to_string(), json!({}), None);
         db.save_provider("claude", &provider_a).unwrap();
@@ -533,6 +522,12 @@ mod tests {
 
         // 启用自动故障转移
         let mut config = db.get_proxy_config_for_app("claude").await.unwrap();
+        // 1 次失败即熔断，0 秒超时立即进入 HalfOpen
+        config.circuit_failure_threshold = 1;
+        config.circuit_success_threshold = 2;
+        config.circuit_timeout_seconds = 0;
+        config.circuit_error_rate_threshold = 0.6;
+        config.circuit_min_requests = 10;
         config.auto_failover_enabled = true;
         db.update_proxy_config_for_app(config).await.unwrap();
 
@@ -569,18 +564,17 @@ mod tests {
     async fn test_cancelled_probe_returns_half_open_slot() {
         let _home = temp_home();
         let db = Arc::new(Database::memory().unwrap());
-        db.update_circuit_breaker_config(&CircuitBreakerConfig {
-            failure_threshold: 1,
-            timeout_seconds: 0,
-            ..Default::default()
-        })
-        .await
-        .unwrap();
         let provider_a =
             Provider::with_id("a".to_string(), "Provider A".to_string(), json!({}), None);
         db.save_provider("claude", &provider_a).unwrap();
         db.add_to_failover_queue("claude", "a").unwrap();
         let mut config = db.get_proxy_config_for_app("claude").await.unwrap();
+        // 1 次失败即熔断，0 秒超时立即进入 HalfOpen
+        config.circuit_failure_threshold = 1;
+        config.circuit_success_threshold = 2;
+        config.circuit_timeout_seconds = 0;
+        config.circuit_error_rate_threshold = 0.6;
+        config.circuit_min_requests = 10;
         config.auto_failover_enabled = true;
         db.update_proxy_config_for_app(config).await.unwrap();
 
@@ -617,18 +611,17 @@ mod tests {
     async fn test_stale_probe_permit_does_not_free_next_round_slot() {
         let _home = temp_home();
         let db = Arc::new(Database::memory().unwrap());
-        db.update_circuit_breaker_config(&CircuitBreakerConfig {
-            failure_threshold: 1,
-            timeout_seconds: 0,
-            ..Default::default()
-        })
-        .await
-        .unwrap();
         let provider_a =
             Provider::with_id("a".to_string(), "Provider A".to_string(), json!({}), None);
         db.save_provider("claude", &provider_a).unwrap();
         db.add_to_failover_queue("claude", "a").unwrap();
         let mut config = db.get_proxy_config_for_app("claude").await.unwrap();
+        // 1 次失败即熔断，0 秒超时立即进入 HalfOpen
+        config.circuit_failure_threshold = 1;
+        config.circuit_success_threshold = 2;
+        config.circuit_timeout_seconds = 0;
+        config.circuit_error_rate_threshold = 0.6;
+        config.circuit_min_requests = 10;
         config.auto_failover_enabled = true;
         db.update_proxy_config_for_app(config).await.unwrap();
 
