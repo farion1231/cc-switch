@@ -1,0 +1,281 @@
+{
+  "copilotReasoningEfforts": [
+    "none",
+    "minimal",
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max"
+  ],
+  "codexReservedModelProviderIds": [
+    "amazon-bedrock",
+    "amazon-bedrock-runtime",
+    "openai",
+    "ollama",
+    "lmstudio"
+  ],
+  "codexWireApis": {
+    "chat": [
+      "chat",
+      "chat_completions",
+      "chat-completions",
+      "openai_chat",
+      "openai-chat",
+      "openai_chat_completions"
+    ],
+    "anthropic": [
+      "anthropic",
+      "anthropic_messages",
+      "anthropic-messages",
+      "messages",
+      "claude"
+    ]
+  },
+  "hermesProviderSource": {
+    "field": "_cc_source",
+    "customList": "custom_providers",
+    "dict": "providers_dict"
+  },
+  "codingPlanProviderByUrl": {
+    "https://api.kimi.com/coding/": "kimi",
+    "HTTPS://API.KIMI.COM/CODING/v1": "kimi",
+    "https://open.bigmodel.cn/api/anthropic": "zhipu",
+    "https://api.z.ai/api/anthropic": "zhipu",
+    "https://api.minimaxi.com/anthropic": "minimax",
+    "https://api.minimax.io/anthropic": "minimax",
+    "https://api.minimax.cn/v1": "minimax",
+    "https://api.minimax.cn.example.com/v1": null,
+    "https://zenmux.ai/api/anthropic": "zenmux",
+    "https://ark.cn-beijing.volces.com/api/plan/v3": "volcengine",
+    "https://ark.cn-beijing.volces.com/api/coding": "volcengine",
+    "https://ark.cn-beijing.volces.com/api/v3": null,
+    "https://opencode.ai/zen/go/v1": "opencode_go",
+    "https://opencode.ai/inference/go/anthropic": "opencode_go",
+    "https://opencode.ai/zen/v1": null,
+    "https://api.commandcode.ai/provider": "command_code",
+    "https://api.commandcode.ai/provider/v1": "command_code",
+    "https://api.commandcode.ai/providers": null,
+    "https://ollama.com": "ollama_cloud",
+    "https://ollama.com/v1": "ollama_cloud",
+    "http://localhost:11434": null,
+    "https://ollama.com.example.com/v1": null,
+    "https://proxy.example.com/ollama.com/v1": null,
+    "https://api.openai.com/v1": null
+  },
+  "quotaWarnBelowPercent": 20.0,
+  "exchangeRateCurrencies": [
+    "CNY",
+    "EUR",
+    "JPY",
+    "TWD",
+    "TRY",
+    "KRW"
+  ],
+  "customIcon": {
+    "prefix": "data:image/png;base64,",
+    "maxLength": 65536,
+    "maxDimension": 256
+  },
+  "profileScopeByApp": {
+    "claude": "claude",
+    "claude-desktop": "claude-desktop",
+    "codex": "codex",
+    "gemini": null,
+    "grokbuild": null,
+    "opencode": null,
+    "openclaw": null,
+    "hermes": null,
+    "pi": null,
+    "mcode": null,
+    "kimi": null,
+    "dsh": null,
+    "agy": null,
+    "omp": null,
+    "copilot": null,
+    "workbuddy": null
+  },
+  "userAgentValid": {
+    "": true,
+    "   ": true,
+    "Mozilla/5.0 (X11; Linux x86_64)": true,
+    " padded/1.0 ": true,
+    "tab\tinside": true,
+    "café/1.0": true,
+    "客户端/2.0": true,
+    "line\nbreak": false,
+    "carriage\rreturn": false,
+    "nul\u0000byte": false,
+    "escape\u001b[0m": false,
+    "delete": false
+  },
+  "providerNeedsRouting": [
+    {
+      "name": "plain",
+      "provider": {
+        "id": "p1",
+        "name": "P1",
+        "settingsConfig": {},
+        "meta": {}
+      },
+      "needsRouting": {
+        "claude": false,
+        "claude-desktop": false,
+        "codex": false,
+        "gemini": false,
+        "grokbuild": false
+      }
+    },
+    {
+      "name": "copilot",
+      "provider": {
+        "id": "p1",
+        "name": "P1",
+        "settingsConfig": {},
+        "meta": {
+          "providerType": "github_copilot"
+        }
+      },
+      "needsRouting": {
+        "claude": true,
+        "claude-desktop": true,
+        "codex": true,
+        "gemini": false,
+        "grokbuild": true
+      }
+    },
+    {
+      "name": "openai_chat",
+      "provider": {
+        "id": "p1",
+        "name": "P1",
+        "settingsConfig": {},
+        "meta": {
+          "apiFormat": "openai_chat"
+        }
+      },
+      "needsRouting": {
+        "claude": true,
+        "claude-desktop": false,
+        "codex": true,
+        "gemini": false,
+        "grokbuild": true
+      }
+    },
+    {
+      "name": "anthropic",
+      "provider": {
+        "id": "p1",
+        "name": "P1",
+        "settingsConfig": {},
+        "meta": {
+          "apiFormat": "anthropic"
+        }
+      },
+      "needsRouting": {
+        "claude": false,
+        "claude-desktop": false,
+        "codex": true,
+        "gemini": false,
+        "grokbuild": true
+      }
+    },
+    {
+      "name": "full_url",
+      "provider": {
+        "id": "p1",
+        "name": "P1",
+        "settingsConfig": {},
+        "meta": {
+          "isFullUrl": true
+        }
+      },
+      "needsRouting": {
+        "claude": true,
+        "claude-desktop": false,
+        "codex": true,
+        "gemini": false,
+        "grokbuild": true
+      }
+    },
+    {
+      "name": "codex_chat_wire",
+      "provider": {
+        "id": "p1",
+        "name": "P1",
+        "settingsConfig": {
+          "auth": {
+            "OPENAI_API_KEY": "sk"
+          },
+          "config": "model_provider = \"x\"\n[model_providers.x]\nbase_url = \"https://x.example/v1\"\nwire_api = \"chat\"\n"
+        },
+        "meta": {}
+      },
+      "needsRouting": {
+        "claude": false,
+        "claude-desktop": false,
+        "codex": true,
+        "gemini": false,
+        "grokbuild": true
+      }
+    },
+    {
+      "name": "codex_responses_wire",
+      "provider": {
+        "id": "p1",
+        "name": "P1",
+        "settingsConfig": {
+          "auth": {
+            "OPENAI_API_KEY": "sk"
+          },
+          "config": "model_provider = \"x\"\n[model_providers.x]\nbase_url = \"https://x.example/v1\"\nwire_api = \"responses\"\n"
+        },
+        "meta": {}
+      },
+      "needsRouting": {
+        "claude": false,
+        "claude-desktop": false,
+        "codex": false,
+        "gemini": false,
+        "grokbuild": false
+      }
+    },
+    {
+      "name": "desktop_proxy_mode",
+      "provider": {
+        "id": "p1",
+        "name": "P1",
+        "settingsConfig": {},
+        "meta": {
+          "claudeDesktopMode": "proxy"
+        }
+      },
+      "needsRouting": {
+        "claude": false,
+        "claude-desktop": true,
+        "codex": false,
+        "gemini": false,
+        "grokbuild": false
+      }
+    },
+    {
+      "name": "official_copilot",
+      "provider": {
+        "id": "p1",
+        "name": "P1",
+        "settingsConfig": {},
+        "meta": {
+          "providerType": "github_copilot"
+        },
+        "category": "official"
+      },
+      "needsRouting": {
+        "claude": false,
+        "claude-desktop": false,
+        "codex": false,
+        "gemini": false,
+        "grokbuild": false
+      }
+    }
+  ]
+}

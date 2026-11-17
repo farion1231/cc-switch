@@ -187,10 +187,6 @@ export const providersApi = {
     return await invoke("ensure_claude_desktop_official_provider");
   },
 
-  async ensureCodexOfficialProvider(): Promise<boolean> {
-    return await invoke("ensure_codex_official_provider");
-  },
-
   async ensureGrokBuildOfficialProvider(): Promise<boolean> {
     return await invoke("ensure_grokbuild_official_provider");
   },
@@ -309,6 +305,14 @@ export const providersApi = {
   },
 
   /**
+   * 从 DevEco live 配置导入供应商到数据库
+   * DevEco 特有功能：由于累加模式，用户可能已在 deveco 配置中配置供应商
+   */
+  async importDevEcoFromLive(): Promise<number> {
+    return await invoke("import_deveco_providers_from_live");
+  },
+
+  /**
    * WorkBuddy models.json 里已有的模型 id 及归属。WorkBuddy 里一个模型 id 只能属于一张卡
    * （id 既是唯一键又是发给上游的模型名），表单据此跳过或标出被占用的 id。
    */
@@ -327,13 +331,6 @@ export const universalProvidersApi = {
    */
   async getAll(): Promise<UniversalProvidersMap> {
     return await invoke("get_universal_providers");
-  },
-
-  /**
-   * 获取单个统一供应商
-   */
-  async get(id: string): Promise<UniversalProvider | null> {
-    return await invoke("get_universal_provider", { id });
   },
 
   /**

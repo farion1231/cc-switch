@@ -13,10 +13,11 @@
 //! 文件中，cc-switch 只投影 provider / mcp 段，其余顶层配置（`model`、`agent`、
 //! `theme` 等）原样保留。
 
+use crate::app_config::AppType;
 use crate::config::write_json_file_with_contents;
 use crate::error::AppError;
 use crate::provider::DevEcoProviderConfig;
-use crate::settings::get_deveco_override_dir;
+use crate::settings::get_override_dir;
 use indexmap::IndexMap;
 use serde_json::{json, Map, Value};
 use std::path::{Path, PathBuf};
@@ -38,7 +39,7 @@ fn deveco_config_lock() -> &'static Mutex<()> {
 ///
 /// 优先级：settings 覆盖 → `DEVECO_CONFIG_DIR` 环境变量 → `~/.config/deveco`
 pub fn get_deveco_dir() -> PathBuf {
-    if let Some(override_dir) = get_deveco_override_dir() {
+    if let Some(override_dir) = get_override_dir(&AppType::DevEco) {
         return override_dir;
     }
 

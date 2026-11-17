@@ -6,6 +6,7 @@
 //! 只缓存在内存里（十几 MB），不落盘：落盘的包下次启动要重新验签、还要处理残留，换来的只是
 //! 退出后不用再下一次，不值。
 
+use crate::sync_utils::MutexExt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
@@ -45,6 +46,8 @@ pub struct ReadyUpdate {
 pub struct AutoUpdateStatus {
     /// 这台机器能不能自动安装（便携版、Linux 非 AppImage 不行）。
     pub supported: bool,
+    /// 自动下载开关（设备级）。前端查到新版本时据此立刻触发下载，不用等后台循环。
+    pub enabled: bool,
     pub downloading: bool,
     /// 已下载、待安装的版本。开关关着时不报（关掉即视为不要了）。
     pub ready: Option<ReadyUpdate>,
@@ -80,7 +83,7 @@ fn enabled() -> bool {
 }
 
 fn pending_guard() -> std::sync::MutexGuard<'static, Option<PendingUpdate>> {
-    PENDING.lock().unwrap_or_else(|e| e.into_inner())
+    PENDING.lock_recover()
 }
 
 /// 已下载、待安装的版本；开关关着时视为没有。
@@ -97,6 +100,7 @@ pub fn ready() -> Option<ReadyUpdate> {
 pub fn status(routing_in_use: bool) -> AutoUpdateStatus {
     AutoUpdateStatus {
         supported: auto_install_supported(),
+        enabled: enabled(),
         downloading: DOWNLOADING.load(Ordering::SeqCst),
         ready: ready(),
         routing_in_use,

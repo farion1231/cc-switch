@@ -164,7 +164,7 @@ impl StreamCheckService {
     /// 没有 cc-switch 能可靠探测的目标——这类供应商的连通检测按钮在前端已隐藏
     /// （见 `ProviderCard.tsx`），故此处对其提取失败直接报错即可，不做官方端点回退。
     fn resolve_base_url(app_type: &AppType, provider: &Provider) -> Result<String, AppError> {
-        if provider.category.as_deref() == Some("official") {
+        if provider.has_official_category() {
             return Err(AppError::Message(
                 "Official providers do not expose a reachability-check target".to_string(),
             ));

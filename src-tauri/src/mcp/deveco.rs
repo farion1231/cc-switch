@@ -22,11 +22,7 @@ fn should_sync_deveco_mcp() -> bool {
 }
 
 /// 同步单个 MCP 服务器到 DevEco Code 配置
-pub fn sync_single_server_to_deveco(
-    _config: &crate::app_config::MultiAppConfig,
-    id: &str,
-    server_spec: &Value,
-) -> Result<(), AppError> {
+pub fn sync_single_server_to_deveco(id: &str, server_spec: &Value) -> Result<(), AppError> {
     if !should_sync_deveco_mcp() {
         return Ok(());
     }

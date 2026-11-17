@@ -60,19 +60,29 @@ export const SESSION_SOURCE_PATHS: Record<SessionAppId, string[]> = {
 const NATIVE_DELETE_HINT_KEYS: Record<string, string> = {
   mcode: "sessionManager.mcodeDeleteHint",
   deveco: "sessionManager.devecoDeleteHint",
-  agy: "sessionManager.agyDeleteHint",
   dsh: "dsh.deleteSessionHint",
   copilot: "sessionManager.copilotDeleteHint",
   workbuddy: "workbuddy.deleteSessionHint",
 };
 
-export const canDeleteSession = (session: SessionMeta) =>
-  Boolean(session.sourcePath) &&
-  !(session.providerId in NATIVE_DELETE_HINT_KEYS);
+/** Antigravity 只有 CLI 的会话能在这里删（后端连索引一起清）；IDE 的会话
+ *  （`~/.gemini/antigravity/brain`）索引在别处，没有导出记录的会话也没有可删的来源。 */
+const agyDeleteBlocked = (session: SessionMeta) =>
+  !session.sourcePath ||
+  /[\\/]antigravity[\\/]brain[\\/]/.test(session.sourcePath);
 
 /** 不能在 CC Switch 里删除时，提示去哪里删的文案 key。 */
-export const nativeDeleteHintKey = (providerId: string): string | undefined =>
-  NATIVE_DELETE_HINT_KEYS[providerId];
+export const nativeDeleteHintKey = (
+  session: SessionMeta,
+): string | undefined =>
+  session.providerId === "agy"
+    ? agyDeleteBlocked(session)
+      ? "sessionManager.agyDeleteHint"
+      : undefined
+    : NATIVE_DELETE_HINT_KEYS[session.providerId];
+
+export const canDeleteSession = (session: SessionMeta) =>
+  Boolean(session.sourcePath) && !nativeDeleteHintKey(session);
 
 export interface SessionProjectGroup {
   key: string;

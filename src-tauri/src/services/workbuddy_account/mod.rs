@@ -27,6 +27,7 @@
 
 mod quota;
 
+use crate::sync_utils::MutexExt;
 #[cfg(test)]
 use quota::QuotaUnavailable;
 pub use quota::{account_quota, WorkBuddyQuota, WorkBuddyQuotaSnapshot};
@@ -368,9 +369,7 @@ impl WorkBuddyAccountManager {
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, StoreFile> {
-        self.store
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+        self.store.lock_recover()
     }
 
     /// 列出账号，并把 WorkBuddy 当前登着的那个号自动收录进来（没收录过就加，已收录就把
@@ -422,10 +421,7 @@ impl WorkBuddyAccountManager {
             Ok(LiveLogin::None) | Err(_) => (false, false, false),
         };
         let reauth = {
-            let mut outcome = self
-                .reauth_outcome
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut outcome = self.reauth_outcome.lock_recover();
             if outcome
                 .as_ref()
                 .is_some_and(|(at, _)| at.elapsed() > REAUTH_NOTICE)
@@ -593,17 +589,13 @@ impl WorkBuddyAccountManager {
             Ok(LiveLogin::None) | Err(_) => (None, None),
         };
         // 新的一轮：旧结果不再提示；普通的「登录另一个账号」也会取消之前没等到的重新登录
-        *self
-            .reauth_outcome
-            .lock()
-            .unwrap_or_else(|p| p.into_inner()) = None;
-        *self.reauth.lock().unwrap_or_else(|p| p.into_inner()) =
-            reauth_target.map(|target| PendingReauth {
-                target: target.to_string(),
-                baseline_info,
-                baseline_uid,
-                started: Instant::now(),
-            });
+        *self.reauth_outcome.lock_recover() = None;
+        *self.reauth.lock_recover() = reauth_target.map(|target| PendingReauth {
+            target: target.to_string(),
+            baseline_info,
+            baseline_uid,
+            started: Instant::now(),
+        });
         self.ensure_quiet()?;
         let captured = match live? {
             LiveLogin::Known { bundle, identity } => {
@@ -633,7 +625,7 @@ impl WorkBuddyAccountManager {
             return Err(account_not_found(account_id));
         }
         store.dismissed.insert(account_id.to_string());
-        let mut pending = self.reauth.lock().unwrap_or_else(|p| p.into_inner());
+        let mut pending = self.reauth.lock_recover();
         if pending.as_ref().is_some_and(|p| p.target == account_id) {
             *pending = None;
         }
@@ -690,14 +682,14 @@ impl WorkBuddyAccountManager {
     // ---------- 内部 ----------
 
     fn clear_reauth(&self) {
-        *self.reauth.lock().unwrap_or_else(|p| p.into_inner()) = None;
+        *self.reauth.lock_recover() = None;
     }
 
     /// 有进行中的「重新登录」且 WorkBuddy 这边出现了它要等的新登录时，取出它。
     /// 新登录指：登的就是目标、且和发起时那份不同；或者登进了发起时之外的另一个号。
     /// 发起时那个号自己刷新 token 不算（还在等）。超时的直接作废。
     fn take_settled_reauth(&self, bundle: &Bundle, identity: &Identity) -> Option<PendingReauth> {
-        let mut pending = self.reauth.lock().unwrap_or_else(|p| p.into_inner());
+        let mut pending = self.reauth.lock_recover();
         let settled = match pending.as_ref() {
             None => return None,
             Some(p) if p.started.elapsed() > REAUTH_WINDOW => {
@@ -744,10 +736,7 @@ impl WorkBuddyAccountManager {
                 "登进了另一个账号"
             }
         );
-        *self
-            .reauth_outcome
-            .lock()
-            .unwrap_or_else(|p| p.into_inner()) = Some((
+        *self.reauth_outcome.lock_recover() = Some((
             Instant::now(),
             WorkBuddyReauthOutcome {
                 id: chrono::Utc::now().timestamp_millis(),
