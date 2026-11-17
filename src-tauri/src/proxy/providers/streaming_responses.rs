@@ -2489,6 +2489,28 @@ impl ResponsesToAnthropicState {
         }
     }
 
+    /// Emits the placeholder `message_start` once, for streams whose first
+    /// frame is not `response.created`.
+    fn ensure_message_start(&mut self, out: &mut Vec<Bytes>) {
+        if self.has_sent_message_start {
+            return;
+        }
+        out.push(anthropic_sse(
+            "message_start",
+            &json!({
+                "type":"message_start",
+                "message":{
+                    "id":self.message_id.clone().unwrap_or_default(),
+                    "type":"message",
+                    "role":"assistant",
+                    "model":self.current_model.clone().unwrap_or_default(),
+                    "usage":{"input_tokens":0,"output_tokens":0}
+                }
+            }),
+        ));
+        self.has_sent_message_start = true;
+    }
+
     /// Converts one parsed upstream event. `Break` ends the stream loop.
     fn handle_event(
         &mut self,
@@ -2508,21 +2530,8 @@ impl ResponsesToAnthropicState {
         if delta_requires_message_start {
             self.has_substantive_output = true;
         }
-        if delta_requires_message_start && !self.has_sent_message_start {
-            out.push(anthropic_sse(
-                "message_start",
-                &json!({
-                    "type":"message_start",
-                    "message":{
-                        "id":self.message_id.clone().unwrap_or_default(),
-                        "type":"message",
-                        "role":"assistant",
-                        "model":self.current_model.clone().unwrap_or_default(),
-                        "usage":{"input_tokens":0,"output_tokens":0}
-                    }
-                }),
-            ));
-            self.has_sent_message_start = true;
+        if delta_requires_message_start {
+            self.ensure_message_start(out);
         }
 
         match event_name {
@@ -2674,24 +2683,7 @@ impl ResponsesToAnthropicState {
 
     fn on_content_part_added(&mut self, data: &Value, out: &mut Vec<Bytes>) {
         // 确保 message_start 已发送
-        if !self.has_sent_message_start {
-            let start_event = json!({
-                "type": "message_start",
-                "message": {
-                    "id": self.message_id.clone().unwrap_or_default(),
-                    "type": "message",
-                    "role": "assistant",
-                    "model": self.current_model.clone().unwrap_or_default(),
-                    "usage": { "input_tokens": 0, "output_tokens": 0 }
-                }
-            });
-            let sse = format!(
-                "event: message_start\ndata: {}\n\n",
-                serde_json::to_string(&start_event).unwrap_or_default()
-            );
-            out.push(Bytes::from(sse));
-            self.has_sent_message_start = true;
-        }
+        self.ensure_message_start(out);
 
         if let Some(part) = data.get("part") {
             let part_type = part.get("type").and_then(|t| t.as_str());
@@ -2904,293 +2896,254 @@ impl ResponsesToAnthropicState {
                         self.next_content_index += 1;
                         index
                     });
-                    for event in text_block_events(index, &text) {
-                        out.push(event);
-                    }
+                    out.extend(text_block_events(index, &text));
                 }
             }
-            if item_type == "function_call" {
-                self.has_tool_use = true;
-                self.has_substantive_output = true;
-                if let Some(index) = self.current_text_index.take() {
-                    if self.open_indices.remove(&index) {
-                        let stop_event = json!({
-                            "type": "content_block_stop",
-                            "index": index
-                        });
-                        let stop_sse = format!(
-                            "event: content_block_stop\ndata: {}\n\n",
-                            serde_json::to_string(&stop_event).unwrap_or_default()
-                        );
-                        out.push(Bytes::from(stop_sse));
-                    }
-                    if self.fallback_open_index == Some(index) {
-                        self.fallback_open_index = None;
-                    }
-                }
-                // 确保 message_start 已发送
-                if !self.has_sent_message_start {
-                    let start_event = json!({
-                        "type": "message_start",
-                        "message": {
-                            "id": self.message_id.clone().unwrap_or_default(),
-                            "type": "message",
-                            "role": "assistant",
-                            "model": self.current_model.clone().unwrap_or_default(),
-                            "usage": { "input_tokens": 0, "output_tokens": 0 }
-                        }
-                    });
-                    let sse = format!(
-                        "event: message_start\ndata: {}\n\n",
-                        serde_json::to_string(&start_event).unwrap_or_default()
-                    );
-                    out.push(Bytes::from(sse));
-                    self.has_sent_message_start = true;
-                }
-
-                let call_id = item.get("call_id").and_then(|i| i.as_str()).unwrap_or("");
-                let name = item.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                let index = if let Some(k) = tool_item_key_from_added(data, item) {
-                    if let Some(existing) = self.index_by_key.get(&k).copied() {
-                        existing
-                    } else {
-                        let assigned = self.next_content_index;
-                        self.next_content_index += 1;
-                        self.index_by_key.insert(k, assigned);
-                        assigned
-                    }
-                } else {
-                    let assigned = self.next_content_index;
-                    self.next_content_index += 1;
-                    assigned
-                };
-                if let Some(item_id) = item
-                    .get("id")
-                    .and_then(|v| v.as_str())
-                    .or_else(|| data.get("item_id").and_then(|v| v.as_str()))
-                {
-                    self.tool_index_by_item_id
-                        .insert(item_id.to_string(), index);
-                }
-                self.tool_name_by_index.insert(index, name.to_string());
-                self.last_tool_index = Some(index);
-
-                if self.open_indices.contains(&index) {
-                    return ControlFlow::Continue(());
-                }
-
-                self.tool_args_by_index.insert(index, String::new());
-
-                let event = json!({
-                    "type": "content_block_start",
-                    "index": index,
-                    "content_block": {
-                        "type": "tool_use",
-                        "id": call_id,
-                        "name": name
-                    }
-                });
-                let sse = format!(
-                    "event: content_block_start\ndata: {}\n\n",
-                    serde_json::to_string(&event).unwrap_or_default()
-                );
-                out.push(Bytes::from(sse));
-                self.open_indices.insert(index);
-            } else if item_type == "web_search_call" {
-                self.has_substantive_output = true;
-                if let Some(index) = self.current_text_index.take() {
-                    if self.open_indices.remove(&index) {
-                        out.push(anthropic_sse(
-                            "content_block_stop",
-                            &json!({"type":"content_block_stop","index":index}),
-                        ));
-                    }
-                    if self.fallback_open_index == Some(index) {
-                        self.fallback_open_index = None;
-                    }
-                }
-                if !self.has_sent_message_start {
-                    out.push(anthropic_sse(
-                        "message_start",
-                        &json!({
-                            "type":"message_start",
-                            "message":{
-                                "id":self.message_id.clone().unwrap_or_default(),
-                                "type":"message",
-                                "role":"assistant",
-                                "model":self.current_model.clone().unwrap_or_default(),
-                                "usage":{"input_tokens":0,"output_tokens":0}
-                            }
-                        }),
-                    ));
-                    self.has_sent_message_start = true;
-                }
-
-                let item_keys = web_search_item_keys(data, Some(item));
-                let index = if let Some(existing) = item_keys
-                    .iter()
-                    .find_map(|key| self.index_by_key.get(key).copied())
-                {
-                    existing
-                } else {
-                    let assigned = self.next_content_index;
-                    self.next_content_index += 1;
-                    assigned
-                };
-                for key in item_keys {
-                    self.index_by_key.insert(key, index);
-                }
-                let search_id = self
-                    .web_search_id_by_index
-                    .get(&index)
-                    .cloned()
-                    .or_else(|| {
-                        item.get("id")
-                            .and_then(Value::as_str)
-                            .or_else(|| data.get("item_id").and_then(Value::as_str))
-                            .filter(|id| !id.is_empty())
-                            .map(ToString::to_string)
-                    })
-                    .unwrap_or_else(|| format!("ws_stream_{index}"));
-                let disposition = record_web_search_call(
-                    &search_id,
-                    item,
-                    &mut WebSearchRecordState {
-                        ids_seen: &mut self.web_search_ids_seen,
-                        id_order: &mut self.web_search_id_order,
-                        results_by_id: &mut self.web_search_results_by_id,
-                        errors_by_id: &mut self.web_search_errors_by_id,
-                        request_count: &mut self.web_search_count,
-                        max_uses: self.max_web_search_uses,
-                        limit_exceeded_id: &mut self.web_search_limit_exceeded_id,
-                    },
-                );
-                if disposition == WebSearchCallDisposition::Ignored {
-                    return ControlFlow::Continue(());
-                }
-                self.web_search_index_by_item_id
-                    .insert(search_id.clone(), index);
-                self.web_search_id_by_index.insert(index, search_id.clone());
-                reserve_web_search_result_index(
-                    &search_id,
-                    &mut self.web_search_result_index_by_id,
-                    &mut self.next_content_index,
-                );
-
-                if !self.open_indices.contains(&index) {
-                    out.push(anthropic_sse(
-                        "content_block_start",
-                        &json!({
-                            "type":"content_block_start",
-                            "index":index,
-                            "content_block":{
-                                "type":"server_tool_use",
-                                "id":search_id,
-                                "name":self.hosted_web_search_name.as_str(),
-                                "input":{},
-                                "caller":{"type":"direct"}
-                            }
-                        }),
-                    ));
-                    self.open_indices.insert(index);
-                }
-                if disposition == WebSearchCallDisposition::LimitExceeded {
-                    out.push(anthropic_sse(
-                        "content_block_delta",
-                        &json!({
-                            "type":"content_block_delta",
-                            "index":index,
-                            "delta":{
-                                "type":"input_json_delta",
-                                "partial_json":"{}"
-                            }
-                        }),
-                    ));
-                    if self.open_indices.remove(&index) {
-                        out.push(anthropic_sse(
-                            "content_block_stop",
-                            &json!({"type":"content_block_stop","index":index}),
-                        ));
-                    }
-                    self.web_search_ids_completed.insert(search_id);
-                    for event in take_open_web_search_block_stop_events(
-                        &mut self.open_indices,
-                        &self.web_search_id_by_index,
-                    ) {
-                        out.push(event);
-                    }
-                    for event in take_web_search_result_events(
-                        &self.web_search_id_order,
-                        &mut self.web_search_results_by_id,
-                        &mut self.web_search_errors_by_id,
-                        &mut self.web_search_result_index_by_id,
-                        &mut self.next_content_index,
-                    ) {
-                        out.push(event);
-                    }
-                    if self.open_indices.is_empty() {
-                        for event in
-                            web_search_limit_stop_events(self.web_search_count, self.has_tool_use)
-                        {
-                            out.push(event);
-                        }
-                    } else {
-                        out.push(anthropic_error_sse(
-                            "Responses upstream started a web search beyond max_uses while another content block was incomplete",
-                            "stream_truncated",
-                        ));
-                    }
-                    self.terminated = true;
-                    return ControlFlow::Break(());
-                }
-            } else if item_type == "reasoning" {
-                if !self.has_sent_message_start {
-                    let start_event = json!({
-                        "type": "message_start",
-                        "message": {
-                            "id": self.message_id.clone().unwrap_or_default(),
-                            "type": "message",
-                            "role": "assistant",
-                            "model": self.current_model.clone().unwrap_or_default(),
-                            "usage": { "input_tokens": 0, "output_tokens": 0 }
-                        }
-                    });
-                    let sse = format!(
-                        "event: message_start\ndata: {}\n\n",
-                        serde_json::to_string(&start_event).unwrap_or_default()
-                    );
-                    out.push(Bytes::from(sse));
-                    self.has_sent_message_start = true;
-                }
-
-                let index = if let Some(key) = reasoning_item_key(data, Some(item)) {
-                    if let Some(existing) = self.index_by_key.get(&key).copied() {
-                        existing
-                    } else {
-                        let assigned = self.next_content_index;
-                        self.next_content_index += 1;
-                        self.index_by_key.insert(key, assigned);
-                        assigned
-                    }
-                } else {
-                    let assigned = self.next_content_index;
-                    self.next_content_index += 1;
-                    assigned
-                };
-                if let Some(item_id) = item
-                    .get("id")
-                    .and_then(Value::as_str)
-                    .or_else(|| data.get("item_id").and_then(Value::as_str))
-                {
-                    self.reasoning_index_by_item_id
-                        .insert(item_id.to_string(), index);
-                }
-                self.reasoning_item_by_index.insert(index, item.clone());
-                self.reasoning_text_by_index.entry(index).or_default();
+            match item_type {
+                "function_call" => self.on_function_call_item_added(data, item, out),
+                "web_search_call" => return self.on_web_search_call_item_added(data, item, out),
+                "reasoning" => self.on_reasoning_item_added(data, item, out),
+                // message type output_item.added is handled via content_part.added
+                _ => {}
             }
-            // message type output_item.added is handled via content_part.added
         }
         ControlFlow::Continue(())
+    }
+
+    fn on_function_call_item_added(&mut self, data: &Value, item: &Value, out: &mut Vec<Bytes>) {
+        self.has_tool_use = true;
+        self.has_substantive_output = true;
+        if let Some(index) = self.current_text_index.take() {
+            if self.open_indices.remove(&index) {
+                let stop_event = json!({
+                    "type": "content_block_stop",
+                    "index": index
+                });
+                let stop_sse = format!(
+                    "event: content_block_stop\ndata: {}\n\n",
+                    serde_json::to_string(&stop_event).unwrap_or_default()
+                );
+                out.push(Bytes::from(stop_sse));
+            }
+            if self.fallback_open_index == Some(index) {
+                self.fallback_open_index = None;
+            }
+        }
+        // 确保 message_start 已发送
+        self.ensure_message_start(out);
+
+        let call_id = item.get("call_id").and_then(|i| i.as_str()).unwrap_or("");
+        let name = item.get("name").and_then(|n| n.as_str()).unwrap_or("");
+        let index = if let Some(k) = tool_item_key_from_added(data, item) {
+            if let Some(existing) = self.index_by_key.get(&k).copied() {
+                existing
+            } else {
+                let assigned = self.next_content_index;
+                self.next_content_index += 1;
+                self.index_by_key.insert(k, assigned);
+                assigned
+            }
+        } else {
+            let assigned = self.next_content_index;
+            self.next_content_index += 1;
+            assigned
+        };
+        if let Some(item_id) = item
+            .get("id")
+            .and_then(|v| v.as_str())
+            .or_else(|| data.get("item_id").and_then(|v| v.as_str()))
+        {
+            self.tool_index_by_item_id
+                .insert(item_id.to_string(), index);
+        }
+        self.tool_name_by_index.insert(index, name.to_string());
+        self.last_tool_index = Some(index);
+
+        if self.open_indices.contains(&index) {
+            return;
+        }
+
+        self.tool_args_by_index.insert(index, String::new());
+
+        let event = json!({
+            "type": "content_block_start",
+            "index": index,
+            "content_block": {
+                "type": "tool_use",
+                "id": call_id,
+                "name": name
+            }
+        });
+        let sse = format!(
+            "event: content_block_start\ndata: {}\n\n",
+            serde_json::to_string(&event).unwrap_or_default()
+        );
+        out.push(Bytes::from(sse));
+        self.open_indices.insert(index);
+    }
+
+    fn on_web_search_call_item_added(
+        &mut self,
+        data: &Value,
+        item: &Value,
+        out: &mut Vec<Bytes>,
+    ) -> ControlFlow<()> {
+        self.has_substantive_output = true;
+        if let Some(index) = self.current_text_index.take() {
+            if self.open_indices.remove(&index) {
+                out.push(anthropic_sse(
+                    "content_block_stop",
+                    &json!({"type":"content_block_stop","index":index}),
+                ));
+            }
+            if self.fallback_open_index == Some(index) {
+                self.fallback_open_index = None;
+            }
+        }
+        self.ensure_message_start(out);
+
+        let item_keys = web_search_item_keys(data, Some(item));
+        let index = if let Some(existing) = item_keys
+            .iter()
+            .find_map(|key| self.index_by_key.get(key).copied())
+        {
+            existing
+        } else {
+            let assigned = self.next_content_index;
+            self.next_content_index += 1;
+            assigned
+        };
+        for key in item_keys {
+            self.index_by_key.insert(key, index);
+        }
+        let search_id = self
+            .web_search_id_by_index
+            .get(&index)
+            .cloned()
+            .or_else(|| {
+                item.get("id")
+                    .and_then(Value::as_str)
+                    .or_else(|| data.get("item_id").and_then(Value::as_str))
+                    .filter(|id| !id.is_empty())
+                    .map(ToString::to_string)
+            })
+            .unwrap_or_else(|| format!("ws_stream_{index}"));
+        let disposition = record_web_search_call(
+            &search_id,
+            item,
+            &mut WebSearchRecordState {
+                ids_seen: &mut self.web_search_ids_seen,
+                id_order: &mut self.web_search_id_order,
+                results_by_id: &mut self.web_search_results_by_id,
+                errors_by_id: &mut self.web_search_errors_by_id,
+                request_count: &mut self.web_search_count,
+                max_uses: self.max_web_search_uses,
+                limit_exceeded_id: &mut self.web_search_limit_exceeded_id,
+            },
+        );
+        if disposition == WebSearchCallDisposition::Ignored {
+            return ControlFlow::Continue(());
+        }
+        self.web_search_index_by_item_id
+            .insert(search_id.clone(), index);
+        self.web_search_id_by_index.insert(index, search_id.clone());
+        reserve_web_search_result_index(
+            &search_id,
+            &mut self.web_search_result_index_by_id,
+            &mut self.next_content_index,
+        );
+
+        if !self.open_indices.contains(&index) {
+            out.push(anthropic_sse(
+                "content_block_start",
+                &json!({
+                    "type":"content_block_start",
+                    "index":index,
+                    "content_block":{
+                        "type":"server_tool_use",
+                        "id":search_id,
+                        "name":self.hosted_web_search_name.as_str(),
+                        "input":{},
+                        "caller":{"type":"direct"}
+                    }
+                }),
+            ));
+            self.open_indices.insert(index);
+        }
+        if disposition == WebSearchCallDisposition::LimitExceeded {
+            out.push(anthropic_sse(
+                "content_block_delta",
+                &json!({
+                    "type":"content_block_delta",
+                    "index":index,
+                    "delta":{
+                        "type":"input_json_delta",
+                        "partial_json":"{}"
+                    }
+                }),
+            ));
+            if self.open_indices.remove(&index) {
+                out.push(anthropic_sse(
+                    "content_block_stop",
+                    &json!({"type":"content_block_stop","index":index}),
+                ));
+            }
+            self.web_search_ids_completed.insert(search_id);
+            out.extend(take_open_web_search_block_stop_events(
+                &mut self.open_indices,
+                &self.web_search_id_by_index,
+            ));
+            out.extend(take_web_search_result_events(
+                &self.web_search_id_order,
+                &mut self.web_search_results_by_id,
+                &mut self.web_search_errors_by_id,
+                &mut self.web_search_result_index_by_id,
+                &mut self.next_content_index,
+            ));
+            if self.open_indices.is_empty() {
+                for event in web_search_limit_stop_events(self.web_search_count, self.has_tool_use)
+                {
+                    out.push(event);
+                }
+            } else {
+                out.push(anthropic_error_sse(
+                    "Responses upstream started a web search beyond max_uses while another content block was incomplete",
+                    "stream_truncated",
+                ));
+            }
+            self.terminated = true;
+            return ControlFlow::Break(());
+        }
+        ControlFlow::Continue(())
+    }
+
+    fn on_reasoning_item_added(&mut self, data: &Value, item: &Value, out: &mut Vec<Bytes>) {
+        self.ensure_message_start(out);
+
+        let index = if let Some(key) = reasoning_item_key(data, Some(item)) {
+            if let Some(existing) = self.index_by_key.get(&key).copied() {
+                existing
+            } else {
+                let assigned = self.next_content_index;
+                self.next_content_index += 1;
+                self.index_by_key.insert(key, assigned);
+                assigned
+            }
+        } else {
+            let assigned = self.next_content_index;
+            self.next_content_index += 1;
+            assigned
+        };
+        if let Some(item_id) = item
+            .get("id")
+            .and_then(Value::as_str)
+            .or_else(|| data.get("item_id").and_then(Value::as_str))
+        {
+            self.reasoning_index_by_item_id
+                .insert(item_id.to_string(), index);
+        }
+        self.reasoning_item_by_index.insert(index, item.clone());
+        self.reasoning_text_by_index.entry(index).or_default();
     }
 
     fn on_function_call_arguments_delta(&mut self, data: &Value, out: &mut Vec<Bytes>) {
@@ -3884,9 +3837,7 @@ impl ResponsesToAnthropicState {
                     .web_search_errors_by_id
                     .remove(&search_id)
                     .unwrap_or(Value::Array(results));
-                for event in web_search_result_events(index, &search_id, content) {
-                    out.push(event);
-                }
+                out.extend(web_search_result_events(index, &search_id, content));
             }
         }
 
@@ -3925,9 +3876,7 @@ impl ResponsesToAnthropicState {
                     self.next_content_index += 1;
                     index
                 });
-                for event in text_block_events(index, &text) {
-                    out.push(event);
-                }
+                out.extend(text_block_events(index, &text));
             }
         }
         if self.preserve_web_search_citations {
@@ -3953,9 +3902,7 @@ impl ResponsesToAnthropicState {
                     self.next_content_index += 1;
                     index
                 });
-                for event in text_block_events(index, &text) {
-                    out.push(event);
-                }
+                out.extend(text_block_events(index, &text));
             }
         }
 
@@ -4099,291 +4046,352 @@ impl ResponsesToAnthropicState {
             self.preserve_web_search_citations = true;
         }
         match item_type {
-            Some("function_call") => {
-                self.has_tool_use = true;
-                let item_id = item
-                    .get("id")
+            Some("function_call") => self.on_function_call_item_done(data, item, out),
+            Some("web_search_call") => return self.on_web_search_call_item_done(data, item, out),
+            Some("reasoning") => self.on_reasoning_item_done(data, item, out),
+            Some("message") => self.on_message_item_done(data, item, out),
+            _ => {}
+        }
+        ControlFlow::Continue(())
+    }
+
+    fn on_function_call_item_done(&mut self, data: &Value, item: &Value, out: &mut Vec<Bytes>) {
+        self.has_tool_use = true;
+        let item_id = item
+            .get("id")
+            .and_then(Value::as_str)
+            .or_else(|| data.get("item_id").and_then(Value::as_str));
+        let index = item_id
+            .and_then(|id| self.tool_index_by_item_id.get(id).copied())
+            .or_else(|| {
+                tool_item_key_from_event(data).and_then(|key| self.index_by_key.get(&key).copied())
+            })
+            .or(self.last_tool_index);
+        if let Some(index) = index.filter(|value| self.open_indices.contains(value)) {
+            let name = self
+                .tool_name_by_index
+                .get(&index)
+                .map(String::as_str)
+                .unwrap_or("");
+            if !self.tool_had_delta.contains(&index) || name == "Read" {
+                let raw = item
+                    .get("arguments")
                     .and_then(Value::as_str)
-                    .or_else(|| data.get("item_id").and_then(Value::as_str));
-                let index = item_id
-                    .and_then(|id| self.tool_index_by_item_id.get(id).copied())
-                    .or_else(|| {
-                        tool_item_key_from_event(data)
-                            .and_then(|key| self.index_by_key.get(&key).copied())
-                    })
-                    .or(self.last_tool_index);
-                if let Some(index) = index.filter(|value| self.open_indices.contains(value)) {
-                    let name = self
-                        .tool_name_by_index
-                        .get(&index)
-                        .map(String::as_str)
-                        .unwrap_or("");
-                    if !self.tool_had_delta.contains(&index) || name == "Read" {
-                        let raw = item
-                            .get("arguments")
-                            .and_then(Value::as_str)
-                            .filter(|value| !value.is_empty())
-                            .map(str::to_string)
-                            .unwrap_or_else(|| {
-                                self.tool_args_by_index
-                                    .get(&index)
-                                    .cloned()
-                                    .unwrap_or_default()
-                            });
-                        let arguments = if name == "Read" {
-                            sanitize_anthropic_tool_use_input_json(name, &raw)
-                        } else {
-                            raw
-                        };
-                        if !arguments.is_empty() {
-                            let event = json!({
-                                "type": "content_block_delta",
-                                "index": index,
-                                "delta": {
-                                    "type": "input_json_delta",
-                                    "partial_json": arguments
-                                }
-                            });
-                            let sse = format!(
-                                "event: content_block_delta\ndata: {}\n\n",
-                                serde_json::to_string(&event).unwrap_or_default()
-                            );
-                            out.push(Bytes::from(sse));
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+                    .unwrap_or_else(|| {
+                        self.tool_args_by_index
+                            .get(&index)
+                            .cloned()
+                            .unwrap_or_default()
+                    });
+                let arguments = if name == "Read" {
+                    sanitize_anthropic_tool_use_input_json(name, &raw)
+                } else {
+                    raw
+                };
+                if !arguments.is_empty() {
+                    let event = json!({
+                        "type": "content_block_delta",
+                        "index": index,
+                        "delta": {
+                            "type": "input_json_delta",
+                            "partial_json": arguments
                         }
-                    }
-                    self.open_indices.remove(&index);
-                    let event = json!({"type": "content_block_stop", "index": index});
+                    });
                     let sse = format!(
-                        "event: content_block_stop\ndata: {}\n\n",
+                        "event: content_block_delta\ndata: {}\n\n",
                         serde_json::to_string(&event).unwrap_or_default()
                     );
                     out.push(Bytes::from(sse));
-                    if let Some(id) = item_id {
-                        self.tool_index_by_item_id.remove(id);
-                    }
-                    self.tool_name_by_index.remove(&index);
-                    self.tool_args_by_index.remove(&index);
-                    self.tool_had_delta.remove(&index);
                 }
             }
-            Some("web_search_call") => {
-                self.has_substantive_output = true;
-                if self.preserve_web_search_citations {
-                    let pending_text = self.buffered_citation_text.render_pending_parts();
-                    let mut reusable_text_index = None;
-                    if !pending_text.is_empty() {
-                        if let Some(text_index) = self.current_text_index.take() {
-                            let was_open = self.open_indices.remove(&text_index);
-                            if was_open {
-                                out.push(anthropic_sse(
-                                    "content_block_stop",
-                                    &json!({"type":"content_block_stop","index":text_index}),
-                                ));
-                            } else {
-                                reusable_text_index = Some(text_index);
-                            }
-                            if self.fallback_open_index == Some(text_index) {
-                                self.fallback_open_index = None;
-                            }
-                        }
-                    }
-                    for text in pending_text {
-                        let index = reusable_text_index.take().unwrap_or_else(|| {
-                            let index = self.next_content_index;
-                            self.next_content_index += 1;
-                            index
-                        });
-                        for event in text_block_events(index, &text) {
-                            out.push(event);
-                        }
-                    }
-                }
-                if !self.has_sent_message_start {
-                    out.push(anthropic_sse(
-                        "message_start",
-                        &json!({
-                            "type":"message_start",
-                            "message":{
-                                "id":self.message_id.clone().unwrap_or_default(),
-                                "type":"message",
-                                "role":"assistant",
-                                "model":self.current_model.clone().unwrap_or_default(),
-                                "usage":{"input_tokens":0,"output_tokens":0}
-                            }
-                        }),
-                    ));
-                    self.has_sent_message_start = true;
-                }
+            self.open_indices.remove(&index);
+            let event = json!({"type": "content_block_stop", "index": index});
+            let sse = format!(
+                "event: content_block_stop\ndata: {}\n\n",
+                serde_json::to_string(&event).unwrap_or_default()
+            );
+            out.push(Bytes::from(sse));
+            if let Some(id) = item_id {
+                self.tool_index_by_item_id.remove(id);
+            }
+            self.tool_name_by_index.remove(&index);
+            self.tool_args_by_index.remove(&index);
+            self.tool_had_delta.remove(&index);
+        }
+    }
 
-                let item_keys = web_search_item_keys(data, Some(item));
-                let provisional_index = item_keys
-                    .iter()
-                    .find_map(|key| self.index_by_key.get(key).copied());
-                let search_id = provisional_index
-                    .and_then(|index| self.web_search_id_by_index.get(&index).cloned())
-                    .or_else(|| {
-                        item.get("id")
-                            .and_then(Value::as_str)
-                            .or_else(|| data.get("item_id").and_then(Value::as_str))
-                            .filter(|id| !id.is_empty())
-                            .map(ToString::to_string)
-                    })
-                    .or_else(|| provisional_index.map(|index| format!("ws_stream_{index}")))
-                    .unwrap_or_else(|| format!("ws_stream_{}", self.next_content_index));
-                let disposition = record_web_search_call(
-                    &search_id,
-                    item,
-                    &mut WebSearchRecordState {
-                        ids_seen: &mut self.web_search_ids_seen,
-                        id_order: &mut self.web_search_id_order,
-                        results_by_id: &mut self.web_search_results_by_id,
-                        errors_by_id: &mut self.web_search_errors_by_id,
-                        request_count: &mut self.web_search_count,
-                        max_uses: self.max_web_search_uses,
-                        limit_exceeded_id: &mut self.web_search_limit_exceeded_id,
-                    },
-                );
-                if disposition == WebSearchCallDisposition::Ignored {
-                    return ControlFlow::Continue(());
-                }
-                if self.web_search_ids_completed.contains(&search_id) {
-                    return ControlFlow::Continue(());
-                }
-
-                let index = self
-                    .web_search_index_by_item_id
-                    .get(&search_id)
-                    .copied()
-                    .or(provisional_index)
-                    .unwrap_or_else(|| {
-                        let assigned = self.next_content_index;
-                        self.next_content_index += 1;
-                        assigned
-                    });
-                for key in item_keys {
-                    self.index_by_key.insert(key, index);
-                }
-                self.web_search_index_by_item_id
-                    .insert(search_id.clone(), index);
-                self.web_search_id_by_index.insert(index, search_id.clone());
-                reserve_web_search_result_index(
-                    &search_id,
-                    &mut self.web_search_result_index_by_id,
-                    &mut self.next_content_index,
-                );
-
+    fn on_web_search_call_item_done(
+        &mut self,
+        data: &Value,
+        item: &Value,
+        out: &mut Vec<Bytes>,
+    ) -> ControlFlow<()> {
+        self.has_substantive_output = true;
+        if self.preserve_web_search_citations {
+            let pending_text = self.buffered_citation_text.render_pending_parts();
+            let mut reusable_text_index = None;
+            if !pending_text.is_empty() {
                 if let Some(text_index) = self.current_text_index.take() {
-                    if self.open_indices.remove(&text_index) {
+                    let was_open = self.open_indices.remove(&text_index);
+                    if was_open {
                         out.push(anthropic_sse(
                             "content_block_stop",
                             &json!({"type":"content_block_stop","index":text_index}),
                         ));
+                    } else {
+                        reusable_text_index = Some(text_index);
                     }
                     if self.fallback_open_index == Some(text_index) {
                         self.fallback_open_index = None;
                     }
                 }
-
-                if !self.open_indices.contains(&index) {
-                    out.push(anthropic_sse(
-                        "content_block_start",
-                        &json!({
-                            "type":"content_block_start",
-                            "index":index,
-                            "content_block":{
-                                "type":"server_tool_use",
-                                "id":search_id,
-                                "name":self.hosted_web_search_name.as_str(),
-                                "input":{},
-                                "caller":{"type":"direct"}
-                            }
-                        }),
-                    ));
-                    self.open_indices.insert(index);
-                }
-
-                let input = web_search_action_input(item);
-                out.push(anthropic_sse(
-                    "content_block_delta",
-                    &json!({
-                        "type":"content_block_delta",
-                        "index":index,
-                        "delta":{
-                            "type":"input_json_delta",
-                            "partial_json":serde_json::to_string(&input)
-                                .unwrap_or_else(|_| "{}".to_string())
-                        }
-                    }),
-                ));
-                if self.open_indices.remove(&index) {
-                    out.push(anthropic_sse(
-                        "content_block_stop",
-                        &json!({"type":"content_block_stop","index":index}),
-                    ));
-                }
-                self.web_search_ids_completed.insert(search_id);
-                if disposition == WebSearchCallDisposition::LimitExceeded {
-                    for event in take_open_web_search_block_stop_events(
-                        &mut self.open_indices,
-                        &self.web_search_id_by_index,
-                    ) {
-                        out.push(event);
-                    }
-                    for event in take_web_search_result_events(
-                        &self.web_search_id_order,
-                        &mut self.web_search_results_by_id,
-                        &mut self.web_search_errors_by_id,
-                        &mut self.web_search_result_index_by_id,
-                        &mut self.next_content_index,
-                    ) {
-                        out.push(event);
-                    }
-                    if self.open_indices.is_empty() {
-                        for event in
-                            web_search_limit_stop_events(self.web_search_count, self.has_tool_use)
-                        {
-                            out.push(event);
-                        }
-                    } else {
-                        out.push(anthropic_error_sse(
-                            "Responses upstream started a web search beyond max_uses while another content block was incomplete",
-                            "stream_truncated",
-                        ));
-                    }
-                    self.terminated = true;
-                    return ControlFlow::Break(());
-                }
             }
-            Some("reasoning") => {
-                let item_id = item
-                    .get("id")
-                    .and_then(Value::as_str)
-                    .or_else(|| data.get("item_id").and_then(Value::as_str));
-                let index = item_id
-                    .and_then(|id| self.reasoning_index_by_item_id.get(id).copied())
-                    .or_else(|| {
-                        reasoning_item_key(data, Some(item))
-                            .and_then(|key| self.index_by_key.get(&key).copied())
-                    })
-                    .unwrap_or_else(|| {
-                        let assigned = self.next_content_index;
-                        self.next_content_index += 1;
-                        assigned
-                    });
-                self.reasoning_item_by_index.insert(index, item.clone());
+            for text in pending_text {
+                let index = reusable_text_index.take().unwrap_or_else(|| {
+                    let index = self.next_content_index;
+                    self.next_content_index += 1;
+                    index
+                });
+                out.extend(text_block_events(index, &text));
+            }
+        }
+        self.ensure_message_start(out);
 
-                let final_item = self
-                    .reasoning_item_by_index
-                    .get(&index)
-                    .cloned()
-                    .unwrap_or_else(|| item.clone());
-                let full_text = reasoning_summary_text(&final_item);
-                let emitted_text = self
-                    .reasoning_text_by_index
-                    .get(&index)
-                    .cloned()
-                    .unwrap_or_default();
-                if emitted_text.is_empty() && !full_text.is_empty() {
+        let item_keys = web_search_item_keys(data, Some(item));
+        let provisional_index = item_keys
+            .iter()
+            .find_map(|key| self.index_by_key.get(key).copied());
+        let search_id = provisional_index
+            .and_then(|index| self.web_search_id_by_index.get(&index).cloned())
+            .or_else(|| {
+                item.get("id")
+                    .and_then(Value::as_str)
+                    .or_else(|| data.get("item_id").and_then(Value::as_str))
+                    .filter(|id| !id.is_empty())
+                    .map(ToString::to_string)
+            })
+            .or_else(|| provisional_index.map(|index| format!("ws_stream_{index}")))
+            .unwrap_or_else(|| format!("ws_stream_{}", self.next_content_index));
+        let disposition = record_web_search_call(
+            &search_id,
+            item,
+            &mut WebSearchRecordState {
+                ids_seen: &mut self.web_search_ids_seen,
+                id_order: &mut self.web_search_id_order,
+                results_by_id: &mut self.web_search_results_by_id,
+                errors_by_id: &mut self.web_search_errors_by_id,
+                request_count: &mut self.web_search_count,
+                max_uses: self.max_web_search_uses,
+                limit_exceeded_id: &mut self.web_search_limit_exceeded_id,
+            },
+        );
+        if disposition == WebSearchCallDisposition::Ignored {
+            return ControlFlow::Continue(());
+        }
+        if self.web_search_ids_completed.contains(&search_id) {
+            return ControlFlow::Continue(());
+        }
+
+        let index = self
+            .web_search_index_by_item_id
+            .get(&search_id)
+            .copied()
+            .or(provisional_index)
+            .unwrap_or_else(|| {
+                let assigned = self.next_content_index;
+                self.next_content_index += 1;
+                assigned
+            });
+        for key in item_keys {
+            self.index_by_key.insert(key, index);
+        }
+        self.web_search_index_by_item_id
+            .insert(search_id.clone(), index);
+        self.web_search_id_by_index.insert(index, search_id.clone());
+        reserve_web_search_result_index(
+            &search_id,
+            &mut self.web_search_result_index_by_id,
+            &mut self.next_content_index,
+        );
+
+        if let Some(text_index) = self.current_text_index.take() {
+            if self.open_indices.remove(&text_index) {
+                out.push(anthropic_sse(
+                    "content_block_stop",
+                    &json!({"type":"content_block_stop","index":text_index}),
+                ));
+            }
+            if self.fallback_open_index == Some(text_index) {
+                self.fallback_open_index = None;
+            }
+        }
+
+        if !self.open_indices.contains(&index) {
+            out.push(anthropic_sse(
+                "content_block_start",
+                &json!({
+                    "type":"content_block_start",
+                    "index":index,
+                    "content_block":{
+                        "type":"server_tool_use",
+                        "id":search_id,
+                        "name":self.hosted_web_search_name.as_str(),
+                        "input":{},
+                        "caller":{"type":"direct"}
+                    }
+                }),
+            ));
+            self.open_indices.insert(index);
+        }
+
+        let input = web_search_action_input(item);
+        out.push(anthropic_sse(
+            "content_block_delta",
+            &json!({
+                "type":"content_block_delta",
+                "index":index,
+                "delta":{
+                    "type":"input_json_delta",
+                    "partial_json":serde_json::to_string(&input)
+                        .unwrap_or_else(|_| "{}".to_string())
+                }
+            }),
+        ));
+        if self.open_indices.remove(&index) {
+            out.push(anthropic_sse(
+                "content_block_stop",
+                &json!({"type":"content_block_stop","index":index}),
+            ));
+        }
+        self.web_search_ids_completed.insert(search_id);
+        if disposition == WebSearchCallDisposition::LimitExceeded {
+            out.extend(take_open_web_search_block_stop_events(
+                &mut self.open_indices,
+                &self.web_search_id_by_index,
+            ));
+            out.extend(take_web_search_result_events(
+                &self.web_search_id_order,
+                &mut self.web_search_results_by_id,
+                &mut self.web_search_errors_by_id,
+                &mut self.web_search_result_index_by_id,
+                &mut self.next_content_index,
+            ));
+            if self.open_indices.is_empty() {
+                for event in web_search_limit_stop_events(self.web_search_count, self.has_tool_use)
+                {
+                    out.push(event);
+                }
+            } else {
+                out.push(anthropic_error_sse(
+                    "Responses upstream started a web search beyond max_uses while another content block was incomplete",
+                    "stream_truncated",
+                ));
+            }
+            self.terminated = true;
+            return ControlFlow::Break(());
+        }
+        ControlFlow::Continue(())
+    }
+
+    fn on_reasoning_item_done(&mut self, data: &Value, item: &Value, out: &mut Vec<Bytes>) {
+        let item_id = item
+            .get("id")
+            .and_then(Value::as_str)
+            .or_else(|| data.get("item_id").and_then(Value::as_str));
+        let index = item_id
+            .and_then(|id| self.reasoning_index_by_item_id.get(id).copied())
+            .or_else(|| {
+                reasoning_item_key(data, Some(item))
+                    .and_then(|key| self.index_by_key.get(&key).copied())
+            })
+            .unwrap_or_else(|| {
+                let assigned = self.next_content_index;
+                self.next_content_index += 1;
+                assigned
+            });
+        self.reasoning_item_by_index.insert(index, item.clone());
+
+        let final_item = self
+            .reasoning_item_by_index
+            .get(&index)
+            .cloned()
+            .unwrap_or_else(|| item.clone());
+        let full_text = reasoning_summary_text(&final_item);
+        let emitted_text = self
+            .reasoning_text_by_index
+            .get(&index)
+            .cloned()
+            .unwrap_or_default();
+        if emitted_text.is_empty() && !full_text.is_empty() {
+            let start_event = json!({
+                "type": "content_block_start",
+                "index": index,
+                "content_block": {"type": "thinking", "thinking": ""}
+            });
+            let start_sse = format!(
+                "event: content_block_start\ndata: {}\n\n",
+                serde_json::to_string(&start_event).unwrap_or_default()
+            );
+            out.push(Bytes::from(start_sse));
+            self.open_indices.insert(index);
+            let delta_event = json!({
+                "type": "content_block_delta",
+                "index": index,
+                "delta": {"type": "thinking_delta", "thinking": full_text}
+            });
+            let delta_sse = format!(
+                "event: content_block_delta\ndata: {}\n\n",
+                serde_json::to_string(&delta_event).unwrap_or_default()
+            );
+            out.push(Bytes::from(delta_sse));
+        } else if self.open_indices.contains(&index) {
+            // Deltas may cover only the start of the summary
+            // (e.g. a later summary part arrived without
+            // deltas). Emit the missing tail; snapshots that
+            // do not extend the streamed text are ignored.
+            if let Some(suffix) = full_text
+                .strip_prefix(emitted_text.as_str())
+                .filter(|suffix| !suffix.is_empty())
+            {
+                let delta_event = json!({
+                    "type": "content_block_delta",
+                    "index": index,
+                    "delta": {"type": "thinking_delta", "thinking": suffix}
+                });
+                let delta_sse = format!(
+                    "event: content_block_delta\ndata: {}\n\n",
+                    serde_json::to_string(&delta_event).unwrap_or_default()
+                );
+                out.push(Bytes::from(delta_sse));
+            }
+        }
+
+        let encrypted = final_item
+            .get("encrypted_content")
+            .and_then(Value::as_str)
+            .is_some_and(|value| !value.is_empty());
+        if encrypted {
+            if let Some(envelope) = encode_openai_reasoning_item(&final_item) {
+                if self.open_indices.contains(&index) {
+                    let signature_event = json!({
+                        "type": "content_block_delta",
+                        "index": index,
+                        "delta": {
+                            "type": "signature_delta",
+                            "signature": envelope
+                        }
+                    });
+                    let signature_sse = format!(
+                        "event: content_block_delta\ndata: {}\n\n",
+                        serde_json::to_string(&signature_event).unwrap_or_default()
+                    );
+                    out.push(Bytes::from(signature_sse));
+                } else {
+                    // Encrypted-only item: an empty thinking block
+                    // carries the envelope (Claude Code's VS Code
+                    // extension cannot render redacted_thinking).
                     let start_event = json!({
                         "type": "content_block_start",
                         "index": index,
@@ -4395,172 +4403,85 @@ impl ResponsesToAnthropicState {
                     );
                     out.push(Bytes::from(start_sse));
                     self.open_indices.insert(index);
-                    let delta_event = json!({
+                    let signature_event = json!({
                         "type": "content_block_delta",
                         "index": index,
-                        "delta": {"type": "thinking_delta", "thinking": full_text}
+                        "delta": {
+                            "type": "signature_delta",
+                            "signature": envelope
+                        }
                     });
-                    let delta_sse = format!(
+                    let signature_sse = format!(
                         "event: content_block_delta\ndata: {}\n\n",
-                        serde_json::to_string(&delta_event).unwrap_or_default()
+                        serde_json::to_string(&signature_event).unwrap_or_default()
                     );
-                    out.push(Bytes::from(delta_sse));
-                } else if self.open_indices.contains(&index) {
-                    // Deltas may cover only the start of the summary
-                    // (e.g. a later summary part arrived without
-                    // deltas). Emit the missing tail; snapshots that
-                    // do not extend the streamed text are ignored.
-                    if let Some(suffix) = full_text
-                        .strip_prefix(emitted_text.as_str())
-                        .filter(|suffix| !suffix.is_empty())
-                    {
-                        let delta_event = json!({
-                            "type": "content_block_delta",
-                            "index": index,
-                            "delta": {"type": "thinking_delta", "thinking": suffix}
-                        });
-                        let delta_sse = format!(
-                            "event: content_block_delta\ndata: {}\n\n",
-                            serde_json::to_string(&delta_event).unwrap_or_default()
-                        );
-                        out.push(Bytes::from(delta_sse));
-                    }
+                    out.push(Bytes::from(signature_sse));
                 }
-
-                let encrypted = final_item
-                    .get("encrypted_content")
-                    .and_then(Value::as_str)
-                    .is_some_and(|value| !value.is_empty());
-                if encrypted {
-                    if let Some(envelope) = encode_openai_reasoning_item(&final_item) {
-                        if self.open_indices.contains(&index) {
-                            let signature_event = json!({
-                                "type": "content_block_delta",
-                                "index": index,
-                                "delta": {
-                                    "type": "signature_delta",
-                                    "signature": envelope
-                                }
-                            });
-                            let signature_sse = format!(
-                                "event: content_block_delta\ndata: {}\n\n",
-                                serde_json::to_string(&signature_event).unwrap_or_default()
-                            );
-                            out.push(Bytes::from(signature_sse));
-                        } else {
-                            // Encrypted-only item: an empty thinking block
-                            // carries the envelope (Claude Code's VS Code
-                            // extension cannot render redacted_thinking).
-                            let start_event = json!({
-                                "type": "content_block_start",
-                                "index": index,
-                                "content_block": {"type": "thinking", "thinking": ""}
-                            });
-                            let start_sse = format!(
-                                "event: content_block_start\ndata: {}\n\n",
-                                serde_json::to_string(&start_event).unwrap_or_default()
-                            );
-                            out.push(Bytes::from(start_sse));
-                            self.open_indices.insert(index);
-                            let signature_event = json!({
-                                "type": "content_block_delta",
-                                "index": index,
-                                "delta": {
-                                    "type": "signature_delta",
-                                    "signature": envelope
-                                }
-                            });
-                            let signature_sse = format!(
-                                "event: content_block_delta\ndata: {}\n\n",
-                                serde_json::to_string(&signature_event).unwrap_or_default()
-                            );
-                            out.push(Bytes::from(signature_sse));
-                        }
-                    }
-                }
-                if self.open_indices.remove(&index) {
-                    let stop_event = json!({"type": "content_block_stop", "index": index});
-                    let stop_sse = format!(
-                        "event: content_block_stop\ndata: {}\n\n",
-                        serde_json::to_string(&stop_event).unwrap_or_default()
-                    );
-                    out.push(Bytes::from(stop_sse));
-                }
-                if let Some(id) = item_id {
-                    self.reasoning_index_by_item_id.remove(id);
-                }
-                self.reasoning_item_by_index.remove(&index);
-                self.reasoning_text_by_index.remove(&index);
             }
-            Some("message") => {
-                let buffered_citations = self
-                    .preserve_web_search_citations
-                    .then_some(&mut self.buffered_citation_text);
-                let missing_text = missing_message_text_parts(
-                    item,
-                    data.get("output_index").and_then(Value::as_u64),
-                    &mut self.streamed_text,
-                    buffered_citations,
-                );
-                if !missing_text.is_empty() {
-                    self.has_substantive_output = true;
-                    if !self.has_sent_message_start {
-                        out.push(anthropic_sse(
-                            "message_start",
-                            &json!({
-                                "type":"message_start",
-                                "message":{
-                                    "id":self.message_id.clone().unwrap_or_default(),
-                                    "type":"message",
-                                    "role":"assistant",
-                                    "model":self.current_model.clone().unwrap_or_default(),
-                                    "usage":{"input_tokens":0,"output_tokens":0}
-                                }
-                            }),
-                        ));
-                        self.has_sent_message_start = true;
-                    }
-                    let mut reusable_text_index = None;
-                    if let Some(index) = self.current_text_index.take() {
-                        let was_open = self.open_indices.remove(&index);
-                        if was_open {
-                            out.push(anthropic_sse(
-                                "content_block_stop",
-                                &json!({"type":"content_block_stop","index":index}),
-                            ));
-                        } else if self.preserve_web_search_citations {
-                            reusable_text_index = Some(index);
-                        }
-                        if self.fallback_open_index == Some(index) {
-                            self.fallback_open_index = None;
-                        }
-                    }
-                    for text in missing_text {
-                        let index = reusable_text_index.take().unwrap_or_else(|| {
-                            let index = self.next_content_index;
-                            self.next_content_index += 1;
-                            index
-                        });
-                        for event in text_block_events(index, &text) {
-                            out.push(event);
-                        }
-                    }
-                }
-
-                let mut new_results = Vec::new();
-                for result in web_search_results_from_output_item(item) {
-                    let Some(url) = result.get("url").and_then(Value::as_str) else {
-                        continue;
-                    };
-                    if self.seen_web_search_result_urls.insert(url.to_string()) {
-                        new_results.push(result);
-                    }
-                }
-                append_unique_web_search_results(&mut self.pending_web_search_results, new_results);
-            }
-            _ => {}
         }
-        ControlFlow::Continue(())
+        if self.open_indices.remove(&index) {
+            let stop_event = json!({"type": "content_block_stop", "index": index});
+            let stop_sse = format!(
+                "event: content_block_stop\ndata: {}\n\n",
+                serde_json::to_string(&stop_event).unwrap_or_default()
+            );
+            out.push(Bytes::from(stop_sse));
+        }
+        if let Some(id) = item_id {
+            self.reasoning_index_by_item_id.remove(id);
+        }
+        self.reasoning_item_by_index.remove(&index);
+        self.reasoning_text_by_index.remove(&index);
+    }
+
+    fn on_message_item_done(&mut self, data: &Value, item: &Value, out: &mut Vec<Bytes>) {
+        let buffered_citations = self
+            .preserve_web_search_citations
+            .then_some(&mut self.buffered_citation_text);
+        let missing_text = missing_message_text_parts(
+            item,
+            data.get("output_index").and_then(Value::as_u64),
+            &mut self.streamed_text,
+            buffered_citations,
+        );
+        if !missing_text.is_empty() {
+            self.has_substantive_output = true;
+            self.ensure_message_start(out);
+            let mut reusable_text_index = None;
+            if let Some(index) = self.current_text_index.take() {
+                let was_open = self.open_indices.remove(&index);
+                if was_open {
+                    out.push(anthropic_sse(
+                        "content_block_stop",
+                        &json!({"type":"content_block_stop","index":index}),
+                    ));
+                } else if self.preserve_web_search_citations {
+                    reusable_text_index = Some(index);
+                }
+                if self.fallback_open_index == Some(index) {
+                    self.fallback_open_index = None;
+                }
+            }
+            for text in missing_text {
+                let index = reusable_text_index.take().unwrap_or_else(|| {
+                    let index = self.next_content_index;
+                    self.next_content_index += 1;
+                    index
+                });
+                out.extend(text_block_events(index, &text));
+            }
+        }
+
+        let mut new_results = Vec::new();
+        for result in web_search_results_from_output_item(item) {
+            let Some(url) = result.get("url").and_then(Value::as_str) else {
+                continue;
+            };
+            if self.seen_web_search_result_urls.insert(url.to_string()) {
+                new_results.push(result);
+            }
+        }
+        append_unique_web_search_results(&mut self.pending_web_search_results, new_results);
     }
 
     /// The upstream ended without a terminal event.
@@ -4607,9 +4528,7 @@ impl ResponsesToAnthropicState {
                         self.next_content_index += 1;
                         index
                     });
-                    for event in text_block_events(index, &text) {
-                        out.push(event);
-                    }
+                    out.extend(text_block_events(index, &text));
                 }
             }
             // Text-only partial output is safe to expose as a max-token style
@@ -4622,21 +4541,7 @@ impl ResponsesToAnthropicState {
                     &json!({"type":"content_block_stop","index":index}),
                 ));
             }
-            if !self.has_sent_message_start {
-                out.push(anthropic_sse(
-                    "message_start",
-                    &json!({
-                        "type":"message_start",
-                        "message":{
-                            "id":self.message_id.clone().unwrap_or_default(),
-                            "type":"message",
-                            "role":"assistant",
-                            "model":self.current_model.clone().unwrap_or_default(),
-                            "usage":{"input_tokens":0,"output_tokens":0}
-                        }
-                    }),
-                ));
-            }
+            self.ensure_message_start(out);
             out.push(anthropic_sse(
                 "message_delta",
                 &json!({
@@ -4779,7 +4684,6 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                             continue;
                         }
 
-
                         let flow = state.handle_event(event_name, &data, &mut out);
                         for bytes in out.drain(..) {
                             yield Ok(bytes);
@@ -4811,7 +4715,6 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                 }
             }
         }
-
 
         if !state.terminated {
             state.finish_unterminated(&mut out);
