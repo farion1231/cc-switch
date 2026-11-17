@@ -118,9 +118,7 @@ pub(crate) async fn test_connection<B: SyncBackend>(
 ) -> Result<Value, String> {
     let preserve_empty = preserve_empty_secret.unwrap_or(true);
     let resolved = resolve_secret_for_request::<B>(settings, B::load(), preserve_empty);
-    B::check_connection(&resolved)
-        .await
-        .map_err(|e| e.to_string())?;
+    B::check_connection(&resolved).await?;
     Ok(json!({
         "success": true,
         "message": format!("{} connection ok", B::NAME)
@@ -184,25 +182,21 @@ pub(crate) async fn sync_save_settings<B: SyncBackend>(
         *B::status_mut(&mut sync_settings) = status;
     }
 
-    B::normalize_and_validate(&mut sync_settings).map_err(|e| e.to_string())?;
-    B::store(Some(sync_settings)).map_err(|e| e.to_string())?;
+    B::normalize_and_validate(&mut sync_settings)?;
+    B::store(Some(sync_settings))?;
     Ok(json!({ "success": true }))
 }
 
 /// Forget the saved config (connection, credentials, remote root, status) on
 /// this device. Remote snapshots are left untouched.
 pub(crate) async fn sync_clear_settings<B: SyncBackend>() -> Result<Value, String> {
-    run_with_sync_lock(async { B::store(None) })
-        .await
-        .map_err(|e| e.to_string())?;
+    run_with_sync_lock(async { B::store(None) }).await?;
     Ok(json!({ "success": true }))
 }
 
 pub(crate) async fn sync_fetch_remote_info<B: SyncBackend>() -> Result<Value, String> {
     let settings = require_enabled_settings::<B>()?;
-    let info = B::fetch_remote_info(&settings)
-        .await
-        .map_err(|e| e.to_string())?;
+    let info = B::fetch_remote_info(&settings).await?;
     Ok(info.unwrap_or(json!({ "empty": true })))
 }
 
