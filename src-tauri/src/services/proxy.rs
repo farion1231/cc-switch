@@ -180,9 +180,6 @@ impl ProxyService {
             gemini,
             grokbuild,
             claude_desktop,
-            // OpenCode and OpenClaw don't support proxy features
-            opencode: false,
-            openclaw: false,
         })
     }
 

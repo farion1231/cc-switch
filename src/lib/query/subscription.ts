@@ -16,6 +16,7 @@ import type {
 import type { ManagedAuthStatus } from "@/lib/api/auth";
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import { PROVIDER_TYPES } from "@/config/constants";
+import { appHas } from "@/config/appSpecs";
 import { resolveDisplayUsage, type LastGoodSnapshot } from "./queries";
 import { extractErrorMessage } from "@/utils/errorUtils";
 
@@ -100,9 +101,7 @@ export function useSubscriptionQuota(
   const query = useQuery({
     queryKey: subscriptionKeys.quota(appId),
     queryFn: () => subscriptionApi.getQuota(appId),
-    enabled:
-      enabled &&
-      ["claude", "codex", "gemini", "grokbuild", "agy"].includes(appId),
+    enabled: enabled && appHas(appId, "officialSubscription"),
     refetchInterval,
     refetchIntervalInBackground: Boolean(refetchInterval),
     refetchOnWindowFocus: Boolean(refetchInterval),
