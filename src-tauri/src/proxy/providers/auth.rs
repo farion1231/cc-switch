@@ -91,6 +91,15 @@ pub enum AuthStrategy {
     ///
     /// access token 由 xAI Device Code 流程获取并由 forwarder 动态注入。
     XaiOAuth,
+
+    /// Claude Code 订阅登录（官方 Claude 账号）
+    ///
+    /// - Header: `Authorization: Bearer <access_token>`
+    /// - Header: `anthropic-beta: oauth-2025-04-20`（由 forwarder 并入）
+    ///
+    /// access token 由 forwarder 从本机 Claude Code 登录（钥匙串 /
+    /// `~/.claude`）或卡片绑定的托管账号动态读取，CC Switch 不负责刷新。
+    ClaudeOAuth,
 }
 
 #[cfg(test)]
@@ -103,6 +112,7 @@ mod tests {
         assert_ne!(AuthStrategy::Anthropic, AuthStrategy::Bearer);
         assert_ne!(AuthStrategy::Bearer, AuthStrategy::Google);
         assert_ne!(AuthStrategy::CodexOAuth, AuthStrategy::XaiOAuth);
+        assert_ne!(AuthStrategy::ClaudeOAuth, AuthStrategy::ClaudeAuth);
     }
 
     #[test]
@@ -150,6 +160,8 @@ mod tests {
             AuthStrategy::GoogleOAuth,
             AuthStrategy::GitHubCopilot,
             AuthStrategy::CodexOAuth,
+            AuthStrategy::XaiOAuth,
+            AuthStrategy::ClaudeOAuth,
         ];
 
         for (i, s1) in strategies.iter().enumerate() {

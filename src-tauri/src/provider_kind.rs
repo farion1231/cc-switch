@@ -1,9 +1,9 @@
 //! The only place that decides which managed-account upstream a provider is.
 //!
-//! GitHub Copilot, Codex OAuth and xAI OAuth providers declare themselves in
-//! `meta.providerType`. Copilot providers saved before that field existed carry
-//! only their URL, so the URL fallback for that old data lives here and nowhere
-//! else. `tests::identity_checks_stay_in_provider_kind` fails the build when a
+//! GitHub Copilot, Codex OAuth, xAI OAuth and Claude OAuth providers declare
+//! themselves in `meta.providerType`. Copilot providers saved before that field
+//! existed carry only their URL, so the URL fallback for that old data lives here
+//! and nowhere else. `tests::identity_checks_stay_in_provider_kind` fails the build when a
 //! raw `providerType` string or Copilot URL check shows up in another file.
 
 use crate::provider::Provider;
@@ -15,6 +15,7 @@ pub enum ProviderKind {
     GitHubCopilot,
     CodexOAuth,
     XaiOAuth,
+    ClaudeOAuth,
 }
 
 impl ProviderKind {
@@ -24,6 +25,7 @@ impl ProviderKind {
             "github_copilot" => Some(Self::GitHubCopilot),
             "codex_oauth" => Some(Self::CodexOAuth),
             "xai_oauth" => Some(Self::XaiOAuth),
+            "claude_oauth" => Some(Self::ClaudeOAuth),
             _ => None,
         }
     }
@@ -79,6 +81,7 @@ mod tests {
             (Some("github_copilot"), Some(ProviderKind::GitHubCopilot)),
             (Some("codex_oauth"), Some(ProviderKind::CodexOAuth)),
             (Some("xai_oauth"), Some(ProviderKind::XaiOAuth)),
+            (Some("claude_oauth"), Some(ProviderKind::ClaudeOAuth)),
             (Some("newapi"), None),
             (None, None),
         ];
@@ -140,6 +143,7 @@ mod tests {
         "Some(\"github_copilot\")",
         "Some(\"codex_oauth\")",
         "Some(\"xai_oauth\")",
+        "Some(\"claude_oauth\")",
         "\"github_copilot\" | ",
     ];
 

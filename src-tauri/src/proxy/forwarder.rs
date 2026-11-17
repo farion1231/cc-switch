@@ -1566,7 +1566,8 @@ impl RequestForwarder {
             .unwrap_or(false)
             && !provider.is_codex_oauth()
             && !provider.is_xai_oauth()
-            && !provider.is_github_copilot();
+            && !provider.is_github_copilot()
+            && !provider.is_claude_oauth();
 
         // GitHub Copilot API 使用 /chat/completions（无 /v1 前缀）
         let is_copilot = is_managed_copilot_request(app_type, provider, &base_url);
@@ -2517,6 +2518,23 @@ impl RequestForwarder {
                 }
             }
 
+            // Claude Code 订阅登录：每次请求前从本机凭据读取 access token。
+            // 不依赖 AppHandle（凭据是 Claude Code 自己写的），读到什么就用什么；
+            // 过期/缺失直接作为认证失败，交给故障转移。
+            if auth.strategy == AuthStrategy::ClaudeOAuth {
+                match super::providers::claude_oauth_auth::access_token_for(provider) {
+                    Ok(token) => {
+                        auth = AuthInfo::new(token, AuthStrategy::ClaudeOAuth);
+                    }
+                    Err(error) => {
+                        log::warn!("[ClaudeOAuth] 读取 Claude Code 登录失败: {error}");
+                        return Err(ProxyError::AuthError(format!(
+                            "Claude 订阅认证失败: {error}"
+                        )));
+                    }
+                }
+            }
+
             for secret in std::iter::once(&auth.api_key).chain(auth.access_token.iter()) {
                 if !secret.is_empty() && !log_secrets.contains(secret) {
                     log_secrets.push(secret.clone());
@@ -2634,22 +2652,34 @@ impl RequestForwarder {
         let should_send_anthropic_headers = adapter.name() == "Claude"
             && matches!(resolved_claude_api_format.as_deref(), Some("anthropic"));
 
+        // Claude Code 订阅登录：OAuth access token 需要额外的 oauth beta 标记。
+        let claude_oauth_route = matches!(app_type, AppType::Claude | AppType::ClaudeDesktop)
+            && provider.is_claude_oauth();
+
         // 预计算 anthropic-beta 值（仅 Claude）
         let anthropic_beta_value = if should_send_anthropic_headers {
             const CLAUDE_CODE_BETA: &str = "claude-code-20250219";
-            Some(if let Some(beta) = headers.get("anthropic-beta") {
-                if let Ok(beta_str) = beta.to_str() {
-                    if beta_str.contains(CLAUDE_CODE_BETA) {
-                        beta_str.to_string()
-                    } else {
-                        format!("{CLAUDE_CODE_BETA},{beta_str}")
+            let client_beta = headers
+                .get("anthropic-beta")
+                .and_then(|beta| beta.to_str().ok());
+            if claude_oauth_route {
+                const CLAUDE_OAUTH_BETA: &str = "oauth-2025-04-20";
+                let mut betas: Vec<&str> = vec![CLAUDE_CODE_BETA, CLAUDE_OAUTH_BETA];
+                if let Some(client_beta) = client_beta {
+                    for beta in client_beta.split(',').map(str::trim) {
+                        if !beta.is_empty() && !betas.contains(&beta) {
+                            betas.push(beta);
+                        }
                     }
-                } else {
-                    CLAUDE_CODE_BETA.to_string()
                 }
+                Some(betas.join(","))
             } else {
-                CLAUDE_CODE_BETA.to_string()
-            })
+                Some(match client_beta {
+                    Some(beta_str) if beta_str.contains(CLAUDE_CODE_BETA) => beta_str.to_string(),
+                    Some(beta_str) => format!("{CLAUDE_CODE_BETA},{beta_str}"),
+                    None => CLAUDE_CODE_BETA.to_string(),
+                })
+            }
         } else if codex_impersonate_claude_code || codex_anthropic_one_m {
             // Codex→Anthropic: emulation injects the claude-code marker; a [1m]
             // model injects the context-1m marker.
@@ -4312,7 +4342,12 @@ fn rewrite_codex_endpoint_for_copilot(
 fn uses_anthropic_rectifiers(provider_type: Option<ProviderType>) -> bool {
     matches!(
         provider_type,
-        Some(ProviderType::Claude | ProviderType::ClaudeAuth | ProviderType::GitHubCopilot)
+        Some(
+            ProviderType::Claude
+                | ProviderType::ClaudeAuth
+                | ProviderType::ClaudeOAuth
+                | ProviderType::GitHubCopilot
+        )
     )
 }
 

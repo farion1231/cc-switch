@@ -51,6 +51,13 @@ pub fn is_official_category(category: Option<&str>) -> bool {
     category == Some("official")
 }
 
+/// Whether a base URL points at Anthropic's own API. Only the host is compared,
+/// so `/v1` and a trailing slash do not matter; a gateway that merely contains
+/// `api.anthropic.com` in its path or name does not match.
+fn is_anthropic_api_url(base_url: &str) -> bool {
+    url::Url::parse(base_url).is_ok_and(|url| url.host_str() == Some("api.anthropic.com"))
+}
+
 impl Provider {
     pub fn has_official_category(&self) -> bool {
         is_official_category(self.category.as_deref())
@@ -89,6 +96,61 @@ impl Provider {
 
     pub fn is_github_copilot(&self) -> bool {
         ProviderKind::of(self) == Some(ProviderKind::GitHubCopilot)
+    }
+
+    /// A Claude card whose route credential is the machine's Claude Code
+    /// subscription login, not a key of its own.
+    ///
+    /// True when the card declares the managed `claude_oauth` kind, or when it
+    /// is a keyless card aimed at Anthropic's own API / the official Claude card
+    /// (which stores no base URL at all). The injected token comes from the
+    /// Claude Code sign-in on this machine or from the account the card is bound
+    /// to, so only call this on a Claude path: other apps' official cards match
+    /// `has_official_category` too and rely on their own kinds.
+    pub fn is_claude_oauth(&self) -> bool {
+        if ProviderKind::declared(self) == Some(ProviderKind::ClaudeOAuth) {
+            return true;
+        }
+        if self.has_claude_credential() {
+            return false;
+        }
+        match self.claude_env_str("ANTHROPIC_BASE_URL") {
+            Some(base_url) => is_anthropic_api_url(base_url),
+            None => self.has_official_category(),
+        }
+    }
+
+    /// `settings_config.env.<key>`, trimmed the way
+    /// [`crate::proxy::providers::ClaudeAdapter`] reads it. Empty/whitespace
+    /// values count as absent.
+    fn claude_env_str(&self, key: &str) -> Option<&str> {
+        self.settings_config
+            .pointer(&format!("/env/{key}"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    }
+
+    /// Whether the card carries its own Anthropic credential, checking the same
+    /// places the adapter does (`env.ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_API_KEY`
+    /// and the raw top-level `apiKey` / `api_key`). `PROXY_MANAGED` is the
+    /// placeholder CC Switch writes into the *client* config while routing, never
+    /// a real key, so it does not count.
+    fn has_claude_credential(&self) -> bool {
+        let is_credential = |value: &str| !value.eq_ignore_ascii_case("PROXY_MANAGED");
+
+        let from_env = ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"]
+            .iter()
+            .any(|key| self.claude_env_str(key).is_some_and(is_credential));
+        let direct = ["apiKey", "api_key"].iter().any(|key| {
+            self.settings_config
+                .get(*key)
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .is_some_and(is_credential)
+        });
+        from_env || direct
     }
 
     pub fn uses_managed_account_auth(&self) -> bool {
@@ -1180,6 +1242,77 @@ mod tests {
                 "{provider_type}"
             );
         }
+    }
+
+    #[test]
+    fn claude_oauth_covers_declared_kind_official_card_and_keyless_anthropic() {
+        let settings = |env: serde_json::Value| json!({ "env": env });
+
+        // 显式声明托管 kind。
+        let mut declared = Provider::with_id("p".into(), "P".into(), settings(json!({})), None);
+        declared.meta = Some(ProviderMeta {
+            provider_type: Some("claude_oauth".to_string()),
+            ..ProviderMeta::default()
+        });
+        assert!(declared.is_claude_oauth());
+
+        // 官方卡：不存 base_url，靠客户端自己的登录。
+        let mut official =
+            Provider::with_id("claude-official".into(), "Claude Official".into(), settings(json!({})), None);
+        official.category = Some("official".to_string());
+        assert!(official.is_claude_oauth());
+
+        // 路由用的 `default`：无自带 key，指向 Anthropic 官方 API。
+        let keyless = Provider::with_id(
+            "default".into(),
+            "default".into(),
+            settings(json!({ "ANTHROPIC_BASE_URL": "https://api.anthropic.com" })),
+            None,
+        );
+        assert!(keyless.is_claude_oauth());
+
+        // 路由期间 CC Switch 写进客户端配置的占位符不算凭据。
+        let placeholder = Provider::with_id(
+            "p".into(),
+            "P".into(),
+            settings(json!({
+                "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
+                "ANTHROPIC_AUTH_TOKEN": "PROXY_MANAGED",
+            })),
+            None,
+        );
+        assert!(placeholder.is_claude_oauth());
+
+        // 自带 key → 普通 Anthropic 卡，不是订阅登录。
+        let keyed = Provider::with_id(
+            "p".into(),
+            "P".into(),
+            settings(json!({
+                "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
+                "ANTHROPIC_API_KEY": "sk-ant-abc",
+            })),
+            None,
+        );
+        assert!(!keyed.is_claude_oauth());
+
+        // 第三方网关不匹配。
+        let gateway = Provider::with_id(
+            "p".into(),
+            "P".into(),
+            settings(json!({ "ANTHROPIC_BASE_URL": "https://modelhub.example" })),
+            None,
+        );
+        assert!(!gateway.is_claude_oauth());
+
+        // 别家的官方卡（Codex）即使 category 是 official 也不算：上游不是 Anthropic。
+        let mut codex_official = Provider::with_id(
+            "codex-official".into(),
+            "Codex Official".into(),
+            settings(json!({ "ANTHROPIC_BASE_URL": "https://chatgpt.com/backend-api/codex" })),
+            None,
+        );
+        codex_official.category = Some("official".to_string());
+        assert!(!codex_official.is_claude_oauth());
     }
 
     #[test]

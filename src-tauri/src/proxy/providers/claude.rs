@@ -531,6 +531,7 @@ impl ClaudeAdapter {
     /// - GitHubCopilot: meta.provider_type 为 github_copilot 或 base_url 包含 githubcopilot.com
     /// - CodexOAuth: meta.provider_type 为 codex_oauth
     /// - XaiOAuth: meta.provider_type 为 xai_oauth
+    /// - ClaudeOAuth: 官方订阅 / 指向 api.anthropic.com 而无自带 key 的卡（token 由 forwarder 注入）
     /// - OpenRouter: base_url 包含 openrouter.ai
     /// - ClaudeAuth: auth_mode 为 bearer_only
     /// - Claude: 默认 Anthropic 官方
@@ -543,6 +544,11 @@ impl ClaudeAdapter {
                 }
                 _ => ProviderType::Gemini,
             };
+        }
+
+        // 检测 Claude Code 订阅登录（官方订阅卡，或无自带 key 的 api.anthropic.com 卡）
+        if provider.is_claude_oauth() {
+            return ProviderType::ClaudeOAuth;
         }
 
         // 检测 Codex OAuth (ChatGPT Plus/Pro)
@@ -745,6 +751,11 @@ impl ProviderAdapter for ClaudeAdapter {
     }
 
     fn extract_base_url(&self, provider: &Provider) -> Result<String, ProxyError> {
+        // Claude Code 订阅登录：上游固定是 Anthropic 官方 API。
+        if provider.is_claude_oauth() {
+            return Ok(super::ANTHROPIC_API_BASE_URL.to_string());
+        }
+
         // Codex OAuth: 强制使用 ChatGPT 后端 API 端点（忽略用户配置的 base_url）
         if provider.is_codex_oauth() {
             return Ok(super::CHATGPT_CODEX_BASE_URL.to_string());
@@ -819,6 +830,15 @@ impl ProviderAdapter for ClaudeAdapter {
             return Some(AuthInfo::new(
                 "xai_oauth_placeholder".to_string(),
                 AuthStrategy::XaiOAuth,
+            ));
+        }
+
+        // Claude Code 订阅登录同样使用占位符：真实 access_token 由 forwarder 从本机
+        // Claude Code 登录动态读取（见 `claude_oauth_auth`）。
+        if provider_type == ProviderType::ClaudeOAuth {
+            return Some(AuthInfo::new(
+                "claude_oauth_placeholder".to_string(),
+                AuthStrategy::ClaudeOAuth,
             ));
         }
 
@@ -965,6 +985,11 @@ impl ProviderAdapter for ClaudeAdapter {
                 ]
             }
             AuthStrategy::XaiOAuth => {
+                vec![(HeaderName::from_static("authorization"), hv(&bearer)?)]
+            }
+            AuthStrategy::ClaudeOAuth => {
+                // token 由 forwarder 从本机 Claude Code 登录动态注入（Bearer）；
+                // 需要的 oauth beta 标记同样在 forwarder 里并入 anthropic-beta。
                 vec![(HeaderName::from_static("authorization"), hv(&bearer)?)]
             }
             AuthStrategy::GitHubCopilot => {
@@ -1516,6 +1541,56 @@ mod tests {
         assert_eq!(
             adapter.provider_type(&claude_auth),
             ProviderType::ClaudeAuth
+        );
+    }
+
+    #[test]
+    fn claude_oauth_cards_use_the_subscription_login() {
+        let adapter = ClaudeAdapter::new();
+
+        // 无自带 key、指向官方 API 的卡（路由用的 `default`）：走订阅登录，
+        // 上游固定 Anthropic 官方，鉴权用 forwarder 注入的 Bearer token。
+        let keyless = create_provider(json!({
+            "env": { "ANTHROPIC_BASE_URL": "https://api.anthropic.com" }
+        }));
+        assert_eq!(adapter.provider_type(&keyless), ProviderType::ClaudeOAuth);
+        assert_eq!(
+            adapter.extract_base_url(&keyless).unwrap(),
+            super::super::ANTHROPIC_API_BASE_URL
+        );
+        assert!(!adapter.needs_transform(&keyless));
+        let auth = adapter
+            .extract_auth(&keyless)
+            .expect("managed auth placeholder");
+        assert_eq!(auth.strategy, AuthStrategy::ClaudeOAuth);
+        let headers = adapter.get_auth_headers(&auth).unwrap();
+        assert_eq!(headers.len(), 1);
+        assert_eq!(headers[0].0.as_str(), "authorization");
+        assert_eq!(
+            headers[0].1.to_str().unwrap(),
+            "Bearer claude_oauth_placeholder"
+        );
+
+        // 官方卡（category official，env 为空）：同样是订阅登录。
+        let mut official = create_provider(json!({ "env": {} }));
+        official.category = Some("official".to_string());
+        assert_eq!(adapter.provider_type(&official), ProviderType::ClaudeOAuth);
+        assert_eq!(
+            adapter.extract_base_url(&official).unwrap(),
+            super::super::ANTHROPIC_API_BASE_URL
+        );
+
+        // 自带 key 的卡照旧是普通 Anthropic（x-api-key）。
+        let keyed = create_provider(json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
+                "ANTHROPIC_API_KEY": "sk-ant-x"
+            }
+        }));
+        assert_eq!(adapter.provider_type(&keyed), ProviderType::Claude);
+        assert_eq!(
+            adapter.extract_auth(&keyed).unwrap().strategy,
+            AuthStrategy::Anthropic
         );
     }
 

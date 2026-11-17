@@ -13,6 +13,7 @@
 mod adapter;
 mod auth;
 mod claude;
+pub mod claude_oauth_auth;
 mod claude_reasoning;
 mod codex;
 pub(crate) mod codex_chat_common;
@@ -51,6 +52,8 @@ use crate::app_config::AppType;
 
 pub const CHATGPT_CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
 pub const XAI_API_BASE_URL: &str = "https://api.x.ai/v1";
+/// Anthropic 官方 API 根（Claude Code 订阅登录的上游）。
+pub const ANTHROPIC_API_BASE_URL: &str = "https://api.anthropic.com";
 
 /// 上游是不是 Mistral 官方 API。只认 `api.mistral.ai` 这个主机：名字、路径或
 /// 模型名里带 "mistral" 的中转站不算，它们照各自的协议处理。
@@ -118,6 +121,8 @@ pub enum ProviderType {
     CodexOAuth,
     /// xAI Grok OAuth（需要 Anthropic ↔ Responses API 转换）
     XaiOAuth,
+    /// Claude Code 订阅登录（官方 Claude 账号，token 由 forwarder 注入）
+    ClaudeOAuth,
 }
 
 /// 根据 AppType 获取对应的适配器
