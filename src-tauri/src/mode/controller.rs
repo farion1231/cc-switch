@@ -2628,7 +2628,6 @@ mod mode_tests {
     use crate::mode::operation::failpoint;
     use crate::mode::stack::StackMemberView;
     use crate::mode::state::{self, Mode};
-    use crate::proxy::types::ProxyConfig;
     use crate::services::provider::ProviderService;
     use serde_json::{json, Value};
     use serial_test::serial;
@@ -2702,12 +2701,11 @@ mod mode_tests {
         db.set_current_provider(app.as_str(), current)
             .expect("set current");
         crate::settings::set_current_provider(&app, Some(current)).expect("local current");
-        db.update_proxy_config(ProxyConfig {
-            listen_port: 0,
-            ..Default::default()
-        })
-        .await
-        .expect("ephemeral port");
+        let mut proxy = db.get_global_proxy_config().await.expect("ephemeral port");
+        proxy.listen_port = 0;
+        db.update_global_proxy_config(proxy)
+            .await
+            .expect("ephemeral port");
         AppState::new(db)
     }
 
@@ -5723,12 +5721,11 @@ model_provider = "c"
 
     async fn state_without_providers() -> AppState {
         let db = Arc::new(Database::memory().expect("memory db"));
-        db.update_proxy_config(ProxyConfig {
-            listen_port: 0,
-            ..Default::default()
-        })
-        .await
-        .expect("ephemeral port");
+        let mut proxy = db.get_global_proxy_config().await.expect("ephemeral port");
+        proxy.listen_port = 0;
+        db.update_global_proxy_config(proxy)
+            .await
+            .expect("ephemeral port");
         AppState::new(db)
     }
 
@@ -6860,12 +6857,11 @@ model_provider = "c"
 
         // 端口被占，路由起不来。
         let busy = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let mut proxy = state.db.get_global_proxy_config().await.expect("busy port");
+        proxy.listen_port = busy.local_addr().unwrap().port();
         state
             .db
-            .update_proxy_config(ProxyConfig {
-                listen_port: busy.local_addr().unwrap().port(),
-                ..Default::default()
-            })
+            .update_global_proxy_config(proxy)
             .await
             .expect("busy port");
 

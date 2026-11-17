@@ -1,5 +1,6 @@
 //! 项目 Profile 管理命令
 
+use crate::error::AppError;
 use serde::Serialize;
 use tauri::{Emitter, State};
 
@@ -107,20 +108,17 @@ pub async fn list_profiles(state: State<'_, AppState>) -> Result<ProfilesRespons
 }
 
 fn list_profiles_blocking(state: &AppState) -> Result<ProfilesResponse, String> {
-    let profiles = ProfileService::list(state).map_err(|e| e.to_string())?;
+    let profiles = ProfileService::list(state)?;
     let current_ids = CurrentProfileIds {
         claude: state
             .db
-            .get_current_profile_id(ProfileScope::Claude.as_str())
-            .map_err(|e| e.to_string())?,
+            .get_current_profile_id(ProfileScope::Claude.as_str())?,
         claude_desktop: state
             .db
-            .get_current_profile_id(ProfileScope::ClaudeDesktop.as_str())
-            .map_err(|e| e.to_string())?,
+            .get_current_profile_id(ProfileScope::ClaudeDesktop.as_str())?,
         codex: state
             .db
-            .get_current_profile_id(ProfileScope::Codex.as_str())
-            .map_err(|e| e.to_string())?,
+            .get_current_profile_id(ProfileScope::Codex.as_str())?,
     };
     Ok(ProfilesResponse {
         profiles: profiles.into_iter().map(ProfileDto::from).collect(),
@@ -133,10 +131,11 @@ fn list_profiles_blocking(state: &AppState) -> Result<ProfilesResponse, String> 
 /// 拍到切到一半的状态。
 pub(crate) static PROFILE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-async fn profile_mutation<T, F>(state: &State<'_, AppState>, task: F) -> Result<T, String>
+async fn profile_mutation<T, E, F>(state: &State<'_, AppState>, task: F) -> Result<T, String>
 where
     T: Send + 'static,
-    F: FnOnce(&AppState) -> Result<T, String> + Send + 'static,
+    E: Into<String> + Send + 'static,
+    F: FnOnce(&AppState) -> Result<T, E> + Send + 'static,
 {
     let _serial = PROFILE_LOCK.lock().await;
     run_db_task(state, task).await
@@ -148,11 +147,9 @@ pub async fn create_profile(
     name: String,
     scope: String,
 ) -> Result<ProfileDto, String> {
-    let scope = ProfileScope::parse(&scope).map_err(|e| e.to_string())?;
+    let scope = ProfileScope::parse(&scope)?;
     profile_mutation(&state, move |state| {
-        ProfileService::create(state, &name, scope)
-            .map(ProfileDto::from)
-            .map_err(|e| e.to_string())
+        ProfileService::create(state, &name, scope).map(ProfileDto::from)
     })
     .await
 }
@@ -165,24 +162,17 @@ pub async fn update_profile(
     resnapshot: Option<bool>,
     scope: Option<String>,
 ) -> Result<ProfileDto, String> {
-    let scope = scope
-        .map(|s| ProfileScope::parse(&s))
-        .transpose()
-        .map_err(|e| e.to_string())?;
+    let scope = scope.map(|s| ProfileScope::parse(&s)).transpose()?;
     profile_mutation(&state, move |state| {
         ProfileService::update(state, &id, name, resnapshot.unwrap_or(false), scope)
             .map(ProfileDto::from)
-            .map_err(|e| e.to_string())
     })
     .await
 }
 
 #[tauri::command]
 pub async fn delete_profile(state: State<'_, AppState>, id: String) -> Result<(), String> {
-    profile_mutation(&state, move |state| {
-        ProfileService::delete(state, &id).map_err(|e| e.to_string())
-    })
-    .await
+    profile_mutation(&state, move |state| ProfileService::delete(state, &id)).await
 }
 
 #[tauri::command]
@@ -190,12 +180,9 @@ pub async fn clear_current_profile(
     state: State<'_, AppState>,
     scope: String,
 ) -> Result<(), String> {
-    let scope = ProfileScope::parse(&scope).map_err(|e| e.to_string())?;
+    let scope = ProfileScope::parse(&scope)?;
     profile_mutation(&state, move |state| {
-        state
-            .db
-            .set_current_profile_id(scope.as_str(), None)
-            .map_err(|e| e.to_string())
+        state.db.set_current_profile_id(scope.as_str(), None)
     })
     .await
 }
@@ -211,11 +198,11 @@ pub async fn apply_profile(
     id: String,
     scope: String,
 ) -> Result<Vec<String>, String> {
-    let scope = ProfileScope::parse(&scope).map_err(|e| e.to_string())?;
+    let scope = ProfileScope::parse(&scope)?;
     profile_mutation(&state, move |state| {
-        let warnings = ProfileService::apply(state, &id, scope).map_err(|e| e.to_string())?;
+        let warnings = ProfileService::apply(state, &id, scope)?;
         emit_profile_apply_events(&app, state, &id, scope);
-        Ok(warnings)
+        Ok::<_, AppError>(warnings)
     })
     .await
 }

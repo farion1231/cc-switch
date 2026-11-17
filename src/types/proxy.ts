@@ -34,9 +34,6 @@ export interface ProxyTakeoverStatus {
   codex: boolean;
   gemini: boolean;
   grokbuild: boolean;
-  opencode: boolean;
-  openclaw: boolean;
-  hermes: boolean;
 }
 
 /** Applied under the backend switch lock, not inferred from a possibly stale UI mode. */
@@ -162,16 +159,6 @@ export interface ProviderHealth {
   last_failure_at: string | null;
   last_error: string | null;
   updated_at: string;
-}
-
-export type CircuitState = "closed" | "open" | "half_open";
-
-// 供应商健康状态枚举
-export enum ProviderHealthStatus {
-  Healthy = "healthy",
-  Degraded = "degraded",
-  Failed = "failed",
-  Unknown = "unknown",
 }
 
 // 故障转移队列条目
