@@ -46,13 +46,13 @@ use super::operation;
 use super::stack::{self, StackModel, StackView};
 use super::state::{op, Contract, Mode, ModeState, PendingTarget, StackState};
 
-/// 有路由模式的应用（[`AppSpec::route_mode`](crate::app_config::AppSpec::route_mode)）：本地路由的
-/// 在前，Claude Desktop 在最后（它经同一个路由服务转发，只是没有故障转移）。
+/// 有路由模式的应用（[`AppSpec::route_mode`](crate::app_config::AppSpec::route_mode)）：
+/// Claude Desktop 在最后（它只在启动时读配置，接上、重写都排在命令行客户端之后）。
 fn route_mode_apps() -> impl Iterator<Item = AppType> {
     let apps = || AppType::all().filter(|app| app.spec().route_mode);
     apps()
-        .filter(|app| app.spec().local_proxy)
-        .chain(apps().filter(|app| !app.spec().local_proxy))
+        .filter(|app| *app != AppType::ClaudeDesktop)
+        .chain(apps().filter(|app| *app == AppType::ClaudeDesktop))
 }
 
 fn err(error: impl std::fmt::Display) -> String {
@@ -6596,6 +6596,59 @@ model_provider = "c"
             Some("map"),
             "the route is kept for next time"
         );
+    }
+
+    /// Desktop 的故障转移：转移成功只换代理的路由，profile 一个字节都不动（Desktop 只在启动
+    /// 时读它，照旧发原来那家的模型名，由新这家的映射表接住）；模式照常镜像进应用级配置。
+    #[tokio::test]
+    #[serial]
+    async fn claude_desktop_failover_moves_the_route_without_touching_the_profile() {
+        let home = Home::new();
+        let _dirs = DesktopDirs::under(&home);
+        seed_settings(USER_SETTINGS);
+        let desktop = AppType::ClaudeDesktop;
+        let first = desktop_card("map", true);
+        let mut second = desktop_card("other", true);
+        for route in second
+            .meta
+            .as_mut()
+            .unwrap()
+            .claude_desktop_model_routes
+            .values_mut()
+        {
+            route.model = "glm-5".to_string();
+            route.label_override = Some("GLM".to_string());
+        }
+        let state = state_with(desktop.clone(), &[first, second], "map").await;
+
+        enter_with_route(&state, &desktop, false, Some("map"))
+            .await
+            .expect("enter desktop route");
+        assert_eq!(state.db.get_proxy_flags_sync(&desktop), (true, false));
+        let before = desktop_profile();
+
+        assert!(record_failover_route(&state, &desktop, "other")
+            .await
+            .expect("record failover"));
+        assert_eq!(
+            current::mode_state(&desktop).proxy_route.as_deref(),
+            Some("other")
+        );
+        assert_eq!(desktop_profile(), before);
+        // 同一家再记一次是空操作
+        assert!(!record_failover_route(&state, &desktop, "other")
+            .await
+            .expect("same route"));
+
+        // 开启故障转移时切回队列 P1：这是用户发起的换路由，profile 跟着 P1 重写。
+        switch_route_for_failover(&state, &desktop, "map")
+            .await
+            .expect("switch to P1");
+        assert_eq!(
+            current::mode_state(&desktop).proxy_route.as_deref(),
+            Some("map")
+        );
+        assert_eq!(desktop_profile(), before);
     }
 
     #[tokio::test]

@@ -330,6 +330,8 @@
     "statusMissingRouteMappings": "ルーティング先に有効なモデルマッピングがありません。編集して、少なくとも 1 つのマッピングを追加してください。",
     "statusGatewayTokenMissing": "ローカルルーティング token がまだ生成されていません。このプロバイダーへ再度切り替えると新しい token が書き込まれます。",
     "statusBaseUrlMismatch": "Claude Desktop profile の URL が現在のプロバイダーと一致しません。現在: {{actual}}、期待値: {{expected}}。現在のプロバイダーへ再度切り替えると修復できます。",
+    "failoverTitle": "フェイルオーバーが有効です",
+    "failoverNote": "キュー内の次のプロバイダーに切り替わった後も、Claude Desktop にはルーティング開始時のプロバイダーのモデル名が表示されます。実際のリクエストは切り替え先のモデルマッピングで送信され、対応するモデルがマッピングにないプロバイダーはスキップされます。モデル一覧は Claude Desktop を再起動すると更新されます。",
     "route": {
       "tooltip": {
         "active": "Claude Desktop ローカルルーティングは起動中です - {{address}}:{{port}}",

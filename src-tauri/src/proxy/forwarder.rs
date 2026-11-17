@@ -461,6 +461,15 @@ impl RequestForwarder {
             && CodexStandaloneEndpoint::from_effective_endpoint(endpoint).is_none()
     }
 
+    /// 故障转移队列里，Claude Desktop 的请求换家前先看这家的映射表接不接得住请求的模型。
+    /// 聚合模型的请求已经解出了上游名，不查映射表；只有一家时没有下一家可换，也不查。
+    fn skips_unmapped_desktop_provider(&self, app_type: &AppType, providers: usize) -> bool {
+        self.failover_chain
+            && providers > 1
+            && matches!(app_type, AppType::ClaudeDesktop)
+            && !self.keeps_resolved_model()
+    }
+
     /// 这个请求读写路由状态吗：熔断器（许可、结果、健康度）、「正在使用」、代理统计
     /// （总数、成功率、故障转移次数、最近错误、活跃连接）、故障转移切换。Stack 模型的请求
     /// 和普通路由完全分开，一律不碰；只有用量日志照常按供应商记。以后新增路由状态也先问它。
@@ -768,6 +777,9 @@ impl RequestForwarder {
         let mut last_error = None;
         let mut last_provider = None;
         let mut attempted_providers = 0usize;
+        // 队列里因为没有这个模型的映射而跳过的最后一家（见下面的跳过逻辑）
+        let mut unmapped_error = None;
+        let mut unmapped_provider = None;
 
         // 单 Provider 场景下跳过熔断器检查（故障转移关闭时）；Stack 模型的请求不碰熔断器。
         let bypass_circuit_breaker = providers.len() == 1 || !self.routing_state_enabled();
@@ -790,6 +802,25 @@ impl RequestForwarder {
                     self.max_attempts
                 );
                 break;
+            }
+
+            // Claude Desktop 发来的是进入路由时那家的模型名。故障转移队列里这家的映射表接不住
+            // 这个名字时跳过它试下一家：没有发出请求，不占尝试次数、不拿熔断器名额，也不记
+            // 失败（这家对别的模型照样可用）。只有一家时不查，照旧由 `forward` 报错。
+            if self.skips_unmapped_desktop_provider(app_type, providers.len()) {
+                if let Err(error) =
+                    crate::claude_desktop_config::proxy_request_upstream_model(body, provider)
+                {
+                    log::info!(
+                        "[{app_type_str}] [{}] Provider {} ({}) 没有这个模型的映射，跳过: {error}",
+                        log_fwd::MODEL_UNMAPPED_SKIPPED,
+                        provider.name,
+                        provider.id
+                    );
+                    unmapped_error = Some(ProxyError::InvalidRequest(error.to_string()));
+                    unmapped_provider = Some(provider.clone());
+                    continue;
+                }
             }
 
             // 发起请求前先获取熔断器放行许可（HalfOpen 会占用探测名额）
@@ -1295,6 +1326,19 @@ impl RequestForwarder {
                         }
                     }
                 }
+            }
+        }
+
+        if last_error.is_none() {
+            if let Some(error) = unmapped_error {
+                // 没有一家发出过请求，或者发出的都被熔断器挡下：队列里没有一家接得住这个模型。
+                // 这是映射配置的问题，报给客户端的是「模型路由未配置」，不是「供应商不可用」。
+                self.record_failed_request(error.to_string()).await;
+                return Err(ForwardError {
+                    error,
+                    provider: unmapped_provider,
+                    outbound_model: None,
+                });
             }
         }
 

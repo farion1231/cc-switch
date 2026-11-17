@@ -405,6 +405,18 @@ export function SwitchModePanel({
       />,
     );
   }
+  // Desktop 只在启动时读模型列表：转移到别家后界面上还是原来那家的名字，先说清楚。
+  if (app === "claude-desktop" && active === "route" && failoverOn) {
+    notices.push(
+      <Notice
+        key="desktopFailover"
+        tone="neutral"
+        title={t("claudeDesktop.failoverTitle")}
+      >
+        {t("claudeDesktop.failoverNote")}
+      </Notice>,
+    );
+  }
   if (desktopMessages.length > 0) {
     notices.push(
       <Notice

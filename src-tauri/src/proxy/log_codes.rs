@@ -32,4 +32,6 @@ pub mod fwd {
     pub const ALL_PROVIDERS_FAILED: &str = "FWD-002";
     pub const SINGLE_PROVIDER_FAILED: &str = "FWD-003";
     pub const CIRCUIT_SKIPPED: &str = "FWD-004";
+    /// Claude Desktop 故障转移：这家的映射表里没有请求的模型，没发请求就跳过了
+    pub const MODEL_UNMAPPED_SKIPPED: &str = "FWD-005";
 }

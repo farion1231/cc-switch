@@ -894,11 +894,18 @@ pub fn model_list_response(provider: &Provider) -> Result<Value, AppError> {
 }
 
 pub fn map_proxy_request_model(mut body: Value, provider: &Provider) -> Result<Value, AppError> {
+    let upstream_model = proxy_request_upstream_model(&body, provider)?;
+    body["model"] = json!(upstream_model);
+    Ok(normalize_upstream_request(body, provider))
+}
+
+/// 这家能不能接这个请求的模型：只查映射，不改请求体。故障转移换家前先问一遍，查不到的那家
+/// 跳过（Desktop 发来的是进入路由时那家的模型名，别家的映射表不一定有）。
+pub fn proxy_request_upstream_model(body: &Value, provider: &Provider) -> Result<String, AppError> {
     let requested_raw = body
         .get("model")
         .and_then(Value::as_str)
         .map(str::trim)
-        .map(str::to_string)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| {
             AppError::localized(
@@ -907,15 +914,14 @@ pub fn map_proxy_request_model(mut body: Value, provider: &Provider) -> Result<V
                 "Claude Desktop request is missing the model field",
             )
         })?;
-    let requested = strip_one_m_suffix_for_route_lookup(&requested_raw);
+    let requested = strip_one_m_suffix_for_route_lookup(requested_raw);
 
     let routes = proxy_model_routes(provider)?;
     // 默认列表只提供进入路由时的角色菜单，不把原生的日期后缀或版本别名改成默认 ID。
     if uses_default_proxy_routes(provider) && is_claude_safe_model_id(requested) {
-        body["model"] = json!(requested);
-        return Ok(normalize_upstream_request(body, provider));
+        return Ok(requested.to_string());
     }
-    let upstream_model = routes
+    routes
         .iter()
         .find(|r| r.route_id == requested)
         .or_else(|| {
@@ -959,10 +965,7 @@ pub fn map_proxy_request_model(mut body: Value, provider: &Provider) -> Result<V
                 format!("Claude Desktop 模型路由未配置: {requested_raw}"),
                 format!("Claude Desktop model route is not configured: {requested_raw}"),
             )
-        })?;
-
-    body["model"] = json!(upstream_model);
-    Ok(normalize_upstream_request(body, provider))
+        })
 }
 
 /// 请求体的 `model` 已经是上游名（路由映射过，或聚合模型直接解出了上游名）之后，按上游的

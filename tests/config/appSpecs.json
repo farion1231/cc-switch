@@ -9,7 +9,7 @@
   {
     "id": "claude-desktop",
     "additive": false,
-    "localProxy": false,
+    "localProxy": true,
     "routeMode": true,
     "stack": true
   },

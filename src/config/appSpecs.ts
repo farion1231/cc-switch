@@ -10,10 +10,7 @@ import type { AppId } from "@/lib/api/types";
 export interface AppCaps {
   /** 有完整的本地路由和故障转移（后端 `AppSpec::local_proxy`） */
   localProxy: boolean;
-  /**
-   * 有直连 / 路由模式（后端 `AppSpec::route_mode`）。Claude Desktop 经同一个路由服务转发，
-   * 但没有故障转移和路由设置，所以它是 `routeMode` 而不是 `localProxy`。
-   */
+  /** 有直连 / 路由模式（后端 `AppSpec::route_mode`） */
   routeMode: boolean;
   /** 支持 Stack 模式（后端 `AppSpec::stack`） */
   stack: boolean;
@@ -60,7 +57,7 @@ export const APP_SPECS = {
     officialSubscription: true,
   },
   "claude-desktop": {
-    localProxy: false,
+    localProxy: true,
     routeMode: true,
     stack: true,
     additive: false,
@@ -272,10 +269,10 @@ export const APP_IDS_WITH = Object.fromEntries(
   ]),
 ) as { [Cap in keyof AppCaps]: AppIdWith<Cap>[] };
 
-/** 有路由模式的应用，本地路由的在前、Claude Desktop 在最后（后端 `route_mode_apps` 同序） */
+/** 有路由模式的应用，Claude Desktop 在最后（后端 `route_mode_apps` 同序） */
 export const ROUTE_MODE_APP_IDS: AppIdWith<"routeMode">[] = [
-  ...APP_IDS_WITH.localProxy,
-  ...APP_IDS_WITH.routeMode.filter((app) => !APP_SPECS[app].localProxy),
+  ...APP_IDS_WITH.routeMode.filter((app) => app !== "claude-desktop"),
+  ...APP_IDS_WITH.routeMode.filter((app) => app === "claude-desktop"),
 ];
 
 /** `app` 支持 `cap`；不认识的应用 ID 为 false */

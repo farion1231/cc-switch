@@ -370,18 +370,15 @@ describe("SwitchModePanel — Stack mode", () => {
 });
 
 describe("SwitchModePanel — Claude Desktop", () => {
-  it("offers all three modes, without failover or route settings", async () => {
+  it("offers all three modes, with the failover switch in route mode", async () => {
     mockMode("route", "map", "direct");
-    let failoverReads = 0;
     server.use(
-      http.post(`${TAURI_ENDPOINT}/get_auto_failover_enabled`, () => {
-        failoverReads += 1;
-        return HttpResponse.json(false);
-      }),
-      http.post(`${TAURI_ENDPOINT}/get_failover_queue`, () => {
-        failoverReads += 1;
-        return HttpResponse.json([]);
-      }),
+      http.post(`${TAURI_ENDPOINT}/get_auto_failover_enabled`, () =>
+        HttpResponse.json(false),
+      ),
+      http.post(`${TAURI_ENDPOINT}/get_failover_queue`, () =>
+        HttpResponse.json([]),
+      ),
     );
 
     renderPanel("claude-desktop", {
@@ -395,8 +392,35 @@ describe("SwitchModePanel — Claude Desktop", () => {
     expect(
       screen.getByRole("button", { name: /mode\.names\.stack/ }),
     ).toBeInTheDocument();
-    expect(screen.queryByRole("switch")).not.toBeInTheDocument();
-    expect(failoverReads).toBe(0);
+    expect(
+      screen.getByRole("switch", { name: "mode.failover" }),
+    ).not.toBeChecked();
+    // 关着时不提示
+    expect(
+      screen.queryByText("claudeDesktop.failoverNote"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("explains the stale model list while failover is on", async () => {
+    mockMode("route", "map", "direct");
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_auto_failover_enabled`, () =>
+        HttpResponse.json(true),
+      ),
+      http.post(`${TAURI_ENDPOINT}/get_failover_queue`, () =>
+        HttpResponse.json([]),
+      ),
+    );
+
+    renderPanel("claude-desktop", {
+      direct: provider("direct"),
+      map: provider("map"),
+    });
+
+    expect(
+      await screen.findByText("claudeDesktop.failoverNote"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "mode.failover" })).toBeChecked();
   });
 
   it("enters Stack with Desktop's own notes and asks for a restart", async () => {

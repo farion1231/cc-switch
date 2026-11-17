@@ -5274,6 +5274,146 @@ mod bookkeeping {
         assert_eq!(requests[1]["model"], "kimi-k3");
     }
 
+    /// Claude Desktop 的模型映射卡：`routes` 是 (Desktop 看到的名字, 上游模型)。
+    fn desktop_provider(id: &str, upstream: &Upstream, routes: &[(&str, &str)]) -> Provider {
+        let mut provider = provider(id, upstream);
+        provider.meta = Some(crate::provider::ProviderMeta {
+            claude_desktop_mode: Some(crate::provider::ClaudeDesktopMode::Proxy),
+            claude_desktop_model_routes: routes
+                .iter()
+                .map(|(route, model)| {
+                    (
+                        route.to_string(),
+                        crate::provider::ClaudeDesktopModelRoute {
+                            model: model.to_string(),
+                            label_override: None,
+                            supports_1m: None,
+                        },
+                    )
+                })
+                .collect(),
+            ..Default::default()
+        });
+        provider
+    }
+
+    async fn send_desktop(
+        forwarder: &RequestForwarder,
+        providers: Vec<Provider>,
+        model: &str,
+    ) -> Result<ForwardResult, ForwardError> {
+        let mut body = plain_body();
+        body["model"] = json!(model);
+        forwarder
+            .forward_with_retry(
+                &AppType::ClaudeDesktop,
+                http::Method::POST,
+                "/v1/messages",
+                &body,
+                HeaderMap::new(),
+                Extensions::new(),
+                &providers,
+            )
+            .await
+    }
+
+    async fn desktop_breaker_untouched(forwarder: &RequestForwarder, provider_id: &str) -> bool {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        forwarder
+            .router
+            .get_circuit_breaker_stats(provider_id, &AppType::ClaudeDesktop)
+            .await
+            .is_none()
+    }
+
+    /// Desktop 发的是进入路由时那家的模型名。故障转移换家时按新这家的映射表改写；
+    /// 名字不完全一样时按档位（sonnet / opus / haiku）落到同档。
+    #[tokio::test]
+    async fn claude_desktop_failover_maps_the_model_for_the_next_provider() {
+        let first = upstream(vec![error(503, "overloaded")]).await;
+        let second = upstream(vec![ok()]).await;
+        let a = desktop_provider("a", &first, &[("claude-sonnet-5", "a-sonnet")]);
+        let b = desktop_provider("b", &second, &[("claude-sonnet-4-6", "b-sonnet")]);
+        let fwd = forwarder(4, "a").failover_chain(true);
+
+        send_desktop(&fwd, vec![a, b], "claude-sonnet-5")
+            .await
+            .map_err(|e| e.error)
+            .expect("failed over");
+
+        assert_eq!(first.requests.lock().await[0]["model"], "a-sonnet");
+        assert_eq!(second.requests.lock().await[0]["model"], "b-sonnet");
+    }
+
+    /// 队列里某家的映射表接不住请求的模型：不发请求就跳过，不占尝试次数、不记熔断器，
+    /// 接着试下一家。
+    #[tokio::test]
+    async fn claude_desktop_failover_skips_a_provider_without_the_route() {
+        let first = upstream(vec![error(503, "overloaded")]).await;
+        let second = upstream(vec![]).await;
+        let third = upstream(vec![ok()]).await;
+        let a = desktop_provider("a", &first, &[("claude-sonnet-5", "a-sonnet")]);
+        let b = desktop_provider("b", &second, &[("claude-opus-5", "b-opus")]);
+        let c = desktop_provider("c", &third, &[("claude-sonnet-5", "c-sonnet")]);
+        // 最多两次尝试：跳过的那家要是占了名额，就轮不到第三家
+        let fwd = forwarder(2, "a").failover_chain(true);
+
+        send_desktop(&fwd, vec![a, b, c], "claude-sonnet-5")
+            .await
+            .map_err(|e| e.error)
+            .expect("failed over past the provider without the route");
+
+        assert!(second.requests.lock().await.is_empty());
+        assert_eq!(third.requests.lock().await[0]["model"], "c-sonnet");
+        assert!(desktop_breaker_untouched(&fwd, "b").await);
+    }
+
+    /// 队列里没有一家接得住：报「模型路由未配置」，不是「供应商不可用」，也不发请求。
+    #[tokio::test]
+    async fn claude_desktop_failover_reports_the_route_when_no_provider_has_it() {
+        let first = upstream(vec![]).await;
+        let second = upstream(vec![]).await;
+        let a = desktop_provider("a", &first, &[("claude-opus-5", "a-opus")]);
+        let b = desktop_provider("b", &second, &[("claude-opus-5", "b-opus")]);
+        let fwd = forwarder(4, "a").failover_chain(true);
+
+        let error = send_desktop(&fwd, vec![a, b], "claude-sonnet-5")
+            .await
+            .map(|_| ())
+            .map_err(|e| e.error)
+            .expect_err("no provider maps the model");
+
+        assert!(
+            matches!(&error, ProxyError::InvalidRequest(message) if message.contains("claude-sonnet-5")),
+            "{error:?}"
+        );
+        assert!(first.requests.lock().await.is_empty());
+        assert!(second.requests.lock().await.is_empty());
+        assert_eq!(books(&fwd).await.failed, 1);
+    }
+
+    /// 有一家真的失败过时，报的是那次失败，不被后面跳过的那家盖掉。
+    #[tokio::test]
+    async fn claude_desktop_failover_keeps_the_upstream_error_over_a_skipped_provider() {
+        let first = upstream(vec![error(503, "overloaded")]).await;
+        let second = upstream(vec![]).await;
+        let a = desktop_provider("a", &first, &[("claude-sonnet-5", "a-sonnet")]);
+        let b = desktop_provider("b", &second, &[("claude-opus-5", "b-opus")]);
+        let fwd = forwarder(4, "a").failover_chain(true);
+
+        let error = send_desktop(&fwd, vec![a, b], "claude-sonnet-5")
+            .await
+            .map(|_| ())
+            .map_err(|e| e.error)
+            .expect_err("the only mapped provider failed");
+
+        assert!(
+            matches!(error, ProxyError::UpstreamError { status: 503, .. }),
+            "{error:?}"
+        );
+        assert!(second.requests.lock().await.is_empty());
+    }
+
     #[tokio::test]
     async fn stacked_requests_stay_stacked_through_rectifier_retries() {
         let up = upstream(vec![error(400, SIGNATURE_ERROR), ok()]).await;

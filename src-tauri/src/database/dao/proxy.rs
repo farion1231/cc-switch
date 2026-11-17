@@ -24,7 +24,56 @@ fn validate_pricing_source(value: &str) -> Result<&str, AppError> {
     }
 }
 
+/// Claude Desktop 的应用级配置。`proxy_config` 表的 CHECK 不收 `claude-desktop`，加一行就要
+/// 重建表、升数据库版本，所以这一份整体存成 `settings` 表里的一条 JSON；读写都走下面几个
+/// 函数，调用方按应用名取，不用管存在哪。
+const DESKTOP_APP_TYPE: &str = "claude-desktop";
+const DESKTOP_PROXY_CONFIG_KEY: &str = "claude_desktop_proxy_config";
+const DESKTOP_PRICING_SOURCE_KEY: &str = "claude_desktop_pricing_model_source";
+
+/// 还没存过时的默认值：重试、超时、熔断参数和 Claude Code 那一行的 seed 一致。
+fn desktop_default_proxy_config() -> AppProxyConfig {
+    AppProxyConfig {
+        app_type: DESKTOP_APP_TYPE.to_string(),
+        enabled: false,
+        auto_failover_enabled: false,
+        max_retries: 6,
+        streaming_first_byte_timeout: 90,
+        streaming_idle_timeout: 180,
+        non_streaming_timeout: 600,
+        circuit_failure_threshold: 8,
+        circuit_success_threshold: 3,
+        circuit_timeout_seconds: 90,
+        circuit_error_rate_threshold: 0.7,
+        circuit_min_requests: 15,
+    }
+}
+
 impl Database {
+    // ==================== Claude Desktop（存在 settings 表） ====================
+
+    fn desktop_proxy_config(&self) -> Result<AppProxyConfig, AppError> {
+        let Some(raw) = self.get_setting(DESKTOP_PROXY_CONFIG_KEY)? else {
+            return Ok(desktop_default_proxy_config());
+        };
+        match serde_json::from_str::<AppProxyConfig>(&raw) {
+            Ok(mut config) => {
+                config.app_type = DESKTOP_APP_TYPE.to_string();
+                Ok(config)
+            }
+            Err(error) => {
+                log::warn!("Claude Desktop 的路由配置解析不了，按默认值处理: {error}");
+                Ok(desktop_default_proxy_config())
+            }
+        }
+    }
+
+    fn save_desktop_proxy_config(&self, config: &AppProxyConfig) -> Result<(), AppError> {
+        let raw = serde_json::to_string(config)
+            .map_err(|e| AppError::Database(format!("序列化 Claude Desktop 路由配置失败: {e}")))?;
+        self.set_setting(DESKTOP_PROXY_CONFIG_KEY, &raw)
+    }
+
     // ==================== Global Proxy Config ====================
 
     /// 获取全局代理配置（统一字段）
@@ -94,6 +143,12 @@ impl Database {
 
     /// 获取计费模式来源
     pub async fn get_pricing_model_source(&self, app_type: &AppType) -> Result<String, AppError> {
+        if *app_type == AppType::ClaudeDesktop {
+            return Ok(self
+                .get_setting(DESKTOP_PRICING_SOURCE_KEY)?
+                .filter(|value| validate_pricing_source(value).is_ok())
+                .unwrap_or_else(|| PRICING_SOURCE_RESPONSE.to_string()));
+        }
         let result = {
             let conn = lock_conn!(self.conn);
             conn.query_row(
@@ -120,6 +175,9 @@ impl Database {
         value: &str,
     ) -> Result<(), AppError> {
         let trimmed = validate_pricing_source(value)?;
+        if *app_type == AppType::ClaudeDesktop {
+            return self.set_setting(DESKTOP_PRICING_SOURCE_KEY, trimmed);
+        }
 
         // 确保行存在
         self.ensure_proxy_config_row_exists(app_type)?;
@@ -142,6 +200,9 @@ impl Database {
         &self,
         app_type: &AppType,
     ) -> Result<AppProxyConfig, AppError> {
+        if *app_type == AppType::ClaudeDesktop {
+            return self.desktop_proxy_config();
+        }
         // 使用 block 限制 conn 的作用域，避免跨 await 持有锁
         let result = {
             let conn = lock_conn!(self.conn);
@@ -200,6 +261,9 @@ impl Database {
         &self,
         config: AppProxyConfig,
     ) -> Result<(), AppError> {
+        if config.app_type == DESKTOP_APP_TYPE {
+            return self.save_desktop_proxy_config(&config);
+        }
         let conn = lock_conn!(self.conn);
 
         conn.execute(
@@ -578,6 +642,12 @@ impl Database {
     }
 
     pub fn get_proxy_flags_sync(&self, app_type: &AppType) -> (bool, bool) {
+        if *app_type == AppType::ClaudeDesktop {
+            return self
+                .desktop_proxy_config()
+                .map(|config| (config.enabled, config.auto_failover_enabled))
+                .unwrap_or((false, false));
+        }
         let conn = match lock_recovering(&self.conn) {
             Ok(c) => c,
             Err(_) => return (false, false),
@@ -600,6 +670,12 @@ impl Database {
         enabled: bool,
         auto_failover_enabled: bool,
     ) -> Result<(), AppError> {
+        if *app_type == AppType::ClaudeDesktop {
+            let mut config = self.desktop_proxy_config()?;
+            config.enabled = enabled;
+            config.auto_failover_enabled = auto_failover_enabled;
+            return self.save_desktop_proxy_config(&config);
+        }
         let conn = lock_conn!(self.conn);
 
         conn.execute(
@@ -647,6 +723,66 @@ mod tests {
             }
         ));
 
+        Ok(())
+    }
+
+    /// Claude Desktop 没有 `proxy_config` 行（表的 CHECK 不收），整份配置存在 settings 表里，
+    /// 但读写接口和其它应用一样。
+    #[tokio::test]
+    async fn claude_desktop_config_round_trips_without_a_proxy_config_row() -> Result<(), AppError>
+    {
+        let db = Database::memory()?;
+
+        let mut config = db.get_proxy_config_for_app(&AppType::ClaudeDesktop).await?;
+        assert_eq!(config.app_type, "claude-desktop");
+        assert!(!config.enabled && !config.auto_failover_enabled);
+        assert_eq!(
+            db.get_proxy_flags_sync(&AppType::ClaudeDesktop),
+            (false, false)
+        );
+
+        config.auto_failover_enabled = true;
+        config.max_retries = 2;
+        db.update_proxy_config_for_app(config).await?;
+        let saved = db.get_proxy_config_for_app(&AppType::ClaudeDesktop).await?;
+        assert!(saved.auto_failover_enabled);
+        assert_eq!(saved.max_retries, 2);
+
+        // 只改两个开关，其余参数留着
+        db.set_proxy_flags_sync(&AppType::ClaudeDesktop, true, false)?;
+        assert_eq!(
+            db.get_proxy_flags_sync(&AppType::ClaudeDesktop),
+            (true, false)
+        );
+        assert_eq!(
+            db.get_proxy_config_for_app(&AppType::ClaudeDesktop)
+                .await?
+                .max_retries,
+            2
+        );
+
+        db.set_pricing_model_source(&AppType::ClaudeDesktop, "request")
+            .await?;
+        assert_eq!(
+            db.get_pricing_model_source(&AppType::ClaudeDesktop).await?,
+            "request"
+        );
+
+        // 其它应用的行不受影响，表里也没有多出 Desktop 的行
+        assert!(
+            !db.get_proxy_config_for_app(&AppType::Claude)
+                .await?
+                .auto_failover_enabled
+        );
+        let conn = db.conn.lock().unwrap();
+        let rows: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM proxy_config WHERE app_type = 'claude-desktop'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(rows, 0);
         Ok(())
     }
 }

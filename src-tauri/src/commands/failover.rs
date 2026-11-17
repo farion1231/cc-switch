@@ -27,7 +27,18 @@ fn require_failover_provider(
         .map_err(|error| error.to_string())?
         .ok_or_else(|| format!("供应商不存在: {provider_id}"))?;
     if !crate::proxy::provider_router::provider_supports_failover(app_type, &provider) {
-        return Err("Codex Official 账号卡不支持自动故障转移".to_string());
+        return Err(if *app_type == crate::app_config::AppType::ClaudeDesktop {
+            "Claude Desktop 官方账号不经过本地路由，不支持自动故障转移 (The Claude Desktop official account does not go through local routing and cannot join failover)"
+                .to_string()
+        } else {
+            "Codex Official 账号卡不支持自动故障转移".to_string()
+        });
+    }
+    // Claude Desktop 换到这家时要按它的模型映射改写请求：缺地址、缺 Key 或映射表解析不了的卡
+    // 转移过去也发不出请求，入队时就拒绝。
+    if *app_type == crate::app_config::AppType::ClaudeDesktop {
+        crate::claude_desktop_config::validate_proxy_provider(&provider)
+            .map_err(|error| error.to_string())?;
     }
     Ok(provider)
 }
@@ -43,6 +54,7 @@ mod tests {
     #[test]
     fn failover_rejects_apps_without_a_proxy_data_plane() {
         assert!(require_failover_app("claude").is_ok());
+        assert!(require_failover_app("claude-desktop").is_ok());
         assert!(require_failover_app("pi").is_err());
     }
 
@@ -68,6 +80,70 @@ mod tests {
             .expect("save official");
 
         assert!(require_failover_provider(&db, &AppType::Codex, &official.id).is_err());
+    }
+
+    /// Claude Desktop：官方账号不经路由，不能入队；缺 Key 的卡转移过去发不出请求，也不能；
+    /// 配好地址、Key 和模型映射的卡可以。
+    #[test]
+    fn failover_checks_claude_desktop_cards_before_queueing() {
+        let db = Database::memory().expect("memory db");
+        let official = Provider::with_id(
+            "claude-desktop-official".to_string(),
+            "Claude Desktop Official".to_string(),
+            json!({}),
+            None,
+        );
+        let mapping = |id: &str, key: &str| {
+            let mut provider = Provider::with_id(
+                id.to_string(),
+                id.to_string(),
+                json!({ "env": {
+                    "ANTHROPIC_BASE_URL": "https://example.com",
+                    "ANTHROPIC_AUTH_TOKEN": key,
+                }}),
+                None,
+            );
+            provider.meta = Some(ProviderMeta {
+                claude_desktop_mode: Some(crate::provider::ClaudeDesktopMode::Proxy),
+                claude_desktop_model_routes: [(
+                    "claude-sonnet-5".to_string(),
+                    crate::provider::ClaudeDesktopModelRoute {
+                        model: "kimi-k3".to_string(),
+                        label_override: None,
+                        supports_1m: None,
+                    },
+                )]
+                .into_iter()
+                .collect(),
+                ..Default::default()
+            });
+            provider
+        };
+        let ready = mapping("ready", "sk-test");
+        let keyless = mapping("keyless", "");
+        for provider in [&official, &ready, &keyless] {
+            db.save_provider(&crate::app_config::AppType::ClaudeDesktop, provider)
+                .expect("save");
+        }
+
+        assert!(require_failover_provider(
+            &db,
+            &crate::app_config::AppType::ClaudeDesktop,
+            &official.id
+        )
+        .is_err());
+        assert!(require_failover_provider(
+            &db,
+            &crate::app_config::AppType::ClaudeDesktop,
+            &keyless.id
+        )
+        .is_err());
+        assert!(require_failover_provider(
+            &db,
+            &crate::app_config::AppType::ClaudeDesktop,
+            &ready.id
+        )
+        .is_ok());
     }
 }
 

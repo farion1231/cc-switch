@@ -21,8 +21,14 @@ pub struct ProviderPermit {
 /// Codex Official requests carry the selected account's native Authorization
 /// header. Reusing that request against another account card would cross the
 /// account boundary, so these cards must never participate in provider retry.
+///
+/// Claude Desktop 的官方账号不经过本地路由，同样不进队列。
 pub(crate) fn provider_supports_failover(app_type: &AppType, provider: &Provider) -> bool {
-    *app_type != AppType::Codex || !crate::proxy::providers::is_codex_official_provider(provider)
+    match app_type {
+        AppType::Codex => !crate::proxy::providers::is_codex_official_provider(provider),
+        AppType::ClaudeDesktop => !crate::claude_desktop_config::is_official_provider(provider),
+        _ => true,
+    }
 }
 
 /// 供应商路由器

@@ -330,6 +330,8 @@
     "statusMissingRouteMappings": "路由那家没有有效的模型映射；请编辑它，补全至少一个模型映射。",
     "statusGatewayTokenMissing": "当前本地路由 token 尚未生成；重新切换该供应商会写入新的本地 token。",
     "statusBaseUrlMismatch": "Claude Desktop profile 指向的地址与当前供应商不一致；当前为 {{actual}}，应为 {{expected}}。重新切换当前供应商可修复。",
+    "failoverTitle": "故障转移已开启",
+    "failoverNote": "转移到队列里的下一家后，Claude Desktop 里显示的仍是进入路由时那家的模型名，实际请求按新这家的模型映射发送；映射表里没有对应模型的供应商会被跳过。重启 Claude Desktop 后模型列表才会更新。",
     "route": {
       "tooltip": {
         "active": "Claude Desktop 本地路由已开启 - {{address}}:{{port}}",
