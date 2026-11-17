@@ -87,7 +87,7 @@ pub struct DiscoverableSkill {
     /// 仓库里 SKILL.md 的网页地址
     #[serde(rename = "readmeUrl")]
     pub readme_url: Option<String>,
-    /// 仓库所在主机：`github.com`，或 GitLab 实例的主机名（可带端口）
+    /// 仓库所在主机：`github.com`，或 GitLab / Gitea 实例的主机名（可带端口）
     #[serde(rename = "repoHost", default = "default_repo_host")]
     pub repo_host: String,
     /// 仓库所有者（GitLab 是分组路径，可含 `/`）
@@ -104,7 +104,8 @@ pub struct DiscoverableSkill {
 /// 仓库配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillRepo {
-    /// 仓库所在主机：`github.com` 走 GitHub，其余一律按 GitLab 处理（自建实例可带端口）。
+    /// 仓库所在主机：`github.com` 走 GitHub，其余是 GitLab 或 Gitea / Forgejo 实例
+    /// （可带端口），具体是哪种下载前探测一次，见 [`RepoPlatform`]。
     ///
     /// 只是仓库的一个属性，不参与身份：`skill_repos` 的主键仍是 (owner, name)，
     /// 所以同一个 owner/name 不能同时存在于两个主机上，后加的会替换先加的。
@@ -131,6 +132,17 @@ impl SkillRepo {
     pub fn is_github(&self) -> bool {
         self.host == GITHUB_HOST
     }
+}
+
+/// 仓库主机跑的是哪种代码托管平台，决定归档下载地址和文档链接的格式。
+///
+/// 不入库：它是主机的属性，不是仓库的属性，下载前向主机探测一次、按主机记在内存里
+/// （[`SkillService::resolve_platform`]）。Forgejo（Codeberg）与 Gitea 接口相同，归 `Gitea`。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RepoPlatform {
+    GitHub,
+    GitLab,
+    Gitea,
 }
 
 /// 技能安装状态（旧版兼容）
@@ -406,6 +418,11 @@ const MAX_ARCHIVE_DOWNLOAD_BYTES: u64 = MAX_ARCHIVE_TOTAL_BYTES;
 /// 技能归档下载请求的 User-Agent。
 const SKILL_DOWNLOAD_USER_AGENT: &str = concat!("CC-Switch/", env!("CARGO_PKG_VERSION"));
 
+/// 平台探测的超时：它排在下载前面，占的是调用方那 60 秒的下载预算
+const PLATFORM_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+/// 平台探测最多读这么多响应体。Gitea 的回答只有几十个字节
+const PLATFORM_PROBE_MAX_BODY_BYTES: usize = 4 * 1024;
+
 /// 技能元数据 (从 SKILL.md 解析)
 #[derive(Debug, Clone, Deserialize)]
 pub struct SkillMetadata {
@@ -594,6 +611,8 @@ pub struct SkillService {
     /// 发现要把每个仓库的归档整包下下来，添加、启用仓库或导入后的重拉不该把
     /// 没变的仓库再下一遍；手动刷新会绕过它（`force_refresh`）。
     discovery_cache: Mutex<HashMap<RepoCacheKey, (Instant, Vec<DiscoverableSkill>)>>,
+    /// 主机 → 平台的探测结果，进程内有效。只记探明的，见 `resolve_platform`。
+    platform_cache: Mutex<HashMap<String, RepoPlatform>>,
 }
 
 /// host / owner / name / branch（branch 是配置值，不是解析后的分支）
@@ -614,6 +633,7 @@ impl SkillService {
             #[cfg(test)]
             repo_fixture: None,
             discovery_cache: Mutex::new(HashMap::new()),
+            platform_cache: Mutex::new(HashMap::new()),
         }
     }
 
@@ -622,6 +642,7 @@ impl SkillService {
     /// 坐标不合法时返回 None：这个值会存进 `readme_url`，前端「查看文档」用
     /// `openExternal` 直接打开，恶意 branch 能把它指到该主机上的任意路径。
     fn build_skill_doc_url(
+        platform: RepoPlatform,
         host: &str,
         owner: &str,
         repo: &str,
@@ -632,35 +653,49 @@ impl SkillService {
             log::warn!("跳过非法仓库坐标的文档链接: {host}/{owner}/{repo}@{branch}");
             return None;
         }
+        // 主机才是准绳：`github.com` 不管传进来什么平台都按 GitHub 拼
         Some(if host == GITHUB_HOST {
             format!("https://github.com/{owner}/{repo}/blob/{branch}/{doc_path}")
+        } else if platform == RepoPlatform::Gitea {
+            format!("https://{host}/{owner}/{repo}/src/branch/{branch}/{doc_path}")
         } else {
             format!("https://{host}/{owner}/{repo}/-/blob/{branch}/{doc_path}")
         })
     }
 
-    /// 从旧 readme_url 中提取仓库内文档路径，兼容 `blob`/`tree` 两种格式
+    /// 从旧 readme_url 中提取仓库内文档路径，兼容 GitHub 的 `blob` / `tree`、
+    /// GitLab 的 `-/blob`、Gitea 的 `src/branch`
     fn extract_doc_path_from_url(url: &str) -> Option<String> {
-        // GitLab 的地址是 `…/-/blob/…`，先认它：分组名本身可以叫 blob / tree，
-        // 只找 `/blob/` 会切在分组路径上。
-        let marker = if url.contains("/-/blob/") {
-            "/-/blob/"
-        } else if url.contains("/-/tree/") {
-            "/-/tree/"
-        } else if url.contains("/blob/") {
-            "/blob/"
-        } else if url.contains("/tree/") {
-            "/tree/"
-        } else {
-            return None;
-        };
-
-        let (_, tail) = url.split_once(marker)?;
-        let (_, path) = tail.split_once('/')?;
+        let (_, path) = Self::doc_url_ref_and_path(url)?.split_once('/')?;
         if path.is_empty() {
             return None;
         }
         Some(path.to_string())
+    }
+
+    /// 文档链接里平台标记之后的部分：`<分支>/<仓库内路径>`。
+    fn doc_url_ref_and_path(url: &str) -> Option<&str> {
+        // GitLab 的地址是 `…/-/blob/…`，先认它：分组可以嵌套、分组名本身可以叫
+        // blob / tree，只有 `/-/` 能说明项目路径到哪里结束。
+        for marker in ["/-/blob/", "/-/tree/"] {
+            if let Some((_, tail)) = url.split_once(marker) {
+                return Some(tail);
+            }
+        }
+        // GitHub 与 Gitea 的仓库固定是 `主机/owner/repo` 三段，标记紧跟其后。按位置认，
+        // 不在整条地址里搜：仓库可以叫 `tree`，仓库里也可以有 `blob/`、`src/branch/` 目录。
+        let anchored = url.split_once("://").and_then(|(_, rest)| {
+            let after_repo = rest.splitn(4, '/').nth(3)?;
+            ["src/branch/", "blob/", "tree/"]
+                .into_iter()
+                .find_map(|marker| after_repo.strip_prefix(marker))
+        });
+        // 都对不上的旧地址（比如不带 `/-/` 的老式 GitLab 链接）沿用原来的搜法
+        anchored.or_else(|| {
+            ["/blob/", "/tree/"]
+                .into_iter()
+                .find_map(|marker| url.split_once(marker).map(|(_, tail)| tail))
+        })
     }
 
     // ========== 路径管理 ==========
@@ -1016,7 +1051,10 @@ impl SkillService {
             &skill.directory,
         );
 
+        // 目标目录已存在时上面没下载，这个主机可能还没探测过（重启后界面先显示
+        // 上次的发现结果），所以平台要参考发现时给出的链接。
         let readme_url = Self::build_skill_doc_url(
+            self.platform_for_doc_url(skill),
             &skill.repo_host,
             &skill.repo_owner,
             &skill.repo_name,
@@ -1788,7 +1826,14 @@ impl SkillService {
             skill.readme_url.as_deref(),
             &skill.directory,
         );
-        let readme_url = Self::build_skill_doc_url(&host, &owner, &name, &used_branch, &doc_path);
+        let readme_url = Self::build_skill_doc_url(
+            self.known_platform(&host),
+            &host,
+            &owner,
+            &name,
+            &used_branch,
+            &doc_path,
+        );
 
         let updated_metadata = InstalledSkill {
             id: skill.id.clone(),
@@ -3549,6 +3594,7 @@ impl SkillService {
             description: meta.description.unwrap_or_default(),
             directory: directory.to_string(),
             readme_url: Self::build_skill_doc_url(
+                self.known_platform(&repo.host),
                 &repo.host,
                 &repo.owner,
                 &repo.name,
@@ -3822,7 +3868,8 @@ impl SkillService {
             })
     }
 
-    /// 按主机分派的仓库坐标校验：`github.com` 用 GitHub 的规则，其余按 GitLab。
+    /// 按主机分派的仓库坐标校验：`github.com` 用 GitHub 的规则，其余按 GitLab
+    /// （分组可以嵌套；Gitea 的 owner 只有一段，是它的子集，拼地址时再收紧）。
     ///
     /// 入库（`add_skill_repo`）和出库（`download_repo`、文档链接）都走这一个函数，
     /// 两头的规则不会走偏。
@@ -3859,12 +3906,131 @@ impl SkillService {
         Self::validate_repo_coords(&repo.host, &repo.owner, &repo.name, &repo.branch)
     }
 
+    /// 主机没探明时按什么平台处理：`github.com` 是 GitHub，其余按 GitLab。
+    fn default_platform(host: &str) -> RepoPlatform {
+        if host == GITHUB_HOST {
+            RepoPlatform::GitHub
+        } else {
+            RepoPlatform::GitLab
+        }
+    }
+
+    /// 只查内存里的探测结果，不联网。
+    ///
+    /// 给拼文档链接用，而且只用在刚下载完的地方（发现、更新）：那里平台已经探明。
+    /// 没探过的主机按 GitLab，与加入 Gitea 之前的行为一致。安装可能跳过下载，
+    /// 走 `platform_for_doc_url`。
+    fn known_platform(&self, host: &str) -> RepoPlatform {
+        self.platform_cache
+            .lock_recover()
+            .get(host)
+            .copied()
+            .unwrap_or_else(|| Self::default_platform(host))
+    }
+
+    /// 给一个待安装的技能重拼文档链接时用哪种平台的格式。
+    ///
+    /// 探测过的主机以探测结果为准；没探测过时看发现阶段给出的链接是不是 Gitea 的
+    /// 形状。链接来自前端，但这里只用它在两种格式之间二选一，最终的地址仍由校验过的
+    /// 坐标重拼，不会把它原样存下来。
+    fn platform_for_doc_url(&self, skill: &DiscoverableSkill) -> RepoPlatform {
+        let host = &skill.repo_host;
+        if let Some(platform) = self.platform_cache.lock_recover().get(host).copied() {
+            return platform;
+        }
+        let gitea_prefix = format!(
+            "https://{host}/{}/{}/src/branch/",
+            skill.repo_owner, skill.repo_name
+        );
+        let looks_like_gitea = host != GITHUB_HOST
+            && skill
+                .readme_url
+                .as_deref()
+                .is_some_and(|url| url.starts_with(&gitea_prefix));
+        if looks_like_gitea {
+            RepoPlatform::Gitea
+        } else {
+            Self::default_platform(host)
+        }
+    }
+
+    /// 判断主机跑的是 GitLab 还是 Gitea，每个主机每次启动只探测一次。
+    ///
+    /// 探测对已有的 GitLab 用户必须无害：请求失败、超时、限流都按 GitLab 继续，
+    /// 而且不记结果，下次下载重新探测。调用方须已校验过 `host`。
+    async fn resolve_platform(&self, host: &str) -> RepoPlatform {
+        if host == GITHUB_HOST || !Self::is_valid_gitlab_host(host) {
+            return Self::default_platform(host);
+        }
+        if let Some(platform) = self.platform_cache.lock_recover().get(host).copied() {
+            return platform;
+        }
+        match Self::probe_platform(host).await {
+            Some(platform) => {
+                self.platform_cache
+                    .lock_recover()
+                    .insert(host.to_string(), platform);
+                platform
+            }
+            None => RepoPlatform::GitLab,
+        }
+    }
+
+    /// 向主机要 `/api/v1/version`：Gitea / Forgejo 不登录就返回 `{"version": "…"}`，
+    /// GitLab 没有这个地址（404，或跳去登录页）。`None` 表示这次没探明。
+    async fn probe_platform(host: &str) -> Option<RepoPlatform> {
+        let url = format!("https://{host}/api/v1/version");
+        let mut response = crate::proxy::http_client::get()
+            .get(&url)
+            .header(reqwest::header::USER_AGENT, SKILL_DOWNLOAD_USER_AGENT)
+            .timeout(PLATFORM_PROBE_TIMEOUT)
+            .send()
+            .await
+            .inspect_err(|e| log::warn!("探测 {host} 的平台失败，按 GitLab 处理: {e}"))
+            .ok()?;
+        let status = response.status().as_u16();
+        // 响应体来自用户填的任意主机：只读开头一小段，够放下版本号就行
+        let mut body = Vec::new();
+        while body.len() < PLATFORM_PROBE_MAX_BODY_BYTES {
+            match response.chunk().await {
+                Ok(Some(chunk)) => body.extend_from_slice(&chunk),
+                Ok(None) => break,
+                Err(e) => {
+                    log::warn!("探测 {host} 的平台失败，按 GitLab 处理: {e}");
+                    return None;
+                }
+            }
+        }
+        Self::classify_platform_probe(status, &body)
+    }
+
+    /// 把探测响应归类。抽成纯函数是为了不联网也能单测这张判定表。
+    ///
+    /// 只有 200 且是带 `version` 字符串的 JSON 才算 Gitea：自建 GitLab 前面常有
+    /// 统一登录或网关，对任何地址都回 200 的网页，不能只看状态码。
+    /// 429 和 5xx 说明这次没问到，返回 `None`，不下结论。
+    fn classify_platform_probe(status: u16, body: &[u8]) -> Option<RepoPlatform> {
+        if status == 429 || status >= 500 {
+            return None;
+        }
+        let is_gitea = status == 200
+            && body.len() <= PLATFORM_PROBE_MAX_BODY_BYTES
+            && serde_json::from_slice::<serde_json::Value>(body)
+                .is_ok_and(|value| value.get("version").is_some_and(|v| v.is_string()));
+        Some(if is_gitea {
+            RepoPlatform::Gitea
+        } else {
+            RepoPlatform::GitLab
+        })
+    }
+
     /// 某个分支的归档下载地址。
     ///
     /// GitLab 走 API 的归档接口而不是网页上的下载链接：分支放在查询参数里，带 `/` 的
     /// 分支名不会和路径混在一起；而且分支不存在、项目不存在都返回 404（网页链接遇到
     /// 不存在或私有的项目会跳去登录页），正好对上 `try_repo_branches` 的换分支规则。
-    fn build_archive_url(repo: &SkillRepo, branch: &str) -> Result<String> {
+    /// Gitea 的 API 归档接口同样两种情况都是 404。
+    fn build_archive_url(repo: &SkillRepo, platform: RepoPlatform, branch: &str) -> Result<String> {
         if repo.is_github() {
             let url = format!(
                 "https://github.com/{}/{}/archive/refs/heads/{}.zip",
@@ -3883,6 +4049,39 @@ impl SkillService {
         };
         let origin = format!("https://{}/", repo.host);
         let mut url = url::Url::parse(&origin).map_err(|_| invalid())?;
+
+        if platform == RepoPlatform::Gitea {
+            // Gitea 没有嵌套分组：owner 只有一段。带 `/` 的是 GitLab 式路径，
+            // 拼进去只会落到别的接口上。
+            if repo.owner.contains('/') {
+                return Err(invalid());
+            }
+            // `/api/v1/repos/{owner}/{repo}/archive/{分支}.zip`，分支里的 `/` 是真的路径分隔
+            let archive = format!("{branch}.zip");
+            let prefix = ["api", "v1", "repos", &repo.owner, &repo.name, "archive"];
+            url.path_segments_mut()
+                .map_err(|_| invalid())?
+                .extend(prefix)
+                .extend(archive.split('/'));
+            // 出口断言：前六段原样落在预期位置，后面只有分支那几段，没有多出查询或片段
+            let segments: Vec<&str> = url
+                .path_segments()
+                .map(Iterator::collect)
+                .unwrap_or_default();
+            if url.scheme() != "https"
+                || !url.username().is_empty()
+                || url.password().is_some()
+                || url.query().is_some()
+                || url.fragment().is_some()
+                || !url.as_str().starts_with(&origin)
+                || segments.len() != prefix.len() + archive.split('/').count()
+                || segments[..prefix.len()] != prefix
+            {
+                return Err(invalid());
+            }
+            return Ok(url.into());
+        }
+
         // 项目路径是 API 路径里的**一段**，`/` 会被编码成 %2F
         let project = format!("{}/{}", repo.owner, repo.name);
         url.path_segments_mut().map_err(|_| invalid())?.extend([
@@ -4143,7 +4342,8 @@ impl SkillService {
             return Ok((temp_dir, repo.branch.clone()));
         }
 
-        let branch = Self::try_repo_branches(repo, temp_path, |url| async move {
+        let platform = self.resolve_platform(&repo.host).await;
+        let branch = Self::try_repo_branches(repo, platform, temp_path, |url| async move {
             self.download_and_extract(&url, temp_path).await
         })
         .await?;
@@ -4157,6 +4357,7 @@ impl SkillService {
     /// 「仓库或分支不存在」。抽成接收 `attempt` 的函数是为了不联网也能单测这条规则。
     async fn try_repo_branches<F, Fut>(
         repo: &SkillRepo,
+        platform: RepoPlatform,
         temp_path: &Path,
         mut attempt: F,
     ) -> Result<String>
@@ -4177,7 +4378,7 @@ impl SkillService {
 
         let mut last_error = None;
         for branch in branches {
-            let url = Self::build_archive_url(repo, branch)?;
+            let url = Self::build_archive_url(repo, platform, branch)?;
 
             match attempt(url).await {
                 Ok(()) => return Ok(branch.to_string()),
@@ -5149,6 +5350,7 @@ fn build_repo_info_from_lock(
             let fallback = format!("{dir_name}/SKILL.md");
             let doc_path = info.skill_path.as_deref().unwrap_or(&fallback);
             let url = SkillService::build_skill_doc_url(
+                RepoPlatform::GitHub,
                 GITHUB_HOST,
                 &info.owner,
                 &info.repo,
@@ -5691,7 +5893,8 @@ mod tests {
     ) -> (Result<String>, Vec<String>) {
         let temp = tempdir().unwrap();
         let mut attempted = Vec::new();
-        let result = SkillService::try_repo_branches(repo, temp.path(), |url| {
+        let platform = SkillService::default_platform(&repo.host);
+        let result = SkillService::try_repo_branches(repo, platform, temp.path(), |url| {
             let branch = url
                 .rsplit('/')
                 .next()
@@ -5907,17 +6110,22 @@ mod tests {
         );
         // 项目路径是一段，`/` 编码成 %2F；分支在查询参数里，带 `/` 也不会混进路径
         assert_eq!(
-            SkillService::build_archive_url(&repo, "feature/env").unwrap(),
+            SkillService::build_archive_url(&repo, RepoPlatform::GitLab, "feature/env").unwrap(),
             "https://gitlab.example.com:8443/api/v4/projects/group%2Fsubgroup%2Fskills/repository/archive.zip?sha=feature%2Fenv"
         );
         // 分支名允许 `&` `=`，不能让它们变成额外的查询参数
         assert_eq!(
-            SkillService::build_archive_url(&repo, "a&ref=b").unwrap(),
+            SkillService::build_archive_url(&repo, RepoPlatform::GitLab, "a&ref=b").unwrap(),
             "https://gitlab.example.com:8443/api/v4/projects/group%2Fsubgroup%2Fskills/repository/archive.zip?sha=a%26ref%3Db"
         );
         // GitHub 的地址不变
         assert_eq!(
-            SkillService::build_archive_url(&branch_fallback_repo("main"), "main").unwrap(),
+            SkillService::build_archive_url(
+                &branch_fallback_repo("main"),
+                RepoPlatform::GitHub,
+                "main"
+            )
+            .unwrap(),
             "https://github.com/acme/skills/archive/refs/heads/main.zip"
         );
     }
@@ -5927,18 +6135,19 @@ mod tests {
         let repo = gitlab_repo("gitlab.com", "group/sub", "skills", "develop");
         let temp = tempdir().unwrap();
         let mut attempted = Vec::new();
-        let result = SkillService::try_repo_branches(&repo, temp.path(), |url| {
-            let found = url.ends_with("?sha=master");
-            attempted.push(url);
-            async move {
-                if found {
-                    Ok(())
-                } else {
-                    Err(http404_error())
+        let result =
+            SkillService::try_repo_branches(&repo, RepoPlatform::GitLab, temp.path(), |url| {
+                let found = url.ends_with("?sha=master");
+                attempted.push(url);
+                async move {
+                    if found {
+                        Ok(())
+                    } else {
+                        Err(http404_error())
+                    }
                 }
-            }
-        })
-        .await;
+            })
+            .await;
         assert_eq!(result.unwrap(), "master");
         let prefix =
             "https://gitlab.com/api/v4/projects/group%2Fsub%2Fskills/repository/archive.zip";
@@ -5956,6 +6165,7 @@ mod tests {
     fn gitlab_doc_url_round_trips_through_extract_doc_path() {
         // 分组名恰好叫 blob：只找 `/blob/` 会切在分组路径上
         let url = SkillService::build_skill_doc_url(
+            RepoPlatform::GitLab,
             "gitlab.example.com",
             "blob/tools",
             "skills",
@@ -5972,6 +6182,7 @@ mod tests {
             Some("demo/SKILL.md")
         );
         assert!(SkillService::build_skill_doc_url(
+            RepoPlatform::GitLab,
             "gitlab.example.com/evil",
             "group",
             "skills",
@@ -5979,6 +6190,238 @@ mod tests {
             "x"
         )
         .is_none());
+    }
+
+    #[test]
+    fn platform_probe_only_treats_a_version_json_as_gitea() {
+        use RepoPlatform::{GitLab, Gitea};
+        let classify = SkillService::classify_platform_probe;
+        // Gitea 与 Forgejo（Codeberg）的真实回答
+        assert_eq!(classify(200, br#"{"version":"1.22.3"}"#), Some(Gitea));
+        assert_eq!(
+            classify(200, br#"{"version":"9.0.3+gitea-1.22.0"}"#),
+            Some(Gitea)
+        );
+        // GitLab 没有这个地址；自建实例前面的网关还可能对任何地址都回 200 的登录页
+        assert_eq!(classify(404, br#"{"error":"404 Not Found"}"#), Some(GitLab));
+        assert_eq!(classify(401, b""), Some(GitLab));
+        assert_eq!(
+            classify(200, b"<!DOCTYPE html><html>Sign in</html>"),
+            Some(GitLab)
+        );
+        assert_eq!(classify(200, br#"{"version":17}"#), Some(GitLab));
+        assert_eq!(classify(200, br#"{"message":"ok"}"#), Some(GitLab));
+        // 没问到就不下结论：限流和服务端错误不能把一个 Gitea 主机记成 GitLab
+        assert_eq!(classify(429, b""), None);
+        assert_eq!(classify(502, br#"{"version":"1.22.3"}"#), None);
+        // 超过读取上限的响应体不解析
+        let mut oversized = br#"{"version":"1","pad":""#.to_vec();
+        oversized.resize(PLATFORM_PROBE_MAX_BODY_BYTES + 1, b'a');
+        oversized.extend_from_slice(br#""}"#);
+        assert_eq!(classify(200, &oversized), Some(GitLab));
+    }
+
+    #[tokio::test]
+    async fn platform_lookup_never_probes_github_and_reuses_what_it_learned() {
+        let service = SkillService::new();
+        // github.com 不联网直接定；没探过的主机拼文档链接时按 GitLab
+        assert_eq!(
+            service.resolve_platform(GITHUB_HOST).await,
+            RepoPlatform::GitHub
+        );
+        assert_eq!(service.known_platform(GITHUB_HOST), RepoPlatform::GitHub);
+        assert_eq!(
+            service.known_platform("git.example.com"),
+            RepoPlatform::GitLab
+        );
+        // 不合法的主机不发请求
+        assert_eq!(
+            service.resolve_platform("git.example.com/evil").await,
+            RepoPlatform::GitLab
+        );
+
+        service
+            .platform_cache
+            .lock_recover()
+            .insert("git.example.com".to_string(), RepoPlatform::Gitea);
+        assert_eq!(
+            service.resolve_platform("git.example.com").await,
+            RepoPlatform::Gitea
+        );
+        assert_eq!(
+            service.known_platform("git.example.com"),
+            RepoPlatform::Gitea
+        );
+    }
+
+    #[test]
+    fn build_archive_url_targets_the_gitea_api() {
+        let build = |repo: &SkillRepo, branch: &str| {
+            SkillService::build_archive_url(repo, RepoPlatform::Gitea, branch)
+        };
+        let repo = gitlab_repo("git.example.com:3000", "team", "skills", "main");
+        assert_eq!(
+            build(&repo, "main").unwrap(),
+            "https://git.example.com:3000/api/v1/repos/team/skills/archive/main.zip"
+        );
+        // 分支里的 `/` 是路径分隔；`&` `=` 留在路径里，变不成查询参数
+        assert_eq!(
+            build(&repo, "feature/env").unwrap(),
+            "https://git.example.com:3000/api/v1/repos/team/skills/archive/feature/env.zip"
+        );
+        assert_eq!(
+            build(&repo, "a&ref=b").unwrap(),
+            "https://git.example.com:3000/api/v1/repos/team/skills/archive/a&ref=b.zip"
+        );
+        // 点段会被 URL 解析吃掉、把落点挪到别的接口上：出口断言拦住
+        assert!(build(&repo, "../../../../user").is_err());
+        // Gitea 的 owner 只有一段，GitLab 式的嵌套分组不是合法坐标
+        let nested = gitlab_repo("git.example.com", "group/sub", "skills", "main");
+        assert!(build(&nested, "main").is_err());
+        // 主机才是准绳：github.com 不会因为传错平台就去打 Gitea 的接口
+        assert_eq!(
+            build(&branch_fallback_repo("main"), "main").unwrap(),
+            "https://github.com/acme/skills/archive/refs/heads/main.zip"
+        );
+    }
+
+    #[tokio::test]
+    async fn branch_fallback_walks_gitea_branches_on_404() {
+        let repo = gitlab_repo("codeberg.org", "team", "skills", "develop");
+        let temp = tempdir().unwrap();
+        let mut attempted = Vec::new();
+        let result =
+            SkillService::try_repo_branches(&repo, RepoPlatform::Gitea, temp.path(), |url| {
+                let found = url.ends_with("/master.zip");
+                attempted.push(url);
+                async move {
+                    if found {
+                        Ok(())
+                    } else {
+                        Err(http404_error())
+                    }
+                }
+            })
+            .await;
+        assert_eq!(result.unwrap(), "master");
+        let prefix = "https://codeberg.org/api/v1/repos/team/skills/archive";
+        assert_eq!(
+            attempted,
+            [
+                format!("{prefix}/develop.zip"),
+                format!("{prefix}/main.zip"),
+                format!("{prefix}/master.zip"),
+            ]
+        );
+    }
+
+    #[test]
+    fn gitea_doc_url_round_trips_through_extract_doc_path() {
+        // 仓库里恰好有个 blob 目录：标记要取最靠前的 `/src/branch/`，不是后面的 `/blob/`
+        let url = SkillService::build_skill_doc_url(
+            RepoPlatform::Gitea,
+            "git.example.com:3000",
+            "team",
+            "skills",
+            "main",
+            "tools/blob/demo/SKILL.md",
+        )
+        .unwrap();
+        assert_eq!(
+            url,
+            "https://git.example.com:3000/team/skills/src/branch/main/tools/blob/demo/SKILL.md"
+        );
+        assert_eq!(
+            SkillService::extract_doc_path_from_url(&url).as_deref(),
+            Some("tools/blob/demo/SKILL.md")
+        );
+        // 标记按位置认，不在整条地址里搜：GitHub 仓库里有 src/branch 目录、
+        // 仓库名或 owner 恰好叫 tree / blob，都不能切错
+        for (url, expected) in [
+            (
+                "https://github.com/o/r/blob/main/src/branch/demo/SKILL.md",
+                "src/branch/demo/SKILL.md",
+            ),
+            (
+                "https://github.com/acme/tree/blob/main/tools/demo/SKILL.md",
+                "tools/demo/SKILL.md",
+            ),
+            (
+                "https://github.com/blob/tree/tree/main/demo/SKILL.md",
+                "demo/SKILL.md",
+            ),
+            (
+                "https://git.example.com/team/blob/src/branch/main/demo/SKILL.md",
+                "demo/SKILL.md",
+            ),
+            // 不带 `/-/` 的老式 GitLab 链接仍按原来的搜法
+            (
+                "https://gitlab.example.com/group/sub/skills/blob/main/demo/SKILL.md",
+                "demo/SKILL.md",
+            ),
+        ] {
+            assert_eq!(
+                SkillService::extract_doc_path_from_url(url).as_deref(),
+                Some(expected),
+                "{url}"
+            );
+        }
+        assert_eq!(
+            SkillService::extract_doc_path_from_url("https://github.com/o/r"),
+            None
+        );
+    }
+
+    #[test]
+    fn doc_url_platform_falls_back_to_the_shape_of_the_discovered_link() {
+        let skill = |host: &str, readme_url: &str| DiscoverableSkill {
+            key: "team/skills:demo".to_string(),
+            name: "demo".to_string(),
+            description: String::new(),
+            directory: "demo".to_string(),
+            readme_url: Some(readme_url.to_string()),
+            repo_host: host.to_string(),
+            repo_owner: "team".to_string(),
+            repo_name: "skills".to_string(),
+            repo_branch: "main".to_string(),
+        };
+        let gitea_link = "https://git.example.com/team/skills/src/branch/main/demo/SKILL.md";
+        let gitlab_link = "https://git.example.com/team/skills/-/blob/main/demo/SKILL.md";
+        let service = SkillService::new();
+
+        // 重启后还没探测过：安装跳过下载时，按发现阶段的链接形状定
+        assert_eq!(
+            service.platform_for_doc_url(&skill("git.example.com", gitea_link)),
+            RepoPlatform::Gitea
+        );
+        assert_eq!(
+            service.platform_for_doc_url(&skill("git.example.com", gitlab_link)),
+            RepoPlatform::GitLab
+        );
+        // 链接指向别的仓库或别的主机，不算数
+        assert_eq!(
+            service.platform_for_doc_url(&skill(
+                "git.example.com",
+                "https://git.example.com/other/skills/src/branch/main/demo/SKILL.md"
+            )),
+            RepoPlatform::GitLab
+        );
+        assert_eq!(
+            service.platform_for_doc_url(&skill(
+                GITHUB_HOST,
+                "https://github.com/team/skills/src/branch/main/demo/SKILL.md"
+            )),
+            RepoPlatform::GitHub
+        );
+        // 探测过的以探测结果为准
+        service
+            .platform_cache
+            .lock_recover()
+            .insert("git.example.com".to_string(), RepoPlatform::GitLab);
+        assert_eq!(
+            service.platform_for_doc_url(&skill("git.example.com", gitea_link)),
+            RepoPlatform::GitLab
+        );
     }
 
     #[test]
@@ -5993,12 +6436,20 @@ mod tests {
     #[test]
     fn build_skill_doc_url_drops_illegal_coordinates() {
         assert_eq!(
-            SkillService::build_skill_doc_url(GITHUB_HOST, "owner", "repo", "main", "a/SKILL.md")
-                .as_deref(),
+            SkillService::build_skill_doc_url(
+                RepoPlatform::GitHub,
+                GITHUB_HOST,
+                "owner",
+                "repo",
+                "main",
+                "a/SKILL.md"
+            )
+            .as_deref(),
             Some("https://github.com/owner/repo/blob/main/a/SKILL.md")
         );
         // readme_url 会被前端 openExternal 直接打开，非法坐标不得产出链接
         assert!(SkillService::build_skill_doc_url(
+            RepoPlatform::GitHub,
             GITHUB_HOST,
             "owner",
             "repo",
@@ -8512,6 +8963,7 @@ mod tests {
                 installed.repo_name = Some("repo".to_string());
                 installed.repo_branch = Some("main".to_string());
                 installed.readme_url = SkillService::build_skill_doc_url(
+                    RepoPlatform::GitHub,
                     GITHUB_HOST,
                     "owner",
                     "repo",
@@ -8534,6 +8986,7 @@ mod tests {
                     format!("{new_path}/SKILL.md")
                 };
                 let expected_url = SkillService::build_skill_doc_url(
+                    RepoPlatform::GitHub,
                     GITHUB_HOST,
                     "owner",
                     "repo",

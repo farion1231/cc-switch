@@ -1,6 +1,7 @@
 import { act, renderHook } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import {
+  copilotOneMAvailable,
   hasClaudeOneMMarker,
   setClaudeOneMMarker,
   stripClaudeOneMMarker,
@@ -144,5 +145,26 @@ describe("useModelState", () => {
     expect(setClaudeOneMMarker("deepseek-v4-pro", true)).toBe(
       "deepseek-v4-pro[1M]",
     );
+  });
+});
+
+describe("copilotOneMAvailable", () => {
+  const models = [
+    { id: "claude-fable-5.1" },
+    { id: "claude-opus-5.5" },
+    { id: "claude-opus-5.5-1m" },
+    { id: "gemini-4-carbon", context_window: 1_048_576 },
+  ];
+
+  it("allows 1M only when Copilot lists a -1m id or a native 1M context", () => {
+    expect(copilotOneMAvailable("claude-fable-5.1[1M]", models)).toBe(false);
+    expect(copilotOneMAvailable("claude-fable-5-1", models)).toBe(false);
+    expect(copilotOneMAvailable("claude-opus-5-5[1M]", models)).toBe(true);
+    expect(copilotOneMAvailable("gemini-4-carbon", models)).toBe(true);
+  });
+
+  it("returns undefined before the list is fetched or without a model", () => {
+    expect(copilotOneMAvailable("claude-fable-5.1[1M]", [])).toBeUndefined();
+    expect(copilotOneMAvailable("  ", models)).toBeUndefined();
   });
 });
