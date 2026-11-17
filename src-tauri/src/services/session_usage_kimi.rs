@@ -334,7 +334,8 @@ fn refresh_existing(
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
         )
         .optional()?;
-    let Some((old_model, multiplier, old_latency, old_first, old_created, old_duration)) = stored else {
+    let Some((old_model, multiplier, old_latency, old_first, old_created, old_duration)) = stored
+    else {
         return Ok(false);
     };
     let model_changed = model != old_model && model != "unknown";
@@ -665,35 +666,71 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("wire.jsonl");
         let mut records = request("legacy", "old-model", 1_800_000_000_000, 500, 1500, 60);
-        records.extend(protocol_step("main", "native", "new-model", 1_800_000_300_000, 60));
+        records.extend(protocol_step(
+            "main",
+            "native",
+            "new-model",
+            1_800_000_300_000,
+            60,
+        ));
         records.push(records.last().unwrap().clone());
         write_records(&path, &records);
-        assert_eq!(sync_file(&db, &path, "main", "session", "file", 1).unwrap().imported, 2);
+        assert_eq!(
+            sync_file(&db, &path, "main", "session", "file", 1)
+                .unwrap()
+                .imported,
+            2
+        );
         let totals: (i64, i64, i64, i64) = db.conn.lock().unwrap().query_row(
             "SELECT COUNT(*),SUM(output_tokens),SUM(duration_ms),SUM(first_token_ms) FROM proxy_request_logs", [],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         ).unwrap();
         assert_eq!(totals, (2, 120, 3000, 700));
-        assert_eq!(sync_file(&db, &path, "main", "session", "file", 2).unwrap().imported, 0);
+        assert_eq!(
+            sync_file(&db, &path, "main", "session", "file", 2)
+                .unwrap()
+                .imported,
+            0
+        );
     }
 
     #[test]
     fn kimi_usage_backfills_null_duration_from_previous_parser_once() {
         let db = Database::memory().unwrap();
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("workspace").join("session").join("agents").join("main").join("wire.jsonl");
-        write_records(&path, &protocol_step("main", "backfill", "new-model", 1_800_000_000_000, 60));
+        let path = dir
+            .path()
+            .join("workspace")
+            .join("session")
+            .join("agents")
+            .join("main")
+            .join("wire.jsonl");
+        write_records(
+            &path,
+            &protocol_step("main", "backfill", "new-model", 1_800_000_000_000, 60),
+        );
         assert_eq!(sync_sessions(&db, dir.path()).unwrap().imported, 1);
         {
             let conn = db.conn.lock().unwrap();
-            conn.execute("UPDATE proxy_request_logs SET duration_ms=NULL", []).unwrap();
-            conn.execute("UPDATE session_log_sync SET parser_state='step-usage-v2'", []).unwrap();
+            conn.execute("UPDATE proxy_request_logs SET duration_ms=NULL", [])
+                .unwrap();
+            conn.execute(
+                "UPDATE session_log_sync SET parser_state='step-usage-v2'",
+                [],
+            )
+            .unwrap();
         }
         assert_eq!(sync_sessions(&db, dir.path()).unwrap().imported, 1);
-        let row: (i64, i64, i64) = db.conn.lock().unwrap().query_row(
-            "SELECT COUNT(*),SUM(output_tokens),MIN(duration_ms) FROM proxy_request_logs", [],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        ).unwrap();
+        let row: (i64, i64, i64) = db
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*),SUM(output_tokens),MIN(duration_ms) FROM proxy_request_logs",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
         assert_eq!(row, (1, 60, 1000));
         assert_eq!(sync_sessions(&db, dir.path()).unwrap().files_scanned, 0);
     }
@@ -704,23 +741,39 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("wire.jsonl");
         let mut records = protocol_step("main", "untimed", "model", 1_800_000_000_000, 60);
-        records[2]["event"].as_object_mut().unwrap().remove("llmStreamDurationMs");
+        records[2]["event"]
+            .as_object_mut()
+            .unwrap()
+            .remove("llmStreamDurationMs");
         write_records(&path, &records);
         sync_file(&db, &path, "main", "session", "file", 1).unwrap();
-        let duration: Option<i64> = db.conn.lock().unwrap().query_row(
-            "SELECT duration_ms FROM proxy_request_logs", [], |row| row.get(0),
-        ).unwrap();
+        let duration: Option<i64> = db
+            .conn
+            .lock()
+            .unwrap()
+            .query_row("SELECT duration_ms FROM proxy_request_logs", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
         assert_eq!(duration, None);
     }
 
     #[test]
     #[ignore = "opt-in read-only wire acceptance; set KIMI_TEST_SESSIONS and CC_SWITCH_TEST_HOME"]
     fn kimi_usage_readonly_local_acceptance() {
-        let root = std::env::var_os("KIMI_TEST_SESSIONS").expect("set KIMI_TEST_SESSIONS to a sessions tree");
-        assert!(std::env::var_os("CC_SWITCH_TEST_HOME").is_some(), "set CC_SWITCH_TEST_HOME to an isolated temporary directory");
+        let root = std::env::var_os("KIMI_TEST_SESSIONS")
+            .expect("set KIMI_TEST_SESSIONS to a sessions tree");
+        assert!(
+            std::env::var_os("CC_SWITCH_TEST_HOME").is_some(),
+            "set CC_SWITCH_TEST_HOME to an isolated temporary directory"
+        );
         let db = Database::memory().unwrap();
         let first = sync_sessions(&db, Path::new(&root)).unwrap();
-        assert!(first.errors.is_empty(), "wire scan errors: {}", first.errors.len());
+        assert!(
+            first.errors.is_empty(),
+            "wire scan errors: {}",
+            first.errors.len()
+        );
         let totals: (i64, i64, i64) = db.conn.lock().unwrap().query_row(
             "SELECT COUNT(*),SUM(CASE WHEN duration_ms>0 THEN 1 ELSE 0 END),SUM(CASE WHEN first_token_ms IS NOT NULL THEN 1 ELSE 0 END) FROM proxy_request_logs WHERE app_type='kimi'", [],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
@@ -728,7 +781,10 @@ mod tests {
         assert!(totals.0 > 0 && totals.1 > 0 && totals.2 > 0);
         let second = sync_sessions(&db, Path::new(&root)).unwrap();
         assert_eq!(second.imported, 0);
-        println!("isolated Kimi import: rows={}, timed={}, first_token={}, second_imported={}", totals.0, totals.1, totals.2, second.imported);
+        println!(
+            "isolated Kimi import: rows={}, timed={}, first_token={}, second_imported={}",
+            totals.0, totals.1, totals.2, second.imported
+        );
     }
 
     fn protocol_step(agent: &str, id: &str, model: &str, start: i64, output: u64) -> Vec<Value> {
