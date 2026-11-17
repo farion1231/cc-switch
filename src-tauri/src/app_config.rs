@@ -33,6 +33,8 @@ pub struct McpApps {
     pub pi: bool,
     #[serde(default)]
     pub omp: bool,
+    #[serde(default)]
+    pub atomcode: bool,
 }
 
 impl McpApps {
@@ -53,8 +55,7 @@ impl McpApps {
             AppType::Omp => self.omp,
             AppType::ClaudeDesktop => false,
             AppType::Agy => self.agy,
-            // AtomCode MCP sync is not wired yet (needs a schema column).
-            AppType::AtomCode => false,
+            AppType::AtomCode => self.atomcode,
             AppType::Copilot => self.copilot,
         }
     }
@@ -76,7 +77,7 @@ impl McpApps {
             AppType::ClaudeDesktop => {}
             AppType::Agy => self.agy = enabled,
             AppType::Omp => self.omp = enabled,
-            AppType::AtomCode => {}
+            AppType::AtomCode => self.atomcode = enabled,
             AppType::Copilot => self.copilot = enabled,
         }
     }
@@ -123,6 +124,9 @@ impl McpApps {
         if self.omp {
             apps.push(AppType::Omp);
         }
+        if self.atomcode {
+            apps.push(AppType::AtomCode);
+        }
         apps
     }
 
@@ -141,6 +145,7 @@ impl McpApps {
             && !self.mcode
             && !self.pi
             && !self.omp
+            && !self.atomcode
     }
 }
 
@@ -173,6 +178,8 @@ pub struct SkillApps {
     pub pi: bool,
     #[serde(default)]
     pub omp: bool,
+    #[serde(default)]
+    pub atomcode: bool,
 }
 
 impl SkillApps {
@@ -194,7 +201,7 @@ impl SkillApps {
             AppType::Omp => self.omp,
             AppType::Copilot => self.copilot,
             AppType::ClaudeDesktop => false,
-            AppType::AtomCode => false,
+            AppType::AtomCode => self.atomcode,
         }
     }
 
@@ -216,7 +223,7 @@ impl SkillApps {
             AppType::Omp => self.omp = enabled,
             AppType::Copilot => self.copilot = enabled,
             AppType::ClaudeDesktop => {} // Claude Desktop 3P profiles don't use CC Switch skill sync
-            AppType::AtomCode => {}      // AtomCode skills are not wired yet
+            AppType::AtomCode => self.atomcode = enabled,
         }
     }
 
@@ -262,6 +269,9 @@ impl SkillApps {
         if self.omp {
             apps.push(AppType::Omp);
         }
+        if self.atomcode {
+            apps.push(AppType::AtomCode);
+        }
         apps
     }
 
@@ -280,6 +290,7 @@ impl SkillApps {
             && !self.mcode
             && !self.pi
             && !self.omp
+            && !self.atomcode
     }
 
     /// 仅启用指定应用（其他应用设为禁用）

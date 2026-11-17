@@ -108,6 +108,7 @@ const IMPORT_SOURCE_FILES: Record<
   copilot: { file: "~/.copilot/mcp-config.json" },
   mcode: { file: "~/.minimax/mcp.json" },
   omp: { file: "~/.omp/agent/mcp.json" },
+  atomcode: { file: "~/.atomcode/mcp.json" },
 };
 
 /** 先写配置文件、成功后才入库的应用：写失败时开关没变，重试要逐行重写 */

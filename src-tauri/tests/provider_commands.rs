@@ -549,6 +549,7 @@ command = "say"
                 dsh: false,
                 pi: false,
                 omp: false,
+                atomcode: false,
             },
             description: None,
             homepage: None,

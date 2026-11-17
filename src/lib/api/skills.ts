@@ -17,7 +17,8 @@ export type AppType =
   | "dsh"
   | "agy"
   | "omp"
-  | "copilot";
+  | "copilot"
+  | "atomcode";
 
 /** Skill 应用启用状态 */
 export interface SkillApps {
@@ -36,9 +37,10 @@ export interface SkillApps {
   agy?: boolean;
   omp?: boolean;
   copilot?: boolean;
+  atomcode?: boolean;
 }
 
-/** atomcode 的 Skills 后端尚未接线，`SkillApps` 没有该键；按 `AppId` 索引时用它安全取值。 */
+/** 按任意 `AppId` 安全索引 `SkillApps`（缺失键返回 false，避免直接下标）。 */
 export const skillAppEnabled = (apps: SkillApps, app: AppId): boolean =>
   Boolean((apps as Partial<Record<AppId, boolean | undefined>>)[app]);
 

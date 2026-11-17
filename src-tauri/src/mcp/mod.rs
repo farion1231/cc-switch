@@ -13,6 +13,7 @@
 //! - `omp` - Omp MCP 同步和导入
 
 pub mod agy;
+pub(crate) mod atomcode;
 mod claude;
 mod codex;
 pub(crate) mod dsh;

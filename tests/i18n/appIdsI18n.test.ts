@@ -32,7 +32,7 @@ describe.each(CORE_LANGUAGES)("apps.<id> i18n coverage (%s)", (_, locale) => {
 });
 
 describe("skillAppEnabled safe indexing", () => {
-  it("returns false for missing keys (atomcode is not wired yet)", () => {
+  it("returns false for missing keys", () => {
     expect(skillAppEnabled({} as SkillApps, "atomcode")).toBe(false);
   });
 

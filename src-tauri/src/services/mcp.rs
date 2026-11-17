@@ -288,6 +288,8 @@ impl McpService {
                     mcp::copilot::sync_and_commit(server_id, spec, commit)?;
                 } else if app == AppType::Mcode {
                     mcp::mcode::sync_and_commit(server_id, spec, commit)?;
+                } else if app == AppType::AtomCode {
+                    mcp::atomcode::sync_and_commit(server_id, spec, commit)?;
                 } else if app == AppType::Omp {
                     mcp::omp::sync_and_commit(
                         server_id,
@@ -332,6 +334,7 @@ impl McpService {
                     | AppType::Pi
                     | AppType::Agy
                     | AppType::Copilot
+                    | AppType::AtomCode
             ) {
                 continue; // Already written before saving the managed state.
             }
@@ -398,10 +401,7 @@ impl McpService {
             AppType::Pi => mcp::pi::sync(&server.id, Some(&server.server))?,
             AppType::Agy => mcp::agy::sync(&server.id, Some(&server.server))?,
             AppType::Omp => mcp::sync_single_server_to_omp(&server.id, &server.server)?,
-            // AtomCode MCP sync is not wired yet (needs an enabled_atomcode schema column).
-            AppType::AtomCode => {
-                log::debug!("AtomCode MCP sync is not wired yet, skipping");
-            }
+            AppType::AtomCode => mcp::atomcode::sync(&server.id, Some(&server.server))?,
         }
         Ok(())
     }
@@ -423,6 +423,7 @@ impl McpService {
                     | AppType::Pi
                     | AppType::Agy
                     | AppType::Copilot
+                    | AppType::AtomCode
             ) {
                 continue; // Already removed before deleting the managed record.
             }
@@ -462,10 +463,7 @@ impl McpService {
             AppType::Pi => mcp::pi::sync(id, None)?,
             AppType::Agy => mcp::agy::sync(id, None)?,
             AppType::Omp => mcp::remove_server_from_omp(id)?,
-            // AtomCode MCP sync is not wired yet (needs an enabled_atomcode schema column).
-            AppType::AtomCode => {
-                log::debug!("AtomCode MCP sync is not wired yet, skipping remove");
-            }
+            AppType::AtomCode => mcp::atomcode::sync(id, None)?,
         }
         Ok(())
     }
@@ -889,7 +887,7 @@ impl McpService {
         let mut total = 0;
         let mut failures: Vec<String> = Vec::new();
 
-        let results: [(&str, Result<usize, AppError>); 13] = [
+        let results: [(&str, Result<usize, AppError>); 14] = [
             ("claude", Self::import_from_claude(state)),
             ("codex", Self::import_from_codex(state)),
             ("gemini", Self::import_from_gemini(state)),
@@ -903,6 +901,7 @@ impl McpService {
             ("pi", mcp::pi::import(state)),
             ("omp", Self::import_from_omp(state)),
             ("copilot", mcp::copilot::import(state)),
+            ("atomcode", mcp::atomcode::import(state)),
         ];
         for (app, result) in results {
             match result {

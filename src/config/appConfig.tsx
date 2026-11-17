@@ -191,11 +191,8 @@ export function usesEditorView(appId: AppId): boolean {
   return EDITOR_VIEW_APP_IDS.includes(appId);
 }
 
-/** Claude Desktop、OpenClaw 不由 CC Switch 管理 MCP；Pi 1.0 起内置 MCP（`~/.pi/agent/mcp.json`）；AtomCode MCP 暂未接入 */
-export type McpAppId = Exclude<
-  AppId,
-  "claude-desktop" | "openclaw" | "atomcode"
->;
+/** Claude Desktop、OpenClaw 不由 CC Switch 管理 MCP；Pi 1.0 起内置 MCP（`~/.pi/agent/mcp.json`） */
+export type McpAppId = Exclude<AppId, "claude-desktop" | "openclaw">;
 export const MCP_APP_IDS: McpAppId[] = [
   "claude",
   "codex",
@@ -210,6 +207,7 @@ export const MCP_APP_IDS: McpAppId[] = [
   "agy",
   "omp",
   "copilot",
+  "atomcode",
 ];
 
 export function isMcpAppId(appId: string): appId is McpAppId {
