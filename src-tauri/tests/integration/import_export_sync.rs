@@ -9,42 +9,7 @@ use crate::support::{
 };
 
 #[test]
-fn sync_enabled_to_codex_writes_enabled_servers() {
-    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
-    reset_test_fs();
-
-    // 模拟 Codex 已安装/已初始化：存在 ~/.codex 目录
-    let path = cc_switch_lib::get_codex_config_path();
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).expect("create codex dir");
-    }
-
-    let mut config = MultiAppConfig::default();
-    config.mcp.codex.servers.insert(
-        "stdio-enabled".into(),
-        json!({
-            "id": "stdio-enabled",
-            "enabled": true,
-            "server": {
-                "type": "stdio",
-                "command": "echo",
-                "args": ["ok"],
-            }
-        }),
-    );
-
-    cc_switch_lib::sync_enabled_to_codex(&config).expect("sync codex");
-
-    assert!(path.exists(), "config.toml should be created");
-    let text = fs::read_to_string(&path).expect("read config.toml");
-    assert!(
-        text.contains("mcp_servers") && text.contains("stdio-enabled"),
-        "enabled servers should be serialized"
-    );
-}
-
-#[test]
-fn sync_enabled_to_codex_preserves_non_mcp_content_and_style() {
+fn sync_single_server_to_codex_preserves_non_mcp_content_and_style() {
     let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
 
@@ -62,17 +27,11 @@ mode = "dev"
     fs::write(&path, seed).expect("seed config.toml");
 
     // 启用一个 MCP 项，触发增量写入
-    let mut config = MultiAppConfig::default();
-    config.mcp.codex.servers.insert(
-        "echo".into(),
-        json!({
-            "id": "echo",
-            "enabled": true,
-            "server": { "type": "stdio", "command": "echo" }
-        }),
-    );
-
-    cc_switch_lib::sync_enabled_to_codex(&config).expect("sync codex");
+    cc_switch_lib::sync_single_server_to_codex(
+        "echo",
+        &json!({ "type": "stdio", "command": "echo" }),
+    )
+    .expect("sync codex");
 
     let text = fs::read_to_string(&path).expect("read config.toml");
     // 顶层注释与非 MCP 键应保留
@@ -103,7 +62,7 @@ mode = "dev"
 }
 
 #[test]
-fn sync_enabled_to_codex_migrates_erroneous_mcp_dot_servers_to_mcp_servers() {
+fn sync_single_server_to_codex_migrates_erroneous_mcp_dot_servers_to_mcp_servers() {
     let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let path = cc_switch_lib::get_codex_config_path();
@@ -117,17 +76,11 @@ fn sync_enabled_to_codex_migrates_erroneous_mcp_dot_servers_to_mcp_servers() {
 "#;
     fs::write(&path, seed).expect("seed config.toml");
 
-    let mut config = MultiAppConfig::default();
-    config.mcp.codex.servers.insert(
-        "echo".into(),
-        json!({
-            "id": "echo",
-            "enabled": true,
-            "server": { "type": "stdio", "command": "echo" }
-        }),
-    );
-
-    cc_switch_lib::sync_enabled_to_codex(&config).expect("sync codex");
+    cc_switch_lib::sync_single_server_to_codex(
+        "echo",
+        &json!({ "type": "stdio", "command": "echo" }),
+    )
+    .expect("sync codex");
     let text = fs::read_to_string(&path).expect("read config.toml");
     // 应迁移到顶层 mcp_servers，并移除错误的 mcp.servers 表
     assert!(
@@ -138,73 +91,6 @@ fn sync_enabled_to_codex_migrates_erroneous_mcp_dot_servers_to_mcp_servers() {
         !text.contains("[mcp.servers]"),
         "invalid [mcp.servers] table should be removed"
     );
-}
-
-#[test]
-fn sync_enabled_to_codex_removes_servers_when_none_enabled() {
-    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
-    reset_test_fs();
-    let path = cc_switch_lib::get_codex_config_path();
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).expect("create codex dir");
-    }
-    fs::write(
-        &path,
-        r#"[mcp_servers]
-disabled = { type = "stdio", command = "noop" }
-"#,
-    )
-    .expect("seed config file");
-
-    let config = MultiAppConfig::default(); // 无启用项
-    cc_switch_lib::sync_enabled_to_codex(&config).expect("sync codex");
-
-    let text = fs::read_to_string(&path).expect("read config.toml");
-    assert!(
-        !text.contains("mcp_servers") && !text.contains("servers"),
-        "disabled entries should be removed from config.toml"
-    );
-}
-
-#[test]
-fn sync_enabled_to_codex_returns_error_on_invalid_toml() {
-    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
-    reset_test_fs();
-    let path = cc_switch_lib::get_codex_config_path();
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).expect("create codex dir");
-    }
-    fs::write(&path, "invalid = [").expect("write invalid config");
-
-    let mut config = MultiAppConfig::default();
-    config.mcp.codex.servers.insert(
-        "broken".into(),
-        json!({
-            "id": "broken",
-            "enabled": true,
-            "server": {
-                "type": "stdio",
-                "command": "echo"
-            }
-        }),
-    );
-
-    let err = cc_switch_lib::sync_enabled_to_codex(&config).expect_err("sync should fail");
-    match err {
-        cc_switch_lib::AppError::Toml { path, .. } => {
-            assert!(
-                path.ends_with("config.toml"),
-                "path should reference config.toml"
-            );
-        }
-        cc_switch_lib::AppError::McpValidation(msg) => {
-            assert!(
-                msg.contains("config.toml"),
-                "error message should mention config.toml"
-            );
-        }
-        other => panic!("unexpected error: {other:?}"),
-    }
 }
 
 #[test]
@@ -219,9 +105,7 @@ fn sync_single_server_to_codex_fails_closed_on_invalid_toml() {
     let broken = "model = \"gpt-5.5\"\ninvalid = [\n";
     fs::write(&path, broken).expect("write invalid config");
 
-    let config = MultiAppConfig::default();
     let err = cc_switch_lib::sync_single_server_to_codex(
-        &config,
         "srv",
         &json!({ "type": "stdio", "command": "echo" }),
     )
@@ -459,63 +343,6 @@ command = "echo"
         Some("prev"),
         "existing server config should be preserved, not overwritten by import"
     );
-}
-
-#[test]
-fn sync_claude_enabled_mcp_projects_to_user_config() {
-    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
-    reset_test_fs();
-    let home = ensure_test_home();
-
-    // 模拟 Claude 已安装/已初始化：存在 ~/.claude 目录
-    fs::create_dir_all(home.join(".claude")).expect("create claude dir");
-
-    let mut config = MultiAppConfig::default();
-
-    config.mcp.claude.servers.insert(
-        "stdio-enabled".into(),
-        json!({
-            "id": "stdio-enabled",
-            "enabled": true,
-            "server": {
-                "type": "stdio",
-                "command": "echo",
-                "args": ["hi"],
-            }
-        }),
-    );
-    config.mcp.claude.servers.insert(
-        "http-disabled".into(),
-        json!({
-            "id": "http-disabled",
-            "enabled": false,
-            "server": {
-                "type": "http",
-                "url": "https://example.com",
-            }
-        }),
-    );
-
-    cc_switch_lib::sync_enabled_to_claude(&config).expect("sync Claude MCP");
-
-    let claude_path = cc_switch_lib::get_claude_mcp_path();
-    assert!(claude_path.exists(), "claude config should exist");
-    let text = fs::read_to_string(&claude_path).expect("read .claude.json");
-    let value: serde_json::Value = serde_json::from_str(&text).expect("parse claude json");
-    let servers = value
-        .get("mcpServers")
-        .and_then(|v| v.as_object())
-        .expect("mcpServers map");
-    assert_eq!(servers.len(), 1, "only enabled entries should be written");
-    let enabled = servers.get("stdio-enabled").expect("enabled entry");
-    assert_eq!(
-        enabled
-            .get("command")
-            .and_then(|v| v.as_str())
-            .unwrap_or_default(),
-        "echo"
-    );
-    assert!(servers.get("http-disabled").is_none());
 }
 
 #[test]
