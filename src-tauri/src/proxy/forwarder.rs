@@ -667,7 +667,7 @@ impl RequestForwarder {
     async fn record_success_result(
         &self,
         provider_id: &str,
-        app_type: &str,
+        app_type: &AppType,
         used_half_open_permit: bool,
     ) {
         // 名额本身由这次尝试的 HalfOpenPermitGuard 归还，这里只记结果，所以传 false。
@@ -686,7 +686,7 @@ impl RequestForwarder {
 
         let router = self.router.clone();
         let provider_id = provider_id.to_string();
-        let app_type = app_type.to_string();
+        let app_type = app_type.clone();
         tokio::spawn(async move {
             if let Err(e) = router
                 .record_result(&provider_id, &app_type, false, true, None)
@@ -710,7 +710,7 @@ impl RequestForwarder {
         &self,
         retry_err: ProxyError,
         provider: &Provider,
-        app_type_str: &str,
+        app_type: &AppType,
         rectifier_label: &str,
         last_error: &mut Option<ProxyError>,
         last_provider: &mut Option<Provider>,
@@ -726,7 +726,7 @@ impl RequestForwarder {
         if is_provider_error {
             self.record_provider_failure(
                 provider,
-                app_type_str,
+                app_type,
                 &retry_err,
                 format!(
                     "Provider {} {rectifier_label}重试失败: {}",
@@ -760,7 +760,7 @@ impl RequestForwarder {
     async fn finish_success(
         &self,
         provider: &Provider,
-        app_type_str: &str,
+        app_type: &AppType,
         used_half_open_permit: bool,
         (response, claude_api_format, outbound_model): (
             ProxyResponse,
@@ -783,13 +783,13 @@ impl RequestForwarder {
 
         // 普通闭合熔断状态异步记录，避免阻塞流式首包返回；
         // HalfOpen 探测仍同步等待，保证熔断状态在归还名额前就转回 Closed。
-        self.record_success_result(&provider.id, app_type_str, used_half_open_permit)
+        self.record_success_result(&provider.id, app_type, used_half_open_permit)
             .await;
 
         {
             let mut current_providers = self.current_providers.write().await;
             current_providers.insert(
-                app_type_str.to_string(),
+                app_type.to_string(),
                 (provider.id.clone(), provider.name.clone()),
             );
         }
@@ -805,7 +805,7 @@ impl RequestForwarder {
                 let ah = self.app_handle.clone();
                 let pid = provider.id.clone();
                 let pname = provider.name.clone();
-                let at = app_type_str.to_string();
+                let at = app_type.to_string();
                 tokio::spawn(async move {
                     let _ = fm.try_switch(ah.as_ref(), &at, &pid, &pname).await;
                 });
@@ -820,7 +820,7 @@ impl RequestForwarder {
     async fn record_provider_failure(
         &self,
         provider: &Provider,
-        app_type_str: &str,
+        app_type: &AppType,
         error: &ProxyError,
         last_error: String,
     ) {
@@ -831,7 +831,7 @@ impl RequestForwarder {
             .router
             .record_result(
                 &provider.id,
-                app_type_str,
+                app_type,
                 false,
                 false,
                 Some(error.to_string()),
@@ -991,7 +991,7 @@ impl RequestForwarder {
             } else {
                 let permit = self
                     .router
-                    .allow_provider_request(&provider.id, app_type_str)
+                    .allow_provider_request(&provider.id, app_type)
                     .await;
                 (permit.allowed, permit.used_half_open_permit, Some(permit))
             };
@@ -1052,7 +1052,7 @@ impl RequestForwarder {
                     return Ok(self
                         .finish_success(
                             provider,
-                            app_type_str,
+                            app_type,
                             used_half_open_permit,
                             forwarded,
                             attempted_codex_upstream_format,
@@ -1114,7 +1114,7 @@ impl RequestForwarder {
                                     return Ok(self
                                         .finish_success(
                                             provider,
-                                            app_type_str,
+                                            app_type,
                                             used_half_open_permit,
                                             forwarded,
                                             media_retry_codex_upstream_format,
@@ -1129,7 +1129,7 @@ impl RequestForwarder {
                                         .handle_rectifier_retry_failure(
                                             retry_err,
                                             provider,
-                                            app_type_str,
+                                            app_type,
                                             "media 降级",
                                             &mut last_error,
                                             &mut last_provider,
@@ -1177,7 +1177,7 @@ impl RequestForwarder {
                                 return Ok(self
                                     .finish_success(
                                         provider,
-                                        app_type_str,
+                                        app_type,
                                         used_half_open_permit,
                                         forwarded,
                                         retry_codex_upstream_format,
@@ -1252,7 +1252,7 @@ impl RequestForwarder {
                                     return Ok(self
                                         .finish_success(
                                             provider,
-                                            app_type_str,
+                                            app_type,
                                             used_half_open_permit,
                                             forwarded,
                                             opaque_retry_codex_upstream_format,
@@ -1351,7 +1351,7 @@ impl RequestForwarder {
                                         return Ok(self
                                             .finish_success(
                                                 provider,
-                                                app_type_str,
+                                                app_type,
                                                 used_half_open_permit,
                                                 forwarded,
                                                 signature_retry_codex_upstream_format,
@@ -1366,7 +1366,7 @@ impl RequestForwarder {
                                             .handle_rectifier_retry_failure(
                                                 retry_err,
                                                 provider,
-                                                app_type_str,
+                                                app_type,
                                                 "整流",
                                                 &mut last_error,
                                                 &mut last_provider,
@@ -1435,7 +1435,7 @@ impl RequestForwarder {
                                     return Ok(self
                                         .finish_success(
                                             provider,
-                                            app_type_str,
+                                            app_type,
                                             used_half_open_permit,
                                             forwarded,
                                             budget_retry_codex_upstream_format,
@@ -1450,7 +1450,7 @@ impl RequestForwarder {
                                         .handle_rectifier_retry_failure(
                                             retry_err,
                                             provider,
-                                            app_type_str,
+                                            app_type,
                                             "budget 整流",
                                             &mut last_error,
                                             &mut last_provider,
@@ -1479,7 +1479,7 @@ impl RequestForwarder {
                             // 可重试：真正的 provider 故障 → 记录失败并更新熔断器/DB 健康度
                             self.record_provider_failure(
                                 provider,
-                                app_type_str,
+                                app_type,
                                 &e,
                                 format!("Provider {} 失败: {}", provider.name, e),
                             )
@@ -5265,7 +5265,7 @@ mod tests {
             let result = forwarder
                 .finish_success(
                     &provider,
-                    "codex",
+                    &AppType::Codex,
                     false,
                     (response, None, Some("resolved-model".to_string())),
                     format,
@@ -9543,7 +9543,7 @@ mod tests {
             for _ in 0..200 {
                 if let Some(stats) = forwarder
                     .router
-                    .get_circuit_breaker_stats(provider_id, "claude")
+                    .get_circuit_breaker_stats(provider_id, &AppType::Claude)
                     .await
                 {
                     if stats.total_requests > 0 {
@@ -9554,7 +9554,7 @@ mod tests {
             }
             forwarder
                 .router
-                .get_circuit_breaker_stats(provider_id, "claude")
+                .get_circuit_breaker_stats(provider_id, &AppType::Claude)
                 .await
                 .map(|stats| (stats.total_requests, stats.failed_requests))
         }
@@ -9832,7 +9832,7 @@ mod tests {
                 for _ in 0..20 {
                     let _ = fwd
                         .router
-                        .record_result(id, "claude", false, false, Some("seed".into()))
+                        .record_result(id, &AppType::Claude, false, false, Some("seed".into()))
                         .await;
                 }
             }
@@ -10102,7 +10102,7 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(50)).await;
             forwarder
                 .router
-                .get_circuit_breaker_stats(provider_id, "claude")
+                .get_circuit_breaker_stats(provider_id, &AppType::Claude)
                 .await
                 .is_none()
         }
