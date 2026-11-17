@@ -3530,7 +3530,7 @@
     },
     "repo": {
       "title": "管理技能儲存庫",
-      "description": "新增或刪除 GitHub / GitLab 技能儲存庫來源",
+      "description": "新增或刪除 GitHub / GitLab / Gitea 技能儲存庫來源",
       "url": "儲存庫 URL",
       "urlPlaceholder": "owner/name、https://github.com/owner/name 或 https://gitlab.com/group/project",
       "branch": "分支",
@@ -3540,7 +3540,7 @@
       "list": "已新增的儲存庫",
       "empty": "暫無儲存庫",
       "invalidUrl": "無效的儲存庫 URL 格式",
-      "httpsOnly": "GitLab 儲存庫僅支援 https 位址",
+      "httpsOnly": "GitLab / Gitea 儲存庫僅支援 https 位址",
       "addSuccess": "儲存庫 {{owner}}/{{name}} 已新增，識別到 {{count}} 個技能",
       "addFailed": "新增失敗",
       "removeSuccess": "儲存庫 {{owner}}/{{name}} 已刪除",

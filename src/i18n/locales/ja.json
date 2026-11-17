@@ -3530,7 +3530,7 @@
     },
     "repo": {
       "title": "スキルリポジトリを管理",
-      "description": "GitHub / GitLab のスキルリポジトリソースを追加または削除します",
+      "description": "GitHub / GitLab / Gitea のスキルリポジトリソースを追加または削除します",
       "url": "リポジトリ URL",
       "urlPlaceholder": "owner/name、https://github.com/owner/name または https://gitlab.com/group/project",
       "branch": "ブランチ",
@@ -3540,7 +3540,7 @@
       "list": "追加済みリポジトリ",
       "empty": "リポジトリがありません",
       "invalidUrl": "リポジトリ URL の形式が無効です",
-      "httpsOnly": "GitLab リポジトリは https のアドレスのみ対応しています",
+      "httpsOnly": "GitLab / Gitea リポジトリは https のアドレスのみ対応しています",
       "addSuccess": "リポジトリ {{owner}}/{{name}} を追加しました。検出スキル: {{count}} 件",
       "addFailed": "追加に失敗しました",
       "removeSuccess": "リポジトリ {{owner}}/{{name}} を削除しました",

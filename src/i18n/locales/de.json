@@ -3530,7 +3530,7 @@
     },
     "repo": {
       "title": "Skill-Repositories verwalten",
-      "description": "GitHub- und GitLab-Skill-Repository-Quellen hinzufügen oder entfernen",
+      "description": "GitHub-, GitLab- und Gitea-Skill-Repository-Quellen hinzufügen oder entfernen",
       "url": "Repository-URL",
       "urlPlaceholder": "owner/name, https://github.com/owner/name oder https://gitlab.com/group/project",
       "branch": "Branch",
@@ -3540,7 +3540,7 @@
       "list": "Hinzugefügte Repositories",
       "empty": "Keine Repositories",
       "invalidUrl": "Ungültiges Format der Repository-URL",
-      "httpsOnly": "GitLab-Repositories müssen eine https-Adresse verwenden",
+      "httpsOnly": "GitLab- und Gitea-Repositories müssen eine https-Adresse verwenden",
       "addSuccess": "Repository {{owner}}/{{name}} hinzugefügt, {{count}} Skills erkannt",
       "addFailed": "Hinzufügen fehlgeschlagen",
       "removeSuccess": "Repository {{owner}}/{{name}} entfernt",

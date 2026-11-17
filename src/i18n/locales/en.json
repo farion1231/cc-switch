@@ -3530,7 +3530,7 @@
     },
     "repo": {
       "title": "Manage Skill Repositories",
-      "description": "Add or remove GitHub / GitLab skill repository sources",
+      "description": "Add or remove GitHub / GitLab / Gitea skill repository sources",
       "url": "Repository URL",
       "urlPlaceholder": "owner/name, https://github.com/owner/name or https://gitlab.com/group/project",
       "branch": "Branch",
@@ -3540,7 +3540,7 @@
       "list": "Added Repositories",
       "empty": "No repositories",
       "invalidUrl": "Invalid repository URL format",
-      "httpsOnly": "GitLab repositories must use an https address",
+      "httpsOnly": "GitLab and Gitea repositories must use an https address",
       "addSuccess": "Repository {{owner}}/{{name}} added, detected {{count}} skills",
       "addFailed": "Failed to add",
       "removeSuccess": "Repository {{owner}}/{{name}} removed",

@@ -3530,7 +3530,7 @@
     },
     "repo": {
       "title": "스킬 저장소 관리",
-      "description": "GitHub / GitLab 스킬 저장소 추가 또는 제거",
+      "description": "GitHub / GitLab / Gitea 스킬 저장소 추가 또는 제거",
       "url": "저장소 URL",
       "urlPlaceholder": "owner/name, https://github.com/owner/name 또는 https://gitlab.com/group/project",
       "branch": "브랜치",
@@ -3540,7 +3540,7 @@
       "list": "추가된 저장소",
       "empty": "저장소 없음",
       "invalidUrl": "잘못된 저장소 URL 형식",
-      "httpsOnly": "GitLab 저장소는 https 주소만 지원합니다",
+      "httpsOnly": "GitLab / Gitea 저장소는 https 주소만 지원합니다",
       "addSuccess": "저장소 {{owner}}/{{name}}을(를) 추가하고 스킬 {{count}}개를 찾았습니다",
       "addFailed": "추가하지 못했습니다.",
       "removeSuccess": "저장소 {{owner}}/{{name}} 제거를 완료했습니다.",
