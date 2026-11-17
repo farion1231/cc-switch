@@ -93,6 +93,7 @@ export const SKILLS_APP_IDS: AppId[] = [
   "agy",
   "omp",
   "copilot",
+  "atomcode",
 ];
 
 export type ProxyAppId = Extract<
