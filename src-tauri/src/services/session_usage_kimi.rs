@@ -21,7 +21,7 @@ use std::{
     path::Path,
 };
 
-const KIMI_USAGE_PARSER_STATE: &str = "step-usage-v2";
+const KIMI_USAGE_PARSER_STATE: &str = "step-usage-timing-v3";
 type UsageKey = (u64, u64, u64, u64);
 
 fn usage_key(usage: &Value) -> UsageKey {
@@ -111,6 +111,7 @@ fn sync_file(
     };
     let mut pending = Vec::new();
     let mut usage_models: HashMap<UsageKey, VecDeque<Option<String>>> = HashMap::new();
+    let mut usage_records = 0usize;
     let mut result = SessionSyncResult {
         files_scanned: 1,
         ..Default::default()
@@ -144,6 +145,10 @@ fn sync_file(
             _ => {}
         }
         if record["type"].as_str() == Some("usage.record") {
+            if record["usageScope"].as_str() == Some("session") {
+                continue;
+            }
+            usage_records += 1;
             let model = record["model"]
                 .as_str()
                 .filter(|model| {
@@ -236,6 +241,9 @@ fn sync_file(
         // (and after tools); resolve its messageId before taking the database lock.
         pending.push((request, meta, usage, created));
     }
+    if usage_records > 0 && pending.is_empty() {
+        log::warn!("Kimi Code wire has {usage_records} usage records but no importable completed requests; check for unfinished turns or an unsupported wire format");
+    }
     let mut conn = lock_conn!(db.conn);
     let tx = conn.transaction()?;
     for (request, meta, mut usage, created) in pending {
@@ -244,6 +252,9 @@ fn sync_file(
         let info = requests.get(&meta);
         let latency = info.map_or(0, |info| info.latency_ms);
         let first_token = info.and_then(|info| info.first_token_ms);
+        // Same whole-response interval as latency_ms, including first-token wait.
+        // Unknown timing stays NULL rather than becoming a zero-duration sample.
+        let duration = (latency > 0).then_some(latency);
         let started = info.and_then(|info| info.request_ms);
         // Permanent receipts prevent re-import after wire rewrites, forks, or log pruning.
         if tx.execute("INSERT OR IGNORE INTO session_usage_dedup (data_source, request_id, semantic_id, has_entry_id) VALUES ('kimi_session', ?1, ?1, 1)", [&request])? == 0 {
@@ -260,10 +271,10 @@ fn sync_file(
         tx.execute("INSERT OR IGNORE INTO proxy_request_logs (
             request_id, provider_id, app_type, model, request_model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
             input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
-            latency_ms, first_token_ms, status_code, session_id, provider_type, is_streaming, cost_multiplier, created_at, data_source, input_token_semantics
-        ) VALUES (?1, '_kimi_session', 'kimi', ?2, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?15, ?16, 200, ?12, 'kimi_session', 1, '1', ?13, 'kimi_session', ?14)",
+            latency_ms, first_token_ms, duration_ms, status_code, session_id, provider_type, is_streaming, cost_multiplier, created_at, data_source, input_token_semantics
+        ) VALUES (?1, '_kimi_session', 'kimi', ?2, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?15, ?16, ?17, 200, ?12, 'kimi_session', 1, '1', ?13, 'kimi_session', ?14)",
             rusqlite::params![request, model, usage.input_tokens, usage.output_tokens, usage.cache_read_tokens, usage.cache_creation_tokens,
-                amounts[0], amounts[1], amounts[2], amounts[3], amounts[4], session, started.map_or(created, |start| completed_ms(start, latency, created))/1000, INPUT_TOKEN_SEMANTICS_FRESH, latency, first_token])?;
+                amounts[0], amounts[1], amounts[2], amounts[3], amounts[4], session, started.map_or(created, |start| completed_ms(start, latency, created))/1000, INPUT_TOKEN_SEMANTICS_FRESH, latency, first_token, duration])?;
         result.imported += 1;
     }
     update_sync_state_on_conn(&tx, key, modified, bytes)?;
@@ -315,15 +326,15 @@ fn refresh_existing(
 ) -> Result<bool, AppError> {
     let latency = info.map_or(0, |info| info.latency_ms);
     let first_token = info.and_then(|info| info.first_token_ms);
-    let stored: Option<(String, String, i64, Option<i64>, i64)> = conn
+    let stored: Option<(String, String, i64, Option<i64>, i64, Option<i64>)> = conn
         .query_row(
-            "SELECT model, cost_multiplier, latency_ms, first_token_ms, created_at FROM proxy_request_logs
+            "SELECT model, cost_multiplier, latency_ms, first_token_ms, created_at, duration_ms FROM proxy_request_logs
          WHERE request_id = ?1 AND app_type = 'kimi' AND data_source = 'kimi_session'",
             [request],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
         )
         .optional()?;
-    let Some((old_model, multiplier, old_latency, old_first, old_created)) = stored else {
+    let Some((old_model, multiplier, old_latency, old_first, old_created, old_duration)) = stored else {
         return Ok(false);
     };
     let model_changed = model != old_model && model != "unknown";
@@ -334,6 +345,7 @@ fn refresh_existing(
         old_latency
     };
     let first_token = first_token.or(old_first).filter(|first| *first <= latency);
+    let duration = (latency > 0).then_some(latency).or(old_duration);
     // Rows imported before their request events were readable carry the commit time.
     let created = info
         .and_then(|info| info.request_ms)
@@ -344,6 +356,7 @@ fn refresh_existing(
         && latency == old_latency
         && first_token == old_first
         && created == old_created
+        && duration == old_duration
     {
         return Ok(false);
     }
@@ -365,9 +378,9 @@ fn refresh_existing(
         )?;
     }
     conn.execute(
-        "UPDATE proxy_request_logs SET latency_ms = ?2, first_token_ms = ?3, created_at = ?4
+        "UPDATE proxy_request_logs SET latency_ms = ?2, first_token_ms = ?3, created_at = ?4, duration_ms = ?5
          WHERE request_id = ?1 AND app_type = 'kimi' AND data_source = 'kimi_session'",
-        rusqlite::params![request, latency, first_token, created],
+        rusqlite::params![request, latency, first_token, created, duration],
     )?;
     Ok(true)
 }
@@ -644,6 +657,78 @@ mod tests {
                 .imported,
             0
         );
+    }
+
+    #[test]
+    fn kimi_usage_persists_old_and_native_duration_without_duplicate_usage() {
+        let db = Database::memory().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("wire.jsonl");
+        let mut records = request("legacy", "old-model", 1_800_000_000_000, 500, 1500, 60);
+        records.extend(protocol_step("main", "native", "new-model", 1_800_000_300_000, 60));
+        records.push(records.last().unwrap().clone());
+        write_records(&path, &records);
+        assert_eq!(sync_file(&db, &path, "main", "session", "file", 1).unwrap().imported, 2);
+        let totals: (i64, i64, i64, i64) = db.conn.lock().unwrap().query_row(
+            "SELECT COUNT(*),SUM(output_tokens),SUM(duration_ms),SUM(first_token_ms) FROM proxy_request_logs", [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        ).unwrap();
+        assert_eq!(totals, (2, 120, 3000, 700));
+        assert_eq!(sync_file(&db, &path, "main", "session", "file", 2).unwrap().imported, 0);
+    }
+
+    #[test]
+    fn kimi_usage_backfills_null_duration_from_previous_parser_once() {
+        let db = Database::memory().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("workspace").join("session").join("agents").join("main").join("wire.jsonl");
+        write_records(&path, &protocol_step("main", "backfill", "new-model", 1_800_000_000_000, 60));
+        assert_eq!(sync_sessions(&db, dir.path()).unwrap().imported, 1);
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute("UPDATE proxy_request_logs SET duration_ms=NULL", []).unwrap();
+            conn.execute("UPDATE session_log_sync SET parser_state='step-usage-v2'", []).unwrap();
+        }
+        assert_eq!(sync_sessions(&db, dir.path()).unwrap().imported, 1);
+        let row: (i64, i64, i64) = db.conn.lock().unwrap().query_row(
+            "SELECT COUNT(*),SUM(output_tokens),MIN(duration_ms) FROM proxy_request_logs", [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).unwrap();
+        assert_eq!(row, (1, 60, 1000));
+        assert_eq!(sync_sessions(&db, dir.path()).unwrap().files_scanned, 0);
+    }
+
+    #[test]
+    fn kimi_usage_missing_native_timing_keeps_duration_unknown() {
+        let db = Database::memory().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("wire.jsonl");
+        let mut records = protocol_step("main", "untimed", "model", 1_800_000_000_000, 60);
+        records[2]["event"].as_object_mut().unwrap().remove("llmStreamDurationMs");
+        write_records(&path, &records);
+        sync_file(&db, &path, "main", "session", "file", 1).unwrap();
+        let duration: Option<i64> = db.conn.lock().unwrap().query_row(
+            "SELECT duration_ms FROM proxy_request_logs", [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(duration, None);
+    }
+
+    #[test]
+    #[ignore = "opt-in read-only wire acceptance; set KIMI_TEST_SESSIONS and CC_SWITCH_TEST_HOME"]
+    fn kimi_usage_readonly_local_acceptance() {
+        let root = std::env::var_os("KIMI_TEST_SESSIONS").expect("set KIMI_TEST_SESSIONS to a sessions tree");
+        assert!(std::env::var_os("CC_SWITCH_TEST_HOME").is_some(), "set CC_SWITCH_TEST_HOME to an isolated temporary directory");
+        let db = Database::memory().unwrap();
+        let first = sync_sessions(&db, Path::new(&root)).unwrap();
+        assert!(first.errors.is_empty(), "wire scan errors: {}", first.errors.len());
+        let totals: (i64, i64, i64) = db.conn.lock().unwrap().query_row(
+            "SELECT COUNT(*),SUM(CASE WHEN duration_ms>0 THEN 1 ELSE 0 END),SUM(CASE WHEN first_token_ms IS NOT NULL THEN 1 ELSE 0 END) FROM proxy_request_logs WHERE app_type='kimi'", [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).unwrap();
+        assert!(totals.0 > 0 && totals.1 > 0 && totals.2 > 0);
+        let second = sync_sessions(&db, Path::new(&root)).unwrap();
+        assert_eq!(second.imported, 0);
+        println!("isolated Kimi import: rows={}, timed={}, first_token={}, second_imported={}", totals.0, totals.1, totals.2, second.imported);
     }
 
     fn protocol_step(agent: &str, id: &str, model: &str, start: i64, output: u64) -> Vec<Value> {
