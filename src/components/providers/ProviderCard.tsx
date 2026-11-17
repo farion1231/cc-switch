@@ -311,8 +311,9 @@ export function ProviderCard({
       : null;
   // 绑了账号的官方卡（Codex / Claude）默认查额度，和 Kimi、agy 的账号卡一样
   const usageEnabled =
-    provider.meta?.usage_script?.enabled ??
-    (isBoundCodexOfficial || Boolean(claudeBoundAccountId));
+    !presentation.readOnly &&
+    (provider.meta?.usage_script?.enabled ??
+      (isBoundCodexOfficial || Boolean(claudeBoundAccountId)));
   const supportsOfficialSubscription =
     isOfficial && appHas(appId, "officialSubscription");
   const isOfficialSubscriptionUsage =

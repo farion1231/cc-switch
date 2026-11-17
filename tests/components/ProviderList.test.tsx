@@ -1164,6 +1164,57 @@ describe("ProviderList Component", () => {
     });
   });
 
+  it.each(["pi", "omp"] as const)(
+    "isolates login-only membership for %s",
+    async (appId) => {
+      const provider = createProvider({
+        id: "login-only",
+        meta: { piLoginOrigin: true, piLoginReadOnly: true },
+      });
+      useDragSortMock.mockReturnValue({
+        sortedProviders: [provider],
+        sensors: [],
+        handleDragEnd: vi.fn(),
+      });
+      server.use(
+        http.post(`${TAURI_ENDPOINT}/get_${appId}_current_state`, () =>
+          HttpResponse.json({
+            enabledProviderIds: [],
+            loginProviderIds: [provider.id],
+            defaultProviderId: null,
+          }),
+        ),
+      );
+      renderWithQueryClient(
+        <ProviderList
+          providers={{ [provider.id]: provider }}
+          currentProviderId=""
+          appId={appId}
+          onSwitch={vi.fn()}
+          onEdit={vi.fn()}
+          onDelete={vi.fn()}
+          onDuplicate={vi.fn()}
+          onOpenWebsite={vi.fn()}
+        />,
+      );
+      await waitFor(() => {
+        const card = lastProps(provider.id);
+        expect(card).toBeDefined();
+        if (appId === "pi") {
+          expect(card.presentation).toMatchObject({
+            readOnly: true,
+            buttons: [],
+            status: { label: "pi.login.configured" },
+            editDisabledReason: "pi.login.managedHint",
+          });
+        } else {
+          expect(card.presentation.readOnly).toBeUndefined();
+          expect(card.presentation.buttons).toMatchObject([{ key: "add" }]);
+        }
+      });
+    },
+  );
+
   it("derives Pi membership only from the native provider ID list", async () => {
     const provider = createProvider({
       id: "drifted-pi",
@@ -1252,6 +1303,126 @@ describe("ProviderList Component", () => {
     await waitFor(() => expect(enable).toBeEnabled());
     fireEvent.click(enable);
     expect(onSwitch).toHaveBeenCalledWith(provider);
+  });
+
+  it.each([false, true])(
+    "protects fresh login projections against cached state (explicit override: %s)",
+    async (explicitOverride) => {
+      const provider = createProvider({
+        id: "login-fresh",
+        meta: { piLoginReadOnly: true },
+      });
+      useDragSortMock.mockReturnValue({
+        sortedProviders: [provider],
+        sensors: [],
+        handleDragEnd: vi.fn(),
+      });
+      server.use(
+        http.post(`${TAURI_ENDPOINT}/get_pi_current_state`, () =>
+          HttpResponse.json({
+            enabledProviderIds: explicitOverride ? [provider.id] : [],
+            loginProviderIds: [],
+          }),
+        ),
+      );
+      renderWithQueryClient(
+        <ProviderList
+          providers={{ [provider.id]: provider }}
+          currentProviderId=""
+          appId="pi"
+          onSwitch={vi.fn()}
+          onEdit={vi.fn()}
+          onDelete={vi.fn()}
+          onDuplicate={vi.fn()}
+          onOpenWebsite={vi.fn()}
+        />,
+      );
+      await waitFor(() => {
+        const card = lastProps(provider.id);
+        expect(card).toBeDefined();
+        expect(card.presentation).toMatchObject({
+          readOnly: true,
+          buttons: [],
+          editDisabledReason: "pi.login.managedHint",
+          deleteDisabledReason: "pi.login.managedHint",
+        });
+      });
+    },
+  );
+
+  it("allows an explicit Pi override once both queries observe it", async () => {
+    const provider = createProvider({
+      id: "explicit-override",
+      meta: { piLoginOrigin: true },
+    });
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [provider],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_pi_current_state`, () =>
+        HttpResponse.json({
+          enabledProviderIds: [provider.id],
+          loginProviderIds: [],
+        }),
+      ),
+    );
+    renderWithQueryClient(
+      <ProviderList
+        providers={{ [provider.id]: provider }}
+        currentProviderId=""
+        appId="pi"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+      />,
+    );
+    await waitFor(() => {
+      const card = lastProps(provider.id);
+      expect(card).toBeDefined();
+      expect(card.presentation.readOnly).toBeUndefined();
+      expect(card.presentation.editDisabledReason).toBeUndefined();
+      expect(card.presentation.buttons).toMatchObject([{ key: "remove" }]);
+    });
+  });
+
+  it("keeps a known Pi login projection read-only when state refresh fails", async () => {
+    const provider = createProvider({
+      id: "login-fallback",
+      meta: { piLoginReadOnly: true },
+    });
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [provider],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_pi_current_state`, () =>
+        HttpResponse.json("current state unavailable", { status: 500 }),
+      ),
+    );
+    renderWithQueryClient(
+      <ProviderList
+        providers={{ [provider.id]: provider }}
+        currentProviderId=""
+        appId="pi"
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+      />,
+    );
+    await screen.findByText("无法读取 Pi 当前配置");
+    expect(lastProps(provider.id).presentation).toMatchObject({
+      readOnly: true,
+      buttons: [],
+      editDisabledReason: "pi.login.managedHint",
+      deleteDisabledReason: "pi.login.managedHint",
+    });
   });
 
   it("does not use legacy metadata when Pi's authoritative state is unavailable", async () => {

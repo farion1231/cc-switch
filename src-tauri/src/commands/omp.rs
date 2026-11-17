@@ -15,6 +15,7 @@ fn current_state(state: &AppState) -> Result<PiCurrentState, AppError> {
             None
         });
     Ok(PiCurrentState {
+        login_provider_ids: Vec::new(),
         enabled_provider_ids,
         default_provider_id,
     })
@@ -57,6 +58,7 @@ mod tests {
         );
         let current = current_state(&state).unwrap();
         assert_eq!(current.enabled_provider_ids, vec!["managed", "native"]);
+        assert!(current.login_provider_ids.is_empty());
         assert_eq!(current.default_provider_id.as_deref(), Some("managed"));
     }
 

@@ -855,6 +855,52 @@ describe("buildAdditiveSections", () => {
     ]);
   });
 
+  it("renders Pi login-only providers as externally managed without state changes", () => {
+    const sections = buildAdditiveSections({
+      app: "pi",
+      t,
+      providers: [relay],
+      isInConfig: () => false,
+      isPiLoginProvider: () => true,
+      actions: additiveActions(),
+    });
+    expect(item(sections, "relay")).toMatchObject({
+      section: "added",
+      readOnly: true,
+      buttons: [],
+      status: { label: "pi.login.configured" },
+      editDisabledReason: "pi.login.managedHint",
+      deleteDisabledReason: "pi.login.managedHint",
+    });
+  });
+
+  it("does not apply Pi login-only presentation to Oh My Pi", () => {
+    const sections = buildAdditiveSections({
+      app: "omp",
+      t,
+      providers: [relay],
+      isInConfig: () => false,
+      isPiLoginProvider: () => true,
+      actions: additiveActions(),
+    });
+    expect(item(sections, "relay").readOnly).toBeUndefined();
+    expect(button(sections, "relay", "add").disabledReason).toBeUndefined();
+  });
+
+  it("keeps explicit Pi overrides editable even when they have login provenance", () => {
+    const sections = buildAdditiveSections({
+      app: "pi",
+      t,
+      providers: [provider("relay", { meta: { piLoginOrigin: true } })],
+      isInConfig: () => true,
+      isPiLoginProvider: () => false,
+      actions: additiveActions(),
+    });
+    expect(item(sections, "relay").readOnly).toBeUndefined();
+    expect(item(sections, "relay").editDisabledReason).toBeUndefined();
+    expect(button(sections, "relay", "remove").disabledReason).toBeUndefined();
+  });
+
   it("blocks every Pi change while Pi's current state is unavailable", () => {
     const sections = buildAdditiveSections({
       app: "pi",

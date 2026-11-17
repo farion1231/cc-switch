@@ -78,6 +78,8 @@ export interface CardPresentation {
   move?: { onUp?: () => void; onDown?: () => void };
   /** 在队列里且路由服务在跑时显示健康状态 */
   showHealth?: boolean;
+  /** Externally managed projection: no duplicate, test, or usage actions. */
+  readOnly?: boolean;
   /** 编辑 / 删除不可用的原因（当前那家不能删、Hermes 托管只能在 Web UI 改…） */
   editDisabledReason?: string;
   deleteDisabledReason?: string;
@@ -705,6 +707,8 @@ export interface AdditiveInput {
   isHermesManaged?: (provider: Provider) => boolean;
   /** Pi / Oh My Pi：读不到当前配置时一律不能改 */
   piStateUnavailable?: boolean;
+  /** Pi only: login-only providers, excluding explicit models.json overrides. */
+  isPiLoginProvider?: (provider: Provider) => boolean;
   /** Kimi：原生 default_model 别名所属的供应商。 */
   kimiCurrentId?: string | null;
   /** WorkBuddy 官方登录卡：已收录账号、当前登录、是否在运行 */
@@ -810,6 +814,23 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
 
   for (const p of providers) {
     const chips: CardChip[] = [];
+    if (app === "pi" && input.isPiLoginProvider?.(p)) {
+      const reason = t("pi.login.managedHint");
+      added.push({
+        provider: p,
+        presentation: {
+          status: { label: t("pi.login.configured"), dot: "muted" },
+          chips: [
+            { key: "piLogin", label: "/login", tone: "outline", title: reason },
+          ],
+          buttons: [],
+          readOnly: true,
+          editDisabledReason: reason,
+          deleteDisabledReason: reason,
+        },
+      });
+      continue;
+    }
     if (app === "workbuddy" && isWorkBuddyOfficial(p)) {
       const card = workbuddyOfficialCard(input, p);
       (card.added ? added : available).push({

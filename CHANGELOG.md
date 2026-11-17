@@ -5,6 +5,12 @@ All notable changes to CC Switch will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Pi login-only providers** (refs #6799): Show providers configured through Pi's `/login` as read-only cards without storing credentials. Explicit `models.json` overrides remain editable; login/logout transitions preserve user configuration. Read-only presentation is isolated from Oh My Pi.
+
 ## [4.0.34] - 2026-11-16
 
 This release lets the skill repository manager add repositories on GitLab, Gitea and Forgejo (self-hosted instances and Codeberg included), lets Antigravity CLI sessions be deleted from the session manager, starts the automatic update download as soon as a new version is found, adds thinking effort levels for custom WorkBuddy models, and lets S3 users clear their saved config. Fixes cover Gemini CLI model-list fetches, image input for GitHub Copilot models in Codex, S3 sync on Alibaba OSS, Tencent COS and Huawei OBS, sync failing on unresolvable skill links, Fable 5.2 shown as Fable 5 in route mode, the prefix cache of Gemini models on Copilot, 1M Fable requests rejected by Copilot, the S3 provider preset not being remembered, and Hermes config directory changes not syncing providers. A large internal cleanup removes dead code and unifies duplicated helpers.

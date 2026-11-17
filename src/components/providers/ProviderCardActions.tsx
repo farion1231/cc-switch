@@ -211,25 +211,26 @@ export function ProviderCardActions({
             <ModeMenuItem key={item.key} item={item} />
           ))}
           {menuItems.length > 0 && <DropdownMenuSeparator />}
-          {onDuplicate && (
+          {onDuplicate && !presentation.readOnly && (
             <DropdownMenuItem onSelect={onDuplicate}>
               {t("provider.duplicate")}
             </DropdownMenuItem>
           )}
-          {onTest && (
+          {onTest && !presentation.readOnly && (
             <DropdownMenuItem disabled={isTesting} onSelect={onTest}>
               {isTesting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
               {t("provider.connectivityCheck")}
             </DropdownMenuItem>
           )}
-          {onConfigureUsage && (
+          {onConfigureUsage && !presentation.readOnly && (
             <DropdownMenuItem onSelect={onConfigureUsage}>
               {t("provider.configureUsage")}
             </DropdownMenuItem>
           )}
-          {(onDuplicate || onTest || onConfigureUsage) && (
-            <DropdownMenuSeparator />
-          )}
+          {!presentation.readOnly &&
+            (onDuplicate || onTest || onConfigureUsage) && (
+              <DropdownMenuSeparator />
+            )}
           <DropdownMenuItem
             disabled={Boolean(presentation.deleteDisabledReason)}
             onSelect={onDelete}

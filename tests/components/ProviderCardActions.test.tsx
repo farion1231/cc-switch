@@ -22,6 +22,52 @@ async function openMenu(presentation: CardPresentation) {
 }
 
 describe("ProviderCardActions — mode items in the more menu", () => {
+  it("protects login projections and hides duplicate, test, and usage actions", async () => {
+    const onEdit = vi.fn();
+    const onDelete = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <ProviderCardActions
+        providerName="Pi"
+        presentation={{
+          buttons: [],
+          chips: [],
+          readOnly: true,
+          editDisabledReason: "pi.login.managedHint",
+          deleteDisabledReason: "pi.login.managedHint",
+        }}
+        onEdit={onEdit}
+        onDelete={onDelete}
+        onDuplicate={vi.fn()}
+        onTest={vi.fn()}
+        onConfigureUsage={vi.fn()}
+      />,
+    );
+    const edit = screen.getByRole("button", {
+      name: "providerCard.action.edit",
+    });
+    expect(edit).toHaveAttribute("aria-disabled", "true");
+    await user.click(edit);
+    await user.click(
+      screen.getByRole("button", { name: "providerCard.action.more" }),
+    );
+    const menu = await screen.findByRole("menu");
+    expect(
+      within(menu).queryByText("provider.duplicate"),
+    ).not.toBeInTheDocument();
+    expect(
+      within(menu).queryByText("provider.connectivityCheck"),
+    ).not.toBeInTheDocument();
+    expect(
+      within(menu).queryByText("provider.configureUsage"),
+    ).not.toBeInTheDocument();
+    const remove = within(menu).getByRole("menuitem");
+    expect(remove).toHaveAttribute("aria-disabled", "true");
+    await user.click(remove);
+    expect(onEdit).not.toHaveBeenCalled();
+    expect(onDelete).not.toHaveBeenCalled();
+  });
+
   it("lists them first", async () => {
     const onSelect = vi.fn();
     const { user, menu } = await openMenu({
