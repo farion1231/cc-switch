@@ -2927,6 +2927,13 @@ impl SkillService {
         Self::inspect_pi_skill_destination(source, destination, directory).map(|_| ())
     }
 
+    fn link_points_to_managed_copy(resolved: &Path, source: &Path) -> bool {
+        matches!(
+            (resolved.canonicalize(), source.canonicalize()),
+            (Ok(resolved), Ok(source)) if resolved == source
+        ) || (!source.exists() && resolved == source)
+    }
+
     fn inspect_pi_skill_destination(
         source: &Path,
         destination: &Path,
@@ -2946,10 +2953,7 @@ impl SkillService {
                     .map(|parent| parent.join(&target))
                     .unwrap_or(target)
             };
-            if matches!(
-                (resolved.canonicalize(), source.canonicalize()),
-                (Ok(resolved), Ok(source)) if resolved == source
-            ) {
+            if Self::link_points_to_managed_copy(&resolved, source) {
                 return Ok(Some(PiSkillDeployment::Symlink {
                     expected_target: resolved,
                 }));
@@ -7889,6 +7893,76 @@ mod tests {
             assert!(!native.exists());
             assert!(!source.exists());
         }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn uninstall_removes_a_dangling_link_to_a_missing_managed_copy() {
+        for app in [AppType::Dsh, AppType::Agy] {
+            let temp = tempdir().unwrap();
+            let _home = TestHomeGuard::set(temp.path());
+            let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
+            let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
+            let db = Arc::new(Database::memory().unwrap());
+            let mut skill = poisoned_skill("owner/repo:skill", "test-skill");
+            skill.apps.set_enabled_for(&app, true);
+            db.save_skill(&skill).unwrap();
+            let source = SkillService::get_ssot_dir().unwrap().join("test-skill");
+            let native = SkillService::get_app_skills_dir(&app)
+                .unwrap()
+                .join("test-skill");
+            write_skill(&source, "managed");
+            fs::create_dir_all(native.parent().unwrap()).unwrap();
+            let linked = SkillService::create_symlink(&source, &native);
+            #[cfg(windows)]
+            if linked.is_err() {
+                return;
+            }
+            linked.unwrap();
+            fs::remove_dir_all(&source).unwrap();
+
+            SkillService::uninstall(&db, &skill.id).expect("uninstall with a missing managed copy");
+
+            assert!(db.get_installed_skill(&skill.id).unwrap().is_none());
+            assert!(
+                !SkillService::is_symlink(&native),
+                "dangling link must be removed"
+            );
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn uninstall_keeps_a_dangling_link_to_another_path_when_the_managed_copy_is_missing() {
+        let temp = tempdir().unwrap();
+        let _home = TestHomeGuard::set(temp.path());
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
+        let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
+        let db = Arc::new(Database::memory().unwrap());
+        let mut skill = poisoned_skill("owner/repo:skill", "test-skill");
+        skill.apps.set_enabled_for(&AppType::Dsh, true);
+        db.save_skill(&skill).unwrap();
+        let native = SkillService::get_app_skills_dir(&AppType::Dsh)
+            .unwrap()
+            .join("test-skill");
+        let elsewhere = temp.path().join("elsewhere");
+        fs::create_dir_all(&elsewhere).unwrap();
+        fs::create_dir_all(native.parent().unwrap()).unwrap();
+        let linked = SkillService::create_symlink(&elsewhere, &native);
+        #[cfg(windows)]
+        if linked.is_err() {
+            return;
+        }
+        linked.unwrap();
+        fs::remove_dir_all(&elsewhere).unwrap();
+
+        assert!(SkillService::uninstall(&db, &skill.id).is_err());
+
+        assert!(db.get_installed_skill(&skill.id).unwrap().is_some());
+        assert!(
+            SkillService::is_symlink(&native),
+            "foreign link must be kept"
+        );
     }
 
     #[test]
