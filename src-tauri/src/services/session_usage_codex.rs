@@ -2258,6 +2258,187 @@ fn verified_ordinal_fork(parsed: &ParsedCodexFile) -> bool {
         && child_events_after_fork(parsed).is_some()
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ForkRequestEvidence {
+    response_id: String,
+    thread_id: String,
+    usage: CumulativeTokens,
+}
+
+struct ForkFileEvidence {
+    requests: HashMap<String, (DateTime<Utc>, ForkRequestEvidence)>,
+    token_lines: HashMap<i64, ForkRequestEvidence>,
+    stamp: ParentFileStamp,
+}
+
+/// Legacy copied history retains response IDs and the original request owner,
+/// even when every envelope timestamp is rewritten. Read a complete, stable
+/// snapshot and pair records exactly as the ordinary token parser does.
+fn read_fork_file_evidence(path: &Path) -> Option<ForkFileEvidence> {
+    let file = fs::File::open(path).ok()?;
+    let stamp = ParentFileStamp::from_file(&file)?;
+    let mut reader = codex_rollout_file::reader_from_file(path, file).ok()?;
+    let mut requests = HashMap::new();
+    let mut token_lines = HashMap::new();
+    let mut pending: Option<ForkRequestEvidence> = None;
+    let mut bytes = Vec::new();
+    let mut line_offset = 0i64;
+    loop {
+        bytes.clear();
+        if reader.read_until(b'\n', &mut bytes).ok()? == 0 {
+            break;
+        }
+        line_offset += 1;
+        let line = std::str::from_utf8(&bytes).ok()?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        // Validate every record, including bodies omitted from the projection.
+        let record = parse_parent_record(line).ok()?;
+        let kind = record
+            .event_type
+            .as_ref()
+            .and_then(serde_json::Value::as_str);
+        if kind == Some("token_usage_record") {
+            pending = None;
+            let value: serde_json::Value = serde_json::from_str(line).ok()?;
+            let payload = value.get("payload")?;
+            let usage = payload.get("usage").and_then(parse_cumulative_tokens)?;
+            if usage_is_zero(&usage) {
+                continue;
+            }
+            let response_id = non_empty_string(payload.get("response_id"))?;
+            let owner = non_empty_string(payload.get("thread_id"))?;
+            let thread_id = uuid::Uuid::parse_str(&owner).ok()?.hyphenated().to_string();
+            if let Some(session_id) = payload
+                .get("session_id")
+                .and_then(serde_json::Value::as_str)
+            {
+                if uuid::Uuid::parse_str(session_id)
+                    .ok()?
+                    .hyphenated()
+                    .to_string()
+                    != thread_id
+                {
+                    return None;
+                }
+            }
+            let evidence = ForkRequestEvidence {
+                response_id: response_id.clone(),
+                thread_id,
+                usage,
+            };
+            let timestamp = parse_timestamp(record.timestamp.as_ref())?;
+            if let Some((_, previous)) = requests.insert(response_id, (timestamp, evidence.clone()))
+            {
+                if previous != evidence {
+                    return None;
+                }
+            }
+            pending = Some(evidence);
+        } else if kind == Some("event_msg")
+            && record.payload.as_ref()?.event_type.as_ref()?.as_str() == Some("token_count")
+        {
+            if let Some(evidence) = pending.take() {
+                let last = record
+                    .payload
+                    .as_ref()?
+                    .info
+                    .as_ref()?
+                    .get("last_token_usage")
+                    .and_then(parse_cumulative_tokens)?;
+                if usage_matches(&last, &evidence.usage) || usage_is_zero(&last) {
+                    token_lines.insert(line_offset, evidence);
+                }
+            }
+        }
+    }
+    if ParentFileStamp::from_file(&fs::File::open(path).ok()?)? != stamp {
+        return None;
+    }
+    Some(ForkFileEvidence {
+        requests,
+        token_lines,
+        stamp,
+    })
+}
+
+/// A non-archived parent can remain idle forever too. Do not waive the time
+/// guard based on idleness alone: verify each copied response against its parent
+/// and require explicit child ownership for every new billable request.
+fn verified_owned_fork_prefix(
+    parsed: &ParsedCodexFile,
+    child_path: &Path,
+    index: &RolloutIndex,
+) -> Option<usize> {
+    let ParentResolution::Parent(parent_id) = &parsed.parent else {
+        return None;
+    };
+    if parsed.bounded_history.is_some() {
+        return None;
+    }
+    child_events_after_fork(parsed)?;
+    let candidates = index.get(parent_id)?;
+    // Multiple copies/pages need their existing resolution and conflict checks.
+    if candidates.len() != 1 {
+        return None;
+    }
+    let parent_path = &candidates[0];
+    let timeline = load_parent_timeline(parent_path).ok()?;
+    if !timeline.verified_snapshot || timeline.has_token_without_timestamp {
+        return None;
+    }
+    let cutoff = parsed.root_timestamp?;
+    let signatures = timeline.signatures_at(cutoff);
+    let prefix = matching_replay_prefix(&parsed.token_events, &signatures);
+    let replay_end = parsed.token_events.get(prefix.checked_sub(1)?)?.line_offset;
+    let child_id = parsed.meta_thread_id.as_deref()?;
+    let parent = read_fork_file_evidence(parent_path)?;
+    let child = read_fork_file_evidence(child_path)?;
+    for event in parsed
+        .token_events
+        .iter()
+        .filter(|event| event.event_index.is_some())
+        .chain(parsed.usage_record_events.iter())
+    {
+        let evidence = child.token_lines.get(&event.line_offset)?;
+        let delta = delta_from_usage(&evidence.usage);
+        if (
+            delta.input,
+            delta.cached_input,
+            delta.cache_write_input,
+            delta.output,
+        ) != (
+            event.delta.input,
+            event.delta.cached_input,
+            event.delta.cache_write_input,
+            event.delta.output,
+        ) {
+            return None;
+        }
+        if event.line_offset <= replay_end {
+            // Fallback records have a separate insertion path; copied fallbacks
+            // must stay deferred until that path can also strip them safely.
+            if event.event_index.is_none() || evidence.thread_id == child_id {
+                return None;
+            }
+            let (timestamp, inherited) = parent.requests.get(&evidence.response_id)?;
+            if *timestamp > cutoff || inherited != evidence {
+                return None;
+            }
+        } else if evidence.thread_id != child_id
+            || parent.requests.contains_key(&evidence.response_id)
+        {
+            return None;
+        }
+    }
+    // The parent must still be the same snapshot used for the identity checks.
+    if ParentFileStamp::from_file(&fs::File::open(parent_path).ok()?)? != parent.stamp {
+        return None;
+    }
+    Some(prefix)
+}
+
 // A bounded-reference fork stores only its own requests. Accept this narrow case
 // only with a complete physical prefix and an exact inherited counter baseline.
 // Otherwise retain the existing replay/deferred path. Never rewrite rollout data.
@@ -2448,104 +2629,118 @@ fn sync_single_codex_file(
         ));
     }
 
-    let replay_prefix = match &parsed.parent {
-        ParentResolution::None | ParentResolution::Continuation { .. } => 0,
-        ParentResolution::Deferred(reason) => {
-            let pending_reason = if let Some(meta_id) = parsed.meta_thread_id.as_deref() {
-                if rollout_index.contains_key(meta_id) {
-                    PendingReason::Retryable {
-                        reason: reason.clone(),
-                        parent_id: meta_id.to_string(),
-                        child_file,
-                        parent_files: parent_dependency_stamp(meta_id, rollout_index),
+    let replay_prefix = if let Some(prefix) =
+        verified_owned_fork_prefix(&parsed, file_path, rollout_index)
+    {
+        prefix
+    } else {
+        match &parsed.parent {
+            ParentResolution::None | ParentResolution::Continuation { .. } => 0,
+            ParentResolution::Deferred(reason) => {
+                let pending_reason = if let Some(meta_id) = parsed.meta_thread_id.as_deref() {
+                    if rollout_index.contains_key(meta_id) {
+                        PendingReason::Retryable {
+                            reason: reason.clone(),
+                            parent_id: meta_id.to_string(),
+                            child_file,
+                            parent_files: parent_dependency_stamp(meta_id, rollout_index),
+                        }
+                    } else {
+                        PendingReason::Stable(reason.clone())
                     }
                 } else {
                     PendingReason::Stable(reason.clone())
-                }
-            } else {
-                PendingReason::Stable(reason.clone())
-            };
-            return Ok(mark_deferred(
-                file_path,
-                file_modified,
-                file_size,
-                pending_reason,
-            ));
-        }
-        ParentResolution::Parent(_)
-            if verified_ordinal_fork(&parsed) || verified_bounded_fork(&parsed, rollout_index) =>
-        {
-            0
-        }
-        ParentResolution::Parent(parent_id) => {
-            let Some(cutoff) = parsed.root_timestamp else {
+                };
                 return Ok(mark_deferred(
                     file_path,
                     file_modified,
                     file_size,
-                    PendingReason::Stable(
-                        "parented rollout 的 root meta 缺少有效 timestamp".to_string(),
-                    ),
+                    pending_reason,
                 ));
-            };
-            // 先把查询结果拷出来再释放锁：Rust 2021 下 `if let .. else` 的临时值活到
-            // else 分支结束，锁中毒时 Err 里仍攥着 guard，else 里再加锁会自锁。
-            // None = 锁已中毒（不走缓存），Some(None) = 未命中。
-            let cached_prefix = replay_caches().lock().ok().map(|caches| {
-                caches
-                    .replay_prefixes
-                    .get(file_path)
-                    .filter(|cached| cached.modified == file_modified && cached.size == file_size)
-                    .map(|cached| cached.prefix)
-            });
-            match cached_prefix {
-                Some(Some(prefix)) => prefix,
-                Some(None) => {
-                    let parent_files = parent_dependency_stamp(parent_id, rollout_index);
-                    let parent_signatures = match resolve_parent_signatures(
-                        parent_id,
-                        cutoff,
-                        rollout_index,
-                        &parsed,
-                    ) {
-                        Ok(signatures) => signatures,
-                        Err(error) => {
-                            let pending_reason = if rollout_index.contains_key(parent_id) {
-                                PendingReason::Retryable {
-                                    reason: error.reason,
-                                    parent_id: parent_id.clone(),
-                                    child_file,
-                                    parent_files: if error.cacheable { parent_files } else { None },
-                                }
-                            } else {
-                                PendingReason::MissingParent(parent_id.clone())
-                            };
-                            return Ok(mark_deferred(
-                                file_path,
-                                file_modified,
-                                file_size,
-                                pending_reason,
-                            ));
+            }
+            ParentResolution::Parent(_)
+                if verified_ordinal_fork(&parsed)
+                    || verified_bounded_fork(&parsed, rollout_index) =>
+            {
+                0
+            }
+            ParentResolution::Parent(parent_id) => {
+                let Some(cutoff) = parsed.root_timestamp else {
+                    return Ok(mark_deferred(
+                        file_path,
+                        file_modified,
+                        file_size,
+                        PendingReason::Stable(
+                            "parented rollout 的 root meta 缺少有效 timestamp".to_string(),
+                        ),
+                    ));
+                };
+                // 先把查询结果拷出来再释放锁：Rust 2021 下 `if let .. else` 的临时值活到
+                // else 分支结束，锁中毒时 Err 里仍攥着 guard，else 里再加锁会自锁。
+                // None = 锁已中毒（不走缓存），Some(None) = 未命中。
+                let cached_prefix = replay_caches().lock().ok().map(|caches| {
+                    caches
+                        .replay_prefixes
+                        .get(file_path)
+                        .filter(|cached| {
+                            cached.modified == file_modified && cached.size == file_size
+                        })
+                        .map(|cached| cached.prefix)
+                });
+                match cached_prefix {
+                    Some(Some(prefix)) => prefix,
+                    Some(None) => {
+                        let parent_files = parent_dependency_stamp(parent_id, rollout_index);
+                        let parent_signatures = match resolve_parent_signatures(
+                            parent_id,
+                            cutoff,
+                            rollout_index,
+                            &parsed,
+                        ) {
+                            Ok(signatures) => signatures,
+                            Err(error) => {
+                                let pending_reason = if rollout_index.contains_key(parent_id) {
+                                    PendingReason::Retryable {
+                                        reason: error.reason,
+                                        parent_id: parent_id.clone(),
+                                        child_file,
+                                        parent_files: if error.cacheable {
+                                            parent_files
+                                        } else {
+                                            None
+                                        },
+                                    }
+                                } else {
+                                    PendingReason::MissingParent(parent_id.clone())
+                                };
+                                return Ok(mark_deferred(
+                                    file_path,
+                                    file_modified,
+                                    file_size,
+                                    pending_reason,
+                                ));
+                            }
+                        };
+                        let prefix =
+                            matching_replay_prefix(&parsed.token_events, &parent_signatures);
+                        if let Ok(mut caches) = replay_caches().lock() {
+                            caches.replay_prefixes.insert(
+                                file_path.to_path_buf(),
+                                CachedReplayPrefix {
+                                    modified: file_modified,
+                                    size: file_size,
+                                    prefix,
+                                },
+                            );
                         }
-                    };
-                    let prefix = matching_replay_prefix(&parsed.token_events, &parent_signatures);
-                    if let Ok(mut caches) = replay_caches().lock() {
-                        caches.replay_prefixes.insert(
-                            file_path.to_path_buf(),
-                            CachedReplayPrefix {
-                                modified: file_modified,
-                                size: file_size,
-                                prefix,
-                            },
-                        );
+                        prefix
                     }
-                    prefix
-                }
-                None => {
-                    let parent_signatures =
-                        resolve_parent_signatures(parent_id, cutoff, rollout_index, &parsed)
-                            .map_err(|error| AppError::Config(error.reason))?;
-                    matching_replay_prefix(&parsed.token_events, &parent_signatures)
+                    None => {
+                        let parent_signatures =
+                            resolve_parent_signatures(parent_id, cutoff, rollout_index, &parsed)
+                                .map_err(|error| AppError::Config(error.reason))?;
+                        matching_replay_prefix(&parsed.token_events, &parent_signatures)
+                    }
                 }
             }
         }
@@ -3526,6 +3721,164 @@ mod tests {
             ],
         );
         (parent, child)
+    }
+
+    fn owned_legacy_fork(dir: &Path) -> (PathBuf, PathBuf) {
+        let (archived, child) = archived_legacy_fork(dir);
+        let active = dir.join("sessions");
+        fs::create_dir_all(&active).unwrap();
+        let parent = active.join(archived.file_name().unwrap());
+        fs::rename(archived, &parent).unwrap();
+        for (path, is_child) in [(&parent, false), (&child, true)] {
+            let values = fs::read_to_string(path)
+                .unwrap()
+                .lines()
+                .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+                .collect::<Vec<_>>();
+            let mut records = Vec::new();
+            let mut request = 0;
+            for value in values {
+                if value
+                    .pointer("/payload/type")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("token_count")
+                {
+                    request += 1;
+                    let own_request = is_child && request == 3;
+                    // The parent's copied requests can themselves belong to an
+                    // ancestor; comparing ownership only with parent_id is wrong.
+                    let owner = if own_request { CHILD_A_ID } else { CHILD_B_ID };
+                    let response_id = if own_request {
+                        "resp_child".to_string()
+                    } else {
+                        format!("resp_inherited_{request}")
+                    };
+                    let usage = value
+                        .pointer("/payload/info/last_token_usage")
+                        .unwrap()
+                        .clone();
+                    records.push(serde_json::json!({
+                        "timestamp": value["timestamp"], "type": "token_usage_record",
+                        "payload": { "response_id": response_id, "thread_id": owner, "session_id": owner, "usage": usage }
+                    }));
+                }
+                records.push(value);
+            }
+            write_jsonl(path, &records);
+        }
+        (parent, child)
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_owned_legacy_fork_recovers_from_active_idle_parent() -> Result<(), AppError> {
+        for compressed in [false, true] {
+            clear_codex_replay_caches();
+            let dir = tempdir().unwrap();
+            let db = Database::memory()?;
+            let (parent, child) = owned_legacy_fork(dir.path());
+            let parent = if compressed {
+                compress_rollout(&parent)
+            } else {
+                parent
+            };
+            let files = [parent.as_path(), child.as_path()];
+            let result = sync_test_file(&db, &child, &files)?;
+            assert_eq!(
+                (result.imported, result.skipped, result.deferred),
+                (1, 2, false)
+            );
+            assert_unchanged_codex_file_is_skipped(&db, &child)?;
+            lock_conn!(db.conn).execute("DELETE FROM session_log_sync", [])?;
+            clear_codex_replay_caches();
+            assert_eq!(sync_test_file(&db, &child, &files)?.imported, 0);
+            let mut usage = token_usage_record_at("resp_append", 25, 15, 3, "2026-07-10T03:00:22Z");
+            usage["payload"]["thread_id"] = serde_json::json!(CHILD_A_ID);
+            usage["payload"]["session_id"] = serde_json::json!(CHILD_A_ID);
+            append_jsonl(&child, usage);
+            append_jsonl(
+                &child,
+                token_count_with_last_at(275, 140, 28, 25, 15, 3, "codex", "2026-07-10T03:00:22Z"),
+            );
+            assert_eq!(sync_test_file(&db, &child, &files)?.imported, 1);
+            let mut compaction =
+                token_usage_record_at("resp_compact_owned", 40, 20, 4, "2026-07-10T03:00:23Z");
+            compaction["payload"]["thread_id"] = serde_json::json!(CHILD_A_ID);
+            append_jsonl(&child, compaction);
+            append_jsonl(
+                &child,
+                token_count_with_last_at(315, 160, 32, 0, 0, 0, "codex", "2026-07-10T03:00:23Z"),
+            );
+            assert_eq!(sync_test_file(&db, &child, &files)?.imported, 1);
+            assert_eq!(sync_test_file(&db, &child, &files)?.imported, 0);
+            assert_eq!(codex_usage_rows(&db)?.len(), 3);
+        }
+        Ok(())
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_owned_legacy_fork_rejects_unverified_request_identity() -> Result<(), AppError> {
+        for case in [
+            "missing_record",
+            "missing_response",
+            "foreign_live_owner",
+            "forged_replay_response",
+            "replay_usage_mismatch",
+            "conflicting_session",
+            "duplicate_response",
+        ] {
+            clear_codex_replay_caches();
+            let dir = tempdir().unwrap();
+            let db = Database::memory()?;
+            let (parent, child) = owned_legacy_fork(dir.path());
+            let mut records = fs::read_to_string(&child)
+                .unwrap()
+                .lines()
+                .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+                .collect::<Vec<_>>();
+            let positions = records
+                .iter()
+                .enumerate()
+                .filter_map(|(i, v)| (v["type"] == "token_usage_record").then_some(i))
+                .collect::<Vec<_>>();
+            let first = positions[0];
+            let last = positions[2];
+            match case {
+                "missing_record" => {
+                    records.remove(last);
+                }
+                "missing_response" => {
+                    records[last]["payload"]
+                        .as_object_mut()
+                        .unwrap()
+                        .remove("response_id");
+                }
+                "foreign_live_owner" => {
+                    records[last]["payload"]["thread_id"] = serde_json::json!(CHILD_B_ID);
+                    records[last]["payload"]["session_id"] = serde_json::json!(CHILD_B_ID);
+                }
+                "forged_replay_response" => {
+                    records[first]["payload"]["response_id"] = serde_json::json!("resp_unknown")
+                }
+                "replay_usage_mismatch" => {
+                    records[first]["payload"]["usage"]["input_tokens"] = serde_json::json!(999)
+                }
+                "conflicting_session" => {
+                    records[last]["payload"]["session_id"] = serde_json::json!(CHILD_B_ID)
+                }
+                "duplicate_response" => {
+                    records[last]["payload"]["response_id"] =
+                        records[first]["payload"]["response_id"].clone()
+                }
+                _ => unreachable!(),
+            }
+            write_jsonl(&child, &records);
+            let result = sync_test_file(&db, &child, &[&parent, &child])?;
+            assert!(result.deferred, "{case}");
+            assert!(codex_usage_rows(&db)?.is_empty(), "{case}");
+        }
+        Ok(())
     }
 
     #[test]
