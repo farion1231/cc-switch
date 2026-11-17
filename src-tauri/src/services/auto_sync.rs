@@ -238,6 +238,7 @@ mod tests {
     use crate::services::sync_protocol::sync_mutex;
     use crate::services::webdav_auto_sync::WebDavAutoSync;
     use crate::settings::{self, AppSettings, S3SyncSettings, WebDavSyncSettings};
+    use crate::test_support::EnvVars;
     use serial_test::serial;
     use std::io::{BufRead, BufReader, Read, Write};
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -332,19 +333,18 @@ mod tests {
 
     /// Points settings at a fresh home for one test and puts the old one back.
     struct IsolatedHome {
+        _env: EnvVars,
         _dir: tempfile::TempDir,
-        previous: Option<std::ffi::OsString>,
     }
 
     impl IsolatedHome {
         fn new() -> Self {
             let dir = tempfile::tempdir().expect("create test home");
-            let previous = std::env::var_os("CC_SWITCH_TEST_HOME");
-            std::env::set_var("CC_SWITCH_TEST_HOME", dir.path());
+            let env = EnvVars::new().set("CC_SWITCH_TEST_HOME", dir.path());
             settings::update_settings(AppSettings::default()).expect("reset settings");
             Self {
+                _env: env,
                 _dir: dir,
-                previous,
             }
         }
     }
@@ -352,10 +352,6 @@ mod tests {
     impl Drop for IsolatedHome {
         fn drop(&mut self) {
             let _ = settings::update_settings(AppSettings::default());
-            match self.previous.take() {
-                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
-                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
-            }
         }
     }
 

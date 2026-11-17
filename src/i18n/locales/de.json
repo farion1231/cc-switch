@@ -25,7 +25,6 @@
     "success": "Erfolg",
     "error": "Fehler",
     "unknown": "Unbekannt",
-    "enterValidValue": "Bitte geben Sie einen gültigen Wert ein",
     "clear": "Leeren",
     "format": "Formatieren",
     "formatSuccess": "Erfolgreich formatiert",
@@ -281,8 +280,7 @@
     "editCurrentNotice": "Dies ist der verwendete Anbieter. Das Speichern wirkt sofort; die nächste Anfrage verwendet die neuen Einstellungen."
   },
   "claudeCode": {
-    "needsRouting": "Routing erforderlich",
-    "noRoutingSupport": "Kein Routing-Support"
+    "needsRouting": "Routing erforderlich"
   },
   "codex": {
     "needsRouting": "Routing erforderlich",
@@ -343,8 +341,6 @@
   },
   "notifications": {
     "providerAdded": "Anbieter hinzugefügt",
-    "providerSaved": "Anbieterkonfiguration gespeichert",
-    "providerDeleted": "Anbieter erfolgreich gelöscht",
     "switchSuccess": "Wechsel erfolgreich!",
     "codexRestartRequired": "Wechsel erfolgreich. Starten Sie den Client neu, um die Änderungen zu übernehmen.",
     "geminiRestartRequired": "Wechsel erfolgreich. Starten Sie Gemini CLI neu, um die Änderungen zu übernehmen.",
@@ -355,12 +351,9 @@
     "removeFromConfigFailed": "Anbieter konnte nicht entfernt werden",
     "switchFailedTitle": "Wechsel fehlgeschlagen",
     "switchFailed": "Wechsel fehlgeschlagen: {{error}}",
-    "autoImported": "Standardanbieter aus vorhandener Konfiguration erstellt",
     "addFailed": "Anbieter konnte nicht hinzugefügt werden: {{error}}",
     "saveFailed": "Speichern fehlgeschlagen: {{error}}",
     "saveFailedGeneric": "Speichern fehlgeschlagen, bitte versuchen Sie es erneut",
-    "appliedToClaudePlugin": "Auf Claude-Plugin angewendet",
-    "removedFromClaudePlugin": "Aus Claude-Plugin entfernt",
     "syncClaudePluginFailed": "Synchronisierung des Claude-Plugins fehlgeschlagen",
     "skipClaudeOnboardingFailed": "Die Bestätigung beim ersten Start von Claude Code konnte nicht übersprungen werden",
     "clearClaudeOnboardingSkipFailed": "Die Bestätigung beim ersten Start von Claude Code konnte nicht wiederhergestellt werden",
@@ -379,8 +372,6 @@
     "proxyReasonDesktopMapping": "verwendet Modellzuordnung (Claude Desktop akzeptiert nur Claude-Modellnamen)",
     "proxyReasonManagedOAuth": "verwendet eine verwaltete OAuth-Anmeldung (Token wird vom lokalen Routing eingefügt)",
     "proxyReasonRoutingRequired": "erfordert lokales Routing zur Verarbeitung von Anfragen",
-    "openAIFormatHint": "Dieser Anbieter verwendet ein OpenAI-kompatibles Format und erfordert einen aktivierten Routing-Dienst",
-    "copilotProxyHint": "GitHub Copilot als Claude-Anbieter erfordert immer lokales Routing; das Routing wählt anhand des aktuellen Modells automatisch Chat Completions oder Responses.",
     "openLinkFailed": "Link konnte nicht geöffnet werden",
     "openclawModelsRegistered": "Modelle wurden in der /model-Liste registriert",
     "openclawDefaultModelSet": "Als Standardmodell festgelegt",
@@ -1742,22 +1733,9 @@
     "copilotDeleteHint": "Löschen Sie diese Sitzung in GitHub Copilot CLI, damit dessen Sitzungsspeicher konsistent bleibt"
   },
   "console": {
-    "providerSwitchReceived": "Ereignis zum Anbieterwechsel empfangen:",
-    "setupListenerFailed": "Listener für Anbieterwechsel konnte nicht eingerichtet werden:",
-    "updateProviderFailed": "Aktualisieren des Anbieters fehlgeschlagen:",
-    "autoImportFailed": "Automatischer Import der Standardkonfiguration fehlgeschlagen:",
     "openLinkFailed": "Link konnte nicht geöffnet werden:",
-    "getVersionFailed": "Versionsinformationen konnten nicht abgerufen werden:",
-    "loadSettingsFailed": "Einstellungen konnten nicht geladen werden:",
-    "getConfigPathFailed": "Konfigurationspfad konnte nicht abgerufen werden:",
-    "getConfigDirFailed": "Konfigurationsverzeichnis konnte nicht abgerufen werden:",
-    "detectPortableFailed": "Portable-Modus konnte nicht erkannt werden:",
-    "saveSettingsFailed": "Einstellungen konnten nicht gespeichert werden:",
     "updateFailed": "Update fehlgeschlagen:",
     "checkUpdateFailed": "Suche nach Updates fehlgeschlagen:",
-    "openConfigFolderFailed": "Konfigurationsordner konnte nicht geöffnet werden:",
-    "selectConfigDirFailed": "Konfigurationsverzeichnis konnte nicht ausgewählt werden:",
-    "getDefaultConfigDirFailed": "Standard-Konfigurationsverzeichnis konnte nicht abgerufen werden:",
     "openReleaseNotesFailed": "Versionshinweise konnten nicht geöffnet werden:"
   },
   "providerForm": {
@@ -2077,7 +2055,6 @@
     "enterCode": "Geben Sie den Code in Ihrem Browser ein:",
     "accountCount": "{{count}} Konto/Konten",
     "selectAccount": "Konto auswählen",
-    "chatgptAccount": "ChatGPT-Konto",
     "accountToUse": "Zu verwendendes Konto",
     "signInMethod": "Anmeldemethode",
     "manageAccounts": "Konten verwalten",
@@ -2087,18 +2064,14 @@
     "explicitSelectionRequired": "Anmeldemethode auswählen",
     "useDefaultAccount": "Standardkonto verwenden",
     "noneOptionLabel": "Codex-Anmeldung folgen",
-    "reauthDescription": "Damit das Verhalten der Browser-Anmeldung erreicht wird, müssen sich diese Konten erneut anmelden, um das erforderliche Anmeldezertifikat (id_token) wiederherzustellen. Nach der erneuten Authentifizierung können sie für die verwaltete Bindung verwendet werden.",
     "reauthBadge": "Erneute Anmeldung erforderlich",
-    "reauthLogin": "Erneut anmelden",
     "reauthSelectHint": "Dieses Konto muss sich erneut anmelden, um die verwaltete Bindung zu ermöglichen.",
     "reauthNow": "Jetzt erneut anmelden",
     "duplicateAccount": "Dieses ChatGPT-Konto wurde bereits hinzugefügt. Verwenden Sie das vorhandene Konto.",
-    "loggedInAccounts": "Angemeldete Konten",
     "defaultAccount": "Standard",
     "selected": "Ausgewählt",
     "removeAccount": "Konto entfernen",
     "setAsDefault": "Als Standard festlegen",
-    "addAnotherAccount": "Weiteres Konto hinzufügen",
     "logoutAll": "Alle Konten abmelden",
     "retry": "Erneut versuchen",
     "copyCode": "Code kopieren",
@@ -2107,7 +2080,6 @@
     "loginMethod": "Anmeldemethode",
     "browserLogin": "Browser-Anmeldung",
     "deviceCodeLogin": "Anmeldung per Gerätecode",
-    "openBrowserLogin": "Browser-Anmeldung öffnen",
     "loginExpired": "Anmeldung abgelaufen. Bitte erneut versuchen."
   },
   "xaiOauth": {
@@ -2161,7 +2133,6 @@
     "testing": "Wird getestet",
     "addEndpointPlaceholder": "https://api.example.com",
     "done": "Fertig",
-    "noEndpoints": "Keine Endpunkte",
     "failed": "Fehlgeschlagen",
     "enterValidUrl": "Bitte geben Sie eine gültige URL ein",
     "invalidUrlFormat": "Ungültiges URL-Format",
@@ -2169,12 +2140,7 @@
     "urlExists": "Diese URL existiert bereits",
     "saveFailed": "Speichern fehlgeschlagen, bitte versuchen Sie es erneut",
     "loadEndpointsFailed": "Benutzerdefinierte Endpunkte konnten nicht geladen werden:",
-    "addEndpointFailed": "Benutzerdefinierter Endpunkt konnte nicht hinzugefügt werden:",
-    "removeEndpointFailed": "Benutzerdefinierter Endpunkt konnte nicht entfernt werden:",
-    "removeFailed": "Entfernen fehlgeschlagen: {{error}}",
-    "updateLastUsedFailed": "Zeitpunkt der letzten Nutzung des Endpunkts konnte nicht aktualisiert werden",
     "pleaseAddEndpoint": "Fügen Sie zuerst einen Endpunkt hinzu",
-    "testUnavailable": "Geschwindigkeitstest nicht verfügbar",
     "noResult": "Kein Ergebnis zurückgegeben",
     "testFailed": "Geschwindigkeitstest fehlgeschlagen: {{error}}",
     "empty": "Keine Endpunkte"
@@ -2942,8 +2908,6 @@
   "presetSelector": {
     "title": "Konfigurationstyp auswählen",
     "custom": "Benutzerdefiniert",
-    "customDescription": "Anbieter manuell konfigurieren, erfordert eine vollständige Konfiguration",
-    "officialDescription": "Offizielle Anmeldung, kein API-Schlüssel erforderlich",
     "presetDescription": "Preset-Konfiguration verwenden, nur ein API-Schlüssel erforderlich"
   },
   "mcp": {
@@ -3827,7 +3791,6 @@
   },
   "providerIcon": {
     "label": "Symbol",
-    "colorLabel": "Symbolfarbe",
     "selectIcon": "Symbol auswählen",
     "preview": "Vorschau",
     "clickToChange": "Klicken, um das Symbol zu ändern",
@@ -4041,13 +4004,10 @@
   },
   "proxyConfig": {
     "proxyEnabled": "Routing-Hauptschalter",
-    "appTakeover": "Routing aktiviert",
-    "perAppConfig": "Konfiguration pro App",
     "circuitBreaker": "Circuit Breaker",
     "circuitBreakerSettings": "Circuit-Breaker-Einstellungen",
     "failureThreshold": "Fehlerschwelle",
     "successThreshold": "Erfolgsschwelle",
-    "recoveryTimeout": "Wiederherstellungs-Timeout",
     "errorRateThreshold": "Fehlerratenschwelle",
     "minRequests": "Min. Anfragen",
     "timeoutConfig": "Timeout-Konfiguration",

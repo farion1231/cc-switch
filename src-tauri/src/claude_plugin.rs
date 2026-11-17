@@ -8,7 +8,7 @@ const CLAUDE_CONFIG_FILE: &str = "config.json";
 
 fn claude_dir() -> Result<PathBuf, AppError> {
     // 优先使用设置中的覆盖目录
-    if let Some(dir) = crate::settings::get_claude_override_dir() {
+    if let Some(dir) = crate::settings::get_override_dir(&crate::app_config::AppType::Claude) {
         return Ok(dir);
     }
     let home = dirs::home_dir().ok_or_else(|| AppError::Config("无法获取用户主目录".into()))?;

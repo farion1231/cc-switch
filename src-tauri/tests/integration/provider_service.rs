@@ -667,11 +667,15 @@ wire_api = "responses"
 
     let state = create_test_state_with_config(&initial_config).expect("create test state");
 
-    let mut proxy_config = state.db.get_proxy_config().await.expect("get proxy config");
+    let mut proxy_config = state
+        .db
+        .get_global_proxy_config()
+        .await
+        .expect("get proxy config");
     proxy_config.listen_port = 0;
     state
         .db
-        .update_proxy_config(proxy_config)
+        .update_global_proxy_config(proxy_config)
         .await
         .expect("use ephemeral proxy port");
 
@@ -2039,11 +2043,15 @@ fn sync_current_provider_for_app_leaves_the_proxy_contract_alone() {
 
     let rt = tokio::runtime::Runtime::new().expect("create tokio runtime");
     rt.block_on(async {
-        let mut proxy_config = state.db.get_proxy_config().await.expect("get proxy config");
+        let mut proxy_config = state
+            .db
+            .get_global_proxy_config()
+            .await
+            .expect("get proxy config");
         proxy_config.listen_port = 0;
         state
             .db
-            .update_proxy_config(proxy_config)
+            .update_global_proxy_config(proxy_config)
             .await
             .expect("use ephemeral proxy port");
         cc_switch_lib::mode::controller::enter(&state, &AppType::Claude, false)

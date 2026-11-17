@@ -699,7 +699,7 @@ fn migration_from_v3_8_schema_v1_to_current_schema_v3() {
 }
 
 #[test]
-fn schema_dry_run_does_not_write_to_disk() {
+fn json_migration_accepts_minimal_config() {
     // Create minimal valid config for migration
     let mut apps = HashMap::new();
     apps.insert("claude".to_string(), ProviderManager::default());
@@ -714,16 +714,16 @@ fn schema_dry_run_does_not_write_to_disk() {
         claude_common_config_snippet: None,
     };
 
-    // Dry-run should succeed without any file I/O errors
-    let result = Database::migrate_from_json_dry_run(&config);
+    let db = Database::memory().expect("create memory db");
+    let result = db.migrate_from_json(&config);
     assert!(
         result.is_ok(),
-        "Dry-run should succeed with valid config: {result:?}"
+        "Migration should succeed with valid config: {result:?}"
     );
 }
 
 #[test]
-fn dry_run_validates_schema_compatibility() {
+fn json_migration_imports_provider_data() {
     // Create config with actual provider data
     let mut providers = IndexMap::new();
     providers.insert(
@@ -764,12 +764,14 @@ fn dry_run_validates_schema_compatibility() {
         claude_common_config_snippet: None,
     };
 
-    // Dry-run should validate the full migration path
-    let result = Database::migrate_from_json_dry_run(&config);
+    let db = Database::memory().expect("create memory db");
+    let result = db.migrate_from_json(&config);
     assert!(
         result.is_ok(),
-        "Dry-run should succeed with provider data: {result:?}"
+        "Migration should succeed with provider data: {result:?}"
     );
+    let migrated = db.get_all_providers("claude").expect("read providers");
+    assert_eq!(migrated["test-provider"].name, "Test Provider");
 }
 
 #[test]
@@ -1727,12 +1729,11 @@ async fn proxy_dao_calls_survive_a_poisoned_lock() {
     let db = std::sync::Arc::new(Database::memory().expect("memory db"));
     db.set_proxy_flags_sync("claude", true, true)
         .expect("set flags");
-    db.update_proxy_config(crate::proxy::types::ProxyConfig {
-        listen_port: 25721,
-        ..Default::default()
-    })
-    .await
-    .expect("set port");
+    let mut proxy = db.get_global_proxy_config().await.expect("set port");
+    proxy.listen_port = 25721;
+    db.update_global_proxy_config(proxy)
+        .await
+        .expect("set port");
 
     // 每次调用前都重新毒化，确保每个调用点自己完成恢复
     let poison = || {
@@ -1754,11 +1755,6 @@ async fn proxy_dao_calls_survive_a_poisoned_lock() {
         db.get_proxy_flags_sync("claude"),
         (true, false),
         "get_proxy_flags_sync after poison"
-    );
-    poison();
-    assert!(
-        db.is_live_takeover_active_sync(),
-        "is_live_takeover_active_sync after poison"
     );
     poison();
     assert_eq!(

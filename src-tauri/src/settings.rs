@@ -1309,83 +1309,28 @@ pub fn reload_settings() -> Result<(), AppError> {
     Ok(())
 }
 
-pub fn get_claude_override_dir() -> Option<PathBuf> {
+/// 用户在设置里为该应用指定的配置目录。没有目录覆盖项的应用返回 `None`。
+pub fn get_override_dir(app: &AppType) -> Option<PathBuf> {
     let settings = read_settings();
-    settings
-        .claude_config_dir
-        .as_ref()
-        .map(|p| resolve_override_path(p))
-}
-
-pub fn get_codex_override_dir() -> Option<PathBuf> {
-    let settings = read_settings();
-    settings
-        .codex_config_dir
-        .as_ref()
-        .map(|p| resolve_override_path(p))
-}
-
-pub fn get_gemini_override_dir() -> Option<PathBuf> {
-    let settings = read_settings();
-    settings
-        .gemini_config_dir
-        .as_ref()
-        .map(|p| resolve_override_path(p))
-}
-
-pub fn get_grok_override_dir() -> Option<PathBuf> {
-    let settings = read_settings();
-    settings
-        .grok_config_dir
-        .as_ref()
-        .map(|p| resolve_override_path(p))
-}
-
-pub fn get_opencode_override_dir() -> Option<PathBuf> {
-    let settings = read_settings();
-    settings
-        .opencode_config_dir
-        .as_ref()
-        .map(|p| resolve_override_path(p))
-}
-
-pub fn get_openclaw_override_dir() -> Option<PathBuf> {
-    let settings = read_settings();
-    settings
-        .openclaw_config_dir
-        .as_ref()
-        .map(|p| resolve_override_path(p))
-}
-
-pub fn get_hermes_override_dir() -> Option<PathBuf> {
-    let settings = read_settings();
-    settings
-        .hermes_config_dir
-        .as_ref()
-        .map(|p| resolve_override_path(p))
-}
-
-pub fn get_pi_override_dir() -> Option<PathBuf> {
-    let settings = read_settings();
-    settings
-        .pi_config_dir
-        .as_ref()
-        .map(|path| resolve_override_path(path))
-}
-pub fn get_omp_override_dir() -> Option<PathBuf> {
-    let settings = read_settings();
-    settings
-        .omp_config_dir
-        .as_ref()
-        .map(|path| resolve_override_path(path))
-}
-
-pub fn get_dsh_override_dir() -> Option<PathBuf> {
-    let settings = read_settings();
-    settings
-        .dsh_config_dir
-        .as_ref()
-        .map(|path| resolve_override_path(path))
+    let dir = match app {
+        AppType::Claude => &settings.claude_config_dir,
+        AppType::Codex => &settings.codex_config_dir,
+        AppType::Gemini => &settings.gemini_config_dir,
+        AppType::GrokBuild => &settings.grok_config_dir,
+        AppType::OpenCode => &settings.opencode_config_dir,
+        AppType::OpenClaw => &settings.openclaw_config_dir,
+        AppType::Hermes => &settings.hermes_config_dir,
+        AppType::Pi => &settings.pi_config_dir,
+        AppType::Omp => &settings.omp_config_dir,
+        AppType::Dsh => &settings.dsh_config_dir,
+        AppType::ClaudeDesktop
+        | AppType::Mcode
+        | AppType::Kimi
+        | AppType::Agy
+        | AppType::Copilot
+        | AppType::WorkBuddy => return None,
+    };
+    dir.as_deref().map(resolve_override_path)
 }
 
 pub fn preserve_codex_official_auth_on_switch() -> bool {
@@ -1647,24 +1592,23 @@ mod tests {
             .is_err());
             assert!(settings_store().is_poisoned());
         };
-        let getters: [fn() -> Option<PathBuf>; 10] = [
-            get_claude_override_dir,
-            get_codex_override_dir,
-            get_gemini_override_dir,
-            get_grok_override_dir,
-            get_opencode_override_dir,
-            get_openclaw_override_dir,
-            get_hermes_override_dir,
-            get_pi_override_dir,
-            get_omp_override_dir,
-            get_dsh_override_dir,
-        ];
-        for (getter, name) in getters.into_iter().zip([
-            "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes", "pi", "omp",
-            "dsh",
-        ]) {
+        for (app, name) in [
+            (AppType::Claude, "claude"),
+            (AppType::Codex, "codex"),
+            (AppType::Gemini, "gemini"),
+            (AppType::GrokBuild, "grok"),
+            (AppType::OpenCode, "opencode"),
+            (AppType::OpenClaw, "openclaw"),
+            (AppType::Hermes, "hermes"),
+            (AppType::Pi, "pi"),
+            (AppType::Omp, "omp"),
+            (AppType::Dsh, "dsh"),
+        ] {
             poison();
-            assert_eq!(getter(), Some(PathBuf::from(format!("/custom/{name}"))));
+            assert_eq!(
+                get_override_dir(&app),
+                Some(PathBuf::from(format!("/custom/{name}")))
+            );
         }
         poison();
         assert_eq!(
