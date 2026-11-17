@@ -843,6 +843,14 @@ pub(crate) fn change_and_commit<T>(
         return Err(AppError::Config("omp.errors.legacyModelsJson".into()));
     }
     let after = edit_provider(&text, id, config)?;
+    if before.is_some() && before.as_deref() != Some(after.as_bytes()) {
+        if let Err(err) = crate::services::config_backup::backup_before_edit(
+            &crate::app_config::AppType::Omp,
+            Some("save_omp_models"),
+        ) {
+            log::warn!("Failed to back up Oh My Pi models.yml before write: {err}");
+        }
+    }
     write_and_commit(&path, before.as_deref(), after.as_bytes(), || commit(old))
 }
 

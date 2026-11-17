@@ -452,6 +452,15 @@ fn write_yaml_section_to_config_locked(
         None
     };
 
+    if !raw.is_empty() && config_path == get_hermes_config_path() {
+        if let Err(err) = crate::services::config_backup::backup_before_edit(
+            &crate::app_config::AppType::Hermes,
+            Some("save_hermes_config"),
+        ) {
+            log::warn!("Failed to back up Hermes config before write: {err}");
+        }
+    }
+
     if let Some(parent) = config_path.parent() {
         fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
     }

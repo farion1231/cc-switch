@@ -276,7 +276,38 @@
     "formSubtitleStack": "{{app}}（聚合模式）",
     "editCurrentNoticeFile": "这是正在使用的供应商。保存后会立即写进",
     "editCurrentNoticeFileEnd": "，下一次请求生效。",
-    "editCurrentNotice": "这是正在使用的供应商。保存后立即生效，下一次请求就用新的设置。"
+    "editCurrentNotice": "这是正在使用的供应商。保存后立即生效，下一次请求就用新的设置。",
+    "configHistory": {
+      "button": "配置历史",
+      "panelTitle": "{{app}} 配置历史",
+      "panelDescription": "首次导入及每次保存自动保留的 {{app}} 本地配置快照，可在右侧对比并回退。",
+      "backToList": "返回列表",
+      "empty": "暂无本地配置快照，首次导入或保存配置后将自动生成。",
+      "preview": "预览",
+      "previewFailed": "读取快照预览失败",
+      "restore": "回退",
+      "restoring": "回退中...",
+      "confirmRestoreAction": "确认回退",
+      "confirmRestoreMessage": "将 {{app}} 的本地配置文件回退到 {{date}} 的快照并覆盖当前本地配置。",
+      "restoreSuccess": "已回退 {{app}} 本地配置",
+      "restoreFailed": "回退配置失败",
+      "delete": "删除",
+      "deleting": "删除中...",
+      "deleteSuccess": "快照已删除",
+      "deleteFailed": "删除快照失败",
+      "confirmDeleteMessage": "此配置快照将被永久删除，操作无法撤消。",
+      "confirmDeletePinnedMessage": "这是首次导入时保留的原始配置快照（已固定保护），删除后无法撤消。",
+      "notExisted": "当时不存在",
+      "missingFileHint": "创建该快照时此文件尚不存在，回退时若存在将会被移除。",
+      "binaryFileHint": "二进制文件内容无法预览。",
+      "truncatedHint": "预览内容已截断（超过 64 KB）。",
+      "reasons": {
+        "import": "首次导入",
+        "edit": "保存备份",
+        "rollback": "回退前",
+        "manual": "手动备份"
+      }
+    }
   },
   "claudeCode": {
     "needsRouting": "需要路由"
@@ -632,6 +663,10 @@
         "database": {
           "name": "数据库备份",
           "hint": "自动备份与手动备份的数据库快照。"
+        },
+        "appConfigs": {
+          "name": "应用配置备份",
+          "hint": "首次导入及每次保存时保留的各应用本地配置快照。"
         },
         "skills": {
           "name": "Skill 卸载备份",

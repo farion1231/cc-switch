@@ -276,7 +276,38 @@
     "editCurrentNoticeFileEnd": "에 즉시 저장되며, 다음 요청부터 적용됩니다.",
     "editCurrentNotice": "사용 중인 공급자입니다. 저장하면 즉시 적용되며, 다음 요청부터 새 설정을 사용합니다.",
     "liveConfigReadFailed": "{{app}} 설정 파일을 읽을 수 없습니다",
-    "liveConfigReadFailedHint": "설정 파일의 문제를 해결하기 전까지는 공급자를 추가하거나 제거할 수 없습니다."
+    "liveConfigReadFailedHint": "설정 파일의 문제를 해결하기 전까지는 공급자를 추가하거나 제거할 수 없습니다.",
+    "configHistory": {
+      "button": "설정 기록",
+      "panelTitle": "{{app}} 설정 기록",
+      "panelDescription": "초기 가져오기 및 저장할 때마다 자동으로 기록된 {{app}} 로컬 설정 스냅샷입니다.",
+      "backToList": "목록으로",
+      "empty": "로컬 설정 스냅샷이 아직 없습니다. 가져오기 또는 저장 시 자동으로 생성됩니다.",
+      "preview": "미리보기",
+      "previewFailed": "미리보기를 불러오지 못했습니다",
+      "restore": "롤백",
+      "restoring": "롤백 중...",
+      "confirmRestoreAction": "롤백 확인",
+      "confirmRestoreMessage": "{{app}} 로컬 설정을 {{date}} 스ナップ샷으로 복원하고 현재 파일을 덮어씁니다.",
+      "restoreSuccess": "{{app}} 설정을 롤백했습니다",
+      "restoreFailed": "롤백에 실패했습니다",
+      "delete": "삭제",
+      "deleting": "삭제 중...",
+      "deleteSuccess": "스냅샷이 삭제되었습니다",
+      "deleteFailed": "스냅샷 삭제에 실패했습니다",
+      "confirmDeleteMessage": "이 스냅샷은 영구적으로 삭제되며 되돌릴 수 없습니다.",
+      "confirmDeletePinnedMessage": "초기 가져오기 시점의 원본 설정을 보호하는 고정 스냅샷입니다. 삭제 후에는 되돌릴 수 없습니다.",
+      "notExisted": "존재하지 않음",
+      "missingFileHint": "스냅샷 생성 당시 이 파일이 존재하지 않았습니다. 롤백 시 해당 파일이 있으면 제거됩니다.",
+      "binaryFileHint": "바이너리 파일 내용은 미리 볼 수 없습니다.",
+      "truncatedHint": "미리보기가 64 KB로 잘렸습니다.",
+      "reasons": {
+        "import": "초기 가져오기",
+        "edit": "저장 시",
+        "rollback": "롤백 전",
+        "manual": "수동"
+      }
+    }
   },
   "claudeCode": {
     "needsRouting": "라우팅 필요"
@@ -632,6 +663,10 @@
         "database": {
           "name": "데이터베이스 백업",
           "hint": "자동 및 수동 데이터베이스 스냅샷."
+        },
+        "appConfigs": {
+          "name": "앱 설정 백업",
+          "hint": "초기 가져오기 및 저장할 때마다 보관된 앱별 로컬 설정 스냅샷입니다."
         },
         "skills": {
           "name": "스킬 제거 시 백업",

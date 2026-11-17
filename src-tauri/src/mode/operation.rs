@@ -128,6 +128,31 @@ pub fn run(
             let current = read_current(&current_planned.file.path)?;
             if digest(current.as_deref()) == current_planned.pre {
                 ensure_first_write_backup(store, &current_planned.file.path, current.as_deref())?;
+                if !pending.published
+                    && crate::services::config_backup::is_auto_backup_enabled()
+                    && crate::services::config_backup::is_device_store(store)
+                {
+                    if let Ok(app_type) = guard.app().parse::<crate::app_config::AppType>() {
+                        if matches!(app_type, crate::app_config::AppType::ClaudeDesktop) {
+                            if let Err(err) =
+                                crate::services::config_backup::ensure_import_backup_in(
+                                    store,
+                                    &app_type,
+                                    Some("first-write"),
+                                )
+                            {
+                                log::warn!("[{}] 首次写入配置备份失败: {err}", app_type.as_str());
+                            }
+                        }
+                        if let Err(err) = crate::services::config_backup::backup_before_edit_in(
+                            store,
+                            &app_type,
+                            Some(op),
+                        ) {
+                            log::warn!("[{}] 写前配置备份失败: {err}", app_type.as_str());
+                        }
+                    }
+                }
                 // 换进第一个文件之前先记下「已开始发布」，记不下来就不发布：换进去之后才记的
                 // 话，中间崩溃、这个文件又被客户端改掉（Codex 刷新登录），恢复时就分不出发布
                 // 开始过没有，还没发布的登录暂存会被当成没用的丢掉。

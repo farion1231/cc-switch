@@ -276,7 +276,38 @@
     "formSubtitleStack": "{{app}} (Birleştirme modu)",
     "editCurrentNoticeFile": "Bu, kullanımda olan sağlayıcıdır. Kaydetme şunu yazar:",
     "editCurrentNoticeFileEnd": "hemen; sonraki istek bunu kullanır.",
-    "editCurrentNotice": "Bu, kullanımda olan sağlayıcıdır. Kaydetme hemen etkili olur; sonraki istek yeni ayarları kullanır."
+    "editCurrentNotice": "Bu, kullanımda olan sağlayıcıdır. Kaydetme hemen etkili olur; sonraki istek yeni ayarları kullanır.",
+    "configHistory": {
+      "button": "Yapılandırma Geçmişi",
+      "panelTitle": "{{app}} Yapılandırma Geçmişi",
+      "panelDescription": "{{app}} için ilk içe aktarmada ve her kaydetmede oluşturulan yerel yapılandırma anlık görüntüleri.",
+      "backToList": "Listeye dön",
+      "empty": "Henüz yerel yapılandırma anlık görüntüsü yok. İçe aktarma veya kaydetmede otomatik olarak oluşturulur.",
+      "preview": "Önizle",
+      "previewFailed": "Anlık görüntü önizlemesi yüklenemedi",
+      "restore": "Geri Al",
+      "restoring": "Geri alınıyor...",
+      "confirmRestoreAction": "Geri Almayı Onayla",
+      "confirmRestoreMessage": "{{app}} için {{date}} tarihli anlık görüntüye dönmek mevcut yerel yapılandırma dosyalarının üzerine yazacaktır.",
+      "restoreSuccess": "{{app}} yapılandırması geri alındı",
+      "restoreFailed": "Geri alma başarısız oldu",
+      "delete": "Sil",
+      "deleting": "Siliniyor...",
+      "deleteSuccess": "Anlık görüntü silindi",
+      "deleteFailed": "Anlık görüntü silinemedi",
+      "confirmDeleteMessage": "Bu anlık görüntü kalıcı olarak silinecektir. Bu işlem geri alınamaz.",
+      "confirmDeletePinnedMessage": "Bu, ilk içe aktarmadaki orijinal yapılandırmanızı koruyan sabitlenmiş bir anlık görüntüdür. Silindikten sonra geri alınamaz.",
+      "notExisted": "Mevcut değildi",
+      "missingFileHint": "Bu dosya anlık görüntü alındığında yoktu. Geri alırken mevcutsa kaldırılacaktır.",
+      "binaryFileHint": "İkili dosya içeriği önizlenemez.",
+      "truncatedHint": "Önizleme 64 KB ile sınırlandırıldı.",
+      "reasons": {
+        "import": "İlk İçe Aktarma",
+        "edit": "Kaydedildiğinde",
+        "rollback": "Geri Alma Öncesi",
+        "manual": "Manuel"
+      }
+    }
   },
   "claudeCode": {
     "needsRouting": "Yönlendirme Gerekiyor"
@@ -632,6 +663,10 @@
         "database": {
           "name": "Veritabanı yedeklemeleri",
           "hint": "Otomatik ve manuel veritabanı anlık görüntüleri."
+        },
+        "appConfigs": {
+          "name": "Uygulama yapılandırma yedeklemeleri",
+          "hint": "İlk içe aktarma ve her kaydetmede oluşturulan uygulama bazlı yerel yapılandırma anlık görüntüleri."
         },
         "skills": {
           "name": "Beceri kaldırma yedeklemeleri",

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Loader2 } from "lucide-react";
+import { History, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/notice";
 import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
@@ -12,6 +12,7 @@ import {
   type ProviderFormValues,
 } from "@/components/providers/forms/ProviderForm";
 import { AuthSettingsPanel } from "@/components/providers/AuthSettingsPanel";
+import { ProviderConfigHistoryPanel } from "@/components/providers/ProviderConfigHistoryPanel";
 import {
   openclawApi,
   providersApi,
@@ -19,6 +20,7 @@ import {
   type AppId,
   type AuthCenterTarget,
 } from "@/lib/api";
+import { backupsApi, type ConfigBackupEntry } from "@/lib/api/settings";
 import type {
   EditorConflictPolicy,
   ProviderEditorSave,
@@ -80,10 +82,47 @@ export function EditProviderDialog({
   const [stackLayout, setStackLayout] = useState(false);
   const [authSettingsTarget, setAuthSettingsTarget] =
     useState<AuthCenterTarget | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [configBackups, setConfigBackups] = useState<ConfigBackupEntry[]>([]);
+  const [isLoadingBackups, setIsLoadingBackups] = useState(false);
+  const [reloadRevision, setReloadRevision] = useState(0);
+  const [reloadedProvider, setReloadedProvider] = useState<Provider | null>(
+    null,
+  );
 
   useEffect(() => {
     setAuthSettingsTarget(null);
+    setHistoryOpen(false);
+    setReloadedProvider(null);
   }, [appId, open, provider?.id]);
+
+  const activeProvider = reloadedProvider ?? provider;
+
+  const refreshBackups = useCallback(async () => {
+    if (!open || !provider) {
+      setConfigBackups([]);
+      return;
+    }
+    setIsLoadingBackups(true);
+    try {
+      const items = await backupsApi.listAppConfigBackups(appId);
+      setConfigBackups(items);
+    } catch {
+      setConfigBackups([]);
+    } finally {
+      setIsLoadingBackups(false);
+    }
+  }, [appId, open, provider]);
+
+  useEffect(() => {
+    if (!open || !provider || !historyOpen) {
+      if (!open) {
+        setConfigBackups([]);
+      }
+      return;
+    }
+    void refreshBackups();
+  }, [open, provider, historyOpen, refreshBackups]);
 
   const formReadyToken = useMemo(
     () => Symbol("provider-form-ready"),
@@ -137,7 +176,7 @@ export function EditProviderDialog({
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
-      if (!open || !provider) {
+      if (!open || !activeProvider) {
         setLiveSettings(null);
         setEditorView(null);
         setHasLoadedLive(false);
@@ -155,10 +194,10 @@ export function EditProviderDialog({
         try {
           const view = await providersApi.getEditorView(
             appId,
-            asRecord(provider.settingsConfig) ?? {},
-            provider.category,
-            provider.id,
-            appId === "codex" ? provider.meta : undefined,
+            asRecord(activeProvider.settingsConfig) ?? {},
+            activeProvider.category,
+            activeProvider.id,
+            appId === "codex" ? activeProvider.meta : undefined,
           );
           if (!cancelled) {
             setEditorView(view);
@@ -211,7 +250,7 @@ export function EditProviderDialog({
 
       if (appId === "openclaw") {
         try {
-          const live = await openclawApi.getLiveProvider(provider.id);
+          const live = await openclawApi.getLiveProvider(activeProvider.id);
           if (!cancelled && live && typeof live === "object") {
             setLiveSettings(live);
           } else if (!cancelled) {
@@ -231,7 +270,7 @@ export function EditProviderDialog({
 
       try {
         const currentId = await providersApi.getCurrent(appId);
-        if (currentId && provider.id === currentId) {
+        if (currentId && activeProvider.id === currentId) {
           try {
             const live = (await vscodeApi.getLiveProviderSettings(
               appId,
@@ -261,32 +300,55 @@ export function EditProviderDialog({
     return () => {
       cancelled = true;
     };
-  }, [open, provider?.id, appId, hasLoadedLive, isProxyTakeover]); // 只依赖 provider.id，不依赖整个 provider 对象
+  }, [
+    open,
+    activeProvider?.id,
+    appId,
+    hasLoadedLive,
+    isProxyTakeover,
+    reloadRevision,
+  ]); // 只依赖 provider.id，不依赖整个 provider 对象
 
   const initialSettingsConfig = useMemo(
-    () => liveSettings ?? asRecord(provider?.settingsConfig) ?? {},
-    [liveSettings, provider?.settingsConfig],
+    () => liveSettings ?? asRecord(activeProvider?.settingsConfig) ?? {},
+    [liveSettings, activeProvider?.settingsConfig],
   ); // 只依赖表单初始化所需字段，不依赖整个 provider
 
   // 固定 initialData，防止 provider 对象更新时重置表单
   const initialData = useMemo(() => {
-    if (!provider) return null;
+    if (!activeProvider) return null;
     return {
-      name: provider.name,
-      notes: provider.notes,
-      websiteUrl: provider.websiteUrl,
+      name: activeProvider.name,
+      notes: activeProvider.notes,
+      websiteUrl: activeProvider.websiteUrl,
       settingsConfig: initialSettingsConfig,
-      category: provider.category,
-      meta: provider.meta,
-      icon: provider.icon,
-      iconColor: provider.iconColor,
+      category: activeProvider.category,
+      meta: activeProvider.meta,
+      icon: activeProvider.icon,
+      iconColor: activeProvider.iconColor,
     };
   }, [
     open, // 修复：编辑保存后再次打开显示旧数据，依赖 open 确保每次打开时重新读取最新 provider 数据
-    provider?.id, // 只依赖 ID，provider 对象更新不会触发重新计算
-    provider?.meta, // 供应商元数据变化时重新初始化表单
+    activeProvider?.id, // 只依赖 ID，provider 对象更新不会触发重新计算
+    activeProvider?.meta, // 供应商元数据变化时重新初始化表单
     initialSettingsConfig,
+    reloadRevision,
   ]);
+
+  const handleRolledBack = useCallback(async () => {
+    if (provider && typeof providersApi?.getAll === "function") {
+      try {
+        const all = await providersApi.getAll(appId);
+        if (all && all[provider.id]) {
+          setReloadedProvider(all[provider.id]);
+        }
+      } catch {
+        // 忽略读取错误，依然刷新 live 投影
+      }
+    }
+    setHasLoadedLive(false);
+    setReloadRevision((rev) => rev + 1);
+  }, [appId, provider]);
 
   const handleSubmit = useCallback(
     async (values: ProviderFormValues) => {
@@ -340,11 +402,24 @@ export function EditProviderDialog({
     ],
   );
 
-  if (!provider || !initialData) {
+  if (!activeProvider || !initialData) {
     return null;
   }
 
   const waitingForEditorView = appHas(appId, "editorView") && !hasLoadedLive;
+
+  const historyButton = (
+    <Button
+      type="button"
+      variant={historyOpen ? "solid" : "neutral"}
+      size="compact"
+      aria-expanded={historyOpen}
+      onClick={() => setHistoryOpen((prev) => !prev)}
+    >
+      <History className="h-3.5 w-3.5" />
+      <span>{t("provider.configHistory.button")}</span>
+    </Button>
+  );
 
   const liveFile = !isProxyTakeover ? LIVE_FILE[appId] : undefined;
   const currentNotice =
@@ -371,7 +446,7 @@ export function EditProviderDialog({
       // Showing a loading page first causes a flash for fast local reads.
       isOpen={open && !waitingForEditorView}
       trackUnsavedChanges
-      title={t("provider.editProviderNamed", { name: provider.name })}
+      title={t("provider.editProviderNamed", { name: activeProvider.name })}
       subtitle={
         stackLayout
           ? t("provider.formSubtitleStack", {
@@ -379,6 +454,19 @@ export function EditProviderDialog({
               defaultValue: "{{app}}（聚合模式）",
             })
           : APP_DISPLAY_NAME[appId]
+      }
+      actions={historyButton}
+      sidePanel={
+        historyOpen ? (
+          <ProviderConfigHistoryPanel
+            appId={appId}
+            backups={configBackups}
+            isLoading={isLoadingBackups}
+            onClose={() => setHistoryOpen(false)}
+            onRefresh={refreshBackups}
+            onRolledBack={handleRolledBack}
+          />
+        ) : undefined
       }
       backLabel={t("provider.backToList")}
       onClose={handlePanelClose}
@@ -413,8 +501,9 @@ export function EditProviderDialog({
         </div>
       ) : (
         <ProviderForm
+          key={`${activeProvider.id}-${reloadRevision}`}
           appId={appId}
-          providerId={provider.id}
+          providerId={activeProvider.id}
           submitLabel={t("common.save")}
           onSubmit={handleSubmit}
           onCancel={closeDialog}

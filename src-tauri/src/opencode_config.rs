@@ -142,6 +142,16 @@ impl OpenCodeDocument {
             )));
         }
         if self.previous_contents.as_deref() != Some(source.as_bytes()) {
+            if self.previous_contents.is_some()
+                && get_opencode_config_path().ok().as_deref() == Some(self.path.as_path())
+            {
+                if let Err(err) = crate::services::config_backup::backup_before_edit(
+                    &crate::app_config::AppType::OpenCode,
+                    Some("save_opencode_config"),
+                ) {
+                    log::warn!("Failed to back up OpenCode config before write: {err}");
+                }
+            }
             atomic_write(&self.path, source.as_bytes())?;
         }
         Ok(())

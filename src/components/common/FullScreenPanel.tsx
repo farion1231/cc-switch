@@ -19,6 +19,8 @@ interface FullScreenPanelProps {
   backLabel?: string;
   /** 页头右侧 */
   actions?: React.ReactNode;
+  /** 右侧展开面板（不遮蔽左侧编辑区，独立滚动） */
+  sidePanel?: React.ReactNode;
   onClose: () => void;
   children: React.ReactNode;
   footer?: React.ReactNode;
@@ -76,6 +78,7 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
   subtitle,
   backLabel,
   actions,
+  sidePanel,
   onClose,
   children,
   footer,
@@ -200,13 +203,16 @@ export const FullScreenPanel: React.FC<FullScreenPanelProps> = ({
             }
           />
 
-          <div className="flex-1 overflow-y-auto scroll-stable">
-            <div
-              className={cn("w-full space-y-6 px-6 py-6", contentClassName)}
-              {...unsavedChangesHandlers}
-            >
-              {children}
+          <div className="flex flex-1 min-h-0 overflow-hidden">
+            <div className="flex-1 min-w-0 overflow-y-auto scroll-stable">
+              <div
+                className={cn("w-full space-y-6 px-6 py-6", contentClassName)}
+                {...unsavedChangesHandlers}
+              >
+                {children}
+              </div>
             </div>
+            {sidePanel}
           </div>
 
           {footer && (

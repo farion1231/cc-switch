@@ -307,6 +307,36 @@ pub fn get_config_library_path() -> Result<PathBuf, AppError> {
     Ok(current_platform_paths()?.config_library_path)
 }
 
+/// Config files managed/observed for Claude Desktop backups.
+pub(crate) fn backup_target_paths() -> Result<Vec<(String, PathBuf, bool)>, AppError> {
+    if !is_supported_platform() {
+        return Ok(Vec::new());
+    }
+    let paths = current_platform_paths()?;
+    Ok(vec![
+        (
+            "normal/claude_desktop_config.json".to_string(),
+            paths.normal_config_path,
+            false,
+        ),
+        (
+            "threep/claude_desktop_config.json".to_string(),
+            paths.threep_config_path,
+            false,
+        ),
+        (
+            "configLibrary/profile.json".to_string(),
+            paths.profile_path,
+            true,
+        ),
+        (
+            "configLibrary/_meta.json".to_string(),
+            paths.meta_path,
+            false,
+        ),
+    ])
+}
+
 pub fn default_proxy_routes() -> Vec<ClaudeDesktopDefaultRoute> {
     DEFAULT_PROXY_ROUTES.to_vec()
 }

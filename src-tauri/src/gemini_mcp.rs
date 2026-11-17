@@ -162,6 +162,15 @@ pub fn set_mcp_servers_map(
         obj.insert("mcpServers".into(), Value::Object(out));
     }
 
+    if path.exists() {
+        if let Err(err) = crate::services::config_backup::backup_before_edit(
+            &crate::app_config::AppType::Gemini,
+            Some("mcp_sync"),
+        ) {
+            log::warn!("Failed to back up Gemini config before MCP write: {err}");
+        }
+    }
+
     write_json_value(&path, &root)?;
     Ok(())
 }

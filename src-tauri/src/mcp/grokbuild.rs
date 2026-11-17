@@ -169,7 +169,16 @@ pub fn sync_single_server_to_grokbuild(id: &str, server_spec: &Value) -> Result<
         id,
         Item::Table(json_server_to_grokbuild_toml_table(server_spec)?),
     );
-    crate::config::write_text_file(&path, &doc.to_string())
+    let next = doc.to_string();
+    if path.exists() && next != text {
+        if let Err(err) = crate::services::config_backup::backup_before_edit(
+            &crate::app_config::AppType::GrokBuild,
+            Some("mcp_sync"),
+        ) {
+            log::warn!("Failed to back up Grok Build config before MCP write: {err}");
+        }
+    }
+    crate::config::write_text_file(&path, &next)
 }
 
 pub fn remove_server_from_grokbuild(id: &str) -> Result<(), AppError> {
@@ -204,7 +213,16 @@ pub fn remove_server_from_grokbuild(id: &str) -> Result<(), AppError> {
             None => {}
         }
     }
-    crate::config::write_text_file(&path, &doc.to_string())
+    let next = doc.to_string();
+    if path.exists() && next != text {
+        if let Err(err) = crate::services::config_backup::backup_before_edit(
+            &crate::app_config::AppType::GrokBuild,
+            Some("mcp_sync"),
+        ) {
+            log::warn!("Failed to back up Grok Build config before MCP write: {err}");
+        }
+    }
+    crate::config::write_text_file(&path, &next)
 }
 
 #[cfg(test)]

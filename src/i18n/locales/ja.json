@@ -276,7 +276,38 @@
     "formSubtitleStack": "{{app}}（集約モード）",
     "editCurrentNoticeFile": "使用中のプロバイダーです。保存するとすぐに",
     "editCurrentNoticeFileEnd": " に書き込まれ、次のリクエストから反映されます。",
-    "editCurrentNotice": "使用中のプロバイダーです。保存するとすぐに反映され、次のリクエストから新しい設定が使われます。"
+    "editCurrentNotice": "使用中のプロバイダーです。保存するとすぐに反映され、次のリクエストから新しい設定が使われます。",
+    "configHistory": {
+      "button": "設定履歴",
+      "panelTitle": "{{app}} 設定履歴",
+      "panelDescription": "初回インポートおよび保存ごとに自動記録された {{app}} のローカル設定スナップショット。",
+      "backToList": "一覧に戻る",
+      "empty": "ローカル設定スナップショットはまだありません。インポートまたは保存時に自動作成されます。",
+      "preview": "プレビュー",
+      "previewFailed": "プレビューの読み込みに失敗しました",
+      "restore": "ロールバック",
+      "restoring": "ロールバック中...",
+      "confirmRestoreAction": "ロールバックを実行",
+      "confirmRestoreMessage": "{{app}} のローカル設定を {{date}} のスナップショットに戻し、現在の設定を上書きします。",
+      "restoreSuccess": "{{app}} の設定をロールバックしました",
+      "restoreFailed": "ロールバックに失敗しました",
+      "delete": "削除",
+      "deleting": "削除中...",
+      "deleteSuccess": "スナップショットを削除しました",
+      "deleteFailed": "スナップショットの削除に失敗しました",
+      "confirmDeleteMessage": "このスナップショットは完全に削除され、元に戻せません。",
+      "confirmDeletePinnedMessage": "初回インポート時の設定を保護する固定スナップショットです。削除すると元に戻せません。",
+      "notExisted": "存在しませんでした",
+      "missingFileHint": "作成時にこのファイルは存在しませんでした。ロールバック時に存在する場合は削除されます。",
+      "binaryFileHint": "バイナリファイルはプレビューできません。",
+      "truncatedHint": "プレビューは 64 KB で切り詰められました。",
+      "reasons": {
+        "import": "初回インポート",
+        "edit": "保存時",
+        "rollback": "ロールバック前",
+        "manual": "手動"
+      }
+    }
   },
   "claudeCode": {
     "needsRouting": "ルーティングが必要"
@@ -632,6 +663,10 @@
         "database": {
           "name": "データベースのバックアップ",
           "hint": "自動・手動で作成したデータベースのスナップショット。"
+        },
+        "appConfigs": {
+          "name": "アプリ設定のバックアップ",
+          "hint": "初回インポートおよび保存ごとに作成されたアプリ別のローカル設定スナップショット。"
         },
         "skills": {
           "name": "Skill アンインストール時のバックアップ",

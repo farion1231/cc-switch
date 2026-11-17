@@ -454,6 +454,48 @@ export interface BackupLocation {
   deletable: boolean;
 }
 
+export type ConfigBackupReason = "import" | "edit" | "rollback" | "manual";
+
+export interface ConfigBackupFileSummary {
+  key: string;
+  originalPath: string;
+  existed: boolean;
+  sizeBytes: number;
+}
+
+export interface ConfigBackupEntry {
+  id: string;
+  app: AppId;
+  reason: ConfigBackupReason;
+  createdAt: string;
+  pinned: boolean;
+  label?: string | null;
+  totalSizeBytes: number;
+  files: ConfigBackupFileSummary[];
+}
+
+export interface ConfigBackupFilePreview {
+  key: string;
+  originalPath: string;
+  existed: boolean;
+  sizeBytes: number;
+  content?: string | null;
+  truncated: boolean;
+  binary: boolean;
+}
+
+export interface ConfigBackupPreview {
+  entry: ConfigBackupEntry;
+  files: ConfigBackupFilePreview[];
+}
+
+export interface ConfigBackupRestoreResult {
+  app: AppId;
+  restoredBackupId: string;
+  safetyBackupId?: string | null;
+  restoredFiles: string[];
+}
+
 export const backupsApi = {
   async createDbBackup(): Promise<string> {
     return await invoke("create_db_backup");
@@ -486,5 +528,31 @@ export const backupsApi = {
 
   async revealBackupLocation(id: string): Promise<boolean> {
     return await invoke("reveal_backup_location", { id });
+  },
+
+  async listAppConfigBackups(
+    app?: AppId | "all",
+  ): Promise<ConfigBackupEntry[]> {
+    return await invoke("list_app_config_backups", {
+      app: app && app !== "all" ? app : null,
+    });
+  },
+
+  async previewAppConfigBackup(
+    app: AppId,
+    backupId: string,
+  ): Promise<ConfigBackupPreview> {
+    return await invoke("preview_app_config_backup", { app, backupId });
+  },
+
+  async restoreAppConfigBackup(
+    app: AppId,
+    backupId: string,
+  ): Promise<ConfigBackupRestoreResult> {
+    return await invoke("restore_app_config_backup", { app, backupId });
+  },
+
+  async deleteAppConfigBackup(app: AppId, backupId: string): Promise<void> {
+    await invoke("delete_app_config_backup", { app, backupId });
   },
 };

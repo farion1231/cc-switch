@@ -12,6 +12,14 @@ pub(super) fn list(state: &AppState) -> Result<IndexMap<String, Provider>, AppEr
     let _guard = futures::executor::block_on(state.proxy_service.lock_switch_for_app(PI_APP));
     match crate::pi_config::read_pi_native_providers() {
         Ok(native) => {
+            if !native.is_empty() {
+                if let Err(err) = crate::services::config_backup::ensure_import_backup(
+                    &AppType::Pi,
+                    Some("import_pi_live"),
+                ) {
+                    log::warn!("Failed to create initial Pi config backup: {err}");
+                }
+            }
             if let Err(error) = sync_native_locked(state, &native) {
                 log::warn!("Failed to sync Pi providers from native config: {error}");
             }
@@ -25,6 +33,11 @@ pub(super) fn list(state: &AppState) -> Result<IndexMap<String, Provider>, AppEr
 
 pub(super) fn import_from_live(state: &AppState) -> Result<usize, AppError> {
     let _guard = futures::executor::block_on(state.proxy_service.lock_switch_for_app(PI_APP));
+    if let Err(err) =
+        crate::services::config_backup::ensure_import_backup(&AppType::Pi, Some("import_pi_live"))
+    {
+        log::warn!("Failed to create initial Pi config backup: {err}");
+    }
     let native = crate::pi_config::read_pi_native_providers()?;
     sync_native_locked(state, &native)
 }

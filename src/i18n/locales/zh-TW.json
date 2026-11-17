@@ -276,7 +276,38 @@
     "formSubtitleStack": "{{app}}（聚合模式）",
     "editCurrentNoticeFile": "這是正在使用的供應商。儲存後會立即寫進",
     "editCurrentNoticeFileEnd": "，下一次請求生效。",
-    "editCurrentNotice": "這是正在使用的供應商。儲存後立即生效，下一次請求就用新的設定。"
+    "editCurrentNotice": "這是正在使用的供應商。儲存後立即生效，下一次請求就用新的設定。",
+    "configHistory": {
+      "button": "設定歷史",
+      "panelTitle": "{{app}} 設定歷史",
+      "panelDescription": "首次匯入及每次儲存自動保留的 {{app}} 本機設定快照，可在右側對比並回退。",
+      "backToList": "返回清單",
+      "empty": "尚無本機設定快照，首次匯入或儲存設定後將自動建立。",
+      "preview": "預覽",
+      "previewFailed": "讀取快照預覽失敗",
+      "restore": "回退",
+      "restoring": "回退中...",
+      "confirmRestoreAction": "確認回退",
+      "confirmRestoreMessage": "將 {{app}} 的本機設定檔回退至 {{date}} 的快照並覆寫目前本機設定。",
+      "restoreSuccess": "已回退 {{app}} 本機設定",
+      "restoreFailed": "回退設定失敗",
+      "delete": "刪除",
+      "deleting": "刪除中...",
+      "deleteSuccess": "快照已刪除",
+      "deleteFailed": "刪除快照失敗",
+      "confirmDeleteMessage": "此設定快照將被永久刪除，操作無法復原。",
+      "confirmDeletePinnedMessage": "這是首次匯入時保留的原始設定快照（已釘選保護），刪除後無法復原。",
+      "notExisted": "當時不存在",
+      "missingFileHint": "建立此快照時檔案尚不存在，回退時若存在將會移除。",
+      "binaryFileHint": "二進位檔案內容無法預覽。",
+      "truncatedHint": "預覽內容已截斷（超過 64 KB）。",
+      "reasons": {
+        "import": "首次匯入",
+        "edit": "儲存備份",
+        "rollback": "回退前",
+        "manual": "手動備份"
+      }
+    }
   },
   "claudeCode": {
     "needsRouting": "需要路由"
@@ -632,6 +663,10 @@
         "database": {
           "name": "資料庫備份",
           "hint": "自動備份與手動備份的資料庫快照。"
+        },
+        "appConfigs": {
+          "name": "應用程式設定備份",
+          "hint": "首次匯入及每次儲存時保留的各應用本機設定快照。"
         },
         "skills": {
           "name": "Skill 解除安裝備份",

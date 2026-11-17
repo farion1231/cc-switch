@@ -75,6 +75,12 @@ fn categories() -> Vec<Category> {
             scope: Scope::Files(|name| name.ends_with(".db")),
             deletable: false,
         },
+        Category {
+            id: "appConfigs",
+            dir: DeviceStore::for_device().app_config_backup_dir(),
+            scope: Scope::WholeDir,
+            deletable: false,
+        },
         whole("skills", app_dir.join("skill-backups")),
         whole(
             "codexHistoryUnify",
@@ -194,6 +200,8 @@ pub fn list_locations() -> Vec<BackupLocation> {
         .filter_map(|category| {
             let usage = if category.id == "database" {
                 database_usage()
+            } else if category.id == "appConfigs" {
+                app_configs_usage()
             } else {
                 measure(&category)
             };
@@ -228,6 +236,15 @@ fn database_usage() -> Usage {
             .map(SystemTime::from);
     }
     usage
+}
+
+fn app_configs_usage() -> Usage {
+    let (items, size, latest) = crate::services::config_backup::total_usage();
+    Usage {
+        size,
+        items,
+        latest,
+    }
 }
 
 fn find(id: &str) -> Result<Category, AppError> {
