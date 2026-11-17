@@ -184,6 +184,55 @@ fn existing_skill_repo_selection_is_not_supplemented() {
 }
 
 #[test]
+fn migration_v26_to_v27_adds_skill_repo_host() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    conn.execute_batch(
+        r#"
+        CREATE TABLE skills (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            directory TEXT NOT NULL,
+            repo_owner TEXT,
+            repo_name TEXT
+        );
+        INSERT INTO skills (id, name, directory, repo_owner, repo_name)
+        VALUES ('owner/repo:demo', 'Demo', 'demo', 'owner', 'repo');
+
+        CREATE TABLE skill_repos (
+            owner TEXT NOT NULL, name TEXT NOT NULL, branch TEXT NOT NULL DEFAULT 'main',
+            enabled BOOLEAN NOT NULL DEFAULT 1, PRIMARY KEY (owner, name)
+        );
+        INSERT INTO skill_repos (owner, name, branch, enabled)
+        VALUES ('owner', 'repo', 'develop', 0);
+        "#,
+    )
+    .expect("seed v26 skill tables");
+    Database::set_user_version(&conn, 26).expect("set user_version=26");
+
+    Database::apply_schema_migrations_on_conn(&conn).expect("apply migrations");
+
+    assert_eq!(
+        Database::get_user_version(&conn).expect("version after migration"),
+        SCHEMA_VERSION
+    );
+    // 已有仓库原样保留，主机靠列默认值落成 github.com
+    let (host, branch, enabled): (String, String, bool) = conn
+        .query_row("SELECT host, branch, enabled FROM skill_repos", [], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })
+        .expect("migrated repo");
+    assert_eq!(
+        (host.as_str(), branch.as_str(), enabled),
+        ("github.com", "develop", false)
+    );
+    // 已安装的技能不回填：NULL 就按 github.com 读
+    let repo_host: Option<String> = conn
+        .query_row("SELECT repo_host FROM skills", [], |row| row.get(0))
+        .expect("migrated skill");
+    assert_eq!(repo_host, None);
+}
+
+#[test]
 fn schema_migration_sets_user_version_when_missing() {
     let conn = Connection::open_in_memory().expect("open memory db");
 
@@ -699,7 +748,7 @@ fn migration_from_v3_8_schema_v1_to_current_schema_v3() {
 }
 
 #[test]
-fn schema_dry_run_does_not_write_to_disk() {
+fn json_migration_accepts_minimal_config() {
     // Create minimal valid config for migration
     let mut apps = HashMap::new();
     apps.insert("claude".to_string(), ProviderManager::default());
@@ -714,16 +763,16 @@ fn schema_dry_run_does_not_write_to_disk() {
         claude_common_config_snippet: None,
     };
 
-    // Dry-run should succeed without any file I/O errors
-    let result = Database::migrate_from_json_dry_run(&config);
+    let db = Database::memory().expect("create memory db");
+    let result = db.migrate_from_json(&config);
     assert!(
         result.is_ok(),
-        "Dry-run should succeed with valid config: {result:?}"
+        "Migration should succeed with valid config: {result:?}"
     );
 }
 
 #[test]
-fn dry_run_validates_schema_compatibility() {
+fn json_migration_imports_provider_data() {
     // Create config with actual provider data
     let mut providers = IndexMap::new();
     providers.insert(
@@ -764,12 +813,14 @@ fn dry_run_validates_schema_compatibility() {
         claude_common_config_snippet: None,
     };
 
-    // Dry-run should validate the full migration path
-    let result = Database::migrate_from_json_dry_run(&config);
+    let db = Database::memory().expect("create memory db");
+    let result = db.migrate_from_json(&config);
     assert!(
         result.is_ok(),
-        "Dry-run should succeed with provider data: {result:?}"
+        "Migration should succeed with provider data: {result:?}"
     );
+    let migrated = db.get_all_providers("claude").expect("read providers");
+    assert_eq!(migrated["test-provider"].name, "Test Provider");
 }
 
 #[test]
@@ -1613,9 +1664,9 @@ fn migration_v23_to_v24_adds_dsh_flags_without_changing_omp_or_skill_state() {
 }
 
 /// Upstream v23 (before DeepSeek Harness, Copilot, WorkBuddy and Cline): v23→v24,
-/// v24→v25, v25→v26 and v26→v27 all run.
+/// v24→v25, v25→v26, v26→v27 and v27→v28 all run.
 #[test]
-fn migration_v23_to_v27_adds_dsh_copilot_workbuddy_and_cline_flags() {
+fn migration_v23_to_v28_adds_dsh_copilot_workbuddy_and_cline_flags() {
     let conn = Connection::open_in_memory().expect("open memory db");
     Database::create_tables_on_conn(&conn).expect("create tables");
     conn.execute_batch(
@@ -1656,7 +1707,7 @@ fn migration_v23_to_v27_adds_dsh_copilot_workbuddy_and_cline_flags() {
 }
 
 /// Upstream v24 (DeepSeek Harness, no Copilot, WorkBuddy or Cline): v24→v25 adds
-/// `enabled_copilot`, v25→v26 adds `enabled_workbuddy`, v26→v27 adds
+/// `enabled_copilot`, v25→v26 adds `enabled_workbuddy`, v27→v28 adds
 /// `enabled_cline`, and the DeepSeek Harness flags are kept.
 #[test]
 fn migration_from_v24_adds_copilot_workbuddy_and_cline_flags_without_changing_dsh_state() {
@@ -1678,9 +1729,8 @@ fn migration_from_v24_adds_copilot_workbuddy_and_cline_flags_without_changing_ds
     Database::set_user_version(&conn, 24).expect("set user_version=24");
 
     Database::apply_schema_migrations_on_conn(&conn).expect("upgrade v24 database");
-    // v24 → v25（Copilot）→ v26（WorkBuddy）→ v27（Cline）
-    assert_eq!(Database::get_user_version(&conn).unwrap(), 27);
-    assert_eq!(SCHEMA_VERSION, 27);
+    // v24 → v25（Copilot）→ v26（WorkBuddy）
+    assert_eq!(Database::get_user_version(&conn).unwrap(), SCHEMA_VERSION);
     for table in ["mcp_servers", "skills"] {
         let flags: (bool, bool, bool, bool) = conn
             .query_row(
@@ -1703,10 +1753,10 @@ fn migration_from_v24_adds_copilot_workbuddy_and_cline_flags_without_changing_ds
         .unwrap());
 }
 
-/// Upstream v26 (WorkBuddy, no Cline): v26→v27 adds `enabled_cline` and keeps the
+/// Upstream v26 (WorkBuddy, no Cline): v27→v28 adds `enabled_cline` and keeps the
 /// existing DeepSeek Harness / Copilot / Oh My Pi / WorkBuddy flags.
 #[test]
-fn migration_v26_to_v27_adds_cline_flags_without_changing_workbuddy_state() {
+fn migration_v26_to_v28_adds_cline_flags_without_changing_workbuddy_state() {
     let conn = Connection::open_in_memory().expect("open memory db");
     Database::create_tables_on_conn(&conn).expect("create tables");
     conn.execute_batch(
@@ -1749,7 +1799,7 @@ fn migration_v26_to_v27_adds_cline_flags_without_changing_workbuddy_state() {
 }
 
 /// A Cline development build stamped v26 with `enabled_cline` but without the
-/// upstream v26 `enabled_workbuddy`; v26→v27 must fill in the WorkBuddy columns
+/// upstream v26 `enabled_workbuddy`; the upgrade to v28 must fill in the WorkBuddy columns
 /// and keep the Cline flags.
 #[test]
 fn migration_from_cline_dev_v26_adds_workbuddy_flags_and_keeps_cline_state() {
@@ -1784,7 +1834,7 @@ fn migration_from_cline_dev_v26_adds_workbuddy_flags_and_keeps_cline_state() {
 /// WorkBuddy and Cline flags, and the migration only stamps the current version.
 #[test]
 fn fresh_install_has_dsh_copilot_workbuddy_and_cline_flags_at_current_version() {
-    assert_eq!(SCHEMA_VERSION, 27);
+    assert_eq!(SCHEMA_VERSION, 28);
     // 与 Database::init 的全新安装路径一致：先建表，再从 user_version=0 跑迁移。
     let conn = Connection::open_in_memory().expect("open memory db");
     Database::create_tables_on_conn(&conn).expect("create tables");
@@ -1866,12 +1916,11 @@ async fn proxy_dao_calls_survive_a_poisoned_lock() {
     let db = std::sync::Arc::new(Database::memory().expect("memory db"));
     db.set_proxy_flags_sync("claude", true, true)
         .expect("set flags");
-    db.update_proxy_config(crate::proxy::types::ProxyConfig {
-        listen_port: 25721,
-        ..Default::default()
-    })
-    .await
-    .expect("set port");
+    let mut proxy = db.get_global_proxy_config().await.expect("set port");
+    proxy.listen_port = 25721;
+    db.update_global_proxy_config(proxy)
+        .await
+        .expect("set port");
 
     // 每次调用前都重新毒化，确保每个调用点自己完成恢复
     let poison = || {
@@ -1895,11 +1944,6 @@ async fn proxy_dao_calls_survive_a_poisoned_lock() {
         "get_proxy_flags_sync after poison"
     );
     poison();
-    assert!(
-        db.is_live_takeover_active_sync(),
-        "is_live_takeover_active_sync after poison"
-    );
-    poison();
     assert_eq!(
         db.get_proxy_client_endpoint_sync().1,
         25721,
@@ -1915,4 +1959,43 @@ async fn proxy_dao_calls_survive_a_poisoned_lock() {
             .expect("read pricing source"),
         "request"
     );
+}
+
+/// 早期开发版把 enabled_cline 记作 v27，库里没有上游 v26→v27 的 GitLab 列；
+/// 升到 v28 要把它们补上，并保留已有的 cline 开关。
+#[test]
+fn migration_from_dev_v27_fills_skill_repo_host_and_keeps_cline_flag() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    conn.execute_batch(
+        r#"
+        CREATE TABLE mcp_servers (id TEXT PRIMARY KEY, enabled_workbuddy BOOLEAN NOT NULL DEFAULT 0, enabled_cline BOOLEAN NOT NULL DEFAULT 0);
+        CREATE TABLE skills (id TEXT PRIMARY KEY, enabled_workbuddy BOOLEAN NOT NULL DEFAULT 0, enabled_cline BOOLEAN NOT NULL DEFAULT 0);
+        CREATE TABLE skill_repos (owner TEXT NOT NULL, name TEXT NOT NULL, PRIMARY KEY (owner, name));
+        INSERT INTO mcp_servers (id, enabled_cline) VALUES ('m', 1);
+        INSERT INTO skills (id, enabled_cline) VALUES ('s', 1);
+        INSERT INTO skill_repos (owner, name) VALUES ('o', 'r');
+        "#,
+    )
+    .expect("seed dev v27 database");
+    Database::set_user_version(&conn, 27).expect("set user_version=27");
+
+    Database::apply_schema_migrations_on_conn(&conn).expect("upgrade dev v27 database");
+    assert_eq!(Database::get_user_version(&conn).unwrap(), SCHEMA_VERSION);
+
+    for table in ["mcp_servers", "skills"] {
+        let enabled: bool = conn
+            .query_row(&format!("SELECT enabled_cline FROM {table}"), [], |row| {
+                row.get(0)
+            })
+            .expect("read cline flag");
+        assert!(enabled, "{table}");
+    }
+    let repo_host: Option<String> = conn
+        .query_row("SELECT repo_host FROM skills", [], |row| row.get(0))
+        .expect("skills.repo_host exists");
+    assert_eq!(repo_host, None);
+    let host: String = conn
+        .query_row("SELECT host FROM skill_repos", [], |row| row.get(0))
+        .expect("skill_repos.host exists");
+    assert_eq!(host, "github.com");
 }

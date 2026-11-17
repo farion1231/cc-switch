@@ -152,7 +152,7 @@ pub(super) fn parse_semver(v: &str) -> Option<([u64; 3], Vec<String>)> {
 /// local version 段的开发构建形态:git describe(`238.g<sha>`)或常见开发通道标识
 /// (canary / nightly / dev / dirty / snapshot)。普通 semver build metadata
 /// (如 `linux.1`)不命中 —— 与前端 `src/lib/version.ts` 的 DEV_LOCAL_RE 语义对称。
-static DEV_LOCAL_RE: Lazy<Regex> = Lazy::new(|| {
+static DEV_LOCAL_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)^\d+\.g[0-9a-f]{4,}|(^|\.)(canary|nightly|dev|dirty|snapshot)(\.|$)")
         .expect("Invalid dev-local regex")
 });
@@ -404,7 +404,7 @@ async fn fetch_pypi_latest_version(client: &reqwest::Client, package: &str) -> O
 /// 预编译的版本号正则表达式。末尾的 `(\+[\w.-]+)?` 保留 PEP 440 local version
 /// 段(git describe 风格,如 Hermes main/canary 开发构建 `0.22.1+238.g<sha>`),
 /// 让前端能据此识别开发构建,避免把"版本号更低但内容更新"误报成"有新版本"。
-pub(super) static VERSION_RE: Lazy<Regex> = Lazy::new(|| {
+pub(super) static VERSION_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\d+\.\d+\.\d+(-[\w.]+)?(\+[\w.-]+)?").expect("Invalid version regex")
 });
 

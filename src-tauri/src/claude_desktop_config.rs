@@ -808,8 +808,16 @@ fn next_catalog_safe_route_id(
         .iter()
         .map(|route| route.route_id)
         .find(|route_id| {
+            // 借来的键会被 published_route_id 换成小版本目录名（claude-fable-5 →
+            // claude-fable-5-2），换了名也算占用，否则下一条会再借到它、两条撞名被去重。
             !reserved.contains(*route_id)
-                && !existing.iter().any(|route| route.route_id == *route_id)
+                && !existing.iter().any(|route| {
+                    route.route_id == *route_id
+                        || crate::live::project::claude::point_release_client_id(
+                            route_id,
+                            &route.upstream_model,
+                        ) == Some(route.route_id.as_str())
+                })
         })
     {
         return default_route.to_string();
@@ -1788,11 +1796,12 @@ mod tests {
     }
 
     fn set_proxy_port(db: &Database, port: u16) {
-        let config = crate::proxy::types::ProxyConfig {
-            listen_port: port,
-            ..Default::default()
-        };
-        futures::executor::block_on(db.update_proxy_config(config)).expect("update proxy config");
+        futures::executor::block_on(async {
+            let mut proxy = db.get_global_proxy_config().await?;
+            proxy.listen_port = port;
+            db.update_global_proxy_config(proxy).await
+        })
+        .expect("update proxy config");
     }
 
     fn direct_provider(id: &str) -> Provider {
@@ -2368,6 +2377,7 @@ mod tests {
                 "claude-sonnet-5".to_string(),
                 route("anthropic/claude-sonnet-5-5-20261001"),
             ),
+            ("claude-fable-5".to_string(), route("claude-fable-5.2")),
             ("claude-haiku-4-5".to_string(), route("glm-5")),
         ]);
 
@@ -2380,7 +2390,12 @@ mod tests {
         };
         assert_eq!(
             names(&provider),
-            ["claude-sonnet-5-5", "claude-opus-5-5", "claude-haiku-5-5"]
+            [
+                "claude-sonnet-5-5",
+                "claude-opus-5-5",
+                "claude-fable-5-2",
+                "claude-haiku-5-5"
+            ]
         );
         let models = model_list_response(&provider).expect("model list");
         assert_eq!(models["data"][1]["id"], json!("claude-opus-5-5"));
@@ -2389,7 +2404,7 @@ mod tests {
             models["data"][1]["description"],
             json!("Proxy · claude-opus-5.5")
         );
-        assert_eq!(models["data"][2]["description"], json!("Proxy · glm-5"));
+        assert_eq!(models["data"][3]["description"], json!("Proxy · glm-5"));
 
         // 新名字、旧 profile 里的原键、带日期的全名都落到同一个目标。
         for (requested, upstream) in [
@@ -2398,6 +2413,8 @@ mod tests {
             ("claude-opus-5-5-20261001[1m]", "claude-opus-5.5"),
             ("claude-sonnet-5-5", "anthropic/claude-sonnet-5-5-20261001"),
             ("claude-sonnet-5", "anthropic/claude-sonnet-5-5-20261001"),
+            ("claude-fable-5-2", "claude-fable-5.2"),
+            ("claude-fable-5", "claude-fable-5.2"),
             ("claude-haiku-5-5", "glm-5"),
             ("claude-haiku-4-5", "glm-5"),
         ] {
@@ -2422,12 +2439,38 @@ mod tests {
                 "claude-sonnet-5-5",
                 "claude-opus-5",
                 "claude-opus-5-5",
+                "claude-fable-5-2",
                 "claude-haiku-5-5"
             ]
         );
         let mapped = map_proxy_request_model(json!({ "model": "claude-opus-5" }), &provider)
             .expect("original key");
         assert_eq!(mapped["model"], json!("claude-opus-5.5"));
+    }
+
+    #[test]
+    fn claude_desktop_proxy_borrowed_point_release_routes_do_not_collide() {
+        let route = |model: &str| ClaudeDesktopModelRoute {
+            model: model.to_string(),
+            label_override: None,
+            supports_1m: None,
+        };
+        let mut provider = proxy_provider("proxy");
+        provider
+            .meta
+            .as_mut()
+            .expect("meta")
+            .claude_desktop_model_routes = std::collections::HashMap::from([
+            ("claude-sonnet-5".to_string(), route("glm-5")),
+            ("claude-opus-5".to_string(), route("glm-5.1")),
+            ("claude-haiku-4-5".to_string(), route("glm-4.7-air")),
+            ("legacy-a".to_string(), route("claude-fable-5.2")),
+            ("legacy-b".to_string(), route("anthropic/claude-fable-5.2")),
+        ]);
+
+        let routes = proxy_model_routes(&provider).expect("routes");
+        assert_eq!(routes.len(), 5, "{routes:?}");
+        assert!(routes.iter().any(|r| r.route_id == "claude-fable-5-2"));
     }
 
     #[test]

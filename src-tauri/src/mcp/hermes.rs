@@ -173,11 +173,7 @@ fn convert_from_hermes_format(id: &str, spec: &Value) -> Result<Value, AppError>
 /// 2. If server already exists, merge: keep Hermes-specific fields, overwrite core fields
 /// 3. Set `enabled: true`
 /// 4. Write back
-pub fn sync_single_server_to_hermes(
-    _config: &MultiAppConfig,
-    id: &str,
-    server_spec: &Value,
-) -> Result<(), AppError> {
+pub fn sync_single_server_to_hermes(id: &str, server_spec: &Value) -> Result<(), AppError> {
     if !should_sync_hermes_mcp() {
         return Ok(());
     }

@@ -618,18 +618,22 @@ fn proxy_model_fields(env: &Map<String, Value>, route_name: &str) -> Vec<(&'stat
     fields
 }
 
-/// 上游是比代际别名更新的小版本（5.5）时，Claude Code 目录里对应的客户端 id。
+/// 上游是比代际别名更新的小版本（Opus / Sonnet 5.5、Fable 5.1 / 5.2）时，Claude Code
+/// 目录里对应的客户端 id。
 ///
 /// Claude Code 按客户端 id 查自己的模型表决定显示名和输出上限：`claude-opus-5` 是
-/// 「Opus 5」、64K 输出，`claude-opus-5-5` 才是「Opus 5.5」、128K。上游配的是 5.5 却
-/// 写代际别名，菜单显示错、长输出被截断。上游 id 的分隔符各家不同（`claude-opus-5.5`、
-/// `claude-opus-5-5`、`anthropic/claude-opus-5.5`、带日期的），按版本号匹配。
+/// 「Opus 5」、64K 输出，`claude-opus-5-5` 才是「Opus 5.5」、128K；`claude-fable-5` 同样
+/// 只是「Fable 5」（#9608）。上游配的是小版本却写代际别名，菜单显示错、长输出被截断。
+/// 上游 id 的分隔符各家不同（`claude-opus-5.5`、`claude-opus-5-5`、`anthropic/claude-opus-5.5`、
+/// 带日期的），按版本号匹配。每项是（代际别名, 家族前缀, 小版本号, 目录 id）。
 ///
 /// 这张表也供反向映射用：接管写出的目录 id 要能被 [`ModelMapping::map_model`] 认成
 /// 同一个子代理模型。
-const POINT_RELEASE_CLIENT_IDS: &[(&str, &str, &str)] = &[
-    (PROXY_OPUS_ALIAS, "opus-5", "claude-opus-5-5"),
-    (PROXY_SONNET_ALIAS, "sonnet-5", "claude-sonnet-5-5"),
+const POINT_RELEASE_CLIENT_IDS: &[(&str, &str, &str, &str)] = &[
+    (PROXY_OPUS_ALIAS, "opus-5", "5", "claude-opus-5-5"),
+    (PROXY_SONNET_ALIAS, "sonnet-5", "5", "claude-sonnet-5-5"),
+    (PROXY_FABLE_ALIAS, "fable-5", "2", "claude-fable-5-2"),
+    (PROXY_FABLE_ALIAS, "fable-5", "1", "claude-fable-5-1"),
 ];
 
 pub(crate) fn point_release_client_id(family_alias: &str, upstream: &str) -> Option<&'static str> {
@@ -638,25 +642,26 @@ pub(crate) fn point_release_client_id(family_alias: &str, upstream: &str) -> Opt
         .to_ascii_lowercase();
     POINT_RELEASE_CLIENT_IDS
         .iter()
-        .filter(|(alias, _, _)| *alias == family_alias)
-        .find(|(_, stem, _)| {
-            [".5", "-5"].iter().any(|minor| {
-                id.find(&format!("{stem}{minor}")).is_some_and(|at| {
-                    let rest = &id[at + stem.len() + minor.len()..];
+        .filter(|(alias, _, _, _)| *alias == family_alias)
+        .find(|(_, stem, minor, _)| {
+            ['.', '-'].iter().any(|sep| {
+                let needle = format!("{stem}{sep}{minor}");
+                id.find(&needle).is_some_and(|at| {
+                    let rest = &id[at + needle.len()..];
                     !rest.starts_with(|c: char| c.is_ascii_digit() || c == '.')
                 })
             })
         })
-        .map(|(_, _, client)| *client)
+        .map(|(_, _, _, client)| *client)
 }
 
 fn client_alias_for_upstream<'a>(default_alias: &'a str, upstream: &str) -> &'a str {
     point_release_client_id(default_alias, upstream).unwrap_or(default_alias)
 }
 
-/// 子代理模型原样写给客户端；上游是 5.5 时同样换成目录 id，否则 Claude Code 不认识它。
+/// 子代理模型原样写给客户端；上游是小版本时同样换成目录 id，否则 Claude Code 不认识它。
 pub(crate) fn client_model_for_subagent(upstream: &str) -> String {
-    let Some(alias) = [PROXY_OPUS_ALIAS, PROXY_SONNET_ALIAS]
+    let Some(alias) = [PROXY_OPUS_ALIAS, PROXY_SONNET_ALIAS, PROXY_FABLE_ALIAS]
         .into_iter()
         .find_map(|family| point_release_client_id(family, upstream))
     else {
@@ -1185,6 +1190,30 @@ mod tests {
     }
 
     #[test]
+    fn fable_point_release_upstream_uses_catalog_id() {
+        let row = json!({ "env": {
+            "ANTHROPIC_AUTH_TOKEN": "sk",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-5.5[1M]",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-5.5[1M]",
+            "ANTHROPIC_DEFAULT_FABLE_MODEL": "claude-fable-5.2[1M]"
+        }});
+        let routed = proxy_projection(
+            &ClaudeProjection::of(&row),
+            "Route",
+            "http://127.0.0.1:15721",
+            ProxyAuth::AuthToken,
+            None,
+        );
+        assert_eq!(
+            routed
+                .env
+                .get("ANTHROPIC_DEFAULT_FABLE_MODEL")
+                .and_then(Value::as_str),
+            Some("claude-fable-5-2[1M]")
+        );
+    }
+
+    #[test]
     fn point_release_client_id_matches_version_not_spelling() {
         for upstream in [
             "claude-opus-5.5",
@@ -1217,10 +1246,38 @@ mod tests {
             client_alias_for_upstream(PROXY_SONNET_ALIAS, "claude-opus-5.5"),
             PROXY_SONNET_ALIAS
         );
+        // Fable 的小版本是 5.1 / 5.2（#9608）；代际 Fable 5（含带日期的）照旧写别名。
+        for (upstream, client) in [
+            ("claude-fable-5.2[1M]", "claude-fable-5-2"),
+            ("claude-fable-5-2", "claude-fable-5-2"),
+            ("anthropic/claude-fable-5.2", "claude-fable-5-2"),
+            ("claude-fable-5-2-20261101", "claude-fable-5-2"),
+            ("claude-fable-5.1", "claude-fable-5-1"),
+            ("claude-fable-5", PROXY_FABLE_ALIAS),
+            ("claude-fable-5-20260609", PROXY_FABLE_ALIAS),
+            ("claude-fable-5.25", PROXY_FABLE_ALIAS),
+            ("claude-fable-5.5", PROXY_FABLE_ALIAS),
+            ("claude-opus-5.5", PROXY_FABLE_ALIAS),
+        ] {
+            assert_eq!(
+                client_alias_for_upstream(PROXY_FABLE_ALIAS, upstream),
+                client,
+                "{upstream}"
+            );
+        }
+        // 只有 5.5 的家族不会把 5.1 / 5.2 换成目录 id。
+        assert_eq!(
+            client_alias_for_upstream(PROXY_OPUS_ALIAS, "claude-opus-5.2"),
+            PROXY_OPUS_ALIAS
+        );
         assert_eq!(client_model_for_subagent("glm-4.7-air"), "glm-4.7-air");
         assert_eq!(
             client_model_for_subagent("claude-sonnet-5.5"),
             "claude-sonnet-5-5"
+        );
+        assert_eq!(
+            client_model_for_subagent("claude-fable-5.2[1M]"),
+            "claude-fable-5-2[1M]"
         );
     }
 

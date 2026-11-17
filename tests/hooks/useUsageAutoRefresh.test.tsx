@@ -18,6 +18,7 @@ import { useUsageAutoRefresh } from "@/hooks/useUsageAutoRefresh";
 import { usageApi } from "@/lib/api/usage";
 import { usageKeys } from "@/lib/query/usage";
 import type { SessionSyncResult } from "@/types/usage";
+import { createTestQueryClient } from "../utils/testQueryClient";
 
 vi.mock("@/lib/api/usage", () => ({
   usageApi: { syncSessionUsage: vi.fn() },
@@ -49,7 +50,7 @@ describe("useUsageAutoRefresh", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     focusManager.setFocused(true);
-    client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client = createTestQueryClient();
     invalidate = vi.spyOn(client, "invalidateQueries");
     syncMock.mockReset().mockResolvedValue(syncResult);
   });

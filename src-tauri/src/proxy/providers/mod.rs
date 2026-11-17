@@ -8,7 +8,6 @@
 //! - `claude`: Claude (Anthropic) 适配器
 //! - `codex`: Codex (OpenAI) 适配器
 //! - `gemini`: Gemini (Google) 适配器
-//! - `models`: API 数据模型
 //! - `transform`: 格式转换
 
 mod adapter;
@@ -30,7 +29,6 @@ mod gemini;
 pub(crate) mod gemini_schema;
 pub mod gemini_shadow;
 pub(crate) mod inline_think;
-pub mod models;
 pub(crate) mod reasoning_bridge;
 pub(crate) mod responses_late_arguments;
 pub mod streaming;
@@ -58,6 +56,24 @@ pub const XAI_API_BASE_URL: &str = "https://api.x.ai/v1";
 /// 模型名里带 "mistral" 的中转站不算，它们照各自的协议处理。
 pub fn is_mistral_api(base_url: &str) -> bool {
     url::Url::parse(base_url).is_ok_and(|url| url.host_str() == Some("api.mistral.ai"))
+}
+
+/// 上游主机是 `suffixes` 里的某一个，或是它的子域名（按标签边界比，不按子串）。
+/// 解析不了或没有主机时为 false。
+fn url_host_is_or_under(base_url: &str, suffixes: &[&str]) -> bool {
+    let Ok(url) = url::Url::parse(base_url.trim()) else {
+        return false;
+    };
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    let host = host.to_ascii_lowercase();
+    suffixes.iter().any(|suffix| {
+        host == *suffix
+            || host
+                .strip_suffix(suffix)
+                .is_some_and(|prefix| prefix.ends_with('.'))
+    })
 }
 
 // 公开导出

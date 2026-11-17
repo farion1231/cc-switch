@@ -336,11 +336,30 @@ describe("piPresetThinkingFor", () => {
 });
 
 describe("fillWorkBuddyModel", () => {
+  const url = "https://api.example.test/v1";
+  const efforts = {
+    reasoning: {
+      supportedEfforts: ["low", "high", "max"],
+      defaultEffort: "high",
+      canDisableThinking: false,
+    },
+    thinkingLevelMap: {
+      off: null,
+      minimal: null,
+      low: "low",
+      medium: null,
+      high: "high",
+      xhigh: null,
+      max: "max",
+    },
+  };
+
   it("fills blank limits and only turns capabilities on", () => {
     expect(
       fillWorkBuddyModel(
         { id: "m", supportsToolCall: true, supportsImages: false },
         metadata,
+        url,
       ),
     ).toEqual({
       id: "m",
@@ -349,12 +368,33 @@ describe("fillWorkBuddyModel", () => {
       supportsReasoning: true,
       maxInputTokens: 262144,
       maxOutputTokens: 32768,
+      ...efforts,
     });
     expect(
       fillWorkBuddyModel(
         { id: "m", maxInputTokens: 1000, supportsReasoning: true },
         { reasoning: false, contextWindow: 2000 },
+        url,
       ),
     ).toEqual({ id: "m", maxInputTokens: 1000, supportsReasoning: true });
+  });
+
+  it("derives effort levels only where they reach the upstream", () => {
+    // Moonshot 不认 reasoning_effort（Pi 的探测规则），不列强度
+    expect(
+      fillWorkBuddyModel({ id: "m" }, metadata, "https://api.moonshot.cn/v1"),
+    ).not.toHaveProperty("reasoning");
+    // 已有的强度或映射不动
+    const kept = {
+      id: "m",
+      supportsReasoning: true,
+      thinkingLevelMap: { max: "max" },
+    };
+    expect(fillWorkBuddyModel(kept, metadata, url)).toEqual({
+      ...kept,
+      supportsImages: true,
+      maxInputTokens: 262144,
+      maxOutputTokens: 32768,
+    });
   });
 });

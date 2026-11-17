@@ -146,7 +146,8 @@ impl Database {
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             installed_at INTEGER NOT NULL DEFAULT 0,
             content_hash TEXT,
-            updated_at INTEGER NOT NULL DEFAULT 0
+            updated_at INTEGER NOT NULL DEFAULT 0,
+            repo_host TEXT
         )",
             [],
         )
@@ -156,7 +157,8 @@ impl Database {
         conn.execute(
             "CREATE TABLE IF NOT EXISTS skill_repos (
             owner TEXT NOT NULL, name TEXT NOT NULL, branch TEXT NOT NULL DEFAULT 'main',
-            enabled BOOLEAN NOT NULL DEFAULT 1, PRIMARY KEY (owner, name)
+            enabled BOOLEAN NOT NULL DEFAULT 1, host TEXT NOT NULL DEFAULT 'github.com',
+            PRIMARY KEY (owner, name)
         )",
             [],
         )
@@ -729,42 +731,31 @@ impl Database {
                         Self::set_user_version(conn, 26)?;
                     }
                     26 => {
-                        // Cline: MCP and Skills both store a flag. Development builds of
-                        // the Cline branch used v23 for enabled_cline alone (no enabled_omp),
-                        // v24 for enabled_cline + enabled_omp (no enabled_dsh), v25 for
-                        // enabled_cline + enabled_dsh (no enabled_copilot) and v26 for
-                        // enabled_cline + enabled_copilot (no upstream v26 enabled_workbuddy),
-                        // so add those upstream columns here as well when they are missing.
-                        for (table, column) in [
-                            ("mcp_servers", "enabled_cline"),
-                            ("skills", "enabled_cline"),
-                            ("mcp_servers", "enabled_omp"),
-                            ("mcp_servers", "enabled_dsh"),
-                            ("skills", "enabled_dsh"),
-                            ("mcp_servers", "enabled_copilot"),
-                            ("skills", "enabled_copilot"),
-                            ("mcp_servers", "enabled_workbuddy"),
-                            ("skills", "enabled_workbuddy"),
-                        ] {
+                        // 技能仓库支持 GitLab：仓库和已安装的技能各记一个主机。
+                        // 老行不用回填——skill_repos.host 靠列默认值就是 github.com，
+                        // skills.repo_host 为 NULL 也按 github.com 读。
+                        Self::add_skill_repo_host_columns(conn)?;
+                        Self::set_user_version(conn, 27)?;
+                    }
+                    27 => {
+                        // Cline：MCP 与 Skills 都记启用开关。
+                        // 早期开发版把 enabled_cline 记作 v26 或 v27，这样的库会跳过上游的
+                        // v25→v26（WorkBuddy）或 v26→v27（GitLab 技能仓库），这里一并按
+                        // "缺失才加"补齐，保证幂等。
+                        for table in ["mcp_servers", "skills"] {
                             if Self::table_exists(conn, table)? {
-                                Self::add_column_if_missing(
-                                    conn,
-                                    table,
-                                    column,
-                                    "BOOLEAN NOT NULL DEFAULT 0",
-                                )?;
+                                for column in ["enabled_workbuddy", "enabled_cline"] {
+                                    Self::add_column_if_missing(
+                                        conn,
+                                        table,
+                                        column,
+                                        "BOOLEAN NOT NULL DEFAULT 0",
+                                    )?;
+                                }
                             }
                         }
-                        // Cline 开发版的 v24 早于上游 DSH 用量导入，同样补齐 parser_state
-                        if Self::table_exists(conn, "session_log_sync")? {
-                            Self::add_column_if_missing(
-                                conn,
-                                "session_log_sync",
-                                "parser_state",
-                                "TEXT",
-                            )?;
-                        }
-                        Self::set_user_version(conn, 27)?;
+                        Self::add_skill_repo_host_columns(conn)?;
+                        Self::set_user_version(conn, 28)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -789,6 +780,22 @@ impl Database {
                 Err(e)
             }
         }
+    }
+
+    /// v26→v27：技能仓库支持 GitLab（`skill_repos.host`、`skills.repo_host`），缺失才加
+    fn add_skill_repo_host_columns(conn: &Connection) -> Result<(), AppError> {
+        if Self::table_exists(conn, "skill_repos")? {
+            Self::add_column_if_missing(
+                conn,
+                "skill_repos",
+                "host",
+                "TEXT NOT NULL DEFAULT 'github.com'",
+            )?;
+        }
+        if Self::table_exists(conn, "skills")? {
+            Self::add_column_if_missing(conn, "skills", "repo_host", "TEXT")?;
+        }
+        Ok(())
     }
 
     /// v0 -> v1 迁移：补齐所有缺失列
