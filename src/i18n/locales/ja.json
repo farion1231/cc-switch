@@ -1658,7 +1658,17 @@
         "prLink": "PR #{{number}} を関連付け",
         "prLinkPlain": "PR を関連付け",
         "slashCommand": "{{command}} を実行",
-        "subAgent": "サブエージェント {{name}}"
+        "subAgent": "サブエージェント {{name}}",
+        "goal": "目標 · {{status}}",
+        "goalPlain": "目標",
+        "goalStatus": {
+          "active": "進行中",
+          "paused": "一時停止",
+          "blocked": "ブロック中",
+          "usageLimited": "使用上限に到達",
+          "budgetLimited": "予算上限に到達",
+          "complete": "完了"
+        }
       },
       "injectedToggle": "挿入されたコンテキストを表示",
       "injectedRow": "コンテキスト · {{label}} · {{chars}} 文字",

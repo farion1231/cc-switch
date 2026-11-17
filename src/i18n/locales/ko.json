@@ -1657,7 +1657,17 @@
         "prLink": "연결된 PR #{{number}}",
         "prLinkPlain": "PR을 연결했습니다",
         "slashCommand": "{{command}}을(를) 실행",
-        "subAgent": "서브에이전트 {{name}}"
+        "subAgent": "서브에이전트 {{name}}",
+        "goal": "목표 · {{status}}",
+        "goalPlain": "목표",
+        "goalStatus": {
+          "active": "진행 중",
+          "paused": "일시 중지됨",
+          "blocked": "막힘",
+          "usageLimited": "사용 한도 도달",
+          "budgetLimited": "예산 도달",
+          "complete": "완료"
+        }
       },
       "injectedToggle": "주입된 컨텍스트 표시",
       "injectedRow": "컨텍스트 · {{label}} · {{chars}}자",

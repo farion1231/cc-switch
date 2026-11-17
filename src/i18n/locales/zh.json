@@ -1658,7 +1658,17 @@
         "prLink": "已关联 PR #{{number}}",
         "prLinkPlain": "已关联 PR",
         "slashCommand": "运行了 {{command}}",
-        "subAgent": "子代理 {{name}}"
+        "subAgent": "子代理 {{name}}",
+        "goal": "目标 · {{status}}",
+        "goalPlain": "目标",
+        "goalStatus": {
+          "active": "进行中",
+          "paused": "已暂停",
+          "blocked": "受阻",
+          "usageLimited": "额度已用尽",
+          "budgetLimited": "已达预算",
+          "complete": "已完成"
+        }
       },
       "injectedToggle": "显示注入的上下文",
       "injectedRow": "上下文 · {{label}} · {{chars}} 字",

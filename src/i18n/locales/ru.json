@@ -1659,7 +1659,17 @@
         "prLink": "Привязан PR #{{number}}",
         "prLinkPlain": "Привязан PR",
         "slashCommand": "Выполнено {{command}}",
-        "subAgent": "Подагент {{name}}"
+        "subAgent": "Подагент {{name}}",
+        "goal": "Цель · {{status}}",
+        "goalPlain": "Цель",
+        "goalStatus": {
+          "active": "Активна",
+          "paused": "Приостановлена",
+          "blocked": "Заблокирована",
+          "usageLimited": "Достигнут лимит использования",
+          "budgetLimited": "Достигнут бюджет",
+          "complete": "Выполнена"
+        }
       },
       "injectedToggle": "Показать внедрённый контекст",
       "injectedRow": "Контекст · {{label}} · {{chars}} симв.",

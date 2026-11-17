@@ -1658,7 +1658,17 @@
         "prLink": "Linked PR #{{number}}",
         "prLinkPlain": "Linked a PR",
         "slashCommand": "Ran {{command}}",
-        "subAgent": "Subagent {{name}}"
+        "subAgent": "Subagent {{name}}",
+        "goal": "Goal · {{status}}",
+        "goalPlain": "Goal",
+        "goalStatus": {
+          "active": "Active",
+          "paused": "Paused",
+          "blocked": "Blocked",
+          "usageLimited": "Usage limit reached",
+          "budgetLimited": "Budget reached",
+          "complete": "Complete"
+        }
       },
       "injectedToggle": "Show injected context",
       "injectedRow": "Context · {{label}} · {{chars}} chars",

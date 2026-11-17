@@ -1658,7 +1658,17 @@
         "prLink": "PR #{{number}} verknüpft",
         "prLinkPlain": "Einen PR verknüpft",
         "slashCommand": "{{command}} ausgeführt",
-        "subAgent": "Subagent {{name}}"
+        "subAgent": "Subagent {{name}}",
+        "goal": "Ziel · {{status}}",
+        "goalPlain": "Ziel",
+        "goalStatus": {
+          "active": "Aktiv",
+          "paused": "Pausiert",
+          "blocked": "Blockiert",
+          "usageLimited": "Nutzungslimit erreicht",
+          "budgetLimited": "Budget erreicht",
+          "complete": "Abgeschlossen"
+        }
       },
       "injectedToggle": "Eingefügten Kontext anzeigen",
       "injectedRow": "Kontext · {{label}} · {{chars}} Zeichen",
