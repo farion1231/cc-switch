@@ -1740,6 +1740,9 @@
     "openReleaseNotesFailed": "開啟更新日誌失敗："
   },
   "providerForm": {
+    "billingMultiplier": "供應商費用倍率",
+    "billingMultiplierHelp": "該供應商所有模型的參考費用統一乘以此值。0.5 為半價，留空為 1 倍。僅用於後續本機代理請求；Token 數與歷史費用不變，無法識別供應商的離線工作階段不適用。",
+    "billingMultiplierInvalid": "請輸入 0 到 1000 的十進位數，或留空使用 1 倍。",
     "nativeConfig": {
       "title": "設定檔 {{path}}（只顯示這一家）",
       "hint": "按應用自己的格式顯示這一家在檔案裡的部分，儲存後寫進這個檔案；預設模型等全域設定不在這裡。在這裡寫的註解不會儲存。",

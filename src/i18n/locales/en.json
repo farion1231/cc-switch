@@ -1740,6 +1740,9 @@
     "openReleaseNotesFailed": "Failed to open release notes:"
   },
   "providerForm": {
+    "billingMultiplier": "Provider cost multiplier",
+    "billingMultiplierHelp": "Apply to all model reference costs for future local proxy requests. 0.5 means half price; blank means 1×. Token counts and past costs stay unchanged. Offline sessions without provider attribution are excluded.",
+    "billingMultiplierInvalid": "Enter a decimal from 0 to 1000, or leave blank for 1×.",
     "nativeConfig": {
       "title": "Config file {{path}} (this provider only)",
       "hint": "Shows this provider's part of the file in the app's own format and writes it there on save. Global settings such as the default model are not here. Comments typed here are not saved.",

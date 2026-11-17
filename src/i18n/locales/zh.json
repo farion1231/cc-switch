@@ -1740,6 +1740,9 @@
     "openReleaseNotesFailed": "打开更新日志失败:"
   },
   "providerForm": {
+    "billingMultiplier": "供应商费用倍率",
+    "billingMultiplierHelp": "该供应商所有模型的参考费用统一乘以此值。0.5 为半价，留空为 1 倍。仅用于后续本地代理请求；Token 数和历史费用不变，无法识别供应商的离线会话不适用。",
+    "billingMultiplierInvalid": "请输入 0 到 1000 的十进制数，或留空使用 1 倍。",
     "nativeConfig": {
       "title": "配置文件 {{path}}（只显示这一家）",
       "hint": "按应用自己的格式显示这一家在文件里的部分，保存后写进这个文件；默认模型等全局设置不在这里。在这里写的注释不会保存。",

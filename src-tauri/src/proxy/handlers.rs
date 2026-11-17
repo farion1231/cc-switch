@@ -537,6 +537,7 @@ fn extract_gateway_token(headers: &axum::http::HeaderMap) -> Option<String> {
 ///
 /// 支持 OpenAI Chat Completions 和 Responses API 两种格式的转换
 struct ClaudeUsageLog {
+    multiplier: rust_decimal::Decimal,
     model: String,
     request_model: String,
     outbound_model: String,
@@ -575,6 +576,7 @@ fn prepare_claude_usage_log(
             .unwrap_or_else(|| ctx.request_model.clone()),
         app_type: ctx.app_type_str,
         provider_id: ctx.provider.id.clone(),
+        multiplier: crate::provider::billing_multiplier(&ctx.provider),
         session_id: ctx.session_id.clone(),
         usage,
         latency_ms: ctx.latency_ms(),
@@ -587,6 +589,7 @@ async fn write_claude_usage_log(state: &ProxyState, log: ClaudeUsageLog) {
     log_usage(
         state,
         &log.provider_id,
+        log.multiplier,
         log.app_type,
         &log.model,
         &log.request_model,
@@ -678,6 +681,7 @@ async fn handle_claude_transform(
         let usage_collector = if usage_logging_enabled(state) {
             let state = state.clone();
             let provider_id = ctx.provider.id.clone();
+            let multiplier = crate::provider::billing_multiplier(&ctx.provider);
             let request_model = ctx.request_model.clone();
             // 上游/转换层未回显模型时，优先用映射后的出站模型兜底（路由接管真值），
             // 其次才是客户端请求别名。空字符串视为缺失（转换器对无回显上游会合成 ""）。
@@ -720,6 +724,7 @@ async fn handle_claude_transform(
                             log_usage(
                                 &state,
                                 &provider_id,
+                                multiplier,
                                 app_type_str,
                                 &model,
                                 &request_model,
@@ -1657,12 +1662,14 @@ async fn handle_codex_xai_native_responses_rewrite(
                 tokio::spawn({
                     let state = state.clone();
                     let provider_id = ctx.provider.id.clone();
+                    let multiplier = crate::provider::billing_multiplier(&ctx.provider);
                     let session_id = ctx.session_id.clone();
                     let latency_ms = ctx.latency_ms();
                     async move {
                         log_usage(
                             &state,
                             &provider_id,
+                            multiplier,
                             app_type_str,
                             &model,
                             &request_model,
@@ -1738,6 +1745,7 @@ async fn handle_codex_chat_to_responses_transform(
         let usage_collector = if usage_logging_enabled(state) {
             let state = state.clone();
             let provider_id = ctx.provider.id.clone();
+            let multiplier = crate::provider::billing_multiplier(&ctx.provider);
             let request_model = ctx.request_model.clone();
             // 接管/模型覆写场景的归因兜底：出站真值优先于客户端请求别名
             let fallback_model = ctx
@@ -1780,6 +1788,7 @@ async fn handle_codex_chat_to_responses_transform(
                         log_usage(
                             &state,
                             &provider_id,
+                            multiplier,
                             app_type_str,
                             &model,
                             &request_model,
@@ -1899,12 +1908,14 @@ async fn handle_codex_chat_to_responses_transform(
         tokio::spawn({
             let state = state.clone();
             let provider_id = ctx.provider.id.clone();
+            let multiplier = crate::provider::billing_multiplier(&ctx.provider);
             let session_id = ctx.session_id.clone();
             let latency_ms = ctx.latency_ms();
             async move {
                 log_usage(
                     &state,
                     &provider_id,
+                    multiplier,
                     app_type_str,
                     &model,
                     &request_model,
@@ -2064,12 +2075,14 @@ async fn handle_codex_anthropic_to_responses_transform(
         tokio::spawn({
             let state = state.clone();
             let provider_id = ctx.provider.id.clone();
+            let multiplier = crate::provider::billing_multiplier(&ctx.provider);
             let session_id = ctx.session_id.clone();
             let latency_ms = ctx.latency_ms();
             async move {
                 log_usage(
                     &state,
                     &provider_id,
+                    multiplier,
                     app_type_str,
                     &model,
                     &request_model,
@@ -2122,6 +2135,7 @@ fn build_codex_anthropic_sse_response(
     let usage_collector = if usage_logging_enabled(state) {
         let state = state.clone();
         let provider_id = ctx.provider.id.clone();
+        let multiplier = crate::provider::billing_multiplier(&ctx.provider);
         let request_model = ctx.request_model.clone();
         let fallback_model = ctx
             .outbound_model
@@ -2157,6 +2171,7 @@ fn build_codex_anthropic_sse_response(
                     log_usage(
                         &state,
                         &provider_id,
+                        multiplier,
                         app_type_str,
                         &model,
                         &request_model,
@@ -3296,6 +3311,7 @@ async fn log_forward_error(
 async fn log_usage(
     state: &ProxyState,
     provider_id: &str,
+    multiplier: rust_decimal::Decimal,
     app_type: &str,
     model: &str,
     request_model: &str,
@@ -3339,6 +3355,7 @@ async fn log_usage(
         logger.log_with_calculation(
             request_id,
             provider_id,
+            multiplier,
             app_type,
             model,
             request_model,

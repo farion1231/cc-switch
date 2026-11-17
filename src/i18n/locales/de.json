@@ -1740,6 +1740,9 @@
     "openReleaseNotesFailed": "Versionshinweise konnten nicht geöffnet werden:"
   },
   "providerForm": {
+    "billingMultiplier": "Kostenfaktor des Anbieters",
+    "billingMultiplierHelp": "Gilt für die Referenzkosten aller Modelle bei künftigen lokalen Proxy-Anfragen. 0.5 bedeutet den halben Preis; leer bedeutet 1×. Tokenzahlen und bisherige Kosten bleiben unverändert. Offline-Sitzungen ohne Anbieterzuordnung sind ausgeschlossen.",
+    "billingMultiplierInvalid": "Eine Dezimalzahl von 0 bis 1000 eingeben oder für 1× leer lassen.",
     "nativeConfig": {
       "title": "Konfigurationsdatei {{path}} (nur dieser Anbieter)",
       "hint": "Zeigt den Teil der Datei, der zu diesem Anbieter gehört, im eigenen Format der App und schreibt ihn beim Speichern dorthin. Globale Einstellungen wie das Standardmodell sind hier nicht enthalten. Hier eingegebene Kommentare werden nicht gespeichert.",

@@ -78,6 +78,10 @@ import {
 } from "@/utils/providerConfigUtils";
 import { mergeProviderMeta } from "@/utils/providerMetaUtils";
 import {
+  BillingMultiplierField,
+  isValidBillingMultiplier,
+} from "./BillingMultiplierField";
+import {
   codexApiFormatFromWireApi,
   extractCodexWireApi,
   setCodexWireApi,
@@ -497,6 +501,7 @@ function ProviderFormFull({
     );
     setPromptCacheRouting(initialData?.meta?.promptCacheRouting ?? "auto");
     setCustomUserAgent(initialData?.meta?.customUserAgent ?? "");
+    setBillingMultiplier(initialData?.meta?.billingMultiplier ?? "");
     setLocalProxyHeadersOverride(
       formatRequestOverrideObject(
         initialData?.meta?.localProxyRequestOverrides?.headers,
@@ -753,6 +758,12 @@ function ProviderFormFull({
     );
   const [customUserAgent, setCustomUserAgent] = useState<string>(
     () => initialData?.meta?.customUserAgent ?? "",
+  );
+  const [billingMultiplier, setBillingMultiplier] = useState(
+    initialData?.meta?.billingMultiplier ?? "",
+  );
+  const supportsBillingMultiplier = ["claude", "codex", "gemini"].includes(
+    appId,
   );
   const [localProxyHeadersOverride, setLocalProxyHeadersOverride] =
     useState<string>(() =>
@@ -1377,6 +1388,18 @@ function ProviderFormFull({
     (appId === "claude" || appId === "codex") && category !== "official";
 
   const handleSubmit = async (values: ProviderFormData) => {
+    if (
+      supportsBillingMultiplier &&
+      !isValidBillingMultiplier(billingMultiplier)
+    ) {
+      toast.error(
+        t("providerForm.billingMultiplierInvalid", {
+          defaultValue:
+            "Enter a decimal from 0 to 1000, or leave blank for 1×.",
+        }),
+      );
+      return;
+    }
     const overridesResult = shouldApplyLocalProxyRequestOverrides
       ? buildLocalProxyRequestOverrides(
           localProxyHeadersOverride,
@@ -2196,6 +2219,11 @@ function ProviderFormFull({
       delete nextMeta.githubAccountId;
     }
 
+    if (supportsBillingMultiplier) {
+      if (billingMultiplier.trim())
+        nextMeta.billingMultiplier = billingMultiplier.trim();
+      else delete nextMeta.billingMultiplier;
+    }
     payload.meta = nextMeta;
 
     await onSubmit(payload);
@@ -2749,6 +2777,13 @@ function ProviderFormFull({
               ) : undefined
             }
           />
+
+          {supportsBillingMultiplier && (
+            <BillingMultiplierField
+              value={billingMultiplier}
+              onChange={setBillingMultiplier}
+            />
+          )}
 
           {appId === "claude" && (
             <ClaudeFormFields

@@ -1671,6 +1671,9 @@
     "openReleaseNotesFailed": "Sürüm notları açılamadı:"
   },
   "providerForm": {
+    "billingMultiplier": "Sağlayıcı maliyet çarpanı",
+    "billingMultiplierHelp": "Gelecekteki yerel proxy isteklerinde tüm modellerin referans maliyetine uygulanır. 0.5 yarı fiyat, boş alan 1× demektir. Token sayıları ve geçmiş maliyetler değişmez. Sağlayıcısı belirlenemeyen çevrimdışı oturumlar kapsam dışıdır.",
+    "billingMultiplierInvalid": "0 ile 1000 arasında bir ondalık sayı girin veya 1× için boş bırakın.",
     "nativeConfig": {
       "title": "Yapılandırma dosyası {{path}} (yalnızca bu sağlayıcı)",
       "hint": "Bu sağlayıcının dosyadaki bölümünü uygulamanın kendi biçiminde gösterir ve kaydettiğinizde oraya yazar. Varsayılan model gibi genel ayarlar burada yer almaz. Buraya yazılan yorumlar kaydedilmez.",
