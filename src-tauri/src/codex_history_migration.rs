@@ -1534,6 +1534,7 @@ mod tests {
     use super::*;
     use crate::codex_state_db::CODEX_STATE_DB_FILENAME;
     use crate::provider::Provider;
+    use crate::test_support::TestHome;
     use serial_test::serial;
     use std::ffi::OsString;
     use tempfile::tempdir;
@@ -2955,39 +2956,6 @@ model_provider = "aihubmix"
         assert!(!ids.contains("my-local-relay"));
     }
 
-    /// 端到端测试用的隔离 HOME：CC Switch 设置与 `~/.codex` 都落在临时目录。
-    struct IsolatedHome {
-        dir: tempfile::TempDir,
-        original_test_home: Option<OsString>,
-    }
-
-    impl IsolatedHome {
-        fn new() -> Self {
-            let dir = tempdir().expect("tempdir");
-            let original_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
-            std::env::set_var("CC_SWITCH_TEST_HOME", dir.path());
-            crate::settings::reload_settings().expect("reload settings for isolated home");
-            Self {
-                dir,
-                original_test_home,
-            }
-        }
-
-        fn codex_dir(&self) -> PathBuf {
-            self.dir.path().join(".codex")
-        }
-    }
-
-    impl Drop for IsolatedHome {
-        fn drop(&mut self) {
-            match &self.original_test_home {
-                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
-                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
-            }
-            let _ = crate::settings::reload_settings();
-        }
-    }
-
     fn session_meta_line(id: &str, provider: &str) -> String {
         format!(
             "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{id}\",\"model_provider\":\"{provider}\"}}}}\n"
@@ -3026,8 +2994,8 @@ model_provider = "aihubmix"
         if crate::config::sqlite_unsupported_in_temp_dir() {
             return;
         }
-        let home = IsolatedHome::new();
-        let codex_dir = home.codex_dir();
+        let home = TestHome::new();
+        let codex_dir = home.path().join(".codex");
         let session_dir = codex_dir.join("sessions/2026/09/01");
         fs::create_dir_all(&session_dir).expect("create session dir");
         // 休眠 custom 表保持原样：迁移不碰 config.toml。
@@ -3110,8 +3078,8 @@ model_provider = "aihubmix"
         if crate::config::sqlite_unsupported_in_temp_dir() {
             return;
         }
-        let home = IsolatedHome::new();
-        let codex_dir = home.codex_dir();
+        let home = TestHome::new();
+        let codex_dir = home.path().join(".codex");
         fs::create_dir_all(&codex_dir).expect("create codex dir");
         fs::write(
             codex_dir.join("config.toml"),
@@ -3169,9 +3137,9 @@ model_provider = "aihubmix"
         if crate::config::sqlite_unsupported_in_temp_dir() {
             return;
         }
-        let home = IsolatedHome::new();
+        let home = TestHome::new();
         enable_unify_toggle(true);
-        let codex_dir = home.codex_dir();
+        let codex_dir = home.path().join(".codex");
         let session_dir = codex_dir.join("sessions/2026/11/08");
         fs::create_dir_all(&session_dir).expect("create session dir");
         fs::write(codex_dir.join("config.toml"), UNIFIED_CONFIG).expect("write config");
@@ -3227,9 +3195,9 @@ model_provider = "aihubmix"
         if crate::config::sqlite_unsupported_in_temp_dir() {
             return;
         }
-        let home = IsolatedHome::new();
+        let home = TestHome::new();
         enable_unify_toggle(true);
-        let codex_dir = home.codex_dir();
+        let codex_dir = home.path().join(".codex");
         fs::create_dir_all(&codex_dir).expect("create codex dir");
         fs::write(codex_dir.join("config.toml"), "model = \"gpt-5.5\"\n").expect("write config");
         let state_db = codex_dir.join(CODEX_STATE_DB_FILENAME);
@@ -3246,9 +3214,9 @@ model_provider = "aihubmix"
         if crate::config::sqlite_unsupported_in_temp_dir() {
             return;
         }
-        let home = IsolatedHome::new();
+        let home = TestHome::new();
         enable_unify_toggle(false);
-        let codex_dir = home.codex_dir();
+        let codex_dir = home.path().join(".codex");
         fs::create_dir_all(&codex_dir).expect("create codex dir");
         fs::write(codex_dir.join("config.toml"), UNIFIED_CONFIG).expect("write config");
         let state_db = codex_dir.join(CODEX_STATE_DB_FILENAME);

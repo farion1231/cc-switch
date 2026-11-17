@@ -1542,11 +1542,6 @@ impl CodexOAuthManager {
         Ok(())
     }
 
-    pub async fn is_authenticated(&self) -> bool {
-        let accounts = self.accounts.read().await;
-        !accounts.is_empty()
-    }
-
     /// 获取认证状态摘要（与 Copilot 的格式保持一致，便于复用前端）
     pub async fn get_status(&self) -> CodexOAuthStatus {
         let accounts_map = self.accounts.read().await.clone();
@@ -2352,7 +2347,6 @@ mod tests {
     async fn test_manager_initial_state() {
         let temp = tempfile::tempdir().unwrap();
         let manager = CodexOAuthManager::new(temp.path().to_path_buf());
-        assert!(!manager.is_authenticated().await);
         assert!(manager.list_accounts().await.is_empty());
     }
 

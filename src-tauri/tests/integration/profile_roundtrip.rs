@@ -70,6 +70,7 @@ fn installed_skill(id: &str, directory: &str, claude_enabled: bool) -> Installed
         name: id.to_string(),
         description: None,
         directory: directory.to_string(),
+        repo_host: None,
         repo_owner: None,
         repo_name: None,
         repo_branch: None,
@@ -700,11 +701,15 @@ fn profile_switch_in_routing_mode_changes_the_route_only() {
 
     // 使用临时端口，避免测试机器端口冲突
     futures::executor::block_on(async {
-        let mut proxy_config = state.db.get_proxy_config().await.expect("get proxy config");
+        let mut proxy_config = state
+            .db
+            .get_global_proxy_config()
+            .await
+            .expect("get proxy config");
         proxy_config.listen_port = 0;
         state
             .db
-            .update_proxy_config(proxy_config)
+            .update_global_proxy_config(proxy_config)
             .await
             .expect("set ephemeral proxy port");
     });

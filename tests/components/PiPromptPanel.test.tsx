@@ -1,13 +1,10 @@
-import {
-  QueryClient,
-  QueryClientProvider,
-  useMutation,
-} from "@tanstack/react-query";
+import { QueryClientProvider, useMutation } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import PromptPanel from "@/components/prompts/PromptPanel";
 import { promptsApi, type Prompt } from "@/lib/api";
+import { createTestQueryClient } from "../utils/testQueryClient";
 
 const mocks = vi.hoisted(() => ({
   state: {
@@ -56,9 +53,7 @@ vi.mock("@/hooks/useTauriEvent", () => ({
 }));
 
 function renderWithClient(ui: React.ReactNode) {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
+  const client = createTestQueryClient();
   return render(
     <QueryClientProvider client={client}>{ui}</QueryClientProvider>,
   );

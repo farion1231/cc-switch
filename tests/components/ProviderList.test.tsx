@@ -1,5 +1,5 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { useState, type ReactElement } from "react";
 import { http, HttpResponse } from "msw";
@@ -10,6 +10,7 @@ import {
 } from "@/components/providers/ProviderList";
 import { hermesKeys } from "@/hooks/useHermes";
 import { server } from "../msw/server";
+import { createTestQueryClient } from "../utils/testQueryClient";
 
 vi.mock("sonner", () => ({
   toast: {
@@ -132,9 +133,7 @@ function createProvider(overrides: Partial<Provider> = {}): Provider {
 }
 
 function renderWithQueryClient(ui: ReactElement) {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
+  const queryClient = createTestQueryClient();
 
   return {
     ...render(
@@ -447,9 +446,7 @@ describe("ProviderList Component", () => {
       onSetAsDefault,
       onRemoveFromConfig,
     };
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
+    const client = createTestQueryClient();
     const { rerender } = render(
       <QueryClientProvider client={client}>
         <ProviderList {...props} currentProviderId="current" />
@@ -1052,9 +1049,7 @@ describe("ProviderList Component", () => {
       onOpenWebsite: vi.fn(),
     };
     const onSearchOpenChange = vi.fn();
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
+    const queryClient = createTestQueryClient();
     const ui = (searchOpen: boolean) => (
       <QueryClientProvider client={queryClient}>
         <ProviderList
