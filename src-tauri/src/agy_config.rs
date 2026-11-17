@@ -603,18 +603,16 @@ mod integration_tests {
     use crate::provider::Provider;
     use crate::services::provider::agy_direct;
     use crate::store::AppState;
+    use crate::test_support::TestHome;
     use serial_test::serial;
     use std::os::unix::fs::PermissionsExt;
     use std::sync::Arc;
 
-    struct HomeGuard(tempfile::TempDir, Option<std::ffi::OsString>);
+    /// A test home that also disarms any failpoint before the home goes away.
+    struct HomeGuard(TestHome);
     impl HomeGuard {
         fn new() -> Self {
-            let dir = tempfile::tempdir().unwrap();
-            let previous = std::env::var_os("CC_SWITCH_TEST_HOME");
-            std::env::set_var("CC_SWITCH_TEST_HOME", dir.path());
-            crate::settings::reload_settings().unwrap();
-            Self(dir, previous)
+            Self(TestHome::new())
         }
         fn path(&self) -> &Path {
             self.0.path()
@@ -623,11 +621,6 @@ mod integration_tests {
     impl Drop for HomeGuard {
         fn drop(&mut self) {
             failpoint::crash_at(None);
-            match self.1.take() {
-                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
-                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
-            }
-            let _ = crate::settings::reload_settings();
         }
     }
 

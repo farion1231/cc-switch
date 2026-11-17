@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -7,6 +7,7 @@ import {
   ClaudeBoundAccountLine,
   ClaudeOfficialSection,
 } from "@/components/providers/forms/ClaudeOfficialSection";
+import { createTestQueryClient } from "../utils/testQueryClient";
 
 const mocks = vi.hoisted(() => ({
   useManagedAuth: vi.fn(),
@@ -84,11 +85,7 @@ const loginSwitch = (overrides: Record<string, unknown> = {}) => {
 // 组件读 React Query（切换状态、账号列表），每个用例一个新的 client
 const withQuery = (node: React.ReactNode) =>
   render(
-    <QueryClientProvider
-      client={
-        new QueryClient({ defaultOptions: { queries: { retry: false } } })
-      }
-    >
+    <QueryClientProvider client={createTestQueryClient()}>
       {node}
     </QueryClientProvider>,
   );

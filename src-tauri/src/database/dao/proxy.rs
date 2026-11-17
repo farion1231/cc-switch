@@ -334,114 +334,14 @@ impl Database {
         Ok(())
     }
 
-    // ==================== Legacy Proxy Config (兼容旧代码) ====================
-
-    /// 获取代理配置（兼容旧接口，返回 claude 行的配置）
-    pub async fn get_proxy_config(&self) -> Result<ProxyConfig, AppError> {
-        // 使用 block 限制 conn 的作用域，避免跨 await 持有锁
-        let result = {
-            let conn = lock_conn!(self.conn);
-            conn.query_row(
-                "SELECT listen_address, listen_port, max_retries,
-                        enable_logging,
-                        streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout
-                 FROM proxy_config WHERE app_type = 'claude'",
-                [],
-                |row| {
-                    Ok(ProxyConfig {
-                        listen_address: row.get(0)?,
-                        listen_port: row.get::<_, i32>(1)? as u16,
-                        max_retries: row.get::<_, i32>(2)? as u8,
-                        request_timeout: 600, // 废弃字段，返回默认值
-                        enable_logging: row.get::<_, i32>(3)? != 0,
-                        live_takeover_active: false, // 废弃字段
-                        streaming_first_byte_timeout: row.get::<_, i32>(4).unwrap_or(60) as u64,
-                        streaming_idle_timeout: row.get::<_, i32>(5).unwrap_or(120) as u64,
-                        non_streaming_timeout: row.get::<_, i32>(6).unwrap_or(600) as u64,
-                    })
-                },
-            )
-        };
-        // conn 已在 block 结束时释放
-
-        match result {
-            Ok(config) => Ok(config),
-            Err(rusqlite::Error::QueryReturnedNoRows) => {
-                // 如果不存在，初始化默认配置
-                self.init_proxy_config_rows().await?;
-                Ok(ProxyConfig::default())
-            }
-            Err(e) => Err(AppError::Database(e.to_string())),
-        }
-    }
-
-    /// 更新代理配置（兼容旧接口，更新所有三行的公共字段）
-    pub async fn update_proxy_config(&self, config: ProxyConfig) -> Result<(), AppError> {
-        let conn = lock_conn!(self.conn);
-
-        // 更新所有三行的公共字段
-        conn.execute(
-            "UPDATE proxy_config SET
-                listen_address = ?1,
-                listen_port = ?2,
-                max_retries = ?3,
-                enable_logging = ?4,
-                streaming_first_byte_timeout = ?5,
-                streaming_idle_timeout = ?6,
-                non_streaming_timeout = ?7,
-                updated_at = datetime('now')",
-            rusqlite::params![
-                config.listen_address,
-                config.listen_port as i32,
-                config.max_retries as i32,
-                if config.enable_logging { 1 } else { 0 },
-                config.streaming_first_byte_timeout as i32,
-                config.streaming_idle_timeout as i32,
-                config.non_streaming_timeout as i32,
-            ],
-        )
-        .map_err(|e| AppError::Database(e.to_string()))?;
-
-        Ok(())
-    }
-
-    /// 设置 Live 接管状态（兼容旧版本，更新 enabled 字段）
-    pub async fn set_live_takeover_active(&self, _active: bool) -> Result<(), AppError> {
-        // 不再使用此字段，由 enabled 字段替代
-        // 保留空实现以兼容旧代码
-        Ok(())
-    }
-
-    /// 检查是否处于 Live 接管模式
-    ///
-    /// 检查是否有任一 app 的 enabled = true
-    pub async fn is_live_takeover_active(&self) -> Result<bool, AppError> {
-        let conn = lock_conn!(self.conn);
-        let count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM proxy_config WHERE enabled = 1",
-                [],
-                |row| row.get(0),
-            )
-            .map_err(|e| AppError::Database(e.to_string()))?;
-        Ok(count > 0)
-    }
-
-    /// 同步版本：检查是否有任一 app 的 enabled = true
-    ///
-    /// 用于 `ProfileService::apply` 等 sync 路径判断是否需要停止代理服务。
-    pub fn is_live_takeover_active_sync(&self) -> bool {
-        let conn = match lock_recovering(&self.conn) {
-            Ok(c) => c,
-            Err(_) => return false,
-        };
-        conn.query_row(
-            "SELECT COUNT(*) FROM proxy_config WHERE enabled = 1",
-            [],
-            |row| row.get::<_, i64>(0),
-        )
-        .unwrap_or(0)
-            > 0
+    /// 代理服务器的监听配置（取自全局配置）
+    pub async fn get_listen_config(&self) -> Result<ProxyConfig, AppError> {
+        let global = self.get_global_proxy_config().await?;
+        Ok(ProxyConfig {
+            listen_address: global.listen_address,
+            listen_port: global.listen_port,
+            enable_logging: global.enable_logging,
+        })
     }
 
     // ==================== Provider Health ====================
@@ -491,21 +391,6 @@ impl Database {
             }),
             Err(e) => Err(AppError::Database(e.to_string())),
         }
-    }
-
-    /// 更新Provider健康状态
-    ///
-    /// 使用默认阈值（5）判断是否健康，建议使用 `update_provider_health_with_threshold` 传入配置的阈值
-    pub async fn update_provider_health(
-        &self,
-        provider_id: &str,
-        app_type: &str,
-        success: bool,
-        error_msg: Option<String>,
-    ) -> Result<(), AppError> {
-        // 默认阈值与 CircuitBreakerConfig::default() 保持一致
-        self.update_provider_health_with_threshold(provider_id, app_type, success, error_msg, 5)
-            .await
     }
 
     /// 更新Provider健康状态（带阈值参数）
@@ -576,25 +461,6 @@ impl Database {
         Ok(())
     }
 
-    /// 重置Provider健康状态
-    pub async fn reset_provider_health(
-        &self,
-        provider_id: &str,
-        app_type: &str,
-    ) -> Result<(), AppError> {
-        let conn = lock_conn!(self.conn);
-
-        conn.execute(
-            "DELETE FROM provider_health WHERE provider_id = ?1 AND app_type = ?2",
-            rusqlite::params![provider_id, app_type],
-        )
-        .map_err(|e| AppError::Database(e.to_string()))?;
-
-        log::debug!("Reset health status for provider {provider_id} (app: {app_type})");
-
-        Ok(())
-    }
-
     /// 清空指定应用的健康状态（关闭单个代理时使用）
     pub async fn clear_provider_health_for_app(&self, app_type: &str) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
@@ -620,79 +486,6 @@ impl Database {
         Ok(())
     }
 
-    // ==================== Circuit Breaker Config (Legacy Compatibility) ====================
-
-    /// 获取熔断器配置（兼容旧接口，从 claude 行读取）
-    ///
-    /// 熔断器配置已合并到 proxy_config 表，每 app 独立
-    /// 此方法保留用于兼容旧代码，建议使用 get_proxy_config_for_app
-    pub async fn get_circuit_breaker_config(
-        &self,
-    ) -> Result<crate::proxy::circuit_breaker::CircuitBreakerConfig, AppError> {
-        // 使用 block 限制 conn 的作用域，避免跨 await 持有锁
-        let result = {
-            let conn = lock_conn!(self.conn);
-            conn.query_row(
-                "SELECT circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
-                        circuit_error_rate_threshold, circuit_min_requests
-                 FROM proxy_config WHERE app_type = 'claude'",
-                [],
-                |row| {
-                    Ok(crate::proxy::circuit_breaker::CircuitBreakerConfig {
-                        failure_threshold: row.get::<_, i32>(0)? as u32,
-                        success_threshold: row.get::<_, i32>(1)? as u32,
-                        timeout_seconds: row.get::<_, i64>(2)? as u64,
-                        error_rate_threshold: row.get(3)?,
-                        min_requests: row.get::<_, i32>(4)? as u32,
-                    })
-                },
-            )
-        };
-        // conn 已在 block 结束时释放
-
-        match result {
-            Ok(config) => Ok(config),
-            Err(rusqlite::Error::QueryReturnedNoRows) => {
-                // 如果不存在，初始化默认配置
-                self.init_proxy_config_rows().await?;
-                Ok(crate::proxy::circuit_breaker::CircuitBreakerConfig::default())
-            }
-            Err(e) => Err(AppError::Database(e.to_string())),
-        }
-    }
-
-    /// 更新熔断器配置（兼容旧接口，更新所有三行）
-    ///
-    /// 熔断器配置已合并到 proxy_config 表
-    /// 此方法保留用于兼容旧代码，建议使用 update_proxy_config_for_app
-    pub async fn update_circuit_breaker_config(
-        &self,
-        config: &crate::proxy::circuit_breaker::CircuitBreakerConfig,
-    ) -> Result<(), AppError> {
-        let conn = lock_conn!(self.conn);
-
-        // 更新所有三行的熔断器配置
-        conn.execute(
-            "UPDATE proxy_config SET
-                circuit_failure_threshold = ?1,
-                circuit_success_threshold = ?2,
-                circuit_timeout_seconds = ?3,
-                circuit_error_rate_threshold = ?4,
-                circuit_min_requests = ?5,
-                updated_at = datetime('now')",
-            rusqlite::params![
-                config.failure_threshold as i32,
-                config.success_threshold as i32,
-                config.timeout_seconds as i64,
-                config.error_rate_threshold,
-                config.min_requests as i32,
-            ],
-        )
-        .map_err(|e| AppError::Database(e.to_string()))?;
-
-        Ok(())
-    }
-
     // ==================== Live Backup ====================
 
     /// 保存 Live 配置备份
@@ -713,17 +506,6 @@ impl Database {
 
         log::info!("已备份 {app_type} Live 配置");
         Ok(())
-    }
-
-    /// 检查是否存在任意 Live 配置备份
-    pub async fn has_any_live_backup(&self) -> Result<bool, AppError> {
-        let conn = lock_conn!(self.conn);
-        let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM proxy_live_backup", [], |row| {
-                row.get(0)
-            })
-            .map_err(|e| AppError::Database(e.to_string()))?;
-        Ok(count > 0)
     }
 
     /// 获取 Live 配置备份
@@ -760,17 +542,6 @@ impl Database {
         .map_err(|e| AppError::Database(e.to_string()))?;
 
         log::info!("已删除 {app_type} Live 配置备份");
-        Ok(())
-    }
-
-    /// 删除所有 Live 配置备份
-    pub async fn delete_all_live_backups(&self) -> Result<(), AppError> {
-        let conn = lock_conn!(self.conn);
-
-        conn.execute("DELETE FROM proxy_live_backup", [])
-            .map_err(|e| AppError::Database(e.to_string()))?;
-
-        log::info!("已删除所有 Live 配置备份");
         Ok(())
     }
 

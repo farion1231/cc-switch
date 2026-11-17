@@ -4,6 +4,7 @@
 //! 进入 / 退出代理）都走这里：先拿应用写锁，再经 `mode::operation` 记下 pending、发布。
 //! 不回填、不合并通用配置片段、不注入上下文默认值：用户的设置本来就留在 live 里。
 
+use crate::sync_utils::MutexExt;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
@@ -283,7 +284,7 @@ static SCHEDULED: Mutex<Vec<(u64, Sweep)>> = Mutex::new(Vec::new());
 static NEXT_SWEEP: AtomicU64 = AtomicU64::new(0);
 
 fn scheduled() -> std::sync::MutexGuard<'static, Vec<(u64, Sweep)>> {
-    SCHEDULED.lock().unwrap_or_else(|e| e.into_inner())
+    SCHEDULED.lock_recover()
 }
 
 /// 取走所有安排下的删除（不做）。
@@ -422,36 +423,14 @@ fn sweep_tombstones(sweep: &Sweep) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::TestHome;
     use serde_json::{json, Value};
     use serial_test::serial;
 
-    struct TestHome {
-        _dir: tempfile::TempDir,
-        original: Option<std::ffi::OsString>,
-    }
-
-    impl TestHome {
-        fn new() -> Self {
-            let dir = tempfile::tempdir().expect("temp home");
-            let original = std::env::var_os("CC_SWITCH_TEST_HOME");
-            std::env::set_var("CC_SWITCH_TEST_HOME", dir.path());
-            crate::settings::reload_settings().expect("reload settings");
-            take_scheduled();
-            Self {
-                _dir: dir,
-                original,
-            }
-        }
-    }
-
-    impl Drop for TestHome {
-        fn drop(&mut self) {
-            match &self.original {
-                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
-                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
-            }
-            let _ = crate::settings::reload_settings();
-        }
+    fn test_home() -> TestHome {
+        let home = TestHome::new();
+        take_scheduled();
+        home
     }
 
     fn write_live(value: &Value) {
@@ -505,7 +484,7 @@ mod tests {
     #[test]
     #[serial]
     fn switching_to_official_blanks_routing_keys_then_removes_them() {
-        let _home = TestHome::new();
+        let _home = test_home();
         let db = Database::memory().unwrap();
         write_live(&custom_live());
 
@@ -541,7 +520,7 @@ mod tests {
     #[test]
     #[serial]
     fn a_later_write_takes_over_the_earlier_sweep() {
-        let _home = TestHome::new();
+        let _home = test_home();
         let db = Database::memory().unwrap();
         write_live(&custom_live());
 
@@ -561,7 +540,7 @@ mod tests {
     #[test]
     #[serial]
     fn sweep_keeps_values_written_after_the_tombstone() {
-        let _home = TestHome::new();
+        let _home = test_home();
         let db = Database::memory().unwrap();
         write_live(&custom_live());
 
@@ -585,7 +564,7 @@ mod tests {
     #[test]
     #[serial]
     fn detach_deletes_without_tombstones() {
-        let _home = TestHome::new();
+        let _home = test_home();
         let db = Database::memory().unwrap();
         write_live(&custom_live());
 
@@ -603,7 +582,7 @@ mod tests {
     #[test]
     #[serial]
     fn switches_that_blank_nothing_record_and_schedule_nothing() {
-        let _home = TestHome::new();
+        let _home = test_home();
         let db = Database::memory().unwrap();
         write_live(&json!({ "env": {} }));
 
@@ -632,7 +611,7 @@ mod tests {
     #[test]
     #[serial]
     fn switching_records_tombstones_and_the_sweep_clears_the_record() {
-        let _home = TestHome::new();
+        let _home = test_home();
         let db = Database::memory().unwrap();
         write_live(&custom_live());
 
@@ -648,7 +627,7 @@ mod tests {
     #[test]
     #[serial]
     fn startup_finishes_tombstones_left_by_the_last_run() {
-        let _home = TestHome::new();
+        let _home = test_home();
         let db = Database::memory().unwrap();
         write_live(&custom_live());
         switch_to(&db, Some(&custom()), &official()).expect("switch");
@@ -665,7 +644,7 @@ mod tests {
     #[test]
     #[serial]
     fn exit_finishes_tombstones_without_waiting_once_they_were_visible() {
-        let _home = TestHome::new();
+        let _home = test_home();
         let db = Database::memory().unwrap();
         write_live(&custom_live());
         switch_to(&db, Some(&custom()), &official()).expect("switch");
@@ -686,7 +665,7 @@ mod tests {
     #[test]
     #[serial]
     fn an_unswept_record_is_carried_into_the_next_write() {
-        let _home = TestHome::new();
+        let _home = test_home();
         let db = Database::memory().unwrap();
         let mut gateway = custom();
         gateway.settings_config["env"]["CLAUDE_CODE_DISABLE_THINKING"] = json!("1");

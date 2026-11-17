@@ -283,6 +283,39 @@ async fn batches_skip_empty_selections_limit_concurrency_and_cancel_queued_check
 
 #[tokio::test]
 #[serial(mcp_check_permits)]
+async fn checks_still_start_and_cancel_after_a_panic_while_the_batch_registry_was_held() {
+    if !crate::sync_utils::in_isolated_process(
+        "services::mcp_connectivity::tests::checks_still_start_and_cancel_after_a_panic_while_the_batch_registry_was_held",
+    ) {
+        return;
+    }
+    assert!(std::panic::catch_unwind(|| {
+        let _registry = BATCHES.lock().unwrap();
+        panic!("interrupted while holding the batch registry");
+    })
+    .is_err());
+    let state = MockServer {
+        hang: true,
+        ..Default::default()
+    };
+    let (url, task) = mock_http(state.clone()).await;
+    let spec = http_spec(&format!("{url}/mcp"), "http");
+    let batch = start_checks(
+        (0..MAX_CONCURRENT_CHECKS + 1)
+            .map(|id| server(id, spec.clone(), true))
+            .collect(),
+        |_| true,
+    );
+    wait_until(|| state.started.load(Ordering::SeqCst) == MAX_CONCURRENT_CHECKS).await;
+    cancel_checks(&batch);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    // Cancelling still reached the batch: the queued check never started.
+    assert_eq!(state.started.load(Ordering::SeqCst), MAX_CONCURRENT_CHECKS);
+    task.abort();
+}
+
+#[tokio::test]
+#[serial(mcp_check_permits)]
 async fn concurrency_limit_spans_batches_and_passes_to_queued_checks() {
     let state = MockServer {
         hang: true,
@@ -307,7 +340,7 @@ async fn concurrency_limit_spans_batches_and_passes_to_queued_checks() {
     task.abort();
 }
 
-static STDIO_FIXTURE: Lazy<(tempfile::TempDir, PathBuf)> = Lazy::new(|| {
+static STDIO_FIXTURE: LazyLock<(tempfile::TempDir, PathBuf)> = LazyLock::new(|| {
     let directory = tempfile::tempdir().unwrap();
     let binary = directory
         .path()

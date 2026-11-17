@@ -1743,7 +1743,9 @@ async fn get_local_claude_quota() -> Result<SubscriptionQuota, String> {
 
     let direct = claude_quota_from(read_claude_credentials()).await?;
     // 改了配置目录时登录不一定在 ~/.claude，在那里跑会拿到别的号的额度
-    if !needs_cli_usage(&direct) || crate::settings::get_claude_override_dir().is_some() {
+    if !needs_cli_usage(&direct)
+        || crate::settings::get_override_dir(&crate::app_config::AppType::Claude).is_some()
+    {
         return Ok(direct);
     }
     let cached = tokio::task::spawn_blocking(|| {

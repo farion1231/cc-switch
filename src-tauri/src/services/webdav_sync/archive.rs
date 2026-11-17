@@ -369,6 +369,16 @@ fn zip_dir_recursive(
                 );
                 continue;
             }
+            // A link that does not resolve (dangling, or a target this process may not
+            // open) cannot be archived. Falling through would open it as a file, and one
+            // such entry would fail the whole upload, db.sql included (#9615).
+            Err(error) if is_link(&path) => {
+                log::warn!(
+                    "[WebDAV] Skipping unresolvable link in skills: {}: {error}",
+                    path.display()
+                );
+                continue;
+            }
             Err(_) => path.clone(),
         };
 
@@ -452,6 +462,17 @@ fn copy_dir_recursive_inner(
         let entry = entry.map_err(|e| AppError::io(src, e))?;
         let path = entry.path();
         let dest_path = dest.join(entry.file_name());
+        // Same entries zip_dir_recursive leaves out: there is nothing to copy, and
+        // failing here would fail every download at the pre-import backup.
+        if is_link(&path) {
+            if let Err(error) = fs::canonicalize(&path) {
+                log::warn!(
+                    "[WebDAV] Skipping unresolvable link in skills: {}: {error}",
+                    path.display()
+                );
+                continue;
+            }
+        }
         if path.is_dir() {
             copy_dir_recursive_inner(&path, &dest_path, visited)?;
         } else {
@@ -459,6 +480,14 @@ fn copy_dir_recursive_inner(
         }
     }
     Ok(())
+}
+
+/// Whether the entry itself is a link: a symlink, or on Windows also a directory
+/// junction (std reports both as symlinks).
+fn is_link(path: &Path) -> bool {
+    fs::symlink_metadata(path)
+        .map(|metadata| metadata.file_type().is_symlink())
+        .unwrap_or(false)
 }
 
 fn mark_visited_dir(path: &Path, visited: &mut HashSet<PathBuf>) -> Result<bool, AppError> {
@@ -588,6 +617,47 @@ mod tests {
                 .read_to_string(&mut content)
                 .unwrap();
             assert_eq!(content, "instructions");
+        }
+
+        /// #9615: a link that does not resolve used to be opened as a file, and that
+        /// one error failed the whole upload.
+        #[test]
+        fn zip_skips_links_that_do_not_resolve() {
+            let temp = tempdir().unwrap();
+            let source = temp.path().join("skills");
+            let skill = source.join("example");
+            fs::create_dir_all(&skill).unwrap();
+            fs::write(skill.join("SKILL.md"), "kept").unwrap();
+            // One at the top level (a skill installed as a link), one inside a skill.
+            symlink("../missing-skill", source.join("broken")).unwrap();
+            symlink("missing.md", skill.join("gone.md")).unwrap();
+
+            let mut archive = archive_dir(&source, &temp.path().join("skills.zip"));
+            let names: Vec<String> = (0..archive.len())
+                .map(|index| archive.by_index(index).unwrap().name().to_string())
+                .collect();
+            assert_eq!(names, ["example/", "example/SKILL.md"]);
+        }
+
+        #[test]
+        fn copy_skips_links_that_do_not_resolve() {
+            let temp = tempdir().unwrap();
+            let source = temp.path().join("skills");
+            let skill = source.join("example");
+            fs::create_dir_all(&skill).unwrap();
+            fs::write(skill.join("SKILL.md"), "kept").unwrap();
+            symlink("../missing-skill", source.join("broken")).unwrap();
+            symlink("missing.md", skill.join("gone.md")).unwrap();
+
+            let backup = temp.path().join("backup");
+            super::super::copy_dir_recursive(&source, &backup).unwrap();
+
+            assert_eq!(
+                fs::read_to_string(backup.join("example/SKILL.md")).unwrap(),
+                "kept"
+            );
+            assert!(fs::symlink_metadata(backup.join("broken")).is_err());
+            assert!(fs::symlink_metadata(backup.join("example/gone.md")).is_err());
         }
     }
 

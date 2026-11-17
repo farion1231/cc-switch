@@ -26,9 +26,9 @@
 mod pii;
 mod secrets;
 
-use once_cell::sync::Lazy;
 use secrets::SecretDetector;
 use serde_json::Value;
+use std::sync::LazyLock;
 
 /// 内置 gitleaks 默认规则集（上游 gitleaks/gitleaks `config/gitleaks.toml`）
 const GITLEAKS_TOML: &str = include_str!("gitleaks.toml");
@@ -221,7 +221,7 @@ fn merge_spans(spans: Vec<Span>) -> Vec<Span> {
     merged
 }
 
-static FILTER: Lazy<Filter> = Lazy::new(|| {
+static FILTER: LazyLock<Filter> = LazyLock::new(|| {
     let filter = Filter::from_gitleaks_toml(GITLEAKS_TOML);
     let (rules, skipped) = filter.secrets.stats();
     log::info!("[PrivacyFilter] Loaded {rules} gitleaks rules ({skipped} skipped)");
@@ -235,7 +235,7 @@ pub fn global() -> &'static Filter {
 
 /// 预热：提前编译规则，避免开关打开后的第一个请求承担编译耗时
 pub fn warm_up() {
-    Lazy::force(&FILTER);
+    LazyLock::force(&FILTER);
 }
 
 // ---------------------------------------------------------------------------

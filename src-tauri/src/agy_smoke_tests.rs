@@ -1,18 +1,9 @@
 //! Explicit opt-in native smoke test. Never reads the real database itself.
-use crate::{agy_config, app_config::AppType, database::Database, provider::Provider};
+use crate::{
+    agy_config, app_config::AppType, database::Database, provider::Provider, test_support::TestHome,
+};
 use serde_json::{json, Value};
 use std::{fs, path::Path, sync::Arc};
-
-struct RestoreHome(Option<std::ffi::OsString>);
-impl Drop for RestoreHome {
-    fn drop(&mut self) {
-        match self.0.take() {
-            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
-            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
-        }
-        let _ = crate::settings::reload_settings();
-    }
-}
 
 /// 按「在终端中打开」的方式跑真实 agy：Key 卡带私有 `--gemini_dir` 和只给这个进程的环境变量。
 async fn native(
@@ -49,11 +40,8 @@ async fn agy_live_provider_skill_session_and_tokens() {
     let config = std::env::var("CCS_AGY_SMOKE_CONFIG").expect("explicit fixture file required");
     let real = std::env::var("CCS_AGY_SMOKE_BIN").expect("explicit native binary required");
     let settings: Value = serde_json::from_slice(&fs::read(config).unwrap()).unwrap();
-    let temp = tempfile::tempdir().unwrap();
-    let home = temp.path();
-    let _restore = RestoreHome(std::env::var_os("CC_SWITCH_TEST_HOME"));
-    std::env::set_var("CC_SWITCH_TEST_HOME", home);
-    crate::settings::reload_settings().unwrap();
+    let test_home = TestHome::new();
+    let home = test_home.path();
     fs::create_dir_all(home.join("workspace")).unwrap();
     let db = Arc::new(Database::memory().unwrap());
     let row = Provider::with_id("smoke".into(), "Smoke".into(), settings.clone(), None);

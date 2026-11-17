@@ -5,16 +5,16 @@ use crate::opencode_config;
 use crate::provider::Provider;
 use crate::settings::{get_settings, update_settings, AppSettings};
 use crate::store::AppState;
+use crate::test_support::EnvVars;
 use serde_json::json;
 use serial_test::serial;
-use std::ffi::OsString;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 struct Fixture {
     previous_settings: AppSettings,
-    previous_env: Vec<(&'static str, Option<OsString>)>,
+    _env: EnvVars,
     config_path: PathBuf,
     state: AppState,
     _dir: tempfile::TempDir,
@@ -23,12 +23,9 @@ struct Fixture {
 impl Fixture {
     fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
-        let previous_env = ["CC_SWITCH_TEST_HOME", "OPENCODE_DB"]
-            .into_iter()
-            .map(|key| (key, std::env::var_os(key)))
-            .collect();
-        std::env::set_var("CC_SWITCH_TEST_HOME", dir.path());
-        std::env::set_var("OPENCODE_DB", dir.path().join("opencode.db"));
+        let env = EnvVars::new()
+            .set("CC_SWITCH_TEST_HOME", dir.path())
+            .set("OPENCODE_DB", dir.path().join("opencode.db"));
         let previous_settings = get_settings();
         let config_dir = dir.path().join("opencode");
         fs::create_dir_all(&config_dir).unwrap();
@@ -39,7 +36,7 @@ impl Fixture {
         .unwrap();
         Self {
             previous_settings,
-            previous_env,
+            _env: env,
             config_path: config_dir.join("opencode.json"),
             state: AppState::new(Arc::new(Database::memory().unwrap())),
             _dir: dir,
@@ -59,12 +56,6 @@ impl Drop for Fixture {
     fn drop(&mut self) {
         // Restore the cached settings while writes still target the temporary home.
         update_settings(self.previous_settings.clone()).unwrap();
-        for (key, value) in &self.previous_env {
-            match value {
-                Some(value) => std::env::set_var(key, value),
-                None => std::env::remove_var(key),
-            }
-        }
     }
 }
 
@@ -327,7 +318,7 @@ fn opencode_jsonc_provider_and_mcp_workflows_preserve_comments() {
             json!({"type":"http","url":"https://example.com/mcp"}),
         ),
     ] {
-        crate::mcp::sync_single_server_to_opencode(&config, id, &spec).unwrap();
+        crate::mcp::sync_single_server_to_opencode(id, &spec).unwrap();
     }
     let servers = opencode_config::get_mcp_servers().unwrap();
     assert_eq!(servers["existing"]["command"], json!(["npx", "updated"]));

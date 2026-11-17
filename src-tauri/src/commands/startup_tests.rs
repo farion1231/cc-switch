@@ -9,52 +9,25 @@ use crate::database::Database;
 use crate::provider::{Provider, UniversalProvider};
 use crate::services::model_pricing::ModelPricingInfo;
 use crate::store::AppState;
+use crate::test_support::{self, EnvVars};
 
+/// A test home with the Kimi, MiniMax and DSH data directories under it too.
 pub(super) struct TestHome {
-    previous: Option<std::ffi::OsString>,
-    native_overrides: Vec<(&'static str, Option<std::ffi::OsString>)>,
-    _directory: tempfile::TempDir,
+    _native_dirs: EnvVars,
+    _home: test_support::TestHome,
 }
 
 impl TestHome {
     pub(super) fn new() -> Self {
-        let directory = tempfile::tempdir().unwrap();
-        let previous = std::env::var_os("CC_SWITCH_TEST_HOME");
-        std::env::set_var("CC_SWITCH_TEST_HOME", directory.path());
-        let native_overrides = [
-            ("KIMI_CODE_HOME", ".kimi-code"),
-            ("MINIMAX_DATA_DIR", ".minimax"),
-            ("DSH_HOME", ".dsh"),
-        ]
-        .into_iter()
-        .map(|(key, dir)| {
-            let previous = std::env::var_os(key);
-            std::env::set_var(key, directory.path().join(dir));
-            (key, previous)
-        })
-        .collect();
-        crate::settings::reload_settings().unwrap();
+        let home = test_support::TestHome::new();
+        let native_dirs = EnvVars::new()
+            .set("KIMI_CODE_HOME", home.path().join(".kimi-code"))
+            .set("MINIMAX_DATA_DIR", home.path().join(".minimax"))
+            .set("DSH_HOME", home.path().join(".dsh"));
         Self {
-            previous,
-            native_overrides,
-            _directory: directory,
+            _native_dirs: native_dirs,
+            _home: home,
         }
-    }
-}
-
-impl Drop for TestHome {
-    fn drop(&mut self) {
-        for (key, previous) in &self.native_overrides {
-            match previous {
-                Some(value) => std::env::set_var(key, value),
-                None => std::env::remove_var(key),
-            }
-        }
-        match &self.previous {
-            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
-            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
-        }
-        let _ = crate::settings::reload_settings();
     }
 }
 
@@ -123,10 +96,6 @@ fn startup_database_commands_yield_during_session_sync_contention() {
     let providers = query!(get_providers, "opencode".into());
     assert_eq!(providers[&provider.id].name, provider.name);
     assert_eq!(query!(get_current_provider, "claude".into()), provider.id);
-    assert_eq!(
-        query!(get_direct_provider, "claude".into()),
-        Some(provider.id.clone())
-    );
     let mode = query!(get_app_mode, "claude".into());
     assert_eq!(mode.mode, "direct");
     assert_eq!(mode.direct_provider_id, Some(provider.id));
@@ -156,7 +125,6 @@ fn startup_database_commands_yield_during_session_sync_contention() {
     assert_eq!(sync.config.last_sync_at, Some(1234));
     assert_eq!(sync.config.last_sync_error.as_deref(), Some("offline"));
     query!(delete_model_pricing, pricing.model_id);
-    assert!(query!(get_usage_data_sources).is_empty());
 
     // Validation errors must still reach the caller after moving work off-thread.
     assert!(
@@ -275,6 +243,7 @@ fn remaining_database_commands_yield_during_session_sync_contention() {
     skill_query!(scan_unmanaged_skills);
     assert!(skill_query!(get_skill_repos).is_empty());
     let repo = crate::services::skill::SkillRepo {
+        host: "github.com".into(),
         owner: "octocat".into(),
         name: "skills".into(),
         branch: "main".into(),
@@ -441,7 +410,6 @@ fn profile_and_universal_mutations_wait_for_their_serial_locks() {
         "upsert_universal_provider",
         super::provider::universal_mutation(&state, move |state| {
             crate::services::ProviderService::upsert_universal(state, universal)
-                .map_err(|e| e.to_string())
         }),
     )
     .unwrap());
