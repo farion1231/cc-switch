@@ -245,12 +245,6 @@ fn delete_session_source(
                 .into(),
         );
     }
-    if provider_id == "agy" {
-        return Err(
-            "Delete this session in Antigravity to keep its binary store and summaries consistent"
-                .into(),
-        );
-    }
     if provider_id == "mcode" {
         return Err(
             "Delete this session in MCode so its runtime state and history are removed together"
@@ -299,6 +293,7 @@ fn delete_session_with_roots(
         "pi" => pi::delete_session(&validated_root, &validated_source, session_id),
         "omp" => omp::delete_session(&validated_root, &validated_source, session_id),
         "kimi" => kimi::delete_session(&validated_root, &validated_source, session_id),
+        "agy" => agy::delete_session(&validated_root, &validated_source, session_id),
         _ => Err(format!("Unsupported provider: {provider_id}")),
     }
 }
