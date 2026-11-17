@@ -4,9 +4,9 @@ use std::fs;
 use serde_json::json;
 
 use cc_switch_lib::{
-    get_claude_mcp_path, get_claude_mcp_status, get_claude_settings_path, get_grok_config_path,
-    import_default_config_test_hook, read_claude_mcp_config, update_settings, AppError,
-    AppSettings, AppType, McpApps, McpServer, McpService, MultiAppConfig, ProviderService,
+    get_claude_mcp_path, get_claude_settings_path, get_grok_config_path,
+    import_default_config_test_hook, update_settings, AppError, AppSettings, AppType, McpApps,
+    McpServer, McpService, MultiAppConfig, ProviderService,
 };
 
 use crate::support::{
@@ -727,7 +727,8 @@ fn import_mcp_from_claude_creates_config_and_enables_servers() {
     let config = MultiAppConfig::default();
     let state = create_test_state_with_config(&config).expect("create test state");
 
-    let changed = McpService::import_from_claude(&state).expect("import mcp from claude succeeds");
+    let changed = McpService::import_from_app(&state, &AppType::Claude)
+        .expect("import mcp from claude succeeds");
     assert!(
         changed > 0,
         "import should report inserted or normalized entries"
@@ -773,7 +774,7 @@ command = "echo"
     fs::write(&config_path, original).expect("seed codex config");
 
     let state = create_test_state().expect("create test state");
-    let changed = McpService::import_from_codex(&state).expect("import from codex");
+    let changed = McpService::import_from_app(&state, &AppType::Codex).expect("import from codex");
     assert!(changed > 0, "should import servers from Codex config");
 
     let after = fs::read_to_string(&config_path).expect("read codex config");
@@ -800,7 +801,7 @@ fn import_mcp_from_codex_infers_http_from_url_without_type() {
     .expect("seed codex config");
 
     let state = create_test_state().expect("create test state");
-    let changed = McpService::import_from_codex(&state).expect("import from codex");
+    let changed = McpService::import_from_app(&state, &AppType::Codex).expect("import from codex");
     assert!(changed > 0, "should import the url-only server");
 
     let servers = state.db.get_all_mcp_servers().expect("get all mcp servers");
@@ -888,7 +889,8 @@ command = "echo"
         })
         .expect("seed existing mcp server");
 
-    let changed = McpService::import_from_claude(&state).expect("import from claude");
+    let changed =
+        McpService::import_from_app(&state, &AppType::Claude).expect("import from claude");
     assert_eq!(changed, 0, "existing server should not count as new");
 
     let after = fs::read_to_string(&codex_config_path).expect("read codex config");
@@ -920,8 +922,8 @@ fn import_mcp_from_claude_invalid_json_preserves_state() {
 
     let state = create_test_state().expect("create test state");
 
-    let err =
-        McpService::import_from_claude(&state).expect_err("invalid json should bubble up error");
+    let err = McpService::import_from_app(&state, &AppType::Claude)
+        .expect_err("invalid json should bubble up error");
     match err {
         AppError::McpValidation(msg) => assert!(
             msg.contains("解析 ~/.claude.json 失败"),
@@ -1304,8 +1306,8 @@ command = "echo"
 
     let state = create_test_state().expect("create test state");
 
-    McpService::import_from_claude(&state).expect("import from claude");
-    McpService::import_from_codex(&state).expect("import from codex");
+    McpService::import_from_app(&state, &AppType::Claude).expect("import from claude");
+    McpService::import_from_app(&state, &AppType::Codex).expect("import from codex");
 
     let servers = state.db.get_all_mcp_servers().expect("get all mcp servers");
     let entry = servers.get("shared").expect("shared server exists");
@@ -1339,7 +1341,8 @@ fn import_mcp_from_gemini_sse_url_only_is_valid() {
     .expect("seed ~/.gemini/settings.json");
 
     let state = create_test_state().expect("create test state");
-    let changed = McpService::import_from_gemini(&state).expect("import from gemini");
+    let changed =
+        McpService::import_from_app(&state, &AppType::Gemini).expect("import from gemini");
     assert!(changed > 0, "should import at least 1 server");
 
     let servers = state.db.get_all_mcp_servers().expect("get all mcp servers");
@@ -1717,61 +1720,6 @@ fn custom_claude_dir_sync_does_not_copy_default_profile() {
 }
 
 #[test]
-fn custom_claude_dir_read_only_mcp_queries_do_not_create_profile() {
-    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
-    reset_test_fs();
-    let home = ensure_test_home();
-    let home_mcp_path = home.join(".claude.json");
-    fs::write(
-        &home_mcp_path,
-        serde_json::to_string_pretty(&json!({
-            "mcpServers": {
-                "home-only": {
-                    "type": "stdio",
-                    "command": "home-command"
-                }
-            },
-            "profileSentinel": "home-profile"
-        }))
-        .expect("serialize default profile"),
-    )
-    .expect("seed default Claude profile");
-
-    let custom_dir = home.join("profiles").join("work").join(".claude");
-    fs::create_dir_all(&custom_dir).expect("create custom claude dir");
-    update_settings(AppSettings {
-        claude_config_dir: Some(custom_dir.to_string_lossy().to_string()),
-        ..AppSettings::default()
-    })
-    .expect("set custom claude config dir");
-
-    let expected_mcp_path = custom_dir.join(".claude.json");
-    assert!(
-        !expected_mcp_path.exists(),
-        "custom profile should start without a live MCP file"
-    );
-
-    let status =
-        futures::executor::block_on(get_claude_mcp_status()).expect("get Claude MCP status");
-    assert_eq!(
-        status.user_config_path,
-        expected_mcp_path.to_string_lossy(),
-        "status should report the custom profile MCP path"
-    );
-    assert!(
-        !status.user_config_exists,
-        "status should report missing custom profile MCP file"
-    );
-    let text =
-        futures::executor::block_on(read_claude_mcp_config()).expect("read Claude MCP config");
-    assert_eq!(text, None, "missing custom profile should read as None");
-    assert!(
-        !expected_mcp_path.exists(),
-        "read-only MCP queries should not copy or create the custom profile"
-    );
-}
-
-#[test]
 fn sync_all_enabled_removes_known_disabled_but_preserves_unknown_live_entries() {
     let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
@@ -1984,7 +1932,10 @@ fn omp_mcp_disable_reenable_preserves_options_and_suppresses_discovered_sources(
     let (state, path) = omp_test_state();
     let native = json!({"mcpServers":{"demo":{"command":"node","args":["mcp.js"],"enabled":false,"timeout":0,"requestIdFormat":"string","instructions":false}},"disabledServers":["demo","other"],"enabledServers":["other"]});
     fs::write(&path, native.to_string()).unwrap();
-    assert_eq!(McpService::import_from_omp(&state).unwrap(), 1);
+    assert_eq!(
+        McpService::import_from_app(&state, &AppType::Omp).unwrap(),
+        1
+    );
     assert!(!state.db.get_all_mcp_servers().unwrap()["demo"].apps.omp);
     McpService::toggle_app(&state, "demo", AppType::Omp, true).unwrap();
     let read =
@@ -2037,7 +1988,7 @@ fn omp_mcp_resync_and_conflicting_enable_preserve_native_configuration() {
     assert_eq!(fs::read_to_string(&path).unwrap(), native.to_string());
     assert!(McpService::toggle_app(&state, &server.id, AppType::Omp, true).is_err());
     assert!(!state.db.get_all_mcp_servers().unwrap()[&server.id].apps.omp);
-    assert!(McpService::import_from_omp(&state)
+    assert!(McpService::import_from_app(&state, &AppType::Omp)
         .unwrap_err()
         .to_string()
         .contains("context7"));

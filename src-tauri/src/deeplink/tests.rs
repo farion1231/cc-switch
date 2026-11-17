@@ -7,54 +7,11 @@ use super::provider::parse_and_merge_config;
 use super::utils::{infer_homepage_from_endpoint, validate_url};
 use super::DeepLinkImportRequest;
 use crate::provider::UsageScript;
+use crate::test_support::{EnvVars, TempUserHome};
 use crate::AppType;
 use crate::{store::AppState, Database};
 use base64::prelude::*;
-use std::{env, ffi::OsString, sync::Arc};
-
-struct TestHomeGuard {
-    _dir: tempfile::TempDir,
-    original_home: Option<OsString>,
-    original_userprofile: Option<OsString>,
-    original_test_home: Option<OsString>,
-}
-
-impl TestHomeGuard {
-    fn new() -> Self {
-        let dir = tempfile::tempdir().expect("create isolated test home");
-        let original_home = env::var_os("HOME");
-        let original_userprofile = env::var_os("USERPROFILE");
-        let original_test_home = env::var_os("CC_SWITCH_TEST_HOME");
-
-        env::set_var("HOME", dir.path());
-        env::set_var("USERPROFILE", dir.path());
-        env::set_var("CC_SWITCH_TEST_HOME", dir.path());
-
-        Self {
-            _dir: dir,
-            original_home,
-            original_userprofile,
-            original_test_home,
-        }
-    }
-}
-
-impl Drop for TestHomeGuard {
-    fn drop(&mut self) {
-        match &self.original_test_home {
-            Some(value) => env::set_var("CC_SWITCH_TEST_HOME", value),
-            None => env::remove_var("CC_SWITCH_TEST_HOME"),
-        }
-        match &self.original_userprofile {
-            Some(value) => env::set_var("USERPROFILE", value),
-            None => env::remove_var("USERPROFILE"),
-        }
-        match &self.original_home {
-            Some(value) => env::set_var("HOME", value),
-            None => env::remove_var("HOME"),
-        }
-    }
-}
+use std::{env, sync::Arc};
 
 // =============================================================================
 // Parser Tests
@@ -1026,7 +983,7 @@ fn test_build_claude_provider_without_config_unchanged() {
 #[test]
 #[serial_test::serial]
 fn test_import_prompt_allows_space_in_base64_content() {
-    let _test_home = TestHomeGuard::new();
+    let _test_home = TempUserHome::new();
     let url = "ccswitch://v1/import?resource=prompt&app=codex&name=PromptPlus&content=Pj4+";
     let request = parse_deeplink_url(url).unwrap();
 
@@ -1792,7 +1749,7 @@ fn import_pi_link(enabled: Option<bool>) -> (AppState, String) {
 #[test]
 #[serial_test::serial]
 fn test_pi_link_with_the_toggle_off_is_saved_without_touching_models_json() {
-    let _home = TestHomeGuard::new();
+    let _home = TempUserHome::new();
     let _agent = crate::pi_config::test_support::TestAgentDir::new();
 
     let (state, id) = import_pi_link(Some(false));
@@ -1804,7 +1761,7 @@ fn test_pi_link_with_the_toggle_off_is_saved_without_touching_models_json() {
 #[test]
 #[serial_test::serial]
 fn test_pi_link_with_the_toggle_on_or_unset_is_added_to_models_json() {
-    let _home = TestHomeGuard::new();
+    let _home = TempUserHome::new();
     let _agent = crate::pi_config::test_support::TestAgentDir::new();
 
     for enabled in [Some(true), None] {
@@ -1937,7 +1894,7 @@ fn import_claude_link(enabled: Option<bool>) -> (AppState, String) {
 #[test]
 #[serial_test::serial]
 fn test_first_switch_mode_provider_stays_inactive_when_the_toggle_is_off() {
-    let _home = TestHomeGuard::new();
+    let _home = TempUserHome::new();
 
     for enabled in [Some(false), None] {
         let (state, id) = import_claude_link(enabled);
@@ -1964,7 +1921,7 @@ fn test_first_switch_mode_provider_stays_inactive_when_the_toggle_is_off() {
 #[test]
 #[serial_test::serial]
 fn test_first_switch_mode_provider_takes_effect_when_the_toggle_is_on() {
-    let _home = TestHomeGuard::new();
+    let _home = TempUserHome::new();
 
     let (state, id) = import_claude_link(Some(true));
 
@@ -2005,7 +1962,7 @@ fn png_data_uri(width: u32, height: u32) -> String {
 #[test]
 #[serial_test::serial]
 fn test_import_stores_a_valid_custom_icon_and_rejects_a_broken_one() {
-    let _home = TestHomeGuard::new();
+    let _home = TempUserHome::new();
     let link = format!(
         "{}&iconUrl=https%3A%2F%2Fcdn.example.com%2Flogo.png",
         provider_link("claude", None)
@@ -2176,7 +2133,7 @@ fn agy_deeplink_accepts_flat_env_and_rejects_invalid_env() {
 #[test]
 #[serial_test::serial]
 fn agy_deeplink_mcp_import_merges_apps_and_writes_native_config() {
-    let _home = TestHomeGuard::new();
+    let _home = TempUserHome::new();
     let db = Arc::new(Database::memory().unwrap());
     let state = AppState::new(db.clone());
     let config = BASE64_URL_SAFE_NO_PAD
@@ -2206,7 +2163,7 @@ fn agy_deeplink_mcp_import_merges_apps_and_writes_native_config() {
 #[test]
 #[serial_test::serial]
 fn agy_deeplink_prompt_import_respects_activation() {
-    let _home = TestHomeGuard::new();
+    let _home = TempUserHome::new();
     let state = AppState::new(Arc::new(Database::memory().unwrap()));
     let content = BASE64_URL_SAFE_NO_PAD.encode("Agy instructions");
     let path = crate::prompt_files::prompt_file_path(&AppType::Agy).unwrap();
@@ -2229,7 +2186,7 @@ fn agy_deeplink_prompt_import_respects_activation() {
 #[cfg(unix)]
 #[serial_test::serial]
 fn agy_deeplink_enabled_key_provider_stays_out_of_live_files() {
-    let _home = TestHomeGuard::new();
+    let _home = TempUserHome::new();
     let state = AppState::new(Arc::new(Database::memory().unwrap()));
     let request = parse_deeplink_url("ccswitch://v1/import?resource=provider&app=agy&name=Agy&endpoint=https://relay.example&apiKey=fixture&model=link-model&enabled=true").unwrap();
     let id = super::provider::import_provider_from_deeplink(&state, request).unwrap();
@@ -2391,29 +2348,6 @@ fn claude_desktop_link_with_non_anthropic_format_needs_a_model() {
     assert!(err.to_string().contains("model"), "{err}");
 }
 
-// =============================================================================
-// Pi 系四家：MiniMax Code、Kimi Code、DeepSeek Harness、Oh My Pi
-// =============================================================================
-
-struct EnvVarGuard(&'static str, Option<OsString>);
-
-impl EnvVarGuard {
-    fn set(name: &'static str, value: &std::path::Path) -> Self {
-        let previous = env::var_os(name);
-        env::set_var(name, value);
-        Self(name, previous)
-    }
-}
-
-impl Drop for EnvVarGuard {
-    fn drop(&mut self) {
-        match &self.1 {
-            Some(value) => env::set_var(self.0, value),
-            None => env::remove_var(self.0),
-        }
-    }
-}
-
 /// 名字带中文和下划线，检验 id 仍满足各家的原生 key 规则。
 fn import_pi_family_link(app: &str, api_format: Option<&str>) -> (AppState, String) {
     let name: String = url::form_urlencoded::byte_serialize("中转_Relay".as_bytes()).collect();
@@ -2490,8 +2424,8 @@ fn test_omp_link_rejects_keys_that_resolve_through_the_environment() {
 #[test]
 #[serial_test::serial]
 fn test_mcode_link_is_added_to_config_yaml() {
-    let home = TestHomeGuard::new();
-    let _data = EnvVarGuard::set("MINIMAX_DATA_DIR", &home._dir.path().join("minimax"));
+    let home = TempUserHome::new();
+    let _data = EnvVars::new().set("MINIMAX_DATA_DIR", home.path().join("minimax"));
 
     let (state, id) = import_pi_family_link("mcode", None);
 
@@ -2505,9 +2439,9 @@ fn test_mcode_link_is_added_to_config_yaml() {
 #[test]
 #[serial_test::serial]
 fn test_dsh_link_is_added_to_every_profile() {
-    let home = TestHomeGuard::new();
-    let dsh_home = home._dir.path().join("dsh");
-    let _data = EnvVarGuard::set("DSH_HOME", &dsh_home);
+    let home = TempUserHome::new();
+    let dsh_home = home.path().join("dsh");
+    let _data = EnvVars::new().set("DSH_HOME", &dsh_home);
 
     let (_state, id) = import_pi_family_link("dsh", Some("anthropic"));
 
@@ -2532,8 +2466,8 @@ fn test_dsh_link_is_added_to_every_profile() {
 #[test]
 #[serial_test::serial]
 fn test_kimi_link_namespaces_its_model_and_sets_a_context_size() {
-    let home = TestHomeGuard::new();
-    let _data = EnvVarGuard::set("KIMI_CODE_HOME", &home._dir.path().join("kimi"));
+    let home = TempUserHome::new();
+    let _data = EnvVars::new().set("KIMI_CODE_HOME", home.path().join("kimi"));
 
     let (state, id) = import_pi_family_link("kimi", None);
 
@@ -2554,7 +2488,7 @@ fn test_kimi_link_namespaces_its_model_and_sets_a_context_size() {
 #[test]
 #[serial_test::serial]
 fn test_omp_link_is_added_to_models_yml() {
-    let _home = TestHomeGuard::new();
+    let _home = TempUserHome::new();
     let _agent = crate::omp_config::test_support::TestAgentDir::new();
 
     let (_state, id) = import_pi_family_link("omp", Some("openai_responses"));
@@ -2600,8 +2534,8 @@ fn test_pi_family_inline_config_fills_each_apps_native_connection_fields() {
 fn test_copilot_link_writes_a_readable_card_into_providers_json() {
     use serde_json::json;
 
-    let home = TestHomeGuard::new();
-    let copilot_home = home._dir.path().join(".copilot");
+    let home = TempUserHome::new();
+    let copilot_home = home.path().join(".copilot");
     let _copilot = crate::copilot_config::test_support::CopilotHomeGuard::new(&copilot_home);
 
     assert_eq!(
@@ -2633,10 +2567,9 @@ fn test_copilot_link_writes_a_readable_card_into_providers_json() {
 #[serial_test::serial]
 fn copilot_inline_links_keep_credentials_and_all_model_ids_after_preview() {
     use serde_json::json;
-    let home = TestHomeGuard::new();
-    let _copilot = crate::copilot_config::test_support::CopilotHomeGuard::new(
-        &home._dir.path().join(".copilot"),
-    );
+    let home = TempUserHome::new();
+    let _copilot =
+        crate::copilot_config::test_support::CopilotHomeGuard::new(&home.path().join(".copilot"));
     let state = AppState::new(Arc::new(Database::memory().unwrap()));
     let config = BASE64_STANDARD.encode(json!({
         "provider":{"baseUrl":"https://relay.example/v1","bearerToken":"bearer-fixture","headers":{"ignored":"header"}},

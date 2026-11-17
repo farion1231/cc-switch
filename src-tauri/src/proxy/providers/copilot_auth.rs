@@ -468,8 +468,6 @@ impl CopilotToken {
 struct CopilotTokenResponse {
     token: String,
     expires_at: i64,
-    #[allow(dead_code)]
-    refresh_in: Option<i64>,
 }
 
 /// GitHub 用户信息
@@ -623,12 +621,6 @@ impl CopilotAuthManager {
         let accounts = self.accounts.read().await.clone();
         let default_account_id = self.resolve_default_account_id().await;
         Self::sorted_accounts(&accounts, default_account_id.as_deref())
-    }
-
-    /// 获取指定账号信息
-    pub async fn get_account(&self, account_id: &str) -> Option<GitHubAccount> {
-        let accounts = self.accounts.read().await;
-        accounts.get(account_id).map(GitHubAccount::from)
     }
 
     /// 指定账号的 GitHub OAuth Token 和域名，给 Copilot CLI 的 `COPILOT_GITHUB_TOKEN` 用。
@@ -1120,16 +1112,6 @@ impl CopilotAuthManager {
     pub async fn fetch_models(&self) -> Result<Vec<CopilotModel>, CopilotAuthError> {
         match self.resolve_default_account_id().await {
             Some(id) => self.fetch_models_for_account(&id).await,
-            None => Err(CopilotAuthError::GitHubTokenInvalid),
-        }
-    }
-
-    pub async fn get_model_vendor(
-        &self,
-        model_id: &str,
-    ) -> Result<Option<String>, CopilotAuthError> {
-        match self.resolve_default_account_id().await {
-            Some(id) => self.get_model_vendor_for_account(&id, model_id).await,
             None => Err(CopilotAuthError::GitHubTokenInvalid),
         }
     }
@@ -2204,7 +2186,11 @@ mod tests {
             .unwrap();
         assert_eq!(vendor.as_deref(), Some("OpenAI"));
 
-        let default_vendor = manager.get_model_vendor("claude-sonnet-4").await.unwrap();
+        let default_vendor = manager
+            .resolve_model("claude-sonnet-4", CodexCopilotApiFormat::Auto)
+            .await
+            .unwrap()
+            .map(|model| model.vendor);
         assert_eq!(default_vendor.as_deref(), Some("Anthropic"));
 
         let hidden = manager

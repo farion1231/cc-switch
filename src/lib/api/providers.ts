@@ -318,13 +318,6 @@ export const universalProvidersApi = {
   },
 
   /**
-   * 获取单个统一供应商
-   */
-  async get(id: string): Promise<UniversalProvider | null> {
-    return await invoke("get_universal_provider", { id });
-  },
-
-  /**
    * 添加或更新统一供应商
    */
   async upsert(provider: UniversalProvider): Promise<boolean> {

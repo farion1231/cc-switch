@@ -16,7 +16,7 @@ import {
   it,
   vi,
 } from "vitest";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import type {
   settingsApi,
   ToolInstallationReport,
@@ -26,6 +26,7 @@ import type {
 import type { DndContextProps, DragEndEvent } from "@dnd-kit/core";
 import { emitTauriEvent } from "../msw/tauriMocks";
 import { APP_IDS } from "@/config/appSpecs";
+import { createTestQueryClient } from "../utils/testQueryClient";
 
 type ToolVersions = Awaited<ReturnType<typeof settingsApi.getToolVersions>>;
 
@@ -182,9 +183,7 @@ function updateButton(name: string) {
 }
 
 function mountApps(AppsPage: () => JSX.Element) {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
+  const client = createTestQueryClient();
   return render(
     <QueryClientProvider client={client}>
       <AppsPage />
