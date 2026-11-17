@@ -1119,7 +1119,7 @@ pub async fn handle_grokbuild_responses(
 
 /// Responses 的两个入口：普通回合 `/responses`，和远程压缩接口 `/responses/compact`。
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum ResponsesEndpoint {
+pub(super) enum ResponsesEndpoint {
     Responses,
     Compact,
 }
@@ -1141,7 +1141,16 @@ async fn handle_responses_for_app(
     app_type_str: &'static str,
     responses_endpoint: ResponsesEndpoint,
 ) -> Result<axum::response::Response, ProxyError> {
-    handle_responses_for_target(state, request, app_type, tag, app_type_str, None).await
+    handle_responses_for_target(
+        state,
+        request,
+        app_type,
+        tag,
+        app_type_str,
+        responses_endpoint,
+        None,
+    )
+    .await
 }
 
 pub(super) async fn handle_responses_for_target(
@@ -1150,6 +1159,7 @@ pub(super) async fn handle_responses_for_target(
     app_type: AppType,
     tag: &'static str,
     app_type_str: &'static str,
+    responses_endpoint: ResponsesEndpoint,
     target: Option<crate::mode::stack::StackTarget>,
 ) -> Result<axum::response::Response, ProxyError> {
     let (parts, req_body) = request.into_parts();

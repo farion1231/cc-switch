@@ -100,6 +100,7 @@ pub(super) async fn handle(
         AppType::Codex,
         "WorkBuddy",
         "workbuddy",
+        handlers::ResponsesEndpoint::Responses,
         Some(target),
     )
     .await?;
