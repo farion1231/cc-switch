@@ -307,16 +307,10 @@ use crate::error::AppError;
 use crate::prompt_files::prompt_file_path;
 use crate::provider::ProviderManager;
 
-/// 应用类型
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+/// 应用类型。不走 serde：输出用 [`AppType::as_str`]，解析只走 [`FromStr`]（唯一的别名表）。
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum AppType {
     Claude,
-    #[serde(
-        rename = "claude-desktop",
-        alias = "claude_desktop",
-        alias = "claudeDesktop"
-    )]
     ClaudeDesktop,
     Codex,
     Gemini,
@@ -331,7 +325,6 @@ pub enum AppType {
     Agy,
     Omp,
     Copilot,
-    #[serde(rename = "workbuddy", alias = "work-buddy")]
     WorkBuddy,
 }
 
