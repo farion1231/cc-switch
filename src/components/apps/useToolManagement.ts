@@ -185,6 +185,8 @@ ${posixScriptInstallCommand("https://raw.githubusercontent.com/NousResearch/herm
 npm i -g @earendil-works/pi-coding-agent@latest
 # MiniMax Code
 ${posixScriptInstallCommand("https://filecdn.minimax.chat/public/install.sh")} || ${MCODE_NPM_INSTALL_COMMAND}
+# DevEco Code
+npm i -g @deveco/deveco-code@latest
 # DeepSeek Harness
 npm i -g @deepseek-ai/dsh@latest --engine-strict
 # Kimi Code
@@ -214,6 +216,8 @@ ${HERMES_WINDOWS_INSTALL_COMMAND}
 npm i -g @earendil-works/pi-coding-agent@latest
 # MiniMax Code
 ${MCODE_WINDOWS_INSTALL_COMMAND}
+# DevEco Code
+npm i -g @deveco/deveco-code@latest
 # DeepSeek Harness
 npm i -g @deepseek-ai/dsh@latest --engine-strict
 # Kimi Code
