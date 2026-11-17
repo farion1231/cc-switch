@@ -161,16 +161,6 @@ export interface ProviderHealth {
   updated_at: string;
 }
 
-export type CircuitState = "closed" | "open" | "half_open";
-
-// 供应商健康状态枚举
-export enum ProviderHealthStatus {
-  Healthy = "healthy",
-  Degraded = "degraded",
-  Failed = "failed",
-  Unknown = "unknown",
-}
-
 // 故障转移队列条目
 export interface FailoverQueueItem {
   providerId: string;

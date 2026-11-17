@@ -231,93 +231,34 @@ mod tests {
     };
     #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
     use crate::provider::{ClaudeDesktopMode, ClaudeDesktopModelRoute};
-    use crate::proxy::types::ProxyConfig;
     use crate::store::AppState;
     use crate::sync_utils::MutexExt;
+    use crate::test_support::{EnvVars, TempUserHome};
     use serde_json::json;
     use serial_test::serial;
-    use std::env;
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::sync::{Arc, Mutex, OnceLock};
-    use tempfile::TempDir;
 
+    /// A temp user home that also pins the Claude Desktop paths under it
+    /// (`LOCALAPPDATA` on Windows, `XDG_CONFIG_HOME` unset on Linux).
     struct TempHome {
-        #[allow(dead_code)]
-        dir: TempDir,
-        original_home: Option<String>,
-        #[cfg(windows)]
-        original_local_app_data: Option<String>,
-        original_userprofile: Option<String>,
-        original_test_home: Option<String>,
-        #[cfg(target_os = "linux")]
-        original_xdg_config_home: Option<std::ffi::OsString>,
+        _desktop_env: EnvVars,
+        home: TempUserHome,
     }
 
     impl TempHome {
         fn new() -> Self {
-            let dir = TempDir::new().expect("failed to create temp home");
-            let original_home = env::var("HOME").ok();
+            let home = TempUserHome::new();
+            let desktop_env = EnvVars::new();
             #[cfg(windows)]
-            let original_local_app_data = env::var("LOCALAPPDATA").ok();
-            let original_userprofile = env::var("USERPROFILE").ok();
-            let original_test_home = env::var("CC_SWITCH_TEST_HOME").ok();
+            let desktop_env =
+                desktop_env.set("LOCALAPPDATA", home.path().join("AppData").join("Local"));
             #[cfg(target_os = "linux")]
-            let original_xdg_config_home = env::var_os("XDG_CONFIG_HOME");
-
-            env::set_var("HOME", dir.path());
-            #[cfg(windows)]
-            env::set_var("LOCALAPPDATA", dir.path().join("AppData").join("Local"));
-            env::set_var("USERPROFILE", dir.path());
-            env::set_var("CC_SWITCH_TEST_HOME", dir.path());
-            // Claude Desktop Linux paths follow XDG_CONFIG_HOME; pin them under the temp home.
-            #[cfg(target_os = "linux")]
-            env::remove_var("XDG_CONFIG_HOME");
-
+            let desktop_env = desktop_env.remove("XDG_CONFIG_HOME");
             Self {
-                dir,
-                original_home,
-                #[cfg(windows)]
-                original_local_app_data,
-                original_userprofile,
-                original_test_home,
-                #[cfg(target_os = "linux")]
-                original_xdg_config_home,
-            }
-        }
-    }
-
-    impl Drop for TempHome {
-        fn drop(&mut self) {
-            match &self.original_home {
-                Some(value) => env::set_var("HOME", value),
-                None => env::remove_var("HOME"),
-            }
-
-            #[cfg(windows)]
-            {
-                match &self.original_local_app_data {
-                    Some(value) => env::set_var("LOCALAPPDATA", value),
-                    None => env::remove_var("LOCALAPPDATA"),
-                }
-            }
-
-            match &self.original_userprofile {
-                Some(value) => env::set_var("USERPROFILE", value),
-                None => env::remove_var("USERPROFILE"),
-            }
-
-            match &self.original_test_home {
-                Some(value) => env::set_var("CC_SWITCH_TEST_HOME", value),
-                None => env::remove_var("CC_SWITCH_TEST_HOME"),
-            }
-
-            #[cfg(target_os = "linux")]
-            {
-                match &self.original_xdg_config_home {
-                    Some(value) => env::set_var("XDG_CONFIG_HOME", value),
-                    None => env::remove_var("XDG_CONFIG_HOME"),
-                }
+                _desktop_env: desktop_env,
+                home,
             }
         }
     }
@@ -356,24 +297,14 @@ mod tests {
     fn with_test_home<T>(test: impl FnOnce(&AppState, &Path) -> T) -> T {
         let _guard = test_guard();
         let temp = tempfile::tempdir().expect("tempdir");
-        let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
-        let old_home = std::env::var_os("HOME");
-        std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
-        std::env::set_var("HOME", temp.path());
+        let env = EnvVars::new()
+            .set("CC_SWITCH_TEST_HOME", temp.path())
+            .set("HOME", temp.path());
 
         let db = Arc::new(Database::memory().expect("in-memory database"));
         let state = AppState::new(db);
         let result = test(&state, temp.path());
-
-        match old_test_home {
-            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
-            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
-        }
-        match old_home {
-            Some(value) => std::env::set_var("HOME", value),
-            None => std::env::remove_var("HOME"),
-        }
-
+        drop(env);
         result
     }
 
@@ -2183,12 +2114,16 @@ command = "legacy-cmd"
         )
         .expect("seed live file");
 
-        db.update_proxy_config(ProxyConfig {
-            listen_port: 0,
-            ..Default::default()
-        })
-        .await
-        .expect("update proxy config");
+        let mut proxy = db
+            .get_global_proxy_config()
+            .await
+            .expect("update proxy config");
+
+        proxy.listen_port = 0;
+
+        db.update_global_proxy_config(proxy)
+            .await
+            .expect("update proxy config");
         crate::mode::controller::enter(&state, &AppType::Claude, false)
             .await
             .expect("enter routing mode");
@@ -2282,12 +2217,16 @@ requires_openai_auth = true
         crate::settings::set_current_provider(&AppType::Codex, Some("p1"))
             .expect("set local current provider");
 
-        db.update_proxy_config(ProxyConfig {
-            listen_port: 0,
-            ..Default::default()
-        })
-        .await
-        .expect("update proxy config");
+        let mut proxy = db
+            .get_global_proxy_config()
+            .await
+            .expect("update proxy config");
+
+        proxy.listen_port = 0;
+
+        db.update_global_proxy_config(proxy)
+            .await
+            .expect("update proxy config");
         crate::mode::controller::enter(&state, &AppType::Codex, false)
             .await
             .expect("enter routing mode");
@@ -2355,12 +2294,14 @@ requires_openai_auth = true
         crate::settings::reload_settings().expect("reload settings");
 
         let db = Arc::new(Database::memory().expect("init db"));
-        db.update_proxy_config(ProxyConfig {
-            listen_port: 0,
-            ..Default::default()
-        })
-        .await
-        .expect("ephemeral proxy port");
+        let mut proxy = db
+            .get_global_proxy_config()
+            .await
+            .expect("ephemeral proxy port");
+        proxy.listen_port = 0;
+        db.update_global_proxy_config(proxy)
+            .await
+            .expect("ephemeral proxy port");
         let state = AppState::new(db.clone());
 
         let mut original = Provider::with_id(
@@ -2441,7 +2382,7 @@ requires_openai_auth = true
         .expect("join update")
         .expect("update route provider");
 
-        let profile_path = claude_desktop_profile_path(home.dir.path());
+        let profile_path = claude_desktop_profile_path(home.home.path());
         let profile: Value = read_json_file(&profile_path).expect("read desktop profile");
         assert_eq!(
             profile["inferenceGatewayBaseUrl"],
@@ -3299,9 +3240,9 @@ wire_api = "responses"
                         )
                         .unwrap();
                     runtime.block_on(async {
-                        let mut config = state.db.get_proxy_config().await.unwrap();
+                        let mut config = state.db.get_global_proxy_config().await.unwrap();
                         config.listen_port = 0;
-                        state.db.update_proxy_config(config).await.unwrap();
+                        state.db.update_global_proxy_config(config).await.unwrap();
                     });
                     let current = managed_codex_provider("current", "old-local-id");
                     state.db.save_provider("codex", &current).unwrap();
@@ -3671,9 +3612,9 @@ wire_api = "responses"
                     )
                     .await
                     .unwrap();
-                let mut config = state.db.get_proxy_config().await.unwrap();
+                let mut config = state.db.get_global_proxy_config().await.unwrap();
                 config.listen_port = 0;
-                state.db.update_proxy_config(config).await.unwrap();
+                state.db.update_global_proxy_config(config).await.unwrap();
             });
             let current = managed_codex_provider("current", "old-local-id");
             state.db.save_provider("codex", &current).unwrap();
@@ -5030,9 +4971,9 @@ wire_api = "responses"
                         runtime.block_on(async {
                             // 端口 0 启动后实际端口会记进库，重开的 AppState 不启动代理
                             // 也能算出契约地址。
-                            let mut config = state.db.get_proxy_config().await.unwrap();
+                            let mut config = state.db.get_global_proxy_config().await.unwrap();
                             config.listen_port = 0;
-                            state.db.update_proxy_config(config).await.unwrap();
+                            state.db.update_global_proxy_config(config).await.unwrap();
                             crate::mode::controller::enter(state, &AppType::Codex, false)
                                 .await
                                 .unwrap();
@@ -8503,14 +8444,6 @@ impl ProviderService {
         state: &AppState,
     ) -> Result<HashMap<String, UniversalProvider>, AppError> {
         state.db.get_all_universal_providers()
-    }
-
-    /// 获取单个统一供应商
-    pub fn get_universal(
-        state: &AppState,
-        id: &str,
-    ) -> Result<Option<UniversalProvider>, AppError> {
-        state.db.get_universal_provider(id)
     }
 
     /// 添加或更新统一供应商（不自动同步，需手动调用 sync_universal_to_apps）

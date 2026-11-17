@@ -791,7 +791,6 @@ dependencies = [
  "objc2-app-kit 0.2.2",
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
- "once_cell",
  "png 0.18.1",
  "process-wrap",
  "prost",

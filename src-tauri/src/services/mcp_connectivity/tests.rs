@@ -340,7 +340,7 @@ async fn concurrency_limit_spans_batches_and_passes_to_queued_checks() {
     task.abort();
 }
 
-static STDIO_FIXTURE: Lazy<(tempfile::TempDir, PathBuf)> = Lazy::new(|| {
+static STDIO_FIXTURE: LazyLock<(tempfile::TempDir, PathBuf)> = LazyLock::new(|| {
     let directory = tempfile::tempdir().unwrap();
     let binary = directory
         .path()

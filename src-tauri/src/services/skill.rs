@@ -98,33 +98,6 @@ pub struct DiscoverableSkill {
     pub repo_branch: String,
 }
 
-/// 技能对象（兼容旧 API，内部使用 DiscoverableSkill）
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Skill {
-    /// 唯一标识: "owner/name:directory" 或 "local:directory"
-    pub key: String,
-    /// 显示名称 (从 SKILL.md 解析)
-    pub name: String,
-    /// 技能描述
-    pub description: String,
-    /// 目录名称 (安装路径的最后一段)
-    pub directory: String,
-    /// GitHub README URL
-    #[serde(rename = "readmeUrl")]
-    pub readme_url: Option<String>,
-    /// 是否已安装
-    pub installed: bool,
-    /// 仓库所有者
-    #[serde(rename = "repoOwner")]
-    pub repo_owner: Option<String>,
-    /// 仓库名称
-    #[serde(rename = "repoName")]
-    pub repo_name: Option<String>,
-    /// 分支名称
-    #[serde(rename = "repoBranch")]
-    pub repo_branch: Option<String>,
-}
-
 /// 仓库配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillRepo {
@@ -687,8 +660,14 @@ impl SkillService {
     pub fn get_app_skills_dir(app: &AppType) -> Result<PathBuf> {
         // 目录覆盖：优先使用用户在 settings.json 中配置的 override 目录
         match app {
-            AppType::Claude => {
-                if let Some(custom) = crate::settings::get_claude_override_dir() {
+            AppType::Claude
+            | AppType::Codex
+            | AppType::Gemini
+            | AppType::GrokBuild
+            | AppType::OpenCode
+            | AppType::OpenClaw
+            | AppType::Hermes => {
+                if let Some(custom) = crate::settings::get_override_dir(app) {
                     return Ok(custom.join("skills"));
                 }
             }
@@ -698,36 +677,6 @@ impl SkillService {
             | AppType::Dsh
             | AppType::Copilot
             | AppType::WorkBuddy => {}
-            AppType::Codex => {
-                if let Some(custom) = crate::settings::get_codex_override_dir() {
-                    return Ok(custom.join("skills"));
-                }
-            }
-            AppType::Gemini => {
-                if let Some(custom) = crate::settings::get_gemini_override_dir() {
-                    return Ok(custom.join("skills"));
-                }
-            }
-            AppType::GrokBuild => {
-                if let Some(custom) = crate::settings::get_grok_override_dir() {
-                    return Ok(custom.join("skills"));
-                }
-            }
-            AppType::OpenCode => {
-                if let Some(custom) = crate::settings::get_opencode_override_dir() {
-                    return Ok(custom.join("skills"));
-                }
-            }
-            AppType::OpenClaw => {
-                if let Some(custom) = crate::settings::get_openclaw_override_dir() {
-                    return Ok(custom.join("skills"));
-                }
-            }
-            AppType::Hermes => {
-                if let Some(custom) = crate::settings::get_hermes_override_dir() {
-                    return Ok(custom.join("skills"));
-                }
-            }
             AppType::Pi => {
                 return Ok(crate::pi_config::get_pi_agent_dir()?.join("skills"));
             }
@@ -3405,73 +3354,6 @@ impl SkillService {
         Ok(SkillDiscoveryResult { skills, failures })
     }
 
-    /// 列出所有技能（兼容旧 API）
-    pub async fn list_skills(
-        &self,
-        repos: Vec<SkillRepo>,
-        db: &Arc<Database>,
-    ) -> Result<Vec<Skill>> {
-        // 获取可发现的技能
-        let discoverable = self.discover_available(repos).await?;
-
-        // 获取已安装的技能
-        let installed = db.get_all_installed_skills()?;
-        let installed_dirs: HashSet<String> =
-            installed.values().map(|s| s.directory.clone()).collect();
-
-        // 转换为 Skill 格式
-        let mut skills: Vec<Skill> = discoverable
-            .into_iter()
-            .map(|d| {
-                let install_name = Path::new(&d.directory)
-                    .file_name()
-                    .map(|s| s.to_string_lossy().to_string())
-                    .unwrap_or_else(|| d.directory.clone());
-
-                Skill {
-                    key: d.key,
-                    name: d.name,
-                    description: d.description,
-                    directory: d.directory,
-                    readme_url: d.readme_url,
-                    installed: installed_dirs.contains(&install_name),
-                    repo_owner: Some(d.repo_owner),
-                    repo_name: Some(d.repo_name),
-                    repo_branch: Some(d.repo_branch),
-                }
-            })
-            .collect();
-
-        // 添加本地已安装但不在仓库中的技能
-        for skill in installed.values() {
-            let already_in_list = skills.iter().any(|s| {
-                let s_install_name = Path::new(&s.directory)
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| s.directory.clone());
-                s_install_name == skill.directory
-            });
-
-            if !already_in_list {
-                skills.push(Skill {
-                    key: skill.id.clone(),
-                    name: skill.name.clone(),
-                    description: skill.description.clone().unwrap_or_default(),
-                    directory: skill.directory.clone(),
-                    readme_url: skill.readme_url.clone(),
-                    installed: true,
-                    repo_owner: skill.repo_owner.clone(),
-                    repo_name: skill.repo_name.clone(),
-                    repo_branch: skill.repo_branch.clone(),
-                });
-            }
-        }
-
-        skills.sort_by_key(|skill| skill.name.to_lowercase());
-
-        Ok(skills)
-    }
-
     /// 只发现一个仓库（添加、重新启用仓库时用），不碰其它仓库。
     pub async fn discover_repo(&self, repo: &SkillRepo) -> SkillDiscoveryResult {
         if !repo.enabled {
@@ -5270,6 +5152,7 @@ pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::EnvVars;
     use tempfile::tempdir;
 
     #[test]
@@ -7395,37 +7278,17 @@ mod tests {
     /// 守卫只负责在测试结束后恢复原值）。
     struct TestHomeGuard {
         home: PathBuf,
-        previous: Option<std::ffi::OsString>,
-        previous_kimi_home: Option<std::ffi::OsString>,
-        previous_dsh_home: Option<std::ffi::OsString>,
+        _env: EnvVars,
     }
     impl TestHomeGuard {
         fn set(home: &Path) -> Self {
-            let guard = Self {
+            let env = EnvVars::new()
+                .set("DSH_HOME", home.join(".dsh"))
+                .set("CC_SWITCH_TEST_HOME", home)
+                .set("KIMI_CODE_HOME", home.join(".kimi-code"));
+            Self {
                 home: home.to_path_buf(),
-                previous: std::env::var_os("CC_SWITCH_TEST_HOME"),
-                previous_kimi_home: std::env::var_os("KIMI_CODE_HOME"),
-                previous_dsh_home: std::env::var_os("DSH_HOME"),
-            };
-            std::env::set_var("DSH_HOME", home.join(".dsh"));
-            std::env::set_var("CC_SWITCH_TEST_HOME", home);
-            std::env::set_var("KIMI_CODE_HOME", home.join(".kimi-code"));
-            guard
-        }
-    }
-    impl Drop for TestHomeGuard {
-        fn drop(&mut self) {
-            match self.previous_dsh_home.take() {
-                Some(value) => std::env::set_var("DSH_HOME", value),
-                None => std::env::remove_var("DSH_HOME"),
-            }
-            match self.previous_kimi_home.take() {
-                Some(value) => std::env::set_var("KIMI_CODE_HOME", value),
-                None => std::env::remove_var("KIMI_CODE_HOME"),
-            }
-            match self.previous.take() {
-                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
-                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
+                _env: env,
             }
         }
     }
@@ -8072,24 +7935,14 @@ mod tests {
 
     #[test]
     // serial：与 backup/s3_sync/deeplink 等同样读写进程级 CC_SWITCH_TEST_HOME 的测试互斥，
-    // EnvGuard 只负责恢复不提供互斥。
+    // EnvVars 只负责恢复不提供互斥。
     #[serial_test::serial]
     fn get_app_skills_dir_honors_test_home_override() {
         // 回归：曾直呼 dirs::home_dir() 绕过 CC_SWITCH_TEST_HOME——Unix 上碰巧跟 $HOME
         // 一致所以测试能过，Windows 上 dirs 走 Known Folder API，测试隔离整体失效
         // （tests/skill_sync.rs 扫到 runner 真实用户目录）。
-        struct EnvGuard(Option<std::ffi::OsString>);
-        impl Drop for EnvGuard {
-            fn drop(&mut self) {
-                match self.0.take() {
-                    Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
-                    None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
-                }
-            }
-        }
         let temp = tempdir().expect("tempdir");
-        let _guard = EnvGuard(std::env::var_os("CC_SWITCH_TEST_HOME"));
-        std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
+        let _guard = EnvVars::new().set("CC_SWITCH_TEST_HOME", temp.path());
 
         let dir =
             SkillService::get_app_skills_dir(&AppType::Claude).expect("resolve claude skills dir");

@@ -34,9 +34,8 @@ async fn persists_and_reloads_accounts() {
     assert_eq!(accounts.len(), 1);
     assert_eq!(accounts[0].id, "acc:org");
     assert_eq!(accounts[0].label(), "me@example.com");
-    assert_eq!(reloaded.config_dir_of("acc:org").await, Some(dir.clone()));
-    assert_eq!(reloaded.all_config_dirs().await, vec![dir]);
-    assert_eq!(reloaded.config_dir_of("other").await, None);
+    assert_eq!(config_dir_on_disk(tmp.path(), "acc:org"), Some(dir));
+    assert_eq!(config_dir_on_disk(tmp.path(), "other"), None);
 }
 
 #[tokio::test]
@@ -79,7 +78,7 @@ async fn missing_dir_resolves_to_none() {
     let manager = ClaudeAccountManager::new(tmp.path().to_path_buf());
     let dir = manager.insert_for_test("acc:", "me@example.com").await;
     std::fs::remove_dir_all(&dir).unwrap();
-    assert_eq!(manager.config_dir_of("acc:").await, None);
+    assert_eq!(config_dir_on_disk(tmp.path(), "acc:"), None);
     assert!(manager.list().await[0].requires_reauth);
 }
 
@@ -124,8 +123,7 @@ async fn corrupt_local_id_never_resolves() {
         // 账号表以磁盘为准（切换时可能收录账号）
         manager.persist(&store).unwrap();
     }
-    assert_eq!(manager.config_dir_of("acc:").await, None);
-    assert!(manager.all_config_dirs().await.is_empty());
+    assert_eq!(config_dir_on_disk(tmp.path(), "acc:"), None);
     assert!(manager.list().await[0].requires_reauth);
 }
 

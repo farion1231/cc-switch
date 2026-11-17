@@ -95,19 +95,6 @@ export interface ImportSkillSelection {
   apps: SkillApps;
 }
 
-/** 技能对象（兼容旧 API） */
-export interface Skill {
-  key: string;
-  name: string;
-  description: string;
-  directory: string;
-  readmeUrl?: string;
-  installed: boolean;
-  repoOwner?: string;
-  repoName?: string;
-  repoBranch?: string;
-}
-
 /** Skill 更新信息 */
 export interface SkillUpdateInfo {
   id: string;
@@ -317,35 +304,6 @@ export const skillsApi = {
     offset: number,
   ): Promise<SkillsShSearchResult> {
     return await invoke("search_skills_sh", { query, limit, offset });
-  },
-
-  // ========== 兼容旧 API ==========
-
-  /** 获取技能列表（兼容旧 API） */
-  async getAll(app: AppId = "claude"): Promise<Skill[]> {
-    if (app === "claude") {
-      return await invoke("get_skills");
-    }
-    return await invoke("get_skills_for_app", { app });
-  },
-
-  /** 安装技能（兼容旧 API） */
-  async install(directory: string, app: AppId = "claude"): Promise<boolean> {
-    if (app === "claude") {
-      return await invoke("install_skill", { directory });
-    }
-    return await invoke("install_skill_for_app", { app, directory });
-  },
-
-  /** 卸载技能（兼容旧 API） */
-  async uninstall(
-    directory: string,
-    app: AppId = "claude",
-  ): Promise<SkillUninstallResult> {
-    if (app === "claude") {
-      return await invoke("uninstall_skill", { directory });
-    }
-    return await invoke("uninstall_skill_for_app", { app, directory });
   },
 
   // ========== 仓库管理 ==========
