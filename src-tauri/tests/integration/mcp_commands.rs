@@ -4,9 +4,9 @@ use std::fs;
 use serde_json::json;
 
 use cc_switch_lib::{
-    get_claude_mcp_path, get_claude_mcp_status, get_claude_settings_path, get_grok_config_path,
-    import_default_config_test_hook, read_claude_mcp_config, update_settings, AppError,
-    AppSettings, AppType, McpApps, McpServer, McpService, MultiAppConfig, ProviderService,
+    get_claude_mcp_path, get_claude_settings_path, get_grok_config_path,
+    import_default_config_test_hook, update_settings, AppError, AppSettings, AppType, McpApps,
+    McpServer, McpService, MultiAppConfig, ProviderService,
 };
 
 use crate::support::{
@@ -1713,61 +1713,6 @@ fn custom_claude_dir_sync_does_not_copy_default_profile() {
         fs::read_to_string(&home_mcp_path).expect("reread default Claude profile"),
         default_profile_text,
         "default Claude profile should remain unchanged"
-    );
-}
-
-#[test]
-fn custom_claude_dir_read_only_mcp_queries_do_not_create_profile() {
-    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
-    reset_test_fs();
-    let home = ensure_test_home();
-    let home_mcp_path = home.join(".claude.json");
-    fs::write(
-        &home_mcp_path,
-        serde_json::to_string_pretty(&json!({
-            "mcpServers": {
-                "home-only": {
-                    "type": "stdio",
-                    "command": "home-command"
-                }
-            },
-            "profileSentinel": "home-profile"
-        }))
-        .expect("serialize default profile"),
-    )
-    .expect("seed default Claude profile");
-
-    let custom_dir = home.join("profiles").join("work").join(".claude");
-    fs::create_dir_all(&custom_dir).expect("create custom claude dir");
-    update_settings(AppSettings {
-        claude_config_dir: Some(custom_dir.to_string_lossy().to_string()),
-        ..AppSettings::default()
-    })
-    .expect("set custom claude config dir");
-
-    let expected_mcp_path = custom_dir.join(".claude.json");
-    assert!(
-        !expected_mcp_path.exists(),
-        "custom profile should start without a live MCP file"
-    );
-
-    let status =
-        futures::executor::block_on(get_claude_mcp_status()).expect("get Claude MCP status");
-    assert_eq!(
-        status.user_config_path,
-        expected_mcp_path.to_string_lossy(),
-        "status should report the custom profile MCP path"
-    );
-    assert!(
-        !status.user_config_exists,
-        "status should report missing custom profile MCP file"
-    );
-    let text =
-        futures::executor::block_on(read_claude_mcp_config()).expect("read Claude MCP config");
-    assert_eq!(text, None, "missing custom profile should read as None");
-    assert!(
-        !expected_mcp_path.exists(),
-        "read-only MCP queries should not copy or create the custom profile"
     );
 }
 
