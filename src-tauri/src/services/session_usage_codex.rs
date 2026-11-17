@@ -163,6 +163,9 @@ struct ParentTokenTimeline {
     max_timestamp: Option<DateTime<Utc>>,
     has_token_without_timestamp: bool,
     high_water: Option<CumulativeTokens>,
+    /// Every record decoded successfully and the file stamp stayed unchanged.
+    /// Required before treating an archived, idle parent as a complete snapshot.
+    verified_snapshot: bool,
 }
 
 impl ParentTokenTimeline {
@@ -1892,6 +1895,7 @@ fn load_parent_timeline(
     let mut max_timestamp: Option<DateTime<Utc>> = None;
     let mut has_token_without_timestamp = false;
     let mut high_water: Option<CumulativeTokens> = None;
+    let mut complete_records = true;
 
     // 必须扫描完整父文件，不能在首个未来时间戳处 break：rollout 写入顺序
     // 不承诺时间戳严格单调。缓存完整时间线后，不同 child cutoff 只需内存过滤。
@@ -1918,9 +1922,14 @@ fn load_parent_timeline(
         // Decode separately from reading: malformed UTF-8 is a skipped record,
         // just like malformed JSON, rather than a retryable reader failure.
         let Ok(line) = std::str::from_utf8(&bytes) else {
+            complete_records = false;
             continue;
         };
+        if line.trim().is_empty() {
+            continue;
+        }
         let Ok(record) = parse_parent_record(line) else {
+            complete_records = false;
             continue;
         };
         let timestamp = parse_timestamp(record.timestamp.as_ref());
@@ -1973,11 +1982,15 @@ fn load_parent_timeline(
         }
     }
 
+    let after_stamp = fs::File::open(parent_path)
+        .ok()
+        .and_then(|file| ParentFileStamp::from_file(&file));
     let timeline = Arc::new(ParentTokenTimeline {
         events,
         max_timestamp,
         has_token_without_timestamp,
         high_water,
+        verified_snapshot: complete_records && stamp.is_some() && stamp == after_stamp,
     });
     if let (Some(stamp), Ok(mut caches)) = (stamp, replay_caches().lock()) {
         caches.parent_timelines.insert(
@@ -2003,6 +2016,7 @@ fn resolve_parent_signatures(
     parent_id: &str,
     cutoff: DateTime<Utc>,
     rollout_index: &RolloutIndex,
+    child: &ParsedCodexFile,
 ) -> Result<Vec<TokenUsageSignature>, ParentSignatureError> {
     let Some(candidates) = rollout_index.get(parent_id) else {
         return Err(ParentSignatureError::transient(format!(
@@ -2022,11 +2036,18 @@ fn resolve_parent_signatures(
         max_timestamp: None,
         has_token_without_timestamp: false,
         high_water: None,
+        verified_snapshot: true,
     };
     let mut segments: Vec<ParentSegment> = Vec::new();
     let mut latest_path: Option<&Path> = None;
     for candidate in ordered {
         let timeline = load_parent_timeline(candidate)?;
+        // Any live copy or malformed/unstable archive retains the timestamp guard.
+        merged.verified_snapshot &= timeline.verified_snapshot
+            && candidate
+                .parent()
+                .and_then(Path::file_name)
+                .is_some_and(|name| name == "archived_sessions");
         // 无论是否为重复副本，只要任一候选存在无时间戳错误标志，必须合入以保留防御校验
         merged.has_token_without_timestamp |= timeline.has_token_without_timestamp;
         let rollout_id = thread_id_from_filename(candidate);
@@ -2064,6 +2085,37 @@ fn resolve_parent_signatures(
             "找不到父 rollout: {parent_id}"
         )));
     };
+    // Legacy forks copy token snapshots and may rewrite their timestamps to the
+    // fork time, without recording ordinal/history_base boundaries. An archived
+    // parent will never advance to that time. Use its verified snapshot only
+    // when we can identify a copied prefix and all child events have exact
+    // request usage after the fork. Keep prefix stripping and native request IDs.
+    if merged.verified_snapshot
+        && !merged.has_token_without_timestamp
+        && merged.max_timestamp.is_some_and(|last| last < cutoff)
+        && child.bounded_history.is_none()
+        && child_events_after_fork(child).is_some()
+    {
+        let signatures = merged.signatures_at(cutoff);
+        let prefix = matching_replay_prefix(&child.token_events, &signatures);
+        if let Some(last_replayed) = prefix
+            .checked_sub(1)
+            .and_then(|index| child.token_events.get(index))
+        {
+            // Fallback usage records lack token signatures for parent matching.
+            // Do not recover a file if any such record lies in copied history.
+            if child
+                .usage_record_events
+                .iter()
+                .all(|event| event.line_offset > last_replayed.line_offset)
+                && child.token_events[prefix..]
+                    .iter()
+                    .all(|event| !signatures.contains(&event.signature))
+            {
+                return Ok(signatures);
+            }
+        }
+    }
     merged
         .signatures_before(latest_path, cutoff)
         .map_err(ParentSignatureError::content)
@@ -2450,32 +2502,32 @@ fn sync_single_codex_file(
                 Some(Some(prefix)) => prefix,
                 Some(None) => {
                     let parent_files = parent_dependency_stamp(parent_id, rollout_index);
-                    let parent_signatures =
-                        match resolve_parent_signatures(parent_id, cutoff, rollout_index) {
-                            Ok(signatures) => signatures,
-                            Err(error) => {
-                                let pending_reason = if rollout_index.contains_key(parent_id) {
-                                    PendingReason::Retryable {
-                                        reason: error.reason,
-                                        parent_id: parent_id.clone(),
-                                        child_file,
-                                        parent_files: if error.cacheable {
-                                            parent_files
-                                        } else {
-                                            None
-                                        },
-                                    }
-                                } else {
-                                    PendingReason::MissingParent(parent_id.clone())
-                                };
-                                return Ok(mark_deferred(
-                                    file_path,
-                                    file_modified,
-                                    file_size,
-                                    pending_reason,
-                                ));
-                            }
-                        };
+                    let parent_signatures = match resolve_parent_signatures(
+                        parent_id,
+                        cutoff,
+                        rollout_index,
+                        &parsed,
+                    ) {
+                        Ok(signatures) => signatures,
+                        Err(error) => {
+                            let pending_reason = if rollout_index.contains_key(parent_id) {
+                                PendingReason::Retryable {
+                                    reason: error.reason,
+                                    parent_id: parent_id.clone(),
+                                    child_file,
+                                    parent_files: if error.cacheable { parent_files } else { None },
+                                }
+                            } else {
+                                PendingReason::MissingParent(parent_id.clone())
+                            };
+                            return Ok(mark_deferred(
+                                file_path,
+                                file_modified,
+                                file_size,
+                                pending_reason,
+                            ));
+                        }
+                    };
                     let prefix = matching_replay_prefix(&parsed.token_events, &parent_signatures);
                     if let Ok(mut caches) = replay_caches().lock() {
                         caches.replay_prefixes.insert(
@@ -2491,7 +2543,7 @@ fn sync_single_codex_file(
                 }
                 None => {
                     let parent_signatures =
-                        resolve_parent_signatures(parent_id, cutoff, rollout_index)
+                        resolve_parent_signatures(parent_id, cutoff, rollout_index, &parsed)
                             .map_err(|error| AppError::Config(error.reason))?;
                     matching_replay_prefix(&parsed.token_events, &parent_signatures)
                 }
@@ -3353,6 +3405,246 @@ mod tests {
             changes_after, changes_before,
             "unchanged file rewrote its cursor"
         );
+        Ok(())
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_archived_legacy_idle_fork_recovery_and_append() -> Result<(), AppError> {
+        for compressed in [false, true] {
+            clear_codex_replay_caches();
+            let db = Database::memory()?;
+            let dir = tempdir().unwrap();
+            let (parent, child) = archived_legacy_fork(dir.path());
+            let parent = if compressed {
+                compress_rollout(&parent)
+            } else {
+                parent
+            };
+            let files = [parent.as_path(), child.as_path()];
+            // The parent has additional usage after the child's copied prefix:
+            // a rewind must not require replaying the parent's entire history.
+            assert_eq!(sync_test_file(&db, &parent, &files)?.imported, 3);
+            let result = sync_test_file(&db, &child, &files)?;
+            assert_eq!(
+                (result.imported, result.skipped, result.deferred),
+                (1, 2, false)
+            );
+            assert_unchanged_codex_file_is_skipped(&db, &child)?;
+            clear_codex_replay_caches();
+            {
+                let conn = lock_conn!(db.conn);
+                conn.execute("DELETE FROM session_log_sync", [])?;
+            }
+            assert_eq!(sync_test_file(&db, &child, &files)?.imported, 0);
+            append_jsonl(
+                &child,
+                token_count_with_last_at(275, 140, 28, 25, 15, 3, "codex", "2026-07-10T03:00:22Z"),
+            );
+            assert_eq!(sync_test_file(&db, &child, &files)?.imported, 1);
+            // A genuine child compaction fallback keeps its native response ID.
+            append_jsonl(
+                &child,
+                token_usage_record_at("resp_child_compact", 40, 20, 4, "2026-07-10T03:00:23Z"),
+            );
+            append_jsonl(
+                &child,
+                token_count_with_last_at(315, 160, 32, 0, 0, 0, "codex", "2026-07-10T03:00:23Z"),
+            );
+            assert_eq!(sync_test_file(&db, &child, &files)?.imported, 1);
+            assert_eq!(sync_test_file(&db, &child, &files)?.imported, 0);
+            let conn = lock_conn!(db.conn);
+            let usage: (i64, i64, i64, i64) = conn.query_row(
+                "SELECT COUNT(*), SUM(input_tokens), SUM(cache_read_tokens), SUM(output_tokens)
+                 FROM proxy_request_logs WHERE session_id = ?1",
+                [CHILD_A_ID],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )?;
+            assert_eq!(usage, (3, 115, 60, 12));
+        }
+        Ok(())
+    }
+
+    fn archived_legacy_fork(dir: &Path) -> (PathBuf, PathBuf) {
+        let archive = dir.join("archived_sessions");
+        fs::create_dir_all(&archive).unwrap();
+        let parent = rollout_path(&archive, PARENT_ID);
+        let child = rollout_path(dir, CHILD_A_ID);
+        write_jsonl(
+            &parent,
+            &[
+                session_meta(PARENT_ID),
+                token_count_with_last_at(100, 50, 10, 100, 50, 10, "codex", "2026-07-10T03:00:01Z"),
+                token_count_with_last_at(
+                    200,
+                    100,
+                    20,
+                    100,
+                    50,
+                    10,
+                    "codex",
+                    "2026-07-10T03:00:02Z",
+                ),
+                token_count_with_last_at(
+                    300,
+                    150,
+                    30,
+                    100,
+                    50,
+                    10,
+                    "codex",
+                    "2026-07-10T03:00:03Z",
+                ),
+            ],
+        );
+        write_jsonl(
+            &child,
+            &[
+                session_meta_at(CHILD_A_ID, Some(PARENT_ID), None, "2026-07-10T03:00:20Z"),
+                turn_context_at("2026-07-10T03:00:20Z"),
+                token_count_with_last_at(
+                    100,
+                    50,
+                    10,
+                    100,
+                    50,
+                    10,
+                    "codex",
+                    "2026-07-10T03:00:20.001Z",
+                ),
+                token_count_with_last_at(
+                    200,
+                    100,
+                    20,
+                    100,
+                    50,
+                    10,
+                    "codex",
+                    "2026-07-10T03:00:20.002Z",
+                ),
+                token_count_with_last_at(250, 125, 25, 50, 25, 5, "codex", "2026-07-10T03:00:21Z"),
+            ],
+        );
+        (parent, child)
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_archived_legacy_idle_fork_rejects_unverified_parent() -> Result<(), AppError> {
+        for case in [
+            "live_copy",
+            "malformed_json",
+            "invalid_utf8",
+            "conflicting_copy",
+            "missing_timestamp",
+        ] {
+            clear_codex_replay_caches();
+            let db = Database::memory()?;
+            let dir = tempdir().unwrap();
+            let (parent, child) = archived_legacy_fork(dir.path());
+            let mut files = vec![parent.clone(), child.clone()];
+            match case {
+                "live_copy" | "conflicting_copy" => {
+                    let copy_dir = if case == "live_copy" {
+                        dir.path().join("sessions")
+                    } else {
+                        dir.path().join("other").join("archived_sessions")
+                    };
+                    fs::create_dir_all(&copy_dir).unwrap();
+                    let copy = rollout_path(&copy_dir, PARENT_ID);
+                    fs::copy(&parent, &copy).unwrap();
+                    if case == "conflicting_copy" {
+                        append_jsonl(&copy, token_count_at(999, 0, 99, "2026-07-10T03:00:04Z"));
+                    }
+                    files.push(copy);
+                }
+                "missing_timestamp" => {
+                    append_jsonl(&parent, token_count_without_timestamp(999, 0, 99))
+                }
+                _ => {
+                    use std::io::Write;
+                    let mut file = fs::OpenOptions::new().append(true).open(&parent).unwrap();
+                    file.write_all(if case == "invalid_utf8" {
+                        b"\xff\n"
+                    } else {
+                        b"{unfinished"
+                    })
+                    .unwrap();
+                }
+            }
+            let paths = files.iter().map(PathBuf::as_path).collect::<Vec<_>>();
+            let result = sync_test_file(&db, &child, &paths)?;
+            assert!(result.deferred, "{case}");
+            assert!(codex_usage_rows(&db)?.is_empty(), "{case}");
+            assert_eq!(get_sync_state(&db, &child.to_string_lossy())?, (0, 0));
+        }
+        Ok(())
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_archived_legacy_idle_fork_rejects_ambiguous_replay() -> Result<(), AppError> {
+        for case in [
+            "no_match",
+            "cumulative_only",
+            "bounded_history",
+            "copied_fallback",
+            "replay_after_live",
+        ] {
+            clear_codex_replay_caches();
+            let db = Database::memory()?;
+            let dir = tempdir().unwrap();
+            let (parent, child) = archived_legacy_fork(dir.path());
+            let mut records = fs::read_to_string(&child)
+                .unwrap()
+                .lines()
+                .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+                .collect::<Vec<_>>();
+            match case {
+                "no_match" => {
+                    records.drain(2..4);
+                }
+                "cumulative_only" => {
+                    records[4]["payload"]["info"]
+                        .as_object_mut()
+                        .unwrap()
+                        .remove("last_token_usage");
+                }
+                "bounded_history" => {
+                    records[0]["payload"]["history_base"] =
+                        serde_json::json!({"thread_id": PARENT_ID});
+                }
+                "copied_fallback" => {
+                    records.insert(
+                        3,
+                        token_usage_record_at("resp_copied", 40, 20, 4, "2026-07-10T03:00:20.001Z"),
+                    );
+                    records.insert(
+                        4,
+                        token_count_with_last_at(
+                            200,
+                            100,
+                            20,
+                            0,
+                            0,
+                            0,
+                            "codex",
+                            "2026-07-10T03:00:20.001Z",
+                        ),
+                    );
+                    // This zero-last snapshot is part of the parent's history too.
+                    let mut inherited = records[4].clone();
+                    inherited["timestamp"] = serde_json::json!("2026-07-10T03:00:02.001Z");
+                    append_jsonl(&parent, inherited);
+                }
+                "replay_after_live" => records.push(records[2].clone()),
+                _ => unreachable!(),
+            }
+            write_jsonl(&child, &records);
+            let result = sync_test_file(&db, &child, &[&parent, &child])?;
+            assert!(result.deferred, "{case}");
+            assert!(codex_usage_rows(&db)?.is_empty(), "{case}");
+        }
         Ok(())
     }
 
