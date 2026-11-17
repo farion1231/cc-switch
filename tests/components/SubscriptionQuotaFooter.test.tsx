@@ -11,6 +11,10 @@ import {
   vi,
 } from "vitest";
 import { SubscriptionQuotaView } from "@/components/SubscriptionQuotaFooter";
+import UsageFooter from "@/components/UsageFooter";
+import { QueryClientProvider } from "@tanstack/react-query";
+import { usageKeys } from "@/lib/query/usage";
+import { createTestQueryClient } from "../utils/testQueryClient";
 import type { QuotaTier, SubscriptionQuota } from "@/types/subscription";
 import type { QuotaDisplay } from "@/components/quota/quotaRules";
 import zh from "@/i18n/locales/zh.json";
@@ -192,6 +196,115 @@ describe("Claude Fable subscription quota", () => {
     renderQuota([{ name: "seven_day_fable", utilization: 37, resetsAt: null }]);
     expect(screen.getByText(sentence(text))).toBeInTheDocument();
   });
+});
+
+describe("Kimi monthly quota", () => {
+  const tiers: QuotaTier[] = [
+    { name: "five_hour", utilization: 23, resetsAt: null },
+    { name: "kimi_monthly_total", utilization: 40, resetsAt: null },
+    { name: "kimi_monthly_code", utilization: 35, resetsAt: null },
+  ];
+
+  it("shows only the tighter monthly pool on the card", () => {
+    renderQuota(tiers, true, { tool: "coding_plan" });
+    const lines = screen.getByRole("button", { name: "查看各档额度" }).children;
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toHaveTextContent("5 小时剩余 77%");
+    expect(lines[1]).toHaveTextContent("每月剩余 60%");
+  });
+
+  it("uses the coding pool when it has less left and keeps its reset time", () => {
+    renderQuota([
+      ...tiers.slice(0, 2),
+      {
+        name: "kimi_monthly_code",
+        utilization: 80,
+        resetsAt: "2026-09-12T00:00:00Z",
+      },
+    ]);
+    const lines = screen.getByRole("button", { name: "查看各档额度" }).children;
+    expect(lines).toHaveLength(2);
+    expect(lines[1]).toHaveTextContent("每月剩余 20%");
+    expect(lines[1]).toHaveTextContent("2d12h");
+  });
+
+  it("keeps both monthly pools accessible in the dropdown", async () => {
+    renderQuota(tiers);
+    fireEvent.click(screen.getByRole("button", { name: "查看各档额度" }));
+    const dialog = await screen.findByRole("dialog", { name: "各档额度" });
+    expect(
+      within(dialog)
+        .getAllByRole("listitem")
+        .map((item) => item.textContent),
+    ).toEqual(["5 小时剩余 77%", "月总额度剩余 60%", "月编程额度剩余 65%"]);
+  });
+
+  it("uses a single Monthly line in English", async () => {
+    await i18n.changeLanguage("en");
+    renderQuota(tiers, true, { tool: "coding_plan" });
+    const lines = screen.getByRole("button", {
+      name: "Show all limits",
+    }).children;
+    expect(lines).toHaveLength(2);
+    expect(lines[1]).toHaveTextContent("Monthly 60% left");
+  });
+
+  it("also collapses monthly pools on the API-key provider card", () => {
+    const providerId = "kimi-monthly-test";
+    const queryClient = createTestQueryClient();
+    queryClient.setQueryData(usageKeys.script(providerId, "claude"), {
+      success: true,
+      data: tiers.map((tier) => ({
+        planName: tier.name,
+        used: tier.utilization,
+        unit: "%",
+      })),
+    });
+    render(
+      <I18nextProvider i18n={i18n}>
+        <QueryClientProvider client={queryClient}>
+          <UsageFooter
+            provider={{
+              id: providerId,
+              name: "Kimi",
+              settingsConfig: {},
+              meta: {
+                usage_script: {
+                  enabled: true,
+                  language: "javascript",
+                  code: "",
+                  templateType: "token_plan",
+                },
+              },
+            }}
+            providerId={providerId}
+            appId="claude"
+            usageEnabled
+            inline
+          />
+        </QueryClientProvider>
+      </I18nextProvider>,
+    );
+    const lines = screen.getByRole("button", { name: "查看各档额度" }).children;
+    expect(lines).toHaveLength(2);
+    expect(lines[1]).toHaveTextContent("每月剩余 60%");
+  });
+
+  it.each([
+    ["zh", "月总额度", "月编程额度"],
+    ["zh-TW", "月總額度", "月程式設計額度"],
+    ["en", "Monthly total", "Monthly coding"],
+    ["ja", "月間合計", "月間コーディング"],
+  ])(
+    "shows separate localized monthly bars in %s",
+    async (language, total, coding) => {
+      await i18n.changeLanguage(language);
+      renderQuota(tiers, false, { tool: "coding_plan" });
+      expect(screen.getByText(total)).toBeInTheDocument();
+      expect(screen.getByText(coding)).toBeInTheDocument();
+      expect(screen.getAllByRole("meter")).toHaveLength(3);
+    },
+  );
 });
 
 describe("Antigravity quota groups", () => {

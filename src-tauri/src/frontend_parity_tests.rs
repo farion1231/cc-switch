@@ -155,6 +155,10 @@ fn backend_constants_match_shared_fixture() {
             "dict": crate::hermes_config::PROVIDER_SOURCE_DICT,
         },
         "codingPlanProviderByUrl": coding_plan,
+        "kimiMonthlyTiers": [
+            crate::services::subscription::TIER_KIMI_MONTHLY_TOTAL,
+            crate::services::subscription::TIER_KIMI_MONTHLY_CODE,
+        ],
         "quotaWarnBelowPercent": crate::tray::WARN_BELOW_PERCENT,
         "exchangeRateCurrencies": crate::services::exchange_rates::TARGET_CURRENCIES,
         "customIcon": {

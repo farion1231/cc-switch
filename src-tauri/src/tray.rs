@@ -129,6 +129,8 @@ pub struct TrayTexts {
     pub tier_weekly: &'static str,
     pub tier_fable: &'static str,
     pub tier_monthly: &'static str,
+    pub tier_kimi_monthly_total: &'static str,
+    pub tier_kimi_monthly_code: &'static str,
     pub tier_thirty_day: &'static str,
     pub tier_credits: &'static str,
     pub tier_gemini_pro: &'static str,
@@ -240,6 +242,8 @@ impl TrayTexts {
                 tier_weekly: "Weekly",
                 tier_fable: "Fable",
                 tier_monthly: "Monthly",
+                tier_kimi_monthly_total: "Monthly total",
+                tier_kimi_monthly_code: "Monthly coding",
                 tier_thirty_day: "30-day",
                 tier_credits: "Credits",
                 tier_gemini_pro: "Pro",
@@ -295,6 +299,8 @@ impl TrayTexts {
                 tier_weekly: "주간",
                 tier_fable: "Fable",
                 tier_monthly: "월간",
+                tier_kimi_monthly_total: "월간 총 사용량",
+                tier_kimi_monthly_code: "월간 코딩",
                 tier_thirty_day: "30일",
                 tier_credits: "크레딧",
                 tier_gemini_pro: "Pro",
@@ -352,6 +358,8 @@ impl TrayTexts {
                 tier_weekly: "Woche",
                 tier_fable: "Fable",
                 tier_monthly: "Monat",
+                tier_kimi_monthly_total: "Monat gesamt",
+                tier_kimi_monthly_code: "Monat Coding",
                 tier_thirty_day: "30 Tage",
                 tier_credits: "Credits",
                 tier_gemini_pro: "Pro",
@@ -407,6 +415,8 @@ impl TrayTexts {
                 tier_weekly: "Неделя",
                 tier_fable: "Fable",
                 tier_monthly: "Месяц",
+                tier_kimi_monthly_total: "Всего за месяц",
+                tier_kimi_monthly_code: "Кодинг за месяц",
                 tier_thirty_day: "30 дней",
                 tier_credits: "Кредиты",
                 tier_gemini_pro: "Pro",
@@ -462,6 +472,8 @@ impl TrayTexts {
                 tier_weekly: "Haftalık",
                 tier_fable: "Fable",
                 tier_monthly: "Aylık",
+                tier_kimi_monthly_total: "Aylık toplam",
+                tier_kimi_monthly_code: "Aylık kodlama",
                 tier_thirty_day: "30 günlük",
                 tier_credits: "Krediler",
                 tier_gemini_pro: "Pro",
@@ -519,6 +531,8 @@ impl TrayTexts {
                 tier_weekly: "週間",
                 tier_fable: "Fable",
                 tier_monthly: "月間",
+                tier_kimi_monthly_total: "月間合計",
+                tier_kimi_monthly_code: "月間コーディング",
                 tier_thirty_day: "30日間",
                 tier_credits: "クレジット",
                 tier_gemini_pro: "Pro",
@@ -574,6 +588,8 @@ impl TrayTexts {
                 tier_weekly: "每週",
                 tier_fable: "Fable",
                 tier_monthly: "每月",
+                tier_kimi_monthly_total: "月總額度",
+                tier_kimi_monthly_code: "月程式設計額度",
                 tier_thirty_day: "30 天",
                 tier_credits: "額度",
                 tier_gemini_pro: "Pro",
@@ -629,6 +645,8 @@ impl TrayTexts {
                 tier_weekly: "每周",
                 tier_fable: "Fable",
                 tier_monthly: "每月",
+                tier_kimi_monthly_total: "月总额度",
+                tier_kimi_monthly_code: "月编程额度",
                 tier_thirty_day: "30 天",
                 tier_credits: "额度",
                 tier_gemini_pro: "Pro",
@@ -714,6 +732,8 @@ enum TierGroup {
     Weekly,
     Fable,
     Monthly,
+    KimiMonthlyTotal,
+    KimiMonthlyCode,
     Credits,
     GeminiPro,
     GeminiFlash,
@@ -736,6 +756,8 @@ const TIER_GROUPS: &[(TierGroup, &[&str])] = {
         ),
         (TierGroup::Fable, &[s::TIER_SEVEN_DAY_FABLE]),
         (TierGroup::Monthly, &[s::TIER_MONTHLY, s::TIER_THIRTY_DAY]),
+        (TierGroup::KimiMonthlyTotal, &[s::TIER_KIMI_MONTHLY_TOTAL]),
+        (TierGroup::KimiMonthlyCode, &[s::TIER_KIMI_MONTHLY_CODE]),
         (TierGroup::Credits, &[s::TIER_CREDITS]),
         (TierGroup::GeminiPro, &[s::TIER_GEMINI_PRO]),
         (TierGroup::GeminiFlash, &[s::TIER_GEMINI_FLASH]),
@@ -753,6 +775,8 @@ fn tier_label(texts: &TrayTexts, group: TierGroup, tier_name: &str) -> &'static 
             texts.tier_thirty_day
         }
         TierGroup::Monthly => texts.tier_monthly,
+        TierGroup::KimiMonthlyTotal => texts.tier_kimi_monthly_total,
+        TierGroup::KimiMonthlyCode => texts.tier_kimi_monthly_code,
         TierGroup::Credits => texts.tier_credits,
         TierGroup::GeminiPro => texts.tier_gemini_pro,
         TierGroup::GeminiFlash => texts.tier_gemini_flash,
@@ -4017,6 +4041,39 @@ mod tests {
         assert_eq!(
             texts,
             ["5-hour 88% left", "Weekly 5% left", "Fable 70% left"]
+        );
+    }
+
+    #[test]
+    fn kimi_monthly_pools_stay_separate_in_the_tray() {
+        let quota = make_quota(
+            "kimi_oauth",
+            true,
+            vec![
+                tier(TIER_FIVE_HOUR, 23.0),
+                tier("kimi_monthly_total", 40.0),
+                tier("kimi_monthly_code", 35.0),
+            ],
+        );
+        assert_eq!(
+            sub_title(&en(), &quota).as_deref(),
+            Some("5-hour 77% left · Monthly total 60% left · Monthly coding 65% left")
+        );
+        let result = usage_result(
+            true,
+            vec![
+                usage_data(Some(TIER_FIVE_HOUR), 23.0),
+                usage_data(Some("kimi_monthly_total"), 40.0),
+                usage_data(Some("kimi_monthly_code"), 35.0),
+            ],
+        );
+        let Some(QuotaView::Lines(lines)) = format_script_result(&zh(), &result) else {
+            panic!("expected lines");
+        };
+        let texts: Vec<&str> = lines.iter().map(|line| line.text.as_str()).collect();
+        assert_eq!(
+            texts,
+            ["5 小时剩余 77%", "月总额度剩余 60%", "月编程额度剩余 65%"]
         );
     }
 

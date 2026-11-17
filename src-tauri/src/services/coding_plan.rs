@@ -4,7 +4,8 @@
 //! Ollama Cloud 的套餐额度查询。复用 subscription 模块的 SubscriptionQuota / QuotaTier 类型。
 
 use super::subscription::{
-    CredentialStatus, QuotaTier, SubscriptionQuota, TIER_FIVE_HOUR, TIER_MONTHLY, TIER_WEEKLY_LIMIT,
+    CredentialStatus, QuotaTier, SubscriptionQuota, TIER_FIVE_HOUR, TIER_KIMI_MONTHLY_CODE,
+    TIER_KIMI_MONTHLY_TOTAL, TIER_MONTHLY, TIER_WEEKLY_LIMIT,
 };
 use super::usage_http::{parse_f64, send_for_json, JsonReply};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -272,6 +273,39 @@ pub(crate) async fn query_kimi_at(
             used_value_usd: None,
             max_value_usd: None,
         });
+    }
+
+    // 新套餐只有 usages 比例字段，月总额度与月编程额度是两个独立的桶。
+    // 旧计数字段存在时保留其结果（部分旧套餐的 ratio 曾返回 0），只补缺失的档位。
+    if let Some(usages) = body.get("usages") {
+        for (field, name) in [
+            ("limit_5h", TIER_FIVE_HOUR),
+            ("limit_7d", TIER_WEEKLY_LIMIT),
+            ("limit_month_total", TIER_KIMI_MONTHLY_TOTAL),
+            ("limit_month_code", TIER_KIMI_MONTHLY_CODE),
+        ] {
+            if tiers.iter().any(|tier| tier.name == name) {
+                continue;
+            }
+            let Some(entry) = usages.get(field) else {
+                continue;
+            };
+            let Some(utilization) = entry
+                .get("used_ratio")
+                .and_then(parse_f64)
+                .map(|ratio| ratio * 100.0)
+                .filter(|value| value.is_finite() && *value >= 0.0)
+            else {
+                continue;
+            };
+            tiers.push(QuotaTier {
+                name: name.to_string(),
+                utilization,
+                resets_at: entry.get("reset_time").and_then(extract_reset_time),
+                used_value_usd: None,
+                max_value_usd: None,
+            });
+        }
     }
 
     Ok(SubscriptionQuota {
@@ -1847,13 +1881,104 @@ mod tests {
     use super::{
         detect_provider, kimi_quota_base, parse_afp_tiers, parse_coding_plan_tiers,
         parse_command_code_quota, parse_minimax_tiers, parse_ollama_cloud_tiers,
-        parse_opencode_go_tiers, parse_zhipu_token_tiers, query_command_code_at, query_zhipu_at,
-        query_zhipu_team_at, volcengine_canonical_query, volcengine_is_auth_error_code,
-        volcengine_region, volcengine_response_error, volcengine_sign, zhipu_outcome_from_body,
-        zhipu_quota_base, CodingPlanOutcome, CodingPlanProvider, CredentialStatus, TIER_FIVE_HOUR,
-        TIER_MONTHLY, TIER_WEEKLY_LIMIT,
+        parse_opencode_go_tiers, parse_zhipu_token_tiers, query_command_code_at, query_kimi_at,
+        query_zhipu_at, query_zhipu_team_at, volcengine_canonical_query,
+        volcengine_is_auth_error_code, volcengine_region, volcengine_response_error,
+        volcengine_sign, zhipu_outcome_from_body, zhipu_quota_base, CodingPlanOutcome,
+        CodingPlanProvider, CredentialStatus, TIER_FIVE_HOUR, TIER_MONTHLY, TIER_WEEKLY_LIMIT,
     };
     use serde_json::json;
+
+    #[tokio::test]
+    async fn kimi_global_monthly_tiers_do_not_invent_weekly_quota() {
+        ensure_no_proxy_for_loopback();
+        let body = json!({
+            "limits": [{"detail": {"limit": "100", "remaining": "77",
+                "resetTime": "2030-01-01T05:00:00Z"}}],
+            "usages": {
+                "limit_5h": {"used_ratio": 0.23, "reset_time": "2030-01-01T05:00:00Z"},
+                "limit_month_total": {"used_ratio": 0.4, "reset_time": "2030-02-01T00:00:00Z"},
+                "limit_month_code": {"used_ratio": 0.35, "reset_time": "2030-02-01T00:00:00Z"}
+            }
+        });
+        let (base, paths, handle) =
+            spawn_sequence_server(vec![Some(http_response("200 OK", &body.to_string()))]);
+        let quota = query_kimi_at(&format!("{base}/coding/v1/"), "test-key")
+            .await
+            .unwrap();
+        handle.join().unwrap();
+
+        assert_eq!(*paths.lock().unwrap(), ["/coding/v1/usages"]);
+        assert!(quota.success);
+        assert_eq!(quota.tiers.len(), 3);
+        for (tier, (name, used, reset)) in quota.tiers.iter().zip([
+            (TIER_FIVE_HOUR, 23.0, "2030-01-01T05:00:00Z"),
+            ("kimi_monthly_total", 40.0, "2030-02-01T00:00:00Z"),
+            ("kimi_monthly_code", 35.0, "2030-02-01T00:00:00Z"),
+        ]) {
+            assert_eq!(tier.name, name);
+            assert!((tier.utilization - used).abs() < 1e-9);
+            assert_eq!(tier.resets_at.as_deref(), Some(reset));
+        }
+    }
+
+    #[tokio::test]
+    async fn kimi_ratio_only_tiers_support_weekly_and_zero_usage() {
+        ensure_no_proxy_for_loopback();
+        let body = json!({"usages": {
+            "limit_5h": {"used_ratio": 0, "reset_time": "2030-01-01T05:00:00Z"},
+            "limit_7d": {"used_ratio": "0.6", "reset_time": "2030-01-08T00:00:00Z"}
+        }});
+        let (base, handle) = spawn_once_server(Some(http_response("200 OK", &body.to_string())));
+        let quota = query_kimi_at(&base, "test-key").await.unwrap();
+        handle.join().unwrap();
+
+        assert_eq!(quota.tiers.len(), 2);
+        assert_eq!(quota.tiers[0].name, TIER_FIVE_HOUR);
+        assert_eq!(quota.tiers[0].utilization, 0.0);
+        assert_eq!(quota.tiers[1].name, TIER_WEEKLY_LIMIT);
+        assert_eq!(quota.tiers[1].utilization, 60.0);
+        assert_eq!(
+            quota.tiers[1].resets_at.as_deref(),
+            Some("2030-01-08T00:00:00Z")
+        );
+    }
+
+    #[tokio::test]
+    async fn kimi_legacy_counters_take_precedence_without_duplicate_tiers() {
+        ensure_no_proxy_for_loopback();
+        let body = json!({
+            "limits": [{"detail": {"limit": "100", "remaining": "75"}}],
+            "usage": {"limit": "100", "remaining": "40"},
+            "usages": {"limit_5h": {"used_ratio": 0}, "limit_7d": {"used_ratio": 0}}
+        });
+        let (base, handle) = spawn_once_server(Some(http_response("200 OK", &body.to_string())));
+        let quota = query_kimi_at(&base, "test-key").await.unwrap();
+        handle.join().unwrap();
+
+        assert_eq!(quota.tiers.len(), 2);
+        assert_eq!(quota.tiers[0].name, TIER_FIVE_HOUR);
+        assert_eq!(quota.tiers[0].utilization, 25.0);
+        assert_eq!(quota.tiers[1].name, TIER_WEEKLY_LIMIT);
+        assert_eq!(quota.tiers[1].utilization, 60.0);
+    }
+
+    #[tokio::test]
+    async fn kimi_invalid_ratio_fields_do_not_create_quota_tiers() {
+        ensure_no_proxy_for_loopback();
+        let body = json!({"usages": {
+            "limit_5h": null,
+            "limit_7d": {"reset_time": "2030-01-08T00:00:00Z"},
+            "limit_month_total": {"used_ratio": "NaN"},
+            "limit_month_code": {"used_ratio": -0.1}
+        }});
+        let (base, handle) = spawn_once_server(Some(http_response("200 OK", &body.to_string())));
+        let quota = query_kimi_at(&base, "test-key").await.unwrap();
+        handle.join().unwrap();
+
+        assert!(quota.success);
+        assert!(quota.tiers.is_empty());
+    }
 
     #[test]
     fn kimi_detects_cn_and_global_hosts() {

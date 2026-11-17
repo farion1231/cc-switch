@@ -4266,6 +4266,8 @@
       "agyThirdPartyFiveHour": "Claude 5 ч",
       "agyThirdPartyWeekly": "Claude нед",
       "monthly": "Мес",
+      "kimiMonthlyTotal": "Мес. всего",
+      "kimiMonthlyCode": "Мес. кодинг",
       "credits": "Кредиты",
       "copilotPremium": "Credits"
     },
@@ -4287,6 +4289,8 @@
     "agyThirdPartyWeekly": "Claude/GPT, неделя",
     "weeklyLimit": "Еженедельно",
     "monthly": "Ежемесячно",
+    "kimiMonthlyTotal": "Всего за месяц",
+    "kimiMonthlyCode": "Кодинг за месяц",
     "credits": "Кредиты",
     "copilotPremium": "Credits",
     "copilotCompletions": "Автодополнения",

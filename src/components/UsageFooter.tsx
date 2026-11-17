@@ -5,6 +5,8 @@ import { type AppId } from "@/lib/api";
 import { useUsageQuery } from "@/lib/query/queries";
 import { UsageData, Provider } from "@/types";
 import {
+  collapseInlineGroups,
+  tierBreakdown,
   tierLabel,
   tierShortLabel,
 } from "@/components/SubscriptionQuotaFooter";
@@ -166,10 +168,11 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
   if (isTokenPlan && usageDataList.every((d) => d.unit === "%")) {
     const tiers = usageDataList.map((d) => toQuotaTier(d));
     const planLabel = tiers[0]?.planLabel;
-    const rows = tiers.map((tier, index) => {
-      const label = tierLabel(t, tier.name);
+    const visibleTiers = inline ? collapseInlineGroups(tiers) : tiers;
+    const rows = visibleTiers.map((tier, index) => {
+      const label = tierLabel(t, tier.name, inline);
       const line = tierLine(t, tier, label, {
-        short: tierShortLabel(t, tier.name),
+        short: tierShortLabel(t, tier.name, inline),
         display,
       });
       return {
@@ -187,6 +190,7 @@ const UsageFooter: React.FC<UsageFooterProps> = ({
         queriedAt={lastQueriedAt}
         loading={loading}
         onRefresh={refresh}
+        breakdown={tierBreakdown(t, tiers, display) ?? undefined}
       />
     ) : (
       <QuotaBars

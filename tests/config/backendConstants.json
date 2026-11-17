@@ -67,6 +67,10 @@
     "https://proxy.example.com/ollama.com/v1": null,
     "https://api.openai.com/v1": null
   },
+  "kimiMonthlyTiers": [
+    "kimi_monthly_total",
+    "kimi_monthly_code"
+  ],
   "quotaWarnBelowPercent": 20.0,
   "exchangeRateCurrencies": [
     "CNY",
