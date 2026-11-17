@@ -409,7 +409,6 @@ fn profile_and_universal_mutations_wait_for_their_serial_locks() {
         "upsert_universal_provider",
         super::provider::universal_mutation(&state, move |state| {
             crate::services::ProviderService::upsert_universal(state, universal)
-                .map_err(|e| e.to_string())
         }),
     )
     .unwrap());
