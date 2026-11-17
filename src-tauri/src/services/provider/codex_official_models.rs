@@ -909,32 +909,31 @@ pub(crate) mod testing {
 mod tests {
     use super::testing::*;
     use super::*;
+    use crate::test_support::EnvVars;
     use serde_json::json;
     use serial_test::serial;
     use std::sync::mpsc;
 
     /// 临时 home（缓存文件落在这里），结束时换回假依赖之前的状态。
     struct Scope {
+        _env: EnvVars,
         _dir: tempfile::TempDir,
-        saved: Option<std::ffi::OsString>,
     }
 
     impl Scope {
         fn new() -> Self {
             let dir = tempfile::TempDir::new().unwrap();
-            let saved = std::env::var_os("CC_SWITCH_TEST_HOME");
-            std::env::set_var("CC_SWITCH_TEST_HOME", dir.path());
-            Self { _dir: dir, saved }
+            let env = EnvVars::new().set("CC_SWITCH_TEST_HOME", dir.path());
+            Self {
+                _env: env,
+                _dir: dir,
+            }
         }
     }
 
     impl Drop for Scope {
         fn drop(&mut self) {
             reset_test_env();
-            match self.saved.take() {
-                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
-                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
-            }
         }
     }
 

@@ -531,23 +531,6 @@ impl ClaudeAccountManager {
         Ok(removed.into_iter().map(|(key, _)| key).collect())
     }
 
-    /// 账号在本机的 `CLAUDE_CONFIG_DIR`；不在这台电脑上（别的设备同步来的绑定、已删除）为 `None`。
-    pub async fn config_dir_of(&self, account_id: &str) -> Option<PathBuf> {
-        // 拿着锁读盘：和正在进行的改动串行
-        let _store = self.store.lock().await;
-        config_dir_on_disk(&self.data_dir, account_id)
-    }
-
-    /// 本机全部账号目录（不管存不存在）：判断 live 里的 `CLAUDE_CONFIG_DIR` 是不是 CC Switch 写的。
-    pub async fn all_config_dirs(&self) -> Vec<PathBuf> {
-        load_store(&self.data_dir)
-            .accounts
-            .values()
-            .filter(|data| layout::valid_local_id(&data.local_id))
-            .map(|data| layout::config_dir(&self.data_dir, &data.local_id))
-            .collect()
-    }
-
     pub fn data_dir(&self) -> &Path {
         &self.data_dir
     }

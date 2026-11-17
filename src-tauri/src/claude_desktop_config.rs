@@ -1788,11 +1788,12 @@ mod tests {
     }
 
     fn set_proxy_port(db: &Database, port: u16) {
-        let config = crate::proxy::types::ProxyConfig {
-            listen_port: port,
-            ..Default::default()
-        };
-        futures::executor::block_on(db.update_proxy_config(config)).expect("update proxy config");
+        futures::executor::block_on(async {
+            let mut proxy = db.get_global_proxy_config().await?;
+            proxy.listen_port = port;
+            db.update_global_proxy_config(proxy).await
+        })
+        .expect("update proxy config");
     }
 
     fn direct_provider(id: &str) -> Provider {
