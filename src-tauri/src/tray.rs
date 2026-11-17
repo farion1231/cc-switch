@@ -11,9 +11,8 @@
 use crate::sync_utils::MutexExt;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{LazyLock, Mutex, OnceLock};
 
-use once_cell::sync::Lazy;
 use serde::Serialize;
 use tauri::image::Image;
 use tauri::menu::{
@@ -78,8 +77,8 @@ pub(crate) const WARN_BELOW_PERCENT: f64 = 20.0;
 
 /// 每个应用行的子菜单句柄，额度更新时就地改标题而不是整菜单重建（整建会关掉 macOS 上
 /// 正开着的菜单）。`create_tray_menu` 每次重建都整表覆盖写入。
-static TRAY_SECTION_SUBMENUS: Lazy<Mutex<HashMap<AppType, Submenu<tauri::Wry>>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
+static TRAY_SECTION_SUBMENUS: LazyLock<Mutex<HashMap<AppType, Submenu<tauri::Wry>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 // ─── 文案 ────────────────────────────────────────────────────────────────────
 
@@ -1527,7 +1526,7 @@ fn collect_app_snapshot(
 /// 启动流程（接上路由、拉起 Desktop 映射服务）走完之前不报「路由服务没在跑」：那时它本来就还没起来。
 static STARTUP_SETTLED: AtomicBool = AtomicBool::new(false);
 /// 启动时没能接上、已退回直连的应用（托盘自己留一份，界面照样取走它的那份）。
-static ATTACH_FAILURES: Lazy<Mutex<Vec<(AppType, bool)>>> = Lazy::new(|| Mutex::new(Vec::new()));
+static ATTACH_FAILURES: Mutex<Vec<(AppType, bool)>> = Mutex::new(Vec::new());
 
 /// 托盘里切换失败的应用。规格 5.5：处理掉才消失（同一应用之后切换成功、或打开过它的页面），
 /// 不按时间过期。
@@ -1536,9 +1535,10 @@ struct SwitchFailure {
     reason: String,
 }
 
-static SWITCH_FAILURES: Lazy<Mutex<Vec<SwitchFailure>>> = Lazy::new(|| Mutex::new(Vec::new()));
+static SWITCH_FAILURES: Mutex<Vec<SwitchFailure>> = Mutex::new(Vec::new());
 /// 上一次建菜单时菜单上会自己过时的那部分，悬停图标 / 路由服务启停时比一下，变了才重建。
-static LAST_STATUS: Lazy<Mutex<MenuStatus>> = Lazy::new(|| Mutex::new(MenuStatus::default()));
+static LAST_STATUS: LazyLock<Mutex<MenuStatus>> =
+    LazyLock::new(|| Mutex::new(MenuStatus::default()));
 
 /// 启动流程走完：记下启动时退回直连的应用，重建一次菜单。
 pub fn mark_startup_settled(app: &tauri::AppHandle) {
@@ -1668,7 +1668,7 @@ struct FeedbackRecord {
     seen: bool,
 }
 
-static FEEDBACK: Lazy<Mutex<Option<FeedbackRecord>>> = Lazy::new(|| Mutex::new(None));
+static FEEDBACK: Mutex<Option<FeedbackRecord>> = Mutex::new(None);
 
 /// 切换成功后要不要说一句：客户端只在启动时读配置的才说；Claude Code 直连、路由 / 故障转移
 /// 换一家立即生效，不说。Claude Desktop 换一家都要重启 Desktop（路由那家的模型列表写在配置
@@ -2743,7 +2743,7 @@ fn tray_tooltip(texts: &TrayTexts, problems: &[TrayProblem]) -> String {
 }
 
 /// 现在托盘上的（有没有圆点，悬停提示）；`None` = 托盘图标还没建好，还是建图标时的样子。
-static APPLIED_INDICATOR: Lazy<Mutex<Option<(bool, String)>>> = Lazy::new(|| Mutex::new(None));
+static APPLIED_INDICATOR: Mutex<Option<(bool, String)>> = Mutex::new(None);
 
 /// 问题区有内容时托盘图标加圆点、悬停提示写第一条问题（macOS 不设提示，见
 /// `TRAY_TOOLTIP_ENABLED`）；问题都消失后换回原图标和提示。只在变了时才动（Linux 每次换图标
@@ -2976,7 +2976,7 @@ impl TrayNavigation {
 }
 
 /// 等主界面来取的导航：轻量模式下窗口是新建的，事件发出去时前端可能还没开始监听。
-static PENDING_NAVIGATION: Lazy<Mutex<Option<TrayNavigation>>> = Lazy::new(|| Mutex::new(None));
+static PENDING_NAVIGATION: Mutex<Option<TrayNavigation>> = Mutex::new(None);
 
 /// 解析 `nav:…` 菜单 id：`nav:main`、`nav:settings:<分组>`、`nav:app:<应用>[:…]`、
 /// `nav:add:<应用>`、`nav:needs:<应用>:<供应商 id>`。
@@ -3510,8 +3510,8 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
 }
 
 /// 托盘面板发起过的脚本额度查询：(应用, 供应商 id) → 上次查询时间。
-static PANEL_SCRIPT_QUERIES: Lazy<Mutex<HashMap<(AppType, String), std::time::Instant>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
+static PANEL_SCRIPT_QUERIES: LazyLock<Mutex<HashMap<(AppType, String), std::time::Instant>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// 托盘面板弹出时：子面板里每一家都写额度，不在用的那几家也要有数据。开了自动查询的脚本
 /// 供应商（余额、套餐），缓存里还没有、或距面板上次替它查已超过它自己的自动查询间隔，就在
