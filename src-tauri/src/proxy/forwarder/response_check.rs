@@ -474,4 +474,71 @@ impl RequestForwarder {
         let replay = futures::stream::once(async move { Ok(first) }).chain(stream);
         Ok(ProxyResponse::streamed(status, headers, replay))
     }
+
+    /// Hold back a 2xx response until it is known not to be a semantic
+    /// failure, so such a failure stays inside the retry loop.
+    pub(super) async fn validate_success_response(
+        &self,
+        response: ProxyResponse,
+        request_is_streaming: bool,
+        codex_responses_to_anthropic: bool,
+        resolved_claude_api_format: Option<&str>,
+        opaque_state_request: Option<&Value>,
+    ) -> Result<ProxyResponse, ProxyError> {
+        let mut response = self
+            .prepare_success_response_for_failover(response, request_is_streaming)
+            .await?;
+        // Streaming requests normally return SSE. If a compatible gateway
+        // explicitly returns JSON instead, buffer and validate it inside the retry
+        // loop as well so a 2xx Anthropic error envelope can still fail over. Do
+        // not buffer unknown content types: some gateways omit the SSE header.
+        if codex_responses_to_anthropic && (!request_is_streaming || response.is_json()) {
+            response = self
+                .validate_codex_anthropic_success_response(response)
+                .await?;
+        } else if matches!(resolved_claude_api_format, Some("openai_responses")) {
+            if !request_is_streaming || response.is_json() {
+                // Claude→Responses gateways can also return a semantic failure in an
+                // HTTP 2xx Response object. Validate buffered/JSON bodies inside the
+                // retry loop so an early failure can still select another provider.
+                response = self.validate_responses_success_response(response).await?;
+            } else {
+                // Delay committing the downstream stream until the upstream emits
+                // either productive output or a valid non-failure terminal event.
+                // A response.failed/error before output remains failover-safe.
+                response = self.validate_responses_stream_start(response).await?;
+            }
+        } else if let Some(request) = opaque_state_request.filter(|_| !response.is_json()) {
+            response = self.hold_opaque_state_stream(response, request).await?;
+        }
+        Ok(response)
+    }
+}
+
+/// The `UpstreamError` for a non-2xx response, with its (decoded, size-capped)
+/// body kept when it is UTF-8.
+pub(super) async fn upstream_error(response: ProxyResponse) -> Result<ProxyError, ProxyError> {
+    let status_code = response.status().as_u16();
+    // 错误响应同样可能被上游压缩（content-encoding）。reqwest 未启用任何
+    // 自动解压 feature，这里拿到的是原始字节；不解压的话，压缩过的错误体会
+    // 在 from_utf8 处变成非 UTF-8 而被丢弃，隐藏掉上游的限流/鉴权等详情。
+    let encoding = get_content_encoding(response.headers());
+    let raw = response.bytes_with_limit(MAX_RESPONSE_BODY_BYTES).await?;
+    let decoded = match encoding {
+        Some(encoding) => {
+            match decompress_body_with_limit(&encoding, &raw, MAX_RESPONSE_BODY_BYTES) {
+                Ok(Some(decompressed)) => decompressed,
+                // 不支持的编码 / 解压失败 / 解压后超限：退回（已有上限的）
+                // 原始字节，尽量保留可读信息
+                _ => raw.to_vec(),
+            }
+        }
+        None => raw.to_vec(),
+    };
+    let body_text = String::from_utf8(decoded).ok();
+
+    Ok(ProxyError::UpstreamError {
+        status: status_code,
+        body: body_text,
+    })
 }
