@@ -458,9 +458,13 @@ export function AtomCodeProviderForm({
               </Label>
               <Select
                 value={config.account?.provider || "openai-compatible"}
-                onValueChange={(value) =>
-                  updateAccount({ provider: value as AtomCodeProviderType })
-                }
+                onValueChange={(value) => {
+                  // Radix Select 会监听原生 form reset 事件（choosePreset 里的
+                  // form.reset 会触发），未设 defaultValue 时回调带空串——
+                  // 忽略它，否则厂商预设 id 会被清空、保存时被后端白名单拒绝
+                  if (!value) return;
+                  updateAccount({ provider: value as AtomCodeProviderType });
+                }}
               >
                 <SelectTrigger id="atomcode-provider-type">
                   <SelectValue />
