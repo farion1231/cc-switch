@@ -2739,10 +2739,6 @@ pub(crate) fn plan_codex_stack_catalog(
                 "description".to_string(),
                 json!(crate::mode::stack::model_description(&model, window)),
             );
-            // 第三方不支持 Responses Lite 协议。
-            if obj.get("use_responses_lite") == Some(&Value::Bool(true)) {
-                obj.insert("use_responses_lite".to_string(), Value::Bool(false));
-            }
             entries.push(entry);
         }
     }
@@ -2784,9 +2780,30 @@ pub(crate) fn codex_stack_third_party_rows(
         },
         _ => Vec::new(),
     };
+    // 行里没配模型目录时，这家在直连、路由下不写目录，Codex 用自己的官方条目，GPT-6 系列
+    // 走 Responses Lite（请求带 `reasoning.context = "all_turns"`）。合并目录照着来，同一家
+    // 在聚合下发的请求和直连一样：按官方客户端转给官方后端的中转会自己加 Lite 头，请求里
+    // 缺 all_turns 就被拒（#9665）。显式配了目录的行、走转换的行仍不用 Lite。
+    let follows_codex_default = row.profile == CodexCatalogToolProfile::NativeResponses
+        && codex_catalog_model_specs(row.settings).is_empty();
+    let official = if follows_codex_default {
+        codex_openai_official_models()
+    } else {
+        Vec::new()
+    };
     let windows = RowWindows::of(row.config_text);
-    for entry in &mut entries {
+    for (entry, spec) in entries.iter_mut().zip(&specs) {
         sink_row_windows(entry, &windows, true);
+        let lite = find_codex_official_model(&spec.model, &official)
+            .and_then(|found| found.get("use_responses_lite"))
+            == Some(&Value::Bool(true));
+        if let Some(obj) = entry.as_object_mut() {
+            if lite {
+                obj.insert("use_responses_lite".to_string(), Value::Bool(true));
+            } else if obj.get("use_responses_lite") == Some(&Value::Bool(true)) {
+                obj.insert("use_responses_lite".to_string(), Value::Bool(false));
+            }
+        }
     }
     Ok(entries)
 }
@@ -5744,6 +5761,64 @@ wire_api = "responses"
         // 各家按自己的链路：走 Chat 的那家不发 original 精度的图片。
         assert_eq!(models[0]["supports_image_detail_original"], true);
         assert_eq!(models[1]["supports_image_detail_original"], false);
+    }
+
+    /// #9665：没配目录的行在直连下由 Codex 用官方条目（GPT-6 走 Lite），聚合下要一致；
+    /// 显式配了目录的行、走 Chat 转换的行仍不用 Lite。
+    #[test]
+    fn stacked_rows_without_catalog_follow_codex_responses_lite_default() {
+        let models = with_official_models(official_gpt_rows(), || {
+            let bare = json!({});
+            let explicit = json!({ "modelCatalog": { "models": [{ "model": "gpt-6-sol" }] } });
+            let member = |key, settings, profile| CodexStackCatalogMember {
+                key,
+                provider_name: key,
+                row: CodexCatalogRow {
+                    settings,
+                    config_text: "model = \"gpt-6-sol\"\n",
+                    profile,
+                },
+            };
+            plan_codex_stack_catalog(
+                CodexStackRoute::ThirdParty(CodexCatalogRow {
+                    settings: &bare,
+                    config_text: "model = \"gpt-6-sol\"\n",
+                    profile: CodexCatalogToolProfile::NativeResponses,
+                }),
+                &[
+                    member("bare", &bare, CodexCatalogToolProfile::NativeResponses),
+                    member(
+                        "listed",
+                        &explicit,
+                        CodexCatalogToolProfile::NativeResponses,
+                    ),
+                    member("chat", &bare, CodexCatalogToolProfile::ProxyChat),
+                ],
+                false,
+            )
+            .unwrap()["models"]
+                .as_array()
+                .unwrap()
+                .clone()
+        });
+        let lite: Vec<_> = models
+            .iter()
+            .map(|model| {
+                (
+                    model["slug"].as_str().unwrap().to_string(),
+                    model["use_responses_lite"].clone(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            lite,
+            vec![
+                ("gpt-6-sol".to_string(), json!(true)),
+                ("ccs-bare/gpt-6-sol".to_string(), json!(true)),
+                ("ccs-listed/gpt-6-sol".to_string(), json!(false)),
+                ("ccs-chat/gpt-6-sol".to_string(), json!(false)),
+            ]
+        );
     }
 
     #[test]
