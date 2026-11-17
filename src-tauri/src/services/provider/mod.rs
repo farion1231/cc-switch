@@ -4718,7 +4718,7 @@ wire_api = "responses"
                 );
                 child.meta = Some(
                     serde_json::from_value(json!({
-                        "usage_script": {"enabled": true, "language": "javascript", "code": app,
+                        "usage_script": {"enabled": true, "language": "javascript", "code": app.as_str(),
                             "apiKey": "usage-only-key", "autoQueryInterval": 15},
                         "commonConfigEnabled": false,
                         "endpointAutoSelect": true
@@ -4727,7 +4727,7 @@ wire_api = "responses"
                 );
                 child.created_at = Some(123 + index as i64);
                 child.sort_index = Some(10 + index);
-                child.settings_config["local_setting"] = json!(app);
+                child.settings_config["local_setting"] = json!(app.as_str());
                 state.db.save_provider(app, &child).unwrap();
                 state
                     .db
@@ -4769,7 +4769,7 @@ wire_api = "responses"
                     assert_eq!(after.sort_index, before.sort_index, "{app}");
                     assert_eq!(after.name, "Updated");
                     assert_eq!(after.notes.as_deref(), Some("shared note"));
-                    assert_eq!(after.settings_config["local_setting"], json!(app));
+                    assert_eq!(after.settings_config["local_setting"], json!(app.as_str()));
                     let generated = match app {
                         AppType::Claude => universal.to_claude_provider(),
                         AppType::Codex => universal.to_codex_provider(),
