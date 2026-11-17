@@ -1007,19 +1007,11 @@ pub(crate) fn tool_runs_in_wsl(tool: &str) -> bool {
 
 #[cfg(target_os = "windows")]
 pub(super) fn wsl_distro_for_tool(tool: &str) -> Option<String> {
-    let override_dir = match tool {
-        "claude" => crate::settings::get_claude_override_dir(),
-        "codex" => crate::settings::get_codex_override_dir(),
-        "gemini" => crate::settings::get_gemini_override_dir(),
-        "grok" => crate::settings::get_grok_override_dir(),
-        "opencode" => crate::settings::get_opencode_override_dir(),
-        "openclaw" => crate::settings::get_openclaw_override_dir(),
-        "hermes" => crate::settings::get_hermes_override_dir(),
-        "pi" => crate::settings::get_pi_override_dir(),
-        "omp" => crate::settings::get_omp_override_dir(),
-        "dsh" => crate::settings::get_dsh_override_dir(),
-        _ => None,
-    }?;
+    let app = known_tool(tool)?
+        .id
+        .parse::<crate::app_config::AppType>()
+        .ok()?;
+    let override_dir = crate::settings::get_override_dir(&app)?;
 
     wsl_distro_from_path(&override_dir)
 }

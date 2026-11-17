@@ -32,7 +32,7 @@
 
 use crate::config::{atomic_write, get_app_config_dir};
 use crate::error::AppError;
-use crate::settings::{effective_backup_retain_count, get_hermes_override_dir};
+use crate::settings::{effective_backup_retain_count, get_override_dir};
 use chrono::Local;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -51,7 +51,7 @@ use std::sync::{Mutex, OnceLock};
 ///   2. `HERMES_HOME` 环境变量(trim 后非空;按原样,不展开 `~`,与 Hermes `Path(val)` 一致)
 ///   3. 平台默认(Windows: `%LOCALAPPDATA%\hermes`,Mac/Linux: `~/.hermes`)
 pub fn get_hermes_dir() -> PathBuf {
-    if let Some(override_dir) = get_hermes_override_dir() {
+    if let Some(override_dir) = get_override_dir(&crate::app_config::AppType::Hermes) {
         return override_dir;
     }
 

@@ -89,7 +89,7 @@ fn test_home_override() -> Option<PathBuf> {
 
 /// 获取 Claude Code 配置目录路径
 pub fn get_claude_config_dir() -> PathBuf {
-    if let Some(custom) = crate::settings::get_claude_override_dir() {
+    if let Some(custom) = crate::settings::get_override_dir(&crate::app_config::AppType::Claude) {
         return custom;
     }
 
@@ -284,7 +284,8 @@ fn derive_mcp_path_from_override(dir: &Path) -> PathBuf {
 
 /// 获取 Claude MCP 配置文件路径
 pub fn get_claude_mcp_path() -> PathBuf {
-    if let Some(custom_dir) = crate::settings::get_claude_override_dir() {
+    if let Some(custom_dir) = crate::settings::get_override_dir(&crate::app_config::AppType::Claude)
+    {
         if let Some(path) = default_mcp_path_for_config_dir(&custom_dir) {
             return path;
         }
