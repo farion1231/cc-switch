@@ -6,9 +6,11 @@ mod copilot;
 mod diagnostics;
 mod endpoint;
 mod headers;
+mod managed_auth;
 mod opencode;
 mod request_body;
 mod response_check;
+mod send;
 
 use super::hyper_client::{ProxyResponse, MAX_RESPONSE_BODY_BYTES};
 use super::{
@@ -57,6 +59,7 @@ use headers::*;
 use http::Extensions;
 use opencode::*;
 use request_body::*;
+use response_check::*;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::borrow::Cow;
@@ -2154,158 +2157,23 @@ impl RequestForwarder {
         let mut auth_headers = if let Some(mut auth) = adapter.extract_auth(provider) {
             // GitHub Copilot 特殊处理：从 CopilotAuthManager 获取真实 token
             if auth.strategy == AuthStrategy::GitHubCopilot {
-                if let Some(app_handle) = &self.app_handle {
-                    let copilot_state = app_handle.state::<CopilotAuthState>();
-                    let copilot_auth: tokio::sync::RwLockReadGuard<'_, CopilotAuthManager> =
-                        copilot_state.0.read().await;
-
-                    // 从 provider.meta 获取关联的 GitHub 账号 ID（多账号支持）
-                    let account_id = provider
-                        .meta
-                        .as_ref()
-                        .and_then(|m| m.managed_account_id_for("github_copilot"));
-
-                    // 根据账号 ID 获取对应 token（向后兼容：无账号 ID 时使用第一个账号）
-                    let token_result = match &account_id {
-                        Some(id) => {
-                            log::debug!("[Copilot] 使用指定账号 {id} 获取 token");
-                            copilot_auth.get_valid_token_for_account(id).await
-                        }
-                        None => {
-                            log::debug!("[Copilot] 使用默认账号获取 token");
-                            copilot_auth.get_valid_token().await
-                        }
-                    };
-
-                    match token_result {
-                        Ok(token) => {
-                            auth = AuthInfo::new(token, AuthStrategy::GitHubCopilot);
-                            log::debug!(
-                                "[Copilot] 成功获取 Copilot token (account={})",
-                                account_id.as_deref().unwrap_or("default")
-                            );
-                        }
-                        Err(e) => {
-                            log::error!(
-                                "[Copilot] 获取 Copilot token 失败 (account={}): {e}",
-                                account_id.as_deref().unwrap_or("default")
-                            );
-                            return Err(ProxyError::AuthError(format!(
-                                "GitHub Copilot 认证失败: {e}"
-                            )));
-                        }
-                    }
-                } else {
-                    log::error!("[Copilot] AppHandle 不可用");
-                    return Err(ProxyError::AuthError(
-                        "GitHub Copilot 认证不可用（无 AppHandle）".to_string(),
-                    ));
-                }
+                let token = self.copilot_access_token(provider).await?;
+                auth = AuthInfo::new(token, AuthStrategy::GitHubCopilot);
             }
 
             // Codex OAuth 特殊处理：从 CodexOAuthManager 获取真实 access_token
             if auth.strategy == AuthStrategy::CodexOAuth {
-                if let Some(app_handle) = &self.app_handle {
-                    let codex_state = app_handle.state::<CodexOAuthState>();
-                    let codex_auth = &codex_state.0;
-
-                    // 从 provider.meta 获取关联的 ChatGPT 账号 ID
-                    let account_id = provider
-                        .meta
-                        .as_ref()
-                        .and_then(|m| m.managed_account_id_for("codex_oauth"));
-
-                    let resolved_account_id = match account_id {
-                        Some(id) => Some(id),
-                        None => codex_auth.default_account_id().await,
-                    };
-
-                    let token_result = match &resolved_account_id {
-                        Some(id) => {
-                            log::debug!("[CodexOAuth] 使用指定账号 {id} 获取 token");
-                            codex_auth.get_valid_token_for_account(id).await
-                        }
-                        None => {
-                            return Err(ProxyError::AuthError(
-                                "Codex OAuth 认证失败: 无可用的 ChatGPT 账号".to_string(),
-                            ));
-                        }
-                    };
-
-                    match token_result {
-                        Ok(token) => {
-                            auth = AuthInfo::new(token, AuthStrategy::CodexOAuth);
-                            should_send_codex_oauth_session_headers = true;
-                            // 本地账号 ID 只用于绑定；请求头必须使用上游 workspace ID。
-                            codex_oauth_account_id = match resolved_account_id.as_deref() {
-                                Some(id) => Some(
-                                    codex_auth
-                                        .chatgpt_account_id_for_account(id)
-                                        .await
-                                        .map_err(|e| {
-                                            ProxyError::AuthError(format!(
-                                                "Codex OAuth 账号解析失败: {e}"
-                                            ))
-                                        })?,
-                                ),
-                                None => None,
-                            };
-                            log::debug!(
-                                "[CodexOAuth] 成功获取 access_token (account={})",
-                                codex_oauth_account_id.as_deref().unwrap_or("default")
-                            );
-                        }
-                        Err(e) => {
-                            log::error!("[CodexOAuth] 获取 access_token 失败: {e}");
-                            return Err(ProxyError::AuthError(format!(
-                                "Codex OAuth 认证失败: {e}"
-                            )));
-                        }
-                    }
-                } else {
-                    log::error!("[CodexOAuth] AppHandle 不可用");
-                    return Err(ProxyError::AuthError(
-                        "Codex OAuth 认证不可用（无 AppHandle）".to_string(),
-                    ));
-                }
+                let (token, account_id) = self.codex_oauth_access_token(provider).await?;
+                auth = AuthInfo::new(token, AuthStrategy::CodexOAuth);
+                should_send_codex_oauth_session_headers = true;
+                codex_oauth_account_id = account_id;
             }
 
             // xAI OAuth: resolve a managed account token immediately before
-            // sending the request. Invalid refresh credentials are persisted as
-            // requiring re-authentication by the manager.
+            // sending the request.
             if auth.strategy == AuthStrategy::XaiOAuth {
-                if let Some(app_handle) = &self.app_handle {
-                    let xai_state = app_handle.state::<XaiOAuthState>();
-                    let xai_auth: tokio::sync::RwLockReadGuard<'_, XaiOAuthManager> =
-                        xai_state.0.read().await;
-                    let account_id = provider
-                        .meta
-                        .as_ref()
-                        .and_then(|meta| meta.managed_account_id_for("xai_oauth"));
-                    let token_result = match &account_id {
-                        Some(id) => xai_auth.get_valid_token_for_account(id).await,
-                        None => xai_auth.get_valid_token().await,
-                    };
-                    match token_result {
-                        Ok(token) => {
-                            auth = AuthInfo::new(token, AuthStrategy::XaiOAuth);
-                            log::debug!(
-                                "[XaiOAuth] 成功获取 access_token (account={})",
-                                account_id.as_deref().unwrap_or("default")
-                            );
-                        }
-                        Err(error) => {
-                            log::error!("[XaiOAuth] 获取 access_token 失败: {error}");
-                            return Err(ProxyError::AuthError(format!(
-                                "xAI OAuth 认证失败: {error}"
-                            )));
-                        }
-                    }
-                } else {
-                    return Err(ProxyError::AuthError(
-                        "xAI OAuth 认证不可用（无 AppHandle）".to_string(),
-                    ));
-                }
+                let token = self.xai_oauth_access_token(provider).await?;
+                auth = AuthInfo::new(token, AuthStrategy::XaiOAuth);
             }
 
             for secret in std::iter::once(&auth.api_key).chain(auth.access_token.iter()) {
@@ -2352,27 +2220,6 @@ impl RequestForwarder {
                 self.copilot_optimizer_config.request_classification,
             )?;
         }
-
-        // Copilot 指纹头名（由 get_auth_headers 注入，需在原始头中去重）
-        let copilot_fingerprint_headers: &[&str] = if is_copilot {
-            &[
-                "user-agent",
-                "editor-version",
-                "editor-plugin-version",
-                "copilot-integration-id",
-                "x-github-api-version",
-                "openai-intent",
-                // 新增 headers
-                "x-initiator",
-                "x-interaction-type",
-                "x-interaction-id",
-                "x-vscode-user-agent-library-version",
-                "x-request-id",
-                "x-agent-task-id",
-            ]
-        } else {
-            &[]
-        };
 
         // 预计算上游 host 值（用于在原位替换 host header）
         let upstream_host = url
@@ -2425,292 +2272,33 @@ impl RequestForwarder {
         let should_send_anthropic_headers = adapter.name() == "Claude"
             && matches!(resolved_claude_api_format.as_deref(), Some("anthropic"));
 
-        // 预计算 anthropic-beta 值（仅 Claude）
-        let anthropic_beta_value = if should_send_anthropic_headers {
-            const CLAUDE_CODE_BETA: &str = "claude-code-20250219";
-            Some(if let Some(beta) = headers.get("anthropic-beta") {
-                if let Ok(beta_str) = beta.to_str() {
-                    if beta_str.contains(CLAUDE_CODE_BETA) {
-                        beta_str.to_string()
-                    } else {
-                        format!("{CLAUDE_CODE_BETA},{beta_str}")
-                    }
-                } else {
-                    CLAUDE_CODE_BETA.to_string()
-                }
-            } else {
-                CLAUDE_CODE_BETA.to_string()
-            })
-        } else if codex_impersonate_claude_code || codex_anthropic_one_m {
-            // Codex→Anthropic: emulation injects the claude-code marker; a [1m]
-            // model injects the context-1m marker.
-            let mut betas: Vec<&str> = Vec::new();
-            if codex_impersonate_claude_code {
-                betas.push("claude-code-20250219");
-            }
-            if codex_anthropic_one_m {
-                betas.push("context-1m-2025-08-07");
-            }
-            Some(betas.join(","))
-        } else {
-            None
-        };
+        let anthropic_beta_value = anthropic_beta_value(
+            headers,
+            should_send_anthropic_headers,
+            codex_impersonate_claude_code,
+            codex_anthropic_one_m,
+        );
 
-        // ============================================================
-        // 构建有序 HeaderMap — 内联替换，保持客户端原始顺序
-        // ============================================================
-        let mut ordered_headers = http::HeaderMap::new();
-        let mut saw_auth = false;
-        let mut saw_accept_encoding = false;
-        let mut saw_accept = false;
-        let mut saw_user_agent = false;
-        let mut saw_anthropic_beta = false;
-        let mut saw_anthropic_version = false;
-
-        for (key, value) in headers {
-            let key_str = key.as_str();
-
-            // --- host — 原位替换为上游 host（保持客户端原始位置） ---
-            if key_str.eq_ignore_ascii_case("host") {
-                if let Some(ref host_val) = upstream_host {
-                    if let Ok(hv) = http::HeaderValue::from_str(host_val) {
-                        ordered_headers.append(key.clone(), hv);
-                    }
-                }
-                continue;
-            }
-
-            // --- 连接 / 追踪 / CDN 类 — 无条件跳过 ---
-            if matches!(
-                key_str,
-                "content-length"
-                    | "transfer-encoding"
-                    | "x-forwarded-host"
-                    | "x-forwarded-port"
-                    | "x-forwarded-proto"
-                    | "forwarded"
-                    | "cf-connecting-ip"
-                    | "cf-ipcountry"
-                    | "cf-ray"
-                    | "cf-visitor"
-                    | "true-client-ip"
-                    | "fastly-client-ip"
-                    | "x-azure-clientip"
-                    | "x-azure-fdid"
-                    | "x-azure-ref"
-                    | "akamai-origin-hop"
-                    | "x-akamai-config-log-detail"
-                    | "x-request-id"
-                    | "x-correlation-id"
-                    | "x-trace-id"
-                    | "x-amzn-trace-id"
-                    | "x-b3-traceid"
-                    | "x-b3-spanid"
-                    | "x-b3-parentspanid"
-                    | "x-b3-sampled"
-                    | "traceparent"
-                    | "tracestate"
-            ) {
-                continue;
-            }
-
-            // --- 认证类 — 用 adapter 提供的认证头替换（在原始位置） ---
-            if key_str.eq_ignore_ascii_case("authorization")
-                || key_str.eq_ignore_ascii_case("x-api-key")
-                || key_str.eq_ignore_ascii_case("x-goog-api-key")
-            {
-                // Codex official account cards deliberately keep credentials
-                // out of provider storage. `requires_openai_auth = true` makes
-                // Codex send the active ChatGPT authorization, which must reach
-                // the official upstream unchanged. Other credential headers
-                // are still discarded.
-                if codex_official_auth_passthrough && key_str.eq_ignore_ascii_case("authorization")
-                {
-                    saw_auth = true;
-                    ordered_headers.append(key.clone(), value.clone());
-                    continue;
-                }
-                if !saw_auth {
-                    saw_auth = true;
-                    for (ah_name, ah_value) in &auth_headers {
-                        ordered_headers.append(ah_name.clone(), ah_value.clone());
-                    }
-                }
-                continue;
-            }
-
-            // --- x-app — during Codex→Anthropic emulation, `cli` is injected uniformly below ---
-            if codex_impersonate_claude_code && key_str.eq_ignore_ascii_case("x-app") {
-                continue;
-            }
-
-            // --- Codex/OpenAI fingerprint headers — never leak to an Anthropic upstream ---
-            // These are client/session identifiers from the incoming Codex request,
-            // not Anthropic protocol headers. Forwarding them both leaks identity and
-            // can defeat strict gateway fingerprint checks.
-            // The full set lives in `is_codex_client_fingerprint_header` so it stays in one
-            // place. (HeaderName is lowercased by the http crate, so a direct match is safe.)
-            // Codex Stack 请求发往第三方时同样剥掉：官方做路由时 Codex 每个请求都带着 ChatGPT
-            // 身份（`chatgpt-account-id` 等），它们只能发往官方上游。Stack 目标不会是官方账号，
-            // 这里仍按上游判断，防止以后放宽。只限 Codex：Claude Code 自己的 `x-stainless-*`
-            // 是 Anthropic SDK 的正常请求头，Stack 请求照常转发。
-            // 路由那家是第三方时 Codex 也可能以内置 openai 身份、带着 ChatGPT 登录发请求
-            // （`codex_direct` 的 `openai_route`），身份头同样只能发往官方或 ChatGPT 托管账号。
-            if should_strip_codex_client_fingerprint_header(
-                key_str,
-                &effective_endpoint,
-                codex_responses_to_anthropic,
-                codex_responses_to_chat,
-                codex_stack_request,
-                codex_official_auth_passthrough,
-                matches!(app_type, AppType::Codex) && !provider.is_codex_oauth(),
-            ) {
-                continue;
-            }
-
-            // --- accept — force application/json on the Codex→Anthropic path ---
-            // The Codex CLI sends `Accept: text/event-stream`, whereas a native
-            // Anthropic client sends `application/json` (streaming is driven by
-            // the body's stream:true). Strict Anthropic gateways return 406 Not
-            // Acceptable for an event-stream Accept, so normalize it here.
-            if codex_responses_to_anthropic && key_str.eq_ignore_ascii_case("accept") {
-                if !saw_accept {
-                    saw_accept = true;
-                    ordered_headers.append(
-                        http::header::ACCEPT,
-                        http::HeaderValue::from_static("application/json"),
-                    );
-                }
-                continue;
-            }
-
-            // --- accept-encoding — transform / SSE 路径强制 identity，其余保留原值 ---
-            if key_str.eq_ignore_ascii_case("accept-encoding") {
-                if !saw_accept_encoding {
-                    saw_accept_encoding = true;
-                    if force_identity_encoding {
-                        ordered_headers.append(
-                            http::header::ACCEPT_ENCODING,
-                            http::HeaderValue::from_static("identity"),
-                        );
-                    } else {
-                        ordered_headers.append(key.clone(), value.clone());
-                    }
-                }
-                continue;
-            }
-
-            // --- user-agent: provider-level override for local proxy routing ---
-            if !is_copilot && key_str.eq_ignore_ascii_case("user-agent") {
-                if !saw_user_agent {
-                    saw_user_agent = true;
-                    if let Some(ref ua) = custom_user_agent {
-                        ordered_headers.append(http::header::USER_AGENT, ua.clone());
-                    } else {
-                        ordered_headers.append(key.clone(), value.clone());
-                    }
-                }
-                continue;
-            }
-
-            // --- anthropic-beta — 用重建值替换（确保含 claude-code 标记） ---
-            if key_str.eq_ignore_ascii_case("anthropic-beta") {
-                if !saw_anthropic_beta {
-                    saw_anthropic_beta = true;
-                    if let Some(ref beta_val) = anthropic_beta_value {
-                        if let Ok(hv) = http::HeaderValue::from_str(beta_val) {
-                            ordered_headers.append("anthropic-beta", hv);
-                        }
-                    }
-                }
-                continue;
-            }
-
-            // --- anthropic-version — 透传客户端值 ---
-            if key_str.eq_ignore_ascii_case("anthropic-version") {
-                if should_send_anthropic_headers {
-                    saw_anthropic_version = true;
-                    ordered_headers.append(key.clone(), value.clone());
-                }
-                continue;
-            }
-
-            // --- Copilot 指纹头 — 跳过（由 auth_headers 提供） ---
-            if copilot_fingerprint_headers
-                .iter()
-                .any(|h| key_str.eq_ignore_ascii_case(h))
-            {
-                continue;
-            }
-
-            // --- 默认：透传 ---
-            ordered_headers.append(key.clone(), value.clone());
+        let mut ordered_headers = OutboundHeaderPlan {
+            upstream_host,
+            auth_headers: &auth_headers,
+            codex_official_auth_passthrough,
+            codex_impersonate_claude_code,
+            codex_responses_to_anthropic,
+            codex_responses_to_chat,
+            codex_stack_request,
+            codex_unmanaged_upstream: matches!(app_type, AppType::Codex)
+                && !provider.is_codex_oauth(),
+            effective_endpoint: &effective_endpoint,
+            force_identity_encoding,
+            is_copilot,
+            custom_user_agent,
+            opencode_fallback_user_agent,
+            anthropic_beta_value,
+            should_send_anthropic_headers,
+            codex_oauth_session_headers,
         }
-
-        // 如果原始请求中没有认证头，在末尾追加
-        if !saw_auth && !auth_headers.is_empty() {
-            for (ah_name, ah_value) in &auth_headers {
-                ordered_headers.append(ah_name.clone(), ah_value.clone());
-            }
-        }
-
-        // transform / SSE 路径在缺失时补 identity；普通透传不主动补 accept-encoding
-        if !saw_accept_encoding && force_identity_encoding {
-            ordered_headers.append(
-                http::header::ACCEPT_ENCODING,
-                http::HeaderValue::from_static("identity"),
-            );
-        }
-
-        // On the Codex→Anthropic path, add application/json when Accept is missing (matching a native Anthropic client).
-        if codex_responses_to_anthropic && !saw_accept {
-            ordered_headers.append(
-                http::header::ACCEPT,
-                http::HeaderValue::from_static("application/json"),
-            );
-        }
-
-        // Codex→Anthropic emulation: inject Claude Code's x-app: cli
-        if codex_impersonate_claude_code {
-            ordered_headers.append("x-app", http::HeaderValue::from_static("cli"));
-        }
-
-        if !saw_user_agent {
-            if let Some(ua) = custom_user_agent
-                .as_ref()
-                .or(opencode_fallback_user_agent.as_ref())
-            {
-                ordered_headers.append(http::header::USER_AGENT, ua.clone());
-            }
-        }
-
-        // 如果原始请求中没有 anthropic-beta 且有值需要添加，追加
-        if !saw_anthropic_beta {
-            if let Some(ref beta_val) = anthropic_beta_value {
-                if let Ok(hv) = http::HeaderValue::from_str(beta_val) {
-                    ordered_headers.append("anthropic-beta", hv);
-                }
-            }
-        }
-
-        // anthropic-version: add the default only when it is missing.
-        // The Codex→Anthropic path also needs this header. Note this is independent
-        // of anthropic-beta: the Claude Code-specific beta is only sent when
-        // impersonation is on (handled above); on the plain Codex→Anthropic path
-        // (impersonation off) anthropic-version is still required but no beta is sent.
-        if (should_send_anthropic_headers || codex_responses_to_anthropic) && !saw_anthropic_version
-        {
-            ordered_headers.append(
-                "anthropic-version",
-                http::HeaderValue::from_static("2023-06-01"),
-            );
-        }
-
-        // Codex OAuth 反代尽量对齐官方 Codex CLI 的会话路由信号。
-        // 只发送客户端提供的 session_id；生成的 UUID 每次不同，反而会破坏前缀缓存。
-        for (name, value) in codex_oauth_session_headers {
-            ordered_headers.insert(name, value);
-        }
+        .build(headers);
 
         // 序列化请求体。GET/HEAD 是 idempotent/safe 方法，按 HTTP 语义不应携带 body；
         // 强行附带 JSON body 会让某些上游（如 Google Gemini 的 models.list）拒绝请求。
@@ -2781,22 +2369,6 @@ impl RequestForwarder {
             && carries_opaque_state(&filtered_body))
         .then_some(filtered_body);
 
-        // 确定超时
-        let timeout = if self.non_streaming_timeout.is_zero() {
-            std::time::Duration::from_secs(600) // 默认 600 秒
-        } else {
-            self.non_streaming_timeout
-        };
-
-        // 获取全局代理 URL（上游是本机地址时直连，不送进代理）
-        let upstream_proxy_url: Option<String> = super::http_client::proxy_url_for(&url);
-
-        // SOCKS5 代理不支持 CONNECT 隧道，需要用 reqwest
-        let is_socks_proxy = upstream_proxy_url
-            .as_deref()
-            .map(|u| u.starts_with("socks5"))
-            .unwrap_or(false);
-
         let preserve_exact_header_case = should_preserve_exact_header_case(
             adapter.name(),
             provider,
@@ -2804,63 +2376,18 @@ impl RequestForwarder {
             is_copilot,
         );
 
-        // 发送请求
-        let response = if is_socks_proxy || !preserve_exact_header_case {
-            // OpenAI / Copilot / Codex 类后端不依赖原始 header 大小写；走 reqwest
-            // 连接池，避免 raw TCP/TLS path 每次请求都重新握手。SOCKS5 也只能走 reqwest。
-            log::debug!(
-                "[Forwarder] Using pooled reqwest client (preserve_exact_header_case={preserve_exact_header_case}, socks_proxy={is_socks_proxy})"
-            );
-            let client = super::http_client::get_for_url(&url);
-            let mut request = client.request(method.clone(), &url);
-            if request_is_streaming {
-                // reqwest 的 timeout 是整请求超时；流式请求交给 response_processor
-                // 的首包/静默期超时控制，避免长流被总时长误杀。
-                request = request.timeout(std::time::Duration::from_secs(24 * 60 * 60));
-            } else if !self.non_streaming_timeout.is_zero() {
-                request = request.timeout(self.non_streaming_timeout);
-            }
-            for (key, value) in &ordered_headers {
-                request = request.header(key, value);
-            }
-            let send = request.body(body_bytes).send();
-            let send_result = if request_is_streaming {
-                let header_timeout = if self.streaming_first_byte_timeout.is_zero() {
-                    timeout
-                } else {
-                    self.streaming_first_byte_timeout
-                };
-                tokio::time::timeout(header_timeout, send)
-                    .await
-                    .map_err(|_| {
-                        ProxyError::Timeout(format!(
-                            "流式响应首包超时: {}s（上游未返回响应头）",
-                            header_timeout.as_secs()
-                        ))
-                    })?
-            } else {
-                send.await
-            };
-            let reqwest_resp = send_result.map_err(map_reqwest_send_error)?;
-            ProxyResponse::Reqwest(reqwest_resp)
-        } else {
-            // HTTP 代理或直连：走 hyper raw write（保持 header 大小写）
-            // 如果有 HTTP 代理，hyper_client 会用 CONNECT 隧道穿过代理
-            let uri: http::Uri = url.parse().map_err(|e| {
-                ProxyError::ForwardFailed(format!("Invalid upstream URL ({target_for_log}): {e}"))
-            })?;
-            super::hyper_client::send_request(
-                uri,
+        let response = self
+            .send_upstream(
+                &url,
                 &target_for_log,
-                method.clone(),
+                method,
                 ordered_headers,
-                extensions.clone(),
+                extensions,
                 body_bytes,
-                timeout,
-                upstream_proxy_url.as_deref(),
+                request_is_streaming,
+                preserve_exact_header_case,
             )
-            .await?
-        };
+            .await?;
 
         // Official responses (errors included) carry the account's usage headers;
         // they feed the next request's quota check without an extra lookup.
@@ -2872,63 +2399,18 @@ impl RequestForwarder {
         let status = response.status();
 
         if status.is_success() {
-            let mut response = self
-                .prepare_success_response_for_failover(response, request_is_streaming)
+            let response = self
+                .validate_success_response(
+                    response,
+                    request_is_streaming,
+                    codex_responses_to_anthropic,
+                    resolved_claude_api_format.as_deref(),
+                    opaque_state_request.as_ref(),
+                )
                 .await?;
-            // Streaming requests normally return SSE. If a compatible gateway
-            // explicitly returns JSON instead, buffer and validate it inside the retry
-            // loop as well so a 2xx Anthropic error envelope can still fail over. Do
-            // not buffer unknown content types: some gateways omit the SSE header.
-            if codex_responses_to_anthropic && (!request_is_streaming || response.is_json()) {
-                response = self
-                    .validate_codex_anthropic_success_response(response)
-                    .await?;
-            } else if matches!(
-                resolved_claude_api_format.as_deref(),
-                Some("openai_responses")
-            ) {
-                if !request_is_streaming || response.is_json() {
-                    // Claude→Responses gateways can also return a semantic failure in an
-                    // HTTP 2xx Response object. Validate buffered/JSON bodies inside the
-                    // retry loop so an early failure can still select another provider.
-                    response = self.validate_responses_success_response(response).await?;
-                } else {
-                    // Delay committing the downstream stream until the upstream emits
-                    // either productive output or a valid non-failure terminal event.
-                    // A response.failed/error before output remains failover-safe.
-                    response = self.validate_responses_stream_start(response).await?;
-                }
-            } else if let Some(request) = opaque_state_request
-                .as_ref()
-                .filter(|_| !response.is_json())
-            {
-                response = self.hold_opaque_state_stream(response, request).await?;
-            }
             Ok((response, resolved_claude_api_format, outbound_model))
         } else {
-            let status_code = status.as_u16();
-            // 错误响应同样可能被上游压缩（content-encoding）。reqwest 未启用任何
-            // 自动解压 feature，这里拿到的是原始字节；不解压的话，压缩过的错误体会
-            // 在 from_utf8 处变成非 UTF-8 而被丢弃，隐藏掉上游的限流/鉴权等详情。
-            let encoding = get_content_encoding(response.headers());
-            let raw = response.bytes_with_limit(MAX_RESPONSE_BODY_BYTES).await?;
-            let decoded = match encoding {
-                Some(encoding) => {
-                    match decompress_body_with_limit(&encoding, &raw, MAX_RESPONSE_BODY_BYTES) {
-                        Ok(Some(decompressed)) => decompressed,
-                        // 不支持的编码 / 解压失败 / 解压后超限：退回（已有上限的）
-                        // 原始字节，尽量保留可读信息
-                        _ => raw.to_vec(),
-                    }
-                }
-                None => raw.to_vec(),
-            };
-            let body_text = String::from_utf8(decoded).ok();
-
-            Err(ProxyError::UpstreamError {
-                status: status_code,
-                body: body_text,
-            })
+            Err(upstream_error(response).await?)
         }
     }
 
