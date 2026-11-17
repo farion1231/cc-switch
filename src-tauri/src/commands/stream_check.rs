@@ -18,7 +18,7 @@ pub async fn stream_check_provider(
     app_type: AppType,
     provider_id: String,
 ) -> Result<StreamCheckResult, AppError> {
-    let providers = state.db.get_all_providers(app_type.as_str())?;
+    let providers = state.db.get_all_providers(&app_type)?;
     let provider = providers
         .get(&provider_id)
         .ok_or_else(|| AppError::Message(format!("供应商 {provider_id} 不存在")))?;

@@ -3,7 +3,7 @@
 //! 包含 Schema 迁移和基本功能的测试。
 
 use super::*;
-use crate::app_config::MultiAppConfig;
+use crate::app_config::{AppType, MultiAppConfig};
 use crate::provider::{Provider, ProviderManager};
 use indexmap::IndexMap;
 use rusqlite::{params, Connection};
@@ -819,7 +819,9 @@ fn json_migration_imports_provider_data() {
         result.is_ok(),
         "Migration should succeed with provider data: {result:?}"
     );
-    let migrated = db.get_all_providers("claude").expect("read providers");
+    let migrated = db
+        .get_all_providers(&AppType::Claude)
+        .expect("read providers");
     assert_eq!(migrated["test-provider"].name, "Test Provider");
 }
 
@@ -1775,7 +1777,7 @@ fn keeps_the_lock_poisoned_when_rollback_fails() {
 #[tokio::test]
 async fn proxy_dao_calls_survive_a_poisoned_lock() {
     let db = std::sync::Arc::new(Database::memory().expect("memory db"));
-    db.set_proxy_flags_sync("claude", true, true)
+    db.set_proxy_flags_sync(&AppType::Claude, true, true)
         .expect("set flags");
     let mut proxy = db.get_global_proxy_config().await.expect("set port");
     proxy.listen_port = 25721;
@@ -1796,11 +1798,11 @@ async fn proxy_dao_calls_survive_a_poisoned_lock() {
     };
 
     poison();
-    db.set_proxy_flags_sync("claude", true, false)
+    db.set_proxy_flags_sync(&AppType::Claude, true, false)
         .expect("set flags after poison");
     poison();
     assert_eq!(
-        db.get_proxy_flags_sync("claude"),
+        db.get_proxy_flags_sync(&AppType::Claude),
         (true, false),
         "get_proxy_flags_sync after poison"
     );
@@ -1811,11 +1813,11 @@ async fn proxy_dao_calls_survive_a_poisoned_lock() {
         "get_proxy_client_endpoint_sync after poison"
     );
     poison();
-    db.set_pricing_model_source("claude", "request")
+    db.set_pricing_model_source(&AppType::Claude, "request")
         .await
         .expect("set pricing source after poison");
     assert_eq!(
-        db.get_pricing_model_source("claude")
+        db.get_pricing_model_source(&AppType::Claude)
             .await
             .expect("read pricing source"),
         "request"

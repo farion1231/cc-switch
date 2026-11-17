@@ -10,6 +10,7 @@
 
 #[cfg(test)]
 mod tests {
+    use crate::app_config::AppType;
     use crate::database::Database;
     use crate::provider::Provider;
     use crate::proxy::server::ProxyServer;
@@ -133,8 +134,9 @@ mod tests {
             }),
             None,
         );
-        db.save_provider("claude", &provider).unwrap();
-        db.set_current_provider("claude", &provider.id).unwrap();
+        db.save_provider(&AppType::Claude, &provider).unwrap();
+        db.set_current_provider(&AppType::Claude, &provider.id)
+            .unwrap();
 
         let proxy = ProxyServer::new(
             ProxyConfig {

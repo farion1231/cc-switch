@@ -2,6 +2,7 @@
 //!
 //! 提供前端调用的 API 接口
 
+use crate::app_config::AppType;
 use crate::error::AppError;
 use crate::proxy::types::*;
 use crate::proxy::CircuitBreakerConfig;
@@ -275,9 +276,9 @@ pub async fn get_proxy_config_for_app(
     state: tauri::State<'_, AppState>,
     app_type: String,
 ) -> Result<AppProxyConfig, String> {
-    require_proxy_app(&app_type)?;
+    let app = require_proxy_app(&app_type)?;
     let db = &state.db;
-    Ok(db.get_proxy_config_for_app(&app_type).await?)
+    Ok(db.get_proxy_config_for_app(&app).await?)
 }
 
 /// 更新指定应用的代理配置
@@ -289,8 +290,7 @@ pub async fn update_proxy_config_for_app(
     config: AppProxyConfig,
 ) -> Result<(), String> {
     let db = &state.db;
-    let app_type = config.app_type.clone();
-    let app = require_proxy_app(&app_type)?;
+    let app = require_proxy_app(&config.app_type)?;
     let circuit_config = CircuitBreakerConfig::from(&config);
     // `enabled` 是模式的镜像，只由进入 / 退出代理改写。
     let mut config = config;
@@ -300,13 +300,13 @@ pub async fn update_proxy_config_for_app(
 
     state
         .proxy_service
-        .update_circuit_breaker_config_for_app(&app_type, circuit_config)
+        .update_circuit_breaker_config_for_app(&app, circuit_config)
         .await
 }
 
 async fn get_pricing_model_source_internal(
     state: &AppState,
-    app_type: &str,
+    app_type: &AppType,
 ) -> Result<String, AppError> {
     let db = &state.db;
     db.get_pricing_model_source(app_type).await
@@ -315,7 +315,7 @@ async fn get_pricing_model_source_internal(
 #[cfg_attr(not(feature = "test-hooks"), doc(hidden))]
 pub async fn get_pricing_model_source_test_hook(
     state: &AppState,
-    app_type: &str,
+    app_type: &AppType,
 ) -> Result<String, AppError> {
     get_pricing_model_source_internal(state, app_type).await
 }
@@ -325,12 +325,12 @@ pub async fn get_pricing_model_source(
     state: tauri::State<'_, AppState>,
     app_type: String,
 ) -> Result<String, AppError> {
-    get_pricing_model_source_internal(&state, &app_type).await
+    get_pricing_model_source_internal(&state, &AppType::from_str(&app_type)?).await
 }
 
 async fn set_pricing_model_source_internal(
     state: &AppState,
-    app_type: &str,
+    app_type: &AppType,
     value: &str,
 ) -> Result<(), AppError> {
     let db = &state.db;
@@ -340,7 +340,7 @@ async fn set_pricing_model_source_internal(
 #[cfg_attr(not(feature = "test-hooks"), doc(hidden))]
 pub async fn set_pricing_model_source_test_hook(
     state: &AppState,
-    app_type: &str,
+    app_type: &AppType,
     value: &str,
 ) -> Result<(), AppError> {
     set_pricing_model_source_internal(state, app_type, value).await
@@ -352,7 +352,7 @@ pub async fn set_pricing_model_source(
     app_type: String,
     value: String,
 ) -> Result<(), AppError> {
-    set_pricing_model_source_internal(&state, &app_type, &value).await
+    set_pricing_model_source_internal(&state, &AppType::from_str(&app_type)?, &value).await
 }
 
 // ==================== 故障转移相关命令 ====================
@@ -363,7 +363,7 @@ pub async fn get_provider_health(
     provider_id: String,
     app_type: String,
 ) -> Result<ProviderHealth, String> {
-    require_mode_app(&app_type)?;
+    let app = require_mode_app(&app_type)?;
     let db = &state.db;
-    Ok(db.get_provider_health(&provider_id, &app_type).await?)
+    Ok(db.get_provider_health(&provider_id, &app).await?)
 }
