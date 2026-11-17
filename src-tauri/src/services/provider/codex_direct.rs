@@ -61,7 +61,7 @@ fn app() -> &'static str {
 /// 官方卡：`category == "official"`，或按 `is_codex_official_provider` 认出来的（早期
 /// 绑定托管账号时没存 category 的卡）。
 pub(crate) fn is_official(provider: &Provider) -> bool {
-    provider.category.as_deref() == Some("official")
+    provider.has_official_category()
         || crate::proxy::providers::is_codex_official_provider(provider)
 }
 

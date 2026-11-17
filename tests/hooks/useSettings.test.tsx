@@ -60,6 +60,7 @@ vi.mock("@tanstack/react-query", async () => {
     ...actual,
     useQueryClient: () => ({
       getQueryData: (...args: unknown[]) => getQueryDataMock(...args),
+      invalidateQueries: async () => {},
     }),
   };
 });
@@ -363,24 +364,35 @@ describe("useSettings hook", () => {
     expect(syncCurrentProvidersLiveMock).not.toHaveBeenCalled();
   });
 
-  it("projects providers into a new Hermes directory on save", async () => {
-    settingsFormMock = createSettingsFormMock({
-      settings: {
-        ...serverSettings,
-        hermesConfigDir: "  /custom/hermes  ",
-      },
-    });
+  it.each([
+    ["claudeConfigDir", 1],
+    ["codexConfigDir", 1],
+    ["geminiConfigDir", 1],
+    ["grokConfigDir", 1],
+    ["opencodeConfigDir", 1],
+    ["openclawConfigDir", 1],
+    ["hermesConfigDir", 1],
+    ["piConfigDir", 0],
+    ["ompConfigDir", 0],
+    ["dshConfigDir", 0],
+  ] as const)(
+    "saves a changed %s and projects providers %i time(s)",
+    async (field, syncCalls) => {
+      settingsFormMock = createSettingsFormMock({
+        settings: { ...serverSettings, [field]: "  /custom/dir  " },
+      });
 
-    const { result } = renderHook(() => useSettings());
+      const { result } = renderHook(() => useSettings());
 
-    await act(async () => {
-      await result.current.saveSettings(undefined, { silent: true });
-    });
+      await act(async () => {
+        await result.current.saveSettings(undefined, { silent: true });
+      });
 
-    const payload = mutateAsyncMock.mock.calls[0][0] as Settings;
-    expect(payload.hermesConfigDir).toBe("/custom/hermes");
-    expect(syncCurrentProvidersLiveMock).toHaveBeenCalledTimes(1);
-  });
+      const payload = mutateAsyncMock.mock.calls[0][0] as Settings;
+      expect(payload[field]).toBe("/custom/dir");
+      expect(syncCurrentProvidersLiveMock).toHaveBeenCalledTimes(syncCalls);
+    },
+  );
 
   it("sanitizes the Pi directory without projecting providers", async () => {
     settingsFormMock = createSettingsFormMock({

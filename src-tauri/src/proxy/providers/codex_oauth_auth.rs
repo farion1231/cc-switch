@@ -1057,19 +1057,6 @@ impl CodexOAuthManager {
         Ok(cached)
     }
 
-    /// 获取指定账号的有效 access_token 与 id_token（必要时自动刷新）
-    ///
-    /// id_token 用于让托管写入的 Codex auth.json 与原生浏览器登录保持
-    /// 一致的 tokens 字段形状（仅托管绑定路径使用）。旧账号若无 id_token
-    /// 会返回 `None`，前端据此提示重新登录。
-    pub async fn get_valid_token_and_id_token_for_account(
-        &self,
-        account_id: &str,
-    ) -> Result<(String, Option<String>), CodexOAuthError> {
-        let bundle = self.get_valid_token_bundle_for_account(account_id).await?;
-        Ok((bundle.access_token, bundle.id_token))
-    }
-
     /// 获取写入托管 Codex `auth.json` 所需的完整可刷新 token 束
     /// （access_token + id_token + refresh_token）。
     ///
@@ -1553,11 +1540,6 @@ impl CodexOAuthManager {
         }
 
         Ok(())
-    }
-
-    pub async fn is_authenticated(&self) -> bool {
-        let accounts = self.accounts.read().await;
-        !accounts.is_empty()
     }
 
     /// 获取认证状态摘要（与 Copilot 的格式保持一致，便于复用前端）
@@ -2365,7 +2347,6 @@ mod tests {
     async fn test_manager_initial_state() {
         let temp = tempfile::tempdir().unwrap();
         let manager = CodexOAuthManager::new(temp.path().to_path_buf());
-        assert!(!manager.is_authenticated().await);
         assert!(manager.list_accounts().await.is_empty());
     }
 

@@ -16,6 +16,7 @@ use crate::settings::{
     CodexLegacyOfficialHistoryBucketMigration, CodexOfficialHistoryUnifyMigration,
     CodexProviderTemplateMigration, CodexThirdPartyHistoryProviderBucketMigration,
 };
+use crate::sync_utils::MutexExt;
 use chrono::{Local, Utc};
 use rusqlite::{backup::Backup, params_from_iter, Connection};
 use serde_json::Value;
@@ -40,9 +41,7 @@ const STATE_DB_ID_CHUNK: usize = 500;
 static CODEX_OFFICIAL_HISTORY_OP_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn lock_codex_official_history_op() -> std::sync::MutexGuard<'static, ()> {
-    CODEX_OFFICIAL_HISTORY_OP_LOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+    CODEX_OFFICIAL_HISTORY_OP_LOCK.lock_recover()
 }
 
 /// 用户在「备份与恢复」里删除迁移备份目录时拿同一把锁，避免抽掉正在写的备份。
@@ -917,7 +916,7 @@ fn migrate_codex_provider_templates_to_custom(
     let mut migrated_provider_ids = Vec::new();
 
     for (_, provider) in providers {
-        if provider.category.as_deref() == Some("official")
+        if provider.has_official_category()
             || is_official_seed_id(&provider.id)
             || provider.is_codex_oauth()
         {
@@ -962,7 +961,7 @@ fn collect_source_model_provider_ids(db: &Database) -> Result<BTreeSet<String>, 
     let mut ids = BTreeSet::new();
 
     for provider in providers.values() {
-        if provider.category.as_deref() == Some("official")
+        if provider.has_official_category()
             || is_official_seed_id(&provider.id)
             || provider.is_codex_oauth()
         {
@@ -1591,6 +1590,7 @@ mod tests {
     use super::*;
     use crate::codex_state_db::CODEX_STATE_DB_FILENAME;
     use crate::provider::Provider;
+    use crate::test_support::TestHome;
     use serial_test::serial;
     use std::ffi::OsString;
     use tempfile::tempdir;
@@ -3012,39 +3012,6 @@ model_provider = "aihubmix"
         assert!(!ids.contains("my-local-relay"));
     }
 
-    /// 端到端测试用的隔离 HOME：CC Switch 设置与 `~/.codex` 都落在临时目录。
-    struct IsolatedHome {
-        dir: tempfile::TempDir,
-        original_test_home: Option<OsString>,
-    }
-
-    impl IsolatedHome {
-        fn new() -> Self {
-            let dir = tempdir().expect("tempdir");
-            let original_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
-            std::env::set_var("CC_SWITCH_TEST_HOME", dir.path());
-            crate::settings::reload_settings().expect("reload settings for isolated home");
-            Self {
-                dir,
-                original_test_home,
-            }
-        }
-
-        fn codex_dir(&self) -> PathBuf {
-            self.dir.path().join(".codex")
-        }
-    }
-
-    impl Drop for IsolatedHome {
-        fn drop(&mut self) {
-            match &self.original_test_home {
-                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
-                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
-            }
-            let _ = crate::settings::reload_settings();
-        }
-    }
-
     fn session_meta_line(id: &str, provider: &str) -> String {
         format!(
             "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{id}\",\"model_provider\":\"{provider}\"}}}}\n"
@@ -3083,8 +3050,8 @@ model_provider = "aihubmix"
         if crate::config::sqlite_unsupported_in_temp_dir() {
             return;
         }
-        let home = IsolatedHome::new();
-        let dir = home.codex_dir();
+        let home = TestHome::new();
+        let dir = home.path().join(".codex");
         let sessions = dir.join("sessions/2026/10/21");
         fs::create_dir_all(&sessions).unwrap();
         fs::write(dir.join("config.toml"), "model_provider = \"openai\"\n").unwrap();
@@ -3194,8 +3161,8 @@ model_provider = "aihubmix"
         if crate::config::sqlite_unsupported_in_temp_dir() {
             return;
         }
-        let home = IsolatedHome::new();
-        let codex_dir = home.codex_dir();
+        let home = TestHome::new();
+        let codex_dir = home.path().join(".codex");
         let session_dir = codex_dir.join("sessions/2026/09/01");
         fs::create_dir_all(&session_dir).expect("create session dir");
         // 休眠 custom 表保持原样：迁移不碰 config.toml。
@@ -3278,8 +3245,8 @@ model_provider = "aihubmix"
         if crate::config::sqlite_unsupported_in_temp_dir() {
             return;
         }
-        let home = IsolatedHome::new();
-        let codex_dir = home.codex_dir();
+        let home = TestHome::new();
+        let codex_dir = home.path().join(".codex");
         fs::create_dir_all(&codex_dir).expect("create codex dir");
         fs::write(
             codex_dir.join("config.toml"),
@@ -3337,9 +3304,9 @@ model_provider = "aihubmix"
         if crate::config::sqlite_unsupported_in_temp_dir() {
             return;
         }
-        let home = IsolatedHome::new();
+        let home = TestHome::new();
         enable_unify_toggle(true);
-        let codex_dir = home.codex_dir();
+        let codex_dir = home.path().join(".codex");
         let session_dir = codex_dir.join("sessions/2026/11/08");
         fs::create_dir_all(&session_dir).unwrap();
         fs::write(
@@ -3417,9 +3384,9 @@ model_provider = "aihubmix"
             ("model_provider = \"openai\"\nprofile = \"p\"\n[profiles.p]\nmodel_provider = \"custom\"\n", false),
             ("model_provider = \"custom\"\nprofile = \"p\"\n[profiles.p]\nmodel_provider = \"openai\"\n", true),
         ] {
-            let home = IsolatedHome::new();
+            let home = TestHome::new();
             enable_unify_toggle(true);
-            let codex_dir = home.codex_dir();
+            let codex_dir = home.path().join(".codex");
             fs::create_dir_all(codex_dir.join("sessions")).unwrap();
             fs::write(codex_dir.join("config.toml"), config).unwrap();
             let file = codex_dir.join("sessions/rollout-api.jsonl");
@@ -3450,9 +3417,9 @@ model_provider = "aihubmix"
             ("openai", false, false),
             ("openai", true, true),
         ] {
-            let home = IsolatedHome::new();
+            let home = TestHome::new();
             enable_unify_toggle(true);
-            let codex_dir = home.codex_dir();
+            let codex_dir = home.path().join(".codex");
             fs::create_dir_all(&codex_dir).unwrap();
             fs::write(
                 codex_dir.join("config.toml"),
@@ -3471,7 +3438,7 @@ model_provider = "aihubmix"
                         codex_config_dir: Some(canonical_dir_string(&if same_dir {
                             codex_dir.clone()
                         } else {
-                            home.dir.path().join("other-codex")
+                            home.path().join("other-codex")
                         })),
                     }
                 )
@@ -3500,9 +3467,9 @@ model_provider = "aihubmix"
         if crate::config::sqlite_unsupported_in_temp_dir() {
             return;
         }
-        let home = IsolatedHome::new();
+        let home = TestHome::new();
         enable_unify_toggle(false);
-        let codex_dir = home.codex_dir();
+        let codex_dir = home.path().join(".codex");
         fs::create_dir_all(&codex_dir).expect("create codex dir");
         fs::write(codex_dir.join("config.toml"), UNIFIED_CONFIG).expect("write config");
         let state_db = codex_dir.join(CODEX_STATE_DB_FILENAME);
