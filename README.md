@@ -400,14 +400,6 @@ For detailed guides on every feature, check out the **[User Manual](docs/user-ma
 
 ### Usage & Cost Tracking
 
-Claude, Codex and Gemini provider forms include a **Provider cost multiplier**.
-Set `0.5` to estimate half of the configured reference price for every model on that
-provider, including cache costs; blank means `1×`. Values from `0` to `1000` are accepted.
-It applies to future local-proxy request costs, leaving token counts and historical
-costs unchanged. Offline sessions without provider attribution are excluded. This is
-an estimate, not the provider's actual invoice. The setting is opt-in: discontinued
-legacy multiplier settings remain inactive until a new multiplier is explicitly set.
-
 - **Usage dashboard** — Works without local routing: by default it automatically scans each tool's local session logs and tracks requests, tokens, cache hit rate, output speed, and spending by provider and model, with trend charts, a full-year heatmap, and per-request logs
 - **Quotas & balances** — Provider cards and the tray show what's left and the reset countdown, e.g. "5h 94% left": official subscription quotas (Claude, ChatGPT, Gemini, SuperGrok), Coding Plan 5-hour / weekly / monthly quotas (Kimi, Zhipu GLM, MiniMax, Volcengine Ark, etc.), and account balances (DeepSeek, OpenRouter, SiliconFlow, etc.); some need to be turned on first via "Configure usage query" on the provider card, and for other providers you can write a custom usage script. ChatGPT subscriptions also show remaining limit resets and the Codex Credits balance
 - **Custom pricing** — Set per-model prices, or import them from models.dev

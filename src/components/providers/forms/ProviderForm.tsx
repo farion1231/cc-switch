@@ -762,9 +762,9 @@ function ProviderFormFull({
   const [billingMultiplier, setBillingMultiplier] = useState(
     initialData?.meta?.billingMultiplier ?? "",
   );
-  const supportsBillingMultiplier = ["claude", "codex", "gemini"].includes(
-    appId,
-  );
+  // 只有走本地路由的应用记得到按供应商的花费；官方卡的花费跟单价无关，不显示。
+  const supportsBillingMultiplier =
+    appHas(appId, "localProxy") && category !== "official";
   const [localProxyHeadersOverride, setLocalProxyHeadersOverride] =
     useState<string>(() =>
       formatRequestOverrideObject(
@@ -2778,13 +2778,6 @@ function ProviderFormFull({
             }
           />
 
-          {supportsBillingMultiplier && (
-            <BillingMultiplierField
-              value={billingMultiplier}
-              onChange={setBillingMultiplier}
-            />
-          )}
-
           {appId === "claude" && (
             <ClaudeFormFields
               providerId={providerId}
@@ -2859,6 +2852,10 @@ function ProviderFormFull({
               onFullUrlChange={setLocalIsFullUrl}
               customUserAgent={customUserAgent}
               onCustomUserAgentChange={setCustomUserAgent}
+              billingMultiplier={billingMultiplier}
+              onBillingMultiplierChange={
+                supportsBillingMultiplier ? setBillingMultiplier : undefined
+              }
               localProxyHeadersOverride={localProxyHeadersOverride}
               onLocalProxyHeadersOverrideChange={setLocalProxyHeadersOverride}
               localProxyBodyOverride={localProxyBodyOverride}
@@ -2969,6 +2966,10 @@ function ProviderFormFull({
               speedTestEndpoints={speedTestEndpoints}
               customUserAgent={customUserAgent}
               onCustomUserAgentChange={setCustomUserAgent}
+              billingMultiplier={billingMultiplier}
+              onBillingMultiplierChange={
+                supportsBillingMultiplier ? setBillingMultiplier : undefined
+              }
               localProxyHeadersOverride={localProxyHeadersOverride}
               onLocalProxyHeadersOverrideChange={setLocalProxyHeadersOverride}
               localProxyBodyOverride={localProxyBodyOverride}
@@ -3005,6 +3006,15 @@ function ProviderFormFull({
               model={geminiModel}
               onModelChange={handleGeminiModelChange}
               speedTestEndpoints={speedTestEndpoints}
+            />
+          )}
+
+          {/* Gemini 表单没有高级区，倍率单独放在模型下面 */}
+          {appId === "gemini" && supportsBillingMultiplier && (
+            <BillingMultiplierField
+              id="gemini-billing-multiplier"
+              value={billingMultiplier}
+              onChange={setBillingMultiplier}
             />
           )}
 
