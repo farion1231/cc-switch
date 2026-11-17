@@ -219,8 +219,9 @@ describe("injectCodingPlanUsageScript", () => {
       "https://api.kimi.ai/coding/v1",
     ]) {
       expect(
-        inject("claude", { settingsConfig: { env: { ANTHROPIC_BASE_URL: baseUrl } } })
-          .meta?.usage_script,
+        inject("claude", {
+          settingsConfig: { env: { ANTHROPIC_BASE_URL: baseUrl } },
+        }).meta?.usage_script,
       ).toMatchObject({ enabled: true, codingPlanProvider: "kimi" });
     }
     expect(
@@ -234,7 +235,9 @@ describe("injectCodingPlanUsageScript", () => {
     expect(
       inject("claude", {
         settingsConfig: {
-          env: { ANTHROPIC_BASE_URL: "https://api.kimi.ai.evil.example/coding" },
+          env: {
+            ANTHROPIC_BASE_URL: "https://api.kimi.ai.evil.example/coding",
+          },
         },
       }).meta?.usage_script,
     ).toBeUndefined();
