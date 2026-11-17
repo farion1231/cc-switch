@@ -19,6 +19,7 @@ import {
 } from "@/lib/query/sessions";
 import type { SessionMessage, SessionMeta } from "@/types";
 import { call, fixtures, msg, result, text } from "./sessions/reader/helpers";
+import { createTestQueryClient } from "../utils/testQueryClient";
 
 // jsdom 没有布局，虚拟列表一条都不渲染；这里让它把全部行都画出来
 vi.mock("@tanstack/react-virtual", () => ({
@@ -65,9 +66,7 @@ const renderReader = (
   providerId: string,
   messages: SessionMessage[],
 ): ReturnType<typeof render> => {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
+  const client = createTestQueryClient();
   const ui: ReactElement = (
     <QueryClientProvider client={client}>
       <SessionReader

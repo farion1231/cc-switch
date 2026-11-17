@@ -75,6 +75,78 @@ export function workbuddyThinkingFields(
 }
 
 /**
+ * 编辑用的映射：有映射就用它；只手写了 `reasoning` 的，按列出的强度还原；
+ * 都没有时所有档位从「不支持」起步（空映射会被当成 Pi 默认，档位全开）。
+ */
+function editableThinkingMap(model: WorkBuddyModel): PiThinkingLevelMap {
+  if (
+    isPiThinkingLevelMap(model.thinkingLevelMap) &&
+    Object.keys(model.thinkingLevelMap).length > 0
+  ) {
+    return clonePiThinkingLevelMap(model.thinkingLevelMap);
+  }
+  const map = listedEffortsMap(model);
+  if (model.reasoning && !model.reasoning.canDisableThinking) map.off = null;
+  return map;
+}
+
+/** 按 `reasoning` 列出的强度写成显式映射：列出的发同名值，其余不支持。 */
+function listedEffortsMap(model: WorkBuddyModel): PiThinkingLevelMap {
+  const map: PiThinkingLevelMap = { minimal: null };
+  const listed = Array.isArray(model.reasoning?.supportedEfforts)
+    ? model.reasoning.supportedEfforts
+    : [];
+  for (const effort of WORKBUDDY_EFFORTS) {
+    map[effort] = listed.includes(effort) ? effort : null;
+  }
+  return map;
+}
+
+/** 按新映射重写模型的思考字段；一个强度都不剩时去掉，WorkBuddy 只显示思考开关。 */
+function withThinkingMap(
+  model: WorkBuddyModel,
+  map: PiThinkingLevelMap,
+): WorkBuddyModel {
+  const { reasoning: _reasoning, thinkingLevelMap: _map, ...rest } = model;
+  const fields = workbuddyThinkingFields(map);
+  if (!fields.reasoning) return rest;
+  const previous = model.reasoning?.defaultEffort;
+  if (previous && fields.reasoning.supportedEfforts.includes(previous)) {
+    fields.reasoning.defaultEffort = previous;
+  }
+  return { ...rest, ...fields };
+}
+
+/** 表单里勾选 / 取消一个思考强度。已有的上游值（预设核对过的映射）勾回来时保留。 */
+export function setWorkBuddyEffort(
+  model: WorkBuddyModel,
+  effort: WorkBuddyEffort,
+  enabled: boolean,
+): WorkBuddyModel {
+  const map = editableThinkingMap(model);
+  if (!enabled) map[effort] = null;
+  else if (typeof map[effort] !== "string") map[effort] = effort;
+  return withThinkingMap(model, map);
+}
+
+/** 表单里切换「可以关闭思考」。 */
+export function setWorkBuddyCanDisableThinking(
+  model: WorkBuddyModel,
+  enabled: boolean,
+): WorkBuddyModel {
+  const map = editableThinkingMap(model);
+  if (!enabled) map.off = null;
+  else if (map.off === null) {
+    delete map.off;
+    // 只写了 `{ off: null }` 的映射（Kimi K2.7 Code 等）删掉 off 就空了，空映射会被
+    // 当成「不生成强度」；把正在列出的强度写成显式映射，保住原有档位。
+    if (Object.keys(map).length === 0)
+      Object.assign(map, listedEffortsMap(model));
+  }
+  return withThinkingMap(model, map);
+}
+
+/**
  * CC Switch 侧的供应商配置：`vendor` / `url` / `apiKey` 写入时复制到每个模型条目。
  * 只走 OpenAI Chat Completions，`url` 填完整的 `/chat/completions` 地址。
  * 旧条目可能带 `api` 字段（以前可选 Responses），编辑保存时原样保留、同样复制到条目。

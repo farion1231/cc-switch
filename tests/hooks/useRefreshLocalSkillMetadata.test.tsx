@@ -3,6 +3,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useRefreshLocalSkillMetadata } from "@/hooks/useSkills";
+import { createTestQueryClient } from "../utils/testQueryClient";
 
 const refreshLocalMetadataMock = vi.hoisted(() => vi.fn());
 
@@ -27,9 +28,7 @@ describe("useRefreshLocalSkillMetadata", () => {
 
   it("refreshes the installed list only when metadata changed", async () => {
     refreshLocalMetadataMock.mockResolvedValue(2);
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
+    const queryClient = createTestQueryClient();
     const invalidateSpy = vi
       .spyOn(queryClient, "invalidateQueries")
       .mockResolvedValue(undefined);
@@ -47,9 +46,7 @@ describe("useRefreshLocalSkillMetadata", () => {
 
   it("does not invalidate the list when nothing changed", async () => {
     refreshLocalMetadataMock.mockResolvedValue(0);
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
+    const queryClient = createTestQueryClient();
     const invalidateSpy = vi
       .spyOn(queryClient, "invalidateQueries")
       .mockResolvedValue(undefined);
@@ -64,9 +61,7 @@ describe("useRefreshLocalSkillMetadata", () => {
 
   it("does not rescan when the installed list is invalidated", async () => {
     refreshLocalMetadataMock.mockResolvedValue(1);
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
+    const queryClient = createTestQueryClient();
     vi.spyOn(queryClient, "invalidateQueries").mockResolvedValue(undefined);
 
     const { result } = renderHook(() => useRefreshLocalSkillMetadata(), {
@@ -85,9 +80,7 @@ describe("useRefreshLocalSkillMetadata", () => {
 
   it("keeps the result cached across remounts in the same session", async () => {
     refreshLocalMetadataMock.mockResolvedValue(1);
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
+    const queryClient = createTestQueryClient();
     vi.spyOn(queryClient, "invalidateQueries").mockResolvedValue(undefined);
 
     const first = renderHook(() => useRefreshLocalSkillMetadata(), {

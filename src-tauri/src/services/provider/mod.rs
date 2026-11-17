@@ -29,7 +29,6 @@ mod pi;
 mod usage;
 
 use indexmap::IndexMap;
-use regex::Regex;
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -232,92 +231,34 @@ mod tests {
     };
     #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
     use crate::provider::{ClaudeDesktopMode, ClaudeDesktopModelRoute};
-    use crate::proxy::types::ProxyConfig;
     use crate::store::AppState;
+    use crate::sync_utils::MutexExt;
+    use crate::test_support::{EnvVars, TempUserHome};
     use serde_json::json;
     use serial_test::serial;
-    use std::env;
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::sync::{Arc, Mutex, OnceLock};
-    use tempfile::TempDir;
 
+    /// A temp user home that also pins the Claude Desktop paths under it
+    /// (`LOCALAPPDATA` on Windows, `XDG_CONFIG_HOME` unset on Linux).
     struct TempHome {
-        #[allow(dead_code)]
-        dir: TempDir,
-        original_home: Option<String>,
-        #[cfg(windows)]
-        original_local_app_data: Option<String>,
-        original_userprofile: Option<String>,
-        original_test_home: Option<String>,
-        #[cfg(target_os = "linux")]
-        original_xdg_config_home: Option<std::ffi::OsString>,
+        _desktop_env: EnvVars,
+        home: TempUserHome,
     }
 
     impl TempHome {
         fn new() -> Self {
-            let dir = TempDir::new().expect("failed to create temp home");
-            let original_home = env::var("HOME").ok();
+            let home = TempUserHome::new();
+            let desktop_env = EnvVars::new();
             #[cfg(windows)]
-            let original_local_app_data = env::var("LOCALAPPDATA").ok();
-            let original_userprofile = env::var("USERPROFILE").ok();
-            let original_test_home = env::var("CC_SWITCH_TEST_HOME").ok();
+            let desktop_env =
+                desktop_env.set("LOCALAPPDATA", home.path().join("AppData").join("Local"));
             #[cfg(target_os = "linux")]
-            let original_xdg_config_home = env::var_os("XDG_CONFIG_HOME");
-
-            env::set_var("HOME", dir.path());
-            #[cfg(windows)]
-            env::set_var("LOCALAPPDATA", dir.path().join("AppData").join("Local"));
-            env::set_var("USERPROFILE", dir.path());
-            env::set_var("CC_SWITCH_TEST_HOME", dir.path());
-            // Claude Desktop Linux paths follow XDG_CONFIG_HOME; pin them under the temp home.
-            #[cfg(target_os = "linux")]
-            env::remove_var("XDG_CONFIG_HOME");
-
+            let desktop_env = desktop_env.remove("XDG_CONFIG_HOME");
             Self {
-                dir,
-                original_home,
-                #[cfg(windows)]
-                original_local_app_data,
-                original_userprofile,
-                original_test_home,
-                #[cfg(target_os = "linux")]
-                original_xdg_config_home,
-            }
-        }
-    }
-
-    impl Drop for TempHome {
-        fn drop(&mut self) {
-            match &self.original_home {
-                Some(value) => env::set_var("HOME", value),
-                None => env::remove_var("HOME"),
-            }
-
-            #[cfg(windows)]
-            {
-                match &self.original_local_app_data {
-                    Some(value) => env::set_var("LOCALAPPDATA", value),
-                    None => env::remove_var("LOCALAPPDATA"),
-                }
-            }
-
-            match &self.original_userprofile {
-                Some(value) => env::set_var("USERPROFILE", value),
-                None => env::remove_var("USERPROFILE"),
-            }
-
-            match &self.original_test_home {
-                Some(value) => env::set_var("CC_SWITCH_TEST_HOME", value),
-                None => env::remove_var("CC_SWITCH_TEST_HOME"),
-            }
-
-            #[cfg(target_os = "linux")]
-            {
-                match &self.original_xdg_config_home {
-                    Some(value) => env::set_var("XDG_CONFIG_HOME", value),
-                    None => env::remove_var("XDG_CONFIG_HOME"),
-                }
+                _desktop_env: desktop_env,
+                home,
             }
         }
     }
@@ -350,32 +291,20 @@ mod tests {
 
     fn test_guard() -> std::sync::MutexGuard<'static, ()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|err| err.into_inner())
+        LOCK.get_or_init(|| Mutex::new(())).lock_recover()
     }
 
     fn with_test_home<T>(test: impl FnOnce(&AppState, &Path) -> T) -> T {
         let _guard = test_guard();
         let temp = tempfile::tempdir().expect("tempdir");
-        let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
-        let old_home = std::env::var_os("HOME");
-        std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
-        std::env::set_var("HOME", temp.path());
+        let env = EnvVars::new()
+            .set("CC_SWITCH_TEST_HOME", temp.path())
+            .set("HOME", temp.path());
 
         let db = Arc::new(Database::memory().expect("in-memory database"));
         let state = AppState::new(db);
         let result = test(&state, temp.path());
-
-        match old_test_home {
-            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
-            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
-        }
-        match old_home {
-            Some(value) => std::env::set_var("HOME", value),
-            None => std::env::remove_var("HOME"),
-        }
-
+        drop(env);
         result
     }
 
@@ -2034,25 +1963,6 @@ GEMINI_TIMEOUT_MS=30000
     }
 
     #[test]
-    fn extract_credentials_returns_expected_values() {
-        let provider = Provider::with_id(
-            "claude".into(),
-            "Claude".into(),
-            json!({
-                "env": {
-                    "ANTHROPIC_AUTH_TOKEN": "token",
-                    "ANTHROPIC_BASE_URL": "https://claude.example"
-                }
-            }),
-            None,
-        );
-        let (api_key, base_url) =
-            ProviderService::extract_credentials(&provider, &AppType::Claude).unwrap();
-        assert_eq!(api_key, "token");
-        assert_eq!(base_url, "https://claude.example");
-    }
-
-    #[test]
     fn extract_codex_common_config_strips_provider_fields_and_injected_artifacts() {
         // 顶层 experimental_bearer_token 模拟无活跃路由时的 fallback 注入；
         // web_search = "disabled" 是 cc-switch 对黑名单网关注入的哨兵；
@@ -2204,12 +2114,16 @@ command = "legacy-cmd"
         )
         .expect("seed live file");
 
-        db.update_proxy_config(ProxyConfig {
-            listen_port: 0,
-            ..Default::default()
-        })
-        .await
-        .expect("update proxy config");
+        let mut proxy = db
+            .get_global_proxy_config()
+            .await
+            .expect("update proxy config");
+
+        proxy.listen_port = 0;
+
+        db.update_global_proxy_config(proxy)
+            .await
+            .expect("update proxy config");
         crate::mode::controller::enter(&state, &AppType::Claude, false)
             .await
             .expect("enter routing mode");
@@ -2303,12 +2217,16 @@ requires_openai_auth = true
         crate::settings::set_current_provider(&AppType::Codex, Some("p1"))
             .expect("set local current provider");
 
-        db.update_proxy_config(ProxyConfig {
-            listen_port: 0,
-            ..Default::default()
-        })
-        .await
-        .expect("update proxy config");
+        let mut proxy = db
+            .get_global_proxy_config()
+            .await
+            .expect("update proxy config");
+
+        proxy.listen_port = 0;
+
+        db.update_global_proxy_config(proxy)
+            .await
+            .expect("update proxy config");
         crate::mode::controller::enter(&state, &AppType::Codex, false)
             .await
             .expect("enter routing mode");
@@ -2376,12 +2294,14 @@ requires_openai_auth = true
         crate::settings::reload_settings().expect("reload settings");
 
         let db = Arc::new(Database::memory().expect("init db"));
-        db.update_proxy_config(ProxyConfig {
-            listen_port: 0,
-            ..Default::default()
-        })
-        .await
-        .expect("ephemeral proxy port");
+        let mut proxy = db
+            .get_global_proxy_config()
+            .await
+            .expect("ephemeral proxy port");
+        proxy.listen_port = 0;
+        db.update_global_proxy_config(proxy)
+            .await
+            .expect("ephemeral proxy port");
         let state = AppState::new(db.clone());
 
         let mut original = Provider::with_id(
@@ -2462,7 +2382,7 @@ requires_openai_auth = true
         .expect("join update")
         .expect("update route provider");
 
-        let profile_path = claude_desktop_profile_path(home.dir.path());
+        let profile_path = claude_desktop_profile_path(home.home.path());
         let profile: Value = read_json_file(&profile_path).expect("read desktop profile");
         assert_eq!(
             profile["inferenceGatewayBaseUrl"],
@@ -3320,9 +3240,9 @@ wire_api = "responses"
                         )
                         .unwrap();
                     runtime.block_on(async {
-                        let mut config = state.db.get_proxy_config().await.unwrap();
+                        let mut config = state.db.get_global_proxy_config().await.unwrap();
                         config.listen_port = 0;
-                        state.db.update_proxy_config(config).await.unwrap();
+                        state.db.update_global_proxy_config(config).await.unwrap();
                     });
                     let current = managed_codex_provider("current", "old-local-id");
                     state.db.save_provider("codex", &current).unwrap();
@@ -3692,9 +3612,9 @@ wire_api = "responses"
                     )
                     .await
                     .unwrap();
-                let mut config = state.db.get_proxy_config().await.unwrap();
+                let mut config = state.db.get_global_proxy_config().await.unwrap();
                 config.listen_port = 0;
-                state.db.update_proxy_config(config).await.unwrap();
+                state.db.update_global_proxy_config(config).await.unwrap();
             });
             let current = managed_codex_provider("current", "old-local-id");
             state.db.save_provider("codex", &current).unwrap();
@@ -5051,9 +4971,9 @@ wire_api = "responses"
                         runtime.block_on(async {
                             // 端口 0 启动后实际端口会记进库，重开的 AppState 不启动代理
                             // 也能算出契约地址。
-                            let mut config = state.db.get_proxy_config().await.unwrap();
+                            let mut config = state.db.get_global_proxy_config().await.unwrap();
                             config.listen_port = 0;
-                            state.db.update_proxy_config(config).await.unwrap();
+                            state.db.update_global_proxy_config(config).await.unwrap();
                             crate::mode::controller::enter(state, &AppType::Codex, false)
                                 .await
                                 .unwrap();
@@ -5621,7 +5541,7 @@ impl ProviderService {
                 provider.settings_config.clone(),
                 Self::provider_live_config_managed(provider),
             );
-            if provider.category.as_deref() != Some("official") {
+            if !provider.has_official_category() {
                 if let Some(converted) =
                     crate::copilot_config::convert_legacy_settings(&provider.settings_config)
                 {
@@ -6459,7 +6379,7 @@ impl ProviderService {
         // Normalize Claude model keys
         Self::normalize_provider_if_claude(&app_type, &mut provider);
         Self::validate_provider_settings(&app_type, &provider)?;
-        if matches!(app_type, AppType::Codex) && provider.category.as_deref() == Some("official") {
+        if matches!(app_type, AppType::Codex) && provider.has_official_category() {
             crate::codex_config::strip_codex_unified_session_bucket_from_settings(
                 &mut provider.settings_config,
             )?;
@@ -7194,7 +7114,7 @@ impl ProviderService {
         if crate::mode::current::is_proxy(&app_type) {
             // 代理模式：只换代理路由，直连指针不变。契约没变时客户端文件不读也不写；
             // 变了在同一个操作里先改写客户端，再发布路由。
-            if _provider.category.as_deref() == Some("official")
+            if _provider.has_official_category()
                 && !official_provider_supports_proxy_takeover(&app_type, _provider)
             {
                 return Err(AppError::localized(
@@ -8201,16 +8121,6 @@ impl ProviderService {
         endpoints::remove_custom_endpoint(state, app_type, provider_id, url)
     }
 
-    /// Update endpoint last used timestamp (re-export)
-    pub fn update_endpoint_last_used(
-        state: &AppState,
-        app_type: AppType,
-        provider_id: &str,
-        url: String,
-    ) -> Result<(), AppError> {
-        endpoints::update_endpoint_last_used(state, app_type, provider_id, url)
-    }
-
     /// Update provider sort order
     pub fn update_sort_order(
         state: &AppState,
@@ -8349,7 +8259,7 @@ impl ProviderService {
                             "Grok Build configuration is missing the config field",
                         )
                     })?;
-                if provider.category.as_deref() == Some("official") {
+                if provider.has_official_category() {
                     // 官方条目走 Grok CLI 自带 OAuth：空 config 合法，
                     // 其余内容只要求 TOML 语法合法。
                     crate::grok_config::validate_config_toml_syntax(config)?;
@@ -8437,284 +8347,6 @@ impl ProviderService {
         }
 
         Ok(())
-    }
-
-    #[allow(dead_code)]
-    fn extract_credentials(
-        provider: &Provider,
-        app_type: &AppType,
-    ) -> Result<(String, String), AppError> {
-        match app_type {
-            AppType::Claude => {
-                let env = provider
-                    .settings_config
-                    .get("env")
-                    .and_then(|v| v.as_object())
-                    .ok_or_else(|| {
-                        AppError::localized(
-                            "provider.claude.env.missing",
-                            "配置格式错误: 缺少 env",
-                            "Invalid configuration: missing env section",
-                        )
-                    })?;
-
-                let api_key = env
-                    .get("ANTHROPIC_AUTH_TOKEN")
-                    .or_else(|| env.get("ANTHROPIC_API_KEY"))
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        AppError::localized(
-                            "provider.claude.api_key.missing",
-                            "缺少 API Key",
-                            "API key is missing",
-                        )
-                    })?
-                    .to_string();
-
-                let base_url = env
-                    .get("ANTHROPIC_BASE_URL")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        AppError::localized(
-                            "provider.claude.base_url.missing",
-                            "缺少 ANTHROPIC_BASE_URL 配置",
-                            "Missing ANTHROPIC_BASE_URL configuration",
-                        )
-                    })?
-                    .to_string();
-
-                Ok((api_key, base_url))
-            }
-            AppType::GrokBuild => {
-                let config_toml = provider
-                    .settings_config
-                    .get("config")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| {
-                        AppError::localized(
-                            "provider.grokbuild.config.missing",
-                            "Grok Build 配置缺少 config 字段",
-                            "Grok Build configuration is missing the config field",
-                        )
-                    })?;
-                let (base_url, api_key) = crate::grok_config::extract_credentials(config_toml)
-                    .ok_or_else(|| {
-                        AppError::localized(
-                            "provider.grokbuild.credentials.missing",
-                            "Grok Build 配置缺少 Base URL 或 API Key",
-                            "Grok Build configuration is missing the base URL or API key",
-                        )
-                    })?;
-                Ok((api_key, base_url))
-            }
-            AppType::ClaudeDesktop => {
-                let credentials =
-                    crate::claude_desktop_config::direct_gateway_credentials(provider)?;
-                Ok((credentials.api_key, credentials.base_url))
-            }
-            AppType::Codex => {
-                let _auth = provider
-                    .settings_config
-                    .get("auth")
-                    .and_then(|v| v.as_object())
-                    .ok_or_else(|| {
-                        AppError::localized(
-                            "provider.codex.auth.missing",
-                            "配置格式错误: 缺少 auth",
-                            "Invalid configuration: missing auth section",
-                        )
-                    })?;
-
-                let config_toml = provider
-                    .settings_config
-                    .get("config")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-
-                let api_key = crate::codex_config::extract_codex_api_key(
-                    provider.settings_config.get("auth"),
-                    Some(config_toml),
-                )
-                .ok_or_else(|| {
-                    AppError::localized(
-                        "provider.codex.api_key.missing",
-                        "缺少 API Key",
-                        "API key is missing",
-                    )
-                })?;
-
-                let base_url = if config_toml.contains("base_url") {
-                    let re = Regex::new(r#"base_url\s*=\s*["']([^"']+)["']"#).map_err(|e| {
-                        AppError::localized(
-                            "provider.regex_init_failed",
-                            format!("正则初始化失败: {e}"),
-                            format!("Failed to initialize regex: {e}"),
-                        )
-                    })?;
-                    re.captures(config_toml)
-                        .and_then(|caps| caps.get(1))
-                        .map(|m| m.as_str().to_string())
-                        .ok_or_else(|| {
-                            AppError::localized(
-                                "provider.codex.base_url.invalid",
-                                "config.toml 中 base_url 格式错误",
-                                "base_url in config.toml has invalid format",
-                            )
-                        })?
-                } else {
-                    return Err(AppError::localized(
-                        "provider.codex.base_url.missing",
-                        "config.toml 中缺少 base_url 配置",
-                        "base_url is missing from config.toml",
-                    ));
-                };
-
-                Ok((api_key, base_url))
-            }
-            AppType::Gemini | AppType::Agy => {
-                use crate::gemini_config::json_to_env;
-
-                let env_map = json_to_env(&provider.settings_config)?;
-
-                let api_key = env_map.get("GEMINI_API_KEY").cloned().ok_or_else(|| {
-                    AppError::localized(
-                        "gemini.missing_api_key",
-                        "缺少 GEMINI_API_KEY",
-                        "Missing GEMINI_API_KEY",
-                    )
-                })?;
-
-                let base_url = env_map
-                    .get("GOOGLE_GEMINI_BASE_URL")
-                    .cloned()
-                    .unwrap_or_else(|| "https://generativelanguage.googleapis.com".to_string());
-
-                Ok((api_key, base_url))
-            }
-            AppType::Copilot => {
-                // 新形状在 provider 节点；旧版环境变量形状的行还没被列表转换时兜底。
-                let settings =
-                    crate::copilot_config::convert_legacy_settings(&provider.settings_config)
-                        .unwrap_or_else(|| provider.settings_config.clone());
-                let get = |key: &str| {
-                    settings
-                        .get("provider")
-                        .and_then(|provider| provider.get(key))
-                        .and_then(Value::as_str)
-                        .map(str::trim)
-                        .filter(|value| !value.is_empty())
-                        .map(str::to_string)
-                };
-                let api_key = get("apiKey")
-                    .or_else(|| get("bearerToken"))
-                    .unwrap_or_default();
-                let base_url = get("baseUrl").ok_or_else(|| {
-                    AppError::localized(
-                        "copilot.missing_base_url",
-                        "缺少自带模型的接口地址",
-                        "Missing the bring-your-own-model endpoint",
-                    )
-                })?;
-                Ok((api_key, base_url))
-            }
-            AppType::OpenCode => {
-                // OpenCode uses options.apiKey and options.baseURL
-                let options = provider
-                    .settings_config
-                    .get("options")
-                    .and_then(|v| v.as_object())
-                    .ok_or_else(|| {
-                        AppError::localized(
-                            "provider.opencode.options.missing",
-                            "配置格式错误: 缺少 options",
-                            "Invalid configuration: missing options section",
-                        )
-                    })?;
-
-                let api_key = options
-                    .get("apiKey")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        AppError::localized(
-                            "provider.opencode.api_key.missing",
-                            "缺少 API Key",
-                            "API key is missing",
-                        )
-                    })?
-                    .to_string();
-
-                let base_url = options
-                    .get("baseURL")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-
-                Ok((api_key, base_url))
-            }
-            AppType::Dsh => Ok((
-                provider
-                    .settings_config
-                    .pointer("/options/apiKey")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .into(),
-                provider
-                    .settings_config
-                    .pointer("/options/baseURL")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .into(),
-            )),
-            AppType::Kimi => Ok((
-                provider
-                    .settings_config
-                    .pointer("/provider/api_key")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .into(),
-                provider
-                    .settings_config
-                    .pointer("/provider/base_url")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .into(),
-            )),
-            AppType::WorkBuddy => {
-                let (base_url, api_key) = provider.resolve_usage_credentials(&AppType::WorkBuddy);
-                if api_key.is_empty() {
-                    return Err(AppError::localized(
-                        "provider.openclaw.api_key.missing",
-                        "缺少 API Key",
-                        "API key is missing",
-                    ));
-                }
-                Ok((api_key, base_url))
-            }
-            AppType::OpenClaw | AppType::Hermes | AppType::Pi | AppType::Mcode | AppType::Omp => {
-                // These native formats use apiKey and baseUrl directly on the object.
-                let api_key = provider
-                    .settings_config
-                    .get("apiKey")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        AppError::localized(
-                            "provider.openclaw.api_key.missing",
-                            "缺少 API Key",
-                            "API key is missing",
-                        )
-                    })?
-                    .to_string();
-
-                let base_url = provider
-                    .settings_config
-                    .get("baseUrl")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-
-                Ok((api_key, base_url))
-            }
-        }
     }
 }
 
@@ -8812,14 +8444,6 @@ impl ProviderService {
         state: &AppState,
     ) -> Result<HashMap<String, UniversalProvider>, AppError> {
         state.db.get_all_universal_providers()
-    }
-
-    /// 获取单个统一供应商
-    pub fn get_universal(
-        state: &AppState,
-        id: &str,
-    ) -> Result<Option<UniversalProvider>, AppError> {
-        state.db.get_universal_provider(id)
     }
 
     /// 添加或更新统一供应商（不自动同步，需手动调用 sync_universal_to_apps）

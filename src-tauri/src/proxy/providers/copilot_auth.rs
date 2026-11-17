@@ -473,8 +473,6 @@ impl CopilotToken {
 struct CopilotTokenResponse {
     token: String,
     expires_at: i64,
-    #[allow(dead_code)]
-    refresh_in: Option<i64>,
 }
 
 /// GitHub 用户信息
@@ -655,13 +653,6 @@ impl CopilotAuthManager {
         let accounts = self.accounts.read().await.clone();
         let default_account_id = self.resolve_default_account_id().await;
         Self::sorted_accounts(&accounts, default_account_id.as_deref())
-    }
-
-    /// 获取指定账号信息
-    pub async fn get_account(&self, account_id: &str) -> Option<GitHubAccount> {
-        let _ = self.ensure_migration_complete().await;
-        let accounts = self.accounts.read().await;
-        accounts.get(account_id).map(GitHubAccount::from)
     }
 
     /// 指定账号的 GitHub OAuth Token 和域名，给 Copilot CLI 的 `COPILOT_GITHUB_TOKEN` 用。
@@ -1008,14 +999,23 @@ impl CopilotAuthManager {
         let all_models = self.fetch_all_models_for_account(account_id).await?;
         let total = all_models.len();
         let picker_models: Vec<CopilotModel> = all_models
-            .into_iter()
+            .iter()
             .filter(|model| model.model_picker_enabled)
+            .cloned()
             .collect();
-        // Copilot Free 账号的模型通常全部 model_picker_enabled=false，这里记录两个数便于排查
+        // Copilot Free / Student 账号的模型通常全部 model_picker_enabled=false，这里记录两个数便于排查
         log::info!(
             "[CopilotAuth] 账号 {account_id} 共 {total} 个模型，其中可在模型选择器使用的 {} 个",
             picker_models.len()
         );
+        if picker_models.is_empty() && total > 0 {
+            // 全被筛掉时列出模型 ID（不含隐私），用户贴一次日志就能看出账号拿到的是哪类模型
+            let ids: Vec<&str> = all_models.iter().map(|model| model.id.as_str()).collect();
+            log::info!(
+                "[CopilotAuth] 账号 {account_id} 没有可在模型选择器使用的模型，接口返回的模型 ID: {}",
+                ids.join(", ")
+            );
+        }
         Ok(picker_models)
     }
 
@@ -1160,18 +1160,6 @@ impl CopilotAuthManager {
         }
     }
 
-    pub async fn get_model_vendor(
-        &self,
-        model_id: &str,
-    ) -> Result<Option<String>, CopilotAuthError> {
-        self.ensure_migration_for_default().await?;
-
-        match self.resolve_default_account_id().await {
-            Some(id) => self.get_model_vendor_for_account(&id, model_id).await,
-            None => Err(CopilotAuthError::GitHubTokenInvalid),
-        }
-    }
-
     pub async fn resolve_model(
         &self,
         model_id: &str,
@@ -1242,8 +1230,9 @@ impl CopilotAuthManager {
         }
 
         log::info!(
-            "[CopilotAuth] 获取使用量成功，计划: {}, 重置日期: {}",
+            "[CopilotAuth] 获取使用量成功，计划: {}, SKU: {}, 重置日期: {}",
             usage.copilot_plan,
+            usage.access_type_sku.as_deref().unwrap_or("未返回"),
             usage.quota_reset_date
         );
 
@@ -1409,12 +1398,6 @@ impl CopilotAuthManager {
             username,
             expires_at,
         }
-    }
-
-    /// 检查是否已认证（有任意账号）
-    pub async fn is_authenticated(&self) -> bool {
-        let accounts = self.accounts.read().await;
-        !accounts.is_empty()
     }
 
     /// 清除所有认证（登出所有账号）
@@ -1782,7 +1765,7 @@ impl CopilotAuthManager {
     }
 
     async fn ensure_migration_for_default(&self) -> Result<(), CopilotAuthError> {
-        if self.is_authenticated().await {
+        if !self.accounts.read().await.is_empty() {
             let _ = self.ensure_migration_complete().await;
             Ok(())
         } else {
@@ -2366,7 +2349,11 @@ mod tests {
             .unwrap();
         assert_eq!(vendor.as_deref(), Some("OpenAI"));
 
-        let default_vendor = manager.get_model_vendor("claude-sonnet-4").await.unwrap();
+        let default_vendor = manager
+            .resolve_model("claude-sonnet-4", CodexCopilotApiFormat::Auto)
+            .await
+            .unwrap()
+            .map(|model| model.vendor);
         assert_eq!(default_vendor.as_deref(), Some("Anthropic"));
 
         let hidden = manager
@@ -3055,7 +3042,7 @@ mod tests {
 
         let reloaded = CopilotAuthManager::new(dir.path().to_path_buf());
         assert!(reloaded.pending_migration.read().await.is_none());
-        assert!(reloaded.is_authenticated().await);
+        assert!(!reloaded.list_accounts().await.is_empty());
 
         server.abort();
     }

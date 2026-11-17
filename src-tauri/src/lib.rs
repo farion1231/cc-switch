@@ -52,6 +52,8 @@ mod session_manager;
 mod settings;
 mod store;
 mod sync_utils;
+#[cfg(test)]
+mod test_support;
 
 mod tray;
 #[cfg(target_os = "windows")]
@@ -62,6 +64,7 @@ mod usage_script;
 mod window_fit;
 mod workbuddy_config;
 
+use crate::sync_utils::MutexExt;
 pub use app_config::{AppType, InstalledSkill, McpApps, McpServer, MultiAppConfig, SkillApps};
 pub use codex_config::{
     extract_codex_experimental_bearer_token, get_codex_auth_path, get_codex_config_path,
@@ -77,8 +80,7 @@ pub use grok_config::get_grok_config_path;
 pub use mcp::{
     import_from_claude, import_from_codex, import_from_gemini, import_from_grokbuild,
     remove_server_from_claude, remove_server_from_codex, remove_server_from_gemini,
-    remove_server_from_grokbuild, sync_enabled_to_claude, sync_enabled_to_codex,
-    sync_enabled_to_gemini, sync_single_server_to_claude, sync_single_server_to_codex,
+    remove_server_from_grokbuild, sync_single_server_to_claude, sync_single_server_to_codex,
     sync_single_server_to_gemini, sync_single_server_to_grokbuild,
 };
 pub use prompt::Prompt;
@@ -442,7 +444,7 @@ fn raise_open_file_limit() {
 #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 fn handle_second_instance(app: &tauri::AppHandle, args: Vec<String>) {
     static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let _serial = SERIAL.lock_recover();
     log::debug!("Args count: {}", args.len());
     for (i, arg) in args.iter().enumerate() {
         log::debug!("  arg[{i}]: {}", url_for_log(arg));
@@ -1131,52 +1133,21 @@ pub fn run() {
             if app_state.db.is_mcp_table_empty().unwrap_or(false) {
                 log::info!("MCP table empty, importing from live configurations...");
 
-                match crate::services::mcp::McpService::import_from_claude(&app_state) {
-                    Ok(count) if count > 0 => {
-                        log::info!("✓ Imported {count} MCP server(s) from Claude");
+                for (app, label) in [
+                    (crate::app_config::AppType::Claude, "Claude"),
+                    (crate::app_config::AppType::Codex, "Codex"),
+                    (crate::app_config::AppType::Gemini, "Gemini"),
+                    (crate::app_config::AppType::GrokBuild, "Grok Build"),
+                    (crate::app_config::AppType::OpenCode, "OpenCode"),
+                    (crate::app_config::AppType::Hermes, "Hermes"),
+                ] {
+                    match crate::services::mcp::McpService::import_from_app(&app_state, &app) {
+                        Ok(count) if count > 0 => {
+                            log::info!("✓ Imported {count} MCP server(s) from {label}");
+                        }
+                        Ok(_) => log::debug!("○ No {label} MCP servers found to import"),
+                        Err(e) => log::warn!("✗ Failed to import {label} MCP: {e}"),
                     }
-                    Ok(_) => log::debug!("○ No Claude MCP servers found to import"),
-                    Err(e) => log::warn!("✗ Failed to import Claude MCP: {e}"),
-                }
-
-                match crate::services::mcp::McpService::import_from_codex(&app_state) {
-                    Ok(count) if count > 0 => {
-                        log::info!("✓ Imported {count} MCP server(s) from Codex");
-                    }
-                    Ok(_) => log::debug!("○ No Codex MCP servers found to import"),
-                    Err(e) => log::warn!("✗ Failed to import Codex MCP: {e}"),
-                }
-
-                match crate::services::mcp::McpService::import_from_gemini(&app_state) {
-                    Ok(count) if count > 0 => {
-                        log::info!("✓ Imported {count} MCP server(s) from Gemini");
-                    }
-                    Ok(_) => log::debug!("○ No Gemini MCP servers found to import"),
-                    Err(e) => log::warn!("✗ Failed to import Gemini MCP: {e}"),
-                }
-
-                match crate::services::mcp::McpService::import_from_grokbuild(&app_state) {
-                    Ok(count) if count > 0 => {
-                        log::info!("✓ Imported {count} MCP server(s) from Grok Build");
-                    }
-                    Ok(_) => log::debug!("○ No Grok Build MCP servers found to import"),
-                    Err(e) => log::warn!("✗ Failed to import Grok Build MCP: {e}"),
-                }
-
-                match crate::services::mcp::McpService::import_from_opencode(&app_state) {
-                    Ok(count) if count > 0 => {
-                        log::info!("✓ Imported {count} MCP server(s) from OpenCode");
-                    }
-                    Ok(_) => log::debug!("○ No OpenCode MCP servers found to import"),
-                    Err(e) => log::warn!("✗ Failed to import OpenCode MCP: {e}"),
-                }
-
-                match crate::services::mcp::McpService::import_from_hermes(&app_state) {
-                    Ok(count) if count > 0 => {
-                        log::info!("✓ Imported {count} MCP server(s) from Hermes");
-                    }
-                    Ok(_) => log::debug!("○ No Hermes MCP servers found to import"),
-                    Err(e) => log::warn!("✗ Failed to import Hermes MCP: {e}"),
                 }
             }
 
@@ -1626,11 +1597,8 @@ pub fn run() {
             commands::get_claude_desktop_default_routes,
             commands::import_claude_desktop_providers_from_claude,
             commands::ensure_claude_desktop_official_provider,
-            commands::ensure_codex_official_provider,
             commands::ensure_grokbuild_official_provider,
-            commands::get_claude_config_status,
             commands::get_config_status,
-            commands::get_claude_code_config_path,
             commands::get_config_dir,
             commands::open_config_folder,
             commands::pick_directory,
@@ -1638,14 +1606,8 @@ pub fn run() {
             commands::get_init_error,
             commands::get_migration_result,
             commands::get_skills_migration_result,
-            commands::get_app_config_path,
             commands::open_app_config_folder,
             commands::reveal_app_log_file,
-            commands::get_claude_common_config_snippet,
-            commands::set_claude_common_config_snippet,
-            commands::get_common_config_snippet,
-            commands::set_common_config_snippet,
-            commands::extract_common_config_snippet,
             commands::read_live_provider_settings,
             commands::get_settings,
             commands::save_settings,
@@ -1661,8 +1623,6 @@ pub fn run() {
             commands::set_optimizer_config,
             commands::get_privacy_filter_config,
             commands::set_privacy_filter_config,
-            commands::get_copilot_optimizer_config,
-            commands::set_copilot_optimizer_config,
             commands::get_log_config,
             commands::set_log_config,
             commands::restart_app,
@@ -1674,18 +1634,10 @@ pub fn run() {
             commands::open_portable_update_download,
             commands::is_portable_mode,
             commands::copy_text_to_clipboard,
-            commands::get_claude_plugin_status,
-            commands::read_claude_plugin_config,
             commands::apply_claude_plugin_config,
-            commands::is_claude_plugin_applied,
             commands::apply_claude_onboarding_skip,
             commands::clear_claude_onboarding_skip,
             // Claude MCP management
-            commands::get_claude_mcp_status,
-            commands::read_claude_mcp_config,
-            commands::upsert_claude_mcp_server,
-            commands::delete_claude_mcp_server,
-            commands::validate_mcp_command,
             // usage query
             commands::queryProviderUsage,
             commands::testUsageScript,
@@ -1698,10 +1650,6 @@ pub fn run() {
             commands::get_coding_plan_quota,
             commands::get_balance,
             // New MCP via config.json (SSOT)
-            commands::get_mcp_config,
-            commands::upsert_mcp_server_in_config,
-            commands::delete_mcp_server_in_config,
-            commands::set_mcp_enabled,
             // Unified MCP management
             commands::get_mcp_servers,
             commands::start_mcp_connectivity_checks,
@@ -1748,7 +1696,6 @@ pub fn run() {
             commands::get_custom_endpoints,
             commands::add_custom_endpoint,
             commands::remove_custom_endpoint,
-            commands::update_endpoint_last_used,
             // app_config_dir override via Store
             commands::get_app_config_dir_override,
             commands::set_app_config_dir_override,
@@ -1767,6 +1714,7 @@ pub fn run() {
             commands::s3_sync_upload,
             commands::s3_sync_download,
             commands::s3_sync_save_settings,
+            commands::s3_sync_clear_settings,
             commands::s3_sync_fetch_remote_info,
             commands::save_file_dialog,
             commands::open_file_dialog,
@@ -1781,10 +1729,8 @@ pub fn run() {
             commands::delete_db_backup,
             commands::sync_current_providers_live,
             // Deep link import
-            commands::parse_deeplink,
             commands::merge_deeplink_config,
             commands::fetch_deeplink_icon,
-            commands::import_from_deeplink,
             commands::import_from_deeplink_unified,
             commands::peek_pending_deeplink,
             commands::ack_pending_deeplink,
@@ -1792,7 +1738,6 @@ pub fn run() {
             // Environment variable management
             commands::check_env_conflicts,
             commands::delete_env_vars,
-            commands::restore_env_backup,
             // Skill management (v3.10.0+ unified)
             commands::get_installed_skills,
             commands::refresh_local_skill_metadata,
@@ -1815,19 +1760,12 @@ pub fn run() {
             commands::open_skill_dir,
             commands::search_skills_sh,
             // Skill management (legacy API compatibility)
-            commands::get_skills,
-            commands::get_skills_for_app,
-            commands::install_skill,
-            commands::install_skill_for_app,
-            commands::uninstall_skill,
-            commands::uninstall_skill_for_app,
             commands::get_skill_repos,
             commands::add_skill_repo,
             commands::remove_skill_repo,
             commands::install_skills_from_zip,
             // Auto launch
             commands::set_auto_launch,
-            commands::get_auto_launch_status,
             // Proxy server management
             commands::start_proxy_server,
             commands::stop_proxy_server,
@@ -1845,10 +1783,7 @@ pub fn run() {
             tray_panel::tray_panel_action,
             tray::tray_app_page_seen,
             commands::exit_proxy_apps_in_mode,
-            commands::get_direct_provider,
             commands::get_proxy_status,
-            commands::get_proxy_config,
-            commands::update_proxy_config,
             // Global & Per-App Config
             commands::get_global_proxy_config,
             commands::update_global_proxy_config,
@@ -1858,9 +1793,6 @@ pub fn run() {
             commands::update_proxy_config_for_app,
             commands::get_pricing_model_source,
             commands::set_pricing_model_source,
-            commands::is_proxy_running,
-            commands::is_live_takeover_active,
-            commands::switch_proxy_provider,
             commands::get_proxy_stack,
             commands::set_proxy_stack_member,
             commands::adopt_codex_stack_catalog,
@@ -1868,13 +1800,8 @@ pub fn run() {
             commands::acknowledge_codex_stale_clients,
             // Proxy failover commands
             commands::get_provider_health,
-            commands::reset_circuit_breaker,
-            commands::get_circuit_breaker_config,
-            commands::update_circuit_breaker_config,
-            commands::get_circuit_breaker_stats,
             // Failover queue management
             commands::get_failover_queue,
-            commands::get_available_providers_for_failover,
             commands::add_to_failover_queue,
             commands::remove_from_failover_queue,
             commands::get_auto_failover_enabled,
@@ -1897,12 +1824,10 @@ pub fn run() {
             commands::save_models_dev_sync_config,
             commands::record_models_dev_sync_result,
             commands::fetch_models_dev,
-            commands::check_provider_limits,
             // Session usage sync
             commands::sync_session_usage,
             commands::rebuild_codex_usage,
             commands::get_session_usage_last_sync,
-            commands::get_usage_data_sources,
             commands::fetch_exchange_rates,
             // Stream health check
             commands::stream_check_provider,
@@ -1929,7 +1854,6 @@ pub fn run() {
             commands::open_provider_terminal,
             // Universal Provider management
             commands::get_universal_providers,
-            commands::get_universal_provider,
             commands::upsert_universal_provider,
             commands::delete_universal_provider,
             commands::sync_universal_provider,
@@ -1961,7 +1885,6 @@ pub fn run() {
             // Hermes specific
             commands::import_hermes_providers_from_live,
             commands::get_hermes_live_provider_ids,
-            commands::get_hermes_live_provider,
             commands::get_hermes_model_config,
             commands::open_hermes_web_ui,
             commands::launch_hermes_dashboard,
@@ -1973,7 +1896,6 @@ pub fn run() {
             commands::get_global_proxy_url,
             commands::set_global_proxy_url,
             commands::test_proxy_url,
-            commands::get_upstream_proxy_status,
             commands::scan_local_proxies,
             commands::diagnose_ip,
             // Window theme control
@@ -1982,7 +1904,6 @@ pub fn run() {
             commands::auth_start_login,
             commands::auth_poll_for_account,
             commands::auth_cancel_login,
-            commands::auth_list_accounts,
             commands::auth_get_status,
             commands::auth_remove_account,
             commands::auth_set_default_account,
@@ -2013,17 +1934,6 @@ pub fn run() {
             commands::kimi_oauth_use_account,
             commands::kimi_oauth_models,
             // Copilot OAuth commands (multi-account support)
-            commands::copilot_start_device_flow,
-            commands::copilot_poll_for_auth,
-            commands::copilot_poll_for_account,
-            commands::copilot_list_accounts,
-            commands::copilot_remove_account,
-            commands::copilot_set_default_account,
-            commands::copilot_get_auth_status,
-            commands::copilot_logout,
-            commands::copilot_is_authenticated,
-            commands::copilot_get_token,
-            commands::copilot_get_token_for_account,
             commands::copilot_get_models,
             commands::copilot_get_models_for_account,
             commands::copilot_get_usage,
@@ -2046,10 +1956,6 @@ pub fn run() {
             commands::delete_daily_memory_file,
             commands::search_daily_memory_files,
             commands::open_workspace_directory,
-            // lightweight mode (for testing or low-resource environments)
-            commands::enter_lightweight_mode,
-            commands::exit_lightweight_mode,
-            commands::is_lightweight_mode,
         ]);
 
     let app = builder

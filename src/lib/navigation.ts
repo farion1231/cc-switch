@@ -75,10 +75,6 @@ export function isAppPage(view: View): view is AppPage {
   return (APP_PAGES as string[]).includes(view);
 }
 
-export function isGlobalPage(view: View): view is GlobalPage {
-  return (GLOBAL_PAGES as string[]).includes(view);
-}
-
 export function parseView(value: string | null | undefined): View | null {
   if (!value) return null;
   if (value in LEGACY_VIEWS) return LEGACY_VIEWS[value];
@@ -114,29 +110,6 @@ export function storeView(view: View) {
     localStorage.setItem(VIEW_STORAGE_KEY, view);
   } catch {
     // 存不了就算了：下次启动回到供应商页
-  }
-}
-
-/**
- * 旧的设置页签名 → 新的设置分组。用量统计、认证已经搬成全局页，由调用方改走全局页。
- */
-export function normalizeSettingsSection(
-  tab: string | null | undefined,
-): SettingsSection {
-  switch (tab) {
-    case "proxy":
-    case "routing":
-      return "routing";
-    case "advanced":
-    case "data":
-      return "data";
-    case "appConfig":
-    case "network":
-    case "about":
-    case "general":
-      return tab;
-    default:
-      return "general";
   }
 }
 
