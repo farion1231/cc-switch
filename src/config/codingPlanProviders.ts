@@ -32,7 +32,14 @@ export interface CodingPlanProviderEntry {
 }
 
 export const CODING_PLAN_PROVIDERS: readonly CodingPlanProviderEntry[] = [
-  { id: "kimi", label: "Kimi For Coding", pattern: /api\.kimi\.com\/coding/i },
+  // Kimi For Coding 分国内站（kimi.com / api.kimi.com）与海外站（kimi.ai /
+  // api.kimi.ai，「Kimi For Coding Global」预设），两套账号体系不互通，
+  // 额度端点各自在所属区域的 {host}/coding/v1 下，两个 host 都要认。
+  {
+    id: "kimi",
+    label: "Kimi For Coding",
+    pattern: /api\.kimi\.(?:com|ai)\/coding/i,
+  },
   {
     id: "zhipu",
     label: "Zhipu GLM (智谱)",

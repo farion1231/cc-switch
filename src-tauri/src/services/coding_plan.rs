@@ -35,7 +35,7 @@ enum CodingPlanProvider {
 
 fn detect_provider(base_url: &str) -> Option<CodingPlanProvider> {
     let url = base_url.to_lowercase();
-    if url.contains("api.kimi.com/coding") {
+    if url.contains("api.kimi.com/coding") || url.contains("api.kimi.ai/coding") {
         Some(CodingPlanProvider::Kimi)
     } else if url.contains("open.bigmodel.cn") || url.contains("bigmodel.cn") {
         Some(CodingPlanProvider::ZhipuCn)
@@ -186,8 +186,24 @@ impl CodingPlanOutcome {
 
 // ── Kimi For Coding ─────────────────────────────────────────
 
-async fn query_kimi(api_key: &str) -> Result<SubscriptionQuota, String> {
-    query_kimi_at("https://api.kimi.com/coding/v1", api_key).await
+/// Resolve the Kimi quota API root from the user's configured `base_url`.
+///
+/// Kimi For Coding 分国内站与海外站（「Kimi For Coding Global」，www.kimi.ai +
+/// api.kimi.ai），两套账号体系互不鉴权：拿海外 Key 查国内端点（或反过来）只会
+/// 得到 401，所以额度查询必须跟着 provider 所在区域走。Coding 数据面的 API 根
+/// 在两个区域都固定是 `{host}/coding/v1`——像 Claude Code 的
+/// `ANTHROPIC_BASE_URL=https://api.kimi.ai/coding/` 这类不带 `/v1` 的写法，
+/// 直接拼 `/usages` 会 404（实测两端点均如此），这里统一归一到带 `/v1` 的根。
+fn kimi_quota_base(base_url: &str) -> &'static str {
+    if base_url.to_lowercase().contains("api.kimi.ai") {
+        "https://api.kimi.ai/coding/v1"
+    } else {
+        "https://api.kimi.com/coding/v1"
+    }
+}
+
+async fn query_kimi(base_url: &str, api_key: &str) -> Result<SubscriptionQuota, String> {
+    query_kimi_at(kimi_quota_base(base_url), api_key).await
 }
 
 /// `base_url` is the Kimi Code API root (`https://api.kimi.ai/coding/v1` for
@@ -1811,7 +1827,7 @@ pub(crate) async fn query_coding_plan(
         CodingPlanProvider::ZhipuCn | CodingPlanProvider::ZhipuEn => {
             return query_zhipu(base_url, api_key).await
         }
-        CodingPlanProvider::Kimi => query_kimi(api_key).await,
+        CodingPlanProvider::Kimi => query_kimi(base_url, api_key).await,
         CodingPlanProvider::MiniMaxCn => query_minimax(api_key, true).await,
         CodingPlanProvider::MiniMaxEn => query_minimax(api_key, false).await,
         CodingPlanProvider::ZenMux => query_zenmux(base_url, api_key).await,
@@ -1829,15 +1845,57 @@ pub(crate) async fn query_coding_plan(
 #[cfg(test)]
 mod tests {
     use super::{
-        detect_provider, parse_afp_tiers, parse_coding_plan_tiers, parse_command_code_quota,
-        parse_minimax_tiers, parse_ollama_cloud_tiers, parse_opencode_go_tiers,
-        parse_zhipu_token_tiers, query_command_code_at, query_zhipu_at, query_zhipu_team_at,
-        volcengine_canonical_query, volcengine_is_auth_error_code, volcengine_region,
-        volcengine_response_error, volcengine_sign, zhipu_outcome_from_body, zhipu_quota_base,
-        CodingPlanOutcome, CodingPlanProvider, CredentialStatus, TIER_FIVE_HOUR, TIER_MONTHLY,
-        TIER_WEEKLY_LIMIT,
+        detect_provider, kimi_quota_base, parse_afp_tiers, parse_coding_plan_tiers,
+        parse_command_code_quota, parse_minimax_tiers, parse_ollama_cloud_tiers,
+        parse_opencode_go_tiers, parse_zhipu_token_tiers, query_command_code_at, query_zhipu_at,
+        query_zhipu_team_at, volcengine_canonical_query, volcengine_is_auth_error_code,
+        volcengine_region, volcengine_response_error, volcengine_sign, zhipu_outcome_from_body,
+        zhipu_quota_base, CodingPlanOutcome, CodingPlanProvider, CredentialStatus, TIER_FIVE_HOUR,
+        TIER_MONTHLY, TIER_WEEKLY_LIMIT,
     };
     use serde_json::json;
+
+    #[test]
+    fn kimi_detects_cn_and_global_hosts() {
+        // 国内站（kimi.com）与海外站（kimi.ai，「Kimi For Coding Global」）都命中；
+        // 大小写不敏感；各 app 的 base_url 形态（带不带 /v1、尾斜杠）都要认
+        for base_url in [
+            "https://api.kimi.com/coding/",
+            "https://api.kimi.com/coding/v1",
+            "https://api.kimi.ai/coding",
+            "https://api.kimi.ai/coding/",
+            "https://api.kimi.ai/coding/v1",
+            "HTTPS://API.KIMI.AI/CODING/v1",
+        ] {
+            assert!(
+                matches!(detect_provider(base_url), Some(CodingPlanProvider::Kimi)),
+                "{base_url} must detect as Kimi"
+            );
+        }
+        // 近似 host 不命中（与前端 regex 一致）
+        assert!(detect_provider("https://api.kimi.ai.evil.example/coding").is_none());
+        assert!(detect_provider("https://api.kimi.com.evil.example/coding").is_none());
+    }
+
+    #[test]
+    fn kimi_quota_base_follows_region_and_normalizes_path() {
+        // 海外 base_url（含 Claude Code 式 `…/coding/` 尾斜杠写法）归一到全球根
+        for base_url in [
+            "https://api.kimi.ai/coding",
+            "https://api.kimi.ai/coding/",
+            "https://api.kimi.ai/coding/v1",
+        ] {
+            assert_eq!(kimi_quota_base(base_url), "https://api.kimi.ai/coding/v1");
+        }
+        // 国内 base_url 归一到国内根
+        for base_url in [
+            "https://api.kimi.com/coding",
+            "https://api.kimi.com/coding/",
+            "https://api.kimi.com/coding/v1",
+        ] {
+            assert_eq!(kimi_quota_base(base_url), "https://api.kimi.com/coding/v1");
+        }
+    }
 
     #[test]
     fn minimax_cn_detects_current_and_legacy_hosts() {
