@@ -2397,6 +2397,57 @@ pub(crate) fn create_anthropic_sse_stream_from_responses_with_web_search_options
     order_anthropic_web_search_result_stream(raw_stream, hosted_web_search_name)
 }
 
+/// The closing `message_delta` + `message_stop` of a completed response. The
+/// stream loop renders each frame right before yielding it, so the usage
+/// summary and its logs happen only once the client has read everything
+/// before them.
+struct MessageEnd {
+    stop_reason: Option<&'static str>,
+    usage: Value,
+    web_search_count: u64,
+}
+
+impl MessageEnd {
+    fn message_delta(&self) -> Bytes {
+        // Defensive: Always build usage_json, even if usage field missing
+        // Some() wrapper with fallback to {} ensures build_anthropic_usage_from_responses
+        // always receives valid input, preventing null pointer errors in VSCode Extension
+        let mut usage_json = build_anthropic_usage_from_responses(Some(&self.usage));
+        if self.web_search_count > 0 {
+            usage_json["server_tool_use"] = json!({
+                "web_search_requests": self.web_search_count
+            });
+        }
+
+        // Emit message_delta (with usage + stop_reason)
+        let delta_event = json!({
+            "type": "message_delta",
+            "delta": {
+                "stop_reason": self.stop_reason,
+                "stop_sequence": null
+            },
+            "usage": usage_json
+        });
+        let sse = format!(
+            "event: message_delta\ndata: {}\n\n",
+            serde_json::to_string(&delta_event).unwrap_or_default()
+        );
+        log::debug!("[Claude/Responses] >>> Anthropic SSE: message_delta");
+        Bytes::from(sse)
+    }
+
+    fn message_stop() -> Bytes {
+        // Emit message_stop
+        let stop_event = json!({"type": "message_stop"});
+        let stop_sse = format!(
+            "event: message_stop\ndata: {}\n\n",
+            serde_json::to_string(&stop_event).unwrap_or_default()
+        );
+        log::debug!("[Claude/Responses] >>> Anthropic SSE: message_stop");
+        Bytes::from(stop_sse)
+    }
+}
+
 /// Mutable state of one Responses → Anthropic SSE conversion. Each upstream
 /// event goes through [`Self::handle_event`], which appends the Anthropic SSE
 /// frames it produces to `out`; the stream loop yields them in order.
@@ -2439,6 +2490,8 @@ struct ResponsesToAnthropicState {
     legacy_reasoning_index: Option<u32>,
     has_substantive_output: bool,
     terminated: bool,
+    /// Set by a completed response; the stream loop yields it after the event.
+    message_end: Option<MessageEnd>,
 }
 
 impl ResponsesToAnthropicState {
@@ -2486,6 +2539,7 @@ impl ResponsesToAnthropicState {
             legacy_reasoning_index: None,
             has_substantive_output: false,
             terminated: false,
+            message_end: None,
         }
     }
 
@@ -3961,42 +4015,17 @@ impl ResponsesToAnthropicState {
         }
         self.fallback_open_index = None;
 
-        // Defensive: Always build usage_json, even if usage field missing
-        // Some() wrapper with fallback to {} ensures build_anthropic_usage_from_responses
-        // always receives valid input, preventing null pointer errors in VSCode Extension
-        let mut usage_json = build_anthropic_usage_from_responses(Some(
-            response_obj.get("usage").unwrap_or(&json!({})),
-        ));
-        if self.web_search_count > 0 {
-            usage_json["server_tool_use"] = json!({
-                "web_search_requests": self.web_search_count
-            });
-        }
-
-        // Emit message_delta (with usage + stop_reason)
-        let delta_event = json!({
-            "type": "message_delta",
-            "delta": {
-                "stop_reason": stop_reason,
-                "stop_sequence": null
-            },
-            "usage": usage_json
+        // message_delta and message_stop are built as they are yielded, so a
+        // client that stops reading after the dangling block stops leaves the
+        // same trace as before (see `MessageEnd`).
+        self.message_end = Some(MessageEnd {
+            stop_reason,
+            usage: response_obj
+                .get("usage")
+                .cloned()
+                .unwrap_or_else(|| json!({})),
+            web_search_count: self.web_search_count,
         });
-        let sse = format!(
-            "event: message_delta\ndata: {}\n\n",
-            serde_json::to_string(&delta_event).unwrap_or_default()
-        );
-        log::debug!("[Claude/Responses] >>> Anthropic SSE: message_delta");
-        out.push(Bytes::from(sse));
-
-        // Emit message_stop
-        let stop_event = json!({"type": "message_stop"});
-        let stop_sse = format!(
-            "event: message_stop\ndata: {}\n\n",
-            serde_json::to_string(&stop_event).unwrap_or_default()
-        );
-        log::debug!("[Claude/Responses] >>> Anthropic SSE: message_stop");
-        out.push(Bytes::from(stop_sse));
         self.terminated = true;
     }
 
@@ -4687,6 +4716,10 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                         let flow = state.handle_event(event_name, &data, &mut out);
                         for bytes in out.drain(..) {
                             yield Ok(bytes);
+                        }
+                        if let Some(end) = state.message_end.take() {
+                            yield Ok(end.message_delta());
+                            yield Ok(MessageEnd::message_stop());
                         }
                         if flow.is_break() {
                             break 'stream_loop;
