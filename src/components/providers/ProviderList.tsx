@@ -179,6 +179,15 @@ export function ProviderList({
     appId === "omp" ? "omp" : "pi",
   );
   const isPiStateReady = !appHas(appId, "piFamily") || isPiCurrentStateSuccess;
+  const isPiLoginProvider = useCallback(
+    (provider: Provider): boolean =>
+      appId === "pi" &&
+      // These queries refresh independently. Keep either source's read-only
+      // signal until both have observed an explicit override or logout.
+      ((piCurrentState?.loginProviderIds?.includes(provider.id) ?? false) ||
+        provider.meta?.piLoginReadOnly === true),
+    [appId, piCurrentState],
+  );
   // WorkBuddy 官方登录卡：有这种卡时才去读账号和运行状态
   const hasWorkBuddyOfficial =
     appId === "workbuddy" &&
@@ -210,6 +219,12 @@ export function ProviderList({
         case "hermes":
           return hermesLiveIds?.includes(provider.id) ?? false;
         case "pi":
+          return (
+            isPiLoginProvider(provider) ||
+            (isPiStateReady &&
+              (piCurrentState?.enabledProviderIds.includes(provider.id) ??
+                false))
+          );
         case "omp":
           return isPiStateReady
             ? (piCurrentState?.enabledProviderIds.includes(provider.id) ??
@@ -226,6 +241,7 @@ export function ProviderList({
       hermesLiveIds,
       isPiStateReady,
       piCurrentState,
+      isPiLoginProvider,
     ],
   );
 
@@ -428,6 +444,7 @@ export function ProviderList({
           !!hermesLiveIdsError ||
           hermesLiveIds.includes(provider.id)),
       piStateUnavailable: appHas(appId, "piFamily") && !isPiStateReady,
+      isPiLoginProvider,
       kimiCurrentId: currentProviderId,
       workbuddyOfficial,
       copilotDefaultId: appId === "copilot" ? currentProviderId : null,
@@ -464,6 +481,7 @@ export function ProviderList({
     hermesLiveIdsError,
     hermesModelConfig?.provider,
     isPiStateReady,
+    isPiLoginProvider,
     currentProviderId,
     showDshAccountCard,
     onRemoveFromConfig,

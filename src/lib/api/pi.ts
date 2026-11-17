@@ -4,6 +4,8 @@ import type { AppIdWith } from "@/config/appSpecs";
 
 export interface PiCurrentState {
   enabledProviderIds: string[];
+  // Pi only; absent from Oh My Pi state.
+  loginProviderIds?: string[];
   defaultProviderId: string | null;
 }
 
