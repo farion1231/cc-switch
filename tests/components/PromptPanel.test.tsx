@@ -14,6 +14,7 @@ import PromptPanel, {
   type PromptPanelProps,
 } from "@/components/prompts/PromptPanel";
 import { promptsApi, type AppId, type Prompt } from "@/lib/api";
+import { createTestQueryClient } from "../utils/testQueryClient";
 
 const mocks = vi.hoisted(() => ({
   state: {
@@ -148,9 +149,7 @@ function Harness(props: Partial<PromptPanelProps> & { client: QueryClient }) {
 }
 
 function renderPanel(props: Partial<PromptPanelProps> = {}) {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
+  const client = createTestQueryClient();
   const view = render(<Harness client={client} {...props} />);
   return {
     ...view,

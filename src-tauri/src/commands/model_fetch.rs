@@ -29,7 +29,7 @@ pub async fn get_agy_models(
     // 登录态不在 settings.json 里：首次使用、只用官方登录时它可能还不存在，列模型只依赖
     // CLI 自己。文件在但坏了照样报错，免得静默略过。
     if api_key.is_none() && crate::agy_config::settings_path().exists() {
-        crate::agy_config::read_live_settings().map_err(|e| e.to_string())?;
+        crate::agy_config::read_live_settings()?;
     }
     let path = tokio::task::spawn_blocking(crate::agy_config::real_agy_bin)
         .await
@@ -117,7 +117,7 @@ pub async fn get_opencode_models() -> Result<Vec<OpenCodeModelRef>, String> {
             ("OPENCODE_CONFIG_DIR", config_dir_env),
             ("OPENCODE_DISABLE_PROJECT_CONFIG", "true".to_string()),
         ];
-        let output = super::misc::run_detected_tool_command_with_timeout(
+        let output = super::misc::tool_process::run_detected_tool_command_with_timeout(
             "opencode",
             &["models"],
             Some(OPENCODE_MODELS_TIMEOUT),

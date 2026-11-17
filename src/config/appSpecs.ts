@@ -40,6 +40,8 @@ export interface AppCaps {
    * `ProviderService::editor_view` 投影。
    */
   editorView: boolean;
+  /** 官方卡能查订阅额度（后端 `get_subscription_quota`） */
+  officialSubscription: boolean;
 }
 
 /** 键的顺序就是应用的默认顺序（侧栏、应用页）。 */
@@ -55,6 +57,7 @@ export const APP_SPECS = {
     managedAccount: true,
     piFamily: false,
     editorView: true,
+    officialSubscription: true,
   },
   "claude-desktop": {
     localProxy: false,
@@ -67,6 +70,7 @@ export const APP_SPECS = {
     managedAccount: true,
     piFamily: false,
     editorView: false,
+    officialSubscription: false,
   },
   codex: {
     localProxy: true,
@@ -79,6 +83,7 @@ export const APP_SPECS = {
     managedAccount: true,
     piFamily: false,
     editorView: true,
+    officialSubscription: true,
   },
   gemini: {
     localProxy: true,
@@ -91,6 +96,7 @@ export const APP_SPECS = {
     managedAccount: false,
     piFamily: false,
     editorView: true,
+    officialSubscription: true,
   },
   grokbuild: {
     localProxy: true,
@@ -103,6 +109,7 @@ export const APP_SPECS = {
     managedAccount: false,
     piFamily: false,
     editorView: true,
+    officialSubscription: true,
   },
   opencode: {
     localProxy: false,
@@ -115,6 +122,7 @@ export const APP_SPECS = {
     managedAccount: false,
     piFamily: false,
     editorView: false,
+    officialSubscription: false,
   },
   openclaw: {
     localProxy: false,
@@ -127,6 +135,7 @@ export const APP_SPECS = {
     managedAccount: false,
     piFamily: false,
     editorView: false,
+    officialSubscription: false,
   },
   hermes: {
     localProxy: false,
@@ -139,6 +148,7 @@ export const APP_SPECS = {
     managedAccount: false,
     piFamily: false,
     editorView: false,
+    officialSubscription: false,
   },
   pi: {
     localProxy: false,
@@ -151,6 +161,7 @@ export const APP_SPECS = {
     managedAccount: false,
     piFamily: true,
     editorView: false,
+    officialSubscription: false,
   },
   mcode: {
     localProxy: false,
@@ -163,6 +174,7 @@ export const APP_SPECS = {
     managedAccount: false,
     piFamily: false,
     editorView: false,
+    officialSubscription: false,
   },
   kimi: {
     localProxy: false,
@@ -175,6 +187,7 @@ export const APP_SPECS = {
     managedAccount: false,
     piFamily: false,
     editorView: false,
+    officialSubscription: false,
   },
   dsh: {
     localProxy: false,
@@ -187,6 +200,7 @@ export const APP_SPECS = {
     managedAccount: false,
     piFamily: false,
     editorView: false,
+    officialSubscription: false,
   },
   agy: {
     localProxy: false,
@@ -199,6 +213,7 @@ export const APP_SPECS = {
     managedAccount: true,
     piFamily: false,
     editorView: false,
+    officialSubscription: true,
   },
   omp: {
     localProxy: false,
@@ -211,6 +226,7 @@ export const APP_SPECS = {
     managedAccount: false,
     piFamily: true,
     editorView: false,
+    officialSubscription: false,
   },
   copilot: {
     localProxy: false,
@@ -223,6 +239,7 @@ export const APP_SPECS = {
     managedAccount: true,
     piFamily: false,
     editorView: false,
+    officialSubscription: false,
   },
   workbuddy: {
     localProxy: false,
@@ -235,6 +252,7 @@ export const APP_SPECS = {
     managedAccount: true,
     piFamily: false,
     editorView: false,
+    officialSubscription: false,
   },
 } as const satisfies Record<AppId, AppCaps>;
 

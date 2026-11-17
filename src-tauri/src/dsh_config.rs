@@ -16,7 +16,7 @@ use std::{
 /// DSH home: the directory set in CC Switch settings (e.g. a WSL path, #9239), then
 /// `DSH_HOME`, then `~/.dsh`.
 pub(crate) fn data_dir() -> PathBuf {
-    if let Some(dir) = crate::settings::get_dsh_override_dir() {
+    if let Some(dir) = crate::settings::get_override_dir(&crate::app_config::AppType::Dsh) {
         return dir;
     }
     std::env::var_os("DSH_HOME")

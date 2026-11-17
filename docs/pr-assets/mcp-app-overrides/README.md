@@ -21,7 +21,7 @@ The before component comes from `c72c82cfbed609fc672dbeac2f369a81c83ff331`. The 
 - Pi disabled-entry updates check the previous connection, preserve disabled state, reject foreign changes and roll back on a later write failure. OMP import and ownership checks agree on empty optional collections.
 - Editing or merely browsing one application cannot normalize another application's untouched configuration.
 
-Primary tests: `src-tauri/tests/mcp_app_overrides.rs`, `src-tauri/tests/mcp_app_overrides_agents.rs`, the MCP command/schema/backup/deep-link suites, and `tests/components/McpFormModal.test.tsx`.
+Primary tests: `src-tauri/tests/integration/mcp_app_overrides.rs`, `src-tauri/tests/integration/mcp_app_overrides_agents.rs`, the MCP command/schema/backup/deep-link suites, and `tests/components/McpFormModal.test.tsx`.
 
 The implementation was assisted by AI and reviewed in separate agent passes for write/import paths and storage/restoration. Reported findings were reproduced, fixed and re-reviewed. Current test totals and the tested base are recorded in the PR description.
 
@@ -29,7 +29,7 @@ The implementation was assisted by AI and reviewed in separate agent passes for 
 
 An override replaces the shared connection rather than merging fields. Native-owned options retain their existing adapter rules. Claude Desktop and OpenClaw remain outside CC Switch's MCP management. Standard `mcpServers` JSON copying exports the default; database backup/sync retains independent configurations.
 
-The proposed database migration is now v26 → v27, following upstream's v25 → v26 WorkBuddy migration. It also accepts the earlier PR builds' v24/v25/v26 layouts, preserving existing independent connections and enabled flags while adding missing upstream columns. The migration number remains subject to maintainer coordination before merge. Older clients cannot open the new schema; retain the existing pre-migration backup for downgrade. This change does not introduce a transaction spanning all applications' files. Local validation is on macOS ARM64; Windows/Linux runtime and real Agent interoperability are not claimed.
+The proposed database migration is now v27 → v28, following upstream's v26 → v27 GitLab host migration. It also accepts the earlier PR builds' v24/v25/v26/v27 layouts, preserving existing independent connections and enabled flags while adding missing upstream columns. The migration number remains subject to maintainer coordination before merge. Older clients cannot open the new schema; retain the existing pre-migration backup for downgrade. This change does not introduce a transaction spanning all applications' files. Local validation is on macOS ARM64; Windows/Linux runtime and real Agent interoperability are not claimed.
 
 ## Local verification — 2026-10-25
 

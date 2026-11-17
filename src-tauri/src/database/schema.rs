@@ -145,7 +145,8 @@ impl Database {
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             installed_at INTEGER NOT NULL DEFAULT 0,
             content_hash TEXT,
-            updated_at INTEGER NOT NULL DEFAULT 0
+            updated_at INTEGER NOT NULL DEFAULT 0,
+            repo_host TEXT
         )",
             [],
         )
@@ -155,7 +156,8 @@ impl Database {
         conn.execute(
             "CREATE TABLE IF NOT EXISTS skill_repos (
             owner TEXT NOT NULL, name TEXT NOT NULL, branch TEXT NOT NULL DEFAULT 'main',
-            enabled BOOLEAN NOT NULL DEFAULT 1, PRIMARY KEY (owner, name)
+            enabled BOOLEAN NOT NULL DEFAULT 1, host TEXT NOT NULL DEFAULT 'github.com',
+            PRIMARY KEY (owner, name)
         )",
             [],
         )
@@ -728,6 +730,23 @@ impl Database {
                         Self::set_user_version(conn, 26)?;
                     }
                     26 => {
+                        // 技能仓库支持 GitLab：仓库和已安装的技能各记一个主机。
+                        // 老行不用回填——skill_repos.host 靠列默认值就是 github.com，
+                        // skills.repo_host 为 NULL 也按 github.com 读。
+                        if Self::table_exists(conn, "skill_repos")? {
+                            Self::add_column_if_missing(
+                                conn,
+                                "skill_repos",
+                                "host",
+                                "TEXT NOT NULL DEFAULT 'github.com'",
+                            )?;
+                        }
+                        if Self::table_exists(conn, "skills")? {
+                            Self::add_column_if_missing(conn, "skills", "repo_host", "TEXT")?;
+                        }
+                        Self::set_user_version(conn, 27)?;
+                    }
+                    27 => {
                         // Earlier override builds used versions now assigned to upstream clients.
                         for table in ["mcp_servers", "skills"] {
                             if Self::table_exists(conn, table)? {
@@ -765,7 +784,19 @@ impl Database {
                                 "TEXT NOT NULL DEFAULT '{}'",
                             )?;
                         }
-                        Self::set_user_version(conn, 27)?;
+                        // Prior override builds already used v27, before upstream added GitLab hosts.
+                        if Self::table_exists(conn, "skill_repos")? {
+                            Self::add_column_if_missing(
+                                conn,
+                                "skill_repos",
+                                "host",
+                                "TEXT NOT NULL DEFAULT 'github.com'",
+                            )?;
+                        }
+                        if Self::table_exists(conn, "skills")? {
+                            Self::add_column_if_missing(conn, "skills", "repo_host", "TEXT")?;
+                        }
+                        Self::set_user_version(conn, 28)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -2845,6 +2876,9 @@ impl Database {
                 "0",
             ),
             // Qwen 系列 (阿里巴巴)
+            // 2026-11-16：https://www.qwencloud.com/models/qwen4-max（新加坡，USD/百万 token）；
+            // 无阶梯，思考/非思考同价；缓存写入取默认 5 分钟档（1 小时档 $3）。
+            ("qwen4-max", "Qwen4 Max", "1.50", "4.50", "0.075", "1.875"),
             ("qwen3.8-max", "Qwen3.8 Max", "2", "6", "0.25", "2.50"),
             // 2026-09-06：阿里国际站价页 0.15/0.47 全区间（0<Token≤1M）平价、无阶梯；
             // 缓存两列官方只注明"非常规比例"未给数字，取 models.dev（与 qwen3.8-max 同口径）
@@ -4758,6 +4792,80 @@ mod tests {
                 )?,
                 (true, !prior_pr)
             );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn mcp_migration_handles_upstream_and_override_version_27_layouts() -> Result<(), AppError> {
+        for prior_pr in [false, true] {
+            let conn = Connection::open_in_memory()?;
+            conn.execute_batch(
+                "CREATE TABLE mcp_servers(id TEXT PRIMARY KEY, server_config TEXT NOT NULL,
+                    enabled_copilot BOOLEAN NOT NULL DEFAULT 0, enabled_workbuddy BOOLEAN NOT NULL DEFAULT 0);
+                 CREATE TABLE skills(id TEXT PRIMARY KEY, enabled_workbuddy BOOLEAN NOT NULL DEFAULT 0);
+                 CREATE TABLE skill_repos(id TEXT PRIMARY KEY);
+                 INSERT INTO mcp_servers VALUES ('shared', '{\"command\":\"original\"}', 1, 1);
+                 INSERT INTO skills VALUES ('skill', 1);
+                 INSERT INTO skill_repos VALUES ('repo');",
+            )?;
+            if prior_pr {
+                conn.execute_batch(
+                    "ALTER TABLE mcp_servers ADD COLUMN app_overrides TEXT NOT NULL DEFAULT '{}';
+                     UPDATE mcp_servers SET app_overrides = '{\"codex\":{\"command\":\"custom\"}}';",
+                )?;
+            } else {
+                conn.execute_batch(
+                    "ALTER TABLE skill_repos ADD COLUMN host TEXT NOT NULL DEFAULT 'github.com';
+                     ALTER TABLE skills ADD COLUMN repo_host TEXT;
+                     UPDATE skill_repos SET host = 'gitlab.example';
+                     UPDATE skills SET repo_host = 'gitlab.example';",
+                )?;
+            }
+            Database::set_user_version(&conn, 27)?;
+            for _ in 0..2 {
+                Database::apply_schema_migrations_on_conn(&conn)?;
+                assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+                let (config, overrides, copilot, workbuddy): (String, String, bool, bool) = conn.query_row(
+                    "SELECT server_config, app_overrides, enabled_copilot, enabled_workbuddy FROM mcp_servers",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                )?;
+                assert_eq!(config, "{\"command\":\"original\"}");
+                assert_eq!(
+                    overrides,
+                    if prior_pr {
+                        "{\"codex\":{\"command\":\"custom\"}}"
+                    } else {
+                        "{}"
+                    }
+                );
+                assert!(copilot && workbuddy);
+                let host: String =
+                    conn.query_row("SELECT host FROM skill_repos", [], |row| row.get(0))?;
+                assert_eq!(
+                    host,
+                    if prior_pr {
+                        "github.com"
+                    } else {
+                        "gitlab.example"
+                    }
+                );
+                let (enabled, repo_host): (bool, Option<String>) = conn.query_row(
+                    "SELECT enabled_workbuddy, repo_host FROM skills",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )?;
+                assert!(enabled);
+                assert_eq!(
+                    repo_host.as_deref(),
+                    if prior_pr {
+                        None
+                    } else {
+                        Some("gitlab.example")
+                    }
+                );
+            }
         }
         Ok(())
     }

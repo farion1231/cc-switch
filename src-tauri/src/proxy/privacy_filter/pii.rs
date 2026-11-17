@@ -4,17 +4,18 @@
 
 use super::secrets::{lookback_start, CONTEXT_LOOKBACK};
 use super::{Kind, Span};
-use once_cell::sync::Lazy;
 use regex::Regex;
 use std::net::Ipv4Addr;
+use std::sync::LazyLock;
 
-static RE_EMAIL: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}").unwrap());
-static RE_PHONE_CN: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?:\+?86[-\s]?)?1[3-9][0-9]{9}").unwrap());
-static RE_ID_CARD: Lazy<Regex> = Lazy::new(|| Regex::new(r"[1-9][0-9]{16}[0-9Xx]").unwrap());
-static RE_BANK_CARD: Lazy<Regex> = Lazy::new(|| Regex::new(r"[0-9]{13,19}").unwrap());
-static RE_IPV4: Lazy<Regex> = Lazy::new(|| {
+static RE_EMAIL: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}").unwrap());
+static RE_PHONE_CN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?:\+?86[-\s]?)?1[3-9][0-9]{9}").unwrap());
+static RE_ID_CARD: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"[1-9][0-9]{16}[0-9Xx]").unwrap());
+static RE_BANK_CARD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[0-9]{13,19}").unwrap());
+static RE_IPV4: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r"(?:(?:25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])",
     )
@@ -22,7 +23,7 @@ static RE_IPV4: Lazy<Regex> = Lazy::new(|| {
 });
 
 /// 紧贴在数字前面、说明它是卡号的词。不含单独的 card：UI 代码里 `card.createdAt: 1700000000000` 太常见
-static RE_CARD_CONTEXT: Lazy<Regex> = Lazy::new(|| {
+static RE_CARD_CONTEXT: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r"(?i)卡号|银行卡|信用卡|储蓄卡|借记卡|(?:bank|credit|debit|payment)[\s_-]?card|\bcard[\s_-]?(?:no|num|number)\b",
     )

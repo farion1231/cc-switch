@@ -58,7 +58,10 @@ pub fn view(
     settings_config: &Value,
     category: Option<&str>,
 ) -> Result<EditorView, AppError> {
-    let projection = GeminiProjection::of(settings_config, category == Some("official"));
+    let projection = GeminiProjection::of(
+        settings_config,
+        crate::provider::is_official_category(category),
+    );
 
     let env_file = gemini_direct::env_file();
     let env_pre = read_current(&env_file.path)?;

@@ -187,10 +187,6 @@ export const providersApi = {
     return await invoke("ensure_claude_desktop_official_provider");
   },
 
-  async ensureCodexOfficialProvider(): Promise<boolean> {
-    return await invoke("ensure_codex_official_provider");
-  },
-
   async ensureGrokBuildOfficialProvider(): Promise<boolean> {
     return await invoke("ensure_grokbuild_official_provider");
   },
@@ -319,13 +315,6 @@ export const universalProvidersApi = {
    */
   async getAll(): Promise<UniversalProvidersMap> {
     return await invoke("get_universal_providers");
-  },
-
-  /**
-   * 获取单个统一供应商
-   */
-  async get(id: string): Promise<UniversalProvider | null> {
-    return await invoke("get_universal_provider", { id });
   },
 
   /**

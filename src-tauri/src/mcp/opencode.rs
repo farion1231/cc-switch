@@ -182,11 +182,7 @@ pub fn convert_from_opencode_format(spec: &Value) -> Result<Value, AppError> {
 // ============================================================================
 
 /// Sync a single MCP server to OpenCode live config
-pub fn sync_single_server_to_opencode(
-    _config: &MultiAppConfig,
-    id: &str,
-    server_spec: &Value,
-) -> Result<(), AppError> {
+pub fn sync_single_server_to_opencode(id: &str, server_spec: &Value) -> Result<(), AppError> {
     if !should_sync_opencode_mcp()? {
         return Ok(());
     }
