@@ -17,10 +17,9 @@
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use crate::gemini_config::get_gemini_dir;
-use crate::proxy::usage::calculator::{CostCalculator, ModelPricing};
 use crate::proxy::usage::parser::TokenUsage;
 use crate::services::session_usage::{
-    metadata_modified_nanos, update_sync_state, SessionSyncResult,
+    cost_columns, metadata_modified_nanos, update_sync_state, SessionSyncResult,
 };
 use crate::services::usage_stats::{find_model_pricing, has_matching_proxy_usage_log, DedupKey};
 use crate::session_manager::providers::gemini::{is_session_file, parse_session_document};
@@ -307,7 +306,7 @@ fn insert_gemini_session_entry(
             return Ok(false);
         }
 
-        let (input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost) =
+        let [input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost] =
             compute_gemini_entry_costs(&tx, model, tokens.input, output_tokens, tokens.cached);
 
         let updated = tx
@@ -382,7 +381,7 @@ fn insert_gemini_session_entry(
         return Ok(false);
     }
 
-    let (input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost) =
+    let [input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost] =
         compute_gemini_entry_costs(&tx, model, tokens.input, output_tokens, tokens.cached);
 
     record_gemini_dedup_tombstone(&tx, request_id)?;
@@ -448,7 +447,7 @@ fn compute_gemini_entry_costs(
     input_tokens: u32,
     output_tokens: u32,
     cache_read_tokens: u32,
-) -> (String, String, String, String, String) {
+) -> [String; 5] {
     let usage = TokenUsage {
         input_tokens,
         output_tokens,
@@ -459,33 +458,15 @@ fn compute_gemini_entry_costs(
         message_id: None,
     };
 
-    match find_gemini_pricing(conn, model) {
-        Some(pricing) => {
-            let cost =
-                CostCalculator::calculate_for_app("gemini", &usage, &pricing, Decimal::from(1));
-            (
-                cost.input_cost.to_string(),
-                cost.output_cost.to_string(),
-                cost.cache_read_cost.to_string(),
-                cost.cache_creation_cost.to_string(),
-                cost.total_cost.to_string(),
-            )
-        }
-        None => (
-            "0".to_string(),
-            "0".to_string(),
-            "0".to_string(),
-            "0".to_string(),
-            "0".to_string(),
-        ),
-    }
+    cost_columns(
+        "gemini",
+        &usage,
+        find_model_pricing(conn, model).as_ref(),
+        Decimal::ONE,
+    )
 }
 
 /// 查找 Gemini 模型定价
-fn find_gemini_pricing(conn: &rusqlite::Connection, model_id: &str) -> Option<ModelPricing> {
-    find_model_pricing(conn, model_id)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

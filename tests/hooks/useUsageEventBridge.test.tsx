@@ -11,6 +11,7 @@ import { waitFor } from "@testing-library/react";
 import { useUsageEventBridge } from "@/hooks/useUsageEventBridge";
 import { usageKeys } from "@/lib/query/usage";
 import { emitTauriEvent } from "../msw/tauriMocks";
+import { createTestQueryClient } from "../utils/testQueryClient";
 
 describe("useUsageEventBridge", () => {
   beforeEach(() => focusManager.setFocused(true));
@@ -41,9 +42,7 @@ describe("useUsageEventBridge", () => {
   });
 
   it("keeps background data stale and fetches once on return", async () => {
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
+    const client = createTestQueryClient();
     const query = vi.fn().mockResolvedValue(1);
     const wrapper = ({ children }: PropsWithChildren) => (
       <QueryClientProvider client={client}>{children}</QueryClientProvider>

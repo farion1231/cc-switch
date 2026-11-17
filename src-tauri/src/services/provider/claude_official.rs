@@ -28,7 +28,7 @@ pub const CONFIG_DIR_ENV: &str = "CLAUDE_CONFIG_DIR";
 
 /// Claude 官方卡（预设标了 `category: "official"`）。
 pub fn is_official(provider: &Provider) -> bool {
-    provider.category.as_deref() == Some("official")
+    provider.has_official_category()
 }
 
 /// 官方卡绑定的账号 key；没绑（默认登录）或不是官方卡时为 `None`。

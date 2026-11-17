@@ -1,12 +1,11 @@
 #![allow(non_snake_case)]
 
-use serde_json::{json, Value};
+use serde_json::Value;
 use tauri::State;
 
 use crate::commands::sync_support::{self, SyncBackend};
 use crate::database::Database;
 use crate::error::AppError;
-use crate::services::sync_protocol::run_with_sync_lock;
 use crate::services::{webdav_auto_sync, webdav_sync as webdav_sync_service};
 use crate::settings::{self, WebDavSyncSettings, WebDavSyncStatus};
 use crate::store::AppState;
@@ -92,14 +91,9 @@ pub async fn webdav_sync_save_settings(
     sync_support::sync_save_settings::<WebDavBackend>(settings, passwordTouched).await
 }
 
-/// Forget the saved WebDAV config (URL, credentials, remote root, status) on
-/// this device. Remote snapshots are left untouched.
 #[tauri::command]
 pub async fn webdav_sync_clear_settings() -> Result<Value, String> {
-    run_with_sync_lock(async { settings::set_webdav_sync_settings(None) })
-        .await
-        .map_err(|e| e.to_string())?;
-    Ok(json!({ "success": true }))
+    sync_support::sync_clear_settings::<WebDavBackend>().await
 }
 
 #[tauri::command]

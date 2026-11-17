@@ -35,7 +35,7 @@ pub(crate) fn get_omp_agent_dir() -> Result<PathBuf, AppError> {
         return Ok(path);
     }
 
-    if let Some(dir) = crate::settings::get_omp_override_dir() {
+    if let Some(dir) = crate::settings::get_override_dir(&crate::app_config::AppType::Omp) {
         return Ok(dir);
     }
 
