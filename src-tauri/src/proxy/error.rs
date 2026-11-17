@@ -38,10 +38,6 @@ pub enum ProxyError {
     #[error("未配置供应商")]
     NoProvidersConfigured,
 
-    #[allow(dead_code)]
-    #[error("Provider不健康: {0}")]
-    ProviderUnhealthy(String),
-
     #[error("上游错误 (状态码 {status}): {body:?}")]
     UpstreamError { status: u16, body: Option<String> },
 
@@ -54,21 +50,14 @@ pub enum ProxyError {
     #[error("配置错误: {0}")]
     ConfigError(String),
 
-    #[allow(dead_code)]
     #[error("格式转换错误: {0}")]
     TransformError(String),
 
-    #[allow(dead_code)]
     #[error("无效的请求: {0}")]
     InvalidRequest(String),
 
     #[error("超时: {0}")]
     Timeout(String),
-
-    /// 流式响应空闲超时
-    #[allow(dead_code)]
-    #[error("流式响应空闲超时: {0}秒无数据")]
-    StreamIdleTimeout(u64),
 
     /// 认证错误
     #[error("认证失败: {0}")]
@@ -82,7 +71,6 @@ pub enum ProxyError {
     #[error("已暂停使用 Codex 官方登录，官方请求不会发出。请在模型菜单换成第三方模型；官方额度恢复后，在 CC Switch 的 Codex 页面点「恢复官方登录」，然后重启 Codex。 (The Codex official login is paused, so official requests are not sent. Pick a third-party model in the model menu; once the official quota is back, click \"Resume official login\" on the Codex page in CC Switch, then restart Codex.)")]
     CodexOfficialLoginPaused,
 
-    #[allow(dead_code)]
     #[error("内部错误: {0}")]
     Internal(String),
 }
@@ -145,9 +133,6 @@ impl IntoResponse for ProxyError {
                     ProxyError::NoProvidersConfigured => {
                         (StatusCode::SERVICE_UNAVAILABLE, self.to_string())
                     }
-                    ProxyError::ProviderUnhealthy(_) => {
-                        (StatusCode::SERVICE_UNAVAILABLE, self.to_string())
-                    }
                     ProxyError::MaxRetriesExceeded => {
                         (StatusCode::SERVICE_UNAVAILABLE, self.to_string())
                     }
@@ -160,9 +145,6 @@ impl IntoResponse for ProxyError {
                     }
                     ProxyError::InvalidRequest(_) => (StatusCode::BAD_REQUEST, self.to_string()),
                     ProxyError::Timeout(_) => (StatusCode::GATEWAY_TIMEOUT, self.to_string()),
-                    ProxyError::StreamIdleTimeout(_) => {
-                        (StatusCode::GATEWAY_TIMEOUT, self.to_string())
-                    }
                     ProxyError::AuthError(_) => (StatusCode::UNAUTHORIZED, self.to_string()),
                     ProxyError::CodexQuotaProtection(_) | ProxyError::CodexOfficialLoginPaused => {
                         (StatusCode::FORBIDDEN, self.to_string())
@@ -198,8 +180,6 @@ pub enum ErrorCategory {
     Retryable, // 网络超时、5xx 错误
     /// 不可重试错误（4xx、认证失败）
     NonRetryable, // 认证失败、参数错误、4xx 错误
-    #[allow(dead_code)]
-    ClientAbort, // 客户端主动中断
 }
 
 /// 把错误连同 `source()` 原因链拼成一行。
@@ -224,26 +204,6 @@ pub fn describe_error_chain(error: &(dyn std::error::Error + 'static)) -> String
 /// reqwest 错误的文本带完整 URL（查询参数里可能有 Key），先去掉 URL 再展开原因链。
 pub fn describe_reqwest_error(error: reqwest::Error) -> String {
     describe_error_chain(&error.without_url())
-}
-
-/// 判断错误是否可重试
-#[allow(dead_code)]
-pub fn categorize_error(error: &reqwest::Error) -> ErrorCategory {
-    if error.is_timeout() || error.is_connect() {
-        return ErrorCategory::Retryable;
-    }
-
-    if let Some(status) = error.status() {
-        if status.is_server_error() {
-            ErrorCategory::Retryable
-        } else if status.is_client_error() {
-            ErrorCategory::NonRetryable
-        } else {
-            ErrorCategory::Retryable
-        }
-    } else {
-        ErrorCategory::Retryable
-    }
 }
 
 #[cfg(test)]

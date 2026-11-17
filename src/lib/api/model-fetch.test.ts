@@ -1,5 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
-import { fetchModelsForConfig, modelFetchRequestHeaders } from "./model-fetch";
+import {
+  claudeModelFetchApiFormat,
+  fetchModelsForConfig,
+  modelFetchRequestHeaders,
+} from "./model-fetch";
 
 const invoke = vi.hoisted(() => vi.fn().mockResolvedValue([]));
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -70,4 +74,19 @@ describe("modelFetchRequestHeaders", () => {
     ).toBeUndefined();
     expect(modelFetchRequestHeaders('{"x-api-key": "k"}')).toBeUndefined();
   });
+});
+
+describe("claudeModelFetchApiFormat", () => {
+  it("sends Gemini Native catalogs with the Google API-key header", () => {
+    expect(claudeModelFetchApiFormat("gemini_native")).toBe(
+      "google-generative-ai",
+    );
+  });
+
+  it.each(["anthropic", "openai_chat", "openai_responses", undefined])(
+    "keeps the default Bearer catalog request for %s",
+    (format) => {
+      expect(claudeModelFetchApiFormat(format)).toBeUndefined();
+    },
+  );
 });

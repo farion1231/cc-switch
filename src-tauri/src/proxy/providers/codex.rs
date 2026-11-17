@@ -6,18 +6,14 @@
 //! 支持检测官方 Codex 客户端 (codex_vscode, codex_cli_rs)
 
 use super::{AuthInfo, AuthStrategy, ProviderAdapter};
+use crate::codex_config::{
+    active_provider_str, extract_codex_base_url, is_anthropic_wire_api, is_chat_wire_api,
+};
 use crate::provider::{CodexChatReasoningConfig, Provider};
 use crate::proxy::error::ProxyError;
-use regex::Regex;
 use serde_json::Value as JsonValue;
 use std::collections::HashSet;
-use std::sync::LazyLock;
 use toml::Value as TomlValue;
-
-/// 官方 Codex 客户端 User-Agent 正则
-#[allow(dead_code)]
-static CODEX_CLIENT_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^(codex_vscode|codex_cli_rs)/[\d.]+").unwrap());
 
 /// Codex 适配器
 pub struct CodexAdapter;
@@ -68,7 +64,7 @@ pub fn codex_provider_uses_chat_completions(provider: &Provider) -> bool {
         .settings_config
         .get("config")
         .and_then(|v| v.as_str())
-        .and_then(extract_codex_base_url_from_toml)
+        .and_then(extract_codex_base_url)
         .map(|url| is_chat_completions_url(&url))
         .unwrap_or(false)
 }
@@ -114,7 +110,7 @@ pub fn should_send_codex_chat_prompt_cache_key(provider: &Provider) -> bool {
                 .settings_config
                 .get("config")
                 .and_then(|value| value.as_str())
-                .and_then(extract_codex_base_url_from_toml)
+                .and_then(extract_codex_base_url)
         });
 
     let Some(base_url) = base_url else {
@@ -257,7 +253,7 @@ fn provider_is_xai_native_responses(provider: &Provider) -> bool {
         return false;
     }
 
-    extract_codex_base_url_from_toml(config_text)
+    extract_codex_base_url(config_text)
         .map(|url| url.to_ascii_lowercase())
         .is_some_and(|url| url.contains("api.x.ai"))
 }
@@ -319,7 +315,7 @@ fn has_explicit_codex_third_party_upstream(provider: &Provider) -> bool {
 /// backend. The fixed legacy card keeps its existing behavior.
 pub fn is_codex_official_provider(provider: &Provider) -> bool {
     let is_fixed_official_id = provider.id == crate::database::CODEX_OFFICIAL_PROVIDER_ID;
-    if is_fixed_official_id && provider.category.as_deref() == Some("official") {
+    if is_fixed_official_id && provider.has_official_category() {
         return true;
     }
 
@@ -358,7 +354,7 @@ pub fn is_codex_official_provider(provider: &Provider) -> bool {
         return false;
     }
 
-    is_fixed_official_id || provider.category.as_deref() == Some("official")
+    is_fixed_official_id || provider.has_official_category()
 }
 
 /// Vendors whose OFFICIAL Codex integration is a native `/responses` gateway that
@@ -440,7 +436,7 @@ pub fn resolve_codex_catalog_tool_profile(
         .settings_config
         .get("config")
         .and_then(|v| v.as_str())
-        .and_then(extract_codex_base_url_from_toml)
+        .and_then(extract_codex_base_url)
         .or_else(|| {
             provider
                 .settings_config
@@ -817,7 +813,7 @@ fn infer_codex_chat_reasoning_config(
                 .settings_config
                 .get("config")
                 .and_then(|v| v.as_str())
-                .and_then(extract_codex_base_url_from_toml)
+                .and_then(extract_codex_base_url)
         })
         .unwrap_or_default();
     infer_chat_reasoning_config(&provider.name, &base_url, &model)
@@ -1021,26 +1017,23 @@ fn infer_aggregator_platform_config(
         });
     }
 
+    // Mistral 官方 API（#9507）：Chat 请求体不收额外字段，它托管的 deepseek / glm 名模型
+    // 会被下方模型规则注入 `thinking:{type}`，整条 422。与 Codex 的 Mistral 预设、Claude
+    // 侧（`claude_reasoning`）共用 `is_mistral_api`，不下发推理参数。
+    // 要发档位的用户在卡上显式配置 codexChatReasoning。
+    if super::is_mistral_api(base_url) {
+        return Some(CodexChatReasoningConfig {
+            supports_thinking: Some(false),
+            supports_effort: Some(false),
+            thinking_param: Some("none".to_string()),
+            effort_param: Some("none".to_string()),
+            effort_value_mode: None,
+            output_format: Some("auto".to_string()),
+            effort_levels: None,
+        });
+    }
+
     None
-}
-
-fn is_chat_wire_api(value: &str) -> bool {
-    matches!(
-        value.trim().to_ascii_lowercase().as_str(),
-        "chat"
-            | "chat_completions"
-            | "chat-completions"
-            | "openai_chat"
-            | "openai-chat"
-            | "openai_chat_completions"
-    )
-}
-
-fn is_anthropic_wire_api(value: &str) -> bool {
-    matches!(
-        value.trim().to_ascii_lowercase().as_str(),
-        "anthropic" | "anthropic_messages" | "anthropic-messages" | "claude" | "messages"
-    )
 }
 
 fn is_chat_completions_url(value: &str) -> bool {
@@ -1062,21 +1055,7 @@ pub fn is_origin_only_url(value: &str) -> bool {
 
 fn extract_codex_wire_api_from_toml(config_text: &str) -> Option<String> {
     let doc = config_text.parse::<TomlValue>().ok()?;
-
-    if let Some(active_provider) = doc.get("model_provider").and_then(|v| v.as_str()) {
-        if let Some(wire_api) = doc
-            .get("model_providers")
-            .and_then(|providers| providers.get(active_provider))
-            .and_then(|provider| provider.get("wire_api"))
-            .and_then(|v| v.as_str())
-        {
-            return Some(wire_api.to_string());
-        }
-    }
-
-    doc.get("wire_api")
-        .and_then(|v| v.as_str())
-        .map(ToString::to_string)
+    active_provider_str(&doc, "wire_api").map(str::to_string)
 }
 
 fn extract_codex_model_from_toml(config_text: &str) -> Option<String> {
@@ -1087,12 +1066,6 @@ fn extract_codex_model_from_toml(config_text: &str) -> Option<String> {
         .map(str::trim)
         .filter(|model| !model.is_empty())
         .map(ToString::to_string)
-}
-
-fn extract_codex_base_url_from_toml(config_text: &str) -> Option<String> {
-    // Canonical parser lives in codex_config; keep this thin alias so the
-    // proxy hot path and the usage-credential resolver share one implementation.
-    crate::codex_config::extract_codex_base_url(config_text)
 }
 
 impl CodexAdapter {
@@ -1219,7 +1192,7 @@ impl ProviderAdapter for CodexAdapter {
                 // The table `model_provider` selects, read the way Codex reads it. The text
                 // scans below remain for a top-level `openai_base_url` and for TOML that
                 // does not parse.
-                if let Some(url) = extract_codex_base_url_from_toml(config_str) {
+                if let Some(url) = extract_codex_base_url(config_str) {
                     return Ok(url.trim_end_matches('/').to_string());
                 }
                 if let Some(start) = config_str.find("base_url = \"") {
@@ -2396,6 +2369,7 @@ wire_api = "chat"
         let transformed = crate::proxy::providers::transform_codex_chat::responses_to_chat_completions_with_reasoning(
             request,
             Some(&config),
+            true,
         )
         .unwrap();
         assert_eq!(transformed["reasoning_effort"], "max");
@@ -2505,6 +2479,71 @@ wire_api = "chat"
         assert_eq!(config.effort_param.as_deref(), Some("reasoning_effort"));
         assert_eq!(config.effort_value_mode.as_deref(), Some("zen"));
         assert_eq!(config.output_format.as_deref(), Some("reasoning_content"));
+    }
+
+    #[test]
+    fn test_resolve_codex_chat_reasoning_mistral_api_sends_no_reasoning_fields() {
+        let provider = create_provider(json!({
+            "config": r#"
+model_provider = "mistral"
+model = "deepseek-v4-1-flash-1017"
+
+[model_providers.mistral]
+name = "Mistral AI"
+base_url = "https://api.mistral.ai/v1"
+wire_api = "chat"
+"#
+        }));
+
+        // Mistral 托管的 deepseek 名模型不得套 DeepSeek 规则注入 thinking（#9507）。
+        let request = json!({
+            "model": "deepseek-v4-1-flash-1017",
+            "input": "hi",
+            "reasoning": {"effort": "high"}
+        });
+        let config = resolve_codex_chat_reasoning_config(&provider, &request).unwrap();
+        let chat = crate::proxy::providers::transform_codex_chat::responses_to_chat_completions_with_reasoning(
+            request,
+            Some(&config),
+            // 与 forwarder 对 api.mistral.ai 的取值一致。
+            false,
+        )
+        .unwrap();
+
+        assert!(chat.get("thinking").is_none());
+        assert!(chat.get("reasoning_effort").is_none());
+        assert!(chat.get("reasoning").is_none());
+    }
+
+    #[test]
+    fn test_resolve_codex_chat_reasoning_mistral_rule_needs_exact_host() {
+        for base_url in [
+            "https://api.mistral.ai.example/v1",
+            "https://relay.example/api.mistral.ai/v1",
+        ] {
+            let provider = create_provider(json!({
+                "config": format!(
+                    "model_provider = \"relay\"\nmodel = \"deepseek-v4-pro\"\n\n[model_providers.relay]\nname = \"Relay\"\nbase_url = \"{base_url}\"\nwire_api = \"chat\"\n"
+                )
+            }));
+
+            let config = resolve_codex_chat_reasoning_config(
+                &provider,
+                &json!({ "model": "deepseek-v4-pro" }),
+            )
+            .unwrap();
+
+            assert_eq!(
+                config.thinking_param.as_deref(),
+                Some("thinking"),
+                "{base_url}"
+            );
+            assert_eq!(
+                config.effort_value_mode.as_deref(),
+                Some("deepseek"),
+                "{base_url}"
+            );
+        }
     }
 
     #[test]

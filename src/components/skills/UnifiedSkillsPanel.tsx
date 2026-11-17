@@ -51,7 +51,6 @@ import {
   useUpdateSkill,
 } from "@/hooks/useSkills";
 import type { AppId } from "@/lib/api/types";
-import { SKILLS_APP_IDS } from "@/config/appConfig";
 import { settingsApi, skillsApi } from "@/lib/api";
 import { copyText } from "@/lib/clipboard";
 import { extractErrorMessage } from "@/utils/errorUtils";
@@ -76,7 +75,9 @@ import { SkillsStorageSheet } from "./SkillsStorageSheet";
 import { useSkillsResync } from "./useSkillsResync";
 import { useSkillInstallTargets } from "./useSkillInstallTargets";
 import { describeRepoFailures } from "./repoFailures";
+import { repoWebUrl } from "./repoUrl";
 import type { ZipSkippedSkill } from "@/lib/api/skills";
+import { APP_IDS_WITH } from "@/config/appSpecs";
 
 const BACKUP_DIR = "~/.cc-switch/skill-backups";
 
@@ -132,7 +133,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
   onNavigationBlockedChange,
 }) => {
   const { t, i18n } = useTranslation();
-  const appIds = useVisibleAppIds(SKILLS_APP_IDS);
+  const appIds = useVisibleAppIds(APP_IDS_WITH.skills);
   const { targets, setTargets, installTo } = useSkillInstallTargets(appIds);
 
   const [view, setView] = useState<SkillsView>(initialView);
@@ -319,7 +320,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
   }, [installedSkills]);
 
   const enabledCount = (skill: InstalledSkill) =>
-    SKILLS_APP_IDS.filter((app) => skill.apps[app]).length;
+    APP_IDS_WITH.skills.filter((app) => skill.apps[app]).length;
 
   const normalizedQuery = searchQuery.trim().toLocaleLowerCase();
   const filteredSkills = useMemo(() => {
@@ -879,7 +880,11 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     const url =
       skill.readmeUrl ||
       (skill.repoOwner && skill.repoName
-        ? `https://github.com/${skill.repoOwner}/${skill.repoName}`
+        ? repoWebUrl({
+            host: skill.repoHost,
+            owner: skill.repoOwner,
+            name: skill.repoName,
+          })
         : undefined);
     if (!url) return;
     try {
@@ -1825,7 +1830,7 @@ function InstalledRow({
   onUninstall,
 }: InstalledRowProps) {
   const { t } = useTranslation();
-  const enabled = SKILLS_APP_IDS.some((app) => skill.apps[app]);
+  const enabled = APP_IDS_WITH.skills.some((app) => skill.apps[app]);
   const failedApp = appIds.find((app) => fails[failKey(skill.id, app)]);
   const failure = failedApp ? fails[failKey(skill.id, failedApp)] : undefined;
   const failId = `sk-fail-${skill.id}`;

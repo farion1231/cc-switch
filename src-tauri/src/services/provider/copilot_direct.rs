@@ -11,8 +11,7 @@ pub(crate) const ACCOUNT_AUTH_PROVIDER: &str = "github_copilot";
 
 /// 官方登录卡：分类标为官方，或者没有自带模型的 `provider` 节点。供应商名称可编辑，不参与判断。
 pub(crate) fn is_official(provider: &Provider) -> bool {
-    provider.category.as_deref() == Some("official")
-        || !copilot_config::is_byok_settings(&provider.settings_config)
+    provider.has_official_category() || !copilot_config::is_byok_settings(&provider.settings_config)
 }
 
 /// 在终端里启动这张卡要用的参数。自带模型卡必须已经添加进 `providers.json`：Copilot 只从
@@ -72,6 +71,7 @@ mod tests {
     use crate::database::Database;
     use crate::services::provider::ProviderService;
     use crate::store::AppState;
+    use crate::test_support::EnvVars;
     use serde_json::{json, Value};
     use serial_test::serial;
     use std::sync::Arc;
@@ -115,17 +115,13 @@ mod tests {
     /// 临时 home + 临时 `COPILOT_HOME` 下跑 Copilot 的供应商服务。
     fn with_copilot_home(test: impl FnOnce(&AppState, &std::path::Path)) {
         let dir = tempfile::tempdir().unwrap();
-        let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
-        std::env::set_var("CC_SWITCH_TEST_HOME", dir.path());
+        let env = EnvVars::new().set("CC_SWITCH_TEST_HOME", dir.path());
         let copilot_home = dir.path().join(".copilot");
         let guard = CopilotHomeGuard::new(&copilot_home);
         let state = AppState::new(Arc::new(Database::memory().unwrap()));
         test(&state, &copilot_home);
         drop(guard);
-        match old_test_home {
-            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
-            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
-        }
+        drop(env);
     }
 
     #[test]

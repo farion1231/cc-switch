@@ -195,28 +195,6 @@ impl ProviderRouter {
         Ok(())
     }
 
-    /// 重置熔断器（手动恢复）
-    pub async fn reset_circuit_breaker(&self, circuit_key: &str) {
-        let breakers = self.circuit_breakers.read().await;
-        if let Some(breaker) = breakers.get(circuit_key) {
-            breaker.reset().await;
-        }
-    }
-
-    /// 重置指定供应商的熔断器
-    pub async fn reset_provider_breaker(&self, provider_id: &str, app_type: &str) {
-        let circuit_key = format!("{app_type}:{provider_id}");
-        self.reset_circuit_breaker(&circuit_key).await;
-    }
-
-    /// 更新所有熔断器的配置（热更新）
-    pub async fn update_all_configs(&self, config: CircuitBreakerConfig) {
-        let breakers = self.circuit_breakers.read().await;
-        for breaker in breakers.values() {
-            breaker.update_config(config.clone()).await;
-        }
-    }
-
     /// 更新指定应用已创建熔断器的配置（热更新）
     pub async fn update_app_configs(&self, app_type: &str, config: CircuitBreakerConfig) {
         let prefix = format!("{app_type}:");
@@ -229,7 +207,7 @@ impl ProviderRouter {
     }
 
     /// 获取熔断器状态
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub async fn get_circuit_breaker_stats(
         &self,
         provider_id: &str,
@@ -290,10 +268,9 @@ mod tests {
     use super::*;
     use crate::database::Database;
     use crate::provider::{AuthBinding, AuthBindingSource, ProviderMeta};
+    use crate::test_support::TempUserHome;
     use serde_json::json;
     use serial_test::serial;
-    use std::env;
-    use tempfile::TempDir;
 
     fn managed_codex_official(id: &str, account_id: &str) -> Provider {
         let mut provider = Provider::with_id(
@@ -315,58 +292,16 @@ mod tests {
         provider
     }
 
-    struct TempHome {
-        #[allow(dead_code)]
-        dir: TempDir,
-        original_home: Option<String>,
-        original_userprofile: Option<String>,
-        original_test_home: Option<String>,
-    }
-
-    impl TempHome {
-        fn new() -> Self {
-            let dir = TempDir::new().expect("failed to create temp home");
-            let original_home = env::var("HOME").ok();
-            let original_userprofile = env::var("USERPROFILE").ok();
-            let original_test_home = env::var("CC_SWITCH_TEST_HOME").ok();
-
-            env::set_var("HOME", dir.path());
-            env::set_var("USERPROFILE", dir.path());
-            env::set_var("CC_SWITCH_TEST_HOME", dir.path());
-            crate::settings::reload_settings().expect("reload settings");
-
-            Self {
-                dir,
-                original_home,
-                original_userprofile,
-                original_test_home,
-            }
-        }
-    }
-
-    impl Drop for TempHome {
-        fn drop(&mut self) {
-            match &self.original_home {
-                Some(value) => env::set_var("HOME", value),
-                None => env::remove_var("HOME"),
-            }
-
-            match &self.original_userprofile {
-                Some(value) => env::set_var("USERPROFILE", value),
-                None => env::remove_var("USERPROFILE"),
-            }
-
-            match &self.original_test_home {
-                Some(value) => env::set_var("CC_SWITCH_TEST_HOME", value),
-                None => env::remove_var("CC_SWITCH_TEST_HOME"),
-            }
-        }
+    fn temp_home() -> TempUserHome {
+        let home = TempUserHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        home
     }
 
     #[tokio::test]
     #[serial]
     async fn test_provider_router_creation() {
-        let _home = TempHome::new();
+        let _home = temp_home();
         let db = Arc::new(Database::memory().unwrap());
         let router = ProviderRouter::new(db);
 
@@ -377,7 +312,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_failover_disabled_uses_current_provider() {
-        let _home = TempHome::new();
+        let _home = temp_home();
         let db = Arc::new(Database::memory().unwrap());
 
         let provider_a =
@@ -400,7 +335,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_failover_enabled_uses_queue_order_ignoring_current() {
-        let _home = TempHome::new();
+        let _home = temp_home();
         let db = Arc::new(Database::memory().unwrap());
 
         // 设置 sort_index 来控制顺序：b=1, a=2
@@ -435,7 +370,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_failover_enabled_uses_queue_only_even_if_current_not_in_queue() {
-        let _home = TempHome::new();
+        let _home = temp_home();
         let db = Arc::new(Database::memory().unwrap());
 
         let provider_a =
@@ -465,7 +400,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn codex_official_current_stays_single_route_when_failover_is_stale() {
-        let _home = TempHome::new();
+        let _home = temp_home();
         let db = Arc::new(Database::memory().unwrap());
         let official = managed_codex_official("official-a", "account-a");
         let fallback = Provider::with_id(
@@ -494,7 +429,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn stale_codex_official_queue_entries_are_not_retry_targets() {
-        let _home = TempHome::new();
+        let _home = temp_home();
         let db = Arc::new(Database::memory().unwrap());
         let current = Provider::with_id(
             "third-party".to_string(),
@@ -536,16 +471,8 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_select_providers_does_not_consume_half_open_permit() {
-        let _home = TempHome::new();
+        let _home = temp_home();
         let db = Arc::new(Database::memory().unwrap());
-
-        db.update_circuit_breaker_config(&CircuitBreakerConfig {
-            failure_threshold: 1,
-            timeout_seconds: 0,
-            ..Default::default()
-        })
-        .await
-        .unwrap();
 
         let provider_a =
             Provider::with_id("a".to_string(), "Provider A".to_string(), json!({}), None);
@@ -560,6 +487,12 @@ mod tests {
 
         // 启用自动故障转移（使用新的 proxy_config API）
         let mut config = db.get_proxy_config_for_app("claude").await.unwrap();
+        // 1 次失败即熔断，0 秒超时立即进入 HalfOpen
+        config.circuit_failure_threshold = 1;
+        config.circuit_success_threshold = 2;
+        config.circuit_timeout_seconds = 0;
+        config.circuit_error_rate_threshold = 0.6;
+        config.circuit_min_requests = 10;
         config.auto_failover_enabled = true;
         db.update_proxy_config_for_app(config).await.unwrap();
 
@@ -579,17 +512,8 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_dropping_permit_frees_half_open_slot() {
-        let _home = TempHome::new();
+        let _home = temp_home();
         let db = Arc::new(Database::memory().unwrap());
-
-        // 配置熔断器：1 次失败即熔断，0 秒超时立即进入 HalfOpen
-        db.update_circuit_breaker_config(&CircuitBreakerConfig {
-            failure_threshold: 1,
-            timeout_seconds: 0,
-            ..Default::default()
-        })
-        .await
-        .unwrap();
 
         let provider_a =
             Provider::with_id("a".to_string(), "Provider A".to_string(), json!({}), None);
@@ -598,6 +522,12 @@ mod tests {
 
         // 启用自动故障转移
         let mut config = db.get_proxy_config_for_app("claude").await.unwrap();
+        // 1 次失败即熔断，0 秒超时立即进入 HalfOpen
+        config.circuit_failure_threshold = 1;
+        config.circuit_success_threshold = 2;
+        config.circuit_timeout_seconds = 0;
+        config.circuit_error_rate_threshold = 0.6;
+        config.circuit_min_requests = 10;
         config.auto_failover_enabled = true;
         db.update_proxy_config_for_app(config).await.unwrap();
 
@@ -632,20 +562,19 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_cancelled_probe_returns_half_open_slot() {
-        let _home = TempHome::new();
+        let _home = temp_home();
         let db = Arc::new(Database::memory().unwrap());
-        db.update_circuit_breaker_config(&CircuitBreakerConfig {
-            failure_threshold: 1,
-            timeout_seconds: 0,
-            ..Default::default()
-        })
-        .await
-        .unwrap();
         let provider_a =
             Provider::with_id("a".to_string(), "Provider A".to_string(), json!({}), None);
         db.save_provider("claude", &provider_a).unwrap();
         db.add_to_failover_queue("claude", "a").unwrap();
         let mut config = db.get_proxy_config_for_app("claude").await.unwrap();
+        // 1 次失败即熔断，0 秒超时立即进入 HalfOpen
+        config.circuit_failure_threshold = 1;
+        config.circuit_success_threshold = 2;
+        config.circuit_timeout_seconds = 0;
+        config.circuit_error_rate_threshold = 0.6;
+        config.circuit_min_requests = 10;
         config.auto_failover_enabled = true;
         db.update_proxy_config_for_app(config).await.unwrap();
 
@@ -680,20 +609,19 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_stale_probe_permit_does_not_free_next_round_slot() {
-        let _home = TempHome::new();
+        let _home = temp_home();
         let db = Arc::new(Database::memory().unwrap());
-        db.update_circuit_breaker_config(&CircuitBreakerConfig {
-            failure_threshold: 1,
-            timeout_seconds: 0,
-            ..Default::default()
-        })
-        .await
-        .unwrap();
         let provider_a =
             Provider::with_id("a".to_string(), "Provider A".to_string(), json!({}), None);
         db.save_provider("claude", &provider_a).unwrap();
         db.add_to_failover_queue("claude", "a").unwrap();
         let mut config = db.get_proxy_config_for_app("claude").await.unwrap();
+        // 1 次失败即熔断，0 秒超时立即进入 HalfOpen
+        config.circuit_failure_threshold = 1;
+        config.circuit_success_threshold = 2;
+        config.circuit_timeout_seconds = 0;
+        config.circuit_error_rate_threshold = 0.6;
+        config.circuit_min_requests = 10;
         config.auto_failover_enabled = true;
         db.update_proxy_config_for_app(config).await.unwrap();
 

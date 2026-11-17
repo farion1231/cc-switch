@@ -118,9 +118,6 @@ describe("native OpenCode provider form", () => {
       http.post("http://tauri.local/auth_get_status", () =>
         HttpResponse.json({ authenticated: false, accounts: [] }),
       ),
-      http.post("http://tauri.local/get_common_config_snippet", () =>
-        HttpResponse.json(""),
-      ),
     );
   });
   it.each([{}, { models: { alias: { modelID: "upstream" } } }])(

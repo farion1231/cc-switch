@@ -89,7 +89,7 @@ fn test_home_override() -> Option<PathBuf> {
 
 /// 获取 Claude Code 配置目录路径
 pub fn get_claude_config_dir() -> PathBuf {
-    if let Some(custom) = crate::settings::get_claude_override_dir() {
+    if let Some(custom) = crate::settings::get_override_dir(&crate::app_config::AppType::Claude) {
         return custom;
     }
 
@@ -284,7 +284,8 @@ fn derive_mcp_path_from_override(dir: &Path) -> PathBuf {
 
 /// 获取 Claude MCP 配置文件路径
 pub fn get_claude_mcp_path() -> PathBuf {
-    if let Some(custom_dir) = crate::settings::get_claude_override_dir() {
+    if let Some(custom_dir) = crate::settings::get_override_dir(&crate::app_config::AppType::Claude)
+    {
         if let Some(path) = default_mcp_path_for_config_dir(&custom_dir) {
             return path;
         }
@@ -358,28 +359,6 @@ pub fn get_app_config_dir() -> PathBuf {
 /// 获取应用配置文件路径
 pub fn get_app_config_path() -> PathBuf {
     get_app_config_dir().join("config.json")
-}
-
-/// 清理供应商名称，确保文件名安全
-#[allow(dead_code)]
-pub fn sanitize_provider_name(name: &str) -> String {
-    name.chars()
-        .map(|c| match c {
-            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '-',
-            _ => c,
-        })
-        .collect::<String>()
-        .to_lowercase()
-}
-
-/// 获取供应商配置文件路径
-#[allow(dead_code)]
-pub fn get_provider_config_path(provider_id: &str, provider_name: Option<&str>) -> PathBuf {
-    let base_name = provider_name
-        .map(sanitize_provider_name)
-        .unwrap_or_else(|| sanitize_provider_name(provider_id));
-
-    get_claude_config_dir().join(format!("settings-{base_name}.json"))
 }
 
 /// 读取 JSON 配置文件
@@ -604,7 +583,7 @@ pub(crate) fn stage_write(
 /// 不碰路径里的目录软链；除相对目标带 `..` 外不做 `canonicalize`（Windows 上会把路径
 /// 改写成 `\\?\` 形式），普通文件原样返回。
 /// 悬空链接照样返回它指向的路径，写入时会在那里新建文件、链接保留。
-fn resolve_symlink_target(path: &Path) -> PathBuf {
+pub(crate) fn resolve_symlink_target(path: &Path) -> PathBuf {
     // 与 Linux 的 MAXSYMLINKS 一致，防止链接成环时死循环。
     const MAX_HOPS: usize = 40;
     let mut current = path.to_path_buf();
@@ -1202,7 +1181,8 @@ mod tests {
         // 进程级环境变量的读写必须与同样改它们的测试互斥。锁是模块级共享的
         // （写成测试函数体内的 static 只能锁住自己，等于没锁），见
         // `proxy::http_client` 里同一套 env_lock() 用法。
-        let _guard = env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        use crate::sync_utils::MutexExt;
+        let _guard = env_lock().lock_recover();
 
         // 假装 HOME 指向另一处，并且那里有一份 db——正是会触发回退的形状
         let legacy_home = tempfile::tempdir().expect("tempdir");
@@ -1211,22 +1191,13 @@ mod tests {
         std::fs::write(legacy_dir.join("cc-switch.db"), b"legacy").expect("seed legacy db");
 
         let test_home = tempfile::tempdir().expect("tempdir");
-        let saved_home = std::env::var_os("HOME");
-        let saved_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
-
-        std::env::set_var("HOME", legacy_home.path());
-        std::env::set_var("CC_SWITCH_TEST_HOME", test_home.path());
+        let env = crate::test_support::EnvVars::new()
+            .set("HOME", legacy_home.path())
+            .set("CC_SWITCH_TEST_HOME", test_home.path());
 
         let dir = get_app_config_dir();
 
-        match saved_test_home {
-            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
-            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
-        }
-        match saved_home {
-            Some(value) => std::env::set_var("HOME", value),
-            None => std::env::remove_var("HOME"),
-        }
+        drop(env);
 
         let expected = test_home.path().join(".cc-switch");
         assert_eq!(

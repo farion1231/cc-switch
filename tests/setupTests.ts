@@ -7,8 +7,16 @@ import { server } from "./msw/server";
 import { resetProviderState } from "./msw/state";
 import "./msw/tauriMocks";
 
+// A request without a handler fails the test that made it, instead of only
+// logging while the component quietly takes its error path.
+const unhandledRequests: string[] = [];
+
 beforeAll(async () => {
-  server.listen({ onUnhandledRequest: "warn" });
+  server.listen({
+    onUnhandledRequest: (request) => {
+      unhandledRequests.push(`${request.method} ${request.url}`);
+    },
+  });
   await i18n.use(initReactI18next).init({
     lng: "zh",
     fallbackLng: "zh",
@@ -35,6 +43,12 @@ afterEach(() => {
   resetProviderState();
   server.resetHandlers();
   vi.clearAllMocks();
+  const unhandled = unhandledRequests.splice(0);
+  if (unhandled.length > 0) {
+    throw new Error(
+      `Requests without an MSW handler (add one to tests/msw/handlers.ts or server.use it in the test):\n${unhandled.join("\n")}`,
+    );
+  }
 });
 
 afterAll(() => {

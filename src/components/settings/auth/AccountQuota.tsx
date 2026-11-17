@@ -353,34 +353,53 @@ export function CopilotAccountQuota({
   );
 }
 
-/** xAI 账号的订阅额度（get_xai_oauth_quota(accountId)） */
-export function XaiAccountQuota({
-  accountId,
-  login,
-}: {
-  accountId: string;
-  login: string;
-}) {
-  const { t, i18n } = useTranslation();
-  const display = useQuotaDisplay();
-  const {
-    data: quota,
-    isFetching: loading,
-    refetch,
-  } = useXaiOauthQuotaByAccountId(accountId, {
-    enabled: true,
-    autoQuery: false,
-  });
-  return (
-    <AccountQuotaColumn
-      login={login}
-      state={subscriptionQuotaState(t, quota, loading, i18n.language, display)}
-      queriedAt={quota?.queriedAt ?? null}
-      loading={loading}
-      onRefresh={() => void refetch()}
-    />
-  );
+/** 按账号查的订阅额度列：xAI、Antigravity、Claude 只是查询 hook 不同 */
+function subscriptionAccountQuota(
+  useQuota: (
+    accountId: string,
+    options: { enabled: boolean; autoQuery: boolean },
+  ) => {
+    data: SubscriptionQuota | undefined;
+    isFetching: boolean;
+    refetch: () => unknown;
+  },
+) {
+  return function SubscriptionAccountQuota({
+    accountId,
+    login,
+  }: {
+    accountId: string;
+    login: string;
+  }) {
+    const { t, i18n } = useTranslation();
+    const display = useQuotaDisplay();
+    const {
+      data: quota,
+      isFetching: loading,
+      refetch,
+    } = useQuota(accountId, { enabled: true, autoQuery: false });
+    return (
+      <AccountQuotaColumn
+        login={login}
+        state={subscriptionQuotaState(
+          t,
+          quota,
+          loading,
+          i18n.language,
+          display,
+        )}
+        queriedAt={quota?.queriedAt ?? null}
+        loading={loading}
+        onRefresh={() => void refetch()}
+      />
+    );
+  };
 }
+
+/** xAI 账号的订阅额度（get_xai_oauth_quota(accountId)） */
+export const XaiAccountQuota = subscriptionAccountQuota(
+  useXaiOauthQuotaByAccountId,
+);
 
 /** Kimi 官方账号的剩余额度（kimi_oauth_quota(accountId)，不用先切号） */
 export function KimiAccountQuota({
@@ -421,56 +440,12 @@ export function KimiAccountQuota({
 }
 
 /** Antigravity 账号的剩余额度（agy_account_quota(accountId)，不用先切号） */
-export function AgyAccountQuota({
-  accountId,
-  login,
-}: {
-  accountId: string;
-  login: string;
-}) {
-  const { t, i18n } = useTranslation();
-  const display = useQuotaDisplay();
-  const {
-    data: quota,
-    isFetching: loading,
-    refetch,
-  } = useAgyAccountQuota(accountId, { enabled: true, autoQuery: false });
-  return (
-    <AccountQuotaColumn
-      login={login}
-      state={subscriptionQuotaState(t, quota, loading, i18n.language, display)}
-      queriedAt={quota?.queriedAt ?? null}
-      loading={loading}
-      onRefresh={() => void refetch()}
-    />
-  );
-}
+export const AgyAccountQuota = subscriptionAccountQuota(useAgyAccountQuota);
 
 /** Claude 官方账号的订阅额度（get_claude_account_quota(accountId)，不用先切号） */
-export function ClaudeAccountQuota({
-  accountId,
-  login,
-}: {
-  accountId: string;
-  login: string;
-}) {
-  const { t, i18n } = useTranslation();
-  const display = useQuotaDisplay();
-  const {
-    data: quota,
-    isFetching: loading,
-    refetch,
-  } = useClaudeAccountQuota(accountId, { enabled: true, autoQuery: false });
-  return (
-    <AccountQuotaColumn
-      login={login}
-      state={subscriptionQuotaState(t, quota, loading, i18n.language, display)}
-      queriedAt={quota?.queriedAt ?? null}
-      loading={loading}
-      onRefresh={() => void refetch()}
-    />
-  );
-}
+export const ClaudeAccountQuota = subscriptionAccountQuota(
+  useClaudeAccountQuota,
+);
 
 /**
  * WorkBuddyQuota → 额度列状态：一行「套餐名  额度条  剩余积分」，悬停写全剩余 / 总量 / 已用；

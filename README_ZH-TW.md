@@ -150,8 +150,8 @@ TeamoRouter 也提供集中計費、團隊管理、BYOK、智慧路由、用量�
 </tr>
 
 <tr>
-<td width="180"><a href="https://9527.codes/register?aff=e5zI"><img src="assets/partners/logos/9527-banner.png" alt="9527CODE" width="150"></a></td>
-<td>感謝 9527CODE 贊助本專案！9527 CODE 是專注於穩定性與服務品質的企業級全能力 AI 中轉平台，為 Claude Code、Codex 等主流 AI 模型提供快速、穩定、高品質的中轉服務。它更重視長期穩定、線路品質與持續可用性，為企業與重度 AI 用戶提供穩定高效的一站式模型接入方案。已連續營運一年，服務穩定性達 99.9%，並提供 7×24 小時真人技術支援。透過本專案的<a href="https://9527.codes/register?aff=e5zI">專屬連結</a>註冊，新用戶可聯繫客服領取體驗額度，邀請返現不設上限！</td>
+<td width="180"><a href="https://9527.codes/register?channel=ccs"><img src="assets/partners/logos/9527-banner.png" alt="9527CODE" width="150"></a></td>
+<td>感謝 9527CODE 贊助本專案！9527 CODE 是專注於穩定性與服務品質的企業級全能力 AI 中轉平台，為 Claude Code、Codex 等主流 AI 模型提供快速、穩定、高品質的中轉服務。它更重視長期穩定、線路品質與持續可用性，為企業與重度 AI 用戶提供穩定高效的一站式模型接入方案。已連續營運一年，服務穩定性達 99.9%，並提供 7×24 小時真人技術支援。透過本專案的<a href="https://9527.codes/register?channel=ccs">專屬連結</a>註冊，新用戶可聯繫客服領取體驗額度，邀請返現不設上限！</td>
 </tr>
 
 <tr>
