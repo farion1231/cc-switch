@@ -1914,6 +1914,8 @@
     "requestModelLabel": "Запрашиваемая модель",
     "modelOneMHeader": "Заявить 1M",
     "modelOneMLabel": "1M",
+    "copilotOneMUnavailable": "В Copilot нет 1M-версии этой модели",
+    "copilotOneMMismatch": "В Copilot нет 1M-версии {{models}}: запросы уйдут на обычную модель, но Claude Code по-прежнему рассчитывает на контекст 1M, и длинные сессии могут превысить лимит. Снимите отметку 1M.",
     "fallbackModelLabel": "Модель fallback по умолчанию",
     "fallbackModelHelpDirect": "Записывается в ANTHROPIC_MODEL: основная модель, с которой запускается Claude Code. Фоновые задачи вместо неё используют уровень Haiku.",
     "fallbackModelHelp": "Запросы, которые не сопоставляются с уровнями Sonnet, Opus, Fable или Haiku, отправляются в upstream с этой моделью.",

@@ -1914,6 +1914,8 @@
     "requestModelLabel": "リクエストモデル",
     "modelOneMHeader": "1M 対応を宣言",
     "modelOneMLabel": "1M",
+    "copilotOneMUnavailable": "Copilot にはこのモデルの 1M 版がありません",
+    "copilotOneMMismatch": "Copilot には {{models}} の 1M 版がありません。リクエストは通常版にフォールバックしますが、Claude Code は 1M のコンテキストを前提にするため、長いセッションで上限を超える可能性があります。1M のチェックを外してください。",
     "fallbackModelLabel": "既定フォールバックモデル",
     "fallbackModelHelpDirect": "ANTHROPIC_MODEL に書き込まれ、Claude Code の起動時のメインモデルになります。バックグラウンドタスクは Haiku の枠を使います。",
     "fallbackModelHelp": "Sonnet・Opus・Fable・Haiku のどの枠にも当たらないリクエストは、このモデルで上流へ送ります。",

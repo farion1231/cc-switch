@@ -1914,6 +1914,8 @@
     "requestModelLabel": "实际请求模型",
     "modelOneMHeader": "声明支持 1M",
     "modelOneMLabel": "1M",
+    "copilotOneMUnavailable": "Copilot 没有这个模型的 1M 版本",
+    "copilotOneMMismatch": "Copilot 没有 {{models}} 的 1M 版本：请求会退回普通版本，但 Claude Code 仍按 1M 规划上下文，长会话可能超出上限。建议取消勾选 1M。",
     "fallbackModelLabel": "默认兜底模型",
     "fallbackModelHelpDirect": "写进 ANTHROPIC_MODEL，是 Claude Code 启动时用的主模型。后台任务另用 Haiku 那一档。",
     "fallbackModelHelp": "没落到 Sonnet、Opus、Fable、Haiku 任一档的请求，改用这个模型发给上游。",

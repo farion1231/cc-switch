@@ -1914,6 +1914,8 @@
     "requestModelLabel": "Angefordertes Modell",
     "modelOneMHeader": "1M angeben",
     "modelOneMLabel": "1M",
+    "copilotOneMUnavailable": "Copilot bietet für dieses Modell keine 1M-Version an",
+    "copilotOneMMismatch": "Copilot bietet für {{models}} keine 1M-Version an: Anfragen fallen auf das normale Modell zurück, Claude Code plant aber weiter mit 1M Kontext, sodass lange Sitzungen das Limit überschreiten können. Deaktiviere 1M.",
     "fallbackModelLabel": "Standard-Fallback-Modell",
     "fallbackModelHelpDirect": "In ANTHROPIC_MODEL geschrieben: das Hauptmodell, mit dem Claude Code startet. Hintergrundaufgaben nutzen stattdessen die Haiku-Stufe.",
     "fallbackModelHelp": "Anfragen, die keiner Sonnet-, Opus-, Fable- oder Haiku-Stufe zugeordnet werden, werden mit diesem Modell an den Upstream gesendet.",

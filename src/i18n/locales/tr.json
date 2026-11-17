@@ -1845,6 +1845,8 @@
     "requestModelLabel": "İstenilen model",
     "modelOneMHeader": "1 milyon beyan edin",
     "modelOneMLabel": "1 milyon",
+    "copilotOneMUnavailable": "Copilot'ta bu modelin 1M sürümü yok",
+    "copilotOneMMismatch": "Copilot'ta {{models}} için 1M sürümü yok: istekler normal modele geri döner, ancak Claude Code bağlamı hâlâ 1M'ye göre planlar; uzun oturumlar sınırı aşabilir. 1M işaretini kaldırın.",
     "fallbackModelLabel": "Varsayılan geri dönüş modeli",
     "fallbackModelHelpDirect": "ANTHROPIC_MODEL'e yazıldı: Claude Code ana modeliyle başlıyor. Arka plan görevleri bunun yerine Haiku katmanını kullanır.",
     "fallbackModelHelp": "Bu modelde Sonnet, Opus, Fable veya Haiku katmanıyla eşleşmeyen istekler yukarı yönde gönderilir.",
