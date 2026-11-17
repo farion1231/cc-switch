@@ -148,6 +148,19 @@ impl Drop for ActiveConnectionGuard {
     }
 }
 
+/// The provider and client request one failover attempt sends; the attempt
+/// and its rectifier retries differ only in the body.
+#[derive(Clone, Copy)]
+struct Attempt<'a> {
+    app_type: &'a AppType,
+    method: &'a http::Method,
+    provider: &'a Provider,
+    endpoint: &'a str,
+    headers: &'a axum::http::HeaderMap,
+    extensions: &'a Extensions,
+    adapter: &'a dyn ProviderAdapter,
+}
+
 pub struct RequestForwarder {
     /// 共享的 ProviderRouter（持有熔断器状态）
     router: Arc<ProviderRouter>,
@@ -825,19 +838,22 @@ impl RequestForwarder {
             // forward_with_retry wrapper 在客户端请求维度统一处理，这里只刷
             // 新「正在尝试哪个 provider」的展示字段。
             self.note_attempt(provider).await;
+            let attempt = Attempt {
+                app_type,
+                method: &method,
+                provider,
+                endpoint,
+                headers: &headers,
+                extensions: &extensions,
+                adapter: adapter.as_ref(),
+            };
 
             // 转发请求（每个 Provider 只尝试一次，重试由客户端控制）
             let mut attempted_codex_upstream_format = None;
             match self
                 .forward(
-                    app_type,
-                    &method,
-                    provider,
-                    endpoint,
+                    &attempt,
                     &provider_body,
-                    &headers,
-                    &extensions,
-                    adapter.as_ref(),
                     &mut attempted_codex_upstream_format,
                 )
                 .await
@@ -889,14 +905,8 @@ impl RequestForwarder {
                             let mut media_retry_codex_upstream_format = None;
                             match self
                                 .forward(
-                                    app_type,
-                                    &method,
-                                    provider,
-                                    endpoint,
+                                    &attempt,
                                     &media_body,
-                                    &headers,
-                                    &extensions,
-                                    adapter.as_ref(),
                                     &mut media_retry_codex_upstream_format,
                                 )
                                 .await
@@ -953,17 +963,7 @@ impl RequestForwarder {
                         );
                         let mut retry_codex_upstream_format = None;
                         match self
-                            .forward(
-                                app_type,
-                                &method,
-                                provider,
-                                endpoint,
-                                &retry_body,
-                                &headers,
-                                &extensions,
-                                adapter.as_ref(),
-                                &mut retry_codex_upstream_format,
-                            )
+                            .forward(&attempt, &retry_body, &mut retry_codex_upstream_format)
                             .await
                         {
                             Ok(forwarded) => {
@@ -1029,14 +1029,8 @@ impl RequestForwarder {
                             let mut opaque_retry_codex_upstream_format = None;
                             match self
                                 .forward(
-                                    app_type,
-                                    &method,
-                                    provider,
-                                    endpoint,
+                                    &attempt,
                                     &opaque_body,
-                                    &headers,
-                                    &extensions,
-                                    adapter.as_ref(),
                                     &mut opaque_retry_codex_upstream_format,
                                 )
                                 .await
@@ -1128,14 +1122,8 @@ impl RequestForwarder {
                                 let mut signature_retry_codex_upstream_format = None;
                                 match self
                                     .forward(
-                                        app_type,
-                                        &method,
-                                        provider,
-                                        endpoint,
+                                        &attempt,
                                         &provider_body,
-                                        &headers,
-                                        &extensions,
-                                        adapter.as_ref(),
                                         &mut signature_retry_codex_upstream_format,
                                     )
                                     .await
@@ -1212,14 +1200,8 @@ impl RequestForwarder {
                             let mut budget_retry_codex_upstream_format = None;
                             match self
                                 .forward(
-                                    app_type,
-                                    &method,
-                                    provider,
-                                    endpoint,
+                                    &attempt,
                                     &provider_body,
-                                    &headers,
-                                    &extensions,
-                                    adapter.as_ref(),
                                     &mut budget_retry_codex_upstream_format,
                                 )
                                 .await
@@ -1335,19 +1317,21 @@ impl RequestForwarder {
     /// `outbound_model` 是最终发往上游的模型名（所有映射/改写之后）。
     /// `codex_upstream_format_out` 记下这次实际选中的 Codex 上游格式：成功时交给
     /// `finish_success`，失败时给整流判断用（Copilot 按模型逐次选协议，不能从静态配置推）。
-    #[allow(clippy::too_many_arguments)]
     async fn forward(
         &self,
-        app_type: &AppType,
-        method: &http::Method,
-        provider: &Provider,
-        endpoint: &str,
+        attempt: &Attempt<'_>,
         body: &Value,
-        headers: &axum::http::HeaderMap,
-        extensions: &Extensions,
-        adapter: &dyn ProviderAdapter,
         codex_upstream_format_out: &mut Option<CodexUpstreamFormat>,
     ) -> Result<(ProxyResponse, Option<String>, Option<String>), ProxyError> {
+        let Attempt {
+            app_type,
+            method,
+            provider,
+            endpoint,
+            headers,
+            extensions,
+            adapter,
+        } = *attempt;
         *codex_upstream_format_out = None;
         self.set_last_outbound_model(None);
         // 使用适配器提取 base_url

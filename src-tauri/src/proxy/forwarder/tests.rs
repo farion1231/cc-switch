@@ -1893,14 +1893,16 @@ async fn codex_copilot_validates_client_model_before_runtime_lookup() {
         let mut codex_upstream_format = None;
         let error = match forwarder
             .forward(
-                &AppType::Codex,
-                &http::Method::POST,
-                &copilot,
-                "/v1/responses",
+                &Attempt {
+                    app_type: &AppType::Codex,
+                    method: &http::Method::POST,
+                    provider: &copilot,
+                    endpoint: "/v1/responses",
+                    headers: &HeaderMap::new(),
+                    extensions: &Extensions::new(),
+                    adapter: adapter.as_ref(),
+                },
                 &body,
-                &HeaderMap::new(),
-                &Extensions::new(),
-                adapter.as_ref(),
                 &mut codex_upstream_format,
             )
             .await
