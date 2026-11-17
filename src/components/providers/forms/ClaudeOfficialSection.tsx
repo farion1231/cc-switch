@@ -332,7 +332,8 @@ export const ClaudeOfficialSection: React.FC<ClaudeOfficialSectionProps> = ({
   );
 };
 
-export default ClaudeOfficialSection;
+const DEFAULT_LOGIN = "__default__";
+const MANAGE_ACCOUNTS = "__manage_accounts__";
 
 interface ClaudeAccountSelectProps {
   value: string | null;

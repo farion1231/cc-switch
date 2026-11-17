@@ -485,5 +485,3 @@ export const XaiOAuthSection: React.FC<XaiOAuthSectionProps> = ({
     </div>
   );
 };
-
-export default XaiOAuthSection;
