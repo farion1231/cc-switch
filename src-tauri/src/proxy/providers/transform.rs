@@ -373,6 +373,60 @@ pub(crate) fn inject_openai_stream_include_usage(result: &mut Value) {
     }
 }
 
+/// Send mid-conversation system messages as `user` messages at their position.
+///
+/// Only for upstreams that hoist every `role: system` message into one leading
+/// instruction (GitHub Copilot's chat endpoint does this for Gemini models).
+/// Claude Code appends a new system message each turn, so hoisting rewrites
+/// the start of the request and the upstream prefix cache misses the whole
+/// history. The leading run of system messages is kept as is; later ones
+/// become `user` messages in place, so the converted request is append-only
+/// across turns. A system message between an assistant `tool_calls` message
+/// and its `tool` results is moved right after the results, keeping them
+/// adjacent. Same approach as `anthropic_to_gemini` (#9450).
+pub(crate) fn demote_mid_conversation_system_messages(result: &mut Value) {
+    fn has_role(message: &Value, role: &str) -> bool {
+        message.get("role").and_then(Value::as_str) == Some(role)
+    }
+
+    let Some(messages) = result.get_mut("messages").and_then(Value::as_array_mut) else {
+        return;
+    };
+    let leading = messages
+        .iter()
+        .take_while(|message| has_role(message, "system"))
+        .count();
+    if !messages[leading..]
+        .iter()
+        .any(|message| has_role(message, "system"))
+    {
+        return;
+    }
+
+    let tail = messages.split_off(leading);
+    let mut deferred = Vec::new();
+    for mut message in tail {
+        if has_role(&message, "system") {
+            let empty = match message.get("content") {
+                None | Some(Value::Null) => true,
+                Some(Value::String(text)) => text.is_empty(),
+                Some(Value::Array(parts)) => parts.is_empty(),
+                Some(_) => false,
+            };
+            if !empty {
+                message["role"] = json!("user");
+                deferred.push(message);
+            }
+            continue;
+        }
+        if !has_role(&message, "tool") {
+            messages.append(&mut deferred);
+        }
+        messages.push(message);
+    }
+    messages.append(&mut deferred);
+}
+
 /// Translate an Anthropic `tool_choice` into the OpenAI Chat Completions form.
 ///
 /// Anthropic forms:
@@ -1102,6 +1156,82 @@ mod tests {
             "You are Claude Code.\nBe concise."
         );
         assert!(result["messages"][0].get("cache_control").is_none());
+    }
+
+    #[test]
+    fn demote_mid_conversation_system_keeps_leading_run_and_tool_adjacency() {
+        let mut result = json!({
+            "messages": [
+                {"role": "system", "content": "head"},
+                {"role": "system", "content": "env"},
+                {"role": "user", "content": "q"},
+                {"role": "assistant", "content": null, "tool_calls": [
+                    {"id": "a", "type": "function", "function": {"name": "f", "arguments": "{}"}},
+                    {"id": "b", "type": "function", "function": {"name": "f", "arguments": "{}"}}
+                ]},
+                {"role": "system", "content": "between"},
+                {"role": "tool", "tool_call_id": "a", "content": "1"},
+                {"role": "system", "content": ""},
+                {"role": "tool", "tool_call_id": "b", "content": "2"},
+                {"role": "user", "content": "next"},
+                {"role": "system", "content": [{"type": "text", "text": "tail"}]}
+            ]
+        });
+
+        demote_mid_conversation_system_messages(&mut result);
+
+        assert_eq!(
+            result["messages"],
+            json!([
+                {"role": "system", "content": "head"},
+                {"role": "system", "content": "env"},
+                {"role": "user", "content": "q"},
+                {"role": "assistant", "content": null, "tool_calls": [
+                    {"id": "a", "type": "function", "function": {"name": "f", "arguments": "{}"}},
+                    {"id": "b", "type": "function", "function": {"name": "f", "arguments": "{}"}}
+                ]},
+                {"role": "tool", "tool_call_id": "a", "content": "1"},
+                {"role": "tool", "tool_call_id": "b", "content": "2"},
+                {"role": "user", "content": "between"},
+                {"role": "user", "content": "next"},
+                {"role": "user", "content": [{"type": "text", "text": "tail"}]}
+            ])
+        );
+    }
+
+    #[test]
+    fn demote_mid_conversation_system_is_append_only_across_turns() {
+        let turn = |extra: Vec<Value>| {
+            let mut messages = vec![
+                json!({"role": "system", "content": "head"}),
+                json!({"role": "user", "content": "q"}),
+                json!({"role": "assistant", "content": null, "tool_calls": [
+                    {"id": "a", "type": "function", "function": {"name": "f", "arguments": "{}"}}
+                ]}),
+                json!({"role": "system", "content": "budget 1"}),
+                json!({"role": "tool", "tool_call_id": "a", "content": "1"}),
+            ];
+            messages.extend(extra);
+            let mut result = json!({ "messages": messages });
+            demote_mid_conversation_system_messages(&mut result);
+            result["messages"].as_array().unwrap().clone()
+        };
+
+        let first = turn(vec![]);
+        let second = turn(vec![
+            json!({"role": "assistant", "content": "done"}),
+            json!({"role": "system", "content": "budget 2"}),
+        ]);
+        assert_eq!(&second[..first.len()], &first[..]);
+
+        // Requests without a later system message are left untouched.
+        let mut plain = json!({"messages": [
+            {"role": "system", "content": "head"},
+            {"role": "user", "content": "q"}
+        ]});
+        let before = plain.clone();
+        demote_mid_conversation_system_messages(&mut plain);
+        assert_eq!(plain, before);
     }
 
     #[test]
