@@ -220,37 +220,3 @@ fn unchanged_metadata_maps_do_not_emit_database_changes_after_reload() {
         "changed"
     );
 }
-
-#[test]
-#[ignore = "manual performance benchmark; reports median latency without timing assertions"]
-fn benchmark_provider_list() {
-    for count in [10, 100, 1000] {
-        let db = Database::memory().unwrap();
-        for i in 0..count {
-            let id = format!("provider-{i:04}");
-            db.save_provider(&AppType::Claude, &provider(&id)).unwrap();
-            for endpoint in 0..3 {
-                db.add_custom_endpoint(
-                    &AppType::Claude,
-                    &id,
-                    &format!("https://endpoint-{endpoint}"),
-                )
-                .unwrap();
-            }
-        }
-        let mut samples = Vec::new();
-        for _ in 0..25 {
-            let start = std::time::Instant::now();
-            let result = db.get_all_providers(&AppType::Claude).unwrap();
-            assert_eq!(result.len(), count);
-            std::hint::black_box(result);
-            samples.push(start.elapsed());
-        }
-        samples.sort_unstable();
-        eprintln!(
-            "provider_list count={count} endpoints={} median_us={}",
-            count * 3,
-            samples[samples.len() / 2].as_micros()
-        );
-    }
-}
