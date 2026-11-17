@@ -1457,15 +1457,17 @@ mod tests {
         use std::sync::Arc;
 
         let home = TempUserHome::new();
+        let hermes_dir = home.path().join(".hermes");
+        let _env = EnvVars::new().set("HERMES_HOME", &hermes_dir);
+
         let db = Arc::new(Database::memory().unwrap());
         let state = AppState::new(db);
 
-        let hermes_dir = home.path().join(".hermes");
         fs::create_dir_all(&hermes_dir).unwrap();
-        let hermes_cfg = hermes_dir.join("config.yaml");
+        let hermes_cfg = crate::hermes_config::get_hermes_config_path();
         fs::write(
             &hermes_cfg,
-            "model:\n  provider: orig\n  default: orig-model\n",
+            "model:\n  provider: orig\n  default: orig-model\ncustom_providers:\n  - name: orig\n    base_url: https://orig.example.com/v1\n    api_key: sk-orig\n    models:\n      orig-model: {}\n",
         )
         .unwrap();
 
@@ -1479,13 +1481,9 @@ mod tests {
             "custom-p1".into(),
             "Custom P1".into(),
             json!({
-                "model": { "provider": "custom-p1", "default": "gpt-5" },
-                "custom_providers": [{
-                    "name": "custom-p1",
-                    "base_url": "https://api.example.com/v1",
-                    "api_key": "sk-1",
-                    "models": ["gpt-5"]
-                }]
+                "base_url": "https://api.example.com/v1",
+                "api_key": "sk-1",
+                "models": ["gpt-5"]
             }),
             None,
         );
