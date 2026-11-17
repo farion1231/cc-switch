@@ -1,3 +1,5 @@
+import { dshApi } from "@/lib/api/dsh";
+import { resolveDshCodexAccountId } from "@/lib/authBinding";
 import { useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/lib/toast";
@@ -337,7 +339,12 @@ export function useProviderActions(
           },
         };
 
-        if (appHas(activeApp, "piFamily")) {
+        if (resolveDshCodexAccountId(activeApp, provider)) {
+          await dshApi.updateCodexUsage(
+            script.enabled,
+            script.autoQueryInterval ?? 0,
+          );
+        } else if (appHas(activeApp, "piFamily")) {
           await piApi.updateProviderUsageScript(provider.id, script, activeApp);
         } else {
           await providersApi.update(updatedProvider, activeApp);

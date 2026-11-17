@@ -42,6 +42,8 @@ export interface DshLoginStart {
 }
 
 export const dshApi = {
+  updateCodexUsage: (enabled: boolean, autoQueryInterval: number) =>
+    invoke<void>("dsh_codex_usage_update", { enabled, autoQueryInterval }),
   accountStatus: () => invoke<DshAccountStatus>("dsh_account_status"),
   /** Web 和 Desktop 同时退出 */
   accountSignOut: () => invoke<void>("dsh_account_sign_out"),
