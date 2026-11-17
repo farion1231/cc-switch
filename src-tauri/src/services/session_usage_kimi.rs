@@ -316,6 +316,15 @@ fn costs(
 
 /// Enrich retained details only. A receipt without a detail row belongs to pruned history;
 /// recreating it would count the request again on top of its daily rollup.
+struct StoredRequest {
+    model: String,
+    multiplier: String,
+    latency: i64,
+    first_token: Option<i64>,
+    created: i64,
+    duration: Option<i64>,
+}
+
 fn refresh_existing(
     conn: &rusqlite::Connection,
     request: &str,
@@ -326,15 +335,25 @@ fn refresh_existing(
 ) -> Result<bool, AppError> {
     let latency = info.map_or(0, |info| info.latency_ms);
     let first_token = info.and_then(|info| info.first_token_ms);
-    let stored: Option<(String, String, i64, Option<i64>, i64, Option<i64>)> = conn
+    let stored: Option<StoredRequest> = conn
         .query_row(
             "SELECT model, cost_multiplier, latency_ms, first_token_ms, created_at, duration_ms FROM proxy_request_logs
          WHERE request_id = ?1 AND app_type = 'kimi' AND data_source = 'kimi_session'",
             [request],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
+            |row| Ok(StoredRequest {
+                model: row.get(0)?, multiplier: row.get(1)?, latency: row.get(2)?,
+                first_token: row.get(3)?, created: row.get(4)?, duration: row.get(5)?,
+            }),
         )
         .optional()?;
-    let Some((old_model, multiplier, old_latency, old_first, old_created, old_duration)) = stored
+    let Some(StoredRequest {
+        model: old_model,
+        multiplier,
+        latency: old_latency,
+        first_token: old_first,
+        created: old_created,
+        duration: old_duration,
+    }) = stored
     else {
         return Ok(false);
     };
