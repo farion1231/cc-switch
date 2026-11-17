@@ -3465,9 +3465,9 @@
     },
     "repo": {
       "title": "Beceri Depolarını Yönet",
-      "description": "GitHub beceri deposu kaynaklarını ekleme veya kaldırma",
+      "description": "GitHub / GitLab beceri deposu kaynaklarını ekleme veya kaldırma",
       "url": "Depo URL'si",
-      "urlPlaceholder": "sahibi/adı veya https://github.com/owner/name",
+      "urlPlaceholder": "sahibi/adı, https://github.com/owner/name veya https://gitlab.com/group/project",
       "branch": "Şube",
       "branchPlaceholder": "ana",
       "path": "Beceri Yolu",
@@ -3475,6 +3475,7 @@
       "list": "Eklenen Depolar",
       "empty": "Depo yok",
       "invalidUrl": "Geçersiz kod deposu URL biçimi",
+      "httpsOnly": "GitLab depoları yalnızca https adresiyle desteklenir",
       "addSuccess": "{{owner}}/{{name}} deposu eklendi, {{count}} becerileri algılandı",
       "addFailed": "Eklenemedi",
       "removeSuccess": "Depo {{owner}}/{{name}} kaldırıldı",
@@ -4922,7 +4923,7 @@
       "disabledShort": "Kapalı",
       "disabled": "Kapatıldı, Keşfet tarafından kullanılmıyor",
       "manage": "Depoları ekleyin veya yönetin",
-      "openAria": "GitHub’da {{repo}}'yi açın",
+      "openAria": "{{repo}} deposunu tarayıcıda açın",
       "removeAria": "{{repo}} deposunu kaldır",
       "readFailed": "Okuma başarısız oldu"
     },

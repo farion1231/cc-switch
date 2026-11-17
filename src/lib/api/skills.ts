@@ -45,6 +45,8 @@ export interface InstalledSkill {
   name: string;
   description?: string;
   directory: string;
+  /** 仓库所在主机；不写即 github.com，GitLab 仓库是实例的主机名 */
+  repoHost?: string;
   repoOwner?: string;
   repoName?: string;
   repoBranch?: string;
@@ -75,6 +77,8 @@ export interface DiscoverableSkill {
   description: string;
   directory: string;
   readmeUrl?: string;
+  /** 仓库所在主机；不写即 github.com（后端总会带上，skills.sh 的结果不带） */
+  repoHost?: string;
   repoOwner: string;
   repoName: string;
   repoBranch: string;
@@ -175,6 +179,11 @@ export interface SkillsShSearchResult {
 
 /** 仓库配置 */
 export interface SkillRepo {
+  /**
+   * 仓库所在主机；不写即 github.com，其余按 GitLab 处理（自建实例可带端口）。
+   * 只是属性：仓库仍按 owner + name 定位，GitLab 的 owner 是分组路径，可含 `/`。
+   */
+  host?: string;
   owner: string;
   name: string;
   branch: string;

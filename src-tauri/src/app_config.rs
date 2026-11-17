@@ -140,7 +140,10 @@ pub struct InstalledSkill {
     pub description: Option<String>,
     /// 安装目录名（在 SSOT 目录中的子目录名）
     pub directory: String,
-    /// 仓库所有者（GitHub 用户/组织）
+    /// 仓库所在主机；缺省即 `github.com`，GitLab 仓库记实例的主机名
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo_host: Option<String>,
+    /// 仓库所有者（GitHub 用户/组织，或 GitLab 分组路径）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub repo_owner: Option<String>,
     /// 仓库名称

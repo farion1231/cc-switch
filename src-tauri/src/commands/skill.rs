@@ -294,13 +294,14 @@ pub async fn get_skill_repos(app_state: State<'_, AppState>) -> Result<Vec<Skill
 
 #[tauri::command]
 pub async fn add_skill_repo(
-    repo: SkillRepo,
+    mut repo: SkillRepo,
     app_state: State<'_, AppState>,
 ) -> Result<bool, String> {
-    // 整个结构体由前端反序列化而来，owner/name/branch 会被拼进归档下载 URL。
+    // 主机名不分大小写，统一存小写；校验只认规范形式。
+    repo.host = repo.host.trim().to_ascii_lowercase();
+    // 整个结构体由前端反序列化而来，host/owner/name/branch 会被拼进归档下载 URL。
     // 主防线在 download_repo，这里让非法值当场报错而不是沉淀进表。
-    SkillService::validate_repo_ref(&repo.owner, &repo.name, &repo.branch)
-        .map_err(|e| e.to_string())?;
+    SkillService::validate_repo(&repo).map_err(|e| e.to_string())?;
     run_db_task(&app_state, move |state| {
         state.db.save_skill_repo(&repo)?;
         Ok::<_, AppError>(true)

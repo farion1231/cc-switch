@@ -3529,9 +3529,9 @@
     },
     "repo": {
       "title": "Управление репозиториями навыков",
-      "description": "Добавляйте или удаляйте источники репозиториев навыков GitHub",
+      "description": "Добавляйте или удаляйте источники репозиториев навыков GitHub и GitLab",
       "url": "URL репозитория",
-      "urlPlaceholder": "owner/name or https://github.com/owner/name",
+      "urlPlaceholder": "owner/name, https://github.com/owner/name или https://gitlab.com/group/project",
       "branch": "Ветка",
       "branchPlaceholder": "main",
       "path": "Путь к навыкам",
@@ -3539,6 +3539,7 @@
       "list": "Добавленные репозитории",
       "empty": "Нет репозиториев",
       "invalidUrl": "Неверный формат URL репозитория",
+      "httpsOnly": "Репозитории GitLab поддерживаются только по адресу https",
       "addSuccess": "Репозиторий {{owner}}/{{name}} добавлен. Найдено навыков: {{count}}",
       "addFailed": "Не удалось добавить",
       "removeSuccess": "Репозиторий {{owner}}/{{name}} удалён",
@@ -4986,7 +4987,7 @@
       "disabledShort": "Выкл.",
       "disabled": "Отключён, не используется в обзоре",
       "manage": "Добавить или настроить репозитории",
-      "openAria": "Открыть {{repo}} на GitHub",
+      "openAria": "Открыть {{repo}} в браузере",
       "removeAria": "Удалить репозиторий {{repo}}",
       "readFailed": "Ошибка чтения"
     },

@@ -3531,9 +3531,9 @@
     },
     "repo": {
       "title": "Skill-Repositories verwalten",
-      "description": "GitHub-Skill-Repository-Quellen hinzufügen oder entfernen",
+      "description": "GitHub- und GitLab-Skill-Repository-Quellen hinzufügen oder entfernen",
       "url": "Repository-URL",
-      "urlPlaceholder": "owner/name oder https://github.com/owner/name",
+      "urlPlaceholder": "owner/name, https://github.com/owner/name oder https://gitlab.com/group/project",
       "branch": "Branch",
       "branchPlaceholder": "main",
       "path": "Skills-Pfad",
@@ -3541,6 +3541,7 @@
       "list": "Hinzugefügte Repositories",
       "empty": "Keine Repositories",
       "invalidUrl": "Ungültiges Format der Repository-URL",
+      "httpsOnly": "GitLab-Repositories müssen eine https-Adresse verwenden",
       "addSuccess": "Repository {{owner}}/{{name}} hinzugefügt, {{count}} Skills erkannt",
       "addFailed": "Hinzufügen fehlgeschlagen",
       "removeSuccess": "Repository {{owner}}/{{name}} entfernt",
@@ -4988,7 +4989,7 @@
       "disabledShort": "Aus",
       "disabled": "Ausgeschaltet, wird von „Entdecken“ nicht verwendet",
       "manage": "Repositories hinzufügen oder verwalten",
-      "openAria": "{{repo}} auf GitHub öffnen",
+      "openAria": "{{repo}} im Browser öffnen",
       "removeAria": "Repository {{repo}} entfernen",
       "readFailed": "Lesen fehlgeschlagen"
     },

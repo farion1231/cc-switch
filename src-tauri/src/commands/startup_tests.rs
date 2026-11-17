@@ -243,6 +243,7 @@ fn remaining_database_commands_yield_during_session_sync_contention() {
     skill_query!(scan_unmanaged_skills);
     assert!(skill_query!(get_skill_repos).is_empty());
     let repo = crate::services::skill::SkillRepo {
+        host: "github.com".into(),
         owner: "octocat".into(),
         name: "skills".into(),
         branch: "main".into(),

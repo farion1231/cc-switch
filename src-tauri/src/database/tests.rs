@@ -184,6 +184,55 @@ fn existing_skill_repo_selection_is_not_supplemented() {
 }
 
 #[test]
+fn migration_v26_to_v27_adds_skill_repo_host() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    conn.execute_batch(
+        r#"
+        CREATE TABLE skills (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            directory TEXT NOT NULL,
+            repo_owner TEXT,
+            repo_name TEXT
+        );
+        INSERT INTO skills (id, name, directory, repo_owner, repo_name)
+        VALUES ('owner/repo:demo', 'Demo', 'demo', 'owner', 'repo');
+
+        CREATE TABLE skill_repos (
+            owner TEXT NOT NULL, name TEXT NOT NULL, branch TEXT NOT NULL DEFAULT 'main',
+            enabled BOOLEAN NOT NULL DEFAULT 1, PRIMARY KEY (owner, name)
+        );
+        INSERT INTO skill_repos (owner, name, branch, enabled)
+        VALUES ('owner', 'repo', 'develop', 0);
+        "#,
+    )
+    .expect("seed v26 skill tables");
+    Database::set_user_version(&conn, 26).expect("set user_version=26");
+
+    Database::apply_schema_migrations_on_conn(&conn).expect("apply migrations");
+
+    assert_eq!(
+        Database::get_user_version(&conn).expect("version after migration"),
+        SCHEMA_VERSION
+    );
+    // 已有仓库原样保留，主机靠列默认值落成 github.com
+    let (host, branch, enabled): (String, String, bool) = conn
+        .query_row("SELECT host, branch, enabled FROM skill_repos", [], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })
+        .expect("migrated repo");
+    assert_eq!(
+        (host.as_str(), branch.as_str(), enabled),
+        ("github.com", "develop", false)
+    );
+    // 已安装的技能不回填：NULL 就按 github.com 读
+    let repo_host: Option<String> = conn
+        .query_row("SELECT repo_host FROM skills", [], |row| row.get(0))
+        .expect("migrated skill");
+    assert_eq!(repo_host, None);
+}
+
+#[test]
 fn schema_migration_sets_user_version_when_missing() {
     let conn = Connection::open_in_memory().expect("open memory db");
 
@@ -1633,8 +1682,7 @@ fn migration_from_v24_adds_copilot_and_workbuddy_flags_without_changing_dsh_stat
 
     Database::apply_schema_migrations_on_conn(&conn).expect("upgrade v24 database");
     // v24 → v25（Copilot）→ v26（WorkBuddy）
-    assert_eq!(Database::get_user_version(&conn).unwrap(), 26);
-    assert_eq!(SCHEMA_VERSION, 26);
+    assert_eq!(Database::get_user_version(&conn).unwrap(), SCHEMA_VERSION);
     for table in ["mcp_servers", "skills"] {
         let flags: (bool, bool, bool) = conn
             .query_row(

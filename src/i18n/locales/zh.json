@@ -3531,9 +3531,9 @@
     },
     "repo": {
       "title": "管理技能仓库",
-      "description": "添加或删除 GitHub 技能仓库源",
+      "description": "添加或删除 GitHub / GitLab 技能仓库源",
       "url": "仓库 URL",
-      "urlPlaceholder": "owner/name 或 https://github.com/owner/name",
+      "urlPlaceholder": "owner/name、https://github.com/owner/name 或 https://gitlab.com/group/project",
       "branch": "分支",
       "branchPlaceholder": "main",
       "path": "技能路径",
@@ -3541,6 +3541,7 @@
       "list": "已添加的仓库",
       "empty": "暂无仓库",
       "invalidUrl": "无效的仓库 URL 格式",
+      "httpsOnly": "GitLab 仓库只支持 https 地址",
       "addSuccess": "仓库 {{owner}}/{{name}} 已添加，识别到 {{count}} 个技能",
       "addFailed": "添加失败",
       "removeSuccess": "仓库 {{owner}}/{{name}} 已删除",
@@ -4988,7 +4989,7 @@
       "disabledShort": "停用",
       "disabled": "已停用，不参与发现",
       "manage": "添加或管理仓库",
-      "openAria": "在 GitHub 打开 {{repo}}",
+      "openAria": "在浏览器打开 {{repo}}",
       "removeAria": "删除仓库 {{repo}}",
       "readFailed": "读取失败"
     },
