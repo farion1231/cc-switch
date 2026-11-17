@@ -6754,8 +6754,7 @@ mod tests {
                     .expect("symlink rollout directory");
             }
         }
-        let previous_home = std::env::var_os("CC_SWITCH_TEST_HOME");
-        std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
+        let env = crate::test_support::EnvVars::new().set("CC_SWITCH_TEST_HOME", temp.path());
 
         clear_codex_replay_caches();
         // CODEX_REPLAY_DISK=1 时用临时 HOME 下的磁盘库：逐行 autocommit 的
@@ -6830,10 +6829,7 @@ mod tests {
             eprintln!("[REPLAY] wrote {} rows to {out_path}", rows.len());
         }
 
-        match previous_home {
-            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
-            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
-        }
+        drop(env);
         Ok(())
     }
 

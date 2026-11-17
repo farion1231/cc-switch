@@ -3326,9 +3326,9 @@ pub fn strip_codex_unified_session_bucket_from_settings(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::TestHome;
     use serde_json::json;
     use serial_test::serial;
-    use std::ffi::OsString;
 
     #[test]
     fn official_proxy_route_is_recognized_by_its_address() {
@@ -3384,35 +3384,6 @@ mod tests {
             extract_codex_id_token_user_identity(&format!("{header}.{payload}.")),
             None
         );
-    }
-
-    struct CodexLiveTestHome {
-        _dir: tempfile::TempDir,
-        original_test_home: Option<OsString>,
-    }
-
-    impl CodexLiveTestHome {
-        fn new() -> Self {
-            let dir = tempfile::tempdir().expect("create isolated Codex live test home");
-            let original_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
-            std::env::set_var("CC_SWITCH_TEST_HOME", dir.path());
-            crate::settings::reload_settings().expect("reload settings for isolated test home");
-
-            Self {
-                _dir: dir,
-                original_test_home,
-            }
-        }
-    }
-
-    impl Drop for CodexLiveTestHome {
-        fn drop(&mut self) {
-            match &self.original_test_home {
-                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
-                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
-            }
-            let _ = crate::settings::reload_settings();
-        }
     }
 
     #[derive(Debug, PartialEq)]
@@ -3478,7 +3449,7 @@ mod tests {
     #[test]
     #[serial]
     fn ensure_live_auth_guard_rejects_rotated_refresh_without_mutating_live_bundle() {
-        let _home = CodexLiveTestHome::new();
+        let _home = TestHome::new();
         let before = seed_rotated_managed_codex_live_state();
 
         let result =
@@ -3491,7 +3462,7 @@ mod tests {
     #[test]
     #[serial]
     fn clear_live_auth_guard_rejects_rotated_refresh_without_mutating_live_bundle() {
-        let _home = CodexLiveTestHome::new();
+        let _home = TestHome::new();
         let before = seed_rotated_managed_codex_live_state();
 
         let result =
@@ -3584,7 +3555,7 @@ base_url = "https://single.example.com/v1"
     #[test]
     #[serial]
     fn managed_chatgpt_login_matches_local_marker_and_workspace() {
-        let _home = CodexLiveTestHome::new();
+        let _home = TestHome::new();
         let shared_chatgpt_user_token = |subject: &str| {
             let header = URL_SAFE_NO_PAD.encode(br#"{"alg":"none"}"#);
             let payload = URL_SAFE_NO_PAD.encode(
@@ -3697,7 +3668,7 @@ base_url = "https://single.example.com/v1"
     #[test]
     #[serial]
     fn missing_or_malformed_marker_never_establishes_ownership() {
-        let _home = CodexLiveTestHome::new();
+        let _home = TestHome::new();
         let id_token = test_codex_id_token("user-a");
         let auth = codex_managed_oauth_auth_value(
             "workspace-a",
@@ -3720,7 +3691,7 @@ base_url = "https://single.example.com/v1"
     #[test]
     #[serial]
     fn legacy_managed_marker_removal_requires_manager_identity() {
-        let _home = CodexLiveTestHome::new();
+        let _home = TestHome::new();
         let id_token = test_codex_id_token("legacy-user");
         let auth = codex_managed_oauth_auth_value(
             "legacy-workspace",
@@ -6518,8 +6489,8 @@ wire_api = "responses"
     #[test]
     #[serial]
     fn codex_cli_candidates_try_the_desktop_app_cli_after_standalone_installs() {
-        let test_home = CodexLiveTestHome::new();
-        let home = test_home._dir.path();
+        let test_home = TestHome::new();
+        let home = test_home.path();
         let standalone = home.join(".volta/bin/codex");
         let desktop = desktop_cli(
             &home.join("Applications"),
@@ -6560,8 +6531,8 @@ wire_api = "responses"
     #[test]
     #[serial]
     fn proxy_chat_catalog_ignores_codex_models_cache() {
-        let home = CodexLiveTestHome::new();
-        let codex_dir = home._dir.path().join(".codex");
+        let home = TestHome::new();
+        let codex_dir = home.path().join(".codex");
         std::fs::create_dir_all(&codex_dir).expect("create codex dir");
         std::fs::write(
             codex_dir.join("models_cache.json"),

@@ -1259,28 +1259,15 @@ mod tests {
     fn with_test_home<T>(test_fn: impl FnOnce() -> T) -> T {
         let _guard = test_guard();
         let tmp = tempfile::tempdir().unwrap();
-        let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
-        std::env::set_var("CC_SWITCH_TEST_HOME", tmp.path());
-        // Neutralize the env vars get_hermes_dir() consults, so an ambient
+        // Also neutralize the env vars get_hermes_dir() consults, so an ambient
         // HERMES_HOME / LOCALAPPDATA (e.g. set by a Hermes install) can't make
-        // tests escape the temp home. Restored below.
-        let old_hermes_home = std::env::var_os("HERMES_HOME");
-        let old_local_appdata = std::env::var_os("LOCALAPPDATA");
-        std::env::remove_var("HERMES_HOME");
-        std::env::remove_var("LOCALAPPDATA");
+        // tests escape the temp home.
+        let env = crate::test_support::EnvVars::new()
+            .set("CC_SWITCH_TEST_HOME", tmp.path())
+            .remove("HERMES_HOME")
+            .remove("LOCALAPPDATA");
         let result = test_fn();
-        match old_local_appdata {
-            Some(value) => std::env::set_var("LOCALAPPDATA", value),
-            None => std::env::remove_var("LOCALAPPDATA"),
-        }
-        match old_hermes_home {
-            Some(value) => std::env::set_var("HERMES_HOME", value),
-            None => std::env::remove_var("HERMES_HOME"),
-        }
-        match old_test_home {
-            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
-            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
-        }
+        drop(env);
         result
     }
 
