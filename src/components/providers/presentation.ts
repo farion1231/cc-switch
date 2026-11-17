@@ -66,8 +66,13 @@ export interface CardButton {
 export interface CardPresentation {
   /** 当前那张：模式色边框 + 淡底；共存式应用的默认那家（OpenClaw / OpenCode / Kimi 默认、Hermes 当前）也用 direct */
   tone?: CardTone;
-  /** 主操作位换成状态文字（使用中 / 路由中 / 当前默认 / 已添加…） */
-  status?: { label: string; dot: CardTone | "muted" };
+  /** 主操作位换成状态文字（使用中 / 路由中 / 当前默认 / 已添加…）；传了 onClick 时可点击退出使用 */
+  status?: {
+    label: string;
+    dot: CardTone | "muted";
+    onClick?: () => void;
+    tip?: string;
+  };
   buttons: CardButton[];
   /** 「更多」菜单最前面、跟当前模式有关的操作（聚合页、OpenClaw / OpenCode 的「设为默认」） */
   menuItems?: CardMenuItem[];
@@ -150,6 +155,7 @@ export interface SwitchModeInput {
   serviceRunning: boolean;
   actions: {
     switchDirect: (provider: Provider) => void;
+    deactivateDirect?: (provider: Provider) => void;
     needsRouteDialog: (provider: Provider) => void;
     exitAndUse: (provider: Provider) => void;
     routeTo: (provider: Provider) => void;
@@ -269,6 +275,10 @@ function buildSwitchSectionsByView(input: SwitchModeInput): ProviderSection[] {
                   status: {
                     label: t("providerCard.status.inUse"),
                     dot: "direct",
+                    tip: t("providerCard.action.deactivate"),
+                    onClick: actions.deactivateDirect
+                      ? () => actions.deactivateDirect?.(p)
+                      : undefined,
                   },
                   chips,
                   buttons: [],

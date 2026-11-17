@@ -254,6 +254,9 @@ pub struct PendingTarget {
     /// 直连指针：切换成功后当前供应商是谁。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pointer: Option<String>,
+    /// 清除直连指针（退出使用状态，当前供应商置空）。
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub clear_pointer: bool,
     /// 模式状态：有值时整体替换这个应用的 mode、attached、proxy_route、contract。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state: Option<ModeState>,
@@ -277,6 +280,14 @@ impl PendingTarget {
         }
     }
 
+    /// 清除直连指针（退出使用状态，当前供应商置空）。
+    pub fn clear_pointer() -> Self {
+        Self {
+            clear_pointer: true,
+            ..Self::default()
+        }
+    }
+
     /// 只落定模式状态。
     pub fn mode(state: ModeState) -> Self {
         Self {
@@ -287,6 +298,7 @@ impl PendingTarget {
 
     pub fn is_empty(&self) -> bool {
         self.pointer.is_none()
+            && !self.clear_pointer
             && self.state.is_none()
             && self.written.is_none()
             && self.stack.is_none()

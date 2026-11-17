@@ -381,8 +381,10 @@ function ExitBody({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const targetId = state.useProviderId ?? directId;
-  const provider =
-    providers.find((p) => p.id === targetId)?.name ?? t("mode.noProvider");
+  const matchedProvider = targetId
+    ? providers.find((p) => p.id === targetId)
+    : undefined;
+  const provider = matchedProvider?.name;
 
   // Claude Desktop 没有单个配置文件可指，也没有故障转移队列和路由设置
   const notes =
@@ -394,10 +396,14 @@ function ExitBody({
             : t("mode.dialog.desktopExitNoteRouteKept"),
         ]
       : [
-          t("mode.dialog.exitNoteFile", {
-            file: CLIENT_FILE[app] ?? "",
-            provider,
-          }),
+          provider
+            ? t("mode.dialog.exitNoteFile", {
+                file: CLIENT_FILE[app] ?? "",
+                provider,
+              })
+            : t("mode.dialog.exitNoteFileDefault", {
+                file: CLIENT_FILE[app] ?? "",
+              }),
           active === "stack"
             ? t("mode.dialog.leaveStackNote")
             : t("mode.dialog.exitNoteRouteKept"),
@@ -428,7 +434,9 @@ function ExitBody({
           })}
         </DialogTitle>
         <DialogDescription className="text-body text-fg-2">
-          {t("mode.dialog.exitLead", { app: appName, provider })}
+          {provider
+            ? t("mode.dialog.exitLead", { app: appName, provider })
+            : t("mode.dialog.exitLeadNoProvider", { app: appName })}
         </DialogDescription>
       </div>
 

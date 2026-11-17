@@ -388,7 +388,12 @@
       "thirdPartyBucket": "Drittanbietern",
       "migrationFinished": "{{count}} alte Sitzungen migriert. Starten Sie Codex neu, um sie fortzusetzen.",
       "migrationFailed": "Alte Sitzungen konnten nicht migriert werden: {{error}}. CC Switch versucht es beim nächsten Start erneut."
-    }
+    },
+    "deactivateSuccess": "Nutzung beendet; Konfiguration auf Standard zurückgesetzt.",
+    "deactivateRestartRequired": "Nutzung beendet und Standardkonfiguration wiederhergestellt. Starten Sie den Client neu, um die Änderungen zu übernehmen.",
+    "deactivateFailedTitle": "Nutzung konnte nicht beendet werden",
+    "deactivateFailed": "Nutzung konnte nicht beendet werden: {{error}}",
+    "claudeAccountVacateFailed": "Nutzung beendet und Konfiguration wiederhergestellt, aber die verwaltete Claude-Kontoanmeldung konnte nicht in ihren Ordner zurückverschoben werden."
   },
   "confirm": {
     "deleteProvider": "Anbieter löschen",
@@ -4454,7 +4459,8 @@
       "stackDefaultChanged": "Aggregations-Standard auf {{provider}} gesetzt. Ausgewählte aggregierte Modelle nutzen weiterhin ihre jeweiligen Anbieter.",
       "clientConfigChanged": " Auch die Client-Konfiguration wurde geändert. Starten Sie {{app}} neu, um die aktualisierte Konfiguration zu laden.",
       "restartHint": " Starten Sie {{app}} neu, um die Änderung anzuwenden.",
-      "failed": "Wechsel nicht möglich: {{detail}}"
+      "failed": "Wechsel nicht möglich: {{detail}}",
+      "exitedToDefault": "Zurück zu Direkt: {{app}}-Konfiguration auf Standard zurückgesetzt."
     },
     "dialog": {
       "routeTitle": "Routing für {{app}} verwenden?",
@@ -4491,7 +4497,9 @@
       "needsRouteTitle": "{{provider}} benötigt Routing",
       "needsRouteLead": "{{provider}}: {{reason}}. Wenn Sie direkt dorthin wechseln, kann {{app}} ihn nicht verwenden.",
       "switchAnyway": "Trotzdem direkt wechseln",
-      "routeAndUse": "Routing starten und verwenden"
+      "routeAndUse": "Routing starten und verwenden",
+      "exitLeadNoProvider": "{{app}} leitet keine Anfragen mehr über CC Switch und die Konfiguration wird auf Standard zurückgesetzt.",
+      "exitNoteFileDefault": "Entfernt die Anbieteradresse und Zugangsdaten in {{file}}, um den Standard wiederherzustellen; andere Einstellungen bleiben unberührt."
     },
     "help": {
       "title": "Worin sich die Verbindungsmodi unterscheiden",
@@ -4523,7 +4531,8 @@
       "more": "Weitere Aktionen für {{name}}",
       "moveUp": "{{name}} nach oben",
       "moveDown": "{{name}} nach unten",
-      "openTerminal": "Terminal mit {{name}} öffnen"
+      "openTerminal": "Terminal mit {{name}} öffnen",
+      "deactivate": "Klicken, um die Nutzung zu beenden und die Standardkonfiguration wiederherzustellen"
     },
     "chip": {
       "official": "Offiziell",
@@ -4543,7 +4552,7 @@
       "defaultWhileRouting": "Beim Routing ist der Standard der Anbieter, zu dem geroutet wird. Beim Wechsel zur Aggregation können Sie einen anderen wählen.",
       "needsRoute": "Benötigt Routing: {{reason}}; eine Direktverbindung ist nicht möglich.",
       "defaultCannotRemove": "Der Standard kann nicht entfernt werden. Legen Sie zuerst einen anderen Anbieter als Standard fest.",
-      "inUseCannotDelete": "Der verwendete Anbieter kann nicht gelöscht werden. Wechseln Sie zuerst zu einem anderen.",
+      "inUseCannotDelete": "Der verwendete Anbieter kann nicht gelöscht werden. Beenden Sie zuerst die Nutzung oder wechseln Sie zu einem anderen.",
       "directDefaultCannotDelete": "Beim Verlassen des Routings wird zu diesem Anbieter zurückgewechselt, daher kann er nicht gelöscht werden. Wählen Sie auf der Direkt-Seite zuerst bei einem anderen Anbieter „Zurück zu Direkt und verwenden“.",
       "noFailover": "Offizielle Konten können nicht in die Failover-Warteschlange aufgenommen werden: Sie verwenden die eigene Anmeldung des Clients und können nicht mit anderen Anbietern rotieren."
     },

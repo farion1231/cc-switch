@@ -88,7 +88,7 @@ export function useModeActions(app: AppId) {
     }: {
       directProviderId: string | null;
       useProviderId?: string;
-      providerName: string;
+      providerName?: string;
     }) => {
       setPending(true);
       try {
@@ -99,7 +99,9 @@ export function useModeActions(app: AppId) {
         await refresh();
         toast.success(
           [
-            t("mode.toast.exited", { app: appName, provider: providerName }),
+            providerName
+              ? t("mode.toast.exited", { app: appName, provider: providerName })
+              : t("mode.toast.exitedToDefault", { app: appName }),
             restartHint,
           ]
             .filter(Boolean)

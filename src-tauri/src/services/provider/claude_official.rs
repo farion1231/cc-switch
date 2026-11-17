@@ -76,6 +76,24 @@ pub fn with_login_switch<R>(
     result
 }
 
+/// 退出「使用中」时，如果上一家是绑了本机托管账号的官方卡且它此刻正在默认槽位里，
+/// 把它的登录移回它自己的账号目录，让默认槽位回到未登录状态。
+pub fn vacate_login(prev: Option<&Provider>) -> Result<(), AppError> {
+    if !snapshot::active() {
+        return Ok(());
+    }
+    let Some(account) = prev.and_then(bound_account) else {
+        return Ok(());
+    };
+    let data_dir = crate::config::get_app_config_dir();
+    let Some(dir) = claude_account::config_dir_on_disk(&data_dir, &account) else {
+        return Ok(());
+    };
+    with_snapshot_ctx(&data_dir, |ctx| snapshot::vacate(ctx, &account, &dir))?;
+    snapshot::confirm(&data_dir);
+    Ok(())
+}
+
 /// 换掉登录之前默认槽位里是什么：切换的后续步骤失败时用来换回去。
 enum PreviousLogin {
     /// 原来的号和它被收回到的目录

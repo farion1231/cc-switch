@@ -388,7 +388,12 @@
       "thirdPartyBucket": "第三方供應商",
       "migrationFinished": "已遷入 {{count}} 個舊會話，重新啟動 Codex 後即可繼續",
       "migrationFailed": "遷入舊會話失敗：{{error}}。下次啟動 CC Switch 會自動重試"
-    }
+    },
+    "deactivateSuccess": "已退出使用狀態，設定已恢復預設",
+    "deactivateRestartRequired": "已退出使用狀態，設定已恢復預設，請重啟用戶端以生效",
+    "deactivateFailedTitle": "退出使用失敗",
+    "deactivateFailed": "退出使用失敗：{{error}}",
+    "claudeAccountVacateFailed": "已退出使用狀態並恢復設定，但未能將託管 Claude 帳號的登入移回帳號目錄"
   },
   "confirm": {
     "deleteProvider": "刪除供應商",
@@ -4454,7 +4459,8 @@
       "stackDefaultChanged": "聚合預設供應商已設為 {{provider}}；已選聚合模型仍使用各自的供應商。",
       "clientConfigChanged": "用戶端設定也已更新；重新啟動 {{app}} 以載入更新後的設定。",
       "restartHint": "重新啟動 {{app}} 後生效。",
-      "failed": "切換失敗：{{detail}}"
+      "failed": "切換失敗：{{detail}}",
+      "exitedToDefault": "已回到直連：{{app}} 設定已恢復預設。"
     },
     "dialog": {
       "routeTitle": "讓 {{app}} 使用路由模式？",
@@ -4491,7 +4497,9 @@
       "needsRouteTitle": "{{provider}} 需要路由",
       "needsRouteLead": "{{provider}}：{{reason}}。直連切換過去，{{app}} 會無法使用它。",
       "switchAnyway": "仍然直連切換",
-      "routeAndUse": "開始路由並使用它"
+      "routeAndUse": "開始路由並使用它",
+      "exitLeadNoProvider": "{{app}} 的請求不再經過 CC Switch，對應設定參數將恢復預設。",
+      "exitNoteFileDefault": "會清除 {{file}} 中的供應商位址和金鑰使其恢復預設，其他設定不動。"
     },
     "help": {
       "title": "連線模式的差別",
@@ -4523,7 +4531,8 @@
       "more": "{{name}} 的更多操作",
       "moveUp": "{{name}} 上移一位",
       "moveDown": "{{name}} 下移一位",
-      "openTerminal": "用 {{name}} 開啟終端機"
+      "openTerminal": "用 {{name}} 開啟終端機",
+      "deactivate": "點擊退出使用，恢復預設設定"
     },
     "chip": {
       "official": "官方",
@@ -4543,7 +4552,7 @@
       "defaultWhileRouting": "正在路由時，預設就是路由到的那家；切換到聚合模式時可以另選。",
       "needsRoute": "需要路由：{{reason}}，不能直連。",
       "defaultCannotRemove": "預設那家不能移除，先把別家設為預設。",
-      "inUseCannotDelete": "正在用的這家不能刪除，先切到別家。",
+      "inUseCannotDelete": "正在用的這家不能刪除，請先退出使用或切到別家。",
       "directDefaultCannotDelete": "退出路由後會回到這家，所以不能刪除。先在直連頁對別家點「回到直連並使用」，再刪除。",
       "noFailover": "官方帳號不進故障轉移佇列：它用客戶端自己的登入，不能和別家輪換。"
     },

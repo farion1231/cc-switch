@@ -388,7 +388,12 @@
       "thirdPartyBucket": "üçüncü taraf sağlayıcılar",
       "migrationFinished": "{{count}} eski oturum taşındı. Devam etmek için Codex'i yeniden başlatın.",
       "migrationFailed": "Eski oturumlar taşınamadı: {{error}}. CC Switch bir sonraki açılışta yeniden deneyecek."
-    }
+    },
+    "deactivateSuccess": "Sağlayıcı kullanımı sonlandırıldı; yapılandırma varsayılana döndürüldü",
+    "deactivateRestartRequired": "Sağlayıcı kullanımı sonlandırıldı ve varsayılan yapılandırma geri yüklendi. Değişiklikleri uygulamak için istemciyi yeniden başlatın.",
+    "deactivateFailedTitle": "Kullanım sonlandırılamadı",
+    "deactivateFailed": "Kullanım sonlandırılamadı: {{error}}",
+    "claudeAccountVacateFailed": "Sağlayıcı kullanımı sonlandırıldı ve yapılandırma geri yüklendi, ancak yönetilen Claude hesap oturumu kendi klasörüne geri taşınamadı."
   },
   "confirm": {
     "deleteProvider": "Sağlayıcıyı Sil",
@@ -4385,7 +4390,8 @@
       "stackDefaultChanged": "Birleştirme varsayılanı {{provider}} olarak ayarlandı. Seçili birleştirilmiş modeller kendi sağlayıcılarını kullanmaya devam eder.",
       "clientConfigChanged": " İstemci yapılandırması da değişti. Güncel yapılandırmayı yüklemek için {{app}} uygulamasını yeniden başlatın.",
       "restartHint": "Uygulamak için {{app}}'yi yeniden başlatın.",
-      "failed": "Geçiş yapılamadı: {{detail}}"
+      "failed": "Geçiş yapılamadı: {{detail}}",
+      "exitedToDefault": "Doğrudan bağlantıya dönüldü: {{app}} yapılandırması varsayılana döndürüldü."
     },
     "dialog": {
       "routeTitle": "{{app}} için yönlendirme kullanılsın mı?",
@@ -4422,7 +4428,9 @@
       "needsRouteTitle": "{{provider}}'nin yönlendirmeye ihtiyacı var",
       "needsRouteLead": "{{provider}}: {{reason}}. Doğrudan geçiş yaparsanız {{app}} onu kullanamayacaktır.",
       "switchAnyway": "Yine de doğrudan geçiş yap",
-      "routeAndUse": "Yönlendirmeyi başlatın ve kullanın"
+      "routeAndUse": "Yönlendirmeyi başlatın ve kullanın",
+      "exitLeadNoProvider": "{{app}} artık istekleri CC Switch üzerinden yönlendirmeyecek ve yapılandırma varsayılana döndürülecektir.",
+      "exitNoteFileDefault": "{{file}} dosyasındaki sağlayıcı adresini ve anahtarını temizleyerek varsayılana döndürür; diğer ayarlara dokunulmaz."
     },
     "help": {
       "title": "Bağlantı modları nasıl farklılık gösterir?",
@@ -4454,7 +4462,8 @@
       "more": "{{name}} için diğer işlemler",
       "moveUp": "{{name}}'yi yukarı taşı",
       "moveDown": "{{name}}'yi aşağı taşı",
-      "openTerminal": "Open a terminal with {{name}}"
+      "openTerminal": "Open a terminal with {{name}}",
+      "deactivate": "Kullanımı sonlandırmak ve varsayılan yapılandırmayı geri yüklemek için tıklayın"
     },
     "chip": {
       "official": "Resmi",
@@ -4474,7 +4483,7 @@
       "defaultWhileRouting": "Yönlendirme sırasında varsayılan, yönlendirdiğiniz sağlayıcıdır. Birleştirme'ya geçerken başka bir tane seçebilirsiniz.",
       "needsRoute": "Yönlendirme gerekiyor: {{reason}}; doğrudan bağlanamıyorum.",
       "defaultCannotRemove": "Varsayılan kaldırılamaz. Önce başka bir sağlayıcıyı varsayılan yapın.",
-      "inUseCannotDelete": "Kullanılan sağlayıcı silinemez. Önce diğerine geçin.",
+      "inUseCannotDelete": "Kullanılan sağlayıcı silinemez. Önce kullanımı sonlandırın veya başka bir sağlayıcıya geçin.",
       "directDefaultCannotDelete": "Yönlendirmeden çıkıldığında bu sağlayıcıya dönülür; bu nedenle silinemez. Önce doğrudan bağlantı sayfasında başka bir sağlayıcı için \"Doğrudan bağlantıya dön ve kullan\" seçeneğini seçin.",
       "noFailover": "Resmi hesaplar yedek sağlayıcıya geçiş kuyruğuna katılamaz: İstemcinin kendi oturum açma bilgilerini kullanırlar ve diğer sağlayıcılarla dönüşümlü olarak çalışamazlar."
     },

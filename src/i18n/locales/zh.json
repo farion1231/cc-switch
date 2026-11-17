@@ -388,7 +388,12 @@
       "thirdPartyBucket": "第三方供应商",
       "migrationFinished": "已迁入 {{count}} 个旧会话，重启 Codex 后即可继续",
       "migrationFailed": "迁入旧会话失败：{{error}}。下次启动 CC Switch 会自动重试"
-    }
+    },
+    "deactivateSuccess": "已退出使用状态，配置已恢复默认",
+    "deactivateRestartRequired": "已退出使用状态，配置已恢复默认，请重启客户端以生效",
+    "deactivateFailedTitle": "退出使用失败",
+    "deactivateFailed": "退出使用失败：{{error}}",
+    "claudeAccountVacateFailed": "已退出使用状态并恢复配置，但未能将托管 Claude 账号的登录移回账号目录"
   },
   "confirm": {
     "deleteProvider": "删除供应商",
@@ -4454,7 +4459,8 @@
       "stackDefaultChanged": "聚合默认供应商已设为 {{provider}}；已选聚合模型仍使用各自的供应商。",
       "clientConfigChanged": "客户端配置也已更新；重启 {{app}} 以加载更新后的配置。",
       "restartHint": "重启 {{app}} 后生效。",
-      "failed": "切换失败：{{detail}}"
+      "failed": "切换失败：{{detail}}",
+      "exitedToDefault": "已回到直连：{{app}} 配置已恢复默认。"
     },
     "dialog": {
       "routeTitle": "让 {{app}} 使用路由模式？",
@@ -4491,7 +4497,9 @@
       "needsRouteTitle": "{{provider}} 需要路由",
       "needsRouteLead": "{{provider}}：{{reason}}。直连切换过去，{{app}} 会无法使用它。",
       "switchAnyway": "仍然直连切换",
-      "routeAndUse": "开始路由并使用它"
+      "routeAndUse": "开始路由并使用它",
+      "exitLeadNoProvider": "{{app}} 的请求不再经过 CC Switch，对应配置参数将恢复默认。",
+      "exitNoteFileDefault": "会清除 {{file}} 中的供应商地址和密钥使其恢复默认，其他设置不动。"
     },
     "help": {
       "title": "连接模式的区别",
@@ -4523,7 +4531,8 @@
       "more": "{{name}} 的更多操作",
       "moveUp": "{{name}} 上移一位",
       "moveDown": "{{name}} 下移一位",
-      "openTerminal": "用 {{name}} 打开终端"
+      "openTerminal": "用 {{name}} 打开终端",
+      "deactivate": "点击退出使用，恢复默认配置"
     },
     "chip": {
       "official": "官方",
@@ -4543,7 +4552,7 @@
       "defaultWhileRouting": "正在路由时，默认就是路由到的那家；切换到聚合模式时可以另选。",
       "needsRoute": "需要路由：{{reason}}，不能直连。",
       "defaultCannotRemove": "默认那家不能移除，先把别家设为默认。",
-      "inUseCannotDelete": "正在用的这家不能删除，先切到别家。",
+      "inUseCannotDelete": "正在用的这家不能删除，请先退出使用或切到别家。",
       "directDefaultCannotDelete": "退出路由后会回到这家，所以不能删除。先在直连页对别家点「回到直连并使用」，再删除。",
       "noFailover": "官方账号不进故障转移队列：它用客户端自己的登录，不能和别家轮换。"
     },

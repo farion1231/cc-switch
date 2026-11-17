@@ -414,7 +414,11 @@ pub fn commit_target(
     app: &str,
     target: &PendingTarget,
 ) -> Result<(), AppError> {
-    if let Some(id) = target.pointer.as_deref() {
+    if target.clear_pointer {
+        let app_type: crate::app_config::AppType = app.parse()?;
+        crate::settings::set_current_provider(&app_type, None)?;
+        db.clear_current_provider(app)?;
+    } else if let Some(id) = target.pointer.as_deref() {
         let app_type: crate::app_config::AppType = app.parse()?;
         crate::settings::set_current_provider(&app_type, Some(id))?;
         db.set_current_provider(app, id)?;

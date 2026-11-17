@@ -388,7 +388,12 @@
       "thirdPartyBucket": "サードパーティプロバイダー",
       "migrationFinished": "古いセッションを {{count}} 件移行しました。Codex を再起動すると続けられます。",
       "migrationFailed": "古いセッションの移行に失敗しました：{{error}}。次回 CC Switch の起動時に自動で再試行します。"
-    }
+    },
+    "deactivateSuccess": "使用を終了し、設定をデフォルトに戻しました",
+    "deactivateRestartRequired": "使用を終了し、設定をデフォルトに戻しました。クライアントを再起動して反映してください",
+    "deactivateFailedTitle": "使用終了に失敗しました",
+    "deactivateFailed": "使用終了に失敗しました: {{error}}",
+    "claudeAccountVacateFailed": "使用を終了し設定を戻しましたが、管理対象 Claude アカウントのログインをアカウントフォルダへ戻せませんでした"
   },
   "confirm": {
     "deleteProvider": "プロバイダーを削除",
@@ -4454,7 +4459,8 @@
       "stackDefaultChanged": "集約のデフォルトを {{provider}} に設定しました。選択済みの集約モデルは引き続き各モデルのプロバイダーを使用します。",
       "clientConfigChanged": "クライアント設定も更新されました。更新後の設定を読み込むには {{app}} を再起動してください。",
       "restartHint": "{{app}} の再起動後に反映されます。",
-      "failed": "切り替えに失敗しました：{{detail}}"
+      "failed": "切り替えに失敗しました：{{detail}}",
+      "exitedToDefault": "直接接続に戻りました：{{app}} の設定をデフォルトに戻しました。"
     },
     "dialog": {
       "routeTitle": "{{app}} でルーティングを使いますか？",
@@ -4491,7 +4497,9 @@
       "needsRouteTitle": "{{provider}} にはルーティングが必要です",
       "needsRouteLead": "{{provider}}：{{reason}}。直接接続で切り替えると {{app}} では使えません。",
       "switchAnyway": "それでも直接切り替える",
-      "routeAndUse": "ルーティングを開始して使う"
+      "routeAndUse": "ルーティングを開始して使う",
+      "exitLeadNoProvider": "{{app}} は CC Switch を経由しなくなり、設定はデフォルトに戻ります。",
+      "exitNoteFileDefault": "{{file}} 内のプロバイダーアドレスと認証情報をクリアしてデフォルトに戻します。その他の設定は変更されません。"
     },
     "help": {
       "title": "接続モードの違い",
@@ -4523,7 +4531,8 @@
       "more": "{{name}} のその他の操作",
       "moveUp": "{{name}} を上へ",
       "moveDown": "{{name}} を下へ",
-      "openTerminal": "{{name}} でターミナルを開く"
+      "openTerminal": "{{name}} でターミナルを開く",
+      "deactivate": "クリックして使用を終了し、デフォルト設定に戻す"
     },
     "chip": {
       "official": "公式",
@@ -4543,7 +4552,7 @@
       "defaultWhileRouting": "ルーティング中は、転送先のプロバイダーがそのまま既定になります。集約に切り替えるときに別のプロバイダーを選べます。",
       "needsRoute": "ルーティングが必要：{{reason}}。直接接続はできません。",
       "defaultCannotRemove": "既定のプロバイダーは削除できません。先にほかを既定にしてください。",
-      "inUseCannotDelete": "使用中のプロバイダーは削除できません。先にほかへ切り替えてください。",
+      "inUseCannotDelete": "使用中のプロバイダーは削除できません。先に使用を終了するか、別のプロバイダーに切り替えてください。",
       "directDefaultCannotDelete": "ルーティングを終了するとこのプロバイダーに戻るため、削除できません。先に直接接続ページでほかのプロバイダーの「直接接続に戻して使う」を選んでください。",
       "noFailover": "公式アカウントはフェイルオーバーキューに入れられません。クライアント自身のログインを使うため、ほかと交代できません。"
     },

@@ -24,6 +24,7 @@ import {
   useUpdateProviderMutation,
   useDeleteProviderMutation,
   useSwitchProviderMutation,
+  useDeactivateProviderMutation,
 } from "@/lib/query";
 import { usageKeys } from "@/lib/query/usage";
 import { routeSwitchNotification } from "@/utils/routeSwitchNotification";
@@ -50,10 +51,11 @@ export function useProviderActions(
   const updateProviderMutation = useUpdateProviderMutation(activeApp);
   const deleteProviderMutation = useDeleteProviderMutation(activeApp);
   const switchProviderMutation = useSwitchProviderMutation(activeApp);
+  const deactivateProviderMutation = useDeactivateProviderMutation(activeApp);
 
   // Claude 插件同步逻辑
   const syncClaudePlugin = useCallback(
-    async (provider: Provider) => {
+    async (provider: Provider | null) => {
       if (activeApp !== "claude") return;
 
       try {
@@ -62,7 +64,8 @@ export function useProviderActions(
           return;
         }
 
-        const isOfficial = provider.category === "official";
+        const isOfficial =
+          provider === null || provider.category === "official";
         await settingsApi.applyClaudePluginConfig({ official: isOfficial });
 
         // 静默执行，不显示成功通知
@@ -308,6 +311,51 @@ export function useProviderActions(
     [switchProviderMutation, syncClaudePlugin, activeApp, isProxyTakeover, t],
   );
 
+  // 退出使用当前供应商（恢复默认配置）
+  const deactivateProvider = useCallback(async () => {
+    try {
+      const result = await deactivateProviderMutation.mutateAsync();
+      await syncClaudePlugin(null);
+
+      if (
+        result?.warnings?.some((warning) =>
+          warning.startsWith("claude_account_vacate_failed"),
+        )
+      ) {
+        toast.warning(
+          t("notifications.claudeAccountVacateFailed", {
+            defaultValue:
+              "已退出使用状态并恢复配置，但未能将托管 Claude 账号的登录移回账号目录",
+          }),
+          { duration: 6000 },
+        );
+      }
+
+      const splitExtras = result?.codexHistorySplit
+        ? codexHistorySplitToastExtras(result.codexHistorySplit, t)
+        : undefined;
+
+      const needsRestart =
+        activeApp === "codex" ||
+        activeApp === "gemini" ||
+        activeApp === "grokbuild" ||
+        activeApp === "claude-desktop";
+      const message = needsRestart
+        ? t("notifications.deactivateRestartRequired", {
+            defaultValue: "已退出使用状态，配置已恢复默认，请重启客户端以生效",
+          })
+        : t("notifications.deactivateSuccess", {
+            defaultValue: "已退出使用状态，配置已恢复默认",
+          });
+      toast.success(message, {
+        closeButton: true,
+        ...splitExtras,
+      });
+    } catch {
+      // 错误提示由 mutation 处理
+    }
+  }, [deactivateProviderMutation, syncClaudePlugin, activeApp, t]);
+
   // 删除供应商
   const deleteProvider = useCallback(
     async (id: string) => {
@@ -483,6 +531,7 @@ export function useProviderActions(
     addProvider,
     updateProvider,
     switchProvider,
+    deactivateProvider,
     deleteProvider,
     saveUsageScript,
     setAsDefaultModel,
@@ -490,6 +539,7 @@ export function useProviderActions(
       addProviderMutation.isPending ||
       updateProviderMutation.isPending ||
       deleteProviderMutation.isPending ||
-      switchProviderMutation.isPending,
+      switchProviderMutation.isPending ||
+      deactivateProviderMutation.isPending,
   };
 }

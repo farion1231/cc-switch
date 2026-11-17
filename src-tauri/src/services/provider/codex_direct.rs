@@ -403,6 +403,7 @@ fn auth_target<'a>(goal: &'a AuthGoal, op_name: &str) -> AuthTarget<'a> {
         },
         AuthGoal::Official(row_auth) => AuthTarget::Official { row_auth },
         AuthGoal::Managed(auth) => AuthTarget::Managed { auth },
+        AuthGoal::Deactivate => AuthTarget::Deactivate,
     }
 }
 
@@ -537,10 +538,12 @@ fn row_facts(db: &Database) -> Result<RowFacts, AppError> {
 #[derive(Debug, Clone)]
 enum AuthGoal {
     ThirdParty,
-    /// 代理的第三方路由，或者没有直连供应商：不动原生登录，只清托管账号的登录。
+    /// 代理的第三方路由：不动原生登录，只清托管账号的登录。
     KeepNative,
     Official(Value),
     Managed(Value),
+    /// 没有直连供应商（退出使用中）：清掉托管账号登录和第三方残留 Key，不动原生登录。
+    Deactivate,
 }
 
 /// 行里的 `auth`（没有时是空对象）。
@@ -609,7 +612,7 @@ pub(crate) fn plan(
     let without_login = matches!(target, Target::Proxy { .. })
         && crate::settings::codex_proxy_without_official_login();
     let (route, stamp, auth) = match (target, &projection) {
-        (Target::Direct(None), _) | (_, None) => (RouteWrite::Default, None, AuthGoal::KeepNative),
+        (Target::Direct(None), _) | (_, None) => (RouteWrite::Default, None, AuthGoal::Deactivate),
         (Target::Direct(Some(provider)), Some(projection)) => {
             let auth = match &managed_login {
                 Some(login) => AuthGoal::Managed(login.clone()),

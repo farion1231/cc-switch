@@ -226,6 +226,40 @@ pub async fn switch_provider(
     Ok(result)
 }
 
+fn deactivate_provider_internal(
+    state: &AppState,
+    app_type: AppType,
+) -> Result<SwitchResult, AppError> {
+    let codex_bucket_before = matches!(app_type, AppType::Codex)
+        .then(crate::codex_history_migration::codex_live_history_bucket)
+        .flatten();
+    let mut result = ProviderService::deactivate(state, app_type.clone())?;
+    if matches!(app_type, AppType::Codex) {
+        result.codex_history_split = crate::codex_history_migration::codex_history_split_hint(
+            codex_bucket_before.as_deref(),
+        );
+    }
+    Ok(result)
+}
+
+#[tauri::command]
+pub async fn deactivate_provider(
+    app_handle: tauri::AppHandle,
+    app: String,
+) -> Result<SwitchResult, String> {
+    let app_type = AppType::from_str(&app)?;
+    let handle = app_handle.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let state = handle
+            .try_state::<AppState>()
+            .ok_or_else(|| "应用状态不可用".to_string())?;
+        deactivate_provider_internal(state.inner(), app_type).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("退出供应商使用状态任务执行失败: {e}"))??;
+    Ok(result)
+}
+
 fn import_default_config_internal(state: &AppState, app_type: AppType) -> Result<bool, AppError> {
     if matches!(app_type, AppType::GrokBuild) {
         // 官方登录态（live 语法合法且无自定义模型表）+ 用户手动导入：

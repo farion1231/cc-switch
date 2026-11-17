@@ -418,6 +418,61 @@ export const useSwitchProviderMutation = (appId: AppId) => {
   });
 };
 
+export const useDeactivateProviderMutation = (appId: AppId) => {
+  const queryClient = useQueryClient();
+  const { t } = useTranslation();
+
+  return useMutation({
+    mutationFn: async (): Promise<SwitchResult> => {
+      return await providersApi.deactivate(appId);
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
+      if (appId === "claude") {
+        await queryClient.invalidateQueries({
+          queryKey: ["managed-auth-status", "claude_official"],
+        });
+      }
+      if (appId === "claude-desktop") {
+        await queryClient.invalidateQueries({ queryKey: proxyKeys.status });
+        await queryClient.invalidateQueries({
+          queryKey: ["claudeDesktopStatus"],
+        });
+      }
+      try {
+        await providersApi.updateTrayMenu();
+      } catch (trayError) {
+        console.error(
+          "Failed to update tray menu after deactivating provider",
+          trayError,
+        );
+      }
+    },
+    onError: (error: Error) => {
+      const detail = extractErrorMessage(error) || t("common.unknown");
+
+      toast.error(
+        t("notifications.deactivateFailedTitle", {
+          defaultValue: "退出使用失败",
+        }),
+        {
+          description: t("notifications.deactivateFailed", {
+            defaultValue: "退出使用失败：{{error}}",
+            error: detail,
+          }),
+          duration: 6000,
+          action: {
+            label: t("common.copy", { defaultValue: "复制" }),
+            onClick: () => {
+              navigator.clipboard?.writeText(detail).catch(() => undefined);
+            },
+          },
+        },
+      );
+    },
+  });
+};
+
 export const useDeleteSessionMutation = () => {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
