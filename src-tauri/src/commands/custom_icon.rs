@@ -9,10 +9,7 @@ use crate::store::AppState;
 
 #[tauri::command]
 pub async fn get_custom_icons(state: State<'_, AppState>) -> Result<Vec<CustomIconEntry>, String> {
-    run_db_task(&state, |state| {
-        icon::list_library_icons(&state.db).map_err(|e| e.to_string())
-    })
-    .await
+    run_db_task(&state, |state| icon::list_library_icons(&state.db)).await
 }
 
 #[tauri::command]
@@ -22,7 +19,7 @@ pub async fn add_custom_icon(
     data: String,
 ) -> Result<AddLibraryIconResult, String> {
     run_db_task(&state, move |state| {
-        icon::add_library_icon(&state.db, &name, &data).map_err(|e| e.to_string())
+        icon::add_library_icon(&state.db, &name, &data)
     })
     .await
 }
@@ -34,7 +31,7 @@ pub async fn rename_custom_icon(
     name: String,
 ) -> Result<CustomIconEntry, String> {
     run_db_task(&state, move |state| {
-        icon::rename_library_icon(&state.db, &id, &name).map_err(|e| e.to_string())
+        icon::rename_library_icon(&state.db, &id, &name)
     })
     .await
 }
@@ -42,7 +39,7 @@ pub async fn rename_custom_icon(
 #[tauri::command]
 pub async fn delete_custom_icon(state: State<'_, AppState>, id: String) -> Result<(), String> {
     run_db_task(&state, move |state| {
-        icon::delete_library_icon(&state.db, &id).map_err(|e| e.to_string())
+        icon::delete_library_icon(&state.db, &id)
     })
     .await
 }

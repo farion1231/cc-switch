@@ -146,7 +146,8 @@ impl Database {
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             installed_at INTEGER NOT NULL DEFAULT 0,
             content_hash TEXT,
-            updated_at INTEGER NOT NULL DEFAULT 0
+            updated_at INTEGER NOT NULL DEFAULT 0,
+            repo_host TEXT
         )",
             [],
         )
@@ -156,7 +157,8 @@ impl Database {
         conn.execute(
             "CREATE TABLE IF NOT EXISTS skill_repos (
             owner TEXT NOT NULL, name TEXT NOT NULL, branch TEXT NOT NULL DEFAULT 'main',
-            enabled BOOLEAN NOT NULL DEFAULT 1, PRIMARY KEY (owner, name)
+            enabled BOOLEAN NOT NULL DEFAULT 1, host TEXT NOT NULL DEFAULT 'github.com',
+            PRIMARY KEY (owner, name)
         )",
             [],
         )
@@ -729,11 +731,16 @@ impl Database {
                         Self::set_user_version(conn, 26)?;
                     }
                     26 => {
-                        log::info!(
-                            "迁移数据库从 v26 到 v27（MCP/Skills 添加 CodeBuddy Code 支持）"
-                        );
-                        Self::migrate_v26_to_v27(conn)?;
+                        // 技能仓库支持 GitLab：仓库和已安装的技能各记一个主机。
+                        // 老行不用回填——skill_repos.host 靠列默认值就是 github.com，
+                        // skills.repo_host 为 NULL 也按 github.com 读。
+                        Self::add_skill_repo_host_columns(conn)?;
                         Self::set_user_version(conn, 27)?;
+                    }
+                    27 => {
+                        log::info!("迁移数据库从 v27 到 v28（MCP/Skills 添加 CodeBuddy 支持）");
+                        Self::migrate_v27_to_v28(conn)?;
+                        Self::set_user_version(conn, 28)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -760,13 +767,14 @@ impl Database {
         }
     }
 
-    /// v26 -> v27 迁移：CodeBuddy Code 的 MCP 与 Skills 开关。
+    /// v27 -> v28 迁移：CodeBuddy Code 的 MCP 与 Skills 开关。
     ///
     /// CodeBuddy 早期开发版曾把 `enabled_codebuddy` 作为 v23（无 `enabled_omp`）、
-    /// v24（无 `enabled_dsh`）、v25（无 `enabled_copilot`）或 v26（无上游 v26 的
-    /// `enabled_workbuddy`）发布，这些库会跳过上游对应的迁移步骤；这里各列都按
-    /// “缺失才加”补齐，上游与任一开发版来源的库都能升到 v27，且不会改动已有开关。
-    fn migrate_v26_to_v27(conn: &Connection) -> Result<(), AppError> {
+    /// v24（无 `enabled_dsh`）、v25（无 `enabled_copilot`）、v26（无上游 v26 的
+    /// `enabled_workbuddy`）或 v27（无上游 v27 的 GitLab 列）发布，这些库会跳过上游
+    /// 对应的迁移步骤；这里各列都按“缺失才加”补齐，上游与任一开发版来源的库都能
+    /// 升到 v28，且不会改动已有开关。
+    fn migrate_v27_to_v28(conn: &Connection) -> Result<(), AppError> {
         if Self::table_exists(conn, "mcp_servers")? {
             Self::add_column_if_missing(
                 conn,
@@ -786,6 +794,23 @@ impl Database {
                     Self::add_column_if_missing(conn, table, column, "BOOLEAN NOT NULL DEFAULT 0")?;
                 }
             }
+        }
+        Self::add_skill_repo_host_columns(conn)?;
+        Ok(())
+    }
+
+    /// v26→v27：技能仓库支持 GitLab（`skill_repos.host`、`skills.repo_host`），缺失才加
+    fn add_skill_repo_host_columns(conn: &Connection) -> Result<(), AppError> {
+        if Self::table_exists(conn, "skill_repos")? {
+            Self::add_column_if_missing(
+                conn,
+                "skill_repos",
+                "host",
+                "TEXT NOT NULL DEFAULT 'github.com'",
+            )?;
+        }
+        if Self::table_exists(conn, "skills")? {
+            Self::add_column_if_missing(conn, "skills", "repo_host", "TEXT")?;
         }
         Ok(())
     }
@@ -4432,8 +4457,8 @@ mod tests {
         let conn = Connection::open_in_memory()?;
         Database::create_tables_on_conn(&conn)?;
         Database::apply_schema_migrations_on_conn(&conn)?;
-        assert_eq!(Database::get_user_version(&conn)?, 27);
-        assert_eq!(SCHEMA_VERSION, 27);
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        assert_eq!(SCHEMA_VERSION, 28);
         assert!(Database::has_column(&conn, "mcp_servers", "enabled_omp")?);
         for table in ["mcp_servers", "skills"] {
             assert!(Database::has_column(&conn, table, "enabled_dsh")?);
@@ -4538,7 +4563,7 @@ mod tests {
     }
 
     /// Earlier CodeBuddy builds shipped `enabled_codebuddy` as v26 before upstream
-    /// claimed v26 for WorkBuddy; the v26 -> v27 step must add `enabled_workbuddy`.
+    /// claimed v26 for WorkBuddy; the v26 -> v27 -> v28 steps must add `enabled_workbuddy`.
     #[test]
     fn codebuddy_dev_v26_database_gains_workbuddy_column_and_keeps_codebuddy_flags(
     ) -> Result<(), AppError> {

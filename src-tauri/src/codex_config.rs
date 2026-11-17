@@ -8,8 +8,6 @@ use crate::config::{
 use crate::error::AppError;
 use crate::model_capabilities::{image_input_capability_from_modalities, ImageInputCapability};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-#[cfg(not(test))]
-use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::fs;
@@ -269,7 +267,7 @@ pub(crate) const CODEX_RESERVED_MODEL_PROVIDER_IDS: &[&str] = &[
 
 /// 获取 Codex 配置目录路径
 pub fn get_codex_config_dir() -> PathBuf {
-    if let Some(custom) = crate::settings::get_codex_override_dir() {
+    if let Some(custom) = crate::settings::get_override_dir(&crate::app_config::AppType::Codex) {
         return custom;
     }
 
@@ -2304,7 +2302,8 @@ pub(crate) fn apply_codex_auto_review_model(catalog: &mut Value, model: &str) ->
 /// Codex 自带的 OpenAI 官方模型列表（`codex debug models --bundled`），给第三方的 GPT
 /// 行按模型名找官方条目用。只缓存成功读到的列表：Codex 升级后要重启 CC Switch 才换新。
 #[cfg(not(test))]
-static CODEX_OPENAI_OFFICIAL_MODELS_CACHE: OnceCell<Vec<Value>> = OnceCell::new();
+static CODEX_OPENAI_OFFICIAL_MODELS_CACHE: std::sync::Mutex<Option<Vec<Value>>> =
+    std::sync::Mutex::new(None);
 
 #[cfg(test)]
 thread_local! {
@@ -2322,15 +2321,15 @@ fn codex_static_official_models() -> Vec<Value> {
 /// 写的证明不了（见 `codex_official_models`）。
 #[cfg(not(test))]
 fn codex_openai_official_models() -> Vec<Value> {
-    CODEX_OPENAI_OFFICIAL_MODELS_CACHE
-        .get_or_try_init(|| {
-            load_codex_bundled_models()
-                .ok()
-                .and_then(normalize_codex_native_rows)
-                .ok_or(())
-        })
-        .cloned()
-        .unwrap_or_else(|_| codex_static_official_models())
+    // 持锁加载：并发的首次调用排队等结果，不会同时各跑一遍 `codex`；没读到就不缓存。
+    use crate::sync_utils::MutexExt;
+    let mut cache = CODEX_OPENAI_OFFICIAL_MODELS_CACHE.lock_recover();
+    if cache.is_none() {
+        *cache = load_codex_bundled_models()
+            .ok()
+            .and_then(normalize_codex_native_rows);
+    }
+    cache.clone().unwrap_or_else(codex_static_official_models)
 }
 
 #[cfg(test)]
@@ -3326,9 +3325,9 @@ pub fn strip_codex_unified_session_bucket_from_settings(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::TestHome;
     use serde_json::json;
     use serial_test::serial;
-    use std::ffi::OsString;
 
     #[test]
     fn official_proxy_route_is_recognized_by_its_address() {
@@ -3384,35 +3383,6 @@ mod tests {
             extract_codex_id_token_user_identity(&format!("{header}.{payload}.")),
             None
         );
-    }
-
-    struct CodexLiveTestHome {
-        _dir: tempfile::TempDir,
-        original_test_home: Option<OsString>,
-    }
-
-    impl CodexLiveTestHome {
-        fn new() -> Self {
-            let dir = tempfile::tempdir().expect("create isolated Codex live test home");
-            let original_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
-            std::env::set_var("CC_SWITCH_TEST_HOME", dir.path());
-            crate::settings::reload_settings().expect("reload settings for isolated test home");
-
-            Self {
-                _dir: dir,
-                original_test_home,
-            }
-        }
-    }
-
-    impl Drop for CodexLiveTestHome {
-        fn drop(&mut self) {
-            match &self.original_test_home {
-                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
-                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
-            }
-            let _ = crate::settings::reload_settings();
-        }
     }
 
     #[derive(Debug, PartialEq)]
@@ -3478,7 +3448,7 @@ mod tests {
     #[test]
     #[serial]
     fn ensure_live_auth_guard_rejects_rotated_refresh_without_mutating_live_bundle() {
-        let _home = CodexLiveTestHome::new();
+        let _home = TestHome::new();
         let before = seed_rotated_managed_codex_live_state();
 
         let result =
@@ -3491,7 +3461,7 @@ mod tests {
     #[test]
     #[serial]
     fn clear_live_auth_guard_rejects_rotated_refresh_without_mutating_live_bundle() {
-        let _home = CodexLiveTestHome::new();
+        let _home = TestHome::new();
         let before = seed_rotated_managed_codex_live_state();
 
         let result =
@@ -3584,7 +3554,7 @@ base_url = "https://single.example.com/v1"
     #[test]
     #[serial]
     fn managed_chatgpt_login_matches_local_marker_and_workspace() {
-        let _home = CodexLiveTestHome::new();
+        let _home = TestHome::new();
         let shared_chatgpt_user_token = |subject: &str| {
             let header = URL_SAFE_NO_PAD.encode(br#"{"alg":"none"}"#);
             let payload = URL_SAFE_NO_PAD.encode(
@@ -3697,7 +3667,7 @@ base_url = "https://single.example.com/v1"
     #[test]
     #[serial]
     fn missing_or_malformed_marker_never_establishes_ownership() {
-        let _home = CodexLiveTestHome::new();
+        let _home = TestHome::new();
         let id_token = test_codex_id_token("user-a");
         let auth = codex_managed_oauth_auth_value(
             "workspace-a",
@@ -3720,7 +3690,7 @@ base_url = "https://single.example.com/v1"
     #[test]
     #[serial]
     fn legacy_managed_marker_removal_requires_manager_identity() {
-        let _home = CodexLiveTestHome::new();
+        let _home = TestHome::new();
         let id_token = test_codex_id_token("legacy-user");
         let auth = codex_managed_oauth_auth_value(
             "legacy-workspace",
@@ -6518,8 +6488,8 @@ wire_api = "responses"
     #[test]
     #[serial]
     fn codex_cli_candidates_try_the_desktop_app_cli_after_standalone_installs() {
-        let test_home = CodexLiveTestHome::new();
-        let home = test_home._dir.path();
+        let test_home = TestHome::new();
+        let home = test_home.path();
         let standalone = home.join(".volta/bin/codex");
         let desktop = desktop_cli(
             &home.join("Applications"),
@@ -6560,8 +6530,8 @@ wire_api = "responses"
     #[test]
     #[serial]
     fn proxy_chat_catalog_ignores_codex_models_cache() {
-        let home = CodexLiveTestHome::new();
-        let codex_dir = home._dir.path().join(".codex");
+        let home = TestHome::new();
+        let codex_dir = home.path().join(".codex");
         std::fs::create_dir_all(&codex_dir).expect("create codex dir");
         std::fs::write(
             codex_dir.join("models_cache.json"),

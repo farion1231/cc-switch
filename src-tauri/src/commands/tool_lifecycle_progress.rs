@@ -5,12 +5,11 @@
 //! 「在下载一个 100 MB 的包」「排在别人后面」和「真卡住了」。
 
 use crate::sync_utils::MutexExt;
-use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::Serialize;
 use std::io::Read;
 use std::process::{Command, Output, Stdio};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
 pub(super) const TOOL_LIFECYCLE_PROGRESS_EVENT: &str = "tool-lifecycle-progress";
@@ -194,7 +193,7 @@ fn offer_line(bytes: &[u8], progress: &ToolLifecycleProgress, throttle: &LineThr
 /// 转圈动画不一定用 `\r`：有的安装器（如 OpenCode）用「光标回行首 / 清行」序列在同一行
 /// 重画，所有帧落在同一「行」里。这类序列之后的内容才是屏幕上最终看到的，取最后一段。
 pub(super) fn clean_progress_line(raw: &str) -> Option<String> {
-    static REDRAW: Lazy<Regex> = Lazy::new(|| {
+    static REDRAW: LazyLock<Regex> = LazyLock::new(|| {
         // 光标上移 / 左移 / 换行 / 定位，以及清屏、清行
         Regex::new(r"\x1b\[[0-?]*[ -/]*[ADEFGHJKf]").expect("valid regex")
     });
@@ -207,7 +206,7 @@ pub(super) fn clean_progress_line(raw: &str) -> Option<String> {
 }
 
 fn clean_segment(raw: &str) -> Option<String> {
-    static ESCAPES: Lazy<Regex> = Lazy::new(|| {
+    static ESCAPES: LazyLock<Regex> = LazyLock::new(|| {
         // CSI（颜色、光标移动）与 OSC（窗口标题、超链接）序列
         Regex::new(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-_]")
             .expect("valid regex")
