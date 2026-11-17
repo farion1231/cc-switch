@@ -842,21 +842,15 @@ fn claude_desktop_profile_scope_is_independent() {
 
     state
         .db
-        .save_provider(
-            AppType::ClaudeDesktop.as_str(),
-            &desktop_provider("d1", "dk-1"),
-        )
+        .save_provider(&AppType::ClaudeDesktop, &desktop_provider("d1", "dk-1"))
         .expect("save desktop provider d1");
     state
         .db
-        .save_provider(
-            AppType::ClaudeDesktop.as_str(),
-            &desktop_provider("d2", "dk-2"),
-        )
+        .save_provider(&AppType::ClaudeDesktop, &desktop_provider("d2", "dk-2"))
         .expect("save desktop provider d2");
     state
         .db
-        .set_current_provider(AppType::ClaudeDesktop.as_str(), "d1")
+        .set_current_provider(&AppType::ClaudeDesktop, "d1")
         .expect("set current desktop provider d1");
 
     // 在 Desktop 页新建项目：只拍 Desktop 供应商
@@ -879,7 +873,7 @@ fn claude_desktop_profile_scope_is_independent() {
     assert_eq!(
         state
             .db
-            .get_current_provider(AppType::ClaudeDesktop.as_str())
+            .get_current_provider(&AppType::ClaudeDesktop)
             .expect("get current desktop provider")
             .as_deref(),
         Some("d1"),
