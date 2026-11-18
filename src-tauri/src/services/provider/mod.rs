@@ -5635,7 +5635,7 @@ impl ProviderService {
     /// the model of providers that are not currently selected.
     fn list_trae(state: &AppState) -> Result<IndexMap<String, Provider>, AppError> {
         let native = crate::trae_config::get_providers()?;
-        let mut saved = state.db.get_all_providers("trae")?;
+        let mut saved = state.db.get_all_providers(&AppType::Trae)?;
         for (id, config) in &native {
             if !saved.contains_key(id) {
                 let name = config
@@ -5657,7 +5657,7 @@ impl ProviderService {
             }
             // The TRAE login is built into traecli and always available.
             Self::set_provider_live_config_managed(provider, official || native.contains_key(id));
-            state.db.save_provider("trae", provider)?;
+            state.db.save_provider(&AppType::Trae, provider)?;
         }
         Ok(saved)
     }
@@ -5676,12 +5676,12 @@ impl ProviderService {
                     Some(provider.settings_config.clone()),
                     create,
                     || {
-                        state.db.save_provider("trae", provider)?;
+                        state.db.save_provider(&AppType::Trae, provider)?;
                         Ok(true)
                     },
                 )
             } else {
-                state.db.save_provider("trae", provider)?;
+                state.db.save_provider(&AppType::Trae, provider)?;
                 Ok(true)
             };
         }
@@ -6774,7 +6774,7 @@ impl ProviderService {
         }
         if app_type == AppType::Trae {
             return crate::trae_config::save_and_commit(id, None, false, || {
-                state.db.delete_provider("trae", id)
+                state.db.delete_provider(&AppType::Trae, id)
             });
         }
 
@@ -6874,14 +6874,14 @@ impl ProviderService {
             // 只写进 [model_providers.<id>]，不改 model_provider：选中由「设为默认」完成
             let mut provider = state
                 .db
-                .get_provider_by_id(id, "trae")?
+                .get_provider_by_id(id, &AppType::Trae)?
                 .ok_or_else(|| AppError::Message(format!("供应商 {id} 不存在")))?;
             Self::set_provider_live_config_managed(&mut provider, true);
             return crate::trae_config::save_and_commit(
                 id,
                 Some(provider.settings_config.clone()),
                 false,
-                || state.db.save_provider("trae", &provider),
+                || state.db.save_provider(&AppType::Trae, &provider),
             );
         }
         if app_type == AppType::Copilot {
@@ -6979,9 +6979,9 @@ impl ProviderService {
                 ));
             }
             return crate::trae_config::save_and_commit(id, None, false, || {
-                if let Some(mut provider) = state.db.get_provider_by_id(id, "trae")? {
+                if let Some(mut provider) = state.db.get_provider_by_id(id, &AppType::Trae)? {
                     Self::set_provider_live_config_managed(&mut provider, false);
-                    state.db.save_provider("trae", &provider)?;
+                    state.db.save_provider(&AppType::Trae, &provider)?;
                 }
                 Ok(())
             });
@@ -7198,7 +7198,7 @@ impl ProviderService {
                 provider.settings_config.clone(),
                 |config| {
                     provider.settings_config = config;
-                    state.db.save_provider("trae", &provider)
+                    state.db.save_provider(&AppType::Trae, &provider)
                 },
             )?;
             return Ok(SwitchResult::default());
