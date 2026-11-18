@@ -1988,6 +1988,7 @@
     "directModeFormatSwitch": "Этот формат не работает в режиме прямого подключения; чтобы использовать эту карточку, переключитесь на маршрутизацию или агрегацию."
   },
   "copilot": {
+    "autoModelName": "GitHub Copilot Auto",
     "automaticFormat": "Выбирается маршрутизацией автоматически",
     "automaticFormatHint": "Маршрутизация выбирает формат upstream Copilot для каждой модели; ручные настройки формата игнорируются.",
     "authSection": "Авторизация GitHub Copilot",
