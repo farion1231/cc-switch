@@ -3470,6 +3470,25 @@
     }
   },
   "skills": {
+    "github": {
+      "saveHint": "새 저장소는 가져올 때 저장소 관리에 자동으로 저장됩니다.",
+      "chooseRepo": "저장된 저장소에서 선택",
+      "chooseRepoPlaceholder": "추가된 저장소 선택",
+      "title": "Git에서 가져오기",
+      "lead": "공개 GitHub, GitLab, Gitea 또는 Forgejo 저장소에서 설치할 Skills를 선택합니다.",
+      "fetch": "스킬 가져오기",
+      "search": "스킬 검색…",
+      "count": "선택한 스킬 {{selected}} / {{total}}개",
+      "occupied": "다른 스킬이 이 디렉터리를 사용하고 있습니다. “설치됨”에서 관리하세요.",
+      "open": "저장소에서 {{name}} 열기",
+      "empty": "일치하는 스킬이 없습니다",
+      "install": "선택 항목 설치",
+      "found": "이 저장소에서 스킬 {{count}}개를 찾았습니다",
+      "selectAll": "모두 선택",
+      "selectNone": "모두 선택 해제",
+      "hostConflict": "소유자와 이름이 같은 저장소가 다른 호스트에 저장되어 있습니다. 먼저 저장소 관리에서 확인하세요.",
+      "branchFallback": "{{requested}}를 요청했지만 {{resolved}}의 Skills를 표시합니다. 설치 전에 선택 항목을 확인하세요."
+    },
     "manage": "스킬",
     "title": "스킬 관리",
     "description": "인기 저장소에서 스킬을 찾아 설치하여 Claude Code/Codex/Gemini의 기능을 확장합니다",

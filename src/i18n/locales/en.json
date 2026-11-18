@@ -3682,7 +3682,26 @@
       "syncCopyDesc": "Uses more disk space; copied again after each update",
       "moveHint": "Switching moves {{count}} Skills to the new location."
     },
-    "updatesIncomplete": "No updates found, but {{count}} repositories couldn't be read"
+    "updatesIncomplete": "No updates found, but {{count}} repositories couldn't be read",
+    "github": {
+      "saveHint": "New repositories are saved to Manage repositories when fetched.",
+      "chooseRepo": "From Saved repositories",
+      "chooseRepoPlaceholder": "Choose a saved repository",
+      "title": "Get from Git",
+      "lead": "Fetch a public GitHub, GitLab, Gitea or Forgejo repository and choose Skills to install.",
+      "fetch": "Fetch Skills",
+      "search": "Search Skills…",
+      "count": "Selected {{selected}} / {{total}} Skills",
+      "occupied": "Directory in use by another Skill. Manage it in Installed.",
+      "open": "Open {{name}} in repository",
+      "empty": "No matching Skills",
+      "install": "Install selected",
+      "found": "Found {{count}} Skills in this repository",
+      "selectAll": "Select All",
+      "selectNone": "Select None",
+      "hostConflict": "A repository with this owner and name is already saved on another host. Manage it in repositories first.",
+      "branchFallback": "Requested {{requested}}; showing Skills from {{resolved}}. Review the selection before installing."
+    }
   },
   "deeplink": {
     "confirmImport": "Confirm Import Provider",

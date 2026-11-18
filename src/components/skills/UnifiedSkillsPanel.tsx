@@ -71,6 +71,7 @@ import { V7ConfirmDialog } from "@/components/mcp/formBits";
 import { useVisibleAppIds } from "@/components/mcp/useVisibleAppIds";
 import { SkillsPage, useSkillRepoActions } from "./SkillsPage";
 import { RepoManagerPanel } from "./RepoManagerPanel";
+import { GitSkillsDialog } from "./GitSkillsDialog";
 import { SkillImportDialog } from "./SkillImportDialog";
 import { SkillRestoreDialog } from "./SkillRestoreDialog";
 import { SkillsStorageSheet } from "./SkillsStorageSheet";
@@ -153,6 +154,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [fails, setFails] = useState<Record<string, WriteFailure>>({});
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
+  const [gitOpen, setGitOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [restoreOpen, setRestoreOpen] = useState(false);
   const [storageOpen, setStorageOpen] = useState(false);
@@ -222,7 +224,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     updateSkillMutation.isPending ||
     isUpdatingMany;
   const dialogOpen =
-    importOpen || restoreOpen || confirm !== null || repoManagerOpen;
+    gitOpen || importOpen || restoreOpen || confirm !== null || repoManagerOpen;
   const navigationBlocked = writePending || mutationPending || dialogOpen;
   const interactionBlocked = navigationBlocked || isCheckingUpdates;
   // 外观上的禁用晚 300ms 才出现：点一个格子写得很快时不让整页按钮闪一下变灰。
@@ -961,6 +963,9 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
             <DropdownMenuContent align="end" className="min-w-[220px]">
               <DropdownMenuItem onSelect={() => setView("discover")}>
                 {t("skillsPage.addMenu.discover")}
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => setGitOpen(true)}>
+                {t("skills.github.title")}
               </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => void handleInstallFromZip()}>
                 {t("skillsPage.addMenu.zip")}
@@ -1739,6 +1744,15 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
         />
       )}
 
+      {gitOpen && (
+        <GitSkillsDialog
+          appIds={appIds}
+          targets={targets}
+          setTargets={setTargets}
+          installTo={installTo}
+          onClose={() => setGitOpen(false)}
+        />
+      )}
       <SkillRestoreDialog
         open={restoreOpen}
         backups={skillBackups}
