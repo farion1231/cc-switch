@@ -8,7 +8,9 @@
 //! - Claude 的格式转换逻辑保留在此文件（用于 OpenRouter 旧接口回退）
 
 use super::{
-    content_encoding::{decompress_body, get_content_encoding, is_supported_content_encoding},
+    content_encoding::{
+        decompress_body, get_content_encoding, is_supported_content_encoding, looks_like_zstd_frame,
+    },
     error_mapper::{get_error_message, map_proxy_error_to_status},
     forwarder::ActiveConnectionGuard,
     handler_config::{
@@ -715,22 +717,39 @@ fn endpoint_with_query(uri: &axum::http::Uri, endpoint: &str) -> String {
 /// `serde_json::from_slice` 直接解析失败。这里在解析前解压，并剥掉已失真的实体头
 /// （content-encoding / content-length / transfer-encoding）——转发层会基于解压后的
 /// 明文 JSON 重新生成正确的头。
+///
+/// 中间 hop 可能丢掉 Content-Encoding。无该头时，仅当请求体带 RFC 8878 zstd
+/// frame magic 才按 zstd 解压。解压失败与有头路径一样硬失败，避免把压缩字节
+/// 当 JSON 往下传。明文路径原样返回，不改写 JSON 语义。
 fn decode_codex_request_body(
     headers: &mut axum::http::HeaderMap,
     body_bytes: Bytes,
 ) -> Result<Bytes, ProxyError> {
-    let Some(encoding) = get_content_encoding(headers) else {
-        return Ok(body_bytes);
-    };
+    if let Some(encoding) = get_content_encoding(headers) {
+        return decompress_codex_request_body(headers, &encoding, body_bytes);
+    }
 
-    if !is_supported_content_encoding(&encoding) {
+    if looks_like_zstd_frame(&body_bytes) {
+        log::debug!("[Codex] 无 Content-Encoding，按 zstd magic 解压请求体");
+        return decompress_codex_request_body(headers, "zstd", body_bytes);
+    }
+
+    Ok(body_bytes)
+}
+
+fn decompress_codex_request_body(
+    headers: &mut axum::http::HeaderMap,
+    encoding: &str,
+    body_bytes: Bytes,
+) -> Result<Bytes, ProxyError> {
+    if !is_supported_content_encoding(encoding) {
         return Err(ProxyError::InvalidRequest(format!(
             "Unsupported request content-encoding: {encoding}"
         )));
     }
 
     log::debug!("[Codex] 解压请求体: content-encoding={encoding}");
-    let decompressed = match decompress_body(&encoding, &body_bytes) {
+    let decompressed = match decompress_body(encoding, &body_bytes) {
         Ok(Some(decompressed)) => decompressed,
         // is_supported_content_encoding 已确保编码受支持，正常不会返回 None；
         // 防御性兜底：宁可报错，也不能把压缩字节当 JSON 透传下去。

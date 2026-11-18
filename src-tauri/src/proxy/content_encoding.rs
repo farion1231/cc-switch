@@ -7,6 +7,14 @@
 use axum::http::header::HeaderMap;
 use std::io::Read;
 
+/// RFC 8878 zstd frame magic. JSON cannot start with these bytes (`0x28` is
+/// `(`), so sniffing a missing `Content-Encoding` is safe on Codex JSON bodies.
+pub(crate) const ZSTD_FRAME_MAGIC: [u8; 4] = [0x28, 0xB5, 0x2F, 0xFD];
+
+pub(crate) fn looks_like_zstd_frame(body: &[u8]) -> bool {
+    body.len() >= 4 && body[..4] == ZSTD_FRAME_MAGIC
+}
+
 /// 把 content-encoding 值拆成有序 coding 列表（去掉 identity 与空值）。
 ///
 /// HTTP 允许堆叠编码（如 `gzip, zstd`），各 coding 以逗号分隔；亦允许重复
@@ -408,5 +416,24 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.append("content-encoding", HeaderValue::from_static("identity"));
         assert_eq!(get_content_encoding(&headers), None);
+    }
+
+    #[test]
+    fn looks_like_zstd_frame_detects_magic_without_content_encoding() {
+        let payload = r#"{"model":"gpt-6.1-sol","input":"你好"}"#.as_bytes();
+        let compressed = zstd::stream::encode_all(std::io::Cursor::new(payload), 0).unwrap();
+        assert!(looks_like_zstd_frame(&compressed));
+        assert!(!looks_like_zstd_frame(payload));
+        let decompressed = decompress_body("zstd", &compressed).unwrap().unwrap();
+        assert_eq!(decompressed, payload);
+    }
+
+    #[test]
+    fn looks_like_zstd_frame_rejects_plain_json() {
+        assert!(!looks_like_zstd_frame(br#"{"model":"gpt-6.1-sol"}"#));
+        assert!(!looks_like_zstd_frame(b""));
+        assert!(!looks_like_zstd_frame(&[0x28, 0xB5]));
+        // JSON object/array/string/bool/null/number cannot start with 0x28.
+        assert!(!looks_like_zstd_frame(br#"{"input":"\u0028"}"#));
     }
 }
