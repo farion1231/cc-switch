@@ -3984,7 +3984,7 @@ fn grok_follow_cli_card_drops_the_stash_when_cli_is_already_back() {
     state
         .db
         .save_provider(
-            AppType::GrokBuild.as_str(),
+            &AppType::GrokBuild,
             &grok_official("grokbuild-official", None),
         )
         .expect("save");
@@ -4007,7 +4007,7 @@ fn grok_bound_card_leaves_auth_alone_when_cli_already_uses_the_account() {
     state
         .db
         .save_provider(
-            AppType::GrokBuild.as_str(),
+            &AppType::GrokBuild,
             &grok_official("grok-a", Some("user-a")),
         )
         .expect("save");
@@ -4033,14 +4033,14 @@ fn grok_unbound_and_third_party_cards_do_not_touch_auth() {
     state
         .db
         .save_provider(
-            AppType::GrokBuild.as_str(),
+            &AppType::GrokBuild,
             &grok_official("grokbuild-official", None),
         )
         .expect("save official");
     state
         .db
         .save_provider(
-            AppType::GrokBuild.as_str(),
+            &AppType::GrokBuild,
             &Provider::with_id(
                 "grok-relay".to_string(),
                 "Relay".to_string(),
@@ -4087,7 +4087,7 @@ fn grok_editor_unbinding_current_card_restores_cli_login() {
     state
         .db
         .save_provider(
-            AppType::GrokBuild.as_str(),
+            &AppType::GrokBuild,
             &grok_official("grok-a", Some("user-a")),
         )
         .expect("save");
@@ -4096,7 +4096,7 @@ fn grok_editor_unbinding_current_card_restores_cli_login() {
 
     let row = state
         .db
-        .get_provider_by_id("grok-a", AppType::GrokBuild.as_str())
+        .get_provider_by_id("grok-a", &AppType::GrokBuild)
         .expect("read provider")
         .expect("provider exists");
     let view = ProviderService::editor_view(
