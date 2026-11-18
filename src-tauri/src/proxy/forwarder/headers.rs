@@ -425,7 +425,10 @@ impl OutboundHeaderPlan<'_> {
         for (key, value) in headers {
             let key_str = key.as_str();
 
-            if matches!(key_str, "copilot-session-token" | "session-token" | "session_token") {
+            if matches!(
+                key_str,
+                "copilot-session-token" | "session-token" | "session_token"
+            ) {
                 if !saw_copilot_auto_session_token {
                     if let Some(token) = &self.copilot_auto_session_token {
                         if let Ok(name) = http::HeaderName::from_bytes(key.as_str().as_bytes()) {

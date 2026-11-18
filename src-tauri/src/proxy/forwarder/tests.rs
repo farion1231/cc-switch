@@ -208,7 +208,9 @@ fn test_forwarder(
         failover_chain: false,
         last_outbound_model: std::sync::Mutex::new(None),
         privacy_filter: PrivacyFilterConfig::default(),
-        copilot_auto_sessions: Arc::new(super::super::copilot_auto_session::AutoSessionManager::default()),
+        copilot_auto_sessions: Arc::new(
+            super::super::copilot_auto_session::AutoSessionManager::default(),
+        ),
     }
 }
 

@@ -199,8 +199,8 @@ pub fn map_codex_failover_model(mut body: Value, provider: &Provider) -> Value {
                 crate::codex_config::CodexCatalogToolProfile::ProxyChat
             },
         )
-            .iter()
-            .any(|model| model == requested)
+        .iter()
+        .any(|model| model == requested)
     {
         return body;
     }

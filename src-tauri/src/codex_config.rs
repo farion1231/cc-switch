@@ -5348,8 +5348,11 @@ wire_api = "responses"
         assert_eq!(slugs, vec!["copilot-fusion-auto"]);
         assert_eq!(models[0]["display_name"], "GitHub Copilot Auto");
 
-        let published =
-            codex_published_models_for_profile(&json!({}), config, CodexCatalogToolProfile::Copilot);
+        let published = codex_published_models_for_profile(
+            &json!({}),
+            config,
+            CodexCatalogToolProfile::Copilot,
+        );
         assert_eq!(published, vec!["copilot-fusion-auto".to_string()]);
     }
 
@@ -5425,9 +5428,14 @@ wire_api = "responses"
             }
         });
         let config = "model = \"gpt-5.5\"\n";
-        let copilot = codex_published_models_for_profile(&settings, config, CodexCatalogToolProfile::Copilot);
+        let copilot =
+            codex_published_models_for_profile(&settings, config, CodexCatalogToolProfile::Copilot);
         assert_eq!(copilot, vec!["gpt-5.5".to_string()]);
-        let other = codex_published_models_for_profile(&settings, config, CodexCatalogToolProfile::ProxyChat);
+        let other = codex_published_models_for_profile(
+            &settings,
+            config,
+            CodexCatalogToolProfile::ProxyChat,
+        );
         assert_eq!(other, vec!["gpt-5.5".to_string()]);
     }
 

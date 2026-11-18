@@ -213,7 +213,12 @@ impl RequestForwarder {
         response: ProxyResponse,
         request_is_streaming: bool,
     ) -> Result<ProxyResponse, ProxyError> {
-        self.prepare_success_response_for_failover_with_deadline(response, request_is_streaming, None).await
+        self.prepare_success_response_for_failover_with_deadline(
+            response,
+            request_is_streaming,
+            None,
+        )
+        .await
     }
 
     pub(super) async fn prepare_success_response_for_failover_with_deadline(
@@ -236,7 +241,9 @@ impl RequestForwarder {
             .map(|at| at.saturating_duration_since(tokio::time::Instant::now()))
             .unwrap_or(self.non_streaming_timeout);
         if body_timeout.is_zero() {
-            return Err(ProxyError::Timeout("Copilot Auto response body deadline elapsed".into()));
+            return Err(ProxyError::Timeout(
+                "Copilot Auto response body deadline elapsed".into(),
+            ));
         }
         let body_deadline = deadline.unwrap_or_else(|| tokio::time::Instant::now() + body_timeout);
         let body = tokio::time::timeout_at(
@@ -468,10 +475,18 @@ impl RequestForwarder {
         let headers = response.headers().clone();
         let timeout = deadline
             .map(|at| at.saturating_duration_since(tokio::time::Instant::now()))
-            .map(|remaining| if self.streaming_first_byte_timeout.is_zero() { remaining } else { remaining.min(self.streaming_first_byte_timeout) })
+            .map(|remaining| {
+                if self.streaming_first_byte_timeout.is_zero() {
+                    remaining
+                } else {
+                    remaining.min(self.streaming_first_byte_timeout)
+                }
+            })
             .unwrap_or(self.streaming_first_byte_timeout);
         if timeout.is_zero() {
-            return Err(ProxyError::Timeout("Copilot Auto first chunk deadline elapsed".into()));
+            return Err(ProxyError::Timeout(
+                "Copilot Auto first chunk deadline elapsed".into(),
+            ));
         }
         let mut stream = Box::pin(response.bytes_stream());
 
@@ -512,7 +527,11 @@ impl RequestForwarder {
         deadline: Option<tokio::time::Instant>,
     ) -> Result<ProxyResponse, ProxyError> {
         let mut response = self
-            .prepare_success_response_for_failover_with_deadline(response, request_is_streaming, deadline)
+            .prepare_success_response_for_failover_with_deadline(
+                response,
+                request_is_streaming,
+                deadline,
+            )
             .await?;
         // Streaming requests normally return SSE. If a compatible gateway
         // explicitly returns JSON instead, buffer and validate it inside the retry

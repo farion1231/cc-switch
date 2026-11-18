@@ -354,7 +354,9 @@ impl RequestForwarder {
             failover_chain: false,
             last_outbound_model: std::sync::Mutex::new(None),
             privacy_filter: PrivacyFilterConfig::default(),
-            copilot_auto_sessions: Arc::new(super::copilot_auto_session::AutoSessionManager::default()),
+            copilot_auto_sessions: Arc::new(
+                super::copilot_auto_session::AutoSessionManager::default(),
+            ),
         }
     }
 
@@ -372,7 +374,11 @@ impl RequestForwarder {
         } else {
             self.non_streaming_timeout
         };
-        if configured.is_zero() { std::time::Duration::from_secs(600) } else { configured }
+        if configured.is_zero() {
+            std::time::Duration::from_secs(600)
+        } else {
+            configured
+        }
     }
 
     /// 设置隐私过滤配置
@@ -892,19 +898,31 @@ impl RequestForwarder {
                         .await);
                 }
                 Err(mut e) => {
-                    let auto_requested = body.get("model").and_then(Value::as_str)
+                    let auto_requested = body
+                        .get("model")
+                        .and_then(Value::as_str)
                         .map(super::model_mapper::strip_one_m_suffix_for_upstream)
                         == Some(super::providers::copilot_auto::COPILOT_AUTO_VIRTUAL_MODEL_ID);
-                    if auto_requested && provider.is_github_copilot()
+                    if auto_requested
+                        && provider.is_github_copilot()
                         && matches!(&e, ProxyError::UpstreamError { status: 401, .. })
                     {
                         log::info!("[{app_type_str}] [Copilot/Auto] 401; resolving a fresh session and retrying once");
                         let mut retry_format = None;
-                        match self.forward(&attempt, &provider_body, &mut retry_format).await {
+                        match self
+                            .forward(&attempt, &provider_body, &mut retry_format)
+                            .await
+                        {
                             Ok(forwarded) => {
-                                return Ok(self.finish_success(
-                                    provider, app_type, used_half_open_permit, forwarded, retry_format,
-                                ).await);
+                                return Ok(self
+                                    .finish_success(
+                                        provider,
+                                        app_type,
+                                        used_half_open_permit,
+                                        forwarded,
+                                        retry_format,
+                                    )
+                                    .await);
                             }
                             Err(retry_error) => e = retry_error,
                         }
@@ -1546,7 +1564,8 @@ impl RequestForwarder {
                 .and_then(Value::as_str)
                 .map(super::model_mapper::strip_one_m_suffix_for_upstream)
                 == Some(super::providers::copilot_auto::COPILOT_AUTO_VIRTUAL_MODEL_ID);
-        let copilot_auto_compaction = is_copilot_auto_compaction_request(auto_requested, app_type, endpoint, &mapped_body);
+        let copilot_auto_compaction =
+            is_copilot_auto_compaction_request(auto_requested, app_type, endpoint, &mapped_body);
         let mut auto_session_header = None;
         let mut auto_deadline = None;
         let mut auto_session_key = None;
@@ -1563,24 +1582,45 @@ impl RequestForwarder {
             })?;
             let auth_state = app_handle.state::<CopilotAuthState>();
             let auth = auth_state.0.read().await;
-            let account_id = match provider.meta.as_ref().and_then(|meta| meta.managed_account_id_for("github_copilot")) {
+            let account_id = match provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.managed_account_id_for("github_copilot"))
+            {
                 Some(id) => id,
-                None => auth.resolve_default_account_id().await.ok_or_else(|| ProxyError::AuthError("No GitHub Copilot account is available".into()))?,
+                None => auth.resolve_default_account_id().await.ok_or_else(|| {
+                    ProxyError::AuthError("No GitHub Copilot account is available".into())
+                })?,
             };
-            let token = auth.get_valid_token_for_account(&account_id).await
-                .map_err(|error| ProxyError::AuthError(format!("GitHub Copilot authentication failed: {error}")))?;
+            let token = auth
+                .get_valid_token_for_account(&account_id)
+                .await
+                .map_err(|error| {
+                    ProxyError::AuthError(format!("GitHub Copilot authentication failed: {error}"))
+                })?;
             auto_account_id = Some(account_id.clone());
             auto_access_token = Some(token.clone());
             base_url = auth.get_api_endpoint(&account_id).await;
             let generation = auth.get_credential_generation();
-            let deadline = attempt_started + self.copilot_auto_timeout_budget(is_streaming_request(endpoint, body, headers));
+            let deadline = attempt_started
+                + self.copilot_auto_timeout_budget(is_streaming_request(endpoint, body, headers));
             auto_deadline = Some(deadline);
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-            let catalogue = tokio::time::timeout(remaining, auth.fetch_catalog_for_account(&account_id)).await
-                .map_err(|_| ProxyError::Timeout("Copilot Auto catalogue lookup timed out".into()))?
-                .map_err(|error| ProxyError::ForwardFailed(format!("Copilot catalogue lookup failed: {error}")))?;
+            let catalogue =
+                tokio::time::timeout(remaining, auth.fetch_catalog_for_account(&account_id))
+                    .await
+                    .map_err(|_| {
+                        ProxyError::Timeout("Copilot Auto catalogue lookup timed out".into())
+                    })?
+                    .map_err(|error| {
+                        ProxyError::ForwardFailed(format!(
+                            "Copilot catalogue lookup failed: {error}"
+                        ))
+                    })?;
             if !catalogue.iter().any(|model| model.supports_auto_routing()) {
-                return Err(ProxyError::ConfigError("This Copilot account does not advertise Auto routing".into()));
+                return Err(ProxyError::ConfigError(
+                    "This Copilot account does not advertise Auto routing".into(),
+                ));
             }
             let protocol = if is_copilot_auto_chat_endpoint(endpoint) {
                 super::providers::copilot_auto::RequestProtocol::ChatCompletions
@@ -1589,29 +1629,65 @@ impl RequestForwarder {
             } else {
                 super::providers::copilot_auto::RequestProtocol::AnthropicMessages
             };
-            let (prompt, has_image) = super::providers::copilot_auto::extract_prompt_summary_for_auto(&mapped_body, protocol);
+            let (prompt, has_image) =
+                super::providers::copilot_auto::extract_prompt_summary_for_auto(
+                    &mapped_body,
+                    protocol,
+                );
             let key = super::copilot_auto_session::AutoSessionKey {
-                app_namespace: if matches!(app_type, AppType::Codex) { "codex" } else { "claude" }.into(),
-                provider_id: provider.id.clone(), account_id: account_id.clone(), api_base: base_url.clone(),
-                credential_generation: generation, client_session_id: self.session_id.clone(), branch_id: None,
+                app_namespace: if matches!(app_type, AppType::Codex) {
+                    "codex"
+                } else {
+                    "claude"
+                }
+                .into(),
+                provider_id: provider.id.clone(),
+                account_id: account_id.clone(),
+                api_base: base_url.clone(),
+                credential_generation: generation,
+                client_session_id: self.session_id.clone(),
+                branch_id: None,
             };
-            let resolution_timeout = deadline.saturating_duration_since(tokio::time::Instant::now()).min(std::time::Duration::from_secs(15));
+            let resolution_timeout = deadline
+                .saturating_duration_since(tokio::time::Instant::now())
+                .min(std::time::Duration::from_secs(15));
             let snapshot = if self.session_client_provided {
-                self.copilot_auto_sessions.get_or_resolve(&key, &token, &prompt, has_image, resolution_timeout).await?
+                self.copilot_auto_sessions
+                    .get_or_resolve(&key, &token, &prompt, has_image, resolution_timeout)
+                    .await?
             } else {
-                self.copilot_auto_sessions.resolve_uncached(&key, &token, &prompt, has_image, resolution_timeout).await?
+                self.copilot_auto_sessions
+                    .resolve_uncached(&key, &token, &prompt, has_image, resolution_timeout)
+                    .await?
             };
-            let selected = catalogue.iter().find(|model| model.id == snapshot.selected_model)
-                .ok_or_else(|| ProxyError::ConfigError(format!("Copilot Auto selected model '{}' is absent from the account catalogue", snapshot.selected_model)))?;
+            let selected = catalogue
+                .iter()
+                .find(|model| model.id == snapshot.selected_model)
+                .ok_or_else(|| {
+                    ProxyError::ConfigError(format!(
+                        "Copilot Auto selected model '{}' is absent from the account catalogue",
+                        snapshot.selected_model
+                    ))
+                })?;
             if is_copilot_auto_chat_endpoint(endpoint)
-                && !selected.supported_endpoints.iter().any(|e| e.contains("chat/completions")) {
-                return Err(ProxyError::ConfigError(format!("Copilot Auto selected model '{}' does not support Chat Completions", snapshot.selected_model)));
+                && !selected
+                    .supported_endpoints
+                    .iter()
+                    .any(|e| e.contains("chat/completions"))
+            {
+                return Err(ProxyError::ConfigError(format!(
+                    "Copilot Auto selected model '{}' does not support Chat Completions",
+                    snapshot.selected_model
+                )));
             }
             mapped_body["model"] = Value::String(snapshot.selected_model);
             auto_session_key = Some(key);
             auto_session_token = Some(snapshot.session_token.clone());
-            auto_session_header = Some(http::HeaderValue::from_str(&snapshot.session_token)
-                .map_err(|_| ProxyError::ConfigError("Invalid Copilot Auto session token".into()))?);
+            auto_session_header = Some(
+                http::HeaderValue::from_str(&snapshot.session_token).map_err(|_| {
+                    ProxyError::ConfigError("Invalid Copilot Auto session token".into())
+                })?,
+            );
         }
 
         if is_copilot_claude_body {
@@ -2515,11 +2591,18 @@ impl RequestForwarder {
             if let (Some(account_id), Some(access_token)) = (&auto_account_id, &auto_access_token) {
                 if let Some(app_handle) = &self.app_handle {
                     let auth_state = app_handle.state::<CopilotAuthState>();
-                    auth_state.0.read().await.invalidate_token_if_matches(account_id, access_token).await;
+                    auth_state
+                        .0
+                        .read()
+                        .await
+                        .invalidate_token_if_matches(account_id, access_token)
+                        .await;
                 }
             }
             if let (Some(key), Some(token)) = (&auto_session_key, &auto_session_token) {
-                self.copilot_auto_sessions.invalidate_if_token_matches(key, token).await;
+                self.copilot_auto_sessions
+                    .invalidate_if_token_matches(key, token)
+                    .await;
             }
         }
 
@@ -2538,7 +2621,9 @@ impl RequestForwarder {
                 )
                 .await?;
             if copilot_auto_compaction {
-                if let (Some(key), Some(token)) = (auto_session_key.clone(), auto_session_token.clone()) {
+                if let (Some(key), Some(token)) =
+                    (auto_session_key.clone(), auto_session_token.clone())
+                {
                     let sessions = self.copilot_auto_sessions.clone();
                     response = response.with_success_terminal_hook(Box::new(move || {
                         Box::pin(async move {

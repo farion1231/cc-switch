@@ -373,9 +373,9 @@ pub fn codex_model_ids(key: &str, provider: &Provider) -> Vec<String> {
             crate::codex_config::CodexCatalogToolProfile::ProxyChat
         },
     )
-        .into_iter()
-        .map(|model| encode(&AppType::Codex, key, &model, false))
-        .collect()
+    .into_iter()
+    .map(|model| encode(&AppType::Codex, key, &model, false))
+    .collect()
 }
 
 /// Claude Desktop Stack 供应商发布的一个模型。
