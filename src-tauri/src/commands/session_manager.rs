@@ -227,7 +227,15 @@ pub async fn launch_session_terminal(
     if let Some((provider, conversation)) =
         crate::services::provider::agy_direct::key_resume_target(&state.db, &command)?
     {
-        crate::commands::terminal_launch::open_agy_resume_terminal(&provider, &conversation, cwd)?;
+        tauri::async_runtime::spawn_blocking(move || {
+            crate::commands::terminal_launch::open_agy_resume_terminal(
+                &provider,
+                &conversation,
+                cwd,
+            )
+        })
+        .await
+        .map_err(|e| format!("Failed to launch terminal: {e}"))??;
         return Ok(true);
     }
     let command = command.clone();
