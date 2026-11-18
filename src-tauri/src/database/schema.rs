@@ -1810,6 +1810,16 @@ impl Database {
                 "0.20",
                 "10",
             ),
+            // Claude Mythos 5.2（2026-11-18 核对官方模型页：与 Fable 5.2 同价，缓存写入为 5 分钟 TTL）
+            // 来源：https://platform.claude.com/docs/en/models/mythos-5-2/overview
+            (
+                "claude-mythos-5-2",
+                "Claude Mythos 5.2",
+                "8",
+                "40",
+                "0.20",
+                "10",
+            ),
             // Claude Fable 5.1 / Mythos 5.1（2026-09-01 发布；同 Fable 5 价，
             // 但缓存读为 0.025x = $0.25，非 Fable 5 的 $1）
             (
