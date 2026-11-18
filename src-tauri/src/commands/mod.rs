@@ -1,4 +1,6 @@
 #![allow(non_snake_case)]
+mod desktop_tasks;
+pub use desktop_tasks::*;
 
 mod agy_account;
 mod auth;

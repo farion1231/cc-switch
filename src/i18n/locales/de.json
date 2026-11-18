@@ -5315,5 +5315,41 @@
     "installFailed": "Update-Installation fehlgeschlagen",
     "downloadingInline": "Neue Version wird im Hintergrund heruntergeladen…",
     "downloadedInline": "Heruntergeladen"
+  },
+  "desktopTasks": {
+    "source": "Quellkonto / Profil",
+    "target": "Zielkonto / Profil",
+    "chooseProfile": "Vorhandenes Profil auswählen",
+    "lastKnown": "zuletzt angemeldetes Konto",
+    "profileHint": "Konten und Organisationen bleiben getrennt. Der letzte Anmeldehinweis kennzeichnet kein laufendes Profil.",
+    "empty": "Keine gespeicherten Desktop-Profile gefunden. Claude Desktop zuerst mit dem gewünschten Konto öffnen, dann aktualisieren.",
+    "preview": "Wiederherstellung prüfen",
+    "apply": "Wiederherstellen",
+    "verifyHint": "Die Dateien wurden erfolgreich zurückgelesen. Desktop mit dem Zielprofil öffnen und Sichtbarkeit sowie Verfügbarkeit prüfen. CC Switch hat keine Sitzung oder Aufgabe gestartet.",
+    "selected": "{{count}} ausgewählt",
+    "disposition": {
+      "ready": "Bereit zum Kopieren",
+      "exists": "Bereits vorhanden; Ziel beibehalten"
+    },
+    "taskHint": "Aktiviert/Pausiert bleibt erhalten. Verpasste Termine vor der Wiederherstellung werden übersprungen; spätere Ausführungen steuert Desktop. Abgelaufene einmalige Aufgaben lassen sich nicht wiederherstellen.",
+    "noTasks": "Dieses Profil enthält keine gespeicherten lokalen Aufgaben.",
+    "enabled": "Aktiviert",
+    "paused": "Pausiert",
+    "manual": "Nur manuell",
+    "viewPrompt": "Anweisungen anzeigen",
+    "exportPrompt": "Anweisungen exportieren",
+    "orphans": "Gespeicherte Anweisungen ohne Zeitplan",
+    "orphanHint": "Diese Dateien können nach dem Löschen einer Aufgabe verbleiben. Sie lassen sich anzeigen oder exportieren; Zeitplan und Aktivierungszustand sind daraus nicht rekonstruierbar.",
+    "backup": "Sicherung der Aufgabenregistrierung: {{path}}",
+    "problem": {
+      "missingPrompt": "Gespeicherte Anweisungen fehlen oder sind nicht lesbar",
+      "missingDirectory": "Arbeitsordner auf diesem Mac nicht verfügbar",
+      "unsupportedTask": "Dieses Aufgabenformat oder diese Einstellung wird nicht unterstützt",
+      "expired": "Der einmalige Termin liegt in der Vergangenheit"
+    },
+    "title": "Desktop-Aufgaben",
+    "description": "Gespeicherte lokale Claude-Desktop-Aufgaben prüfen und ausgewählte Definitionen in einem anderen vorhandenen Profil auf diesem Mac wiederherstellen.",
+    "applyHint": "Beenden Sie Claude Desktop vor der Ausführung. Aktivierungszustände bleiben erhalten, zuvor verpasste Ausführungen werden übersprungen. Quelldefinitionen und gemeinsame Anweisungen bleiben unverändert.",
+    "receipt": "{{tasks}} Aufgaben wiederhergestellt; {{skipped}} vorhandene Aufgaben übersprungen."
   }
 }

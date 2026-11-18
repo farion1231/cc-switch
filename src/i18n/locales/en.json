@@ -5315,5 +5315,41 @@
     "installFailed": "Update installation failed",
     "downloadingInline": "Downloading the new version in the background…",
     "downloadedInline": "Downloaded"
+  },
+  "desktopTasks": {
+    "source": "Source account / profile",
+    "target": "Destination account / profile",
+    "chooseProfile": "Choose an existing profile",
+    "lastKnown": "last signed-in account",
+    "profileHint": "Account and organization folders stay separate. The last signed-in hint does not identify a running profile.",
+    "empty": "No saved Desktop profiles found. Open Claude Desktop with the intended account first, then refresh.",
+    "preview": "Preview recovery",
+    "apply": "Apply recovery",
+    "verifyHint": "Files were read back successfully. Reopen Desktop in the destination profile to check visibility and availability; no session or task was launched by CC Switch.",
+    "selected": "{{count}} selected",
+    "disposition": {
+      "ready": "Ready to copy",
+      "exists": "Already exists; keep destination"
+    },
+    "taskHint": "Enabled and paused states are preserved. Missed occurrences before recovery are skipped; Desktop controls later scheduling. Expired one-time tasks cannot be restored.",
+    "noTasks": "No saved local task definitions in this profile.",
+    "enabled": "Enabled",
+    "paused": "Paused",
+    "manual": "Manual only",
+    "viewPrompt": "View instructions",
+    "exportPrompt": "Export instructions",
+    "orphans": "Saved prompts without schedules",
+    "orphanHint": "These files may remain after a task was deleted. You can view or export them, but their schedule and enabled state cannot be recovered from the prompt.",
+    "backup": "Registry backup: {{path}}",
+    "problem": {
+      "missingPrompt": "Saved instructions are missing or unreadable",
+      "missingDirectory": "Working folder is unavailable on this Mac",
+      "unsupportedTask": "This task format or setting is not supported for recovery",
+      "expired": "The one-time scheduled time has passed"
+    },
+    "title": "Desktop tasks",
+    "description": "Inspect saved local Claude Desktop tasks and recover selected definitions into another existing profile on this Mac.",
+    "applyHint": "Quit Claude Desktop before applying. Recovery preserves enabled/paused state, skips pre-recovery missed runs, and keeps source definitions and shared prompts unchanged.",
+    "receipt": "Restored {{tasks}} tasks; skipped {{skipped}} existing tasks."
   }
 }

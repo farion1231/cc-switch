@@ -1,3 +1,4 @@
+import { DesktopTasksDialog } from "./DesktopTasksDialog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -169,6 +170,7 @@ export function SessionManagerPage({
   const [query, setQuery] = useState("");
   const [groupMode, setGroupMode] = useState<GroupMode>(readGroupMode);
   const [expanded, setExpanded] = useState<Set<string>>(readExpanded);
+  const [desktopTasksOpen, setDesktopTasksOpen] = useState(false);
   const [readerKey, setReaderKey] = useState<string | null>(null);
   // 点了行下方某条摘录打开的：跳到那条消息，而不是最相关的那条
   const [readerJump, setReaderJump] = useState<{
@@ -1116,6 +1118,13 @@ export function SessionManagerPage({
               >
                 <DropdownMenuItem
                   className={sessionMenuItemClass}
+                  disabled={!isMac()}
+                  onSelect={() => setDesktopTasksOpen(true)}
+                >
+                  {t("desktopTasks.title")}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  className={sessionMenuItemClass}
                   onSelect={() => void refreshList()}
                 >
                   {t("sessionManager.refreshList", {
@@ -1570,6 +1579,10 @@ export function SessionManagerPage({
         </div>
       </div>
 
+      <DesktopTasksDialog
+        open={desktopTasksOpen}
+        onOpenChange={setDesktopTasksOpen}
+      />
       <SessionDeleteDialog
         targets={deleteTargets}
         pending={isDeleting}

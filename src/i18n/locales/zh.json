@@ -5315,5 +5315,41 @@
     "installFailed": "安装更新失败",
     "downloadingInline": "正在后台下载新版本…",
     "downloadedInline": "已下载完毕"
+  },
+  "desktopTasks": {
+    "source": "来源账号 / 配置",
+    "target": "目标账号 / 配置",
+    "chooseProfile": "选择已有配置",
+    "lastKnown": "上次登录账号",
+    "profileHint": "账号和组织分别列出。“上次登录”标记不代表当前正在运行的配置。",
+    "empty": "未找到已保存的 Desktop 配置。先用目标账号打开 Claude Desktop，再刷新。",
+    "preview": "预览恢复",
+    "apply": "执行恢复",
+    "verifyHint": "文件回读校验成功。请用目标配置重新打开 Desktop，检查记录是否可见、可用；CC Switch 未启动会话或任务。",
+    "selected": "已选 {{count}} 项",
+    "disposition": {
+      "ready": "可复制",
+      "exists": "已存在，保留目标记录"
+    },
+    "taskHint": "保留启用和暂停状态，跳过恢复之前错过的运行；后续调度由 Desktop 控制。已过期的一次性任务不能恢复。",
+    "noTasks": "此配置中没有已保存的本地任务定义。",
+    "enabled": "已启用",
+    "paused": "已暂停",
+    "manual": "仅手动运行",
+    "viewPrompt": "查看任务指令",
+    "exportPrompt": "导出任务指令",
+    "orphans": "没有调度记录的已保存指令",
+    "orphanHint": "这些文件可能在任务删除后保留。可以查看或导出，但无法从指令推断原来的调度和启用状态。",
+    "backup": "任务注册表备份：{{path}}",
+    "problem": {
+      "missingPrompt": "已保存的指令缺失或无法读取",
+      "missingDirectory": "本机无法访问工作目录",
+      "unsupportedTask": "恢复功能不支持此任务格式或设置",
+      "expired": "一次性任务的计划时间已过"
+    },
+    "title": "Desktop 任务",
+    "description": "查看已保存的本地 Claude Desktop 任务，并将选中的定义恢复到本机另一个已有配置。",
+    "applyHint": "执行前请退出 Claude Desktop。保留启用和暂停状态，跳过恢复之前错过的运行，不改动来源定义和共享指令。",
+    "receipt": "已恢复 {{tasks}} 个任务，跳过 {{skipped}} 个已有任务。"
   }
 }

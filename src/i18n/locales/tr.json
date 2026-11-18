@@ -5315,5 +5315,41 @@
     "installFailed": "Güncelleme kurulamadı",
     "downloadingInline": "Yeni sürüm arka planda indiriliyor…",
     "downloadedInline": "İndirildi"
+  },
+  "desktopTasks": {
+    "source": "Kaynak hesap / profil",
+    "target": "Hedef hesap / profil",
+    "chooseProfile": "Mevcut bir profil seçin",
+    "lastKnown": "son giriş yapılan hesap",
+    "profileHint": "Hesaplar ve kuruluşlar ayrı tutulur. Son giriş bilgisi, çalışan profili göstermez.",
+    "empty": "Kayıtlı Desktop profili bulunamadı. Önce ilgili hesapla Claude Desktop uygulamasını açın, ardından yenileyin.",
+    "preview": "Kurtarmayı önizle",
+    "apply": "Kurtarmayı uygula",
+    "verifyHint": "Dosyalar yeniden okunarak doğrulandı. Görünürlüğü ve kullanılabilirliği kontrol etmek için Desktop uygulamasını hedef profille açın. CC Switch hiçbir oturum veya görev başlatmadı.",
+    "selected": "{{count}} seçildi",
+    "disposition": {
+      "ready": "Kopyalanmaya hazır",
+      "exists": "Zaten var; hedef korunur"
+    },
+    "taskHint": "Etkin ve duraklatılmış durumlar korunur. Kurtarma öncesi kaçırılan çalıştırmalar atlanır; sonraki zamanlamayı Desktop yönetir. Süresi geçmiş tek seferlik görevler kurtarılamaz.",
+    "noTasks": "Bu profilde kayıtlı yerel görev tanımı yok.",
+    "enabled": "Etkin",
+    "paused": "Duraklatılmış",
+    "manual": "Yalnızca elle",
+    "viewPrompt": "Talimatları görüntüle",
+    "exportPrompt": "Talimatları dışa aktar",
+    "orphans": "Zamanlaması olmayan kayıtlı talimatlar",
+    "orphanHint": "Bu dosyalar görev silindikten sonra kalabilir. Görüntülenebilir veya dışa aktarılabilir ancak zamanlama ve etkinlik durumu talimatlardan kurtarılamaz.",
+    "backup": "Görev kayıt dosyası yedeği: {{path}}",
+    "problem": {
+      "missingPrompt": "Kayıtlı talimatlar eksik veya okunamıyor",
+      "missingDirectory": "Çalışma klasörü bu Mac üzerinde kullanılamıyor",
+      "unsupportedTask": "Bu görev biçimi veya ayarı kurtarma için desteklenmiyor",
+      "expired": "Tek seferlik görevin zamanı geçmiş"
+    },
+    "title": "Desktop görevleri",
+    "description": "Kayıtlı yerel Claude Desktop görevlerini inceleyin ve seçili tanımları bu Mac üzerindeki başka bir mevcut profile kurtarın.",
+    "applyHint": "Uygulamadan önce Claude Desktop uygulamasını kapatın. Etkin veya duraklatılmış durum korunur, kurtarmadan önce kaçırılan çalıştırmalar atlanır. Kaynak tanımlar ve paylaşılan talimatlar değişmez.",
+    "receipt": "{{tasks}} görev kurtarıldı; mevcut {{skipped}} görev atlandı."
   }
 }

@@ -5315,5 +5315,41 @@
     "installFailed": "安裝更新失敗",
     "downloadingInline": "正在背景下載新版本…",
     "downloadedInline": "已下載完畢"
+  },
+  "desktopTasks": {
+    "source": "來源帳號 / 設定檔",
+    "target": "目的帳號 / 設定檔",
+    "chooseProfile": "選擇現有設定檔",
+    "lastKnown": "上次登入的帳號",
+    "profileHint": "帳號與組織分別列出。「上次登入」標記不代表目前正在執行的設定檔。",
+    "empty": "找不到已儲存的 Desktop 設定檔。請先以目標帳號開啟 Claude Desktop，再重新整理。",
+    "preview": "預覽復原",
+    "apply": "套用復原",
+    "verifyHint": "檔案回讀驗證成功。請以目標設定檔重新開啟 Desktop，檢查紀錄是否可見、可用；CC Switch 未啟動會話或任務。",
+    "selected": "已選取 {{count}} 項",
+    "disposition": {
+      "ready": "可複製",
+      "exists": "已存在，保留目的地紀錄"
+    },
+    "taskHint": "保留啟用與暫停狀態，略過復原之前錯過的執行；後續排程由 Desktop 控制。已過期的一次性任務無法復原。",
+    "noTasks": "此設定檔中沒有已儲存的本機任務定義。",
+    "enabled": "已啟用",
+    "paused": "已暫停",
+    "manual": "僅手動執行",
+    "viewPrompt": "檢視任務指示",
+    "exportPrompt": "匯出任務指示",
+    "orphans": "沒有排程紀錄的已儲存指示",
+    "orphanHint": "這些檔案可能在任務刪除後留下。可以檢視或匯出，但無法從指示推斷原來的排程與啟用狀態。",
+    "backup": "任務登錄檔備份：{{path}}",
+    "problem": {
+      "missingPrompt": "已儲存的指示遺失或無法讀取",
+      "missingDirectory": "這台 Mac 無法存取工作資料夾",
+      "unsupportedTask": "復原功能不支援此任務格式或設定",
+      "expired": "一次性任務的排程時間已過"
+    },
+    "title": "Desktop 工作",
+    "description": "查看已儲存的本機 Claude Desktop 工作，並將選取的定義還原至本機另一個現有設定檔。",
+    "applyHint": "執行前請結束 Claude Desktop。保留啟用和暫停狀態，略過還原前錯過的執行，不變更來源定義和共用指令。",
+    "receipt": "已還原 {{tasks}} 個工作，略過 {{skipped}} 個現有工作。"
   }
 }

@@ -5315,5 +5315,41 @@
     "installFailed": "アップデートのインストールに失敗しました",
     "downloadingInline": "新しいバージョンをバックグラウンドでダウンロード中…",
     "downloadedInline": "ダウンロード完了"
+  },
+  "desktopTasks": {
+    "source": "移行元のアカウント / プロファイル",
+    "target": "移行先のアカウント / プロファイル",
+    "chooseProfile": "既存のプロファイルを選択",
+    "lastKnown": "最後にログインしたアカウント",
+    "profileHint": "アカウントと組織は別々に表示されます。最終ログインの表示は実行中のプロファイルを示すものではありません。",
+    "empty": "保存済みの Desktop プロファイルがありません。対象アカウントで Claude Desktop を開いてから更新してください。",
+    "preview": "復元内容を確認",
+    "apply": "復元を適用",
+    "verifyHint": "ファイルの読み戻しを確認しました。移行先のプロファイルで Desktop を開き、表示と利用可否を確認してください。CC Switch は会話やタスクを起動していません。",
+    "selected": "{{count}} 件選択",
+    "disposition": {
+      "ready": "コピー可能",
+      "exists": "既存の移行先項目を維持"
+    },
+    "taskHint": "有効・一時停止の状態を維持し、復元前の実行漏れはスキップします。その後の実行は Desktop が管理します。期限切れの単発タスクは復元できません。",
+    "noTasks": "このプロファイルに保存済みのローカルタスクはありません。",
+    "enabled": "有効",
+    "paused": "一時停止",
+    "manual": "手動のみ",
+    "viewPrompt": "指示を表示",
+    "exportPrompt": "指示を書き出す",
+    "orphans": "スケジュールのない保存済み指示",
+    "orphanHint": "タスク削除後も残る場合があるファイルです。表示や書き出しはできますが、元のスケジュールや有効状態は復元できません。",
+    "backup": "タスク登録情報のバックアップ: {{path}}",
+    "problem": {
+      "missingPrompt": "保存済みの指示がないか読み取れません",
+      "missingDirectory": "この Mac に作業フォルダーがありません",
+      "unsupportedTask": "この形式または設定のタスクは復元できません",
+      "expired": "単発タスクの予定時刻を過ぎています"
+    },
+    "title": "Desktop のタスク",
+    "description": "保存済みのローカル Claude Desktop タスクを確認し、選択した定義をこの Mac の別の既存プロファイルに復元します。",
+    "applyHint": "実行前に Claude Desktop を終了してください。有効・一時停止の状態を保持し、復元前の未実行分はスキップします。元の定義と共有プロンプトは変更しません。",
+    "receipt": "タスクを {{tasks}} 件復元し、既存の {{skipped}} 件をスキップしました。"
   }
 }
