@@ -208,6 +208,7 @@ fn test_forwarder(
         failover_chain: false,
         last_outbound_model: std::sync::Mutex::new(None),
         privacy_filter: PrivacyFilterConfig::default(),
+        copilot_auto_sessions: Arc::new(super::super::copilot_auto_session::AutoSessionManager::default()),
     }
 }
 
@@ -2290,6 +2291,7 @@ fn codex_copilot_metadata_selects_advertised_transport_at_forwarding_seam() {
             supports_parallel_tool_calls: None,
             supports_vision: None,
             reasoning_effort: None,
+            billing: None,
         }];
         let mut body = json!({"model": "GPT-5.6", "input": "Hello"});
         let resolved = resolve_model_with_format("GPT-5.6", &models, api_format);

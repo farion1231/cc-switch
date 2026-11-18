@@ -23,15 +23,15 @@ use super::{
         codex_chat_common::extract_reasoning_field_text,
         codex_chat_history::record_responses_sse_stream,
         get_adapter, get_claude_api_format,
-        streaming::create_anthropic_sse_stream,
+        streaming::create_anthropic_sse_stream_with_terminal_hook,
         streaming_codex_anthropic::{
-            create_responses_sse_stream_from_anthropic_with_context,
+            create_responses_sse_stream_from_anthropic_with_context_and_terminal_hook,
             responses_sse_events_from_anthropic_message,
         },
-        streaming_codex_chat::create_responses_sse_stream_from_chat_with_context,
+        streaming_codex_chat::create_responses_sse_stream_from_chat_with_context_and_terminal_hook,
         streaming_gemini::create_anthropic_sse_stream_from_gemini,
         streaming_responses::{
-            create_anthropic_sse_stream_from_responses,
+            create_anthropic_sse_stream_from_responses_with_terminal_hook,
             create_anthropic_sse_stream_from_responses_with_web_search_options,
         },
         transform, transform_codex_anthropic, transform_codex_chat,
@@ -653,6 +653,7 @@ async fn handle_claude_transform(
     api_format: &str,
     connection_guard: Option<ActiveConnectionGuard>,
 ) -> Result<axum::response::Response, ProxyError> {
+    let (response, mut terminal_hook) = response.take_success_terminal_hook();
     let status = response.status();
     let is_codex_oauth = ProviderKind::declared(&ctx.provider) == Some(ProviderKind::CodexOAuth);
     // Claude 的模型验证要求非流式 JSON，并直接读取 usage.input_tokens。
@@ -675,17 +676,14 @@ async fn handle_claude_transform(
         let sse_stream: Box<
             dyn futures::Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin,
         > = if api_format == "openai_responses" {
-            if hosted_web_search_name.is_none() && hosted_web_search_max_uses.is_none() {
-                Box::new(Box::pin(create_anthropic_sse_stream_from_responses(stream)))
-            } else {
-                Box::new(Box::pin(
-                    create_anthropic_sse_stream_from_responses_with_web_search_options(
-                        stream,
-                        hosted_web_search_name.clone(),
-                        hosted_web_search_max_uses,
-                    ),
-                ))
-            }
+            Box::new(Box::pin(
+                create_anthropic_sse_stream_from_responses_with_terminal_hook(
+                    stream,
+                    hosted_web_search_name.clone(),
+                    hosted_web_search_max_uses,
+                    terminal_hook,
+                ),
+            ))
         } else if api_format == "gemini_native" {
             Box::new(Box::pin(create_anthropic_sse_stream_from_gemini(
                 stream,
@@ -695,7 +693,10 @@ async fn handle_claude_transform(
                 tool_schema_hints.clone(),
             )))
         } else {
-            Box::new(Box::pin(create_anthropic_sse_stream(stream)))
+            Box::new(Box::pin(create_anthropic_sse_stream_with_terminal_hook(
+                stream,
+                terminal_hook,
+            )))
         };
 
         // 创建使用量收集器；关闭 usage logging 时不要再解析转换后的 SSE。
@@ -886,6 +887,17 @@ async fn handle_claude_transform(
         })
     });
 
+    // Keep the original protocol's success signal before conversion. The generic
+    // Anthropic mapper intentionally treats unknown/incomplete upstream endings as
+    // `end_turn` for ordinary proxy compatibility, so that field cannot authorize
+    // clearing an Auto-compaction retry token by itself.
+    let auto_compaction_summary_succeeded = upstream_response
+        .as_ref()
+        .is_some_and(|response| auto_compaction_summary_succeeded(response, api_format))
+        || direct_anthropic_response
+            .as_ref()
+            .is_some_and(anthropic_message_summary_succeeded);
+
     // 根据 api_format 选择非流式转换器
     let transform_result = match (direct_anthropic_response, upstream_response) {
         (Some(response), _) => Ok(response),
@@ -926,6 +938,16 @@ async fn handle_claude_transform(
             return Err(error);
         }
     };
+    if anthropic_response
+        .get("stop_reason")
+        .and_then(Value::as_str)
+        == Some("end_turn")
+        && auto_compaction_summary_succeeded
+    {
+        if let Some(hook) = terminal_hook.take() {
+            hook().await;
+        }
+    }
 
     // 记录使用量
     // 全 0 usage 不落账（对齐 Codex 流式收集器的 skip）：SSE 聚合兜底救回的流
@@ -958,6 +980,101 @@ async fn handle_claude_transform(
         log::error!("[Claude] 构建响应失败: {e}");
         ProxyError::Internal(format!("Failed to build response: {e}"))
     })
+}
+
+fn auto_compaction_summary_succeeded(response: &Value, api_format: &str) -> bool {
+    match api_format {
+        "openai_responses" => {
+            response.get("status").and_then(Value::as_str) == Some("completed")
+                && response
+                    .get("output")
+                    .and_then(Value::as_array)
+                    .is_some_and(|items| {
+                        !items.iter().any(|item| {
+                            item.get("type").and_then(Value::as_str) == Some("function_call")
+                        }) && !crate::proxy::providers::codex_compaction::summary_from_output_items(
+                            items,
+                        )
+                        .trim()
+                        .is_empty()
+                    })
+        }
+        "openai_chat" => {
+            let Some(choice) = response
+                .get("choices")
+                .and_then(Value::as_array)
+                .and_then(|choices| choices.first())
+            else {
+                return false;
+            };
+            let normal_stop = matches!(
+                choice.get("finish_reason").and_then(Value::as_str),
+                Some("stop" | "end_turn" | "stop_sequence")
+            );
+            let message = choice.get("message");
+            let has_text = message
+                .and_then(|message| message.get("content"))
+                .is_some_and(|content| match content {
+                    Value::String(text) => !text.trim().is_empty(),
+                    Value::Array(parts) => parts.iter().any(|part| {
+                        part.get("text")
+                            .and_then(Value::as_str)
+                            .is_some_and(|text| !text.trim().is_empty())
+                    }),
+                    _ => false,
+                });
+            normal_stop
+                && has_text
+                && message
+                    .and_then(|message| message.get("tool_calls"))
+                    .and_then(Value::as_array)
+                    .is_none_or(|calls| calls.is_empty())
+        }
+        "gemini_native" => {
+            let Some(candidate) = response
+                .get("candidates")
+                .and_then(Value::as_array)
+                .and_then(|candidates| candidates.first())
+            else {
+                return false;
+            };
+            candidate.get("finishReason").and_then(Value::as_str) == Some("STOP")
+                && candidate
+                    .pointer("/content/parts")
+                    .and_then(Value::as_array)
+                    .is_some_and(|parts| {
+                        !parts.iter().any(|part| part.get("functionCall").is_some())
+                            && parts.iter().any(|part| {
+                                part.get("text")
+                                    .and_then(Value::as_str)
+                                    .is_some_and(|text| !text.trim().is_empty())
+                            })
+                    })
+        }
+        "anthropic" | "anthropic_native" | "anthropic_messages" => {
+            anthropic_message_summary_succeeded(response)
+        }
+        _ => false,
+    }
+}
+
+fn anthropic_message_summary_succeeded(response: &Value) -> bool {
+    response.get("stop_reason").and_then(Value::as_str) == Some("end_turn")
+        && response
+            .get("content")
+            .and_then(Value::as_array)
+            .is_some_and(|blocks| {
+                !blocks
+                    .iter()
+                    .any(|block| block.get("type").and_then(Value::as_str) == Some("tool_use"))
+                    && blocks.iter().any(|block| {
+                        block.get("type").and_then(Value::as_str) == Some("text")
+                            && block
+                                .get("text")
+                                .and_then(Value::as_str)
+                                .is_some_and(|text| !text.trim().is_empty())
+                    })
+            })
 }
 
 fn endpoint_with_query(uri: &axum::http::Uri, endpoint: &str) -> String {
@@ -1372,10 +1489,12 @@ async fn handle_codex_native_compaction_response(
         .await;
     }
 
+    let (response, terminal_hook) = response.take_success_terminal_hook();
     let builder = rewritten_sse_response_builder(status, response.headers());
 
     let compaction_stream = super::providers::codex_compaction::create_native_compaction_sse_stream(
         codex_native_responses_stream(response, ctx),
+        terminal_hook,
     );
     let usage_collector = create_usage_collector(ctx, state, status.as_u16(), &CODEX_PARSER_CONFIG);
     let logged_stream = create_logged_passthrough_stream(
@@ -1601,6 +1720,8 @@ async fn handle_codex_xai_native_responses_rewrite(
         .await;
     }
 
+    let (response, mut terminal_hook) = response.take_success_terminal_hook();
+
     if response.is_sse() {
         let builder = rewritten_sse_response_builder(status, response.headers());
 
@@ -1625,13 +1746,15 @@ async fn handle_codex_xai_native_responses_rewrite(
             );
         let usage_collector =
             create_usage_collector(ctx, state, status.as_u16(), &CODEX_PARSER_CONFIG);
-        let logged_stream = create_logged_passthrough_stream(
-            restore_stream,
-            ctx.tag,
-            usage_collector,
-            ctx.streaming_timeout_config(),
-            connection_guard,
-        );
+        let logged_stream =
+            crate::proxy::response_processor::create_logged_passthrough_stream_with_terminal_hook(
+                restore_stream,
+                ctx.tag,
+                usage_collector,
+                ctx.streaming_timeout_config(),
+                connection_guard,
+                terminal_hook,
+            );
 
         let body = axum::body::Body::from_stream(logged_stream);
         return builder.body(body).map_err(|e| {
@@ -1651,6 +1774,11 @@ async fn handle_codex_xai_native_responses_rewrite(
         };
     let (mut response_headers, status, body_bytes) =
         read_decoded_body(response, ctx.tag, body_timeout).await?;
+    if crate::proxy::response_processor::terminal_json_response_succeeded(&body_bytes) {
+        if let Some(hook) = terminal_hook.take() {
+            hook().await;
+        }
+    }
     strip_hop_by_hop_response_headers(&mut response_headers);
 
     // Restore names when the body parses as JSON; otherwise pass the bytes
@@ -1745,6 +1873,7 @@ async fn handle_codex_chat_to_responses_transform(
     connection_guard: Option<ActiveConnectionGuard>,
     tool_context: transform_codex_chat::CodexToolContext,
 ) -> Result<axum::response::Response, ProxyError> {
+    let (response, mut terminal_hook) = response.take_success_terminal_hook();
     let status = response.status();
 
     if !status.is_success() {
@@ -1757,7 +1886,11 @@ async fn handle_codex_chat_to_responses_transform(
 
     if is_stream || response.is_sse() {
         let stream = response.bytes_stream();
-        let sse_stream = create_responses_sse_stream_from_chat_with_context(stream, tool_context);
+        let sse_stream = create_responses_sse_stream_from_chat_with_context_and_terminal_hook(
+            stream,
+            tool_context,
+            terminal_hook,
+        );
         let sse_stream = record_responses_sse_stream(
             sse_stream,
             state.codex_chat_history.clone(),
@@ -1890,6 +2023,7 @@ async fn handle_codex_chat_to_responses_transform(
             ));
         }
     };
+    let successful_terminal = auto_compaction_summary_succeeded(&chat_response, "openai_chat");
     let responses_response = transform_codex_chat::chat_completion_to_response_with_context(
         chat_response,
         &tool_context,
@@ -1898,6 +2032,11 @@ async fn handle_codex_chat_to_responses_transform(
         log::error!("[Codex] Chat → Responses 响应转换失败: {e}");
         e
     })?;
+    if successful_terminal {
+        if let Some(hook) = terminal_hook.take() {
+            hook().await;
+        }
+    }
     state
         .codex_chat_history
         .record_response(
@@ -1997,6 +2136,7 @@ async fn handle_codex_anthropic_to_responses_transform(
     connection_guard: Option<ActiveConnectionGuard>,
     codex_tool_context: transform_codex_chat::CodexToolContext,
 ) -> Result<axum::response::Response, ProxyError> {
+    let (response, mut terminal_hook) = response.take_success_terminal_hook();
     let status = response.status();
 
     if !status.is_success() {
@@ -2008,8 +2148,11 @@ async fn handle_codex_anthropic_to_responses_transform(
     // envelopes and gateways that ignore stream:true can be converted faithfully.
     if response.is_sse() || (is_stream && !response.is_json()) {
         let stream = response.bytes_stream();
-        let sse_stream =
-            create_responses_sse_stream_from_anthropic_with_context(stream, codex_tool_context);
+        let sse_stream = create_responses_sse_stream_from_anthropic_with_context_and_terminal_hook(
+            stream,
+            codex_tool_context,
+            terminal_hook,
+        );
         return build_codex_anthropic_sse_response(
             sse_stream,
             ctx,
@@ -2068,6 +2211,7 @@ async fn handle_codex_anthropic_to_responses_transform(
     }
 
     let _connection_guard = connection_guard;
+    let successful_terminal = anthropic_message_summary_succeeded(&anthropic_response);
     let responses_response =
         transform_codex_anthropic::anthropic_response_to_responses_with_context(
             anthropic_response,
@@ -2077,6 +2221,12 @@ async fn handle_codex_anthropic_to_responses_transform(
             log::error!("[Codex] Failed to convert Anthropic response to Responses: {e}");
             e
         })?;
+
+    if successful_terminal {
+        if let Some(hook) = terminal_hook.take() {
+            hook().await;
+        }
+    }
 
     if let Some(usage) = TokenUsage::from_codex_response_auto(&responses_response)
         .filter(TokenUsage::has_billable_tokens)
@@ -2709,7 +2859,7 @@ async fn responses_sse_stream_to_anthropic_message(
 /// 复用 `proxy::sse` 的 `SseBlocks`/`strip_sse_field`：`SseBlocks` 支持
 /// `\n\n`、`\r\n\r\n`、`\n\r\n` 和 `\r\n\n` 四种分隔符；
 /// `strip_sse_field` 兼容带/不带空格的字段写法。
-fn responses_sse_to_response_value(body: &str) -> Result<Value, ProxyError> {
+pub(crate) fn responses_sse_to_response_value(body: &str) -> Result<Value, ProxyError> {
     let mut sse_blocks = SseBlocks::new(body.trim_start_matches('\u{feff}'));
     let mut completed_response: Option<Value> = None;
     let mut output_items = Vec::new();
@@ -2944,7 +3094,7 @@ fn sse_block_parts(block: &str) -> Option<(String, String)> {
 /// reasoning / reasoning_details）经 codex_chat_common 公共提取器并入同一累加器；
 /// finish_reason 首个非 null 即锁定（kimi-k2.6 会在 tool_use 后再发带
 /// finish_reason 的尾块，见 streaming.rs）。
-fn chat_sse_to_response_value(body: &str) -> Result<Value, ProxyError> {
+pub(crate) fn chat_sse_to_response_value(body: &str) -> Result<Value, ProxyError> {
     // 剥 BOM：嗅探器接受 BOM 开头，但 strip_sse_field 按行首精确匹配，
     // 不剥会让首个 data 行静默丢失
     let mut sse_blocks = SseBlocks::new(body.trim_start_matches('\u{feff}'));

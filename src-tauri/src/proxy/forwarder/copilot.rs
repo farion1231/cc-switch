@@ -2,6 +2,53 @@
 
 use super::*;
 
+/// True for the supported chat routes that may execute a Copilot Auto choice.
+pub(super) fn is_copilot_auto_chat_endpoint(endpoint: &str) -> bool {
+    let clean = endpoint.split('?').next().unwrap_or(endpoint);
+    clean == "/chat/completions"
+        || clean == "/v1/chat/completions"
+        || clean == "/v1/v1/chat/completions"
+        || clean == "/codex/v1/chat/completions"
+        || clean.starts_with("/chat/completions/")
+        || clean.starts_with("/v1/chat/completions/")
+}
+
+pub(super) fn is_copilot_auto_messages_endpoint(endpoint: &str) -> bool {
+    let clean = endpoint.split('?').next().unwrap_or(endpoint);
+    clean == "/v1/messages"
+        || clean == "/claude/v1/messages"
+        || clean == "/claude-desktop/v1/messages"
+        || clean.starts_with("/v1/messages/")
+}
+
+pub(super) fn is_copilot_auto_compaction_request(
+    auto_requested: bool,
+    app_type: &AppType,
+    endpoint: &str,
+    body: &Value,
+) -> bool {
+    auto_requested
+        && (endpoint
+            .split('?')
+            .next()
+            .unwrap_or(endpoint)
+            .ends_with("/responses/compact")
+            || crate::proxy::copilot_optimizer::is_compact_request(body)
+            || (matches!(app_type, AppType::Codex)
+                && crate::proxy::providers::codex_compaction::is_compaction_request(body)))
+}
+
+pub(super) async fn invalidate_compacted_auto_route(
+    sessions: &crate::proxy::copilot_auto_session::AutoSessionManager,
+    key: &crate::proxy::copilot_auto_session::AutoSessionKey,
+    token: &str,
+    compaction_succeeded: bool,
+) {
+    if compaction_succeeded {
+        sessions.invalidate_if_token_matches(key, token).await;
+    }
+}
+
 pub(super) struct CopilotRequestContext {
     pub(super) classification: crate::proxy::copilot_optimizer::CopilotClassification,
     pub(super) request_id: Option<String>,

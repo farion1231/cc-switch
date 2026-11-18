@@ -350,6 +350,7 @@ pub(crate) fn scrub_ccswitch_state_for_official(body: &mut Value) -> bool {
 /// Codex 会按可重试错误处理，而不是装上半截摘要。
 pub(crate) fn create_native_compaction_sse_stream<E>(
     stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
+    success_hook: Option<super::super::hyper_client::SuccessTerminalHook>,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send
 where
     E: std::error::Error + Send + 'static,
@@ -357,6 +358,7 @@ where
     async_stream::stream! {
         let mut sse = SseBuffer::new();
         let mut state = NativeCompactionState::default();
+        let mut success_hook = success_hook;
 
         tokio::pin!(stream);
 
@@ -368,7 +370,13 @@ where
                         if block.trim().is_empty() {
                             continue;
                         }
-                        for event in state.handle_block(block) {
+                        let (events, succeeded) = state.handle_block(block);
+                        if succeeded {
+                            if let Some(hook) = success_hook.take() {
+                                hook().await;
+                            }
+                        }
+                        for event in events {
                             yield Ok(event);
                         }
                     }
@@ -382,7 +390,13 @@ where
 
         let tail = sse.take_tail();
         if !tail.trim().is_empty() {
-            for event in state.handle_block(&tail) {
+            let (events, succeeded) = state.handle_block(&tail);
+            if succeeded {
+                if let Some(hook) = success_hook.take() {
+                    hook().await;
+                }
+            }
+            for event in events {
                 yield Ok(event);
             }
         }
@@ -396,8 +410,8 @@ struct NativeCompactionState {
 }
 
 impl NativeCompactionState {
-    fn handle_block(&mut self, block: &str) -> Vec<Bytes> {
-        let passthrough = || vec![Bytes::from(format!("{block}\n\n"))];
+    fn handle_block(&mut self, block: &str) -> (Vec<Bytes>, bool) {
+        let passthrough = || (vec![Bytes::from(format!("{block}\n\n"))], false);
         let data = block
             .lines()
             .filter_map(|line| strip_sse_field(line, "data"))
@@ -422,14 +436,17 @@ impl NativeCompactionState {
         }
     }
 
-    fn finish(&mut self, event: Value) -> Vec<Bytes> {
+    fn finish(&mut self, event: Value) -> (Vec<Bytes>, bool) {
         let mut response = event.get("response").cloned().unwrap_or_else(|| json!({}));
         let status = response
             .get("status")
             .and_then(Value::as_str)
             .unwrap_or("completed");
         if status == "incomplete" {
-            return vec![response_event("response.incomplete", response)];
+            return (vec![response_event("response.incomplete", response)], false);
+        }
+        if status != "completed" || response.get("error").is_some_and(|error| !error.is_null()) {
+            return (vec![response_event("response.failed", response)], false);
         }
 
         let mut summary = summary_from_output_items(&self.done_items);
@@ -444,7 +461,7 @@ impl NativeCompactionState {
                 "type": "compaction_summary_empty",
                 "message": "Upstream returned no summary text for the compaction turn"
             });
-            return vec![response_event("response.failed", response)];
+            return (vec![response_event("response.failed", response)], false);
         }
 
         let item = compaction_output_item(&summary);
@@ -466,7 +483,10 @@ impl NativeCompactionState {
             Some(output) => output.push(item),
             None => response["output"] = json!([item]),
         }
-        vec![item_done, response_event("response.completed", response)]
+        (
+            vec![item_done, response_event("response.completed", response)],
+            true,
+        )
     }
 }
 
@@ -501,7 +521,7 @@ mod tests {
         let upstream = futures::stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
             input.to_string(),
         ))]);
-        let chunks: Vec<_> = create_native_compaction_sse_stream(upstream)
+        let chunks: Vec<_> = create_native_compaction_sse_stream(upstream, None)
             .collect()
             .await;
         let merged = chunks

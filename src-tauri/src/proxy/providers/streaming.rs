@@ -242,6 +242,15 @@ fn open_block_stop_events(
 pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
     stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
+    create_anthropic_sse_stream_with_terminal_hook(stream, None)
+}
+
+pub(crate) fn create_anthropic_sse_stream_with_terminal_hook<
+    E: std::error::Error + Send + 'static,
+>(
+    stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
+    mut terminal_hook: Option<crate::proxy::hyper_client::SuccessTerminalHook>,
+) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
         let mut sse = SseBuffer::new();
         let mut message_id = None;
@@ -262,6 +271,8 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
         let mut inline_think = InlineThinkSplitter::default();
         let mut tool_blocks_by_index: HashMap<usize, ToolBlockState> = HashMap::new();
         let mut open_tool_block_indices: HashSet<u32> = HashSet::new();
+        let mut has_summary_text = false;
+        let mut has_tool_use = false;
 
         tokio::pin!(stream);
 
@@ -312,11 +323,17 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
 
                                     // 流正常结束，发出缓存的 message_delta（含完整 usage）。
                                     if let Some((stop_reason, usage_json)) = pending_message_delta.take() {
+                                        let successful = stop_reason.as_deref() == Some("end_turn")
+                                            && has_summary_text
+                                            && !has_tool_use;
                                         let event = build_message_delta_event(stop_reason, usage_json);
                                         let sse_data = format!("event: message_delta\ndata: {}\n\n",
                                             serde_json::to_string(&event).unwrap_or_default());
                                         log::debug!("[Claude/OpenRouter] >>> Anthropic SSE: message_delta (from pending)");
                                         yield Ok(Bytes::from(sse_data));
+                                        if successful {
+                                            if let Some(hook) = terminal_hook.take() { hook().await; }
+                                        }
                                     }
 
                                     let event = json!({"type": "message_stop"});
@@ -417,6 +434,9 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                         if let Some(content) = &choice.delta.content {
                                             if !content.is_empty() {
                                                 let (thinking, text) = inline_think.push(content);
+                                                has_summary_text |= text
+                                                    .as_deref()
+                                                    .is_some_and(|text| !text.trim().is_empty());
                                                 for (block_type, delta) in
                                                     [("thinking", thinking), ("text", text)]
                                                 {
@@ -438,6 +458,7 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                         // 处理工具调用
                                         if let Some(tool_calls) = &choice.delta.tool_calls {
                                             if !tool_calls.is_empty() {
+                                                has_tool_use = true;
                                                 // 工具调用边界：先冲刷 inline think 残留再关块。
                                                 // 拖到 finish_reason 才下发的话，这些内容会在
                                                 // 工具块打开之后才开块，顺序颠倒且块交叠。
@@ -629,6 +650,9 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                             // finish_reason 边界：冲刷 inline think 残留
                                             // （未闭合的 think 块按思考内容下发），再统一关块。
                                             let (thinking, text) = inline_think.flush();
+                                            has_summary_text |= text
+                                                .as_deref()
+                                                .is_some_and(|text| !text.trim().is_empty());
                                             for (block_type, delta) in
                                                 [("thinking", thinking), ("text", text)]
                                             {
@@ -798,9 +822,13 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
         // 若上游已显式报错，则只保留 error 事件，避免把失败伪装成成功完成。
         // 无 finish_reason 的纯截断不发终止事件（既有方向），也不在此补关块。
         if !stream_ended_with_error {
+            let mut successful_terminal = false;
             let emitted_pending_message_delta = if let Some((stop_reason, usage_json)) =
                 pending_message_delta.take()
             {
+                successful_terminal = stop_reason.as_deref() == Some("end_turn")
+                    && has_summary_text
+                    && !has_tool_use;
                 // 发终止事件前补关仍开着的块（finish 处理完后又来迟到增量重开块的场景）。
                 for sse_data in open_block_stop_events(
                     &mut current_non_tool_block_index,
@@ -820,6 +848,11 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
             };
 
             if emitted_pending_message_delta {
+                if successful_terminal {
+                    if let Some(hook) = terminal_hook.take() {
+                        hook().await;
+                    }
+                }
                 let event = json!({"type": "message_stop"});
                 let sse_data = format!("event: message_stop\ndata: {}\n\n",
                     serde_json::to_string(&event).unwrap_or_default());

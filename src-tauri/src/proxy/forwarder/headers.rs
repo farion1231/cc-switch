@@ -294,6 +294,9 @@ pub(super) fn is_protected_local_proxy_override_header(name: &http::HeaderName) 
             | "x-goog-api-key"
             | "chatgpt-account-id"
             | "session_id"
+            | "copilot-session-token"
+            | "session-token"
+            | "session_token"
             | "x-client-request-id"
             | "x-codex-window-id"
             | "x-forwarded-host"
@@ -402,6 +405,8 @@ pub(super) struct OutboundHeaderPlan<'a> {
     pub(super) anthropic_beta_value: Option<String>,
     pub(super) should_send_anthropic_headers: bool,
     pub(super) codex_oauth_session_headers: Vec<(http::HeaderName, http::HeaderValue)>,
+    /// A session token resolved for this managed Copilot Auto request.
+    pub(super) copilot_auto_session_token: Option<http::HeaderValue>,
 }
 
 impl OutboundHeaderPlan<'_> {
@@ -415,9 +420,22 @@ impl OutboundHeaderPlan<'_> {
         let mut saw_user_agent = false;
         let mut saw_anthropic_beta = false;
         let mut saw_anthropic_version = false;
+        let mut saw_copilot_auto_session_token = false;
 
         for (key, value) in headers {
             let key_str = key.as_str();
+
+            if matches!(key_str, "copilot-session-token" | "session-token" | "session_token") {
+                if !saw_copilot_auto_session_token {
+                    if let Some(token) = &self.copilot_auto_session_token {
+                        if let Ok(name) = http::HeaderName::from_bytes(key.as_str().as_bytes()) {
+                            ordered_headers.append(name, token.clone());
+                        }
+                    }
+                    saw_copilot_auto_session_token = true;
+                }
+                continue;
+            }
 
             // --- host — 原位替换为上游 host（保持客户端原始位置） ---
             if key_str.eq_ignore_ascii_case("host") {
@@ -596,6 +614,12 @@ impl OutboundHeaderPlan<'_> {
 
             // --- 默认：透传 ---
             ordered_headers.append(key.clone(), value.clone());
+        }
+
+        if !saw_copilot_auto_session_token {
+            if let Some(token) = self.copilot_auto_session_token {
+                ordered_headers.insert("copilot-session-token", token);
+            }
         }
 
         // 如果原始请求中没有认证头，在末尾追加

@@ -454,6 +454,18 @@ impl AnthropicToResponsesState {
             })
     }
 
+    fn successful_terminal(&self) -> bool {
+        self.completed
+            && self.stop_reason.as_deref() == Some("end_turn")
+            && !self
+                .sorted_output_items()
+                .iter()
+                .any(|item| item.get("type").and_then(Value::as_str) == Some("function_call"))
+            && !codex_compaction::summary_from_output_items(&self.sorted_output_items())
+                .trim()
+                .is_empty()
+    }
+
     fn finalize(&mut self) -> Vec<Bytes> {
         if self.completed {
             return Vec::new();
@@ -713,11 +725,26 @@ pub(crate) fn responses_sse_events_from_anthropic_message(
     events
 }
 
+#[cfg(test)]
 pub(crate) fn create_responses_sse_stream_from_anthropic_with_context<
     E: std::error::Error + Send + 'static,
 >(
     stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
     tool_context: CodexToolContext,
+) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
+    create_responses_sse_stream_from_anthropic_with_context_and_terminal_hook(
+        stream,
+        tool_context,
+        None,
+    )
+}
+
+pub(crate) fn create_responses_sse_stream_from_anthropic_with_context_and_terminal_hook<
+    E: std::error::Error + Send + 'static,
+>(
+    stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
+    tool_context: CodexToolContext,
+    mut terminal_hook: Option<crate::proxy::hyper_client::SuccessTerminalHook>,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
         let mut sse = SseBuffer::new();
@@ -737,6 +764,9 @@ pub(crate) fn create_responses_sse_stream_from_anthropic_with_context<
                     if json_document_candidate(sse.pending()).is_none() {
                         while let Some(block) = sse.next_block() {
                             let (events, failed) = process_anthropic_sse_block(&mut state, block);
+                            if state.successful_terminal() {
+                                if let Some(hook) = terminal_hook.take() { hook().await; }
+                            }
                             for event in events {
                                 yield Ok(event);
                             }
@@ -783,6 +813,9 @@ pub(crate) fn create_responses_sse_stream_from_anthropic_with_context<
             }
             if !state.completed {
                 let (events, failed) = process_anthropic_sse_block(&mut state, sse.pending());
+                if state.successful_terminal() {
+                    if let Some(hook) = terminal_hook.take() { hook().await; }
+                }
                 for event in events {
                     yield Ok(event);
                 }

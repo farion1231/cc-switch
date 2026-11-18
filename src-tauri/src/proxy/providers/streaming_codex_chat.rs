@@ -504,6 +504,17 @@ impl ChatToResponsesState {
         events
     }
 
+    fn successful_terminal(&self) -> bool {
+        if self.tool_context.is_compaction_request() {
+            return codex_compaction::compaction_incomplete_reason(self.finish_reason.as_deref())
+                .is_none()
+                && !codex_compaction::summary_from_output_items(&self.completed_output_items())
+                    .is_empty();
+        }
+        (self.has_emitted_tool_call() || self.dropped_tool_calls == 0)
+            && self.finish_reason.as_deref() == Some("stop")
+    }
+
     /// Codex 远程压缩回合：在 completed 之前交回唯一一个 compaction 条目（见
     /// `codex_compaction`）。截断、内容过滤等非正常结束或没有摘要正文时报可重试的错误，
     /// 不能让 Codex 装上半截或空的摘要。
@@ -753,9 +764,20 @@ fn chat_delta_reasoning_text(delta: &Value) -> Option<String> {
 
 /// Create a stream that converts Chat Completions SSE chunks into Responses SSE
 /// events while restoring Codex tool namespace/custom/tool_search metadata.
+#[cfg(test)]
 pub fn create_responses_sse_stream_from_chat_with_context<E: std::error::Error + Send + 'static>(
     stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
     tool_context: CodexToolContext,
+) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
+    create_responses_sse_stream_from_chat_with_context_and_terminal_hook(stream, tool_context, None)
+}
+
+pub(crate) fn create_responses_sse_stream_from_chat_with_context_and_terminal_hook<
+    E: std::error::Error + Send + 'static,
+>(
+    stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
+    tool_context: CodexToolContext,
+    mut terminal_hook: Option<crate::proxy::hyper_client::SuccessTerminalHook>,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
         let mut sse = SseBuffer::new();
@@ -791,9 +813,10 @@ pub fn create_responses_sse_stream_from_chat_with_context<E: std::error::Error +
 
                         let data = data_parts.join("\n");
                         if data.trim() == "[DONE]" {
-                            for event in state.finalize() {
-                                yield Ok(event);
-                            }
+                            let success = state.successful_terminal();
+                            let events = state.finalize();
+                            if success { if let Some(hook) = terminal_hook.take() { hook().await; } }
+                            for event in events { yield Ok(event); }
                             // [DONE] is terminal, including failed/incomplete finalization.
                             return;
                         }
@@ -832,9 +855,10 @@ pub fn create_responses_sse_stream_from_chat_with_context<E: std::error::Error +
 
         if !stream_failed {
             if state.completed || state.finish_reason.is_some() {
-                for event in state.finalize() {
-                    yield Ok(event);
-                }
+                let success = state.successful_terminal();
+                let events = state.finalize();
+                if success { if let Some(hook) = terminal_hook.take() { hook().await; } }
+                for event in events { yield Ok(event); }
             } else if state.has_substantive_output() {
                 state.finish_reason = Some("length".to_string());
                 for event in state.finalize() {

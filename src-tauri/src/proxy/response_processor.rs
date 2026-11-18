@@ -165,6 +165,7 @@ pub async fn handle_streaming(
     parser_config: &UsageParserConfig,
     connection_guard: Option<ActiveConnectionGuard>,
 ) -> Response {
+    let (response, terminal_hook) = response.take_success_terminal_hook();
     let status = response.status();
     log::debug!(
         "[{}] 已接收上游流式响应: status={}, headers={}",
@@ -201,12 +202,13 @@ pub async fn handle_streaming(
     let timeout_config = ctx.streaming_timeout_config();
 
     // 创建带日志和超时的透传流
-    let logged_stream = create_logged_passthrough_stream(
+    let logged_stream = create_logged_passthrough_stream_with_terminal_hook(
         stream,
         ctx.tag,
         usage_collector,
         timeout_config,
         connection_guard,
+        terminal_hook,
     );
 
     let body = axum::body::Body::from_stream(logged_stream);
@@ -228,6 +230,7 @@ pub async fn handle_non_streaming(
     // guard 在函数 scope 内持有，整包响应读取完成后随函数返回一并 drop
     _connection_guard: Option<ActiveConnectionGuard>,
 ) -> Result<Response, ProxyError> {
+    let (response, mut terminal_hook) = response.take_success_terminal_hook();
     // 整包超时：仅在故障转移开启且配置值非零时生效
     let body_timeout =
         if ctx.app_config.auto_failover_enabled && ctx.app_config.non_streaming_timeout > 0 {
@@ -237,6 +240,14 @@ pub async fn handle_non_streaming(
         };
     let (mut response_headers, status, body_bytes) =
         read_decoded_body(response, ctx.tag, body_timeout).await?;
+    if terminal_hook.is_some()
+        && status.is_success()
+        && terminal_json_response_succeeded(&body_bytes)
+    {
+        if let Some(hook) = terminal_hook.take() {
+            hook().await;
+        }
+    }
     strip_hop_by_hop_response_headers(&mut response_headers);
 
     log::debug!(
@@ -734,6 +745,229 @@ async fn log_usage_internal(
     }
 }
 
+/// Shared semantic terminal tracker for native SSE passthrough. The existing
+/// passthrough parser already frames SSE events for usage collection; this
+/// tracker only recognizes the same protocol terminals for callbacks attached
+/// by protocol-aware callers.
+#[derive(Default)]
+struct SuccessTerminalTracker {
+    chat_success: bool,
+    anthropic_success: bool,
+    chat_has_text: bool,
+    chat_has_tools: bool,
+    anthropic_has_text: bool,
+    anthropic_has_tools: bool,
+}
+
+impl SuccessTerminalTracker {
+    fn observe(&mut self, event_name: Option<&str>, data: &str) -> bool {
+        if data.trim() == "[DONE]" {
+            return std::mem::take(&mut self.chat_success);
+        }
+        let Ok(value) = serde_json::from_str::<Value>(data) else {
+            return false;
+        };
+        let event_name = event_name.or_else(|| value.get("type").and_then(Value::as_str));
+        if event_name == Some("error") || value.get("error").is_some_and(|error| !error.is_null()) {
+            self.chat_success = false;
+            self.anthropic_success = false;
+            return false;
+        }
+        let response = value.get("response").unwrap_or(&value);
+        if event_name == Some("response.completed")
+            && response
+                .get("status")
+                .and_then(Value::as_str)
+                .is_none_or(|status| status == "completed")
+            && response.get("error").is_none_or(Value::is_null)
+        {
+            let mut completed_response = response.clone();
+            if completed_response
+                .get("status")
+                .and_then(Value::as_str)
+                .is_none()
+            {
+                completed_response["status"] = Value::String("completed".to_string());
+            }
+            return response_summary_contract(&completed_response);
+        }
+        if event_name == Some("content_block_start") {
+            match value.pointer("/content_block/type").and_then(Value::as_str) {
+                Some("text") => {}
+                Some("tool_use") => self.anthropic_has_tools = true,
+                _ => {}
+            }
+        }
+        if event_name == Some("content_block_delta")
+            && value.pointer("/delta/type").and_then(Value::as_str) == Some("text_delta")
+            && value
+                .pointer("/delta/text")
+                .and_then(Value::as_str)
+                .is_some_and(|s| !s.trim().is_empty())
+        {
+            self.anthropic_has_text = true;
+        }
+        if event_name == Some("message_start") {
+            self.anthropic_has_text = false;
+            self.anthropic_has_tools = false;
+        }
+        if event_name == Some("message_delta")
+            && value.pointer("/delta/stop_reason").and_then(Value::as_str) == Some("end_turn")
+        {
+            self.anthropic_success = self.anthropic_has_text && !self.anthropic_has_tools;
+        }
+        if event_name == Some("message_stop") {
+            return std::mem::take(&mut self.anthropic_success);
+        }
+        if let Some(choices) = value.get("choices").and_then(Value::as_array) {
+            for choice in choices {
+                let delta = choice.get("delta").unwrap_or(&Value::Null);
+                if delta
+                    .get("content")
+                    .and_then(Value::as_str)
+                    .is_some_and(|s| !s.trim().is_empty())
+                {
+                    self.chat_has_text = true;
+                }
+                if delta
+                    .get("tool_calls")
+                    .and_then(Value::as_array)
+                    .is_some_and(|tools| !tools.is_empty())
+                {
+                    self.chat_has_tools = true;
+                }
+            }
+            if !choices.is_empty()
+                && choices.iter().all(|choice| {
+                    choice.get("finish_reason").and_then(Value::as_str) == Some("stop")
+                })
+            {
+                self.chat_success = self.chat_has_text && !self.chat_has_tools;
+            }
+        }
+        false
+    }
+}
+
+pub(crate) fn terminal_json_response_succeeded(bytes: &[u8]) -> bool {
+    let Ok(value) = serde_json::from_slice::<Value>(bytes) else {
+        return false;
+    };
+    if value.get("error").is_some_and(|error| !error.is_null())
+        || value.get("type").and_then(Value::as_str) == Some("error")
+    {
+        return false;
+    }
+    if value.get("object").and_then(Value::as_str) == Some("chat.completion") {
+        return value
+            .get("choices")
+            .and_then(Value::as_array)
+            .is_some_and(|choices| {
+                !choices.is_empty()
+                    && choices.iter().all(|choice| {
+                        choice.get("finish_reason").and_then(Value::as_str) == Some("stop")
+                    })
+            })
+            && chat_value_has_summary(&value);
+    }
+    if value.get("type").and_then(Value::as_str) == Some("message") {
+        return value.get("stop_reason").and_then(Value::as_str) == Some("end_turn")
+            && anthropic_value_has_summary(&value);
+    }
+    if value.get("object").and_then(Value::as_str) == Some("response.compaction") {
+        return value
+            .get("output")
+            .and_then(Value::as_array)
+            .is_some_and(|items| {
+                items.iter().any(|item| {
+                    item.get("type").and_then(Value::as_str) == Some("compaction")
+                        && item
+                            .get("encrypted_content")
+                            .and_then(Value::as_str)
+                            .is_some_and(|content| !content.is_empty())
+                })
+            })
+            && value
+                .get("status")
+                .is_none_or(|status| status.as_str() == Some("completed"));
+    }
+    response_summary_contract(&value)
+}
+
+fn chat_value_has_summary(value: &Value) -> bool {
+    value
+        .get("choices")
+        .and_then(Value::as_array)
+        .is_some_and(|choices| {
+            !choices.is_empty()
+                && choices.iter().all(|choice| {
+                    let message = choice.get("message").unwrap_or(&Value::Null);
+                    let has_text = message.get("content").is_some_and(|content| match content {
+                        Value::String(text) => !text.trim().is_empty(),
+                        Value::Array(parts) => parts.iter().any(|part| {
+                            part.get("text")
+                                .and_then(Value::as_str)
+                                .is_some_and(|text| !text.trim().is_empty())
+                        }),
+                        _ => false,
+                    });
+                    has_text
+                        && message
+                            .get("tool_calls")
+                            .and_then(Value::as_array)
+                            .is_none_or(|calls| calls.is_empty())
+                })
+        })
+}
+
+fn anthropic_value_has_summary(value: &Value) -> bool {
+    value
+        .get("content")
+        .and_then(Value::as_array)
+        .is_some_and(|blocks| {
+            !blocks
+                .iter()
+                .any(|block| block.get("type").and_then(Value::as_str) == Some("tool_use"))
+                && blocks.iter().any(|block| {
+                    block.get("type").and_then(Value::as_str) == Some("text")
+                        && block
+                            .get("text")
+                            .and_then(Value::as_str)
+                            .is_some_and(|text| !text.trim().is_empty())
+                })
+        })
+}
+
+fn response_summary_contract(value: &Value) -> bool {
+    if value.get("object").and_then(Value::as_str) == Some("response.compaction") {
+        return value
+            .get("output")
+            .and_then(Value::as_array)
+            .is_some_and(|items| {
+                items.iter().any(|item| {
+                    item.get("type").and_then(Value::as_str) == Some("compaction")
+                        && item
+                            .get("encrypted_content")
+                            .and_then(Value::as_str)
+                            .is_some_and(|s| !s.is_empty())
+                })
+            });
+    }
+    value.get("status").and_then(Value::as_str) == Some("completed")
+        && value.get("error").is_none_or(Value::is_null)
+        && value
+            .get("output")
+            .and_then(Value::as_array)
+            .is_some_and(|items| {
+                !items
+                    .iter()
+                    .any(|item| item.get("type").and_then(Value::as_str) == Some("function_call"))
+                    && !crate::proxy::providers::codex_compaction::summary_from_output_items(items)
+                        .trim()
+                        .is_empty()
+            })
+}
+
 /// 创建带日志记录和超时控制的透传流
 pub fn create_logged_passthrough_stream(
     stream: impl Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static,
@@ -742,13 +976,34 @@ pub fn create_logged_passthrough_stream(
     timeout_config: StreamingTimeoutConfig,
     connection_guard: Option<ActiveConnectionGuard>,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
+    create_logged_passthrough_stream_with_terminal_hook(
+        stream,
+        tag,
+        usage_collector,
+        timeout_config,
+        connection_guard,
+        None,
+    )
+}
+
+pub(crate) fn create_logged_passthrough_stream_with_terminal_hook(
+    stream: impl Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static,
+    tag: &'static str,
+    usage_collector: Option<SseUsageCollector>,
+    timeout_config: StreamingTimeoutConfig,
+    connection_guard: Option<ActiveConnectionGuard>,
+    terminal_hook: Option<crate::proxy::hyper_client::SuccessTerminalHook>,
+) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
         let _conn_guard = connection_guard;
         let mut sse = SseBuffer::new();
         let mut collector = usage_collector;
+        let mut terminal_hook = terminal_hook;
+        let mut terminal_tracker = SuccessTerminalTracker::default();
+        let mut success_terminal_seen = false;
         let mut finish_guard = collector.clone().map(SseUsageFinishGuard::new);
         let inspect_sse_events =
-            collector.is_some() || log::log_enabled!(log::Level::Debug);
+            collector.is_some() || terminal_hook.is_some() || log::log_enabled!(log::Level::Debug);
         let mut is_first_chunk = true;
 
         // 超时配置
@@ -808,6 +1063,17 @@ pub fn create_logged_passthrough_stream(
                                 let event_name = event_text
                                     .lines()
                                     .find_map(|line| strip_sse_field(line, "event"));
+                                if terminal_hook.is_some() {
+                                    let event_data = event_text.lines()
+                                        .filter_map(|line| strip_sse_field(line, "data"))
+                                        .collect::<Vec<_>>().join("\n");
+                                    if terminal_tracker.observe(event_name, &event_data) {
+                                        if let Some(hook) = terminal_hook.take() {
+                                            hook().await;
+                                        }
+                                        success_terminal_seen = true;
+                                    }
+                                }
                                 // 提取 data 部分；只有 usage collector 存在时才解析 JSON。
                                 for line in event_text.lines() {
                                     if let Some(data) = strip_sse_field(line, "data") {
@@ -841,6 +1107,9 @@ pub fn create_logged_passthrough_stream(
                     }
 
                     yield Ok(bytes);
+                    if success_terminal_seen {
+                        break;
+                    }
                 }
                 Some(Err(e)) => {
                     log::error!("[{tag}] 流错误: {e}");
@@ -848,6 +1117,24 @@ pub fn create_logged_passthrough_stream(
                     break;
                 }
                 None => {
+                    // The shared SSE parser also accepts a final event without a
+                    // trailing blank line. Only inspect this tail when a protocol
+                    // callback is present; the ordinary passthrough path stays lazy.
+                    if terminal_hook.is_some() {
+                        let tail = sse.take_tail();
+                        if !tail.trim().is_empty() {
+                            let event_name = tail.lines()
+                                .find_map(|line| strip_sse_field(line, "event"));
+                            let event_data = tail.lines()
+                                .filter_map(|line| strip_sse_field(line, "data"))
+                                .collect::<Vec<_>>().join("\n");
+                            if terminal_tracker.observe(event_name, &event_data) {
+                                if let Some(hook) = terminal_hook.take() {
+                                    hook().await;
+                                }
+                            }
+                        }
+                    }
                     // 流正常结束
                     break;
                 }
