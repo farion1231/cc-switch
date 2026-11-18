@@ -1852,11 +1852,17 @@ pub fn run() {
             commands::list_tool_installations,
             // Provider terminal
             commands::open_provider_terminal,
-            // Universal Provider management
+            // Universal Provider & Global Aggregation management
             commands::get_universal_providers,
             commands::upsert_universal_provider,
             commands::delete_universal_provider,
             commands::sync_universal_provider,
+            commands::get_aggregation_overview,
+            commands::set_global_aggregation_mode,
+            commands::save_and_sync_universal_provider,
+            commands::sync_aggregation_provider_to_all_apps,
+            commands::unsync_aggregation_provider,
+            commands::set_aggregation_app_mode,
             // Custom icon library
             commands::get_custom_icons,
             commands::add_custom_icon,

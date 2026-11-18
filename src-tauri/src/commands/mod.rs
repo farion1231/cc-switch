@@ -1,5 +1,6 @@
 #![allow(non_snake_case)]
 
+mod aggregation;
 mod agy_account;
 mod auth;
 mod balance;
@@ -49,6 +50,7 @@ mod provider_concurrency_tests;
 #[cfg(test)]
 mod startup_tests;
 
+pub use aggregation::*;
 pub use agy_account::*;
 pub use auth::*;
 pub use balance::*;

@@ -2568,10 +2568,26 @@ pub async fn handle_gemini(
         .map(|pq| pq.as_str())
         .unwrap_or(uri.path());
 
+    if super::providers::gemini_inbound::endpoint_is_gemini_models_list(&method, endpoint) {
+        if let Some(provider) = ctx
+            .get_providers()
+            .first()
+            .filter(|p| super::providers::gemini_inbound::gemini_needs_inbound_transform(p))
+        {
+            let model =
+                super::providers::gemini_inbound::resolve_gemini_inbound_model(provider, None);
+            return Ok(Json(
+                super::providers::gemini_inbound::synthetic_gemini_models_response(&model),
+            )
+            .into_response());
+        }
+    }
+
     let is_stream = body
         .get("stream")
         .and_then(|v| v.as_bool())
-        .unwrap_or(false);
+        .unwrap_or(false)
+        || super::providers::gemini_inbound::endpoint_is_gemini_stream(endpoint);
 
     let forwarder = ctx.create_forwarder(&state);
     let mut result = match forwarder
@@ -2601,7 +2617,43 @@ pub async fn handle_gemini(
     let connection_guard = result.connection_guard.take();
     ctx.outbound_model = result.outbound_model.take();
     ctx.provider = result.provider;
+    let inbound_upstream_fmt = result.claude_api_format.take();
     let response = result.response;
+
+    if let Some(upstream_fmt) = inbound_upstream_fmt.as_deref() {
+        let status = response.status();
+        if response.is_sse() || is_stream {
+            let stream = response.bytes_stream();
+            let sse_stream = if upstream_fmt == "anthropic" {
+                super::providers::gemini_inbound::create_gemini_sse_stream_from_anthropic(stream)
+            } else {
+                super::providers::gemini_inbound::create_gemini_sse_stream_from_openai_chat(stream)
+            };
+            let body = axum::body::Body::from_stream(sse_stream);
+            let builder = axum::response::Response::builder()
+                .status(status)
+                .header(axum::http::header::CONTENT_TYPE, "text/event-stream")
+                .header(axum::http::header::CACHE_CONTROL, "no-cache");
+            drop(connection_guard);
+            return builder
+                .body(body)
+                .map_err(|e| ProxyError::Internal(format!("Failed to build Gemini SSE response: {e}")));
+        }
+
+        let bytes = response
+            .bytes_with_limit(super::hyper_client::MAX_RESPONSE_BODY_BYTES)
+            .await?;
+        let parsed: Value = serde_json::from_slice(&bytes).map_err(|e| {
+            ProxyError::TransformError(format!("Failed to parse upstream JSON for Gemini: {e}"))
+        })?;
+        let gemini_json = if upstream_fmt == "anthropic" {
+            super::providers::gemini_inbound::anthropic_response_to_gemini(&parsed)
+        } else {
+            super::providers::gemini_inbound::openai_chat_response_to_gemini(&parsed)
+        };
+        drop(connection_guard);
+        return Ok((status, Json(gemini_json)).into_response());
+    }
 
     process_response(
         response,

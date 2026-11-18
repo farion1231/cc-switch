@@ -674,6 +674,13 @@ pub struct ProviderMeta {
         skip_serializing_if = "Option::is_none"
     )]
     pub stack_models: Option<Vec<ClaudeStackModel>>,
+    /// 是否在全局聚合中手动取消跨应用兼容；为 `true` 时自动全量同步会跳过该供应商。
+    #[serde(
+        rename = "aggregationDisabled",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub aggregation_disabled: Option<bool>,
 }
 
 /// Stack 模式下 Claude Code 供应商发布的一个模型。
@@ -762,10 +769,120 @@ impl ProviderManager {
 pub struct UniversalProviderApps {
     #[serde(default)]
     pub claude: bool,
+    #[serde(default, rename = "claudeDesktop", alias = "claude-desktop")]
+    pub claude_desktop: bool,
     #[serde(default)]
     pub codex: bool,
     #[serde(default)]
     pub gemini: bool,
+    #[serde(default)]
+    pub grokbuild: bool,
+    #[serde(default)]
+    pub opencode: bool,
+    #[serde(default)]
+    pub openclaw: bool,
+    #[serde(default)]
+    pub hermes: bool,
+    #[serde(default)]
+    pub pi: bool,
+    #[serde(default)]
+    pub omp: bool,
+    #[serde(default)]
+    pub mcode: bool,
+    #[serde(default)]
+    pub kimi: bool,
+    #[serde(default)]
+    pub dsh: bool,
+    #[serde(default)]
+    pub copilot: bool,
+    #[serde(default)]
+    pub workbuddy: bool,
+}
+
+impl UniversalProviderApps {
+    /// 所有兼容聚合分发的应用列表（除启动器式的 Agy）
+    pub const COMPATIBLE_APPS: [crate::app_config::AppType; 15] = [
+        crate::app_config::AppType::Claude,
+        crate::app_config::AppType::ClaudeDesktop,
+        crate::app_config::AppType::Codex,
+        crate::app_config::AppType::Gemini,
+        crate::app_config::AppType::GrokBuild,
+        crate::app_config::AppType::OpenCode,
+        crate::app_config::AppType::OpenClaw,
+        crate::app_config::AppType::Hermes,
+        crate::app_config::AppType::Pi,
+        crate::app_config::AppType::Omp,
+        crate::app_config::AppType::Mcode,
+        crate::app_config::AppType::Kimi,
+        crate::app_config::AppType::Dsh,
+        crate::app_config::AppType::Copilot,
+        crate::app_config::AppType::WorkBuddy,
+    ];
+
+    /// 启用全部兼容应用
+    pub fn all_compatible() -> Self {
+        Self {
+            claude: true,
+            claude_desktop: true,
+            codex: true,
+            gemini: true,
+            grokbuild: true,
+            opencode: true,
+            openclaw: true,
+            hermes: true,
+            pi: true,
+            omp: true,
+            mcode: true,
+            kimi: true,
+            dsh: true,
+            copilot: true,
+            workbuddy: true,
+        }
+    }
+
+    pub fn is_enabled_for(&self, app: &crate::app_config::AppType) -> bool {
+        use crate::app_config::AppType;
+        match app {
+            AppType::Claude => self.claude,
+            AppType::ClaudeDesktop => self.claude_desktop,
+            AppType::Codex => self.codex,
+            AppType::Gemini => self.gemini,
+            AppType::GrokBuild => self.grokbuild,
+            AppType::OpenCode => self.opencode,
+            AppType::OpenClaw => self.openclaw,
+            AppType::Hermes => self.hermes,
+            AppType::Pi => self.pi,
+            AppType::Omp => self.omp,
+            AppType::Mcode => self.mcode,
+            AppType::Kimi => self.kimi,
+            AppType::Dsh => self.dsh,
+            AppType::Copilot => self.copilot,
+            AppType::WorkBuddy => self.workbuddy,
+            AppType::Agy => false,
+        }
+    }
+
+    pub fn set_enabled_for(&mut self, app: &crate::app_config::AppType, enabled: bool) {
+        use crate::app_config::AppType;
+        match app {
+            AppType::Claude => self.claude = enabled,
+            AppType::ClaudeDesktop => self.claude_desktop = enabled,
+            AppType::Codex => self.codex = enabled,
+            AppType::Gemini => self.gemini = enabled,
+            AppType::GrokBuild => self.grokbuild = enabled,
+            AppType::OpenCode => self.opencode = enabled,
+            AppType::OpenClaw => self.openclaw = enabled,
+            AppType::Hermes => self.hermes = enabled,
+            AppType::Pi => self.pi = enabled,
+            AppType::Omp => self.omp = enabled,
+            AppType::Mcode => self.mcode = enabled,
+            AppType::Kimi => self.kimi = enabled,
+            AppType::Dsh => self.dsh = enabled,
+            AppType::Copilot => self.copilot = enabled,
+            AppType::WorkBuddy => self.workbuddy = enabled,
+            AppType::Agy => {}
+        }
+    }
 }
 
 /// Claude 模型配置
@@ -840,6 +957,12 @@ pub struct UniversalProvider {
     /// 各应用的模型配置
     #[serde(default)]
     pub models: UniversalProviderModels,
+    /// 上游接口协议（"anthropic" | "openai_chat" | "openai_responses" | "gemini_native"）
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "apiFormat")]
+    pub api_format: Option<String>,
+    /// 聚合模式下附加发布的模型列表
+    #[serde(default, skip_serializing_if = "Vec::is_empty", rename = "extraModels")]
+    pub extra_models: Vec<String>,
     /// 网站链接
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "websiteUrl")]
@@ -884,6 +1007,8 @@ impl UniversalProvider {
             base_url,
             api_key,
             models: UniversalProviderModels::default(),
+            api_format: None,
+            extra_models: Vec::new(),
             website_url: None,
             notes: None,
             icon: None,
@@ -925,6 +1050,34 @@ impl UniversalProvider {
             }
         });
 
+        let mut meta = self.meta.clone();
+        if let Some(fmt) = self
+            .api_format
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            meta.get_or_insert_with(Default::default).api_format = Some(fmt.to_string());
+        }
+        if !self.extra_models.is_empty() {
+            let mut stack_models: Vec<ClaudeStackModel> = vec![ClaudeStackModel {
+                model: model.clone(),
+                display_name: None,
+                one_m: false,
+            }];
+            for extra in &self.extra_models {
+                let trimmed = extra.trim();
+                if !trimmed.is_empty() && !stack_models.iter().any(|m| m.model == trimmed) {
+                    stack_models.push(ClaudeStackModel {
+                        model: trimmed.to_string(),
+                        display_name: None,
+                        one_m: false,
+                    });
+                }
+            }
+            meta.get_or_insert_with(Default::default).stack_models = Some(stack_models);
+        }
+
         Some(Provider {
             id: format!("universal-claude-{}", self.id),
             name: self.name.clone(),
@@ -934,7 +1087,7 @@ impl UniversalProvider {
             created_at: self.created_at,
             sort_index: self.sort_index,
             notes: self.notes.clone(),
-            meta: self.meta.clone(),
+            meta,
             icon: self.icon.clone(),
             icon_color: self.icon_color.clone(),
             in_failover_queue: false,
@@ -969,6 +1122,12 @@ impl UniversalProvider {
             base_trimmed.to_string()
         };
 
+        let wire_api = match self.api_format.as_deref().map(str::trim) {
+            Some("openai_chat") => "chat",
+            Some("anthropic") => "anthropic",
+            _ => "responses",
+        };
+
         // 生成 Codex 的 config.toml 内容
         let config_toml = format!(
             r#"model_provider = "custom"
@@ -978,16 +1137,38 @@ model_reasoning_effort = "{reasoning_effort}"
 [model_providers.custom]
 name = "NewAPI"
 base_url = "{codex_base_url}"
-wire_api = "responses"
+wire_api = "{wire_api}"
 requires_openai_auth = true"#
         );
 
-        let settings_config = serde_json::json!({
-            "auth": {
+        let mut settings_map = serde_json::Map::new();
+        settings_map.insert(
+            "auth".to_string(),
+            serde_json::json!({
                 "OPENAI_API_KEY": self.api_key
-            },
-            "config": config_toml
-        });
+            }),
+        );
+        settings_map.insert("config".to_string(), serde_json::json!(config_toml));
+        if !self.extra_models.is_empty() {
+            let primary = config_toml
+                .lines()
+                .find_map(|line| line.trim().strip_prefix("model = "))
+                .map(|v| v.trim().trim_matches('"'));
+            if let Some(catalog) = build_codex_model_catalog(primary, &self.extra_models) {
+                settings_map.insert("modelCatalog".to_string(), catalog);
+            }
+        }
+        let settings_config = serde_json::Value::Object(settings_map);
+
+        let mut meta = self.meta.clone();
+        if let Some(fmt) = self
+            .api_format
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            meta.get_or_insert_with(Default::default).api_format = Some(fmt.to_string());
+        }
 
         Some(Provider {
             id: format!("universal-codex-{}", self.id),
@@ -998,7 +1179,7 @@ requires_openai_auth = true"#
             created_at: self.created_at,
             sort_index: self.sort_index,
             notes: self.notes.clone(),
-            meta: self.meta.clone(),
+            meta,
             icon: self.icon.clone(),
             icon_color: self.icon_color.clone(),
             in_failover_queue: false,
@@ -1024,6 +1205,16 @@ requires_openai_auth = true"#
             }
         });
 
+        let mut meta = self.meta.clone();
+        if let Some(fmt) = self
+            .api_format
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            meta.get_or_insert_with(Default::default).api_format = Some(fmt.to_string());
+        }
+
         Some(Provider {
             id: format!("universal-gemini-{}", self.id),
             name: self.name.clone(),
@@ -1033,7 +1224,7 @@ requires_openai_auth = true"#
             created_at: self.created_at,
             sort_index: self.sort_index,
             notes: self.notes.clone(),
-            meta: self.meta.clone(),
+            meta,
             icon: self.icon.clone(),
             icon_color: self.icon_color.clone(),
             in_failover_queue: false,
@@ -1054,6 +1245,29 @@ pub enum OpenCodeConfigFormat {
 
 /// OpenCode 供应商的 settings_config 结构
 ///
+/// 为 Codex 多模型配置构建 `settings_config.modelCatalog` 对象（`{ "models": [...] }`，去重保序）
+pub fn build_codex_model_catalog(
+    primary: Option<&str>,
+    extras: &[String],
+) -> Option<serde_json::Value> {
+    let mut seen = std::collections::HashSet::new();
+    let mut catalog = Vec::new();
+    for raw in primary.into_iter().chain(extras.iter().map(|s| s.as_str())) {
+        let model = raw.trim();
+        if !model.is_empty() && seen.insert(model.to_string()) {
+            catalog.push(serde_json::json!({
+                "model": model,
+                "displayName": model
+            }));
+        }
+    }
+    if catalog.is_empty() {
+        None
+    } else {
+        Some(serde_json::json!({ "models": catalog }))
+    }
+}
+
 /// OpenCode 使用 AI SDK 包名来指定供应商类型，与其他应用的配置格式不同。
 /// 配置示例：
 /// ```json

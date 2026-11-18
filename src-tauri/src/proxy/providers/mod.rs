@@ -26,6 +26,7 @@ pub mod copilot_auth;
 pub mod copilot_model_map;
 pub(crate) mod copilot_responses;
 mod gemini;
+pub mod gemini_inbound;
 pub(crate) mod gemini_schema;
 pub mod gemini_shadow;
 pub(crate) mod inline_think;

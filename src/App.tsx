@@ -195,6 +195,11 @@ const HermesMemorySaveButton = lazy(() =>
     default: m.HermesMemorySaveButton,
   })),
 );
+const AggregationPage = lazy(() =>
+  import("@/components/aggregation/AggregationPage").then((m) => ({
+    default: m.AggregationPage,
+  })),
+);
 
 function PageLoading() {
   const { t } = useTranslation();
@@ -562,7 +567,10 @@ function App() {
   }, [queryClient]);
 
   useTauriEvent("universal-provider-synced", async () => {
-    await queryClient.invalidateQueries({ queryKey: ["providers"] });
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["providers"] }),
+      queryClient.invalidateQueries({ queryKey: ["aggregation"] }),
+    ]);
     try {
       await providersApi.updateTrayMenu();
     } catch (error) {
@@ -1670,6 +1678,7 @@ function App() {
           scrollRef={providerScrollContainerRef}
           onSwitch={switchProvider}
           onOpenRoutingSettings={() => openSettings("routing")}
+          onOpenAggregation={() => openPage("aggregation")}
           needsRouteRequest={
             trayNeedsRoute?.app === modeAppId ? trayNeedsRoute : undefined
           }
@@ -1801,6 +1810,13 @@ function App() {
 
   const renderGlobalPage = () => {
     switch (currentView) {
+      case "aggregation":
+        return (
+          <AggregationPage
+            onOpenApp={selectApp}
+            onOpenRoutingSettings={() => openSettings("routing")}
+          />
+        );
       case "usage":
         return (
           <UsagePage

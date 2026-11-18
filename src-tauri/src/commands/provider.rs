@@ -61,15 +61,37 @@ pub async fn add_provider(
 ) -> Result<bool, String> {
     let app_type = AppType::from_str(&app)?;
     let add_to_live = addToLive.unwrap_or(true);
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app_handle
+    let added_id = provider.id.clone();
+    let app_type_for_task = app_type.clone();
+    let handle_for_task = app_handle.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let state = handle_for_task
             .try_state::<AppState>()
             .ok_or_else(|| "应用状态不可用".to_string())?;
-        ProviderService::add_from_editor(state.inner(), app_type, provider, add_to_live, editorSave)
-            .map_err(|e| e.to_string())
+        ProviderService::add_from_editor(
+            state.inner(),
+            app_type_for_task,
+            provider,
+            add_to_live,
+            editorSave,
+        )
+        .map_err(|e| e.to_string())
     })
     .await
-    .map_err(|e| format!("供应商添加任务执行失败: {e}"))?
+    .map_err(|e| format!("供应商添加任务执行失败: {e}"))??;
+
+    if result && !added_id.trim().is_empty() {
+        if let Some(state) = app_handle.try_state::<AppState>() {
+            crate::services::provider::aggregation::auto_sync_added_provider_if_enabled(
+                state.inner(),
+                &app_type,
+                &added_id,
+            )
+            .await;
+        }
+    }
+
+    Ok(result)
 }
 
 #[tauri::command]
@@ -81,13 +103,16 @@ pub async fn update_provider(
     #[allow(non_snake_case)] editorSave: Option<EditorSave>,
 ) -> Result<bool, String> {
     let app_type = AppType::from_str(&app)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app_handle
+    let sync_id = provider.id.clone();
+    let app_type_for_task = app_type.clone();
+    let app_handle_for_task = app_handle.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let state = app_handle_for_task
             .try_state::<AppState>()
             .ok_or_else(|| "应用状态不可用".to_string())?;
         ProviderService::update_from_editor(
             state.inner(),
-            app_type,
+            app_type_for_task,
             originalId.as_deref(),
             provider,
             editorSave,
@@ -95,7 +120,20 @@ pub async fn update_provider(
         .map_err(|e| e.to_string())
     })
     .await
-    .map_err(|e| format!("供应商更新任务执行失败: {e}"))?
+    .map_err(|e| format!("供应商更新任务执行失败: {e}"))??;
+
+    if result && !sync_id.trim().is_empty() {
+        if let Some(state) = app_handle.try_state::<AppState>() {
+            crate::services::provider::aggregation::auto_sync_added_provider_if_enabled(
+                state.inner(),
+                &app_type,
+                &sync_id,
+            )
+            .await;
+        }
+    }
+
+    Ok(result)
 }
 
 /// 供应商编辑器底部 JSON 的显示内容：切到这个供应商之后配置文件会是什么样。

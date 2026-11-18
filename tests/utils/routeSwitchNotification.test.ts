@@ -43,7 +43,7 @@ describe("route switch notifications", () => {
           "B",
           t,
         ),
-      ).toBe("路由已切换至 B，后续新请求将使用该供应商。");
+      ).toBe("已切换至 B，后续新请求将使用该供应商。");
     },
   );
 
@@ -74,7 +74,7 @@ describe("route switch notifications", () => {
         t,
       ),
     ).toBe(
-      "路由目标已设为 Official B。客户端配置也已更新；重启 Codex 以加载更新后的配置。",
+      "主供应商已设为 Official B。客户端配置也已更新；重启 Codex 以加载更新后的配置。",
     );
   });
 
@@ -99,7 +99,7 @@ describe("route switch notifications", () => {
         "B",
         t,
       ),
-    ).toBe("已记住供应商 B，客户端接入路由或聚合后使用。");
+    ).toBe("已记住供应商 B，客户端接入故障转移或聚合后使用。");
   });
 
   it.each(["en", "zh", "zh-TW", "ja", "tr"])(

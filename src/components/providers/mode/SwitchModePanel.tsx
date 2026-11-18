@@ -81,6 +81,7 @@ interface SwitchModePanelProps extends ListCallbacks {
     options?: { acknowledgedRouting?: boolean },
   ) => unknown;
   onOpenRoutingSettings: () => void;
+  onOpenAggregation?: () => void;
   startupFailure?: StartupAttachFailure;
   onDismissStartupFailure?: () => void;
   /** 托盘里点了直连下需要路由的那家：到这页后弹同一个「需要路由」对话框 */
@@ -90,9 +91,14 @@ interface SwitchModePanelProps extends ListCallbacks {
   onViewChange?: (app: AppIdWith<"routeMode">, view: AppMode) => void;
 }
 
-/** Gemini CLI、Grok Build、Claude Desktop 没有聚合模式（Q6）：那一格隐藏，前两格位置不变。 */
-const modesFor = (app: AppIdWith<"routeMode">): AppMode[] =>
-  appHas(app, "stack") ? ["direct", "route", "stack"] : ["direct", "route"];
+/** 聚合模式已统一收口到侧栏全局「聚合」页面；各应用供应商页仅保留直连与故障转移。 */
+const modesFor = (_app: AppIdWith<"routeMode">): AppMode[] => [
+  "direct",
+  "route",
+];
+
+const defaultViewForActive = (mode: AppMode): AppMode =>
+  mode === "stack" ? "route" : mode;
 
 /**
  * 切换式应用的供应商页（v7 S1–S3）：模式行 → 通知槽 → 按查看的模式分区的列表。
@@ -107,6 +113,7 @@ export function SwitchModePanel({
   scrollRef,
   onSwitch,
   onOpenRoutingSettings,
+  onOpenAggregation,
   startupFailure,
   onDismissStartupFailure,
   needsRouteRequest,
@@ -121,15 +128,17 @@ export function SwitchModePanel({
 
   const { data: modeView } = useAppMode(app);
   const active: AppMode =
-    modeView && modes.includes(modeView.mode) ? modeView.mode : "direct";
+    modeView && (modes.includes(modeView.mode) || modeView.mode === "stack")
+      ? modeView.mode
+      : "direct";
   const directId = modeView?.directProviderId ?? null;
   const routeId = modeView?.routeProviderId ?? null;
 
   // 离开页面再回来、或生效的模式变了，一律落在生效的那格（「查看中」不持久化）
-  const [view, setView] = useState<AppMode>(active);
+  const [view, setView] = useState<AppMode>(defaultViewForActive(active));
   const [searchSlot, setSearchSlot] = useState<HTMLDivElement | null>(null);
   useEffect(() => {
-    setView(active);
+    setView(defaultViewForActive(active));
   }, [app, active]);
   useEffect(() => {
     onViewChange?.(app, view);
@@ -525,7 +534,39 @@ export function SwitchModePanel({
       </Notice>,
     );
   }
-  if (view !== active) {
+  if (active === "stack") {
+    notices.push(
+      <Notice
+        key="globalStackNotice"
+        tone="neutral"
+        title={t("aggregation.appManagedNotice", {
+          app: appName,
+          defaultValue: `${appName} 当前由全局「聚合」模式接管。`,
+        })}
+        actions={
+          <>
+            {onOpenAggregation && (
+              <Button
+                variant="stack"
+                size="compact"
+                onClick={onOpenAggregation}
+              >
+                {t("aggregation.goToPage", { defaultValue: "前往聚合页" })}
+              </Button>
+            )}
+            <Button
+              variant="neutral"
+              size="compact"
+              onClick={() => setDialog({ kind: "exit" })}
+            >
+              {t("mode.notice.backToDirect")}
+            </Button>
+          </>
+        }
+      />,
+    );
+  }
+  if (view !== active && active !== "stack") {
     const cta =
       view === "route"
         ? t("mode.activate.route")
