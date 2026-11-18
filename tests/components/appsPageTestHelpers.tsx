@@ -213,6 +213,7 @@ export function resetAppsPageMocks(
             : "1.0.0",
         latest_version: "2.0.0",
         error: null,
+        installed: !state.missing.has(name),
         installed_but_broken: false,
         env_type: "windows",
         wsl_distro: null,

@@ -158,6 +158,8 @@ pub struct ToolVersion {
     /// 已定位到可执行文件、但 `--version` 报错退出（装了却跑不起来，如 Node 版本不达标）。
     /// 供前端区分"未安装"与"已安装·无法运行"，无需匹配 error 文案反推语义。
     installed_but_broken: bool,
+    /// true = 已执行到工具，false = 确认不存在，None = 探测失败、安装状态未知。
+    installed: Option<bool>,
     /// 工具运行环境: "windows", "wsl", "macos", "linux", "unknown"
     env_type: String,
     /// 当 env_type 为 "wsl" 时，返回该工具绑定的 WSL distro（用于按 distro 探测 shells）
@@ -957,7 +959,7 @@ pub async fn probe_tool_installations(
         requested
             .into_iter()
             .map(|tool| {
-                let installs = enumerate_tool_installations(tool);
+                let installs = enumerate_tool_installations(tool)?;
                 let (update, needs_confirmation) = plan_command_for(tool, &installs);
                 let (command, anchored, unmanaged) = match update {
                     UpdateCommand::Anchored(command) => (command, true, false),
@@ -965,7 +967,7 @@ pub async fn probe_tool_installations(
                     UpdateCommand::Unmanaged => (String::new(), false, true),
                 };
                 let is_conflict = is_conflicting(&installs);
-                ToolInstallationReport {
+                Ok(ToolInstallationReport {
                     tool: tool.to_string(),
                     installs,
                     is_conflict,
@@ -973,12 +975,12 @@ pub async fn probe_tool_installations(
                     command,
                     anchored,
                     unmanaged,
-                }
+                })
             })
             .collect()
     })
     .await
-    .map_err(|e| format!("probe task join error: {e}"))
+    .map_err(|e| format!("probe task join error: {e}"))?
 }
 
 /// 「应用」页的安装概览：每个工具装在哪几处、来源和命令行默认那处。只定位、不跑命令，
