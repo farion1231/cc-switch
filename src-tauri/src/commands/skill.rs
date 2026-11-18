@@ -168,12 +168,15 @@ pub async fn discover_available_skills(
         .map_err(|e| e.to_string())
 }
 
-/// 只发现一个已保存的仓库（添加、重新启用仓库后用，不重拉其它仓库）。
-/// 仓库不存在或已停用时返回空结果。
+/// 只发现一个已保存的仓库，不重拉其它仓库。
+/// 默认跳过停用的仓库；调用方可临时读取停用仓库或指定分支，不修改已保存配置。
 #[tauri::command]
 pub async fn discover_repo_skills(
     owner: String,
     name: String,
+    include_disabled: Option<bool>,
+    branch: Option<String>,
+    force_refresh: Option<bool>,
     service: State<'_, SkillServiceState>,
     app_state: State<'_, AppState>,
 ) -> Result<SkillDiscoveryResult, String> {
@@ -184,6 +187,20 @@ pub async fn discover_repo_skills(
     else {
         return Ok(SkillDiscoveryResult::default());
     };
+    let mut repo = repo;
+    if include_disabled.unwrap_or(false) {
+        repo.enabled = true;
+    }
+    if let Some(branch) = branch {
+        repo.branch = branch;
+    }
+    if force_refresh.unwrap_or(false) {
+        return service
+            .0
+            .discover_available_report(vec![repo], true)
+            .await
+            .map_err(|e| e.to_string());
+    }
     Ok(service.0.discover_repo(&repo).await)
 }
 

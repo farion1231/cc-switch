@@ -272,8 +272,17 @@ export const skillsApi = {
   async discoverRepo(
     owner: string,
     name: string,
+    includeDisabled = false,
+    branch?: string,
+    forceRefresh = false,
   ): Promise<SkillDiscoveryResult> {
-    return await invoke("discover_repo_skills", { owner, name });
+    return await invoke("discover_repo_skills", {
+      owner,
+      name,
+      includeDisabled,
+      branch,
+      forceRefresh,
+    });
   },
 
   /** 检查 Skills 更新，附带没读到的仓库 */
