@@ -439,6 +439,7 @@ mod tests {
             supports_parallel_tool_calls: None,
             supports_vision: None,
             reasoning_effort: None,
+            billing: None,
         }
     }
 

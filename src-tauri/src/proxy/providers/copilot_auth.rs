@@ -21,6 +21,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 
@@ -271,6 +272,7 @@ pub struct CopilotModel {
     /// 模型供应商
     pub vendor: String,
     /// 是否在模型选择器中显示
+    #[serde(default)]
     pub model_picker_enabled: bool,
     /// Copilot-reported maximum prompt limit for this exact model ID.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -287,6 +289,33 @@ pub struct CopilotModel {
     /// Copilot-reported reasoning effort levels supported by this model.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<Vec<CopilotReasoningEffort>>,
+    /// Billing metadata reported by the account model catalogue.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub billing: Option<CopilotModelBilling>,
+}
+
+/// User-selectable models plus account-wide Auto capability. Hidden models are
+/// deliberately omitted from `models`, while they may still establish Auto.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CopilotModelOptions {
+    pub models: Vec<CopilotModel>,
+    pub auto_routing_supported: bool,
+}
+
+impl CopilotModel {
+    pub fn supports_auto_routing(&self) -> bool {
+        self.billing
+            .as_ref()
+            .and_then(|billing| billing.auto_discount)
+            .is_some()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CopilotModelBilling {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_discount: Option<f64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -309,16 +338,49 @@ struct CopilotModelsResponse {
 }
 
 /// Copilot Models API 响应项
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct CopilotModelsResponseItem {
     id: String,
     name: String,
     vendor: String,
+    #[serde(default)]
     model_picker_enabled: bool,
     #[serde(default)]
     supported_endpoints: Vec<String>,
     #[serde(default)]
     capabilities: Option<Value>,
+    #[serde(default)]
+    billing: Option<CopilotModelBilling>,
+    #[serde(default)]
+    policy: Option<Value>,
+}
+
+impl CopilotModelsResponseItem {
+    fn is_usable(&self) -> bool {
+        let disabled = self
+            .policy
+            .as_ref()
+            .and_then(|policy| policy.get("state"))
+            .and_then(Value::as_str)
+            .is_some_and(|state| state.eq_ignore_ascii_case("disabled"));
+        let limits = self.capabilities.as_ref().and_then(|c| c.get("limits"));
+        let has_prompt = limits
+            .and_then(|l| l.get("max_prompt_tokens"))
+            .and_then(Value::as_u64)
+            .is_some_and(|n| n > 0);
+        let has_output = limits
+            .and_then(|l| l.get("max_output_tokens"))
+            .and_then(Value::as_u64)
+            .is_some_and(|n| n > 0);
+        let has_tool_capability = self
+            .capabilities
+            .as_ref()
+            .and_then(|c| c.get("supports"))
+            .and_then(|s| s.get("tool_calls"))
+            .and_then(Value::as_bool)
+            .is_some();
+        !disabled && has_prompt && has_output && has_tool_capability
+    }
 }
 
 fn positive_capability_limit(capabilities: &Value, pointer: &str) -> Option<u64> {
@@ -586,6 +648,8 @@ pub struct CopilotAuthManager {
     pending_migration: Arc<RwLock<Option<String>>>,
     /// 旧认证数据迁移失败时的状态消息
     migration_error: Arc<RwLock<Option<String>>>,
+    /// 凭证代次（账号添加/删除/切换默认时自增，使失效的 Auto 会话感知）
+    credential_generation: Arc<AtomicU64>,
 }
 
 impl CopilotAuthManager {
@@ -604,6 +668,7 @@ impl CopilotAuthManager {
             storage_path,
             pending_migration: Arc::new(RwLock::new(None)),
             migration_error: Arc::new(RwLock::new(None)),
+            credential_generation: Arc::new(AtomicU64::new(1)),
         };
 
         // 尝试从磁盘加载（同步，不发起网络请求）
@@ -612,6 +677,16 @@ impl CopilotAuthManager {
         }
 
         manager
+    }
+
+    /// 获取凭证代次
+    pub fn get_credential_generation(&self) -> u64 {
+        self.credential_generation.load(Ordering::Relaxed)
+    }
+
+    /// 递增凭证代次（在账号变更、登出或关键凭证重置时调用）
+    pub fn bump_credential_generation(&self) {
+        self.credential_generation.fetch_add(1, Ordering::SeqCst);
     }
 
     // ==================== 多账号管理方法 ====================
@@ -679,6 +754,7 @@ impl CopilotAuthManager {
 
         // 持久化
         self.save_to_disk().await?;
+        self.bump_credential_generation();
 
         Ok(())
     }
@@ -725,6 +801,7 @@ impl CopilotAuthManager {
 
         // 持久化
         self.save_to_disk().await?;
+        self.bump_credential_generation();
 
         log::info!("[CopilotAuth] 添加账号成功: {}", user.login);
 
@@ -746,6 +823,7 @@ impl CopilotAuthManager {
         }
 
         self.save_to_disk().await?;
+        self.bump_credential_generation();
         Ok(())
     }
 
@@ -949,6 +1027,47 @@ impl CopilotAuthManager {
         }
     }
 
+    /// 失效指定账号已缓存的 Copilot Bearer Token（如遇到上游 401，促使下次调用重新向 GitHub 换票）
+    pub async fn invalidate_token_for_account(&self, account_id: &str) {
+        let mut tokens = self.copilot_tokens.write().await;
+        if tokens.remove(account_id).is_some() {
+            log::info!("[CopilotAuth] 已失效账号 {account_id} 的 Copilot Bearer Token 缓存");
+        }
+    }
+
+    /// 仅当指定账号当前缓存的 Copilot Bearer Token 与 expected_token 匹配时才失效缓存。
+    /// 防止并发请求 A 刷新出新 Bearer 后，B 的旧请求迟到返回 401 误删新凭证。
+    pub async fn invalidate_token_if_matches(
+        &self,
+        account_id: &str,
+        expected_token: &str,
+    ) -> bool {
+        let mut tokens = self.copilot_tokens.write().await;
+        if let Some(cached) = tokens.get(account_id) {
+            if cached.token == expected_token {
+                tokens.remove(account_id);
+                let preview_len = expected_token.len().min(8);
+                log::info!(
+                    "[CopilotAuth] 已失效账号 {account_id} 匹配版本 ({}) 的 Copilot Bearer Token 缓存",
+                    &expected_token[..preview_len]
+                );
+                return true;
+            } else {
+                log::info!(
+                    "[CopilotAuth] 保留账号 {account_id} 较新的 Copilot Bearer Token（与 401 失败令牌版本不一致）"
+                );
+            }
+        }
+        false
+    }
+
+    /// 失效默认账号的 Copilot Bearer Token 缓存
+    pub async fn invalidate_default_token(&self) {
+        if let Some(id) = self.resolve_default_account_id().await {
+            self.invalidate_token_for_account(&id).await;
+        }
+    }
+
     // ==================== 模型和使用量 ====================
 
     /// 获取指定账号的 Copilot 可用模型列表
@@ -956,7 +1075,18 @@ impl CopilotAuthManager {
         &self,
         account_id: &str,
     ) -> Result<Vec<CopilotModel>, CopilotAuthError> {
+        Ok(self
+            .fetch_model_options_for_account(account_id)
+            .await?
+            .models)
+    }
+
+    pub async fn fetch_model_options_for_account(
+        &self,
+        account_id: &str,
+    ) -> Result<CopilotModelOptions, CopilotAuthError> {
         let all_models = self.fetch_all_models_for_account(account_id).await?;
+        let auto_routing_supported = all_models.iter().any(CopilotModel::supports_auto_routing);
         let total = all_models.len();
         let picker_models: Vec<CopilotModel> = all_models
             .iter()
@@ -976,7 +1106,19 @@ impl CopilotAuthManager {
                 ids.join(", ")
             );
         }
-        Ok(picker_models)
+        Ok(CopilotModelOptions {
+            models: picker_models,
+            auto_routing_supported,
+        })
+    }
+
+    /// 指定账号的内部完整目录，保留 picker 隐藏模型作为 Auto 能力证据。
+    /// 面向用户的模型选项只从 [`Self::fetch_model_options_for_account`] 读取。
+    pub async fn fetch_catalog_for_account(
+        &self,
+        account_id: &str,
+    ) -> Result<Vec<CopilotModel>, CopilotAuthError> {
+        self.fetch_all_models_for_account(account_id).await
     }
 
     async fn fetch_all_models_for_account(
@@ -1024,7 +1166,12 @@ impl CopilotAuthManager {
             .header("editor-version", COPILOT_EDITOR_VERSION)
             .header("editor-plugin-version", COPILOT_PLUGIN_VERSION)
             .header("user-agent", COPILOT_USER_AGENT)
-            .header("x-github-api-version", COPILOT_API_VERSION)
+            // /models needs the newer contract to return current billing and policy metadata.
+            // Keep token/usage requests on their established API version.
+            .header(
+                "x-github-api-version",
+                super::copilot_auto::COPILOT_AUTO_API_VERSION,
+            )
             .send()
             .await?;
 
@@ -1044,6 +1191,7 @@ impl CopilotAuthManager {
         let models: Vec<CopilotModel> = models_response
             .data
             .into_iter()
+            .filter(CopilotModelsResponseItem::is_usable)
             .map(|m| CopilotModel {
                 id: m.id,
                 name: m.name,
@@ -1056,6 +1204,7 @@ impl CopilotAuthManager {
                 ),
                 supports_vision: extract_copilot_vision(m.capabilities.as_ref()),
                 reasoning_effort: extract_copilot_reasoning_effort(m.capabilities.as_ref()),
+                billing: m.billing,
             })
             .collect();
 
@@ -1086,6 +1235,26 @@ impl CopilotAuthManager {
         Ok(super::copilot_model_map::resolve_model_record(model_id, &models).cloned())
     }
 
+    /// Find the exact upstream model ID, without aliases or family fallback.
+    pub async fn get_exact_model_record_for_account(
+        &self,
+        account_id: &str,
+        model_id: &str,
+    ) -> Result<Option<CopilotModel>, CopilotAuthError> {
+        let models = self.fetch_all_models_for_account(account_id).await?;
+        Ok(models.into_iter().find(|model| model.id == model_id))
+    }
+
+    pub async fn get_exact_model_record(
+        &self,
+        model_id: &str,
+    ) -> Result<Option<CopilotModel>, CopilotAuthError> {
+        match self.resolve_default_account_id().await {
+            Some(id) => self.get_exact_model_record_for_account(&id, model_id).await,
+            None => Err(CopilotAuthError::GitHubTokenInvalid),
+        }
+    }
+
     pub async fn get_model_record(
         &self,
         model_id: &str,
@@ -1112,6 +1281,31 @@ impl CopilotAuthManager {
     pub async fn fetch_models(&self) -> Result<Vec<CopilotModel>, CopilotAuthError> {
         match self.resolve_default_account_id().await {
             Some(id) => self.fetch_models_for_account(&id).await,
+            None => Err(CopilotAuthError::GitHubTokenInvalid),
+        }
+    }
+
+    pub async fn fetch_model_options(&self) -> Result<CopilotModelOptions, CopilotAuthError> {
+        match self.resolve_default_account_id().await {
+            Some(id) => self.fetch_model_options_for_account(&id).await,
+            None => Err(CopilotAuthError::GitHubTokenInvalid),
+        }
+    }
+
+    /// 默认账号的完整模型目录，见 [`Self::fetch_catalog_for_account`]。
+    pub async fn fetch_catalog(&self) -> Result<Vec<CopilotModel>, CopilotAuthError> {
+        match self.resolve_default_account_id().await {
+            Some(id) => self.fetch_catalog_for_account(&id).await,
+            None => Err(CopilotAuthError::GitHubTokenInvalid),
+        }
+    }
+
+    pub async fn get_model_vendor(
+        &self,
+        model_id: &str,
+    ) -> Result<Option<String>, CopilotAuthError> {
+        match self.resolve_default_account_id().await {
+            Some(id) => self.get_model_vendor_for_account(&id, model_id).await,
             None => Err(CopilotAuthError::GitHubTokenInvalid),
         }
     }
@@ -1390,6 +1584,7 @@ impl CopilotAuthManager {
         if self.storage_path.exists() {
             std::fs::remove_file(&self.storage_path)?;
         }
+        self.bump_credential_generation();
 
         Ok(())
     }
@@ -1427,7 +1622,7 @@ impl CopilotAuthManager {
         account_list
     }
 
-    async fn resolve_default_account_id(&self) -> Option<String> {
+    pub async fn resolve_default_account_id(&self) -> Option<String> {
         let stored_default = self.default_account_id.read().await.clone();
         let accounts = self.accounts.read().await;
 
@@ -1789,6 +1984,39 @@ mod tests {
     }
 
     #[test]
+    fn model_directory_requires_enabled_policy_and_complete_capabilities_but_keeps_auto_zero() {
+        let usable = serde_json::from_value::<CopilotModelsResponseItem>(serde_json::json!({
+            "id":"kimi-k3", "name":"Kimi K3", "vendor":"Moonshot",
+            "model_picker_enabled":true, "supported_endpoints":["/v1/messages"],
+            "capabilities":{"limits":{"max_prompt_tokens":128000,"max_output_tokens":8192},"supports":{"tool_calls":true}},
+            "billing":{"auto_discount":0}
+        })).unwrap();
+        assert!(usable.is_usable());
+        assert!(CopilotModel {
+            id: usable.id.clone(),
+            name: usable.name.clone(),
+            vendor: usable.vendor.clone(),
+            model_picker_enabled: usable.model_picker_enabled,
+            context_window: None,
+            supported_endpoints: usable.supported_endpoints.clone(),
+            supports_parallel_tool_calls: None,
+            supports_vision: None,
+            reasoning_effort: None,
+            billing: usable.billing.clone()
+        }
+        .supports_auto_routing());
+
+        let mut disabled = usable.clone();
+        disabled.policy = Some(serde_json::json!({"state":"disabled"}));
+        assert!(!disabled.is_usable());
+        let mut incomplete = usable;
+        incomplete.capabilities = Some(
+            serde_json::json!({"limits":{"max_prompt_tokens":128000},"supports":{"tool_calls":true}}),
+        );
+        assert!(!incomplete.is_usable());
+    }
+
+    #[test]
     fn vision_capability_preserves_false_and_unknown() {
         assert_eq!(extract_copilot_vision(None), None);
         for (capabilities, expected) in [
@@ -1860,6 +2088,7 @@ mod tests {
                 CopilotReasoningEffort::Xhigh,
                 CopilotReasoningEffort::Max,
             ]),
+            billing: None,
         };
 
         assert_eq!(
@@ -2150,6 +2379,7 @@ mod tests {
                         supports_parallel_tool_calls: None,
                         supports_vision: None,
                         reasoning_effort: None,
+                        billing: None,
                     },
                     CopilotModel {
                         id: "claude-sonnet-4".to_string(),
@@ -2161,6 +2391,7 @@ mod tests {
                         supports_parallel_tool_calls: None,
                         supports_vision: None,
                         reasoning_effort: None,
+                        billing: None,
                     },
                     CopilotModel {
                         id: "gpt-hidden".to_string(),
@@ -2175,6 +2406,7 @@ mod tests {
                         supports_parallel_tool_calls: None,
                         supports_vision: None,
                         reasoning_effort: None,
+                        billing: None,
                     },
                 ],
             );
@@ -2244,6 +2476,15 @@ mod tests {
             .unwrap()
             .iter()
             .all(|model| model.id != "gpt-hidden"));
+        let models = manager.fetch_catalog_for_account("12345").await.unwrap();
+        assert_eq!(models.len(), 3);
+        let hidden = models.iter().find(|m| m.id == "gpt-hidden").unwrap();
+        assert!(!hidden.model_picker_enabled);
+        assert_eq!(hidden.context_window, Some(128_000));
+        assert_eq!(
+            hidden.supported_endpoints,
+            vec!["/v1/chat/completions", "/responses"]
+        );
     }
 
     #[tokio::test]
@@ -2263,6 +2504,7 @@ mod tests {
             supports_parallel_tool_calls: None,
             supports_vision: None,
             reasoning_effort: None,
+            billing: None,
         };
         manager.copilot_models.write().await.extend([
             ("messages-only".to_string(), vec![model(&["/v1/messages"])]),
@@ -2279,6 +2521,10 @@ mod tests {
                 .await
                 .unwrap()
                 .is_empty());
+            let models = manager.fetch_catalog_for_account(account).await.unwrap();
+            assert_eq!(models.len(), 1);
+            assert_eq!(models[0].id, "claude-opus-4.7");
+            assert!(!models[0].model_picker_enabled);
             assert_eq!(
                 manager
                     .get_model_vendor_for_account(account, "claude-opus-4-8")
@@ -2321,6 +2567,207 @@ mod tests {
                 endpoint: "/chat/completions".to_string(),
             })
         );
+    }
+
+    #[tokio::test]
+    async fn test_fetch_catalog_returns_hidden_models_with_account_isolation() {
+        let temp_dir = tempdir().unwrap();
+        let manager = CopilotAuthManager::new(temp_dir.path().to_path_buf());
+
+        // 设置默认账号 account_a 和另一个账号 account_b
+        *manager.default_account_id.write().await = Some("account_a".to_string());
+        manager.accounts.write().await.extend([
+            (
+                "account_a".to_string(),
+                GitHubAccountData {
+                    github_token: "gho_a".to_string(),
+                    user: GitHubUser {
+                        login: "user_a".to_string(),
+                        id: 111,
+                        avatar_url: None,
+                    },
+                    authenticated_at: 1700000000,
+                    github_domain: DEFAULT_GITHUB_DOMAIN.to_string(),
+                },
+            ),
+            (
+                "account_b".to_string(),
+                GitHubAccountData {
+                    github_token: "gho_b".to_string(),
+                    user: GitHubUser {
+                        login: "user_b".to_string(),
+                        id: 222,
+                        avatar_url: None,
+                    },
+                    authenticated_at: 1700000000,
+                    github_domain: DEFAULT_GITHUB_DOMAIN.to_string(),
+                },
+            ),
+        ]);
+
+        let model_visible = CopilotModel {
+            id: "gpt-5.4".to_string(),
+            name: "GPT-5.4".to_string(),
+            vendor: "OpenAI".to_string(),
+            model_picker_enabled: true,
+            context_window: Some(200_000),
+            supported_endpoints: vec!["/chat/completions".to_string()],
+            supports_parallel_tool_calls: Some(true),
+            supports_vision: None,
+            reasoning_effort: Some(vec![
+                CopilotReasoningEffort::Low,
+                CopilotReasoningEffort::Medium,
+                CopilotReasoningEffort::High,
+            ]),
+            billing: None,
+        };
+
+        let model_hidden = CopilotModel {
+            id: "kimi-k3".to_string(),
+            name: "Kimi K3".to_string(),
+            vendor: "OpenAI".to_string(),
+            model_picker_enabled: false,
+            context_window: Some(922_000),
+            supported_endpoints: vec!["/responses".to_string(), "ws:/responses".to_string()],
+            supports_parallel_tool_calls: Some(true),
+            supports_vision: None,
+            reasoning_effort: Some(vec![
+                CopilotReasoningEffort::None,
+                CopilotReasoningEffort::Low,
+                CopilotReasoningEffort::Medium,
+            ]),
+            billing: Some(CopilotModelBilling {
+                auto_discount: Some(0.0),
+            }),
+        };
+
+        let model_account_b = CopilotModel {
+            id: "kimi-k3".to_string(),
+            name: "Kimi K3".to_string(),
+            vendor: "Moonshot AI".to_string(),
+            model_picker_enabled: false,
+            context_window: Some(128_000),
+            supported_endpoints: vec!["/chat/completions".to_string()],
+            supports_parallel_tool_calls: None,
+            supports_vision: None,
+            reasoning_effort: None,
+            billing: None,
+        };
+
+        manager.copilot_models.write().await.extend([
+            (
+                "account_a".to_string(),
+                vec![model_visible.clone(), model_hidden.clone()],
+            ),
+            ("account_b".to_string(), vec![model_account_b.clone()]),
+        ]);
+
+        // 1. 默认账号的完整目录必须包括 picker=false 的隐藏模型
+        let default_models = manager.fetch_catalog().await.unwrap();
+        assert_eq!(default_models.len(), 2);
+        assert!(default_models
+            .iter()
+            .any(|m| m.id == "gpt-5.4" && m.model_picker_enabled));
+        let hidden_fetched = default_models
+            .iter()
+            .find(|m| m.id == "kimi-k3")
+            .expect("kimi-k3 must be present in the internal catalogue");
+        assert!(!hidden_fetched.model_picker_enabled);
+        assert!(hidden_fetched.supports_auto_routing());
+        assert_eq!(hidden_fetched.context_window, Some(922_000));
+        assert_eq!(
+            hidden_fetched.supported_endpoints,
+            vec!["/responses", "ws:/responses"]
+        );
+        assert_eq!(hidden_fetched.supports_parallel_tool_calls, Some(true));
+        assert_eq!(
+            hidden_fetched.reasoning_effort,
+            Some(vec![
+                CopilotReasoningEffort::None,
+                CopilotReasoningEffort::Low,
+                CopilotReasoningEffort::Medium,
+            ])
+        );
+        // 代理解析模型名用的 picker 列表仍不含隐藏模型
+        let picker_models = manager.fetch_models().await.unwrap();
+        assert_eq!(picker_models.len(), 1);
+        assert_eq!(picker_models[0].id, "gpt-5.4");
+        let options = manager
+            .fetch_model_options_for_account("account_a")
+            .await
+            .unwrap();
+        assert_eq!(options.models.len(), 1);
+        assert_eq!(options.models[0].id, "gpt-5.4");
+        assert!(options.auto_routing_supported);
+        assert!(options.models[0].billing.is_none());
+        assert!(
+            manager
+                .fetch_model_options()
+                .await
+                .unwrap()
+                .auto_routing_supported
+        );
+
+        // 2. 显式账号的完整目录必须是对应账号的，并保持账户隔离
+        let account_b_models = manager
+            .fetch_catalog_for_account("account_b")
+            .await
+            .unwrap();
+        assert_eq!(account_b_models.len(), 1);
+        assert_eq!(account_b_models[0].id, "kimi-k3");
+        assert!(!account_b_models[0].model_picker_enabled);
+        assert!(
+            !manager
+                .fetch_model_options_for_account("account_b")
+                .await
+                .unwrap()
+                .auto_routing_supported
+        );
+    }
+
+    #[test]
+    fn test_copilot_models_response_item_defaults_missing_picker_flag() {
+        let json_with_missing_picker = r#"{
+            "data": [
+                {
+                    "id": "test-model-1",
+                    "name": "Test Model 1",
+                    "vendor": "Test Vendor",
+                    "supported_endpoints": ["/chat/completions"],
+                    "billing": {"auto_discount": 0.3}
+                }
+            ]
+        }"#;
+
+        let parsed: CopilotModelsResponse = serde_json::from_str(json_with_missing_picker).unwrap();
+        assert_eq!(parsed.data.len(), 1);
+        assert_eq!(parsed.data[0].id, "test-model-1");
+        assert!(!parsed.data[0].model_picker_enabled);
+        assert_eq!(
+            parsed.data[0].billing.as_ref().unwrap().auto_discount,
+            Some(0.3)
+        );
+    }
+
+    #[test]
+    fn auto_routing_requires_discount_field_even_when_zero() {
+        let model = |discount: Option<f64>| CopilotModel {
+            id: "m".into(),
+            name: "M".into(),
+            vendor: "OpenAI".into(),
+            model_picker_enabled: true,
+            context_window: None,
+            supported_endpoints: vec![],
+            supports_parallel_tool_calls: None,
+            supports_vision: None,
+            reasoning_effort: None,
+            billing: discount.map(|auto_discount| CopilotModelBilling {
+                auto_discount: Some(auto_discount),
+            }),
+        };
+        assert!(model(Some(0.3)).supports_auto_routing());
+        assert!(model(Some(0.0)).supports_auto_routing());
+        assert!(!model(None).supports_auto_routing());
     }
 
     #[tokio::test]
@@ -2525,6 +2972,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_credential_generation_bumps_on_logout_and_removal() {
+        let temp_dir = tempdir().unwrap();
+        let manager = CopilotAuthManager::new(temp_dir.path().to_path_buf());
+        let initial_gen = manager.get_credential_generation();
+
+        // Adding account data
+        {
+            let mut accounts = manager.accounts.write().await;
+            accounts.insert(
+                "acc_1".to_string(),
+                GitHubAccountData {
+                    github_token: "gho_test".to_string(),
+                    user: GitHubUser {
+                        login: "alice".to_string(),
+                        id: 1,
+                        avatar_url: None,
+                    },
+                    authenticated_at: 100,
+                    github_domain: "github.com".to_string(),
+                },
+            );
+        }
+
+        manager.remove_account("acc_1").await.unwrap();
+        let gen_after_remove = manager.get_credential_generation();
+        assert!(gen_after_remove > initial_gen);
+
+        manager.clear_auth().await.unwrap();
+        let gen_after_clear = manager.get_credential_generation();
+        assert!(gen_after_clear > gen_after_remove);
+    }
+
+    #[tokio::test]
     async fn test_get_api_endpoint_cache_hit_skips_fetch() {
         // 缓存命中时应直接返回，不发起网络请求
         let temp_dir = tempdir().unwrap();
@@ -2657,5 +3137,52 @@ mod tests {
 
         let account = GitHubAccount::from(&data);
         assert_eq!(account.id, "company.ghe.com:99999");
+    }
+
+    #[tokio::test]
+    async fn test_invalidate_token_if_matches() {
+        let temp_dir = tempdir().unwrap();
+        let manager = CopilotAuthManager::new(temp_dir.path().to_path_buf());
+
+        // 插入 token-v2
+        {
+            let mut tokens = manager.copilot_tokens.write().await;
+            tokens.insert(
+                "acc-1".to_string(),
+                CopilotToken {
+                    token: "bearer-token-v2".to_string(),
+                    expires_at: 1800000000,
+                },
+            );
+        }
+
+        // 旧的 401 请求携带 bearer-token-v1，尝试失效 -> 不应删除 v2
+        let removed = manager
+            .invalidate_token_if_matches("acc-1", "bearer-token-v1")
+            .await;
+        assert!(!removed);
+        {
+            let tokens = manager.copilot_tokens.read().await;
+            assert_eq!(
+                tokens.get("acc-1").map(|t| t.token.as_str()),
+                Some("bearer-token-v2")
+            );
+        }
+
+        // 别的账号尝试失效 -> 不影响 acc-1
+        let removed = manager
+            .invalidate_token_if_matches("acc-2", "bearer-token-v2")
+            .await;
+        assert!(!removed);
+
+        // 匹配当前 token-v2 -> 成功失效
+        let removed = manager
+            .invalidate_token_if_matches("acc-1", "bearer-token-v2")
+            .await;
+        assert!(removed);
+        {
+            let tokens = manager.copilot_tokens.read().await;
+            assert!(tokens.get("acc-1").is_none());
+        }
     }
 }
