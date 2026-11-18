@@ -2573,11 +2573,16 @@ pub(crate) fn codex_single_model_catalog(
     config_text: &str,
     profile: CodexCatalogToolProfile,
 ) -> Result<Value, AppError> {
-    let spec = CodexCatalogModelSpec {
+    let specs = [CodexCatalogModelSpec {
         model: model.to_string(),
         ..CodexCatalogModelSpec::default()
-    };
-    codex_catalog_from_specs_for_row(&[spec], config_text, profile)
+    }];
+    let mut catalog = codex_catalog_from_specs_for_row(&specs, config_text, profile)?;
+    // 行里本来就没配目录：Lite 跟 Codex 自己的默认（同 `codex_stack_third_party_rows`）。
+    if let Some(Value::Array(entries)) = catalog.get_mut("models") {
+        apply_codex_responses_lite(entries, &specs, profile, true);
+    }
+    Ok(catalog)
 }
 
 /// 一家第三方供应商发布的模型：行里的模型目录；没有配置目录时只有行的 `model`。
@@ -2780,20 +2785,34 @@ pub(crate) fn codex_stack_third_party_rows(
         },
         _ => Vec::new(),
     };
-    // 行里没配模型目录时，这家在直连、路由下不写目录，Codex 用自己的官方条目，GPT-6 系列
-    // 走 Responses Lite（请求带 `reasoning.context = "all_turns"`）。合并目录照着来，同一家
-    // 在聚合下发的请求和直连一样：按官方客户端转给官方后端的中转会自己加 Lite 头，请求里
-    // 缺 all_turns 就被拒（#9665）。显式配了目录的行、走转换的行仍不用 Lite。
-    let follows_codex_default = row.profile == CodexCatalogToolProfile::NativeResponses
-        && codex_catalog_model_specs(row.settings).is_empty();
-    let official = if follows_codex_default {
+    let follows_codex_default = codex_catalog_model_specs(row.settings).is_empty();
+    let windows = RowWindows::of(row.config_text);
+    for entry in &mut entries {
+        sink_row_windows(entry, &windows, true);
+    }
+    apply_codex_responses_lite(&mut entries, &specs, row.profile, follows_codex_default);
+    Ok(entries)
+}
+
+/// 决定 CC Switch 替一家第三方生成的目录行用不用 Responses Lite。
+///
+/// 行里没配模型目录时，这家在直连、路由下不写目录，Codex 用自己的官方条目，GPT-6 系列
+/// 走 Responses Lite（请求带 `reasoning.context = "all_turns"`）。CC Switch 不得不替它写
+/// 目录时（聚合的合并目录、「打开终端」盖掉上一家留下的指针）照着来，同一家在各条路径上
+/// 发的请求一致：按官方客户端转给官方后端的中转会自己加 Lite 头，请求里缺 all_turns 就被拒
+/// （#9665）。显式配了目录的行、走转换的行仍不用 Lite（转换层不认识它）。
+fn apply_codex_responses_lite(
+    entries: &mut [Value],
+    specs: &[CodexCatalogModelSpec],
+    profile: CodexCatalogToolProfile,
+    row_has_no_catalog: bool,
+) {
+    let official = if row_has_no_catalog && profile == CodexCatalogToolProfile::NativeResponses {
         codex_openai_official_models()
     } else {
         Vec::new()
     };
-    let windows = RowWindows::of(row.config_text);
-    for (entry, spec) in entries.iter_mut().zip(&specs) {
-        sink_row_windows(entry, &windows, true);
+    for (entry, spec) in entries.iter_mut().zip(specs) {
         let lite = find_codex_official_model(&spec.model, &official)
             .and_then(|found| found.get("use_responses_lite"))
             == Some(&Value::Bool(true));
@@ -2805,7 +2824,6 @@ pub(crate) fn codex_stack_third_party_rows(
             }
         }
     }
-    Ok(entries)
 }
 
 /// 一家行里配置的窗口类全局键（见 [`sink_row_windows`]）。
@@ -5818,6 +5836,31 @@ wire_api = "responses"
                 ("ccs-listed/gpt-6-sol".to_string(), json!(false)),
                 ("ccs-chat/gpt-6-sol".to_string(), json!(false)),
             ]
+        );
+    }
+
+    /// 「打开终端」给没配目录的卡盖掉上一家留下的指针时生成的单模型目录，Lite 同样跟 Codex
+    /// 的默认走（#9665）；走转换的卡、对不上官方条目的模型仍不用 Lite。
+    #[test]
+    fn single_model_catalog_follows_codex_responses_lite_default() {
+        let lite = |model: &str, profile| {
+            with_official_models(official_gpt_rows(), || {
+                codex_single_model_catalog(model, "", profile).unwrap()["models"][0]
+                    ["use_responses_lite"]
+                    .clone()
+            })
+        };
+        assert_eq!(
+            lite("gpt-6-sol", CodexCatalogToolProfile::NativeResponses),
+            json!(true)
+        );
+        assert_eq!(
+            lite("gpt-6-sol", CodexCatalogToolProfile::ProxyChat),
+            json!(false)
+        );
+        assert_ne!(
+            lite("kimi-k2", CodexCatalogToolProfile::NativeResponses),
+            json!(true)
         );
     }
 
