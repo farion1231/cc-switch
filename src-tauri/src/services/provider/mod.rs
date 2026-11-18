@@ -5478,6 +5478,12 @@ impl ProviderService {
             } else {
                 crate::mcode_config::get_providers()?
             };
+            let mut saved = state.db.get_all_providers(app_type.as_str())?;
+            let nicknames = if app_type == AppType::Kimi {
+                crate::services::kimi_oauth::account_nicknames()
+            } else {
+                Default::default()
+            };
             if !native.is_empty() {
                 if let Err(err) = crate::services::config_backup::ensure_import_backup(
                     &app_type,
@@ -5489,12 +5495,6 @@ impl ProviderService {
                     );
                 }
             }
-            let mut saved = state.db.get_all_providers(app_type.as_str())?;
-            let nicknames = if app_type == AppType::Kimi {
-                crate::services::kimi_oauth::account_nicknames()
-            } else {
-                Default::default()
-            };
             for (id, config) in &native {
                 if !saved.contains_key(id) {
                     let name = config.get("name").and_then(Value::as_str).unwrap_or(id);

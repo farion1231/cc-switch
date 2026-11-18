@@ -288,6 +288,8 @@
       "restore": "ロールバック",
       "restoring": "ロールバック中...",
       "confirmRestoreAction": "ロールバックを実行",
+      "loadFailed": "設定履歴を読み込めませんでした",
+      "confirmRestoreDirect": "{{app}} のローカル設定を {{date}} のスナップショットに戻し、現在の設定を上書きします。 CC Switch は現在のプロバイダーの選択を解除します。この設定の管理を再開するには、プロバイダーを再度選択してください。",
       "confirmRestoreMessage": "{{app}} のローカル設定を {{date}} のスナップショットに戻し、現在の設定を上書きします。",
       "restoreSuccess": "{{app}} の設定をロールバックしました",
       "restoreFailed": "ロールバックに失敗しました",

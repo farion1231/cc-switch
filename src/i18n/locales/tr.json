@@ -288,6 +288,8 @@
       "restore": "Geri Al",
       "restoring": "Geri alınıyor...",
       "confirmRestoreAction": "Geri Almayı Onayla",
+      "loadFailed": "Yapılandırma geçmişi yüklenemedi",
+      "confirmRestoreDirect": "{{app}} için {{date}} tarihli anlık görüntüye dönmek mevcut yerel yapılandırma dosyalarının üzerine yazacaktır. CC Switch etkin sağlayıcı seçimini kaldıracak. Bu yapılandırmayı yeniden yönetmek için bir sağlayıcı seçin.",
       "confirmRestoreMessage": "{{app}} için {{date}} tarihli anlık görüntüye dönmek mevcut yerel yapılandırma dosyalarının üzerine yazacaktır.",
       "restoreSuccess": "{{app}} yapılandırması geri alındı",
       "restoreFailed": "Geri alma başarısız oldu",

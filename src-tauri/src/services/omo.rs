@@ -248,74 +248,31 @@ impl OmoService {
         Self::find_config_location(v, &home_dirs, &opencode_dir)?.ok_or(AppError::OmoConfigNotFound)
     }
 
-    /// Existing OMO / OMO Slim config files to include in OpenCode config backups.
-    pub(crate) fn backup_target_paths() -> Result<Vec<(String, PathBuf, bool)>, AppError> {
+    /// Include absent files so restoring an older snapshot also removes variants created later.
+    pub(crate) fn backup_target_paths() -> Vec<(String, PathBuf, bool)> {
         let opencode_dir = get_opencode_dir();
-        let home_dirs = Self::unified_home_candidates(&get_home_dir(), &opencode_dir);
-        let mut out = Vec::new();
-        let mut seen = std::collections::HashSet::new();
-
+        let native_home = get_home_dir();
+        let mut targets = Vec::new();
         for (tag, variant) in [("standard", &STANDARD), ("slim", &SLIM)] {
-            if let Ok(Some(location)) =
-                Self::find_config_location(variant, &home_dirs, &opencode_dir)
-            {
-                let (key, path) = match location {
-                    OmoConfigLocation::Unified(path) => {
-                        let name = path
-                            .file_name()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or("omo.jsonc");
-                        (format!("omo/unified/{name}"), path)
-                    }
-                    OmoConfigLocation::Legacy(path) => {
-                        let name = path
-                            .file_name()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or(variant.preferred_filename);
-                        (format!("omo/{tag}/{name}"), path)
-                    }
-                };
-                if seen.insert(key.clone()) {
-                    out.push((key, path, false));
-                }
+            for name in variant.config_candidates {
+                targets.push((format!("omo/{tag}/{name}"), opencode_dir.join(name), false));
             }
         }
-        Ok(out)
-    }
-
-    /// Resolve a backup file key produced by [`Self::backup_target_paths`] back to its safe local path.
-    pub(crate) fn resolve_backup_target_path(key: &str) -> Option<(PathBuf, bool)> {
-        let opencode_dir = get_opencode_dir();
-        if let Some(name) = key.strip_prefix("omo/unified/") {
-            if !UNIFIED_CONFIG_FILENAMES.contains(&name) {
-                return None;
-            }
-            let home_dirs = Self::unified_home_candidates(&get_home_dir(), &opencode_dir);
-            let existing = home_dirs
-                .iter()
-                .map(|home| home.join(".omo").join(name))
-                .find(|path| path.exists());
-            let target = existing.unwrap_or_else(|| {
-                home_dirs
-                    .into_iter()
-                    .next()
-                    .unwrap_or_else(get_home_dir)
-                    .join(".omo")
-                    .join(name)
-            });
-            return Some((target, false));
-        }
-        if let Some(name) = key.strip_prefix("omo/standard/") {
-            if STANDARD.config_candidates.contains(&name) {
-                return Some((opencode_dir.join(name), false));
+        for home in Self::unified_home_candidates(&native_home, &opencode_dir) {
+            let tag = if home == native_home {
+                "unified"
+            } else {
+                "unified-wsl"
+            };
+            for name in UNIFIED_CONFIG_FILENAMES {
+                targets.push((
+                    format!("omo/{tag}/{name}"),
+                    home.join(".omo").join(name),
+                    false,
+                ));
             }
         }
-        if let Some(name) = key.strip_prefix("omo/slim/") {
-            if SLIM.config_candidates.contains(&name) {
-                return Some((opencode_dir.join(name), false));
-            }
-        }
-        None
+        targets
     }
 
     fn read_jsonc_object(path: &Path) -> Result<Map<String, Value>, AppError> {

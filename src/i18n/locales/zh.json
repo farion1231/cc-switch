@@ -288,6 +288,8 @@
       "restore": "回退",
       "restoring": "回退中...",
       "confirmRestoreAction": "确认回退",
+      "loadFailed": "无法加载配置历史",
+      "confirmRestoreDirect": "将 {{app}} 的本地配置文件回退到 {{date}} 的快照并覆盖当前本地配置。 CC Switch 会清除当前供应商。再次选择供应商后，才会重新管理此配置。",
       "confirmRestoreMessage": "将 {{app}} 的本地配置文件回退到 {{date}} 的快照并覆盖当前本地配置。",
       "restoreSuccess": "已回退 {{app}} 本地配置",
       "restoreFailed": "回退配置失败",

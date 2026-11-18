@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { EditProviderDialog } from "@/components/providers/EditProviderDialog";
+import { ProviderEmptyState } from "@/components/providers/ProviderEmptyState";
 import type { Provider } from "@/types";
 import { server } from "../msw/server";
 
@@ -114,7 +115,23 @@ describe("EditProviderDialog right-side config history and rollback", () => {
     apiMocks.getLiveProviderSettings.mockResolvedValue({});
   });
 
-  it("opens history from header button without count badge or redundant banner, previews with cache, and rolls back", async () => {
+  it("opens configuration history when the provider list is empty", async () => {
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/list_app_config_backups`, () =>
+        HttpResponse.json([]),
+      ),
+    );
+    render(<ProviderEmptyState appId="codex" />);
+    fireEvent.click(
+      screen.getByRole("button", { name: "provider.configHistory.button" }),
+    );
+    expect(
+      await screen.findByText("provider.configHistory.empty"),
+    ).toBeVisible();
+  });
+
+  it("previews cached history and closes the provider editor after a direct rollback", async () => {
+    const onOpenChange = vi.fn();
     const initialProvider = makeProvider("Codex Main", 'model = "gpt-5.4"');
     const rolledBackProvider = makeProvider("Codex Main", 'model = "gpt-5"');
     let restored = false;
@@ -199,7 +216,7 @@ describe("EditProviderDialog right-side config history and rollback", () => {
     render(
       <EditProviderDialog
         open
-        onOpenChange={vi.fn()}
+        onOpenChange={onOpenChange}
         onSubmit={vi.fn()}
         provider={initialProvider}
         appId="codex"
@@ -263,7 +280,7 @@ describe("EditProviderDialog right-side config history and rollback", () => {
     );
     await waitFor(() => {
       expect(
-        screen.getByText("provider.configHistory.confirmRestoreMessage"),
+        screen.getByText("provider.configHistory.confirmRestoreDirect"),
       ).toBeInTheDocument();
     });
 
@@ -277,10 +294,7 @@ describe("EditProviderDialog right-side config history and rollback", () => {
       expect(restoreCalls).toEqual([
         { app: "codex", backupId: "20261117_060000_0_import" },
       ]);
-      expect(apiMocks.getAll).toHaveBeenCalledWith("codex");
-      expect(screen.getByTestId("form-provider-config").textContent).toContain(
-        "gpt-5",
-      );
+      expect(onOpenChange).toHaveBeenCalledWith(false);
     });
     expect(toastMocks.success).toHaveBeenCalled();
   });

@@ -129,21 +129,11 @@ pub fn run(
             if digest(current.as_deref()) == current_planned.pre {
                 ensure_first_write_backup(store, &current_planned.file.path, current.as_deref())?;
                 if !pending.published
+                    && op != state::op::RESTORE_CONFIG
                     && crate::services::config_backup::is_auto_backup_enabled()
                     && crate::services::config_backup::is_device_store(store)
                 {
                     if let Ok(app_type) = guard.app().parse::<crate::app_config::AppType>() {
-                        if matches!(app_type, crate::app_config::AppType::ClaudeDesktop) {
-                            if let Err(err) =
-                                crate::services::config_backup::ensure_import_backup_in(
-                                    store,
-                                    &app_type,
-                                    Some("first-write"),
-                                )
-                            {
-                                log::warn!("[{}] 首次写入配置备份失败: {err}", app_type.as_str());
-                            }
-                        }
                         if let Err(err) = crate::services::config_backup::backup_before_edit_in(
                             store,
                             &app_type,
@@ -439,7 +429,20 @@ pub fn commit_target(
     app: &str,
     target: &PendingTarget,
 ) -> Result<(), AppError> {
-    if let Some(id) = target.pointer.as_deref() {
+    if target.clear_pointer {
+        let app_type: crate::app_config::AppType = app.parse()?;
+        if let Some(account) = &target.vacate_claude_account {
+            crate::services::provider::claude_official::vacate_login(account)?;
+        }
+        state::update(store, |live| {
+            live.apps
+                .entry(app.to_owned())
+                .or_default()
+                .skip_startup_import = true;
+        })?;
+        crate::settings::set_current_provider(&app_type, None)?;
+        db.clear_current_provider(&app_type)?;
+    } else if let Some(id) = target.pointer.as_deref() {
         let app_type: crate::app_config::AppType = app.parse()?;
         crate::settings::set_current_provider(&app_type, Some(id))?;
         db.set_current_provider(app, id)?;

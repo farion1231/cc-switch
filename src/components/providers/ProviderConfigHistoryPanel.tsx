@@ -1,4 +1,5 @@
-import { useContext, useEffect, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useRef, useState } from "react";
+import { appHas } from "@/config/appSpecs";
 import { QueryClientContext } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "@/lib/toast";
@@ -39,24 +40,41 @@ export function formatHistoryDate(isoString: string): string {
 
 interface ProviderConfigHistoryPanelProps {
   appId: AppId;
-  backups: ConfigBackupEntry[];
-  isLoading: boolean;
+  standalone?: boolean;
   onClose: () => void;
-  onRefresh: () => Promise<void>;
-  onRolledBack: () => Promise<void> | void;
+  onRolledBack?: () => Promise<void> | void;
 }
 
 export function ProviderConfigHistoryPanel({
   appId,
-  backups,
-  isLoading,
+  standalone = false,
   onClose,
-  onRefresh,
   onRolledBack,
 }: ProviderConfigHistoryPanelProps) {
   const { t } = useTranslation();
   const queryClient = useContext(QueryClientContext);
   const previewCacheRef = useRef<Map<string, ConfigBackupPreview>>(new Map());
+
+  const [backups, setBackups] = useState<ConfigBackupEntry[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const request = useRef(0);
+  const refresh = useCallback(async () => {
+    const version = ++request.current;
+    setIsLoading(true);
+    try {
+      const entries = await backupsApi.listAppConfigBackups(appId);
+      if (version === request.current) setBackups(entries);
+    } catch (error) {
+      if (version === request.current) {
+        setBackups([]);
+        toast.error(
+          extractErrorMessage(error) || t("provider.configHistory.loadFailed"),
+        );
+      }
+    } finally {
+      if (version === request.current) setIsLoading(false);
+    }
+  }, [appId, t]);
 
   const [isRestoring, setIsRestoring] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -71,23 +89,31 @@ export function ProviderConfigHistoryPanel({
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   useEffect(() => {
+    setBackups([]);
+    void refresh();
     previewCacheRef.current.clear();
     setPreviewData(null);
     setExpandedFiles({});
     setConfirmRestoreId(null);
     setConfirmDeleteId(null);
-  }, [appId]);
+    return () => {
+      ++request.current;
+    };
+  }, [refresh]);
 
   const appName = APP_DISPLAY_NAME[appId] ?? appId;
   const reasonLabel = (reason: ConfigBackupReason) =>
     t(`provider.configHistory.reasons.${reason}`, { defaultValue: reason });
 
+  const restoreMessage = appHas(appId, "routeMode")
+    ? "provider.configHistory.confirmRestoreDirect"
+    : "provider.configHistory.confirmRestoreMessage";
   const previewLabel = t("provider.configHistory.preview");
   const restoreLabel = t("provider.configHistory.restore");
   const deleteLabel = t("provider.configHistory.delete");
 
   const invalidateAll = async () => {
-    await onRefresh();
+    await refresh();
     if (queryClient) {
       await queryClient.invalidateQueries();
     }
@@ -139,7 +165,7 @@ export function ProviderConfigHistoryPanel({
       setPreviewData(null);
       previewCacheRef.current.clear();
       await invalidateAll();
-      await onRolledBack();
+      await onRolledBack?.();
       toast.success(
         t("provider.configHistory.restoreSuccess", { app: appName }),
       );
@@ -175,7 +201,7 @@ export function ProviderConfigHistoryPanel({
   return (
     <aside
       aria-label={t("provider.configHistory.panelTitle", { app: appName })}
-      className="w-[380px] xl:w-[440px] shrink-0 border-l border-border bg-surface/50 flex flex-col min-h-0"
+      className={`flex min-h-0 flex-col border-border bg-surface/50 ${standalone ? "w-full" : "w-[380px] shrink-0 border-l xl:w-[440px]"}`}
     >
       <div className="shrink-0 border-b border-border px-4 py-3 space-y-1">
         <div className="flex items-center justify-between gap-2">
@@ -243,7 +269,7 @@ export function ProviderConfigHistoryPanel({
             {confirmRestoreId === previewData.entry.id && (
               <div className="rounded-md border border-border bg-surface p-2.5 space-y-2">
                 <p className="text-xs text-fg-1 m-0">
-                  {t("provider.configHistory.confirmRestoreMessage", {
+                  {t(restoreMessage, {
                     app: appName,
                     date: formatHistoryDate(previewData.entry.createdAt),
                   })}
@@ -435,7 +461,7 @@ export function ProviderConfigHistoryPanel({
                   {confirmingRestore && (
                     <div className="rounded-md border border-border bg-subtle p-2 space-y-2">
                       <p className="text-xs text-fg-1 m-0">
-                        {t("provider.configHistory.confirmRestoreMessage", {
+                        {t(restoreMessage, {
                           app: appName,
                           date: formatHistoryDate(backup.createdAt),
                         })}

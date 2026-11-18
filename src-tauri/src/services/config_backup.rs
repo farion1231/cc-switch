@@ -23,11 +23,11 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::app_config::AppType;
-use crate::config::{
-    atomic_write, atomic_write_private, get_claude_config_dir, get_claude_settings_path,
-};
+use crate::config::{atomic_write_private, get_claude_config_dir};
 use crate::error::AppError;
-use crate::live::engine::{lock_app, DeviceStore};
+use crate::live::engine::{lock_app, DeviceStore, LiveFile};
+use crate::live::patch::{Guarded, WholeFile};
+use crate::mode::{operation, state as mode_state};
 use crate::settings::effective_backup_retain_count;
 use crate::store::AppState;
 use crate::sync_utils::MutexExt;
@@ -43,10 +43,10 @@ fn backup_ops_lock() -> &'static Mutex<()> {
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
-/// Tracks the most recently rolled-back content digest per `(backup_dir, app)` so
+/// Track the restored digest for the app backup directory and its active profile so
 /// immediately saving after a rollback does not create a redundant snapshot.
-fn last_restored_digests() -> &'static Mutex<HashMap<(PathBuf, String), String>> {
-    static MAP: OnceLock<Mutex<HashMap<(PathBuf, String), String>>> = OnceLock::new();
+fn last_restored_digests() -> &'static Mutex<HashMap<(PathBuf, PathBuf), String>> {
+    static MAP: OnceLock<Mutex<HashMap<(PathBuf, PathBuf), String>>> = OnceLock::new();
     MAP.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -87,6 +87,8 @@ pub struct ConfigBackupManifest {
     pub reason: ConfigBackupReason,
     pub created_at: String,
     pub pinned: bool,
+    #[serde(default)]
+    pub proxy_attached: Option<bool>,
     pub label: Option<String>,
     pub content_digest: String,
     pub files: Vec<ConfigBackupFileRecord>,
@@ -190,16 +192,10 @@ fn sha256_hex(bytes: &[u8]) -> String {
 /// Exhaustive match over `AppType` ensures every supported app is handled.
 pub(crate) fn resolve_app_config_targets(app: &AppType) -> Result<Vec<ConfigTarget>, AppError> {
     match app {
-        AppType::Claude => {
-            let path = get_claude_settings_path();
-            let key = path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .filter(|n| *n == "claude.json" || *n == "settings.json")
-                .unwrap_or("settings.json")
-                .to_string();
-            Ok(vec![ConfigTarget::new(key, path, true)])
-        }
+        AppType::Claude => Ok(["settings.json", "claude.json"]
+            .into_iter()
+            .map(|name| ConfigTarget::new(name, get_claude_config_dir().join(name), true))
+            .collect()),
         AppType::ClaudeDesktop => {
             let targets = crate::claude_desktop_config::backup_target_paths()?;
             Ok(targets
@@ -238,15 +234,12 @@ pub(crate) fn resolve_app_config_targets(app: &AppType) -> Result<Vec<ConfigTarg
             true,
         )]),
         AppType::OpenCode => {
-            let main_path = crate::opencode_config::get_opencode_config_path()?;
-            let main_key = main_path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .filter(|n| *n == "opencode.jsonc" || *n == "opencode.json")
-                .unwrap_or("opencode.json")
-                .to_string();
-            let mut targets = vec![ConfigTarget::new(main_key, main_path, false)];
-            for (key, path, private) in crate::services::OmoService::backup_target_paths()? {
+            let dir = crate::opencode_config::get_opencode_dir();
+            let mut targets: Vec<_> = ["opencode.jsonc", "opencode.json"]
+                .into_iter()
+                .map(|name| ConfigTarget::new(name, dir.join(name), false))
+                .collect();
+            for (key, path, private) in crate::services::OmoService::backup_target_paths() {
                 targets.push(ConfigTarget::new(key, path, private));
             }
             Ok(targets)
@@ -289,24 +282,16 @@ pub(crate) fn resolve_app_config_targets(app: &AppType) -> Result<Vec<ConfigTarg
             true,
         )]),
         AppType::Omp => {
-            let models_path = crate::omp_config::get_omp_models_path()?;
-            let models_key = models_path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .filter(|n| *n == "models.yml" || *n == "models.yaml")
-                .unwrap_or("models.yml")
-                .to_string();
-            let settings_path = crate::omp_config::get_omp_settings_path()?;
-            let settings_key = settings_path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .filter(|n| *n == "config.yml" || *n == "config.yaml")
-                .unwrap_or("config.yml")
-                .to_string();
-            Ok(vec![
-                ConfigTarget::new(models_key, models_path, true),
-                ConfigTarget::new(settings_key, settings_path, false),
-            ])
+            let dir = crate::omp_config::get_omp_agent_dir()?;
+            Ok([
+                ("models.yml", true),
+                ("models.yaml", true),
+                ("config.yml", false),
+                ("config.yaml", false),
+            ]
+            .into_iter()
+            .map(|(name, private)| ConfigTarget::new(name, dir.join(name), private))
+            .collect())
         }
         AppType::Copilot => Ok(vec![
             ConfigTarget::new(
@@ -338,37 +323,13 @@ fn resolve_target_path_for_key(
         return Ok(None);
     }
 
-    match app {
-        AppType::Claude => match key {
-            "settings.json" | "claude.json" => Ok(Some((get_claude_config_dir().join(key), true))),
-            _ => Ok(None),
-        },
-        AppType::OpenCode => {
-            if key == "opencode.json" || key == "opencode.jsonc" {
-                return Ok(Some((
-                    crate::opencode_config::get_opencode_dir().join(key),
-                    false,
-                )));
-            }
-            Ok(crate::services::OmoService::resolve_backup_target_path(key))
-        }
-        AppType::Dsh => Ok(crate::dsh_config::resolve_backup_target_path(key)),
-        AppType::Omp => {
-            let dir = crate::omp_config::get_omp_agent_dir()?;
-            match key {
-                "models.yml" | "models.yaml" => Ok(Some((dir.join(key), true))),
-                "config.yml" | "config.yaml" => Ok(Some((dir.join(key), false))),
-                _ => Ok(None),
-            }
-        }
-        _ => {
-            let targets = resolve_app_config_targets(app)?;
-            Ok(targets
-                .into_iter()
-                .find(|t| t.key == key)
-                .map(|t| (t.path, t.private)))
-        }
+    if app == &AppType::Dsh {
+        return Ok(crate::dsh_config::resolve_backup_target_path(key));
     }
+    Ok(resolve_app_config_targets(app)?
+        .into_iter()
+        .find(|target| target.key == key)
+        .map(|target| (target.path, target.private)))
 }
 
 fn is_safe_rel_key(key: &str) -> bool {
@@ -380,7 +341,7 @@ fn is_safe_rel_key(key: &str) -> bool {
 }
 
 fn validate_backup_id(backup_id: &str) -> Result<(), AppError> {
-    if backup_id.is_empty()
+    if !is_safe_rel_key(backup_id)
         || backup_id.contains('/')
         || backup_id.contains('\\')
         || backup_id.contains("..")
@@ -421,6 +382,22 @@ struct CapturedSnapshot {
     any_existed: bool,
 }
 
+fn snapshot_digest(records: &[ConfigBackupFileRecord]) -> String {
+    let mut digest_parts: Vec<String> = records
+        .iter()
+        .map(|r| {
+            format!(
+                "{}:{}:{}",
+                r.key,
+                r.existed,
+                r.sha256.as_deref().unwrap_or("")
+            )
+        })
+        .collect();
+    digest_parts.sort();
+    sha256_hex(digest_parts.join("\n").as_bytes())
+}
+
 fn capture_targets(targets: &[ConfigTarget]) -> Result<CapturedSnapshot, AppError> {
     let mut records = Vec::with_capacity(targets.len());
     let mut bytes_by_key = HashMap::new();
@@ -459,19 +436,7 @@ fn capture_targets(targets: &[ConfigTarget]) -> Result<CapturedSnapshot, AppErro
         }
     }
 
-    let mut digest_parts: Vec<String> = records
-        .iter()
-        .map(|r| {
-            format!(
-                "{}:{}:{}",
-                r.key,
-                r.existed,
-                r.sha256.as_deref().unwrap_or("")
-            )
-        })
-        .collect();
-    digest_parts.sort();
-    let content_digest = sha256_hex(digest_parts.join("\n").as_bytes());
+    let content_digest = snapshot_digest(&records);
 
     Ok(CapturedSnapshot {
         records,
@@ -482,10 +447,68 @@ fn capture_targets(targets: &[ConfigTarget]) -> Result<CapturedSnapshot, AppErro
 }
 
 fn read_manifest(snapshot_dir: &Path) -> Result<ConfigBackupManifest, AppError> {
+    let dir_type = fs::symlink_metadata(snapshot_dir).map_err(|e| AppError::io(snapshot_dir, e))?;
+    if !dir_type.is_dir() {
+        return Err(AppError::InvalidInput("Invalid backup directory".into()));
+    }
     let manifest_path = snapshot_dir.join(MANIFEST_FILENAME);
+    if !fs::symlink_metadata(&manifest_path)
+        .map_err(|e| AppError::io(&manifest_path, e))?
+        .is_file()
+    {
+        return Err(AppError::InvalidInput("Invalid backup manifest".into()));
+    }
     let raw = fs::read_to_string(&manifest_path).map_err(|e| AppError::io(&manifest_path, e))?;
-    serde_json::from_str::<ConfigBackupManifest>(&raw)
-        .map_err(|e| AppError::json(&manifest_path, e))
+    let manifest: ConfigBackupManifest =
+        serde_json::from_str(&raw).map_err(|e| AppError::json(&manifest_path, e))?;
+    validate_backup_id(&manifest.id)?;
+    if snapshot_dir.file_name() != Some(manifest.id.as_ref()) {
+        return Err(AppError::InvalidInput(
+            "Backup ID does not match its directory".into(),
+        ));
+    }
+    Ok(manifest)
+}
+
+/// Old snapshots have no separate profile field. Match their recorded paths against
+/// the current profile's allowlist before using them for history, retention or restore.
+fn scoped_target(app: &AppType, record: &ConfigBackupFileRecord) -> Result<ConfigTarget, AppError> {
+    if let Some((path, private)) = resolve_target_path_for_key(app, &record.key)? {
+        if path.to_string_lossy() == record.original_path {
+            return Ok(ConfigTarget::new(
+                &record.key,
+                path,
+                private || record.private,
+            ));
+        }
+    }
+    // Older Windows snapshots used the same key for a native or a WSL unified OMO file.
+    if app == &AppType::OpenCode {
+        if let Some(name) = record.key.strip_prefix("omo/unified/") {
+            if let Some((path, private)) =
+                resolve_target_path_for_key(app, &format!("omo/unified-wsl/{name}"))?
+            {
+                if path.to_string_lossy() == record.original_path {
+                    return Ok(ConfigTarget::new(
+                        &record.key,
+                        path,
+                        private || record.private,
+                    ));
+                }
+            }
+        }
+    }
+    Err(AppError::localized("config_backup.scope_mismatch",
+        "此备份属于其他配置目录或配置档案，请切回原配置后重试",
+        "This backup belongs to a different configuration directory or profile. Switch back to restore it."))
+}
+
+fn matches_scope(manifest: &ConfigBackupManifest, app: &AppType) -> bool {
+    !manifest.files.is_empty()
+        && manifest
+            .files
+            .iter()
+            .all(|file| scoped_target(app, file).is_ok())
 }
 
 fn manifest_to_entry(manifest: &ConfigBackupManifest) -> ConfigBackupEntry {
@@ -512,7 +535,11 @@ fn manifest_to_entry(manifest: &ConfigBackupManifest) -> ConfigBackupEntry {
     }
 }
 
-fn load_app_manifests(store: &DeviceStore, app: &AppType) -> Vec<ConfigBackupManifest> {
+fn load_app_manifests(
+    store: &DeviceStore,
+    app: &AppType,
+    scoped: bool,
+) -> Vec<ConfigBackupManifest> {
     let app_dir = app_backup_dir(store, app);
     let Ok(entries) = fs::read_dir(&app_dir) else {
         return Vec::new();
@@ -520,11 +547,15 @@ fn load_app_manifests(store: &DeviceStore, app: &AppType) -> Vec<ConfigBackupMan
     let mut manifests = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
-        if !path.is_dir() {
+        if !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
             continue;
         }
         match read_manifest(&path) {
-            Ok(manifest) if manifest.app == app.as_str() => manifests.push(manifest),
+            Ok(manifest) if manifest.app == app.as_str() => {
+                if !scoped || matches_scope(&manifest, app) {
+                    manifests.push(manifest);
+                }
+            }
             Ok(manifest) => {
                 log::warn!(
                     "Ignoring mismatched app config backup manifest {} (app={})",
@@ -552,10 +583,11 @@ fn write_snapshot(
     store: &DeviceStore,
     app: &AppType,
     reason: ConfigBackupReason,
-    pinned: bool,
     label: Option<&str>,
     captured: CapturedSnapshot,
+    preserve_id: Option<&str>,
 ) -> Result<ConfigBackupEntry, AppError> {
+    let pinned = reason == ConfigBackupReason::Import;
     let app_dir = app_backup_dir(store, app);
     fs::create_dir_all(&app_dir).map_err(|e| AppError::io(&app_dir, e))?;
 
@@ -584,6 +616,9 @@ fn write_snapshot(
         reason,
         created_at: Utc::now().to_rfc3339(),
         pinned,
+        proxy_attached: Some(
+            app.spec().route_mode && mode_state::mode_state(store, app.as_str())?.attached,
+        ),
         label: label.map(str::to_string),
         content_digest: captured.content_digest,
         files: captured.records,
@@ -601,21 +636,43 @@ fn write_snapshot(
     }
 
     if !pinned {
-        prune_unpinned_backups(store, app, &app_dir);
+        prune_unpinned_backups(store, app, &app_dir, preserve_id);
     }
 
     Ok(manifest_to_entry(&manifest))
 }
 
-fn prune_unpinned_backups(store: &DeviceStore, app: &AppType, app_dir: &Path) {
+fn prune_unpinned_backups(
+    store: &DeviceStore,
+    app: &AppType,
+    app_dir: &Path,
+    preserve_id: Option<&str>,
+) {
     let retain = effective_backup_retain_count();
-    let manifests = load_app_manifests(store, app);
+    let manifests = load_app_manifests(store, app, true);
     let unpinned: Vec<ConfigBackupManifest> = manifests.into_iter().filter(|m| !m.pinned).collect();
     if unpinned.len() <= retain {
         return;
     }
-    for old in unpinned.into_iter().skip(retain) {
-        let path = app_dir.join(&old.id);
+    let expired: std::collections::HashSet<_> = unpinned
+        .into_iter()
+        .skip(retain)
+        .filter(|old| Some(old.id.as_str()) != preserve_id)
+        .map(|old| old.id)
+        .collect();
+    let Ok(entries) = fs::read_dir(app_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if !entry.file_type().is_ok_and(|kind| kind.is_dir())
+            || !entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| expired.contains(name))
+        {
+            continue;
+        }
+        let path = entry.path();
         if let Err(err) = fs::remove_dir_all(&path) {
             log::warn!(
                 "Failed to prune old app config backup {}: {err}",
@@ -645,7 +702,7 @@ pub(crate) fn ensure_import_backup_in(
     label: Option<&str>,
 ) -> Result<Option<ConfigBackupEntry>, AppError> {
     let _guard = backup_ops_lock().lock_recover();
-    let existing = load_app_manifests(store, app);
+    let existing = load_app_manifests(store, app, true);
     if existing
         .iter()
         .any(|m| m.reason == ConfigBackupReason::Import)
@@ -666,9 +723,9 @@ pub(crate) fn ensure_import_backup_in(
         store,
         app,
         ConfigBackupReason::Import,
-        true,
         label,
         captured,
+        None,
     )?;
     log::info!(
         "Created initial import config backup '{}' for {}",
@@ -707,7 +764,21 @@ pub(crate) fn backup_before_edit_in(
         return Ok(None);
     }
 
-    let existing = load_app_manifests(store, app);
+    let existing = load_app_manifests(store, app, true);
+    if !existing
+        .iter()
+        .any(|m| m.reason == ConfigBackupReason::Import)
+    {
+        return write_snapshot(
+            store,
+            app,
+            ConfigBackupReason::Import,
+            label,
+            captured,
+            None,
+        )
+        .map(Some);
+    }
     if existing
         .iter()
         .any(|m| m.content_digest == captured.content_digest)
@@ -715,7 +786,7 @@ pub(crate) fn backup_before_edit_in(
         return Ok(None);
     }
 
-    let entry = write_snapshot(store, app, ConfigBackupReason::Edit, false, label, captured)?;
+    let entry = write_snapshot(store, app, ConfigBackupReason::Edit, label, captured, None)?;
     log::debug!(
         "Created pre-edit config backup '{}' for {}",
         entry.id,
@@ -754,14 +825,14 @@ pub(crate) fn backup_on_save_in(
         return Ok(None);
     }
 
-    let key = (store.app_config_backup_dir(), app.as_str().to_string());
+    let key = (app_backup_dir(store, app), targets[0].path.clone());
     if let Some(restored_digest) = last_restored_digests().lock_recover().remove(&key) {
         if restored_digest == captured.content_digest {
             return Ok(None);
         }
     }
 
-    let entry = write_snapshot(store, app, ConfigBackupReason::Edit, false, label, captured)?;
+    let entry = write_snapshot(store, app, ConfigBackupReason::Edit, label, captured, None)?;
     log::debug!(
         "Created post-save config backup '{}' for {}",
         entry.id,
@@ -783,13 +854,13 @@ pub(crate) fn list_backups_in(
     let mut entries = Vec::new();
     match app {
         Some(target_app) => {
-            for manifest in load_app_manifests(store, target_app) {
+            for manifest in load_app_manifests(store, target_app, true) {
                 entries.push(manifest_to_entry(&manifest));
             }
         }
         None => {
             for app_type in AppType::all() {
-                for manifest in load_app_manifests(store, &app_type) {
+                for manifest in load_app_manifests(store, &app_type, false) {
                     entries.push(manifest_to_entry(&manifest));
                 }
             }
@@ -830,6 +901,13 @@ pub(crate) fn preview_backup_in(
             "备份 {backup_id} 不属于应用 {}",
             app.as_str()
         )));
+    }
+    if !matches_scope(&manifest, app) {
+        return Err(AppError::localized(
+            "config_backup.scope_mismatch",
+            "此备份属于其他配置目录或配置档案",
+            "This backup belongs to a different configuration directory or profile.",
+        ));
     }
 
     let entry = manifest_to_entry(&manifest);
@@ -894,10 +972,21 @@ fn read_archived_file(
         .archive_rel_path
         .as_deref()
         .ok_or_else(|| AppError::Config(format!("备份文件 {} 缺少归档路径", record.key)))?;
-    if !is_safe_rel_key(rel) {
+    if rel != format!("{FILES_DIRNAME}/{}", record.key) || !is_safe_rel_key(rel) {
         return Err(AppError::InvalidInput(format!("备份归档路径非法: {rel}")));
     }
-    let archive_path = snapshot_dir.join(rel);
+    let mut archive_path = snapshot_dir.to_path_buf();
+    for part in Path::new(rel).components() {
+        archive_path.push(part);
+        if fs::symlink_metadata(&archive_path)
+            .map_err(|e| AppError::io(&archive_path, e))?
+            .is_symlink()
+        {
+            return Err(AppError::InvalidInput(
+                "Unexpected link in backup archive".into(),
+            ));
+        }
+    }
     let bytes = fs::read(&archive_path).map_err(|e| AppError::io(&archive_path, e))?;
     if let Some(expected_hash) = &record.sha256 {
         let actual_hash = sha256_hex(&bytes);
@@ -909,6 +998,14 @@ fn read_archived_file(
         }
     }
     Ok(bytes)
+}
+
+fn proxy_snapshot_error() -> AppError {
+    AppError::localized(
+        "config_backup.proxy_snapshot",
+        "此快照使用 CC Switch 的代理配置，请选择直连模式下的快照",
+        "This snapshot contains CC Switch proxy settings. Select a direct-mode snapshot.",
+    )
 }
 
 /// Roll back an app's local config files to the specified backup snapshot.
@@ -944,8 +1041,23 @@ pub(crate) fn restore_backup_in(
         )),
         _ => None,
     };
-    let _app_write_guard = lock_app(app.as_str());
-    let _backup_guard = backup_ops_lock().lock_recover();
+    let app_guard = lock_app(app.as_str());
+    let commit = |target: &mode_state::PendingTarget| match state {
+        Some(state) => operation::commit_target(&state.db, store, app.as_str(), target),
+        None if target.is_empty() => Ok(()),
+        None => Err(AppError::Config(
+            "Restoring provider state requires a database".into(),
+        )),
+    };
+    operation::recover_before_write(store, &app_guard, &commit)?;
+    if app.spec().route_mode && mode_state::mode_state(store, app.as_str())?.is_proxy() {
+        return Err(AppError::localized(
+            "config_backup.proxy_active",
+            "请先退出代理模式，再恢复直连配置",
+            "Exit proxy mode before restoring a direct configuration.",
+        ));
+    }
+    let backup_guard = backup_ops_lock().lock_recover();
 
     let snapshot_dir = app_backup_dir(store, app).join(backup_id);
     if !snapshot_dir.exists() {
@@ -964,68 +1076,160 @@ pub(crate) fn restore_backup_in(
         )));
     }
 
-    // Load and verify every archived file in memory before mutating anything on disk.
-    struct RestoreAction {
-        key: String,
-        dest: PathBuf,
-        private: bool,
-        bytes: Option<Vec<u8>>,
+    if manifest.proxy_attached == Some(true) {
+        return Err(proxy_snapshot_error());
     }
-    let mut actions = Vec::with_capacity(manifest.files.len());
+    // Verify the archive and every destination before staging the first write. The operation
+    // journal keeps file publication and the provider pointer recoverable as one operation.
+    let mut targets = resolve_app_config_targets(app)?;
+    let mut archived = Vec::with_capacity(manifest.files.len());
+    let mut destinations = std::collections::HashSet::new();
     for record in &manifest.files {
-        let Some((dest, default_private)) = resolve_target_path_for_key(app, &record.key)? else {
-            return Err(AppError::InvalidInput(format!(
-                "无法解析应用 {} 的配置键 {}",
-                app.as_str(),
-                record.key
-            )));
-        };
-        let bytes = if record.existed {
-            Some(read_archived_file(&snapshot_dir, record)?)
+        let target = scoped_target(app, record)?;
+        if !destinations.insert(target.path.clone()) {
+            return Err(AppError::InvalidInput(
+                "Duplicate backup destination".into(),
+            ));
+        }
+        let next = if record.existed {
+            let bytes = read_archived_file(&snapshot_dir, record)?;
+            if app.spec().route_mode
+                && manifest.proxy_attached.is_none()
+                && bytes
+                    .windows(b"PROXY_MANAGED".len())
+                    .any(|part| part == b"PROXY_MANAGED")
+            {
+                return Err(proxy_snapshot_error());
+            }
+            WholeFile::Write(bytes)
         } else {
-            None
+            WholeFile::Delete
         };
-        actions.push(RestoreAction {
-            key: record.key.clone(),
-            dest,
-            private: record.private || default_private,
-            bytes,
-        });
-    }
-
-    // Rolling back restores a previously saved snapshot directly without creating another backup.
-    let safety_backup_id: Option<String> = None;
-    last_restored_digests().lock_recover().insert(
-        (store.app_config_backup_dir(), app.as_str().to_string()),
-        manifest.content_digest.clone(),
-    );
-
-    let mut restored_files = Vec::new();
-    for action in actions {
-        match action.bytes {
-            Some(bytes) => {
-                if let Some(parent) = action.dest.parent() {
-                    fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
-                }
-                if action.private {
-                    atomic_write_private(&action.dest, &bytes)?;
-                } else {
-                    atomic_write(&action.dest, &bytes)?;
-                }
-                restored_files.push(action.key);
-            }
+        let index = match targets
+            .iter()
+            .position(|candidate| candidate.path == target.path)
+        {
+            Some(index) => index,
             None => {
-                if action.dest.exists() {
-                    fs::remove_file(&action.dest).map_err(|e| AppError::io(&action.dest, e))?;
-                    restored_files.push(action.key);
-                }
+                targets.push(target.clone());
+                targets.len() - 1
             }
+        };
+        archived.push((index, target, next));
+    }
+    // Earlier versions recorded only the first existing Slim filename. No Slim key
+    // means neither candidate existed. If one was recorded, leave any unknown alternate alone.
+    if app == &AppType::OpenCode
+        && manifest.proxy_attached.is_none()
+        && !manifest
+            .files
+            .iter()
+            .any(|file| file.key.starts_with("omo/slim/"))
+    {
+        for (index, target) in targets
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| t.key.starts_with("omo/slim/"))
+        {
+            archived.push((index, target.clone(), WholeFile::Delete));
         }
     }
+    if manifest.files.is_empty() {
+        return Err(AppError::InvalidInput("Empty configuration backup".into()));
+    }
 
-    // Release locks before best-effort DB re-sync for additive apps.
-    drop(_backup_guard);
-    drop(_app_write_guard);
+    let captured = capture_targets(&targets)?;
+    let mut projected = captured.records.clone();
+    let files_and_patches: Vec<_> = archived
+        .into_iter()
+        .map(|(index, target, then)| {
+            let current = &captured.records[index];
+            projected[index].sha256 = match &then {
+                WholeFile::Write(bytes) => Some(sha256_hex(bytes)),
+                WholeFile::Delete => None,
+            };
+            projected[index].existed = projected[index].sha256.is_some();
+            let patch = Guarded {
+                expected_pre: current.sha256.clone(),
+                then,
+            };
+            (target, patch)
+        })
+        .collect();
+    let existing = load_app_manifests(store, app, true);
+    let app_dir = app_backup_dir(store, app);
+    let safety_backup_id = if existing.iter().any(|m| {
+        m.content_digest == captured.content_digest
+            && m.proxy_attached != Some(true)
+            && snapshot_digest(&m.files) == captured.content_digest
+            && m.files
+                .iter()
+                .filter(|record| record.existed)
+                .all(|record| read_archived_file(&app_dir.join(&m.id), record).is_ok())
+    }) {
+        None
+    } else {
+        Some(
+            write_snapshot(
+                store,
+                app,
+                ConfigBackupReason::Rollback,
+                None,
+                captured,
+                Some(backup_id),
+            )?
+            .id,
+        )
+    };
+    let changes: Vec<_> = files_and_patches
+        .iter()
+        .map(|(target, patch)| operation::FileChange {
+            file: LiveFile {
+                path: target.path.clone(),
+                private: target.private,
+            },
+            patch,
+        })
+        .collect();
+    let target = match state.filter(|_| app.spec().route_mode) {
+        Some(state) => {
+            // The archived settings do not include Claude's Keychain. Park a bound login
+            // before releasing the selection, as part of the recoverable state update.
+            let account = if app == &AppType::Claude {
+                crate::mode::current::direct_provider(&state.db, app)?
+                    .as_ref()
+                    .and_then(crate::services::provider::claude_official::bound_account)
+            } else {
+                None
+            };
+            mode_state::PendingTarget {
+                written: Some(mode_state::Written::default()),
+                vacate_claude_account: account,
+                ..mode_state::PendingTarget::clear_pointer()
+            }
+        }
+        None => mode_state::PendingTarget::default(),
+    };
+    let report = operation::run(
+        store,
+        &app_guard,
+        mode_state::op::RESTORE_CONFIG,
+        &changes,
+        target,
+        &commit,
+    )?;
+    let restored_files = files_and_patches
+        .into_iter()
+        .filter(|(target, _)| report.changed.contains(&target.path))
+        .map(|(target, _)| target.key)
+        .collect::<Vec<_>>();
+    last_restored_digests().lock_recover().insert(
+        (app_backup_dir(store, app), targets[0].path.clone()),
+        snapshot_digest(&projected),
+    );
+
+    drop(backup_guard);
+    drop(app_guard);
     drop(_native_guard);
     drop(_route_guard);
 
@@ -1093,6 +1297,13 @@ pub(crate) fn delete_backup_in(
             app.as_str()
         )));
     }
+    if !matches_scope(&manifest, app) {
+        return Err(AppError::localized(
+            "config_backup.scope_mismatch",
+            "此备份属于其他配置目录或配置档案",
+            "This backup belongs to a different configuration directory or profile.",
+        ));
+    }
     fs::remove_dir_all(&snapshot_dir).map_err(|e| AppError::io(&snapshot_dir, e))?;
     Ok(())
 }
@@ -1136,7 +1347,7 @@ mod tests {
             .expect("initial import backup should be created");
         assert_eq!(first.reason, ConfigBackupReason::Import);
         assert!(first.pinned);
-        assert_eq!(first.files.len(), 1);
+        assert_eq!(first.files.len(), 2);
         assert!(first.files[0].existed);
 
         // Second call must be a no-op even if disk changes.
@@ -1164,9 +1375,10 @@ mod tests {
         let config_path = grok_dir.join("config.toml");
         fs::write(&config_path, "# user comment\nversion = 0\n").unwrap();
 
-        let import_entry = ensure_import_backup(&AppType::GrokBuild, Some("import"))
-            .unwrap()
-            .unwrap();
+        let import_entry =
+            backup_before_edit(&AppType::GrokBuild, Some("first edit after upgrade"))
+                .unwrap()
+                .unwrap();
 
         // Same content as import -> deduplicated.
         assert!(backup_before_edit(&AppType::GrokBuild, Some("edit-0"))
@@ -1231,11 +1443,21 @@ mod tests {
 
         let count_before_restore = list_backups(Some(&AppType::Codex)).unwrap().len();
         let restored = restore_backup(None, &AppType::Codex, &import_entry.id).unwrap();
-        assert!(restored.safety_backup_id.is_none());
+        let safety = preview_backup(&AppType::Codex, &restored.safety_backup_id.unwrap()).unwrap();
+        assert_eq!(safety.entry.reason, ConfigBackupReason::Rollback);
+        assert!(safety.files[0]
+            .content
+            .as_deref()
+            .unwrap()
+            .contains("edited"));
+        assert!(restore_backup(None, &AppType::Codex, &import_entry.id)
+            .unwrap()
+            .safety_backup_id
+            .is_none());
         assert_eq!(
             list_backups(Some(&AppType::Codex)).unwrap().len(),
-            count_before_restore,
-            "rollback must not create a new backup"
+            count_before_restore + 1,
+            "repeating a restore should reuse the archived preimage"
         );
         assert_eq!(
             fs::read_to_string(&auth_path).unwrap(),
@@ -1249,6 +1471,164 @@ mod tests {
             !catalog_path.exists(),
             "file that did not exist at import must be removed on rollback"
         );
+    }
+
+    #[test]
+    #[serial]
+    fn restore_preflights_every_destination_and_recovers_an_interrupted_publish() {
+        let home = TempUserHome::new();
+        let dir = home.path().join(".codex");
+        fs::create_dir_all(&dir).unwrap();
+        let auth = dir.join("auth.json");
+        let config = dir.join("config.toml");
+        fs::write(&auth, "old auth").unwrap();
+        fs::write(&config, "old config").unwrap();
+        let original = ensure_import_backup(&AppType::Codex, None)
+            .unwrap()
+            .unwrap();
+        fs::write(&auth, "new auth").unwrap();
+        fs::remove_file(&config).unwrap();
+        fs::create_dir(&config).unwrap();
+        assert!(restore_backup(None, &AppType::Codex, &original.id).is_err());
+        assert_eq!(fs::read(&auth).unwrap(), b"new auth");
+        assert_eq!(list_backups(Some(&AppType::Codex)).unwrap().len(), 1);
+        fs::remove_dir(&config).unwrap();
+        fs::write(&config, "new config").unwrap();
+        operation::failpoint::crash_at(Some("published:0"));
+        let interrupted = restore_backup(None, &AppType::Codex, &original.id);
+        operation::failpoint::crash_at(None);
+        assert!(interrupted.is_err());
+        let store = DeviceStore::for_device();
+        let guard = lock_app("codex");
+        assert_eq!(
+            operation::recover(&store, &guard, &|_| Ok(())).unwrap(),
+            Some(operation::RecoveryOutcome::RolledForward)
+        );
+        assert_eq!(fs::read(&config).unwrap(), b"old config");
+        assert_eq!(fs::read(&auth).unwrap(), b"old auth");
+        let safety = list_backups(Some(&AppType::Codex))
+            .unwrap()
+            .into_iter()
+            .find(|entry| entry.reason == ConfigBackupReason::Rollback)
+            .unwrap();
+        let preview = preview_backup(&AppType::Codex, &safety.id).unwrap();
+        assert_eq!(preview.files[0].content.as_deref(), Some("new auth"));
+        assert_eq!(preview.files[1].content.as_deref(), Some("new config"));
+    }
+
+    #[test]
+    #[serial]
+    fn omp_history_and_rollback_follow_the_selected_profile() {
+        let _home = TempUserHome::new();
+        let _env = EnvVars::new().set("OMP_PROFILE", "personal");
+        let app = AppType::Omp;
+        let personal = crate::omp_config::get_omp_agent_dir().unwrap();
+        fs::create_dir_all(&personal).unwrap();
+        fs::write(personal.join("models.yml"), "personal: true").unwrap();
+        let first = backup_before_edit(&app, None).unwrap().unwrap();
+        {
+            let _env = EnvVars::new().set("OMP_PROFILE", "work");
+            let work = crate::omp_config::get_omp_agent_dir().unwrap();
+            fs::create_dir_all(&work).unwrap();
+            // Identical contents in independent profiles must each get a pinned original.
+            fs::write(work.join("models.yml"), "personal: true").unwrap();
+            assert!(list_backups(Some(&app)).unwrap().is_empty());
+            assert!(backup_before_edit(&app, None).unwrap().unwrap().pinned);
+            fs::write(work.join("models.yml"), "work: true").unwrap();
+            assert!(restore_backup(None, &app, &first.id).is_err());
+            assert!(delete_backup(&app, &first.id).is_err());
+            assert_eq!(fs::read(work.join("models.yml")).unwrap(), b"work: true");
+        }
+        assert_eq!(list_backups(Some(&app)).unwrap()[0].id, first.id);
+    }
+
+    #[test]
+    #[serial]
+    fn restores_absent_opencode_and_omo_variants() {
+        let _home = TempUserHome::new();
+        let dir = crate::opencode_config::get_opencode_dir();
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("opencode.json"), "{}").unwrap();
+        let entry = ensure_import_backup(&AppType::OpenCode, None)
+            .unwrap()
+            .unwrap();
+        let slim = dir.join("oh-my-opencode-slim.jsonc");
+        let alternate = dir.join("opencode.jsonc");
+        fs::write(&slim, "{/* new slim */}").unwrap();
+        fs::write(&alternate, "{}").unwrap();
+        restore_backup(None, &AppType::OpenCode, &entry.id).unwrap();
+        assert!(!slim.exists());
+        assert!(!alternate.exists());
+        assert!(dir.join("opencode.json").is_file());
+
+        // An older snapshot only listed files present when it was taken.
+        let snapshot_dir =
+            app_backup_dir(&DeviceStore::for_device(), &AppType::OpenCode).join(&entry.id);
+        let mut older = read_manifest(&snapshot_dir).unwrap();
+        older.files.retain(|file| file.existed);
+        older.content_digest = snapshot_digest(&older.files);
+        older.proxy_attached = None;
+        fs::write(
+            snapshot_dir.join(MANIFEST_FILENAME),
+            serde_json::to_vec(&older).unwrap(),
+        )
+        .unwrap();
+        fs::write(&slim, "{}").unwrap();
+        restore_backup(None, &AppType::OpenCode, &entry.id).unwrap();
+        assert!(!slim.exists());
+        assert!(backup_on_save(&AppType::OpenCode, None).unwrap().is_none());
+    }
+
+    #[test]
+    #[serial]
+    fn retention_ignores_a_manifest_filed_under_the_wrong_id() {
+        let _home = TempUserHome::new();
+        let app = AppType::Kimi;
+        let path = crate::kimi_config::config_path();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, "original").unwrap();
+        let first = backup_before_edit(&app, None).unwrap().unwrap();
+        let store = DeviceStore::for_device();
+        let app_dir = app_backup_dir(&store, &app);
+        let misplaced = app_dir.join("misfiled-backup");
+        fs::create_dir_all(&misplaced).unwrap();
+        fs::copy(
+            app_dir.join(&first.id).join(MANIFEST_FILENAME),
+            misplaced.join(MANIFEST_FILENAME),
+        )
+        .unwrap();
+        assert!(read_manifest(&misplaced).is_err());
+        prune_unpinned_backups(&store, &app, &app_dir, None);
+        assert!(app_dir.join(&first.id).is_dir());
+        assert!(misplaced.is_dir());
+        assert_eq!(list_backups(Some(&app)).unwrap().len(), 1);
+    }
+
+    #[test]
+    #[serial]
+    fn rejects_restoring_into_proxy_mode_or_from_a_proxy_snapshot() {
+        let _home = TempUserHome::new();
+        let store = DeviceStore::for_device();
+        let app = AppType::Codex;
+        let dir = crate::codex_config::get_codex_config_path();
+        fs::create_dir_all(dir.parent().unwrap()).unwrap();
+        fs::write(&dir, "model = 'original'").unwrap();
+        let direct = backup_before_edit(&app, None).unwrap().unwrap();
+        mode_state::update(&store, |live| {
+            let entry = live.apps.entry("codex".into()).or_default();
+            entry.mode = Some(mode_state::Mode::Proxy);
+            entry.attached = true;
+        })
+        .unwrap();
+        fs::write(&dir, "model = 'proxy'").unwrap();
+        let proxy = backup_before_edit(&app, None).unwrap().unwrap();
+        assert!(restore_backup(None, &app, &direct.id).is_err());
+        assert_eq!(fs::read(&dir).unwrap(), b"model = 'proxy'");
+        mode_state::update(&store, |live| {
+            live.apps.remove("codex");
+        })
+        .unwrap();
+        assert!(restore_backup(None, &app, &proxy.id).is_err());
     }
 
     #[test]
@@ -1375,6 +1755,20 @@ mod tests {
             .id
             .clone();
         restore_backup(Some(&state), &AppType::Claude, &import_id).unwrap();
+        assert_eq!(
+            fs::read_to_string(&claude_settings).unwrap(),
+            original_claude
+        );
+
+        assert!(
+            crate::mode::current::direct_provider(&state.db, &AppType::Claude)
+                .unwrap()
+                .is_none()
+        );
+        assert!(crate::settings::get_current_provider(&AppType::Claude).is_none());
+
+        let previous = ProviderService::list(&state, AppType::Claude).unwrap()["p3"].clone();
+        ProviderService::update_from_editor(&state, AppType::Claude, None, previous, None).unwrap();
         assert_eq!(
             fs::read_to_string(&claude_settings).unwrap(),
             original_claude

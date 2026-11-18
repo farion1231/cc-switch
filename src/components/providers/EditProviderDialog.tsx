@@ -20,7 +20,6 @@ import {
   type AppId,
   type AuthCenterTarget,
 } from "@/lib/api";
-import { backupsApi, type ConfigBackupEntry } from "@/lib/api/settings";
 import type {
   EditorConflictPolicy,
   ProviderEditorSave,
@@ -83,8 +82,6 @@ export function EditProviderDialog({
   const [authSettingsTarget, setAuthSettingsTarget] =
     useState<AuthCenterTarget | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [configBackups, setConfigBackups] = useState<ConfigBackupEntry[]>([]);
-  const [isLoadingBackups, setIsLoadingBackups] = useState(false);
   const [reloadRevision, setReloadRevision] = useState(0);
   const [reloadedProvider, setReloadedProvider] = useState<Provider | null>(
     null,
@@ -97,32 +94,6 @@ export function EditProviderDialog({
   }, [appId, open, provider?.id]);
 
   const activeProvider = reloadedProvider ?? provider;
-
-  const refreshBackups = useCallback(async () => {
-    if (!open || !provider) {
-      setConfigBackups([]);
-      return;
-    }
-    setIsLoadingBackups(true);
-    try {
-      const items = await backupsApi.listAppConfigBackups(appId);
-      setConfigBackups(items);
-    } catch {
-      setConfigBackups([]);
-    } finally {
-      setIsLoadingBackups(false);
-    }
-  }, [appId, open, provider]);
-
-  useEffect(() => {
-    if (!open || !provider || !historyOpen) {
-      if (!open) {
-        setConfigBackups([]);
-      }
-      return;
-    }
-    void refreshBackups();
-  }, [open, provider, historyOpen, refreshBackups]);
 
   const formReadyToken = useMemo(
     () => Symbol("provider-form-ready"),
@@ -336,6 +307,10 @@ export function EditProviderDialog({
   ]);
 
   const handleRolledBack = useCallback(async () => {
+    if (appHas(appId, "routeMode")) {
+      onOpenChange(false);
+      return;
+    }
     if (provider && typeof providersApi?.getAll === "function") {
       try {
         const all = await providersApi.getAll(appId);
@@ -348,7 +323,7 @@ export function EditProviderDialog({
     }
     setHasLoadedLive(false);
     setReloadRevision((rev) => rev + 1);
-  }, [appId, provider]);
+  }, [appId, provider, onOpenChange]);
 
   const handleSubmit = useCallback(
     async (values: ProviderFormValues) => {
@@ -460,10 +435,7 @@ export function EditProviderDialog({
         historyOpen ? (
           <ProviderConfigHistoryPanel
             appId={appId}
-            backups={configBackups}
-            isLoading={isLoadingBackups}
             onClose={() => setHistoryOpen(false)}
-            onRefresh={refreshBackups}
             onRolledBack={handleRolledBack}
           />
         ) : undefined

@@ -288,6 +288,8 @@
       "restore": "Rollback",
       "restoring": "Rolling back...",
       "confirmRestoreAction": "Confirm Rollback",
+      "loadFailed": "Could not load configuration history",
+      "confirmRestoreDirect": "Rolling back {{app}} to the snapshot from {{date}} will overwrite the current local config files. CC Switch will clear the active provider. Select a provider again to resume managing this configuration.",
       "confirmRestoreMessage": "Rolling back {{app}} to the snapshot from {{date}} will overwrite the current local config files.",
       "restoreSuccess": "Rolled back {{app}} configuration",
       "restoreFailed": "Rollback failed",

@@ -288,6 +288,8 @@
       "restore": "回退",
       "restoring": "回退中...",
       "confirmRestoreAction": "確認回退",
+      "loadFailed": "無法載入設定歷史",
+      "confirmRestoreDirect": "將 {{app}} 的本機設定檔回退至 {{date}} 的快照並覆寫目前本機設定。 CC Switch 會清除目前的供應商。再次選擇供應商後，才會重新管理此設定。",
       "confirmRestoreMessage": "將 {{app}} 的本機設定檔回退至 {{date}} 的快照並覆寫目前本機設定。",
       "restoreSuccess": "已回退 {{app}} 本機設定",
       "restoreFailed": "回退設定失敗",
