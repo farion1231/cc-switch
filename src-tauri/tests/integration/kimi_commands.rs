@@ -109,7 +109,7 @@ fn kimi_official_accounts_edit_models_leave_kimi_and_are_deleted_only_after_leav
     assert!(credentials.join("kimi-code-ccs-second.json").exists());
     let saved = state
         .db
-        .get_provider_by_id("kimi-code-ccs-second", "kimi")
+        .get_provider_by_id("kimi-code-ccs-second", &AppType::Kimi)
         .unwrap()
         .unwrap();
     assert_eq!(saved.meta.unwrap().live_config_managed, Some(false));
@@ -130,7 +130,11 @@ fn kimi_official_accounts_edit_models_leave_kimi_and_are_deleted_only_after_leav
         );
         ProviderService::remove_from_live_config(&state, AppType::Kimi, id).unwrap();
         ProviderService::delete(&state, AppType::Kimi, id).unwrap();
-        assert!(state.db.get_provider_by_id(id, "kimi").unwrap().is_none());
+        assert!(state
+            .db
+            .get_provider_by_id(id, &AppType::Kimi)
+            .unwrap()
+            .is_none());
     }
     assert_eq!(fs::read_to_string(home.config()).unwrap(), "");
 }
@@ -204,7 +208,7 @@ fn kimi_official_import_repairs_existing_display_identity_without_rewriting_nati
     let id = "managed:kimi-code";
     let mut legacy = Provider::with_id(id.into(), id.into(), json!({}), None);
     legacy.notes = Some("my note".into());
-    state.db.save_provider("kimi", &legacy).unwrap();
+    state.db.save_provider(&AppType::Kimi, &legacy).unwrap();
     let providers = ProviderService::list(&state, AppType::Kimi).unwrap();
     let official = &providers[id];
     assert_eq!(official.name, "Kimi Official");
@@ -221,7 +225,11 @@ fn kimi_official_import_repairs_existing_display_identity_without_rewriting_nati
     );
     assert_eq!(ProviderService::current(&state, AppType::Kimi).unwrap(), id);
     assert_eq!(fs::read_to_string(home.config()).unwrap(), native);
-    let persisted = state.db.get_provider_by_id(id, "kimi").unwrap().unwrap();
+    let persisted = state
+        .db
+        .get_provider_by_id(id, &AppType::Kimi)
+        .unwrap()
+        .unwrap();
     assert_eq!(persisted.name, "Kimi Official");
     assert_eq!(persisted.category.as_deref(), Some("official"));
     assert_eq!(persisted.icon.as_deref(), Some("kimi"));
@@ -287,7 +295,7 @@ fn kimi_provider_lifecycle_imports_native_config_and_tracks_external_removal() {
     ProviderService::delete(&state, AppType::Kimi, "custom").unwrap();
     assert!(!state
         .db
-        .get_all_providers("kimi")
+        .get_all_providers(&AppType::Kimi)
         .unwrap()
         .contains_key("custom"));
     let actual: toml::Value = toml::from_str(&fs::read_to_string(home.config()).unwrap()).unwrap();
@@ -336,7 +344,7 @@ fn kimi_provider_add_rejects_collisions_and_protects_the_default_model() {
     .is_err());
     assert!(state
         .db
-        .get_provider_by_id("second", "kimi")
+        .get_provider_by_id("second", &AppType::Kimi)
         .unwrap()
         .is_none());
     assert!(ProviderService::remove_from_live_config(&state, AppType::Kimi, "first").is_err());
@@ -386,7 +394,7 @@ fn kimi_switch_selects_native_model_and_current_tracks_external_changes() {
     ProviderService::switch(&state, AppType::Kimi, "first").unwrap();
     let saved = state
         .db
-        .get_provider_by_id("first", "kimi")
+        .get_provider_by_id("first", &AppType::Kimi)
         .unwrap()
         .unwrap();
     assert_eq!(
@@ -429,7 +437,7 @@ fn kimi_import_and_mutations_preserve_native_capabilities() {
     let original = fs::read(home.config()).unwrap();
     state
         .db
-        .save_provider("kimi", &native_provider("saved"))
+        .save_provider(&AppType::Kimi, &native_provider("saved"))
         .unwrap();
     let entries = ProviderService::list(&state, AppType::Kimi).unwrap();
     for id in ["native", "saved"] {
@@ -445,7 +453,7 @@ fn kimi_import_and_mutations_preserve_native_capabilities() {
         assert_eq!(
             state
                 .db
-                .get_provider_by_id(id, "kimi")
+                .get_provider_by_id(id, &AppType::Kimi)
                 .unwrap()
                 .unwrap()
                 .settings_config,
@@ -474,7 +482,7 @@ fn kimi_import_and_mutations_preserve_native_capabilities() {
     assert_eq!(
         state
             .db
-            .get_provider_by_id("new", "kimi")
+            .get_provider_by_id("new", &AppType::Kimi)
             .unwrap()
             .unwrap()
             .settings_config["models"]["new/model"]["capabilities"],

@@ -244,7 +244,7 @@ fn import_default_config_internal(state: &AppState, app_type: AppType) -> Result
                     AppType::GrokBuild,
                 )?;
                 state.db.set_current_provider(
-                    app_type.as_str(),
+                    &app_type,
                     crate::database::GROKBUILD_OFFICIAL_PROVIDER_ID,
                 )?;
                 crate::settings::set_current_provider(
@@ -271,18 +271,11 @@ fn import_default_config_internal(state: &AppState, app_type: AppType) -> Result
 
     if imported {
         // Extract common config snippet (mirrors old startup logic in lib.rs)
-        if state
-            .db
-            .should_auto_extract_config_snippet(app_type.as_str())?
-        {
+        if state.db.should_auto_extract_config_snippet(&app_type)? {
             match ProviderService::extract_common_config_snippet(state, app_type.clone()) {
                 Ok(snippet) if !snippet.is_empty() && snippet != "{}" => {
-                    let _ = state
-                        .db
-                        .set_config_snippet(app_type.as_str(), Some(snippet));
-                    let _ = state
-                        .db
-                        .set_config_snippet_cleared(app_type.as_str(), false);
+                    let _ = state.db.set_config_snippet(&app_type, Some(snippet));
+                    let _ = state.db.set_config_snippet_cleared(&app_type, false);
                 }
                 _ => {}
             }
@@ -336,8 +329,8 @@ pub async fn import_claude_desktop_providers_from_claude(
 }
 
 fn import_claude_desktop_providers_from_claude_blocking(state: &AppState) -> Result<usize, String> {
-    let claude_providers = state.db.get_all_providers(AppType::Claude.as_str())?;
-    let existing_ids = state.db.get_provider_ids(AppType::ClaudeDesktop.as_str())?;
+    let claude_providers = state.db.get_all_providers(&AppType::Claude)?;
+    let existing_ids = state.db.get_provider_ids(&AppType::ClaudeDesktop)?;
 
     let mut imported = 0usize;
     for provider in claude_providers.values() {
@@ -362,7 +355,7 @@ fn import_claude_desktop_providers_from_claude_blocking(state: &AppState) -> Res
 
         state
             .db
-            .save_provider(AppType::ClaudeDesktop.as_str(), &desktop_provider)?;
+            .save_provider(&AppType::ClaudeDesktop, &desktop_provider)?;
         imported += 1;
     }
 
@@ -637,7 +630,7 @@ async fn query_provider_usage_inner(
     // 从数据库读取供应商信息，检查特殊模板类型
     let providers = state
         .db
-        .get_all_providers(app_type.as_str())
+        .get_all_providers(&app_type)
         .map_err(|e| format!("Failed to get providers: {e}"))?;
     let provider = providers.get(provider_id);
     let usage_script = provider

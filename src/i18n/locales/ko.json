@@ -1452,7 +1452,7 @@
     "keyFieldsHint": "기본 모델(models.default)과 해당 모델 테이블은 공급자를 전환하면 함께 바뀝니다. 나머지는 Grok Build 전역 설정이며 저장하면 모든 공급자에 적용됩니다.",
     "inactiveFieldsHint": "이전 버전에서 이 공급자에 저장한 설정으로, 이제 공급자를 전환해도 적용되지 않습니다. 항목을 선택하여 TOML을 복사한 뒤 필요한 경우 위에 붙여 넣으세요.",
     "inactiveFieldCopied": "복사됨",
-    "routeOnlySettingsHint": "아래 두 가지 설정은 라우팅 모드에서만 적용됩니다."
+    "routeOnlySettingsHint": "아래 설정은 라우팅 모드에서만 적용됩니다."
   },
   "sessionManager": {
     "searchPlaceholder": "제목, 폴더, 첫 번째/마지막 메시지 또는 세션 ID 검색",
@@ -1666,7 +1666,17 @@
         "prLink": "연결된 PR #{{number}}",
         "prLinkPlain": "PR을 연결했습니다",
         "slashCommand": "{{command}}을(를) 실행",
-        "subAgent": "서브에이전트 {{name}}"
+        "subAgent": "서브에이전트 {{name}}",
+        "goal": "목표 · {{status}}",
+        "goalPlain": "목표",
+        "goalStatus": {
+          "active": "진행 중",
+          "paused": "일시 중지됨",
+          "blocked": "막힘",
+          "usageLimited": "사용 한도 도달",
+          "budgetLimited": "예산 도달",
+          "complete": "완료"
+        }
       },
       "injectedToggle": "주입된 컨텍스트 표시",
       "injectedRow": "컨텍스트 · {{label}} · {{chars}}자",
@@ -1749,6 +1759,9 @@
     "openReleaseNotesFailed": "릴리스 노트를 열지 못했습니다:"
   },
   "providerForm": {
+    "billingMultiplier": "공급자 비용 배율",
+    "billingMultiplierHelp": "이 공급자의 모든 모델 기준 가격에 이 값을 곱해 로컬 라우팅을 거친 요청의 비용을 추정합니다. 0.5는 반값이며 비워 두면 1배입니다. 이후 요청에만 적용됩니다. 라우팅을 끈 직접 연결 모드에서는 세션 기록에서 가져온 사용량이 계속 1배로 집계됩니다.",
+    "billingMultiplierInvalid": "0부터 1000까지의 숫자를 입력하거나 1배를 쓰려면 비워 두세요.",
     "nativeConfig": {
       "title": "설정 파일 {{path}} (이 공급자만 해당)",
       "hint": "앱에서 사용하는 설정 형식으로 파일 내 이 공급자에 해당하는 부분을 표시하며, 저장 시 해당 파일에 반영합니다. 기본 모델 등의 전역 설정은 포함되지 않습니다. 여기에 입력한 주석은 저장되지 않습니다.",
@@ -1923,6 +1936,8 @@
     "requestModelLabel": "실제 요청에 사용할 모델",
     "modelOneMHeader": "1M 컨텍스트 지원 명시",
     "modelOneMLabel": "1M",
+    "copilotOneMUnavailable": "Copilot에는 이 모델의 1M 버전이 없습니다",
+    "copilotOneMMismatch": "Copilot에는 {{models}}의 1M 버전이 없습니다. 요청은 일반 모델로 대체되지만 Claude Code는 여전히 1M 컨텍스트를 기준으로 계획하므로 긴 세션에서 한도를 넘을 수 있습니다. 1M 체크를 해제하세요.",
     "fallbackModelLabel": "기본 대체 모델",
     "fallbackModelHelpDirect": "ANTHROPIC_MODEL에 기록되며 Claude Code 시작 시 사용할 주 모델입니다. 백그라운드 작업은 별도로 Haiku 등급을 사용합니다.",
     "fallbackModelHelp": "Sonnet, Opus, Fable 또는 Haiku 계층에 매핑되지 않는 요청은 이 모델을 통해 업스트림으로 전송됩니다.",
@@ -2242,7 +2257,7 @@
     "inactiveFieldCopied": "복사됨",
     "upstreamFormatCopilotRouteHint": "모든 모드에는 Copilot 계정 자격 증명을 삽입하는 라우팅이 필요합니다. 명시적으로 선택한 프로토콜은 해당 프로토콜을 지원하지 않는 모델에서는 실패합니다.",
     "maxOutputTokensWarning": "모델이나 게이트웨이의 실제 출력 한도를 초과하면 요청에 400 오류가 반환됩니다.",
-    "routeOnlySettingsHint": "아래 두 설정은 라우팅 및 통합 모드에서만 적용됩니다."
+    "routeOnlySettingsHint": "아래 설정은 라우팅 및 통합 모드에서만 적용됩니다."
   },
   "geminiConfig": {
     "envFile": "환경 변수(.env)",
@@ -2739,7 +2754,9 @@
       "speedEstimateTooFew": "출력이 200토큰 미만이므로 속도를 추정하지 않습니다.",
       "noTimingSession": "세션 로그에는 타이밍 데이터가 없습니다.",
       "noFirstToken": "첫 토큰 시간 데이터가 없어 속도를 계산하지 않습니다.",
-      "providerId": "공급자 ID"
+      "providerId": "공급자 ID",
+      "copyRequestId": "요청 ID 복사",
+      "requestIdCopied": "요청 ID를 복사했습니다"
     },
     "sources": {
       "scanTitle": "세션 로그를 자동으로 스캔",
@@ -3539,7 +3556,7 @@
     },
     "repo": {
       "title": "스킬 저장소 관리",
-      "description": "GitHub / GitLab 스킬 저장소 추가 또는 제거",
+      "description": "GitHub / GitLab / Gitea 스킬 저장소 추가 또는 제거",
       "url": "저장소 URL",
       "urlPlaceholder": "owner/name, https://github.com/owner/name 또는 https://gitlab.com/group/project",
       "branch": "브랜치",
@@ -3549,7 +3566,7 @@
       "list": "추가된 저장소",
       "empty": "저장소 없음",
       "invalidUrl": "잘못된 저장소 URL 형식",
-      "httpsOnly": "GitLab 저장소는 https 주소만 지원합니다",
+      "httpsOnly": "GitLab / Gitea 저장소는 https 주소만 지원합니다",
       "addSuccess": "저장소 {{owner}}/{{name}}을(를) 추가하고 스킬 {{count}}개를 찾았습니다",
       "addFailed": "추가하지 못했습니다.",
       "removeSuccess": "저장소 {{owner}}/{{name}} 제거를 완료했습니다.",

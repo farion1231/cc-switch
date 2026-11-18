@@ -474,7 +474,7 @@ fn row_facts(db: &Database) -> Result<RowFacts, AppError> {
         third_party_keys: Vec::new(),
         official_logins: Vec::new(),
     };
-    for provider in db.get_all_providers(app())?.values() {
+    for provider in db.get_all_providers(&AppType::Codex)?.values() {
         let auth = provider.settings_config.get("auth");
         if is_official(provider) {
             if managed_account(provider).is_none() {

@@ -2165,10 +2165,6 @@ impl Database {
             return Ok(false);
         }
 
-        let pricing = match Self::get_log_model_pricing_cached(conn, pricing_cache, log)? {
-            Some(info) => info,
-            None => return Ok(false),
-        };
         let multiplier =
             rust_decimal::Decimal::from_str(&log.cost_multiplier).unwrap_or_else(|e| {
                 log::warn!(
@@ -2178,6 +2174,15 @@ impl Database {
                 );
                 rust_decimal::Decimal::ONE
             });
+        // 倍率为 0 的行总价本来就是 0，不是缺价：回填只会重写分项费用、每次读日志都 UPDATE 一遍。
+        if multiplier.is_zero() {
+            return Ok(false);
+        }
+
+        let pricing = match Self::get_log_model_pricing_cached(conn, pricing_cache, log)? {
+            Some(info) => info,
+            None => return Ok(false),
+        };
 
         let million = rust_decimal::Decimal::from(1_000_000u64);
 
@@ -3690,6 +3695,46 @@ mod tests {
         )?;
         assert_eq!(input_cost, "5.000000");
         assert_eq!(total_cost, "7.500000");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_backfill_skips_zero_multiplier_rows() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        {
+            let conn = lock_conn!(db.conn);
+            insert_usage_log(
+                &conn,
+                "codex-gpt-5-5-free",
+                "codex",
+                "free-relay",
+                "gpt-5.5",
+                "proxy",
+                1000,
+                1_000_000,
+                0,
+                0,
+                0,
+                200,
+                "0",
+            )?;
+            conn.execute(
+                "UPDATE proxy_request_logs
+                 SET cost_multiplier = '0', input_cost_usd = '1.000000'
+                 WHERE request_id = 'codex-gpt-5-5-free'",
+                [],
+            )?;
+        }
+
+        // 已按 0 倍率计过价的行不是缺价行：回填不得重写它，也不得每次读取都 UPDATE。
+        assert_eq!(db.backfill_missing_usage_costs()?, 0);
+        let detail = db
+            .get_request_detail("codex-gpt-5-5-free")?
+            .expect("row exists");
+        assert_eq!(detail.input_cost_usd, "1.000000");
+        assert_eq!(detail.total_cost_usd, "0");
 
         Ok(())
     }

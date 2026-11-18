@@ -46,7 +46,7 @@ impl Fixture {
     fn imported(&self) -> Provider {
         self.state
             .db
-            .get_provider_by_id("opencode-go", "opencode")
+            .get_provider_by_id("opencode-go", &AppType::OpenCode)
             .unwrap()
             .unwrap()
     }
@@ -152,7 +152,7 @@ fn opencode_builtin_incomplete_copies_cannot_be_added_to_live() {
         let saved = fixture
             .state
             .db
-            .get_provider_by_id(&id, "opencode")
+            .get_provider_by_id(&id, &AppType::OpenCode)
             .unwrap()
             .unwrap();
         assert_eq!(saved.meta.unwrap().live_config_managed, Some(false));
@@ -189,7 +189,7 @@ fn additive_add_rolls_back_row_when_live_config_cannot_be_parsed() {
     assert!(fixture
         .state
         .db
-        .get_provider_by_id("custom-new", "opencode")
+        .get_provider_by_id("custom-new", &AppType::OpenCode)
         .unwrap()
         .is_none());
     assert_eq!(fs::read_to_string(&fixture.config_path).unwrap(), broken);
@@ -235,7 +235,7 @@ fn opencode_builtin_credential_only_import_does_not_create_config() {
     assert!(fixture
         .state
         .db
-        .get_all_providers("opencode")
+        .get_all_providers(&AppType::OpenCode)
         .unwrap()
         .is_empty());
     assert_eq!(fs::read(&db_path).unwrap(), original_db);
