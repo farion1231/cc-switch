@@ -1486,7 +1486,7 @@
     "expandContent": "Vollständigen Inhalt anzeigen",
     "collapseContent": "Einklappen",
     "helpTitle": "Woher Sitzungen stammen",
-    "helpBody": "CC Switch liest die Sitzungsaufzeichnungen, die jede App auf diesem Computer ablegt. Siehe „Speicherorte der Sitzungen“ im ⋯-Menü. Claude Desktop hat keine eigenen Sitzungsaufzeichnungen.",
+    "helpBody": "CC Switch liest lokal gespeicherte Gespräche. Den Desktop-Kontoverlauf öffnen Sie im Menü für weitere Aktionen.",
     "moreActions": "Weitere Sitzungsaktionen",
     "refreshList": "Liste aktualisieren",
     "listRefreshed": "Sitzungsliste aktualisiert",
@@ -1505,7 +1505,7 @@
     "groupBy": "Gruppieren nach",
     "groupByTime": "Nach Zeit",
     "groupByProject": "Nach Projekt",
-    "desktopNote": "Claude Desktop hat keine eigenen Sitzungsaufzeichnungen. Angezeigt werden Claude-Code-Sitzungen.",
+    "desktopNote": "Diese Liste zeigt Claude-Code-Gesprächsdateien. Im Desktop-Verlauf lassen sich Einträge nach Konto und Archivstatus durchsuchen.",
     "dshMergedNote": "DeepSeek Harness Web und Desktop teilen sich einen Satz Sitzungsaufzeichnungen, die hier gemeinsam angezeigt werden.",
     "matchCount": "{{count}} passende Sitzungen",
     "totalCount": "{{count}} Sitzungen",
@@ -5315,5 +5315,25 @@
     "installFailed": "Update-Installation fehlgeschlagen",
     "downloadingInline": "Neue Version wird im Hintergrund heruntergeladen…",
     "downloadedInline": "Heruntergeladen"
+  },
+  "desktopHistory": {
+    "chooseProfile": "Vorhandenes Profil auswählen",
+    "lastKnown": "zuletzt angemeldetes Konto",
+    "profileHint": "Konten und Organisationen bleiben getrennt. Der letzte Anmeldehinweis kennzeichnet kein laufendes Profil.",
+    "empty": "Keine gespeicherten Desktop-Profile gefunden. Claude Desktop zuerst mit dem gewünschten Konto öffnen, dann aktualisieren.",
+    "showArchived": "Archivierten Verlauf einschließen",
+    "active": "Aktiv",
+    "archived": "Archiviert",
+    "noSessions": "Kein Verlauf für diesen Filter.",
+    "noTranscript": "Kein lokaler Transkriptverweis",
+    "readTranscript": "Transkript {{number}} lesen",
+    "transcript": {
+      "missing": "Transkript {{number}} fehlt",
+      "ambiguous": "Transkript {{number}} ist mehrdeutig"
+    },
+    "transcriptHint": "Desktop-Einträge und Gesprächsdateien sind getrennt. Fehlende Transkripte bleiben markiert; das Kopieren eines Eintrags stellt das Gespräch nicht wieder her. Links öffnen die zugehörigen Transkripte im vorhandenen Leser.",
+    "title": "Desktop-Verlauf",
+    "description": "Gespeicherte Claude-Desktop-Konten, archivierte Einträge und verfügbare lokale Gespräche durchsuchen.",
+    "profile": "Konto / Profil"
   }
 }

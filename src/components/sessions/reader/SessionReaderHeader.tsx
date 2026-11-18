@@ -65,6 +65,7 @@ export const readerIconButton =
 // ─── 页头：返回、标题、上一个 / 下一个、恢复、⋯ ───────────────────────────
 
 export interface SessionReaderHeaderProps {
+  readOnly?: boolean;
   session: SessionMeta;
   title: string;
   appName: string;
@@ -87,6 +88,7 @@ export interface SessionReaderHeaderProps {
 }
 
 export const SessionReaderHeader = memo(function SessionReaderHeader({
+  readOnly = false,
   session,
   title,
   appName,
@@ -111,8 +113,8 @@ export const SessionReaderHeader = memo(function SessionReaderHeader({
   const rt = useReaderT();
   const appId = isSessionAppId(session.providerId) ? session.providerId : null;
   const isCodex = session.providerId === "codex";
-  const command = session.resumeCommand;
-  const deletable = canDeleteSession(session);
+  const command = readOnly ? undefined : session.resumeCommand;
+  const deletable = !readOnly && canDeleteSession(session);
 
   const launchLabel = launchTerminal
     ? t("sessionManager.resumeIn", {

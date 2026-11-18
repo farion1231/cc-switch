@@ -1486,7 +1486,7 @@
     "expandContent": "Expand full content",
     "collapseContent": "Collapse",
     "helpTitle": "Where sessions come from",
-    "helpBody": "CC Switch reads the session records each app keeps on this computer. See “Where sessions are stored” in the ⋯ menu. Claude Desktop has no session records of its own.",
+    "helpBody": "CC Switch reads locally saved session records. Open Desktop account history from the more-actions menu.",
     "moreActions": "More session actions",
     "refreshList": "Refresh list",
     "listRefreshed": "Session list refreshed",
@@ -1505,7 +1505,7 @@
     "groupBy": "Group by",
     "groupByTime": "By time",
     "groupByProject": "By project",
-    "desktopNote": "Claude Desktop has no session records of its own. Showing Claude Code sessions.",
+    "desktopNote": "This list shows Claude Code transcript files. Open Desktop history to browse records by account and archive state.",
     "dshMergedNote": "DeepSeek Harness Web and Desktop share one set of session records, shown together here.",
     "matchCount": "{{count}} matching sessions",
     "totalCount": "{{count}} sessions",
@@ -5315,5 +5315,25 @@
     "installFailed": "Update installation failed",
     "downloadingInline": "Downloading the new version in the background…",
     "downloadedInline": "Downloaded"
+  },
+  "desktopHistory": {
+    "chooseProfile": "Choose an existing profile",
+    "lastKnown": "last signed-in account",
+    "profileHint": "Account and organization folders stay separate. The last signed-in hint does not identify a running profile.",
+    "empty": "No saved Desktop profiles found. Open Claude Desktop with the intended account first, then refresh.",
+    "showArchived": "Include archived history",
+    "active": "Active",
+    "archived": "Archived",
+    "noSessions": "No history matches this filter.",
+    "noTranscript": "No local transcript reference",
+    "readTranscript": "Read transcript {{number}}",
+    "transcript": {
+      "missing": "Transcript {{number}} missing",
+      "ambiguous": "Transcript {{number}} has multiple matches"
+    },
+    "transcriptHint": "Desktop records and conversation files are separate. Missing transcripts stay marked; copying a record does not recover its conversation. Each link opens a referenced transcript in the existing reader.",
+    "title": "Desktop history",
+    "description": "Browse saved Claude Desktop accounts, archived records, and their available local transcripts.",
+    "profile": "Account / profile"
   }
 }

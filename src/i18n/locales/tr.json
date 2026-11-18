@@ -1417,7 +1417,7 @@
     "expandContent": "Tüm içeriği genişlet",
     "collapseContent": "Daralt",
     "helpTitle": "Oturumların nereden geldiği",
-    "helpBody": "CC Switch, her uygulamanın bu bilgisayarda tuttuğu oturum kayıtlarını okur. ⋯ menüsündeki “Oturumların nerede saklandığı” konusuna bakın. Claude Desktop'nin kendine ait oturum kaydı yoktur.",
+    "helpBody": "CC Switch yerel olarak kaydedilen konuşmaları okur. Diğer işlemler menüsünden Desktop hesap geçmişini açabilirsiniz.",
     "moreActions": "Daha fazla oturum eylemi",
     "refreshList": "Listeyi yenile",
     "listRefreshed": "Oturum listesi yenilendi",
@@ -1436,7 +1436,7 @@
     "groupBy": "Gruplandırma ölçütü",
     "groupByTime": "Zamana göre",
     "groupByProject": "Projeye göre",
-    "desktopNote": "Claude Desktop'nin kendine ait oturum kaydı yoktur. Claude Code oturumları gösteriliyor.",
+    "desktopNote": "Bu liste Claude Code konuşma dosyalarını gösterir. Desktop geçmişinde kayıtları hesaba ve arşiv durumuna göre inceleyebilirsiniz.",
     "dshMergedNote": "DeepSeek Harness Web ve Desktop aynı oturum kayıtlarını paylaşır; burada birlikte gösterilir.",
     "matchCount": "{{count}} eşleştirme oturumları",
     "totalCount": "{{count}} oturumları",
@@ -5315,5 +5315,25 @@
     "installFailed": "Güncelleme kurulamadı",
     "downloadingInline": "Yeni sürüm arka planda indiriliyor…",
     "downloadedInline": "İndirildi"
+  },
+  "desktopHistory": {
+    "chooseProfile": "Mevcut bir profil seçin",
+    "lastKnown": "son giriş yapılan hesap",
+    "profileHint": "Hesaplar ve kuruluşlar ayrı tutulur. Son giriş bilgisi, çalışan profili göstermez.",
+    "empty": "Kayıtlı Desktop profili bulunamadı. Önce ilgili hesapla Claude Desktop uygulamasını açın, ardından yenileyin.",
+    "showArchived": "Arşivlenmiş geçmişi dahil et",
+    "active": "Etkin",
+    "archived": "Arşivlenmiş",
+    "noSessions": "Bu filtreye uyan geçmiş yok.",
+    "noTranscript": "Yerel konuşma kaydı başvurusu yok",
+    "readTranscript": "Konuşma kaydı {{number}} oku",
+    "transcript": {
+      "missing": "Konuşma kaydı {{number}} eksik",
+      "ambiguous": "Konuşma kaydı {{number}} birden fazla dosyayla eşleşiyor"
+    },
+    "transcriptHint": "Desktop kayıtları ve konuşma dosyaları ayrıdır. Bir kaydı kopyalamak eksik konuşmayı kurtarmaz. Bağlantılar ilgili konuşma kaydını mevcut okuyucuda açar.",
+    "title": "Desktop geçmişi",
+    "description": "Kayıtlı Claude Desktop hesaplarını, arşivlenmiş kayıtları ve kullanılabilir yerel konuşmaları inceleyin.",
+    "profile": "Hesap / profil"
   }
 }
