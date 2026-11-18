@@ -569,9 +569,11 @@ describe("PromptPanel", () => {
       await screen.findByText("prompts.emptyTitle:Grok Build"),
     ).toBeInTheDocument();
     expect(screen.getByText(/# Rules\s+Be brief\./)).toBeInTheDocument();
-    fireEvent.click(
-      screen.getByRole("button", { name: "prompts.importExisting" }),
-    );
+    const importButton = screen.getByRole("button", {
+      name: "prompts.importExisting",
+    });
+    await waitFor(() => expect(importButton).toBeEnabled());
+    fireEvent.click(importButton);
 
     await waitFor(() => expect(mocks.importFromFile).toHaveBeenCalledTimes(1));
     await waitFor(() =>
