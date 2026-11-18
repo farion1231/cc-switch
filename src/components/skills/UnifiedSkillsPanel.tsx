@@ -75,6 +75,7 @@ import { SkillsStorageSheet } from "./SkillsStorageSheet";
 import { useSkillsResync } from "./useSkillsResync";
 import { useSkillInstallTargets } from "./useSkillInstallTargets";
 import { describeRepoFailures } from "./repoFailures";
+import { repoWebUrl } from "./repoUrl";
 import type { ZipSkippedSkill } from "@/lib/api/skills";
 import { APP_IDS_WITH } from "@/config/appSpecs";
 
@@ -879,7 +880,11 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     const url =
       skill.readmeUrl ||
       (skill.repoOwner && skill.repoName
-        ? `https://github.com/${skill.repoOwner}/${skill.repoName}`
+        ? repoWebUrl({
+            host: skill.repoHost,
+            owner: skill.repoOwner,
+            name: skill.repoName,
+          })
         : undefined);
     if (!url) return;
     try {

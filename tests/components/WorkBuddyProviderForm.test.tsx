@@ -428,11 +428,33 @@ describe("WorkBuddyProviderForm", () => {
     fireEvent.click(
       screen.getByRole("switch", { name: "kimi.capabilities.tool_use" }),
     );
+    // 打开思考后可以选强度
+    fireEvent.click(
+      screen.getByRole("button", { name: "pi.form.thinkingLevels.high" }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "pi.form.thinkingLevels.max" }),
+    );
+    expect(
+      screen.getByRole("button", { name: "pi.form.thinkingLevels.max" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(
+      screen.getByRole("switch", { name: "workbuddy.form.canDisableThinking" }),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(submit).toHaveBeenCalledOnce());
     expect(
       JSON.parse(submit.mock.calls[0][0].settingsConfig).models[0],
-    ).toMatchObject({ supportsReasoning: true, supportsToolCall: false });
+    ).toMatchObject({
+      supportsReasoning: true,
+      supportsToolCall: false,
+      reasoning: {
+        supportedEfforts: ["high", "max"],
+        defaultEffort: "high",
+        canDisableThinking: false,
+      },
+      thinkingLevelMap: { off: null, low: null, high: "high", max: "max" },
+    });
   });
 
   it("rejects malformed and taken provider keys and non-http URLs", async () => {

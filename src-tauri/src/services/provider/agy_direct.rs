@@ -4,13 +4,14 @@
 use serde_json::{json, Value};
 
 use crate::agy_config;
+use crate::app_config::AppType;
 use crate::database::Database;
 use crate::error::AppError;
 use crate::provider::Provider;
 
 pub(crate) fn is_official(provider: &Provider) -> bool {
     // Provider names are user editable and must never silently select OAuth.
-    provider.category.as_deref() == Some("official")
+    provider.has_official_category()
         || provider
             .meta
             .as_ref()
@@ -85,7 +86,7 @@ pub(crate) fn key_resume_target(
     db: &Database,
     command: &str,
 ) -> Result<Option<(Provider, String)>, AppError> {
-    for provider in db.get_all_providers("agy")?.into_values() {
+    for provider in db.get_all_providers(&AppType::Agy)?.into_values() {
         let dir = agy_config::key_profile_dir(&provider.id);
         let prefix = agy_config::resume_command(Some(&dir), "");
         let Some(id) = command.strip_prefix(&prefix) else {

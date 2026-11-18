@@ -25,7 +25,6 @@
     "success": "성공",
     "error": "오류",
     "unknown": "알 수 없음",
-    "enterValidValue": "유효한 값을 입력하세요.",
     "clear": "지우기",
     "format": "포맷팅",
     "formatSuccess": "포맷팅이 완료되었습니다",
@@ -142,7 +141,6 @@
     "adoptCatalog": "CC Switch 모델 카탈로그 사용",
     "adoptCatalogDone": "이제 CC Switch의 모델 카탈로그를 사용하고 있습니다. 적용하려면 Codex를 다시 시작하세요.",
     "adoptCatalogFailed": "CC Switch의 모델 카탈로그로 전환하지 못했습니다: {{error}}",
-    "noRoutingSupport": "라우팅 지원 없음",
     "blockedByProxyHint": "라우팅 모드에서는 공식 공급자로 전환할 수 없습니다.",
     "editProvider": "공급자 편집",
     "editProviderHint": "업데이트 후 즉시 현재 공급자에 설정이 적용됩니다.",
@@ -281,12 +279,10 @@
     "liveConfigReadFailedHint": "설정 파일의 문제를 해결하기 전까지는 공급자를 추가하거나 제거할 수 없습니다."
   },
   "claudeCode": {
-    "needsRouting": "라우팅 필요",
-    "noRoutingSupport": "라우팅 지원 없음"
+    "needsRouting": "라우팅 필요"
   },
   "codex": {
     "needsRouting": "라우팅 필요",
-    "noRoutingSupport": "라우팅 지원 없음",
     "officialRouting": "공식 계정 라우팅",
     "nativeLogin": "Codex 로그인",
     "followCodexLogin": "Codex에 로그인된 계정 사용",
@@ -338,14 +334,11 @@
       "tooltip": {
         "active": "Claude Desktop 로컬 라우팅이 실행 중입니다 - {{address}}:{{port}}",
         "inactive": "모델 매핑 또는 형식 변환이 필요한 공급자를 위해 Claude Desktop 로컬 라우팅을 활성화합니다. 설정된 주소: {{address}}:{{port}}"
-      },
-      "stopBlockedByTakeover": "다른 앱이 아직 라우팅 모드입니다. 라우팅 서비스를 중지하려면 먼저 해당 앱을 직접 연결로 전환하세요."
+      }
     }
   },
   "notifications": {
     "providerAdded": "공급자가 추가됨",
-    "providerSaved": "공급자 설정이 저장되었습니다.",
-    "providerDeleted": "공급자가 삭제되었습니다.",
     "switchSuccess": "전환 성공!",
     "codexRestartRequired": "성공적으로 전환되었습니다. 변경 사항을 적용하려면 클라이언트를 다시 시작하세요.",
     "geminiRestartRequired": "성공적으로 전환되었습니다. 변경 사항을 적용하려면 Gemini CLI를 다시 시작하세요.",
@@ -356,12 +349,9 @@
     "removeFromConfigFailed": "공급자를 제거할 수 없습니다.",
     "switchFailedTitle": "전환 실패",
     "switchFailed": "전환 실패: {{error}}",
-    "autoImported": "기존 설정에서 기본 공급자를 생성했습니다",
     "addFailed": "공급자 추가 실패: {{error}}",
     "saveFailed": "저장 실패: {{error}}",
     "saveFailedGeneric": "저장하지 못했습니다. 다시 시도해 주세요.",
-    "appliedToClaudePlugin": "Claude 플러그인에 적용",
-    "removedFromClaudePlugin": "Claude 플러그인에서 제거됨",
     "syncClaudePluginFailed": "Claude 플러그인 동기화 실패",
     "skipClaudeOnboardingFailed": "Claude Code 첫 실행 확인을 건너뛰지 못했습니다.",
     "clearClaudeOnboardingSkipFailed": "Claude Code 첫 실행 확인을 복원하지 못했습니다.",
@@ -380,8 +370,6 @@
     "proxyReasonDesktopMapping": "모델 매핑을 사용합니다 (Claude Desktop은 Claude 모델 이름만 허용)",
     "proxyReasonManagedOAuth": "관리형 OAuth 로그인을 사용합니다 (로컬 라우팅이 토큰을 주입)",
     "proxyReasonRoutingRequired": "요청 처리에 로컬 라우팅이 필요합니다",
-    "openAIFormatHint": "이 공급자는 OpenAI 호환 형식을 사용하며 라우팅 서비스를 활성화해야 합니다.",
-    "copilotProxyHint": "GitHub Copilot을 Claude 공급자로 사용하려면 항상 로컬 라우팅이 필요합니다. 현재 모델에 따라 Chat Completions 또는 Responses를 자동으로 선택합니다.",
     "openLinkFailed": "링크를 열지 못했습니다.",
     "openclawModelsRegistered": "모델이 /model 목록에 등록되었습니다.",
     "openclawDefaultModelSet": "기본 모델로 설정했습니다.",
@@ -476,8 +464,6 @@
     "authCenter": {
       "description": "GitHub Copilot, ChatGPT 및 xAI 구독을 공급자로 사용할 수 있습니다. 자격 증명은 라우팅 서비스가 주입하므로 관련 공급자는 라우팅 모드에서 사용해야 합니다(Codex 공식 로그인 연결 제외). Antigravity 계정은 agy의 공식 로그인을 전환하는 데 사용합니다.",
       "beta": "베타",
-      "copilotDescription": "GitHub Copilot 계정 관리",
-      "codexOauthDescription": "ChatGPT 계정 관리",
       "xaiOauthDescription": "xAI/Grok 계정 관리"
     },
     "advanced": {
@@ -488,12 +474,8 @@
       "proxy": {
         "title": "로컬 라우팅",
         "description": "라우팅 서비스 토글 제어, 상태 및 포트 정보 보기",
-        "enableFeature": "메인 페이지에 라우팅 토글 표시",
-        "enableFeatureDescription": "활성화되면 라우팅 및 장애 조치 토글이 기본 페이지 상단에 나타납니다.",
         "enableStackMode": "메인 페이지에 통합 모드 스위치 표시",
-        "enableStackModeDescription": "켜면 Claude Code와 Codex의 메인 페이지 스위치가 통합 모드로 바뀝니다. OpenCode처럼 여러 공급자를 추가하면 해당 공급자들의 모델이 클라이언트 모델 목록에 표시됩니다(Codex는 다시 시작한 후 적용). 장애 조치는 사용하지 않습니다. 이 옵션과 로컬 라우팅 스위치는 둘 중 하나만 선택할 수 있으며, 전환 시 활성화되어 있던 Claude Code와 Codex는 먼저 직접 연결로 돌아갑니다.",
         "enableFailoverToggle": "메인 페이지에 장애 조치 스위치 표시",
-        "enableFailoverToggleDescription": "켜면 메인 페이지 상단에 장애 조치 스위치가 별도로 표시됩니다.",
         "running": "실행 중",
         "stopped": "중지됨"
       },
@@ -526,7 +508,6 @@
         "description": "API 요청 호환성 문제 자동 수정",
         "enabled": "호환성 보정 활성화",
         "requestGroup": "요청 보정",
-        "responseGroup": "응답 보정",
         "thinkingSignature": "Thinking 서명 보정",
         "thinkingSignatureDescription": "Anthropic 유형 공급자가 thinking 서명 비호환 또는 잘못된 요청 등의 오류를 반환하면 호환되지 않는 thinking 관련 블록을 자동으로 제거한 뒤 같은 공급자로 한 번 다시 시도합니다.",
         "thinkingBudget": "Thinking Budget 보정",
@@ -836,10 +817,8 @@
       "enabledHint": "켜면 S3 업로드/다운로드 및 자동 동기화를 사용할 수 있습니다.",
       "mutualExclusionTitle": "동기화 유형 전환",
       "mutualExclusionMessage": "S3 동기화를 켜면 현재 WebDAV 동기화가 꺼집니다. 계속하시겠습니까?",
-      "mutualExclusionMessageReverse": "WebDAV 동기화를 켜면 현재 S3 동기화가 꺼집니다. 계속하시겠습니까?",
       "mutualExclusionFailed": "동기화 유형 전환 실패: {{error}}",
       "testConnection": "연결 테스트",
-      "connectionOk": "S3 연결 성공",
       "test": "연결 테스트",
       "testing": "테스트 중...",
       "testSuccess": "S3 연결 성공",
@@ -866,6 +845,15 @@
       "incompatibleVersion": "원격 데이터가 호환되지 않습니다(버전 {{version}}). 이 클라이언트는 프로토콜 v2 / db-v6을 지원합니다.",
       "unsaved": "저장되지 않음",
       "saved": "저장됨",
+      "clear": "설정 지우기",
+      "clearing": "지우는 중...",
+      "clearSuccess": "이 기기의 S3 설정을 지웠습니다",
+      "clearFailed": "설정을 지우지 못했습니다: {{error}}",
+      "clearConfirm": {
+        "title": "S3 설정 지우기",
+        "message": "이 기기에 저장된 S3 리전, 버킷, 액세스 키, 시크릿 키, 엔드포인트 및 원격 폴더 설정을 삭제하고 자동 동기화를 중지합니다. 버킷에 이미 업로드된 데이터는 삭제되지 않습니다.",
+        "confirm": "지우기"
+      },
       "unsavedChanges": "먼저 설정을 저장하세요.",
       "saveBeforeSync": "업로드/다운로드를 활성화하려면 먼저 설정을 저장하세요.",
       "fetchingRemote": "원격 정보를 가져오는 중...",
@@ -955,10 +943,6 @@
     "appVisibility": {
       "title": "메인 페이지 표시",
       "description": "메인 페이지에 표시할 앱을 선택하세요",
-      "claudeDesc": "Anthropic Claude Code CLI",
-      "codexDesc": "OpenAI Codex CLI",
-      "geminiDesc": "Google Gemini CLI",
-      "opencodeDesc": "OpenCode CLI",
       "showProfileSwitcher": "프로젝트 전환기 표시",
       "showProfileSwitcherDescription": "기본 페이지 헤더에 프로젝트 전환기 표시",
       "showProviderSearch": "공급자 검색 표시",
@@ -967,7 +951,6 @@
     "terminal": {
       "title": "선호하는 터미널",
       "description": "터미널 버튼을 클릭할 때 사용할 터미널 앱을 선택하세요",
-      "fallbackHint": "선택한 터미널을 사용할 수 없는 경우 시스템 기본값이 사용됩니다.",
       "options": {
         "macos": {
           "terminal": "Terminal.app",
@@ -995,28 +978,18 @@
         }
       }
     },
-    "configDirectoryOverride": "설정 디렉터리 재정의(고급)",
     "configDirectoryDescription": "WSL과 같은 환경에서 Claude Code 또는 Codex를 사용하는 경우 설정 디렉터리를 WSL의 설정 디렉터리로 수동으로 지정하여 공급자 데이터를 기본 환경과 일관되게 유지할 수 있습니다.",
     "appConfigDir": "CC Switch 설정 디렉터리",
     "appConfigDirDescription": "CC Switch 설정 저장 위치 (클라우드 동기화 폴더를 선택하면 설정을 클라우드로 동기화할 수 있습니다)",
     "browsePlaceholderApp": "예: C:\\Users\\Administrator\\.cc-switch",
-    "claudeConfigDir": "Claude Code 설정 디렉터리",
     "claudeConfigDirDescription": "Claude 설정 디렉터리(settings.json)를 변경합니다. 사용자 지정 디렉터리에서는 그 안에 .claude.json(MCP)을 저장합니다. 기본 ~/.claude 디렉터리에서는 Claude Code의 기본 동작대로 별도 경로인 ~/.claude.json을 사용합니다.",
-    "codexConfigDir": "Codex 설정 디렉터리",
     "codexConfigDirDescription": "Codex 설정 디렉터리를 재정의합니다.",
-    "geminiConfigDir": "Gemini 설정 디렉터리",
     "geminiConfigDirDescription": "Gemini 설정 디렉터리(.env)를 재정의합니다.",
-    "grokConfigDir": "Grok Build 설정 디렉터리",
     "grokConfigDirDescription": "Grok Build 설정 디렉터리(config.toml)를 재정의합니다.",
-    "opencodeConfigDir": "OpenCode 설정 디렉터리",
     "opencodeConfigDirDescription": "OpenCode 설정 디렉터리(opencode.json / opencode.jsonc)를 재정의합니다.",
-    "openclawConfigDir": "OpenClaw 설정 디렉터리",
     "openclawConfigDirDescription": "OpenClaw 설정 디렉터리(openclaw.json)를 재정의합니다.",
-    "hermesConfigDir": "Hermes 설정 디렉터리",
     "hermesConfigDirDescription": "Hermes 설정 디렉터리(config.yaml)를 재정의합니다.",
-    "piConfigDir": "Pi 설정 디렉터리",
     "piConfigDirDescription": "Pi 설정 디렉터리(models.json, 지침 파일, 프롬프트, 스킬 및 세션)를 변경합니다.",
-    "ompConfigDir": "Oh My Pi 설정 디렉터리",
     "browsePlaceholderClaude": "예: /home/<사용자 이름>/.claude",
     "browsePlaceholderCodex": "예: /home/<사용자 이름>/.codex",
     "browsePlaceholderGemini": "예: /home/<사용자 이름>/.gemini",
@@ -1145,7 +1118,6 @@
       "testFailed": "연결 실패: {{error}}",
       "pricingDefaultsTitle": "기본 요금 설정",
       "pricingDefaultsDescription": "각 앱의 요금을 요청 모델과 응답 모델 중 어느 모델에 따라 적용할지 설정합니다. 로컬 라우팅을 통과하는 요청에만 적용됩니다.",
-      "pricingAppLabel": "앱",
       "pricingModelSourceLabel": "요금 적용 기준 모델",
       "pricingModelSourceRequest": "요청 모델",
       "pricingModelSourceResponse": "응답 모델",
@@ -1253,6 +1225,9 @@
       "modelsHint": "모델을 하나 이상 추가하세요. 모델 ID는 그대로 API에 전송됩니다. WorkBuddy는 아직 같은 모델을 여러 번 추가하는 것을 지원하지 않으므로, 모델 ID 하나는 카드 하나에만 넣을 수 있습니다. 이름을 비워 두면 WorkBuddy 메뉴에 \"공급업체 레이블:모델 ID\"로 표시됩니다.",
       "maxInputTokens": "최대 입력 토큰",
       "maxOutputTokens": "최대 출력 토큰",
+      "thinkingEfforts": "추론 강도",
+      "thinkingEffortsHint": "선택한 강도는 WorkBuddy 모델 메뉴에 표시되고, 고른 강도는 reasoning_effort 값으로 API에 전송됩니다. 아무것도 선택하지 않으면 추론 켜기/끄기 스위치만 표시됩니다.",
+      "canDisableThinking": "추론 끄기 허용",
       "modelIdTaken": "WorkBuddy는 아직 같은 모델을 여러 번 추가하는 것을 지원하지 않으며, 이 모델은 이미 \"{{owner}}\"에 있습니다. 이 카드로 옮기려면 먼저 그쪽에서 삭제하세요.",
       "modelOwnerUser": "WorkBuddy에서 직접 추가한 모델",
       "presetModelsSkipped": "WorkBuddy는 아직 같은 모델을 여러 번 추가하는 것을 지원하지 않아, 이미 다른 카드에 있는 모델은 건너뛰었습니다: {{models}}. 이 카드로 옮기려면 원래 카드에서 먼저 삭제한 뒤 여기에서 다시 추가하세요."
@@ -1759,22 +1734,9 @@
     "dshMergedNote": "DeepSeek Harness의 Web과 Desktop은 동일한 세션 기록을 공유합니다. 이 기록은 여기에 통합하여 표시됩니다."
   },
   "console": {
-    "providerSwitchReceived": "수신된 공급자 전환 이벤트:",
-    "setupListenerFailed": "공급자 전환 이벤트 수신기 설정 실패:",
-    "updateProviderFailed": "공급자 업데이트 실패:",
-    "autoImportFailed": "기본 설정 자동 가져오기 실패:",
     "openLinkFailed": "링크를 열지 못했습니다:",
-    "getVersionFailed": "버전 정보를 가져오지 못했습니다:",
-    "loadSettingsFailed": "설정을 로드하지 못했습니다:",
-    "getConfigPathFailed": "설정 경로를 가져오지 못했습니다.",
-    "getConfigDirFailed": "설정 디렉터리를 가져오지 못했습니다.",
-    "detectPortableFailed": "휴대용 모드를 감지하지 못했습니다.",
-    "saveSettingsFailed": "설정을 저장하지 못했습니다.",
     "updateFailed": "업데이트 실패:",
     "checkUpdateFailed": "업데이트 확인 실패:",
-    "openConfigFolderFailed": "설정 폴더를 열지 못했습니다:",
-    "selectConfigDirFailed": "설정 디렉터리를 선택하지 못했습니다.",
-    "getDefaultConfigDirFailed": "기본 설정 디렉터리를 가져오지 못했습니다.",
     "openReleaseNotesFailed": "릴리스 노트를 열지 못했습니다:"
   },
   "providerForm": {
@@ -1952,6 +1914,8 @@
     "requestModelLabel": "실제 요청에 사용할 모델",
     "modelOneMHeader": "1M 컨텍스트 지원 명시",
     "modelOneMLabel": "1M",
+    "copilotOneMUnavailable": "Copilot에는 이 모델의 1M 버전이 없습니다",
+    "copilotOneMMismatch": "Copilot에는 {{models}}의 1M 버전이 없습니다. 요청은 일반 모델로 대체되지만 Claude Code는 여전히 1M 컨텍스트를 기준으로 계획하므로 긴 세션에서 한도를 넘을 수 있습니다. 1M 체크를 해제하세요.",
     "fallbackModelLabel": "기본 대체 모델",
     "fallbackModelHelpDirect": "ANTHROPIC_MODEL에 기록되며 Claude Code 시작 시 사용할 주 모델입니다. 백그라운드 작업은 별도로 Haiku 등급을 사용합니다.",
     "fallbackModelHelp": "Sonnet, Opus, Fable 또는 Haiku 계층에 매핑되지 않는 요청은 이 모델을 통해 업스트림으로 전송됩니다.",
@@ -2035,12 +1999,10 @@
     "selectAccount": "계정 선택",
     "selectAccountPlaceholder": "GitHub 계정을 선택하세요",
     "useDefaultAccount": "기본 계정 사용",
-    "loggedInAccounts": "로그인된 계정",
     "defaultAccount": "기본값",
     "selected": "선택됨",
     "removeAccount": "계정 삭제",
     "setAsDefault": "기본값으로 설정",
-    "addAnotherAccount": "다른 계정 추가",
     "retry": "다시 시도",
     "copyCode": "코드 복사",
     "migrationFailed": "레거시 인증 마이그레이션 실패: {{error}}",
@@ -2094,7 +2056,6 @@
     "enterCode": "브라우저에 코드를 입력하세요:",
     "accountCount": "계정 {{count}}개",
     "selectAccount": "계정 선택",
-    "chatgptAccount": "ChatGPT 계정",
     "accountToUse": "사용할 계정",
     "signInMethod": "로그인 방법",
     "manageAccounts": "계정 관리",
@@ -2104,18 +2065,14 @@
     "explicitSelectionRequired": "로그인 방법을 선택하세요",
     "useDefaultAccount": "기본 계정 사용",
     "noneOptionLabel": "Codex에 로그인된 계정 사용",
-    "reauthDescription": "브라우저 로그인과 동일한 방식으로 계정을 사용하려면 다시 로그인하여 필요한 로그인 자격 증명(id_token)을 보완해야 합니다. 다시 로그인하면 관리형 계정 연결에 사용할 수 있습니다.",
     "reauthBadge": "다시 로그인 필요",
-    "reauthLogin": "다시 로그인",
     "reauthSelectHint": "관리형 연결을 사용하려면 이 계정에 다시 로그인해야 합니다.",
     "reauthNow": "지금 다시 로그인",
     "duplicateAccount": "이 ChatGPT 계정은 이미 추가되었습니다. 기존 계정을 사용하세요.",
-    "loggedInAccounts": "로그인된 계정",
     "defaultAccount": "기본값",
     "selected": "선택됨",
     "removeAccount": "계정 삭제",
     "setAsDefault": "기본값으로 설정",
-    "addAnotherAccount": "다른 계정 추가",
     "logoutAll": "모든 계정 로그아웃",
     "retry": "다시 시도",
     "copyCode": "코드 복사",
@@ -2124,7 +2081,6 @@
     "loginMethod": "로그인 방법",
     "browserLogin": "브라우저 로그인",
     "deviceCodeLogin": "디바이스 코드 로그인",
-    "openBrowserLogin": "브라우저에서 로그인",
     "loginExpired": "로그인이 만료되었습니다. 다시 시도해 주세요."
   },
   "xaiOauth": {
@@ -2178,7 +2134,6 @@
     "testing": "테스트 중",
     "addEndpointPlaceholder": "https://api.example.com",
     "done": "완료",
-    "noEndpoints": "엔드포인트 없음",
     "failed": "실패",
     "enterValidUrl": "유효한 URL을 입력하세요.",
     "invalidUrlFormat": "잘못된 URL 형식",
@@ -2186,12 +2141,7 @@
     "urlExists": "이 URL은 이미 존재합니다.",
     "saveFailed": "저장하지 못했습니다. 다시 시도해 주세요.",
     "loadEndpointsFailed": "사용자 지정 엔드포인트를 로드하지 못했습니다.",
-    "addEndpointFailed": "사용자 지정 엔드포인트를 추가하지 못했습니다.",
-    "removeEndpointFailed": "사용자 지정 엔드포인트를 제거하지 못했습니다.",
-    "removeFailed": "제거 실패: {{error}}",
-    "updateLastUsedFailed": "엔드포인트 마지막 사용 시간을 업데이트하지 못했습니다.",
     "pleaseAddEndpoint": "먼저 엔드포인트를 추가하세요.",
-    "testUnavailable": "속도 테스트 불가",
     "noResult": "반환된 결과가 없습니다.",
     "testFailed": "속도 테스트 실패: {{error}}",
     "empty": "엔드포인트 없음"
@@ -2638,7 +2588,6 @@
       "configLoadFailed": "로컬 요금 설정을 불러오지 못했습니다: {{error}}",
       "neverSynced": "동기화한 적 없음",
       "lastSync": "마지막 동기화",
-      "commonStatus": "자주 사용하는 모델",
       "lastError": "마지막 자동 동기화 실패: {{error}}",
       "localFile": "로컬 요금 파일",
       "openFolder": "폴더 열기",
@@ -2960,8 +2909,6 @@
   "presetSelector": {
     "title": "설정 유형 선택",
     "custom": "사용자 지정",
-    "customDescription": "공급자를 수동으로 설정합니다. 필요한 설정 정보를 모두 입력하세요.",
-    "officialDescription": "공식 로그인을 사용하므로 API 키를 입력할 필요가 없습니다.",
     "presetDescription": "프리셋 설정을 사용하므로 API 키만 입력하면 됩니다."
   },
   "mcp": {
@@ -2974,13 +2921,9 @@
     "geminiTitle": "Gemini MCP 관리",
     "unifiedPanel": {
       "title": "MCP 서버 관리",
-      "addServer": "서버 추가",
-      "editServer": "서버 편집",
       "deleteServer": "서버 삭제",
       "deleteConfirm": "정말로 \"{{id}}\" 서버를 삭제하시겠습니까? 이 작업은 취소할 수 없습니다.",
-      "noServers": "아직 서버가 없습니다",
       "enabledApps": "활성화된 앱",
-      "noImportFound": "가져올 MCP 서버를 찾을 수 없습니다. 모든 서버는 이미 CC Switch에 의해 관리됩니다.",
       "importSuccess": "MCP 서버 {{count}}개를 성공적으로 가져왔습니다.",
       "searchPlaceholder": "MCP 이름, 설명, 태그 또는 명령 검색...",
       "searchAriaLabel": "관리형 MCP 서버 검색",
@@ -3016,37 +2959,25 @@
     },
     "form": {
       "title": "MCP 제목(고유)",
-      "titlePlaceholder": "my-mcp-server",
       "name": "표시 이름",
       "namePlaceholder": "예: mcp-server-time",
       "enabledApps": "앱에 활성화",
-      "noAppsWarning": "앱을 하나 이상 선택해야 합니다.",
       "description": "설명",
       "descriptionPlaceholder": "설명(선택 사항)",
       "tags": "태그(쉼표로 구분)",
       "tagsPlaceholder": "stdio, time, utility",
       "homepage": "홈페이지",
-      "homepagePlaceholder": "https://example.com",
       "docs": "문서",
-      "docsPlaceholder": "https://example.com/docs",
-      "additionalInfo": "추가 정보",
-      "jsonConfig": "전체 JSON 설정",
-      "jsonConfigOrPrefix": "전체 JSON 설정 또는 사용",
-      "tomlConfigOrPrefix": "전체 TOML 설정 또는 사용",
       "jsonPlaceholder": "{\n  \"type\": \"stdio\",\n  \"command\": \"uvx\",\n  \"args\": [\"mcp-server-fetch\"]\n}",
       "tomlConfig": "전체 TOML 설정",
       "tomlPlaceholder": "type = \"stdio\"\ncommand = \"uvx\"\nargs = [\"mcp-server-fetch\"]",
-      "useWizard": "설정 마법사",
-      "syncOtherSide": "{{target}}에 동기화",
-      "syncOtherSideHint": "{{target}}에도 동일한 설정을 적용합니다. 동일한 ID를 가진 기존 항목을 덮어씁니다.",
-      "willOverwriteWarning": "{{target}}에 있는 같은 이름의 설정을 덮어씁니다."
+      "syncOtherSide": "{{target}}에 동기화"
     },
     "wizard": {
       "title": "MCP 설정 마법사",
       "hint": "MCP 서버를 빠르게 설정하고 JSON 설정을 자동 생성합니다.",
       "type": "유형",
       "typeStdio": "stdio",
-      "typeHttp": "http",
       "typeSse": "sse",
       "command": "명령",
       "commandPlaceholder": "npx 또는 uvx",
@@ -3075,16 +3006,13 @@
       "saved": "저장됨",
       "deleted": "삭제됨",
       "enabled": "활성화됨",
-      "disabled": "비활성화됨",
-      "templateAdded": "템플릿이 추가됨"
+      "disabled": "비활성화됨"
     },
     "error": {
       "idRequired": "식별자를 입력하세요",
-      "idExists": "식별자가 이미 존재합니다. 다른 식별자를 사용하세요.",
       "jsonInvalid": "잘못된 JSON 형식",
       "tomlInvalid": "잘못된 TOML 형식",
       "commandRequired": "명령어를 입력해 주세요.",
-      "singleServerObjectRequired": "단일 MCP 서버 객체를 붙여 넣으세요(최상위 mcpServers는 제외).",
       "piSseUnsupported": "Pi는 SSE 방식의 MCP 서버를 지원하지 않습니다. 대신 HTTP(Streamable HTTP)를 사용하세요.",
       "piInvalidName": "Pi MCP 서버 이름에는 영문자, 숫자, _ 및 -만 사용할 수 있습니다: {{id}}",
       "piNameConflict": "Pi는 -와 _만 다른 서버 이름을 같은 이름으로 처리합니다. {{id}}이(가) 기존 {{other}}와(과) 충돌합니다.",
@@ -3105,7 +3033,6 @@
       "enabled": "활성화됨",
       "installed": "설치됨",
       "docs": "문서",
-      "requiresEnv": "환경 변수 필요",
       "fetch": {
         "name": "mcp-server-fetch",
         "description": "GET/POST 등 HTTP 메서드를 지원하는 범용 HTTP 요청 도구로, API를 빠르게 호출하거나 웹 데이터를 가져오는 데 적합합니다."
@@ -3307,7 +3234,6 @@
     "openDirectory": "파일 관리자에서 열기",
     "dailyMemory": {
       "title": "일일 메모리",
-      "sectionTitle": "일일 메모리",
       "cardTitle": "일일 메모리 파일",
       "createToday": "메모리 추가",
       "empty": "아직 일일 메모리 파일이 없습니다.",
@@ -3371,8 +3297,7 @@
       "add": "변수 추가",
       "saveSuccess": "환경 변수가 저장되었습니다.",
       "saveFailed": "환경 변수를 저장하지 못했습니다.",
-      "loadFailed": "환경 변수를 로드하지 못했습니다.",
-      "duplicateKey": "중복된 변수 이름이 감지되었습니다: {{key}}"
+      "loadFailed": "환경 변수를 로드하지 못했습니다."
     },
     "tools": {
       "title": "도구 권한",
@@ -3579,8 +3504,6 @@
       "skillNotFound": "스킬을 찾을 수 없음: {{directory}}",
       "missingRepoInfo": "저장소 정보(owner 또는 name)가 없습니다",
       "downloadTimeout": "저장소 {{owner}}/{{name}} 다운로드 시간 초과 ({{timeout}}초)",
-      "downloadTimeoutHint": "네트워크 연결을 확인하거나 나중에 다시 시도하세요.",
-      "skillPathNotFound": "{{owner}}/{{name}} 저장소에서 스킬 경로 '{{path}}'을(를) 찾을 수 없습니다.",
       "skillDirNotFound": "스킬 디렉터리를 찾을 수 없습니다: {{path}}",
       "directoryConflict": "스킬 디렉터리 '{{directory}}' 항목을 {{existing_repo}}에서 이미 사용 중이므로 {{new_repo}}에서 설치할 수 없습니다.",
       "emptyArchive": "다운로드한 아카이브가 비어 있습니다.",
@@ -3589,23 +3512,19 @@
       "archiveDownloadTooLarge": "저장소 아카이브 다운로드가 {{limit_mb}} MB 제한을 초과했습니다. 중단됨",
       "archiveTooManyEntries": "압축 파일의 항목 수({{count}}개)가 최대 허용 개수({{limit}}개)를 초과했습니다.",
       "downloadFailed": "다운로드 실패: HTTP {{status}}",
-      "allBranchesFailed": "모든 브랜치 다운로드에 실패했습니다. 시도한 브랜치: {{branches}}",
       "httpError": "HTTP 오류 {{status}}",
       "http403": "GitHub 접근이 제한되었습니다. 요청 빈도 제한일 수 있습니다",
       "http404": "저장소 또는 브랜치를 찾을 수 없습니다. URL을 확인하세요.",
       "http429": "요청이 너무 많습니다. 잠시 기다렸다가 다시 시도해 주세요.",
-      "parseMetadataFailed": "스킬 메타데이터를 해석하지 못했습니다",
       "getHomeDirFailed": "사용자 홈 디렉터리를 가져올 수 없습니다.",
       "noSkillsInZip": "ZIP 파일에 스킬이 없습니다 (SKILL.md 파일 필요)",
       "networkError": "네트워크 오류",
-      "fsError": "파일 시스템 오류",
       "unknownError": "알 수 없는 오류",
       "suggestion": {
         "checkNetwork": "네트워크 연결을 확인해 주세요.",
         "checkProxy": "HTTP 프록시 설정을 고려하세요.",
         "retryLater": "나중에 다시 시도해 주세요.",
         "checkRepoUrl": "저장소 URL과 브랜치 이름을 확인하세요",
-        "checkDiskSpace": "디스크 공간을 확인하세요",
         "checkPermission": "디렉터리 권한을 확인하세요.",
         "uninstallFirst": "먼저 동일한 이름을 가진 기존 스킬을 제거하세요.",
         "checkZipContent": "ZIP 파일에 SKILL.md를 포함하는 유효한 스킬 디렉터리가 있는지 확인하세요"
@@ -3613,21 +3532,20 @@
     },
     "repo": {
       "title": "스킬 저장소 관리",
-      "description": "GitHub 스킬 저장소 추가 또는 제거",
+      "description": "GitHub / GitLab / Gitea 스킬 저장소 추가 또는 제거",
       "url": "저장소 URL",
-      "urlPlaceholder": "owner/name 또는 https://github.com/owner/name",
+      "urlPlaceholder": "owner/name, https://github.com/owner/name 또는 https://gitlab.com/group/project",
       "branch": "브랜치",
       "branchPlaceholder": "main",
       "path": "스킬 경로",
-      "pathPlaceholder": "skills (선택 사항, 비워 두면 루트 디렉터리 스캔)",
       "add": "저장소 추가",
       "list": "추가된 저장소",
       "empty": "저장소 없음",
       "invalidUrl": "잘못된 저장소 URL 형식",
+      "httpsOnly": "GitLab / Gitea 저장소는 https 주소만 지원합니다",
       "addSuccess": "저장소 {{owner}}/{{name}}을(를) 추가하고 스킬 {{count}}개를 찾았습니다",
       "addFailed": "추가하지 못했습니다.",
       "removeSuccess": "저장소 {{owner}}/{{name}} 제거를 완료했습니다.",
-      "removeFailed": "제거하지 못했습니다.",
       "skillCount": "스킬 {{count}}개 발견"
     },
     "search": "스킬 검색",
@@ -3653,8 +3571,7 @@
       "all": "모두",
       "installed": "설치됨",
       "uninstalled": "설치되지 않음",
-      "repo": "저장소로 필터링",
-      "allRepos": "모든 저장소"
+      "repo": "저장소로 필터링"
     },
     "noResults": "일치하는 스킬이 없습니다",
     "noInstalled": "설치된 스킬 없음",
@@ -3702,8 +3619,6 @@
     "installFromZip": {
       "button": "ZIP에서 설치",
       "installing": "설치 중...",
-      "successSingle": "스킬 {{name}} 설치됨",
-      "successMultiple": "스킬 {{count}}개를 설치했습니다.",
       "noSkillsFound": "ZIP 파일에 스킬이 없습니다 (SKILL.md 파일 필요)",
       "skippedTitle": "스킬 {{count}}개 건너뜀: 폴더 이름이 이미 사용 중입니다.",
       "allSkipped": "아무것도 설치하지 않았습니다. ZIP의 스킬 {{count}}개 모두 폴더 이름이 이미 사용 중입니다.",
@@ -3871,7 +3786,6 @@
       "dimensions": "이미지가 너무 큽니다(너비와 높이는 4096픽셀을 초과할 수 없음)."
     },
     "category": {
-      "aiProvider": "AI 공급자",
       "cloud": "클라우드 플랫폼",
       "tool": "개발 도구",
       "other": "기타"
@@ -3879,7 +3793,6 @@
   },
   "providerIcon": {
     "label": "아이콘",
-    "colorLabel": "아이콘 색상",
     "selectIcon": "아이콘 선택",
     "preview": "미리보기",
     "clickToChange": "아이콘을 변경하려면 클릭하세요.",
@@ -3912,18 +3825,12 @@
     },
     "tooltip": {
       "enabled": "{{app}} 장애 조치 활성화됨\n요청은 대기열 우선순위를 따릅니다(P1→P2→...)",
-      "disabled": "{{app}} 장애 조치 활성화\n즉시 대기열 P1로 전환한 다음 오류 발생 시 폴백합니다.",
-      "takeoverRequired": "먼저 {{app}}의 요청을 라우팅 서비스에서 관리하도록 설정한 뒤 장애 조치를 켜세요"
+      "disabled": "{{app}} 장애 조치 활성화\n즉시 대기열 P1로 전환한 다음 오류 발생 시 폴백합니다."
     }
   },
   "proxy": {
     "panel": {
-      "serviceAddress": "서비스 주소",
-      "addressCopied": "주소가 복사되었습니다",
       "currentProvider": "현재 공급자:",
-      "waitingFirstRequest": "현재 공급자: 첫 요청 대기 중...",
-      "stoppedTitle": "라우팅 서비스가 중지되었습니다.",
-      "stoppedDescription": "위의 토글을 사용하여 서비스를 시작하세요.",
       "openSettings": "라우팅 서비스 설정",
       "stats": {
         "activeConnections": "활성 연결",
@@ -3935,9 +3842,6 @@
     "settings": {
       "title": "라우팅 서비스 설정",
       "description": "로컬 라우팅 서버 수신 주소, 포트 및 런타임 매개변수를 설정합니다. 변경사항은 저장 후 즉시 적용됩니다.",
-      "alert": {
-        "autoApply": "변경 사항은 수동으로 다시 시작하지 않고도 실행 중인 라우팅 서비스에 자동으로 동기화됩니다."
-      },
       "basic": {
         "title": "기본 설정",
         "description": "라우팅 서비스 수신 주소 및 포트를 설정합니다."
@@ -3989,16 +3893,8 @@
         }
       },
       "validation": {
-        "addressInvalid": "유효한 IP 주소를 입력하세요.",
-        "portMin": "포트는 1024 이상이어야 합니다.",
-        "portMax": "포트는 65535 이하여야 합니다.",
         "retryMin": "재시도 횟수는 음수일 수 없습니다.",
-        "retryMax": "재시도 횟수는 10을 초과할 수 없습니다.",
-        "timeoutNonNegative": "제한 시간은 음수일 수 없습니다.",
-        "timeoutMax": "제한 시간은 600초를 초과할 수 없습니다.",
-        "timeoutRange": "0 또는 10~600 사이의 값을 입력하세요.",
-        "streamingTimeoutMin": "제한 시간은 5초 이상이어야 합니다.",
-        "streamingTimeoutMax": "제한 시간은 300초를 초과할 수 없습니다."
+        "retryMax": "재시도 횟수는 10을 초과할 수 없습니다."
       },
       "actions": {
         "save": "설정 저장"
@@ -4030,7 +3926,6 @@
       "enabled": "{{app}}이(가) 통합 모드로 전환되었습니다",
       "exitedToDirect": "{{apps}}을(를) 직접 연결로 되돌렸습니다",
       "ariaLabel": "{{appLabel}} 통합 모드",
-      "failoverUnavailable": "{{appLabel}}은(는) 통합 모드이므로 장애 조치를 사용하지 않습니다. 대기열과 설정은 유지되며 라우팅 모드로 돌아가면 다시 적용됩니다",
       "codexStale": {
         "authTitle": "Codex는 여전히 이전 계정을 캐시할 수 있습니다. 새 로그인을 로드하려면 백그라운드 서버를 다시 시작하세요.",
         "title": "Codex가 이전 모델 목록을 사용하고 있어 전환 후의 모델이 표시되지 않습니다.",
@@ -4048,26 +3943,17 @@
       }
     },
     "failover": {
-      "proxyRequired": "장애 조치를 설정하려면 라우팅 서비스를 시작해야 합니다.",
-      "autoSwitch": "자동 장애 조치",
-      "autoSwitchDescription": "활성화되면 즉시 대기열 P1로 전환하고 실패 시 자동으로 대기열의 다음 공급자를 시도합니다."
+      "proxyRequired": "장애 조치를 설정하려면 라우팅 서비스를 시작해야 합니다."
     },
     "failoverQueue": {
       "title": "장애 조치 대기열",
       "description": "각 앱 공급자의 장애 조치 순서 관리",
       "info": "자동 장애 조치(failover)가 활성화되면 요청은 큐 우선 순위(P1 우선)를 따릅니다. 오류가 발생하면 시스템은 대기열의 다음 공급자를 시도합니다.",
-      "selectProvider": "대기열에 추가할 공급자를 선택하세요.",
-      "noAvailableProviders": "추가할 수 있는 공급자가 없습니다.",
       "empty": "장애 조치 대기열이 비어 있습니다. 자동 장애 조치를 활성화하려면 공급자를 추가하세요.",
-      "orderHint": "대기열 순서는 홈 페이지의 공급자 목록 순서와 일치합니다. 우선순위를 변경하려면 홈 페이지에서 공급자 순서를 변경하세요.",
-      "dragHint": "장애 조치 순서를 조정하려면 공급자를 드래그하세요. 숫자가 낮을수록 우선순위가 높습니다.",
       "toggleEnabled": "활성화/비활성화",
       "addSuccess": "장애 조치 대기열에 추가됨",
       "addFailed": "추가하지 못했습니다.",
       "removeSuccess": "장애 조치 대기열에서 제거됨",
-      "removeFailed": "제거하지 못했습니다.",
-      "reorderSuccess": "대기열 순서가 업데이트되었습니다.",
-      "reorderFailed": "순서 변경 실패",
       "toggleFailed": "상태를 업데이트하지 못했습니다."
     },
     "autoFailover": {
@@ -4087,15 +3973,6 @@
       "errorRateHint": "오류율이 이 값을 초과하면 서킷 브레이커를 엽니다.",
       "minRequests": "최소 요청 수",
       "minRequestsHint": "오류율을 계산하는 데 필요한 최소 요청 수",
-      "explanationTitle": "작동 방식",
-      "failureThresholdLabel": "실패 임계값",
-      "failureThresholdExplain": "연속 실패 횟수가 이 값에 도달하면 서킷 브레이커가 열리고 해당 공급자를 일시적으로 사용할 수 없게 됩니다.",
-      "timeoutLabel": "복구 대기 시간",
-      "timeoutExplain": "서킷 브레이커가 열린 후 설정한 시간만큼 기다렸다가 반열림 상태로 전환을 시도합니다.",
-      "successThresholdLabel": "복구 성공 임계값",
-      "successThresholdExplain": "반열림 상태에서 성공 횟수가 이 값에 도달하면 서킷 브레이커를 닫고 해당 공급자를 다시 사용할 수 있게 합니다.",
-      "errorRateLabel": "오류율 임계값",
-      "errorRateExplain": "연속 실패 임계값에 도달하지 않았더라도 오류율이 이 값을 초과하면 서킷 브레이커를 엽니다.",
       "maxRetries": "최대 재시도 횟수",
       "timeoutSettings": "제한 시간 설정",
       "streamingFirstByte": "스트리밍 첫 바이트 대기 제한 시간",
@@ -4129,13 +4006,10 @@
   },
   "proxyConfig": {
     "proxyEnabled": "라우팅 마스터 스위치",
-    "appTakeover": "라우팅 활성화됨",
-    "perAppConfig": "앱별 설정",
     "circuitBreaker": "서킷 브레이커 설정",
     "circuitBreakerSettings": "서킷 브레이커 설정",
     "failureThreshold": "실패 임계값",
     "successThreshold": "복구 성공 임계값",
-    "recoveryTimeout": "복구 대기 시간",
     "errorRateThreshold": "오류율 임계값",
     "minRequests": "최소 요청 수",
     "timeoutConfig": "제한 시간 설정",
@@ -4357,9 +4231,7 @@
       "title": "기본 모델",
       "description": "OpenClaw의 기본 주 모델과 대체 모델을 설정합니다",
       "primary": "주 모델",
-      "primaryPlaceholder": "예: deepseek/deepseek-chat",
       "fallbacks": "대체 모델",
-      "fallbacksPlaceholder": "예: openrouter/anthropic/claude-sonnet-4.5",
       "addFallback": "대체 모델 추가",
       "saved": "기본 모델 설정이 저장되었습니다.",
       "saveFailed": "기본 모델을 저장하지 못했습니다."
@@ -4370,9 +4242,6 @@
       "modelId": "모델 ID",
       "modelIdPlaceholder": "예: deepseek/deepseek-chat",
       "alias": "별칭",
-      "aliasPlaceholder": "예: DeepSeek",
-      "addEntry": "모델 추가",
-      "removeEntry": "제거",
       "saved": "모델 카탈로그가 저장되었습니다.",
       "saveFailed": "모델 카탈로그를 저장하지 못했습니다.",
       "empty": "모델 카탈로그 항목이 없습니다.",
@@ -4586,7 +4455,6 @@
       "routeSwitched": "라우팅 대상을 {{provider}}(으)로 전환했습니다. 이후 새 요청은 이 공급자를 사용합니다.",
       "stackDefaultChanged": "통합 기본 공급자를 {{provider}}(으)로 설정했습니다. 이미 선택한 통합 모델은 각자의 공급자를 계속 사용합니다.",
       "clientConfigChanged": " 클라이언트 설정도 변경되었습니다. 업데이트된 설정을 로드하려면 {{app}}을(를) 다시 시작하세요.",
-      "defaultRemembered": "통합 모드로 전환하면 {{provider}}이(가) 기본 공급자가 됩니다.",
       "restartHint": "적용하려면 {{app}}을(를) 다시 시작하세요.",
       "failed": "전환할 수 없음: {{detail}}"
     },
@@ -5122,7 +4990,7 @@
       "disabledShort": "꺼짐",
       "disabled": "꺼짐, 탐색에 사용하지 않음",
       "manage": "저장소 추가 또는 관리",
-      "openAria": "GitHub에서 {{repo}} 열기",
+      "openAria": "브라우저에서 {{repo}} 열기",
       "removeAria": "저장소 {{repo}} 제거",
       "readFailed": "읽기 실패"
     },
@@ -5432,6 +5300,8 @@
     "readyBodyRouting": "지금 설치할까요? CC Switch가 다시 시작되며, 로컬 라우팅을 거쳐 진행 중인 요청이 중단됩니다.",
     "later": "나중에",
     "installNow": "설치 후 다시 시작",
-    "installFailed": "업데이트 설치에 실패했습니다"
+    "installFailed": "업데이트 설치에 실패했습니다",
+    "downloadingInline": "새 버전을 백그라운드에서 다운로드하는 중…",
+    "downloadedInline": "다운로드 완료"
   }
 }

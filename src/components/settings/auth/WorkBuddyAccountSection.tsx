@@ -454,5 +454,3 @@ export function WorkBuddyAccountSection({
     </ManagedAccountsGroup>
   );
 }
-
-export default WorkBuddyAccountSection;

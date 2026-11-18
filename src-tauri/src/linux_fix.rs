@@ -31,6 +31,7 @@
 //! single_instance、托盘 show_main、lightweight 退出/重建）都应在现有
 //! `set_focus()` 之后追加一次调用。
 
+use crate::sync_utils::MutexExt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
@@ -105,9 +106,7 @@ impl<T> LatestSlot<T> {
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Option<T>> {
-        self.inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+        self.inner.lock_recover()
     }
 }
 
