@@ -25,7 +25,6 @@
     "success": "Success",
     "error": "Error",
     "unknown": "Unknown",
-    "enterValidValue": "Please enter a valid value",
     "clear": "Clear",
     "format": "Format",
     "formatSuccess": "Formatted successfully",
@@ -142,7 +141,6 @@
     "adoptCatalog": "Use CC Switch's model catalog",
     "adoptCatalogDone": "Now using CC Switch's model catalog. Restart Codex to apply",
     "adoptCatalogFailed": "Failed to switch to CC Switch's model catalog: {{error}}",
-    "noRoutingSupport": "No Routing Support",
     "blockedByProxyHint": "Can't switch to an official provider in Routing mode",
     "editProvider": "Edit Provider",
     "editProviderHint": "Configuration will be applied to the current provider immediately after update.",
@@ -281,12 +279,10 @@
     "editCurrentNotice": "This is the provider in use. Saving takes effect right away; the next request uses the new settings."
   },
   "claudeCode": {
-    "needsRouting": "Needs Routing",
-    "noRoutingSupport": "No Routing Support"
+    "needsRouting": "Needs Routing"
   },
   "codex": {
     "needsRouting": "Needs Routing",
-    "noRoutingSupport": "No Routing Support",
     "officialRouting": "Official Account Routing",
     "nativeLogin": "Codex Sign-in",
     "followCodexLogin": "Follow Codex login",
@@ -343,8 +339,6 @@
   },
   "notifications": {
     "providerAdded": "Provider added",
-    "providerSaved": "Provider configuration saved",
-    "providerDeleted": "Provider deleted successfully",
     "switchSuccess": "Switch successful!",
     "codexRestartRequired": "Switched successfully. Restart the client to apply changes.",
     "geminiRestartRequired": "Switched successfully. Restart Gemini CLI to apply changes.",
@@ -355,12 +349,9 @@
     "removeFromConfigFailed": "Could not remove provider",
     "switchFailedTitle": "Switch failed",
     "switchFailed": "Switch failed: {{error}}",
-    "autoImported": "Default provider created from existing configuration",
     "addFailed": "Failed to add provider: {{error}}",
     "saveFailed": "Save failed: {{error}}",
     "saveFailedGeneric": "Save failed, please try again",
-    "appliedToClaudePlugin": "Applied to Claude plugin",
-    "removedFromClaudePlugin": "Removed from Claude plugin",
     "syncClaudePluginFailed": "Sync Claude plugin failed",
     "skipClaudeOnboardingFailed": "Failed to skip Claude Code first-run confirmation",
     "clearClaudeOnboardingSkipFailed": "Failed to restore Claude Code first-run confirmation",
@@ -379,8 +370,6 @@
     "proxyReasonDesktopMapping": "uses model mapping (Claude Desktop only accepts Claude model names)",
     "proxyReasonManagedOAuth": "uses managed OAuth login (token injected by local routing)",
     "proxyReasonRoutingRequired": "requires local routing to process requests",
-    "openAIFormatHint": "This provider uses OpenAI-compatible format and requires the routing service to be enabled",
-    "copilotProxyHint": "GitHub Copilot as a Claude provider always requires local routing; routing automatically selects Chat Completions or Responses based on the current model.",
     "openLinkFailed": "Failed to open link",
     "openclawModelsRegistered": "Models have been registered to /model list",
     "openclawDefaultModelSet": "Set as default model",
@@ -1236,6 +1225,9 @@
       "modelsHint": "Add at least one model. The model ID is sent to the API as-is. WorkBuddy doesn't support adding the same model more than once yet, so a model ID can be in only one card. With the name left blank, WorkBuddy's menu shows \"vendor label:model ID\".",
       "maxInputTokens": "Max input tokens",
       "maxOutputTokens": "Max output tokens",
+      "thinkingEfforts": "Thinking effort",
+      "thinkingEffortsHint": "Selected efforts are listed in WorkBuddy's model menu; the chosen one is sent to the API as reasoning_effort. With none selected, only a thinking on/off switch is shown.",
+      "canDisableThinking": "Thinking can be turned off",
       "modelIdTaken": "WorkBuddy doesn't support adding the same model more than once yet, and this model is already in \"{{owner}}\". To move it to this card, remove it there first.",
       "modelOwnerUser": "a model added in WorkBuddy itself",
       "presetModelsSkipped": "WorkBuddy doesn't support adding the same model more than once yet, so models already in other cards were skipped: {{models}}. To move one to this card, remove it from its current card first, then add it back here."
@@ -1451,7 +1443,7 @@
     "keyFieldsHint": "The default model (models.default) and the model table it points to follow the provider; everything else is Grok Build global settings and applies to every provider after saving.",
     "inactiveFieldsHint": "Saved in this provider by an older version; switching no longer applies them. Click one to copy its TOML and paste it above if you need it.",
     "inactiveFieldCopied": "Copied",
-    "routeOnlySettingsHint": "The two settings below only apply in routing mode."
+    "routeOnlySettingsHint": "The settings below only apply in routing mode."
   },
   "sessionManager": {
     "searchPlaceholder": "Search titles, folders, first/last messages or session IDs",
@@ -1666,7 +1658,17 @@
         "prLink": "Linked PR #{{number}}",
         "prLinkPlain": "Linked a PR",
         "slashCommand": "Ran {{command}}",
-        "subAgent": "Subagent {{name}}"
+        "subAgent": "Subagent {{name}}",
+        "goal": "Goal · {{status}}",
+        "goalPlain": "Goal",
+        "goalStatus": {
+          "active": "Active",
+          "paused": "Paused",
+          "blocked": "Blocked",
+          "usageLimited": "Usage limit reached",
+          "budgetLimited": "Budget reached",
+          "complete": "Complete"
+        }
       },
       "injectedToggle": "Show injected context",
       "injectedRow": "Context · {{label}} · {{chars}} chars",
@@ -1742,25 +1744,15 @@
     "copilotDeleteHint": "Delete this session in GitHub Copilot CLI so its session store stays consistent"
   },
   "console": {
-    "providerSwitchReceived": "Received provider switch event:",
-    "setupListenerFailed": "Failed to setup provider switch listener:",
-    "updateProviderFailed": "Update provider failed:",
-    "autoImportFailed": "Auto import default configuration failed:",
     "openLinkFailed": "Failed to open link:",
-    "getVersionFailed": "Failed to get version info:",
-    "loadSettingsFailed": "Failed to load settings:",
-    "getConfigPathFailed": "Failed to get config path:",
-    "getConfigDirFailed": "Failed to get config directory:",
-    "detectPortableFailed": "Failed to detect portable mode:",
-    "saveSettingsFailed": "Failed to save settings:",
     "updateFailed": "Update failed:",
     "checkUpdateFailed": "Check for updates failed:",
-    "openConfigFolderFailed": "Failed to open config folder:",
-    "selectConfigDirFailed": "Failed to select config directory:",
-    "getDefaultConfigDirFailed": "Failed to get default config directory:",
     "openReleaseNotesFailed": "Failed to open release notes:"
   },
   "providerForm": {
+    "billingMultiplier": "Provider cost multiplier",
+    "billingMultiplierHelp": "Every model's reference price for this provider is multiplied by this value to estimate what requests through local routing cost. 0.5 means half price; leave blank for 1×. Only affects future requests; in direct mode (routing off), usage imported from session logs is still counted at 1×.",
+    "billingMultiplierInvalid": "Enter a number from 0 to 1000, or leave blank for 1×.",
     "nativeConfig": {
       "title": "Config file {{path}} (this provider only)",
       "hint": "Shows this provider's part of the file in the app's own format and writes it there on save. Global settings such as the default model are not here. Comments typed here are not saved.",
@@ -1935,6 +1927,8 @@
     "requestModelLabel": "Requested model",
     "modelOneMHeader": "Declare 1M",
     "modelOneMLabel": "1M",
+    "copilotOneMUnavailable": "Copilot has no 1M version of this model",
+    "copilotOneMMismatch": "Copilot has no 1M version of {{models}}: requests fall back to the regular model, but Claude Code still plans for a 1M context, so long sessions may exceed the limit. Uncheck 1M.",
     "fallbackModelLabel": "Default fallback model",
     "fallbackModelHelpDirect": "Written to ANTHROPIC_MODEL: the main model Claude Code starts with. Background tasks use the Haiku tier instead.",
     "fallbackModelHelp": "Requests that don't map to the Sonnet, Opus, Fable, or Haiku tier are sent upstream with this model.",
@@ -2018,12 +2012,10 @@
     "selectAccount": "Select Account",
     "selectAccountPlaceholder": "Select a GitHub account",
     "useDefaultAccount": "Use default account",
-    "loggedInAccounts": "Logged in accounts",
     "defaultAccount": "Default",
     "selected": "Selected",
     "removeAccount": "Remove account",
     "setAsDefault": "Set as default",
-    "addAnotherAccount": "Add another account",
     "retry": "Retry",
     "copyCode": "Copy code",
     "migrationFailed": "Legacy auth migration failed: {{error}}",
@@ -2077,7 +2069,6 @@
     "enterCode": "Enter the code in your browser:",
     "accountCount": "{{count}} account(s)",
     "selectAccount": "Select account",
-    "chatgptAccount": "ChatGPT account",
     "accountToUse": "Account to use",
     "signInMethod": "Sign-in method",
     "manageAccounts": "Manage accounts",
@@ -2087,18 +2078,14 @@
     "explicitSelectionRequired": "Choose a sign-in method",
     "useDefaultAccount": "Use default account",
     "noneOptionLabel": "Follow Codex login",
-    "reauthDescription": "To match the browser-login behavior, these accounts must sign in again to restore the required login credential (id_token). Once re-authenticated they can be used for managed binding.",
     "reauthBadge": "Re-login required",
-    "reauthLogin": "Re-login",
     "reauthSelectHint": "This account needs to sign in again to enable managed binding.",
     "reauthNow": "Re-login now",
     "duplicateAccount": "This ChatGPT account has already been added. Use the existing account.",
-    "loggedInAccounts": "Logged in accounts",
     "defaultAccount": "Default",
     "selected": "Selected",
     "removeAccount": "Remove account",
     "setAsDefault": "Set as default",
-    "addAnotherAccount": "Add another account",
     "logoutAll": "Logout all accounts",
     "retry": "Retry",
     "copyCode": "Copy code",
@@ -2107,7 +2094,6 @@
     "loginMethod": "Login method",
     "browserLogin": "Browser login",
     "deviceCodeLogin": "Device-code login",
-    "openBrowserLogin": "Open browser login",
     "loginExpired": "Login expired. Please try again."
   },
   "xaiOauth": {
@@ -2161,7 +2147,6 @@
     "testing": "Testing",
     "addEndpointPlaceholder": "https://api.example.com",
     "done": "Done",
-    "noEndpoints": "No endpoints",
     "failed": "Failed",
     "enterValidUrl": "Please enter a valid URL",
     "invalidUrlFormat": "Invalid URL format",
@@ -2169,12 +2154,7 @@
     "urlExists": "This URL already exists",
     "saveFailed": "Save failed, please try again",
     "loadEndpointsFailed": "Failed to load custom endpoints:",
-    "addEndpointFailed": "Failed to add custom endpoint:",
-    "removeEndpointFailed": "Failed to remove custom endpoint:",
-    "removeFailed": "Remove failed: {{error}}",
-    "updateLastUsedFailed": "Failed to update endpoint last used time",
     "pleaseAddEndpoint": "Please add an endpoint first",
-    "testUnavailable": "Speed test unavailable",
     "noResult": "No result returned",
     "testFailed": "Speed test failed: {{error}}",
     "empty": "No endpoints"
@@ -2268,7 +2248,7 @@
     "inactiveFieldCopied": "Copied",
     "upstreamFormatCopilotRouteHint": "Every mode requires routing, which injects the Copilot account credentials. A protocol you pick explicitly fails for models that don't support it.",
     "maxOutputTokensWarning": "Don't exceed the real output limit of the model or gateway, or requests return 400.",
-    "routeOnlySettingsHint": "The two settings below only apply in routing and Aggregation modes."
+    "routeOnlySettingsHint": "The settings below only apply in routing and Aggregation modes."
   },
   "geminiConfig": {
     "envFile": "Environment Variables (.env)",
@@ -2770,7 +2750,9 @@
       "speedEstimateTooFew": "Under 200 output tokens, so no estimate",
       "noTimingSession": "Session logs have no timing data",
       "noFirstToken": "No first-token timing, so no speed",
-      "providerId": "Provider ID"
+      "providerId": "Provider ID",
+      "copyRequestId": "Copy request ID",
+      "requestIdCopied": "Request ID copied"
     },
     "sources": {
       "scanTitle": "Scan session logs automatically",
@@ -2942,8 +2924,6 @@
   "presetSelector": {
     "title": "Select Configuration Type",
     "custom": "Custom",
-    "customDescription": "Manually configure provider, requires complete configuration",
-    "officialDescription": "Official login, no API Key required",
     "presetDescription": "Use preset configuration, only API Key required"
   },
   "mcp": {
@@ -3567,9 +3547,9 @@
     },
     "repo": {
       "title": "Manage Skill Repositories",
-      "description": "Add or remove GitHub skill repository sources",
+      "description": "Add or remove GitHub / GitLab / Gitea skill repository sources",
       "url": "Repository URL",
-      "urlPlaceholder": "owner/name or https://github.com/owner/name",
+      "urlPlaceholder": "owner/name, https://github.com/owner/name or https://gitlab.com/group/project",
       "branch": "Branch",
       "branchPlaceholder": "main",
       "path": "Skills Path",
@@ -3577,6 +3557,7 @@
       "list": "Added Repositories",
       "empty": "No repositories",
       "invalidUrl": "Invalid repository URL format",
+      "httpsOnly": "GitLab and Gitea repositories must use an https address",
       "addSuccess": "Repository {{owner}}/{{name}} added, detected {{count}} skills",
       "addFailed": "Failed to add",
       "removeSuccess": "Repository {{owner}}/{{name}} removed",
@@ -3827,7 +3808,6 @@
   },
   "providerIcon": {
     "label": "Icon",
-    "colorLabel": "Icon Color",
     "selectIcon": "Select Icon",
     "preview": "Preview",
     "clickToChange": "Click to change icon",
@@ -4041,13 +4021,10 @@
   },
   "proxyConfig": {
     "proxyEnabled": "Routing Master Switch",
-    "appTakeover": "Routing Enabled",
-    "perAppConfig": "Per-App Config",
     "circuitBreaker": "Circuit Breaker",
     "circuitBreakerSettings": "Circuit Breaker Settings",
     "failureThreshold": "Failure Threshold",
     "successThreshold": "Success Threshold",
-    "recoveryTimeout": "Recovery Timeout",
     "errorRateThreshold": "Error Rate Threshold",
     "minRequests": "Min Requests",
     "timeoutConfig": "Timeout Config",
@@ -5029,7 +5006,7 @@
       "disabledShort": "Off",
       "disabled": "Turned off, not used by Discover",
       "manage": "Add or manage repositories",
-      "openAria": "Open {{repo}} on GitHub",
+      "openAria": "Open {{repo}} in the browser",
       "removeAria": "Remove repository {{repo}}",
       "readFailed": "Read failed"
     },

@@ -608,29 +608,6 @@ mod tests {
         }
     }
 
-    #[test]
-    #[ignore = "manual serialization benchmark"]
-    fn benchmark_message_sizing() {
-        let message = SessionMessage {
-            content: "a".repeat(8 * 1024 * 1024),
-            ..SessionMessage::default()
-        };
-        let start = std::time::Instant::now();
-        for _ in 0..20 {
-            std::hint::black_box(serde_json::to_vec(&message).unwrap().len());
-        }
-        let materialized = start.elapsed();
-        let start = std::time::Instant::now();
-        for _ in 0..20 {
-            std::hint::black_box(serialized_message_len(&message));
-        }
-        eprintln!(
-            "message_sizing 8MiB x20 materialized_ms={} counted_ms={}",
-            materialized.as_millis(),
-            start.elapsed().as_millis()
-        );
-    }
-
     fn key(name: &str) -> CacheKey {
         ("claude".to_string(), name.to_string())
     }

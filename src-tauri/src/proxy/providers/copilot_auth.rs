@@ -1116,16 +1116,6 @@ impl CopilotAuthManager {
         }
     }
 
-    pub async fn get_model_vendor(
-        &self,
-        model_id: &str,
-    ) -> Result<Option<String>, CopilotAuthError> {
-        match self.resolve_default_account_id().await {
-            Some(id) => self.get_model_vendor_for_account(&id, model_id).await,
-            None => Err(CopilotAuthError::GitHubTokenInvalid),
-        }
-    }
-
     pub async fn resolve_model(
         &self,
         model_id: &str,
@@ -2196,7 +2186,11 @@ mod tests {
             .unwrap();
         assert_eq!(vendor.as_deref(), Some("OpenAI"));
 
-        let default_vendor = manager.get_model_vendor("claude-sonnet-4").await.unwrap();
+        let default_vendor = manager
+            .resolve_model("claude-sonnet-4", CodexCopilotApiFormat::Auto)
+            .await
+            .unwrap()
+            .map(|model| model.vendor);
         assert_eq!(default_vendor.as_deref(), Some("Anthropic"));
 
         let hidden = manager

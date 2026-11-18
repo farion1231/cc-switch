@@ -173,8 +173,6 @@ export const AgyOAuthSection: React.FC<AgyOAuthSectionProps> = ({
   );
 };
 
-export default AgyOAuthSection;
-
 interface AgyAccountSelectProps {
   value: string | null;
   onChange: (accountId: string | null) => void;

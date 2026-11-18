@@ -2,6 +2,7 @@
 //!
 //! 提供前端调用的 API 接口
 
+use crate::app_config::AppType;
 use crate::error::AppError;
 use crate::proxy::types::*;
 use crate::proxy::CircuitBreakerConfig;
@@ -45,8 +46,6 @@ pub async fn stop_proxy_server(state: tauri::State<'_, AppState>) -> Result<(), 
         || takeover.gemini
         || takeover.grokbuild
         || takeover.claude_desktop
-        || takeover.opencode
-        || takeover.openclaw
     {
         return Err(
             "仍有应用处于代理接管状态，请先在设置中关闭对应应用接管后再停止本地路由。".to_string(),
@@ -218,11 +217,9 @@ pub async fn get_proxy_status(state: tauri::State<'_, AppState>) -> Result<Proxy
 #[tauri::command]
 pub async fn get_global_proxy_config(
     state: tauri::State<'_, AppState>,
-) -> Result<GlobalProxyConfig, String> {
+) -> Result<GlobalProxyConfig, AppError> {
     let db = &state.db;
-    db.get_global_proxy_config()
-        .await
-        .map_err(|e| e.to_string())
+    db.get_global_proxy_config().await
 }
 
 /// 更新全局代理配置
@@ -262,7 +259,7 @@ pub async fn set_proxy_client_host(
 }
 
 pub(crate) async fn save_proxy_client_host(state: &AppState, host: &str) -> Result<(), String> {
-    crate::settings::set_proxy_client_host(host).map_err(|e| e.to_string())?;
+    crate::settings::set_proxy_client_host(host)?;
     resync_proxy_clients(state).await
 }
 
@@ -279,11 +276,9 @@ pub async fn get_proxy_config_for_app(
     state: tauri::State<'_, AppState>,
     app_type: String,
 ) -> Result<AppProxyConfig, String> {
-    require_proxy_app(&app_type)?;
+    let app = require_proxy_app(&app_type)?;
     let db = &state.db;
-    db.get_proxy_config_for_app(&app_type)
-        .await
-        .map_err(|e| e.to_string())
+    Ok(db.get_proxy_config_for_app(&app).await?)
 }
 
 /// 更新指定应用的代理配置
@@ -295,26 +290,23 @@ pub async fn update_proxy_config_for_app(
     config: AppProxyConfig,
 ) -> Result<(), String> {
     let db = &state.db;
-    let app_type = config.app_type.clone();
-    let app = require_proxy_app(&app_type)?;
+    let app = require_proxy_app(&config.app_type)?;
     let circuit_config = CircuitBreakerConfig::from(&config);
     // `enabled` 是模式的镜像，只由进入 / 退出代理改写。
     let mut config = config;
     config.enabled = crate::mode::current::is_proxy(&app);
 
-    db.update_proxy_config_for_app(config)
-        .await
-        .map_err(|e| e.to_string())?;
+    db.update_proxy_config_for_app(config).await?;
 
     state
         .proxy_service
-        .update_circuit_breaker_config_for_app(&app_type, circuit_config)
+        .update_circuit_breaker_config_for_app(&app, circuit_config)
         .await
 }
 
 async fn get_pricing_model_source_internal(
     state: &AppState,
-    app_type: &str,
+    app_type: &AppType,
 ) -> Result<String, AppError> {
     let db = &state.db;
     db.get_pricing_model_source(app_type).await
@@ -323,7 +315,7 @@ async fn get_pricing_model_source_internal(
 #[cfg_attr(not(feature = "test-hooks"), doc(hidden))]
 pub async fn get_pricing_model_source_test_hook(
     state: &AppState,
-    app_type: &str,
+    app_type: &AppType,
 ) -> Result<String, AppError> {
     get_pricing_model_source_internal(state, app_type).await
 }
@@ -332,15 +324,13 @@ pub async fn get_pricing_model_source_test_hook(
 pub async fn get_pricing_model_source(
     state: tauri::State<'_, AppState>,
     app_type: String,
-) -> Result<String, String> {
-    get_pricing_model_source_internal(&state, &app_type)
-        .await
-        .map_err(|e| e.to_string())
+) -> Result<String, AppError> {
+    get_pricing_model_source_internal(&state, &AppType::from_str(&app_type)?).await
 }
 
 async fn set_pricing_model_source_internal(
     state: &AppState,
-    app_type: &str,
+    app_type: &AppType,
     value: &str,
 ) -> Result<(), AppError> {
     let db = &state.db;
@@ -350,7 +340,7 @@ async fn set_pricing_model_source_internal(
 #[cfg_attr(not(feature = "test-hooks"), doc(hidden))]
 pub async fn set_pricing_model_source_test_hook(
     state: &AppState,
-    app_type: &str,
+    app_type: &AppType,
     value: &str,
 ) -> Result<(), AppError> {
     set_pricing_model_source_internal(state, app_type, value).await
@@ -361,10 +351,8 @@ pub async fn set_pricing_model_source(
     state: tauri::State<'_, AppState>,
     app_type: String,
     value: String,
-) -> Result<(), String> {
-    set_pricing_model_source_internal(&state, &app_type, &value)
-        .await
-        .map_err(|e| e.to_string())
+) -> Result<(), AppError> {
+    set_pricing_model_source_internal(&state, &AppType::from_str(&app_type)?, &value).await
 }
 
 // ==================== 故障转移相关命令 ====================
@@ -375,9 +363,7 @@ pub async fn get_provider_health(
     provider_id: String,
     app_type: String,
 ) -> Result<ProviderHealth, String> {
-    require_mode_app(&app_type)?;
+    let app = require_mode_app(&app_type)?;
     let db = &state.db;
-    db.get_provider_health(&provider_id, &app_type)
-        .await
-        .map_err(|e| e.to_string())
+    Ok(db.get_provider_health(&provider_id, &app).await?)
 }

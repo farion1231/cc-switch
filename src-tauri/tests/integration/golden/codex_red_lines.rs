@@ -211,7 +211,7 @@ fn snapshot(state: &AppState, target: &str) -> LiveSnapshot {
         .collect();
     let target_row = state
         .db
-        .get_provider_by_id(target, AppType::Codex.as_str())
+        .get_provider_by_id(target, &AppType::Codex)
         .expect("query provider")
         .expect("target exists")
         .settings_config;
@@ -799,11 +799,15 @@ fn auth_cleanup_failure_is_a_warning() {
 }
 
 async fn use_ephemeral_proxy_port(state: &AppState) {
-    let mut config = state.db.get_proxy_config().await.expect("proxy config");
+    let mut config = state
+        .db
+        .get_global_proxy_config()
+        .await
+        .expect("proxy config");
     config.listen_port = 0;
     state
         .db
-        .update_proxy_config(config)
+        .update_global_proxy_config(config)
         .await
         .expect("use ephemeral proxy port");
 }
@@ -834,7 +838,7 @@ async fn check_proxy_exit_keeps_login(current: &str, after_login: Option<&str>) 
         // 进入代理不回填官方卡（直连切走时的回填是另一回事，随 Codex 只写关键字段那一步去掉）。
         let official = state
             .db
-            .get_provider_by_id(current, AppType::Codex.as_str())
+            .get_provider_by_id(current, &AppType::Codex)
             .expect("read official row")
             .expect("official row");
         assert!(

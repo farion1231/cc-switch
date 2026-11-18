@@ -5,9 +5,10 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WhatsNewEntry } from "@/lib/whatsNew";
+import { createTestQueryClient } from "../utils/testQueryClient";
 
 const mocks = vi.hoisted(() => ({
   getAll: vi.fn(),
@@ -55,9 +56,7 @@ const entry = (version: string, ...texts: string[]): WhatsNewEntry => ({
 });
 
 function renderNotice() {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
+  const client = createTestQueryClient();
   return render(
     <QueryClientProvider client={client}>
       <WhatsNewNotice />

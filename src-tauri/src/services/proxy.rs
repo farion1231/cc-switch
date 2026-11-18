@@ -104,7 +104,7 @@ impl ProxyService {
         // 2. 获取配置
         let config = self
             .db
-            .get_proxy_config()
+            .get_listen_config()
             .await
             .map_err(|e| format!("获取代理配置失败: {e}"))?;
 
@@ -180,9 +180,6 @@ impl ProxyService {
             gemini,
             grokbuild,
             claude_desktop,
-            // OpenCode and OpenClaw don't support proxy features
-            opencode: false,
-            openclaw: false,
         })
     }
 
@@ -235,7 +232,7 @@ impl ProxyService {
     pub(crate) async fn build_proxy_urls(&self) -> Result<(String, String), String> {
         let config = self
             .db
-            .get_proxy_config()
+            .get_listen_config()
             .await
             .map_err(|e| format!("获取代理配置失败: {e}"))?;
 
@@ -471,7 +468,7 @@ impl ProxyService {
         }
         let new_config = self
             .db
-            .get_proxy_config()
+            .get_listen_config()
             .await
             .map_err(|e| format!("获取代理配置失败: {e}"))?;
 
@@ -531,7 +528,7 @@ impl ProxyService {
             .map_err(|e| format!("恢复原代理配置失败: {e}"))?;
         let config = self
             .db
-            .get_proxy_config()
+            .get_listen_config()
             .await
             .map_err(|e| format!("获取代理配置失败: {e}"))?;
         self.start_with(&config).await
@@ -551,7 +548,7 @@ impl ProxyService {
     /// 热更新指定应用的熔断器配置
     pub async fn update_circuit_breaker_config_for_app(
         &self,
-        app_type: &str,
+        app_type: &crate::app_config::AppType,
         config: crate::proxy::CircuitBreakerConfig,
     ) -> Result<(), String> {
         if let Some(server) = self.server.read().await.as_ref() {
@@ -571,8 +568,13 @@ mod tests {
     use super::*;
     async fn seed_distinct_app_proxy_configs(db: &Database) -> Vec<Value> {
         let mut configs = Vec::new();
-        for (app, retries) in [("claude", 6), ("codex", 0), ("gemini", 2), ("grokbuild", 3)] {
-            let mut config = db.get_proxy_config_for_app(app).await.unwrap();
+        for (app, retries) in [
+            (AppType::Claude, 6),
+            (AppType::Codex, 0),
+            (AppType::Gemini, 2),
+            (AppType::GrokBuild, 3),
+        ] {
+            let mut config = db.get_proxy_config_for_app(&app).await.unwrap();
             config.enabled = retries % 2 == 0;
             config.auto_failover_enabled = retries % 2 != 0;
             config.max_retries = retries;
@@ -588,8 +590,8 @@ mod tests {
 
     async fn assert_app_proxy_configs_unchanged(db: &Database, configs: &[Value]) {
         for expected in configs {
-            let app = expected["appType"].as_str().unwrap();
-            let actual = db.get_proxy_config_for_app(app).await.unwrap();
+            let app: AppType = expected["appType"].as_str().unwrap().parse().unwrap();
+            let actual = db.get_proxy_config_for_app(&app).await.unwrap();
             assert_eq!(serde_json::to_value(actual).unwrap(), *expected, "{app}");
         }
     }
@@ -599,7 +601,7 @@ mod tests {
         let db = Arc::new(Database::memory().unwrap());
         let configs = seed_distinct_app_proxy_configs(&db).await;
         let service = ProxyService::new(db.clone());
-        let mut config = db.get_proxy_config().await.unwrap();
+        let mut config = db.get_listen_config().await.unwrap();
         config.listen_port = 0;
         let mut expected_global = db.get_global_proxy_config().await.unwrap();
         expected_global.listen_port = 23456;

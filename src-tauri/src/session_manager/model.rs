@@ -287,6 +287,8 @@ pub enum EventKind {
     Error,
     /// Codex agent_message / SubAgentActivity
     SubAgent,
+    /// Codex thread_goal_updated（`/goal` 设定的目标；text 为状态，正文为完整目标）
+    Goal,
     Other,
 }
 

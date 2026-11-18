@@ -1,10 +1,5 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
-import type {
-  McpConfigResponse,
-  McpServer,
-  McpServersMap,
-  McpStatus,
-} from "@/types";
+import type { McpServer, McpServersMap } from "@/types";
 import type { AppId } from "./types";
 
 export interface McpConnectivityResult {
@@ -28,29 +23,6 @@ export const mcpApi = {
 
   async cancelConnectivityChecks(batchId: string): Promise<void> {
     await invoke("cancel_mcp_connectivity_checks", { batchId });
-  },
-
-  async getStatus(): Promise<McpStatus> {
-    return await invoke("get_claude_mcp_status");
-  },
-
-  async readConfig(): Promise<string | null> {
-    return await invoke("read_claude_mcp_config");
-  },
-
-  async deleteServer(id: string): Promise<boolean> {
-    return await invoke("delete_claude_mcp_server", { id });
-  },
-
-  async validateCommand(cmd: string): Promise<boolean> {
-    return await invoke("validate_mcp_command", { cmd });
-  },
-
-  /**
-   * @deprecated 使用 getAllServers() 代替（v3.7.0+）
-   */
-  async getConfig(app: AppId = "claude"): Promise<McpConfigResponse> {
-    return await invoke("get_mcp_config", { app });
   },
 
   // ========================================================================

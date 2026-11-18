@@ -176,6 +176,8 @@ export interface LocalProxyRequestOverrides {
 
 // 供应商元数据（字段名与后端一致，保持 snake_case）
 export interface ProviderMeta {
+  /** Explicit multiplier for future local-proxy reference costs; absent means 1. */
+  billingMultiplier?: string;
   // 自定义端点：以 URL 为键，值为端点信息
   custom_endpoints?: Record<string, CustomEndpoint>;
   // 是否在切换/同步到 live 时应用通用配置片段
@@ -639,6 +641,7 @@ export type EventKind =
   | "info"
   | "error"
   | "sub_agent"
+  | "goal"
   | "other";
 
 /** 大内容的「按需取」引用：前端不解析，原样回传给后端 */
@@ -866,19 +869,6 @@ export interface McpServer {
 
 // MCP 服务器映射（id -> McpServer）
 export type McpServersMap = Record<string, McpServer>;
-
-// MCP 配置状态
-export interface McpStatus {
-  userConfigPath: string;
-  userConfigExists: boolean;
-  serverCount: number;
-}
-
-// 新：来自 config.json 的 MCP 列表响应
-export interface McpConfigResponse {
-  configPath: string;
-  servers: Record<string, McpServer>;
-}
 
 // ============================================================================
 // 统一供应商（Universal Provider）- 跨应用共享配置

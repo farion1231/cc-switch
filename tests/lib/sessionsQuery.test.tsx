@@ -8,6 +8,7 @@ import type {
   SessionMessage,
   TranscriptChunk,
 } from "@/types";
+import { createTestQueryClient } from "../utils/testQueryClient";
 
 const api = vi.hoisted(() => ({
   getMessages: vi.fn(),
@@ -69,8 +70,7 @@ const wrapperWith = (client: QueryClient) =>
     );
   };
 
-const newClient = () =>
-  new QueryClient({ defaultOptions: { queries: { retry: false } } });
+const newClient = () => createTestQueryClient();
 
 beforeEach(() => {
   Object.values(api).forEach((fn) => fn.mockReset());

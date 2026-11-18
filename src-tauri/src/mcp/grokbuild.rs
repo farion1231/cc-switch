@@ -130,11 +130,7 @@ pub fn import_from_grokbuild(config: &mut MultiAppConfig) -> Result<usize, AppEr
     Ok(changed)
 }
 
-pub fn sync_single_server_to_grokbuild(
-    _config: &MultiAppConfig,
-    id: &str,
-    server_spec: &Value,
-) -> Result<(), AppError> {
+pub fn sync_single_server_to_grokbuild(id: &str, server_spec: &Value) -> Result<(), AppError> {
     if !should_sync_grokbuild_mcp() {
         return Ok(());
     }

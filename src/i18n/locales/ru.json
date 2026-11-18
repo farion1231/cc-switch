@@ -25,7 +25,6 @@
     "success": "Успешно",
     "error": "Ошибка",
     "unknown": "Неизвестно",
-    "enterValidValue": "Введите корректное значение",
     "clear": "Очистить",
     "format": "Форматировать",
     "formatSuccess": "Форматирование выполнено",
@@ -142,7 +141,6 @@
     "adoptCatalog": "Использовать каталог моделей CC Switch",
     "adoptCatalogDone": "Теперь используется каталог моделей CC Switch. Перезапустите Codex, чтобы применить",
     "adoptCatalogFailed": "Не удалось перейти на каталог моделей CC Switch: {{error}}",
-    "noRoutingSupport": "Без поддержки маршрутизации",
     "blockedByProxyHint": "В режиме маршрутизации нельзя переключиться на официального провайдера",
     "editProvider": "Редактировать провайдера",
     "editProviderHint": "Конфигурация будет применена к текущему провайдеру сразу после обновления.",
@@ -281,12 +279,10 @@
     "editCurrentNotice": "Это используемый провайдер. Сохранение вступает в силу сразу: следующий запрос использует новые настройки."
   },
   "claudeCode": {
-    "needsRouting": "Требуется маршрутизация",
-    "noRoutingSupport": "Маршрутизация не поддерживается"
+    "needsRouting": "Требуется маршрутизация"
   },
   "codex": {
     "needsRouting": "Требуется маршрутизация",
-    "noRoutingSupport": "Маршрутизация не поддерживается",
     "officialRouting": "Маршрутизация официального аккаунта",
     "nativeLogin": "Вход в Codex",
     "followCodexLogin": "Следовать входу Codex",
@@ -343,8 +339,6 @@
   },
   "notifications": {
     "providerAdded": "Провайдер добавлен",
-    "providerSaved": "Конфигурация провайдера сохранена",
-    "providerDeleted": "Провайдер успешно удалён",
     "switchSuccess": "Переключение выполнено успешно!",
     "codexRestartRequired": "Переключение выполнено. Перезапустите клиент, чтобы применить изменения.",
     "geminiRestartRequired": "Переключение выполнено. Перезапустите Gemini CLI, чтобы применить изменения.",
@@ -355,12 +349,9 @@
     "removeFromConfigFailed": "Не удалось удалить провайдера",
     "switchFailedTitle": "Не удалось переключить",
     "switchFailed": "Не удалось переключить: {{error}}",
-    "autoImported": "Провайдер по умолчанию создан из существующей конфигурации",
     "addFailed": "Не удалось добавить провайдера: {{error}}",
     "saveFailed": "Не удалось сохранить: {{error}}",
     "saveFailedGeneric": "Не удалось сохранить, попробуйте ещё раз",
-    "appliedToClaudePlugin": "Применено к плагину Claude",
-    "removedFromClaudePlugin": "Удалено из плагина Claude",
     "syncClaudePluginFailed": "Не удалось синхронизировать плагин Claude",
     "skipClaudeOnboardingFailed": "Не удалось пропустить первичное подтверждение Claude Code",
     "clearClaudeOnboardingSkipFailed": "Не удалось восстановить первичное подтверждение Claude Code",
@@ -379,8 +370,6 @@
     "proxyReasonDesktopMapping": "использует сопоставление моделей (Claude Desktop принимает только имена моделей Claude)",
     "proxyReasonManagedOAuth": "использует управляемый вход через OAuth (токен подставляется локальной маршрутизацией)",
     "proxyReasonRoutingRequired": "требует локальной маршрутизации для обработки запросов",
-    "openAIFormatHint": "Этот провайдер использует формат, совместимый с OpenAI, и требует включённой маршрутизации",
-    "copilotProxyHint": "GitHub Copilot как провайдер Claude всегда требует локальной маршрутизации; маршрут автоматически выбирает Chat Completions или Responses в зависимости от текущей модели.",
     "openLinkFailed": "Не удалось открыть ссылку",
     "openclawModelsRegistered": "Модели зарегистрированы в списке /model",
     "openclawDefaultModelSet": "Установлено как модель по умолчанию",
@@ -1236,6 +1225,9 @@
       "modelsHint": "Добавьте хотя бы одну модель. ID модели передаётся в API как есть. WorkBuddy пока не позволяет добавлять одну и ту же модель несколько раз, поэтому ID модели может быть только в одной карточке. Если имя оставить пустым, меню WorkBuddy покажет «метка поставщика:ID модели».",
       "maxInputTokens": "Макс. входных токенов",
       "maxOutputTokens": "Макс. выходных токенов",
+      "thinkingEfforts": "Уровень мышления",
+      "thinkingEffortsHint": "Выбранные уровни появятся в меню моделей WorkBuddy, а выбранный уровень отправляется в API как reasoning_effort. Если ничего не выбрано, показывается только переключатель мышления.",
+      "canDisableThinking": "Мышление можно отключить",
       "modelIdTaken": "WorkBuddy пока не позволяет добавлять одну и ту же модель несколько раз, а эта модель уже есть в «{{owner}}». Чтобы перенести её в эту карточку, сначала удалите её там.",
       "modelOwnerUser": "модель, добавленная в самом WorkBuddy",
       "presetModelsSkipped": "WorkBuddy пока не позволяет добавлять одну и ту же модель несколько раз, поэтому пропущены модели, которые уже есть в других карточках: {{models}}. Чтобы перенести модель в эту карточку, сначала удалите её из текущей, затем добавьте здесь."
@@ -1451,7 +1443,7 @@
     "keyFieldsHint": "Модель по умолчанию (models.default) и таблица моделей, на которую она указывает, зависят от провайдера; всё остальное — глобальные настройки Grok Build и применяется ко всем провайдерам после сохранения.",
     "inactiveFieldsHint": "Сохранено в этом провайдере старой версией; при переключении больше не применяется. Нажмите на поле, чтобы скопировать его TOML, и при необходимости вставьте выше.",
     "inactiveFieldCopied": "Скопировано",
-    "routeOnlySettingsHint": "Две настройки ниже действуют только в режиме маршрутизации."
+    "routeOnlySettingsHint": "Настройки ниже действуют только в режиме маршрутизации."
   },
   "sessionManager": {
     "searchPlaceholder": "Поиск по заголовкам, папкам, первому/последнему сообщению или ID сессии",
@@ -1667,7 +1659,17 @@
         "prLink": "Привязан PR #{{number}}",
         "prLinkPlain": "Привязан PR",
         "slashCommand": "Выполнено {{command}}",
-        "subAgent": "Подагент {{name}}"
+        "subAgent": "Подагент {{name}}",
+        "goal": "Цель · {{status}}",
+        "goalPlain": "Цель",
+        "goalStatus": {
+          "active": "Активна",
+          "paused": "Приостановлена",
+          "blocked": "Заблокирована",
+          "usageLimited": "Достигнут лимит использования",
+          "budgetLimited": "Достигнут бюджет",
+          "complete": "Выполнена"
+        }
       },
       "injectedToggle": "Показать внедрённый контекст",
       "injectedRow": "Контекст · {{label}} · {{chars}} симв.",
@@ -1742,25 +1744,15 @@
     }
   },
   "console": {
-    "providerSwitchReceived": "Получено событие переключения провайдера:",
-    "setupListenerFailed": "Не удалось настроить обработчик переключения провайдера:",
-    "updateProviderFailed": "Не удалось обновить провайдера:",
-    "autoImportFailed": "Не удалось автоматически импортировать конфигурацию по умолчанию:",
     "openLinkFailed": "Не удалось открыть ссылку:",
-    "getVersionFailed": "Не удалось получить информацию о версии:",
-    "loadSettingsFailed": "Не удалось загрузить настройки:",
-    "getConfigPathFailed": "Не удалось получить путь к конфигурации:",
-    "getConfigDirFailed": "Не удалось получить каталог конфигурации:",
-    "detectPortableFailed": "Не удалось определить портативный режим:",
-    "saveSettingsFailed": "Не удалось сохранить настройки:",
     "updateFailed": "Не удалось выполнить обновление:",
     "checkUpdateFailed": "Не удалось проверить обновления:",
-    "openConfigFolderFailed": "Не удалось открыть папку конфигурации:",
-    "selectConfigDirFailed": "Не удалось выбрать каталог конфигурации:",
-    "getDefaultConfigDirFailed": "Не удалось получить каталог конфигурации по умолчанию:",
     "openReleaseNotesFailed": "Не удалось открыть примечания к выпуску:"
   },
   "providerForm": {
+    "billingMultiplier": "Множитель стоимости провайдера",
+    "billingMultiplierHelp": "Справочная цена каждой модели этого провайдера умножается на это значение, чтобы оценить стоимость запросов через локальную маршрутизацию. 0.5 — половина цены; оставьте пустым для 1×. Влияет только на будущие запросы; в прямом режиме (маршрутизация выключена) использование, импортированное из журналов сессий, по-прежнему считается с 1×.",
+    "billingMultiplierInvalid": "Введите число от 0 до 1000 или оставьте пустым для 1×.",
     "nativeConfig": {
       "title": "Файл конфигурации {{path}} (только этот провайдер)",
       "hint": "Показывает часть файла, относящуюся к этому провайдеру, в родном формате приложения и записывает её туда при сохранении. Глобальных настроек, например модели по умолчанию, здесь нет. Введённые здесь комментарии не сохраняются.",
@@ -1935,6 +1927,8 @@
     "requestModelLabel": "Запрашиваемая модель",
     "modelOneMHeader": "Заявить 1M",
     "modelOneMLabel": "1M",
+    "copilotOneMUnavailable": "В Copilot нет 1M-версии этой модели",
+    "copilotOneMMismatch": "В Copilot нет 1M-версии {{models}}: запросы уйдут на обычную модель, но Claude Code по-прежнему рассчитывает на контекст 1M, и длинные сессии могут превысить лимит. Снимите отметку 1M.",
     "fallbackModelLabel": "Модель fallback по умолчанию",
     "fallbackModelHelpDirect": "Записывается в ANTHROPIC_MODEL: основная модель, с которой запускается Claude Code. Фоновые задачи вместо неё используют уровень Haiku.",
     "fallbackModelHelp": "Запросы, которые не сопоставляются с уровнями Sonnet, Opus, Fable или Haiku, отправляются в upstream с этой моделью.",
@@ -2018,12 +2012,10 @@
     "selectAccount": "Выберите аккаунт",
     "selectAccountPlaceholder": "Выберите аккаунт GitHub",
     "useDefaultAccount": "Использовать аккаунт по умолчанию",
-    "loggedInAccounts": "Вошедшие аккаунты",
     "defaultAccount": "По умолчанию",
     "selected": "Выбрано",
     "removeAccount": "Удалить аккаунт",
     "setAsDefault": "Сделать по умолчанию",
-    "addAnotherAccount": "Добавить ещё аккаунт",
     "retry": "Повторить",
     "copyCode": "Скопировать код",
     "migrationFailed": "Не удалось перенести старую авторизацию: {{error}}",
@@ -2077,7 +2069,6 @@
     "enterCode": "Введите код в браузере:",
     "accountCount": "Аккаунтов: {{count}}",
     "selectAccount": "Выберите аккаунт",
-    "chatgptAccount": "Аккаунт ChatGPT",
     "accountToUse": "Используемый аккаунт",
     "signInMethod": "Способ входа",
     "manageAccounts": "Управление аккаунтами",
@@ -2087,18 +2078,14 @@
     "explicitSelectionRequired": "Выберите способ входа",
     "useDefaultAccount": "Использовать аккаунт по умолчанию",
     "noneOptionLabel": "Следовать входу Codex",
-    "reauthDescription": "Чтобы соответствовать поведению входа через браузер, этим аккаунтам нужно войти снова и восстановить учётные данные (id_token). После повторной аутентификации их можно использовать для управляемой привязки.",
     "reauthBadge": "Требуется повторный вход",
-    "reauthLogin": "Войти снова",
     "reauthSelectHint": "Этому аккаунту нужно войти снова, чтобы включить управляемую привязку.",
     "reauthNow": "Войти сейчас",
     "duplicateAccount": "Этот аккаунт ChatGPT уже добавлен. Используйте существующий.",
-    "loggedInAccounts": "Вошедшие аккаунты",
     "defaultAccount": "По умолчанию",
     "selected": "Выбрано",
     "removeAccount": "Удалить аккаунт",
     "setAsDefault": "Сделать по умолчанию",
-    "addAnotherAccount": "Добавить ещё аккаунт",
     "logoutAll": "Выйти из всех аккаунтов",
     "retry": "Повторить",
     "copyCode": "Скопировать код",
@@ -2107,7 +2094,6 @@
     "loginMethod": "Способ входа",
     "browserLogin": "Вход через браузер",
     "deviceCodeLogin": "Вход по коду устройства",
-    "openBrowserLogin": "Открыть вход в браузере",
     "loginExpired": "Срок входа истёк. Попробуйте снова."
   },
   "xaiOauth": {
@@ -2161,7 +2147,6 @@
     "testing": "Проверка",
     "addEndpointPlaceholder": "https://api.example.com",
     "done": "Готово",
-    "noEndpoints": "Endpoint'ы отсутствуют",
     "failed": "Ошибка",
     "enterValidUrl": "Введите действительный URL",
     "invalidUrlFormat": "Неверный формат URL",
@@ -2169,12 +2154,7 @@
     "urlExists": "Этот URL уже существует",
     "saveFailed": "Не удалось сохранить, попробуйте ещё раз",
     "loadEndpointsFailed": "Не удалось загрузить пользовательские endpoint'ы:",
-    "addEndpointFailed": "Не удалось добавить пользовательский endpoint:",
-    "removeEndpointFailed": "Не удалось удалить пользовательский endpoint:",
-    "removeFailed": "Не удалось удалить: {{error}}",
-    "updateLastUsedFailed": "Не удалось обновить время последнего использования endpoint'а",
     "pleaseAddEndpoint": "Сначала добавьте endpoint",
-    "testUnavailable": "Проверка скорости недоступна",
     "noResult": "Результат не получен",
     "testFailed": "Не удалось проверить скорость: {{error}}",
     "empty": "Endpoint'ы отсутствуют"
@@ -2268,7 +2248,7 @@
     "inactiveFieldCopied": "Скопировано",
     "upstreamFormatCopilotRouteHint": "Каждый режим требует маршрутизации, которая подставляет учётные данные аккаунта Copilot. Явно выбранный протокол не сработает для моделей, которые его не поддерживают.",
     "maxOutputTokensWarning": "Не превышайте реальный лимит вывода модели или шлюза, иначе запросы вернут 400.",
-    "routeOnlySettingsHint": "Две настройки ниже применяются только в режимах маршрутизации и агрегации."
+    "routeOnlySettingsHint": "Настройки ниже применяются только в режимах маршрутизации и агрегации."
   },
   "geminiConfig": {
     "envFile": "Переменные окружения (.env)",
@@ -2769,7 +2749,9 @@
       "speedEstimateTooFew": "Меньше 200 токенов вывода, скорость не оценивается",
       "noTimingSession": "В логах сессий нет данных о времени",
       "noFirstToken": "Нет времени до первого токена, скорость не считается",
-      "providerId": "ID провайдера"
+      "providerId": "ID провайдера",
+      "copyRequestId": "Скопировать ID запроса",
+      "requestIdCopied": "ID запроса скопирован"
     },
     "sources": {
       "scanTitle": "Автоматически сканировать логи сессий",
@@ -2941,8 +2923,6 @@
   "presetSelector": {
     "title": "Выберите тип конфигурации",
     "custom": "Пользовательская",
-    "customDescription": "Настройка провайдера вручную, требуется полная конфигурация",
-    "officialDescription": "Официальный вход, API-ключ не требуется",
     "presetDescription": "Использовать готовый пресет, требуется только API-ключ"
   },
   "mcp": {
@@ -3565,9 +3545,9 @@
     },
     "repo": {
       "title": "Управление репозиториями навыков",
-      "description": "Добавляйте или удаляйте источники репозиториев навыков GitHub",
+      "description": "Добавляйте или удаляйте источники репозиториев навыков GitHub, GitLab и Gitea",
       "url": "URL репозитория",
-      "urlPlaceholder": "owner/name or https://github.com/owner/name",
+      "urlPlaceholder": "owner/name, https://github.com/owner/name или https://gitlab.com/group/project",
       "branch": "Ветка",
       "branchPlaceholder": "main",
       "path": "Путь к навыкам",
@@ -3575,6 +3555,7 @@
       "list": "Добавленные репозитории",
       "empty": "Нет репозиториев",
       "invalidUrl": "Неверный формат URL репозитория",
+      "httpsOnly": "Репозитории GitLab и Gitea поддерживаются только по адресу https",
       "addSuccess": "Репозиторий {{owner}}/{{name}} добавлен. Найдено навыков: {{count}}",
       "addFailed": "Не удалось добавить",
       "removeSuccess": "Репозиторий {{owner}}/{{name}} удалён",
@@ -3825,7 +3806,6 @@
   },
   "providerIcon": {
     "label": "Иконка",
-    "colorLabel": "Цвет иконки",
     "selectIcon": "Выбрать иконку",
     "preview": "Предпросмотр",
     "clickToChange": "Нажмите, чтобы изменить иконку",
@@ -4039,13 +4019,10 @@
   },
   "proxyConfig": {
     "proxyEnabled": "Главный переключатель маршрутизации",
-    "appTakeover": "Маршрутизация включена",
-    "perAppConfig": "Конфигурация по приложениям",
     "circuitBreaker": "Предохранитель",
     "circuitBreakerSettings": "Настройки предохранителя",
     "failureThreshold": "Порог отказов",
     "successThreshold": "Порог успешности",
-    "recoveryTimeout": "Тайм-аут восстановления",
     "errorRateThreshold": "Порог частоты ошибок",
     "minRequests": "Минимум запросов",
     "timeoutConfig": "Настройки тайм-аутов",
@@ -5027,7 +5004,7 @@
       "disabledShort": "Выкл.",
       "disabled": "Отключён, не используется в обзоре",
       "manage": "Добавить или настроить репозитории",
-      "openAria": "Открыть {{repo}} на GitHub",
+      "openAria": "Открыть {{repo}} в браузере",
       "removeAria": "Удалить репозиторий {{repo}}",
       "readFailed": "Ошибка чтения"
     },

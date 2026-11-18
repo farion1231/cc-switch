@@ -16,14 +16,13 @@ pub async fn get_config_status(
     state: State<'_, AppState>,
     app: String,
 ) -> Result<ConfigStatus, String> {
-    match AppType::from_str(&app).map_err(|e| e.to_string())? {
+    match AppType::from_str(&app)? {
         AppType::Claude => Ok(config::get_claude_config_status()),
         AppType::ClaudeDesktop => {
             let status = crate::claude_desktop_config::get_status(
                 state.db.as_ref(),
                 state.proxy_service.is_running().await,
-            )
-            .map_err(|e| e.to_string())?;
+            )?;
             Ok(ConfigStatus {
                 exists: status.configured,
                 path: status.config_library_path.unwrap_or_default(),
@@ -58,8 +57,7 @@ pub async fn get_config_status(
             Ok(ConfigStatus { exists, path })
         }
         AppType::OpenCode => {
-            let config_path =
-                crate::opencode_config::get_opencode_config_path().map_err(|e| e.to_string())?;
+            let config_path = crate::opencode_config::get_opencode_config_path()?;
             let exists = config_path.try_exists().map_err(|e| e.to_string())?;
             let path = crate::opencode_config::get_opencode_dir()
                 .to_string_lossy()
@@ -107,9 +105,8 @@ pub async fn get_config_status(
             })
         }
         AppType::Pi => {
-            let config_path = crate::pi_config::get_pi_models_path().map_err(|e| e.to_string())?;
-            let path = crate::pi_config::get_pi_agent_dir()
-                .map_err(|e| e.to_string())?
+            let config_path = crate::pi_config::get_pi_models_path()?;
+            let path = crate::pi_config::get_pi_agent_dir()?
                 .to_string_lossy()
                 .to_string();
             Ok(ConfigStatus {
@@ -125,10 +122,8 @@ pub async fn get_config_status(
             })
         }
         AppType::Omp => {
-            let config_path =
-                crate::omp_config::get_omp_models_path().map_err(|e| e.to_string())?;
-            let path = crate::omp_config::get_omp_agent_dir()
-                .map_err(|e| e.to_string())?
+            let config_path = crate::omp_config::get_omp_models_path()?;
+            let path = crate::omp_config::get_omp_agent_dir()?
                 .to_string_lossy()
                 .to_string();
             Ok(ConfigStatus {
@@ -159,21 +154,19 @@ pub async fn get_config_dir(app: String) -> Result<String, String> {
 
 /// 每个应用的配置目录：设置页显示的路径和「打开文件夹」打开的是同一个。
 fn app_config_dir(app: &str) -> Result<std::path::PathBuf, String> {
-    let dir = match AppType::from_str(app).map_err(|e| e.to_string())? {
+    let dir = match AppType::from_str(app)? {
         AppType::Claude => config::get_claude_config_dir(),
-        AppType::ClaudeDesktop => {
-            crate::claude_desktop_config::get_config_library_path().map_err(|e| e.to_string())?
-        }
+        AppType::ClaudeDesktop => crate::claude_desktop_config::get_config_library_path()?,
         AppType::Codex => codex_config::get_codex_config_dir(),
         AppType::Gemini => crate::gemini_config::get_gemini_dir(),
         AppType::GrokBuild => crate::grok_config::get_grok_config_dir(),
         AppType::OpenCode => crate::opencode_config::get_opencode_dir(),
         AppType::OpenClaw => crate::openclaw_config::get_openclaw_dir(),
         AppType::Hermes => crate::hermes_config::get_hermes_dir(),
-        AppType::Pi => crate::pi_config::get_pi_agent_dir().map_err(|e| e.to_string())?,
+        AppType::Pi => crate::pi_config::get_pi_agent_dir()?,
         AppType::Dsh => crate::dsh_config::data_dir(),
         AppType::Kimi => crate::kimi_config::data_dir(),
-        AppType::Omp => crate::omp_config::get_omp_agent_dir().map_err(|e| e.to_string())?,
+        AppType::Omp => crate::omp_config::get_omp_agent_dir()?,
         AppType::Mcode => crate::mcode_config::config_path()
             .parent()
             .unwrap()

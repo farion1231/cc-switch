@@ -69,10 +69,10 @@ const POLLING_SAFETY_MARGIN_SECS: u64 = 3;
 const CODEX_USER_AGENT: &str = "cc-switch-codex-oauth";
 
 // Shared by model discovery and generation: ChatGPT gates models by this
-// client identity. GPT-6.1 Sol enters the ChatGPT-account catalog at 0.159.0.
+// client identity.
 // Bump together when a new model raises its minimal_client_version or catalog gate.
 pub(crate) const CODEX_OAUTH_ORIGINATOR: &str = "codex_cli_rs";
-pub(crate) const CODEX_OAUTH_CLIENT_VERSION: &str = "0.159.0";
+pub(crate) const CODEX_OAUTH_CLIENT_VERSION: &str = "0.169.0";
 
 /// Codex OAuth 错误
 #[derive(Debug, thiserror::Error)]
@@ -1542,11 +1542,6 @@ impl CodexOAuthManager {
         Ok(())
     }
 
-    pub async fn is_authenticated(&self) -> bool {
-        let accounts = self.accounts.read().await;
-        !accounts.is_empty()
-    }
-
     /// 获取认证状态摘要（与 Copilot 的格式保持一致，便于复用前端）
     pub async fn get_status(&self) -> CodexOAuthStatus {
         let accounts_map = self.accounts.read().await.clone();
@@ -2352,7 +2347,6 @@ mod tests {
     async fn test_manager_initial_state() {
         let temp = tempfile::tempdir().unwrap();
         let manager = CodexOAuthManager::new(temp.path().to_path_buf());
-        assert!(!manager.is_authenticated().await);
         assert!(manager.list_accounts().await.is_empty());
     }
 

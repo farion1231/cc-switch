@@ -492,6 +492,17 @@ pub fn transform_claude_request_for_api_format(
                 if let Some(obj) = result.as_object_mut() {
                     obj.remove("stop");
                 }
+                // Copilot 的 chat 端点给 Gemini 模型转格式时，把所有 system 消息都提进
+                // 开头的指令；Claude Code 每轮追加的中途 system 消息于是改写请求开头，
+                // 前缀缓存只命中到 system 为止（#9613）。只对 Copilot 的 Gemini 模型
+                // 把中途 system 原位改成 user 发出。
+                let is_gemini = result
+                    .get("model")
+                    .and_then(Value::as_str)
+                    .is_some_and(|model| model.to_ascii_lowercase().contains("gemini"));
+                if is_gemini {
+                    super::transform::demote_mid_conversation_system_messages(&mut result);
+                }
             }
             super::claude_reasoning::apply(&mut result, api_format, effort_plan);
             Ok(result)
@@ -1193,7 +1204,7 @@ mod tests {
     }
 
     #[test]
-    fn codex_oauth_generation_uses_gpt6_compatible_identity() {
+    fn codex_oauth_generation_uses_current_client_identity() {
         let headers: http::HeaderMap = ClaudeAdapter::new()
             .get_auth_headers(&AuthInfo::new(
                 "test-token".into(),
@@ -1210,10 +1221,9 @@ mod tests {
             .split('.')
             .map(|part| part.parse().unwrap())
             .collect();
-        // GPT-6.1 Sol requires the newer Codex client identity on ChatGPT accounts.
         assert!(
-            version.as_slice() >= [0, 159, 0].as_slice(),
-            "gpt-6.1-sol requires Codex >= 0.159.0; sent {version:?}"
+            version.as_slice() >= [0, 169, 0].as_slice(),
+            "ChatGPT OAuth requests should advertise Codex >= 0.169.0; sent {version:?}"
         );
     }
 
@@ -2329,6 +2339,72 @@ mod tests {
                 .unwrap();
 
         assert!(transformed.get("stop").is_none());
+    }
+
+    #[test]
+    fn copilot_gemini_chat_sends_mid_conversation_system_as_user() {
+        // #9613: Copilot hoists every system message into the Gemini instruction,
+        // so only Gemini models on Copilot get later system messages as user ones.
+        let copilot = create_provider(json!({
+            "env": { "ANTHROPIC_BASE_URL": "https://api.githubcopilot.com" }
+        }));
+        let generic = create_provider(json!({
+            "env": { "ANTHROPIC_BASE_URL": "https://openrouter.ai/api/v1" }
+        }));
+        let body = |model: &str| {
+            json!({
+                "model": model,
+                "system": "You are Claude Code.",
+                "max_tokens": 64,
+                "messages": [
+                    { "role": "user", "content": "hello" },
+                    { "role": "assistant", "content": "hi" },
+                    { "role": "system", "content": "<total_tokens>9 tokens left</total_tokens>" },
+                    { "role": "user", "content": "go on" }
+                ]
+            })
+        };
+        let roles = |transformed: &Value| -> Vec<String> {
+            transformed["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|m| m["role"].as_str().unwrap().to_string())
+                .collect()
+        };
+
+        let transformed = transform_claude_request_for_api_format(
+            body("gemini-4-carbon"),
+            &copilot,
+            "openai_chat",
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            roles(&transformed),
+            ["system", "user", "assistant", "user", "user"]
+        );
+        assert_eq!(
+            transformed["messages"][3]["content"],
+            "<total_tokens>9 tokens left</total_tokens>"
+        );
+
+        for (model, provider) in [("gpt-4.1", &copilot), ("gemini-4-carbon", &generic)] {
+            let transformed = transform_claude_request_for_api_format(
+                body(model),
+                provider,
+                "openai_chat",
+                None,
+                None,
+            )
+            .unwrap();
+            assert_eq!(
+                roles(&transformed),
+                ["system", "user", "assistant", "system", "user"],
+                "{model}"
+            );
+        }
     }
 
     #[test]
