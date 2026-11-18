@@ -322,7 +322,13 @@ pub fn responses_to_chat_completions_with_reasoning(
             );
         }
     }
-    let messages = collapse_system_messages_to_head(messages);
+    let mut messages = collapse_system_messages_to_head(messages);
+    // 放在折叠之后：折叠按「后面是否紧接 user」决定中途 developer 指令的位置，
+    // 提前删掉空 user 会改变非空指令的角色和位置。
+    let dropped = drop_empty_user_messages(&mut messages);
+    if dropped > 0 {
+        log::debug!("[Codex Chat] Dropped {dropped} empty user message(s)");
+    }
     result["messages"] = json!(messages);
 
     if let Some(max_tokens) = body.get("max_output_tokens") {
@@ -663,6 +669,27 @@ fn collapse_system_messages_to_head(messages: Vec<Value>) -> Vec<Value> {
     }
     out.extend(rest);
     out
+}
+
+/// 去掉内容为空的 user 消息，返回去掉的条数。
+///
+/// Codex 压缩后重建历史时，只有图片、没有文字的用户消息会被换成一段空文本
+/// （codex-rs `compact.rs` 的 media-only fallback），转成 Chat 就是 `content: ""`。
+/// 严格的 OpenAI 兼容上游直接 400「message content cannot be empty」（#9660）。
+/// 空消息不带任何信息，去掉后其余消息逐字节不变；不含空 user 消息的请求不受影响。
+fn drop_empty_user_messages(messages: &mut Vec<Value>) -> usize {
+    let before = messages.len();
+    messages.retain(|message| {
+        if message.get("role").and_then(Value::as_str) != Some("user") {
+            return true;
+        }
+        match message.get("content") {
+            Some(Value::String(text)) => !text.is_empty(),
+            Some(Value::Array(parts)) => !parts.is_empty(),
+            _ => true,
+        }
+    });
+    before - messages.len()
 }
 
 fn instruction_text(value: &Value) -> String {
@@ -4740,6 +4767,72 @@ mod tests {
         assert_eq!(messages[0]["content"], "Instructions.");
         assert_eq!(messages[1]["role"], "user");
         assert!(result.get("tools").is_none());
+    }
+
+    #[test]
+    fn empty_user_messages_from_compacted_media_only_input_are_dropped() {
+        // Codex 压缩后把只有图片的用户消息换成空文本，转成 Chat 不能留下 content: ""。
+        let input = json!({
+            "model": "agnes-2.5-flash",
+            "instructions": "Instructions.",
+            "input": [
+                {"type": "message", "role": "user", "content": [{"type": "input_text", "text": ""}]},
+                {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "Fix the bug."}]},
+                {"type": "message", "role": "user", "content": []},
+                {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "Summary."}]}
+            ]
+        });
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[0]["role"], "system");
+        assert_eq!(messages[1]["content"], "Fix the bug.");
+        assert_eq!(messages[2]["content"], "Summary.");
+    }
+
+    #[test]
+    fn dropping_empty_user_keeps_mid_conversation_developer_in_place() {
+        let input = json!({
+            "model": "agnes-2.5-flash",
+            "instructions": "Instructions.",
+            "input": [
+                {"type": "message", "role": "user", "content": "U1"},
+                {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "A1"}]},
+                {"type": "message", "role": "developer", "content": [{"type": "input_text", "text": "S2"}]},
+                {"type": "message", "role": "user", "content": [{"type": "input_text", "text": ""}]},
+                {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "A2"}]}
+            ]
+        });
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        let roles: Vec<&str> = messages.iter().filter_map(|m| m["role"].as_str()).collect();
+        assert_eq!(
+            roles,
+            vec!["system", "user", "assistant", "user", "assistant"]
+        );
+        assert_eq!(messages[0]["content"], "Instructions.");
+        assert_eq!(messages[3]["content"], "S2");
+    }
+
+    #[test]
+    fn non_empty_user_messages_are_kept_verbatim() {
+        let input = json!({
+            "model": "agnes-2.5-flash",
+            "input": [
+                {"type": "message", "role": "user", "content": [{"type": "input_text", "text": " "}]},
+                {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": ""}]},
+                {"type": "message", "role": "user", "content": "Next."}
+            ]
+        });
+        let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[0]["content"], " ");
+        assert_eq!(messages[1]["role"], "assistant");
+        assert_eq!(messages[2]["content"], "Next.");
     }
 
     #[test]

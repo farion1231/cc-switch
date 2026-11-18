@@ -126,7 +126,7 @@ fn codebuddy_provider_lifecycle_preserves_native_models() {
     assert_eq!(
         state
             .db
-            .get_provider_by_id("cc-model", "codebuddy")
+            .get_provider_by_id("cc-model", &AppType::Codebuddy)
             .unwrap()
             .unwrap()
             .meta
@@ -140,7 +140,7 @@ fn codebuddy_provider_lifecycle_preserves_native_models() {
     assert_eq!(home.ids(), ["native"]);
     assert!(state
         .db
-        .get_provider_by_id("cc-model", "codebuddy")
+        .get_provider_by_id("cc-model", &AppType::Codebuddy)
         .unwrap()
         .is_none());
 
@@ -186,7 +186,7 @@ fn codebuddy_official_cards_never_touch_models_json() {
     assert_eq!(fs::read_to_string(home.models()).unwrap(), original);
     let saved = state
         .db
-        .get_provider_by_id("codebuddy-official-a", "codebuddy")
+        .get_provider_by_id("codebuddy-official-a", &AppType::Codebuddy)
         .unwrap()
         .unwrap();
     assert_eq!(
@@ -232,7 +232,7 @@ fn codebuddy_official_cards_never_touch_models_json() {
     ProviderService::delete(&state, AppType::Codebuddy, "codebuddy-official-a").unwrap();
     assert!(state
         .db
-        .get_provider_by_id("codebuddy-official-a", "codebuddy")
+        .get_provider_by_id("codebuddy-official-a", &AppType::Codebuddy)
         .unwrap()
         .is_none());
     assert_eq!(fs::read_to_string(home.models()).unwrap(), original);

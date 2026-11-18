@@ -130,7 +130,7 @@ pub async fn codebuddy_account_switch_provider(
 ) -> Result<String, String> {
     let provider = app_state
         .db
-        .get_provider_by_id(&provider_id, AppType::Codebuddy.as_str())
+        .get_provider_by_id(&provider_id, &AppType::Codebuddy)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("供应商 {provider_id} 不存在"))?;
     let account_id = official_card_account_id(&provider).map_err(|e| e.to_string())?;
