@@ -2320,6 +2320,12 @@ pub(crate) fn find_model_pricing(conn: &Connection, model_id: &str) -> Option<Mo
         })
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PricingCandidate {
+    model_id: String,
+    allow_prefix_match: bool,
+}
+
 pub(crate) fn find_model_pricing_row(
     conn: &Connection,
     model_id: &str,
@@ -2330,14 +2336,14 @@ pub(crate) fn find_model_pricing_row(
     }
 
     for candidate in &candidates {
-        if let Some(row) = query_model_pricing_exact(conn, candidate)? {
+        if let Some(row) = query_model_pricing_exact(conn, &candidate.model_id)? {
             return Ok(Some(row));
         }
     }
 
     for candidate in &candidates {
-        if should_try_pricing_prefix_match(candidate) {
-            if let Some(row) = query_model_pricing_prefix(conn, candidate)? {
+        if candidate.allow_prefix_match && should_try_pricing_prefix_match(&candidate.model_id) {
+            if let Some(row) = query_model_pricing_prefix(conn, &candidate.model_id)? {
                 return Ok(Some(row));
             }
         }
@@ -2349,7 +2355,10 @@ pub(crate) fn find_model_pricing_row(
 /// 精准回填的行筛选：log 的任一模型字段归一化后与目标模型的 candidates 相交，
 /// 或可按查价层的前缀规则命中目标，即视为相关。镜像 find_model_pricing_row 的
 /// 匹配语义，宁可误纳（后续查价会兜底）不可漏筛。
-fn log_pricing_scope_matches(log: &RequestLogDetail, target_candidates: &[String]) -> bool {
+fn log_pricing_scope_matches(
+    log: &RequestLogDetail,
+    target_candidates: &[PricingCandidate],
+) -> bool {
     [
         Some(log.model.as_str()),
         log.request_model.as_deref(),
@@ -2360,10 +2369,12 @@ fn log_pricing_scope_matches(log: &RequestLogDetail, target_candidates: &[String
     .any(|field| {
         model_pricing_candidates(field).iter().any(|candidate| {
             target_candidates.iter().any(|target| {
-                target == candidate
-                    || (should_try_pricing_prefix_match(candidate)
+                target.model_id == candidate.model_id
+                    || (candidate.allow_prefix_match
+                        && should_try_pricing_prefix_match(&candidate.model_id)
                         && target
-                            .strip_prefix(candidate.as_str())
+                            .model_id
+                            .strip_prefix(candidate.model_id.as_str())
                             .is_some_and(|rest| rest.starts_with('-')))
             })
         })
@@ -2424,17 +2435,24 @@ fn query_model_pricing_prefix(
     .map_err(|e| AppError::Database(format!("查询模型前缀定价失败: {e}")))
 }
 
-fn model_pricing_candidates(model_id: &str) -> Vec<String> {
+fn model_pricing_candidates(model_id: &str) -> Vec<PricingCandidate> {
     let cleaned = clean_model_id_for_pricing(model_id);
     if is_placeholder_pricing_model(&cleaned) {
         return Vec::new();
     }
 
     let mut candidates = Vec::new();
+    let mut hydrogen_tiered_fallbacks = Vec::new();
     let mut queue = vec![cleaned];
 
     while let Some(candidate) = queue.pop() {
-        if !push_unique_candidate(&mut candidates, candidate.clone()) {
+        if !push_unique_candidate(
+            &mut candidates,
+            PricingCandidate {
+                model_id: candidate.clone(),
+                allow_prefix_match: true,
+            },
+        ) {
             continue;
         }
 
@@ -2453,6 +2471,12 @@ fn model_pricing_candidates(model_id: &str) -> Vec<String> {
         if let Some(stripped) = strip_reasoning_effort_suffix(&candidate) {
             queue.push(stripped);
         }
+        if candidate == "gemini-4-hydrogen-tiered" {
+            hydrogen_tiered_fallbacks.push(PricingCandidate {
+                model_id: "gemini-4-hydrogen".to_string(),
+                allow_prefix_match: false,
+            });
+        }
         // AGY's "Gemini 4 Hydrogen (Orchestrator)" is the same Hydrogen worker.
         // Keep the raw ID and any exact custom price; otherwise use the base API estimate.
         if candidate == "gemini-4-hydrogen-orchestrator" {
@@ -2463,6 +2487,10 @@ fn model_pricing_candidates(model_id: &str) -> Vec<String> {
         }
     }
 
+    // Resolve every normalized exact variant before trying the base API estimate.
+    for fallback in hydrogen_tiered_fallbacks {
+        push_unique_candidate(&mut candidates, fallback);
+    }
     candidates
 }
 
@@ -2483,8 +2511,15 @@ fn clean_model_id_for_pricing(model_id: &str) -> String {
         .to_string()
 }
 
-fn push_unique_candidate(candidates: &mut Vec<String>, candidate: String) -> bool {
-    if candidate.is_empty() || candidates.iter().any(|existing| existing == &candidate) {
+fn push_unique_candidate(
+    candidates: &mut Vec<PricingCandidate>,
+    candidate: PricingCandidate,
+) -> bool {
+    if candidate.model_id.is_empty()
+        || candidates
+            .iter()
+            .any(|existing| existing.model_id == candidate.model_id)
+    {
         return false;
     }
     candidates.push(candidate);
@@ -2617,6 +2652,10 @@ fn strip_reasoning_effort_suffix(model_id: &str) -> Option<String> {
 }
 
 fn should_try_pricing_prefix_match(model_id: &str) -> bool {
+    if model_id == "gemini-4-hydrogen-tiered" {
+        return false;
+    }
+
     let dash_count = model_id.matches('-').count();
 
     if model_id.starts_with("claude-") {
@@ -5801,6 +5840,153 @@ mod tests {
             find_model_pricing_row(&conn, "gemini-4-hydrogen-orchestrator-high")?,
             Some(("4".into(), "16".into(), "0.3".into(), "0".into()))
         );
+        Ok(())
+    }
+
+    #[test]
+    fn test_hydrogen_tiered_pricing_preserves_exact_overrides() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+        let base = find_model_pricing_row(&conn, "gemini-4-hydrogen")?;
+        assert!(base.is_some());
+        for model in [
+            "gemini-4-hydrogen-tiered",
+            "gemini-4-hydrogen-tiered-high",
+            "gemini-4-hydrogen-tiered-medium",
+            "gemini-4-hydrogen-tiered-low",
+            "gemini-4-hydrogen-tiered-xhigh",
+            "models/gemini-4-hydrogen-tiered-high",
+            "google/GEMINI-4-HYDROGEN-TIERED-HIGH",
+            "google.gemini-4-hydrogen-tiered-high:free",
+            "claude-gemini-4-hydrogen-tiered-high",
+            "gemini-4-hydrogen-tiered-high-2026-11-18",
+        ] {
+            assert_eq!(find_model_pricing_row(&conn, model)?, base, "{model}");
+        }
+        for model in [
+            "gemini-4-hydrogen-tiered-preview",
+            "gemini-4-carbon-tiered-high",
+            "gemini-4-argon-tiered-high",
+            "custom-tiered-high",
+        ] {
+            assert!(find_model_pricing_row(&conn, model)?.is_none(), "{model}");
+        }
+
+        conn.execute(
+            "INSERT INTO model_pricing VALUES ('gemini-4-hydrogen-tiered-high',
+             'Custom Hydrogen Tiered High', '3', '12', '0.2', '0')",
+            [],
+        )?;
+        for model in [
+            "gemini-4-hydrogen-tiered-high",
+            "google.gemini-4-hydrogen-tiered-high",
+            "claude-gemini-4-hydrogen-tiered-high",
+        ] {
+            assert_eq!(
+                find_model_pricing_row(&conn, model)?,
+                Some(("3".into(), "12".into(), "0.2".into(), "0".into())),
+                "{model}"
+            );
+        }
+        conn.execute(
+            "INSERT INTO model_pricing VALUES ('gemini-4-hydrogen-tiered',
+             'Custom Hydrogen Tiered', '2', '10', '0.1', '0')",
+            [],
+        )?;
+        assert_eq!(
+            find_model_pricing_row(&conn, "gemini-4-hydrogen-tiered-high")?,
+            Some(("3".into(), "12".into(), "0.2".into(), "0".into()))
+        );
+        assert_eq!(
+            find_model_pricing_row(&conn, "gemini-4-hydrogen-tiered-medium")?,
+            Some(("2".into(), "10".into(), "0.1".into(), "0".into()))
+        );
+        conn.execute(
+            "DELETE FROM model_pricing WHERE model_id IN
+             ('gemini-4-hydrogen', 'gemini-4-hydrogen-tiered', 'gemini-4-hydrogen-tiered-high')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO model_pricing VALUES ('gemini-4-hydrogen-preview',
+             'Custom Hydrogen Preview', '4', '16', '0.3', '0')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO model_pricing VALUES ('gemini-4-hydrogen-tiered-low',
+             'Custom Hydrogen Tiered Low', '1', '5', '0.1', '0')",
+            [],
+        )?;
+        // A missing exact base must not borrow a preview or another tier's price.
+        assert!(find_model_pricing_row(&conn, "gemini-4-hydrogen-tiered-high")?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn test_hydrogen_tiered_backfills_without_transcripts() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            for (id, model, cost) in [
+                ("tiered-history", "gemini-4-hydrogen-tiered-high", "0"),
+                ("unresolved-mode", "orchestrator-carbon", "0"),
+                ("already-priced", "gemini-4-hydrogen-tiered-high", "9"),
+            ] {
+                insert_usage_log(
+                    &conn,
+                    id,
+                    "agy",
+                    "_agy_session",
+                    model,
+                    "agy_session",
+                    1000,
+                    1_000_000,
+                    100_000,
+                    1_000_000,
+                    0,
+                    200,
+                    cost,
+                )?;
+            }
+            conn.execute(
+                "UPDATE proxy_request_logs SET request_model=model, input_token_semantics=?1",
+                [INPUT_TOKEN_SEMANTICS_FRESH],
+            )?;
+        }
+        assert_eq!(
+            db.backfill_missing_usage_costs_for_model("gemini-4-hydrogen")?,
+            1
+        );
+        assert_eq!(db.backfill_missing_usage_costs()?, 0);
+        let conn = lock_conn!(db.conn);
+        let row: (String, String, String) = conn.query_row(
+            "SELECT model, request_model, total_cost_usd FROM proxy_request_logs
+             WHERE request_id='tiered-history'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )?;
+        assert_eq!(
+            row,
+            (
+                "gemini-4-hydrogen-tiered-high".into(),
+                "gemini-4-hydrogen-tiered-high".into(),
+                "2.325000".into(),
+            )
+        );
+        for (id, expected) in [("unresolved-mode", "0"), ("already-priced", "9")] {
+            let cost: String = conn.query_row(
+                "SELECT total_cost_usd FROM proxy_request_logs WHERE request_id=?1",
+                [id],
+                |r| r.get(0),
+            )?;
+            assert_eq!(cost, expected);
+        }
+        let totals: (i64, i64, i64, i64) = conn.query_row(
+            "SELECT COUNT(*),SUM(input_tokens),SUM(output_tokens),SUM(cache_read_tokens)
+             FROM proxy_request_logs",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )?;
+        assert_eq!(totals, (3, 3_000_000, 300_000, 3_000_000));
         Ok(())
     }
 

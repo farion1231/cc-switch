@@ -597,6 +597,68 @@ mod tests {
     }
 
     #[test]
+    fn hydrogen_tiered_native_and_explicit_models_are_priced() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("conversations")).unwrap();
+        let source = dir
+            .path()
+            .join("brain/tiered/.system_generated/logs/transcript_full.jsonl");
+        let native = native_models::write_test_database(
+            &dir.path().join("conversations/tiered.db"),
+            &[(1, 0, "gemini-4-hydrogen")],
+        );
+        native_models::set_test_generation(
+            &native,
+            0,
+            "gemini-4-hydrogen",
+            &native_models::test_model_id("gemini-4-hydrogen-tiered-high"),
+        );
+        let db = Database::memory().unwrap();
+        let rows = vec![
+            json!({"step_index":1,"type":"PLANNER_RESPONSE","status":"DONE","input_tokens":1_000_000,"output_tokens":100_000,"cache_read_tokens":1_000_000}),
+            json!({"step_index":2,"type":"PLANNER_RESPONSE","status":"DONE","model":"gemini-4-hydrogen-tiered-high","input_tokens":1_000_000,"output_tokens":100_000,"cache_read_tokens":1_000_000}),
+        ];
+        assert_eq!(
+            import_records(&db, "tiered", &rows, Some(&source)).unwrap(),
+            (2, 0)
+        );
+        assert_eq!(
+            import_records(&db, "tiered", &rows, Some(&source)).unwrap(),
+            (0, 2)
+        );
+        let conn = db.conn.lock().unwrap();
+        for id in ["agy:tiered:1", "agy:tiered:2"] {
+            let row: (String, String, String, i64, i64, i64) = conn
+                .query_row(
+                    "SELECT model, request_model, total_cost_usd, input_tokens, output_tokens,
+                        cache_read_tokens FROM proxy_request_logs WHERE request_id=?1",
+                    [id],
+                    |r| {
+                        Ok((
+                            r.get(0)?,
+                            r.get(1)?,
+                            r.get(2)?,
+                            r.get(3)?,
+                            r.get(4)?,
+                            r.get(5)?,
+                        ))
+                    },
+                )
+                .unwrap();
+            assert_eq!(row.0, "gemini-4-hydrogen-tiered-high");
+            assert_eq!(row.1, "gemini-4-hydrogen-tiered-high");
+            assert_eq!(
+                row.2.parse::<rust_decimal::Decimal>().unwrap(),
+                "2.325".parse::<rust_decimal::Decimal>().unwrap()
+            );
+            assert_eq!((row.3, row.4, row.5), (1_000_000, 100_000, 1_000_000));
+        }
+    }
+
+    #[test]
     fn native_timing_fills_latency_and_first_token_and_backfills_untimed_rows() {
         if crate::config::sqlite_unsupported_in_temp_dir() {
             return;
