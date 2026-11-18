@@ -342,7 +342,7 @@ pub fn responses_request_to_anthropic(
             ));
         }
         if adaptive_should_think {
-            result["thinking"] = json!({ "type": "disabled" });
+            set_thinking_disabled(&mut result, model);
         }
     } else if adaptive_should_think && (!explicitly_disabled || cannot_disable_thinking) {
         thinking_enabled = true;
@@ -355,7 +355,7 @@ pub fn responses_request_to_anthropic(
             result["output_config"] = json!({ "effort": "low" });
         }
     } else if explicitly_disabled {
-        result["thinking"] = json!({ "type": "disabled" });
+        set_thinking_disabled(&mut result, model);
     } else if thinking_budget > 0 {
         thinking_enabled = true;
         // Anthropic requires max_tokens > budget_tokens and budget >= 1024. Reserve
@@ -428,10 +428,11 @@ pub fn responses_request_to_anthropic(
                             .to_string(),
                     ));
                 }
-                // Anthropic rejects forced tools while thinking is enabled. Preserve
-                // the caller's explicit tool constraint and disable thinking for this
-                // request instead of silently weakening `required`/named selection.
-                result["thinking"] = json!({ "type": "disabled" });
+                // Preserve the caller's explicit tool constraint and use the
+                // model-compatible fallback instead of silently weakening
+                // `required`/named selection. Omitting thinking on Opus 5.5 does
+                // not guarantee that its upstream accepts forced selection.
+                set_thinking_disabled(&mut result, model);
                 result.as_object_mut().unwrap().remove("output_config");
                 if let Some(value) = body.get("temperature") {
                     result["temperature"] = value.clone();
@@ -455,6 +456,17 @@ pub fn responses_request_to_anthropic(
     }
 
     Ok(result)
+}
+
+/// Opus 5.5 rejects the disabled literal and asks callers to omit `thinking`.
+/// Omitting it uses that upstream's default; it does not promise thinking is off
+/// or relax a forced tool choice. Other models retain their existing payload.
+fn set_thinking_disabled(result: &mut Value, model: &str) {
+    if crate::proxy::thinking_optimizer::thinking_rejects_disabled(model) {
+        result.as_object_mut().unwrap().remove("thinking");
+    } else {
+        result["thinking"] = json!({ "type": "disabled" });
+    }
 }
 
 fn chat_tool_to_anthropic_tool(chat_tool: &Value) -> Option<Value> {
@@ -2183,6 +2195,145 @@ mod tests {
 
         let opus = responses_request_to_anthropic(request("claude-opus-4.8"), 4096).unwrap();
         assert!(opus.get("thinking").is_none());
+    }
+
+    #[test]
+    fn test_opus_5_5_unsigned_tool_history_omits_disabled_thinking() {
+        for effort in [
+            "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra",
+        ] {
+            let input = json!({
+                "model": "claude-opus-5-5",
+                "reasoning": {"effort": effort},
+                "input": [
+                    {"role": "user", "content": "read the file"},
+                    {"type": "function_call", "call_id": "c1", "name": "Read", "arguments": "{}"},
+                    {"type": "function_call_output", "call_id": "c1", "output": "ok"}
+                ]
+            });
+            let result = responses_request_to_anthropic(input, 4096).unwrap();
+            assert!(result.get("thinking").is_none(), "effort={effort}");
+            assert!(result.get("output_config").is_none(), "effort={effort}");
+            let messages = result["messages"].as_array().unwrap();
+            assert_eq!(messages.len(), 3);
+            assert_eq!(messages[1]["content"][0]["type"], "tool_use");
+            assert_eq!(messages[1]["content"][0]["id"], "c1");
+            assert_eq!(messages[2]["content"][0]["type"], "tool_result");
+            assert_eq!(messages[2]["content"][0]["tool_use_id"], "c1");
+        }
+    }
+
+    #[test]
+    fn test_opus_5_5_explicit_none_omits_disabled_thinking_only_for_5_5() {
+        for model in [
+            "claude-opus-5-5",
+            "anthropic/Claude-Opus-5.5",
+            "claude-opus-5",
+        ] {
+            for effort in ["none", "off", "disabled"] {
+                let result = responses_request_to_anthropic(
+                    json!({
+                        "model": model,
+                        "reasoning": {"effort": effort},
+                        "input": "hi"
+                    }),
+                    4096,
+                )
+                .unwrap();
+                if model == "claude-opus-5" {
+                    assert_eq!(result["thinking"]["type"], "disabled");
+                } else {
+                    assert!(
+                        result.get("thinking").is_none(),
+                        "model={model}, effort={effort}"
+                    );
+                }
+                assert!(result.get("output_config").is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn test_opus_5_5_forced_tool_choice_is_not_silently_downgraded() {
+        for model in ["claude-opus-5-5", "claude-opus-5"] {
+            for choice in [
+                json!("required"),
+                json!({"type": "function", "name": "Read"}),
+            ] {
+                let result = responses_request_to_anthropic(
+                    json!({
+                        "model": model,
+                        "reasoning": {"effort": "high"},
+                        "input": "read the file",
+                        "tools": [{"type": "function", "name": "Read", "parameters": {"type": "object"}}],
+                        "tool_choice": choice,
+                        "parallel_tool_calls": false
+                    }),
+                    4096,
+                )
+                .unwrap();
+                if model == "claude-opus-5" {
+                    assert_eq!(result["thinking"]["type"], "disabled");
+                } else {
+                    assert!(result.get("thinking").is_none());
+                }
+                assert!(result.get("output_config").is_none());
+                assert_eq!(result["tool_choice"]["disable_parallel_tool_use"], true);
+                if choice == "required" {
+                    assert_eq!(result["tool_choice"]["type"], "any");
+                } else {
+                    assert_eq!(result["tool_choice"]["type"], "tool");
+                    assert_eq!(result["tool_choice"]["name"], "Read");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_opus_5_unsigned_history_still_disables_thinking() {
+        let result = responses_request_to_anthropic(
+            json!({
+                "model": "claude-opus-5",
+                "reasoning": {"effort": "high"},
+                "input": [
+                    {"role": "user", "content": "read the file"},
+                    {"type": "function_call", "call_id": "c1", "name": "Read", "arguments": "{}"},
+                    {"type": "function_call_output", "call_id": "c1", "output": "ok"}
+                ]
+            }),
+            4096,
+        )
+        .unwrap();
+        assert_eq!(result["thinking"]["type"], "disabled");
+        assert!(result.get("output_config").is_none());
+    }
+
+    #[test]
+    fn test_opus_5_5_signed_tool_history_keeps_adaptive_effort_and_signature() {
+        let reasoning = encode_anthropic_thinking_block(&json!({
+            "type": "thinking", "thinking": "check", "signature": "test_signature"
+        }))
+        .unwrap();
+        let result = responses_request_to_anthropic(
+            json!({
+                "model": "claude-opus-5-5",
+                "reasoning": {"effort": "high"},
+                "input": [
+                    {"role": "user", "content": "read the file"},
+                    {"type": "reasoning", "encrypted_content": reasoning},
+                    {"type": "function_call", "call_id": "c1", "name": "Read", "arguments": "{}"},
+                    {"type": "function_call_output", "call_id": "c1", "output": "ok"}
+                ]
+            }),
+            4096,
+        )
+        .unwrap();
+        assert_eq!(result["thinking"]["type"], "adaptive");
+        assert_eq!(result["output_config"]["effort"], "high");
+        assert_eq!(
+            result["messages"][1]["content"][0]["signature"],
+            "test_signature"
+        );
     }
 
     #[test]
