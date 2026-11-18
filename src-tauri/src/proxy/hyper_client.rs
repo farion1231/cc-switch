@@ -133,15 +133,6 @@ impl ProxyResponse {
         }
     }
 
-    /// Reattach metadata returned by `take_success_terminal_hook` after a body
-    /// validation or replay step rebuilt the response.
-    pub fn with_optional_success_terminal_hook(self, hook: Option<SuccessTerminalHook>) -> Self {
-        match hook {
-            Some(hook) => self.with_success_terminal_hook(hook),
-            None => self,
-        }
-    }
-
     /// Remove the optional semantic completion callback before a response is
     /// consumed by a converter. Wrapping an already wrapped response is safe.
     pub fn take_success_terminal_hook(self) -> (Self, Option<SuccessTerminalHook>) {

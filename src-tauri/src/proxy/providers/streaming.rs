@@ -239,6 +239,7 @@ fn open_block_stop_events(
 }
 
 /// 创建 Anthropic SSE 流
+#[cfg(test)]
 pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
     stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {

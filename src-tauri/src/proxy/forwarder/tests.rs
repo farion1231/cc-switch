@@ -561,7 +561,7 @@ async fn non_streaming_success_is_buffered_before_marking_provider_successful() 
     );
 
     let prepared = forwarder
-        .prepare_success_response_for_failover(response, false)
+        .prepare_success_response_for_failover(response, false, None)
         .await
         .expect("response should be buffered");
 
@@ -586,7 +586,7 @@ async fn non_streaming_body_read_error_is_retryable_before_success_record() {
     );
 
     let err = match forwarder
-        .prepare_success_response_for_failover(response, false)
+        .prepare_success_response_for_failover(response, false, None)
         .await
     {
         Ok(_) => panic!("body read errors should fail the attempt"),
@@ -609,7 +609,7 @@ async fn streaming_success_primes_first_chunk_and_replays_it() {
     );
 
     let prepared = forwarder
-        .prepare_success_response_for_failover(response, true)
+        .prepare_success_response_for_failover(response, true, None)
         .await
         .expect("stream should be primed");
 
@@ -634,7 +634,7 @@ async fn streaming_first_chunk_error_is_retryable_before_success_record() {
     );
 
     let err = match forwarder
-        .prepare_success_response_for_failover(response, true)
+        .prepare_success_response_for_failover(response, true, None)
         .await
     {
         Ok(_) => panic!("first chunk errors should fail the attempt"),

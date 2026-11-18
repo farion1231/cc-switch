@@ -2757,10 +2757,6 @@ fn codex_published_specs(
 
 /// Stack 模型用：一家第三方供应商发布的模型名（按目录顺序）。`config_text` 是行里的
 /// `config`（只读顶层 `model`）。
-pub(crate) fn codex_published_models(settings: &Value, config_text: &str) -> Vec<String> {
-    codex_published_models_for_profile(settings, config_text, CodexCatalogToolProfile::ProxyChat)
-}
-
 pub(crate) fn codex_published_models_for_profile(
     settings: &Value,
     config_text: &str,
