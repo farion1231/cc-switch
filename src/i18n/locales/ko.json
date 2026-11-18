@@ -1226,7 +1226,7 @@
       "maxInputTokens": "최대 입력 토큰",
       "maxOutputTokens": "최대 출력 토큰",
       "thinkingEfforts": "추론 강도",
-      "thinkingEffortsHint": "선택한 강도는 WorkBuddy 모델 메뉴에 표시되고, 고른 강도는 reasoning_effort 값으로 API에 전송됩니다. 아무것도 선택하지 않으면 추론 켜기/끄기 스위치만 표시됩니다.",
+      "thinkingEffortsHint": "여기서 선택한 추론 강도가 WorkBuddy 모델 메뉴에 표시됩니다. 해당 메뉴에서 강도를 고르면 그 값이 reasoning_effort로 API에 전송됩니다. 아무것도 선택하지 않으면 추론을 켜거나 끄는 스위치만 표시됩니다.",
       "canDisableThinking": "추론 끄기 허용",
       "modelIdTaken": "WorkBuddy는 아직 같은 모델을 중복으로 추가할 수 없습니다. 이 모델은 이미 등록되어 있습니다({{owner}}). 이 카드로 옮기려면 먼저 기존 위치에서 삭제하세요.",
       "modelOwnerUser": "WorkBuddy에서 직접 추가한 모델",
@@ -1665,7 +1665,7 @@
           "paused": "일시 중지됨",
           "blocked": "막힘",
           "usageLimited": "사용 한도 도달",
-          "budgetLimited": "예산 도달",
+          "budgetLimited": "예산 한도 도달",
           "complete": "완료"
         }
       },
@@ -1928,7 +1928,7 @@
     "modelOneMHeader": "1M 컨텍스트 지원 명시",
     "modelOneMLabel": "1M",
     "copilotOneMUnavailable": "Copilot에는 이 모델의 1M 버전이 없습니다",
-    "copilotOneMMismatch": "Copilot에는 {{models}}의 1M 버전이 없습니다. 요청은 일반 모델로 대체되지만 Claude Code는 여전히 1M 컨텍스트를 기준으로 계획하므로 긴 세션에서 한도를 넘을 수 있습니다. 1M 체크를 해제하세요.",
+    "copilotOneMMismatch": "Copilot에는 {{models}}의 1M 버전이 없습니다. 요청에는 일반 버전이 사용되지만 Claude Code는 여전히 컨텍스트를 1M 토큰까지 사용할 수 있다고 가정합니다. 따라서 세션이 길어지면 실제 한도를 넘을 수 있습니다. 1M 옵션을 선택 해제하는 것이 좋습니다.",
     "fallbackModelLabel": "기본 대체 모델",
     "fallbackModelHelpDirect": "ANTHROPIC_MODEL에 기록되며 Claude Code 시작 시 사용할 주 모델입니다. 백그라운드 작업은 별도로 Haiku 등급을 사용합니다.",
     "fallbackModelHelp": "Sonnet, Opus, Fable 또는 Haiku 계층에 매핑되지 않는 요청은 이 모델을 통해 업스트림으로 전송됩니다.",
