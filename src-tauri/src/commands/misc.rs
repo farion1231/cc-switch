@@ -26,7 +26,11 @@ pub(super) mod tool_process;
 mod tool_uninstall;
 #[path = "tool_version.rs"]
 pub(super) mod tool_version;
+#[cfg(target_os = "windows")]
+pub(super) use tool_discovery::is_windows_app_execution_alias_dir;
 use tool_discovery::*;
+#[cfg(target_os = "windows")]
+pub(super) use tool_lifecycle_command::powershell_encoded_command;
 use tool_lifecycle_command::*;
 use tool_process::*;
 use tool_version::*;
