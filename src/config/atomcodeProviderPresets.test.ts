@@ -177,10 +177,7 @@ describe("atomcodeProviderPresets", () => {
       "minimax-token-plan": ["minimax-token-plan", "https://api.minimax.cn/v1"],
       "xiaomi-mimo": ["xiaomi-mimo", "https://api.xiaomimimo.com/v1"],
       longcat: ["longcat", "https://api.longcat.chat/openai/v1"],
-      volcengine: [
-        "volcengine",
-        "https://ark.cn-beijing.volces.com/api/v3",
-      ],
+      volcengine: ["volcengine", "https://ark.cn-beijing.volces.com/api/v3"],
       "volcengine-coding": [
         "volcengine-coding",
         "https://ark.cn-beijing.volces.com/api/coding/v3",
