@@ -2678,7 +2678,9 @@
       "speedEstimateTooFew": "Çıkış tokenu 200'ün altında olduğundan tahmin yok",
       "noTimingSession": "Oturum günlüklerinde zamanlama verisi yok",
       "noFirstToken": "İlk token zamanlaması yok, dolayısıyla hız yok",
-      "providerId": "Sağlayıcı kimliği"
+      "providerId": "Sağlayıcı kimliği",
+      "copyRequestId": "Talep kimliğini kopyala",
+      "requestIdCopied": "Talep kimliği kopyalandı"
     },
     "sources": {
       "scanTitle": "Oturum günlüklerini otomatik olarak tara",

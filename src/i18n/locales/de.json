@@ -2747,7 +2747,9 @@
       "speedEstimateTooFew": "Unter 200 Ausgabe-Token, daher keine Schätzung",
       "noTimingSession": "Sitzungsprotokolle enthalten keine Zeitdaten",
       "noFirstToken": "Keine Zeit bis zum ersten Token, daher keine Geschwindigkeit",
-      "providerId": "Anbieter-ID"
+      "providerId": "Anbieter-ID",
+      "copyRequestId": "Anfrage-ID kopieren",
+      "requestIdCopied": "Anfrage-ID kopiert"
     },
     "sources": {
       "scanTitle": "Sitzungsprotokolle automatisch scannen",

@@ -2742,7 +2742,9 @@
       "speedEstimateTooFew": "출력이 200토큰 미만이므로 속도를 추정하지 않습니다.",
       "noTimingSession": "세션 로그에는 타이밍 데이터가 없습니다.",
       "noFirstToken": "첫 토큰 시간 데이터가 없어 속도를 계산하지 않습니다.",
-      "providerId": "공급자 ID"
+      "providerId": "공급자 ID",
+      "copyRequestId": "요청 ID 복사",
+      "requestIdCopied": "요청 ID를 복사했습니다"
     },
     "sources": {
       "scanTitle": "세션 로그를 자동으로 스캔",

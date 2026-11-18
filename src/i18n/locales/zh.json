@@ -2747,7 +2747,9 @@
       "speedEstimateTooFew": "输出不到 200 token，不估速度",
       "noTimingSession": "会话日志没有计时数据",
       "noFirstToken": "没有首字计时，不算速度",
-      "providerId": "供应商 ID"
+      "providerId": "供应商 ID",
+      "copyRequestId": "复制请求 ID",
+      "requestIdCopied": "已复制请求 ID"
     },
     "sources": {
       "scanTitle": "自动扫描会话日志",

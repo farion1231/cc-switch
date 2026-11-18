@@ -2747,7 +2747,9 @@
       "speedEstimateTooFew": "出力が 200 トークン未満のため速度は推定しません",
       "noTimingSession": "セッションログには計測データがありません",
       "noFirstToken": "最初のトークンの計測がないため速度は出しません",
-      "providerId": "プロバイダー ID"
+      "providerId": "プロバイダー ID",
+      "copyRequestId": "リクエスト ID をコピー",
+      "requestIdCopied": "リクエスト ID をコピーしました"
     },
     "sources": {
       "scanTitle": "セッションログを自動スキャン",
