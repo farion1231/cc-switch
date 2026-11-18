@@ -8,8 +8,6 @@ use crate::config::{
 use crate::error::AppError;
 use crate::model_capabilities::{image_input_capability_from_modalities, ImageInputCapability};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-#[cfg(not(test))]
-use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::fs;
@@ -269,7 +267,7 @@ pub(crate) const CODEX_RESERVED_MODEL_PROVIDER_IDS: &[&str] = &[
 
 /// 获取 Codex 配置目录路径
 pub fn get_codex_config_dir() -> PathBuf {
-    if let Some(custom) = crate::settings::get_codex_override_dir() {
+    if let Some(custom) = crate::settings::get_override_dir(&crate::app_config::AppType::Codex) {
         return custom;
     }
 
@@ -974,21 +972,46 @@ pub fn extract_codex_api_key(auth: Option<&Value>, config_text: Option<&str>) ->
 /// section unrelated to the active provider must not leak into `{{baseUrl}}`.
 pub fn extract_codex_base_url(config_text: &str) -> Option<String> {
     let doc = config_text.parse::<toml::Value>().ok()?;
+    active_provider_str(&doc, "base_url").map(str::to_string)
+}
 
-    if let Some(active_provider) = doc.get("model_provider").and_then(|v| v.as_str()) {
-        if let Some(base_url) = doc
-            .get("model_providers")
-            .and_then(|providers| providers.get(active_provider))
-            .and_then(|provider| provider.get("base_url"))
-            .and_then(|v| v.as_str())
-        {
-            return Some(base_url.to_string());
-        }
-    }
-
-    doc.get("base_url")
+/// A string field of the active Codex provider: the active
+/// `[model_providers.<model_provider>].<key>`, falling back to a top-level
+/// `<key>`. A non-active `[model_providers.*]` section is never read.
+pub fn active_provider_str<'a>(doc: &'a toml::Value, key: &str) -> Option<&'a str> {
+    doc.get("model_provider")
         .and_then(|v| v.as_str())
-        .map(ToString::to_string)
+        .and_then(|active| doc.get("model_providers")?.get(active)?.get(key)?.as_str())
+        .or_else(|| doc.get(key)?.as_str())
+}
+
+/// `wire_api` values that mean OpenAI Chat Completions, matched trimmed and
+/// case-insensitively. The frontend copy is checked against
+/// `tests/config/backendConstants.json`.
+pub const CHAT_WIRE_APIS: &[&str] = &[
+    "chat",
+    "chat_completions",
+    "chat-completions",
+    "openai_chat",
+    "openai-chat",
+    "openai_chat_completions",
+];
+
+/// `wire_api` values that mean Anthropic Messages, matched like [`CHAT_WIRE_APIS`].
+pub const ANTHROPIC_WIRE_APIS: &[&str] = &[
+    "anthropic",
+    "anthropic_messages",
+    "anthropic-messages",
+    "messages",
+    "claude",
+];
+
+pub fn is_chat_wire_api(value: &str) -> bool {
+    CHAT_WIRE_APIS.contains(&value.trim().to_ascii_lowercase().as_str())
+}
+
+pub fn is_anthropic_wire_api(value: &str) -> bool {
+    ANTHROPIC_WIRE_APIS.contains(&value.trim().to_ascii_lowercase().as_str())
 }
 
 pub fn codex_auth_has_login_material(auth: &Value) -> bool {
@@ -2279,7 +2302,8 @@ pub(crate) fn apply_codex_auto_review_model(catalog: &mut Value, model: &str) ->
 /// Codex 自带的 OpenAI 官方模型列表（`codex debug models --bundled`），给第三方的 GPT
 /// 行按模型名找官方条目用。只缓存成功读到的列表：Codex 升级后要重启 CC Switch 才换新。
 #[cfg(not(test))]
-static CODEX_OPENAI_OFFICIAL_MODELS_CACHE: OnceCell<Vec<Value>> = OnceCell::new();
+static CODEX_OPENAI_OFFICIAL_MODELS_CACHE: std::sync::Mutex<Option<Vec<Value>>> =
+    std::sync::Mutex::new(None);
 
 #[cfg(test)]
 thread_local! {
@@ -2297,15 +2321,15 @@ fn codex_static_official_models() -> Vec<Value> {
 /// 写的证明不了（见 `codex_official_models`）。
 #[cfg(not(test))]
 fn codex_openai_official_models() -> Vec<Value> {
-    CODEX_OPENAI_OFFICIAL_MODELS_CACHE
-        .get_or_try_init(|| {
-            load_codex_bundled_models()
-                .ok()
-                .and_then(normalize_codex_native_rows)
-                .ok_or(())
-        })
-        .cloned()
-        .unwrap_or_else(|_| codex_static_official_models())
+    // 持锁加载：并发的首次调用排队等结果，不会同时各跑一遍 `codex`；没读到就不缓存。
+    use crate::sync_utils::MutexExt;
+    let mut cache = CODEX_OPENAI_OFFICIAL_MODELS_CACHE.lock_recover();
+    if cache.is_none() {
+        *cache = load_codex_bundled_models()
+            .ok()
+            .and_then(normalize_codex_native_rows);
+    }
+    cache.clone().unwrap_or_else(codex_static_official_models)
 }
 
 #[cfg(test)]
@@ -2549,11 +2573,16 @@ pub(crate) fn codex_single_model_catalog(
     config_text: &str,
     profile: CodexCatalogToolProfile,
 ) -> Result<Value, AppError> {
-    let spec = CodexCatalogModelSpec {
+    let specs = [CodexCatalogModelSpec {
         model: model.to_string(),
         ..CodexCatalogModelSpec::default()
-    };
-    codex_catalog_from_specs_for_row(&[spec], config_text, profile)
+    }];
+    let mut catalog = codex_catalog_from_specs_for_row(&specs, config_text, profile)?;
+    // 行里本来就没配目录：Lite 跟 Codex 自己的默认（同 `codex_stack_third_party_rows`）。
+    if let Some(Value::Array(entries)) = catalog.get_mut("models") {
+        apply_codex_responses_lite(entries, &specs, profile, true);
+    }
+    Ok(catalog)
 }
 
 /// 一家第三方供应商发布的模型：行里的模型目录；没有配置目录时只有行的 `model`。
@@ -2715,10 +2744,6 @@ pub(crate) fn plan_codex_stack_catalog(
                 "description".to_string(),
                 json!(crate::mode::stack::model_description(&model, window)),
             );
-            // 第三方不支持 Responses Lite 协议。
-            if obj.get("use_responses_lite") == Some(&Value::Bool(true)) {
-                obj.insert("use_responses_lite".to_string(), Value::Bool(false));
-            }
             entries.push(entry);
         }
     }
@@ -2760,11 +2785,45 @@ pub(crate) fn codex_stack_third_party_rows(
         },
         _ => Vec::new(),
     };
+    let follows_codex_default = codex_catalog_model_specs(row.settings).is_empty();
     let windows = RowWindows::of(row.config_text);
     for entry in &mut entries {
         sink_row_windows(entry, &windows, true);
     }
+    apply_codex_responses_lite(&mut entries, &specs, row.profile, follows_codex_default);
     Ok(entries)
+}
+
+/// 决定 CC Switch 替一家第三方生成的目录行用不用 Responses Lite。
+///
+/// 行里没配模型目录时，这家在直连、路由下不写目录，Codex 用自己的官方条目，GPT-6 系列
+/// 走 Responses Lite（请求带 `reasoning.context = "all_turns"`）。CC Switch 不得不替它写
+/// 目录时（聚合的合并目录、「打开终端」盖掉上一家留下的指针）照着来，同一家在各条路径上
+/// 发的请求一致：按官方客户端转给官方后端的中转会自己加 Lite 头，请求里缺 all_turns 就被拒
+/// （#9665）。显式配了目录的行、走转换的行仍不用 Lite（转换层不认识它）。
+fn apply_codex_responses_lite(
+    entries: &mut [Value],
+    specs: &[CodexCatalogModelSpec],
+    profile: CodexCatalogToolProfile,
+    row_has_no_catalog: bool,
+) {
+    let official = if row_has_no_catalog && profile == CodexCatalogToolProfile::NativeResponses {
+        codex_openai_official_models()
+    } else {
+        Vec::new()
+    };
+    for (entry, spec) in entries.iter_mut().zip(specs) {
+        let lite = find_codex_official_model(&spec.model, &official)
+            .and_then(|found| found.get("use_responses_lite"))
+            == Some(&Value::Bool(true));
+        if let Some(obj) = entry.as_object_mut() {
+            if lite {
+                obj.insert("use_responses_lite".to_string(), Value::Bool(true));
+            } else if obj.get("use_responses_lite") == Some(&Value::Bool(true)) {
+                obj.insert("use_responses_lite".to_string(), Value::Bool(false));
+            }
+        }
+    }
 }
 
 /// 一家行里配置的窗口类全局键（见 [`sink_row_windows`]）。
@@ -3301,9 +3360,9 @@ pub fn strip_codex_unified_session_bucket_from_settings(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::TestHome;
     use serde_json::json;
     use serial_test::serial;
-    use std::ffi::OsString;
 
     #[test]
     fn official_proxy_route_is_recognized_by_its_address() {
@@ -3359,35 +3418,6 @@ mod tests {
             extract_codex_id_token_user_identity(&format!("{header}.{payload}.")),
             None
         );
-    }
-
-    struct CodexLiveTestHome {
-        _dir: tempfile::TempDir,
-        original_test_home: Option<OsString>,
-    }
-
-    impl CodexLiveTestHome {
-        fn new() -> Self {
-            let dir = tempfile::tempdir().expect("create isolated Codex live test home");
-            let original_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
-            std::env::set_var("CC_SWITCH_TEST_HOME", dir.path());
-            crate::settings::reload_settings().expect("reload settings for isolated test home");
-
-            Self {
-                _dir: dir,
-                original_test_home,
-            }
-        }
-    }
-
-    impl Drop for CodexLiveTestHome {
-        fn drop(&mut self) {
-            match &self.original_test_home {
-                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
-                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
-            }
-            let _ = crate::settings::reload_settings();
-        }
     }
 
     #[derive(Debug, PartialEq)]
@@ -3453,7 +3483,7 @@ mod tests {
     #[test]
     #[serial]
     fn ensure_live_auth_guard_rejects_rotated_refresh_without_mutating_live_bundle() {
-        let _home = CodexLiveTestHome::new();
+        let _home = TestHome::new();
         let before = seed_rotated_managed_codex_live_state();
 
         let result =
@@ -3466,7 +3496,7 @@ mod tests {
     #[test]
     #[serial]
     fn clear_live_auth_guard_rejects_rotated_refresh_without_mutating_live_bundle() {
-        let _home = CodexLiveTestHome::new();
+        let _home = TestHome::new();
         let before = seed_rotated_managed_codex_live_state();
 
         let result =
@@ -3559,7 +3589,7 @@ base_url = "https://single.example.com/v1"
     #[test]
     #[serial]
     fn managed_chatgpt_login_matches_local_marker_and_workspace() {
-        let _home = CodexLiveTestHome::new();
+        let _home = TestHome::new();
         let shared_chatgpt_user_token = |subject: &str| {
             let header = URL_SAFE_NO_PAD.encode(br#"{"alg":"none"}"#);
             let payload = URL_SAFE_NO_PAD.encode(
@@ -3672,7 +3702,7 @@ base_url = "https://single.example.com/v1"
     #[test]
     #[serial]
     fn missing_or_malformed_marker_never_establishes_ownership() {
-        let _home = CodexLiveTestHome::new();
+        let _home = TestHome::new();
         let id_token = test_codex_id_token("user-a");
         let auth = codex_managed_oauth_auth_value(
             "workspace-a",
@@ -3695,7 +3725,7 @@ base_url = "https://single.example.com/v1"
     #[test]
     #[serial]
     fn legacy_managed_marker_removal_requires_manager_identity() {
-        let _home = CodexLiveTestHome::new();
+        let _home = TestHome::new();
         let id_token = test_codex_id_token("legacy-user");
         let auth = codex_managed_oauth_auth_value(
             "legacy-workspace",
@@ -5751,6 +5781,89 @@ wire_api = "responses"
         assert_eq!(models[1]["supports_image_detail_original"], false);
     }
 
+    /// #9665：没配目录的行在直连下由 Codex 用官方条目（GPT-6 走 Lite），聚合下要一致；
+    /// 显式配了目录的行、走 Chat 转换的行仍不用 Lite。
+    #[test]
+    fn stacked_rows_without_catalog_follow_codex_responses_lite_default() {
+        let models = with_official_models(official_gpt_rows(), || {
+            let bare = json!({});
+            let explicit = json!({ "modelCatalog": { "models": [{ "model": "gpt-6-sol" }] } });
+            let member = |key, settings, profile| CodexStackCatalogMember {
+                key,
+                provider_name: key,
+                row: CodexCatalogRow {
+                    settings,
+                    config_text: "model = \"gpt-6-sol\"\n",
+                    profile,
+                },
+            };
+            plan_codex_stack_catalog(
+                CodexStackRoute::ThirdParty(CodexCatalogRow {
+                    settings: &bare,
+                    config_text: "model = \"gpt-6-sol\"\n",
+                    profile: CodexCatalogToolProfile::NativeResponses,
+                }),
+                &[
+                    member("bare", &bare, CodexCatalogToolProfile::NativeResponses),
+                    member(
+                        "listed",
+                        &explicit,
+                        CodexCatalogToolProfile::NativeResponses,
+                    ),
+                    member("chat", &bare, CodexCatalogToolProfile::ProxyChat),
+                ],
+                false,
+            )
+            .unwrap()["models"]
+                .as_array()
+                .unwrap()
+                .clone()
+        });
+        let lite: Vec<_> = models
+            .iter()
+            .map(|model| {
+                (
+                    model["slug"].as_str().unwrap().to_string(),
+                    model["use_responses_lite"].clone(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            lite,
+            vec![
+                ("gpt-6-sol".to_string(), json!(true)),
+                ("ccs-bare/gpt-6-sol".to_string(), json!(true)),
+                ("ccs-listed/gpt-6-sol".to_string(), json!(false)),
+                ("ccs-chat/gpt-6-sol".to_string(), json!(false)),
+            ]
+        );
+    }
+
+    /// 「打开终端」给没配目录的卡盖掉上一家留下的指针时生成的单模型目录，Lite 同样跟 Codex
+    /// 的默认走（#9665）；走转换的卡、对不上官方条目的模型仍不用 Lite。
+    #[test]
+    fn single_model_catalog_follows_codex_responses_lite_default() {
+        let lite = |model: &str, profile| {
+            with_official_models(official_gpt_rows(), || {
+                codex_single_model_catalog(model, "", profile).unwrap()["models"][0]
+                    ["use_responses_lite"]
+                    .clone()
+            })
+        };
+        assert_eq!(
+            lite("gpt-6-sol", CodexCatalogToolProfile::NativeResponses),
+            json!(true)
+        );
+        assert_eq!(
+            lite("gpt-6-sol", CodexCatalogToolProfile::ProxyChat),
+            json!(false)
+        );
+        assert_ne!(
+            lite("kimi-k2", CodexCatalogToolProfile::NativeResponses),
+            json!(true)
+        );
+    }
+
     #[test]
     fn mirrored_rows_round_trip_as_bare_models() {
         let (catalog, simplified) = with_official_models(official_gpt_rows(), || {
@@ -6493,8 +6606,8 @@ wire_api = "responses"
     #[test]
     #[serial]
     fn codex_cli_candidates_try_the_desktop_app_cli_after_standalone_installs() {
-        let test_home = CodexLiveTestHome::new();
-        let home = test_home._dir.path();
+        let test_home = TestHome::new();
+        let home = test_home.path();
         let standalone = home.join(".volta/bin/codex");
         let desktop = desktop_cli(
             &home.join("Applications"),
@@ -6535,8 +6648,8 @@ wire_api = "responses"
     #[test]
     #[serial]
     fn proxy_chat_catalog_ignores_codex_models_cache() {
-        let home = CodexLiveTestHome::new();
-        let codex_dir = home._dir.path().join(".codex");
+        let home = TestHome::new();
+        let codex_dir = home.path().join(".codex");
         std::fs::create_dir_all(&codex_dir).expect("create codex dir");
         std::fs::write(
             codex_dir.join("models_cache.json"),

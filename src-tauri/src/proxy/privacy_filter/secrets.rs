@@ -2,9 +2,9 @@
 
 use super::{Kind, Span};
 use aho_corasick::{AhoCorasick, MatchKind};
-use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::Deserialize;
+use std::sync::LazyLock;
 
 /// 高熵兜底默认阈值（贴近 gitleaks 经验值）
 const ENTROPY_MIN: f64 = 4.0;
@@ -14,7 +14,7 @@ const ENTROPY_MIN_STRICT: f64 = 4.8;
 pub(super) const CONTEXT_LOOKBACK: usize = 30;
 
 /// 上下文型口令：藏在句子里的密码/token，如「我的密码是 hunter2」「api_key: xxx」
-static RE_CONTEXT_SECRET: Lazy<Regex> = Lazy::new(|| {
+static RE_CONTEXT_SECRET: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r#"(?i)(密码|口令|密钥|password|passwd|pwd|secret|token|api[_\s-]?key)\s*['"]?\s*(?:是|为|:|：|=)\s*['"]?([^\s'"，。；;]{4,})"#,
     )
@@ -22,12 +22,12 @@ static RE_CONTEXT_SECRET: Lazy<Regex> = Lazy::new(|| {
 });
 
 /// 高熵兜底：赋值表达式只捕获 value，避免将字段名一起替换。
-static RE_ENTROPY_TOKEN: Lazy<Regex> = Lazy::new(|| {
+static RE_ENTROPY_TOKEN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?:[A-Za-z_][A-Za-z0-9_-]*=)?([A-Za-z0-9+/_\-]{20,}={0,3})").unwrap()
 });
 
 /// 密钥语义关键词。命中则保留 ENTROPY_MIN，否则收紧到 ENTROPY_MIN_STRICT。
-static RE_SECRET_CONTEXT: Lazy<Regex> = Lazy::new(|| {
+static RE_SECRET_CONTEXT: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r"(?i)(?:password|passwd|pwd|secret|token|api[_\s-]?key|access[_\s-]?key|bearer|authorization|credential|jwt|密码|口令|密钥|凭证|令牌|鉴权)",
     )
@@ -35,22 +35,22 @@ static RE_SECRET_CONTEXT: Lazy<Regex> = Lazy::new(|| {
 });
 
 /// HTTP Authorization 头标准形态：Authorization: <scheme> <value>
-static RE_AUTH_HEADER_PREFIX: Lazy<Regex> = Lazy::new(|| {
+static RE_AUTH_HEADER_PREFIX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)\bauthorization\s*:\s*(?:basic|bearer|digest|ntlm|hmac|token)\s+$").unwrap()
 });
 
 /// 以 host.tld: 开头的命中（generic-api-key 把域名+冒号+路径一起吃掉的情形）
-static RE_HOST_PORT_PREFIX: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"^[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z0-9-]+:").unwrap());
+static RE_HOST_PORT_PREFIX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z0-9-]+:").unwrap());
 
 /// 模板变量：{{ X }} / ${X} / %{X} / <X> / $X / %X%
-static RE_TEMPLATE_VAR: Lazy<Regex> = Lazy::new(|| {
+static RE_TEMPLATE_VAR: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r"^(?:\{\{[^{}]+\}\}|\$\{[^{}]+\}|%\{[^{}]+\}|<[^<>]+>|\$[A-Za-z_][A-Za-z0-9_]*|%[A-Za-z_][A-Za-z0-9_]*%)$",
     )
     .unwrap()
 });
-static RE_UUID: Lazy<Regex> = Lazy::new(|| {
+static RE_UUID: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
         .unwrap()
 });

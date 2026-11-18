@@ -25,7 +25,6 @@
     "success": "成功",
     "error": "錯誤",
     "unknown": "未知",
-    "enterValidValue": "請輸入有效的內容",
     "clear": "清除",
     "format": "格式化",
     "formatSuccess": "格式化成功",
@@ -142,7 +141,6 @@
     "adoptCatalog": "改用 CC Switch 的模型目錄",
     "adoptCatalogDone": "已改用 CC Switch 的模型目錄，重新啟動 Codex 後生效",
     "adoptCatalogFailed": "改用 CC Switch 的模型目錄失敗：{{error}}",
-    "noRoutingSupport": "不支援路由",
     "blockedByProxyHint": "路由模式下無法切換至官方供應商",
     "editProvider": "編輯供應商",
     "editProviderHint": "更新設定後將立即套用至目前供應商。",
@@ -281,12 +279,10 @@
     "editCurrentNotice": "這是正在使用的供應商。儲存後立即生效，下一次請求就用新的設定。"
   },
   "claudeCode": {
-    "needsRouting": "需要路由",
-    "noRoutingSupport": "不支援路由"
+    "needsRouting": "需要路由"
   },
   "codex": {
     "needsRouting": "需要路由",
-    "noRoutingSupport": "不支援路由",
     "officialRouting": "官方帳號路由",
     "nativeLogin": "Codex 登入",
     "followCodexLogin": "跟隨 Codex 登入",
@@ -338,14 +334,11 @@
       "tooltip": {
         "active": "Claude Desktop 本地路由已開啟 - {{address}}:{{port}}",
         "inactive": "開啟 Claude Desktop 本地路由，用於需要模型對應或格式轉換的供應商。目前設定位址：{{address}}:{{port}}"
-      },
-      "stopBlockedByTakeover": "還有其他應用處於路由模式。請先讓這些應用回到直連，再停止路由服務。"
+      }
     }
   },
   "notifications": {
     "providerAdded": "供應商已新增",
-    "providerSaved": "供應商設定已儲存",
-    "providerDeleted": "供應商刪除成功",
     "switchSuccess": "切換成功！",
     "codexRestartRequired": "切換成功，請重新啟動客戶端以套用",
     "geminiRestartRequired": "切換成功，請重新啟動 Gemini CLI 以套用",
@@ -356,12 +349,9 @@
     "removeFromConfigFailed": "無法移除供應商",
     "switchFailedTitle": "切換失敗",
     "switchFailed": "切換失敗：{{error}}",
-    "autoImported": "已從現有設定建立預設供應商",
     "addFailed": "新增供應商失敗：{{error}}",
     "saveFailed": "儲存失敗：{{error}}",
     "saveFailedGeneric": "儲存失敗，請重試",
-    "appliedToClaudePlugin": "已套用至 Claude 外掛程式",
-    "removedFromClaudePlugin": "已從 Claude 外掛程式移除",
     "syncClaudePluginFailed": "同步 Claude 外掛程式失敗",
     "skipClaudeOnboardingFailed": "跳過 Claude Code 初次安裝確認失敗",
     "clearClaudeOnboardingSkipFailed": "還原 Claude Code 初次安裝確認失敗",
@@ -380,8 +370,6 @@
     "proxyReasonDesktopMapping": "使用模型對應（Claude Desktop 只認 Claude 模型名稱）",
     "proxyReasonManagedOAuth": "使用託管 OAuth 登入（權杖由本機路由注入）",
     "proxyReasonRoutingRequired": "需要本機路由處理請求",
-    "openAIFormatHint": "此供應商使用 OpenAI 相容格式，需要開啟路由服務才能正常使用",
-    "copilotProxyHint": "GitHub Copilot 作為 Claude 供應商時始終需要本地路由；路由會根據目前模型自動選擇 Chat Completions 或 Responses。",
     "openLinkFailed": "連結開啟失敗",
     "openclawModelsRegistered": "模型已註冊至 /model 清單",
     "openclawDefaultModelSet": "已設為預設模型",
@@ -476,8 +464,6 @@
     "authCenter": {
       "description": "把 GitHub Copilot、ChatGPT、xAI 訂閱當作供應商用。憑證由路由服務注入，相關供應商要在路由模式下使用（Codex 官方登入綁定除外）。Antigravity 帳號用來切換 agy 的官方登入。",
       "beta": "Beta",
-      "copilotDescription": "管理 GitHub Copilot 帳號",
-      "codexOauthDescription": "管理 ChatGPT 帳號",
       "xaiOauthDescription": "管理 xAI / Grok 帳號"
     },
     "advanced": {
@@ -488,12 +474,8 @@
       "proxy": {
         "title": "本地路由",
         "description": "控制路由服務開關、查看狀態與連接埠資訊",
-        "enableFeature": "在主頁面顯示本地路由開關",
-        "enableFeatureDescription": "開啟後，主頁面頂部將顯示路由和故障轉移開關",
         "enableStackMode": "在主頁面顯示聚合模式開關",
-        "enableStackModeDescription": "開啟後，Claude Code 和 Codex 的主頁面開關換成聚合模式：像 OpenCode 一樣新增多家供應商，它們的模型都會出現在用戶端的模型清單裡（Codex 需要重新啟動後生效），不做故障轉移。和本機路由開關二選一，切換時已開啟的 Claude Code、Codex 會先退回直連",
         "enableFailoverToggle": "在主頁面顯示故障轉移開關",
-        "enableFailoverToggleDescription": "開啟後，主頁面頂部將獨立顯示故障轉移開關",
         "running": "執行中",
         "stopped": "已停止"
       },
@@ -526,7 +508,6 @@
         "description": "自動修復 API 請求中的相容性問題",
         "enabled": "啟用整流器",
         "requestGroup": "請求整流",
-        "responseGroup": "回應整流",
         "thinkingSignature": "Thinking 簽章整流",
         "thinkingSignatureDescription": "當 Anthropic 類型供應商回傳 thinking 簽章不相容或非法請求等錯誤時，自動移除不相容的 thinking 相關區塊，並對同一供應商重試一次",
         "thinkingBudget": "Thinking Budget 整流",
@@ -836,10 +817,8 @@
       "enabledHint": "開啟後可使用 S3 上傳/下載和自動同步。",
       "mutualExclusionTitle": "切換同步方式",
       "mutualExclusionMessage": "啟用 S3 同步將停用目前的 WebDAV 同步，是否繼續？",
-      "mutualExclusionMessageReverse": "啟用 WebDAV 同步將停用目前的 S3 同步，是否繼續？",
       "mutualExclusionFailed": "切換同步方式失敗：{{error}}",
       "testConnection": "測試連線",
-      "connectionOk": "S3 連線成功",
       "test": "測試連線",
       "testing": "測試中...",
       "testSuccess": "S3 連線成功",
@@ -866,6 +845,15 @@
       "incompatibleVersion": "遠端資料版本不相容（版本 {{version}}），目前支援協議 v2 / db-v6",
       "unsaved": "未儲存",
       "saved": "已儲存",
+      "clear": "清除設定",
+      "clearing": "清除中...",
+      "clearSuccess": "已清除本機的 S3 設定",
+      "clearFailed": "清除設定失敗：{{error}}",
+      "clearConfirm": {
+        "title": "清除 S3 設定",
+        "message": "將從本機刪除已儲存的 S3 區域、儲存貯體、Access Key、Secret Key、端點和遠端目錄，並停止自動同步。儲存貯體中已上傳的資料不會被刪除。",
+        "confirm": "清除"
+      },
       "unsavedChanges": "請先儲存設定",
       "saveBeforeSync": "請先儲存設定，再使用上傳/下載。",
       "fetchingRemote": "取得遠端資訊...",
@@ -955,10 +943,6 @@
     "appVisibility": {
       "title": "主頁面顯示",
       "description": "選擇在主頁面顯示的應用程式",
-      "claudeDesc": "Anthropic Claude Code CLI",
-      "codexDesc": "OpenAI Codex CLI",
-      "geminiDesc": "Google Gemini CLI",
-      "opencodeDesc": "OpenCode CLI",
       "showProfileSwitcher": "顯示專案切換",
       "showProfileSwitcherDescription": "在主頁面頂部顯示專案切換入口",
       "showProviderSearch": "顯示供應商搜尋",
@@ -967,7 +951,6 @@
     "terminal": {
       "title": "首選終端機",
       "description": "選擇點擊終端機按鈕時使用的終端機應用程式",
-      "fallbackHint": "如果選擇的終端機不可用，將自動使用系統預設終端機",
       "options": {
         "macos": {
           "terminal": "Terminal.app",
@@ -995,28 +978,18 @@
         }
       }
     },
-    "configDirectoryOverride": "設定目錄覆寫（進階）",
     "configDirectoryDescription": "在 WSL 等環境使用 Claude Code 或 Codex 的時候，可手動指定為 WSL 裡的設定目錄，供應商資料與主環境保持一致。",
     "appConfigDir": "CC Switch 設定目錄",
     "appConfigDirDescription": "自訂 CC Switch 的設定儲存位置（指定至雲端同步資料夾即可雲端同步設定）",
     "browsePlaceholderApp": "例如：C:\\Users\\Administrator\\.cc-switch",
-    "claudeConfigDir": "Claude Code 設定目錄",
     "claudeConfigDirDescription": "覆寫 Claude 設定目錄 (settings.json)。真正自訂目錄會在目錄內存放 Claude MCP 的 .claude.json；預設 ~/.claude 目錄仍使用 Claude 預設的 ~/.claude.json。",
-    "codexConfigDir": "Codex 設定目錄",
     "codexConfigDirDescription": "覆寫 Codex 設定目錄。",
-    "geminiConfigDir": "Gemini 設定目錄",
     "geminiConfigDirDescription": "覆寫 Gemini 設定目錄 (.env)。",
-    "grokConfigDir": "Grok Build 設定目錄",
     "grokConfigDirDescription": "覆寫 Grok Build 設定目錄 (config.toml)。",
-    "opencodeConfigDir": "OpenCode 設定目錄",
     "opencodeConfigDirDescription": "覆寫 OpenCode 設定目錄 (opencode.json / opencode.jsonc)。",
-    "openclawConfigDir": "OpenClaw 設定目錄",
     "openclawConfigDirDescription": "覆寫 OpenClaw 設定目錄 (openclaw.json)。",
-    "hermesConfigDir": "Hermes 設定目錄",
     "hermesConfigDirDescription": "覆寫 Hermes 設定目錄 (config.yaml)。",
-    "piConfigDir": "Pi 設定目錄",
     "piConfigDirDescription": "覆寫 Pi 設定目錄（models.json、指示檔案、提示、Skills 與工作階段）。",
-    "ompConfigDir": "Oh My Pi 設定目錄",
     "browsePlaceholderClaude": "例如：/home/<您的帳號>/.claude",
     "browsePlaceholderCodex": "例如：/home/<您的帳號>/.codex",
     "browsePlaceholderGemini": "例如：/home/<您的帳號>/.gemini",
@@ -1145,7 +1118,6 @@
       "testFailed": "連線失敗：{{error}}",
       "pricingDefaultsTitle": "計費預設設定",
       "pricingDefaultsDescription": "設定各應用程式依請求模型還是回傳模型比對定價，僅對經本機路由的請求生效。",
-      "pricingAppLabel": "應用程式",
       "pricingModelSourceLabel": "計費模式",
       "pricingModelSourceRequest": "請求模型",
       "pricingModelSourceResponse": "回傳模型",
@@ -1253,6 +1225,9 @@
       "modelsHint": "至少新增一個模型。模型 ID 會原樣傳送給介面。WorkBuddy 暫時不支援同一個模型新增多次，同一個模型 ID 只能放在一張卡裡。名稱留空時，WorkBuddy 選單顯示「廠商標籤:模型 ID」。",
       "maxInputTokens": "最大輸入 Token",
       "maxOutputTokens": "最大輸出 Token",
+      "thinkingEfforts": "思考強度",
+      "thinkingEffortsHint": "選中的強度會列在 WorkBuddy 的模型選單裡，選哪檔就把對應的值作為 reasoning_effort 送給介面。都不選時只顯示思考開關。",
+      "canDisableThinking": "可以關閉思考",
       "modelIdTaken": "WorkBuddy 暫時不支援同一個模型新增多次，這個模型已經在「{{owner}}」裡了。想換到這張卡，請先從那邊刪除。",
       "modelOwnerUser": "WorkBuddy 裡自行新增的模型",
       "presetModelsSkipped": "WorkBuddy 暫時不支援同一個模型新增多次，這些模型已經在別的卡裡，已略過：{{models}}。想換到這張卡，請先從原來的卡刪除，再在這裡加回來。"
@@ -1683,7 +1658,17 @@
         "prLink": "已關聯 PR #{{number}}",
         "prLinkPlain": "已關聯 PR",
         "slashCommand": "執行了 {{command}}",
-        "subAgent": "子代理 {{name}}"
+        "subAgent": "子代理 {{name}}",
+        "goal": "目標 · {{status}}",
+        "goalPlain": "目標",
+        "goalStatus": {
+          "active": "進行中",
+          "paused": "已暫停",
+          "blocked": "受阻",
+          "usageLimited": "額度已用盡",
+          "budgetLimited": "已達預算",
+          "complete": "已完成"
+        }
       },
       "injectedToggle": "顯示注入的上下文",
       "injectedRow": "上下文 · {{label}} · {{chars}} 字",
@@ -1759,22 +1744,9 @@
     "copilotDeleteHint": "請在 GitHub Copilot CLI 中刪除此工作階段，以保持工作階段儲存一致"
   },
   "console": {
-    "providerSwitchReceived": "收到供應商切換事件：",
-    "setupListenerFailed": "設定供應商切換監聽器失敗：",
-    "updateProviderFailed": "更新供應商失敗：",
-    "autoImportFailed": "自動匯入預設設定失敗：",
     "openLinkFailed": "開啟連結失敗：",
-    "getVersionFailed": "取得版本資訊失敗：",
-    "loadSettingsFailed": "載入設定失敗：",
-    "getConfigPathFailed": "取得設定路徑失敗：",
-    "getConfigDirFailed": "取得設定目錄失敗：",
-    "detectPortableFailed": "檢測可攜模式失敗：",
-    "saveSettingsFailed": "儲存設定失敗：",
     "updateFailed": "更新失敗：",
     "checkUpdateFailed": "檢查更新失敗：",
-    "openConfigFolderFailed": "開啟設定資料夾失敗：",
-    "selectConfigDirFailed": "選擇設定目錄失敗：",
-    "getDefaultConfigDirFailed": "取得預設設定目錄失敗：",
     "openReleaseNotesFailed": "開啟更新日誌失敗："
   },
   "providerForm": {
@@ -1952,6 +1924,8 @@
     "requestModelLabel": "實際請求模型",
     "modelOneMHeader": "聲明支援 1M",
     "modelOneMLabel": "1M",
+    "copilotOneMUnavailable": "Copilot 沒有這個模型的 1M 版本",
+    "copilotOneMMismatch": "Copilot 沒有 {{models}} 的 1M 版本：請求會退回一般版本，但 Claude Code 仍按 1M 規劃上下文，長對話可能超出上限。建議取消勾選 1M。",
     "fallbackModelLabel": "備用模型",
     "fallbackModelHelpDirect": "寫進 ANTHROPIC_MODEL，是 Claude Code 啟動時使用的主模型。背景任務另用 Haiku 那一檔。",
     "fallbackModelHelp": "沒落到 Sonnet、Opus、Fable、Haiku 任一檔的請求，改用這個模型發給上游。",
@@ -2035,12 +2009,10 @@
     "selectAccount": "選擇帳號",
     "selectAccountPlaceholder": "選擇一個 GitHub 帳號",
     "useDefaultAccount": "使用預設帳號",
-    "loggedInAccounts": "已登入帳號",
     "defaultAccount": "預設",
     "selected": "已選取",
     "removeAccount": "移除帳號",
     "setAsDefault": "設為預設",
-    "addAnotherAccount": "新增其他帳號",
     "retry": "重試",
     "copyCode": "複製程式碼",
     "migrationFailed": "舊驗證資料遷移失敗：{{error}}",
@@ -2094,7 +2066,6 @@
     "enterCode": "請在瀏覽器中輸入以下驗證碼：",
     "accountCount": "{{count}} 個帳號",
     "selectAccount": "選擇帳號",
-    "chatgptAccount": "ChatGPT 帳號",
     "accountToUse": "使用的帳號",
     "signInMethod": "登入方式",
     "manageAccounts": "管理帳號",
@@ -2104,18 +2075,14 @@
     "explicitSelectionRequired": "請先選擇登入方式",
     "useDefaultAccount": "使用預設帳號",
     "noneOptionLabel": "跟隨 Codex 登入",
-    "reauthDescription": "為與瀏覽器登入行為保持一致，這些帳號需要重新登入以補全所需的登入憑證（id_token）。重新登入後即可正常用於託管綁定。",
     "reauthBadge": "需要重新登入",
-    "reauthLogin": "重新登入",
     "reauthSelectHint": "該帳號需重新登入以啟用託管綁定。",
     "reauthNow": "立即重新登入",
     "duplicateAccount": "該 ChatGPT 帳號已新增，請直接使用現有帳號。",
-    "loggedInAccounts": "已登入帳號",
     "defaultAccount": "預設",
     "selected": "已選取",
     "removeAccount": "移除帳號",
     "setAsDefault": "設為預設",
-    "addAnotherAccount": "新增其他帳號",
     "logoutAll": "登出所有帳號",
     "retry": "重試",
     "copyCode": "複製程式碼",
@@ -2124,7 +2091,6 @@
     "loginMethod": "登入方式",
     "browserLogin": "瀏覽器登入",
     "deviceCodeLogin": "裝置代碼登入",
-    "openBrowserLogin": "開啟瀏覽器登入",
     "loginExpired": "登入已過期，請重試。"
   },
   "xaiOauth": {
@@ -2178,7 +2144,6 @@
     "testing": "測速中",
     "addEndpointPlaceholder": "https://api.example.com",
     "done": "完成",
-    "noEndpoints": "暫無端點",
     "failed": "失敗",
     "enterValidUrl": "請輸入有效的 URL",
     "invalidUrlFormat": "URL 格式不正確",
@@ -2186,12 +2151,7 @@
     "urlExists": "該位址已存在",
     "saveFailed": "儲存失敗，請重試",
     "loadEndpointsFailed": "載入自訂端點失敗：",
-    "addEndpointFailed": "新增自訂端點失敗：",
-    "removeEndpointFailed": "刪除自訂端點失敗：",
-    "removeFailed": "刪除失敗：{{error}}",
-    "updateLastUsedFailed": "更新端點使用時間失敗",
     "pleaseAddEndpoint": "請先新增端點",
-    "testUnavailable": "測速功能不可用",
     "noResult": "未回傳結果",
     "testFailed": "測速失敗：{{error}}",
     "empty": "暫無端點"
@@ -2643,7 +2603,6 @@
       "configLoadFailed": "載入本機定價設定失敗：{{error}}",
       "neverSynced": "從未同步",
       "lastSync": "上次同步",
-      "commonStatus": "常用模型",
       "lastError": "上次自動同步失敗：{{error}}",
       "localFile": "本機定價檔案",
       "openFolder": "開啟資料夾",
@@ -2788,7 +2747,9 @@
       "speedEstimateTooFew": "輸出不到 200 token，不估速度",
       "noTimingSession": "工作階段日誌沒有計時資料",
       "noFirstToken": "沒有首字計時，不算速度",
-      "providerId": "供應商 ID"
+      "providerId": "供應商 ID",
+      "copyRequestId": "複製請求 ID",
+      "requestIdCopied": "已複製請求 ID"
     },
     "sources": {
       "scanTitle": "自動掃描工作階段日誌",
@@ -2960,8 +2921,6 @@
   "presetSelector": {
     "title": "選擇設定類型",
     "custom": "自訂",
-    "customDescription": "手動設定供應商，需要填寫完整的設定資訊",
-    "officialDescription": "官方登入，不需要填寫 API Key",
     "presetDescription": "使用預設設定，只需填寫 API Key"
   },
   "mcp": {
@@ -2974,13 +2933,9 @@
     "geminiTitle": "Gemini MCP 管理",
     "unifiedPanel": {
       "title": "MCP 伺服器管理",
-      "addServer": "新增伺服器",
-      "editServer": "編輯伺服器",
       "deleteServer": "刪除伺服器",
       "deleteConfirm": "確定要刪除伺服器 \"{{id}}\" 嗎？此操作無法復原。",
-      "noServers": "暫無伺服器",
       "enabledApps": "啟用的應用程式",
-      "noImportFound": "未發現需要匯入的 MCP 伺服器。所有伺服器已在 CC Switch 統一管理中。",
       "importSuccess": "成功匯入 {{count}} 個 MCP 伺服器",
       "searchPlaceholder": "搜尋 MCP 名稱、描述、標籤或命令...",
       "searchAriaLabel": "搜尋已管理的 MCP 伺服器",
@@ -3016,37 +2971,25 @@
     },
     "form": {
       "title": "MCP 標題（唯一）",
-      "titlePlaceholder": "my-mcp-server",
       "name": "顯示名稱",
       "namePlaceholder": "例如 mcp-server-time",
       "enabledApps": "啟用至應用程式",
-      "noAppsWarning": "至少選擇一個應用程式",
       "description": "描述",
       "descriptionPlaceholder": "選填的描述資訊",
       "tags": "標籤（逗號分隔）",
       "tagsPlaceholder": "stdio, time, utility",
       "homepage": "首頁連結",
-      "homepagePlaceholder": "https://example.com",
       "docs": "文件連結",
-      "docsPlaceholder": "https://example.com/docs",
-      "additionalInfo": "附加資訊",
-      "jsonConfig": "完整的 JSON 設定",
-      "jsonConfigOrPrefix": "完整的 JSON 設定或者使用",
-      "tomlConfigOrPrefix": "完整的 TOML 設定或者使用",
       "jsonPlaceholder": "{\n  \"type\": \"stdio\",\n  \"command\": \"uvx\",\n  \"args\": [\"mcp-server-fetch\"]\n}",
       "tomlConfig": "完整的 TOML 設定",
       "tomlPlaceholder": "type = \"stdio\"\ncommand = \"uvx\"\nargs = [\"mcp-server-fetch\"]",
-      "useWizard": "設定精靈",
-      "syncOtherSide": "同步至 {{target}}",
-      "syncOtherSideHint": "勾選後會把目前設定同時寫入 {{target}}，若存在同名設定將被覆寫",
-      "willOverwriteWarning": "將覆寫 {{target}} 中的同名設定"
+      "syncOtherSide": "同步至 {{target}}"
     },
     "wizard": {
       "title": "MCP 設定精靈",
       "hint": "快速設定 MCP 伺服器，自動產生 JSON 設定",
       "type": "類型",
       "typeStdio": "stdio",
-      "typeHttp": "http",
       "typeSse": "sse",
       "command": "命令",
       "commandPlaceholder": "npx 或 uvx",
@@ -3075,16 +3018,13 @@
       "saved": "已儲存",
       "deleted": "已刪除",
       "enabled": "已啟用",
-      "disabled": "已停用",
-      "templateAdded": "已新增範本"
+      "disabled": "已停用"
     },
     "error": {
       "idRequired": "請填寫標識",
-      "idExists": "該標識已存在，請更換",
       "jsonInvalid": "JSON 格式錯誤，請檢查",
       "tomlInvalid": "TOML 格式錯誤，請檢查",
       "commandRequired": "請填寫命令",
-      "singleServerObjectRequired": "此處只需單個伺服器物件，請不要貼上包含 mcpServers 的整份設定",
       "piSseUnsupported": "Pi 不支援 SSE 連線方式的 MCP 伺服器，請改用 HTTP（streamable HTTP）",
       "piInvalidName": "Pi 的 MCP 伺服器名稱只能包含字母、數字、_ 和 -：{{id}}",
       "piNameConflict": "Pi 會把只差 - 和 _ 的伺服器名稱視為同一個：{{id}} 與已有的 {{other}} 衝突",
@@ -3105,7 +3045,6 @@
       "enabled": "已啟用",
       "installed": "已安裝",
       "docs": "文件",
-      "requiresEnv": "需要環境變數",
       "fetch": {
         "name": "mcp-server-fetch",
         "description": "通用 HTTP 請求工具，支援 GET/POST 等 HTTP 方法，適合快速請求 API / 抓取網頁資料"
@@ -3307,7 +3246,6 @@
     "openDirectory": "在檔案管理員中開啟",
     "dailyMemory": {
       "title": "每日記憶",
-      "sectionTitle": "每日記憶",
       "cardTitle": "每日記憶檔案",
       "createToday": "新增記憶",
       "empty": "暫無每日記憶檔案",
@@ -3371,8 +3309,7 @@
       "add": "新增變數",
       "saveSuccess": "環境變數已儲存",
       "saveFailed": "儲存環境變數失敗",
-      "loadFailed": "讀取環境變數失敗",
-      "duplicateKey": "檢測到重複的變數名稱: {{key}}"
+      "loadFailed": "讀取環境變數失敗"
     },
     "tools": {
       "title": "工具權限",
@@ -3579,8 +3516,6 @@
       "skillNotFound": "技能不存在：{{directory}}",
       "missingRepoInfo": "缺少儲存庫資訊（owner 或 name）",
       "downloadTimeout": "下載儲存庫 {{owner}}/{{name}} 逾時（{{timeout}} 秒）",
-      "downloadTimeoutHint": "請檢查網路連線或稍後重試",
-      "skillPathNotFound": "儲存庫 {{owner}}/{{name}} 中未找到技能路徑 '{{path}}'",
       "skillDirNotFound": "技能目錄不存在：{{path}}",
       "directoryConflict": "技能目錄 '{{directory}}' 已被 {{existing_repo}} 佔用，無法從 {{new_repo}} 安裝",
       "emptyArchive": "下載的壓縮檔為空",
@@ -3589,23 +3524,19 @@
       "archiveDownloadTooLarge": "倉庫壓縮檔下載超過 {{limit_mb}} MB 上限，已中止",
       "archiveTooManyEntries": "壓縮檔項目過多（{{count}}），上限 {{limit}}",
       "downloadFailed": "下載失敗：HTTP {{status}}",
-      "allBranchesFailed": "所有分支下載失敗，嘗試了：{{branches}}",
       "httpError": "HTTP 錯誤 {{status}}",
       "http403": "GitHub 存取受限，可能是請求頻率過高",
       "http404": "儲存庫或分支不存在，請檢查位址",
       "http429": "請求過於頻繁，請等待後重試",
-      "parseMetadataFailed": "解析技能中繼資料失敗",
       "getHomeDirFailed": "無法取得使用者主目錄",
       "noSkillsInZip": "ZIP 檔案中未找到技能（需包含 SKILL.md 檔案）",
       "networkError": "網路錯誤",
-      "fsError": "檔案系統錯誤",
       "unknownError": "未知錯誤",
       "suggestion": {
         "checkNetwork": "請檢查網路連線",
         "checkProxy": "建議設定 HTTP 代理伺服器",
         "retryLater": "請稍後重試",
         "checkRepoUrl": "請檢查儲存庫位址和分支名稱",
-        "checkDiskSpace": "請檢查磁碟空間",
         "checkPermission": "請檢查目錄權限",
         "uninstallFirst": "請先解除安裝已安裝的同名技能",
         "checkZipContent": "請確認 ZIP 檔案包含有效的技能目錄（含 SKILL.md 檔案）"
@@ -3613,21 +3544,20 @@
     },
     "repo": {
       "title": "管理技能儲存庫",
-      "description": "新增或刪除 GitHub 技能儲存庫來源",
+      "description": "新增或刪除 GitHub / GitLab / Gitea 技能儲存庫來源",
       "url": "儲存庫 URL",
-      "urlPlaceholder": "owner/name 或 https://github.com/owner/name",
+      "urlPlaceholder": "owner/name、https://github.com/owner/name 或 https://gitlab.com/group/project",
       "branch": "分支",
       "branchPlaceholder": "main",
       "path": "技能路徑",
-      "pathPlaceholder": "skills (選填，留空掃描根目錄)",
       "add": "新增儲存庫",
       "list": "已新增的儲存庫",
       "empty": "暫無儲存庫",
       "invalidUrl": "無效的儲存庫 URL 格式",
+      "httpsOnly": "GitLab / Gitea 儲存庫僅支援 https 位址",
       "addSuccess": "儲存庫 {{owner}}/{{name}} 已新增，識別到 {{count}} 個技能",
       "addFailed": "新增失敗",
       "removeSuccess": "儲存庫 {{owner}}/{{name}} 已刪除",
-      "removeFailed": "刪除失敗",
       "skillCount": "識別到 {{count}} 個技能"
     },
     "search": "搜尋技能",
@@ -3653,8 +3583,7 @@
       "all": "全部",
       "installed": "已安裝",
       "uninstalled": "未安裝",
-      "repo": "儲存庫篩選",
-      "allRepos": "全部儲存庫"
+      "repo": "儲存庫篩選"
     },
     "noResults": "未找到相符的技能",
     "noInstalled": "暫無已安裝的技能",
@@ -3702,8 +3631,6 @@
     "installFromZip": {
       "button": "從 ZIP 安裝",
       "installing": "安裝中...",
-      "successSingle": "技能 {{name}} 已安裝",
-      "successMultiple": "成功安裝 {{count}} 個技能",
       "noSkillsFound": "ZIP 檔案中未找到技能（需包含 SKILL.md 檔案）",
       "skippedTitle": "跳過了 {{count}} 個 Skill：目錄名已被佔用",
       "allSkipped": "沒有安裝：ZIP 裡的 {{count}} 個 Skill 目錄名都已被佔用",
@@ -3871,7 +3798,6 @@
       "dimensions": "圖片尺寸太大（寬高不能超過 4096 像素）"
     },
     "category": {
-      "aiProvider": "AI 服務商",
       "cloud": "雲端平台",
       "tool": "開發工具",
       "other": "其他"
@@ -3879,7 +3805,6 @@
   },
   "providerIcon": {
     "label": "圖示",
-    "colorLabel": "圖示顏色",
     "selectIcon": "選擇圖示",
     "preview": "預覽",
     "clickToChange": "點擊更換圖示",
@@ -3912,18 +3837,12 @@
     },
     "tooltip": {
       "enabled": "{{app}} 故障轉移已啟用\n按佇列優先順序（P1→P2→...）選擇供應商",
-      "disabled": "啟用 {{app}} 故障轉移\n將立即切換至佇列 P1，並在失敗時自動切換至下一個",
-      "takeoverRequired": "請先接管 {{app}}，再啟用故障轉移"
+      "disabled": "啟用 {{app}} 故障轉移\n將立即切換至佇列 P1，並在失敗時自動切換至下一個"
     }
   },
   "proxy": {
     "panel": {
-      "serviceAddress": "服務位址",
-      "addressCopied": "位址已複製",
       "currentProvider": "目前 Provider：",
-      "waitingFirstRequest": "目前 Provider：等待首次請求...",
-      "stoppedTitle": "路由服務已停止",
-      "stoppedDescription": "使用上方開關即可啟動服務",
       "openSettings": "設定路由服務",
       "stats": {
         "activeConnections": "活躍連線",
@@ -3935,9 +3854,6 @@
     "settings": {
       "title": "路由服務設定",
       "description": "設定本地路由伺服器的監聽位址、連接埠和執行參數，儲存後立即生效。",
-      "alert": {
-        "autoApply": "儲存後將自動同步至正在執行的路由服務，無需手動重新啟動。"
-      },
       "basic": {
         "title": "基礎設定",
         "description": "設定路由服務監聽的位址與連接埠。"
@@ -3989,16 +3905,8 @@
         }
       },
       "validation": {
-        "addressInvalid": "請輸入有效的 IP 位址",
-        "portMin": "連接埠必須大於 1024",
-        "portMax": "連接埠必須小於 65535",
         "retryMin": "重試次數不能為負",
-        "retryMax": "重試次數不能超過 10",
-        "timeoutNonNegative": "逾時時間不能為負數",
-        "timeoutMax": "逾時時間最多 600 秒",
-        "timeoutRange": "請輸入 0 或 10-600 之間的數值",
-        "streamingTimeoutMin": "逾時時間至少 5 秒",
-        "streamingTimeoutMax": "逾時時間最多 300 秒"
+        "retryMax": "重試次數不能超過 10"
       },
       "actions": {
         "save": "儲存設定"
@@ -4030,7 +3938,6 @@
       "enabled": "{{app}} 已進入聚合模式",
       "exitedToDirect": "{{apps}} 已退回直連",
       "ariaLabel": "{{appLabel}} 聚合模式",
-      "failoverUnavailable": "{{appLabel}} 在聚合模式下不做故障轉移。佇列和設定保留，回到路由模式後恢復",
       "codexStale": {
         "authTitle": "Codex 可能仍快取著切換前的帳號；重新啟動背景服務才能載入新登入",
         "title": "Codex 還在用舊的模型清單，切換後的模型不會出現",
@@ -4048,26 +3955,17 @@
       }
     },
     "failover": {
-      "proxyRequired": "需要先啟動路由服務才能設定故障轉移",
-      "autoSwitch": "自動故障轉移",
-      "autoSwitchDescription": "開啟後將立即切換至佇列 P1，並在請求失敗時自動切換至佇列中的下一個供應商"
+      "proxyRequired": "需要先啟動路由服務才能設定故障轉移"
     },
     "failoverQueue": {
       "title": "故障轉移佇列",
       "description": "管理各應用程式的供應商故障轉移順序",
       "info": "啟用自動故障轉移後，將按佇列優先順序選擇供應商（P1 優先）。當請求失敗時，系統會按佇列順序依次嘗試下一個供應商。",
-      "selectProvider": "選擇供應商新增至佇列",
-      "noAvailableProviders": "沒有可新增的供應商",
       "empty": "故障轉移佇列為空。新增供應商以啟用自動故障轉移。",
-      "orderHint": "佇列順序與首頁供應商清單順序一致，可在首頁拖曳調整順序。",
-      "dragHint": "拖曳供應商可調整故障轉移順序，序號越小優先順序越高。",
       "toggleEnabled": "啟用/停用",
       "addSuccess": "已新增至故障轉移佇列",
       "addFailed": "新增失敗",
       "removeSuccess": "已從故障轉移佇列移除",
-      "removeFailed": "移除失敗",
-      "reorderSuccess": "佇列順序已更新",
-      "reorderFailed": "更新順序失敗",
       "toggleFailed": "狀態更新失敗"
     },
     "autoFailover": {
@@ -4087,15 +3985,6 @@
       "errorRateHint": "錯誤率超過此值時打開斷路器",
       "minRequests": "最小請求數",
       "minRequestsHint": "計算錯誤率前的最小請求數",
-      "explanationTitle": "運作原理",
-      "failureThresholdLabel": "失敗閾值",
-      "failureThresholdExplain": "連續失敗達到此次數時，斷路器打開，該供應商暫時不可用",
-      "timeoutLabel": "恢復等待時間",
-      "timeoutExplain": "斷路器打開後，等待此時間後嘗試半開狀態",
-      "successThresholdLabel": "恢復成功閾值",
-      "successThresholdExplain": "半開狀態下，成功達到此次數時關閉斷路器，供應商恢復可用",
-      "errorRateLabel": "錯誤率閾值",
-      "errorRateExplain": "錯誤率超過此值時，即使未達到失敗閾值也會打開斷路器",
       "maxRetries": "最大重試次數",
       "timeoutSettings": "逾時設定",
       "streamingFirstByte": "串流首位元組逾時",
@@ -4129,13 +4018,10 @@
   },
   "proxyConfig": {
     "proxyEnabled": "路由總開關",
-    "appTakeover": "路由啟用",
-    "perAppConfig": "應用程式設定",
     "circuitBreaker": "斷路器設定",
     "circuitBreakerSettings": "斷路器設定",
     "failureThreshold": "失敗閾值",
     "successThreshold": "恢復閾值",
-    "recoveryTimeout": "恢復等待時間",
     "errorRateThreshold": "錯誤率閾值",
     "minRequests": "最小請求數",
     "timeoutConfig": "逾時設定",
@@ -4357,9 +4243,7 @@
       "title": "預設模型",
       "description": "設定 OpenClaw 的預設主模型和備用模型",
       "primary": "主模型",
-      "primaryPlaceholder": "例如: deepseek/deepseek-chat",
       "fallbacks": "備用模型",
-      "fallbacksPlaceholder": "例如: openrouter/anthropic/claude-sonnet-4.5",
       "addFallback": "新增備用模型",
       "saved": "預設模型設定已儲存",
       "saveFailed": "儲存預設模型失敗"
@@ -4370,9 +4254,6 @@
       "modelId": "模型 ID",
       "modelIdPlaceholder": "例如: deepseek/deepseek-chat",
       "alias": "別名",
-      "aliasPlaceholder": "例如: DeepSeek",
-      "addEntry": "新增模型",
-      "removeEntry": "移除",
       "saved": "模型目錄已儲存",
       "saveFailed": "儲存模型目錄失敗",
       "empty": "暫無模型目錄設定",
@@ -4586,7 +4467,6 @@
       "routeSwitched": "路由已切換至 {{provider}}，後續新請求將使用此供應商。",
       "stackDefaultChanged": "聚合預設供應商已設為 {{provider}}；已選聚合模型仍使用各自的供應商。",
       "clientConfigChanged": "用戶端設定也已更新；重新啟動 {{app}} 以載入更新後的設定。",
-      "defaultRemembered": "切換到聚合模式後，預設供應商是 {{provider}}。",
       "restartHint": "重新啟動 {{app}} 後生效。",
       "failed": "切換失敗：{{detail}}"
     },
@@ -5122,7 +5002,7 @@
       "disabledShort": "停用",
       "disabled": "已停用，不參與探索",
       "manage": "新增或管理倉庫",
-      "openAria": "在 GitHub 開啟 {{repo}}",
+      "openAria": "在瀏覽器開啟 {{repo}}",
       "removeAria": "刪除倉庫 {{repo}}",
       "readFailed": "讀取失敗"
     },
@@ -5432,6 +5312,8 @@
     "readyBodyRouting": "現在安裝嗎？CC Switch 會重新啟動，正在經本地路由的請求會中斷。",
     "later": "稍後",
     "installNow": "安裝並重新啟動",
-    "installFailed": "安裝更新失敗"
+    "installFailed": "安裝更新失敗",
+    "downloadingInline": "正在背景下載新版本…",
+    "downloadedInline": "已下載完畢"
   }
 }

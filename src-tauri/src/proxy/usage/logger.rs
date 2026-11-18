@@ -2,6 +2,7 @@
 
 use super::calculator::{CostBreakdown, CostCalculator, ModelPricing};
 use super::parser::TokenUsage;
+use crate::app_config::AppType;
 use crate::database::{Database, PRICING_SOURCE_REQUEST, PRICING_SOURCE_RESPONSE};
 use crate::error::AppError;
 use crate::services::sql_helpers::{INPUT_TOKEN_SEMANTICS_FRESH, INPUT_TOKEN_SEMANTICS_TOTAL};
@@ -365,12 +366,13 @@ impl<'a> UsageLogger<'a> {
     pub async fn resolve_pricing_model_source(&self, app_type: &str) -> String {
         // Claude Desktop 网关没有独立的全局计费配置（proxy_config 的 CHECK 不含
         // claude-desktop），继承 claude 的设置。
-        let default_app_type = if app_type == "claude-desktop" {
-            "claude"
-        } else {
-            app_type
+        let default_app_type = match app_type.parse::<AppType>() {
+            Ok(AppType::ClaudeDesktop) => AppType::Claude,
+            Ok(app) => app,
+            // 不认识的应用没有 proxy_config 行，和查不到行一样按返回模型计费。
+            Err(_) => return PRICING_SOURCE_RESPONSE.to_string(),
         };
-        match self.db.get_pricing_model_source(default_app_type).await {
+        match self.db.get_pricing_model_source(&default_app_type).await {
             Ok(value) if value == PRICING_SOURCE_RESPONSE || value == PRICING_SOURCE_REQUEST => {
                 value
             }

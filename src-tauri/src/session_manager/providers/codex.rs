@@ -422,6 +422,22 @@ struct UsageRecordPayload<'a> {
     turn_token_usage: Option<TokenUsage>,
 }
 
+/// `thread_goal_updated`：Codex 把 `/goal` 的完整目标记在这里；注入上下文里超过
+/// 700 字节的目标会被写成 `[objective omitted; exceeds the evidence limit]`
+#[derive(Deserialize)]
+struct GoalUpdatedPayload<'a> {
+    #[serde(borrow)]
+    goal: GoalPayload<'a>,
+}
+
+#[derive(Deserialize)]
+struct GoalPayload<'a> {
+    #[serde(default, borrow)]
+    objective: Option<Str<'a>>,
+    #[serde(default, borrow)]
+    status: Option<Str<'a>>,
+}
+
 #[derive(Deserialize)]
 struct CompactedPayload<'a> {
     #[serde(default, borrow)]
@@ -623,6 +639,8 @@ struct RolloutParser {
     last_web_search_id: Option<String>,
     /// 刚输出的 compaction 事件（compacted / compaction / ContextCompaction 去重）
     last_compaction: Option<usize>,
+    /// 上一次输出的目标（目标, 状态）：每轮结算用量都会再记一次，没变就不重复显示
+    last_goal: Option<(String, String)>,
 }
 
 impl RolloutParser {
@@ -743,6 +761,12 @@ impl RolloutParser {
             }
             return;
         }
+        if sub == "thread_goal_updated" {
+            if let Some((ts, p)) = parse_line::<GoalUpdatedPayload>(line) {
+                self.on_goal(p.goal, ts);
+            }
+            return;
+        }
         if !matches!(
             sub,
             "task_started"
@@ -787,6 +811,31 @@ impl RolloutParser {
             }
             _ => {}
         }
+    }
+
+    /// 目标或状态变了才输出一个 Goal 事件，完整目标作为事件的正文
+    fn on_goal(&mut self, goal: GoalPayload<'_>, ts: Option<i64>) {
+        let Some(objective) = owned(&goal.objective).filter(|o| !o.trim().is_empty()) else {
+            return;
+        };
+        let status = owned(&goal.status).unwrap_or_default();
+        let key = (objective, status);
+        if self.last_goal.as_ref() == Some(&key) {
+            return;
+        }
+        let (objective, status) = key.clone();
+        self.last_goal = Some(key);
+        let status = (!status.is_empty()).then_some(status);
+        self.push(
+            "system",
+            ts,
+            None,
+            vec![
+                SessionBlock::event(EventKind::Goal, status, None),
+                SessionBlock::text(objective),
+            ],
+            false,
+        );
     }
 
     // ─── 轮次 ────────────────────────────────────────────────────────
@@ -3189,6 +3238,74 @@ mod tests {
             }
             other => panic!("unexpected block {other:?}"),
         }
+    }
+
+    /// #9647：注入上下文里超过 700 字节的 `/goal` 目标被 Codex 省略，完整目标在
+    /// `thread_goal_updated` 里；每轮结算用量的重复记录不再显示，状态变了才再显示
+    #[test]
+    fn goal_updates_show_the_full_objective_once_per_status() {
+        use serde_json::json;
+        let objective = format!(
+            "Migrate the docs site. {}",
+            "Keep every link working. ".repeat(40)
+        );
+        let goal = |status: &str, tokens: i64| {
+            json!({ "type": "thread_goal_updated", "threadId": "t1", "turnId": T1,
+            "goal": { "threadId": "t1", "objective": objective, "status": status,
+            "tokensUsed": tokens, "timeUsedSeconds": 3, "createdAt": 1, "updatedAt": 2 } })
+        };
+        let lines = vec![
+            line(0, "session_meta", json!({ "id": "t1", "cwd": "/p" })),
+            line(1, "event_msg", goal("active", 0)),
+            line(
+                2,
+                "event_msg",
+                json!({ "type": "task_started", "turn_id": T1 }),
+            ),
+            line(
+                2,
+                "response_item",
+                json!({ "type": "message", "role": "user", "content": [{ "type": "input_text",
+                "text": "<codex_internal_context source=\"user_goal\">\nUser set the goal: [objective omitted; exceeds the evidence limit].\nUser set goal status: \"active\".\n</codex_internal_context>" }] }),
+            ),
+            line(5, "event_msg", goal("active", 1200)),
+            line(6, "event_msg", goal("complete", 2400)),
+            line(
+                7,
+                "event_msg",
+                json!({ "type": "thread_goal_updated", "goal": { "objective": "  " } }),
+            ),
+        ];
+        let (_tmp, _path, msgs) = load_fixture(&lines);
+
+        let goals: Vec<_> = msgs
+            .iter()
+            .filter(|m| {
+                matches!(
+                    m.blocks.first(),
+                    Some(SessionBlock::Event {
+                        kind: EventKind::Goal,
+                        ..
+                    })
+                )
+            })
+            .collect();
+        assert_eq!(goals.len(), 2);
+        for (msg, status) in goals.iter().zip(["active", "complete"]) {
+            assert_eq!(msg.role, "system");
+            assert!(!msg.injected);
+            let [SessionBlock::Event { text, .. }, SessionBlock::Text { text: body, .. }] =
+                msg.blocks.as_slice()
+            else {
+                panic!("unexpected goal blocks: {:?}", msg.blocks);
+            };
+            assert_eq!(text.as_deref(), Some(status));
+            assert_eq!(body, &objective);
+        }
+        // 省略了目标的注入上下文照旧默认隐藏
+        assert!(msgs
+            .iter()
+            .any(|m| m.injected && m.content.contains("objective omitted")));
     }
 
     fn load_fixture(lines: &[String]) -> (tempfile::TempDir, PathBuf, Vec<SessionMessage>) {

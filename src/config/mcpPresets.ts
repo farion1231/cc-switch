@@ -102,5 +102,3 @@ export const getMcpPresetWithDescription = (
     description: t(descriptionKey),
   } as McpServer;
 };
-
-export default mcpPresets;

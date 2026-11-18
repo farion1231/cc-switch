@@ -25,7 +25,6 @@
     "success": "Erfolg",
     "error": "Fehler",
     "unknown": "Unbekannt",
-    "enterValidValue": "Bitte geben Sie einen gültigen Wert ein",
     "clear": "Leeren",
     "format": "Formatieren",
     "formatSuccess": "Erfolgreich formatiert",
@@ -142,7 +141,6 @@
     "adoptCatalog": "Modellkatalog von CC Switch verwenden",
     "adoptCatalogDone": "Der Modellkatalog von CC Switch wird jetzt verwendet. Starten Sie Codex neu, um die Änderung zu übernehmen",
     "adoptCatalogFailed": "Wechsel zum Modellkatalog von CC Switch fehlgeschlagen: {{error}}",
-    "noRoutingSupport": "Kein Routing-Support",
     "blockedByProxyHint": "Im Routing-Modus ist kein Wechsel zu einem offiziellen Anbieter möglich",
     "editProvider": "Anbieter bearbeiten",
     "editProviderHint": "Die Konfiguration wird nach der Aktualisierung sofort auf den aktuellen Anbieter angewendet.",
@@ -281,12 +279,10 @@
     "editCurrentNotice": "Dies ist der verwendete Anbieter. Das Speichern wirkt sofort; die nächste Anfrage verwendet die neuen Einstellungen."
   },
   "claudeCode": {
-    "needsRouting": "Routing erforderlich",
-    "noRoutingSupport": "Kein Routing-Support"
+    "needsRouting": "Routing erforderlich"
   },
   "codex": {
     "needsRouting": "Routing erforderlich",
-    "noRoutingSupport": "Kein Routing-Support",
     "officialRouting": "Routing über offizielles Konto",
     "nativeLogin": "Codex-Anmeldung",
     "followCodexLogin": "Codex-Anmeldung folgen",
@@ -338,14 +334,11 @@
       "tooltip": {
         "active": "Das lokale Routing von Claude Desktop läuft – {{address}}:{{port}}",
         "inactive": "Schalten Sie das lokale Routing von Claude Desktop für Anbieter ein, die Modellzuordnung oder Formatkonvertierung benötigen. Konfigurierte Adresse: {{address}}:{{port}}"
-      },
-      "stopBlockedByTakeover": "Andere Apps befinden sich noch im Routing-Modus. Stellen Sie sie zurück auf „Direkt“, bevor Sie den Routing-Dienst beenden."
+      }
     }
   },
   "notifications": {
     "providerAdded": "Anbieter hinzugefügt",
-    "providerSaved": "Anbieterkonfiguration gespeichert",
-    "providerDeleted": "Anbieter erfolgreich gelöscht",
     "switchSuccess": "Wechsel erfolgreich!",
     "codexRestartRequired": "Wechsel erfolgreich. Starten Sie den Client neu, um die Änderungen zu übernehmen.",
     "geminiRestartRequired": "Wechsel erfolgreich. Starten Sie Gemini CLI neu, um die Änderungen zu übernehmen.",
@@ -356,12 +349,9 @@
     "removeFromConfigFailed": "Anbieter konnte nicht entfernt werden",
     "switchFailedTitle": "Wechsel fehlgeschlagen",
     "switchFailed": "Wechsel fehlgeschlagen: {{error}}",
-    "autoImported": "Standardanbieter aus vorhandener Konfiguration erstellt",
     "addFailed": "Anbieter konnte nicht hinzugefügt werden: {{error}}",
     "saveFailed": "Speichern fehlgeschlagen: {{error}}",
     "saveFailedGeneric": "Speichern fehlgeschlagen, bitte versuchen Sie es erneut",
-    "appliedToClaudePlugin": "Auf Claude-Plugin angewendet",
-    "removedFromClaudePlugin": "Aus Claude-Plugin entfernt",
     "syncClaudePluginFailed": "Synchronisierung des Claude-Plugins fehlgeschlagen",
     "skipClaudeOnboardingFailed": "Die Bestätigung beim ersten Start von Claude Code konnte nicht übersprungen werden",
     "clearClaudeOnboardingSkipFailed": "Die Bestätigung beim ersten Start von Claude Code konnte nicht wiederhergestellt werden",
@@ -380,8 +370,6 @@
     "proxyReasonDesktopMapping": "verwendet Modellzuordnung (Claude Desktop akzeptiert nur Claude-Modellnamen)",
     "proxyReasonManagedOAuth": "verwendet eine verwaltete OAuth-Anmeldung (Token wird vom lokalen Routing eingefügt)",
     "proxyReasonRoutingRequired": "erfordert lokales Routing zur Verarbeitung von Anfragen",
-    "openAIFormatHint": "Dieser Anbieter verwendet ein OpenAI-kompatibles Format und erfordert einen aktivierten Routing-Dienst",
-    "copilotProxyHint": "GitHub Copilot als Claude-Anbieter erfordert immer lokales Routing; das Routing wählt anhand des aktuellen Modells automatisch Chat Completions oder Responses.",
     "openLinkFailed": "Link konnte nicht geöffnet werden",
     "openclawModelsRegistered": "Modelle wurden in der /model-Liste registriert",
     "openclawDefaultModelSet": "Als Standardmodell festgelegt",
@@ -476,8 +464,6 @@
     "authCenter": {
       "description": "Nutzen Sie GitHub-Copilot-, ChatGPT- und xAI-Abonnements als Anbieter. Der Routing-Dienst fügt deren Zugangsdaten ein, daher laufen diese Anbieter im Routing-Modus (außer bei der Bindung an die offizielle Codex-Anmeldung). Antigravity-Konten wechseln die offizielle Anmeldung von agy.",
       "beta": "Beta",
-      "copilotDescription": "GitHub-Copilot-Konten verwalten",
-      "codexOauthDescription": "ChatGPT-Konten verwalten",
       "xaiOauthDescription": "xAI-/Grok-Konten verwalten"
     },
     "advanced": {
@@ -488,12 +474,8 @@
       "proxy": {
         "title": "Lokales Routing",
         "description": "Routing-Dienst ein- und ausschalten, Status und Portinformationen anzeigen",
-        "enableFeature": "Routing-Schalter auf der Hauptseite anzeigen",
-        "enableFeatureDescription": "Wenn aktiviert, erscheinen die Schalter für Routing und Failover oben auf der Hauptseite",
         "enableStackMode": "Umschalter für den Aggregationsmodus auf der Hauptseite anzeigen",
-        "enableStackModeDescription": "Wenn aktiviert, wird der Schalter auf der Hauptseite für Claude Code und Codex zum Aggregationsmodus: Sie fügen mehrere Anbieter hinzu wie in OpenCode, und alle ihre Modelle erscheinen in der Modellliste des Clients (Codex muss zuvor neu gestartet werden). Kein Failover. Diese Option und der Schalter für das lokale Routing schließen sich gegenseitig aus; beim Umschalten werden Claude Code und Codex zuerst auf Direkt zurückgesetzt",
         "enableFailoverToggle": "Failover-Schalter auf der Hauptseite anzeigen",
-        "enableFailoverToggleDescription": "Wenn aktiviert, erscheint der Failover-Schalter separat oben auf der Hauptseite",
         "running": "Läuft",
         "stopped": "Gestoppt"
       },
@@ -526,7 +508,6 @@
         "description": "Kompatibilitätsprobleme bei API-Anfragen automatisch beheben",
         "enabled": "Anfragekorrektur aktivieren",
         "requestGroup": "Anfragekorrektur",
-        "responseGroup": "Antwortkorrektur",
         "thinkingSignature": "Korrektur der Thinking-Signatur",
         "thinkingSignatureDescription": "Wenn ein Anbieter vom Typ Anthropic Fehler wegen inkompatibler Thinking-Signatur oder unzulässiger Anfrage zurückgibt, werden inkompatible Thinking-Blöcke automatisch entfernt und die Anfrage einmal beim selben Anbieter wiederholt",
         "thinkingBudget": "Korrektur des Thinking-Budgets",
@@ -836,10 +817,8 @@
       "enabledHint": "Schaltet die S3-Synchronisierung für manuelle und automatische Cloud-Vorgänge ein.",
       "mutualExclusionTitle": "Synchronisierungstyp wechseln",
       "mutualExclusionMessage": "Beim Aktivieren der S3-Synchronisierung wird die aktuelle WebDAV-Synchronisierung deaktiviert. Fortfahren?",
-      "mutualExclusionMessageReverse": "Beim Aktivieren der WebDAV-Synchronisierung wird die aktuelle S3-Synchronisierung deaktiviert. Fortfahren?",
       "mutualExclusionFailed": "Synchronisierungstyp konnte nicht gewechselt werden: {{error}}",
       "testConnection": "Verbindung testen",
-      "connectionOk": "S3-Verbindung erfolgreich",
       "test": "Verbindung testen",
       "testing": "Wird getestet …",
       "testSuccess": "S3-Verbindung erfolgreich",
@@ -866,6 +845,15 @@
       "incompatibleVersion": "Remote-Daten sind inkompatibel (Version {{version}}). Dieser Client unterstützt Protokoll v2 / db-v6.",
       "unsaved": "Nicht gespeichert",
       "saved": "Gespeichert",
+      "clear": "Konfiguration löschen",
+      "clearing": "Wird gelöscht …",
+      "clearSuccess": "S3-Konfiguration auf diesem Gerät gelöscht",
+      "clearFailed": "Konfiguration konnte nicht gelöscht werden: {{error}}",
+      "clearConfirm": {
+        "title": "S3-Konfiguration löschen",
+        "message": "Dadurch werden die gespeicherte S3-Region, der Bucket, der Access Key, der Secret Key, der Endpunkt und der Remote-Ordner von diesem Gerät entfernt und die automatische Synchronisierung wird beendet. Bereits in den Bucket hochgeladene Daten werden nicht gelöscht.",
+        "confirm": "Löschen"
+      },
       "unsavedChanges": "Bitte speichern Sie zuerst die Konfiguration",
       "saveBeforeSync": "Speichern Sie zuerst die Konfiguration, um Upload/Download zu aktivieren.",
       "fetchingRemote": "Remote-Informationen werden abgerufen …",
@@ -955,10 +943,6 @@
     "appVisibility": {
       "title": "Anzeige auf der Startseite",
       "description": "Wählen Sie, welche Apps auf der Startseite angezeigt werden",
-      "claudeDesc": "Anthropic Claude Code CLI",
-      "codexDesc": "OpenAI Codex CLI",
-      "geminiDesc": "Google Gemini CLI",
-      "opencodeDesc": "OpenCode CLI",
       "showProfileSwitcher": "Projektumschalter anzeigen",
       "showProfileSwitcherDescription": "Den Projektumschalter in der Kopfzeile der Hauptseite anzeigen",
       "showProviderSearch": "Anbietersuche anzeigen",
@@ -967,7 +951,6 @@
     "terminal": {
       "title": "Bevorzugtes Terminal",
       "description": "Wählen Sie, welche Terminal-App beim Klick auf die Terminal-Schaltfläche verwendet wird",
-      "fallbackHint": "Ist das gewählte Terminal nicht verfügbar, wird der Systemstandard verwendet",
       "options": {
         "macos": {
           "terminal": "Terminal.app",
@@ -995,28 +978,18 @@
         }
       }
     },
-    "configDirectoryOverride": "Überschreiben des Konfigurationsverzeichnisses (erweitert)",
     "configDirectoryDescription": "Wenn Sie Claude Code oder Codex in Umgebungen wie WSL verwenden, können Sie das Konfigurationsverzeichnis manuell auf das in WSL festlegen, damit die Anbieterdaten mit der Hauptumgebung übereinstimmen.",
     "appConfigDir": "CC-Switch-Konfigurationsverzeichnis",
     "appConfigDirDescription": "Speicherort der CC-Switch-Konfiguration anpassen (auf einen Cloud-Sync-Ordner verweisen, um die Konfiguration zu synchronisieren)",
     "browsePlaceholderApp": "z. B. C:\\Users\\Administrator\\.cc-switch",
-    "claudeConfigDir": "Claude-Code-Konfigurationsverzeichnis",
     "claudeConfigDirDescription": "Überschreibt das Claude-Konfigurationsverzeichnis (settings.json). Benutzerdefinierte Verzeichnisse speichern .claude.json (MCP) innerhalb des Verzeichnisses; das Standardverzeichnis ~/.claude behält den getrennten Pfad ~/.claude.json von Claude Code bei.",
-    "codexConfigDir": "Codex-Konfigurationsverzeichnis",
     "codexConfigDirDescription": "Überschreibt das Codex-Konfigurationsverzeichnis.",
-    "geminiConfigDir": "Gemini-Konfigurationsverzeichnis",
     "geminiConfigDirDescription": "Überschreibt das Gemini-Konfigurationsverzeichnis (.env).",
-    "grokConfigDir": "Grok-Build-Konfigurationsverzeichnis",
     "grokConfigDirDescription": "Überschreibt das Grok-Build-Konfigurationsverzeichnis (config.toml).",
-    "opencodeConfigDir": "OpenCode-Konfigurationsverzeichnis",
     "opencodeConfigDirDescription": "Überschreibt das OpenCode-Konfigurationsverzeichnis (opencode.json / opencode.jsonc).",
-    "openclawConfigDir": "OpenClaw-Konfigurationsverzeichnis",
     "openclawConfigDirDescription": "Überschreibt das OpenClaw-Konfigurationsverzeichnis (openclaw.json).",
-    "hermesConfigDir": "Hermes-Konfigurationsverzeichnis",
     "hermesConfigDirDescription": "Überschreibt das Hermes-Konfigurationsverzeichnis (config.yaml).",
-    "piConfigDir": "Pi-Konfigurationsverzeichnis",
     "piConfigDirDescription": "Überschreibt das Pi-Konfigurationsverzeichnis (models.json, Anweisungsdateien, Prompts, Skills und Sitzungen).",
-    "ompConfigDir": "Oh-My-Pi-Konfigurationsverzeichnis",
     "browsePlaceholderClaude": "z. B. /home/<your-username>/.claude",
     "browsePlaceholderCodex": "z. B. /home/<your-username>/.codex",
     "browsePlaceholderGemini": "z. B. /home/<your-username>/.gemini",
@@ -1145,7 +1118,6 @@
       "testFailed": "Verbindung fehlgeschlagen: {{error}}",
       "pricingDefaultsTitle": "Preis-Standardwerte",
       "pricingDefaultsDescription": "Legen Sie fest, ob jede App die Preise anhand des Anfragemodells oder des Antwortmodells zuordnet. Gilt nur für Anfragen, die über das lokale Routing laufen.",
-      "pricingAppLabel": "App",
       "pricingModelSourceLabel": "Quelle des Preismodells",
       "pricingModelSourceRequest": "Anfragemodell",
       "pricingModelSourceResponse": "Antwortmodell",
@@ -1253,6 +1225,9 @@
       "modelsHint": "Fügen Sie mindestens ein Modell hinzu. Die Modell-ID wird unverändert an die API gesendet. WorkBuddy unterstützt es noch nicht, dasselbe Modell mehrfach hinzuzufügen, daher kann eine Modell-ID nur in einer Karte vorkommen. Bleibt der Name leer, zeigt das Menü von WorkBuddy „Hersteller-Label:Modell-ID“ an.",
       "maxInputTokens": "Max. Eingabe-Token",
       "maxOutputTokens": "Max. Ausgabe-Token",
+      "thinkingEfforts": "Denkaufwand",
+      "thinkingEffortsHint": "Ausgewählte Stufen erscheinen im Modellmenü von WorkBuddy; die gewählte wird als reasoning_effort an die API gesendet. Ohne Auswahl gibt es nur einen Ein/Aus-Schalter für das Denken.",
+      "canDisableThinking": "Denken kann ausgeschaltet werden",
       "modelIdTaken": "WorkBuddy unterstützt es noch nicht, dasselbe Modell mehrfach hinzuzufügen, und dieses Modell befindet sich bereits in „{{owner}}“. Um es in diese Karte zu verschieben, entfernen Sie es zuerst dort.",
       "modelOwnerUser": "ein Modell, das in WorkBuddy selbst hinzugefügt wurde",
       "presetModelsSkipped": "WorkBuddy unterstützt es noch nicht, dasselbe Modell mehrfach hinzuzufügen, daher wurden Modelle übersprungen, die bereits in anderen Karten vorhanden sind: {{models}}. Um eines in diese Karte zu verschieben, entfernen Sie es zuerst aus seiner aktuellen Karte und fügen Sie es dann hier wieder hinzu."
@@ -1683,7 +1658,17 @@
         "prLink": "PR #{{number}} verknüpft",
         "prLinkPlain": "Einen PR verknüpft",
         "slashCommand": "{{command}} ausgeführt",
-        "subAgent": "Subagent {{name}}"
+        "subAgent": "Subagent {{name}}",
+        "goal": "Ziel · {{status}}",
+        "goalPlain": "Ziel",
+        "goalStatus": {
+          "active": "Aktiv",
+          "paused": "Pausiert",
+          "blocked": "Blockiert",
+          "usageLimited": "Nutzungslimit erreicht",
+          "budgetLimited": "Budget erreicht",
+          "complete": "Abgeschlossen"
+        }
       },
       "injectedToggle": "Eingefügten Kontext anzeigen",
       "injectedRow": "Kontext · {{label}} · {{chars}} Zeichen",
@@ -1759,22 +1744,9 @@
     "copilotDeleteHint": "Löschen Sie diese Sitzung in GitHub Copilot CLI, damit dessen Sitzungsspeicher konsistent bleibt"
   },
   "console": {
-    "providerSwitchReceived": "Ereignis zum Anbieterwechsel empfangen:",
-    "setupListenerFailed": "Listener für Anbieterwechsel konnte nicht eingerichtet werden:",
-    "updateProviderFailed": "Aktualisieren des Anbieters fehlgeschlagen:",
-    "autoImportFailed": "Automatischer Import der Standardkonfiguration fehlgeschlagen:",
     "openLinkFailed": "Link konnte nicht geöffnet werden:",
-    "getVersionFailed": "Versionsinformationen konnten nicht abgerufen werden:",
-    "loadSettingsFailed": "Einstellungen konnten nicht geladen werden:",
-    "getConfigPathFailed": "Konfigurationspfad konnte nicht abgerufen werden:",
-    "getConfigDirFailed": "Konfigurationsverzeichnis konnte nicht abgerufen werden:",
-    "detectPortableFailed": "Portable-Modus konnte nicht erkannt werden:",
-    "saveSettingsFailed": "Einstellungen konnten nicht gespeichert werden:",
     "updateFailed": "Update fehlgeschlagen:",
     "checkUpdateFailed": "Suche nach Updates fehlgeschlagen:",
-    "openConfigFolderFailed": "Konfigurationsordner konnte nicht geöffnet werden:",
-    "selectConfigDirFailed": "Konfigurationsverzeichnis konnte nicht ausgewählt werden:",
-    "getDefaultConfigDirFailed": "Standard-Konfigurationsverzeichnis konnte nicht abgerufen werden:",
     "openReleaseNotesFailed": "Versionshinweise konnten nicht geöffnet werden:"
   },
   "providerForm": {
@@ -1952,6 +1924,8 @@
     "requestModelLabel": "Angefordertes Modell",
     "modelOneMHeader": "1M angeben",
     "modelOneMLabel": "1M",
+    "copilotOneMUnavailable": "Copilot bietet für dieses Modell keine 1M-Version an",
+    "copilotOneMMismatch": "Copilot bietet für {{models}} keine 1M-Version an: Anfragen fallen auf das normale Modell zurück, Claude Code plant aber weiter mit 1M Kontext, sodass lange Sitzungen das Limit überschreiten können. Deaktiviere 1M.",
     "fallbackModelLabel": "Standard-Fallback-Modell",
     "fallbackModelHelpDirect": "In ANTHROPIC_MODEL geschrieben: das Hauptmodell, mit dem Claude Code startet. Hintergrundaufgaben nutzen stattdessen die Haiku-Stufe.",
     "fallbackModelHelp": "Anfragen, die keiner Sonnet-, Opus-, Fable- oder Haiku-Stufe zugeordnet werden, werden mit diesem Modell an den Upstream gesendet.",
@@ -2035,12 +2009,10 @@
     "selectAccount": "Konto auswählen",
     "selectAccountPlaceholder": "GitHub-Konto auswählen",
     "useDefaultAccount": "Standardkonto verwenden",
-    "loggedInAccounts": "Angemeldete Konten",
     "defaultAccount": "Standard",
     "selected": "Ausgewählt",
     "removeAccount": "Konto entfernen",
     "setAsDefault": "Als Standard festlegen",
-    "addAnotherAccount": "Weiteres Konto hinzufügen",
     "retry": "Erneut versuchen",
     "copyCode": "Code kopieren",
     "migrationFailed": "Migration der alten Authentifizierung fehlgeschlagen: {{error}}",
@@ -2094,7 +2066,6 @@
     "enterCode": "Geben Sie den Code in Ihrem Browser ein:",
     "accountCount": "{{count}} Konto/Konten",
     "selectAccount": "Konto auswählen",
-    "chatgptAccount": "ChatGPT-Konto",
     "accountToUse": "Zu verwendendes Konto",
     "signInMethod": "Anmeldemethode",
     "manageAccounts": "Konten verwalten",
@@ -2104,18 +2075,14 @@
     "explicitSelectionRequired": "Anmeldemethode auswählen",
     "useDefaultAccount": "Standardkonto verwenden",
     "noneOptionLabel": "Codex-Anmeldung folgen",
-    "reauthDescription": "Damit das Verhalten der Browser-Anmeldung erreicht wird, müssen sich diese Konten erneut anmelden, um das erforderliche Anmeldezertifikat (id_token) wiederherzustellen. Nach der erneuten Authentifizierung können sie für die verwaltete Bindung verwendet werden.",
     "reauthBadge": "Erneute Anmeldung erforderlich",
-    "reauthLogin": "Erneut anmelden",
     "reauthSelectHint": "Dieses Konto muss sich erneut anmelden, um die verwaltete Bindung zu ermöglichen.",
     "reauthNow": "Jetzt erneut anmelden",
     "duplicateAccount": "Dieses ChatGPT-Konto wurde bereits hinzugefügt. Verwenden Sie das vorhandene Konto.",
-    "loggedInAccounts": "Angemeldete Konten",
     "defaultAccount": "Standard",
     "selected": "Ausgewählt",
     "removeAccount": "Konto entfernen",
     "setAsDefault": "Als Standard festlegen",
-    "addAnotherAccount": "Weiteres Konto hinzufügen",
     "logoutAll": "Alle Konten abmelden",
     "retry": "Erneut versuchen",
     "copyCode": "Code kopieren",
@@ -2124,7 +2091,6 @@
     "loginMethod": "Anmeldemethode",
     "browserLogin": "Browser-Anmeldung",
     "deviceCodeLogin": "Anmeldung per Gerätecode",
-    "openBrowserLogin": "Browser-Anmeldung öffnen",
     "loginExpired": "Anmeldung abgelaufen. Bitte erneut versuchen."
   },
   "xaiOauth": {
@@ -2178,7 +2144,6 @@
     "testing": "Wird getestet",
     "addEndpointPlaceholder": "https://api.example.com",
     "done": "Fertig",
-    "noEndpoints": "Keine Endpunkte",
     "failed": "Fehlgeschlagen",
     "enterValidUrl": "Bitte geben Sie eine gültige URL ein",
     "invalidUrlFormat": "Ungültiges URL-Format",
@@ -2186,12 +2151,7 @@
     "urlExists": "Diese URL existiert bereits",
     "saveFailed": "Speichern fehlgeschlagen, bitte versuchen Sie es erneut",
     "loadEndpointsFailed": "Benutzerdefinierte Endpunkte konnten nicht geladen werden:",
-    "addEndpointFailed": "Benutzerdefinierter Endpunkt konnte nicht hinzugefügt werden:",
-    "removeEndpointFailed": "Benutzerdefinierter Endpunkt konnte nicht entfernt werden:",
-    "removeFailed": "Entfernen fehlgeschlagen: {{error}}",
-    "updateLastUsedFailed": "Zeitpunkt der letzten Nutzung des Endpunkts konnte nicht aktualisiert werden",
     "pleaseAddEndpoint": "Fügen Sie zuerst einen Endpunkt hinzu",
-    "testUnavailable": "Geschwindigkeitstest nicht verfügbar",
     "noResult": "Kein Ergebnis zurückgegeben",
     "testFailed": "Geschwindigkeitstest fehlgeschlagen: {{error}}",
     "empty": "Keine Endpunkte"
@@ -2643,7 +2603,6 @@
       "configLoadFailed": "Lokale Preiskonfiguration konnte nicht geladen werden: {{error}}",
       "neverSynced": "Nie",
       "lastSync": "Letzte Synchronisierung",
-      "commonStatus": "Gängige Modelle",
       "lastError": "Letzte automatische Synchronisierung fehlgeschlagen: {{error}}",
       "localFile": "Lokale Preisdatei",
       "openFolder": "Ordner öffnen",
@@ -2788,7 +2747,9 @@
       "speedEstimateTooFew": "Unter 200 Ausgabe-Token, daher keine Schätzung",
       "noTimingSession": "Sitzungsprotokolle enthalten keine Zeitdaten",
       "noFirstToken": "Keine Zeit bis zum ersten Token, daher keine Geschwindigkeit",
-      "providerId": "Anbieter-ID"
+      "providerId": "Anbieter-ID",
+      "copyRequestId": "Anfrage-ID kopieren",
+      "requestIdCopied": "Anfrage-ID kopiert"
     },
     "sources": {
       "scanTitle": "Sitzungsprotokolle automatisch scannen",
@@ -2960,8 +2921,6 @@
   "presetSelector": {
     "title": "Konfigurationstyp auswählen",
     "custom": "Benutzerdefiniert",
-    "customDescription": "Anbieter manuell konfigurieren, erfordert eine vollständige Konfiguration",
-    "officialDescription": "Offizielle Anmeldung, kein API-Schlüssel erforderlich",
     "presetDescription": "Preset-Konfiguration verwenden, nur ein API-Schlüssel erforderlich"
   },
   "mcp": {
@@ -2974,13 +2933,9 @@
     "geminiTitle": "Gemini MCP-Verwaltung",
     "unifiedPanel": {
       "title": "MCP-Server-Verwaltung",
-      "addServer": "Server hinzufügen",
-      "editServer": "Server bearbeiten",
       "deleteServer": "Server löschen",
       "deleteConfirm": "Möchten Sie den Server „{{id}}“ wirklich löschen? Diese Aktion kann nicht rückgängig gemacht werden.",
-      "noServers": "Noch keine Server",
       "enabledApps": "Aktivierte Apps",
-      "noImportFound": "Keine MCP-Server zum Importieren gefunden. Alle Server werden bereits von CC Switch verwaltet.",
       "importSuccess": "{{count}} MCP-Server erfolgreich importiert",
       "searchPlaceholder": "MCP-Name, Beschreibung, Tag oder Befehl suchen …",
       "searchAriaLabel": "Verwaltete MCP-Server durchsuchen",
@@ -3016,37 +2971,25 @@
     },
     "form": {
       "title": "MCP-Titel (eindeutig)",
-      "titlePlaceholder": "my-mcp-server",
       "name": "Anzeigename",
       "namePlaceholder": "z. B. mcp-server-time",
       "enabledApps": "Für Apps aktivieren",
-      "noAppsWarning": "Es muss mindestens eine App ausgewählt sein",
       "description": "Beschreibung",
       "descriptionPlaceholder": "Optionale Beschreibung",
       "tags": "Tags (durch Komma getrennt)",
       "tagsPlaceholder": "stdio, time, utility",
       "homepage": "Startseite",
-      "homepagePlaceholder": "https://example.com",
       "docs": "Doku",
-      "docsPlaceholder": "https://example.com/docs",
-      "additionalInfo": "Zusätzliche Informationen",
-      "jsonConfig": "Vollständige JSON-Konfiguration",
-      "jsonConfigOrPrefix": "Vollständige JSON-Konfiguration oder verwenden Sie",
-      "tomlConfigOrPrefix": "Vollständige TOML-Konfiguration oder verwenden Sie",
       "jsonPlaceholder": "{\n  \"type\": \"stdio\",\n  \"command\": \"uvx\",\n  \"args\": [\"mcp-server-fetch\"]\n}",
       "tomlConfig": "Vollständige TOML-Konfiguration",
       "tomlPlaceholder": "type = \"stdio\"\ncommand = \"uvx\"\nargs = [\"mcp-server-fetch\"]",
-      "useWizard": "Konfigurationsassistent",
-      "syncOtherSide": "Nach {{target}} spiegeln",
-      "syncOtherSideHint": "Wendet dieselben Einstellungen auf {{target}} an; vorhandene Einträge mit derselben ID werden überschrieben.",
-      "willOverwriteWarning": "Überschreibt die Konfiguration mit demselben Namen in {{target}}"
+      "syncOtherSide": "Nach {{target}} spiegeln"
     },
     "wizard": {
       "title": "MCP-Konfigurationsassistent",
       "hint": "MCP-Server schnell konfigurieren und die JSON-Konfiguration automatisch erzeugen",
       "type": "Typ",
       "typeStdio": "stdio",
-      "typeHttp": "http",
       "typeSse": "sse",
       "command": "Befehl",
       "commandPlaceholder": "npx oder uvx",
@@ -3075,16 +3018,13 @@
       "saved": "Gespeichert",
       "deleted": "Gelöscht",
       "enabled": "Aktiviert",
-      "disabled": "Deaktiviert",
-      "templateAdded": "Vorlage hinzugefügt"
+      "disabled": "Deaktiviert"
     },
     "error": {
       "idRequired": "Bitte Kennung eingeben",
-      "idExists": "Die Kennung existiert bereits. Bitte wählen Sie eine andere.",
       "jsonInvalid": "Ungültiges JSON-Format",
       "tomlInvalid": "Ungültiges TOML-Format",
       "commandRequired": "Bitte Befehl eingeben",
-      "singleServerObjectRequired": "Bitte ein einzelnes MCP-Server-Objekt einfügen (ohne das äußere mcpServers)",
       "piSseUnsupported": "Pi unterstützt keine SSE-MCP-Server. Verwenden Sie stattdessen HTTP (Streamable HTTP)",
       "piInvalidName": "Pi-MCP-Servernamen dürfen nur Buchstaben, Ziffern, _ und - enthalten: {{id}}",
       "piNameConflict": "Pi behandelt Servernamen, die sich nur durch - und _ unterscheiden, als denselben Server: {{id}} steht im Konflikt mit dem vorhandenen {{other}}",
@@ -3105,7 +3045,6 @@
       "enabled": "Aktiviert",
       "installed": "Installiert",
       "docs": "Doku",
-      "requiresEnv": "Benötigt Umgebungsvariablen",
       "fetch": {
         "name": "mcp-server-fetch",
         "description": "Universelles HTTP-Anfragewerkzeug, unterstützt GET/POST und weitere HTTP-Methoden, geeignet für schnelle API-Anfragen und das Abrufen von Webdaten"
@@ -3307,7 +3246,6 @@
     "openDirectory": "Im Dateimanager öffnen",
     "dailyMemory": {
       "title": "Tägliches Gedächtnis",
-      "sectionTitle": "Tägliches Gedächtnis",
       "cardTitle": "Dateien des täglichen Gedächtnisses",
       "createToday": "Gedächtnis hinzufügen",
       "empty": "Noch keine Dateien des täglichen Gedächtnisses",
@@ -3371,8 +3309,7 @@
       "add": "Variable hinzufügen",
       "saveSuccess": "Umgebungsvariablen gespeichert",
       "saveFailed": "Umgebungsvariablen konnten nicht gespeichert werden",
-      "loadFailed": "Umgebungsvariablen konnten nicht geladen werden",
-      "duplicateKey": "Doppelter Variablenname erkannt: {{key}}"
+      "loadFailed": "Umgebungsvariablen konnten nicht geladen werden"
     },
     "tools": {
       "title": "Tool-Berechtigungen",
@@ -3579,8 +3516,6 @@
       "skillNotFound": "Skill nicht gefunden: {{directory}}",
       "missingRepoInfo": "Repository-Angaben fehlen (Eigentümer oder Name)",
       "downloadTimeout": "Zeitüberschreitung beim Herunterladen des Repositorys {{owner}}/{{name}} ({{timeout}} s)",
-      "downloadTimeoutHint": "Bitte Netzwerkverbindung prüfen oder später erneut versuchen",
-      "skillPathNotFound": "Skill-Pfad „{{path}}“ im Repository {{owner}}/{{name}} nicht gefunden",
       "skillDirNotFound": "Skill-Verzeichnis nicht gefunden: {{path}}",
       "directoryConflict": "Das Skill-Verzeichnis „{{directory}}“ ist bereits von {{existing_repo}} belegt und kann nicht aus {{new_repo}} installiert werden",
       "emptyArchive": "Das heruntergeladene Archiv ist leer",
@@ -3589,23 +3524,19 @@
       "archiveDownloadTooLarge": "Der Download des Repository-Archivs überschreitet das Limit von {{limit_mb}} MB; abgebrochen",
       "archiveTooManyEntries": "Das Archiv hat zu viele Einträge ({{count}}); das Limit beträgt {{limit}}",
       "downloadFailed": "Download fehlgeschlagen: HTTP {{status}}",
-      "allBranchesFailed": "Alle Branches fehlgeschlagen, versucht: {{branches}}",
       "httpError": "HTTP-Fehler {{status}}",
       "http403": "GitHub-Zugriff eingeschränkt, möglicherweise durch Ratenbegrenzung",
       "http404": "Repository oder Branch nicht gefunden, bitte URL prüfen",
       "http429": "Zu viele Anfragen, bitte warten und erneut versuchen",
-      "parseMetadataFailed": "Skill-Metadaten konnten nicht geparst werden",
       "getHomeDirFailed": "Benutzerverzeichnis konnte nicht ermittelt werden",
       "noSkillsInZip": "Keine Skills in der ZIP-Datei gefunden (erfordert eine SKILL.md-Datei)",
       "networkError": "Netzwerkfehler",
-      "fsError": "Dateisystemfehler",
       "unknownError": "Unbekannter Fehler",
       "suggestion": {
         "checkNetwork": "Bitte Netzwerkverbindung prüfen",
         "checkProxy": "Erwägen Sie, einen HTTP-Proxy zu konfigurieren",
         "retryLater": "Bitte später erneut versuchen",
         "checkRepoUrl": "Bitte Repository-URL und Branch-Namen prüfen",
-        "checkDiskSpace": "Bitte Speicherplatz prüfen",
         "checkPermission": "Bitte Verzeichnisberechtigungen prüfen",
         "uninstallFirst": "Bitte zuerst den vorhandenen Skill mit demselben Namen deinstallieren",
         "checkZipContent": "Bitte prüfen, ob die ZIP-Datei gültige Skill-Verzeichnisse (mit SKILL.md-Dateien) enthält"
@@ -3613,21 +3544,20 @@
     },
     "repo": {
       "title": "Skill-Repositories verwalten",
-      "description": "GitHub-Skill-Repository-Quellen hinzufügen oder entfernen",
+      "description": "GitHub-, GitLab- und Gitea-Skill-Repository-Quellen hinzufügen oder entfernen",
       "url": "Repository-URL",
-      "urlPlaceholder": "owner/name oder https://github.com/owner/name",
+      "urlPlaceholder": "owner/name, https://github.com/owner/name oder https://gitlab.com/group/project",
       "branch": "Branch",
       "branchPlaceholder": "main",
       "path": "Skills-Pfad",
-      "pathPlaceholder": "skills (optional, für das Stammverzeichnis leer lassen)",
       "add": "Repository hinzufügen",
       "list": "Hinzugefügte Repositories",
       "empty": "Keine Repositories",
       "invalidUrl": "Ungültiges Format der Repository-URL",
+      "httpsOnly": "GitLab- und Gitea-Repositories müssen eine https-Adresse verwenden",
       "addSuccess": "Repository {{owner}}/{{name}} hinzugefügt, {{count}} Skills erkannt",
       "addFailed": "Hinzufügen fehlgeschlagen",
       "removeSuccess": "Repository {{owner}}/{{name}} entfernt",
-      "removeFailed": "Entfernen fehlgeschlagen",
       "skillCount": "{{count}} Skills erkannt"
     },
     "search": "Skills suchen",
@@ -3653,8 +3583,7 @@
       "all": "Alle",
       "installed": "Installiert",
       "uninstalled": "Nicht installiert",
-      "repo": "Nach Repository filtern",
-      "allRepos": "Alle Repositories"
+      "repo": "Nach Repository filtern"
     },
     "noResults": "Keine passenden Skills gefunden",
     "noInstalled": "Keine Skills installiert",
@@ -3702,8 +3631,6 @@
     "installFromZip": {
       "button": "Aus ZIP installieren",
       "installing": "Wird installiert …",
-      "successSingle": "Skill {{name}} installiert",
-      "successMultiple": "{{count}} Skills erfolgreich installiert",
       "noSkillsFound": "Keine Skills in der ZIP-Datei gefunden (erfordert eine SKILL.md-Datei)",
       "skippedTitle": "{{count}} Skills übersprungen: Ordnername bereits vergeben",
       "allSkipped": "Nichts installiert: Alle {{count}} Skills in der ZIP verwenden bereits vergebene Ordnernamen",
@@ -3871,7 +3798,6 @@
       "dimensions": "Das Bild ist zu groß (Breite und Höhe dürfen 4096 px nicht überschreiten)"
     },
     "category": {
-      "aiProvider": "KI-Anbieter",
       "cloud": "Cloud-Plattformen",
       "tool": "Entwicklertools",
       "other": "Sonstige"
@@ -3879,7 +3805,6 @@
   },
   "providerIcon": {
     "label": "Symbol",
-    "colorLabel": "Symbolfarbe",
     "selectIcon": "Symbol auswählen",
     "preview": "Vorschau",
     "clickToChange": "Klicken, um das Symbol zu ändern",
@@ -3912,18 +3837,12 @@
     },
     "tooltip": {
       "enabled": "{{app}}-Failover aktiviert\nAnfragen folgen der Priorität der Warteschlange (P1→P2→...)",
-      "disabled": "{{app}}-Failover aktivieren\nWechselt sofort zu P1 der Warteschlange und weicht bei Fehlern aus",
-      "takeoverRequired": "Übernehmen Sie zuerst {{app}} und aktivieren Sie dann das Failover"
+      "disabled": "{{app}}-Failover aktivieren\nWechselt sofort zu P1 der Warteschlange und weicht bei Fehlern aus"
     }
   },
   "proxy": {
     "panel": {
-      "serviceAddress": "Dienstadresse",
-      "addressCopied": "Adresse kopiert",
       "currentProvider": "Aktueller Anbieter:",
-      "waitingFirstRequest": "Aktueller Anbieter: Warten auf die erste Anfrage …",
-      "stoppedTitle": "Routing-Dienst angehalten",
-      "stoppedDescription": "Starten Sie den Dienst mit dem Schalter oben",
       "openSettings": "Routing-Dienst konfigurieren",
       "stats": {
         "activeConnections": "Aktive Verbindungen",
@@ -3935,9 +3854,6 @@
     "settings": {
       "title": "Einstellungen des Routing-Dienstes",
       "description": "Konfigurieren Sie Abhöradresse, Port und Laufzeitparameter des lokalen Routing-Servers. Änderungen werden nach dem Speichern sofort wirksam.",
-      "alert": {
-        "autoApply": "Änderungen werden automatisch mit dem laufenden Routing-Dienst synchronisiert, ein manueller Neustart ist nicht nötig."
-      },
       "basic": {
         "title": "Grundeinstellungen",
         "description": "Abhöradresse und Port des Routing-Dienstes konfigurieren."
@@ -3989,16 +3905,8 @@
         }
       },
       "validation": {
-        "addressInvalid": "Bitte geben Sie eine gültige IP-Adresse ein",
-        "portMin": "Der Port muss größer als 1024 sein",
-        "portMax": "Der Port muss kleiner als 65535 sein",
         "retryMin": "Die Anzahl der Wiederholungen darf nicht negativ sein",
-        "retryMax": "Die Anzahl der Wiederholungen darf 10 nicht überschreiten",
-        "timeoutNonNegative": "Der Timeout darf nicht negativ sein",
-        "timeoutMax": "Der Timeout darf 600 Sekunden nicht überschreiten",
-        "timeoutRange": "Bitte geben Sie 0 oder einen Wert zwischen 10 und 600 ein",
-        "streamingTimeoutMin": "Der Timeout muss mindestens 5 Sekunden betragen",
-        "streamingTimeoutMax": "Der Timeout darf 300 Sekunden nicht überschreiten"
+        "retryMax": "Die Anzahl der Wiederholungen darf 10 nicht überschreiten"
       },
       "actions": {
         "save": "Konfiguration speichern"
@@ -4030,7 +3938,6 @@
       "enabled": "{{app}} befindet sich jetzt im Aggregationsmodus",
       "exitedToDirect": "{{apps}} wieder auf Direkt umgestellt",
       "ariaLabel": "Aggregationsmodus für {{appLabel}}",
-      "failoverUnavailable": "{{appLabel}} befindet sich im Aggregationsmodus, der kein Failover bietet. Warteschlange und Einstellungen bleiben erhalten und gelten im Routing-Modus wieder",
       "codexStale": {
         "authTitle": "Codex hat möglicherweise noch das vorherige Konto im Cache; starten Sie dessen Hintergrundserver neu, um die neue Anmeldung zu laden",
         "title": "Codex verwendet noch eine alte Modellliste, daher werden die aktuellen Modelle nicht angezeigt",
@@ -4048,26 +3955,17 @@
       }
     },
     "failover": {
-      "proxyRequired": "Der Routing-Dienst muss gestartet sein, um Failover zu konfigurieren",
-      "autoSwitch": "Automatisches Failover",
-      "autoSwitchDescription": "Wenn aktiviert, wird sofort zu P1 der Warteschlange gewechselt und bei Fehlern automatisch der nächste Anbieter der Warteschlange versucht"
+      "proxyRequired": "Der Routing-Dienst muss gestartet sein, um Failover zu konfigurieren"
     },
     "failoverQueue": {
       "title": "Failover-Warteschlange",
       "description": "Failover-Reihenfolge der Anbieter jeder App verwalten",
       "info": "Wenn das automatische Failover aktiviert ist, folgen Anfragen der Prioritätsreihenfolge der Warteschlange (P1 zuerst). Bei Fehlern versucht das System den nächsten Anbieter in der Warteschlange.",
-      "selectProvider": "Anbieter zum Hinzufügen zur Warteschlange auswählen",
-      "noAvailableProviders": "Keine Anbieter zum Hinzufügen verfügbar",
       "empty": "Die Failover-Warteschlange ist leer. Fügen Sie Anbieter hinzu, um das automatische Failover zu aktivieren.",
-      "orderHint": "Die Reihenfolge der Warteschlange entspricht der Anbieterliste auf der Startseite. Ändern Sie die Reihenfolge der Anbieter auf der Startseite, um die Priorität zu ändern.",
-      "dragHint": "Ziehen Sie Anbieter, um die Failover-Reihenfolge anzupassen. Niedrigere Nummern haben höhere Priorität.",
       "toggleEnabled": "Aktivieren/Deaktivieren",
       "addSuccess": "Zur Failover-Warteschlange hinzugefügt",
       "addFailed": "Hinzufügen fehlgeschlagen",
       "removeSuccess": "Aus der Failover-Warteschlange entfernt",
-      "removeFailed": "Entfernen fehlgeschlagen",
-      "reorderSuccess": "Reihenfolge der Warteschlange aktualisiert",
-      "reorderFailed": "Reihenfolge konnte nicht aktualisiert werden",
       "toggleFailed": "Status konnte nicht aktualisiert werden"
     },
     "autoFailover": {
@@ -4087,15 +3985,6 @@
       "errorRateHint": "Circuit Breaker öffnen, wenn die Fehlerrate diesen Wert übersteigt",
       "minRequests": "Mindestanzahl an Anfragen",
       "minRequestsHint": "Mindestanzahl an Anfragen, bevor die Fehlerrate berechnet wird",
-      "explanationTitle": "Funktionsweise",
-      "failureThresholdLabel": "Fehlerschwelle",
-      "failureThresholdExplain": "Der Circuit Breaker öffnet sich nach so vielen aufeinanderfolgenden Fehlern und macht den Anbieter vorübergehend nicht verfügbar",
-      "timeoutLabel": "Wartezeit bis zur Erholung",
-      "timeoutExplain": "Nach dem Öffnen des Circuit Breakers wird so lange gewartet, bevor der halb offene Zustand versucht wird",
-      "successThresholdLabel": "Erfolgsschwelle zur Erholung",
-      "successThresholdExplain": "Im halb offenen Zustand wird der Circuit Breaker nach so vielen Erfolgen geschlossen und der Anbieter ist wieder verfügbar",
-      "errorRateLabel": "Fehlerratenschwelle",
-      "errorRateExplain": "Circuit Breaker öffnen, wenn die Fehlerrate diesen Wert übersteigt, auch wenn die Fehlerschwelle nicht erreicht ist",
       "maxRetries": "Max. Wiederholungen",
       "timeoutSettings": "Timeout-Einstellungen",
       "streamingFirstByte": "Streaming-Timeout für das erste Byte",
@@ -4129,13 +4018,10 @@
   },
   "proxyConfig": {
     "proxyEnabled": "Routing-Hauptschalter",
-    "appTakeover": "Routing aktiviert",
-    "perAppConfig": "Konfiguration pro App",
     "circuitBreaker": "Circuit Breaker",
     "circuitBreakerSettings": "Circuit-Breaker-Einstellungen",
     "failureThreshold": "Fehlerschwelle",
     "successThreshold": "Erfolgsschwelle",
-    "recoveryTimeout": "Wiederherstellungs-Timeout",
     "errorRateThreshold": "Fehlerratenschwelle",
     "minRequests": "Min. Anfragen",
     "timeoutConfig": "Timeout-Konfiguration",
@@ -4357,9 +4243,7 @@
       "title": "Standardmodell",
       "description": "Primäres Standardmodell und Fallback-Modelle für OpenClaw konfigurieren",
       "primary": "Primäres Modell",
-      "primaryPlaceholder": "z. B. deepseek/deepseek-chat",
       "fallbacks": "Fallback-Modelle",
-      "fallbacksPlaceholder": "z. B. openrouter/anthropic/claude-sonnet-4.5",
       "addFallback": "Fallback-Modell hinzufügen",
       "saved": "Standardmodell-Konfiguration gespeichert",
       "saveFailed": "Standardmodell konnte nicht gespeichert werden"
@@ -4370,9 +4254,6 @@
       "modelId": "Modell-ID",
       "modelIdPlaceholder": "z. B. deepseek/deepseek-chat",
       "alias": "Alias",
-      "aliasPlaceholder": "z. B. DeepSeek",
-      "addEntry": "Modell hinzufügen",
-      "removeEntry": "Entfernen",
       "saved": "Modellkatalog gespeichert",
       "saveFailed": "Modellkatalog konnte nicht gespeichert werden",
       "empty": "Keine Einträge im Modellkatalog",
@@ -4586,7 +4467,6 @@
       "routeSwitched": "Routing auf {{provider}} umgestellt. Neue Anfragen verwenden diesen Anbieter.",
       "stackDefaultChanged": "Aggregations-Standard auf {{provider}} gesetzt. Ausgewählte aggregierte Modelle nutzen weiterhin ihre jeweiligen Anbieter.",
       "clientConfigChanged": " Auch die Client-Konfiguration wurde geändert. Starten Sie {{app}} neu, um die aktualisierte Konfiguration zu laden.",
-      "defaultRemembered": "{{provider}} wird der Standardanbieter, sobald Sie zu Aggregation wechseln.",
       "restartHint": " Starten Sie {{app}} neu, um die Änderung anzuwenden.",
       "failed": "Wechsel nicht möglich: {{detail}}"
     },
@@ -5122,7 +5002,7 @@
       "disabledShort": "Aus",
       "disabled": "Ausgeschaltet, wird von „Entdecken“ nicht verwendet",
       "manage": "Repositories hinzufügen oder verwalten",
-      "openAria": "{{repo}} auf GitHub öffnen",
+      "openAria": "{{repo}} im Browser öffnen",
       "removeAria": "Repository {{repo}} entfernen",
       "readFailed": "Lesen fehlgeschlagen"
     },
@@ -5432,6 +5312,8 @@
     "readyBodyRouting": "Jetzt installieren? CC Switch wird neu gestartet, laufende Anfragen über das lokale Routing werden abgebrochen.",
     "later": "Später",
     "installNow": "Installieren und neu starten",
-    "installFailed": "Update-Installation fehlgeschlagen"
+    "installFailed": "Update-Installation fehlgeschlagen",
+    "downloadingInline": "Neue Version wird im Hintergrund heruntergeladen…",
+    "downloadedInline": "Heruntergeladen"
   }
 }

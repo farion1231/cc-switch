@@ -104,3 +104,29 @@ describe("Antigravity model discovery", () => {
     expect(onModelChange).toHaveBeenCalledWith("Gemini 3.8 Flash (Low)");
   });
 });
+
+describe("Gemini CLI model discovery", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    api.fetchModelsForConfig.mockResolvedValue([{ id: "gemini-3.8-flash" }]);
+  });
+
+  // #8546：Gemini CLI 只说原生协议，取模型要走 v1beta + x-goog-api-key
+  it("fetches models with the Gemini native format", async () => {
+    render(<Harness appId="gemini" baseUrl="https://relay.example/gemini" />);
+    fireEvent.click(
+      screen.getByRole("button", { name: "providerForm.fetchModels" }),
+    );
+    await waitFor(() =>
+      expect(api.fetchModelsForConfig).toHaveBeenCalledWith(
+        "https://relay.example/gemini",
+        "fixture-key",
+        false,
+        undefined,
+        undefined,
+        { apiFormat: "google-generative-ai" },
+      ),
+    );
+    expect(api.getAgyModels).not.toHaveBeenCalled();
+  });
+});

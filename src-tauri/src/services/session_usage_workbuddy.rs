@@ -12,10 +12,11 @@
 //! `session_usage_dedup` 里的永久回执保证同一请求不会重复入库。
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
-use crate::proxy::usage::{calculator::CostCalculator, parser::TokenUsage};
+use crate::proxy::usage::parser::TokenUsage;
 use crate::services::{
     session_usage::{
-        load_sync_cursors, metadata_modified_nanos, update_sync_state_on_conn, SessionSyncResult,
+        cost_columns, load_sync_cursors, metadata_modified_nanos, update_sync_state_on_conn,
+        SessionSyncResult,
     },
     sql_helpers::INPUT_TOKEN_SEMANTICS_FRESH,
     usage_stats::find_model_pricing,
@@ -160,7 +161,12 @@ fn sync_file(
             continue;
         }
         let usage = &entry.usage;
-        let amounts = costs(&tx, &entry.model, usage);
+        let amounts = cost_columns(
+            "workbuddy",
+            usage,
+            find_model_pricing(&tx, &entry.model).as_ref(),
+            Decimal::ONE,
+        );
         tx.execute(
             "INSERT OR IGNORE INTO proxy_request_logs (
                 request_id, provider_id, app_type, model, request_model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
@@ -190,23 +196,6 @@ fn sync_file(
     update_sync_state_on_conn(&tx, key, modified, bytes)?;
     tx.commit()?;
     Ok(result)
-}
-
-fn costs(conn: &rusqlite::Connection, model: &str, usage: &TokenUsage) -> [String; 5] {
-    find_model_pricing(conn, model)
-        .map(|pricing| {
-            let cost =
-                CostCalculator::calculate_for_app("workbuddy", usage, &pricing, Decimal::ONE);
-            [
-                cost.input_cost,
-                cost.output_cost,
-                cost.cache_read_cost,
-                cost.cache_creation_cost,
-                cost.total_cost,
-            ]
-        })
-        .unwrap_or([Decimal::ZERO; 5])
-        .map(|value| value.to_string())
 }
 
 #[cfg(test)]
