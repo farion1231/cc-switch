@@ -59,28 +59,21 @@ fn credential_guard_all_app_configs_allow_model_edits_but_reject_key_and_destina
                 | AppType::Copilot
                 | AppType::WorkBuddy
         ) {
-            assert!(db.save_provider(app.as_str(), &original).is_err());
-            assert!(db
-                .get_provider_by_id(&original.id, app.as_str())
-                .unwrap()
-                .is_none());
+            assert!(db.save_provider(&app, &original).is_err());
+            assert!(db.get_provider_by_id(&original.id, &app).unwrap().is_none());
             continue;
         }
-        db.save_provider(app.as_str(), &original).unwrap();
+        db.save_provider(&app, &original).unwrap();
         let mut edited = original.clone();
         edited.name = "Renamed".into();
         edited.settings_config = replace(&original.settings_config, "model-a", "model-b");
-        db.save_provider(app.as_str(), &edited).unwrap();
+        db.save_provider(&app, &edited).unwrap();
         for replacement in ["test-key-b", "", "****"] {
             let mut wrong = edited.clone();
             wrong.settings_config = replace(&edited.settings_config, "test-key-a", replacement);
-            assert!(
-                db.save_provider(app.as_str(), &wrong).is_err(),
-                "{}",
-                app.as_str()
-            );
+            assert!(db.save_provider(&app, &wrong).is_err(), "{}", app.as_str());
             assert!(db
-                .update_provider_settings_config(app.as_str(), &edited.id, &wrong.settings_config)
+                .update_provider_settings_config(&app, &edited.id, &wrong.settings_config)
                 .is_err());
         }
         let mut wrong = edited.clone();
@@ -89,11 +82,8 @@ fn credential_guard_all_app_configs_allow_model_edits_but_reject_key_and_destina
             "https://example.com",
             "https://different.example.com",
         );
-        assert!(db.save_provider(app.as_str(), &wrong).is_err());
-        let stored = db
-            .get_provider_by_id(&original.id, app.as_str())
-            .unwrap()
-            .unwrap();
+        assert!(db.save_provider(&app, &wrong).is_err());
+        let stored = db.get_provider_by_id(&original.id, &app).unwrap().unwrap();
         assert_eq!(stored.name, edited.name);
         assert_eq!(stored.settings_config, edited.settings_config);
     }
@@ -103,7 +93,7 @@ fn credential_guard_all_app_configs_allow_model_edits_but_reject_key_and_destina
 fn credential_guard_ordinary_save_cannot_drop_protection_or_rename_binding() {
     let db = Database::memory().unwrap();
     let original = provider(&AppType::Claude);
-    db.save_provider("claude", &original).unwrap();
+    db.save_provider(&AppType::Claude, &original).unwrap();
     for meta in [
         None,
         Some(ProviderMeta::default()),
@@ -114,17 +104,17 @@ fn credential_guard_ordinary_save_cannot_drop_protection_or_rename_binding() {
     ] {
         let mut next = original.clone();
         next.meta = meta;
-        assert!(db.save_provider("claude", &next).is_err());
+        assert!(db.save_provider(&AppType::Claude, &next).is_err());
     }
     let mut renamed = original.clone();
     renamed.id = "different".into();
     assert!(validate_update(&AppType::Claude, &original, &renamed).is_err());
     assert!(db
-        .get_provider_by_id("different", "claude")
+        .get_provider_by_id("different", &AppType::Claude)
         .unwrap()
         .is_none());
     assert_eq!(
-        db.get_provider_by_id(&original.id, "claude")
+        db.get_provider_by_id(&original.id, &AppType::Claude)
             .unwrap()
             .unwrap()
             .settings_config,
@@ -136,27 +126,32 @@ fn credential_guard_ordinary_save_cannot_drop_protection_or_rename_binding() {
 fn credential_guard_explicit_removal_is_scoped_and_changes_no_credential() {
     let db = Database::memory().unwrap();
     for app in [AppType::Claude, AppType::Codex] {
-        db.save_provider(app.as_str(), &provider(&app)).unwrap();
+        db.save_provider(&app, &provider(&app)).unwrap();
     }
-    db.remove_provider_credential_protection("claude", "guarded")
+    db.remove_provider_credential_protection(&AppType::Claude, "guarded")
         .unwrap();
-    let mut unlocked = db.get_provider_by_id("guarded", "claude").unwrap().unwrap();
+    let mut unlocked = db
+        .get_provider_by_id("guarded", &AppType::Claude)
+        .unwrap()
+        .unwrap();
     assert!(!is_protected(&unlocked));
     assert_eq!(
         unlocked.settings_config,
         provider(&AppType::Claude).settings_config
     );
     assert!(is_protected(
-        &db.get_provider_by_id("guarded", "codex").unwrap().unwrap()
+        &db.get_provider_by_id("guarded", &AppType::Codex)
+            .unwrap()
+            .unwrap()
     ));
     unlocked.settings_config = replace(&unlocked.settings_config, "test-key-a", "test-key-b");
-    db.save_provider("claude", &unlocked).unwrap();
+    db.save_provider(&AppType::Claude, &unlocked).unwrap();
     // A stale editor cannot restore the old protected row after the user unlocked it.
     assert!(db
-        .save_provider("claude", &provider(&AppType::Claude))
+        .save_provider(&AppType::Claude, &provider(&AppType::Claude))
         .is_err());
     assert_eq!(
-        db.get_provider_by_id("guarded", "claude")
+        db.get_provider_by_id("guarded", &AppType::Claude)
             .unwrap()
             .unwrap()
             .settings_config,
@@ -170,10 +165,10 @@ fn credential_guard_unmanaged_rows_keep_existing_edit_behavior() {
         let db = Database::memory().unwrap();
         let mut row = provider(&app);
         row.meta = None;
-        db.save_provider(app.as_str(), &row).unwrap();
+        db.save_provider(&app, &row).unwrap();
         row.settings_config = replace(&row.settings_config, "test-key-a", "test-key-b");
-        db.save_provider(app.as_str(), &row).unwrap();
-        db.update_provider_settings_config(app.as_str(), &row.id, &row.settings_config)
+        db.save_provider(&app, &row).unwrap();
+        db.update_provider_settings_config(&app, &row.id, &row.settings_config)
             .unwrap();
     }
 }

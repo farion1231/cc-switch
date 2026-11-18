@@ -147,7 +147,7 @@ fn first_run_import(app: AppType, snapshot: &str, settings_sort: &[&str]) {
         .expect("seed official providers");
     let snippet = state
         .db
-        .get_config_snippet(app.as_str())
+        .get_config_snippet(&app)
         .expect("read common config snippet");
     let dump = format!(
         "{}\ncommon config snippet: {}\n",

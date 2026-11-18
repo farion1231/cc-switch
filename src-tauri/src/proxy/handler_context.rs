@@ -107,7 +107,7 @@ impl RequestContext {
         // 从数据库读取应用级代理配置（per-app）
         let mut app_config = state
             .db
-            .get_proxy_config_for_app(app_type_str)
+            .get_proxy_config_for_app(&app_type)
             .await
             .map_err(|e| ProxyError::DatabaseError(e.to_string()))?;
 
@@ -181,7 +181,7 @@ impl RequestContext {
                     state
                         .provider_router
                         .select_providers_with_current(
-                            app_type_str,
+                            &app_type,
                             current_provider,
                             app_config.auto_failover_enabled,
                         )
