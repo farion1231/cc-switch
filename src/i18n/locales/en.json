@@ -1663,7 +1663,17 @@
         "prLink": "Linked PR #{{number}}",
         "prLinkPlain": "Linked a PR",
         "slashCommand": "Ran {{command}}",
-        "subAgent": "Subagent {{name}}"
+        "subAgent": "Subagent {{name}}",
+        "goal": "Goal · {{status}}",
+        "goalPlain": "Goal",
+        "goalStatus": {
+          "active": "Active",
+          "paused": "Paused",
+          "blocked": "Blocked",
+          "usageLimited": "Usage limit reached",
+          "budgetLimited": "Budget reached",
+          "complete": "Complete"
+        }
       },
       "injectedToggle": "Show injected context",
       "injectedRow": "Context · {{label}} · {{chars}} chars",
@@ -2743,7 +2753,9 @@
       "speedEstimateTooFew": "Under 200 output tokens, so no estimate",
       "noTimingSession": "Session logs have no timing data",
       "noFirstToken": "No first-token timing, so no speed",
-      "providerId": "Provider ID"
+      "providerId": "Provider ID",
+      "copyRequestId": "Copy request ID",
+      "requestIdCopied": "Request ID copied"
     },
     "sources": {
       "scanTitle": "Scan session logs automatically",

@@ -1594,7 +1594,17 @@
         "prLink": "Bağlantılı Halkla İlişkiler #{{number}}",
         "prLinkPlain": "PR bağlantılı",
         "slashCommand": "{{command}} koştu",
-        "subAgent": "Alt ajan {{name}}"
+        "subAgent": "Alt ajan {{name}}",
+        "goal": "Hedef · {{status}}",
+        "goalPlain": "Hedef",
+        "goalStatus": {
+          "active": "Etkin",
+          "paused": "Duraklatıldı",
+          "blocked": "Engellendi",
+          "usageLimited": "Kullanım sınırına ulaşıldı",
+          "budgetLimited": "Bütçeye ulaşıldı",
+          "complete": "Tamamlandı"
+        }
       },
       "injectedToggle": "Enjekte edilen bağlamı göster",
       "injectedRow": "Bağlam · {{label}} · {{chars}} karakterleri",
@@ -2674,7 +2684,9 @@
       "speedEstimateTooFew": "Çıkış tokenu 200'ün altında olduğundan tahmin yok",
       "noTimingSession": "Oturum günlüklerinde zamanlama verisi yok",
       "noFirstToken": "İlk token zamanlaması yok, dolayısıyla hız yok",
-      "providerId": "Sağlayıcı kimliği"
+      "providerId": "Sağlayıcı kimliği",
+      "copyRequestId": "Talep kimliğini kopyala",
+      "requestIdCopied": "Talep kimliği kopyalandı"
     },
     "sources": {
       "scanTitle": "Oturum günlüklerini otomatik olarak tara",

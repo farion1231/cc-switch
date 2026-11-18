@@ -288,6 +288,19 @@ describe("effectiveBlocks · 旧后端兜底", () => {
 });
 
 describe("buildTurns · 分组、配对与最终回复判定", () => {
+  it("轮首事件同条 system 消息里的正文并入事件（#9647 Codex 目标）", () => {
+    const goal = { type: "event", kind: "goal", text: "active" } as const;
+    const turns = buildTurns([
+      msg("system", [goal, text("Migrate the docs site")], { turnId: "t" }),
+      msg("user", [text("go")], { turnId: "t" }),
+      msg("assistant", [text("done")], { turnId: "t" }),
+    ]);
+    expect(turns[0].leadingEvents).toMatchObject([
+      { block: goal, body: "Migrate the docs site" },
+    ]);
+    expect(turns[0].steps).toEqual([]);
+  });
+
   it("同一 turnId 不连续出现时加后缀保证 key 唯一", () => {
     const turns = buildTurns([
       msg("user", [text("a")], { turnId: "x" }),

@@ -206,6 +206,7 @@ pub(crate) fn first_user_summary(messages: &[SessionMessage]) -> Option<String> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use tempfile::tempdir;
 
     fn create_schema(conn: &Connection) {
@@ -312,6 +313,7 @@ mod tests {
     /// 与「本 provider 自己的数据库」比对。DevEco 最初没有登记这条分支，于是列表
     /// 能出、点开就报 `Unsupported provider: deveco`。
     #[test]
+    #[serial]
     fn transcript_loads_through_the_validated_source_path() {
         let temp = tempdir().expect("tempdir");
         let home = temp.path().join("home");
@@ -325,18 +327,16 @@ mod tests {
             seed(&conn);
         }
 
-        let previous = std::env::var_os("CC_SWITCH_TEST_HOME");
-        std::env::set_var("CC_SWITCH_TEST_HOME", &home);
+        // `get_deveco_db_path` prefers DEVECO_DB and XDG_DATA_HOME over the test
+        // home, so clear both for the duration of the test.
+        let _env = crate::test_support::EnvVars::new()
+            .set("CC_SWITCH_TEST_HOME", &home)
+            .remove("DEVECO_DB")
+            .remove("XDG_DATA_HOME");
 
         let source = format!("sqlite:{}:ses_root", db.display());
-        let loaded = crate::session_manager::load_transcript(PROVIDER_ID, &source);
-
-        match previous {
-            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
-            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
-        }
-
-        let loaded = loaded.expect("transcript must load through validate_source");
+        let loaded = crate::session_manager::load_transcript(PROVIDER_ID, &source)
+            .expect("transcript must load through validate_source");
         assert_eq!(loaded.transcript.messages.len(), 2);
         assert_eq!(loaded.transcript.messages[0].content, "Hello");
     }

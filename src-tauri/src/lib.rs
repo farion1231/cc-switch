@@ -1090,7 +1090,7 @@ pub fn run() {
             {
                 let has_omo = app_state
                     .db
-                    .get_all_providers("opencode")
+                    .get_all_providers(&AppType::OpenCode)
                     .map(|providers| providers.values().any(|p| p.category.as_deref() == Some("omo")))
                     .unwrap_or(false);
                 if !has_omo {
@@ -1112,7 +1112,7 @@ pub fn run() {
             {
                 let has_omo_slim = app_state
                     .db
-                    .get_all_providers("opencode")
+                    .get_all_providers(&AppType::OpenCode)
                     .map(|providers| {
                         providers
                             .values()
@@ -2151,7 +2151,7 @@ fn initialize_common_config_snippets(state: &store::AppState) {
     for app_type in crate::app_config::AppType::all() {
         if !state
             .db
-            .should_auto_extract_config_snippet(app_type.as_str())
+            .should_auto_extract_config_snippet(&app_type)
             .unwrap_or(false)
         {
             continue;
@@ -2172,9 +2172,9 @@ fn initialize_common_config_snippets(state: &store::AppState) {
             &settings,
         ) {
             Ok(snippet) if !snippet.is_empty() && snippet != "{}" => {
-                match state.db.set_config_snippet(app_type.as_str(), Some(snippet)) {
+                match state.db.set_config_snippet(&app_type, Some(snippet)) {
                     Ok(()) => {
-                        let _ = state.db.set_config_snippet_cleared(app_type.as_str(), false);
+                        let _ = state.db.set_config_snippet_cleared(&app_type, false);
                         log::info!(
                             "✓ Auto-extracted common config snippet for {}",
                             app_type.as_str()

@@ -106,7 +106,7 @@ fn failed_deveco_prompt_writes_preserve_state_and_can_be_retried() {
         "id":"active", "name":"Active", "content":"original", "enabled":true
     }))
     .unwrap();
-    state.db.save_prompt("deveco", &active).unwrap();
+    state.db.save_prompt(&AppType::DevEco, &active).unwrap();
     // A directory at the file path deterministically rejects the atomic rename.
     fs::create_dir_all(&path).unwrap();
     let mut edited = active.clone();
@@ -114,7 +114,7 @@ fn failed_deveco_prompt_writes_preserve_state_and_can_be_retried() {
     assert!(
         PromptService::upsert_prompt(&state, AppType::DevEco, &active.id, edited.clone()).is_err()
     );
-    let stored = &state.db.get_prompts("deveco").unwrap()[&active.id];
+    let stored = &state.db.get_prompts(&AppType::DevEco).unwrap()[&active.id];
     assert!(stored.enabled);
     assert_eq!(stored.content, "original");
 
@@ -123,7 +123,7 @@ fn failed_deveco_prompt_writes_preserve_state_and_can_be_retried() {
     fs::write(&path, "original").unwrap();
     PromptService::upsert_prompt(&state, AppType::DevEco, &active.id, edited).unwrap();
     assert_eq!(fs::read_to_string(&path).unwrap(), "updated");
-    assert!(state.db.get_prompts("deveco").unwrap()[&active.id].enabled);
+    assert!(state.db.get_prompts(&AppType::DevEco).unwrap()[&active.id].enabled);
 }
 
 #[test]

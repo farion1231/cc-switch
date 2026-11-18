@@ -2,6 +2,7 @@
 //!
 //! 提供键值对形式的通用设置存储。
 
+use crate::app_config::AppType;
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use rusqlite::params;
@@ -9,7 +10,7 @@ use rusqlite::params;
 impl Database {
     const LEGACY_COMMON_CONFIG_MIGRATED_KEY: &'static str = "common_config_legacy_migrated_v1";
 
-    fn config_snippet_cleared_key(app_type: &str) -> String {
+    fn config_snippet_cleared_key(app_type: &AppType) -> String {
         format!("common_config_{app_type}_cleared")
     }
 
@@ -59,12 +60,12 @@ impl Database {
     // --- 通用配置片段 (Common Config Snippet) ---
 
     /// 获取通用配置片段
-    pub fn get_config_snippet(&self, app_type: &str) -> Result<Option<String>, AppError> {
+    pub fn get_config_snippet(&self, app_type: &AppType) -> Result<Option<String>, AppError> {
         self.get_setting(&format!("common_config_{app_type}"))
     }
 
     /// 检查通用配置片段是否被用户显式清空
-    pub fn is_config_snippet_cleared(&self, app_type: &str) -> Result<bool, AppError> {
+    pub fn is_config_snippet_cleared(&self, app_type: &AppType) -> Result<bool, AppError> {
         Ok(self
             .get_setting(&Self::config_snippet_cleared_key(app_type))?
             .as_deref()
@@ -74,7 +75,7 @@ impl Database {
     /// 设置通用配置片段是否被显式清空
     pub fn set_config_snippet_cleared(
         &self,
-        app_type: &str,
+        app_type: &AppType,
         cleared: bool,
     ) -> Result<(), AppError> {
         let key = Self::config_snippet_cleared_key(app_type);
@@ -89,7 +90,7 @@ impl Database {
     }
 
     /// 当前是否允许从 live 配置自动抽取通用配置片段
-    pub fn should_auto_extract_config_snippet(&self, app_type: &str) -> Result<bool, AppError> {
+    pub fn should_auto_extract_config_snippet(&self, app_type: &AppType) -> Result<bool, AppError> {
         Ok(self.get_config_snippet(app_type)?.is_none()
             && !self.is_config_snippet_cleared(app_type)?)
     }
@@ -120,7 +121,7 @@ impl Database {
     /// 设置通用配置片段
     pub fn set_config_snippet(
         &self,
-        app_type: &str,
+        app_type: &AppType,
         snippet: Option<String>,
     ) -> Result<(), AppError> {
         let key = format!("common_config_{app_type}");

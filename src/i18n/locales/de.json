@@ -1663,7 +1663,17 @@
         "prLink": "PR #{{number}} verknüpft",
         "prLinkPlain": "Einen PR verknüpft",
         "slashCommand": "{{command}} ausgeführt",
-        "subAgent": "Subagent {{name}}"
+        "subAgent": "Subagent {{name}}",
+        "goal": "Ziel · {{status}}",
+        "goalPlain": "Ziel",
+        "goalStatus": {
+          "active": "Aktiv",
+          "paused": "Pausiert",
+          "blocked": "Blockiert",
+          "usageLimited": "Nutzungslimit erreicht",
+          "budgetLimited": "Budget erreicht",
+          "complete": "Abgeschlossen"
+        }
       },
       "injectedToggle": "Eingefügten Kontext anzeigen",
       "injectedRow": "Kontext · {{label}} · {{chars}} Zeichen",
@@ -2743,7 +2753,9 @@
       "speedEstimateTooFew": "Unter 200 Ausgabe-Token, daher keine Schätzung",
       "noTimingSession": "Sitzungsprotokolle enthalten keine Zeitdaten",
       "noFirstToken": "Keine Zeit bis zum ersten Token, daher keine Geschwindigkeit",
-      "providerId": "Anbieter-ID"
+      "providerId": "Anbieter-ID",
+      "copyRequestId": "Anfrage-ID kopieren",
+      "requestIdCopied": "Anfrage-ID kopiert"
     },
     "sources": {
       "scanTitle": "Sitzungsprotokolle automatisch scannen",

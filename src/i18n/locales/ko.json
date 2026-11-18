@@ -1662,7 +1662,17 @@
         "prLink": "연결된 PR #{{number}}",
         "prLinkPlain": "PR을 연결했습니다",
         "slashCommand": "{{command}}을(를) 실행",
-        "subAgent": "서브에이전트 {{name}}"
+        "subAgent": "서브에이전트 {{name}}",
+        "goal": "목표 · {{status}}",
+        "goalPlain": "목표",
+        "goalStatus": {
+          "active": "진행 중",
+          "paused": "일시 중지됨",
+          "blocked": "막힘",
+          "usageLimited": "사용 한도 도달",
+          "budgetLimited": "예산 도달",
+          "complete": "완료"
+        }
       },
       "injectedToggle": "주입된 컨텍스트 표시",
       "injectedRow": "컨텍스트 · {{label}} · {{chars}}자",
@@ -2738,7 +2748,9 @@
       "speedEstimateTooFew": "출력이 200토큰 미만이므로 속도를 추정하지 않습니다.",
       "noTimingSession": "세션 로그에는 타이밍 데이터가 없습니다.",
       "noFirstToken": "첫 토큰 시간 데이터가 없어 속도를 계산하지 않습니다.",
-      "providerId": "공급자 ID"
+      "providerId": "공급자 ID",
+      "copyRequestId": "요청 ID 복사",
+      "requestIdCopied": "요청 ID를 복사했습니다"
     },
     "sources": {
       "scanTitle": "세션 로그를 자동으로 스캔",
