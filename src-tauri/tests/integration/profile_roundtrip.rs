@@ -108,35 +108,29 @@ fn profile_snapshot_apply_roundtrip_restores_configuration() {
     // ---- 种子数据：2 个 Claude 供应商（p1 为当前）+ 2 个 MCP + 1 个 Skill + 2 个 Prompt ----
     state
         .db
-        .save_provider(AppType::Claude.as_str(), &claude_provider("p1", "key-1"))
+        .save_provider(&AppType::Claude, &claude_provider("p1", "key-1"))
         .expect("save provider p1");
     state
         .db
-        .save_provider(AppType::Claude.as_str(), &claude_provider("p2", "key-2"))
+        .save_provider(&AppType::Claude, &claude_provider("p2", "key-2"))
         .expect("save provider p2");
     state
         .db
-        .set_current_provider(AppType::Claude.as_str(), "p1")
+        .set_current_provider(&AppType::Claude, "p1")
         .expect("set current provider p1");
 
     // Claude Desktop 只有供应商一个活跃维度（MCP/Skills/Prompt 对它不适用）
     state
         .db
-        .save_provider(
-            AppType::ClaudeDesktop.as_str(),
-            &desktop_provider("d1", "dk-1"),
-        )
+        .save_provider(&AppType::ClaudeDesktop, &desktop_provider("d1", "dk-1"))
         .expect("save desktop provider d1");
     state
         .db
-        .save_provider(
-            AppType::ClaudeDesktop.as_str(),
-            &desktop_provider("d2", "dk-2"),
-        )
+        .save_provider(&AppType::ClaudeDesktop, &desktop_provider("d2", "dk-2"))
         .expect("save desktop provider d2");
     state
         .db
-        .set_current_provider(AppType::ClaudeDesktop.as_str(), "d1")
+        .set_current_provider(&AppType::ClaudeDesktop, "d1")
         .expect("set current desktop provider d1");
 
     // 让 live settings.json 与 p1 一致（switch_normal 回填需要）
@@ -166,11 +160,11 @@ fn profile_snapshot_apply_roundtrip_restores_configuration() {
 
     state
         .db
-        .save_prompt(AppType::Claude.as_str(), &prompt("pr1", true))
+        .save_prompt(&AppType::Claude, &prompt("pr1", true))
         .expect("save prompt pr1");
     state
         .db
-        .save_prompt(AppType::Claude.as_str(), &prompt("pr2", false))
+        .save_prompt(&AppType::Claude, &prompt("pr2", false))
         .expect("save prompt pr2");
 
     // ---- 保存项目 A（在 Claude 页新建：只拍 Claude 当前状态）----
@@ -213,7 +207,7 @@ fn profile_snapshot_apply_roundtrip_restores_configuration() {
 
     let current = state
         .db
-        .get_current_provider(AppType::Claude.as_str())
+        .get_current_provider(&AppType::Claude)
         .expect("get current provider");
     assert_eq!(current.as_deref(), Some("p1"), "provider restored to p1");
 
@@ -222,7 +216,7 @@ fn profile_snapshot_apply_roundtrip_restores_configuration() {
     // 编译剔除，Desktop 仍是种子值 d1。两种情况都验证 claude-scope apply 不会动 Desktop。
     let current_desktop = state
         .db
-        .get_current_provider(AppType::ClaudeDesktop.as_str())
+        .get_current_provider(&AppType::ClaudeDesktop)
         .expect("get current desktop provider");
     #[cfg(any(target_os = "macos", windows))]
     let expected_desktop = "d2";
@@ -244,10 +238,7 @@ fn profile_snapshot_apply_roundtrip_restores_configuration() {
         "skill re-enabled"
     );
 
-    let prompts = state
-        .db
-        .get_prompts(AppType::Claude.as_str())
-        .expect("get prompts");
+    let prompts = state.db.get_prompts(&AppType::Claude).expect("get prompts");
     assert!(prompts.get("pr1").expect("pr1").enabled, "pr1 re-enabled");
     assert!(!prompts.get("pr2").expect("pr2").enabled, "pr2 disabled");
 
@@ -288,11 +279,11 @@ fn shared_profile_sides_are_isolated_and_mergeable() {
     // 种子：Claude 侧有当前供应商 + 启用的 MCP
     state
         .db
-        .save_provider(AppType::Claude.as_str(), &claude_provider("p1", "key-1"))
+        .save_provider(&AppType::Claude, &claude_provider("p1", "key-1"))
         .expect("save provider p1");
     state
         .db
-        .set_current_provider(AppType::Claude.as_str(), "p1")
+        .set_current_provider(&AppType::Claude, "p1")
         .expect("set current provider p1");
     let claude_dir = home.join(".claude");
     fs::create_dir_all(&claude_dir).expect("create .claude dir");
@@ -328,7 +319,7 @@ fn shared_profile_sides_are_isolated_and_mergeable() {
     assert_eq!(
         state
             .db
-            .get_current_provider(AppType::Claude.as_str())
+            .get_current_provider(&AppType::Claude)
             .expect("get claude current provider")
             .as_deref(),
         Some("p1"),
@@ -497,15 +488,15 @@ fn switching_profile_autosaves_previous_profile_state() {
     // ---- 种子：Claude 侧两套供应商 / MCP / Prompt ----
     state
         .db
-        .save_provider(AppType::Claude.as_str(), &claude_provider("p1", "key-1"))
+        .save_provider(&AppType::Claude, &claude_provider("p1", "key-1"))
         .expect("save provider p1");
     state
         .db
-        .save_provider(AppType::Claude.as_str(), &claude_provider("p2", "key-2"))
+        .save_provider(&AppType::Claude, &claude_provider("p2", "key-2"))
         .expect("save provider p2");
     state
         .db
-        .set_current_provider(AppType::Claude.as_str(), "p1")
+        .set_current_provider(&AppType::Claude, "p1")
         .expect("set current provider p1");
 
     let claude_dir = home.join(".claude");
@@ -528,11 +519,11 @@ fn switching_profile_autosaves_previous_profile_state() {
 
     state
         .db
-        .save_prompt(AppType::Claude.as_str(), &prompt("pr1", true))
+        .save_prompt(&AppType::Claude, &prompt("pr1", true))
         .expect("save prompt pr1");
     state
         .db
-        .save_prompt(AppType::Claude.as_str(), &prompt("pr2", false))
+        .save_prompt(&AppType::Claude, &prompt("pr2", false))
         .expect("save prompt pr2");
 
     // ---- Project A：状态 X（p1 / m1 / pr1）----
@@ -559,7 +550,7 @@ fn switching_profile_autosaves_previous_profile_state() {
     assert_eq!(
         state
             .db
-            .get_current_provider(AppType::Claude.as_str())
+            .get_current_provider(&AppType::Claude)
             .expect("get current provider")
             .as_deref(),
         Some("p2"),
@@ -568,10 +559,7 @@ fn switching_profile_autosaves_previous_profile_state() {
     let servers = state.db.get_all_mcp_servers().expect("get mcp servers");
     assert!(!servers.get("m1").expect("m1").apps.claude, "m1 disabled");
     assert!(servers.get("m2").expect("m2").apps.claude, "m2 enabled");
-    let prompts = state
-        .db
-        .get_prompts(AppType::Claude.as_str())
-        .expect("get prompts");
+    let prompts = state.db.get_prompts(&AppType::Claude).expect("get prompts");
     assert!(!prompts.get("pr1").expect("pr1").enabled, "pr1 disabled");
     assert!(prompts.get("pr2").expect("pr2").enabled, "pr2 enabled");
 
@@ -601,7 +589,7 @@ fn switching_profile_autosaves_previous_profile_state() {
     assert_eq!(
         state
             .db
-            .get_current_provider(AppType::Claude.as_str())
+            .get_current_provider(&AppType::Claude)
             .expect("get current provider")
             .as_deref(),
         Some("p2"),
@@ -616,10 +604,7 @@ fn switching_profile_autosaves_previous_profile_state() {
         servers.get("m2").expect("m2").apps.claude,
         "m2 stays enabled"
     );
-    let prompts = state
-        .db
-        .get_prompts(AppType::Claude.as_str())
-        .expect("get prompts");
+    let prompts = state.db.get_prompts(&AppType::Claude).expect("get prompts");
     assert!(
         !prompts.get("pr1").expect("pr1").enabled,
         "pr1 stays disabled"
@@ -651,7 +636,7 @@ fn applying_profile_without_active_prompt_disables_current_prompt() {
     let state = create_test_state().expect("create test state");
     state
         .db
-        .save_prompt(AppType::Claude.as_str(), &prompt("pr1", false))
+        .save_prompt(&AppType::Claude, &prompt("pr1", false))
         .expect("save prompt pr1");
 
     // 拍快照时没有启用中的提示词：记成「拍到的是无」，不是「没拍过」
@@ -674,10 +659,7 @@ fn applying_profile_without_active_prompt_disables_current_prompt() {
         ProfileService::apply(&state, &project.id, ProfileScope::Claude).expect("apply profile");
     assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
 
-    let prompts = state
-        .db
-        .get_prompts(AppType::Claude.as_str())
-        .expect("get prompts");
+    let prompts = state.db.get_prompts(&AppType::Claude).expect("get prompts");
     let pr1 = prompts.get("pr1").expect("pr1");
     assert!(!pr1.enabled, "pr1 disabled by applying the project");
     assert_eq!(
@@ -719,14 +701,14 @@ fn profile_switch_in_routing_mode_changes_the_route_only() {
     custom1.category = Some("custom".to_string());
     state
         .db
-        .save_provider(AppType::Claude.as_str(), &custom1)
+        .save_provider(&AppType::Claude, &custom1)
         .expect("save custom1 provider");
 
     let mut custom2 = claude_provider("custom2", "custom-key-2");
     custom2.category = Some("custom".to_string());
     state
         .db
-        .save_provider(AppType::Claude.as_str(), &custom2)
+        .save_provider(&AppType::Claude, &custom2)
         .expect("save custom2 provider");
 
     // 初始状态：custom1 + 路由模式
@@ -765,7 +747,7 @@ fn profile_switch_in_routing_mode_changes_the_route_only() {
     );
 
     assert!(cc_switch_lib::mode::current::is_proxy(&AppType::Claude));
-    let (proxy_enabled_after, _) = state.db.get_proxy_flags_sync("claude");
+    let (proxy_enabled_after, _) = state.db.get_proxy_flags_sync(&AppType::Claude);
     assert!(
         proxy_enabled_after,
         "routing mode is mirrored for old versions"
@@ -860,21 +842,15 @@ fn claude_desktop_profile_scope_is_independent() {
 
     state
         .db
-        .save_provider(
-            AppType::ClaudeDesktop.as_str(),
-            &desktop_provider("d1", "dk-1"),
-        )
+        .save_provider(&AppType::ClaudeDesktop, &desktop_provider("d1", "dk-1"))
         .expect("save desktop provider d1");
     state
         .db
-        .save_provider(
-            AppType::ClaudeDesktop.as_str(),
-            &desktop_provider("d2", "dk-2"),
-        )
+        .save_provider(&AppType::ClaudeDesktop, &desktop_provider("d2", "dk-2"))
         .expect("save desktop provider d2");
     state
         .db
-        .set_current_provider(AppType::ClaudeDesktop.as_str(), "d1")
+        .set_current_provider(&AppType::ClaudeDesktop, "d1")
         .expect("set current desktop provider d1");
 
     // 在 Desktop 页新建项目：只拍 Desktop 供应商
@@ -897,7 +873,7 @@ fn claude_desktop_profile_scope_is_independent() {
     assert_eq!(
         state
             .db
-            .get_current_provider(AppType::ClaudeDesktop.as_str())
+            .get_current_provider(&AppType::ClaudeDesktop)
             .expect("get current desktop provider")
             .as_deref(),
         Some("d1"),

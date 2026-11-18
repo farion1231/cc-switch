@@ -16,6 +16,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
+import { useUsageFirstDate } from "@/lib/query/usage";
 import { getUsageRangePresetLabel, resolveUsageRange } from "@/lib/usageRange";
 import { getLocaleFromLanguage } from "./format";
 import type { UsageRangePreset, UsageRangeSelection } from "@/types/usage";
@@ -92,6 +93,23 @@ function setDateKeepTime(ts: number, day: Date): number {
   );
 }
 
+/** 本地日期 `YYYY-MM-DD` 当天 0 点的时间戳；认不出时为 null */
+function parseLocalDayStart(value: string | null | undefined): number | null {
+  const match = value ? /^(\d{4})-(\d{2})-(\d{2})$/.exec(value) : null;
+  if (!match) return null;
+  return toTs(
+    new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3])),
+  );
+}
+
+/** 今天最后一分钟：结束时间不能选到未来的日子 */
+function endOfTodayTs(): number {
+  const now = new Date();
+  return toTs(
+    new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59),
+  );
+}
+
 function getCalendarDays(month: Date): Date[] {
   const first = new Date(month.getFullYear(), month.getMonth(), 1);
   const gridStart = new Date(first);
@@ -140,6 +158,19 @@ export function UsageDateRangePicker({
       ),
   );
   const [error, setError] = useState<string | null>(null);
+  // 可选范围：最早到有用量记录的那天，最晚到今天。趋势图按天出柱，
+  // 选到 1905 年这种起点会一次画四万多根柱子把界面卡死（#9691）。
+  // 最早日期没查到之前不知道下界，先不让确认；查到 null（没有记录）时页面是空状态、不画图，不设下界。
+  // 查询失败时不能让确认一直点不了：放开下界，只保留「不晚于今天」
+  const firstUsageDateQuery = useUsageFirstDate(undefined, {
+    refetchInterval: false,
+  });
+  const boundsReady =
+    firstUsageDateQuery.isSuccess || firstUsageDateQuery.isError;
+  const minTs = parseLocalDayStart(firstUsageDateQuery.data);
+  const maxTs = endOfTodayTs();
+  const clampTs = (ts: number) =>
+    Math.min(Math.max(ts, minTs ?? Number.NEGATIVE_INFINITY), maxTs);
 
   const language = i18n.resolvedLanguage || i18n.language || "en";
   const locale = getLocaleFromLanguage(language);
@@ -198,14 +229,13 @@ export function UsageDateRangePicker({
 
     // When live end time is active, calendar only controls start date
     if (draftLiveEnd) {
-      const nextTs = setDateKeepTime(draftStart, day);
+      const nextTs = clampTs(setDateKeepTime(draftStart, day));
       setDraftStart(nextTs);
       return;
     }
 
-    const nextTs = setDateKeepTime(
-      activeField === "start" ? draftStart : draftEnd,
-      day,
+    const nextTs = clampTs(
+      setDateKeepTime(activeField === "start" ? draftStart : draftEnd, day),
     );
 
     if (activeField === "start") {
@@ -237,14 +267,18 @@ export function UsageDateRangePicker({
 
   const handleApply = () => {
     setError(null);
-    if (draftStart > draftEnd) {
+    if (!boundsReady) return;
+    // 手输的日期不在输入时改写（会打断逐位输入年份），确认时再收进可选范围
+    const start = clampTs(draftStart);
+    const end = draftLiveEnd ? draftEnd : clampTs(draftEnd);
+    if (start > end) {
       setError(t("usage.invalidTimeRangeOrder", "开始时间不能晚于结束时间"));
       return;
     }
     onApply({
       preset: "custom",
-      customStartDate: draftStart,
-      customEndDate: draftEnd,
+      customStartDate: start,
+      customEndDate: end,
       liveEndTime: draftLiveEnd,
     });
     setOpen(false);
@@ -290,6 +324,8 @@ export function UsageDateRangePicker({
               isEndLive && "pointer-events-none",
             )}
             value={fmtDate(ts)}
+            min={minTs != null ? fmtDate(minTs) : undefined}
+            max={fmtDate(maxTs)}
             onChange={(e) => {
               if (isEndLive) return;
               const next = parseDateInput(ts, e.target.value);
@@ -415,6 +451,7 @@ export function UsageDateRangePicker({
                 variant="solid"
                 size="compact"
                 className="flex-1"
+                disabled={!boundsReady}
                 onClick={handleApply}
               >
                 {t("common.confirm")}
@@ -503,6 +540,9 @@ export function UsageDateRangePicker({
                   dayStart >= startOfDay(startDay) &&
                   dayStart <= startOfDay(endDay);
                 const isEndpoint = isStart || isEnd;
+                const isOutOfBounds =
+                  (minTs != null && dayStart < startOfDay(fromTs(minTs))) ||
+                  dayStart > fromTs(maxTs);
 
                 return (
                   <button
@@ -511,10 +551,16 @@ export function UsageDateRangePicker({
                     aria-label={day.toLocaleDateString(locale)}
                     aria-current={isToday ? "date" : undefined}
                     aria-pressed={isEndpoint}
+                    disabled={isOutOfBounds}
                     className={cn(
                       "relative h-7 rounded text-caption transition-colors",
                       !isCurrentMonth && "text-fg-3",
-                      isCurrentMonth && !inRange && "hover:bg-subtle",
+                      isOutOfBounds &&
+                        "cursor-not-allowed text-fg-3 opacity-40",
+                      isCurrentMonth &&
+                        !inRange &&
+                        !isOutOfBounds &&
+                        "hover:bg-subtle",
                       inRange && !isEndpoint && "bg-selected text-fg-1",
                       isEndpoint && "bg-action text-action-fg font-medium",
                       isToday && !isEndpoint && "ring-1 ring-border-strong",
