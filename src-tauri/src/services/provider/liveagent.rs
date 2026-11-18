@@ -15,10 +15,10 @@ pub(super) fn list(state: &AppState) -> Result<IndexMap<String, Provider>, AppEr
         Ok(live) => live,
         Err(error) => {
             log::warn!("Failed to read LiveAgent providers; showing saved catalog: {error}");
-            return state.db.get_all_providers(APP);
+            return state.db.get_all_providers(&AppType::LiveAgent);
         }
     };
-    let mut saved = state.db.get_all_providers(APP)?;
+    let mut saved = state.db.get_all_providers(&AppType::LiveAgent)?;
     for (id, config) in &live {
         let entry = saved
             .entry(id.clone())
@@ -34,7 +34,7 @@ pub(super) fn list(state: &AppState) -> Result<IndexMap<String, Provider>, AppEr
     }
     for (id, provider) in &mut saved {
         ProviderService::set_provider_live_config_managed(provider, live.contains_key(id));
-        state.db.save_provider(APP, provider)?;
+        state.db.save_provider(&AppType::LiveAgent, provider)?;
     }
     Ok(saved)
 }
@@ -54,7 +54,11 @@ pub(super) fn add(
 ) -> Result<bool, AppError> {
     let _guard = futures::executor::block_on(state.proxy_service.lock_switch_for_app(APP));
     prepare(&mut provider)?;
-    if state.db.get_provider_by_id(&provider.id, APP)?.is_some() {
+    if state
+        .db
+        .get_provider_by_id(&provider.id, &AppType::LiveAgent)?
+        .is_some()
+    {
         return Err(AppError::InvalidInput(
             "LiveAgent provider key already exists".into(),
         ));
@@ -74,7 +78,7 @@ pub(super) fn add(
             Ok(())
         },
         || {
-            state.db.save_provider(APP, &provider)?;
+            state.db.save_provider(&AppType::LiveAgent, &provider)?;
             Ok(true)
         },
     )
@@ -91,7 +95,11 @@ pub(super) fn update(
             "LiveAgent provider keys cannot be renamed".into(),
         ));
     }
-    if state.db.get_provider_by_id(&provider.id, APP)?.is_none() {
+    if state
+        .db
+        .get_provider_by_id(&provider.id, &AppType::LiveAgent)?
+        .is_none()
+    {
         return Err(AppError::InvalidInput(
             "LiveAgent provider not found".into(),
         ));
@@ -111,7 +119,9 @@ pub(super) fn update(
             Ok(())
         },
         || {
-            state.db.save_provider(APP, &provider.borrow())?;
+            state
+                .db
+                .save_provider(&AppType::LiveAgent, &provider.borrow())?;
             Ok(true)
         },
     )
@@ -121,7 +131,7 @@ pub(super) fn enable(state: &AppState, id: &str) -> Result<SwitchResult, AppErro
     let _guard = futures::executor::block_on(state.proxy_service.lock_switch_for_app(APP));
     let mut provider = state
         .db
-        .get_provider_by_id(id, APP)?
+        .get_provider_by_id(id, &AppType::LiveAgent)?
         .ok_or_else(|| AppError::InvalidInput("LiveAgent provider not found".into()))?;
     native::validate_provider(id, &provider.settings_config)?;
     ProviderService::set_provider_live_config_managed(&mut provider, true);
@@ -138,7 +148,9 @@ pub(super) fn enable(state: &AppState, id: &str) -> Result<SwitchResult, AppErro
             Ok(())
         },
         || {
-            state.db.save_provider(APP, &provider.borrow())?;
+            state
+                .db
+                .save_provider(&AppType::LiveAgent, &provider.borrow())?;
             Ok(SwitchResult::default())
         },
     )
@@ -146,7 +158,7 @@ pub(super) fn enable(state: &AppState, id: &str) -> Result<SwitchResult, AppErro
 
 pub(super) fn remove(state: &AppState, id: &str, delete: bool) -> Result<(), AppError> {
     let _guard = futures::executor::block_on(state.proxy_service.lock_switch_for_app(APP));
-    let Some(mut provider) = state.db.get_provider_by_id(id, APP)? else {
+    let Some(mut provider) = state.db.get_provider_by_id(id, &AppType::LiveAgent)? else {
         return Ok(());
     };
     ProviderService::set_provider_live_config_managed(&mut provider, false);
@@ -164,9 +176,11 @@ pub(super) fn remove(state: &AppState, id: &str, delete: bool) -> Result<(), App
         },
         || {
             if delete {
-                state.db.delete_provider(APP, id)?;
+                state.db.delete_provider(&AppType::LiveAgent, id)?;
             } else {
-                state.db.save_provider(APP, &provider.borrow())?;
+                state
+                    .db
+                    .save_provider(&AppType::LiveAgent, &provider.borrow())?;
             }
             Ok(())
         },
@@ -238,7 +252,11 @@ mod tests {
         enable(&state, "second").unwrap();
         native::set_default("second", "model").unwrap();
         remove(&state, "first", false).unwrap();
-        assert!(state.db.get_provider_by_id("first", APP).unwrap().is_some());
+        assert!(state
+            .db
+            .get_provider_by_id("first", &AppType::LiveAgent)
+            .unwrap()
+            .is_some());
         assert!(!native::get_providers().unwrap().contains_key("first"));
         enable(&state, "first").unwrap();
         assert_eq!(
@@ -246,7 +264,11 @@ mod tests {
             "new-key"
         );
         remove(&state, "first", true).unwrap();
-        assert!(state.db.get_provider_by_id("first", APP).unwrap().is_none());
+        assert!(state
+            .db
+            .get_provider_by_id("first", &AppType::LiveAgent)
+            .unwrap()
+            .is_none());
         let saved = list(&state).unwrap();
         assert!(saved["second"]
             .meta

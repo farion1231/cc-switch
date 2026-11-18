@@ -357,7 +357,7 @@ export const SessionReaderHeader = memo(function SessionReaderHeader({
           ) && (
             <p className="px-2.5 pb-1.5 text-caption text-fg-2">
               {t(
-                nativeDeleteHintKey(session.providerId) ??
+                nativeDeleteHintKey(session) ??
                   "sessionManager.mcodeDeleteHint",
                 {
                   defaultValue: "请在 MiniMax Code 中删除",

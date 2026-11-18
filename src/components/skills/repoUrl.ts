@@ -2,13 +2,13 @@
 export const GITHUB_HOST = "github.com";
 
 export interface ParsedRepoUrl {
-  /** 只有 GitLab 仓库才带；GitHub 仓库不写，后端按 github.com 处理 */
+  /** GitLab / Gitea 仓库才带；GitHub 仓库不写，后端按 github.com 处理 */
   host?: string;
   owner: string;
   name: string;
 }
 
-/** 仓库首页：GitHub 与 GitLab 都是 `https://<主机>/<owner>/<name>` */
+/** 仓库首页：GitHub、GitLab、Gitea 都是 `https://<主机>/<owner>/<name>` */
 export function repoWebUrl(repo: {
   host?: string;
   owner: string;
@@ -17,10 +17,16 @@ export function repoWebUrl(repo: {
   return `https://${repo.host || GITHUB_HOST}/${repo.owner}/${repo.name}`;
 }
 
+const GITEA_REF_KINDS = ["branch", "tag", "commit"];
+
 const stripRepoSuffix = (path: string) =>
   path.replace(/\/+$/, "").replace(/\.git$/, "");
 
-function fromHostAndPath(host: string, path: string): ParsedRepoUrl | null {
+function fromHostAndPath(
+  host: string,
+  path: string,
+  isWebUrl = false,
+): ParsedRepoUrl | null {
   const normalizedHost = host
     .toLowerCase()
     .replace(/^www\.(?=github\.com$)/, "");
@@ -32,6 +38,20 @@ function fromHostAndPath(host: string, path: string): ParsedRepoUrl | null {
 
   if (normalizedHost === GITHUB_HOST) {
     return parts.length === 2 ? { owner: parts[0], name: parts[1] } : null;
+  }
+  // Gitea / Forgejo 的页面地址是 `owner/repo/src/branch/main/…`（还有 tag、commit），
+  // 仓库只有前两段。这里分不清主机是哪种平台，只能认形状，所以收得很紧：
+  // 带 `/-/` 的是 GitLab 页面，以 `.git` 结尾的和 SSH 写法是克隆地址，都不是它。
+  // 剩下认错的只有 GitLab 上叫 `group/x/src/branch/…` 的嵌套分组的网页地址，
+  // 那种改填克隆地址（带 `.git`）即可。
+  const isGiteaPage =
+    isWebUrl &&
+    marker < 0 &&
+    !/\.git\/*$/.test(path) &&
+    parts[2] === "src" &&
+    GITEA_REF_KINDS.includes(parts[3]);
+  if (isGiteaPage) {
+    return { host: normalizedHost, owner: parts[0], name: parts[1] };
   }
   // GitLab 的分组可以嵌套：最后一段是项目名，前面整段是分组路径
   if (parts.length < 2) return null;
@@ -47,6 +67,7 @@ function fromHostAndPath(host: string, path: string): ParsedRepoUrl | null {
  * - `owner/name`（GitHub）
  * - `https://github.com/owner/name[.git]`
  * - `https://<GitLab 主机>[:端口]/group[/subgroup…]/project[.git]`
+ * - `https://<Gitea 主机>[:端口]/owner/repo[.git]`（Forgejo / Codeberg 同）
  * - `git@<主机>:group/project.git`、`ssh://git@<主机>[:端口]/group/project.git`
  *   （只取坐标，下载仍走 https；SSH 端口与 https 端口无关，丢掉）
  */
@@ -71,7 +92,7 @@ export function parseRepoUrl(url: string): ParsedRepoUrl | null {
     try {
       const parsed = new URL(trimmed);
       // `host` 带端口，`hostname` 不带：自建实例常用非默认端口
-      return fromHostAndPath(parsed.host, parsed.pathname);
+      return fromHostAndPath(parsed.host, parsed.pathname, true);
     } catch {
       return null;
     }
@@ -85,7 +106,7 @@ export function parseRepoUrl(url: string): ParsedRepoUrl | null {
 }
 
 /**
- * 明文 http 的 GitLab 地址：技能内容会被 AI 工具当指令执行，下载只走 https，
+ * 明文 http 的 GitLab / Gitea 地址：技能内容会被 AI 工具当指令执行，下载只走 https，
  * 所以这类地址要单独提示，而不是存进去再报一个看不懂的网络错误。
  */
 export function isInsecureRepoUrl(url: string): boolean {

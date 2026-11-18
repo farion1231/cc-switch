@@ -210,7 +210,7 @@ describe("完整表单按实际模式提示（Claude Code）", () => {
     expect(shownOnPage("providerForm.modelMappingHint")).toHaveLength(0);
     expect(shownOnPage(/^看供应商原生支持哪种协议/)).toHaveLength(0);
     expect(
-      screen.getByText("以下两项只在路由、聚合模式下生效。"),
+      screen.getByText("以下设置只在路由、聚合模式下生效。"),
     ).toBeInTheDocument();
   });
 
