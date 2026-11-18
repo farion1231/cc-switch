@@ -2,6 +2,7 @@
 //!
 //! 管理代理模式下的故障转移队列（基于 providers 表的 in_failover_queue 字段）
 
+use crate::app_config::AppType;
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use crate::provider::Provider;
@@ -20,7 +21,10 @@ pub struct FailoverQueueItem {
 
 impl Database {
     /// 获取故障转移队列（按 sort_index 排序）
-    pub fn get_failover_queue(&self, app_type: &str) -> Result<Vec<FailoverQueueItem>, AppError> {
+    pub fn get_failover_queue(
+        &self,
+        app_type: &AppType,
+    ) -> Result<Vec<FailoverQueueItem>, AppError> {
         let conn = lock_conn!(self.conn);
 
         let mut stmt = conn
@@ -49,12 +53,16 @@ impl Database {
     }
 
     /// 获取故障转移队列中的供应商（完整 Provider 信息，与队列的排序一致）
-    pub fn get_failover_providers(&self, app_type: &str) -> Result<Vec<Provider>, AppError> {
+    pub fn get_failover_providers(&self, app_type: &AppType) -> Result<Vec<Provider>, AppError> {
         Ok(self.load_providers(app_type, true)?.into_values().collect())
     }
 
     /// 添加供应商到故障转移队列
-    pub fn add_to_failover_queue(&self, app_type: &str, provider_id: &str) -> Result<(), AppError> {
+    pub fn add_to_failover_queue(
+        &self,
+        app_type: &AppType,
+        provider_id: &str,
+    ) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
 
         conn.execute(
@@ -69,7 +77,7 @@ impl Database {
     /// 从故障转移队列中移除供应商
     pub fn remove_from_failover_queue(
         &self,
-        app_type: &str,
+        app_type: &AppType,
         provider_id: &str,
     ) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
@@ -108,22 +116,22 @@ mod tests {
             provider.sort_index = Some(1);
             provider.created_at = Some(created_at);
             provider.in_failover_queue = queued;
-            db.save_provider("claude", &provider).unwrap();
-            db.add_custom_endpoint("claude", id, &format!("https://{id}.example.com"))
+            db.save_provider(&AppType::Claude, &provider).unwrap();
+            db.add_custom_endpoint(&AppType::Claude, id, &format!("https://{id}.example.com"))
                 .unwrap();
         }
         let other_app = Provider::with_id("a".into(), "other app".into(), json!({}), None);
-        db.save_provider("codex", &other_app).unwrap();
-        db.add_custom_endpoint("codex", "a", "https://codex.example.com")
+        db.save_provider(&AppType::Codex, &other_app).unwrap();
+        db.add_custom_endpoint(&AppType::Codex, "a", "https://codex.example.com")
             .unwrap();
 
-        let all = db.get_all_providers("claude").unwrap();
+        let all = db.get_all_providers(&AppType::Claude).unwrap();
         assert_eq!(
             all.keys().map(String::as_str).collect::<Vec<_>>(),
             ["outside", "b", "a"]
         );
-        let queued = db.get_failover_providers("claude").unwrap();
-        let queue = db.get_failover_queue("claude").unwrap();
+        let queued = db.get_failover_providers(&AppType::Claude).unwrap();
+        let queue = db.get_failover_queue(&AppType::Claude).unwrap();
         assert_eq!(
             queued.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(),
             queue

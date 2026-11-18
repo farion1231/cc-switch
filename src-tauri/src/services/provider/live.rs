@@ -768,7 +768,7 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
 /// Writes all providers from the database to the live configuration file.
 /// Used for OpenCode and other additive mode applications.
 fn sync_all_providers_to_live(state: &AppState, app_type: &AppType) -> Result<(), AppError> {
-    let providers = state.db.get_all_providers(app_type.as_str())?;
+    let providers = state.db.get_all_providers(app_type)?;
     let mut synced_count = 0usize;
 
     for provider in providers.values() {
@@ -869,7 +869,7 @@ pub(crate) fn sync_current_provider_for_app_respecting_mode(
         None => return Ok(None),
     };
 
-    let providers = state.db.get_all_providers(app_type.as_str())?;
+    let providers = state.db.get_all_providers(app_type)?;
     let Some(provider) = providers.get(&current_id) else {
         return Ok(None);
     };
@@ -882,7 +882,7 @@ pub(crate) fn sync_current_provider_for_app_respecting_mode(
 pub(crate) fn initialize_dsh_profiles(state: &AppState) -> Result<(), AppError> {
     let providers = state
         .db
-        .get_all_providers("dsh")?
+        .get_all_providers(&AppType::Dsh)?
         .into_iter()
         .filter(|(_, provider)| {
             provider
@@ -1114,7 +1114,7 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
     // - 启动编排顺序是先 import 后 seed，新用户启动时 providers 为空，导入照常
     // - 老用户已有非 seed provider，跳过导入（正确）
     // - 用户手动点 ProviderEmptyState 的导入按钮时，与官方 seed 共存而不被阻塞
-    if state.db.has_non_official_seed_provider(app_type.as_str())? {
+    if state.db.has_non_official_seed_provider(&app_type)? {
         return Ok(false);
     }
 
@@ -1280,12 +1280,10 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         provider.website_url = Some("https://github.com/features/copilot/cli".to_string());
     }
 
-    state.db.save_provider(app_type.as_str(), &provider)?;
+    state.db.save_provider(&app_type, &provider)?;
     // Copilot 是累加式，没有直连指针：「默认」看 Copilot 自己的 settings.json。
     if !app_type.spec().additive {
-        state
-            .db
-            .set_current_provider(app_type.as_str(), &provider.id)?;
+        state.db.set_current_provider(&app_type, &provider.id)?;
         crate::settings::set_current_provider(&app_type, Some(provider.id.as_str()))?;
     }
 
@@ -1325,7 +1323,7 @@ pub fn should_import_default_config_on_startup(
         return Ok(false);
     }
 
-    Ok(!state.db.has_any_provider_for_app(app_type.as_str())?)
+    Ok(!state.db.has_any_provider_for_app(app_type)?)
 }
 
 /// Remove an OpenCode provider from the live configuration
@@ -1364,7 +1362,7 @@ pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, Ap
 
     let mut imported = 0;
     let mut updated = 0;
-    let existing_ids = state.db.get_provider_ids("opencode")?;
+    let existing_ids = state.db.get_provider_ids(&AppType::OpenCode)?;
 
     for (id, (settings_config, format)) in providers {
         // Keep validation and display-name extraction separate from persistence.
@@ -1389,7 +1387,7 @@ pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, Ap
             (format == OpenCodeConfigFormat::V2).then_some(OpenCodeConfigFormat::V2);
 
         if existing_ids.contains(&id) {
-            match state.db.get_provider_by_id(&id, "opencode") {
+            match state.db.get_provider_by_id(&id, &AppType::OpenCode) {
                 Ok(Some(existing)) => {
                     let display_name = name.clone().unwrap_or_else(|| existing.name.clone());
                     if existing.settings_config != settings_config
@@ -1403,7 +1401,7 @@ pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, Ap
                             .meta
                             .get_or_insert_with(Default::default)
                             .opencode_config_format = native_format;
-                        if let Err(e) = state.db.save_provider("opencode", &provider) {
+                        if let Err(e) = state.db.save_provider(&AppType::OpenCode, &provider) {
                             log::warn!(
                                 "Failed to update OpenCode provider '{id}' from live config: {e}"
                             );
@@ -1431,7 +1429,7 @@ pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, Ap
         });
 
         // Save to database
-        if let Err(e) = state.db.save_provider("opencode", &provider) {
+        if let Err(e) = state.db.save_provider(&AppType::OpenCode, &provider) {
             log::warn!("Failed to import OpenCode provider '{id}': {e}");
             continue;
         }
@@ -1458,7 +1456,7 @@ pub fn import_openclaw_providers_from_live(state: &AppState) -> Result<usize, Ap
 
     let mut imported = 0;
     let mut updated = 0;
-    let existing_ids = state.db.get_provider_ids("openclaw")?;
+    let existing_ids = state.db.get_provider_ids(&AppType::OpenClaw)?;
 
     for (id, config) in providers {
         // Validate: skip entries with empty id or no models
@@ -1481,12 +1479,12 @@ pub fn import_openclaw_providers_from_live(state: &AppState) -> Result<usize, Ap
         };
 
         if existing_ids.contains(&id) {
-            match state.db.get_provider_by_id(&id, "openclaw") {
+            match state.db.get_provider_by_id(&id, &AppType::OpenClaw) {
                 Ok(Some(existing)) => {
                     if existing.settings_config != settings_config {
                         let mut provider = existing;
                         provider.settings_config = settings_config;
-                        if let Err(e) = state.db.save_provider("openclaw", &provider) {
+                        if let Err(e) = state.db.save_provider(&AppType::OpenClaw, &provider) {
                             log::warn!(
                                 "Failed to update OpenClaw provider '{id}' from live config: {e}"
                             );
@@ -1519,7 +1517,7 @@ pub fn import_openclaw_providers_from_live(state: &AppState) -> Result<usize, Ap
         });
 
         // Save to database
-        if let Err(e) = state.db.save_provider("openclaw", &provider) {
+        if let Err(e) = state.db.save_provider(&AppType::OpenClaw, &provider) {
             log::warn!("Failed to import OpenClaw provider '{id}': {e}");
             continue;
         }
@@ -1546,7 +1544,7 @@ pub fn import_hermes_providers_from_live(state: &AppState) -> Result<usize, AppE
 
     let mut imported = 0;
     let mut updated = 0;
-    let existing_ids = state.db.get_provider_ids("hermes")?;
+    let existing_ids = state.db.get_provider_ids(&AppType::Hermes)?;
 
     for (name, config) in providers {
         // Validate: skip entries with empty name
@@ -1556,12 +1554,12 @@ pub fn import_hermes_providers_from_live(state: &AppState) -> Result<usize, AppE
         }
 
         if existing_ids.contains(&name) {
-            match state.db.get_provider_by_id(&name, "hermes") {
+            match state.db.get_provider_by_id(&name, &AppType::Hermes) {
                 Ok(Some(existing)) => {
                     if existing.settings_config != config {
                         let mut provider = existing;
                         provider.settings_config = config;
-                        if let Err(e) = state.db.save_provider("hermes", &provider) {
+                        if let Err(e) = state.db.save_provider(&AppType::Hermes, &provider) {
                             log::warn!(
                                 "Failed to update Hermes provider '{name}' from live config: {e}"
                             );
@@ -1587,7 +1585,7 @@ pub fn import_hermes_providers_from_live(state: &AppState) -> Result<usize, AppE
         });
 
         // Save to database
-        if let Err(e) = state.db.save_provider("hermes", &provider) {
+        if let Err(e) = state.db.save_provider(&AppType::Hermes, &provider) {
             log::warn!("Failed to import Hermes provider '{name}': {e}");
             continue;
         }

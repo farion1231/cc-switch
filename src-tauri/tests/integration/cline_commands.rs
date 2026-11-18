@@ -168,7 +168,7 @@ fn cline_provider_lifecycle_imports_native_config_and_keeps_cline_owned_entries(
     assert!(home.models()["providers"].get("ccs-relay").is_none());
     assert!(!state
         .db
-        .get_all_providers("cline")
+        .get_all_providers(&AppType::Cline)
         .unwrap()
         .contains_key("ccs-relay"));
     assert_eq!(
@@ -192,13 +192,18 @@ fn cline_login_tokens_never_reach_the_database() {
                "tokenSource": "oauth"}),
         None,
     );
-    state.db.save_provider("cline", &legacy).unwrap();
+    state.db.save_provider(&AppType::Cline, &legacy).unwrap();
 
     let listed = ProviderService::list(&state, AppType::Cline).unwrap();
     assert!(listed["cline"].settings_config["settings"]
         .get("auth")
         .is_none());
-    for provider in state.db.get_all_providers("cline").unwrap().values() {
+    for provider in state
+        .db
+        .get_all_providers(&AppType::Cline)
+        .unwrap()
+        .values()
+    {
         assert!(
             provider.settings_config["settings"].get("auth").is_none(),
             "{} kept credentials",
@@ -218,7 +223,7 @@ fn cline_login_tokens_never_reach_the_database() {
     assert_eq!(entry["settings"]["model"], "anthropic/claude-opus-5-5");
     assert!(state
         .db
-        .get_provider_by_id("cline", "cline")
+        .get_provider_by_id("cline", &AppType::Cline)
         .unwrap()
         .unwrap()
         .settings_config["settings"]
@@ -272,7 +277,7 @@ fn cline_rejects_settings_that_would_reset_its_provider_file() {
     assert_eq!(home.providers(), native);
     assert!(!state
         .db
-        .get_all_providers("cline")
+        .get_all_providers(&AppType::Cline)
         .unwrap()
         .contains_key("ccs-bad"));
 }
