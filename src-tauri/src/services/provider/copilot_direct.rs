@@ -247,14 +247,14 @@ mod tests {
                 json!({"provider":{"baseUrl":"https://old.test/v1"},"models":[{"id":"old"}],"reasoningEffort":"max"}),
                 None,
             );
-            state.db.save_provider("copilot", &mine).unwrap();
+            state.db.save_provider(&AppType::Copilot, &mine).unwrap();
             let legacy = Provider::with_id(
                 "legacy".into(),
                 "Legacy".into(),
                 json!({"env":{"COPILOT_PROVIDER_BASE_URL":"https://legacy.test/v1","COPILOT_PROVIDER_API_KEY":"k","COPILOT_MODEL":"lm"}}),
                 None,
             );
-            state.db.save_provider("copilot", &legacy).unwrap();
+            state.db.save_provider(&AppType::Copilot, &legacy).unwrap();
             let mut official = Provider::with_id(
                 "foundry".into(),
                 "GitHub Copilot".into(),
@@ -262,7 +262,10 @@ mod tests {
                 None,
             );
             official.category = Some("official".into());
-            state.db.save_provider("copilot", &official).unwrap();
+            state
+                .db
+                .save_provider(&AppType::Copilot, &official)
+                .unwrap();
 
             let listed = ProviderService::list(state, AppType::Copilot).unwrap();
             // 官方卡不参与合并，也永远不是「已添加」
@@ -294,7 +297,7 @@ mod tests {
             // 转换结果存回库里
             let saved = state
                 .db
-                .get_provider_by_id("legacy", "copilot")
+                .get_provider_by_id("legacy", &AppType::Copilot)
                 .unwrap()
                 .unwrap();
             assert_eq!(saved.settings_config, legacy.settings_config);
@@ -350,7 +353,7 @@ mod tests {
             assert!(import_default_config(state, AppType::Copilot).unwrap());
             let row = state
                 .db
-                .get_provider_by_id("default", "copilot")
+                .get_provider_by_id("default", &AppType::Copilot)
                 .unwrap()
                 .unwrap();
             assert!(is_official(&row));

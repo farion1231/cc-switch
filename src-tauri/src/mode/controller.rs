@@ -60,7 +60,7 @@ fn err(error: impl std::fmt::Display) -> String {
 }
 
 fn provider(state: &AppState, app: &AppType, id: &str) -> Result<Option<Provider>, String> {
-    state.db.get_provider_by_id(id, app.as_str()).map_err(err)
+    state.db.get_provider_by_id(id, app).map_err(err)
 }
 
 fn direct_provider(state: &AppState, app: &AppType) -> Result<Option<Provider>, String> {
@@ -904,7 +904,7 @@ pub async fn exit(state: &AppState, app: &AppType) -> Result<(), String> {
         let _guard = lock_settled(state, app).await.map_err(|e| e.to_string())?;
         exit_locked(state, app, false)?;
     }
-    if let Err(error) = state.db.clear_provider_health_for_app(app.as_str()).await {
+    if let Err(error) = state.db.clear_provider_health_for_app(app).await {
         log::warn!("清除 {} 健康状态失败: {error}", app.as_str());
     }
     stop_server_if_unused(state).await;
@@ -923,7 +923,7 @@ pub async fn exit_apps_in_mode(state: &AppState, stack: bool) -> Result<Vec<Stri
             }
             exit_locked(state, &app, false)?;
         }
-        if let Err(error) = state.db.clear_provider_health_for_app(app.as_str()).await {
+        if let Err(error) = state.db.clear_provider_health_for_app(&app).await {
             log::warn!("清除 {} 健康状态失败: {error}", app.as_str());
         }
         exited.push(app.as_str().to_string());
@@ -1399,7 +1399,7 @@ pub async fn sync_stack_order(state: &AppState, app: &AppType) -> Result<(), Str
     if current.members.len() < 2 {
         return Ok(());
     }
-    let providers = state.db.get_all_providers(app.as_str()).map_err(err)?;
+    let providers = state.db.get_all_providers(app).map_err(err)?;
     let mut next = current.clone();
     // 稳定排序：sort_index 相同或缺失时保留原名单顺序。
     next.members.sort_by_key(|id| {
@@ -1518,7 +1518,7 @@ pub async fn adopt_codex_stack_catalog(state: &AppState) -> Result<Option<&'stat
     if let Some(settings) = codex_direct::settings_without_row_catalog(&route) {
         state
             .db
-            .update_provider_settings_config(app.as_str(), &route.id, &settings)
+            .update_provider_settings_config(&app, &route.id, &settings)
             .map_err(err)?;
         route.settings_config = settings;
     }
@@ -1773,7 +1773,7 @@ async fn startup_app(state: &AppState, app: &AppType) -> Result<(), String> {
         }
         card.is_some()
     } else {
-        state.db.get_proxy_flags_sync(app.as_str()).0
+        state.db.get_proxy_flags_sync(app).0
     };
     let want_proxy = if legacy {
         enabled
@@ -1882,7 +1882,7 @@ fn adopt_legacy_desktop_card(
 /// 旧版的接管备份行：不回放，转存到本机文件后删除。留着的话，降级后旧版启动时会把这份
 /// 陈旧的快照写回客户端。
 async fn drain_legacy_backup(state: &AppState, app: &AppType) -> bool {
-    let backup = match state.db.get_live_backup(app.as_str()).await {
+    let backup = match state.db.get_live_backup(app).await {
         Ok(Some(backup)) => backup,
         Ok(None) => return false,
         Err(error) => {
@@ -1909,7 +1909,7 @@ async fn drain_legacy_backup(state: &AppState, app: &AppType) -> bool {
     });
     match saved {
         Ok(()) => {
-            if let Err(error) = state.db.delete_live_backup(app.as_str()).await {
+            if let Err(error) = state.db.delete_live_backup(app).await {
                 log::warn!("删除 {} 的旧接管备份失败: {error}", app.as_str());
             } else {
                 log::info!(
@@ -2696,10 +2696,9 @@ mod mode_tests {
     async fn state_with(app: AppType, rows: &[Provider], current: &str) -> AppState {
         let db = Arc::new(Database::memory().expect("memory db"));
         for row in rows {
-            db.save_provider(app.as_str(), row).expect("save provider");
+            db.save_provider(&app, row).expect("save provider");
         }
-        db.set_current_provider(app.as_str(), current)
-            .expect("set current");
+        db.set_current_provider(&app, current).expect("set current");
         crate::settings::set_current_provider(&app, Some(current)).expect("local current");
         let mut proxy = db.get_global_proxy_config().await.expect("ephemeral port");
         proxy.listen_port = 0;
@@ -2812,7 +2811,7 @@ mod mode_tests {
         assert_eq!(entered.proxy_route.as_deref(), Some("a"));
         assert!(entered.contract.is_some());
         assert!(
-            state.db.get_proxy_flags_sync("claude").0,
+            state.db.get_proxy_flags_sync(&AppType::Claude).0,
             "enabled mirrors the mode"
         );
 
@@ -2828,7 +2827,7 @@ mod mode_tests {
         let left = mode(&AppType::Claude);
         assert_eq!(left.mode, Some(Mode::Direct));
         assert_eq!(left.proxy_route.as_deref(), Some("a"), "the route is kept");
-        assert!(!state.db.get_proxy_flags_sync("claude").0);
+        assert!(!state.db.get_proxy_flags_sync(&AppType::Claude).0);
         assert!(!state.proxy_service.is_running().await);
     }
 
@@ -3128,7 +3127,11 @@ mod mode_tests {
         failpoint::crash_at(None);
         assert!(interrupted.is_err());
 
-        let mut row = state.db.get_provider_by_id("b", "claude").unwrap().unwrap();
+        let mut row = state
+            .db
+            .get_provider_by_id("b", &AppType::Claude)
+            .unwrap()
+            .unwrap();
         let base =
             ProviderService::editor_view(&state, AppType::Claude, &row.settings_config, None)
                 .expect("view")
@@ -3154,7 +3157,7 @@ mod mode_tests {
         let b_token = |state: &AppState| {
             state
                 .db
-                .get_provider_by_id("b", "claude")
+                .get_provider_by_id("b", &AppType::Claude)
                 .unwrap()
                 .unwrap()
                 .settings_config["env"]["ANTHROPIC_AUTH_TOKEN"]
@@ -3222,7 +3225,7 @@ mod mode_tests {
             assert_eq!(recovered.attached, expect_proxy, "{point}");
             assert_eq!(live_is_proxy, expect_proxy, "{point}: file and state agree");
             assert_eq!(
-                state.db.get_proxy_flags_sync("claude").0,
+                state.db.get_proxy_flags_sync(&AppType::Claude).0,
                 expect_proxy,
                 "{point}"
             );
@@ -3282,20 +3285,25 @@ mod mode_tests {
             state
                 .db
                 .save_live_backup(
-                    "claude",
+                    &AppType::Claude,
                     r#"{"env":{"ANTHROPIC_BASE_URL":"https://stale.example"}}"#,
                 )
                 .await
                 .unwrap();
             state
                 .db
-                .set_proxy_flags_sync("claude", enabled, false)
+                .set_proxy_flags_sync(&AppType::Claude, enabled, false)
                 .unwrap();
 
             startup(&state).await;
 
             assert!(
-                state.db.get_live_backup("claude").await.unwrap().is_none(),
+                state
+                    .db
+                    .get_live_backup(&AppType::Claude)
+                    .await
+                    .unwrap()
+                    .is_none(),
                 "the old version would replay a leftover backup row after a downgrade"
             );
             let drained = home.dir.path().join(".cc-switch/backups/proxy-live-backup");
@@ -3379,8 +3387,11 @@ mod mode_tests {
             json!({ "GEMINI_API_KEY": "real-key", "GOOGLE_GEMINI_BASE_URL": "https://g.example" }),
             json!({}),
         );
-        state.db.save_provider("gemini", &row).unwrap();
-        state.db.set_current_provider("gemini", "g").unwrap();
+        state.db.save_provider(&AppType::Gemini, &row).unwrap();
+        state
+            .db
+            .set_current_provider(&AppType::Gemini, "g")
+            .unwrap();
         crate::settings::set_current_provider(&AppType::Gemini, Some("g")).unwrap();
         enter(&state, &AppType::Claude, false)
             .await
@@ -3519,7 +3530,7 @@ mod mode_tests {
         );
         let relay_row = state
             .db
-            .get_provider_by_id("relay", "codex")
+            .get_provider_by_id("relay", &AppType::Codex)
             .unwrap()
             .unwrap();
         assert!(
@@ -4162,7 +4173,7 @@ model_provider = "c"
         );
         let row = state
             .db
-            .get_provider_by_id(&official.id, "codex")
+            .get_provider_by_id(&official.id, &AppType::Codex)
             .unwrap()
             .unwrap();
         assert_eq!(
@@ -4681,7 +4692,11 @@ model_provider = "c"
         seed_codex(CODEX_USER_LIVE, None);
         let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
         let save = |id: &str, settings: Value, base: Value| {
-            let mut row = state.db.get_provider_by_id(id, "codex").unwrap().unwrap();
+            let mut row = state
+                .db
+                .get_provider_by_id(id, &AppType::Codex)
+                .unwrap()
+                .unwrap();
             row.settings_config = settings;
             ProviderService::update_from_editor(
                 &state,
@@ -4697,7 +4712,11 @@ model_provider = "c"
         };
 
         // 编辑非当前的 b：显示的是切到 b 之后的 config.toml（Key 在输入框里，不在 TOML 里）。
-        let b_row = state.db.get_provider_by_id("b", "codex").unwrap().unwrap();
+        let b_row = state
+            .db
+            .get_provider_by_id("b", &AppType::Codex)
+            .unwrap()
+            .unwrap();
         let view =
             ProviderService::editor_view(&state, AppType::Codex, &b_row.settings_config, None)
                 .expect("view b");
@@ -4728,7 +4747,11 @@ model_provider = "c"
             Some("gpt-a"),
             "b is not current: {live}"
         );
-        let b_row = state.db.get_provider_by_id("b", "codex").unwrap().unwrap();
+        let b_row = state
+            .db
+            .get_provider_by_id("b", &AppType::Codex)
+            .unwrap()
+            .unwrap();
         let b_config = b_row.settings_config["config"].as_str().unwrap();
         assert!(
             b_config.contains("gpt-b2") && !b_config.contains("approval_policy"),
@@ -4736,7 +4759,11 @@ model_provider = "c"
         );
 
         // 编辑当前的 a：关键字段立刻换进 live。
-        let a_row = state.db.get_provider_by_id("a", "codex").unwrap().unwrap();
+        let a_row = state
+            .db
+            .get_provider_by_id("a", &AppType::Codex)
+            .unwrap()
+            .unwrap();
         let view =
             ProviderService::editor_view(&state, AppType::Codex, &a_row.settings_config, None)
                 .expect("view a");
@@ -4750,7 +4777,11 @@ model_provider = "c"
         assert!(codex_text().contains("[mcp_servers.git]"));
 
         // 打开编辑器之后别的程序改了同一个键：保存时报冲突，什么都不写。
-        let a_row = state.db.get_provider_by_id("a", "codex").unwrap().unwrap();
+        let a_row = state
+            .db
+            .get_provider_by_id("a", &AppType::Codex)
+            .unwrap()
+            .unwrap();
         let view =
             ProviderService::editor_view(&state, AppType::Codex, &a_row.settings_config, None)
                 .expect("view a again");
@@ -4787,7 +4818,11 @@ model_provider = "c"
         );
         let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
         let open = |id: &str| {
-            let row = state.db.get_provider_by_id(id, "codex").unwrap().unwrap();
+            let row = state
+                .db
+                .get_provider_by_id(id, &AppType::Codex)
+                .unwrap()
+                .unwrap();
             let view =
                 ProviderService::editor_view(&state, AppType::Codex, &row.settings_config, None)
                     .expect("view");
@@ -4810,7 +4845,7 @@ model_provider = "c"
         let a_config = |state: &AppState| {
             state
                 .db
-                .get_provider_by_id("a", "codex")
+                .get_provider_by_id("a", &AppType::Codex)
                 .unwrap()
                 .unwrap()
                 .settings_config["config"]
@@ -4880,7 +4915,11 @@ model_provider = "c"
         );
         let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
 
-        let mut row = state.db.get_provider_by_id("a", "codex").unwrap().unwrap();
+        let mut row = state
+            .db
+            .get_provider_by_id("a", &AppType::Codex)
+            .unwrap()
+            .unwrap();
         let base = ProviderService::editor_view(&state, AppType::Codex, &row.settings_config, None)
             .expect("view")
             .settings;
@@ -4912,7 +4951,11 @@ model_provider = "c"
             doc["profiles"]["work"]["model_provider"].as_str(),
             Some("custom")
         );
-        let stored = state.db.get_provider_by_id("a", "codex").unwrap().unwrap();
+        let stored = state
+            .db
+            .get_provider_by_id("a", &AppType::Codex)
+            .unwrap()
+            .unwrap();
         assert!(!stored.settings_config["config"]
             .as_str()
             .unwrap()
@@ -4951,7 +4994,7 @@ model_provider = "c"
         let config_of = |id: &str| {
             state
                 .db
-                .get_provider_by_id(id, "codex")
+                .get_provider_by_id(id, &AppType::Codex)
                 .unwrap()
                 .unwrap()
                 .settings_config["config"]
@@ -5030,7 +5073,11 @@ model_provider = "c"
         seed_codex(CODEX_USER_LIVE, None);
         let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
 
-        let mut row = state.db.get_provider_by_id("a", "codex").unwrap().unwrap();
+        let mut row = state
+            .db
+            .get_provider_by_id("a", &AppType::Codex)
+            .unwrap()
+            .unwrap();
         let view = ProviderService::editor_view(&state, AppType::Codex, &row.settings_config, None)
             .expect("view a");
         let shown = view.settings["config"].as_str().unwrap();
@@ -5303,9 +5350,13 @@ model_provider = "c"
         assert_eq!(fs::read(gemini_env_path()).unwrap(), before);
         assert_eq!(in_use(&state, &AppType::Gemini).as_deref(), Some("b"));
 
-        let mut changed = state.db.get_provider_by_id("a", "gemini").unwrap().unwrap();
+        let mut changed = state
+            .db
+            .get_provider_by_id("a", &AppType::Gemini)
+            .unwrap()
+            .unwrap();
         changed.settings_config["env"]["GEMINI_MODEL"] = json!("m-changed");
-        state.db.save_provider("gemini", &changed).unwrap();
+        state.db.save_provider(&AppType::Gemini, &changed).unwrap();
         let result = ProviderService::switch(&state, AppType::Gemini, "a").expect("changed model");
         assert_eq!(
             result.route,
@@ -5330,7 +5381,11 @@ model_provider = "c"
         seed_gemini(GEMINI_USER_ENV, GEMINI_USER_SETTINGS);
         let state = state_with(AppType::Gemini, &gemini_a_vertex(), "a").await;
 
-        let a = state.db.get_provider_by_id("a", "gemini").unwrap().unwrap();
+        let a = state
+            .db
+            .get_provider_by_id("a", &AppType::Gemini)
+            .unwrap()
+            .unwrap();
         let view = ProviderService::editor_view(&state, AppType::Gemini, &a.settings_config, None)
             .expect("view");
         assert_eq!(view.settings["env"]["GEMINI_SANDBOX"], json!("docker"));
@@ -5364,7 +5419,11 @@ model_provider = "c"
             "{env}"
         );
         assert_eq!(gemini_settings()["ui"], json!({ "theme": "dark" }));
-        let saved = state.db.get_provider_by_id("a", "gemini").unwrap().unwrap();
+        let saved = state
+            .db
+            .get_provider_by_id("a", &AppType::Gemini)
+            .unwrap()
+            .unwrap();
         assert_eq!(
             saved.settings_config["env"]["GEMINI_API_KEY"],
             json!("key-a2")
@@ -5375,7 +5434,7 @@ model_provider = "c"
         // 编辑非当前的 vertex：live 的关键字段不动，全局改动照写。
         let vertex = state
             .db
-            .get_provider_by_id("vertex", "gemini")
+            .get_provider_by_id("vertex", &AppType::Gemini)
             .unwrap()
             .unwrap();
         let view =
@@ -5407,7 +5466,7 @@ model_provider = "c"
         assert!(!env.contains("GOOGLE_CLOUD_PROJECT"), "{env}");
         let saved = state
             .db
-            .get_provider_by_id("vertex", "gemini")
+            .get_provider_by_id("vertex", &AppType::Gemini)
             .unwrap()
             .unwrap();
         assert_eq!(
@@ -5529,7 +5588,7 @@ model_provider = "c"
         // 编辑当前供应商、把表名从 b 改成 grok-4.6：live 里只剩新表。
         let mut b = state
             .db
-            .get_provider_by_id("b", "grokbuild")
+            .get_provider_by_id("b", &AppType::GrokBuild)
             .unwrap()
             .unwrap();
         b.settings_config = grok_row("b", "grok-4.6", "").settings_config;
@@ -5668,7 +5727,7 @@ model_provider = "c"
 
         let a = state
             .db
-            .get_provider_by_id("a", "grokbuild")
+            .get_provider_by_id("a", &AppType::GrokBuild)
             .unwrap()
             .unwrap();
         let view =
@@ -5706,7 +5765,7 @@ model_provider = "c"
         );
         let saved = state
             .db
-            .get_provider_by_id("a", "grokbuild")
+            .get_provider_by_id("a", &AppType::GrokBuild)
             .unwrap()
             .unwrap();
         let row_text = saved.settings_config["config"].as_str().unwrap();
@@ -5776,7 +5835,11 @@ model_provider = "c"
         let live = codex_text();
         assert!(live.contains("approval_policy = \"never\""), "{live}");
         assert_eq!(codex_doc()["model"].as_str(), Some("gpt-a"), "{live}");
-        let c = state.db.get_provider_by_id("c", "codex").unwrap().unwrap();
+        let c = state
+            .db
+            .get_provider_by_id("c", &AppType::Codex)
+            .unwrap()
+            .unwrap();
         let c_config = c.settings_config["config"].as_str().unwrap();
         assert!(
             c_config.contains("gpt-c") && !c_config.contains("approval_policy"),
@@ -5825,7 +5888,11 @@ model_provider = "c"
         )
         .expect("add c");
 
-        let c = state.db.get_provider_by_id("c", "codex").unwrap().unwrap();
+        let c = state
+            .db
+            .get_provider_by_id("c", &AppType::Codex)
+            .unwrap()
+            .unwrap();
         let c_config = c.settings_config["config"].as_str().unwrap();
         assert!(
             c_config.contains("model_auto_compact_token_limit = 90000")
@@ -5879,7 +5946,11 @@ model_provider = "c"
             .as_deref(),
             Some("c")
         );
-        let c = state.db.get_provider_by_id("c", "gemini").unwrap().unwrap();
+        let c = state
+            .db
+            .get_provider_by_id("c", &AppType::Gemini)
+            .unwrap()
+            .unwrap();
         assert!(c.settings_config["env"].get("DEBUG").is_none());
         assert!(c.settings_config["config"].get("ui").is_none());
     }
@@ -5913,7 +5984,7 @@ model_provider = "c"
         assert_eq!(written.tables, vec!["grok-4.5".to_string()]);
         let a = state
             .db
-            .get_provider_by_id("a", "grokbuild")
+            .get_provider_by_id("a", &AppType::GrokBuild)
             .unwrap()
             .unwrap();
         let row_text = a.settings_config["config"].as_str().unwrap();
@@ -6448,7 +6519,7 @@ model_provider = "c"
         for card in [desktop_card("direct", false), desktop_card("map", true)] {
             state
                 .db
-                .save_provider(desktop.as_str(), &card)
+                .save_provider(&desktop, &card)
                 .expect("save desktop card");
         }
         crate::settings::set_current_provider(&desktop, Some("direct")).expect("desktop current");
@@ -6476,7 +6547,7 @@ model_provider = "c"
         );
         let mut changed = state
             .db
-            .get_provider_by_id("map", desktop.as_str())
+            .get_provider_by_id("map", &desktop)
             .unwrap()
             .unwrap();
         for route in changed
@@ -6488,7 +6559,7 @@ model_provider = "c"
         {
             route.label_override = Some("Updated model".to_string());
         }
-        state.db.save_provider(desktop.as_str(), &changed).unwrap();
+        state.db.save_provider(&desktop, &changed).unwrap();
         let result =
             ProviderService::switch(&state, desktop.clone(), "map").expect("changed profile");
         assert_eq!(
@@ -6540,7 +6611,7 @@ model_provider = "c"
         let state = state_with(desktop.clone(), &[native.clone()], &native.id).await;
         let before = state
             .db
-            .get_provider_by_id(&native.id, desktop.as_str())
+            .get_provider_by_id(&native.id, &desktop)
             .expect("read native Desktop card before routing")
             .expect("native Desktop card is saved");
 
@@ -6572,7 +6643,7 @@ model_provider = "c"
 
         let stored_native = state
             .db
-            .get_provider_by_id(&native.id, desktop.as_str())
+            .get_provider_by_id(&native.id, &desktop)
             .expect("read native Desktop card")
             .expect("native Desktop card remains saved");
         assert_eq!(stored_native.settings_config, native.settings_config);
@@ -6619,7 +6690,7 @@ model_provider = "c"
 
         let stored_mapping = state
             .db
-            .get_provider_by_id(&native.id, desktop.as_str())
+            .get_provider_by_id(&native.id, &desktop)
             .expect("read updated Desktop card")
             .expect("updated Desktop card remains saved");
         let profile = desktop_profile();
@@ -6664,7 +6735,7 @@ model_provider = "c"
         ] {
             state
                 .db
-                .save_provider(desktop.as_str(), &card)
+                .save_provider(&desktop, &card)
                 .expect("save desktop card");
         }
         crate::settings::set_current_provider(&desktop, Some("direct")).expect("desktop current");
@@ -6740,7 +6811,7 @@ model_provider = "c"
         let desktop = AppType::ClaudeDesktop;
         state
             .db
-            .save_provider(desktop.as_str(), &desktop_card("map", true))
+            .save_provider(&desktop, &desktop_card("map", true))
             .expect("save mapping card");
         crate::settings::set_current_provider(&desktop, Some("map")).expect("desktop current");
 
@@ -6785,13 +6856,13 @@ model_provider = "c"
         for card in [desktop_card("map", true), desktop_card("other", true)] {
             state
                 .db
-                .save_provider(desktop.as_str(), &card)
+                .save_provider(&desktop, &card)
                 .expect("save desktop card");
         }
         // 旧版：映射卡同时是本地指针和 DB 的 is_current。
         state
             .db
-            .set_current_provider(desktop.as_str(), "map")
+            .set_current_provider(&desktop, "map")
             .expect("db current");
         crate::settings::set_current_provider(&desktop, Some("map")).expect("desktop current");
 
@@ -6805,7 +6876,7 @@ model_provider = "c"
             .expect("delete old mapping card");
         assert!(state
             .db
-            .get_provider_by_id("map", desktop.as_str())
+            .get_provider_by_id("map", &desktop)
             .unwrap()
             .is_none());
         // 直连指针和路由那家照旧删不掉。
@@ -6835,7 +6906,7 @@ model_provider = "c"
         let desktop = AppType::ClaudeDesktop;
         state
             .db
-            .save_provider(desktop.as_str(), &desktop_card("map", true))
+            .save_provider(&desktop, &desktop_card("map", true))
             .expect("save mapping card");
         crate::settings::set_current_provider(&desktop, Some("map")).expect("desktop current");
         // 旧版给映射卡写的配置：指着本地路由。
@@ -6956,11 +7027,18 @@ model_provider = "c"
         seed_settings(USER_SETTINGS);
         let state = state_with(AppType::Claude, &stack_rows(), "a").await;
         // 故障转移开着，队列里还有别家。
-        let mut config = state.db.get_proxy_config_for_app("claude").await.unwrap();
+        let mut config = state
+            .db
+            .get_proxy_config_for_app(&AppType::Claude)
+            .await
+            .unwrap();
         config.auto_failover_enabled = true;
         state.db.update_proxy_config_for_app(config).await.unwrap();
         for id in ["a", "kimi"] {
-            state.db.add_to_failover_queue("claude", id).unwrap();
+            state
+                .db
+                .add_to_failover_queue(&AppType::Claude, id)
+                .unwrap();
         }
         let proxy = crate::proxy::server::ProxyState::for_test(state.db.clone());
         let body = json!({ "model": "claude-sonnet-5", "messages": [] });
@@ -6997,7 +7075,10 @@ model_provider = "c"
         assert_eq!(chain(&ctx), vec!["a"]);
         assert!(!ctx.app_config.auto_failover_enabled);
         // 队列留着，回到路由模式恢复。
-        assert_eq!(state.db.get_failover_queue("claude").unwrap().len(), 2);
+        assert_eq!(
+            state.db.get_failover_queue(&AppType::Claude).unwrap().len(),
+            2
+        );
     }
 
     #[tokio::test]
@@ -7090,7 +7171,7 @@ model_provider = "c"
 
         let mut kimi = state
             .db
-            .get_provider_by_id("kimi", "claude")
+            .get_provider_by_id("kimi", &AppType::Claude)
             .unwrap()
             .unwrap();
         kimi.settings_config["env"][CLAUDE_MAX_CONTEXT_ENV] = json!("64000");
@@ -7107,7 +7188,7 @@ model_provider = "c"
         assert!(env.get(CLAUDE_MAX_CONTEXT_ENV).is_none(), "{env}");
         assert!(state
             .db
-            .get_provider_by_id("kimi", "claude")
+            .get_provider_by_id("kimi", &AppType::Claude)
             .unwrap()
             .is_none());
         let stack = stack_state();
@@ -7127,7 +7208,11 @@ model_provider = "c"
         assert_eq!(sonnet(), "ccs-claude-a--claude-sonnet-4-6");
 
         // 配了列表：整张照常发布，第一个占四档。
-        let mut a = state.db.get_provider_by_id("a", "claude").unwrap().unwrap();
+        let mut a = state
+            .db
+            .get_provider_by_id("a", &AppType::Claude)
+            .unwrap()
+            .unwrap();
         a.meta.get_or_insert_with(Default::default).stack_models = serde_json::from_value(
             json!([{ "model": "a-vision", "displayName": "A Vision" }, { "model": "claude-sonnet-4-6" }]),
         )
@@ -7323,7 +7408,7 @@ model_provider = "c"
                     "",
                     Some(json!({"models": [{"model": "gpt-member", "displayName": "Member"}]})),
                 );
-                state.db.save_provider("codex", &member).unwrap();
+                state.db.save_provider(&AppType::Codex, &member).unwrap();
                 set_codex_member(&state, "member", true).await;
                 check(true);
             }
@@ -7339,7 +7424,7 @@ model_provider = "c"
             // Switching off must remove a previously projected capability rather than
             // retaining the outgoing provider's opt-in in the shared custom table.
             let disabled = codex_native("disabled", "https://disabled.example/v1", "", None);
-            state.db.save_provider("codex", &disabled).unwrap();
+            state.db.save_provider(&AppType::Codex, &disabled).unwrap();
             set_route(&state, &AppType::Codex, "disabled")
                 .await
                 .unwrap();
@@ -8181,7 +8266,11 @@ model_provider = "c"
 
         let notice = adopt_codex_stack_catalog(&state).await.expect("adopt");
         assert_eq!(notice, None);
-        let row = state.db.get_provider_by_id("a", "codex").unwrap().unwrap();
+        let row = state
+            .db
+            .get_provider_by_id("a", &AppType::Codex)
+            .unwrap()
+            .unwrap();
         let row_config = row.settings_config["config"].as_str().unwrap();
         assert!(
             !row_config.contains("model_catalog_json") && row_config.contains("model_verbosity"),
@@ -8217,7 +8306,11 @@ model_provider = "c"
         );
         let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
         let open = |id: &str| {
-            let row = state.db.get_provider_by_id(id, "codex").unwrap().unwrap();
+            let row = state
+                .db
+                .get_provider_by_id(id, &AppType::Codex)
+                .unwrap()
+                .unwrap();
             let view =
                 ProviderService::editor_view(&state, AppType::Codex, &row.settings_config, None)
                     .expect("view");
@@ -8240,7 +8333,7 @@ model_provider = "c"
         let row_config = |id: &str| {
             state
                 .db
-                .get_provider_by_id(id, "codex")
+                .get_provider_by_id(id, &AppType::Codex)
                 .unwrap()
                 .unwrap()
                 .settings_config["config"]
@@ -8308,7 +8401,7 @@ model_provider = "c"
 
         let mut deepseek = state
             .db
-            .get_provider_by_id("deepseek", "codex")
+            .get_provider_by_id("deepseek", &AppType::Codex)
             .unwrap()
             .unwrap();
         deepseek.settings_config["modelCatalog"] = json!({ "models": [
@@ -8442,7 +8535,7 @@ model_provider = "c"
         let _home = Home::new();
         seed_codex("", None);
         let state = state_with(AppType::Codex, &codex_stack_rows(), "a").await;
-        state.db.delete_provider("codex", "zhipu").unwrap();
+        state.db.delete_provider(&AppType::Codex, "zhipu").unwrap();
 
         let updates = ["zhipu", "deepseek", "a"]
             .iter()
@@ -8457,12 +8550,12 @@ model_provider = "c"
         ProviderService::update_sort_order(&state, AppType::Codex, updates).expect("sort");
         assert!(state
             .db
-            .get_provider_by_id("zhipu", "codex")
+            .get_provider_by_id("zhipu", &AppType::Codex)
             .unwrap()
             .is_none());
         let deepseek = state
             .db
-            .get_provider_by_id("deepseek", "codex")
+            .get_provider_by_id("deepseek", &AppType::Codex)
             .unwrap()
             .unwrap();
         assert_eq!(deepseek.sort_index, Some(1));
@@ -8501,11 +8594,11 @@ model_provider = "c"
         );
         let mut zhipu = state
             .db
-            .get_provider_by_id("zhipu", "codex")
+            .get_provider_by_id("zhipu", &AppType::Codex)
             .unwrap()
             .unwrap();
         zhipu.settings_config["config"] = json!("model = [\n");
-        state.db.save_provider("codex", &zhipu).unwrap();
+        state.db.save_provider(&AppType::Codex, &zhipu).unwrap();
         resync_route(&state, &AppType::Codex).await.expect("resync");
         assert_eq!(
             catalog_slugs(),
@@ -9069,7 +9162,11 @@ model_provider = "c"
         add_from_editor(&state, AppType::Codex, draft, shown.clone(), shown)
             .expect("a keyless row can be saved");
         assert_eq!(codex_text(), routed);
-        let c = state.db.get_provider_by_id("c", "codex").unwrap().unwrap();
+        let c = state
+            .db
+            .get_provider_by_id("c", &AppType::Codex)
+            .unwrap()
+            .unwrap();
         let c_config = c.settings_config["config"].as_str().unwrap();
         assert!(!c_config.contains("pending-key"), "{c_config}");
         assert!(
@@ -9107,7 +9204,11 @@ model_provider = "c"
         let state = state_with(AppType::Codex, &codex_a_b(), "a").await;
         ProviderService::switch(&state, AppType::Codex, "a").expect("a");
         let before_live = codex_text();
-        let mut row = state.db.get_provider_by_id("a", "codex").unwrap().unwrap();
+        let mut row = state
+            .db
+            .get_provider_by_id("a", &AppType::Codex)
+            .unwrap()
+            .unwrap();
         let before_row = row.settings_config.clone();
 
         let base = ProviderService::editor_view(&state, AppType::Codex, &row.settings_config, None)
@@ -9136,7 +9237,7 @@ model_provider = "c"
         assert_eq!(
             state
                 .db
-                .get_provider_by_id("a", "codex")
+                .get_provider_by_id("a", &AppType::Codex)
                 .unwrap()
                 .unwrap()
                 .settings_config,
@@ -9161,7 +9262,11 @@ model_provider = "c"
         let err = add_from_editor(&state, AppType::Codex, draft, base.clone(), base)
             .expect_err("a keyless first provider would go live");
         assert!(err.to_string().contains("requires_openai_auth"), "{err}");
-        assert!(state.db.get_provider_by_id("c", "codex").unwrap().is_none());
+        assert!(state
+            .db
+            .get_provider_by_id("c", &AppType::Codex)
+            .unwrap()
+            .is_none());
         assert_eq!(codex_text(), before);
     }
 }

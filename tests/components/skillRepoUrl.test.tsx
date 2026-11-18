@@ -74,6 +74,48 @@ describe("parseRepoUrl", () => {
     expect(parseRepoUrl("https://gitlab.com/project")).toBeNull();
   });
 
+  it("reads Gitea and Forgejo addresses, including page URLs", () => {
+    const expected = { host: "codeberg.org", owner: "team", name: "skills" };
+    expect(parseRepoUrl("https://codeberg.org/team/skills")).toEqual(expected);
+    expect(parseRepoUrl("https://codeberg.org/team/skills.git")).toEqual(
+      expected,
+    );
+    // 页面地址里仓库只有前两段，`src/branch/…` 之后是界面路径
+    for (const tail of [
+      "src/branch/main",
+      "src/branch/feature/x/skills/demo",
+      "src/tag/v1.0.0",
+      "src/commit/0123abcd/README.md",
+    ]) {
+      expect(parseRepoUrl(`https://codeberg.org/team/skills/${tail}`)).toEqual(
+        expected,
+      );
+    }
+    expect(
+      parseRepoUrl("https://git.example.com:3000/team/skills/src/branch/main"),
+    ).toEqual({ host: "git.example.com:3000", owner: "team", name: "skills" });
+    // 只有 `src` 后面跟着 branch / tag / commit 才算页面路径：GitLab 的嵌套分组可以叫 src
+    expect(parseRepoUrl("https://gitlab.com/group/sub/src/project")).toEqual({
+      host: "gitlab.com",
+      owner: "group/sub/src",
+      name: "project",
+    });
+    // 克隆地址和带 `/-/` 的 GitLab 页面地址不是 Gitea 页面，分组恰好叫 src/branch 也不截断
+    const nested = {
+      host: "gitlab.com",
+      owner: "group/sub/src/branch",
+      name: "skills",
+    };
+    for (const url of [
+      "https://gitlab.com/group/sub/src/branch/skills.git",
+      "https://gitlab.com/group/sub/src/branch/skills/-/tree/main",
+      "git@gitlab.com:group/sub/src/branch/skills.git",
+      "ssh://git@gitlab.com/group/sub/src/branch/skills.git",
+    ]) {
+      expect(parseRepoUrl(url)).toEqual(nested);
+    }
+  });
+
   it("keeps the port of a self-hosted instance", () => {
     // #8389 报告人的坐标：裸 IP、非默认端口、分组名带下划线
     expect(

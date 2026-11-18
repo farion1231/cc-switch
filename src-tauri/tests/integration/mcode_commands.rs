@@ -14,7 +14,7 @@ fn failed_mcode_prompt_writes_preserve_state_and_can_be_retried() {
         "id":"active", "name":"Active", "content":"original", "enabled":true
     }))
     .unwrap();
-    state.db.save_prompt("mcode", &active).unwrap();
+    state.db.save_prompt(&AppType::Mcode, &active).unwrap();
     // A directory at the file path deterministically rejects the atomic rename.
     fs::create_dir_all(&path).unwrap();
     let mut edited = active.clone();
@@ -27,17 +27,17 @@ fn failed_mcode_prompt_writes_preserve_state_and_can_be_retried() {
     assert!(
         PromptService::upsert_prompt(&state, AppType::Mcode, &active.id, disabled.clone()).is_err()
     );
-    let stored = &state.db.get_prompts("mcode").unwrap()[&active.id];
+    let stored = &state.db.get_prompts(&AppType::Mcode).unwrap()[&active.id];
     assert!(stored.enabled);
     assert_eq!(stored.content, "original");
     fs::remove_dir(&path).unwrap();
     fs::write(&path, "original").unwrap();
     PromptService::upsert_prompt(&state, AppType::Mcode, &active.id, disabled).unwrap();
-    assert!(!state.db.get_prompts("mcode").unwrap()[&active.id].enabled);
+    assert!(!state.db.get_prompts(&AppType::Mcode).unwrap()[&active.id].enabled);
     assert_eq!(fs::read_to_string(&path).unwrap(), "");
     PromptService::upsert_prompt(&state, AppType::Mcode, &active.id, edited).unwrap();
     assert_eq!(fs::read_to_string(&path).unwrap(), "updated");
-    assert!(state.db.get_prompts("mcode").unwrap()[&active.id].enabled);
+    assert!(state.db.get_prompts(&AppType::Mcode).unwrap()[&active.id].enabled);
 }
 
 #[test]
@@ -65,7 +65,11 @@ fn adding_an_mcode_provider_rejects_a_key_already_in_use() {
         assert!(ProviderService::add(&state, AppType::Mcode, provider(id), true).is_err());
     }
     assert_eq!(fs::read_to_string(&path).unwrap(), native);
-    assert!(state.db.get_all_providers("mcode").unwrap().is_empty());
+    assert!(state
+        .db
+        .get_all_providers(&AppType::Mcode)
+        .unwrap()
+        .is_empty());
 
     // Neither is a row that only lives in the database.
     ProviderService::add(&state, AppType::Mcode, provider("fresh"), false).unwrap();
@@ -75,7 +79,7 @@ fn adding_an_mcode_provider_rejects_a_key_already_in_use() {
     assert_eq!(
         state
             .db
-            .get_provider_by_id("fresh", "mcode")
+            .get_provider_by_id("fresh", &AppType::Mcode)
             .unwrap()
             .unwrap()
             .name,
@@ -118,7 +122,7 @@ fn concurrent_mcode_adds_with_one_key_leave_exactly_one_winner() {
     assert_eq!(
         state
             .db
-            .get_provider_by_id("same", "mcode")
+            .get_provider_by_id("same", &AppType::Mcode)
             .unwrap()
             .unwrap()
             .name,

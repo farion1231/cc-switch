@@ -229,7 +229,7 @@ fn pointer_account(db: &Database) -> Option<String> {
     let current =
         crate::mode::current::provider_for(db, &app, crate::mode::current::Purpose::Direct)
             .ok()??;
-    let providers = db.get_all_providers(app.as_str()).ok()?;
+    let providers = db.get_all_providers(&app).ok()?;
     bound_account(providers.get(&current)?)
 }
 
@@ -241,7 +241,7 @@ pub fn ensure_default_terminal_is_official(db: &Database) -> Result<(), AppError
         None
     } else {
         crate::mode::current::provider_for(db, &app, crate::mode::current::Purpose::Direct)?
-            .and_then(|id| db.get_all_providers(app.as_str()).ok()?.get(&id).cloned())
+            .and_then(|id| db.get_all_providers(&app).ok()?.get(&id).cloned())
     };
     if in_use.as_ref().is_some_and(is_official) {
         return Ok(());
@@ -291,7 +291,7 @@ pub async fn refresh_live_after_account_change(
     };
     let providers = state
         .db
-        .get_all_providers(app.as_str())
+        .get_all_providers(&app)
         .map_err(|error| error.to_string())?;
     let Some(provider) = providers.get(&current) else {
         return Ok(());
