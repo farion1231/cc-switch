@@ -2789,6 +2789,25 @@
       "short": "DeepSeek 계정",
       "label": "{{app}} · DeepSeek 계정(OAuth)",
       "hint": "DeepSeek 계정으로 로그인하여 보낸 요청의 사용량을 세션 로그에서 읽습니다. Web과 Desktop이 로그인 정보를 공유하므로 사용량을 합산합니다"
+    },
+    "tray": {
+      "allApps": "전체",
+      "filterBy": "필터",
+      "clearFilters": "필터 초기화",
+      "allProviders": "모든 공급자",
+      "allModels": "모든 모델",
+      "viewDetails": "세부 정보 보기",
+      "backToOverview": "개요로 돌아가기",
+      "byApp": "앱별",
+      "byProvider": "공급자별",
+      "byModel": "모델별",
+      "successRate": "성공률",
+      "avgPerReq": "회당 평균",
+      "peak": "최고치",
+      "selectedBucket": "선택됨",
+      "cacheShare": "캐시 비중",
+      "hitRateShort": "적중률",
+      "noBreakdown": "세부 데이터 없음"
     }
   },
   "usageScript": {

@@ -2788,6 +2788,25 @@
       "title": "Настройки статистики",
       "pricingSummary": "Задайте цены за миллион токенов для каждой модели или синхронизируйте их с models.dev",
       "managePricing": "Управлять ценами…"
+    },
+    "tray": {
+      "allApps": "Все",
+      "filterBy": "Фильтр",
+      "clearFilters": "Сбросить фильтры",
+      "allProviders": "Все провайдеры",
+      "allModels": "Все модели",
+      "viewDetails": "Подробнее",
+      "backToOverview": "Назад к обзору",
+      "byApp": "По приложению",
+      "byProvider": "По провайдеру",
+      "byModel": "По модели",
+      "successRate": "Успешность",
+      "avgPerReq": "Сред./запр.",
+      "peak": "Пик",
+      "selectedBucket": "Выбрано",
+      "cacheShare": "Доля кэша",
+      "hitRateShort": "Кэш %",
+      "noBreakdown": "Нет данных по категориям"
     }
   },
   "usageScript": {

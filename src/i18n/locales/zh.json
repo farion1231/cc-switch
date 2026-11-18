@@ -2789,6 +2789,25 @@
       "title": "用量设置",
       "pricingSummary": "按模型设置每百万 Tokens 的价格，可从 models.dev 同步",
       "managePricing": "管理定价…"
+    },
+    "tray": {
+      "allApps": "全部",
+      "filterBy": "筛选",
+      "clearFilters": "清除筛选",
+      "allProviders": "全部供应商",
+      "allModels": "全部模型",
+      "viewDetails": "查看详情",
+      "backToOverview": "返回概览",
+      "byApp": "按应用",
+      "byProvider": "按供应商",
+      "byModel": "按模型",
+      "successRate": "成功率",
+      "avgPerReq": "均次",
+      "peak": "峰值",
+      "selectedBucket": "已选时段",
+      "cacheShare": "缓存占比",
+      "hitRateShort": "命中率",
+      "noBreakdown": "暂无细分数据"
     }
   },
   "usageScript": {

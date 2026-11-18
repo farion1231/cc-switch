@@ -2720,6 +2720,25 @@
       "title": "Kullanım ayarları",
       "pricingSummary": "Milyon token başına model fiyatlarını belirleyin veya models.dev üzerinden eşitleyin.",
       "managePricing": "Fiyatlandırmayı yönet…"
+    },
+    "tray": {
+      "allApps": "Tümü",
+      "filterBy": "Filtre",
+      "clearFilters": "Filtreleri temizle",
+      "allProviders": "Tüm sağlayıcılar",
+      "allModels": "Tüm modeller",
+      "viewDetails": "Detayları görüntüle",
+      "backToOverview": "Özete dön",
+      "byApp": "Uygulamaya göre",
+      "byProvider": "Sağlayıcıya göre",
+      "byModel": "Modele göre",
+      "successRate": "Başarı",
+      "avgPerReq": "Ort./istek",
+      "peak": "Zirve",
+      "selectedBucket": "Seçili",
+      "cacheShare": "Önbellek payı",
+      "hitRateShort": "İsabet %",
+      "noBreakdown": "Dağılım verisi yok"
     }
   },
   "usageScript": {
