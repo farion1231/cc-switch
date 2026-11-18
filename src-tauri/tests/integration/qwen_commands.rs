@@ -139,7 +139,7 @@ fn qwen_provider_lifecycle_imports_native_entries_and_keeps_user_settings() {
     ProviderService::delete(&state, AppType::Qwen, "bailian").unwrap();
     assert!(state
         .db
-        .get_provider_by_id("bailian", "qwen")
+        .get_provider_by_id("bailian", &AppType::Qwen)
         .unwrap()
         .is_none());
 
@@ -198,7 +198,7 @@ fn qwen_add_rejects_collisions_and_first_provider_becomes_current() {
     .is_err());
     assert!(state
         .db
-        .get_provider_by_id("second", "qwen")
+        .get_provider_by_id("second", &AppType::Qwen)
         .unwrap()
         .is_none());
     assert_eq!(fs::read(home.settings()).unwrap(), bytes);

@@ -60,7 +60,7 @@ fn workbuddy_providers_are_written_to_models_json_and_removed_cleanly() {
     assert_eq!(doc["availableModels"], json!(["mine", "deepseek-chat"]));
     let saved = state
         .db
-        .get_provider_by_id("ds", "workbuddy")
+        .get_provider_by_id("ds", &AppType::WorkBuddy)
         .unwrap()
         .unwrap();
     assert_eq!(
@@ -72,7 +72,7 @@ fn workbuddy_providers_are_written_to_models_json_and_removed_cleanly() {
     let mut edited = provider("ds", "deepseek-reasoner");
     edited.meta = state
         .db
-        .get_provider_by_id("ds", "workbuddy")
+        .get_provider_by_id("ds", &AppType::WorkBuddy)
         .unwrap()
         .unwrap()
         .meta;
@@ -93,7 +93,7 @@ fn workbuddy_providers_are_written_to_models_json_and_removed_cleanly() {
     assert_eq!(doc["availableModels"], json!(["mine"]));
     assert!(state
         .db
-        .get_provider_by_id("ds", "workbuddy")
+        .get_provider_by_id("ds", &AppType::WorkBuddy)
         .unwrap()
         .is_some());
 
@@ -106,7 +106,7 @@ fn workbuddy_providers_are_written_to_models_json_and_removed_cleanly() {
     );
     assert!(state
         .db
-        .get_provider_by_id("ds", "workbuddy")
+        .get_provider_by_id("ds", &AppType::WorkBuddy)
         .unwrap()
         .is_none());
 }
@@ -154,7 +154,7 @@ fn workbuddy_official_cards_never_touch_models_json() {
     assert_eq!(fs::read_to_string(&path).unwrap(), before);
     let saved = state
         .db
-        .get_provider_by_id("wb-official", "workbuddy")
+        .get_provider_by_id("wb-official", &AppType::WorkBuddy)
         .unwrap()
         .unwrap();
     assert_eq!(
@@ -179,7 +179,7 @@ fn workbuddy_official_cards_never_touch_models_json() {
     assert_eq!(fs::read_to_string(&path).unwrap(), before);
     let saved = state
         .db
-        .get_provider_by_id("wb-official", "workbuddy")
+        .get_provider_by_id("wb-official", &AppType::WorkBuddy)
         .unwrap()
         .unwrap();
     assert_eq!(
@@ -200,13 +200,13 @@ fn workbuddy_official_cards_never_touch_models_json() {
     assert_eq!(fs::read_to_string(&path).unwrap(), before);
     assert!(state
         .db
-        .get_provider_by_id("wb-official", "workbuddy")
+        .get_provider_by_id("wb-official", &AppType::WorkBuddy)
         .unwrap()
         .is_none());
     // 自定义模型卡不受影响
     assert!(state
         .db
-        .get_provider_by_id("ds", "workbuddy")
+        .get_provider_by_id("ds", &AppType::WorkBuddy)
         .unwrap()
         .is_some());
 }
@@ -221,7 +221,7 @@ fn workbuddy_official_card_without_live_flag_is_skipped_by_sync() {
     let mut card = official_card("wb-official", "uid-1");
     card.settings_config = provider("x", "leftover-model").settings_config;
     card.meta.as_mut().unwrap().live_config_managed = None;
-    state.db.save_provider("workbuddy", &card).unwrap();
+    state.db.save_provider(&AppType::WorkBuddy, &card).unwrap();
     ProviderService::sync_current_to_live(&state).unwrap();
     assert!(
         !path.exists()
@@ -251,7 +251,7 @@ fn workbuddy_refuses_to_take_over_a_model_id_it_does_not_own() {
     assert_eq!(fs::read_to_string(&path).unwrap(), native);
     assert!(state
         .db
-        .get_provider_by_id("ds", "workbuddy")
+        .get_provider_by_id("ds", &AppType::WorkBuddy)
         .unwrap()
         .is_none());
 
@@ -266,14 +266,14 @@ fn workbuddy_refuses_to_take_over_a_model_id_it_does_not_own() {
     let mut colliding = provider("ds", "deepseek-chat");
     colliding.meta = state
         .db
-        .get_provider_by_id("ds", "workbuddy")
+        .get_provider_by_id("ds", &AppType::WorkBuddy)
         .unwrap()
         .unwrap()
         .meta;
     assert!(ProviderService::update(&state, AppType::WorkBuddy, None, colliding).is_err());
     let saved = state
         .db
-        .get_provider_by_id("ds", "workbuddy")
+        .get_provider_by_id("ds", &AppType::WorkBuddy)
         .unwrap()
         .unwrap();
     assert_eq!(saved.settings_config["models"][0]["id"], "deepseek-v4");
