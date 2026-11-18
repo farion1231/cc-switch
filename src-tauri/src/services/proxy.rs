@@ -548,7 +548,7 @@ impl ProxyService {
     /// 热更新指定应用的熔断器配置
     pub async fn update_circuit_breaker_config_for_app(
         &self,
-        app_type: &str,
+        app_type: &crate::app_config::AppType,
         config: crate::proxy::CircuitBreakerConfig,
     ) -> Result<(), String> {
         if let Some(server) = self.server.read().await.as_ref() {
@@ -568,8 +568,13 @@ mod tests {
     use super::*;
     async fn seed_distinct_app_proxy_configs(db: &Database) -> Vec<Value> {
         let mut configs = Vec::new();
-        for (app, retries) in [("claude", 6), ("codex", 0), ("gemini", 2), ("grokbuild", 3)] {
-            let mut config = db.get_proxy_config_for_app(app).await.unwrap();
+        for (app, retries) in [
+            (AppType::Claude, 6),
+            (AppType::Codex, 0),
+            (AppType::Gemini, 2),
+            (AppType::GrokBuild, 3),
+        ] {
+            let mut config = db.get_proxy_config_for_app(&app).await.unwrap();
             config.enabled = retries % 2 == 0;
             config.auto_failover_enabled = retries % 2 != 0;
             config.max_retries = retries;
@@ -585,8 +590,8 @@ mod tests {
 
     async fn assert_app_proxy_configs_unchanged(db: &Database, configs: &[Value]) {
         for expected in configs {
-            let app = expected["appType"].as_str().unwrap();
-            let actual = db.get_proxy_config_for_app(app).await.unwrap();
+            let app: AppType = expected["appType"].as_str().unwrap().parse().unwrap();
+            let actual = db.get_proxy_config_for_app(&app).await.unwrap();
             assert_eq!(serde_json::to_value(actual).unwrap(), *expected, "{app}");
         }
     }

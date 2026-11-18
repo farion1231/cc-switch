@@ -1427,7 +1427,7 @@ fn tray_mode(app_state: &AppState, app: &AppType) -> TrayMode {
     if crate::mode::stack::stack_mode_now(app) {
         return TrayMode::Stack;
     }
-    let (_, auto_failover) = app_state.db.get_proxy_flags_sync(app.as_str());
+    let (_, auto_failover) = app_state.db.get_proxy_flags_sync(app);
     if auto_failover {
         TrayMode::Failover
     } else {
@@ -1443,7 +1443,7 @@ fn collect_app_snapshot(
     service_running: Option<bool>,
     profiles: &[crate::database::Profile],
 ) -> Result<AppSnapshot, AppError> {
-    let rows = app_state.db.get_all_providers(app.as_str())?;
+    let rows = app_state.db.get_all_providers(app)?;
     let claude_accounts = if *app == AppType::Claude {
         crate::services::claude_account::labels_on_disk(&crate::config::get_app_config_dir())
     } else {
@@ -1465,7 +1465,7 @@ fn collect_app_snapshot(
     let queue = if mode == TrayMode::Failover {
         app_state
             .db
-            .get_failover_queue(app.as_str())?
+            .get_failover_queue(app)?
             .into_iter()
             .map(|item| item.provider_id)
             .filter(|id| rows.contains_key(id))
@@ -2486,7 +2486,7 @@ pub(crate) fn collect_panel_model(app_state: &AppState) -> Result<PanelModel, Ap
     let mut apps = Vec::with_capacity(snapshots.len());
     for snapshot in &snapshots {
         let app = snapshot.app.as_str();
-        let providers = app_state.db.get_all_providers(app)?;
+        let providers = app_state.db.get_all_providers(&snapshot.app)?;
         let (header, rows) = panel_rows(&app_state.usage_cache, &texts, snapshot, &providers, now);
         let credits = snapshot
             .current_id
@@ -3255,7 +3255,7 @@ fn handle_provider_click(
     }
     let provider = state
         .db
-        .get_provider_by_id(provider_id, app_type.as_str())?
+        .get_provider_by_id(provider_id, app_type)?
         .ok_or_else(|| AppError::Message(format!("供应商 {provider_id} 不存在")))?;
     if mode == TrayMode::Direct && provider_needs_routing(app_type, &provider) {
         return Ok(ClickOutcome::NeedsRoute);
@@ -3271,7 +3271,7 @@ fn emit_switched(app: &tauri::AppHandle, app_type: &AppType, provider_id: &str) 
     let proxy_enabled = crate::mode::current::is_proxy(app_type);
     let auto_failover = app
         .try_state::<AppState>()
-        .map(|state| state.db.get_proxy_flags_sync(app_type.as_str()).1)
+        .map(|state| state.db.get_proxy_flags_sync(app_type).1)
         .unwrap_or(false);
     let event_data = serde_json::json!({
         "appType": app_type.as_str(),
@@ -3449,7 +3449,7 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
         };
         // 只需当前 provider —— by-id 查询避免把整个 app 的 provider 列表加载
         // 进内存（每次悬停的热路径）。
-        let current = match app_state.db.get_provider_by_id(&current_id, app_type_str) {
+        let current = match app_state.db.get_provider_by_id(&current_id, app_type) {
             Ok(Some(p)) => p,
             Ok(None) => continue,
             Err(e) => {
@@ -3529,7 +3529,7 @@ pub(crate) async fn refresh_panel_provider_usage(app: &tauri::AppHandle) {
         .unwrap_or_default();
     let mut due = Vec::new();
     for app_type in TRAY_APPS.iter().filter(|app| visible_apps.is_visible(app)) {
-        let rows = match app_state.db.get_all_providers(app_type.as_str()) {
+        let rows = match app_state.db.get_all_providers(app_type) {
             Ok(rows) => rows,
             Err(e) => {
                 log::warn!("[Tray] 读取{}供应商失败: {e}", app_display_name(app_type));

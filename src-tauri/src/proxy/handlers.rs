@@ -292,7 +292,7 @@ pub async fn handle_claude_desktop_models(
     validate_claude_desktop_gateway_auth(&state, &headers)?;
     let providers = state
         .provider_router
-        .select_providers("claude-desktop")
+        .select_providers(&AppType::ClaudeDesktop)
         .await
         .map_err(|e| ProxyError::DatabaseError(e.to_string()))?;
     let provider = providers.first().ok_or(ProxyError::NoAvailableProvider)?;
@@ -5449,7 +5449,11 @@ mod stack_tests {
     async fn stacked_requests_go_to_one_provider_without_failover_timeouts() {
         let state = proxy_state();
         // 应用开了故障转移、配了很短的超时，队列里还有别家。
-        let mut config = state.db.get_proxy_config_for_app("claude").await.unwrap();
+        let mut config = state
+            .db
+            .get_proxy_config_for_app(&AppType::Claude)
+            .await
+            .unwrap();
         config.auto_failover_enabled = true;
         config.max_retries = 3;
         config.non_streaming_timeout = 1;

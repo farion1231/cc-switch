@@ -2,6 +2,7 @@
 //!
 //! 处理代理配置、Provider健康状态和使用统计的数据库操作
 
+use crate::app_config::AppType;
 use crate::error::AppError;
 use crate::proxy::types::*;
 
@@ -92,7 +93,7 @@ impl Database {
     }
 
     /// 获取计费模式来源
-    pub async fn get_pricing_model_source(&self, app_type: &str) -> Result<String, AppError> {
+    pub async fn get_pricing_model_source(&self, app_type: &AppType) -> Result<String, AppError> {
         let result = {
             let conn = lock_conn!(self.conn);
             conn.query_row(
@@ -115,7 +116,7 @@ impl Database {
     /// 设置计费模式来源
     pub async fn set_pricing_model_source(
         &self,
-        app_type: &str,
+        app_type: &AppType,
         value: &str,
     ) -> Result<(), AppError> {
         let trimmed = validate_pricing_source(value)?;
@@ -139,7 +140,7 @@ impl Database {
     /// 获取应用级代理配置
     pub async fn get_proxy_config_for_app(
         &self,
-        app_type: &str,
+        app_type: &AppType,
     ) -> Result<AppProxyConfig, AppError> {
         // 使用 block 限制 conn 的作用域，避免跨 await 持有锁
         let result = {
@@ -239,16 +240,16 @@ impl Database {
     /// 确保指定 app_type 的 proxy_config 行存在（同步版本，用于 set_* 函数）
     ///
     /// 使用与 schema.rs seed 相同的 per-app 默认值
-    fn ensure_proxy_config_row_exists(&self, app_type: &str) -> Result<(), AppError> {
+    fn ensure_proxy_config_row_exists(&self, app_type: &AppType) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
 
         // 根据 app_type 使用不同的默认值（与 schema.rs seed 保持一致）
         let (retries, fb_timeout, idle_timeout, cb_fail, cb_succ, cb_timeout, cb_rate, cb_min) =
             match app_type {
-                "claude" => (6, 90, 180, 8, 3, 90, 0.7, 15),
-                "codex" => (3, 60, 120, 4, 2, 60, 0.6, 10),
-                "gemini" => (5, 60, 120, 4, 2, 60, 0.6, 10),
-                "grokbuild" => (3, 60, 120, 4, 2, 60, 0.6, 10),
+                AppType::Claude => (6, 90, 180, 8, 3, 90, 0.7, 15),
+                AppType::Codex => (3, 60, 120, 4, 2, 60, 0.6, 10),
+                AppType::Gemini => (5, 60, 120, 4, 2, 60, 0.6, 10),
+                AppType::GrokBuild => (3, 60, 120, 4, 2, 60, 0.6, 10),
                 _ => (3, 60, 120, 4, 2, 60, 0.6, 10), // 默认值
             };
 
@@ -350,7 +351,7 @@ impl Database {
     pub async fn get_provider_health(
         &self,
         provider_id: &str,
-        app_type: &str,
+        app_type: &AppType,
     ) -> Result<ProviderHealth, AppError> {
         let result = {
             let conn = lock_conn!(self.conn);
@@ -400,7 +401,7 @@ impl Database {
     pub async fn update_provider_health_with_threshold(
         &self,
         provider_id: &str,
-        app_type: &str,
+        app_type: &AppType,
         success: bool,
         error_msg: Option<String>,
         failure_threshold: u32,
@@ -462,7 +463,7 @@ impl Database {
     }
 
     /// 清空指定应用的健康状态（关闭单个代理时使用）
-    pub async fn clear_provider_health_for_app(&self, app_type: &str) -> Result<(), AppError> {
+    pub async fn clear_provider_health_for_app(&self, app_type: &AppType) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
 
         conn.execute(
@@ -491,7 +492,7 @@ impl Database {
     /// 保存 Live 配置备份
     pub async fn save_live_backup(
         &self,
-        app_type: &str,
+        app_type: &AppType,
         config_json: &str,
     ) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
@@ -509,7 +510,10 @@ impl Database {
     }
 
     /// 获取 Live 配置备份
-    pub async fn get_live_backup(&self, app_type: &str) -> Result<Option<LiveBackup>, AppError> {
+    pub async fn get_live_backup(
+        &self,
+        app_type: &AppType,
+    ) -> Result<Option<LiveBackup>, AppError> {
         let conn = lock_conn!(self.conn);
 
         let result = conn.query_row(
@@ -532,7 +536,7 @@ impl Database {
     }
 
     /// 删除 Live 配置备份
-    pub async fn delete_live_backup(&self, app_type: &str) -> Result<(), AppError> {
+    pub async fn delete_live_backup(&self, app_type: &AppType) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
 
         conn.execute(
@@ -573,7 +577,7 @@ impl Database {
         (host, port)
     }
 
-    pub fn get_proxy_flags_sync(&self, app_type: &str) -> (bool, bool) {
+    pub fn get_proxy_flags_sync(&self, app_type: &AppType) -> (bool, bool) {
         let conn = match lock_recovering(&self.conn) {
             Ok(c) => c,
             Err(_) => return (false, false),
@@ -592,7 +596,7 @@ impl Database {
     /// 用于托盘菜单点击等同步场景
     pub fn set_proxy_flags_sync(
         &self,
-        app_type: &str,
+        app_type: &AppType,
         enabled: bool,
         auto_failover_enabled: bool,
     ) -> Result<(), AppError> {
@@ -614,6 +618,7 @@ impl Database {
 
 #[cfg(test)]
 mod tests {
+    use crate::app_config::AppType;
     use crate::database::Database;
     use crate::error::AppError;
 
@@ -621,15 +626,16 @@ mod tests {
     async fn test_pricing_model_source_round_trip_and_validation() -> Result<(), AppError> {
         let db = Database::memory()?;
 
-        let default = db.get_pricing_model_source("claude").await?;
+        let default = db.get_pricing_model_source(&AppType::Claude).await?;
         assert_eq!(default, "response");
 
-        db.set_pricing_model_source("claude", "request").await?;
-        let updated = db.get_pricing_model_source("claude").await?;
+        db.set_pricing_model_source(&AppType::Claude, "request")
+            .await?;
+        let updated = db.get_pricing_model_source(&AppType::Claude).await?;
         assert_eq!(updated, "request");
 
         let err = db
-            .set_pricing_model_source("claude", "invalid")
+            .set_pricing_model_source(&AppType::Claude, "invalid")
             .await
             .unwrap_err();
         // AppError::localized returns AppError::Localized variant
