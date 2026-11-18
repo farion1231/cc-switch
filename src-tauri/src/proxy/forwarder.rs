@@ -30,7 +30,10 @@ use super::{
         codex_chat_history::CodexChatHistoryStore, gemini_shadow::GeminiShadowStore, get_adapter,
         AuthInfo, AuthStrategy, ClaudeAdapter, ProviderAdapter, ProviderType,
     },
-    thinking_budget_rectifier::{rectify_thinking_budget, should_rectify_thinking_budget},
+    thinking_budget_rectifier::{
+        rectify_thinking_budget, rectify_thinking_disabled, should_rectify_thinking_budget,
+        should_rectify_thinking_disabled,
+    },
     thinking_rectifier::{
         normalize_thinking_type, rectify_anthropic_request, should_rectify_thinking_signature,
     },
@@ -1164,13 +1167,20 @@ impl RequestForwarder {
                         }
                     }
 
-                    // 检测是否需要触发 budget 整流器（上游为 Anthropic Messages 的供应商）
+                    // 检测是否需要触发 budget 整流器（上游为 Anthropic Messages 的供应商）；
+                    // 上游拒绝关思考（#8887、#9671）也走这条重试路径
                     if is_anthropic_provider {
                         let error_message = extract_error_message(&e);
-                        if should_rectify_thinking_budget(
+                        let budget_hit = should_rectify_thinking_budget(
                             error_message.as_deref(),
                             &self.rectifier_config,
-                        ) {
+                        );
+                        let disabled_hit = !budget_hit
+                            && should_rectify_thinking_disabled(
+                                error_message.as_deref(),
+                                &self.rectifier_config,
+                            );
+                        if budget_hit || disabled_hit {
                             // 已经重试过：直接返回错误（不可重试客户端错误）
                             if budget_rectifier_retried {
                                 log::warn!(
@@ -1179,7 +1189,11 @@ impl RequestForwarder {
                                 return Err(self.finish_neutral_failure(e, provider).await);
                             }
 
-                            let budget_rectified = rectify_thinking_budget(provider_body.to_mut());
+                            let budget_rectified = if budget_hit {
+                                rectify_thinking_budget(provider_body.to_mut())
+                            } else {
+                                rectify_thinking_disabled(provider_body.to_mut())
+                            };
                             if !budget_rectified.applied {
                                 log::warn!(
                                     "[{app_type_str}] [RECT-014] budget 整流器触发但无可整流内容，不做无意义重试"
@@ -1188,8 +1202,9 @@ impl RequestForwarder {
                             }
 
                             log::info!(
-                                "[{}] [RECT-010] thinking budget 整流器触发, before={:?}, after={:?}",
+                                "[{}] [RECT-010] thinking {} 整流器触发, before={:?}, after={:?}",
                                 app_type_str,
+                                if budget_hit { "budget" } else { "disabled" },
                                 budget_rectified.before,
                                 budget_rectified.after
                             );
