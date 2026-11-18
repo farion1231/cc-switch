@@ -5315,5 +5315,35 @@
     "installFailed": "Update installation failed",
     "downloadingInline": "Downloading the new version in the background…",
     "downloadedInline": "Downloaded"
+  },
+  "desktopMigration": {
+    "source": "Source account / profile",
+    "target": "Destination account / profile",
+    "chooseProfile": "Choose an existing profile",
+    "lastKnown": "last signed-in account",
+    "profileHint": "Account and organization folders stay separate. The last signed-in hint does not identify a running profile.",
+    "empty": "No saved Desktop profiles found. Open Claude Desktop with the intended account first, then refresh.",
+    "preview": "Preview recovery",
+    "apply": "Apply recovery",
+    "verifyHint": "Files were read back successfully. Reopen Desktop in the destination profile to check visibility and availability; no session or task was launched by CC Switch.",
+    "selected": "{{count}} selected",
+    "disposition": {
+      "ready": "Ready to copy",
+      "exists": "Already exists; keep destination"
+    },
+    "showArchived": "Include archived history",
+    "active": "Active",
+    "archived": "Archived",
+    "noSessions": "No history matches this filter.",
+    "problem": {
+      "deleted": "Deleted; excluded",
+      "unverified": "Record state cannot be verified",
+      "targetArchived": "Destination has an archive marker"
+    },
+    "title": "Migrate Desktop sessions",
+    "description": "Copy selected Claude Desktop records to another existing account or profile on this Mac.",
+    "applyHint": "Quit Claude Desktop before applying. Existing destination records stay unchanged; source records are preserved and archived sessions stay archived.",
+    "receipt": "Copied {{sessions}} session records; skipped {{skipped}} existing records.",
+    "transcriptHint": "This copies Desktop metadata. Missing transcripts and project folders are not recreated."
   }
 }

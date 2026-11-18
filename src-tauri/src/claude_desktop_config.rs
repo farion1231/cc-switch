@@ -307,6 +307,21 @@ pub fn get_config_library_path() -> Result<PathBuf, AppError> {
     Ok(current_platform_paths()?.config_library_path)
 }
 
+/// The same roots used for Desktop configuration, without creating either one.
+#[cfg(unix)]
+pub(crate) fn desktop_data_dirs() -> Result<(PathBuf, PathBuf), AppError> {
+    let paths = current_platform_paths()?;
+    let parent = |path: PathBuf| {
+        path.parent()
+            .map(Path::to_path_buf)
+            .ok_or_else(|| AppError::Config("Invalid Claude Desktop data directory".into()))
+    };
+    Ok((
+        parent(paths.normal_config_path)?,
+        parent(paths.threep_config_path)?,
+    ))
+}
+
 pub fn default_proxy_routes() -> Vec<ClaudeDesktopDefaultRoute> {
     DEFAULT_PROXY_ROUTES.to_vec()
 }

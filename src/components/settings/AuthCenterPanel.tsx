@@ -1,3 +1,4 @@
+import { DesktopSessionMigration } from "./DesktopSessionMigration";
 import { useEffect, useId, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { CopilotAuthSection } from "@/components/providers/forms/CopilotAuthSection";
@@ -195,6 +196,7 @@ export function AuthCenterPanel({
         </p>
       )}
       <OpenBrowserToggle />
+      <DesktopSessionMigration />
       <div ref={claudeOfficialSectionRef}>
         <ClaudeOfficialSection helpSide="bottom" />
       </div>

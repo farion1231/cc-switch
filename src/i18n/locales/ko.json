@@ -5315,5 +5315,35 @@
     "installFailed": "업데이트 설치에 실패했습니다",
     "downloadingInline": "새 버전을 백그라운드에서 다운로드하는 중…",
     "downloadedInline": "다운로드 완료"
+  },
+  "desktopMigration": {
+    "source": "원본 계정 / 프로필",
+    "target": "대상 계정 / 프로필",
+    "chooseProfile": "기존 프로필 선택",
+    "lastKnown": "마지막 로그인 계정",
+    "profileHint": "계정과 조직은 별도로 표시됩니다. 마지막 로그인 표시는 현재 실행 중인 프로필을 뜻하지 않습니다.",
+    "empty": "저장된 Desktop 프로필이 없습니다. 원하는 계정으로 Claude Desktop을 연 뒤 새로 고치세요.",
+    "preview": "복구 미리 보기",
+    "apply": "복구 적용",
+    "verifyHint": "파일을 다시 읽어 검증했습니다. 대상 프로필로 Desktop을 열어 표시 및 사용 가능 여부를 확인하세요. CC Switch는 세션이나 작업을 실행하지 않았습니다.",
+    "selected": "{{count}}개 선택",
+    "disposition": {
+      "ready": "복사 가능",
+      "exists": "이미 존재함; 대상 유지"
+    },
+    "showArchived": "보관된 기록 포함",
+    "active": "활성",
+    "archived": "보관됨",
+    "noSessions": "필터에 맞는 기록이 없습니다.",
+    "problem": {
+      "deleted": "삭제됨; 제외",
+      "unverified": "항목 상태를 확인할 수 없음",
+      "targetArchived": "대상에 보관 표시가 있음"
+    },
+    "title": "Desktop 세션 이전",
+    "description": "선택한 Claude Desktop 기록을 이 Mac의 다른 기존 계정이나 프로필로 복사합니다.",
+    "applyHint": "실행 전에 Claude Desktop을 종료하세요. 대상의 기존 기록과 원본을 변경하지 않으며 보관된 세션은 보관 상태를 유지합니다.",
+    "receipt": "세션 기록 {{sessions}}개를 복사하고 기존 기록 {{skipped}}개를 건너뛰었습니다.",
+    "transcriptHint": "Desktop 메타데이터를 복사합니다. 누락된 대화 파일이나 프로젝트 폴더는 복원하지 않습니다."
   }
 }

@@ -5315,5 +5315,35 @@
     "installFailed": "Güncelleme kurulamadı",
     "downloadingInline": "Yeni sürüm arka planda indiriliyor…",
     "downloadedInline": "İndirildi"
+  },
+  "desktopMigration": {
+    "source": "Kaynak hesap / profil",
+    "target": "Hedef hesap / profil",
+    "chooseProfile": "Mevcut bir profil seçin",
+    "lastKnown": "son giriş yapılan hesap",
+    "profileHint": "Hesaplar ve kuruluşlar ayrı tutulur. Son giriş bilgisi, çalışan profili göstermez.",
+    "empty": "Kayıtlı Desktop profili bulunamadı. Önce ilgili hesapla Claude Desktop uygulamasını açın, ardından yenileyin.",
+    "preview": "Kurtarmayı önizle",
+    "apply": "Kurtarmayı uygula",
+    "verifyHint": "Dosyalar yeniden okunarak doğrulandı. Görünürlüğü ve kullanılabilirliği kontrol etmek için Desktop uygulamasını hedef profille açın. CC Switch hiçbir oturum veya görev başlatmadı.",
+    "selected": "{{count}} seçildi",
+    "disposition": {
+      "ready": "Kopyalanmaya hazır",
+      "exists": "Zaten var; hedef korunur"
+    },
+    "showArchived": "Arşivlenmiş geçmişi dahil et",
+    "active": "Etkin",
+    "archived": "Arşivlenmiş",
+    "noSessions": "Bu filtreye uyan geçmiş yok.",
+    "problem": {
+      "deleted": "Silinmiş; hariç tutuldu",
+      "unverified": "Kayıt durumu doğrulanamıyor",
+      "targetArchived": "Hedefte arşiv işareti var"
+    },
+    "title": "Desktop oturumlarını taşı",
+    "description": "Seçili Claude Desktop kayıtlarını bu Mac üzerindeki başka bir mevcut hesaba veya profile kopyalayın.",
+    "applyHint": "Uygulamadan önce Claude Desktop uygulamasını kapatın. Hedefteki mevcut kayıtlar ve kaynak kayıtları değişmez; arşivlenmiş oturumlar arşivlenmiş kalır.",
+    "receipt": "{{sessions}} oturum kaydı kopyalandı; mevcut {{skipped}} kayıt atlandı.",
+    "transcriptHint": "Desktop meta verilerini kopyalar. Eksik konuşma dosyaları veya proje klasörleri yeniden oluşturulmaz."
   }
 }
