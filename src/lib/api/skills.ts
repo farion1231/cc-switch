@@ -16,7 +16,8 @@ export type AppType =
   | "kimi"
   | "dsh"
   | "agy"
-  | "omp";
+  | "omp"
+  | "copilot";
 
 /** Skill 应用启用状态 */
 export interface SkillApps {
@@ -34,6 +35,8 @@ export interface SkillApps {
   dsh?: boolean;
   agy?: boolean;
   omp?: boolean;
+  copilot?: boolean;
+  workbuddy?: boolean;
 }
 
 /** 已安装的 Skill（v3.10.0+ 统一结构） */
@@ -42,6 +45,8 @@ export interface InstalledSkill {
   name: string;
   description?: string;
   directory: string;
+  /** 仓库所在主机；不写即 github.com，GitLab 仓库是实例的主机名 */
+  repoHost?: string;
   repoOwner?: string;
   repoName?: string;
   repoBranch?: string;
@@ -72,6 +77,8 @@ export interface DiscoverableSkill {
   description: string;
   directory: string;
   readmeUrl?: string;
+  /** 仓库所在主机；不写即 github.com（后端总会带上，skills.sh 的结果不带） */
+  repoHost?: string;
   repoOwner: string;
   repoName: string;
   repoBranch: string;
@@ -90,19 +97,6 @@ export interface UnmanagedSkill {
 export interface ImportSkillSelection {
   directory: string;
   apps: SkillApps;
-}
-
-/** 技能对象（兼容旧 API） */
-export interface Skill {
-  key: string;
-  name: string;
-  description: string;
-  directory: string;
-  readmeUrl?: string;
-  installed: boolean;
-  repoOwner?: string;
-  repoName?: string;
-  repoBranch?: string;
 }
 
 /** Skill 更新信息 */
@@ -185,6 +179,11 @@ export interface SkillsShSearchResult {
 
 /** 仓库配置 */
 export interface SkillRepo {
+  /**
+   * 仓库所在主机；不写即 github.com，其余按 GitLab 处理（自建实例可带端口）。
+   * 只是属性：仓库仍按 owner + name 定位，GitLab 的 owner 是分组路径，可含 `/`。
+   */
+  host?: string;
   owner: string;
   name: string;
   branch: string;
@@ -199,6 +198,11 @@ export const skillsApi = {
   /** 获取所有已安装的 Skills */
   async getInstalled(): Promise<InstalledSkill[]> {
     return await invoke("get_installed_skills");
+  },
+
+  /** 刷新本地 Skill 的过期元数据，返回实际更新的数量 */
+  async refreshLocalMetadata(): Promise<number> {
+    return await invoke("refresh_local_skill_metadata");
   },
 
   /** 获取可恢复的 Skill 备份列表 */
@@ -309,35 +313,6 @@ export const skillsApi = {
     offset: number,
   ): Promise<SkillsShSearchResult> {
     return await invoke("search_skills_sh", { query, limit, offset });
-  },
-
-  // ========== 兼容旧 API ==========
-
-  /** 获取技能列表（兼容旧 API） */
-  async getAll(app: AppId = "claude"): Promise<Skill[]> {
-    if (app === "claude") {
-      return await invoke("get_skills");
-    }
-    return await invoke("get_skills_for_app", { app });
-  },
-
-  /** 安装技能（兼容旧 API） */
-  async install(directory: string, app: AppId = "claude"): Promise<boolean> {
-    if (app === "claude") {
-      return await invoke("install_skill", { directory });
-    }
-    return await invoke("install_skill_for_app", { app, directory });
-  },
-
-  /** 卸载技能（兼容旧 API） */
-  async uninstall(
-    directory: string,
-    app: AppId = "claude",
-  ): Promise<SkillUninstallResult> {
-    if (app === "claude") {
-      return await invoke("uninstall_skill", { directory });
-    }
-    return await invoke("uninstall_skill_for_app", { app, directory });
   },
 
   // ========== 仓库管理 ==========

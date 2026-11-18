@@ -3,47 +3,15 @@
 use serde_json::Value;
 use std::collections::HashMap;
 
-use crate::app_config::{McpApps, McpConfig, McpServer, MultiAppConfig};
+use crate::app_config::{McpApps, McpServer, MultiAppConfig};
 use crate::error::AppError;
 
-use super::validation::{extract_server_spec, validate_server_spec};
+use super::validation::validate_server_spec;
 
 fn should_sync_gemini_mcp() -> bool {
     // Gemini 未安装/未初始化时：~/.gemini 目录不存在。
     // 按用户偏好：目录缺失时跳过写入/删除，不创建任何文件或目录。
     crate::gemini_config::get_gemini_dir().exists()
-}
-
-/// 返回已启用的 MCP 服务器（过滤 enabled==true）
-fn collect_enabled_servers(cfg: &McpConfig) -> HashMap<String, Value> {
-    let mut out = HashMap::new();
-    for (id, entry) in cfg.servers.iter() {
-        let enabled = entry
-            .get("enabled")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        if !enabled {
-            continue;
-        }
-        match extract_server_spec(entry) {
-            Ok(spec) => {
-                out.insert(id.clone(), spec);
-            }
-            Err(err) => {
-                log::warn!("跳过无效的 MCP 条目 '{id}': {err}");
-            }
-        }
-    }
-    out
-}
-
-/// 将 config.json 中 Gemini 的 enabled==true 项写入 Gemini MCP 配置
-pub fn sync_enabled_to_gemini(config: &MultiAppConfig) -> Result<(), AppError> {
-    if !should_sync_gemini_mcp() {
-        return Ok(());
-    }
-    let enabled = collect_enabled_servers(&config.mcp.gemini);
-    crate::gemini_mcp::set_mcp_servers_map(&enabled)
 }
 
 /// 从 Gemini MCP 配置导入到统一结构（v3.7.0+）
@@ -93,7 +61,9 @@ pub fn import_from_gemini(config: &mut MultiAppConfig) -> Result<usize, AppError
                         hermes: false,
                         mcode: false,
                         kimi: false,
+                        copilot: false,
                         dsh: false,
+                        workbuddy: false,
                         pi: false,
                         omp: false,
                     },
@@ -116,11 +86,7 @@ pub fn import_from_gemini(config: &mut MultiAppConfig) -> Result<usize, AppError
 }
 
 /// 将单个 MCP 服务器同步到 Gemini live 配置
-pub fn sync_single_server_to_gemini(
-    _config: &MultiAppConfig,
-    id: &str,
-    server_spec: &Value,
-) -> Result<(), AppError> {
+pub fn sync_single_server_to_gemini(id: &str, server_spec: &Value) -> Result<(), AppError> {
     if !should_sync_gemini_mcp() {
         return Ok(());
     }

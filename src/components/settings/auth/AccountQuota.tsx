@@ -38,6 +38,12 @@ import {
   useXaiOauthQuotaByAccountId,
 } from "@/lib/query/subscription";
 import { extractErrorMessage } from "@/utils/errorUtils";
+import type { WorkBuddyQuota } from "@/lib/api/auth";
+import {
+  useWorkBuddyAccountQuota,
+  workbuddyCreditsLine,
+  workbuddyExpiryLine,
+} from "@/components/providers/workbuddyQuota";
 
 export interface AccountQuotaRow {
   label: string;
@@ -347,34 +353,53 @@ export function CopilotAccountQuota({
   );
 }
 
-/** xAI 账号的订阅额度（get_xai_oauth_quota(accountId)） */
-export function XaiAccountQuota({
-  accountId,
-  login,
-}: {
-  accountId: string;
-  login: string;
-}) {
-  const { t, i18n } = useTranslation();
-  const display = useQuotaDisplay();
-  const {
-    data: quota,
-    isFetching: loading,
-    refetch,
-  } = useXaiOauthQuotaByAccountId(accountId, {
-    enabled: true,
-    autoQuery: false,
-  });
-  return (
-    <AccountQuotaColumn
-      login={login}
-      state={subscriptionQuotaState(t, quota, loading, i18n.language, display)}
-      queriedAt={quota?.queriedAt ?? null}
-      loading={loading}
-      onRefresh={() => void refetch()}
-    />
-  );
+/** 按账号查的订阅额度列：xAI、Antigravity、Claude 只是查询 hook 不同 */
+function subscriptionAccountQuota(
+  useQuota: (
+    accountId: string,
+    options: { enabled: boolean; autoQuery: boolean },
+  ) => {
+    data: SubscriptionQuota | undefined;
+    isFetching: boolean;
+    refetch: () => unknown;
+  },
+) {
+  return function SubscriptionAccountQuota({
+    accountId,
+    login,
+  }: {
+    accountId: string;
+    login: string;
+  }) {
+    const { t, i18n } = useTranslation();
+    const display = useQuotaDisplay();
+    const {
+      data: quota,
+      isFetching: loading,
+      refetch,
+    } = useQuota(accountId, { enabled: true, autoQuery: false });
+    return (
+      <AccountQuotaColumn
+        login={login}
+        state={subscriptionQuotaState(
+          t,
+          quota,
+          loading,
+          i18n.language,
+          display,
+        )}
+        queriedAt={quota?.queriedAt ?? null}
+        loading={loading}
+        onRefresh={() => void refetch()}
+      />
+    );
+  };
 }
+
+/** xAI 账号的订阅额度（get_xai_oauth_quota(accountId)） */
+export const XaiAccountQuota = subscriptionAccountQuota(
+  useXaiOauthQuotaByAccountId,
+);
 
 /** Kimi 官方账号的剩余额度（kimi_oauth_quota(accountId)，不用先切号） */
 export function KimiAccountQuota({
@@ -415,53 +440,116 @@ export function KimiAccountQuota({
 }
 
 /** Antigravity 账号的剩余额度（agy_account_quota(accountId)，不用先切号） */
-export function AgyAccountQuota({
-  accountId,
-  login,
-}: {
-  accountId: string;
-  login: string;
-}) {
-  const { t, i18n } = useTranslation();
-  const display = useQuotaDisplay();
-  const {
-    data: quota,
-    isFetching: loading,
-    refetch,
-  } = useAgyAccountQuota(accountId, { enabled: true, autoQuery: false });
-  return (
-    <AccountQuotaColumn
-      login={login}
-      state={subscriptionQuotaState(t, quota, loading, i18n.language, display)}
-      queriedAt={quota?.queriedAt ?? null}
-      loading={loading}
-      onRefresh={() => void refetch()}
-    />
-  );
-}
+export const AgyAccountQuota = subscriptionAccountQuota(useAgyAccountQuota);
 
 /** Claude 官方账号的订阅额度（get_claude_account_quota(accountId)，不用先切号） */
-export function ClaudeAccountQuota({
+export const ClaudeAccountQuota = subscriptionAccountQuota(
+  useClaudeAccountQuota,
+);
+
+/**
+ * WorkBuddyQuota → 额度列状态：一行「套餐名  额度条  剩余积分」，悬停写全剩余 / 总量 / 已用；
+ * 显示的是上次结果时悬停说明原因。还没有结果时：当前号且 WorkBuddy 没运行给一句提示，
+ * 查询失败写「额度没查到」，其余不显示。
+ */
+export function workbuddyQuotaState(
+  t: TFunction,
+  quota: WorkBuddyQuota | undefined,
+  loading: boolean,
+  locale: string,
+  display: QuotaDisplay = "left",
+  planInLabel = true,
+): AccountQuotaState {
+  if (!quota) return loading ? { kind: "loading" } : null;
+  const credits = workbuddyCreditsLine(t, quota, locale, display);
+  if (credits) {
+    const expiry = workbuddyExpiryLine(t, quota, locale);
+    return {
+      kind: "rows",
+      rows: [
+        {
+          label:
+            (planInLabel ? credits.planName : undefined) ??
+            t("workbuddy.quota.credits"),
+          line: credits.line,
+        },
+        ...(expiry
+          ? [{ label: t("workbuddy.quota.expiry"), line: expiry }]
+          : []),
+      ],
+    };
+  }
+  if (quota.unavailable === "not_running" && quota.current) {
+    const caption = t("workbuddy.quota.openToQuery");
+    return {
+      kind: "rows",
+      rows: [
+        {
+          label: t("workbuddy.quota.credits"),
+          line: {
+            key: "workbuddy_not_running",
+            left: Infinity,
+            tone: "muted",
+            text: caption,
+            caption,
+            value: "",
+            detail: t("workbuddy.quota.onlyWhileRunning"),
+          },
+        },
+      ],
+    };
+  }
+  if (quota.unavailable === "failed") {
+    return {
+      kind: "failed",
+      reason: quota.error || t("workbuddy.quota.unavailable"),
+    };
+  }
+  return null;
+}
+
+/** WorkBuddy 账号的套餐与积分（workbuddy_account_quota(accountId)）：只有当前号能经运行中的 WorkBuddy 刷新 */
+export function WorkBuddyAccountQuota({
   accountId,
   login,
+  planInLabel = true,
 }: {
   accountId: string;
   login: string;
+  /** 额度行标签用套餐名；授权中心把套餐放在账号第二行，这里就只写「积分」 */
+  planInLabel?: boolean;
 }) {
   const { t, i18n } = useTranslation();
   const display = useQuotaDisplay();
   const {
     data: quota,
     isFetching: loading,
-    refetch,
-  } = useClaudeAccountQuota(accountId, { enabled: true, autoQuery: false });
+    isError,
+    error,
+    refresh,
+  } = useWorkBuddyAccountQuota(accountId);
+  const state: AccountQuotaState =
+    !quota && isError
+      ? {
+          kind: "failed",
+          reason:
+            extractErrorMessage(error) || t("workbuddy.quota.unavailable"),
+        }
+      : workbuddyQuotaState(
+          t,
+          quota,
+          loading,
+          i18n.language,
+          display,
+          planInLabel,
+        );
   return (
     <AccountQuotaColumn
       login={login}
-      state={subscriptionQuotaState(t, quota, loading, i18n.language, display)}
-      queriedAt={quota?.queriedAt ?? null}
+      state={state}
+      queriedAt={quota?.snapshot?.queriedAt ?? null}
       loading={loading}
-      onRefresh={() => void refetch()}
+      onRefresh={() => void refresh()}
     />
   );
 }

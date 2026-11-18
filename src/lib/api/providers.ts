@@ -91,6 +91,12 @@ export interface ClaudeDesktopDefaultRoute {
   supports1m: boolean;
 }
 
+/** WorkBuddy models.json 里的一个模型 id 及归属（CC Switch 供应商 id；null 是用户自己加的）。 */
+export interface WorkBuddyModelOwner {
+  id: string;
+  owner: string | null;
+}
+
 export const providersApi = {
   async getAll(appId: AppId): Promise<Record<string, Provider>> {
     return await invoke("get_providers", { app: appId });
@@ -179,10 +185,6 @@ export const providersApi = {
 
   async ensureClaudeDesktopOfficialProvider(): Promise<boolean> {
     return await invoke("ensure_claude_desktop_official_provider");
-  },
-
-  async ensureCodexOfficialProvider(): Promise<boolean> {
-    return await invoke("ensure_codex_official_provider");
   },
 
   async ensureGrokBuildOfficialProvider(): Promise<boolean> {
@@ -293,6 +295,14 @@ export const providersApi = {
   async importHermesFromLive(): Promise<number> {
     return await invoke("import_hermes_providers_from_live");
   },
+
+  /**
+   * WorkBuddy models.json 里已有的模型 id 及归属。WorkBuddy 里一个模型 id 只能属于一张卡
+   * （id 既是唯一键又是发给上游的模型名），表单据此跳过或标出被占用的 id。
+   */
+  async getWorkBuddyModelOwners(): Promise<WorkBuddyModelOwner[]> {
+    return await invoke("workbuddy_model_owners");
+  },
 };
 
 // ============================================================================
@@ -305,13 +315,6 @@ export const universalProvidersApi = {
    */
   async getAll(): Promise<UniversalProvidersMap> {
     return await invoke("get_universal_providers");
-  },
-
-  /**
-   * 获取单个统一供应商
-   */
-  async get(id: string): Promise<UniversalProvider | null> {
-    return await invoke("get_universal_provider", { id });
   },
 
   /**

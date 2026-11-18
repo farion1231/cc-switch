@@ -49,6 +49,7 @@ import {
 } from "@/config/claudeDesktopProviderPresets";
 import {
   fetchCodexOauthModels,
+  claudeModelFetchApiFormat,
   fetchModelsForConfig,
   fetchXaiOauthModels,
   showFetchModelsError,
@@ -652,6 +653,11 @@ export function ClaudeDesktopProviderForm({
       const models = await request;
       if (managedModelsRequestRef.current !== requestId) return;
       setFetchedModels(models);
+      if (models.length === 0 && activeProviderType === "github_copilot") {
+        // Copilot Free 账号的模型都不允许在模型选择器中使用，会被后端过滤成空
+        toast.info(t("copilot.noPickerModelsClaude"));
+        return;
+      }
       toast.success(
         t("providerForm.fetchModelsSuccess", {
           count: models.length,
@@ -692,7 +698,14 @@ export function ClaudeDesktopProviderForm({
 
     setIsFetchingModels(true);
     try {
-      const models = await fetchModelsForConfig(baseUrl.trim(), apiKey.trim());
+      const models = await fetchModelsForConfig(
+        baseUrl.trim(),
+        apiKey.trim(),
+        undefined,
+        undefined,
+        undefined,
+        { apiFormat: claudeModelFetchApiFormat(apiFormat) },
+      );
       setFetchedModels(models);
       toast.success(
         t("providerForm.fetchModelsSuccess", {

@@ -27,23 +27,7 @@ const DEEPSEEK_HOST_SUFFIXES: &[&str] = &["deepseek.com"];
 /// 同一份域名名单）和 DeepSeek。
 pub fn upstream_rejects_messages_inside_tool_calls(base_url: &str) -> bool {
     super::transform_codex_chat_moonshot_schema::upstream_requires_ref_sibling_all_of(base_url)
-        || host_matches(base_url, DEEPSEEK_HOST_SUFFIXES)
-}
-
-fn host_matches(base_url: &str, suffixes: &[&str]) -> bool {
-    let Ok(url) = url::Url::parse(base_url.trim()) else {
-        return false;
-    };
-    let Some(host) = url.host_str() else {
-        return false;
-    };
-    let host = host.to_ascii_lowercase();
-    suffixes.iter().any(|suffix| {
-        host == *suffix
-            || host
-                .strip_suffix(suffix)
-                .is_some_and(|prefix| prefix.ends_with('.'))
-    })
+        || super::url_host_is_or_under(base_url, DEEPSEEK_HOST_SUFFIXES)
 }
 
 /// 理顺 `input` 里这些上游拒收的助手消息排列。返回是否改动过请求体。

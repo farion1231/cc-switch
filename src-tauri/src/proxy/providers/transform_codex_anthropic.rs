@@ -29,6 +29,19 @@ use std::collections::{BTreeMap, HashSet};
 pub(crate) const ANTHROPIC_THINKING_ENCRYPTED_PREFIX: &str = "ccswitch-anthropic-thinking-v1:";
 const TOOL_SEARCH_PROXY_NAME: &str = "tool_search";
 
+/// Anthropic `max_tokens` used when neither the request nor the provider sets an
+/// output ceiling. Codex never sends `max_output_tokens`, so in practice this is
+/// the ceiling for every Codex → Anthropic request without a provider override.
+///
+/// Thinking tokens count against `max_tokens` (adaptive thinking included), so the
+/// old 8192 left too little room: one long file write in a tool call would stop at
+/// `max_tokens` and Codex would drop the turn as an incomplete response. 32000 is
+/// at or below the output ceiling of every Claude 4+ model (Opus 4 / 4.1 are the
+/// lowest at 32K) and of the current Anthropic-compatible endpoints (Kimi, GLM,
+/// MiniMax, DeepSeek). A gateway with a lower ceiling needs the provider's
+/// "max output tokens" setting.
+pub(crate) const DEFAULT_CODEX_ANTHROPIC_MAX_TOKENS: u64 = 32000;
+
 /// Maps Codex's reasoning.effort to the token budget for Anthropic thinking.
 ///
 /// Returning `None` indicates an unrecognized effort value—in that case extended
@@ -1282,12 +1295,6 @@ fn document_block_from_input_file(part: &Value) -> Option<Value> {
     Some(block)
 }
 
-/// Anthropic Messages response → OpenAI Responses response (non-streaming)
-#[allow(dead_code)]
-pub fn anthropic_response_to_responses(body: Value) -> Result<Value, ProxyError> {
-    anthropic_response_to_responses_with_context(body, &CodexToolContext::default())
-}
-
 pub(crate) fn anthropic_response_to_responses_with_context(
     body: Value,
     tool_context: &CodexToolContext,
@@ -2384,6 +2391,23 @@ mod tests {
     }
 
     #[test]
+    fn test_request_shipped_default_leaves_room_for_long_tool_calls() {
+        // Codex never sends max_output_tokens, so the shipped default is the real
+        // ceiling. Even with the deepest effort, a large tool call (e.g. writing a
+        // whole file) must keep at least 16000 tokens after the thinking budget.
+        let input = json!({
+            "model": "claude-sonnet-4-5",
+            "reasoning": { "effort": "xhigh" },
+            "input": [{ "role": "user", "content": "write the file" }]
+        });
+        let result =
+            responses_request_to_anthropic(input, DEFAULT_CODEX_ANTHROPIC_MAX_TOKENS).unwrap();
+        assert_eq!(result["max_tokens"], DEFAULT_CODEX_ANTHROPIC_MAX_TOKENS);
+        let budget = result["thinking"]["budget_tokens"].as_u64().unwrap();
+        assert!(DEFAULT_CODEX_ANTHROPIC_MAX_TOKENS - budget >= 16000);
+    }
+
+    #[test]
     fn test_request_default_max_tokens_leaves_output_headroom() {
         // Regression: on the no-max_output_tokens fallback path, a large derived thinking
         // budget must not consume nearly all of the default max_tokens. With default 8192
@@ -2473,7 +2497,9 @@ mod tests {
             "stop_reason": "end_turn",
             "usage": { "input_tokens": 10, "output_tokens": 5 }
         });
-        let result = anthropic_response_to_responses(input).unwrap();
+        let result =
+            anthropic_response_to_responses_with_context(input, &CodexToolContext::default())
+                .unwrap();
         assert_eq!(result["id"], "resp_msg_1");
         assert_eq!(result["status"], "completed");
         assert_eq!(result["output"][0]["type"], "message");
@@ -2497,7 +2523,9 @@ mod tests {
             "stop_reason": "tool_use",
             "usage": { "input_tokens": 10, "output_tokens": 15 }
         });
-        let result = anthropic_response_to_responses(input).unwrap();
+        let result =
+            anthropic_response_to_responses_with_context(input, &CodexToolContext::default())
+                .unwrap();
         assert_eq!(result["status"], "completed");
         assert_eq!(result["output"][0]["type"], "function_call");
         assert_eq!(result["output"][0]["call_id"], "call_1");
@@ -2516,7 +2544,9 @@ mod tests {
             "stop_reason": "end_turn",
             "usage": { "input_tokens": 1, "output_tokens": 2 }
         });
-        let result = anthropic_response_to_responses(input).unwrap();
+        let result =
+            anthropic_response_to_responses_with_context(input, &CodexToolContext::default())
+                .unwrap();
         assert_eq!(result["output"][0]["type"], "reasoning");
         assert_eq!(result["output"][0]["summary"][0]["text"], "Let me think");
         assert_eq!(result["output"][1]["type"], "message");
@@ -2533,7 +2563,9 @@ mod tests {
             "stop_reason":"end_turn"
         });
 
-        let result = anthropic_response_to_responses(input).unwrap();
+        let result =
+            anthropic_response_to_responses_with_context(input, &CodexToolContext::default())
+                .unwrap();
         assert_eq!(result["output"].as_array().unwrap().len(), 1);
         assert_eq!(result["output"][0]["type"], "message");
     }
@@ -2546,7 +2578,9 @@ mod tests {
             "stop_reason": "max_tokens",
             "usage": { "input_tokens": 1, "output_tokens": 2 }
         });
-        let result = anthropic_response_to_responses(input).unwrap();
+        let result =
+            anthropic_response_to_responses_with_context(input, &CodexToolContext::default())
+                .unwrap();
         assert_eq!(result["status"], "incomplete");
         assert_eq!(result["incomplete_details"]["reason"], "max_output_tokens");
     }
@@ -2565,7 +2599,9 @@ mod tests {
                 "cache_creation_input_tokens": 20
             }
         });
-        let result = anthropic_response_to_responses(input).unwrap();
+        let result =
+            anthropic_response_to_responses_with_context(input, &CodexToolContext::default())
+                .unwrap();
         // Responses input_tokens is the inclusive total: fresh + read + write.
         assert_eq!(result["usage"]["input_tokens"], 100);
         assert_eq!(result["usage"]["output_tokens"], 5);
@@ -2596,7 +2632,9 @@ mod tests {
             }],
             "stop_reason": "tool_use"
         });
-        let result = anthropic_response_to_responses(input).unwrap();
+        let result =
+            anthropic_response_to_responses_with_context(input, &CodexToolContext::default())
+                .unwrap();
         let args = result["output"][0]["arguments"].as_str().unwrap();
         assert!(args.contains("/tmp/x"));
         assert!(!args.contains("pages"));
@@ -2610,22 +2648,27 @@ mod tests {
             "stop_reason": "refusal",
             "usage": { "input_tokens": 1, "output_tokens": 0 }
         });
-        let result = anthropic_response_to_responses(input).unwrap();
+        let result =
+            anthropic_response_to_responses_with_context(input, &CodexToolContext::default())
+                .unwrap();
         assert_eq!(result["status"], "incomplete");
         assert_eq!(result["incomplete_details"]["reason"], "content_filter");
     }
 
     #[test]
     fn test_signed_thinking_round_trips_through_responses_tool_loop() {
-        let converted = anthropic_response_to_responses(json!({
-            "id": "msg_signed",
-            "model": "claude-sonnet-5",
-            "stop_reason": "tool_use",
-            "content": [
-                {"type": "thinking", "thinking": "check", "signature": "sig_123"},
-                {"type": "tool_use", "id": "call_1", "name": "Read", "input": {"path": "/tmp/a"}}
-            ]
-        }))
+        let converted = anthropic_response_to_responses_with_context(
+            json!({
+                "id": "msg_signed",
+                "model": "claude-sonnet-5",
+                "stop_reason": "tool_use",
+                "content": [
+                    {"type": "thinking", "thinking": "check", "signature": "sig_123"},
+                    {"type": "tool_use", "id": "call_1", "name": "Read", "input": {"path": "/tmp/a"}}
+                ]
+            }),
+            &CodexToolContext::default(),
+        )
         .unwrap();
         let reasoning = converted["output"][0].clone();
         assert!(reasoning["encrypted_content"]
@@ -2654,10 +2697,13 @@ mod tests {
 
     #[test]
     fn test_redacted_thinking_is_preserved_without_visible_summary() {
-        let response = anthropic_response_to_responses(json!({
-            "id": "msg_redacted",
-            "content": [{"type": "redacted_thinking", "data": "opaque"}]
-        }))
+        let response = anthropic_response_to_responses_with_context(
+            json!({
+                "id": "msg_redacted",
+                "content": [{"type": "redacted_thinking", "data": "opaque"}]
+            }),
+            &CodexToolContext::default(),
+        )
         .unwrap();
         assert_eq!(response["output"][0]["summary"], json!([]));
         assert!(response["output"][0]["encrypted_content"].is_string());
@@ -2687,21 +2733,27 @@ mod tests {
 
     #[test]
     fn test_success_status_error_envelope_is_not_completed() {
-        let error = anthropic_response_to_responses(json!({
-            "type": "error",
-            "error": {"type": "overloaded_error", "message": "busy"}
-        }))
+        let error = anthropic_response_to_responses_with_context(
+            json!({
+                "type": "error",
+                "error": {"type": "overloaded_error", "message": "busy"}
+            }),
+            &CodexToolContext::default(),
+        )
         .unwrap_err();
         assert!(error.to_string().contains("overloaded_error"));
     }
 
     #[test]
     fn test_context_window_stop_reason_is_incomplete() {
-        let response = anthropic_response_to_responses(json!({
-            "id": "msg_ctx",
-            "stop_reason": "model_context_window_exceeded",
-            "content": [{"type": "text", "text": "partial"}]
-        }))
+        let response = anthropic_response_to_responses_with_context(
+            json!({
+                "id": "msg_ctx",
+                "stop_reason": "model_context_window_exceeded",
+                "content": [{"type": "text", "text": "partial"}]
+            }),
+            &CodexToolContext::default(),
+        )
         .unwrap();
         assert_eq!(response["status"], "incomplete");
         assert_eq!(
@@ -2959,7 +3011,8 @@ data: {\"type\":\"message_stop\"}\n\n";
         assert_eq!(msg["usage"]["server_tool_use"]["web_search_requests"], 1);
 
         // The aggregated result can be converted directly into Responses.
-        let resp = anthropic_response_to_responses(msg).unwrap();
+        let resp = anthropic_response_to_responses_with_context(msg, &CodexToolContext::default())
+            .unwrap();
         assert_eq!(resp["status"], "completed");
         assert_eq!(resp["output"][0]["content"][0]["text"], "Hello world");
     }
@@ -3025,7 +3078,9 @@ data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usa
         let sse = "data: {\"type\":\"message_start\",\"message\":{\"id\":\"m\",\"content\":[]}}\n\n\
 data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"partial\"}}\n\n";
         let message = anthropic_sse_to_message_value(sse).unwrap();
-        let response = anthropic_response_to_responses(message).unwrap();
+        let response =
+            anthropic_response_to_responses_with_context(message, &CodexToolContext::default())
+                .unwrap();
         assert_eq!(response["status"], "incomplete");
         assert_eq!(
             response["incomplete_details"]["reason"],
@@ -3059,7 +3114,9 @@ data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":
         // anything it does not recognise. Asserting only on the intermediate value
         // would pass while the client receives a `completed` response with empty
         // output and no indication that the text was thrown away.
-        let response = anthropic_response_to_responses(msg).expect("final conversion must succeed");
+        let response =
+            anthropic_response_to_responses_with_context(msg, &CodexToolContext::default())
+                .expect("final conversion must succeed");
         assert_eq!(
             response["output"][0]["content"][0]["text"],
             json!("x"),

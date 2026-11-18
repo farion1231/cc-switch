@@ -224,6 +224,7 @@ impl TranscriptCache {
         self.entries.lock().unwrap_or_else(|poisoned| {
             let mut guard = poisoned.into_inner();
             guard.clear();
+            self.entries.clear_poison();
             guard
         })
     }
@@ -481,6 +482,23 @@ mod tests {
     use std::time::Duration;
     use tempfile::tempdir;
 
+    #[test]
+    fn cache_recovers_after_poison_and_retains_new_entries() {
+        let cache = TranscriptCache::new(8, 1024);
+        cache.insert(key("old"), fp(1), Arc::new(transcript_of_bytes(100)));
+        assert!(std::panic::catch_unwind(|| {
+            let _guard = cache.entries.lock().unwrap();
+            panic!("interrupted cache update");
+        })
+        .is_err());
+
+        assert!(cache.get(&key("old"), fp(1)).is_none());
+        let fresh = Arc::new(transcript_of_bytes(100));
+        cache.insert(key("new"), fp(2), fresh.clone());
+        assert!(Arc::ptr_eq(&cache.get(&key("new"), fp(2)).unwrap(), &fresh));
+        assert!(!cache.entries.is_poisoned());
+    }
+
     fn transcript_of_bytes(bytes: usize) -> Transcript {
         Transcript {
             approx_bytes: bytes,
@@ -588,29 +606,6 @@ mod tests {
                 assert_eq!(question_preview(&structured), previous(&structured));
             }
         }
-    }
-
-    #[test]
-    #[ignore = "manual serialization benchmark"]
-    fn benchmark_message_sizing() {
-        let message = SessionMessage {
-            content: "a".repeat(8 * 1024 * 1024),
-            ..SessionMessage::default()
-        };
-        let start = std::time::Instant::now();
-        for _ in 0..20 {
-            std::hint::black_box(serde_json::to_vec(&message).unwrap().len());
-        }
-        let materialized = start.elapsed();
-        let start = std::time::Instant::now();
-        for _ in 0..20 {
-            std::hint::black_box(serialized_message_len(&message));
-        }
-        eprintln!(
-            "message_sizing 8MiB x20 materialized_ms={} counted_ms={}",
-            materialized.as_millis(),
-            start.elapsed().as_millis()
-        );
     }
 
     fn key(name: &str) -> CacheKey {
