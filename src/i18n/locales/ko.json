@@ -4786,7 +4786,7 @@
       "filesTitle": "읽은 파일",
       "claudeNote": " (최상위 mcpServers)",
       "ok": "확인",
-      "dshNote": " (초기화된 모든 프로필에 기록: web, desktop, headless, acp)"
+      "dshNote": " (초기화된 모든 프로필에 기록: web, desktop, headless, acp. 홈 수준의 ~/.dsh/cordis.patch.yml은 읽거나 쓰지 않으므로, 그 안의 MCP는 해당 파일에서 관리하세요)"
     },
     "templateLabels": {
       "sequential-thinking": "순차적 사고"

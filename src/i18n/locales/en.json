@@ -4785,7 +4785,7 @@
       "failedTitle": "Some apps couldn't be read",
       "filesTitle": "Which files were read",
       "claudeNote": " (top-level mcpServers)",
-      "dshNote": " (written to every initialized profile: web, desktop, headless, acp)",
+      "dshNote": " (written to every initialized profile: web, desktop, headless, acp. The home-level ~/.dsh/cordis.patch.yml is neither read nor written; manage the MCP servers in it there)",
       "ok": "Got it"
     },
     "templateLabels": {

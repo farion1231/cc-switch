@@ -4716,7 +4716,7 @@
       "failedTitle": "Bazı uygulamalar okunamadı",
       "filesTitle": "Hangi dosyalar okundu",
       "claudeNote": " (üst düzey mcpServers)",
-      "dshNote": " (başlatılmış her profile yazılır: web, desktop, headless, acp)",
+      "dshNote": " (başlatılmış her profile yazılır: web, desktop, headless, acp. Ana düzeydeki ~/.dsh/cordis.patch.yml okunmaz ve yazılmaz; içindeki MCP sunucularını o dosyada yönetin)",
       "ok": "Anladım"
     },
     "templateLabels": {
