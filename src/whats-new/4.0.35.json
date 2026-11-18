@@ -3,8 +3,8 @@
   "items": [
     {
       "type": "new",
-      "zh": "Claude Code 里 ChatGPT 账号的 Codex 卡片支持 GPT-6.2",
-      "zh-TW": "Claude Code 裡 ChatGPT 帳號的 Codex 卡片支援 GPT-6.2",
+      "zh": "Claude Code 的 ChatGPT 账号卡片可用 GPT-6.2",
+      "zh-TW": "Claude Code 的 ChatGPT 帳號卡片可用 GPT-6.2",
       "en": "ChatGPT-account Codex cards in Claude Code now support GPT-6.2",
       "ja": "Claude Code の ChatGPT アカウント Codex カードが GPT-6.2 に対応"
     },
