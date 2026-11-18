@@ -71,7 +71,9 @@ fn decide(body: &Value, provider: &Provider, base_url: &str) -> (EffortPlan, &'s
     if is_known_non_reasoning_model(model) {
         return (EffortPlan::Omit, "non-reasoning-model");
     }
-    if is_mistral(provider, base_url, model) {
+    // Mistral 开推理后流式 `content` 是 thinking / text 分块数组，转换层还不解析（正文会丢），
+    // 先不给它发档位。
+    if super::is_mistral_api(base_url) {
         return (EffortPlan::Omit, "mistral-chunked-content");
     }
 
@@ -117,14 +119,6 @@ fn is_known_non_reasoning_model(model: &str) -> bool {
         .and_then(|rest| rest.chars().next())
         .is_some_and(|c| c.is_ascii_digit() && c < '5');
     gpt_before_5 || name.starts_with("chatgpt-4") || name.starts_with("llama")
-}
-
-/// Mistral 开推理后流式 `content` 是 thinking / text 分块数组，转换层还不解析（正文会丢），
-/// 先不给它发档位（与 Codex 的 Mistral 预设同口径）。
-fn is_mistral(provider: &Provider, base_url: &str, model: &str) -> bool {
-    format!("{} {base_url} {model}", provider.name)
-        .to_ascii_lowercase()
-        .contains("mistral")
 }
 
 fn override_mode(provider: &Provider) -> Option<&str> {
@@ -400,7 +394,7 @@ mod tests {
     }
 
     #[test]
-    fn mistral_gets_nothing_until_chunked_content_is_parsed() {
+    fn official_mistral_api_gets_nothing_until_chunked_content_is_parsed() {
         let official = provider("Mistral", None);
         assert_eq!(
             plan(
@@ -410,10 +404,20 @@ mod tests {
             ),
             EffortPlan::Omit
         );
-        let relay = provider("Relay", None);
+    }
+
+    #[test]
+    fn relays_merely_mentioning_mistral_are_not_treated_as_the_official_api() {
+        // 只有官方主机按 Mistral 处理；中转站的名字、地址或模型名里带 mistral 不算，
+        // 照普通中转走：要了 high 就发 high。
+        let relay = provider("Mistral via relay", None);
         assert_eq!(
-            plan(&body("mistral-small-2603", Some("high")), &relay, RELAY),
-            EffortPlan::Omit
+            plan(
+                &body("mistral-small-2603", Some("high")),
+                &relay,
+                "https://mistral-relay.example/v1"
+            ),
+            EffortPlan::Send("high")
         );
     }
 

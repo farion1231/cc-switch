@@ -28,6 +28,7 @@
 //! `config.toml` 暂时解析不了），而缓存这时已经是新的，之后的刷新只会得到 304 或同样的
 //! 列表。所以「客户端落后于缓存」单独记一个标记，重写成功才清掉，每个检查点都看它。
 
+use crate::sync_utils::MutexExt;
 use std::cmp::Ordering as CmpOrdering;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -157,28 +158,20 @@ fn env_slot() -> &'static Mutex<Option<Arc<Env>>> {
 }
 
 fn env() -> Arc<Env> {
-    let mut slot = env_slot()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut slot = env_slot().lock_recover();
     slot.get_or_insert_with(|| Arc::new(Env::real())).clone()
 }
 
 #[cfg(test)]
 pub(crate) fn set_test_env(env: Env) {
-    *env_slot()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Arc::new(env));
+    *env_slot().lock_recover() = Some(Arc::new(env));
 }
 
 #[cfg(test)]
 pub(crate) fn reset_test_env() {
-    *env_slot()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+    *env_slot().lock_recover() = None;
     CLIENT_BEHIND.store(false, Ordering::SeqCst);
-    *last_source_slot()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+    *last_source_slot().lock_recover() = None;
 }
 
 /// 服务端按版本过滤列表：报低了少模型（`0.60.0` 返回 0 条），报高了会列出本机驱动不了的
@@ -403,9 +396,7 @@ fn read_cache() -> Cache {
 }
 
 fn store_entry(identity: &str, entry: Entry) {
-    let _guard = cache_lock()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _guard = cache_lock().lock_recover();
     let mut cache = read_cache();
     cache.insert(identity.to_string(), entry);
     let path = DeviceStore::for_device().file(CACHE_FILENAME);
@@ -549,9 +540,7 @@ fn last_source_slot() -> &'static Mutex<Option<NativeSource>> {
 }
 
 pub(crate) fn last_source() -> Option<NativeSource> {
-    *last_source_slot()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+    *last_source_slot().lock_recover()
 }
 
 /// 最近一次写目录时官方列表没用上（登录过期、拿不到版本、拉取失败……）。
@@ -593,9 +582,7 @@ pub(crate) fn rows_for_switch(login: &Result<OfficialLogin, OfficialSkip>) -> Na
             }
         },
     };
-    *last_source_slot()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(source);
+    *last_source_slot().lock_recover() = Some(source);
     rows
 }
 
@@ -922,32 +909,31 @@ pub(crate) mod testing {
 mod tests {
     use super::testing::*;
     use super::*;
+    use crate::test_support::EnvVars;
     use serde_json::json;
     use serial_test::serial;
     use std::sync::mpsc;
 
     /// 临时 home（缓存文件落在这里），结束时换回假依赖之前的状态。
     struct Scope {
+        _env: EnvVars,
         _dir: tempfile::TempDir,
-        saved: Option<std::ffi::OsString>,
     }
 
     impl Scope {
         fn new() -> Self {
             let dir = tempfile::TempDir::new().unwrap();
-            let saved = std::env::var_os("CC_SWITCH_TEST_HOME");
-            std::env::set_var("CC_SWITCH_TEST_HOME", dir.path());
-            Self { _dir: dir, saved }
+            let env = EnvVars::new().set("CC_SWITCH_TEST_HOME", dir.path());
+            Self {
+                _env: env,
+                _dir: dir,
+            }
         }
     }
 
     impl Drop for Scope {
         fn drop(&mut self) {
             reset_test_env();
-            match self.saved.take() {
-                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
-                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
-            }
         }
     }
 

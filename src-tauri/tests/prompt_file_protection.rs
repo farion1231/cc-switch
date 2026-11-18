@@ -69,7 +69,7 @@ fn local_protection_preserves_rules_across_restores_and_prompt_operations() {
             created_at: None,
             updated_at: None,
         };
-        state.db.save_prompt(&key, &remote).unwrap();
+        state.db.save_prompt(&app, &remote).unwrap();
         assert!(!get_prompt_file_protection(key.clone()).unwrap());
         fs::write(&path, local).unwrap();
         PromptService::sync_to_live(&state, app.clone()).unwrap();
@@ -117,7 +117,7 @@ fn local_protection_preserves_rules_across_restores_and_prompt_operations() {
             0
         );
         assert!(
-            fresh.db.get_prompts(&key).unwrap().is_empty(),
+            fresh.db.get_prompts(&app).unwrap().is_empty(),
             "first launch must not adopt independently managed rules"
         );
 
@@ -126,7 +126,7 @@ fn local_protection_preserves_rules_across_restores_and_prompt_operations() {
         let snapshot = Database::memory().unwrap();
         snapshot
             .save_prompt(
-                &key,
+                &app,
                 &Prompt {
                     content: "new snapshot".into(),
                     ..remote.clone()
@@ -139,14 +139,14 @@ fn local_protection_preserves_rules_across_restores_and_prompt_operations() {
             json!({"env":{"ANTHROPIC_BASE_URL":"https://gateway.example.test","ANTHROPIC_AUTH_TOKEN":"public-fake-key"}}),
             None,
         );
-        snapshot.save_provider("claude", &provider).unwrap();
+        snapshot.save_provider(&AppType::Claude, &provider).unwrap();
         let sql = snapshot.export_sql_string_for_sync().unwrap();
         assert!(!sql.contains("prompt-file-protection"));
         state.db.import_sql_string(&sql).unwrap();
         assert!(
             state
                 .db
-                .get_provider_by_id("team-api", "claude")
+                .get_provider_by_id("team-api", &AppType::Claude)
                 .unwrap()
                 .is_some(),
             "provider configuration still restores"
@@ -212,7 +212,7 @@ fn policy_survives_data_directory_changes_and_fallback() {
         let path = home._dir.path().join(file);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, "B: independently maintained").unwrap();
-        state.db.save_prompt(app.as_str(), &team_prompt()).unwrap();
+        state.db.save_prompt(&app, &team_prompt()).unwrap();
         set_prompt_file_protection(app.as_str().into(), true).unwrap();
         for directory in [
             Some(alternative.clone()),
@@ -277,7 +277,7 @@ fn releasing_protection_does_not_backfill_until_explicit_adoption() {
         let path = home._dir.path().join(file);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, "B: private local rules").unwrap();
-        state.db.save_prompt(app.as_str(), &team_prompt()).unwrap();
+        state.db.save_prompt(&app, &team_prompt()).unwrap();
         set_prompt_file_protection(app.as_str().into(), true).unwrap();
         set_prompt_file_protection(app.as_str().into(), false).unwrap();
         let prompts = PromptService::get_prompts(&state, app.clone()).unwrap();
@@ -290,7 +290,7 @@ fn releasing_protection_does_not_backfill_until_explicit_adoption() {
             "the file is not managed until an explicit write"
         );
         assert_eq!(
-            state.db.get_prompts(app.as_str()).unwrap()["team"].content,
+            state.db.get_prompts(&app).unwrap()["team"].content,
             "A: shared rules"
         );
         assert!(PromptService::enable_prompt(&state, app.clone(), "missing").is_err());
@@ -309,13 +309,13 @@ fn releasing_protection_does_not_backfill_until_explicit_adoption() {
         );
         assert_eq!(fs::read_to_string(&path).unwrap(), "B: private local rules");
         assert_eq!(
-            state.db.get_prompts(app.as_str()).unwrap()["team"].content,
+            state.db.get_prompts(&app).unwrap()["team"].content,
             "A: shared rules"
         );
         assert!(
             !state
                 .db
-                .get_prompts(app.as_str())
+                .get_prompts(&app)
                 .unwrap()
                 .values()
                 .any(|p| p.content == "B: private local rules"),
@@ -337,7 +337,7 @@ fn releasing_protection_does_not_backfill_until_explicit_adoption() {
             "B: private local rules",
             "editing a detached inactive template must not clear the independent file"
         );
-        state.db.save_prompt(app.as_str(), &team_prompt()).unwrap();
+        state.db.save_prompt(&app, &team_prompt()).unwrap();
         let profile = ProfileService::create(&state, "Team project", scope).unwrap();
         let warnings = ProfileService::apply(&state, &profile.id, scope).unwrap();
         assert!(warnings.is_empty(), "{warnings:?}");
@@ -393,7 +393,10 @@ fn failed_ownership_commit_is_reported_and_does_not_allow_backfill() {
     let file = home._dir.path().join(".claude/CLAUDE.md");
     fs::create_dir_all(file.parent().unwrap()).unwrap();
     fs::write(&file, "B: independent").unwrap();
-    state.db.save_prompt("claude", &team_prompt()).unwrap();
+    state
+        .db
+        .save_prompt(&AppType::Claude, &team_prompt())
+        .unwrap();
     set_prompt_file_protection("claude".into(), true).unwrap();
     set_prompt_file_protection("claude".into(), false).unwrap();
     let policy_dir = home._dir.path().join(".cc-switch");
@@ -447,7 +450,7 @@ fn detached_adoption_requires_a_readable_existing_file() {
         let path = home._dir.path().join(relative);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, [0xff, 0xfe, 0x41]).unwrap();
-        state.db.save_prompt(app.as_str(), &team_prompt()).unwrap();
+        state.db.save_prompt(&app, &team_prompt()).unwrap();
         set_prompt_file_protection(app.as_str().into(), true).unwrap();
         set_prompt_file_protection(app.as_str().into(), false).unwrap();
         assert!(
@@ -455,9 +458,9 @@ fn detached_adoption_requires_a_readable_existing_file() {
             "a failed backup read must not be silently discarded"
         );
         assert_eq!(fs::read(&path).unwrap(), [0xff, 0xfe, 0x41]);
-        assert_eq!(state.db.get_prompts(app.as_str()).unwrap().len(), 1);
+        assert_eq!(state.db.get_prompts(&app).unwrap().len(), 1);
         assert_eq!(
-            state.db.get_prompts(app.as_str()).unwrap()["team"].content,
+            state.db.get_prompts(&app).unwrap()["team"].content,
             "A: shared rules"
         );
         fs::remove_file(&path).unwrap();
@@ -477,11 +480,14 @@ fn detached_adoption_keeps_exact_separate_backups() {
     let state = AppState::new(Arc::new(Database::memory().unwrap()));
     let file = home._dir.path().join(".claude/CLAUDE.md");
     fs::create_dir_all(file.parent().unwrap()).unwrap();
-    state.db.save_prompt("claude", &team_prompt()).unwrap();
+    state
+        .db
+        .save_prompt(&AppType::Claude, &team_prompt())
+        .unwrap();
     state
         .db
         .save_prompt(
-            "claude",
+            &AppType::Claude,
             &Prompt {
                 id: "similar".into(),
                 content: "B: local rules".into(),
@@ -501,7 +507,7 @@ fn detached_adoption_keeps_exact_separate_backups() {
         set_prompt_file_protection("claude".into(), false).unwrap();
         PromptService::enable_prompt(&state, AppType::Claude, "team").unwrap();
     }
-    let prompts = state.db.get_prompts("claude").unwrap();
+    let prompts = state.db.get_prompts(&AppType::Claude).unwrap();
     for original in originals {
         assert!(
             prompts
@@ -522,7 +528,10 @@ fn unresolved_parent_components_cannot_turn_an_existing_file_into_a_new_file() {
     let existing = home._dir.path().join("existing");
     fs::create_dir_all(&existing).unwrap();
     fs::write(existing.join("CLAUDE.md"), "B: independent original").unwrap();
-    state.db.save_prompt("claude", &team_prompt()).unwrap();
+    state
+        .db
+        .save_prompt(&AppType::Claude, &team_prompt())
+        .unwrap();
     update_settings(AppSettings {
         claude_config_dir: Some(
             home._dir

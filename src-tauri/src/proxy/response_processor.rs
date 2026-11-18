@@ -908,6 +908,7 @@ fn format_headers(headers: &HeaderMap) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app_config::AppType;
     use crate::database::Database;
     use crate::error::AppError;
     use crate::provider::ProviderMeta;
@@ -1233,7 +1234,8 @@ mod tests {
         let db = Arc::new(Database::memory()?);
         let app_type = "claude";
 
-        db.set_pricing_model_source(app_type, "response").await?;
+        db.set_pricing_model_source(&AppType::Claude, "response")
+            .await?;
         seed_pricing(&db)?;
         {
             // 旧版写下的全局倍率仍留在列里，新版不再读取
@@ -1304,7 +1306,8 @@ mod tests {
         let db = Arc::new(Database::memory()?);
         let app_type = "claude";
 
-        db.set_pricing_model_source(app_type, "request").await?;
+        db.set_pricing_model_source(&AppType::Claude, "request")
+            .await?;
         seed_pricing(&db)?;
         {
             let conn = crate::database::lock_conn!(db.conn);
@@ -1376,7 +1379,8 @@ mod tests {
 
         // proxy_config 没有 claude-desktop 行；它的计费模式必须继承 claude，
         // 而不是静默落回工厂默认（response）
-        db.set_pricing_model_source("claude", "request").await?;
+        db.set_pricing_model_source(&AppType::Claude, "request")
+            .await?;
 
         let logger = UsageLogger::new(&db);
         let source = logger.resolve_pricing_model_source("claude-desktop").await;
@@ -1399,7 +1403,8 @@ mod tests {
         let db = Arc::new(Database::memory()?);
         let app_type = "claude";
 
-        db.set_pricing_model_source(app_type, "response").await?;
+        db.set_pricing_model_source(&AppType::Claude, "response")
+            .await?;
         seed_pricing(&db)?;
         insert_provider(&db, "provider-busy", app_type, ProviderMeta::default())?;
 

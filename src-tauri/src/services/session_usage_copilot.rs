@@ -8,12 +8,14 @@
 //! 记录里的 model 只是发给上游的 wireModel，不带供应商。归属看会话当时选的模型：
 //! `session.start.data.selectedModel`，之后 `session.model_change.data.newModel`。选的是
 //! `<卡片 id>/<模型>` 且卡片在库里时记到那张卡，否则记 `_copilot_session`（官方模型）。
+use crate::app_config::AppType;
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
-use crate::proxy::usage::{calculator::CostCalculator, parser::TokenUsage};
+use crate::proxy::usage::parser::TokenUsage;
 use crate::services::{
     session_usage::{
-        load_sync_cursors, metadata_modified_nanos, update_sync_state_on_conn, SessionSyncResult,
+        cost_columns, load_sync_cursors, metadata_modified_nanos, update_sync_state_on_conn,
+        SessionSyncResult,
     },
     sql_helpers::INPUT_TOKEN_SEMANTICS_FRESH,
     usage_stats::find_model_pricing,
@@ -34,7 +36,10 @@ pub fn sync_copilot_usage(db: &Database) -> Result<SessionSyncResult, AppError> 
 fn sync_sessions(db: &Database, root: &Path) -> Result<SessionSyncResult, AppError> {
     let mut result = SessionSyncResult::default();
     let cursors = load_sync_cursors(db)?;
-    let provider_ids: HashSet<String> = db.get_all_providers("copilot")?.into_keys().collect();
+    let provider_ids: HashSet<String> = db
+        .get_all_providers(&AppType::Copilot)?
+        .into_keys()
+        .collect();
     let Ok(sessions) = fs::read_dir(root) else {
         return Ok(result);
     };
@@ -227,7 +232,12 @@ fn sync_file(
             result.skipped += 1;
             continue;
         }
-        let amounts = costs(&tx, &record.model, &record.usage);
+        let amounts = cost_columns(
+            "copilot",
+            &record.usage,
+            find_model_pricing(&tx, &record.model).as_ref(),
+            Decimal::ONE,
+        );
         tx.execute(
             "INSERT OR IGNORE INTO proxy_request_logs (
             request_id, provider_id, app_type, model, request_model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
@@ -259,23 +269,6 @@ fn sync_file(
     update_sync_state_on_conn(&tx, key, modified, bytes)?;
     tx.commit()?;
     Ok(result)
-}
-
-/// 五个金额（输入、输出、缓存读、缓存写、合计）；查不到价格的记 0，不代表免费。
-fn costs(conn: &rusqlite::Connection, model: &str, usage: &TokenUsage) -> [String; 5] {
-    find_model_pricing(conn, model)
-        .map(|pricing| {
-            let cost = CostCalculator::calculate_for_app("copilot", usage, &pricing, Decimal::ONE);
-            [
-                cost.input_cost,
-                cost.output_cost,
-                cost.cache_read_cost,
-                cost.cache_creation_cost,
-                cost.total_cost,
-            ]
-        })
-        .unwrap_or([Decimal::ZERO; 5])
-        .map(|value| value.to_string())
 }
 
 #[cfg(test)]
@@ -412,7 +405,7 @@ mod tests {
             json!({"provider":{"baseUrl":"https://api.deepseek.com/v1"},"models":[{"id":"deepseek-v4"}]}),
             None,
         );
-        db.save_provider("copilot", &card).unwrap();
+        db.save_provider(&AppType::Copilot, &card).unwrap();
         let root = tempfile::tempdir().unwrap();
         write_session(
             root.path(),

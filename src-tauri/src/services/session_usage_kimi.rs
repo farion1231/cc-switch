@@ -2,10 +2,11 @@
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use crate::kimi_session::{timestamp_ms, RequestIndex, RequestInfo};
-use crate::proxy::usage::{calculator::CostCalculator, parser::TokenUsage};
+use crate::proxy::usage::parser::TokenUsage;
 use crate::services::{
     session_usage::{
-        load_sync_cursors, metadata_modified_nanos, update_sync_state_on_conn, SessionSyncResult,
+        cost_columns, load_sync_cursors, metadata_modified_nanos, update_sync_state_on_conn,
+        SessionSyncResult,
     },
     sql_helpers::INPUT_TOKEN_SEMANTICS_FRESH,
     usage_stats::find_model_pricing,
@@ -234,19 +235,12 @@ fn costs(
     usage: &TokenUsage,
     multiplier: Decimal,
 ) -> [String; 5] {
-    find_model_pricing(conn, model)
-        .map(|pricing| {
-            let cost = CostCalculator::calculate_for_app("kimi", usage, &pricing, multiplier);
-            [
-                cost.input_cost,
-                cost.output_cost,
-                cost.cache_read_cost,
-                cost.cache_creation_cost,
-                cost.total_cost,
-            ]
-        })
-        .unwrap_or([Decimal::ZERO; 5])
-        .map(|value| value.to_string())
+    cost_columns(
+        "kimi",
+        usage,
+        find_model_pricing(conn, model).as_ref(),
+        multiplier,
+    )
 }
 
 /// Enrich retained details only. A receipt without a detail row belongs to pruned history;

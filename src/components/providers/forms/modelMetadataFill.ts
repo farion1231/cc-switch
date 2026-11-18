@@ -4,7 +4,10 @@
 import type { KnownModelMetadata } from "@/lib/modelMetadata";
 import type { CodexCatalogModel, OpenClawModel, OpenCodeModel } from "@/types";
 import type { HermesModel } from "@/config/hermesProviderPresets";
-import type { WorkBuddyModel } from "@/config/workbuddyProviderPresets";
+import {
+  workbuddyThinkingFields,
+  type WorkBuddyModel,
+} from "@/config/workbuddyProviderPresets";
 import type { KimiProviderConfig } from "@/config/kimiProviderPresets";
 import {
   PI_THINKING_LEVELS,
@@ -89,8 +92,9 @@ export function fillOpenClawModel(
 export function fillWorkBuddyModel(
   model: WorkBuddyModel,
   metadata: KnownModelMetadata,
+  baseUrl: string,
 ): WorkBuddyModel {
-  const next = { ...model };
+  let next = { ...model };
   if (isBlank(model.maxInputTokens) && metadata.contextWindow) {
     next.maxInputTokens = metadata.contextWindow;
   }
@@ -99,6 +103,24 @@ export function fillWorkBuddyModel(
   }
   if (metadata.reasoning === true) next.supportsReasoning = true;
   if (metadata.inputModalities?.includes("image")) next.supportsImages = true;
+  // 思考强度：WorkBuddy CLI 内置 pi-ai，档位映射与 Pi 同规则补，只是不往条目里补
+  // compat（预设映射要靠 compat 才成立时跳过）。用户已有映射或强度的不动。
+  if (next.supportsReasoning && !model.reasoning && !model.thinkingLevelMap) {
+    const effective: PiProviderProtocol = {
+      api: "openai-completions",
+      baseUrl,
+      providerId: "",
+      compat: {},
+    };
+    const preset = piPresetThinkingFor(metadata.piThinking, effective);
+    const map =
+      preset && Object.keys(preset.missingCompat).length === 0
+        ? preset.map
+        : piSendsReasoningEffort(effective)
+          ? piThinkingLevelMapFromEfforts(metadata.reasoningEfforts)
+          : undefined;
+    if (map) next = { ...next, ...workbuddyThinkingFields(map) };
+  }
   return next;
 }
 
