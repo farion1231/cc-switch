@@ -112,6 +112,15 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
+        // 修复 user_version 已到 26 但 enabled_atomcode 未落盘的库（跑过未发布
+        // 开发版或从缺列备份导入）：迁移循环不会再触发 v25->v26，这里幂等补齐。
+        Self::add_column_if_missing(
+            conn,
+            "mcp_servers",
+            "enabled_atomcode",
+            "BOOLEAN NOT NULL DEFAULT 0",
+        )?;
+
         // 4. Prompts 表
         conn.execute("CREATE TABLE IF NOT EXISTS prompts (
             id TEXT NOT NULL, app_type TEXT NOT NULL, name TEXT NOT NULL, content TEXT NOT NULL,
@@ -149,6 +158,14 @@ impl Database {
             [],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 同 mcp_servers：兜底补齐 user_version 已到 26 但列缺失的存量库。
+        Self::add_column_if_missing(
+            conn,
+            "skills",
+            "enabled_atomcode",
+            "BOOLEAN NOT NULL DEFAULT 0",
+        )?;
 
         // 6. Skill Repos 表
         conn.execute(
@@ -4265,6 +4282,41 @@ mod tests {
             }
             Database::apply_schema_migrations_on_conn(&conn)?;
         }
+        Ok(())
+    }
+
+    #[test]
+    fn create_tables_patches_enabled_atomcode_into_already_v26_databases() -> Result<(), AppError>
+    {
+        // 正式环境与未发布开发版常见的事故现场：user_version 已是 26（迁移循环
+        // 不会再跑 v25->v26），但 enabled_atomcode 列实际没落盘。启动时的建表
+        // 兜底必须幂等补列，否则 MCP / Skills 列表的 SELECT 会报 no such column。
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch(
+            "CREATE TABLE mcp_servers(id TEXT PRIMARY KEY, enabled_claude BOOLEAN NOT NULL DEFAULT 0);
+             CREATE TABLE skills(id TEXT PRIMARY KEY, enabled_claude BOOLEAN NOT NULL DEFAULT 0);
+             INSERT INTO mcp_servers VALUES ('m', 1);
+             INSERT INTO skills VALUES ('s', 1);",
+        )?;
+        Database::set_user_version(&conn, SCHEMA_VERSION)?;
+
+        // 完整启动路径：先建表（含兜底补列），再按版本迁移。
+        Database::create_tables_on_conn(&conn)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+
+        assert!(Database::has_column(&conn, "mcp_servers", "enabled_atomcode")?);
+        assert!(Database::has_column(&conn, "skills", "enabled_atomcode")?);
+        // 已有的其它应用开关不能被破坏，atomcode 默认关闭。
+        for table in ["mcp_servers", "skills"] {
+            let (claude, atomcode) = conn.query_row(
+                &format!("SELECT enabled_claude, enabled_atomcode FROM {table}"),
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )?;
+            assert_eq!((claude, atomcode), (1, 0), "table {table}");
+        }
+        // 重复启动不应报错（幂等）。
+        Database::create_tables_on_conn(&conn)?;
         Ok(())
     }
 
