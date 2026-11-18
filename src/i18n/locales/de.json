@@ -392,8 +392,7 @@
     "deactivateSuccess": "Nutzung beendet; Konfiguration auf Standard zurückgesetzt.",
     "deactivateRestartRequired": "Nutzung beendet und Standardkonfiguration wiederhergestellt. Starten Sie den Client neu, um die Änderungen zu übernehmen.",
     "deactivateFailedTitle": "Nutzung konnte nicht beendet werden",
-    "deactivateFailed": "Nutzung konnte nicht beendet werden: {{error}}",
-    "claudeAccountVacateFailed": "Nutzung beendet und Konfiguration wiederhergestellt, aber die verwaltete Claude-Kontoanmeldung konnte nicht in ihren Ordner zurückverschoben werden."
+    "deactivateFailed": "Nutzung konnte nicht beendet werden: {{error}}"
   },
   "confirm": {
     "deleteProvider": "Anbieter löschen",

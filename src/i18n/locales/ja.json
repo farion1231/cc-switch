@@ -392,8 +392,7 @@
     "deactivateSuccess": "使用を終了し、設定をデフォルトに戻しました",
     "deactivateRestartRequired": "使用を終了し、設定をデフォルトに戻しました。クライアントを再起動して反映してください",
     "deactivateFailedTitle": "使用終了に失敗しました",
-    "deactivateFailed": "使用終了に失敗しました: {{error}}",
-    "claudeAccountVacateFailed": "使用を終了し設定を戻しましたが、管理対象 Claude アカウントのログインをアカウントフォルダへ戻せませんでした"
+    "deactivateFailed": "使用終了に失敗しました: {{error}}"
   },
   "confirm": {
     "deleteProvider": "プロバイダーを削除",

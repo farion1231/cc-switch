@@ -423,8 +423,8 @@ export const useDeactivateProviderMutation = (appId: AppId) => {
   const { t } = useTranslation();
 
   return useMutation({
-    mutationFn: async (): Promise<SwitchResult> => {
-      return await providersApi.deactivate(appId);
+    mutationFn: async (id: string): Promise<SwitchResult> => {
+      return await providersApi.deactivate(appId, id);
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["providers", appId] });

@@ -392,8 +392,7 @@
     "deactivateSuccess": "사용을 종료하고 구성을 기본값으로 복원했습니다",
     "deactivateRestartRequired": "사용을 종료하고 구성을 기본값으로 복원했습니다. 클라이언트를 다시 시작하여 적용하세요",
     "deactivateFailedTitle": "사용 종료 실패",
-    "deactivateFailed": "사용 종료 실패: {{error}}",
-    "claudeAccountVacateFailed": "사용을 종료하고 구성을 복원했지만 관리형 Claude 계정 로그인을 계정 폴더로 되돌리지 못했습니다"
+    "deactivateFailed": "사용 종료 실패: {{error}}"
   },
   "confirm": {
     "deleteProvider": "공급자 삭제",

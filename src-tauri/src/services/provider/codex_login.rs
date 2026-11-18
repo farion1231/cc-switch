@@ -301,7 +301,7 @@ pub(crate) fn plan(input: AuthInput<'_>) -> AuthPlan {
         AuthTarget::Official { row_auth } => {
             official(row_auth, native, managed || residue, &mut stash)
         }
-        AuthTarget::Deactivate => (managed || residue).then_some(None),
+        AuthTarget::Deactivate => official(&Value::Null, native, managed || residue, &mut stash),
     };
 
     // 只算 Codex 会拿来登录的东西（OAuth token、API Key 等），Bedrock 凭据和元数据不算。

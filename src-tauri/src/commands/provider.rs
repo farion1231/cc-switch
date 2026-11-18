@@ -229,11 +229,12 @@ pub async fn switch_provider(
 fn deactivate_provider_internal(
     state: &AppState,
     app_type: AppType,
+    id: &str,
 ) -> Result<SwitchResult, AppError> {
     let codex_bucket_before = matches!(app_type, AppType::Codex)
         .then(crate::codex_history_migration::codex_live_history_bucket)
         .flatten();
-    let mut result = ProviderService::deactivate(state, app_type.clone())?;
+    let mut result = ProviderService::deactivate(state, app_type.clone(), id)?;
     if matches!(app_type, AppType::Codex) {
         result.codex_history_split = crate::codex_history_migration::codex_history_split_hint(
             codex_bucket_before.as_deref(),
@@ -246,6 +247,7 @@ fn deactivate_provider_internal(
 pub async fn deactivate_provider(
     app_handle: tauri::AppHandle,
     app: String,
+    id: String,
 ) -> Result<SwitchResult, String> {
     let app_type = AppType::from_str(&app)?;
     let handle = app_handle.clone();
@@ -253,7 +255,7 @@ pub async fn deactivate_provider(
         let state = handle
             .try_state::<AppState>()
             .ok_or_else(|| "应用状态不可用".to_string())?;
-        deactivate_provider_internal(state.inner(), app_type).map_err(|e| e.to_string())
+        deactivate_provider_internal(state.inner(), app_type, &id).map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| format!("退出供应商使用状态任务执行失败: {e}"))??;

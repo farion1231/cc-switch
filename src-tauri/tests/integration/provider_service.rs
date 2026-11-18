@@ -844,6 +844,13 @@ requires_openai_auth = true
         live_config.contains("experimental_bearer_token = \"third-party-key\""),
         "the third-party key must be injected as the provider-scoped bearer token; got:\n{live_config}"
     );
+    ProviderService::deactivate(&state, AppType::Codex, "third-party").unwrap();
+    let restored: serde_json::Value =
+        read_json_file(&cc_switch_lib::get_codex_auth_path()).unwrap();
+    assert_eq!(
+        restored, live_auth,
+        "deactivation restores the stashed native sign-in"
+    );
 }
 
 #[test]
@@ -3970,7 +3977,15 @@ fn deactivate_claude_restores_defaults_and_allows_deleting_last_provider() {
     let state = create_test_state_with_config(&config).expect("create test state");
     assert!(ProviderService::delete(&state, AppType::Claude, "only-claude").is_err());
 
-    ProviderService::deactivate(&state, AppType::Claude).expect("deactivate claude");
+    let before = std::fs::read(&settings_path).unwrap();
+    assert!(ProviderService::deactivate(&state, AppType::Claude, "stale-card").is_err());
+    assert_eq!(
+        ProviderService::current(&state, AppType::Claude).unwrap(),
+        "only-claude"
+    );
+    assert_eq!(std::fs::read(&settings_path).unwrap(), before);
+
+    ProviderService::deactivate(&state, AppType::Claude, "only-claude").expect("deactivate claude");
 
     assert_eq!(
         ProviderService::current(&state, AppType::Claude).unwrap(),
@@ -3980,7 +3995,6 @@ fn deactivate_claude_restores_defaults_and_allows_deleting_last_provider() {
         cc_switch_lib::mode::current::local_direct_pointer(&AppType::Claude),
         None
     );
-    assert_eq!(state.db.get_current_provider("claude").unwrap(), None);
 
     let after: serde_json::Value = read_json_file(&settings_path).expect("read settings.json");
     assert!(
@@ -4013,7 +4027,16 @@ fn deactivate_claude_restores_defaults_and_allows_deleting_last_provider() {
         .is_empty());
 
     // Idempotent when already deactivated.
-    ProviderService::deactivate(&state, AppType::Claude).expect("idempotent deactivate");
+    ProviderService::deactivate(&state, AppType::Claude, "only-claude")
+        .expect("idempotent deactivate");
+    assert!(
+        !ProviderService::should_import_default_config_on_startup(&state, &AppType::Claude)
+            .unwrap()
+    );
+    assert!(
+        ProviderService::import_default_config(&state, AppType::Claude).unwrap(),
+        "an explicit import still works"
+    );
 }
 
 #[test]
@@ -4066,7 +4089,7 @@ fn deactivate_codex_restores_defaults_and_allows_deleting_last_provider() {
     let state = create_test_state_with_config(&config).expect("create test state");
     assert!(ProviderService::delete(&state, AppType::Codex, "only-codex").is_err());
 
-    ProviderService::deactivate(&state, AppType::Codex).expect("deactivate codex");
+    ProviderService::deactivate(&state, AppType::Codex, "only-codex").expect("deactivate codex");
 
     assert_eq!(
         ProviderService::current(&state, AppType::Codex).unwrap(),
@@ -4172,7 +4195,7 @@ fn deactivate_gemini_and_grokbuild_restore_defaults_and_allow_deleting_last_prov
 
     let state = create_test_state_with_config(&config).expect("create test state");
 
-    ProviderService::deactivate(&state, AppType::Gemini).expect("deactivate gemini");
+    ProviderService::deactivate(&state, AppType::Gemini, "only-gemini").expect("deactivate gemini");
     assert_eq!(
         ProviderService::current(&state, AppType::Gemini).unwrap(),
         ""
@@ -4190,7 +4213,8 @@ fn deactivate_gemini_and_grokbuild_restore_defaults_and_allow_deleting_last_prov
     assert!(settings_after.pointer("/model/name").is_none());
     ProviderService::delete(&state, AppType::Gemini, "only-gemini").expect("delete last gemini");
 
-    ProviderService::deactivate(&state, AppType::GrokBuild).expect("deactivate grokbuild");
+    ProviderService::deactivate(&state, AppType::GrokBuild, "only-grok")
+        .expect("deactivate grokbuild");
     assert_eq!(
         ProviderService::current(&state, AppType::GrokBuild).unwrap(),
         ""
@@ -4209,7 +4233,7 @@ fn deactivate_rejects_non_route_mode_and_active_proxy_mode() {
     let _home = ensure_test_home();
 
     let state = create_test_state().expect("create test state");
-    assert!(ProviderService::deactivate(&state, AppType::Agy).is_err());
+    assert!(ProviderService::deactivate(&state, AppType::Agy, "test").is_err());
 
     let store = cc_switch_lib::live::engine::DeviceStore::for_device();
     cc_switch_lib::mode::state::update(&store, |live| {
@@ -4218,7 +4242,7 @@ fn deactivate_rejects_non_route_mode_and_active_proxy_mode() {
         entry.attached = true;
     })
     .unwrap();
-    let err = ProviderService::deactivate(&state, AppType::Claude)
+    let err = ProviderService::deactivate(&state, AppType::Claude, "only-claude")
         .expect_err("deactivate while proxy mode active should fail");
     assert!(err.to_string().contains("直连"), "{err}");
 }

@@ -392,8 +392,7 @@
     "deactivateSuccess": "Stopped using provider; configuration restored to default.",
     "deactivateRestartRequired": "Stopped using provider and restored default configuration. Restart the client to apply changes.",
     "deactivateFailedTitle": "Failed to stop using provider",
-    "deactivateFailed": "Failed to stop using provider: {{error}}",
-    "claudeAccountVacateFailed": "Stopped using provider and restored config, but failed to move the managed Claude account sign-in back to its folder."
+    "deactivateFailed": "Failed to stop using provider: {{error}}"
   },
   "confirm": {
     "deleteProvider": "Delete Provider",

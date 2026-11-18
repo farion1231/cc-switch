@@ -477,11 +477,14 @@ impl Database {
     }
 
     /// 清除指定应用类型的当前供应商标记（is_current 全部置 0）。
-    pub fn clear_current_provider(&self, app_type: &str) -> Result<(), AppError> {
+    pub fn clear_current_provider(
+        &self,
+        app_type: &crate::app_config::AppType,
+    ) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
         conn.execute(
             "UPDATE providers SET is_current = 0 WHERE app_type = ?1",
-            params![app_type],
+            params![app_type.as_str()],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(())

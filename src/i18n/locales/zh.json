@@ -392,8 +392,7 @@
     "deactivateSuccess": "已退出使用状态，配置已恢复默认",
     "deactivateRestartRequired": "已退出使用状态，配置已恢复默认，请重启客户端以生效",
     "deactivateFailedTitle": "退出使用失败",
-    "deactivateFailed": "退出使用失败：{{error}}",
-    "claudeAccountVacateFailed": "已退出使用状态并恢复配置，但未能将托管 Claude 账号的登录移回账号目录"
+    "deactivateFailed": "退出使用失败：{{error}}"
   },
   "confirm": {
     "deleteProvider": "删除供应商",

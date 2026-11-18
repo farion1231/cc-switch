@@ -1010,10 +1010,10 @@ describe("useProviderActions", () => {
     });
 
     await act(async () => {
-      await result.current.deactivateProvider();
+      await result.current.deactivateProvider("provider-a");
     });
 
-    expect(deactivateProviderMutateAsync).toHaveBeenCalledTimes(1);
+    expect(deactivateProviderMutateAsync).toHaveBeenCalledWith("provider-a");
     expect(settingsApiApplyMock).toHaveBeenCalledWith({ official: true });
     expect(toastSuccessMock).toHaveBeenCalledTimes(1);
   });

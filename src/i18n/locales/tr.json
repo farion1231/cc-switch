@@ -392,8 +392,7 @@
     "deactivateSuccess": "Sağlayıcı kullanımı sonlandırıldı; yapılandırma varsayılana döndürüldü",
     "deactivateRestartRequired": "Sağlayıcı kullanımı sonlandırıldı ve varsayılan yapılandırma geri yüklendi. Değişiklikleri uygulamak için istemciyi yeniden başlatın.",
     "deactivateFailedTitle": "Kullanım sonlandırılamadı",
-    "deactivateFailed": "Kullanım sonlandırılamadı: {{error}}",
-    "claudeAccountVacateFailed": "Sağlayıcı kullanımı sonlandırıldı ve yapılandırma geri yüklendi, ancak yönetilen Claude hesap oturumu kendi klasörüne geri taşınamadı."
+    "deactivateFailed": "Kullanım sonlandırılamadı: {{error}}"
   },
   "confirm": {
     "deleteProvider": "Sağlayıcıyı Sil",

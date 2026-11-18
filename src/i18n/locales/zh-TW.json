@@ -392,8 +392,7 @@
     "deactivateSuccess": "已退出使用狀態，設定已恢復預設",
     "deactivateRestartRequired": "已退出使用狀態，設定已恢復預設，請重啟用戶端以生效",
     "deactivateFailedTitle": "退出使用失敗",
-    "deactivateFailed": "退出使用失敗：{{error}}",
-    "claudeAccountVacateFailed": "已退出使用狀態並恢復設定，但未能將託管 Claude 帳號的登入移回帳號目錄"
+    "deactivateFailed": "退出使用失敗：{{error}}"
   },
   "confirm": {
     "deleteProvider": "刪除供應商",

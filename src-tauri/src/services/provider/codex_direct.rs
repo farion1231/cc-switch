@@ -1308,7 +1308,7 @@ pub(crate) fn run_with_edits(
                 .map(|bytes| guarded(marker_pre.as_deref(), WholeFile::Write(bytes)))
         }
         _ if marker_pre.is_some()
-            && ((live_is_managed && auth_plan.auth == Some(None)) || outgoing_missing) =>
+            && ((live_is_managed && auth_plan.auth.is_some()) || outgoing_missing) =>
         {
             Some(guarded(marker_pre.as_deref(), WholeFile::Delete))
         }

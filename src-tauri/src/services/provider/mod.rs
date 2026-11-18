@@ -7403,19 +7403,15 @@ impl ProviderService {
 
     /// 退出「使用中」状态：清除当前供应商指针，并把对应客户端配置文件中的供应商参数
     /// 恢复为默认（只清关键字段与上一家的独有字段，用户自己的其他设置不动）。
-    pub fn deactivate(state: &AppState, app_type: AppType) -> Result<SwitchResult, AppError> {
+    pub fn deactivate(
+        state: &AppState,
+        app_type: AppType,
+        expected_id: &str,
+    ) -> Result<SwitchResult, AppError> {
         let app = app_type.as_str().to_string();
-        let result = Self::deactivate_inner(state, app_type);
+        let result = Self::deactivate_inner(state, app_type, expected_id);
         match &result {
-            Ok(result) if result.warnings.is_empty() => {
-                log::info!("[DEACTIVATE] {app} 退出使用状态完成，配置已恢复默认");
-            }
-            Ok(result) => {
-                log::warn!(
-                    "[DEACTIVATE] {app} 退出使用状态完成，有警告: {:?}",
-                    result.warnings
-                );
-            }
+            Ok(_) => log::info!("[DEACTIVATE] {app} 退出使用状态完成，配置已恢复默认"),
             Err(error) => log::error!(
                 "[DEACTIVATE] {app} 退出使用状态失败: {}",
                 crate::error_for_log(&error.to_string())
@@ -7424,7 +7420,11 @@ impl ProviderService {
         result
     }
 
-    fn deactivate_inner(state: &AppState, app_type: AppType) -> Result<SwitchResult, AppError> {
+    fn deactivate_inner(
+        state: &AppState,
+        app_type: AppType,
+        expected_id: &str,
+    ) -> Result<SwitchResult, AppError> {
         if !app_type.spec().route_mode {
             return Err(AppError::InvalidInput(format!(
                 "{} does not have an active provider to deactivate",
@@ -7442,31 +7442,26 @@ impl ProviderService {
             ));
         }
 
-        let current_id = crate::mode::current::provider_for(
-            &state.db,
-            &app_type,
-            crate::mode::current::Purpose::Direct,
-        )?;
-        let Some(current_id) = current_id else {
-            // 幂等：本就没有使用中的供应商时，确保两处指针都干净即可。
-            crate::settings::set_current_provider(&app_type, None)?;
-            state.db.clear_current_provider(app_type.as_str())?;
+        let Some(prev) = crate::mode::current::direct_provider(&state.db, &app_type)? else {
             return Ok(SwitchResult::default());
         };
-
-        let providers = state.db.get_all_providers(app_type.as_str())?;
-        let prev = providers.get(&current_id);
-        let mut result = SwitchResult::default();
-        let target = crate::mode::state::PendingTarget::clear_pointer();
+        if prev.id != expected_id {
+            return Err(AppError::localized(
+                "deactivate.current_changed",
+                "使用中的供应商已更改，请刷新后重试",
+                "The active provider changed. Refresh and try again.",
+            ));
+        }
+        let mut target = crate::mode::state::PendingTarget::clear_pointer();
 
         match app_type {
             AppType::Claude => {
-                let prev_proj = prev.map(|p| {
-                    crate::live::project::claude::ClaudeProjection::of(&p.settings_config)
-                });
+                target.vacate_claude_account = claude_official::bound_account(&prev);
+                let prev_proj =
+                    crate::live::project::claude::ClaudeProjection::of(&prev.settings_config);
                 let empty = crate::live::project::claude::ClaudeProjection::default();
                 let mut patch =
-                    crate::live::project::claude::direct_patch(prev_proj.as_ref(), &empty);
+                    crate::live::project::claude::direct_patch(Some(&prev_proj), &empty);
                 claude_official::strip_from_patch(&mut patch);
                 claude_direct::run(
                     state.db.as_ref(),
@@ -7474,18 +7469,12 @@ impl ProviderService {
                     Some(&patch),
                     target,
                 )?;
-                if let Err(err) = claude_official::vacate_login(prev) {
-                    log::warn!("[DEACTIVATE] 迁回 Claude 托管账号登录失败: {err}");
-                    result
-                        .warnings
-                        .push("claude_account_vacate_failed".to_string());
-                }
                 if let Err(err) = McpService::sync_enabled_for_app(state, &AppType::Claude) {
                     log::warn!("退出使用状态后重投影 claude MCP 失败（将在下次同步时自愈）: {err}");
                 }
             }
             AppType::Codex => {
-                let owner = prev.map_or(codex_direct::Owner::None, codex_direct::Owner::Provider);
+                let owner = codex_direct::Owner::Provider(&prev);
                 codex_direct::write_direct(
                     state.db.as_ref(),
                     &state.codex_oauth_manager,
@@ -7509,7 +7498,7 @@ impl ProviderService {
                 grok_direct::run(
                     state.db.as_ref(),
                     crate::mode::state::op::SWITCH,
-                    prev,
+                    Some(&prev),
                     Some(&empty),
                     target,
                 )?;
@@ -7525,7 +7514,7 @@ impl ProviderService {
             _ => unreachable!("route_mode apps already checked"),
         }
 
-        Ok(result)
+        Ok(SwitchResult::default())
     }
 
     /// Sync current provider to live configuration (re-export)
