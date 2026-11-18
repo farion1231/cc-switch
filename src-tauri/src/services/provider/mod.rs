@@ -2,8 +2,8 @@
 //!
 //! Handles provider CRUD operations, switching, and configuration management.
 
-pub(crate) mod agy_direct;
 pub mod aggregation;
+pub(crate) mod agy_direct;
 pub(crate) mod claude_direct;
 mod claude_editor;
 pub(crate) mod claude_official;

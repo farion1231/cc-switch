@@ -108,11 +108,13 @@ pub fn infer_universal_api_format(u: &UniversalProvider) -> String {
         return normalize_api_format(fmt);
     }
     let url_lower = u.base_url.to_ascii_lowercase();
-    if url_lower.contains("generativelanguage.googleapis.com") || url_lower.contains("aistudio.google")
+    if url_lower.contains("generativelanguage.googleapis.com")
+        || url_lower.contains("aistudio.google")
     {
         return "gemini_native".to_string();
     }
-    if url_lower.contains("api.anthropic.com") || u.provider_type.eq_ignore_ascii_case("anthropic") {
+    if url_lower.contains("api.anthropic.com") || u.provider_type.eq_ignore_ascii_case("anthropic")
+    {
         return "anthropic".to_string();
     }
     if u.provider_type.eq_ignore_ascii_case("openai_responses") {
@@ -126,8 +128,9 @@ fn normalize_api_format(raw: &str) -> String {
         "anthropic" | "anthropic-messages" | "@ai-sdk/anthropic" => "anthropic".to_string(),
         "openai_responses" | "openai-responses" | "responses" | "codex_responses"
         | "@ai-sdk/openai" => "openai_responses".to_string(),
-        "gemini_native" | "gemini" | "google-generative-ai" | "google-genai"
-        | "@ai-sdk/google" => "gemini_native".to_string(),
+        "gemini_native" | "gemini" | "google-generative-ai" | "google-genai" | "@ai-sdk/google" => {
+            "gemini_native".to_string()
+        }
         _ => "openai_chat".to_string(),
     }
 }
@@ -264,14 +267,25 @@ pub fn inspect_app_provider(
             env.and_then(|e| {
                 ["OPENAI_API_KEY", "API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"]
                     .iter()
-                    .find_map(|k| e.get(*k).and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()))
+                    .find_map(|k| {
+                        e.get(*k)
+                            .and_then(Value::as_str)
+                            .map(str::trim)
+                            .filter(|s| !s.is_empty())
+                    })
                     .map(str::to_string)
             })
         })
         .or_else(|| {
             ["apiKey", "api_key", "authToken", "token"]
                 .iter()
-                .find_map(|k| settings.get(*k).and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()))
+                .find_map(|k| {
+                    settings
+                        .get(*k)
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                })
                 .map(str::to_string)
         })
         .or_else(|| extract_header_api_key(settings))
@@ -307,8 +321,7 @@ pub fn inspect_app_provider(
                                 .and_then(toml::Value::as_table)
                                 .is_some_and(|t| {
                                     t.values().any(|p| {
-                                        p.get("requires_openai_auth")
-                                            .and_then(toml::Value::as_bool)
+                                        p.get("requires_openai_auth").and_then(toml::Value::as_bool)
                                             == Some(false)
                                     })
                                 });
@@ -344,7 +357,9 @@ pub fn inspect_app_provider(
 
     if base_url.is_none() && api_key.is_some() {
         base_url = match app {
-            AppType::Claude | AppType::ClaudeDesktop => Some("https://api.anthropic.com".to_string()),
+            AppType::Claude | AppType::ClaudeDesktop => {
+                Some("https://api.anthropic.com".to_string())
+            }
             AppType::Codex => Some("https://api.openai.com/v1".to_string()),
             AppType::Gemini => Some("https://generativelanguage.googleapis.com".to_string()),
             _ => None,
@@ -499,7 +514,8 @@ fn extract_models_for_app(app: &AppType, provider: &Provider) -> Vec<String> {
                     push(&model_cfg.model);
                 }
                 if let Ok(parsed) = cfg.parse::<toml::Value>() {
-                    if let Some(model_tables) = parsed.get("model").and_then(toml::Value::as_table) {
+                    if let Some(model_tables) = parsed.get("model").and_then(toml::Value::as_table)
+                    {
                         for (key, table) in model_tables {
                             if let Some(m) = table.get("model").and_then(toml::Value::as_str) {
                                 push(m);
@@ -512,7 +528,10 @@ fn extract_models_for_app(app: &AppType, provider: &Provider) -> Vec<String> {
             }
         }
         AppType::Gemini | AppType::Agy => {
-            if let Some(model) = settings.pointer("/env/GEMINI_MODEL").and_then(Value::as_str) {
+            if let Some(model) = settings
+                .pointer("/env/GEMINI_MODEL")
+                .and_then(Value::as_str)
+            {
                 push(model);
             }
         }
@@ -590,7 +609,10 @@ fn extract_toml_string(cfg: &str, key: &str) -> Option<String> {
     if let Some(s) = parsed.get(key).and_then(toml::Value::as_str) {
         return Some(s.to_string());
     }
-    if let Some(providers) = parsed.get("model_providers").and_then(toml::Value::as_table) {
+    if let Some(providers) = parsed
+        .get("model_providers")
+        .and_then(toml::Value::as_table)
+    {
         for table in providers.values() {
             if let Some(s) = table.get(key).and_then(toml::Value::as_str) {
                 return Some(s.to_string());
@@ -600,7 +622,10 @@ fn extract_toml_string(cfg: &str, key: &str) -> Option<String> {
     None
 }
 
-pub fn spec_from_app_provider(app: &AppType, provider: &Provider) -> Option<NormalizedProviderSpec> {
+pub fn spec_from_app_provider(
+    app: &AppType,
+    provider: &Provider,
+) -> Option<NormalizedProviderSpec> {
     if is_official_provider(app, provider) {
         return None;
     }
@@ -737,7 +762,12 @@ pub fn build_compatible_provider(
                 stack_models: Some(stack_models),
                 ..Default::default()
             });
-            Some(make_provider(target_id_seed.to_string(), spec, settings_config, meta))
+            Some(make_provider(
+                target_id_seed.to_string(),
+                spec,
+                settings_config,
+                meta,
+            ))
         }
         AppType::ClaudeDesktop => {
             let settings_config = json!({
@@ -768,7 +798,12 @@ pub fn build_compatible_provider(
                 stack_models: Some(stack_models),
                 ..Default::default()
             });
-            Some(make_provider(target_id_seed.to_string(), spec, settings_config, meta))
+            Some(make_provider(
+                target_id_seed.to_string(),
+                spec,
+                settings_config,
+                meta,
+            ))
         }
         AppType::Codex => {
             let wire_api = match spec.api_format.as_str() {
@@ -790,8 +825,7 @@ pub fn build_compatible_provider(
             );
             settings_map.insert("config".to_string(), json!(config_toml));
             if all_models.len() > 1 {
-                if let Some(catalog) =
-                    crate::provider::build_codex_model_catalog(None, &all_models)
+                if let Some(catalog) = crate::provider::build_codex_model_catalog(None, &all_models)
                 {
                     settings_map.insert("modelCatalog".to_string(), catalog);
                 }
@@ -801,7 +835,12 @@ pub fn build_compatible_provider(
                 api_format: api_format_meta,
                 ..Default::default()
             });
-            Some(make_provider(target_id_seed.to_string(), spec, settings_config, meta))
+            Some(make_provider(
+                target_id_seed.to_string(),
+                spec,
+                settings_config,
+                meta,
+            ))
         }
         AppType::GrokBuild => {
             let api_backend = match spec.api_format.as_str() {
@@ -829,7 +868,12 @@ pub fn build_compatible_provider(
                 api_format: api_format_meta,
                 ..Default::default()
             });
-            Some(make_provider(target_id_seed.to_string(), spec, settings_config, meta))
+            Some(make_provider(
+                target_id_seed.to_string(),
+                spec,
+                settings_config,
+                meta,
+            ))
         }
         AppType::Gemini => {
             let settings_config = json!({
@@ -843,7 +887,12 @@ pub fn build_compatible_provider(
                 api_format: api_format_meta,
                 ..Default::default()
             });
-            Some(make_provider(target_id_seed.to_string(), spec, settings_config, meta))
+            Some(make_provider(
+                target_id_seed.to_string(),
+                spec,
+                settings_config,
+                meta,
+            ))
         }
         AppType::OpenCode => {
             let npm = match spec.api_format.as_str() {
@@ -1251,11 +1300,7 @@ fn build_aggregation_overview_sync(
             )
             .unwrap_or(None)
         } else {
-            state
-                .db
-                .get_current_provider(&app)
-                .ok()
-                .flatten()
+            state.db.get_current_provider(&app).ok().flatten()
         };
         let stack_set: HashSet<String> = if app.spec().stack {
             crate::mode::state::stack(&store, app.as_str())
@@ -1605,12 +1650,7 @@ pub async fn auto_sync_added_provider_if_enabled(
     let Ok(Some(provider)) = state.db.get_provider_by_id(provider_id, source_app) else {
         return;
     };
-    if provider
-        .meta
-        .as_ref()
-        .and_then(|m| m.aggregation_disabled)
-        == Some(true)
-    {
+    if provider.meta.as_ref().and_then(|m| m.aggregation_disabled) == Some(true) {
         return;
     }
     let Some(spec) = spec_from_app_provider(source_app, &provider) else {
@@ -1712,7 +1752,8 @@ async fn save_synced_provider_for_app(
                     existing_meta.claude_desktop_mode = new_meta.claude_desktop_mode;
                 }
                 if !new_meta.claude_desktop_model_routes.is_empty() {
-                    existing_meta.claude_desktop_model_routes = new_meta.claude_desktop_model_routes;
+                    existing_meta.claude_desktop_model_routes =
+                        new_meta.claude_desktop_model_routes;
                 }
                 existing_meta.is_full_url = new_meta.is_full_url;
                 existing_meta.api_key_field = new_meta.api_key_field;
@@ -1770,7 +1811,9 @@ async fn save_synced_provider_for_app(
         .as_deref()
             == Some(provider_id.as_str());
         if is_current {
-            if let Err(e) = ProviderService::sync_current_provider_for_app(state, target_app.clone()) {
+            if let Err(e) =
+                ProviderService::sync_current_provider_for_app(state, target_app.clone())
+            {
                 warning = Some(format!("{} 刷新当前配置失败: {e}", target_app.as_str()));
             }
         }
@@ -1779,11 +1822,7 @@ async fn save_synced_provider_for_app(
     Ok(warning)
 }
 
-async fn ensure_in_stack(
-    state: &AppState,
-    app: &AppType,
-    provider_id: &str,
-) -> Result<(), String> {
+async fn ensure_in_stack(state: &AppState, app: &AppType, provider_id: &str) -> Result<(), String> {
     let store = crate::live::engine::DeviceStore::for_device();
     let already = crate::mode::state::stack(&store, app.as_str())
         .map(|s| s.is_member(provider_id))
@@ -1865,12 +1904,7 @@ async fn sync_all_ready_app_providers_inner(
             let Some(provider) = providers.get(&pid) else {
                 continue;
             };
-            if provider
-                .meta
-                .as_ref()
-                .and_then(|m| m.aggregation_disabled)
-                == Some(true)
-            {
+            if provider.meta.as_ref().and_then(|m| m.aggregation_disabled) == Some(true) {
                 continue;
             }
             let Some(spec) = spec_from_app_provider(app, provider) else {
@@ -1994,8 +2028,7 @@ async fn remove_synced_child_for_app(
     }
 
     if target_app.spec().additive || matches!(target_app, AppType::Agy) {
-        ProviderService::delete(state, target_app.clone(), child_id)
-            .map_err(|e| e.to_string())?;
+        ProviderService::delete(state, target_app.clone(), child_id).map_err(|e| e.to_string())?;
         return Ok(true);
     }
 
@@ -2028,12 +2061,9 @@ async fn remove_synced_child_for_app(
             None,
             all.iter().filter(|(k, _)| k.as_str() != child_id),
         );
-        let remaining_any = remaining_routable.clone().or_else(|| {
-            all.keys()
-                .filter(|k| k.as_str() != child_id)
-                .min()
-                .cloned()
-        });
+        let remaining_any = remaining_routable
+            .clone()
+            .or_else(|| all.keys().filter(|k| k.as_str() != child_id).min().cloned());
 
         if is_routed {
             if let Some(next_route) = remaining_routable.as_deref() {
@@ -2278,7 +2308,10 @@ mod tests {
         )
         .unwrap();
 
-        assert!(overview.app_providers.iter().any(|p| p.app_type == "claude"));
+        assert!(overview
+            .app_providers
+            .iter()
+            .any(|p| p.app_type == "claude"));
         assert!(!overview.app_providers.iter().any(|p| p.app_type == "codex"));
         assert!(overview.app_states.iter().any(|s| s.app_type == "claude"));
         assert!(!overview.app_states.iter().any(|s| s.app_type == "codex"));
@@ -2336,7 +2369,10 @@ mod tests {
             json!({ "env": { "ANTHROPIC_BASE_URL": "https://remote.example.com" } }),
             None,
         );
-        state.db.save_provider(&AppType::Claude, &missing_key).unwrap();
+        state
+            .db
+            .save_provider(&AppType::Claude, &missing_key)
+            .unwrap();
         let overview = build_aggregation_overview_sync(
             &state,
             false,
@@ -2383,7 +2419,9 @@ mod tests {
         };
 
         let codex_from_up = up.to_codex_provider().expect("codex provider");
-        assert!(ProviderService::validate_provider_settings(&AppType::Codex, &codex_from_up).is_ok());
+        assert!(
+            ProviderService::validate_provider_settings(&AppType::Codex, &codex_from_up).is_ok()
+        );
         let up_models: Vec<&str> = codex_from_up
             .settings_config
             .get("modelCatalog")
@@ -2461,9 +2499,12 @@ mod tests {
 
         let opencode_id =
             synced_child_id_for_app_provider(&AppType::OpenCode, &AppType::Hermes, "relay.v1");
-        let built_opencode =
-            build_compatible_provider(&app_spec, &AppType::OpenCode, "agg-opencode-hermes-relay.v1")
-                .unwrap();
+        let built_opencode = build_compatible_provider(
+            &app_spec,
+            &AppType::OpenCode,
+            "agg-opencode-hermes-relay.v1",
+        )
+        .unwrap();
         assert_eq!(built_opencode.id, opencode_id);
     }
 
@@ -2588,9 +2629,11 @@ mod tests {
             .is_some());
 
         // Removing synced child deletes it cleanly from target DB
-        assert!(remove_synced_child_for_app(&state, &AppType::Gemini, &ready_gemini_id)
-            .await
-            .unwrap());
+        assert!(
+            remove_synced_child_for_app(&state, &AppType::Gemini, &ready_gemini_id)
+                .await
+                .unwrap()
+        );
         assert!(state
             .db
             .get_provider_by_id(&ready_gemini_id, &AppType::Gemini)

@@ -4795,7 +4795,10 @@ mod tests {
         );
         routed.current_id = Some("kimi".to_string());
         let menu = model(&[], &[routed]);
-        assert_eq!(text_of(&menu[2]), "Claude Desktop · 故障转移 · Kimi For Coding");
+        assert_eq!(
+            text_of(&menu[2]),
+            "Claude Desktop · 故障转移 · Kimi For Coding"
+        );
         let children = children_of(&menu, &AppType::ClaudeDesktop);
         assert!(
             matches!(&children[1], TrayEntry::Check { id, checked: true, .. } if id == "prov:claude-desktop:kimi")

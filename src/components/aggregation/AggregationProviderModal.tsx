@@ -188,8 +188,9 @@ export function AggregationProviderModal({
 
   const openCustomForm = useCallback(() => {
     const customEntry =
-      catalog.find((e) => e.variants.some((v) => v.providerType === "custom_gateway")) ??
-      catalog[0];
+      catalog.find((e) =>
+        e.variants.some((v) => v.providerType === "custom_gateway"),
+      ) ?? catalog[0];
     const variant =
       customEntry?.variants.find((v) => v.providerType === "custom_gateway") ??
       customEntry?.variants[0] ??
@@ -247,7 +248,9 @@ export function AggregationProviderModal({
         "";
       setPrimaryModel(model);
       setExtraModelsText((editingProvider.extraModels ?? []).join(", "));
-      setReasoningEffort(editingProvider.models?.codex?.reasoningEffort || "high");
+      setReasoningEffort(
+        editingProvider.models?.codex?.reasoningEffort || "high",
+      );
       const claudeCfg = editingProvider.models?.claude;
       setHaikuModel(
         claudeCfg?.haikuModel && claudeCfg.haikuModel !== model
@@ -324,7 +327,10 @@ export function AggregationProviderModal({
   };
 
   const requiresUrlInput =
-    isEditMode || !selectedVariant || Boolean(selectedVariant.isCustomTemplate) || !selectedVariant.baseUrl;
+    isEditMode ||
+    !selectedVariant ||
+    Boolean(selectedVariant.isCustomTemplate) ||
+    !selectedVariant.baseUrl;
   const keyOptional = Boolean(selectedVariant?.keyOptional);
   const canSubmit =
     !saving &&
@@ -508,15 +514,17 @@ export function AggregationProviderModal({
 
   const filteredByGroup = useMemo(() => {
     const q = presetQuery.trim().toLowerCase();
-    const result = new Map<AggregationPresetGroupKind, AggregationPresetEntry[]>();
+    const result = new Map<
+      AggregationPresetGroupKind,
+      AggregationPresetEntry[]
+    >();
     for (const kind of GROUP_ORDER) {
       if (groupFilter !== "all" && groupFilter !== kind) continue;
       const items = catalog.filter((entry) => {
         if (entry.group !== kind) return false;
         if (!q) return true;
         return (
-          entry.name.toLowerCase().includes(q) ||
-          entry.searchText.includes(q)
+          entry.name.toLowerCase().includes(q) || entry.searchText.includes(q)
         );
       });
       if (items.length > 0) {
@@ -527,10 +535,18 @@ export function AggregationProviderModal({
   }, [catalog, groupFilter, presetQuery]);
 
   const groupLabels: Record<AggregationPresetGroupKind, string> = {
-    gateway: t("aggregation.presetGroup.gateway", { defaultValue: "网关与自定义" }),
-    vendor: t("aggregation.presetGroup.vendor", { defaultValue: "模型厂商与官方套餐" }),
-    relay: t("aggregation.presetGroup.relay", { defaultValue: "聚合与中转渠道" }),
-    local: t("aggregation.presetGroup.local", { defaultValue: "本机服务（免密）" }),
+    gateway: t("aggregation.presetGroup.gateway", {
+      defaultValue: "网关与自定义",
+    }),
+    vendor: t("aggregation.presetGroup.vendor", {
+      defaultValue: "模型厂商与官方套餐",
+    }),
+    relay: t("aggregation.presetGroup.relay", {
+      defaultValue: "聚合与中转渠道",
+    }),
+    local: t("aggregation.presetGroup.local", {
+      defaultValue: "本机服务（免密）",
+    }),
   };
 
   const openExternal = (url?: string) => {
@@ -722,7 +738,8 @@ export function AggregationProviderModal({
                 value={presetQuery}
                 onChange={(e) => setPresetQuery(e.target.value)}
                 placeholder={t("aggregation.modal.searchPresetPlaceholder", {
-                  defaultValue: "搜索 DeepSeek / Kimi / 智谱 / OpenRouter / 域名...",
+                  defaultValue:
+                    "搜索 DeepSeek / Kimi / 智谱 / OpenRouter / 域名...",
                 })}
                 className="ps-9"
               />
@@ -750,7 +767,9 @@ export function AggregationProviderModal({
                 )}
               >
                 {kind === "all"
-                  ? t("aggregation.presetGroup.all", { defaultValue: "全部预设" })
+                  ? t("aggregation.presetGroup.all", {
+                      defaultValue: "全部预设",
+                    })
                   : groupLabels[kind]}
               </button>
             ))}
@@ -862,7 +881,10 @@ export function AggregationProviderModal({
                     </div>
                     {baseUrl && (
                       <div className="text-[11px] text-fg-3">
-                        {extractHost(baseUrl)} · {API_FORMATS.find((f) => f.value === apiFormat)?.label ?? apiFormat} · {primaryModel}
+                        {extractHost(baseUrl)} ·{" "}
+                        {API_FORMATS.find((f) => f.value === apiFormat)
+                          ?.label ?? apiFormat}{" "}
+                        · {primaryModel}
                       </div>
                     )}
                   </div>

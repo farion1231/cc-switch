@@ -157,9 +157,12 @@ pub(super) fn upsert_live(state: &AppState, provider: &Provider) -> Result<(), A
     } else {
         Change::Insert
     };
-    omp_config::change_and_commit(&provider.id, Some(&provider.settings_config), change, |_| {
-        Ok(())
-    })
+    omp_config::change_and_commit(
+        &provider.id,
+        Some(&provider.settings_config),
+        change,
+        |_| Ok(()),
+    )
 }
 
 #[cfg(test)]

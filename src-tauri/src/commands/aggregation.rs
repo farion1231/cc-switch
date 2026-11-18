@@ -35,7 +35,10 @@ pub async fn set_global_aggregation_mode(
     enabled: bool,
 ) -> Result<AggregationOverview, String> {
     let overview = service_set_global_mode(state.inner(), &app, enabled).await?;
-    let _ = app.emit("universal-provider-synced", serde_json::json!({ "action": "mode", "enabled": enabled }));
+    let _ = app.emit(
+        "universal-provider-synced",
+        serde_json::json!({ "action": "mode", "enabled": enabled }),
+    );
     Ok(overview)
 }
 
@@ -71,7 +74,11 @@ pub async fn sync_aggregation_provider_to_all_apps(
     source_app: Option<String>,
     provider_id: String,
 ) -> Result<SyncAllResult, String> {
-    let parsed_app = match source_app.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+    let parsed_app = match source_app
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         Some(raw) => Some(AppType::from_str(raw).map_err(|e| e.to_string())?),
         None => None,
     };
@@ -91,7 +98,11 @@ pub async fn unsync_aggregation_provider(
     source_app: Option<String>,
     provider_id: String,
 ) -> Result<SyncAllResult, String> {
-    let parsed_app = match source_app.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+    let parsed_app = match source_app
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         Some(raw) => Some(AppType::from_str(raw).map_err(|e| e.to_string())?),
         None => None,
     };

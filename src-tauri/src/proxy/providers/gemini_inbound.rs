@@ -88,7 +88,11 @@ pub fn gemini_to_openai_chat(body: &Value, model: &str, stream: bool) -> Value {
 
             for part in parts {
                 if let Some(text) = part.get("text").and_then(Value::as_str) {
-                    if !part.get("thought").and_then(Value::as_bool).unwrap_or(false) {
+                    if !part
+                        .get("thought")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false)
+                    {
                         text_chunks.push(text.to_string());
                     }
                 } else if let Some(fc) = part.get("functionCall") {
@@ -197,7 +201,10 @@ pub fn gemini_to_anthropic(body: &Value, model: &str, stream: bool) -> Value {
         for msg in msgs.iter() {
             let role = msg.get("role").and_then(Value::as_str).unwrap_or("user");
             if role == "system" {
-                system_text = msg.get("content").and_then(Value::as_str).map(str::to_string);
+                system_text = msg
+                    .get("content")
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
                 continue;
             }
             if role == "tool" {
@@ -501,17 +508,17 @@ pub fn create_gemini_sse_stream_from_anthropic(
                                         out.push(Ok(Bytes::from(format!("data: {payload}\n\n"))));
                                     }
                                 }
-                                Some("message_delta") => {
-                                    if parsed.pointer("/delta/stop_reason").is_some() {
-                                        let payload = json!({
-                                            "candidates": [{
-                                                "content": { "role": "model", "parts": [] },
-                                                "finishReason": "STOP",
-                                                "index": 0,
-                                            }]
-                                        });
-                                        out.push(Ok(Bytes::from(format!("data: {payload}\n\n"))));
-                                    }
+                                Some("message_delta")
+                                    if parsed.pointer("/delta/stop_reason").is_some() =>
+                                {
+                                    let payload = json!({
+                                        "candidates": [{
+                                            "content": { "role": "model", "parts": [] },
+                                            "finishReason": "STOP",
+                                            "index": 0,
+                                        }]
+                                    });
+                                    out.push(Ok(Bytes::from(format!("data: {payload}\n\n"))));
                                 }
                                 _ => {}
                             }
@@ -557,7 +564,10 @@ pub fn convert_gemini_inbound_request(
     let target_format = gemini_target_api_format(provider);
     let model = resolve_gemini_inbound_model(provider, uri_model);
     match target_format {
-        "anthropic" => Ok(("/v1/messages".to_string(), gemini_to_anthropic(body, &model, is_stream))),
+        "anthropic" => Ok((
+            "/v1/messages".to_string(),
+            gemini_to_anthropic(body, &model, is_stream),
+        )),
         "openai_chat" => Ok((
             "/v1/chat/completions".to_string(),
             gemini_to_openai_chat(body, &model, is_stream),

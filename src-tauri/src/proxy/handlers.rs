@@ -2635,9 +2635,9 @@ pub async fn handle_gemini(
                 .header(axum::http::header::CONTENT_TYPE, "text/event-stream")
                 .header(axum::http::header::CACHE_CONTROL, "no-cache");
             drop(connection_guard);
-            return builder
-                .body(body)
-                .map_err(|e| ProxyError::Internal(format!("Failed to build Gemini SSE response: {e}")));
+            return builder.body(body).map_err(|e| {
+                ProxyError::Internal(format!("Failed to build Gemini SSE response: {e}"))
+            });
         }
 
         let bytes = response

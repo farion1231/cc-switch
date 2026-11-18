@@ -1,6 +1,15 @@
-import { providerPresets, type ProviderPreset } from "@/config/claudeProviderPresets";
-import { codexProviderPresets, type CodexProviderPreset } from "@/config/codexProviderPresets";
-import { geminiProviderPresets, type GeminiProviderPreset } from "@/config/geminiProviderPresets";
+import {
+  providerPresets,
+  type ProviderPreset,
+} from "@/config/claudeProviderPresets";
+import {
+  codexProviderPresets,
+  type CodexProviderPreset,
+} from "@/config/codexProviderPresets";
+import {
+  geminiProviderPresets,
+  type GeminiProviderPreset,
+} from "@/config/geminiProviderPresets";
 import {
   PRESET_FAMILIES,
   type PresetFamilyId,
@@ -9,7 +18,10 @@ import {
 } from "@/config/presetFamilies";
 import { PRESET_SEARCH_ALIASES } from "@/config/presetSearchAliases";
 import { universalProviderPresets } from "@/config/universalProviderPresets";
-import { extractCodexBaseUrl, extractCodexModelName } from "@/utils/providerConfigUtils";
+import {
+  extractCodexBaseUrl,
+  extractCodexModelName,
+} from "@/utils/providerConfigUtils";
 import type {
   ProviderCategory,
   ProviderMeta,
@@ -80,7 +92,12 @@ export function extractHost(url?: string): string {
 export function maskSecretKey(raw?: string): string {
   const key = raw?.trim() ?? "";
   if (!key) return "";
-  if (key === "local-no-key" || key === "ollama" || key === "lmstudio" || key === "no-key") {
+  if (
+    key === "local-no-key" ||
+    key === "ollama" ||
+    key === "lmstudio" ||
+    key === "no-key"
+  ) {
     return "";
   }
   if (key.length <= 8) {
@@ -145,7 +162,9 @@ function collectClaudeVariants(): AggregationPresetVariant[] {
       env.ANTHROPIC_DEFAULT_SONNET_MODEL,
       env.ANTHROPIC_DEFAULT_OPUS_MODEL,
       env.ANTHROPIC_DEFAULT_HAIKU_MODEL,
-    ].filter((m, idx, arr): m is string => Boolean(m) && arr.indexOf(m) === idx);
+    ].filter(
+      (m, idx, arr): m is string => Boolean(m) && arr.indexOf(m) === idx,
+    );
 
     const apiFormat = preset.apiFormat ?? "anthropic";
     const familyName = preset.family
@@ -240,7 +259,9 @@ function collectGeminiOnlyVariants(
     const env =
       (preset.settingsConfig as { env?: Record<string, string> })?.env ?? {};
     const baseUrl = normalizeUrlCandidate(
-      preset.endpointCandidates?.[0] || preset.baseURL || env.GOOGLE_GEMINI_BASE_URL,
+      preset.endpointCandidates?.[0] ||
+        preset.baseURL ||
+        env.GOOGLE_GEMINI_BASE_URL,
     );
     if (!baseUrl) continue;
 
@@ -298,7 +319,12 @@ export function getAggregationPresetCatalog(): AggregationPresetEntry[] {
       iconColor: u.iconColor,
       description: u.description,
       isCustomTemplate: u.isCustomTemplate ?? u.providerType === "newapi",
-      searchText: buildSearchText(u.name, u.websiteUrl ?? "", undefined, u.description),
+      searchText: buildSearchText(
+        u.name,
+        u.websiteUrl ?? "",
+        undefined,
+        u.description,
+      ),
     });
   }
 
@@ -405,8 +431,7 @@ export function getFeaturedAggregationPresets(): AggregationPresetEntry[] {
   for (const target of wanted) {
     const found = catalog.find(
       (item) =>
-        item.name === target ||
-        item.variants.some((v) => v.name === target),
+        item.name === target || item.variants.some((v) => v.name === target),
     );
     if (found && !picked.includes(found)) {
       picked.push(found);

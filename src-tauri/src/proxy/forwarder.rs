@@ -1678,9 +1678,7 @@ impl RequestForwarder {
         let gemini_inbound_format = if matches!(app_type, AppType::Gemini)
             && super::providers::gemini_inbound::gemini_needs_inbound_transform(provider)
         {
-            Some(
-                super::providers::gemini_inbound::gemini_target_api_format(provider).to_string(),
-            )
+            Some(super::providers::gemini_inbound::gemini_target_api_format(provider).to_string())
         } else {
             None
         };
@@ -1726,12 +1724,14 @@ impl RequestForwarder {
                 .split("/models/")
                 .nth(1)
                 .and_then(|rest| rest.split(':').next());
-            Some(super::providers::gemini_inbound::convert_gemini_inbound_request(
-                provider,
-                &mapped_body,
-                uri_model,
-                gemini_stream,
-            )?)
+            Some(
+                super::providers::gemini_inbound::convert_gemini_inbound_request(
+                    provider,
+                    &mapped_body,
+                    uri_model,
+                    gemini_stream,
+                )?,
+            )
         } else {
             None
         };

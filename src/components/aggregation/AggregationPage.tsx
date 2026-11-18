@@ -123,7 +123,9 @@ export function AggregationPage({
       queryClient.invalidateQueries({ queryKey: ["pi", "currentState"] }),
       queryClient.invalidateQueries({ queryKey: ["omp", "currentState"] }),
       queryClient.invalidateQueries({ queryKey: ["opencodeLiveProviderIds"] }),
-      queryClient.invalidateQueries({ queryKey: ["openclaw", "liveProviderIds"] }),
+      queryClient.invalidateQueries({
+        queryKey: ["openclaw", "liveProviderIds"],
+      }),
       queryClient.invalidateQueries({ queryKey: ["hermes"] }),
     ]);
   };
@@ -135,12 +137,18 @@ export function AggregationPage({
       await invalidateAll();
       toast.success(
         enabled
-          ? t("aggregation.toast.enabled", { defaultValue: "已开启全局聚合模式" })
-          : t("aggregation.toast.disabled", { defaultValue: "已关闭全局聚合模式" }),
+          ? t("aggregation.toast.enabled", {
+              defaultValue: "已开启全局聚合模式",
+            })
+          : t("aggregation.toast.disabled", {
+              defaultValue: "已关闭全局聚合模式",
+            }),
       );
     } catch (error) {
       toast.error(
-        t("aggregation.toast.toggleFailed", { defaultValue: "切换聚合模式失败" }),
+        t("aggregation.toast.toggleFailed", {
+          defaultValue: "切换聚合模式失败",
+        }),
         { description: extractErrorMessage(error) || undefined },
       );
     } finally {
@@ -207,10 +215,7 @@ export function AggregationPage({
   ) => {
     setSyncingKey(key);
     try {
-      const result = await aggregationApi.unsyncProvider(
-        sourceApp,
-        providerId,
-      );
+      const result = await aggregationApi.unsyncProvider(sourceApp, providerId);
       await invalidateAll();
       toast.success(
         result.syncedApps.length > 0
@@ -1012,7 +1017,10 @@ export function AggregationPage({
                               </div>
                               <div className="mt-0.5 flex items-center gap-1.5 truncate text-caption text-fg-3">
                                 {host && (
-                                  <span title={item.baseUrl} className="truncate">
+                                  <span
+                                    title={item.baseUrl}
+                                    className="truncate"
+                                  >
                                     {host}
                                   </span>
                                 )}
