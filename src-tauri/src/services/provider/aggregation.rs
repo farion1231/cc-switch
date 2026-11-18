@@ -1292,16 +1292,12 @@ fn build_aggregation_overview_sync(
             .db
             .get_all_providers(&app)
             .map_err(|e| e.to_string())?;
-        let current_id = if app.spec().route_mode {
-            crate::mode::current::provider_for(
-                &state.db,
-                &app,
-                crate::mode::current::Purpose::InUse,
-            )
-            .unwrap_or(None)
-        } else {
-            state.db.get_current_provider(&app).ok().flatten()
-        };
+        let current_id = crate::mode::current::provider_for(
+            &state.db,
+            &app,
+            crate::mode::current::Purpose::InUse,
+        )
+        .unwrap_or(None);
         let stack_set: HashSet<String> = if app.spec().stack {
             crate::mode::state::stack(&store, app.as_str())
                 .map(|s| s.members.into_iter().collect())
