@@ -216,7 +216,7 @@ export const atomcodeProviderPresets: AtomCodeProviderPreset[] = [
     nameKey: "providerForm.presets.zhipu",
     family: "zhipu",
     planKey: "payg",
-    providerKey: "glm",
+    providerKey: "zhipu",
     websiteUrl: "https://open.bigmodel.cn",
     apiKeyUrl: "https://open.bigmodel.cn/usercenter/apikeys",
     category: "cn_official",
@@ -240,7 +240,7 @@ export const atomcodeProviderPresets: AtomCodeProviderPreset[] = [
     nameKey: "providerForm.presets.zhipuCoding",
     family: "zhipu",
     planKey: "coding",
-    providerKey: "glm_coding_plan",
+    providerKey: "zhipu-coding",
     websiteUrl: "https://open.bigmodel.cn",
     apiKeyUrl: "https://www.bigmodel.cn/claude-code",
     category: "cn_official",
@@ -259,7 +259,7 @@ export const atomcodeProviderPresets: AtomCodeProviderPreset[] = [
   {
     name: "通义千问 Qwen",
     nameKey: "providerForm.presets.qwen",
-    providerKey: "qwen",
+    providerKey: "aliyun",
     websiteUrl: "https://dashscope.aliyun.com",
     apiKeyUrl: "https://bailian.console.aliyun.com/?apiKey=1",
     category: "cn_official",
@@ -326,7 +326,7 @@ export const atomcodeProviderPresets: AtomCodeProviderPreset[] = [
     name: "MiniMax Token Plan",
     family: "minimax",
     planKey: "tokenPlan",
-    providerKey: "minimax_token_plan",
+    providerKey: "minimax-token-plan",
     websiteUrl: "https://platform.minimax.cn",
     apiKeyUrl: "https://platform.minimax.cn/subscribe/token-plan",
     category: "cn_official",
@@ -348,7 +348,7 @@ export const atomcodeProviderPresets: AtomCodeProviderPreset[] = [
   },
   {
     name: "Xiaomi MiMo",
-    providerKey: "xiaomi_mimo",
+    providerKey: "xiaomi-mimo",
     websiteUrl: "https://platform.xiaomimimo.com",
     apiKeyUrl: "https://platform.xiaomimimo.com/#/console/api-keys",
     category: "cn_official",
@@ -389,7 +389,7 @@ export const atomcodeProviderPresets: AtomCodeProviderPreset[] = [
     name: "Volcengine Ark",
     family: "volcengine",
     planKey: "payg",
-    providerKey: "volcengine_ark",
+    providerKey: "volcengine",
     websiteUrl:
       "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey?apikey=%7B%7D&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     apiKeyUrl:
@@ -417,7 +417,7 @@ export const atomcodeProviderPresets: AtomCodeProviderPreset[] = [
     name: "Volcengine Ark Coding Plan",
     family: "volcengine",
     planKey: "coding",
-    providerKey: "volcengine_ark_coding_plan",
+    providerKey: "volcengine-coding",
     websiteUrl:
       "https://www.volcengine.com/activity/codingplan?ac=MMAP8JTTCAQ2&rc=6J6FV5N2&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
     apiKeyUrl:
@@ -498,7 +498,7 @@ export const atomcodeProviderPresets: AtomCodeProviderPreset[] = [
     // OpenCode Zen 按量网关的 OpenAI 兼容入口；默认 gpt-6-sol（gpt-5.6-sol 在
     // Zen 上 403 Model access is disabled，见 Codex 预设 2026-10-06 真 Key 实测）。
     name: "OpenCode Zen",
-    providerKey: "opencode_zen",
+    providerKey: "opencode",
     websiteUrl: "https://opencode.ai/zen",
     apiKeyUrl: "https://opencode.ai/auth",
     category: "aggregator",

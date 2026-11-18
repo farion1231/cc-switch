@@ -211,7 +211,12 @@ pub async fn fetch_models_for_config(
 /// AtomCode 源码 provider_preset.rs 为第三份）。早期 cc-switch 写过的
 /// wire 名（claude / gemini …）也照旧支持；未收录的 id 原样返回。
 fn atomcode_effective_base_url<'a>(provider: &str, base_url: &'a str) -> &'a str {
-    match provider {
+    atomcode_preset_default_base_url(provider).filter(|_| base_url.trim().is_empty()).unwrap_or(base_url)
+}
+
+/// AtomCode 厂商预设 id 的默认端点（未收录的 id 返回 None）。
+pub(crate) fn atomcode_preset_default_base_url(provider: &str) -> Option<&'static str> {
+    Some(match provider {
         "claude" | "anthropic" | "anthropic-compatible" => "https://api.anthropic.com",
         "openai" | "openai-responses" => "https://api.openai.com/v1",
         "deepseek" => "https://api.deepseek.com/v1",
@@ -233,8 +238,8 @@ fn atomcode_effective_base_url<'a>(provider: &str, base_url: &'a str) -> &'a str
         "openrouter" => "https://openrouter.ai/api/v1",
         "taotoken" => "https://taotoken.net/api/v1",
         "opencode" => "https://opencode.ai/zen/v1",
-        _ => base_url,
-    }
+        _ => return None,
+    })
 }
 
 /// 获取 AtomCode 供应商的可用模型列表

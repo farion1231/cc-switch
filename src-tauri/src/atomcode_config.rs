@@ -457,6 +457,23 @@ fn apply_provider(
             if map.get("base_url").and_then(Value::as_str) == Some("") {
                 map.remove("base_url");
             }
+            // 与 AtomCode 原生写入格式对齐：base_url 等于该预设的默认端点时不落盘
+            // （由预设 id 自带），api_key 为空也不落盘（交给 AtomCode 自带的 OAuth）。
+            // base_url 与默认端点不同的自定义端点仍然保留。
+            if let Some(provider) = map.get("provider").and_then(Value::as_str) {
+                if let Some(default_url) =
+                    crate::commands::atomcode_preset_default_base_url(canonical_provider_id(provider))
+                {
+                    if map.get("base_url").and_then(Value::as_str) == Some(default_url) {
+                        map.remove("base_url");
+                    }
+                }
+            }
+            if map.get("api_key").and_then(Value::as_str)
+                .is_some_and(|key| key.trim().is_empty())
+            {
+                map.remove("api_key");
+            }
         }
         document["provider_accounts"][id] = account;
         for (key, model) in config["models"].as_object().unwrap() {
@@ -1159,6 +1176,47 @@ model = "m1"
             document["provider_accounts"]["legacy-claude"]["provider"],
             json!("anthropic")
         );
+    }
+
+    #[test]
+    fn write_matches_atomcode_native_account_shape() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, toml_text()).unwrap();
+
+        // 默认端点 + 空 api_key：与 AtomCode 原生 TUI 写出的格式一致，只留 provider
+        let config = json!({
+            "account": {
+                "provider": "zhipu",
+                "base_url": "https://open.bigmodel.cn/api/paas/v4",
+                "api_key": ""
+            },
+            "models": {"glm": {"model": "glm-5.3"}}
+        });
+        add_at_and_commit(&path, "glm", config, || Ok(())).unwrap();
+        let document = read(&path).unwrap();
+        let account = &document["provider_accounts"]["glm"];
+        assert_eq!(account["provider"], json!("zhipu"));
+        assert!(account.get("base_url").is_none());
+        assert!(account.get("api_key").is_none());
+
+        // 自定义端点与真实 api_key 必须保留
+        let custom = json!({
+            "account": {
+                "provider": "zhipu",
+                "base_url": "https://mirror.example/v4",
+                "api_key": "sk-real"
+            },
+            "models": {"glm2": {"model": "glm-5.3"}}
+        });
+        add_at_and_commit(&path, "glm-custom", custom, || Ok(())).unwrap();
+        let document = read(&path).unwrap();
+        let custom_account = &document["provider_accounts"]["glm-custom"];
+        assert_eq!(
+            custom_account["base_url"],
+            json!("https://mirror.example/v4")
+        );
+        assert_eq!(custom_account["api_key"], json!("sk-real"));
     }
 
     #[test]

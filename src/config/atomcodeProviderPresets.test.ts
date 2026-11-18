@@ -166,29 +166,29 @@ describe("atomcodeProviderPresets", () => {
     const expected: Record<string, [string, string]> = {
       anthropic: ["anthropic", "https://api.anthropic.com"],
       openai: ["openai", "https://api.openai.com/v1"],
-      glm: ["zhipu", "https://open.bigmodel.cn/api/paas/v4"],
-      glm_coding_plan: [
+      zhipu: ["zhipu", "https://open.bigmodel.cn/api/paas/v4"],
+      "zhipu-coding": [
         "zhipu-coding",
         "https://open.bigmodel.cn/api/coding/paas/v4",
       ],
       moonshot: ["moonshot", "https://api.moonshot.cn/v1"],
-      qwen: ["aliyun", "https://dashscope.aliyuncs.com/compatible-mode/v1"],
+      aliyun: ["aliyun", "https://dashscope.aliyuncs.com/compatible-mode/v1"],
       minimax: ["minimax", "https://api.minimaxi.com/v1"],
-      minimax_token_plan: ["minimax-token-plan", "https://api.minimax.cn/v1"],
-      xiaomi_mimo: ["xiaomi-mimo", "https://api.xiaomimimo.com/v1"],
+      "minimax-token-plan": ["minimax-token-plan", "https://api.minimax.cn/v1"],
+      "xiaomi-mimo": ["xiaomi-mimo", "https://api.xiaomimimo.com/v1"],
       longcat: ["longcat", "https://api.longcat.chat/openai/v1"],
-      volcengine_ark: [
+      volcengine: [
         "volcengine",
         "https://ark.cn-beijing.volces.com/api/v3",
       ],
-      volcengine_ark_coding_plan: [
+      "volcengine-coding": [
         "volcengine-coding",
         "https://ark.cn-beijing.volces.com/api/coding/v3",
       ],
       siliconflow: ["siliconflow", "https://api.siliconflow.cn/v1"],
       openrouter: ["openrouter", "https://openrouter.ai/api/v1"],
       taotoken: ["taotoken", "https://taotoken.net/api/v1"],
-      opencode_zen: ["opencode", "https://opencode.ai/zen/v1"],
+      opencode: ["opencode", "https://opencode.ai/zen/v1"],
     };
     for (const [key, [provider, baseUrl]] of Object.entries(expected)) {
       const preset = atomcodeProviderPresets.find((p) => p.providerKey === key);
