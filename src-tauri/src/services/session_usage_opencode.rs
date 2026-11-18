@@ -12,9 +12,9 @@
 //! ```
 //!
 //! OpenCode V2 把会话数据迁移到 `session_v2` / `session_message` 并冻结 V1
-//! 表。用户继续使用 1.x 时仍会写入 V1，因此两套表共存时合并读取；合并读取
-//! 从识别出混合布局前最后一次成功扫描（没有则从首次识别）时开始计数，不回填
-//! 旧版本漏算的历史。
+//! 表。用户继续使用 1.x 时仍会写入 V1，因此两套表共存时合并读取。已扫描过的
+//! 库从识别出混合布局前最后一次成功扫描时开始计数，不回填旧版本漏算的历史；
+//! 从没扫描过的库和单一布局一样，首次扫描导入全部历史。
 
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
@@ -135,12 +135,11 @@ fn sync_opencode_usage_from_path(
             None => {
                 // 已扫描过的库从上次成功扫描时的文件 mtime（纳秒）起算：升级前
                 // 刚写入、旧版本本应按 V2 导入的用量不能被起点挡掉。
+                // 从没成功扫描过的库起点为 0：和单一布局的首次扫描一样导入全部
+                // 历史，此时还没有被汇总删除的明细，不会重复计数。
                 let cutoff_ms = match cursors.get(&db_path_str) {
                     Some(cursor) if cursor.last_modified > 0 => cursor.last_modified / 1_000_000,
-                    _ => SystemTime::now()
-                        .duration_since(SystemTime::UNIX_EPOCH)
-                        .map(|d| d.as_millis() as i64)
-                        .unwrap_or(0),
+                    _ => 0,
                 };
                 update_sync_state(db, &cutoff_key, cutoff_ms, 0)?;
                 cutoff_ms
@@ -810,39 +809,56 @@ mod tests {
     }
 
     #[test]
-    fn test_mixed_sync_does_not_import_history_before_first_detection() {
+    fn test_mixed_sync_imports_full_history_when_never_scanned() {
+        // A database CC Switch has never scanned has no file cursor. Like a
+        // single-layout database, its first scan imports everything, counting
+        // a message that exists in both layouts once.
         let source = mixed_database();
         source
             .execute_batch(
-                "INSERT INTO session VALUES ('v1-only', 100);
-                 INSERT INTO session_v2 VALUES ('migrated', 100);",
+                "INSERT INTO session VALUES ('migrated', 100), ('v1-only', 150);
+                 INSERT INTO session_v2 VALUES ('migrated', 300);",
             )
             .unwrap();
-        source
-            .execute(
-                "INSERT INTO message VALUES ('old', 'v1-only', 100, 100, ?1)",
-                [usage_message(20, true)],
-            )
-            .unwrap();
-        source
-            .execute(
-                "INSERT INTO session_message VALUES ('m1', 'migrated', 'assistant', 100, 100, ?1)",
-                [usage_message(20, true)],
-            )
-            .unwrap();
+        for (id, session_id, updated) in [("m1", "migrated", 100), ("old", "v1-only", 150)] {
+            source
+                .execute(
+                    "INSERT INTO message VALUES (?1, ?2, 100, ?3, ?4)",
+                    rusqlite::params![id, session_id, updated, usage_message(20, true)],
+                )
+                .unwrap();
+        }
+        for (id, updated) in [("m1", 100), ("m2", 300)] {
+            source
+                .execute(
+                    "INSERT INTO session_message VALUES (?1, 'migrated', 'assistant', 100, ?2, ?3)",
+                    rusqlite::params![id, updated, usage_message(20, true)],
+                )
+                .unwrap();
+        }
         let (_dir, path) = write_database(&source);
         let db = Database::memory().unwrap();
 
-        let before_ms = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as i64;
         let result = sync_opencode_usage_from_path(&db, &path).unwrap();
-        assert_eq!(result.imported, 0);
+        assert_eq!(result.imported, 3);
         assert!(result.errors.is_empty());
-        assert!(imported_request_ids(&db).is_empty());
-        let cutoff = mixed_cutoff(&db, &path).expect("cutoff is pinned on first detection");
-        assert!(cutoff >= before_ms);
+        assert_eq!(
+            imported_request_ids(&db),
+            vec![
+                "opencode_session:migrated:m1",
+                "opencode_session:migrated:m2",
+                "opencode_session:v1-only:old",
+            ]
+        );
+        assert_eq!(mixed_cutoff(&db, &path), Some(0));
+
+        // The pinned 0 is kept: the file cursor written by the scan above must
+        // not turn into a later cutoff on the next run.
+        assert_eq!(
+            sync_opencode_usage_from_path(&db, &path).unwrap().imported,
+            0
+        );
+        assert_eq!(mixed_cutoff(&db, &path), Some(0));
     }
 
     #[test]
