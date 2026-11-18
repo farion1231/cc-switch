@@ -190,7 +190,15 @@ pub fn map_codex_failover_model(mut body: Value, provider: &Provider) -> Value {
         return body;
     };
     if requested == own
-        || crate::codex_config::codex_published_models(&provider.settings_config, config)
+        || crate::codex_config::codex_published_models_for_profile(
+            &provider.settings_config,
+            config,
+            if provider.is_github_copilot() {
+                crate::codex_config::CodexCatalogToolProfile::Copilot
+            } else {
+                crate::codex_config::CodexCatalogToolProfile::ProxyChat
+            },
+        )
             .iter()
             .any(|model| model == requested)
     {

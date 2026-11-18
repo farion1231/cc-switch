@@ -364,7 +364,15 @@ pub fn codex_model_ids(key: &str, provider: &Provider) -> Vec<String> {
         .get("config")
         .and_then(Value::as_str)
         .unwrap_or("");
-    crate::codex_config::codex_published_models(&provider.settings_config, config)
+    crate::codex_config::codex_published_models_for_profile(
+        &provider.settings_config,
+        config,
+        if provider.is_github_copilot() {
+            crate::codex_config::CodexCatalogToolProfile::Copilot
+        } else {
+            crate::codex_config::CodexCatalogToolProfile::ProxyChat
+        },
+    )
         .into_iter()
         .map(|model| encode(&AppType::Codex, key, &model, false))
         .collect()
