@@ -106,12 +106,22 @@ pub(crate) fn adaptive_thinking_is_default(model: &str) -> bool {
     .any(|needle| normalized.contains(needle))
 }
 
-/// Models that reject `thinking: {"type":"disabled"}`.
+/// Models that cannot run without thinking, even when `thinking` is omitted.
 pub(crate) fn thinking_cannot_be_disabled(model: &str) -> bool {
     let normalized = normalize_model_name(model);
     ["fable-5", "mythos-5"]
         .iter()
         .any(|needle| normalized.contains(needle))
+}
+
+/// Models that reject the explicit `thinking: {"type":"disabled"}` payload.
+/// Opus 5.5 accepts an omitted `thinking` key instead; keep that wire-format
+/// restriction separate from the mandatory-thinking guards for Fable/Mythos.
+pub(crate) fn thinking_rejects_disabled(model: &str) -> bool {
+    thinking_cannot_be_disabled(model)
+        || normalize_model_name(model)
+            .split_once("opus-5-5")
+            .is_some_and(|(_, suffix)| suffix.is_empty() || suffix.starts_with('-'))
 }
 
 fn normalize_model_name(model: &str) -> String {
@@ -201,6 +211,33 @@ mod tests {
         }
         assert!(thinking_cannot_be_disabled("claude-fable-5"));
         assert!(!thinking_cannot_be_disabled("claude-sonnet-5"));
+    }
+
+    #[test]
+    fn opus_5_5_rejects_disabled_without_changing_opus_5() {
+        for model in [
+            "claude-opus-5-5",
+            " anthropic/Claude-Opus-5.5 ",
+            "anthropic.claude-opus-5-5-20261101-v1:0",
+            "claude_opus_5_5",
+        ] {
+            assert!(thinking_rejects_disabled(model), "model={model}");
+            assert!(!thinking_cannot_be_disabled(model), "model={model}");
+        }
+        for model in [
+            "claude-opus-5",
+            "claude-opus-5-20261101",
+            "claude-opus-5-50",
+            "claude-opus-4-8",
+            "claude-sonnet-5",
+            "claude-sonnet-4-6",
+        ] {
+            assert!(!thinking_rejects_disabled(model), "model={model}");
+        }
+        for model in ["claude-fable-5", "claude-mythos-5"] {
+            assert!(thinking_cannot_be_disabled(model), "model={model}");
+            assert!(thinking_rejects_disabled(model), "model={model}");
+        }
     }
 
     #[test]
