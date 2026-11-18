@@ -1,9 +1,14 @@
+use crate::app_config::AppType;
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use crate::provider::{Provider, ProviderMeta};
 use indexmap::IndexMap;
-use rusqlite::{params, OptionalExtension};
-use std::collections::{HashMap, HashSet};
+use rusqlite::params;
+use std::collections::HashSet;
+
+#[cfg(test)]
+#[path = "providers_tests.rs"]
+mod tests;
 
 type OmoProviderRow = (
     String,
@@ -105,14 +110,30 @@ impl Database {
 
     pub fn get_all_providers(
         &self,
-        app_type: &str,
+        app_type: &AppType,
+    ) -> Result<IndexMap<String, Provider>, AppError> {
+        self.load_providers(app_type, false)
+    }
+
+    /// 路由只加载故障转移队列；端点一次批量读取，避免每张卡再查一次。
+    pub(super) fn load_providers(
+        &self,
+        app_type: &AppType,
+        failover_only: bool,
     ) -> Result<IndexMap<String, Provider>, AppError> {
         let conn = lock_conn!(self.conn);
-        let mut stmt = conn.prepare(
+        let query = if failover_only {
+            "SELECT id, name, settings_config, website_url, category, created_at, sort_index, notes, icon, icon_color, meta, in_failover_queue
+             FROM providers WHERE app_type = ?1 AND in_failover_queue = 1
+             ORDER BY COALESCE(sort_index, 999999), id ASC"
+        } else {
             "SELECT id, name, settings_config, website_url, category, created_at, sort_index, notes, icon, icon_color, meta, in_failover_queue
              FROM providers WHERE app_type = ?1
              ORDER BY COALESCE(sort_index, 999999), created_at ASC, id ASC"
-        ).map_err(|e| AppError::Database(e.to_string()))?;
+        };
+        let mut stmt = conn
+            .prepare_cached(query)
+            .map_err(|e| AppError::Database(e.to_string()))?;
 
         let provider_iter = stmt
             .query_map(params![app_type], |row| {
@@ -157,44 +178,58 @@ impl Database {
         for provider_res in provider_iter {
             let (id, mut provider) = provider_res.map_err(|e| AppError::Database(e.to_string()))?;
             provider.id = id.clone();
-
-            let mut stmt_endpoints = conn.prepare(
-                "SELECT url, added_at FROM provider_endpoints WHERE provider_id = ?1 AND app_type = ?2 ORDER BY added_at ASC, url ASC"
-            ).map_err(|e| AppError::Database(e.to_string()))?;
-
-            let endpoints_iter = stmt_endpoints
-                .query_map(params![id, app_type], |row| {
-                    let url: String = row.get(0)?;
-                    let added_at: Option<i64> = row.get(1)?;
-                    Ok((
-                        url,
-                        crate::settings::CustomEndpoint {
-                            url: "".to_string(),
-                            added_at: added_at.unwrap_or(0),
-                            last_used: None,
-                        },
-                    ))
-                })
-                .map_err(|e| AppError::Database(e.to_string()))?;
-
-            let mut custom_endpoints = HashMap::new();
-            for ep_res in endpoints_iter {
-                let (url, mut ep) = ep_res.map_err(|e| AppError::Database(e.to_string()))?;
-                ep.url = url.clone();
-                custom_endpoints.insert(url, ep);
-            }
-
             if let Some(meta) = &mut provider.meta {
-                meta.custom_endpoints = custom_endpoints;
+                // The endpoint table is authoritative, including when it is empty.
+                meta.custom_endpoints.clear();
             }
-
             providers.insert(id, provider);
+        }
+
+        if providers.is_empty() {
+            return Ok(providers);
+        }
+
+        let mut stmt_endpoints = conn
+            .prepare_cached(
+                "SELECT e.provider_id, e.url, e.added_at
+             FROM provider_endpoints e
+             INNER JOIN providers p ON p.id = e.provider_id AND p.app_type = e.app_type
+             WHERE e.app_type = ?1 AND (?2 = 0 OR p.in_failover_queue = 1)
+             ORDER BY e.added_at ASC, e.url ASC",
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let endpoints = stmt_endpoints
+            .query_map(params![app_type, failover_only], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<i64>>(2)?,
+                ))
+            })
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        for endpoint in endpoints {
+            let (provider_id, url, added_at) =
+                endpoint.map_err(|e| AppError::Database(e.to_string()))?;
+            if let Some(meta) = providers
+                .get_mut(&provider_id)
+                .and_then(|provider| provider.meta.as_mut())
+            {
+                meta.custom_endpoints.insert(
+                    url.clone(),
+                    crate::settings::CustomEndpoint {
+                        url,
+                        added_at: added_at.unwrap_or(0),
+                        last_used: None,
+                    },
+                );
+            }
         }
 
         Ok(providers)
     }
 
-    pub fn get_current_provider(&self, app_type: &str) -> Result<Option<String>, AppError> {
+    pub fn get_current_provider(&self, app_type: &AppType) -> Result<Option<String>, AppError> {
         let conn = lock_conn!(self.conn);
         let mut stmt = conn
             .prepare("SELECT id FROM providers WHERE app_type = ?1 AND is_current = 1 LIMIT 1")
@@ -216,7 +251,7 @@ impl Database {
     pub fn get_provider_by_id(
         &self,
         id: &str,
-        app_type: &str,
+        app_type: &AppType,
     ) -> Result<Option<Provider>, AppError> {
         let conn = lock_conn!(self.conn);
         let result = conn.query_row(
@@ -267,7 +302,7 @@ impl Database {
     /// 和删除、编辑并发时既不会复活删掉的行，也不会盖掉别处刚存的字段。
     pub fn update_provider_sort_indexes(
         &self,
-        app_type: &str,
+        app_type: &AppType,
         updates: &[(String, usize)],
     ) -> Result<(), AppError> {
         let mut conn = lock_conn!(self.conn);
@@ -284,7 +319,7 @@ impl Database {
         tx.commit().map_err(|e| AppError::Database(e.to_string()))
     }
 
-    pub fn save_provider(&self, app_type: &str, provider: &Provider) -> Result<(), AppError> {
+    pub fn save_provider(&self, app_type: &AppType, provider: &Provider) -> Result<(), AppError> {
         let mut conn = lock_conn!(self.conn);
         let tx = conn
             .transaction()
@@ -292,20 +327,43 @@ impl Database {
 
         let mut meta_clone = provider.meta.clone().unwrap_or_default();
         let endpoints = std::mem::take(&mut meta_clone.custom_endpoints);
+        let mut meta_json = serde_json::to_string(&meta_clone)
+            .map_err(|e| AppError::Database(format!("Failed to serialize meta: {e}")))?;
 
-        let existing: Option<(bool, bool)> = tx
+        let existing: Option<(bool, bool, String)> = tx
             .query_row(
-                "SELECT is_current, in_failover_queue FROM providers WHERE id = ?1 AND app_type = ?2",
+                "SELECT is_current, in_failover_queue, meta FROM providers WHERE id = ?1 AND app_type = ?2",
                 params![provider.id, app_type],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .ok();
 
         let is_update = existing.is_some();
-        let (is_current, in_failover_queue) =
-            existing.unwrap_or((false, provider.in_failover_queue));
+        let (is_current, in_failover_queue) = match existing {
+            Some((current, queued, stored_meta)) => {
+                // Metadata contains HashMaps (headers/model routes), whose key
+                // order can change after every read. Keep equivalent stored JSON
+                // so the no-op UPDATE predicate does not emit a spurious change.
+                // Only parse on a byte mismatch; normal refreshes stay cheap.
+                if meta_json != stored_meta
+                    && matches!(
+                        (
+                            serde_json::from_str::<serde_json::Value>(&meta_json),
+                            serde_json::from_str::<serde_json::Value>(&stored_meta),
+                        ),
+                        (Ok(new), Ok(old)) if new == old
+                    )
+                {
+                    meta_json = stored_meta;
+                }
+                (current, queued)
+            }
+            None => (false, provider.in_failover_queue),
+        };
 
         if is_update {
+            // Native-provider list refreshes also pass through this method. An
+            // unchanged row must not dirty the database or enqueue cloud sync.
             tx.execute(
                 "UPDATE providers SET
                     name = ?1,
@@ -320,7 +378,13 @@ impl Database {
                     meta = ?10,
                     is_current = ?11,
                     in_failover_queue = ?12
-                WHERE id = ?13 AND app_type = ?14",
+                WHERE id = ?13 AND app_type = ?14
+                  AND (name IS NOT ?1 OR settings_config IS NOT ?2
+                       OR website_url IS NOT ?3 OR category IS NOT ?4
+                       OR created_at IS NOT ?5 OR sort_index IS NOT ?6
+                       OR notes IS NOT ?7 OR icon IS NOT ?8 OR icon_color IS NOT ?9
+                       OR meta IS NOT ?10 OR is_current IS NOT ?11
+                       OR in_failover_queue IS NOT ?12)",
                 params![
                     provider.name,
                     serde_json::to_string(&provider.settings_config).map_err(|e| {
@@ -333,9 +397,7 @@ impl Database {
                     provider.notes,
                     provider.icon,
                     provider.icon_color,
-                    serde_json::to_string(&meta_clone).map_err(|e| AppError::Database(format!(
-                        "Failed to serialize meta: {e}"
-                    )))?,
+                    meta_json,
                     is_current,
                     in_failover_queue,
                     provider.id,
@@ -362,8 +424,7 @@ impl Database {
                     provider.notes,
                     provider.icon,
                     provider.icon_color,
-                    serde_json::to_string(&meta_clone)
-                        .map_err(|e| AppError::Database(format!("Failed to serialize meta: {e}")))?,
+                    meta_json,
                     is_current,
                     in_failover_queue,
                 ],
@@ -384,106 +445,7 @@ impl Database {
         Ok(())
     }
 
-    /// Replace a provider row under a new ID without exposing an intermediate
-    /// duplicate or missing row. Existing endpoint and health references move
-    /// with the provider, while its current-state bit is preserved.
-    pub fn replace_provider_id(
-        &self,
-        app_type: &str,
-        original_id: &str,
-        provider: &Provider,
-    ) -> Result<(), AppError> {
-        if original_id == provider.id {
-            return self.save_provider(app_type, provider);
-        }
-
-        let mut conn = lock_conn!(self.conn);
-        let tx = conn
-            .transaction()
-            .map_err(|e| AppError::Database(e.to_string()))?;
-
-        let (is_current, in_failover_queue) = tx
-            .query_row(
-                "SELECT is_current, in_failover_queue FROM providers WHERE id = ?1 AND app_type = ?2",
-                params![original_id, app_type],
-                |row| Ok((row.get::<_, bool>(0)?, row.get::<_, bool>(1)?)),
-            )
-            .optional()
-            .map_err(|e| AppError::Database(e.to_string()))?
-            .ok_or_else(|| {
-                AppError::Database(format!(
-                    "Provider '{original_id}' does not exist in app '{app_type}'"
-                ))
-            })?;
-
-        let target_exists = tx
-            .query_row(
-                "SELECT 1 FROM providers WHERE id = ?1 AND app_type = ?2",
-                params![provider.id, app_type],
-                |_| Ok(()),
-            )
-            .optional()
-            .map_err(|e| AppError::Database(e.to_string()))?
-            .is_some();
-        if target_exists {
-            return Err(AppError::Database(format!(
-                "Provider '{}' already exists in app '{app_type}'",
-                provider.id
-            )));
-        }
-
-        let mut meta = provider.meta.clone().unwrap_or_default();
-        meta.custom_endpoints.clear();
-        tx.execute(
-            "INSERT INTO providers (
-                id, app_type, name, settings_config, website_url, category,
-                created_at, sort_index, notes, icon, icon_color, meta,
-                is_current, in_failover_queue
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
-            params![
-                provider.id,
-                app_type,
-                provider.name,
-                serde_json::to_string(&provider.settings_config).map_err(|e| {
-                    AppError::Database(format!("Failed to serialize settings_config: {e}"))
-                })?,
-                provider.website_url,
-                provider.category,
-                provider.created_at,
-                provider.sort_index,
-                provider.notes,
-                provider.icon,
-                provider.icon_color,
-                serde_json::to_string(&meta).map_err(|e| {
-                    AppError::Database(format!("Failed to serialize meta: {e}"))
-                })?,
-                is_current,
-                in_failover_queue,
-            ],
-        )
-        .map_err(|e| AppError::Database(e.to_string()))?;
-
-        tx.execute(
-            "UPDATE provider_endpoints SET provider_id = ?1 WHERE provider_id = ?2 AND app_type = ?3",
-            params![provider.id, original_id, app_type],
-        )
-        .map_err(|e| AppError::Database(e.to_string()))?;
-        tx.execute(
-            "UPDATE provider_health SET provider_id = ?1 WHERE provider_id = ?2 AND app_type = ?3",
-            params![provider.id, original_id, app_type],
-        )
-        .map_err(|e| AppError::Database(e.to_string()))?;
-        tx.execute(
-            "DELETE FROM providers WHERE id = ?1 AND app_type = ?2",
-            params![original_id, app_type],
-        )
-        .map_err(|e| AppError::Database(e.to_string()))?;
-
-        tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
-        Ok(())
-    }
-
-    pub fn delete_provider(&self, app_type: &str, id: &str) -> Result<(), AppError> {
+    pub fn delete_provider(&self, app_type: &AppType, id: &str) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
         conn.execute(
             "DELETE FROM providers WHERE id = ?1 AND app_type = ?2",
@@ -493,7 +455,7 @@ impl Database {
         Ok(())
     }
 
-    pub fn set_current_provider(&self, app_type: &str, id: &str) -> Result<(), AppError> {
+    pub fn set_current_provider(&self, app_type: &AppType, id: &str) -> Result<(), AppError> {
         let mut conn = lock_conn!(self.conn);
         let tx = conn
             .transaction()
@@ -517,7 +479,7 @@ impl Database {
 
     pub fn update_provider_settings_config(
         &self,
-        app_type: &str,
+        app_type: &AppType,
         provider_id: &str,
         settings_config: &serde_json::Value,
     ) -> Result<(), AppError> {
@@ -538,7 +500,7 @@ impl Database {
 
     pub fn add_custom_endpoint(
         &self,
-        app_type: &str,
+        app_type: &AppType,
         provider_id: &str,
         url: &str,
     ) -> Result<(), AppError> {
@@ -553,7 +515,7 @@ impl Database {
 
     pub fn remove_custom_endpoint(
         &self,
-        app_type: &str,
+        app_type: &AppType,
         provider_id: &str,
         url: &str,
     ) -> Result<(), AppError> {
@@ -568,7 +530,7 @@ impl Database {
 
     pub fn set_omo_provider_current(
         &self,
-        app_type: &str,
+        app_type: &AppType,
         provider_id: &str,
         category: &str,
     ) -> Result<(), AppError> {
@@ -611,7 +573,7 @@ impl Database {
 
     pub fn is_omo_provider_current(
         &self,
-        app_type: &str,
+        app_type: &AppType,
         provider_id: &str,
         category: &str,
     ) -> Result<bool, AppError> {
@@ -630,7 +592,7 @@ impl Database {
 
     pub fn clear_omo_provider_current(
         &self,
-        app_type: &str,
+        app_type: &AppType,
         provider_id: &str,
         category: &str,
     ) -> Result<(), AppError> {
@@ -646,7 +608,7 @@ impl Database {
 
     pub fn get_current_omo_provider(
         &self,
-        app_type: &str,
+        app_type: &AppType,
         category: &str,
     ) -> Result<Option<Provider>, AppError> {
         let conn = lock_conn!(self.conn);
@@ -726,7 +688,7 @@ impl Database {
     ///
     /// 比 `get_all_providers` 轻量得多：只读 id 列、无 endpoint 子查询。
     /// 用于只需要做存在性检查的场景（如 additive 模式的 live 同步去重）。
-    pub fn get_provider_ids(&self, app_type: &str) -> Result<HashSet<String>, AppError> {
+    pub fn get_provider_ids(&self, app_type: &AppType) -> Result<HashSet<String>, AppError> {
         let conn = lock_conn!(self.conn);
         let mut stmt = conn
             .prepare("SELECT id FROM providers WHERE app_type = ?1")
@@ -745,7 +707,7 @@ impl Database {
     ///
     /// 启动阶段的 live import 需要使用这个更严格的判断：
     /// 只要该 app 已经有任何 provider（包括官方 seed），就不应再自动导入 `default`。
-    pub fn has_any_provider_for_app(&self, app_type: &str) -> Result<bool, AppError> {
+    pub fn has_any_provider_for_app(&self, app_type: &AppType) -> Result<bool, AppError> {
         let conn = lock_conn!(self.conn);
         let exists: bool = conn
             .query_row(
@@ -761,7 +723,7 @@ impl Database {
     ///
     /// 比 `get_all_providers` 轻量得多：只读 id 列、无 endpoint 子查询、首条命中即返回。
     /// 用于 `import_default_config` 决定是否跳过 live 导入。
-    pub fn has_non_official_seed_provider(&self, app_type: &str) -> Result<bool, AppError> {
+    pub fn has_non_official_seed_provider(&self, app_type: &AppType) -> Result<bool, AppError> {
         use crate::database::dao::providers_seed::is_official_seed_id;
         let conn = lock_conn!(self.conn);
         let mut stmt = conn
@@ -780,7 +742,7 @@ impl Database {
     }
 
     /// 计算指定 app 下一个可用的 sort_index（追加到末尾）。
-    fn next_sort_index_for_app(&self, app_type: &str) -> Result<usize, AppError> {
+    fn next_sort_index_for_app(&self, app_type: &AppType) -> Result<usize, AppError> {
         let conn = lock_conn!(self.conn);
         let max: Option<i64> = conn
             .query_row(
@@ -815,14 +777,14 @@ impl Database {
         let now_ms = chrono::Utc::now().timestamp_millis();
 
         for seed in OFFICIAL_SEEDS {
-            let app_type_str = seed.app_type.as_str();
+            let app_type = &seed.app_type;
 
             // 若该 id 已存在（极端情况：用户曾手动用过同 id），跳过
-            if self.get_provider_by_id(seed.id, app_type_str)?.is_some() {
+            if self.get_provider_by_id(seed.id, app_type)?.is_some() {
                 continue;
             }
 
-            let next_sort_index = self.next_sort_index_for_app(app_type_str)?;
+            let next_sort_index = self.next_sort_index_for_app(app_type)?;
 
             let settings_config: serde_json::Value =
                 serde_json::from_str(seed.settings_config_json).map_err(|e| {
@@ -841,13 +803,9 @@ impl Database {
             provider.sort_index = Some(next_sort_index);
             provider.created_at = Some(now_ms);
 
-            self.save_provider(app_type_str, &provider)?;
+            self.save_provider(app_type, &provider)?;
             inserted += 1;
-            log::info!(
-                "✓ Seeded official provider: {} ({})",
-                seed.name,
-                app_type_str
-            );
+            log::info!("✓ Seeded official provider: {} ({app_type})", seed.name);
         }
 
         // 即使 inserted=0（例如用户手动创建过同 id）也设置 flag 防止反复检查
@@ -876,14 +834,11 @@ impl Database {
             .find(|s| s.id == seed_id && s.app_type == app_type)
             .ok_or_else(|| {
                 AppError::Database(format!(
-                    "unknown official seed: id={seed_id}, app_type={}",
-                    app_type.as_str()
+                    "unknown official seed: id={seed_id}, app_type={app_type}"
                 ))
             })?;
 
-        let app_type_str = seed.app_type.as_str();
-
-        if self.get_provider_by_id(seed_id, app_type_str)?.is_some() {
+        if self.get_provider_by_id(seed_id, &app_type)?.is_some() {
             return Ok(false);
         }
 
@@ -892,7 +847,7 @@ impl Database {
                 AppError::Database(format!("Seed JSON parse failed for {}: {e}", seed.id))
             })?;
 
-        let next_sort_index = self.next_sort_index_for_app(app_type_str)?;
+        let next_sort_index = self.next_sort_index_for_app(&app_type)?;
         let now_ms = chrono::Utc::now().timestamp_millis();
 
         let mut provider = Provider::with_id(
@@ -907,7 +862,7 @@ impl Database {
         provider.sort_index = Some(next_sort_index);
         provider.created_at = Some(now_ms);
 
-        self.save_provider(app_type_str, &provider)?;
+        self.save_provider(&app_type, &provider)?;
 
         Ok(true)
     }
@@ -930,10 +885,7 @@ mod ensure_official_seed_tests {
         assert!(inserted, "should insert when missing");
 
         let provider = db
-            .get_provider_by_id(
-                CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID,
-                AppType::ClaudeDesktop.as_str(),
-            )
+            .get_provider_by_id(CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID, &AppType::ClaudeDesktop)
             .expect("query ok")
             .expect("provider exists after ensure");
 
@@ -950,14 +902,11 @@ mod ensure_official_seed_tests {
         db.init_default_official_providers().expect("seed");
 
         let mut renamed = db
-            .get_provider_by_id(
-                CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID,
-                AppType::ClaudeDesktop.as_str(),
-            )
+            .get_provider_by_id(CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID, &AppType::ClaudeDesktop)
             .expect("query ok")
             .expect("seed present");
         renamed.name = "My Custom Backup".to_string();
-        db.save_provider(AppType::ClaudeDesktop.as_str(), &renamed)
+        db.save_provider(&AppType::ClaudeDesktop, &renamed)
             .expect("save customization");
 
         let inserted = db
@@ -966,10 +915,7 @@ mod ensure_official_seed_tests {
         assert!(!inserted, "should skip when present");
 
         let after = db
-            .get_provider_by_id(
-                CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID,
-                AppType::ClaudeDesktop.as_str(),
-            )
+            .get_provider_by_id(CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID, &AppType::ClaudeDesktop)
             .expect("query ok")
             .expect("still present");
         assert_eq!(
@@ -982,7 +928,7 @@ mod ensure_official_seed_tests {
     fn ensure_recreates_codex_official_seed_after_deletion() {
         let db = Database::memory().expect("memory db");
         db.init_default_official_providers().expect("seed");
-        db.delete_provider(AppType::Codex.as_str(), CODEX_OFFICIAL_PROVIDER_ID)
+        db.delete_provider(&AppType::Codex, CODEX_OFFICIAL_PROVIDER_ID)
             .expect("delete Codex official");
 
         let inserted = db
@@ -990,7 +936,7 @@ mod ensure_official_seed_tests {
             .expect("ensure Codex official");
         assert!(inserted);
         let provider = db
-            .get_provider_by_id(CODEX_OFFICIAL_PROVIDER_ID, AppType::Codex.as_str())
+            .get_provider_by_id(CODEX_OFFICIAL_PROVIDER_ID, &AppType::Codex)
             .expect("query")
             .expect("Codex official restored");
         assert_eq!(provider.category.as_deref(), Some("official"));
@@ -1001,7 +947,7 @@ mod ensure_official_seed_tests {
     fn ensure_recreates_grokbuild_official_seed_after_deletion() {
         let db = Database::memory().expect("memory db");
         db.init_default_official_providers().expect("seed");
-        db.delete_provider(AppType::GrokBuild.as_str(), GROKBUILD_OFFICIAL_PROVIDER_ID)
+        db.delete_provider(&AppType::GrokBuild, GROKBUILD_OFFICIAL_PROVIDER_ID)
             .expect("delete Grok Build official");
 
         let inserted = db
@@ -1009,7 +955,7 @@ mod ensure_official_seed_tests {
             .expect("ensure Grok Build official");
         assert!(inserted);
         let provider = db
-            .get_provider_by_id(GROKBUILD_OFFICIAL_PROVIDER_ID, AppType::GrokBuild.as_str())
+            .get_provider_by_id(GROKBUILD_OFFICIAL_PROVIDER_ID, &AppType::GrokBuild)
             .expect("query")
             .expect("Grok Build official restored");
         assert_eq!(provider.category.as_deref(), Some("official"));

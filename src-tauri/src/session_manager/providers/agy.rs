@@ -1,4 +1,5 @@
-//! Read Antigravity's exported transcript; never open its binary conversation store for writing.
+//! Read Antigravity's exported transcript. The conversation store is written only by
+//! [`delete_session`], which removes a CLI conversation the way agy's own picker does.
 use super::{
     blocks::assign_turn_ids,
     utils::{parse_timestamp_to_ms, truncate_summary},
@@ -64,6 +65,61 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
     scan_roots(&session_sources())
 }
 
+/// Enumerate `(session_id, transcript_path)` across all Antigravity roots without opening
+/// `conversation_summaries.db` or parsing transcript contents for session-list metadata.
+pub(crate) fn transcript_files() -> Vec<(String, PathBuf)> {
+    transcript_files_in_roots(&session_sources())
+}
+
+pub(crate) fn transcript_files_in_roots(
+    sources: &[(PathBuf, Option<PathBuf>)],
+) -> Vec<(String, PathBuf)> {
+    let mut seen = std::collections::HashSet::new();
+    let mut files = Vec::new();
+    for (root, _) in sources {
+        for (id, path) in transcripts_in_root(root) {
+            if seen.insert(id.clone()) {
+                files.push((id, path));
+            }
+        }
+    }
+    files
+}
+
+fn transcripts_in_root(root: &Path) -> Vec<(String, PathBuf)> {
+    let canonical_root = root.canonicalize().ok();
+    let mut files = Vec::new();
+    if let Ok(entries) = fs::read_dir(root) {
+        for entry in entries.flatten() {
+            if !entry.file_type().is_ok_and(|t| t.is_dir()) {
+                continue;
+            }
+            let Some(id) = entry
+                .file_name()
+                .to_str()
+                .map(str::to_string)
+                .filter(|id| valid_session_id(id))
+            else {
+                continue;
+            };
+            let path = entry
+                .path()
+                .join(".system_generated/logs/transcript_full.jsonl");
+            if !path.is_file()
+                || !path
+                    .canonicalize()
+                    .ok()
+                    .zip(canonical_root.as_ref())
+                    .is_some_and(|(path, root)| path.starts_with(root))
+            {
+                continue;
+            }
+            files.push((id, path));
+        }
+    }
+    files
+}
+
 /// Missing roots are tolerated; a session id found in several roots is reported once. The first
 /// root wins, except that an index-only entry yields to a later root holding the transcript: the
 /// IDE can continue a conversation the CLI index also lists, and only the transcript has usage.
@@ -100,59 +156,33 @@ fn scan_root(root: &Path, gemini_dir: Option<&Path>) -> Vec<SessionMeta> {
             .join("conversation_summaries.db"),
         gemini_dir,
     );
-    let canonical_root = root.canonicalize().ok();
     let mut sessions = Vec::new();
-    if let Ok(entries) = fs::read_dir(root) {
-        for entry in entries.flatten() {
-            if !entry.file_type().is_ok_and(|t| t.is_dir()) {
-                continue;
+    for (id, path) in transcripts_in_root(root) {
+        let summary = summaries.remove(&id);
+        // Avoid parsing every transcript on list refresh when agy's own index is available.
+        let mut meta = if let Some(meta) = summary {
+            meta
+        } else {
+            let Ok(rows) = records(&path) else { continue };
+            let first = rows
+                .iter()
+                .find(|v| v["type"] == "USER_INPUT")
+                .and_then(|v| v["content"].as_str())
+                .map(user_request);
+            SessionMeta {
+                provider_id: "agy".into(),
+                session_id: id.clone(),
+                title: first.map(|s| truncate_summary(s, 80)),
+                summary: first.map(|s| truncate_summary(s, 160)),
+                project_dir: None,
+                created_at: rows.iter().find_map(timestamp),
+                last_active_at: rows.iter().filter_map(timestamp).max(),
+                source_path: None,
+                resume_command: Some(crate::agy_config::resume_command(gemini_dir, &id)),
             }
-            let Some(id) = entry
-                .file_name()
-                .to_str()
-                .map(str::to_string)
-                .filter(|id| valid_session_id(id))
-            else {
-                continue;
-            };
-            let path = entry
-                .path()
-                .join(".system_generated/logs/transcript_full.jsonl");
-            if !path.is_file()
-                || !path
-                    .canonicalize()
-                    .ok()
-                    .zip(canonical_root.as_ref())
-                    .is_some_and(|(path, root)| path.starts_with(root))
-            {
-                continue;
-            }
-            let summary = summaries.remove(&id);
-            // Avoid parsing every transcript on list refresh when agy's own index is available.
-            let mut meta = if let Some(meta) = summary {
-                meta
-            } else {
-                let Ok(rows) = records(&path) else { continue };
-                let first = rows
-                    .iter()
-                    .find(|v| v["type"] == "USER_INPUT")
-                    .and_then(|v| v["content"].as_str())
-                    .map(user_request);
-                SessionMeta {
-                    provider_id: "agy".into(),
-                    session_id: id.clone(),
-                    title: first.map(|s| truncate_summary(s, 80)),
-                    summary: first.map(|s| truncate_summary(s, 160)),
-                    project_dir: None,
-                    created_at: rows.iter().find_map(timestamp),
-                    last_active_at: rows.iter().filter_map(timestamp).max(),
-                    source_path: None,
-                    resume_command: Some(crate::agy_config::resume_command(gemini_dir, &id)),
-                }
-            };
-            meta.source_path = Some(path.to_string_lossy().into_owned());
-            sessions.push(meta);
-        }
+        };
+        meta.source_path = Some(path.to_string_lossy().into_owned());
+        sessions.push(meta);
     }
     // A binary-only conversation can still be found and resumed, but has no readable transcript.
     sessions.extend(summaries.into_values());
@@ -271,6 +301,194 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
     Ok(messages)
 }
 
+/// Delete a CLI conversation the way agy's picker (`/resume`, F4) does: its row in
+/// `conversation_summaries.db` (list + full-text search), its entry in
+/// `jetbox_summaries_proto.pb`, then `conversations/<id>.db`, `brain/<id>/` and the annotation.
+///
+/// The jetbox file is the source agy rebuilds the summaries table from, so dropping only the
+/// table rows would bring the conversation back on the next start. It is changed first in
+/// memory and checked to be the known map layout; anything else is refused before writing.
+/// IDE conversations (`~/.gemini/antigravity`) keep their index elsewhere and stay read-only.
+pub fn delete_session(root: &Path, path: &Path, session_id: &str) -> Result<bool, String> {
+    if !valid_session_id(session_id) {
+        return Err("Invalid Antigravity session ID".into());
+    }
+    let expected = root
+        .join(session_id)
+        .join(".system_generated")
+        .join("logs")
+        .join("transcript_full.jsonl");
+    if path != expected {
+        return Err(format!(
+            "Unexpected Antigravity session source: {}",
+            path.display()
+        ));
+    }
+    let app_dir = root
+        .parent()
+        .filter(|_| root.file_name().is_some_and(|name| name == "brain"))
+        .filter(|dir| {
+            dir.file_name()
+                .is_some_and(|name| name == "antigravity-cli")
+        })
+        .ok_or("Delete this session in Antigravity to keep its index and summaries consistent")?;
+
+    // agy holds this lock while the conversation is open; keep it until the files are gone.
+    let presence = app_dir.join("presence").join(format!("{session_id}.lock"));
+    let presence_lock = lock_presence(&presence)?;
+
+    let jetbox_path = app_dir.join("jetbox_summaries_proto.pb");
+    let jetbox = match fs::read(&jetbox_path) {
+        Ok(bytes) => Some(jetbox_without(&bytes, session_id)?),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(format!("Cannot read Antigravity conversation index: {e}")),
+    };
+
+    delete_summary_rows(&app_dir.join("conversation_summaries.db"), session_id)?;
+    if let Some(Some(bytes)) = jetbox {
+        crate::config::atomic_write_private(&jetbox_path, &bytes)
+            .map_err(|e| format!("Cannot update Antigravity conversation index: {e}"))?;
+    }
+
+    let conversation = app_dir
+        .join("conversations")
+        .join(format!("{session_id}.db"));
+    for file in [
+        conversation.clone(),
+        conversation.with_extension("db-wal"),
+        conversation.with_extension("db-shm"),
+        app_dir
+            .join("annotations")
+            .join(format!("{session_id}.pbtxt")),
+    ] {
+        ignore_missing(&file, fs::remove_file(&file))?;
+    }
+    let brain_dir = root.join(session_id);
+    ignore_missing(&brain_dir, fs::remove_dir_all(&brain_dir))?;
+    // Windows cannot delete a file this process still has open.
+    drop(presence_lock);
+    ignore_missing(&presence, fs::remove_file(&presence))?;
+    Ok(true)
+}
+
+// `rust-version` in Cargo.toml is stale (dependencies already need 1.88); the pinned
+// toolchain (rust-toolchain.toml) has `File::try_lock`.
+#[allow(clippy::incompatible_msrv)]
+fn lock_presence(path: &Path) -> Result<Option<fs::File>, String> {
+    let file = match fs::OpenOptions::new().read(true).write(true).open(path) {
+        Ok(file) => file,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => {
+            return Err(format!(
+                "Cannot check whether agy is using this session: {e}"
+            ))
+        }
+    };
+    match file.try_lock() {
+        Ok(()) => Ok(Some(file)),
+        Err(fs::TryLockError::WouldBlock) => {
+            Err("This conversation is open in agy. Close it there before deleting".into())
+        }
+        Err(fs::TryLockError::Error(e)) => Err(format!(
+            "Cannot check whether agy is using this session: {e}"
+        )),
+    }
+}
+
+fn delete_summary_rows(db: &Path, session_id: &str) -> Result<(), String> {
+    if !db.exists() {
+        return Ok(());
+    }
+    let err = |e: rusqlite::Error| format!("Cannot update Antigravity conversation list: {e}");
+    let mut conn = rusqlite::Connection::open(db).map_err(err)?;
+    conn.busy_timeout(std::time::Duration::from_secs(5))
+        .map_err(err)?;
+    let tx = conn.transaction().map_err(err)?;
+    for table in [
+        "conversation_summaries",
+        "conversations_fts",
+        "conversation_parents",
+    ] {
+        let exists: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name = ?1)",
+                [table],
+                |row| row.get(0),
+            )
+            .map_err(err)?;
+        if exists {
+            tx.execute(
+                &format!("DELETE FROM {table} WHERE conversation_id = ?1"),
+                [session_id],
+            )
+            .map_err(err)?;
+        }
+    }
+    tx.commit().map_err(err)
+}
+
+fn ignore_missing(path: &Path, result: std::io::Result<()>) -> Result<(), String> {
+    match result {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("Failed to delete {}: {e}", path.display())),
+    }
+}
+
+/// `jetbox_summaries_proto.pb` is a `map<string, Summary>`: repeated top-level field 1, each a
+/// message whose field 1 is the conversation id. Returns the file without that id's entry, or
+/// `None` when it has none. Any other layout is refused rather than rewritten.
+fn jetbox_without(bytes: &[u8], session_id: &str) -> Result<Option<Vec<u8>>, String> {
+    let unknown =
+        || "Unrecognized Antigravity conversation index; delete this session in agy".to_string();
+    let mut kept = Vec::with_capacity(bytes.len());
+    let mut dropped = false;
+    let mut rest = bytes;
+    while !rest.is_empty() {
+        let (field, wire, body, len) = proto_field(rest).ok_or_else(unknown)?;
+        if field != 1 || wire != 2 {
+            return Err(unknown());
+        }
+        let (key_field, key_wire, key, _) = proto_field(body).ok_or_else(unknown)?;
+        if key_field != 1 || key_wire != 2 {
+            return Err(unknown());
+        }
+        if key == session_id.as_bytes() {
+            dropped = true;
+        } else {
+            kept.extend_from_slice(&rest[..len]);
+        }
+        rest = &rest[len..];
+    }
+    Ok(dropped.then_some(kept))
+}
+
+/// One length-delimited field: `(field number, wire type, payload, bytes consumed)`. Other wire
+/// types are reported with an empty payload so the caller can reject them.
+fn proto_field(bytes: &[u8]) -> Option<(u64, u8, &[u8], usize)> {
+    fn varint(bytes: &[u8], at: &mut usize) -> Option<u64> {
+        let mut value = 0u64;
+        for shift in (0..64).step_by(7) {
+            let byte = *bytes.get(*at)?;
+            *at += 1;
+            value |= u64::from(byte & 0x7f) << shift;
+            if byte < 0x80 {
+                return Some(value);
+            }
+        }
+        None
+    }
+    let mut at = 0;
+    let key = varint(bytes, &mut at)?;
+    let wire = (key & 7) as u8;
+    if wire != 2 {
+        return Some((key >> 3, wire, &[], at));
+    }
+    let len = usize::try_from(varint(bytes, &mut at)?).ok()?;
+    let end = at.checked_add(len).filter(|end| *end <= bytes.len())?;
+    Some((key >> 3, wire, &bytes[at..end], end))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -343,6 +561,9 @@ mod tests {
 
     #[test]
     fn agy_index_only_entry_yields_to_a_later_root_with_the_transcript() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let home = tempfile::tempdir().unwrap();
         let cli = home.path().join("antigravity-cli");
         fs::create_dir_all(&cli).unwrap();
@@ -446,5 +667,164 @@ mod tests {
             messages[1].meta.as_ref().unwrap().cache_read_tokens,
             Some(20)
         );
+    }
+
+    fn len_field(field: u8, payload: &[u8]) -> Vec<u8> {
+        assert!(payload.len() < 128);
+        let mut out = vec![(field << 3) | 2, payload.len() as u8];
+        out.extend_from_slice(payload);
+        out
+    }
+
+    fn jetbox_entry(id: &str, summary: &[u8]) -> Vec<u8> {
+        len_field(
+            1,
+            &[len_field(1, id.as_bytes()), len_field(2, summary)].concat(),
+        )
+    }
+
+    #[test]
+    fn agy_jetbox_drops_only_the_entry_keyed_by_the_session() {
+        let parent = jetbox_entry("aaa-1", b"title");
+        // A child summary mentions its parent's id; only the key decides which entry goes.
+        let child = jetbox_entry("bbb-2", b"parent aaa-1");
+        let file = [parent.clone(), child.clone()].concat();
+
+        assert_eq!(jetbox_without(&file, "aaa-1").unwrap(), Some(child.clone()));
+        assert_eq!(jetbox_without(&file, "bbb-2").unwrap(), Some(parent));
+        assert_eq!(jetbox_without(&file, "ccc-3").unwrap(), None);
+        assert_eq!(jetbox_without(&[], "aaa-1").unwrap(), None);
+    }
+
+    #[test]
+    fn agy_jetbox_refuses_layouts_it_does_not_know() {
+        let entry = jetbox_entry("aaa-1", b"title");
+        for file in [
+            [entry.clone(), len_field(2, b"x")].concat(), // another top-level field
+            [entry.clone(), vec![0x08, 0x01]].concat(),   // a varint at top level
+            len_field(1, &len_field(2, b"no key first")), // entry without a key
+            entry[..entry.len() - 1].to_vec(),            // truncated
+        ] {
+            assert!(jetbox_without(&file, "aaa-1").is_err());
+        }
+    }
+
+    struct AgyFixture {
+        _home: tempfile::TempDir,
+        app: PathBuf,
+    }
+
+    impl AgyFixture {
+        fn new(dir_name: &str, ids: &[&str]) -> Self {
+            let home = tempfile::tempdir().unwrap();
+            let app = home.path().join(dir_name);
+            for sub in ["conversations", "annotations", "presence"] {
+                fs::create_dir_all(app.join(sub)).unwrap();
+            }
+            let db = rusqlite::Connection::open(app.join("conversation_summaries.db")).unwrap();
+            db.execute_batch(
+                "CREATE TABLE conversation_summaries(conversation_id TEXT PRIMARY KEY, title TEXT);
+                 CREATE VIRTUAL TABLE conversations_fts USING fts5(conversation_id UNINDEXED, title);
+                 CREATE TABLE conversation_parents(conversation_id TEXT PRIMARY KEY, parent_id TEXT NOT NULL) WITHOUT ROWID;",
+            )
+            .unwrap();
+            let mut jetbox = Vec::new();
+            for id in ids {
+                let logs = app.join("brain").join(id).join(".system_generated/logs");
+                fs::create_dir_all(&logs).unwrap();
+                fs::write(logs.join("transcript_full.jsonl"), "{}\n").unwrap();
+                fs::write(app.join("conversations").join(format!("{id}.db")), "db").unwrap();
+                fs::write(app.join("annotations").join(format!("{id}.pbtxt")), "title").unwrap();
+                fs::write(app.join("presence").join(format!("{id}.lock")), "").unwrap();
+                db.execute("INSERT INTO conversation_summaries VALUES (?1, 't')", [id])
+                    .unwrap();
+                db.execute("INSERT INTO conversations_fts VALUES (?1, 't')", [id])
+                    .unwrap();
+                jetbox.extend(jetbox_entry(id, b"summary"));
+            }
+            fs::write(app.join("jetbox_summaries_proto.pb"), jetbox).unwrap();
+            Self { _home: home, app }
+        }
+
+        fn delete(&self, id: &str) -> Result<bool, String> {
+            let root = self.app.join("brain").canonicalize().unwrap();
+            let path = root
+                .join(id)
+                .join(".system_generated/logs/transcript_full.jsonl");
+            delete_session(&root, &path.canonicalize().unwrap(), id)
+        }
+
+        fn rows(&self, table: &str, id: &str) -> i64 {
+            rusqlite::Connection::open(self.app.join("conversation_summaries.db"))
+                .unwrap()
+                .query_row(
+                    &format!("SELECT count(*) FROM {table} WHERE conversation_id = ?1"),
+                    [id],
+                    |row| row.get(0),
+                )
+                .unwrap()
+        }
+
+        fn traces(&self, id: &str) -> Vec<PathBuf> {
+            [
+                self.app.join("brain").join(id),
+                self.app.join("conversations").join(format!("{id}.db")),
+                self.app.join("annotations").join(format!("{id}.pbtxt")),
+                self.app.join("presence").join(format!("{id}.lock")),
+            ]
+            .into_iter()
+            .filter(|path| path.exists())
+            .collect()
+        }
+
+        fn jetbox(&self) -> Vec<u8> {
+            fs::read(self.app.join("jetbox_summaries_proto.pb")).unwrap()
+        }
+    }
+
+    #[test]
+    fn agy_delete_removes_index_entries_and_files_of_one_cli_conversation() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        let fixture = AgyFixture::new("antigravity-cli", &["aaa-1", "bbb-2"]);
+
+        assert_eq!(fixture.delete("aaa-1"), Ok(true));
+
+        assert!(fixture.traces("aaa-1").is_empty());
+        assert_eq!(fixture.rows("conversation_summaries", "aaa-1"), 0);
+        assert_eq!(fixture.rows("conversations_fts", "aaa-1"), 0);
+        assert_eq!(fixture.jetbox(), jetbox_entry("bbb-2", b"summary"));
+        assert_eq!(fixture.traces("bbb-2").len(), 4);
+        assert_eq!(fixture.rows("conversation_summaries", "bbb-2"), 1);
+        assert_eq!(fixture.rows("conversations_fts", "bbb-2"), 1);
+    }
+
+    #[test]
+    #[allow(clippy::incompatible_msrv)]
+    fn agy_delete_refuses_open_ide_and_unrecognized_conversations_without_changes() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        let fixture = AgyFixture::new("antigravity-cli", &["aaa-1"]);
+        let held = fs::File::open(fixture.app.join("presence/aaa-1.lock")).unwrap();
+        held.lock().unwrap();
+        assert!(fixture.delete("aaa-1").unwrap_err().contains("open in agy"));
+        drop(held);
+        assert_eq!(fixture.traces("aaa-1").len(), 4);
+
+        let original = fixture.jetbox();
+        fs::write(
+            fixture.app.join("jetbox_summaries_proto.pb"),
+            [original.clone(), vec![0x08, 0x01]].concat(),
+        )
+        .unwrap();
+        assert!(fixture.delete("aaa-1").is_err());
+        assert_eq!(fixture.traces("aaa-1").len(), 4);
+        assert_eq!(fixture.rows("conversation_summaries", "aaa-1"), 1);
+
+        let ide = AgyFixture::new("antigravity", &["aaa-1"]);
+        assert!(ide.delete("aaa-1").is_err());
+        assert_eq!(ide.traces("aaa-1").len(), 4);
     }
 }

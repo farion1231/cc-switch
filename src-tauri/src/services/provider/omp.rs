@@ -28,11 +28,11 @@ pub(super) fn list(state: &AppState) -> Result<IndexMap<String, Provider>, AppEr
     if let Err(error) = sync_native(state) {
         log::warn!("Failed to read Oh My Pi providers; showing saved catalog: {error}");
     }
-    state.db.get_all_providers("omp")
+    state.db.get_all_providers(&AppType::Omp)
 }
 fn sync_native(state: &AppState) -> Result<usize, AppError> {
     let native = omp_config::get_providers()?;
-    let saved = state.db.get_all_providers("omp")?;
+    let saved = state.db.get_all_providers(&AppType::Omp)?;
     let mut changed = 0;
     for (id, config) in native {
         let mut provider = saved.get(&id).cloned().unwrap_or_else(|| {
@@ -52,7 +52,7 @@ fn sync_native(state: &AppState) -> Result<usize, AppError> {
             continue;
         }
         provider.settings_config = config;
-        state.db.save_provider("omp", &provider)?;
+        state.db.save_provider(&AppType::Omp, &provider)?;
         changed += 1;
     }
     Ok(changed)
@@ -68,7 +68,11 @@ pub(super) fn add(
 ) -> Result<bool, AppError> {
     let _guard = futures::executor::block_on(state.proxy_service.lock_switch_for_app("omp"));
     prepare(&mut provider)?;
-    if state.db.get_provider_by_id(&provider.id, "omp")?.is_some() {
+    if state
+        .db
+        .get_provider_by_id(&provider.id, &AppType::Omp)?
+        .is_some()
+    {
         return Err(AppError::Config("omp.errors.duplicateProvider".into()));
     }
     let native_config = if add_to_live {
@@ -78,7 +82,7 @@ pub(super) fn add(
         provider.settings_config.clone()
     };
     let commit = |_| {
-        state.db.save_provider("omp", &provider)?;
+        state.db.save_provider(&AppType::Omp, &provider)?;
         Ok(true)
     };
     if add_to_live {
@@ -101,7 +105,7 @@ pub(super) fn update(
     }
     state
         .db
-        .get_provider_by_id(&provider.id, "omp")?
+        .get_provider_by_id(&provider.id, &AppType::Omp)?
         .ok_or_else(|| AppError::Config("omp.errors.providerMissing".into()))?;
     prepare(&mut provider)?;
     let native_config = if omp_config::get_providers()?.contains_key(&provider.id) {
@@ -115,7 +119,7 @@ pub(super) fn update(
         Some(&native_config),
         Change::ReplaceIfPresent,
         |_| {
-            state.db.save_provider("omp", &provider)?;
+            state.db.save_provider(&AppType::Omp, &provider)?;
             Ok(true)
         },
     )
@@ -123,21 +127,21 @@ pub(super) fn update(
 pub(super) fn delete(state: &AppState, id: &str) -> Result<(), AppError> {
     let _guard = futures::executor::block_on(state.proxy_service.lock_switch_for_app("omp"));
     omp_config::change_and_commit(id, None, Change::Remove, |_| {
-        state.db.delete_provider("omp", id)
+        state.db.delete_provider(&AppType::Omp, id)
     })
 }
 pub(super) fn remove(state: &AppState, id: &str) -> Result<(), AppError> {
     let _guard = futures::executor::block_on(state.proxy_service.lock_switch_for_app("omp"));
     let mut provider = state
         .db
-        .get_provider_by_id(id, "omp")?
+        .get_provider_by_id(id, &AppType::Omp)?
         .ok_or_else(|| AppError::Config("omp.errors.providerMissing".into()))?;
     omp_config::change_and_commit(id, None, Change::Remove, |old| {
         if let Some(config) = old {
             if !provider.is_dim_oauth() {
                 provider.settings_config = config;
             }
-            state.db.save_provider("omp", &provider)?;
+            state.db.save_provider(&AppType::Omp, &provider)?;
         }
         Ok(())
     })
@@ -146,7 +150,7 @@ pub(super) fn enable(state: &AppState, id: &str) -> Result<SwitchResult, AppErro
     let _guard = futures::executor::block_on(state.proxy_service.lock_switch_for_app("omp"));
     let mut provider = state
         .db
-        .get_provider_by_id(id, "omp")?
+        .get_provider_by_id(id, &AppType::Omp)?
         .ok_or_else(|| AppError::Config("omp.errors.providerMissing".into()))?;
     let native_config =
         crate::proxy::dim_relay::project_provider(&state.db, &AppType::Omp, &provider)?
@@ -161,7 +165,7 @@ pub(super) fn enable(state: &AppState, id: &str) -> Result<SwitchResult, AppErro
             );
         }
         provider.settings_config = native.clone();
-        state.db.save_provider("omp", &provider)?;
+        state.db.save_provider(&AppType::Omp, &provider)?;
         return Ok(SwitchResult::default());
     }
     ProviderService::validate_provider_settings(&AppType::Omp, &provider)?;
@@ -215,7 +219,7 @@ mod tests {
         let state = AppState::new(Arc::new(Database::memory().unwrap()));
         let baseline = provider();
         add(&state, baseline.clone(), true).unwrap();
-        state.db.save_provider("pi", &baseline).unwrap();
+        state.db.save_provider(&AppType::Pi, &baseline).unwrap();
 
         let mut external = baseline.settings_config.clone();
         external["apiKey"] = json!("rotated-outside");
@@ -254,7 +258,7 @@ mod tests {
         );
         let pi = state
             .db
-            .get_provider_by_id(&baseline.id, "pi")
+            .get_provider_by_id(&baseline.id, &AppType::Pi)
             .unwrap()
             .unwrap();
         assert_eq!(pi.settings_config, baseline.settings_config);

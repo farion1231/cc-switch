@@ -46,6 +46,7 @@ import type { CopilotModel } from "@/lib/api/copilot";
 import {
   fetchCodexOauthModels,
   fetchXaiOauthModels,
+  claudeModelFetchApiFormat,
   fetchModelsForConfig,
   modelFetchRequestHeaders,
   showFetchModelsError,
@@ -68,6 +69,7 @@ import type {
 } from "@/types";
 import type { ManagedAuthProvider } from "@/lib/api";
 import {
+  copilotOneMAvailable,
   hasClaudeOneMMarker,
   setClaudeOneMMarker,
   stripClaudeOneMMarker,
@@ -186,6 +188,11 @@ interface ClaudeFormFieldsProps {
   /** Stack 布局的模型列表（第一行是这家的默认模型）。 */
   stackModelRows?: ClaudeStackModelRow[];
   onStackModelRowsChange?: (rows: ClaudeStackModelRow[]) => void;
+}
+
+/** 清空列表的 state 更新：已经是空的就原样返回，React 不会因此重渲染 */
+function keepEmpty<T>(prev: T[]): T[] {
+  return prev.length === 0 ? prev : [];
 }
 
 export function ClaudeFormFields({
@@ -351,6 +358,7 @@ export function ClaudeFormFields({
       modelsUrl,
       customUserAgent,
       {
+        apiFormat: claudeModelFetchApiFormat(apiFormat),
         requestHeaders: modelFetchRequestHeaders(localProxyHeadersOverride),
       },
     )
@@ -368,6 +376,7 @@ export function ClaudeFormFields({
     apiKey,
     isFullUrl,
     customUserAgent,
+    apiFormat,
     localProxyHeadersOverride,
     showModelFetchResult,
     t,
@@ -394,7 +403,12 @@ export function ClaudeFormFields({
       .then((models) => {
         if (copilotModelsRequestRef.current !== requestId) return;
         setCopilotModels(models);
-        showModelFetchResult(models.length);
+        if (models.length === 0) {
+          // Copilot Free 账号的模型都不允许在模型选择器中使用，会被后端过滤成空
+          toast.info(t("copilot.noPickerModelsClaude"));
+        } else {
+          showModelFetchResult(models.length);
+        }
       })
       .catch((err) => {
         if (copilotModelsRequestRef.current !== requestId) return;
@@ -484,21 +498,22 @@ export function ClaudeFormFields({
       });
   }, [isXaiOauthAuthenticated, selectedXaiAccountId, showModelFetchResult, t]);
 
+  // 已经是空列表时保留原数组：挂载时新建的 [] 会让表单白白多渲染一轮
   useEffect(() => {
     copilotModelsRequestRef.current += 1;
-    setCopilotModels([]);
+    setCopilotModels(keepEmpty);
     setModelsLoading(false);
   }, [isCopilotPreset, isCopilotAuthenticated, selectedGitHubAccountId]);
 
   useEffect(() => {
     codexOauthModelsRequestRef.current += 1;
-    setCodexOauthModels([]);
+    setCodexOauthModels(keepEmpty);
     setCodexOauthModelsLoading(false);
   }, [isCodexOauthPreset, isCodexOauthAuthenticated, selectedCodexAccountId]);
 
   useEffect(() => {
     xaiOauthModelsRequestRef.current += 1;
-    setXaiOauthModels([]);
+    setXaiOauthModels(keepEmpty);
     setXaiOauthModelsLoading(false);
   }, [isXaiOauthPreset, isXaiOauthAuthenticated, selectedXaiAccountId]);
 
@@ -694,6 +709,25 @@ export function ClaudeFormFields({
   const handleRoleOneMChange = (row: ModelRoleRow, enabled: boolean) => {
     handleRoleModelChange(row, setClaudeOneMMarker(row.model, enabled));
   };
+
+  // Copilot 取到模型列表后才知道哪些模型有 1M 版本；没有的不让勾，已勾的提示取消。
+  const copilotLacksOneM = (model: string) =>
+    isCopilotPreset && copilotOneMAvailable(model, copilotModels) === false;
+  // 兜底模型常和某一档相同，去重后再列。
+  const copilotOneMMismatches = [
+    ...new Set(
+      [...modelRoleRows.map((row) => row.model), claudeModel]
+        .filter(
+          (model) => hasClaudeOneMMarker(model) && copilotLacksOneM(model),
+        )
+        .map((model) => stripClaudeOneMMarker(model).trim()),
+    ),
+  ];
+  const fallbackOneMBlocked =
+    !fallbackUsesOneM && copilotLacksOneM(claudeModel);
+  const copilotOneMUnavailableTip = t("providerForm.copilotOneMUnavailable", {
+    defaultValue: "Copilot 没有这个模型的 1M 版本",
+  });
 
   const oauthSections = (
     <>
@@ -1231,6 +1265,7 @@ export function ClaudeFormFields({
               {modelRoleRows.map((row) => {
                 const modelBase = stripClaudeOneMMarker(row.model);
                 const usesOneM = hasClaudeOneMMarker(row.model);
+                const oneMBlocked = !usesOneM && copilotLacksOneM(row.model);
 
                 return (
                   <div
@@ -1275,9 +1310,15 @@ export function ClaudeFormFields({
                           setClaudeOneMMarker(value, usesOneM),
                         ),
                     )}
-                    <label className="flex h-9 items-center gap-2 text-sm text-fg-2">
+                    <label
+                      className={`flex h-9 items-center gap-2 text-sm text-fg-2${oneMBlocked ? " opacity-50" : ""}`}
+                      title={
+                        oneMBlocked ? copilotOneMUnavailableTip : undefined
+                      }
+                    >
                       <Checkbox
                         checked={usesOneM}
+                        disabled={oneMBlocked}
                         onCheckedChange={(checked) =>
                           handleRoleOneMChange(row, checked === true)
                         }
@@ -1289,6 +1330,15 @@ export function ClaudeFormFields({
                   </div>
                 );
               })}
+              {copilotOneMMismatches.length > 0 && (
+                <p className="text-xs leading-relaxed text-warning-text">
+                  {t("providerForm.copilotOneMMismatch", {
+                    models: copilotOneMMismatches.join(", "),
+                    defaultValue:
+                      "Copilot 没有 {{models}} 的 1M 版本：请求会退回普通版本，但 Claude Code 仍按 1M 规划上下文，长会话可能超出上限。建议取消勾选 1M。",
+                  })}
+                </p>
+              )}
             </div>
 
             <div className="space-y-2 border-t border-border pt-4">
@@ -1321,9 +1371,15 @@ export function ClaudeFormFields({
                       setClaudeOneMMarker(value, fallbackUsesOneM),
                     ),
                 )}
-                <label className="flex h-9 items-center gap-2 text-sm text-fg-2">
+                <label
+                  className={`flex h-9 items-center gap-2 text-sm text-fg-2${fallbackOneMBlocked ? " opacity-50" : ""}`}
+                  title={
+                    fallbackOneMBlocked ? copilotOneMUnavailableTip : undefined
+                  }
+                >
                   <Checkbox
                     checked={fallbackUsesOneM}
+                    disabled={fallbackOneMBlocked}
                     onCheckedChange={(checked) => {
                       const base = stripClaudeOneMMarker(claudeModel).trim();
                       if (!base) return;

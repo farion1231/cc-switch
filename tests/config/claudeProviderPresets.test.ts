@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { providerPresets } from "@/config/claudeProviderPresets";
+import { hasIcon } from "@/icons/extracted";
 import { GPT_CONTEXT_WINDOW_CAP } from "@/lib/modelMetadata";
 import type { Provider } from "@/types";
 import { providerNeedsRouting } from "@/utils/providerCapabilities";
@@ -212,5 +213,50 @@ describe("Microsoft Foundry Provider Preset", () => {
     expect(foundry!.apiKeyField).toBe("ANTHROPIC_API_KEY");
     expect(env).toHaveProperty("ANTHROPIC_API_KEY", "");
     expect(env).not.toHaveProperty("ANTHROPIC_AUTH_TOKEN");
+  });
+});
+
+describe("Genesis Claude Code preset", () => {
+  const preset = providerPresets.find((p) => p.name === "Genesis");
+
+  it("uses the Genesis logo", () => {
+    expect(preset?.icon).toBe("genesis");
+    expect(hasIcon("genesis")).toBe(true);
+  });
+
+  it("routes Claude Code through OpenAI Chat with a user-supplied bearer key", () => {
+    expect(preset).toBeDefined();
+    expect(preset!.category).toBe("aggregator");
+    expect(preset!.apiFormat).toBe("openai_chat");
+    expect(preset!.settingsConfig).toMatchObject({
+      env: {
+        ANTHROPIC_BASE_URL: "https://token.moi.matrixorigin.cn",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    });
+
+    const provider: Provider = {
+      id: "genesis",
+      name: preset!.name,
+      category: preset!.category,
+      settingsConfig: preset!.settingsConfig as Record<string, any>,
+      meta: { apiFormat: preset!.apiFormat },
+    };
+    expect(providerNeedsRouting("claude", provider)).toBe(true);
+  });
+
+  it("starts with K3 and still discovers the account's chat model choices", () => {
+    const env = (preset!.settingsConfig as any).env;
+    expect(preset!.modelsUrl).toBe(
+      "https://token.moi.matrixorigin.cn/v1/models?type=chat",
+    );
+    for (const key of [
+      "ANTHROPIC_MODEL",
+      "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+      "ANTHROPIC_DEFAULT_SONNET_MODEL",
+      "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    ]) {
+      expect(env).toHaveProperty(key, "kimi-k3");
+    }
   });
 });

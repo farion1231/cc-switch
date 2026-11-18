@@ -2,8 +2,9 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import "@testing-library/jest-dom";
 import type { ComponentProps } from "react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { SettingsPage } from "@/components/settings/SettingsPage";
+import { createTestQueryClient } from "../utils/testQueryClient";
 
 const toastSuccessMock = vi.fn();
 const toastErrorMock = vi.fn();
@@ -157,11 +158,7 @@ vi.mock("@/components/settings/CodexAuthSettings", () => ({
 const renderSettingsPage = (
   props?: Partial<ComponentProps<typeof SettingsPage>>,
 ) => {
-  const client = new QueryClient({
-    defaultOptions: {
-      queries: { retry: false },
-    },
-  });
+  const client = createTestQueryClient();
   const allProps = {
     section: "general" as const,
     onOpenApps: vi.fn(),
@@ -218,6 +215,18 @@ describe("SettingsPage", () => {
       }),
     ).toBeInTheDocument();
     expect(screen.getByText("global-proxy-settings")).toBeInTheDocument();
+  });
+
+  it("places IP diagnostics under Network, after the global proxy", () => {
+    renderSettingsPage({ section: "network" });
+    const proxy = screen.getByText("global-proxy-settings");
+    const diagnostics = screen.getByRole("heading", {
+      name: "settings.ipDiagnostics.title",
+    });
+    expect(
+      proxy.compareDocumentPosition(diagnostics) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   it("saves general switches immediately and links to the Apps page", async () => {

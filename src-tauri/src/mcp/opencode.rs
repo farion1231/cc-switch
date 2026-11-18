@@ -182,11 +182,7 @@ pub fn convert_from_opencode_format(spec: &Value) -> Result<Value, AppError> {
 // ============================================================================
 
 /// Sync a single MCP server to OpenCode live config
-pub fn sync_single_server_to_opencode(
-    _config: &MultiAppConfig,
-    id: &str,
-    server_spec: &Value,
-) -> Result<(), AppError> {
+pub fn sync_single_server_to_opencode(id: &str, server_spec: &Value) -> Result<(), AppError> {
     if !should_sync_opencode_mcp()? {
         return Ok(());
     }
@@ -265,7 +261,9 @@ pub fn import_from_opencode(config: &mut MultiAppConfig) -> Result<usize, AppErr
                         hermes: false,
                         mcode: false,
                         kimi: false,
+                        copilot: false,
                         dsh: false,
+                        workbuddy: false,
                         pi: false,
                         omp: false,
                     },

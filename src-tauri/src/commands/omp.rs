@@ -1,3 +1,4 @@
+use super::run_db_task;
 use crate::error::AppError;
 use crate::services::pi_state::PiCurrentState;
 use crate::store::AppState;
@@ -20,8 +21,13 @@ fn current_state(state: &AppState) -> Result<PiCurrentState, AppError> {
 }
 
 #[tauri::command]
-pub(crate) fn get_omp_current_state(state: State<'_, AppState>) -> Result<PiCurrentState, String> {
-    current_state(state.inner()).map_err(|error| error.to_string())
+pub(crate) async fn get_omp_current_state(
+    state: State<'_, AppState>,
+) -> Result<PiCurrentState, String> {
+    run_db_task(&state, |state| {
+        current_state(state).map_err(|error| error.to_string())
+    })
+    .await
 }
 
 #[cfg(test)]

@@ -19,6 +19,7 @@ const copilotApiMock = vi.hoisted(() => ({
 const modelFetchApiMock = vi.hoisted(() => ({
   fetchCodexOauthModels: vi.fn(),
   fetchModelsForConfig: vi.fn(),
+  modelFetchRequestHeaders: vi.fn(),
   showFetchModelsError: vi.fn(),
 }));
 
@@ -27,9 +28,13 @@ vi.mock("@/lib/api/copilot", () => ({
   copilotGetModelsForAccount: copilotApiMock.copilotGetModelsForAccount,
 }));
 
-vi.mock("@/lib/api/model-fetch", () => ({
+vi.mock("@/lib/api/model-fetch", async (importOriginal) => ({
+  claudeModelFetchApiFormat: (
+    await importOriginal<typeof import("@/lib/api/model-fetch")>()
+  ).claudeModelFetchApiFormat,
   fetchCodexOauthModels: modelFetchApiMock.fetchCodexOauthModels,
   fetchModelsForConfig: modelFetchApiMock.fetchModelsForConfig,
+  modelFetchRequestHeaders: modelFetchApiMock.modelFetchRequestHeaders,
   showFetchModelsError: modelFetchApiMock.showFetchModelsError,
 }));
 
@@ -217,6 +222,82 @@ describe("ClaudeFormFields", () => {
     await waitFor(() => {
       expect(modelFetchApiMock.fetchCodexOauthModels).toHaveBeenCalledWith(
         "chatgpt-1",
+      );
+    });
+  });
+
+  it("Genesis 使用当前 Key 拉取可用对话模型", async () => {
+    Element.prototype.scrollIntoView ??= vi.fn();
+    const onModelChange = vi.fn();
+    modelFetchApiMock.fetchModelsForConfig.mockResolvedValueOnce([
+      { id: "chat-model-a" },
+      { id: "chat-model-b" },
+    ]);
+    renderCopilotForm({
+      isCopilotPreset: false,
+      usesOAuth: false,
+      category: "aggregator",
+      shouldShowApiKey: true,
+      apiKey: "test-key",
+      baseUrl: "https://token.moi.matrixorigin.cn",
+      defaultSonnetModel: "",
+      defaultSonnetModelName: "",
+      onModelChange,
+    });
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "providerForm.advancedOptionsToggle",
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "providerForm.fetchModels" }),
+    );
+
+    await waitFor(() => {
+      expect(modelFetchApiMock.fetchModelsForConfig).toHaveBeenCalledWith(
+        "https://token.moi.matrixorigin.cn",
+        "test-key",
+        false,
+        "https://token.moi.matrixorigin.cn/v1/models?type=chat",
+        "",
+        { requestHeaders: undefined },
+      );
+    });
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Select model" })[0]);
+    fireEvent.click(screen.getByText("chat-model-b"));
+    expect(onModelChange).toHaveBeenCalledWith(
+      "ANTHROPIC_DEFAULT_SONNET_MODEL",
+      "chat-model-b",
+    );
+  });
+
+  it("Gemini Native 拉取模型时用 Google 的 API Key 头", async () => {
+    modelFetchApiMock.fetchModelsForConfig.mockResolvedValueOnce([]);
+    renderCopilotForm({
+      isCopilotPreset: false,
+      usesOAuth: false,
+      category: "custom",
+      shouldShowApiKey: true,
+      apiKey: "AIza-test",
+      baseUrl: "https://generativelanguage.googleapis.com",
+      apiFormat: "gemini_native",
+    });
+
+    // 非 Anthropic 格式的高级选项默认展开，直接点获取模型
+    fireEvent.click(
+      screen.getByRole("button", { name: "providerForm.fetchModels" }),
+    );
+
+    await waitFor(() => {
+      expect(modelFetchApiMock.fetchModelsForConfig).toHaveBeenCalledWith(
+        "https://generativelanguage.googleapis.com",
+        "AIza-test",
+        false,
+        undefined,
+        "",
+        { apiFormat: "google-generative-ai", requestHeaders: undefined },
       );
     });
   });

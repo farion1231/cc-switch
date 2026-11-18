@@ -57,9 +57,10 @@ export const TIER_I18N_KEYS: Record<string, string> = {
   gemini_pro: "subscription.geminiPro",
   gemini_flash: "subscription.geminiFlash",
   gemini_flash_lite: "subscription.geminiFlashLite",
-  // Antigravity：Gemini 一组、Claude 和 GPT 一组，各有 5 小时和每周两档
+  // Antigravity：Gemini 一组、Claude 和 GPT 一组，各有 5 小时和每周两档；Pro 档另有 Argon 每周
   agy_gemini_five_hour: "subscription.agyGeminiFiveHour",
   agy_gemini_weekly: "subscription.agyGeminiWeekly",
+  agy_gemini_argon_weekly: "subscription.agyGeminiArgonWeekly",
   agy_third_party_five_hour: "subscription.agyThirdPartyFiveHour",
   agy_third_party_weekly: "subscription.agyThirdPartyWeekly",
   // Token Plan（five_hour 已在上方官方映射中）
@@ -77,11 +78,13 @@ const HIDDEN_INLINE_TIERS = new Set(["seven_day_sonnet"]);
 
 /**
  * 卡片上按组只留剩余最少的一档、标签写组名（展开时仍逐档列出）：
- * Antigravity 的 Gemini、Claude 和 GPT 两组各有 5 小时和每周两档，四档在卡片上放不下
+ * Antigravity 的 Gemini、Claude 和 GPT 两组各有 5 小时和每周两档（Pro 档 Gemini 组另有 Argon 每周），
+ * 四五档在卡片上放不下。Argon 也算进 Gemini 组，卡片始终两行、位置不随用量跳
  */
 const INLINE_TIER_GROUPS: Record<string, string> = {
   agy_gemini_five_hour: "subscription.agyGemini",
   agy_gemini_weekly: "subscription.agyGemini",
+  agy_gemini_argon_weekly: "subscription.agyGemini",
   agy_third_party_five_hour: "subscription.agyThirdParty",
   agy_third_party_weekly: "subscription.agyThirdParty",
 };

@@ -12,6 +12,10 @@ const mocks = vi.hoisted(() => ({
   useXaiOauth: vi.fn(),
 }));
 
+vi.mock("@/lib/query/accountPlans", () => ({
+  useAccountQuotaPlans: () => ({}),
+}));
+
 vi.mock("@/components/providers/forms/hooks/useCopilotAuth", () => ({
   useCopilotAuth: mocks.useCopilotAuth,
 }));

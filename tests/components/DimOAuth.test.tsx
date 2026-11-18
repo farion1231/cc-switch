@@ -104,6 +104,7 @@ function renderForm(accountId = account.id, effort = "high") {
 beforeEach(() => {
   Element.prototype.scrollIntoView = vi.fn();
   vi.spyOn(providersApi, "getClaudeDesktopDefaultRoutes").mockResolvedValue([]);
+  vi.spyOn(providersApi, "getHermesLiveProviderIds").mockResolvedValue([]);
   i18n.addResource(
     "zh",
     "translation",

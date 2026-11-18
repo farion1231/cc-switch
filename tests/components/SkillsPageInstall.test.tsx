@@ -360,6 +360,42 @@ describe("SkillsPage (Discover)", () => {
     expect(screen.getByText("other-skill")).toBeInTheDocument();
   });
 
+  it("does not treat the same path on another host as the installed skill", () => {
+    // 仓库只按 owner/name 定位：GitHub 的 owner-a/repo-a 被换成 GitLab 上的同名仓库后，
+    // 之前从 GitHub 装的 repo-skill 不是这一个，只能算目录被占用
+    m.repos = [makeRepo({ host: "gitlab.example.com" })];
+    m.discoverable = [makeDiscoverable({ repoHost: "gitlab.example.com" })];
+    m.installed = [
+      {
+        id: "owner-a/repo-a:repo-skill",
+        name: "repo-skill",
+        directory: "repo-skill",
+        repoOwner: "owner-a",
+        repoName: "repo-a",
+        apps: {
+          claude: true,
+          codex: true,
+          gemini: false,
+          opencode: false,
+          openclaw: false,
+          hermes: false,
+          pi: false,
+        },
+        installedAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    renderPage();
+    expect(
+      screen.queryByRole("button", {
+        name: "skillsPage.discover.installedAria",
+      }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText("skillsPage.discover.dirTaken"),
+    ).toBeInTheDocument();
+  });
+
   it("shows an install failure on the row and lets the user retry", async () => {
     m.repos = [makeRepo()];
     m.discoverable = [makeDiscoverable()];

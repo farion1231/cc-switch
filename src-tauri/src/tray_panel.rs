@@ -8,11 +8,12 @@
 //! - Windows：固定透明画布，网页只为卡片绘制不透明背景，两块卡片并成两栏；
 //!   原生窗口区域跟随卡片裁剪，画布其余部分透明且不拦截鼠标。
 //! - Linux：AppIndicator 不派发点击事件，点图标仍是原生菜单，菜单最上面一项打开面板；没有原生模糊，
-//!   网页画兼容的毛玻璃。
+//!   使用不透明窗口和实色画布，避开 WebKitGTK 的透明合成问题。
 //!
 //! 面板只换了外观：每一行沿用原生菜单的事件 id，点击走 `tray::handle_tray_menu_event`，
 //! 切换、路由、故障转移的行为和原生菜单一致。窗口懒创建，之后只隐藏不销毁；失焦即隐藏。
 
+use crate::sync_utils::MutexExt;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -63,7 +64,7 @@ mod style {
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 mod style {
     pub const LAYOUT: &str = "joined";
-    /// 没有原生模糊：网页自己画兼容的毛玻璃
+    /// 没有原生模糊；面板用不透明窗口和实色画布（见 tray-panel.css），不画半透明毛玻璃
     pub const GLASS: &str = "frosted";
     pub const CARD_GAP: f64 = 0.0;
     pub const RADIUS: f64 = 12.0;
@@ -101,7 +102,7 @@ pub struct PanelTexts {
 impl PanelTexts {
     pub fn from_language(language: &str) -> Self {
         match language {
-            "en" | "tr" => Self {
+            "en" => Self {
                 switch_provider: "Switch provider",
                 search_placeholder: "Search providers…",
                 in_use: "In use",
@@ -109,11 +110,7 @@ impl PanelTexts {
                 open_main: "Open main window",
                 quit: "Quit",
                 settings: "Settings",
-                lightweight_mode: if language == "tr" {
-                    "Hafif mod"
-                } else {
-                    "Lightweight mode"
-                },
+                lightweight_mode: "Lightweight mode",
                 open_panel: "Open quick panel",
                 config_tab: "Configuration",
                 usage_tab: "Usage",
@@ -123,6 +120,82 @@ impl PanelTexts {
                 duration_minutes: "{n}m",
                 duration_sep: " ",
                 reset_credits: "{count} resets available",
+            },
+            "tr" => Self {
+                switch_provider: "Sağlayıcı değiştir",
+                search_placeholder: "Sağlayıcı ara…",
+                in_use: "Kullanımda",
+                no_match: "Eşleşen sağlayıcı yok",
+                open_main: "Ana pencereyi aç",
+                quit: "Çık",
+                settings: "Ayarlar",
+                lightweight_mode: "Hafif mod",
+                open_panel: "Hızlı paneli aç",
+                config_tab: "Yapılandırma",
+                usage_tab: "Kullanım",
+                resets_in: "{when} içinde sıfırlanır",
+                duration_days: "{n} g",
+                duration_hours: "{n} sa",
+                duration_minutes: "{n} dk",
+                duration_sep: " ",
+                reset_credits: "{count} sıfırlama hakkı var",
+            },
+            "de" => Self {
+                switch_provider: "Anbieter wechseln",
+                search_placeholder: "Anbieter suchen…",
+                in_use: "Aktiv",
+                no_match: "Keine passenden Anbieter",
+                open_main: "Hauptfenster öffnen",
+                quit: "Beenden",
+                settings: "Optionen",
+                lightweight_mode: "Lightweight-Modus",
+                open_panel: "Schnellpanel öffnen",
+                config_tab: "Konfiguration",
+                usage_tab: "Nutzung",
+                resets_in: "Zurückgesetzt in {when}",
+                duration_days: "{n} T.",
+                duration_hours: "{n} Std.",
+                duration_minutes: "{n} Min.",
+                duration_sep: " ",
+                reset_credits: "{count} Zurücksetzungen verfügbar",
+            },
+            "ru" => Self {
+                switch_provider: "Сменить провайдера",
+                search_placeholder: "Поиск провайдеров…",
+                in_use: "Используется",
+                no_match: "Нет подходящих провайдеров",
+                open_main: "Открыть главное окно",
+                quit: "Выйти",
+                settings: "Настройки",
+                lightweight_mode: "Облегчённый режим",
+                open_panel: "Открыть быструю панель",
+                config_tab: "Конфигурация",
+                usage_tab: "Использование",
+                resets_in: "Сброс через {when}",
+                duration_days: "{n} д",
+                duration_hours: "{n} ч",
+                duration_minutes: "{n} мин",
+                duration_sep: " ",
+                reset_credits: "Доступно сбросов: {count}",
+            },
+            "ko" => Self {
+                switch_provider: "공급자 전환",
+                search_placeholder: "공급자 검색…",
+                in_use: "사용 중",
+                no_match: "일치하는 공급자 없음",
+                open_main: "메인 창 열기",
+                quit: "종료",
+                settings: "설정",
+                lightweight_mode: "경량 모드",
+                open_panel: "빠른 패널 열기",
+                config_tab: "설정",
+                usage_tab: "사용량",
+                resets_in: "{when} 후 초기화",
+                duration_days: "{n}일",
+                duration_hours: "{n}시간",
+                duration_minutes: "{n}분",
+                duration_sep: " ",
+                reset_credits: "초기화 {count}회 가능",
             },
             "ja" => Self {
                 switch_provider: "プロバイダーを切り替え",
@@ -248,10 +321,6 @@ static APPLIED_DARK: Mutex<Option<Option<bool>>> = Mutex::new(None);
 /// 这次弹出里上次摆的窗口位置和大小；没变就不动窗口，只挪玻璃（展开子面板不跳）。
 static APPLIED_FRAME: Mutex<Option<Frame>> = Mutex::new(None);
 
-fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|e| e.into_inner())
-}
-
 /// 主面板放在图标旁边：水平居中于图标、不出工作区；图标在屏幕下半（Windows 任务栏）时向上弹出。
 /// 子面板默认向右展开，右边放不下就向左。`icon` 和 `work` 是同一显示器上的逻辑坐标。
 fn place(
@@ -361,7 +430,7 @@ fn ensure_window(app: &AppHandle) -> Option<WebviewWindow> {
 
 fn create_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
     // 新窗口还没套过深浅色（轻量模式下面板收起即销毁，会反复新建）。
-    *lock(&APPLIED_DARK) = None;
+    *APPLIED_DARK.lock_recover() = None;
     let window =
         WebviewWindowBuilder::new(app, PANEL_LABEL, WebviewUrl::App("tray-panel.html".into()))
             .title("CC Switch")
@@ -370,7 +439,9 @@ fn create_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
             .maximizable(false)
             .minimizable(false)
             .decorations(false)
-            .transparent(true)
+            // Linux uses a rectangular opaque canvas: transparent WebKitGTK
+            // surfaces can lose damaged regions after lightweight recreation (#9216).
+            .transparent(!cfg!(target_os = "linux"))
             // Windows 使用固定透明画布，整窗系统阴影会暴露画布的外框。
             .shadow(!cfg!(target_os = "windows"))
             .always_on_top(true)
@@ -384,7 +455,7 @@ fn create_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
     let handle = window.clone();
     window.on_window_event(move |event| match event {
         tauri::WindowEvent::Focused(false) if handle.is_visible().unwrap_or(false) => {
-            *lock(&LAST_BLUR_HIDE) = Some(Instant::now());
+            *LAST_BLUR_HIDE.lock_recover() = Some(Instant::now());
             hide_window(&handle);
         }
         tauri::WindowEvent::CloseRequested { api, .. } => {
@@ -460,14 +531,14 @@ fn show_at(app: &AppHandle, window: &WebviewWindow, icon: (f64, f64, f64, f64)) 
         scale,
         PanelTexts::current(),
     );
-    *lock(&ANCHOR) = Some(Anchor {
+    *ANCHOR.lock_recover() = Some(Anchor {
         x,
         y,
         scale,
         placement: placement.clone(),
     });
     PENDING_REVEAL.store(true, Ordering::Release);
-    *lock(&APPLIED_FRAME) = None;
+    *APPLIED_FRAME.lock_recover() = None;
     let _ = window.emit_to(PANEL_LABEL, SHOW_EVENT, placement);
 
     let fallback = window.clone();
@@ -501,7 +572,8 @@ pub fn toggle(app: &AppHandle, rect: &tauri::Rect) {
             return;
         }
     }
-    let just_blurred = lock(&LAST_BLUR_HIDE)
+    let just_blurred = LAST_BLUR_HIDE
+        .lock_recover()
         .take()
         .is_some_and(|at| at.elapsed() < BLUR_CLICK_GRACE);
     if just_blurred {
@@ -543,7 +615,7 @@ pub fn notify_changed(app: &AppHandle) {
         return;
     }
     let wait = {
-        let mut state = lock(&CHANGED_STATE);
+        let mut state = CHANGED_STATE.lock_recover();
         if state.1 {
             return;
         }
@@ -566,7 +638,7 @@ pub fn notify_changed(app: &AppHandle) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(wait).await;
-        *lock(&CHANGED_STATE) = (Some(Instant::now()), false);
+        *CHANGED_STATE.lock_recover() = (Some(Instant::now()), false);
         let _ = app.emit_to(PANEL_LABEL, CHANGED_EVENT, ());
     });
 }
@@ -605,7 +677,7 @@ mod platform {
         NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua, NSAppearanceNameDarkAqua,
         NSGlassEffectView, NSGlassEffectViewStyle, NSScreen, NSView, NSVisualEffectBlendingMode,
         NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWindow,
-        NSWindowOrderingMode,
+        NSWindowCollectionBehavior, NSWindowOrderingMode,
     };
     use objc2_foundation_03::{NSPoint, NSRect, NSSize};
     use tauri::WebviewWindow;
@@ -625,8 +697,19 @@ mod platform {
     /// macOS 26 上还会描一圈深色边。阴影由网页给每块卡片画（窗口四周留了边距）。
     pub fn init(window: &WebviewWindow) {
         let _ = window.set_shadow(false);
-        // 轻量模式下面板会销毁重建：旧窗口的玻璃挂在已销毁的视图上，丢掉，按新窗口重新垫。
-        let _ = window.run_on_main_thread(|| GLASS.with(|glass| glass.borrow_mut().clear()));
+        let target = window.clone();
+        let _ = window.run_on_main_thread(move || {
+            // 轻量模式下面板会销毁重建：旧窗口的玻璃挂在已销毁的视图上，丢掉，按新窗口重新垫。
+            GLASS.with(|glass| glass.borrow_mut().clear());
+            // `visible_on_all_workspaces` 只加 CanJoinAllSpaces，进不了别的应用的全屏 Space：
+            // 在全屏应用里点托盘图标，面板会显示在别的桌面上、看不见（#9331）。
+            if let Some(ns_window) = ns_window(&target) {
+                ns_window.setCollectionBehavior(
+                    ns_window.collectionBehavior()
+                        | NSWindowCollectionBehavior::FullScreenAuxiliary,
+                );
+            }
+        });
     }
 
     fn ns_window(window: &WebviewWindow) -> Option<&NSWindow> {
@@ -1105,7 +1188,8 @@ pub fn tray_panel_placement(app: AppHandle) -> Option<PanelPlacement> {
     if !PENDING_REVEAL.load(Ordering::Acquire) && !visible {
         return None;
     }
-    lock(&ANCHOR)
+    ANCHOR
+        .lock_recover()
         .as_ref()
         .map(|anchor| anchor.placement.clone())
 }
@@ -1128,7 +1212,7 @@ pub struct PanelLayout {
 /// 前端排好版后回报尺寸：摆好窗口和玻璃；这次弹出还没显示的话随即显示。
 #[tauri::command]
 pub fn tray_panel_layout(app: AppHandle, layout: PanelLayout) {
-    let Some(anchor) = lock(&ANCHOR).clone() else {
+    let Some(anchor) = ANCHOR.lock_recover().clone() else {
         return;
     };
     if layout.seq != anchor.placement.seq || layout.width <= 0.0 || layout.height <= 0.0 {
@@ -1138,7 +1222,7 @@ pub fn tray_panel_layout(app: AppHandle, layout: PanelLayout) {
         return;
     };
     {
-        let mut applied = lock(&APPLIED_DARK);
+        let mut applied = APPLIED_DARK.lock_recover();
         if *applied != Some(layout.dark) {
             *applied = Some(layout.dark);
             platform::set_dark(&window, layout.dark);
@@ -1151,7 +1235,7 @@ pub fn tray_panel_layout(app: AppHandle, layout: PanelLayout) {
         height: layout.height,
     };
     let move_window = {
-        let mut applied = lock(&APPLIED_FRAME);
+        let mut applied = APPLIED_FRAME.lock_recover();
         let changed = *applied != Some(frame);
         *applied = Some(frame);
         changed

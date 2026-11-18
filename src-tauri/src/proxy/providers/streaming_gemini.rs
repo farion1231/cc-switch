@@ -8,7 +8,7 @@ use super::transform_gemini::{
     build_anthropic_usage, is_synthesized_tool_call_id, rectify_tool_call_parts,
     synthesize_tool_call_id, AnthropicToolSchemaHints,
 };
-use crate::proxy::sse::{append_utf8_safe, strip_sse_field, take_sse_block};
+use crate::proxy::sse::{strip_sse_field, SseBuffer};
 use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
 use serde_json::{json, Value};
@@ -242,8 +242,7 @@ pub fn create_anthropic_sse_stream_from_gemini<E: std::error::Error + Send + 'st
     tool_schema_hints: Option<AnthropicToolSchemaHints>,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
-        let mut buffer = String::new();
-        let mut utf8_remainder = Vec::new();
+        let mut sse = SseBuffer::new();
         let mut message_id: Option<String> = None;
         let mut current_model: Option<String> = None;
         let mut has_sent_message_start = false;
@@ -261,9 +260,9 @@ pub fn create_anthropic_sse_stream_from_gemini<E: std::error::Error + Send + 'st
         while let Some(chunk) = stream.next().await {
             match chunk {
                 Ok(bytes) => {
-                    append_utf8_safe(&mut buffer, &mut utf8_remainder, &bytes);
+                    sse.push_bytes(&bytes);
 
-                    while let Some(block) = take_sse_block(&mut buffer) {
+                    while let Some(block) = sse.next_block() {
                         if block.trim().is_empty() {
                             continue;
                         }
@@ -301,8 +300,13 @@ pub fn create_anthropic_sse_stream_from_gemini<E: std::error::Error + Send + 'st
                                 .and_then(|value| value.as_str())
                                 .map(ToString::to_string);
                         }
-                        if latest_usage.is_none() {
-                            latest_usage = chunk_json.get("usageMetadata").cloned();
+                        // usageMetadata 每帧都是整次请求的快照，结尾可能单独来一帧只带 usage、
+                        // candidates 为空（缓存命中数常只在这帧给出），所以不能只在有 candidate 时更新。
+                        if let Some(usage) = chunk_json
+                            .get("usageMetadata")
+                            .filter(|value| value.is_object())
+                        {
+                            latest_usage = Some(usage.clone());
                         }
 
                         if !has_sent_message_start {
@@ -335,9 +339,6 @@ pub fn create_anthropic_sse_stream_from_gemini<E: std::error::Error + Send + 'st
                         {
                             if let Some(reason) = candidate.get("finishReason").and_then(|value| value.as_str()) {
                                 latest_finish_reason = Some(reason.to_string());
-                            }
-                            if let Some(usage) = chunk_json.get("usageMetadata") {
-                                latest_usage = Some(usage.clone());
                             }
                             if let Some(parts) = candidate
                                 .get("content")
@@ -642,6 +643,25 @@ mod tests {
         assert!(output.contains("\"text\":\"lo\""));
         assert!(output.contains("\"stop_reason\":\"end_turn\""));
         assert!(output.contains("event: message_stop"));
+    }
+
+    #[test]
+    fn usage_only_terminal_frame_updates_final_usage() {
+        let output = collect_stream_output(vec![
+            "data: {\"responseId\":\"resp_u\",\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"OK\"}]}}],\"usageMetadata\":{\"promptTokenCount\":10000,\"totalTokenCount\":10001}}\n\n",
+            "data: {\"responseId\":\"resp_u\",\"candidates\":[{\"finishReason\":\"STOP\"}]}\n\n",
+            "data: {\"responseId\":\"resp_u\",\"candidates\":[],\"usageMetadata\":{\"promptTokenCount\":12000,\"cachedContentTokenCount\":11000,\"totalTokenCount\":12010}}\n\n",
+        ]);
+
+        let delta = output
+            .split("\n\n")
+            .find(|block| block.starts_with("event: message_delta"))
+            .and_then(|block| block.lines().find_map(|line| line.strip_prefix("data: ")))
+            .map(|data| serde_json::from_str::<Value>(data).unwrap())
+            .expect("message_delta event");
+        assert_eq!(delta["usage"]["input_tokens"], 1000);
+        assert_eq!(delta["usage"]["cache_read_input_tokens"], 11000);
+        assert_eq!(delta["usage"]["output_tokens"], 10);
     }
 
     #[test]

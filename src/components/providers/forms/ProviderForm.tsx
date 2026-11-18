@@ -1,5 +1,12 @@
-import { useEffect, useMemo, useState, useCallback, useRef } from "react";
-import { useForm } from "react-hook-form";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  useCallback,
+  useRef,
+  type ComponentProps,
+} from "react";
+import { useForm, useWatch, type Control } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -51,6 +58,7 @@ import {
 import {
   openclawProviderPresets,
   rebaseOpenClawSuggestedDefaults,
+  savedOpenClawModelIds,
   type OpenClawProviderPreset,
   type OpenClawSuggestedDefaults,
 } from "@/config/openclawProviderPresets";
@@ -103,10 +111,11 @@ import { GrokBuildProviderForm } from "./GrokBuildProviderForm";
 import { CodexFormFields } from "./CodexFormFields";
 import { GeminiFormFields } from "./GeminiFormFields";
 import { KimiProviderForm } from "./KimiProviderForm";
+import { CopilotProviderForm } from "./CopilotProviderForm";
 import { AgyAccountSelect } from "./AgyOAuthSection";
 import { ClaudeAccountSelect } from "./ClaudeOfficialSection";
-import { isMac } from "@/lib/platform";
 import { McodeProviderForm } from "./McodeProviderForm";
+import { WorkBuddyProviderForm } from "./WorkBuddyProviderForm";
 import { PiProviderForm } from "./PiProviderForm";
 import { OmoFormFields } from "./OmoFormFields";
 import { parseOmoOtherFieldsObject } from "@/types/omo";
@@ -154,11 +163,15 @@ import {
   dimSdk,
   DIM_PLACEHOLDER,
 } from "@/lib/dimProviderConfig";
-import { resolveManagedAccountId } from "@/lib/authBinding";
+import {
+  canSwitchAgyAccount,
+  resolveManagedAccountId,
+} from "@/lib/authBinding";
 import { useOpenClawLiveProviderIds } from "@/hooks/useOpenClaw";
 import { useHermesLiveProviderIds } from "@/hooks/useHermes";
 import { resolveCodexOfficialIdentity } from "@/utils/providerCapabilities";
 import { normalizeEnabledCodexChatEffortParam } from "./helpers/codexChatReasoning";
+import { appHas } from "@/config/appSpecs";
 
 type PresetEntry = {
   id: string;
@@ -345,11 +358,27 @@ export interface ProviderFormProps {
   onStackLayoutChange?: (stackLayout: boolean) => void;
 }
 
+/**
+ * Codex 配置编辑器要显示供应商名称。名称用 useWatch 在这里读：在 ProviderForm 里
+ * form.watch("name") 会让整张表单跟着名称框的每次按键重渲染。
+ */
+function CodexConfigEditorWithName({
+  control,
+  ...props
+}: Omit<ComponentProps<typeof CodexConfigEditor>, "providerName"> & {
+  control: Control<ProviderFormData>;
+}) {
+  const providerName = useWatch({ control, name: "name" });
+  return <CodexConfigEditor {...props} providerName={providerName} />;
+}
+
 export function ProviderForm(props: ProviderFormProps) {
   if (props.appId === "kimi") return <KimiProviderForm {...props} />;
+  if (props.appId === "copilot") return <CopilotProviderForm {...props} />;
   if (props.appId === "mcode" || props.appId === "dsh")
     return <McodeProviderForm {...props} />;
-  if (props.appId === "pi" || props.appId === "omp") {
+  if (props.appId === "workbuddy") return <WorkBuddyProviderForm {...props} />;
+  if (appHas(props.appId, "piFamily")) {
     return <PiProviderForm {...props} />;
   }
   if (props.appId === "claude-desktop") {
@@ -444,7 +473,19 @@ function ProviderFormFull({
   const isOmoSlimCategory = appId === "opencode" && category === "omo-slim";
   const isAnyOmoCategory = isOmoCategory || isOmoSlimCategory;
 
+  // 上面各个 state 的初始值已经按 initialData 算好；这里只在之后 initialData 换了时重新同步。
+  // 挂载时再设一遍会因为新建的 {} / [] 让整张表单多渲染一轮（打开编辑页卡顿的一部分）。
+  const stateSyncedFor = useRef({ appId, initialData, supportsFullUrl });
   useEffect(() => {
+    const synced = stateSyncedFor.current;
+    if (
+      synced.appId === appId &&
+      synced.initialData === initialData &&
+      synced.supportsFullUrl === supportsFullUrl
+    ) {
+      return;
+    }
+    stateSyncedFor.current = { appId, initialData, supportsFullUrl };
     setSelectedPresetId(initialData ? null : "custom");
     setActivePreset(null);
 
@@ -795,11 +836,13 @@ function ProviderFormFull({
     codexMultiAgentV2Total,
     codexCatalogModels,
     codexAutoReviewModel,
+    codexOfficialSpeedTiers,
     codexAuthError,
     setCodexAuth,
     setCodexConfig,
     setCodexCatalogModels,
     setCodexAutoReviewModel,
+    setCodexOfficialSpeedTiers,
     handleCodexApiKeyChange,
     handleCodexBaseUrlChange,
     handleCodexModelChange,
@@ -853,7 +896,7 @@ function ProviderFormFull({
   const [localCodexImpersonateClaudeCode, setLocalCodexImpersonateClaudeCode] =
     useState<boolean>(initialData?.meta?.impersonateClaudeCode === true);
 
-  // Codex → Anthropic output ceiling override (empty string = use the 8192 default).
+  // Codex → Anthropic output ceiling override (empty string = use the 32000 default).
   // Kept as a string so the numeric input can be cleared; parsed on save.
   const [localCodexMaxOutputTokens, setLocalCodexMaxOutputTokens] =
     useState<string>(
@@ -935,7 +978,11 @@ function ProviderFormFull({
     projectCodexDraft,
   ]);
 
+  // useForm 已经用 defaultValues 初始化过；只在它之后变了时 reset，挂载时 reset 会多渲染一轮
+  const formResetFor = useRef(defaultValues);
   useEffect(() => {
+    if (formResetFor.current === defaultValues) return;
+    formResetFor.current = defaultValues;
     form.reset(defaultValues);
   }, [defaultValues, form]);
 
@@ -1940,6 +1987,7 @@ function ProviderFormFull({
           modelCatalog?: {
             models: CodexCatalogModel[];
             autoReviewModel?: string;
+            officialSpeedTiers?: boolean;
           };
         };
         if (normalizedCatalogModels.length > 0) {
@@ -1953,6 +2001,9 @@ function ProviderFormFull({
             )
           ) {
             configObj.modelCatalog.autoReviewModel = autoReviewModel;
+          }
+          if (codexOfficialSpeedTiers) {
+            configObj.modelCatalog.officialSpeedTiers = true;
           }
         }
         settingsConfig = JSON.stringify(configObj);
@@ -2046,6 +2097,7 @@ function ProviderFormFull({
             ? rebaseOpenClawSuggestedDefaults(
                 activePreset.suggestedDefaults,
                 payload.providerKey,
+                savedOpenClawModelIds(payload.settingsConfig),
               )
             : activePreset.suggestedDefaults;
       }
@@ -3064,6 +3116,8 @@ function ProviderFormFull({
               onCatalogModelsChange={setCodexCatalogModels}
               autoReviewModel={codexAutoReviewModel}
               onAutoReviewModelChange={setCodexAutoReviewModel}
+              officialSpeedTiers={codexOfficialSpeedTiers}
+              onOfficialSpeedTiersChange={setCodexOfficialSpeedTiers}
               speedTestEndpoints={speedTestEndpoints}
               customUserAgent={customUserAgent}
               onCustomUserAgentChange={setCustomUserAgent}
@@ -3106,13 +3160,15 @@ function ProviderFormFull({
             />
           )}
 
-          {/* 切号只实现了 macOS；别的平台上不显示，卡上已有的绑定原样保留 */}
-          {appId === "agy" && category === "official" && isMac() && (
-            <AgyAccountSelect
-              value={selectedAgyAccountId}
-              onChange={setSelectedAgyAccountId}
-            />
-          )}
+          {/* 切号只实现了 macOS、Windows；别的平台上不显示，卡上已有的绑定原样保留 */}
+          {appId === "agy" &&
+            category === "official" &&
+            canSwitchAgyAccount() && (
+              <AgyAccountSelect
+                value={selectedAgyAccountId}
+                onChange={setSelectedAgyAccountId}
+              />
+            )}
 
           {appId === "opencode" && !isAnyOmoCategory && !isNativeOpencode && (
             <OpenCodeFormFields
@@ -3209,10 +3265,10 @@ function ProviderFormFull({
               settingsConfigErrorField
             ) : appId === "codex" ? (
               <>
-                <CodexConfigEditor
+                <CodexConfigEditorWithName
+                  control={form.control}
                   authValue={codexAuth}
                   configValue={codexConfig}
-                  providerName={form.watch("name")}
                   showRemoteCompaction={category !== "official"}
                   isProxyTakeover={isProxyTakeover}
                   onAuthChange={setCodexAuth}

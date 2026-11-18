@@ -31,7 +31,17 @@ static KEY_CREATION: Mutex<()> = Mutex::new(());
 const MAX_BODY: usize = 200 * 1024 * 1024;
 
 pub(crate) fn is_relay_client(app: &AppType) -> bool {
-    app.is_additive_mode()
+    matches!(
+        app,
+        AppType::OpenCode
+            | AppType::OpenClaw
+            | AppType::Hermes
+            | AppType::Pi
+            | AppType::Omp
+            | AppType::Mcode
+            | AppType::Dsh
+            | AppType::Kimi
+    )
 }
 
 fn api_format<'a>(app: &AppType, provider: &'a Provider) -> Result<&'a str, AppError> {
@@ -149,7 +159,7 @@ pub(crate) fn project_provider(
         return Ok(provider.clone());
     }
     let format = api_format(app, provider)?;
-    let config = futures::executor::block_on(db.get_proxy_config())?;
+    let config = futures::executor::block_on(db.get_global_proxy_config())?;
     let port = if config.listen_port == 0 {
         return Err(AppError::Config(
             "Start the DimAgent gateway before writing client configuration".into(),
@@ -218,7 +228,7 @@ pub(crate) async fn ensure_started(
     api_format(app, provider).map_err(|e| e.to_string())?;
     let config = state
         .db
-        .get_proxy_config()
+        .get_global_proxy_config()
         .await
         .map_err(|e| e.to_string())?;
     loopback_host(&config.listen_address, config.listen_port).map_err(|e| e.to_string())?;
@@ -243,7 +253,7 @@ pub(crate) fn client_exists(app: &AppType, id: &str) -> Result<bool, AppError> {
 pub(crate) fn has_clients(db: &Database) -> Result<bool, AppError> {
     for app in AppType::all().filter(is_relay_client) {
         for provider in db
-            .get_all_providers(app.as_str())?
+            .get_all_providers(&app)?
             .values()
             .filter(|p| p.is_dim_oauth())
         {
@@ -261,7 +271,7 @@ pub(crate) fn refresh_clients(db: &Database) -> Result<(), AppError> {
     // Resolve and validate every source before touching any file.
     for app in AppType::all().filter(is_relay_client) {
         for provider in db
-            .get_all_providers(app.as_str())?
+            .get_all_providers(&app)?
             .into_values()
             .filter(Provider::is_dim_oauth)
         {
@@ -429,7 +439,7 @@ fn authorize_request(
         ));
     }
     let provider = db
-        .get_provider_by_id(id, app.as_str())
+        .get_provider_by_id(id, &app)
         .map_err(|_| {
             error(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -781,7 +791,7 @@ mod tests {
             cases.into_iter().enumerate()
         {
             let p = provider(&format!("fixture-{index}"), format);
-            db.save_provider(app.as_str(), &p).unwrap();
+            db.save_provider(&app, &p).unwrap();
             let projected = project_provider(&db, &app, &p).unwrap();
             let config = if container.is_empty() {
                 &projected.settings_config
@@ -813,7 +823,7 @@ mod tests {
             assert!(!headers.contains_key("x-api-key"));
             assert_eq!(body["model"], "vendor/full-id");
             assert_eq!(
-                db.get_provider_by_id(&p.id, app.as_str())
+                db.get_provider_by_id(&p.id, &app)
                     .unwrap()
                     .unwrap()
                     .settings_config,
@@ -825,7 +835,7 @@ mod tests {
             ("openai_responses", "/v1/responses/compact"),
         ] {
             let p = provider("auxiliary", format);
-            db.save_provider("mcode", &p).unwrap();
+            db.save_provider(&AppType::Mcode, &p).unwrap();
             let key = gateway_key(&db, &AppType::Mcode, &p.id).unwrap();
             assert_eq!(
                 client
@@ -845,7 +855,7 @@ mod tests {
             assert!(body.get("reasoning_effort").is_none());
         }
         let p = provider("stream", "openai_chat");
-        db.save_provider("mcode", &p).unwrap();
+        db.save_provider(&AppType::Mcode, &p).unwrap();
         let key = gateway_key(&db, &AppType::Mcode, &p.id).unwrap();
         let url = format!("{gateway}/managed/dim/mcode/stream/v1/chat/completions");
         let mut remote_request = Request::builder()
@@ -962,10 +972,10 @@ mod tests {
         let _omp = crate::omp_config::test_support::TestAgentDir::new();
         let db = Arc::new(Database::memory().unwrap());
         let state = AppState::new(db.clone());
-        let mut config = db.get_proxy_config().await.unwrap();
+        let mut config = db.get_global_proxy_config().await.unwrap();
         config.listen_address = "127.0.0.1".into();
         config.listen_port = 0;
-        db.update_proxy_config(config).await.unwrap();
+        db.update_global_proxy_config(config).await.unwrap();
         for app in [AppType::Pi, AppType::Omp] {
             let mut p = provider("dim-live-fixture", "openai_chat");
             p.settings_config = json!({
@@ -981,7 +991,7 @@ mod tests {
         let canonical: Vec<_> = [AppType::Pi, AppType::Omp]
             .iter()
             .map(|app| {
-                db.get_provider_by_id("dim-live-fixture", app.as_str())
+                db.get_provider_by_id("dim-live-fixture", app)
                     .unwrap()
                     .unwrap()
             })
@@ -1006,11 +1016,15 @@ mod tests {
                 .contains(&format!(":{}/managed/dim/", first.port)));
             assert!(row["apiKey"].as_str().unwrap().starts_with("ccs-dim-"));
         }
-        let mut changed = db.get_proxy_config().await.unwrap();
+        let mut changed = db.get_global_proxy_config().await.unwrap();
         let available = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         changed.listen_port = available.local_addr().unwrap().port();
         drop(available);
-        assert!(state.proxy_service.update_config(&changed).await.unwrap());
+        assert!(state
+            .proxy_service
+            .update_global_config(&changed)
+            .await
+            .unwrap());
         for row in native() {
             assert!(row["baseUrl"]
                 .as_str()
@@ -1021,17 +1035,21 @@ mod tests {
         let occupied = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let mut rejected = changed.clone();
         rejected.listen_port = occupied.local_addr().unwrap().port();
-        assert!(state.proxy_service.update_config(&rejected).await.is_err());
+        assert!(state
+            .proxy_service
+            .update_global_config(&rejected)
+            .await
+            .is_err());
         assert_eq!(native(), before_failure);
         assert_eq!(
-            db.get_proxy_config().await.unwrap().listen_port,
+            db.get_global_proxy_config().await.unwrap().listen_port,
             changed.listen_port
         );
         for (app, expected) in [AppType::Pi, AppType::Omp].into_iter().zip(canonical) {
             ProviderService::remove_from_live_config(&state, app.clone(), "dim-live-fixture")
                 .unwrap();
             let saved = db
-                .get_provider_by_id("dim-live-fixture", app.as_str())
+                .get_provider_by_id("dim-live-fixture", &app)
                 .unwrap()
                 .unwrap();
             assert_eq!(saved.settings_config, expected.settings_config);
@@ -1042,7 +1060,7 @@ mod tests {
             ProviderService::switch(&state, app.clone(), "dim-live-fixture").unwrap();
             ProviderService::list(&state, app.clone()).unwrap();
             let saved = db
-                .get_provider_by_id("dim-live-fixture", app.as_str())
+                .get_provider_by_id("dim-live-fixture", &app)
                 .unwrap()
                 .unwrap();
             assert_eq!(saved.settings_config, expected.settings_config);

@@ -388,6 +388,8 @@ fn provider_name_coalesce(log_alias: &str, provider_alias: &str) -> String {
          WHEN '_grok_session' THEN 'Grok Build (Session)' \
          WHEN '_agy_session' THEN 'Antigravity (Session)' \
          WHEN '_kimi_session' THEN 'Kimi Code (Session)' \
+         WHEN '_copilot_session' THEN 'Copilot CLI (Session)' \
+         WHEN '_workbuddy_session' THEN 'WorkBuddy (Session)' \
          WHEN '_dsh_session' THEN 'DeepSeek Harness (Session)' \
          WHEN '_dsh_account_session' THEN 'DeepSeek Harness (OAuth)' \
          WHEN '_mcode_session' THEN 'MiniMax Code (Session)' \
@@ -428,7 +430,7 @@ fn dedup_app_type_match_sql(left: &str, right: &str) -> String {
 ///
 /// 注意：包裹后该列上的索引在此比较中失效，但这些都是已带时间过滤的聚合扫描，
 /// app_type 本就不是主访问路径，可接受。仅用于读侧；跨源去重使用更窄的
-/// [`dedup_app_type_match_sql`]，额度检查（`check_provider_limits`）仍保留原始精确比较。
+/// [`dedup_app_type_match_sql`]。
 fn folded_app_type_sql(column: &str) -> String {
     format!("CASE WHEN {column} = 'claude-desktop' THEN 'claude' ELSE {column} END")
 }
@@ -452,30 +454,118 @@ fn effective_model_sql(alias: &str) -> String {
     format!("COALESCE(NULLIF({alias}.pricing_model, ''), {alias}.model)")
 }
 
-/// 把 Dashboard 顶部的 Provider/模型筛选追加到查询条件。
-///
-/// Provider 按展示名精确匹配（复用 [`provider_name_coalesce`]，会话占位行的
-/// 可读名如 "Claude (Session)" 也能选中）；模型按 [`effective_model_sql`] 匹配。
-/// 注意：传入 `provider_name` 时调用方必须把 [`providers_join`] 拼进 FROM，
-/// 否则 `{provider_alias}.name` 无法解析。
-fn push_provider_model_filters(
-    conditions: &mut Vec<String>,
-    params: &mut Vec<Box<dyn rusqlite::ToSql>>,
-    log_alias: &str,
-    provider_alias: &str,
-    provider_name: Option<&str>,
-    model: Option<&str>,
-) {
-    if let Some(name) = provider_name {
-        conditions.push(format!(
-            "{} = ?",
-            provider_name_coalesce(log_alias, provider_alias)
-        ));
-        params.push(Box::new(name.to_string()));
+/// 一条查询的 `WHERE` 条件和按 `?` 出现顺序绑定的参数，两者一起追加，顺序不会错开。
+#[derive(Default)]
+struct SqlWhere {
+    conditions: Vec<String>,
+    params: Vec<Box<dyn rusqlite::ToSql>>,
+}
+
+impl SqlWhere {
+    fn push_condition(&mut self, condition: impl Into<String>) {
+        self.conditions.push(condition.into());
     }
-    if let Some(m) = model {
-        conditions.push(format!("{} = ?", effective_model_sql(log_alias)));
-        params.push(Box::new(m.to_string()));
+
+    fn push(&mut self, condition: impl Into<String>, param: impl rusqlite::ToSql + 'static) {
+        self.conditions.push(condition.into());
+        self.params.push(Box::new(param));
+    }
+
+    /// `WHERE a AND b`；没有条件时是空串。
+    fn into_where(self) -> (String, Vec<Box<dyn rusqlite::ToSql>>) {
+        let clause = if self.conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", self.conditions.join(" AND "))
+        };
+        (clause, self.params)
+    }
+
+    /// 接在已有 `WHERE` 后面的 `AND a AND b`；没有条件时是空串。
+    fn into_and(self) -> (String, Vec<Box<dyn rusqlite::ToSql>>) {
+        let clause = self
+            .conditions
+            .iter()
+            .map(|c| format!("AND {c}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        (clause, self.params)
+    }
+}
+
+/// Dashboard 顶部的筛选：应用、Provider、模型。
+///
+/// 应用按 [`folded_app_type_sql`] 匹配（claude-desktop 算 claude）；Provider 按展示名
+/// 精确匹配（复用 [`provider_name_coalesce`]，会话占位行的可读名如 "Claude (Session)"
+/// 也能选中）；模型按 [`effective_model_sql`] 匹配。
+#[derive(Clone, Copy)]
+struct UsageFilter<'a> {
+    app_type: Option<&'a str>,
+    provider_name: Option<&'a str>,
+    model: Option<&'a str>,
+}
+
+impl UsageFilter<'_> {
+    /// 追加筛选条件。传了 `provider_name` 时 FROM 里必须有 [`Self::join`]（或同样的
+    /// `LEFT JOIN providers`），否则 `{provider_alias}.name` 无法解析。
+    fn push_to(&self, conditions: &mut SqlWhere, log_alias: &str, provider_alias: &str) {
+        if let Some(app_type) = self.app_type {
+            let column = format!("{log_alias}.app_type");
+            conditions.push(
+                format!("{} = ?", folded_app_type_sql(&column)),
+                app_type.to_string(),
+            );
+        }
+        if let Some(name) = self.provider_name {
+            conditions.push(
+                format!("{} = ?", provider_name_coalesce(log_alias, provider_alias)),
+                name.to_string(),
+            );
+        }
+        if let Some(model) = self.model {
+            conditions.push(
+                format!("{} = ?", effective_model_sql(log_alias)),
+                model.to_string(),
+            );
+        }
+    }
+
+    /// 只有按 Provider 筛选时才需要连 providers 表。
+    fn join(&self, log_alias: &str, provider_alias: &str) -> String {
+        if self.provider_name.is_some() {
+            providers_join(log_alias, provider_alias)
+        } else {
+            String::new()
+        }
+    }
+
+    /// 明细表 `l`（providers 别名 `p`）：跨源去重、时间范围、筛选。
+    fn detail_where(
+        &self,
+        conn: &Connection,
+        start_date: Option<i64>,
+        end_date: Option<i64>,
+    ) -> Result<SqlWhere, AppError> {
+        let mut conditions = SqlWhere::default();
+        conditions.push_condition(effective_usage_log_filter_for_range(
+            conn, "l", start_date, end_date,
+        )?);
+        if let Some(start) = start_date {
+            conditions.push("l.created_at >= ?", start);
+        }
+        if let Some(end) = end_date {
+            conditions.push("l.created_at <= ?", end);
+        }
+        self.push_to(&mut conditions, "l", "p");
+        Ok(conditions)
+    }
+
+    /// 汇总表 `r`（providers 别名 `p2`）：只算被范围完整覆盖的本地自然日，再加筛选。
+    fn rollup_where(&self, bounds: &RollupDateBounds) -> SqlWhere {
+        let mut conditions = SqlWhere::default();
+        push_rollup_date_filters(&mut conditions, "r.date", bounds);
+        self.push_to(&mut conditions, "r", "p2");
+        conditions
     }
 }
 
@@ -942,25 +1032,18 @@ fn compute_rollup_date_bounds(
     })
 }
 
-fn push_rollup_date_filters(
-    conditions: &mut Vec<String>,
-    params: &mut Vec<Box<dyn rusqlite::ToSql>>,
-    column: &str,
-    bounds: &RollupDateBounds,
-) {
+fn push_rollup_date_filters(conditions: &mut SqlWhere, column: &str, bounds: &RollupDateBounds) {
     if bounds.is_empty {
-        conditions.push("1 = 0".to_string());
+        conditions.push_condition("1 = 0");
         return;
     }
 
     if let Some(start) = &bounds.start {
-        conditions.push(format!("{column} >= ?"));
-        params.push(Box::new(start.clone()));
+        conditions.push(format!("{column} >= ?"), start.clone());
     }
 
     if let Some(end) = &bounds.end {
-        conditions.push(format!("{column} <= ?"));
-        params.push(Box::new(end.clone()));
+        conditions.push(format!("{column} <= ?"), end.clone());
     }
 }
 
@@ -989,78 +1072,20 @@ impl Database {
     ) -> Result<UsageSummary, AppError> {
         let conn = lock_conn!(self.conn);
 
-        // Build detail WHERE clause
-        let mut conditions = vec![effective_usage_log_filter_for_range(
-            &conn, "l", start_date, end_date,
-        )?];
-        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-
-        if let Some(start) = start_date {
-            conditions.push("l.created_at >= ?".to_string());
-            params_vec.push(Box::new(start));
-        }
-        if let Some(end) = end_date {
-            conditions.push("l.created_at <= ?".to_string());
-            params_vec.push(Box::new(end));
-        }
-        if let Some(at) = app_type {
-            conditions.push(format!("{} = ?", folded_app_type_sql("l.app_type")));
-            params_vec.push(Box::new(at.to_string()));
-        }
-        push_provider_model_filters(
-            &mut conditions,
-            &mut params_vec,
-            "l",
-            "p",
+        let filter = UsageFilter {
+            app_type,
             provider_name,
             model,
-        );
-
-        let where_clause = if conditions.is_empty() {
-            String::new()
-        } else {
-            format!("WHERE {}", conditions.join(" AND "))
         };
-        let detail_join = if provider_name.is_some() {
-            providers_join("l", "p")
-        } else {
-            String::new()
-        };
+        let (where_clause, params_vec) = filter
+            .detail_where(&conn, start_date, end_date)?
+            .into_where();
+        let detail_join = filter.join("l", "p");
 
         // Only include rolled-up rows for full local days that are fully covered by the range.
-        let mut rollup_conditions: Vec<String> = Vec::new();
-        let mut rollup_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
         let rollup_bounds = compute_rollup_date_bounds(start_date, end_date)?;
-
-        push_rollup_date_filters(
-            &mut rollup_conditions,
-            &mut rollup_params,
-            "r.date",
-            &rollup_bounds,
-        );
-        if let Some(at) = app_type {
-            rollup_conditions.push(format!("{} = ?", folded_app_type_sql("r.app_type")));
-            rollup_params.push(Box::new(at.to_string()));
-        }
-        push_provider_model_filters(
-            &mut rollup_conditions,
-            &mut rollup_params,
-            "r",
-            "p2",
-            provider_name,
-            model,
-        );
-
-        let rollup_where = if rollup_conditions.is_empty() {
-            String::new()
-        } else {
-            format!("WHERE {}", rollup_conditions.join(" AND "))
-        };
-        let rollup_join = if provider_name.is_some() {
-            providers_join("r", "p2")
-        } else {
-            String::new()
-        };
+        let (rollup_where, rollup_params) = filter.rollup_where(&rollup_bounds).into_where();
+        let rollup_join = filter.join("r", "p2");
 
         let fresh_input_detail = fresh_input_sql("l");
         let fresh_input_rollup = fresh_input_sql("r");
@@ -1154,60 +1179,19 @@ impl Database {
     ) -> Result<Vec<UsageSummaryByApp>, AppError> {
         let conn = lock_conn!(self.conn);
 
-        let mut detail_conditions = vec![effective_usage_log_filter_for_range(
-            &conn, "l", start_date, end_date,
-        )?];
-        let mut detail_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-        if let Some(start) = start_date {
-            detail_conditions.push("l.created_at >= ?".to_string());
-            detail_params.push(Box::new(start));
-        }
-        if let Some(end) = end_date {
-            detail_conditions.push("l.created_at <= ?".to_string());
-            detail_params.push(Box::new(end));
-        }
-        push_provider_model_filters(
-            &mut detail_conditions,
-            &mut detail_params,
-            "l",
-            "p",
+        let filter = UsageFilter {
+            app_type: None,
             provider_name,
             model,
-        );
-        let detail_where = format!("WHERE {}", detail_conditions.join(" AND "));
-        let detail_join = if provider_name.is_some() {
-            providers_join("l", "p")
-        } else {
-            String::new()
         };
+        let (detail_where, detail_params) = filter
+            .detail_where(&conn, start_date, end_date)?
+            .into_where();
+        let detail_join = filter.join("l", "p");
 
         let rollup_bounds = compute_rollup_date_bounds(start_date, end_date)?;
-        let mut rollup_conditions: Vec<String> = Vec::new();
-        let mut rollup_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-        push_rollup_date_filters(
-            &mut rollup_conditions,
-            &mut rollup_params,
-            "r.date",
-            &rollup_bounds,
-        );
-        push_provider_model_filters(
-            &mut rollup_conditions,
-            &mut rollup_params,
-            "r",
-            "p2",
-            provider_name,
-            model,
-        );
-        let rollup_where = if rollup_conditions.is_empty() {
-            String::new()
-        } else {
-            format!("WHERE {}", rollup_conditions.join(" AND "))
-        };
-        let rollup_join = if provider_name.is_some() {
-            providers_join("r", "p2")
-        } else {
-            String::new()
-        };
+        let (rollup_where, rollup_params) = filter.rollup_where(&rollup_bounds).into_where();
+        let rollup_join = filter.join("r", "p2");
 
         let fresh_input_detail = fresh_input_sql("l");
         let fresh_input_rollup = fresh_input_sql("r");
@@ -1319,6 +1303,11 @@ impl Database {
         model: Option<&str>,
     ) -> Result<Vec<DailyStats>, AppError> {
         let conn = lock_conn!(self.conn);
+        let filter = UsageFilter {
+            app_type,
+            provider_name,
+            model,
+        };
 
         let end_ts = end_date.unwrap_or_else(|| Local::now().timestamp());
         let mut start_ts = start_date.unwrap_or_else(|| end_ts - 24 * 60 * 60);
@@ -1340,30 +1329,10 @@ impl Database {
                 bucket_count = 1;
             }
 
-            let mut extra_conditions: Vec<String> = Vec::new();
-            let mut extra_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-            if let Some(at) = app_type {
-                extra_conditions.push(format!("{} = ?", folded_app_type_sql("l.app_type")));
-                extra_params.push(Box::new(at.to_string()));
-            }
-            push_provider_model_filters(
-                &mut extra_conditions,
-                &mut extra_params,
-                "l",
-                "p",
-                provider_name,
-                model,
-            );
-            let extra_filter = extra_conditions
-                .iter()
-                .map(|c| format!("AND {c}"))
-                .collect::<Vec<_>>()
-                .join(" ");
-            let detail_join = if provider_name.is_some() {
-                providers_join("l", "p")
-            } else {
-                String::new()
-            };
+            let mut extra = SqlWhere::default();
+            filter.push_to(&mut extra, "l", "p");
+            let (extra_filter, extra_params) = extra.into_and();
+            let detail_join = filter.join("l", "p");
 
             let effective_filter =
                 effective_usage_log_filter_for_range(&conn, "l", Some(start_ts), Some(end_ts))?;
@@ -1454,30 +1423,10 @@ impl Database {
         let end_day = local_datetime_from_timestamp(end_ts)?.date_naive();
         let bucket_count = (end_day.signed_duration_since(start_day).num_days() + 1) as usize;
 
-        let mut extra_conditions: Vec<String> = Vec::new();
-        let mut extra_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-        if let Some(at) = app_type {
-            extra_conditions.push(format!("{} = ?", folded_app_type_sql("l.app_type")));
-            extra_params.push(Box::new(at.to_string()));
-        }
-        push_provider_model_filters(
-            &mut extra_conditions,
-            &mut extra_params,
-            "l",
-            "p",
-            provider_name,
-            model,
-        );
-        let extra_filter = extra_conditions
-            .iter()
-            .map(|c| format!("AND {c}"))
-            .collect::<Vec<_>>()
-            .join(" ");
-        let detail_join = if provider_name.is_some() {
-            providers_join("l", "p")
-        } else {
-            String::new()
-        };
+        let mut extra = SqlWhere::default();
+        filter.push_to(&mut extra, "l", "p");
+        let (extra_filter, extra_params) = extra.into_and();
+        let detail_join = filter.join("l", "p");
 
         let effective_filter =
             effective_usage_log_filter_for_range(&conn, "l", Some(start_ts), Some(end_ts))?;
@@ -1532,37 +1481,8 @@ impl Database {
         }
 
         let rollup_bounds = compute_rollup_date_bounds(Some(start_ts), Some(end_ts))?;
-        let mut rollup_conditions = Vec::new();
-        let mut rollup_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-        push_rollup_date_filters(
-            &mut rollup_conditions,
-            &mut rollup_params,
-            "r.date",
-            &rollup_bounds,
-        );
-        if let Some(at) = app_type {
-            rollup_conditions.push(format!("{} = ?", folded_app_type_sql("r.app_type")));
-            rollup_params.push(Box::new(at.to_string()));
-        }
-        push_provider_model_filters(
-            &mut rollup_conditions,
-            &mut rollup_params,
-            "r",
-            "p2",
-            provider_name,
-            model,
-        );
-
-        let rollup_where = if rollup_conditions.is_empty() {
-            String::new()
-        } else {
-            format!("WHERE {}", rollup_conditions.join(" AND "))
-        };
-        let rollup_join = if provider_name.is_some() {
-            providers_join("r", "p2")
-        } else {
-            String::new()
-        };
+        let (rollup_where, rollup_params) = filter.rollup_where(&rollup_bounds).into_where();
+        let rollup_join = filter.join("r", "p2");
 
         let fresh_input_rollup = fresh_input_sql("r");
         let rollup_sql = format!(
@@ -1663,30 +1583,15 @@ impl Database {
     ) -> Result<Option<String>, AppError> {
         let conn = lock_conn!(self.conn);
 
-        let mut detail_conditions = Vec::new();
-        let mut detail_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-        if let Some(at) = app_type {
-            detail_conditions.push(format!("{} = ?", folded_app_type_sql("l.app_type")));
-            detail_params.push(Box::new(at.to_string()));
-        }
-        push_provider_model_filters(
-            &mut detail_conditions,
-            &mut detail_params,
-            "l",
-            "p",
+        let filter = UsageFilter {
+            app_type,
             provider_name,
             model,
-        );
-        let detail_where = if detail_conditions.is_empty() {
-            String::new()
-        } else {
-            format!("WHERE {}", detail_conditions.join(" AND "))
         };
-        let detail_join = if provider_name.is_some() {
-            providers_join("l", "p")
-        } else {
-            String::new()
-        };
+        let mut detail = SqlWhere::default();
+        filter.push_to(&mut detail, "l", "p");
+        let (detail_where, detail_params) = detail.into_where();
+        let detail_join = filter.join("l", "p");
         let detail_param_refs: Vec<&dyn rusqlite::ToSql> =
             detail_params.iter().map(|p| p.as_ref()).collect();
         let first_detail_ts: Option<i64> = conn.query_row(
@@ -1700,30 +1605,10 @@ impl Database {
             .map(|ts| local_datetime_from_timestamp(ts).map(|dt| dt.date_naive()))
             .transpose()?;
 
-        let mut rollup_conditions = Vec::new();
-        let mut rollup_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-        if let Some(at) = app_type {
-            rollup_conditions.push(format!("{} = ?", folded_app_type_sql("r.app_type")));
-            rollup_params.push(Box::new(at.to_string()));
-        }
-        push_provider_model_filters(
-            &mut rollup_conditions,
-            &mut rollup_params,
-            "r",
-            "p2",
-            provider_name,
-            model,
-        );
-        let rollup_where = if rollup_conditions.is_empty() {
-            String::new()
-        } else {
-            format!("WHERE {}", rollup_conditions.join(" AND "))
-        };
-        let rollup_join = if provider_name.is_some() {
-            providers_join("r", "p2")
-        } else {
-            String::new()
-        };
+        let mut rollup = SqlWhere::default();
+        filter.push_to(&mut rollup, "r", "p2");
+        let (rollup_where, rollup_params) = rollup.into_where();
+        let rollup_join = filter.join("r", "p2");
         let rollup_param_refs: Vec<&dyn rusqlite::ToSql> =
             rollup_params.iter().map(|p| p.as_ref()).collect();
         let first_rollup_raw: Option<String> = conn.query_row(
@@ -1756,62 +1641,17 @@ impl Database {
     ) -> Result<Vec<ProviderStats>, AppError> {
         let conn = lock_conn!(self.conn);
 
-        let mut detail_conditions = vec![effective_usage_log_filter_for_range(
-            &conn, "l", start_date, end_date,
-        )?];
-        let mut detail_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-        if let Some(start) = start_date {
-            detail_conditions.push("l.created_at >= ?".to_string());
-            detail_params.push(Box::new(start));
-        }
-        if let Some(end) = end_date {
-            detail_conditions.push("l.created_at <= ?".to_string());
-            detail_params.push(Box::new(end));
-        }
-        if let Some(at) = app_type {
-            detail_conditions.push(format!("{} = ?", folded_app_type_sql("l.app_type")));
-            detail_params.push(Box::new(at.to_string()));
-        }
-        push_provider_model_filters(
-            &mut detail_conditions,
-            &mut detail_params,
-            "l",
-            "p",
+        let filter = UsageFilter {
+            app_type,
             provider_name,
             model,
-        );
-        let detail_where = if detail_conditions.is_empty() {
-            String::new()
-        } else {
-            format!("WHERE {}", detail_conditions.join(" AND "))
         };
+        let (detail_where, detail_params) = filter
+            .detail_where(&conn, start_date, end_date)?
+            .into_where();
 
-        let mut rollup_conditions = Vec::new();
-        let mut rollup_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
         let rollup_bounds = compute_rollup_date_bounds(start_date, end_date)?;
-        push_rollup_date_filters(
-            &mut rollup_conditions,
-            &mut rollup_params,
-            "r.date",
-            &rollup_bounds,
-        );
-        if let Some(at) = app_type {
-            rollup_conditions.push(format!("{} = ?", folded_app_type_sql("r.app_type")));
-            rollup_params.push(Box::new(at.to_string()));
-        }
-        push_provider_model_filters(
-            &mut rollup_conditions,
-            &mut rollup_params,
-            "r",
-            "p2",
-            provider_name,
-            model,
-        );
-        let rollup_where = if rollup_conditions.is_empty() {
-            String::new()
-        } else {
-            format!("WHERE {}", rollup_conditions.join(" AND "))
-        };
+        let (rollup_where, rollup_params) = filter.rollup_where(&rollup_bounds).into_where();
 
         // UNION detail logs + rollup data, then aggregate
         let detail_pname = provider_name_coalesce("l", "p");
@@ -1949,72 +1789,19 @@ impl Database {
     ) -> Result<Vec<ModelStats>, AppError> {
         let conn = lock_conn!(self.conn);
 
-        let mut detail_conditions = vec![effective_usage_log_filter_for_range(
-            &conn, "l", start_date, end_date,
-        )?];
-        let mut detail_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-        if let Some(start) = start_date {
-            detail_conditions.push("l.created_at >= ?".to_string());
-            detail_params.push(Box::new(start));
-        }
-        if let Some(end) = end_date {
-            detail_conditions.push("l.created_at <= ?".to_string());
-            detail_params.push(Box::new(end));
-        }
-        if let Some(at) = app_type {
-            detail_conditions.push(format!("{} = ?", folded_app_type_sql("l.app_type")));
-            detail_params.push(Box::new(at.to_string()));
-        }
-        push_provider_model_filters(
-            &mut detail_conditions,
-            &mut detail_params,
-            "l",
-            "p",
+        let filter = UsageFilter {
+            app_type,
             provider_name,
             model,
-        );
-        let detail_where = if detail_conditions.is_empty() {
-            String::new()
-        } else {
-            format!("WHERE {}", detail_conditions.join(" AND "))
         };
-        let detail_join = if provider_name.is_some() {
-            providers_join("l", "p")
-        } else {
-            String::new()
-        };
+        let (detail_where, detail_params) = filter
+            .detail_where(&conn, start_date, end_date)?
+            .into_where();
+        let detail_join = filter.join("l", "p");
 
-        let mut rollup_conditions = Vec::new();
-        let mut rollup_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
         let rollup_bounds = compute_rollup_date_bounds(start_date, end_date)?;
-        push_rollup_date_filters(
-            &mut rollup_conditions,
-            &mut rollup_params,
-            "r.date",
-            &rollup_bounds,
-        );
-        if let Some(at) = app_type {
-            rollup_conditions.push(format!("{} = ?", folded_app_type_sql("r.app_type")));
-            rollup_params.push(Box::new(at.to_string()));
-        }
-        push_provider_model_filters(
-            &mut rollup_conditions,
-            &mut rollup_params,
-            "r",
-            "p2",
-            provider_name,
-            model,
-        );
-        let rollup_where = if rollup_conditions.is_empty() {
-            String::new()
-        } else {
-            format!("WHERE {}", rollup_conditions.join(" AND "))
-        };
-        let rollup_join = if provider_name.is_some() {
-            providers_join("r", "p2")
-        } else {
-            String::new()
-        };
+        let (rollup_where, rollup_params) = filter.rollup_where(&rollup_bounds).into_where();
+        let rollup_join = filter.join("r", "p2");
 
         // UNION detail logs + rollup data
         //
@@ -2149,48 +1936,32 @@ impl Database {
     ) -> Result<PaginatedLogs, AppError> {
         let conn = lock_conn!(self.conn);
 
-        let mut conditions = vec![effective_usage_log_filter_for_range(
+        let filter = UsageFilter {
+            app_type: filters.app_type.as_deref(),
+            provider_name: filters.provider_name.as_deref(),
+            model: filters.model.as_deref(),
+        };
+        let mut conditions = SqlWhere::default();
+        conditions.push_condition(effective_usage_log_filter_for_range(
             &conn,
             "l",
             filters.start_date,
             filters.end_date,
-        )?];
-        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-
-        if let Some(ref app_type) = filters.app_type {
-            // 仅过滤口径折叠 claude-desktop→claude；行投影仍返回原始 app_type，
-            // 详情面板据此展示真实入口（路由接管账单审计需要）。
-            conditions.push(format!("{} = ?", folded_app_type_sql("l.app_type")));
-            params.push(Box::new(app_type.clone()));
-        }
-        // 与 Dashboard 顶部下拉筛选同口径：Provider 按展示名精确匹配（会话占位
-        // 行如 "Claude (Session)" 也能命中），模型按有效计价模型匹配。
-        push_provider_model_filters(
-            &mut conditions,
-            &mut params,
-            "l",
-            "p",
-            filters.provider_name.as_deref(),
-            filters.model.as_deref(),
-        );
+        )?);
+        // 应用仅过滤口径折叠 claude-desktop→claude；行投影仍返回原始 app_type，
+        // 详情面板据此展示真实入口（路由接管账单审计需要）。Provider/模型与 Dashboard
+        // 顶部下拉筛选同口径（会话占位行如 "Claude (Session)" 也能命中）。
+        filter.push_to(&mut conditions, "l", "p");
         if let Some(status) = filters.status_code {
-            conditions.push("l.status_code = ?".to_string());
-            params.push(Box::new(status as i64));
+            conditions.push("l.status_code = ?", status as i64);
         }
         if let Some(start) = filters.start_date {
-            conditions.push("l.created_at >= ?".to_string());
-            params.push(Box::new(start));
+            conditions.push("l.created_at >= ?", start);
         }
         if let Some(end) = filters.end_date {
-            conditions.push("l.created_at <= ?".to_string());
-            params.push(Box::new(end));
+            conditions.push("l.created_at <= ?", end);
         }
-
-        let where_clause = if conditions.is_empty() {
-            String::new()
-        } else {
-            format!("WHERE {}", conditions.join(" AND "))
-        };
+        let (where_clause, mut params) = conditions.into_where();
 
         // 获取总数
         let count_sql = format!(
@@ -2293,108 +2064,6 @@ impl Database {
             Err(e) => Err(AppError::Database(e.to_string())),
         }
     }
-
-    /// 检查 Provider 使用限额
-    pub fn check_provider_limits(
-        &self,
-        provider_id: &str,
-        app_type: &str,
-    ) -> Result<ProviderLimitStatus, AppError> {
-        let conn = lock_conn!(self.conn);
-
-        // 获取 provider 的限额设置
-        let (limit_daily, limit_monthly) = conn
-            .query_row(
-                "SELECT meta FROM providers WHERE id = ? AND app_type = ?",
-                params![provider_id, app_type],
-                |row| {
-                    let meta_str: String = row.get(0)?;
-                    Ok(meta_str)
-                },
-            )
-            .ok()
-            .and_then(|meta_str| serde_json::from_str::<serde_json::Value>(&meta_str).ok())
-            .map(|meta| {
-                let daily = meta
-                    .get("limitDailyUsd")
-                    .and_then(|v| v.as_str())
-                    .and_then(|s| s.parse::<f64>().ok());
-                let monthly = meta
-                    .get("limitMonthlyUsd")
-                    .and_then(|v| v.as_str())
-                    .and_then(|s| s.parse::<f64>().ok());
-                (daily, monthly)
-            })
-            .unwrap_or((None, None));
-
-        // 计算今日使用量 (detail logs + rollup)
-        let daily_usage: f64 = conn
-            .query_row(
-                "SELECT COALESCE(SUM(cost), 0) FROM (
-                    SELECT CAST(total_cost_usd AS REAL) as cost
-                    FROM proxy_request_logs
-                    WHERE provider_id = ? AND app_type = ?
-                      AND date(datetime(created_at, 'unixepoch', 'localtime')) = date('now', 'localtime')
-                    UNION ALL
-                    SELECT CAST(total_cost_usd AS REAL)
-                    FROM usage_daily_rollups
-                    WHERE provider_id = ? AND app_type = ?
-                      AND date = date('now', 'localtime')
-                )",
-                params![provider_id, app_type, provider_id, app_type],
-                |row| row.get(0),
-            )
-            .unwrap_or(0.0);
-
-        // 计算本月使用量 (detail logs + rollup)
-        let monthly_usage: f64 = conn
-            .query_row(
-                "SELECT COALESCE(SUM(cost), 0) FROM (
-                    SELECT CAST(total_cost_usd AS REAL) as cost
-                    FROM proxy_request_logs
-                    WHERE provider_id = ? AND app_type = ?
-                      AND strftime('%Y-%m', datetime(created_at, 'unixepoch', 'localtime')) = strftime('%Y-%m', 'now', 'localtime')
-                    UNION ALL
-                    SELECT CAST(total_cost_usd AS REAL)
-                    FROM usage_daily_rollups
-                    WHERE provider_id = ? AND app_type = ?
-                      AND strftime('%Y-%m', date) = strftime('%Y-%m', 'now', 'localtime')
-                )",
-                params![provider_id, app_type, provider_id, app_type],
-                |row| row.get(0),
-            )
-            .unwrap_or(0.0);
-
-        let daily_exceeded = limit_daily
-            .map(|limit| daily_usage >= limit)
-            .unwrap_or(false);
-        let monthly_exceeded = limit_monthly
-            .map(|limit| monthly_usage >= limit)
-            .unwrap_or(false);
-
-        Ok(ProviderLimitStatus {
-            provider_id: provider_id.to_string(),
-            daily_usage: format!("{daily_usage:.6}"),
-            daily_limit: limit_daily.map(|l| format!("{l:.2}")),
-            daily_exceeded,
-            monthly_usage: format!("{monthly_usage:.6}"),
-            monthly_limit: limit_monthly.map(|l| format!("{l:.2}")),
-            monthly_exceeded,
-        })
-    }
-}
-
-/// Provider 限额状态
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ProviderLimitStatus {
-    pub provider_id: String,
-    pub daily_usage: String,
-    pub daily_limit: Option<String>,
-    pub daily_exceeded: bool,
-    pub monthly_usage: String,
-    pub monthly_limit: Option<String>,
-    pub monthly_exceeded: bool,
 }
 
 #[derive(Clone)]
@@ -2783,6 +2452,11 @@ fn model_pricing_candidates(model_id: &str) -> Vec<String> {
         }
         if let Some(stripped) = strip_reasoning_effort_suffix(&candidate) {
             queue.push(stripped);
+        }
+        // AGY's "Gemini 4 Hydrogen (Orchestrator)" is the same Hydrogen worker.
+        // Keep the raw ID and any exact custom price; otherwise use the base API estimate.
+        if candidate == "gemini-4-hydrogen-orchestrator" {
+            queue.push("gemini-4-hydrogen".to_string());
         }
         if candidate.starts_with("claude-") && candidate.contains('.') {
             queue.push(candidate.replace('.', "-"));
@@ -3746,7 +3420,7 @@ mod tests {
     }
 
     #[test]
-    fn test_backfill_new_anthropic_openai_pricing_after_upgrade() -> Result<(), AppError> {
+    fn test_backfill_new_model_pricing_after_upgrade() -> Result<(), AppError> {
         let db = Database::memory()?;
         let cases = [
             (
@@ -3805,6 +3479,12 @@ mod tests {
                 3_000_000,
                 ["0.150000", "0.600000", "0.075000", "0.000000", "0.825000"],
             ),
+            (
+                "qwen/qwen4-max",
+                "claude",
+                1_000_000,
+                ["1.500000", "4.500000", "0.075000", "1.875000", "7.950000"],
+            ),
         ];
         {
             let conn = lock_conn!(db.conn);
@@ -3812,7 +3492,7 @@ mod tests {
             conn.execute(
                 "DELETE FROM model_pricing WHERE model_id IN
                  ('claude-opus-5-5', 'gpt-6-sol', 'gpt-6.1-sol', 'gpt-6-luna', 'gpt-5.6-cyber',
-                  'gpt-5.5-pro', 'gpt-4o-mini')",
+                  'gpt-5.5-pro', 'gpt-4o-mini', 'qwen4-max')",
                 [],
             )?;
             for (model, app, input, _) in &cases {
@@ -4966,28 +4646,6 @@ mod tests {
         assert!(!request_ids.contains(&"claude-session-dup"));
         assert!(!request_ids.contains(&"gemini-session-dup"));
 
-        let breakdown = crate::services::session_usage::get_data_source_breakdown(&db)?;
-        let proxy_count = breakdown
-            .iter()
-            .find(|item| item.data_source == "proxy")
-            .map(|item| item.request_count);
-        let codex_session_count = breakdown
-            .iter()
-            .find(|item| item.data_source == "codex_session")
-            .map(|item| item.request_count);
-        let gemini_session_count = breakdown
-            .iter()
-            .find(|item| item.data_source == "gemini_session")
-            .map(|item| item.request_count);
-        let session_log_count = breakdown
-            .iter()
-            .find(|item| item.data_source == "session_log")
-            .map(|item| item.request_count);
-        assert_eq!(proxy_count, Some(3));
-        assert_eq!(codex_session_count, Some(1));
-        assert_eq!(gemini_session_count, None);
-        assert_eq!(session_log_count, None);
-
         Ok(())
     }
 
@@ -6098,6 +5756,126 @@ mod tests {
             "缺少 gpt-5 基础定价时，不应前缀误匹配到 gpt-5-mini/gpt-5-pro"
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_hydrogen_orchestrator_pricing_preserves_exact_overrides() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+        let base = find_model_pricing_row(&conn, "gemini-4-hydrogen")?;
+        assert!(base.is_some());
+        for model in [
+            "gemini-4-hydrogen-orchestrator",
+            "google/GEMINI-4-HYDROGEN-ORCHESTRATOR",
+            "google.gemini-4-hydrogen-orchestrator:free",
+            "gemini-4-hydrogen-orchestrator-high",
+        ] {
+            assert_eq!(find_model_pricing_row(&conn, model)?, base, "{model}");
+        }
+        // Orchestrator is a known Hydrogen variant, not a suffix to strip from any model.
+        for model in [
+            "gemini-4-carbon-orchestrator",
+            "gemini-4-hydrogen-orchestrator-preview",
+            "orchestrator-carbon",
+        ] {
+            assert!(find_model_pricing_row(&conn, model)?.is_none(), "{model}");
+        }
+
+        conn.execute(
+            "INSERT INTO model_pricing VALUES ('gemini-4-hydrogen-orchestrator',
+             'Custom Hydrogen Orchestrator', '3', '12', '0.2', '0')",
+            [],
+        )?;
+        assert_eq!(
+            find_model_pricing_row(&conn, "gemini-4-hydrogen-orchestrator")?,
+            Some(("3".into(), "12".into(), "0.2".into(), "0".into()))
+        );
+        // A custom per-effort entry must also win over both fallback prices.
+        conn.execute(
+            "INSERT INTO model_pricing VALUES ('gemini-4-hydrogen-orchestrator-high',
+             'Custom Hydrogen Orchestrator High', '4', '16', '0.3', '0')",
+            [],
+        )?;
+        assert_eq!(
+            find_model_pricing_row(&conn, "gemini-4-hydrogen-orchestrator-high")?,
+            Some(("4".into(), "16".into(), "0.3".into(), "0".into()))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_hydrogen_orchestrator_backfills_without_transcripts() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            for (id, model, cost) in [
+                ("hydrogen-history", "gemini-4-hydrogen-orchestrator", "0"),
+                ("unresolved-mode", "orchestrator-carbon", "0"),
+                ("already-priced", "gemini-4-hydrogen-orchestrator", "9"),
+            ] {
+                insert_usage_log(
+                    &conn,
+                    id,
+                    "agy",
+                    "_agy_session",
+                    model,
+                    "agy_session",
+                    1000,
+                    1_000_000,
+                    100_000,
+                    1_000_000,
+                    0,
+                    200,
+                    cost,
+                )?;
+            }
+            conn.execute(
+                "UPDATE proxy_request_logs SET request_model='Orchestrator (Carbon)',
+                 input_token_semantics=?1",
+                [INPUT_TOKEN_SEMANTICS_FRESH],
+            )?;
+        }
+        // Updating the base price must find retained variant rows without reading JSONL/SQLite.
+        assert_eq!(
+            db.backfill_missing_usage_costs_for_model("gemini-4-hydrogen")?,
+            1
+        );
+        assert_eq!(db.backfill_missing_usage_costs()?, 0);
+        let conn = lock_conn!(db.conn);
+        let row: (String, String, String, String, String) = conn.query_row(
+            "SELECT model,request_model,input_cost_usd,output_cost_usd,cache_read_cost_usd
+             FROM proxy_request_logs WHERE request_id='hydrogen-history'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        )?;
+        assert_eq!(
+            row,
+            (
+                "gemini-4-hydrogen-orchestrator".into(),
+                "Orchestrator (Carbon)".into(),
+                "1.500000".into(),
+                "0.750000".into(),
+                "0.075000".into()
+            )
+        );
+        for (id, expected) in [
+            ("hydrogen-history", "2.325000"),
+            ("unresolved-mode", "0"),
+            ("already-priced", "9"),
+        ] {
+            let cost: String = conn.query_row(
+                "SELECT total_cost_usd FROM proxy_request_logs WHERE request_id=?1",
+                [id],
+                |r| r.get(0),
+            )?;
+            assert_eq!(cost, expected);
+        }
+        let totals: (i64, i64, i64, i64) = conn.query_row(
+            "SELECT COUNT(*),SUM(input_tokens),SUM(output_tokens),SUM(cache_read_tokens) FROM proxy_request_logs",
+            [], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)),
+        )?;
+        assert_eq!(totals, (3, 3_000_000, 300_000, 3_000_000));
         Ok(())
     }
 

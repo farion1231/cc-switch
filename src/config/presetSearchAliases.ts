@@ -29,7 +29,7 @@ export const PRESET_SEARCH_ALIASES: Record<string, string> = {
   "Microsoft Foundry": "azure 微软 ai foundry claude",
   MiniMax: "海螺",
   "MiniMax en": "海螺",
-  "Mistral AI": "codestral la plateforme 法国",
+  "Mistral AI": "codestral la plateforme le chat vibe 法国",
   ModelScope: "魔搭",
   "Nebius Token Factory": "ai studio nbis",
   "OpenAI API": "chatgpt gpt platform",

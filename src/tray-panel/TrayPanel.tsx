@@ -15,6 +15,7 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  Download,
   ExternalLink,
   Feather,
   Loader2,
@@ -459,6 +460,8 @@ function SubPanel({
               onChange={(event) => onQuery(event.target.value)}
               placeholder={texts.searchPlaceholder}
               className="min-w-0 flex-1 bg-transparent text-[13px] outline-none placeholder:text-muted-foreground"
+              autoCorrect="off"
+              autoCapitalize="off"
             />
           </label>
         </div>
@@ -521,9 +524,11 @@ function FooterButton({
 export function TrayPanel() {
   const [nativePlacement, setPlacement] = useState<PanelPlacement | null>(null);
   const [pixelRatio, setPixelRatio] = useState(window.devicePixelRatio || 1);
-  // Windows 文本大小 / WebView 缩放可能让 CSS 像素和屏幕逻辑像素不再一一对应。
+  // 将 CSS 像素换算为原生窗口逻辑像素，适配文本和 WebKit 缩放。
   const coordinateScale =
-    nativePlacement?.platform === "windows"
+    nativePlacement &&
+    (nativePlacement.platform === "windows" ||
+      nativePlacement.platform === "linux")
       ? pixelRatio / nativePlacement.scaleFactor
       : 1;
   const placement = useMemo(
@@ -1073,6 +1078,22 @@ export function TrayPanel() {
                 <div className="flex justify-center py-6">
                   <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
                 </div>
+              )}
+              {state?.update && (
+                <button
+                  key={state.update.id}
+                  type="button"
+                  data-other-item
+                  onClick={() => action(state.update!.id)}
+                  className={cn(
+                    "flex items-start gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium text-blue-500",
+                    FOCUS_RING,
+                    ROW_HOVER,
+                  )}
+                >
+                  <Download className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  <span>{state.update.text}</span>
+                </button>
               )}
               {state?.problems.map((problem) => (
                 <button
