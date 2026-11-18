@@ -492,7 +492,7 @@ fn wsl_tool_action_shell_command(tool: &str, action: ToolLifecycleAction) -> Opt
     }
 }
 
-fn build_tool_action_line(
+pub(super) fn build_tool_action_line(
     tool: &str,
     action: ToolLifecycleAction,
     wsl_shell: Option<&str>,
@@ -519,7 +519,7 @@ fn build_tool_action_line(
         //    逐工具触发 lifecycle,batch 化会破坏"逐工具独立成败"的 UX。
         let command = match action {
             ToolLifecycleAction::Update => {
-                let installs = enumerate_tool_installations(tool);
+                let installs = enumerate_tool_installations(tool)?;
                 match resolve_update_command(tool, &installs) {
                     UpdateCommand::Anchored(command) | UpdateCommand::Static(command) => command,
                     UpdateCommand::Unmanaged => {
@@ -550,7 +550,7 @@ fn build_tool_action_line(
         // （有 native installer 的工具如 claude/opencode/hermes），其余仍裸 npm。
         let command = match action {
             ToolLifecycleAction::Update => {
-                let installs = enumerate_tool_installations(tool);
+                let installs = enumerate_tool_installations(tool)?;
                 match resolve_update_command(tool, &installs) {
                     UpdateCommand::Anchored(command) | UpdateCommand::Static(command) => command,
                     UpdateCommand::Unmanaged => {
