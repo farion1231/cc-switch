@@ -1443,7 +1443,7 @@
     "keyFieldsHint": "デフォルトモデル（models.default）とそれが指すモデルテーブルはプロバイダーに合わせて切り替わります。それ以外は Grok Build のグローバル設定で、保存するとすべてのプロバイダーに適用されます。",
     "inactiveFieldsHint": "旧バージョンがこのプロバイダーに保存した設定で、切り替えでは反映されなくなりました。クリックすると TOML をコピーできるので、必要なら上に貼り付けてください。",
     "inactiveFieldCopied": "コピーしました",
-    "routeOnlySettingsHint": "以下の二つはルーティングモードでのみ有効です。"
+    "routeOnlySettingsHint": "以下の設定はルーティングモードでのみ有効です。"
   },
   "sessionManager": {
     "searchPlaceholder": "タイトル・ディレクトリ・最初と最後のメッセージ・セッション ID で検索",
@@ -1750,6 +1750,9 @@
     "openReleaseNotesFailed": "リリースノートを開けませんでした:"
   },
   "providerForm": {
+    "billingMultiplier": "プロバイダーの料金倍率",
+    "billingMultiplierHelp": "このプロバイダーの全モデルの参考価格にこの値を掛けて、ローカルルーティング経由のリクエストにかかった費用を見積もります。0.5 は半額、空欄は 1 倍です。今後のリクエストにのみ適用されます。ルーティングを使わない直結モードでは、セッション記録から取り込んだ使用量は引き続き 1 倍で集計されます。",
+    "billingMultiplierInvalid": "0 から 1000 までの数値を入力するか、空欄のまま 1 倍にしてください。",
     "nativeConfig": {
       "title": "設定ファイル {{path}}（このプロバイダーのみ）",
       "hint": "このプロバイダーの部分をアプリ本来の形式で表示し、保存時にこのファイルへ書き込みます。デフォルトモデルなどのグローバル設定はここにはありません。ここに書いたコメントは保存されません。",
@@ -2245,7 +2248,7 @@
     "inactiveFieldCopied": "コピーしました",
     "upstreamFormatCopilotRouteHint": "どのモードでもルーティングが必要で、ルーティングが Copilot アカウントの認証情報を注入します。手動指定したプロトコルにモデルが対応していないとエラーになります。",
     "maxOutputTokensWarning": "モデルやゲートウェイの実際の出力上限を超えないでください。超えると 400 が返ります。",
-    "routeOnlySettingsHint": "以下の二つはルーティングモードと集約モードでのみ有効です。"
+    "routeOnlySettingsHint": "以下の設定はルーティングモードと集約モードでのみ有効です。"
   },
   "geminiConfig": {
     "envFile": "環境変数 (.env)",
