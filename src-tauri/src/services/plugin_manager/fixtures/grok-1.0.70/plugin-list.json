@@ -1,0 +1,11 @@
+[
+  {
+    "status": "installed",
+    "name": "hello",
+    "repo_key": "c--fixture-gmkt-plugins-hello-00000000",
+    "version": "0.1.0",
+    "path": "C:/fixture/grok\\installed-plugins\\c--fixture-gmkt-plugins-hello-00000000",
+    "source": "C:\\fixture\\gmkt\\plugins\\hello",
+    "marketplace": "gmkt"
+  }
+]
