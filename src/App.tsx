@@ -1341,6 +1341,15 @@ function App() {
         );
         duplicatedProvider.addToLive = false;
       }
+    } else if (activeApp === "deveco") {
+      // DevEco is additive: the copy needs its own key. Keeping it out of the
+      // native `deveco.jsonc` until the user edits it avoids publishing a
+      // duplicate provider the moment the copy is created.
+      duplicatedProvider.providerKey = generateUniqueProviderCopyKey(
+        provider.id,
+        Object.keys(providers),
+      );
+      duplicatedProvider.addToLive = false;
     } else if (activeApp === "workbuddy") {
       // WorkBuddy model IDs are unique across models.json, so a copy that kept
       // the same models would collide; keep it out of the file until edited.

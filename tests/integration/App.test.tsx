@@ -780,6 +780,42 @@ describe("App integration with MSW", () => {
     );
   });
 
+  it("duplicates DevEco Code providers under a generated unused key", async () => {
+    localStorage.setItem("cc-switch-last-app", "deveco");
+    const provider = (id: string, name: string) => ({
+      id,
+      name,
+      settingsConfig: {},
+      category: "custom" as const,
+      sortIndex: 0,
+      createdAt: Date.now(),
+    });
+    setProviders("deveco", {
+      dot: provider("dot", "DevEco"),
+      "dot-copy": provider("dot-copy", "DevEco copy"),
+    });
+    setCurrentProviderId("deveco", "dot");
+
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-list").textContent).toContain(
+        "dot-copy",
+      ),
+    );
+    fireEvent.click(screen.getByText("duplicate"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-list").textContent).toContain(
+        "dot-copy-2",
+      ),
+    );
+    expect(toastErrorMock).not.toHaveBeenCalledWith(
+      expect.stringContaining("Provider key is required for deveco"),
+    );
+  });
+
   it("refreshes MiniMax Code provider membership after removing it from live config", async () => {
     localStorage.setItem("cc-switch-last-app", "mcode");
     let liveConfigManaged = true;
