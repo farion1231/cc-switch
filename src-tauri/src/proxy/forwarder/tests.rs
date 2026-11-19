@@ -2073,6 +2073,40 @@ fn native_responses_keeps_official_call_id_less_outputs() {
 }
 
 #[test]
+fn native_responses_sends_custom_tools_as_functions_only_when_opted_in() {
+    let original = json!({
+        "model": "deepseek-example",
+        "tools": [{"type": "custom", "name": "apply_patch", "description": "Edit files."}],
+        "input": [
+            {"type": "custom_tool_call", "call_id": "c1", "name": "apply_patch", "input": "patch"},
+            {"type": "custom_tool_call_output", "call_id": "c1", "output": "Success."}
+        ]
+    });
+
+    let provider = test_provider_with_type(None);
+    let mut body = original.clone();
+    apply_native_responses_request_compat(&provider, &mut body, false).unwrap();
+    assert_eq!(body, original, "flag off must leave the body untouched");
+
+    let mut opted_in = test_provider_with_type(None);
+    opted_in
+        .meta
+        .get_or_insert_with(Default::default)
+        .codex_custom_tools_as_functions = Some(true);
+    let mut body = original.clone();
+    apply_native_responses_request_compat(&opted_in, &mut body, false).unwrap();
+    assert_eq!(body["tools"][0]["type"], "function");
+    assert_eq!(body["input"][0]["type"], "function_call");
+    assert_eq!(body["input"][1]["type"], "function_call_output");
+
+    opted_in.category = Some("official".to_string());
+    opted_in.settings_config = json!({"auth": {}, "config": ""});
+    let mut body = original.clone();
+    apply_native_responses_request_compat(&opted_in, &mut body, false).unwrap();
+    assert_eq!(body, original, "official providers keep custom tools");
+}
+
+#[test]
 fn native_responses_keeps_hosted_search_and_async_history() {
     let provider = test_provider_with_type(None);
     let original = json!({"input": [

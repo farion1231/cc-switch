@@ -2149,6 +2149,8 @@
     "autoReviewModelNoList": "Bu kartta model listesi yok: Codex onayları yalnızca ChatGPT hesaplarına yönlendirme yapan bazı aktarım hizmetlerinin kabul ettiği resmî codex-auto-review modeliyle inceler; diğerleri 404 döndürür. Bir model seçmek için yukarıdaki listeye model ekleyin.",
     "officialSpeedTiersLabel": "Resmî Fast katmanını koru",
     "officialSpeedTiersHint": "Model listesindeki GPT modellerinde resmî Fast hız katmanını korur; böylece Codex'te Fast seçildiğinde service_tier=priority gönderilir. Bunu yalnızca resmî ChatGPT hesaplarına yönlendiren aktarım hizmetleri (CPA gibi) kabul eder ve kota daha hızlı tükenir; diğer yukarı akışlar reddedebilir veya daha yüksek fiyattan faturalandırabilir. Açıldığında, resmî kart altında yaptığınız Fast seçimi bu sağlayıcıda hemen geçerli olur. Birleştirme modunda kullanılmaz. Değiştirdikten sonra Codex'i yeniden başlatın.",
+    "customToolsAsFunctionsLabel": "Özel araçları fonksiyon aracı olarak gönder",
+    "customToolsAsFunctionsHint": "Yalnızca fonksiyon araçlarını kabul eden Responses ağ geçitleri için. Yerel proxy, Codex'in serbest biçimli araçlarını (apply_patch, kod modu exec) fonksiyon aracı olarak gönderir ve çağrıları Codex için geri çevirir. Yerel proxy gerekir; sağlayıcı özel araçları zaten kabul ediyorsa kapalı bırakın.",
     "modelListHint": "Değişikliklerden sonra Codex uygulamasını yeniden başlatın.",
     "modelListDefaultHelp": "Bu modeller Codex'nin /model menüsünde görünür; ilk satır varsayılan modeldir. Adını resmi bir GPT modelinden alan satırlar resmi girişi kullanır, dolayısıyla görünen adları, pencereleri ve akıl yürütme düzeyleri göz ardı edilir.",
     "addCatalogModel": "Manuel olarak ekle",

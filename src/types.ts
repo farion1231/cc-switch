@@ -222,6 +222,8 @@ export interface ProviderMeta {
   codexFastMode?: boolean;
   // Codex Responses -> Chat Completions reasoning capability metadata
   codexChatReasoning?: CodexChatReasoning;
+  // Codex native Responses: send custom tools (apply_patch, code-mode exec) as function tools
+  codexCustomToolsAsFunctions?: boolean;
   // Claude route → OpenAI Chat / Responses: how the client's thinking effort is sent upstream (absent = auto)
   claudeReasoningEffort?: ClaudeReasoningEffortMode;
   // Codex → Anthropic path: emulate the Claude Code client (disabled by default; only an explicit true enables it)
