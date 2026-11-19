@@ -548,7 +548,7 @@ impl ProxyService {
     /// 热更新指定应用的熔断器配置
     pub async fn update_circuit_breaker_config_for_app(
         &self,
-        app_type: &crate::app_config::AppType,
+        app_type: &AppType,
         config: crate::proxy::CircuitBreakerConfig,
     ) -> Result<(), String> {
         if let Some(server) = self.server.read().await.as_ref() {
@@ -560,6 +560,46 @@ impl ProxyService {
             log::debug!("{app_type} 熔断器配置将在下次代理启动时生效");
         }
         Ok(())
+    }
+
+    /// 移出故障转移队列：DB 清掉它的健康状态，运行中的路由也丢掉它的熔断器，
+    /// 再加回队列时路由和卡片显示的一样是健康的。
+    pub async fn remove_from_failover_queue(
+        &self,
+        app_type: &AppType,
+        provider_id: &str,
+    ) -> Result<(), crate::error::AppError> {
+        self.db.remove_from_failover_queue(app_type, provider_id)?;
+        self.forget_circuit_breakers(app_type, Some(provider_id))
+            .await;
+        Ok(())
+    }
+
+    /// 清掉一个应用的健康状态，DB 和运行中路由的熔断器一起清。
+    pub async fn clear_provider_health_for_app(
+        &self,
+        app_type: &AppType,
+    ) -> Result<(), crate::error::AppError> {
+        self.db.clear_provider_health_for_app(app_type).await?;
+        self.forget_circuit_breakers(app_type, None).await;
+        Ok(())
+    }
+
+    async fn forget_circuit_breakers(&self, app_type: &AppType, provider_id: Option<&str>) {
+        if let Some(server) = self.server.read().await.as_ref() {
+            server.forget_circuit_breakers(app_type, provider_id).await;
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn provider_router(
+        &self,
+    ) -> Option<Arc<crate::proxy::provider_router::ProviderRouter>> {
+        self.server
+            .read()
+            .await
+            .as_ref()
+            .map(|server| server.provider_router())
     }
 }
 
@@ -594,6 +634,74 @@ mod tests {
             let actual = db.get_proxy_config_for_app(&app).await.unwrap();
             assert_eq!(serde_json::to_value(actual).unwrap(), *expected, "{app}");
         }
+    }
+
+    async fn routed(
+        router: &crate::proxy::provider_router::ProviderRouter,
+        app: &AppType,
+    ) -> Vec<String> {
+        match router.select_providers(app).await {
+            Ok(providers) => providers.into_iter().map(|p| p.id).collect(),
+            Err(_) => Vec::new(),
+        }
+    }
+
+    async fn trip(
+        router: &crate::proxy::provider_router::ProviderRouter,
+        app: &AppType,
+        id: &str,
+        threshold: u32,
+    ) {
+        for _ in 0..threshold {
+            router
+                .record_result(id, app, false, false, None)
+                .await
+                .unwrap();
+        }
+    }
+
+    /// 卡片读 DB 里的健康状态；DB 被清掉后，运行中的路由也必须当这家是健康的。
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn clearing_health_makes_a_tripped_provider_routable_again() {
+        let _home = crate::test_support::TempUserHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().unwrap());
+        let app = AppType::Claude;
+        for id in ["a", "b"] {
+            db.save_provider(
+                &app,
+                &Provider::with_id(id.into(), id.into(), json!({}), None),
+            )
+            .unwrap();
+            db.add_to_failover_queue(&app, id).unwrap();
+        }
+        let mut config = db.get_proxy_config_for_app(&app).await.unwrap();
+        config.auto_failover_enabled = true;
+        let threshold = config.circuit_failure_threshold;
+        db.update_proxy_config_for_app(config).await.unwrap();
+        let mut global = db.get_global_proxy_config().await.unwrap();
+        global.listen_port = 0;
+        db.update_global_proxy_config(global).await.unwrap();
+
+        let service = ProxyService::new(db.clone());
+        service.start().await.expect("start proxy");
+        let router = service.provider_router().await.expect("running router");
+        // 移出队列再加回来：卡片是健康的，路由也要能选到它。
+        trip(&router, &app, "b", threshold).await;
+        assert_eq!(routed(&router, &app).await, vec!["a"]);
+        service.remove_from_failover_queue(&app, "b").await.unwrap();
+        db.add_to_failover_queue(&app, "b").unwrap();
+        assert_eq!(routed(&router, &app).await, vec!["a", "b"]);
+
+        // 退出路由时整个应用的健康状态清零，熔断器也一起清。
+        trip(&router, &app, "a", threshold).await;
+        trip(&router, &app, "b", threshold).await;
+        assert!(routed(&router, &app).await.is_empty());
+        service.clear_provider_health_for_app(&app).await.unwrap();
+        assert_eq!(routed(&router, &app).await, vec!["a", "b"]);
+
+        service.stop().await.expect("stop proxy");
     }
 
     #[tokio::test]

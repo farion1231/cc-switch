@@ -446,6 +446,22 @@ impl ProxyServer {
             .update_app_configs(app_type, config)
             .await;
     }
+
+    pub async fn forget_circuit_breakers(
+        &self,
+        app_type: &crate::app_config::AppType,
+        provider_id: Option<&str>,
+    ) {
+        self.state
+            .provider_router
+            .forget(app_type, provider_id)
+            .await;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn provider_router(&self) -> Arc<ProviderRouter> {
+        self.state.provider_router.clone()
+    }
 }
 
 #[cfg(test)]
