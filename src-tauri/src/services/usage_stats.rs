@@ -2519,10 +2519,18 @@ fn model_pricing_candidates(model_id: &str) -> Vec<PricingCandidate> {
                 allow_prefix_match: false,
             });
         }
-        // AGY's "Gemini 4 Hydrogen (Orchestrator)" is the same Hydrogen worker.
-        // Keep the raw ID and any exact custom price; otherwise use the base API estimate.
-        if candidate == "gemini-4-hydrogen-orchestrator" {
-            push_derived(&mut queue, "gemini-4-hydrogen".to_string());
+        // AGY's "Gemini 4 Hydrogen (Orchestrator)" and per-step worker alias
+        // `gemini-flash-worker-agy` are the same Hydrogen worker.
+        // Keep the raw ID and any exact custom price; otherwise fall back only to an
+        // exact `gemini-4-hydrogen` row.
+        if matches!(
+            candidate.as_str(),
+            "gemini-4-hydrogen-orchestrator" | "gemini-flash-worker-agy"
+        ) {
+            queue.push_back(PricingCandidate {
+                model_id: "gemini-4-hydrogen".to_string(),
+                allow_prefix_match: false,
+            });
         }
     }
 
@@ -2704,8 +2712,10 @@ fn strip_gemini_flash_tiered_suffix(model_id: &str) -> Option<String> {
 }
 
 fn should_try_pricing_prefix_match(model_id: &str) -> bool {
-    if model_id == "gemini-4-hydrogen-tiered"
-        || strip_gemini_flash_tiered_suffix(model_id).is_some()
+    if matches!(
+        model_id,
+        "gemini-4-hydrogen-tiered" | "gemini-4-hydrogen-orchestrator" | "gemini-flash-worker-agy"
+    ) || strip_gemini_flash_tiered_suffix(model_id).is_some()
     {
         return false;
     }
@@ -6472,6 +6482,185 @@ mod tests {
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         )?;
         assert_eq!(totals, (5, 5_000_000, 500_000, 5_000_000));
+        Ok(())
+    }
+
+    #[test]
+    fn test_orchestrator_cli_worker_alias_pricing_and_orphan_backfill() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            let base = find_model_pricing_row(&conn, "gemini-4-hydrogen")?;
+            assert!(base.is_some());
+            for model in [
+                "gemini-flash-worker-agy",
+                "google/GEMINI-FLASH-WORKER-AGY",
+                "google.gemini-flash-worker-agy:free",
+                "gemini-flash-worker-agy-high",
+            ] {
+                assert_eq!(find_model_pricing_row(&conn, model)?, base, "{model}");
+            }
+            for model in [
+                "gemini-flash",
+                "gemini-flash-worker",
+                "gemini-flash-worker-agy-preview",
+                "gemini-pro-orchestrator",
+            ] {
+                assert!(find_model_pricing_row(&conn, model)?.is_none(), "{model}");
+            }
+
+            conn.execute(
+                "INSERT INTO model_pricing VALUES ('gemini-flash-worker-agy',
+                 'Custom Hydrogen Worker', '3', '12', '0.2', '0')",
+                [],
+            )?;
+            for model in [
+                "gemini-flash-worker-agy",
+                "google.gemini-flash-worker-agy:free",
+                "claude-gemini-flash-worker-agy",
+                "gemini-flash-worker-agy-high",
+                "google.gemini-flash-worker-agy-high",
+            ] {
+                assert_eq!(
+                    find_model_pricing_row(&conn, model)?,
+                    Some(("3".into(), "12".into(), "0.2".into(), "0".into())),
+                    "{model}"
+                );
+            }
+            conn.execute(
+                "INSERT INTO model_pricing VALUES ('gemini-flash-worker-agy-high',
+                 'Custom Hydrogen Worker High', '4', '16', '0.3', '0')",
+                [],
+            )?;
+            for model in [
+                "gemini-flash-worker-agy-high",
+                "models/gemini-flash-worker-agy-high",
+                "google.gemini-flash-worker-agy-high:free",
+                "claude-gemini-flash-worker-agy-high",
+            ] {
+                assert_eq!(
+                    find_model_pricing_row(&conn, model)?,
+                    Some(("4".into(), "16".into(), "0.3".into(), "0".into())),
+                    "{model}"
+                );
+            }
+            assert_eq!(
+                find_model_pricing_row(&conn, "google.gemini-flash-worker-agy-low")?,
+                Some(("3".into(), "12".into(), "0.2".into(), "0".into()))
+            );
+            conn.execute(
+                "DELETE FROM model_pricing WHERE model_id LIKE 'gemini-flash-worker-agy%'",
+                [],
+            )?;
+
+            // When base `gemini-4-hydrogen` is absent, neither `gemini-flash-worker-agy` nor its
+            // base fallback may prefix-match sibling `gemini-4-hydrogen-*` or `-high` entries.
+            conn.execute(
+                "DELETE FROM model_pricing WHERE model_id = 'gemini-4-hydrogen'",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO model_pricing VALUES ('gemini-4-hydrogen-orchestrator',
+                 'Custom Hydrogen Orchestrator', '5', '20', '0.5', '0')",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO model_pricing VALUES ('gemini-flash-worker-agy-high',
+                 'Custom Hydrogen Worker High', '4', '16', '0.3', '0')",
+                [],
+            )?;
+            assert!(find_model_pricing_row(&conn, "gemini-flash-worker-agy")?.is_none());
+            assert!(find_model_pricing_row(&conn, "google.gemini-flash-worker-agy")?.is_none());
+
+            for (id, model, cost) in [
+                ("worker-orphan", "gemini-flash-worker-agy", "0"),
+                ("unresolved-planner", "gemini-pro-orchestrator", "0"),
+                ("already-priced", "gemini-flash-worker-agy", "7"),
+            ] {
+                insert_usage_log(
+                    &conn,
+                    id,
+                    "agy",
+                    "_agy_session",
+                    model,
+                    "agy_session",
+                    1000,
+                    1_000_000,
+                    100_000,
+                    1_000_000,
+                    0,
+                    200,
+                    cost,
+                )?;
+            }
+            conn.execute(
+                "UPDATE proxy_request_logs SET input_token_semantics=?1",
+                [INPUT_TOKEN_SEMANTICS_FRESH],
+            )?;
+        }
+
+        // Sibling custom entries must never misprice bare `gemini-flash-worker-agy` rows when
+        // base `gemini-4-hydrogen` is absent.
+        assert_eq!(
+            db.backfill_missing_usage_costs_for_model("gemini-flash-worker-agy-high")?,
+            0
+        );
+        assert_eq!(
+            db.backfill_missing_usage_costs_for_model("gemini-4-hydrogen-orchestrator")?,
+            0
+        );
+        assert_eq!(db.backfill_missing_usage_costs()?, 0);
+
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "DELETE FROM model_pricing
+                 WHERE model_id IN ('gemini-4-hydrogen-orchestrator', 'gemini-flash-worker-agy-high')",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO model_pricing VALUES ('gemini-4-hydrogen',
+                 'Gemini 4 Hydrogen', '1.5', '7.5', '0.075', '0')",
+                [],
+            )?;
+        }
+
+        // Retained worker rows whose transcripts are gone still reprice on Hydrogen updates.
+        assert_eq!(
+            db.backfill_missing_usage_costs_for_model("gemini-4-hydrogen")?,
+            1
+        );
+        assert_eq!(db.backfill_missing_usage_costs()?, 0);
+
+        let conn = lock_conn!(db.conn);
+        let row: (String, String, String, String, String) = conn.query_row(
+            "SELECT model,request_model,input_cost_usd,output_cost_usd,cache_read_cost_usd
+             FROM proxy_request_logs WHERE request_id='worker-orphan'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        )?;
+        assert_eq!(
+            row,
+            (
+                "gemini-flash-worker-agy".into(),
+                "gemini-flash-worker-agy".into(),
+                "1.500000".into(),
+                "0.750000".into(),
+                "0.075000".into(),
+            )
+        );
+        for (id, expected) in [
+            ("worker-orphan", "2.325000"),
+            ("unresolved-planner", "0"),
+            ("already-priced", "7"),
+        ] {
+            let cost: String = conn.query_row(
+                "SELECT total_cost_usd FROM proxy_request_logs WHERE request_id=?1",
+                [id],
+                |r| r.get(0),
+            )?;
+            assert_eq!(cost, expected, "{id}");
+        }
         Ok(())
     }
 

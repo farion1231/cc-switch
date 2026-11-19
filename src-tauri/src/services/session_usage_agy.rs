@@ -56,8 +56,9 @@ fn sync_agy_usage_from_files(
         };
         let modified = metadata_modified_nanos(&metadata);
         let size = metadata.len() as i64;
-        // Invalidate pre-Orchestrator cursors once, including unchanged, already timed history.
-        let native_state = format!("v2:{}", native_models::native_state_fingerprint(&path));
+        // Invalidate pre-Orchestrator / pre-worker-alias cursors once, including unchanged,
+        // already timed history.
+        let native_state = format!("v3:{}", native_models::native_state_fingerprint(&path));
         if cursor.is_some_and(|c| {
             c.last_modified == modified
                 && c.last_byte_offset == Some(size)
@@ -143,6 +144,24 @@ fn is_orchestrator(model: &str) -> bool {
     orchestrator_mode(model).is_some()
 }
 
+/// Per-step alias exported by Antigravity (`agy` CLI and Desktop 2.33+) on Orchestrator worker
+/// generations (`MODEL_PLACEHOLDER_M669`). Unlike `orchestrator_mode`, this already identifies the
+/// Hydrogen worker role even without `conversations/<id>.db`, while still preferring native
+/// field-21 display/tier metadata when present.
+fn is_orchestrator_worker(model: &str) -> bool {
+    model_id_of(model.trim()).eq_ignore_ascii_case("gemini-flash-worker-agy")
+}
+
+/// Mode names, role aliases, and generic labels that do not name a concrete worker model/tier.
+fn is_unresolved_worker_target(model: &str) -> bool {
+    let id = model_id_of(model.trim());
+    id.is_empty()
+        || id.eq_ignore_ascii_case("unknown")
+        || is_orchestrator(&id)
+        || is_orchestrator_worker(&id)
+        || id == "gemini-flash"
+}
+
 /// 五个金额（输入、输出、缓存读、缓存写、合计）；查不到价格的记 0。
 fn costs(
     conn: &rusqlite::Connection,
@@ -219,7 +238,9 @@ fn import_records_with_cursor(
                 let selected =
                     known_model(row).or_else(|| model_by_step.get(&step).map(String::as_str));
                 // Pruned steps can never be updated again, so their model is moot.
-                let needs_model = selected.is_none_or(is_orchestrator) && !pruned.contains(&step);
+                let needs_model = selected
+                    .is_none_or(|m| is_orchestrator(m) || is_orchestrator_worker(m))
+                    && !pruned.contains(&step);
                 (needs_model || !settled.contains(&step)).then_some(step)
             })
             .collect();
@@ -278,14 +299,29 @@ fn import_records_with_cursor(
             .or_else(|| model_by_step.get(&step).cloned())
             .or_else(|| native_model_by_step.get(&step).cloned())
             .unwrap_or_else(|| "unknown".to_string());
+        let native_worker_model = native_model_by_step
+            .get(&step)
+            .map(String::as_str)
+            .filter(|model| !is_unresolved_worker_target(model));
+        let worker_without_native =
+            is_orchestrator_worker(&display) && native_worker_model.is_none();
         let actual = if is_orchestrator(&display) {
-            native_model_by_step.get(&step).unwrap_or(&display)
+            native_model_by_step
+                .get(&step)
+                .map(String::as_str)
+                .unwrap_or(&display)
+        } else if is_orchestrator_worker(&display) {
+            native_worker_model.unwrap_or("gemini-4-hydrogen")
         } else {
             &display
         };
         let model = model_id_of(actual);
         // 原生库暂时不可读时，保留已恢复的模型；Token 仍按最新日志更新。
-        let (model, display) = if (model == "unknown" || is_orchestrator(&model)) && fresh == 0 {
+        let (model, display) = if (model == "unknown"
+            || is_orchestrator(&model)
+            || worker_without_native)
+            && fresh == 0
+        {
             let previous = tx
                 .prepare_cached(
                     "SELECT model, COALESCE(request_model, model) FROM proxy_request_logs
@@ -295,13 +331,27 @@ fn import_records_with_cursor(
                     Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
                 })
                 .optional()?;
-            previous
-                .filter(|(old_model, old_display)| {
-                    model == "unknown"
-                        || (!is_orchestrator(old_model)
-                            && orchestrator_mode(old_display) == orchestrator_mode(&display))
-                })
-                .unwrap_or((model, display))
+            match previous {
+                Some((old_model, old_display)) if model == "unknown" => (old_model, old_display),
+                Some((old_model, old_display))
+                    if worker_without_native
+                        && ((is_orchestrator_worker(&old_display)
+                            && !is_unresolved_worker_target(&old_model))
+                            || (is_orchestrator(&old_display)
+                                && old_model.starts_with("gemini-4-hydrogen"))) =>
+                {
+                    (old_model, display)
+                }
+                Some((old_model, old_display))
+                    if !worker_without_native
+                        && !is_orchestrator(&old_model)
+                        && !is_orchestrator_worker(&old_model)
+                        && orchestrator_mode(&old_display) == orchestrator_mode(&display) =>
+                {
+                    (old_model, old_display)
+                }
+                _ => (model, display),
+            }
         } else {
             (model, display)
         };
