@@ -212,7 +212,10 @@ fn read_generations(path: &Path, steps: &[u64]) -> rusqlite::Result<HashMap<u64,
         // https://antigravity.google/docs/models#orchestrator
         let orchestrator_model = match base.as_deref() {
             Some("gemini-pro-orchestrator") => Some("gemini-4-carbon"),
-            Some("gemini-pro-orchestrator-argon") => Some("gemini-4-argon"),
+            Some("gemini-pro-orchestrator-argon" | "gemini-pro-orchestrator-g1-pro") => {
+                Some("gemini-4-argon")
+            }
+            Some("gemini-pro-orchestrator-neon") => Some("gemini-4-neon"),
             Some("gemini-flash-worker-agy") => Some("gemini-4-hydrogen"),
             _ => None,
         };
@@ -329,6 +332,8 @@ mod tests {
                 (5, 2, "gemini-pro-orchestrator-argon"),
                 (7, 3, "future-worker"),
                 (9, 4, "gemini-flash-worker-agy"),
+                (11, 5, "gemini-pro-orchestrator-neon"),
+                (13, 6, "gemini-pro-orchestrator-g1-pro"),
             ],
         );
         set_test_generation(
@@ -355,12 +360,26 @@ mod tests {
             "gemini-flash-worker-agy",
             &test_model_id("gemini-4-hydrogen-high"),
         );
-        let models = read_models(&path, &[1, 3, 5, 7, 9]).unwrap();
+        set_test_generation(
+            &conn,
+            5,
+            "gemini-pro-orchestrator-neon",
+            &test_model_id("Orchestrator (Neon)"),
+        );
+        set_test_generation(
+            &conn,
+            6,
+            "gemini-pro-orchestrator-g1-pro",
+            &test_model_id("Orchestrator (Argon)"),
+        );
+        let models = read_models(&path, &[1, 3, 5, 7, 9, 11, 13]).unwrap();
         assert_eq!(models[&1], "gemini-4-carbon");
         assert_eq!(models[&3], "gemini-4-hydrogen");
         assert_eq!(models[&5], "gemini-4-argon");
         assert_eq!(models[&7], "future-worker");
         assert_eq!(models[&9], "gemini-4-hydrogen-high");
+        assert_eq!(models[&11], "gemini-4-neon");
+        assert_eq!(models[&13], "gemini-4-argon");
     }
 
     #[test]
