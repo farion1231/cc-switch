@@ -2702,6 +2702,14 @@ fn model_pricing_candidates(model_id: &str) -> Vec<PricingCandidate> {
                 allow_prefix_match: false,
             });
         }
+        // AGY records "Claude Opus 4.6 (Thinking)" as `claude-opus-4.6-thinking`. Extended
+        // thinking is billed at the model's own rates, so price it exactly like the base
+        // Claude ID, including the usual short-ID-to-dated-row match (Sonnet 4.5 only has a
+        // dated row). Only Claude: other `-thinking` IDs (such as `kimi-k2-thinking`) are
+        // separately priced models.
+        if let Some(stripped) = strip_claude_thinking_suffix(&candidate) {
+            push_derived(&mut queue, stripped);
+        }
     }
 
     candidates
@@ -2918,6 +2926,16 @@ fn strip_gemini_flash_tiered_suffix(model_id: &str) -> Option<String> {
             .split('.')
             .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit())))
     .then(|| format!("gemini-{version}-flash"))
+}
+
+fn strip_claude_thinking_suffix(model_id: &str) -> Option<String> {
+    if !model_id.starts_with("claude-")
+        || strip_claude_desktop_non_anthropic_prefix(model_id).is_some()
+    {
+        return None;
+    }
+    let base = model_id.strip_suffix("-thinking")?;
+    (base.len() > "claude-".len()).then(|| base.to_string())
 }
 
 fn should_try_pricing_prefix_match(model_id: &str) -> bool {
@@ -6344,6 +6362,135 @@ mod tests {
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         )?;
         assert_eq!(totals, (3, 3_000_000, 300_000, 3_000_000));
+        Ok(())
+    }
+
+    #[test]
+    fn test_claude_thinking_pricing_matches_base_model() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+        let opus = find_model_pricing_row(&conn, "claude-opus-4-6")?;
+        let sonnet = find_model_pricing_row(&conn, "claude-sonnet-4-6")?;
+        assert!(opus.is_some() && sonnet.is_some());
+        for model in [
+            "claude-opus-4.6-thinking",
+            "claude-opus-4-6-thinking",
+            "models/claude-opus-4.6-thinking",
+            "anthropic.claude-opus-4-6-thinking",
+        ] {
+            assert_eq!(find_model_pricing_row(&conn, model)?, opus, "{model}");
+        }
+        for model in ["claude-sonnet-4.6-thinking", "claude-sonnet-4-6-thinking"] {
+            assert_eq!(find_model_pricing_row(&conn, model)?, sonnet, "{model}");
+        }
+        // A thinking variant resolves exactly like its base ID, including bases that only
+        // have a dated row (short ID -> dated row is the normal Claude lookup).
+        for base in [
+            "claude-opus-4-1",
+            "claude-opus-4-5",
+            "claude-opus-4-6",
+            "claude-opus-4-8",
+            "claude-opus-5-5",
+            "claude-sonnet-4-5",
+            "claude-sonnet-4-6",
+            "claude-haiku-4-5",
+        ] {
+            let expected = find_model_pricing_row(&conn, base)?;
+            assert!(expected.is_some(), "{base}");
+            let dotted = format!("{}.{}", &base[..base.len() - 2], &base[base.len() - 1..]);
+            for model in [format!("{base}-thinking"), format!("{dotted}-thinking")] {
+                assert_eq!(find_model_pricing_row(&conn, &model)?, expected, "{model}");
+            }
+        }
+
+        // Other `-thinking` models are separately priced; never strip them to a base ID.
+        let kimi_thinking = query_model_pricing_exact(&conn, "kimi-k2-thinking")?;
+        assert!(kimi_thinking.is_some());
+        assert_ne!(kimi_thinking, query_model_pricing_exact(&conn, "kimi-k2")?);
+        for model in ["kimi-k2-thinking", "claude-kimi-k2-thinking"] {
+            assert_eq!(
+                find_model_pricing_row(&conn, model)?,
+                kimi_thinking,
+                "{model}"
+            );
+        }
+        assert_eq!(
+            strip_claude_thinking_suffix("claude-kimi-k2-thinking"),
+            None
+        );
+        assert_eq!(strip_claude_thinking_suffix("claude-thinking"), None);
+
+        // An exact custom thinking price still wins over the base estimate.
+        conn.execute(
+            "INSERT INTO model_pricing VALUES ('claude-opus-4-6-thinking',
+             'Custom Opus 4.6 Thinking', '9', '45', '0.9', '11.25')",
+            [],
+        )?;
+        assert_eq!(
+            find_model_pricing_row(&conn, "claude-opus-4.6-thinking")?,
+            Some(("9".into(), "45".into(), "0.9".into(), "11.25".into()))
+        );
+
+        // Unknown Claude versions stay unpriced instead of borrowing another family's price.
+        assert!(find_model_pricing_row(&conn, "claude-opus-9-9-thinking")?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn test_claude_thinking_backfills_without_transcripts() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            for (id, model, cost) in [
+                ("thinking-history", "claude-opus-4.6-thinking", "0"),
+                ("already-priced", "claude-opus-4.6-thinking", "9"),
+            ] {
+                insert_usage_log(
+                    &conn,
+                    id,
+                    "agy",
+                    "_agy_session",
+                    model,
+                    "agy_session",
+                    1000,
+                    1_000_000,
+                    100_000,
+                    1_000_000,
+                    0,
+                    200,
+                    cost,
+                )?;
+            }
+            conn.execute(
+                "UPDATE proxy_request_logs SET request_model='Claude Opus 4.6 (Thinking)',
+                 input_token_semantics=?1",
+                [INPUT_TOKEN_SEMANTICS_FRESH],
+            )?;
+        }
+        // Updating the base Opus 4.6 price must reach the retained thinking row.
+        assert_eq!(
+            db.backfill_missing_usage_costs_for_model("claude-opus-4-6")?,
+            1
+        );
+        assert_eq!(db.backfill_missing_usage_costs()?, 0);
+        let conn = lock_conn!(db.conn);
+        for (id, expected) in [("thinking-history", "8.000000"), ("already-priced", "9")] {
+            let row: (String, String, String) = conn.query_row(
+                "SELECT model, request_model, total_cost_usd FROM proxy_request_logs
+                 WHERE request_id=?1",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )?;
+            assert_eq!(
+                row,
+                (
+                    "claude-opus-4.6-thinking".into(),
+                    "Claude Opus 4.6 (Thinking)".into(),
+                    expected.into(),
+                ),
+                "{id}"
+            );
+        }
         Ok(())
     }
 
