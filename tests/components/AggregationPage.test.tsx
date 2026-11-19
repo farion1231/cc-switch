@@ -470,15 +470,13 @@ describe("AggregationPage", () => {
 
     renderPage();
 
-    // Global mode OFF -> both attach buttons are disabled
-    const attachBtnsOff = await screen.findAllByRole("button", {
-      name: /接入|Connect|attachApp/,
-    });
-    expect(attachBtnsOff).toHaveLength(2);
-    expect(attachBtnsOff[0]).toBeDisabled();
-    expect(attachBtnsOff[1]).toBeDisabled();
+    // Global mode OFF -> no disabled/redundant attach buttons rendered
+    expect(await screen.findByRole("button", { name: "Claude Code" })).toBeInTheDocument();
+    expect(
+      screen.queryAllByRole("button", { name: /接入|Connect|attachApp/ }),
+    ).toHaveLength(0);
 
-    // Turn ON global Aggregation -> Claude & Codex remain unattached (still showing Connect/接入, now enabled)
+    // Turn ON global Aggregation -> Claude & Codex remain unattached (now showing clickable Connect/接入)
     await user.click(
       screen.getByRole("switch", { name: /开启聚合模式|enableMode/ }),
     );
@@ -568,6 +566,9 @@ describe("AggregationPage", () => {
       await screen.findByRole("button", { name: "Gemini CLI" })
     ).parentElement!;
     expect(geminiChip).toHaveTextContent(/官方直连|Official direct/);
+    expect(
+      within(geminiChip).queryByRole("button", { name: /接入|Connect|attachApp/ }),
+    ).not.toBeInTheDocument();
 
     const piChip = screen.getByRole("button", { name: "Pi" }).parentElement!;
     expect(piChip).toHaveTextContent(/未分配|Unassigned/);

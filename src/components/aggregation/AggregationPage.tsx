@@ -796,24 +796,16 @@ export function AggregationPage({
                                   defaultValue: "未分配",
                                 })}
                         </span>
-                        {appState.supportsLocalProxy ? (
+                        {appState.supportsLocalProxy && canAttach ? (
                           <button
                             type="button"
-                            disabled={busy || !canAttach}
+                            disabled={busy}
                             title={
                               isProxyAttached
                                 ? t("aggregation.detachAppTip", {
                                     defaultValue: "点击取消接入",
                                   })
-                                : !canAttach
-                                  ? !overview?.enabled
-                                    ? t("aggregation.enableModeBeforeAttach", {
-                                        defaultValue: "请先开启聚合模式",
-                                      })
-                                    : t("aggregation.assignBeforeAttach", {
-                                        defaultValue: "请先为该应用分配外部供应商",
-                                      })
-                                  : undefined
+                                : undefined
                             }
                             onClick={() =>
                               void handleToggleAppMode(appState, isProxyAttached)
@@ -822,9 +814,7 @@ export function AggregationPage({
                               "rounded px-1.5 py-0.5 text-[11px] font-medium transition-colors",
                               isProxyAttached
                                 ? "bg-stack text-stack-on hover:opacity-90"
-                                : canAttach
-                                  ? "bg-subtle text-fg-2 hover:bg-selected hover:text-fg-1"
-                                  : "bg-subtle/60 text-fg-3 opacity-60 cursor-not-allowed",
+                                : "bg-subtle text-fg-2 hover:bg-selected hover:text-fg-1",
                             )}
                           >
                             {busy
@@ -837,7 +827,7 @@ export function AggregationPage({
                                     defaultValue: "接入",
                                   })}
                           </button>
-                        ) : isProxyAttached ? (
+                        ) : !appState.supportsLocalProxy && isProxyAttached ? (
                           <button
                             type="button"
                             disabled={busy}

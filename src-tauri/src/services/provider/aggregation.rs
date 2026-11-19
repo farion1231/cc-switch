@@ -3186,5 +3186,24 @@ mod tests {
                 .apps
                 .opencode
         );
+
+        // 7. Simulated restart with remembered enable_stack_mode = true:
+        //    startup() automatically starts the local proxy/routing service without auto-attaching apps
+        let _ = state.proxy_service.stop().await;
+        assert!(!state.proxy_service.is_running().await);
+        assert!(crate::settings::get_settings().enable_stack_mode);
+        crate::mode::controller::startup(&state).await;
+        assert!(state.proxy_service.is_running().await);
+        assert!(!crate::mode::current::is_proxy(&AppType::Claude));
+        assert!(!crate::mode::current::is_proxy(&AppType::Codex));
+
+        // 8. Simulated restart with enable_stack_mode = false:
+        //    startup() keeps local proxy/routing service stopped
+        set_global_aggregation_mode_inner(&state, false)
+            .await
+            .expect("disable global aggregation again");
+        assert!(!state.proxy_service.is_running().await);
+        crate::mode::controller::startup(&state).await;
+        assert!(!state.proxy_service.is_running().await);
     }
 }
