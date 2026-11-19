@@ -318,7 +318,7 @@
     "supports1mShort": "1M",
     "directModelListTitle": "模型清單",
     "directModelListCollapsedHint": "原生 Claude 模型供應商通常不需填寫，Claude Desktop 會自動讀取 /v1/models。",
-    "directModelListHint": "設定 Claude Desktop 可用的 Sonnet、Opus、Haiku 模型。留空時 Claude Desktop 會自動讀取 /v1/models；勾選 1M 會聲明支援 1M 上下文。",
+    "directModelListHint": "設定 Claude Desktop 可用的 Sonnet、Opus、Haiku 模型。直連時留空，Claude Desktop 會自動讀取 /v1/models；路由模式下留空只提供預設的 Claude 模型名稱，要使用供應商的模型請在這裡填寫。勾選 1M 會聲明支援 1M 上下文。",
     "directModelInvalid": "直連模型必須使用 Claude Desktop 可識別的 Sonnet / Opus / Haiku 模型名稱",
     "addModel": "新增模型",
     "addRoute": "新增模型",

@@ -318,7 +318,7 @@
     "supports1mShort": "1 milyon",
     "directModelListTitle": "Model Listesi",
     "directModelListCollapsedHint": "Yerel Claude modeli sağlayıcılarında buna genellikle gerek yoktur. Claude Desktop, /v1/models uç noktasını otomatik sorgular.",
-    "directModelListHint": "Claude Desktop için kullanılabilen Sonnet, Opus ve Haiku modellerini yapılandırın. Claude Desktop’ın /v1/models uç noktasını otomatik sorgulaması için boş bırakın. 1M seçeneğini işaretlemek, 1 milyon token bağlam desteğini bildirir.",
+    "directModelListHint": "Claude Desktop için kullanılabilen Sonnet, Opus ve Haiku modellerini yapılandırın. Doğrudan modda boş bırakırsanız Claude Desktop /v1/models uç noktasını otomatik sorgular; yönlendirme modunda boş liste yalnızca varsayılan Claude model adlarını sunar, sağlayıcının modellerini kullanmak için buraya girin. 1M seçeneğini işaretlemek, 1 milyon token bağlam desteğini bildirir.",
     "directModelInvalid": "Doğrudan modeller Claude Desktop tarafından tanınan Sonnet / Opus / Haiku model kimliklerini kullanmalıdır",
     "addModel": "Model ekle",
     "addRoute": "Model ekle",

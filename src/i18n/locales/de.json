@@ -318,7 +318,7 @@
     "supports1mShort": "1M",
     "directModelListTitle": "Modellliste",
     "directModelListCollapsedHint": "Anbieter nativer Claude-Modelle benötigen dies in der Regel nicht. Claude Desktop ruft /v1/models automatisch ab.",
-    "directModelListHint": "Konfigurieren Sie die Modelle Sonnet, Opus und Haiku, die Claude Desktop zur Verfügung stehen. Leer lassen, damit Claude Desktop /v1/models automatisch abruft. Mit dem Häkchen bei 1M wird Unterstützung für 1M Kontext angegeben.",
+    "directModelListHint": "Konfigurieren Sie die Modelle Sonnet, Opus und Haiku, die Claude Desktop zur Verfügung stehen. Im Direktmodus leer lassen, damit Claude Desktop /v1/models automatisch abruft; im Routing-Modus bietet eine leere Liste nur die Standard-Modellnamen von Claude an – tragen Sie die Modelle hier ein, um die des Anbieters zu nutzen. Mit dem Häkchen bei 1M wird Unterstützung für 1M Kontext angegeben.",
     "directModelInvalid": "Direkte Modelle müssen von Claude Desktop erkannte Modell-IDs für Sonnet / Opus / Haiku verwenden",
     "addModel": "Modell hinzufügen",
     "addRoute": "Modell hinzufügen",

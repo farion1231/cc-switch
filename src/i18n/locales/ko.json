@@ -318,7 +318,7 @@
     "supports1mShort": "1M",
     "directModelListTitle": "모델 목록",
     "directModelListCollapsedHint": "네이티브 Claude 모델 공급자는 일반적으로 설정할 필요가 없습니다. Claude Desktop이 /v1/models를 자동으로 가져옵니다.",
-    "directModelListHint": "Claude Desktop에 사용할 수 있는 Sonnet, Opus 및 Haiku 모델을 설정합니다. Claude Desktop이 /v1/models를 자동으로 가져오도록 하려면 이 항목을 비워 두세요. 1M을 선택하면 1M 컨텍스트 지원이 선언됩니다.",
+    "directModelListHint": "Claude Desktop에 사용할 수 있는 Sonnet, Opus 및 Haiku 모델을 설정합니다. 직접 연결에서는 비워 두면 Claude Desktop이 /v1/models를 자동으로 가져옵니다. 라우팅 모드에서는 비워 두면 기본 Claude 모델 이름만 제공되므로, 공급자의 모델을 사용하려면 여기에 입력하세요. 1M을 선택하면 1M 컨텍스트 지원이 선언됩니다.",
     "directModelInvalid": "직접 연결 모델에는 Claude Desktop이 인식하는 Sonnet / Opus / Haiku 모델 ID를 사용해야 합니다",
     "addModel": "모델 추가",
     "addRoute": "모델 추가",
