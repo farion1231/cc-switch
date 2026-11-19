@@ -612,7 +612,7 @@ describe("SessionManagerPage", () => {
     renderPage("claude", { fromApp: "claude-desktop" });
     expect(
       await screen.findByText(
-        "Claude Desktop 没有单独的会话记录，这里显示 Claude Code 的会话。",
+        "这里显示 Claude Code 的会话文件。打开 Desktop 历史可按账号和归档状态查看记录。",
       ),
     ).toBeInTheDocument();
   });

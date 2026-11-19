@@ -1486,7 +1486,7 @@
     "expandContent": "全文を表示",
     "collapseContent": "折りたたむ",
     "helpTitle": "セッションの出どころ",
-    "helpBody": "CC Switch は各アプリがこのコンピューターに保存しているセッション記録を読み取ります。保存場所は右上の ⋯ の「セッションの保存場所」で確認できます。Claude Desktop には独自のセッション記録はありません。",
+    "helpBody": "CC Switch はローカルに保存された会話記録を読み取ります。その他の操作から Desktop のアカウント履歴を開けます。",
     "moreActions": "セッションのその他の操作",
     "refreshList": "一覧を更新",
     "listRefreshed": "セッション一覧を更新しました",
@@ -1505,7 +1505,7 @@
     "groupBy": "グループ化",
     "groupByTime": "時間順",
     "groupByProject": "プロジェクト別",
-    "desktopNote": "Claude Desktop には独自のセッション記録がないため、Claude Code のセッションを表示しています。",
+    "desktopNote": "この一覧には Claude Code の会話ファイルが表示されます。Desktop の履歴では、アカウントとアーカイブ状態ごとに記録を確認できます。",
     "dshMergedNote": "DeepSeek Harness の Web と Desktop は同じセッション記録を共有しているため、ここではまとめて表示します。",
     "matchCount": "一致 {{count}} 件",
     "totalCount": "全 {{count}} 件",
@@ -5318,5 +5318,25 @@
     "installFailed": "アップデートのインストールに失敗しました",
     "downloadingInline": "新しいバージョンをバックグラウンドでダウンロード中…",
     "downloadedInline": "ダウンロード完了"
+  },
+  "desktopHistory": {
+    "chooseProfile": "既存のプロファイルを選択",
+    "lastKnown": "最後にログインしたアカウント",
+    "profileHint": "アカウントと組織は別々に表示されます。最終ログインの表示は実行中のプロファイルを示すものではありません。",
+    "empty": "保存済みの Desktop プロファイルがありません。対象アカウントで Claude Desktop を開いてから更新してください。",
+    "showArchived": "アーカイブ済みの履歴を含める",
+    "active": "有効",
+    "archived": "アーカイブ済み",
+    "noSessions": "このフィルターに一致する履歴はありません。",
+    "noTranscript": "ローカル会話記録への参照なし",
+    "readTranscript": "会話記録 {{number}} を読む",
+    "transcript": {
+      "missing": "会話記録 {{number}} がありません",
+      "ambiguous": "会話記録 {{number}} に複数の候補があります"
+    },
+    "transcriptHint": "Desktop の記録と会話ファイルは別々です。記録をコピーしても欠落した会話は復元されません。各リンクは既存のリーダーで参照先の会話を開きます。",
+    "title": "Desktop の履歴",
+    "description": "保存済みの Claude Desktop アカウント、アーカイブ済みの履歴、利用可能なローカル会話を確認します。",
+    "profile": "アカウント / プロファイル"
   }
 }

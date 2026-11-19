@@ -1486,7 +1486,7 @@
     "expandContent": "展开完整内容",
     "collapseContent": "收起",
     "helpTitle": "会话从哪里来",
-    "helpBody": "CC Switch 读取各个应用保存在本机的会话记录，位置见右上角 ⋯ 里的「会话记录在哪里」。Claude Desktop 没有单独的会话记录。",
+    "helpBody": "CC Switch 读取保存在本机的会话记录。Claude Desktop 的账号历史可从更多操作中打开。",
     "moreActions": "会话的更多操作",
     "refreshList": "刷新列表",
     "listRefreshed": "已刷新会话列表",
@@ -1505,7 +1505,7 @@
     "groupBy": "分组方式",
     "groupByTime": "按时间",
     "groupByProject": "按项目",
-    "desktopNote": "Claude Desktop 没有单独的会话记录，这里显示 Claude Code 的会话。",
+    "desktopNote": "这里显示 Claude Code 的会话文件。打开 Desktop 历史可按账号和归档状态查看记录。",
     "dshMergedNote": "DeepSeek Harness 的 Web 和 Desktop 共用同一份会话记录，这里合并显示。",
     "matchCount": "匹配 {{count}} 个会话",
     "totalCount": "共 {{count}} 个会话",
@@ -5318,5 +5318,25 @@
     "installFailed": "安装更新失败",
     "downloadingInline": "正在后台下载新版本…",
     "downloadedInline": "已下载完毕"
+  },
+  "desktopHistory": {
+    "chooseProfile": "选择已有配置",
+    "lastKnown": "上次登录账号",
+    "profileHint": "账号和组织分别列出。“上次登录”标记不代表当前正在运行的配置。",
+    "empty": "未找到已保存的 Desktop 配置。先用目标账号打开 Claude Desktop，再刷新。",
+    "showArchived": "包含已归档历史",
+    "active": "活跃",
+    "archived": "已归档",
+    "noSessions": "没有符合筛选条件的历史记录。",
+    "noTranscript": "没有本地对话引用",
+    "readTranscript": "阅读对话 {{number}}",
+    "transcript": {
+      "missing": "对话 {{number}} 缺失",
+      "ambiguous": "对话 {{number}} 有多个匹配文件"
+    },
+    "transcriptHint": "Desktop 记录与对话文件分开保存。缺失的对话会被标记，复制记录不会恢复对话内容。链接会在现有阅读器中打开对应的对话文件。",
+    "title": "Desktop 历史",
+    "description": "按账号查看已保存的 Claude Desktop 历史、归档记录及可用的本地对话。",
+    "profile": "账号 / 配置"
   }
 }

@@ -1486,7 +1486,7 @@
     "expandContent": "展開完整內容",
     "collapseContent": "收起",
     "helpTitle": "工作階段從哪裡來",
-    "helpBody": "CC Switch 讀取各個應用保存在本機的工作階段記錄，位置見右上角 ⋯ 裡的「工作階段記錄在哪裡」。Claude Desktop 沒有單獨的工作階段記錄。",
+    "helpBody": "CC Switch 讀取儲存在本機的對話記錄。Claude Desktop 的帳號歷史可從更多操作中開啟。",
     "moreActions": "工作階段的更多操作",
     "refreshList": "重新整理列表",
     "listRefreshed": "已重新整理工作階段列表",
@@ -1505,7 +1505,7 @@
     "groupBy": "分組方式",
     "groupByTime": "按時間",
     "groupByProject": "按專案",
-    "desktopNote": "Claude Desktop 沒有單獨的工作階段記錄，這裡顯示 Claude Code 的工作階段。",
+    "desktopNote": "這裡顯示 Claude Code 的對話檔案。開啟 Desktop 歷史可依帳號和封存狀態查看記錄。",
     "dshMergedNote": "DeepSeek Harness 的 Web 和 Desktop 共用同一份工作階段記錄，這裡合併顯示。",
     "matchCount": "符合 {{count}} 個工作階段",
     "totalCount": "共 {{count}} 個工作階段",
@@ -5318,5 +5318,25 @@
     "installFailed": "安裝更新失敗",
     "downloadingInline": "正在背景下載新版本…",
     "downloadedInline": "已下載完畢"
+  },
+  "desktopHistory": {
+    "chooseProfile": "選擇現有設定檔",
+    "lastKnown": "上次登入的帳號",
+    "profileHint": "帳號與組織分別列出。「上次登入」標記不代表目前正在執行的設定檔。",
+    "empty": "找不到已儲存的 Desktop 設定檔。請先以目標帳號開啟 Claude Desktop，再重新整理。",
+    "showArchived": "包含已封存歷史",
+    "active": "使用中",
+    "archived": "已封存",
+    "noSessions": "沒有符合篩選條件的歷史紀錄。",
+    "noTranscript": "沒有本機對話紀錄參照",
+    "readTranscript": "閱讀對話紀錄 {{number}}",
+    "transcript": {
+      "missing": "對話紀錄 {{number}} 遺失",
+      "ambiguous": "對話紀錄 {{number}} 有多個相符檔案"
+    },
+    "transcriptHint": "Desktop 紀錄與對話檔案分開儲存。遺失的對話會被標記，複製紀錄不會復原對話內容。連結會在現有閱讀器中開啟對應的對話檔案。",
+    "title": "Desktop 歷史",
+    "description": "依帳號查看已儲存的 Claude Desktop 歷史、封存記錄及可用的本機對話。",
+    "profile": "帳號 / 設定檔"
   }
 }

@@ -17,6 +17,12 @@ mod config;
 mod copilot_config;
 mod database;
 mod deeplink;
+#[cfg(unix)]
+mod desktop_data;
+#[cfg(unix)]
+mod desktop_history;
+#[cfg(unix)]
+mod desktop_session_data;
 mod dsh_config;
 mod error;
 #[cfg(test)]
@@ -1594,6 +1600,8 @@ pub fn run() {
             commands::switch_provider,
             commands::import_default_config,
             commands::get_claude_desktop_status,
+            commands::list_desktop_history,
+            commands::open_desktop_history_transcript,
             commands::get_claude_desktop_default_routes,
             commands::import_claude_desktop_providers_from_claude,
             commands::ensure_claude_desktop_official_provider,

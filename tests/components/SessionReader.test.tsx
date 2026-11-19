@@ -65,11 +65,13 @@ const onCopy = vi.fn();
 const renderReader = (
   providerId: string,
   messages: SessionMessage[],
+  readOnly = false,
 ): ReturnType<typeof render> => {
   const client = createTestQueryClient();
   const ui: ReactElement = (
     <QueryClientProvider client={client}>
       <SessionReader
+        readOnly={readOnly}
         session={meta(providerId)}
         appName={providerId === "claude" ? "Claude Code" : providerId}
         transcript={transcriptOf(messages)}
@@ -110,6 +112,24 @@ describe("SessionReader", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("keeps linked Desktop transcripts readable without CLI resume or delete actions", async () => {
+    renderReader("claude", fixtures.claude, true);
+    expect(conversation()).toBeInTheDocument();
+    const resume = screen.getByRole("button", { name: "复制恢复命令" });
+    expect(resume).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(resume);
+    expect(onCopy).not.toHaveBeenCalled();
+    await userEvent.click(
+      screen.getByRole("button", { name: "claude 会话 的更多操作" }),
+    );
+    expect(
+      await screen.findByRole("menuitem", { name: "删除…" }),
+    ).toHaveAttribute("aria-disabled", "true");
+    expect(
+      screen.getByRole("menuitem", { name: "复制整段为 Markdown" }),
+    ).not.toHaveAttribute("aria-disabled", "true");
   });
 
   describe("五家 Agent 共用骨架，只换符号、动词与合并规则", () => {

@@ -1486,7 +1486,7 @@
     "expandContent": "전체 콘텐츠 펼치기",
     "collapseContent": "접기",
     "helpTitle": "세션의 출처",
-    "helpBody": "CC Switch는 각 앱이 이 컴퓨터에 보관하는 세션 기록을 읽습니다. ⋯ 메뉴에서 “세션이 저장되는 위치”를 참조하세요. Claude Desktop에는 자체 세션 기록이 없습니다.",
+    "helpBody": "CC Switch는 로컬에 저장된 대화 기록을 읽습니다. 더 보기 메뉴에서 Desktop 계정 기록을 열 수 있습니다.",
     "moreActions": "추가 세션 작업",
     "refreshList": "목록 새로 고침",
     "listRefreshed": "세션 목록이 새로 고쳐졌습니다.",
@@ -1505,7 +1505,7 @@
     "groupBy": "그룹화 기준",
     "groupByTime": "시간별",
     "groupByProject": "프로젝트별",
-    "desktopNote": "Claude Desktop에는 자체 세션 기록이 없습니다. Claude Code 세션을 표시합니다.",
+    "desktopNote": "이 목록에는 Claude Code 대화 파일이 표시됩니다. Desktop 기록에서 계정과 보관 상태별로 기록을 볼 수 있습니다.",
     "matchCount": "일치하는 세션 {{count}}개",
     "totalCount": "세션 {{count}}개",
     "selectAllMatches": "모든 일치 항목 선택",
@@ -5318,5 +5318,25 @@
     "installFailed": "업데이트 설치에 실패했습니다",
     "downloadingInline": "새 버전을 백그라운드에서 다운로드하는 중…",
     "downloadedInline": "다운로드 완료"
+  },
+  "desktopHistory": {
+    "chooseProfile": "기존 프로필 선택",
+    "lastKnown": "마지막 로그인 계정",
+    "profileHint": "계정과 조직은 별도로 표시됩니다. 마지막 로그인 표시는 현재 실행 중인 프로필을 뜻하지 않습니다.",
+    "empty": "저장된 Desktop 프로필이 없습니다. 원하는 계정으로 Claude Desktop을 연 뒤 새로 고치세요.",
+    "showArchived": "보관된 기록 포함",
+    "active": "활성",
+    "archived": "보관됨",
+    "noSessions": "필터에 맞는 기록이 없습니다.",
+    "noTranscript": "로컬 대화 기록 참조 없음",
+    "readTranscript": "대화 기록 {{number}} 읽기",
+    "transcript": {
+      "missing": "대화 기록 {{number}} 없음",
+      "ambiguous": "대화 기록 {{number}}의 일치 파일이 여러 개임"
+    },
+    "transcriptHint": "Desktop 항목과 대화 파일은 별도로 저장됩니다. 항목을 복사해도 누락된 대화는 복구되지 않습니다. 각 링크는 기존 뷰어에서 참조된 대화 기록을 엽니다.",
+    "title": "Desktop 기록",
+    "description": "저장된 Claude Desktop 계정, 보관된 기록, 사용 가능한 로컬 대화를 확인합니다.",
+    "profile": "계정 / 프로필"
   }
 }

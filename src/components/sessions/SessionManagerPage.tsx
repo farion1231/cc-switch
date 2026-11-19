@@ -59,6 +59,7 @@ import {
   sessionMenuItemClass,
 } from "./SessionItem";
 import { SessionReader } from "./reader/SessionReader";
+import { DesktopHistoryDialog } from "./DesktopHistoryDialog";
 import { sessionKeys, useSessionTranscript } from "@/lib/query/sessions";
 import { SessionDeleteDialog, SessionSourcesDialog } from "./SessionDialogs";
 import {
@@ -170,6 +171,10 @@ export function SessionManagerPage({
   const [groupMode, setGroupMode] = useState<GroupMode>(readGroupMode);
   const [expanded, setExpanded] = useState<Set<string>>(readExpanded);
   const [readerKey, setReaderKey] = useState<string | null>(null);
+  const [desktopOpen, setDesktopOpen] = useState(false);
+  const [desktopSession, setDesktopSession] = useState<SessionMeta | null>(
+    null,
+  );
   // 点了行下方某条摘录打开的：跳到那条消息，而不是最相关的那条
   const [readerJump, setReaderJump] = useState<{
     key: string;
@@ -362,11 +367,12 @@ export function SessionManagerPage({
 
   const readerSession = useMemo(
     () =>
-      readerKey
+      desktopSession ??
+      (readerKey
         ? (sessions.find((session) => getSessionKey(session) === readerKey) ??
           null)
-        : null,
-    [sessions, readerKey],
+        : null),
+    [sessions, readerKey, desktopSession],
   );
   const readerIndex = readerSession
     ? orderedSessions.findIndex(
@@ -497,6 +503,12 @@ export function SessionManagerPage({
   };
 
   const backToList = () => {
+    if (desktopSession) {
+      setDesktopSession(null);
+      setReaderKey(null);
+      setDesktopOpen(true);
+      return;
+    }
     const key = readerKey;
     setReaderKey(null);
     // 阅读页里翻过上一个 / 下一个时，原来那行可能已经滚出虚拟列表：先滚回去再把焦点放回去
@@ -554,6 +566,13 @@ export function SessionManagerPage({
   ).length;
 
   const openDelete = (targets: SessionMeta[], source: DeleteSource) => {
+    if (
+      desktopSession &&
+      targets.some(
+        (session) => session.sourcePath === desktopSession.sourcePath,
+      )
+    )
+      return;
     const deletable = targets.filter(canDeleteSession);
     if (deletable.length === 0) return;
     deleteSourceRef.current = source;
@@ -1090,7 +1109,7 @@ export function SessionManagerPage({
             >
               {t("sessionManager.helpBody", {
                 defaultValue:
-                  "CC Switch 读取各个应用保存在本机的会话记录，位置见右上角 ⋯ 里的「会话记录在哪里」。Claude Desktop 没有单独的会话记录。",
+                  "CC Switch 读取保存在本机的会话记录。Claude Desktop 的账号历史可从更多操作中打开。",
               })}
             </HelpTip>
           }
@@ -1114,6 +1133,13 @@ export function SessionManagerPage({
                 align="end"
                 className="w-[196px] rounded-panel p-1 shadow-v7-md"
               >
+                <DropdownMenuItem
+                  className={sessionMenuItemClass}
+                  disabled={!isMac()}
+                  onSelect={() => setDesktopOpen(true)}
+                >
+                  {t("desktopHistory.title")}
+                </DropdownMenuItem>
                 <DropdownMenuItem
                   className={sessionMenuItemClass}
                   onSelect={() => void refreshList()}
@@ -1182,22 +1208,27 @@ export function SessionManagerPage({
       <div id="main-content" className="flex min-h-0 flex-1 flex-col">
         {readerSession && (
           <SessionReader
-            key={readerKey}
+            readOnly={desktopSession !== null}
+            key={desktopSession ? getSessionKey(desktopSession) : readerKey}
             session={readerSession}
             appName={appName(readerSession.providerId)}
             transcript={transcript}
             listQuery={trimmedQuery}
             initialFind={readerInitialFind}
             launchTerminal={terminalName}
-            hasPrev={readerIndex > 0}
+            hasPrev={!desktopSession && readerIndex > 0}
             hasNext={
-              readerIndex >= 0 && readerIndex < orderedSessions.length - 1
+              !desktopSession &&
+              readerIndex >= 0 &&
+              readerIndex < orderedSessions.length - 1
             }
             onPrev={() =>
+              !desktopSession &&
               readerIndex > 0 &&
               setReaderKey(getSessionKey(orderedSessions[readerIndex - 1]))
             }
             onNext={() =>
+              !desktopSession &&
               readerIndex >= 0 &&
               readerIndex < orderedSessions.length - 1 &&
               setReaderKey(getSessionKey(orderedSessions[readerIndex + 1]))
@@ -1384,8 +1415,16 @@ export function SessionManagerPage({
             <p className="m-0 mx-6 mt-2 shrink-0 text-caption text-fg-2">
               {t("sessionManager.desktopNote", {
                 defaultValue:
-                  "Claude Desktop 没有单独的会话记录，这里显示 Claude Code 的会话。",
-              })}
+                  "这里显示 Claude Code 的会话文件。打开 Desktop 历史可按账号和归档状态查看记录。",
+              })}{" "}
+              <button
+                type="button"
+                className={linkButton}
+                disabled={!isMac()}
+                onClick={() => setDesktopOpen(true)}
+              >
+                {t("desktopHistory.title")}
+              </button>
             </p>
           )}
 
@@ -1570,6 +1609,15 @@ export function SessionManagerPage({
         </div>
       </div>
 
+      <DesktopHistoryDialog
+        open={desktopOpen}
+        onOpenChange={setDesktopOpen}
+        onOpenTranscript={(session) => {
+          setDesktopSession(session);
+          setReaderKey(null);
+          setReaderJump(null);
+        }}
+      />
       <SessionDeleteDialog
         targets={deleteTargets}
         pending={isDeleting}

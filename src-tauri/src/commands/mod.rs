@@ -1,4 +1,6 @@
 #![allow(non_snake_case)]
+mod desktop_history;
+pub use desktop_history::*;
 
 mod agy_account;
 mod auth;
