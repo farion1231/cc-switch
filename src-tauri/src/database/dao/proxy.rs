@@ -144,10 +144,22 @@ impl Database {
     /// 获取计费模式来源
     pub async fn get_pricing_model_source(&self, app_type: &AppType) -> Result<String, AppError> {
         if *app_type == AppType::ClaudeDesktop {
-            return Ok(self
-                .get_setting(DESKTOP_PRICING_SOURCE_KEY)?
-                .filter(|value| validate_pricing_source(value).is_ok())
-                .unwrap_or_else(|| PRICING_SOURCE_RESPONSE.to_string()));
+            // Desktop 现在有独立设置（存在 settings 表）。键不存在时回退到 Claude 的设置，
+            // 避免升级后用户之前的「按请求模型」配置对 Desktop 悄悄失效。
+            if let Some(value) = self.get_setting(DESKTOP_PRICING_SOURCE_KEY)? {
+                if validate_pricing_source(&value).is_ok() {
+                    return Ok(value);
+                }
+            }
+            // 回退到 Claude 的设置（直接查询避免异步递归）
+            let conn = lock_conn!(self.conn);
+            let result: Result<String, rusqlite::Error> = conn.query_row(
+                "SELECT pricing_model_source FROM proxy_config WHERE app_type = ?1",
+                [&AppType::Claude],
+                |row| row.get(0),
+            );
+            drop(conn);
+            return Ok(result.unwrap_or_else(|_| PRICING_SOURCE_RESPONSE.to_string()));
         }
         let result = {
             let conn = lock_conn!(self.conn);

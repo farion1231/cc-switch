@@ -780,6 +780,10 @@ impl RequestForwarder {
         // 队列里因为没有这个模型的映射而跳过的最后一家（见下面的跳过逻辑）
         let mut unmapped_error = None;
         let mut unmapped_provider = None;
+        // 队列里是否有一家通过了模型映射检查（即便随后被熔断器挡下、没发出请求）。
+        // 用来区分「队列里没有一家接得住这个模型」（映射配置问题 → 400）和
+        // 「有家接得住但都暂时不可用」（典型：HalfOpen 探测名额被占用 → 503）。
+        let mut any_mapped = false;
 
         // 单 Provider 场景下跳过熔断器检查（故障转移关闭时）；Stack 模型的请求不碰熔断器。
         let bypass_circuit_breaker = providers.len() == 1 || !self.routing_state_enabled();
@@ -821,6 +825,8 @@ impl RequestForwarder {
                     unmapped_provider = Some(provider.clone());
                     continue;
                 }
+                // 这家接得住这个模型。即便下面被熔断器挡下没发出请求，也说明映射配置没问题。
+                any_mapped = true;
             }
 
             // 发起请求前先获取熔断器放行许可（HalfOpen 会占用探测名额）
@@ -1331,14 +1337,17 @@ impl RequestForwarder {
 
         if last_error.is_none() {
             if let Some(error) = unmapped_error {
-                // 没有一家发出过请求，或者发出的都被熔断器挡下：队列里没有一家接得住这个模型。
-                // 这是映射配置的问题，报给客户端的是「模型路由未配置」，不是「供应商不可用」。
-                self.record_failed_request(error.to_string()).await;
-                return Err(ForwardError {
-                    error,
-                    provider: unmapped_provider,
-                    outbound_model: None,
-                });
+                // 队列里有家接得住这个模型（通过映射检查）但都被熔断器挡下、没发出请求时，
+                // 不报「模型路由未配置」（400），而是报「供应商暂时不可用」（503）。
+                // 只有队列里每家都接不住这个模型时，才是映射配置的问题（400）。
+                if !any_mapped {
+                    self.record_failed_request(error.to_string()).await;
+                    return Err(ForwardError {
+                        error,
+                        provider: unmapped_provider,
+                        outbound_model: None,
+                    });
+                }
             }
         }
 
