@@ -25,7 +25,7 @@ This is a synthetic example. Follow your existing secure credential-delivery pro
 - The confirmation dialog shows the allowed applications. The value is retained in `provider.meta.allowedApps`, not in the client's native settings.
 - An inline `config` supplies native client settings; it cannot override this top-level restriction.
 
-Canonical IDs are `claude`, `claude-desktop`, `codex`, `gemini`, `grokbuild`, `opencode`, `openclaw`, `hermes`, `pi`, and `mcode`. This list identifies applications, not new deep-link support: the public import parser's existing supported-app list still applies. In particular, this change does not enable Claude Desktop or MiniMax Code deep-link imports. Existing Desktop/MiniMax provider records can carry the metadata through the native provider API.
+Canonical IDs are `claude`, `claude-desktop`, `codex`, `gemini`, `grokbuild`, `opencode`, `openclaw`, `hermes`, `pi`, `mcode`, `kimi`, `dsh`, `agy`, `omp`, `copilot`, and `workbuddy`. The provider deep-link parser still determines which of these IDs can be used as the import target.
 
 ## Subsequent operations
 

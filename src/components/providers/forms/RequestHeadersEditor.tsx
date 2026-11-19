@@ -1,3 +1,4 @@
+import { HelpTip } from "@/components/ui/help-tip";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Plus, Trash2 } from "lucide-react";
@@ -110,14 +111,14 @@ export function RequestHeadersEditor({
   return (
     <div className={cn("space-y-2 border-l border-border pl-3", className)}>
       <div className="flex items-start justify-between gap-3">
-        <div className="space-y-1">
+        <div className="flex items-center gap-1">
           <Label>{t("opencode.headers", { defaultValue: "Headers" })}</Label>
-          <p className="text-xs text-fg-2">
+          <HelpTip title={t("opencode.headers", { defaultValue: "Headers" })}>
             {t("opencode.headersHint", {
               defaultValue:
                 "Optional HTTP headers sent with provider requests, such as HTTP-Referer or X-Title.",
             })}
-          </p>
+          </HelpTip>
         </div>
         <Button
           type="button"

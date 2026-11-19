@@ -114,6 +114,44 @@ describe("CodexFormFields sub-agent defaults", () => {
   });
 });
 
+const maxThreadsInput = () =>
+  document.getElementById("codexAgentMaxThreads") as HTMLInputElement | null;
+
+describe("CodexFormFields sub-agent concurrency limit", () => {
+  it("shows the value and writes the typed text through the handler", () => {
+    const onAgentMaxThreadsChange = vi.fn();
+    renderCodexForm({ agentMaxThreads: "8", onAgentMaxThreadsChange });
+    expect(maxThreadsInput()!.value).toBe("8");
+
+    fireEvent.change(maxThreadsInput()!, { target: { value: "12" } });
+    expect(onAgentMaxThreadsChange).toHaveBeenCalledWith("12");
+  });
+
+  it("is shown for the official card too: it is a Codex-wide setting", () => {
+    renderCodexForm({
+      category: "official",
+      onAgentMaxThreadsChange: vi.fn(),
+    });
+    expect(maxThreadsInput()).not.toBeNull();
+    expect(subagentInput()).toBeNull();
+  });
+
+  it("is hidden when the caller gives no handler (Grok Build)", () => {
+    renderCodexForm();
+    expect(maxThreadsInput()).toBeNull();
+  });
+
+  it("points out a multi_agent_v2 total that takes precedence", () => {
+    renderCodexForm({
+      multiAgentV2Total: 5,
+      onAgentMaxThreadsChange: vi.fn(),
+    });
+    expect(
+      screen.getByText(/\[features\.multi_agent_v2\] 写了总数 5/),
+    ).toBeTruthy();
+  });
+});
+
 const rowModels = () =>
   screen
     .getAllByPlaceholderText("例如: deepseek-v4-flash")
@@ -200,7 +238,7 @@ describe("CodexFormFields help tips", () => {
       screen.getByText("不要超过模型或网关的真实输出上限，否则会返回 400。"),
     ).toBeVisible();
     expect(
-      screen.getByText("以下两项只在路由、聚合模式下生效。"),
+      screen.getByText("以下设置只在路由、聚合模式下生效。"),
     ).toBeVisible();
   });
 });

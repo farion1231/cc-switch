@@ -8,38 +8,15 @@
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
-use crate::app_config::{McpApps, McpConfig, McpServer, MultiAppConfig};
+use crate::app_config::{McpApps, McpServer, MultiAppConfig};
 use crate::error::AppError;
 
-use super::validation::{extract_server_spec, validate_server_spec};
+use super::validation::{spec_transport_type, validate_server_spec};
 
 fn should_sync_codex_mcp() -> bool {
     // Codex 未安装/未初始化时：~/.codex 目录不存在。
     // 按用户偏好：目录缺失时跳过写入/删除，不创建任何文件或目录。
     crate::codex_config::get_codex_config_dir().exists()
-}
-
-/// 返回已启用的 MCP 服务器（过滤 enabled==true）
-fn collect_enabled_servers(cfg: &McpConfig) -> HashMap<String, Value> {
-    let mut out = HashMap::new();
-    for (id, entry) in cfg.servers.iter() {
-        let enabled = entry
-            .get("enabled")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        if !enabled {
-            continue;
-        }
-        match extract_server_spec(entry) {
-            Ok(spec) => {
-                out.insert(id.clone(), spec);
-            }
-            Err(err) => {
-                log::warn!("跳过无效的 MCP 条目 '{id}': {err}");
-            }
-        }
-    }
-    out
 }
 
 /// 推断 Codex `[mcp_servers.*]` 条目的传输类型。
@@ -248,6 +225,7 @@ pub fn import_from_codex(config: &mut MultiAppConfig) -> Result<usize, AppError>
                         name: id.clone(),
                         server: spec_v,
                         apps: McpApps {
+                            agy: false,
                             claude: false,
                             codex: true,
                             gemini: false,
@@ -255,7 +233,12 @@ pub fn import_from_codex(config: &mut MultiAppConfig) -> Result<usize, AppError>
                             opencode: false,
                             hermes: false,
                             mcode: false,
+                            kimi: false,
+                            copilot: false,
+                            dsh: false,
+                            workbuddy: false,
                             pi: false,
+                            omp: false,
                         },
                         description: None,
                         homepage: None,
@@ -289,77 +272,6 @@ pub fn import_from_codex(config: &mut MultiAppConfig) -> Result<usize, AppError>
     }
 
     Ok(changed_total)
-}
-
-/// 将 config.json 中 Codex 的 enabled==true 项以 TOML 形式写入 ~/.codex/config.toml
-///
-/// 格式策略：
-/// - 唯一正确格式：[mcp_servers] 顶层表（Codex 官方标准）
-/// - 自动清理错误格式：[mcp.servers]（如果存在）
-/// - 读取现有 config.toml；若语法无效则报错，不尝试覆盖
-/// - 仅更新 `mcp_servers` 表，保留其它键
-/// - 仅写入启用项；无启用项时清理 mcp_servers 表
-pub fn sync_enabled_to_codex(config: &MultiAppConfig) -> Result<(), AppError> {
-    if !should_sync_codex_mcp() {
-        return Ok(());
-    }
-    use toml_edit::{Item, Table};
-
-    // 1) 收集启用项（Codex 维度）
-    let enabled = collect_enabled_servers(&config.mcp.codex);
-
-    // 2) 读取现有 config.toml 文本；保持无效 TOML 的错误返回（不覆盖文件）
-    let base_text = crate::codex_config::read_and_validate_codex_config_text()?;
-
-    // 3) 使用 toml_edit 解析（允许空文件）
-    let mut doc = if base_text.trim().is_empty() {
-        toml_edit::DocumentMut::default()
-    } else {
-        base_text
-            .parse::<toml_edit::DocumentMut>()
-            .map_err(|e| AppError::McpValidation(format!("解析 config.toml 失败: {e}")))?
-    };
-
-    // 4) 清理可能存在的错误格式 [mcp.servers]
-    if let Some(mcp_item) = doc.get_mut("mcp") {
-        if let Some(tbl) = mcp_item.as_table_like_mut() {
-            if tbl.contains_key("servers") {
-                log::warn!("检测到错误的 MCP 格式 [mcp.servers]，正在清理并迁移到 [mcp_servers]");
-                tbl.remove("servers");
-            }
-        }
-    }
-
-    // 5) 构造目标 servers 表（稳定的键顺序）
-    if enabled.is_empty() {
-        // 无启用项：移除 mcp_servers 表
-        doc.as_table_mut().remove("mcp_servers");
-    } else {
-        // 构建 servers 表
-        let mut servers_tbl = Table::new();
-        let mut ids: Vec<_> = enabled.keys().cloned().collect();
-        ids.sort();
-        for id in ids {
-            let spec = enabled.get(&id).expect("spec must exist");
-            // 复用通用转换函数（已包含扩展字段支持）
-            match json_server_to_toml_table(spec) {
-                Ok(table) => {
-                    servers_tbl[&id[..]] = Item::Table(table);
-                }
-                Err(err) => {
-                    log::error!("跳过无效的 MCP 服务器 '{id}': {err}");
-                }
-            }
-        }
-        // 使用唯一正确的格式：[mcp_servers]
-        doc["mcp_servers"] = Item::Table(servers_tbl);
-    }
-
-    // 6) 写回（仅改 TOML，不触碰 auth.json）；toml_edit 会尽量保留未改区域的注释/空白/顺序
-    let new_text = doc.to_string();
-    let path = crate::codex_config::get_codex_config_path();
-    crate::config::write_text_file(&path, &new_text)?;
-    Ok(())
 }
 
 /// 将单个 MCP 服务器同步到 Codex live 配置
@@ -432,11 +344,7 @@ fn remove_mcp_server_from_doc(doc: &mut toml_edit::DocumentMut, id: &str) {
     }
 }
 
-pub fn sync_single_server_to_codex(
-    _config: &MultiAppConfig,
-    id: &str,
-    server_spec: &Value,
-) -> Result<(), AppError> {
+pub fn sync_single_server_to_codex(id: &str, server_spec: &Value) -> Result<(), AppError> {
     if !should_sync_codex_mcp() {
         return Ok(());
     }
@@ -467,7 +375,7 @@ pub fn sync_single_server_to_codex(
     }
 
     // 将 JSON 服务器规范转换为 TOML 表
-    let toml_table = json_server_to_toml_table(server_spec)?;
+    let toml_table = json_server_to_codex_toml_table(server_spec)?;
     upsert_mcp_server_table(&mut doc, id, toml_table)?;
 
     // 写回文件
@@ -617,23 +525,22 @@ fn json_value_to_toml_item(value: &Value, field_name: &str) -> Option<toml_edit:
     }
 }
 
-/// 写出侧的传输类型，与导入侧 [`codex_entry_transport_type`] 对称。
-///
-/// 规范里可能没有 `type`（面板 JSON 模式粘贴 `{"url": …}`、deeplink 都不补），
-/// 此时不能一律当 stdio：那样会写出 `command = ""` 再带上 `url`，Codex 对这种
-/// 条目报 `url is not supported for stdio`，整份 config.toml 加载失败，其它
-/// 正常的 MCP 也跟着失效。显式写了 stdio 却只有 `url` 的规范同理。
-fn spec_transport_type(spec: &Value) -> &str {
-    let has = |key: &str| {
-        spec.get(key)
-            .and_then(|v| v.as_str())
-            .is_some_and(|s| !s.trim().is_empty())
-    };
-    let explicit = spec.get("type").and_then(|v| v.as_str());
-    if matches!(explicit, None | Some("stdio")) && !has("command") && has("url") {
-        return "http";
+/// 共享规范里其他客户端的字段，Codex 的 `[mcp_servers.*]` 不认识：
+/// `timeout`（Gemini CLI / Cline 等，单位各家不同）、`autoApprove`（Cline 等）。
+/// 写进去 Codex 会报 ignored-settings 警告，`--strict-config` 直接拒绝加载。
+/// 只在 Codex 输出里去掉，库里的共享规范不动，其他客户端照常使用。
+/// `timeout` 不换算成 `tool_timeout_sec`：各客户端单位不一，猜错会把超时放大或缩小
+/// 一千倍；需要时直接在规范里写 Codex 原生的 `tool_timeout_sec`，会原样写出。
+const NON_CODEX_SERVER_FIELDS: &[&str] = &["timeout", "autoApprove"];
+
+/// Codex 专用的 JSON → TOML 转换：在通用转换的基础上去掉 Codex 不认的字段。
+/// Grok Build 复用通用转换，不受影响。
+fn json_server_to_codex_toml_table(spec: &Value) -> Result<toml_edit::Table, AppError> {
+    let mut table = json_server_to_toml_table(spec)?;
+    for key in NON_CODEX_SERVER_FIELDS {
+        table.remove(key);
     }
-    explicit.unwrap_or("stdio")
+    Ok(table)
 }
 
 /// Helper: 将 JSON MCP 服务器规范转换为 toml_edit::Table
@@ -1052,6 +959,44 @@ mod tests {
             );
         }
         assert!(remote.get("scopes").is_some());
+    }
+
+    #[test]
+    fn codex_table_drops_other_clients_timeout_and_auto_approve() {
+        // #8843：`timeout` / `autoApprove` 是其他客户端的字段，Codex 严格加载会拒绝。
+        let spec = json!({
+            "type": "stdio",
+            "command": "echo",
+            "timeout": 900000,
+            "autoApprove": ["read_document"],
+            "tool_timeout_sec": 120,
+            "startup_timeout_sec": 20
+        });
+        let table = json_server_to_codex_toml_table(&spec).unwrap();
+        assert!(table.get("timeout").is_none());
+        assert!(table.get("autoApprove").is_none());
+        // Codex 原生字段照常写出
+        assert_eq!(
+            table
+                .get("tool_timeout_sec")
+                .and_then(|item| item.as_integer()),
+            Some(120)
+        );
+        assert_eq!(
+            table
+                .get("startup_timeout_sec")
+                .and_then(|item| item.as_integer()),
+            Some(20)
+        );
+        assert_eq!(
+            table.get("command").and_then(|item| item.as_str()),
+            Some("echo")
+        );
+
+        // 通用转换（Grok Build 复用）不变
+        let shared = json_server_to_toml_table(&spec).unwrap();
+        assert!(shared.get("timeout").is_some());
+        assert!(shared.get("autoApprove").is_some());
     }
 
     #[test]

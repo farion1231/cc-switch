@@ -9,6 +9,7 @@
 //! a direct (non-proxied) CLI request.
 
 use super::{
+    browser_guard,
     failover_switch::FailoverSwitchManager,
     handlers,
     log_codes::srv as log_srv,
@@ -20,6 +21,7 @@ use super::{
 use crate::database::Database;
 use axum::{
     extract::DefaultBodyLimit,
+    middleware,
     routing::{any, get, post},
     Router,
 };
@@ -421,6 +423,11 @@ impl ProxyServer {
             .route("/gemini/v1/*path", any(handlers::handle_gemini))
             // 提高默认请求体大小限制（避免 413 Payload Too Large）
             .layer(DefaultBodyLimit::max(200 * 1024 * 1024))
+            // 拒绝网页发来的请求（最外层，读请求体之前）：见 browser_guard
+            .layer(middleware::from_fn_with_state(
+                self.state.clone(),
+                browser_guard::reject_browser_requests,
+            ))
             .with_state(self.state.clone())
     }
 
@@ -429,19 +436,9 @@ impl ProxyServer {
         *self.state.config.write().await = config.clone();
     }
 
-    /// 热更新熔断器配置
-    ///
-    /// 将新配置应用到所有已创建的熔断器实例
-    pub async fn update_circuit_breaker_configs(
-        &self,
-        config: super::circuit_breaker::CircuitBreakerConfig,
-    ) {
-        self.state.provider_router.update_all_configs(config).await;
-    }
-
     pub async fn update_circuit_breaker_config_for_app(
         &self,
-        app_type: &str,
+        app_type: &crate::app_config::AppType,
         config: super::circuit_breaker::CircuitBreakerConfig,
     ) {
         self.state
@@ -449,19 +446,12 @@ impl ProxyServer {
             .update_app_configs(app_type, config)
             .await;
     }
-
-    /// 重置指定 Provider 的熔断器
-    pub async fn reset_provider_circuit_breaker(&self, provider_id: &str, app_type: &str) {
-        self.state
-            .provider_router
-            .reset_provider_breaker(provider_id, app_type)
-            .await;
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app_config::AppType;
     use crate::provider::{Provider, ProviderMeta};
     use crate::AppError;
     use axum::http::{header, HeaderMap, StatusCode};
@@ -473,6 +463,28 @@ mod tests {
         path_and_query: String,
         authorization: Option<String>,
         body: Value,
+    }
+
+    /// Windows 上监听 socket 不能被子进程继承：从 CC Switch 拉起的终端、CLI 一旦继承它，
+    /// 退出后端口仍被占着，下次启动报 os error 10048（#8552）。mio 1.2.1 起才带
+    /// WSA_FLAG_NO_HANDLE_INHERIT，这里防止 Cargo.lock 退回旧版本。
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn listener_socket_is_not_inheritable_on_windows() {
+        use std::os::windows::io::AsRawSocket;
+        use windows_sys::Win32::Foundation::{GetHandleInformation, HANDLE, HANDLE_FLAG_INHERIT};
+
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind listener");
+        let mut flags = 0u32;
+        let ok = unsafe { GetHandleInformation(listener.as_raw_socket() as HANDLE, &mut flags) };
+        assert_ne!(ok, 0, "GetHandleInformation failed");
+        assert_eq!(
+            flags & HANDLE_FLAG_INHERIT,
+            0,
+            "listener socket is inheritable"
+        );
     }
 
     /// Codex 内置的 openai 先用 WebSocket 连 Responses：握手回 426 它才立刻改走 HTTP。
@@ -507,6 +519,145 @@ mod tests {
             assert_eq!(response.status(), StatusCode::UPGRADE_REQUIRED, "{path}");
         }
         proxy.stop().await.expect("stop test proxy");
+    }
+
+    /// 网页发来的请求（no-cors POST、WebSocket、DNS rebinding）在读请求体之前就被拒绝。
+    #[tokio::test]
+    async fn browser_originated_requests_are_rejected() {
+        let db = Arc::new(Database::memory().expect("memory database"));
+        let proxy = ProxyServer::new(
+            ProxyConfig {
+                listen_port: 0,
+                ..ProxyConfig::default()
+            },
+            db,
+            None,
+        );
+        let info = proxy.start().await.expect("start test proxy");
+        let base = format!("http://127.0.0.1:{}", info.port);
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+
+        let no_cors_post = client
+            .post(format!("{base}/v1/messages"))
+            .header(header::ORIGIN, "https://evil.example")
+            .header(header::CONTENT_TYPE, "text/plain")
+            .body(r#"{"model":"x","max_tokens":1,"messages":[]}"#)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(no_cors_post.status(), StatusCode::FORBIDDEN);
+
+        let websocket = client
+            .get(format!("{base}/v1/responses"))
+            .header(header::ORIGIN, "https://evil.example")
+            .header(header::CONNECTION, "Upgrade")
+            .header(header::UPGRADE, "websocket")
+            .header("sec-websocket-version", "13")
+            .header("sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ==")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(websocket.status(), StatusCode::FORBIDDEN);
+
+        let rebinding = client
+            .get(format!("{base}/status"))
+            .header(header::HOST, format!("rebind.evil.example:{}", info.port))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(rebinding.status(), StatusCode::FORBIDDEN);
+
+        let cli = client.get(format!("{base}/health")).send().await.unwrap();
+        assert_eq!(cli.status(), StatusCode::OK);
+
+        // Claude Desktop 由网关 token 把关，带 Origin 也交给它自己的鉴权（401 而非 403）
+        let desktop = client
+            .get(format!("{base}/claude-desktop/v1/models"))
+            .header(header::ORIGIN, "app://claude")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(desktop.status(), StatusCode::UNAUTHORIZED);
+
+        proxy.stop().await.expect("stop test proxy");
+    }
+
+    /// Regression for #3787: a provider accidentally pointing at the proxy must
+    /// fail before it creates another request, even with a dynamically bound port.
+    #[tokio::test]
+    async fn codex_upstream_self_forwarding_is_rejected() {
+        let db = Arc::new(Database::memory().expect("memory database"));
+        let proxy = ProxyServer::new(
+            ProxyConfig {
+                listen_port: 0,
+                ..ProxyConfig::default()
+            },
+            db.clone(),
+            None,
+        );
+        let info = proxy.start().await.expect("start proxy");
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(std::time::Duration::from_secs(2))
+            .build()
+            .unwrap();
+        let loopback = std::net::Ipv4Addr::LOCALHOST.to_string();
+        for (host, full_url, stream) in
+            [(loopback.as_str(), false, true), ("localhost", true, false)]
+        {
+            let mut provider = Provider::with_id(
+                "self-forwarding".to_string(),
+                "Self forwarding".to_string(),
+                json!({
+                    "base_url": format!("http://{host}:{}/v1{}", info.port, if full_url { "/responses" } else { "" }),
+                    "auth": {"OPENAI_API_KEY": "upstream-secret"},
+                }),
+                None,
+            );
+            provider.meta = Some(ProviderMeta {
+                is_full_url: Some(full_url),
+                ..ProviderMeta::default()
+            });
+            db.save_provider(&AppType::Codex, &provider).unwrap();
+            db.set_current_provider(&AppType::Codex, &provider.id)
+                .unwrap();
+            let before = proxy.get_status().await.total_requests;
+            let request = client
+                .post(format!(
+                    "http://{}:{}/v1/responses",
+                    info.address, info.port
+                ))
+                .json(&json!({
+                    "model": "gpt-5",
+                    "stream": stream,
+                    "input": [{"role": "user", "content": "x".repeat(256 * 1024)}],
+                }));
+            // Bound the regression itself if the guard is ever removed: stop
+            // after eight internal requests instead of letting the loop grow.
+            let response = tokio::select! {
+                response = request.send() => response.expect("send request"),
+                _ = async {
+                    while proxy.get_status().await.total_requests < before + 8 {
+                        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+                    }
+                } => {
+                    proxy.stop().await.unwrap();
+                    panic!("provider request looped back into the proxy");
+                }
+            };
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            let error: Value = response.json().await.unwrap();
+            assert!(error.to_string().contains("own proxy listener"), "{error}");
+            assert_eq!(proxy.get_status().await.total_requests, before + 1);
+            tokio::time::timeout(std::time::Duration::from_secs(1), async {
+                while proxy.get_status().await.active_connections != 0 {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("rejected request releases its connection");
+        }
+        proxy.stop().await.unwrap();
     }
 
     /// A base URL pasted as a complete endpoint with the full-URL switch left off
@@ -562,7 +713,6 @@ mod tests {
         let proxy = ProxyServer::new(
             ProxyConfig {
                 listen_port: 0,
-                non_streaming_timeout: 10,
                 ..ProxyConfig::default()
             },
             db.clone(),
@@ -632,9 +782,9 @@ mod tests {
                 }),
                 None,
             );
-            db.save_provider("codex", &provider)
+            db.save_provider(&AppType::Codex, &provider)
                 .expect("save pasted base URL provider");
-            db.set_current_provider("codex", &provider.id)
+            db.set_current_provider(&AppType::Codex, &provider.id)
                 .expect("select pasted base URL provider");
 
             let response = client
@@ -667,6 +817,122 @@ mod tests {
                 Some("Bearer upstream-secret")
             );
         }
+
+        proxy.stop().await.expect("stop test proxy");
+        mock_handle.abort();
+    }
+
+    /// Codex 对第三方原生 Responses 上游发起 V2 压缩（`/responses`，input 末尾是
+    /// `compaction_trigger`）时，上游只回普通消息，代理要补上 Codex 必需的 compaction 条目。
+    /// `/responses/compact` 是另一套接口，同样的请求体原样透传，不补条目。
+    #[tokio::test]
+    async fn codex_compaction_item_is_added_on_responses_but_not_on_compact() {
+        const UPSTREAM_SSE: &str = "event: response.output_item.done\n\
+data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"summary so far\"}]}}\n\n\
+event: response.completed\n\
+data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"output\":[]}}\n\n";
+        let paths = Arc::new(Mutex::new(Vec::<String>::new()));
+        let handler = {
+            let paths = paths.clone();
+            move |request: axum::extract::Request| {
+                let paths = paths.clone();
+                async move {
+                    paths.lock().await.push(request.uri().path().to_string());
+                    (
+                        StatusCode::OK,
+                        [(header::CONTENT_TYPE, "text/event-stream")],
+                        UPSTREAM_SSE,
+                    )
+                }
+            }
+        };
+        let mock_app = Router::new()
+            .route("/v1/responses", post(handler.clone()))
+            .route("/v1/responses/compact", post(handler));
+        let mock_listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind mock upstream");
+        let mock_addr = mock_listener.local_addr().expect("mock upstream address");
+        let mock_handle = tokio::spawn(async move {
+            axum::serve(mock_listener, mock_app)
+                .await
+                .expect("serve mock upstream");
+        });
+
+        let db = Arc::new(Database::memory().expect("memory database"));
+        let provider = Provider::with_id(
+            "relay".to_string(),
+            "Relay".to_string(),
+            json!({
+                "base_url": format!("http://{mock_addr}/v1"),
+                "auth": {"OPENAI_API_KEY": "upstream-secret"}
+            }),
+            None,
+        );
+        db.save_provider(&AppType::Codex, &provider)
+            .expect("save provider");
+        db.set_current_provider(&AppType::Codex, &provider.id)
+            .expect("select provider");
+        let proxy = ProxyServer::new(
+            ProxyConfig {
+                listen_port: 0,
+                ..ProxyConfig::default()
+            },
+            db,
+            None,
+        );
+        let proxy_info = proxy.start().await.expect("start test proxy");
+        let client = reqwest::Client::new();
+        let compaction_body = json!({
+            "model": "gpt-5",
+            "stream": true,
+            "input": [
+                {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hi"}]},
+                {"type": "compaction_trigger"}
+            ]
+        });
+
+        let mut bodies = Vec::new();
+        for path in ["/v1/responses", "/v1/responses/compact"] {
+            let response = client
+                .post(format!("http://127.0.0.1:{}{path}", proxy_info.port))
+                .json(&compaction_body)
+                .send()
+                .await
+                .expect("send compaction request");
+            assert_eq!(response.status(), StatusCode::OK, "{path}");
+            bodies.push(response.text().await.expect("read response body"));
+        }
+        assert_eq!(
+            *paths.lock().await,
+            vec![
+                "/v1/responses".to_string(),
+                "/v1/responses/compact".to_string()
+            ]
+        );
+
+        let compaction_items = |body: &str| {
+            body.split("\n\n")
+                .filter_map(|block| {
+                    block
+                        .lines()
+                        .find_map(|line| line.strip_prefix("data: "))
+                        .and_then(|data| serde_json::from_str::<Value>(data).ok())
+                })
+                .filter(|event| {
+                    event["type"] == "response.output_item.done"
+                        && event["item"]["type"] == "compaction"
+                })
+                .count()
+        };
+        assert_eq!(compaction_items(&bodies[0]), 1, "{}", bodies[0]);
+        assert!(
+            bodies[0].contains("ccswitch-compaction-v1:"),
+            "{}",
+            bodies[0]
+        );
+        assert_eq!(compaction_items(&bodies[1]), 0, "{}", bodies[1]);
+        assert!(bodies[1].contains("summary so far"), "{}", bodies[1]);
 
         proxy.stop().await.expect("stop test proxy");
         mock_handle.abort();
@@ -729,16 +995,15 @@ mod tests {
             }),
             None,
         );
-        db.save_provider("codex", &provider)
+        db.save_provider(&AppType::Codex, &provider)
             .expect("save test provider");
-        db.set_current_provider("codex", &provider.id)
+        db.set_current_provider(&AppType::Codex, &provider.id)
             .expect("select test provider");
 
         let proxy = ProxyServer::new(
             ProxyConfig {
                 listen_port: 0,
                 enable_logging: true,
-                non_streaming_timeout: 10,
                 ..ProxyConfig::default()
             },
             db.clone(),
@@ -818,9 +1083,9 @@ mod tests {
             is_full_url: Some(true),
             ..ProviderMeta::default()
         });
-        db.save_provider("codex", &full_url_provider)
+        db.save_provider(&AppType::Codex, &full_url_provider)
             .expect("save full URL images provider");
-        db.set_current_provider("codex", &full_url_provider.id)
+        db.set_current_provider(&AppType::Codex, &full_url_provider.id)
             .expect("select full URL images provider");
 
         let response = client
@@ -939,16 +1204,15 @@ mod tests {
             }),
             None,
         );
-        db.save_provider("codex", &provider)
+        db.save_provider(&AppType::Codex, &provider)
             .expect("save test provider");
-        db.set_current_provider("codex", &provider.id)
+        db.set_current_provider(&AppType::Codex, &provider.id)
             .expect("select test provider");
 
         let proxy = ProxyServer::new(
             ProxyConfig {
                 listen_port: 0,
                 enable_logging: true,
-                non_streaming_timeout: 10,
                 ..ProxyConfig::default()
             },
             db.clone(),
@@ -1031,9 +1295,9 @@ mod tests {
             is_full_url: Some(true),
             ..ProviderMeta::default()
         });
-        db.save_provider("codex", &full_url_provider)
+        db.save_provider(&AppType::Codex, &full_url_provider)
             .expect("save full URL images edit provider");
-        db.set_current_provider("codex", &full_url_provider.id)
+        db.set_current_provider(&AppType::Codex, &full_url_provider.id)
             .expect("select full URL images edit provider");
 
         let response = client
@@ -1164,16 +1428,15 @@ mod tests {
             }),
             None,
         );
-        db.save_provider("codex", &provider)
+        db.save_provider(&AppType::Codex, &provider)
             .expect("save test provider");
-        db.set_current_provider("codex", &provider.id)
+        db.set_current_provider(&AppType::Codex, &provider.id)
             .expect("select test provider");
 
         let proxy = ProxyServer::new(
             ProxyConfig {
                 listen_port: 0,
                 enable_logging: false,
-                non_streaming_timeout: 10,
                 ..ProxyConfig::default()
             },
             db.clone(),
@@ -1236,9 +1499,9 @@ mod tests {
             is_full_url: Some(true),
             ..ProviderMeta::default()
         });
-        db.save_provider("codex", &full_url_provider)
+        db.save_provider(&AppType::Codex, &full_url_provider)
             .expect("save full URL provider");
-        db.set_current_provider("codex", &full_url_provider.id)
+        db.set_current_provider(&AppType::Codex, &full_url_provider.id)
             .expect("select full URL provider");
 
         let response = client

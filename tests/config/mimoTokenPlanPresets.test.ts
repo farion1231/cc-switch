@@ -23,7 +23,7 @@ describe("Xiaomi MiMo Token Plan presets", () => {
       "xiaomi-mimo-token-plan/mimo-v2.6-pro",
     );
     expect(tokenPlan?.suggestedDefaults?.modelCatalog).toHaveProperty(
-      "xiaomi-mimo-token-plan/mimo-v2.5",
+      "xiaomi-mimo-token-plan/mimo-v2.6-flash",
     );
   });
 
@@ -41,7 +41,7 @@ describe("Xiaomi MiMo Token Plan presets", () => {
 
     expect(rebased.model?.primary).toBe("my-mimo-plan/mimo-v2.6-pro");
     expect(rebased.modelCatalog).toHaveProperty("my-mimo-plan/mimo-v2.6-pro");
-    expect(rebased.modelCatalog).toHaveProperty("my-mimo-plan/mimo-v2.5");
+    expect(rebased.modelCatalog).toHaveProperty("my-mimo-plan/mimo-v2.6-flash");
     expect(rebased.modelCatalog).not.toHaveProperty(
       "xiaomi-mimo-token-plan/mimo-v2.6-pro",
     );

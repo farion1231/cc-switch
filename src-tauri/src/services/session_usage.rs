@@ -13,9 +13,7 @@ use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use crate::proxy::usage::calculator::{CostCalculator, ModelPricing};
 use crate::proxy::usage::parser::{claude_cache_creation_1h_tokens, TokenUsage};
-use crate::services::usage_stats::{
-    effective_usage_log_filter, find_model_pricing, has_matching_proxy_usage_log, DedupKey,
-};
+use crate::services::usage_stats::{find_model_pricing, has_matching_proxy_usage_log, DedupKey};
 use rusqlite::OptionalExtension;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -79,7 +77,7 @@ pub fn last_sync_completed_at() -> Option<i64> {
 /// 逐文件的单行查询（文件数随历史只增不减，逐文件查询意味着每轮上千次
 /// 取锁）。`last_synced_at` 对 Pi 路径是编码后的 revision，其余路径是
 /// 真实同步时间戳。
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct SyncCursor {
     pub last_modified: i64,
     pub last_line_offset: i64,
@@ -87,6 +85,8 @@ pub(crate) struct SyncCursor {
     /// 游标边界前尾部字节的指纹（仅 Claude 路径写入），用于识别文件被
     /// 外部重写；NULL 表示无指纹可校验。
     pub last_tail_fingerprint: Option<i64>,
+    /// Parser context at the byte offset (DSH's unfinished steps). Committed with the cursor.
+    pub parser_state: Option<String>,
     pub last_synced_at: i64,
 }
 
@@ -101,7 +101,7 @@ pub(crate) fn load_sync_cursors(db: &Database) -> Result<HashMap<String, SyncCur
     let mut stmt = conn
         .prepare(
             "SELECT file_path, last_modified, last_line_offset, last_synced_at, last_byte_offset,
-                    last_tail_fingerprint
+                    last_tail_fingerprint, parser_state
              FROM session_log_sync",
         )
         .map_err(|e| AppError::Database(format!("预取同步游标失败: {e}")))?;
@@ -114,6 +114,7 @@ pub(crate) fn load_sync_cursors(db: &Database) -> Result<HashMap<String, SyncCur
                 last_synced_at: row.get(3)?,
                 last_byte_offset: row.get(4)?,
                 last_tail_fingerprint: row.get(5)?,
+                parser_state: row.get(6)?,
             },
         ))
     });
@@ -164,8 +165,39 @@ pub fn sync_all_unlocked(db: &Database) -> SessionSyncResult {
     );
     merge_sync_step(
         &mut result,
+        "Oh My Pi",
+        crate::services::session_usage_omp::sync_omp_usage(db),
+    );
+    merge_sync_step(
+        &mut result,
         "MCode",
         crate::services::session_usage_mcode::sync_mcode_usage(db),
+    );
+    merge_sync_step(
+        &mut result,
+        "Antigravity",
+        crate::services::session_usage_agy::sync_agy_usage(db),
+    );
+    merge_sync_step(
+        &mut result,
+        "Kimi Code",
+        crate::services::session_usage_kimi::sync_kimi_usage(db),
+    );
+    merge_sync_step(
+        &mut result,
+        "GitHub Copilot CLI",
+        crate::services::session_usage_copilot::sync_copilot_usage(db),
+    );
+    merge_sync_step(
+        &mut result,
+        "WorkBuddy",
+        crate::services::session_usage_workbuddy::sync_workbuddy_usage(db),
+    );
+    // Web 与 Desktop 共用 `$DSH_HOME/sessions`，一次扫描覆盖两端
+    merge_sync_step(
+        &mut result,
+        "DeepSeek Harness",
+        crate::services::session_usage_dsh::sync_dsh_usage(db),
     );
     notify_sync_result(&result);
     record_sync_completed(chrono::Utc::now().timestamp_millis());
@@ -176,15 +208,6 @@ pub(crate) fn notify_sync_result(result: &SessionSyncResult) {
     if result.imported > 0 {
         crate::usage_events::notify_log_recorded();
     }
-}
-
-/// 数据来源分布
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DataSourceSummary {
-    pub data_source: String,
-    pub request_count: u32,
-    pub total_cost_usd: String,
 }
 
 /// 从 JSONL 中解析出的 assistant 消息使用数据
@@ -1034,6 +1057,38 @@ pub(crate) fn update_sync_state_on_conn(
     Ok(())
 }
 
+/// 写入字节游标（Grok 等按行流式扫描）。`last_line_offset` 置 0，表示
+/// 行号/事件计数游标已退役；存量 Grok 行的事件计数只在 `last_byte_offset`
+/// 仍为 NULL 时用一次，转换成字节位置后不再读取。
+pub(crate) fn update_byte_sync_state(
+    db: &Database,
+    file_path: &str,
+    last_modified: i64,
+    byte_offset: i64,
+) -> Result<(), AppError> {
+    let conn = lock_conn!(db.conn);
+    let now = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+
+    conn.prepare_cached(
+        "INSERT OR REPLACE INTO session_log_sync
+         (file_path, last_modified, last_line_offset, last_synced_at, last_byte_offset)
+         VALUES (?1, ?2, 0, ?3, ?4)",
+    )
+    .and_then(|mut stmt| {
+        stmt.execute(rusqlite::params![
+            file_path,
+            last_modified,
+            now,
+            byte_offset
+        ])
+    })
+    .map_err(|e| AppError::Database(format!("更新同步状态失败: {e}")))?;
+    Ok(())
+}
+
 /// 一条回复写库的结果。
 #[derive(Debug, PartialEq, Eq)]
 enum SessionRowOutcome {
@@ -1125,19 +1180,34 @@ fn session_costs(
         model: Some(msg.model.clone()),
         message_id: None,
     };
-    match pricing_cache.get(conn, &msg.model) {
-        Some(pricing) => {
-            let cost = CostCalculator::calculate(&usage, pricing, Decimal::from(1));
-            [
-                cost.input_cost.to_string(),
-                cost.output_cost.to_string(),
-                cost.cache_read_cost.to_string(),
-                cost.cache_creation_cost.to_string(),
-                cost.total_cost.to_string(),
-            ]
-        }
-        None => std::array::from_fn(|_| "0".to_string()),
-    }
+    cost_columns(
+        "claude",
+        &usage,
+        pricing_cache.get(conn, &msg.model),
+        Decimal::ONE,
+    )
+}
+
+/// 五个金额列（输入、输出、缓存读、缓存写、合计）。查不到价格的全记 "0"，
+/// 表示没有定价，不代表免费。
+pub(crate) fn cost_columns(
+    app_type: &str,
+    usage: &TokenUsage,
+    pricing: Option<&ModelPricing>,
+    multiplier: Decimal,
+) -> [String; 5] {
+    let Some(pricing) = pricing else {
+        return std::array::from_fn(|_| "0".to_string());
+    };
+    let cost = CostCalculator::calculate_for_app(app_type, usage, pricing, multiplier);
+    [
+        cost.input_cost,
+        cost.output_cost,
+        cost.cache_read_cost,
+        cost.cache_creation_cost,
+        cost.total_cost,
+    ]
+    .map(|value| value.to_string())
 }
 
 /// 补全一条已经入库的回复。
@@ -1251,6 +1321,7 @@ fn upsert_session_log_entry_on_conn(
 
     let dedup_key = DedupKey {
         app_type: "claude",
+        data_source: "session_log",
         model: &msg.model,
         input_tokens: msg.input_tokens,
         output_tokens: msg.output_tokens,
@@ -1327,38 +1398,6 @@ fn find_model_pricing_for_session(
     model_id: &str,
 ) -> Option<ModelPricing> {
     find_model_pricing(conn, model_id)
-}
-
-/// 查询数据来源分布统计
-pub fn get_data_source_breakdown(db: &Database) -> Result<Vec<DataSourceSummary>, AppError> {
-    let conn = lock_conn!(db.conn);
-
-    let effective_filter = effective_usage_log_filter("l");
-    let sql = format!(
-        "SELECT COALESCE(l.data_source, 'proxy') as ds, COUNT(*) as cnt,
-                COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0) as cost
-         FROM proxy_request_logs l
-         WHERE {effective_filter}
-         GROUP BY ds
-         ORDER BY cnt DESC"
-    );
-
-    let mut stmt = conn.prepare(&sql)?;
-
-    let rows = stmt.query_map([], |row| {
-        Ok(DataSourceSummary {
-            data_source: row.get(0)?,
-            request_count: row.get::<_, i64>(1)? as u32,
-            total_cost_usd: format!("{:.6}", row.get::<_, f64>(2)?),
-        })
-    })?;
-
-    let mut summaries = Vec::new();
-    for row in rows {
-        summaries.push(row.map_err(|e| AppError::Database(e.to_string()))?);
-    }
-
-    Ok(summaries)
 }
 
 #[cfg(test)]
@@ -1772,7 +1811,7 @@ mod tests {
 
     fn sync_with_cursor(db: &Database, path: &Path) -> Result<ClaudeFileSync, AppError> {
         let cursors = load_sync_cursors(db)?;
-        let cursor = cursors.get(path.to_string_lossy().as_ref()).copied();
+        let cursor = cursors.get(path.to_string_lossy().as_ref()).cloned();
         sync_single_file(db, path, cursor.as_ref())
     }
 

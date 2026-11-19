@@ -33,7 +33,7 @@ pub(super) fn candidates(
     if installs.is_empty() {
         return Err(format!(
             "Cannot identify the installation of {} to uninstall. Check installations and try again.",
-            tool_display_name(tool)
+            tool_spec(tool).display_name
         ));
     }
     let has_grok_native = tool == "grok" && installs.iter().any(|i| known_native_install(tool, i));
@@ -113,7 +113,7 @@ fn plan_and_removals(
     } else {
         return Err(format!(
             "Cannot automatically uninstall {} at {}. Use the original installer or package manager to uninstall it.",
-            tool_display_name(tool), inst.path
+            tool_spec(tool).display_name, inst.path
         ));
     };
     let command = if tool == "openclaw" {
@@ -145,16 +145,16 @@ pub(super) fn uninstall(
     tool: &str,
     pref: Option<&WslShellPreferenceInput>,
     confirmed: &ToolUninstallPlan,
+    progress: &ToolLifecycleProgress,
 ) -> Result<(), String> {
     // Never execute a command supplied by the frontend or silently switch installations
     // while the dialog is open / this task is queued behind another lifecycle operation.
     #[cfg(target_os = "windows")]
     if let Some(distro) = wsl_distro_for_tool(tool) {
         // Run the very process the re-derived plan describes (same shell and flag).
-        let (current, mut process) = wsl_plan_and_process(tool, &distro, pref)?;
+        let (current, process) = wsl_plan_and_process(tool, &distro, pref)?;
         validate_confirmed_plan(&current, confirmed)?;
-        let output = process
-            .output()
+        let output = tool_lifecycle_progress::run_with_progress(process, progress)
             .map_err(|e| format!("Cannot start WSL uninstall: {e}"))?;
         return finish_lifecycle_output(&output);
     }
@@ -172,18 +172,18 @@ pub(super) fn uninstall(
     if current.native {
         remove_native_files(inst, &removals)?;
     } else {
-        run_package_uninstall(&current.command)?;
+        run_package_uninstall(&current.command, progress)?;
     }
     // Some managers return zero even if the selected package was not removed.
     verify_removed(tool, &current.path)
 }
 
-fn run_package_uninstall(command: &str) -> Result<(), String> {
+fn run_package_uninstall(command: &str, progress: &ToolLifecycleProgress) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     let batch = format!("@chcp 65001>nul\r\n@echo off\r\ncall {command}\r\nexit /b %errorlevel%");
     #[cfg(target_os = "windows")]
     let command = batch.as_str();
-    run_tool_lifecycle_silently(command, "tool_uninstall")
+    run_tool_lifecycle_silently(command, "tool_uninstall", progress)
 }
 
 fn validate_confirmed_plan(
@@ -203,7 +203,7 @@ fn verify_removed(tool: &str, path: &str) -> Result<(), String> {
         Err(error) => Err(format!("Cannot verify removal of {path}: {error}")),
         Ok(_) => Err(format!(
             "{} is still installed at {}. Use the original installer or package manager to uninstall it.",
-            tool_display_name(tool), path
+            tool_spec(tool).display_name, path
         )),
     }
 }
@@ -220,10 +220,12 @@ fn brew_uninstall_command(tool: &str, real: &str) -> Result<Option<String>, Stri
                 "codex" => &[("/Caskroom/", "codex")],
                 "gemini" => &[("/Cellar/", "gemini-cli")],
                 "opencode" => &[("/Cellar/", "opencode")],
+                "agy" => &[("/Caskroom/", "antigravity-cli")],
+                "copilot" => &[("/Caskroom/", "copilot-cli")],
                 _ => &[],
             };
             if !owners.contains(&(marker, token)) {
-                return Err(format!("Cannot automatically uninstall {}: Homebrew package {token} is not a verified owner. Use the original installer or package manager.", tool_display_name(tool)));
+                return Err(format!("Cannot automatically uninstall {}: Homebrew package {token} is not a verified owner. Use the original installer or package manager.", tool_spec(tool).display_name));
             }
             let brew = format!("{prefix}/bin/brew");
             if !Path::new(&brew).is_file() {
@@ -287,7 +289,7 @@ fn npm_prefix(tool: &str, inst: &ToolInstallation) -> Option<PathBuf> {
 }
 
 fn npm_prefix_for_layout(tool: &str, inst: &ToolInstallation, windows: bool) -> Option<PathBuf> {
-    let package = npm_package_for(tool)?;
+    let package = tool_spec(tool).npm_package?;
     let launcher = Path::new(&inst.path);
     let bin = launcher.parent()?;
     // A local node_modules/.bin entry is never a global npm launcher. Pi's
@@ -328,7 +330,7 @@ fn npm_prefix_for_layout(tool: &str, inst: &ToolInstallation, windows: bool) -> 
 }
 
 fn node_package_uninstall_command(tool: &str, inst: &ToolInstallation) -> Option<String> {
-    let package = npm_package_for(tool)?;
+    let package = tool_spec(tool).npm_package?;
     // A source badge or a sibling manager is not proof of package ownership.
     // pnpm/Bun commands remain available manually for the clients that document
     // them; until their global roots are verified, do not guess or fall back to npm.
@@ -415,6 +417,13 @@ fn known_native_install(tool: &str, inst: &ToolInstallation) -> bool {
             normalized.ends_with("/.opencode/bin/opencode")
                 || normalized.ends_with("/.opencode/bin/opencode.exe")
         }
+        // Official install.sh / install.ps1 targets. A cask binary the self-updater
+        // replaced in place sits in Homebrew's bin and stays a manual uninstall.
+        "agy" => {
+            normalized.ends_with("/.local/bin/agy") || normalized.ends_with("/agy/bin/agy.exe")
+        }
+        // Official install.sh (`~/.local/bin`) / install.ps1 (`%LOCALAPPDATA%\omp`) targets.
+        "omp" => normalized.ends_with("/.local/bin/omp") || normalized.ends_with("/omp/omp.exe"),
         _ => false,
     }
 }
@@ -751,7 +760,8 @@ fn wsl_uninstall_command(tool: &str, path: &str, real: &str) -> Result<String, S
     let removal = if tool == "hermes" {
         format!("{} uninstall --yes", shell_single_quote(path))
     } else {
-        let package = npm_package_for(tool)
+        let package = tool_spec(tool)
+            .npm_package
             .ok_or("Use the original installer to uninstall this WSL application.")?;
         let (prefix, _) = real
             .split_once(&format!("/lib/node_modules/{package}/"))
@@ -868,6 +878,55 @@ mod tests {
         assert!(package_uninstall_command("codex", &inst).unwrap().is_none());
     }
 
+    #[test]
+    fn dsh_npm_uninstall_targets_the_verified_prefix_and_preserves_user_data() {
+        let temp = tempfile::tempdir().unwrap();
+        let prefix = temp.path().join("custom npm prefix");
+        let modules = prefix.join(if cfg!(windows) {
+            "node_modules"
+        } else {
+            "lib/node_modules"
+        });
+        let package = modules.join("@deepseek-ai/dsh");
+        std::fs::create_dir_all(package.join("lib")).unwrap();
+        std::fs::write(
+            package.join("package.json"),
+            r#"{"name":"@deepseek-ai/dsh"}"#,
+        )
+        .unwrap();
+        let executable = package.join("lib/bin.js");
+        std::fs::write(&executable, "launcher").unwrap();
+        let entry = prefix.join(if cfg!(windows) { "dsh.cmd" } else { "bin/dsh" });
+        std::fs::create_dir_all(entry.parent().unwrap()).unwrap();
+        std::fs::write(
+            &entry,
+            r#"node "%dp0%\node_modules\@deepseek-ai\dsh\lib\bin.js""#,
+        )
+        .unwrap();
+        write_fixture_npm(&entry);
+        let inst = ToolInstallation {
+            real: std::fs::canonicalize(if cfg!(windows) { &entry } else { &executable }).unwrap(),
+            ..installation(&entry)
+        };
+        let user_data = temp.path().join(".dsh/profiles/web/cordis.patch.yml");
+        std::fs::create_dir_all(user_data.parent().unwrap()).unwrap();
+        std::fs::write(&user_data, "user settings").unwrap();
+        let command = package_uninstall_command("dsh", &inst).unwrap().unwrap();
+        assert!(command.contains(&format!(
+            "uninstall -g --prefix {}",
+            quote(&prefix.to_string_lossy())
+        )));
+        assert!(command.ends_with("@deepseek-ai/dsh"));
+        assert!(!command.contains(".dsh"));
+        assert_eq!(std::fs::read_to_string(user_data).unwrap(), "user settings");
+        std::fs::write(
+            package.join("package.json"),
+            r#"{"name":"unrelated-package"}"#,
+        )
+        .unwrap();
+        assert!(package_uninstall_command("dsh", &inst).unwrap().is_none());
+    }
+
     #[cfg(target_os = "windows")]
     #[test]
     fn windows_npm_path_fallback_uses_batch_compatible_path() {
@@ -910,7 +969,7 @@ mod tests {
             assert!(!plan.command.contains(r"\\?\"));
             assert!(!marker.exists(), "planning must not execute npm");
 
-            run_package_uninstall(&plan.command)
+            run_package_uninstall(&plan.command, &ToolLifecycleProgress::noop())
                 .expect("PATH npm.cmd should execute via batch call");
             assert_eq!(std::fs::read_to_string(marker).unwrap().trim(), arguments);
             return;
@@ -969,6 +1028,20 @@ mod tests {
         assert!(package_uninstall_command("codex", &inst).unwrap().is_none());
         assert!(!known_native_install("codex", &inst));
         assert!(executable.exists());
+    }
+
+    #[test]
+    fn omp_installer_binary_is_a_known_native_install() {
+        let temp = tempfile::tempdir().unwrap();
+        let bin = temp.path().join(".local/bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let binary = bin.join("omp");
+        std::fs::write(&binary, [0xcf, 0xfa, 0xed, 0xfe]).unwrap();
+        assert!(known_native_install("omp", &installation(&binary)));
+        // A same-named script elsewhere is never claimed.
+        let other = temp.path().join("omp");
+        std::fs::write(&other, "#!/usr/bin/env bun\n").unwrap();
+        assert!(!known_native_install("omp", &installation(&other)));
     }
 
     #[test]
@@ -1155,7 +1228,7 @@ mod tests {
             // The package reference models an npm .cmd shim without running a real CLI.
             std::fs::write(&entry, format!("@echo off\r\nrem node_modules/openclaw/openclaw.mjs\r\nexit /b {exit_code}\r\n")).unwrap();
             let plan = plan_for_install("openclaw", &installation(&entry)).unwrap();
-            let result = run_package_uninstall(&plan.command);
+            let result = run_package_uninstall(&plan.command, &ToolLifecycleProgress::noop());
             assert_eq!(result.is_ok(), exit_code == 0);
             assert_eq!(marker.exists(), exit_code == 0);
         }
@@ -1411,6 +1484,7 @@ mod tests {
             ("codex", "Caskroom", "codex", "--cask"),
             ("gemini", "Cellar", "gemini-cli", "--formula"),
             ("opencode", "Cellar", "opencode", "--formula"),
+            ("agy", "Caskroom", "antigravity-cli", "--cask"),
         ] {
             let real = format!("{prefix}/{location}/{token}/1/bin/{tool}");
             let command = brew_uninstall_command(tool, &real).unwrap().unwrap();
@@ -1527,6 +1601,8 @@ mod tests {
                 ".codex/packages/standalone/releases/0.150.0-linux/codex",
             ),
             ("opencode", ".opencode/bin/opencode"),
+            ("agy", ".local/bin/agy"),
+            ("agy", "AppData/Local/agy/bin/agy.exe"),
         ] {
             let path = temp.path().join(binary);
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();

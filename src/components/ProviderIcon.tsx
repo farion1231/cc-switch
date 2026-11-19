@@ -5,6 +5,9 @@ import {
   getIconMetadata,
   getIconUrl,
   isUrlIcon,
+  isDarkInk,
+  adaptSvgToTheme,
+  isTileIcon,
 } from "@/icons/extracted";
 import { cn } from "@/lib/utils";
 import { isCustomIcon } from "@/utils/customIcon";
@@ -19,6 +22,25 @@ interface ProviderIconProps {
   fallbackClassName?: string; // 覆盖首字母 fallback 的底色 / 文字色
 }
 
+/**
+ * 提取供应商名称的首字母（最多 2 个字符）。
+ *
+ * 使用 `Array.from` 按 Unicode 码位安全切分，避免 emoji 或 UTF-16 代理对（surrogate pairs）
+ * 被截半产生无效字符（例如 `🤖 AI` 会被截出孤立的高代理项 `\ud83e`）。
+ */
+export function getProviderInitials(name: string): string {
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  return Array.from(
+    words
+      .map((word) => Array.from(word)[0])
+      .filter(Boolean)
+      .join(""),
+  )
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
+}
+
 export const ProviderIcon: React.FC<ProviderIconProps> = ({
   icon,
   name,
@@ -29,11 +51,14 @@ export const ProviderIcon: React.FC<ProviderIconProps> = ({
   fallbackClassName,
 }) => {
   // 获取内联 SVG 字符串
-  const iconSvg = useMemo(() => {
+  const { svg: iconSvg, adapted } = useMemo(() => {
     if (icon && !isCustomIcon(icon) && !isUrlIcon(icon) && hasIcon(icon)) {
-      return getIcon(icon);
+      const raw = getIcon(icon);
+      // tile 图标自带底色，里面的深色是底，不能换成文字色
+      const themed = isTileIcon(icon) ? raw : adaptSvgToTheme(raw);
+      return { svg: themed, adapted: themed !== raw };
     }
-    return "";
+    return { svg: "", adapted: false };
   }, [icon]);
 
   // 获取图标 URL：内置的大图（URL_ICONS 列表中的 SVG / 光栅图片），或用户上传的 PNG。
@@ -62,19 +87,23 @@ export const ProviderIcon: React.FC<ProviderIconProps> = ({
     };
   }, [size]);
 
-  // 获取有效颜色：优先使用传入的有效 color，否则从元数据获取 defaultColor
+  // 获取有效颜色：优先使用传入的有效 color，否则从元数据获取 defaultColor。
+  // 近黑色（#000 / #111 这类）的颜色不写死，交给外层文字色，
+  // 否则深色模式下是黑底上的黑图标。已经把近黑笔画换成 currentColor 的图标
+  // 也不能再套品牌色，否则眼睛、嘴这些细节会和脸同色
   const effectiveColor = useMemo(() => {
+    if (adapted) return undefined;
+    let resolved: string | undefined;
     if (color && typeof color === "string" && color.trim() !== "") {
-      return color;
-    }
-    if (icon) {
+      resolved = color;
+    } else if (icon) {
       const metadata = getIconMetadata(icon);
       if (metadata?.defaultColor && metadata.defaultColor !== "currentColor") {
-        return metadata.defaultColor;
+        resolved = metadata.defaultColor;
       }
     }
-    return undefined;
-  }, [color, icon]);
+    return isDarkInk(resolved) ? undefined : resolved;
+  }, [color, icon, adapted]);
 
   // 内联 SVG 渲染（支持 CSS currentColor 着色）
   if (iconSvg) {
@@ -108,15 +137,9 @@ export const ProviderIcon: React.FC<ProviderIconProps> = ({
       />
     );
   }
-
   // Fallback：显示首字母
   if (showFallback) {
-    const initials = name
-      .split(" ")
-      .map((word) => word[0])
-      .join("")
-      .toUpperCase()
-      .slice(0, 2);
+    const initials = getProviderInitials(name);
     const fallbackFontSize =
       typeof size === "number" ? `${Math.max(size * 0.5, 12)}px` : "0.5em";
     return (

@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { isHermesBuiltinProviderId } from "@/config/hermesBuiltinProviderIds";
 import { hermesProviderPresets } from "@/config/hermesProviderPresets";
-
-// Hermes routes `model.provider` to a built-in provider when the name is a
-// canonical built-in id, ignoring a same-named custom_provider.
-const HERMES_BUILTIN_MINIMAX_IDS = ["minimax", "minimax-cn", "minimax-oauth"];
 
 describe("Hermes MiniMax presets", () => {
   it.each(["MiniMax", "MiniMax en"])(
@@ -14,7 +11,7 @@ describe("Hermes MiniMax presets", () => {
 
       const key = preset!.providerKey;
       expect(key).toMatch(/^[a-z0-9]+(-[a-z0-9]+)*$/);
-      expect(HERMES_BUILTIN_MINIMAX_IDS).not.toContain(key);
+      expect(isHermesBuiltinProviderId(key!)).toBe(false);
       expect(preset!.settingsConfig.name).toBe(key);
       expect(preset!.suggestedDefaults?.model.provider).toBe(key);
     },
