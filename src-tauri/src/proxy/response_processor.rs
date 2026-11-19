@@ -938,7 +938,7 @@ mod tests {
             },
         )?;
         let selected = db
-            .get_provider_by_id("snapshot", &AppType::Claude)?
+            .get_provider_by_id("snapshot", &crate::app_config::AppType::Claude)?
             .unwrap();
         let multiplier = crate::provider::billing_multiplier(&selected);
         let state = build_state(db.clone());

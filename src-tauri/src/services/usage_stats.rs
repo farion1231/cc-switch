@@ -2216,12 +2216,26 @@ impl Database {
         // 总成本 = 基础成本之和 × 倍率
         let base_total = input_cost + output_cost + cache_read_cost + cache_creation_cost;
         let total_cost = base_total * multiplier;
+        // 单价全为 0（免费模型）时算出来仍是 0，写回去下次照样当缺价，只是白白 UPDATE。
+        if total_cost.is_zero() {
+            return Ok(false);
+        }
 
-        log.input_cost_usd = format!("{input_cost:.6}");
-        log.output_cost_usd = format!("{output_cost:.6}");
-        log.cache_read_cost_usd = format!("{cache_read_cost:.6}");
-        log.cache_creation_cost_usd = format!("{cache_creation_cost:.6}");
-        log.total_cost_usd = format!("{total_cost:.6}");
+        // 至少 6 位小数、不截断：只存 6 位会把极小额（几个 token、低倍率）写成 0，
+        // 下次读取又被当成缺价重算。界面显示时再舍入。
+        fn cost_string(value: rust_decimal::Decimal) -> String {
+            let value = value.normalize();
+            if value.scale() < 6 {
+                format!("{value:.6}")
+            } else {
+                value.to_string()
+            }
+        }
+        log.input_cost_usd = cost_string(input_cost);
+        log.output_cost_usd = cost_string(output_cost);
+        log.cache_read_cost_usd = cost_string(cache_read_cost);
+        log.cache_creation_cost_usd = cost_string(cache_creation_cost);
+        log.total_cost_usd = cost_string(total_cost);
 
         conn.execute(
             "UPDATE proxy_request_logs
@@ -3735,6 +3749,50 @@ mod tests {
             .expect("row exists");
         assert_eq!(detail.input_cost_usd, "1.000000");
         assert_eq!(detail.total_cost_usd, "0");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_backfill_keeps_sub_micro_dollar_costs() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT OR REPLACE INTO model_pricing
+                 (model_id, display_name, input_cost_per_million, output_cost_per_million)
+                 VALUES ('tiny-model', 'Tiny', '2', '0')",
+                [],
+            )?;
+            insert_usage_log(
+                &conn,
+                "tiny-request",
+                "claude",
+                "relay",
+                "tiny-model",
+                "proxy",
+                1000,
+                3,
+                0,
+                0,
+                0,
+                200,
+                "0",
+            )?;
+            conn.execute(
+                "UPDATE proxy_request_logs SET cost_multiplier = '0.07'
+                 WHERE request_id = 'tiny-request'",
+                [],
+            )?;
+        }
+
+        // 3 token × $2/M × 0.07 = $0.00000042：按 6 位小数存会变成 0，下次读取又被当成缺价重算。
+        assert_eq!(db.backfill_missing_usage_costs()?, 1);
+        let detail = db.get_request_detail("tiny-request")?.expect("row exists");
+        assert_eq!(detail.input_cost_usd, "0.000006");
+        assert_eq!(detail.total_cost_usd, "0.00000042");
+        assert_eq!(db.backfill_missing_usage_costs()?, 0);
 
         Ok(())
     }
