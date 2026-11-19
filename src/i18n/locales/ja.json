@@ -1735,6 +1735,7 @@
       "outlineNoReply": "返信なし",
       "chapter": "チャプター",
       "pinnedChapter": "ピン留めしたチャプター",
+      "outlineChaptersOnly": "チャプターのみ",
       "viewOptions": "表示オプション",
       "noChanges": "このセッションにはファイルの変更がありません",
       "rawMatch": "原文での一致",

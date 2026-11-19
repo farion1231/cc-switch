@@ -1735,6 +1735,7 @@
       "outlineNoReply": "No reply",
       "chapter": "Chapter",
       "pinnedChapter": "Pinned chapter",
+      "outlineChaptersOnly": "Chapters only",
       "viewOptions": "Display options",
       "noChanges": "No file changes in this session",
       "rawMatch": "Matches in source",

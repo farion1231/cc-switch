@@ -779,6 +779,14 @@ describe("SessionReader", () => {
     fireEvent.click(
       within(outline).getByRole("button", { name: /置顶的章节.*下单流程/ }),
     );
+
+    // 只看章节：目录里只留章节，提问和回复收起来
+    expect(within(outline).getByText("接入行情")).toBeInTheDocument();
+    fireEvent.click(within(outline).getByRole("button", { name: /只看章节/ }));
+    expect(within(outline).queryByText("接入行情")).not.toBeInTheDocument();
+    expect(
+      within(outline).getByRole("button", { name: /置顶的章节.*下单流程/ }),
+    ).toBeInTheDocument();
     load.mockRestore();
   });
 

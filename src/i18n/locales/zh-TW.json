@@ -1735,6 +1735,7 @@
       "outlineNoReply": "沒有回覆",
       "chapter": "章節",
       "pinnedChapter": "釘選的章節",
+      "outlineChaptersOnly": "只看章節",
       "viewOptions": "顯示選項",
       "noChanges": "這個工作階段沒有檔案變更",
       "rawMatch": "原文中的相符項目",

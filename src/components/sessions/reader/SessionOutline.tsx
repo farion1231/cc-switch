@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { Bookmark, Pin } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
@@ -56,6 +56,8 @@ export const SessionOutline = memo(function SessionOutline({
   const { t } = useTranslation();
   const rt = useReaderT();
   const listRef = useRef<HTMLOListElement>(null);
+  // 长会话里章节散在几百轮中间：可以只留章节，当成一份章节列表用
+  const [chaptersOnly, setChaptersOnly] = useState(false);
 
   const entries = useMemo<OutlineEntry[]>(
     () =>
@@ -77,6 +79,18 @@ export const SessionOutline = memo(function SessionOutline({
           failed: turn.aborted || turn.steps.some(isFailureStep),
         })),
     [turns],
+  );
+  const chapterCount = useMemo(
+    () => turns.reduce((count, turn) => count + turn.chapters.length, 0),
+    [turns],
+  );
+  const onlyChapters = chaptersOnly && chapterCount > 0;
+  const shown = useMemo(
+    () =>
+      onlyChapters
+        ? entries.filter((entry) => entry.turn.chapters.length > 0)
+        : entries,
+    [entries, onlyChapters],
   );
 
   // 正文滚到别的轮时，把目录里对应的条目滚进视野；只滚目录自己，不带动外层容器
@@ -105,12 +119,30 @@ export const SessionOutline = memo(function SessionOutline({
         <span className="ms-1.5 font-normal tabular-nums text-fg-3">
           {entries.length}
         </span>
+        {chapterCount > 0 && (
+          <button
+            type="button"
+            aria-pressed={onlyChapters}
+            onClick={() => setChaptersOnly((only) => !only)}
+            title={rt("outlineChaptersOnly")}
+            className={cn(
+              "ms-auto flex items-center gap-1 rounded-control px-1.5 py-0.5 text-[11px] font-normal tabular-nums transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              onlyChapters
+                ? "bg-subtle text-fg-1"
+                : "text-fg-3 hover:bg-subtle hover:text-fg-1",
+            )}
+          >
+            <Bookmark aria-hidden className="h-3 w-3" strokeWidth={2} />
+            <span className="sr-only">{rt("outlineChaptersOnly")}</span>
+            {chapterCount}
+          </button>
+        )}
       </div>
       <ol
         ref={listRef}
         className="m-0 min-h-0 flex-1 list-none overflow-y-auto scroll-stable overscroll-contain px-2 pb-4"
       >
-        {entries.map((entry) => {
+        {shown.map((entry) => {
           const active = entry.turn.index === activeTurn;
           return (
             <li
@@ -154,7 +186,7 @@ export const SessionOutline = memo(function SessionOutline({
                 );
               })}
 
-              {entry.question !== undefined && (
+              {!onlyChapters && entry.question !== undefined && (
                 <button
                   type="button"
                   onClick={() => onJumpQuestion(entry.turn)}
@@ -180,39 +212,41 @@ export const SessionOutline = memo(function SessionOutline({
                 </button>
               )}
 
-              <button
-                type="button"
-                onClick={() => onJumpReply(entry.turn)}
-                className="group/outline flex min-w-0 items-start gap-1.5 rounded-control text-start focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                {/* AI 的输出：靠左，带 Agent 头像，正文不加底色 */}
-                <span className="mt-0.5 origin-top-left scale-[0.72]">
-                  <SessionAgentAvatar />
-                </span>
-                <span className="-ms-1.5 flex min-w-0 flex-1 flex-col gap-0.5">
-                  <span className="flex items-center gap-1 text-[11px] tabular-nums text-fg-3">
-                    {entry.steps > 0 &&
-                      rt("outlineSteps", { count: entry.steps })}
-                    {entry.failed && (
-                      <span
-                        aria-label={rt("outlineFailed")}
-                        className="h-1.5 w-1.5 rounded-full bg-danger"
-                      />
-                    )}
+              {!onlyChapters && (
+                <button
+                  type="button"
+                  onClick={() => onJumpReply(entry.turn)}
+                  className="group/outline flex min-w-0 items-start gap-1.5 rounded-control text-start focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  {/* AI 的输出：靠左，带 Agent 头像，正文不加底色 */}
+                  <span className="mt-0.5 origin-top-left scale-[0.72]">
+                    <SessionAgentAvatar />
                   </span>
-                  <span
-                    className={cn(
-                      "line-clamp-2 break-words text-caption transition-colors group-hover/outline:text-fg-1",
-                      entry.reply ? "text-fg-2" : "italic text-fg-3",
-                    )}
-                  >
-                    {entry.reply ||
-                      (entry.turn.aborted
-                        ? rt("outlineAborted")
-                        : rt("outlineNoReply"))}
+                  <span className="-ms-1.5 flex min-w-0 flex-1 flex-col gap-0.5">
+                    <span className="flex items-center gap-1 text-[11px] tabular-nums text-fg-3">
+                      {entry.steps > 0 &&
+                        rt("outlineSteps", { count: entry.steps })}
+                      {entry.failed && (
+                        <span
+                          aria-label={rt("outlineFailed")}
+                          className="h-1.5 w-1.5 rounded-full bg-danger"
+                        />
+                      )}
+                    </span>
+                    <span
+                      className={cn(
+                        "line-clamp-2 break-words text-caption transition-colors group-hover/outline:text-fg-1",
+                        entry.reply ? "text-fg-2" : "italic text-fg-3",
+                      )}
+                    >
+                      {entry.reply ||
+                        (entry.turn.aborted
+                          ? rt("outlineAborted")
+                          : rt("outlineNoReply"))}
+                    </span>
                   </span>
-                </span>
-              </button>
+                </button>
+              )}
             </li>
           );
         })}

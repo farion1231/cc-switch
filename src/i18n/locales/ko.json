@@ -1734,6 +1734,7 @@
       "outlineNoReply": "답변 없음",
       "chapter": "챕터",
       "pinnedChapter": "고정한 챕터",
+      "outlineChaptersOnly": "챕터만 보기",
       "viewOptions": "표시 옵션",
       "noChanges": "이 세션에는 파일 변경 사항이 없습니다",
       "rawMatch": "원문에서 일치하는 내용",
