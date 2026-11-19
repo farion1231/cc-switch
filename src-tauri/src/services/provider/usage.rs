@@ -75,7 +75,8 @@ pub(crate) async fn execute_and_format_usage_result(
 
             let msg = match err {
                 AppError::Localized { zh, en, .. } => {
-                    if lang == "en" || lang == "tr" {
+                    if lang == "en" || lang == "de" || lang == "tr" || lang == "ko" || lang == "ru"
+                    {
                         en
                     } else {
                         zh
@@ -129,7 +130,7 @@ pub async fn query_usage(
     provider_id: &str,
 ) -> Result<UsageResult, AppError> {
     let (script_code, timeout, api_key, base_url, access_token, user_id, template_type) = {
-        let providers = state.db.get_all_providers(app_type.as_str())?;
+        let providers = state.db.get_all_providers(&app_type)?;
         let provider = providers.get(provider_id).ok_or_else(|| {
             AppError::localized(
                 "provider.not_found",
@@ -202,7 +203,7 @@ pub async fn test_usage_script(
     user_id: Option<&str>,
     template_type: Option<&str>,
 ) -> Result<UsageResult, AppError> {
-    let providers = state.db.get_all_providers(app_type.as_str())?;
+    let providers = state.db.get_all_providers(&app_type)?;
     let provider = providers.get(provider_id).ok_or_else(|| {
         AppError::localized(
             "provider.not_found",

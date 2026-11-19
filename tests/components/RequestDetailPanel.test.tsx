@@ -1,10 +1,11 @@
-import { fireEvent, screen } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { renderWithQueryClient as render } from "../utils/testQueryClient";
 import { describe, expect, it, vi } from "vitest";
 import { RequestDetailPanel } from "@/components/usage/RequestDetailPanel";
 import type { RequestLog } from "@/types/usage";
 
 const useRequestDetailMock = vi.hoisted(() => vi.fn());
+const copyTextMock = vi.hoisted(() => vi.fn());
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -12,6 +13,10 @@ vi.mock("react-i18next", () => ({
       options && "value" in options ? `${key}:${options.value}` : key,
     i18n: { resolvedLanguage: "en", language: "en" },
   }),
+}));
+
+vi.mock("@/lib/clipboard", () => ({
+  copyText: (text: string) => copyTextMock(text),
 }));
 
 vi.mock("@/lib/query/usage", () => ({
@@ -50,6 +55,19 @@ const renderWith = (request: RequestLog) => {
 };
 
 describe("RequestDetailPanel", () => {
+  it("copies the full request ID even when the row truncates it", async () => {
+    const longId =
+      "resp_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    copyTextMock.mockResolvedValue(undefined);
+    renderWith(log({ requestId: longId }));
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "usage.detail.copyRequestId" }),
+    );
+
+    await waitFor(() => expect(copyTextMock).toHaveBeenCalledWith(longId));
+  });
+
   it("shows speed, first token and duration for routed requests", () => {
     renderWith(log({}));
 

@@ -107,6 +107,15 @@ describe("kimiProviderPresets", () => {
         "dynamically_loaded_tools",
       ]),
     );
+    for (const preset of ["Kimi", "Kimi Global"]) {
+      for (const id of ["kimi-k3.1-pro", "kimi-k3.1-pro-highspeed"]) {
+        expect(model(preset, id)).toMatchObject({
+          max_context_size: 1048576,
+          support_efforts: ["low", "high", "max"],
+          default_effort: "high",
+        });
+      }
+    }
   });
 
   it("uses cloud providers' real protocols and excludes Bedrock's unsupported signing protocol", () => {

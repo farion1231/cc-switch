@@ -6,10 +6,13 @@ import type {
 } from "@/hooks/useSettings";
 import type { Settings } from "@/types";
 import { Button } from "@/components/ui/button";
+import { DirectoryInput } from "@/components/settings/DirectorySettings";
 import {
-  DirectoryInput,
+  DIRECTORY_APP,
+  DIRECTORY_APPS,
   type DirectoryAppId,
-} from "@/components/settings/DirectorySettings";
+  sanitizeDir,
+} from "@/config/directoryApps";
 import { CodexAuthSettings } from "@/components/settings/CodexAuthSettings";
 import { APP_DISPLAY_NAME, AppGlyph } from "@/components/shell/AppGlyph";
 import {
@@ -18,45 +21,6 @@ import {
   SettingsRow,
   SettingsSwitchRow,
 } from "@/components/settings/SettingsLayout";
-
-const DIRECTORY_FIELD: Record<DirectoryAppId, keyof Settings> = {
-  claude: "claudeConfigDir",
-  codex: "codexConfigDir",
-  gemini: "geminiConfigDir",
-  grokbuild: "grokConfigDir",
-  opencode: "opencodeConfigDir",
-  openclaw: "openclawConfigDir",
-  hermes: "hermesConfigDir",
-  pi: "piConfigDir",
-  omp: "ompConfigDir",
-};
-
-const DIRECTORY_PLACEHOLDER: Record<DirectoryAppId, string> = {
-  claude: "settings.browsePlaceholderClaude",
-  codex: "settings.browsePlaceholderCodex",
-  gemini: "settings.browsePlaceholderGemini",
-  grokbuild: "settings.browsePlaceholderGrok",
-  opencode: "settings.browsePlaceholderOpencode",
-  openclaw: "settings.browsePlaceholderOpenclaw",
-  hermes: "settings.browsePlaceholderHermes",
-  pi: "settings.browsePlaceholderPi",
-  omp: "settings.browsePlaceholderOmp",
-};
-
-const DIRECTORY_APPS: DirectoryAppId[] = [
-  "claude",
-  "codex",
-  "gemini",
-  "grokbuild",
-  "opencode",
-  "openclaw",
-  "hermes",
-  "pi",
-  "omp",
-];
-
-const normalizeDir = (value: unknown) =>
-  typeof value === "string" && value.trim() ? value.trim() : undefined;
 
 interface AppConfigSectionProps {
   settings: SettingsFormState;
@@ -88,11 +52,8 @@ export function AppConfigSection({
   const { t } = useTranslation();
 
   const isDirty = (app: DirectoryAppId) => {
-    const field = DIRECTORY_FIELD[app];
-    return (
-      normalizeDir(settings[field as keyof SettingsFormState]) !==
-      normalizeDir(savedSettings?.[field])
-    );
+    const { field } = DIRECTORY_APP[app];
+    return sanitizeDir(settings[field]) !== sanitizeDir(savedSettings?.[field]);
   };
 
   const directoryRow = (app: DirectoryAppId) => (
@@ -105,13 +66,9 @@ export function AppConfigSection({
     >
       <DirectoryInput
         label=""
-        value={
-          settings[DIRECTORY_FIELD[app] as keyof SettingsFormState] as
-            | string
-            | undefined
-        }
+        value={settings[DIRECTORY_APP[app].field]}
         resolvedValue={resolvedDirs[app]}
-        placeholder={t(DIRECTORY_PLACEHOLDER[app])}
+        placeholder={t(DIRECTORY_APP[app].placeholderKey)}
         onChange={(value) => onDirectoryChange(app, value)}
         onBrowse={() => onBrowseDirectory(app)}
         onReset={() => onResetDirectory(app)}
@@ -141,7 +98,7 @@ export function AppConfigSection({
 
   return (
     <>
-      {DIRECTORY_APPS.map((app) => (
+      {DIRECTORY_APPS.map(({ app }) => (
         <SettingsBlock
           key={app}
           id={`app-config-${app}`}

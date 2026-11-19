@@ -1,7 +1,6 @@
-import { useEffect } from "react";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { useQueryClient } from "@tanstack/react-query";
+import { focusManager, useQueryClient } from "@tanstack/react-query";
 import { usageKeys } from "@/lib/query/usage";
+import { useTauriEvent } from "./useTauriEvent";
 
 /**
  * 监听后端 `usage-log-recorded` 事件，收到后立刻 invalidate 所有
@@ -15,27 +14,12 @@ import { usageKeys } from "@/lib/query/usage";
 export function useUsageEventBridge() {
   const queryClient = useQueryClient();
 
-  useEffect(() => {
-    let unlisten: UnlistenFn | undefined;
-    let disposed = false;
-
-    (async () => {
-      const off = await listen("usage-log-recorded", () => {
-        // invalidate 整个 usage 命名空间：summary / trends / providerStats /
-        // modelStats / logs 全部跟着重拉
-        queryClient.invalidateQueries({ queryKey: usageKeys.all });
-      });
-
-      if (disposed) {
-        off();
-      } else {
-        unlisten = off;
-      }
-    })();
-
-    return () => {
-      disposed = true;
-      unlisten?.();
-    };
-  }, [queryClient]);
+  useTauriEvent("usage-log-recorded", () => {
+    // Mark inactive-window data stale without repeatedly querying SQLite. The
+    // normal focus refetch catches up when the user returns to the window.
+    void queryClient.invalidateQueries({
+      queryKey: usageKeys.all,
+      refetchType: focusManager.isFocused() ? "active" : "none",
+    });
+  });
 }

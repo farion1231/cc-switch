@@ -3,7 +3,8 @@
  *
  * 与后端 `src-tauri/src/services/coding_plan.rs::detect_provider` 保持一致：
  * 后端靠 `url.contains(...)` 做子串判断（MiniMax 例外，按 host 标签匹配），
- * 前端这里用 RegExp 做同效匹配。
+ * 前端这里用 RegExp 做同效匹配。两边对同一组地址的识别结果由
+ * tests/config/backendConstants.test.ts 校验。
  * 新增供应商时改这一处即可（UsageScriptModal 下拉 + useProviderActions
  * 新建自动注入 + 托盘识别全部复用）。
  */
@@ -22,11 +23,12 @@ export interface CodingPlanProviderEntry {
     | "zenmux"
     | "volcengine"
     | "opencode_go"
-    | "command_code";
+    | "command_code"
+    | "ollama_cloud";
   /** UsageScriptModal 下拉显示用 */
   label: string;
-  /** base_url 匹配规则 */
-  pattern: RegExp;
+  /** base_url 匹配规则；null 表示不参与自动检测，只能由用户手动选择 */
+  pattern: RegExp | null;
 }
 
 export const CODING_PLAN_PROVIDERS: readonly CodingPlanProviderEntry[] = [
@@ -38,13 +40,11 @@ export const CODING_PLAN_PROVIDERS: readonly CodingPlanProviderEntry[] = [
   },
   {
     // 智谱团队套餐（Team Plan）。base_url 与个人版智谱（open.bigmodel.cn）相同，
-    // 无法靠 base_url 自动区分——靠显式 codingPlanProvider === "zhipu_team" 路由。
-    // 个人版 zhipu 排在前面，detectCodingPlanProvider 首匹配仍命中个人版，
-    // 故团队版永不被 injectCodingPlanUsageScript 自动注入（必须用户手动选）。
-    // pattern 仅占位（下拉展示用），实际不参与自动检测。
+    // 无法靠 base_url 自动区分——靠显式 codingPlanProvider === "zhipu_team" 路由，
+    // 只能由用户手动选择。
     id: "zhipu_team",
     label: "Zhipu GLM Team (智谱团队)",
-    pattern: /bigmodel\.cn/i,
+    pattern: null,
   },
   {
     // 按 host 标签边界匹配（同后端 codex_url_host_matches_any），不认
@@ -71,13 +71,14 @@ export const CODING_PLAN_PROVIDERS: readonly CodingPlanProviderEntry[] = [
   {
     // OpenCode Go（$10/月订阅，三时间窗口美元额度）。用量端点
     // GET /zen/go/v1/usage 是官方第一方但未文档化的路由，只认
-    // Authorization: Bearer（与推理侧 /messages 只认 x-api-key 相反）。
-    // base 分两档：/zen/go（claude/claude-desktop 直连 /messages）与
-    // /zen/go/v1（codex/opencode/pi 走 Chat），子串同时覆盖；
+    // Authorization: Bearer（与推理侧 /messages 只认 x-api-key 相反）；
+    // /inference/go/v1/usage 返回同一份数据，两个入口共用该端点。
+    // base 分两档：Anthropic 端 /inference/go/anthropic 与旧入口 /zen/go，
+    // OpenAI Chat 端分别是 /inference/go/v1 与 /zen/go/v1；
     // Zen 按量版（/zen/v1）没有用量 API，刻意不命中。
     id: "opencode_go",
     label: "OpenCode Go",
-    pattern: /opencode\.ai\/zen\/go/i,
+    pattern: /opencode\.ai\/(?:zen|inference)\/go/i,
   },
   {
     // Command Code 的余额与窗口接口由官方 CLI 使用，当前未公开文档化。
@@ -85,6 +86,14 @@ export const CODING_PLAN_PROVIDERS: readonly CodingPlanProviderEntry[] = [
     id: "command_code",
     label: "Command Code",
     pattern: /api\.commandcode\.ai\/provider(?:[/?#]|$)/i,
+  },
+  {
+    // Ollama Cloud（GET https://ollama.com/api/balance，Bearer Key）。按 host
+    // 标签匹配（同后端 codex_url_host_matches_any），本地 localhost:11434 不命中。
+    id: "ollama_cloud",
+    label: "Ollama Cloud",
+    pattern:
+      /^(?:https?:\/\/)?(?:[^/?#@]*@)?(?:[\w-]+\.)*ollama\.com(?=[:/?#]|$)/i,
   },
 ] as const;
 
@@ -94,7 +103,7 @@ export function detectCodingPlanProvider(
 ): CodingPlanProviderEntry["id"] | null {
   if (!baseUrl) return null;
   for (const cp of CODING_PLAN_PROVIDERS) {
-    if (cp.pattern.test(baseUrl)) return cp.id;
+    if (cp.pattern?.test(baseUrl)) return cp.id;
   }
   return null;
 }
