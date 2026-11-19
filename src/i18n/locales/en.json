@@ -1735,6 +1735,7 @@
       "outlineFailed": "Has failed steps",
       "outlineAborted": "Interrupted",
       "outlineNoReply": "No reply",
+      "chapter": "Chapter",
       "viewOptions": "Display options",
       "noChanges": "No file changes in this session",
       "rawMatch": "Matches in source",
