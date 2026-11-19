@@ -56,9 +56,9 @@ fn sync_agy_usage_from_files(
         };
         let modified = metadata_modified_nanos(&metadata);
         let size = metadata.len() as i64;
-        // Invalidate pre-Orchestrator / pre-worker-alias cursors once, including unchanged,
-        // already timed history.
-        let native_state = format!("v3:{}", native_models::native_state_fingerprint(&path));
+        // Invalidate pre-Orchestrator / pre-worker-alias / pre-Neon-Orchestrator cursors once,
+        // including unchanged, already timed history.
+        let native_state = format!("v4:{}", native_models::native_state_fingerprint(&path));
         if cursor.is_some_and(|c| {
             c.last_modified == modified
                 && c.last_byte_offset == Some(size)
@@ -133,9 +133,12 @@ fn model_id_of(display: &str) -> String {
 /// Multi-model modes, not evidence of the model used for an individual response.
 /// Display name and native alias of the same mode map to the same planner.
 fn orchestrator_mode(model: &str) -> Option<&'static str> {
-    match model_id_of(model).as_str() {
+    match model_id_of(model.trim()).to_ascii_lowercase().as_str() {
         "orchestrator-carbon" | "gemini-pro-orchestrator" => Some("carbon"),
-        "orchestrator-argon" | "gemini-pro-orchestrator-argon" => Some("argon"),
+        "orchestrator-argon"
+        | "gemini-pro-orchestrator-argon"
+        | "gemini-pro-orchestrator-g1-pro" => Some("argon"),
+        "orchestrator-neon" | "gemini-pro-orchestrator-neon" => Some("neon"),
         _ => None,
     }
 }
