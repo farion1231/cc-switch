@@ -344,7 +344,9 @@ fn convert_input_item(item: &mut Value) -> bool {
             let arguments = json!({ CUSTOM_TOOL_INPUT_FIELD: input }).to_string();
             let mut call = Map::new();
             call.insert("type".into(), json!("function_call"));
-            for key in ["call_id", "name"] {
+            // `namespace` keeps a namespaced custom tool (`code.exec`) distinct
+            // from a top-level tool with the same bare name across turns.
+            for key in ["call_id", "name", "namespace"] {
                 if let Some(value) = item.get(key) {
                     call.insert(key.into(), value.clone());
                 }
@@ -494,6 +496,20 @@ mod tests {
             .unwrap()
             .iter()
             .all(|item| !item["type"].as_str().unwrap().starts_with("custom")));
+    }
+
+    #[test]
+    fn replayed_namespaced_calls_keep_their_namespace() {
+        let mut body = json!({
+            "tools": [{ "type": "namespace", "name": "code",
+                "tools": [{ "type": "custom", "name": "exec" }] }],
+            "input": [{ "type": "custom_tool_call", "call_id": "c", "namespace": "code",
+                "name": "exec", "input": "x" }]
+        });
+        assert!(convert_custom_tools_to_functions(&mut body));
+        assert_eq!(body["input"][0]["type"], "function_call");
+        assert_eq!(body["input"][0]["namespace"], "code");
+        assert_eq!(body["input"][0]["name"], "exec");
     }
 
     #[test]
