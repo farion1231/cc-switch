@@ -2343,6 +2343,11 @@ fn order_anthropic_web_search_result_stream(
                     {
                         pending.clear();
                         yield Ok(bytes);
+                        // 转换器在这条 error 事件之后追加了一个内部错误标记（供外层记账）。
+                        // 不能直接 break：否则外层只看到正常 EOF，会把这次断流记成成功。
+                        if let Some(Err(error)) = stream.next().await {
+                            yield Err(error);
+                        }
                         break;
                     }
                     if state.can_emit(event.as_ref()) {
@@ -4744,6 +4749,12 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                         serde_json::to_string(&error_event).unwrap_or_default());
                     yield Ok(Bytes::from(sse));
                     state.terminated = true;
+                    // 错误事件已下发，只通知外层记账，不再追加传输错误。
+                    yield Err(std::io::Error::other(
+                        crate::proxy::response_processor::SurfacedStreamError(format!(
+                            "Stream error: {e}"
+                        )),
+                    ));
                     break;
                 }
             }

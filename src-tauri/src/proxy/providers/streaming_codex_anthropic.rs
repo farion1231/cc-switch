@@ -759,6 +759,12 @@ pub(crate) fn create_responses_sse_stream_from_anthropic_with_context<
                         yield Ok(event);
                     }
                     stream_failed = true;
+                    // 错误事件已下发，只通知外层记账，不再追加传输错误。
+                    yield Err(std::io::Error::other(
+                        crate::proxy::response_processor::SurfacedStreamError(format!(
+                            "Stream error: {e}"
+                        )),
+                    ));
                     break;
                 }
             }

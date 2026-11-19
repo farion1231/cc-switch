@@ -141,6 +141,21 @@ pub(crate) async fn read_decoded_body(
 // 公共接口
 // ============================================================================
 
+/// 流式转换器已经把上游错误转成一条 SSE `error` 事件发给客户端了。
+///
+/// 外层仍然要把它记为 provider 失败，但不能再把同一个错误作为传输错误发给客户端
+/// （客户端已经收到协议级错误事件，再截断连接会让部分客户端按“网络错误”整请求重试）。
+#[derive(Debug)]
+pub(crate) struct SurfacedStreamError(pub String);
+
+impl std::fmt::Display for SurfacedStreamError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for SurfacedStreamError {}
+
 /// 检测响应是否为 SSE 流式响应
 ///
 /// 上游标了 `text/event-stream` 就是流；客户端要的是流（`request_is_stream`）、
@@ -743,7 +758,7 @@ pub fn create_logged_passthrough_stream(
     connection_guard: Option<ActiveConnectionGuard>,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
-        let _conn_guard = connection_guard;
+        let mut conn_guard = connection_guard;
         let mut sse = SseBuffer::new();
         let mut collector = usage_collector;
         let mut finish_guard = collector.clone().map(SseUsageFinishGuard::new);
@@ -782,7 +797,11 @@ pub fn create_logged_passthrough_stream(
                             // 超时
                             let timeout_type = if is_first_chunk { "首字节" } else { "静默期" };
                             log::error!("[{tag}] 流式响应{}超时 ({}秒)", timeout_type, duration.as_secs());
-                            yield Err(std::io::Error::other(format!("流式响应{timeout_type}超时")));
+                            let message = format!("流式响应{timeout_type}超时");
+                            if let Some(guard) = conn_guard.as_mut() {
+                                guard.report_stream_failure(message.clone());
+                            }
+                            yield Err(std::io::Error::other(message));
                             break;
                         }
                     }
@@ -844,7 +863,17 @@ pub fn create_logged_passthrough_stream(
                 }
                 Some(Err(e)) => {
                     log::error!("[{tag}] 流错误: {e}");
-                    yield Err(std::io::Error::other(e.to_string()));
+                    let message = e.to_string();
+                    if let Some(guard) = conn_guard.as_mut() {
+                        guard.report_stream_failure(message.clone());
+                    }
+                    // 转换器已经把错误转成 SSE `event: error` 发下去了，只记账不重复报错。
+                    let surfaced = e
+                        .get_ref()
+                        .is_some_and(|inner| inner.is::<SurfacedStreamError>());
+                    if !surfaced {
+                        yield Err(std::io::Error::other(message));
+                    }
                     break;
                 }
                 None => {

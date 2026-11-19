@@ -5296,3 +5296,204 @@ mod bookkeeping {
         assert!(breaker_untouched(&fwd, "kimi").await);
     }
 }
+
+fn no_stream_timeouts() -> crate::proxy::handler_context::StreamingTimeoutConfig {
+    crate::proxy::handler_context::StreamingTimeoutConfig {
+        first_byte_timeout: 0,
+        idle_timeout: 0,
+    }
+}
+
+/// 流式响应已经提交（首包成功）之后上游才断开，也要把 provider 记为失败：
+/// 否则熔断器永远看不到这种“稳定地中途断流”的供应商。
+#[tokio::test]
+async fn stream_transport_error_reports_provider_failure() {
+    use crate::proxy::response_processor::create_logged_passthrough_stream;
+    use futures::StreamExt;
+
+    let db = Arc::new(Database::memory().expect("memory db"));
+    let router = Arc::new(ProviderRouter::new(db));
+    let status = Arc::new(RwLock::new(ProxyStatus::default()));
+    let mut guard = ActiveConnectionGuard::acquire(status.clone()).await;
+    guard.attach_stream_outcome(StreamOutcomeReporter::new(
+        router,
+        status.clone(),
+        "provider-1".to_string(),
+        AppType::Claude,
+        true,
+    ));
+
+    let upstream = futures::stream::iter(vec![
+        Ok(Bytes::from_static(b"data: {}\n\n")),
+        Err(std::io::Error::other("upstream reset")),
+    ]);
+    let stream =
+        create_logged_passthrough_stream(upstream, "test", None, no_stream_timeouts(), Some(guard));
+    let chunks: Vec<_> = stream.collect().await;
+    assert!(chunks.iter().any(Result::is_err), "error must reach client");
+
+    // 上报是 spawn 出去的，等它把 last_error 写好。
+    for _ in 0..100 {
+        if status.read().await.last_error.is_some() {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    let last_error = status.read().await.last_error.clone().unwrap_or_default();
+    assert!(
+        last_error.contains("upstream reset"),
+        "provider failure must be recorded, got {last_error:?}"
+    );
+}
+
+/// 转换器已经把上游错误转成 SSE `event: error` 发给客户端了：外层要记账，
+/// 但不能再追加一个传输错误。
+#[tokio::test]
+async fn surfaced_stream_error_is_reported_without_a_second_transport_error() {
+    use crate::proxy::response_processor::{create_logged_passthrough_stream, SurfacedStreamError};
+    use futures::StreamExt;
+
+    let db = Arc::new(Database::memory().expect("memory db"));
+    let router = Arc::new(ProviderRouter::new(db));
+    let status = Arc::new(RwLock::new(ProxyStatus::default()));
+    let mut guard = ActiveConnectionGuard::acquire(status.clone()).await;
+    guard.attach_stream_outcome(StreamOutcomeReporter::new(
+        router,
+        status.clone(),
+        "provider-1".to_string(),
+        AppType::Claude,
+        true,
+    ));
+
+    let upstream = futures::stream::iter(vec![
+        Ok(Bytes::from_static(
+            b"event: error\ndata: {\"type\":\"error\"}\n\n",
+        )),
+        Err(std::io::Error::other(SurfacedStreamError(
+            "Stream error: boom".to_string(),
+        ))),
+    ]);
+    let stream =
+        create_logged_passthrough_stream(upstream, "test", None, no_stream_timeouts(), Some(guard));
+    let chunks: Vec<_> = stream.collect().await;
+    assert!(
+        chunks.iter().all(Result::is_ok),
+        "a surfaced error must not be re-sent as a transport error"
+    );
+    assert_eq!(chunks.len(), 1);
+
+    for _ in 0..100 {
+        if status.read().await.last_error.is_some() {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    let last_error = status.read().await.last_error.clone().unwrap_or_default();
+    assert!(
+        last_error.contains("boom"),
+        "provider failure must still be recorded, got {last_error:?}"
+    );
+}
+
+/// 同一个供应商连续「首包成功 + 中途断流」时，熔断器必须看到连续的失败，
+/// 而不是「成功、失败、成功、失败」交替。
+#[tokio::test]
+async fn repeated_stream_breaks_trip_the_breaker() {
+    let db = Arc::new(Database::memory().expect("memory db"));
+    let threshold = db
+        .get_proxy_config_for_app(&AppType::Claude)
+        .await
+        .expect("proxy config")
+        .circuit_failure_threshold;
+    let router = Arc::new(ProviderRouter::new(db));
+    let status = Arc::new(RwLock::new(ProxyStatus::default()));
+
+    for _ in 0..threshold {
+        let mut guard = ActiveConnectionGuard::acquire(status.clone()).await;
+        guard.attach_stream_outcome(StreamOutcomeReporter::new(
+            router.clone(),
+            status.clone(),
+            "provider-1".to_string(),
+            AppType::Claude,
+            true,
+        ));
+        // 首包的成功记账已由 finish_success 推迟，这里只补报断流。
+        guard.report_stream_failure("upstream reset".to_string());
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+
+    let stats = router
+        .get_circuit_breaker_stats("provider-1", &AppType::Claude)
+        .await
+        .expect("breaker exists");
+    assert_eq!(
+        stats.state,
+        crate::proxy::circuit_breaker::CircuitState::Open,
+        "consecutive breaks must open the breaker: consecutive_failures={}, failed/total={}/{}",
+        stats.consecutive_failures,
+        stats.failed_requests,
+        stats.total_requests
+    );
+    // transition_to_open 会清零连续失败计数，所以这里看总量：每次断流都只记失败，
+    // 没有首包成功来和它交替。
+    assert_eq!(
+        stats.failed_requests, stats.total_requests,
+        "each stream break must count as a failure, not a success: failed/total={}/{}",
+        stats.failed_requests, stats.total_requests
+    );
+}
+
+/// Claude→OpenAI Responses 的公开入口外面还包了一层 web-search 排序器。
+/// 它遇到 `error` 事件时曾直接 break，把转换器追加的内部错误标记吞掉，
+/// 外层只看到正常 EOF，断流被记成成功。这条用例走真实转换入口验证。
+#[tokio::test]
+async fn responses_conversion_stream_error_is_reported_through_the_ordering_wrapper() {
+    use crate::proxy::providers::streaming_responses::create_anthropic_sse_stream_from_responses;
+    use crate::proxy::response_processor::create_logged_passthrough_stream;
+    use futures::StreamExt;
+
+    let db = Arc::new(Database::memory().expect("memory db"));
+    let router = Arc::new(ProviderRouter::new(db));
+    let status = Arc::new(RwLock::new(ProxyStatus::default()));
+    let mut guard = ActiveConnectionGuard::acquire(status.clone()).await;
+    guard.attach_stream_outcome(StreamOutcomeReporter::new(
+        router,
+        status.clone(),
+        "provider-1".to_string(),
+        AppType::Claude,
+        true,
+    ));
+
+    let upstream = futures::stream::iter(vec![
+        Ok::<_, std::io::Error>(Bytes::from_static(
+            b"data: {\"type\":\"response.created\",\"response\":{\"id\":\"r1\"}}\n\n",
+        )),
+        Err(std::io::Error::other("upstream reset")),
+    ]);
+    let converted = create_anthropic_sse_stream_from_responses(upstream);
+    let stream = create_logged_passthrough_stream(
+        converted,
+        "test",
+        None,
+        no_stream_timeouts(),
+        Some(guard),
+    );
+    let chunks: Vec<_> = stream.collect().await;
+    // 转换器已经发过 SSE error 事件；内部标记只用于记账，不应作为传输错误发给客户端。
+    assert!(
+        chunks.iter().all(Result::is_ok),
+        "a surfaced error must not reach the client"
+    );
+
+    for _ in 0..100 {
+        if status.read().await.last_error.is_some() {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    let last_error = status.read().await.last_error.clone().unwrap_or_default();
+    assert!(
+        last_error.contains("upstream reset"),
+        "Responses conversion must report the break, got {last_error:?}"
+    );
+}
