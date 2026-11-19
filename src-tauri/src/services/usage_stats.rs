@@ -12,7 +12,7 @@ use crate::services::sql_helpers::{
 use chrono::{Local, NaiveDate, TimeZone, Timelike};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::str::FromStr;
 use std::sync::LazyLock;
 
@@ -2339,6 +2339,12 @@ pub(crate) fn find_model_pricing(conn: &Connection, model_id: &str) -> Option<Mo
         })
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PricingCandidate {
+    model_id: String,
+    allow_prefix_match: bool,
+}
+
 pub(crate) fn find_model_pricing_row(
     conn: &Connection,
     model_id: &str,
@@ -2349,14 +2355,14 @@ pub(crate) fn find_model_pricing_row(
     }
 
     for candidate in &candidates {
-        if let Some(row) = query_model_pricing_exact(conn, candidate)? {
+        if let Some(row) = query_model_pricing_exact(conn, &candidate.model_id)? {
             return Ok(Some(row));
         }
     }
 
     for candidate in &candidates {
-        if should_try_pricing_prefix_match(candidate) {
-            if let Some(row) = query_model_pricing_prefix(conn, candidate)? {
+        if candidate.allow_prefix_match && should_try_pricing_prefix_match(&candidate.model_id) {
+            if let Some(row) = query_model_pricing_prefix(conn, &candidate.model_id)? {
                 return Ok(Some(row));
             }
         }
@@ -2368,7 +2374,10 @@ pub(crate) fn find_model_pricing_row(
 /// 精准回填的行筛选：log 的任一模型字段归一化后与目标模型的 candidates 相交，
 /// 或可按查价层的前缀规则命中目标，即视为相关。镜像 find_model_pricing_row 的
 /// 匹配语义，宁可误纳（后续查价会兜底）不可漏筛。
-fn log_pricing_scope_matches(log: &RequestLogDetail, target_candidates: &[String]) -> bool {
+fn log_pricing_scope_matches(
+    log: &RequestLogDetail,
+    target_candidates: &[PricingCandidate],
+) -> bool {
     [
         Some(log.model.as_str()),
         log.request_model.as_deref(),
@@ -2379,10 +2388,12 @@ fn log_pricing_scope_matches(log: &RequestLogDetail, target_candidates: &[String
     .any(|field| {
         model_pricing_candidates(field).iter().any(|candidate| {
             target_candidates.iter().any(|target| {
-                target == candidate
-                    || (should_try_pricing_prefix_match(candidate)
+                target.model_id == candidate.model_id
+                    || (candidate.allow_prefix_match
+                        && should_try_pricing_prefix_match(&candidate.model_id)
                         && target
-                            .strip_prefix(candidate.as_str())
+                            .model_id
+                            .strip_prefix(candidate.model_id.as_str())
                             .is_some_and(|rest| rest.starts_with('-')))
             })
         })
@@ -2443,42 +2454,67 @@ fn query_model_pricing_prefix(
     .map_err(|e| AppError::Database(format!("查询模型前缀定价失败: {e}")))
 }
 
-fn model_pricing_candidates(model_id: &str) -> Vec<String> {
+fn model_pricing_candidates(model_id: &str) -> Vec<PricingCandidate> {
     let cleaned = clean_model_id_for_pricing(model_id);
     if is_placeholder_pricing_model(&cleaned) {
         return Vec::new();
     }
 
     let mut candidates = Vec::new();
-    let mut queue = vec![cleaned];
+    let mut queue = VecDeque::from([PricingCandidate {
+        model_id: cleaned,
+        allow_prefix_match: true,
+    }]);
 
-    while let Some(candidate) = queue.pop() {
+    while let Some(candidate) = queue.pop_front() {
+        let allow_prefix_match = candidate.allow_prefix_match;
         if !push_unique_candidate(&mut candidates, candidate.clone()) {
             continue;
         }
+        let candidate = candidate.model_id;
+        let push_derived = |queue: &mut VecDeque<PricingCandidate>, model_id: String| {
+            queue.push_back(PricingCandidate {
+                model_id,
+                allow_prefix_match,
+            });
+        };
 
         if let Some(stripped) = strip_known_model_namespace(&candidate) {
-            queue.push(stripped);
+            push_derived(&mut queue, stripped);
         }
         if let Some(stripped) = strip_claude_desktop_non_anthropic_prefix(&candidate) {
-            queue.push(stripped);
+            push_derived(&mut queue, stripped);
         }
         if let Some(stripped) = strip_bedrock_model_version_suffix(&candidate) {
-            queue.push(stripped);
+            push_derived(&mut queue, stripped);
+        }
+        if candidate.starts_with("claude-")
+            && candidate.contains('.')
+            && strip_claude_desktop_non_anthropic_prefix(&candidate).is_none()
+        {
+            push_derived(&mut queue, candidate.replace('.', "-"));
         }
         if let Some(stripped) = strip_model_date_suffix(&candidate) {
-            queue.push(stripped);
+            push_derived(&mut queue, stripped);
         }
         if let Some(stripped) = strip_reasoning_effort_suffix(&candidate) {
-            queue.push(stripped);
+            push_derived(&mut queue, stripped);
+        }
+        // AGY's built-in subagents (such as browser) and native generations report
+        // Gemini Flash thinking-level endpoints as `gemini-<ver>-flash-tiered`.
+        // Keep the raw ID and any exact custom price; otherwise fall back only to an
+        // exact `gemini-<ver>-flash` row so missing base Flash models never prefix-match
+        // sibling `gemini-<ver>-flash-lite` or custom sub-tier entries.
+        if let Some(stripped) = strip_gemini_flash_tiered_suffix(&candidate) {
+            queue.push_back(PricingCandidate {
+                model_id: stripped,
+                allow_prefix_match: false,
+            });
         }
         // AGY's "Gemini 4 Hydrogen (Orchestrator)" is the same Hydrogen worker.
         // Keep the raw ID and any exact custom price; otherwise use the base API estimate.
         if candidate == "gemini-4-hydrogen-orchestrator" {
-            queue.push("gemini-4-hydrogen".to_string());
-        }
-        if candidate.starts_with("claude-") && candidate.contains('.') {
-            queue.push(candidate.replace('.', "-"));
+            push_derived(&mut queue, "gemini-4-hydrogen".to_string());
         }
     }
 
@@ -2502,8 +2538,21 @@ fn clean_model_id_for_pricing(model_id: &str) -> String {
         .to_string()
 }
 
-fn push_unique_candidate(candidates: &mut Vec<String>, candidate: String) -> bool {
-    if candidate.is_empty() || candidates.iter().any(|existing| existing == &candidate) {
+fn push_unique_candidate(
+    candidates: &mut Vec<PricingCandidate>,
+    candidate: PricingCandidate,
+) -> bool {
+    if candidate.model_id.is_empty() {
+        return false;
+    }
+    if let Some(existing) = candidates
+        .iter_mut()
+        .find(|existing| existing.model_id == candidate.model_id)
+    {
+        if !existing.allow_prefix_match && candidate.allow_prefix_match {
+            existing.allow_prefix_match = true;
+            return true;
+        }
         return false;
     }
     candidates.push(candidate);
@@ -2635,7 +2684,22 @@ fn strip_reasoning_effort_suffix(model_id: &str) -> Option<String> {
     None
 }
 
+fn strip_gemini_flash_tiered_suffix(model_id: &str) -> Option<String> {
+    let version = model_id
+        .strip_prefix("gemini-")?
+        .strip_suffix("-flash-tiered")?;
+    (!version.is_empty()
+        && version
+            .split('.')
+            .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit())))
+    .then(|| format!("gemini-{version}-flash"))
+}
+
 fn should_try_pricing_prefix_match(model_id: &str) -> bool {
+    if strip_gemini_flash_tiered_suffix(model_id).is_some() {
+        return false;
+    }
+
     let dash_count = model_id.matches('-').count();
 
     if model_id.starts_with("claude-") {
@@ -5979,6 +6043,278 @@ mod tests {
             [], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)),
         )?;
         assert_eq!(totals, (3, 3_000_000, 300_000, 3_000_000));
+        Ok(())
+    }
+
+    #[test]
+    fn test_gemini_flash_tiered_pricing_preserves_exact_overrides() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+        let base_38 = find_model_pricing_row(&conn, "gemini-3.8-flash")?;
+        let base_37 = find_model_pricing_row(&conn, "gemini-3.7-flash")?;
+        assert!(base_38.is_some());
+        assert!(base_37.is_some());
+        // Built-in seeds contain `gemini-3.1-flash-lite` (no `gemini-3.1-flash`) and
+        // `gemini-3-flash-preview` (no `gemini-3-flash`); verify they exist before
+        // asserting that `-tiered` never prefix-matches across sub-tiers or previews.
+        assert!(find_model_pricing_row(&conn, "gemini-3.1-flash-lite")?.is_some());
+        assert!(find_model_pricing_row(&conn, "gemini-3-flash-preview")?.is_some());
+
+        for model in [
+            "gemini-3.8-flash-tiered",
+            "models/gemini-3.8-flash-tiered",
+            "google/GEMINI-3.8-FLASH-TIERED",
+            "google.gemini-3.8-flash-tiered:free",
+            "gemini-3.8-flash@tiered",
+            "gemini-3.8-flash-tiered-high",
+            "gemini-3.8-flash-tiered-2026-09-02",
+            "claude-gemini-3.8-flash-tiered",
+        ] {
+            assert_eq!(find_model_pricing_row(&conn, model)?, base_38, "{model}");
+        }
+        for model in ["gemini-3.7-flash-tiered", "models/gemini-3.7-flash-tiered"] {
+            assert_eq!(find_model_pricing_row(&conn, model)?, base_37, "{model}");
+        }
+
+        // `-tiered` is a Gemini Flash endpoint suffix, not a generic suffix for other families,
+        // and must not prefix-match `gemini-3.1-flash-lite` or `-preview` when the exact base
+        // `gemini-<ver>-flash` entry is absent.
+        for model in [
+            "gemini-3.1-flash-tiered",
+            "models/gemini-3.1-flash-tiered",
+            "claude-gemini-3.1-flash-tiered",
+            "gemini-3.1-flash-tiered-high",
+            "gemini-3.1-flash-tiered-2026-09-02",
+            "gemini-3-flash-tiered",
+            "gemini-4-argon-tiered",
+            "gemini-3.1-pro-tiered",
+            "gemini-3.5-flash-lite-tiered",
+            "gemini-3.8-flash-tiered-preview",
+            "gemini-pro-flash-tiered",
+            "gemini-.8-flash-tiered",
+            "gemini-3.-flash-tiered",
+            "gemini--flash-tiered",
+            "gemini-3..8-flash-tiered",
+            "step-3.7-flash-tiered",
+            "custom-flash-tiered",
+            "gemini-3.8-flash-n",
+        ] {
+            assert!(find_model_pricing_row(&conn, model)?.is_none(), "{model}");
+        }
+
+        // Deleting an existing base Flash row or adding only a sub-tier row must also
+        // stay unpriced rather than falling into `LIKE 'gemini-<ver>-flash-%'`.
+        conn.execute(
+            "DELETE FROM model_pricing WHERE model_id = 'gemini-3.5-flash'",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO model_pricing VALUES ('gemini-3.9-flash-low',
+             'Custom Gemini 3.9 Flash Low', '0.2', '1.0', '0.02', '0')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO model_pricing VALUES ('gemini-3.9-flash-tiered-low',
+             'Custom Gemini 3.9 Flash Tiered Low', '0.4', '2.0', '0.04', '0')",
+            [],
+        )?;
+        assert!(find_model_pricing_row(&conn, "gemini-3.5-flash-lite")?.is_some());
+        assert!(find_model_pricing_row(&conn, "gemini-3.5-flash-tiered")?.is_none());
+        assert!(find_model_pricing_row(&conn, "gemini-3.9-flash-tiered")?.is_none());
+        assert!(find_model_pricing_row(&conn, "models/gemini-3.9-flash-tiered")?.is_none());
+        assert!(find_model_pricing_row(&conn, "gemini-3.9-flash-tiered-high")?.is_none());
+        assert_eq!(
+            find_model_pricing_row(&conn, "gemini-3.9-flash-tiered-low")?,
+            Some(("0.4".into(), "2.0".into(), "0.04".into(), "0".into()))
+        );
+
+        // Single-integer major versions still match when an exact `gemini-<major>-flash` row exists.
+        conn.execute(
+            "INSERT INTO model_pricing VALUES ('gemini-4-flash',
+             'Custom Gemini 4 Flash', '1', '5', '0.1', '0')",
+            [],
+        )?;
+        assert_eq!(
+            find_model_pricing_row(&conn, "gemini-4-flash-tiered")?,
+            Some(("1".into(), "5".into(), "0.1".into(), "0".into()))
+        );
+
+        conn.execute(
+            "INSERT INTO model_pricing VALUES ('gemini-3.8-flash-tiered',
+             'Custom Gemini 3.8 Flash Tiered', '2', '8', '0.2', '0')",
+            [],
+        )?;
+        for model in [
+            "gemini-3.8-flash-tiered",
+            "models/gemini-3.8-flash-tiered",
+            "google.gemini-3.8-flash-tiered:free",
+            "claude-gemini-3.8-flash-tiered",
+            "gemini-3.8-flash-tiered-high",
+            "google.gemini-3.8-flash-tiered-high",
+        ] {
+            assert_eq!(
+                find_model_pricing_row(&conn, model)?,
+                Some(("2".into(), "8".into(), "0.2".into(), "0".into())),
+                "{model}"
+            );
+        }
+        assert_eq!(
+            find_model_pricing_row(&conn, "gemini-3.7-flash-tiered")?,
+            base_37
+        );
+
+        conn.execute(
+            "INSERT INTO model_pricing VALUES ('gemini-3.8-flash-tiered-high',
+             'Custom Gemini 3.8 Flash Tiered High', '3', '12', '0.3', '0')",
+            [],
+        )?;
+        for model in [
+            "gemini-3.8-flash-tiered-high",
+            "models/gemini-3.8-flash-tiered-high",
+            "google.gemini-3.8-flash-tiered-high:free",
+            "claude-gemini-3.8-flash-tiered-high",
+            "bedrock.google.gemini-3.8-flash-tiered-high-v1:0",
+        ] {
+            assert_eq!(
+                find_model_pricing_row(&conn, model)?,
+                Some(("3".into(), "12".into(), "0.3".into(), "0".into())),
+                "{model}"
+            );
+        }
+        assert_eq!(
+            find_model_pricing_row(&conn, "google.gemini-3.8-flash-tiered-low")?,
+            Some(("2".into(), "8".into(), "0.2".into(), "0".into()))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_gemini_flash_tiered_backfills_without_transcripts() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            for (id, model, cost) in [
+                ("browser-38", "gemini-3.8-flash-tiered", "0"),
+                ("browser-37", "gemini-3.7-flash-tiered", "0"),
+                ("unpriced-31", "gemini-3.1-flash-tiered", "0"),
+                ("unpriced-n", "gemini-3.8-flash-n", "0"),
+                ("already-priced", "gemini-3.8-flash-tiered", "5"),
+            ] {
+                insert_usage_log(
+                    &conn,
+                    id,
+                    "agy",
+                    "_agy_session",
+                    model,
+                    "agy_session",
+                    1000,
+                    1_000_000,
+                    100_000,
+                    1_000_000,
+                    0,
+                    200,
+                    cost,
+                )?;
+            }
+            conn.execute(
+                "UPDATE proxy_request_logs SET input_token_semantics=?1",
+                [INPUT_TOKEN_SEMANTICS_FRESH],
+            )?;
+        }
+
+        // Scoped Flash Lite updates and full backfills must never misprice `gemini-3.1-flash-tiered`.
+        assert_eq!(
+            db.backfill_missing_usage_costs_for_model("gemini-3.1-flash-lite")?,
+            0
+        );
+        // Scoped base-model updates must only backfill matching Flash version rows.
+        assert_eq!(
+            db.backfill_missing_usage_costs_for_model("gemini-3.8-flash")?,
+            1
+        );
+        assert_eq!(
+            db.backfill_missing_usage_costs_for_model("gemini-3.7-flash")?,
+            1
+        );
+        assert_eq!(db.backfill_missing_usage_costs()?, 0);
+
+        {
+            let conn = lock_conn!(db.conn);
+            for (id, expected_model) in [
+                ("browser-38", "gemini-3.8-flash-tiered"),
+                ("browser-37", "gemini-3.7-flash-tiered"),
+            ] {
+                let row: (String, String, String, String, String) = conn.query_row(
+                    "SELECT model,input_cost_usd,output_cost_usd,cache_read_cost_usd,total_cost_usd
+                     FROM proxy_request_logs WHERE request_id=?1",
+                    [id],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+                )?;
+                assert_eq!(
+                    row,
+                    (
+                        expected_model.into(),
+                        "0.750000".into(),
+                        "0.375000".into(),
+                        "0.075000".into(),
+                        "1.200000".into(),
+                    )
+                );
+            }
+            for (id, expected) in [
+                ("unpriced-31", "0"),
+                ("unpriced-n", "0"),
+                ("already-priced", "5"),
+            ] {
+                let cost: String = conn.query_row(
+                    "SELECT total_cost_usd FROM proxy_request_logs WHERE request_id=?1",
+                    [id],
+                    |r| r.get(0),
+                )?;
+                assert_eq!(cost, expected, "{id}");
+            }
+            conn.execute(
+                "INSERT INTO model_pricing VALUES ('gemini-3.1-flash-tiered-high',
+                 'Custom Gemini 3.1 Flash Tiered High', '3', '12', '0.3', '0')",
+                [],
+            )?;
+        }
+
+        // Adding a custom per-effort `-tiered-high` entry must not misprice bare `-tiered` rows
+        // and permanently lock them out of a later base-model backfill.
+        assert_eq!(
+            db.backfill_missing_usage_costs_for_model("gemini-3.1-flash-tiered-high")?,
+            0
+        );
+        assert_eq!(db.backfill_missing_usage_costs()?, 0);
+
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO model_pricing VALUES ('gemini-3.1-flash',
+                 'Custom Gemini 3.1 Flash', '0.5', '2.5', '0.05', '0')",
+                [],
+            )?;
+        }
+
+        // Once an exact base `gemini-3.1-flash` entry is added, scoped backfill reprices it.
+        assert_eq!(
+            db.backfill_missing_usage_costs_for_model("gemini-3.1-flash")?,
+            1
+        );
+        let conn = lock_conn!(db.conn);
+        let cost_31: String = conn.query_row(
+            "SELECT total_cost_usd FROM proxy_request_logs WHERE request_id='unpriced-31'",
+            [],
+            |r| r.get(0),
+        )?;
+        assert_eq!(cost_31, "0.800000");
+        let totals: (i64, i64, i64, i64) = conn.query_row(
+            "SELECT COUNT(*),SUM(input_tokens),SUM(output_tokens),SUM(cache_read_tokens) FROM proxy_request_logs",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )?;
+        assert_eq!(totals, (5, 5_000_000, 500_000, 5_000_000));
         Ok(())
     }
 
