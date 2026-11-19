@@ -237,6 +237,32 @@ describe("CodexFormFields reasoning effort", () => {
 });
 
 describe("CodexFormFields custom tools switch", () => {
+  it.each(["stack", "classic"] as const)(
+    "is available for cloud presets without speed test (%s layout)",
+    (variant) => {
+      const onChange = vi.fn();
+      render(
+        <FormShell>
+          <CodexFormFields
+            {...baseCodexProps()}
+            variant={variant}
+            category="cloud_provider"
+            shouldShowSpeedTest={false}
+            customToolsAsFunctions={false}
+            onCustomToolsAsFunctionsChange={onChange}
+          />
+        </FormShell>,
+      );
+      fireEvent.click(screen.getByRole("button", { name: /高级选项/ }));
+      fireEvent.click(
+        screen.getByRole("switch", {
+          name: "Send custom tools as function tools",
+        }),
+      );
+      expect(onChange).toHaveBeenCalledWith(true);
+    },
+  );
+
   it("is available in the stack layout for Responses providers", () => {
     const onChange = vi.fn();
     render(
