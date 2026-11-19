@@ -148,6 +148,23 @@ pub(super) fn enable(state: &AppState, id: &str) -> Result<SwitchResult, AppErro
     })
 }
 
+/// 将同步或更新后的 Omp 供应商直接写入或刷新到原生配置（存在则替换，不存在则插入）。
+pub(super) fn upsert_live(state: &AppState, provider: &Provider) -> Result<(), AppError> {
+    let _guard = futures::executor::block_on(state.proxy_service.lock_switch_for_app("omp"));
+    ProviderService::validate_provider_settings(&AppType::Omp, provider)?;
+    let change = if omp_config::get_providers()?.contains_key(&provider.id) {
+        Change::ReplaceIfPresent
+    } else {
+        Change::Insert
+    };
+    omp_config::change_and_commit(
+        &provider.id,
+        Some(&provider.settings_config),
+        change,
+        |_| Ok(()),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

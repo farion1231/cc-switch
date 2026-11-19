@@ -8,7 +8,7 @@ import {
   type CSSProperties,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   closestCenter,
   DndContext,
@@ -183,6 +183,7 @@ function formatCheckedAt(timestamp: number, locale: string): string {
  */
 export function AppsPage() {
   const { t, i18n } = useTranslation();
+  const queryClient = useQueryClient();
   const tools = useToolManagement();
   const { settings, updateSettings, autoSaveSettings } = useSettings();
   const tableRef = useRef<HTMLDivElement>(null);
@@ -302,9 +303,9 @@ export function AppsPage() {
     const next = { ...visibleApps, [app]: visible };
     const previous = settings.visibleApps;
     updateSettings({ visibleApps: next });
-    void autoSaveSettings({ visibleApps: next }).catch(() =>
-      updateSettings({ visibleApps: previous }),
-    );
+    void autoSaveSettings({ visibleApps: next })
+      .then(() => queryClient.invalidateQueries({ queryKey: ["aggregation"] }))
+      .catch(() => updateSettings({ visibleApps: previous }));
   };
 
   const visibilitySwitch = (app: AppId) => (

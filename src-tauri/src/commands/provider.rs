@@ -65,8 +65,14 @@ pub async fn add_provider(
         let state = app_handle
             .try_state::<AppState>()
             .ok_or_else(|| "应用状态不可用".to_string())?;
-        ProviderService::add_from_editor(state.inner(), app_type, provider, add_to_live, editorSave)
-            .map_err(|e| e.to_string())
+        ProviderService::add_from_editor(
+            state.inner(),
+            app_type,
+            provider,
+            add_to_live,
+            editorSave,
+        )
+        .map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| format!("供应商添加任务执行失败: {e}"))?
@@ -148,21 +154,6 @@ pub async fn delete_provider(
     })
     .await
     .map_err(|e| format!("供应商删除任务失败: {e}"))??)
-}
-
-#[tauri::command]
-pub async fn add_provider_to_live_config(
-    state: tauri::State<'_, AppState>,
-    app: String,
-    id: String,
-) -> Result<bool, String> {
-    let app_type = AppType::from_str(&app)?;
-    let state = state.inner().clone();
-    Ok(tauri::async_runtime::spawn_blocking(move || {
-        ProviderService::add_to_live_config(&state, app_type, &id).map(|_| true)
-    })
-    .await
-    .map_err(|e| format!("供应商添加到应用任务失败: {e}"))??)
 }
 
 #[tauri::command]

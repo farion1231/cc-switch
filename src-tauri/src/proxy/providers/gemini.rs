@@ -159,6 +159,14 @@ impl ProviderAdapter for GeminiAdapter {
 
     fn extract_auth(&self, provider: &Provider) -> Option<AuthInfo> {
         let key = self.extract_key_raw(provider)?;
+        let target_format = super::gemini_inbound::gemini_target_api_format(provider);
+        match target_format {
+            "anthropic" => return Some(AuthInfo::new(key, AuthStrategy::Anthropic)),
+            "openai_chat" | "openai_responses" => {
+                return Some(AuthInfo::new(key, AuthStrategy::Bearer));
+            }
+            _ => {}
+        }
         let strategy = self.detect_auth_type(provider);
 
         match strategy {
@@ -178,6 +186,13 @@ impl ProviderAdapter for GeminiAdapter {
     fn build_url(&self, base_url: &str, endpoint: &str) -> String {
         let base_trimmed = base_url.trim_end_matches('/');
         let endpoint_trimmed = endpoint.trim_start_matches('/');
+
+        if base_trimmed.ends_with("/v1") && endpoint_trimmed.starts_with("v1/") {
+            return format!(
+                "{base_trimmed}/{}",
+                endpoint_trimmed.trim_start_matches("v1/")
+            );
+        }
 
         let mut url = format!("{base_trimmed}/{endpoint_trimmed}");
 
@@ -200,6 +215,17 @@ impl ProviderAdapter for GeminiAdapter {
         use super::adapter::auth_header_value as hv;
         use http::{HeaderName, HeaderValue};
         Ok(match auth.strategy {
+            AuthStrategy::Anthropic => vec![
+                (HeaderName::from_static("x-api-key"), hv(&auth.api_key)?),
+                (
+                    HeaderName::from_static("anthropic-version"),
+                    HeaderValue::from_static("2023-06-01"),
+                ),
+            ],
+            AuthStrategy::Bearer => vec![(
+                HeaderName::from_static("authorization"),
+                hv(&format!("Bearer {}", auth.api_key))?,
+            )],
             AuthStrategy::GoogleOAuth => {
                 let token = auth.access_token.as_ref().unwrap_or(&auth.api_key);
                 vec![

@@ -213,12 +213,12 @@ impl TrayTexts {
                 projects_label: "Projects",
                 no_project_label: "No project",
                 header_direct: "Direct",
-                header_route: "Routing",
-                header_failover: "Routing · Failover on",
+                header_route: "Failover",
+                header_failover: "Failover · Queue on",
                 header_stack: "Aggregation · Default provider",
                 header_stack_default: "Aggregation · Default: {name}",
                 failover_note: "Picked from the queue automatically; change it on the app page",
-                mode_route: "Routing",
+                mode_route: "Failover",
                 mode_stack: "Aggregation",
                 needs_routing_suffix: " (needs routing)…",
                 official_blocked_suffix: " (official plans don't go through routing)",
@@ -270,12 +270,12 @@ impl TrayTexts {
                 projects_label: "프로젝트",
                 no_project_label: "프로젝트 없음",
                 header_direct: "직접 연결",
-                header_route: "라우팅",
-                header_failover: "라우팅 · 장애 조치 켜짐",
+                header_route: "장애 조치",
+                header_failover: "장애 조치 · 대기열 켜짐",
                 header_stack: "통합 · 기본 공급자",
                 header_stack_default: "통합 · 기본값: {name}",
                 failover_note: "대기열에서 자동으로 선택됩니다. 앱 페이지에서 변경하세요",
-                mode_route: "라우팅",
+                mode_route: "장애 조치",
                 mode_stack: "통합",
                 needs_routing_suffix: " (라우팅 필요)…",
                 official_blocked_suffix: " (공식 요금제는 라우팅을 사용하지 않음)",
@@ -325,12 +325,12 @@ impl TrayTexts {
                 projects_label: "Projekte",
                 no_project_label: "Kein Projekt",
                 header_direct: "Direkt",
-                header_route: "Routing",
-                header_failover: "Routing · Failover aktiv",
+                header_route: "Failover",
+                header_failover: "Failover · Warteschlange aktiv",
                 header_stack: "Aggregation · Standardanbieter",
                 header_stack_default: "Aggregation · Standard: {name}",
                 failover_note: "Wird automatisch aus der Warteschlange gewählt; änderbar auf der App-Seite",
-                mode_route: "Routing",
+                mode_route: "Failover",
                 mode_stack: "Aggregation",
                 needs_routing_suffix: " (benötigt Routing)…",
                 official_blocked_suffix: " (offizielle Tarife laufen nicht über Routing)",
@@ -382,12 +382,12 @@ impl TrayTexts {
                 projects_label: "Проекты",
                 no_project_label: "Без проекта",
                 header_direct: "Напрямую",
-                header_route: "Маршрутизация",
-                header_failover: "Маршрутизация · резервное переключение включено",
+                header_route: "Резервирование",
+                header_failover: "Резервирование · очередь включена",
                 header_stack: "Агрегация · провайдер по умолчанию",
                 header_stack_default: "Агрегация · по умолчанию: {name}",
                 failover_note: "Выбирается из очереди автоматически; изменить можно на странице приложения",
-                mode_route: "Маршрутизация",
+                mode_route: "Резервирование",
                 mode_stack: "Агрегация",
                 needs_routing_suffix: " (нужна маршрутизация)…",
                 official_blocked_suffix: " (официальные планы не идут через маршрутизацию)",
@@ -437,12 +437,12 @@ impl TrayTexts {
                 projects_label: "Projeler",
                 no_project_label: "Proje yok",
                 header_direct: "Doğrudan",
-                header_route: "Yönlendirme",
-                header_failover: "Yönlendirme · Yedek sağlayıcıya geçiş açık",
+                header_route: "Yük Devretme",
+                header_failover: "Yük Devretme · Kuyruk açık",
                 header_stack: "Birleştirme · Varsayılan sağlayıcı",
                 header_stack_default: "Birleştirme · Varsayılan: {name}",
                 failover_note: "Kuyruktan otomatik seçilir; uygulama sayfasından değiştirebilirsiniz",
-                mode_route: "Yönlendirme",
+                mode_route: "Yük Devretme",
                 mode_stack: "Birleştirme",
                 needs_routing_suffix: " (yönlendirme gerekir)…",
                 official_blocked_suffix: " (resmî abonelikler yönlendirmeyi kullanmaz)",
@@ -492,12 +492,12 @@ impl TrayTexts {
                 projects_label: "プロジェクト",
                 no_project_label: "プロジェクトを使用しない",
                 header_direct: "直接接続",
-                header_route: "ルーティング",
-                header_failover: "ルーティング · フェイルオーバー有効",
+                header_route: "フェイルオーバー",
+                header_failover: "フェイルオーバー · キュー有効",
                 header_stack: "集約 · デフォルトのプロバイダー",
                 header_stack_default: "集約 · デフォルト：{name}",
                 failover_note: "キューの順に自動で選ばれます（変更はアプリのページで）",
-                mode_route: "ルーティング",
+                mode_route: "フェイルオーバー",
                 mode_stack: "集約",
                 needs_routing_suffix: "（ルーティングが必要）…",
                 official_blocked_suffix: "（公式サブスクリプションはルーティングを通りません）",
@@ -549,12 +549,12 @@ impl TrayTexts {
                 projects_label: "專案",
                 no_project_label: "不使用專案",
                 header_direct: "直連",
-                header_route: "路由",
-                header_failover: "路由 · 故障轉移開啟中",
+                header_route: "故障轉移",
+                header_failover: "故障轉移 · 佇列開啟中",
                 header_stack: "聚合 · 預設供應商",
                 header_stack_default: "聚合 · 預設 {name}",
                 failover_note: "依佇列自動選擇，要調整請到應用頁",
-                mode_route: "路由",
+                mode_route: "故障轉移",
                 mode_stack: "聚合",
                 needs_routing_suffix: "（需要路由）…",
                 official_blocked_suffix: "（官方訂閱不經過路由）",
@@ -604,12 +604,12 @@ impl TrayTexts {
                 projects_label: "项目",
                 no_project_label: "不使用项目",
                 header_direct: "直连",
-                header_route: "路由",
-                header_failover: "路由 · 故障转移开启中",
+                header_route: "故障转移",
+                header_failover: "故障转移 · 队列开启中",
                 header_stack: "聚合 · 默认供应商",
                 header_stack_default: "聚合 · 默认 {name}",
                 failover_note: "按队列自动选择，要调整请到应用页",
-                mode_route: "路由",
+                mode_route: "故障转移",
                 mode_stack: "聚合",
                 needs_routing_suffix: "（需要路由）…",
                 official_blocked_suffix: "（官方订阅不经过路由）",
@@ -3815,18 +3815,18 @@ mod tests {
         let zh = zh();
         assert_eq!(
             (zh.header_direct, zh.mode_route, zh.mode_stack),
-            ("直连", "路由", "聚合")
+            ("直连", "故障转移", "聚合")
         );
-        assert_eq!(zh.header_failover, "路由 · 故障转移开启中");
+        assert_eq!(zh.header_failover, "故障转移 · 队列开启中");
         let tw = TrayTexts::from_language("zh-TW");
         assert_eq!((tw.header_direct, tw.mode_stack), ("直連", "聚合"));
         let en = en();
         assert_eq!(
             (en.header_direct, en.mode_route, en.mode_stack),
-            ("Direct", "Routing", "Aggregation")
+            ("Direct", "Failover", "Aggregation")
         );
         let ja = TrayTexts::from_language("ja");
-        assert_eq!(ja.mode_route, "ルーティング");
+        assert_eq!(ja.mode_route, "フェイルオーバー");
         for texts in [zh, tw, en, ja] {
             // 托盘不用 emoji 表达状态（Windows 菜单里彩色 emoji 会变成单色轮廓）。
             for text in [
@@ -4690,9 +4690,9 @@ mod tests {
             vec![entry("or", "OpenRouter"), official],
         );
         let menu = model(&[], &[app]);
-        assert_eq!(text_of(&menu[2]), "Grok Build · 路由 · OpenRouter");
+        assert_eq!(text_of(&menu[2]), "Grok Build · 故障转移 · OpenRouter");
         let children = children_of(&menu, &AppType::GrokBuild);
-        assert_eq!(text_of(&children[0]), "路由");
+        assert_eq!(text_of(&children[0]), "故障转移");
         assert!(
             matches!(&children[2], TrayEntry::Item { enabled: false, text, .. }
             if text == "xAI Official（官方订阅不经过路由）")
@@ -4715,7 +4715,7 @@ mod tests {
         assert_eq!(
             texts_of(&children),
             [
-                "路由 · 故障转移开启中",
+                "故障转移 · 队列开启中",
                 "按队列自动选择，要调整请到应用页",
                 "1. DeepSeek",
                 "2. 智谱 GLM Coding Plan",
@@ -4795,7 +4795,10 @@ mod tests {
         );
         routed.current_id = Some("kimi".to_string());
         let menu = model(&[], &[routed]);
-        assert_eq!(text_of(&menu[2]), "Claude Desktop · 路由 · Kimi For Coding");
+        assert_eq!(
+            text_of(&menu[2]),
+            "Claude Desktop · 故障转移 · Kimi For Coding"
+        );
         let children = children_of(&menu, &AppType::ClaudeDesktop);
         assert!(
             matches!(&children[1], TrayEntry::Check { id, checked: true, .. } if id == "prov:claude-desktop:kimi")
@@ -4826,11 +4829,11 @@ mod tests {
         assert_eq!(text_of(&menu[2]), "打开 CC Switch");
         assert_eq!(
             text_of(&menu[4]),
-            "Claude Desktop · 路由 · Kimi For Coding · 需要处理"
+            "Claude Desktop · 故障转移 · Kimi For Coding · 需要处理"
         );
         // 子菜单和其他路由应用一样以模式标题开头，服务没在跑由顶部问题区说。
         let children = children_of(&menu, &AppType::ClaudeDesktop);
-        assert_eq!(text_of(&children[0]), "路由");
+        assert_eq!(text_of(&children[0]), "故障转移");
     }
 
     #[test]
@@ -4851,7 +4854,7 @@ mod tests {
             texts_of(&menu[..4]),
             [
                 "路由服务没在运行（端口 15721）",
-                "Claude Code：上次的路由没能接上，已回到直连",
+                "Claude Code：上次的故障转移没能接上，已回到直连",
                 "还有 1 个问题，打开 CC Switch 查看",
                 "---"
             ]

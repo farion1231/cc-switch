@@ -998,9 +998,9 @@ fn write_direct_for_exit(
     )
 }
 
-/// 没有应用在代理模式（含 Claude Desktop 的路由模式）时，停掉代理服务。
+/// 没有应用在代理模式（含 Claude Desktop 的路由模式）且全局聚合未开启时，停掉代理服务。
 async fn stop_server_if_unused(state: &AppState) {
-    if current::any_proxy() {
+    if current::any_proxy() || crate::settings::get_settings().enable_stack_mode {
         return;
     }
     if state.proxy_service.is_running().await {
@@ -1010,8 +1010,15 @@ async fn stop_server_if_unused(state: &AppState) {
     }
 }
 
-/// 「关闭本地路由」：全部退回直连，再停掉代理服务。
+/// 「关闭本地路由」：全部退回直连，关闭全局聚合开关，再停掉代理服务。
 pub async fn exit_all(state: &AppState) -> Result<(), String> {
+    let mut settings = crate::settings::get_settings();
+    if settings.enable_stack_mode {
+        settings.enable_stack_mode = false;
+        if let Err(error) = crate::settings::update_settings(settings) {
+            log::warn!("关闭全局聚合开关失败: {error}");
+        }
+    }
     let mut errors = Vec::new();
     for app in route_mode_apps() {
         let result = match lock_settled(state, &app).await {
@@ -1746,6 +1753,13 @@ pub async fn startup(state: &AppState) {
         };
         if let Err(error) = result {
             log::error!("启动时恢复 {} 的模式失败: {error}", app.as_str());
+        }
+    }
+    // 记住全局聚合开启状态时，启动后自动拉起本地代理/聚合服务（不自动接管未手动接入的应用）
+    if crate::settings::get_settings().enable_stack_mode && !state.proxy_service.is_running().await
+    {
+        if let Err(error) = state.proxy_service.start().await {
+            log::error!("启动时自动开启聚合/本地路由服务失败: {error}");
         }
     }
     // 接上失败退回直连的应用可能已经把代理拉起来了。

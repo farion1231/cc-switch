@@ -1,13 +1,15 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import { useQueries } from "@tanstack/react-query";
+import { useQueries, useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/lib/toast";
 import { ChevronRight, Loader2 } from "lucide-react";
 import type { AppId } from "@/lib/api";
+import { aggregationApi } from "@/lib/api/aggregation";
 import { proxyApi } from "@/lib/api/proxy";
-import { useProvidersQuery } from "@/lib/query";
+import { useProvidersQuery, useSettingsQuery } from "@/lib/query";
 import {
+  proxyKeys,
   useGlobalProxyConfig,
   useProxyClientHost,
   useProxyStatusQuery,
@@ -92,6 +94,8 @@ function formatUptime(seconds: number, t: TFunction) {
  */
 export function RoutingSection({ onOpenApp }: RoutingSectionProps) {
   const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const { data: settings } = useSettingsQuery();
   const { data: status } = useProxyStatusQuery();
   const running = status?.running ?? false;
   const { startProxyServer, stopProxyServer, stopWithRestore, isPending } =
@@ -181,6 +185,42 @@ export function RoutingSection({ onOpenApp }: RoutingSectionProps) {
       await saveClientHostMutation.mutateAsync(trimmed);
     } catch {
       // useSetProxyClientHost 的 onSuccess / onError 已经弹过 toast
+    }
+  };
+
+  const [togglingAggregation, setTogglingAggregation] = useState(false);
+
+  const toggleAggregationMode = async (enabled: boolean) => {
+    setTogglingAggregation(true);
+    try {
+      await aggregationApi.setGlobalMode(enabled);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["settings"] }),
+        queryClient.invalidateQueries({ queryKey: ["aggregation"] }),
+        queryClient.invalidateQueries({ queryKey: proxyKeys.status }),
+        queryClient.invalidateQueries({ queryKey: proxyKeys.takeoverStatus }),
+        queryClient.invalidateQueries({ queryKey: ["app-mode"] }),
+        queryClient.invalidateQueries({ queryKey: ["proxy-stack"] }),
+        queryClient.invalidateQueries({ queryKey: ["providers"] }),
+      ]);
+      toast.success(
+        enabled
+          ? t("aggregation.toast.enabled", {
+              defaultValue: "已开启全局聚合模式",
+            })
+          : t("aggregation.toast.disabled", {
+              defaultValue: "已关闭全局聚合模式",
+            }),
+      );
+    } catch (error) {
+      toast.error(
+        t("aggregation.toast.toggleFailed", {
+          defaultValue: "切换聚合模式失败",
+        }),
+        { description: error instanceof Error ? error.message : String(error) },
+      );
+    } finally {
+      setTogglingAggregation(false);
     }
   };
 
@@ -383,6 +423,23 @@ export function RoutingSection({ onOpenApp }: RoutingSectionProps) {
             checked={config?.enableLogging ?? false}
             disabled={!config}
             onCheckedChange={(value) => void toggleLogging(value)}
+          />
+          <SettingsSwitchRow
+            label={t("aggregation.enableMode", {
+              defaultValue: "开启聚合模式",
+            })}
+            help={{
+              title: t("aggregation.enableMode", {
+                defaultValue: "开启聚合模式",
+              }),
+              body: t("aggregation.enableModeHelp", {
+                defaultValue:
+                  "所有外部供应商统一在「聚合」页面添加和配置，并按每个供应商指定的适用应用精准同步与转发；各应用页面仅保留官方直连登录。",
+              }),
+            }}
+            checked={Boolean(settings?.enableStackMode)}
+            disabled={togglingAggregation}
+            onCheckedChange={(value) => void toggleAggregationMode(value)}
           />
         </SettingsCard>
       </SettingsBlock>

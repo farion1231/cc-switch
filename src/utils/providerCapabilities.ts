@@ -1,8 +1,8 @@
-import type { AppId } from "@/lib/api";
+import type { AppId, AuthCenterTarget } from "@/lib/api";
 import type { Provider } from "@/types";
 import { isOAuthProviderType } from "@/config/constants";
 import { isCopilotOfficialCard } from "@/config/copilotConfig";
-import { resolveManagedAccountId } from "@/lib/authBinding";
+import { canSwitchAgyAccount, resolveManagedAccountId } from "@/lib/authBinding";
 import {
   extractCodexBaseUrl,
   extractCodexExperimentalBearerToken,
@@ -14,6 +14,61 @@ import {
 
 export const CODEX_OFFICIAL_PROVIDER_ID = "codex-official";
 export const GROKBUILD_OFFICIAL_PROVIDER_ID = "grokbuild-official";
+
+/** 支持在应用页内部直连官方登录的应用集合；其余应用仅在「聚合」页配置外部供应商。 */
+const OFFICIAL_LOGIN_APP_IDS = new Set<AppId>([
+  "claude",
+  "claude-desktop",
+  "codex",
+  "gemini",
+  "grokbuild",
+  "agy",
+  "copilot",
+  "workbuddy",
+  "kimi",
+  "mcode",
+  "dsh",
+]);
+
+export function appSupportsOfficialLogin(appId: AppId): boolean {
+  return OFFICIAL_LOGIN_APP_IDS.has(appId);
+}
+
+/** 授权中心里对应应用官方账号组的跳转目标；无授权中心交互登录的应用返回 null。 */
+export function authCenterTargetForApp(appId: AppId): AuthCenterTarget | null {
+  switch (appId) {
+    case "claude":
+      return "claude_official";
+    case "codex":
+      return "codex_oauth";
+    case "agy":
+      return canSwitchAgyAccount() ? "agy_oauth" : null;
+    case "copilot":
+      return "github_copilot";
+    case "workbuddy":
+      return "workbuddy_account";
+    case "kimi":
+      return "kimi_oauth";
+    case "mcode":
+      return "mcode_oauth";
+    case "dsh":
+      return "dsh_account";
+    default:
+      return null;
+  }
+}
+
+/**
+ * 是否为聚合模式同步/分配到该应用的外部供应商（对应后端 `is_generated_sync_id`：
+ * 通用供应商生成 `universal-*`，跨应用分配生成 `agg-*`）。
+ */
+export function isAggregationProvidedProvider(
+  provider: Pick<Provider, "id">,
+): boolean {
+  return (
+    provider.id.startsWith("universal-") || provider.id.startsWith("agg-")
+  );
+}
 
 export type CodexOfficialIdentity =
   | "native_login"

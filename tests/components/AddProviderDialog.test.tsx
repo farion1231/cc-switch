@@ -590,4 +590,22 @@ context_window = 500000
     );
     expect(universalProps.onManageUniversalProviders).toBeTypeOf("function");
   });
+
+  it("hides universal provider entry and uses official-login title when officialOnly is true", async () => {
+    render(
+      <AddProviderDialog
+        open
+        onOpenChange={vi.fn()}
+        appId="claude"
+        onSubmit={vi.fn()}
+        officialOnly
+      />,
+    );
+
+    expect(
+      await screen.findByText(/provider\.addOfficialLogin|添加官方登录/),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(universalProps.onUniversalPresetSelect).toBeUndefined());
+    expect(universalProps.onManageUniversalProviders).toBeUndefined();
+  });
 });

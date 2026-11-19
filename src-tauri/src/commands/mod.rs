@@ -1,5 +1,6 @@
 #![allow(non_snake_case)]
 
+mod aggregation;
 mod agy_account;
 mod auth;
 mod balance;
@@ -17,6 +18,7 @@ mod global_proxy;
 mod hermes;
 mod import_export;
 mod kimi_oauth;
+mod mcode_oauth;
 mod mcp;
 mod misc;
 mod model_fetch;
@@ -49,6 +51,7 @@ mod provider_concurrency_tests;
 #[cfg(test)]
 mod startup_tests;
 
+pub use aggregation::*;
 pub use agy_account::*;
 pub use auth::*;
 pub use balance::*;
@@ -66,6 +69,7 @@ pub use global_proxy::*;
 pub use hermes::*;
 pub use import_export::*;
 pub use kimi_oauth::*;
+pub use mcode_oauth::*;
 pub use mcp::*;
 pub use misc::*;
 pub use model_fetch::*;

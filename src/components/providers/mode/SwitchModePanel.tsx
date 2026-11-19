@@ -1,20 +1,16 @@
-import { createPortal } from "react-dom";
-import { badgeVariants } from "@/components/ui/badge";
-import { HoverTip } from "@/components/ui/hover-tip";
-import { cn } from "@/lib/utils";
 import { useEffect, useMemo, useState, type RefObject } from "react";
 import { useTranslation } from "react-i18next";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/lib/toast";
 import type { Provider } from "@/types";
 import type { AppMode, StartupAttachFailure } from "@/types/proxy";
-import { settingsApi } from "@/lib/api";
+import { authApi, settingsApi } from "@/lib/api";
+import type { ManagedAuthProvider, ManagedAuthStatus } from "@/lib/api/auth";
 import { providersApi } from "@/lib/api/providers";
 import { proxyApi } from "@/lib/api/proxy";
 import { useSettingsQuery } from "@/lib/query";
 import {
   proxyKeys,
-  useAdoptCodexStackCatalog,
   useAppMode,
   useProxyStack,
   useProxyStatusQuery,
@@ -29,7 +25,11 @@ import {
 } from "@/lib/query/failover";
 import { useModeActions } from "@/hooks/useModeActions";
 import { getRoutingReason } from "@/utils/routingReason";
-import { CODEX_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
+import {
+  CODEX_OFFICIAL_PROVIDER_ID,
+  isOfficialAccount,
+} from "@/utils/providerCapabilities";
+import { resolveManagedAccountId } from "@/lib/authBinding";
 import { routeSwitchNotification } from "@/utils/routeSwitchNotification";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { Button } from "@/components/ui/button";
@@ -42,7 +42,6 @@ import {
   queueMoveSortUpdates,
 } from "@/components/providers/presentation";
 import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
-import { ModeTabs, MODE_TONE } from "./ModeTabs";
 import { ModeDialog, type ModeDialogState } from "./ModeDialog";
 import {
   sameStackSubagent,
@@ -71,7 +70,6 @@ type ListCallbacks = Pick<
 
 interface SwitchModePanelProps extends ListCallbacks {
   app: AppIdWith<"routeMode">;
-  statusSlot?: HTMLDivElement | null;
   providers: Record<string, Provider>;
   currentProviderId: string;
   isLoading: boolean;
@@ -81,25 +79,54 @@ interface SwitchModePanelProps extends ListCallbacks {
     options?: { acknowledgedRouting?: boolean },
   ) => unknown;
   onOpenRoutingSettings: () => void;
+  onOpenAuthCenter?: () => void;
+  onOpenAggregation?: () => void;
   startupFailure?: StartupAttachFailure;
   onDismissStartupFailure?: () => void;
   /** 托盘里点了直连下需要路由的那家：到这页后弹同一个「需要路由」对话框 */
   needsRouteRequest?: { providerId: string; nonce: number };
   onNeedsRouteHandled?: () => void;
-  /** 正在看的那格变了：新增 / 编辑供应商按它选表单布局。需要是稳定的回调 */
-  onViewChange?: (app: AppIdWith<"routeMode">, view: AppMode) => void;
 }
 
-/** Gemini CLI、Grok Build、Claude Desktop 没有聚合模式（Q6）：那一格隐藏，前两格位置不变。 */
-const modesFor = (app: AppIdWith<"routeMode">): AppMode[] =>
-  appHas(app, "stack") ? ["direct", "route", "stack"] : ["direct", "route"];
+const SYNTHETIC_AUTH_PREFIX = "__auth_";
+
+function isSyntheticAuthProviderId(id: string): boolean {
+  return id.startsWith(SYNTHETIC_AUTH_PREFIX);
+}
+
+function buildSyntheticAuthProvider(
+  app: AppIdWith<"routeMode">,
+  authProvider: ManagedAuthProvider,
+  accountId: string,
+  login: string,
+): Provider {
+  const settingsConfig =
+    app === "codex"
+      ? {
+          auth: { OPENAI_API_KEY: null },
+          config: "",
+        }
+      : {};
+  return {
+    id: `${SYNTHETIC_AUTH_PREFIX}${authProvider}_${accountId}`,
+    name: login,
+    category: "official",
+    settingsConfig,
+    meta: {
+      authBinding: {
+        source: "managed_account",
+        authProvider,
+        accountId,
+      },
+    },
+  };
+}
 
 /**
  * 切换式应用的供应商页（v7 S1–S3）：模式行 → 通知槽 → 按查看的模式分区的列表。
  * tab 只负责查看；要生效必须点写明后果的按钮（确认框），回到直连也一样。
  */
 export function SwitchModePanel({
-  statusSlot,
   app,
   providers,
   currentProviderId,
@@ -107,33 +134,100 @@ export function SwitchModePanel({
   scrollRef,
   onSwitch,
   onOpenRoutingSettings,
+  onOpenAuthCenter,
+  onOpenAggregation,
   startupFailure,
   onDismissStartupFailure,
   needsRouteRequest,
   onNeedsRouteHandled,
-  onViewChange,
   ...listCallbacks
 }: SwitchModePanelProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const appName = APP_DISPLAY_NAME[app];
-  const modes = modesFor(app);
 
   const { data: modeView } = useAppMode(app);
   const active: AppMode =
-    modeView && modes.includes(modeView.mode) ? modeView.mode : "direct";
+    modeView &&
+    (modeView.mode === "direct" ||
+      modeView.mode === "route" ||
+      modeView.mode === "stack")
+      ? modeView.mode
+      : "direct";
   const directId = modeView?.directProviderId ?? null;
   const routeId = modeView?.routeProviderId ?? null;
+  const view: AppMode = "direct";
 
-  // 离开页面再回来、或生效的模式变了，一律落在生效的那格（「查看中」不持久化）
-  const [view, setView] = useState<AppMode>(active);
-  const [searchSlot, setSearchSlot] = useState<HTMLDivElement | null>(null);
-  useEffect(() => {
-    setView(active);
-  }, [app, active]);
-  useEffect(() => {
-    onViewChange?.(app, view);
-  }, [app, view, onViewChange]);
+  const managedAuthProvider: ManagedAuthProvider | null =
+    app === "claude"
+      ? "claude_official"
+      : app === "codex"
+        ? "codex_oauth"
+        : null;
+
+  const { data: authStatus, isPending: isAuthPending } =
+    useQuery<ManagedAuthStatus>({
+      queryKey: ["managed-auth-status", managedAuthProvider],
+      queryFn: () => authApi.authGetStatus(managedAuthProvider!),
+      enabled: Boolean(managedAuthProvider),
+      staleTime: 30_000,
+    });
+
+  const officialProviders = useMemo(() => {
+    const out: Record<string, Provider> = {};
+    if (managedAuthProvider) {
+      const boundByAccountId = new Map<string, Provider>();
+      for (const provider of Object.values(providers)) {
+        if (!isOfficialAccount(app, provider)) continue;
+        const accountId = resolveManagedAccountId(
+          provider.meta,
+          managedAuthProvider,
+        );
+        if (accountId && !boundByAccountId.has(accountId)) {
+          boundByAccountId.set(accountId, provider);
+        }
+      }
+      for (const account of authStatus?.accounts ?? []) {
+        const existing = boundByAccountId.get(account.id);
+        if (existing) {
+          out[existing.id] = existing;
+        } else {
+          const synthetic = buildSyntheticAuthProvider(
+            app,
+            managedAuthProvider,
+            account.id,
+            account.login,
+          );
+          out[synthetic.id] = synthetic;
+        }
+      }
+      return out;
+    }
+
+    for (const [id, provider] of Object.entries(providers)) {
+      if (isOfficialAccount(app, provider)) {
+        out[id] = provider;
+      }
+    }
+    return out;
+  }, [providers, app, managedAuthProvider, authStatus]);
+
+  const allProvidersMap = useMemo(
+    () => ({ ...providers, ...officialProviders }),
+    [providers, officialProviders],
+  );
+
+  const fallbackDirectId = useMemo(() => {
+    if (directId && officialProviders[directId]) return directId;
+    const firstOfficial = Object.keys(officialProviders)[0];
+    if (firstOfficial) return firstOfficial;
+    if (directId && providers[directId]) return directId;
+    return (
+      Object.values(providers).find((provider) =>
+        isOfficialAccount(app, provider),
+      )?.id ?? directId
+    );
+  }, [directId, officialProviders, providers, app]);
 
   const { data: proxyStatus } = useProxyStatusQuery();
   const serviceRunning = proxyStatus?.running ?? false;
@@ -148,7 +242,6 @@ export function SwitchModePanel({
   const removeFromQueue = useRemoveFromFailoverQueue();
   const { data: stack } = useProxyStack(app, appHas(app, "stack"));
   const setStackMember = useSetProxyStackMember();
-  const adoptCatalog = useAdoptCodexStackCatalog();
   const modeActions = useModeActions(app);
   const desktopMessages = useDesktopConfigMessages(app === "claude-desktop");
 
@@ -177,9 +270,37 @@ export function SwitchModePanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [needsRouteRequest?.nonce, providers]);
 
-  const providerList = useMemo(() => Object.values(providers), [providers]);
+  const providerList = useMemo(
+    () => Object.values(allProvidersMap),
+    [allProvidersMap],
+  );
   const nameOf = (id: string | null) =>
-    (id && providers[id]?.name) || t("mode.noProvider");
+    (id && allProvidersMap[id]?.name) || t("mode.noProvider");
+
+  const materializeProvider = async (provider: Provider): Promise<Provider> => {
+    if (!isSyntheticAuthProviderId(provider.id) || !managedAuthProvider) {
+      return provider;
+    }
+    const accountId = resolveManagedAccountId(
+      provider.meta,
+      managedAuthProvider,
+    );
+    const realProvider: Provider = {
+      ...provider,
+      id: `${managedAuthProvider}-${accountId ?? provider.id.slice(SYNTHETIC_AUTH_PREFIX.length)}`,
+    };
+    await providersApi.add(realProvider, app, false);
+    await queryClient.invalidateQueries({ queryKey: ["providers", app] });
+    return realProvider;
+  };
+
+  const handleSwitchProvider = async (
+    provider: Provider,
+    options?: { acknowledgedRouting?: boolean },
+  ) => {
+    const real = await materializeProvider(provider);
+    return await onSwitch(real, options);
+  };
 
   const stackMembers = useMemo(() => {
     const members = new Map<string, number>();
@@ -248,7 +369,7 @@ export function SwitchModePanel({
     routingReason: (provider: Provider) =>
       getRoutingReason(app, provider, t) ?? "",
     actions: {
-      switchDirect: (provider: Provider) => void onSwitch(provider),
+      switchDirect: (provider: Provider) => void handleSwitchProvider(provider),
       needsRouteDialog: (provider: Provider) =>
         setDialog({
           kind: "needsRoute",
@@ -256,7 +377,7 @@ export function SwitchModePanel({
           reason: getRoutingReason(app, provider, t) ?? "",
         }),
       exitAndUse,
-      routeTo: (provider: Provider) => void onSwitch(provider),
+      routeTo: (provider: Provider) => void handleSwitchProvider(provider),
       queueAdd: (provider: Provider) =>
         addToQueue.mutate({ appType: app, providerId: provider.id }),
       queueRemove: (provider: Provider) =>
@@ -283,40 +404,6 @@ export function SwitchModePanel({
           ? void onSwitch(provider)
           : void rememberDefault(provider),
     },
-  };
-
-  // 页头始终显示实际生效的连接，不跟随正在浏览的模式页签。
-  const routeTarget = failoverOn ? t("mode.status.byQueue") : nameOf(routeId);
-  const otherMembers = (stack?.members ?? []).filter(
-    (member) => member.providerId !== routeId,
-  );
-  const otherModels = otherMembers.reduce(
-    (sum, member) => sum + member.modelIds.length,
-    0,
-  );
-  const status =
-    active === "direct"
-      ? { lead: t("mode.status.directLead"), value: nameOf(directId) }
-      : active === "route"
-        ? {
-            lead: t("mode.status.routeLead"),
-            value: routeTarget,
-          }
-        : {
-            lead: t("mode.status.stackLead"),
-            value: t("mode.status.stackValue", {
-              name: nameOf(routeId),
-              count: otherMembers.length,
-              models: otherModels,
-            }),
-          };
-
-  const handleFailoverChange = (enabled: boolean) => {
-    if (enabled && !settings?.failoverConfirmed) {
-      setConfirmFailover(true);
-      return;
-    }
-    setFailover.mutate({ appType: app, enabled });
   };
 
   const confirmFailoverOn = async () => {
@@ -460,35 +547,6 @@ export function SwitchModePanel({
       </Notice>,
     );
   }
-  if (view === "stack" && active === "stack" && stack?.notice) {
-    notices.push(
-      <Notice
-        key="stackNotice"
-        tone="warning"
-        title={t(`provider.${stack.notice}`)}
-        actions={
-          stack.notice === "routeOwnsCatalog" ? (
-            <Button
-              variant="neutral"
-              size="compact"
-              disabled={adoptCatalog.isPending}
-              onClick={() => adoptCatalog.mutate()}
-            >
-              {t("provider.adoptCatalog")}
-            </Button>
-          ) : undefined
-        }
-      >
-        {stack.noticeReasons?.length
-          ? stack.noticeReasons.map((reason) => (
-              <div key={reason}>
-                {t(`provider.officialModelsReason.${reason}`)}
-              </div>
-            ))
-          : undefined}
-      </Notice>,
-    );
-  }
   if (
     app === "codex" &&
     stack?.staleClients &&
@@ -525,37 +583,34 @@ export function SwitchModePanel({
       </Notice>,
     );
   }
-  if (view !== active) {
-    const cta =
-      view === "route"
-        ? t("mode.activate.route")
-        : view === "stack"
-          ? t("mode.activate.stack")
-          : t("mode.activate.direct");
+  if (active !== "direct") {
     notices.push(
       <Notice
-        key="activate"
+        key="globalStackNotice"
         tone="neutral"
-        title={t("mode.activate.viewing", {
-          view: t(`mode.names.${view}`),
+        title={t("aggregation.appManagedNotice", {
           app: appName,
-          active: t(`mode.names.${active}`),
+          defaultValue: `${appName} 当前由「聚合」接管外部供应商。`,
         })}
         actions={
-          <Button
-            variant={view}
-            size="regular"
-            disabled={modeActions.pending}
-            onClick={() =>
-              setDialog(
-                view === "direct"
-                  ? { kind: "exit" }
-                  : { kind: "enter", target: view },
-              )
-            }
-          >
-            {cta}
-          </Button>
+          <>
+            {onOpenAggregation && (
+              <Button
+                variant="stack"
+                size="compact"
+                onClick={onOpenAggregation}
+              >
+                {t("aggregation.goToPage", { defaultValue: "前往聚合页" })}
+              </Button>
+            )}
+            <Button
+              variant="neutral"
+              size="compact"
+              onClick={() => setDialog({ kind: "exit" })}
+            >
+              {t("mode.notice.backToDirect")}
+            </Button>
+          </>
         }
       />,
     );
@@ -563,75 +618,10 @@ export function SwitchModePanel({
 
   return (
     <>
-      {statusSlot &&
-        createPortal(
-          <HoverTip content={`${status.lead} ${status.value}`}>
-            <span
-              tabIndex={0}
-              aria-label={`${status.lead} ${status.value}`}
-              className={cn(
-                badgeVariants({ variant: "outline" }),
-                "max-w-full gap-1 border-border bg-surface px-2.5 py-1 text-body font-normal",
-              )}
-            >
-              <span
-                aria-hidden="true"
-                className={cn(
-                  "me-1 h-1.5 w-1.5 shrink-0 rounded-full",
-                  (
-                    active === "direct"
-                      ? Boolean(directId && providers[directId])
-                      : serviceRunning &&
-                        modeView?.attached &&
-                        Boolean(routeId && providers[routeId])
-                  )
-                    ? MODE_TONE[active].dot
-                    : "bg-fg-3",
-                )}
-              />
-              <span className="shrink-0 text-fg-2">
-                {t(`mode.names.${active}`)}
-              </span>
-              <span aria-hidden="true" className="text-fg-3">
-                ·
-              </span>
-              <span className="min-w-0 truncate font-medium text-fg-1">
-                {active === "stack" ? nameOf(routeId) : status.value}
-              </span>
-            </span>
-          </HoverTip>,
-          statusSlot,
-        )}
-      <ModeTabs
-        modes={modes}
-        active={active}
-        view={view}
-        onView={setView}
-        failover={
-          hasFailover && view === "route" && active === "route"
-            ? {
-                enabled: failoverOn,
-                disabled: setFailover.isPending,
-                onChange: handleFailoverChange,
-              }
-            : undefined
-        }
-        onOpenRouteSettings={
-          hasFailover && view === "route" && active === "route"
-            ? () => setRouteSettingsOpen(true)
-            : undefined
-        }
-        onOpenStackSettings={
-          app === "codex" && view === "stack" && active === "stack"
-            ? () => setStackSettingsOpen(true)
-            : undefined
-        }
-        searchSlotRef={setSearchSlot}
-      />
       <div
         ref={scrollRef}
         id="main-content"
-        className="min-h-0 flex-1 overflow-y-auto scroll-stable overflow-x-hidden px-6 pb-12 pt-3"
+        className="min-h-0 flex-1 overflow-y-auto scroll-stable overflow-x-hidden px-6 pb-12 pt-4"
       >
         {notices.length > 0 && (
           <div role="status" className="mb-3 flex flex-col gap-2">
@@ -640,13 +630,24 @@ export function SwitchModePanel({
         )}
         <ProviderList
           {...listCallbacks}
-          providers={providers}
+          onOpenTerminal={
+            listCallbacks.onOpenTerminal
+              ? (provider) => {
+                  void materializeProvider(provider).then((real) =>
+                    listCallbacks.onOpenTerminal?.(real),
+                  );
+                }
+              : undefined
+          }
+          providers={officialProviders}
           currentProviderId={currentProviderId}
           appId={app}
-          isLoading={isLoading}
-          onSwitch={(provider) => void onSwitch(provider)}
+          isLoading={isLoading || (Boolean(managedAuthProvider) && isAuthPending)}
+          onSwitch={(provider) => void handleSwitchProvider(provider)}
           switchMode={switchMode}
-          searchSlot={searchSlot}
+          officialOnly
+          onOpenAuthCenter={onOpenAuthCenter}
+          onOpenAggregation={onOpenAggregation}
         />
       </div>
 
@@ -655,9 +656,9 @@ export function SwitchModePanel({
         state={dialog}
         active={active}
         providers={providerList}
-        directId={directId}
+        directId={fallbackDirectId}
         eligibleIds={eligibleIds}
-        defaultPick={routeId ?? directId}
+        defaultPick={routeId ?? fallbackDirectId}
         stackMembers={(stack?.members ?? []).map((member) => ({
           id: member.providerId,
           name: nameOf(member.providerId),
@@ -673,16 +674,29 @@ export function SwitchModePanel({
         }
         onClose={() => setDialog(null)}
         onEnter={enterMode}
-        onExit={(useProviderId) =>
-          modeActions.exitToDirect({
-            directProviderId: directId,
+        onExit={async (useProviderId) => {
+          const targetId = useProviderId ?? fallbackDirectId;
+          const target = targetId ? allProvidersMap[targetId] : undefined;
+          if (target && isSyntheticAuthProviderId(target.id)) {
+            const real = await materializeProvider(target);
+            await modeActions.exitToDirect({
+              directProviderId: fallbackDirectId,
+              useProviderId: real.id,
+              providerName: real.name,
+            });
+            return;
+          }
+          await modeActions.exitToDirect({
+            directProviderId: fallbackDirectId,
             useProviderId,
-            providerName: nameOf(useProviderId ?? directId),
-          })
-        }
+            providerName: nameOf(targetId),
+          });
+        }}
         onSwitchDirect={(providerId) => {
-          const provider = providers[providerId];
-          if (provider) void onSwitch(provider, { acknowledgedRouting: true });
+          const provider = allProvidersMap[providerId];
+          if (provider) {
+            void handleSwitchProvider(provider, { acknowledgedRouting: true });
+          }
         }}
       />
 

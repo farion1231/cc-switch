@@ -27,6 +27,7 @@ const platform = vi.hoisted(() => ({ mac: true }));
 vi.mock("@/lib/platform", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/platform")>()),
   isMac: () => platform.mac,
+  isWindows: () => false,
 }));
 vi.mock("@/lib/query/failover", () => ({
   useProviderHealth: () => ({ data: undefined }),

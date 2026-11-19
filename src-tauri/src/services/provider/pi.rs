@@ -223,6 +223,20 @@ pub(super) fn enable(state: &AppState, id: &str) -> Result<SwitchResult, AppErro
     Ok(SwitchResult::default())
 }
 
+/// 将同步或更新后的 Pi 供应商直接写入或刷新到原生 `models.json`（存在则原地替换，不存在则插入）。
+pub(super) fn upsert_live(state: &AppState, provider: &Provider) -> Result<(), AppError> {
+    let app_type = AppType::Pi;
+    let _guard =
+        futures::executor::block_on(state.proxy_service.lock_switch_for_app(app_type.as_str()));
+    ProviderService::validate_provider_settings(&app_type, provider)?;
+    if crate::pi_config::pi_provider_exists(&provider.id)? {
+        crate::pi_config::replace_pi_provider_if_present(&provider.id, &provider.settings_config)?;
+    } else {
+        crate::pi_config::insert_pi_provider(&provider.id, &provider.settings_config)?;
+    }
+    Ok(())
+}
+
 fn sync_native_locked(
     state: &AppState,
     native: &IndexMap<String, Value>,
@@ -868,5 +882,24 @@ mod tests {
         ProviderService::delete(&state, AppType::Pi, "cc-switch-test")
             .expect("global selection is advisory for deletion");
         assert!(!crate::pi_config::pi_provider_exists("cc-switch-test").unwrap());
+    }
+
+    #[test]
+    #[serial]
+    fn upsert_live_inserts_and_updates_models_json() {
+        let _agent = TestAgentDir::new();
+        let state = state();
+        let first = input("gpt-4o");
+        state.db.save_provider(&AppType::Pi, &first).unwrap();
+
+        upsert_live(&state, &first).expect("insert new synced Pi provider into models.json");
+        assert!(crate::pi_config::pi_provider_exists("cc-switch-test").unwrap());
+
+        let updated = input("gpt-5.4");
+        state.db.save_provider(&AppType::Pi, &updated).unwrap();
+        upsert_live(&state, &updated).expect("update existing Pi provider in models.json");
+
+        let native = crate::pi_config::read_pi_native_providers().unwrap();
+        assert_eq!(native["cc-switch-test"]["models"][0]["id"], "gpt-5.4");
     }
 }

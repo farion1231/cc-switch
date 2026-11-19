@@ -1,7 +1,6 @@
 import {
   lazy,
   Suspense,
-  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -15,8 +14,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import {
   ExternalLink,
   KeyRound,
+  Layers,
   MoreHorizontal,
-  Plus,
   Search,
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -37,6 +36,7 @@ import {
   type AppId,
   type ProviderSwitchEvent,
 } from "@/lib/api";
+import type { AuthCenterTarget } from "@/lib/api/auth";
 import { checkAllEnvConflicts, checkEnvConflicts } from "@/lib/api/env";
 import { useProviderActions } from "@/hooks/useProviderActions";
 import { openclawKeys, useOpenClawHealth } from "@/hooks/useOpenClaw";
@@ -64,7 +64,12 @@ import {
 import { isTextEditableTarget } from "@/utils/domUtils";
 import { setZoom, stepZoom } from "@/lib/interfacePrefs";
 import { deepClone } from "@/utils/deepClone";
-import { isOfficialAccount } from "@/utils/providerCapabilities";
+import {
+  appSupportsOfficialLogin,
+  authCenterTargetForApp,
+  isAggregationProvidedProvider,
+  isOfficialAccount,
+} from "@/utils/providerCapabilities";
 import {
   COPILOT_PROVIDER_ID_MAX,
   normalizeCopilotProviderId,
@@ -93,6 +98,10 @@ import { WindowControls } from "@/components/shell/WindowControls";
 import { APP_DISPLAY_NAME, AppGlyph } from "@/components/shell/AppGlyph";
 import { ProfileSwitcher } from "@/components/profiles/ProfileSwitcher";
 import { ProviderList } from "@/components/providers/ProviderList";
+import {
+  OfficialAccountsPanel,
+  type OfficialPanelAppId,
+} from "@/components/providers/OfficialAccountsPanel";
 import {
   hasOpencodeDefinition,
   isNativeOpencodeConfig,
@@ -195,6 +204,11 @@ const HermesMemorySaveButton = lazy(() =>
     default: m.HermesMemorySaveButton,
   })),
 );
+const AggregationPage = lazy(() =>
+  import("@/components/aggregation/AggregationPage").then((m) => ({
+    default: m.AggregationPage,
+  })),
+);
 
 function PageLoading() {
   const { t } = useTranslation();
@@ -235,6 +249,9 @@ function App() {
   const [settingsSection, setSettingsSection] =
     useState<SettingsSection>("general");
   const [appConfigScrollTarget, setAppConfigScrollTarget] = useState<AppId>();
+  const [authCenterTarget, setAuthCenterTarget] = useState<
+    AuthCenterTarget | undefined
+  >(undefined);
   // 进设置前停留的页面：设置目录里的「← 返回」回到这里
   const settingsReturnViewRef = useRef<View>("providers");
   const [openclawConfigTab, setOpenclawConfigTab] =
@@ -249,23 +266,11 @@ function App() {
   }, [isAddOpen]);
   // 供应商搜索面板：页头按钮和 ⌘F 都能打开；换应用或离开供应商页就收起
   const [providerSearchOpen, setProviderSearchOpen] = useState(false);
-  const [connectionStatusSlot, setConnectionStatusSlot] =
-    useState<HTMLDivElement | null>(null);
   useEffect(() => {
     setProviderSearchOpen(false);
   }, [activeApp, currentView]);
-  // 供应商页顶部正在看的那格（直连 / 路由 / 聚合），由 SwitchModePanel 报上来。打开新增、
-  // 编辑时记下当时那格（新增记在 formModeView，编辑随供应商记进 editProviderStore），
-  // 表单按它选布局：在聚合那格打开就是聚合的简化表单。
-  const [providerModeView, setProviderModeView] = useState<{
-    app: AppId;
-    view: AppMode;
-  } | null>(null);
+  // 新增、编辑时记下当时模式布局：应用内部统一按直连官方视图
   const [formModeView, setFormModeView] = useState<AppMode>();
-  const handleProviderModeViewChange = useCallback(
-    (app: AppId, view: AppMode) => setProviderModeView({ app, view }),
-    [],
-  );
   // 托盘里点了直连下需要路由的那家：打开应用页后弹「需要路由」对话框
   const [trayNeedsRoute, setTrayNeedsRoute] = useState<{
     app: AppId;
@@ -385,9 +390,7 @@ function App() {
 
   const { isRunning: isProxyRunning, takeoverStatus } = useProxyStatus();
   const modeAppId = appHas(activeApp, "routeMode") ? activeApp : null;
-  // 换了应用、新面板还没报上来时为 undefined：表单按应用实际生效的模式
-  const currentModeView =
-    providerModeView?.app === activeApp ? providerModeView.view : undefined;
+  const currentModeView: AppMode | undefined = undefined;
   const openAddProvider = (modeView: AppMode | undefined) => {
     setFormModeView(modeView);
     setIsAddOpen(true);
@@ -402,6 +405,17 @@ function App() {
   });
   const { data: piCurrentState } = usePiCurrentState(activeApp === "pi");
   const providers = useMemo(() => data?.providers ?? {}, [data]);
+  const activeSupportsOfficialLogin = appSupportsOfficialLogin(activeApp);
+  const activeAuthCenterTarget = authCenterTargetForApp(activeApp);
+  const aggregationProviders = useMemo(() => {
+    const out: Record<string, Provider> = {};
+    for (const [id, provider] of Object.entries(providers)) {
+      if (isAggregationProvidedProvider(provider)) {
+        out[id] = provider;
+      }
+    }
+    return out;
+  }, [providers]);
   const currentProviderId = data?.currentProviderId ?? "";
   const isOpenClawView = activeApp === "openclaw" && isAppPage(currentView);
   const { data: openclawHealthWarnings = [] } =
@@ -449,31 +463,6 @@ function App() {
         },
       );
     }
-  };
-
-  // Kimi「添加」只写进 config.toml、不改默认模型；「切换」走 switchProvider。
-  // Copilot CLI 的自带模型卡同理：「添加」只写进 providers.json，默认模型在 copilot 里用 /model 选
-  const handleAddNativeProvider = async (
-    provider: Provider,
-    app: "kimi" | "copilot",
-  ) => {
-    try {
-      await providersApi.addToLiveConfig(provider.id, app);
-    } catch (error) {
-      toast.error(
-        t("notifications.addFailed", {
-          error: extractErrorMessage(error) || t("common.unknown"),
-        }),
-        { closeButton: true },
-      );
-      return;
-    } finally {
-      await queryClient.invalidateQueries({ queryKey: ["providers", app] });
-    }
-    toast.success(
-      t("notifications.addToConfigSuccess", { defaultValue: "已添加到配置" }),
-      { closeButton: true },
-    );
   };
 
   const disableOmoMutation = useDisableCurrentOmo();
@@ -562,7 +551,13 @@ function App() {
   }, [queryClient]);
 
   useTauriEvent("universal-provider-synced", async () => {
-    await queryClient.invalidateQueries({ queryKey: ["providers"] });
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["providers"] }),
+      queryClient.invalidateQueries({ queryKey: ["aggregation"] }),
+      queryClient.invalidateQueries({ queryKey: ["settings"] }),
+      queryClient.invalidateQueries({ queryKey: proxyKeys.status }),
+      queryClient.invalidateQueries({ queryKey: proxyKeys.takeoverStatus }),
+    ]);
     try {
       await providersApi.updateTrayMenu();
     } catch (error) {
@@ -972,6 +967,14 @@ function App() {
     setCurrentView("providers");
   };
 
+  const openAuthCenter = (target?: AuthCenterTarget | null) => {
+    if (managementBusyRef.current) return;
+    if (confirmLeave(() => openAuthCenter(target))) return;
+    closeProviderPanels();
+    setAuthCenterTarget(target ?? undefined);
+    setCurrentView("auth");
+  };
+
   const openPage = (page: GlobalPage | "settings") => {
     if (page === "settings") {
       openSettings("general");
@@ -982,6 +985,7 @@ function App() {
     if (currentViewRef.current === page) return;
     if (confirmLeave(() => openPage(page))) return;
     closeProviderPanels();
+    setAuthCenterTarget(undefined);
     if (page === "prompts" && currentViewRef.current !== "prompts") {
       // 提示词页默认选中侧栏里最后选的那个应用
       setPromptsApp(
@@ -1000,8 +1004,17 @@ function App() {
       }
       if (!navigation.app) return;
       selectApp(navigation.app);
-      // 托盘先换应用：新应用那格还没报上来，按它实际生效的模式
-      if (navigation.intent === "add") openAddProvider(undefined);
+      // 所有官方登录入口统一在授权中心管理；不支持官方登录的应用直接跳转到聚合页配置外部供应商
+      if (navigation.intent === "add") {
+        if (appSupportsOfficialLogin(navigation.app)) {
+          const target = authCenterTargetForApp(navigation.app);
+          if (target) {
+            openAuthCenter(target);
+          }
+        } else {
+          openPage("aggregation");
+        }
+      }
       if (navigation.intent === "needsRoute" && navigation.providerId) {
         setTrayNeedsRoute({
           app: navigation.app,
@@ -1388,7 +1401,7 @@ function App() {
   };
 
   const confirmActionMessage = useMemo(() => {
-    if (!confirmAction) return "";
+    if (!confirmAction?.provider) return "";
 
     const message =
       confirmAction.action === "remove"
@@ -1518,19 +1531,8 @@ function App() {
       variant="app"
       icon={<AppGlyph app={activeApp} size={20} badgeClassName="bg-app" />}
       title={APP_DISPLAY_NAME[activeApp]}
-      truncateTitle={currentView === "providers" && Boolean(modeAppId)}
-      titleExtra={
-        currentView === "providers" && modeAppId ? (
-          <div
-            ref={setConnectionStatusSlot}
-            className="ms-2 flex min-w-0 max-w-[280px] items-center"
-          />
-        ) : undefined
-      }
       subtitle={
-        activeApp === "openclaw" ||
-        activeApp === "hermes" ||
-        (currentView === "providers" && modeAppId)
+        activeApp === "openclaw" || activeApp === "hermes"
           ? undefined
           : appPageName
       }
@@ -1573,16 +1575,32 @@ function App() {
                 </Button>
               </HoverTip>
             )}
-          {currentView === "providers" && (
-            <Button
-              variant="solid"
-              size="regular"
-              onClick={() => openAddProvider(currentModeView)}
-            >
-              <Plus className="h-4 w-4" />
-              {t("provider.addProvider")}
-            </Button>
-          )}
+          {currentView === "providers" &&
+            (activeSupportsOfficialLogin ? (
+              activeAuthCenterTarget ? (
+                <Button
+                  variant="neutral"
+                  size="regular"
+                  onClick={() => openAuthCenter(activeAuthCenterTarget)}
+                >
+                  <KeyRound className="h-4 w-4" />
+                  {t("provider.manageInAuthCenter", {
+                    defaultValue: "管理账号",
+                  })}
+                </Button>
+              ) : null
+            ) : (
+              <Button
+                variant="solid"
+                size="regular"
+                onClick={() => openPage("aggregation")}
+              >
+                <Layers className="h-4 w-4" />
+                {t("aggregation.manageExternalProviders", {
+                  defaultValue: "前往聚合配置",
+                })}
+              </Button>
+            ))}
           {currentView === "hermesMemory" && (
             <Suspense fallback={null}>
               <HermesMemorySaveButton />
@@ -1663,18 +1681,20 @@ function App() {
         <SwitchModePanel
           key={modeAppId}
           app={modeAppId}
-          statusSlot={connectionStatusSlot}
           providers={providers}
           currentProviderId={currentProviderId}
           isLoading={isLoading}
           scrollRef={providerScrollContainerRef}
           onSwitch={switchProvider}
           onOpenRoutingSettings={() => openSettings("routing")}
+          onOpenAuthCenter={() =>
+            openAuthCenter(authCenterTargetForApp(modeAppId))
+          }
+          onOpenAggregation={() => openPage("aggregation")}
           needsRouteRequest={
             trayNeedsRoute?.app === modeAppId ? trayNeedsRoute : undefined
           }
           onNeedsRouteHandled={() => setTrayNeedsRoute(null)}
-          onViewChange={handleProviderModeViewChange}
           startupFailure={startupFailure}
           onDismissStartupFailure={() =>
             setStartupFailures((list) =>
@@ -1686,6 +1706,53 @@ function App() {
       );
     }
 
+    if (!activeSupportsOfficialLogin) {
+      return (
+        <div
+          ref={providerScrollContainerRef}
+          id="main-content"
+          className="min-h-0 flex-1 overflow-y-auto scroll-stable overflow-x-hidden px-6 pb-12 pt-4"
+        >
+          <div className="space-y-4">
+            <ProviderList
+              {...listCallbacks}
+              providers={aggregationProviders}
+              currentProviderId={currentProviderId}
+              appId={activeApp}
+              isLoading={isLoading}
+              aggregationOnly
+              onOpenAggregation={() => openPage("aggregation")}
+              onSwitch={(provider) =>
+                void (appHas(activeApp, "piFamily")
+                  ? handleEnablePiProvider(provider, activeApp)
+                  : switchProvider(provider))
+              }
+              onRemoveFromConfig={
+                appHas(activeApp, "additive")
+                  ? (provider) =>
+                      setConfirmAction({ provider, action: "remove" })
+                  : undefined
+              }
+              onDisableOmo={
+                activeApp === "opencode" ? handleDisableOmo : undefined
+              }
+              onDisableOmoSlim={
+                activeApp === "opencode" ? handleDisableOmoSlim : undefined
+              }
+              onSetAsDefault={
+                activeApp === "openclaw" || activeApp === "opencode"
+                  ? (provider, modelId) =>
+                      void setAsDefaultModel(provider, modelId)
+                  : activeApp === "hermes"
+                    ? (provider) => void switchProvider(provider)
+                    : undefined
+              }
+            />
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div
         ref={providerScrollContainerRef}
@@ -1693,38 +1760,12 @@ function App() {
         className="min-h-0 flex-1 overflow-y-auto scroll-stable overflow-x-hidden px-6 pb-12 pt-4"
       >
         <div className="space-y-4">
-          <ProviderList
-            {...listCallbacks}
-            providers={providers}
-            currentProviderId={currentProviderId}
-            appId={activeApp}
-            isLoading={isLoading}
-            onSwitch={(provider) =>
-              void (appHas(activeApp, "piFamily")
-                ? handleEnablePiProvider(provider, activeApp)
-                : activeApp === "kimi" || activeApp === "copilot"
-                  ? handleAddNativeProvider(provider, activeApp)
-                  : switchProvider(provider))
-            }
-            onRemoveFromConfig={
-              appHas(activeApp, "additive")
-                ? (provider) => setConfirmAction({ provider, action: "remove" })
-                : undefined
-            }
-            onDisableOmo={
-              activeApp === "opencode" ? handleDisableOmo : undefined
-            }
-            onDisableOmoSlim={
-              activeApp === "opencode" ? handleDisableOmoSlim : undefined
-            }
-            onSetAsDefault={
-              activeApp === "openclaw" || activeApp === "opencode"
-                ? (provider, modelId) =>
-                    void setAsDefaultModel(provider, modelId)
-                : activeApp === "hermes" || activeApp === "kimi"
-                  ? (provider) => void switchProvider(provider)
-                  : undefined
-            }
+          <OfficialAccountsPanel
+            appId={activeApp as OfficialPanelAppId}
+            searchOpen={providerSearchOpen}
+            onSearchOpenChange={setProviderSearchOpen}
+            onOpenAuthCenter={() => openAuthCenter(activeAuthCenterTarget)}
+            onOpenAggregation={() => openPage("aggregation")}
           />
         </div>
       </div>
@@ -1801,6 +1842,13 @@ function App() {
 
   const renderGlobalPage = () => {
     switch (currentView) {
+      case "aggregation":
+        return (
+          <AggregationPage
+            onOpenApp={selectApp}
+            onOpenRoutingSettings={() => openSettings("routing")}
+          />
+        );
       case "usage":
         return (
           <UsagePage
@@ -1834,7 +1882,10 @@ function App() {
               className="min-h-0 flex-1 overflow-y-auto scroll-stable"
             >
               <div className="px-6 pb-10 pt-4">
-                <AuthCenterPanel showIntro={false} />
+                <AuthCenterPanel
+                  showIntro={false}
+                  authScrollTarget={authCenterTarget}
+                />
               </div>
             </div>
           </>
@@ -1976,6 +2027,7 @@ function App() {
             appId={activeApp}
             onSubmit={addProvider}
             modeView={formModeView}
+            officialOnly
           />
         )}
 

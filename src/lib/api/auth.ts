@@ -17,6 +17,7 @@ export type ManagedLoginMethod = CodexLoginMethod | "copy_link";
 export type AuthCenterTarget =
   | ManagedAuthProvider
   | "kimi_oauth"
+  | "mcode_oauth"
   | "dsh_account";
 
 export const CODEX_OAUTH_DUPLICATE_ACCOUNT_ERROR =

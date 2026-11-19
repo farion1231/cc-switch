@@ -157,21 +157,59 @@ export function ProviderPresetSelector({
 }: Readonly<ProviderPresetSelectorProps>) {
   const step = usePresetStep();
   const registerSelector = step?.registerSelector;
+  const officialOnly = Boolean(step?.officialOnly);
+  const onOfficialPresetCountChange = step?.onOfficialPresetCountChange;
   useEffect(() => registerSelector?.(), [registerSelector]);
+
+  const effectiveEntries = useMemo(
+    () =>
+      officialOnly
+        ? presetEntries.filter((entry) => entry.preset.category === "official")
+        : presetEntries,
+    [officialOnly, presetEntries],
+  );
+
+  useEffect(() => {
+    if (officialOnly) {
+      onOfficialPresetCountChange?.(effectiveEntries.length);
+    }
+  }, [officialOnly, effectiveEntries.length, onOfficialPresetCountChange]);
 
   const pick = (id: string) => {
     onPresetChange(id);
     step?.setStep("form");
   };
 
+  // 应用内部仅允许官方登录：当且仅有一个官方预设时直接选中并跳过预设选择步
+  const autoPickedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!officialOnly || step?.step !== "pick") {
+      autoPickedRef.current = null;
+      return;
+    }
+    if (effectiveEntries.length === 1) {
+      const only = effectiveEntries[0];
+      if (autoPickedRef.current !== only.id) {
+        autoPickedRef.current = only.id;
+        onPresetChange(only.id);
+        step.setStep("form");
+      }
+    }
+  }, [officialOnly, step, effectiveEntries, onPresetChange]);
+
   if (step?.step === "pick" && step.host) {
     return createPortal(
       <PresetPicker
         appId={step.appId}
-        entries={presetEntries}
+        entries={effectiveEntries}
         onPick={pick}
-        onUniversalPresetSelect={onUniversalPresetSelect}
-        onManageUniversalProviders={onManageUniversalProviders}
+        officialOnly={officialOnly}
+        onUniversalPresetSelect={
+          officialOnly ? undefined : onUniversalPresetSelect
+        }
+        onManageUniversalProviders={
+          officialOnly ? undefined : onManageUniversalProviders
+        }
       />,
       step.host,
     );
@@ -179,21 +217,26 @@ export function ProviderPresetSelector({
 
   const entry =
     selectedPresetId && selectedPresetId !== "custom"
-      ? presetEntries.find((item) => item.id === selectedPresetId)
+      ? effectiveEntries.find((item) => item.id === selectedPresetId)
       : undefined;
 
   if (!step) {
     // 没有两步外壳（单独渲染的表单）：就地显示选择列表，选中多版本的那一家时下面跟版本切换
-    const versions = entry ? presetVersions(presetEntries, entry) : [];
+    const versions = entry ? presetVersions(effectiveEntries, entry) : [];
     return (
       <div className="space-y-3" data-preset-selector="">
         <div className="h-[420px] overflow-hidden rounded-panel border border-border">
           <PresetPicker
-            entries={presetEntries}
+            entries={effectiveEntries}
             onPick={onPresetChange}
             selectedPresetId={selectedPresetId}
-            onUniversalPresetSelect={onUniversalPresetSelect}
-            onManageUniversalProviders={onManageUniversalProviders}
+            officialOnly={officialOnly}
+            onUniversalPresetSelect={
+              officialOnly ? undefined : onUniversalPresetSelect
+            }
+            onManageUniversalProviders={
+              officialOnly ? undefined : onManageUniversalProviders
+            }
           />
         </div>
         {entry && versions.length > 1 && (
@@ -209,10 +252,13 @@ export function ProviderPresetSelector({
 
   return (
     <PresetBar
-      action={barAction}
+      action={
+        barAction ??
+        (officialOnly && effectiveEntries.length <= 1 ? <span /> : undefined)
+      }
       appId={step.appId}
       entry={entry}
-      versions={entry ? presetVersions(presetEntries, entry) : []}
+      versions={entry ? presetVersions(effectiveEntries, entry) : []}
       onChange={() => step.setStep("pick")}
       // 换版本 = 选了同一家的另一个预设，表单按它重填
       onVersionChange={onPresetChange}
@@ -540,6 +586,7 @@ interface PresetPickerProps {
   appId?: AppId;
   entries: PresetEntry[];
   selectedPresetId?: string | null;
+  officialOnly?: boolean;
   onPick: (id: string) => void;
   onUniversalPresetSelect?: (preset: UniversalProviderPreset) => void;
   onManageUniversalProviders?: () => void;
@@ -549,6 +596,7 @@ function PresetPicker({
   appId,
   entries,
   selectedPresetId,
+  officialOnly = false,
   onPick,
   onUniversalPresetSelect,
   onManageUniversalProviders,
@@ -620,7 +668,7 @@ function PresetPicker({
   ];
   const searching = query.trim().length > 0;
 
-  const customRow = (
+  const customRow = officialOnly ? null : (
     <PresetRow
       icon={<PresetIconBox />}
       name={t("providerPreset.custom")}
@@ -737,15 +785,17 @@ function PresetPicker({
               <p className="text-caption text-fg-2">
                 {t("providerPreset.noResultsHint")}
               </p>
-              <Button
-                type="button"
-                variant="neutral"
-                size="compact"
-                className="mt-1"
-                onClick={() => onPick("custom")}
-              >
-                {t("providerPreset.useCustom")}
-              </Button>
+              {!officialOnly && (
+                <Button
+                  type="button"
+                  variant="neutral"
+                  size="compact"
+                  className="mt-1"
+                  onClick={() => onPick("custom")}
+                >
+                  {t("providerPreset.useCustom")}
+                </Button>
+              )}
             </div>
           ) : category === "universal" ? (
             <div className="grid grid-cols-2 gap-2">

@@ -53,6 +53,8 @@ interface AddProviderDialogProps {
   ) => Promise<void> | void;
   /** 从供应商页哪一格打开的，见 ProviderForm 的同名参数 */
   modeView?: AppMode;
+  /** 应用内部直连模式：仅允许添加官方登录，外部供应商统一在聚合页配置 */
+  officialOnly?: boolean;
 }
 
 export function AddProviderDialog({
@@ -61,10 +63,12 @@ export function AddProviderDialog({
   appId,
   onSubmit,
   modeView,
+  officialOnly = false,
 }: AddProviderDialogProps) {
   const { t } = useTranslation();
-  // OpenCode and OpenClaw don't support universal providers
+  // OpenCode and OpenClaw don't support universal providers; officialOnly hides universal entry
   const showUniversalTab =
+    !officialOnly &&
     appId !== "opencode" &&
     appId !== "openclaw" &&
     appId !== "hermes" &&
@@ -81,8 +85,12 @@ export function AddProviderDialog({
   const [step, setStep] = useState<"pick" | "form">("pick");
   const [pickerHost, setPickerHost] = useState<HTMLDivElement | null>(null);
   const [manageUniversalOpen, setManageUniversalOpen] = useState(false);
+  const [officialPresetCount, setOfficialPresetCount] = useState(0);
   useEffect(() => {
-    if (open) setStep("pick");
+    if (open) {
+      setStep("pick");
+      setOfficialPresetCount(0);
+    }
   }, [open, appId]);
   const selectorCount = useRef(0);
   const registerSelector = useCallback(() => {
@@ -92,8 +100,16 @@ export function AddProviderDialog({
     };
   }, []);
   const stepState = useMemo<PresetStepState>(
-    () => ({ appId, step, setStep, host: pickerHost, registerSelector }),
-    [appId, step, pickerHost, registerSelector],
+    () => ({
+      appId,
+      step,
+      setStep,
+      host: pickerHost,
+      registerSelector,
+      officialOnly,
+      onOfficialPresetCountChange: setOfficialPresetCount,
+    }),
+    [appId, step, pickerHost, registerSelector, officialOnly],
   );
   const [universalFormOpen, setUniversalFormOpen] = useState(false);
   const [selectedUniversalPreset, setSelectedUniversalPreset] =
@@ -172,13 +188,18 @@ export function AddProviderDialog({
       setAuthSettingsTarget(null);
       return;
     }
+    // 仅有一个官方登录预设时直接关闭，不退回空的/单项选择器
+    if (officialOnly && officialPresetCount <= 1) {
+      closeDialog();
+      return;
+    }
     // 第 2 步的返回回到选预设
     if (step === "form") {
       setStep("pick");
       return;
     }
     closeDialog();
-  }, [authSettingsTarget, closeDialog, step]);
+  }, [authSettingsTarget, closeDialog, step, officialOnly, officialPresetCount]);
   const formReadyToken = useMemo(
     () => Symbol("provider-form-ready"),
     [appId, open],
@@ -536,7 +557,11 @@ export function AddProviderDialog({
     <FullScreenPanel
       isOpen={open}
       trackUnsavedChanges={step === "form" && !accountLogin}
-      title={t("provider.addNewProvider")}
+      title={
+        officialOnly
+          ? t("provider.addOfficialLogin", { defaultValue: "添加官方登录" })
+          : t("provider.addNewProvider")
+      }
       subtitle={
         stackLayout
           ? t("provider.formSubtitleStack", {
@@ -546,7 +571,7 @@ export function AddProviderDialog({
           : APP_DISPLAY_NAME[appId]
       }
       backLabel={
-        step === "form"
+        step === "form" && !(officialOnly && officialPresetCount <= 1)
           ? t("providerPreset.backToPick")
           : t("provider.backToList")
       }

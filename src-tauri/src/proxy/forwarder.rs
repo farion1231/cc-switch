@@ -1690,6 +1690,13 @@ impl RequestForwarder {
         } else {
             None
         };
+        let gemini_inbound_format = if matches!(app_type, AppType::Gemini)
+            && super::providers::gemini_inbound::gemini_needs_inbound_transform(provider)
+        {
+            Some(super::providers::gemini_inbound::gemini_target_api_format(provider).to_string())
+        } else {
+            None
+        };
         if adapter.name() == "Claude" {
             if let Some(api_format) = resolved_claude_api_format.as_deref() {
                 // 主动剥离 thinking block — Copilot 的 OpenAI 兼容端点不识别该块，避免上游拒绝后
@@ -1725,6 +1732,24 @@ impl RequestForwarder {
                 .as_ref()
                 .and_then(|meta| meta.impersonate_claude_code)
                 == Some(true);
+        let gemini_inbound_converted = if gemini_inbound_format.is_some() {
+            let gemini_stream =
+                super::providers::gemini_inbound::endpoint_is_gemini_stream(endpoint);
+            let uri_model = endpoint
+                .split("/models/")
+                .nth(1)
+                .and_then(|rest| rest.split(':').next());
+            Some(
+                super::providers::gemini_inbound::convert_gemini_inbound_request(
+                    provider,
+                    &mapped_body,
+                    uri_model,
+                    gemini_stream,
+                )?,
+            )
+        } else {
+            None
+        };
         let (effective_endpoint, passthrough_query) =
             if let Some(copilot_endpoint) = copilot_endpoint_override.as_deref() {
                 rewrite_codex_endpoint_for_copilot(endpoint, copilot_endpoint)
@@ -1732,6 +1757,8 @@ impl RequestForwarder {
                 rewrite_codex_responses_endpoint_to_chat(endpoint)
             } else if codex_responses_to_anthropic {
                 rewrite_codex_responses_endpoint_to_anthropic(endpoint)
+            } else if let Some((target_ep, _)) = &gemini_inbound_converted {
+                (target_ep.clone(), None)
             } else if needs_transform && adapter.name() == "Claude" {
                 let api_format = resolved_claude_api_format
                     .as_deref()
@@ -1818,7 +1845,9 @@ impl RequestForwarder {
         let mut codex_anthropic_one_m = false;
 
         // 转换请求体（如果需要）
-        let mut request_body = if codex_responses_to_chat {
+        let mut request_body = if let Some((_, converted_body)) = gemini_inbound_converted {
+            converted_body
+        } else if codex_responses_to_chat {
             let mut mapped_body = mapped_body;
             let explicit_prompt_cache_key = mapped_body
                 .get("prompt_cache_key")
@@ -2144,6 +2173,7 @@ impl RequestForwarder {
         let force_identity_encoding = needs_transform
             || codex_responses_to_chat
             || codex_responses_to_anthropic
+            || gemini_inbound_format.is_some()
             || request_is_streaming;
 
         // Codex OAuth 需要注入的 ChatGPT-Account-Id（在动态 token 获取期间填充）
@@ -2407,7 +2437,11 @@ impl RequestForwarder {
                     opaque_state_request.as_ref(),
                 )
                 .await?;
-            Ok((response, resolved_claude_api_format, outbound_model))
+            Ok((
+                response,
+                resolved_claude_api_format.or(gemini_inbound_format),
+                outbound_model,
+            ))
         } else {
             Err(upstream_error(response).await?)
         }

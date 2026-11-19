@@ -246,6 +246,8 @@ export interface ProviderMeta {
   githubAccountId?: string;
   // Stack 模式下这家 Claude Code 供应商发布的模型；没有时按模型映射发布，空列表什么都不发布
   stackModels?: ClaudeStackModel[];
+  // 是否手动取消了跨应用聚合兼容
+  aggregationDisabled?: boolean;
 }
 
 // Stack 模式下 Claude Code 供应商发布的一个模型
@@ -877,8 +879,20 @@ export type McpServersMap = Record<string, McpServer>;
 // 统一供应商的应用启用状态
 export interface UniversalProviderApps {
   claude: boolean;
+  claudeDesktop?: boolean;
   codex: boolean;
   gemini: boolean;
+  grokbuild?: boolean;
+  opencode?: boolean;
+  openclaw?: boolean;
+  hermes?: boolean;
+  pi?: boolean;
+  omp?: boolean;
+  mcode?: boolean;
+  kimi?: boolean;
+  dsh?: boolean;
+  copilot?: boolean;
+  workbuddy?: boolean;
 }
 
 // Claude 模型配置
@@ -916,6 +930,8 @@ export interface UniversalProvider {
   baseUrl: string;
   apiKey: string;
   models: UniversalProviderModels;
+  apiFormat?: string;
+  extraModels?: string[];
   websiteUrl?: string;
   notes?: string;
   icon?: string;

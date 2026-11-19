@@ -669,7 +669,7 @@ async fn query_zenmux(base_url: &str, api_key: &str) -> Result<SubscriptionQuota
 /// 5h 桶始终存在;周桶并非所有套餐都有,靠 `current_weekly_status` 区分:
 /// 1 = 正常计时,2 = 周额度已耗尽(照常展示),3 = 无周限额
 /// (该字段为 3 时 `remaining_percent` 恒为 100,不应展示)。
-fn parse_minimax_tiers(body: &serde_json::Value) -> Vec<QuotaTier> {
+pub(crate) fn parse_minimax_tiers(body: &serde_json::Value) -> Vec<QuotaTier> {
     let mut tiers = Vec::new();
 
     let Some(model_remains) = body.get("model_remains").and_then(|v| v.as_array()) else {

@@ -2,6 +2,7 @@
 //!
 //! Handles provider CRUD operations, switching, and configuration management.
 
+pub mod aggregation;
 pub(crate) mod agy_direct;
 pub(crate) mod claude_direct;
 mod claude_editor;
@@ -8468,19 +8469,13 @@ impl ProviderService {
         // 删除统一供应商
         state.db.delete_universal_provider(id)?;
 
-        // 删除生成的子供应商
+        // 删除生成的子供应商（覆盖所有兼容应用）
         if let Some(p) = provider {
-            if p.apps.claude {
-                let claude_id = format!("universal-claude-{id}");
-                let _ = state.db.delete_provider(&AppType::Claude, &claude_id);
-            }
-            if p.apps.codex {
-                let codex_id = format!("universal-codex-{id}");
-                let _ = state.db.delete_provider(&AppType::Codex, &codex_id);
-            }
-            if p.apps.gemini {
-                let gemini_id = format!("universal-gemini-{id}");
-                let _ = state.db.delete_provider(&AppType::Gemini, &gemini_id);
+            for target_app in crate::provider::UniversalProviderApps::COMPATIBLE_APPS {
+                if p.apps.is_enabled_for(&target_app) {
+                    let child_id = aggregation::synced_child_id_for_universal(&target_app, id);
+                    let _ = state.db.delete_provider(&target_app, &child_id);
+                }
             }
         }
 
