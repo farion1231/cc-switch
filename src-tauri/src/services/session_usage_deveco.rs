@@ -63,6 +63,28 @@ fn is_pending_usage(value: &Value) -> bool {
     value.pointer("/time/completed").is_none()
 }
 
+/// 未结算的 assistant 行要闲置多久才算"被放弃"，而不是"仍在生成"。
+///
+/// DevEco 在流式生成期间会持续刷新 `time_updated`，所以这么久没被写过的行
+/// 不会再拿到 `time.completed`。
+const PENDING_GRACE_MS: i64 = 60 * 60 * 1000;
+
+/// 行是"未结算"，且已经超过 [`PENDING_GRACE_MS`] 没有被写过。
+///
+/// 这种请求已被放弃——用户点了停止、应用被杀、连接断开——DevEco 永远不会补上
+/// `time.completed`。水位必须能越过它，否则一个被放弃的回合会把之后所有用量永久堵死。
+fn is_abandoned_pending(value: &Value, updated_at_ms: i64, now_ms: i64) -> bool {
+    is_pending_usage(value) && now_ms.saturating_sub(updated_at_ms) > PENDING_GRACE_MS
+}
+
+fn now_millis() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|elapsed| i64::try_from(elapsed.as_millis()).ok())
+        .unwrap_or(0)
+}
+
 fn usage_from_value(value: &Value) -> Option<MessageUsage> {
     if value.get("role").and_then(Value::as_str) != Some("assistant") {
         return None;
@@ -110,16 +132,18 @@ fn sync_from_database(
     )?;
 
     let mut query = source.prepare(
-        "SELECT rowid, session_id, id, data FROM message WHERE rowid > ?1 ORDER BY rowid",
+        "SELECT rowid, session_id, id, data, time_updated FROM message WHERE rowid > ?1 ORDER BY rowid",
     )?;
     let mut rows = query.query([cursor])?;
     result.files_scanned = 1;
+    let now_ms = now_millis();
 
     while let Some(row) = rows.next()? {
         let row_id: i64 = row.get(0)?;
         let session_id: String = row.get(1)?;
         let message_id: String = row.get(2)?;
         let data: String = row.get(3)?;
+        let updated_at_ms: i64 = row.get(4)?;
         let value: Value = match serde_json::from_str(&data) {
             Ok(value) => value,
             Err(_) => {
@@ -132,8 +156,17 @@ fn sync_from_database(
         // A pending (not yet completed) assistant row is updated in place by DevEco
         // rather than re-inserted with a new rowid, so the watermark must stop before
         // it: advancing past it would make its final usage unreachable forever.
+        //
+        // A request abandoned mid-flight (stopped, killed, disconnected) never gets
+        // `time.completed` at all, so stopping on it would wedge the watermark for
+        // good and hide every later row. Once such a row has been idle past the grace
+        // window it is treated as finished-without-usage and the scan moves on.
         if is_pending_usage(&value) {
-            break;
+            if !is_abandoned_pending(&value, updated_at_ms, now_ms) {
+                break;
+            }
+            cursor = row_id;
+            continue;
         }
 
         // The cursor advances even for rows we don't import (user messages, malformed
@@ -230,12 +263,23 @@ mod tests {
         source
     }
 
+    /// 写入一行"刚被 DevEco 写过"的消息，使未结算行按"仍在生成"处理。
     fn insert_message(source: &rusqlite::Connection, id: &str, session: &str, data: &str) {
+        insert_message_updated_at(source, id, session, data, now_millis());
+    }
+
+    fn insert_message_updated_at(
+        source: &rusqlite::Connection,
+        id: &str,
+        session: &str,
+        data: &str,
+        updated_at_ms: i64,
+    ) {
         source
             .execute(
                 "INSERT INTO message (id, session_id, time_created, time_updated, data)
-                 VALUES (?1, ?2, 0, 0, ?3)",
-                rusqlite::params![id, session, data],
+                 VALUES (?1, ?2, 0, ?3, ?4)",
+                rusqlite::params![id, session, updated_at_ms, data],
             )
             .unwrap();
     }
@@ -456,6 +500,83 @@ mod tests {
                 .imported,
             0,
             "已入库的行不得重复导入"
+        );
+    }
+
+    #[test]
+    fn sync_skips_an_abandoned_pending_row_instead_of_freezing_the_watermark() {
+        let source = source_with_messages();
+        let db = Database::memory().unwrap();
+
+        let completed = |input: u32| {
+            format!(
+                r#"{{"role":"assistant","modelID":"p/m","cost":{input},
+                    "tokens":{{"input":{input},"output":1}},
+                    "time":{{"created":1,"completed":2}}}}"#
+            )
+        };
+
+        insert_message(&source, "msg_done_1", "s1", &completed(10));
+        // 用户中止的请求：DevEco 永远不会补上 time.completed。
+        insert_message_updated_at(
+            &source,
+            "msg_abandoned",
+            "s1",
+            r#"{"role":"assistant","modelID":"p/m","tokens":{"input":0,"output":0},
+                "time":{"created":1}}"#,
+            now_millis() - PENDING_GRACE_MS - 1,
+        );
+        insert_message(&source, "msg_done_2", "s1", &completed(20));
+
+        let result = sync_from_database(&db, &source, "deveco-abandoned").unwrap();
+        assert_eq!(result.imported, 2, "废弃的未完成行不得把水位永久堵在它前面");
+
+        assert_eq!(
+            sync_from_database(&db, &source, "deveco-abandoned")
+                .unwrap()
+                .imported,
+            0,
+            "越过废弃行后不得重复导入"
+        );
+    }
+
+    #[test]
+    fn sync_still_stops_at_a_fresh_pending_row() {
+        let source = source_with_messages();
+        let db = Database::memory().unwrap();
+
+        insert_message(
+            &source,
+            "msg_in_flight",
+            "s1",
+            r#"{"role":"assistant","modelID":"p/m","tokens":{"input":0,"output":0},
+                "time":{"created":1}}"#,
+        );
+
+        assert_eq!(
+            sync_from_database(&db, &source, "deveco-inflight")
+                .unwrap()
+                .imported,
+            0,
+            "仍在生成中的行不得入库"
+        );
+
+        // 同一行原地结算后必须能补录：说明水位确实停在它前面，而不是越过。
+        source
+            .execute(
+                "UPDATE message SET data = ?1 WHERE id = 'msg_in_flight'",
+                [r#"{"role":"assistant","modelID":"p/m","cost":0.5,
+                     "tokens":{"input":7,"output":3},
+                     "time":{"created":1,"completed":2}}"#],
+            )
+            .unwrap();
+
+        assert_eq!(
+            sync_from_database(&db, &source, "deveco-inflight")
+                .unwrap()
+                .imported,
+            1,
+            "仍在生成中的行不得被越过"
         );
     }
 
