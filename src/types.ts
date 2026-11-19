@@ -50,7 +50,9 @@ export interface EndpointCandidate {
   isCustom?: boolean;
 }
 
+import type { AppId } from "./lib/api/types";
 import type { TemplateType } from "./config/constants";
+import type { Language } from "./i18n/languages";
 
 // 用量查询脚本配置
 export interface UsageScript {
@@ -174,6 +176,8 @@ export interface LocalProxyRequestOverrides {
 
 // 供应商元数据（字段名与后端一致，保持 snake_case）
 export interface ProviderMeta {
+  /** Explicit multiplier for future local-proxy reference costs; absent means 1. */
+  billingMultiplier?: string;
   // 自定义端点：以 URL 为键，值为端点信息
   custom_endpoints?: Record<string, CustomEndpoint>;
   // 是否在切换/同步到 live 时应用通用配置片段
@@ -224,8 +228,8 @@ export interface ProviderMeta {
   impersonateClaudeCode?: boolean;
   // Codex → Anthropic path: override the Anthropic max_tokens (output ceiling).
   // Codex does not forward model_max_output_tokens in the request body; without
-  // this the path falls back to a conservative 8192 default, which can truncate
-  // long/thinking-heavy responses. When set (>0) it takes precedence over the
+  // this the path falls back to a 32000 default (DEFAULT_CODEX_ANTHROPIC_MAX_TOKENS),
+  // which a low-ceiling gateway may reject. When set (>0) it takes precedence over the
   // request value and the default.
   maxOutputTokens?: number;
   // Custom User-Agent for local proxy routing. Only applied by the local proxy.
@@ -309,22 +313,7 @@ export interface CodexCatalogModel {
 export type ClaudeApiKeyField = "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_API_KEY";
 
 // 主页面显示的应用配置
-export interface VisibleApps {
-  claude: boolean;
-  "claude-desktop": boolean;
-  codex: boolean;
-  gemini: boolean;
-  grokbuild: boolean;
-  opencode: boolean;
-  openclaw: boolean;
-  hermes: boolean;
-  pi: boolean;
-  mcode: boolean;
-  kimi: boolean;
-  dsh?: boolean;
-  agy: boolean;
-  omp: boolean;
-}
+export type VisibleApps = Record<AppId, boolean>;
 
 // WebDAV 同步状态
 export interface WebDavSyncStatus {
@@ -359,6 +348,8 @@ export interface S3SyncSettings {
   endpoint?: string;
   remoteRoot?: string;
   profile?: string;
+  /** Selected S3 provider preset id; presentational, persisted so it survives reopening. */
+  preset?: string;
   status?: WebDavSyncStatus;
 }
 
@@ -439,6 +430,8 @@ export interface Settings {
   usageDisplay?: UsageDisplaySettings;
   // 会话用量自动扫描开关（默认开启=自动模式；关闭后仅手动同步时扫描会话日志，代理记账不受影响）
   sessionAutoSyncEnabled?: boolean;
+  // 会话页搜索消息正文（默认关闭；开启后在本地建 session-index.db 索引，关闭时删除索引）
+  sessionContentSearchEnabled?: boolean;
   // Whether to show the failover toggle independently on the main page
   enableFailoverToggle?: boolean;
   // Whether to show the project profile switcher on the main page header
@@ -447,6 +440,8 @@ export interface Settings {
   showProviderSearch?: boolean;
   // 启动时检查已安装的命令行应用有没有新版本（默认关）
   checkToolUpdatesOnStartup?: boolean;
+  // 自动下载 CC Switch 新版本，下好后问要不要安装（默认关；设备级，不随云同步）
+  autoUpdateEnabled?: boolean;
   // 点托盘图标出原生菜单，不出托盘面板（macOS / Windows；Linux 一律原生菜单；默认关，没写过视为关，即用托盘面板）
   nativeTrayMenu?: boolean;
   // Preserve Codex ChatGPT login in auth.json when switching third-party providers
@@ -456,6 +451,8 @@ export interface Settings {
     fiveHourThreshold: number;
     weeklyThreshold: number;
   };
+  // 路由 / 聚合模式下暂停使用 Codex 官方登录（官方额度用完、发送键被锁时的应急开关；默认关）
+  codexProxyWithoutOfficialLogin?: boolean;
   // Run official Codex under the shared "custom" provider id so future
   // sessions share one resume-history bucket with third-party providers
   unifyCodexSessionHistory?: boolean;
@@ -484,7 +481,7 @@ export interface Settings {
   // User has confirmed the common config first-run notice
   commonConfigConfirmed?: boolean;
   // 首选语言（可选，默认中文）
-  language?: "en" | "zh" | "zh-TW" | "ja" | "tr";
+  language?: Language;
   // 按档的额度百分比写剩余还是已用（默认剩余；余额、Credits 不受影响）
   quotaDisplay?: "left" | "used";
 
@@ -562,6 +559,43 @@ export interface Settings {
   };
 }
 
+/** 原文 UTF-16 坐标，左闭右开；不得切开代理对。 */
+export interface SessionTextRange {
+  start: number;
+  end: number;
+}
+
+/** 一条命中消息的摘录 */
+export interface SessionContentSnippet {
+  /** 摘录所在消息在会话里的序号 */
+  messageIndex: number;
+  /** 命中词附近的纯文本，空白已压缩 */
+  text: string;
+  /** 按完整消息匹配后映射到最终 text 的位置，避免截断改变上下文小写规则。 */
+  highlights: SessionTextRange[];
+}
+
+/** 会话正文搜索的命中（search_session_content）：最多 3 条摘录，第一条最相关 */
+export interface SessionContentHit {
+  providerId: string;
+  sourcePath: string;
+  snippets: SessionContentSnippet[];
+  /** 命中的消息条数 */
+  matchCount: number;
+}
+
+/** 正文索引的进度；running 为 false 且 processed === total 时索引已是最新 */
+export interface SessionIndexStatus {
+  running: boolean;
+  processed: number;
+  total: number;
+}
+
+export interface SessionContentSearchResult {
+  hits: SessionContentHit[];
+  status: SessionIndexStatus;
+}
+
 export interface SessionMeta {
   providerId: string;
   sessionId: string;
@@ -607,6 +641,7 @@ export type EventKind =
   | "info"
   | "error"
   | "sub_agent"
+  | "goal"
   | "other";
 
 /** 大内容的「按需取」引用：前端不解析，原样回传给后端 */
@@ -801,7 +836,9 @@ export interface McpApps {
   mcode?: boolean;
   kimi?: boolean;
   dsh?: boolean;
+  workbuddy?: boolean;
   agy?: boolean;
+  copilot?: boolean;
   claude: boolean;
   "claude-desktop"?: boolean;
   codex: boolean;
@@ -832,19 +869,6 @@ export interface McpServer {
 
 // MCP 服务器映射（id -> McpServer）
 export type McpServersMap = Record<string, McpServer>;
-
-// MCP 配置状态
-export interface McpStatus {
-  userConfigPath: string;
-  userConfigExists: boolean;
-  serverCount: number;
-}
-
-// 新：来自 config.json 的 MCP 列表响应
-export interface McpConfigResponse {
-  configPath: string;
-  servers: Record<string, McpServer>;
-}
 
 // ============================================================================
 // 统一供应商（Universal Provider）- 跨应用共享配置
@@ -935,19 +959,6 @@ export interface OpenCodeProviderConfig {
   name?: string; // 供应商显示名称
   options: OpenCodeProviderOptions;
   models: Record<string, OpenCodeModel>;
-}
-
-// OpenCode MCP 服务器配置（与统一格式不同）
-export interface OpenCodeMcpServerSpec {
-  type: "local" | "remote";
-  // local 类型字段
-  command?: string[]; // 与统一格式不同：命令和参数合并为数组
-  environment?: Record<string, string>; // 与统一格式不同：使用 environment 而非 env
-  // remote 类型字段
-  url?: string;
-  headers?: Record<string, string>;
-  // 通用字段
-  enabled?: boolean;
 }
 
 // ============================================================================

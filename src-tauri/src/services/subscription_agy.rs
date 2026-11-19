@@ -1,7 +1,7 @@
 //! Antigravity CLI 官方登录的剩余额度：问 agy 自己的 `/usage` 命令
 //! （`agy -p /usage --output-format json`），这条命令不调模型、不新建会话。
 //!
-//! 这是后备路径：能切号的平台（macOS）先用 CC Switch 存的令牌直接问 Google
+//! 这是后备路径：能切号的平台（macOS、Windows）先用 CC Switch 存的令牌直接问 Google
 //! （`commands::agy_account::agy_quota`，约 1 秒），认不出 agy 的登录时才走这里；
 //! 启动 agy 要七八秒。
 
@@ -16,6 +16,7 @@ const TIMEOUT: Duration = Duration::from_secs(30);
 
 pub const TIER_AGY_GEMINI_FIVE_HOUR: &str = "agy_gemini_five_hour";
 pub const TIER_AGY_GEMINI_WEEKLY: &str = "agy_gemini_weekly";
+pub const TIER_AGY_GEMINI_ARGON_WEEKLY: &str = "agy_gemini_argon_weekly";
 pub const TIER_AGY_THIRD_PARTY_FIVE_HOUR: &str = "agy_third_party_five_hour";
 pub const TIER_AGY_THIRD_PARTY_WEEKLY: &str = "agy_third_party_weekly";
 
@@ -49,12 +50,14 @@ struct UsageBucket {
     reset_time: Option<String>,
 }
 
-/// agy 的额度分组：Gemini 一组，Claude 和 GPT 共用一组，每组各有 5 小时和每周两档。
+/// agy 的额度分组：Gemini 一组，Claude 和 GPT 共用一组，每组各有 5 小时和每周两档；
+/// Pro 档的 Gemini 组另有 Gemini 4 Argon 单独的每周额度。
 /// 不认识的桶（以后新增的组）跳过，免得显示成没有文案的档。
 fn tier_name(bucket_id: &str) -> Option<&'static str> {
     match bucket_id {
         "gemini-5h" => Some(TIER_AGY_GEMINI_FIVE_HOUR),
         "gemini-weekly" => Some(TIER_AGY_GEMINI_WEEKLY),
+        "gemini-argon-wtu-weekly" => Some(TIER_AGY_GEMINI_ARGON_WEEKLY),
         "3p-5h" => Some(TIER_AGY_THIRD_PARTY_FIVE_HOUR),
         "3p-weekly" => Some(TIER_AGY_THIRD_PARTY_WEEKLY),
         _ => None,
@@ -65,8 +68,9 @@ fn sort_order(name: &str) -> usize {
     match name {
         TIER_AGY_GEMINI_FIVE_HOUR => 0,
         TIER_AGY_GEMINI_WEEKLY => 1,
-        TIER_AGY_THIRD_PARTY_FIVE_HOUR => 2,
-        _ => 3,
+        TIER_AGY_GEMINI_ARGON_WEEKLY => 2,
+        TIER_AGY_THIRD_PARTY_FIVE_HOUR => 3,
+        _ => 4,
     }
 }
 
@@ -177,7 +181,8 @@ mod tests {
       "command": {"name": "usage", "data": {"description": "...", "groups": [
         {"name": "Gemini Models", "buckets": [
           {"id": "gemini-weekly", "window": "weekly", "remaining_fraction": 0.75, "reset_time": "2026-10-27T15:13:36Z"},
-          {"id": "gemini-5h", "window": "5h", "remaining_fraction": 1, "reset_time": "2026-10-21T04:16:37Z"}
+          {"id": "gemini-5h", "window": "5h", "remaining_fraction": 1, "reset_time": "2026-10-21T04:16:37Z"},
+          {"id": "gemini-argon-wtu-weekly", "window": "weekly", "remaining_fraction": 0.8, "reset_time": "2026-10-27T18:00:00Z"}
         ]},
         {"name": "Claude and GPT models", "buckets": [
           {"id": "3p-weekly", "window": "weekly", "remaining_fraction": 0.1, "reset_time": "2026-10-27T23:16:37Z"},
@@ -196,13 +201,15 @@ mod tests {
             [
                 TIER_AGY_GEMINI_FIVE_HOUR,
                 TIER_AGY_GEMINI_WEEKLY,
+                TIER_AGY_GEMINI_ARGON_WEEKLY,
                 TIER_AGY_THIRD_PARTY_FIVE_HOUR,
                 TIER_AGY_THIRD_PARTY_WEEKLY,
             ]
         );
         let used: Vec<_> = tiers.iter().map(|t| t.utilization.round()).collect();
-        assert_eq!(used, [0.0, 25.0, 100.0, 90.0]);
+        assert_eq!(used, [0.0, 25.0, 20.0, 100.0, 90.0]);
         assert_eq!(tiers[1].resets_at.as_deref(), Some("2026-10-27T15:13:36Z"));
+        assert_eq!(tiers[2].resets_at.as_deref(), Some("2026-10-27T18:00:00Z"));
     }
 
     #[test]

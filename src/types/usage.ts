@@ -1,12 +1,5 @@
 // 使用统计相关类型定义
 
-export interface TokenUsage {
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number;
-  cacheCreationTokens: number;
-}
-
 export interface RequestLog {
   requestId: string;
   providerId: string;
@@ -44,12 +37,6 @@ export interface SessionSyncResult {
   suspectedDuplicates: number;
   deferredFiles: number;
   errors: string[];
-}
-
-export interface DataSourceSummary {
-  dataSource: string;
-  requestCount: number;
-  totalCostUsd: string;
 }
 
 export interface PaginatedLogs {
@@ -177,16 +164,6 @@ export interface UsageScopeFilters {
   model?: string;
 }
 
-export interface ProviderLimitStatus {
-  providerId: string;
-  dailyUsage: string;
-  dailyLimit?: string;
-  dailyExceeded: boolean;
-  monthlyUsage: string;
-  monthlyLimit?: string;
-  monthlyExceeded: boolean;
-}
-
 export type UsageRangePreset =
   | "today"
   | "1d"
@@ -232,7 +209,9 @@ export type AppType =
   | "mcode"
   | "kimi"
   | "dsh"
-  | "agy";
+  | "agy"
+  | "copilot"
+  | "workbuddy";
 
 export type AppTypeFilter = "all" | AppType;
 
@@ -248,6 +227,8 @@ export const KNOWN_APP_TYPES: ReadonlyArray<AppType> = [
   "kimi",
   "dsh",
   "agy",
+  "copilot",
+  "workbuddy",
 ];
 
 /**
@@ -276,6 +257,7 @@ const PARTIAL_CACHE_WRITE_APP_TYPES: ReadonlySet<string> = new Set([
   "omp",
   "mcode",
   "kimi",
+  "workbuddy",
 ]);
 
 export type CacheWriteAvailability = "ok" | "partial" | "na";
@@ -358,10 +340,4 @@ export function isUnpricedUsage(log: UsageCostLog): boolean {
     (!Number.isFinite(multiplier) || multiplier !== 0) &&
     totalCost === 0
   );
-}
-
-export interface StatsFilters {
-  timeRange: UsageRangePreset;
-  providerId?: string;
-  appType?: string;
 }

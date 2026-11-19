@@ -46,7 +46,7 @@ pub fn from_override_path(path: &str) -> RunTarget {
 pub fn current_wsl() -> Option<WslTarget> {
     #[cfg(windows)]
     {
-        let dir = crate::settings::get_claude_override_dir()?;
+        let dir = crate::settings::get_override_dir(&crate::app_config::AppType::Claude)?;
         match from_override_path(&dir.to_string_lossy()) {
             RunTarget::Wsl(wsl) => Some(wsl),
             RunTarget::Native => None,

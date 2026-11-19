@@ -342,8 +342,8 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
   },
   {
     name: "9527CODE",
-    websiteUrl: "https://9527.codes",
-    apiKeyUrl: "https://9527.codes/register?aff=e5zI",
+    websiteUrl: "https://9527.codes/register?channel=ccs",
+    apiKeyUrl: "https://9527.codes/register?channel=ccs",
     auth: grokAuth(),
     config: grokPresetConfig("9527CODE", "https://9527.codes/v1"),
     endpointCandidates: [
@@ -448,7 +448,6 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     endpointCandidates: ["https://www.ccsub.net/v1"],
     category: "aggregator",
     isPartner: true,
-    partnerPromotionKey: "ccsub",
     icon: "ccsub",
   },
   {

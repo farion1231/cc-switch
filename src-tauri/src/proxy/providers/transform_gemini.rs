@@ -43,15 +43,6 @@ pub(crate) fn is_synthesized_tool_call_id(id: &str) -> bool {
     id.starts_with(SYNTHESIZED_ID_PREFIX)
 }
 
-/// Anthropic 请求 → Gemini 原生请求。
-///
-/// 转换工具库 API：当前无生产调用方（连通性检查不再发真实请求，曾是其唯一 crate 内
-/// 消费者），但保留其转换逻辑与下方测试套件，供代理转换路径复用 / 未来接线。
-#[allow(dead_code)]
-pub fn anthropic_to_gemini(body: Value) -> Result<Value, ProxyError> {
-    anthropic_to_gemini_with_shadow(body, None, None, None)
-}
-
 pub fn anthropic_to_gemini_with_shadow(
     body: Value,
     shadow_store: Option<&GeminiShadowStore>,
@@ -132,28 +123,6 @@ pub fn anthropic_to_gemini_with_shadow(
     }
 
     Ok(result)
-}
-
-/// Convenience wrapper over [`gemini_to_anthropic_with_shadow_and_hints`]
-/// with no shadow store or schema hints. Used by the shared
-/// `ProviderAdapter::transform_response` path and by tests.
-#[allow(dead_code)] // kept as public API for non-streaming transform paths
-pub fn gemini_to_anthropic(body: Value) -> Result<Value, ProxyError> {
-    gemini_to_anthropic_with_shadow(body, None, None, None)
-}
-
-/// Convenience wrapper for callers that have a shadow store but no tool
-/// schema hints. Production call sites funnel through
-/// [`gemini_to_anthropic_with_shadow_and_hints`] directly; this helper exists
-/// for test ergonomics and future external callers.
-#[allow(dead_code)] // kept as public API for shadow-only transform paths
-pub fn gemini_to_anthropic_with_shadow(
-    body: Value,
-    shadow_store: Option<&GeminiShadowStore>,
-    provider_id: Option<&str>,
-    session_id: Option<&str>,
-) -> Result<Value, ProxyError> {
-    gemini_to_anthropic_with_shadow_and_hints(body, shadow_store, provider_id, session_id, None)
 }
 
 pub fn gemini_to_anthropic_with_shadow_and_hints(
@@ -315,11 +284,16 @@ fn build_system_instruction(
         collect_system_texts(system, &mut texts)?;
     }
 
+    // Only system messages that lead the conversation are hoisted. Ones that
+    // appear later (Claude Code's per-turn `<total_tokens>` budget, steer
+    // reminders) stay in place as contents: hoisting them would rewrite the
+    // instruction ahead of the whole history every turn and break the
+    // upstream prefix cache (same fix as #6941 for OpenAI Chat).
     if let Some(messages) = messages {
-        for message in messages {
-            if message.get("role").and_then(|value| value.as_str()) != Some("system") {
-                continue;
-            }
+        for message in messages
+            .iter()
+            .take_while(|message| is_system_message(message))
+        {
             if let Some(content) = message.get("content") {
                 collect_system_texts(content, &mut texts)?;
             }
@@ -333,6 +307,10 @@ fn build_system_instruction(
     Ok(Some(json!({
         "parts": [{ "text": texts.join("\n\n") }]
     })))
+}
+
+fn is_system_message(message: &Value) -> bool {
+    message.get("role").and_then(|value| value.as_str()) == Some("system")
 }
 
 fn collect_system_texts(value: &Value, texts: &mut Vec<String>) -> Result<(), ProxyError> {
@@ -554,6 +532,8 @@ fn convert_messages_to_contents(
     shadow_turns: &[GeminiAssistantTurn],
     supports_multimodal_function_response: bool,
 ) -> Result<Vec<Value>, ProxyError> {
+    let messages = coalesce_split_tool_result_messages(messages);
+    let messages = messages.as_ref();
     let mut contents = Vec::new();
     let mut used_shadow_indices = HashSet::new();
     let total_assistant_messages = messages
@@ -600,13 +580,41 @@ fn convert_messages_to_contents(
 
     let shadow_start_index = total_assistant_messages.saturating_sub(effective_shadow_turns.len());
     let mut assistant_seen_index = 0usize;
+    // Leading system messages were hoisted into `systemInstruction`.
+    let leading_system_count = messages
+        .iter()
+        .take_while(|message| is_system_message(message))
+        .count();
 
-    for message in messages {
+    let mut deferred_system: Vec<Value> = Vec::new();
+
+    for message in &messages[leading_system_count..] {
+        // A function call turn must be followed directly by its function
+        // response turn, so a system message wedged between them is held
+        // back until the response has been emitted.
+        if !contents.last().is_some_and(has_function_call) {
+            contents.append(&mut deferred_system);
+        }
+
         let role = message
             .get("role")
             .and_then(|value| value.as_str())
             .unwrap_or("user");
         if role == "system" {
+            // Gemini contents have no system role; keep a later system message
+            // at its position as a user turn so the converted history stays
+            // append-only across requests (see `build_system_instruction`).
+            let mut texts = Vec::new();
+            if let Some(content) = message.get("content") {
+                collect_system_texts(content, &mut texts)?;
+            }
+            if !texts.is_empty() {
+                let parts: Vec<Value> = texts
+                    .into_iter()
+                    .map(|text| json!({ "text": text }))
+                    .collect();
+                deferred_system.push(json!({ "role": "user", "parts": parts }));
+            }
             continue;
         }
 
@@ -681,8 +689,103 @@ fn convert_messages_to_contents(
             "parts": parts
         }));
     }
+    contents.append(&mut deferred_system);
 
     Ok(contents)
+}
+
+/// Merges a run of consecutive user messages into one when two or more of
+/// them carry `tool_result` blocks (#9453).
+///
+/// Anthropic treats consecutive same-role messages as a single turn, so the
+/// results of parallel tool calls may arrive spread over several user
+/// messages. Gemini instead checks that the content right after a
+/// functionCall turn holds as many functionResponse parts as there were
+/// calls, and rejects the split shape with "the number of function response
+/// parts is equal to the number of function call parts". Once merged, the
+/// existing split in `convert_messages_to_contents` emits every function
+/// response in one user content and the remaining parts in the next.
+///
+/// Runs with at most one tool-carrying message are left untouched, so the
+/// converted history of shapes that already worked stays byte-identical.
+fn coalesce_split_tool_result_messages(messages: &[Value]) -> std::borrow::Cow<'_, [Value]> {
+    let is_user = |message: &Value| {
+        matches!(
+            message.get("role").and_then(|value| value.as_str()),
+            None | Some("user")
+        )
+    };
+    let has_tool_result = |message: &Value| {
+        message
+            .get("content")
+            .and_then(|content| content.as_array())
+            .is_some_and(|blocks| {
+                blocks.iter().any(|block| {
+                    block.get("type").and_then(|value| value.as_str()) == Some("tool_result")
+                })
+            })
+    };
+    let mergeable_content = |message: &Value| match message.get("content") {
+        None => Some(Vec::new()),
+        Some(Value::String(text)) => Some(vec![json!({ "type": "text", "text": text })]),
+        Some(Value::Array(blocks)) => Some(blocks.clone()),
+        Some(_) => None,
+    };
+
+    let mut result: Option<Vec<Value>> = None;
+    let mut index = 0;
+    while index < messages.len() {
+        let mut end = index;
+        while end < messages.len() && is_user(&messages[end]) {
+            end += 1;
+        }
+        if end == index {
+            if let Some(result) = result.as_mut() {
+                result.push(messages[index].clone());
+            }
+            index += 1;
+            continue;
+        }
+
+        let run = &messages[index..end];
+        let merged = (run
+            .iter()
+            .filter(|message| has_tool_result(message))
+            .count()
+            > 1)
+        .then(|| {
+            run.iter()
+                .map(mergeable_content)
+                .collect::<Option<Vec<_>>>()
+                .map(|blocks| json!({ "role": "user", "content": blocks.concat() }))
+        })
+        .flatten();
+
+        match merged {
+            Some(merged) => {
+                let result = result.get_or_insert_with(|| messages[..index].to_vec());
+                result.push(merged);
+            }
+            None => {
+                if let Some(result) = result.as_mut() {
+                    result.extend_from_slice(run);
+                }
+            }
+        }
+        index = end;
+    }
+
+    match result {
+        Some(result) => std::borrow::Cow::Owned(result),
+        None => std::borrow::Cow::Borrowed(messages),
+    }
+}
+
+fn has_function_call(content: &Value) -> bool {
+    content
+        .get("parts")
+        .and_then(Value::as_array)
+        .is_some_and(|parts| parts.iter().any(|part| part.get("functionCall").is_some()))
 }
 
 fn find_matching_shadow_turn_for_assistant_message(
@@ -1545,7 +1648,7 @@ mod tests {
             ]
         });
 
-        let result = anthropic_to_gemini(input).unwrap();
+        let result = anthropic_to_gemini_with_shadow(input, None, None, None).unwrap();
         assert_eq!(
             result["systemInstruction"]["parts"][0]["text"],
             "You are helpful."
@@ -1564,7 +1667,7 @@ mod tests {
         for (key, value) in thinking.as_object().unwrap() {
             body[key] = value.clone();
         }
-        anthropic_to_gemini(body).unwrap()["generationConfig"]
+        anthropic_to_gemini_with_shadow(body, None, None, None).unwrap()["generationConfig"]
             .get("thinkingConfig")
             .cloned()
     }
@@ -1803,8 +1906,9 @@ mod tests {
         with_thinking["thinking"] = json!({ "type": "adaptive" });
         with_thinking["output_config"] = json!({ "effort": "medium" });
 
-        let mut plain = anthropic_to_gemini(base).unwrap();
-        let mut converted = anthropic_to_gemini(with_thinking).unwrap();
+        let mut plain = anthropic_to_gemini_with_shadow(base, None, None, None).unwrap();
+        let mut converted =
+            anthropic_to_gemini_with_shadow(with_thinking, None, None, None).unwrap();
         assert_eq!(
             converted["generationConfig"]
                 .as_object_mut()
@@ -1815,11 +1919,16 @@ mod tests {
         assert_eq!(converted, plain);
 
         // 没有别的生成参数时，generationConfig 只放 thinkingConfig。
-        plain = anthropic_to_gemini(json!({
-            "model": "gemini-2.5-flash",
-            "thinking": { "type": "disabled" },
-            "messages": [{ "role": "user", "content": "Hi" }]
-        }))
+        plain = anthropic_to_gemini_with_shadow(
+            json!({
+                "model": "gemini-2.5-flash",
+                "thinking": { "type": "disabled" },
+                "messages": [{ "role": "user", "content": "Hi" }]
+            }),
+            None,
+            None,
+            None,
+        )
         .unwrap();
         assert_eq!(
             plain["generationConfig"],
@@ -1845,7 +1954,8 @@ mod tests {
             Some("claude-opus-5-5"),
         );
         assert_eq!(
-            anthropic_to_gemini(body).unwrap()["generationConfig"]["thinkingConfig"],
+            anthropic_to_gemini_with_shadow(body, None, None, None).unwrap()["generationConfig"]
+                ["thinkingConfig"],
             json!({ "thinkingLevel": "high" })
         );
     }
@@ -1865,7 +1975,7 @@ mod tests {
             ]
         });
 
-        let result = anthropic_to_gemini(input).unwrap();
+        let result = anthropic_to_gemini_with_shadow(input, None, None, None).unwrap();
 
         assert_eq!(
             result["systemInstruction"]["parts"][0]["text"],
@@ -1874,6 +1984,90 @@ mod tests {
         assert_eq!(result["contents"].as_array().unwrap().len(), 1);
         assert_eq!(result["contents"][0]["role"], "user");
         assert_eq!(result["contents"][0]["parts"][0]["text"], "Hello");
+    }
+
+    #[test]
+    fn anthropic_to_gemini_keeps_mid_conversation_system_messages_in_place() {
+        // Claude Code appends a `<total_tokens>` system message every turn;
+        // hoisting it would change the instruction ahead of the whole history
+        // and break the prefix cache, so it must stay where it appears.
+        let first = json!({
+            "model": "gemini-3-pro",
+            "system": "Stable instructions",
+            "messages": [
+                { "role": "user", "content": "Existing history" },
+                { "role": "system", "content": "<total_tokens>99900000 tokens left</total_tokens>\n\n" }
+            ]
+        });
+        let mut second = first.clone();
+        second["messages"].as_array_mut().unwrap().extend([
+            json!({ "role": "assistant", "content": "Acknowledged" }),
+            json!({ "role": "user", "content": "Continue" }),
+            json!({
+                "role": "system",
+                "content": [{ "type": "text", "text": "<total_tokens>99899000 tokens left</total_tokens>\n\n" }]
+            }),
+        ]);
+
+        let first = anthropic_to_gemini_with_shadow(first, None, None, None).unwrap();
+        let second = anthropic_to_gemini_with_shadow(second, None, None, None).unwrap();
+
+        assert_eq!(
+            first["systemInstruction"]["parts"][0]["text"],
+            "Stable instructions"
+        );
+        assert_eq!(first["systemInstruction"], second["systemInstruction"]);
+
+        let first_contents = first["contents"].as_array().unwrap();
+        let second_contents = second["contents"].as_array().unwrap();
+        assert_eq!(first_contents.len(), 2);
+        assert_eq!(second_contents.len(), 5);
+        assert_eq!(&second_contents[..2], first_contents.as_slice());
+        assert_eq!(
+            first_contents[1],
+            json!({
+                "role": "user",
+                "parts": [{ "text": "<total_tokens>99900000 tokens left</total_tokens>\n\n" }]
+            })
+        );
+        assert_eq!(second_contents[2]["role"], "model");
+        assert_eq!(
+            second_contents[4],
+            json!({
+                "role": "user",
+                "parts": [{ "text": "<total_tokens>99899000 tokens left</total_tokens>\n\n" }]
+            })
+        );
+    }
+
+    #[test]
+    fn anthropic_to_gemini_moves_system_message_after_function_response() {
+        let input = json!({
+            "model": "gemini-3-pro",
+            "messages": [
+                { "role": "user", "content": "Read the file" },
+                {
+                    "role": "assistant",
+                    "content": [{ "type": "tool_use", "id": "toolu_1", "name": "Read", "input": {} }]
+                },
+                { "role": "system", "content": "<total_tokens>1 tokens left</total_tokens>" },
+                {
+                    "role": "user",
+                    "content": [{ "type": "tool_result", "tool_use_id": "toolu_1", "content": "ok" }]
+                }
+            ]
+        });
+
+        let result = anthropic_to_gemini_with_shadow(input, None, None, None).unwrap();
+        let contents = result["contents"].as_array().unwrap();
+
+        assert_eq!(contents.len(), 4);
+        assert!(contents[1]["parts"][0].get("functionCall").is_some());
+        assert!(contents[2]["parts"][0].get("functionResponse").is_some());
+        assert_eq!(
+            contents[3]["parts"][0]["text"],
+            "<total_tokens>1 tokens left</total_tokens>"
+        );
     }
 
     #[test]
@@ -1903,7 +2097,7 @@ mod tests {
             "tool_choice": { "type": "tool", "name": "get_weather" }
         });
 
-        let result = anthropic_to_gemini(input).unwrap();
+        let result = anthropic_to_gemini_with_shadow(input, None, None, None).unwrap();
         assert_eq!(
             result["tools"][0]["functionDeclarations"][0]["name"],
             "get_weather"
@@ -1950,7 +2144,7 @@ mod tests {
             ]
         });
 
-        let result = anthropic_to_gemini(input).unwrap();
+        let result = anthropic_to_gemini_with_shadow(input, None, None, None).unwrap();
         let contents = result["contents"].as_array().unwrap();
 
         assert_eq!(contents.len(), 4);
@@ -1968,6 +2162,98 @@ mod tests {
             contents[3]["parts"],
             json!([{ "text": "<system-reminder>keep going</system-reminder>" }])
         );
+    }
+
+    /// Regression for #9453: results of parallel tool calls spread over
+    /// consecutive user messages must land in one functionResponse turn,
+    /// otherwise Gemini rejects the call/response count mismatch.
+    #[test]
+    fn anthropic_to_gemini_merges_parallel_tool_results_split_across_user_messages() {
+        let input = json!({
+            "messages": [
+                { "role": "user", "content": "Check two cities" },
+                {
+                    "role": "assistant",
+                    "content": [
+                        { "type": "tool_use", "id": "call_1", "name": "get_weather", "input": { "city": "Tokyo" } },
+                        { "type": "tool_use", "id": "call_2", "name": "get_weather", "input": { "city": "Paris" } }
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        { "type": "tool_result", "tool_use_id": "call_1", "content": "Sunny" },
+                        { "type": "text", "text": "reminder 1" }
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        { "type": "tool_result", "tool_use_id": "call_2", "content": "Rain" },
+                        { "type": "text", "text": "reminder 2" }
+                    ]
+                },
+                { "role": "assistant", "content": "Tokyo is sunny, Paris is rainy." },
+                { "role": "user", "content": "Thanks" }
+            ]
+        });
+
+        let result = anthropic_to_gemini_with_shadow(input, None, None, None).unwrap();
+        let contents = result["contents"].as_array().unwrap();
+
+        assert_eq!(contents.len(), 6);
+        assert_eq!(contents[1]["role"], "model");
+        assert_eq!(contents[1]["parts"].as_array().unwrap().len(), 2);
+
+        let responses = contents[2]["parts"].as_array().unwrap();
+        assert_eq!(contents[2]["role"], "user");
+        assert_eq!(responses.len(), 2);
+        assert_eq!(responses[0]["functionResponse"]["id"], "call_1");
+        assert_eq!(responses[1]["functionResponse"]["id"], "call_2");
+
+        assert_eq!(
+            contents[3]["parts"],
+            json!([{ "text": "reminder 1" }, { "text": "reminder 2" }])
+        );
+        assert_eq!(contents[4]["role"], "model");
+        assert_eq!(contents[5]["parts"], json!([{ "text": "Thanks" }]));
+    }
+
+    /// Consecutive user messages with at most one tool_result carrier keep
+    /// their existing one-content-per-message conversion (prompt cache).
+    #[test]
+    fn anthropic_to_gemini_keeps_consecutive_user_messages_without_split_tool_results() {
+        let input = json!({
+            "messages": [
+                { "role": "user", "content": "first" },
+                { "role": "user", "content": [{ "type": "text", "text": "second" }] },
+                {
+                    "role": "assistant",
+                    "content": [
+                        { "type": "tool_use", "id": "call_1", "name": "get_weather", "input": { "city": "Tokyo" } }
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [{ "type": "tool_result", "tool_use_id": "call_1", "content": "Sunny" }]
+                },
+                { "role": "user", "content": "follow-up" }
+            ]
+        });
+
+        let messages = input["messages"].as_array().unwrap();
+        assert!(matches!(
+            coalesce_split_tool_result_messages(messages),
+            std::borrow::Cow::Borrowed(_)
+        ));
+
+        let result = anthropic_to_gemini_with_shadow(input, None, None, None).unwrap();
+        let contents = result["contents"].as_array().unwrap();
+        assert_eq!(contents.len(), 5);
+        assert_eq!(contents[0]["parts"], json!([{ "text": "first" }]));
+        assert_eq!(contents[1]["parts"], json!([{ "text": "second" }]));
+        assert_eq!(contents[3]["parts"][0]["functionResponse"]["id"], "call_1");
+        assert_eq!(contents[4]["parts"], json!([{ "text": "follow-up" }]));
     }
 
     #[test]
@@ -2004,7 +2290,7 @@ mod tests {
             ]
         });
 
-        let result = anthropic_to_gemini(input).unwrap();
+        let result = anthropic_to_gemini_with_shadow(input, None, None, None).unwrap();
         let parts = result["contents"][1]["parts"].as_array().unwrap();
         let response = &parts[0]["functionResponse"]["response"]["content"];
 
@@ -2065,7 +2351,7 @@ mod tests {
             ]
         });
 
-        let result = anthropic_to_gemini(input).unwrap();
+        let result = anthropic_to_gemini_with_shadow(input, None, None, None).unwrap();
         let serialized = result.to_string();
 
         assert!(serialized.contains("[cc-switch: omitted 20000 bytes]"));
@@ -2107,7 +2393,7 @@ mod tests {
             ]
         });
 
-        let result = anthropic_to_gemini(input).unwrap();
+        let result = anthropic_to_gemini_with_shadow(input, None, None, None).unwrap();
         let parts = result["contents"][1]["parts"].as_array().unwrap();
 
         assert_eq!(parts.len(), 1);
@@ -2151,7 +2437,7 @@ mod tests {
             ]
         });
 
-        let result = anthropic_to_gemini(input).unwrap();
+        let result = anthropic_to_gemini_with_shadow(input, None, None, None).unwrap();
         let parts = result["contents"][1]["parts"].as_array().unwrap();
 
         assert_eq!(parts.len(), 1);
@@ -2196,7 +2482,7 @@ mod tests {
             ]
         });
 
-        let result = anthropic_to_gemini(input).unwrap();
+        let result = anthropic_to_gemini_with_shadow(input, None, None, None).unwrap();
         let parts = result["contents"][1]["parts"].as_array().unwrap();
         let response = &parts[0]["functionResponse"]["response"]["content"];
 
@@ -2239,7 +2525,7 @@ mod tests {
             ]
         });
 
-        let result = anthropic_to_gemini(input).unwrap();
+        let result = anthropic_to_gemini_with_shadow(input, None, None, None).unwrap();
         let parts = result["contents"][1]["parts"].as_array().unwrap();
         let function_response = &parts[0]["functionResponse"];
 
@@ -2353,7 +2639,13 @@ mod tests {
 
     #[test]
     fn anthropic_to_gemini_fills_skip_signature_on_first_call_of_current_turn_steps() {
-        let result = anthropic_to_gemini(skip_signature_request("gemini-3.8-flash")).unwrap();
+        let result = anthropic_to_gemini_with_shadow(
+            skip_signature_request("gemini-3.8-flash"),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
         let contents = result["contents"].as_array().unwrap();
         let model_turns: Vec<&Value> = contents
             .iter()
@@ -2413,7 +2705,13 @@ mod tests {
 
     #[test]
     fn anthropic_to_gemini_skips_placeholder_for_pre_gemini_3_models() {
-        let result = anthropic_to_gemini(skip_signature_request("gemini-2.5-flash")).unwrap();
+        let result = anthropic_to_gemini_with_shadow(
+            skip_signature_request("gemini-2.5-flash"),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
         let has_placeholder = result["contents"]
             .as_array()
             .unwrap()
@@ -2546,7 +2844,7 @@ mod tests {
             ]
         });
 
-        let error = anthropic_to_gemini(input).unwrap_err();
+        let error = anthropic_to_gemini_with_shadow(input, None, None, None).unwrap_err();
         assert!(error
             .to_string()
             .contains("Unable to resolve Gemini functionResponse.name"));
@@ -2572,7 +2870,7 @@ mod tests {
             ]
         });
 
-        let result = anthropic_to_gemini(input).unwrap();
+        let result = anthropic_to_gemini_with_shadow(input, None, None, None).unwrap();
         let declaration = &result["tools"][0]["functionDeclarations"][0];
 
         assert!(declaration.get("parameters").is_none());
@@ -2602,7 +2900,8 @@ mod tests {
             }
         });
 
-        let result = gemini_to_anthropic(input).unwrap();
+        let result =
+            gemini_to_anthropic_with_shadow_and_hints(input, None, None, None, None).unwrap();
         assert_eq!(result["id"], "resp_1");
         assert_eq!(result["content"][0]["type"], "text");
         assert_eq!(result["content"][0]["text"], "Hello from Gemini");
@@ -2639,7 +2938,8 @@ mod tests {
             }
         });
 
-        let result = gemini_to_anthropic(input).unwrap();
+        let result =
+            gemini_to_anthropic_with_shadow_and_hints(input, None, None, None, None).unwrap();
         assert_eq!(result["content"][0]["type"], "tool_use");
         assert_eq!(result["content"][0]["id"], "call_1");
         assert_eq!(result["stop_reason"], "tool_use");
@@ -2757,7 +3057,8 @@ mod tests {
             }
         });
 
-        let result = gemini_to_anthropic(input).unwrap();
+        let result =
+            gemini_to_anthropic_with_shadow_and_hints(input, None, None, None, None).unwrap();
         assert_eq!(result["stop_reason"], "refusal");
         assert_eq!(result["content"][0]["type"], "text");
         assert!(result["content"][0]["text"]
@@ -3085,7 +3386,8 @@ mod tests {
             }]
         });
 
-        let result = gemini_to_anthropic(input).unwrap();
+        let result =
+            gemini_to_anthropic_with_shadow_and_hints(input, None, None, None, None).unwrap();
         let id0 = result["content"][0]["id"].as_str().unwrap();
         let id1 = result["content"][1]["id"].as_str().unwrap();
         assert!(is_synthesized_tool_call_id(id0));
@@ -3116,7 +3418,7 @@ mod tests {
             ]
         });
 
-        let result = anthropic_to_gemini(input).unwrap();
+        let result = anthropic_to_gemini_with_shadow(input, None, None, None).unwrap();
         let fc = &result["contents"][0]["parts"][0]["functionCall"];
         assert!(
             fc.get("id").is_none(),
@@ -3152,7 +3454,7 @@ mod tests {
             ]
         });
 
-        let result = anthropic_to_gemini(input).unwrap();
+        let result = anthropic_to_gemini_with_shadow(input, None, None, None).unwrap();
         assert_eq!(
             result["contents"][0]["parts"][0]["functionCall"]["id"],
             "call_real_1"

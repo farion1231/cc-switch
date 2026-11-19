@@ -1,4 +1,5 @@
 import { memo, useEffect, useMemo, useRef } from "react";
+import { Bookmark } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { cn } from "@/lib/utils";
@@ -6,7 +7,7 @@ import { formatMessageTime } from "../utils";
 import { useReaderT } from "./i18n";
 import { SessionAgentAvatar } from "./SessionAgentAvatar";
 import { isFailureStep } from "./toolSummary";
-import type { SessionTurn } from "./turns";
+import type { SessionTurn, TurnChapter } from "./turns";
 
 /** 目录里每条最多显示的字数：再多也只是两行截断，没必要整段传给 DOM */
 const SNIPPET_CHARS = 160;
@@ -37,17 +38,20 @@ export interface SessionOutlineProps {
   activeTurn: number;
   onJumpQuestion: (turn: SessionTurn) => void;
   onJumpReply: (turn: SessionTurn) => void;
+  onJumpChapter: (turn: SessionTurn, chapter: TurnChapter) => void;
 }
 
 /**
  * 右侧对话目录：每轮拆成「你」和 Agent 两条，和正文一样人靠右、Agent 靠左，
  * 一眼分清谁说了什么；点哪条跳到正文对应位置，滚动正文时跟着高亮当前轮。
+ * 有章节标记的轮，章节标题列在这一轮最前面，点了跳到正文里的章节行。
  */
 export const SessionOutline = memo(function SessionOutline({
   turns,
   activeTurn,
   onJumpQuestion,
   onJumpReply,
+  onJumpChapter,
 }: SessionOutlineProps) {
   const { t } = useTranslation();
   const rt = useReaderT();
@@ -62,6 +66,7 @@ export const SessionOutline = memo(function SessionOutline({
             turn.question ||
             turn.final ||
             turn.steps.length > 0 ||
+            turn.chapters.length > 0 ||
             turn.aborted,
         )
         .map((turn) => ({
@@ -122,6 +127,26 @@ export const SessionOutline = memo(function SessionOutline({
                   className="absolute inset-y-2 start-0 w-[2px] rounded-full bg-[var(--reader-accent)]"
                 />
               )}
+
+              {entry.turn.chapters.map((chapter) => (
+                <button
+                  key={chapter.id}
+                  type="button"
+                  onClick={() => onJumpChapter(entry.turn, chapter)}
+                  title={chapter.summary}
+                  className="group/outline flex min-w-0 items-center gap-1.5 rounded-control py-0.5 text-start focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <Bookmark
+                    aria-hidden
+                    className="h-3 w-3 shrink-0 text-[var(--reader-accent)]"
+                    strokeWidth={2}
+                  />
+                  <span className="sr-only">{rt("chapter")}：</span>
+                  <span className="min-w-0 truncate text-caption font-semibold text-fg-1 group-hover/outline:underline">
+                    {chapter.title}
+                  </span>
+                </button>
+              ))}
 
               {entry.question !== undefined && (
                 <button

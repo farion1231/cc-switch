@@ -1,5 +1,6 @@
 //! 切换：把一个账号的登录移进默认槽位（[`check_out`]），或移回它自己的目录（[`vacate`]）。
 
+use crate::sync_utils::MutexExt;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -58,9 +59,7 @@ pub fn replace_live(ctx: &Ctx<'_>, target: &str, target_dir: &Path) -> Result<bo
 }
 
 fn run(ctx: &Ctx<'_>, target: &str, target_dir: &Path, mode: Mode) -> Result<Outcome, AppError> {
-    let _serial = SWITCH
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _serial = SWITCH.lock_recover();
     recover_locked(ctx)?;
 
     let started = Instant::now();
@@ -301,9 +300,7 @@ pub fn vacate(ctx: &Ctx<'_>, target: &str, target_dir: &Path) -> Result<(), AppE
     if let Some(result) = super::wsl::dispatch_vacate(ctx, target, target_dir) {
         return result;
     }
-    let _serial = SWITCH
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _serial = SWITCH.lock_recover();
     recover_locked(ctx)?;
     let default = &ctx.default;
     // 目标槽位的锁由 park 拿（锁不可重入，这里先拿会自己等自己）

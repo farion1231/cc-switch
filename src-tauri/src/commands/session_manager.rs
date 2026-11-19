@@ -1,6 +1,7 @@
 #![allow(non_snake_case)]
 
 use tauri::ipc::{Channel, InvokeResponseBody, IpcResponse, Response};
+use tauri::Emitter;
 use tauri_plugin_dialog::DialogExt;
 
 use crate::session_manager;
@@ -18,6 +19,44 @@ pub async fn list_sessions() -> Result<Vec<session_manager::SessionMeta>, String
         .await
         .map_err(|e| format!("Failed to scan sessions: {e}"))?;
     Ok(sessions)
+}
+
+/// 在后台把会话正文索引同步到当前会话列表；进度通过 `session-index-status` 事件推送。
+/// 已在同步时只排一次重跑，立即返回当前进度。
+#[tauri::command]
+pub async fn sync_session_index<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<session_manager::search::IndexStatus, String> {
+    Ok(session_manager::search::start_sync(move |status| {
+        let _ = app.emit("session-index-status", status);
+    }))
+}
+
+/// 在消息正文里搜索，按会话聚合；`providerIds` 为空时不按应用过滤
+#[tauri::command]
+pub async fn search_session_content(
+    query: String,
+    providerIds: Option<Vec<String>>,
+    limit: Option<usize>,
+) -> Result<session_manager::search::ContentSearchResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        session_manager::search::search(
+            &query,
+            providerIds,
+            limit.unwrap_or(session_manager::search::DEFAULT_LIMIT),
+        )
+    })
+    .await
+    .map_err(|e| format!("Failed to search session content: {e}"))
+}
+
+/// 删除会话正文索引文件（关闭「搜索消息正文」时调用）
+#[tauri::command]
+pub async fn clear_session_index() -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(session_manager::search::clear)
+        .await
+        .map_err(|e| format!("Failed to clear session index: {e}"))??;
+    Ok(true)
 }
 
 /// 一次性返回全部消息（兼容旧前端；「复制整段」等一次性场景也用它）。走解析缓存。
@@ -176,10 +215,9 @@ pub async fn launch_session_terminal(
     // Antigravity 第三方 Key 的会话：命令里只有私有目录、没有 Key，按「打开终端」的方式补上
     // 那张卡的 Key 再恢复。
     if let Some((provider, conversation)) =
-        crate::services::provider::agy_direct::key_resume_target(&state.db, &command)
-            .map_err(|e| e.to_string())?
+        crate::services::provider::agy_direct::key_resume_target(&state.db, &command)?
     {
-        crate::commands::misc::open_agy_resume_terminal(&provider, &conversation, cwd)?;
+        crate::commands::terminal_launch::open_agy_resume_terminal(&provider, &conversation, cwd)?;
         return Ok(true);
     }
     let command = command.clone();
@@ -260,6 +298,6 @@ pub async fn export_session_markdown<R: tauri::Runtime>(
     let path = picked
         .into_path()
         .map_err(|e| format!("无效的保存路径: {e}"))?;
-    crate::config::write_text_file(&path, &content).map_err(|e| e.to_string())?;
+    crate::config::write_text_file(&path, &content)?;
     Ok(Some(path.to_string_lossy().into_owned()))
 }

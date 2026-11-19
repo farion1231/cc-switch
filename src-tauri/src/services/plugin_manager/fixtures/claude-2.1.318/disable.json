@@ -1,0 +1,8 @@
+{
+  "command": "disable",
+  "outcome": "ok",
+  "plugin": "hello@ccs-test",
+  "pluginId": "hello@ccs-test",
+  "scope": "user",
+  "message": "Successfully disabled plugin: hello (scope: user)"
+}

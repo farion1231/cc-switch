@@ -10,6 +10,7 @@
 //! (lookup failure, expired login, no 5-hour or weekly window) the request goes
 //! upstream unchanged. It cannot reserve quota for requests already admitted.
 
+use crate::sync_utils::MutexExt;
 use std::{
     collections::HashMap,
     future::Future,
@@ -37,7 +38,7 @@ const MAX_ACCOUNTS: usize = 256;
 const FIVE_HOUR_MINUTES: i64 = 300;
 const WEEKLY_MINUTES: i64 = 10_080;
 
-const RECOVERY: &str = "已暂停新的官方请求，第三方模型仍可使用。使用率回落到阈值以下或窗口重置后自动恢复（约 5 分钟内重新确认）；可在 CC Switch 设置 → 应用配置 → Codex 调整或关闭官方额度保护。 (Official requests paused; third-party models remain available. Requests resume once usage is below the thresholds or the window resets, rechecked within about 5 minutes. Adjust or disable protection in CC Switch settings.)";
+const RECOVERY: &str = "已暂停新的官方请求，第三方模型仍可使用。使用率回落到阈值以下或窗口重置后自动恢复（约 5 分钟内重新确认）；可在 CC Switch 设置 → 应用配置 → Codex 调整或关闭官方额度保护。如果额度已经用完、Codex 锁住了发送键，在 CC Switch 的 Codex 页面打开路由或聚合页签右侧的设置，打开「暂停使用官方登录」并重启 Codex。 (Official requests paused; third-party models remain available. Requests resume once usage is below the thresholds or the window resets, rechecked within about 5 minutes. Adjust or disable protection in CC Switch settings. If the quota is already used up and Codex has locked the send button, open the Routing or Aggregation settings on the Codex page in CC Switch, turn on \"Pause the official login\" and restart Codex.)";
 
 #[derive(Debug, Clone, PartialEq)]
 struct Window {
@@ -185,7 +186,7 @@ impl Default for QuotaCache {
 
 impl QuotaCache {
     fn fresh(&self, key: &str, now: i64) -> Option<Snapshot> {
-        let accounts = self.accounts.lock().unwrap_or_else(|e| e.into_inner());
+        let accounts = self.accounts.lock_recover();
         accounts
             .get(key)
             .filter(|snapshot| snapshot.is_fresh(now))
@@ -193,14 +194,14 @@ impl QuotaCache {
     }
 
     fn store(&self, key: String, snapshot: Snapshot) {
-        let mut accounts = self.accounts.lock().unwrap_or_else(|e| e.into_inner());
+        let mut accounts = self.accounts.lock_recover();
         Self::insert(&mut accounts, key, snapshot);
     }
 
     /// Stores a lookup result unless a fresh reading arrived while it was in
     /// flight (response headers or a concurrent lookup); the newer one wins.
     fn store_lookup(&self, key: String, snapshot: Snapshot, now: i64) -> Snapshot {
-        let mut accounts = self.accounts.lock().unwrap_or_else(|e| e.into_inner());
+        let mut accounts = self.accounts.lock_recover();
         if let Some(newer) = accounts.get(&key).filter(|cached| cached.is_fresh(now)) {
             return newer.clone();
         }
@@ -289,8 +290,27 @@ fn now_unix() -> i64 {
         .unwrap_or_default()
 }
 
+/// Codex's approval reviewer. OpenAI made auto-review free for ChatGPT
+/// sign-ins on 2026-10-06 and it no longer draws on the plan's usage, so pausing
+/// official requests must not pause it: otherwise every sandbox escalation fails
+/// with 403 while the visible conversation is still below the cap.
+pub(crate) const AUTO_REVIEW_MODEL: &str = "codex-auto-review";
+
+/// Whether the request is Codex's free approval reviewer.
+pub(crate) fn is_auto_review_model(request_model: Option<&str>) -> bool {
+    request_model.is_some_and(|model| model.eq_ignore_ascii_case(AUTO_REVIEW_MODEL))
+}
+
 /// Rejects the request when the account's latest usage reaches a threshold.
-pub(crate) async fn admit(token: &str, request_headers: &HeaderMap) -> Result<(), ProxyError> {
+pub(crate) async fn admit(
+    token: &str,
+    request_headers: &HeaderMap,
+    request_model: Option<&str>,
+) -> Result<(), ProxyError> {
+    // Free for ChatGPT sign-ins, so it is exempt even while official requests are paused.
+    if is_auto_review_model(request_model) {
+        return Ok(());
+    }
     let config = crate::settings::get_settings().codex_quota_protection;
     let account_id = request_headers
         .get("chatgpt-account-id")
@@ -368,10 +388,18 @@ mod tests {
     }
 
     #[test]
-    fn defaults_are_off_and_saved_thresholds_validate() {
+    fn auto_review_is_exempt_from_quota_protection() {
+        assert!(is_auto_review_model(Some("codex-auto-review")));
+        assert!(is_auto_review_model(Some("Codex-Auto-Review")));
+        assert!(!is_auto_review_model(Some("gpt-6.2-sol")));
+        assert!(!is_auto_review_model(None));
+    }
+
+    #[test]
+    fn defaults_are_on_and_saved_thresholds_validate() {
         let defaults: CodexQuotaProtection = serde_json::from_str("{}").unwrap();
         assert_eq!(defaults, CodexQuotaProtection::default());
-        assert!(!defaults.enabled);
+        assert!(defaults.enabled);
         assert_eq!(
             (defaults.five_hour_threshold, defaults.weekly_threshold),
             (95, 98)
@@ -502,7 +530,10 @@ mod tests {
     #[tokio::test]
     async fn disabled_never_queries() {
         let cache = QuotaCache::default();
-        let disabled = CodexQuotaProtection::default();
+        let disabled = CodexQuotaProtection {
+            enabled: false,
+            ..CodexQuotaProtection::default()
+        };
         assert!(cache
             .admit_with("a".into(), &disabled, NOW, || async {
                 panic!("must not query")

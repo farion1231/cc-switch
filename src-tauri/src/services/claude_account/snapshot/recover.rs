@@ -6,15 +6,14 @@ use super::store::Slot;
 use super::switch::finish;
 use super::{default_owner, identity, load_state, update_state, Ctx, Journal, Step, SWITCH};
 use crate::error::AppError;
+use crate::sync_utils::MutexExt;
 
 /// 补完上一次没做完的切换（启动时、每次切换前）。补完的切换停在 [`Step::Done`]，等调用方确认。
 pub fn recover(ctx: &Ctx<'_>) -> Result<(), AppError> {
     if let Some(result) = super::wsl::dispatch_recover(ctx) {
         return result;
     }
-    let _serial = SWITCH
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _serial = SWITCH.lock_recover();
     recover_locked(ctx)
 }
 

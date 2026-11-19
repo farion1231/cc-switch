@@ -334,12 +334,14 @@ impl Neutral<'_> {
     fn top(&self, key: &str) -> Leftover {
         match key {
             // 选路已经写了；`experimental_bearer_token`、`base_url`、`wire_api` 是旧版顶层
-            // 写法，Codex 不认；`web_search` 是工具开关，留着只是多一个或少一个工具。
+            // 写法，`disable_response_storage` 已被 Codex 删掉，Codex 都不认；`web_search`
+            // 是工具开关，留着只是多一个或少一个工具。
             "model_provider"
             | "openai_base_url"
             | "experimental_bearer_token"
             | "base_url"
             | "wire_api"
+            | "disable_response_storage"
             | "web_search" => Leftover::Ignore,
             // 生成了目录，启动方会指过去；没生成说明卡上没有模型名，盖不掉。
             "model_catalog_json" if self.catalog => Leftover::Ignore,
@@ -347,7 +349,6 @@ impl Neutral<'_> {
             "model" => Leftover::Uncovered,
             "review_model" => self.model(),
             "model_reasoning_effort" | "plan_mode_reasoning_effort" => self.effort(),
-            "disable_response_storage" => Leftover::Set("false".to_string()),
             "model_supports_reasoning_summaries" => Leftover::Set(
                 self.entry
                     .and_then(|entry| entry.get("supports_reasoning_summaries"))

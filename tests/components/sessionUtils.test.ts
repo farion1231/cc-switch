@@ -1,16 +1,48 @@
 import { describe, expect, it } from "vitest";
 import {
   buildCdResumeCommand,
+  canDeleteSession,
   getSessionLastText,
   getSessionTimeBucket,
   groupSessionsByProject,
   groupSessionsByTime,
   isArchivedSession,
   formatMessageTime,
+  nativeDeleteHintKey,
 } from "@/components/sessions/utils";
 import type { SessionMeta } from "@/types";
 
 describe("session utils", () => {
+  it("lets Antigravity CLI sessions be deleted but keeps IDE and index-only ones native", () => {
+    const agy = (sourcePath?: string): SessionMeta => ({
+      providerId: "agy",
+      sessionId: "aaa-1",
+      sourcePath,
+    });
+    const log = ".system_generated/logs/transcript_full.jsonl";
+    const cli = agy(`/home/u/.gemini/antigravity-cli/brain/aaa-1/${log}`);
+    const keyCard = agy(
+      `C:\\Users\\u\\.cc-switch\\agy\\p\\antigravity-cli\\brain\\aaa-1\\${log}`,
+    );
+    const ide = agy(`/home/u/.gemini/antigravity/brain/aaa-1/${log}`);
+    const indexOnly = agy();
+
+    expect(canDeleteSession(cli)).toBe(true);
+    expect(canDeleteSession(keyCard)).toBe(true);
+    expect(nativeDeleteHintKey(cli)).toBeUndefined();
+    for (const session of [ide, indexOnly]) {
+      expect(canDeleteSession(session)).toBe(false);
+      expect(nativeDeleteHintKey(session)).toBe("sessionManager.agyDeleteHint");
+    }
+    expect(
+      canDeleteSession({
+        providerId: "copilot",
+        sessionId: "s",
+        sourcePath: "/x",
+      }),
+    ).toBe(false);
+  });
+
   it("groups sessions by project directory, newest group first and unknown last", () => {
     const sessions: SessionMeta[] = [
       {
@@ -39,7 +71,7 @@ describe("session utils", () => {
       },
     ];
 
-    const groups = groupSessionsByProject(sessions, "未知目录");
+    const groups = groupSessionsByProject(sessions, "未知目录", "Codex 聊天");
 
     expect(groups.map((group) => group.label)).toEqual([
       "docs",
@@ -93,7 +125,7 @@ describe("session utils", () => {
       },
     ];
 
-    const groups = groupSessionsByProject(sessions, "未知目录");
+    const groups = groupSessionsByProject(sessions, "未知目录", "Codex 聊天");
 
     expect(
       groups.map((group) => [
@@ -104,6 +136,56 @@ describe("session utils", () => {
       ["D:\\projects\\demo", ["upper", "lower", "slash"]],
       ["/work/App", ["posix-a"]],
       ["/work/app/", ["posix-b", "posix-c"]],
+    ]);
+  });
+
+  it("folds Codex desktop project-less chats into one group", () => {
+    const sessions: SessionMeta[] = [
+      {
+        providerId: "codex",
+        sessionId: "win-a",
+        projectDir: "C:\\Users\\me\\Documents\\Codex\\2026-11-10\\x20",
+        lastActiveAt: 40,
+      },
+      {
+        providerId: "codex",
+        sessionId: "project",
+        projectDir: "C:\\work\\app",
+        lastActiveAt: 30,
+      },
+      {
+        providerId: "codex",
+        sessionId: "win-b",
+        projectDir: "c:/users/me/documents/Codex/2026-10-30/wo-d/",
+        lastActiveAt: 20,
+      },
+      {
+        providerId: "codex",
+        sessionId: "mac",
+        projectDir: "/Users/me/Documents/Codex/2026-09-20/s",
+        lastActiveAt: 10,
+      },
+      {
+        providerId: "codex",
+        sessionId: "nested",
+        projectDir: "/Users/me/Documents/Codex/2026-09-20/s/work",
+        lastActiveAt: 5,
+      },
+    ];
+
+    const groups = groupSessionsByProject(sessions, "未知目录", "Codex 聊天");
+
+    expect(
+      groups.map((group) => [
+        group.label,
+        group.projectDir,
+        group.sessions.map((session) => session.sessionId),
+      ]),
+    ).toEqual([
+      ["Codex 聊天", "C:\\Users\\me\\Documents\\Codex", ["win-a", "win-b"]],
+      ["app", "C:\\work\\app", ["project"]],
+      ["Codex 聊天", "/Users/me/Documents/Codex", ["mac"]],
+      ["work", "/Users/me/Documents/Codex/2026-09-20/s/work", ["nested"]],
     ]);
   });
 
