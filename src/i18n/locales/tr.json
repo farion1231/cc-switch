@@ -331,7 +331,7 @@
     "statusGatewayTokenMissing": "Yerel yönlendirme belirteci henüz oluşturulmadı. Bu sağlayıcıya tekrar geçiş yapmak yeni bir yerel token yazacaktır.",
     "statusBaseUrlMismatch": "Claude Desktop profili mevcut sağlayıcıdan farklı bir URL'ye işaret ediyor. Güncel: {{actual}}; beklenen: {{expected}}. Onarmak için tekrar mevcut sağlayıcıya geçin.",
     "failoverTitle": "Yedek sağlayıcıya geçiş açık",
-    "failoverNote": "Kuyruktaki bir sonraki sağlayıcıya geçildikten sonra Claude Desktop, yönlendirmeye girilirken kullanılan sağlayıcının model adlarını göstermeye devam eder. İstekler yeni sağlayıcının model eşlemesiyle gönderilir; eşlemesinde karşılık gelen model bulunmayan sağlayıcılar atlanır. Model listesi, Claude Desktop yeniden başlatıldıktan sonra güncellenir.",
+    "failoverNote": "Otomatik sağlayıcı değişiminden sonra Claude Desktop yayımlanmış model listesini göstermeye devam eder. İsteklerde yeni sağlayıcının model eşlemesi kullanılır. Eşleşen modeli olmayan sağlayıcılar atlanır.",
     "route": {
       "tooltip": {
         "active": "Claude Desktop yerel yönlendirme çalışıyor - {{address}}:{{port}}",

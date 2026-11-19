@@ -493,14 +493,15 @@ async fn write_proxy(
         }
         AppType::ClaudeDesktop => {
             let members = published_members(state, app, &stack, route)?;
-            let profile = claude_desktop_config::route_profile(
-                &state.db,
-                route,
-                &proxy_url,
-                &stack::desktop_published(&members),
-            )
-            .map_err(err)?;
-            let contract = contract::claude_desktop(&profile);
+            let claude_desktop_config::RoutePublication { profile, models } =
+                claude_desktop_config::route_publication(
+                    &state.db,
+                    route,
+                    &proxy_url,
+                    &stack::desktop_published(&members),
+                )
+                .map_err(err)?;
+            let contract = contract::claude_desktop(&profile, models);
             let unchanged = !force && live_now.has_contract(&contract.key);
             target.contract = Some(contract);
             claude_desktop_config::run(
@@ -6603,12 +6604,31 @@ model_provider = "c"
     #[tokio::test]
     #[serial]
     async fn claude_desktop_failover_moves_the_route_without_touching_the_profile() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
         let home = Home::new();
         let _dirs = DesktopDirs::under(&home);
         seed_settings(USER_SETTINGS);
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let upstream_url = format!("http://{}", listener.local_addr().unwrap());
+        let upstream_calls = Arc::new(AtomicUsize::new(0));
+        let failing_upstream = axum::Router::new().fallback({
+            let upstream_calls = Arc::clone(&upstream_calls);
+            move || {
+                upstream_calls.fetch_add(1, Ordering::Relaxed);
+                async { (axum::http::StatusCode::SERVICE_UNAVAILABLE, "overloaded") }
+            }
+        });
+        let upstream = tokio::spawn(async move {
+            axum::serve(listener, failing_upstream).await.unwrap();
+        });
         let desktop = AppType::ClaudeDesktop;
-        let first = desktop_card("map", true);
+        let mut first = desktop_card("map", true);
         let mut second = desktop_card("other", true);
+        for card in [&mut first, &mut second] {
+            card.settings_config["env"]["ANTHROPIC_BASE_URL"] = json!(&upstream_url);
+        }
         for route in second
             .meta
             .as_mut()
@@ -6626,6 +6646,28 @@ model_provider = "c"
             .expect("enter desktop route");
         assert_eq!(state.db.get_proxy_flags_sync(&desktop), (true, false));
         let before = desktop_profile();
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .unwrap();
+        let gateway = before["inferenceGatewayBaseUrl"].as_str().unwrap();
+        let token = before["inferenceGatewayApiKey"].as_str().unwrap();
+        let get_models = || async {
+            client
+                .get(format!("{gateway}/v1/models"))
+                .bearer_auth(token)
+                .send()
+                .await
+                .unwrap()
+                .error_for_status()
+                .unwrap()
+                .json::<Value>()
+                .await
+                .unwrap()
+        };
+        let published = get_models().await;
+        assert_eq!(published["data"][0]["id"], before["inferenceModels"][0]);
 
         assert!(record_failover_route(&state, &desktop, "other")
             .await
@@ -6635,10 +6677,59 @@ model_provider = "c"
             Some("other")
         );
         assert_eq!(desktop_profile(), before);
+        assert_eq!(get_models().await, published);
         // 同一家再记一次是空操作
         assert!(!record_failover_route(&state, &desktop, "other")
             .await
             .expect("same route"));
+
+        // 两家都熔断后，消息暂时不可用，模型发现仍返回已发布的列表。
+        for id in ["map", "other"] {
+            state.db.add_to_failover_queue(&desktop, id).unwrap();
+        }
+        let mut config = state.db.get_proxy_config_for_app(&desktop).await.unwrap();
+        config.auto_failover_enabled = true;
+        config.circuit_failure_threshold = 1;
+        state.db.update_proxy_config_for_app(config).await.unwrap();
+        for _ in 0..2 {
+            let response = client
+                .post(format!("{gateway}/v1/messages"))
+                .bearer_auth(token)
+                .json(&json!({"model": "claude-sonnet-5", "max_tokens": 10,
+                    "messages": [{"role": "user", "content": "hello"}]}))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), reqwest::StatusCode::SERVICE_UNAVAILABLE);
+            assert_eq!(upstream_calls.load(Ordering::Relaxed), 2);
+            assert_eq!(get_models().await, published);
+        }
+
+        assert!(
+            set_route(&state, &desktop, "other")
+                .await
+                .unwrap()
+                .client_config_changed
+        );
+        let updated_profile = desktop_profile();
+        let updated = get_models().await;
+        assert_eq!(
+            updated["data"][0]["id"],
+            updated_profile["inferenceModels"][0]["name"]
+        );
+        assert_eq!(updated["data"][0]["display_name"], "GLM");
+        assert!(updated["data"][0]["description"]
+            .as_str()
+            .unwrap()
+            .contains("glm-5"));
+
+        let mut legacy = current::mode_state(&desktop);
+        legacy.contract.as_mut().unwrap().desktop_models = None;
+        commit_state(&state, &desktop, &PendingTarget::mode(legacy)).unwrap();
+        let legacy_models = get_models().await;
+        assert_eq!(legacy_models["data"][0]["id"], updated["data"][0]["id"]);
+        assert_eq!(legacy_models["data"][0]["display_name"], "GLM");
+        assert!(legacy_models["data"][0].get("description").is_none());
 
         // 开启故障转移时切回队列 P1：这是用户发起的换路由，profile 跟着 P1 重写。
         switch_route_for_failover(&state, &desktop, "map")
@@ -6649,6 +6740,8 @@ model_provider = "c"
             Some("map")
         );
         assert_eq!(desktop_profile(), before);
+        assert_eq!(get_models().await, published);
+        upstream.abort();
     }
 
     #[tokio::test]
@@ -6963,13 +7056,14 @@ model_provider = "c"
             .expect("save mapping card");
         crate::settings::set_current_provider(&desktop, Some("map")).expect("desktop current");
         // 旧版给映射卡写的配置：指着本地路由。
-        let old = crate::claude_desktop_config::route_profile(
+        let old = crate::claude_desktop_config::route_publication(
             &state.db,
             &desktop_card("map", true),
             "http://127.0.0.1:15721",
             &[],
         )
-        .expect("old profile");
+        .expect("old profile")
+        .profile;
         crate::claude_desktop_config::run(
             &state.db,
             op::APPLY,

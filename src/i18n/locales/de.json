@@ -331,7 +331,7 @@
     "statusGatewayTokenMissing": "Das lokale Routing-Token wurde noch nicht erzeugt. Beim erneuten Wechsel zu diesem Anbieter wird ein neues lokales Token geschrieben.",
     "statusBaseUrlMismatch": "Das Claude-Desktop-Profil verweist auf eine andere URL als der aktuelle Anbieter. Aktuell: {{actual}}; erwartet: {{expected}}. Wechseln Sie erneut zum aktuellen Anbieter, um es zu reparieren.",
     "failoverTitle": "Failover ist aktiv",
-    "failoverNote": "Nach dem Wechsel zum nächsten Anbieter in der Warteschlange zeigt Claude Desktop weiterhin die Modellnamen des Anbieters an, mit dem das Routing gestartet wurde. Anfragen werden mit der Modellzuordnung des neuen Anbieters gesendet; Anbieter, deren Zuordnung kein passendes Modell enthält, werden übersprungen. Die Modellliste wird nach einem Neustart von Claude Desktop aktualisiert.",
+    "failoverNote": "Nach einem automatischen Anbieterwechsel zeigt Claude Desktop weiterhin die veröffentlichte Modellliste an. Anfragen verwenden die Modellzuordnung des neuen Anbieters. Anbieter ohne passendes Modell werden übersprungen.",
     "route": {
       "tooltip": {
         "active": "Das lokale Routing von Claude Desktop läuft – {{address}}:{{port}}",

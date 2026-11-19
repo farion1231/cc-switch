@@ -610,23 +610,6 @@ pub fn claude_published_now(db: &Database) -> Result<Vec<StackModel>, AppError> 
     )?))
 }
 
-/// Claude Desktop 现在发布的 Stack 模型（`/v1/models` 用）：同 [`claude_published_now`]。
-pub fn desktop_published_now(db: &Database) -> Result<Vec<DesktopStackModel>, AppError> {
-    let app = AppType::ClaudeDesktop;
-    let store = DeviceStore::for_device();
-    let mode = state::mode_state(&store, app.as_str())?;
-    if !mode.is_proxy() {
-        return Ok(Vec::new());
-    }
-    let stack = state::stack(&store, app.as_str())?;
-    Ok(desktop_published(&published_members(
-        db,
-        &app,
-        &stack,
-        mode.proxy_route.as_deref(),
-    )?))
-}
-
 /// 选中 Stack 模型的请求要发往的那一家。
 #[derive(Debug, Clone)]
 pub struct StackTarget {

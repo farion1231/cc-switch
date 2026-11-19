@@ -462,10 +462,9 @@ impl RequestForwarder {
     }
 
     /// 故障转移队列里，Claude Desktop 的请求换家前先看这家的映射表接不接得住请求的模型。
-    /// 聚合模型的请求已经解出了上游名，不查映射表；只有一家时没有下一家可换，也不查。
-    fn skips_unmapped_desktop_provider(&self, app_type: &AppType, providers: usize) -> bool {
+    /// 聚合模型的请求已经解出了上游名，不查映射表。
+    fn checks_desktop_failover_mapping(&self, app_type: &AppType) -> bool {
         self.failover_chain
-            && providers > 1
             && matches!(app_type, AppType::ClaudeDesktop)
             && !self.keeps_resolved_model()
     }
@@ -785,8 +784,10 @@ impl RequestForwarder {
         // 「有家接得住但都暂时不可用」（典型：HalfOpen 探测名额被占用 → 503）。
         let mut any_mapped = false;
 
-        // 单 Provider 场景下跳过熔断器检查（故障转移关闭时）；Stack 模型的请求不碰熔断器。
-        let bypass_circuit_breaker = providers.len() == 1 || !self.routing_state_enabled();
+        let desktop_failover = self.checks_desktop_failover_mapping(app_type);
+        // Desktop 的单供应商故障转移队列也要申请许可。Stack 模型的请求不碰熔断器。
+        let bypass_circuit_breaker =
+            (providers.len() == 1 && !desktop_failover) || !self.routing_state_enabled();
 
         // 依次尝试每个供应商
         for provider in providers.iter() {
@@ -810,8 +811,8 @@ impl RequestForwarder {
 
             // Claude Desktop 发来的是进入路由时那家的模型名。故障转移队列里这家的映射表接不住
             // 这个名字时跳过它试下一家：没有发出请求，不占尝试次数、不拿熔断器名额，也不记
-            // 失败（这家对别的模型照样可用）。只有一家时不查，照旧由 `forward` 报错。
-            if self.skips_unmapped_desktop_provider(app_type, providers.len()) {
+            // 失败（这家对别的模型照样可用）。
+            if desktop_failover {
                 if let Err(error) =
                     crate::claude_desktop_config::proxy_request_upstream_model(body, provider)
                 {
@@ -830,7 +831,6 @@ impl RequestForwarder {
             }
 
             // 发起请求前先获取熔断器放行许可（HalfOpen 会占用探测名额）
-            // 单 Provider 场景下跳过此检查，避免熔断器阻塞所有请求
             // 占用了 HalfOpen 名额时，`_half_open_permit` 一直持有到这次尝试结束（continue /
             // return，或客户端断开把整个 future 丢掉），drop 时归还名额。
             let (allowed, used_half_open_permit, _half_open_permit) = if bypass_circuit_breaker {

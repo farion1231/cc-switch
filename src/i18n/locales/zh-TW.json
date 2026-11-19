@@ -331,7 +331,7 @@
     "statusGatewayTokenMissing": "目前本地路由 token 尚未產生；重新切換該供應商會寫入新的本地 token。",
     "statusBaseUrlMismatch": "Claude Desktop profile 指向的位址與目前供應商不一致；目前為 {{actual}}，應為 {{expected}}。重新切換目前供應商可修復。",
     "failoverTitle": "故障轉移已開啟",
-    "failoverNote": "轉移到佇列裡的下一家後，Claude Desktop 裡顯示的仍是進入路由時那家的模型名稱，實際請求會依新這家的模型對應送出；對應表裡沒有相應模型的供應商會被跳過。重新啟動 Claude Desktop 後模型清單才會更新。",
+    "failoverNote": "自動故障轉移後，Claude Desktop 會繼續顯示已發佈的模型清單。請求會依切換後供應商的模型對應送出，缺少對應模型的供應商會被跳過。",
     "route": {
       "tooltip": {
         "active": "Claude Desktop 本地路由已開啟 - {{address}}:{{port}}",

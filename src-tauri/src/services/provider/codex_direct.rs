@@ -1111,6 +1111,7 @@ fn contract_of(
             .iter()
             .map(|(key, value)| (key.clone(), Value::String(value_text(value))))
             .collect(),
+        desktop_models: None,
     }
 }
 

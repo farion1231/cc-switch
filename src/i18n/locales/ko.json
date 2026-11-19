@@ -331,7 +331,7 @@
     "statusGatewayTokenMissing": "현재 로컬 라우팅 토큰이 아직 생성되지 않았습니다. 이 공급자로 다시 전환하면 새 로컬 토큰이 저장됩니다.",
     "statusBaseUrlMismatch": "Claude Desktop 프로필의 URL이 현재 공급자와 다릅니다. 현재: {{actual}}, 예상: {{expected}}. 현재 공급자로 다시 전환하여 복구하세요.",
     "failoverTitle": "장애 조치가 켜져 있습니다",
-    "failoverNote": "대기열의 다음 공급자로 전환된 후에도 Claude Desktop에는 라우팅을 시작할 때의 공급자 모델 이름이 표시됩니다. 실제 요청은 새 공급자의 모델 매핑으로 전송되며, 매핑에 해당 모델이 없는 공급자는 건너뜁니다. 모델 목록은 Claude Desktop을 다시 시작하면 업데이트됩니다.",
+    "failoverNote": "자동 장애 조치 후에도 Claude Desktop은 이미 게시된 모델 목록을 표시합니다. 요청에는 전환된 공급자의 모델 매핑이 적용되며, 일치하는 모델이 없는 공급자는 건너뜁니다.",
     "route": {
       "tooltip": {
         "active": "Claude Desktop 로컬 라우팅이 실행 중입니다 - {{address}}:{{port}}",

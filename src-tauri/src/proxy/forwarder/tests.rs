@@ -5392,6 +5392,70 @@ mod bookkeeping {
         assert_eq!(books(&fwd).await.failed, 1);
     }
 
+    #[tokio::test]
+    async fn claude_desktop_failover_returns_unavailable_when_only_matching_provider_is_open() {
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let app = AppType::ClaudeDesktop;
+        let up = upstream(vec![]).await;
+        let a = desktop_provider("a", &up, &[("claude-sonnet-5", "a-sonnet")]);
+        let b = desktop_provider("b", &up, &[("claude-opus-5", "b-opus")]);
+        for provider in [&a, &b] {
+            db.save_provider(&app, provider).expect("save provider");
+            db.add_to_failover_queue(&app, &provider.id)
+                .expect("queue provider");
+        }
+        let mut config = db.get_proxy_config_for_app(&app).await.unwrap();
+        config.circuit_failure_threshold = 1;
+        db.update_proxy_config_for_app(config).await.unwrap();
+        let mut fwd = forwarder(4, "a").failover_chain(true);
+        fwd.router = Arc::new(ProviderRouter::new(db));
+        fwd.router
+            .record_result("a", &app, false, false, None)
+            .await
+            .unwrap();
+
+        let candidates = fwd
+            .router
+            .select_providers_with_current(&app, Some(a), true)
+            .await
+            .unwrap();
+        let error = expect_err(send_desktop(&fwd, candidates, "claude-sonnet-5").await).error;
+        assert!(
+            matches!(error, ProxyError::NoAvailableProvider),
+            "{error:?}"
+        );
+        assert!(up.requests.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn claude_desktop_failover_checks_the_probe_permit_for_a_single_provider() {
+        let db = Arc::new(Database::memory().expect("memory db"));
+        let app = AppType::ClaudeDesktop;
+        let mut config = db.get_proxy_config_for_app(&app).await.unwrap();
+        config.circuit_failure_threshold = 1;
+        config.circuit_timeout_seconds = 0;
+        db.update_proxy_config_for_app(config).await.unwrap();
+        let up = upstream(vec![]).await;
+        let provider = desktop_provider("a", &up, &[("claude-sonnet-5", "a-sonnet")]);
+        db.save_provider(&app, &provider).expect("save provider");
+        let mut fwd = forwarder(4, "a").failover_chain(true);
+        fwd.router = Arc::new(ProviderRouter::new(db));
+        fwd.router
+            .record_result("a", &app, false, false, None)
+            .await
+            .unwrap();
+        let probe = fwd.router.allow_provider_request("a", &app).await;
+        assert!(probe.used_half_open_permit);
+
+        let error = expect_err(send_desktop(&fwd, vec![provider], "claude-sonnet-5").await).error;
+        assert!(
+            matches!(error, ProxyError::NoAvailableProvider),
+            "{error:?}"
+        );
+        assert!(up.requests.lock().await.is_empty());
+        drop(probe);
+    }
+
     /// 有一家真的失败过时，报的是那次失败，不被后面跳过的那家盖掉。
     #[tokio::test]
     async fn claude_desktop_failover_keeps_the_upstream_error_over_a_skipped_provider() {
