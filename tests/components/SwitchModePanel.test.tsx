@@ -55,9 +55,10 @@ vi.mock("@/hooks/useStreamCheck", () => ({
 
 const TAURI_ENDPOINT = "http://tauri.local";
 
-const provider = (id: string): Provider => ({
+const provider = (id: string, official = false): Provider => ({
   id,
   name: id,
+  category: official ? "official" : undefined,
   settingsConfig: {},
 });
 
@@ -81,30 +82,52 @@ function mockMode(
   );
 }
 
+function mockAuthAccounts(
+  authProvider: "claude_official" | "codex_oauth",
+  accounts: Array<{ id: string; login: string }>,
+  defaultAccountId: string | null = accounts[0]?.id ?? null,
+) {
+  server.use(
+    http.post(`${TAURI_ENDPOINT}/auth_get_status`, async ({ request }) => {
+      const { authProvider: requested } = (await request.json()) as {
+        authProvider: string;
+      };
+      if (requested !== authProvider) {
+        return HttpResponse.json({
+          provider: requested,
+          authenticated: false,
+          default_account_id: null,
+          accounts: [],
+        });
+      }
+      return HttpResponse.json({
+        provider: authProvider,
+        authenticated: accounts.length > 0,
+        default_account_id: defaultAccountId,
+        accounts: accounts.map((a) => ({ ...a, authenticated_at: 100 })),
+      });
+    }),
+  );
+}
+
 function renderPanel(
   app: AppIdWith<"routeMode">,
   providers: Record<string, Provider>,
   onSwitch = vi.fn(),
   onOpenAggregation = vi.fn(),
+  onOpenAuthCenter = vi.fn(),
 ) {
   const queryClient = createTestQueryClient();
-  const statusSlot = document.createElement("div");
   const view = render(
     <QueryClientProvider client={queryClient}>
-      <div
-        data-testid="connection-header"
-        ref={(node) => {
-          node?.appendChild(statusSlot);
-        }}
-      />
       <SwitchModePanel
         app={app}
-        statusSlot={statusSlot}
         providers={providers}
         currentProviderId={Object.keys(providers)[0] ?? ""}
         isLoading={false}
         onSwitch={onSwitch}
         onOpenRoutingSettings={vi.fn()}
+        onOpenAuthCenter={onOpenAuthCenter}
         onOpenAggregation={onOpenAggregation}
         onEdit={vi.fn()}
         onDelete={vi.fn()}
@@ -123,26 +146,114 @@ beforeEach(() => {
   Element.prototype.scrollIntoView = vi.fn();
 });
 
-describe("SwitchModePanel — Stack mode", () => {
-  it("hides per-app Aggregation tab and exposes only Direct and Failover tabs", async () => {
-    mockMode("direct", null, "route");
-    renderPanel("codex", { route: provider("route") });
+const boundOfficial = (
+  id: string,
+  authProvider: "claude_official" | "codex_oauth",
+  accountId: string,
+): Provider => ({
+  ...provider(id, true),
+  meta: {
+    authBinding: {
+      source: "managed_account",
+      authProvider,
+      accountId,
+    },
+  },
+});
+
+describe("SwitchModePanel — Direct official login only", () => {
+  it("hides Direct/Route/Stack mode tabs and titlebar mode status inside app pages", async () => {
+    mockMode("direct", null, "official-1");
+    mockAuthAccounts("codex_oauth", [{ id: "acc-1", login: "alice@openai.com" }]);
+    renderPanel("codex", {
+      "official-1": boundOfficial("official-1", "codex_oauth", "acc-1"),
+      external: provider("external", false),
+    });
+
+    // Only logged-in official accounts are rendered inside the app page; external providers live in Aggregation
+    expect(await screen.findByTestId("card-official-1")).toBeInTheDocument();
+    expect(screen.queryByTestId("card-external")).not.toBeInTheDocument();
 
     expect(
-      await screen.findByRole("button", { name: /mode\.names\.direct/ }),
-    ).toBeInTheDocument();
+      screen.queryByRole("button", { name: /mode\.names\.direct/ }),
+    ).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /mode\.names\.route/ }),
-    ).toBeInTheDocument();
+      screen.queryByRole("button", { name: /mode\.names\.route/ }),
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /mode\.names\.stack/ }),
     ).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText(/mode\.status\.(direct|route|stack)Lead/),
+    ).not.toBeInTheDocument();
   });
 
-  it("shows a global Aggregation notice with navigation when active mode is stack", async () => {
+  it("hides unbound seeded official providers when no account is logged in and routes empty state to Auth Center", async () => {
+    const user = userEvent.setup();
+    const onOpenAuthCenter = vi.fn();
+    mockMode("direct", null, "codex-official");
+    mockAuthAccounts("codex_oauth", []);
+    renderPanel(
+      "codex",
+      {
+        "codex-official": provider("codex-official", true),
+      },
+      vi.fn(),
+      vi.fn(),
+      onOpenAuthCenter,
+    );
+
+    expect(
+      await screen.findByText("尚未登录官方账号"),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("card-codex-official")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "前往授权中心" }));
+    expect(onOpenAuthCenter).toHaveBeenCalledTimes(1);
+  });
+
+  it("synthesizes and materializes Auth Center accounts on manual direct switch", async () => {
+    const user = userEvent.setup();
+    const onSwitch = vi.fn();
+    const added: unknown[] = [];
+    mockMode("direct", null, "other-direct");
+    mockAuthAccounts("claude_official", [
+      { id: "acc-alice", login: "alice@anthropic.com" },
+    ]);
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/add_provider`, async ({ request }) => {
+        added.push(await request.json());
+        return HttpResponse.json(true);
+      }),
+    );
+
+    renderPanel("claude", {}, onSwitch);
+
+    const switchBtn = await screen.findByTestId(
+      "switch-__auth_claude_official_acc-alice",
+    );
+    await user.click(switchBtn);
+
+    await waitFor(() => {
+      expect(added).toHaveLength(1);
+      expect(onSwitch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: "claude_official-acc-alice",
+          name: "alice@anthropic.com",
+          category: "official",
+        }),
+        undefined,
+      );
+    });
+  });
+
+  it("shows a global Aggregation notice with navigation when active mode is stack or route", async () => {
     const user = userEvent.setup();
     const onOpenAggregation = vi.fn();
     mockMode("stack", "route");
+    mockAuthAccounts("claude_official", [
+      { id: "acc-1", login: "alice@anthropic.com" },
+    ]);
     server.use(
       http.post(`${TAURI_ENDPOINT}/get_proxy_stack`, () =>
         HttpResponse.json({
@@ -151,7 +262,15 @@ describe("SwitchModePanel — Stack mode", () => {
         }),
       ),
     );
-    renderPanel("claude", { route: provider("route") }, vi.fn(), onOpenAggregation);
+    renderPanel(
+      "claude",
+      {
+        official: boundOfficial("official", "claude_official", "acc-1"),
+        route: provider("route", false),
+      },
+      vi.fn(),
+      onOpenAggregation,
+    );
 
     const openBtn = await screen.findByRole("button", {
       name: /aggregation\.goToPage|前往聚合页/,
@@ -261,7 +380,7 @@ describe("SwitchModePanel — Stack mode", () => {
       }),
     );
 
-    renderPanel("gemini", { a: provider("a") });
+    renderPanel("gemini", { a: provider("a", true) });
     await screen.findByTestId("card-a");
     expect(stackReads).toBe(0);
     expect(
@@ -271,7 +390,7 @@ describe("SwitchModePanel — Stack mode", () => {
 });
 
 describe("SwitchModePanel — Claude Desktop", () => {
-  it("offers Direct and Failover tabs, without failover queue or route settings", async () => {
+  it("hides mode tabs, titlebar status, failover queue, and route settings", async () => {
     mockMode("route", "map", "direct");
     let failoverReads = 0;
     server.use(
@@ -286,16 +405,20 @@ describe("SwitchModePanel — Claude Desktop", () => {
     );
 
     renderPanel("claude-desktop", {
-      direct: provider("direct"),
+      direct: provider("direct", true),
       map: provider("map"),
     });
 
+    expect(await screen.findByTestId("card-direct")).toBeInTheDocument();
     expect(
-      await screen.findByLabelText("mode.status.routeLead map"),
-    ).toBeInTheDocument();
+      screen.queryByLabelText(/mode\.status\.(direct|route|stack)Lead/),
+    ).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /mode\.names\.direct/ }),
-    ).toBeInTheDocument();
+      screen.queryByRole("button", { name: /mode\.names\.direct/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /mode\.names\.route/ }),
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /mode\.names\.stack/ }),
     ).not.toBeInTheDocument();
@@ -342,80 +465,40 @@ describe("SwitchModePanel — mode layer", () => {
     return calls;
   }
 
-  it("enters routing from the notice with the direct provider preselected, without an acknowledgement checkbox", async () => {
-    mockMode("direct", null, "b");
+  it("allows exiting back to Direct official login from Aggregation takeover notice", async () => {
+    mockMode("route", "external", "official");
     const calls = captureTakeover();
-    renderPanel("claude", { a: provider("a"), b: provider("b") });
+    renderPanel("claude", {
+      official: provider("official", true),
+      external: provider("external", false),
+    });
 
     fireEvent.click(
-      await screen.findByRole("button", { name: /mode\.names\.route/ }),
+      await screen.findByRole("button", { name: "mode.notice.backToDirect" }),
     );
-    // 行上没有进入路由的按钮，入口只有通知条
-    await screen.findByTestId("card-b");
-    expect(screen.getByTestId("card-b").querySelector("button")).toBeNull();
-    fireEvent.click(
-      screen.getByRole("button", { name: "mode.activate.route" }),
-    );
-    expect(await screen.findByText("mode.dialog.routeTitle")).toBeVisible();
-    // 没有上次的路由目标时，预选直连那家
-    expect(
-      screen.getByRole("combobox", { name: "mode.dialog.routeTo" }),
-    ).toHaveTextContent("b");
-    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
-    const confirm = screen.getByText("mode.dialog.confirmRoute");
-    expect(confirm.closest("button")).not.toBeDisabled();
-    fireEvent.click(confirm);
+    expect(await screen.findByText("mode.dialog.exitTitle")).toBeVisible();
+    fireEvent.click(screen.getByText("mode.dialog.confirmDirect"));
     await waitFor(() =>
       expect(calls).toEqual([
-        { appType: "claude", enabled: true, stack: false, route: "b" },
+        { appType: "claude", enabled: false, stack: false, route: null },
       ]),
     );
   });
 
-  it.each(["route", "stack"] as const)(
-    "keeps %s status gray when the service runs but the app is detached",
+  it.each(["direct", "route", "stack"] as const)(
+    "never renders titlebar mode status in %s mode",
     async (mode) => {
       mockMode(mode, "a");
-      server.use(
-        http.post(`${TAURI_ENDPOINT}/get_app_mode`, () =>
-          HttpResponse.json({
-            mode,
-            attached: false,
-            routeProviderId: "a",
-            directProviderId: "a",
-          }),
-        ),
-      );
-      renderPanel("claude", { a: provider("a") });
-      await screen.findByLabelText(new RegExp(`mode.status.${mode}Lead`));
+      renderPanel("gemini", { a: provider("a", true) });
+      await screen.findByTestId("card-a");
       expect(
-        screen.getByTestId("connection-header").querySelector(".bg-fg-3"),
-      ).not.toBeNull();
+        screen.queryByLabelText(/mode\.status\.(direct|route|stack)Lead/),
+      ).not.toBeInTheDocument();
       expect(
-        screen.getByTestId("connection-header").querySelector(`.bg-${mode}`),
-      ).toBeNull();
+        screen.queryByRole("button", { name: /mode\.names\.(direct|route|stack)/ }),
+      ).not.toBeInTheDocument();
     },
   );
-
-  it("shows only the route target in the status line, not the local address", async () => {
-    mockMode("route", "route");
-    server.use(
-      http.post(`${TAURI_ENDPOINT}/get_proxy_status`, () =>
-        HttpResponse.json({ running: true, address: "127.0.0.1", port: 15721 }),
-      ),
-    );
-    renderPanel("gemini", { route: provider("route") });
-
-    expect(
-      await screen.findByLabelText("mode.status.routeLead route"),
-    ).toHaveTextContent("route");
-    expect(screen.getByTestId("connection-header")).toHaveTextContent("route");
-    fireEvent.click(screen.getByRole("button", { name: "mode.names.direct" }));
-    expect(
-      screen.getByLabelText("mode.status.routeLead route"),
-    ).toBeInTheDocument();
-    expect(screen.queryByText(/15721/)).not.toBeInTheDocument();
-  });
 });
 
 describe("SwitchModePanel — tray needs-route request", () => {
@@ -455,7 +538,6 @@ describe("SwitchModePanel — tray needs-route request", () => {
 
 describe("SwitchModePanel — pause the Codex official login", () => {
   const PAUSED_TITLE = "mode.notice.officialLoginPaused";
-  const TOGGLE = "settings.codexPauseOfficialLogin.title";
 
   it("keeps a notice up while paused in route mode and resumes from it", async () => {
     const user = userEvent.setup();
@@ -476,32 +558,26 @@ describe("SwitchModePanel — pause the Codex official login", () => {
 
   it("shows no notice in direct mode, where the pause has no effect", async () => {
     setSettings({ codexProxyWithoutOfficialLogin: true });
-    mockMode("direct", "route");
-    renderPanel("codex", { route: provider("route") });
+    mockMode("direct", "official");
+    mockAuthAccounts("codex_oauth", [{ id: "acc-1", login: "alice@openai.com" }]);
+    renderPanel("codex", {
+      official: boundOfficial("official", "codex_oauth", "acc-1"),
+    });
 
-    await screen.findByTestId("card-route");
+    await screen.findByTestId("card-official");
     expect(screen.queryByText(PAUSED_TITLE)).not.toBeInTheDocument();
   });
 
-  it("offers the switch in the route settings for Codex only", async () => {
-    const user = userEvent.setup();
+  it("does not expose per-app route settings button inside SwitchModePanel", async () => {
     mockMode("route", "route");
-    const codex = renderPanel("codex", { route: provider("route") });
-    await user.click(
-      await screen.findByRole("button", { name: "mode.routeSettings" }),
-    );
+    mockAuthAccounts("codex_oauth", [{ id: "acc-1", login: "alice@openai.com" }]);
+    renderPanel("codex", {
+      official: boundOfficial("official", "codex_oauth", "acc-1"),
+      route: provider("route"),
+    });
+    await screen.findByTestId("card-official");
     expect(
-      await screen.findByRole("switch", { name: TOGGLE }),
-    ).toBeInTheDocument();
-    codex.unmount();
-
-    renderPanel("claude", { route: provider("route") });
-    await user.click(
-      await screen.findByRole("button", { name: "mode.routeSettings" }),
-    );
-    await screen.findByText("mode.routeSettingsTitle");
-    expect(
-      screen.queryByRole("switch", { name: TOGGLE }),
+      screen.queryByRole("button", { name: "mode.routeSettings" }),
     ).not.toBeInTheDocument();
   });
 });

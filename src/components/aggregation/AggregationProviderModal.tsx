@@ -46,11 +46,14 @@ import type {
   UniversalProviderApps,
 } from "@/types";
 import type { AppId } from "@/lib/api";
+import type { AggregationAppProviderItem } from "@/lib/api/aggregation";
+import { getApiKeyFromConfig } from "@/utils/providerConfigUtils";
 import { cn } from "@/lib/utils";
 import {
   APP_FLAG_KEY,
   buildVisibleUniversalApps,
   COMPATIBLE_APP_IDS,
+  universalAppsFromAppIds,
 } from "./aggregationApps";
 import {
   type AggregationPresetEntry,
@@ -102,7 +105,13 @@ interface AggregationProviderModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSaveAndSync: (provider: UniversalProvider) => Promise<void>;
+  onPromoteAppProvider?: (
+    sourceApp: AppId,
+    sourceProviderId: string,
+    provider: UniversalProvider,
+  ) => Promise<void>;
   editingProvider?: UniversalProvider | null;
+  editingAppProvider?: AggregationAppProviderItem | null;
   initialPreset?: AggregationPresetEntry | null;
 }
 
@@ -110,11 +119,13 @@ export function AggregationProviderModal({
   isOpen,
   onClose,
   onSaveAndSync,
+  onPromoteAppProvider,
   editingProvider,
+  editingAppProvider,
   initialPreset,
 }: AggregationProviderModalProps) {
   const { t } = useTranslation();
-  const isEditMode = Boolean(editingProvider);
+  const isEditMode = Boolean(editingProvider || editingAppProvider);
   const visibleApps = useVisibleAppIds(COMPATIBLE_APP_IDS);
   const catalog = useMemo(() => getAggregationPresetCatalog(), []);
 
@@ -277,6 +288,43 @@ export function AggregationProviderModal({
       setNotes(editingProvider.notes || "");
       setApps(buildVisibleUniversalApps(visibleApps, editingProvider.apps));
       setStep("form");
+    } else if (editingAppProvider) {
+      const p = editingAppProvider.provider;
+      const settings = (p.settingsConfig ?? {}) as Record<string, unknown>;
+      const extractedKey =
+        getApiKeyFromConfig(JSON.stringify(settings), editingAppProvider.appType) ||
+        (typeof settings.apiKey === "string" ? settings.apiKey : "") ||
+        (typeof settings.api_key === "string" ? settings.api_key : "");
+      setSelectedEntry(null);
+      setSelectedVariant(null);
+      setName(p.name);
+      setApiFormat(
+        editingAppProvider.apiFormat &&
+          editingAppProvider.apiFormat !== "official"
+          ? editingAppProvider.apiFormat
+          : "openai_chat",
+      );
+      setBaseUrl(editingAppProvider.baseUrl || "");
+      setApiKey(extractedKey);
+      setPrimaryModel(editingAppProvider.models[0] || "");
+      setExtraModelsText(editingAppProvider.models.slice(1).join(", "));
+      setReasoningEffort("high");
+      setHaikuModel("");
+      setSonnetModel("");
+      setOpusModel("");
+      setIsFullUrl(Boolean(p.meta?.isFullUrl));
+      setApiKeyField(p.meta?.apiKeyField ?? "ANTHROPIC_AUTH_TOKEN");
+      setCustomUserAgent(p.meta?.customUserAgent || "");
+      setCustomModelsUrl("");
+      setWebsiteUrl(p.websiteUrl || "");
+      setNotes(p.notes || "");
+      setApps(
+        universalAppsFromAppIds(
+          editingAppProvider.syncedApps as AppId[],
+          visibleApps,
+        ),
+      );
+      setStep("form");
     } else if (initialPreset) {
       const variant = initialPreset.variants[0];
       setApiKey("");
@@ -299,7 +347,14 @@ export function AggregationProviderModal({
       setApps(buildVisibleUniversalApps(visibleApps));
       setStep("picker");
     }
-  }, [editingProvider, initialPreset, isOpen, visibleApps, applyVariant]);
+  }, [
+    editingProvider,
+    editingAppProvider,
+    initialPreset,
+    isOpen,
+    visibleApps,
+    applyVariant,
+  ]);
 
   const toggleApp = useCallback((appId: AppId) => {
     const flag = APP_FLAG_KEY[appId];
@@ -320,9 +375,9 @@ export function AggregationProviderModal({
 
   const handleToggleAllApps = () => {
     if (allSelected) {
-      setApps({ claude: false, codex: false, gemini: false });
+      setApps(buildVisibleUniversalApps(visibleApps, undefined, false));
     } else {
-      setApps(buildVisibleUniversalApps(visibleApps));
+      setApps(buildVisibleUniversalApps(visibleApps, undefined, true));
     }
   };
 
@@ -490,7 +545,7 @@ export function AggregationProviderModal({
       apiFormat,
       primaryModel,
       extraModels: parseModelList(extraModelsText),
-      apps: buildVisibleUniversalApps(visibleApps, apps),
+      apps: buildVisibleUniversalApps(visibleApps, apps, false),
       reasoningEffort,
       haikuModel,
       sonnetModel,
@@ -498,14 +553,28 @@ export function AggregationProviderModal({
       meta: hasMeta ? nextMeta : undefined,
       websiteUrl,
       notes,
-      icon: editingProvider?.icon ?? selectedVariant?.icon,
-      iconColor: editingProvider?.iconColor ?? selectedVariant?.iconColor,
+      icon:
+        editingProvider?.icon ??
+        editingAppProvider?.provider.icon ??
+        selectedVariant?.icon,
+      iconColor:
+        editingProvider?.iconColor ??
+        editingAppProvider?.provider.iconColor ??
+        selectedVariant?.iconColor,
       existing: editingProvider,
     });
 
     setSaving(true);
     try {
-      await onSaveAndSync(provider);
+      if (editingAppProvider && onPromoteAppProvider) {
+        await onPromoteAppProvider(
+          editingAppProvider.appType,
+          editingAppProvider.provider.id,
+          provider,
+        );
+      } else {
+        await onSaveAndSync(provider);
+      }
       onClose();
     } finally {
       setSaving(false);
@@ -581,7 +650,7 @@ export function AggregationProviderModal({
         <div className="space-y-1.5">
           <Label htmlFor="agg-provider-model">
             {t("aggregation.modal.primaryModel", {
-              defaultValue: "默认模型（所有应用均可用）",
+              defaultValue: "默认模型",
             })}
           </Label>
           <Input
@@ -681,9 +750,9 @@ export function AggregationProviderModal({
       onClose={onClose}
       title={
         isEditMode
-          ? t("aggregation.modal.editTitle", { defaultValue: "编辑供应商" })
+          ? t("aggregation.modal.editTitle", { defaultValue: "编辑外部供应商" })
           : t("aggregation.modal.addTitle", {
-              defaultValue: "添加跨应用供应商",
+              defaultValue: "添加外部供应商",
             })
       }
       footer={
@@ -719,9 +788,14 @@ export function AggregationProviderModal({
               ) : (
                 <RefreshCw className="h-4 w-4" />
               )}
-              {t("aggregation.modal.saveAndSync", {
-                defaultValue: "保存并兼容全部",
-              })}
+              {enabledCount > 0
+                ? t("aggregation.modal.saveAndApply", {
+                    count: enabledCount,
+                    defaultValue: `保存并应用到 ${enabledCount} 个应用`,
+                  })
+                : t("aggregation.modal.saveOnly", {
+                    defaultValue: "仅保存供应商",
+                  })}
             </Button>
           </>
         )
@@ -976,10 +1050,14 @@ export function AggregationProviderModal({
                   ? t("aggregation.modal.keyOptionalHint", {
                       defaultValue: "本机服务可留空",
                     })
-                  : t("aggregation.modal.autoCompatSummary", {
-                      count: enabledCount,
-                      defaultValue: `保存后自动兼容 ${enabledCount} 个已启用应用`,
-                    })}
+                  : enabledCount > 0
+                    ? t("aggregation.modal.assignedSummary", {
+                        count: enabledCount,
+                        defaultValue: `已指定 ${enabledCount} 个应用使用此供应商`,
+                      })
+                    : t("aggregation.modal.unassignedSummary", {
+                        defaultValue: "请在下方选择需要使用此供应商的应用",
+                      })}
               </span>
             </div>
             <div className="relative">
@@ -1010,10 +1088,83 @@ export function AggregationProviderModal({
             </div>
           </div>
 
+          {/* 指定使用此供应商的应用（显式选择，不默认兼容全应用） */}
+          <div className="space-y-2.5 rounded-panel border border-border bg-surface p-3.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="space-y-0.5">
+                <Label className="text-body font-medium">
+                  {t("aggregation.modal.targetAppsTitle", {
+                    defaultValue: "指定适用应用",
+                  })}{" "}
+                  <span className="text-caption font-normal text-fg-3">
+                    ({enabledCount}/{visibleApps.length})
+                  </span>
+                </Label>
+                <p className="text-[11px] text-fg-3">
+                  {enabledCount > 0
+                    ? t("aggregation.modal.targetAppsHint", {
+                        defaultValue:
+                          "仅勾选的应用会同步并接入此外部供应商；未勾选的应用不受影响。",
+                      })
+                    : t("aggregation.modal.targetAppsEmptyHint", {
+                        defaultValue:
+                          "未勾选任何应用时，仅保存供应商配置，暂不分发到任何应用。",
+                      })}
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="quiet"
+                size="compact"
+                onClick={handleToggleAllApps}
+              >
+                {allSelected
+                  ? t("providerForm.modelPicker.selectNone", {
+                      defaultValue: "取消全选",
+                    })
+                  : t("providerForm.modelPicker.selectAll", {
+                      defaultValue: "全选",
+                    })}
+              </Button>
+            </div>
+            <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">
+              {visibleApps.map((appId) => {
+                const flag = APP_FLAG_KEY[appId];
+                const checked = flag ? Boolean(apps[flag]) : false;
+                return (
+                  <button
+                    key={appId}
+                    type="button"
+                    aria-pressed={checked}
+                    onClick={() => toggleApp(appId)}
+                    className={cn(
+                      "flex items-center gap-2 rounded-control border px-2.5 py-1.5 text-start text-caption transition-colors",
+                      checked
+                        ? "border-stack-border bg-stack-soft text-fg-1 font-medium"
+                        : "border-border bg-app text-fg-3 hover:text-fg-2",
+                    )}
+                  >
+                    <AppGlyph
+                      app={appId}
+                      size={14}
+                      badgeClassName="bg-transparent"
+                    />
+                    <span className="min-w-0 flex-1 truncate">
+                      {APP_DISPLAY_NAME[appId]}
+                    </span>
+                    {checked && (
+                      <Check className="h-3.5 w-3.5 shrink-0 text-stack-text" />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           {/* 自定义/编辑模式下直接展示模型列表与「获取模型列表」 */}
           {requiresUrlInput && renderModelsSection()}
 
-          {/* 折叠高级选项：名称/URL 覆写（预设模式下）、协议、模型、相关设置、应用分发范围、备注 */}
+          {/* 折叠高级选项：名称/URL 覆写（预设模式下）、协议、模型、相关设置、备注 */}
           <div className="rounded-panel border border-border bg-surface">
             <button
               type="button"
@@ -1022,7 +1173,7 @@ export function AggregationProviderModal({
             >
               <span>
                 {t("aggregation.modal.advancedToggle", {
-                  defaultValue: "高级配置（协议格式 · 模型 · 分发范围）",
+                  defaultValue: "高级配置（协议格式 · 模型 · 请求头）",
                 })}
               </span>
               {advancedOpen ? (
@@ -1236,62 +1387,6 @@ export function AggregationProviderModal({
                       onChange={(e) => setCustomModelsUrl(e.target.value)}
                       placeholder="https://api.example.com/v1/models"
                     />
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <Label>
-                      {t("aggregation.modal.compatibleApps", {
-                        defaultValue: "兼容分发的应用",
-                      })}{" "}
-                      ({enabledCount}/{visibleApps.length})
-                    </Label>
-                    <Button
-                      type="button"
-                      variant="quiet"
-                      size="compact"
-                      onClick={handleToggleAllApps}
-                    >
-                      {allSelected
-                        ? t("providerForm.modelPicker.selectNone", {
-                            defaultValue: "取消全选",
-                          })
-                        : t("providerForm.modelPicker.selectAll", {
-                            defaultValue: "全选",
-                          })}
-                    </Button>
-                  </div>
-                  <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">
-                    {visibleApps.map((appId) => {
-                      const flag = APP_FLAG_KEY[appId];
-                      const checked = flag ? Boolean(apps[flag]) : false;
-                      return (
-                        <button
-                          key={appId}
-                          type="button"
-                          onClick={() => toggleApp(appId)}
-                          className={cn(
-                            "flex items-center gap-2 rounded-control border px-2.5 py-1.5 text-start text-caption transition-colors",
-                            checked
-                              ? "border-stack-border bg-stack-soft text-fg-1 font-medium"
-                              : "border-border bg-surface text-fg-3 hover:text-fg-2",
-                          )}
-                        >
-                          <AppGlyph
-                            app={appId}
-                            size={14}
-                            badgeClassName="bg-transparent"
-                          />
-                          <span className="min-w-0 flex-1 truncate">
-                            {APP_DISPLAY_NAME[appId]}
-                          </span>
-                          {checked && (
-                            <Check className="h-3.5 w-3.5 shrink-0 text-stack-text" />
-                          )}
-                        </button>
-                      );
-                    })}
                   </div>
                 </div>
 

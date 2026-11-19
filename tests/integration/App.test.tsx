@@ -70,14 +70,36 @@ vi.mock("@/components/providers/ProviderList", () => ({
     <div>
       <div data-testid="provider-list">{JSON.stringify(providers)}</div>
       <div data-testid="current-provider">{currentProviderId}</div>
-      <button onClick={() => onSwitch(providers[currentProviderId])}>
+      <button
+        onClick={() =>
+          onSwitch(providers[currentProviderId] ?? Object.values(providers)[0])
+        }
+      >
         switch
       </button>
-      <button onClick={() => onEdit(providers[currentProviderId])}>edit</button>
-      <button onClick={() => onDuplicate(providers[currentProviderId])}>
+      <button
+        onClick={() =>
+          onEdit(providers[currentProviderId] ?? Object.values(providers)[0])
+        }
+      >
+        edit
+      </button>
+      <button
+        onClick={() =>
+          onDuplicate(
+            providers[currentProviderId] ?? Object.values(providers)[0],
+          )
+        }
+      >
         duplicate
       </button>
-      <button onClick={() => onConfigureUsage(providers[currentProviderId])}>
+      <button
+        onClick={() =>
+          onConfigureUsage(
+            providers[currentProviderId] ?? Object.values(providers)[0],
+          )
+        }
+      >
         usage
       </button>
       <button onClick={() => onOpenWebsite("https://example.com")}>
@@ -249,20 +271,52 @@ describe("App integration with MSW", () => {
     localStorage.removeItem("cc-switch-last-app");
   });
 
-  it("covers basic provider flows via real hooks", async () => {
+  it("covers basic provider flows via real hooks on aggregation-managed providers", async () => {
+    setProviders("opencode", {
+      "universal-1": {
+        id: "universal-1",
+        name: "Universal One",
+        settingsConfig: {
+          npm: "@ai-sdk/openai-compatible",
+          models: { "glm-5": { name: "GLM 5" } },
+        },
+        sortIndex: 0,
+        createdAt: Date.now(),
+      },
+    });
+    setCurrentProviderId("opencode", "universal-1");
+    setLiveProviderIds("opencode", ["universal-1"]);
+    setProviders("openclaw", {
+      "agg-1": {
+        id: "agg-1",
+        name: "Agg One",
+        settingsConfig: {
+          baseUrl: "https://api.deepseek.com",
+          apiKey: "test-key",
+          api: "openai-completions",
+          models: [],
+        },
+        sortIndex: 0,
+        createdAt: Date.now(),
+      },
+    });
+    setCurrentProviderId("openclaw", "agg-1");
+    setLiveProviderIds("openclaw", ["agg-1"]);
+
     const { default: App } = await import("@/App");
     renderApp(App);
 
+    fireEvent.click(sidebarApp("OpenCode"));
     await waitFor(() =>
       expect(screen.getByTestId("provider-list").textContent).toContain(
-        "claude-1",
+        "universal-1",
       ),
     );
 
-    fireEvent.click(sidebarApp("Codex"));
+    fireEvent.click(sidebarApp("OpenClaw"));
     await waitFor(() =>
       expect(screen.getByTestId("provider-list").textContent).toContain(
-        "codex-1",
+        "agg-1",
       ),
     );
 
@@ -270,17 +324,6 @@ describe("App integration with MSW", () => {
     expect(await screen.findByTestId("usage-modal")).toBeInTheDocument();
     fireEvent.click(screen.getByText("save-script"));
     fireEvent.click(screen.getByText("close-usage"));
-
-    fireEvent.click(screen.getByText("create"));
-    expect(
-      await screen.findByTestId("add-provider-dialog"),
-    ).toBeInTheDocument();
-    fireEvent.click(screen.getByText("confirm-add"));
-    await waitFor(() =>
-      expect(screen.getByTestId("provider-list").textContent).toMatch(
-        /New codex Provider/,
-      ),
-    );
 
     fireEvent.click(screen.getByText("edit"));
     expect(
@@ -302,8 +345,8 @@ describe("App integration with MSW", () => {
     fireEvent.click(screen.getByText("open-website"));
 
     emitTauriEvent("provider-switched", {
-      appType: "codex",
-      providerId: "codex-2",
+      appType: "openclaw",
+      providerId: "agg-2",
     });
 
     expect(toastErrorMock).not.toHaveBeenCalled();
@@ -345,12 +388,46 @@ describe("App integration with MSW", () => {
   });
 
   it("resets provider view scroll when switching apps", async () => {
+    server.use(
+      http.post("http://tauri.local/auth_get_status", async ({ request }) => {
+        const { authProvider } = (await request.json()) as {
+          authProvider: string;
+        };
+        if (authProvider === "claude_official") {
+          return HttpResponse.json({
+            provider: authProvider,
+            authenticated: true,
+            default_account_id: "c-acc",
+            accounts: [
+              { id: "c-acc", login: "alice@anthropic.com", authenticated_at: 1 },
+            ],
+          });
+        }
+        if (authProvider === "codex_oauth") {
+          return HttpResponse.json({
+            provider: authProvider,
+            authenticated: true,
+            default_account_id: "x-acc",
+            accounts: [
+              { id: "x-acc", login: "bob@openai.com", authenticated_at: 1 },
+            ],
+          });
+        }
+        return HttpResponse.json({
+          provider: authProvider,
+          authenticated: false,
+          default_account_id: null,
+          accounts: [],
+        });
+      }),
+    );
+
     const { default: App } = await import("@/App");
     const { container } = renderApp(App);
 
     await waitFor(() =>
       expect(screen.getByTestId("provider-list").textContent).toContain(
-        "claude-1",
+        "alice@anthropic.com",
       ),
     );
 
@@ -371,7 +448,7 @@ describe("App integration with MSW", () => {
 
     await waitFor(() =>
       expect(screen.getByTestId("provider-list").textContent).toContain(
-        "codex-1",
+        "bob@openai.com",
       ),
     );
 
@@ -382,25 +459,44 @@ describe("App integration with MSW", () => {
   }, 10_000);
 
   it("closes provider panels when navigating away from the app page", async () => {
+    setProviders("opencode", {
+      "universal-oc-1": {
+        id: "universal-oc-1",
+        name: "Universal OC",
+        settingsConfig: {},
+        sortIndex: 0,
+      },
+    });
+    setCurrentProviderId("opencode", "universal-oc-1");
+    setProviders("openclaw", {
+      "agg-mc-1": {
+        id: "agg-mc-1",
+        name: "Agg MC",
+        settingsConfig: {},
+        sortIndex: 0,
+      },
+    });
+    setCurrentProviderId("openclaw", "agg-mc-1");
+    localStorage.setItem("cc-switch-last-app", "opencode");
+
     const { default: App } = await import("@/App");
     renderApp(App);
 
     await waitFor(() =>
       expect(screen.getByTestId("provider-list").textContent).toContain(
-        "claude-1",
+        "universal-oc-1",
       ),
     );
 
-    // 面板只盖住内容区，侧栏还能点：切应用时编辑面板必须关掉，否则 Claude 的
-    // 供应商会以 appId=codex 保存进 Codex
+    // 面板只盖住内容区，侧栏还能点：切应用时编辑面板必须关掉，否则会跨应用串台
     fireEvent.click(screen.getByText("edit"));
     expect(
       await screen.findByTestId("edit-provider-dialog"),
     ).toBeInTheDocument();
-    fireEvent.click(sidebarApp("Codex"));
+    fireEvent.click(sidebarApp("OpenClaw"));
     await waitFor(() =>
       expect(screen.getByTestId("provider-list").textContent).toContain(
-        "codex-1",
+        "agg-mc-1",
       ),
     );
     expect(
@@ -414,47 +510,66 @@ describe("App integration with MSW", () => {
       expect(screen.queryByTestId("usage-modal")).not.toBeInTheDocument(),
     );
 
-    fireEvent.click(sidebarApp("Codex"));
+    fireEvent.click(sidebarApp("OpenClaw"));
     await waitFor(() =>
       expect(screen.getByTestId("provider-list").textContent).toContain(
-        "codex-1",
+        "agg-mc-1",
       ),
     );
-    fireEvent.click(screen.getByText("create"));
+    fireEvent.click(screen.getByText("edit"));
     expect(
-      await screen.findByTestId("add-provider-dialog"),
+      await screen.findByTestId("edit-provider-dialog"),
     ).toBeInTheDocument();
     fireEvent.keyDown(window, { key: ",", metaKey: true });
     expect(await screen.findByTestId("settings-page")).toBeInTheDocument();
-    expect(screen.queryByTestId("add-provider-dialog")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("edit-provider-dialog")).not.toBeInTheDocument();
   }, 10_000);
 
   it("asks before leaving an editor page with unsaved changes", async () => {
+    setProviders("opencode", {
+      "universal-oc-1": {
+        id: "universal-oc-1",
+        name: "Universal OC",
+        settingsConfig: {},
+        sortIndex: 0,
+      },
+    });
+    setCurrentProviderId("opencode", "universal-oc-1");
+    setProviders("openclaw", {
+      "agg-mc-1": {
+        id: "agg-mc-1",
+        name: "Agg MC",
+        settingsConfig: {},
+        sortIndex: 0,
+      },
+    });
+    setCurrentProviderId("openclaw", "agg-mc-1");
+    localStorage.setItem("cc-switch-last-app", "opencode");
+
     const { default: App } = await import("@/App");
     renderApp(App);
     await waitFor(() =>
       expect(screen.getByTestId("provider-list").textContent).toContain(
-        "claude-1",
+        "universal-oc-1",
       ),
     );
 
     // 没改过：照常离开，不问
     fireEvent.click(screen.getByText("edit"));
-    fireEvent.click(sidebarApp("Codex"));
+    fireEvent.click(sidebarApp("OpenClaw"));
     await waitFor(() =>
       expect(screen.getByTestId("provider-list").textContent).toContain(
-        "codex-1",
+        "agg-mc-1",
       ),
     );
     expect(screen.queryByTestId("confirm-dialog")).not.toBeInTheDocument();
 
     // 改过：先问；继续编辑就留在原页
-    // （ConfirmDialog 在这个文件里是 mock：只渲染消息和 confirm-delete / cancel-delete）
     fireEvent.click(screen.getByText("edit"));
     fireEvent.input(screen.getByLabelText("edit-field"), {
       target: { value: "draft" },
     });
-    fireEvent.click(sidebarApp("Claude Code"));
+    fireEvent.click(sidebarApp("OpenCode"));
     expect(await screen.findByTestId("confirm-message")).toHaveTextContent(
       "common.unsavedLeaveMessage",
     );
@@ -463,7 +578,7 @@ describe("App integration with MSW", () => {
       await screen.findByTestId("edit-provider-dialog"),
     ).toBeInTheDocument();
     expect(screen.getByTestId("provider-list").textContent).toContain(
-      "codex-1",
+      "agg-mc-1",
     );
 
     // ⌘, 也问；放弃后才离开
@@ -481,11 +596,7 @@ describe("App integration with MSW", () => {
   it("keeps the unsaved guard when re-clicking the current page", async () => {
     const { default: App } = await import("@/App");
     renderApp(App);
-    await waitFor(() =>
-      expect(screen.getByTestId("provider-list").textContent).toContain(
-        "claude-1",
-      ),
-    );
+    await waitFor(() => expect(sidebarApp("MCP")).toBeInTheDocument());
 
     fireEvent.click(sidebarApp("MCP"));
     fireEvent.input(await screen.findByLabelText("mcp-field"), {
@@ -510,11 +621,7 @@ describe("App integration with MSW", () => {
     const { default: App } = await import("@/App");
     renderApp(App);
 
-    await waitFor(() =>
-      expect(screen.getByTestId("provider-list").textContent).toContain(
-        "claude-1",
-      ),
-    );
+    await screen.findByTestId("provider-list");
 
     expect(() => {
       emitTauriEvent("webdav-sync-status-updated", null);
@@ -550,8 +657,8 @@ describe("App integration with MSW", () => {
 
   it("duplicates openclaw providers with a generated key that avoids live-only ids", async () => {
     setProviders("openclaw", {
-      deepseek: {
-        id: "deepseek",
+      "agg-deepseek": {
+        id: "agg-deepseek",
         name: "DeepSeek",
         settingsConfig: {
           baseUrl: "https://api.deepseek.com",
@@ -564,8 +671,8 @@ describe("App integration with MSW", () => {
         createdAt: Date.now(),
       },
     });
-    setCurrentProviderId("openclaw", "deepseek");
-    setLiveProviderIds("openclaw", ["deepseek-copy"]);
+    setCurrentProviderId("openclaw", "agg-deepseek");
+    setLiveProviderIds("openclaw", ["agg-deepseek-copy"]);
 
     const { default: App } = await import("@/App");
     renderApp(App);
@@ -574,7 +681,7 @@ describe("App integration with MSW", () => {
 
     await waitFor(() =>
       expect(screen.getByTestId("provider-list").textContent).toContain(
-        "deepseek",
+        "agg-deepseek",
       ),
     );
 
@@ -582,7 +689,7 @@ describe("App integration with MSW", () => {
 
     await waitFor(() => {
       const providerList = screen.getByTestId("provider-list").textContent;
-      expect(providerList).toContain("deepseek-copy-2");
+      expect(providerList).toContain("agg-deepseek-copy-2");
       expect(providerList).toContain("DeepSeek copy");
     });
 
@@ -600,16 +707,21 @@ describe("App integration with MSW", () => {
     async (settingsConfig) => {
       localStorage.setItem("cc-switch-last-app", "opencode");
       setProviders("opencode", {
-        "opencode-go": {
-          id: "opencode-go",
+        "universal-opencode-go": {
+          id: "universal-opencode-go",
           name: "OpenCode Go",
           settingsConfig,
           sortIndex: 0,
         },
-        other: { id: "other", name: "Other", settingsConfig: {}, sortIndex: 1 },
+        "universal-other": {
+          id: "universal-other",
+          name: "Other",
+          settingsConfig: {},
+          sortIndex: 1,
+        },
       });
-      setCurrentProviderId("opencode", "opencode-go");
-      setLiveProviderIds("opencode", ["opencode-go"]);
+      setCurrentProviderId("opencode", "universal-opencode-go");
+      setLiveProviderIds("opencode", ["universal-opencode-go"]);
       const add = vi.spyOn(providersApi, "add");
       const sort = vi.spyOn(providersApi, "updateSortOrder");
       try {
@@ -617,7 +729,7 @@ describe("App integration with MSW", () => {
         renderApp(App);
         await waitFor(() =>
           expect(screen.getByTestId("provider-list").textContent).toContain(
-            "opencode-go",
+            "universal-opencode-go",
           ),
         );
         fireEvent.click(screen.getByText("duplicate"));
@@ -629,7 +741,7 @@ describe("App integration with MSW", () => {
         expect(add).not.toHaveBeenCalled();
         expect(sort).not.toHaveBeenCalled();
         expect(screen.getByTestId("provider-list").textContent).not.toContain(
-          "opencode-go-copy",
+          "universal-opencode-go-copy",
         );
       } finally {
         add.mockRestore();
@@ -641,8 +753,8 @@ describe("App integration with MSW", () => {
   it("duplicates complete OpenCode providers using an unused ID", async () => {
     localStorage.setItem("cc-switch-last-app", "opencode");
     setProviders("opencode", {
-      custom: {
-        id: "custom",
+      "universal-custom": {
+        id: "universal-custom",
         name: "Custom",
         sortIndex: 0,
         settingsConfig: {
@@ -651,19 +763,19 @@ describe("App integration with MSW", () => {
         },
       },
     });
-    setCurrentProviderId("opencode", "custom");
-    setLiveProviderIds("opencode", ["custom-copy"]);
+    setCurrentProviderId("opencode", "universal-custom");
+    setLiveProviderIds("opencode", ["universal-custom-copy"]);
     const { default: App } = await import("@/App");
     renderApp(App);
     await waitFor(() =>
       expect(screen.getByTestId("provider-list").textContent).toContain(
-        "custom",
+        "universal-custom",
       ),
     );
     fireEvent.click(screen.getByText("duplicate"));
     await waitFor(() =>
       expect(screen.getByTestId("provider-list").textContent).toContain(
-        "custom-copy-2",
+        "universal-custom-copy-2",
       ),
     );
     expect(toastErrorMock).not.toHaveBeenCalled();
@@ -680,23 +792,23 @@ describe("App integration with MSW", () => {
     async ({ settingsConfig, meta }) => {
       localStorage.setItem("cc-switch-last-app", "opencode");
       setProviders("opencode", {
-        native: {
-          id: "native",
+        "universal-native": {
+          id: "universal-native",
           name: "Native",
           settingsConfig,
           meta,
           sortIndex: 0,
         },
       });
-      setCurrentProviderId("opencode", "native");
-      setLiveProviderIds("opencode", ["native"]);
+      setCurrentProviderId("opencode", "universal-native");
+      setLiveProviderIds("opencode", ["universal-native"]);
       const add = vi.spyOn(providersApi, "add");
       try {
         const { default: App } = await import("@/App");
         renderApp(App);
         await waitFor(() =>
           expect(screen.getByTestId("provider-list").textContent).toContain(
-            "native",
+            "universal-native",
           ),
         );
         fireEvent.click(screen.getByText("duplicate"));
@@ -715,8 +827,8 @@ describe("App integration with MSW", () => {
   it("duplicates complete native OpenCode providers using an unused ID", async () => {
     localStorage.setItem("cc-switch-last-app", "opencode");
     setProviders("opencode", {
-      native: {
-        id: "native",
+      "universal-native": {
+        id: "universal-native",
         name: "Native",
         sortIndex: 0,
         settingsConfig: {
@@ -726,26 +838,31 @@ describe("App integration with MSW", () => {
         meta: { opencodeConfigFormat: "v2" },
       },
     });
-    setCurrentProviderId("opencode", "native");
-    setLiveProviderIds("opencode", ["native-copy"]);
+    setCurrentProviderId("opencode", "universal-native");
+    setLiveProviderIds("opencode", ["universal-native-copy"]);
     const { default: App } = await import("@/App");
     renderApp(App);
     await waitFor(() =>
       expect(screen.getByTestId("provider-list").textContent).toContain(
-        "native",
+        "universal-native",
       ),
     );
     fireEvent.click(screen.getByText("duplicate"));
     await waitFor(() =>
       expect(screen.getByTestId("provider-list").textContent).toContain(
-        "native-copy-2",
+        "universal-native-copy-2",
       ),
     );
     expect(toastErrorMock).not.toHaveBeenCalled();
   });
 
-  it("duplicates MiniMax Code providers under a generated unused key", async () => {
-    localStorage.setItem("cc-switch-last-app", "mcode");
+  it("duplicates Hermes providers under a generated unused key", async () => {
+    localStorage.setItem("cc-switch-last-app", "hermes");
+    server.use(
+      http.post("http://tauri.local/get_hermes_live_provider_ids", () =>
+        HttpResponse.json(["universal-kimi"]),
+      ),
+    );
     const provider = (id: string, name: string) => ({
       id,
       name,
@@ -754,45 +871,48 @@ describe("App integration with MSW", () => {
       sortIndex: 0,
       createdAt: Date.now(),
     });
-    setProviders("mcode", {
-      kimi: provider("kimi", "Kimi"),
-      "kimi-copy": provider("kimi-copy", "Kimi copy"),
+    setProviders("hermes", {
+      "universal-kimi": provider("universal-kimi", "Kimi"),
+      "universal-kimi-copy": provider("universal-kimi-copy", "Kimi copy"),
     });
-    setCurrentProviderId("mcode", "kimi");
+    setCurrentProviderId("hermes", "universal-kimi");
 
     const { default: App } = await import("@/App");
     renderApp(App);
 
     await waitFor(() =>
       expect(screen.getByTestId("provider-list").textContent).toContain(
-        "kimi-copy",
+        "universal-kimi-copy",
       ),
     );
     fireEvent.click(screen.getByText("duplicate"));
 
     await waitFor(() =>
       expect(screen.getByTestId("provider-list").textContent).toContain(
-        "kimi-copy-2",
+        "universal-kimi-copy-2",
       ),
-    );
-    expect(toastErrorMock).not.toHaveBeenCalledWith(
-      expect.stringContaining("Provider key is required for mcode"),
     );
   });
 
-  it("refreshes MiniMax Code provider membership after removing it from live config", async () => {
-    localStorage.setItem("cc-switch-last-app", "mcode");
+  it("refreshes Oh My Pi provider membership after removing it from live config", async () => {
+    localStorage.setItem("cc-switch-last-app", "omp");
     let liveConfigManaged = true;
     let providerRequests = 0;
     server.use(
+      http.post("http://tauri.local/get_pi_current_state", () =>
+        HttpResponse.json({
+          enabledProviderIds: liveConfigManaged ? ["agg-custom"] : [],
+          defaultProviderId: null,
+        }),
+      ),
       http.post("http://tauri.local/get_providers", async ({ request }) => {
         const { app } = (await request.json()) as { app: string };
-        if (app !== "mcode") return;
+        if (app !== "omp") return;
         providerRequests += 1;
         return HttpResponse.json({
-          custom: {
-            id: "custom",
-            name: "Custom MiniMax Code",
+          "agg-custom": {
+            id: "agg-custom",
+            name: "Custom Oh My Pi",
             settingsConfig: {},
             meta: { liveConfigManaged },
           },
@@ -801,7 +921,10 @@ describe("App integration with MSW", () => {
       http.post(
         "http://tauri.local/remove_provider_from_live_config",
         async ({ request }) => {
-          expect(await request.json()).toEqual({ id: "custom", app: "mcode" });
+          expect(await request.json()).toEqual({
+            id: "agg-custom",
+            app: "omp",
+          });
           liveConfigManaged = false;
           return HttpResponse.json(true);
         },
@@ -831,83 +954,90 @@ describe("App integration with MSW", () => {
     );
     expect(providerRequests).toBeGreaterThan(requestsBeforeRemoval);
     expect(screen.getByTestId("provider-list")).toHaveTextContent(
-      "Custom MiniMax Code",
+      "Custom Oh My Pi",
     );
   });
 
-  it("rereads Kimi's default after a removal is refused for a stale default", async () => {
-    localStorage.setItem("cc-switch-last-app", "kimi");
-    let kimiCurrent = "kimi-sub";
-    let currentRequests = 0;
+  it("shows only aggregation-provided providers on non-official apps, removes Direct indicators, and manages official logins in Auth Center including mcode", async () => {
+    localStorage.setItem("cc-switch-last-app", "opencode");
     server.use(
-      http.post("http://tauri.local/get_providers", async ({ request }) => {
-        const { app } = (await request.json()) as { app: string };
-        if (app !== "kimi") return;
-        return HttpResponse.json({
-          go: {
-            id: "go",
-            name: "OpenCode Go",
-            settingsConfig: {},
-            meta: { liveConfigManaged: true },
-          },
-          "kimi-sub": {
-            id: "kimi-sub",
-            name: "Kimi subscription",
-            settingsConfig: {},
-            meta: { liveConfigManaged: true },
-          },
-        });
-      }),
-      http.post(
-        "http://tauri.local/get_current_provider",
-        async ({ request }) => {
-          const { app } = (await request.json()) as { app: string };
-          if (app !== "kimi") return;
-          currentRequests += 1;
-          return HttpResponse.json(kimiCurrent);
-        },
+      http.post("http://tauri.local/mcode_oauth_status", () =>
+        HttpResponse.json({
+          currentAccountId: "mcode-1",
+          accounts: [
+            {
+              id: "mcode-1",
+              name: "Alice MiniMax",
+              email: "alice@minimax.cn",
+              avatarUrl: null,
+              region: "cn",
+              authenticated: true,
+              expiresAt: Date.now() + 3600_000,
+              error: null,
+            },
+          ],
+        }),
       ),
-      http.post("http://tauri.local/remove_provider_from_live_config", () =>
-        HttpResponse.json(
-          "无效输入: Select another default model in Kimi Code before removing this model or provider",
-          { status: 500 },
-        ),
+      http.post("http://tauri.local/mcode_oauth_quota", () =>
+        HttpResponse.json({ success: false }),
       ),
     );
+    setProviders("opencode", {
+      "custom-non-agg": {
+        id: "custom-non-agg",
+        name: "Custom Local",
+        settingsConfig: {},
+        sortIndex: 0,
+      },
+      "universal-shared": {
+        id: "universal-shared",
+        name: "Aggregation Shared",
+        settingsConfig: {},
+        sortIndex: 1,
+      },
+    });
+    setCurrentProviderId("opencode", "universal-shared");
 
     const { default: App } = await import("@/App");
     renderApp(App);
 
-    await waitFor(() =>
-      expect(screen.getByTestId("current-provider")).toHaveTextContent(
-        "kimi-sub",
-      ),
-    );
-    // 用户在 Kimi Code 里用 /model 换到了 OpenCode Go 的模型，页面还没重读
-    kimiCurrent = "go";
-    const requestsBeforeRemoval = currentRequests;
-    fireEvent.click(screen.getByText("remove"));
-    fireEvent.click(screen.getByText("confirm-delete"));
+    await waitFor(() => {
+      const listText = screen.getByTestId("provider-list").textContent ?? "";
+      expect(listText).toContain("universal-shared");
+      expect(listText).not.toContain("custom-non-agg");
+    });
 
-    await waitFor(() =>
-      expect(toastErrorMock).toHaveBeenCalledWith(
-        "notifications.removeFromConfigFailed",
-        expect.objectContaining({
-          description: "kimi.error.defaultModelInUse",
-        }),
-      ),
-    );
-    await waitFor(() =>
-      expect(screen.getByTestId("current-provider")).toHaveTextContent("go"),
-    );
-    expect(currentRequests).toBeGreaterThan(requestsBeforeRemoval);
+    // Switch to Claude Code: no "添加官方登录" button and no Direct tab / titlebar status
+    fireEvent.click(sidebarApp("Claude Code"));
+    expect(
+      screen.queryByRole("button", { name: /添加官方登录|addOfficialLogin/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /mode\.names\.direct/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText(/mode\.status\.(direct|route|stack)Lead/),
+    ).not.toBeInTheDocument();
+
+    // Switch to MiniMax Code: shows OfficialAccountsPanel with logged-in account and Auth Center link
+    fireEvent.click(sidebarApp("MiniMax Code"));
+    expect(
+      await screen.findByRole("heading", { name: "Alice MiniMax", hidden: true }),
+    ).toBeInTheDocument();
+
+    const manageBtn = await screen.findByRole("button", {
+      name: /管理账号|manageInAuthCenter/,
+      hidden: true,
+    });
+    fireEvent.click(manageBtn);
+    expect(await screen.findByText("nav.auth")).toBeInTheDocument();
   });
 
   it("warns without blocking when removing Pi's global default provider", async () => {
     localStorage.setItem("cc-switch-last-app", "pi");
     setProviders("pi", {
-      custom: {
-        id: "custom",
+      "universal-custom": {
+        id: "universal-custom",
         name: "Custom Pi",
         settingsConfig: {
           baseUrl: "https://api.example.com/v1",
@@ -923,8 +1053,8 @@ describe("App integration with MSW", () => {
     server.use(
       http.post("http://tauri.local/get_pi_current_state", () =>
         HttpResponse.json({
-          enabledProviderIds: ["custom"],
-          defaultProviderId: "custom",
+          enabledProviderIds: ["universal-custom"],
+          defaultProviderId: "universal-custom",
         }),
       ),
     );
@@ -950,8 +1080,8 @@ describe("App integration with MSW", () => {
 
   it("shows toast when duplicate cannot load live provider ids", async () => {
     setProviders("openclaw", {
-      deepseek: {
-        id: "deepseek",
+      "agg-deepseek": {
+        id: "agg-deepseek",
         name: "DeepSeek",
         settingsConfig: {
           baseUrl: "https://api.deepseek.com",
@@ -964,7 +1094,7 @@ describe("App integration with MSW", () => {
         createdAt: Date.now(),
       },
     });
-    setCurrentProviderId("openclaw", "deepseek");
+    setCurrentProviderId("openclaw", "agg-deepseek");
 
     const liveIdsSpy = vi
       .spyOn(providersApi, "getOpenClawLiveProviderIds")
@@ -977,7 +1107,7 @@ describe("App integration with MSW", () => {
 
     await waitFor(() =>
       expect(screen.getByTestId("provider-list").textContent).toContain(
-        "deepseek",
+        "agg-deepseek",
       ),
     );
 
@@ -990,7 +1120,7 @@ describe("App integration with MSW", () => {
     });
 
     expect(screen.getByTestId("provider-list").textContent).not.toContain(
-      "deepseek-copy",
+      "agg-deepseek-copy",
     );
 
     liveIdsSpy.mockRestore();

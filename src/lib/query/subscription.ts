@@ -7,6 +7,7 @@ import {
 } from "@tanstack/react-query";
 import { subscriptionApi } from "@/lib/api/subscription";
 import { kimiOAuthApi } from "@/lib/api/kimiOAuth";
+import { mcodeOAuthApi } from "@/lib/api/mcodeOAuth";
 import type { AppId } from "@/lib/api/types";
 import type { ProviderMeta } from "@/types";
 import type {
@@ -261,6 +262,28 @@ export function useKimiAccountQuota(
   const query = useQuery({
     queryKey: ["kimi_oauth", "quota", accountId],
     queryFn: () => kimiOAuthApi.quota(accountId),
+    enabled,
+    ...autoRefetch(autoQuery, autoQueryIntervalMinutes),
+    staleTime: REFETCH_INTERVAL,
+    retry: 1,
+  });
+
+  return useQuotaKeepLastGood(query, accountId);
+}
+
+/** MiniMax Code 官方账号的剩余额度（Token Plan） */
+export function useMcodeAccountQuota(
+  accountId: string,
+  options: UseCodexOauthQuotaOptions = {},
+) {
+  const {
+    enabled = true,
+    autoQuery = false,
+    autoQueryIntervalMinutes = 5,
+  } = options;
+  const query = useQuery({
+    queryKey: ["mcode_oauth", "quota", accountId],
+    queryFn: () => mcodeOAuthApi.quota(accountId),
     enabled,
     ...autoRefetch(autoQuery, autoQueryIntervalMinutes),
     staleTime: REFETCH_INTERVAL,

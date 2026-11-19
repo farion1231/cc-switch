@@ -38,10 +38,14 @@ export const APP_FLAG_KEY: Partial<Record<AppId, keyof UniversalProviderApps>> =
     workbuddy: "workbuddy",
   };
 
-/** 构造仅包含可见兼容应用的开关对象；未在应用页面开启显示的应用一律置为 `false`（不配置）。 */
+/**
+ * 构造仅包含可见兼容应用的开关对象；未在应用页面开启显示的应用一律置为 `false`（不配置）。
+ * 默认 `defaultEnabled = false`，要求显式指定哪些应用使用该外部供应商，而非默认兼容全应用。
+ */
 export function buildVisibleUniversalApps(
   visibleIds: readonly AppId[],
   seed?: Partial<UniversalProviderApps>,
+  defaultEnabled = false,
 ): UniversalProviderApps {
   const visibleSet = new Set<AppId>(visibleIds);
   const result: UniversalProviderApps = {
@@ -69,7 +73,36 @@ export function buildVisibleUniversalApps(
       result[flag] = false;
       continue;
     }
-    result[flag] = seed?.[flag] ?? true;
+    result[flag] = seed?.[flag] ?? defaultEnabled;
+  }
+  return result;
+}
+
+export function universalAppsFromAppIds(
+  selectedIds: readonly AppId[],
+  visibleIds: readonly AppId[],
+): UniversalProviderApps {
+  const selectedSet = new Set<AppId>(selectedIds);
+  const seed: Partial<UniversalProviderApps> = {};
+  for (const appId of COMPATIBLE_APP_IDS) {
+    const flag = APP_FLAG_KEY[appId];
+    if (flag) {
+      seed[flag] = selectedSet.has(appId);
+    }
+  }
+  return buildVisibleUniversalApps(visibleIds, seed, false);
+}
+
+export function getVisibleEnabledUniversalApps(
+  apps: UniversalProviderApps,
+  visibleIds: readonly AppId[],
+): AppId[] {
+  const result: AppId[] = [];
+  for (const appId of visibleIds) {
+    const flag = APP_FLAG_KEY[appId];
+    if (flag && apps[flag]) {
+      result.push(appId);
+    }
   }
   return result;
 }

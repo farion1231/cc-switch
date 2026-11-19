@@ -46,12 +46,20 @@ vi.mock("@/components/providers/KimiAccountLogin", () => ({
   KimiAccountLogin: () => <div />,
 }));
 
+vi.mock("@/components/providers/McodeAccountLogin", () => ({
+  McodeAccountLogin: () => <div />,
+}));
+
 vi.mock("@/components/settings/auth/WorkBuddyAccountSection", () => ({
   WorkBuddyAccountSection: () => <div />,
 }));
 
 vi.mock("@/components/providers/DshAccount", () => ({
   DshAccountLogin: () => <div />,
+}));
+
+vi.mock("@/components/providers/forms/AgyOAuthSection", () => ({
+  AgyOAuthSection: () => <div />,
 }));
 
 describe("CodexOAuthSection", () => {

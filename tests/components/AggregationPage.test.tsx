@@ -23,8 +23,8 @@ beforeEach(() => {
 
 function mockOverview(enabled = false) {
   const toggleCalls: unknown[] = [];
-  const syncCalls: unknown[] = [];
-  const unsyncCalls: unknown[] = [];
+  const assignCalls: unknown[] = [];
+  const deleteCalls: unknown[] = [];
 
   const overviewPayload = (isEnabled: boolean) => ({
     enabled: isEnabled,
@@ -38,20 +38,20 @@ function mockOverview(enabled = false) {
         providerType: "custom_gateway",
         apps: {
           claude: true,
-          claudeDesktop: true,
+          claudeDesktop: false,
           codex: true,
-          gemini: true,
-          grokbuild: true,
-          opencode: true,
-          openclaw: true,
-          hermes: true,
-          pi: true,
-          omp: true,
-          mcode: true,
-          kimi: true,
-          dsh: true,
-          copilot: true,
-          workbuddy: true,
+          gemini: false,
+          grokbuild: false,
+          opencode: false,
+          openclaw: false,
+          hermes: false,
+          pi: false,
+          omp: false,
+          mcode: false,
+          kimi: false,
+          dsh: false,
+          copilot: false,
+          workbuddy: false,
         },
         baseUrl: "https://relay.example.com",
         apiKey: "sk-1234567890abcd",
@@ -75,13 +75,30 @@ function mockOverview(enabled = false) {
         canSync: true,
         isCurrentInApp: true,
         inStack: isEnabled,
-        syncedApps: ["claude", "codex"],
+        syncedApps: ["claude"],
       },
       {
         appType: "claude",
         provider: {
-          id: "default",
-          name: "default",
+          id: "claude-official",
+          name: "Claude Official",
+          category: "official",
+          settingsConfig: {},
+        },
+        baseUrl: null,
+        apiFormat: "official",
+        models: [],
+        isOfficial: true,
+        canSync: false,
+        isCurrentInApp: false,
+        inStack: false,
+        syncedApps: ["claude"],
+      },
+      {
+        appType: "claude",
+        provider: {
+          id: "incomplete-1",
+          name: "Incomplete Relay",
           settingsConfig: {},
         },
         baseUrl: "https://missing-key.example.com",
@@ -104,7 +121,32 @@ function mockOverview(enabled = false) {
         attached: isEnabled,
         routeProviderId: "relay-claude",
         stackMemberCount: isEnabled ? 1 : 0,
-        syncedProviderCount: 2,
+        syncedProviderCount: 1,
+        assignedProviderCount: 2,
+      },
+      {
+        appType: "codex",
+        supportsLocalProxy: true,
+        supportsStackCatalog: true,
+        additive: false,
+        mode: isEnabled ? "stack" : "direct",
+        attached: isEnabled,
+        routeProviderId: "universal-codex-univ-1",
+        stackMemberCount: isEnabled ? 1 : 0,
+        syncedProviderCount: 1,
+        assignedProviderCount: 1,
+      },
+      {
+        appType: "gemini",
+        supportsLocalProxy: true,
+        supportsStackCatalog: false,
+        additive: false,
+        mode: "direct",
+        attached: false,
+        routeProviderId: null,
+        stackMemberCount: 0,
+        syncedProviderCount: 0,
+        assignedProviderCount: 0,
       },
       {
         appType: "opencode",
@@ -115,7 +157,8 @@ function mockOverview(enabled = false) {
         attached: false,
         routeProviderId: null,
         stackMemberCount: 0,
-        syncedProviderCount: 1,
+        syncedProviderCount: 0,
+        assignedProviderCount: 0,
       },
     ],
   });
@@ -136,28 +179,28 @@ function mockOverview(enabled = false) {
       },
     ),
     http.post(
-      `${TAURI_ENDPOINT}/sync_aggregation_provider_to_all_apps`,
+      `${TAURI_ENDPOINT}/set_aggregation_provider_apps`,
       async ({ request }) => {
-        syncCalls.push(await request.json());
+        assignCalls.push(await request.json());
         return HttpResponse.json({
-          syncedApps: ["claude", "codex", "gemini"],
+          syncedApps: ["claude", "gemini"],
           warnings: [],
         });
       },
     ),
     http.post(
-      `${TAURI_ENDPOINT}/unsync_aggregation_provider`,
+      `${TAURI_ENDPOINT}/delete_aggregation_provider`,
       async ({ request }) => {
-        unsyncCalls.push(await request.json());
+        deleteCalls.push(await request.json());
         return HttpResponse.json({
-          syncedApps: ["codex"],
+          syncedApps: ["claude", "codex"],
           warnings: [],
         });
       },
     ),
   );
 
-  return { toggleCalls, syncCalls, unsyncCalls };
+  return { toggleCalls, assignCalls, deleteCalls };
 }
 
 function renderPage() {
@@ -173,287 +216,296 @@ function renderPage() {
 }
 
 describe("AggregationPage", () => {
-  it("renders a single global switch, masks API key, and folds missing-credential providers", async () => {
+  it("renders external providers with per-app assignments, excludes official accounts, and folds incomplete items", async () => {
     const user = userEvent.setup();
     const { toggleCalls } = mockOverview(false);
     renderPage();
 
-    const switches = await screen.findAllByRole("switch");
-    expect(switches).toHaveLength(1);
-    expect(switches[0]).not.toBeChecked();
+    expect(await screen.findByText("Main Gateway")).toBeInTheDocument();
+    expect(screen.getByText("Claude Relay")).toBeInTheDocument();
+    // Masked API key
+    expect(screen.getByText("sk-1•••abcd")).toBeInTheDocument();
+    // Official login accounts must NOT appear on the Aggregation page
+    expect(screen.queryByText("Claude Official")).not.toBeInTheDocument();
+    // No "sync to all apps" button anymore
     expect(
-      screen.queryByRole("button", { name: /立即开启聚合模式|turnOnNow/ }),
+      screen.queryByRole("button", { name: /兼容全应用|兼容全部应用|syncAllApps/ }),
     ).not.toBeInTheDocument();
 
-    expect(await screen.findByText("Main Gateway")).toBeInTheDocument();
-    expect(screen.getByText("sk-1•••abcd")).toBeInTheDocument();
-    expect(screen.getByText("Claude Relay")).toBeInTheDocument();
+    // Incomplete external provider is folded by default
+    expect(screen.queryByText("Incomplete Relay")).not.toBeInTheDocument();
+    const foldBtn = screen.getByRole("button", {
+      name: /待补全凭据的外部供应商|incompleteSectionTitle/,
+    });
+    await user.click(foldBtn);
+    expect(screen.getByText("Incomplete Relay")).toBeInTheDocument();
 
-    // 默认折叠仅原生可用/缺少凭据条目，展开后显示原因
-    expect(screen.queryByText("default")).not.toBeInTheDocument();
-    await user.click(
-      screen.getByRole("button", {
-        name: /仅原生应用可用|secondarySectionTitle/,
-      }),
-    );
-    expect(await screen.findByText("default")).toBeInTheDocument();
-
-    await user.click(switches[0]);
-    await waitFor(() =>
-      expect(toggleCalls).toEqual([{ enabled: true }]),
-    );
+    // Global switch toggles aggregation mode
+    const toggle = screen.getByRole("switch", {
+      name: /开启聚合模式|enableMode/,
+    });
+    await user.click(toggle);
+    await waitFor(() => expect(toggleCalls).toEqual([{ enabled: true }]));
   });
 
-  it("syncs a ready app provider across all compatible apps", async () => {
+  it("allows assigning specific apps to a provider inline instead of syncing to all apps", async () => {
     const user = userEvent.setup();
-    const { syncCalls, unsyncCalls } = mockOverview(true);
+    const { assignCalls } = mockOverview(true);
     renderPage();
 
-    const syncButtons = await screen.findAllByRole("button", {
-      name: /^aggregation\.syncAllApps$|^兼容全|^Sync to all apps$/,
+    expect(await screen.findByText("Main Gateway")).toBeInTheDocument();
+
+    const assignBtns = screen.getAllByRole("button", {
+      name: /分配应用|assignApps/,
     });
-    expect(syncButtons.length).toBeGreaterThanOrEqual(2);
+    await user.click(assignBtns[0]);
 
-    // 累加式应用在全局聚合开启且已同步时，与路由类应用保持一致显示“已接入”
-    const attachedBadges = screen.getAllByText(
-      /^(已接入|Connected|aggregation\.appAttached)$/,
-    );
-    expect(attachedBadges.length).toBe(2);
-
-    await user.click(syncButtons[1]);
-    await waitFor(() =>
-      expect(syncCalls).toEqual([
-        { sourceApp: "claude", providerId: "relay-claude" },
-      ]),
-    );
-
-    const unsyncButtons = await screen.findAllByRole("button", {
-      name: /取消兼容|Cancel compatibility|aggregation\.unsyncApps/,
+    // Currently assigned: claude + codex. Uncheck Codex, check Gemini.
+    const codexToggle = await screen.findByRole("button", {
+      name: "Codex",
+      pressed: true,
     });
-    expect(unsyncButtons.length).toBe(2);
+    await user.click(codexToggle);
 
-    await user.click(unsyncButtons[0]);
-    await user.click(unsyncButtons[1]);
+    const geminiToggle = screen.getByRole("button", {
+      name: "Gemini CLI",
+      pressed: false,
+    });
+    await user.click(geminiToggle);
+
+    await user.click(
+      screen.getByRole("button", { name: /保存分配|saveAssignment/ }),
+    );
+
     await waitFor(() =>
-      expect(unsyncCalls).toEqual([
-        { sourceApp: null, providerId: "univ-1" },
-        { sourceApp: "claude", providerId: "relay-claude" },
+      expect(assignCalls).toEqual([
+        {
+          sourceApp: null,
+          providerId: "univ-1",
+          targetApps: ["claude", "gemini"],
+        },
       ]),
     );
   });
 
-  it("supports preset search & simplified key-only creation while hiding disabled apps", async () => {
+  it("deletes an external provider via delete_aggregation_provider", async () => {
     const user = userEvent.setup();
-    const base = getSettings();
-    setSettings({
-      ...base,
-      visibleApps: {
-        ...DEFAULT_VISIBLE_APPS,
-        claude: true,
-        codex: false,
-        opencode: false,
-      },
+    const { deleteCalls } = mockOverview(false);
+    renderPage();
+
+    expect(await screen.findByText("Main Gateway")).toBeInTheDocument();
+
+    const deleteBtns = screen.getAllByRole("button", {
+      name: /common\.delete|删除/,
     });
-    const saveMock = vi.fn<(provider: UniversalProvider) => Promise<void>>(
-      async () => {},
+    await user.click(deleteBtns[0]);
+
+    const dialog = await screen.findByRole("dialog");
+    await user.click(
+      within(dialog).getByRole("button", { name: /common\.confirm|确定/ }),
     );
 
-    server.use(
-      http.post(`${TAURI_ENDPOINT}/get_aggregation_overview`, () =>
-        HttpResponse.json({
-          enabled: true,
-          proxyRunning: true,
-          proxyAddress: "127.0.0.1",
-          proxyPort: 15721,
-          universalProviders: [],
-          appProviders: [
-            {
-              appType: "claude",
-              provider: { id: "c1", name: "Visible Claude", settingsConfig: {} },
-              baseUrl: "https://claude.example.com",
-              apiFormat: "anthropic",
-              models: ["claude-sonnet-4-20250514"],
-              isOfficial: false,
-              canSync: true,
-              isCurrentInApp: true,
-              inStack: true,
-              syncedApps: ["claude", "codex"],
-            },
-            {
-              appType: "codex",
-              provider: { id: "x1", name: "Hidden Codex", settingsConfig: {} },
-              baseUrl: "https://codex.example.com",
-              apiFormat: "openai_responses",
-              models: ["gpt-4o"],
-              isOfficial: false,
-              canSync: true,
-              isCurrentInApp: false,
-              inStack: false,
-              syncedApps: ["codex"],
-            },
-          ],
-          appStates: [
-            {
-              appType: "claude",
-              supportsLocalProxy: true,
-              supportsStackCatalog: true,
-              additive: false,
-              mode: "stack",
-              attached: true,
-              routeProviderId: "c1",
-              stackMemberCount: 1,
-              syncedProviderCount: 1,
-            },
-            {
-              appType: "opencode",
-              supportsLocalProxy: false,
-              supportsStackCatalog: false,
-              additive: true,
-              mode: "additive",
-              attached: false,
-              routeProviderId: null,
-              stackMemberCount: 0,
-              syncedProviderCount: 1,
-            },
-          ],
-        }),
-      ),
-      http.post(`${TAURI_ENDPOINT}/get_proxy_stack`, () =>
-        HttpResponse.json({ active: true, members: [] }),
-      ),
+    await waitFor(() =>
+      expect(deleteCalls).toEqual([
+        {
+          sourceApp: null,
+          providerId: "univ-1",
+        },
+      ]),
     );
+  });
 
+  it("filters providers by assigned app pill", async () => {
+    const user = userEvent.setup();
+    mockOverview(false);
+    renderPage();
+
+    expect(await screen.findByText("Main Gateway")).toBeInTheDocument();
+    expect(screen.getByText("Claude Relay")).toBeInTheDocument();
+
+    // Filter by Codex: only Main Gateway is assigned to Codex, Claude Relay is not
+    await user.click(screen.getByRole("button", { name: /^Codex \(1\)$/ }));
+    expect(screen.getByText("Main Gateway")).toBeInTheDocument();
+    expect(screen.queryByText("Claude Relay")).not.toBeInTheDocument();
+  });
+
+  it("AggregationProviderModal shows Target Apps directly in main form and defaults new providers to none selected", async () => {
+    const user = userEvent.setup();
+    const saved: UniversalProvider[] = [];
     const queryClient = createTestQueryClient();
+
     render(
       <QueryClientProvider client={queryClient}>
-        <div data-testid="agg-page">
-          <AggregationPage
-            onOpenApp={vi.fn()}
-            onOpenRoutingSettings={vi.fn()}
-          />
-        </div>
         <AggregationProviderModal
           isOpen
           onClose={vi.fn()}
-          onSaveAndSync={saveMock}
+          onSaveAndSync={async (p) => {
+            saved.push(p);
+          }}
         />
       </QueryClientProvider>,
     );
 
-    const pageContainer = within(screen.getByTestId("agg-page"));
-    expect(await pageContainer.findByText("Visible Claude")).toBeInTheDocument();
-    expect(pageContainer.queryByText("Hidden Codex")).not.toBeInTheDocument();
-    expect(pageContainer.queryByText("OpenCode")).not.toBeInTheDocument();
-    expect(
-      pageContainer.queryByRole("button", { name: /Codex 聚合设置|codexStackSettings/ }),
-    ).not.toBeInTheDocument();
-
-    // 在预设选择面板中搜索「深度求索」并选中 DeepSeek（只需填写 API Key！）
-    await user.type(
-      screen.getByPlaceholderText(/搜索 DeepSeek|Search DeepSeek/),
-      "深度求索",
-    );
-    await user.click(screen.getByRole("button", { name: /DeepSeek/ }));
-
-    // 主视图只要求填 Key（名称与 URL 默认折叠在高级配置里）
-    expect(screen.queryByPlaceholderText("https://api.example.com")).not.toBeInTheDocument();
-    await user.type(screen.getByPlaceholderText("sk-..."), "sk-deepseek-test");
+    // Step 1: open custom config
     await user.click(
-      screen.getByRole("button", { name: /保存并.*|saveAndSync|Save and sync/i }),
+      screen.getByRole("button", { name: /自定义配置|customProvider/ }),
     );
 
-    await waitFor(() => expect(saveMock).toHaveBeenCalledTimes(1));
-    const saved = saveMock.mock.calls[0][0];
-    expect(saved.name).toBe("DeepSeek");
-    expect(saved.baseUrl).toBe("https://api.deepseek.com/anthropic");
-    expect(saved.apiKey).toBe("sk-deepseek-test");
-    expect(saved.apps.claude).toBe(true);
-    expect(saved.apps.codex).toBe(false);
-    expect(saved.apps.opencode).toBe(false);
+    // Target apps section must be visible immediately (NOT hidden in Advanced)
+    expect(
+      screen.getByText(/指定适用应用|targetAppsTitle/),
+    ).toBeInTheDocument();
+
+    // Defaults to 0 selected apps -> submit button says "仅保存供应商"
+    expect(
+      screen.getByRole("button", { name: /仅保存供应商|saveOnly/ }),
+    ).toBeInTheDocument();
+
+    await user.type(screen.getByLabelText(/provider\.name|名称/), "My Relay");
+    await user.type(
+      screen.getByLabelText(/universalProvider\.baseUrl|API 地址/),
+      "https://my-relay.example.com",
+    );
+    await user.type(
+      screen.getByLabelText(/universalProvider\.apiKey|API Key/),
+      "sk-test-secret",
+    );
+
+    // Explicitly choose ONLY Claude Code and Codex
+    await user.click(
+      screen.getByRole("button", { name: "Claude Code", pressed: false }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Codex", pressed: false }),
+    );
+
+    const submitBtn = screen.getByRole("button", {
+      name: /保存并应用到 2 个应用|saveAndApply/,
+    });
+    await user.click(submitBtn);
+
+    await waitFor(() => expect(saved).toHaveLength(1));
+    expect(saved[0].apps.claude).toBe(true);
+    expect(saved[0].apps.codex).toBe(true);
+    expect(saved[0].apps.gemini).toBe(false);
+    expect(saved[0].apps.opencode).toBe(false);
   });
 
-  it("supports fetching models and advanced endpoint settings in AggregationProviderModal", async () => {
+  it("requires manual per-app connection instead of auto-attaching Claude Code and Codex", async () => {
     const user = userEvent.setup();
-    const saveMock = vi.fn<(provider: UniversalProvider) => Promise<void>>(
-      async () => {},
-    );
-    const fetchPayloads: unknown[] = [];
+    const appModeCalls: unknown[] = [];
+
+    const baseOverview = (globalEnabled: boolean, claudeAttached: boolean) => ({
+      enabled: globalEnabled,
+      proxyRunning: claudeAttached,
+      proxyAddress: "127.0.0.1",
+      proxyPort: 15721,
+      universalProviders: [],
+      appProviders: [],
+      appStates: [
+        {
+          appType: "claude",
+          supportsLocalProxy: true,
+          supportsStackCatalog: true,
+          additive: false,
+          mode: claudeAttached ? "stack" : "direct",
+          attached: claudeAttached,
+          routeProviderId: "agg-claude-u1",
+          stackMemberCount: claudeAttached ? 1 : 0,
+          syncedProviderCount: 1,
+          assignedProviderCount: 1,
+        },
+        {
+          appType: "codex",
+          supportsLocalProxy: true,
+          supportsStackCatalog: true,
+          additive: false,
+          mode: "direct",
+          attached: false,
+          routeProviderId: "agg-codex-u1",
+          stackMemberCount: 0,
+          syncedProviderCount: 1,
+          assignedProviderCount: 1,
+        },
+      ],
+    });
+
+    let globalEnabled = false;
+    let claudeAttached = false;
 
     server.use(
+      http.post(`${TAURI_ENDPOINT}/get_aggregation_overview`, () =>
+        HttpResponse.json(baseOverview(globalEnabled, claudeAttached)),
+      ),
+      http.post(`${TAURI_ENDPOINT}/get_proxy_stack`, () =>
+        HttpResponse.json({ active: claudeAttached, members: [] }),
+      ),
       http.post(
-        `${TAURI_ENDPOINT}/fetch_models_for_config`,
+        `${TAURI_ENDPOINT}/set_global_aggregation_mode`,
         async ({ request }) => {
-          fetchPayloads.push(await request.json());
-          return HttpResponse.json([
-            { id: "deepseek-r1", ownedBy: "deepseek" },
-            { id: "gpt-5.4", ownedBy: "openai" },
-          ]);
+          const body = (await request.json()) as { enabled: boolean };
+          globalEnabled = body.enabled;
+          if (!globalEnabled) {
+            claudeAttached = false;
+          }
+          return HttpResponse.json(baseOverview(globalEnabled, claudeAttached));
+        },
+      ),
+      http.post(
+        `${TAURI_ENDPOINT}/set_aggregation_app_mode`,
+        async ({ request }) => {
+          const body = (await request.json()) as {
+            appType: string;
+            enabled: boolean;
+            routeProviderId?: string | null;
+          };
+          appModeCalls.push(body);
+          if (body.appType === "claude") {
+            claudeAttached = body.enabled;
+          }
+          return HttpResponse.json(null);
         },
       ),
     );
 
-    const queryClient = createTestQueryClient();
-    render(
-      <QueryClientProvider client={queryClient}>
-        <AggregationProviderModal
-          isOpen
-          onClose={vi.fn()}
-          onSaveAndSync={saveMock}
-        />
-      </QueryClientProvider>,
-    );
+    renderPage();
 
-    await user.click(
-      screen.getByRole("button", { name: /自定义配置|Custom provider/ }),
-    );
-    await user.type(
-      screen.getByPlaceholderText(/主用中转站|Primary Gateway/),
-      "YOSHI",
-    );
-    await user.type(
-      screen.getByPlaceholderText("https://api.example.com"),
-      "https://yoshiyoshi.qzz.io",
-    );
-    await user.type(screen.getByPlaceholderText("sk-..."), "sk-yoshi");
-
-    // 点击“获取模型列表”并勾选全部返回模型
-    await user.click(
-      screen.getByRole("button", {
-        name: /获取模型|Fetch models|providerForm\.fetchModels/i,
-      }),
-    );
-
-    await waitFor(() => expect(fetchPayloads.length).toBe(1));
-    expect(fetchPayloads[0]).toMatchObject({
-      baseUrl: "https://yoshiyoshi.qzz.io",
-      apiKey: "sk-yoshi",
-      apiFormat: "openai_chat",
+    // Global mode OFF -> both attach buttons are disabled
+    const attachBtnsOff = await screen.findAllByRole("button", {
+      name: /接入|Connect|attachApp/,
     });
+    expect(attachBtnsOff).toHaveLength(2);
+    expect(attachBtnsOff[0]).toBeDisabled();
+    expect(attachBtnsOff[1]).toBeDisabled();
 
-    const applyBtn = await screen.findByRole("button", {
-      name: /应用|Apply|providerForm\.modelPicker\.apply/i,
+    // Turn ON global Aggregation -> Claude & Codex remain unattached (still showing Connect/接入, now enabled)
+    await user.click(
+      screen.getByRole("switch", { name: /开启聚合模式|enableMode/ }),
+    );
+    await waitFor(() => {
+      const btns = screen.getAllByRole("button", {
+        name: /接入|Connect|attachApp/,
+      });
+      expect(btns).toHaveLength(2);
+      expect(btns[0]).toBeEnabled();
+      expect(btns[1]).toBeEnabled();
     });
-    await user.click(await screen.findByText("deepseek-r1"));
-    await user.click(applyBtn);
+    expect(appModeCalls).toHaveLength(0);
 
-    // 展开高级配置并启用“完整端点 URL”
-    await user.click(
-      screen.getByRole("button", { name: /高级配置|Advanced settings/ }),
-    );
-    await user.click(
-      screen.getByRole("switch", {
-        name: /完整端点 URL|Full endpoint URL/,
-      }),
-    );
+    // Manually connect ONLY Claude Code
+    const attachBtnsOn = screen.getAllByRole("button", {
+      name: /接入|Connect|attachApp/,
+    });
+    await user.click(attachBtnsOn[0]);
 
-    await user.click(
-      screen.getByRole("button", { name: /保存并.*|saveAndSync|Save and sync/i }),
+    await waitFor(() =>
+      expect(appModeCalls).toEqual([
+        {
+          appType: "claude",
+          enabled: true,
+          routeProviderId: "agg-claude-u1",
+        },
+      ]),
     );
-
-    await waitFor(() => expect(saveMock).toHaveBeenCalledTimes(1));
-    const saved = saveMock.mock.calls[0][0];
-    expect(saved.name).toBe("YOSHI");
-    expect(saved.extraModels).toContain("deepseek-r1");
-    expect(saved.meta?.isFullUrl).toBe(true);
   });
 });

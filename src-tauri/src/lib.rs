@@ -1313,6 +1313,7 @@ pub fn run() {
             // 将同一个实例注入到全局状态，避免重复创建导致的不一致
             app.manage(app_state);
             app.manage(services::kimi_oauth::KimiOAuthManager::default());
+            app.manage(services::mcode_oauth::McodeOAuthManager::default());
 
             // 初始化 SkillService
             let skill_service = SkillService::new();
@@ -1589,7 +1590,6 @@ pub fn run() {
             commands::update_provider,
             commands::get_provider_editor_view,
             commands::delete_provider,
-            commands::add_provider_to_live_config,
             commands::remove_provider_from_live_config,
             commands::switch_provider,
             commands::import_default_config,
@@ -1860,8 +1860,9 @@ pub fn run() {
             commands::get_aggregation_overview,
             commands::set_global_aggregation_mode,
             commands::save_and_sync_universal_provider,
-            commands::sync_aggregation_provider_to_all_apps,
-            commands::unsync_aggregation_provider,
+            commands::set_aggregation_provider_apps,
+            commands::promote_app_provider_to_universal,
+            commands::delete_aggregation_provider,
             commands::set_aggregation_app_mode,
             // Custom icon library
             commands::get_custom_icons,
@@ -1939,6 +1940,13 @@ pub fn run() {
             commands::kimi_oauth_quota,
             commands::kimi_oauth_use_account,
             commands::kimi_oauth_models,
+            commands::mcode_oauth_status,
+            commands::mcode_oauth_start,
+            commands::mcode_oauth_poll,
+            commands::mcode_oauth_cancel,
+            commands::mcode_oauth_remove,
+            commands::mcode_oauth_quota,
+            commands::mcode_oauth_use_account,
             // Copilot OAuth commands (multi-account support)
             commands::copilot_get_models,
             commands::copilot_get_models_for_account,

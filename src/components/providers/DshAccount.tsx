@@ -54,7 +54,7 @@ export function accountName(
  * 右侧额度列：余额一行、赠金一行（DeepSeek Harness 也分开显示，免得把赠金当成充值），
  * 写在别的服务「剩余 xx%」那一格的位置；刷新用各服务共用的「x 分钟前 ↻」。
  */
-function DshBalance({
+export function DshBalance({
   login,
   status,
   queriedAt,

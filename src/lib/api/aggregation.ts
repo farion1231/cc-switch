@@ -25,6 +25,7 @@ export interface AggregationAppState {
   routeProviderId?: string | null;
   stackMemberCount: number;
   syncedProviderCount: number;
+  assignedProviderCount?: number;
 }
 
 export interface AggregationOverview {
@@ -57,21 +58,35 @@ export const aggregationApi = {
     return await invoke("save_and_sync_universal_provider", { provider });
   },
 
-  async syncProviderToAllApps(
+  async setProviderApps(
     sourceApp: string | null,
     providerId: string,
+    targetApps: AppId[],
   ): Promise<SyncAllResult> {
-    return await invoke("sync_aggregation_provider_to_all_apps", {
+    return await invoke("set_aggregation_provider_apps", {
       sourceApp,
       providerId,
+      targetApps,
     });
   },
 
-  async unsyncProvider(
+  async promoteAppProviderToUniversal(
+    sourceApp: string,
+    sourceProviderId: string,
+    provider: UniversalProvider,
+  ): Promise<SyncAllResult> {
+    return await invoke("promote_app_provider_to_universal", {
+      sourceApp,
+      sourceProviderId,
+      provider,
+    });
+  },
+
+  async deleteProvider(
     sourceApp: string | null,
     providerId: string,
   ): Promise<SyncAllResult> {
-    return await invoke("unsync_aggregation_provider", {
+    return await invoke("delete_aggregation_provider", {
       sourceApp,
       providerId,
     });

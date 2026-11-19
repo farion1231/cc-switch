@@ -13,6 +13,7 @@ pub mod env_manager;
 pub mod exchange_rates;
 pub mod ip_diagnostics;
 pub mod kimi_oauth;
+pub mod mcode_oauth;
 pub mod mcp;
 pub mod mcp_connectivity;
 pub mod model_fetch;

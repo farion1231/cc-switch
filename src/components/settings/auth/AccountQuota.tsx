@@ -35,6 +35,7 @@ import {
   useAgyAccountQuota,
   useClaudeAccountQuota,
   useKimiAccountQuota,
+  useMcodeAccountQuota,
   useXaiOauthQuotaByAccountId,
 } from "@/lib/query/subscription";
 import { extractErrorMessage } from "@/utils/errorUtils";
@@ -430,6 +431,48 @@ export function KimiAccountQuota({
       state={
         !state && quota?.success
           ? { kind: "note", text: t("kimi.oauth.noSubscription") }
+          : state
+      }
+      queriedAt={quota?.queriedAt ?? null}
+      loading={loading}
+      onRefresh={() => void refetch()}
+    />
+  );
+}
+
+/** MiniMax Code 官方账号的剩余额度（mcode_oauth_quota(accountId)） */
+export function McodeAccountQuota({
+  accountId,
+  login,
+}: {
+  accountId: string;
+  login: string;
+}) {
+  const { t, i18n } = useTranslation();
+  const display = useQuotaDisplay();
+  const {
+    data: quota,
+    isFetching: loading,
+    refetch,
+  } = useMcodeAccountQuota(accountId, { enabled: true, autoQuery: false });
+  const state = subscriptionQuotaState(
+    t,
+    quota,
+    loading,
+    i18n.language,
+    display,
+  );
+  return (
+    <AccountQuotaColumn
+      login={login}
+      state={
+        !state && quota?.success
+          ? {
+              kind: "note",
+              text: t("mcode.oauth.noSubscription", {
+                defaultValue: "未开通 Token Plan",
+              }),
+            }
           : state
       }
       queriedAt={quota?.queriedAt ?? null}

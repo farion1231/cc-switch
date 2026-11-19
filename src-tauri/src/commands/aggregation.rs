@@ -7,12 +7,14 @@ use tauri::{AppHandle, Emitter, State};
 use crate::app_config::AppType;
 use crate::provider::UniversalProvider;
 use crate::services::provider::aggregation::{
-    current_visible_apps, get_aggregation_overview as service_get_overview,
-    mask_universal_apps_to_visible, set_aggregation_app_mode as service_set_app_mode,
+    current_visible_apps, delete_aggregation_provider as service_delete_provider,
+    get_aggregation_overview as service_get_overview, mask_universal_apps_to_visible,
+    promote_app_provider_to_universal as service_promote_to_universal,
+    set_aggregation_app_mode as service_set_app_mode,
     set_global_aggregation_mode as service_set_global_mode,
-    sync_provider_to_all_apps as service_sync_to_all,
-    sync_universal_to_compatible_apps as service_sync_universal,
-    unsync_provider_from_all_apps as service_unsync_from_all, AggregationOverview, SyncAllResult,
+    set_provider_target_apps as service_set_provider_target_apps,
+    sync_universal_to_compatible_apps as service_sync_universal, AggregationOverview,
+    SyncAllResult,
 };
 use crate::services::ProviderService;
 use crate::store::AppState;
@@ -66,15 +68,16 @@ pub async fn save_and_sync_universal_provider(
     Ok(result)
 }
 
-/// 把任意来源供应商（`sourceApp` 为空表示通用供应商，否则为对应应用的供应商）同步兼容到全部应用。
+/// 为指定外部供应商精确指定适用应用列表（未选中的应用会自动取消同步）。
 #[tauri::command]
-pub async fn sync_aggregation_provider_to_all_apps(
+pub async fn set_aggregation_provider_apps(
     app: AppHandle,
     state: State<'_, AppState>,
     source_app: Option<String>,
     provider_id: String,
+    target_apps: Vec<String>,
 ) -> Result<SyncAllResult, String> {
-    let parsed_app = match source_app
+    let parsed_source = match source_app
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty())
@@ -82,23 +85,63 @@ pub async fn sync_aggregation_provider_to_all_apps(
         Some(raw) => Some(AppType::from_str(raw).map_err(|e| e.to_string())?),
         None => None,
     };
-    let result = service_sync_to_all(state.inner(), &app, parsed_app, &provider_id).await?;
+    let mut parsed_targets = Vec::with_capacity(target_apps.len());
+    for raw in target_apps {
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+            parsed_targets.push(AppType::from_str(trimmed).map_err(|e| e.to_string())?);
+        }
+    }
+    let result = service_set_provider_target_apps(
+        state.inner(),
+        &app,
+        parsed_source,
+        &provider_id,
+        parsed_targets,
+    )
+    .await?;
     let _ = app.emit(
         "universal-provider-synced",
-        serde_json::json!({ "action": "sync", "id": provider_id }),
+        serde_json::json!({ "action": "assign", "id": provider_id }),
     );
     Ok(result)
 }
 
-/// 取消指定供应商在所有兼容应用中的聚合分发配置。
+/// 将遗留应用外部供应商提升保存为聚合外部供应商，并同步到指定应用。
 #[tauri::command]
-pub async fn unsync_aggregation_provider(
+pub async fn promote_app_provider_to_universal(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    source_app: String,
+    source_provider_id: String,
+    provider: UniversalProvider,
+) -> Result<SyncAllResult, String> {
+    let parsed_source = AppType::from_str(&source_app).map_err(|e| e.to_string())?;
+    let provider_id = provider.id.clone();
+    let result = service_promote_to_universal(
+        state.inner(),
+        &app,
+        parsed_source,
+        &source_provider_id,
+        provider,
+    )
+    .await?;
+    let _ = app.emit(
+        "universal-provider-synced",
+        serde_json::json!({ "action": "promote", "id": provider_id }),
+    );
+    Ok(result)
+}
+
+/// 从聚合页安全删除外部供应商及其同步到各应用的全部配置。
+#[tauri::command]
+pub async fn delete_aggregation_provider(
     app: AppHandle,
     state: State<'_, AppState>,
     source_app: Option<String>,
     provider_id: String,
 ) -> Result<SyncAllResult, String> {
-    let parsed_app = match source_app
+    let parsed_source = match source_app
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty())
@@ -106,10 +149,11 @@ pub async fn unsync_aggregation_provider(
         Some(raw) => Some(AppType::from_str(raw).map_err(|e| e.to_string())?),
         None => None,
     };
-    let result = service_unsync_from_all(state.inner(), &app, parsed_app, &provider_id).await?;
+    let result =
+        service_delete_provider(state.inner(), &app, parsed_source, &provider_id).await?;
     let _ = app.emit(
         "universal-provider-synced",
-        serde_json::json!({ "action": "unsync", "id": provider_id }),
+        serde_json::json!({ "action": "delete", "id": provider_id }),
     );
     Ok(result)
 }

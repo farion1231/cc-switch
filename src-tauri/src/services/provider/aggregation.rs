@@ -3,7 +3,7 @@
 //! 职责：
 //! 1. 聚合页总览（`get_aggregation_overview`）：汇总所有统一供应商、各应用自有供应商以及各应用的兼容/接入状态；
 //! 2. 跨应用兼容投影：把任意非官方供应商（通用供应商或任意应用下的供应商）转换为其他 14 个兼容应用所需的配置格式；
-//! 3. 全局聚合开关（`set_global_aggregation_mode`）：统一控制 `enable_stack_mode`，关闭时自动把处于 Stack 模式的代理应用退回直连；
+//! 3. 全局聚合开关（`set_global_aggregation_mode`）：统一控制 `enable_stack_mode`，开启时仅同步外部供应商配置而不自动接入 Claude Code / Codex 等应用（需手动开启应用接入）；关闭时自动把处于代理/Stack 模式的应用退回直连；
 //! 4. 代理模式切换与成员管理：在聚合页直接控制支持本地代理的应用进入/退出聚合（Stack / Proxy）并刷新托盘。
 
 use std::collections::{HashMap, HashSet};
@@ -56,6 +56,7 @@ pub struct AggregationAppState {
     pub route_provider_id: Option<String>,
     pub stack_member_count: usize,
     pub synced_provider_count: usize,
+    pub assigned_provider_count: usize,
 }
 
 /// 聚合页总览数据。
@@ -1327,29 +1328,29 @@ fn build_aggregation_overview_sync(
             if is_generated_sync_id(id) {
                 continue;
             }
-            let (base_url, api_key, api_format, models) = inspect_app_provider(&app, provider);
             let official = is_official_provider(&app, provider);
-            let can_sync = !official && base_url.is_some() && api_key.is_some();
+            // 官方登录归属各应用内部直连页，不混入聚合外部供应商列表
+            if official {
+                continue;
+            }
+            let (base_url, api_key, api_format, models) = inspect_app_provider(&app, provider);
+            let can_sync = base_url.is_some() && api_key.is_some();
             let mut synced_apps = Vec::new();
-            if !official {
-                for target in UniversalProviderApps::COMPATIBLE_APPS {
-                    if !visible_apps.is_visible(&target) {
-                        continue;
-                    }
-                    if target == app {
-                        synced_apps.push(target.as_str().to_string());
-                        continue;
-                    }
-                    let expected_id = synced_child_id_for_app_provider(&target, &app, id);
-                    if all_by_app
-                        .get(target.as_str())
-                        .is_some_and(|map| map.contains_key(&expected_id))
-                    {
-                        synced_apps.push(target.as_str().to_string());
-                    }
+            for target in UniversalProviderApps::COMPATIBLE_APPS {
+                if !visible_apps.is_visible(&target) {
+                    continue;
                 }
-            } else {
-                synced_apps.push(app_key.to_string());
+                if target == app {
+                    synced_apps.push(target.as_str().to_string());
+                    continue;
+                }
+                let expected_id = synced_child_id_for_app_provider(&target, &app, id);
+                if all_by_app
+                    .get(target.as_str())
+                    .is_some_and(|map| map.contains_key(&expected_id))
+                {
+                    synced_apps.push(target.as_str().to_string());
+                }
             }
 
             app_providers.push(AggregationAppProviderItem {
@@ -1358,7 +1359,7 @@ fn build_aggregation_overview_sync(
                 base_url,
                 api_format,
                 models,
-                is_official: official,
+                is_official: false,
                 can_sync,
                 is_current_in_app: current_id == Some(id.as_str()),
                 in_stack: stack_set.is_some_and(|set| set.contains(id)),
@@ -1377,6 +1378,14 @@ fn build_aggregation_overview_sync(
         let synced_count = all_by_app
             .get(app_key)
             .map(|map| map.keys().filter(|id| is_generated_sync_id(id)).count())
+            .unwrap_or(0);
+        let assigned_count = all_by_app
+            .get(app_key)
+            .map(|map| {
+                map.values()
+                    .filter(|p| !is_official_provider(&app, p))
+                    .count()
+            })
             .unwrap_or(0);
         let stack_count = stack_members_by_app
             .get(app_key)
@@ -1402,7 +1411,7 @@ fn build_aggregation_overview_sync(
                 mode_state.proxy_route,
             )
         } else if spec.additive {
-            ("additive".to_string(), enabled && synced_count > 0, None)
+            ("additive".to_string(), enabled && assigned_count > 0, None)
         } else {
             ("launch".to_string(), false, None)
         };
@@ -1417,6 +1426,7 @@ fn build_aggregation_overview_sync(
             route_provider_id,
             stack_member_count: stack_count,
             synced_provider_count: synced_count,
+            assigned_provider_count: assigned_count,
         });
     }
 
@@ -1431,10 +1441,19 @@ fn build_aggregation_overview_sync(
     })
 }
 
-/// 切换全局聚合模式开关（持久化 `enable_stack_mode`；关闭时让仍在 Stack 模式的应用退回直连）。
+/// 切换全局聚合模式开关（持久化 `enable_stack_mode`；开启时仅按各供应商指定的应用同步配置，不自动接入任何应用；关闭时让已接入的应用退回直连）。
 pub async fn set_global_aggregation_mode(
     state: &AppState,
     app_handle: &tauri::AppHandle,
+    enabled: bool,
+) -> Result<AggregationOverview, String> {
+    let overview = set_global_aggregation_mode_inner(state, enabled).await?;
+    crate::tray::refresh_tray_menu(app_handle);
+    Ok(overview)
+}
+
+async fn set_global_aggregation_mode_inner(
+    state: &AppState,
     enabled: bool,
 ) -> Result<AggregationOverview, String> {
     let mut settings = crate::settings::get_settings();
@@ -1442,21 +1461,18 @@ pub async fn set_global_aggregation_mode(
     crate::settings::update_settings(settings).map_err(|e| e.to_string())?;
 
     if !enabled {
-        let _ = crate::mode::controller::exit_apps_in_mode(state, true).await?;
+        // 退出全部处于代理（Stack 或 Route）模式的应用，恢复直连官方登录
+        for app in AppType::all() {
+            if app.spec().route_mode && crate::mode::current::is_proxy(&app) {
+                let _ = crate::mode::controller::exit(state, &app).await;
+            }
+        }
     } else {
-        // 开启聚合模式时：
-        // 1. 同步已保存的通用供应商；
-        // 2. 跨应用同步所有可见应用内就绪的非生成供应商；
-        // 3. 自动为可见路由/聚合应用启用代理接入与 Stack，刷新 `/model` 目录。
-        let visible_apps = crate::settings::get_settings()
-            .visible_apps
-            .unwrap_or_default();
+        // 开启全局聚合模式时仅同步各通用供应商勾选的目标应用配置；
+        // Claude Code / Codex 等本地代理应用的接入由用户手动开关，不自动接管。
         let _ = sync_all_universal_providers_inner(state).await;
-        let _ = sync_all_ready_app_providers_inner(state, &visible_apps).await;
-        let _ = activate_aggregation_for_visible_apps(state).await;
     }
 
-    crate::tray::refresh_tray_menu(app_handle);
     get_aggregation_overview(state).await
 }
 
@@ -1527,7 +1543,7 @@ pub async fn sync_universal_to_compatible_apps(
     }
 
     if crate::settings::get_settings().enable_stack_mode {
-        warnings.extend(activate_aggregation_for_visible_apps(state).await);
+        warnings.extend(reconcile_attached_aggregation_apps(state).await);
     }
 
     Ok(SyncAllResult {
@@ -1554,24 +1570,34 @@ async fn sync_all_universal_providers_inner(state: &AppState) -> Result<SyncAllR
     })
 }
 
-/// 把任意来源供应商（`source_app == None` 时为 `UniversalProvider`，否则为某应用的原生 `Provider`）
-/// 投影并同步到所有已开启显示的兼容应用。
-pub async fn sync_provider_to_all_apps(
+/// 将任意来源的外部供应商（`source_app == None` 为通用供应商，否则为某应用遗留的外部供应商）
+/// 精确分配给指定的一组目标应用（未选中的应用会被自动移除其同步子配置）。
+pub async fn set_provider_target_apps(
     state: &AppState,
     app_handle: &tauri::AppHandle,
     source_app: Option<AppType>,
     provider_id: &str,
+    target_apps: Vec<AppType>,
 ) -> Result<SyncAllResult, String> {
     let visible_apps = current_visible_apps();
-    let result = match source_app {
+    let target_set: HashSet<AppType> = target_apps
+        .into_iter()
+        .filter(|app| {
+            visible_apps.is_visible(app) && UniversalProviderApps::COMPATIBLE_APPS.contains(app)
+        })
+        .collect();
+
+    let mut result = match source_app {
         None => {
             let mut universal = state
                 .db
                 .get_universal_provider(provider_id)
                 .map_err(|e| e.to_string())?
-                .ok_or_else(|| format!("通用供应商不存在: {provider_id}"))?;
-            let mut next_apps = UniversalProviderApps::all_compatible();
-            mask_universal_apps_to_visible(&mut next_apps, &visible_apps);
+                .ok_or_else(|| format!("外部供应商不存在: {provider_id}"))?;
+            let mut next_apps = UniversalProviderApps::default();
+            for app in &target_set {
+                next_apps.set_enabled_for(app, true);
+            }
             universal.apps = next_apps;
             state
                 .db
@@ -1580,95 +1606,263 @@ pub async fn sync_provider_to_all_apps(
             sync_universal_to_compatible_apps(state, &universal).await?
         }
         Some(src_app) => {
-            if !visible_apps.is_visible(&src_app) {
-                return Err(format!("应用 {} 未在应用页面开启显示", src_app.as_str()));
-            }
             let mut source_provider = state
                 .db
                 .get_provider_by_id(provider_id, &src_app)
                 .map_err(|e| e.to_string())?
                 .ok_or_else(|| format!("供应商不存在: {provider_id}"))?;
-            // 用户主动兼容时清除之前的取消标记
-            if source_provider
-                .meta
-                .as_ref()
-                .and_then(|m| m.aggregation_disabled)
-                == Some(true)
-            {
-                if let Some(meta) = source_provider.meta.as_mut() {
-                    meta.aggregation_disabled = None;
-                }
-                state
-                    .db
-                    .save_provider(&src_app, &source_provider)
-                    .map_err(|e| e.to_string())?;
-            }
             let spec = spec_from_app_provider(&src_app, &source_provider).ok_or_else(|| {
                 format!(
-                    "供应商 {} 是官方登录/托管账号或缺少端点凭据，无法跨应用转换",
+                    "供应商 {} 是官方登录/托管账号或缺少端点凭据，无法分配到其他应用",
                     source_provider.name
                 )
             })?;
-            sync_spec_to_target_apps(state, &spec, Some(&src_app), provider_id, &visible_apps).await
+
+            if target_set.contains(&src_app) {
+                if source_provider
+                    .meta
+                    .as_ref()
+                    .and_then(|m| m.aggregation_disabled)
+                    == Some(true)
+                {
+                    if let Some(meta) = source_provider.meta.as_mut() {
+                        meta.aggregation_disabled = None;
+                    }
+                    state
+                        .db
+                        .save_provider(&src_app, &source_provider)
+                        .map_err(|e| e.to_string())?;
+                }
+                sync_spec_to_selected_apps(
+                    state,
+                    &spec,
+                    &src_app,
+                    provider_id,
+                    &target_set,
+                    &visible_apps,
+                )
+                .await
+            } else {
+                // 用户取消了原所属应用：提升为通用外部供应商，只分发到新勾选的目标应用，并清理旧来源记录
+                let universal = universal_from_legacy_app_provider(
+                    &src_app,
+                    &source_provider,
+                    &spec,
+                    &target_set,
+                );
+                state
+                    .db
+                    .save_universal_provider(&universal)
+                    .map_err(|e| e.to_string())?;
+                let mut res = sync_universal_to_compatible_apps(state, &universal).await?;
+                let cleanup = remove_legacy_app_provider_and_children(state, &src_app, provider_id).await;
+                res.warnings.extend(cleanup.warnings);
+                res
+            }
         }
     };
 
     if crate::settings::get_settings().enable_stack_mode {
-        let mut result = result;
         result
             .warnings
-            .extend(activate_aggregation_for_visible_apps(state).await);
-        crate::tray::refresh_tray_menu(app_handle);
-        return Ok(result);
+            .extend(reconcile_attached_aggregation_apps(state).await);
     }
 
     crate::tray::refresh_tray_menu(app_handle);
     Ok(result)
 }
 
-/// 新增原生供应商后（当全局聚合模式开启且源应用已开启显示时）自动同步兼容到其余可见应用。
-pub async fn auto_sync_added_provider_if_enabled(
+/// 将遗留的应用内外部供应商提升为统一的聚合外部供应商，同步到选定的目标应用，并安全清理旧记录。
+pub async fn promote_app_provider_to_universal(
     state: &AppState,
-    source_app: &AppType,
+    app_handle: &tauri::AppHandle,
+    source_app: AppType,
+    source_provider_id: &str,
+    mut universal: UniversalProvider,
+) -> Result<SyncAllResult, String> {
+    let visible = current_visible_apps();
+    mask_universal_apps_to_visible(&mut universal.apps, &visible);
+    state
+        .db
+        .save_universal_provider(&universal)
+        .map_err(|e| e.to_string())?;
+
+    let mut result = sync_universal_to_compatible_apps(state, &universal).await?;
+    let cleanup =
+        remove_legacy_app_provider_and_children(state, &source_app, source_provider_id).await;
+    result.warnings.extend(cleanup.warnings);
+
+    if crate::settings::get_settings().enable_stack_mode {
+        result
+            .warnings
+            .extend(reconcile_attached_aggregation_apps(state).await);
+    }
+
+    crate::tray::refresh_tray_menu(app_handle);
+    Ok(result)
+}
+
+/// 从聚合页安全删除外部供应商（连同所有同步到各应用的子配置与代理/Stack 引用一并清理）。
+pub async fn delete_aggregation_provider(
+    state: &AppState,
+    app_handle: &tauri::AppHandle,
+    source_app: Option<AppType>,
     provider_id: &str,
-) {
-    let settings = crate::settings::get_settings();
-    if !settings.enable_stack_mode {
-        return;
-    }
-    let visible_apps = settings.visible_apps.unwrap_or_default();
-    if !visible_apps.is_visible(source_app) {
-        return;
-    }
-    if is_generated_sync_id(provider_id) {
-        return;
-    }
-    let Ok(Some(provider)) = state.db.get_provider_by_id(provider_id, source_app) else {
-        return;
+) -> Result<SyncAllResult, String> {
+    let mut result = match source_app {
+        None => {
+            let mut removed_apps = Vec::new();
+            let mut warnings = Vec::new();
+            for target_app in UniversalProviderApps::COMPATIBLE_APPS {
+                let child_id = synced_child_id_for_universal(&target_app, provider_id);
+                let mut removed = false;
+                match remove_synced_child_for_app(state, &target_app, &child_id).await {
+                    Ok(true) => removed = true,
+                    Ok(false) => {}
+                    Err(e) => warnings.push(format!("{}: {e}", target_app.as_str())),
+                }
+                let legacy_id = format!("universal-{provider_id}");
+                if legacy_id != child_id {
+                    match remove_synced_child_for_app(state, &target_app, &legacy_id).await {
+                        Ok(true) => removed = true,
+                        Ok(false) => {}
+                        Err(e) => warnings.push(format!("{}: {e}", target_app.as_str())),
+                    }
+                }
+                if removed {
+                    removed_apps.push(target_app.as_str().to_string());
+                }
+            }
+            state
+                .db
+                .delete_universal_provider(provider_id)
+                .map_err(|e| e.to_string())?;
+            SyncAllResult {
+                synced_apps: removed_apps,
+                warnings,
+            }
+        }
+        Some(src_app) => remove_legacy_app_provider_and_children(state, &src_app, provider_id).await,
     };
-    if provider.meta.as_ref().and_then(|m| m.aggregation_disabled) == Some(true) {
-        return;
+
+    if crate::settings::get_settings().enable_stack_mode {
+        result
+            .warnings
+            .extend(reconcile_attached_aggregation_apps(state).await);
     }
-    let Some(spec) = spec_from_app_provider(source_app, &provider) else {
-        return;
+
+    crate::tray::refresh_tray_menu(app_handle);
+    Ok(result)
+}
+
+fn universal_from_legacy_app_provider(
+    _source_app: &AppType,
+    provider: &Provider,
+    spec: &NormalizedProviderSpec,
+    target_apps: &HashSet<AppType>,
+) -> UniversalProvider {
+    let mut apps = UniversalProviderApps::default();
+    for app in target_apps {
+        apps.set_enabled_for(app, true);
+    }
+    let primary_model = spec.models.first().cloned();
+    let extra_models = if spec.models.len() > 1 {
+        spec.models[1..].to_vec()
+    } else {
+        Vec::new()
     };
-    let res =
-        sync_spec_to_target_apps(state, &spec, Some(source_app), provider_id, &visible_apps).await;
-    let _ = activate_aggregation_for_visible_apps(state).await;
-    if !res.warnings.is_empty() {
-        log::debug!(
-            "[Aggregation] Auto-sync warnings for {}/{provider_id}: {:?}",
-            source_app.as_str(),
-            res.warnings
-        );
+    let models = crate::provider::UniversalProviderModels {
+        claude: primary_model
+            .as_ref()
+            .map(|m| crate::provider::ClaudeModelConfig {
+                model: Some(m.clone()),
+                haiku_model: None,
+                sonnet_model: None,
+                opus_model: None,
+            }),
+        codex: primary_model
+            .as_ref()
+            .map(|m| crate::provider::CodexModelConfig {
+                model: Some(m.clone()),
+                reasoning_effort: spec.reasoning_effort.clone(),
+            }),
+        gemini: primary_model
+            .as_ref()
+            .map(|m| crate::provider::GeminiModelConfig {
+                model: Some(m.clone()),
+            }),
+    };
+    let u_meta = provider.meta.as_ref().and_then(|m| {
+        if m.is_full_url.is_none()
+            && m.api_key_field.is_none()
+            && m.custom_user_agent.is_none()
+        {
+            None
+        } else {
+            Some(ProviderMeta {
+                is_full_url: m.is_full_url,
+                api_key_field: m.api_key_field.clone(),
+                custom_user_agent: m.custom_user_agent.clone(),
+                ..Default::default()
+            })
+        }
+    });
+
+    UniversalProvider {
+        id: uuid::Uuid::new_v4().to_string(),
+        name: spec.name.clone(),
+        provider_type: "custom_gateway".to_string(),
+        apps,
+        base_url: spec.base_url.clone(),
+        api_key: spec.api_key.clone(),
+        models,
+        api_format: Some(spec.api_format.clone()),
+        extra_models,
+        website_url: spec.website_url.clone(),
+        notes: spec.notes.clone(),
+        icon: spec.icon.clone(),
+        icon_color: spec.icon_color.clone(),
+        meta: u_meta,
+        created_at: spec.created_at,
+        sort_index: spec.sort_index,
     }
 }
 
-async fn sync_spec_to_target_apps(
+async fn remove_legacy_app_provider_and_children(
+    state: &AppState,
+    source_app: &AppType,
+    provider_id: &str,
+) -> SyncAllResult {
+    let mut removed_apps = Vec::new();
+    let mut warnings = Vec::new();
+    for target_app in UniversalProviderApps::COMPATIBLE_APPS {
+        if target_app == *source_app {
+            continue;
+        }
+        let child_id = synced_child_id_for_app_provider(&target_app, source_app, provider_id);
+        match remove_synced_child_for_app(state, &target_app, &child_id).await {
+            Ok(true) => removed_apps.push(target_app.as_str().to_string()),
+            Ok(false) => {}
+            Err(e) => warnings.push(format!("{}: {e}", target_app.as_str())),
+        }
+    }
+    match remove_synced_child_for_app(state, source_app, provider_id).await {
+        Ok(true) => removed_apps.push(source_app.as_str().to_string()),
+        Ok(false) => {}
+        Err(e) => warnings.push(format!("{}: {e}", source_app.as_str())),
+    }
+    SyncAllResult {
+        synced_apps: removed_apps,
+        warnings,
+    }
+}
+
+async fn sync_spec_to_selected_apps(
     state: &AppState,
     spec: &NormalizedProviderSpec,
-    source_app: Option<&AppType>,
+    source_app: &AppType,
     source_id: &str,
+    target_set: &HashSet<AppType>,
     visible_apps: &crate::settings::VisibleApps,
 ) -> SyncAllResult {
     let mut synced_apps = Vec::new();
@@ -1678,18 +1872,20 @@ async fn sync_spec_to_target_apps(
         if !visible_apps.is_visible(&target_app) {
             continue;
         }
-        if source_app == Some(&target_app) {
-            // 源应用本身若支持 Stack，直接把它加入自己的 Stack 名单
+        if target_app == *source_app {
             if target_app.spec().stack {
                 let _ = ensure_in_stack(state, &target_app, source_id).await;
             }
             synced_apps.push(target_app.as_str().to_string());
             continue;
         }
-        let Some(src) = source_app else {
+        let child_id = synced_child_id_for_app_provider(&target_app, source_app, source_id);
+        if !target_set.contains(&target_app) {
+            if let Err(e) = remove_synced_child_for_app(state, &target_app, &child_id).await {
+                warnings.push(format!("{}: {e}", target_app.as_str()));
+            }
             continue;
-        };
-        let child_id = synced_child_id_for_app_provider(&target_app, src, source_id);
+        }
         let Some(provider) = build_compatible_provider(spec, &target_app, &child_id) else {
             continue;
         };
@@ -1876,50 +2072,9 @@ fn sync_additive_child_live(
     }
 }
 
-/// 将所有可见应用内就绪的非生成供应商跨应用同步兼容（开启聚合开关时调用）。
-async fn sync_all_ready_app_providers_inner(
-    state: &AppState,
-    visible_apps: &crate::settings::VisibleApps,
-) -> SyncAllResult {
-    let mut synced_set = std::collections::BTreeSet::new();
-    let mut warnings = Vec::new();
-
-    for app in &UniversalProviderApps::COMPATIBLE_APPS {
-        if !visible_apps.is_visible(app) {
-            continue;
-        }
-        let Ok(providers) = state.db.get_all_providers(app) else {
-            continue;
-        };
-        let mut ids: Vec<String> = providers.keys().cloned().collect();
-        ids.sort();
-        for pid in ids {
-            if is_generated_sync_id(&pid) {
-                continue;
-            }
-            let Some(provider) = providers.get(&pid) else {
-                continue;
-            };
-            if provider.meta.as_ref().and_then(|m| m.aggregation_disabled) == Some(true) {
-                continue;
-            }
-            let Some(spec) = spec_from_app_provider(app, provider) else {
-                continue;
-            };
-            let res = sync_spec_to_target_apps(state, &spec, Some(app), &pid, visible_apps).await;
-            synced_set.extend(res.synced_apps);
-            warnings.extend(res.warnings);
-        }
-    }
-
-    SyncAllResult {
-        synced_apps: synced_set.into_iter().collect(),
-        warnings,
-    }
-}
-
-/// 为路由/聚合型应用挑选可用的非官方路由供应商 ID。
+/// 为路由/聚合型应用挑选可用的非官方外部路由供应商 ID。
 fn select_aggregation_route_id<'a>(
+    app: &AppType,
     current_route: Option<&str>,
     active_id: Option<&str>,
     providers: impl IntoIterator<Item = (&'a String, &'a Provider)>,
@@ -1930,7 +2085,7 @@ fn select_aggregation_route_id<'a>(
         .collect();
     let is_routable = |id: &str| {
         map.get(id)
-            .map(|p| p.category.as_deref() != Some("official"))
+            .map(|p| !is_official_provider(app, p))
             .unwrap_or(false)
     };
 
@@ -1942,12 +2097,13 @@ fn select_aggregation_route_id<'a>(
     }
 
     map.iter()
-        .find(|(_, p)| p.category.as_deref() != Some("official"))
+        .find(|(_, p)| !is_official_provider(app, p))
         .map(|(id, _)| (*id).to_string())
 }
 
-/// 当全局聚合模式开启时，为所有可见的路由/聚合应用自动加入 Stack、启用聚合/代理模式并刷新 `/model` 目录。
-pub async fn activate_aggregation_for_visible_apps(state: &AppState) -> Vec<String> {
+/// 仅协调“已手动接入聚合”的本地代理应用（例如被删光外部供应商时退回直连，或刷新 Stack 成员与路由）；
+/// 绝不自动为未接入的应用开启代理/Stack 模式。
+async fn reconcile_attached_aggregation_apps(state: &AppState) -> Vec<String> {
     let settings = crate::settings::get_settings();
     if !settings.enable_stack_mode {
         return Vec::new();
@@ -1956,29 +2112,15 @@ pub async fn activate_aggregation_for_visible_apps(state: &AppState) -> Vec<Stri
     let mut warnings = Vec::new();
 
     for app in &UniversalProviderApps::COMPATIBLE_APPS {
-        if !visible_apps.is_visible(app) || !app.spec().route_mode {
+        if !visible_apps.is_visible(app)
+            || !app.spec().route_mode
+            || !crate::mode::current::is_proxy(app)
+        {
             continue;
         }
         let Ok(providers) = state.db.get_all_providers(app) else {
             continue;
         };
-        if providers.is_empty() {
-            continue;
-        }
-
-        if app.spec().stack {
-            let mut ids: Vec<&String> = providers
-                .iter()
-                .filter(|(_, p)| p.category.as_deref() != Some("official"))
-                .map(|(id, _)| id)
-                .collect();
-            ids.sort();
-            for pid in ids {
-                if let Err(e) = ensure_in_stack(state, app, pid).await {
-                    warnings.push(format!("{} 加入聚合名单失败: {e}", app.as_str()));
-                }
-            }
-        }
 
         let current_route = crate::mode::current::mode_state(app).proxy_route;
         let active_id = crate::mode::current::provider_for(
@@ -1989,27 +2131,49 @@ pub async fn activate_aggregation_for_visible_apps(state: &AppState) -> Vec<Stri
         .ok()
         .flatten();
         let Some(route_id) = select_aggregation_route_id(
+            app,
             current_route.as_deref(),
             active_id.as_deref(),
             providers.iter(),
         ) else {
+            let _ = crate::mode::controller::exit(state, app).await;
             continue;
         };
 
-        if let Err(err) =
-            crate::mode::controller::enter_with_route(state, app, app.spec().stack, Some(&route_id))
-                .await
-        {
-            warnings.push(format!("{} 自动启用聚合模式失败: {err}", app.as_str()));
+        if app.spec().stack {
+            let mut ids: Vec<&String> = providers
+                .iter()
+                .filter(|(_, p)| !is_official_provider(app, p))
+                .map(|(id, _)| id)
+                .collect();
+            ids.sort();
+            for pid in ids {
+                if let Err(e) = ensure_in_stack(state, app, pid).await {
+                    warnings.push(format!("{} 加入聚合名单失败: {e}", app.as_str()));
+                }
+            }
+        }
+
+        if current_route.as_deref() != Some(route_id.as_str()) {
+            if let Err(err) = crate::mode::controller::enter_with_route(
+                state,
+                app,
+                app.spec().stack,
+                Some(&route_id),
+            )
+            .await
+            {
+                warnings.push(format!("{} 刷新聚合路由失败: {err}", app.as_str()));
+            }
         }
     }
 
     warnings
 }
 
-/// 安全移除某个同步生成的兼容子供应商（`agg-*` / `universal-*`）：
+/// 安全移除某个同步生成的兼容子供应商（`agg-*` / `universal-*`）或遗留外部供应商：
 /// 1) 累加/启动器应用直接走 `ProviderService::delete`（连带清理其 live 文件）；
-/// 2) 路由/聚合型应用先移出 Stack，并在当前代理路由或直连指针指向它时切换回其他可用供应商或退出代理，最后删除 DB 记录。
+/// 2) 路由/聚合型应用先移出 Stack，并在当前代理路由或直连指针指向它时切换回其他可用供应商或退回官方直连，最后删除 DB 记录。
 async fn remove_synced_child_for_app(
     state: &AppState,
     target_app: &AppType,
@@ -2053,12 +2217,18 @@ async fn remove_synced_child_for_app(
             .get_all_providers(target_app)
             .map_err(|e| e.to_string())?;
         let remaining_routable = select_aggregation_route_id(
+            target_app,
             None,
             None,
             all.iter().filter(|(k, _)| k.as_str() != child_id),
         );
-        let remaining_any = remaining_routable
-            .clone()
+        // 直连指针优先恢复到官方登录账号
+        let remaining_official = all
+            .iter()
+            .find(|(k, p)| k.as_str() != child_id && is_official_provider(target_app, p))
+            .map(|(k, _)| k.clone());
+        let remaining_any = remaining_official
+            .or_else(|| remaining_routable.clone())
             .or_else(|| all.keys().filter(|k| k.as_str() != child_id).min().cloned());
 
         if is_routed {
@@ -2098,92 +2268,6 @@ async fn remove_synced_child_for_app(
     Ok(true)
 }
 
-/// 取消指定供应商的跨应用兼容同步：
-/// - 若 `source_app == None`（通用供应商）：关闭所有目标应用开关并清理生成的 `universal-*` 子配置；
-/// - 若 `source_app == Some(app)`（原生应用供应商）：标记 `meta.aggregation_disabled = Some(true)`，并清理所有其他应用内生成的 `agg-*` 子配置。
-pub async fn unsync_provider_from_all_apps(
-    state: &AppState,
-    app_handle: &tauri::AppHandle,
-    source_app: Option<AppType>,
-    provider_id: &str,
-) -> Result<SyncAllResult, String> {
-    let mut removed_apps = Vec::new();
-    let mut warnings = Vec::new();
-
-    match source_app {
-        None => {
-            let mut universal = state
-                .db
-                .get_universal_provider(provider_id)
-                .map_err(|e| e.to_string())?
-                .ok_or_else(|| format!("通用供应商不存在: {provider_id}"))?;
-            universal.apps = UniversalProviderApps::default();
-            state
-                .db
-                .save_universal_provider(&universal)
-                .map_err(|e| e.to_string())?;
-
-            for target_app in UniversalProviderApps::COMPATIBLE_APPS {
-                let child_id = synced_child_id_for_universal(&target_app, provider_id);
-                let mut removed = false;
-                match remove_synced_child_for_app(state, &target_app, &child_id).await {
-                    Ok(true) => removed = true,
-                    Ok(false) => {}
-                    Err(e) => warnings.push(format!("{}: {e}", target_app.as_str())),
-                }
-                let legacy_id = format!("universal-{provider_id}");
-                if legacy_id != child_id {
-                    match remove_synced_child_for_app(state, &target_app, &legacy_id).await {
-                        Ok(true) => removed = true,
-                        Ok(false) => {}
-                        Err(e) => warnings.push(format!("{}: {e}", target_app.as_str())),
-                    }
-                }
-                if removed {
-                    removed_apps.push(target_app.as_str().to_string());
-                }
-            }
-        }
-        Some(src_app) => {
-            let mut source_provider = state
-                .db
-                .get_provider_by_id(provider_id, &src_app)
-                .map_err(|e| e.to_string())?
-                .ok_or_else(|| format!("供应商不存在: {provider_id}"))?;
-            source_provider
-                .meta
-                .get_or_insert_with(Default::default)
-                .aggregation_disabled = Some(true);
-            state
-                .db
-                .save_provider(&src_app, &source_provider)
-                .map_err(|e| e.to_string())?;
-
-            for target_app in UniversalProviderApps::COMPATIBLE_APPS {
-                if target_app == src_app {
-                    continue;
-                }
-                let child_id = synced_child_id_for_app_provider(&target_app, &src_app, provider_id);
-                match remove_synced_child_for_app(state, &target_app, &child_id).await {
-                    Ok(true) => removed_apps.push(target_app.as_str().to_string()),
-                    Ok(false) => {}
-                    Err(e) => warnings.push(format!("{}: {e}", target_app.as_str())),
-                }
-            }
-        }
-    }
-
-    if crate::settings::get_settings().enable_stack_mode {
-        warnings.extend(activate_aggregation_for_visible_apps(state).await);
-    }
-
-    crate::tray::refresh_tray_menu(app_handle);
-    Ok(SyncAllResult {
-        synced_apps: removed_apps,
-        warnings,
-    })
-}
-
 /// 在全局聚合页内一键让某个应用接入或退出聚合（代理模式）。
 pub async fn set_aggregation_app_mode(
     state: &AppState,
@@ -2192,25 +2276,62 @@ pub async fn set_aggregation_app_mode(
     enabled: bool,
     route_provider_id: Option<String>,
 ) -> Result<(), String> {
+    set_aggregation_app_mode_inner(state, app, enabled, route_provider_id).await?;
+    crate::tray::refresh_tray_menu(app_handle);
+    Ok(())
+}
+
+async fn set_aggregation_app_mode_inner(
+    state: &AppState,
+    app: AppType,
+    enabled: bool,
+    route_provider_id: Option<String>,
+) -> Result<(), String> {
     if !app.spec().route_mode {
         return Err(format!("{} 不支持本地代理模式", app.as_str()));
+    }
+    if enabled && !crate::settings::get_settings().enable_stack_mode {
+        return Err("请先开启全局聚合模式".to_string());
     }
     if enabled && !current_visible_apps().is_visible(&app) {
         return Err(format!("{} 未在应用页面开启显示", app.as_str()));
     }
     if enabled {
+        let providers = state
+            .db
+            .get_all_providers(&app)
+            .map_err(|e| e.to_string())?;
+        let effective_route = select_aggregation_route_id(
+            &app,
+            route_provider_id.as_deref(),
+            None,
+            providers.iter(),
+        )
+        .ok_or_else(|| "请先在聚合页为该应用分配至少一个外部供应商".to_string())?;
+
+        if app.spec().stack {
+            let mut ids: Vec<&String> = providers
+                .iter()
+                .filter(|(_, p)| !is_official_provider(&app, p))
+                .map(|(id, _)| id)
+                .collect();
+            ids.sort();
+            for pid in ids {
+                let _ = ensure_in_stack(state, &app, pid).await;
+            }
+        }
+
         let use_stack = app.spec().stack;
         crate::mode::controller::enter_with_route(
             state,
             &app,
             use_stack,
-            route_provider_id.as_deref(),
+            Some(&effective_route),
         )
         .await?;
     } else {
         crate::mode::controller::exit(state, &app).await?;
     }
-    crate::tray::refresh_tray_menu(app_handle);
     Ok(())
 }
 
@@ -2517,7 +2638,12 @@ mod tests {
         providers.insert("default".to_string(), official);
 
         assert_eq!(
-            select_aggregation_route_id(Some("default"), Some("default"), providers.iter()),
+            select_aggregation_route_id(
+                &AppType::Claude,
+                Some("default"),
+                Some("default"),
+                providers.iter()
+            ),
             None
         );
 
@@ -2538,35 +2664,31 @@ mod tests {
 
         // Skips official current_route/active_id and deterministically selects routable provider
         assert_eq!(
-            select_aggregation_route_id(Some("default"), Some("default"), providers.iter()),
+            select_aggregation_route_id(
+                &AppType::Claude,
+                Some("default"),
+                Some("default"),
+                providers.iter()
+            ),
             Some("agg-claude-c1".to_string())
         );
         // Preserves existing routable proxy_route / active_id
         assert_eq!(
-            select_aggregation_route_id(Some("custom-1"), Some("default"), providers.iter()),
+            select_aggregation_route_id(
+                &AppType::Claude,
+                Some("custom-1"),
+                Some("default"),
+                providers.iter()
+            ),
             Some("custom-1".to_string())
         );
     }
 
     #[tokio::test]
-    async fn sync_all_ready_app_providers_skips_aggregation_disabled() {
+    #[serial_test::serial]
+    async fn sync_spec_to_selected_apps_only_syncs_explicitly_chosen_apps() {
         let db = std::sync::Arc::new(crate::database::Database::memory().expect("in-memory db"));
         let state = AppState::new(db);
-
-        let mut opt_out = Provider::with_id(
-            "opt-out-1".to_string(),
-            "Opt Out Codex".to_string(),
-            json!({
-                "auth": { "OPENAI_API_KEY": "sk-opt-out" },
-                "config": "base_url = \"https://relay.example.com/v1\"\nmodel = \"gpt-5.4\""
-            }),
-            Some("custom".to_string()),
-        );
-        opt_out
-            .meta
-            .get_or_insert_with(Default::default)
-            .aggregation_disabled = Some(true);
-        state.db.save_provider(&AppType::Codex, &opt_out).unwrap();
 
         let enabled_claude = Provider::with_id(
             "ready-1".to_string(),
@@ -2584,7 +2706,19 @@ mod tests {
             .save_provider(&AppType::Claude, &enabled_claude)
             .unwrap();
 
-        // Only enable Claude, Codex, and Gemini so test runs cleanly in-memory without touching live additive files
+        let mut official_claude = Provider::with_id(
+            "claude-official".to_string(),
+            "Claude Official".to_string(),
+            json!({ "env": {} }),
+            None,
+        );
+        official_claude.category = Some("official".to_string());
+        state
+            .db
+            .save_provider(&AppType::Claude, &official_claude)
+            .unwrap();
+
+        // Only enable Claude, Codex, and Gemini so test runs cleanly in-memory
         let visible = crate::settings::VisibleApps {
             claude: true,
             codex: true,
@@ -2604,36 +2738,209 @@ mod tests {
             agy: false,
         };
 
-        let _ = sync_all_ready_app_providers_inner(&state, &visible).await;
+        // Overview must exclude official login accounts from app_providers
+        let overview = build_aggregation_overview_sync(
+            &state,
+            false,
+            crate::proxy::types::ProxyStatus::default(),
+            &visible,
+        )
+        .unwrap();
+        assert!(overview
+            .app_providers
+            .iter()
+            .all(|p| p.provider.id != "claude-official"));
+        assert!(overview
+            .app_providers
+            .iter()
+            .any(|p| p.provider.id == "ready-1"));
 
-        // Opt-out Codex provider must NOT be synced to Gemini
-        let opt_out_gemini_id =
-            synced_child_id_for_app_provider(&AppType::Gemini, &AppType::Codex, "opt-out-1");
-        assert!(state
-            .db
-            .get_provider_by_id(&opt_out_gemini_id, &AppType::Gemini)
-            .unwrap()
-            .is_none());
+        // Assign ready-1 ONLY to Claude and Gemini (NOT Codex)
+        let spec = spec_from_app_provider(&AppType::Claude, &enabled_claude).unwrap();
+        let target_set: HashSet<AppType> = [AppType::Claude, AppType::Gemini].into_iter().collect();
+        let res = sync_spec_to_selected_apps(
+            &state,
+            &spec,
+            &AppType::Claude,
+            "ready-1",
+            &target_set,
+            &visible,
+        )
+        .await;
+        assert!(res.synced_apps.contains(&"gemini".to_string()));
+        assert!(!res.synced_apps.contains(&"codex".to_string()));
 
-        // Ready Claude provider MUST be synced to Gemini
         let ready_gemini_id =
             synced_child_id_for_app_provider(&AppType::Gemini, &AppType::Claude, "ready-1");
+        let ready_codex_id =
+            synced_child_id_for_app_provider(&AppType::Codex, &AppType::Claude, "ready-1");
         assert!(state
             .db
             .get_provider_by_id(&ready_gemini_id, &AppType::Gemini)
             .unwrap()
             .is_some());
+        assert!(state
+            .db
+            .get_provider_by_id(&ready_codex_id, &AppType::Codex)
+            .unwrap()
+            .is_none());
 
-        // Removing synced child deletes it cleanly from target DB
-        assert!(
-            remove_synced_child_for_app(&state, &AppType::Gemini, &ready_gemini_id)
-                .await
-                .unwrap()
-        );
+        // Narrow assignment to ONLY Claude: Gemini synced child must be removed automatically
+        let claude_only: HashSet<AppType> = [AppType::Claude].into_iter().collect();
+        let _ = sync_spec_to_selected_apps(
+            &state,
+            &spec,
+            &AppType::Claude,
+            "ready-1",
+            &claude_only,
+            &visible,
+        )
+        .await;
         assert!(state
             .db
             .get_provider_by_id(&ready_gemini_id, &AppType::Gemini)
             .unwrap()
             .is_none());
+    }
+
+    struct AggTestHome {
+        _dir: tempfile::TempDir,
+        saved: Vec<(&'static str, Option<std::ffi::OsString>)>,
+    }
+
+    impl AggTestHome {
+        fn new() -> Self {
+            let dir = tempfile::TempDir::new().expect("temp home");
+            let saved = ["HOME", "USERPROFILE", "CC_SWITCH_TEST_HOME"]
+                .into_iter()
+                .map(|key| {
+                    let old = std::env::var_os(key);
+                    std::env::set_var(key, dir.path());
+                    (key, old)
+                })
+                .collect();
+            crate::settings::reload_settings().expect("reload settings");
+            Self { _dir: dir, saved }
+        }
+    }
+
+    impl Drop for AggTestHome {
+        fn drop(&mut self) {
+            for (key, old) in self.saved.drain(..) {
+                match old {
+                    Some(value) => std::env::set_var(key, value),
+                    None => std::env::remove_var(key),
+                }
+            }
+            let _ = crate::settings::reload_settings();
+        }
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn enabling_global_aggregation_requires_manual_app_attach() {
+        let _home = AggTestHome::new();
+        let db = std::sync::Arc::new(crate::database::Database::memory().expect("in-memory db"));
+        let mut proxy = db.get_global_proxy_config().await.expect("proxy config");
+        proxy.listen_port = 0;
+        db.update_global_proxy_config(proxy)
+            .await
+            .expect("ephemeral port");
+        let state = AppState::new(db);
+
+        let mut settings = crate::settings::get_settings();
+        settings.enable_stack_mode = false;
+        settings.visible_apps = Some(crate::settings::VisibleApps {
+            claude: true,
+            codex: true,
+            gemini: false,
+            claude_desktop: false,
+            grokbuild: false,
+            opencode: false,
+            openclaw: false,
+            hermes: false,
+            pi: false,
+            omp: false,
+            mcode: false,
+            kimi: false,
+            dsh: false,
+            copilot: false,
+            workbuddy: false,
+            agy: false,
+        });
+        crate::settings::update_settings(settings).expect("update visible apps");
+
+        let mut apps = UniversalProviderApps::default();
+        apps.claude = true;
+        apps.codex = true;
+        let universal = UniversalProvider {
+            id: "u-manual".to_string(),
+            name: "Manual Gateway".to_string(),
+            provider_type: "custom_openai".to_string(),
+            apps,
+            base_url: "https://relay.example.com".to_string(),
+            api_key: "sk-manual-123".to_string(),
+            models: UniversalProviderModels::default(),
+            api_format: Some("openai_chat".to_string()),
+            extra_models: vec!["gpt-4o".to_string()],
+            website_url: None,
+            notes: None,
+            icon: None,
+            icon_color: None,
+            meta: None,
+            created_at: Some(100),
+            sort_index: Some(0),
+        };
+        state
+            .db
+            .save_universal_provider(&universal)
+            .expect("save universal");
+
+        // 1. Global aggregation OFF -> manual attach must fail
+        let early_attach =
+            set_aggregation_app_mode_inner(&state, AppType::Claude, true, None).await;
+        assert!(early_attach.is_err());
+
+        // 2. Enable global aggregation -> syncs external providers WITHOUT auto-attaching Claude or Codex
+        let overview = set_global_aggregation_mode_inner(&state, true)
+            .await
+            .expect("enable global aggregation");
+        assert!(overview.enabled);
+        assert!(!crate::mode::current::is_proxy(&AppType::Claude));
+        assert!(!crate::mode::current::is_proxy(&AppType::Codex));
+        let claude_state = overview
+            .app_states
+            .iter()
+            .find(|s| s.app_type == "claude")
+            .expect("claude state");
+        let codex_state = overview
+            .app_states
+            .iter()
+            .find(|s| s.app_type == "codex")
+            .expect("codex state");
+        assert_eq!(claude_state.mode, "direct");
+        assert!(!claude_state.attached);
+        assert_eq!(codex_state.mode, "direct");
+        assert!(!codex_state.attached);
+
+        // 3. Reconciling while unattached also must NOT auto-attach Claude or Codex
+        let _ = reconcile_attached_aggregation_apps(&state).await;
+        assert!(!crate::mode::current::is_proxy(&AppType::Claude));
+        assert!(!crate::mode::current::is_proxy(&AppType::Codex));
+
+        // 4. Manually attach Claude only -> Claude enters stack mode, Codex stays direct
+        set_aggregation_app_mode_inner(&state, AppType::Claude, true, None)
+            .await
+            .expect("manually attach claude");
+        assert!(crate::mode::current::is_proxy(&AppType::Claude));
+        assert!(!crate::mode::current::is_proxy(&AppType::Codex));
+
+        // 5. Disable global aggregation -> attached Claude exits back to direct
+        let disabled_overview = set_global_aggregation_mode_inner(&state, false)
+            .await
+            .expect("disable global aggregation");
+        assert!(!disabled_overview.enabled);
+        assert!(!crate::mode::current::is_proxy(&AppType::Claude));
+        assert!(!crate::mode::current::is_proxy(&AppType::Codex));
     }
 }

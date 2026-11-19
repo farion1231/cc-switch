@@ -106,6 +106,12 @@ interface ProviderListProps {
    * 与第一个分组标题同行
    */
   searchSlot?: HTMLElement | null;
+  /** 应用内部直连模式：仅允许官方登录，外部供应商引导至聚合页 */
+  officialOnly?: boolean;
+  /** 不支持官方登录的应用：仅展示通过聚合模式提供的供应商 */
+  aggregationOnly?: boolean;
+  onOpenAuthCenter?: () => void;
+  onOpenAggregation?: () => void;
 }
 
 export function ProviderList({
@@ -129,6 +135,10 @@ export function ProviderList({
   searchOpen,
   onSearchOpenChange,
   searchSlot,
+  officialOnly = false,
+  aggregationOnly = false,
+  onOpenAuthCenter,
+  onOpenAggregation,
 }: ProviderListProps) {
   const { t } = useTranslation();
   const { checkProvider, isChecking } = useStreamCheck(appId);
@@ -542,8 +552,18 @@ export function ProviderList({
         {liveConfigErrorNotice}
         <ProviderEmptyState
           appId={appId}
-          onCreate={appHas(appId, "piFamily") ? undefined : onCreate}
+          officialOnly={officialOnly}
+          aggregationOnly={aggregationOnly}
+          onOpenAuthCenter={onOpenAuthCenter}
+          onOpenAggregation={onOpenAggregation}
+          onCreate={
+            officialOnly || aggregationOnly || appHas(appId, "piFamily")
+              ? undefined
+              : onCreate
+          }
           onImport={
+            officialOnly ||
+            aggregationOnly ||
             appHas(appId, "piFamily") ||
             appId === "mcode" ||
             appId === "kimi" ||
@@ -569,31 +589,51 @@ export function ProviderList({
     return provider.id === currentProviderId;
   };
 
-  const renderCard = (provider: Provider, presentation: CardPresentation) => (
-    <SortableProviderCard
-      key={provider.id}
-      provider={provider}
-      appId={appId}
-      presentation={presentation}
-      isCurrent={isCurrentFor(provider)}
-      onEdit={onEdit}
-      onDelete={onDelete}
-      onDuplicate={onDuplicate}
-      onConfigureUsage={
-        onConfigureUsage ? (item) => onConfigureUsage(item) : () => undefined
-      }
-      onOpenWebsite={onOpenWebsite}
-      // Antigravity 和 Copilot CLI 官方卡的「打开终端」已经是主按钮，「更多」菜单里不再重复
-      onOpenTerminal={
-        appId === "agy" ||
-        (appId === "copilot" && isOfficialAccount(appId, provider))
-          ? undefined
-          : onOpenTerminal
-      }
-      onTest={handleTest}
-      isTesting={isChecking(provider.id)}
-    />
-  );
+  const renderCard = (provider: Provider, presentation: CardPresentation) => {
+    const isManagedAuthCard =
+      officialOnly && (appId === "claude" || appId === "codex");
+    const effectivePresentation: CardPresentation = isManagedAuthCard
+      ? {
+          ...presentation,
+          editDisabledReason:
+            presentation.editDisabledReason ??
+            t("provider.managedInAuthCenterHint", {
+              defaultValue: "账号在授权中心管理",
+            }),
+          deleteDisabledReason:
+            presentation.deleteDisabledReason ??
+            t("provider.managedInAuthCenterHint", {
+              defaultValue: "账号在授权中心管理",
+            }),
+        }
+      : presentation;
+
+    return (
+      <SortableProviderCard
+        key={provider.id}
+        provider={provider}
+        appId={appId}
+        presentation={effectivePresentation}
+        isCurrent={isCurrentFor(provider)}
+        onEdit={onEdit}
+        onDelete={onDelete}
+        onDuplicate={officialOnly ? undefined : onDuplicate}
+        onConfigureUsage={
+          onConfigureUsage ? (item) => onConfigureUsage(item) : () => undefined
+        }
+        onOpenWebsite={onOpenWebsite}
+        // Antigravity 和 Copilot CLI 官方卡的「打开终端」已经是主按钮，「更多」菜单里不再重复
+        onOpenTerminal={
+          appId === "agy" ||
+          (appId === "copilot" && isOfficialAccount(appId, provider))
+            ? undefined
+            : onOpenTerminal
+        }
+        onTest={handleTest}
+        isTesting={isChecking(provider.id)}
+      />
+    );
+  };
 
   // 搜索框放在列表上方第一行的最右端，不盖住卡片、打开时卡片也不下移
   const searchField = (
@@ -749,7 +789,7 @@ interface SortableProviderCardProps {
   isCurrent: boolean;
   onEdit: (provider: Provider) => void;
   onDelete: (provider: Provider) => void;
-  onDuplicate: (provider: Provider) => void;
+  onDuplicate?: (provider: Provider) => void;
   onConfigureUsage: (provider: Provider) => void;
   onOpenWebsite: (url: string) => void;
   onOpenTerminal?: (provider: Provider) => void;

@@ -429,7 +429,7 @@ export function RoutingSection({ onOpenApp }: RoutingSectionProps) {
               }),
               body: t("aggregation.enableModeHelp", {
                 defaultValue:
-                  "开启后，所有添加的供应商将自动适配并兼容全部应用，所有供应商统一在侧栏「聚合」页面内展示与管理。",
+                  "所有外部供应商统一在「聚合」页面添加和配置，并按每个供应商指定的适用应用精准同步与转发；各应用页面仅保留官方直连登录。",
               }),
             }}
             checked={Boolean(settings?.enableStackMode)}

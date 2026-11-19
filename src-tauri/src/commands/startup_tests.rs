@@ -169,7 +169,6 @@ fn startup_database_commands_yield_during_session_sync_contention() {
         None,
     );
     db.save_provider(&AppType::Kimi, &kimi).unwrap();
-    query!(add_provider_to_live_config, "kimi".into(), kimi.id.clone());
     query!(
         remove_provider_from_live_config,
         "kimi".into(),
