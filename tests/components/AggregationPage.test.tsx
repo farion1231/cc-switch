@@ -508,4 +508,213 @@ describe("AggregationPage", () => {
       ]),
     );
   });
+
+  it("shows Unassigned instead of Official direct for non-official-login apps like pi", async () => {
+    const base = getSettings();
+    setSettings({
+      ...base,
+      visibleApps: {
+        ...DEFAULT_VISIBLE_APPS,
+        gemini: true,
+        pi: true,
+      },
+    });
+
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_aggregation_overview`, () =>
+        HttpResponse.json({
+          enabled: false,
+          proxyRunning: false,
+          proxyAddress: "127.0.0.1",
+          proxyPort: 15721,
+          universalProviders: [],
+          appProviders: [],
+          appStates: [
+            {
+              appType: "gemini",
+              supportsLocalProxy: true,
+              supportsStackCatalog: false,
+              additive: false,
+              mode: "direct",
+              attached: false,
+              routeProviderId: null,
+              stackMemberCount: 0,
+              syncedProviderCount: 0,
+              assignedProviderCount: 0,
+            },
+            {
+              appType: "pi",
+              supportsLocalProxy: false,
+              supportsStackCatalog: false,
+              additive: true,
+              mode: "additive",
+              attached: false,
+              routeProviderId: null,
+              stackMemberCount: 0,
+              syncedProviderCount: 0,
+              assignedProviderCount: 0,
+            },
+          ],
+        }),
+      ),
+      http.post(`${TAURI_ENDPOINT}/get_proxy_stack`, () =>
+        HttpResponse.json({ active: false, members: [] }),
+      ),
+    );
+
+    renderPage();
+
+    const geminiChip = (
+      await screen.findByRole("button", { name: "Gemini CLI" })
+    ).parentElement!;
+    expect(geminiChip).toHaveTextContent(/官方直连|Official direct/);
+
+    const piChip = screen.getByRole("button", { name: "Pi" }).parentElement!;
+    expect(piChip).toHaveTextContent(/未分配|Unassigned/);
+    expect(piChip).not.toHaveTextContent(/官方直连|Official direct/);
+  });
+
+  it("allows cancelling the last connected app (including additive apps like OpenCode) and refreshes provider apps and counts", async () => {
+    const user = userEvent.setup();
+    const base = getSettings();
+    setSettings({
+      ...base,
+      visibleApps: {
+        ...DEFAULT_VISIBLE_APPS,
+        codex: true,
+        opencode: true,
+      },
+    });
+
+    const appModeCalls: unknown[] = [];
+    let codexAssigned = true;
+    let codexAttached = true;
+    let opencodeAssigned = true;
+
+    const buildOverview = () => ({
+      enabled: true,
+      proxyRunning: codexAttached,
+      proxyAddress: "127.0.0.1",
+      proxyPort: 15721,
+      universalProviders: [
+        {
+          id: "u-1",
+          name: "Relay One",
+          providerType: "custom_gateway",
+          apps: {
+            claude: false,
+            claudeDesktop: false,
+            codex: codexAssigned,
+            gemini: false,
+            grokbuild: false,
+            opencode: opencodeAssigned,
+            openclaw: false,
+            hermes: false,
+            pi: false,
+            omp: false,
+            mcode: false,
+            kimi: false,
+            dsh: false,
+            copilot: false,
+            workbuddy: false,
+          },
+          baseUrl: "https://relay.example.com",
+          apiKey: "sk-test-1234",
+          apiFormat: "openai_responses",
+          extraModels: ["gpt-5"],
+          models: {},
+        },
+      ],
+      appProviders: [],
+      appStates: [
+        {
+          appType: "codex",
+          supportsLocalProxy: true,
+          supportsStackCatalog: true,
+          additive: false,
+          mode: codexAttached ? "stack" : "direct",
+          attached: codexAttached,
+          routeProviderId: codexAssigned ? "universal-codex-u-1" : null,
+          stackMemberCount: codexAttached ? 1 : 0,
+          syncedProviderCount: codexAssigned ? 1 : 0,
+          assignedProviderCount: codexAssigned ? 1 : 0,
+        },
+        {
+          appType: "opencode",
+          supportsLocalProxy: false,
+          supportsStackCatalog: false,
+          additive: true,
+          mode: "additive",
+          attached: opencodeAssigned,
+          routeProviderId: null,
+          stackMemberCount: 0,
+          syncedProviderCount: opencodeAssigned ? 1 : 0,
+          assignedProviderCount: opencodeAssigned ? 1 : 0,
+        },
+      ],
+    });
+
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_aggregation_overview`, () =>
+        HttpResponse.json(buildOverview()),
+      ),
+      http.post(`${TAURI_ENDPOINT}/get_proxy_stack`, () =>
+        HttpResponse.json({ active: codexAttached, members: [] }),
+      ),
+      http.post(
+        `${TAURI_ENDPOINT}/set_aggregation_app_mode`,
+        async ({ request }) => {
+          const body = (await request.json()) as {
+            appType: string;
+            enabled: boolean;
+          };
+          appModeCalls.push(body);
+          if (body.appType === "codex" && !body.enabled) {
+            codexAttached = false;
+            codexAssigned = false;
+          }
+          if (body.appType === "opencode" && !body.enabled) {
+            opencodeAssigned = false;
+          }
+          return HttpResponse.json(null);
+        },
+      ),
+    );
+
+    renderPage();
+
+    // Both Codex and OpenCode have clickable 已接入 / Connected buttons
+    const attachedBtns = await screen.findAllByRole("button", {
+      name: /已接入|Connected|appAttached/,
+    });
+    expect(attachedBtns).toHaveLength(2);
+    expect(screen.getByRole("button", { name: /^Codex \(1\)$/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^OpenCode \(1\)$/ })).toBeInTheDocument();
+
+    // Disconnect Codex first
+    await user.click(attachedBtns[0]);
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: /^Codex \(1\)$/ })).not.toBeInTheDocument(),
+    );
+    const codexChip = screen.getByRole("button", { name: "Codex" }).parentElement!;
+    expect(codexChip).toHaveTextContent(/官方直连|Official direct/);
+
+    // Now OpenCode is the LAST connected ("已接入") button — must still be clickable and cancellable!
+    const remainingAttached = screen.getAllByRole("button", {
+      name: /已接入|Connected|appAttached/,
+    });
+    expect(remainingAttached).toHaveLength(1);
+    await user.click(remainingAttached[0]);
+
+    await waitFor(() =>
+      expect(appModeCalls).toEqual([
+        { appType: "codex", enabled: false, routeProviderId: "universal-codex-u-1" },
+        { appType: "opencode", enabled: false, routeProviderId: null },
+      ]),
+    );
+    expect(screen.queryByRole("button", { name: /^OpenCode \(1\)$/ })).not.toBeInTheDocument();
+    const opencodeChip = screen.getByRole("button", { name: "OpenCode" }).parentElement!;
+    expect(opencodeChip).toHaveTextContent(/未分配|Unassigned/);
+    expect(screen.getByText(/未分配应用|No apps assigned/)).toBeInTheDocument();
+  });
 });

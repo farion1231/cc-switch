@@ -24,7 +24,7 @@ import {
   type AggregationAppState,
 } from "@/lib/api/aggregation";
 import type { AppId } from "@/lib/api";
-import { useProxyStack } from "@/lib/query/proxy";
+import { proxyKeys, useProxyStack } from "@/lib/query/proxy";
 import { AppPageHeader } from "@/components/shell/AppPageHeader";
 import { APP_DISPLAY_NAME, AppGlyph } from "@/components/shell/AppGlyph";
 import { useVisibleAppIds } from "@/components/mcp/useVisibleAppIds";
@@ -39,6 +39,7 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { deepClone } from "@/utils/deepClone";
+import { appSupportsOfficialLogin } from "@/utils/providerCapabilities";
 import { cn } from "@/lib/utils";
 import { AggregationProviderModal } from "./AggregationProviderModal";
 import {
@@ -124,6 +125,8 @@ export function AggregationPage({
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["aggregation"] }),
       queryClient.invalidateQueries({ queryKey: ["settings"] }),
+      queryClient.invalidateQueries({ queryKey: proxyKeys.status }),
+      queryClient.invalidateQueries({ queryKey: proxyKeys.takeoverStatus }),
       queryClient.invalidateQueries({ queryKey: ["app-mode"] }),
       queryClient.invalidateQueries({ queryKey: ["proxy-stack"] }),
       queryClient.invalidateQueries({ queryKey: ["providers"] }),
@@ -314,10 +317,11 @@ export function AggregationPage({
     }
   };
 
-  const handleToggleAppMode = async (appState: AggregationAppState) => {
-    const entering = appState.supportsStackCatalog
-      ? appState.mode !== "stack"
-      : appState.mode === "direct";
+  const handleToggleAppMode = async (
+    appState: AggregationAppState,
+    currentlyAttached: boolean,
+  ) => {
+    const entering = !currentlyAttached;
     setAppModeBusy(appState.appType);
     try {
       await aggregationApi.setAppMode(
@@ -325,6 +329,9 @@ export function AggregationPage({
         entering,
         appState.routeProviderId ?? null,
       );
+      if (!entering && appFilter === appState.appType) {
+        setAppFilter("all");
+      }
       await invalidateAll();
       toast.success(
         entering
@@ -332,10 +339,16 @@ export function AggregationPage({
               app: APP_DISPLAY_NAME[appState.appType],
               defaultValue: `${APP_DISPLAY_NAME[appState.appType]} 已接入聚合`,
             })
-          : t("aggregation.toast.appDetached", {
-              app: APP_DISPLAY_NAME[appState.appType],
-              defaultValue: `${APP_DISPLAY_NAME[appState.appType]} 已回到直连`,
-            }),
+          : appState.supportsLocalProxy &&
+              appSupportsOfficialLogin(appState.appType)
+            ? t("aggregation.toast.appDetached", {
+                app: APP_DISPLAY_NAME[appState.appType],
+                defaultValue: `${APP_DISPLAY_NAME[appState.appType]} 已回到直连`,
+              })
+            : t("aggregation.toast.appDisconnected", {
+                app: APP_DISPLAY_NAME[appState.appType],
+                defaultValue: `${APP_DISPLAY_NAME[appState.appType]} 已取消接入`,
+              }),
       );
     } catch (error) {
       toast.error(
@@ -426,7 +439,8 @@ export function AggregationPage({
   const activeFilter =
     appFilter !== "all" &&
     appFilter !== "unassigned" &&
-    !visibleSet.has(appFilter)
+    (!visibleSet.has(appFilter) ||
+      (assignedCountsByApp.get(appFilter as AppId) ?? 0) === 0)
       ? "all"
       : appFilter;
 
@@ -774,26 +788,36 @@ export function AggregationPage({
                                 count: assignedCount,
                                 defaultValue: `${assignedCount} 家`,
                               })
-                            : t("aggregation.appUnassigned", {
-                                defaultValue: "官方直连",
-                              })}
+                            : appSupportsOfficialLogin(appState.appType)
+                              ? t("aggregation.appUnassigned", {
+                                  defaultValue: "官方直连",
+                                })
+                              : t("aggregation.appUnassignedExternal", {
+                                  defaultValue: "未分配",
+                                })}
                         </span>
                         {appState.supportsLocalProxy ? (
                           <button
                             type="button"
                             disabled={busy || !canAttach}
                             title={
-                              !canAttach
-                                ? !overview?.enabled
-                                  ? t("aggregation.enableModeBeforeAttach", {
-                                      defaultValue: "请先开启聚合模式",
-                                    })
-                                  : t("aggregation.assignBeforeAttach", {
-                                      defaultValue: "请先为该应用分配外部供应商",
-                                    })
-                                : undefined
+                              isProxyAttached
+                                ? t("aggregation.detachAppTip", {
+                                    defaultValue: "点击取消接入",
+                                  })
+                                : !canAttach
+                                  ? !overview?.enabled
+                                    ? t("aggregation.enableModeBeforeAttach", {
+                                        defaultValue: "请先开启聚合模式",
+                                      })
+                                    : t("aggregation.assignBeforeAttach", {
+                                        defaultValue: "请先为该应用分配外部供应商",
+                                      })
+                                  : undefined
                             }
-                            onClick={() => void handleToggleAppMode(appState)}
+                            onClick={() =>
+                              void handleToggleAppMode(appState, isProxyAttached)
+                            }
                             className={cn(
                               "rounded px-1.5 py-0.5 text-[11px] font-medium transition-colors",
                               isProxyAttached
@@ -814,11 +838,23 @@ export function AggregationPage({
                                   })}
                           </button>
                         ) : isProxyAttached ? (
-                          <span className="rounded bg-stack px-1.5 py-0.5 text-[11px] font-medium text-stack-on">
-                            {t("aggregation.appAttached", {
-                              defaultValue: "已生效",
+                          <button
+                            type="button"
+                            disabled={busy}
+                            title={t("aggregation.detachAppTip", {
+                              defaultValue: "点击取消接入",
                             })}
-                          </span>
+                            onClick={() =>
+                              void handleToggleAppMode(appState, true)
+                            }
+                            className="rounded bg-stack px-1.5 py-0.5 text-[11px] font-medium text-stack-on transition-opacity hover:opacity-90"
+                          >
+                            {busy
+                              ? "…"
+                              : t("aggregation.appAttached", {
+                                  defaultValue: "已接入",
+                                })}
+                          </button>
                         ) : null}
                       </div>
                     );

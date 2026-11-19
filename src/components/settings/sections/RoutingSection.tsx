@@ -9,6 +9,7 @@ import { aggregationApi } from "@/lib/api/aggregation";
 import { proxyApi } from "@/lib/api/proxy";
 import { useProvidersQuery, useSettingsQuery } from "@/lib/query";
 import {
+  proxyKeys,
   useGlobalProxyConfig,
   useProxyClientHost,
   useProxyStatusQuery,
@@ -196,6 +197,10 @@ export function RoutingSection({ onOpenApp }: RoutingSectionProps) {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["settings"] }),
         queryClient.invalidateQueries({ queryKey: ["aggregation"] }),
+        queryClient.invalidateQueries({ queryKey: proxyKeys.status }),
+        queryClient.invalidateQueries({ queryKey: proxyKeys.takeoverStatus }),
+        queryClient.invalidateQueries({ queryKey: ["app-mode"] }),
+        queryClient.invalidateQueries({ queryKey: ["proxy-stack"] }),
         queryClient.invalidateQueries({ queryKey: ["providers"] }),
       ]);
       toast.success(

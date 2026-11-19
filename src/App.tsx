@@ -554,6 +554,9 @@ function App() {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["providers"] }),
       queryClient.invalidateQueries({ queryKey: ["aggregation"] }),
+      queryClient.invalidateQueries({ queryKey: ["settings"] }),
+      queryClient.invalidateQueries({ queryKey: proxyKeys.status }),
+      queryClient.invalidateQueries({ queryKey: proxyKeys.takeoverStatus }),
     ]);
     try {
       await providersApi.updateTrayMenu();

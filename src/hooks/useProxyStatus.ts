@@ -42,6 +42,7 @@ export function useProxyStatus() {
         { closeButton: true },
       );
       queryClient.invalidateQueries({ queryKey: proxyKeys.status });
+      queryClient.invalidateQueries({ queryKey: ["aggregation"] });
     },
     onError: (error: Error) => {
       const detail =
@@ -67,6 +68,7 @@ export function useProxyStatus() {
         { closeButton: true },
       );
       queryClient.invalidateQueries({ queryKey: proxyKeys.status });
+      queryClient.invalidateQueries({ queryKey: ["aggregation"] });
     },
     onError: (error: Error) => {
       const detail =
@@ -92,6 +94,7 @@ export function useProxyStatus() {
         { closeButton: true },
       );
       queryClient.invalidateQueries({ queryKey: proxyKeys.status });
+      queryClient.invalidateQueries({ queryKey: ["aggregation"] });
       queryClient.invalidateQueries({ queryKey: proxyKeys.takeoverStatus });
       // 退回直连后「当前」显示回直连供应商。
       queryClient.invalidateQueries({ queryKey: ["providers"] });
@@ -143,6 +146,7 @@ export function useProxyStatus() {
         { closeButton: true },
       );
       queryClient.invalidateQueries({ queryKey: proxyKeys.status });
+      queryClient.invalidateQueries({ queryKey: ["aggregation"] });
       queryClient.invalidateQueries({ queryKey: proxyKeys.takeoverStatus });
       // 路由模式下「当前」是路由到的那家，进出路由都要刷新。
       queryClient.invalidateQueries({
@@ -175,6 +179,7 @@ export function useProxyStatus() {
         );
       }
       queryClient.invalidateQueries({ queryKey: proxyKeys.status });
+      queryClient.invalidateQueries({ queryKey: ["aggregation"] });
       queryClient.invalidateQueries({ queryKey: proxyKeys.takeoverStatus });
       for (const app of apps) {
         queryClient.invalidateQueries({ queryKey: ["providers", app] });

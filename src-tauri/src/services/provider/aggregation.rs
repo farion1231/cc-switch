@@ -1334,6 +1334,10 @@ fn build_aggregation_overview_sync(
                 continue;
             }
             let (base_url, api_key, api_format, models) = inspect_app_provider(&app, provider);
+            // 自动导入的裸默认客户端设置（如仅含 DISABLE_AUTOUPDATER 的 Claude settings.json）既无端点也无密钥，不应视为外部供应商
+            if base_url.is_none() && api_key.is_none() {
+                continue;
+            }
             let can_sync = base_url.is_some() && api_key.is_some();
             let mut synced_apps = Vec::new();
             for target in UniversalProviderApps::COMPATIBLE_APPS {
@@ -1382,8 +1386,8 @@ fn build_aggregation_overview_sync(
         let assigned_count = all_by_app
             .get(app_key)
             .map(|map| {
-                map.values()
-                    .filter(|p| !is_official_provider(&app, p))
+                map.iter()
+                    .filter(|(id, p)| is_routable_external_provider(&app, id, p))
                     .count()
             })
             .unwrap_or(0);
@@ -1456,6 +1460,10 @@ async fn set_global_aggregation_mode_inner(
     state: &AppState,
     enabled: bool,
 ) -> Result<AggregationOverview, String> {
+    if enabled && !state.proxy_service.is_running().await {
+        state.proxy_service.start().await?;
+    }
+
     let mut settings = crate::settings::get_settings();
     settings.enable_stack_mode = enabled;
     crate::settings::update_settings(settings).map_err(|e| e.to_string())?;
@@ -1466,6 +1474,10 @@ async fn set_global_aggregation_mode_inner(
             if app.spec().route_mode && crate::mode::current::is_proxy(&app) {
                 let _ = crate::mode::controller::exit(state, &app).await;
             }
+        }
+        // 若已无任何应用处于代理模式，同步停止聚合/本地代理服务
+        if !crate::mode::current::any_proxy() && state.proxy_service.is_running().await {
+            let _ = state.proxy_service.stop().await;
         }
     } else {
         // 开启全局聚合模式时仅同步各通用供应商勾选的目标应用配置；
@@ -2072,6 +2084,18 @@ fn sync_additive_child_live(
     }
 }
 
+/// 判断某应用下的记录是否为可用于聚合接入/转发的外部供应商（排除官方登录、缺凭据条目及裸客户端设置快照）。
+fn is_routable_external_provider(app: &AppType, id: &str, provider: &Provider) -> bool {
+    if is_official_provider(app, provider) {
+        return false;
+    }
+    if is_generated_sync_id(id) {
+        return true;
+    }
+    let (base_url, api_key, _, _) = inspect_app_provider(app, provider);
+    base_url.is_some() && api_key.is_some()
+}
+
 /// 为路由/聚合型应用挑选可用的非官方外部路由供应商 ID。
 fn select_aggregation_route_id<'a>(
     app: &AppType,
@@ -2085,7 +2109,7 @@ fn select_aggregation_route_id<'a>(
         .collect();
     let is_routable = |id: &str| {
         map.get(id)
-            .map(|p| !is_official_provider(app, p))
+            .map(|p| is_routable_external_provider(app, id, p))
             .unwrap_or(false)
     };
 
@@ -2097,7 +2121,7 @@ fn select_aggregation_route_id<'a>(
     }
 
     map.iter()
-        .find(|(_, p)| !is_official_provider(app, p))
+        .find(|(id, p)| is_routable_external_provider(app, id, p))
         .map(|(id, _)| (*id).to_string())
 }
 
@@ -2143,7 +2167,7 @@ async fn reconcile_attached_aggregation_apps(state: &AppState) -> Vec<String> {
         if app.spec().stack {
             let mut ids: Vec<&String> = providers
                 .iter()
-                .filter(|(_, p)| !is_official_provider(app, p))
+                .filter(|(id, p)| is_routable_external_provider(app, id, p))
                 .map(|(id, _)| id)
                 .collect();
             ids.sort();
@@ -2281,22 +2305,92 @@ pub async fn set_aggregation_app_mode(
     Ok(())
 }
 
+/// 取消某个应用在聚合中的接入：解除通用供应商分配并清理该应用下对应的外部供应商条目与配置。
+async fn detach_app_from_external_providers(
+    state: &AppState,
+    app: &AppType,
+) -> Result<(), String> {
+    let universal_map = state
+        .db
+        .get_all_universal_providers()
+        .map_err(|e| e.to_string())?;
+    for mut universal in universal_map.into_values() {
+        if universal.apps.is_enabled_for(app) {
+            universal.apps.set_enabled_for(app, false);
+            state
+                .db
+                .save_universal_provider(&universal)
+                .map_err(|e| e.to_string())?;
+        }
+        let child_id = synced_child_id_for_universal(app, &universal.id);
+        let _ = remove_synced_child_for_app(state, app, &child_id).await?;
+        let legacy_id = format!("universal-{}", universal.id);
+        if legacy_id != child_id {
+            let _ = remove_synced_child_for_app(state, app, &legacy_id).await?;
+        }
+    }
+
+    let visible = current_visible_apps();
+    let app_providers = state.db.get_all_providers(app).map_err(|e| e.to_string())?;
+    for (id, provider) in app_providers {
+        if is_generated_sync_id(&id) {
+            let _ = remove_synced_child_for_app(state, app, &id).await?;
+            continue;
+        }
+        if !is_routable_external_provider(app, &id, &provider) {
+            continue;
+        }
+        // 遗留的本应用原生外部供应商：提升为通用供应商（取消当前应用勾选，保留已分配的其他应用），再安全清理当前应用的记录
+        let Some(spec) = spec_from_app_provider(app, &provider) else {
+            continue;
+        };
+        let mut other_targets = HashSet::new();
+        for target in UniversalProviderApps::COMPATIBLE_APPS {
+            if target == *app || !visible.is_visible(&target) {
+                continue;
+            }
+            let expected_id = synced_child_id_for_app_provider(&target, app, &id);
+            if state
+                .db
+                .get_provider_by_id(&expected_id, &target)
+                .ok()
+                .flatten()
+                .is_some()
+            {
+                other_targets.insert(target);
+            }
+        }
+        let universal = universal_from_legacy_app_provider(app, &provider, &spec, &other_targets);
+        state
+            .db
+            .save_universal_provider(&universal)
+            .map_err(|e| e.to_string())?;
+        let _ = sync_universal_to_compatible_apps(state, &universal).await?;
+        let _ = remove_legacy_app_provider_and_children(state, app, &id).await;
+    }
+
+    Ok(())
+}
+
 async fn set_aggregation_app_mode_inner(
     state: &AppState,
     app: AppType,
     enabled: bool,
     route_provider_id: Option<String>,
 ) -> Result<(), String> {
-    if !app.spec().route_mode {
-        return Err(format!("{} 不支持本地代理模式", app.as_str()));
-    }
-    if enabled && !crate::settings::get_settings().enable_stack_mode {
-        return Err("请先开启全局聚合模式".to_string());
-    }
-    if enabled && !current_visible_apps().is_visible(&app) {
-        return Err(format!("{} 未在应用页面开启显示", app.as_str()));
+    if !UniversalProviderApps::COMPATIBLE_APPS.contains(&app) {
+        return Err(format!("{} 不支持聚合接入", app.as_str()));
     }
     if enabled {
+        if !app.spec().route_mode {
+            return Err(format!("{} 不支持本地代理模式", app.as_str()));
+        }
+        if !crate::settings::get_settings().enable_stack_mode {
+            return Err("请先开启全局聚合模式".to_string());
+        }
+        if !current_visible_apps().is_visible(&app) {
+            return Err(format!("{} 未在应用页面开启显示", app.as_str()));
+        }
         let providers = state
             .db
             .get_all_providers(&app)
@@ -2312,7 +2406,7 @@ async fn set_aggregation_app_mode_inner(
         if app.spec().stack {
             let mut ids: Vec<&String> = providers
                 .iter()
-                .filter(|(_, p)| !is_official_provider(&app, p))
+                .filter(|(id, p)| is_routable_external_provider(&app, id, p))
                 .map(|(id, _)| id)
                 .collect();
             ids.sort();
@@ -2330,7 +2424,10 @@ async fn set_aggregation_app_mode_inner(
         )
         .await?;
     } else {
-        crate::mode::controller::exit(state, &app).await?;
+        if app.spec().route_mode {
+            crate::mode::controller::exit(state, &app).await?;
+        }
+        detach_app_from_external_providers(state, &app).await?;
     }
     Ok(())
 }
@@ -2503,6 +2600,45 @@ mod tests {
             .find(|p| p.provider.id == "default")
             .unwrap();
         assert!(!item.can_sync);
+        // Missing-key provider is not ready, so assigned_provider_count must remain 0
+        let claude_state = overview
+            .app_states
+            .iter()
+            .find(|s| s.app_type == "claude")
+            .unwrap();
+        assert_eq!(claude_state.assigned_provider_count, 0);
+
+        // Bare default settings snapshot (no URL and no key) must not appear in app_providers or assigned_provider_count
+        let bare_claude = Provider::with_id(
+            "default".to_string(),
+            "default".to_string(),
+            json!({ "env": { "DISABLE_AUTOUPDATER": "1" } }),
+            None,
+        );
+        state
+            .db
+            .save_provider(&AppType::Claude, &bare_claude)
+            .unwrap();
+        let bare_overview = build_aggregation_overview_sync(
+            &state,
+            false,
+            crate::proxy::types::ProxyStatus::default(),
+            &crate::settings::VisibleApps::default(),
+        )
+        .unwrap();
+        assert!(bare_overview
+            .app_providers
+            .iter()
+            .all(|p| p.app_type != "claude" || p.provider.id != "default"));
+        assert_eq!(
+            bare_overview
+                .app_states
+                .iter()
+                .find(|s| s.app_type == "claude")
+                .unwrap()
+                .assigned_provider_count,
+            0
+        );
     }
 
     #[test]
@@ -2647,6 +2783,25 @@ mod tests {
             None
         );
 
+        let bare_default = Provider::with_id(
+            "bare-default".to_string(),
+            "default".to_string(),
+            json!({ "env": { "DISABLE_AUTOUPDATER": "1" } }),
+            None,
+        );
+        providers.insert("bare-default".to_string(), bare_default);
+
+        // Neither official nor bare client-settings snapshot is routable
+        assert_eq!(
+            select_aggregation_route_id(
+                &AppType::Claude,
+                Some("bare-default"),
+                Some("default"),
+                providers.iter()
+            ),
+            None
+        );
+
         let agg = Provider::with_id(
             "agg-claude-c1".to_string(),
             "Agg".to_string(),
@@ -2656,17 +2811,22 @@ mod tests {
         let custom = Provider::with_id(
             "custom-1".to_string(),
             "Custom".to_string(),
-            json!({}),
-            Some("custom".to_string()),
+            json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://relay.example.com",
+                    "ANTHROPIC_AUTH_TOKEN": "sk-custom"
+                }
+            }),
+            None,
         );
         providers.insert("agg-claude-c1".to_string(), agg);
         providers.insert("custom-1".to_string(), custom);
 
-        // Skips official current_route/active_id and deterministically selects routable provider
+        // Skips official and bare-default, deterministically selects routable provider
         assert_eq!(
             select_aggregation_route_id(
                 &AppType::Claude,
-                Some("default"),
+                Some("bare-default"),
                 Some("default"),
                 providers.iter()
             ),
@@ -2901,11 +3061,12 @@ mod tests {
             set_aggregation_app_mode_inner(&state, AppType::Claude, true, None).await;
         assert!(early_attach.is_err());
 
-        // 2. Enable global aggregation -> syncs external providers WITHOUT auto-attaching Claude or Codex
+        // 2. Enable global aggregation -> starts proxy service and syncs external providers WITHOUT auto-attaching Claude or Codex
         let overview = set_global_aggregation_mode_inner(&state, true)
             .await
             .expect("enable global aggregation");
         assert!(overview.enabled);
+        assert!(overview.proxy_running);
         assert!(!crate::mode::current::is_proxy(&AppType::Claude));
         assert!(!crate::mode::current::is_proxy(&AppType::Codex));
         let claude_state = overview
@@ -2935,12 +3096,95 @@ mod tests {
         assert!(crate::mode::current::is_proxy(&AppType::Claude));
         assert!(!crate::mode::current::is_proxy(&AppType::Codex));
 
-        // 5. Disable global aggregation -> attached Claude exits back to direct
+        // 4b. Manually detach Claude (last attached proxy app) -> exits proxy, clears claude assignment & refreshes count, preserves codex assignment
+        set_aggregation_app_mode_inner(&state, AppType::Claude, false, None)
+            .await
+            .expect("manually detach claude");
+        assert!(!crate::mode::current::is_proxy(&AppType::Claude));
+        let after_detach = get_aggregation_overview(&state).await.expect("overview");
+        assert_eq!(
+            after_detach
+                .app_states
+                .iter()
+                .find(|s| s.app_type == "claude")
+                .unwrap()
+                .assigned_provider_count,
+            0
+        );
+        assert_eq!(
+            after_detach
+                .app_states
+                .iter()
+                .find(|s| s.app_type == "codex")
+                .unwrap()
+                .assigned_provider_count,
+            1
+        );
+        let updated_u = state
+            .db
+            .get_universal_provider("u-manual")
+            .unwrap()
+            .expect("universal exists");
+        assert!(!updated_u.apps.claude);
+        assert!(updated_u.apps.codex);
+
+        // 5. Re-attach Codex and disable global aggregation -> attached Codex exits back to direct
+        set_aggregation_app_mode_inner(&state, AppType::Codex, true, None)
+            .await
+            .expect("manually attach codex");
+        assert!(crate::mode::current::is_proxy(&AppType::Codex));
+
         let disabled_overview = set_global_aggregation_mode_inner(&state, false)
             .await
             .expect("disable global aggregation");
         assert!(!disabled_overview.enabled);
+        assert!(!disabled_overview.proxy_running);
         assert!(!crate::mode::current::is_proxy(&AppType::Claude));
         assert!(!crate::mode::current::is_proxy(&AppType::Codex));
+
+        // 6. Additive app (OpenCode) can also be detached cleanly even when global aggregation is ON
+        let mut settings = crate::settings::get_settings();
+        if let Some(ref mut v) = settings.visible_apps {
+            v.opencode = true;
+        }
+        crate::settings::update_settings(settings).unwrap();
+        let mut u_with_oc = state.db.get_universal_provider("u-manual").unwrap().unwrap();
+        u_with_oc.apps.opencode = true;
+        state.db.save_universal_provider(&u_with_oc).unwrap();
+        set_global_aggregation_mode_inner(&state, true).await.unwrap();
+        assert_eq!(
+            get_aggregation_overview(&state)
+                .await
+                .unwrap()
+                .app_states
+                .iter()
+                .find(|s| s.app_type == "opencode")
+                .unwrap()
+                .assigned_provider_count,
+            1
+        );
+
+        set_aggregation_app_mode_inner(&state, AppType::OpenCode, false, None)
+            .await
+            .expect("detach additive opencode");
+        let after_oc_detach = get_aggregation_overview(&state).await.unwrap();
+        assert_eq!(
+            after_oc_detach
+                .app_states
+                .iter()
+                .find(|s| s.app_type == "opencode")
+                .unwrap()
+                .assigned_provider_count,
+            0
+        );
+        assert!(
+            !state
+                .db
+                .get_universal_provider("u-manual")
+                .unwrap()
+                .unwrap()
+                .apps
+                .opencode
+        );
     }
 }
