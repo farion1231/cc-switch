@@ -378,6 +378,7 @@
     "openclawModelNotFound": "Das ausgewählte Modell existiert nicht mehr. Aktualisieren Sie die Ansicht und versuchen Sie es erneut.",
     "backfillWarning": "Wechsel erfolgreich, aber die Änderungen konnten nicht im vorherigen Anbieter gespeichert werden",
     "codexAuthCleanupFailed": "Wechsel erfolgreich, aber auth.json konnte nicht entfernt werden – die Zugangsdaten der offiziellen Anmeldung liegen weiterhin auf der Festplatte; löschen Sie auth.json im Codex-Konfigurationsordner, um sie zu entfernen",
+    "omoVariantCleanupFailed": "Erfolgreich gewechselt, aber die Konfigurationsdatei der anderen OMO-Variante (OMO / OMO Slim) konnte nicht entfernt werden, daher lädt OpenCode möglicherweise beide; lösche sie im OpenCode-Konfigurationsverzeichnis",
     "windowControlFailed": "Fenstersteuerung fehlgeschlagen: {{error}}",
     "officialBlockedByProxy": "Bei aktivem lokalem Routing ist kein Wechsel zu einem offiziellen Anbieter möglich. Die Nutzung von Routing mit offiziellen APIs kann zur Sperrung des Kontos führen.",
     "proxyOfficialWarning": "Der aktuelle Anbieter {{name}} ist offiziell. Erwägen Sie den Wechsel zu einem Drittanbieter, bevor Sie das lokale Routing verwenden.",

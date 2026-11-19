@@ -378,6 +378,7 @@
     "openclawModelNotFound": "선택한 모델이 더 이상 존재하지 않습니다. 새로 고침하고 다시 시도하세요.",
     "backfillWarning": "전환은 완료되었지만 이전 공급자의 설정을 다시 저장하지 못해 수동으로 변경한 설정이 저장되지 않았을 수 있습니다.",
     "codexAuthCleanupFailed": "전환은 완료되었지만 auth.json을 삭제하지 못해 공식 로그인 자격 증명이 디스크에 남아 있습니다. 완전히 제거하려면 Codex 설정 디렉터리의 auth.json을 직접 삭제하세요.",
+    "omoVariantCleanupFailed": "전환에 성공했지만 다른 OMO 변형(OMO / OMO Slim)의 설정 파일을 삭제하지 못해 OpenCode가 둘 다 불러올 수 있습니다. OpenCode 설정 디렉터리에서 직접 삭제하세요",
     "windowControlFailed": "창 제어 실패: {{error}}",
     "officialBlockedByProxy": "로컬 라우팅이 활성화된 동안에는 공식 공급자로 전환할 수 없습니다. 공식 API와 함께 라우팅을 사용하면 계정이 차단될 수 있습니다.",
     "proxyOfficialWarning": "현재 선택한 공급자({{name}})는 공식 공급자입니다. 로컬 라우팅을 사용하기 전에 타사 공급자로 전환하는 것을 고려하세요.",
