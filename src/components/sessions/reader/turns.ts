@@ -121,6 +121,20 @@ export interface TurnFinal {
   cost?: StepCost;
 }
 
+/**
+ * 章节：Claude Code desktop 里模型用 `mark_chapter` 打的导航点。
+ * 不算执行步骤，单独成行，目录里也列出来。
+ */
+export interface TurnChapter {
+  /** 稳定 key（行 key、目录 key） */
+  id: string;
+  messageIndex: number;
+  title: string;
+  summary?: string;
+  /** 章节后面紧跟的顶层步骤（合并后）的 id；缺省表示排在本轮所有步骤之后 */
+  beforeStepId?: string;
+}
+
 export interface SessionTurn {
   /** turnId（同一 turnId 再次出现时加 `#n` 后缀保证唯一） */
   key: string;
@@ -133,6 +147,8 @@ export interface SessionTurn {
   leadingEvents: TurnEvent[];
   /** 执行过程（已按风格合并） */
   steps: TimelineStep[];
+  /** 本轮里的章节标记（文档顺序） */
+  chapters: TurnChapter[];
   final?: TurnFinal;
   /** 最终回复之后的事件（中断、Hook 错误、PR 链接…） */
   trailingEvents: TurnEvent[];
@@ -152,6 +168,20 @@ export interface BuildTurnsOptions {
 
 /** 旧后端从 content 兜底出来的调用 id 前缀：这类调用没有结果配对，状态记为 unknown */
 export const LEGACY_CALL_PREFIX = "legacy:";
+
+/** 章节标记的 MCP 工具名（完整名形如 `mcp__ccd_session__mark_chapter`），与后端 claude.rs 一致 */
+export const MARK_CHAPTER_TOOL = "mark_chapter";
+
+/**
+ * 是不是章节标记调用。只认工具名、不认 server（桌面端内部名可能改）；
+ * 后端拿不到章节标题时 title 会退回 `server.tool`，那种按普通 MCP 调用显示。
+ */
+export const isChapterCall = (block: ToolCallBlock): boolean => {
+  if (block.kind !== "mcp" || !block.rawName.startsWith("mcp__")) return false;
+  if (!block.rawName.endsWith(`__${MARK_CHAPTER_TOOL}`)) return false;
+  const title = block.title.trim();
+  return title.length > 0 && !title.endsWith(`.${MARK_CHAPTER_TOOL}`);
+};
 
 const LEGACY_TOOL_LINE = /^\[Tool(?::\s*([^\]]+))?\](?:\s+(.*))?$/;
 
@@ -282,7 +312,10 @@ const locateFinal = (
   for (let i = start; i <= end; i += 1) {
     if (messages[i].injected) continue;
     blocksOf(i).forEach((block, j) => {
-      if (block.type === "tool_call") lastCall = [i, j];
+      // 章节标记不是执行步骤：它跟在回复后面时，前面的文本仍是最终回复
+      if (block.type === "tool_call" && !isChapterCall(block)) {
+        lastCall = [i, j];
+      }
     });
   }
   for (let i = end; i >= start; i -= 1) {
@@ -328,6 +361,7 @@ const buildTurn = (
     lastMessageIndex: end,
     leadingEvents: [],
     steps: [],
+    chapters: [],
     trailingEvents: [],
     injected: [],
     stepCosts: [],
@@ -335,6 +369,9 @@ const buildTurn = (
   };
 
   const steps: TimelineStep[] = [];
+  // 章节及其在原始步骤序列里的位置（合并步骤后再换算成 beforeStepId）
+  const chapters: { chapter: TurnChapter; at: number }[] = [];
+  const chapterCalls = new Set<string>();
   const callSteps = new Map<string, ToolStep>();
   // 本轮所有调用 id：Claude Code 偶尔先写结果、后写调用记录（异步子代理启动时），
   // 这种「早到」的结果先挂起，等调用出现再配上，而不是当成孤儿输出
@@ -404,6 +441,19 @@ const buildTurn = (
           return;
         }
         case "tool_call": {
+          if (isChapterCall(block)) {
+            if (block.id) chapterCalls.add(block.id);
+            chapters.push({
+              chapter: {
+                id,
+                messageIndex: i,
+                title: block.title.trim(),
+                summary: block.detail?.trim() || undefined,
+              },
+              at: steps.length,
+            });
+            return;
+          }
           const step: ToolStep = {
             kind: "tool",
             id,
@@ -427,6 +477,8 @@ const buildTurn = (
           return;
         }
         case "tool_result": {
+          // 章节标记的返回值没有信息量，不显示
+          if (block.callId && chapterCalls.has(block.callId)) return;
           const owner = block.callId ? callSteps.get(block.callId) : undefined;
           if (owner && !owner.result) {
             owner.result = block;
@@ -528,6 +580,18 @@ const buildTurn = (
     };
   }
   turn.steps = mergeSteps(steps, style);
+  turn.chapters = chapters.map(({ chapter, at }) => {
+    // 事件移到回复之后时 steps 会变短，at 越界即「排在所有步骤之后」
+    const next = steps[at];
+    const top =
+      next &&
+      turn.steps.find(
+        (step) =>
+          step === next ||
+          (step.kind === "merged" && step.children.includes(next as ToolStep)),
+      );
+    return top ? { ...chapter, beforeStepId: top.id } : chapter;
+  });
   return turn;
 };
 
@@ -590,8 +654,8 @@ export const buildTurnIndex = (turns: SessionTurn[]): TurnIndex[] =>
 export interface SearchMatch {
   /** turns 下标 */
   turn: number;
-  target: "question" | "step" | "final" | "event";
-  /** target = step 时为命中的（子）步骤 id；event 为事件 id */
+  target: "question" | "step" | "final" | "event" | "chapter";
+  /** target = step 时为命中的（子）步骤 id；event 为事件 id；chapter 为章节 id */
   targetId?: string;
   count: number;
 }
@@ -680,6 +744,20 @@ export const findSearchHits = (
       add({ turn: turn.index, target: "step", targetId: step.id, count });
     };
     turn.steps.forEach((step) => visitStep(step));
+    turn.chapters.forEach((chapter) => {
+      const count = countMatches(
+        [chapter.title, chapter.summary].filter(Boolean).join("\n"),
+        query,
+      );
+      if (count) {
+        add({
+          turn: turn.index,
+          target: "chapter",
+          targetId: chapter.id,
+          count,
+        });
+      }
+    });
     const finalCount = countMatches(turn.final?.text ?? "", query);
     if (finalCount) {
       hits.finalKeys.add(turn.key);
@@ -709,6 +787,9 @@ const matchMessageIndex = (
       return [...turn.leadingEvents, ...turn.trailingEvents].find(
         (event) => event.id === match.targetId,
       )?.messageIndex;
+    case "chapter":
+      return turn.chapters.find((chapter) => chapter.id === match.targetId)
+        ?.messageIndex;
     case "step": {
       for (const step of turn.steps) {
         const candidates = step.kind === "merged" ? step.children : [step];
@@ -821,6 +902,7 @@ export type ReaderRow =
       block: EventBlock;
       body?: string;
     }
+  | { kind: "chapter"; key: string; turn: number; chapter: TurnChapter }
   | { kind: "injected"; key: string; turn: number; messageIndex: number }
   | { kind: "turn_divider"; key: string; turn: number };
 
@@ -949,20 +1031,50 @@ const finalRow = (
   forceExpanded: Boolean(options.search?.finalKeys.has(turn.key)),
 });
 
+/** 章节行的 key：目录点击、查找命中都按它定位 */
+export const chapterRowKey = (turn: SessionTurn, chapter: TurnChapter) =>
+  `${turn.key}:chapter:${chapter.id}`;
+
+const chapterRow = (turn: SessionTurn, chapter: TurnChapter): ReaderRow => ({
+  kind: "chapter",
+  key: chapterRowKey(turn, chapter),
+  turn: turn.index,
+  chapter,
+});
+
+/** 排在某个顶层步骤之前的章节；不传 stepId 取排在所有步骤之后的 */
+const chapterRowsBefore = (turn: SessionTurn, stepId?: string): ReaderRow[] =>
+  turn.chapters
+    .filter((chapter) => chapter.beforeStepId === stepId)
+    .map((chapter) => chapterRow(turn, chapter));
+
+/**
+ * 执行过程的行。章节行不受折叠影响：展开时插在对应步骤之前，
+ * 折叠时全部排在摘要行之前（步骤看不见，位置无从对应）。
+ */
 const timelineRows = (
   turn: SessionTurn,
   options: FlattenOptions,
 ): ReaderRow[] => {
   const { steps } = turn;
-  if (steps.length === 0) return [];
+  if (steps.length === 0) {
+    return turn.chapters.map((chapter) => chapterRow(turn, chapter));
+  }
   // 规则 5：只有 1 步且没失败，不要摘要行
   if (steps.length === 1 && !isFailureStep(steps[0])) {
-    return stepRows(turn, steps[0], options, 0, false);
+    return [
+      ...chapterRowsBefore(turn, steps[0].id),
+      ...stepRows(turn, steps[0], options, 0, false),
+      ...chapterRowsBefore(turn),
+    ];
   }
   const expanded = isTimelineExpanded(turn, options);
   const failures = steps.filter(isFailureStep);
   const pinned = expanded ? [] : failures.slice(0, MAX_PINNED_FAILURES);
   const rows: ReaderRow[] = [
+    ...(expanded
+      ? []
+      : turn.chapters.map((chapter) => chapterRow(turn, chapter))),
     {
       kind: "timeline",
       key: `${turn.key}:timeline`,
@@ -972,9 +1084,11 @@ const timelineRows = (
       hiddenFailures: expanded ? 0 : failures.length - pinned.length,
     },
   ];
-  (expanded ? steps : pinned).forEach((step) =>
-    rows.push(...stepRows(turn, step, options, 0, !expanded)),
-  );
+  (expanded ? steps : pinned).forEach((step) => {
+    if (expanded) rows.push(...chapterRowsBefore(turn, step.id));
+    rows.push(...stepRows(turn, step, options, 0, !expanded));
+  });
+  if (expanded) rows.push(...chapterRowsBefore(turn));
   return rows;
 };
 
@@ -983,6 +1097,7 @@ const turnRows = (turn: SessionTurn, options: FlattenOptions): ReaderRow[] => {
   const rows: ReaderRow[] = [];
   if (filter === "conversation") {
     if (turn.question) rows.push(questionRow(turn, turn.question, options));
+    turn.chapters.forEach((chapter) => rows.push(chapterRow(turn, chapter)));
     if (turn.final) rows.push(finalRow(turn, turn.final, options));
     return rows;
   }
@@ -1062,6 +1177,8 @@ export const findMatchRowIndex = (
         return row.kind === "final";
       case "step":
         return row.kind === "step" && row.step.id === match.targetId;
+      case "chapter":
+        return row.kind === "chapter" && row.chapter.id === match.targetId;
       case "event":
         return (
           (row.kind === "event" && row.eventId === match.targetId) ||
@@ -1082,6 +1199,7 @@ export const ROW_HEIGHT_ESTIMATE: Record<ReaderRow["kind"], number> = {
   step: 32,
   final: 160,
   event: 28,
+  chapter: 40,
   injected: 28,
   turn_divider: 17,
 };
