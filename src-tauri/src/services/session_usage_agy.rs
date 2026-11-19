@@ -56,9 +56,9 @@ fn sync_agy_usage_from_files(
         };
         let modified = metadata_modified_nanos(&metadata);
         let size = metadata.len() as i64;
-        // Invalidate pre-Orchestrator / pre-worker-alias cursors once, including unchanged,
-        // already timed history.
-        let native_state = format!("v3:{}", native_models::native_state_fingerprint(&path));
+        // Invalidate pre-Orchestrator / pre-worker-alias / pre-Neon-Orchestrator cursors once,
+        // including unchanged, already timed history.
+        let native_state = format!("v4:{}", native_models::native_state_fingerprint(&path));
         if cursor.is_some_and(|c| {
             c.last_modified == modified
                 && c.last_byte_offset == Some(size)
@@ -133,9 +133,12 @@ fn model_id_of(display: &str) -> String {
 /// Multi-model modes, not evidence of the model used for an individual response.
 /// Display name and native alias of the same mode map to the same planner.
 fn orchestrator_mode(model: &str) -> Option<&'static str> {
-    match model_id_of(model).as_str() {
+    match model_id_of(model.trim()).to_ascii_lowercase().as_str() {
         "orchestrator-carbon" | "gemini-pro-orchestrator" => Some("carbon"),
-        "orchestrator-argon" | "gemini-pro-orchestrator-argon" => Some("argon"),
+        "orchestrator-argon"
+        | "gemini-pro-orchestrator-argon"
+        | "gemini-pro-orchestrator-g1-pro" => Some("argon"),
+        "orchestrator-neon" | "gemini-pro-orchestrator-neon" => Some("neon"),
         _ => None,
     }
 }
@@ -921,6 +924,10 @@ mod tests {
             "gemini-3.8-flash-high"
         );
         assert_eq!(model_id_of("Gemini 4 Argon (Low)"), "gemini-4-argon-low");
+        assert_eq!(
+            model_id_of("Claude Opus 4.6 (Thinking)"),
+            "claude-opus-4.6-thinking"
+        );
         assert_eq!(model_id_of("gemini-3.8-flash"), "gemini-3.8-flash");
         assert_eq!(model_id_of("unknown"), "unknown");
 
@@ -930,8 +937,9 @@ mod tests {
             json!({"step_index":1,"type":"PLANNER_RESPONSE","status":"DONE","input_tokens":1_000_000,"output_tokens":0}),
             json!({"step_index":2,"type":"PLANNER_RESPONSE","status":"DONE","model":"Gemini 3.1 Pro (High)","input_tokens":1_000_000}),
             json!({"step_index":3,"type":"PLANNER_RESPONSE","status":"DONE","model":"Mystery Model","input_tokens":5}),
+            json!({"step_index":4,"type":"PLANNER_RESPONSE","status":"DONE","model":"Claude Opus 4.6 (Thinking)","input_tokens":1_000_000}),
         ];
-        assert_eq!(import_records(&db, "priced", &rows, None).unwrap(), (3, 0));
+        assert_eq!(import_records(&db, "priced", &rows, None).unwrap(), (4, 0));
         let conn = db.conn.lock().unwrap();
         let price = |model: &str| -> (String, String) {
             conn.query_row(
@@ -946,6 +954,10 @@ mod tests {
         assert!(flash.parse::<f64>().unwrap() > 0.0, "{flash}");
         let (_, pro) = price("gemini-3.1-pro-high");
         assert!(pro.parse::<f64>().unwrap() > 0.0, "{pro}");
+        // Claude Opus 4.6 input is $5 / 1M, the same as the base Opus 4.6 row.
+        let (display, opus) = price("claude-opus-4.6-thinking");
+        assert_eq!(display, "Claude Opus 4.6 (Thinking)");
+        assert_eq!(opus.parse::<f64>().unwrap(), 5.0, "{opus}");
         assert_eq!(price("mystery-model").1, "0");
     }
 

@@ -605,3 +605,85 @@ fn cli_worker_does_not_inherit_stale_direct_hydrogen_selection_across_rewind() {
         "2.325",
     );
 }
+
+#[test]
+fn orchestrator_neon_and_g1_pro_aliases_attribute_and_reparse_after_v3_cursor() {
+    if crate::config::sqlite_unsupported_in_temp_dir() {
+        return;
+    }
+    for (mode, planner, expected_model, expected_cost) in [
+        (
+            "Orchestrator (Neon)",
+            "gemini-pro-orchestrator-neon",
+            "gemini-4-neon",
+            "4.65",
+        ),
+        (
+            "gemini-pro-orchestrator-neon",
+            "gemini-pro-orchestrator-neon",
+            "gemini-4-neon",
+            "4.65",
+        ),
+        (
+            "Orchestrator (Argon)",
+            "gemini-pro-orchestrator-g1-pro",
+            "gemini-4-argon",
+            "3.1",
+        ),
+        (
+            "gemini-pro-orchestrator-g1-pro",
+            "gemini-pro-orchestrator-g1-pro",
+            "gemini-4-argon",
+            "3.1",
+        ),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("conversations")).unwrap();
+        let source = dir
+            .path()
+            .join("brain/session/.system_generated/logs/transcript_full.jsonl");
+        std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+        let rows = rows(mode);
+        let text = rows
+            .iter()
+            .map(Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(&source, text).unwrap();
+        let native_conn = native(&dir.path().join("conversations/session.db"), planner, mode);
+        drop(native_conn);
+
+        let db = Database::memory().unwrap();
+        let files = || vec![("session".into(), source.clone())];
+        let initial = sync_agy_usage_from_files(&db, files()).unwrap();
+        assert_eq!((initial.imported, initial.skipped), (2, 0), "{mode}");
+        assert_price(&db, 1, expected_model, mode, expected_cost);
+        assert_price(&db, 3, "gemini-4-hydrogen", mode, "2.325");
+
+        // Simulate v3: cursor with previously unrecognized planner alias stored at $0.
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute(
+                "UPDATE proxy_request_logs
+                 SET model=?1, input_cost_usd='0', output_cost_usd='0',
+                     cache_read_cost_usd='0', total_cost_usd='0'
+                 WHERE request_id='agy:session:1'",
+                [planner],
+            )
+            .unwrap();
+            conn.execute(
+                "UPDATE session_log_sync SET parser_state=?1",
+                [format!(
+                    "v3:{}",
+                    native_models::native_state_fingerprint(&source)
+                )],
+            )
+            .unwrap();
+        }
+        let upgraded = sync_agy_usage_from_files(&db, files()).unwrap();
+        assert_eq!((upgraded.imported, upgraded.skipped), (1, 1), "{mode}");
+        assert_price(&db, 1, expected_model, mode, expected_cost);
+        let steady = sync_agy_usage_from_files(&db, files()).unwrap();
+        assert_eq!((steady.imported, steady.skipped), (0, 0), "{mode}");
+    }
+}
