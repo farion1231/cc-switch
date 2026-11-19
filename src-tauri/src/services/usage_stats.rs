@@ -2463,6 +2463,12 @@ fn model_pricing_candidates(model_id: &str) -> Vec<String> {
         if candidate == "gemini-4-hydrogen-orchestrator" {
             queue.push("gemini-4-hydrogen".to_string());
         }
+        if let Some(stripped) = strip_tiered_suffix(&candidate) {
+            queue.push(stripped);
+        }
+        if let Some(base) = agy_orchestrator_base(&candidate) {
+            queue.push(base);
+        }
         if candidate.starts_with("claude-") && candidate.contains('.') {
             queue.push(candidate.replace('.', "-"));
         }
@@ -2621,6 +2627,23 @@ fn strip_reasoning_effort_suffix(model_id: &str) -> Option<String> {
     None
 }
 
+/// AGY 的 tiered 变体（如 "gemini-3.8-flash-tiered"、"gemini-4-hydrogen-tiered"）
+/// 与底层模型同价，剥掉 -tiered 标记后按基础模型计价。
+fn strip_tiered_suffix(model_id: &str) -> Option<String> {
+    let stripped = model_id.strip_suffix("-tiered")?;
+    (!stripped.is_empty()).then(|| stripped.to_string())
+}
+
+/// AGY 的 orchestrator 模式 ID 只命名模式（见 session_usage_agy::orchestrator_mode），
+/// 计价回落到对应的基础模型。
+fn agy_orchestrator_base(model_id: &str) -> Option<String> {
+    match model_id {
+        "orchestrator-carbon" => Some("gemini-4-carbon".to_string()),
+        "orchestrator-argon" => Some("gemini-4-argon".to_string()),
+        _ => None,
+    }
+}
+
 fn should_try_pricing_prefix_match(model_id: &str) -> bool {
     let dash_count = model_id.matches('-').count();
 
@@ -2661,6 +2684,27 @@ mod tests {
             chrono::LocalResult::Ambiguous(earliest, _) => earliest.timestamp(),
             chrono::LocalResult::None => panic!("valid local datetime"),
         }
+    }
+
+    /// AGY tiered / orchestrator 变体按基础模型计价（issue #9720）。
+    #[test]
+    fn antigravity_variant_ids_map_to_base_model_pricing_candidates() {
+        let tiered = model_pricing_candidates("gemini-3.8-flash-tiered");
+        assert!(tiered.contains(&"gemini-3.8-flash".to_string()));
+        assert!(tiered.contains(&"gemini-3.8-flash-tiered".to_string()));
+
+        let hydrogen_tiered = model_pricing_candidates("gemini-4-hydrogen-tiered-high");
+        assert!(hydrogen_tiered.contains(&"gemini-4-hydrogen".to_string()));
+
+        let argon = model_pricing_candidates("orchestrator-argon");
+        assert!(argon.contains(&"gemini-4-argon".to_string()));
+
+        let carbon = model_pricing_candidates("orchestrator-carbon");
+        assert!(carbon.contains(&"gemini-4-carbon".to_string()));
+
+        // 非 tiered / 非 orchestrator ID 不受影响。
+        let plain = model_pricing_candidates("gemini-4-argon");
+        assert!(!plain.contains(&"gemini-4".to_string()));
     }
 
     #[allow(clippy::too_many_arguments)]
