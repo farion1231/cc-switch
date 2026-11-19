@@ -1420,7 +1420,7 @@ export function ClaudeDesktopProviderForm({
                   <p className="text-xs leading-relaxed text-fg-2">
                     {t("claudeDesktop.directModelListHint", {
                       defaultValue:
-                        "配置 Claude Desktop 可用的 Sonnet、Opus、Haiku 模型。留空时 Claude Desktop 会自动读取 /v1/models；勾选 1M 会声明支持 1M 上下文。",
+                        "配置 Claude Desktop 可用的 Sonnet、Opus、Haiku 模型。直连时留空，Claude Desktop 会自动读取 /v1/models；路由模式下留空只提供默认的 Claude 模型名，要用供应商的模型请在这里填写。勾选 1M 会声明支持 1M 上下文。",
                     })}
                   </p>
 

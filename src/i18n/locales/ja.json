@@ -318,7 +318,7 @@
     "supports1mShort": "1M",
     "directModelListTitle": "モデル一覧",
     "directModelListCollapsedHint": "ネイティブ Claude モデルのプロバイダーでは通常不要です。Claude Desktop が /v1/models を自動取得します。",
-    "directModelListHint": "Claude Desktop で使用できる Sonnet、Opus、Haiku モデルを設定します。空欄の場合、Claude Desktop が /v1/models を自動取得します。1M をオンにすると 1M コンテキスト対応を宣言します。",
+    "directModelListHint": "Claude Desktop で使用できる Sonnet、Opus、Haiku モデルを設定します。直接接続では空欄にすると Claude Desktop が /v1/models を自動取得します。ルーティングモードでは空欄だと既定の Claude モデル名しか表示されないため、プロバイダーのモデルを使うにはここに入力してください。1M をオンにすると 1M コンテキスト対応を宣言します。",
     "directModelInvalid": "直結モデルは Claude Desktop が認識できる Sonnet / Opus / Haiku モデル ID を使う必要があります",
     "addModel": "モデルを追加",
     "addRoute": "モデルを追加",
@@ -1740,6 +1740,7 @@
       "outlineFailed": "失敗したステップあり",
       "outlineAborted": "中断",
       "outlineNoReply": "返信なし",
+      "chapter": "チャプター",
       "viewOptions": "表示オプション",
       "noChanges": "このセッションにはファイルの変更がありません",
       "rawMatch": "原文での一致",
@@ -4791,7 +4792,7 @@
       "failedTitle": "読み込めなかったアプリがあります",
       "filesTitle": "読み込んだファイル",
       "claudeNote": "（トップレベルの mcpServers）",
-      "dshNote": "（初期化済みのすべての profile に書き込みます：web、desktop、headless、acp）",
+      "dshNote": "（初期化済みのすべての profile に書き込みます：web、desktop、headless、acp。ホームレベルの ~/.dsh/cordis.patch.yml は読み書きしません。そこにある MCP はそのファイルで管理してください）",
       "ok": "OK"
     },
     "templateLabels": {

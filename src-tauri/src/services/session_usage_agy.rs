@@ -924,6 +924,10 @@ mod tests {
             "gemini-3.8-flash-high"
         );
         assert_eq!(model_id_of("Gemini 4 Argon (Low)"), "gemini-4-argon-low");
+        assert_eq!(
+            model_id_of("Claude Opus 4.6 (Thinking)"),
+            "claude-opus-4.6-thinking"
+        );
         assert_eq!(model_id_of("gemini-3.8-flash"), "gemini-3.8-flash");
         assert_eq!(model_id_of("unknown"), "unknown");
 
@@ -933,8 +937,9 @@ mod tests {
             json!({"step_index":1,"type":"PLANNER_RESPONSE","status":"DONE","input_tokens":1_000_000,"output_tokens":0}),
             json!({"step_index":2,"type":"PLANNER_RESPONSE","status":"DONE","model":"Gemini 3.1 Pro (High)","input_tokens":1_000_000}),
             json!({"step_index":3,"type":"PLANNER_RESPONSE","status":"DONE","model":"Mystery Model","input_tokens":5}),
+            json!({"step_index":4,"type":"PLANNER_RESPONSE","status":"DONE","model":"Claude Opus 4.6 (Thinking)","input_tokens":1_000_000}),
         ];
-        assert_eq!(import_records(&db, "priced", &rows, None).unwrap(), (3, 0));
+        assert_eq!(import_records(&db, "priced", &rows, None).unwrap(), (4, 0));
         let conn = db.conn.lock().unwrap();
         let price = |model: &str| -> (String, String) {
             conn.query_row(
@@ -949,6 +954,10 @@ mod tests {
         assert!(flash.parse::<f64>().unwrap() > 0.0, "{flash}");
         let (_, pro) = price("gemini-3.1-pro-high");
         assert!(pro.parse::<f64>().unwrap() > 0.0, "{pro}");
+        // Claude Opus 4.6 input is $5 / 1M, the same as the base Opus 4.6 row.
+        let (display, opus) = price("claude-opus-4.6-thinking");
+        assert_eq!(display, "Claude Opus 4.6 (Thinking)");
+        assert_eq!(opus.parse::<f64>().unwrap(), 5.0, "{opus}");
         assert_eq!(price("mystery-model").1, "0");
     }
 

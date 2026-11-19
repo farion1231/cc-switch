@@ -318,7 +318,7 @@
     "supports1mShort": "1M",
     "directModelListTitle": "Указать модели Claude Desktop вручную (дополнительно)",
     "directModelListCollapsedHint": "Обычно для нативных провайдеров Claude это не требуется. Claude Desktop автоматически получит список через /v1/models.",
-    "directModelListHint": "Заполняйте только если /v1/models у провайдера недоступен или не возвращает распознаваемые Claude Desktop ID моделей Sonnet / Opus / Haiku. Отметка 1M сообщает Claude Desktop о поддержке контекста 1M.",
+    "directModelListHint": "Настройте модели Sonnet, Opus и Haiku, доступные Claude Desktop. В прямом режиме оставьте пустым — Claude Desktop сам получит список через /v1/models; в режиме маршрутизации пустой список даёт только стандартные имена моделей Claude, поэтому, чтобы использовать модели провайдера, заполните его. Отметка 1M сообщает Claude Desktop о поддержке контекста 1M.",
     "directModelInvalid": "Прямые модели должны использовать распознаваемые Claude Desktop ID Sonnet / Opus / Haiku",
     "addModel": "Добавить модель",
     "addRoute": "Добавить модель",
@@ -1741,6 +1741,7 @@
       "outlineFailed": "Есть шаги с ошибкой",
       "outlineAborted": "Прервано",
       "outlineNoReply": "Нет ответа",
+      "chapter": "Глава",
       "viewOptions": "Параметры отображения",
       "noChanges": "В этой сессии нет изменений файлов",
       "rawMatch": "Совпадения в исходнике",
@@ -4789,7 +4790,7 @@
       "failedTitle": "Некоторые приложения не удалось прочитать",
       "filesTitle": "Какие файлы были прочитаны",
       "claudeNote": " (mcpServers верхнего уровня)",
-      "dshNote": " (записывается во все инициализированные profile: web, desktop, headless, acp)",
+      "dshNote": " (записывается во все инициализированные profile: web, desktop, headless, acp. Файл домашнего уровня ~/.dsh/cordis.patch.yml не читается и не изменяется; MCP-серверы из него настраивайте в нём)",
       "ok": "Понятно"
     },
     "templateLabels": {
