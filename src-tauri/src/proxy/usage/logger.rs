@@ -469,7 +469,8 @@ mod tests {
                 id.into(),
                 "discount".into(),
                 crate::provider::billing_multiplier(
-                    &db.get_provider_by_id("discount", app)?.unwrap(),
+                    &db.get_provider_by_id("discount", &app.parse::<AppType>().unwrap())?
+                        .unwrap(),
                 ),
                 app.into(),
                 model.into(),

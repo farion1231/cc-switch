@@ -452,6 +452,49 @@ export function useAddSkillRepo() {
   });
 }
 
+const REPO_TOKENS_QUERY_KEY = ["skills", "repoTokens"];
+
+/**
+ * 设置了访问令牌的主机（#9666）
+ */
+export function useSkillRepoTokens() {
+  return useQuery({
+    queryKey: REPO_TOKENS_QUERY_KEY,
+    queryFn: () => skillsApi.getRepoTokens(),
+  });
+}
+
+/**
+ * 保存或删除一台主机的访问令牌。
+ *
+ * 成功后重新发现一次：后端只缓存读成功的仓库，之前因为没令牌读不到的会重新下载，
+ * 读成功过的仍走缓存，不会把所有仓库再下一遍。
+ */
+export function useSkillRepoTokenActions() {
+  const queryClient = useQueryClient();
+  const onSuccess = () => {
+    void queryClient.invalidateQueries({ queryKey: REPO_TOKENS_QUERY_KEY });
+    void queryClient.invalidateQueries({
+      queryKey: DISCOVERABLE_QUERY_KEY,
+      exact: true,
+    });
+  };
+  const setToken = useMutation({
+    mutationFn: ({ host, token }: { host: string; token: string }) =>
+      skillsApi.setRepoToken(host, token),
+    onSuccess,
+  });
+  const deleteToken = useMutation({
+    mutationFn: (host: string) => skillsApi.deleteRepoToken(host),
+    onSuccess,
+  });
+  return {
+    setToken: (host: string, token: string) =>
+      setToken.mutateAsync({ host, token }),
+    deleteToken: (host: string) => deleteToken.mutateAsync(host),
+  };
+}
+
 /**
  * 删除仓库
  */

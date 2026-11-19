@@ -39,6 +39,13 @@ export interface SkillApps {
   workbuddy?: boolean;
 }
 
+/** 设置了访问令牌的主机（读私有仓库用，令牌本身不经前端读回） */
+export interface SkillRepoTokens {
+  hosts: string[];
+  /** 令牌存在系统凭据存储里；false 时存在本机仅自己可读的文件里 */
+  secureStorage: boolean;
+}
+
 /** 已安装的 Skill（v3.10.0+ 统一结构） */
 export interface InstalledSkill {
   id: string;
@@ -330,6 +337,23 @@ export const skillsApi = {
   /** 删除仓库 */
   async removeRepo(owner: string, name: string): Promise<boolean> {
     return await invoke("remove_skill_repo", { owner, name });
+  },
+
+  // ========== 仓库访问令牌（按主机，只在本机） ==========
+
+  /** 设置了访问令牌的主机（不含令牌本身） */
+  async getRepoTokens(): Promise<SkillRepoTokens> {
+    return await invoke("get_skill_repo_tokens");
+  },
+
+  /** 保存（覆盖）一台主机的访问令牌，返回规范化后的主机名 */
+  async setRepoToken(host: string, token: string): Promise<string> {
+    return await invoke("set_skill_repo_token", { host, token });
+  },
+
+  /** 删除一台主机的访问令牌，返回规范化后的主机名 */
+  async deleteRepoToken(host: string): Promise<string> {
+    return await invoke("delete_skill_repo_token", { host });
   },
 
   // ========== ZIP 安装 ==========
