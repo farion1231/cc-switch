@@ -12,6 +12,7 @@ use crate::services::skill::{
     SkillBackupEntry, SkillDiscoveryResult, SkillRepo, SkillService, SkillStorageLocation,
     SkillUninstallResult, SkillUpdateCheckResult, SkillsShSearchResult, ZipInstallResult,
 };
+use crate::services::skill_repo_tokens::RepoTokenList;
 use crate::store::AppState;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -320,6 +321,50 @@ pub async fn remove_skill_repo(
         Ok::<_, AppError>(true)
     })
     .await
+}
+
+// ========== 仓库访问令牌（#9666） ==========
+//
+// 令牌按主机存在本机（钥匙串或 0600 文件），不进数据库、不随同步。读写钥匙串在 macOS
+// 上会起 `security` 子进程，都放到阻塞线程里做。
+
+/// 设置了访问令牌的主机（不含令牌本身）
+#[tauri::command]
+pub async fn get_skill_repo_tokens(
+    service: State<'_, SkillServiceState>,
+) -> Result<RepoTokenList, String> {
+    let service = Arc::clone(&service.0);
+    tokio::task::spawn_blocking(move || service.repo_token_list())
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
+/// 保存（覆盖）一台主机的访问令牌，返回规范化后的主机名
+#[tauri::command]
+pub async fn set_skill_repo_token(
+    host: String,
+    token: String,
+    service: State<'_, SkillServiceState>,
+) -> Result<String, String> {
+    let service = Arc::clone(&service.0);
+    tokio::task::spawn_blocking(move || service.set_repo_token(&host, &token))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
+/// 删除一台主机的访问令牌，返回规范化后的主机名
+#[tauri::command]
+pub async fn delete_skill_repo_token(
+    host: String,
+    service: State<'_, SkillServiceState>,
+) -> Result<String, String> {
+    let service = Arc::clone(&service.0);
+    tokio::task::spawn_blocking(move || service.delete_repo_token(&host))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
 }
 
 /// 从 ZIP 文件安装 Skills；目录名已被占用的如实列在 `skipped` 里（#3749）
