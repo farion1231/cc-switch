@@ -21,6 +21,28 @@ type OmoProviderRow = (
     String,
 );
 
+const PROVIDER_SELECT: &str = "SELECT id, name, settings_config, website_url, category, created_at, sort_index, notes, icon, icon_color, meta, in_failover_queue FROM providers";
+
+/// 按 [`PROVIDER_SELECT`] 的列序读一行供应商。
+fn row_to_provider(row: &rusqlite::Row<'_>) -> rusqlite::Result<Provider> {
+    let settings_config: String = row.get(2)?;
+    let meta: String = row.get(10)?;
+    Ok(Provider {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        settings_config: serde_json::from_str(&settings_config).unwrap_or(serde_json::Value::Null),
+        website_url: row.get(3)?,
+        category: row.get(4)?,
+        created_at: row.get(5)?,
+        sort_index: row.get(6)?,
+        notes: row.get(7)?,
+        meta: Some(serde_json::from_str::<ProviderMeta>(&meta).unwrap_or_default()),
+        icon: row.get(8)?,
+        icon_color: row.get(9)?,
+        in_failover_queue: row.get(11)?,
+    })
+}
+
 impl Database {
     /// Detach Codex providers bound to these deleted local accounts, atomically.
     /// Only this device's account IDs are passed in: provider rows sync across
@@ -123,66 +145,32 @@ impl Database {
     ) -> Result<IndexMap<String, Provider>, AppError> {
         let conn = lock_conn!(self.conn);
         let query = if failover_only {
-            "SELECT id, name, settings_config, website_url, category, created_at, sort_index, notes, icon, icon_color, meta, in_failover_queue
-             FROM providers WHERE app_type = ?1 AND in_failover_queue = 1
-             ORDER BY COALESCE(sort_index, 999999), id ASC"
+            format!(
+                "{PROVIDER_SELECT} WHERE app_type = ?1 AND in_failover_queue = 1
+                 ORDER BY COALESCE(sort_index, 999999), id ASC"
+            )
         } else {
-            "SELECT id, name, settings_config, website_url, category, created_at, sort_index, notes, icon, icon_color, meta, in_failover_queue
-             FROM providers WHERE app_type = ?1
-             ORDER BY COALESCE(sort_index, 999999), created_at ASC, id ASC"
+            format!(
+                "{PROVIDER_SELECT} WHERE app_type = ?1
+                 ORDER BY COALESCE(sort_index, 999999), created_at ASC, id ASC"
+            )
         };
         let mut stmt = conn
-            .prepare_cached(query)
+            .prepare_cached(&query)
             .map_err(|e| AppError::Database(e.to_string()))?;
 
         let provider_iter = stmt
-            .query_map(params![app_type], |row| {
-                let id: String = row.get(0)?;
-                let name: String = row.get(1)?;
-                let settings_config_str: String = row.get(2)?;
-                let website_url: Option<String> = row.get(3)?;
-                let category: Option<String> = row.get(4)?;
-                let created_at: Option<i64> = row.get(5)?;
-                let sort_index: Option<usize> = row.get(6)?;
-                let notes: Option<String> = row.get(7)?;
-                let icon: Option<String> = row.get(8)?;
-                let icon_color: Option<String> = row.get(9)?;
-                let meta_str: String = row.get(10)?;
-                let in_failover_queue: bool = row.get(11)?;
-
-                let settings_config =
-                    serde_json::from_str(&settings_config_str).unwrap_or(serde_json::Value::Null);
-                let meta: ProviderMeta = serde_json::from_str(&meta_str).unwrap_or_default();
-
-                Ok((
-                    id,
-                    Provider {
-                        id: "".to_string(), // Placeholder, set below
-                        name,
-                        settings_config,
-                        website_url,
-                        category,
-                        created_at,
-                        sort_index,
-                        notes,
-                        meta: Some(meta),
-                        icon,
-                        icon_color,
-                        in_failover_queue,
-                    },
-                ))
-            })
+            .query_map(params![app_type], row_to_provider)
             .map_err(|e| AppError::Database(e.to_string()))?;
 
         let mut providers = IndexMap::new();
         for provider_res in provider_iter {
-            let (id, mut provider) = provider_res.map_err(|e| AppError::Database(e.to_string()))?;
-            provider.id = id.clone();
+            let mut provider = provider_res.map_err(|e| AppError::Database(e.to_string()))?;
             if let Some(meta) = &mut provider.meta {
                 // The endpoint table is authoritative, including when it is empty.
                 meta.custom_endpoints.clear();
             }
-            providers.insert(id, provider);
+            providers.insert(provider.id.clone(), provider);
         }
 
         if providers.is_empty() {
@@ -255,40 +243,9 @@ impl Database {
     ) -> Result<Option<Provider>, AppError> {
         let conn = lock_conn!(self.conn);
         let result = conn.query_row(
-            "SELECT name, settings_config, website_url, category, created_at, sort_index, notes, icon, icon_color, meta, in_failover_queue
-             FROM providers WHERE id = ?1 AND app_type = ?2",
+            &format!("{PROVIDER_SELECT} WHERE id = ?1 AND app_type = ?2"),
             params![id, app_type],
-            |row| {
-                let name: String = row.get(0)?;
-                let settings_config_str: String = row.get(1)?;
-                let website_url: Option<String> = row.get(2)?;
-                let category: Option<String> = row.get(3)?;
-                let created_at: Option<i64> = row.get(4)?;
-                let sort_index: Option<usize> = row.get(5)?;
-                let notes: Option<String> = row.get(6)?;
-                let icon: Option<String> = row.get(7)?;
-                let icon_color: Option<String> = row.get(8)?;
-                let meta_str: String = row.get(9)?;
-                let in_failover_queue: bool = row.get(10)?;
-
-                let settings_config = serde_json::from_str(&settings_config_str).unwrap_or(serde_json::Value::Null);
-                let meta: ProviderMeta = serde_json::from_str(&meta_str).unwrap_or_default();
-
-                Ok(Provider {
-                    id: id.to_string(),
-                    name,
-                    settings_config,
-                    website_url,
-                    category,
-                    created_at,
-                    sort_index,
-                    notes,
-                    meta: Some(meta),
-                    icon,
-                    icon_color,
-                    in_failover_queue,
-                })
-            },
+            row_to_provider,
         );
 
         match result {
