@@ -4,6 +4,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { http, HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
 import { UnreadableEntriesNotice } from "@/components/common/UnreadableEntriesNotice";
+import { mcpApi } from "@/lib/api/mcp";
 import { providersApi } from "@/lib/api/providers";
 import type { UnreadableEntry } from "@/types";
 import { server } from "../msw/server";
@@ -71,6 +72,49 @@ describe("UnreadableEntriesNotice", () => {
       ).not.toBeInTheDocument(),
     );
     expect(deleted).toEqual([{ id: "broken", app: "claude" }]);
+  });
+
+  it("refreshes its own list after deleting an unreadable MCP server", async () => {
+    let entries = [{ ...broken, name: "Broken Server" }];
+    const deleted: unknown[] = [];
+    server.use(
+      http.post("http://tauri.local/get_unreadable_mcp_servers", () =>
+        HttpResponse.json(entries),
+      ),
+      http.post("http://tauri.local/delete_mcp_server", async ({ request }) => {
+        deleted.push(await request.json());
+        entries = [];
+        return HttpResponse.json(true);
+      }),
+    );
+    const client = createTestQueryClient();
+    render(
+      <QueryClientProvider client={client}>
+        <UnreadableEntriesNotice
+          queryKey={["mcp", "unreadable"]}
+          load={mcpApi.getUnreadableServers}
+          remove={mcpApi.deleteUnifiedServer}
+          invalidate={[["mcp", "all"]]}
+        />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "common.delete" }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(
+      Array.from(dialog.querySelectorAll("button")).find(
+        (button) => button.textContent === "common.delete",
+      )!,
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.queryByText("「Broken Server」的数据无法读取"),
+      ).not.toBeInTheDocument(),
+    );
+    expect(deleted).toEqual([{ id: "broken" }]);
   });
 
   it("renders nothing when every entry is readable", async () => {

@@ -1,6 +1,7 @@
 use indexmap::IndexMap;
 
 use crate::app_config::{AppType, McpServer, MultiAppConfig};
+use crate::database::UnreadableEntry;
 use crate::error::AppError;
 use crate::mcp;
 use crate::store::AppState;
@@ -36,8 +37,14 @@ fn commits_with_db(app: &AppType) -> bool {
 
 impl McpService {
     /// 获取所有 MCP 服务器（统一结构）
+    /// 读不出来的行不在这里，见 [`Self::list_unreadable`]。
     pub fn get_all_servers(state: &AppState) -> Result<IndexMap<String, McpServer>, AppError> {
-        state.db.get_all_mcp_servers()
+        Ok(state.db.get_mcp_server_rows()?.readable)
+    }
+
+    /// 库里读不出来的 MCP 服务器：界面单独列出，只能删除。
+    pub fn list_unreadable(state: &AppState) -> Result<Vec<UnreadableEntry>, AppError> {
+        Ok(state.db.get_mcp_server_rows()?.unreadable)
     }
 
     /// 添加或更新 MCP 服务器
@@ -167,6 +174,11 @@ impl McpService {
 
     /// 删除 MCP 服务器
     pub fn delete_server(state: &AppState, id: &str) -> Result<bool, AppError> {
+        // 读不出来的行只删库里这一行：不知道它往各应用写过什么，不碰 live，也不写回任何东西。
+        if state.db.get_unreadable_mcp_server(id)?.is_some() {
+            state.db.delete_mcp_server(id)?;
+            return Ok(true);
+        }
         let server = state.db.get_all_mcp_servers()?.shift_remove(id);
 
         if let Some(server) = server {
@@ -659,5 +671,78 @@ impl McpService {
                 failures.join("; ")
             )))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app_config::McpApps;
+    use crate::database::Database;
+    use std::sync::Arc;
+
+    fn server(id: &str) -> McpServer {
+        McpServer {
+            id: id.into(),
+            name: format!("{id} name"),
+            server: serde_json::json!({"command": "npx"}),
+            apps: McpApps::default(),
+            description: None,
+            homepage: None,
+            docs: None,
+            tags: vec![],
+        }
+    }
+
+    fn stored(state: &AppState, id: &str) -> Option<String> {
+        use rusqlite::OptionalExtension;
+        state
+            .db
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT server_config || '|' || tags || '|' || enabled_claude FROM mcp_servers WHERE id = ?1",
+                [id],
+                |row| row.get(0),
+            )
+            .optional()
+            .unwrap()
+    }
+
+    #[test]
+    fn an_unreadable_server_is_listed_apart_left_untouched_and_can_only_be_deleted() {
+        let state = AppState::new(Arc::new(Database::memory().unwrap()));
+        for id in ["good", "broken"] {
+            state.db.save_mcp_server(&server(id)).unwrap();
+        }
+        state
+            .db
+            .conn
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE mcp_servers SET server_config = '{\"command\":' WHERE id = 'broken'",
+                [],
+            )
+            .unwrap();
+        let bytes = stored(&state, "broken");
+
+        let listed = McpService::get_all_servers(&state).expect("list still loads");
+        assert_eq!(listed.keys().collect::<Vec<_>>(), ["good"]);
+        let unreadable = McpService::list_unreadable(&state).unwrap();
+        assert_eq!(unreadable.len(), 1);
+        assert_eq!(unreadable[0].id, "broken");
+        assert!(
+            unreadable[0].error.contains("server_config"),
+            "{}",
+            unreadable[0].error
+        );
+        assert_eq!(stored(&state, "broken"), bytes);
+
+        assert!(McpService::delete_server(&state, "broken").expect("delete is allowed"));
+        assert_eq!(stored(&state, "broken"), None);
+        assert!(McpService::list_unreadable(&state).unwrap().is_empty());
+        assert!(stored(&state, "good").is_some());
     }
 }
