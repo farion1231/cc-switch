@@ -12,13 +12,17 @@
 //! side turns those function calls back into `custom_tool_call` items, because
 //! Codex rejects a `function_call` addressed to a custom tool ("incompatible
 //! payload"). Argument deltas for converted calls are dropped: Codex reads the
-//! finished item from `response.output_item.done`.
+//! finished item from `response.output_item.done`. While they are dropped the
+//! stream emits an SSE comment at most once per second, so idle timeouts keep
+//! seeing a live stream during long `apply_patch` / `exec` inputs.
 
 use std::collections::{HashMap, HashSet};
+use std::time::Duration;
 
 use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
 use serde_json::{json, Map, Value};
+use tokio::time::Instant;
 
 use super::transform_codex_chat::{
     custom_tool_input_from_chat_arguments, responses_custom_tool_description, responses_tool_name,
@@ -26,15 +30,20 @@ use super::transform_codex_chat::{
 };
 use crate::proxy::sse::{strip_sse_field, SseBuffer};
 
-/// Names of the custom tools a Codex request declares: top-level `tools`,
-/// namespace children, and `additional_tools` / `tool_search_output` carriers in
-/// `input`. Call on the original request, before [`convert_custom_tools_to_functions`].
-pub(crate) fn custom_tool_names(body: &Value) -> HashSet<String> {
+/// A converted custom tool, identified by its enclosing namespace (if any) and
+/// name. A namespace function that shares a bare name with a top-level custom
+/// tool (an MCP `exec`, say) must not be restored as the custom tool.
+pub(crate) type CustomToolId = (Option<String>, String);
+
+/// Custom tools a Codex request declares: top-level `tools`, namespace children,
+/// and `additional_tools` / `tool_search_output` carriers in `input`. Call on the
+/// original request, before [`convert_custom_tools_to_functions`].
+pub(crate) fn custom_tool_names(body: &Value) -> HashSet<CustomToolId> {
     let mut names = HashSet::new();
-    let mut visit = |tool: &Value| {
+    let mut visit = |namespace: Option<&str>, tool: &Value| {
         if is_custom_tool(tool) {
             if let Some(name) = custom_tool_name(tool) {
-                names.insert(name);
+                names.insert((namespace.map(str::to_string), name));
             }
         }
     };
@@ -49,6 +58,9 @@ pub(crate) fn convert_custom_tools_to_functions(body: &mut Value) -> bool {
     if let Some(tools) = body.get_mut("tools").and_then(Value::as_array_mut) {
         changed |= convert_tool_list(tools);
     }
+    if let Some(choice) = body.get_mut("tool_choice") {
+        changed |= convert_tool_choice(choice);
+    }
     if let Some(input) = body.get_mut("input").and_then(Value::as_array_mut) {
         for item in input.iter_mut() {
             changed |= convert_input_item(item);
@@ -59,20 +71,27 @@ pub(crate) fn convert_custom_tools_to_functions(body: &mut Value) -> bool {
 
 /// Turn a `function_call` addressed to a converted custom tool back into a
 /// `custom_tool_call`. Returns whether the item was rewritten.
-pub(crate) fn restore_custom_tool_call_item(item: &mut Value, names: &HashSet<String>) -> bool {
+pub(crate) fn restore_custom_tool_call_item(
+    item: &mut Value,
+    names: &HashSet<CustomToolId>,
+) -> bool {
     if item.get("type").and_then(Value::as_str) != Some("function_call") {
         return false;
     }
     let Some(name) = item.get("name").and_then(Value::as_str) else {
         return false;
     };
-    if !names.contains(name) {
+    let namespace = item
+        .get("namespace")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    if !names.contains(&(namespace, name.to_string())) {
         return false;
     }
     let arguments = item.get("arguments").and_then(Value::as_str).unwrap_or("");
     let mut restored = Map::new();
     restored.insert("type".into(), json!("custom_tool_call"));
-    for key in ["id", "status", "call_id", "name"] {
+    for key in ["id", "status", "call_id", "name", "namespace"] {
         if let Some(value) = item.get(key) {
             restored.insert(key.into(), value.clone());
         }
@@ -88,7 +107,7 @@ pub(crate) fn restore_custom_tool_call_item(item: &mut Value, names: &HashSet<St
 /// Restore converted calls in a complete (non-streaming) Responses body.
 pub(crate) fn restore_response_custom_tool_calls(
     body: &mut Value,
-    names: &HashSet<String>,
+    names: &HashSet<CustomToolId>,
 ) -> bool {
     let mut changed = false;
     if let Some(output) = body.get_mut("output").and_then(Value::as_array_mut) {
@@ -103,16 +122,18 @@ pub(crate) fn restore_response_custom_tool_calls(
 /// so `output_item.done` already carries the full arguments.
 pub(crate) fn create_custom_tool_restore_sse_stream<E>(
     stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
-    names: HashSet<String>,
+    names: HashSet<CustomToolId>,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send
 where
     E: std::error::Error + Send + 'static,
 {
     async_stream::stream! {
         let mut sse = SseBuffer::new();
-        // Converted call item id -> tool name. Argument events carry only the id,
-        // and some upstreams omit `name` on the final `output_item.done`.
-        let mut converted_ids: HashMap<String, String> = HashMap::new();
+        // Converted call item id -> its `name` / `namespace` fields. Argument
+        // events carry only the id, and some upstreams omit them on the final
+        // `output_item.done`.
+        let mut converted_ids: HashMap<String, Map<String, Value>> = HashMap::new();
+        let mut last_emit = Instant::now();
         tokio::pin!(stream);
 
         while let Some(chunk) = stream.next().await {
@@ -123,8 +144,16 @@ where
                         if block.trim().is_empty() {
                             continue;
                         }
-                        if let Some(out) = rewrite_sse_block(block, &names, &mut converted_ids) {
-                            yield Ok(out);
+                        match rewrite_sse_block(block, &names, &mut converted_ids) {
+                            Some(out) => {
+                                last_emit = Instant::now();
+                                yield Ok(out);
+                            }
+                            None if last_emit.elapsed() >= HEARTBEAT_INTERVAL => {
+                                last_emit = Instant::now();
+                                yield Ok(Bytes::from_static(HEARTBEAT));
+                            }
+                            None => {}
                         }
                     }
                 }
@@ -144,11 +173,14 @@ where
     }
 }
 
+const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(1);
+const HEARTBEAT: &[u8] = b": keepalive\n\n";
+
 /// `None` drops the event (argument deltas of a converted call).
 fn rewrite_sse_block(
     block: &str,
-    names: &HashSet<String>,
-    converted_ids: &mut HashMap<String, String>,
+    names: &HashSet<CustomToolId>,
+    converted_ids: &mut HashMap<String, Map<String, Value>>,
 ) -> Option<Bytes> {
     let passthrough = || Some(Bytes::from(format!("{block}\n\n")));
     let mut event_name: Option<&str> = None;
@@ -184,15 +216,20 @@ fn rewrite_sse_block(
                 return passthrough();
             };
             let id = item.get("id").and_then(Value::as_str).map(str::to_string);
-            if item.get("name").is_none() {
-                if let Some(name) = id.as_ref().and_then(|id| converted_ids.get(id)) {
-                    item["name"] = json!(name);
+            if let Some(known) = id.as_ref().and_then(|id| converted_ids.get(id)) {
+                for (key, value) in known {
+                    if item.get(key).is_none() {
+                        item[key.as_str()] = value.clone();
+                    }
                 }
             }
             let restored = restore_custom_tool_call_item(item, names);
             if let (true, Some(id)) = (restored, id) {
-                let name = item.get("name").and_then(Value::as_str).unwrap_or("");
-                converted_ids.insert(id, name.to_string());
+                let identity = ["name", "namespace"]
+                    .into_iter()
+                    .filter_map(|key| Some((key.to_string(), item.get(key)?.clone())))
+                    .collect();
+                converted_ids.insert(id, identity);
             }
             restored
         }
@@ -273,6 +310,33 @@ fn convert_tool_list(tools: &mut [Value]) -> bool {
     changed
 }
 
+/// `{"type":"custom","name":..}` selectors (directly or inside `allowed_tools`)
+/// must name the function the declaration became, as the Chat bridge does.
+fn convert_tool_choice(choice: &mut Value) -> bool {
+    match choice.get("type").and_then(Value::as_str) {
+        Some("custom") => {
+            choice["type"] = json!("function");
+            true
+        }
+        Some("allowed_tools") => {
+            let mut changed = false;
+            for tool in choice
+                .get_mut("tools")
+                .and_then(Value::as_array_mut)
+                .into_iter()
+                .flatten()
+            {
+                if tool.get("type").and_then(Value::as_str) == Some("custom") {
+                    tool["type"] = json!("function");
+                    changed = true;
+                }
+            }
+            changed
+        }
+        _ => false,
+    }
+}
+
 fn convert_input_item(item: &mut Value) -> bool {
     match item.get("type").and_then(Value::as_str) {
         Some("custom_tool_call") => {
@@ -308,19 +372,24 @@ fn convert_input_item(item: &mut Value) -> bool {
     }
 }
 
-fn for_each_declared_tool(body: &Value, visit: &mut impl FnMut(&Value)) {
-    fn walk(tools: &[Value], visit: &mut impl FnMut(&Value)) {
+fn for_each_declared_tool(body: &Value, visit: &mut impl FnMut(Option<&str>, &Value)) {
+    fn walk(
+        namespace: Option<&str>,
+        tools: &[Value],
+        visit: &mut impl FnMut(Option<&str>, &Value),
+    ) {
         for tool in tools {
-            visit(tool);
+            visit(namespace, tool);
             if tool.get("type").and_then(Value::as_str) == Some("namespace") {
                 if let Some(children) = tool.get("tools").and_then(Value::as_array) {
-                    walk(children, visit);
+                    let child_namespace = tool.get("name").and_then(Value::as_str);
+                    walk(child_namespace, children, visit);
                 }
             }
         }
     }
     if let Some(tools) = body.get("tools").and_then(Value::as_array) {
-        walk(tools, visit);
+        walk(None, tools, visit);
     }
     for item in body
         .get("input")
@@ -333,7 +402,7 @@ fn for_each_declared_tool(body: &Value, visit: &mut impl FnMut(&Value)) {
             Some("additional_tools" | "tool_search_output")
         ) {
             if let Some(tools) = item.get("tools").and_then(Value::as_array) {
-                walk(tools, visit);
+                walk(None, tools, visit);
             }
         }
     }
@@ -377,10 +446,12 @@ mod tests {
     #[test]
     fn collects_names_from_every_declaration_site() {
         let names = custom_tool_names(&request());
-        let expected: HashSet<String> = ["apply_patch", "exec", "late_tool"]
-            .into_iter()
-            .map(String::from)
-            .collect();
+        let expected: HashSet<CustomToolId> = [
+            (None, "apply_patch".to_string()),
+            (Some("code".to_string()), "exec".to_string()),
+            (None, "late_tool".to_string()),
+        ]
+        .into();
         assert_eq!(names, expected);
     }
 
@@ -438,7 +509,7 @@ mod tests {
 
     #[test]
     fn restores_calls_and_falls_back_to_raw_arguments() {
-        let names: HashSet<String> = ["apply_patch".to_string()].into();
+        let names: HashSet<CustomToolId> = [(None, "apply_patch".to_string())].into();
         let mut item = json!({
             "type": "function_call", "id": "fc_1", "status": "completed",
             "call_id": "call_1", "name": "apply_patch",
@@ -475,7 +546,7 @@ mod tests {
     }
 
     async fn collect(events: &[Value], names: &[&str]) -> Vec<Value> {
-        let names = names.iter().map(|n| n.to_string()).collect();
+        let names = names.iter().map(|n| (None, n.to_string())).collect();
         let stream =
             create_custom_tool_restore_sse_stream(futures::stream::iter(sse(events)), names);
         let chunks: Vec<_> = stream.collect().await;
@@ -527,7 +598,7 @@ mod tests {
     #[tokio::test]
     async fn stream_passes_unrelated_events_through_unchanged() {
         let events = [json!({ "type": "response.output_text.delta", "delta": "hi" })];
-        let names = HashSet::from(["exec".to_string()]);
+        let names = HashSet::from([(None, "exec".to_string())]);
         let stream =
             create_custom_tool_restore_sse_stream(futures::stream::iter(sse(&events)), names);
         let chunks: Vec<_> = stream.collect().await;
@@ -536,5 +607,81 @@ mod tests {
             chunks[0].as_ref().unwrap().as_ref(),
             format!("event: response.output_text.delta\ndata: {}\n\n", events[0]).as_bytes()
         );
+    }
+    #[test]
+    fn converts_custom_tool_choices() {
+        let mut body = request();
+        body["tool_choice"] = json!({ "type": "custom", "name": "apply_patch" });
+        assert!(convert_custom_tools_to_functions(&mut body));
+        assert_eq!(
+            body["tool_choice"],
+            json!({ "type": "function", "name": "apply_patch" })
+        );
+
+        let mut body = request();
+        body["tool_choice"] = json!({
+            "type": "allowed_tools",
+            "mode": "auto",
+            "tools": [
+                { "type": "custom", "name": "apply_patch" },
+                { "type": "function", "name": "exec_command" }
+            ]
+        });
+        assert!(convert_custom_tools_to_functions(&mut body));
+        assert_eq!(body["tool_choice"]["tools"][0]["type"], "function");
+        assert_eq!(body["tool_choice"]["tools"][1]["type"], "function");
+
+        let mut body = request();
+        body["tool_choice"] = json!("auto");
+        convert_custom_tools_to_functions(&mut body);
+        assert_eq!(body["tool_choice"], "auto");
+    }
+
+    #[test]
+    fn restores_only_the_declared_namespace_identity() {
+        let names: HashSet<CustomToolId> = [
+            (None, "exec".to_string()),
+            (Some("code".to_string()), "run".to_string()),
+        ]
+        .into();
+        // An MCP function that shares the bare name `exec` was never converted.
+        let mut mcp = json!({ "type": "function_call", "call_id": "c", "namespace": "mcp__x", "name": "exec", "arguments": "{}" });
+        assert!(!restore_custom_tool_call_item(&mut mcp, &names));
+        assert_eq!(mcp["type"], "function_call");
+
+        let mut namespaced = json!({ "type": "function_call", "call_id": "c", "namespace": "code", "name": "run", "arguments": "{\"input\":\"x\"}" });
+        assert!(restore_custom_tool_call_item(&mut namespaced, &names));
+        assert_eq!(namespaced["type"], "custom_tool_call");
+        assert_eq!(namespaced["namespace"], "code");
+        assert_eq!(namespaced["input"], "x");
+
+        let mut bare_run =
+            json!({ "type": "function_call", "call_id": "c", "name": "run", "arguments": "{}" });
+        assert!(!restore_custom_tool_call_item(&mut bare_run, &names));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn stream_emits_heartbeats_while_argument_events_are_suppressed() {
+        let added = json!({ "type": "response.output_item.added", "output_index": 0,
+            "item": { "id": "fc_1", "type": "function_call", "call_id": "c", "name": "exec", "arguments": "" } });
+        let delta = json!({ "type": "response.function_call_arguments.delta", "item_id": "fc_1", "delta": "x" });
+        let chunk = |e: &Value| Ok::<_, std::io::Error>(Bytes::from(format!("data: {e}\n\n")));
+        let (first, second, third) = (chunk(&added), chunk(&delta), chunk(&delta));
+        let upstream = async_stream::stream! {
+            yield first;
+            yield second;
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            yield third;
+        };
+        let names = HashSet::from([(None, "exec".to_string())]);
+        let chunks: Vec<String> = create_custom_tool_restore_sse_stream(upstream, names)
+            .map(|c| String::from_utf8(c.unwrap().to_vec()).unwrap())
+            .collect()
+            .await;
+        // The delta right after `added` is dropped silently; the one after a
+        // quiet period yields a comment so idle timers see a live stream.
+        assert_eq!(chunks.len(), 2);
+        assert!(chunks[0].contains("custom_tool_call"));
+        assert_eq!(chunks[1], ": keepalive\n\n");
     }
 }

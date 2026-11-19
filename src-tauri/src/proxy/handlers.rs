@@ -1284,6 +1284,7 @@ async fn handle_responses_for_app(
             response,
             &ctx,
             &state,
+            is_stream,
             connection_guard,
             custom_tool_names,
         )
@@ -1752,8 +1753,9 @@ async fn handle_codex_custom_tool_restore(
     response: super::hyper_client::ProxyResponse,
     ctx: &RequestContext,
     state: &ProxyState,
+    is_stream: bool,
     connection_guard: Option<ActiveConnectionGuard>,
-    names: std::collections::HashSet<String>,
+    names: std::collections::HashSet<transform_codex_responses_custom_tools::CustomToolId>,
 ) -> Result<axum::response::Response, ProxyError> {
     let status = response.status();
     if !status.is_success() {
@@ -1762,14 +1764,19 @@ async fn handle_codex_custom_tool_restore(
             ctx,
             state,
             &CODEX_PARSER_CONFIG,
-            false,
+            is_stream,
             connection_guard,
         )
         .await;
     }
 
-    if response.is_sse() {
-        let builder = rewritten_sse_response_builder(status, response.headers());
+    // Same detector as the generic path: a `stream: true` reply without
+    // Content-Type is still SSE and must go through the restore stream.
+    if super::response_processor::is_sse_response(&response, is_stream) {
+        let mut builder = rewritten_sse_response_builder(status, response.headers());
+        if response.content_type().is_none() {
+            builder = builder.header(axum::http::header::CONTENT_TYPE, "text/event-stream");
+        }
         let repaired =
             super::providers::responses_late_arguments::create_late_arguments_repair_stream(
                 codex_native_responses_stream(response, ctx),
@@ -5122,8 +5129,13 @@ mod copilot_native_responses_tests {
         assert_eq!(events[1]["sequence_number"], 7);
     }
 
-    fn custom_names() -> std::collections::HashSet<String> {
-        ["exec".to_string(), "apply_patch".to_string()].into()
+    fn custom_names(
+    ) -> std::collections::HashSet<transform_codex_responses_custom_tools::CustomToolId> {
+        [
+            (None, "exec".to_string()),
+            (None, "apply_patch".to_string()),
+        ]
+        .into()
     }
 
     #[tokio::test]
@@ -5146,10 +5158,16 @@ mod copilot_native_responses_tests {
         .into_iter()
         .map(|event| format!("data: {event}\n\n"))
         .collect();
-        let response =
-            handle_codex_custom_tool_restore(upstream(&input), &ctx, &state, None, custom_names())
-                .await
-                .unwrap();
+        let response = handle_codex_custom_tool_restore(
+            upstream(&input),
+            &ctx,
+            &state,
+            true,
+            None,
+            custom_names(),
+        )
+        .await
+        .unwrap();
         let (_, events) = body_and_events(response).await;
 
         let types: Vec<&str> = events.iter().map(|e| e["type"].as_str().unwrap()).collect();
@@ -5181,13 +5199,41 @@ mod copilot_native_responses_tests {
         headers.insert("content-type", "application/json".parse().unwrap());
         let upstream = ProxyResponse::buffered(StatusCode::OK, headers, Bytes::from(body));
         let response =
-            handle_codex_custom_tool_restore(upstream, &ctx, &state, None, custom_names())
+            handle_codex_custom_tool_restore(upstream, &ctx, &state, false, None, custom_names())
                 .await
                 .unwrap();
         let bytes = response.into_body().collect().await.unwrap().to_bytes();
         let value: Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(value["output"][0]["type"], "custom_tool_call");
         assert_eq!(value["output"][0]["input"], "patch");
+    }
+
+    #[tokio::test]
+    async fn custom_tool_restore_streams_sse_without_content_type() {
+        let (state, ctx) = context(false).await;
+        let item = json!({ "type": "function_call", "id": "fc_1", "call_id": "call_1",
+            "name": "apply_patch", "arguments": json!({ "input": "patch" }).to_string() });
+        let input = format!(
+            "data: {}\n\n",
+            json!({ "type": "response.output_item.done", "output_index": 0, "item": item })
+        );
+        // `stream: true` request, successful reply that omits Content-Type.
+        let upstream = ProxyResponse::buffered(
+            StatusCode::OK,
+            axum::http::HeaderMap::new(),
+            Bytes::from(input),
+        );
+        let response =
+            handle_codex_custom_tool_restore(upstream, &ctx, &state, true, None, custom_names())
+                .await
+                .unwrap();
+        assert_eq!(
+            response.headers().get("content-type").unwrap(),
+            "text/event-stream"
+        );
+        let (_, events) = body_and_events(response).await;
+        assert_eq!(events[0]["item"]["type"], "custom_tool_call");
+        assert_eq!(events[0]["item"]["input"], "patch");
     }
 }
 
