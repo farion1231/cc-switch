@@ -110,14 +110,17 @@ impl Database {
     ///
     /// The update and read share the same connection lock, so concurrent toggles
     /// for different applications cannot overwrite one another through a stale
-    /// whole-row snapshot.
+    /// whole-row snapshot. A row that can't be read back rolls the flag change back.
     pub fn update_mcp_server_app_enabled(
         &self,
         id: &str,
         app: &AppType,
         enabled: bool,
     ) -> Result<Option<McpServer>, AppError> {
-        let conn = lock_conn!(self.conn);
+        let mut conn = lock_conn!(self.conn);
+        let conn = conn
+            .transaction()
+            .map_err(|e| AppError::Database(e.to_string()))?;
         let column = match app {
             AppType::Claude => Some("enabled_claude"),
             AppType::Codex => Some("enabled_codex"),
@@ -148,13 +151,17 @@ impl Database {
             }
         }
 
-        conn.query_row(
-            &format!("{MCP_SERVER_SELECT} WHERE id = ?1"),
-            params![id],
-            |row| row_to_mcp_server(row).map(|(_, server)| server),
-        )
-        .optional()
-        .map_err(|e| AppError::Database(e.to_string()))
+        let server = conn
+            .query_row(
+                &format!("{MCP_SERVER_SELECT} WHERE id = ?1"),
+                params![id],
+                |row| row_to_mcp_server(row).map(|(_, server)| server),
+            )
+            .optional()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.commit()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(server)
     }
 
     /// 保存 MCP 服务器

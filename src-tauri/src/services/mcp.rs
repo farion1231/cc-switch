@@ -738,6 +738,8 @@ mod tests {
             "{}",
             unreadable[0].error
         );
+        // 切换启用会读整行，读不出来就报错，库里的字节不变。
+        assert!(McpService::toggle_app(&state, "broken", AppType::Claude, true).is_err());
         assert_eq!(stored(&state, "broken"), bytes);
 
         assert!(McpService::delete_server(&state, "broken").expect("delete is allowed"));
