@@ -231,7 +231,7 @@ fn is_default_claude_dir(dir: &Path) -> bool {
 
 /// CLI 的环境变量和工作目录。
 fn cli_context(app: PluginApp) -> (Vec<(&'static str, String)>, PathBuf) {
-    let (dir, env) = match app {
+    let (dir, mut env) = match app {
         PluginApp::Claude => {
             let dir = crate::config::get_claude_config_dir();
             let env = crate::settings::get_override_dir(&crate::app_config::AppType::Claude)
@@ -278,6 +278,11 @@ fn cli_context(app: PluginApp) -> (Vec<(&'static str, String)>, PathBuf) {
             (dir, env)
         }
     };
+    // CC Switch 启动时给自己设了 RUST_BACKTRACE=1（panic_hook），子进程会继承：Codex 这类
+    // Rust 写的 CLI 一报错就把整段堆栈打进 stderr，进而塞满失败提示。这里显式关掉。
+    // anyhow 先认 RUST_LIB_BACKTRACE，两个一起设。
+    env.push(("RUST_BACKTRACE", "0".to_string()));
+    env.push(("RUST_LIB_BACKTRACE", "0".to_string()));
     let working_dir = if std::fs::create_dir_all(&dir).is_ok() {
         dir
     } else {
@@ -1641,6 +1646,29 @@ enabled = false
                 None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
             }
             let _ = crate::settings::reload_settings();
+        }
+    }
+
+    /// 子进程不继承 CC Switch 自己的 RUST_BACKTRACE=1，CLI 报错时不带堆栈。
+    #[test]
+    #[serial_test::serial]
+    fn cli_env_turns_off_rust_backtraces() {
+        let _home = HomeGuard::new();
+        for app in [
+            PluginApp::Claude,
+            PluginApp::Codex,
+            PluginApp::Grok,
+            PluginApp::Mcode,
+            PluginApp::Openclaw,
+            PluginApp::Pi,
+        ] {
+            let (env, _) = cli_context(app);
+            for key in ["RUST_BACKTRACE", "RUST_LIB_BACKTRACE"] {
+                assert!(
+                    env.iter().any(|(k, v)| *k == key && v == "0"),
+                    "{app:?} must set {key}=0"
+                );
+            }
         }
     }
 
