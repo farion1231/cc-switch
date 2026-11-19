@@ -2292,6 +2292,18 @@ impl Database {
                 "0.075",
                 "0",
             ),
+            // Gemini 4 Neon（2026-11-19 核对官方价页 + models.dev）：标准档全 1M 上下文统一平价
+            // 3.00/15.00/0.15/0（输出含 thinking，无介绍期折扣，仅支持隐式缓存，cache_creation 记 0，
+            // 与其他 Gemini 4 条目口径一致；免费层级不可用，批量/Flex/Priority 档不入表）。
+            // 来源：https://ai.google.dev/gemini-api/docs/pricing#gemini-4-neon
+            (
+                "gemini-4-neon",
+                "Gemini 4 Neon",
+                "3.00",
+                "15.00",
+                "0.15",
+                "0",
+            ),
             // Gemini 3.8 系列（2026-09-02 发布，1M 窗口）
             // 介绍价 0.75/3.75/0.075 至 2026-12-31，2027-01-01 起挂牌价 1.50/7.50/0.15；口径同 3.7 Flash，勿加豁免。
             (

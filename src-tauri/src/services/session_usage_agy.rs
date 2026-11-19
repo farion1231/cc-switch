@@ -56,9 +56,9 @@ fn sync_agy_usage_from_files(
         };
         let modified = metadata_modified_nanos(&metadata);
         let size = metadata.len() as i64;
-        // Invalidate pre-Orchestrator / pre-worker-alias cursors once, including unchanged,
-        // already timed history.
-        let native_state = format!("v3:{}", native_models::native_state_fingerprint(&path));
+        // Invalidate pre-Orchestrator / pre-worker-alias / pre-Neon cursors once, including
+        // unchanged, already timed history.
+        let native_state = format!("v4:{}", native_models::native_state_fingerprint(&path));
         if cursor.is_some_and(|c| {
             c.last_modified == modified
                 && c.last_byte_offset == Some(size)
@@ -136,6 +136,7 @@ fn orchestrator_mode(model: &str) -> Option<&'static str> {
     match model_id_of(model).as_str() {
         "orchestrator-carbon" | "gemini-pro-orchestrator" => Some("carbon"),
         "orchestrator-argon" | "gemini-pro-orchestrator-argon" => Some("argon"),
+        "orchestrator-neon" | "gemini-pro-orchestrator-neon" => Some("neon"),
         _ => None,
     }
 }

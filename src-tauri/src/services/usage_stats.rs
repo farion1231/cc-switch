@@ -3588,6 +3588,12 @@ mod tests {
                 1_000_000,
                 ["1.500000", "4.500000", "0.075000", "1.875000", "7.950000"],
             ),
+            (
+                "google/gemini-4-neon-high",
+                "gemini",
+                3_000_000,
+                ["3.000000", "15.000000", "0.150000", "0.000000", "18.150000"],
+            ),
         ];
         {
             let conn = lock_conn!(db.conn);
@@ -3595,7 +3601,7 @@ mod tests {
             conn.execute(
                 "DELETE FROM model_pricing WHERE model_id IN
                  ('claude-opus-5-5', 'gpt-6-sol', 'gpt-6.1-sol', 'gpt-6-luna', 'gpt-5.6-cyber',
-                  'gpt-5.5-pro', 'gpt-4o-mini', 'qwen4-max')",
+                  'gpt-5.5-pro', 'gpt-4o-mini', 'qwen4-max', 'gemini-4-neon')",
                 [],
             )?;
             for (model, app, input, _) in &cases {
@@ -6660,6 +6666,35 @@ mod tests {
                 |r| r.get(0),
             )?;
             assert_eq!(cost, expected, "{id}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_gemini_4_neon_direct_tiers_and_unpriced_orchestrator_aliases() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+        let base = find_model_pricing_row(&conn, "gemini-4-neon")?;
+        assert_eq!(
+            base,
+            Some(("3.00".into(), "15.00".into(), "0.15".into(), "0".into()))
+        );
+
+        for model in [
+            "gemini-4-neon",
+            "gemini-4-neon-low",
+            "gemini-4-neon-medium",
+            "gemini-4-neon-high",
+            "gemini-4-neon-xhigh",
+            "models/gemini-4-neon-high",
+        ] {
+            assert_eq!(find_model_pricing_row(&conn, model)?, base, "{model}");
+        }
+
+        // Orchestrator mode aliases must stay unpriced without native evidence unless a custom
+        // price is explicitly configured for them.
+        for model in ["orchestrator-neon", "gemini-pro-orchestrator-neon"] {
+            assert!(find_model_pricing_row(&conn, model)?.is_none(), "{model}");
         }
         Ok(())
     }

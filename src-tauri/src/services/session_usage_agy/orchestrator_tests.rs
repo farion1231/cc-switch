@@ -91,21 +91,36 @@ fn orchestrator_splits_native_generations_and_preserves_request_mode() {
     if crate::config::sqlite_unsupported_in_temp_dir() {
         return;
     }
-    for (mode, planner, expected) in [
+    for (mode, planner, expected, planner_cost) in [
         (
             "Orchestrator (Carbon)",
             "gemini-pro-orchestrator",
             "gemini-4-carbon",
+            "3.1",
         ),
         (
             "Orchestrator (Argon)",
             "gemini-pro-orchestrator-argon",
             "gemini-4-argon",
+            "3.1",
+        ),
+        (
+            "Orchestrator (Neon)",
+            "gemini-pro-orchestrator-neon",
+            "gemini-4-neon",
+            "4.65",
         ),
         (
             "gemini-pro-orchestrator",
             "gemini-pro-orchestrator",
             "gemini-4-carbon",
+            "3.1",
+        ),
+        (
+            "gemini-pro-orchestrator-neon",
+            "gemini-pro-orchestrator-neon",
+            "gemini-4-neon",
+            "4.65",
         ),
     ] {
         let dir = tempfile::tempdir().unwrap();
@@ -122,7 +137,7 @@ fn orchestrator_splits_native_generations_and_preserves_request_mode() {
             import_records(&db, "session", &rows, Some(&source)).unwrap(),
             (3, 0)
         );
-        assert_price(&db, 1, expected, mode, "3.1");
+        assert_price(&db, 1, expected, mode, planner_cost);
         assert_price(&db, 3, "gemini-4-hydrogen", mode, "2.325");
         assert_price(&db, 5, "gemini-4-carbon-high", "gemini-4-carbon-high", "2");
         assert_eq!(
@@ -599,6 +614,135 @@ fn cli_worker_does_not_inherit_stale_direct_hydrogen_selection_across_rewind() {
     );
     assert_price(
         &db_mixed,
+        3,
+        "gemini-4-hydrogen-orchestrator",
+        "gemini-flash-worker-agy",
+        "2.325",
+    );
+}
+
+#[test]
+fn orchestrator_neon_history_reattributes_after_v3_cursor_upgrade_once() {
+    if crate::config::sqlite_unsupported_in_temp_dir() {
+        return;
+    }
+    // Without native evidence, the Neon planner alias stays unpriced while the worker alias
+    // attributes to Hydrogen.
+    let cli_rows = [
+        json!({"step_index":1,"type":"PLANNER_RESPONSE","status":"DONE","model":"gemini-pro-orchestrator-neon","input_tokens":1_000_000,"output_tokens":100_000,"cache_read_tokens":1_000_000}),
+        json!({"step_index":3,"type":"PLANNER_RESPONSE","status":"DONE","model":"gemini-flash-worker-agy","input_tokens":1_000_000,"output_tokens":100_000,"cache_read_tokens":1_000_000}),
+    ];
+    let db_no_native = Database::memory().unwrap();
+    assert_eq!(
+        import_records(&db_no_native, "session", &cli_rows, None).unwrap(),
+        (2, 0)
+    );
+    assert_price(
+        &db_no_native,
+        1,
+        "gemini-pro-orchestrator-neon",
+        "gemini-pro-orchestrator-neon",
+        "0",
+    );
+    assert_price(
+        &db_no_native,
+        3,
+        "gemini-4-hydrogen",
+        "gemini-flash-worker-agy",
+        "2.325",
+    );
+
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("conversations")).unwrap();
+    let source = dir
+        .path()
+        .join("brain/session/.system_generated/logs/transcript_full.jsonl");
+    std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+    let text = cli_rows
+        .iter()
+        .map(Value::to_string)
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(&source, text).unwrap();
+
+    let native_conn = native(
+        &dir.path().join("conversations/session.db"),
+        "gemini-pro-orchestrator-neon",
+        "Orchestrator (Neon)",
+    );
+    let mut worker_fields = native_models::test_model_id("Gemini 4 Hydrogen (Orchestrator)");
+    worker_fields.extend(native_models::test_timing(1200, 800));
+    native_models::set_test_generation(&native_conn, 7, "gemini-flash-worker-agy", &worker_fields);
+
+    let db = Database::memory().unwrap();
+    let files = || vec![("session".into(), source.clone())];
+    sync_agy_usage_from_files(&db, files()).unwrap();
+    {
+        let conn = db.conn.lock().unwrap();
+        // Simulate a v3 cursor before Neon support: unchanged files, unpriced planner row.
+        conn.execute(
+            "UPDATE proxy_request_logs
+             SET model='gemini-pro-orchestrator-neon',
+                 request_model='gemini-pro-orchestrator-neon',
+                 input_cost_usd='0',
+                 output_cost_usd='0',
+                 cache_read_cost_usd='0',
+                 total_cost_usd='0'
+             WHERE request_id='agy:session:1'",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE session_log_sync SET parser_state=?1",
+            [format!(
+                "v3:{}",
+                native_models::native_state_fingerprint(&source)
+            )],
+        )
+        .unwrap();
+    }
+
+    let result = sync_agy_usage_from_files(&db, files()).unwrap();
+    assert_eq!((result.imported, result.skipped), (1, 1));
+    assert_price(
+        &db,
+        1,
+        "gemini-4-neon",
+        "gemini-pro-orchestrator-neon",
+        "4.65",
+    );
+    assert_price(
+        &db,
+        3,
+        "gemini-4-hydrogen-orchestrator",
+        "gemini-flash-worker-agy",
+        "2.325",
+    );
+    let result = sync_agy_usage_from_files(&db, files()).unwrap();
+    assert_eq!((result.imported, result.skipped), (0, 0));
+
+    // When native metadata becomes unreadable later, keep recovered `gemini-4-neon` on updates.
+    native_conn
+        .execute_batch("DROP TABLE gen_metadata")
+        .unwrap();
+    let updated_rows = [
+        json!({"step_index":0,"type":"USER_INPUT","content":"changed setting `Model Selection` from None to Orchestrator (Neon). No need to comment"}),
+        json!({"step_index":1,"type":"PLANNER_RESPONSE","status":"DONE","input_tokens":2_000_000,"output_tokens":100_000,"cache_read_tokens":1_000_000}),
+        json!({"step_index":3,"type":"PLANNER_RESPONSE","status":"DONE","model":"gemini-flash-worker-agy","input_tokens":1_000_000,"output_tokens":100_000,"cache_read_tokens":1_000_000}),
+    ];
+    assert_eq!(
+        import_records(&db, "session", &updated_rows, Some(&source)).unwrap(),
+        (1, 1)
+    );
+    assert_price(
+        &db,
+        1,
+        "gemini-4-neon",
+        "gemini-pro-orchestrator-neon",
+        "7.65",
+    );
+    assert_price(
+        &db,
         3,
         "gemini-4-hydrogen-orchestrator",
         "gemini-flash-worker-agy",
