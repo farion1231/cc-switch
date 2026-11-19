@@ -63,12 +63,23 @@ function fmtTime(ts: number): string {
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
-function parseDateInput(ts: number, value: string): number {
-  const [y, m, d] = value.split("-").map(Number);
-  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d))
-    return ts;
+/**
+ * 日期框的 `YYYY-MM-DD` 换成时间戳，保留原来的时分；不是完整日期时返回 null。
+ * 逐位键入年份时浏览器会先给出 `0002-11-18` 这样没打完的值，而 `new Date`
+ * 把 0–99 年当成 1900 年代，提交它会把年份改成 1902 / 1905 并打断输入（#9699），
+ * 所以四位数以下的年份一律当作还没打完。
+ */
+function parseDateInput(ts: number, value: string): number | null {
+  const match = /^(\d{4,})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return null;
+  const y = Number(match[1]);
+  const m = Number(match[2]);
+  const d = Number(match[3]);
+  if (y < 1000) return null;
   const base = fromTs(ts);
-  return toTs(new Date(y, m - 1, d, base.getHours(), base.getMinutes()));
+  const date = new Date(y, m - 1, d, base.getHours(), base.getMinutes());
+  if (date.getMonth() !== m - 1 || date.getDate() !== d) return null;
+  return toTs(date);
 }
 
 function parseTimeInput(ts: number, value: string): number {
@@ -158,6 +169,12 @@ export function UsageDateRangePicker({
       ),
   );
   const [error, setError] = useState<string | null>(null);
+  // 日期框正在输入时的原始文本：没打完的值不提交，但要原样留在框里，
+  // 受控 value 一被改写浏览器就会重置正在编辑的年份段。失焦后回到格式化的值
+  const [dateText, setDateText] = useState<Record<DraftField, string | null>>({
+    start: null,
+    end: null,
+  });
   // 可选范围：最早到有用量记录的那天，最晚到今天。趋势图按天出柱，
   // 选到 1905 年这种起点会一次画四万多根柱子把界面卡死（#9691）。
   // 最早日期没查到之前不知道下界，先不让确认；查到 null（没有记录）时页面是空状态、不画图，不设下界。
@@ -193,6 +210,7 @@ export function UsageDateRangePicker({
     );
     setActiveField("start");
     setError(null);
+    setDateText({ start: null, end: null });
   }, [open, selection]);
 
   // Keep draftEnd ticking when live mode is active and popover is open
@@ -226,6 +244,7 @@ export function UsageDateRangePicker({
   /* Pick a date from the calendar */
   const handleDatePick = (day: Date) => {
     setError(null);
+    setDateText({ start: null, end: null });
 
     // When live end time is active, calendar only controls start date
     if (draftLiveEnd) {
@@ -323,12 +342,19 @@ export function UsageDateRangePicker({
               "h-7 flex-1 border-0 bg-transparent p-0 text-body shadow-none focus:ring-0 focus-visible:ring-0",
               isEndLive && "pointer-events-none",
             )}
-            value={fmtDate(ts)}
+            value={dateText[field] ?? fmtDate(ts)}
             min={minTs != null ? fmtDate(minTs) : undefined}
             max={fmtDate(maxTs)}
             onChange={(e) => {
               if (isEndLive) return;
-              const next = parseDateInput(ts, e.target.value);
+              const raw = e.target.value;
+              const next = parseDateInput(ts, raw);
+              // 完整日期格式化后与原文相同，直接交给 state，草稿只留没打完的值
+              setDateText((prev) => ({
+                ...prev,
+                [field]: next == null ? raw : null,
+              }));
+              if (next == null) return;
               setTs(next);
               const d = fromTs(next);
               setDisplayMonth(new Date(d.getFullYear(), d.getMonth(), 1));
@@ -337,6 +363,7 @@ export function UsageDateRangePicker({
             onFocus={() => {
               if (!isEndLive) setActiveField(field);
             }}
+            onBlur={() => setDateText((prev) => ({ ...prev, [field]: null }))}
             readOnly={isEndLive}
           />
           <Input
