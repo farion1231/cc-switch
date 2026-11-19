@@ -507,7 +507,10 @@ fn split_id(id: &str) -> (String, String) {
 fn wsl_unc_root(dir: &Path) -> Option<PathBuf> {
     let text = dir.to_string_lossy();
     let normalized = text.replace('/', "\\");
-    let rest = if normalized.len() >= 8 && normalized[..8].eq_ignore_ascii_case(r"\\?\UNC\") {
+    let rest = if normalized
+        .get(..8)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(r"\\?\UNC\"))
+    {
         &normalized[8..]
     } else {
         normalized.strip_prefix(r"\\")?
@@ -1908,6 +1911,7 @@ enabled = false
         );
         for non_wsl in [
             r"C:\Users\jane\.claude",
+            r"C:\用户\.codex",
             "/home/jane/.claude",
             r"\\server\share\claude",
             r"\\wsl$\",
