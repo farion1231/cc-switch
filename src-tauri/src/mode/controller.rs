@@ -8779,7 +8779,7 @@ model_provider = "c"
         assert_eq!(view.notice_reasons, vec!["noLogin", "noCli"]);
 
         *keychain.lock().unwrap() = CodexKeychainLogin::Missing;
-        *fake.now.lock().unwrap() = NOW + 3600;
+        *fake.now.lock().unwrap() = NOW + 1800;
         check_codex_official_models(&state).await;
         assert_eq!(fake.calls.lock().unwrap().len(), 1, "no new fetch");
         assert!(catalog_slugs().contains(&"gpt-6-sol".to_string()));
@@ -8826,8 +8826,8 @@ model_provider = "c"
             .notice
             .is_none());
 
-        // 后台检查：一小时后是新的，不联网；七小时后刷新，列表变了就重写目录。
-        *fake.now.lock().unwrap() = NOW + 3600;
+        // 后台检查：半小时后是新的，不联网；七小时后刷新，列表变了就重写目录。
+        *fake.now.lock().unwrap() = NOW + 1800;
         check_codex_official_models(&state).await;
         assert_eq!(fake.calls.lock().unwrap().len(), 1);
         *fake.now.lock().unwrap() = NOW + 7 * 3600;
