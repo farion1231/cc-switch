@@ -1735,6 +1735,7 @@
       "outlineAborted": "Прервано",
       "outlineNoReply": "Нет ответа",
       "chapter": "Глава",
+      "pinnedChapter": "Закреплённая глава",
       "viewOptions": "Параметры отображения",
       "noChanges": "В этой сессии нет изменений файлов",
       "rawMatch": "Совпадения в исходнике",

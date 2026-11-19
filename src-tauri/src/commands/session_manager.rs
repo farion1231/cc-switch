@@ -7,6 +7,7 @@ use tauri_plugin_dialog::DialogExt;
 use crate::session_manager;
 use crate::session_manager::cache::chunk_ranges;
 use crate::session_manager::content::{self, BlockContent};
+use crate::session_manager::desktop_chapters::{self, DesktopChapter};
 use crate::session_manager::model::{ContentRef, ImageRef, TranscriptChunk};
 
 #[cfg(test)]
@@ -74,6 +75,26 @@ pub async fn get_session_messages(
     })
     .await
     .map_err(|e| format!("Failed to load session messages: {e}"))?
+}
+
+/// Claude 会话里用户在桌面端手动 pin 的章节（只读）。只对 Claude 会话有意义；
+/// 没装桌面端或读不到时返回空数组，不算错误。
+#[tauri::command]
+pub async fn get_session_desktop_chapters(
+    providerId: String,
+    sourcePath: String,
+) -> Result<Vec<DesktopChapter>, String> {
+    if providerId != "claude" {
+        return Ok(Vec::new());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let source = content::validate_source(&providerId, &sourcePath)?;
+        Ok(desktop_chapters::chapters_for_source(std::path::Path::new(
+            &source.load_path(),
+        )))
+    })
+    .await
+    .map_err(|e| format!("Failed to load desktop chapters: {e}"))?
 }
 
 /// 分块流式读取会话（§5.1，决策 D1）：依次发送 `Header` → 若干 `Messages` → `Done`。

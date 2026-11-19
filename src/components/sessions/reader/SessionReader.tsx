@@ -13,7 +13,10 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { ArrowDown } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import type { SessionTranscriptResult } from "@/lib/query/sessions";
+import {
+  useSessionDesktopChapters,
+  type SessionTranscriptResult,
+} from "@/lib/query/sessions";
 import { toast } from "@/lib/toast";
 
 import { sessionsApi } from "@/lib/api";
@@ -224,9 +227,14 @@ export function SessionReader({
 
   // 流式数据每到一批就重建 turn；交给低优先级渲染，滚动和点击不被打断
   const messages = useDeferredValue(transcript.messages);
+  // 用户在 Claude Code desktop 手动 pin 的章节：正文先出，章节读到了再补进来
+  const pinnedChapters = useSessionDesktopChapters(
+    session.providerId,
+    session.sourcePath ?? undefined,
+  );
   const turns = useMemo(
-    () => buildTurns(messages, { style }),
-    [messages, style],
+    () => buildTurns(messages, { style, pinnedChapters }),
+    [messages, style, pinnedChapters],
   );
   const localIndex = useMemo(() => buildTurnIndex(turns), [turns]);
   const headerTurns = transcript.header?.turns;

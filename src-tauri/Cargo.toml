@@ -74,6 +74,8 @@ anyhow = "1.0"
 zip = "2.2"
 serde_yaml = "0.9"
 tempfile = "3"
+# 只读读取 Claude desktop 的 Local Storage（章节标记），纯 Rust 实现
+rusty-leveldb = "4.0"
 url = "2.5"
 auto-launch = "0.5"
 base64 = "0.22"

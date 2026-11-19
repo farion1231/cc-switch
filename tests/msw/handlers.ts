@@ -204,6 +204,11 @@ export const handlers = [
     return success(getSessionMessages(providerId, sourcePath));
   }),
 
+  // 默认没有桌面端章节；要测的用例自己 server.use 覆盖
+  http.post(`${TAURI_ENDPOINT}/get_session_desktop_chapters`, () =>
+    success([]),
+  ),
+
   http.post(`${TAURI_ENDPOINT}/delete_session`, async ({ request }) => {
     const { providerId, sessionId, sourcePath } = await withJson<{
       providerId: string;
