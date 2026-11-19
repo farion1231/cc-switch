@@ -463,8 +463,7 @@
     "tabProxy": "라우팅",
     "authCenter": {
       "description": "GitHub Copilot, ChatGPT 및 xAI 구독을 공급자로 사용할 수 있습니다. 자격 증명은 라우팅 서비스가 주입하므로 관련 공급자는 라우팅 모드에서 사용해야 합니다(Codex 공식 로그인 연결 제외). Antigravity 계정은 agy의 공식 로그인을 전환하는 데 사용합니다.",
-      "beta": "베타",
-      "xaiOauthDescription": "xAI/Grok 계정 관리"
+      "beta": "베타"
     },
     "advanced": {
       "configDir": {
@@ -1121,7 +1120,6 @@
       "pricingModelSourceLabel": "요금 적용 기준 모델",
       "pricingModelSourceRequest": "요청 모델",
       "pricingModelSourceResponse": "응답 모델",
-      "pricingSave": "기본 요금 설정 저장",
       "pricingSaved": "기본 요금 설정을 저장했습니다",
       "pricingSaveFailed": "기본 요금 설정 저장 실패: {{error}}",
       "pricingLoadFailed": "기본 요금 설정을 불러오지 못했습니다: {{error}}"
@@ -2937,7 +2935,6 @@
     "geminiTitle": "Gemini MCP 관리",
     "unifiedPanel": {
       "title": "MCP 서버 관리",
-      "deleteServer": "서버 삭제",
       "deleteConfirm": "정말로 \"{{id}}\" 서버를 삭제하시겠습니까? 이 작업은 취소할 수 없습니다.",
       "enabledApps": "활성화된 앱",
       "importSuccess": "MCP 서버 {{count}}개를 성공적으로 가져왔습니다.",
@@ -2984,28 +2981,20 @@
       "tagsPlaceholder": "stdio, time, utility",
       "homepage": "홈페이지",
       "docs": "문서",
-      "jsonPlaceholder": "{\n  \"type\": \"stdio\",\n  \"command\": \"uvx\",\n  \"args\": [\"mcp-server-fetch\"]\n}",
-      "tomlConfig": "전체 TOML 설정",
-      "tomlPlaceholder": "type = \"stdio\"\ncommand = \"uvx\"\nargs = [\"mcp-server-fetch\"]",
-      "syncOtherSide": "{{target}}에 동기화"
+      "tomlConfig": "전체 TOML 설정"
     },
     "wizard": {
       "title": "MCP 설정 마법사",
       "hint": "MCP 서버를 빠르게 설정하고 JSON 설정을 자동 생성합니다.",
       "type": "유형",
-      "typeStdio": "stdio",
-      "typeSse": "sse",
       "command": "명령",
       "commandPlaceholder": "npx 또는 uvx",
       "args": "인수",
-      "argsPlaceholder": "arg1\narg2",
       "env": "환경 변수",
-      "envPlaceholder": "KEY1=value1\nKEY2=value2",
       "url": "URL",
       "urlPlaceholder": "https://api.example.com/mcp",
       "urlRequired": "URL을 입력하세요",
       "headers": "헤더(선택 사항)",
-      "headersPlaceholder": "Authorization: Bearer your_token_here\nContent-Type: application/json",
       "preview": "설정 미리보기",
       "apply": "설정 적용"
     },
@@ -3528,7 +3517,6 @@
       "archiveDownloadTooLarge": "저장소 아카이브 다운로드가 {{limit_mb}} MB 제한을 초과했습니다. 중단됨",
       "archiveTooManyEntries": "압축 파일의 항목 수({{count}}개)가 최대 허용 개수({{limit}}개)를 초과했습니다.",
       "downloadFailed": "다운로드 실패: HTTP {{status}}",
-      "httpError": "HTTP 오류 {{status}}",
       "http403": "GitHub 접근이 제한되었습니다. 요청 빈도 제한일 수 있습니다",
       "http404": "저장소 또는 브랜치를 찾을 수 없습니다. URL을 확인하세요. 비공개 저장소는 먼저 '스킬 저장소 관리'에서 액세스 토큰을 설정하세요.",
       "http429": "요청이 너무 많습니다. 잠시 기다렸다가 다시 시도해 주세요.",
@@ -3541,7 +3529,6 @@
       "repoTokenStorageFailed": "{{host}}의 액세스 토큰을 읽거나 쓰지 못했습니다. 시스템 자격 증명 저장소를 사용할 수 있는지 확인하세요.",
       "getHomeDirFailed": "사용자 홈 디렉터리를 가져올 수 없습니다.",
       "noSkillsInZip": "ZIP 파일에 스킬이 없습니다 (SKILL.md 파일 필요)",
-      "networkError": "네트워크 오류",
       "unknownError": "알 수 없는 오류",
       "suggestion": {
         "checkNetwork": "네트워크 연결을 확인해 주세요.",
@@ -3769,7 +3756,6 @@
       "repo": "GitHub 저장소",
       "directory": "대상 디렉터리",
       "branch": "브랜치",
-      "skillsPath": "스킬 경로",
       "hint": "이 작업을 수행하면 스킬 저장소가 목록에 추가됩니다.",
       "hintDetail": "추가 후 스킬 관리 페이지에서 특정 스킬을 설치할 수 있습니다."
     },
@@ -3866,7 +3852,6 @@
   },
   "proxy": {
     "panel": {
-      "currentProvider": "현재 공급자:",
       "openSettings": "라우팅 서비스 설정",
       "stats": {
         "activeConnections": "활성 연결",
@@ -3927,10 +3912,6 @@
           "label": "비스트리밍 제한 시간(초)",
           "description": "스트리밍되지 않는 요청의 총 제한 시간"
         }
-      },
-      "validation": {
-        "retryMin": "재시도 횟수는 음수일 수 없습니다.",
-        "retryMax": "재시도 횟수는 10을 초과할 수 없습니다."
       },
       "actions": {
         "save": "설정 저장"

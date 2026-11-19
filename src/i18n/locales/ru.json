@@ -463,8 +463,7 @@
     "tabProxy": "Маршрутизация",
     "authCenter": {
       "description": "Используйте подписки GitHub Copilot, ChatGPT и xAI как провайдеров. Служба маршрутизации подставляет их учётные данные, поэтому такие провайдеры работают в режиме маршрутизации (кроме привязки к официальному входу Codex). Аккаунты Antigravity переключают официальный вход agy.",
-      "beta": "Бета",
-      "xaiOauthDescription": "Управление аккаунтами xAI / Grok"
+      "beta": "Бета"
     },
     "advanced": {
       "configDir": {
@@ -1121,7 +1120,6 @@
       "pricingModelSourceLabel": "Источник модели для расчёта стоимости",
       "pricingModelSourceRequest": "Модель запроса",
       "pricingModelSourceResponse": "Модель ответа",
-      "pricingSave": "Сохранить настройки цен по умолчанию",
       "pricingSaved": "Настройки цен по умолчанию сохранены",
       "pricingSaveFailed": "Не удалось сохранить настройки цен по умолчанию: {{error}}",
       "pricingLoadFailed": "Не удалось загрузить настройки цен по умолчанию: {{error}}"
@@ -2936,7 +2934,6 @@
     "geminiTitle": "Управление MCP Gemini",
     "unifiedPanel": {
       "title": "Управление MCP-серверами",
-      "deleteServer": "Удалить сервер",
       "deleteConfirm": "Вы уверены, что хотите удалить сервер «{{id}}»? Это действие нельзя отменить.",
       "enabledApps": "Включённые приложения",
       "importSuccess": "Успешно импортировано MCP-серверов: {{count}}",
@@ -2983,28 +2980,20 @@
       "tagsPlaceholder": "stdio, time, utility",
       "homepage": "Домашняя страница",
       "docs": "Документация",
-      "jsonPlaceholder": "{\n  \"type\": \"stdio\",\n  \"command\": \"uvx\",\n  \"args\": [\"mcp-server-fetch\"]\n}",
-      "tomlConfig": "Полная TOML-конфигурация",
-      "tomlPlaceholder": "type = \"stdio\"\ncommand = \"uvx\"\nargs = [\"mcp-server-fetch\"]",
-      "syncOtherSide": "Зеркалировать в {{target}}"
+      "tomlConfig": "Полная TOML-конфигурация"
     },
     "wizard": {
       "title": "Мастер настройки MCP",
       "hint": "Быстро настройте MCP-сервер и автоматически сгенерируйте JSON-конфигурацию",
       "type": "Тип",
-      "typeStdio": "stdio",
-      "typeSse": "sse",
       "command": "Команда",
       "commandPlaceholder": "npx или uvx",
       "args": "Аргументы",
-      "argsPlaceholder": "arg1\narg2",
       "env": "Переменные окружения",
-      "envPlaceholder": "KEY1=value1\nKEY2=value2",
       "url": "URL",
       "urlPlaceholder": "https://api.example.com/mcp",
       "urlRequired": "Введите URL",
       "headers": "Заголовки (необязательно)",
-      "headersPlaceholder": "Authorization: Bearer your_token_here\nContent-Type: application/json",
       "preview": "Предпросмотр конфигурации",
       "apply": "Применить конфигурацию"
     },
@@ -3526,7 +3515,6 @@
       "archiveDownloadTooLarge": "Загрузка архива репозитория превышает лимит {{limit_mb}} MB; прервано",
       "archiveTooManyEntries": "В архиве слишком много элементов: {{count}}. Лимит: {{limit}}.",
       "downloadFailed": "Не удалось загрузить: HTTP {{status}}",
-      "httpError": "HTTP-ошибка {{status}}",
       "http403": "Доступ к GitHub ограничен, возможно, сработал лимит запросов",
       "http404": "Репозиторий или ветка не найдены, проверьте URL. Для приватных репозиториев сначала задайте токен доступа в разделе «Управление репозиториями навыков»",
       "http429": "Слишком много запросов, подождите и повторите",
@@ -3539,7 +3527,6 @@
       "repoTokenStorageFailed": "Не удалось прочитать или записать токен доступа для {{host}}. Проверьте, доступно ли системное хранилище учётных данных",
       "getHomeDirFailed": "Не удалось получить домашний каталог пользователя",
       "noSkillsInZip": "В ZIP-файле не найдено навыков (требуется файл SKILL.md)",
-      "networkError": "Ошибка сети",
       "unknownError": "Неизвестная ошибка",
       "suggestion": {
         "checkNetwork": "Проверьте сетевое подключение",
@@ -3767,7 +3754,6 @@
       "repo": "Репозиторий GitHub",
       "directory": "Целевой каталог",
       "branch": "Ветка",
-      "skillsPath": "Путь к навыкам",
       "hint": "Это добавит репозиторий навыков в список.",
       "hintDetail": "После добавления вы сможете установить конкретные навыки на странице управления навыками."
     },
@@ -3864,7 +3850,6 @@
   },
   "proxy": {
     "panel": {
-      "currentProvider": "Текущий провайдер:",
       "openSettings": "Настроить службу маршрутизации",
       "stats": {
         "activeConnections": "Активные соединения",
@@ -3925,10 +3910,6 @@
           "label": "Тайм-аут непотоковых запросов (сек.)",
           "description": "Общий тайм-аут для непотоковых запросов"
         }
-      },
-      "validation": {
-        "retryMin": "Количество повторов не может быть отрицательным",
-        "retryMax": "Количество повторов не может превышать 10"
       },
       "actions": {
         "save": "Сохранить конфигурацию"
