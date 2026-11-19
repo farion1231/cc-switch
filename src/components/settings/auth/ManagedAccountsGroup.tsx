@@ -607,7 +607,7 @@ function AccountRow({
   const separator = " · ";
 
   return (
-    <div className="flex min-h-[56px] items-center gap-3 border-t border-border py-2 pe-2.5 ps-4">
+    <div className="auth-account-row flex min-h-[56px] items-center gap-3 border-t border-border py-2 pe-2.5 ps-4">
       <AccountAvatar login={account.login} avatarUrl={account.avatarUrl} />
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="flex min-w-0 items-center gap-1.5">
@@ -630,24 +630,31 @@ function AccountRow({
           )}
         </div>
         {account.details.length > 0 && (
-          <span id={subId} className="min-w-0 truncate text-caption text-fg-2">
+          <div id={subId} className="min-w-0 truncate text-caption text-fg-2">
             {account.details.map((part, index) => (
               <React.Fragment key={index}>
                 {index > 0 && separator}
                 {part}
               </React.Fragment>
             ))}
-          </span>
+          </div>
         )}
         {/* 单独一行：跟在第二行后面时，窄窗口里会把域名、登录日期挤成省略号 */}
         {account.users.length > 0 && (
-          <span className="flex min-w-0">
-            <ManagedAccountUsage users={account.users} />
-          </span>
+          <div className="flex min-w-0">
+            <ManagedAccountUsage
+              users={account.users}
+              className="min-w-0 shrink truncate text-fg-3"
+            />
+          </div>
         )}
       </div>
 
-      {!account.needsReauth && account.quota}
+      {!account.needsReauth && account.quota && (
+        <div className="auth-account-quota flex shrink-0 items-center gap-3">
+          {account.quota}
+        </div>
+      )}
 
       {account.needsReauth && canReauth && (
         <Button
