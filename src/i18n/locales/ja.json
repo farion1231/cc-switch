@@ -5109,6 +5109,7 @@
     "addMarketplace": "マーケットプレイスを追加",
     "addMarketplaceTitle": "{{app}} のマーケットプレイスを追加",
     "addMarketplaceBody": "GitHub の owner/repo、Git URL、またはローカルフォルダー（スラッシュ区切り、空白なし）。",
+    "addMarketplaceWaiting": "マーケットプレイスのリポジトリをダウンロードしています。大きなリポジトリは数分かかることがあります（最長 5 分）。このウィンドウを閉じても構いません。完了したら通知します。",
     "sourceLabel": "ソース",
     "removeMarketplace": "削除",
     "confirmUninstallTitle": "{{name}} をアンインストールしますか？",

@@ -5109,6 +5109,7 @@
     "addMarketplace": "添加市场",
     "addMarketplaceTitle": "添加 {{app}} 插件市场",
     "addMarketplaceBody": "GitHub 的 owner/repo、Git 地址，或本地文件夹（用正斜杠，不含空格）。",
+    "addMarketplaceWaiting": "正在下载市场仓库，仓库大时可能要几分钟（最长 5 分钟）。可以先关掉这个窗口，完成后会提示。",
     "sourceLabel": "来源",
     "removeMarketplace": "移除",
     "confirmUninstallTitle": "卸载 {{name}}？",

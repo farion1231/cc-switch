@@ -5109,6 +5109,7 @@
     "addMarketplace": "Add marketplace",
     "addMarketplaceTitle": "Add a {{app}} marketplace",
     "addMarketplaceBody": "A GitHub owner/repo, a Git URL, or a local folder (use forward slashes, no spaces).",
+    "addMarketplaceWaiting": "Downloading the marketplace repository. Large repositories can take a few minutes (up to 5). You can close this window; you'll be notified when it finishes.",
     "sourceLabel": "Source",
     "removeMarketplace": "Remove",
     "confirmUninstallTitle": "Uninstall {{name}}?",

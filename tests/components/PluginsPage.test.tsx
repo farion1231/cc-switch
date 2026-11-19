@@ -574,6 +574,39 @@ describe("PluginsPage", () => {
     expect(within(dialog).getByRole("textbox")).toHaveValue("o/r");
   });
 
+  it("lets a slow marketplace add run on after the dialog is closed", async () => {
+    let finish!: (value: { changed: boolean }) => void;
+    m.addMarketplace.mockReturnValue(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+    renderPage();
+    await screen.findByText("frontend-design");
+    await userEvent.click(
+      screen.getByRole("button", { name: "pluginsPage.addMarketplace" }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.type(within(dialog).getByRole("textbox"), "big/repo");
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "common.add" }),
+    );
+    expect(
+      await within(dialog).findByText("pluginsPage.addMarketplaceWaiting"),
+    ).toBeInTheDocument();
+    // 进行中按钮叫「关闭」：只关窗口，不中止添加
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "common.close" }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+
+    finish({ changed: true });
+    await waitFor(() => expect(m.toastSuccess).toHaveBeenCalled());
+    expect(m.addMarketplace).toHaveBeenCalledTimes(1);
+  });
+
   it("lists marketplaces and only offers removal for user-added ones", async () => {
     m.listMarketplaces.mockResolvedValue([
       { name: "builtin", removable: false, location: "/x" },

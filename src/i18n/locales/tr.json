@@ -5040,6 +5040,7 @@
     "addMarketplace": "Pazar yeri ekle",
     "addMarketplaceTitle": "{{app}} pazar yeri ekle",
     "addMarketplaceBody": "GitHub owner/repo, bir Git URL'si veya yerel bir klasör (eğik çizgi kullanın, boşluk olmasın).",
+    "addMarketplaceWaiting": "Pazar yeri deposu indiriliyor. Büyük depolar birkaç dakika sürebilir (en fazla 5). Bu pencereyi kapatabilirsiniz; bittiğinde bildirim alırsınız.",
     "sourceLabel": "Kaynak",
     "removeMarketplace": "Kaldır",
     "confirmUninstallTitle": "{{name}} kaldırılsın mı?",

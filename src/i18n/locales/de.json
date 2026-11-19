@@ -5109,6 +5109,7 @@
     "addMarketplace": "Marketplace hinzufügen",
     "addMarketplaceTitle": "Marketplace für {{app}} hinzufügen",
     "addMarketplaceBody": "Ein GitHub-owner/repo, eine Git-URL oder ein lokaler Ordner (Schrägstriche verwenden, keine Leerzeichen).",
+    "addMarketplaceWaiting": "Das Marketplace-Repository wird heruntergeladen. Große Repositorys können einige Minuten dauern (höchstens 5). Sie können dieses Fenster schließen; Sie werden benachrichtigt, sobald es fertig ist.",
     "sourceLabel": "Quelle",
     "removeMarketplace": "Entfernen",
     "confirmUninstallTitle": "{{name}} deinstallieren?",

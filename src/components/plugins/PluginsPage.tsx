@@ -917,10 +917,11 @@ export function PluginsPage({ apps, initialApp }: PluginsPageProps) {
       <V7Dialog
         open={addOpen}
         onOpenChange={(next) => {
-          if (!next && !busy["market:+"]) {
-            setAddOpen(false);
-            setSource("");
-          }
+          if (next) return;
+          // 进行中也能关：克隆照常在后台跑完，成功失败都会弹提示；
+          // 输入留着，失败后重新打开就能改了再试
+          setAddOpen(false);
+          if (!busy["market:+"]) setSource("");
         }}
       >
         <form
@@ -952,18 +953,23 @@ export function PluginsPage({ apps, initialApp }: PluginsPageProps) {
               onChange={(event) => setSource(event.target.value)}
             />
           </label>
+          {busy["market:+"] && (
+            <p role="status" className="text-caption text-fg-2">
+              {t("pluginsPage.addMarketplaceWaiting")}
+            </p>
+          )}
           <div className="flex justify-end gap-2 pt-1">
             <Button
               type="button"
               variant="neutral"
               size="regular"
-              disabled={Boolean(busy["market:+"])}
               onClick={() => {
                 setAddOpen(false);
-                setSource("");
+                if (!busy["market:+"]) setSource("");
               }}
             >
-              {t("common.cancel")}
+              {/* 进行中点它只是关窗口，不会中止添加，所以不叫「取消」 */}
+              {busy["market:+"] ? t("common.close") : t("common.cancel")}
             </Button>
             <Button
               type="submit"

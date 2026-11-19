@@ -5109,6 +5109,7 @@
     "addMarketplace": "마켓플레이스 추가",
     "addMarketplaceTitle": "{{app}} 마켓플레이스 추가",
     "addMarketplaceBody": "GitHub owner/repo, Git URL 또는 로컬 폴더(슬래시(/)를 사용하고 공백은 넣지 마세요).",
+    "addMarketplaceWaiting": "마켓플레이스 저장소를 내려받는 중입니다. 저장소가 크면 몇 분 걸릴 수 있습니다(최대 5분). 이 창을 닫아도 되며, 완료되면 알려 드립니다.",
     "sourceLabel": "소스",
     "removeMarketplace": "제거",
     "confirmUninstallTitle": "{{name}}을(를) 제거할까요?",

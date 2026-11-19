@@ -5109,6 +5109,7 @@
     "addMarketplace": "加入市集",
     "addMarketplaceTitle": "加入 {{app}} 外掛市集",
     "addMarketplaceBody": "GitHub 的 owner/repo、Git 網址，或本機資料夾（用正斜線，不含空格）。",
+    "addMarketplaceWaiting": "正在下載市集倉庫，倉庫較大時可能要幾分鐘（最長 5 分鐘）。可以先關閉這個視窗，完成後會通知你。",
     "sourceLabel": "來源",
     "removeMarketplace": "移除",
     "confirmUninstallTitle": "解除安裝 {{name}}？",

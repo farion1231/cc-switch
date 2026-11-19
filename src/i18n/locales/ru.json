@@ -5107,6 +5107,7 @@
     "addMarketplace": "Добавить маркетплейс",
     "addMarketplaceTitle": "Добавить маркетплейс {{app}}",
     "addMarketplaceBody": "GitHub owner/repo, Git URL или локальная папка (используйте прямые слэши, без пробелов).",
+    "addMarketplaceWaiting": "Загружается репозиторий маркетплейса. Большие репозитории могут загружаться несколько минут (до 5). Это окно можно закрыть — по завершении появится уведомление.",
     "sourceLabel": "Источник",
     "removeMarketplace": "Удалить",
     "confirmUninstallTitle": "Удалить {{name}}?",
