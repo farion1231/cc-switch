@@ -1735,6 +1735,7 @@
       "outlineFailed": "失敗したステップあり",
       "outlineAborted": "中断",
       "outlineNoReply": "返信なし",
+      "chapter": "チャプター",
       "viewOptions": "表示オプション",
       "noChanges": "このセッションにはファイルの変更がありません",
       "rawMatch": "原文での一致",

@@ -1736,6 +1736,7 @@
       "outlineFailed": "Есть шаги с ошибкой",
       "outlineAborted": "Прервано",
       "outlineNoReply": "Нет ответа",
+      "chapter": "Глава",
       "viewOptions": "Параметры отображения",
       "noChanges": "В этой сессии нет изменений файлов",
       "rawMatch": "Совпадения в исходнике",
