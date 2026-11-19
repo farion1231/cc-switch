@@ -5,6 +5,32 @@ All notable changes to CC Switch will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.35] - 2026-11-17
+
+This release makes GPT-6.2 available to the ChatGPT-account Codex cards in Claude Code and Claude Desktop, shows the full Codex `/goal` objective in session history, and adds a copy button for request IDs. Fixes cover Claude Code's auto mode being blocked on models that cannot turn thinking off, Codex aggregation and terminal launches failing with "Responses-Lite requires `reasoning.context`", Codex requests rejected after a context compaction, the usage date picker freezing on far-off years, and Skills that could not be uninstalled once their managed copy was gone. Internally the proxy forwarder is split into submodules and the DAO takes `&AppType`.
+
+**Stats**: 17 commits | 116 files changed | +10671 insertions | -9439 deletions
+
+### Added
+
+- **Full Codex `/goal` Objective in Session History** (fe6acd377, refs #9647): Codex leaves objectives longer than 700 bytes out of the `user_goal` context it injects, so the viewer only had a hidden context row. The rollout's `thread_goal_updated` events (objective and status) are now parsed into a visible "Goal · <status>" step that expands to the full objective; repeats with the same objective and status are skipped. Leading events (a goal set before the first prompt) now take the text that follows them as their body instead of a separate note step.
+- **Copy the Request ID in Request Details** (e89dc9eaf, refs #9681): The detail drawer truncates long values, so a long request ID (e.g. Codex `resp_...`) could not be copied in full. The request ID row now has a copy button with a toast on success or failure.
+- **GPT-6.2 Sol and Astra Pricing** (fb453fb5d): Standard short-context (≤272K) list prices; the long-context tier, Batch/Fast/Ultrafast and astra-law are not representable, as with GPT-6.
+
+### Fixed
+
+- **GPT-6.2 Missing for ChatGPT-Account Codex Cards in Claude Code / Claude Desktop** (#9678, refs #9670): The ChatGPT model catalog leaves GPT-6.2 out for clients reporting 0.159.0, and generation requests were rejected with "not supported when using Codex with a ChatGPT account". Model discovery and generation now advertise Codex 0.169.0, without hard-coding model IDs.
+- **Claude Code Auto Mode Blocked by Models That Keep Thinking On** (f5ab4dfad, refs #8887, #9671): The auto mode classifier sends non-streaming requests with `thinking: {"type": "disabled"}`; models such as MiniMax-M3.1-Flash reject that with a 400, the classifier reports itself unavailable and every Bash/MCP call is denied. On the Claude Code and Claude Desktop routes, when an Anthropic Messages upstream returns this error the disabled thinking field is dropped and the request retried once on the same provider (through the thinking budget rectifier's retry path and switch, not counted against the breaker). Requests upstreams accept are sent unchanged.
+- **Codex "Responses-Lite requires `reasoning.context`" in Aggregation and Terminal Launches** (a559a0e1e, 625dff3f7, refs #9665): A third-party Responses relay that forwards GPT-6 to OpenAI's Codex backend worked in direct and route mode but failed in aggregation, because the merged catalog mirrored the official entry with `use_responses_lite` forced to false, so Codex dropped `reasoning.context`. Rows without an explicit model catalog on a native Responses profile now keep the official entry's `use_responses_lite`, as in direct mode; the rule lives in `apply_codex_responses_lite` and also covers the one-model catalog written when opening a terminal for a card. Rows with an explicit catalog and converted profiles still never use Lite.
+- **Codex Requests Rejected After a Context Compaction** (f7002d1e2, refs #9660): After compaction Codex replaces a retained image-only user message with an empty `input_text`, which the Chat conversion sent as `{"role":"user","content":""}` and strict gateways rejected with "message content cannot be empty". User messages with empty content are now dropped after the system-message collapse; other messages stay byte-identical.
+- **Usage Date Picker Froze on Far-Off Years** (8b2f34322, refs #9691): A custom range starting in e.g. 1905 asked the trend chart for about 44,000 daily bars and blocked the WebView. Selectable dates are now limited to [first day with usage, end of today]: calendar clicks are clamped, out-of-range days disabled, the date inputs get min/max and typed values are clamped on confirm. Confirm waits for the first usage date; if that query fails, the lower bound is dropped. The range length itself is not limited.
+- **Skills Could Not Be Uninstalled Once Their Managed Copy Was Gone** (#9669, fixes #9668): A dangling link that points exactly at the missing managed copy is now accepted.
+
+### Internal
+
+- Proxy forwarder split by @SaladDay: helpers moved into `forwarder/{endpoint,headers,request_body,copilot,opencode,response_check,diagnostics}.rs` and tests into `forwarder/tests.rs` (#9661); header plan, managed auth, send and response checks extracted from `forward` (#9662); retries pass one `Attempt` (#9663). No behavior change.
+- The 44 app-keyed DAO functions take `&AppType` (#9640); app ids are parsed only through `FromStr`, so `stream_check_provider` accepts the same ids as other commands (#9642); ignored perf benchmarks removed (#9641).
+
 ## [4.0.34] - 2026-11-16
 
 This release lets the skill repository manager add repositories on GitLab, Gitea and Forgejo (self-hosted instances and Codeberg included), lets Antigravity CLI sessions be deleted from the session manager, starts the automatic update download as soon as a new version is found, adds thinking effort levels for custom WorkBuddy models, and lets S3 users clear their saved config. Fixes cover Gemini CLI model-list fetches, image input for GitHub Copilot models in Codex, S3 sync on Alibaba OSS, Tencent COS and Huawei OBS, sync failing on unresolvable skill links, Fable 5.2 shown as Fable 5 in route mode, the prefix cache of Gemini models on Copilot, 1M Fable requests rejected by Copilot, the S3 provider preset not being remembered, and Hermes config directory changes not syncing providers. A large internal cleanup removes dead code and unifies duplicated helpers.

@@ -1443,7 +1443,7 @@
     "keyFieldsHint": "The default model (models.default) and the model table it points to follow the provider; everything else is Grok Build global settings and applies to every provider after saving.",
     "inactiveFieldsHint": "Saved in this provider by an older version; switching no longer applies them. Click one to copy its TOML and paste it above if you need it.",
     "inactiveFieldCopied": "Copied",
-    "routeOnlySettingsHint": "The two settings below only apply in routing mode."
+    "routeOnlySettingsHint": "The settings below only apply in routing mode."
   },
   "sessionManager": {
     "searchPlaceholder": "Search titles, folders, first/last messages or session IDs",
@@ -1658,7 +1658,17 @@
         "prLink": "Linked PR #{{number}}",
         "prLinkPlain": "Linked a PR",
         "slashCommand": "Ran {{command}}",
-        "subAgent": "Subagent {{name}}"
+        "subAgent": "Subagent {{name}}",
+        "goal": "Goal · {{status}}",
+        "goalPlain": "Goal",
+        "goalStatus": {
+          "active": "Active",
+          "paused": "Paused",
+          "blocked": "Blocked",
+          "usageLimited": "Usage limit reached",
+          "budgetLimited": "Budget reached",
+          "complete": "Complete"
+        }
       },
       "injectedToggle": "Show injected context",
       "injectedRow": "Context · {{label}} · {{chars}} chars",
@@ -1740,6 +1750,9 @@
     "openReleaseNotesFailed": "Failed to open release notes:"
   },
   "providerForm": {
+    "billingMultiplier": "Provider cost multiplier",
+    "billingMultiplierHelp": "Every model's reference price for this provider is multiplied by this value to estimate what requests through local routing cost. 0.5 means half price; leave blank for 1×. Only affects future requests; in direct mode (routing off), usage imported from session logs is still counted at 1×.",
+    "billingMultiplierInvalid": "Enter a number from 0 to 1000, or leave blank for 1×.",
     "nativeConfig": {
       "title": "Config file {{path}} (this provider only)",
       "hint": "Shows this provider's part of the file in the app's own format and writes it there on save. Global settings such as the default model are not here. Comments typed here are not saved.",
@@ -2235,7 +2248,7 @@
     "inactiveFieldCopied": "Copied",
     "upstreamFormatCopilotRouteHint": "Every mode requires routing, which injects the Copilot account credentials. A protocol you pick explicitly fails for models that don't support it.",
     "maxOutputTokensWarning": "Don't exceed the real output limit of the model or gateway, or requests return 400.",
-    "routeOnlySettingsHint": "The two settings below only apply in routing and Aggregation modes."
+    "routeOnlySettingsHint": "The settings below only apply in routing and Aggregation modes."
   },
   "geminiConfig": {
     "envFile": "Environment Variables (.env)",
@@ -2737,7 +2750,9 @@
       "speedEstimateTooFew": "Under 200 output tokens, so no estimate",
       "noTimingSession": "Session logs have no timing data",
       "noFirstToken": "No first-token timing, so no speed",
-      "providerId": "Provider ID"
+      "providerId": "Provider ID",
+      "copyRequestId": "Copy request ID",
+      "requestIdCopied": "Request ID copied"
     },
     "sources": {
       "scanTitle": "Scan session logs automatically",

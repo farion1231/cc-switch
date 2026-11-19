@@ -1374,7 +1374,7 @@
     "keyFieldsHint": "Sağlayıcıyı takip etmek için varsayılan model (models.default) ve işaret ettiği model tablosu; geri kalan her şey Grok Build genel ayarlarıdır ve kaydettikten sonra her sağlayıcı için geçerlidir.",
     "inactiveFieldsHint": "Bu sağlayıcıya daha eski bir sürümle kaydedilmiş; geçiş artık bunları uygulamamaktadır. TOML'yi kopyalamak ve ihtiyacınız varsa yukarıya yapıştırmak için birine tıklayın.",
     "inactiveFieldCopied": "Kopyalandı",
-    "routeOnlySettingsHint": "Aşağıdaki iki ayar yalnızca yönlendirme modunda geçerlidir."
+    "routeOnlySettingsHint": "Aşağıdaki ayarlar yalnızca yönlendirme modunda geçerlidir."
   },
   "sessionManager": {
     "searchPlaceholder": "Başlıkları, klasörleri, ilk/son mesajları veya oturum kimliklerini arayın",
@@ -1589,7 +1589,17 @@
         "prLink": "Bağlantılı Halkla İlişkiler #{{number}}",
         "prLinkPlain": "PR bağlantılı",
         "slashCommand": "{{command}} koştu",
-        "subAgent": "Alt ajan {{name}}"
+        "subAgent": "Alt ajan {{name}}",
+        "goal": "Hedef · {{status}}",
+        "goalPlain": "Hedef",
+        "goalStatus": {
+          "active": "Etkin",
+          "paused": "Duraklatıldı",
+          "blocked": "Engellendi",
+          "usageLimited": "Kullanım sınırına ulaşıldı",
+          "budgetLimited": "Bütçeye ulaşıldı",
+          "complete": "Tamamlandı"
+        }
       },
       "injectedToggle": "Enjekte edilen bağlamı göster",
       "injectedRow": "Bağlam · {{label}} · {{chars}} karakterleri",
@@ -1671,6 +1681,9 @@
     "openReleaseNotesFailed": "Sürüm notları açılamadı:"
   },
   "providerForm": {
+    "billingMultiplier": "Sağlayıcı maliyet çarpanı",
+    "billingMultiplierHelp": "Bu sağlayıcıdaki her modelin referans fiyatı, yerel yönlendirmeden geçen isteklerin maliyetini tahmin etmek için bu değerle çarpılır. 0.5 yarı fiyat demektir; 1× için boş bırakın. Yalnızca sonraki istekleri etkiler; doğrudan modda (yönlendirme kapalı) oturum kayıtlarından içe aktarılan kullanım yine 1× olarak sayılır.",
+    "billingMultiplierInvalid": "0 ile 1000 arasında bir sayı girin veya 1× için boş bırakın.",
     "nativeConfig": {
       "title": "Yapılandırma dosyası {{path}} (yalnızca bu sağlayıcı)",
       "hint": "Bu sağlayıcının dosyadaki bölümünü uygulamanın kendi biçiminde gösterir ve kaydettiğinizde oraya yazar. Varsayılan model gibi genel ayarlar burada yer almaz. Buraya yazılan yorumlar kaydedilmez.",
@@ -2166,7 +2179,7 @@
     "inactiveFieldCopied": "Kopyalandı",
     "upstreamFormatCopilotRouteHint": "Her mod, Copilot hesap kimlik bilgilerini içeren yönlendirmeyi gerektirir. Seçtiğiniz bir protokol, onu desteklemeyen modeller için açıkça başarısız olur.",
     "maxOutputTokensWarning": "Modelin veya ağ geçidinin gerçek çıkış sınırını aşmayın, aksi halde istekler 400 değerini döndürür.",
-    "routeOnlySettingsHint": "Aşağıdaki iki ayar yalnızca yönlendirme ve Birleştirme modlarında geçerlidir."
+    "routeOnlySettingsHint": "Aşağıdaki ayarlar yalnızca yönlendirme ve Birleştirme modlarında geçerlidir."
   },
   "geminiConfig": {
     "envFile": "Ortam Değişkenleri (.env)",
@@ -2668,7 +2681,9 @@
       "speedEstimateTooFew": "Çıkış tokenu 200'ün altında olduğundan tahmin yok",
       "noTimingSession": "Oturum günlüklerinde zamanlama verisi yok",
       "noFirstToken": "İlk token zamanlaması yok, dolayısıyla hız yok",
-      "providerId": "Sağlayıcı kimliği"
+      "providerId": "Sağlayıcı kimliği",
+      "copyRequestId": "Talep kimliğini kopyala",
+      "requestIdCopied": "Talep kimliği kopyalandı"
     },
     "sources": {
       "scanTitle": "Oturum günlüklerini otomatik olarak tara",

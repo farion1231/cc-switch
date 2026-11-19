@@ -4431,6 +4431,15 @@ mod bookkeeping {
         providers: Vec<Provider>,
         body: Value,
     ) -> Result<ForwardResult, ForwardError> {
+        send_as(&AppType::Claude, forwarder, providers, body).await
+    }
+
+    async fn send_as(
+        app_type: &AppType,
+        forwarder: &RequestForwarder,
+        providers: Vec<Provider>,
+        body: Value,
+    ) -> Result<ForwardResult, ForwardError> {
         let mut headers = HeaderMap::new();
         headers.insert(
             http::header::CONTENT_TYPE,
@@ -4438,7 +4447,7 @@ mod bookkeeping {
         );
         forwarder
             .forward_with_retry(
-                &AppType::Claude,
+                app_type,
                 http::Method::POST,
                 "/v1/messages",
                 &body,
@@ -5015,6 +5024,61 @@ mod bookkeeping {
         let requests = up.requests.lock().await;
         assert_eq!(requests.len(), 2);
         assert_eq!(requests[1]["thinking"]["budget_tokens"], 32000);
+    }
+
+    const DISABLED_ERROR: &str = r#"invalid params, model "MiniMax-M3.1-Flash" requires adaptive thinking; thinking.type="disabled" (including reasoning.effort=none) is not allowed (2013)"#;
+
+    async fn assert_thinking_disabled_rejection_retries(app_type: AppType) {
+        let up = upstream(vec![error(400, DISABLED_ERROR), ok()]).await;
+        let fwd = forwarder(1, "p1");
+
+        let result = send_as(
+            &app_type,
+            &fwd,
+            vec![provider("p1", &up)],
+            body_with_thinking(json!({ "type": "disabled" })),
+        )
+        .await;
+
+        assert!(result.is_ok());
+        if app_type == AppType::Claude {
+            // 熔断记录只按 claude 查（Claude Desktop 没有故障转移队列）
+            assert_eq!(breaker(&fwd, "p1").await, Some((1, 0)));
+        }
+        let requests = up.requests.lock().await;
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0]["thinking"]["type"], "disabled");
+        assert!(requests[1].get("thinking").is_none());
+        assert_eq!(requests[1]["max_tokens"], requests[0]["max_tokens"]);
+    }
+
+    #[tokio::test]
+    async fn thinking_disabled_rejection_retries_without_thinking() {
+        // Issue #8887：auto mode 分类器带 thinking disabled，MiniMax-M3.1-Flash 拒绝
+        assert_thinking_disabled_rejection_retries(AppType::Claude).await;
+    }
+
+    #[tokio::test]
+    async fn thinking_disabled_rejection_retries_on_claude_desktop_route() {
+        // Issue #9671：Claude Desktop 路由（/claude-desktop）同样整流
+        assert_thinking_disabled_rejection_retries(AppType::ClaudeDesktop).await;
+    }
+
+    #[tokio::test]
+    async fn thinking_disabled_rejection_without_disabled_thinking_is_not_retried() {
+        let up = upstream(vec![error(400, DISABLED_ERROR), ok()]).await;
+        let fwd = forwarder(1, "p1");
+
+        let result = send(
+            &fwd,
+            vec![provider("p1", &up)],
+            body_with_thinking(json!({ "type": "adaptive" })),
+        )
+        .await;
+
+        // 不是 disabled：没有可整流的内容，原样报错、不重试
+        assert!(result.is_err());
+        assert_eq!(up.requests.lock().await.len(), 1);
     }
 
     #[tokio::test]

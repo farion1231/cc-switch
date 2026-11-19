@@ -58,6 +58,7 @@ import {
   type ClaudeStackModelRow,
 } from "./ClaudeStackModelsField";
 import { LocalProxyRequestOverridesField } from "./LocalProxyRequestOverridesField";
+import { BillingMultiplierField } from "./BillingMultiplierField";
 import {
   ClaudeReasoningEffortField,
   type ClaudeReasoningEffortChoice,
@@ -173,6 +174,9 @@ interface ClaudeFormFieldsProps {
   // Local proxy User-Agent override
   customUserAgent: string;
   onCustomUserAgentChange: (value: string) => void;
+  /** 供应商费用倍率；不传 onBillingMultiplierChange 时不显示（官方卡等）。 */
+  billingMultiplier?: string;
+  onBillingMultiplierChange?: (value: string) => void;
   localProxyHeadersOverride: string;
   onLocalProxyHeadersOverrideChange: (value: string) => void;
   localProxyBodyOverride: string;
@@ -257,6 +261,8 @@ export function ClaudeFormFields({
   onFullUrlChange,
   customUserAgent,
   onCustomUserAgentChange,
+  billingMultiplier = "",
+  onBillingMultiplierChange,
   localProxyHeadersOverride,
   onLocalProxyHeadersOverrideChange,
   localProxyBodyOverride,
@@ -282,6 +288,7 @@ export function ClaudeFormFields({
     apiKeyField !== "ANTHROPIC_AUTH_TOKEN" ||
     isFullUrl ||
     customUserAgent ||
+    billingMultiplier ||
     hasRequestOverrides
   );
   const [advancedExpanded, setAdvancedExpanded] = useState(
@@ -299,7 +306,10 @@ export function ClaudeFormFields({
 
   // Stack 布局的高级区只有完整 URL、User-Agent 和请求覆盖，开了或填了才展开。
   const [stackAdvancedExpanded, setStackAdvancedExpanded] = useState(
-    isFullUrl || !!customUserAgent || hasRequestOverrides,
+    isFullUrl ||
+      !!customUserAgent ||
+      !!billingMultiplier ||
+      hasRequestOverrides,
   );
 
   // Copilot 可用模型列表
@@ -1016,14 +1026,21 @@ export function ClaudeFormFields({
       />
     );
 
-  // 两项都只在路由、聚合模式下生效：在分组开头说一次，各自的作用收进字段名后的「?」。
+  // 这一组都只在路由、聚合模式下生效：在分组开头说一次，各自的作用收进字段名后的「?」。
   const userAgentAndOverrides = (
     <>
       <p className="text-xs leading-relaxed text-fg-2">
         {t("codexConfig.routeOnlySettingsHint", {
-          defaultValue: "以下两项只在路由、聚合模式下生效。",
+          defaultValue: "以下设置只在路由、聚合模式下生效。",
         })}
       </p>
+      {onBillingMultiplierChange && (
+        <BillingMultiplierField
+          id="claude-billing-multiplier"
+          value={billingMultiplier}
+          onChange={onBillingMultiplierChange}
+        />
+      )}
       <CustomUserAgentField
         id="claude-custom-user-agent"
         value={customUserAgent}

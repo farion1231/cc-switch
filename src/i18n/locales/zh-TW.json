@@ -1443,7 +1443,7 @@
     "keyFieldsHint": "預設模型（models.default）和它指向的模型表隨供應商切換；其餘是 Grok Build 全域設定，儲存後對所有供應商生效。",
     "inactiveFieldsHint": "這些是舊版存進卡裡的設定，現在切換不會寫出去。點一下複製 TOML，需要時貼到上方。",
     "inactiveFieldCopied": "已複製",
-    "routeOnlySettingsHint": "以下兩項只在路由模式下生效。"
+    "routeOnlySettingsHint": "以下設定只在路由模式下生效。"
   },
   "sessionManager": {
     "searchPlaceholder": "搜尋標題、目錄、首末訊息或工作階段 ID",
@@ -1658,7 +1658,17 @@
         "prLink": "已關聯 PR #{{number}}",
         "prLinkPlain": "已關聯 PR",
         "slashCommand": "執行了 {{command}}",
-        "subAgent": "子代理 {{name}}"
+        "subAgent": "子代理 {{name}}",
+        "goal": "目標 · {{status}}",
+        "goalPlain": "目標",
+        "goalStatus": {
+          "active": "進行中",
+          "paused": "已暫停",
+          "blocked": "受阻",
+          "usageLimited": "額度已用盡",
+          "budgetLimited": "已達預算",
+          "complete": "已完成"
+        }
       },
       "injectedToggle": "顯示注入的上下文",
       "injectedRow": "上下文 · {{label}} · {{chars}} 字",
@@ -1740,6 +1750,9 @@
     "openReleaseNotesFailed": "開啟更新日誌失敗："
   },
   "providerForm": {
+    "billingMultiplier": "供應商費用倍率",
+    "billingMultiplierHelp": "該供應商所有模型的參考價都乘以這個值，用來估算經本機路由的請求花了多少錢。0.5 即半價，留空為 1 倍。只影響之後的請求；不開路由（直連）時從會話記錄匯入的用量仍按 1 倍統計。",
+    "billingMultiplierInvalid": "請輸入 0 到 1000 的數字，或留空使用 1 倍。",
     "nativeConfig": {
       "title": "設定檔 {{path}}（只顯示這一家）",
       "hint": "按應用自己的格式顯示這一家在檔案裡的部分，儲存後寫進這個檔案；預設模型等全域設定不在這裡。在這裡寫的註解不會儲存。",
@@ -2235,7 +2248,7 @@
     "inactiveFieldCopied": "已複製",
     "upstreamFormatCopilotRouteHint": "所有模式都需要開啟路由，由路由注入 Copilot 帳號憑證；手動指定的協定模型不支援時會報錯。",
     "maxOutputTokensWarning": "不要超過模型或閘道的真實輸出上限，否則會回傳 400。",
-    "routeOnlySettingsHint": "以下兩項只在路由、聚合模式下生效。"
+    "routeOnlySettingsHint": "以下設定只在路由、聚合模式下生效。"
   },
   "geminiConfig": {
     "envFile": "環境變數 (.env)",
@@ -2737,7 +2750,9 @@
       "speedEstimateTooFew": "輸出不到 200 token，不估速度",
       "noTimingSession": "工作階段日誌沒有計時資料",
       "noFirstToken": "沒有首字計時，不算速度",
-      "providerId": "供應商 ID"
+      "providerId": "供應商 ID",
+      "copyRequestId": "複製請求 ID",
+      "requestIdCopied": "已複製請求 ID"
     },
     "sources": {
       "scanTitle": "自動掃描工作階段日誌",
