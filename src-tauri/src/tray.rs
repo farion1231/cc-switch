@@ -1443,7 +1443,8 @@ fn collect_app_snapshot(
     service_running: Option<bool>,
     profiles: &[crate::database::Profile],
 ) -> Result<AppSnapshot, AppError> {
-    let rows = app_state.db.get_all_providers(app)?;
+    // 读不出来的行不进托盘（没有能切换的内容），也不拖垮整个菜单。
+    let rows = app_state.db.get_provider_rows(app)?.readable;
     let claude_accounts = if *app == AppType::Claude {
         crate::services::claude_account::labels_on_disk(&crate::config::get_app_config_dir())
     } else {
@@ -2486,7 +2487,7 @@ pub(crate) fn collect_panel_model(app_state: &AppState) -> Result<PanelModel, Ap
     let mut apps = Vec::with_capacity(snapshots.len());
     for snapshot in &snapshots {
         let app = snapshot.app.as_str();
-        let providers = app_state.db.get_all_providers(&snapshot.app)?;
+        let providers = app_state.db.get_provider_rows(&snapshot.app)?.readable;
         let (header, rows) = panel_rows(&app_state.usage_cache, &texts, snapshot, &providers, now);
         let credits = snapshot
             .current_id
@@ -3529,8 +3530,8 @@ pub(crate) async fn refresh_panel_provider_usage(app: &tauri::AppHandle) {
         .unwrap_or_default();
     let mut due = Vec::new();
     for app_type in TRAY_APPS.iter().filter(|app| visible_apps.is_visible(app)) {
-        let rows = match app_state.db.get_all_providers(app_type) {
-            Ok(rows) => rows,
+        let rows = match app_state.db.get_provider_rows(app_type) {
+            Ok(rows) => rows.readable,
             Err(e) => {
                 log::warn!("[Tray] 读取{}供应商失败: {e}", app_display_name(app_type));
                 continue;
@@ -3614,6 +3615,43 @@ mod tests {
 
     fn now() -> chrono::DateTime<chrono::Local> {
         chrono::Local::now()
+    }
+
+    #[test]
+    fn an_unreadable_provider_is_left_out_of_the_tray_instead_of_breaking_it() {
+        use std::sync::Arc;
+        let state = AppState::new(Arc::new(crate::database::Database::memory().unwrap()));
+        for id in ["good", "broken"] {
+            let provider = crate::provider::Provider::with_id(
+                id.into(),
+                id.into(),
+                serde_json::json!({"env": {}}),
+                None,
+            );
+            state.db.save_provider(&AppType::Codex, &provider).unwrap();
+        }
+        state
+            .db
+            .conn
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE providers SET meta = '{' WHERE app_type = 'codex' AND id = 'broken'",
+                [],
+            )
+            .unwrap();
+
+        let snapshot = collect_app_snapshot(
+            &state,
+            &en(),
+            &crate::settings::AppSettings::default(),
+            &AppType::Codex,
+            None,
+            &[],
+        )
+        .expect("the tray still builds");
+        let ids: Vec<&str> = snapshot.providers.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(ids, ["good"]);
     }
 
     // ─── 基础 ───

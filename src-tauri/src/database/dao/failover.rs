@@ -54,7 +54,11 @@ impl Database {
 
     /// 获取故障转移队列中的供应商（完整 Provider 信息，与队列的排序一致）
     pub fn get_failover_providers(&self, app_type: &AppType) -> Result<Vec<Provider>, AppError> {
-        Ok(self.load_providers(app_type, true)?.into_values().collect())
+        Ok(self
+            .load_providers(app_type, true)?
+            .into_strict()?
+            .into_values()
+            .collect())
     }
 
     /// 添加供应商到故障转移队列

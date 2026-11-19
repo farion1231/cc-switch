@@ -1,9 +1,10 @@
+use super::{Rows, UnreadableEntry};
 use crate::app_config::AppType;
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use crate::provider::{Provider, ProviderMeta};
 use indexmap::IndexMap;
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 use std::collections::HashSet;
 
 #[cfg(test)]
@@ -23,20 +24,21 @@ type OmoProviderRow = (
 
 const PROVIDER_SELECT: &str = "SELECT id, name, settings_config, website_url, category, created_at, sort_index, notes, icon, icon_color, meta, in_failover_queue FROM providers";
 
-/// 按 [`PROVIDER_SELECT`] 的列序读一行供应商。
+/// 按 [`PROVIDER_SELECT`] 的列序（`id, name, settings_config, website_url, category, created_at, sort_index, notes, icon,
+/// icon_color, meta, in_failover_queue`）读一行供应商。
 fn row_to_provider(row: &rusqlite::Row<'_>) -> rusqlite::Result<Provider> {
-    let settings_config: String = row.get(2)?;
-    let meta: String = row.get(10)?;
+    let id: String = row.get(0)?;
+    let entry = format!("供应商 {id}");
     Ok(Provider {
-        id: row.get(0)?,
+        settings_config: super::json_column(row, 2, &entry)?,
+        meta: Some(super::json_column::<ProviderMeta>(row, 10, &entry)?),
+        id,
         name: row.get(1)?,
-        settings_config: serde_json::from_str(&settings_config).unwrap_or(serde_json::Value::Null),
         website_url: row.get(3)?,
         category: row.get(4)?,
         created_at: row.get(5)?,
         sort_index: row.get(6)?,
         notes: row.get(7)?,
-        meta: Some(serde_json::from_str::<ProviderMeta>(&meta).unwrap_or_default()),
         icon: row.get(8)?,
         icon_color: row.get(9)?,
         in_failover_queue: row.get(11)?,
@@ -130,11 +132,36 @@ impl Database {
         Ok(affected)
     }
 
+    /// 一行读不出来就整体报错（见 [`super::Rows::into_strict`]）。只展示、不写的地方用
+    /// [`Self::get_provider_rows`]。
     pub fn get_all_providers(
         &self,
         app_type: &AppType,
     ) -> Result<IndexMap<String, Provider>, AppError> {
+        self.load_providers(app_type, false)?.into_strict()
+    }
+
+    /// 能读的供应商照常返回，读不出来的单独列出，不让一行坏数据拖垮整个列表。
+    pub fn get_provider_rows(&self, app_type: &AppType) -> Result<Rows<Provider>, AppError> {
         self.load_providers(app_type, false)
+    }
+
+    /// 这一行在库里、但存的 JSON 读不出来。
+    pub fn get_unreadable_provider(
+        &self,
+        app_type: &AppType,
+        id: &str,
+    ) -> Result<Option<UnreadableEntry>, AppError> {
+        let conn = lock_conn!(self.conn);
+        let result = conn
+            .query_row(
+                &format!("{PROVIDER_SELECT} WHERE id = ?1 AND app_type = ?2"),
+                params![id, app_type],
+                |row| super::read_row(row, row_to_provider),
+            )
+            .optional()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(result.and_then(Result::err))
     }
 
     /// 路由只加载故障转移队列；端点一次批量读取，避免每张卡再查一次。
@@ -142,7 +169,7 @@ impl Database {
         &self,
         app_type: &AppType,
         failover_only: bool,
-    ) -> Result<IndexMap<String, Provider>, AppError> {
+    ) -> Result<Rows<Provider>, AppError> {
         let conn = lock_conn!(self.conn);
         let query = if failover_only {
             format!(
@@ -160,12 +187,21 @@ impl Database {
             .map_err(|e| AppError::Database(e.to_string()))?;
 
         let provider_iter = stmt
-            .query_map(params![app_type], row_to_provider)
+            .query_map(params![app_type], |row| {
+                super::read_row(row, row_to_provider)
+            })
             .map_err(|e| AppError::Database(e.to_string()))?;
 
         let mut providers = IndexMap::new();
+        let mut unreadable = Vec::new();
         for provider_res in provider_iter {
-            let mut provider = provider_res.map_err(|e| AppError::Database(e.to_string()))?;
+            let mut provider = match provider_res.map_err(|e| AppError::Database(e.to_string()))? {
+                Ok(provider) => provider,
+                Err(entry) => {
+                    unreadable.push(entry);
+                    continue;
+                }
+            };
             if let Some(meta) = &mut provider.meta {
                 // The endpoint table is authoritative, including when it is empty.
                 meta.custom_endpoints.clear();
@@ -174,7 +210,10 @@ impl Database {
         }
 
         if providers.is_empty() {
-            return Ok(providers);
+            return Ok(Rows {
+                readable: providers,
+                unreadable,
+            });
         }
 
         let mut stmt_endpoints = conn
@@ -214,7 +253,10 @@ impl Database {
             }
         }
 
-        Ok(providers)
+        Ok(Rows {
+            readable: providers,
+            unreadable,
+        })
     }
 
     pub fn get_current_provider(&self, app_type: &AppType) -> Result<Option<String>, AppError> {

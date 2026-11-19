@@ -57,6 +57,8 @@ export const handlers = [
     return success(getProviders(app));
   }),
 
+  http.post(`${TAURI_ENDPOINT}/get_unreadable_providers`, () => success([])),
+
   http.post(`${TAURI_ENDPOINT}/workbuddy_model_owners`, () =>
     success(getWorkBuddyModelOwners()),
   ),

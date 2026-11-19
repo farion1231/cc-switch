@@ -37,6 +37,21 @@ pub async fn get_providers(
     )
 }
 
+/// 库里读不出来的供应商（只给界面展示、删除）。
+#[tauri::command]
+pub async fn get_unreadable_providers(
+    state: State<'_, AppState>,
+    app: String,
+) -> Result<Vec<crate::database::UnreadableEntry>, String> {
+    let app_type = AppType::from_str(&app)?;
+    let state = state.inner().clone();
+    Ok(tauri::async_runtime::spawn_blocking(move || {
+        ProviderService::list_unreadable(&state, app_type)
+    })
+    .await
+    .map_err(|e| format!("读取供应商列表任务失败: {e}"))??)
+}
+
 #[tauri::command]
 pub async fn get_current_provider(
     state: State<'_, AppState>,

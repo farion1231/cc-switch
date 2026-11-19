@@ -5403,5 +5403,11 @@
     "installFailed": "Update-Installation fehlgeschlagen",
     "downloadingInline": "Neue Version wird im Hintergrund heruntergeladen…",
     "downloadedInline": "Heruntergeladen"
+  },
+  "unreadableEntry": {
+    "title": "„{{name}}“ kann nicht gelesen werden",
+    "hint": "Möglicherweise von einer neueren CC-Switch-Version gespeichert. Die Daten bleiben unverändert erhalten und können nicht bearbeitet oder aktiviert werden; ein Update stellt sie wieder her, oder du löschst den Eintrag.",
+    "confirmTitle": "Unlesbaren Eintrag löschen",
+    "confirmMessage": "„{{name}}“ löschen? Nur dieser CC-Switch-Eintrag wird entfernt; die Konfigurationsdateien der Apps bleiben unverändert."
   }
 }

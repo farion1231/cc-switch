@@ -33,6 +33,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::app_config::AppType;
+use crate::database::UnreadableEntry;
 use crate::error::AppError;
 use crate::provider::{Provider, ProviderMeta, UsageResult};
 use crate::services::mcp::McpService;
@@ -321,6 +322,118 @@ mod tests {
                  wire_api = \"chat\"\n"
             )
         })
+    }
+
+    fn break_stored_settings(state: &AppState, app: &str, id: &str) -> String {
+        let conn = state.db.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE providers SET settings_config = '{\"env\":' WHERE app_type = ?1 AND id = ?2",
+            [app, id],
+        )
+        .unwrap();
+        conn.query_row(
+            "SELECT settings_config || '|' || meta || '|' || is_current FROM providers WHERE app_type = ?1 AND id = ?2",
+            [app, id],
+            |row| row.get(0),
+        )
+        .unwrap()
+    }
+
+    fn stored_row(state: &AppState, app: &str, id: &str) -> Option<String> {
+        use rusqlite::OptionalExtension;
+        state
+            .db
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT settings_config || '|' || meta || '|' || is_current FROM providers WHERE app_type = ?1 AND id = ?2",
+                [app, id],
+                |row| row.get(0),
+            )
+            .optional()
+            .unwrap()
+    }
+
+    #[test]
+    #[serial]
+    fn an_unreadable_provider_is_listed_apart_left_untouched_and_can_only_be_deleted() {
+        with_test_home(|state, _| {
+            for id in ["good", "broken"] {
+                let mut provider = Provider::with_id(
+                    id.into(),
+                    format!("{id} name"),
+                    json!({"npm": "@ai-sdk/openai-compatible", "options": {"baseURL": format!("https://{id}.example")}}),
+                    None,
+                );
+                provider.category = Some("custom".into());
+                state
+                    .db
+                    .save_provider(&AppType::OpenCode, &provider)
+                    .unwrap();
+            }
+            let stored = break_stored_settings(state, "opencode", "broken");
+
+            let listed = ProviderService::list(state, AppType::OpenCode).expect("list still loads");
+            assert_eq!(listed.keys().collect::<Vec<_>>(), ["good"]);
+            let unreadable = ProviderService::list_unreadable(state, AppType::OpenCode).unwrap();
+            assert_eq!(unreadable.len(), 1);
+            assert_eq!(
+                (unreadable[0].id.as_str(), unreadable[0].name.as_str()),
+                ("broken", "broken name")
+            );
+            assert!(
+                unreadable[0].error.contains("settings_config"),
+                "{}",
+                unreadable[0].error
+            );
+
+            // 不能切换、编辑；这些失败都不改库里的字节。
+            assert!(ProviderService::switch(state, AppType::OpenCode, "broken").is_err());
+            let mut edited = listed["good"].clone();
+            edited.id = "broken".into();
+            assert!(ProviderService::update(state, AppType::OpenCode, None, edited).is_err());
+            assert_eq!(stored_row(state, "opencode", "broken"), Some(stored));
+
+            ProviderService::delete(state, AppType::OpenCode, "broken").expect("delete is allowed");
+            assert_eq!(stored_row(state, "opencode", "broken"), None);
+            assert!(ProviderService::list_unreadable(state, AppType::OpenCode)
+                .unwrap()
+                .is_empty());
+            assert!(stored_row(state, "opencode", "good").is_some());
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn listing_a_native_app_never_overwrites_an_unreadable_row_with_its_native_entry() {
+        with_test_home(|state, _| {
+            let config = json!({
+                "name": "Relay", "kind": "custom", "enabled": true, "api": "openai-completions",
+                "options": {"baseURL": "https://relay.example/v1", "apiKey": "sk-test"},
+                "models": {"m": {"name": "m"}}
+            });
+            state
+                .db
+                .save_provider(
+                    &AppType::Mcode,
+                    &Provider::with_id("relay".into(), "Relay".into(), config.clone(), None),
+                )
+                .unwrap();
+            let stored = break_stored_settings(state, "mcode", "relay");
+            // MCode 自己的配置里有同 id 的条目：合并时会把它当成「库里没有」补存。
+            crate::mcode_config::set_provider("relay", config).unwrap();
+
+            let listed = ProviderService::list(state, AppType::Mcode).expect("list still loads");
+            assert!(listed.is_empty(), "{:?}", listed.keys());
+            assert_eq!(stored_row(state, "mcode", "relay"), Some(stored));
+            assert_eq!(
+                ProviderService::list_unreadable(state, AppType::Mcode)
+                    .unwrap()
+                    .len(),
+                1
+            );
+        });
     }
 
     #[test]
@@ -5497,7 +5610,14 @@ impl ProviderService {
             } else {
                 crate::mcode_config::get_providers()?
             };
-            let mut saved = state.db.get_all_providers(&app_type)?;
+            let mut saved = match state.db.get_all_providers(&app_type) {
+                Ok(saved) => saved,
+                // 有读不出来的行时不合并：按「库里没有」补存原生条目会盖掉那一行。
+                Err(error) => {
+                    log::warn!("Not merging native {app_type:?} providers: {error}");
+                    return Ok(state.db.get_provider_rows(&app_type)?.readable);
+                }
+            };
             let nicknames = if app_type == AppType::Kimi {
                 crate::services::kimi_oauth::account_nicknames()
             } else {
@@ -5530,7 +5650,15 @@ impl ProviderService {
             }
             return Ok(saved);
         }
-        state.db.get_all_providers(&app_type)
+        Ok(state.db.get_provider_rows(&app_type)?.readable)
+    }
+
+    /// 库里读不出来的供应商：界面单独列出，只能删除。
+    pub fn list_unreadable(
+        state: &AppState,
+        app_type: AppType,
+    ) -> Result<Vec<UnreadableEntry>, AppError> {
+        Ok(state.db.get_provider_rows(&app_type)?.unreadable)
     }
 
     /// GitHub Copilot CLI 的列表：自带模型卡和 `providers.json` 合并（文件里有、库里没有的
@@ -5538,7 +5666,14 @@ impl ProviderService {
     /// 官方卡不参与合并，永远不是「已添加」。旧版环境变量形状的自带模型卡就地转成新形状。
     fn list_copilot(state: &AppState) -> Result<IndexMap<String, Provider>, AppError> {
         let app = &AppType::Copilot;
-        let mut saved = state.db.get_all_providers(app)?;
+        let mut saved = match state.db.get_all_providers(app) {
+            Ok(saved) => saved,
+            // 同上：有读不出来的行时不合并 providers.json，免得补存时盖掉那一行。
+            Err(error) => {
+                log::warn!("Not merging Copilot providers.json: {error}");
+                return Ok(state.db.get_provider_rows(app)?.readable);
+            }
+        };
         let native = match crate::copilot_config::get_providers() {
             Ok(native) => native,
             Err(error) => {
@@ -6674,6 +6809,9 @@ impl ProviderService {
     /// 对于累加模式应用（OpenCode, OpenClaw），可以随时删除任意供应商，同时从 live 配置中移除。
     pub fn delete(state: &AppState, app_type: AppType, id: &str) -> Result<(), AppError> {
         let _native_guard = lock_native_provider_operations(state, &app_type);
+        if state.db.get_unreadable_provider(&app_type, id)?.is_some() {
+            return Self::delete_unreadable(state, &app_type, id);
+        }
         if app_type == AppType::Pi {
             return pi::delete(state, id);
         }
@@ -6793,6 +6931,20 @@ impl ProviderService {
 
         state.db.delete_provider(&app_type, id)?;
         Ok(())
+    }
+
+    /// 读不出来的行只删库里这一行：不知道它往 live 写过什么，所以不碰 live，也不写回任何东西。
+    /// 正被使用的照样不能删。
+    fn delete_unreadable(state: &AppState, app_type: &AppType, id: &str) -> Result<(), AppError> {
+        if !app_type.spec().additive
+            && !matches!(app_type, AppType::Agy)
+            && crate::mode::current::is_referenced(&state.db, app_type, id)?
+        {
+            return Err(AppError::Message(
+                "无法删除当前正在使用的供应商".to_string(),
+            ));
+        }
+        state.db.delete_provider(app_type, id)
     }
 
     /// Kimi「添加」：把卡片写进 config.toml，但不改 default_model（「切换」才改）。
