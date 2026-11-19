@@ -119,6 +119,11 @@ vi.mock("@/hooks/useSkills", () => ({
   useRefreshDiscoverableSkills: () => vi.fn(),
   useDiscoverableSkillsFailures: () => ({ data: [] }),
   useSkillRepos: () => ({ data: [], refetch: vi.fn() }),
+  useSkillRepoTokens: () => ({ data: { hosts: [], secureStorage: true } }),
+  useSkillRepoTokenActions: () => ({
+    setToken: vi.fn(),
+    deleteToken: vi.fn(),
+  }),
   useAddSkillRepo: () => ({ mutateAsync: vi.fn() }),
   useRemoveSkillRepo: () => ({ mutateAsync: vi.fn() }),
   useSearchSkillsSh: () => ({ data: undefined, isLoading: false }),

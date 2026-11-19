@@ -1,0 +1,8 @@
+{
+  "pluginId": "hello@ccs-test",
+  "name": "hello",
+  "marketplaceName": "ccs-test",
+  "version": "0.1.0",
+  "installedPath": "C:\\fixture\\codex\\plugins\\cache\\ccs-test\\hello\\0.1.0",
+  "authPolicy": "ON_INSTALL"
+}
