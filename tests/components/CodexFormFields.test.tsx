@@ -235,3 +235,33 @@ describe("CodexFormFields reasoning effort", () => {
     );
   });
 });
+
+describe("CodexFormFields custom tools switch", () => {
+  it("is available in the stack layout for Responses providers", () => {
+    const onChange = vi.fn();
+    render(
+      <FormShell>
+        <CodexFormFields
+          {...baseCodexProps()}
+          variant="stack"
+          customToolsAsFunctions={false}
+          onCustomToolsAsFunctionsChange={onChange}
+        />
+      </FormShell>,
+    );
+
+    if (
+      !screen.queryByRole("switch", {
+        name: "Send custom tools as function tools",
+      })
+    ) {
+      fireEvent.click(screen.getByRole("button", { name: /高级选项/ }));
+    }
+    fireEvent.click(
+      screen.getByRole("switch", {
+        name: "Send custom tools as function tools",
+      }),
+    );
+    expect(onChange).toHaveBeenCalledWith(true);
+  });
+});

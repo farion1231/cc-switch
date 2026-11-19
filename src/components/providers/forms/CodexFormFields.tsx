@@ -2187,6 +2187,7 @@ export function CodexFormFields({
     // Copilot 不显示 UA 和请求覆盖，Responses 格式下高级区就空了。
     const hasStackAdvancedContent =
       showFullUrlToggle ||
+      (showFormatFields && Boolean(customToolsAsFunctionsToggle)) ||
       (showFormatFields && isAnthropicFormat) ||
       showReasoning ||
       userAgentAndOverrides !== null;
@@ -2276,6 +2277,7 @@ export function CodexFormFields({
                   onCheckedChange={onFullUrlChange}
                 />
               )}
+              {showFormatFields && customToolsAsFunctionsToggle}
               {showFormatFields &&
                 isAnthropicFormat &&
                 impersonateClaudeCodeToggle}
