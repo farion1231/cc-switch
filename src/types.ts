@@ -178,6 +178,8 @@ export interface LocalProxyRequestOverrides {
 export interface ProviderMeta {
   /** Opt-in protection against accidental credential changes, not a security boundary. */
   credentialEditProtected?: boolean;
+  /** Explicit multiplier for future local-proxy reference costs; absent means 1. */
+  billingMultiplier?: string;
   // 自定义端点：以 URL 为键，值为端点信息
   custom_endpoints?: Record<string, CustomEndpoint>;
   // 是否在切换/同步到 live 时应用通用配置片段
@@ -641,6 +643,7 @@ export type EventKind =
   | "info"
   | "error"
   | "sub_agent"
+  | "goal"
   | "other";
 
 /** 大内容的「按需取」引用：前端不解析，原样回传给后端 */

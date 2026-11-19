@@ -1443,7 +1443,7 @@
     "keyFieldsHint": "Das Standardmodell (models.default) und die Modelltabelle, auf die es verweist, folgen dem Anbieter; alles andere sind globale Grok-Build-Einstellungen und gilt nach dem Speichern für jeden Anbieter.",
     "inactiveFieldsHint": "Von einer älteren Version in diesem Anbieter gespeichert; beim Wechsel werden sie nicht mehr angewendet. Klicken Sie auf einen Eintrag, um sein TOML zu kopieren und oben einzufügen, falls Sie es benötigen.",
     "inactiveFieldCopied": "Kopiert",
-    "routeOnlySettingsHint": "Die beiden folgenden Einstellungen gelten nur im Routing-Modus."
+    "routeOnlySettingsHint": "Die folgenden Einstellungen gelten nur im Routing-Modus."
   },
   "sessionManager": {
     "searchPlaceholder": "Titel, Ordner, erste/letzte Nachrichten oder Sitzungs-IDs suchen",
@@ -1658,7 +1658,17 @@
         "prLink": "PR #{{number}} verknüpft",
         "prLinkPlain": "Einen PR verknüpft",
         "slashCommand": "{{command}} ausgeführt",
-        "subAgent": "Subagent {{name}}"
+        "subAgent": "Subagent {{name}}",
+        "goal": "Ziel · {{status}}",
+        "goalPlain": "Ziel",
+        "goalStatus": {
+          "active": "Aktiv",
+          "paused": "Pausiert",
+          "blocked": "Blockiert",
+          "usageLimited": "Nutzungslimit erreicht",
+          "budgetLimited": "Budget erreicht",
+          "complete": "Abgeschlossen"
+        }
       },
       "injectedToggle": "Eingefügten Kontext anzeigen",
       "injectedRow": "Kontext · {{label}} · {{chars}} Zeichen",
@@ -1740,6 +1750,9 @@
     "openReleaseNotesFailed": "Versionshinweise konnten nicht geöffnet werden:"
   },
   "providerForm": {
+    "billingMultiplier": "Kostenfaktor des Anbieters",
+    "billingMultiplierHelp": "Der Referenzpreis jedes Modells dieses Anbieters wird mit diesem Wert multipliziert, um die Kosten von Anfragen über das lokale Routing zu schätzen. 0,5 bedeutet halber Preis; leer lassen für 1×. Gilt nur für künftige Anfragen; im Direktmodus (Routing aus) wird aus Sitzungsprotokollen importierte Nutzung weiter mit 1× gezählt.",
+    "billingMultiplierInvalid": "Gib eine Zahl von 0 bis 1000 ein oder lass das Feld für 1× leer.",
     "nativeConfig": {
       "title": "Konfigurationsdatei {{path}} (nur dieser Anbieter)",
       "hint": "Zeigt den Teil der Datei, der zu diesem Anbieter gehört, im eigenen Format der App und schreibt ihn beim Speichern dorthin. Globale Einstellungen wie das Standardmodell sind hier nicht enthalten. Hier eingegebene Kommentare werden nicht gespeichert.",
@@ -2235,7 +2248,7 @@
     "inactiveFieldCopied": "Kopiert",
     "upstreamFormatCopilotRouteHint": "Jeder Modus erfordert Routing, das die Zugangsdaten des Copilot-Kontos einfügt. Ein ausdrücklich gewähltes Protokoll schlägt bei Modellen fehl, die es nicht unterstützen.",
     "maxOutputTokensWarning": "Überschreiten Sie nicht das tatsächliche Ausgabelimit des Modells oder Gateways, sonst geben Anfragen 400 zurück.",
-    "routeOnlySettingsHint": "Die beiden Einstellungen unten gelten nur im Routing- und im Aggregationsmodus."
+    "routeOnlySettingsHint": "Die Einstellungen unten gelten nur im Routing- und im Aggregationsmodus."
   },
   "geminiConfig": {
     "envFile": "Umgebungsvariablen (.env)",
@@ -2737,7 +2750,9 @@
       "speedEstimateTooFew": "Unter 200 Ausgabe-Token, daher keine Schätzung",
       "noTimingSession": "Sitzungsprotokolle enthalten keine Zeitdaten",
       "noFirstToken": "Keine Zeit bis zum ersten Token, daher keine Geschwindigkeit",
-      "providerId": "Anbieter-ID"
+      "providerId": "Anbieter-ID",
+      "copyRequestId": "Anfrage-ID kopieren",
+      "requestIdCopied": "Anfrage-ID kopiert"
     },
     "sources": {
       "scanTitle": "Sitzungsprotokolle automatisch scannen",

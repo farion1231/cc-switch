@@ -69,10 +69,10 @@ const POLLING_SAFETY_MARGIN_SECS: u64 = 3;
 const CODEX_USER_AGENT: &str = "cc-switch-codex-oauth";
 
 // Shared by model discovery and generation: ChatGPT gates models by this
-// client identity. GPT-6.1 Sol enters the ChatGPT-account catalog at 0.159.0.
+// client identity.
 // Bump together when a new model raises its minimal_client_version or catalog gate.
 pub(crate) const CODEX_OAUTH_ORIGINATOR: &str = "codex_cli_rs";
-pub(crate) const CODEX_OAUTH_CLIENT_VERSION: &str = "0.159.0";
+pub(crate) const CODEX_OAUTH_CLIENT_VERSION: &str = "0.169.0";
 
 /// Codex OAuth 错误
 #[derive(Debug, thiserror::Error)]

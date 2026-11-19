@@ -1443,7 +1443,7 @@
     "keyFieldsHint": "기본 모델(models.default)과 해당 모델 테이블은 공급자를 전환하면 함께 바뀝니다. 나머지는 Grok Build 전역 설정이며 저장하면 모든 공급자에 적용됩니다.",
     "inactiveFieldsHint": "이전 버전에서 이 공급자에 저장한 설정으로, 이제 공급자를 전환해도 적용되지 않습니다. 항목을 선택하여 TOML을 복사한 뒤 필요한 경우 위에 붙여 넣으세요.",
     "inactiveFieldCopied": "복사됨",
-    "routeOnlySettingsHint": "아래 두 가지 설정은 라우팅 모드에서만 적용됩니다."
+    "routeOnlySettingsHint": "아래 설정은 라우팅 모드에서만 적용됩니다."
   },
   "sessionManager": {
     "searchPlaceholder": "제목, 폴더, 첫 번째/마지막 메시지 또는 세션 ID 검색",
@@ -1657,7 +1657,17 @@
         "prLink": "연결된 PR #{{number}}",
         "prLinkPlain": "PR을 연결했습니다",
         "slashCommand": "{{command}}을(를) 실행",
-        "subAgent": "서브에이전트 {{name}}"
+        "subAgent": "서브에이전트 {{name}}",
+        "goal": "목표 · {{status}}",
+        "goalPlain": "목표",
+        "goalStatus": {
+          "active": "진행 중",
+          "paused": "일시 중지됨",
+          "blocked": "막힘",
+          "usageLimited": "사용 한도 도달",
+          "budgetLimited": "예산 도달",
+          "complete": "완료"
+        }
       },
       "injectedToggle": "주입된 컨텍스트 표시",
       "injectedRow": "컨텍스트 · {{label}} · {{chars}}자",
@@ -1740,6 +1750,9 @@
     "openReleaseNotesFailed": "릴리스 노트를 열지 못했습니다:"
   },
   "providerForm": {
+    "billingMultiplier": "공급자 비용 배율",
+    "billingMultiplierHelp": "이 공급자의 모든 모델 기준 가격에 이 값을 곱해 로컬 라우팅을 거친 요청의 비용을 추정합니다. 0.5는 반값이며 비워 두면 1배입니다. 이후 요청에만 적용됩니다. 라우팅을 끈 직접 연결 모드에서는 세션 기록에서 가져온 사용량이 계속 1배로 집계됩니다.",
+    "billingMultiplierInvalid": "0부터 1000까지의 숫자를 입력하거나 1배를 쓰려면 비워 두세요.",
     "nativeConfig": {
       "title": "설정 파일 {{path}} (이 공급자만 해당)",
       "hint": "앱에서 사용하는 설정 형식으로 파일 내 이 공급자에 해당하는 부분을 표시하며, 저장 시 해당 파일에 반영합니다. 기본 모델 등의 전역 설정은 포함되지 않습니다. 여기에 입력한 주석은 저장되지 않습니다.",
@@ -2235,7 +2248,7 @@
     "inactiveFieldCopied": "복사됨",
     "upstreamFormatCopilotRouteHint": "모든 모드에는 Copilot 계정 자격 증명을 삽입하는 라우팅이 필요합니다. 명시적으로 선택한 프로토콜은 해당 프로토콜을 지원하지 않는 모델에서는 실패합니다.",
     "maxOutputTokensWarning": "모델이나 게이트웨이의 실제 출력 한도를 초과하면 요청에 400 오류가 반환됩니다.",
-    "routeOnlySettingsHint": "아래 두 설정은 라우팅 및 통합 모드에서만 적용됩니다."
+    "routeOnlySettingsHint": "아래 설정은 라우팅 및 통합 모드에서만 적용됩니다."
   },
   "geminiConfig": {
     "envFile": "환경 변수(.env)",
@@ -2732,7 +2745,9 @@
       "speedEstimateTooFew": "출력이 200토큰 미만이므로 속도를 추정하지 않습니다.",
       "noTimingSession": "세션 로그에는 타이밍 데이터가 없습니다.",
       "noFirstToken": "첫 토큰 시간 데이터가 없어 속도를 계산하지 않습니다.",
-      "providerId": "공급자 ID"
+      "providerId": "공급자 ID",
+      "copyRequestId": "요청 ID 복사",
+      "requestIdCopied": "요청 ID를 복사했습니다"
     },
     "sources": {
       "scanTitle": "세션 로그를 자동으로 스캔",

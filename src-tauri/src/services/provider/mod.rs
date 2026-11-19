@@ -8294,6 +8294,13 @@ impl ProviderService {
 
     fn validate_provider_settings(app_type: &AppType, provider: &Provider) -> Result<(), AppError> {
         crate::credential_edit_guard::validate_supported(app_type, provider)?;
+        if let Some(raw) = provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.billing_multiplier.as_deref())
+        {
+            crate::provider::parse_billing_multiplier(raw).map_err(AppError::InvalidInput)?;
+        }
         icon::validate_icon(provider.icon.as_deref())?;
         match app_type {
             AppType::Claude => {
