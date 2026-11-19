@@ -58,5 +58,5 @@ Copilot CLI 的自带模型只能经进程环境变量 `COPILOT_PROVIDER_*` 配�
 
 ## 验证
 
-- 单元与集成测试：`cargo test --lib copilot`、`cargo test --test copilot_commands`、`pnpm vitest run tests/components/CopilotProviderForm.test.tsx src/config/copilotProviderPresets.test.ts`。
+- 单元与集成测试：`cargo test --lib copilot`、`cargo test --test integration copilot_commands::`、`pnpm vitest run tests/components/CopilotProviderForm.test.tsx src/config/copilotProviderPresets.test.ts`。
 - 真实 CLI：在临时 `COPILOT_HOME` 中用 `copilot mcp add/disable` 核对 MCP 原生格式；用本地 OpenAI 兼容端点以 BYOK 环境变量运行 `copilot -p`，确认请求成功，并用生成的会话目录运行 `CCS_COPILOT_SMOKE_HOME=<目录> cargo test --lib real_copilot_home -- --ignored` 核对会话和用量解析。

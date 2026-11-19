@@ -292,7 +292,7 @@ pub async fn handle_claude_desktop_models(
     validate_claude_desktop_gateway_auth(&state, &headers)?;
     let providers = state
         .provider_router
-        .select_providers("claude-desktop")
+        .select_providers(&AppType::ClaudeDesktop)
         .await
         .map_err(|e| ProxyError::DatabaseError(e.to_string()))?;
     let provider = providers.first().ok_or(ProxyError::NoAvailableProvider)?;
@@ -537,6 +537,7 @@ fn extract_gateway_token(headers: &axum::http::HeaderMap) -> Option<String> {
 ///
 /// 支持 OpenAI Chat Completions 和 Responses API 两种格式的转换
 struct ClaudeUsageLog {
+    multiplier: rust_decimal::Decimal,
     model: String,
     request_model: String,
     outbound_model: String,
@@ -575,6 +576,7 @@ fn prepare_claude_usage_log(
             .unwrap_or_else(|| ctx.request_model.clone()),
         app_type: ctx.app_type_str,
         provider_id: ctx.provider.id.clone(),
+        multiplier: crate::provider::billing_multiplier(&ctx.provider),
         session_id: ctx.session_id.clone(),
         usage,
         latency_ms: ctx.latency_ms(),
@@ -587,6 +589,7 @@ async fn write_claude_usage_log(state: &ProxyState, log: ClaudeUsageLog) {
     log_usage(
         state,
         &log.provider_id,
+        log.multiplier,
         log.app_type,
         &log.model,
         &log.request_model,
@@ -678,6 +681,7 @@ async fn handle_claude_transform(
         let usage_collector = if usage_logging_enabled(state) {
             let state = state.clone();
             let provider_id = ctx.provider.id.clone();
+            let multiplier = crate::provider::billing_multiplier(&ctx.provider);
             let request_model = ctx.request_model.clone();
             // 上游/转换层未回显模型时，优先用映射后的出站模型兜底（路由接管真值），
             // 其次才是客户端请求别名。空字符串视为缺失（转换器对无回显上游会合成 ""）。
@@ -720,6 +724,7 @@ async fn handle_claude_transform(
                             log_usage(
                                 &state,
                                 &provider_id,
+                                multiplier,
                                 app_type_str,
                                 &model,
                                 &request_model,
@@ -1091,7 +1096,15 @@ pub async fn handle_responses(
     State(state): State<ProxyState>,
     request: axum::extract::Request,
 ) -> Result<axum::response::Response, ProxyError> {
-    handle_responses_for_app(state, request, AppType::Codex, "Codex", "codex").await
+    handle_responses_for_app(
+        state,
+        request,
+        AppType::Codex,
+        "Codex",
+        "codex",
+        ResponsesEndpoint::Responses,
+    )
+    .await
 }
 
 pub async fn handle_grokbuild_responses(
@@ -1104,8 +1117,25 @@ pub async fn handle_grokbuild_responses(
         AppType::GrokBuild,
         "Grok Build",
         "grokbuild",
+        ResponsesEndpoint::Responses,
     )
     .await
+}
+
+/// Responses 的两个入口：普通回合 `/responses`，和远程压缩接口 `/responses/compact`。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ResponsesEndpoint {
+    Responses,
+    Compact,
+}
+
+impl ResponsesEndpoint {
+    fn path(self) -> &'static str {
+        match self {
+            Self::Responses => "/responses",
+            Self::Compact => "/responses/compact",
+        }
+    }
 }
 
 async fn handle_responses_for_app(
@@ -1114,6 +1144,7 @@ async fn handle_responses_for_app(
     app_type: AppType,
     tag: &'static str,
     app_type_str: &'static str,
+    responses_endpoint: ResponsesEndpoint,
 ) -> Result<axum::response::Response, ProxyError> {
     let (parts, req_body) = request.into_parts();
     let method = parts.method.clone();
@@ -1144,14 +1175,16 @@ async fn handle_responses_for_app(
         stack,
     )
     .await?;
-    let endpoint = endpoint_with_query(&uri, "/responses");
+    let endpoint = endpoint_with_query(&uri, responses_endpoint.path());
 
     let is_stream = body
         .get("stream")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
     let codex_tool_context = transform_codex_chat::build_codex_tool_context_from_request(&body);
-    let compaction_request = codex_tool_context.is_compaction_request();
+    // V2 压缩回合走的是普通 `/responses`；`/responses/compact` 原样透传。
+    let compaction_request = responses_endpoint == ResponsesEndpoint::Responses
+        && codex_tool_context.is_compaction_request();
     // Captured before forwarding: the flat-name →
     // {namespace, name} map used to restore the native Responses upstream's
     // function-call names (see the namespace-restore dispatch below).
@@ -1340,7 +1373,15 @@ pub async fn handle_responses_compact(
     State(state): State<ProxyState>,
     request: axum::extract::Request,
 ) -> Result<axum::response::Response, ProxyError> {
-    handle_responses_compact_for_app(state, request, AppType::Codex, "Codex", "codex").await
+    handle_responses_for_app(
+        state,
+        request,
+        AppType::Codex,
+        "Codex",
+        "codex",
+        ResponsesEndpoint::Compact,
+    )
+    .await
 }
 
 /// Handle Codex's standalone Alpha Search protocol as a semantic passthrough.
@@ -1453,149 +1494,13 @@ pub async fn handle_grokbuild_responses_compact(
     State(state): State<ProxyState>,
     request: axum::extract::Request,
 ) -> Result<axum::response::Response, ProxyError> {
-    handle_responses_compact_for_app(
+    handle_responses_for_app(
         state,
         request,
         AppType::GrokBuild,
         "Grok Build",
         "grokbuild",
-    )
-    .await
-}
-
-async fn handle_responses_compact_for_app(
-    state: ProxyState,
-    request: axum::extract::Request,
-    app_type: AppType,
-    tag: &'static str,
-    app_type_str: &'static str,
-) -> Result<axum::response::Response, ProxyError> {
-    let (parts, req_body) = request.into_parts();
-    let method = parts.method.clone();
-    let uri = parts.uri;
-    let mut headers = parts.headers;
-    let extensions = parts.extensions;
-    let body_bytes = req_body
-        .collect()
-        .await
-        .map_err(|e| ProxyError::Internal(format!("Failed to read request body: {e}")))?
-        .to_bytes();
-    let body_bytes = decode_codex_request_body(&mut headers, body_bytes)?;
-    let mut body: Value = serde_json::from_slice(&body_bytes)
-        .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
-    drop(body_bytes);
-    // 压缩请求也带着客户端选中的模型：不解码的话，会带着前缀落到默认路由。
-    let stack = match resolve_stack_target(&state, &app_type, &mut body) {
-        Ok(stack) => stack,
-        Err(rejected) => return Ok(*rejected),
-    };
-
-    let mut ctx = RequestContext::new(
-        &state,
-        &body,
-        &headers,
-        app_type.clone(),
-        tag,
-        app_type_str,
-        stack,
-    )
-    .await?;
-    let endpoint = endpoint_with_query(&uri, "/responses/compact");
-
-    let is_stream = body
-        .get("stream")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    let codex_tool_context = transform_codex_chat::build_codex_tool_context_from_request(&body);
-    let namespace_restore_map = transform_codex_responses_namespace::namespace_restore_map(&body);
-
-    let forwarder = ctx.create_forwarder(&state);
-    let mut result = match forwarder
-        .forward_with_retry(
-            &app_type,
-            method,
-            &endpoint,
-            &body,
-            headers,
-            extensions,
-            ctx.get_providers(),
-        )
-        .await
-    {
-        Ok(result) => result,
-        Err(mut err) => {
-            if let Some(provider) = err.provider.take() {
-                ctx.provider = provider;
-            }
-            ctx.outbound_model = err.outbound_model.take();
-            log_forward_error(&state, &ctx, is_stream, &err.error).await;
-            return build_codex_proxy_error_response(&ctx, &endpoint, &err.error, is_stream);
-        }
-    };
-    drop(body);
-
-    let connection_guard = result.connection_guard.take();
-    let codex_upstream_format = result.codex_upstream_format;
-    ctx.outbound_model = result.outbound_model.take();
-    ctx.provider = result.provider;
-    let response = result.response;
-
-    if codex_upstream_format == Some(CodexUpstreamFormat::Anthropic) {
-        return handle_codex_anthropic_to_responses_transform(
-            response,
-            &ctx,
-            &state,
-            is_stream,
-            connection_guard,
-            codex_tool_context,
-        )
-        .await;
-    }
-
-    if codex_upstream_format == Some(CodexUpstreamFormat::ChatCompletions) {
-        return handle_codex_chat_to_responses_transform(
-            response,
-            &ctx,
-            &state,
-            is_stream,
-            connection_guard,
-            codex_tool_context,
-        )
-        .await;
-    }
-
-    if super::providers::provider_needs_responses_namespace_flatten(
-        &ctx.provider,
-        ctx.outbound_model.as_deref(),
-    ) {
-        return handle_codex_xai_native_responses_rewrite(
-            response,
-            &ctx,
-            &state,
-            connection_guard,
-            namespace_restore_map,
-        )
-        .await;
-    }
-
-    if super::providers::provider_needs_responses_late_arguments_repair(&ctx.provider) {
-        return handle_codex_late_arguments_repair(
-            response,
-            &ctx,
-            &state,
-            is_stream,
-            connection_guard,
-        )
-        .await;
-    }
-
-    process_response(
-        response,
-        &ctx,
-        &state,
-        &CODEX_PARSER_CONFIG,
-        is_stream,
-        connection_guard,
+        ResponsesEndpoint::Compact,
     )
     .await
 }
@@ -1757,12 +1662,14 @@ async fn handle_codex_xai_native_responses_rewrite(
                 tokio::spawn({
                     let state = state.clone();
                     let provider_id = ctx.provider.id.clone();
+                    let multiplier = crate::provider::billing_multiplier(&ctx.provider);
                     let session_id = ctx.session_id.clone();
                     let latency_ms = ctx.latency_ms();
                     async move {
                         log_usage(
                             &state,
                             &provider_id,
+                            multiplier,
                             app_type_str,
                             &model,
                             &request_model,
@@ -1838,6 +1745,7 @@ async fn handle_codex_chat_to_responses_transform(
         let usage_collector = if usage_logging_enabled(state) {
             let state = state.clone();
             let provider_id = ctx.provider.id.clone();
+            let multiplier = crate::provider::billing_multiplier(&ctx.provider);
             let request_model = ctx.request_model.clone();
             // 接管/模型覆写场景的归因兜底：出站真值优先于客户端请求别名
             let fallback_model = ctx
@@ -1880,6 +1788,7 @@ async fn handle_codex_chat_to_responses_transform(
                         log_usage(
                             &state,
                             &provider_id,
+                            multiplier,
                             app_type_str,
                             &model,
                             &request_model,
@@ -1999,12 +1908,14 @@ async fn handle_codex_chat_to_responses_transform(
         tokio::spawn({
             let state = state.clone();
             let provider_id = ctx.provider.id.clone();
+            let multiplier = crate::provider::billing_multiplier(&ctx.provider);
             let session_id = ctx.session_id.clone();
             let latency_ms = ctx.latency_ms();
             async move {
                 log_usage(
                     &state,
                     &provider_id,
+                    multiplier,
                     app_type_str,
                     &model,
                     &request_model,
@@ -2164,12 +2075,14 @@ async fn handle_codex_anthropic_to_responses_transform(
         tokio::spawn({
             let state = state.clone();
             let provider_id = ctx.provider.id.clone();
+            let multiplier = crate::provider::billing_multiplier(&ctx.provider);
             let session_id = ctx.session_id.clone();
             let latency_ms = ctx.latency_ms();
             async move {
                 log_usage(
                     &state,
                     &provider_id,
+                    multiplier,
                     app_type_str,
                     &model,
                     &request_model,
@@ -2222,6 +2135,7 @@ fn build_codex_anthropic_sse_response(
     let usage_collector = if usage_logging_enabled(state) {
         let state = state.clone();
         let provider_id = ctx.provider.id.clone();
+        let multiplier = crate::provider::billing_multiplier(&ctx.provider);
         let request_model = ctx.request_model.clone();
         let fallback_model = ctx
             .outbound_model
@@ -2257,6 +2171,7 @@ fn build_codex_anthropic_sse_response(
                     log_usage(
                         &state,
                         &provider_id,
+                        multiplier,
                         app_type_str,
                         &model,
                         &request_model,
@@ -2583,12 +2498,11 @@ fn codex_proxy_error_code(error: &ProxyError) -> &'static str {
         ProxyError::CodexQuotaProtection(_) => "cc_switch_codex_quota_protection",
         ProxyError::CodexOfficialLoginPaused => "cc_switch_codex_official_login_paused",
         ProxyError::ForwardFailed(_) => "cc_switch_forward_failed",
-        ProxyError::Timeout(_) | ProxyError::StreamIdleTimeout(_) => "cc_switch_timeout",
+        ProxyError::Timeout(_) => "cc_switch_timeout",
         ProxyError::NoAvailableProvider => "cc_switch_no_available_provider",
         ProxyError::AllProvidersCircuitOpen => "cc_switch_all_providers_circuit_open",
         ProxyError::NoProvidersConfigured => "cc_switch_no_providers_configured",
         ProxyError::MaxRetriesExceeded => "cc_switch_max_retries_exceeded",
-        ProxyError::ProviderUnhealthy(_) => "cc_switch_provider_unhealthy",
         ProxyError::ConfigError(_) => "cc_switch_config_error",
         ProxyError::TransformError(_) => "cc_switch_transform_error",
         ProxyError::InvalidRequest(_) => "cc_switch_invalid_request",
@@ -3397,6 +3311,7 @@ async fn log_forward_error(
 async fn log_usage(
     state: &ProxyState,
     provider_id: &str,
+    multiplier: rust_decimal::Decimal,
     app_type: &str,
     model: &str,
     request_model: &str,
@@ -3440,6 +3355,7 @@ async fn log_usage(
         logger.log_with_calculation(
             request_id,
             provider_id,
+            multiplier,
             app_type,
             model,
             request_model,
@@ -5550,7 +5466,11 @@ mod stack_tests {
     async fn stacked_requests_go_to_one_provider_without_failover_timeouts() {
         let state = proxy_state();
         // 应用开了故障转移、配了很短的超时，队列里还有别家。
-        let mut config = state.db.get_proxy_config_for_app("claude").await.unwrap();
+        let mut config = state
+            .db
+            .get_proxy_config_for_app(&AppType::Claude)
+            .await
+            .unwrap();
         config.auto_failover_enabled = true;
         config.max_retries = 3;
         config.non_streaming_timeout = 1;

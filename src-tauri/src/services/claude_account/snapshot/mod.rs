@@ -103,7 +103,7 @@ pub fn blocked_reason() -> Option<&'static str> {
     if crate::commands::tool_runs_in_wsl("claude") {
         return Some("wsl");
     }
-    crate::settings::get_claude_override_dir().map(|_| "overrideDir")
+    crate::settings::get_override_dir(&crate::app_config::AppType::Claude).map(|_| "overrideDir")
 }
 
 /// 切卡时会不会切换登录。

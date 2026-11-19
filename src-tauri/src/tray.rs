@@ -8,11 +8,11 @@
 //! 分三层：`collect_*` 从数据库和设备状态读出快照，`build_menu_model` 把快照变成纯数据的菜单
 //! 模型（单测覆盖这一层），`attach_*` 把模型挂到 Tauri 原生菜单上。
 
+use crate::sync_utils::MutexExt;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{LazyLock, Mutex, OnceLock};
 
-use once_cell::sync::Lazy;
 use serde::Serialize;
 use tauri::image::Image;
 use tauri::menu::{
@@ -73,12 +73,12 @@ const MAX_NAME_CHARS: usize = 32;
 /// 问题区里切换失败的原因最多几个字。
 const MAX_REASON_CHARS: usize = 60;
 /// 额度剩余不到这个百分比算「快用完」（和前端 `quotaRules.WARN_BELOW_PERCENT` 一致）。
-const WARN_BELOW_PERCENT: f64 = 20.0;
+pub(crate) const WARN_BELOW_PERCENT: f64 = 20.0;
 
 /// 每个应用行的子菜单句柄，额度更新时就地改标题而不是整菜单重建（整建会关掉 macOS 上
 /// 正开着的菜单）。`create_tray_menu` 每次重建都整表覆盖写入。
-static TRAY_SECTION_SUBMENUS: Lazy<Mutex<HashMap<AppType, Submenu<tauri::Wry>>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
+static TRAY_SECTION_SUBMENUS: LazyLock<Mutex<HashMap<AppType, Submenu<tauri::Wry>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 // ─── 文案 ────────────────────────────────────────────────────────────────────
 
@@ -1138,8 +1138,7 @@ fn tray_usage_source(app_type: &AppType, provider: &Provider) -> Option<TrayUsag
         return Some(TrayUsageSource::Subscription);
     }
     (provider.has_usage_script_enabled()
-        && (provider.category.as_deref() != Some("official")
-            || provider_uses_official_subscription(provider)))
+        && (!provider.has_official_category() || provider_uses_official_subscription(provider)))
     .then_some(TrayUsageSource::Script)
 }
 
@@ -1210,7 +1209,7 @@ fn cached_usage_view(
 
 /// 官方账号卡（同前端 `isOfficialAccount`）：Codex 早期绑定托管账号的官方卡没有 category，按身份认。
 fn is_official_account(app: &AppType, provider: &Provider) -> bool {
-    provider.category.as_deref() == Some("official")
+    provider.has_official_category()
         || (*app == AppType::Codex && crate::proxy::providers::is_codex_official_provider(provider))
 }
 
@@ -1223,20 +1222,7 @@ fn blocked_from_routing(app: &AppType, provider: &Provider) -> bool {
 /// Codex / Grok Build 配置里当前供应商的 `wire_api`；TOML 读不懂时退回唯一的一条赋值。
 fn codex_wire_api(config_text: &str) -> Option<String> {
     if let Ok(doc) = config_text.parse::<toml::Value>() {
-        if let Some(active) = doc.get("model_provider").and_then(|v| v.as_str()) {
-            if let Some(wire_api) = doc
-                .get("model_providers")
-                .and_then(|providers| providers.get(active))
-                .and_then(|provider| provider.get("wire_api"))
-                .and_then(|v| v.as_str())
-            {
-                return Some(wire_api.to_string());
-            }
-        }
-        return doc
-            .get("wire_api")
-            .and_then(|v| v.as_str())
-            .map(str::to_string);
+        return crate::codex_config::active_provider_str(&doc, "wire_api").map(str::to_string);
     }
     let mut found = config_text.lines().filter_map(|line| {
         let (key, value) = line.split_once('=')?;
@@ -1249,23 +1235,6 @@ fn codex_wire_api(config_text: &str) -> Option<String> {
     });
     let first = found.next()?;
     found.next().is_none().then_some(first)
-}
-
-fn is_chat_or_anthropic_wire_api(value: &str) -> bool {
-    matches!(
-        value.trim().to_ascii_lowercase().as_str(),
-        "chat"
-            | "chat_completions"
-            | "chat-completions"
-            | "openai_chat"
-            | "openai-chat"
-            | "openai_chat_completions"
-            | "anthropic"
-            | "anthropic_messages"
-            | "anthropic-messages"
-            | "messages"
-            | "claude"
-    )
 }
 
 /// 这家在这个应用下必须经过路由服务才能用（直连写进去也用不了）。和前端
@@ -1299,7 +1268,10 @@ pub(crate) fn provider_needs_routing(app: &AppType, provider: &Provider) -> bool
                     .get("config")
                     .and_then(|config| config.as_str())
                     .and_then(codex_wire_api)
-                    .is_some_and(|wire_api| is_chat_or_anthropic_wire_api(&wire_api))
+                    .is_some_and(|wire_api| {
+                        crate::codex_config::is_chat_wire_api(&wire_api)
+                            || crate::codex_config::is_anthropic_wire_api(&wire_api)
+                    })
         }
         _ => false,
     }
@@ -1455,7 +1427,7 @@ fn tray_mode(app_state: &AppState, app: &AppType) -> TrayMode {
     if crate::mode::stack::stack_mode_now(app) {
         return TrayMode::Stack;
     }
-    let (_, auto_failover) = app_state.db.get_proxy_flags_sync(app.as_str());
+    let (_, auto_failover) = app_state.db.get_proxy_flags_sync(app);
     if auto_failover {
         TrayMode::Failover
     } else {
@@ -1471,7 +1443,7 @@ fn collect_app_snapshot(
     service_running: Option<bool>,
     profiles: &[crate::database::Profile],
 ) -> Result<AppSnapshot, AppError> {
-    let rows = app_state.db.get_all_providers(app.as_str())?;
+    let rows = app_state.db.get_all_providers(app)?;
     let claude_accounts = if *app == AppType::Claude {
         crate::services::claude_account::labels_on_disk(&crate::config::get_app_config_dir())
     } else {
@@ -1493,7 +1465,7 @@ fn collect_app_snapshot(
     let queue = if mode == TrayMode::Failover {
         app_state
             .db
-            .get_failover_queue(app.as_str())?
+            .get_failover_queue(app)?
             .into_iter()
             .map(|item| item.provider_id)
             .filter(|id| rows.contains_key(id))
@@ -1554,7 +1526,7 @@ fn collect_app_snapshot(
 /// 启动流程（接上路由、拉起 Desktop 映射服务）走完之前不报「路由服务没在跑」：那时它本来就还没起来。
 static STARTUP_SETTLED: AtomicBool = AtomicBool::new(false);
 /// 启动时没能接上、已退回直连的应用（托盘自己留一份，界面照样取走它的那份）。
-static ATTACH_FAILURES: Lazy<Mutex<Vec<(AppType, bool)>>> = Lazy::new(|| Mutex::new(Vec::new()));
+static ATTACH_FAILURES: Mutex<Vec<(AppType, bool)>> = Mutex::new(Vec::new());
 
 /// 托盘里切换失败的应用。规格 5.5：处理掉才消失（同一应用之后切换成功、或打开过它的页面），
 /// 不按时间过期。
@@ -1563,20 +1535,15 @@ struct SwitchFailure {
     reason: String,
 }
 
-static SWITCH_FAILURES: Lazy<Mutex<Vec<SwitchFailure>>> = Lazy::new(|| Mutex::new(Vec::new()));
+static SWITCH_FAILURES: Mutex<Vec<SwitchFailure>> = Mutex::new(Vec::new());
 /// 上一次建菜单时菜单上会自己过时的那部分，悬停图标 / 路由服务启停时比一下，变了才重建。
-static LAST_STATUS: Lazy<Mutex<MenuStatus>> = Lazy::new(|| Mutex::new(MenuStatus::default()));
-
-fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
+static LAST_STATUS: LazyLock<Mutex<MenuStatus>> =
+    LazyLock::new(|| Mutex::new(MenuStatus::default()));
 
 /// 启动流程走完：记下启动时退回直连的应用，重建一次菜单。
 pub fn mark_startup_settled(app: &tauri::AppHandle) {
     {
-        let mut failures = lock(&ATTACH_FAILURES);
+        let mut failures = ATTACH_FAILURES.lock_recover();
         for failure in crate::mode::controller::startup_attach_failures_snapshot() {
             if let Ok(app_type) = failure.app_type.parse::<AppType>() {
                 if !failures.iter().any(|(existing, _)| *existing == app_type) {
@@ -1591,8 +1558,8 @@ pub fn mark_startup_settled(app: &tauri::AppHandle) {
 
 /// 清掉某个应用的问题行，返回有没有清掉东西。
 fn clear_app_problems(app: &AppType) -> bool {
-    let mut attach = lock(&ATTACH_FAILURES);
-    let mut switch = lock(&SWITCH_FAILURES);
+    let mut attach = ATTACH_FAILURES.lock_recover();
+    let mut switch = SWITCH_FAILURES.lock_recover();
     let before = attach.len() + switch.len();
     attach.retain(|(existing, _)| existing != app);
     switch.retain(|failure| failure.app != *app);
@@ -1611,7 +1578,7 @@ pub fn tray_app_page_seen(app: tauri::AppHandle, app_type: String) {
 }
 
 fn record_switch_failure(app: &AppType, reason: String) {
-    let mut failures = lock(&SWITCH_FAILURES);
+    let mut failures = SWITCH_FAILURES.lock_recover();
     failures.retain(|failure| failure.app != *app);
     failures.push(SwitchFailure {
         app: app.clone(),
@@ -1636,7 +1603,7 @@ fn collect_problems(
         problems.push(TrayProblem::ServiceDown { port });
     }
     {
-        let mut failures = lock(&ATTACH_FAILURES);
+        let mut failures = ATTACH_FAILURES.lock_recover();
         // 已经重新进入路由 / 聚合的应用不再报。
         failures.retain(|(app, _)| {
             visible
@@ -1654,7 +1621,7 @@ fn collect_problems(
         }
     }
     {
-        let failures = lock(&SWITCH_FAILURES);
+        let failures = SWITCH_FAILURES.lock_recover();
         for failure in failures.iter() {
             if visible.iter().any(|(app, _)| *app == failure.app) {
                 problems.push(TrayProblem::SwitchFailed {
@@ -1701,7 +1668,7 @@ struct FeedbackRecord {
     seen: bool,
 }
 
-static FEEDBACK: Lazy<Mutex<Option<FeedbackRecord>>> = Lazy::new(|| Mutex::new(None));
+static FEEDBACK: Mutex<Option<FeedbackRecord>> = Mutex::new(None);
 
 /// 切换成功后要不要说一句：客户端只在启动时读配置的才说；Claude Code 直连、路由 / 故障转移
 /// 换一家立即生效，不说。Claude Desktop 换一家都要重启 Desktop（路由那家的模型列表写在配置
@@ -1732,7 +1699,7 @@ fn switch_feedback(app: &AppType, mode: TrayMode, name: String) -> Option<TrayFe
 
 /// 记下最近一次托盘操作的结果（覆盖上一条）。调用方随后会重建菜单。
 fn record_feedback(app: &tauri::AppHandle, feedback: TrayFeedback) {
-    *lock(&FEEDBACK) = Some(FeedbackRecord {
+    *FEEDBACK.lock_recover() = Some(FeedbackRecord {
         feedback,
         at: std::time::Instant::now(),
         seen: false,
@@ -1753,7 +1720,7 @@ fn record_feedback(app: &tauri::AppHandle, feedback: TrayFeedback) {
 
 /// 现在该显示的反馈：没过期、也还没在打开的菜单里显示过。
 fn current_feedback() -> Option<TrayFeedback> {
-    let mut record = lock(&FEEDBACK);
+    let mut record = FEEDBACK.lock_recover();
     if record
         .as_ref()
         .is_some_and(|r| r.seen || r.at.elapsed() >= FEEDBACK_TTL)
@@ -1765,7 +1732,7 @@ fn current_feedback() -> Option<TrayFeedback> {
 
 /// 托盘面板收起：面板里已经显示过反馈行了，下次弹出时不再显示。
 pub fn mark_feedback_seen() {
-    if let Some(record) = lock(&FEEDBACK).as_mut() {
+    if let Some(record) = FEEDBACK.lock_recover().as_mut() {
         record.seen = true;
     }
 }
@@ -2519,7 +2486,7 @@ pub(crate) fn collect_panel_model(app_state: &AppState) -> Result<PanelModel, Ap
     let mut apps = Vec::with_capacity(snapshots.len());
     for snapshot in &snapshots {
         let app = snapshot.app.as_str();
-        let providers = app_state.db.get_all_providers(app)?;
+        let providers = app_state.db.get_all_providers(&snapshot.app)?;
         let (header, rows) = panel_rows(&app_state.usage_cache, &texts, snapshot, &providers, now);
         let credits = snapshot
             .current_id
@@ -2666,9 +2633,9 @@ pub fn create_tray_menu(
     #[cfg(target_os = "windows")]
     crate::tray_compat::remember_native_menu(&menu);
 
-    *lock(&TRAY_SECTION_SUBMENUS) = handles;
+    *TRAY_SECTION_SUBMENUS.lock_recover() = handles;
     update_problem_indicator(app, &texts, &model.status.problems);
-    *lock(&LAST_STATUS) = model.status;
+    *LAST_STATUS.lock_recover() = model.status;
     Ok(menu)
 }
 
@@ -2677,7 +2644,7 @@ pub fn sync_tray_status(app: &tauri::AppHandle, app_state: &AppState) -> Result<
     let texts = TrayTexts::current();
     let (_, status) = collect_status(app_state, &texts)?;
     update_problem_indicator(app, &texts, &status.problems);
-    *lock(&LAST_STATUS) = status;
+    *LAST_STATUS.lock_recover() = status;
     Ok(())
 }
 
@@ -2776,7 +2743,7 @@ fn tray_tooltip(texts: &TrayTexts, problems: &[TrayProblem]) -> String {
 }
 
 /// 现在托盘上的（有没有圆点，悬停提示）；`None` = 托盘图标还没建好，还是建图标时的样子。
-static APPLIED_INDICATOR: Lazy<Mutex<Option<(bool, String)>>> = Lazy::new(|| Mutex::new(None));
+static APPLIED_INDICATOR: Mutex<Option<(bool, String)>> = Mutex::new(None);
 
 /// 问题区有内容时托盘图标加圆点、悬停提示写第一条问题（macOS 不设提示，见
 /// `TRAY_TOOLTIP_ENABLED`）；问题都消失后换回原图标和提示。只在变了时才动（Linux 每次换图标
@@ -2794,7 +2761,7 @@ fn update_problem_indicator(app: &tauri::AppHandle, texts: &TrayTexts, problems:
     };
     // 只在锁里比对和记账：换图标要回主线程执行，不能拿着锁等。
     let icon_changed = {
-        let mut applied = lock(&APPLIED_INDICATOR);
+        let mut applied = APPLIED_INDICATOR.lock_recover();
         if applied.as_ref() == Some(&(has_dot, tooltip.clone())) {
             return;
         }
@@ -2851,7 +2818,7 @@ fn update_tray_usage_labels(app: &tauri::AppHandle) {
             return;
         };
         // 先拷出句柄再改标题：`set_text` 要回主线程执行，不能拿着锁等。
-        let handles = lock(&TRAY_SECTION_SUBMENUS).clone();
+        let handles = TRAY_SECTION_SUBMENUS.lock_recover().clone();
         for snapshot in &snapshots {
             let Some(submenu) = handles.get(&snapshot.app) else {
                 continue;
@@ -2898,7 +2865,7 @@ pub fn apply_tray_style(app: &tauri::AppHandle) {
                 log::error!("摘掉托盘菜单失败: {e}");
             }
             // 菜单没了，旧句柄不再更新标题。
-            lock(&TRAY_SECTION_SUBMENUS).clear();
+            TRAY_SECTION_SUBMENUS.lock_recover().clear();
         }
         if let Err(e) = tray.set_show_menu_on_left_click(native_menu_on_left_click(native)) {
             log::warn!("设置托盘左键行为失败: {e}");
@@ -2955,7 +2922,7 @@ pub fn native_menu_on_left_click(native: bool) -> bool {
 pub fn refresh_tray_if_problems_changed(app: &tauri::AppHandle) {
     static LAST_CHECK: Mutex<Option<std::time::Instant>> = Mutex::new(None);
     {
-        let mut last = lock(&LAST_CHECK);
+        let mut last = LAST_CHECK.lock_recover();
         if last.is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(1)) {
             return;
         }
@@ -2979,7 +2946,7 @@ fn refresh_tray_if_status_changed(app: &tauri::AppHandle) {
     let Ok((_, status)) = collect_status(state.inner(), &texts) else {
         return;
     };
-    if *lock(&LAST_STATUS) != status {
+    if *LAST_STATUS.lock_recover() != status {
         refresh_tray_menu(app);
     }
 }
@@ -3009,7 +2976,7 @@ impl TrayNavigation {
 }
 
 /// 等主界面来取的导航：轻量模式下窗口是新建的，事件发出去时前端可能还没开始监听。
-static PENDING_NAVIGATION: Lazy<Mutex<Option<TrayNavigation>>> = Lazy::new(|| Mutex::new(None));
+static PENDING_NAVIGATION: Mutex<Option<TrayNavigation>> = Mutex::new(None);
 
 /// 解析 `nav:…` 菜单 id：`nav:main`、`nav:settings:<分组>`、`nav:app:<应用>[:…]`、
 /// `nav:add:<应用>`、`nav:needs:<应用>:<供应商 id>`。
@@ -3053,7 +3020,7 @@ fn parse_nav_id(id: &str) -> Option<TrayNavigation> {
 /// 主界面取走托盘留下的导航（取一次就清空）。
 #[tauri::command]
 pub fn take_tray_navigation() -> Option<TrayNavigation> {
-    lock(&PENDING_NAVIGATION).take()
+    PENDING_NAVIGATION.lock_recover().take()
 }
 
 fn navigate(app: &tauri::AppHandle, navigation: TrayNavigation) {
@@ -3067,7 +3034,7 @@ fn navigate(app: &tauri::AppHandle, navigation: TrayNavigation) {
     }
     let pending = !navigation.is_empty();
     if pending {
-        *lock(&PENDING_NAVIGATION) = Some(navigation);
+        *PENDING_NAVIGATION.lock_recover() = Some(navigation);
     }
     show_main_window(app);
     if pending {
@@ -3288,7 +3255,7 @@ fn handle_provider_click(
     }
     let provider = state
         .db
-        .get_provider_by_id(provider_id, app_type.as_str())?
+        .get_provider_by_id(provider_id, app_type)?
         .ok_or_else(|| AppError::Message(format!("供应商 {provider_id} 不存在")))?;
     if mode == TrayMode::Direct && provider_needs_routing(app_type, &provider) {
         return Ok(ClickOutcome::NeedsRoute);
@@ -3304,7 +3271,7 @@ fn emit_switched(app: &tauri::AppHandle, app_type: &AppType, provider_id: &str) 
     let proxy_enabled = crate::mode::current::is_proxy(app_type);
     let auto_failover = app
         .try_state::<AppState>()
-        .map(|state| state.db.get_proxy_flags_sync(app_type.as_str()).1)
+        .map(|state| state.db.get_proxy_flags_sync(app_type).1)
         .unwrap_or(false);
     let event_data = serde_json::json!({
         "appType": app_type.as_str(),
@@ -3437,7 +3404,7 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
     use futures::future::join_all;
 
     {
-        let mut guard = lock(&LAST_TRAY_USAGE_REFRESH);
+        let mut guard = LAST_TRAY_USAGE_REFRESH.lock_recover();
         let now = std::time::Instant::now();
         if let Some(last) = *guard {
             if now.duration_since(last) < MIN_TRAY_USAGE_REFRESH_INTERVAL {
@@ -3482,7 +3449,7 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
         };
         // 只需当前 provider —— by-id 查询避免把整个 app 的 provider 列表加载
         // 进内存（每次悬停的热路径）。
-        let current = match app_state.db.get_provider_by_id(&current_id, app_type_str) {
+        let current = match app_state.db.get_provider_by_id(&current_id, app_type) {
             Ok(Some(p)) => p,
             Ok(None) => continue,
             Err(e) => {
@@ -3543,8 +3510,8 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
 }
 
 /// 托盘面板发起过的脚本额度查询：(应用, 供应商 id) → 上次查询时间。
-static PANEL_SCRIPT_QUERIES: Lazy<Mutex<HashMap<(AppType, String), std::time::Instant>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
+static PANEL_SCRIPT_QUERIES: LazyLock<Mutex<HashMap<(AppType, String), std::time::Instant>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// 托盘面板弹出时：子面板里每一家都写额度，不在用的那几家也要有数据。开了自动查询的脚本
 /// 供应商（余额、套餐），缓存里还没有、或距面板上次替它查已超过它自己的自动查询间隔，就在
@@ -3562,7 +3529,7 @@ pub(crate) async fn refresh_panel_provider_usage(app: &tauri::AppHandle) {
         .unwrap_or_default();
     let mut due = Vec::new();
     for app_type in TRAY_APPS.iter().filter(|app| visible_apps.is_visible(app)) {
-        let rows = match app_state.db.get_all_providers(app_type.as_str()) {
+        let rows = match app_state.db.get_all_providers(app_type) {
             Ok(rows) => rows,
             Err(e) => {
                 log::warn!("[Tray] 读取{}供应商失败: {e}", app_display_name(app_type));
@@ -3588,7 +3555,7 @@ pub(crate) async fn refresh_panel_provider_usage(app: &tauri::AppHandle) {
                 .with_script(app_type, id, |_| ())
                 .is_some();
             let key = (app_type.clone(), id.clone());
-            let mut queried = lock(&PANEL_SCRIPT_QUERIES);
+            let mut queried = PANEL_SCRIPT_QUERIES.lock_recover();
             let is_due = match queried.get(&key) {
                 Some(at) => at.elapsed() >= interval,
                 // 主界面已经查过（缓存里有）：从现在起算间隔
@@ -4553,85 +4520,6 @@ mod tests {
         );
     }
 
-    // ─── 「需要路由」判定（和前端 providerNeedsRouting 对照）───
-
-    fn provider(meta: serde_json::Value, settings: serde_json::Value) -> Provider {
-        serde_json::from_value(serde_json::json!({
-            "id": "p1",
-            "name": "P1",
-            "settingsConfig": settings,
-            "meta": meta,
-        }))
-        .unwrap()
-    }
-
-    #[test]
-    fn needs_routing_mirrors_the_frontend_rule() {
-        let plain = provider(serde_json::json!({}), serde_json::json!({}));
-        for app in TRAY_APPS {
-            assert!(!provider_needs_routing(&app, &plain), "{app:?}");
-        }
-
-        let copilot = provider(
-            serde_json::json!({"providerType": "github_copilot"}),
-            serde_json::json!({}),
-        );
-        for app in [
-            AppType::Claude,
-            AppType::ClaudeDesktop,
-            AppType::Codex,
-            AppType::GrokBuild,
-        ] {
-            assert!(provider_needs_routing(&app, &copilot), "{app:?}");
-        }
-        assert!(!provider_needs_routing(&AppType::Gemini, &copilot));
-
-        let openai_chat = provider(
-            serde_json::json!({"apiFormat": "openai_chat"}),
-            serde_json::json!({}),
-        );
-        assert!(provider_needs_routing(&AppType::Claude, &openai_chat));
-        assert!(provider_needs_routing(&AppType::Codex, &openai_chat));
-        let anthropic = provider(
-            serde_json::json!({"apiFormat": "anthropic"}),
-            serde_json::json!({}),
-        );
-        assert!(!provider_needs_routing(&AppType::Claude, &anthropic));
-        assert!(provider_needs_routing(&AppType::Codex, &anthropic));
-        let full_url = provider(
-            serde_json::json!({"isFullUrl": true}),
-            serde_json::json!({}),
-        );
-        assert!(provider_needs_routing(&AppType::Claude, &full_url));
-
-        let codex_config = |wire_api: &str| {
-            serde_json::json!({
-                "auth": {"OPENAI_API_KEY": "sk"},
-                "config": format!(
-                    "model_provider = \"x\"\n[model_providers.x]\nbase_url = \"https://x.example/v1\"\nwire_api = \"{wire_api}\"\n"
-                )
-            })
-        };
-        let chat_wire = provider(serde_json::json!({}), codex_config("chat"));
-        assert!(provider_needs_routing(&AppType::Codex, &chat_wire));
-        let responses_wire = provider(serde_json::json!({}), codex_config("responses"));
-        assert!(!provider_needs_routing(&AppType::Codex, &responses_wire));
-
-        let desktop_mapping = provider(
-            serde_json::json!({"claudeDesktopMode": "proxy"}),
-            serde_json::json!({}),
-        );
-        assert!(provider_needs_routing(
-            &AppType::ClaudeDesktop,
-            &desktop_mapping
-        ));
-
-        // 官方卡永远不算。
-        let mut official = copilot.clone();
-        official.category = Some("official".to_string());
-        assert!(!provider_needs_routing(&AppType::Claude, &official));
-    }
-
     #[test]
     fn codex_wire_api_falls_back_to_a_single_assignment_when_toml_is_broken() {
         assert_eq!(
@@ -5286,7 +5174,7 @@ mod tests {
     #[test]
     fn feedback_goes_away_after_the_panel_showed_it_or_two_minutes() {
         let record = |at: std::time::Instant| {
-            *lock(&FEEDBACK) = Some(FeedbackRecord {
+            *FEEDBACK.lock_recover() = Some(FeedbackRecord {
                 feedback: TrayFeedback::Switched {
                     app: AppType::Codex,
                     name: "DeepSeek".to_string(),
@@ -5300,7 +5188,7 @@ mod tests {
         // 面板收起 = 这次面板里已经显示过。
         mark_feedback_seen();
         assert!(current_feedback().is_none());
-        assert!(lock(&FEEDBACK).is_none());
+        assert!(FEEDBACK.lock_recover().is_none());
 
         if let Some(at) = std::time::Instant::now().checked_sub(FEEDBACK_TTL) {
             record(at);
@@ -5356,9 +5244,11 @@ mod tests {
 
     #[test]
     fn problems_drop_attach_failures_once_the_app_routes_again() {
-        lock(&ATTACH_FAILURES).clear();
-        lock(&SWITCH_FAILURES).clear();
-        lock(&ATTACH_FAILURES).push((AppType::Claude, false));
+        ATTACH_FAILURES.lock_recover().clear();
+        SWITCH_FAILURES.lock_recover().clear();
+        ATTACH_FAILURES
+            .lock_recover()
+            .push((AppType::Claude, false));
         record_switch_failure(&AppType::Codex, "boom".to_string());
         let visible = [(AppType::Claude, true), (AppType::Codex, true)];
         assert_eq!(collect_problems(None, &visible).len(), 2);

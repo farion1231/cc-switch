@@ -58,34 +58,56 @@ fn split_scheme_host(endpoint: &str) -> (&str, &str) {
     }
 }
 
-/// Build the full URL for an S3 object.
+/// Cloud vendors whose S3-compatible endpoints reject path-style requests for
+/// newly created buckets: Alibaba Cloud OSS, Tencent Cloud COS, Huawei Cloud OBS.
+/// They answer path-style URLs with 403, which reads as a wrong access key.
+const VIRTUAL_HOSTED_ONLY_DOMAINS: [&str; 3] =
+    [".aliyuncs.com", ".myqcloud.com", ".myhuaweicloud.com"];
+
+/// Returns `true` when the endpoint belongs to a vendor that only serves
+/// virtual-hosted URLs. Everything else (MinIO, R2, self-hosted) keeps path style.
+fn requires_virtual_hosted(host: &str) -> bool {
+    let host = host
+        .split(':')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    VIRTUAL_HOSTED_ONLY_DOMAINS
+        .iter()
+        .any(|domain| host.ends_with(domain))
+}
+
+/// Base URL addressing the bucket, without a trailing slash.
 ///
-/// - AWS endpoints use virtual-hosted style: `https://{bucket}.s3.{region}.amazonaws.com/{key}`
-/// - Custom endpoints use path style:       `https://{endpoint}/{bucket}/{key}`
-fn build_object_url(creds: &S3Credentials, key: &str) -> String {
-    let key = key.trim_start_matches('/');
+/// - AWS endpoints use virtual-hosted style:  `https://{bucket}.s3.{region}.amazonaws.com`
+/// - OSS / COS / OBS use virtual-hosted style: `https://{bucket}.{endpoint}`
+///   (an endpoint copied from the console that already starts with the bucket
+///   is used as is)
+/// - Other custom endpoints use path style:   `https://{endpoint}/{bucket}`
+fn bucket_base_url(creds: &S3Credentials) -> String {
     if is_aws_endpoint(&creds.endpoint) {
-        format!(
-            "https://{}.s3.{}.amazonaws.com/{}",
-            creds.bucket, creds.region, key
-        )
-    } else {
-        let (scheme, host) = split_scheme_host(&creds.endpoint);
-        format!("{}://{}/{}/{}", scheme, host, creds.bucket, key)
+        return format!("https://{}.s3.{}.amazonaws.com", creds.bucket, creds.region);
     }
+    let (scheme, host) = split_scheme_host(&creds.endpoint);
+    if !requires_virtual_hosted(host) {
+        return format!("{}://{}/{}", scheme, host, creds.bucket);
+    }
+    let bucket_prefix = format!("{}.", creds.bucket.to_ascii_lowercase());
+    if host.to_ascii_lowercase().starts_with(&bucket_prefix) {
+        format!("{}://{}", scheme, host)
+    } else {
+        format!("{}://{}.{}", scheme, creds.bucket, host)
+    }
+}
+
+/// Build the full URL for an S3 object.
+fn build_object_url(creds: &S3Credentials, key: &str) -> String {
+    format!("{}/{}", bucket_base_url(creds), key.trim_start_matches('/'))
 }
 
 /// Build the bucket-level URL (for HEAD bucket / test connection).
 fn build_bucket_url(creds: &S3Credentials) -> String {
-    if is_aws_endpoint(&creds.endpoint) {
-        format!(
-            "https://{}.s3.{}.amazonaws.com/",
-            creds.bucket, creds.region
-        )
-    } else {
-        let (scheme, host) = split_scheme_host(&creds.endpoint);
-        format!("{}://{}/{}/", scheme, host, creds.bucket)
-    }
+    format!("{}/", bucket_base_url(creds))
 }
 
 // ─── Cryptographic helpers ───────────────────────────────────
@@ -699,6 +721,87 @@ mod tests {
         assert!(!is_aws_endpoint("minio.example.com"));
         assert!(!is_aws_endpoint("storage.googleapis.com"));
         assert!(!is_aws_endpoint("r2.cloudflarestorage.com"));
+    }
+
+    // ── OSS / COS / OBS: virtual-hosted on custom endpoints (#3996) ──
+
+    #[test]
+    fn aliyun_oss_uses_virtual_hosted_style() {
+        let creds = test_creds("https://oss-cn-chengdu.aliyuncs.com/", "cn-chengdu", "ccs");
+        assert_eq!(
+            build_object_url(&creds, "cc-switch-sync/db.sql"),
+            "https://ccs.oss-cn-chengdu.aliyuncs.com/cc-switch-sync/db.sql"
+        );
+        assert_eq!(
+            build_bucket_url(&creds),
+            "https://ccs.oss-cn-chengdu.aliyuncs.com/"
+        );
+
+        // OSS also documents an `s3.` prefixed S3-compatible endpoint.
+        let creds = test_creds("s3.oss-cn-hangzhou.aliyuncs.com", "cn-hangzhou", "ccs");
+        assert_eq!(
+            build_bucket_url(&creds),
+            "https://ccs.s3.oss-cn-hangzhou.aliyuncs.com/"
+        );
+    }
+
+    #[test]
+    fn tencent_cos_and_huawei_obs_use_virtual_hosted_style() {
+        let cos = test_creds(
+            "https://cos.ap-beijing.myqcloud.com",
+            "ap-beijing",
+            "ccs-1250000000",
+        );
+        assert_eq!(
+            build_object_url(&cos, "k.json"),
+            "https://ccs-1250000000.cos.ap-beijing.myqcloud.com/k.json"
+        );
+
+        let obs = test_creds("obs.cn-north-4.myhuaweicloud.com", "cn-north-4", "ccs");
+        assert_eq!(
+            build_bucket_url(&obs),
+            "https://ccs.obs.cn-north-4.myhuaweicloud.com/"
+        );
+    }
+
+    #[test]
+    fn virtual_hosted_endpoint_that_already_names_the_bucket_is_not_prefixed_twice() {
+        // The COS console shows the bucket domain; users often paste it as the endpoint.
+        let creds = test_creds(
+            "https://CCS-1250000000.cos.ap-guangzhou.myqcloud.com",
+            "ap-guangzhou",
+            "ccs-1250000000",
+        );
+        assert_eq!(
+            build_object_url(&creds, "k.json"),
+            "https://CCS-1250000000.cos.ap-guangzhou.myqcloud.com/k.json"
+        );
+    }
+
+    #[test]
+    fn other_custom_endpoints_keep_path_style() {
+        for endpoint in [
+            "https://abc123.r2.cloudflarestorage.com",
+            "http://minio.local:9000",
+            "storage.example.com",
+            // A look-alike that merely contains the vendor domain is not the vendor.
+            "aliyuncs.com.example.com",
+        ] {
+            let creds = test_creds(endpoint, "auto", "ccs");
+            let (scheme, host) = split_scheme_host(endpoint);
+            assert_eq!(
+                build_bucket_url(&creds),
+                format!("{scheme}://{host}/ccs/"),
+                "{endpoint} must stay path-style"
+            );
+        }
+    }
+
+    #[test]
+    fn virtual_hosted_detection_ignores_port_and_case() {
+        assert!(requires_virtual_hosted("OSS-CN-BEIJING.ALIYUNCS.COM"));
+        assert!(requires_virtual_hosted("cos.ap-beijing.myqcloud.com:443"));
+        assert!(!requires_virtual_hosted("minio.local:9000"));
     }
 
     // ── URI encoding ──

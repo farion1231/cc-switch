@@ -238,6 +238,7 @@ mod tests {
     use crate::services::sync_protocol::sync_mutex;
     use crate::services::webdav_auto_sync::WebDavAutoSync;
     use crate::settings::{self, AppSettings, S3SyncSettings, WebDavSyncSettings};
+    use crate::test_support::EnvVars;
     use serial_test::serial;
     use std::io::{BufRead, BufReader, Read, Write};
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -332,19 +333,18 @@ mod tests {
 
     /// Points settings at a fresh home for one test and puts the old one back.
     struct IsolatedHome {
+        _env: EnvVars,
         _dir: tempfile::TempDir,
-        previous: Option<std::ffi::OsString>,
     }
 
     impl IsolatedHome {
         fn new() -> Self {
             let dir = tempfile::tempdir().expect("create test home");
-            let previous = std::env::var_os("CC_SWITCH_TEST_HOME");
-            std::env::set_var("CC_SWITCH_TEST_HOME", dir.path());
+            let env = EnvVars::new().set("CC_SWITCH_TEST_HOME", dir.path());
             settings::update_settings(AppSettings::default()).expect("reset settings");
             Self {
+                _env: env,
                 _dir: dir,
-                previous,
             }
         }
     }
@@ -352,10 +352,6 @@ mod tests {
     impl Drop for IsolatedHome {
         fn drop(&mut self) {
             let _ = settings::update_settings(AppSettings::default());
-            match self.previous.take() {
-                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
-                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
-            }
         }
     }
 
@@ -434,6 +430,16 @@ mod tests {
                         "nothing may be uploaded after sync is disabled"
                     );
                 }
+
+                #[tokio::test]
+                #[serial]
+                async fn queued_upload_is_dropped_after_config_is_cleared() {
+                    let requests = requests(UserChange::Clear).await;
+                    assert_eq!(
+                        requests, 0,
+                        "nothing may be uploaded after the config is cleared"
+                    );
+                }
             }
         };
     }
@@ -445,20 +451,4 @@ mod tests {
         webdav_settings
     );
     queued_upload_tests!(s3, S3AutoSync, settings::set_s3_sync_settings, s3_settings);
-
-    /// "Clear config" exists only for WebDAV (`webdav_sync_clear_settings`).
-    #[tokio::test]
-    #[serial]
-    async fn webdav_queued_upload_is_dropped_after_config_is_cleared() {
-        let requests = requests_after_queued_upload::<WebDavAutoSync>(
-            settings::set_webdav_sync_settings,
-            webdav_settings,
-            UserChange::Clear,
-        )
-        .await;
-        assert_eq!(
-            requests, 0,
-            "nothing may be uploaded after the config is cleared"
-        );
-    }
 }

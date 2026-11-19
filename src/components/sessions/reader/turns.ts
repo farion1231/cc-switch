@@ -364,7 +364,7 @@ const buildTurn = (
       turn.injected.push(i);
       continue;
     }
-    let lastEventInMessage: EventStep | undefined;
+    let lastEventInMessage: EventStep | TurnEvent | undefined;
     blocksOf(i).forEach((block, j) => {
       const id = `${key}:${i}:${j}`;
       const inFinal =
@@ -459,7 +459,9 @@ const buildTurn = (
               ? i <= questionIndex
               : !steps.some((step) => step.kind !== "event");
           if (beforeQuestion) {
-            turn.leadingEvents.push({ id, messageIndex: i, block });
+            // 轮首事件（如 Codex 目标）同样收下后面的正文
+            lastEventInMessage = { id, messageIndex: i, block };
+            turn.leadingEvents.push(lastEventInMessage);
             return;
           }
           lastEventInMessage = { kind: "event", id, messageIndex: i, block };

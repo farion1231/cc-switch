@@ -84,7 +84,7 @@ fn proxy_route_row(db: &Database, app: &AppType) -> Result<Option<Provider>, App
     let Some(route) = mode.proxy_route else {
         return Ok(None);
     };
-    let row = db.get_provider_by_id(&route, app.as_str())?;
+    let row = db.get_provider_by_id(&route, app)?;
     if row.is_none() {
         log::warn!(
             "{} 的代理路由 {route} 在数据库中不存在，按直连指针处理",
@@ -97,7 +97,7 @@ fn proxy_route_row(db: &Database, app: &AppType) -> Result<Option<Provider>, App
 /// 直连指针指向的那一行。
 pub fn direct_provider(db: &Database, app: &AppType) -> Result<Option<Provider>, AppError> {
     match provider_for(db, app, Purpose::Direct)? {
-        Some(id) => db.get_provider_by_id(&id, app.as_str()),
+        Some(id) => db.get_provider_by_id(&id, app),
         None => Ok(None),
     }
 }

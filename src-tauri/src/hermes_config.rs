@@ -32,7 +32,7 @@
 
 use crate::config::{atomic_write, get_app_config_dir};
 use crate::error::AppError;
-use crate::settings::{effective_backup_retain_count, get_hermes_override_dir};
+use crate::settings::{effective_backup_retain_count, get_override_dir};
 use chrono::Local;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -51,7 +51,7 @@ use std::sync::{Mutex, OnceLock};
 ///   2. `HERMES_HOME` 环境变量(trim 后非空;按原样,不展开 `~`,与 Hermes `Path(val)` 一致)
 ///   3. 平台默认(Windows: `%LOCALAPPDATA%\hermes`,Mac/Linux: `~/.hermes`)
 pub fn get_hermes_dir() -> PathBuf {
-    if let Some(override_dir) = get_hermes_override_dir() {
+    if let Some(override_dir) = get_override_dir(&crate::app_config::AppType::Hermes) {
         return override_dir;
     }
 
@@ -1243,14 +1243,13 @@ pub fn read_memory_limits() -> Result<HermesMemoryLimits, AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sync_utils::MutexExt;
     use serial_test::serial;
     use std::sync::{Mutex, OnceLock};
 
     fn test_guard() -> std::sync::MutexGuard<'static, ()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|err| err.into_inner())
+        LOCK.get_or_init(|| Mutex::new(())).lock_recover()
     }
 
     /// Run a test with an isolated temp home directory.
@@ -1260,28 +1259,15 @@ mod tests {
     fn with_test_home<T>(test_fn: impl FnOnce() -> T) -> T {
         let _guard = test_guard();
         let tmp = tempfile::tempdir().unwrap();
-        let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
-        std::env::set_var("CC_SWITCH_TEST_HOME", tmp.path());
-        // Neutralize the env vars get_hermes_dir() consults, so an ambient
+        // Also neutralize the env vars get_hermes_dir() consults, so an ambient
         // HERMES_HOME / LOCALAPPDATA (e.g. set by a Hermes install) can't make
-        // tests escape the temp home. Restored below.
-        let old_hermes_home = std::env::var_os("HERMES_HOME");
-        let old_local_appdata = std::env::var_os("LOCALAPPDATA");
-        std::env::remove_var("HERMES_HOME");
-        std::env::remove_var("LOCALAPPDATA");
+        // tests escape the temp home.
+        let env = crate::test_support::EnvVars::new()
+            .set("CC_SWITCH_TEST_HOME", tmp.path())
+            .remove("HERMES_HOME")
+            .remove("LOCALAPPDATA");
         let result = test_fn();
-        match old_local_appdata {
-            Some(value) => std::env::set_var("LOCALAPPDATA", value),
-            None => std::env::remove_var("LOCALAPPDATA"),
-        }
-        match old_hermes_home {
-            Some(value) => std::env::set_var("HERMES_HOME", value),
-            None => std::env::remove_var("HERMES_HOME"),
-        }
-        match old_test_home {
-            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
-            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
-        }
+        drop(env);
         result
     }
 
