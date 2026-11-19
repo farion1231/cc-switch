@@ -178,6 +178,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["genesis", "matrixorigin", "taas", "token"],
     defaultColor: "currentColor",
   },
+  aiping: {
+    name: "aiping",
+    displayName: "AI Ping",
+    category: "ai-provider",
+    keywords: ["aiping", "ai ping", "qingcheng", "清程极智"],
+    defaultColor: "#2563EB",
+  },
   soshow: {
     name: "soshow",
     displayName: "Soshow",

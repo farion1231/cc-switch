@@ -5076,4 +5076,31 @@ requires_openai_auth = true`,
       },
     ],
   },
+  {
+    name: "AI Ping",
+    websiteUrl: "https://aiping.cn",
+    apiKeyUrl: "https://aiping.cn/user/apikey",
+    category: "aggregator",
+    icon: "aiping",
+    iconColor: "#2563EB",
+    auth: generateThirdPartyAuth(""),
+    config: `model_provider = "custom"
+model = "DeepSeek-V4.1-Flash-1017"
+
+[model_providers.custom]
+name = "aiping"
+base_url = "https://aiping.cn/api/v1"
+wire_api = "responses"
+requires_openai_auth = true`,
+    apiFormat: "openai_chat",
+    modelCatalog: [
+      {
+        model: "DeepSeek-V4.1-Flash-1017",
+        displayName: "DeepSeek V4.1 Flash 1017",
+      },
+      { model: "GLM-5.3-Flash", displayName: "GLM 5.3 Flash" },
+      { model: "Kimi-K3.1-Pro", displayName: "Kimi K3.1 Pro" },
+      { model: "MiniMax-M3.1-Flash", displayName: "MiniMax M3.1 Flash" },
+    ],
+  },
 ];

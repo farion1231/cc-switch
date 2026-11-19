@@ -3243,4 +3243,32 @@ export const providerPresets: ProviderPreset[] = [
     icon: "genesis",
     apiFormat: "openai_chat",
   },
+  {
+    name: "AI Ping",
+    websiteUrl: "https://aiping.cn",
+    apiKeyUrl: "https://aiping.cn/user/apikey",
+    // 官方 Claude Code 接入文档（aiping.cn/docs/UseCases/coding-assistant，2026-11-19
+    // 核对）：base 为 /api/v1/anthropic，Bearer 令牌走默认的 AUTH_TOKEN。
+    // 档位按公开模型列表（/api/v1/models）里四个 1M 上下文的编程模型分配：
+    // 主循环与 sonnet 用 V4.1 Flash 1017、opus 用 Kimi K3.1 Pro、haiku 用
+    // GLM-5.3-Flash、子代理用小模型 MiniMax-M3.1-Flash。
+    // /anthropic/v1/models 404，通用候选剥离 /anthropic 后的 /api/v1/models
+    // 公开可读，不覆写 modelsUrl。
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://aiping.cn/api/v1/anthropic",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "DeepSeek-V4.1-Flash-1017",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "GLM-5.3-Flash",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "DeepSeek-V4.1-Flash-1017",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "Kimi-K3.1-Pro",
+        ANTHROPIC_SMALL_FAST_MODEL: "MiniMax-M3.1-Flash",
+      },
+    },
+    category: "aggregator",
+    icon: "aiping",
+    iconColor: "#2563EB",
+    endpointCandidates: ["https://aiping.cn/api/v1/anthropic"],
+    apiFormat: "anthropic",
+  },
 ];

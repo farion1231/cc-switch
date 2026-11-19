@@ -3206,6 +3206,39 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     category: "aggregator",
     icon: "aicoming",
   },
+  {
+    name: "AI Ping",
+    providerKey: "cc-switch-aiping",
+    websiteUrl: "https://aiping.cn",
+    apiKeyUrl: "https://aiping.cn/user/apikey",
+    settingsConfig: {
+      name: "AI Ping",
+      baseUrl: "https://aiping.cn/api/v1",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        piModel("deepseek/deepseek-v4.1-flash-1017", {
+          id: "DeepSeek-V4.1-Flash-1017",
+          name: "DeepSeek V4.1 Flash 1017",
+        }),
+        piModel("zai/glm-5.3-flash", {
+          id: "GLM-5.3-Flash",
+          name: "GLM 5.3 Flash",
+        }),
+        piModel("moonshotai/kimi-k3.1-pro", {
+          id: "Kimi-K3.1-Pro",
+          name: "Kimi K3.1 Pro",
+        }),
+        piModel("minimax/minimax-m3.1-flash", {
+          id: "MiniMax-M3.1-Flash",
+          name: "MiniMax M3.1 Flash",
+        }),
+      ],
+    },
+    category: "aggregator",
+    icon: "aiping",
+    iconColor: "#2563EB",
+  },
 ];
 
 function materializeVerifiedThinkingProfiles(

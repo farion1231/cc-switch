@@ -4470,4 +4470,26 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
     icon: "aicoming",
   },
+  {
+    name: "AI Ping",
+    websiteUrl: "https://aiping.cn",
+    apiKeyUrl: "https://aiping.cn/user/apikey",
+    category: "aggregator",
+    icon: "aiping",
+    iconColor: "#2563EB",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "AI Ping",
+      options: { baseURL: "https://aiping.cn/api/v1", apiKey: "" },
+      models: {
+        "DeepSeek-V4.1-Flash-1017": {
+          name: "DeepSeek V4.1 Flash 1017",
+          reasoning: true,
+        },
+        "GLM-5.3-Flash": { name: "GLM 5.3 Flash", reasoning: true },
+        "Kimi-K3.1-Pro": { name: "Kimi K3.1 Pro", reasoning: true },
+        "MiniMax-M3.1-Flash": { name: "MiniMax M3.1 Flash", reasoning: true },
+      },
+    },
+  },
 ];

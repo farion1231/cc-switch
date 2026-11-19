@@ -2610,4 +2610,37 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     ),
     icon: "aicoming",
   },
+  {
+    name: "AI Ping",
+    websiteUrl: "https://aiping.cn",
+    apiKeyUrl: "https://aiping.cn/user/apikey",
+    category: "aggregator",
+    icon: "aiping",
+    iconColor: "#2563EB",
+    baseUrl: "https://aiping.cn/api/v1/anthropic",
+    mode: "proxy",
+    apiFormat: "anthropic",
+    modelRoutes: [
+      {
+        routeId: "claude-sonnet-5",
+        upstreamModel: "DeepSeek-V4.1-Flash-1017",
+        supports1m: false,
+      },
+      {
+        routeId: "claude-haiku-4-5",
+        upstreamModel: "GLM-5.3-Flash",
+        supports1m: false,
+      },
+      {
+        routeId: "claude-opus-5",
+        upstreamModel: "Kimi-K3.1-Pro",
+        supports1m: false,
+      },
+      {
+        routeId: "claude-fable-5",
+        upstreamModel: "MiniMax-M3.1-Flash",
+        supports1m: false,
+      },
+    ],
+  },
 ];

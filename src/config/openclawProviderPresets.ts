@@ -6554,4 +6554,26 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
     icon: "aicoming",
   },
+  {
+    name: "AI Ping",
+    websiteUrl: "https://aiping.cn",
+    apiKeyUrl: "https://aiping.cn/user/apikey",
+    category: "aggregator",
+    icon: "aiping",
+    iconColor: "#2563EB",
+    settingsConfig: {
+      baseUrl: "https://aiping.cn/api/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: [
+        {
+          id: "DeepSeek-V4.1-Flash-1017",
+          name: "DeepSeek V4.1 Flash 1017",
+        },
+        { id: "GLM-5.3-Flash", name: "GLM 5.3 Flash" },
+        { id: "Kimi-K3.1-Pro", name: "Kimi K3.1 Pro" },
+        { id: "MiniMax-M3.1-Flash", name: "MiniMax M3.1 Flash" },
+      ],
+    },
+  },
 ];

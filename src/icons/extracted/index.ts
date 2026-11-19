@@ -7,6 +7,7 @@ import _88api from "./88api.png";
 import _alltokens from "./alltokens.png";
 import _alltokensSi from "./alltokens-si.png";
 import _a6api from "./a6-icon.png";
+import _aiping from "./aiping.svg?url";
 import _antigravity from "./antigravity.svg?url";
 import _apikeyfun from "./apikeyfun.png";
 import _apinebula from "./apinebula_icon.png";
@@ -167,6 +168,7 @@ export const iconUrls: Record<string, string> = {
   alltokens: _alltokens,
   "alltokens-si": _alltokensSi,
   a6api: _a6api,
+  aiping: _aiping,
   antigravity: _antigravity,
   apikeyfun: _apikeyfun,
   apinebula: _apinebula,
