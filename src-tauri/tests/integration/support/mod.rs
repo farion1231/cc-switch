@@ -70,6 +70,8 @@ pub fn reset_test_fs() {
         ".gemini",
         ".grok",
         ".config",
+        ".minimax",
+        ".omp",
         ".openclaw",
         ".pi",
         ".workbuddy",
