@@ -3511,6 +3511,7 @@
       "skillNotFound": "Skill nicht gefunden: {{directory}}",
       "missingRepoInfo": "Repository-Angaben fehlen (Eigentümer oder Name)",
       "downloadTimeout": "Zeitüberschreitung beim Herunterladen des Repositorys {{owner}}/{{name}} ({{timeout}} s)",
+      "downloadStalled": "Download des Repositorys {{owner}}/{{name}} abgebrochen: {{timeout}} s lang keine Daten empfangen",
       "skillDirNotFound": "Skill-Verzeichnis nicht gefunden: {{path}}",
       "directoryConflict": "Das Skill-Verzeichnis „{{directory}}“ ist bereits von {{existing_repo}} belegt und kann nicht aus {{new_repo}} installiert werden",
       "emptyArchive": "Das heruntergeladene Archiv ist leer",
@@ -4324,6 +4325,7 @@
     "refresh": "Aktualisieren"
   },
   "nav": {
+    "skills": "Skills",
     "mainLabel": "Hauptnavigation",
     "skipToContent": "Zum Hauptinhalt springen",
     "expandSidebar": "Seitenleiste ausklappen",
