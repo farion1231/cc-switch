@@ -579,7 +579,12 @@ export function PluginsPage({ apps, initialApp }: PluginsPageProps) {
   );
 
   const renderBody = () => {
-    if (installedQuery.isPending) {
+    // 有上次的结果（本地缓存或之前读成功过）时，失败后重读查询仍是 error 状态、只有
+    // isFetching 变了：不换成加载中，点「重试」看着没反应
+    if (
+      installedQuery.isPending ||
+      (loadError !== null && !cliMissing && installedQuery.isFetching)
+    ) {
       return (
         <div className="flex items-center justify-center gap-2 py-12 text-body text-fg-2">
           <Loader2 className="h-4 w-4 animate-spin" />
@@ -615,7 +620,7 @@ export function PluginsPage({ apps, initialApp }: PluginsPageProps) {
     }
     if (view === "marketplaces") return renderMarketplaces();
     if (view === "discover" && !catalogReady) {
-      return catalogQuery.isError ? (
+      return catalogQuery.isError && !catalogQuery.isFetching ? (
         <CenteredState
           title={t("pluginsPage.catalogLoadFailed")}
           detail={
@@ -749,7 +754,10 @@ export function PluginsPage({ apps, initialApp }: PluginsPageProps) {
   };
 
   const renderMarketplaces = () => {
-    if (marketplaces.isLoading) {
+    if (
+      marketplaces.isLoading ||
+      (marketplaces.isError && marketplaces.isFetching)
+    ) {
       return (
         <div className="flex items-center justify-center gap-2 py-12 text-body text-fg-2">
           <Loader2 className="h-4 w-4 animate-spin" />

@@ -433,9 +433,11 @@ impl ToolLifecycleCoordinator {
 
         // 必须把锁移进 blocking 任务：即使等待它的 IPC future 被取消，
         // 子进程仍会继续运行，直到它真正退出前都不能允许下一次写入。
+        // 局部变量按声明的逆序释放：工具锁要先于执行锁放开，否则排队的下一个写入
+        // 拿到执行锁、跑完之后，紧接着对这个工具的请求还会撞上没放开的工具锁。
         tokio::task::spawn_blocking(move || {
-            let _tool_guards = tool_guards;
             let _execution_guard = execution_guard;
+            let _tool_guards = tool_guards;
             operation(&tools)
         })
         .await

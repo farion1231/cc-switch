@@ -1874,11 +1874,31 @@ fn push_codex_cli_candidates_newest_first(
     }
 }
 
-fn codex_bundled_models_command(candidate: &Path) -> Command {
+/// `login_path` 是登录 shell 的 PATH（解析不到为 `None`）。GUI 启动时继承的是 launchd 的
+/// 窄 PATH，npm 装的 `codex` 是 `#!/usr/bin/env node` 脚本，找不到 node 就 exit 127，
+/// 只能退到后面的候选（常是桌面版自带的旧版本，目录里缺新模型，#9764）。与运行时命令一样
+/// （#8653），把候选自己的目录、登录 shell 的 PATH 补在继承的 PATH 前面。
+fn codex_bundled_models_command(candidate: &Path, login_path: Option<&str>) -> Command {
     let mut command = Command::new(candidate);
     command
         .args(["debug", "models", "--bundled"])
         .stdin(Stdio::null());
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let inherited = std::env::var("PATH").unwrap_or_default();
+        let mut path = match login_path {
+            Some(login_path) => crate::commands::merge_path_segments(login_path, &inherited),
+            None => inherited,
+        };
+        // 裸名 `codex` 没有目录，不补。
+        if let Some(dir) = candidate.parent().filter(|dir| !dir.as_os_str().is_empty()) {
+            path = crate::commands::merge_path_segments(&dir.to_string_lossy(), &path);
+        }
+        command.env("PATH", path);
+    }
+    #[cfg(target_os = "windows")]
+    let _ = login_path;
 
     // A release build uses the Windows GUI subsystem, so a console child that
     // is created without this flag gets its own transient console window. npm
@@ -1914,7 +1934,11 @@ impl std::fmt::Display for CodexBundledModelsError {
 /// 本机 Codex 自带的完整模型列表（`codex debug models --bundled`）。和账号无关，版本和
 /// 那个二进制一致。不能用不带 `--bundled` 的版本：那会读到 CC Switch 自己写的目录。
 pub(crate) fn load_codex_bundled_models() -> Result<Vec<Value>, CodexBundledModelsError> {
-    first_bundled_catalog(codex_cli_candidates(), |catalog| {
+    #[cfg(not(target_os = "windows"))]
+    let login_path = crate::commands::cached_login_shell_path();
+    #[cfg(target_os = "windows")]
+    let login_path: Option<String> = None;
+    first_bundled_catalog(codex_cli_candidates(), login_path.as_deref(), |catalog| {
         catalog
             .get("models")
             .and_then(Value::as_array)
@@ -1928,12 +1952,13 @@ pub(crate) fn load_codex_bundled_models() -> Result<Vec<Value>, CodexBundledMode
 /// 找不到命令行。
 fn first_bundled_catalog<T>(
     candidates: Vec<PathBuf>,
+    login_path: Option<&str>,
     pick: impl Fn(&Value) -> Option<T>,
 ) -> Result<T, CodexBundledModelsError> {
     let mut failure = None;
     for candidate in candidates {
         let candidate_label = candidate.to_string_lossy();
-        let output = match codex_bundled_models_command(&candidate).output() {
+        let output = match codex_bundled_models_command(&candidate, login_path).output() {
             Ok(output) => output,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
             Err(err) => {
@@ -6497,7 +6522,7 @@ wire_api = "responses"
         let missing = dir.path().join("missing-codex");
         let pick = |catalog: &Value| catalog.get("models").cloned();
         assert_eq!(
-            first_bundled_catalog(vec![missing.clone()], pick).err(),
+            first_bundled_catalog(vec![missing.clone()], None, pick).err(),
             Some(CodexBundledModelsError::NoCli)
         );
 
@@ -6516,20 +6541,65 @@ wire_api = "responses"
 
             // 找到了命令行但跑失败：不能报成找不到。
             assert!(matches!(
-                first_bundled_catalog(vec![missing.clone(), failing.clone()], pick),
+                first_bundled_catalog(vec![missing.clone(), failing.clone()], None, pick),
                 Err(CodexBundledModelsError::Failed(detail)) if detail.contains("boom")
             ));
             // 前面的失败不影响后面能用的候选。
             assert_eq!(
-                first_bundled_catalog(vec![missing, failing, working], pick).ok(),
+                first_bundled_catalog(vec![missing, failing, working], None, pick).ok(),
                 Some(json!([{ "slug": "x" }]))
             );
         }
     }
 
+    /// npm 装的 `codex` 是 `#!/usr/bin/env node` 脚本：GUI 的窄 PATH 里没有 node 会 exit 127，
+    /// 要靠登录 shell 的 PATH 或候选自己的目录找到它（#9764）。
+    #[cfg(unix)]
+    #[test]
+    fn bundled_models_find_the_interpreter_through_login_path_or_candidate_dir() {
+        use std::os::unix::fs::PermissionsExt;
+        let write_exec = |path: &Path, body: &str| {
+            fs::create_dir_all(path.parent().expect("parent")).expect("create dir");
+            fs::write(path, body).expect("write script");
+            fs::set_permissions(path, fs::Permissions::from_mode(0o755)).expect("chmod");
+        };
+        let interpreter = "cc-switch-test-fake-node-9764";
+        let shim = format!("#!/usr/bin/env {interpreter}\n");
+        let runtime = "#!/bin/sh\necho '{\"models\":[{\"slug\":\"x\"}]}'\n";
+        let pick = |catalog: &Value| catalog.get("models").cloned();
+
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let node_bin = dir.path().join("node/bin");
+        write_exec(&node_bin.join(interpreter), runtime);
+        let npm_codex = dir.path().join("npm/bin/codex");
+        write_exec(&npm_codex, &shim);
+
+        // 继承的 PATH 里没有解释器：跑不起来。
+        assert!(matches!(
+            first_bundled_catalog(vec![npm_codex.clone()], None, pick),
+            Err(CodexBundledModelsError::Failed(_))
+        ));
+        // 登录 shell 的 PATH 里有：能读出目录。
+        let login_path = node_bin.to_string_lossy().into_owned();
+        assert_eq!(
+            first_bundled_catalog(vec![npm_codex], Some(&login_path), pick).ok(),
+            Some(json!([{ "slug": "x" }]))
+        );
+
+        // nvm 这类安装，解释器就在候选旁边：不靠登录 shell 也能找到。
+        let nvm_bin = dir.path().join("nvm/bin");
+        write_exec(&nvm_bin.join(interpreter), runtime);
+        let nvm_codex = nvm_bin.join("codex");
+        write_exec(&nvm_codex, &shim);
+        assert_eq!(
+            first_bundled_catalog(vec![nvm_codex], None, pick).ok(),
+            Some(json!([{ "slug": "x" }]))
+        );
+    }
+
     #[test]
     fn codex_bundled_models_command_uses_expected_program_and_args() {
-        let command = codex_bundled_models_command(Path::new("codex"));
+        let command = codex_bundled_models_command(Path::new("codex"), None);
         assert_eq!(command.get_program(), "codex");
         assert_eq!(
             command
