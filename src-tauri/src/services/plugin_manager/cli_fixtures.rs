@@ -42,7 +42,7 @@ fn ids(entries: &[PluginEntry]) -> Vec<&str> {
 
 #[test]
 fn claude_installed_list() {
-    let listing = parse_claude_listing(&json(fixture!("claude-2.1.318/plugin-list.json")));
+    let listing = parse_claude_listing(&json(fixture!("claude-2.1.318/plugin-list.json")), None);
     assert_eq!(ids(&listing.installed), ["hello@ccs-test"]);
     let hello = &listing.installed[0];
     assert_eq!(hello.name, "hello");
@@ -56,8 +56,10 @@ fn claude_installed_list() {
 
 #[test]
 fn claude_catalog_list() {
-    let listing =
-        parse_claude_listing(&json(fixture!("claude-2.1.318/plugin-list-available.json")));
+    let listing = parse_claude_listing(
+        &json(fixture!("claude-2.1.318/plugin-list-available.json")),
+        None,
+    );
     assert_eq!(ids(&listing.installed), ["hello@ccs-test"]);
     assert!(!listing.installed[0].enabled);
     assert_eq!(
@@ -133,7 +135,7 @@ fn claude_install_that_needs_confirmation_fails_fast() {
 
 #[test]
 fn codex_installed_list() {
-    let listing = parse_codex_listing(&json(fixture!("codex-0.167.0/plugin-list.json")));
+    let listing = parse_codex_listing(&json(fixture!("codex-0.167.0/plugin-list.json")), None);
     assert_eq!(ids(&listing.installed), ["hello@ccs-test"]);
     let hello = &listing.installed[0];
     assert_eq!(hello.name, "hello");
@@ -152,7 +154,10 @@ fn codex_installed_list() {
 
 #[test]
 fn codex_catalog_list() {
-    let listing = parse_codex_listing(&json(fixture!("codex-0.167.0/plugin-list-available.json")));
+    let listing = parse_codex_listing(
+        &json(fixture!("codex-0.167.0/plugin-list-available.json")),
+        None,
+    );
     assert_eq!(ids(&listing.installed), ["hello@ccs-test"]);
     assert_eq!(ids(&listing.available), ["locked@ccs-test"]);
     assert!(
@@ -212,7 +217,7 @@ fn grok_lists_read_status_and_config_toggle() {
         fixture!("grok-1.0.70/plugin-list.json"),
         fixture!("grok-1.0.70/plugin-list-available.json"),
     ] {
-        let listing = grok::parse_listing(&json(text), config);
+        let listing = grok::parse_listing(&json(text), config, None);
         assert_eq!(ids(&listing.installed), ["hello"]);
         let hello = &listing.installed[0];
         assert_eq!(hello.marketplace, "gmkt");
