@@ -37,7 +37,7 @@ pub(crate) fn settings_file() -> LiveFile {
 
 /// 官方卡（Google 登录）：分类是官方，或按名称、推广标记认出来的 Google 官方。
 pub(crate) fn is_official(provider: &Provider) -> bool {
-    provider.category.as_deref() == Some("official") || is_google_official_gemini(provider)
+    provider.has_official_category() || is_google_official_gemini(provider)
 }
 
 /// 供应商的关键字段。第三方卡要带 `GEMINI_API_KEY`（环境变量全空的是走 Google 登录的

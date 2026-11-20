@@ -240,7 +240,7 @@ impl ProfileService {
                 *slot = Some(
                     state
                         .db
-                        .get_prompts(app.as_str())?
+                        .get_prompts(app)?
                         .values()
                         .find(|p| p.enabled)
                         .map_or_else(|| NO_ACTIVE_PROMPT.to_string(), |p| p.id.clone()),
@@ -377,7 +377,7 @@ impl ProfileService {
 
             // 1. 供应商
             if let Some(Some(target_pid)) = payload.providers.get(app) {
-                let providers = state.db.get_all_providers(app_str)?;
+                let providers = state.db.get_all_providers(app)?;
                 if !providers.contains_key(target_pid) {
                     warnings.push(format!(
                         "[{app_str}] provider '{target_pid}' no longer exists, skipped"
@@ -444,7 +444,7 @@ impl ProfileService {
             // 4. Prompt（None = 不动；NO_ACTIVE_PROMPT = 停用当前启用项；
             //    已激活则幂等跳过，避免无谓的文件写与备份）
             if let Some(Some(target_prompt)) = payload.prompts.get(app) {
-                let prompts = state.db.get_prompts(app_str)?;
+                let prompts = state.db.get_prompts(app)?;
                 match prompts.get(target_prompt) {
                     None if target_prompt == NO_ACTIVE_PROMPT => {
                         if prompts.values().any(|p| p.enabled) {

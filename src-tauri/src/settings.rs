@@ -236,6 +236,11 @@ pub struct S3SyncSettings {
     pub remote_root: String,
     #[serde(default = "default_profile")]
     pub profile: String,
+    /// Selected S3 provider preset shown in the settings UI. Purely presentational,
+    /// but persisted so an explicit choice (e.g. MinIO, whose endpoint cannot be
+    /// inferred) survives reopening the page (#6663).
+    #[serde(default)]
+    pub preset: String,
     #[serde(default)]
     pub status: WebDavSyncStatus,
 }
@@ -252,6 +257,7 @@ impl Default for S3SyncSettings {
             endpoint: String::new(),
             remote_root: default_remote_root(),
             profile: default_profile(),
+            preset: String::new(),
             status: WebDavSyncStatus::default(),
         }
     }
@@ -297,6 +303,7 @@ impl S3SyncSettings {
         self.endpoint = self.endpoint.trim().to_string();
         self.remote_root = self.remote_root.trim().to_string();
         self.profile = self.profile.trim().to_string();
+        self.preset = self.preset.trim().to_string();
         if self.remote_root.is_empty() {
             self.remote_root = default_remote_root();
         }
@@ -830,75 +837,24 @@ impl AppSettings {
     }
 
     fn normalize_paths(&mut self) {
-        self.claude_config_dir = self
-            .claude_config_dir
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-
-        self.codex_config_dir = self
-            .codex_config_dir
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-
-        self.gemini_config_dir = self
-            .gemini_config_dir
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-
-        self.grok_config_dir = self
-            .grok_config_dir
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-
-        self.opencode_config_dir = self
-            .opencode_config_dir
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-
-        self.openclaw_config_dir = self
-            .openclaw_config_dir
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-
-        self.hermes_config_dir = self
-            .hermes_config_dir
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-
-        self.pi_config_dir = self
-            .pi_config_dir
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-
-        self.omp_config_dir = self
-            .omp_config_dir
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-
-        self.dsh_config_dir = self
-            .dsh_config_dir
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
+        for dir in [
+            &mut self.claude_config_dir,
+            &mut self.codex_config_dir,
+            &mut self.gemini_config_dir,
+            &mut self.grok_config_dir,
+            &mut self.opencode_config_dir,
+            &mut self.openclaw_config_dir,
+            &mut self.hermes_config_dir,
+            &mut self.pi_config_dir,
+            &mut self.omp_config_dir,
+            &mut self.dsh_config_dir,
+        ] {
+            *dir = dir
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string);
+        }
 
         self.language = self
             .language
@@ -1353,83 +1309,28 @@ pub fn reload_settings() -> Result<(), AppError> {
     Ok(())
 }
 
-pub fn get_claude_override_dir() -> Option<PathBuf> {
+/// 用户在设置里为该应用指定的配置目录。没有目录覆盖项的应用返回 `None`。
+pub fn get_override_dir(app: &AppType) -> Option<PathBuf> {
     let settings = read_settings();
-    settings
-        .claude_config_dir
-        .as_ref()
-        .map(|p| resolve_override_path(p))
-}
-
-pub fn get_codex_override_dir() -> Option<PathBuf> {
-    let settings = read_settings();
-    settings
-        .codex_config_dir
-        .as_ref()
-        .map(|p| resolve_override_path(p))
-}
-
-pub fn get_gemini_override_dir() -> Option<PathBuf> {
-    let settings = read_settings();
-    settings
-        .gemini_config_dir
-        .as_ref()
-        .map(|p| resolve_override_path(p))
-}
-
-pub fn get_grok_override_dir() -> Option<PathBuf> {
-    let settings = read_settings();
-    settings
-        .grok_config_dir
-        .as_ref()
-        .map(|p| resolve_override_path(p))
-}
-
-pub fn get_opencode_override_dir() -> Option<PathBuf> {
-    let settings = read_settings();
-    settings
-        .opencode_config_dir
-        .as_ref()
-        .map(|p| resolve_override_path(p))
-}
-
-pub fn get_openclaw_override_dir() -> Option<PathBuf> {
-    let settings = read_settings();
-    settings
-        .openclaw_config_dir
-        .as_ref()
-        .map(|p| resolve_override_path(p))
-}
-
-pub fn get_hermes_override_dir() -> Option<PathBuf> {
-    let settings = read_settings();
-    settings
-        .hermes_config_dir
-        .as_ref()
-        .map(|p| resolve_override_path(p))
-}
-
-pub fn get_pi_override_dir() -> Option<PathBuf> {
-    let settings = read_settings();
-    settings
-        .pi_config_dir
-        .as_ref()
-        .map(|path| resolve_override_path(path))
-}
-pub fn get_omp_override_dir() -> Option<PathBuf> {
-    let settings = read_settings();
-    settings
-        .omp_config_dir
-        .as_ref()
-        .map(|path| resolve_override_path(path))
-}
-
-pub fn get_dsh_override_dir() -> Option<PathBuf> {
-    let settings = read_settings();
-    settings
-        .dsh_config_dir
-        .as_ref()
-        .map(|path| resolve_override_path(path))
+    let dir = match app {
+        AppType::Claude => &settings.claude_config_dir,
+        AppType::Codex => &settings.codex_config_dir,
+        AppType::Gemini => &settings.gemini_config_dir,
+        AppType::GrokBuild => &settings.grok_config_dir,
+        AppType::OpenCode => &settings.opencode_config_dir,
+        AppType::OpenClaw => &settings.openclaw_config_dir,
+        AppType::Hermes => &settings.hermes_config_dir,
+        AppType::Pi => &settings.pi_config_dir,
+        AppType::Omp => &settings.omp_config_dir,
+        AppType::Dsh => &settings.dsh_config_dir,
+        AppType::ClaudeDesktop
+        | AppType::Mcode
+        | AppType::Kimi
+        | AppType::Agy
+        | AppType::Copilot
+        | AppType::WorkBuddy => return None,
+    };
+    dir.as_deref().map(resolve_override_path)
 }
 
 pub fn preserve_codex_official_auth_on_switch() -> bool {
@@ -1544,10 +1445,7 @@ pub fn get_effective_current_provider(
     // 1. 从本地 settings 读取
     if let Some(local_id) = get_current_provider(app_type) {
         // 2. 验证该 ID 在数据库中存在
-        if db
-            .get_provider_by_id(&local_id, app_type.as_str())?
-            .is_some()
-        {
+        if db.get_provider_by_id(&local_id, app_type)?.is_some() {
             // 存在，直接返回
             return Ok(Some(local_id));
         }
@@ -1562,7 +1460,7 @@ pub fn get_effective_current_provider(
     }
 
     // Fallback 到数据库的 is_current
-    db.get_current_provider(app_type.as_str())
+    db.get_current_provider(app_type)
 }
 
 // ===== Skill 同步方式管理函数 =====
@@ -1691,24 +1589,23 @@ mod tests {
             .is_err());
             assert!(settings_store().is_poisoned());
         };
-        let getters: [fn() -> Option<PathBuf>; 10] = [
-            get_claude_override_dir,
-            get_codex_override_dir,
-            get_gemini_override_dir,
-            get_grok_override_dir,
-            get_opencode_override_dir,
-            get_openclaw_override_dir,
-            get_hermes_override_dir,
-            get_pi_override_dir,
-            get_omp_override_dir,
-            get_dsh_override_dir,
-        ];
-        for (getter, name) in getters.into_iter().zip([
-            "claude", "codex", "gemini", "grok", "opencode", "openclaw", "hermes", "pi", "omp",
-            "dsh",
-        ]) {
+        for (app, name) in [
+            (AppType::Claude, "claude"),
+            (AppType::Codex, "codex"),
+            (AppType::Gemini, "gemini"),
+            (AppType::GrokBuild, "grok"),
+            (AppType::OpenCode, "opencode"),
+            (AppType::OpenClaw, "openclaw"),
+            (AppType::Hermes, "hermes"),
+            (AppType::Pi, "pi"),
+            (AppType::Omp, "omp"),
+            (AppType::Dsh, "dsh"),
+        ] {
             poison();
-            assert_eq!(getter(), Some(PathBuf::from(format!("/custom/{name}"))));
+            assert_eq!(
+                get_override_dir(&app),
+                Some(PathBuf::from(format!("/custom/{name}")))
+            );
         }
         poison();
         assert_eq!(
@@ -1759,6 +1656,56 @@ mod tests {
         };
         settings.normalize_paths();
         assert_eq!(settings.language.as_deref(), Some("ko"));
+    }
+
+    #[test]
+    fn every_directory_override_is_trimmed_and_a_blank_one_is_cleared() {
+        let keys = [
+            "claudeConfigDir",
+            "codexConfigDir",
+            "geminiConfigDir",
+            "grokConfigDir",
+            "opencodeConfigDir",
+            "openclawConfigDir",
+            "hermesConfigDir",
+            "piConfigDir",
+            "ompConfigDir",
+            "dshConfigDir",
+        ];
+        for key in keys {
+            let mut padded: AppSettings =
+                serde_json::from_value(serde_json::json!({ key: "  /custom/dir \n" }))
+                    .expect("settings");
+            padded.normalize_paths();
+            let saved = serde_json::to_value(&padded).expect("serialize");
+            assert_eq!(saved[key], "/custom/dir", "{key}");
+
+            let mut blank: AppSettings =
+                serde_json::from_value(serde_json::json!({ key: "   " })).expect("settings");
+            blank.normalize_paths();
+            let saved = serde_json::to_value(&blank).expect("serialize");
+            assert!(saved.get(key).is_none(), "{key}");
+        }
+    }
+
+    #[test]
+    fn s3_preset_round_trips_and_stays_absent_from_old_files() {
+        // Files written before the preset was persisted must still load; the
+        // frontend then derives the preset from the endpoint.
+        let old: S3SyncSettings =
+            serde_json::from_value(serde_json::json!({ "endpoint": "https://minio.local:9000" }))
+                .expect("old s3 settings");
+        assert!(old.preset.is_empty());
+
+        let mut settings = S3SyncSettings {
+            preset: "  s3-minio  ".to_string(),
+            ..S3SyncSettings::default()
+        };
+        settings.normalize();
+        assert_eq!(settings.preset, "s3-minio");
+
+        let saved = serde_json::to_value(&settings).expect("serialize");
+        assert_eq!(saved["preset"], "s3-minio");
     }
 
     #[test]

@@ -61,7 +61,7 @@ fn app() -> &'static str {
 /// 官方卡：`category == "official"`，或按 `is_codex_official_provider` 认出来的（早期
 /// 绑定托管账号时没存 category 的卡）。
 pub(crate) fn is_official(provider: &Provider) -> bool {
-    provider.category.as_deref() == Some("official")
+    provider.has_official_category()
         || crate::proxy::providers::is_codex_official_provider(provider)
 }
 
@@ -474,7 +474,7 @@ fn row_facts(db: &Database) -> Result<RowFacts, AppError> {
         third_party_keys: Vec::new(),
         official_logins: Vec::new(),
     };
-    for provider in db.get_all_providers(app())?.values() {
+    for provider in db.get_all_providers(&AppType::Codex)?.values() {
         let auth = provider.settings_config.get("auth");
         if is_official(provider) {
             if managed_account(provider).is_none() {
