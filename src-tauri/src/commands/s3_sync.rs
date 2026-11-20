@@ -89,6 +89,11 @@ pub async fn s3_sync_save_settings(
 }
 
 #[tauri::command]
+pub async fn s3_sync_clear_settings() -> Result<Value, String> {
+    sync_support::sync_clear_settings::<S3Backend>().await
+}
+
+#[tauri::command]
 pub async fn s3_sync_fetch_remote_info() -> Result<Value, String> {
     sync_support::sync_fetch_remote_info::<S3Backend>().await
 }

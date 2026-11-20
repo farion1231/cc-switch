@@ -417,14 +417,6 @@ export function useModelPricing() {
   });
 }
 
-export function useProviderLimits(providerId: string, appType: string) {
-  return useQuery({
-    queryKey: usageKeys.limits(providerId, appType),
-    queryFn: () => usageApi.checkProviderLimits(providerId, appType),
-    enabled: !!providerId && !!appType,
-  });
-}
-
 export function useUpdateModelPricing() {
   const queryClient = useQueryClient();
 

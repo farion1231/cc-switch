@@ -18,8 +18,6 @@ import {
   type QuotaLine,
 } from "@/components/quota/quotaRules";
 
-export { countdownStr } from "@/components/quota/quotaRules";
-
 interface SubscriptionQuotaFooterProps {
   appId: AppId;
   inline?: boolean;

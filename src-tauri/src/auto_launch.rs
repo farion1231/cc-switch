@@ -60,14 +60,6 @@ pub fn disable_auto_launch() -> Result<(), AppError> {
     Ok(())
 }
 
-/// 检查是否已启用开机自启
-pub fn is_auto_launch_enabled() -> Result<bool, AppError> {
-    let auto_launch = get_auto_launch()?;
-    auto_launch
-        .is_enabled()
-        .map_err(|e| AppError::Message(format!("检查开机自启状态失败: {e}")))
-}
-
 #[cfg(test)]
 mod tests {
     #[allow(unused_imports)]
