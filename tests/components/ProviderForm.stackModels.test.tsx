@@ -142,7 +142,7 @@ describe("ProviderForm Stack layout (Claude Code)", () => {
       screen.getByRole("button", { name: "providerForm.advancedOptionsToggle" }),
     );
     expect(
-      screen.getByText("以下两项只在路由、聚合模式下生效。"),
+      screen.getByText("以下设置只在路由、聚合模式下生效。"),
     ).toBeVisible();
     expect(
       screen.getByRole("button", { name: "自定义 User-Agent" }),
@@ -170,7 +170,7 @@ describe("ProviderForm Stack layout (Claude Code)", () => {
     expect(values.meta?.stackModels).toEqual([
       { model: "m-s", displayName: "Model S", oneM: true },
     ]);
-    expect(settings.env.ANTHROPIC_MODEL).toBe("m-s[1M]");
+    expect(settings.env.ANTHROPIC_MODEL).toBe("m-s[1m]");
     expect(settings.env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe("m-s[1M]");
   });
 

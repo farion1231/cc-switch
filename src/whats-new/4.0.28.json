@@ -1,0 +1,33 @@
+{
+  "version": "4.0.28",
+  "items": [
+    {
+      "type": "improve",
+      "zh": "新版 Codex 直连切换后旧会话只读，改用路由或统一会话历史即可继续",
+      "zh-TW": "新版 Codex 直連切換後舊工作階段唯讀，改用路由或統一工作階段歷史即可繼續",
+      "en": "New Codex makes the other provider's sessions read-only; routing or unified history keeps them going",
+      "ja": "新 Codex は切替後の旧セッションが読み取り専用に。ルーティングか履歴統合で継続可能"
+    },
+    {
+      "type": "new",
+      "zh": "Codex 官方额度用完时可暂停官方登录，继续用第三方模型",
+      "zh-TW": "Codex 官方額度用完時可暫停官方登入，繼續用第三方模型",
+      "en": "Pause the official Codex login when its quota runs out and keep using third-party models",
+      "ja": "Codex の公式枠が尽きたら公式ログインを一時停止し、サードパーティモデルを継続利用"
+    },
+    {
+      "type": "new",
+      "zh": "应用页的安装和升级显示排队状态与实时进度",
+      "zh-TW": "應用頁的安裝與升級顯示排隊狀態與即時進度",
+      "en": "The Apps page shows queue state and live progress for installs and upgrades",
+      "ja": "アプリページでインストールと更新の待機状態と進捗を表示"
+    },
+    {
+      "type": "fix",
+      "zh": "修复 Codex 故障转移到别家时带错模型名",
+      "zh-TW": "修正 Codex 故障轉移到別家時帶錯模型名稱",
+      "en": "Codex failover no longer sends the previous vendor's model to the next one",
+      "ja": "Codex のフェイルオーバー先に前のプロバイダーのモデル名が送られる問題を修正"
+    }
+  ]
+}

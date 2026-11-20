@@ -1,0 +1,46 @@
+name: Close Schema Version PRs
+
+on:
+  pull_request_target:
+    types: [opened]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  close:
+    if: |
+      github.event.pull_request.author_association != 'OWNER' &&
+      github.event.pull_request.author_association != 'COLLABORATOR'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Close if SCHEMA_VERSION is changed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          BODY_ZH: |
+            感谢你的贡献！
+
+            这个 PR 修改了数据库版本 `SCHEMA_VERSION`。数据库迁移发布后无法撤回，多个 PR 同时占用同一个版本号也会互相冲突，所以版本号由维护者统一分配，这类 PR 会被自动关闭（见[贡献指南](https://github.com/farion1231/cc-switch/blob/main/CONTRIBUTING.md#pull-request-指南)）。这不代表否定你的想法。
+
+            如果确实需要改动数据库结构，请在下方回复，@ 任意一位维护者（`@farion1231`、`@funkpopo`、`@YUZHEthefool`、`@Owlbay`、`@SaladDay`）说明原因，我们会视情况重新打开。
+          BODY_EN: |
+            Thanks for your contribution!
+
+            This PR changes the database version `SCHEMA_VERSION`. Migrations can't be rolled back once released, and parallel PRs claiming the same version number conflict with each other, so the version is assigned by maintainers and PRs like this are closed automatically (see the [contributing guide](https://github.com/farion1231/cc-switch/blob/main/CONTRIBUTING.md#pull-request-guidelines)). This is not a judgement on your idea.
+
+            If your change really needs a schema change, please reply below, mention any one maintainer (`@farion1231`, `@funkpopo`, `@YUZHEthefool`, `@Owlbay` or `@SaladDay`) and explain why; we'll reopen it if appropriate.
+        run: |
+          gh api "repos/$GH_REPO/pulls/$PR/files" --paginate --jq '.[].patch' \
+            | grep -qE '^\+.*const SCHEMA_VERSION' || exit 0
+
+          # Reply in Chinese if the author wrote Chinese, skipping the bilingual
+          # template lines (headings, table, checklist, comments)
+          BODY=$BODY_EN
+          if gh pr view "$PR" --json title,body --jq '.title + "\n" + .body
+              | split("\n") | any(test("\\p{Han}") and (test("^\\s*(#|\\||- \\[|<!--)") | not))' \
+              | grep -q true; then
+            BODY=$BODY_ZH
+          fi
+          gh pr close "$PR" --comment "$BODY"

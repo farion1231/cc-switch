@@ -1,11 +1,13 @@
+import { createPortal } from "react-dom";
+import { badgeVariants } from "@/components/ui/badge";
+import { HoverTip } from "@/components/ui/hover-tip";
+import { cn } from "@/lib/utils";
 import { useEffect, useMemo, useState, type RefObject } from "react";
 import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/lib/toast";
 import type { Provider } from "@/types";
 import type { AppMode, StartupAttachFailure } from "@/types/proxy";
-import type { ModeAppId } from "@/config/appConfig";
-import { isProxyAppId, isStackAppId } from "@/config/appConfig";
 import { settingsApi } from "@/lib/api";
 import { providersApi } from "@/lib/api/providers";
 import { proxyApi } from "@/lib/api/proxy";
@@ -40,7 +42,7 @@ import {
   queueMoveSortUpdates,
 } from "@/components/providers/presentation";
 import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
-import { ModeTabs } from "./ModeTabs";
+import { ModeTabs, MODE_TONE } from "./ModeTabs";
 import { ModeDialog, type ModeDialogState } from "./ModeDialog";
 import {
   sameStackSubagent,
@@ -50,7 +52,9 @@ import {
 } from "./StackSubagentFields";
 import { RouteSettingsSheet } from "./RouteSettingsSheet";
 import { StackSettingsSheet } from "./StackSettingsSheet";
+import { useCodexPauseOfficialLogin } from "./CodexPauseOfficialLogin";
 import { useDesktopConfigMessages } from "./useDesktopConfigMessages";
+import { type AppIdWith, appHas } from "@/config/appSpecs";
 
 type ListCallbacks = Pick<
   React.ComponentProps<typeof ProviderList>,
@@ -66,7 +70,8 @@ type ListCallbacks = Pick<
 >;
 
 interface SwitchModePanelProps extends ListCallbacks {
-  app: ModeAppId;
+  app: AppIdWith<"routeMode">;
+  statusSlot?: HTMLDivElement | null;
   providers: Record<string, Provider>;
   currentProviderId: string;
   isLoading: boolean;
@@ -82,18 +87,19 @@ interface SwitchModePanelProps extends ListCallbacks {
   needsRouteRequest?: { providerId: string; nonce: number };
   onNeedsRouteHandled?: () => void;
   /** 正在看的那格变了：新增 / 编辑供应商按它选表单布局。需要是稳定的回调 */
-  onViewChange?: (app: ModeAppId, view: AppMode) => void;
+  onViewChange?: (app: AppIdWith<"routeMode">, view: AppMode) => void;
 }
 
 /** Gemini CLI、Grok Build、Claude Desktop 没有聚合模式（Q6）：那一格隐藏，前两格位置不变。 */
-const modesFor = (app: ModeAppId): AppMode[] =>
-  isStackAppId(app) ? ["direct", "route", "stack"] : ["direct", "route"];
+const modesFor = (app: AppIdWith<"routeMode">): AppMode[] =>
+  appHas(app, "stack") ? ["direct", "route", "stack"] : ["direct", "route"];
 
 /**
  * 切换式应用的供应商页（v7 S1–S3）：模式行 → 通知槽 → 按查看的模式分区的列表。
  * tab 只负责查看；要生效必须点写明后果的按钮（确认框），回到直连也一样。
  */
 export function SwitchModePanel({
+  statusSlot,
   app,
   providers,
   currentProviderId,
@@ -132,14 +138,15 @@ export function SwitchModePanel({
   const { data: proxyStatus } = useProxyStatusQuery();
   const serviceRunning = proxyStatus?.running ?? false;
   const { data: settings } = useSettingsQuery();
+  const pauseOfficialLogin = useCodexPauseOfficialLogin();
   // Claude Desktop 没有故障转移和路由设置（没有 proxy_config 行）
-  const hasFailover = isProxyAppId(app);
+  const hasFailover = appHas(app, "localProxy");
   const { data: failoverOn = false } = useAutoFailoverEnabled(app, hasFailover);
   const { data: queue } = useFailoverQueue(app, hasFailover);
   const setFailover = useSetAutoFailoverEnabled();
   const addToQueue = useAddToFailoverQueue();
   const removeFromQueue = useRemoveFromFailoverQueue();
-  const { data: stack } = useProxyStack(app, isStackAppId(app));
+  const { data: stack } = useProxyStack(app, appHas(app, "stack"));
   const setStackMember = useSetProxyStackMember();
   const adoptCatalog = useAdoptCodexStackCatalog();
   const modeActions = useModeActions(app);
@@ -278,7 +285,7 @@ export function SwitchModePanel({
     },
   };
 
-  // 状态行：只在看生效的那格时显示；路由只写目标，不写本机地址和端口
+  // 页头始终显示实际生效的连接，不跟随正在浏览的模式页签。
   const routeTarget = failoverOn ? t("mode.status.byQueue") : nameOf(routeId);
   const otherMembers = (stack?.members ?? []).filter(
     (member) => member.providerId !== routeId,
@@ -288,23 +295,21 @@ export function SwitchModePanel({
     0,
   );
   const status =
-    view !== active
-      ? undefined
-      : active === "direct"
-        ? { lead: t("mode.status.directLead"), value: nameOf(directId) }
-        : active === "route"
-          ? {
-              lead: t("mode.status.routeLead"),
-              value: `→ ${routeTarget}`,
-            }
-          : {
-              lead: t("mode.status.stackLead"),
-              value: t("mode.status.stackValue", {
-                name: nameOf(routeId),
-                count: otherMembers.length,
-                models: otherModels,
-              }),
-            };
+    active === "direct"
+      ? { lead: t("mode.status.directLead"), value: nameOf(directId) }
+      : active === "route"
+        ? {
+            lead: t("mode.status.routeLead"),
+            value: routeTarget,
+          }
+        : {
+            lead: t("mode.status.stackLead"),
+            value: t("mode.status.stackValue", {
+              name: nameOf(routeId),
+              count: otherMembers.length,
+              models: otherModels,
+            }),
+          };
 
   const handleFailoverChange = (enabled: boolean) => {
     if (enabled && !settings?.failoverConfirmed) {
@@ -498,6 +503,28 @@ export function SwitchModePanel({
       />,
     );
   }
+  // 暂停使用官方登录只在路由 / 聚合下生效；开着就一直提示，免得额度恢复后忘了关
+  if (app === "codex" && active !== "direct" && pauseOfficialLogin.paused) {
+    notices.push(
+      <Notice
+        key="officialLoginPaused"
+        tone="warning"
+        title={t("mode.notice.officialLoginPaused")}
+        actions={
+          <Button
+            variant="neutral"
+            size="compact"
+            disabled={pauseOfficialLogin.saving}
+            onClick={() => void pauseOfficialLogin.setPaused(false)}
+          >
+            {t("mode.notice.resumeOfficialLogin")}
+          </Button>
+        }
+      >
+        {t("mode.notice.officialLoginPausedBody")}
+      </Notice>,
+    );
+  }
   if (view !== active) {
     const cta =
       view === "route"
@@ -536,12 +563,50 @@ export function SwitchModePanel({
 
   return (
     <>
+      {statusSlot &&
+        createPortal(
+          <HoverTip content={`${status.lead} ${status.value}`}>
+            <span
+              tabIndex={0}
+              aria-label={`${status.lead} ${status.value}`}
+              className={cn(
+                badgeVariants({ variant: "outline" }),
+                "max-w-full gap-1 border-border bg-surface px-2.5 py-1 text-body font-normal",
+              )}
+            >
+              <span
+                aria-hidden="true"
+                className={cn(
+                  "me-1 h-1.5 w-1.5 shrink-0 rounded-full",
+                  (
+                    active === "direct"
+                      ? Boolean(directId && providers[directId])
+                      : serviceRunning &&
+                        modeView?.attached &&
+                        Boolean(routeId && providers[routeId])
+                  )
+                    ? MODE_TONE[active].dot
+                    : "bg-fg-3",
+                )}
+              />
+              <span className="shrink-0 text-fg-2">
+                {t(`mode.names.${active}`)}
+              </span>
+              <span aria-hidden="true" className="text-fg-3">
+                ·
+              </span>
+              <span className="min-w-0 truncate font-medium text-fg-1">
+                {active === "stack" ? nameOf(routeId) : status.value}
+              </span>
+            </span>
+          </HoverTip>,
+          statusSlot,
+        )}
       <ModeTabs
         modes={modes}
         active={active}
         view={view}
         onView={setView}
-        status={status}
         failover={
           hasFailover && view === "route" && active === "route"
             ? {
@@ -621,7 +686,7 @@ export function SwitchModePanel({
         }}
       />
 
-      {isProxyAppId(app) && (
+      {appHas(app, "localProxy") && (
         <RouteSettingsSheet
           app={app}
           open={routeSettingsOpen}

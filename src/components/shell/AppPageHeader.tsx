@@ -1,11 +1,22 @@
-import { createContext, useContext, type ReactNode } from "react";
-import { DRAG_REGION_ATTR, DRAG_REGION_STYLE } from "@/lib/platform";
+import {
+  createContext,
+  useContext,
+  useLayoutEffect,
+  useState,
+  type ReactNode,
+} from "react";
+import {
+  DRAG_REGION_ATTR,
+  DRAG_REGION_ENABLED,
+  DRAG_REGION_STYLE,
+} from "@/lib/platform";
 import { cn } from "@/lib/utils";
 
 /** 由外壳提供：Linux 自绘窗口按钮要接在每一屏页头的最右端。 */
 export const WindowControlsContext = createContext<ReactNode>(null);
 
 const NO_DRAG = { WebkitAppRegion: "no-drag" } as React.CSSProperties;
+const PAGE_HEADER_HEIGHT = 52;
 
 interface AppPageHeaderProps {
   /** 标题前的可操作元素（二级页的返回按钮）；和 icon 二选一 */
@@ -40,18 +51,22 @@ export function AppPageHeader({
   className,
 }: AppPageHeaderProps) {
   const windowControls = useContext(WindowControlsContext);
+  // 自绘窗口按钮启用时没有系统标题栏，页头必须同时提供拖动入口。
+  const dragRegionAttr = windowControls
+    ? { "data-tauri-drag-region": true }
+    : DRAG_REGION_ATTR;
   return (
     <header
       className={cn(
         "flex h-[52px] shrink-0 items-center gap-5 border-b border-border pe-4 ps-6",
         className,
       )}
-      {...DRAG_REGION_ATTR}
+      {...dragRegionAttr}
       style={DRAG_REGION_STYLE as React.CSSProperties}
     >
       {/* Tauri 只认按下的元素自身带拖动属性：标题区、标题、占位条都要带，整条才能拖窗口 */}
       <div
-        {...DRAG_REGION_ATTR}
+        {...dragRegionAttr}
         className={cn(
           "flex min-w-0 items-center gap-2.5",
           truncateTitle ? "flex-1" : "shrink-0",
@@ -71,7 +86,7 @@ export function AppPageHeader({
           </span>
         )}
         <h1
-          {...DRAG_REGION_ATTR}
+          {...dragRegionAttr}
           className={cn(
             "m-0 whitespace-nowrap",
             variant === "app" ? "text-title" : "text-page",
@@ -81,7 +96,7 @@ export function AppPageHeader({
           {title}
         </h1>
         {(subtitle || titleExtra) && (
-          <div className="flex items-center gap-1" style={NO_DRAG}>
+          <div className="flex min-w-0 items-center gap-1" style={NO_DRAG}>
             {subtitle && (
               <span className="whitespace-nowrap text-body text-fg-3">
                 {subtitle}
@@ -91,7 +106,7 @@ export function AppPageHeader({
           </div>
         )}
       </div>
-      {!truncateTitle && <div {...DRAG_REGION_ATTR} className="flex-1" />}
+      {!truncateTitle && <div {...dragRegionAttr} className="flex-1" />}
       {actions && (
         <div
           className="flex min-w-0 shrink items-center justify-end gap-2"
@@ -106,5 +121,52 @@ export function AppPageHeader({
         </div>
       )}
     </header>
+  );
+}
+
+/**
+ * 页头下沿离窗口顶部多远。页头上方可能有环境变量警告条，得量实际位置，
+ * 遮罩上复刻的窗口按钮才能和页头里的对齐。
+ */
+export function usePageHeaderBottom() {
+  const [bottom, setBottom] = useState(PAGE_HEADER_HEIGHT);
+  useLayoutEffect(() => {
+    const header = document.querySelector("#content-area header");
+    const measured = header?.getBoundingClientRect().bottom;
+    if (measured) setBottom(measured);
+  }, []);
+  return bottom;
+}
+
+/**
+ * 模态遮罩的子元素：遮罩盖住了页头，这一条铺到页头下沿，弹窗打开时照样能拖窗口，
+ * 页头最右端的窗口按钮也在这里再放一份。
+ * 放在遮罩里才收得到指针事件（Radix 把遮罩外的 body 设成 pointer-events: none），
+ * 也自然排在弹窗内容下面。
+ */
+export function ModalDragStrip() {
+  const windowControls = useContext(WindowControlsContext);
+  const height = usePageHeaderBottom();
+  if (!windowControls && !DRAG_REGION_ENABLED) return null;
+  return (
+    <div
+      data-tauri-drag-region
+      className="absolute inset-x-0 top-0"
+      style={{ height, ...DRAG_REGION_STYLE }}
+      // 不让 pointerdown 冒到 document：「点遮罩就关」的弹窗不能一拖窗口就关掉
+      onPointerDown={(event) => event.stopPropagation()}
+      // 同理不让焦点跑到遮罩里：焦点离开弹窗也算「点外面」
+      onMouseDown={(event) => event.preventDefault()}
+    >
+      {windowControls && (
+        // 让开页头 1px 下边框，和页头里的按钮严丝合缝，不然半透明遮罩下会有重影
+        <div
+          className="absolute bottom-px end-4 flex items-center gap-1"
+          style={{ height: PAGE_HEADER_HEIGHT - 1, ...NO_DRAG }}
+        >
+          {windowControls}
+        </div>
+      )}
+    </div>
   );
 }

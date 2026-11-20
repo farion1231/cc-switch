@@ -67,7 +67,7 @@ export function useProviderCategory({
           preset.category || (preset.isOfficial ? "official" : undefined),
         );
       }
-    } else if (type === "gemini" && appId === "gemini") {
+    } else if (type === "gemini" && (appId === "gemini" || appId === "agy")) {
       const preset = geminiProviderPresets[index];
       if (preset) {
         setCategory(preset.category || undefined);

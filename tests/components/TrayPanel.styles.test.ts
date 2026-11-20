@@ -24,7 +24,7 @@ afterEach(() => {
   else root.dataset.layout = originalLayout;
 });
 
-function cardFor(platform: "windows" | "macos", dark: boolean) {
+function cardFor(platform: "windows" | "macos" | "linux", dark: boolean) {
   root.classList.toggle("dark", dark);
   root.dataset.glass = platform === "macos" ? "native" : "frosted";
   root.dataset.layout = platform === "macos" ? "floating" : "joined";
@@ -47,11 +47,24 @@ describe("TrayPanel backgrounds stay scoped to each platform", () => {
   });
 
   it.each([false, true])(
+    "keeps the Linux canvas and cards opaque (dark=%s)",
+    (dark) => {
+      const style = cardFor("linux", dark);
+      expect(style.backgroundColor).toBe(
+        dark ? "rgb(36, 36, 40)" : "rgb(235, 235, 237)",
+      );
+      expect(getComputedStyle(canvas).backgroundColor).toBe(
+        style.backgroundColor,
+      );
+    },
+  );
+
+  it.each([false, true])(
     "preserves the macOS overlay on native glass (dark=%s)",
     (dark) => {
       const style = cardFor("macos", dark);
       expect(style.backgroundColor).toBe(
-        dark ? "rgba(24, 24, 27, 0.08)" : "rgba(255, 255, 255, 0.06)",
+        dark ? "rgba(30, 30, 33, 0.62)" : "rgba(246, 246, 248, 0.72)",
       );
       expect(style.boxShadow).toContain("0 6px 16px");
       expect(getComputedStyle(root).backgroundColor).toBe("rgba(0, 0, 0, 0)");

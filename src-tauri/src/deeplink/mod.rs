@@ -21,6 +21,7 @@ mod utils;
 #[cfg(test)]
 mod tests;
 
+use crate::sync_utils::MutexExt;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
@@ -59,9 +60,7 @@ static PENDING_DEEPLINK: Mutex<Option<PendingDeepLinkEntry>> = Mutex::new(None);
 static NEXT_PENDING_ID: AtomicU64 = AtomicU64::new(1);
 
 fn pending_slot() -> std::sync::MutexGuard<'static, Option<PendingDeepLinkEntry>> {
-    PENDING_DEEPLINK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+    PENDING_DEEPLINK.lock_recover()
 }
 
 /// 暂存一条待处理的深链接，覆盖还没处理的旧链接（只保留最新一条）
@@ -96,7 +95,7 @@ pub struct DeepLinkImportRequest {
     pub resource: String,
 
     // ============ Common fields ============
-    /// Target application (claude/codex/gemini) - for provider, prompt, skill
+    /// Target application (e.g. claude/codex/gemini/agy) - for provider and prompt
     #[serde(skip_serializing_if = "Option::is_none")]
     pub app: Option<String>,
     /// Resource name
@@ -153,7 +152,7 @@ pub struct DeepLinkImportRequest {
     pub description: Option<String>,
 
     // ============ MCP-specific fields ============
-    /// Target applications for MCP (comma-separated: "claude,codex,gemini")
+    /// Target applications for MCP (comma-separated: "claude,codex,gemini,agy")
     #[serde(skip_serializing_if = "Option::is_none")]
     pub apps: Option<String>,
 

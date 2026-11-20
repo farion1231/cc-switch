@@ -53,21 +53,37 @@ name = "Relay"
     expect(parse(setCodexStandaloneWebSearch(input, true))).toEqual(expected);
   });
 
-  it.each([
-    'model_providers.relay = { name = "Relay", supports_standalone_web_search = false }',
-    '[model_providers.relay] # provider\nname = "Relay"',
-    "[model_providers.relay]\nname = \"Relay\"\n[mcp_servers.fs] # tools\ncommand = 'fs'\nstartup_timeout_sec = 30.0",
-  ])(
-    "preserves every byte when the table cannot be safely edited: %s",
-    (body) => {
-      const input = `# “Keep this comment”\nmodel_provider = "relay"\n${body}\n`;
-      for (const enabled of [true, false]) {
-        expect(setCodexStandaloneWebSearch(input, enabled)).toBe(input);
-        const crlf = input.replace(/\n/g, "\r\n");
-        expect(setCodexStandaloneWebSearch(crlf, enabled)).toBe(crlf);
-      }
-    },
-  );
+  it.each(["\n", "\r\n"])("preserves an inline provider table", (eol) => {
+    const input = [
+      "# “Keep this comment”",
+      'model_provider = "relay"',
+      'model_providers.relay = { name = "Relay", supports_standalone_web_search = false }',
+      "",
+    ].join(eol);
+    for (const enabled of [true, false]) {
+      expect(setCodexStandaloneWebSearch(input, enabled)).toBe(input);
+    }
+  });
+
+  it.each(["\n", "\r\n"])("edits tables with commented headers", (eol) => {
+    const input = [
+      'model_provider = "relay"',
+      "[model_providers.relay] # provider",
+      'name = "Relay"',
+      "[mcp_servers.fs] # tools",
+      "command = 'fs'",
+      "startup_timeout_sec = 30.0",
+      "",
+    ].join(eol);
+    for (const enabled of [true, false]) {
+      expect(setCodexStandaloneWebSearch(input, enabled)).toBe(
+        input.replace(
+          'name = "Relay"',
+          `name = "Relay"${eol}supports_standalone_web_search = ${enabled}`,
+        ),
+      );
+    }
+  });
 
   it("inserts the capability without changing any unrelated text", () => {
     const input = `# “Keep this comment”\nmodel_provider = "relay"\n[model_providers.relay]\nname = 'Relay'\n\n[mcp_servers.fs]\nstartup_timeout_sec = 30.0 # keep float\n`;

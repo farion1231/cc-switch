@@ -17,6 +17,7 @@
 //! app-server 看不到，改成「变了就提醒」——目录或文件登录和用户上次确认时（[`ACK_FILENAME`]）
 //! 不同就提示可能还在用旧的，用户关掉提示时记下现在这份。`ps` 读不出来时也这样退回。
 
+use crate::sync_utils::MutexExt;
 use std::process::Output;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -138,24 +139,18 @@ fn env_slot() -> &'static Mutex<Option<Arc<Env>>> {
 }
 
 fn env() -> Arc<Env> {
-    let mut slot = env_slot()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut slot = env_slot().lock_recover();
     slot.get_or_insert_with(|| Arc::new(Env::real())).clone()
 }
 
 #[cfg(test)]
 pub(crate) fn set_test_env(env: Env) {
-    *env_slot()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Arc::new(env));
+    *env_slot().lock_recover() = Some(Arc::new(env));
 }
 
 #[cfg(test)]
 pub(crate) fn reset_test_env() {
-    *env_slot()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+    *env_slot().lock_recover() = None;
 }
 
 #[cfg(unix)]
@@ -287,9 +282,7 @@ fn record_history(
     fingerprint: &str,
     now_ms: u64,
 ) -> Vec<Generation> {
-    let _guard = history_lock()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _guard = history_lock().lock_recover();
     let mut history = read_history(store, filename);
     if history
         .last()
@@ -401,9 +394,7 @@ pub(crate) fn stale_clients(store: &DeviceStore, check_catalog: bool) -> Option<
 /// 看不到进程时，用户上次确认的目录和登录。从没确认过就把现在这份当作确认过的：装好或升级
 /// 之后第一次不提示，不能因为以前切过就声称开着的客户端还在用旧的。
 fn acknowledged(store: &DeviceStore, catalog: &str, login: Option<&str>) -> Acknowledged {
-    let _guard = history_lock()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _guard = history_lock().lock_recover();
     let path = store.file(ACK_FILENAME);
     if let Some(mut ack) = std::fs::read(&path)
         .ok()
@@ -443,9 +434,7 @@ pub(crate) fn acknowledge(store: &DeviceStore) {
         catalog: current_fingerprint(),
         login: current_login_fingerprint(),
     };
-    let _guard = history_lock()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _guard = history_lock().lock_recover();
     write_ack(store, &ack);
 }
 
@@ -665,6 +654,7 @@ fn restart_timeout() -> Duration {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::EnvVars;
     use serial_test::serial;
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
@@ -673,17 +663,16 @@ mod tests {
 
     /// 临时 home（历史文件和 Codex 目录都落在这里），结束时换回真的依赖。
     struct Scope {
+        _env: EnvVars,
         dir: tempfile::TempDir,
-        saved: Option<std::ffi::OsString>,
     }
 
     impl Scope {
         fn new() -> Self {
             let dir = tempfile::TempDir::new().unwrap();
-            let saved = std::env::var_os("CC_SWITCH_TEST_HOME");
-            std::env::set_var("CC_SWITCH_TEST_HOME", dir.path());
+            let env = EnvVars::new().set("CC_SWITCH_TEST_HOME", dir.path());
             std::fs::create_dir_all(get_codex_config_dir()).unwrap();
-            Self { dir, saved }
+            Self { _env: env, dir }
         }
 
         fn store(&self) -> DeviceStore {
@@ -694,10 +683,6 @@ mod tests {
     impl Drop for Scope {
         fn drop(&mut self) {
             reset_test_env();
-            match self.saved.take() {
-                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
-                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
-            }
         }
     }
 

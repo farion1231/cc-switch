@@ -39,6 +39,19 @@ export interface SubscriptionQuota {
   resetCredits?: ResetCredits | null;
   /** ChatGPT 订阅买的 Codex Credits 余额（额度用完后才扣）；没有时缺省 */
   creditsBalance?: number | null;
+  /** 套餐名（「Pro 200」「Google AI Pro」「SuperGrok」…），授权中心的账号额度会带；没有时缺省 */
+  planName?: string | null;
   error: string | null;
   queriedAt: number | null;
+}
+
+/** Claude 账号的套餐：Claude Code 记在凭据里（`subscriptionType` / `rateLimitTier`） */
+export interface ClaudeAccountPlan {
+  subscriptionType: string | null;
+  rateLimitTier: string | null;
+}
+
+/** 绑号卡的额度，带上这个号的套餐（读不到时缺省） */
+export interface ClaudeAccountQuota extends SubscriptionQuota {
+  plan?: ClaudeAccountPlan | null;
 }

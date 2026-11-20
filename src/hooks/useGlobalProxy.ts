@@ -11,10 +11,8 @@ import {
   getGlobalProxyUrl,
   setGlobalProxyUrl,
   testProxyUrl,
-  getUpstreamProxyStatus,
   scanLocalProxies,
   type ProxyTestResult,
-  type UpstreamProxyStatus,
   type DetectedProxy,
 } from "@/lib/api/globalProxy";
 
@@ -77,16 +75,6 @@ export function useTestProxy() {
     onError: (error: Error) => {
       toast.error(error.message);
     },
-  });
-}
-
-/**
- * 获取当前出站代理状态
- */
-export function useUpstreamProxyStatus() {
-  return useQuery<UpstreamProxyStatus>({
-    queryKey: ["upstreamProxyStatus"],
-    queryFn: getUpstreamProxyStatus,
   });
 }
 

@@ -143,7 +143,7 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn codex_oauth_model_discovery_uses_gpt6_compatible_identity() {
+    fn codex_oauth_model_discovery_uses_current_client_identity() {
         let request = build_models_request(&reqwest::Client::new(), "test-token", "test-account")
             .build()
             .unwrap();
@@ -161,9 +161,8 @@ mod tests {
             .split('.')
             .map(|part| part.parse().unwrap())
             .collect();
-        // GPT-6.1 Sol is absent from the 0.155.0 catalog for this account; the
-        // catalog gate sits above the model's advertised minimal_client_version.
-        assert!(parts.as_slice() >= [0, 159, 0].as_slice());
+        // The catalog gate can exceed a model's advertised minimal_client_version.
+        assert!(parts.as_slice() >= [0, 169, 0].as_slice());
         assert_eq!(request.headers()["version"], version);
         let models = parse_models(json!({"models": [
             {"slug": "gpt-6.1-sol", "minimal_client_version": "0.153.0"},
@@ -171,6 +170,19 @@ mod tests {
         ]}));
         assert_eq!(models[0].id, "gpt-6-sol");
         assert_eq!(models[1].id, "gpt-6.1-sol");
+    }
+
+    #[test]
+    fn parse_codex_oauth_models_preserves_gpt_6_2_astra() {
+        let models = parse_models(json!({
+            "models": [
+                { "slug": "gpt-6.2-astra", "display_name": "GPT-6.2 Astra" }
+            ]
+        }));
+
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].id, "gpt-6.2-astra");
+        assert_eq!(models[0].owned_by.as_deref(), Some("Codex"));
     }
 
     #[test]

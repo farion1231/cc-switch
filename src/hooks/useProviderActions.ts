@@ -15,6 +15,7 @@ import type {
   OpenClawProviderConfig,
   OpenClawDefaultModel,
 } from "@/types";
+import { getOpencodeDeclaredModels } from "@/components/providers/forms/helpers/opencodeFormUtils";
 import type { OpenClawSuggestedDefaults } from "@/config/openclawProviderPresets";
 import type { ProviderEditorSave } from "@/lib/api/providers";
 import { injectCodingPlanUsageScript } from "@/config/codingPlanProviders";
@@ -31,6 +32,8 @@ import { openclawKeys } from "@/hooks/useOpenClaw";
 import { supportsOfficialProxyTakeover } from "@/utils/providerCapabilities";
 import { getRoutingReason } from "@/utils/routingReason";
 import { logFrontendInfo } from "@/lib/frontendLogger";
+import { codexHistorySplitToastExtras } from "@/utils/codexHistorySplitHint";
+import { appHas } from "@/config/appSpecs";
 
 /**
  * Hook for managing provider actions (add, update, delete, switch)
@@ -99,7 +102,13 @@ export function useProviderActions(
           // 1. Merge model catalog (allowlist)
           if (modelCatalog && Object.keys(modelCatalog).length > 0) {
             const existingCatalog = (await openclawApi.getModelCatalog()) || {};
-            const mergedCatalog = { ...existingCatalog, ...modelCatalog };
+            // 新补的空条目不覆盖已有条目（别名、手加的字段）；预设条目照旧覆盖
+            const mergedCatalog = { ...existingCatalog };
+            for (const [ref, entry] of Object.entries(modelCatalog)) {
+              if (Object.keys(entry).length > 0 || !(ref in mergedCatalog)) {
+                mergedCatalog[ref] = entry;
+              }
+            }
             await openclawApi.setModelCatalog(mergedCatalog);
             await queryClient.invalidateQueries({
               queryKey: openclawKeys.health,
@@ -221,21 +230,30 @@ export function useProviderActions(
         // message for an auth-cleanup warning would point the user at the
         // wrong problem entirely.
         if (result?.warnings?.length) {
-          const authCleanupFailed = result.warnings.some((warning) =>
-            warning.startsWith("codex_auth_cleanup_failed"),
-          );
-          const hasOtherWarnings = result.warnings.some(
-            (warning) => !warning.startsWith("codex_auth_cleanup_failed"),
-          );
-          if (authCleanupFailed) {
-            toast.warning(
-              t("notifications.codexAuthCleanupFailed", {
+          const coded = [
+            {
+              code: "codex_auth_cleanup_failed",
+              message: t("notifications.codexAuthCleanupFailed", {
                 defaultValue:
                   "切换成功，但未能删除 auth.json，官方登录凭据仍留在磁盘上；如需彻底移除请手动删除 Codex 配置目录中的 auth.json",
               }),
-              { duration: 6000 },
-            );
+            },
+            {
+              code: "omo_variant_cleanup_failed",
+              message: t("notifications.omoVariantCleanupFailed", {
+                defaultValue:
+                  "切换成功，但未能删除另一个 OMO 变体（OMO / OMO Slim）的配置文件，OpenCode 可能同时加载两者；请在 OpenCode 配置目录中手动删除它",
+              }),
+            },
+          ];
+          for (const { code, message } of coded) {
+            if (result.warnings.some((warning) => warning.startsWith(code))) {
+              toast.warning(message, { duration: 6000 });
+            }
           }
+          const hasOtherWarnings = result.warnings.some(
+            (warning) => !coded.some(({ code }) => warning.startsWith(code)),
+          );
           if (hasOtherWarnings) {
             toast.warning(
               t("notifications.backfillWarning", {
@@ -246,6 +264,11 @@ export function useProviderActions(
             );
           }
         }
+
+        // 会话分组的提醒并进「切换成功」那条，不另弹
+        const splitExtras = result?.codexHistorySplit
+          ? codexHistorySplitToastExtras(result.codexHistorySplit, t)
+          : undefined;
 
         // 若已弹过 proxyRequired 警告则不再弹 success
         if (!proxyRequiredReason) {
@@ -267,7 +290,8 @@ export function useProviderActions(
           } else if (
             activeApp === "opencode" ||
             activeApp === "openclaw" ||
-            activeApp === "mcode"
+            activeApp === "mcode" ||
+            activeApp === "workbuddy"
           ) {
             messageKey = "notifications.addToConfigSuccess";
             defaultMessage = "已添加到配置";
@@ -277,6 +301,13 @@ export function useProviderActions(
             : t(messageKey, { defaultValue: defaultMessage });
           toast.success(message, {
             closeButton: true,
+            ...splitExtras,
+          });
+        } else if (splitExtras?.description) {
+          // 没弹「切换成功」时单独提醒一句，仍然只是一行
+          toast.info(splitExtras.description as string, {
+            closeButton: true,
+            duration: splitExtras.duration,
           });
         }
       } catch {
@@ -306,8 +337,8 @@ export function useProviderActions(
           },
         };
 
-        if (activeApp === "pi") {
-          await piApi.updateProviderUsageScript(provider.id, script);
+        if (appHas(activeApp, "piFamily")) {
+          await piApi.updateProviderUsageScript(provider.id, script, activeApp);
         } else {
           await providersApi.update(updatedProvider, activeApp);
         }
@@ -340,9 +371,63 @@ export function useProviderActions(
     [activeApp, queryClient, t],
   );
 
-  // Set provider as default model (OpenClaw only)
+  // OpenCode：只写 opencode.json 顶层 model，small_model 不动
+  const setOpenCodeDefaultModel = useCallback(
+    async (provider: Provider, modelId?: string) => {
+      const modelIds = getOpencodeDeclaredModels(
+        provider.id,
+        provider.settingsConfig,
+      ).map((model) => model.id);
+      if (modelIds.length === 0) {
+        toast.error(
+          t("notifications.openclawNoModels", {
+            defaultValue: "该供应商没有配置模型",
+          }),
+        );
+        return;
+      }
+      const selected = modelId ?? modelIds[0];
+      if (!modelIds.includes(selected)) {
+        toast.error(
+          t("notifications.openclawModelNotFound", {
+            defaultValue: "所选模型已不存在，请刷新后重试",
+          }),
+        );
+        return;
+      }
+
+      try {
+        await providersApi.setOpenCodeDefaultModel(
+          `${provider.id}/${selected}`,
+        );
+        await queryClient.invalidateQueries({
+          queryKey: ["opencodeDefaultModel"],
+        });
+        toast.success(
+          t("notifications.openclawDefaultModelSet", {
+            defaultValue: "已设为默认模型",
+          }),
+          { closeButton: true },
+        );
+      } catch (error) {
+        toast.error(
+          extractErrorMessage(error) ||
+            t("notifications.openclawDefaultModelSetFailed", {
+              defaultValue: "设置默认模型失败",
+            }),
+        );
+      }
+    },
+    [queryClient, t],
+  );
+
+  // Set provider as default model (OpenClaw / OpenCode)
   const setAsDefaultModel = useCallback(
     async (provider: Provider, modelId?: string) => {
+      if (activeApp === "opencode") {
+        await setOpenCodeDefaultModel(provider, modelId);
+        return;
+      }
       const config = provider.settingsConfig as OpenClawProviderConfig;
       if (!config.models || config.models.length === 0) {
         toast.error(
@@ -400,7 +485,7 @@ export function useProviderActions(
         toast.error(detail);
       }
     },
-    [queryClient, t],
+    [activeApp, queryClient, setOpenCodeDefaultModel, t],
   );
 
   return {

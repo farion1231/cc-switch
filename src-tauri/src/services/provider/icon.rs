@@ -23,8 +23,8 @@ pub const CUSTOM_ICON_PREFIX: &str = "data:image/png;base64,";
 /// 前端输出 96×96 的 PNG，最坏情况（不可压缩）base64 后约 50 KB。
 pub const MAX_CUSTOM_ICON_LENGTH: usize = 64 * 1024;
 
-/// PNG 宽高上限，和前端的 `MAX_CUSTOM_ICON_DIMENSION` 一致。前端只输出 96×96，留出余量即可。
-const MAX_CUSTOM_ICON_DIMENSION: u32 = 256;
+/// PNG 宽高上限。前端只输出 `OUTPUT_SIZE`（96×96），留出余量即可。
+pub(crate) const MAX_CUSTOM_ICON_DIMENSION: u32 = 256;
 
 /// 解码时允许分配的内存：256×256 的 16 位 RGBA 是 512 KiB，留一倍余量
 const DECODE_LIMIT_BYTES: usize = 1024 * 1024;
