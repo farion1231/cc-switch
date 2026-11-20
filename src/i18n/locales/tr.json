@@ -378,6 +378,7 @@
     "openclawModelNotFound": "Seçilen model artık mevcut değil. Yenileyin ve tekrar deneyin.",
     "backfillWarning": "Başarılı bir şekilde geçiş yapıldı ancak değişiklikler önceki sağlayıcıya kaydedilemedi",
     "codexAuthCleanupFailed": "Başarılı bir şekilde geçiş yapıldı ancak auth.json kaldırılamadı; resmi oturum açma kimlik bilgileri hâlâ diskte; bunları kaldırmak için auth.json'u Codex yapılandırma dizininden silin",
+    "omoVariantCleanupFailed": "Geçiş başarılı, ancak diğer OMO varyantının (OMO / OMO Slim) yapılandırma dosyası silinemedi, bu yüzden OpenCode ikisini birden yükleyebilir; dosyayı OpenCode yapılandırma dizininden elle silin",
     "windowControlFailed": "Pencere kontrolü başarısız oldu: {{error}}",
     "officialBlockedByProxy": "Yerel yönlendirme etkinken resmi sağlayıcıya geçilemez. Yönlendirmenin resmi API'lerle kullanılması hesabın yasaklanmasına neden olabilir.",
     "proxyOfficialWarning": "Mevcut sağlayıcı {{name}} resmidir. Yerel yönlendirmeyi kullanmadan önce üçüncü taraf bir sağlayıcıya geçmeyi düşünün.",
@@ -5403,5 +5404,11 @@
     "installFailed": "Güncelleme kurulamadı",
     "downloadingInline": "Yeni sürüm arka planda indiriliyor…",
     "downloadedInline": "İndirildi"
+  },
+  "unreadableEntry": {
+    "title": "“{{name}}” okunamıyor",
+    "hint": "CC Switch'in daha yeni bir sürümüyle kaydedilmiş olabilir. Veriler olduğu gibi korunur, düzenlenemez veya etkinleştirilemez; güncelleme verileri geri getirir ya da kaydı silebilirsiniz.",
+    "confirmTitle": "Okunamayan kaydı sil",
+    "confirmMessage": "“{{name}}” silinsin mi? Yalnızca bu CC Switch kaydı silinir; uygulamaların kendi yapılandırma dosyaları değişmez."
   }
 }

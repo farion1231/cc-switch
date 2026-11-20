@@ -514,8 +514,17 @@ pub fn members(
             log::warn!("{} 的 Stack 模型成员 {id} 没有登记 key，跳过", app.as_str());
             continue;
         };
-        let Some(provider) = db.get_provider_by_id(id, app)? else {
-            continue;
+        let provider = match db.read_provider(app, id)? {
+            Some(Ok(provider)) => provider,
+            Some(Err(entry)) => {
+                log::warn!(
+                    "{} 的 Stack 成员 {id} 读不出来，跳过: {}",
+                    app.as_str(),
+                    entry.error
+                );
+                continue;
+            }
+            None => continue,
         };
         let route = route == Some(id.as_str());
         let model_ids = model_ids_of(app, key, &provider, route);
@@ -765,7 +774,8 @@ fn resolve_desktop(
         }
     }
     let find = |key: &str, provider_id: &str| -> Result<bool, AppError> {
-        let Some(provider) = db.get_provider_by_id(provider_id, app)? else {
+        // 读不出来的成员发布不了模型，和不在库里一样不算命中，不拖累其余成员。
+        let Some(Ok(provider)) = db.read_provider(app, provider_id)? else {
             return Ok(false);
         };
         Ok(desktop_models(key, &provider)
@@ -1246,6 +1256,32 @@ mod tests {
         assert_eq!(route_flags, vec![("kimi", true, 1), ("zhipu", false, 1)]);
     }
 
+    fn break_row(db: &Database, app: &str, id: &str) {
+        db.conn
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE providers SET meta = '{' WHERE app_type = ?1 AND id = ?2",
+                [app, id],
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn an_unreadable_member_is_left_out_and_the_others_still_publish_and_resolve() {
+        let fx = fixture();
+        break_row(&fx.db, "claude", "zhipu");
+        let stack = state::stack(&fx.store, "claude").unwrap();
+
+        let members = super::members(&fx.db, &AppType::Claude, &stack, None).unwrap();
+        let ids: Vec<&str> = members.iter().map(|m| m.provider.id.as_str()).collect();
+        assert_eq!(ids, ["kimi"]);
+        assert_eq!(
+            hit(resolve_in(&fx, AppType::Claude, "ccs-claude-kimi--kimi-k3")).0,
+            "kimi"
+        );
+    }
+
     #[test]
     fn the_default_is_the_first_model_of_the_routes_list() {
         let fx = fixture();
@@ -1650,6 +1686,20 @@ mod tests {
                     .collect::<Vec<_>>(),
                 vec!["glm-5.2"]
             );
+        }
+
+        #[test]
+        fn unreadable_rows_neither_resolve_nor_break_the_other_ids() {
+            let fx = fixture();
+            // zhipu 是名单里的路由那家；gone 是移除了的成员，查不到时才会去读它。
+            for id in ["zhipu", "gone"] {
+                super::break_row(&fx.db, "claude-desktop", id);
+            }
+            let app = AppType::ClaudeDesktop;
+            let kimi = encode(&app, "kimi", "kimi-k3", false);
+            assert_eq!(hit(resolve_in(&fx, app.clone(), &kimi)).0, "kimi");
+            let gone = encode(&app, "gone", "g-1", false);
+            assert_eq!(miss(resolve_in(&fx, app, &gone)), StackMiss::Unknown);
         }
 
         #[test]
