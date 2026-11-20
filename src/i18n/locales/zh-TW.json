@@ -378,6 +378,7 @@
     "openclawModelNotFound": "所選模型已不存在，請重新整理後再試",
     "backfillWarning": "切換成功，但舊供應商設定回填失敗，您手動修改的設定可能未儲存",
     "codexAuthCleanupFailed": "切換成功，但未能刪除 auth.json，官方登入憑證仍留在磁碟上；如需徹底移除請手動刪除 Codex 設定目錄中的 auth.json",
+    "omoVariantCleanupFailed": "切換成功，但未能刪除另一個 OMO 變體（OMO / OMO Slim）的設定檔，OpenCode 可能同時載入兩者；請在 OpenCode 設定目錄中手動刪除它",
     "windowControlFailed": "視窗控制失敗：{{error}}",
     "officialBlockedByProxy": "本地路由模式下不能切換至官方供應商，使用路由存取官方 API 可能導致帳號被封鎖",
     "proxyOfficialWarning": "目前供應商 {{name}} 是官方供應商，建議切換至第三方供應商後再使用本地路由",
@@ -463,8 +464,7 @@
     "tabProxy": "路由",
     "authCenter": {
       "description": "把 GitHub Copilot、ChatGPT、xAI 訂閱當作供應商用。憑證由路由服務注入，相關供應商要在路由模式下使用（Codex 官方登入綁定除外）。Antigravity 帳號用來切換 agy 的官方登入。",
-      "beta": "Beta",
-      "xaiOauthDescription": "管理 xAI / Grok 帳號"
+      "beta": "Beta"
     },
     "advanced": {
       "configDir": {
@@ -1121,7 +1121,6 @@
       "pricingModelSourceLabel": "計費模式",
       "pricingModelSourceRequest": "請求模型",
       "pricingModelSourceResponse": "回傳模型",
-      "pricingSave": "儲存計費設定",
       "pricingSaved": "計費設定已儲存",
       "pricingSaveFailed": "儲存計費設定失敗：{{error}}",
       "pricingLoadFailed": "載入計費設定失敗：{{error}}"
@@ -2937,7 +2936,6 @@
     "geminiTitle": "Gemini MCP 管理",
     "unifiedPanel": {
       "title": "MCP 伺服器管理",
-      "deleteServer": "刪除伺服器",
       "deleteConfirm": "確定要刪除伺服器 \"{{id}}\" 嗎？此操作無法復原。",
       "enabledApps": "啟用的應用程式",
       "importSuccess": "成功匯入 {{count}} 個 MCP 伺服器",
@@ -2984,28 +2982,20 @@
       "tagsPlaceholder": "stdio, time, utility",
       "homepage": "首頁連結",
       "docs": "文件連結",
-      "jsonPlaceholder": "{\n  \"type\": \"stdio\",\n  \"command\": \"uvx\",\n  \"args\": [\"mcp-server-fetch\"]\n}",
-      "tomlConfig": "完整的 TOML 設定",
-      "tomlPlaceholder": "type = \"stdio\"\ncommand = \"uvx\"\nargs = [\"mcp-server-fetch\"]",
-      "syncOtherSide": "同步至 {{target}}"
+      "tomlConfig": "完整的 TOML 設定"
     },
     "wizard": {
       "title": "MCP 設定精靈",
       "hint": "快速設定 MCP 伺服器，自動產生 JSON 設定",
       "type": "類型",
-      "typeStdio": "stdio",
-      "typeSse": "sse",
       "command": "命令",
       "commandPlaceholder": "npx 或 uvx",
       "args": "參數",
-      "argsPlaceholder": "arg1\narg2",
       "env": "環境變數",
-      "envPlaceholder": "KEY1=value1\nKEY2=value2",
       "url": "URL",
       "urlPlaceholder": "https://api.example.com/mcp",
       "urlRequired": "請輸入 URL",
       "headers": "請求標頭（選填）",
-      "headersPlaceholder": "Authorization: Bearer your_token_here\nContent-Type: application/json",
       "preview": "設定預覽",
       "apply": "套用設定"
     },
@@ -3528,7 +3518,6 @@
       "archiveDownloadTooLarge": "倉庫壓縮檔下載超過 {{limit_mb}} MB 上限，已中止",
       "archiveTooManyEntries": "壓縮檔項目過多（{{count}}），上限 {{limit}}",
       "downloadFailed": "下載失敗：HTTP {{status}}",
-      "httpError": "HTTP 錯誤 {{status}}",
       "http403": "GitHub 存取受限，可能是請求頻率過高",
       "http404": "儲存庫或分支不存在，請檢查位址；私有儲存庫需要先在「管理技能儲存庫」中設定存取權杖",
       "http429": "請求過於頻繁，請等待後重試",
@@ -3541,7 +3530,6 @@
       "repoTokenStorageFailed": "無法讀寫 {{host}} 的存取權杖，請檢查系統的憑證儲存區是否可用",
       "getHomeDirFailed": "無法取得使用者主目錄",
       "noSkillsInZip": "ZIP 檔案中未找到技能（需包含 SKILL.md 檔案）",
-      "networkError": "網路錯誤",
       "unknownError": "未知錯誤",
       "suggestion": {
         "checkNetwork": "請檢查網路連線",
@@ -3769,7 +3757,6 @@
       "repo": "GitHub 儲存庫",
       "directory": "目標目錄",
       "branch": "分支",
-      "skillsPath": "Skills 路徑",
       "hint": "此操作將新增 Skill 儲存庫至清單。",
       "hintDetail": "新增後，您可以在 Skills 管理介面中選擇安裝具體的 Skill。"
     },
@@ -3866,7 +3853,6 @@
   },
   "proxy": {
     "panel": {
-      "currentProvider": "目前 Provider：",
       "openSettings": "設定路由服務",
       "stats": {
         "activeConnections": "活躍連線",
@@ -3927,10 +3913,6 @@
           "label": "非串流逾時（秒）",
           "description": "非串流請求的總逾時時間"
         }
-      },
-      "validation": {
-        "retryMin": "重試次數不能為負",
-        "retryMax": "重試次數不能超過 10"
       },
       "actions": {
         "save": "儲存設定"
@@ -5443,5 +5425,11 @@
     "installFailed": "安裝更新失敗",
     "downloadingInline": "正在背景下載新版本…",
     "downloadedInline": "已下載完畢"
+  },
+  "unreadableEntry": {
+    "title": "「{{name}}」的資料無法讀取",
+    "hint": "可能由較新版本的 CC Switch 寫入。資料已原樣保留，無法編輯或啟用；升級後即可恢復，也可以刪除。",
+    "confirmTitle": "刪除無法讀取的項目",
+    "confirmMessage": "刪除「{{name}}」？只刪除 CC Switch 中的這筆記錄，不變更各應用自己的設定檔。"
   }
 }

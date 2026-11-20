@@ -50,6 +50,14 @@ pub async fn get_mcp_servers(
     McpService::get_all_servers(&state)
 }
 
+/// 库里读不出来的 MCP 服务器（只给界面展示、删除）。
+#[tauri::command]
+pub async fn get_unreadable_mcp_servers(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::database::UnreadableEntry>, AppError> {
+    McpService::list_unreadable(&state)
+}
+
 #[tauri::command]
 pub async fn upsert_mcp_server(
     state: State<'_, AppState>,

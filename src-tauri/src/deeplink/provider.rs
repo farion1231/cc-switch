@@ -200,10 +200,7 @@ fn copilot_link_provider_id(state: &AppState, name: &str) -> Result<String, AppE
     slug.truncate(56);
     let slug = slug.trim_end_matches('-').to_string();
     let taken = |id: &str| -> Result<bool, AppError> {
-        Ok(state
-            .db
-            .get_provider_by_id(id, &AppType::Copilot)?
-            .is_some()
+        Ok(state.db.provider_exists(id, &AppType::Copilot)?
             || crate::copilot_config::provider_key_exists(id)?)
     };
     if !taken(&slug)? {

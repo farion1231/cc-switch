@@ -37,6 +37,21 @@ pub async fn get_providers(
     )
 }
 
+/// 库里读不出来的供应商（只给界面展示、删除）。
+#[tauri::command]
+pub async fn get_unreadable_providers(
+    state: State<'_, AppState>,
+    app: String,
+) -> Result<Vec<crate::database::UnreadableEntry>, String> {
+    let app_type = AppType::from_str(&app)?;
+    let state = state.inner().clone();
+    Ok(tauri::async_runtime::spawn_blocking(move || {
+        ProviderService::list_unreadable(&state, app_type)
+    })
+    .await
+    .map_err(|e| format!("读取供应商列表任务失败: {e}"))??)
+}
+
 #[tauri::command]
 pub async fn get_current_provider(
     state: State<'_, AppState>,
@@ -329,7 +344,11 @@ pub async fn import_claude_desktop_providers_from_claude(
 }
 
 fn import_claude_desktop_providers_from_claude_blocking(state: &AppState) -> Result<usize, String> {
-    let claude_providers = state.db.get_all_providers(&AppType::Claude)?;
+    // 读不出来的 Claude 供应商没法转换，跳过；它在 Claude 那边原样保留。
+    let claude_providers = state
+        .db
+        .get_provider_rows(&AppType::Claude)?
+        .into_readable("从 Claude 导入 Claude Desktop 供应商");
     let existing_ids = state.db.get_provider_ids(&AppType::ClaudeDesktop)?;
 
     let mut imported = 0usize;
@@ -630,9 +649,11 @@ async fn query_provider_usage_inner(
     // 从数据库读取供应商信息，检查特殊模板类型
     let providers = state
         .db
-        .get_all_providers(&app_type)
+        .get_provider_rows(&app_type)
         .map_err(|e| format!("Failed to get providers: {e}"))?;
-    let provider = providers.get(provider_id);
+    let provider = providers
+        .get(provider_id)
+        .map_err(|e| format!("Failed to get providers: {e}"))?;
     let usage_script = provider
         .and_then(|p| p.meta.as_ref())
         .and_then(|m| m.usage_script.as_ref());

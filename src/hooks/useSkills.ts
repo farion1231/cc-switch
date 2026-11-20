@@ -17,7 +17,6 @@ import {
   type SkillDiscoveryResult,
   type SkillUpdateCheckResult,
   type SkillUpdateInfo,
-  type SkillsShSearchResult,
 } from "@/lib/api/skills";
 import type { AppId } from "@/lib/api/types";
 import {
@@ -619,7 +618,6 @@ export type {
   ImportSkillSelection,
   SkillBackupEntry,
   SkillUpdateInfo,
-  SkillsShSearchResult,
   AppId,
 };
 
