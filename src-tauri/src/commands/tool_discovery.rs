@@ -61,7 +61,7 @@ fn should_skip_cli_path_env_dir(path: &Path) -> bool {
 }
 
 #[cfg(target_os = "windows")]
-fn is_windows_app_execution_alias_dir(path: &Path) -> bool {
+pub(in crate::commands) fn is_windows_app_execution_alias_dir(path: &Path) -> bool {
     let normalized = path
         .to_string_lossy()
         .replace('/', "\\")

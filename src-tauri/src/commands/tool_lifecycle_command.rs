@@ -147,7 +147,7 @@ const AGY_INSTALL_WINDOWS_SCRIPT: &str = "irm https://antigravity.google/cli/ins
 const CODEX_INSTALL_WINDOWS_SCRIPT: &str = "irm https://chatgpt.com/codex/install.ps1 | iex";
 
 #[cfg(target_os = "windows")]
-fn powershell_encoded_command(script: &str) -> String {
+pub(in crate::commands) fn powershell_encoded_command(script: &str) -> String {
     use base64::{engine::general_purpose::STANDARD, Engine as _};
 
     let mut bytes = Vec::with_capacity(script.len() * 2);
