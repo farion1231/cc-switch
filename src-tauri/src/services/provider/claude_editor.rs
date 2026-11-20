@@ -733,7 +733,10 @@ mod tests {
         claude_direct::switch_to(&db, Some(&updated), &b).expect("switch to b");
         let after_switch: Value =
             serde_json::from_slice(&std::fs::read(&path).expect("read after")).expect("after json");
-        assert_eq!(after_switch["env"]["ANTHROPIC_BASE_URL"], "https://b.example");
+        assert_eq!(
+            after_switch["env"]["ANTHROPIC_BASE_URL"],
+            "https://b.example"
+        );
         assert_eq!(after_switch["modelPicker"], user_picker);
     }
 }

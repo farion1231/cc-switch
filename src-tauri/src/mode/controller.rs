@@ -6386,7 +6386,11 @@ model_provider = "c"
         ProviderService::switch(&state, AppType::Claude, "b").expect("switch");
         ProviderService::switch(&state, AppType::Claude, "a").expect("switch back");
 
-        let mut row = state.db.get_provider_by_id("a", "claude").unwrap().unwrap();
+        let mut row = state
+            .db
+            .get_provider_by_id("a", &AppType::Claude)
+            .unwrap()
+            .unwrap();
         let base =
             ProviderService::editor_view(&state, AppType::Claude, &row.settings_config, None)
                 .expect("view")

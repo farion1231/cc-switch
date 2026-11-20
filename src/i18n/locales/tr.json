@@ -4395,7 +4395,7 @@
       "resumeOfficialLogin": "Resmî girişi sürdür",
       "attachFailed": "{{mode}} önceki başlangıçta yeniden bağlanamadığı için {{app}} doğrudan bağlantıya döndü.",
       "attachDrifted": "CC Switch kapalıyken {{app}} yapılandırması değiştirildiği için {{mode}} yeniden bağlanmadı ve dosya olduğu gibi bırakıldı.",
-      "attachUnreadable": "{{app}} yapılandırma dosyası okunamadığı (yok ya da ayrıştırılamıyor) için {{mode}} yeniden bağlanmadı ve {{app}} doğrudan bağlantıya döndü."
+      "attachUnreadable": "{{app}} yapılandırma dosyası okunamadığı (yok ya da ayrıştırılamıyor) için {{mode}} yeniden bağlanmadı ve doğrudan bağlantıya dönüldü."
     },
     "toast": {
       "enteredRoute": "{{app}} artık yönlendirme yapıyor → {{provider}}.",
