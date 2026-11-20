@@ -514,7 +514,7 @@ pub fn members(
             log::warn!("{} 的 Stack 模型成员 {id} 没有登记 key，跳过", app.as_str());
             continue;
         };
-        let Some(provider) = db.get_provider_by_id(id, app.as_str())? else {
+        let Some(provider) = db.get_provider_by_id(id, app)? else {
             continue;
         };
         let route = route == Some(id.as_str());
@@ -700,7 +700,7 @@ pub fn resolve(
     let Some(provider_id) = stack.keys.get(key) else {
         return Ok(Resolved::Miss(StackMiss::Unknown));
     };
-    let provider = db.get_provider_by_id(provider_id, app.as_str())?;
+    let provider = db.get_provider_by_id(provider_id, app)?;
     let Some(provider) = provider else {
         return Ok(Resolved::Miss(StackMiss::Deleted));
     };
@@ -765,7 +765,7 @@ fn resolve_desktop(
         }
     }
     let find = |key: &str, provider_id: &str| -> Result<bool, AppError> {
-        let Some(provider) = db.get_provider_by_id(provider_id, app.as_str())? else {
+        let Some(provider) = db.get_provider_by_id(provider_id, app)? else {
             return Ok(false);
         };
         Ok(desktop_models(key, &provider)
@@ -1167,7 +1167,7 @@ mod tests {
             ),
             provider("gone", "Gone", None, json!({ "ANTHROPIC_MODEL": "g-1" })),
         ] {
-            db.save_provider("claude", &row).unwrap();
+            db.save_provider(&AppType::Claude, &row).unwrap();
         }
         state::update(&store, |live| {
             let claude = live.apps.entry("claude".to_string()).or_default();
@@ -1261,7 +1261,7 @@ mod tests {
                 { "model": "kimi-k3" }
             ]),
         );
-        fx.db.save_provider("claude", &kimi).unwrap();
+        fx.db.save_provider(&AppType::Claude, &kimi).unwrap();
         let stack = state::stack(&fx.store, "claude").unwrap();
         let published = published_members(&fx.db, &AppType::Claude, &stack, Some("kimi")).unwrap();
         let default = claude_route_default(&published).unwrap();
@@ -1369,7 +1369,7 @@ mod tests {
             "config": "model = \"deepseek-v4-flash\"\n",
             "modelCatalog": { "models": [{ "model": "deepseek-v4-pro" }] },
         });
-        fx.db.save_provider("codex", &deepseek).unwrap();
+        fx.db.save_provider(&AppType::Codex, &deepseek).unwrap();
         state::update(&fx.store, |live| {
             let stack = &mut live.apps.entry("codex".to_string()).or_default().stack;
             stack.members = vec!["ds".to_string()];
@@ -1508,7 +1508,7 @@ mod tests {
                 ),
                 card("gone", "Gone", &[("claude-sonnet-5", "g-1", None, false)]),
             ] {
-                db.save_provider("claude-desktop", &row).unwrap();
+                db.save_provider(&AppType::ClaudeDesktop, &row).unwrap();
             }
             state::update(&store, |live| {
                 let desktop = live.apps.entry("claude-desktop".to_string()).or_default();
@@ -1713,7 +1713,7 @@ mod tests {
             };
             for key in ["relay-484", "relay-1944"] {
                 let row = card(key, key, &[("claude-sonnet-5", "kimi-k3", None, false)]);
-                fx.db.save_provider("claude-desktop", &row).unwrap();
+                fx.db.save_provider(&AppType::ClaudeDesktop, &row).unwrap();
             }
             state::update(&fx.store, |live| {
                 let desktop = live.apps.entry("claude-desktop".to_string()).or_default();

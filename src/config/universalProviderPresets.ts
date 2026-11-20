@@ -114,10 +114,3 @@ export function createUniversalProviderFromPreset(
     createdAt: Date.now(),
   };
 }
-
-/**
- * 获取预设的显示名称（用于 UI）
- */
-export function getPresetDisplayName(preset: UniversalProviderPreset): string {
-  return preset.name;
-}

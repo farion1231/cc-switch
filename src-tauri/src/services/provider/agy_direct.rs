@@ -4,6 +4,7 @@
 use serde_json::{json, Value};
 
 use crate::agy_config;
+use crate::app_config::AppType;
 use crate::database::Database;
 use crate::error::AppError;
 use crate::provider::Provider;
@@ -85,7 +86,7 @@ pub(crate) fn key_resume_target(
     db: &Database,
     command: &str,
 ) -> Result<Option<(Provider, String)>, AppError> {
-    for provider in db.get_all_providers("agy")?.into_values() {
+    for provider in db.get_all_providers(&AppType::Agy)?.into_values() {
         let dir = agy_config::key_profile_dir(&provider.id);
         let prefix = agy_config::resume_command(Some(&dir), "");
         let Some(id) = command.strip_prefix(&prefix) else {

@@ -1204,7 +1204,7 @@ mod tests {
     }
 
     #[test]
-    fn codex_oauth_generation_uses_gpt6_compatible_identity() {
+    fn codex_oauth_generation_uses_current_client_identity() {
         let headers: http::HeaderMap = ClaudeAdapter::new()
             .get_auth_headers(&AuthInfo::new(
                 "test-token".into(),
@@ -1221,10 +1221,9 @@ mod tests {
             .split('.')
             .map(|part| part.parse().unwrap())
             .collect();
-        // GPT-6.1 Sol requires the newer Codex client identity on ChatGPT accounts.
         assert!(
-            version.as_slice() >= [0, 159, 0].as_slice(),
-            "gpt-6.1-sol requires Codex >= 0.159.0; sent {version:?}"
+            version.as_slice() >= [0, 169, 0].as_slice(),
+            "ChatGPT OAuth requests should advertise Codex >= 0.169.0; sent {version:?}"
         );
     }
 
