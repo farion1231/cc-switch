@@ -4697,6 +4697,7 @@
       "sameName": "Listede zaten bulunan sunucular için yalnızca eşleşen uygulamalar etkinleştirildi; CC Switch’teki yapılandırma önceliğini korur.",
       "failedTitle": "Bazı uygulamalar okunamadı",
       "filesTitle": "Hangi dosyalar okundu",
+      "extraSourceLabel": "Diğer kaynaklar",
       "claudeNote": " (üst düzey mcpServers)",
       "dshNote": " (başlatılmış her profile yazılır: web, desktop, headless, acp. Ana düzeydeki ~/.dsh/cordis.patch.yml okunmaz ve yazılmaz; içindeki MCP sunucularını o dosyada yönetin)",
       "ok": "Anladım"

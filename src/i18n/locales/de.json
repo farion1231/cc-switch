@@ -4766,6 +4766,7 @@
       "sameName": "Bei Servern, die bereits in der Liste stehen, wurden nur die passenden App-Schalter eingeschaltet; die Konfiguration in CC Switch hat weiterhin Vorrang.",
       "failedTitle": "Einige Apps konnten nicht gelesen werden",
       "filesTitle": "Welche Dateien gelesen wurden",
+      "extraSourceLabel": "Weitere Quellen",
       "claudeNote": " (mcpServers auf oberster Ebene)",
       "dshNote": " (in jedes initialisierte Profil geschrieben: web, desktop, headless, acp. Die Datei auf Home-Ebene ~/.dsh/cordis.patch.yml wird weder gelesen noch geschrieben; MCP-Server darin bitte dort verwalten)",
       "ok": "Verstanden"
