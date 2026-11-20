@@ -240,6 +240,8 @@ describe("UnifiedSkillsPanel", () => {
     const codexCell = screen.getByRole("button", { name: lockedLabel });
     expect(codexCell).toHaveAttribute("aria-pressed", "true");
     expect(codexCell.querySelector("svg.lucide-lock")).not.toBeNull();
+    expect(columns()[1]).toBeDisabled();
+    expect(columns()[1]).toHaveTextContent("1");
 
     await userEvent.click(codexCell);
 

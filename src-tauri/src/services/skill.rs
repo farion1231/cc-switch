@@ -2675,9 +2675,7 @@ impl SkillService {
     /// 禁用：从应用目录删除
     pub fn toggle_app(db: &Arc<Database>, id: &str, app: &AppType, enabled: bool) -> Result<()> {
         let _state_guard = skill_state_write_guard();
-        if crate::settings::get_skill_storage_location() == SkillStorageLocation::Unified
-            && app.scans_agents_skills_dir()
-        {
+        if Self::uses_unified_skill_discovery(app) {
             return Err(anyhow!(
                 "Cannot change {app:?} Skill state while Unified storage is active"
             ));
@@ -3070,7 +3068,15 @@ impl SkillService {
         app_dir.join(directory).is_dir()
     }
 
+    fn uses_unified_skill_discovery(app: &AppType) -> bool {
+        crate::settings::get_skill_storage_location() == SkillStorageLocation::Unified
+            && app.scans_agents_skills_dir()
+    }
+
     fn preflight_install_destination(source: &Path, directory: &str, app: &AppType) -> Result<()> {
+        if Self::uses_unified_skill_discovery(app) {
+            return Ok(());
+        }
         let ssot_dir = Self::get_ssot_dir()?;
         let app_dir = Self::get_distinct_app_skills_dir(&ssot_dir, app)?;
         if !matches!(
@@ -3244,7 +3250,7 @@ impl SkillService {
     /// - Symlink: 仅使用 symlink
     /// - Copy: 仅使用文件复制
     pub fn sync_to_app_dir(directory: &str, app: &AppType) -> Result<()> {
-        if matches!(app, AppType::ClaudeDesktop) {
+        if matches!(app, AppType::ClaudeDesktop) || Self::uses_unified_skill_discovery(app) {
             return Ok(());
         }
 
@@ -3552,6 +3558,7 @@ impl SkillService {
         let _state_guard = skill_state_read_guard();
         AppType::all()
             .filter(Self::is_sync_managed_app)
+            .filter(|app| !Self::uses_unified_skill_discovery(app))
             .map(|app| {
                 let (error, failed_skills) = match Self::sync_to_app_unlocked(db, &app) {
                     Ok(failed) => (None, failed),
@@ -3574,7 +3581,7 @@ impl SkillService {
     /// 返回同步失败、被跳过的 Skill（整个应用失败时返回 Err）。
     fn sync_to_app_unlocked(db: &Arc<Database>, app: &AppType) -> Result<Vec<SkillSyncFailure>> {
         let mut failed = Vec::new();
-        if !Self::is_sync_managed_app(app) {
+        if !Self::is_sync_managed_app(app) || Self::uses_unified_skill_discovery(app) {
             return Ok(failed);
         }
 
@@ -8190,6 +8197,85 @@ mod tests {
         assert!(fs::read_to_string(native.join("conflict/SKILL.md"))
             .unwrap()
             .contains("external"));
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn unified_discovery_skips_projections_across_skill_write_paths() {
+        let temp = tempdir().unwrap();
+        let _home = TestHomeGuard::set(temp.path());
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::Unified);
+        let remote = tempdir().unwrap();
+        let service = SkillService {
+            repo_fixture: Some(remote.path().to_path_buf()),
+            ..SkillService::new()
+        };
+        let db = Arc::new(Database::memory().unwrap());
+        let mut skill = poisoned_skill("owner/repo:test-skill", "test-skill");
+        skill.repo_owner = Some("owner".into());
+        skill.repo_name = Some("repo".into());
+        skill.repo_branch = Some("main".into());
+        let source = SkillService::get_ssot_dir().unwrap().join("test-skill");
+        write_skill(&source, "old content");
+        write_skill(&remote.path().join("test-skill"), "new content");
+        for app in [
+            AppType::Codex,
+            AppType::Gemini,
+            AppType::OpenCode,
+            AppType::OpenClaw,
+        ] {
+            skill.apps.set_enabled_for(&app, true);
+            SkillService::persist_and_sync_new_skill(&db, &skill, &app).unwrap();
+            assert!(!SkillService::get_app_skills_dir(&app)
+                .unwrap()
+                .join("test-skill")
+                .exists());
+        }
+        service.update_skill(&db, &skill.id).await.unwrap();
+        let imported = SkillService::import_from_apps(
+            &db,
+            vec![ImportSkillSelection {
+                directory: "test-skill".into(),
+                apps: skill.apps.clone(),
+            }],
+        )
+        .unwrap();
+        for imported_skill in imported {
+            if imported_skill.id != skill.id {
+                db.delete_skill(&imported_skill.id).unwrap();
+            }
+        }
+        // Even existing user copies must remain untouched by supplier switching or resync.
+        for app in [AppType::Codex, AppType::Gemini, AppType::OpenCode] {
+            let root = SkillService::get_app_skills_dir(&app).unwrap();
+            write_skill(&root.join("user-copy"), "user content");
+            SkillService::sync_to_app(&db, &app).unwrap();
+            assert!(root.join("user-copy/SKILL.md").is_file());
+            assert!(!root.join("test-skill").exists());
+        }
+        let outcomes = SkillService::resync_all_apps(&db);
+        assert!(outcomes
+            .iter()
+            .all(|outcome| !["codex", "gemini", "opencode", "openclaw"]
+                .contains(&outcome.app.as_str())));
+        let backup = SkillService::create_uninstall_backup(&skill)
+            .unwrap()
+            .unwrap();
+        for app in [AppType::Codex, AppType::Gemini, AppType::OpenCode] {
+            db.delete_skill(&skill.id).unwrap();
+            SkillService::remove_path(&source).unwrap();
+            SkillService::restore_from_backup(
+                &db,
+                backup.file_name().unwrap().to_str().unwrap(),
+                &app,
+            )
+            .unwrap();
+            assert!(source.join("SKILL.md").is_file());
+            assert!(!SkillService::get_app_skills_dir(&app)
+                .unwrap()
+                .join("test-skill")
+                .exists());
+        }
     }
 
     #[test]

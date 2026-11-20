@@ -140,12 +140,18 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
 }) => {
   const { t, i18n } = useTranslation();
   const { data: settings } = useSettingsQuery();
-  const lockedApps: AppId[] =
-    settings?.skillStorageLocation === "unified"
-      ? ["codex", "gemini", "opencode", "openclaw"]
-      : [];
+  const lockedApps = useMemo<AppId[]>(
+    () =>
+      settings?.skillStorageLocation === "unified"
+        ? ["codex", "gemini", "opencode", "openclaw"]
+        : [],
+    [settings?.skillStorageLocation],
+  );
   const appIds = useVisibleAppIds(APP_IDS_WITH.skills);
-  const { targets, setTargets, installTo } = useSkillInstallTargets(appIds);
+  const { targets, setTargets, installTo } = useSkillInstallTargets(
+    appIds,
+    lockedApps,
+  );
 
   const [view, setView] = useState<SkillsView>(initialView);
   // 「发现」段第一次打开后就一直挂着（隐藏而不卸载），来回切不再重新加载仓库列表
@@ -351,8 +357,10 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     });
   }, [installedSkills]);
 
+  const isEnabled = (skill: InstalledSkill, app: AppId) =>
+    lockedApps.includes(app) || Boolean(skill.apps[app]);
   const enabledCount = (skill: InstalledSkill) =>
-    APP_IDS_WITH.skills.filter((app) => skill.apps[app]).length;
+    APP_IDS_WITH.skills.filter((app) => isEnabled(skill, app)).length;
 
   const normalizedQuery = searchQuery.trim().toLocaleLowerCase();
   const filteredSkills = useMemo(() => {
@@ -361,7 +369,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
       if (statusFilter === "none" && enabledCount(skill) > 0) return false;
       if (statusFilter.startsWith("app:")) {
         const app = statusFilter.slice(4) as AppId;
-        if (!skill.apps[app]) return false;
+        if (!isEnabled(skill, app)) return false;
       }
       if (sourceFilter !== "all" && sourceKey(skill) !== sourceFilter) {
         return false;
@@ -385,6 +393,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     sourceFilter,
     normalizedQuery,
     updatesMap,
+    lockedApps,
   ]);
 
   // 「可更新」筛选下把最后一个也更新完：回到全部，免得停在空表上
@@ -548,6 +557,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
   };
 
   const handleColumnBulk = (app: AppId, enabled: boolean) => {
+    if (lockedApps.includes(app)) return;
     const ids = scope.rows
       .filter((skill) => Boolean(skill.apps[app]) !== enabled)
       .map((skill) => skill.id);
@@ -559,6 +569,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
   };
 
   const handleSelectionToggle = (app: AppId, enabled: boolean) => {
+    if (lockedApps.includes(app)) return;
     const chosen = installedSkills.filter((skill) => selected.has(skill.id));
     const ids = chosen
       .filter((skill) => Boolean(skill.apps[app]) !== enabled)
@@ -1226,8 +1237,8 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
               <div className="flex shrink-0">
                 {appIds.map((app) => {
                   const isPi = app === "pi";
-                  const onInScope = scope.rows.filter(
-                    (skill) => skill.apps[app],
+                  const onInScope = scope.rows.filter((skill) =>
+                    isEnabled(skill, app),
                   ).length;
                   const appFilter: StatusFilter = `app:${app}`;
                   return (
@@ -1235,7 +1246,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
                       key={app}
                       app={app}
                       enabledCount={
-                        installedSkills.filter((skill) => skill.apps[app])
+                        installedSkills.filter((skill) => isEnabled(skill, app))
                           .length
                       }
                       totalCount={nInstalled}
@@ -1248,8 +1259,14 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
                       }
                       scopeKind={scope.kind}
                       noun={noun}
-                      disabled={controlsDisabled}
-                      title={isPi ? t("skillsPage.piColumnTitle") : undefined}
+                      disabled={controlsDisabled || lockedApps.includes(app)}
+                      title={
+                        lockedApps.includes(app)
+                          ? lockedMessage(app)
+                          : isPi
+                            ? t("skillsPage.piColumnTitle")
+                            : undefined
+                      }
                       help={
                         isPi
                           ? {
@@ -1422,7 +1439,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
               renderViewTabs={(trailing) =>
                 viewTabsTrailing("discover", trailing)
               }
-              visibleAppIds={appIds}
+              visibleAppIds={appIds.filter((app) => !lockedApps.includes(app))}
               installTargets={targets}
               onInstallTargetsChange={setTargets}
               installTo={installTo}
@@ -1530,7 +1547,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
                     ariaLabel={t("skillsPage.bulk.enableToAria", {
                       count: selected.size,
                     })}
-                    apps={appIds}
+                    apps={appIds.filter((app) => !lockedApps.includes(app))}
                     disabled={controlsDisabled}
                     onPick={(app) => handleSelectionToggle(app, true)}
                   />
@@ -1539,7 +1556,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
                     ariaLabel={t("skillsPage.bulk.disableAria", {
                       count: selected.size,
                     })}
-                    apps={appIds}
+                    apps={appIds.filter((app) => !lockedApps.includes(app))}
                     disabled={controlsDisabled}
                     onPick={(app) => handleSelectionToggle(app, false)}
                   />
@@ -1789,6 +1806,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
         <SkillImportDialog
           skills={unmanagedSkills}
           visibleAppIds={appIds}
+          lockedApps={lockedApps}
           isImporting={importMutation.isPending}
           onImport={(imports) => void handleImport(imports)}
           onClose={() => setImportOpen(false)}
@@ -1902,7 +1920,8 @@ function InstalledRow({
   onUninstall,
 }: InstalledRowProps) {
   const { t } = useTranslation();
-  const enabled = APP_IDS_WITH.skills.some((app) => skill.apps[app]);
+  const enabled =
+    lockedApps.length > 0 || APP_IDS_WITH.skills.some((app) => skill.apps[app]);
   const failedApp = appIds.find((app) => fails[failKey(skill.id, app)]);
   const failure = failedApp ? fails[failKey(skill.id, failedApp)] : undefined;
   const failId = `sk-fail-${skill.id}`;

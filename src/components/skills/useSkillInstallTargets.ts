@@ -31,18 +31,24 @@ function writeStored(apps: AppId[]) {
  * 「安装到」：发现、ZIP、备份恢复都显式装进这里选的应用（默认记住上次的选择）。
  * 后端 install_skill_unified 只收一个应用，所以先装到第一个、再逐个启用其余的，不是原子的。
  */
-export function useSkillInstallTargets(visibleAppIds: readonly AppId[]) {
+export function useSkillInstallTargets(
+  visibleAppIds: readonly AppId[],
+  lockedApps: readonly AppId[] = [],
+) {
   const [stored, setStored] = useState<AppId[]>(
     () => readStored() ?? DEFAULT_TARGETS,
   );
   const toggleMutation = useToggleSkillApp();
 
   // 只算看得见的应用；一个都不剩时退回第一个可见应用
+  const selectable = visibleAppIds.filter((app) => !lockedApps.includes(app));
   const targets = APP_IDS_WITH.skills.filter(
-    (app) => stored.includes(app) && visibleAppIds.includes(app),
+    (app) => stored.includes(app) && selectable.includes(app),
   );
   const effective =
-    targets.length > 0 ? targets : visibleAppIds.slice(0, 1).map((app) => app);
+    targets.length > 0
+      ? targets
+      : (selectable.length > 0 ? selectable : visibleAppIds).slice(0, 1);
 
   const setTargets = useCallback((apps: AppId[]) => {
     setStored(apps);
@@ -62,6 +68,7 @@ export function useSkillInstallTargets(visibleAppIds: readonly AppId[]) {
     const failures: Array<{ id: string; app: AppId; error: unknown }> = [];
     for (const skill of installed) {
       for (const app of rest) {
+        if (lockedApps.includes(app)) continue;
         try {
           await toggleMutation.mutateAsync({
             id: skill.id,

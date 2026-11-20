@@ -20,6 +20,7 @@ const IMPORT_APP_IDS = APP_IDS_WITH.skills.filter(
 interface SkillImportDialogProps {
   skills: UnmanagedSkill[];
   visibleAppIds: AppId[];
+  lockedApps?: readonly AppId[];
   isImporting: boolean;
   onImport: (imports: ImportSkillSelection[]) => void;
   onClose: () => void;
@@ -32,6 +33,7 @@ const isAppId = (value: string): value is AppId =>
 export function SkillImportDialog({
   skills,
   visibleAppIds,
+  lockedApps = [],
   isImporting,
   onImport,
   onClose,
@@ -82,14 +84,21 @@ export function SkillImportDialog({
 
   const submit = () => {
     // 默认勾的应用只给在那里发现过的 Skill；另外勾的应用给全部
-    const extra = [...apps].filter((app) => !defaultApps.has(app));
+    const extra = [...apps].filter(
+      (app) => !defaultApps.has(app) && !lockedApps.includes(app),
+    );
     onImport(
       skills
         .filter((skill) => selected.has(skill.directory))
         .map((skill) => {
           const chosen = new Set<AppId>(extra);
           for (const found of skill.foundIn) {
-            if (isAppId(found) && apps.has(found)) chosen.add(found);
+            if (
+              isAppId(found) &&
+              apps.has(found) &&
+              !lockedApps.includes(found)
+            )
+              chosen.add(found);
           }
           return {
             directory: skill.directory,
@@ -227,11 +236,19 @@ export function SkillImportDialog({
             <label
               key={app}
               className="flex h-6 cursor-pointer items-center gap-2 text-body"
+              title={
+                lockedApps.includes(app)
+                  ? t("skillsPage.lockedInUnified", {
+                      app: APP_DISPLAY_NAME[app],
+                    })
+                  : undefined
+              }
             >
               <input
                 type="checkbox"
                 className={CHECKBOX_CLASS}
-                checked={apps.has(app)}
+                checked={lockedApps.includes(app) || apps.has(app)}
+                disabled={lockedApps.includes(app)}
                 onChange={(event) =>
                   setApps((prev) => {
                     const next = new Set(prev);
