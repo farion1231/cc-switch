@@ -14,6 +14,7 @@ import { ArrowDown } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
+  clearSessionImageCache,
   useSessionDesktopChapters,
   type SessionTranscriptResult,
 } from "@/lib/query/sessions";
@@ -188,6 +189,9 @@ export function SessionReader({
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const findInputRef = useRef<HTMLInputElement>(null);
   const findButtonRef = useRef<HTMLButtonElement>(null);
+
+  // 离开阅读页时立即释放缓存的会话图片 Blob URL，避免常驻 WebView 内存
+  useEffect(() => () => clearSessionImageCache(), []);
 
   const [filter, setFilter] = useState<ReaderFilter>("all");
   const [expandAll, setExpandAll] = useState(readExpandAll);

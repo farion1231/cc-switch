@@ -8,6 +8,9 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum ProxyError {
+    #[error("请求体超过大小上限: {0} 字节")]
+    RequestBodyTooLarge(usize),
+
     #[error("上游响应体超过大小上限: {0} 字节")]
     ResponseBodyTooLarge(usize),
 
@@ -151,6 +154,9 @@ impl IntoResponse for ProxyError {
                     }
                     ProxyError::Internal(_) => {
                         (StatusCode::INTERNAL_SERVER_ERROR, self.to_string())
+                    }
+                    ProxyError::RequestBodyTooLarge(_) => {
+                        (StatusCode::PAYLOAD_TOO_LARGE, self.to_string())
                     }
                     ProxyError::ResponseBodyTooLarge(_) => {
                         (StatusCode::BAD_GATEWAY, self.to_string())
