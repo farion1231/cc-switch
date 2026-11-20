@@ -407,9 +407,11 @@ describe("AccountQuotaColumn", () => {
     const captionText = screen.getByText("2027年12月2日到期");
     expect(captionText).toHaveClass("min-w-0", "truncate");
     expect(captionText.parentElement).not.toHaveClass("shrink-0");
-    expect(screen.getByText("重置剩余 10 次")).toHaveClass(
-      "w-[var(--auth-quota-value)]",
-      "truncate",
+    const valueCell = screen.getByText("重置剩余 10 次");
+    expect(valueCell).toHaveClass(
+      "min-w-[var(--auth-quota-value)]",
+      "whitespace-nowrap",
     );
+    expect(valueCell).not.toHaveClass("truncate");
   });
 });

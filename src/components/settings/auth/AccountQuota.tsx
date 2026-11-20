@@ -279,8 +279,8 @@ function QuotaRowCells({
         </span>
       )}
       {/* 旁边已有额度条，正常时数值不上色 */}
-      {/* 宽度随密度变量走，极端长翻译截断，避免向左溢出盖住额度条 */}
-      <span className="w-[var(--auth-quota-value)] shrink-0 truncate text-end tabular-nums text-fg-1">
+      {/* 至少占 --auth-quota-value 宽以对齐常规文案；长译文不截断，直接撑宽该格 */}
+      <span className="min-w-[var(--auth-quota-value)] shrink-0 whitespace-nowrap text-end tabular-nums text-fg-1">
         <TonedText
           text={value}
           line={line}

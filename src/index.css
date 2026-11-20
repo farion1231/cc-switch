@@ -685,7 +685,7 @@ input[type="password"]::-ms-clear {
   width: var(--auth-quota-col-min);
 }
 
-/* 舒适密度下 --fs-caption 从 12px 升到 13px：数值与倒计时格按比例放宽，避免文字向左溢出盖住额度条 */
+/* 舒适密度下 --fs-caption 从 12px 升到 13px：数值最小宽度与倒计时格按比例放宽 */
 html[data-density="comfortable"] .auth-quota-col {
   --auth-quota-value: 80px;
   --auth-quota-reset: 60px;
