@@ -1248,5 +1248,3 @@ function PluginRow({
     </div>
   );
 }
-
-export default PluginsPage;

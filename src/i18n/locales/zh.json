@@ -463,8 +463,7 @@
     "tabProxy": "路由",
     "authCenter": {
       "description": "把 GitHub Copilot、ChatGPT、xAI 订阅当作供应商用。凭据由路由服务注入，相关供应商要在路由模式下使用（Codex 官方登录绑定除外）。Antigravity 账号用来切换 agy 的官方登录。",
-      "beta": "Beta",
-      "xaiOauthDescription": "管理 xAI / Grok 账号"
+      "beta": "Beta"
     },
     "advanced": {
       "configDir": {
@@ -1121,7 +1120,6 @@
       "pricingModelSourceLabel": "计费模式",
       "pricingModelSourceRequest": "请求模型",
       "pricingModelSourceResponse": "返回模型",
-      "pricingSave": "保存计费配置",
       "pricingSaved": "计费配置已保存",
       "pricingSaveFailed": "保存计费配置失败：{{error}}",
       "pricingLoadFailed": "加载计费配置失败：{{error}}"
@@ -2937,7 +2935,6 @@
     "geminiTitle": "Gemini MCP 管理",
     "unifiedPanel": {
       "title": "MCP 服务器管理",
-      "deleteServer": "删除服务器",
       "deleteConfirm": "确定要删除服务器 \"{{id}}\" 吗？此操作无法撤销。",
       "enabledApps": "启用的应用",
       "importSuccess": "成功导入 {{count}} 个 MCP 服务器",
@@ -2984,28 +2981,20 @@
       "tagsPlaceholder": "stdio, time, utility",
       "homepage": "主页链接",
       "docs": "文档链接",
-      "jsonPlaceholder": "{\n  \"type\": \"stdio\",\n  \"command\": \"uvx\",\n  \"args\": [\"mcp-server-fetch\"]\n}",
-      "tomlConfig": "完整的 TOML 配置",
-      "tomlPlaceholder": "type = \"stdio\"\ncommand = \"uvx\"\nargs = [\"mcp-server-fetch\"]",
-      "syncOtherSide": "同步到 {{target}}"
+      "tomlConfig": "完整的 TOML 配置"
     },
     "wizard": {
       "title": "MCP 配置向导",
       "hint": "快速配置 MCP 服务器，自动生成 JSON 配置",
       "type": "类型",
-      "typeStdio": "stdio",
-      "typeSse": "sse",
       "command": "命令",
       "commandPlaceholder": "npx 或 uvx",
       "args": "参数",
-      "argsPlaceholder": "arg1\narg2",
       "env": "环境变量",
-      "envPlaceholder": "KEY1=value1\nKEY2=value2",
       "url": "URL",
       "urlPlaceholder": "https://api.example.com/mcp",
       "urlRequired": "请输入 URL",
       "headers": "请求头（可选）",
-      "headersPlaceholder": "Authorization: Bearer your_token_here\nContent-Type: application/json",
       "preview": "配置预览",
       "apply": "应用配置"
     },
@@ -3528,7 +3517,6 @@
       "archiveDownloadTooLarge": "仓库压缩包下载超过 {{limit_mb}} MB 上限，已中止",
       "archiveTooManyEntries": "压缩包条目过多（{{count}}），上限 {{limit}}",
       "downloadFailed": "下载失败：HTTP {{status}}",
-      "httpError": "HTTP 错误 {{status}}",
       "http403": "GitHub 访问受限，可能是请求频率过高",
       "http404": "仓库或分支不存在，请检查地址；私有仓库需要先在「管理技能仓库」里设置访问令牌",
       "http429": "请求过于频繁，请等待后重试",
@@ -3541,7 +3529,6 @@
       "repoTokenStorageFailed": "无法读写 {{host}} 的访问令牌，请检查系统的凭据存储是否可用",
       "getHomeDirFailed": "无法获取用户主目录",
       "noSkillsInZip": "ZIP 文件中未找到技能（需包含 SKILL.md 文件）",
-      "networkError": "网络错误",
       "unknownError": "未知错误",
       "suggestion": {
         "checkNetwork": "请检查网络连接",
@@ -3769,7 +3756,6 @@
       "repo": "GitHub 仓库",
       "directory": "目标目录",
       "branch": "分支",
-      "skillsPath": "Skills 路径",
       "hint": "此操作将添加 Skill 仓库到列表。",
       "hintDetail": "添加后，您可以在 Skills 管理界面中选择安装具体的 Skill。"
     },
@@ -3866,7 +3852,6 @@
   },
   "proxy": {
     "panel": {
-      "currentProvider": "当前 Provider：",
       "openSettings": "配置路由服务",
       "stats": {
         "activeConnections": "活跃连接",
@@ -3927,10 +3912,6 @@
           "label": "非流式超时（秒）",
           "description": "非流式请求的总超时时间"
         }
-      },
-      "validation": {
-        "retryMin": "重试次数不能为负",
-        "retryMax": "重试次数不能超过10"
       },
       "actions": {
         "save": "保存配置"
