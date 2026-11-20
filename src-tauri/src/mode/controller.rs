@@ -904,7 +904,7 @@ pub async fn exit(state: &AppState, app: &AppType) -> Result<(), String> {
         let _guard = lock_settled(state, app).await.map_err(|e| e.to_string())?;
         exit_locked(state, app, false)?;
     }
-    if let Err(error) = state.db.clear_provider_health_for_app(app).await {
+    if let Err(error) = state.proxy_service.clear_provider_health_for_app(app).await {
         log::warn!("清除 {} 健康状态失败: {error}", app.as_str());
     }
     stop_server_if_unused(state).await;
@@ -923,7 +923,11 @@ pub async fn exit_apps_in_mode(state: &AppState, stack: bool) -> Result<Vec<Stri
             }
             exit_locked(state, &app, false)?;
         }
-        if let Err(error) = state.db.clear_provider_health_for_app(&app).await {
+        if let Err(error) = state
+            .proxy_service
+            .clear_provider_health_for_app(&app)
+            .await
+        {
             log::warn!("清除 {} 健康状态失败: {error}", app.as_str());
         }
         exited.push(app.as_str().to_string());
@@ -1399,7 +1403,12 @@ pub async fn sync_stack_order(state: &AppState, app: &AppType) -> Result<(), Str
     if current.members.len() < 2 {
         return Ok(());
     }
-    let providers = state.db.get_all_providers(app).map_err(err)?;
+    // 只读排序；读不出来的成员和不在库里的一样排到最后。
+    let providers = state
+        .db
+        .get_provider_rows(app)
+        .map_err(err)?
+        .into_readable("Stack 排序");
     let mut next = current.clone();
     // 稳定排序：sort_index 相同或缺失时保留原名单顺序。
     next.members.sort_by_key(|id| {

@@ -422,7 +422,7 @@ impl ProxyServer {
             // Gemini 的 GA 版本也叫 /v1，给原 SDK 留一条出口
             .route("/gemini/v1/*path", any(handlers::handle_gemini))
             // 提高默认请求体大小限制（避免 413 Payload Too Large）
-            .layer(DefaultBodyLimit::max(200 * 1024 * 1024))
+            .layer(DefaultBodyLimit::max(handlers::MAX_REQUEST_BODY_BYTES))
             // 拒绝网页发来的请求（最外层，读请求体之前）：见 browser_guard
             .layer(middleware::from_fn_with_state(
                 self.state.clone(),
@@ -445,6 +445,22 @@ impl ProxyServer {
             .provider_router
             .update_app_configs(app_type, config)
             .await;
+    }
+
+    pub async fn forget_circuit_breakers(
+        &self,
+        app_type: &crate::app_config::AppType,
+        provider_id: Option<&str>,
+    ) {
+        self.state
+            .provider_router
+            .forget(app_type, provider_id)
+            .await;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn provider_router(&self) -> Arc<ProviderRouter> {
+        self.state.provider_router.clone()
     }
 }
 
