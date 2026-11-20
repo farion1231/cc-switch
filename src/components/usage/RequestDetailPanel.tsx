@@ -1,16 +1,19 @@
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { HoverTip } from "@/components/ui/hover-tip";
 import { Notice } from "@/components/ui/notice";
 import {
   Sheet,
   SheetBody,
   SheetContent,
-  SheetDescription,
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
 import { useRequestDetail } from "@/lib/query/usage";
+import { copyText } from "@/lib/clipboard";
+import { toast } from "@/lib/toast";
 import {
   getFreshInputTokens,
   isUnpricedUsage,
@@ -46,19 +49,48 @@ interface DetailRow {
   strong?: boolean;
   muted?: boolean;
   title?: string;
+  /** 行尾给一个复制按钮：显示被截断时也复制完整原文 */
+  copy?: { text: string; label: string; copied: string };
+}
+
+function CopyRowButton({ copy }: { copy: NonNullable<DetailRow["copy"]> }) {
+  const { t } = useTranslation();
+  const handleCopy = async () => {
+    try {
+      await copyText(copy.text);
+      toast.success(copy.copied);
+    } catch (error) {
+      toast.error(t("prompts.copyFailed"), { description: String(error) });
+    }
+  };
+  return (
+    <HoverTip content={copy.label}>
+      <Button
+        type="button"
+        variant="quiet"
+        size="icon-compact"
+        className="h-6 w-6 shrink-0"
+        aria-label={copy.label}
+        onClick={() => void handleCopy()}
+      >
+        <Copy className="h-3.5 w-3.5" strokeWidth={1.5} />
+      </Button>
+    </HoverTip>
+  );
 }
 
 function DetailSection({ title, rows }: { title: string; rows: DetailRow[] }) {
   return (
     <section className="flex flex-col gap-2">
       <h3 className="m-0 text-strong font-semibold text-fg-1">{title}</h3>
-      <dl className="m-0 rounded-panel border border-border">
-        {rows.map((row, index) => (
+      {/* 卡片外框已经把一组框住，行与行靠间距分开，不再每行画线；只有「合计」上方留一道 */}
+      <dl className="m-0 rounded-panel border border-border py-1.5">
+        {rows.map((row) => (
           <div
             key={row.key}
             className={cn(
-              "flex min-h-8 items-center gap-3 px-3.5 py-1.5",
-              index < rows.length - 1 && "border-b border-border",
+              "flex min-h-8 items-center gap-3 px-3.5 py-1",
+              row.key === "total" && "mt-1.5 border-t border-border pt-2.5",
             )}
           >
             <dt className="shrink-0 text-caption text-fg-2">{row.label}</dt>
@@ -76,6 +108,7 @@ function DetailSection({ title, rows }: { title: string; rows: DetailRow[] }) {
             >
               {row.value}
             </dd>
+            {row.copy && <CopyRowButton copy={row.copy} />}
           </div>
         ))}
       </dl>
@@ -114,14 +147,17 @@ function useDetailSections(request: RequestLog) {
       label: t("usage.provider"),
       value: getUsageProviderLabel(request.providerName, t).shortLabel,
     },
-    {
+    { key: "model", label: t("usage.model"), value: request.model, mono: true },
+  ];
+  // 会话日志的供应商就叫「会话日志」，ID 是内部的 _session：不再重复列「供应商 ID」和「来源」
+  if (isProxy) {
+    basic.splice(3, 0, {
       key: "providerId",
       label: t("usage.detail.providerId"),
       value: request.providerId,
       mono: true,
-    },
-    { key: "model", label: t("usage.model"), value: request.model, mono: true },
-  ];
+    });
+  }
   if (request.requestModel && request.requestModel !== request.model) {
     basic.push({
       key: "requestModel",
@@ -138,22 +174,25 @@ function useDetailSections(request: RequestLog) {
       mono: true,
     });
   }
-  basic.push(
-    {
+  if (isProxy) {
+    basic.push({
       key: "source",
       label: t("usage.detail.source"),
-      value: isProxy
-        ? t("usage.detail.sourceProxy", { code: request.statusCode })
-        : t("usage.detail.sourceSession"),
+      value: t("usage.detail.sourceProxy", { code: request.statusCode }),
       title: request.dataSource ?? "proxy",
+    });
+  }
+  basic.push({
+    key: "requestId",
+    label: t("usage.requestId"),
+    value: request.requestId,
+    mono: true,
+    copy: {
+      text: request.requestId,
+      label: t("usage.detail.copyRequestId"),
+      copied: t("usage.detail.requestIdCopied"),
     },
-    {
-      key: "requestId",
-      label: t("usage.requestId"),
-      value: request.requestId,
-      mono: true,
-    },
-  );
+  });
 
   const tokens: DetailRow[] = [
     {
@@ -361,14 +400,6 @@ export function RequestDetailPanel({
     refetch,
   } = useRequestDetail(requestId ?? "");
 
-  const subtitle = request
-    ? [
-        new Date(request.createdAt * 1000).toLocaleString(),
-        appDisplayName(request.appType),
-        getUsageProviderLabel(request.providerName, t).shortLabel,
-      ].join(" · ")
-    : undefined;
-
   return (
     <Sheet
       open={requestId != null}
@@ -380,12 +411,11 @@ export function RequestDetailPanel({
         width={420}
         closeLabel={t("common.close")}
         dismissOnOutsideClick
+        // 不放副标题：时间、应用、供应商就是「基本信息」前三行
+        aria-describedby={undefined}
       >
         <SheetHeader className="pb-3">
           <SheetTitle>{t("usage.requestDetail")}</SheetTitle>
-          <SheetDescription className={subtitle ? "truncate" : "sr-only"}>
-            {subtitle ?? t("usage.requestDetail")}
-          </SheetDescription>
         </SheetHeader>
         <SheetBody className="border-t border-border">
           {isLoading ? (

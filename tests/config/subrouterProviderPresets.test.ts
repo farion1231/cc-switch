@@ -40,7 +40,7 @@ describe("SubRouter provider presets", () => {
     expect(preset?.endpointCandidates).toEqual(["https://subrouter.ai/v1"]);
     expect(preset?.auth).toEqual({ OPENAI_API_KEY: "" });
     expect(preset?.config).toContain('name = "subrouter"');
-    expect(preset?.config).toContain('model = "gpt-5.6-sol"');
+    expect(preset?.config).toContain('model = "gpt-6.1-sol"');
     expect(preset?.config).toContain('base_url = "https://subrouter.ai/v1"');
     expect(preset?.config).toContain('wire_api = "responses"');
   });
@@ -53,11 +53,11 @@ describe("SubRouter provider presets", () => {
     expect(preset).toBeDefined();
     expect(preset?.baseURL).toBe("https://subrouter.ai/v1beta");
     expect(preset?.endpointCandidates).toEqual(["https://subrouter.ai/v1beta"]);
-    expect(preset?.model).toBe("gemini-3.6-flash");
+    expect(preset?.model).toBe("gemini-3.8-flash");
 
     const env = (preset?.settingsConfig as { env: Record<string, string> }).env;
     expect(env.GOOGLE_GEMINI_BASE_URL).toBe("https://subrouter.ai/v1beta");
-    expect(env.GEMINI_MODEL).toBe("gemini-3.6-flash");
+    expect(env.GEMINI_MODEL).toBe("gemini-3.8-flash");
   });
 
   it("uses OpenAI-compatible config for OpenCode", () => {
@@ -71,7 +71,7 @@ describe("SubRouter provider presets", () => {
       "https://subrouter.ai/v1",
     );
     expect(preset?.settingsConfig.options?.apiKey).toBe("");
-    expect(preset?.settingsConfig.models).toHaveProperty("gpt-5.6-sol");
+    expect(preset?.settingsConfig.models).toHaveProperty("gpt-6.1-sol");
   });
 
   it("uses OpenAI completions config for OpenClaw without hardcoded pricing", () => {
@@ -84,13 +84,13 @@ describe("SubRouter provider presets", () => {
     expect(preset?.settingsConfig.baseUrl).toBe("https://subrouter.ai/v1");
     expect(preset?.settingsConfig.api).toBe("openai-completions");
     expect(model).toMatchObject({
-      id: "gpt-5.6-sol",
-      name: "GPT-5.6 Sol",
+      id: "gpt-6.1-sol",
+      name: "GPT-6.1 Sol",
       contextWindow: 272000,
     });
     expect(model).not.toHaveProperty("cost");
     expect(preset?.suggestedDefaults?.model).toEqual({
-      primary: "subrouter/gpt-5.6-sol",
+      primary: "subrouter/gpt-6.1-sol",
     });
   });
 
@@ -107,7 +107,7 @@ describe("SubRouter provider presets", () => {
       api_mode: "chat_completions",
     });
     expect(preset?.suggestedDefaults?.model).toEqual({
-      default: "gpt-5.6-sol",
+      default: "gpt-6.1-sol",
       provider: "subrouter",
     });
   });

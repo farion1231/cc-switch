@@ -8,7 +8,3 @@ export interface IconMetadata {
   // 不按透明 logo 那样缩小居中，否则会变成「框里套一块小方块」
   shape?: "tile";
 }
-
-export interface IconPreset {
-  [key: string]: IconMetadata;
-}
