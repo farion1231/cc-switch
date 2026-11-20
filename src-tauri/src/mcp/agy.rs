@@ -41,9 +41,7 @@ impl<'a> AgyChange<'a> {
 }
 
 pub fn sync(id: &str, spec: Option<&Value>) -> Result<(), AppError> {
-    let _guard = WRITE_LOCK
-        .lock()
-        .map_err(|e| AppError::Message(e.to_string()))?;
+    let _guard = crate::sync_utils::lock_file_operation(&WRITE_LOCK);
     sync_file(
         &crate::agy_config::customizations_dir().join("mcp_config.json"),
         id,
@@ -56,9 +54,7 @@ pub(crate) fn sync_and_commit<T>(
     change: AgyChange<'_>,
     commit: impl FnOnce() -> Result<T, AppError>,
 ) -> Result<T, AppError> {
-    let _guard = WRITE_LOCK
-        .lock()
-        .map_err(|e| AppError::Message(e.to_string()))?;
+    let _guard = crate::sync_utils::lock_file_operation(&WRITE_LOCK);
     let path = crate::agy_config::customizations_dir().join("mcp_config.json");
     crate::mcode_config::write_and_commit(&path, || sync_file(&path, id, change), commit)
 }
@@ -110,10 +106,17 @@ fn sync_file(path: &Path, id: &str, change: AgyChange<'_>) -> Result<(), AppErro
 
 pub fn import(state: &AppState) -> Result<usize, AppError> {
     let document = read(&crate::agy_config::customizations_dir().join("mcp_config.json"))?;
-    let mut existing = state.db.get_all_mcp_servers()?;
+    let (mut existing, unreadable) = state
+        .db
+        .get_mcp_server_rows()?
+        .into_readable_and_unreadable_ids();
     let mut count = 0;
     let mut skipped = Vec::new();
     for (id, native) in document["mcpServers"].as_object().into_iter().flatten() {
+        if unreadable.contains(id) {
+            skipped.push(format!("'{id}': stored server is unreadable"));
+            continue;
+        }
         let mut spec = unified_spec(native);
         if super::validation::validate_server_spec(&spec).is_err() {
             skipped.push(format!("'{id}': invalid transport configuration"));

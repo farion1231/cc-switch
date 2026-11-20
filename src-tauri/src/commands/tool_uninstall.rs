@@ -33,7 +33,7 @@ pub(super) fn candidates(
     if installs.is_empty() {
         return Err(format!(
             "Cannot identify the installation of {} to uninstall. Check installations and try again.",
-            tool_display_name(tool)
+            tool_spec(tool).display_name
         ));
     }
     let has_grok_native = tool == "grok" && installs.iter().any(|i| known_native_install(tool, i));
@@ -113,7 +113,7 @@ fn plan_and_removals(
     } else {
         return Err(format!(
             "Cannot automatically uninstall {} at {}. Use the original installer or package manager to uninstall it.",
-            tool_display_name(tool), inst.path
+            tool_spec(tool).display_name, inst.path
         ));
     };
     let command = if tool == "openclaw" {
@@ -203,7 +203,7 @@ fn verify_removed(tool: &str, path: &str) -> Result<(), String> {
         Err(error) => Err(format!("Cannot verify removal of {path}: {error}")),
         Ok(_) => Err(format!(
             "{} is still installed at {}. Use the original installer or package manager to uninstall it.",
-            tool_display_name(tool), path
+            tool_spec(tool).display_name, path
         )),
     }
 }
@@ -221,10 +221,11 @@ fn brew_uninstall_command(tool: &str, real: &str) -> Result<Option<String>, Stri
                 "gemini" => &[("/Cellar/", "gemini-cli")],
                 "opencode" => &[("/Cellar/", "opencode")],
                 "agy" => &[("/Caskroom/", "antigravity-cli")],
+                "copilot" => &[("/Caskroom/", "copilot-cli")],
                 _ => &[],
             };
             if !owners.contains(&(marker, token)) {
-                return Err(format!("Cannot automatically uninstall {}: Homebrew package {token} is not a verified owner. Use the original installer or package manager.", tool_display_name(tool)));
+                return Err(format!("Cannot automatically uninstall {}: Homebrew package {token} is not a verified owner. Use the original installer or package manager.", tool_spec(tool).display_name));
             }
             let brew = format!("{prefix}/bin/brew");
             if !Path::new(&brew).is_file() {
@@ -288,7 +289,7 @@ fn npm_prefix(tool: &str, inst: &ToolInstallation) -> Option<PathBuf> {
 }
 
 fn npm_prefix_for_layout(tool: &str, inst: &ToolInstallation, windows: bool) -> Option<PathBuf> {
-    let package = npm_package_for(tool)?;
+    let package = tool_spec(tool).npm_package?;
     let launcher = Path::new(&inst.path);
     let bin = launcher.parent()?;
     // A local node_modules/.bin entry is never a global npm launcher. Pi's
@@ -329,7 +330,7 @@ fn npm_prefix_for_layout(tool: &str, inst: &ToolInstallation, windows: bool) -> 
 }
 
 fn node_package_uninstall_command(tool: &str, inst: &ToolInstallation) -> Option<String> {
-    let package = npm_package_for(tool)?;
+    let package = tool_spec(tool).npm_package?;
     // A source badge or a sibling manager is not proof of package ownership.
     // pnpm/Bun commands remain available manually for the clients that document
     // them; until their global roots are verified, do not guess or fall back to npm.
@@ -759,7 +760,8 @@ fn wsl_uninstall_command(tool: &str, path: &str, real: &str) -> Result<String, S
     let removal = if tool == "hermes" {
         format!("{} uninstall --yes", shell_single_quote(path))
     } else {
-        let package = npm_package_for(tool)
+        let package = tool_spec(tool)
+            .npm_package
             .ok_or("Use the original installer to uninstall this WSL application.")?;
         let (prefix, _) = real
             .split_once(&format!("/lib/node_modules/{package}/"))

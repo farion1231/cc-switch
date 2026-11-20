@@ -9,6 +9,14 @@ export type ProviderCategory =
   | "omo" // Oh My OpenCode
   | "omo-slim"; // Oh My OpenCode Slim
 
+/** 库里有、但存的数据读不出来的一条记录：只能删除，原始数据保持不动。 */
+export interface UnreadableEntry {
+  id: string;
+  name: string;
+  /** 后端的解析错误，点名是哪一列 */
+  error: string;
+}
+
 export interface Provider {
   id: string;
   name: string;
@@ -31,11 +39,6 @@ export interface Provider {
   inFailoverQueue?: boolean;
 }
 
-export interface AppConfig {
-  providers: Record<string, Provider>;
-  current: string;
-}
-
 // 自定义端点配置
 export interface CustomEndpoint {
   url: string;
@@ -50,7 +53,9 @@ export interface EndpointCandidate {
   isCustom?: boolean;
 }
 
+import type { AppId } from "./lib/api/types";
 import type { TemplateType } from "./config/constants";
+import type { Language } from "./i18n/languages";
 
 // 用量查询脚本配置
 export interface UsageScript {
@@ -174,6 +179,8 @@ export interface LocalProxyRequestOverrides {
 
 // 供应商元数据（字段名与后端一致，保持 snake_case）
 export interface ProviderMeta {
+  /** Explicit multiplier for future local-proxy reference costs; absent means 1. */
+  billingMultiplier?: string;
   // 自定义端点：以 URL 为键，值为端点信息
   custom_endpoints?: Record<string, CustomEndpoint>;
   // 是否在切换/同步到 live 时应用通用配置片段
@@ -224,8 +231,8 @@ export interface ProviderMeta {
   impersonateClaudeCode?: boolean;
   // Codex → Anthropic path: override the Anthropic max_tokens (output ceiling).
   // Codex does not forward model_max_output_tokens in the request body; without
-  // this the path falls back to a conservative 8192 default, which can truncate
-  // long/thinking-heavy responses. When set (>0) it takes precedence over the
+  // this the path falls back to a 32000 default (DEFAULT_CODEX_ANTHROPIC_MAX_TOKENS),
+  // which a low-ceiling gateway may reject. When set (>0) it takes precedence over the
   // request value and the default.
   maxOutputTokens?: number;
   // Custom User-Agent for local proxy routing. Only applied by the local proxy.
@@ -309,22 +316,7 @@ export interface CodexCatalogModel {
 export type ClaudeApiKeyField = "ANTHROPIC_AUTH_TOKEN" | "ANTHROPIC_API_KEY";
 
 // 主页面显示的应用配置
-export interface VisibleApps {
-  claude: boolean;
-  "claude-desktop": boolean;
-  codex: boolean;
-  gemini: boolean;
-  grokbuild: boolean;
-  opencode: boolean;
-  openclaw: boolean;
-  hermes: boolean;
-  pi: boolean;
-  mcode: boolean;
-  kimi: boolean;
-  dsh?: boolean;
-  agy: boolean;
-  omp: boolean;
-}
+export type VisibleApps = Record<AppId, boolean>;
 
 // WebDAV 同步状态
 export interface WebDavSyncStatus {
@@ -359,6 +351,8 @@ export interface S3SyncSettings {
   endpoint?: string;
   remoteRoot?: string;
   profile?: string;
+  /** Selected S3 provider preset id; presentational, persisted so it survives reopening. */
+  preset?: string;
   status?: WebDavSyncStatus;
 }
 
@@ -449,6 +443,8 @@ export interface Settings {
   showProviderSearch?: boolean;
   // 启动时检查已安装的命令行应用有没有新版本（默认关）
   checkToolUpdatesOnStartup?: boolean;
+  // 自动下载 CC Switch 新版本，下好后问要不要安装（默认关；设备级，不随云同步）
+  autoUpdateEnabled?: boolean;
   // 点托盘图标出原生菜单，不出托盘面板（macOS / Windows；Linux 一律原生菜单；默认关，没写过视为关，即用托盘面板）
   nativeTrayMenu?: boolean;
   // Preserve Codex ChatGPT login in auth.json when switching third-party providers
@@ -488,7 +484,7 @@ export interface Settings {
   // User has confirmed the common config first-run notice
   commonConfigConfirmed?: boolean;
   // 首选语言（可选，默认中文）
-  language?: "en" | "zh" | "zh-TW" | "ja" | "tr";
+  language?: Language;
   // 按档的额度百分比写剩余还是已用（默认剩余；余额、Credits 不受影响）
   quotaDisplay?: "left" | "used";
 
@@ -648,6 +644,7 @@ export type EventKind =
   | "info"
   | "error"
   | "sub_agent"
+  | "goal"
   | "other";
 
 /** 大内容的「按需取」引用：前端不解析，原样回传给后端 */
@@ -842,7 +839,9 @@ export interface McpApps {
   mcode?: boolean;
   kimi?: boolean;
   dsh?: boolean;
+  workbuddy?: boolean;
   agy?: boolean;
+  copilot?: boolean;
   claude: boolean;
   "claude-desktop"?: boolean;
   codex: boolean;
@@ -873,19 +872,6 @@ export interface McpServer {
 
 // MCP 服务器映射（id -> McpServer）
 export type McpServersMap = Record<string, McpServer>;
-
-// MCP 配置状态
-export interface McpStatus {
-  userConfigPath: string;
-  userConfigExists: boolean;
-  serverCount: number;
-}
-
-// 新：来自 config.json 的 MCP 列表响应
-export interface McpConfigResponse {
-  configPath: string;
-  servers: Record<string, McpServer>;
-}
 
 // ============================================================================
 // 统一供应商（Universal Provider）- 跨应用共享配置
@@ -976,19 +962,6 @@ export interface OpenCodeProviderConfig {
   name?: string; // 供应商显示名称
   options: OpenCodeProviderOptions;
   models: Record<string, OpenCodeModel>;
-}
-
-// OpenCode MCP 服务器配置（与统一格式不同）
-export interface OpenCodeMcpServerSpec {
-  type: "local" | "remote";
-  // local 类型字段
-  command?: string[]; // 与统一格式不同：命令和参数合并为数组
-  environment?: Record<string, string>; // 与统一格式不同：使用 environment 而非 env
-  // remote 类型字段
-  url?: string;
-  headers?: Record<string, string>;
-  // 通用字段
-  enabled?: boolean;
 }
 
 // ============================================================================

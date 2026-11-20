@@ -158,9 +158,7 @@ fn native_transport(spec: &Value) -> Result<Value, AppError> {
 }
 
 pub fn sync(id: &str, spec: Option<&Value>) -> Result<(), AppError> {
-    let _guard = WRITE_LOCK
-        .lock()
-        .map_err(|e| AppError::Message(e.to_string()))?;
+    let _guard = crate::sync_utils::lock_file_operation(&WRITE_LOCK);
     let change = PiChange::from_enabled(spec);
     match installed_config_path()? {
         Some(path) => sync_file(&path, id, change),
@@ -171,9 +169,7 @@ pub fn sync(id: &str, spec: Option<&Value>) -> Result<(), AppError> {
 /// 删除服务器时清掉 Pi 里由 CC Switch 写入、后来被取消勾选的条目：
 /// 只删 `enabled: false` 且连接方式和这个服务器一致的同名条目，用户自己的同名条目不动
 pub(crate) fn remove_disabled_if_managed(id: &str, spec: &Value) -> Result<(), AppError> {
-    let _guard = WRITE_LOCK
-        .lock()
-        .map_err(|e| AppError::Message(e.to_string()))?;
+    let _guard = crate::sync_utils::lock_file_operation(&WRITE_LOCK);
     let Some(path) = installed_config_path()?.filter(|path| path.exists()) else {
         return Ok(());
     };
@@ -195,11 +191,9 @@ pub(crate) fn sync_and_commit<T>(
     change: PiChange<'_>,
     commit: impl FnOnce() -> Result<T, AppError>,
 ) -> Result<T, AppError> {
-    let _guard = WRITE_LOCK
-        .lock()
-        .map_err(|e| AppError::Message(e.to_string()))?;
+    let _guard = crate::sync_utils::lock_file_operation(&WRITE_LOCK);
     if let PiChange::Enable(_) = change {
-        check_enabled_name_collision(id, &db.get_all_mcp_servers()?)?;
+        check_enabled_name_collision(id, &db.get_mcp_server_rows()?.into_readable("Pi 重名检查"))?;
     }
     let Some(path) = installed_config_path()? else {
         validate_change(id, change)?;
@@ -256,11 +250,12 @@ fn sync_file(path: &Path, id: &str, change: PiChange<'_>) -> Result<(), AppError
 /// `enabled: false` 的条目导入后不勾选 Pi。和已有服务器连接方式不同的同名条目跳过并报告。
 pub fn import(state: &AppState) -> Result<usize, AppError> {
     // 和勾选共用写锁：重名检查读到的数据库在导入写完前不会被并发勾选改掉
-    let _guard = WRITE_LOCK
-        .lock()
-        .map_err(|e| AppError::Message(e.to_string()))?;
+    let _guard = crate::sync_utils::lock_file_operation(&WRITE_LOCK);
     let document = read(&config_path()?)?;
-    let mut existing = state.db.get_all_mcp_servers()?;
+    let (mut existing, unreadable) = state
+        .db
+        .get_mcp_server_rows()?
+        .into_readable_and_unreadable_ids();
     let before = existing.clone();
     let mut count = 0;
     let mut skipped = Vec::new();
@@ -269,6 +264,10 @@ pub fn import(state: &AppState) -> Result<usize, AppError> {
         .cloned()
         .unwrap_or_default();
     for (id, native) in &natives {
+        if unreadable.contains(id) {
+            skipped.push(format!("'{id}': stored server is unreadable"));
+            continue;
+        }
         let mut spec = unified_spec(native);
         // 按 Pi 的规则校验：导入后会勾上 Pi，不合规的条目之后每次同步都会报错
         if validate_entry(id, &spec).is_err() {

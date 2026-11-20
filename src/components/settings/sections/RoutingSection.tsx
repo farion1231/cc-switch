@@ -15,11 +15,6 @@ import {
   useUpdateGlobalProxyConfig,
 } from "@/lib/query/proxy";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
-import {
-  MODE_APP_IDS,
-  PROXY_APP_IDS,
-  type ProxyAppId,
-} from "@/config/appConfig";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { HelpTip, DisabledReason } from "@/components/ui/help-tip";
@@ -37,6 +32,11 @@ import {
 } from "@/components/settings/SettingsLayout";
 import type { AppMode } from "@/types/proxy";
 import { cn } from "@/lib/utils";
+import {
+  APP_IDS_WITH,
+  ROUTE_MODE_APP_IDS,
+  type AppIdWith,
+} from "@/config/appSpecs";
 
 interface RoutingSectionProps {
   /** 「前往」打开这个应用的供应商页 */
@@ -107,7 +107,8 @@ export function RoutingSection({ onOpenApp }: RoutingSectionProps) {
   const [clientHost, setClientHost] = useState("");
   const [clientHostError, setClientHostError] = useState<string | null>(null);
   const [confirmExitAll, setConfirmExitAll] = useState(false);
-  const [failoverApp, setFailoverApp] = useState<ProxyAppId>("claude");
+  const [failoverApp, setFailoverApp] =
+    useState<AppIdWith<"localProxy">>("claude");
 
   useEffect(() => {
     if (config) {
@@ -121,7 +122,7 @@ export function RoutingSection({ onOpenApp }: RoutingSectionProps) {
   }, [savedClientHost]);
 
   const modeQueries = useQueries({
-    queries: MODE_APP_IDS.map((app) => ({
+    queries: ROUTE_MODE_APP_IDS.map((app) => ({
       queryKey: ["providers", app, "mode"],
       queryFn: () => proxyApi.getAppMode(app),
     })),
@@ -134,7 +135,7 @@ export function RoutingSection({ onOpenApp }: RoutingSectionProps) {
     "claude-desktop": useProvidersQuery("claude-desktop").data,
   };
 
-  const usingApps = MODE_APP_IDS.flatMap((app, index) => {
+  const usingApps = ROUTE_MODE_APP_IDS.flatMap((app, index) => {
     const view = modeQueries[index]?.data;
     if (!view || view.mode === "direct") return [];
     const routeName =
@@ -435,7 +436,7 @@ export function RoutingSection({ onOpenApp }: RoutingSectionProps) {
             aria-label={t("settings.advanced.failover.title")}
             value={failoverApp}
             onValueChange={setFailoverApp}
-            items={PROXY_APP_IDS.map((app) => ({
+            items={APP_IDS_WITH.localProxy.map((app) => ({
               value: app,
               label: APP_DISPLAY_NAME[app],
             }))}

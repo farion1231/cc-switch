@@ -19,6 +19,19 @@ export interface ModelFetchOptions {
 }
 
 /**
+ * Claude / Claude Desktop 卡片的 `meta.apiFormat` 换成取模型列表要用的格式名。
+ *
+ * 只有 Gemini Native 需要换：Google 原生接口只认 `x-goog-api-key` 头里的
+ * AI Studio Key，按默认的 `Authorization: Bearer` 发会被回 401。其余格式
+ * 沿用默认（Bearer + `/v1/models`），不改变既有行为。
+ */
+export function claudeModelFetchApiFormat(
+  apiFormat: string | undefined,
+): string | undefined {
+  return apiFormat === "gemini_native" ? "google-generative-ai" : undefined;
+}
+
+/**
  * 把表单里的本地代理 Header 覆盖 JSON 解析成取模型列表时要携带的请求头。
  *
  * 与转发路径共用 parseHeaderOverrideJson 的校验规则；解析失败或覆盖为空时
@@ -152,7 +165,12 @@ export function showFetchModelsError(
   // 解析后端错误字符串
   const msg = String(err);
 
-  if (msg.includes("HTTP 401") || msg.includes("HTTP 403")) {
+  // Google 对无效的 AI Studio Key 回 400 + reason API_KEY_INVALID，而不是 401
+  if (
+    msg.includes("HTTP 401") ||
+    msg.includes("HTTP 403") ||
+    msg.includes("API_KEY_INVALID")
+  ) {
     toast.error(t("providerForm.fetchModelsAuthFailed"));
     return;
   }
