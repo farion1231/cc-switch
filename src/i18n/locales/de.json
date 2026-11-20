@@ -463,8 +463,7 @@
     "tabProxy": "Routing",
     "authCenter": {
       "description": "Nutzen Sie GitHub-Copilot-, ChatGPT- und xAI-Abonnements als Anbieter. Der Routing-Dienst fügt deren Zugangsdaten ein, daher laufen diese Anbieter im Routing-Modus (außer bei der Bindung an die offizielle Codex-Anmeldung). Antigravity-Konten wechseln die offizielle Anmeldung von agy.",
-      "beta": "Beta",
-      "xaiOauthDescription": "xAI-/Grok-Konten verwalten"
+      "beta": "Beta"
     },
     "advanced": {
       "configDir": {
@@ -1121,7 +1120,6 @@
       "pricingModelSourceLabel": "Quelle des Preismodells",
       "pricingModelSourceRequest": "Anfragemodell",
       "pricingModelSourceResponse": "Antwortmodell",
-      "pricingSave": "Preis-Standardwerte speichern",
       "pricingSaved": "Preis-Standardwerte gespeichert",
       "pricingSaveFailed": "Preis-Standardwerte konnten nicht gespeichert werden: {{error}}",
       "pricingLoadFailed": "Preis-Standardwerte konnten nicht geladen werden: {{error}}"
@@ -2937,7 +2935,6 @@
     "geminiTitle": "Gemini MCP-Verwaltung",
     "unifiedPanel": {
       "title": "MCP-Server-Verwaltung",
-      "deleteServer": "Server löschen",
       "deleteConfirm": "Möchten Sie den Server „{{id}}“ wirklich löschen? Diese Aktion kann nicht rückgängig gemacht werden.",
       "enabledApps": "Aktivierte Apps",
       "importSuccess": "{{count}} MCP-Server erfolgreich importiert",
@@ -2984,28 +2981,20 @@
       "tagsPlaceholder": "stdio, time, utility",
       "homepage": "Startseite",
       "docs": "Doku",
-      "jsonPlaceholder": "{\n  \"type\": \"stdio\",\n  \"command\": \"uvx\",\n  \"args\": [\"mcp-server-fetch\"]\n}",
-      "tomlConfig": "Vollständige TOML-Konfiguration",
-      "tomlPlaceholder": "type = \"stdio\"\ncommand = \"uvx\"\nargs = [\"mcp-server-fetch\"]",
-      "syncOtherSide": "Nach {{target}} spiegeln"
+      "tomlConfig": "Vollständige TOML-Konfiguration"
     },
     "wizard": {
       "title": "MCP-Konfigurationsassistent",
       "hint": "MCP-Server schnell konfigurieren und die JSON-Konfiguration automatisch erzeugen",
       "type": "Typ",
-      "typeStdio": "stdio",
-      "typeSse": "sse",
       "command": "Befehl",
       "commandPlaceholder": "npx oder uvx",
       "args": "Argumente",
-      "argsPlaceholder": "arg1\narg2",
       "env": "Umgebungsvariablen",
-      "envPlaceholder": "KEY1=value1\nKEY2=value2",
       "url": "URL",
       "urlPlaceholder": "https://api.example.com/mcp",
       "urlRequired": "Bitte URL eingeben",
       "headers": "Header (optional)",
-      "headersPlaceholder": "Authorization: Bearer your_token_here\nContent-Type: application/json",
       "preview": "Konfigurationsvorschau",
       "apply": "Konfiguration anwenden"
     },
@@ -3528,7 +3517,6 @@
       "archiveDownloadTooLarge": "Der Download des Repository-Archivs überschreitet das Limit von {{limit_mb}} MB; abgebrochen",
       "archiveTooManyEntries": "Das Archiv hat zu viele Einträge ({{count}}); das Limit beträgt {{limit}}",
       "downloadFailed": "Download fehlgeschlagen: HTTP {{status}}",
-      "httpError": "HTTP-Fehler {{status}}",
       "http403": "GitHub-Zugriff eingeschränkt, möglicherweise durch Ratenbegrenzung",
       "http404": "Repository oder Branch nicht gefunden, bitte URL prüfen. Private Repositories benötigen zuerst ein Zugriffstoken unter „Skill-Repositories verwalten“",
       "http429": "Zu viele Anfragen, bitte warten und erneut versuchen",
@@ -3541,7 +3529,6 @@
       "repoTokenStorageFailed": "Das Zugriffstoken für {{host}} konnte nicht gelesen oder geschrieben werden. Prüfen Sie, ob der Anmeldedatenspeicher des Systems verfügbar ist",
       "getHomeDirFailed": "Benutzerverzeichnis konnte nicht ermittelt werden",
       "noSkillsInZip": "Keine Skills in der ZIP-Datei gefunden (erfordert eine SKILL.md-Datei)",
-      "networkError": "Netzwerkfehler",
       "unknownError": "Unbekannter Fehler",
       "suggestion": {
         "checkNetwork": "Bitte Netzwerkverbindung prüfen",
@@ -3769,7 +3756,6 @@
       "repo": "GitHub-Repository",
       "directory": "Zielverzeichnis",
       "branch": "Branch",
-      "skillsPath": "Skills-Pfad",
       "hint": "Dadurch wird das Skill-Repository zur Liste hinzugefügt.",
       "hintDetail": "Nach dem Hinzufügen können Sie bestimmte Skills auf der Skills-Verwaltungsseite installieren."
     },
@@ -3866,7 +3852,6 @@
   },
   "proxy": {
     "panel": {
-      "currentProvider": "Aktueller Anbieter:",
       "openSettings": "Routing-Dienst konfigurieren",
       "stats": {
         "activeConnections": "Aktive Verbindungen",
@@ -3927,10 +3912,6 @@
           "label": "Nicht-Streaming-Timeout (Sek.)",
           "description": "Gesamt-Timeout für Nicht-Streaming-Anfragen"
         }
-      },
-      "validation": {
-        "retryMin": "Die Anzahl der Wiederholungen darf nicht negativ sein",
-        "retryMax": "Die Anzahl der Wiederholungen darf 10 nicht überschreiten"
       },
       "actions": {
         "save": "Konfiguration speichern"

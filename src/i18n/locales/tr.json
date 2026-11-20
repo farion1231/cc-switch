@@ -463,8 +463,7 @@
     "tabProxy": "Yönlendirme",
     "authCenter": {
       "description": "Sağlayıcı olarak GitHub Copilot, ChatGPT ve xAI aboneliklerini kullanın. Yönlendirme hizmeti kimlik bilgilerini enjekte eder, böylece bu sağlayıcılar Yönlendirme modunda çalışır (Codex'in resmî oturum açma entegrasyonu hariç). Antigravity hesapları agy'nin resmî oturum açma hesabını değiştirir.",
-      "beta": "beta",
-      "xaiOauthDescription": "xAI / Grok hesaplarını yönetin"
+      "beta": "beta"
     },
     "advanced": {
       "configDir": {
@@ -1121,7 +1120,6 @@
       "pricingModelSourceLabel": "Fiyatlandırma Modeli Kaynağı",
       "pricingModelSourceRequest": "İstek modeli",
       "pricingModelSourceResponse": "Yanıt modeli",
-      "pricingSave": "Fiyatlandırma Varsayılanlarını Kaydet",
       "pricingSaved": "Fiyatlandırma varsayılanları kaydedildi",
       "pricingSaveFailed": "Fiyatlandırma varsayılanları kaydedilemedi: {{error}}",
       "pricingLoadFailed": "Fiyatlandırma varsayılanları yüklenemedi: {{error}}"
@@ -2868,7 +2866,6 @@
     "geminiTitle": "Gemini MCP Yönetimi",
     "unifiedPanel": {
       "title": "MCP Sunucu Yönetimi",
-      "deleteServer": "Sunucuyu Sil",
       "deleteConfirm": "\"{{id}}\" sunucusunu silmek istediğinizden emin misiniz? Bu eylem geri alınamaz.",
       "enabledApps": "Etkin Uygulamalar",
       "importSuccess": "{{count}} MCP sunucuları başarıyla içe aktarıldı",
@@ -2915,28 +2912,20 @@
       "tagsPlaceholder": "stdio, time, utility",
       "homepage": "Ana sayfa",
       "docs": "Dokümanlar",
-      "jsonPlaceholder": "{\n  \"type\": \"stdio\",\n  \"command\": \"uvx\",\n  \"args\": [\"mcp-server-fetch\"]\n}",
-      "tomlConfig": "Tam TOML Yapılandırması",
-      "tomlPlaceholder": "type = \"stdio\"\ncommand = \"uvx\"\nargs = [\"mcp-server-fetch\"]",
-      "syncOtherSide": "{{target}}'ye aynalama"
+      "tomlConfig": "Tam TOML Yapılandırması"
     },
     "wizard": {
       "title": "MCP Yapılandırma Sihirbazı",
       "hint": "MCP sunucusunu hızla yapılandırın ve JSON yapılandırmasını otomatik olarak oluşturun",
       "type": "Tür",
-      "typeStdio": "stdio",
-      "typeSse": "sse",
       "command": "Komut",
       "commandPlaceholder": "npx veya uvx",
       "args": "Argümanlar",
-      "argsPlaceholder": "arg1\narg2",
       "env": "Ortam Değişkenleri",
-      "envPlaceholder": "KEY1=value1\nKEY2=value2",
       "url": "URL'si",
       "urlPlaceholder": "https://api.example.com/mcp",
       "urlRequired": "Lütfen URL'yi girin",
       "headers": "Başlıklar (isteğe bağlı)",
-      "headersPlaceholder": "Authorization: Bearer your_token_here\nContent-Type: application/json",
       "preview": "Yapılandırma Önizlemesi",
       "apply": "Yapılandırmayı Uygula"
     },
@@ -3459,7 +3448,6 @@
       "archiveDownloadTooLarge": "Depo arşivi {{limit_mb}} MB sınırını aşıyor; indirme durduruldu.",
       "archiveTooManyEntries": "Arşivde çok fazla giriş var ({{count}}); sınır {{limit}}'dir",
       "downloadFailed": "İndirme başarısız oldu: HTTP {{status}}",
-      "httpError": "HTTP hatası {{status}}",
       "http403": "GitHub erişimi kısıtlı, muhtemelen hız sınırlı",
       "http404": "Depo veya şube bulunamadı, lütfen URL'yi kontrol edin. Özel depolar için önce Beceri Depolarını Yönet bölümünde bir erişim belirteci ayarlayın",
       "http429": "Çok fazla istek var, lütfen bekleyip yeniden deneyin",
@@ -3472,7 +3460,6 @@
       "repoTokenStorageFailed": "{{host}} için erişim belirteci okunamadı veya yazılamadı. Sistemin kimlik bilgisi deposunun kullanılabilir olduğunu kontrol edin",
       "getHomeDirFailed": "Kullanıcı ana dizini alınamıyor",
       "noSkillsInZip": "ZIP dosyasında beceri bulunamadı (SKILL.md dosyası gerektirir)",
-      "networkError": "Ağ hatası",
       "unknownError": "Bilinmeyen hata",
       "suggestion": {
         "checkNetwork": "Lütfen ağ bağlantısını kontrol edin",
@@ -3700,7 +3687,6 @@
       "repo": "GitHub Deposu",
       "directory": "Hedef Dizin",
       "branch": "Şube",
-      "skillsPath": "Beceri Yolu",
       "hint": "Bu, Beceri deposunu listeye ekleyecektir.",
       "hintDetail": "Ekledikten sonra, Beceri yönetimi sayfasından belirli Becerileri yükleyebilirsiniz."
     },
@@ -3797,7 +3783,6 @@
   },
   "proxy": {
     "panel": {
-      "currentProvider": "Mevcut Sağlayıcı:",
       "openSettings": "Yönlendirme Hizmetini Yapılandırma",
       "stats": {
         "activeConnections": "Aktif Bağlantılar",
@@ -3858,10 +3843,6 @@
           "label": "Yayın Dışı Zaman Aşımı (sn)",
           "description": "Akış dışı istekler için toplam zaman aşımı"
         }
-      },
-      "validation": {
-        "retryMin": "Yeniden deneme sayısı negatif olamaz",
-        "retryMax": "Yeniden deneme sayısı 10'u aşamaz"
       },
       "actions": {
         "save": "Yapılandırmayı Kaydet"
