@@ -422,7 +422,7 @@ impl ProxyServer {
             // Gemini 的 GA 版本也叫 /v1，给原 SDK 留一条出口
             .route("/gemini/v1/*path", any(handlers::handle_gemini))
             // 提高默认请求体大小限制（避免 413 Payload Too Large）
-            .layer(DefaultBodyLimit::max(200 * 1024 * 1024))
+            .layer(DefaultBodyLimit::max(handlers::MAX_REQUEST_BODY_BYTES))
             // 拒绝网页发来的请求（最外层，读请求体之前）：见 browser_guard
             .layer(middleware::from_fn_with_state(
                 self.state.clone(),

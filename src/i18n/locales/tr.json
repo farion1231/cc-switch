@@ -5404,5 +5404,11 @@
     "installFailed": "Güncelleme kurulamadı",
     "downloadingInline": "Yeni sürüm arka planda indiriliyor…",
     "downloadedInline": "İndirildi"
+  },
+  "unreadableEntry": {
+    "title": "“{{name}}” okunamıyor",
+    "hint": "CC Switch'in daha yeni bir sürümüyle kaydedilmiş olabilir. Veriler olduğu gibi korunur, düzenlenemez veya etkinleştirilemez; güncelleme verileri geri getirir ya da kaydı silebilirsiniz.",
+    "confirmTitle": "Okunamayan kaydı sil",
+    "confirmMessage": "“{{name}}” silinsin mi? Yalnızca bu CC Switch kaydı silinir; uygulamaların kendi yapılandırma dosyaları değişmez."
   }
 }
