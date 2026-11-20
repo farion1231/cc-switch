@@ -23,6 +23,11 @@ import {
   type FetchedModel,
 } from "@/lib/api/model-fetch";
 
+vi.mock("@/hooks/useGlobalProxy", () => ({
+  useGlobalProxyUrl: () => ({ data: null }),
+  useTestProxy: () => ({ mutate: vi.fn(), isPending: false }),
+}));
+
 vi.mock("@/lib/api/copilot", () => ({
   copilotGetModels: vi.fn(),
   copilotGetModelsForAccount: vi.fn(),
@@ -123,6 +128,8 @@ function makeProps(kind: ProviderKind): Props {
     speedTestEndpoints: [],
     customUserAgent: "",
     onCustomUserAgentChange: vi.fn(),
+    proxyUrl: "",
+    onProxyUrlChange: vi.fn(),
     localProxyHeadersOverride: "",
     onLocalProxyHeadersOverrideChange: vi.fn(),
     localProxyBodyOverride: "",

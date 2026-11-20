@@ -49,6 +49,9 @@ interface GeminiFormFieldsProps {
 
   // Speed Test Endpoints
   speedTestEndpoints: EndpointCandidate[];
+
+  /** 供应商级代理，获取模型列表时使用（后端在启用全局代理时忽略） */
+  proxyUrl?: string;
 }
 
 export function GeminiFormFields({
@@ -74,6 +77,7 @@ export function GeminiFormFields({
   model,
   onModelChange,
   speedTestEndpoints,
+  proxyUrl,
 }: GeminiFormFieldsProps) {
   const { t } = useTranslation();
 
@@ -104,6 +108,7 @@ export function GeminiFormFields({
           undefined,
           {
             apiFormat: "google-generative-ai",
+            proxyUrl,
           },
         )
     )
@@ -122,7 +127,7 @@ export function GeminiFormFields({
         showFetchModelsError(err, t);
       })
       .finally(() => setIsFetchingModels(false));
-  }, [appId, baseUrl, apiKey, t]);
+  }, [appId, baseUrl, apiKey, proxyUrl, t]);
 
   // 检测是否为 Google 官方（使用 OAuth）
   const isGoogleOfficial =
@@ -246,6 +251,7 @@ export function GeminiFormFields({
           autoSelect={autoSelect}
           onAutoSelectChange={onAutoSelectChange}
           onCustomEndpointsChange={onCustomEndpointsChange}
+          proxyUrl={proxyUrl}
         />
       )}
     </>

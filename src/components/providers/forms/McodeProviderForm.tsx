@@ -19,6 +19,8 @@ import {
 } from "@/config/dshProviderPresets";
 import { mcodePresetModelSources } from "@/config/presetModelMetadata";
 import { BasicFormFields } from "./BasicFormFields";
+import { ProviderProxyField } from "./ProviderProxyField";
+import { withProviderProxy } from "@/lib/proxyUrl";
 import { OpenCodeFormFields } from "./OpenCodeFormFields";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
 import { usePresetStep } from "./presetStep";
@@ -143,6 +145,7 @@ export function McodeProviderForm({
   const [extraOptions, setExtraOptions] = useState(
     toOpencodeExtraOptions(config.options ?? {}),
   );
+  const [proxyUrl, setProxyUrl] = useState(initialData?.meta?.proxyUrl ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   // The key becomes `custom_provider.<key>` and MCode's default-model
@@ -274,7 +277,10 @@ export function McodeProviderForm({
             await onSubmit({
               ...identity,
               name: identity.name.trim(),
-              meta: initialData?.meta,
+              meta:
+                category === "official"
+                  ? initialData?.meta
+                  : withProviderProxy(initialData?.meta, proxyUrl),
               providerKey: isEdit ? providerId : providerKey,
               presetCategory: category,
               settingsConfig: JSON.stringify({
@@ -372,7 +378,16 @@ export function McodeProviderForm({
               mergeOpencodeExtraOptionRows(options, draft);
               update({ ...config, options });
             }}
+            proxyUrl={proxyUrl}
           />
+          {category !== "official" && (
+            <ProviderProxyField
+              id="mcode-provider-proxy-url"
+              value={proxyUrl}
+              onChange={setProxyUrl}
+              directOnly
+            />
+          )}
         </fieldset>
         {isNative ? (
           <NativeConfigEditor

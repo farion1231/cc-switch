@@ -1984,7 +1984,12 @@
     "reasoningEffortOff": "전송하지 않음",
     "reasoningEffortPassthrough": "그대로 전송",
     "directModeFormatInUse": "이 카드는 현재 직접 연결로 사용 중입니다. 이 형식으로 저장하면 요청이 실패합니다. 먼저 라우팅 또는 통합 모드로 전환하세요.",
-    "directModeFormatSwitch": "이 형식은 직접 연결 모드에서 사용할 수 없습니다. 이 카드를 사용하려면 라우팅 또는 통합 모드로 전환하세요."
+    "directModeFormatSwitch": "이 형식은 직접 연결 모드에서 사용할 수 없습니다. 이 카드를 사용하려면 라우팅 또는 통합 모드로 전환하세요.",
+    "proxyUrl": "프록시 URL",
+    "proxyUrlHelp": "이 공급자에 대한 요청(전달, 속도 테스트, 모델 가져오기)이 이 프록시를 통과합니다. 비워 두면 시스템 프록시를 따릅니다. 전역 프록시가 활성화되면 전역 프록시가 우선 적용됩니다.",
+    "proxyUrlHelpDirect": "CC Switch가 이 공급자를 위해 보내는 요청(속도 테스트, 모델 가져오기)이 이 프록시를 통과합니다. 앱 자체는 공급자에 직접 연결되므로 영향을 받지 않습니다. 비워 두면 시스템 프록시를 따릅니다. 전역 프록시가 활성화되면 전역 프록시가 우선 적용됩니다.",
+    "proxyUrlGlobalEnabled": "전역 프록시가 활성화되어 있어 이 설정이 적용되지 않습니다. 공급자별 프록시를 사용하려면 설정에서 전역 프록시를 지우세요.",
+    "proxyUrlInvalid": "유효하지 않은 프록시 URL입니다. 지원되는 프로토콜: http, https, socks5, socks5h."
   },
   "copilot": {
     "automaticFormat": "모델에 따라 자동 선택",

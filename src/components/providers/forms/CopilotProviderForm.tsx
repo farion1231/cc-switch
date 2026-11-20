@@ -71,6 +71,8 @@ import {
 import { RequestHeadersEditor } from "./RequestHeadersEditor";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
 import { CopilotAuthSection } from "./CopilotAuthSection";
+import { ProviderProxyField } from "./ProviderProxyField";
+import { withProviderProxy } from "@/lib/proxyUrl";
 import type { ProviderFormProps } from "./ProviderForm";
 
 const PRESETS = [
@@ -341,6 +343,7 @@ export function CopilotProviderForm({
   );
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
   const [isFetchingModels, setIsFetchingModels] = useState(false);
+  const [proxyUrl, setProxyUrl] = useState(initialData?.meta?.proxyUrl ?? "");
   const [busy, setBusy] = useState(false);
   const { data: existing } = useProvidersQuery("copilot");
   const preset =
@@ -464,6 +467,7 @@ export function CopilotProviderForm({
         apiFormat:
           providerType === "anthropic" ? "anthropic-messages" : undefined,
         requestHeaders,
+        proxyUrl: proxyUrl.trim() || undefined,
       },
     )
       .then((result) => {
@@ -482,7 +486,7 @@ export function CopilotProviderForm({
       .finally(() => {
         if (generation === fetchGeneration.current) setIsFetchingModels(false);
       });
-  }, [baseUrl, credential, headersKey, providerType, t]);
+  }, [baseUrl, credential, headersKey, providerType, proxyUrl, t]);
 
   // 选中的模型按 Pi 预设和 models.dev 补上下文 / 输出上限（只补没填的）
   const fillModelMetadata = useModelMetadataFill({
@@ -565,6 +569,7 @@ export function CopilotProviderForm({
         setCategory(next?.category ?? "custom");
         setOfficialModel("");
         setReasoningEffort("");
+        setProxyUrl("");
         const nextConnection: Connection =
           next && "provider" in next.settingsConfig
             ? structuredClone({
@@ -601,6 +606,7 @@ export function CopilotProviderForm({
       const meta: ProviderMeta = { ...(initialData?.meta ?? {}) };
       delete meta.githubAccountId;
       delete meta.authBinding;
+      delete meta.proxyUrl;
       if (isOfficial && accountId) {
         meta.authBinding = {
           source: "managed_account",
@@ -608,6 +614,7 @@ export function CopilotProviderForm({
           accountId,
         };
       }
+      const nextMeta = isOfficial ? meta : withProviderProxy(meta, proxyUrl);
       const model = officialModel.trim();
       const settingsConfig = isOfficial
         ? // 官方卡只用 GitHub 登录：不留任何自带模型字段
@@ -619,7 +626,7 @@ export function CopilotProviderForm({
       await onSubmit({
         ...identity,
         name: identity.name.trim(),
-        meta,
+        meta: nextMeta,
         providerKey: isOfficial ? undefined : isEdit ? providerId : cardId,
         presetId: presetId === "custom" ? undefined : presetId,
         presetCategory: category,
@@ -1041,6 +1048,12 @@ export function CopilotProviderForm({
                     provider: nextProvider,
                   });
                 }}
+              />
+              <ProviderProxyField
+                id="copilot-provider-proxy-url"
+                value={proxyUrl}
+                onChange={setProxyUrl}
+                directOnly
               />
               {modelList}
               {reasoningEffortField}

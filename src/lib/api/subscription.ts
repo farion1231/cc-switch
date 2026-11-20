@@ -30,6 +30,8 @@ export const subscriptionApi = {
     codingPlanProvider?: string,
     teamOrganizationId?: string,
     teamProjectId?: string,
+    // 所属供应商的代理；后端在启用全局代理时忽略
+    proxyUrl?: string,
   ): Promise<SubscriptionQuota> =>
     invoke("get_coding_plan_quota", {
       baseUrl,
@@ -39,10 +41,17 @@ export const subscriptionApi = {
       codingPlanProvider,
       teamOrganizationId,
       teamProjectId,
+      proxyUrl: proxyUrl?.trim() || undefined,
     }),
   getBalance: (
     baseUrl: string,
     apiKey: string,
+    // 所属供应商的代理；后端在启用全局代理时忽略
+    proxyUrl?: string,
   ): Promise<import("@/types").UsageResult> =>
-    invoke("get_balance", { baseUrl, apiKey }),
+    invoke("get_balance", {
+      baseUrl,
+      apiKey,
+      proxyUrl: proxyUrl?.trim() || undefined,
+    }),
 };

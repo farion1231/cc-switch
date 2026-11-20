@@ -1984,7 +1984,12 @@
     "reasoningEffortOff": "Nicht senden",
     "reasoningEffortPassthrough": "Unverändert senden",
     "directModeFormatInUse": "Diese Karte wird im Direktmodus verwendet: Wenn Sie sie mit diesem Format speichern, schlagen Anfragen fehl. Wechseln Sie zuerst zu Routing oder Aggregation.",
-    "directModeFormatSwitch": "Dieses Format funktioniert im Direktmodus nicht; wechseln Sie zu Routing oder Aggregation, um diese Karte zu verwenden."
+    "directModeFormatSwitch": "Dieses Format funktioniert im Direktmodus nicht; wechseln Sie zu Routing oder Aggregation, um diese Karte zu verwenden.",
+    "proxyUrl": "Proxy-URL",
+    "proxyUrlHelp": "Anfragen an diesen Anbieter (Weiterleitung, Geschwindigkeitstests, Modellabruf) laufen über diesen Proxy. Leer lassen, um dem System-Proxy zu folgen. Der globale Proxy hat Vorrang, wenn er aktiviert ist.",
+    "proxyUrlHelpDirect": "Anfragen, die CC Switch für diesen Anbieter stellt (Geschwindigkeitstests, Modellabruf), laufen über diesen Proxy. Die Anwendung selbst verbindet sich direkt mit dem Anbieter und wird nicht beeinflusst. Leer lassen, um dem System-Proxy zu folgen. Der globale Proxy hat Vorrang, wenn er aktiviert ist.",
+    "proxyUrlGlobalEnabled": "Der globale Proxy ist aktiviert, daher hat diese Einstellung keine Auswirkung. Löschen Sie den globalen Proxy in den Einstellungen, um einen anbieterspezifischen Proxy zu verwenden.",
+    "proxyUrlInvalid": "Ungültige Proxy-URL. Unterstützte Protokolle: http, https, socks5, socks5h."
   },
   "copilot": {
     "automaticFormat": "Wird automatisch vom Routing gewählt",

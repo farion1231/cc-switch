@@ -51,6 +51,7 @@ import {
   type GeminiProviderPreset,
 } from "@/config/geminiProviderPresets";
 import { usesGeminiStyleForm } from "@/config/appConfig";
+import { ProviderProxyField } from "./ProviderProxyField";
 import {
   opencodeProviderPresets,
   type OpenCodeProviderPreset,
@@ -502,6 +503,7 @@ function ProviderFormFull({
     setPromptCacheRouting(initialData?.meta?.promptCacheRouting ?? "auto");
     setCustomUserAgent(initialData?.meta?.customUserAgent ?? "");
     setBillingMultiplier(initialData?.meta?.billingMultiplier ?? "");
+    setProxyUrl(initialData?.meta?.proxyUrl ?? "");
     setLocalProxyHeadersOverride(
       formatRequestOverrideObject(
         initialData?.meta?.localProxyRequestOverrides?.headers,
@@ -765,6 +767,9 @@ function ProviderFormFull({
   // 只有走本地路由的应用记得到按供应商的花费；官方卡的花费跟单价无关，不显示。
   const supportsBillingMultiplier =
     appHas(appId, "localProxy") && category !== "official";
+  const [proxyUrl, setProxyUrl] = useState<string>(
+    () => initialData?.meta?.proxyUrl ?? "",
+  );
   const [localProxyHeadersOverride, setLocalProxyHeadersOverride] =
     useState<string>(() =>
       formatRequestOverrideObject(
@@ -2061,6 +2066,9 @@ function ProviderFormFull({
         ? normalizeClaudeStackModels(claudeStackRows)
         : undefined;
 
+    // 供应商级代理：官方账号、OMO 配置、OpenCode 内置供应商没有自己的端点，不存
+    const savesProviderProxy =
+      category !== "official" && !isAnyOmoCategory && !isNativeOpencode;
     const nextMeta: ProviderMeta = {
       ...(baseMeta ?? {}),
       opencodeConfigFormat: isNativeOpencode ? "v2" : undefined,
@@ -2144,6 +2152,7 @@ function ProviderFormFull({
         (appId === "claude" || appId === "codex") && category !== "official"
           ? customUserAgent.trim() || undefined
           : undefined,
+      proxyUrl: savesProviderProxy ? proxyUrl.trim() || undefined : undefined,
       localProxyRequestOverrides: shouldApplyLocalProxyRequestOverrides
         ? overridesResult.overrides
         : undefined,
@@ -2856,6 +2865,8 @@ function ProviderFormFull({
               onBillingMultiplierChange={
                 supportsBillingMultiplier ? setBillingMultiplier : undefined
               }
+              proxyUrl={proxyUrl}
+              onProxyUrlChange={setProxyUrl}
               localProxyHeadersOverride={localProxyHeadersOverride}
               onLocalProxyHeadersOverrideChange={setLocalProxyHeadersOverride}
               localProxyBodyOverride={localProxyBodyOverride}
@@ -2970,6 +2981,8 @@ function ProviderFormFull({
               onBillingMultiplierChange={
                 supportsBillingMultiplier ? setBillingMultiplier : undefined
               }
+              proxyUrl={proxyUrl}
+              onProxyUrlChange={setProxyUrl}
               localProxyHeadersOverride={localProxyHeadersOverride}
               onLocalProxyHeadersOverrideChange={setLocalProxyHeadersOverride}
               localProxyBodyOverride={localProxyBodyOverride}
@@ -3006,6 +3019,7 @@ function ProviderFormFull({
               model={geminiModel}
               onModelChange={handleGeminiModelChange}
               speedTestEndpoints={speedTestEndpoints}
+              proxyUrl={proxyUrl}
             />
           )}
 
@@ -3050,6 +3064,7 @@ function ProviderFormFull({
               onExtraOptionsChange={
                 opencodeForm.handleOpencodeExtraOptionsChange
               }
+              proxyUrl={proxyUrl}
             />
           )}
 
@@ -3091,6 +3106,7 @@ function ProviderFormFull({
               onModelsChange={openclawForm.handleOpenclawModelsChange}
               userAgent={openclawForm.openclawUserAgent}
               onUserAgentChange={openclawForm.handleOpenclawUserAgentChange}
+              proxyUrl={proxyUrl}
             />
           )}
 
@@ -3114,8 +3130,23 @@ function ProviderFormFull({
               onRateLimitDelayChange={
                 hermesForm.handleHermesRateLimitDelayChange
               }
+              proxyUrl={proxyUrl}
             />
           )}
+
+          {/* Claude / Codex 的代理字段在各自的高级区里；其余应用放在这里 */}
+          {appId !== "claude" &&
+            appId !== "codex" &&
+            category !== "official" &&
+            !isAnyOmoCategory &&
+            !isNativeOpencode && (
+              <ProviderProxyField
+                id="provider-proxy-url"
+                value={proxyUrl}
+                onChange={setProxyUrl}
+                directOnly={appId !== "gemini"}
+              />
+            )}
 
           {/* 配置编辑器：Codex、Claude、Gemini 分别使用不同的编辑器 */}
           {useStackLayout ? (

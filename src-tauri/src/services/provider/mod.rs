@@ -8179,6 +8179,15 @@ impl ProviderService {
             crate::provider::parse_billing_multiplier(raw).map_err(AppError::InvalidInput)?;
         }
         icon::validate_icon(provider.icon.as_deref())?;
+        if let Some(proxy_url) = provider.proxy_url() {
+            crate::proxy::http_client::validate_proxy(Some(proxy_url)).map_err(|e| {
+                AppError::localized(
+                    "provider.proxy_url.invalid",
+                    format!("供应商代理地址无效：{e}"),
+                    format!("Invalid provider proxy URL: {e}"),
+                )
+            })?;
+        }
         match app_type {
             AppType::Claude => {
                 if !provider.settings_config.is_object() {

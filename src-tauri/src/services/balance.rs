@@ -74,7 +74,7 @@ fn make_auth_error(status: reqwest::StatusCode) -> UsageResult {
 // Response: { balance_infos: [{ currency, total_balance, granted_balance, topped_up_balance }], is_available }
 
 async fn query_deepseek(api_key: &str) -> Result<UsageResult, String> {
-    let client = crate::proxy::http_client::get();
+    let client = crate::proxy::http_client::provider_scoped();
 
     let request = client
         .get("https://api.deepseek.com/user/balance")
@@ -134,7 +134,7 @@ fn parse_deepseek_balance(body: &serde_json::Value) -> UsageResult {
 // Response: { object, type, balance, total_cash_balance, total_voucher_balance }
 
 async fn query_stepfun(api_key: &str) -> Result<UsageResult, String> {
-    let client = crate::proxy::http_client::get();
+    let client = crate::proxy::http_client::provider_scoped();
 
     let request = client
         .get("https://api.stepfun.com/v1/accounts")
@@ -170,7 +170,7 @@ async fn query_stepfun(api_key: &str) -> Result<UsageResult, String> {
 // Response: { code, data: { balance, chargeBalance, totalBalance, status } }
 
 async fn query_siliconflow(api_key: &str, is_cn: bool) -> Result<UsageResult, String> {
-    let client = crate::proxy::http_client::get();
+    let client = crate::proxy::http_client::provider_scoped();
 
     let domain = if is_cn {
         "api.siliconflow.cn"
@@ -226,7 +226,7 @@ async fn query_siliconflow(api_key: &str, is_cn: bool) -> Result<UsageResult, St
 // /key's limit_remaining is a spending cap, not the account credit balance.
 
 async fn query_openrouter(api_key: &str) -> Result<UsageResult, String> {
-    let client = crate::proxy::http_client::get();
+    let client = crate::proxy::http_client::provider_scoped();
 
     let request = client
         .get("https://openrouter.ai/api/v1/credits")
@@ -280,7 +280,7 @@ fn parse_openrouter_balance(body: &serde_json::Value) -> UsageResult {
 // 金额单位：0.0001 USD
 
 async fn query_novita(api_key: &str) -> Result<UsageResult, String> {
-    let client = crate::proxy::http_client::get();
+    let client = crate::proxy::http_client::provider_scoped();
 
     let request = client
         .get("https://api.novita.ai/v3/user/balance")
@@ -344,7 +344,7 @@ pub(crate) async fn query_zhipu_balance(
     } else {
         "https://api.z.ai"
     };
-    let client = crate::proxy::http_client::get();
+    let client = crate::proxy::http_client::provider_scoped();
 
     let request = client
         .get(format!(

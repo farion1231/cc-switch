@@ -17,58 +17,7 @@ import {
   useScanProxies,
   type DetectedProxy,
 } from "@/hooks/useGlobalProxy";
-
-/** 从完整 URL 提取认证信息 */
-function extractAuth(url: string): {
-  baseUrl: string;
-  username: string;
-  password: string;
-} {
-  if (!url.trim()) return { baseUrl: "", username: "", password: "" };
-
-  try {
-    const parsed = new URL(url);
-    const username = decodeURIComponent(parsed.username || "");
-    const password = decodeURIComponent(parsed.password || "");
-    // 移除认证信息，获取基础 URL
-    parsed.username = "";
-    parsed.password = "";
-    return { baseUrl: parsed.toString(), username, password };
-  } catch {
-    return { baseUrl: url, username: "", password: "" };
-  }
-}
-
-/** 将认证信息合并到 URL */
-function mergeAuth(
-  baseUrl: string,
-  username: string,
-  password: string,
-): string {
-  if (!baseUrl.trim()) return "";
-  if (!username.trim()) return baseUrl;
-
-  try {
-    const parsed = new URL(baseUrl);
-    // URL 对象的 username/password setter 会自动进行 percent-encoding
-    // 不要使用 encodeURIComponent，否则会导致双重编码
-    parsed.username = username.trim();
-    if (password) {
-      parsed.password = password;
-    }
-    return parsed.toString();
-  } catch {
-    // URL 解析失败，尝试手动插入（此时需要手动编码）
-    const match = baseUrl.match(/^(\w+:\/\/)(.+)$/);
-    if (match) {
-      const auth = password
-        ? `${encodeURIComponent(username.trim())}:${encodeURIComponent(password)}@`
-        : `${encodeURIComponent(username.trim())}@`;
-      return `${match[1]}${auth}${match[2]}`;
-    }
-    return baseUrl;
-  }
-}
+import { extractProxyAuth, mergeProxyAuth } from "@/lib/proxyUrl";
 
 export function GlobalProxySettings() {
   const { t } = useTranslation();
@@ -86,14 +35,18 @@ export function GlobalProxySettings() {
 
   // 计算完整 URL（含认证信息）
   const fullUrl = useMemo(
-    () => mergeAuth(url, username, password),
+    () => mergeProxyAuth(url, username, password),
     [url, username, password],
   );
 
   // 同步远程配置
   useEffect(() => {
     if (savedUrl !== undefined) {
-      const { baseUrl, username: u, password: p } = extractAuth(savedUrl || "");
+      const {
+        baseUrl,
+        username: u,
+        password: p,
+      } = extractProxyAuth(savedUrl || "");
       setUrl(baseUrl);
       setUsername(u);
       setPassword(p);
@@ -118,7 +71,7 @@ export function GlobalProxySettings() {
   };
 
   const handleSelect = (proxyUrl: string) => {
-    const { baseUrl, username: u, password: p } = extractAuth(proxyUrl);
+    const { baseUrl, username: u, password: p } = extractProxyAuth(proxyUrl);
     setUrl(baseUrl);
     setUsername(u);
     setPassword(p);

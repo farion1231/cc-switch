@@ -53,6 +53,7 @@ import {
   type FetchedModel,
 } from "@/lib/api/model-fetch";
 import { CustomUserAgentField } from "./CustomUserAgentField";
+import { ProviderProxyField } from "./ProviderProxyField";
 import {
   ClaudeStackModelsField,
   type ClaudeStackModelRow,
@@ -177,6 +178,9 @@ interface ClaudeFormFieldsProps {
   /** 供应商费用倍率；不传 onBillingMultiplierChange 时不显示（官方卡等）。 */
   billingMultiplier?: string;
   onBillingMultiplierChange?: (value: string) => void;
+  // Per-provider outbound proxy
+  proxyUrl: string;
+  onProxyUrlChange: (value: string) => void;
   localProxyHeadersOverride: string;
   onLocalProxyHeadersOverrideChange: (value: string) => void;
   localProxyBodyOverride: string;
@@ -263,6 +267,8 @@ export function ClaudeFormFields({
   onCustomUserAgentChange,
   billingMultiplier = "",
   onBillingMultiplierChange,
+  proxyUrl,
+  onProxyUrlChange,
   localProxyHeadersOverride,
   onLocalProxyHeadersOverrideChange,
   localProxyBodyOverride,
@@ -289,6 +295,7 @@ export function ClaudeFormFields({
     isFullUrl ||
     customUserAgent ||
     billingMultiplier ||
+    proxyUrl.trim() ||
     hasRequestOverrides
   );
   const [advancedExpanded, setAdvancedExpanded] = useState(
@@ -304,11 +311,12 @@ export function ClaudeFormFields({
     }
   }, [hasAnyAdvancedValue, isXaiOauthPreset]);
 
-  // Stack 布局的高级区只有完整 URL、User-Agent 和请求覆盖，开了或填了才展开。
+  // Stack 布局的高级区只有完整 URL、代理、User-Agent 和请求覆盖，开了或填了才展开。
   const [stackAdvancedExpanded, setStackAdvancedExpanded] = useState(
     isFullUrl ||
       !!customUserAgent ||
       !!billingMultiplier ||
+      !!proxyUrl.trim() ||
       hasRequestOverrides,
   );
 
@@ -370,6 +378,7 @@ export function ClaudeFormFields({
       {
         apiFormat: claudeModelFetchApiFormat(apiFormat),
         requestHeaders: modelFetchRequestHeaders(localProxyHeadersOverride),
+        proxyUrl: proxyUrl.trim() || undefined,
       },
     )
       .then((models) => {
@@ -387,6 +396,7 @@ export function ClaudeFormFields({
     isFullUrl,
     customUserAgent,
     apiFormat,
+    proxyUrl,
     localProxyHeadersOverride,
     showModelFetchResult,
     t,
@@ -882,6 +892,7 @@ export function ClaudeFormFields({
           autoSelect={autoSelect}
           onAutoSelectChange={onAutoSelectChange}
           onCustomEndpointsChange={onCustomEndpointsChange}
+          proxyUrl={proxyUrl}
         />
       )}
     </>
@@ -1029,7 +1040,7 @@ export function ClaudeFormFields({
   // 这一组都只在路由、聚合模式下生效：在分组开头说一次，各自的作用收进字段名后的「?」。
   const userAgentAndOverrides = (
     <>
-      <p className="text-xs leading-relaxed text-fg-2">
+      <p className="border-t border-border pt-3 text-xs leading-relaxed text-fg-2">
         {t("codexConfig.routeOnlySettingsHint", {
           defaultValue: "以下设置只在路由、聚合模式下生效。",
         })}
@@ -1102,38 +1113,39 @@ export function ClaudeFormFields({
           />
         )}
 
-        {/* 高级区只有 UA 和请求覆盖；Copilot 的转发会跳过这两项，整块不显示 */}
-        {!isCopilotPreset && (
-          <Collapsible
-            open={stackAdvancedExpanded}
-            onOpenChange={setStackAdvancedExpanded}
-            className="rounded-lg border border-border p-4"
-          >
-            <CollapsibleTrigger asChild>
-              <Button
-                type="button"
-                variant={null}
-                size="sm"
-                className="h-8 w-full justify-start gap-1.5 px-0 text-sm font-medium text-fg-1 hover:opacity-70 active:scale-100"
-              >
-                {stackAdvancedExpanded ? (
-                  <ChevronDown className="h-4 w-4" />
-                ) : (
-                  <ChevronRight className="h-4 w-4" />
-                )}
-                {t("providerForm.advancedOptionsToggle")}
-              </Button>
-            </CollapsibleTrigger>
-            <CollapsibleContent className="space-y-4 pt-2">
-              {fullUrlToggle && (
-                <div className="border-b border-border pb-3">
-                  {fullUrlToggle}
-                </div>
+        {/* Stack 高级区：完整 URL、供应商代理，以及非 Copilot 的 UA / 请求覆盖 */}
+        <Collapsible
+          open={stackAdvancedExpanded}
+          onOpenChange={setStackAdvancedExpanded}
+          className="rounded-lg border border-border p-4"
+        >
+          <CollapsibleTrigger asChild>
+            <Button
+              type="button"
+              variant={null}
+              size="sm"
+              className="h-8 w-full justify-start gap-1.5 px-0 text-sm font-medium text-fg-1 hover:opacity-70 active:scale-100"
+            >
+              {stackAdvancedExpanded ? (
+                <ChevronDown className="h-4 w-4" />
+              ) : (
+                <ChevronRight className="h-4 w-4" />
               )}
-              {userAgentAndOverrides}
-            </CollapsibleContent>
-          </Collapsible>
-        )}
+              {t("providerForm.advancedOptionsToggle")}
+            </Button>
+          </CollapsibleTrigger>
+          <CollapsibleContent className="space-y-4 pt-2">
+            {fullUrlToggle && (
+              <div className="border-b border-border pb-3">{fullUrlToggle}</div>
+            )}
+            <ProviderProxyField
+              id="claude-provider-proxy-url"
+              value={proxyUrl}
+              onChange={onProxyUrlChange}
+            />
+            {!isCopilotPreset && userAgentAndOverrides}
+          </CollapsibleContent>
+        </Collapsible>
       </>
     );
   }
@@ -1424,6 +1436,14 @@ export function ClaudeFormFields({
                       })}
                 </p>
               )}
+            </div>
+
+            <div className="border-t border-border pt-4">
+              <ProviderProxyField
+                id="claude-provider-proxy-url"
+                value={proxyUrl}
+                onChange={onProxyUrlChange}
+              />
             </div>
 
             {/* Copilot 的请求由转发层按 Copilot 客户端的样子发，UA 和请求覆盖都会被跳过 */}

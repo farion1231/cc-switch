@@ -35,6 +35,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import type { ProviderFormProps, ProviderFormValues } from "./ProviderForm";
+import { ProviderProxyField } from "./ProviderProxyField";
+import { withProviderProxy } from "@/lib/proxyUrl";
 import JsonEditor from "@/components/JsonEditor";
 import { BasicFormFields, REQUIRED_LABEL } from "./BasicFormFields";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
@@ -575,6 +577,7 @@ export function PiProviderForm({
   const [category, setCategory] = useState<ProviderCategory>(
     initialData?.category ?? "custom",
   );
+  const [proxyUrl, setProxyUrl] = useState(initialData?.meta?.proxyUrl ?? "");
   const [providerKey, setProviderKey] = useState(providerId ?? "");
   // Pi 和 omp 的供应商各管各的，查重只看当前应用。
   const { data: existingProviders } = useProvidersQuery(isOmp ? "omp" : "pi");
@@ -1234,6 +1237,7 @@ export function PiProviderForm({
       {
         apiFormat: api,
         requestHeaders,
+        proxyUrl,
       },
     )
       .then((result) => {
@@ -1257,7 +1261,7 @@ export function PiProviderForm({
           setIsFetchingModels(false);
         }
       });
-  }, [api, apiKey, baseUrl, providerHeaders, t]);
+  }, [api, apiKey, baseUrl, providerHeaders, proxyUrl, t]);
 
   const handleApiChange = useCallback(
     (value: string) => {
@@ -1556,7 +1560,10 @@ export function PiProviderForm({
         providerKey: isEdit ? providerId : trimmedKey,
         presetId: selectedPresetId ?? undefined,
         presetCategory: category,
-        meta: initialData?.meta,
+        meta:
+          category === "official"
+            ? initialData?.meta
+            : withProviderProxy(initialData?.meta, proxyUrl),
       };
       await onSubmit(values);
     } catch (error) {
@@ -2300,6 +2307,15 @@ export function PiProviderForm({
               </CollapsibleContent>
             </Collapsible>
           </fieldset>
+        )}
+
+        {hasConfigurationSelection && category !== "official" && (
+          <ProviderProxyField
+            id="pi-provider-proxy-url"
+            value={proxyUrl}
+            onChange={setProxyUrl}
+            directOnly
+          />
         )}
 
         {hasConfigurationSelection && isOmp && (

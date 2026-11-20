@@ -49,6 +49,9 @@ interface HermesFormFieldsProps {
   onModelsChange: (models: HermesModel[]) => void;
   rateLimitDelay: number | undefined;
   onRateLimitDelayChange: (delay: number | undefined) => void;
+
+  /** 供应商级代理，获取模型列表时使用（后端在启用全局代理时忽略） */
+  proxyUrl?: string;
 }
 
 type BaseUrlErrorCode = "empty" | "invalid" | "scheme";
@@ -98,6 +101,7 @@ export function HermesFormFields({
   onModelsChange,
   rateLimitDelay,
   onRateLimitDelayChange,
+  proxyUrl,
 }: HermesFormFieldsProps) {
   const { t } = useTranslation();
   const [expandedModelKeys, setExpandedModelKeys] = useState<Set<string>>(
@@ -150,7 +154,9 @@ export function HermesFormFields({
       return;
     }
     setIsFetchingModels(true);
-    fetchModelsForConfig(baseUrl, apiKey)
+    fetchModelsForConfig(baseUrl, apiKey, undefined, undefined, undefined, {
+      proxyUrl,
+    })
       .then((fetched) => {
         setFetchedModels(fetched);
         if (fetched.length === 0) {
@@ -166,7 +172,7 @@ export function HermesFormFields({
         showFetchModelsError(err, t);
       })
       .finally(() => setIsFetchingModels(false));
-  }, [baseUrl, apiKey, t]);
+  }, [baseUrl, apiKey, proxyUrl, t]);
 
   const handleRemoveModel = (index: number) => {
     const removedKey = modelKeysRef.current[index];
