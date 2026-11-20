@@ -76,7 +76,7 @@ fn detect_provider(base_url: &str) -> Option<CodingPlanProvider> {
 /// `base_url` 的路径部分（小写，不含查询串和片段），没有 scheme 也能取。
 fn url_path(base_url: &str) -> String {
     let url = base_url.trim().to_ascii_lowercase();
-    let rest = url.split_once("://").map_or(url.as_str(), |(_, rest)| rest);
+    let rest = crate::codex_config::url_after_scheme(&url);
     let path = rest.find(['/', '?', '#']).map_or("", |i| &rest[i..]);
     path.split(['?', '#']).next().unwrap_or("").to_string()
 }
@@ -1227,14 +1227,8 @@ enum VolcCall {
 /// `ark.cn-beijing.volces.com` → `cn-beijing`）；无法识别时回落 cn-beijing。
 /// 控制面 Host 是固定网关（`VOLCENGINE_OPENAPI_HOST`），不随 base_url 变化。
 fn volcengine_region(base_url: &str) -> String {
-    let host = base_url
-        .split_once("://")
-        .map(|(_, rest)| rest)
-        .unwrap_or(base_url)
-        .split('/')
-        .next()
-        .unwrap_or("");
-    host.split('.')
+    crate::codex_config::codex_url_host(base_url)
+        .split('.')
         .find(|p| p.starts_with("cn-") || p.starts_with("ap-"))
         .map(|p| p.to_string())
         .unwrap_or_else(|| VOLCENGINE_DEFAULT_REGION.to_string())

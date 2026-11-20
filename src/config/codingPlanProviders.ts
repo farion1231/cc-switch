@@ -4,7 +4,7 @@
  * 与后端 `src-tauri/src/services/coding_plan.rs::detect_provider` 保持一致：
  * 都按 host 标签边界匹配（同后端 `codex_url_host_matches_any`），有的再要求路径前缀；
  * 出现在中转站路径或查询串里的域名、`api.z.ai.example.com` 这类伪造后缀都不认。
- * 前端这里用 RegExp 做同效匹配。两边对同一组地址的识别结果由
+ * 前端这里用 RegExp 做同效匹配（见 `urlHostPattern`）。两边对同一组地址的识别结果由
  * tests/config/backendConstants.test.ts 校验。
  * 新增供应商时改这一处即可（UsageScriptModal 下拉 + useProviderActions
  * 新建自动注入 + 托盘识别全部复用）。
@@ -13,6 +13,7 @@ import { createUsageScript } from "@/types";
 import { TEMPLATE_TYPES } from "@/config/constants";
 import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
 import { extractGrokBuildBaseUrl } from "@/utils/grokBuildConfig";
+import { urlHostPattern } from "@/utils/urlHostPattern";
 
 export interface CodingPlanProviderEntry {
   /** 与后端 QuotaTier 的 `codingPlanProvider` 取值对齐 */
@@ -32,28 +33,16 @@ export interface CodingPlanProviderEntry {
   pattern: RegExp | null;
 }
 
-/**
- * base_url 的 host 是 `host`（正则片段）或其子域，可带 scheme、userinfo、端口和末尾的点；
- * `path` 是紧跟其后的路径前缀（正则片段），省略时只看 host。
- */
-function urlPattern(host: string, path = ""): RegExp {
-  return new RegExp(
-    String.raw`^\s*(?:https?://)?(?:[^/?#@]*@)?(?:[\w-]+\.)*${host}\.?(?::\d+)?` +
-      (path ? path : String.raw`(?=[/?#]|\s*$)`),
-    "i",
-  );
-}
-
 export const CODING_PLAN_PROVIDERS: readonly CodingPlanProviderEntry[] = [
   {
     id: "kimi",
     label: "Kimi For Coding",
-    pattern: urlPattern(String.raw`api\.kimi\.com`, "/coding"),
+    pattern: urlHostPattern(String.raw`api\.kimi\.com`, "/coding"),
   },
   {
     id: "zhipu",
     label: "Zhipu GLM (智谱)",
-    pattern: urlPattern(String.raw`(?:bigmodel\.cn|api\.z\.ai)`),
+    pattern: urlHostPattern(String.raw`(?:bigmodel\.cn|api\.z\.ai)`),
   },
   {
     // 智谱团队套餐（Team Plan）。base_url 与个人版智谱（open.bigmodel.cn）相同，
@@ -66,12 +55,14 @@ export const CODING_PLAN_PROVIDERS: readonly CodingPlanProviderEntry[] = [
   {
     id: "minimax",
     label: "MiniMax",
-    pattern: urlPattern(String.raw`api\.(?:minimaxi\.com|minimax\.(?:io|cn))`),
+    pattern: urlHostPattern(
+      String.raw`api\.(?:minimaxi\.com|minimax\.(?:io|cn))`,
+    ),
   },
   {
     id: "zenmux",
     label: "ZenMux",
-    pattern: urlPattern(String.raw`zenmux\.ai`),
+    pattern: urlHostPattern(String.raw`zenmux\.ai`),
   },
   {
     // 火山方舟 Agent Plan / Coding Plan。base_url 形如
@@ -79,7 +70,7 @@ export const CODING_PLAN_PROVIDERS: readonly CodingPlanProviderEntry[] = [
     // /api/coding[/v3]（Coding Plan）。
     id: "volcengine",
     label: "火山方舟 (Volcengine)",
-    pattern: urlPattern(String.raw`volces\.com`, "/api/(?:plan|coding)"),
+    pattern: urlHostPattern(String.raw`volces\.com`, "/api/(?:plan|coding)"),
   },
   {
     // OpenCode Go（$10/月订阅，三时间窗口美元额度）。用量端点
@@ -91,14 +82,14 @@ export const CODING_PLAN_PROVIDERS: readonly CodingPlanProviderEntry[] = [
     // Zen 按量版（/zen/v1）没有用量 API，刻意不命中。
     id: "opencode_go",
     label: "OpenCode Go",
-    pattern: urlPattern(String.raw`opencode\.ai`, "/(?:zen|inference)/go"),
+    pattern: urlHostPattern(String.raw`opencode\.ai`, "/(?:zen|inference)/go"),
   },
   {
     // Command Code 的余额与窗口接口由官方 CLI 使用，当前未公开文档化。
     // Claude 使用 /provider，Codex 使用 /provider/v1。
     id: "command_code",
     label: "Command Code",
-    pattern: urlPattern(
+    pattern: urlHostPattern(
       String.raw`api\.commandcode\.ai`,
       "/provider(?:[/?#]|\\s*$)",
     ),
@@ -108,7 +99,7 @@ export const CODING_PLAN_PROVIDERS: readonly CodingPlanProviderEntry[] = [
     // 本地 localhost:11434 不命中。
     id: "ollama_cloud",
     label: "Ollama Cloud",
-    pattern: urlPattern(String.raw`ollama\.com`),
+    pattern: urlHostPattern(String.raw`ollama\.com`),
   },
 ] as const;
 

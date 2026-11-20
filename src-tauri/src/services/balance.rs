@@ -45,6 +45,18 @@ fn detect_provider(base_url: &str) -> Option<BalanceProvider> {
     }
 }
 
+/// 按地址认出的余额供应商 id，取值与前端 `BALANCE_PROVIDERS` 的 `id` 一致（两站点的硅基流动同为 `siliconflow`）。
+#[cfg(test)]
+pub(crate) fn detect_provider_id(base_url: &str) -> Option<&'static str> {
+    Some(match detect_provider(base_url)? {
+        BalanceProvider::DeepSeek => "deepseek",
+        BalanceProvider::StepFun => "stepfun",
+        BalanceProvider::SiliconFlow | BalanceProvider::SiliconFlowEn => "siliconflow",
+        BalanceProvider::OpenRouter => "openrouter",
+        BalanceProvider::NovitaAI => "novita",
+    })
+}
+
 fn make_error(msg: String) -> UsageResult {
     UsageResult {
         success: false,
