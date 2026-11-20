@@ -97,8 +97,8 @@ pub fn reapply_current_codex_official_live(state: &AppState) -> Result<bool, App
     if current_id.is_empty() {
         return Ok(false);
     }
-    let providers = state.db.get_all_providers(&AppType::Codex)?;
-    let Some(provider) = providers.get(&current_id) else {
+    let providers = state.db.get_provider_rows(&AppType::Codex)?;
+    let Some(provider) = providers.get(&current_id)? else {
         return Ok(false);
     };
     if !codex_direct::is_official(provider) {
@@ -125,8 +125,8 @@ pub fn reapply_current_codex_third_party_live(state: &AppState) -> Result<bool, 
     else {
         return Ok(false);
     };
-    let providers = state.db.get_all_providers(&AppType::Codex)?;
-    let Some(provider) = providers.get(&current_id) else {
+    let providers = state.db.get_provider_rows(&AppType::Codex)?;
+    let Some(provider) = providers.get(&current_id)? else {
         return Ok(false);
     };
     if codex_direct::is_official(provider) {
@@ -433,6 +433,70 @@ mod tests {
                     .len(),
                 1
             );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn an_unreadable_row_only_fails_what_reads_that_row() {
+        with_test_home(|state, _| {
+            for id in ["good", "broken"] {
+                let mut provider = Provider::with_id(
+                    id.into(),
+                    format!("{id} name"),
+                    codex_settings(&format!("https://{id}.example/v1"), &format!("sk-{id}")),
+                    None,
+                );
+                provider.category = Some("custom".into());
+                provider.meta = Some(ProviderMeta::default());
+                state.db.save_provider(&AppType::Codex, &provider).unwrap();
+            }
+            state
+                .db
+                .add_custom_endpoint(&AppType::Codex, "good", "https://mirror.example/v1")
+                .unwrap();
+            ProviderService::switch(state, AppType::Codex, "broken").unwrap();
+            let stored = break_stored_settings(state, "codex", "broken");
+
+            // 指针照样指着读不出来的那行：解析当前供应商不报错，删除按「正在使用」拒绝。
+            assert_eq!(
+                ProviderService::current(state, AppType::Codex).unwrap(),
+                "broken"
+            );
+            let refused = ProviderService::delete(state, AppType::Codex, "broken")
+                .unwrap_err()
+                .to_string();
+            assert!(refused.contains("正在使用"), "{refused}");
+
+            // 只读另一行的操作不受影响；读这一行的点名报错。
+            let endpoints = ProviderService::get_custom_endpoints(state, AppType::Codex, "good")
+                .expect("endpoints of another row");
+            assert_eq!(endpoints.len(), 1);
+            let error = ProviderService::get_custom_endpoints(state, AppType::Codex, "broken")
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("broken"), "{error}");
+            for (id, names_broken) in [("good", false), ("broken", true)] {
+                let error =
+                    futures::executor::block_on(usage::query_usage(state, AppType::Codex, id))
+                        .unwrap_err()
+                        .to_string();
+                assert_eq!(error.contains("broken"), names_broken, "{id}: {error}");
+            }
+
+            // 从读不出来的那家切走可以（之后才能删它），它的字节不变。
+            ProviderService::switch(state, AppType::Codex, "good").expect("switch away");
+            assert_eq!(
+                ProviderService::current(state, AppType::Codex).unwrap(),
+                "good"
+            );
+            // 只有 is_current（最后一段）跟着指针变，存的 JSON 不动。
+            let json_part = |row: &str| row.rsplit_once('|').unwrap().0.to_string();
+            assert_eq!(
+                stored_row(state, "codex", "broken").map(|row| json_part(&row)),
+                Some(json_part(&stored))
+            );
+            ProviderService::delete(state, AppType::Codex, "broken").expect("delete once unused");
         });
     }
 
@@ -7205,11 +7269,13 @@ impl ProviderService {
             return omp::enable(state, id);
         }
 
-        // Check if provider exists
-        let providers = state.db.get_all_providers(&app_type)?;
-        let _provider = providers
-            .get(id)
+        // Check if provider exists. 别的行读不出来不拦这次切换（它们在下面只用来找上一家；
+        // 上一家读不出来就和它不在库里一样处理）；要切到的这一行读不出来则报错。
+        let rows = state.db.get_provider_rows(&app_type)?;
+        let _provider = rows
+            .get(id)?
             .ok_or_else(|| AppError::Message(format!("供应商 {id} 不存在")))?;
+        let providers = &rows.readable;
         // WorkBuddy 官方登录卡不写 models.json，卡片的「添加」走账号切换（还原绑定账号的登录文件）
         if app_type == AppType::WorkBuddy
             && crate::workbuddy_config::is_official_provider(_provider)
@@ -7249,14 +7315,14 @@ impl ProviderService {
 
         // OMO providers are switched through their own exclusive path.
         if matches!(app_type, AppType::OpenCode) && _provider.category.as_deref() == Some("omo") {
-            return Self::switch_normal(state, app_type, id, &providers);
+            return Self::switch_normal(state, app_type, id, providers);
         }
 
         // OMO Slim providers are switched through their own exclusive path.
         if matches!(app_type, AppType::OpenCode)
             && _provider.category.as_deref() == Some("omo-slim")
         {
-            return Self::switch_normal(state, app_type, id, &providers);
+            return Self::switch_normal(state, app_type, id, providers);
         }
 
         // 切换和进入 / 退出代理都会改客户端文件和指针。按应用串行，拿到锁、补完上一次
@@ -7297,7 +7363,7 @@ impl ProviderService {
         }
 
         // Normal mode: full switch with Live config write
-        Self::switch_normal(state, app_type, id, &providers)
+        Self::switch_normal(state, app_type, id, providers)
     }
 
     /// Normal switch flow (non-proxy mode)
@@ -7659,9 +7725,9 @@ impl ProviderService {
             return Err(AppError::Message("No current provider".to_string()));
         }
 
-        let providers = state.db.get_all_providers(&app_type)?;
+        let providers = state.db.get_provider_rows(&app_type)?;
         let provider = providers
-            .get(&current_id)
+            .get(&current_id)?
             .ok_or_else(|| AppError::Message(format!("Provider {current_id} not found")))?;
 
         match app_type {
