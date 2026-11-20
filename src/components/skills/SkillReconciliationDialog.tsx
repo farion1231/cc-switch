@@ -92,9 +92,11 @@ export function SkillReconciliationDialog({
                 {candidate.name}
               </span>
               <span className="truncate font-mono text-caption text-fg-3">
-                {APP_DISPLAY_NAME[
-                  candidate.app as keyof typeof APP_DISPLAY_NAME
-                ] ?? candidate.app}
+                {candidate.app === "agents"
+                  ? "~/.agents/skills"
+                  : (APP_DISPLAY_NAME[
+                      candidate.app as keyof typeof APP_DISPLAY_NAME
+                    ] ?? candidate.app)}
                 {" · "}
                 {candidate.directory}
               </span>

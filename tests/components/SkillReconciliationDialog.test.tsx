@@ -8,6 +8,30 @@ vi.mock("react-i18next", () => ({
 }));
 
 describe("SkillReconciliationDialog", () => {
+  it("displays the agents source as its recognizable directory", () => {
+    render(
+      <SkillReconciliationDialog
+        candidates={[
+          {
+            app: "agents",
+            directory: "example",
+            name: "Example",
+            path: "/home/user/.agents/skills/example",
+          },
+        ]}
+        isRemoving={false}
+        onRemove={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByText("~/.agents/skills", { exact: false }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("agents", { exact: true }),
+    ).not.toBeInTheDocument();
+  });
+
   it("requires explicit selection before removing a duplicate", async () => {
     const user = userEvent.setup();
     const candidate = {
