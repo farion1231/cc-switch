@@ -4,7 +4,7 @@ import type {
   TemplateValueConfig,
 } from "@/config/claudeProviderPresets";
 import type { CodexProviderPreset } from "@/config/codexProviderPresets";
-import { applyTemplateValues } from "@/utils/codexConfigUtils";
+import { applyTemplateValues } from "@/utils/providerConfigUtils";
 import { deepClone } from "@/utils/deepClone";
 
 type TemplatePath = Array<string | number>;

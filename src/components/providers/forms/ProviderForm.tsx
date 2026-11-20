@@ -75,7 +75,7 @@ import {
   applyTemplateValues,
   getApiKeyFromConfig,
   hasApiKeyField,
-} from "@/utils/codexConfigUtils";
+} from "@/utils/providerConfigUtils";
 import { mergeProviderMeta } from "@/utils/providerMetaUtils";
 import {
   BillingMultiplierField,
