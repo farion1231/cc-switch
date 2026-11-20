@@ -886,31 +886,7 @@ impl SkillService {
     ) -> Result<Vec<SkillReconciliationCandidate>> {
         let ssot_dir = Self::get_ssot_dir()?;
         let skills = db.get_all_installed_skills()?;
-        let mut app_roots: Vec<(String, PathBuf)> = Vec::new();
-        for app in AppType::all() {
-            if !Self::is_sync_managed_app(&app) {
-                continue;
-            }
-            let app_dir = Self::get_app_skills_dir(&app)?;
-            if Self::is_protected_reconciliation_root(&app_dir)?
-                || Self::paths_alias(&app_dir, &ssot_dir)
-                || app_roots
-                    .iter()
-                    .any(|(_, existing)| Self::paths_alias(existing, &app_dir))
-            {
-                continue;
-            }
-            app_roots.push((app.as_str().to_string(), app_dir));
-        }
-        let agents_dir = crate::config::get_home_dir().join(".agents").join("skills");
-        if !Self::is_protected_reconciliation_root(&agents_dir)?
-            && !Self::paths_alias(&agents_dir, &ssot_dir)
-            && !app_roots
-                .iter()
-                .any(|(_, existing)| Self::paths_alias(existing, &agents_dir))
-        {
-            app_roots.push(("agents".to_string(), agents_dir));
-        }
+        let app_roots = Self::reconciliation_roots(&ssot_dir)?;
 
         let mut candidates = Vec::new();
         for skill in skills.values() {
@@ -923,17 +899,14 @@ impl SkillService {
                 continue;
             }
 
-            for (app, app_dir) in &app_roots {
-                if AppType::from_str(app).ok().is_some_and(|app_type| {
-                    skill.apps.is_enabled_for(&app_type)
-                        && !Self::uses_unified_skill_discovery(&app_type)
-                }) {
+            for (apps, app_dir) in &app_roots {
+                if Self::reconciliation_root_is_active(apps, skill) {
                     continue;
                 }
                 let duplicate = app_dir.join(&directory);
                 if duplicate.exists() || Self::is_symlink(&duplicate) {
                     candidates.push(SkillReconciliationCandidate {
-                        app: app.clone(),
+                        app: apps[0].clone(),
                         directory: directory.clone(),
                         name: skill.name.clone(),
                         path: duplicate.display().to_string(),
@@ -942,6 +915,42 @@ impl SkillService {
             }
         }
         Ok(candidates)
+    }
+
+    /// Keep every application sharing a physical root, including the agents alias.
+    fn reconciliation_roots(ssot_dir: &Path) -> Result<Vec<(Vec<String>, PathBuf)>> {
+        let mut roots: Vec<(Vec<String>, PathBuf)> = Vec::new();
+        let mut paths = Vec::new();
+        for app in AppType::all().filter(Self::is_sync_managed_app) {
+            paths.push((app.as_str().to_string(), Self::get_app_skills_dir(&app)?));
+        }
+        paths.push((
+            "agents".to_string(),
+            crate::config::get_home_dir().join(".agents/skills"),
+        ));
+        for (app, path) in paths {
+            if Self::is_protected_reconciliation_root(&path)? || Self::paths_alias(&path, ssot_dir)
+            {
+                continue;
+            }
+            if let Some((apps, _)) = roots
+                .iter_mut()
+                .find(|(_, root)| Self::paths_alias(root, &path))
+            {
+                apps.push(app);
+            } else {
+                roots.push((vec![app], path));
+            }
+        }
+        Ok(roots)
+    }
+
+    fn reconciliation_root_is_active(apps: &[String], skill: &InstalledSkill) -> bool {
+        apps.iter().any(|app| {
+            AppType::from_str(app).ok().is_some_and(|app| {
+                skill.apps.is_enabled_for(&app) && !Self::uses_unified_skill_discovery(&app)
+            })
+        })
     }
 
     // Overrides and symlinked roots must not bypass native-directory protection.
@@ -963,31 +972,28 @@ impl SkillService {
     ) -> Result<bool> {
         let _state_guard = skill_state_write_guard();
         let directory = Self::require_valid_directory(directory)?;
-        let (app_dir, app_type) = if app == "agents" {
-            (
-                crate::config::get_home_dir().join(".agents").join("skills"),
-                None,
-            )
-        } else {
-            let app = AppType::from_str(app).map_err(|error| anyhow!("{error}"))?;
-            if !Self::is_sync_managed_app(&app) {
+        if app != "agents" {
+            let app_type = AppType::from_str(app).map_err(|error| anyhow!("{error}"))?;
+            if !Self::is_sync_managed_app(&app_type) {
                 return Ok(false);
             }
-            (Self::get_app_skills_dir(&app)?, Some(app))
-        };
-        if Self::is_protected_reconciliation_root(&app_dir)? {
-            return Ok(false);
         }
+        let ssot_dir = Self::get_ssot_dir()?;
+        // Rebuild the entire mapping: another app may have been enabled or its
+        // directory override changed since the candidate was displayed.
+        let Some((apps, app_dir)) = Self::reconciliation_roots(&ssot_dir)?
+            .into_iter()
+            .find(|(apps, _)| apps.iter().any(|candidate| candidate == app))
+        else {
+            return Ok(false);
+        };
         let skills = db.get_all_installed_skills()?;
         let Some(skill) = skills.values().find(|skill| skill.directory == directory) else {
             return Ok(false);
         };
-        if app_type.as_ref().is_some_and(|app_type| {
-            skill.apps.is_enabled_for(app_type) && !Self::uses_unified_skill_discovery(app_type)
-        }) {
+        if Self::reconciliation_root_is_active(&apps, skill) {
             return Ok(false);
         }
-        let ssot_dir = Self::get_ssot_dir()?;
         if Self::paths_alias(&app_dir, &ssot_dir)
             || !ssot_dir.join(&directory).is_dir()
             || !ssot_dir.join(&directory).join("SKILL.md").is_file()
@@ -7654,6 +7660,94 @@ mod tests {
             );
             assert!(source.join("SKILL.md").is_file());
         }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn reconciliation_rechecks_all_apps_sharing_a_physical_root() {
+        let temp = tempdir().unwrap();
+        let _home = TestHomeGuard::set(temp.path());
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
+        let db = Arc::new(Database::memory().unwrap());
+        let mut skill = poisoned_skill("local:managed", "managed");
+        skill.apps.codex = true;
+        db.save_skill(&skill).unwrap();
+        write_skill(
+            &SkillService::get_ssot_dir().unwrap().join("managed"),
+            "canonical",
+        );
+        let shared = SkillService::get_app_skills_dir(&AppType::Claude).unwrap();
+        write_skill(&shared.join("managed"), "shared copy");
+        for root in [
+            SkillService::get_app_skills_dir(&AppType::Codex).unwrap(),
+            crate::config::get_home_dir().join(".agents/skills"),
+        ] {
+            fs::create_dir_all(root.parent().unwrap()).unwrap();
+            SkillService::create_symlink(&shared, &root).unwrap();
+        }
+
+        // Claude is encountered first but the later Codex alias is enabled.
+        assert!(SkillService::find_managed_skill_duplicates(&db)
+            .unwrap()
+            .is_empty());
+        for app in ["claude", "codex", "agents"] {
+            assert!(!SkillService::remove_managed_skill_duplicate(&db, app, "managed").unwrap());
+        }
+        skill.apps.codex = false;
+        db.save_skill(&skill).unwrap();
+        let candidates = SkillService::find_managed_skill_duplicates(&db).unwrap();
+        assert_eq!(candidates.len(), 1, "one candidate per physical directory");
+
+        // Another application's root and switch change after the preview.
+        let gemini = SkillService::get_app_skills_dir(&AppType::Gemini).unwrap();
+        fs::create_dir_all(gemini.parent().unwrap()).unwrap();
+        SkillService::create_symlink(&shared, &gemini).unwrap();
+        skill.apps.gemini = true;
+        db.save_skill(&skill).unwrap();
+        for app in ["claude", "codex", "agents", "gemini"] {
+            assert!(!SkillService::remove_managed_skill_duplicate(&db, app, "managed").unwrap());
+        }
+        assert!(shared.join("managed/SKILL.md").is_file());
+        skill.apps.gemini = false;
+        db.save_skill(&skill).unwrap();
+        assert!(SkillService::remove_managed_skill_duplicate(&db, "agents", "managed").unwrap());
+        assert!(!shared.join("managed").exists());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn reconciliation_shared_roots_respect_unified_discovery_and_active_projection_apps() {
+        let temp = tempdir().unwrap();
+        let _home = TestHomeGuard::set(temp.path());
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::Unified);
+        let db = Arc::new(Database::memory().unwrap());
+        let mut skill = poisoned_skill("local:managed", "managed");
+        skill.apps.claude = true;
+        skill.apps.codex = true;
+        db.save_skill(&skill).unwrap();
+        write_skill(
+            &SkillService::get_ssot_dir().unwrap().join("managed"),
+            "canonical",
+        );
+        let shared = SkillService::get_app_skills_dir(&AppType::Claude).unwrap();
+        write_skill(&shared.join("managed"), "shared copy");
+        let codex = SkillService::get_app_skills_dir(&AppType::Codex).unwrap();
+        fs::create_dir_all(codex.parent().unwrap()).unwrap();
+        SkillService::create_symlink(&shared, &codex).unwrap();
+
+        assert!(SkillService::find_managed_skill_duplicates(&db)
+            .unwrap()
+            .is_empty());
+        assert!(!SkillService::remove_managed_skill_duplicate(&db, "codex", "managed").unwrap());
+        skill.apps.claude = false;
+        db.save_skill(&skill).unwrap();
+        assert_eq!(
+            SkillService::find_managed_skill_duplicates(&db)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(SkillService::remove_managed_skill_duplicate(&db, "codex", "managed").unwrap());
     }
 
     #[test]
