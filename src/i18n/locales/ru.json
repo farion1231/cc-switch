@@ -318,7 +318,7 @@
     "supports1mShort": "1M",
     "directModelListTitle": "Указать модели Claude Desktop вручную (дополнительно)",
     "directModelListCollapsedHint": "Обычно для нативных провайдеров Claude это не требуется. Claude Desktop автоматически получит список через /v1/models.",
-    "directModelListHint": "Заполняйте только если /v1/models у провайдера недоступен или не возвращает распознаваемые Claude Desktop ID моделей Sonnet / Opus / Haiku. Отметка 1M сообщает Claude Desktop о поддержке контекста 1M.",
+    "directModelListHint": "Настройте модели Sonnet, Opus и Haiku, доступные Claude Desktop. В прямом режиме оставьте пустым — Claude Desktop сам получит список через /v1/models; в режиме маршрутизации пустой список даёт только стандартные имена моделей Claude, поэтому, чтобы использовать модели провайдера, заполните его. Отметка 1M сообщает Claude Desktop о поддержке контекста 1M.",
     "directModelInvalid": "Прямые модели должны использовать распознаваемые Claude Desktop ID Sonnet / Opus / Haiku",
     "addModel": "Добавить модель",
     "addRoute": "Добавить модель",
@@ -463,8 +463,7 @@
     "tabProxy": "Маршрутизация",
     "authCenter": {
       "description": "Используйте подписки GitHub Copilot, ChatGPT и xAI как провайдеров. Служба маршрутизации подставляет их учётные данные, поэтому такие провайдеры работают в режиме маршрутизации (кроме привязки к официальному входу Codex). Аккаунты Antigravity переключают официальный вход agy.",
-      "beta": "Бета",
-      "xaiOauthDescription": "Управление аккаунтами xAI / Grok"
+      "beta": "Бета"
     },
     "advanced": {
       "configDir": {
@@ -1121,7 +1120,6 @@
       "pricingModelSourceLabel": "Источник модели для расчёта стоимости",
       "pricingModelSourceRequest": "Модель запроса",
       "pricingModelSourceResponse": "Модель ответа",
-      "pricingSave": "Сохранить настройки цен по умолчанию",
       "pricingSaved": "Настройки цен по умолчанию сохранены",
       "pricingSaveFailed": "Не удалось сохранить настройки цен по умолчанию: {{error}}",
       "pricingLoadFailed": "Не удалось загрузить настройки цен по умолчанию: {{error}}"
@@ -1736,6 +1734,7 @@
       "outlineFailed": "Есть шаги с ошибкой",
       "outlineAborted": "Прервано",
       "outlineNoReply": "Нет ответа",
+      "chapter": "Глава",
       "viewOptions": "Параметры отображения",
       "noChanges": "В этой сессии нет изменений файлов",
       "rawMatch": "Совпадения в исходнике",
@@ -2935,7 +2934,6 @@
     "geminiTitle": "Управление MCP Gemini",
     "unifiedPanel": {
       "title": "Управление MCP-серверами",
-      "deleteServer": "Удалить сервер",
       "deleteConfirm": "Вы уверены, что хотите удалить сервер «{{id}}»? Это действие нельзя отменить.",
       "enabledApps": "Включённые приложения",
       "importSuccess": "Успешно импортировано MCP-серверов: {{count}}",
@@ -2982,28 +2980,20 @@
       "tagsPlaceholder": "stdio, time, utility",
       "homepage": "Домашняя страница",
       "docs": "Документация",
-      "jsonPlaceholder": "{\n  \"type\": \"stdio\",\n  \"command\": \"uvx\",\n  \"args\": [\"mcp-server-fetch\"]\n}",
-      "tomlConfig": "Полная TOML-конфигурация",
-      "tomlPlaceholder": "type = \"stdio\"\ncommand = \"uvx\"\nargs = [\"mcp-server-fetch\"]",
-      "syncOtherSide": "Зеркалировать в {{target}}"
+      "tomlConfig": "Полная TOML-конфигурация"
     },
     "wizard": {
       "title": "Мастер настройки MCP",
       "hint": "Быстро настройте MCP-сервер и автоматически сгенерируйте JSON-конфигурацию",
       "type": "Тип",
-      "typeStdio": "stdio",
-      "typeSse": "sse",
       "command": "Команда",
       "commandPlaceholder": "npx или uvx",
       "args": "Аргументы",
-      "argsPlaceholder": "arg1\narg2",
       "env": "Переменные окружения",
-      "envPlaceholder": "KEY1=value1\nKEY2=value2",
       "url": "URL",
       "urlPlaceholder": "https://api.example.com/mcp",
       "urlRequired": "Введите URL",
       "headers": "Заголовки (необязательно)",
-      "headersPlaceholder": "Authorization: Bearer your_token_here\nContent-Type: application/json",
       "preview": "Предпросмотр конфигурации",
       "apply": "Применить конфигурацию"
     },
@@ -3525,7 +3515,6 @@
       "archiveDownloadTooLarge": "Загрузка архива репозитория превышает лимит {{limit_mb}} MB; прервано",
       "archiveTooManyEntries": "В архиве слишком много элементов: {{count}}. Лимит: {{limit}}.",
       "downloadFailed": "Не удалось загрузить: HTTP {{status}}",
-      "httpError": "HTTP-ошибка {{status}}",
       "http403": "Доступ к GitHub ограничен, возможно, сработал лимит запросов",
       "http404": "Репозиторий или ветка не найдены, проверьте URL. Для приватных репозиториев сначала задайте токен доступа в разделе «Управление репозиториями навыков»",
       "http429": "Слишком много запросов, подождите и повторите",
@@ -3538,7 +3527,6 @@
       "repoTokenStorageFailed": "Не удалось прочитать или записать токен доступа для {{host}}. Проверьте, доступно ли системное хранилище учётных данных",
       "getHomeDirFailed": "Не удалось получить домашний каталог пользователя",
       "noSkillsInZip": "В ZIP-файле не найдено навыков (требуется файл SKILL.md)",
-      "networkError": "Ошибка сети",
       "unknownError": "Неизвестная ошибка",
       "suggestion": {
         "checkNetwork": "Проверьте сетевое подключение",
@@ -3766,7 +3754,6 @@
       "repo": "Репозиторий GitHub",
       "directory": "Целевой каталог",
       "branch": "Ветка",
-      "skillsPath": "Путь к навыкам",
       "hint": "Это добавит репозиторий навыков в список.",
       "hintDetail": "После добавления вы сможете установить конкретные навыки на странице управления навыками."
     },
@@ -3863,7 +3850,6 @@
   },
   "proxy": {
     "panel": {
-      "currentProvider": "Текущий провайдер:",
       "openSettings": "Настроить службу маршрутизации",
       "stats": {
         "activeConnections": "Активные соединения",
@@ -3924,10 +3910,6 @@
           "label": "Тайм-аут непотоковых запросов (сек.)",
           "description": "Общий тайм-аут для непотоковых запросов"
         }
-      },
-      "validation": {
-        "retryMin": "Количество повторов не может быть отрицательным",
-        "retryMax": "Количество повторов не может превышать 10"
       },
       "actions": {
         "save": "Сохранить конфигурацию"
@@ -4361,7 +4343,8 @@
       "stack": "Агрегация"
     },
     "needsAttention": "Требует внимания",
-    "back": "Назад"
+    "back": "Назад",
+    "plugins": "Плагины"
   },
   "appsPage": {
     "showInSidebar": "Показывать {{name}} в боковой панели",
@@ -4781,7 +4764,7 @@
       "failedTitle": "Некоторые приложения не удалось прочитать",
       "filesTitle": "Какие файлы были прочитаны",
       "claudeNote": " (mcpServers верхнего уровня)",
-      "dshNote": " (записывается во все инициализированные profile: web, desktop, headless, acp)",
+      "dshNote": " (записывается во все инициализированные profile: web, desktop, headless, acp. Файл домашнего уровня ~/.dsh/cordis.patch.yml не читается и не изменяется; MCP-серверы из него настраивайте в нём)",
       "ok": "Понятно"
     },
     "templateLabels": {
@@ -5054,6 +5037,88 @@
     },
     "updateAllCount": "Обновить все ({{count}})",
     "updatingProgress": "Обновление {{done}}/{{total}}…"
+  },
+  "pluginsPage": {
+    "title": "Плагины",
+    "helpTitle": "Плагины",
+    "help": "Устанавливайте, включайте и удаляйте плагины для Claude Code, Codex, Grok Build, MiniMax Code, OpenClaw и Pi. CC Switch запускает собственный CLI каждого приложения, поэтому результат тот же, что и при использовании его команды плагинов в терминале. Для Pi плагины — это пакеты Pi, а каталог берётся из npm.",
+    "appAria": "Приложение",
+    "viewAria": "Разделы плагинов",
+    "viewInstalled": "Установленные",
+    "viewInstalledCount": "Установленные · {{count}}",
+    "viewDiscover": "Обзор",
+    "viewDiscoverCount": "Обзор · {{count}}",
+    "viewMarketplaces": "Маркетплейсы",
+    "searchPlaceholder": "Поиск плагинов",
+    "searchAria": "Поиск плагинов",
+    "count": "Плагинов: {{count}}",
+    "countFiltered": "{{shown}} из {{count}}",
+    "noMatches": "Нет плагинов по запросу «{{query}}»",
+    "loading": "Чтение плагинов {{app}}…",
+    "loadFailed": "Не удалось прочитать плагины {{app}}",
+    "catalogLoadFailed": "Не удалось прочитать каталог маркетплейса",
+    "loadingCatalog": "Чтение каталога маркетплейса {{app}}…",
+    "refreshing": "Обновление…",
+    "marketsLoadFailed": "Не удалось прочитать маркетплейсы",
+    "cliMissingTitle": "{{app}} не установлен",
+    "cliMissingBody": "Плагины управляются через CLI {{app}}. Установите его на странице «Приложения» и вернитесь сюда.",
+    "emptyInstalledTitle": "Нет установленных плагинов",
+    "emptyInstalledBody": "Просмотрите маркетплейсы, чтобы добавить в {{app}} навыки, команды, агентов и MCP-серверы.",
+    "browse": "Обзор плагинов",
+    "emptyDiscoverTitle": "Нечего устанавливать",
+    "emptyDiscoverBody": "Все плагины из ваших маркетплейсов установлены. Добавьте маркетплейс, чтобы увидеть больше.",
+    "emptyCatalogBody": "Все плагины из каталога установлены.",
+    "emptyMarketsTitle": "Маркетплейсы не добавлены",
+    "emptyMarketsBody": "{{app}} по-прежнему показывает встроенный каталог. Добавьте репозиторий GitHub или Git URL, чтобы увидеть больше плагинов.",
+    "builtIn": "Встроенный",
+    "builtInPlugin": "Поставляется с приложением. Его можно включить или выключить, но не удалить.",
+    "scope": "Область: {{scope}}",
+    "scopeReadOnly": "Установлен в области {{scope}}. Управляйте им через CLI из этого проекта.",
+    "enableAria": "Включить {{name}}",
+    "moreActions": "Другие действия для {{name}}",
+    "working": "Выполняется…",
+    "install": "Установить",
+    "installing": "Установка…",
+    "notInstallable": "Недоступно",
+    "update": "Обновить",
+    "uninstall": "Удалить",
+    "restartNote": "Изменения применятся к новым сессиям {{app}}.",
+    "restartNoteGateway": "Изменения применятся после перезапуска {{app}} Gateway.",
+    "refreshMarketplaces": "Обновить маркетплейсы",
+    "refreshCatalog": "Обновить каталог",
+    "addMarketplace": "Добавить маркетплейс",
+    "addMarketplaceTitle": "Добавить маркетплейс {{app}}",
+    "addMarketplaceBody": "GitHub owner/repo, Git URL или локальная папка (используйте прямые слэши, без пробелов).",
+    "addMarketplaceWaiting": "Загружается репозиторий маркетплейса. Большие репозитории могут загружаться несколько минут (до 5). Это окно можно закрыть — по завершении появится уведомление.",
+    "sourceLabel": "Источник",
+    "removeMarketplace": "Удалить",
+    "confirmUninstallTitle": "Удалить {{name}}?",
+    "confirmUninstallBody": "Удаляет плагин и его кэшированные файлы из {{app}}. Его можно снова установить в разделе «Обзор».",
+    "confirmUninstallClaudeBody": "Удаляет плагин из {{app}}, сохраняя его каталог данных. Если это последняя установка, сохранённые параметры и учётные данные будут удалены и не восстановятся при повторной установке.",
+    "confirmInstallTitle": "Установить {{name}}?",
+    "confirmInstallBody": "Плагины работают с вашими правами: {{app}} загрузит их навыки, хуки и MCP-серверы и предоставит заявленные ими возможности. Устанавливайте плагины только из доверенных источников.",
+    "confirmRemoveMarketTitle": "Удалить маркетплейс {{name}}?",
+    "confirmRemoveMarketBody": "{{app}} перестанет показывать плагины из этого маркетплейса и может удалить установленные из него плагины. Позже его можно добавить снова.",
+    "toast": {
+      "installed": "{{name}} установлен",
+      "installFailed": "Не удалось установить {{name}}",
+      "installNeedsTerminal": "Во время установки этот плагин запускает на вашем компьютере команду, объявленную маркетплейсом, и CC Switch не будет подтверждать её за вас. Выполните {{command}} в терминале, подтвердите там, затем вернитесь и обновите.",
+      "authRequired": "{{app}} требует сначала войти. Выполните {{command}} в терминале, затем вернитесь и повторите попытку.",
+      "uninstalled": "{{name}} удалён",
+      "uninstallFailed": "Не удалось удалить {{name}}",
+      "enabled": "{{name}} включён",
+      "disabled": "{{name}} выключен",
+      "toggleFailed": "Не удалось изменить {{name}}",
+      "updated": "{{name}} обновлён",
+      "upToDate": "{{name}} уже последней версии",
+      "updateFailed": "Не удалось обновить {{name}}",
+      "refreshed": "Маркетплейсы обновлены",
+      "refreshFailed": "Не удалось обновить маркетплейсы",
+      "marketAdded": "Маркетплейс {{source}} добавлен",
+      "marketAddFailed": "Не удалось добавить маркетплейс",
+      "marketRemoved": "Маркетплейс {{name}} удалён",
+      "marketRemoveFailed": "Не удалось удалить {{name}}"
+    }
   },
   "newLayoutNotice": {
     "title": "У CC Switch новый интерфейс",

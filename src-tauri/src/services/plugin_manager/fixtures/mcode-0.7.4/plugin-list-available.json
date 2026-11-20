@@ -1,0 +1,69 @@
+{
+  "installed": [],
+  "available": [
+    {
+      "pluginId": "computer-use@official",
+      "name": "computer-use",
+      "displayName": "电脑操控",
+      "marketplaceName": "official",
+      "version": "1.1.1",
+      "description": "通过原生桌面能力查看应用、点击、输入和验证操作结果。",
+      "author": "MiniMax",
+      "installed": false,
+      "enabled": false,
+      "capabilities": {
+        "appCount": 0,
+        "mcpServerCount": 0,
+        "skillCount": 1
+      }
+    },
+    {
+      "pluginId": "browser-use@official",
+      "name": "browser-use",
+      "displayName": "浏览器控制",
+      "marketplaceName": "official",
+      "version": "1.0.11",
+      "description": "让 Agent 安全复用当前会话内置 Browser 的页面、标签页与登录态，完成网页查看、交互和调试。",
+      "author": "MiniMax",
+      "installed": false,
+      "enabled": false,
+      "capabilities": {
+        "appCount": 0,
+        "mcpServerCount": 0,
+        "skillCount": 1
+      }
+    },
+    {
+      "pluginId": "minimax-bot@official",
+      "name": "minimax-bot",
+      "displayName": "MiniMax Bot",
+      "marketplaceName": "official",
+      "version": "0.7.18",
+      "description": "把 MiniMax Code 变成一支长期在线的 Bot 团队：主 Bot 帮你搭团队，群聊里管理员接话、@ 点名接力，每个 Bot 有自己的章鱼形象和记忆，支持定时任务与用量统计。",
+      "author": "MiniMax Code",
+      "installed": false,
+      "enabled": false,
+      "capabilities": {
+        "appCount": 0,
+        "mcpServerCount": 1,
+        "skillCount": 0
+      }
+    },
+    {
+      "pluginId": "email-workbench@official",
+      "name": "email-workbench",
+      "displayName": "邮箱工作台",
+      "marketplaceName": "official",
+      "version": "1.2.8",
+      "description": "邮箱连接跟随账号同步，在本机阅读邮件、编辑草稿与管理附件；发送前在工作台确认。",
+      "author": "User",
+      "installed": false,
+      "enabled": false,
+      "capabilities": {
+        "appCount": 0,
+        "mcpServerCount": 1,
+        "skillCount": 2
+      }
+    }
+  ]
+}

@@ -31,11 +31,6 @@ export interface Provider {
   inFailoverQueue?: boolean;
 }
 
-export interface AppConfig {
-  providers: Record<string, Provider>;
-  current: string;
-}
-
 // 自定义端点配置
 export interface CustomEndpoint {
   url: string;
