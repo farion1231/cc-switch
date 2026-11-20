@@ -122,3 +122,5 @@ pub(crate) use misc::tool_process::{
     terminate_child_tree,
 };
 pub(crate) use misc::tool_version::local_tool_version;
+#[cfg(target_os = "windows")]
+pub(crate) use misc::windows_shell_compatible_path;

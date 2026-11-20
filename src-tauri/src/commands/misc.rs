@@ -881,7 +881,8 @@ pub(super) fn effective_path_string() -> String {
     .map(|dir| dir.to_string_lossy().into_owned())
     .collect::<Vec<_>>()
     .join(";");
-    merge_path_segments_win(&[&process, &user, &machine, &fnm])
+    let merged = merge_path_segments_win(&[&process, &user, &machine, &fnm]);
+    expand_reparse_path_segments_win(&merged)
 }
 
 /// Merge several Windows PATH strings (`;`-separated) in order, keeping only
@@ -904,6 +905,112 @@ pub(super) fn merge_path_segments_win(parts: &[&str]) -> String {
     merged.join(";")
 }
 
+/// Resolve Windows directory reparse points (NTFS junctions / symlinks) in
+/// each PATH segment and prepend the physical target directory before the
+/// original entry.
+///
+/// Uses component-wise `symlink_metadata` + `read_link` (which opens with
+/// `FILE_FLAG_OPEN_REPARSE_POINT` rather than traversing), so resolution still
+/// succeeds even when the current process is restricted by RedirectionGuard
+/// (`ProcessRedirectionTrustPolicy`, #8891), where `std::fs::canonicalize`
+/// fails with `ERROR_UNTRUSTED_MOUNT_POINT`.
+#[cfg(target_os = "windows")]
+fn expand_reparse_path_segments_win(path_list: &str) -> String {
+    expand_reparse_path_segments_win_with(path_list, resolve_windows_reparse_path)
+}
+
+#[cfg(target_os = "windows")]
+fn expand_reparse_path_segments_win_with(
+    path_list: &str,
+    resolve: impl Fn(&Path) -> Option<PathBuf>,
+) -> String {
+    let mut expanded: Vec<String> = Vec::new();
+    for seg in path_list.split(';') {
+        let s = seg.trim();
+        if s.is_empty() {
+            continue;
+        }
+        if let Some(resolved) = resolve(Path::new(s)) {
+            let resolved_str = resolved.to_string_lossy().into_owned();
+            if !resolved_str.is_empty() {
+                expanded.push(resolved_str);
+            }
+        }
+        expanded.push(s.to_string());
+    }
+    let refs: Vec<&str> = expanded.iter().map(String::as_str).collect();
+    merge_path_segments_win(&refs)
+}
+
+#[cfg(target_os = "windows")]
+fn resolve_windows_reparse_path(path: &Path) -> Option<PathBuf> {
+    use std::os::windows::fs::MetadataExt;
+    use std::path::Component;
+
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
+    const MAX_REPARSE_HOPS: usize = 16;
+
+    let mut current = path.to_path_buf();
+    let mut saw_reparse = false;
+
+    for _ in 0..MAX_REPARSE_HOPS {
+        let mut rebuilt = PathBuf::new();
+        let mut redirected = false;
+
+        let mut components = current.components();
+        while let Some(comp) = components.next() {
+            match comp {
+                Component::Prefix(p) => rebuilt.push(p.as_os_str()),
+                Component::RootDir => rebuilt.push(comp.as_os_str()),
+                Component::CurDir => {}
+                Component::ParentDir => {
+                    rebuilt.pop();
+                }
+                Component::Normal(part) => {
+                    rebuilt.push(part);
+                    let Ok(meta) = std::fs::symlink_metadata(&rebuilt) else {
+                        rebuilt.extend(components);
+                        break;
+                    };
+                    if (meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT) != 0
+                        || meta.file_type().is_symlink()
+                    {
+                        if let Ok(target) = std::fs::read_link(&rebuilt) {
+                            let target = strip_windows_reparse_prefix(&target);
+                            if target.is_absolute() {
+                                rebuilt = target;
+                            } else {
+                                rebuilt.pop();
+                                rebuilt.push(target);
+                            }
+                            rebuilt.extend(components);
+                            redirected = true;
+                            saw_reparse = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        if redirected {
+            current = rebuilt;
+        } else {
+            return (saw_reparse
+                && !rebuilt
+                    .to_string_lossy()
+                    .eq_ignore_ascii_case(&path.to_string_lossy()))
+            .then_some(rebuilt);
+        }
+    }
+
+    (saw_reparse
+        && !current
+            .to_string_lossy()
+            .eq_ignore_ascii_case(&path.to_string_lossy()))
+    .then_some(current)
+}
+
 /// Convert a canonicalized Windows path back to the form accepted by shell
 /// commands. `std::fs::canonicalize` prefixes local paths with `\\?\` (and UNC
 /// paths with `\\?\UNC\`), but `cmd.exe` cannot `call` a batch file through
@@ -911,15 +1018,26 @@ pub(super) fn merge_path_segments_win(parts: &[&str]) -> String {
 /// specified." Direct Win32 executable launches accept the prefix; batch
 /// scripts do not.
 #[cfg(target_os = "windows")]
-pub(super) fn windows_shell_compatible_path(path: &Path) -> std::path::PathBuf {
+fn strip_windows_reparse_prefix(path: &Path) -> std::path::PathBuf {
     let raw = path.to_string_lossy();
-    if let Some(unc) = raw.strip_prefix(r"\\?\UNC\") {
+    if let Some(unc) = raw
+        .strip_prefix(r"\\?\UNC\")
+        .or_else(|| raw.strip_prefix(r"\??\UNC\"))
+    {
         std::path::PathBuf::from(format!(r"\\{unc}"))
-    } else if let Some(local) = raw.strip_prefix(r"\\?\") {
+    } else if let Some(local) = raw
+        .strip_prefix(r"\\?\")
+        .or_else(|| raw.strip_prefix(r"\??\"))
+    {
         std::path::PathBuf::from(local)
     } else {
         path.to_path_buf()
     }
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn windows_shell_compatible_path(path: &Path) -> std::path::PathBuf {
+    strip_windows_reparse_prefix(path)
 }
 
 /// 一次"探测工具安装分布"的结果：枚举到的所有安装 + 各项衍生判定。同时服务两条
@@ -1701,5 +1819,161 @@ mod tests {
             windows_shell_compatible_path(Path::new(r"C:\tools\codex.cmd")),
             PathBuf::from(r"C:\tools\codex.cmd")
         );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn expand_reparse_path_segments_win_prepends_resolved_targets_and_dedupes() {
+        let expanded = expand_reparse_path_segments_win_with(
+            r"C:\Tools;C:\nvm\.nodejs;C:\Windows\system32;C:\nvm\.shim",
+            |path| {
+                if path == Path::new(r"C:\nvm\.nodejs") {
+                    Some(PathBuf::from(r"C:\nvm\.shim"))
+                } else {
+                    None
+                }
+            },
+        );
+        assert_eq!(
+            expanded,
+            r"C:\Tools;C:\nvm\.shim;C:\nvm\.nodejs;C:\Windows\system32"
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn resolve_windows_reparse_path_dereferences_junction_and_nested_bin() {
+        use std::os::windows::process::CommandExt;
+
+        let dir = tempfile::tempdir().expect("temp dir should be created");
+        let real_root = dir.path().join("real_shim");
+        let real_bin = real_root.join("bin");
+        std::fs::create_dir_all(&real_bin).expect("real_bin should be created");
+
+        let junction = dir.path().join(".nodejs");
+        let cmd_status = std::process::Command::new("cmd")
+            .args(["/D", "/C", "mklink", "/J"])
+            .arg(&junction)
+            .arg(&real_root)
+            .creation_flags(CREATE_NO_WINDOW)
+            .status()
+            .expect("mklink /J should execute");
+        assert!(cmd_status.success(), "mklink /J failed: {cmd_status}");
+
+        let resolved_junction =
+            resolve_windows_reparse_path(&junction).expect("junction should resolve");
+        assert_eq!(
+            resolved_junction.to_string_lossy().to_ascii_lowercase(),
+            windows_shell_compatible_path(&real_root)
+                .to_string_lossy()
+                .to_ascii_lowercase()
+        );
+
+        let nested_via_junction = junction.join("bin");
+        let resolved_nested = resolve_windows_reparse_path(&nested_via_junction)
+            .expect("child under junction should resolve");
+        assert_eq!(
+            resolved_nested.to_string_lossy().to_ascii_lowercase(),
+            windows_shell_compatible_path(&real_bin)
+                .to_string_lossy()
+                .to_ascii_lowercase()
+        );
+
+        // Plain directories and missing paths should not be rewritten.
+        assert_eq!(resolve_windows_reparse_path(&real_bin), None);
+        assert_eq!(
+            resolve_windows_reparse_path(&dir.path().join("nonexistent")),
+            None
+        );
+
+        let double_slash_junction = PathBuf::from(format!(r"{}\\.nodejs", dir.path().display()));
+        let expanded = expand_reparse_path_segments_win(&format!(
+            "{};{}",
+            double_slash_junction.display(),
+            real_bin.display()
+        ));
+        let segments: Vec<&str> = expanded.split(';').collect();
+        assert_eq!(
+            segments.len(),
+            3,
+            "expected resolved, junction, real_bin: {expanded}"
+        );
+        assert!(
+            segments[0]
+                .eq_ignore_ascii_case(&windows_shell_compatible_path(&real_root).to_string_lossy()),
+            "expected resolved real_root first: {expanded}"
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn resolve_windows_reparse_path_succeeds_under_redirection_guard() {
+        use std::os::windows::process::CommandExt;
+        use windows::Win32::System::SystemServices::PROCESS_MITIGATION_REDIRECTION_TRUST_POLICY;
+        use windows::Win32::System::Threading::{
+            ProcessRedirectionTrustPolicy, SetProcessMitigationPolicy,
+        };
+
+        const CHILD_JUNCTION: &str = "CC_SWITCH_TEST_RG_JUNCTION";
+        const CHILD_EXPECTED: &str = "CC_SWITCH_TEST_RG_EXPECTED";
+        if let (Some(junction), Some(expected)) = (
+            std::env::var_os(CHILD_JUNCTION),
+            std::env::var_os(CHILD_EXPECTED),
+        ) {
+            let mut policy = PROCESS_MITIGATION_REDIRECTION_TRUST_POLICY::default();
+            policy.Anonymous.Flags = 0x1;
+            unsafe {
+                SetProcessMitigationPolicy(
+                    ProcessRedirectionTrustPolicy,
+                    &policy as *const _ as *const std::ffi::c_void,
+                    std::mem::size_of::<PROCESS_MITIGATION_REDIRECTION_TRUST_POLICY>(),
+                )
+            }
+            .expect("SetProcessMitigationPolicy should succeed");
+
+            let junction_path = PathBuf::from(&junction);
+            let resolved = resolve_windows_reparse_path(&junction_path)
+                .expect("read_link-based resolution must succeed under RedirectionGuard");
+            assert_eq!(
+                resolved.to_string_lossy().to_ascii_lowercase(),
+                PathBuf::from(&expected)
+                    .to_string_lossy()
+                    .to_ascii_lowercase()
+            );
+            let expanded = expand_reparse_path_segments_win(&junction_path.to_string_lossy());
+            let segments: Vec<&str> = expanded.split(';').collect();
+            assert!(
+                segments[0]
+                    .eq_ignore_ascii_case(&PathBuf::from(&expected).to_string_lossy().as_ref()),
+                "expanded PATH should put physical target first under RedirectionGuard: {expanded}"
+            );
+            return;
+        }
+
+        let dir = tempfile::tempdir().expect("temp dir should be created");
+        let real_root = dir.path().join("real_shim");
+        std::fs::create_dir_all(&real_root).expect("real_root should be created");
+        let junction = dir.path().join(".nodejs");
+        let cmd_status = std::process::Command::new("cmd")
+            .args(["/D", "/C", "mklink", "/J"])
+            .arg(&junction)
+            .arg(&real_root)
+            .creation_flags(CREATE_NO_WINDOW)
+            .status()
+            .expect("mklink /J should execute");
+        assert!(cmd_status.success(), "mklink /J failed: {cmd_status}");
+
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "commands::misc::tests::resolve_windows_reparse_path_succeeds_under_redirection_guard",
+                "--nocapture",
+            ])
+            .env(CHILD_JUNCTION, &junction)
+            .env(CHILD_EXPECTED, windows_shell_compatible_path(&real_root))
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
     }
 }
