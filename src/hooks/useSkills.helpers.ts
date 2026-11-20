@@ -1,8 +1,21 @@
 import type {
   InstalledSkill,
+  SkillAppSyncOutcome,
   SkillDiscoveryResult,
   SkillUpdateOutcome,
 } from "@/lib/api/skills";
+
+export function didResyncSkill(
+  outcome: SkillAppSyncOutcome,
+  directory: string,
+): boolean {
+  return (
+    outcome.ok ||
+    (outcome.error == null &&
+      outcome.failedSkills.length > 0 &&
+      !outcome.failedSkills.some((failure) => failure.directory === directory))
+  );
+}
 
 export function hasSkillUpdateSyncFailures(
   outcome: Pick<SkillUpdateOutcome, "failedApps" | "syncWarnings">,

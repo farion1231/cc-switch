@@ -1961,15 +1961,16 @@ impl SkillService {
             .map(|ch| if ch.is_control() { ' ' } else { ch })
             .collect::<String>();
         let home = crate::config::get_home_dir();
-        let home_str = home.to_string_lossy();
-        if !home_str.is_empty() && home_str != "." && home_str != "/" {
-            msg = msg.replace(home_str.as_ref(), "~");
-        }
+        // 规范化的 Windows 路径可能在原路径前带有 \\?\，应优先替换。
         if let Ok(canonical_home) = home.canonicalize() {
             let canonical_str = canonical_home.to_string_lossy();
             if !canonical_str.is_empty() && canonical_str != "." && canonical_str != "/" {
                 msg = msg.replace(canonical_str.as_ref(), "~");
             }
+        }
+        let home_str = home.to_string_lossy();
+        if !home_str.is_empty() && home_str != "." && home_str != "/" {
+            msg = msg.replace(home_str.as_ref(), "~");
         }
         let collapsed = msg.split_whitespace().collect::<Vec<_>>().join(" ");
         const MAX_CHARS: usize = 240;
@@ -9936,21 +9937,22 @@ mod tests {
         let _storage = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
         let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
 
-        let sanitized_sample = SkillService::sanitize_sync_error(&anyhow!(
-            "failed writing {}\n\tpermission denied",
-            home.path().join(".codex").join("skills").display()
-        ));
+        let relative_path = Path::new("~").join(".codex").join("skills");
         let home_str = home.path().to_string_lossy();
-        assert!(
-            !sanitized_sample.contains(home_str.as_ref()),
-            "sanitize_sync_error must redact raw home path: {sanitized_sample}"
-        );
-        assert!(
-            sanitized_sample.contains("~/.codex/skills")
-                || sanitized_sample.contains("~\\.codex\\skills"),
-            "sanitize_sync_error should preserve ~-relative hint: {sanitized_sample}"
-        );
-        assert!(!sanitized_sample.contains('\n') && !sanitized_sample.contains('\t'));
+        let canonical_home = home.path().canonicalize().expect("canonical home");
+        for home_path in [home.path(), canonical_home.as_path()] {
+            let sanitized_sample = SkillService::sanitize_sync_error(&anyhow!(
+                "failed writing {}\n\tpermission denied",
+                home_path.join(".codex").join("skills").display()
+            ));
+            assert_eq!(
+                sanitized_sample,
+                format!(
+                    "failed writing {} permission denied",
+                    relative_path.display()
+                )
+            );
+        }
 
         let remote = tempdir().expect("remote");
         let db = Arc::new(Database::memory().expect("memory db"));

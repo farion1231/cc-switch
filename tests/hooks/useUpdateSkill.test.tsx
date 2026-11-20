@@ -65,15 +65,27 @@ describe("useUpdateSkill and useResyncSkillsToApps", () => {
   it("keeps the update entry when client sync fails, strips outcome fields from installed cache, and clears update after resync converges", async () => {
     const queryClient = createQueryClient();
     const initial = makeSkill();
+    const beta = makeSkill({
+      id: "owner/repo:beta-skill",
+      name: "Beta Skill",
+      directory: "beta-skill",
+      contentHash: "hash-v2",
+    });
     queryClient.setQueryData<InstalledSkill[]>(
       ["skills", "installed"],
-      [initial],
+      [initial, beta],
     );
     queryClient.setQueryData<SkillUpdateCheckResult>(["skills", "updates"], {
       updates: [
         {
           id: initial.id,
           name: initial.name,
+          currentHash: "hash-v1",
+          remoteHash: "hash-v2",
+        },
+        {
+          id: beta.id,
+          name: beta.name,
           currentHash: "hash-v1",
           remoteHash: "hash-v2",
         },
@@ -110,7 +122,7 @@ describe("useUpdateSkill and useResyncSkillsToApps", () => {
       "skills",
       "installed",
     ]);
-    expect(installedAfterPartial).toHaveLength(1);
+    expect(installedAfterPartial).toHaveLength(2);
     expect(installedAfterPartial?.[0]?.name).toBe("Alpha Skill v2");
     expect(installedAfterPartial?.[0]?.contentHash).toBe("hash-v2");
     expect("failedApps" in (installedAfterPartial?.[0] ?? {})).toBe(false);
@@ -121,6 +133,7 @@ describe("useUpdateSkill and useResyncSkillsToApps", () => {
       queryClient.getQueryData<SkillUpdateCheckResult>(["skills", "updates"]);
     expect(updatesAfterPartial?.updates.map((u) => u.id)).toEqual([
       initial.id,
+      beta.id,
       "owner/repo:other-skill",
     ]);
 
@@ -132,6 +145,7 @@ describe("useUpdateSkill and useResyncSkillsToApps", () => {
         ok: false,
         failedSkills: [
           { directory: "alpha-skill", error: "Permission denied" },
+          { directory: "beta-skill", error: "Permission denied" },
         ],
       },
     ]);
@@ -145,12 +159,12 @@ describe("useUpdateSkill and useResyncSkillsToApps", () => {
       queryClient
         .getQueryData<SkillUpdateCheckResult>(["skills", "updates"])
         ?.updates.map((u) => u.id),
-    ).toEqual([initial.id, "owner/repo:other-skill"]);
+    ).toEqual([initial.id, beta.id, "owner/repo:other-skill"]);
 
-    // Once resync succeeds for all apps, only converged skills (contentHash === remoteHash) leave updates
+    // An app-wide error on an enabled client can never confirm convergence.
     apiMocks.resyncToApps.mockResolvedValueOnce([
       { app: "claude", ok: true, failedSkills: [] },
-      { app: "codex", ok: true, failedSkills: [] },
+      { app: "codex", ok: false, error: "Unavailable", failedSkills: [] },
     ]);
     await act(async () => {
       await resyncHook.current.mutateAsync();
@@ -159,7 +173,26 @@ describe("useUpdateSkill and useResyncSkillsToApps", () => {
       queryClient
         .getQueryData<SkillUpdateCheckResult>(["skills", "updates"])
         ?.updates.map((u) => u.id),
-    ).toEqual(["owner/repo:other-skill"]);
+    ).toEqual([initial.id, beta.id, "owner/repo:other-skill"]);
+
+    // A disabled client and a different skill on an enabled client may still fail.
+    apiMocks.resyncToApps.mockResolvedValueOnce([
+      { app: "claude", ok: true, failedSkills: [] },
+      {
+        app: "codex",
+        ok: false,
+        failedSkills: [{ directory: beta.directory, error: "Unavailable" }],
+      },
+      { app: "gemini", ok: false, error: "Unavailable", failedSkills: [] },
+    ]);
+    await act(async () => {
+      await resyncHook.current.mutateAsync();
+    });
+    expect(
+      queryClient
+        .getQueryData<SkillUpdateCheckResult>(["skills", "updates"])
+        ?.updates.map((u) => u.id),
+    ).toEqual([beta.id, "owner/repo:other-skill"]);
   });
 
   it("removes the update entry immediately when all enabled client syncs succeed", async () => {

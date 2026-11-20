@@ -78,9 +78,12 @@ import { useSkillsResync } from "./useSkillsResync";
 import { useSkillInstallTargets } from "./useSkillInstallTargets";
 import { describeRepoFailures } from "./repoFailures";
 import { repoWebUrl } from "./repoUrl";
-import type { ZipSkippedSkill } from "@/lib/api/skills";
-import { hasSkillUpdateSyncFailures } from "@/hooks/useSkills.helpers";
-import { APP_IDS_WITH } from "@/config/appSpecs";
+import type { SkillAppSyncOutcome, ZipSkippedSkill } from "@/lib/api/skills";
+import {
+  didResyncSkill,
+  hasSkillUpdateSyncFailures,
+} from "@/hooks/useSkills.helpers";
+import { APP_IDS, APP_IDS_WITH } from "@/config/appSpecs";
 
 const BACKUP_DIR = "~/.cc-switch/skill-backups";
 
@@ -98,6 +101,14 @@ interface WriteFailure {
   error: string;
 }
 const failKey = (id: string, app: AppId) => `${id}\u0000${app}`;
+
+function formatSkillSyncWarning(warning: string): string {
+  const colon = warning.indexOf(":");
+  if (colon < 0) return warning;
+  const app = warning.slice(0, colon).trim();
+  const appId = APP_IDS.find((id) => id === app);
+  return appId ? `${APP_DISPLAY_NAME[appId]}${warning.slice(colon)}` : warning;
+}
 
 type ConfirmState =
   | { kind: "uninstall"; ids: string[] }
@@ -656,7 +667,6 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
       endWrite();
     }
     if (partialUpdated.length > 0) {
-      const separator = t("mcpPage.listSeparator", { defaultValue: "、" });
       const uniqueFailedApps = Array.from(
         new Set(partialUpdated.flatMap((item) => item.failedApps)),
       );
@@ -664,17 +674,21 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
         uniqueFailedApps.length > 0
           ? uniqueFailedApps
               .map((app) => APP_DISPLAY_NAME[app] ?? app)
-              .join(separator)
+              .join(listSeparator)
           : partialUpdated
               .flatMap((item) => item.syncWarnings)
+              .map(formatSkillSyncWarning)
               .map((warning) => warning.split(":")[0]?.trim())
               .filter(Boolean)
-              .join(separator);
+              .join(listSeparator);
       const warningDetails = partialUpdated
         .flatMap((item) =>
-          partialUpdated.length > 1
-            ? item.syncWarnings.map((warning) => `${item.name}: ${warning}`)
-            : item.syncWarnings,
+          item.syncWarnings.map((warning) => {
+            const detail = formatSkillSyncWarning(warning);
+            return partialUpdated.length > 1
+              ? `${item.name}: ${detail}`
+              : detail;
+          }),
         )
         .join("\n");
       const message =
@@ -741,30 +755,38 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     }
   };
 
+  const clearResolvedSyncFailures = (outcomes: SkillAppSyncOutcome[]) => {
+    const outcomesByApp = new Map<string, SkillAppSyncOutcome>(
+      outcomes.map((outcome) => [outcome.app, outcome]),
+    );
+    const skillsById = new Map(
+      installedSkills.map((skill) => [skill.id, skill]),
+    );
+    setFails((prev) => {
+      const next = { ...prev };
+      for (const [key, failure] of Object.entries(prev)) {
+        const [id, app] = key.split("\u0000");
+        const skill = skillsById.get(id);
+        const outcome = outcomesByApp.get(app);
+        if (
+          skill &&
+          outcome &&
+          Boolean(skill.apps[outcome.app]) === failure.desired &&
+          didResyncSkill(outcome, skill.directory)
+        ) {
+          delete next[key];
+        }
+      }
+      return next;
+    });
+  };
+
   // 「立即重新同步」也放在 ⋯ 菜单（#9417）：不用每次打开「存储与同步」对话框
   const handleResyncToApps = async () => {
     if (resyncPending || !beginWrite()) return;
     try {
       const outcomes = await resyncToApps();
-      if (outcomes) {
-        const okApps = new Set<string>(
-          outcomes
-            .filter((outcome) => outcome.ok)
-            .map((outcome) => outcome.app),
-        );
-        if (okApps.size > 0) {
-          setFails((prev) => {
-            const next = { ...prev };
-            for (const key of Object.keys(next)) {
-              const app = key.split("\u0000")[1];
-              if (app && okApps.has(app)) {
-                delete next[key];
-              }
-            }
-            return next;
-          });
-        }
-      }
+      if (outcomes) clearResolvedSyncFailures(outcomes);
     } finally {
       endWrite();
     }
@@ -1863,7 +1885,11 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
         onCancel={() => setConfirm(null)}
       />
 
-      <SkillsStorageSheet open={storageOpen} onOpenChange={setStorageOpen} />
+      <SkillsStorageSheet
+        open={storageOpen}
+        onOpenChange={setStorageOpen}
+        onResyncComplete={clearResolvedSyncFailures}
+      />
 
       {repoManagerOpen && (
         <RepoManagerContainer onClose={() => setRepoManagerOpen(false)} />

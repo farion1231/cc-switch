@@ -20,6 +20,7 @@ import {
 } from "@/lib/api/skills";
 import type { AppId } from "@/lib/api/types";
 import {
+  didResyncSkill,
   hasSkillUpdateSyncFailures,
   mergeImportedSkills,
   replaceRepoDiscovery,
@@ -642,14 +643,14 @@ export function useResyncSkillsToApps() {
     mutationKey: SKILLS_RESYNC_MUTATION_KEY,
     mutationFn: () => skillsApi.resyncToApps(),
     onSuccess: (outcomes) => {
-      if (!outcomes.every((outcome) => outcome.ok)) return;
+      if (outcomes.length === 0) return;
       const installed = queryClient.getQueryData<InstalledSkill[]>([
         "skills",
         "installed",
       ]);
       if (!installed) return;
-      const hashById = new Map(
-        installed.map((skill) => [skill.id, skill.contentHash]),
+      const installedById = new Map(
+        installed.map((skill) => [skill.id, skill]),
       );
       queryClient.setQueryData<SkillUpdateCheckResult>(
         ["skills", "updates"],
@@ -658,8 +659,16 @@ export function useResyncSkillsToApps() {
           return {
             ...oldData,
             updates: oldData.updates.filter((update) => {
-              const localHash = hashById.get(update.id);
-              return !localHash || localHash !== update.remoteHash;
+              const skill = installedById.get(update.id);
+              return (
+                !skill?.contentHash ||
+                skill.contentHash !== update.remoteHash ||
+                outcomes.some(
+                  (outcome) =>
+                    skill.apps[outcome.app] &&
+                    !didResyncSkill(outcome, skill.directory),
+                )
+              );
             }),
           };
         },
