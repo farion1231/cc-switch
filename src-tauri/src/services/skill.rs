@@ -924,10 +924,10 @@ impl SkillService {
             }
 
             for (app, app_dir) in &app_roots {
-                if AppType::from_str(app)
-                    .ok()
-                    .is_some_and(|app_type| skill.apps.is_enabled_for(&app_type))
-                {
+                if AppType::from_str(app).ok().is_some_and(|app_type| {
+                    skill.apps.is_enabled_for(&app_type)
+                        && !Self::uses_unified_skill_discovery(&app_type)
+                }) {
                     continue;
                 }
                 let duplicate = app_dir.join(&directory);
@@ -982,10 +982,9 @@ impl SkillService {
         let Some(skill) = skills.values().find(|skill| skill.directory == directory) else {
             return Ok(false);
         };
-        if app_type
-            .as_ref()
-            .is_some_and(|app_type| skill.apps.is_enabled_for(app_type))
-        {
+        if app_type.as_ref().is_some_and(|app_type| {
+            skill.apps.is_enabled_for(app_type) && !Self::uses_unified_skill_discovery(app_type)
+        }) {
             return Ok(false);
         }
         let ssot_dir = Self::get_ssot_dir()?;
@@ -7587,6 +7586,74 @@ mod tests {
             .is_empty());
         assert!(!SkillService::remove_managed_skill_duplicate(&db, "opencode", "managed").unwrap());
         assert!(native_root.join("managed/SKILL.md").is_file());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn reconciliation_detects_legacy_enabled_projections_only_in_unified_storage() {
+        for location in [
+            SkillStorageLocation::CcSwitch,
+            SkillStorageLocation::Unified,
+        ] {
+            let temp = tempdir().unwrap();
+            let _home = TestHomeGuard::set(temp.path());
+            let _location = StorageLocationGuard::set(&_home, location);
+            let db = Arc::new(Database::memory().unwrap());
+            let mut skill = poisoned_skill("local:managed", "managed");
+            for app in [AppType::Codex, AppType::Gemini, AppType::OpenCode] {
+                skill.apps.set_enabled_for(&app, true);
+                write_skill(
+                    &SkillService::get_app_skills_dir(&app)
+                        .unwrap()
+                        .join("managed"),
+                    "legacy copy",
+                );
+            }
+            skill.apps.claude = true;
+            write_skill(
+                &SkillService::get_app_skills_dir(&AppType::Claude)
+                    .unwrap()
+                    .join("managed"),
+                "active copy",
+            );
+            db.save_skill(&skill).unwrap();
+            let source = SkillService::get_ssot_dir().unwrap().join("managed");
+            write_skill(&source, "canonical");
+            let candidates = SkillService::find_managed_skill_duplicates(&db).unwrap();
+            if location == SkillStorageLocation::Unified {
+                assert_eq!(candidates.len(), 3);
+                for app in [AppType::Codex, AppType::Gemini, AppType::OpenCode] {
+                    assert!(candidates
+                        .iter()
+                        .any(|candidate| candidate.app == app.as_str()));
+                    assert!(SkillService::remove_managed_skill_duplicate(
+                        &db,
+                        app.as_str(),
+                        "managed"
+                    )
+                    .unwrap());
+                    assert!(!SkillService::get_app_skills_dir(&app)
+                        .unwrap()
+                        .join("managed")
+                        .exists());
+                    assert!(db
+                        .get_installed_skill(&skill.id)
+                        .unwrap()
+                        .unwrap()
+                        .apps
+                        .is_enabled_for(&app));
+                }
+            } else {
+                assert!(candidates.is_empty());
+                assert!(
+                    !SkillService::remove_managed_skill_duplicate(&db, "codex", "managed").unwrap()
+                );
+            }
+            assert!(
+                !SkillService::remove_managed_skill_duplicate(&db, "claude", "managed").unwrap()
+            );
+            assert!(source.join("SKILL.md").is_file());
+        }
     }
 
     #[test]
