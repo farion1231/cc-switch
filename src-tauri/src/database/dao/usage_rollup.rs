@@ -653,6 +653,7 @@ mod tests {
             // 3. 验证 should_skip_session_insert 拦截该消息二次导入
             let key = crate::services::usage_stats::DedupKey {
                 app_type: "opencode",
+                data_source: "opencode_session",
                 model: "gemini-3.8-flash-high",
                 input_tokens: 100,
                 output_tokens: 50,

@@ -3444,6 +3444,7 @@ mod tests {
         assert!(has_matching_proxy_usage_log(&conn, &key)?);
         assert!(should_skip_session_insert(
             &conn,
+            "codex_session",
             "codex-session-alias",
             &key
         )?);

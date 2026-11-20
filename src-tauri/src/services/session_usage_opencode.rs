@@ -675,6 +675,16 @@ pub(crate) fn repair_opencode_history_rollups(
         OpenCodeSchema::V2 => {
             "SELECT session_id, id, data, type FROM session_message WHERE type IN ('assistant', 'compaction')"
         }
+        OpenCodeSchema::Mixed => {
+            "SELECT session_id, id, data, type FROM (
+                 SELECT session_id, id, data, type, time_updated, 0 AS layout_priority
+                 FROM session_message
+                 WHERE type IN ('assistant', 'compaction')
+                 UNION ALL
+                 SELECT session_id, id, data, NULL AS type, time_updated, 1 AS layout_priority
+                 FROM message WHERE time_created > 0
+             ) ORDER BY time_updated DESC, layout_priority, id"
+        }
     };
 
     let mut stmt = opencode_conn
@@ -689,6 +699,7 @@ pub(crate) fn repair_opencode_history_rollups(
     > = std::collections::HashMap::new();
     let mut date_model_req_ids: std::collections::HashMap<(String, String), Vec<String>> =
         std::collections::HashMap::new();
+    let mut seen_message_ids: HashSet<String> = HashSet::new();
 
     let cc_conn = lock_conn!(db.conn);
     let mut pricing_cache: std::collections::HashMap<String, Option<ModelPricing>> =
@@ -716,9 +727,12 @@ pub(crate) fn repair_opencode_history_rollups(
             Err(_) => continue,
         };
 
-        if schema == OpenCodeSchema::V1
-            && value.get("role").and_then(|r| r.as_str()) != Some("assistant")
+        if message_type.is_none() && value.get("role").and_then(|r| r.as_str()) != Some("assistant")
         {
+            continue;
+        }
+
+        if !seen_message_ids.insert(message_id.clone()) {
             continue;
         }
 
