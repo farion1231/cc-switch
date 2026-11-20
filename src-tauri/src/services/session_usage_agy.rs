@@ -28,6 +28,15 @@ struct AgySyncCursorUpdate<'a> {
     native_state: &'a str,
 }
 
+type ParentModelEvent = (i64, Option<String>);
+type CachedParentEvents = (Vec<ParentModelEvent>, bool);
+
+#[derive(Default)]
+struct SyncParentCache {
+    lookup: agy::ParentLookupCache,
+    parent_events: HashMap<PathBuf, CachedParentEvents>,
+}
+
 pub fn sync_agy_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
     sync_agy_usage_from_files(db, agy::transcript_files())
 }
@@ -41,6 +50,7 @@ fn sync_agy_usage_from_files(
         return Ok(result);
     }
     let cursors = load_sync_cursors(db)?;
+    let mut parent_cache = SyncParentCache::default();
     for (session_id, path) in files {
         result.files_scanned += 1;
         let cursor_key = format!("agy:{}", path.to_string_lossy());
@@ -56,9 +66,9 @@ fn sync_agy_usage_from_files(
         };
         let modified = metadata_modified_nanos(&metadata);
         let size = metadata.len() as i64;
-        // Invalidate pre-Orchestrator / pre-worker-alias / pre-Neon-Orchestrator cursors once,
-        // including unchanged, already timed history.
-        let native_state = format!("v4:{}", native_models::native_state_fingerprint(&path));
+        // Invalidate pre-Orchestrator / pre-worker-alias / pre-Neon-Orchestrator /
+        // pre-parent-inheritance cursors once, including unchanged, already timed history.
+        let native_state = format!("v5:{}", native_models::native_state_fingerprint(&path));
         if cursor.is_some_and(|c| {
             c.last_modified == modified
                 && c.last_byte_offset == Some(size)
@@ -80,6 +90,7 @@ fn sync_agy_usage_from_files(
                     &rows,
                     Some(&path),
                     Some(sync_cursor),
+                    &mut parent_cache,
                 ) {
                     Ok((imported, skipped)) => {
                         result.imported += imported;
@@ -175,7 +186,8 @@ fn import_records(
     rows: &[Value],
     transcript: Option<&Path>,
 ) -> Result<(u32, u32), AppError> {
-    import_records_with_cursor(db, session, rows, transcript, None)
+    let mut parent_cache = SyncParentCache::default();
+    import_records_with_cursor(db, session, rows, transcript, None, &mut parent_cache)
 }
 
 fn import_records_with_cursor(
@@ -184,6 +196,7 @@ fn import_records_with_cursor(
     rows: &[Value],
     transcript: Option<&Path>,
     sync_cursor: Option<AgySyncCursorUpdate<'_>>,
+    parent_cache: &mut SyncParentCache,
 ) -> Result<(u32, u32), AppError> {
     // step_index 顺序决定模型归属：先按顺序扫一遍切换事件，再给每个响应打上当时的模型。
     let mut ordered: Vec<&Value> = rows.iter().collect();
@@ -240,7 +253,37 @@ fn import_records_with_cursor(
                 }
                 Err(error) => {
                     native_ok = false;
-                    log::debug!("Antigravity {session}: cannot read native models: {error}");
+                    log::warn!("Antigravity {session}: cannot read native models: {error}");
+                }
+            }
+        }
+        // Own transcript and own database still have no model. Use the parent's concrete
+        // model from just before this session started (Model Selection, else the parent's
+        // database). Never inherit Orchestrator/worker selector names or guess a tier.
+        // A failed parent database read leaves the sync cursor unset so the next sync retries.
+        if native_ok {
+            let missing: Vec<u64> = ordered
+                .iter()
+                .filter(|row| row["type"] == "PLANNER_RESPONSE" && row["status"] == "DONE")
+                .filter_map(|row| {
+                    let step = row["step_index"].as_u64()?;
+                    (known_model(row).is_none()
+                        && !model_by_step.contains_key(&step)
+                        && !native_model_by_step.contains_key(&step)
+                        && !pruned.contains(&step))
+                    .then_some(step)
+                })
+                .collect();
+            if !missing.is_empty() {
+                let child_start = ordered.iter().filter_map(|row| agy::timestamp(row)).min();
+                let (model, parent_native_ok) = parent_model(transcript, child_start, parent_cache);
+                if !parent_native_ok {
+                    native_ok = false;
+                }
+                if let Some(model) = model {
+                    for step in missing {
+                        model_by_step.entry(step).or_insert_with(|| model.clone());
+                    }
                 }
             }
         }
@@ -427,6 +470,118 @@ fn steps_with_timing(
         }
     }
     Ok((settled, pruned))
+}
+
+/// Parent concrete model active at the latest moment that is not after `child_start`.
+///
+/// Mode selector names (`Orchestrator (*)`, `gemini-flash-worker-agy`) clear any earlier
+/// selection rather than inheriting either a selector name or a stale pre-Orchestrator model.
+/// The bool is false only when the parent's transcript or conversation database exists
+/// but cannot be opened. The sync cursor stays unset in that case.
+fn parent_model(
+    transcript: &Path,
+    child_start: Option<i64>,
+    cache: &mut SyncParentCache,
+) -> (Option<String>, bool) {
+    let Some(parent) = cache.lookup.parent_session_id(transcript, child_start) else {
+        return (None, true);
+    };
+    let Some((root, _)) = agy::transcript_home(transcript) else {
+        return (None, true);
+    };
+    let parent_transcript = root
+        .join("brain")
+        .join(&parent)
+        .join(".system_generated/logs/transcript_full.jsonl");
+    if !parent_transcript.is_file() {
+        return (None, true);
+    }
+    if let Some((events, parent_native_ok)) = cache.parent_events.get(&parent_transcript) {
+        return (model_active_before(events, child_start), *parent_native_ok);
+    }
+    let rows = match agy::records(&parent_transcript) {
+        Ok(rows) => rows,
+        Err(err) => {
+            log::warn!(
+                "Antigravity parent {parent}: cannot read transcript for model inheritance: {err}"
+            );
+            return (None, false);
+        }
+    };
+    let mut events = Vec::new();
+    let mut steps = Vec::new();
+    for row in &rows {
+        let Some(at) = agy::timestamp(row) else {
+            continue;
+        };
+        if row["type"] == "USER_INPUT" {
+            if let Some(model) = row["content"].as_str().and_then(model_from_settings_change) {
+                if is_unresolved_worker_target(&model) {
+                    events.push((at, None));
+                } else {
+                    events.push((at, Some(model)));
+                }
+            }
+        } else if row["type"] == "PLANNER_RESPONSE" && row["status"] == "DONE" {
+            if let Some(step) = row["step_index"].as_u64() {
+                steps.push((step, at));
+            }
+        }
+    }
+    let mut parent_native_ok = true;
+    if !steps.is_empty() {
+        let wanted: Vec<u64> = steps.iter().map(|(step, _)| *step).collect();
+        match native_models::generations_for_transcript(&parent_transcript, &wanted) {
+            Ok(generations) => {
+                for (step, at) in steps {
+                    if let Some(model) = generations.get(&step).and_then(|item| item.model.clone())
+                    {
+                        if !is_unresolved_worker_target(&model) {
+                            events.push((at, Some(model)));
+                        }
+                    }
+                }
+            }
+            Err(err) => {
+                log::warn!(
+                    "Antigravity parent {parent}: cannot read native models for inheritance: {err}"
+                );
+                parent_native_ok = false;
+            }
+        }
+    }
+    let chosen = model_active_before(&events, child_start);
+    cache
+        .parent_events
+        .insert(parent_transcript, (events, parent_native_ok));
+    (chosen, parent_native_ok)
+}
+
+/// Latest model state at or before `child_start`. A later switch (including entering
+/// Orchestrator mode, represented as `None`) overrides earlier concrete selections;
+/// within the same 1-second timestamp, a resolved concrete model beats a `None` marker.
+fn model_active_before(events: &[ParentModelEvent], child_start: Option<i64>) -> Option<String> {
+    let mut best: Option<(i64, Option<&str>)> = None;
+    for (at, model) in events {
+        if child_start.is_some_and(|start| *at > start) {
+            continue;
+        }
+        let concrete = model
+            .as_deref()
+            .filter(|name| !is_unresolved_worker_target(name));
+        let replace = match best {
+            None => true,
+            Some((best_at, _)) if *at > best_at => true,
+            Some((best_at, best_model)) if *at == best_at => {
+                concrete.is_some() || best_model.is_none()
+            }
+            Some(_) => false,
+        };
+        if replace {
+            best = Some((*at, concrete));
+        }
+    }
+    best.and_then(|(_, model)| model.map(str::to_string))
 }
 
 fn known_model(row: &Value) -> Option<&str> {
@@ -1063,5 +1218,482 @@ mod tests {
             )
             .unwrap();
         assert_eq!(total_input, 160);
+    }
+
+    #[test]
+    fn gemini_root_fixture_scans_sessions_and_imports_usage() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let paths = crate::agy_config::agy_paths(dir.path());
+        let logs = paths.sessions.join("conv-1").join(".system_generated/logs");
+        std::fs::create_dir_all(&logs).unwrap();
+        std::fs::write(
+            logs.join("transcript_full.jsonl"),
+            concat!(
+                r#"{"step_index":0,"type":"USER_INPUT","content":"<USER_REQUEST>hello from wsl</USER_REQUEST>","created_at":"2026-11-01T00:00:00Z"}"#,
+                "\n",
+                r#"{"step_index":1,"type":"PLANNER_RESPONSE","status":"DONE","input_tokens":12,"output_tokens":3,"created_at":"2026-11-01T00:00:01Z"}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+        std::fs::create_dir_all(paths.settings.parent().unwrap()).unwrap();
+        std::fs::write(&paths.settings, r#"{"model":"Gemini 3.8 Flash (High)"}"#).unwrap();
+        std::fs::create_dir_all(paths.mcp.parent().unwrap()).unwrap();
+        std::fs::write(&paths.mcp, r#"{"mcpServers":{}}"#).unwrap();
+        std::fs::create_dir_all(&paths.skills).unwrap();
+        std::fs::write(&paths.prompts, "agents\n").unwrap();
+        let summaries = rusqlite::Connection::open(&paths.summaries).unwrap();
+        summaries
+            .execute_batch(
+                "CREATE TABLE conversation_summaries(conversation_id TEXT,title TEXT,workspace_uris TEXT,preview TEXT,last_modified_time TEXT);",
+            )
+            .unwrap();
+        summaries
+            .execute(
+                "INSERT INTO conversation_summaries VALUES (?1,?2,?3,?4,?5)",
+                rusqlite::params![
+                    "conv-1",
+                    "WSL chat",
+                    "[]",
+                    "hello from wsl",
+                    "2026-11-01T00:00:02Z"
+                ],
+            )
+            .unwrap();
+        drop(summaries);
+
+        let sessions = agy::scan_gemini_root(dir.path());
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].session_id, "conv-1");
+        assert_eq!(sessions[0].title.as_deref(), Some("WSL chat"));
+        let source = sessions[0].source_path.clone().expect("transcript");
+        assert!(source.contains("antigravity-cli"));
+        assert!(paths.settings.is_file());
+        assert!(paths.mcp.is_file());
+        assert!(paths.prompts.is_file());
+        assert!(paths.skills.is_dir());
+
+        let rows = agy::records(std::path::Path::new(&source)).unwrap();
+        let db = Database::memory().unwrap();
+        assert_eq!(
+            import_records(&db, "conv-1", &rows, Some(std::path::Path::new(&source))).unwrap(),
+            (1, 0)
+        );
+        let got: (i64, i64) = db
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT input_tokens, output_tokens FROM proxy_request_logs WHERE request_id='agy:conv-1:1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(got, (12, 3));
+    }
+
+    fn transcript(root: &std::path::Path, id: &str) -> std::path::PathBuf {
+        root.join("brain")
+            .join(id)
+            .join(".system_generated/logs/transcript_full.jsonl")
+    }
+
+    #[test]
+    fn child_transcript_without_a_model_uses_its_conversation_db_and_updates_unknown_rows() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let source = transcript(dir.path(), "child");
+        let rows = [json!({
+            "step_index": 1,
+            "type": "PLANNER_RESPONSE",
+            "status": "DONE",
+            "created_at": "2026-11-11T00:00:02Z",
+            "input_tokens": 80,
+            "output_tokens": 12
+        })];
+        let db = Database::memory().unwrap();
+        assert_eq!(
+            import_records(&db, "child", &rows, Some(&source)).unwrap(),
+            (1, 0)
+        );
+        let model = |db: &Database| -> (String, i64, Option<i64>) {
+            db.conn
+                .lock()
+                .unwrap()
+                .query_row(
+                    "SELECT model, latency_ms, first_token_ms FROM proxy_request_logs WHERE request_id='agy:child:1'",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .unwrap()
+        };
+        assert_eq!(model(&db).0, "unknown");
+
+        std::fs::create_dir_all(dir.path().join("conversations")).unwrap();
+        let native = native_models::write_test_database(
+            &dir.path().join("conversations/child.db"),
+            &[(1, 0, "gemini-4-argon")],
+        );
+        native_models::set_test_generation(
+            &native,
+            0,
+            "gemini-4-argon",
+            &native_models::test_timing(1200, 800),
+        );
+        assert_eq!(
+            import_records(&db, "child", &rows, Some(&source)).unwrap(),
+            (1, 0)
+        );
+        assert_eq!(model(&db), ("gemini-4-argon".into(), 2000, Some(1200)));
+
+        // A parent model must not replace the child's own database model.
+        std::fs::create_dir_all(transcript(dir.path(), "parent").parent().unwrap()).unwrap();
+        std::fs::write(
+            transcript(dir.path(), "parent"),
+            r#"{"step_index":0,"type":"USER_INPUT","created_at":"2026-11-11T00:00:01Z","content":"changed setting `Model Selection` from None to Gemini 3.8 Flash (High)."}"#,
+        )
+        .unwrap();
+        let summaries =
+            rusqlite::Connection::open(dir.path().join("conversation_summaries.db")).unwrap();
+        summaries
+            .execute_batch(
+                "CREATE TABLE conversation_summaries(conversation_id TEXT, parent_conversation_id TEXT);
+                 INSERT INTO conversation_summaries VALUES ('child','parent');",
+            )
+            .unwrap();
+        assert_eq!(
+            import_records(&db, "child", &rows, Some(&source)).unwrap(),
+            (0, 1)
+        );
+        assert_eq!(model(&db).0, "gemini-4-argon");
+    }
+
+    #[test]
+    fn child_without_a_db_model_inherits_the_parent_model_from_before_it_started() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let parent = transcript(dir.path(), "parent");
+        std::fs::create_dir_all(parent.parent().unwrap()).unwrap();
+        std::fs::write(
+            &parent,
+            concat!(
+                r#"{"step_index":0,"type":"USER_INPUT","created_at":"2026-11-11T00:00:01Z","content":"changed setting `Model Selection` from None to Gemini 4 Argon (High)."}"#,
+                "\n",
+                r#"{"step_index":2,"type":"USER_INPUT","created_at":"2026-11-11T00:00:03Z","content":"changed setting `Model Selection` from Gemini 4 Argon (High) to Gemini 4 Argon (Low)."}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+        std::fs::create_dir_all(transcript(dir.path(), "db-parent").parent().unwrap()).unwrap();
+        std::fs::write(
+            transcript(dir.path(), "db-parent"),
+            concat!(
+                r#"{"step_index":1,"type":"PLANNER_RESPONSE","status":"DONE","created_at":"2026-11-11T00:00:01Z","input_tokens":1,"output_tokens":1}"#,
+                "\n",
+                r#"{"step_index":2,"type":"PLANNER_RESPONSE","status":"DONE","created_at":"2026-11-11T00:00:03Z","input_tokens":1,"output_tokens":1}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.path().join("conversations")).unwrap();
+        native_models::write_test_database(
+            &dir.path().join("conversations/db-parent.db"),
+            &[(1, 0, "gemini-4-argon"), (2, 1, "gemini-3.8-flash-tiered")],
+        );
+
+        let at = "2026-11-11T00:00:02Z";
+        let row = |step| {
+            json!({
+                "step_index": step,
+                "type": "PLANNER_RESPONSE",
+                "status": "DONE",
+                "created_at": at,
+                "input_tokens": 10,
+                "output_tokens": 4
+            })
+        };
+        let db = Database::memory().unwrap();
+        let summary = transcript(dir.path(), "from-summary");
+        assert_eq!(
+            import_records(&db, "from-summary", &[row(1)], Some(&summary)).unwrap(),
+            (1, 0)
+        );
+        let stored = |db: &Database, id: &str| -> String {
+            db.conn
+                .lock()
+                .unwrap()
+                .query_row(
+                    "SELECT model FROM proxy_request_logs WHERE request_id=?1",
+                    [id],
+                    |r| r.get(0),
+                )
+                .unwrap()
+        };
+        assert_eq!(stored(&db, "agy:from-summary:1"), "unknown");
+
+        let summaries =
+            rusqlite::Connection::open(dir.path().join("conversation_summaries.db")).unwrap();
+        summaries
+            .execute_batch(
+                "CREATE TABLE conversation_summaries(conversation_id TEXT, parent_conversation_id TEXT);
+                 INSERT INTO conversation_summaries VALUES ('from-summary','parent');
+                 INSERT INTO conversation_summaries VALUES ('too-early','parent');
+                 INSERT INTO conversation_summaries VALUES ('from-db','db-parent');
+                 INSERT INTO conversation_summaries VALUES ('via-invoke', NULL);",
+            )
+            .unwrap();
+        std::fs::write(
+            &parent,
+            concat!(
+                r#"{"step_index":0,"type":"USER_INPUT","created_at":"2026-11-11T00:00:01Z","content":"changed setting `Model Selection` from None to Gemini 4 Argon (High)."}"#,
+                "\n",
+                r#"{"step_index":1,"type":"INVOKE_SUBAGENT","created_at":"2026-11-11T00:00:01Z","content":"started {\"conversationId\":\"via-invoke\",\"logAbsoluteUri\":\"file:///home/alice/.gemini/antigravity-cli/brain/via-invoke/.system_generated/logs/transcript_full.jsonl\"}"}"#,
+                "\n",
+                r#"{"step_index":2,"type":"USER_INPUT","created_at":"2026-11-11T00:00:03Z","content":"changed setting `Model Selection` from Gemini 4 Argon (High) to Gemini 4 Argon (Low)."}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(
+            import_records(&db, "from-summary", &[row(1)], Some(&summary)).unwrap(),
+            (1, 0)
+        );
+        assert_eq!(stored(&db, "agy:from-summary:1"), "gemini-4-argon-high");
+
+        let early = transcript(dir.path(), "too-early");
+        let early_row = json!({
+            "step_index": 1,
+            "type": "PLANNER_RESPONSE",
+            "status": "DONE",
+            "created_at": "2026-11-11T00:00:00Z",
+            "input_tokens": 10,
+            "output_tokens": 4
+        });
+        import_records(&db, "too-early", &[early_row], Some(&early)).unwrap();
+        assert_eq!(stored(&db, "agy:too-early:1"), "unknown");
+
+        let via = transcript(dir.path(), "via-invoke");
+        import_records(&db, "via-invoke", &[row(1)], Some(&via)).unwrap();
+        assert_eq!(stored(&db, "agy:via-invoke:1"), "gemini-4-argon-high");
+
+        let from_db = transcript(dir.path(), "from-db");
+        import_records(&db, "from-db", &[row(1)], Some(&from_db)).unwrap();
+        assert_eq!(stored(&db, "agy:from-db:1"), "gemini-4-argon");
+    }
+
+    #[test]
+    fn child_does_not_inherit_orchestrator_or_worker_mode_selector_from_parent() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let mode_only = transcript(dir.path(), "mode-only");
+        let worker_only = transcript(dir.path(), "worker-only");
+        let switched = transcript(dir.path(), "switched");
+        let with_db = transcript(dir.path(), "with-db");
+        for p in [&mode_only, &worker_only, &switched, &with_db] {
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        }
+        std::fs::write(
+            &mode_only,
+            concat!(
+                r#"{"step_index":0,"type":"USER_INPUT","created_at":"2026-11-11T00:00:01Z","content":"changed setting `Model Selection` from None to Orchestrator (Carbon)."}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+        std::fs::write(
+            &worker_only,
+            concat!(
+                r#"{"step_index":0,"type":"USER_INPUT","created_at":"2026-11-11T00:00:01Z","content":"changed setting `Model Selection` from None to gemini-flash-worker-agy."}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+        std::fs::write(
+            &switched,
+            concat!(
+                r#"{"step_index":0,"type":"USER_INPUT","created_at":"2026-11-11T00:00:01Z","content":"changed setting `Model Selection` from None to Gemini 4 Argon (High)."}"#,
+                "\n",
+                r#"{"step_index":1,"type":"USER_INPUT","created_at":"2026-11-11T00:00:02Z","content":"changed setting `Model Selection` from Gemini 4 Argon (High) to Orchestrator (Argon)."}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+        std::fs::write(
+            &with_db,
+            concat!(
+                r#"{"step_index":0,"type":"USER_INPUT","created_at":"2026-11-11T00:00:01Z","content":"changed setting `Model Selection` from None to Orchestrator (Carbon)."}"#,
+                "\n",
+                r#"{"step_index":1,"type":"PLANNER_RESPONSE","status":"DONE","created_at":"2026-11-11T00:00:01Z","input_tokens":1,"output_tokens":1}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.path().join("conversations")).unwrap();
+        let native = native_models::write_test_database(
+            &dir.path().join("conversations/with-db.db"),
+            &[(1, 0, "gemini-pro-orchestrator")],
+        );
+        native_models::set_test_generation(
+            &native,
+            0,
+            "gemini-pro-orchestrator",
+            &native_models::test_model_id("Orchestrator (Carbon)"),
+        );
+        drop(native);
+
+        let summaries =
+            rusqlite::Connection::open(dir.path().join("conversation_summaries.db")).unwrap();
+        summaries
+            .execute_batch(
+                "CREATE TABLE conversation_summaries(conversation_id TEXT, parent_conversation_id TEXT);
+                 INSERT INTO conversation_summaries VALUES ('c-mode','mode-only');
+                 INSERT INTO conversation_summaries VALUES ('c-worker','worker-only');
+                 INSERT INTO conversation_summaries VALUES ('c-switch','switched');
+                 INSERT INTO conversation_summaries VALUES ('c-db','with-db');",
+            )
+            .unwrap();
+        drop(summaries);
+
+        let db = Database::memory().unwrap();
+        let child_row = [json!({
+            "step_index": 1,
+            "type": "PLANNER_RESPONSE",
+            "status": "DONE",
+            "created_at": "2026-11-11T00:00:03Z",
+            "input_tokens": 10,
+            "output_tokens": 4
+        })];
+        let stored = |id: &str| -> String {
+            db.conn
+                .lock()
+                .unwrap()
+                .query_row(
+                    "SELECT model FROM proxy_request_logs WHERE request_id=?1",
+                    [id],
+                    |r| r.get(0),
+                )
+                .unwrap()
+        };
+
+        import_records(
+            &db,
+            "c-mode",
+            &child_row,
+            Some(&transcript(dir.path(), "c-mode")),
+        )
+        .unwrap();
+        assert_eq!(stored("agy:c-mode:1"), "unknown");
+
+        import_records(
+            &db,
+            "c-worker",
+            &child_row,
+            Some(&transcript(dir.path(), "c-worker")),
+        )
+        .unwrap();
+        assert_eq!(stored("agy:c-worker:1"), "unknown");
+
+        import_records(
+            &db,
+            "c-switch",
+            &child_row,
+            Some(&transcript(dir.path(), "c-switch")),
+        )
+        .unwrap();
+        assert_eq!(stored("agy:c-switch:1"), "unknown");
+
+        import_records(
+            &db,
+            "c-db",
+            &child_row,
+            Some(&transcript(dir.path(), "c-db")),
+        )
+        .unwrap();
+        assert_eq!(stored("agy:c-db:1"), "gemini-4-carbon");
+    }
+
+    #[test]
+    fn sync_agy_usage_v5_cursor_backfills_unknown_subagent_from_v4_cursor() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let parent = transcript(dir.path(), "parent-p");
+        let child = transcript(dir.path(), "child-c");
+        std::fs::create_dir_all(parent.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(child.parent().unwrap()).unwrap();
+        std::fs::write(
+            &parent,
+            concat!(
+                r#"{"step_index":0,"type":"USER_INPUT","created_at":"2026-11-11T00:00:01Z","content":"changed setting `Model Selection` from None to Gemini 4 Neon (High)."}"#,
+                "\n",
+                r#"{"step_index":1,"type":"INVOKE_SUBAGENT","created_at":"2026-11-11T00:00:01Z","content":"started {\"conversationId\":\"child-c\",\"logAbsoluteUri\":\"file:///home/alice/.gemini/antigravity-cli/brain/child-c/.system_generated/logs/transcript_full.jsonl\"}"}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+        std::fs::write(
+            &child,
+            r#"{"step_index":1,"type":"PLANNER_RESPONSE","status":"DONE","created_at":"2026-11-11T00:00:02Z","input_tokens":40,"output_tokens":10}"#,
+        )
+        .unwrap();
+
+        let db = Database::memory().unwrap();
+        let child_row = [json!({
+            "step_index": 1,
+            "type": "PLANNER_RESPONSE",
+            "status": "DONE",
+            "created_at": "2026-11-11T00:00:02Z",
+            "input_tokens": 40,
+            "output_tokens": 10
+        })];
+        // Seed an earlier v4: import where child landed as `unknown`.
+        import_records(&db, "child-c", &child_row, None).unwrap();
+        let meta = std::fs::metadata(&child).unwrap();
+        let modified = metadata_modified_nanos(&meta);
+        let size = meta.len() as i64;
+        let key = format!("agy:{}", child.to_string_lossy());
+        let old_state = format!("v4:{}", native_models::native_state_fingerprint(&child));
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute(
+                "INSERT OR REPLACE INTO session_log_sync
+                     (file_path, last_modified, last_line_offset, last_synced_at, last_byte_offset, parser_state)
+                 VALUES (?1, ?2, 0, unixepoch(), ?3, ?4)",
+                params![key, modified, size, old_state],
+            )
+            .unwrap();
+        }
+
+        let roots = [(dir.path().join("brain"), None)];
+        let res = sync_agy_usage_from_files(&db, agy::transcript_files_in_roots(&roots)).unwrap();
+        assert_eq!(res.imported, 1);
+        let conn = db.conn.lock().unwrap();
+        let model: String = conn
+            .query_row(
+                "SELECT model FROM proxy_request_logs WHERE request_id='agy:child-c:1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(model, "gemini-4-neon-high");
+        let parser_state: String = conn
+            .query_row(
+                "SELECT parser_state FROM session_log_sync WHERE file_path=?1",
+                [&key],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(parser_state.starts_with("v5:"), "{parser_state}");
     }
 }

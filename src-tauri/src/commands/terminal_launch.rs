@@ -15,6 +15,8 @@ use super::misc::{
     effective_path_string, is_valid_wsl_distro_name, windows_cmd_double_quote_arg,
     windows_shell_compatible_path, wsl_auto_shell_command, wsl_distro_for_tool, CREATE_NO_WINDOW,
 };
+#[cfg(any(target_os = "windows", test))]
+use super::misc::{wsl_login_command_line, WslEnvCarrier};
 
 // 以下 shell 解析辅助函数仅被 macOS/Linux 的终端启动逻辑使用；Windows 非 test 编译下为死代码。
 #[cfg_attr(windows, allow(dead_code))]
@@ -684,6 +686,10 @@ async fn switch_agy_to_bound_account(
         log::info!("[AgyAccount] 这个平台不能切号，忽略卡片绑定的账号");
         return Ok(());
     }
+    if crate::commands::tool_runs_in_wsl("agy") {
+        log::info!("[AgyAccount] Antigravity 运行在 WSL 里，忽略卡片绑定的本机账号");
+        return Ok(());
+    }
     if !accounts
         .list()
         .await
@@ -712,27 +718,37 @@ async fn switch_agy_to_bound_account(
 /// Antigravity CLI：官方登录卡跑 `agy`，卡上设了模型就加 `--model`（只对这次会话生效）；
 /// Key 卡用它的私有 `--gemini_dir`，Key 和地址只经环境变量传给这一个进程。
 fn agy_terminal_launch(provider: &crate::provider::Provider) -> Result<ProviderLaunch, String> {
-    let launch = crate::services::provider::agy_direct::terminal_launch(provider)?;
-    let Some(dir) = launch.gemini_dir else {
-        let (args, batch_command, batch_vars) = match launch.model {
-            Some(model) => (
-                vec![format!("--model={model}")],
-                format!("agy \"--model=%{AGY_MODEL_BATCH_VAR}%\""),
-                vec![(AGY_MODEL_BATCH_VAR, model)],
-            ),
-            None => (Vec::new(), "agy".to_string(), Vec::new()),
-        };
+    let launch = crate::services::provider::agy_direct::terminal_launch(provider)
+        .map_err(|e| e.to_string())?;
+    if !launch.key_mode {
+        let mut args = Vec::new();
+        let mut batch_parts = vec!["agy".to_string()];
+        let mut batch_vars = Vec::new();
+        if let Some(dir) = launch.gemini_dir {
+            let raw = dir.to_string_lossy().into_owned();
+            args.push(format!("--gemini_dir={raw}"));
+            batch_parts.push(format!("\"--gemini_dir=%{AGY_DIR_BATCH_VAR}%\""));
+            batch_vars.push((AGY_DIR_BATCH_VAR, raw));
+        }
+        if let Some(model) = launch.model {
+            args.push(format!("--model={model}"));
+            batch_parts.push(format!("\"--model=%{AGY_MODEL_BATCH_VAR}%\""));
+            batch_vars.push((AGY_MODEL_BATCH_VAR, model));
+        }
         return Ok(ProviderLaunch {
             title: "Starting Antigravity CLI with your signed-in account",
             detail: None,
             program: "agy",
             args,
-            batch_command,
+            batch_command: batch_parts.join(" "),
             env: launch.env,
             batch_vars,
             cleanup: Vec::new(),
         });
-    };
+    }
+    let dir = launch
+        .gemini_dir
+        .ok_or_else(|| "Antigravity API-key launch missing private directory".to_string())?;
     Ok(ProviderLaunch {
         title: "Using a private Antigravity profile for this provider:",
         detail: Some(dir.clone()),
@@ -1572,19 +1588,139 @@ fn which_command(cmd: &str) -> bool {
         .unwrap_or(false)
 }
 
+#[cfg(any(target_os = "windows", test))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WslTerminalCommand {
+    line: String,
+    set_lines: String,
+    env: Vec<(String, String)>,
+}
+
+/// 打开终端时给 agy 的那段 Linux 命令（还没包 `wsl.exe`）。
+/// `gemini_root` 是覆盖目录（`.gemini`）。没有 `--gemini_dir` 时补上它的 Linux 路径，
+/// 这样发行版里的 agy 用的就是这块配置，而不是默认家目录。已有 `--gemini_dir`（Key 卡的
+/// 私有目录或官方卡的覆盖根）时改成发行版能读的路径；仅 Key 卡私有目录与 `shared` 不同时
+/// 才把共享 `config` 链过去（含失效/过期软链更新）。所有用户可控路径、参数与凭据均经
+/// `WslEnvCarrier` (`WSLENV/u`) 传入，绝不进入 Windows `.bat` 命令行。
+#[cfg(any(target_os = "windows", test))]
+fn agy_wsl_terminal_payload(
+    distro: &str,
+    gemini_root: &str,
+    launch: &ProviderLaunch,
+    cwd: Option<&str>,
+) -> Result<(String, WslEnvCarrier), String> {
+    let shared = crate::config::path_into_wsl(gemini_root, distro)
+        .ok_or_else(|| format!("Antigravity config directory is not inside WSL distro {distro}"))?;
+    let mut carrier = WslEnvCarrier::default();
+    let mut steps = Vec::new();
+    if let Some(cwd) = cwd.filter(|value| !value.is_empty()) {
+        let linux = crate::config::path_into_wsl(cwd, distro)
+            .ok_or_else(|| format!("Cannot use this folder inside WSL distro {distro}"))?;
+        let cwd_var = carrier.var_for(&linux);
+        steps.push(format!("cd \"${cwd_var}\""));
+    }
+    for (name, value) in &launch.env {
+        if name.is_empty()
+            || name.starts_with(|c: char| c.is_ascii_digit())
+            || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        {
+            return Err(format!("invalid env for {name}"));
+        }
+        match value {
+            None => steps.push(format!("unset {name}")),
+            Some(value) => {
+                let val_var = carrier.var_for(value);
+                steps.push(format!("export {name}=\"${val_var}\""));
+            }
+        }
+    }
+    let mut exec_args = Vec::new();
+    let mut has_gemini_dir = false;
+    let mut private_dir = None;
+    for arg in &launch.args {
+        if let Some(path) = arg.strip_prefix("--gemini_dir=") {
+            has_gemini_dir = true;
+            let linux = crate::config::path_into_wsl(path, distro).ok_or_else(|| {
+                format!("Cannot use this Antigravity profile inside WSL distro {distro}")
+            })?;
+            if linux != shared {
+                private_dir = Some(linux.clone());
+            }
+            let dir_var = carrier.var_for(&linux);
+            exec_args.push(format!("\"--gemini_dir=${dir_var}\""));
+        } else {
+            let arg_var = carrier.var_for(arg);
+            exec_args.push(format!("\"${arg_var}\""));
+        }
+    }
+    if let Some(private_dir) = private_dir {
+        let shared_var = carrier.var_for(&shared);
+        let private_var = carrier.var_for(&private_dir);
+        steps.push(format!(
+            "mkdir -p \"${shared_var}/config\" && if [ -L \"${private_var}/config\" ] || [ ! -e \"${private_var}/config\" ]; then ln -sfn \"${shared_var}/config\" \"${private_var}/config\"; fi"
+        ));
+    } else if !has_gemini_dir {
+        let shared_var = carrier.var_for(&shared);
+        exec_args.insert(0, format!("\"--gemini_dir=${shared_var}\""));
+    }
+    let payload_var = carrier.finish_exec(steps, &exec_args);
+    Ok((payload_var, carrier))
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn agy_wsl_terminal_command(
+    distro: &str,
+    gemini_root: &str,
+    launch: &ProviderLaunch,
+    cwd: Option<&str>,
+) -> Result<WslTerminalCommand, String> {
+    let (payload_var, carrier) = agy_wsl_terminal_payload(distro, gemini_root, launch, cwd)?;
+    Ok(WslTerminalCommand {
+        line: wsl_login_command_line(distro, &payload_var)?,
+        set_lines: carrier.wslenv_set_lines(),
+        env: carrier.entries,
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn agy_wsl_terminal_line(
+    launch: &ProviderLaunch,
+    cwd: Option<&Path>,
+) -> Result<Option<WslTerminalCommand>, String> {
+    if launch.program != "agy" {
+        return Ok(None);
+    }
+    let Some(distro) = wsl_distro_for_tool("agy") else {
+        return Ok(None);
+    };
+    let root = crate::agy_config::agy_gemini_root();
+    let cwd = cwd.map(|dir| dir.to_string_lossy().into_owned());
+    agy_wsl_terminal_command(&distro, &root.to_string_lossy(), launch, cwd.as_deref()).map(Some)
+}
+
 /// Windows: 根据用户首选终端启动
 #[cfg(target_os = "windows")]
 fn launch_windows_terminal(launch: &ProviderLaunch, cwd: Option<&Path>) -> Result<(), String> {
     let preferred = crate::settings::get_preferred_terminal();
     let terminal = preferred.as_deref().unwrap_or("cmd");
 
+    // 配置目录在 WSL 里时，bat 只负责拉起 `wsl.exe`。工作目录、参数与凭据均经
+    // `WSLENV` 传入（`pushd` 到 UNC 进的是 9P 盘符，且用户输入不得接触 cmd.exe 引号）。
+    let wsl_command = agy_wsl_terminal_line(launch, cwd)?;
     let bat_file = unique_temp_path("cc_switch_launcher", "bat");
-    let (cwd_command, cwd_env) = build_windows_cwd_command(cwd);
+    let (cwd_command, cwd_env) = if wsl_command.is_some() {
+        (String::new(), None)
+    } else {
+        build_windows_cwd_command(cwd)
+    };
     let mut launch_env: Vec<(String, String)> = cwd_env
         .map(|value| (WINDOWS_CWD_ENV.to_string(), value))
         .into_iter()
         .collect();
-    let (set_lines, extra_env) = build_windows_launch_env(launch);
+    let (set_lines, extra_env) = match &wsl_command {
+        Some(wsl) => (wsl.set_lines.clone(), wsl.env.clone()),
+        None => build_windows_launch_env(launch),
+    };
     launch_env.extend(extra_env);
     let launch_env: Vec<(&str, &str)> = launch_env
         .iter()
@@ -1607,7 +1743,10 @@ fn launch_windows_terminal(launch: &ProviderLaunch, cwd: Option<&Path>) -> Resul
     let content = format!(
         "@echo off\r\n{cwd_command}setlocal DisableDelayedExpansion\r\n{set_lines}echo {title}\r\n{command}\r\nendlocal\r\n{cleanup}del \"%~f0\" >nul 2>&1\r\n",
         title = escape_windows_batch_value(launch.title),
-        command = launch.batch_command,
+        command = wsl_command
+            .as_ref()
+            .map(|wsl| wsl.line.replace('%', "%%"))
+            .unwrap_or_else(|| launch.batch_command.clone()),
     );
 
     std::fs::write(&bat_file, &content).map_err(|e| format!("写入批处理文件失败: {e}"))?;
@@ -3067,5 +3206,531 @@ mod tests {
             executable_zsh.to_string_lossy()
         )));
         assert!(!valid_user_shell_path("/usr/bin/powershell"));
+    }
+
+    #[test]
+    fn agy_wsl_non_ascii_paths_stay_out_of_batch_bytes_and_pass_via_wslenv() {
+        let root = r"\\wsl.localhost\Ubuntu-26.04\home\张三\.gemini";
+        let cwd = r"\\wsl.localhost\Ubuntu-26.04\home\张三\我的 项目";
+        let profile = r"C:\Users\张三\.cc-switch\agy\relay";
+        let key = ProviderLaunch {
+            title: "Using a private Antigravity profile for this provider:",
+            detail: None,
+            program: "agy",
+            args: vec![
+                format!("--gemini_dir={profile}"),
+                "--model=中文 模型".to_string(),
+            ],
+            batch_command: "agy".to_string(),
+            env: vec![("GEMINI_API_KEY", Some("密钥-中文".to_string()))],
+            batch_vars: Vec::new(),
+            cleanup: Vec::new(),
+        };
+
+        let cmd = agy_wsl_terminal_command("Ubuntu-26.04", root, &key, Some(cwd)).unwrap();
+        assert!(cmd.line.is_ascii(), "line must be pure ASCII: {}", cmd.line);
+        assert!(
+            cmd.set_lines.is_ascii(),
+            "set_lines must be pure ASCII: {}",
+            cmd.set_lines
+        );
+        let values: Vec<&str> = cmd.env.iter().map(|(_, v)| v.as_str()).collect();
+        assert!(values.contains(&"/home/张三/.gemini"), "{values:?}");
+        assert!(values.contains(&"/home/张三/我的 项目"), "{values:?}");
+        assert!(
+            values.contains(&"/mnt/c/Users/张三/.cc-switch/agy/relay"),
+            "{values:?}"
+        );
+        assert!(values.contains(&"密钥-中文"), "{values:?}");
+        assert!(values.contains(&"--model=中文 模型"), "{values:?}");
+
+        let defined_pos = cmd.set_lines.find("if defined WSLENV ").unwrap();
+        let not_defined_pos = cmd.set_lines.find("if not defined WSLENV ").unwrap();
+        assert!(defined_pos < not_defined_pos, "{}", cmd.set_lines);
+        for (name, _) in &cmd.env {
+            assert!(
+                cmd.set_lines.contains(&format!("{name}/u")),
+                "missing {name}/u in {}",
+                cmd.set_lines
+            );
+        }
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let (payload_var, carrier) =
+                agy_wsl_terminal_payload("Ubuntu-26.04", root, &key, Some(cwd)).unwrap();
+            let tmp = tempfile::tempdir().unwrap();
+            let base = tmp.path();
+            let real_shared = base.join("home/张三/.gemini");
+            let real_cwd = base.join("home/张三/我的 项目");
+            let real_profile = base.join("mnt/c/Users/张三/.cc-switch/agy/relay");
+            std::fs::create_dir_all(real_shared.join("config")).unwrap();
+            std::fs::create_dir_all(&real_cwd).unwrap();
+            std::fs::create_dir_all(&real_profile).unwrap();
+
+            let bin_dir = base.join("bin");
+            std::fs::create_dir_all(&bin_dir).unwrap();
+            let out_file = base.join("agy-args.txt");
+            let fake_agy = bin_dir.join("agy");
+            std::fs::write(
+                &fake_agy,
+                format!(
+                    "#!/bin/sh\n{{ pwd; printf '%s\\n' \"$GEMINI_API_KEY\"; printf '%s\\n' \"$@\"; }} > \"{}\"\n",
+                    out_file.display()
+                ),
+            )
+            .unwrap();
+            std::fs::set_permissions(&fake_agy, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+            let mut proc_cmd = std::process::Command::new("sh");
+            proc_cmd
+                .arg("-c")
+                .arg(crate::commands::misc::wsl_login_inner(&payload_var));
+            for (name, val) in &carrier.entries {
+                let mapped = val
+                    .replace("/home/张三", &base.join("home/张三").to_string_lossy())
+                    .replace(
+                        "/mnt/c/Users/张三",
+                        &base.join("mnt/c/Users/张三").to_string_lossy(),
+                    );
+                proc_cmd.env(name, mapped);
+            }
+            let path_env = format!(
+                "{}:{}",
+                bin_dir.display(),
+                std::env::var("PATH").unwrap_or_default()
+            );
+            proc_cmd.env("PATH", path_env);
+            proc_cmd.env("SHELL", "/bin/sh");
+            let status = proc_cmd.status().unwrap();
+            assert!(status.success());
+
+            let recorded = std::fs::read_to_string(&out_file).unwrap();
+            let lines: Vec<&str> = recorded.lines().collect();
+            assert_eq!(lines[0], real_cwd.to_string_lossy());
+            assert_eq!(lines[1], "密钥-中文");
+            assert_eq!(
+                lines[2],
+                format!("--gemini_dir={}", real_profile.to_string_lossy())
+            );
+            assert_eq!(lines[3], "--model=中文 模型");
+            assert_eq!(
+                std::fs::read_link(real_profile.join("config")).unwrap(),
+                real_shared.join("config")
+            );
+        }
+    }
+
+    #[test]
+    fn agy_wsl_terminal_isolates_quotes_backslashes_cmd_metachars_and_secrets_from_bat() {
+        let root = r"\\wsl.localhost\Ubuntu-26.04\home\alice\.gemini";
+        let cwd =
+            r#"\\wsl.localhost\Ubuntu-26.04\home\alice\proj "quoted" & calc | dir && echo hi"#;
+        let profile = r#"C:\Users\alice\.cc-switch\agy\relay\"quoted""#;
+        let malicious_model = r#"--model=m" && calc | cat \"quote\" %PATH% !VAR! 's' $(id)"#;
+        let ascii_secret = r#"sk-ascii-"&|&&calc\secret"#;
+        let endpoint = r#"https://relay.example/v1?x=1&y="2""#;
+
+        let launch = ProviderLaunch {
+            title: "Using a private Antigravity profile for this provider:",
+            detail: None,
+            program: "agy",
+            args: vec![
+                format!("--gemini_dir={profile}"),
+                malicious_model.to_string(),
+            ],
+            batch_command: "agy".to_string(),
+            env: vec![
+                ("GEMINI_API_KEY", Some(ascii_secret.to_string())),
+                ("GOOGLE_GEMINI_BASE_URL", Some(endpoint.to_string())),
+            ],
+            batch_vars: Vec::new(),
+            cleanup: Vec::new(),
+        };
+
+        let cmd = agy_wsl_terminal_command("Ubuntu-26.04", root, &launch, Some(cwd)).unwrap();
+        // No user-controlled strings or plaintext API keys may ever land in .bat bytes.
+        for forbidden in [
+            ascii_secret,
+            "sk-ascii",
+            endpoint,
+            "relay.example",
+            "calc",
+            "%PATH%",
+            "!VAR!",
+            "$(id)",
+            "/home/alice",
+            profile,
+            malicious_model,
+            r#"\\"#,
+        ] {
+            assert!(
+                !cmd.line.contains(forbidden),
+                "`{forbidden}` leaked into batch line: {}",
+                cmd.line
+            );
+            assert!(
+                !cmd.set_lines.contains(forbidden),
+                "`{forbidden}` leaked into set_lines: {}",
+                cmd.set_lines
+            );
+        }
+
+        // Verify cmd.exe quote parity: metacharacters `&|<>^()` must never fall outside quotes.
+        let mut in_quotes = false;
+        for ch in cmd.line.chars() {
+            if ch == '"' {
+                in_quotes = !in_quotes;
+            } else if !in_quotes {
+                assert!(
+                    !"&|<>^()".contains(ch),
+                    "cmd.exe metachar `{ch}` outside quotes in {}",
+                    cmd.line
+                );
+            }
+        }
+        assert!(!in_quotes, "unbalanced quotes in {}", cmd.line);
+
+        // Verify official cards with default/non-default dirs never duplicate or self-link.
+        let official_same_dir = ProviderLaunch {
+            title: "Starting Antigravity CLI with your signed-in account",
+            detail: None,
+            program: "agy",
+            args: vec![format!("--gemini_dir={root}"), "--model=Gemini 4".into()],
+            batch_command: "agy".to_string(),
+            env: Vec::new(),
+            batch_vars: Vec::new(),
+            cleanup: Vec::new(),
+        };
+        let official_cmd =
+            agy_wsl_terminal_command("Ubuntu-26.04", root, &official_same_dir, None).unwrap();
+        let official_payload = &official_cmd.env.last().unwrap().1;
+        assert_eq!(official_payload.matches("--gemini_dir=").count(), 1);
+        assert!(!official_payload.contains("ln -sfn"));
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let (payload_var, carrier) =
+                agy_wsl_terminal_payload("Ubuntu-26.04", root, &launch, Some(cwd)).unwrap();
+            let tmp = tempfile::tempdir().unwrap();
+            let base = tmp.path();
+            let real_shared = base.join("home/alice/.gemini");
+            let real_cwd = base.join(r#"home/alice/proj "quoted" & calc | dir && echo hi"#);
+            let real_profile = base.join(r#"mnt/c/Users/alice/.cc-switch/agy/relay/"quoted""#);
+            std::fs::create_dir_all(real_shared.join("config")).unwrap();
+            std::fs::create_dir_all(&real_cwd).unwrap();
+            std::fs::create_dir_all(&real_profile).unwrap();
+
+            let bin_dir = base.join("bin");
+            std::fs::create_dir_all(&bin_dir).unwrap();
+            let out_file = base.join("agy-captured.txt");
+            let leak_file = base.join("agy-leaked-env.txt");
+            let fake_agy = bin_dir.join("agy");
+            std::fs::write(
+                &fake_agy,
+                format!(
+                    "#!/bin/sh\nenv | grep '^CC_SWITCH_INTERNAL_WSL_' > \"{}\" || true\n{{ pwd; printf '%s\\n' \"$GEMINI_API_KEY\"; printf '%s\\n' \"$GOOGLE_GEMINI_BASE_URL\"; printf '%s\\n' \"$@\"; }} > \"{}\"\n",
+                    leak_file.display(),
+                    out_file.display()
+                ),
+            )
+            .unwrap();
+            std::fs::set_permissions(&fake_agy, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+            let mut proc_cmd = std::process::Command::new("sh");
+            proc_cmd
+                .arg("-c")
+                .arg(crate::commands::misc::wsl_login_inner(&payload_var));
+            for (name, val) in &carrier.entries {
+                let mapped = val
+                    .replace("/home/alice", &base.join("home/alice").to_string_lossy())
+                    .replace(
+                        "/mnt/c/Users/alice",
+                        &base.join("mnt/c/Users/alice").to_string_lossy(),
+                    );
+                proc_cmd.env(name, mapped);
+            }
+            proc_cmd.env(
+                "PATH",
+                format!(
+                    "{}:{}",
+                    bin_dir.display(),
+                    std::env::var("PATH").unwrap_or_default()
+                ),
+            );
+            proc_cmd.env("SHELL", "/bin/sh");
+            let out = proc_cmd.output().unwrap();
+            assert!(
+                out.status.success(),
+                "status={:?}\nstdout={}\nstderr={}",
+                out.status,
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+
+            assert!(
+                std::fs::read_to_string(&leak_file).unwrap().is_empty(),
+                "carrier env vars leaked into agy"
+            );
+            let captured = std::fs::read_to_string(&out_file).unwrap();
+            let lines: Vec<&str> = captured.lines().collect();
+            assert_eq!(lines[0], real_cwd.to_string_lossy());
+            assert_eq!(lines[1], ascii_secret);
+            assert_eq!(lines[2], endpoint);
+            assert_eq!(
+                lines[3],
+                format!("--gemini_dir={}", real_profile.to_string_lossy())
+            );
+            assert_eq!(lines[4], malicious_model);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn agy_wsl_updates_stale_key_symlink_without_touching_real_config_dir() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path();
+        let old_shared = base.join("old-gemini");
+        let new_shared = base.join("new-gemini");
+        let profile_stale = base.join("profile-stale");
+        let profile_dangling = base.join("profile-dangling");
+        let profile_real = base.join("profile-real");
+        std::fs::create_dir_all(old_shared.join("config")).unwrap();
+        std::fs::create_dir_all(new_shared.join("config")).unwrap();
+        std::fs::create_dir_all(&profile_stale).unwrap();
+        std::fs::create_dir_all(&profile_dangling).unwrap();
+        std::fs::create_dir_all(profile_real.join("config")).unwrap();
+        std::fs::write(profile_real.join("config/user.txt"), "keep me").unwrap();
+
+        std::os::unix::fs::symlink(old_shared.join("config"), profile_stale.join("config"))
+            .unwrap();
+        std::os::unix::fs::symlink(base.join("missing/config"), profile_dangling.join("config"))
+            .unwrap();
+
+        let bin_dir = base.join("bin");
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        let fake_agy = bin_dir.join("agy");
+        std::fs::write(&fake_agy, "#!/bin/sh\nexit 0\n").unwrap();
+        std::fs::set_permissions(&fake_agy, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let path_env = format!(
+            "{}:{}",
+            bin_dir.display(),
+            std::env::var("PATH").unwrap_or_default()
+        );
+
+        let run_for_profile = |profile: &Path| {
+            let root_unc = format!(
+                r"\\wsl.localhost\Ubuntu-26.04{}",
+                new_shared.to_string_lossy().replace('/', r"\")
+            );
+            let profile_unc = format!(
+                r"\\wsl.localhost\Ubuntu-26.04{}",
+                profile.to_string_lossy().replace('/', r"\")
+            );
+            let launch = ProviderLaunch {
+                title: "Using a private Antigravity profile for this provider:",
+                detail: None,
+                program: "agy",
+                args: vec![format!("--gemini_dir={profile_unc}")],
+                batch_command: "agy".to_string(),
+                env: vec![("GEMINI_API_KEY", Some("k".to_string()))],
+                batch_vars: Vec::new(),
+                cleanup: Vec::new(),
+            };
+            let (payload_var, carrier) =
+                agy_wsl_terminal_payload("Ubuntu-26.04", &root_unc, &launch, None).unwrap();
+            let mut proc_cmd = std::process::Command::new("sh");
+            proc_cmd
+                .arg("-c")
+                .arg(crate::commands::misc::wsl_login_inner(&payload_var));
+            for (k, v) in &carrier.entries {
+                proc_cmd.env(k, v);
+            }
+            proc_cmd.env("PATH", &path_env);
+            proc_cmd.env("SHELL", "/bin/sh");
+            let out = proc_cmd.output().unwrap();
+            assert!(
+                out.status.success(),
+                "status={:?}\nstdout={}\nstderr={}",
+                out.status,
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+        };
+
+        run_for_profile(&profile_stale);
+        assert_eq!(
+            std::fs::read_link(profile_stale.join("config")).unwrap(),
+            new_shared.join("config")
+        );
+
+        run_for_profile(&profile_dangling);
+        assert_eq!(
+            std::fs::read_link(profile_dangling.join("config")).unwrap(),
+            new_shared.join("config")
+        );
+
+        run_for_profile(&profile_real);
+        assert!(!std::fs::symlink_metadata(profile_real.join("config"))
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(
+            std::fs::read_to_string(profile_real.join("config/user.txt")).unwrap(),
+            "keep me"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn agy_wsl_login_inner_works_with_fish_and_dash_shells() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path();
+        let root_dir = base.join("home/alice/.gemini");
+        std::fs::create_dir_all(root_dir.join("config")).unwrap();
+        let shells_dir = base.join("shells");
+        let bin_dir = base.join("bin");
+        std::fs::create_dir_all(&shells_dir).unwrap();
+        std::fs::create_dir_all(&bin_dir).unwrap();
+
+        let out_file = base.join("agy-shell-check.txt");
+        let fake_agy = bin_dir.join("agy");
+        std::fs::write(
+            &fake_agy,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$GEMINI_API_KEY\" \"$@\" > \"{}\"\n",
+                out_file.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&fake_agy, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let fake_fish = shells_dir.join("fish");
+        std::fs::write(
+            &fake_fish,
+            "#!/bin/sh\n\
+             if [ \"$1\" != \"-lc\" ]; then echo \"fish expected -lc, got $1\" >&2; exit 91; fi\n\
+             case \"$2\" in *\"export \"*|*\"if [\"*|*\"unset \"*) echo \"POSIX syntax in fish arg: $2\" >&2; exit 92;; esac\n\
+             exec sh -c \"$2\"\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&fake_fish, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let fake_dash = shells_dir.join("dash");
+        std::fs::write(
+            &fake_dash,
+            "#!/bin/sh\n\
+             if [ \"$1\" != \"-c\" ]; then echo \"dash expected -c, got $1\" >&2; exit 93; fi\n\
+             exec sh -c \"$2\"\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&fake_dash, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let root_unc = format!(
+            r"\\wsl.localhost\Ubuntu-26.04{}",
+            root_dir.to_string_lossy().replace('/', r"\")
+        );
+        let launch = ProviderLaunch {
+            title: "Starting Antigravity CLI with your signed-in account",
+            detail: None,
+            program: "agy",
+            args: vec!["--model=Gemini 4 Neon".to_string()],
+            batch_command: "agy".to_string(),
+            env: vec![("GEMINI_API_KEY", Some("k-fish-dash".to_string()))],
+            batch_vars: Vec::new(),
+            cleanup: Vec::new(),
+        };
+        let (payload_var, carrier) =
+            agy_wsl_terminal_payload("Ubuntu-26.04", &root_unc, &launch, None).unwrap();
+        let inner = crate::commands::misc::wsl_login_inner(&payload_var);
+        let path_env = format!(
+            "{}:{}",
+            bin_dir.display(),
+            std::env::var("PATH").unwrap_or_default()
+        );
+
+        let mut shells: Vec<String> = vec![
+            fake_fish.to_string_lossy().into_owned(),
+            fake_dash.to_string_lossy().into_owned(),
+            "/bin/sh".to_string(),
+            "/usr/bin/unsupported-csh".to_string(),
+        ];
+        if Path::new("/bin/dash").is_file() {
+            shells.push("/bin/dash".to_string());
+        }
+        for shell in shells {
+            let _ = std::fs::remove_file(&out_file);
+            let mut proc_cmd = std::process::Command::new("sh");
+            proc_cmd.arg("-c").arg(&inner);
+            for (k, v) in &carrier.entries {
+                proc_cmd.env(k, v);
+            }
+            proc_cmd.env("PATH", &path_env);
+            proc_cmd.env("SHELL", &shell);
+            let status = proc_cmd.status().unwrap();
+            assert!(status.success(), "shell `{shell}` failed: {status:?}");
+            let lines: Vec<String> = std::fs::read_to_string(&out_file)
+                .unwrap()
+                .lines()
+                .map(str::to_string)
+                .collect();
+            assert_eq!(lines[0], "k-fish-dash", "shell `{shell}`");
+            assert_eq!(
+                lines[1],
+                format!("--gemini_dir={}", root_dir.to_string_lossy()),
+                "shell `{shell}`"
+            );
+            assert_eq!(lines[2], "--model=Gemini 4 Neon", "shell `{shell}`");
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn agy_terminal_launch_includes_custom_local_root_and_model_for_official_card() {
+        let home = crate::test_support::TestHome::new();
+        let custom_root = home.path().join("custom-agy-gemini");
+        let mut settings = crate::settings::get_settings();
+        settings.agy_config_dir = Some(custom_root.to_string_lossy().into_owned());
+        crate::settings::update_settings(settings).unwrap();
+
+        let provider = crate::provider::Provider::with_id(
+            "official".into(),
+            "Antigravity".into(),
+            serde_json::json!({"config": {"model": {"name": "Gemini 3.8 Flash (High)"}}}),
+            None,
+        );
+        let launch = agy_terminal_launch(&provider).unwrap();
+        assert_eq!(launch.detail, None);
+        assert_eq!(
+            launch.args,
+            vec![
+                format!("--gemini_dir={}", custom_root.to_string_lossy()),
+                "--model=Gemini 3.8 Flash (High)".to_string(),
+            ]
+        );
+        assert_eq!(
+            launch.batch_command,
+            format!(
+                "agy \"--gemini_dir=%{AGY_DIR_BATCH_VAR}%\" \"--model=%{AGY_MODEL_BATCH_VAR}%\""
+            )
+        );
+        assert_eq!(
+            launch.batch_vars,
+            vec![
+                (
+                    AGY_DIR_BATCH_VAR,
+                    custom_root.to_string_lossy().into_owned()
+                ),
+                (AGY_MODEL_BATCH_VAR, "Gemini 3.8 Flash (High)".to_string()),
+            ]
+        );
     }
 }

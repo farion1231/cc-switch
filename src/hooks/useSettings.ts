@@ -9,6 +9,7 @@ import {
   useSettingsQuery,
   useSaveSettingsMutation,
 } from "@/lib/query";
+import { subscriptionKeys } from "@/lib/query/subscription";
 import type { Settings } from "@/types";
 import {
   DIRECTORY_APPS,
@@ -440,6 +441,18 @@ export function useSettings(): UseSettingsResult {
             // DSH_ACCOUNT_STATUS_KEY：登录凭据也在 DSH 主目录里，不刷新会显示旧目录的账号
             queryClient.invalidateQueries({
               queryKey: ["dsh-account-status"],
+            }),
+          ]);
+        }
+        if (dirChanged("agyConfigDir")) {
+          await Promise.all([
+            queryClient.invalidateQueries({ queryKey: ["providers", "agy"] }),
+            queryClient.invalidateQueries({ queryKey: ["skills"] }),
+            queryClient.invalidateQueries({ queryKey: ["sessions"] }),
+            queryClient.invalidateQueries({ queryKey: ["prompts"] }),
+            queryClient.invalidateQueries({ queryKey: ["mcp", "all"] }),
+            queryClient.invalidateQueries({
+              queryKey: subscriptionKeys.quota("agy"),
             }),
           ]);
         }

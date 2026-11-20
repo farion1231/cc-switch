@@ -61,7 +61,10 @@ export function AppConfigSection({
       label={t("settings.appConfig.configDir")}
       help={{
         title: t("settings.appConfig.configDir"),
-        body: t("settings.configDirectoryDescription"),
+        body:
+          app === "agy"
+            ? t("settings.agyConfigDirDescription")
+            : t("settings.configDirectoryDescription"),
       }}
     >
       <DirectoryInput
