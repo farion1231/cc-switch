@@ -24,6 +24,8 @@ export interface FetchedModelSelection {
 
 interface ModelMetadataSourceProps {
   baseUrl: string;
+  /** 调用方保存时优先使用接口返回的上下文长度。 */
+  preferFetchedContextWindow?: boolean;
   presets?: () => readonly PresetModelSource[];
 }
 
@@ -170,32 +172,49 @@ function FetchedModelPickerBody({
   });
   const baseUrl = metadataSource?.baseUrl;
   const presets = metadataSource?.presets;
+  const preferFetchedContextWindow = metadataSource?.preferFetchedContextWindow;
   const allIdsKey = allIds.join("\n");
   const summaries = useMemo(() => {
     const result = new Map<string, string>();
     if (baseUrl === undefined) return result;
     const presetSources = presets?.();
+    const fetchedById = new Map(models.map((model) => [model.id, model]));
     for (const id of allIdsKey.split("\n")) {
       const metadata = resolveModelMetadata(id, {
         baseUrl,
         presets: presetSources,
         modelsDev,
       });
-      if (!metadata) continue;
+      const fetchedContextWindow = fetchedById.get(id)?.maxInputTokens;
+      const contextWindow =
+        preferFetchedContextWindow &&
+        typeof fetchedContextWindow === "number" &&
+        Number.isFinite(fetchedContextWindow) &&
+        fetchedContextWindow > 0
+          ? fetchedContextWindow
+          : metadata?.contextWindow;
       const parts: string[] = [];
-      if (metadata.contextWindow) {
-        parts.push(formatContextWindow(metadata.contextWindow));
+      if (contextWindow) {
+        parts.push(formatContextWindow(contextWindow));
       }
-      if (metadata.reasoning || metadata.reasoningEfforts?.length) {
+      if (metadata?.reasoning || metadata?.reasoningEfforts?.length) {
         parts.push(t("providerForm.modelPicker.reasoning"));
       }
-      if (metadata.inputModalities?.includes("image")) {
+      if (metadata?.inputModalities?.includes("image")) {
         parts.push(t("providerForm.modelPicker.image"));
       }
       if (parts.length > 0) result.set(id, parts.join(" · "));
     }
     return result;
-  }, [allIdsKey, baseUrl, modelsDev, presets, t]);
+  }, [
+    allIdsKey,
+    baseUrl,
+    models,
+    modelsDev,
+    preferFetchedContextWindow,
+    presets,
+    t,
+  ]);
 
   const setChecked = (ids: string[], checked: boolean) =>
     setDraft((prev) => {
