@@ -21,14 +21,7 @@ export function SkillReconciliationDialog({
   onClose,
 }: SkillReconciliationDialogProps) {
   const { t } = useTranslation();
-  const [selected, setSelected] = useState<Set<string>>(
-    () =>
-      new Set(
-        candidates.map(
-          (candidate) => `${candidate.app}:${candidate.directory}`,
-        ),
-      ),
-  );
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
 
   const keyOf = (candidate: SkillReconciliationCandidate) =>
     `${candidate.app}:${candidate.directory}`;

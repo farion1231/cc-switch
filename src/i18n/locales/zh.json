@@ -4880,7 +4880,7 @@
     "lockedInUnified": "Unified 存储模式下，{{app}} 会读取 ~/.agents/skills 中的全部 Skill，无法单独切换。",
     "reconciliation": {
       "title": "发现重复 Skill",
-      "lead": "这些已管理 Skill 同时存在于 Agent 或应用的 Skills 目录。请选择要删除的副本，未选中的副本会保留。",
+      "lead": "这些已管理 Skill 同时存在于 Agent 或应用的 Skills 目录。请选择要删除的副本，未选中的副本会保留。 默认不选择任何项。真实文件夹可能包含你的修改，删除前请先备份。",
       "path": "重复路径：{{path}}",
       "remove": "删除选中项（{{count}}）",
       "success": "已删除选中的重复 Skill。"

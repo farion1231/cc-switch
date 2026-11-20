@@ -888,8 +888,12 @@ impl SkillService {
         let skills = db.get_all_installed_skills()?;
         let mut app_roots: Vec<(String, PathBuf)> = Vec::new();
         for app in AppType::all() {
+            if !Self::is_sync_managed_app(&app) {
+                continue;
+            }
             let app_dir = Self::get_app_skills_dir(&app)?;
-            if Self::paths_alias(&app_dir, &ssot_dir)
+            if Self::is_protected_reconciliation_root(&app_dir)?
+                || Self::paths_alias(&app_dir, &ssot_dir)
                 || app_roots
                     .iter()
                     .any(|(_, existing)| Self::paths_alias(existing, &app_dir))
@@ -899,7 +903,8 @@ impl SkillService {
             app_roots.push((app.as_str().to_string(), app_dir));
         }
         let agents_dir = crate::config::get_home_dir().join(".agents").join("skills");
-        if !Self::paths_alias(&agents_dir, &ssot_dir)
+        if !Self::is_protected_reconciliation_root(&agents_dir)?
+            && !Self::paths_alias(&agents_dir, &ssot_dir)
             && !app_roots
                 .iter()
                 .any(|(_, existing)| Self::paths_alias(existing, &agents_dir))
@@ -939,6 +944,18 @@ impl SkillService {
         Ok(candidates)
     }
 
+    // Overrides and symlinked roots must not bypass native-directory protection.
+    fn is_protected_reconciliation_root(root: &Path) -> Result<bool> {
+        for app in AppType::all() {
+            if !Self::is_sync_managed_app(&app)
+                && Self::paths_overlap(root, &Self::get_app_skills_dir(&app)?)
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     pub fn remove_managed_skill_duplicate(
         db: &Arc<Database>,
         app: &str,
@@ -953,8 +970,14 @@ impl SkillService {
             )
         } else {
             let app = AppType::from_str(app).map_err(|error| anyhow!("{error}"))?;
+            if !Self::is_sync_managed_app(&app) {
+                return Ok(false);
+            }
             (Self::get_app_skills_dir(&app)?, Some(app))
         };
+        if Self::is_protected_reconciliation_root(&app_dir)? {
+            return Ok(false);
+        }
         let skills = db.get_all_installed_skills()?;
         let Some(skill) = skills.values().find(|skill| skill.directory == directory) else {
             return Ok(false);
@@ -7480,6 +7503,65 @@ mod tests {
             format!("---\nname: {name}\ndescription: Test skill\n---\n"),
         )
         .expect("write SKILL.md");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn reconciliation_preserves_native_app_directories() {
+        let temp = tempdir().expect("tempdir");
+        let _home = TestHomeGuard::set(temp.path());
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
+        let db = Arc::new(Database::memory().unwrap());
+        db.save_skill(&poisoned_skill("owner/repo:managed", "managed"))
+            .unwrap();
+        write_skill(
+            &SkillService::get_ssot_dir().unwrap().join("managed"),
+            "managed",
+        );
+        for app in [
+            AppType::Pi,
+            AppType::Omp,
+            AppType::OpenClaw,
+            AppType::ClaudeDesktop,
+        ] {
+            let native = SkillService::get_app_skills_dir(&app)
+                .unwrap()
+                .join("managed");
+            write_skill(&native, "user content");
+            assert!(
+                !SkillService::remove_managed_skill_duplicate(&db, app.as_str(), "managed")
+                    .unwrap()
+            );
+            assert!(native.join("SKILL.md").is_file());
+        }
+        assert!(SkillService::find_managed_skill_duplicates(&db)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn reconciliation_preserves_native_directories_reached_through_root_symlinks() {
+        let temp = tempdir().expect("tempdir");
+        let _home = TestHomeGuard::set(temp.path());
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
+        let db = Arc::new(Database::memory().unwrap());
+        db.save_skill(&poisoned_skill("owner/repo:managed", "managed"))
+            .unwrap();
+        write_skill(
+            &SkillService::get_ssot_dir().unwrap().join("managed"),
+            "managed",
+        );
+        let native_root = SkillService::get_app_skills_dir(&AppType::Pi).unwrap();
+        write_skill(&native_root.join("managed"), "native content");
+        let app_root = SkillService::get_app_skills_dir(&AppType::OpenCode).unwrap();
+        fs::create_dir_all(app_root.parent().unwrap()).unwrap();
+        SkillService::create_symlink(&native_root, &app_root).unwrap();
+        assert!(SkillService::find_managed_skill_duplicates(&db)
+            .unwrap()
+            .is_empty());
+        assert!(!SkillService::remove_managed_skill_duplicate(&db, "opencode", "managed").unwrap());
+        assert!(native_root.join("managed/SKILL.md").is_file());
     }
 
     #[test]
