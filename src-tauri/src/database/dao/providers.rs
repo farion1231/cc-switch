@@ -1,9 +1,10 @@
+use super::{Rows, UnreadableEntry};
 use crate::app_config::AppType;
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use crate::provider::{Provider, ProviderMeta};
 use indexmap::IndexMap;
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 use std::collections::HashSet;
 
 #[cfg(test)]
@@ -20,6 +21,29 @@ type OmoProviderRow = (
     Option<String>,
     String,
 );
+
+const PROVIDER_SELECT: &str = "SELECT id, name, settings_config, website_url, category, created_at, sort_index, notes, icon, icon_color, meta, in_failover_queue FROM providers";
+
+/// 按 [`PROVIDER_SELECT`] 的列序（`id, name, settings_config, website_url, category, created_at, sort_index, notes, icon,
+/// icon_color, meta, in_failover_queue`）读一行供应商。
+fn row_to_provider(row: &rusqlite::Row<'_>) -> rusqlite::Result<Provider> {
+    let id: String = row.get(0)?;
+    let entry = format!("供应商 {id}");
+    Ok(Provider {
+        settings_config: super::json_column(row, 2, &entry)?,
+        meta: Some(super::json_column::<ProviderMeta>(row, 10, &entry)?),
+        id,
+        name: row.get(1)?,
+        website_url: row.get(3)?,
+        category: row.get(4)?,
+        created_at: row.get(5)?,
+        sort_index: row.get(6)?,
+        notes: row.get(7)?,
+        icon: row.get(8)?,
+        icon_color: row.get(9)?,
+        in_failover_queue: row.get(11)?,
+    })
+}
 
 impl Database {
     /// Detach Codex providers bound to these deleted local accounts, atomically.
@@ -108,11 +132,56 @@ impl Database {
         Ok(affected)
     }
 
+    /// 一行读不出来就整体报错（见 [`super::Rows::into_strict`]）。只展示、不写的地方用
+    /// [`Self::get_provider_rows`]。
     pub fn get_all_providers(
         &self,
         app_type: &AppType,
     ) -> Result<IndexMap<String, Provider>, AppError> {
+        self.load_providers(app_type, false)?.into_strict()
+    }
+
+    /// 能读的供应商照常返回，读不出来的单独列出，不让一行坏数据拖垮整个列表。
+    pub fn get_provider_rows(&self, app_type: &AppType) -> Result<Rows<Provider>, AppError> {
         self.load_providers(app_type, false)
+    }
+
+    /// 这一行在库里、但存的 JSON 读不出来。
+    pub fn get_unreadable_provider(
+        &self,
+        app_type: &AppType,
+        id: &str,
+    ) -> Result<Option<UnreadableEntry>, AppError> {
+        Ok(self.read_provider(app_type, id)?.and_then(Result::err))
+    }
+
+    /// 按 id 读一行，读不出来时放在内层的 `Err` 里：调用方可以把它当成跳过的一项，
+    /// 不必让整个操作失败。
+    pub fn read_provider(
+        &self,
+        app_type: &AppType,
+        id: &str,
+    ) -> Result<Option<Result<Provider, UnreadableEntry>>, AppError> {
+        let conn = lock_conn!(self.conn);
+        conn.query_row(
+            &format!("{PROVIDER_SELECT} WHERE id = ?1 AND app_type = ?2"),
+            params![id, app_type],
+            |row| super::read_row(row, row_to_provider),
+        )
+        .optional()
+        .map_err(|e| AppError::Database(e.to_string()))
+    }
+
+    /// 库里有没有这一行，不解析它存的 JSON：只问「在不在」的地方（指针校验、种子、
+    /// 起名查重）不该因为这一行读不出来就失败。
+    pub fn provider_exists(&self, id: &str, app_type: &AppType) -> Result<bool, AppError> {
+        let conn = lock_conn!(self.conn);
+        conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM providers WHERE id = ?1 AND app_type = ?2)",
+            params![id, app_type],
+            |row| row.get(0),
+        )
+        .map_err(|e| AppError::Database(e.to_string()))
     }
 
     /// 路由只加载故障转移队列；端点一次批量读取，避免每张卡再查一次。
@@ -120,73 +189,51 @@ impl Database {
         &self,
         app_type: &AppType,
         failover_only: bool,
-    ) -> Result<IndexMap<String, Provider>, AppError> {
+    ) -> Result<Rows<Provider>, AppError> {
         let conn = lock_conn!(self.conn);
         let query = if failover_only {
-            "SELECT id, name, settings_config, website_url, category, created_at, sort_index, notes, icon, icon_color, meta, in_failover_queue
-             FROM providers WHERE app_type = ?1 AND in_failover_queue = 1
-             ORDER BY COALESCE(sort_index, 999999), id ASC"
+            format!(
+                "{PROVIDER_SELECT} WHERE app_type = ?1 AND in_failover_queue = 1
+                 ORDER BY COALESCE(sort_index, 999999), id ASC"
+            )
         } else {
-            "SELECT id, name, settings_config, website_url, category, created_at, sort_index, notes, icon, icon_color, meta, in_failover_queue
-             FROM providers WHERE app_type = ?1
-             ORDER BY COALESCE(sort_index, 999999), created_at ASC, id ASC"
+            format!(
+                "{PROVIDER_SELECT} WHERE app_type = ?1
+                 ORDER BY COALESCE(sort_index, 999999), created_at ASC, id ASC"
+            )
         };
         let mut stmt = conn
-            .prepare_cached(query)
+            .prepare_cached(&query)
             .map_err(|e| AppError::Database(e.to_string()))?;
 
         let provider_iter = stmt
             .query_map(params![app_type], |row| {
-                let id: String = row.get(0)?;
-                let name: String = row.get(1)?;
-                let settings_config_str: String = row.get(2)?;
-                let website_url: Option<String> = row.get(3)?;
-                let category: Option<String> = row.get(4)?;
-                let created_at: Option<i64> = row.get(5)?;
-                let sort_index: Option<usize> = row.get(6)?;
-                let notes: Option<String> = row.get(7)?;
-                let icon: Option<String> = row.get(8)?;
-                let icon_color: Option<String> = row.get(9)?;
-                let meta_str: String = row.get(10)?;
-                let in_failover_queue: bool = row.get(11)?;
-
-                let settings_config =
-                    serde_json::from_str(&settings_config_str).unwrap_or(serde_json::Value::Null);
-                let meta: ProviderMeta = serde_json::from_str(&meta_str).unwrap_or_default();
-
-                Ok((
-                    id,
-                    Provider {
-                        id: "".to_string(), // Placeholder, set below
-                        name,
-                        settings_config,
-                        website_url,
-                        category,
-                        created_at,
-                        sort_index,
-                        notes,
-                        meta: Some(meta),
-                        icon,
-                        icon_color,
-                        in_failover_queue,
-                    },
-                ))
+                super::read_row(row, row_to_provider)
             })
             .map_err(|e| AppError::Database(e.to_string()))?;
 
         let mut providers = IndexMap::new();
+        let mut unreadable = Vec::new();
         for provider_res in provider_iter {
-            let (id, mut provider) = provider_res.map_err(|e| AppError::Database(e.to_string()))?;
-            provider.id = id.clone();
+            let mut provider = match provider_res.map_err(|e| AppError::Database(e.to_string()))? {
+                Ok(provider) => provider,
+                Err(entry) => {
+                    unreadable.push(entry);
+                    continue;
+                }
+            };
             if let Some(meta) = &mut provider.meta {
                 // The endpoint table is authoritative, including when it is empty.
                 meta.custom_endpoints.clear();
             }
-            providers.insert(id, provider);
+            providers.insert(provider.id.clone(), provider);
         }
 
         if providers.is_empty() {
-            return Ok(providers);
+            return Ok(Rows {
+                readable: providers,
+                unreadable,
+            });
         }
 
         let mut stmt_endpoints = conn
@@ -226,7 +273,10 @@ impl Database {
             }
         }
 
-        Ok(providers)
+        Ok(Rows {
+            readable: providers,
+            unreadable,
+        })
     }
 
     pub fn get_current_provider(&self, app_type: &AppType) -> Result<Option<String>, AppError> {
@@ -255,40 +305,9 @@ impl Database {
     ) -> Result<Option<Provider>, AppError> {
         let conn = lock_conn!(self.conn);
         let result = conn.query_row(
-            "SELECT name, settings_config, website_url, category, created_at, sort_index, notes, icon, icon_color, meta, in_failover_queue
-             FROM providers WHERE id = ?1 AND app_type = ?2",
+            &format!("{PROVIDER_SELECT} WHERE id = ?1 AND app_type = ?2"),
             params![id, app_type],
-            |row| {
-                let name: String = row.get(0)?;
-                let settings_config_str: String = row.get(1)?;
-                let website_url: Option<String> = row.get(2)?;
-                let category: Option<String> = row.get(3)?;
-                let created_at: Option<i64> = row.get(4)?;
-                let sort_index: Option<usize> = row.get(5)?;
-                let notes: Option<String> = row.get(6)?;
-                let icon: Option<String> = row.get(7)?;
-                let icon_color: Option<String> = row.get(8)?;
-                let meta_str: String = row.get(9)?;
-                let in_failover_queue: bool = row.get(10)?;
-
-                let settings_config = serde_json::from_str(&settings_config_str).unwrap_or(serde_json::Value::Null);
-                let meta: ProviderMeta = serde_json::from_str(&meta_str).unwrap_or_default();
-
-                Ok(Provider {
-                    id: id.to_string(),
-                    name,
-                    settings_config,
-                    website_url,
-                    category,
-                    created_at,
-                    sort_index,
-                    notes,
-                    meta: Some(meta),
-                    icon,
-                    icon_color,
-                    in_failover_queue,
-                })
-            },
+            row_to_provider,
         );
 
         match result {
@@ -606,6 +625,21 @@ impl Database {
         Ok(())
     }
 
+    /// 这一类（`omo` / `omo-slim`）全部取消启用。只改 `is_current`，不读各行存的 JSON。
+    pub fn clear_omo_category_current(
+        &self,
+        app_type: &AppType,
+        category: &str,
+    ) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        conn.execute(
+            "UPDATE providers SET is_current = 0 WHERE app_type = ?1 AND category = ?2",
+            params![app_type, category],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+
     pub fn get_current_omo_provider(
         &self,
         app_type: &AppType,
@@ -780,7 +814,7 @@ impl Database {
             let app_type = &seed.app_type;
 
             // 若该 id 已存在（极端情况：用户曾手动用过同 id），跳过
-            if self.get_provider_by_id(seed.id, app_type)?.is_some() {
+            if self.provider_exists(seed.id, app_type)? {
                 continue;
             }
 
@@ -838,7 +872,7 @@ impl Database {
                 ))
             })?;
 
-        if self.get_provider_by_id(seed_id, &app_type)?.is_some() {
+        if self.provider_exists(seed_id, &app_type)? {
             return Ok(false);
         }
 

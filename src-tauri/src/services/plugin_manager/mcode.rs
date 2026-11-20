@@ -30,6 +30,7 @@ fn parse_entry(item: &Value, installed: bool) -> Option<PluginEntry> {
         removable: true,
         installable: true,
         installed_id: None,
+        catalog_id: None,
         install_path: None,
         updated_at: None,
         id,

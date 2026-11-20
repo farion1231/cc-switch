@@ -1,8 +1,5 @@
 import { useState, useCallback, useMemo } from "react";
-import {
-  buildOmoSlimProfilePreview,
-  buildOmoProfilePreview,
-} from "@/types/omo";
+import { buildOmoProfilePreview } from "@/types/omo";
 
 interface UseOmoDraftStateParams {
   initialOmoSettings: Record<string, unknown> | undefined;
@@ -56,7 +53,9 @@ export function useOmoDraftState({
   const mergedOmoJsonPreview = useMemo(() => {
     if (isSlim) {
       return JSON.stringify(
-        buildOmoSlimProfilePreview(omoAgents, omoOtherFieldsStr),
+        buildOmoProfilePreview(omoAgents, undefined, omoOtherFieldsStr, {
+          slim: true,
+        }),
         null,
         2,
       );

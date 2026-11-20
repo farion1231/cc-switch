@@ -22,11 +22,26 @@ export function WindowControls() {
       try {
         const win = getCurrentWindow();
         const update = async () => {
-          const value = await win.isMaximized();
-          if (active) setMaximized(value);
+          try {
+            const value = await win.isMaximized();
+            if (active) setMaximized(value);
+          } catch (error) {
+            if (active) {
+              console.error(
+                "[WindowControls] Failed to sync maximized state",
+                error,
+              );
+            }
+          }
         };
         await update();
-        unlisten = await win.onResized(() => void update());
+        if (!active) return;
+        const off = await win.onResized(() => void update());
+        if (!active) {
+          off();
+          return;
+        }
+        unlisten = off;
       } catch (error) {
         console.error("[WindowControls] Failed to sync maximized state", error);
       }
