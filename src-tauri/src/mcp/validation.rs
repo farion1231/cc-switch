@@ -68,21 +68,3 @@ pub(crate) fn spec_transport_type(spec: &Value) -> &str {
     }
     explicit.unwrap_or("stdio")
 }
-
-/// 从 MCP 条目中提取服务器规范
-pub fn extract_server_spec(entry: &Value) -> Result<Value, AppError> {
-    let obj = entry
-        .as_object()
-        .ok_or_else(|| AppError::McpValidation("MCP 服务器条目必须为 JSON 对象".into()))?;
-    let server = obj
-        .get("server")
-        .ok_or_else(|| AppError::McpValidation("MCP 服务器条目缺少 server 字段".into()))?;
-
-    if !server.is_object() {
-        return Err(AppError::McpValidation(
-            "MCP 服务器 server 字段必须为 JSON 对象".into(),
-        ));
-    }
-
-    Ok(server.clone())
-}

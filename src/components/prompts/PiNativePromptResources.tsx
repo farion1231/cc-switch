@@ -1032,16 +1032,3 @@ export const PiPromptTemplates = forwardRef<
     </>
   );
 });
-
-/**
- * Kept as a compatibility export for callers that render the native resources
- * directly. The Pi page itself places these sections in separate segments.
- */
-export function PiNativePromptResources() {
-  return (
-    <div className="space-y-6">
-      <PiSystemPromptFiles />
-      <PiPromptTemplates />
-    </div>
-  );
-}

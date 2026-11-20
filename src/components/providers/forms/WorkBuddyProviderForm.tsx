@@ -29,6 +29,9 @@ import { piPresetModelSources } from "@/config/presetModelMetadata";
 import {
   WORKBUDDY_ACCOUNT_AUTH_PROVIDER,
   WORKBUDDY_DEFAULT_CONFIG,
+  WORKBUDDY_EFFORTS,
+  setWorkBuddyCanDisableThinking,
+  setWorkBuddyEffort,
   workbuddyOfficialPreset,
   workbuddyProviderPresets,
   type WorkBuddyModel,
@@ -100,6 +103,15 @@ const configSchema = z
           supportsToolCall: z.boolean().optional(),
           supportsImages: z.boolean().optional(),
           supportsReasoning: z.boolean().optional(),
+          // 表单按它画强度按钮，JSON 里写坏了就不进表单（编辑中途的半截结构会让表单崩）。
+          reasoning: z
+            .object({
+              supportedEfforts: z.array(z.enum(WORKBUDDY_EFFORTS)),
+              defaultEffort: z.enum(WORKBUDDY_EFFORTS),
+              canDisableThinking: z.boolean(),
+            })
+            .passthrough()
+            .optional(),
         })
         .passthrough(),
     ),
@@ -252,12 +264,17 @@ export function WorkBuddyProviderForm({
   const [configRef, commitConfig] = useCommittableRef(config, update);
   const commitModels = (next: WorkBuddyModel[]) =>
     commitConfig({ ...configRef.current, models: next });
-  const updateModel = (index: number, patch: Partial<WorkBuddyModel>) =>
+  const replaceModel = (
+    index: number,
+    update: (model: WorkBuddyModel) => WorkBuddyModel,
+  ) =>
     commitModels(
       configRef.current.models.map((model, i) =>
-        i === index ? { ...model, ...patch } : model,
+        i === index ? update(model) : model,
       ),
     );
+  const updateModel = (index: number, patch: Partial<WorkBuddyModel>) =>
+    replaceModel(index, (model) => ({ ...model, ...patch }));
   // 模型是数组，展开状态按下标记；删除一行时把后面的下标往前挪。
   const [expandedModels, setExpandedModels] = useState<Set<number>>(
     () => new Set(),
@@ -344,7 +361,7 @@ export function WorkBuddyProviderForm({
         const current = configRef.current.models;
         const index = current.findIndex((model) => model.id === id);
         if (index < 0) return false;
-        const filled = fillWorkBuddyModel(current[index], metadata);
+        const filled = fillWorkBuddyModel(current[index], metadata, baseUrl);
         if (!metadataFilledAnything(current[index], filled)) return false;
         commitModels(current.map((model, i) => (i === index ? filled : model)));
         return true;
@@ -752,6 +769,89 @@ export function WorkBuddyProviderForm({
                                   </div>
                                 ))}
                               </div>
+                              {model.supportsReasoning === true && (
+                                <div className="space-y-2 sm:col-span-2">
+                                  <div className="flex items-center gap-1">
+                                    <Label
+                                      id={`workbuddy-model-efforts-${index}`}
+                                    >
+                                      {t("workbuddy.form.thinkingEfforts")}
+                                    </Label>
+                                    <HelpTip
+                                      title={t(
+                                        "workbuddy.form.thinkingEfforts",
+                                      )}
+                                    >
+                                      {t("workbuddy.form.thinkingEffortsHint")}
+                                    </HelpTip>
+                                  </div>
+                                  <div
+                                    role="group"
+                                    aria-labelledby={`workbuddy-model-efforts-${index}`}
+                                    className="flex flex-wrap items-center gap-1.5"
+                                  >
+                                    {WORKBUDDY_EFFORTS.map((effort) => {
+                                      const selected =
+                                        Array.isArray(
+                                          model.reasoning?.supportedEfforts,
+                                        ) &&
+                                        model.reasoning.supportedEfforts.includes(
+                                          effort,
+                                        );
+                                      return (
+                                        <Button
+                                          key={effort}
+                                          type="button"
+                                          size="sm"
+                                          variant={
+                                            selected ? "secondary" : "outline"
+                                          }
+                                          aria-pressed={selected}
+                                          className="h-7"
+                                          onClick={() =>
+                                            replaceModel(index, (current) =>
+                                              setWorkBuddyEffort(
+                                                current,
+                                                effort,
+                                                !selected,
+                                              ),
+                                            )
+                                          }
+                                        >
+                                          {t(
+                                            `pi.form.thinkingLevels.${effort}`,
+                                          )}
+                                        </Button>
+                                      );
+                                    })}
+                                  </div>
+                                  {model.reasoning && (
+                                    <div className="flex items-center gap-2.5">
+                                      <Label
+                                        htmlFor={`workbuddy-model-can-disable-${index}`}
+                                        className="cursor-pointer"
+                                      >
+                                        {t("workbuddy.form.canDisableThinking")}
+                                      </Label>
+                                      <Switch
+                                        id={`workbuddy-model-can-disable-${index}`}
+                                        checked={
+                                          model.reasoning.canDisableThinking ===
+                                          true
+                                        }
+                                        onCheckedChange={(checked) =>
+                                          replaceModel(index, (current) =>
+                                            setWorkBuddyCanDisableThinking(
+                                              current,
+                                              checked,
+                                            ),
+                                          )
+                                        }
+                                      />
+                                    </div>
+                                  )}
+                                </div>
+                              )}
                               <div className="space-y-2">
                                 <Label
                                   htmlFor={`workbuddy-model-input-${index}`}

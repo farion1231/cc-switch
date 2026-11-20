@@ -10,10 +10,12 @@
 
 #[cfg(test)]
 mod tests {
+    use crate::app_config::AppType;
     use crate::database::Database;
     use crate::provider::Provider;
     use crate::proxy::server::ProxyServer;
     use crate::proxy::types::ProxyConfig;
+    use crate::test_support::TempUserHome;
     use axum::{
         body::Body,
         extract::State,
@@ -24,9 +26,7 @@ mod tests {
     };
     use serde_json::{json, Value};
     use serial_test::serial;
-    use std::env;
     use std::sync::{Arc, Mutex};
-    use tempfile::TempDir;
     use tokio::net::TcpListener;
 
     const REASONING: &str = "The bat costs $1.05 more than the ball.";
@@ -134,14 +134,14 @@ mod tests {
             }),
             None,
         );
-        db.save_provider("claude", &provider).unwrap();
-        db.set_current_provider("claude", &provider.id).unwrap();
+        db.save_provider(&AppType::Claude, &provider).unwrap();
+        db.set_current_provider(&AppType::Claude, &provider.id)
+            .unwrap();
 
         let proxy = ProxyServer::new(
             ProxyConfig {
                 listen_port: 0,
                 enable_logging: false,
-                non_streaming_timeout: 10,
                 ..ProxyConfig::default()
             },
             db.clone(),
@@ -165,57 +165,17 @@ mod tests {
         })
     }
 
-    struct TempHome {
-        #[allow(dead_code)]
-        dir: TempDir,
-        original_home: Option<String>,
-        original_userprofile: Option<String>,
-        original_test_home: Option<String>,
-    }
-
-    impl TempHome {
-        fn new() -> Self {
-            let dir = TempDir::new().expect("failed to create temp home");
-            let original_home = env::var("HOME").ok();
-            let original_userprofile = env::var("USERPROFILE").ok();
-            let original_test_home = env::var("CC_SWITCH_TEST_HOME").ok();
-
-            env::set_var("HOME", dir.path());
-            env::set_var("USERPROFILE", dir.path());
-            env::set_var("CC_SWITCH_TEST_HOME", dir.path());
-            crate::settings::reload_settings().expect("reload settings");
-
-            Self {
-                dir,
-                original_home,
-                original_userprofile,
-                original_test_home,
-            }
-        }
-    }
-
-    impl Drop for TempHome {
-        fn drop(&mut self) {
-            match &self.original_home {
-                Some(value) => env::set_var("HOME", value),
-                None => env::remove_var("HOME"),
-            }
-            match &self.original_userprofile {
-                Some(value) => env::set_var("USERPROFILE", value),
-                None => env::remove_var("USERPROFILE"),
-            }
-            match &self.original_test_home {
-                Some(value) => env::set_var("CC_SWITCH_TEST_HOME", value),
-                None => env::remove_var("CC_SWITCH_TEST_HOME"),
-            }
-        }
+    fn temp_home() -> TempUserHome {
+        let home = TempUserHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        home
     }
 
     /// 非流式：`/v1/messages` 的响应里思考必须是独立 thinking 块，标签不能泄漏
     #[tokio::test]
     #[serial]
     async fn proxy_converts_inline_think_to_thinking_block_non_streaming() {
-        let _home = TempHome::new();
+        let _home = temp_home();
         let (mock_base_url, captured) = start_inline_think_upstream().await;
         let (_proxy, proxy_url) = start_proxy_with_inline_think_provider(mock_base_url).await;
 
@@ -264,7 +224,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn proxy_converts_inline_think_to_thinking_block_streaming() {
-        let _home = TempHome::new();
+        let _home = temp_home();
         let (mock_base_url, captured) = start_inline_think_upstream().await;
         let (_proxy, proxy_url) = start_proxy_with_inline_think_provider(mock_base_url).await;
 

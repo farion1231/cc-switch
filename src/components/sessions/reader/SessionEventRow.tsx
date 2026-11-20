@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 import type { EventBlock, SessionMessage } from "@/types";
 import { highlightText } from "../utils";
 import { useReaderContext } from "./context";
-import { useReaderT } from "./i18n";
+import { READER_DEFAULTS, useReaderT } from "./i18n";
 import { GlyphCell } from "./rowStyles";
 import { openSessionLink, SessionPlainText } from "./SessionMarkdown";
 import { BlockText } from "./SessionStepDetails";
@@ -80,6 +80,25 @@ export const describeEvent = (
       return {
         label: rt("event.subAgent", { name }),
         detail: [rest, extra].filter(Boolean).join("\n\n") || undefined,
+        tone: "muted",
+      };
+    }
+    case "goal": {
+      // text 是 Codex 的目标状态（active / complete…），正文是完整目标
+      const statusKey = `event.goalStatus.${text}`;
+      return {
+        label: text
+          ? rt("event.goal", {
+              // 不认识的新状态原样显示
+              status: rt(
+                statusKey,
+                statusKey in READER_DEFAULTS
+                  ? undefined
+                  : { defaultValue: text },
+              ),
+            })
+          : rt("event.goalPlain"),
+        detail: extra || undefined,
         tone: "muted",
       };
     }
