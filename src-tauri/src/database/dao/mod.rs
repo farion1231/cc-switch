@@ -69,6 +69,22 @@ impl<T> Rows<T> {
             None => Ok(self.readable),
         }
     }
+
+    /// 只读、不写的地方：读不出来的行记一条警告后跳过，不拖累其余各行。
+    pub fn into_readable(self, purpose: &str) -> IndexMap<String, T> {
+        for entry in &self.unreadable {
+            log::warn!("{purpose}: 跳过读不出来的 {}: {}", entry.id, entry.error);
+        }
+        self.readable
+    }
+
+    /// 只要其中一行：它本身读不出来就报错并点名，别的行坏了不影响。
+    pub fn get(&self, id: &str) -> Result<Option<&T>, AppError> {
+        if let Some(entry) = self.unreadable.iter().find(|entry| entry.id == id) {
+            return Err(AppError::Database(entry.error.clone()));
+        }
+        Ok(self.readable.get(id))
+    }
 }
 
 /// 读一行；[`json_column`] 报的解析失败变成 [`UnreadableEntry`]（`id`、`name` 在第 0、1 列），
