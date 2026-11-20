@@ -111,7 +111,7 @@ pub struct AgyAccountStatus {
     pub accounts: Vec<AgyAccount>,
     /// agy 当前登录的是哪个已收录的号；没登录、或读不到钥匙串时为 `None`
     pub current_account_id: Option<String>,
-    /// 这个平台能不能切号（目前只有 macOS）
+    /// 这个平台能不能切号（目前是 macOS 和 Windows）
     pub supported: bool,
 }
 

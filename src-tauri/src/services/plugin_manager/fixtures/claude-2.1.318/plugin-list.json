@@ -1,0 +1,14 @@
+[
+  {
+    "id": "hello@ccs-test",
+    "version": "0.1.0",
+    "scope": "user",
+    "enabled": false,
+    "installPath": "C:\\fixture\\cfg\\plugins\\cache\\ccs-test\\hello\\0.1.0",
+    "readFromFolder": "C:\\fixture\\mkt\\plugins\\hello",
+    "folderVersion": "0.1.0",
+    "installedAt": "2026-11-06T14:50:12.538Z",
+    "lastUpdated": "2026-11-06T14:50:12.538Z",
+    "projectEnabled": false
+  }
+]
