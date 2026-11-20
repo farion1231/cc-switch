@@ -32,6 +32,8 @@ import { openclawKeys } from "@/hooks/useOpenClaw";
 import { supportsOfficialProxyTakeover } from "@/utils/providerCapabilities";
 import { getRoutingReason } from "@/utils/routingReason";
 import { logFrontendInfo } from "@/lib/frontendLogger";
+import { codexHistorySplitToastExtras } from "@/utils/codexHistorySplitHint";
+import { appHas } from "@/config/appSpecs";
 
 /**
  * Hook for managing provider actions (add, update, delete, switch)
@@ -100,7 +102,13 @@ export function useProviderActions(
           // 1. Merge model catalog (allowlist)
           if (modelCatalog && Object.keys(modelCatalog).length > 0) {
             const existingCatalog = (await openclawApi.getModelCatalog()) || {};
-            const mergedCatalog = { ...existingCatalog, ...modelCatalog };
+            // 新补的空条目不覆盖已有条目（别名、手加的字段）；预设条目照旧覆盖
+            const mergedCatalog = { ...existingCatalog };
+            for (const [ref, entry] of Object.entries(modelCatalog)) {
+              if (Object.keys(entry).length > 0 || !(ref in mergedCatalog)) {
+                mergedCatalog[ref] = entry;
+              }
+            }
             await openclawApi.setModelCatalog(mergedCatalog);
             await queryClient.invalidateQueries({
               queryKey: openclawKeys.health,
@@ -248,6 +256,11 @@ export function useProviderActions(
           }
         }
 
+        // 会话分组的提醒并进「切换成功」那条，不另弹
+        const splitExtras = result?.codexHistorySplit
+          ? codexHistorySplitToastExtras(result.codexHistorySplit, t)
+          : undefined;
+
         // 若已弹过 proxyRequired 警告则不再弹 success
         if (!proxyRequiredReason) {
           let messageKey = "notifications.switchSuccess";
@@ -268,7 +281,8 @@ export function useProviderActions(
           } else if (
             activeApp === "opencode" ||
             activeApp === "openclaw" ||
-            activeApp === "mcode"
+            activeApp === "mcode" ||
+            activeApp === "workbuddy"
           ) {
             messageKey = "notifications.addToConfigSuccess";
             defaultMessage = "已添加到配置";
@@ -278,6 +292,13 @@ export function useProviderActions(
             : t(messageKey, { defaultValue: defaultMessage });
           toast.success(message, {
             closeButton: true,
+            ...splitExtras,
+          });
+        } else if (splitExtras?.description) {
+          // 没弹「切换成功」时单独提醒一句，仍然只是一行
+          toast.info(splitExtras.description as string, {
+            closeButton: true,
+            duration: splitExtras.duration,
           });
         }
       } catch {
@@ -307,7 +328,7 @@ export function useProviderActions(
           },
         };
 
-        if (activeApp === "pi" || activeApp === "omp") {
+        if (appHas(activeApp, "piFamily")) {
           await piApi.updateProviderUsageScript(provider.id, script, activeApp);
         } else {
           await providersApi.update(updatedProvider, activeApp);

@@ -216,6 +216,19 @@ describe("Antigravity quota groups", () => {
     expect(screen.getByText("2d12h")).toBeInTheDocument();
   });
 
+  it("counts the Argon weekly window in the Gemini line, so the card stays two rows", () => {
+    // 按后端排好的顺序：Argon 在 Gemini 每周之后、Claude/GPT 之前
+    renderQuota([
+      ...agyTiers.slice(0, 2),
+      { name: "agy_gemini_argon_weekly", utilization: 70, resetsAt: null },
+      ...agyTiers.slice(2),
+    ]);
+    const lines = screen.getByRole("button", { name: "查看各档额度" }).children;
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toHaveTextContent("Gemini 剩余 30%");
+    expect(lines[1]).toHaveTextContent("Claude/GPT 剩余 5%");
+  });
+
   it("opens one dropdown listing all four windows; ↻ still refreshes", async () => {
     const refetch = vi.fn();
     renderQuota(agyTiers, true, {}, refetch);

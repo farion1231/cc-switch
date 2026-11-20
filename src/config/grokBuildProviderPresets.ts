@@ -342,8 +342,8 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
   },
   {
     name: "9527CODE",
-    websiteUrl: "https://9527.codes",
-    apiKeyUrl: "https://9527.codes/register?aff=e5zI",
+    websiteUrl: "https://9527.codes/register?channel=ccs",
+    apiKeyUrl: "https://9527.codes/register?channel=ccs",
     auth: grokAuth(),
     config: grokPresetConfig("9527CODE", "https://9527.codes/v1"),
     endpointCandidates: [
@@ -368,15 +368,12 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
   },
   {
     name: "TeamoRouter",
-    websiteUrl: "https://teamorouter.cn",
+    websiteUrl: "https://teamorouter.com",
     apiKeyUrl:
-      "https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
+      "https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
     auth: grokAuth(),
-    config: grokPresetConfig("TeamoRouter", "https://api.teamorouter.cn/v1"),
-    endpointCandidates: [
-      "https://api.teamorouter.cn/v1",
-      "https://api.teamorouter.com/v1",
-    ],
+    config: grokPresetConfig("TeamoRouter", "https://api.teamorouter.com/v1"),
+    endpointCandidates: ["https://api.teamorouter.com/v1"],
     category: "aggregator",
     isPartner: true,
     partnerPromotionKey: "teamorouter",
@@ -451,7 +448,6 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     endpointCandidates: ["https://www.ccsub.net/v1"],
     category: "aggregator",
     isPartner: true,
-    partnerPromotionKey: "ccsub",
     icon: "ccsub",
   },
   {

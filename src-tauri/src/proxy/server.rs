@@ -436,19 +436,9 @@ impl ProxyServer {
         *self.state.config.write().await = config.clone();
     }
 
-    /// 热更新熔断器配置
-    ///
-    /// 将新配置应用到所有已创建的熔断器实例
-    pub async fn update_circuit_breaker_configs(
-        &self,
-        config: super::circuit_breaker::CircuitBreakerConfig,
-    ) {
-        self.state.provider_router.update_all_configs(config).await;
-    }
-
     pub async fn update_circuit_breaker_config_for_app(
         &self,
-        app_type: &str,
+        app_type: &crate::app_config::AppType,
         config: super::circuit_breaker::CircuitBreakerConfig,
     ) {
         self.state
@@ -456,19 +446,12 @@ impl ProxyServer {
             .update_app_configs(app_type, config)
             .await;
     }
-
-    /// 重置指定 Provider 的熔断器
-    pub async fn reset_provider_circuit_breaker(&self, provider_id: &str, app_type: &str) {
-        self.state
-            .provider_router
-            .reset_provider_breaker(provider_id, app_type)
-            .await;
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app_config::AppType;
     use crate::provider::{Provider, ProviderMeta};
     use crate::AppError;
     use axum::http::{header, HeaderMap, StatusCode};
@@ -635,8 +618,9 @@ mod tests {
                 is_full_url: Some(full_url),
                 ..ProviderMeta::default()
             });
-            db.save_provider("codex", &provider).unwrap();
-            db.set_current_provider("codex", &provider.id).unwrap();
+            db.save_provider(&AppType::Codex, &provider).unwrap();
+            db.set_current_provider(&AppType::Codex, &provider.id)
+                .unwrap();
             let before = proxy.get_status().await.total_requests;
             let request = client
                 .post(format!(
@@ -729,7 +713,6 @@ mod tests {
         let proxy = ProxyServer::new(
             ProxyConfig {
                 listen_port: 0,
-                non_streaming_timeout: 10,
                 ..ProxyConfig::default()
             },
             db.clone(),
@@ -799,9 +782,9 @@ mod tests {
                 }),
                 None,
             );
-            db.save_provider("codex", &provider)
+            db.save_provider(&AppType::Codex, &provider)
                 .expect("save pasted base URL provider");
-            db.set_current_provider("codex", &provider.id)
+            db.set_current_provider(&AppType::Codex, &provider.id)
                 .expect("select pasted base URL provider");
 
             let response = client
@@ -834,6 +817,122 @@ mod tests {
                 Some("Bearer upstream-secret")
             );
         }
+
+        proxy.stop().await.expect("stop test proxy");
+        mock_handle.abort();
+    }
+
+    /// Codex 对第三方原生 Responses 上游发起 V2 压缩（`/responses`，input 末尾是
+    /// `compaction_trigger`）时，上游只回普通消息，代理要补上 Codex 必需的 compaction 条目。
+    /// `/responses/compact` 是另一套接口，同样的请求体原样透传，不补条目。
+    #[tokio::test]
+    async fn codex_compaction_item_is_added_on_responses_but_not_on_compact() {
+        const UPSTREAM_SSE: &str = "event: response.output_item.done\n\
+data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"summary so far\"}]}}\n\n\
+event: response.completed\n\
+data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"output\":[]}}\n\n";
+        let paths = Arc::new(Mutex::new(Vec::<String>::new()));
+        let handler = {
+            let paths = paths.clone();
+            move |request: axum::extract::Request| {
+                let paths = paths.clone();
+                async move {
+                    paths.lock().await.push(request.uri().path().to_string());
+                    (
+                        StatusCode::OK,
+                        [(header::CONTENT_TYPE, "text/event-stream")],
+                        UPSTREAM_SSE,
+                    )
+                }
+            }
+        };
+        let mock_app = Router::new()
+            .route("/v1/responses", post(handler.clone()))
+            .route("/v1/responses/compact", post(handler));
+        let mock_listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind mock upstream");
+        let mock_addr = mock_listener.local_addr().expect("mock upstream address");
+        let mock_handle = tokio::spawn(async move {
+            axum::serve(mock_listener, mock_app)
+                .await
+                .expect("serve mock upstream");
+        });
+
+        let db = Arc::new(Database::memory().expect("memory database"));
+        let provider = Provider::with_id(
+            "relay".to_string(),
+            "Relay".to_string(),
+            json!({
+                "base_url": format!("http://{mock_addr}/v1"),
+                "auth": {"OPENAI_API_KEY": "upstream-secret"}
+            }),
+            None,
+        );
+        db.save_provider(&AppType::Codex, &provider)
+            .expect("save provider");
+        db.set_current_provider(&AppType::Codex, &provider.id)
+            .expect("select provider");
+        let proxy = ProxyServer::new(
+            ProxyConfig {
+                listen_port: 0,
+                ..ProxyConfig::default()
+            },
+            db,
+            None,
+        );
+        let proxy_info = proxy.start().await.expect("start test proxy");
+        let client = reqwest::Client::new();
+        let compaction_body = json!({
+            "model": "gpt-5",
+            "stream": true,
+            "input": [
+                {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hi"}]},
+                {"type": "compaction_trigger"}
+            ]
+        });
+
+        let mut bodies = Vec::new();
+        for path in ["/v1/responses", "/v1/responses/compact"] {
+            let response = client
+                .post(format!("http://127.0.0.1:{}{path}", proxy_info.port))
+                .json(&compaction_body)
+                .send()
+                .await
+                .expect("send compaction request");
+            assert_eq!(response.status(), StatusCode::OK, "{path}");
+            bodies.push(response.text().await.expect("read response body"));
+        }
+        assert_eq!(
+            *paths.lock().await,
+            vec![
+                "/v1/responses".to_string(),
+                "/v1/responses/compact".to_string()
+            ]
+        );
+
+        let compaction_items = |body: &str| {
+            body.split("\n\n")
+                .filter_map(|block| {
+                    block
+                        .lines()
+                        .find_map(|line| line.strip_prefix("data: "))
+                        .and_then(|data| serde_json::from_str::<Value>(data).ok())
+                })
+                .filter(|event| {
+                    event["type"] == "response.output_item.done"
+                        && event["item"]["type"] == "compaction"
+                })
+                .count()
+        };
+        assert_eq!(compaction_items(&bodies[0]), 1, "{}", bodies[0]);
+        assert!(
+            bodies[0].contains("ccswitch-compaction-v1:"),
+            "{}",
+            bodies[0]
+        );
+        assert_eq!(compaction_items(&bodies[1]), 0, "{}", bodies[1]);
+        assert!(bodies[1].contains("summary so far"), "{}", bodies[1]);
 
         proxy.stop().await.expect("stop test proxy");
         mock_handle.abort();
@@ -896,16 +995,15 @@ mod tests {
             }),
             None,
         );
-        db.save_provider("codex", &provider)
+        db.save_provider(&AppType::Codex, &provider)
             .expect("save test provider");
-        db.set_current_provider("codex", &provider.id)
+        db.set_current_provider(&AppType::Codex, &provider.id)
             .expect("select test provider");
 
         let proxy = ProxyServer::new(
             ProxyConfig {
                 listen_port: 0,
                 enable_logging: true,
-                non_streaming_timeout: 10,
                 ..ProxyConfig::default()
             },
             db.clone(),
@@ -985,9 +1083,9 @@ mod tests {
             is_full_url: Some(true),
             ..ProviderMeta::default()
         });
-        db.save_provider("codex", &full_url_provider)
+        db.save_provider(&AppType::Codex, &full_url_provider)
             .expect("save full URL images provider");
-        db.set_current_provider("codex", &full_url_provider.id)
+        db.set_current_provider(&AppType::Codex, &full_url_provider.id)
             .expect("select full URL images provider");
 
         let response = client
@@ -1106,16 +1204,15 @@ mod tests {
             }),
             None,
         );
-        db.save_provider("codex", &provider)
+        db.save_provider(&AppType::Codex, &provider)
             .expect("save test provider");
-        db.set_current_provider("codex", &provider.id)
+        db.set_current_provider(&AppType::Codex, &provider.id)
             .expect("select test provider");
 
         let proxy = ProxyServer::new(
             ProxyConfig {
                 listen_port: 0,
                 enable_logging: true,
-                non_streaming_timeout: 10,
                 ..ProxyConfig::default()
             },
             db.clone(),
@@ -1198,9 +1295,9 @@ mod tests {
             is_full_url: Some(true),
             ..ProviderMeta::default()
         });
-        db.save_provider("codex", &full_url_provider)
+        db.save_provider(&AppType::Codex, &full_url_provider)
             .expect("save full URL images edit provider");
-        db.set_current_provider("codex", &full_url_provider.id)
+        db.set_current_provider(&AppType::Codex, &full_url_provider.id)
             .expect("select full URL images edit provider");
 
         let response = client
@@ -1331,16 +1428,15 @@ mod tests {
             }),
             None,
         );
-        db.save_provider("codex", &provider)
+        db.save_provider(&AppType::Codex, &provider)
             .expect("save test provider");
-        db.set_current_provider("codex", &provider.id)
+        db.set_current_provider(&AppType::Codex, &provider.id)
             .expect("select test provider");
 
         let proxy = ProxyServer::new(
             ProxyConfig {
                 listen_port: 0,
                 enable_logging: false,
-                non_streaming_timeout: 10,
                 ..ProxyConfig::default()
             },
             db.clone(),
@@ -1403,9 +1499,9 @@ mod tests {
             is_full_url: Some(true),
             ..ProviderMeta::default()
         });
-        db.save_provider("codex", &full_url_provider)
+        db.save_provider(&AppType::Codex, &full_url_provider)
             .expect("save full URL provider");
-        db.set_current_provider("codex", &full_url_provider.id)
+        db.set_current_provider(&AppType::Codex, &full_url_provider.id)
             .expect("select full URL provider");
 
         let response = client

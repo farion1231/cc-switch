@@ -9,7 +9,6 @@ import {
 const OPENCODE_GO_CODEX_TOML = `model_provider = "custom"
 model = "glm-5.2"
 model_reasoning_effort = "high"
-disable_response_storage = true
 
 [model_providers.custom]
 name = "opencode_go"
@@ -40,6 +39,25 @@ describe("detectCodingPlanProvider (OpenCode Go)", () => {
     expect(
       detectCodingPlanProvider("https://opencode.ai/inference/v1"),
     ).toBeNull();
+  });
+});
+
+describe("detectCodingPlanProvider (Ollama Cloud)", () => {
+  it.each([
+    "https://ollama.com",
+    "https://ollama.com/v1",
+    "https://OLLAMA.com/",
+  ])("recognizes Ollama Cloud for %s", (baseUrl) => {
+    expect(detectCodingPlanProvider(baseUrl)).toBe("ollama_cloud");
+  });
+
+  it.each([
+    "http://localhost:11434",
+    "http://127.0.0.1:11434/v1",
+    "https://ollama.com.example.com/v1",
+    "https://proxy.example.com/ollama.com/v1",
+  ])("ignores local Ollama and look-alike hosts such as %s", (baseUrl) => {
+    expect(detectCodingPlanProvider(baseUrl)).toBeNull();
   });
 });
 

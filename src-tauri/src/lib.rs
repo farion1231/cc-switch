@@ -3,6 +3,7 @@ mod agy_config;
 mod agy_smoke_tests;
 mod app_config;
 mod app_store;
+mod app_update;
 mod auto_launch;
 mod claude_desktop_config;
 mod claude_mcp;
@@ -13,10 +14,13 @@ mod codex_rollout_file;
 mod codex_state_db;
 mod commands;
 mod config;
+mod copilot_config;
 mod database;
 mod deeplink;
 mod dsh_config;
 mod error;
+#[cfg(test)]
+mod frontend_parity_tests;
 mod gemini_config;
 mod gemini_mcp;
 mod grok_config;
@@ -41,11 +45,15 @@ mod pi_config;
 mod prompt;
 mod prompt_files;
 mod provider;
+mod provider_kind;
 mod proxy;
 mod services;
 mod session_manager;
 mod settings;
 mod store;
+mod sync_utils;
+#[cfg(test)]
+mod test_support;
 
 mod tray;
 #[cfg(target_os = "windows")]
@@ -53,7 +61,10 @@ mod tray_compat;
 mod tray_panel;
 mod usage_events;
 mod usage_script;
+mod window_fit;
+mod workbuddy_config;
 
+use crate::sync_utils::MutexExt;
 pub use app_config::{AppType, InstalledSkill, McpApps, McpServer, MultiAppConfig, SkillApps};
 pub use codex_config::{
     extract_codex_experimental_bearer_token, get_codex_auth_path, get_codex_config_path,
@@ -69,15 +80,19 @@ pub use grok_config::get_grok_config_path;
 pub use mcp::{
     import_from_claude, import_from_codex, import_from_gemini, import_from_grokbuild,
     remove_server_from_claude, remove_server_from_codex, remove_server_from_gemini,
-    remove_server_from_grokbuild, sync_enabled_to_claude, sync_enabled_to_codex,
-    sync_enabled_to_gemini, sync_single_server_to_claude, sync_single_server_to_codex,
+    remove_server_from_grokbuild, sync_single_server_to_claude, sync_single_server_to_codex,
     sync_single_server_to_gemini, sync_single_server_to_grokbuild,
 };
 pub use prompt::Prompt;
 pub use provider::{Provider, ProviderMeta};
+#[doc(hidden)]
+pub use services::provider::claude_direct::settle_claude_tombstones;
 pub use services::{
     profile::{ProfilePayload, ProfileScope, ProfileService, NO_ACTIVE_PROMPT},
-    provider::{reapply_current_codex_official_live, EditorSave, EditorView},
+    provider::{
+        reapply_current_codex_official_live, reapply_current_codex_third_party_live, EditorSave,
+        EditorView,
+    },
     skill::{migrate_skills_to_ssot, ImportSkillSelection},
     ConfigService, EndpointLatency, McpService, PromptService, ProviderService, ProxyService,
     SkillService, SpeedtestService,
@@ -429,7 +444,7 @@ fn raise_open_file_limit() {
 #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 fn handle_second_instance(app: &tauri::AppHandle, args: Vec<String>) {
     static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let _serial = SERIAL.lock_recover();
     log::debug!("Args count: {}", args.len());
     for (i, arg) in args.iter().enumerate() {
         log::debug!("  arg[{i}]: {}", url_for_log(arg));
@@ -482,6 +497,17 @@ pub fn run() {
 
     let mut builder = tauri::Builder::default();
 
+    // WebView settings are per-view: apply this to initial and recreated windows,
+    // including the lightweight tray panel (#9216), before they are shown.
+    #[cfg(target_os = "linux")]
+    {
+        builder = builder.plugin(
+            tauri::plugin::Builder::<_, ()>::new("linux-webview-rendering")
+                .on_webview_ready(|webview| linux_fix::configure_webview(&webview))
+                .build(),
+        );
+    }
+
     #[cfg(target_os = "windows")]
     {
         builder = builder.plugin(
@@ -518,7 +544,10 @@ pub fn run() {
                 && !startup_page_handled.swap(true, Ordering::Relaxed)
                 && !crate::settings::get_settings().silent_startup
             {
-                let _ = webview.window().show();
+                let window = webview.window();
+                if window.show().is_ok() {
+                    let _ = window.emit("main-window-visibility-changed", ());
+                }
                 log::info!("主页面加载完成，主窗口已显示");
             }
         });
@@ -549,7 +578,10 @@ pub fn run() {
 
                 if settings.minimize_to_tray_on_close {
                     api.prevent_close();
-                    let _ = window.hide();
+                    if window.hide().is_ok() {
+                        // An already-unfocused window may emit no blur/resize.
+                        let _ = window.emit("main-window-visibility-changed", ());
+                    }
                     log::info!("关闭请求已处理：最小化到托盘");
                     #[cfg(target_os = "windows")]
                     {
@@ -793,6 +825,8 @@ pub fn run() {
             // 补完上次崩溃时写到一半的客户端文件（写前意图在 ~/.cc-switch/live-state.json），
             // 要在任何写客户端文件的启动步骤之前。
             crate::mode::operation::recover_on_startup(&app_state.db);
+            // 上次退出或崩溃前没来得及删的 Claude 空值墓碑（切换时给开着的会话写的）接着删
+            crate::services::provider::claude_direct::resume_tombstone_sweep();
 
             // ============================================================
             // 按表独立判断的导入逻辑（各类数据独立检查，互不影响）
@@ -863,7 +897,8 @@ pub fn run() {
                 app_state.db.is_providers_empty().unwrap_or(false);
 
             for app_type in
-                crate::app_config::AppType::all().filter(|t| !t.is_additive_mode())
+                crate::app_config::AppType::all()
+                    .filter(crate::services::provider::imports_default_config)
             {
                 if !crate::services::provider::should_import_default_config_on_startup(
                     &app_state,
@@ -969,8 +1004,9 @@ pub fn run() {
                         }
                     }
 
-                    // 统一会话开关的官方历史迁移：开关开启但上次未完成（如文件被占用
-                    // 中途失败）时在启动期重试；函数内部自门控，开关关闭时直接跳过。
+                    // 统一会话开关的官方历史迁移：开关开着且勾选了迁入既有会话时，每次启动
+                    // 都把留在 openai 桶的会话迁进 custom（新版 Codex 会把它们锁成只读）；
+                    // 函数内部自门控，state DB 里没有 openai 线程时直接跳过。
                     match crate::codex_history_migration::maybe_migrate_codex_official_history_to_unified_bucket() {
                         Ok(outcome) => {
                             if let Some(reason) = outcome.skipped_reason {
@@ -1046,7 +1082,7 @@ pub fn run() {
             {
                 let has_omo = app_state
                     .db
-                    .get_all_providers("opencode")
+                    .get_all_providers(&AppType::OpenCode)
                     .map(|providers| providers.values().any(|p| p.category.as_deref() == Some("omo")))
                     .unwrap_or(false);
                 if !has_omo {
@@ -1068,7 +1104,7 @@ pub fn run() {
             {
                 let has_omo_slim = app_state
                     .db
-                    .get_all_providers("opencode")
+                    .get_all_providers(&AppType::OpenCode)
                     .map(|providers| {
                         providers
                             .values()
@@ -1097,52 +1133,21 @@ pub fn run() {
             if app_state.db.is_mcp_table_empty().unwrap_or(false) {
                 log::info!("MCP table empty, importing from live configurations...");
 
-                match crate::services::mcp::McpService::import_from_claude(&app_state) {
-                    Ok(count) if count > 0 => {
-                        log::info!("✓ Imported {count} MCP server(s) from Claude");
+                for (app, label) in [
+                    (crate::app_config::AppType::Claude, "Claude"),
+                    (crate::app_config::AppType::Codex, "Codex"),
+                    (crate::app_config::AppType::Gemini, "Gemini"),
+                    (crate::app_config::AppType::GrokBuild, "Grok Build"),
+                    (crate::app_config::AppType::OpenCode, "OpenCode"),
+                    (crate::app_config::AppType::Hermes, "Hermes"),
+                ] {
+                    match crate::services::mcp::McpService::import_from_app(&app_state, &app) {
+                        Ok(count) if count > 0 => {
+                            log::info!("✓ Imported {count} MCP server(s) from {label}");
+                        }
+                        Ok(_) => log::debug!("○ No {label} MCP servers found to import"),
+                        Err(e) => log::warn!("✗ Failed to import {label} MCP: {e}"),
                     }
-                    Ok(_) => log::debug!("○ No Claude MCP servers found to import"),
-                    Err(e) => log::warn!("✗ Failed to import Claude MCP: {e}"),
-                }
-
-                match crate::services::mcp::McpService::import_from_codex(&app_state) {
-                    Ok(count) if count > 0 => {
-                        log::info!("✓ Imported {count} MCP server(s) from Codex");
-                    }
-                    Ok(_) => log::debug!("○ No Codex MCP servers found to import"),
-                    Err(e) => log::warn!("✗ Failed to import Codex MCP: {e}"),
-                }
-
-                match crate::services::mcp::McpService::import_from_gemini(&app_state) {
-                    Ok(count) if count > 0 => {
-                        log::info!("✓ Imported {count} MCP server(s) from Gemini");
-                    }
-                    Ok(_) => log::debug!("○ No Gemini MCP servers found to import"),
-                    Err(e) => log::warn!("✗ Failed to import Gemini MCP: {e}"),
-                }
-
-                match crate::services::mcp::McpService::import_from_grokbuild(&app_state) {
-                    Ok(count) if count > 0 => {
-                        log::info!("✓ Imported {count} MCP server(s) from Grok Build");
-                    }
-                    Ok(_) => log::debug!("○ No Grok Build MCP servers found to import"),
-                    Err(e) => log::warn!("✗ Failed to import Grok Build MCP: {e}"),
-                }
-
-                match crate::services::mcp::McpService::import_from_opencode(&app_state) {
-                    Ok(count) if count > 0 => {
-                        log::info!("✓ Imported {count} MCP server(s) from OpenCode");
-                    }
-                    Ok(_) => log::debug!("○ No OpenCode MCP servers found to import"),
-                    Err(e) => log::warn!("✗ Failed to import OpenCode MCP: {e}"),
-                }
-
-                match crate::services::mcp::McpService::import_from_hermes(&app_state) {
-                    Ok(count) if count > 0 => {
-                        log::info!("✓ Imported {count} MCP server(s) from Hermes");
-                    }
-                    Ok(_) => log::debug!("○ No Hermes MCP servers found to import"),
-                    Err(e) => log::warn!("✗ Failed to import Hermes MCP: {e}"),
                 }
             }
 
@@ -1160,6 +1165,7 @@ pub fn run() {
                     crate::app_config::AppType::Hermes,
                     crate::app_config::AppType::Pi,
                     crate::app_config::AppType::Mcode,
+                    crate::app_config::AppType::WorkBuddy,
                 ] {
                     match crate::services::prompt::PromptService::import_from_file_on_first_launch(
                         &app_state,
@@ -1267,12 +1273,15 @@ pub fn run() {
             // Linux（AppIndicator）不派发点击事件，只能出原生菜单，菜单里有一项打开面板。
             let native_menu = tray_panel::uses_native_menu();
             let mut tray_builder = TrayIconBuilder::with_id(tray::TRAY_ID)
-                .tooltip("CC Switch") // 鼠标悬停提示
                 .on_tray_icon_event(tray::handle_tray_icon_event)
                 .on_menu_event(|app, event| {
                     tray::handle_tray_menu_event(app, &event.id.0);
                 })
                 .show_menu_on_left_click(tray::native_menu_on_left_click(native_menu));
+            // 鼠标悬停提示（macOS 不设，见 `tray::TRAY_TOOLTIP_ENABLED`）
+            if tray::TRAY_TOOLTIP_ENABLED {
+                tray_builder = tray_builder.tooltip("CC Switch");
+            }
             if native_menu {
                 let menu = tray::create_tray_menu(app.handle(), &app_state)?;
                 tray_builder = tray_builder.menu(&menu);
@@ -1294,11 +1303,10 @@ pub fn run() {
             let _tray = tray_builder.build(app)?;
             #[cfg(target_os = "windows")]
             tray_compat::install(app.handle());
-            crate::services::webdav_auto_sync::start_worker(
-                app_state.db.clone(),
-                app.handle().clone(),
-            );
-            crate::services::s3_auto_sync::start_worker(
+            crate::services::auto_sync::start_worker::<
+                crate::services::webdav_auto_sync::WebDavAutoSync,
+            >(app_state.db.clone(), app.handle().clone());
+            crate::services::auto_sync::start_worker::<crate::services::s3_auto_sync::S3AutoSync>(
                 app_state.db.clone(),
                 app.handle().clone(),
             );
@@ -1351,6 +1359,13 @@ pub fn run() {
                 app.manage(commands::AgyAccountState(Arc::new(manager)));
             }
 
+            // WorkBuddy 官方账号（授权中心收录、切换桌面端登录的快照）
+            {
+                use crate::services::workbuddy_account::WorkBuddyAccountManager;
+                let manager = WorkBuddyAccountManager::new(crate::config::get_app_config_dir());
+                app.manage(commands::WorkBuddyAccountState(Arc::new(manager)));
+            }
+
             // Claude Code 官方订阅账号（授权中心加号；每个账号一个 CLAUDE_CONFIG_DIR）
             {
                 use crate::services::claude_account::ClaudeAccountManager;
@@ -1397,6 +1412,9 @@ pub fn run() {
                 }
             }
 
+            // 自动更新：开关打开时后台定时检查并下载新版本（装不装由用户确认）
+            crate::app_update::spawn_background_loop(app.handle().clone());
+
             // 异常退出恢复 + 代理状态自动恢复
             let app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
@@ -1431,23 +1449,24 @@ pub fn run() {
                     state.inner().clone(),
                 );
 
-                // Periodic backup check (on startup)
-                if let Err(e) = state.db.periodic_backup_if_needed() {
-                    log::warn!("Periodic backup failed on startup: {e}");
-                }
-
-                // Periodic maintenance timer: run once per day while the app is running
+                // Backup and log maintenance can hold the database lock for a
+                // long time. Keep disk work off both the UI and async workers.
+                // The first interval tick runs startup maintenance; later ticks
+                // run daily, without a catch-up burst after sleep.
                 let db_for_timer = state.db.clone();
                 tauri::async_runtime::spawn(async move {
                     const PERIODIC_MAINTENANCE_INTERVAL_SECS: u64 = 24 * 60 * 60;
                     let mut interval = tokio::time::interval(std::time::Duration::from_secs(
                         PERIODIC_MAINTENANCE_INTERVAL_SECS,
                     ));
-                    interval.tick().await; // skip immediate first tick (already checked above)
+                    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
                     loop {
                         interval.tick().await;
-                        if let Err(e) = db_for_timer.periodic_backup_if_needed() {
-                            log::warn!("Periodic maintenance timer failed: {e}");
+                        let db = db_for_timer.clone();
+                        match tauri::async_runtime::spawn_blocking(move || db.periodic_backup_if_needed()).await {
+                            Ok(Ok(())) => {}
+                            Ok(Err(e)) => log::warn!("Periodic maintenance failed: {e}"),
+                            Err(e) => log::warn!("Periodic maintenance task failed: {e}"),
                         }
                     }
                 });
@@ -1506,21 +1525,6 @@ pub fn run() {
                 });
             });
 
-            // Linux: 禁用 WebKitGTK 硬件加速，防止 EGL 初始化失败导致白屏
-            #[cfg(target_os = "linux")]
-            {
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.with_webview(|webview| {
-                        use webkit2gtk::{WebViewExt, SettingsExt, HardwareAccelerationPolicy};
-                        let wk_webview = webview.inner();
-                        if let Some(settings) = WebViewExt::settings(&wk_webview) {
-                            SettingsExt::set_hardware_acceleration_policy(&settings, HardwareAccelerationPolicy::Never);
-                            log::info!("已禁用 WebKitGTK 硬件加速");
-                        }
-                    });
-                }
-            }
-
             // 静默启动：根据设置决定是否显示主窗口
             let settings = crate::settings::get_settings();
             if let Some(window) = app.get_webview_window("main") {
@@ -1534,6 +1538,9 @@ pub fn run() {
                     let _ = window.set_decorations(false);
                     let _ = window.set_shadow(true);
                 }
+                // window-state 插件恢复的位置可能压在任务栏 / Dock 下面，首次显示前收回工作区。
+                // 放在装饰设置之后，按最终的窗口外框计算。
+                window_fit::fit_to_work_area(&window);
                 // 上次退出时在轻量模式：照旧只留托盘。由深链接冷启动的要给用户看导入对话框，正常启动。
                 if settings.lightweight_mode && !startup_deeplink {
                     if let Err(e) = crate::lightweight::enter_lightweight_mode(app.handle()) {
@@ -1543,7 +1550,9 @@ pub fn run() {
                     }
                 } else if settings.silent_startup {
                     // 静默启动模式：保持窗口隐藏
-                    let _ = window.hide();
+                    if window.hide().is_ok() {
+                        let _ = window.emit("main-window-visibility-changed", ());
+                    }
                     #[cfg(target_os = "windows")]
                     let _ = window.set_skip_taskbar(true);
                     #[cfg(target_os = "macos")]
@@ -1552,7 +1561,9 @@ pub fn run() {
                 } else {
                     // 正常启动模式：显示窗口
                     #[cfg(not(target_os = "windows"))]
-                    let _ = window.show();
+                    if window.show().is_ok() {
+                        let _ = window.emit("main-window-visibility-changed", ());
+                    }
                     #[cfg(target_os = "windows")]
                     log::info!("正常启动模式：等待主页面加载完成后显示主窗口");
                     #[cfg(not(target_os = "windows"))]
@@ -1586,11 +1597,8 @@ pub fn run() {
             commands::get_claude_desktop_default_routes,
             commands::import_claude_desktop_providers_from_claude,
             commands::ensure_claude_desktop_official_provider,
-            commands::ensure_codex_official_provider,
             commands::ensure_grokbuild_official_provider,
-            commands::get_claude_config_status,
             commands::get_config_status,
-            commands::get_claude_code_config_path,
             commands::get_config_dir,
             commands::open_config_folder,
             commands::pick_directory,
@@ -1598,14 +1606,8 @@ pub fn run() {
             commands::get_init_error,
             commands::get_migration_result,
             commands::get_skills_migration_result,
-            commands::get_app_config_path,
             commands::open_app_config_folder,
             commands::reveal_app_log_file,
-            commands::get_claude_common_config_snippet,
-            commands::set_claude_common_config_snippet,
-            commands::get_common_config_snippet,
-            commands::set_common_config_snippet,
-            commands::extract_common_config_snippet,
             commands::read_live_provider_settings,
             commands::get_settings,
             commands::save_settings,
@@ -1619,29 +1621,33 @@ pub fn run() {
             commands::set_rectifier_config,
             commands::get_optimizer_config,
             commands::set_optimizer_config,
-            commands::get_copilot_optimizer_config,
-            commands::set_copilot_optimizer_config,
+            commands::get_privacy_filter_config,
+            commands::set_privacy_filter_config,
             commands::get_log_config,
             commands::set_log_config,
             commands::restart_app,
             commands::install_update_and_restart,
+            commands::get_auto_update_status,
+            commands::download_app_update,
             commands::check_app_update_available,
             commands::check_for_updates,
             commands::open_portable_update_download,
             commands::is_portable_mode,
             commands::copy_text_to_clipboard,
-            commands::get_claude_plugin_status,
-            commands::read_claude_plugin_config,
+            commands::list_installed_plugins,
+            commands::list_plugin_catalog,
+            commands::list_plugin_marketplaces,
+            commands::install_plugin,
+            commands::uninstall_plugin,
+            commands::set_plugin_enabled,
+            commands::update_plugin,
+            commands::add_plugin_marketplace,
+            commands::remove_plugin_marketplace,
+            commands::refresh_plugin_marketplaces,
             commands::apply_claude_plugin_config,
-            commands::is_claude_plugin_applied,
             commands::apply_claude_onboarding_skip,
             commands::clear_claude_onboarding_skip,
             // Claude MCP management
-            commands::get_claude_mcp_status,
-            commands::read_claude_mcp_config,
-            commands::upsert_claude_mcp_server,
-            commands::delete_claude_mcp_server,
-            commands::validate_mcp_command,
             // usage query
             commands::queryProviderUsage,
             commands::testUsageScript,
@@ -1654,10 +1660,6 @@ pub fn run() {
             commands::get_coding_plan_quota,
             commands::get_balance,
             // New MCP via config.json (SSOT)
-            commands::get_mcp_config,
-            commands::upsert_mcp_server_in_config,
-            commands::delete_mcp_server_in_config,
-            commands::set_mcp_enabled,
             // Unified MCP management
             commands::get_mcp_servers,
             commands::start_mcp_connectivity_checks,
@@ -1704,7 +1706,6 @@ pub fn run() {
             commands::get_custom_endpoints,
             commands::add_custom_endpoint,
             commands::remove_custom_endpoint,
-            commands::update_endpoint_last_used,
             // app_config_dir override via Store
             commands::get_app_config_dir_override,
             commands::set_app_config_dir_override,
@@ -1723,6 +1724,7 @@ pub fn run() {
             commands::s3_sync_upload,
             commands::s3_sync_download,
             commands::s3_sync_save_settings,
+            commands::s3_sync_clear_settings,
             commands::s3_sync_fetch_remote_info,
             commands::save_file_dialog,
             commands::open_file_dialog,
@@ -1737,10 +1739,8 @@ pub fn run() {
             commands::delete_db_backup,
             commands::sync_current_providers_live,
             // Deep link import
-            commands::parse_deeplink,
             commands::merge_deeplink_config,
             commands::fetch_deeplink_icon,
-            commands::import_from_deeplink,
             commands::import_from_deeplink_unified,
             commands::peek_pending_deeplink,
             commands::ack_pending_deeplink,
@@ -1748,9 +1748,9 @@ pub fn run() {
             // Environment variable management
             commands::check_env_conflicts,
             commands::delete_env_vars,
-            commands::restore_env_backup,
             // Skill management (v3.10.0+ unified)
             commands::get_installed_skills,
+            commands::refresh_local_skill_metadata,
             commands::get_skill_backups,
             commands::delete_skill_backup,
             commands::install_skill_unified,
@@ -1770,19 +1770,15 @@ pub fn run() {
             commands::open_skill_dir,
             commands::search_skills_sh,
             // Skill management (legacy API compatibility)
-            commands::get_skills,
-            commands::get_skills_for_app,
-            commands::install_skill,
-            commands::install_skill_for_app,
-            commands::uninstall_skill,
-            commands::uninstall_skill_for_app,
             commands::get_skill_repos,
             commands::add_skill_repo,
             commands::remove_skill_repo,
+            commands::get_skill_repo_tokens,
+            commands::set_skill_repo_token,
+            commands::delete_skill_repo_token,
             commands::install_skills_from_zip,
             // Auto launch
             commands::set_auto_launch,
-            commands::get_auto_launch_status,
             // Proxy server management
             commands::start_proxy_server,
             commands::stop_proxy_server,
@@ -1800,10 +1796,7 @@ pub fn run() {
             tray_panel::tray_panel_action,
             tray::tray_app_page_seen,
             commands::exit_proxy_apps_in_mode,
-            commands::get_direct_provider,
             commands::get_proxy_status,
-            commands::get_proxy_config,
-            commands::update_proxy_config,
             // Global & Per-App Config
             commands::get_global_proxy_config,
             commands::update_global_proxy_config,
@@ -1813,9 +1806,6 @@ pub fn run() {
             commands::update_proxy_config_for_app,
             commands::get_pricing_model_source,
             commands::set_pricing_model_source,
-            commands::is_proxy_running,
-            commands::is_live_takeover_active,
-            commands::switch_proxy_provider,
             commands::get_proxy_stack,
             commands::set_proxy_stack_member,
             commands::adopt_codex_stack_catalog,
@@ -1823,13 +1813,8 @@ pub fn run() {
             commands::acknowledge_codex_stale_clients,
             // Proxy failover commands
             commands::get_provider_health,
-            commands::reset_circuit_breaker,
-            commands::get_circuit_breaker_config,
-            commands::update_circuit_breaker_config,
-            commands::get_circuit_breaker_stats,
             // Failover queue management
             commands::get_failover_queue,
-            commands::get_available_providers_for_failover,
             commands::add_to_failover_queue,
             commands::remove_from_failover_queue,
             commands::get_auto_failover_enabled,
@@ -1852,17 +1837,18 @@ pub fn run() {
             commands::save_models_dev_sync_config,
             commands::record_models_dev_sync_result,
             commands::fetch_models_dev,
-            commands::check_provider_limits,
             // Session usage sync
             commands::sync_session_usage,
             commands::rebuild_codex_usage,
             commands::get_session_usage_last_sync,
-            commands::get_usage_data_sources,
             commands::fetch_exchange_rates,
             // Stream health check
             commands::stream_check_provider,
             // Session manager
             commands::list_sessions,
+            commands::sync_session_index,
+            commands::search_session_content,
+            commands::clear_session_index,
             commands::get_session_messages,
             commands::stream_session_messages,
             commands::get_session_block_content,
@@ -1881,7 +1867,6 @@ pub fn run() {
             commands::open_provider_terminal,
             // Universal Provider management
             commands::get_universal_providers,
-            commands::get_universal_provider,
             commands::upsert_universal_provider,
             commands::delete_universal_provider,
             commands::sync_universal_provider,
@@ -1913,7 +1898,6 @@ pub fn run() {
             // Hermes specific
             commands::import_hermes_providers_from_live,
             commands::get_hermes_live_provider_ids,
-            commands::get_hermes_live_provider,
             commands::get_hermes_model_config,
             commands::open_hermes_web_ui,
             commands::launch_hermes_dashboard,
@@ -1925,21 +1909,26 @@ pub fn run() {
             commands::get_global_proxy_url,
             commands::set_global_proxy_url,
             commands::test_proxy_url,
-            commands::get_upstream_proxy_status,
             commands::scan_local_proxies,
+            commands::diagnose_ip,
             // Window theme control
             commands::set_window_theme,
             // Generic managed auth commands
             commands::auth_start_login,
             commands::auth_poll_for_account,
             commands::auth_cancel_login,
-            commands::auth_list_accounts,
             commands::auth_get_status,
             commands::auth_remove_account,
             commands::auth_set_default_account,
             commands::auth_logout,
             commands::agy_account_is_running,
             commands::agy_account_quota,
+            commands::workbuddy_account_live_state,
+            commands::workbuddy_model_owners,
+            commands::workbuddy_account_import_current,
+            commands::workbuddy_account_prepare_new_login,
+            commands::workbuddy_account_open_app,
+            commands::workbuddy_account_quota,
             commands::claude_account_submit_paste,
             commands::get_claude_account_quota,
             commands::get_claude_default_plan,
@@ -1958,21 +1947,11 @@ pub fn run() {
             commands::kimi_oauth_use_account,
             commands::kimi_oauth_models,
             // Copilot OAuth commands (multi-account support)
-            commands::copilot_start_device_flow,
-            commands::copilot_poll_for_auth,
-            commands::copilot_poll_for_account,
-            commands::copilot_list_accounts,
-            commands::copilot_remove_account,
-            commands::copilot_set_default_account,
-            commands::copilot_get_auth_status,
-            commands::copilot_logout,
-            commands::copilot_is_authenticated,
-            commands::copilot_get_token,
-            commands::copilot_get_token_for_account,
             commands::copilot_get_models,
             commands::copilot_get_models_for_account,
             commands::copilot_get_usage,
             commands::copilot_get_usage_for_account,
+            commands::copilot_cli_signed_in_account,
             // OMO commands
             commands::read_omo_local_file,
             commands::get_current_omo_provider_id,
@@ -1990,10 +1969,6 @@ pub fn run() {
             commands::delete_daily_memory_file,
             commands::search_daily_memory_files,
             commands::open_workspace_directory,
-            // lightweight mode (for testing or low-resource environments)
-            commands::enter_lightweight_mode,
-            commands::exit_lightweight_mode,
-            commands::is_lightweight_mode,
         ]);
 
     let app = builder
@@ -2112,11 +2087,22 @@ pub fn run() {
 pub async fn cleanup_before_exit(app_handle: &tauri::AppHandle) {
     if let Some(state) = app_handle.try_state::<store::AppState>() {
         crate::mode::controller::detach_all(state.inner()).await;
+        // 切换后几秒内退出：给开着的 Claude Code 会话写的空值墓碑现在删掉（刚写的最多等 3 秒），
+        // 不留到下次启动
+        let _ = tokio::task::spawn_blocking(
+            crate::services::provider::claude_direct::finish_tombstones_before_exit,
+        )
+        .await;
         log::info!("退出清理完成：客户端已指回直连，代理已停止");
     }
 }
 
 /// 系统终止应用时最多等退出清理这么久：停代理服务自带 5 秒超时，指回直连只是写几个文件。
+///
+/// 删 Claude 空值墓碑前最多等 3 秒（`claude_direct::TOMBSTONE_MIN_VISIBLE`），但这 3 秒从
+/// 切换写入墓碑那一刻算，指回直连、停代理花掉的时间也算在里面，所以不会再叠加 3 秒：最坏
+/// 是两者取大（5 秒）再加写几个文件。只有真写了墓碑、而且是切换后 3 秒内退出才会等。
+/// 超时也不弄坏文件：空值留着（Claude Code 读到等于没设），下次启动接着删。
 const SYSTEM_EXIT_CLEANUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
 
 /// 系统直接终止应用时（macOS ⌘Q、Dock「退出」、注销关机）的退出清理。
@@ -2168,7 +2154,7 @@ fn initialize_common_config_snippets(state: &store::AppState) {
     for app_type in crate::app_config::AppType::all() {
         if !state
             .db
-            .should_auto_extract_config_snippet(app_type.as_str())
+            .should_auto_extract_config_snippet(&app_type)
             .unwrap_or(false)
         {
             continue;
@@ -2189,9 +2175,9 @@ fn initialize_common_config_snippets(state: &store::AppState) {
             &settings,
         ) {
             Ok(snippet) if !snippet.is_empty() && snippet != "{}" => {
-                match state.db.set_config_snippet(app_type.as_str(), Some(snippet)) {
+                match state.db.set_config_snippet(&app_type, Some(snippet)) {
                     Ok(()) => {
-                        let _ = state.db.set_config_snippet_cleared(app_type.as_str(), false);
+                        let _ = state.db.set_config_snippet_cleared(&app_type, false);
                         log::info!(
                             "✓ Auto-extracted common config snippet for {}",
                             app_type.as_str()
@@ -2252,7 +2238,11 @@ fn is_chinese_locale() -> bool {
     std::env::var("LANG")
         .or_else(|_| std::env::var("LC_ALL"))
         .or_else(|_| std::env::var("LC_MESSAGES"))
-        .map(|lang| lang.starts_with("zh"))
+        .map(|lang| {
+            lang.split(['-', '_', '.', '@'])
+                .next()
+                .is_some_and(|language| language.eq_ignore_ascii_case("zh"))
+        })
         .unwrap_or(false)
 }
 

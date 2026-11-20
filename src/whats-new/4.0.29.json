@@ -1,0 +1,33 @@
+{
+  "version": "4.0.29",
+  "items": [
+    {
+      "type": "new",
+      "zh": "新增 Copilot CLI，自带 Key 的供应商可在 /model 里选",
+      "zh-TW": "新增 Copilot CLI，自帶 Key 的供應商可在 /model 裡選",
+      "en": "GitHub Copilot CLI support: your own-key providers show up in Copilot's /model",
+      "ja": "GitHub Copilot CLI に対応。自前キーのプロバイダーを /model で直接選択可能"
+    },
+    {
+      "type": "new",
+      "zh": "界面新增韩语和俄语，七种语言同步维护",
+      "zh-TW": "介面新增韓語與俄語，七種語言同步維護",
+      "en": "Korean and Russian UI, with all seven languages now kept complete",
+      "ja": "韓国語とロシア語の UI を追加。7 言語をそろえて維持"
+    },
+    {
+      "type": "fix",
+      "zh": "修复 Codex 桌面版在 WSL 中运行时用第三方供应商无法启动",
+      "zh-TW": "修正 Codex 桌面版在 WSL 中執行時使用第三方供應商無法啟動",
+      "en": "The Codex desktop app starts again on third-party providers when it runs Codex in WSL",
+      "ja": "Codex デスクトップ版を WSL で実行時、サードパーティで起動できない問題を修正"
+    },
+    {
+      "type": "fix",
+      "zh": "修复 Codex 经路由连第三方时新对话报 400、长回答被截断",
+      "zh-TW": "修正 Codex 經路由連第三方時新對話報 400、長回答被截斷",
+      "en": "Routed Codex no longer gets 400 on new chats or truncated long replies from third parties",
+      "ja": "ルーティング経由の Codex で新規チャットの 400 と長い応答の途切れを修正"
+    }
+  ]
+}

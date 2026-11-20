@@ -147,6 +147,7 @@ export function PricingEditModal({
               placeholder={t("usage.modelIdPlaceholder", {
                 defaultValue: "例如: claude-3-5-sonnet-20241022",
               })}
+              autoFocus
               required
             />
           </div>
@@ -165,6 +166,7 @@ export function PricingEditModal({
             placeholder={t("usage.displayNamePlaceholder", {
               defaultValue: "例如: Claude 3.5 Sonnet",
             })}
+            autoFocus={!isNew}
             required
           />
         </div>

@@ -603,18 +603,16 @@ mod integration_tests {
     use crate::provider::Provider;
     use crate::services::provider::agy_direct;
     use crate::store::AppState;
+    use crate::test_support::TestHome;
     use serial_test::serial;
     use std::os::unix::fs::PermissionsExt;
     use std::sync::Arc;
 
-    struct HomeGuard(tempfile::TempDir, Option<std::ffi::OsString>);
+    /// A test home that also disarms any failpoint before the home goes away.
+    struct HomeGuard(TestHome);
     impl HomeGuard {
         fn new() -> Self {
-            let dir = tempfile::tempdir().unwrap();
-            let previous = std::env::var_os("CC_SWITCH_TEST_HOME");
-            std::env::set_var("CC_SWITCH_TEST_HOME", dir.path());
-            crate::settings::reload_settings().unwrap();
-            Self(dir, previous)
+            Self(TestHome::new())
         }
         fn path(&self) -> &Path {
             self.0.path()
@@ -623,11 +621,6 @@ mod integration_tests {
     impl Drop for HomeGuard {
         fn drop(&mut self) {
             failpoint::crash_at(None);
-            match self.1.take() {
-                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
-                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
-            }
-            let _ = crate::settings::reload_settings();
         }
     }
 
@@ -695,7 +688,7 @@ mod integration_tests {
 
         // A pointer left by an older version is neither re-applied by a full
         // sync nor a reason to refuse deleting the card.
-        db.set_current_provider("agy", "login").unwrap();
+        db.set_current_provider(&AppType::Agy, "login").unwrap();
         if let Err(error) = ProviderService::sync_current_to_live(&state) {
             assert!(!error.to_string().contains("provider/agy"), "{error}");
         }
@@ -785,7 +778,7 @@ mod integration_tests {
         let _home = HomeGuard::new();
         let db = Database::memory().unwrap();
         let row = relay("relay one");
-        db.save_provider("agy", &row).unwrap();
+        db.save_provider(&AppType::Agy, &row).unwrap();
         let launch = prepare_launch(&row.id, &row.settings_config).unwrap();
         let dir = launch.gemini_dir.unwrap();
         let logs = dir.join("antigravity-cli/brain/abc-123/.system_generated/logs");
@@ -847,12 +840,12 @@ mod integration_tests {
         assert!(
             !crate::services::ProviderService::import_default_config(&state, AppType::Agy).unwrap()
         );
-        assert!(db.get_all_providers("agy").unwrap().is_empty());
+        assert!(db.get_all_providers(&AppType::Agy).unwrap().is_empty());
 
         // A stored provider is not applied by a full sync either.
         let blank = provider("blank", json!({"env":{},"config":{}}), false);
-        db.save_provider("agy", &blank).unwrap();
-        db.set_current_provider("agy", "blank").unwrap();
+        db.save_provider(&AppType::Agy, &blank).unwrap();
+        db.set_current_provider(&AppType::Agy, "blank").unwrap();
         let result = crate::services::ProviderService::sync_current_to_live(&state);
         if let Err(error) = &result {
             assert!(!error.to_string().contains("provider/agy"), "{error}");
@@ -875,7 +868,10 @@ mod integration_tests {
             crate::services::ProviderService::import_default_config(&state, AppType::Agy).unwrap()
         );
         // The key never lives in a file, so anything imported is agy's own login.
-        let imported = db.get_provider_by_id("default", "agy").unwrap().unwrap();
+        let imported = db
+            .get_provider_by_id("default", &AppType::Agy)
+            .unwrap()
+            .unwrap();
         assert_eq!(imported.category.as_deref(), Some("official"));
         assert!(agy_direct::is_official(&imported));
     }

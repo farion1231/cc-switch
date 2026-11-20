@@ -6,18 +6,14 @@
 //! 支持检测官方 Codex 客户端 (codex_vscode, codex_cli_rs)
 
 use super::{AuthInfo, AuthStrategy, ProviderAdapter};
+use crate::codex_config::{
+    active_provider_str, extract_codex_base_url, is_anthropic_wire_api, is_chat_wire_api,
+};
 use crate::provider::{CodexChatReasoningConfig, Provider};
 use crate::proxy::error::ProxyError;
-use regex::Regex;
 use serde_json::Value as JsonValue;
 use std::collections::HashSet;
-use std::sync::LazyLock;
 use toml::Value as TomlValue;
-
-/// 官方 Codex 客户端 User-Agent 正则
-#[allow(dead_code)]
-static CODEX_CLIENT_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^(codex_vscode|codex_cli_rs)/[\d.]+").unwrap());
 
 /// Codex 适配器
 pub struct CodexAdapter;
@@ -68,7 +64,7 @@ pub fn codex_provider_uses_chat_completions(provider: &Provider) -> bool {
         .settings_config
         .get("config")
         .and_then(|v| v.as_str())
-        .and_then(extract_codex_base_url_from_toml)
+        .and_then(extract_codex_base_url)
         .map(|url| is_chat_completions_url(&url))
         .unwrap_or(false)
 }
@@ -114,7 +110,7 @@ pub fn should_send_codex_chat_prompt_cache_key(provider: &Provider) -> bool {
                 .settings_config
                 .get("config")
                 .and_then(|value| value.as_str())
-                .and_then(extract_codex_base_url_from_toml)
+                .and_then(extract_codex_base_url)
         });
 
     let Some(base_url) = base_url else {
@@ -221,9 +217,24 @@ pub fn should_convert_codex_responses_to_anthropic(provider: &Provider, endpoint
 /// fires on native Responses passthrough.
 ///
 /// Covers managed xAI OAuth *and* API-key providers whose live upstream is
-/// `api.x.ai` with `wire_api = "responses"`. See farion1231/cc-switch#6815.
-pub fn provider_needs_responses_namespace_flatten(provider: &Provider) -> bool {
-    provider.is_xai_oauth() || provider_is_xai_native_responses(provider)
+/// `api.x.ai` with `wire_api = "responses"`, plus Grok models served by managed
+/// Copilot. Call only on native Responses paths, with the resolved outbound
+/// model: a Copilot card can serve both Grok and non-Grok models.
+/// See farion1231/cc-switch#6815.
+pub fn provider_needs_responses_namespace_flatten(
+    provider: &Provider,
+    outbound_model: Option<&str>,
+) -> bool {
+    provider.is_xai_oauth()
+        || provider_is_xai_native_responses(provider)
+        || (provider.is_github_copilot()
+            && outbound_model.is_some_and(|model| {
+                model
+                    .trim()
+                    .as_bytes()
+                    .get(..5)
+                    .is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"grok-"))
+            }))
 }
 
 /// True when this Codex provider talks native Responses to first-party xAI
@@ -242,7 +253,7 @@ fn provider_is_xai_native_responses(provider: &Provider) -> bool {
         return false;
     }
 
-    extract_codex_base_url_from_toml(config_text)
+    extract_codex_base_url(config_text)
         .map(|url| url.to_ascii_lowercase())
         .is_some_and(|url| url.contains("api.x.ai"))
 }
@@ -304,7 +315,7 @@ fn has_explicit_codex_third_party_upstream(provider: &Provider) -> bool {
 /// backend. The fixed legacy card keeps its existing behavior.
 pub fn is_codex_official_provider(provider: &Provider) -> bool {
     let is_fixed_official_id = provider.id == crate::database::CODEX_OFFICIAL_PROVIDER_ID;
-    if is_fixed_official_id && provider.category.as_deref() == Some("official") {
+    if is_fixed_official_id && provider.has_official_category() {
         return true;
     }
 
@@ -343,7 +354,7 @@ pub fn is_codex_official_provider(provider: &Provider) -> bool {
         return false;
     }
 
-    is_fixed_official_id || provider.category.as_deref() == Some("official")
+    is_fixed_official_id || provider.has_official_category()
 }
 
 /// Vendors whose OFFICIAL Codex integration is a native `/responses` gateway that
@@ -425,7 +436,7 @@ pub fn resolve_codex_catalog_tool_profile(
         .settings_config
         .get("config")
         .and_then(|v| v.as_str())
-        .and_then(extract_codex_base_url_from_toml)
+        .and_then(extract_codex_base_url)
         .or_else(|| {
             provider
                 .settings_config
@@ -590,6 +601,124 @@ pub fn strip_codex_hosted_web_search(body: &mut JsonValue) -> bool {
     changed
 }
 
+/// Codex 客户端私有、第三方原生 Responses 网关普遍不认识的 `include` 标记。Codex 0.163+
+/// 起随请求下发（#8996 / #9042），ChatGPT 后端之外的网关会拿它整条 400。只删这一项，
+/// 其余标记原样保留。
+const CODEX_PRIVATE_INCLUDE_MARKERS: &[&str] = &["output.encrypted_content"];
+
+/// 去掉 `include` 里的 Codex 私有标记：去完为空时整个键删掉；缺键、非数组、非对象
+/// 请求一律不动；数组里的非字符串项原样留着。返回是否改了请求。和 xAI 侧的白名单各管
+/// 一段，重复删无副作用。
+pub fn strip_codex_private_include_markers(body: &mut JsonValue) -> bool {
+    let Some(obj) = body.as_object_mut() else {
+        return false;
+    };
+    let mut include_gone = false;
+    let changed = match obj.get_mut("include").and_then(JsonValue::as_array_mut) {
+        Some(include) => {
+            let before = include.len();
+            include.retain(|marker| {
+                !marker
+                    .as_str()
+                    .is_some_and(|marker| CODEX_PRIVATE_INCLUDE_MARKERS.contains(&marker))
+            });
+            let changed = include.len() != before;
+            include_gone = changed && include.is_empty();
+            changed
+        }
+        None => false,
+    };
+    if include_gone {
+        obj.remove("include");
+    }
+    changed
+}
+
+/// Codex 对非 OpenAI provider 会清掉 `encrypted_content` 的条目类型：codex-rs
+/// `ResponseItem::clear_encrypted_content` 覆盖的类型，去掉它另外放行的推理与压缩条目。
+/// 按正向名单照抄，Codex 以后新加的条目类型不会被误删。
+const CODEX_OPENAI_ONLY_ENCRYPTED_CONTENT_ITEM_TYPES: &[&str] = &[
+    "message",
+    "local_shell_call",
+    "function_call",
+    "tool_search_call",
+    "custom_tool_call",
+    "web_search_call",
+    "image_generation_call",
+];
+
+/// 去掉 Codex 只在 provider 是内置 openai 时才发的请求内容，让第三方上游收到的请求和
+/// Codex 自己对非 OpenAI provider 发的一样。照 codex-rs `core/src/client.rs`
+/// `build_responses_request` 里 `is_openai()`（`name == "OpenAI"`）的分支：
+///
+/// - `include` 里的 `output.encrypted_content`（`output_token_replay` 只对 OpenAI 开）；
+/// - `stream_options.reasoning_summary_delivery`（同上，`stream_options` 只有这一个字段）；
+/// - `input` 里的 `configuration_update` 条目（推理档位更新只对 OpenAI 开，否则整条滤掉）；
+/// - 每个条目的 `internal_chat_message_metadata_passthrough`；
+/// - 推理、压缩以外条目的 `encrypted_content`，以及 `function_call` 的 `encrypted_function_args`。
+///
+/// 另加顶层 `access_programs`：Codex 按登录方式而非 provider 决定发不发，但只有带着
+/// ChatGPT 登录才会出现，自定义表（第三方 Key）永远不发。
+///
+/// 第三方路由写成内置 openai（有 ChatGPT 登录时）、聚合模式经内置 openai 走第三方成员，
+/// Codex 都以为自己在跟 OpenAI 说话，这些字段就会到达第三方，严格网关会整条 400
+/// （#9042）。每次删得一样，不影响缓存前缀；请求里没有这些字段时逐字节不变。返回是否
+/// 改了请求。
+pub fn strip_codex_openai_only_request_fields(body: &mut JsonValue) -> bool {
+    let mut changed = strip_codex_private_include_markers(body);
+    let Some(obj) = body.as_object_mut() else {
+        return changed;
+    };
+
+    let mut stream_options_gone = false;
+    if let Some(stream_options) = obj
+        .get_mut("stream_options")
+        .and_then(JsonValue::as_object_mut)
+    {
+        if stream_options
+            .remove("reasoning_summary_delivery")
+            .is_some()
+        {
+            changed = true;
+            stream_options_gone = stream_options.is_empty();
+        }
+    }
+    if stream_options_gone {
+        obj.remove("stream_options");
+    }
+
+    changed |= obj.remove("access_programs").is_some();
+
+    if let Some(input) = obj.get_mut("input").and_then(JsonValue::as_array_mut) {
+        let before = input.len();
+        input.retain(|item| {
+            item.get("type").and_then(JsonValue::as_str) != Some("configuration_update")
+        });
+        changed |= input.len() != before;
+
+        for item in input.iter_mut() {
+            let Some(item) = item.as_object_mut() else {
+                continue;
+            };
+            changed |= item
+                .remove("internal_chat_message_metadata_passthrough")
+                .is_some();
+            let item_type = item.get("type").and_then(JsonValue::as_str);
+            let drops_encrypted_content = item_type
+                .is_some_and(|t| CODEX_OPENAI_ONLY_ENCRYPTED_CONTENT_ITEM_TYPES.contains(&t));
+            let is_function_call = item_type == Some("function_call");
+            if drops_encrypted_content {
+                changed |= item.remove("encrypted_content").is_some();
+            }
+            if is_function_call {
+                changed |= item.remove("encrypted_function_args").is_some();
+            }
+        }
+    }
+
+    changed
+}
+
 pub fn resolve_codex_chat_reasoning_config(
     provider: &Provider,
     body: &JsonValue,
@@ -684,7 +813,7 @@ fn infer_codex_chat_reasoning_config(
                 .settings_config
                 .get("config")
                 .and_then(|v| v.as_str())
-                .and_then(extract_codex_base_url_from_toml)
+                .and_then(extract_codex_base_url)
         })
         .unwrap_or_default();
     infer_chat_reasoning_config(&provider.name, &base_url, &model)
@@ -888,26 +1017,23 @@ fn infer_aggregator_platform_config(
         });
     }
 
+    // Mistral 官方 API（#9507）：Chat 请求体不收额外字段，它托管的 deepseek / glm 名模型
+    // 会被下方模型规则注入 `thinking:{type}`，整条 422。与 Codex 的 Mistral 预设、Claude
+    // 侧（`claude_reasoning`）共用 `is_mistral_api`，不下发推理参数。
+    // 要发档位的用户在卡上显式配置 codexChatReasoning。
+    if super::is_mistral_api(base_url) {
+        return Some(CodexChatReasoningConfig {
+            supports_thinking: Some(false),
+            supports_effort: Some(false),
+            thinking_param: Some("none".to_string()),
+            effort_param: Some("none".to_string()),
+            effort_value_mode: None,
+            output_format: Some("auto".to_string()),
+            effort_levels: None,
+        });
+    }
+
     None
-}
-
-fn is_chat_wire_api(value: &str) -> bool {
-    matches!(
-        value.trim().to_ascii_lowercase().as_str(),
-        "chat"
-            | "chat_completions"
-            | "chat-completions"
-            | "openai_chat"
-            | "openai-chat"
-            | "openai_chat_completions"
-    )
-}
-
-fn is_anthropic_wire_api(value: &str) -> bool {
-    matches!(
-        value.trim().to_ascii_lowercase().as_str(),
-        "anthropic" | "anthropic_messages" | "anthropic-messages" | "claude" | "messages"
-    )
 }
 
 fn is_chat_completions_url(value: &str) -> bool {
@@ -929,21 +1055,7 @@ pub fn is_origin_only_url(value: &str) -> bool {
 
 fn extract_codex_wire_api_from_toml(config_text: &str) -> Option<String> {
     let doc = config_text.parse::<TomlValue>().ok()?;
-
-    if let Some(active_provider) = doc.get("model_provider").and_then(|v| v.as_str()) {
-        if let Some(wire_api) = doc
-            .get("model_providers")
-            .and_then(|providers| providers.get(active_provider))
-            .and_then(|provider| provider.get("wire_api"))
-            .and_then(|v| v.as_str())
-        {
-            return Some(wire_api.to_string());
-        }
-    }
-
-    doc.get("wire_api")
-        .and_then(|v| v.as_str())
-        .map(ToString::to_string)
+    active_provider_str(&doc, "wire_api").map(str::to_string)
 }
 
 fn extract_codex_model_from_toml(config_text: &str) -> Option<String> {
@@ -954,12 +1066,6 @@ fn extract_codex_model_from_toml(config_text: &str) -> Option<String> {
         .map(str::trim)
         .filter(|model| !model.is_empty())
         .map(ToString::to_string)
-}
-
-fn extract_codex_base_url_from_toml(config_text: &str) -> Option<String> {
-    // Canonical parser lives in codex_config; keep this thin alias so the
-    // proxy hot path and the usage-credential resolver share one implementation.
-    crate::codex_config::extract_codex_base_url(config_text)
 }
 
 impl CodexAdapter {
@@ -1086,7 +1192,7 @@ impl ProviderAdapter for CodexAdapter {
                 // The table `model_provider` selects, read the way Codex reads it. The text
                 // scans below remain for a top-level `openai_base_url` and for TOML that
                 // does not parse.
-                if let Some(url) = extract_codex_base_url_from_toml(config_str) {
+                if let Some(url) = extract_codex_base_url(config_str) {
                     return Ok(url.trim_end_matches('/').to_string());
                 }
                 if let Some(start) = config_str.find("base_url = \"") {
@@ -2263,6 +2369,7 @@ wire_api = "chat"
         let transformed = crate::proxy::providers::transform_codex_chat::responses_to_chat_completions_with_reasoning(
             request,
             Some(&config),
+            true,
         )
         .unwrap();
         assert_eq!(transformed["reasoning_effort"], "max");
@@ -2372,6 +2479,71 @@ wire_api = "chat"
         assert_eq!(config.effort_param.as_deref(), Some("reasoning_effort"));
         assert_eq!(config.effort_value_mode.as_deref(), Some("zen"));
         assert_eq!(config.output_format.as_deref(), Some("reasoning_content"));
+    }
+
+    #[test]
+    fn test_resolve_codex_chat_reasoning_mistral_api_sends_no_reasoning_fields() {
+        let provider = create_provider(json!({
+            "config": r#"
+model_provider = "mistral"
+model = "deepseek-v4-1-flash-1017"
+
+[model_providers.mistral]
+name = "Mistral AI"
+base_url = "https://api.mistral.ai/v1"
+wire_api = "chat"
+"#
+        }));
+
+        // Mistral 托管的 deepseek 名模型不得套 DeepSeek 规则注入 thinking（#9507）。
+        let request = json!({
+            "model": "deepseek-v4-1-flash-1017",
+            "input": "hi",
+            "reasoning": {"effort": "high"}
+        });
+        let config = resolve_codex_chat_reasoning_config(&provider, &request).unwrap();
+        let chat = crate::proxy::providers::transform_codex_chat::responses_to_chat_completions_with_reasoning(
+            request,
+            Some(&config),
+            // 与 forwarder 对 api.mistral.ai 的取值一致。
+            false,
+        )
+        .unwrap();
+
+        assert!(chat.get("thinking").is_none());
+        assert!(chat.get("reasoning_effort").is_none());
+        assert!(chat.get("reasoning").is_none());
+    }
+
+    #[test]
+    fn test_resolve_codex_chat_reasoning_mistral_rule_needs_exact_host() {
+        for base_url in [
+            "https://api.mistral.ai.example/v1",
+            "https://relay.example/api.mistral.ai/v1",
+        ] {
+            let provider = create_provider(json!({
+                "config": format!(
+                    "model_provider = \"relay\"\nmodel = \"deepseek-v4-pro\"\n\n[model_providers.relay]\nname = \"Relay\"\nbase_url = \"{base_url}\"\nwire_api = \"chat\"\n"
+                )
+            }));
+
+            let config = resolve_codex_chat_reasoning_config(
+                &provider,
+                &json!({ "model": "deepseek-v4-pro" }),
+            )
+            .unwrap();
+
+            assert_eq!(
+                config.thinking_param.as_deref(),
+                Some("thinking"),
+                "{base_url}"
+            );
+            assert_eq!(
+                config.effort_value_mode.as_deref(),
+                Some("deepseek"),
+                "{base_url}"
+            );
+        }
     }
 
     #[test]
@@ -2573,7 +2745,7 @@ wire_api = "responses"
             provider_type: Some("xai_oauth".to_string()),
             ..Default::default()
         });
-        assert!(provider_needs_responses_namespace_flatten(&xai));
+        assert!(provider_needs_responses_namespace_flatten(&xai, None));
 
         // API-key Grok cards (no xai_oauth meta) still talk to api.x.ai Responses.
         let grok_key = create_provider(json!({
@@ -2588,7 +2760,7 @@ base_url = "https://api.x.ai/v1"
 wire_api = "responses"
 "#
         }));
-        assert!(provider_needs_responses_namespace_flatten(&grok_key));
+        assert!(provider_needs_responses_namespace_flatten(&grok_key, None));
 
         // A non-xAI Responses provider must not be flattened.
         let other = create_provider(json!({
@@ -2599,6 +2771,184 @@ base_url = "https://api.deepseek.com"
 wire_api = "responses"
 "#
         }));
-        assert!(!provider_needs_responses_namespace_flatten(&other));
+        assert!(!provider_needs_responses_namespace_flatten(&other, None));
+        assert!(!provider_needs_responses_namespace_flatten(
+            &other,
+            Some("grok-4.7")
+        ));
+    }
+
+    #[test]
+    fn copilot_namespace_compat_uses_only_the_outbound_grok_model() {
+        let mut copilot = create_copilot_provider();
+        copilot.settings_config = json!({
+            "config": "model = \"grok-4.7\"",
+            "modelCatalog": {"models": [{"model": "grok-4.7"}, {"model": "gpt-6.1-sol"}]}
+        });
+        for (model, expected) in [
+            (Some("grok-4.7"), true),
+            (Some("grok-4.5"), true),
+            (Some(" GROK-4.7-fast "), true),
+            (Some("gpt-6.1-sol"), false),
+            (Some("claude-sonnet-4.6"), false),
+            (Some("grokker"), false),
+            (Some("模型"), false),
+            (Some(""), false),
+            (None, false),
+        ] {
+            assert_eq!(
+                provider_needs_responses_namespace_flatten(&copilot, model),
+                expected,
+                "{model:?}"
+            );
+        }
+
+        copilot.meta = None;
+        assert!(!provider_needs_responses_namespace_flatten(
+            &copilot,
+            Some("grok-4.7")
+        ));
+    }
+
+    #[test]
+    fn strip_private_include_markers_keeps_other_markers() {
+        let mut body = json!({
+            "include": ["reasoning.encrypted_content", "output.encrypted_content"]
+        });
+
+        assert!(strip_codex_private_include_markers(&mut body));
+        assert_eq!(body["include"], json!(["reasoning.encrypted_content"]));
+    }
+
+    #[test]
+    fn strip_private_include_markers_removes_empty_include() {
+        let mut body = json!({ "include": ["output.encrypted_content"] });
+
+        assert!(strip_codex_private_include_markers(&mut body));
+        assert!(body.get("include").is_none());
+    }
+
+    #[test]
+    fn strip_private_include_markers_leaves_unrelated_markers_alone() {
+        let mut body = json!({ "include": ["web_search_call.action.sources"] });
+
+        assert!(!strip_codex_private_include_markers(&mut body));
+        assert_eq!(body["include"], json!(["web_search_call.action.sources"]));
+    }
+
+    #[test]
+    fn strip_private_include_markers_ignores_shapes_it_does_not_own() {
+        // Missing key.
+        let mut body = json!({ "model": "m" });
+        assert!(!strip_codex_private_include_markers(&mut body));
+
+        // Not an array.
+        let mut body = json!({ "include": "output.encrypted_content" });
+        assert!(!strip_codex_private_include_markers(&mut body));
+        assert_eq!(body["include"], json!("output.encrypted_content"));
+
+        // Non-object body.
+        let mut body = json!(["output.encrypted_content"]);
+        assert!(!strip_codex_private_include_markers(&mut body));
+    }
+
+    #[test]
+    fn strip_private_include_markers_keeps_non_string_entries() {
+        // `include` should only ever hold strings; if something else shows up, the
+        // private marker still goes but the unknown entry is left where it was.
+        let mut body = json!({ "include": ["output.encrypted_content", 42] });
+
+        assert!(strip_codex_private_include_markers(&mut body));
+        assert_eq!(body["include"], json!([42]));
+    }
+
+    #[test]
+    fn strip_private_include_markers_is_idempotent() {
+        let mut body = json!({ "include": ["reasoning.encrypted_content"] });
+
+        assert!(!strip_codex_private_include_markers(&mut body));
+        assert!(!strip_codex_private_include_markers(&mut body));
+        assert_eq!(body["include"], json!(["reasoning.encrypted_content"]));
+    }
+
+    #[test]
+    fn strip_openai_only_fields_leaves_custom_table_requests_byte_identical() {
+        // 和 Codex 对自定义表发的请求一样：没有任何只发给 OpenAI 的字段，什么都不动。
+        let mut body = json!({
+            "model": "m",
+            "include": ["reasoning.encrypted_content"],
+            "input": [
+                { "type": "message", "role": "user", "content": [] },
+                { "type": "reasoning", "summary": [], "encrypted_content": "r" },
+                { "type": "compaction", "encrypted_content": "c" },
+                { "type": "context_compaction", "encrypted_content": "cc" }
+            ]
+        });
+        let before = body.clone();
+
+        assert!(!strip_codex_openai_only_request_fields(&mut body));
+        assert_eq!(body, before);
+    }
+
+    #[test]
+    fn strip_openai_only_fields_keeps_other_stream_options() {
+        let mut body = json!({
+            "stream_options": { "reasoning_summary_delivery": "sequential_cutoff", "include_usage": true }
+        });
+
+        assert!(strip_codex_openai_only_request_fields(&mut body));
+        assert_eq!(body["stream_options"], json!({ "include_usage": true }));
+    }
+
+    #[test]
+    fn strip_openai_only_fields_keeps_compaction_ciphertext() {
+        // 压缩条目的密文 Codex 对非 OpenAI 也照发，第三方压缩靠 `codex_compaction` 处理。
+        let mut body = json!({
+            "input": [
+                {
+                    "type": "compaction_summary",
+                    "encrypted_content": "c",
+                    "internal_chat_message_metadata_passthrough": { "turn_id": "t" }
+                },
+                { "type": "web_search_call", "status": "completed", "encrypted_content": "w" }
+            ]
+        });
+
+        assert!(strip_codex_openai_only_request_fields(&mut body));
+        assert_eq!(
+            body["input"],
+            json!([
+                { "type": "compaction_summary", "encrypted_content": "c" },
+                { "type": "web_search_call", "status": "completed" }
+            ])
+        );
+    }
+
+    #[test]
+    fn strip_openai_only_fields_ignores_shapes_it_does_not_own() {
+        let mut body = json!(["output.encrypted_content"]);
+        assert!(!strip_codex_openai_only_request_fields(&mut body));
+
+        // input 不是数组、条目不是对象：不动。
+        let mut body = json!({ "input": "hi", "stream_options": "x" });
+        assert!(!strip_codex_openai_only_request_fields(&mut body));
+        let mut body = json!({ "input": ["hi", 1] });
+        assert!(!strip_codex_openai_only_request_fields(&mut body));
+        assert_eq!(body["input"], json!(["hi", 1]));
+    }
+
+    #[test]
+    fn strip_openai_only_fields_is_idempotent() {
+        let mut body = json!({
+            "include": ["output.encrypted_content"],
+            "access_programs": { "cyber": "standard" },
+            "input": [{ "type": "configuration_update", "reasoning": { "effort": "high" } }]
+        });
+
+        assert!(strip_codex_openai_only_request_fields(&mut body));
+        let once = body.clone();
+        assert!(!strip_codex_openai_only_request_fields(&mut body));
+        assert_eq!(body, once);
+        assert_eq!(body, json!({ "input": [] }));
     }
 }

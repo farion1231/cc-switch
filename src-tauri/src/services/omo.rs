@@ -1,3 +1,4 @@
+use crate::app_config::AppType;
 #[cfg(windows)]
 use crate::config::derive_wsl_home_dir;
 use crate::config::{atomic_write, get_home_dir, write_json_file_with_contents};
@@ -89,7 +90,7 @@ impl UnifiedConfigDocument {
     }
 
     fn save(self) -> Result<Vec<u8>, AppError> {
-        let _guard = omo_write_lock().lock()?;
+        let _guard = crate::sync_utils::lock_file_operation(omo_write_lock());
         let next_source = self.document.validated_source()?;
         let current_source =
             std::fs::read_to_string(&self.path).map_err(|e| AppError::io(&self.path, e))?;
@@ -349,7 +350,7 @@ impl OmoService {
         expected_contents: Option<&[u8]>,
         snapshot: Option<&[u8]>,
     ) -> Result<(), AppError> {
-        let _guard = omo_write_lock().lock()?;
+        let _guard = crate::sync_utils::lock_file_operation(omo_write_lock());
         let current_contents = Self::snapshot_config_file(path)?;
         if current_contents.as_deref() != expected_contents {
             return Err(AppError::Config(format!(
@@ -364,7 +365,7 @@ impl OmoService {
         v: &OmoVariant,
         profile_data: Option<&OmoProfileData>,
     ) -> Result<(), AppError> {
-        let _operation_guard = omo_operation_lock().lock()?;
+        let _operation_guard = crate::sync_utils::lock_file_operation(omo_operation_lock());
         let plugin_config_path = crate::opencode_config::get_opencode_config_path()?;
         let legacy_dir = plugin_config_path.parent().ok_or_else(|| {
             AppError::Config("OpenCode config path has no parent directory".to_string())
@@ -391,13 +392,13 @@ impl OmoService {
                 }
             }
             OmoConfigLocation::Legacy(path) => {
-                let _guard = omo_write_lock().lock()?;
+                let _guard = crate::sync_utils::lock_file_operation(omo_write_lock());
                 let previous_contents = Self::snapshot_config_file(path)?;
                 let expected_contents = Some(write_json_file_with_contents(path, &merged)?);
                 (previous_contents, expected_contents)
             }
         };
-        if let Err(err) = crate::opencode_config::add_plugin(v.plugin_name) {
+        let rollback = || {
             if expected_contents.is_some() {
                 if let Err(rollback_err) = Self::restore_config_file_if_unchanged(
                     &config_path,
@@ -411,6 +412,13 @@ impl OmoService {
                     );
                 }
             }
+            Ok(())
+        };
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            crate::opencode_config::add_plugin(v.plugin_name)
+        }));
+        if let Err(err) = crate::sync_utils::resume_after_rollback(outcome, rollback) {
+            rollback()?;
             return Err(err);
         }
         if expected_contents.is_some() {
@@ -422,7 +430,7 @@ impl OmoService {
     // ── Public API (variant-parameterized) ─────────────────
 
     pub fn delete_config_file(v: &OmoVariant) -> Result<(), AppError> {
-        let _operation_guard = omo_operation_lock().lock()?;
+        let _operation_guard = crate::sync_utils::lock_file_operation(omo_operation_lock());
         let plugin_config_path = crate::opencode_config::get_opencode_config_path()?;
         let base_dir = plugin_config_path
             .parent()
@@ -441,28 +449,33 @@ impl OmoService {
 
         let mut applied_changes = Vec::new();
 
-        let result = (|| -> Result<(), AppError> {
-            if let Some(path) = &unified_path {
-                if let Some((snapshot, expected_contents)) =
-                    Self::remove_unified_config_section(path)?
-                {
-                    applied_changes.push((path.clone(), Some(snapshot), Some(expected_contents)));
+        let outcome =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<(), AppError> {
+                if let Some(path) = &unified_path {
+                    if let Some((snapshot, expected_contents)) =
+                        Self::remove_unified_config_section(path)?
+                    {
+                        applied_changes.push((
+                            path.clone(),
+                            Some(snapshot),
+                            Some(expected_contents),
+                        ));
+                    }
                 }
-            }
-            for path in &legacy_paths {
-                let _guard = omo_write_lock().lock()?;
-                let snapshot = Self::snapshot_config_file(path)?;
-                if snapshot.is_none() {
-                    continue;
+                for path in &legacy_paths {
+                    let _guard = crate::sync_utils::lock_file_operation(omo_write_lock());
+                    let snapshot = Self::snapshot_config_file(path)?;
+                    if snapshot.is_none() {
+                        continue;
+                    }
+                    std::fs::remove_file(path).map_err(|e| AppError::io(path, e))?;
+                    applied_changes.push((path.clone(), snapshot, None));
                 }
-                std::fs::remove_file(path).map_err(|e| AppError::io(path, e))?;
-                applied_changes.push((path.clone(), snapshot, None));
-            }
-            crate::opencode_config::remove_plugins_by_prefixes(v.plugin_prefixes)?;
-            Ok(())
-        })();
+                crate::opencode_config::remove_plugins_by_prefixes(v.plugin_prefixes)?;
+                Ok(())
+            }));
 
-        if let Err(err) = result {
+        let rollback = || {
             for (path, snapshot, expected_contents) in applied_changes.iter().rev() {
                 if let Err(rollback_err) = Self::restore_config_file_if_unchanged(
                     path,
@@ -474,6 +487,10 @@ impl OmoService {
                     );
                 }
             }
+            Ok(())
+        };
+        if let Err(err) = crate::sync_utils::resume_after_rollback(outcome, rollback) {
+            rollback()?;
             return Err(err);
         }
 
@@ -491,7 +508,9 @@ impl OmoService {
     }
 
     pub fn write_config_to_file(state: &AppState, v: &OmoVariant) -> Result<(), AppError> {
-        let current_omo = state.db.get_current_omo_provider("opencode", v.category)?;
+        let current_omo = state
+            .db
+            .get_current_omo_provider(&AppType::OpenCode, v.category)?;
         let profile_data = current_omo
             .as_ref()
             .map(|provider| Self::profile_data_from_provider(provider, v));
@@ -564,10 +583,10 @@ impl OmoService {
             in_failover_queue: false,
         };
 
-        state.db.save_provider("opencode", &provider)?;
+        state.db.save_provider(&AppType::OpenCode, &provider)?;
         state
             .db
-            .set_omo_provider_current("opencode", &provider.id, v.category)?;
+            .set_omo_provider_current(&AppType::OpenCode, &provider.id, v.category)?;
         Self::write_config_to_file(state, v)?;
         Ok(provider)
     }

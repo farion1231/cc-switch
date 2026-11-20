@@ -76,6 +76,27 @@ export interface ProviderPreset extends PresetFamilyFields {
 
 export const providerPresets: ProviderPreset[] = [
   {
+    name: "TokenPlus",
+    websiteUrl: "https://www.tokenplus.cn/",
+    apiKeyUrl: "https://www.tokenplus.cn/workspace",
+    category: "aggregator",
+    partnerPromotionKey: "tokenplus",
+    icon: "tokenplus",
+    apiKeyField: "ANTHROPIC_API_KEY",
+    apiFormat: "anthropic",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.tokenplus.cn",
+        ANTHROPIC_API_KEY: "",
+        ANTHROPIC_MODEL: "deepseek/deepseek-v4.1-flash-1017",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek/deepseek-v4.1-flash-1017",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "z-ai/glm-5.3-flash",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "moonshot-ai/kimi-k3.1-pro",
+        ANTHROPIC_SMALL_FAST_MODEL: "minimax/m3.1-flash",
+      },
+    },
+  },
+  {
     name: "Claude Official",
     websiteUrl: "https://www.anthropic.com/claude-code",
     settingsConfig: {
@@ -595,8 +616,8 @@ export const providerPresets: ProviderPreset[] = [
   },
   {
     name: "9527CODE",
-    websiteUrl: "https://9527.codes",
-    apiKeyUrl: "https://9527.codes/register?aff=e5zI",
+    websiteUrl: "https://9527.codes/register?channel=ccs",
+    apiKeyUrl: "https://9527.codes/register?channel=ccs",
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL: "https://9527.codes",
@@ -641,22 +662,19 @@ export const providerPresets: ProviderPreset[] = [
   },
   {
     name: "TeamoRouter",
-    websiteUrl: "https://teamorouter.cn",
+    websiteUrl: "https://teamorouter.com",
     apiKeyUrl:
-      "https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
+      "https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
     settingsConfig: {
       env: {
-        ANTHROPIC_BASE_URL: "https://api.teamorouter.cn",
+        ANTHROPIC_BASE_URL: "https://api.teamorouter.com",
         ANTHROPIC_AUTH_TOKEN: "",
       },
     },
     category: "aggregator",
     isPartner: true,
     partnerPromotionKey: "teamorouter",
-    endpointCandidates: [
-      "https://api.teamorouter.cn",
-      "https://api.teamorouter.com",
-    ],
+    endpointCandidates: ["https://api.teamorouter.com"],
     icon: "teamorouter",
   },
   {
@@ -906,7 +924,6 @@ export const providerPresets: ProviderPreset[] = [
     },
     category: "aggregator",
     isPartner: true,
-    partnerPromotionKey: "ccsub",
     icon: "ccsub",
   },
   {
@@ -2652,41 +2669,39 @@ export const providerPresets: ProviderPreset[] = [
   {
     name: "Mistral AI",
     websiteUrl: "https://mistral.ai",
-    apiKeyUrl: "https://console.mistral.ai/api-keys",
+    // Vibe（原 Le Chat）各档订阅的月度额度与 API 共用（docs.mistral.ai/vibe/
+    // code/cli/api-keys-profiles，2026-11-06 核对），Key 在 Code > Vibe CLI
+    // 页创建，免费 / 订阅 / 按量付费通用，地址同普通 API
+    apiKeyUrl: "https://chat.mistral.ai/code/extensions",
     // 官方 OpenAPI（docs.mistral.ai/openapi.yaml，2026-10-14 核对）只列
     // /v1/chat/completions，鉴权为 Bearer。/v1/messages 与 /v1/responses 无 Key
     // 实测 401（不是 404，网关配了路由），但文档与 changelog 均未提，未经真 Key
     // 实测前只走 openai_chat 路由；base 不带 /v1，适配器自拼
     // /v1/chat/completions（同 Nebius）。模型取官方模型表（docs.mistral.ai/
-    // models.md 同日），用固定版本 ID：主力 Mistral Medium 3.5、haiku 档
-    // Mistral Small 4，均为 GA。Devstral 全系已下线（官方替代即这两款）；
-    // Codestral 定位补全 / FIM，不做 Agent 主力。ChatCompletionRequest 不收
-    // 额外字段且没有 stream_options，转换层给流式请求加的
-    // stream_options.include_usage 会不会被 422 拒、开推理后 content 变成
-    // thinking/text 分块数组能否解析，均未经真 Key 实测。/v1/models 无 Key 401，
-    // 默认探测即可，不写 modelsUrl
+    // models.md，2026-11-06 核对）：Medium 3.5 已于 10-31 弃用（2027-04-30
+    // 下线，官方替代 Large 4），主力改 Mistral Large 4（GA，窗口 1M，标
+    // [1M]）；haiku 档仍是 Mistral Small 4（GA，256k，不标 1M，按 Claude Code
+    // 默认窗口算）。Codestral 定位补全 / FIM，不做 Agent 主力。
+    // ChatCompletionRequest 不收额外字段且没有 stream_options，转换层给流式请求
+    // 加的 stream_options.include_usage 会不会被 422 拒，未经真 Key 实测。
+    // Large 4 不收 reasoning_effort=none（最低 low），不发档位时是否仍推理官方
+    // 未写；推理时流式 delta.content 先是 thinking/text 分块数组，转换层只认
+    // 字符串，正文可能丢。/v1/models 无 Key 401，默认探测即可，不写 modelsUrl。
+    // 以上风险未经真 Key 冒烟，2026-11-06 起照常展示（不再隐藏）
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL: "https://api.mistral.ai",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "mistral-medium-3-5",
+        ANTHROPIC_MODEL: "mistral-large-4[1M]",
         ANTHROPIC_DEFAULT_HAIKU_MODEL: "mistral-small-2603",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "mistral-medium-3-5",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "mistral-medium-3-5",
-        // 两款窗口官方只写「256k」（模型卡 docs.mistral.ai/models/
-        // mistral-medium-3-5-26-04.md、mistral-small-4-0-26-03.md 同日），规则是
-        // prompt + max_tokens ≤ 窗口；models.dev 记 262144，取较小的 256000 钉住
-        CLAUDE_CODE_MAX_CONTEXT_TOKENS: "256000",
-        CLAUDE_CODE_AUTO_COMPACT_WINDOW: "256000",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "mistral-large-4[1M]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "mistral-large-4[1M]",
       },
     },
     category: "cn_official",
     apiFormat: "openai_chat",
     endpointCandidates: ["https://api.mistral.ai"],
     icon: "mistral",
-    // 先隐藏：上面两条转换层风险（stream_options 可能 422、推理分块数组）
-    // 真 Key 冒烟通过前不在列表里展示
-    hidden: true,
   },
   {
     name: "Cloudflare AI Gateway",
@@ -3202,5 +3217,30 @@ export const providerPresets: ProviderPreset[] = [
     },
     category: "aggregator",
     icon: "aicoming",
+  },
+  {
+    name: "Genesis",
+    websiteUrl: "https://genesis.moi.matrixorigin.cn/taas/",
+    apiKeyUrl: "https://uc.moi.matrixorigin.cn/account/credentials?app=genesis",
+    // 矩阵起源 TaaS 按请求路径路由、不按模型名：同一模型未必每种请求格式都有
+    // 上游。/v1/chat/completions 经本地路由实测可用（含流式、工具调用），
+    // /v1/messages 不保证，所以走 openai_chat；base 不带 /v1，适配器自拼。
+    // /v1/models 需 Key（无 Key 返回 invalid_api_key），加 ?type=chat 滤掉
+    // embedding / rerank。起步模型 kimi-k3，用户可再按账号拉取更换（#9269）
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://token.moi.matrixorigin.cn",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "kimi-k3",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "kimi-k3",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "kimi-k3",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "kimi-k3",
+      },
+    },
+    modelsUrl: "https://token.moi.matrixorigin.cn/v1/models?type=chat",
+    endpointCandidates: ["https://token.moi.matrixorigin.cn"],
+    category: "aggregator",
+    icon: "genesis",
+    apiFormat: "openai_chat",
   },
 ];

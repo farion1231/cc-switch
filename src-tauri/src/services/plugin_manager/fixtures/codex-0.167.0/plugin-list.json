@@ -1,0 +1,23 @@
+{
+  "installed": [
+    {
+      "pluginId": "hello@ccs-test",
+      "name": "hello",
+      "marketplaceName": "ccs-test",
+      "version": "0.1.0",
+      "installed": true,
+      "enabled": false,
+      "source": {
+        "source": "local",
+        "path": "C:\\fixture\\cmkt\\plugins\\hello"
+      },
+      "marketplaceSource": {
+        "sourceType": "local",
+        "source": "\\\\?\\C:\\fixture\\cmkt"
+      },
+      "installPolicy": "AVAILABLE",
+      "authPolicy": "ON_INSTALL"
+    }
+  ],
+  "available": []
+}

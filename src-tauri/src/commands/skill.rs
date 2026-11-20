@@ -6,12 +6,13 @@
 
 use super::run_db_task;
 use crate::app_config::{AppType, InstalledSkill, UnmanagedSkill};
-use crate::error::format_skill_error;
+use crate::error::AppError;
 use crate::services::skill::{
-    DiscoverableSkill, ImportSkillSelection, MigrationResult, Skill, SkillAppSyncOutcome,
+    DiscoverableSkill, ImportSkillSelection, MigrationResult, SkillAppSyncOutcome,
     SkillBackupEntry, SkillDiscoveryResult, SkillRepo, SkillService, SkillStorageLocation,
     SkillUninstallResult, SkillUpdateCheckResult, SkillsShSearchResult, ZipInstallResult,
 };
+use crate::services::skill_repo_tokens::RepoTokenList;
 use crate::store::AppState;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -22,19 +23,34 @@ use tauri_plugin_opener::OpenerExt;
 pub struct SkillServiceState(pub Arc<SkillService>);
 
 /// 解析 app 参数为 AppType
-fn parse_app_type(app: &str) -> Result<AppType, String> {
-    AppType::from_str(app).map_err(|e| e.to_string())
+fn parse_app_type(app: &str) -> Result<AppType, AppError> {
+    AppType::from_str(app)
 }
 
 // ========== 统一管理命令 ==========
 
 /// 获取所有已安装的 Skills
+///
+/// 只读数据库，不扫描 SSOT 目录；元数据刷新由
+/// [`refresh_local_skill_metadata`] 单独在后台完成（issue #7848）。
 #[tauri::command]
 pub async fn get_installed_skills(
     app_state: State<'_, AppState>,
 ) -> Result<Vec<InstalledSkill>, String> {
     run_db_task(&app_state, |state| {
         SkillService::get_all_installed(&state.db).map_err(|e| e.to_string())
+    })
+    .await
+}
+
+/// 刷新本地 Skill 的过期元数据（手动编辑 SKILL.md 后同步名称/描述/哈希）。
+///
+/// 全目录哈希可能读入较大的资源文件，放到阻塞线程池执行，避免占用同步命令
+/// 线程；返回实际更新的数量，前端仅在大于 0 时刷新列表。
+#[tauri::command]
+pub async fn refresh_local_skill_metadata(app_state: State<'_, AppState>) -> Result<usize, String> {
+    run_db_task(&app_state, |state| {
+        SkillService::refresh_local_skill_metadata(&state.db).map_err(|e| e.to_string())
     })
     .await
 }
@@ -97,7 +113,6 @@ pub async fn restore_skill_backup(
     .await
 }
 
-/// 切换 Skill 的应用启用状态
 #[tauri::command]
 pub async fn toggle_skill_app(
     id: String,
@@ -108,12 +123,11 @@ pub async fn toggle_skill_app(
     let app_type = parse_app_type(&app)?;
     run_db_task(&app_state, move |state| {
         SkillService::toggle_app(&state.db, &id, &app_type, enabled).map_err(|e| e.to_string())?;
-        Ok(true)
+        Ok::<_, String>(true)
     })
     .await
 }
 
-/// 扫描未管理的 Skills
 #[tauri::command]
 pub async fn scan_unmanaged_skills(
     app_state: State<'_, AppState>,
@@ -147,7 +161,7 @@ pub async fn discover_available_skills(
     service: State<'_, SkillServiceState>,
     app_state: State<'_, AppState>,
 ) -> Result<SkillDiscoveryResult, String> {
-    let repos = app_state.db.get_skill_repos().map_err(|e| e.to_string())?;
+    let repos = app_state.db.get_skill_repos()?;
     service
         .0
         .discover_available_report(repos, force_refresh.unwrap_or(false))
@@ -164,7 +178,7 @@ pub async fn discover_repo_skills(
     service: State<'_, SkillServiceState>,
     app_state: State<'_, AppState>,
 ) -> Result<SkillDiscoveryResult, String> {
-    let repos = app_state.db.get_skill_repos().map_err(|e| e.to_string())?;
+    let repos = app_state.db.get_skill_repos()?;
     let Some(repo) = repos
         .into_iter()
         .find(|repo| repo.owner == owner && repo.name == name)
@@ -199,7 +213,6 @@ pub async fn resync_skills_to_apps(
         .map_err(|e| format!("重新同步 Skill 失败: {e}"))
 }
 
-/// 更新单个 Skill
 #[tauri::command]
 pub async fn update_skill(
     id: String,
@@ -273,150 +286,30 @@ pub async fn search_skills_sh(
         .map_err(|e| e.to_string())
 }
 
-// ========== 兼容旧 API 的命令 ==========
-
-/// 获取技能列表（兼容旧 API）
-#[tauri::command]
-pub async fn get_skills(
-    service: State<'_, SkillServiceState>,
-    app_state: State<'_, AppState>,
-) -> Result<Vec<Skill>, String> {
-    let repos = app_state.db.get_skill_repos().map_err(|e| e.to_string())?;
-    service
-        .0
-        .list_skills(repos, &app_state.db)
-        .await
-        .map_err(|e| e.to_string())
-}
-
-/// 获取指定应用的技能列表（兼容旧 API）
-#[tauri::command]
-pub async fn get_skills_for_app(
-    app: String,
-    service: State<'_, SkillServiceState>,
-    app_state: State<'_, AppState>,
-) -> Result<Vec<Skill>, String> {
-    // 新版本不再区分应用，统一返回所有技能
-    let _ = parse_app_type(&app)?; // 验证 app 参数有效
-    get_skills(service, app_state).await
-}
-
-/// 安装技能（兼容旧 API）
-#[tauri::command]
-pub async fn install_skill(
-    directory: String,
-    service: State<'_, SkillServiceState>,
-    app_state: State<'_, AppState>,
-) -> Result<bool, String> {
-    install_skill_for_app("claude".to_string(), directory, service, app_state).await
-}
-
-/// 安装指定应用的技能（兼容旧 API）
-#[tauri::command]
-pub async fn install_skill_for_app(
-    app: String,
-    directory: String,
-    service: State<'_, SkillServiceState>,
-    app_state: State<'_, AppState>,
-) -> Result<bool, String> {
-    let app_type = parse_app_type(&app)?;
-
-    // 先获取技能信息
-    let repos = app_state.db.get_skill_repos().map_err(|e| e.to_string())?;
-    let skills = service
-        .0
-        .discover_available(repos)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    let skill = skills
-        .into_iter()
-        .find(|s| {
-            let install_name = std::path::Path::new(&s.directory)
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| s.directory.clone());
-            install_name.eq_ignore_ascii_case(&directory)
-                || s.directory.eq_ignore_ascii_case(&directory)
-        })
-        .ok_or_else(|| {
-            format_skill_error(
-                "SKILL_NOT_FOUND",
-                &[("directory", &directory)],
-                Some("checkRepoUrl"),
-            )
-        })?;
-
-    service
-        .0
-        .install(&app_state.db, &skill, &app_type)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    Ok(true)
-}
-
-/// 卸载技能（兼容旧 API）
-#[tauri::command]
-pub async fn uninstall_skill(
-    directory: String,
-    app_state: State<'_, AppState>,
-) -> Result<SkillUninstallResult, String> {
-    uninstall_skill_for_app("claude".to_string(), directory, app_state).await
-}
-
-/// 卸载指定应用的技能（兼容旧 API）
-#[tauri::command]
-pub async fn uninstall_skill_for_app(
-    app: String,
-    directory: String,
-    app_state: State<'_, AppState>,
-) -> Result<SkillUninstallResult, String> {
-    let _ = parse_app_type(&app)?; // 验证参数
-
-    run_db_task(&app_state, move |state| {
-        // 通过 directory 找到对应的 skill id
-        let skills = SkillService::get_all_installed(&state.db).map_err(|e| e.to_string())?;
-
-        let skill = skills
-            .into_iter()
-            .find(|s| s.directory.eq_ignore_ascii_case(&directory))
-            .ok_or_else(|| format!("未找到已安装的 Skill: {directory}"))?;
-
-        SkillService::uninstall(&state.db, &skill.id).map_err(|e| e.to_string())
-    })
-    .await
-}
-
 // ========== 仓库管理命令 ==========
 
-/// 获取技能仓库列表
 #[tauri::command]
 pub async fn get_skill_repos(app_state: State<'_, AppState>) -> Result<Vec<SkillRepo>, String> {
-    run_db_task(&app_state, |state| {
-        state.db.get_skill_repos().map_err(|e| e.to_string())
-    })
-    .await
+    run_db_task(&app_state, |state| state.db.get_skill_repos()).await
 }
 
-/// 添加技能仓库
 #[tauri::command]
 pub async fn add_skill_repo(
-    repo: SkillRepo,
+    mut repo: SkillRepo,
     app_state: State<'_, AppState>,
 ) -> Result<bool, String> {
-    // 整个结构体由前端反序列化而来，owner/name/branch 会被拼进归档下载 URL。
+    // 主机名不分大小写，统一存小写；校验只认规范形式。
+    repo.host = repo.host.trim().to_ascii_lowercase();
+    // 整个结构体由前端反序列化而来，host/owner/name/branch 会被拼进归档下载 URL。
     // 主防线在 download_repo，这里让非法值当场报错而不是沉淀进表。
-    SkillService::validate_repo_ref(&repo.owner, &repo.name, &repo.branch)
-        .map_err(|e| e.to_string())?;
+    SkillService::validate_repo(&repo).map_err(|e| e.to_string())?;
     run_db_task(&app_state, move |state| {
-        state.db.save_skill_repo(&repo).map_err(|e| e.to_string())?;
-        Ok(true)
+        state.db.save_skill_repo(&repo)?;
+        Ok::<_, AppError>(true)
     })
     .await
 }
 
-/// 删除技能仓库
 #[tauri::command]
 pub async fn remove_skill_repo(
     owner: String,
@@ -424,13 +317,54 @@ pub async fn remove_skill_repo(
     app_state: State<'_, AppState>,
 ) -> Result<bool, String> {
     run_db_task(&app_state, move |state| {
-        state
-            .db
-            .delete_skill_repo(&owner, &name)
-            .map_err(|e| e.to_string())?;
-        Ok(true)
+        state.db.delete_skill_repo(&owner, &name)?;
+        Ok::<_, AppError>(true)
     })
     .await
+}
+
+// ========== 仓库访问令牌（#9666） ==========
+//
+// 令牌按主机存在本机（钥匙串或 0600 文件），不进数据库、不随同步。读写钥匙串在 macOS
+// 上会起 `security` 子进程，都放到阻塞线程里做。
+
+/// 设置了访问令牌的主机（不含令牌本身）
+#[tauri::command]
+pub async fn get_skill_repo_tokens(
+    service: State<'_, SkillServiceState>,
+) -> Result<RepoTokenList, String> {
+    let service = Arc::clone(&service.0);
+    tokio::task::spawn_blocking(move || service.repo_token_list())
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
+/// 保存（覆盖）一台主机的访问令牌，返回规范化后的主机名
+#[tauri::command]
+pub async fn set_skill_repo_token(
+    host: String,
+    token: String,
+    service: State<'_, SkillServiceState>,
+) -> Result<String, String> {
+    let service = Arc::clone(&service.0);
+    tokio::task::spawn_blocking(move || service.set_repo_token(&host, &token))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
+/// 删除一台主机的访问令牌，返回规范化后的主机名
+#[tauri::command]
+pub async fn delete_skill_repo_token(
+    host: String,
+    service: State<'_, SkillServiceState>,
+) -> Result<String, String> {
+    let service = Arc::clone(&service.0);
+    tokio::task::spawn_blocking(move || service.delete_repo_token(&host))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
 }
 
 /// 从 ZIP 文件安装 Skills；目录名已被占用的如实列在 `skipped` 里（#3749）
