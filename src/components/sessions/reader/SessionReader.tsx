@@ -13,7 +13,10 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { ArrowDown } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import type { SessionTranscriptResult } from "@/lib/query/sessions";
+import {
+  clearSessionImageCache,
+  type SessionTranscriptResult,
+} from "@/lib/query/sessions";
 import { toast } from "@/lib/toast";
 
 import { sessionsApi } from "@/lib/api";
@@ -185,6 +188,9 @@ export function SessionReader({
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const findInputRef = useRef<HTMLInputElement>(null);
   const findButtonRef = useRef<HTMLButtonElement>(null);
+
+  // 离开阅读页时立即释放缓存的会话图片 Blob URL，避免常驻 WebView 内存
+  useEffect(() => () => clearSessionImageCache(), []);
 
   const [filter, setFilter] = useState<ReaderFilter>("all");
   const [expandAll, setExpandAll] = useState(readExpandAll);

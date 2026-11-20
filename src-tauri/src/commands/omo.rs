@@ -21,14 +21,9 @@ pub async fn get_current_omo_provider_id(state: State<'_, AppState>) -> Result<S
 
 #[tauri::command]
 pub async fn disable_current_omo(state: State<'_, AppState>) -> Result<(), String> {
-    let providers = state.db.get_all_providers(&AppType::OpenCode)?;
-    for (id, p) in &providers {
-        if p.category.as_deref() == Some("omo") {
-            state
-                .db
-                .clear_omo_provider_current(&AppType::OpenCode, id, "omo")?;
-        }
-    }
+    state
+        .db
+        .clear_omo_category_current(&AppType::OpenCode, "omo")?;
     OmoService::delete_config_file(&STANDARD)?;
     Ok(())
 }
@@ -52,14 +47,9 @@ pub async fn get_current_omo_slim_provider_id(
 
 #[tauri::command]
 pub async fn disable_current_omo_slim(state: State<'_, AppState>) -> Result<(), String> {
-    let providers = state.db.get_all_providers(&AppType::OpenCode)?;
-    for (id, p) in &providers {
-        if p.category.as_deref() == Some("omo-slim") {
-            state
-                .db
-                .clear_omo_provider_current(&AppType::OpenCode, id, "omo-slim")?;
-        }
-    }
+    state
+        .db
+        .clear_omo_category_current(&AppType::OpenCode, "omo-slim")?;
     OmoService::delete_config_file(&SLIM)?;
     Ok(())
 }

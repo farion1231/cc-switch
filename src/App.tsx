@@ -109,7 +109,6 @@ import { EnvWarningBanner } from "@/components/env/EnvWarningBanner";
 import { SwitchModePanel } from "@/components/providers/mode/SwitchModePanel";
 import { proxyApi } from "@/lib/api/proxy";
 import type { AppMode, StartupAttachFailure } from "@/types/proxy";
-import { PLUGIN_APPS, isPluginApp } from "@/lib/api/plugins";
 import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
 import { FirstRunNoticeDialog } from "@/components/FirstRunNoticeDialog";
 import { WhatsNewNotice } from "@/components/WhatsNewDialog";
@@ -1874,8 +1873,8 @@ function App() {
       case "plugins":
         return (
           <PluginsPage
-            apps={PLUGIN_APPS.filter((app) => visibleApps[app])}
-            initialApp={isPluginApp(activeApp) ? activeApp : "claude"}
+            apps={APP_IDS_WITH.plugins.filter((app) => visibleApps[app])}
+            initialApp={appHas(activeApp, "plugins") ? activeApp : "claude"}
           />
         );
       case "prompts":
