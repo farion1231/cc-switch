@@ -8,6 +8,7 @@ pub mod search;
 mod search_revision;
 pub mod terminal;
 
+use crate::sync_utils::MutexExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -17,7 +18,8 @@ use std::time::{Duration, Instant};
 // 其余模型类型从 `session_manager::model` 引用
 pub use model::SessionMessage;
 use providers::{
-    agy, claude, codex, dsh, gemini, grokbuild, hermes, kimi, mcode, omp, openclaw, opencode, pi,
+    agy, claude, codex, copilot, dsh, gemini, grokbuild, hermes, kimi, mcode, omp, openclaw,
+    opencode, pi, workbuddy,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -63,7 +65,7 @@ pub struct DeleteSessionOutcome {
 pub fn scan_sessions() -> Vec<SessionMeta> {
     let scan = scan_sessions_with_status();
     let sessions = scan.sessions.clone();
-    *RECENT_SCAN.lock().unwrap_or_else(|e| e.into_inner()) = Some((Instant::now(), scan));
+    *RECENT_SCAN.lock_recover() = Some((Instant::now(), scan));
     sessions
 }
 
@@ -81,8 +83,7 @@ fn take_recent_scan(
     slot: &Mutex<Option<(Instant, SessionScan)>>,
     now: Instant,
 ) -> Option<SessionScan> {
-    slot.lock()
-        .unwrap_or_else(|e| e.into_inner())
+    slot.lock_recover()
         .take()
         .filter(|(created, _)| now.saturating_duration_since(*created) <= SCAN_REUSE_WINDOW)
         .map(|(_, scan)| scan)
@@ -96,7 +97,7 @@ pub(crate) struct SessionScan {
 pub(crate) fn scan_sessions_with_status() -> SessionScan {
     use providers::utils::ScanStatus;
     type Scanner = fn(&mut ScanStatus) -> Vec<SessionMeta>;
-    let scanners: [(&str, Scanner); 13] = [
+    let scanners: [(&str, Scanner); 15] = [
         ("codex", codex::scan_sessions_with_status),
         ("claude", claude::scan_sessions_with_status),
         ("opencode", opencode::scan_sessions_with_status),
@@ -107,10 +108,12 @@ pub(crate) fn scan_sessions_with_status() -> SessionScan {
         ("pi", pi::scan_sessions_with_status),
         ("omp", omp::scan_sessions_with_status),
         ("mcode", mcode::scan_sessions_with_status),
-        // Kimi Code、DeepSeek Harness、Antigravity 的扫描还不报告读取失败，按完整处理
+        ("copilot", copilot::scan_sessions_with_status),
+        // 以下来源的扫描还不报告读取失败，按完整处理
         ("kimi", |_| kimi::scan_sessions()),
         ("dsh", |_| dsh::scan_sessions()),
         ("agy", |_| agy::scan_sessions()),
+        ("workbuddy", |_| workbuddy::scan_sessions()),
     ];
     let mut scan = SessionScan {
         sessions: Vec::new(),
@@ -173,7 +176,9 @@ pub fn load_messages(provider_id: &str, source_path: &str) -> Result<Vec<Session
         "pi" => pi::load_messages(path),
         "kimi" => kimi::load_messages(path),
         "omp" => omp::load_messages(path),
+        "copilot" => copilot::load_messages(path),
         "dsh" => dsh::load_messages(path),
+        "workbuddy" => workbuddy::load_messages(path),
         _ => Err(format!("Unsupported provider: {provider_id}")),
     }
 }
@@ -227,9 +232,16 @@ fn delete_session_source(
             "Delete this session in DeepSeek Harness to keep its native history consistent".into(),
         );
     }
-    if provider_id == "agy" {
+    if provider_id == "copilot" {
         return Err(
-            "Delete this session in Antigravity to keep its binary store and summaries consistent"
+            "Delete this session in GitHub Copilot CLI to keep its session store and history consistent"
+                .into(),
+        );
+    }
+    if provider_id == "workbuddy" {
+        // WorkBuddy 自己的会话列表在 workbuddy.db 和 sessions/ 里，只删 jsonl 会让它的索引失效。
+        return Err(
+            "Delete this session in WorkBuddy to keep its session list and history consistent"
                 .into(),
         );
     }
@@ -281,6 +293,7 @@ fn delete_session_with_roots(
         "pi" => pi::delete_session(&validated_root, &validated_source, session_id),
         "omp" => omp::delete_session(&validated_root, &validated_source, session_id),
         "kimi" => kimi::delete_session(&validated_root, &validated_source, session_id),
+        "agy" => agy::delete_session(&validated_root, &validated_source, session_id),
         _ => Err(format!("Unsupported provider: {provider_id}")),
     }
 }
@@ -297,8 +310,10 @@ fn provider_roots(provider_id: &str) -> Result<Vec<PathBuf>, String> {
         "pi" => pi::session_roots(),
         "kimi" => kimi::session_roots(),
         "dsh" => dsh::session_roots(),
+        "workbuddy" => workbuddy::session_roots(),
         "agy" => agy::session_roots(),
         "omp" => omp::session_roots(),
+        "copilot" => copilot::session_roots(),
         _ => return Err(format!("Unsupported provider: {provider_id}")),
     };
 

@@ -1,10 +1,14 @@
-import { piProviderPresets, type PiProviderPreset } from "./piProviderPresets";
+import {
+  piProviderPresets,
+  type PiApiFormat,
+  type PiProviderPreset,
+} from "./piProviderPresets";
 
 /**
  * Oh My Pi provider catalog, derived from the Pi catalog.
  *
- * omp validates models.yml against its own schema, so each Pi preset drops what omp doesn't
- * define: the provider-level `name`, the model-level `thinkingLevelMap` (and the catalog
+ * omp validates models.yml against its own schema, so presets on a protocol omp doesn't accept
+ * are left out and each remaining Pi preset drops what omp doesn't define: the provider-level `name`, the model-level `thinkingLevelMap` (and the catalog
  * reference symbol), and the Pi-only `compat` flags. Pi's DeepSeek thinking dialect and its
  * reasoning-replay flag are translated to omp's equivalents.
  */
@@ -62,5 +66,15 @@ function toOmpPreset(preset: PiProviderPreset): OmpProviderPreset {
   };
 }
 
-export const ompProviderPresets: OmpProviderPreset[] =
-  piProviderPresets.map(toOmpPreset);
+/** Pi `api` values omp's models.yml schema accepts (`APIS` in omp_config.rs). */
+export const OMP_API_FORMATS: readonly PiApiFormat[] = [
+  "openai-completions",
+  "openai-responses",
+  "anthropic-messages",
+  "google-generative-ai",
+  "bedrock-converse-stream",
+];
+
+export const ompProviderPresets: OmpProviderPreset[] = piProviderPresets
+  .filter((preset) => OMP_API_FORMATS.includes(preset.settingsConfig.api))
+  .map(toOmpPreset);

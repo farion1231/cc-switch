@@ -28,14 +28,6 @@ export async function deleteEnvVars(
 }
 
 /**
- * 从备份文件恢复环境变量
- * @param backupPath 备份文件路径
- */
-export async function restoreEnvBackup(backupPath: string): Promise<void> {
-  return invoke<void>("restore_env_backup", { backupPath });
-}
-
-/**
  * 检查所有应用的环境变量冲突
  * @returns 按应用类型分组的环境变量冲突
  */

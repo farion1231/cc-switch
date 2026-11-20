@@ -24,28 +24,7 @@ function flattenStrings(
   return result;
 }
 
-function interpolationVariables(value: string): string[] {
-  return Array.from(
-    value.matchAll(/\{\{\s*([^}]+?)\s*\}\}/g),
-    ([, name]) => name,
-  ).sort();
-}
-
 const reference = flattenStrings(en);
-const piKeysOutsideNamespace = new Set([
-  "apps.pi",
-  "deeplink.api",
-  "sessionManager.piDiscoveryUnavailable",
-  "sessionManager.piRelativeSessionDir",
-  "settings.browsePlaceholderPi",
-  "settings.piConfigDir",
-  "settings.piConfigDirDescription",
-]);
-const piReference = new Map(
-  [...reference].filter(
-    ([key]) => key.startsWith("pi.") || piKeysOutsideNamespace.has(key),
-  ),
-);
 const piProductReferences = new Map(
   [...reference].filter(([, value]) => /\bPi\b/.test(value)),
 );
@@ -56,32 +35,6 @@ const locales = [
 ] as const;
 
 describe("locale coverage", () => {
-  it.each(locales)("covers every Pi translation key in %s", (_name, tree) => {
-    const translations = flattenStrings(tree as TranslationTree);
-    const missing = [...piReference.keys()].filter(
-      (key) => !translations.has(key),
-    );
-
-    expect(missing).toEqual([]);
-  });
-
-  it.each(locales)(
-    "preserves every Pi interpolation variable in %s",
-    (_name, tree) => {
-      const translations = flattenStrings(tree as TranslationTree);
-      const mismatched = [...piReference].flatMap(([key, expected]) => {
-        const actual = translations.get(key);
-        return actual !== undefined &&
-          interpolationVariables(actual).join("\0") !==
-            interpolationVariables(expected).join("\0")
-          ? [key]
-          : [];
-      });
-
-      expect(mismatched).toEqual([]);
-    },
-  );
-
   it.each(locales)(
     "preserves explicit Pi product mentions in %s",
     (_name, tree) => {
@@ -96,33 +49,9 @@ describe("locale coverage", () => {
   );
 });
 
-// Turkish is a community translation: keys it does not have yet fall back to
-// English, so new English strings must never fail CI here. These checks only
-// look at strings that already exist in tr.json.
+// Key coverage and interpolation for every locale live in localeParity.test.ts;
+// these blocks pin literals that must survive translation verbatim.
 describe("Turkish locale", () => {
-  it("keeps every existing translation non-empty", () => {
-    expect(
-      [...flattenStrings(tr)].filter(
-        ([key, value]) => reference.get(key)?.trim() && !value.trim(),
-      ),
-    ).toEqual([]);
-  });
-
-  it("preserves interpolation variables in existing translations", () => {
-    expect(
-      [...flattenStrings(tr)]
-        .filter(([key, value]) => {
-          const expected = reference.get(key);
-          return (
-            expected !== undefined &&
-            interpolationVariables(value).join("\0") !==
-              interpolationVariables(expected).join("\0")
-          );
-        })
-        .map(([key]) => key),
-    ).toEqual([]);
-  });
-
   it("preserves protocol fields, configuration literals, and commands", () => {
     const translations = flattenStrings(tr);
     const exactLiterals = [
@@ -137,7 +66,6 @@ describe("Turkish locale", () => {
       "codexConfig.configToml",
       "providerPreset.plan.aksk",
       "mcp.envPlaceholder",
-      "mcp.wizard.envPlaceholder",
       "skills.searchSource.skillssh",
     ];
 
@@ -183,39 +111,10 @@ describe("Korean locale", () => {
     }
   });
 
-  it("keeps every existing translation non-empty", () => {
-    expect(
-      [...flattenStrings(ko)].filter(
-        ([key, value]) => reference.get(key)?.trim() && !value.trim(),
-      ),
-    ).toEqual([]);
-  });
-
-  it("preserves interpolation variables in existing translations", () => {
-    expect(
-      [...flattenStrings(ko)]
-        .filter(([key, value]) => {
-          const expected = reference.get(key);
-          return (
-            expected !== undefined &&
-            interpolationVariables(value).join("\0") !==
-              interpolationVariables(expected).join("\0")
-          );
-        })
-        .map(([key]) => key),
-    ).toEqual([]);
-  });
-
   it("preserves protocol fields, configuration literals, and commands", () => {
     const translations = flattenStrings(ko);
     const exactLiterals = [
       "codexConfig.authJsonPlaceholder",
-      "mcp.form.jsonPlaceholder",
-      "mcp.form.tomlPlaceholder",
-      "mcp.wizard.headersPlaceholder",
-      "mcp.wizard.argsPlaceholder",
-      "mcp.wizard.typeStdio",
-      "mcp.wizard.typeSse",
       "mcp.presets.fetch.name",
       "mcp.presets.time.name",
       "mcp.presets.memory.name",
@@ -236,7 +135,6 @@ describe("Korean locale", () => {
       "codexConfig.configToml",
       "providerPreset.plan.aksk",
       "mcp.envPlaceholder",
-      "mcp.wizard.envPlaceholder",
       "skills.searchSource.skillssh",
     ];
 
@@ -269,40 +167,8 @@ describe("Korean locale", () => {
   });
 });
 
-// Russian is a community translation too: it covers only part of en.json and
-// missing keys fall back to English, so every check here only looks at strings
-// that already exist in ru.json.
 describe("Russian locale", () => {
   const translations = flattenStrings(ru);
-
-  it("only keeps keys that still exist in English", () => {
-    expect([...translations.keys()].filter((key) => !reference.has(key))).toEqual(
-      [],
-    );
-  });
-
-  it("keeps every existing translation non-empty", () => {
-    expect(
-      [...translations].filter(
-        ([key, value]) => reference.get(key)?.trim() && !value.trim(),
-      ),
-    ).toEqual([]);
-  });
-
-  it("preserves interpolation variables in existing translations", () => {
-    expect(
-      [...translations]
-        .filter(([key, value]) => {
-          const expected = reference.get(key);
-          return (
-            expected !== undefined &&
-            interpolationVariables(value).join("\0") !==
-              interpolationVariables(expected).join("\0")
-          );
-        })
-        .map(([key]) => key),
-    ).toEqual([]);
-  });
 
   it("preserves protocol fields, configuration literals, and commands", () => {
     const exactLiterals = [
@@ -317,7 +183,6 @@ describe("Russian locale", () => {
       "codexConfig.configToml",
       "providerPreset.plan.aksk",
       "mcp.envPlaceholder",
-      "mcp.wizard.envPlaceholder",
       "skills.searchSource.skillssh",
     ];
     for (const key of exactLiterals.filter((key) => translations.has(key))) {
