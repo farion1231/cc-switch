@@ -279,6 +279,7 @@ impl Database {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app_config::AppType;
     use serde_json::json;
 
     #[test]
@@ -290,7 +291,7 @@ mod tests {
             json!({"env":{}}),
             None,
         );
-        db.save_provider("claude", &existing).unwrap();
+        db.save_provider(&AppType::Claude, &existing).unwrap();
         let candidates = vec![
             Provider::with_id("new".into(), "First".into(), json!({"env":{}}), None),
             Provider::with_id(
@@ -307,7 +308,7 @@ mod tests {
         assert!(db
             .append_provider_batch("claude", &candidates, &token)
             .is_err());
-        let all = db.get_all_providers("claude").unwrap();
+        let all = db.get_all_providers(&AppType::Claude).unwrap();
         assert_eq!(all.len(), 1);
         assert_eq!(all["collision"].name, "Existing");
     }
@@ -317,7 +318,7 @@ mod tests {
         let db = Database::memory().unwrap();
         let mut existing = Provider::with_id("old".into(), "Old".into(), json!({}), None);
         existing.created_at = Some(chrono::Utc::now().timestamp_millis() + 10000);
-        db.save_provider("claude", &existing).unwrap();
+        db.save_provider(&AppType::Claude, &existing).unwrap();
         let candidates = vec![
             Provider::with_id("first".into(), "Z first".into(), json!({}), None),
             Provider::with_id("second".into(), "A second".into(), json!({}), None),
@@ -328,7 +329,7 @@ mod tests {
             .token;
         db.append_provider_batch("claude", &candidates, &token)
             .unwrap();
-        let all = db.get_all_providers("claude").unwrap();
+        let all = db.get_all_providers(&AppType::Claude).unwrap();
         assert!(all.values().all(|p| p.sort_index.is_none()));
         assert_eq!(all["old"].created_at, existing.created_at);
         assert!(all["old"].created_at < all["first"].created_at);

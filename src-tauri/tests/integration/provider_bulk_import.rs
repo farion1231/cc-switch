@@ -2,9 +2,7 @@ use cc_switch_lib::{AppState, AppType, Database, Provider, ProviderService};
 use serde_json::{json, Value};
 use std::sync::{Arc, Barrier};
 
-#[path = "support/mod.rs"]
-mod support;
-use support::{create_test_state, ensure_test_home, reset_test_fs, test_mutex};
+use crate::support::{create_test_state, ensure_test_home, reset_test_fs, test_mutex};
 
 fn bulk_apps() -> impl Iterator<Item = AppType> {
     AppType::all()
@@ -37,7 +35,7 @@ fn unsupported_apps_preserve_database_and_native_files() {
                 .to_string(),
             expected
         );
-        assert!(state.db.get_all_providers(app.as_str()).unwrap().is_empty());
+        assert!(state.db.get_all_providers(&app).unwrap().is_empty());
         assert_eq!(native_files(), before);
     }
 }
@@ -54,7 +52,7 @@ fn repeated_import_recognizes_explicit_default_protocol_from_editor() {
     for app in [AppType::Claude, AppType::Codex] {
         let data = json!([row("Team", "synthetic-editor-key")]);
         let id = import(&state, app.clone(), data.clone())[0].clone();
-        let mut saved = state.db.get_all_providers(app.as_str()).unwrap()[&id].clone();
+        let mut saved = state.db.get_all_providers(&app).unwrap()[&id].clone();
         saved.meta.as_mut().unwrap().api_format = Some(
             if app == AppType::Claude {
                 "anthropic"
@@ -64,7 +62,7 @@ fn repeated_import_recognizes_explicit_default_protocol_from_editor() {
             .into(),
         );
         saved.meta.as_mut().unwrap().endpoint_auto_select = Some(true);
-        state.db.save_provider(app.as_str(), &saved).unwrap();
+        state.db.save_provider(&app, &saved).unwrap();
         let preview = ProviderService::preview_bulk_import(&state, app, &data.to_string()).unwrap();
         assert_eq!((preview.new_count, preview.duplicate_count), (0, 1));
     }
@@ -116,7 +114,11 @@ fn silently_ignored_insert_rolls_back_the_whole_batch() {
         .token
         .unwrap();
     assert!(ProviderService::import_bulk(&state, AppType::Claude, &source, &token).is_err());
-    assert!(state.db.get_all_providers("claude").unwrap().is_empty());
+    assert!(state
+        .db
+        .get_all_providers(&AppType::Claude)
+        .unwrap()
+        .is_empty());
 }
 
 fn import(state: &AppState, app: AppType, data: Value) -> Vec<String> {
@@ -158,12 +160,12 @@ fn appends_without_switching_even_on_empty_database_and_preserves_native_files()
         assert!(preview.rows[1].same_name);
         let serialized = serde_json::to_string(&preview).unwrap();
         assert!(!serialized.contains("synthetic-key"));
-        assert_eq!(state.db.get_all_providers(app.as_str()).unwrap().len(), 0);
+        assert_eq!(state.db.get_all_providers(&app).unwrap().len(), 0);
         let ids = import(&state, app.clone(), source);
         assert_eq!(ids.len(), 2);
         assert_ne!(ids[0], ids[1]);
-        assert_eq!(state.db.get_current_provider(app.as_str()).unwrap(), None);
-        let stored = state.db.get_all_providers(app.as_str()).unwrap();
+        assert_eq!(state.db.get_current_provider(&app).unwrap(), None);
+        let stored = state.db.get_all_providers(&app).unwrap();
         assert!(stored.values().all(|p| !p.in_failover_queue));
         assert!(stored[&ids[0]].sort_index < stored[&ids[1]].sort_index);
         assert_eq!(
@@ -202,14 +204,13 @@ fn preserves_existing_rows_current_and_failover_skips_duplicates_and_survives_re
     for app in [AppType::Claude, AppType::Codex] {
         let source = json!([row("Existing", "synthetic-existing-key")]);
         let id = import(&state, app.clone(), source.clone())[0].clone();
-        let mut existing = state.db.get_all_providers(app.as_str()).unwrap()[&id].clone();
+        let mut existing = state.db.get_all_providers(&app).unwrap()[&id].clone();
         existing.notes = Some("Keep my notes".into());
         existing.in_failover_queue = true;
-        state.db.save_provider(app.as_str(), &existing).unwrap();
-        state.db.set_current_provider(app.as_str(), &id).unwrap();
+        state.db.save_provider(&app, &existing).unwrap();
+        state.db.set_current_provider(&app, &id).unwrap();
         let snapshot =
-            serde_json::to_value(state.db.get_all_providers(app.as_str()).unwrap()[&id].clone())
-                .unwrap();
+            serde_json::to_value(state.db.get_all_providers(&app).unwrap()[&id].clone()).unwrap();
         let more = json!([
             source[0],
             row("Existing", "synthetic-different-key"),
@@ -221,16 +222,12 @@ fn preserves_existing_rows_current_and_failover_skips_duplicates_and_survives_re
         assert_eq!((preview.new_count, preview.duplicate_count), (2, 2));
         assert!(preview.rows[1].same_name && !preview.rows[1].duplicate);
         let ids = import(&state, app.clone(), more);
-        let all = state.db.get_all_providers(app.as_str()).unwrap();
+        let all = state.db.get_all_providers(&app).unwrap();
         assert_eq!(all.len(), 3);
         assert_eq!(serde_json::to_value(&all[&id]).unwrap(), snapshot);
         assert!(all[&id].sort_index < all[&ids[0]].sort_index);
         assert_eq!(
-            state
-                .db
-                .get_current_provider(app.as_str())
-                .unwrap()
-                .as_deref(),
+            state.db.get_current_provider(&app).unwrap().as_deref(),
             Some(id.as_str())
         );
     }
@@ -238,19 +235,19 @@ fn preserves_existing_rows_current_and_failover_skips_duplicates_and_survives_re
     let restored = Database::memory().unwrap();
     restored.import_sql_string(&dump).unwrap();
     let reopened = Database::init().unwrap();
-    for app in ["claude", "codex"] {
-        let snapshot = serde_json::to_value(state.db.get_all_providers(app).unwrap()).unwrap();
+    for app in [AppType::Claude, AppType::Codex] {
+        let snapshot = serde_json::to_value(state.db.get_all_providers(&app).unwrap()).unwrap();
         assert_eq!(
-            serde_json::to_value(restored.get_all_providers(app).unwrap()).unwrap(),
+            serde_json::to_value(restored.get_all_providers(&app).unwrap()).unwrap(),
             snapshot
         );
         assert_eq!(
-            serde_json::to_value(reopened.get_all_providers(app).unwrap()).unwrap(),
+            serde_json::to_value(reopened.get_all_providers(&app).unwrap()).unwrap(),
             snapshot
         );
         assert_eq!(
-            restored.get_current_provider(app).unwrap(),
-            state.db.get_current_provider(app).unwrap()
+            restored.get_current_provider(&app).unwrap(),
+            state.db.get_current_provider(&app).unwrap()
         );
     }
 }
@@ -310,7 +307,11 @@ fn validation_is_all_or_nothing_and_does_not_echo_secrets() {
             error.to_string(),
             "provider.bulkImport.errors.validationFailed"
         );
-        assert!(state.db.get_all_providers("claude").unwrap().is_empty());
+        assert!(state
+            .db
+            .get_all_providers(&AppType::Claude)
+            .unwrap()
+            .is_empty());
     }
     assert!(ProviderService::preview_bulk_import(
         &state,
@@ -353,7 +354,7 @@ fn defaults_protocols_url_normalization_and_toml_escaping_are_preserved() {
         if app == AppType::Codex {
             assert_eq!(preview.rows[0].model.as_deref(), Some("gpt-5-codex"));
             let mut provider =
-                state.db.get_all_providers("codex").unwrap()[&result.added_ids[0]].clone();
+                state.db.get_all_providers(&AppType::Codex).unwrap()[&result.added_ids[0]].clone();
             let config = provider.settings_config["config"].as_str().unwrap();
             let value: toml::Value = toml::from_str(config).unwrap();
             assert_eq!(
@@ -362,7 +363,7 @@ fn defaults_protocols_url_normalization_and_toml_escaping_are_preserved() {
             );
             provider.settings_config["config"] =
                 json!(format!("# formatting is not identity\n{config}\n"));
-            state.db.save_provider("codex", &provider).unwrap();
+            state.db.save_provider(&AppType::Codex, &provider).unwrap();
             let again =
                 ProviderService::preview_bulk_import(&state, AppType::Codex, &source).unwrap();
             assert_eq!(again.duplicate_count, 2);
@@ -429,7 +430,10 @@ fn stale_preview_and_simultaneous_confirmation_cannot_duplicate_or_overwrite() {
             .count(),
         1
     );
-    assert_eq!(state.db.get_all_providers("claude").unwrap().len(), 1);
+    assert_eq!(
+        state.db.get_all_providers(&AppType::Claude).unwrap().len(),
+        1
+    );
     let source = json!([row("Other", "synthetic-other-key")]).to_string();
     let token = ProviderService::preview_bulk_import(&state, AppType::Claude, &source)
         .unwrap()
@@ -441,12 +445,15 @@ fn stale_preview_and_simultaneous_confirmation_cannot_duplicate_or_overwrite() {
         json!({"env":{"ANTHROPIC_AUTH_TOKEN":"different"}}),
         None,
     );
-    state.db.save_provider("claude", &existing).unwrap();
+    state.db.save_provider(&AppType::Claude, &existing).unwrap();
     let err = ProviderService::import_bulk(&state, AppType::Claude, &source, &token)
         .err()
         .unwrap();
     assert_eq!(err.to_string(), "provider.bulkImport.errors.previewChanged");
-    assert_eq!(state.db.get_all_providers("claude").unwrap().len(), 2);
+    assert_eq!(
+        state.db.get_all_providers(&AppType::Claude).unwrap().len(),
+        2
+    );
 }
 
 #[test]
@@ -472,11 +479,15 @@ fn mid_batch_database_failure_rolls_back_and_does_not_expose_sql_or_keys() {
     .err()
     .unwrap();
     assert_eq!(err.to_string(), "provider.bulkImport.errors.storageFailed");
-    assert!(state.db.get_all_providers("claude").unwrap().is_empty());
+    assert!(state
+        .db
+        .get_all_providers(&AppType::Claude)
+        .unwrap()
+        .is_empty());
     assert_eq!(
         Database::init()
             .unwrap()
-            .get_all_providers("claude")
+            .get_all_providers(&AppType::Claude)
             .unwrap()
             .len(),
         0
@@ -497,7 +508,7 @@ fn preview_decisions_match_persisted_batch_for_both_apps() {
             "gpt-5.4"
         });
         let id = import(&state, app.clone(), json!([existing.clone()]))[0].clone();
-        state.db.set_current_provider(app.as_str(), &id).unwrap();
+        state.db.set_current_provider(&app, &id).unwrap();
         let mut second = existing.clone();
         second["api_key"] = json!("synthetic-team-key-2222");
         let mut qa = existing.clone();
@@ -515,9 +526,9 @@ fn preview_decisions_match_persisted_batch_for_both_apps() {
         )
         .unwrap();
         assert_eq!((result.added_ids.len(), result.skipped), (2, 2));
-        let all = state.db.get_all_providers(app.as_str()).unwrap();
+        let all = state.db.get_all_providers(&app).unwrap();
         assert_eq!(all.len(), 3);
-        let current = state.db.get_current_provider(app.as_str()).unwrap();
+        let current = state.db.get_current_provider(&app).unwrap();
         assert_eq!(current.as_deref(), Some(id.as_str()));
         assert!(all.values().all(|p| !p.in_failover_queue));
         let records: Vec<_> = all.values().map(|p|json!({"id":p.id,"name":p.name,"sortIndex":p.sort_index,"inFailoverQueue":p.in_failover_queue})).collect();
@@ -716,9 +727,9 @@ fn all_agents_append_atomically_without_activation_and_roundtrip_sql_backups() {
         .unwrap();
         assert_eq!((result.added_ids.len(), result.skipped), (1, 2));
         assert_ne!(existing, result.added_ids[0]);
-        let all = state.db.get_all_providers(app.as_str()).unwrap();
+        let all = state.db.get_all_providers(&app).unwrap();
         assert_eq!(all.len(), 2);
-        assert_eq!(state.db.get_current_provider(app.as_str()).unwrap(), None);
+        assert_eq!(state.db.get_current_provider(&app).unwrap(), None);
         assert_eq!(
             ProviderService::list(&state, app.clone()).unwrap().len(),
             2,
@@ -747,8 +758,8 @@ fn all_agents_append_atomically_without_activation_and_roundtrip_sql_backups() {
     restored.import_sql_string(&snapshot).unwrap();
     for app in bulk_apps() {
         assert_eq!(
-            serde_json::to_value(restored.get_all_providers(app.as_str()).unwrap()).unwrap(),
-            serde_json::to_value(state.db.get_all_providers(app.as_str()).unwrap()).unwrap()
+            serde_json::to_value(restored.get_all_providers(&app).unwrap()).unwrap(),
+            serde_json::to_value(state.db.get_all_providers(&app).unwrap()).unwrap()
         );
         let restored_state = AppState::new(Arc::new(Database::init().unwrap()));
         let data = json!([agent_row(&app, "Team gateway", "synthetic-team-key-1111")]);
@@ -879,7 +890,7 @@ fn every_agent_rejects_invalid_batch_and_rolls_back_on_second_insert_failure() {
             preview.token.as_deref().unwrap()
         )
         .is_err());
-        assert!(state.db.get_all_providers(app.as_str()).unwrap().is_empty());
+        assert!(state.db.get_all_providers(&app).unwrap().is_empty());
         let invalid =
             json!([agent_row(&app,"Valid","synthetic-key"), {"name":"broken"}]).to_string();
         let preview = ProviderService::preview_bulk_import(&state, app.clone(), &invalid).unwrap();
@@ -951,7 +962,7 @@ fn independent_connections_cannot_import_the_same_preview_twice() {
                 "{mode} {}",
                 app.as_str()
             );
-            assert_eq!(one.db.get_all_providers(app.as_str()).unwrap().len(), 1);
+            assert_eq!(one.db.get_all_providers(&app).unwrap().len(), 1);
         }
     }
 }
@@ -997,8 +1008,7 @@ fn supported_protocols_models_and_context_windows_match_each_agent() {
                 preview.token.as_deref().unwrap(),
             )
             .unwrap();
-            let saved =
-                state.db.get_all_providers(app.as_str()).unwrap()[&result.added_ids[0]].clone();
+            let saved = state.db.get_all_providers(&app).unwrap()[&result.added_ids[0]].clone();
             if app == AppType::ClaudeDesktop {
                 assert!(preview.rows[0].requires_routing);
                 let routes = &saved.meta.as_ref().unwrap().claude_desktop_model_routes;
@@ -1069,7 +1079,7 @@ fn supported_protocols_models_and_context_windows_match_each_agent() {
     .is_empty());
     let direct = agent_row(&AppType::ClaudeDesktop, "Direct", "synthetic-desktop-key");
     let id = import(&state, AppType::ClaudeDesktop, json!([direct]))[0].clone();
-    let saved = state.db.get_all_providers("claude-desktop").unwrap()[&id].clone();
+    let saved = state.db.get_all_providers(&AppType::ClaudeDesktop).unwrap()[&id].clone();
     assert_eq!(
         saved.meta.as_ref().unwrap().claude_desktop_model_routes["claude-sonnet-4-6"].model,
         "claude-sonnet-4-6"
@@ -1094,10 +1104,10 @@ fn equivalent_legacy_claude_base_urls_are_duplicates() {
     let state = create_test_state().unwrap();
     let source = json!([row("Legacy", "synthetic-legacy-key")]);
     let id = import(&state, AppType::Claude, source.clone())[0].clone();
-    let mut stored = state.db.get_all_providers("claude").unwrap()[&id].clone();
+    let mut stored = state.db.get_all_providers(&AppType::Claude).unwrap()[&id].clone();
     stored.settings_config["env"]["ANTHROPIC_BASE_URL"] =
         json!("https://GATEWAY.example.com:443/v1/");
-    state.db.save_provider("claude", &stored).unwrap();
+    state.db.save_provider(&AppType::Claude, &stored).unwrap();
     assert_eq!(
         ProviderService::preview_bulk_import(&state, AppType::Claude, &source.to_string())
             .unwrap()
@@ -1134,14 +1144,14 @@ fn partially_overlapping_batches_require_repreview_without_partial_writes() {
                 .to_string(),
             "provider.bulkImport.errors.previewChanged"
         );
-        assert_eq!(state.db.get_all_providers(app.as_str()).unwrap().len(), 2);
+        assert_eq!(state.db.get_all_providers(&app).unwrap().len(), 2);
         let review = ProviderService::preview_bulk_import(&state, app.clone(), &b).unwrap();
         assert_eq!((review.new_count, review.duplicate_count), (1, 1));
         let result =
             ProviderService::import_bulk(&state, app.clone(), &b, review.token.as_deref().unwrap())
                 .unwrap();
         assert_eq!((result.added_ids.len(), result.skipped), (1, 1));
-        assert_eq!(state.db.get_all_providers(app.as_str()).unwrap().len(), 3);
+        assert_eq!(state.db.get_all_providers(&app).unwrap().len(), 3);
     }
 }
 
@@ -1152,12 +1162,12 @@ fn kimi_literal_aliases_and_invalid_owner_references_do_not_collapse() {
     let state = create_test_state().unwrap();
     let data = json!([agent_row(&AppType::Kimi, "Team", "synthetic-alias-key")]);
     let id = import(&state, AppType::Kimi, data.clone())[0].clone();
-    let mut saved = state.db.get_all_providers("kimi").unwrap()[&id].clone();
+    let mut saved = state.db.get_all_providers(&AppType::Kimi).unwrap()[&id].clone();
     let models = saved.settings_config["models"].as_object_mut().unwrap();
     let model = models.values().next().unwrap().clone();
     models.clear();
     models.insert("<owner>/team-model".into(), model.clone());
-    state.db.save_provider("kimi", &saved).unwrap();
+    state.db.save_provider(&AppType::Kimi, &saved).unwrap();
     assert_eq!(
         ProviderService::preview_bulk_import(&state, AppType::Kimi, &data.to_string())
             .unwrap()
@@ -1170,7 +1180,7 @@ fn kimi_literal_aliases_and_invalid_owner_references_do_not_collapse() {
         invalid["provider"] = owner;
         models.clear();
         models.insert(format!("{id}/team-model"), invalid);
-        state.db.save_provider("kimi", &saved).unwrap();
+        state.db.save_provider(&AppType::Kimi, &saved).unwrap();
         assert_eq!(
             ProviderService::preview_bulk_import(&state, AppType::Kimi, &data.to_string())
                 .unwrap()
@@ -1215,12 +1225,12 @@ fn omp_plain_keys_warn_and_persist_without_resolving_the_environment() {
         preview.token.as_deref().unwrap(),
     )
     .unwrap();
-    let saved = state.db.get_all_providers("omp").unwrap();
+    let saved = state.db.get_all_providers(&AppType::Omp).unwrap();
     assert_eq!(
         saved[&result.added_ids[0]].settings_config["apiKey"],
         "abc123"
     );
-    assert_eq!(state.db.get_current_provider("omp").unwrap(), None);
+    assert_eq!(state.db.get_current_provider(&AppType::Omp).unwrap(), None);
     assert_eq!(native_files(), initial_native);
     if let Ok(dir) = std::env::var("CC_SWITCH_4184_EVIDENCE_DIR") {
         let fixture = json!({"source":source,"preview":preview,"result":result,"storedKey":"abc123","nativeUnchanged":true});
@@ -1258,7 +1268,7 @@ fn omp_plain_keys_warn_and_persist_without_resolving_the_environment() {
         );
         let ids = import(&state, AppType::Omp, value.clone());
         assert_eq!(
-            state.db.get_all_providers("omp").unwrap()[&ids[0]].settings_config["apiKey"],
+            state.db.get_all_providers(&AppType::Omp).unwrap()[&ids[0]].settings_config["apiKey"],
             key
         );
         assert_eq!(
@@ -1274,7 +1284,7 @@ fn omp_plain_keys_warn_and_persist_without_resolving_the_environment() {
         .export_sql_string()
         .unwrap()
         .contains("value-not-to-import"));
-    let count = state.db.get_all_providers("omp").unwrap().len();
+    let count = state.db.get_all_providers(&AppType::Omp).unwrap().len();
     for bad in [
         "!echo forbidden",
         "${TOKEN}",
@@ -1290,7 +1300,10 @@ fn omp_plain_keys_warn_and_persist_without_resolving_the_environment() {
         assert!(!review.errors.is_empty());
         assert!(review.token.is_none());
         assert!(ProviderService::import_bulk(&state, AppType::Omp, &mixed, "forged").is_err());
-        assert_eq!(state.db.get_all_providers("omp").unwrap().len(), count);
+        assert_eq!(
+            state.db.get_all_providers(&AppType::Omp).unwrap().len(),
+            count
+        );
         assert_eq!(native_files(), before);
     }
 }
@@ -1337,6 +1350,6 @@ fn omp_warning_preview_does_not_authorize_changed_or_repeated_submissions() {
             .count(),
         1
     );
-    assert_eq!(state.db.get_all_providers("omp").unwrap().len(), 1);
+    assert_eq!(state.db.get_all_providers(&AppType::Omp).unwrap().len(), 1);
     assert_eq!(native_files(), initial_native);
 }
