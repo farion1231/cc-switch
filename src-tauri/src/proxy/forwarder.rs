@@ -1646,7 +1646,6 @@ impl RequestForwarder {
                 api_base: base_url.clone(),
                 credential_generation: generation,
                 client_session_id: self.session_id.clone(),
-                branch_id: None,
             };
             let resolution_timeout = deadline
                 .saturating_duration_since(tokio::time::Instant::now())
@@ -2627,7 +2626,7 @@ impl RequestForwarder {
                     let sessions = self.copilot_auto_sessions.clone();
                     response = response.with_success_terminal_hook(Box::new(move || {
                         Box::pin(async move {
-                            invalidate_compacted_auto_route(&sessions, &key, &token, true).await;
+                            sessions.invalidate_if_token_matches(&key, &token).await;
                         })
                     }));
                 }

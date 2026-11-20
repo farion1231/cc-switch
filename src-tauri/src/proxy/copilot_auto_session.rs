@@ -33,7 +33,6 @@ pub struct AutoSessionKey {
     pub api_base: String,
     pub credential_generation: u64,
     pub client_session_id: String,
-    pub branch_id: Option<String>,
 }
 
 /// Cloned snapshot of an active resolution held by executing requests
@@ -113,12 +112,7 @@ impl Default for AutoSessionManager {
     }
 }
 
-#[allow(dead_code)]
 impl AutoSessionManager {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// Fast lookup: returns an active snapshot if present and valid
     pub async fn get(&self, key: &AutoSessionKey) -> Option<AutoSessionSnapshot> {
         let mut sessions = self.sessions.write().await;
@@ -365,33 +359,6 @@ impl AutoSessionManager {
             }
         }
     }
-
-    /// Invalidate a specific session unconditionally (e.g. after explicit reset)
-    pub async fn invalidate(&self, key: &AutoSessionKey) {
-        let mut sessions = self.sessions.write().await;
-        sessions.remove(key);
-        if let Ok(mut locks) = self.single_flight.lock() {
-            locks.remove(key);
-        }
-    }
-
-    /// Invalidate all sessions associated with an account (e.g. logout / account switch)
-    pub async fn invalidate_account(&self, account_id: &str) {
-        let mut sessions = self.sessions.write().await;
-        sessions.retain(|k, _| k.account_id != account_id);
-        if let Ok(mut locks) = self.single_flight.lock() {
-            locks.retain(|k, _| k.account_id != account_id);
-        }
-    }
-
-    /// Clear all cached sessions
-    pub async fn clear(&self) {
-        let mut sessions = self.sessions.write().await;
-        sessions.clear();
-        if let Ok(mut locks) = self.single_flight.lock() {
-            locks.clear();
-        }
-    }
 }
 
 #[cfg(test)]
@@ -406,7 +373,6 @@ mod tests {
             api_base: "https://api.individual.githubcopilot.com".to_string(),
             credential_generation: generation,
             client_session_id: session_id.to_string(),
-            branch_id: None,
         }
     }
 
@@ -422,7 +388,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_session_manager_insert_and_get() {
-        let manager = AutoSessionManager::new();
+        let manager = AutoSessionManager::default();
         let key = dummy_key("session-1", 1);
         let snapshot = dummy_snapshot("gpt-5.6-luna", 1);
 
@@ -435,7 +401,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_session_manager_account_isolation() {
-        let manager = AutoSessionManager::new();
+        let manager = AutoSessionManager::default();
         let mut key1 = dummy_key("session-1", 1);
         key1.account_id = "user_a".to_string();
 
@@ -452,15 +418,16 @@ mod tests {
         assert_eq!(manager.get(&key1).await.unwrap().selected_model, "model-a");
         assert_eq!(manager.get(&key2).await.unwrap().selected_model, "model-b");
 
-        // Invalidate user_a should not affect user_b
-        manager.invalidate_account("user_a").await;
+        manager
+            .invalidate_if_token_matches(&key1, "mock-session-token")
+            .await;
         assert!(manager.get(&key1).await.is_none());
         assert!(manager.get(&key2).await.is_some());
     }
 
     #[tokio::test]
     async fn test_session_manager_generation_mismatch() {
-        let manager = AutoSessionManager::new();
+        let manager = AutoSessionManager::default();
         let key_v1 = dummy_key("session-1", 1);
         let key_v2 = dummy_key("session-1", 2);
 
@@ -474,7 +441,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_session_manager_expired_token() {
-        let manager = AutoSessionManager::new();
+        let manager = AutoSessionManager::default();
         let key = dummy_key("session-exp", 1);
         let mut snapshot = dummy_snapshot("model-1", 1);
         snapshot.expires_at = Some(Instant::now() - Duration::from_secs(1)); // Expired
@@ -485,7 +452,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_session_manager_lru_capacity_eviction() {
-        let manager = AutoSessionManager::new();
+        let manager = AutoSessionManager::default();
 
         // Fill up to MAX_CACHED_SESSIONS (256)
         for i in 0..MAX_CACHED_SESSIONS {
@@ -518,7 +485,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_past_expiration_token_rejected_immediately() {
-        let manager = AutoSessionManager::new();
+        let manager = AutoSessionManager::default();
         let key = dummy_key("session-past-exp", 1);
 
         // JWT with exp in 2020 (UNIX: 1577836800)
@@ -529,9 +496,6 @@ mod tests {
                 "gpt-5.6-luna".to_string(),
             ),
             expires_at: None,
-            selection_reason: None,
-            hydra_scores: None,
-            extra: Default::default(),
         };
 
         let result = manager.create_snapshot_from_response(&key, auto_resp);
@@ -545,7 +509,7 @@ mod tests {
     async fn test_snapshot_expiry_takes_earlier_of_top_level_and_token_exp() {
         use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 
-        let manager = AutoSessionManager::new();
+        let manager = AutoSessionManager::default();
         let key = dummy_key("session-expiry-min", 1);
 
         let now = std::time::SystemTime::now()
@@ -565,9 +529,6 @@ mod tests {
                 "gpt-5.6-luna".to_string(),
             ),
             expires_at: Some(serde_json::json!(top_level)),
-            selection_reason: None,
-            hydra_scores: None,
-            extra: Default::default(),
         };
 
         let snapshot = manager
@@ -585,7 +546,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_snapshot_without_provable_expiry_is_rejected() {
-        let manager = AutoSessionManager::new();
+        let manager = AutoSessionManager::default();
         let key = dummy_key("session-no-expiry", 1);
 
         // Neither top-level expires_at nor a decodable token exp: the previous
@@ -596,9 +557,6 @@ mod tests {
                 "gpt-5.6-luna".to_string(),
             ),
             expires_at: None,
-            selection_reason: None,
-            hydra_scores: None,
-            extra: Default::default(),
         };
 
         let result = manager.create_snapshot_from_response(&key, auto_resp);
@@ -610,7 +568,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_snapshot_with_unparseable_top_level_expiry_is_rejected() {
-        let manager = AutoSessionManager::new();
+        let manager = AutoSessionManager::default();
         let key = dummy_key("session-bad-expiry", 1);
 
         let auto_resp = CopilotAutoResponse {
@@ -619,9 +577,6 @@ mod tests {
                 "gpt-5.6-luna".to_string(),
             ),
             expires_at: Some(serde_json::json!({"deadline": "soon"})),
-            selection_reason: None,
-            hydra_scores: None,
-            extra: Default::default(),
         };
 
         let result = manager.create_snapshot_from_response(&key, auto_resp);
@@ -633,7 +588,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_invalidate_if_token_matches_preserves_newer_token() {
-        let manager = AutoSessionManager::new();
+        let manager = AutoSessionManager::default();
         let key = dummy_key("session-concurrent", 1);
 
         let mut old_snapshot = dummy_snapshot("gpt-5.6-luna", 1);
@@ -674,15 +629,11 @@ mod tests {
         manager.invalidate_if_token_matches(&key, "token-v2").await;
         assert!(manager.get(&key).await.is_none());
         assert_eq!(manager.single_flight.lock().unwrap().len(), 1);
-
-        // 6. Explicit invalidate() clears both session and gate
-        manager.invalidate(&key).await;
-        assert_eq!(manager.single_flight.lock().unwrap().len(), 0);
     }
 
     #[tokio::test]
     async fn test_single_flight_guard_drop_cleans_up_map() {
-        let manager = AutoSessionManager::new();
+        let manager = AutoSessionManager::default();
         let key = dummy_key("session-cancelled", 1);
 
         {
@@ -708,7 +659,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_or_resolve_failure_cleans_up_single_flight_map() {
-        let manager = AutoSessionManager::new();
+        let manager = AutoSessionManager::default();
         let mut key = dummy_key("session-error", 1);
         // Use unreachable local port to ensure instant failure without live network calls
         key.api_base = "http://127.0.0.1:1".to_string();
@@ -751,7 +702,7 @@ mod tests {
             axum::serve(listener, app).await.expect("serve /auto mock");
         });
 
-        let manager = AutoSessionManager::new();
+        let manager = AutoSessionManager::default();
         let mut key = dummy_key("generated-session-id", 1);
         key.api_base = base;
         let snapshot = manager

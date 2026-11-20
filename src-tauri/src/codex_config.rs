@@ -2715,54 +2715,30 @@ pub(crate) fn codex_single_model_catalog(
     Ok(catalog)
 }
 
-/// A provider publishes only its configured model catalogue and top-level model.
-fn codex_published_specs(
-    settings: &Value,
-    config_text: &str,
-    _profile: CodexCatalogToolProfile,
-) -> Vec<CodexCatalogModelSpec> {
+fn codex_published_specs(settings: &Value, config_text: &str) -> Vec<CodexCatalogModelSpec> {
     let mut specs = codex_catalog_model_specs(settings);
-    if specs.is_empty() {
-        if let Some(model) = codex_top_level_model(config_text) {
-            // 带标记的虚拟模型不按具体模型发布：统一走下面补发的干净虚拟项。
-            if codex_model_is_auto_virtual(&model) {
-                specs.push(CodexCatalogModelSpec {
-                    model: crate::proxy::providers::copilot_auto::COPILOT_AUTO_VIRTUAL_MODEL_ID
-                        .to_string(),
-                    display_name: Some(
-                        crate::proxy::providers::copilot_auto::COPILOT_AUTO_VIRTUAL_DISPLAY_NAME
-                            .to_string(),
-                    ),
-                    ..CodexCatalogModelSpec::default()
-                });
-            } else {
-                specs.push(CodexCatalogModelSpec {
-                    model,
-                    ..CodexCatalogModelSpec::default()
-                });
+    if let Some(model) = codex_top_level_model(config_text) {
+        if codex_model_is_auto_virtual(&model) {
+            if !specs
+                .iter()
+                .any(|spec| codex_model_is_auto_virtual(&spec.model))
+            {
+                specs.insert(0, codex_auto_virtual_spec());
             }
+        } else if specs.is_empty() {
+            specs.push(CodexCatalogModelSpec {
+                model,
+                ..CodexCatalogModelSpec::default()
+            });
         }
-    }
-    if codex_top_level_model(config_text)
-        .as_deref()
-        .is_some_and(codex_model_is_auto_virtual)
-        && !specs
-            .iter()
-            .any(|spec| codex_model_is_auto_virtual(&spec.model))
-    {
-        specs.insert(0, codex_auto_virtual_spec());
     }
     specs
 }
 
 /// Stack 模型用：一家第三方供应商发布的模型名（按目录顺序）。`config_text` 是行里的
 /// `config`（只读顶层 `model`）。
-pub(crate) fn codex_published_models_for_profile(
-    settings: &Value,
-    config_text: &str,
-    profile: CodexCatalogToolProfile,
-) -> Vec<String> {
-    codex_published_specs(settings, config_text, profile)
+pub(crate) fn codex_published_models(settings: &Value, config_text: &str) -> Vec<String> {
+    codex_published_specs(settings, config_text)
         .into_iter()
         .map(|spec| spec.model)
         .collect()
@@ -2932,7 +2908,7 @@ const CODEX_CLASSIC_SUBAGENTS: &str = "v1";
 pub(crate) fn codex_stack_third_party_rows(
     row: &CodexCatalogRow<'_>,
 ) -> Result<Vec<Value>, AppError> {
-    let specs = codex_published_specs(row.settings, row.config_text, row.profile);
+    let specs = codex_published_specs(row.settings, row.config_text);
     if specs.is_empty() {
         return Ok(Vec::new());
     }
@@ -5344,11 +5320,7 @@ wire_api = "responses"
         assert_eq!(slugs, vec!["copilot-fusion-auto"]);
         assert_eq!(models[0]["display_name"], "GitHub Copilot Auto");
 
-        let published = codex_published_models_for_profile(
-            &json!({}),
-            config,
-            CodexCatalogToolProfile::Copilot,
-        );
+        let published = codex_published_models(&json!({}), config);
         assert_eq!(published, vec!["copilot-fusion-auto".to_string()]);
     }
 
@@ -5424,15 +5396,10 @@ wire_api = "responses"
             }
         });
         let config = "model = \"gpt-5.5\"\n";
-        let copilot =
-            codex_published_models_for_profile(&settings, config, CodexCatalogToolProfile::Copilot);
-        assert_eq!(copilot, vec!["gpt-5.5".to_string()]);
-        let other = codex_published_models_for_profile(
-            &settings,
-            config,
-            CodexCatalogToolProfile::ProxyChat,
+        assert_eq!(
+            codex_published_models(&settings, config),
+            vec!["gpt-5.5".to_string()]
         );
-        assert_eq!(other, vec!["gpt-5.5".to_string()]);
     }
 
     #[test]

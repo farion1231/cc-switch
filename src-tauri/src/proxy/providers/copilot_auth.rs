@@ -1027,14 +1027,6 @@ impl CopilotAuthManager {
         }
     }
 
-    /// 失效指定账号已缓存的 Copilot Bearer Token（如遇到上游 401，促使下次调用重新向 GitHub 换票）
-    pub async fn invalidate_token_for_account(&self, account_id: &str) {
-        let mut tokens = self.copilot_tokens.write().await;
-        if tokens.remove(account_id).is_some() {
-            log::info!("[CopilotAuth] 已失效账号 {account_id} 的 Copilot Bearer Token 缓存");
-        }
-    }
-
     /// 仅当指定账号当前缓存的 Copilot Bearer Token 与 expected_token 匹配时才失效缓存。
     /// 防止并发请求 A 刷新出新 Bearer 后，B 的旧请求迟到返回 401 误删新凭证。
     pub async fn invalidate_token_if_matches(
@@ -1046,10 +1038,8 @@ impl CopilotAuthManager {
         if let Some(cached) = tokens.get(account_id) {
             if cached.token == expected_token {
                 tokens.remove(account_id);
-                let preview_len = expected_token.len().min(8);
                 log::info!(
-                    "[CopilotAuth] 已失效账号 {account_id} 匹配版本 ({}) 的 Copilot Bearer Token 缓存",
-                    &expected_token[..preview_len]
+                    "[CopilotAuth] 已失效账号 {account_id} 匹配版本的 Copilot Bearer Token 缓存"
                 );
                 return true;
             } else {
@@ -1059,13 +1049,6 @@ impl CopilotAuthManager {
             }
         }
         false
-    }
-
-    /// 失效默认账号的 Copilot Bearer Token 缓存
-    pub async fn invalidate_default_token(&self) {
-        if let Some(id) = self.resolve_default_account_id().await {
-            self.invalidate_token_for_account(&id).await;
-        }
     }
 
     // ==================== 模型和使用量 ====================
@@ -1233,26 +1216,6 @@ impl CopilotAuthManager {
     ) -> Result<Option<CopilotModel>, CopilotAuthError> {
         let models = self.fetch_all_models_for_account(account_id).await?;
         Ok(super::copilot_model_map::resolve_model_record(model_id, &models).cloned())
-    }
-
-    /// Find the exact upstream model ID, without aliases or family fallback.
-    pub async fn get_exact_model_record_for_account(
-        &self,
-        account_id: &str,
-        model_id: &str,
-    ) -> Result<Option<CopilotModel>, CopilotAuthError> {
-        let models = self.fetch_all_models_for_account(account_id).await?;
-        Ok(models.into_iter().find(|model| model.id == model_id))
-    }
-
-    pub async fn get_exact_model_record(
-        &self,
-        model_id: &str,
-    ) -> Result<Option<CopilotModel>, CopilotAuthError> {
-        match self.resolve_default_account_id().await {
-            Some(id) => self.get_exact_model_record_for_account(&id, model_id).await,
-            None => Err(CopilotAuthError::GitHubTokenInvalid),
-        }
     }
 
     pub async fn get_model_record(

@@ -38,17 +38,6 @@ pub(super) fn is_copilot_auto_compaction_request(
                 && crate::proxy::providers::codex_compaction::is_compaction_request(body)))
 }
 
-pub(super) async fn invalidate_compacted_auto_route(
-    sessions: &crate::proxy::copilot_auto_session::AutoSessionManager,
-    key: &crate::proxy::copilot_auto_session::AutoSessionKey,
-    token: &str,
-    compaction_succeeded: bool,
-) {
-    if compaction_succeeded {
-        sessions.invalidate_if_token_matches(key, token).await;
-    }
-}
-
 pub(super) struct CopilotRequestContext {
     pub(super) classification: crate::proxy::copilot_optimizer::CopilotClassification,
     pub(super) request_id: Option<String>,

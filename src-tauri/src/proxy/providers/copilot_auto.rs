@@ -7,22 +7,14 @@ use crate::proxy::error::ProxyError;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use serde::{Deserialize, Serialize};
 
-#[allow(dead_code)]
 pub const COPILOT_AUTO_CLI_USER_AGENT: &str =
     "copilot/1.0.107 (linux v24.22.1) term/unknown client/github/cli";
-#[allow(dead_code)]
 pub const COPILOT_AUTO_CLI_EDITOR_VERSION: &str = "copilot/1.0.107";
-#[allow(dead_code)]
 pub const COPILOT_AUTO_CLI_OPENAI_INTENT: &str = "conversation-agent";
-#[allow(dead_code)]
 pub const COPILOT_AUTO_CLI_INTEGRATION_ID: &str = "copilot-developer-cli";
-#[allow(dead_code)]
 pub const COPILOT_AUTO_CLI_HARNESS_ID: &str = "copilot-sdk";
-#[allow(dead_code)]
 pub const COPILOT_AUTO_API_VERSION: &str = "2026-08-01";
-#[allow(dead_code)]
 pub const COPILOT_AUTO_VIRTUAL_MODEL_ID: &str = "copilot-fusion-auto";
-#[allow(dead_code)]
 pub const COPILOT_AUTO_VIRTUAL_DISPLAY_NAME: &str = "GitHub Copilot Auto";
 
 /// Supported request protocols for prompt extraction
@@ -30,49 +22,35 @@ pub const COPILOT_AUTO_VIRTUAL_DISPLAY_NAME: &str = "GitHub Copilot Auto";
 pub enum RequestProtocol {
     AnthropicMessages,
     CodexResponses,
-    #[allow(dead_code)]
     ChatCompletions,
 }
 
 /// DTO for POST /auto resolution request
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[allow(dead_code)]
-pub struct CopilotAutoRequest {
-    pub prompt: String,
-    #[serde(default)]
-    pub has_image: bool,
+#[derive(Serialize)]
+struct CopilotAutoRequest<'a> {
+    prompt: &'a str,
+    has_image: bool,
 }
 
 /// Selected model payload supporting both object form `{"id": "...", ...}` and string `"..."`.
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Deserialize)]
 #[serde(untagged)]
 pub enum SelectedModelPayload {
-    Object(SelectedModelObject),
+    Object { id: String },
     String(String),
 }
 
 impl SelectedModelPayload {
     pub fn model_id(&self) -> &str {
         match self {
-            Self::Object(obj) => &obj.id,
+            Self::Object { id } => id,
             Self::String(s) => s.as_str(),
         }
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
-pub struct SelectedModelObject {
-    pub id: String,
-    #[serde(default)]
-    pub name: Option<String>,
-    #[serde(default)]
-    pub capabilities: Option<serde_json::Value>,
-    #[serde(flatten)]
-    pub extra: serde_json::Map<String, serde_json::Value>,
-}
-
 /// DTO for POST /auto resolution response
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Deserialize)]
 pub struct CopilotAutoResponse {
     pub session_token: String,
     pub selected_model: SelectedModelPayload,
@@ -80,12 +58,6 @@ pub struct CopilotAutoResponse {
     /// 由 session 侧按已知形态（unix 秒 / RFC 3339）解析。
     #[serde(default)]
     pub expires_at: Option<serde_json::Value>,
-    #[serde(default)]
-    pub selection_reason: Option<String>,
-    #[serde(default)]
-    pub hydra_scores: Option<serde_json::Value>,
-    #[serde(flatten)]
-    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 /// 顶层 `expires_at` → unix 秒。缺失（或 null）返回 `Ok(None)`；存在但无法解析
@@ -125,14 +97,12 @@ impl std::fmt::Debug for CopilotAutoResponse {
         f.debug_struct("CopilotAutoResponse")
             .field("session_token", &"[REDACTED]")
             .field("selected_model", &self.selected_model)
-            .field("selection_reason", &self.selection_reason)
             .finish()
     }
 }
 
 /// JWT payload decoded from session_token
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct ParsedSessionToken {
     pub exp: Option<u64>,
 }
@@ -190,7 +160,7 @@ fn strip_system_reminders(text: &str) -> std::borrow::Cow<'_, str> {
     std::borrow::Cow::Owned(kept)
 }
 
-pub fn truncate_to_char_boundary(s: &mut String, max_bytes: usize) {
+fn truncate_to_char_boundary(s: &mut String, max_bytes: usize) {
     if s.len() > max_bytes {
         let mut end = max_bytes;
         while end > 0 && !s.is_char_boundary(end) {
@@ -405,7 +375,6 @@ pub fn extract_prompt_summary_for_auto(
 }
 
 /// Client for calling POST /auto
-#[allow(dead_code)]
 pub struct CopilotAutoClient;
 
 /// reqwest 自带的超时和 `get_or_resolve` 外层的 tokio 超时等长：谁先到都按超时报，
@@ -434,10 +403,7 @@ impl CopilotAutoClient {
         let url = format!("{clean_base}/auto");
         let interaction_id = uuid::Uuid::new_v4().to_string();
 
-        let request_body = CopilotAutoRequest {
-            prompt: prompt.to_string(),
-            has_image,
-        };
+        let request_body = CopilotAutoRequest { prompt, has_image };
 
         let response = client
             .post(&url)
@@ -516,10 +482,6 @@ mod tests {
 
         let resp: CopilotAutoResponse = serde_json::from_value(fixture).unwrap();
         assert_eq!(resp.selected_model.model_id(), "gpt-5.6-luna");
-        assert_eq!(
-            resp.selection_reason.as_deref(),
-            Some("scored best for code intent")
-        );
 
         // Test debug does not leak session_token
         let debug_str = format!("{resp:?}");
@@ -677,7 +639,7 @@ mod tests {
             }
         });
         let resp: CopilotAutoResponse = serde_json::from_value(fixture).unwrap();
-        assert_eq!(resp.extra["multi_turn"]["backoff_coefficient"], 2.5);
+        assert_eq!(resp.selected_model.model_id(), "gpt-5.6-luna");
     }
 
     #[test]
