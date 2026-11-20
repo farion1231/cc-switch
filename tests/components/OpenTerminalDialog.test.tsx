@@ -1,12 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import {
   OpenTerminalDialog,
   terminalAvailable,
   terminalNeedsRoute,
 } from "@/components/providers/OpenTerminalDialog";
 import type { Provider } from "@/types";
+import { createTestQueryClient } from "../utils/testQueryClient";
 
 const openTerminalMock = vi.fn();
 const pickDirectoryMock = vi.fn();
@@ -51,9 +52,7 @@ function renderDialog(
   target: Provider = provider,
   appId: "claude" | "codex" | "agy" | "grokbuild" | "copilot" = "claude",
 ) {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
+  const client = createTestQueryClient();
   render(
     <QueryClientProvider client={client}>
       <OpenTerminalDialog provider={target} appId={appId} onClose={onClose} />
@@ -230,6 +229,25 @@ describe("OpenTerminalDialog", () => {
     expect(
       window.localStorage.getItem("cc-switch:terminal:extra-args:codex"),
     ).toBeNull();
+  });
+
+  // 回车直接打开：确认按钮被挤到下面时也能用键盘确认（#9478）；输入法选词的回车不算
+  it("opens on Enter in the extra-arguments field, but not while composing", async () => {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(["/work/alpha"]));
+    const onClose = renderDialog();
+    const input = screen.getByLabelText(
+      "provider.openTerminalDialog.extraArgs",
+    );
+
+    fireEvent.keyDown(input, { key: "Enter", keyCode: 229 });
+    expect(openTerminalMock).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(openTerminalMock).toHaveBeenCalledWith("p1", "claude", {
+      cwd: "/work/alpha",
+      skipPermissions: false,
+    });
   });
 
   it("prefills the remembered extra arguments", () => {

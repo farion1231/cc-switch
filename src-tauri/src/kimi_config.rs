@@ -47,7 +47,7 @@ pub(crate) fn official_provider_name(id: &str, nickname: Option<&str>) -> String
 /// Names CC Switch generated earlier follow the account's current nickname.
 pub(crate) fn normalize_provider_identity(provider: &mut Provider, nickname: Option<&str>) {
     if !is_official_provider(&provider.settings_config) {
-        if provider.category.as_deref() == Some("official") {
+        if provider.has_official_category() {
             provider.category = None;
         }
         return;

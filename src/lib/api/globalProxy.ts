@@ -16,14 +16,6 @@ export interface ProxyTestResult {
 }
 
 /**
- * 出站代理状态
- */
-export interface UpstreamProxyStatus {
-  enabled: boolean;
-  proxyUrl: string | null;
-}
-
-/**
  * 检测到的代理
  */
 export interface DetectedProxy {
@@ -67,19 +59,43 @@ export async function testProxyUrl(url: string): Promise<ProxyTestResult> {
 }
 
 /**
- * 获取当前出站代理状态
- *
- * @returns 代理状态，包含是否启用和代理 URL
- */
-export async function getUpstreamProxyStatus(): Promise<UpstreamProxyStatus> {
-  return invoke<UpstreamProxyStatus>("get_upstream_proxy_status");
-}
-
-/**
  * 扫描本地代理
  *
  * @returns 检测到的代理列表
  */
 export async function scanLocalProxies(): Promise<DetectedProxy[]> {
   return invoke<DetectedProxy[]>("scan_local_proxies");
+}
+
+export type DiagnosticError =
+  | "network"
+  | "http"
+  | "invalidResponse"
+  | "unavailable";
+
+export interface IpReport {
+  samples: {
+    source: string;
+    ip: string | null;
+    latencyMs: number;
+    error: DiagnosticError | null;
+  }[];
+  location: {
+    ip: string;
+    country: string | null;
+    region: string | null;
+    city: string | null;
+    connection: {
+      asn: number | null;
+      isp: string | null;
+      org: string | null;
+    } | null;
+    timezone: { id: string | null; utc: string | null } | null;
+  } | null;
+  locationError: DiagnosticError | null;
+}
+
+/** An empty URL follows CC Switch's system proxy behavior. */
+export function diagnoseIp(url: string): Promise<IpReport> {
+  return invoke<IpReport>("diagnose_ip", { url });
 }

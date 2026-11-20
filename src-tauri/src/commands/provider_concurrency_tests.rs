@@ -4,6 +4,7 @@ use std::time::Duration;
 use tauri::Manager;
 
 use super::startup_tests::TestHome;
+use crate::app_config::AppType;
 use crate::database::Database;
 use crate::provider::Provider;
 use crate::store::AppState;
@@ -25,7 +26,8 @@ fn native_provider_lists_wait_for_mutations_before_reading_snapshots() {
             serde_json::json!({}),
             None,
         );
-        db.save_provider(app_type, &provider).unwrap();
+        let app_enum = app_type.parse::<AppType>().unwrap();
+        db.save_provider(&app_enum, &provider).unwrap();
         let state = app.state::<AppState>();
         let guard =
             tauri::async_runtime::block_on(state.proxy_service.lock_switch_for_app(app_type));
@@ -42,7 +44,7 @@ fn native_provider_lists_wait_for_mutations_before_reading_snapshots() {
             tokio::time::timeout(Duration::from_millis(200), listing.as_mut()).await
         });
         // Complete the in-flight mutation while still owning the app lock.
-        db.delete_provider(app_type, &provider.id).unwrap();
+        db.delete_provider(&app_enum, &provider.id).unwrap();
         drop(guard);
         let waited = early_result.is_err();
         let listed = match early_result {
@@ -57,7 +59,7 @@ fn native_provider_lists_wait_for_mutations_before_reading_snapshots() {
         assert!(waited, "{app_type} listed an unfinished mutation");
         assert!(!listed.contains_key(&provider.id));
         assert!(db
-            .get_provider_by_id(&provider.id, app_type)
+            .get_provider_by_id(&provider.id, &app_enum)
             .unwrap()
             .is_none());
     }
@@ -88,7 +90,7 @@ fn deleting_during_native_list_refresh_does_not_resurrect_the_provider() {
     )
     .unwrap();
     db.save_provider(
-        "kimi",
+        &AppType::Kimi,
         &Provider::with_id(
             "deleted".into(),
             "Deleted".into(),
@@ -154,7 +156,10 @@ fn deleting_during_native_list_refresh_does_not_resurrect_the_provider() {
     .unwrap();
 
     assert!(waited, "delete must wait for the in-flight list refresh");
-    assert!(db.get_provider_by_id("deleted", "kimi").unwrap().is_none());
+    assert!(db
+        .get_provider_by_id("deleted", &AppType::Kimi)
+        .unwrap()
+        .is_none());
     assert!(!std::fs::read_to_string(&native_file)
         .unwrap()
         .contains("deleted"));

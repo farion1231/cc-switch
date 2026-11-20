@@ -1,4 +1,4 @@
-import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
+import { parse as parseToml } from "smol-toml";
 import { normalizeTomlText } from "@/utils/textNormalization";
 import { McpServerSpec } from "../types";
 
@@ -20,24 +20,6 @@ export const validateToml = (text: string): string => {
     // 返回底层错误信息，由上层进行 i18n 包装
     return e?.message || "parseError";
   }
-};
-
-/**
- * 将 McpServerSpec 对象转换为 TOML 字符串
- * 使用 @iarna/toml 的 stringify，自动处理转义与嵌套表
- * 保留所有字段（包括扩展字段如 timeout_ms）
- */
-export const mcpServerToToml = (server: McpServerSpec): string => {
-  // 先复制所有字段（保留扩展字段）
-  const obj: any = { ...server };
-
-  // 去除未定义字段，确保输出更干净
-  for (const k of Object.keys(obj)) {
-    if (obj[k] === undefined) delete obj[k];
-  }
-
-  // stringify 默认会带换行，做一次 trim 以适配文本框展示
-  return stringifyToml(obj).trim();
 };
 
 /**
@@ -180,42 +162,3 @@ function normalizeServerConfig(config: any): McpServerSpec {
     throw new Error(`不支持的 MCP 服务器类型: ${type}`);
   }
 }
-
-/**
- * 尝试从 TOML 中提取合理的服务器 ID/标题
- * @param tomlText TOML 文本
- * @returns 建议的 ID，失败返回空字符串
- */
-export const extractIdFromToml = (tomlText: string): string => {
-  try {
-    const parsed = parseToml(normalizeTomlText(tomlText));
-
-    // 尝试从 [mcp_servers.<id>] 或 [mcp.servers.<id>] 中提取 ID
-    if (parsed.mcp_servers && typeof parsed.mcp_servers === "object") {
-      const serverIds = Object.keys(parsed.mcp_servers);
-      if (serverIds.length > 0) {
-        return serverIds[0];
-      }
-    }
-
-    if (parsed.mcp && typeof parsed.mcp === "object") {
-      const mcpObj = parsed.mcp as any;
-      if (mcpObj.servers && typeof mcpObj.servers === "object") {
-        const serverIds = Object.keys(mcpObj.servers);
-        if (serverIds.length > 0) {
-          return serverIds[0];
-        }
-      }
-    }
-
-    // 尝试从 command 中推断
-    if (parsed.command && typeof parsed.command === "string") {
-      const cmd = parsed.command.split(/[\\/]/).pop() || "";
-      return cmd.replace(/\.(exe|bat|sh|js|py)$/i, "");
-    }
-  } catch {
-    // 解析失败，返回空
-  }
-
-  return "";
-};

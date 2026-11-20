@@ -1,7 +1,8 @@
 import React from "react";
 import { HoverTip } from "@/components/ui/hover-tip";
 import type { AppId } from "@/lib/api/types";
-import { APP_IDS, APP_ICON_MAP } from "@/config/appConfig";
+import { APP_ICON_MAP } from "@/config/appConfig";
+import { APP_IDS } from "@/config/appSpecs";
 
 interface AppToggleGroupProps {
   apps: Partial<Record<AppId, boolean>>;

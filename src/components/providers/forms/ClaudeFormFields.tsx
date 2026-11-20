@@ -46,6 +46,7 @@ import type { CopilotModel } from "@/lib/api/copilot";
 import {
   fetchCodexOauthModels,
   fetchXaiOauthModels,
+  claudeModelFetchApiFormat,
   fetchModelsForConfig,
   modelFetchRequestHeaders,
   showFetchModelsError,
@@ -57,6 +58,7 @@ import {
   type ClaudeStackModelRow,
 } from "./ClaudeStackModelsField";
 import { LocalProxyRequestOverridesField } from "./LocalProxyRequestOverridesField";
+import { BillingMultiplierField } from "./BillingMultiplierField";
 import {
   ClaudeReasoningEffortField,
   type ClaudeReasoningEffortChoice,
@@ -68,6 +70,7 @@ import type {
 } from "@/types";
 import type { ManagedAuthProvider } from "@/lib/api";
 import {
+  copilotOneMAvailable,
   hasClaudeOneMMarker,
   setClaudeOneMMarker,
   stripClaudeOneMMarker,
@@ -171,6 +174,9 @@ interface ClaudeFormFieldsProps {
   // Local proxy User-Agent override
   customUserAgent: string;
   onCustomUserAgentChange: (value: string) => void;
+  /** 供应商费用倍率；不传 onBillingMultiplierChange 时不显示（官方卡等）。 */
+  billingMultiplier?: string;
+  onBillingMultiplierChange?: (value: string) => void;
   localProxyHeadersOverride: string;
   onLocalProxyHeadersOverrideChange: (value: string) => void;
   localProxyBodyOverride: string;
@@ -255,6 +261,8 @@ export function ClaudeFormFields({
   onFullUrlChange,
   customUserAgent,
   onCustomUserAgentChange,
+  billingMultiplier = "",
+  onBillingMultiplierChange,
   localProxyHeadersOverride,
   onLocalProxyHeadersOverrideChange,
   localProxyBodyOverride,
@@ -280,6 +288,7 @@ export function ClaudeFormFields({
     apiKeyField !== "ANTHROPIC_AUTH_TOKEN" ||
     isFullUrl ||
     customUserAgent ||
+    billingMultiplier ||
     hasRequestOverrides
   );
   const [advancedExpanded, setAdvancedExpanded] = useState(
@@ -297,7 +306,10 @@ export function ClaudeFormFields({
 
   // Stack 布局的高级区只有完整 URL、User-Agent 和请求覆盖，开了或填了才展开。
   const [stackAdvancedExpanded, setStackAdvancedExpanded] = useState(
-    isFullUrl || !!customUserAgent || hasRequestOverrides,
+    isFullUrl ||
+      !!customUserAgent ||
+      !!billingMultiplier ||
+      hasRequestOverrides,
   );
 
   // Copilot 可用模型列表
@@ -356,6 +368,7 @@ export function ClaudeFormFields({
       modelsUrl,
       customUserAgent,
       {
+        apiFormat: claudeModelFetchApiFormat(apiFormat),
         requestHeaders: modelFetchRequestHeaders(localProxyHeadersOverride),
       },
     )
@@ -373,6 +386,7 @@ export function ClaudeFormFields({
     apiKey,
     isFullUrl,
     customUserAgent,
+    apiFormat,
     localProxyHeadersOverride,
     showModelFetchResult,
     t,
@@ -706,6 +720,25 @@ export function ClaudeFormFields({
     handleRoleModelChange(row, setClaudeOneMMarker(row.model, enabled));
   };
 
+  // Copilot 取到模型列表后才知道哪些模型有 1M 版本；没有的不让勾，已勾的提示取消。
+  const copilotLacksOneM = (model: string) =>
+    isCopilotPreset && copilotOneMAvailable(model, copilotModels) === false;
+  // 兜底模型常和某一档相同，去重后再列。
+  const copilotOneMMismatches = [
+    ...new Set(
+      [...modelRoleRows.map((row) => row.model), claudeModel]
+        .filter(
+          (model) => hasClaudeOneMMarker(model) && copilotLacksOneM(model),
+        )
+        .map((model) => stripClaudeOneMMarker(model).trim()),
+    ),
+  ];
+  const fallbackOneMBlocked =
+    !fallbackUsesOneM && copilotLacksOneM(claudeModel);
+  const copilotOneMUnavailableTip = t("providerForm.copilotOneMUnavailable", {
+    defaultValue: "Copilot 没有这个模型的 1M 版本",
+  });
+
   const oauthSections = (
     <>
       {/* GitHub Copilot OAuth 认证 */}
@@ -993,14 +1026,21 @@ export function ClaudeFormFields({
       />
     );
 
-  // 两项都只在路由、聚合模式下生效：在分组开头说一次，各自的作用收进字段名后的「?」。
+  // 这一组都只在路由、聚合模式下生效：在分组开头说一次，各自的作用收进字段名后的「?」。
   const userAgentAndOverrides = (
     <>
       <p className="text-xs leading-relaxed text-fg-2">
         {t("codexConfig.routeOnlySettingsHint", {
-          defaultValue: "以下两项只在路由、聚合模式下生效。",
+          defaultValue: "以下设置只在路由、聚合模式下生效。",
         })}
       </p>
+      {onBillingMultiplierChange && (
+        <BillingMultiplierField
+          id="claude-billing-multiplier"
+          value={billingMultiplier}
+          onChange={onBillingMultiplierChange}
+        />
+      )}
       <CustomUserAgentField
         id="claude-custom-user-agent"
         value={customUserAgent}
@@ -1242,6 +1282,7 @@ export function ClaudeFormFields({
               {modelRoleRows.map((row) => {
                 const modelBase = stripClaudeOneMMarker(row.model);
                 const usesOneM = hasClaudeOneMMarker(row.model);
+                const oneMBlocked = !usesOneM && copilotLacksOneM(row.model);
 
                 return (
                   <div
@@ -1286,9 +1327,15 @@ export function ClaudeFormFields({
                           setClaudeOneMMarker(value, usesOneM),
                         ),
                     )}
-                    <label className="flex h-9 items-center gap-2 text-sm text-fg-2">
+                    <label
+                      className={`flex h-9 items-center gap-2 text-sm text-fg-2${oneMBlocked ? " opacity-50" : ""}`}
+                      title={
+                        oneMBlocked ? copilotOneMUnavailableTip : undefined
+                      }
+                    >
                       <Checkbox
                         checked={usesOneM}
+                        disabled={oneMBlocked}
                         onCheckedChange={(checked) =>
                           handleRoleOneMChange(row, checked === true)
                         }
@@ -1300,6 +1347,15 @@ export function ClaudeFormFields({
                   </div>
                 );
               })}
+              {copilotOneMMismatches.length > 0 && (
+                <p className="text-xs leading-relaxed text-warning-text">
+                  {t("providerForm.copilotOneMMismatch", {
+                    models: copilotOneMMismatches.join(", "),
+                    defaultValue:
+                      "Copilot 没有 {{models}} 的 1M 版本：请求会退回普通版本，但 Claude Code 仍按 1M 规划上下文，长会话可能超出上限。建议取消勾选 1M。",
+                  })}
+                </p>
+              )}
             </div>
 
             <div className="space-y-2 border-t border-border pt-4">
@@ -1332,9 +1388,15 @@ export function ClaudeFormFields({
                       setClaudeOneMMarker(value, fallbackUsesOneM),
                     ),
                 )}
-                <label className="flex h-9 items-center gap-2 text-sm text-fg-2">
+                <label
+                  className={`flex h-9 items-center gap-2 text-sm text-fg-2${fallbackOneMBlocked ? " opacity-50" : ""}`}
+                  title={
+                    fallbackOneMBlocked ? copilotOneMUnavailableTip : undefined
+                  }
+                >
                   <Checkbox
                     checked={fallbackUsesOneM}
+                    disabled={fallbackOneMBlocked}
                     onCheckedChange={(checked) => {
                       const base = stripClaudeOneMMarker(claudeModel).trim();
                       if (!base) return;
