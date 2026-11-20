@@ -594,7 +594,20 @@ fn with_index_in<T>(
         *guard = Some(index?);
     }
     let index = guard.as_mut().expect("index opened above");
-    f(index).map_err(|e| format!("Session index error: {e}"))
+    f(index).map_err(|error| {
+        // Open validates the schema, but corrupt FTS segments may only fail on query.
+        // Close and remove the cache under the same lock used by background sync.
+        if matches!(
+            error.sqlite_error_code(),
+            Some(rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase)
+        ) {
+            *guard = None;
+            if let Err(cleanup) = remove_index_files(path) {
+                log::warn!("清理损坏的会话正文索引失败: {cleanup}");
+            }
+        }
+        format!("Session index error: {error}")
+    })
 }
 
 fn remove_index_files(path: &Path) -> std::io::Result<()> {
@@ -684,9 +697,7 @@ fn search_in(
         if error == DISABLED {
             return Ok(Vec::new());
         }
-        // 索引槽里已经打开的句柄再次查询失败（FTS 段损坏等）时，[`with_index_in`]
-        // 的重建逻辑不会触发。索引只是缓存，丢掉它让下一次重试重新打开并自愈。
-        *slot.lock_recover() = None;
+        log::warn!("会话正文搜索失败: {error}");
         Err(error)
     })?;
     Ok(ContentSearchResult { hits, status })
@@ -1582,6 +1593,72 @@ mod tests {
     }
 
     #[test]
+    fn non_corruption_errors_preserve_the_index() {
+        let index = SessionIndex::open_in_memory().unwrap();
+        let slot = Mutex::new(Some(index));
+        let result: Result<(), String> = with_index_in(
+            &slot,
+            Path::new("unused-index-path"),
+            || true,
+            |_| Err(rusqlite::Error::InvalidQuery),
+        );
+        assert!(result.is_err());
+        assert!(slot.lock_recover().is_some());
+    }
+
+    #[test]
+    fn search_recovers_from_corrupt_fts_segments() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(INDEX_FILE);
+        {
+            let mut index = SessionIndex::open(&path).unwrap();
+            index
+                .replace_source("codex", "/synthetic", fp(1), &rows(&["needle"]))
+                .unwrap();
+            index
+                .conn
+                .execute(
+                    "UPDATE message_text_data SET block = x'00' WHERE id > 10",
+                    [],
+                )
+                .unwrap();
+        }
+        // Opening succeeds even though reading the FTS segment fails.
+        let index = SessionIndex::open(&path).unwrap();
+        assert_eq!(
+            index
+                .search("needle", None, 10)
+                .unwrap_err()
+                .sqlite_error_code(),
+            Some(rusqlite::ErrorCode::DatabaseCorrupt)
+        );
+        let slot = Mutex::new(Some(index));
+        assert!(search_in(&slot, &path, || true, "needle", None, 10).is_err());
+        assert!(slot.lock_recover().is_none());
+        assert!(
+            !path.exists(),
+            "corrupt cache must be removed before releasing the lock"
+        );
+        with_index_in(
+            &slot,
+            &path,
+            || true,
+            |index| index.replace_source("codex", "/synthetic", fp(1), &rows(&["needle"])),
+        )
+        .unwrap();
+        assert_eq!(
+            search_in(&slot, &path, || true, "needle", None, 10)
+                .unwrap()
+                .hits
+                .len(),
+            1
+        );
+    }
+
+    #[test]
     fn search_reports_index_failures_instead_of_empty_hits() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(INDEX_FILE);
@@ -1603,6 +1680,9 @@ mod tests {
         assert!(!error.trim().is_empty(), "the failure needs a reason");
 
         // 索引只是缓存：挡路的目录挪开后，界面上的「重试」要能自愈
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         fs::remove_dir(&path).unwrap();
         let recovered = search_in(
             &slot,
