@@ -329,10 +329,13 @@ impl StoreWriter {
     }
 
     fn drain(&self) {
-        /// 写线程无论正常结束还是 panic，都要清掉 `writing`，否则之后再也不会落盘
-        struct Finish<'a>(&'a StoreWriter);
+        /// 写线程 panic 时也要清掉 `writing`，否则之后再也不会落盘
+        struct Finish<'a>(&'a StoreWriter, bool);
         impl Drop for Finish<'_> {
             fn drop(&mut self) {
+                if self.1 {
+                    return;
+                }
                 let mut state = self.0.lock();
                 state.writing = false;
                 if std::thread::panicking() {
@@ -341,10 +344,19 @@ impl StoreWriter {
                 self.0.idle.notify_all();
             }
         }
-        let _finish = Finish(self);
+        let mut finish = Finish(self, false);
         loop {
-            let Some(snapshot) = self.lock().pending.take() else {
-                return;
+            let snapshot = {
+                let mut state = self.lock();
+                match state.pending.take() {
+                    Some(snapshot) => snapshot,
+                    None => {
+                        state.writing = false;
+                        finish.1 = true;
+                        self.idle.notify_all();
+                        return;
+                    }
+                }
             };
             self.write(&snapshot);
         }
@@ -1054,6 +1066,66 @@ mod tests {
         cache.scan_with_limit(files, 2, |path: &Path| Ok(meta_from_file(path)));
         cache.flush_store();
         assert_eq!(std::fs::read(&store).unwrap(), b"sentinel");
+    }
+
+    #[test]
+    fn store_writer_does_not_strand_pending_snapshot_when_draining() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = dir.path().join("list.json");
+        let writer = Arc::new(StoreWriter::new(store.clone()));
+        let key = PathBuf::from("session.jsonl");
+        let snapshot_for = |id: usize| {
+            Snapshot(vec![(
+                key.clone(),
+                CachedParse {
+                    modified: None,
+                    len: id as u64,
+                    meta: Some(Arc::new(SessionMeta {
+                        provider_id: "test".to_string(),
+                        session_id: format!("s-{id}"),
+                        title: None,
+                        summary: None,
+                        project_dir: None,
+                        created_at: None,
+                        last_active_at: None,
+                        source_path: None,
+                        resume_command: None,
+                    })),
+                },
+            )])
+        };
+
+        for round in 0..40 {
+            writer.submit(snapshot_for(round * 2));
+            while {
+                let s = writer.lock();
+                s.writing && s.pending.is_some()
+            } {
+                std::thread::yield_now();
+            }
+            writer.submit(snapshot_for(round * 2 + 1));
+
+            let mut state = writer.lock();
+            while state.writing {
+                state = writer
+                    .idle
+                    .wait(state)
+                    .unwrap_or_else(PoisonError::into_inner);
+            }
+            assert!(
+                state.pending.is_none(),
+                "round {round}: writer exited with a stranded pending snapshot"
+            );
+            drop(state);
+
+            let expected = format!("s-{}", round * 2 + 1);
+            let loaded = FileParseCache::load_store(&store);
+            let saved_id = loaded
+                .get(&key)
+                .and_then(|entry| entry.meta.as_deref())
+                .map(|meta| meta.session_id.as_str());
+            assert_eq!(saved_id, Some(expected.as_str()));
+        }
     }
 
     #[test]
