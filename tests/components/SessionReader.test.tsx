@@ -567,6 +567,47 @@ describe("SessionReader", () => {
     );
   });
 
+  it("章节：正文里成行、目录里可点、导出为小标题", async () => {
+    const chapter = (id: string, title: string, detail?: string) =>
+      call(id, "mcp", {
+        rawName: "mcp__ccd_session__mark_chapter",
+        server: "ccd_session",
+        title,
+        detail,
+      });
+    renderReader("claude", [
+      msg("user", [text("重构支付模块")], { turnId: "t1" }),
+      msg(
+        "assistant",
+        [chapter("ch1", "梳理现状", "先读代码"), call("c1"), call("c2")],
+        { turnId: "t1" },
+      ),
+      msg("tool", [result("ch1"), result("c1"), result("c2")], {
+        turnId: "t1",
+      }),
+      msg("assistant", [text("改完了")], { turnId: "t1" }),
+    ]);
+
+    // 正文：章节单独成行，不计入执行步骤，也不显示成 MCP 调用
+    expect(within(conversation()).getByText("梳理现状")).toBeInTheDocument();
+    expect(within(conversation()).getByText("先读代码")).toBeInTheDocument();
+    expect(screen.getByText(/执行过程 · 2 步/)).toBeInTheDocument();
+    expect(screen.queryByText(/mark_chapter/)).not.toBeInTheDocument();
+
+    // 目录：章节标题可点（不报错即可，滚动由虚拟列表负责）
+    const outline = screen.getByRole("navigation", { name: "对话目录" });
+    fireEvent.click(within(outline).getByRole("button", { name: /梳理现状/ }));
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "claude 会话 的更多操作" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: "复制整段为 Markdown" }),
+    );
+    const [markdown] = onCopy.mock.calls[0] as [string, string];
+    expect(markdown).toContain("### 梳理现状\n\n> 先读代码");
+  });
+
   it("导出为 Markdown 文件：用会话标题做文件名，内容与复制为 Markdown 一致", async () => {
     const exportMarkdown = vi
       .spyOn(sessionsApi, "exportMarkdown")

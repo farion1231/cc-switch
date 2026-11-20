@@ -33,6 +33,7 @@ import {
   agentTurnTs,
 } from "./SessionAgentAvatar";
 import { SessionFinalReply } from "./SessionFinalReply";
+import { SessionChapterRow } from "./SessionChapterRow";
 import { SessionOutline } from "./SessionOutline";
 import { SessionQuestion } from "./SessionQuestion";
 import {
@@ -45,6 +46,7 @@ import { isFailureStep } from "./toolSummary";
 import {
   buildTurnIndex,
   buildTurns,
+  chapterRowKey,
   estimateRowHeight,
   findMatchPositionForMessage,
   findMatchRowIndex,
@@ -55,6 +57,7 @@ import {
   type ReaderRow,
   type SearchMatch,
   type SessionTurn,
+  type TurnChapter,
 } from "./turns";
 
 /** 「展开全部过程」偏好（与会话列表的分组方式一样存在 localStorage） */
@@ -355,6 +358,16 @@ export function SessionReader({
     [rows, scrollToRow, turns],
   );
 
+  /** 目录里点章节：跳到章节行；被「只看改动」过滤掉时退回这一轮的第一行 */
+  const jumpToChapter = useCallback(
+    (turn: SessionTurn, chapter: TurnChapter) => {
+      const key = chapterRowKey(turn, chapter);
+      const index = rows.findIndex((row) => row.key === key);
+      scrollToRow(index >= 0 ? index : findTurnRowIndex(rows, turns, turn.key));
+    },
+    [rows, scrollToRow, turns],
+  );
+
   // j / k 在轮之间跳（‹ › 是会话之间）
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -629,6 +642,8 @@ export function SessionReader({
             />
           </div>
         ) : null;
+      case "chapter":
+        return <SessionChapterRow chapter={row.chapter} />;
       case "event":
         return <SessionEventRow block={row.block} body={row.body} />;
       case "injected":
@@ -833,6 +848,7 @@ export function SessionReader({
               activeTurn={activeTurn}
               onJumpQuestion={jumpToQuestion}
               onJumpReply={jumpToReply}
+              onJumpChapter={jumpToChapter}
             />
           )}
         </div>
