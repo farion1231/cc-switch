@@ -68,6 +68,13 @@ The platform also supports enterprise-grade concurrency, a dedicated admin conso
 </tr>
 
 <tr>
+<td width="180"><a href="https://modelflare.dev/sign-up?utm_source=github&utm_campaign=ccswitch"><img src="assets/partners/logos/modelflare-banner.png" alt="Modelflare" width="150"></a></td>
+<td>Thanks to Modelflare for sponsoring this project! Modelflare: full-strength, stable, never watered down, with the world's SOTA models at low cost. The site is operated by Havenbyte LLC, a US limited liability company, and supports GPT, Claude, Gemini, Grok, and other leading models over common compatible protocols, plus 40+ image and video models. Formal business partnerships in mainland China are supported.
+<b>Cache compensation is a highlight:</b> some of the OpenAI price-first, stable, and premium groups guarantee a daily cache hit rate of 65%, 75%, and 85% respectively. When eligible requests fall short of the target, the platform compensates the difference, which you can see on the usage dashboard after settlement.
+<b>Special offer:</b> a single top-up of US$20 unlocks the GPT discount group at a 0.015× price multiplier, and a single top-up of US$50 unlocks the Claude discount group at a 0.03× price multiplier. <a href="https://modelflare.dev/sign-up?utm_source=github&utm_campaign=ccswitch">Sign up via the exclusive link</a> to take part.</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://hao.ai/invite/DTBZS3OR"><img src="assets/partners/logos/haoai-banner.png" alt="hao.ai" width="150"></a></td>
 <td>Thanks to hao.ai for sponsoring this project! hao.ai is a fast, stable unified LLM API gateway for developers and teams. With one API key and a unified interface, you can access GPT, Claude, xAI Grok, and other leading models, compatible with common protocols and SDKs such as OpenAI and Anthropic. The platform offers model routing, failover, team management, and complete request logs, with model prices as low as 15% of official reference prices, making it simpler, more stable, and cheaper to build AI applications. hao.ai offers CC Switch users a special perk: register via <a href="https://hao.ai/invite/DTBZS3OR">this link</a> to get 5% bonus credit on your first order!</td>
 </tr>
