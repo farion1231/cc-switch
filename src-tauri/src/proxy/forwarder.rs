@@ -1386,7 +1386,7 @@ impl RequestForwarder {
             if crate::settings::codex_proxy_without_official_login() {
                 return Err(ProxyError::CodexOfficialLoginPaused);
             }
-            let (expected_chatgpt_account_id, managed_session_matches) = match provider
+            let (expected_account_id, managed_session_matches, quota_client) = match provider
                 .meta
                 .as_ref()
                 .and_then(|meta| meta.managed_account_id_for("codex_oauth"))
@@ -1415,14 +1415,18 @@ impl RequestForwarder {
                         }
                         None => false,
                     };
-                    (Some(chatgpt_account_id), Some(session_matches))
+                    (
+                        Some(chatgpt_account_id),
+                        Some(session_matches),
+                        Some(codex_state.0.account_client()),
+                    )
                 }
-                None => (None, None),
+                None => (None, None, None),
             };
             validate_codex_official_authorization(
                 headers,
                 provider,
-                expected_chatgpt_account_id.as_deref(),
+                expected_account_id.as_deref(),
                 managed_session_matches,
             )?;
             if method == http::Method::POST {
@@ -1432,7 +1436,8 @@ impl RequestForwarder {
                     )
                 })?;
                 let request_model = body.get("model").and_then(|value| value.as_str());
-                super::codex_quota_protection::admit(token, headers, request_model).await?;
+                super::codex_quota_protection::admit(token, headers, request_model, quota_client)
+                    .await?;
                 quota_token = Some(token);
             }
         }

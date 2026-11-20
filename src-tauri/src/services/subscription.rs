@@ -1073,7 +1073,7 @@ pub(crate) async fn query_codex_quota_with_client(
     expired_message: &str,
 ) -> Result<SubscriptionQuota, String> {
     let (quota, reset_credits) = tokio::join!(
-        query_codex_usage_with_client(
+        query_codex_usage(
             client,
             access_token,
             account_id,
@@ -1090,23 +1090,6 @@ pub(crate) async fn query_codex_quota_with_client(
 }
 
 pub(crate) async fn query_codex_usage(
-    access_token: &str,
-    account_id: Option<&str>,
-    tool_label: &str,
-    expired_message: &str,
-) -> Result<SubscriptionQuota, String> {
-    let client = crate::proxy::http_client::get();
-    query_codex_usage_with_client(
-        &client,
-        access_token,
-        account_id,
-        tool_label,
-        expired_message,
-    )
-    .await
-}
-
-async fn query_codex_usage_with_client(
     client: &reqwest::Client,
     access_token: &str,
     account_id: Option<&str>,
