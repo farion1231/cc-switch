@@ -609,6 +609,8 @@ struct CopilotAuthStore {
     authenticated_at: Option<i64>,
 }
 
+type CopilotModelCache = HashMap<(String, &'static str), Vec<CopilotModel>>;
+
 /// Copilot 认证管理器（支持多账号）
 pub struct CopilotAuthManager {
     /// 所有 GitHub 账号（key = GitHub user ID）
@@ -619,8 +621,8 @@ pub struct CopilotAuthManager {
     refresh_locks: Arc<RwLock<HashMap<String, Arc<Mutex<()>>>>>,
     /// Copilot Token 缓存（key = GitHub user ID，内存缓存，自动刷新）
     copilot_tokens: Arc<RwLock<HashMap<String, CopilotToken>>>,
-    /// Copilot Models 缓存（key = GitHub user ID，仅进程内复用）
-    copilot_models: Arc<RwLock<HashMap<(String, &'static str), Vec<CopilotModel>>>>,
+    /// Copilot Models 进程内缓存，按账号 ID 和 API 版本区分。
+    copilot_models: Arc<RwLock<CopilotModelCache>>,
     /// Copilot API 端点缓存（key = GitHub user ID，从 /copilot_internal/user 获取）
     api_endpoints: Arc<RwLock<HashMap<String, String>>>,
     #[cfg(test)]

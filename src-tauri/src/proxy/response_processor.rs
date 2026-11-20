@@ -968,23 +968,6 @@ fn responses_have_summary(value: &Value) -> bool {
 }
 
 /// 创建带日志记录和超时控制的透传流
-pub fn create_logged_passthrough_stream(
-    stream: impl Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static,
-    tag: &'static str,
-    usage_collector: Option<SseUsageCollector>,
-    timeout_config: StreamingTimeoutConfig,
-    connection_guard: Option<ActiveConnectionGuard>,
-) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
-    create_logged_passthrough_stream_with_terminal_hook(
-        stream,
-        tag,
-        usage_collector,
-        timeout_config,
-        connection_guard,
-        None,
-    )
-}
-
 pub(crate) fn create_logged_passthrough_stream_with_terminal_hook(
     stream: impl Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static,
     tag: &'static str,
@@ -1324,7 +1307,7 @@ mod tests {
                 "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":1,\"output_tokens\":2}}}\n\n",
             ));
         };
-        let stream = create_logged_passthrough_stream(
+        let stream = create_logged_passthrough_stream_with_terminal_hook(
             upstream,
             "test",
             Some(collector),
@@ -1332,6 +1315,7 @@ mod tests {
                 first_byte_timeout: 0,
                 idle_timeout: 0,
             },
+            None,
             None,
         );
         futures::pin_mut!(stream);
@@ -1850,7 +1834,7 @@ mod tests {
         let stream = futures::stream::iter(vec![Ok::<_, std::io::Error>(
             sse_body.as_bytes().to_vec().into(),
         )]);
-        let passthrough = create_logged_passthrough_stream(
+        let passthrough = create_logged_passthrough_stream_with_terminal_hook(
             stream,
             "test",
             Some(collector),
@@ -1858,6 +1842,7 @@ mod tests {
                 first_byte_timeout: 0,
                 idle_timeout: 0,
             },
+            None,
             None,
         );
         futures::pin_mut!(passthrough);
