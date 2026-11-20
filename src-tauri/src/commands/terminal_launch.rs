@@ -1042,8 +1042,9 @@ fn build_unix_launcher_script(
     handoff.push_str(&build_final_shell_cd_command(shell, cwd));
     handoff.push_str(&build_exec_line(shell, cwd));
 
+    let is_bash = shell.rsplit('/').next() == Some("bash");
     let mut command = unix_launch_command_in(launch, shell);
-    if shell.rsplit('/').next() == Some("bash") {
+    if is_bash {
         // Keep the interactive Bash that ran the provider in charge of the
         // terminal until it has reaped the foreground job. Returning first to
         // the non-interactive sh can leave the dead job's process group in the
@@ -1053,10 +1054,10 @@ fn build_unix_launcher_script(
     }
     script.push_str(&build_provider_command_line(shell, &command, cwd));
     script.push('\n');
-    if shell.rsplit('/').next() != Some("bash") {
+    if !is_bash {
         script.push_str(&handoff);
+        script.push('\n');
     }
-    script.push('\n');
     script
 }
 
@@ -2563,6 +2564,8 @@ mod tests {
             unix_launch_command_in(&launch, "/bin/bash")
         );
         assert!(script.contains(&build_provider_command_line("/bin/bash", &command, None)));
+        assert!(script.ends_with('\n'));
+        assert!(!script.ends_with("\n\n"));
     }
 
     #[test]
