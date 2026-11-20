@@ -489,6 +489,7 @@ struct ParsedCodexFile {
     /// root meta 的 `ordinal` 正好等于 `forked_from_ordinal_exclusive`：分叉子
     /// rollout 从父线程的截止序号接着编号，文件里只有分叉之后的记录。
     starts_at_fork_ordinal: bool,
+    has_fork_provenance: bool,
     root_timestamp: Option<DateTime<Utc>>,
     parent: ParentResolution,
     token_events: Vec<ParsedTokenEvent>,
@@ -528,6 +529,7 @@ struct PendingEntry {
 #[derive(Debug, Default)]
 struct CodexReplayCaches {
     parent_timelines: HashMap<PathBuf, CachedParentTimeline>,
+    fork_evidence: HashMap<PathBuf, Arc<ForkFileEvidence>>,
     replay_prefixes: HashMap<PathBuf, CachedReplayPrefix>,
     pending: HashMap<PathBuf, PendingEntry>,
 }
@@ -1276,6 +1278,7 @@ fn parse_codex_file_with_index(
     let mut root_meta_seen = false;
     let mut bounded_history = None;
     let mut starts_at_fork_ordinal = false;
+    let mut has_fork_provenance = false;
     let mut root_timestamp = None;
     let mut meta_thread_id = None;
     let mut parent = ParentResolution::None;
@@ -1644,6 +1647,8 @@ fn parse_codex_file_with_index(
                     .get("response_id")
                     .and_then(serde_json::Value::as_str)
                     .unwrap_or("");
+                has_fork_provenance |= !response_id.trim().is_empty()
+                    && non_empty_string(payload.get("thread_id")).is_some();
                 let key = if response_id.is_empty() {
                     format!("line{line_offset}")
                 } else {
@@ -1669,6 +1674,7 @@ fn parse_codex_file_with_index(
         root_meta_seen,
         bounded_history,
         starts_at_fork_ordinal,
+        has_fork_provenance,
         root_timestamp,
         parent,
         token_events,
@@ -1992,16 +1998,28 @@ fn load_parent_timeline(
         high_water,
         verified_snapshot: complete_records && stamp.is_some() && stamp == after_stamp,
     });
-    if let (Some(stamp), Ok(mut caches)) = (stamp, replay_caches().lock()) {
-        caches.parent_timelines.insert(
-            parent_path.to_path_buf(),
-            CachedParentTimeline {
-                stamp,
-                timeline: Arc::clone(&timeline),
-            },
-        );
-    }
+    cache_parent_timeline(parent_path, stamp, after_stamp, &timeline);
     Ok(timeline)
+}
+
+fn cache_parent_timeline(
+    path: &Path,
+    stamp: Option<ParentFileStamp>,
+    after_stamp: Option<ParentFileStamp>,
+    timeline: &Arc<ParentTokenTimeline>,
+) {
+    // A failed final metadata read is transient, not a stable invalid snapshot.
+    if stamp.is_some() && stamp == after_stamp {
+        if let (Some(stamp), Ok(mut caches)) = (stamp, replay_caches().lock()) {
+            caches.parent_timelines.insert(
+                path.to_path_buf(),
+                CachedParentTimeline {
+                    stamp,
+                    timeline: Arc::clone(timeline),
+                },
+            );
+        }
+    }
 }
 
 /// 父线程的一个分段（首页或某个续写页），可能有多份内容一致的副本。
@@ -2094,7 +2112,6 @@ fn resolve_parent_signatures(
         && !merged.has_token_without_timestamp
         && merged.max_timestamp.is_some_and(|last| last < cutoff)
         && child.bounded_history.is_none()
-        && child_events_after_fork(child).is_some()
     {
         let signatures = merged.signatures_at(cutoff);
         let prefix = matching_replay_prefix(&child.token_events, &signatures);
@@ -2108,6 +2125,7 @@ fn resolve_parent_signatures(
                 .usage_record_events
                 .iter()
                 .all(|event| event.line_offset > last_replayed.line_offset)
+                && child_events_after_replay(child, prefix).is_some()
                 && child.token_events[prefix..]
                     .iter()
                     .all(|event| !signatures.contains(&event.signature))
@@ -2226,12 +2244,24 @@ fn update_codex_sync_state(
 /// Every billable event is the child's own request: exact `last_token_usage`
 /// and a timestamp after the fork. Copied parent history fails the time check.
 fn child_events_after_fork(parsed: &ParsedCodexFile) -> Option<()> {
+    child_events_after_replay(parsed, 0)
+}
+
+/// Copied legacy snapshots are verified by prefix alignment, so their original
+/// timestamps and cumulative-only usage must not constrain the child's requests.
+fn child_events_after_replay(parsed: &ParsedCodexFile, prefix: usize) -> Option<()> {
     let cutoff = parsed.root_timestamp?;
-    for event in parsed
-        .token_events
-        .iter()
-        .chain(&parsed.usage_record_events)
-    {
+    let replay_end = if prefix == 0 {
+        0
+    } else {
+        parsed.token_events.get(prefix - 1)?.line_offset
+    };
+    for event in parsed.token_events.get(prefix..)?.iter().chain(
+        parsed
+            .usage_record_events
+            .iter()
+            .filter(|event| event.line_offset > replay_end),
+    ) {
         let last = event.signature.last.as_ref()?;
         if last.input.is_none()
             || last.output.is_none()
@@ -2265,6 +2295,7 @@ struct ForkRequestEvidence {
     usage: CumulativeTokens,
 }
 
+#[derive(Debug)]
 struct ForkFileEvidence {
     requests: HashMap<String, (DateTime<Utc>, ForkRequestEvidence)>,
     token_lines: HashMap<i64, ForkRequestEvidence>,
@@ -2274,11 +2305,22 @@ struct ForkFileEvidence {
 /// Legacy copied history retains response IDs and the original request owner,
 /// even when every envelope timestamp is rewritten. Read a complete, stable
 /// snapshot and pair records exactly as the ordinary token parser does.
-fn read_fork_file_evidence(path: &Path) -> Option<ForkFileEvidence> {
+fn read_fork_file_evidence(path: &Path) -> Option<Arc<ForkFileEvidence>> {
     let file = fs::File::open(path).ok()?;
     let stamp = ParentFileStamp::from_file(&file)?;
+    if let Some(cached) = replay_caches().lock().ok().and_then(|caches| {
+        caches
+            .fork_evidence
+            .get(path)
+            .filter(|entry| entry.stamp == stamp)
+            .cloned()
+    }) {
+        return Some(cached);
+    }
+    #[cfg(test)]
+    tests::record_fork_evidence_read(path);
     let mut reader = codex_rollout_file::reader_from_file(path, file).ok()?;
-    let mut requests = HashMap::new();
+    let mut requests: HashMap<String, (DateTime<Utc>, ForkRequestEvidence)> = HashMap::new();
     let mut token_lines = HashMap::new();
     let mut pending: Option<ForkRequestEvidence> = None;
     let mut bytes = Vec::new();
@@ -2329,25 +2371,42 @@ fn read_fork_file_evidence(path: &Path) -> Option<ForkFileEvidence> {
                 usage,
             };
             let timestamp = parse_timestamp(record.timestamp.as_ref())?;
-            if let Some((_, previous)) = requests.insert(response_id, (timestamp, evidence.clone()))
-            {
-                if previous != evidence {
+            if let Some((previous_ts, previous)) = requests.get_mut(&response_id) {
+                if previous != &evidence {
                     return None;
                 }
+                *previous_ts = (*previous_ts).max(timestamp);
+            } else {
+                requests.insert(response_id, (timestamp, evidence.clone()));
             }
             pending = Some(evidence);
         } else if kind == Some("event_msg")
-            && record.payload.as_ref()?.event_type.as_ref()?.as_str() == Some("token_count")
+            && record
+                .payload
+                .as_ref()
+                .and_then(|payload| payload.event_type.as_ref())
+                .and_then(serde_json::Value::as_str)
+                == Some("token_count")
         {
+            let Some(info) = record
+                .payload
+                .as_ref()
+                .and_then(|payload| payload.info.as_ref())
+                .filter(|info| !info.is_null())
+                .filter(|info| parse_token_signature(info).is_some())
+            else {
+                continue;
+            };
             if let Some(evidence) = pending.take() {
-                let last = record
-                    .payload
-                    .as_ref()?
-                    .info
-                    .as_ref()?
+                let last = info
                     .get("last_token_usage")
-                    .and_then(parse_cumulative_tokens)?;
-                if usage_matches(&last, &evidence.usage) || usage_is_zero(&last) {
+                    .and_then(parse_cumulative_tokens);
+                // Total-only copied history can be paired too: the caller checks
+                // its computed delta. New child requests still require exact last.
+                if last
+                    .as_ref()
+                    .is_none_or(|last| usage_matches(last, &evidence.usage) || usage_is_zero(last))
+                {
                     token_lines.insert(line_offset, evidence);
                 }
             }
@@ -2356,11 +2415,17 @@ fn read_fork_file_evidence(path: &Path) -> Option<ForkFileEvidence> {
     if ParentFileStamp::from_file(&fs::File::open(path).ok()?)? != stamp {
         return None;
     }
-    Some(ForkFileEvidence {
+    let evidence = Arc::new(ForkFileEvidence {
         requests,
         token_lines,
         stamp,
-    })
+    });
+    if let Ok(mut caches) = replay_caches().lock() {
+        caches
+            .fork_evidence
+            .insert(path.to_path_buf(), Arc::clone(&evidence));
+    }
+    Some(evidence)
 }
 
 /// A non-archived parent can remain idle forever too. Do not waive the time
@@ -2370,14 +2435,14 @@ fn verified_owned_fork_prefix(
     parsed: &ParsedCodexFile,
     child_path: &Path,
     index: &RolloutIndex,
+    child_file: Option<ParentFileStamp>,
 ) -> Option<usize> {
     let ParentResolution::Parent(parent_id) = &parsed.parent else {
         return None;
     };
-    if parsed.bounded_history.is_some() {
+    if parsed.bounded_history.is_some() || !parsed.has_fork_provenance {
         return None;
     }
-    child_events_after_fork(parsed)?;
     let candidates = index.get(parent_id)?;
     // Multiple copies/pages need their existing resolution and conflict checks.
     if candidates.len() != 1 {
@@ -2389,12 +2454,21 @@ fn verified_owned_fork_prefix(
         return None;
     }
     let cutoff = parsed.root_timestamp?;
+    // Recovery is only needed for the idle-parent timestamp failure. Normal
+    // forks must not trigger a second read/decompression of either rollout.
+    if timeline.max_timestamp.is_none_or(|last| last >= cutoff) {
+        return None;
+    }
     let signatures = timeline.signatures_at(cutoff);
     let prefix = matching_replay_prefix(&parsed.token_events, &signatures);
     let replay_end = parsed.token_events.get(prefix.checked_sub(1)?)?.line_offset;
+    child_events_after_replay(parsed, prefix)?;
     let child_id = parsed.meta_thread_id.as_deref()?;
     let parent = read_fork_file_evidence(parent_path)?;
     let child = read_fork_file_evidence(child_path)?;
+    if Some(child.stamp) != child_file {
+        return None;
+    }
     for event in parsed
         .token_events
         .iter()
@@ -2437,6 +2511,24 @@ fn verified_owned_fork_prefix(
         return None;
     }
     Some(prefix)
+}
+
+/// Called only on a replay-cache miss. Successful normal alignment needs no
+/// request-evidence scan; an idle-parent recovery shares the same prefix cache.
+fn resolve_parent_replay_prefix(
+    parent_id: &str,
+    cutoff: DateTime<Utc>,
+    index: &RolloutIndex,
+    parsed: &ParsedCodexFile,
+    child_path: &Path,
+    child_file: Option<ParentFileStamp>,
+) -> Result<usize, ParentSignatureError> {
+    match resolve_parent_signatures(parent_id, cutoff, index, parsed) {
+        Ok(signatures) => Ok(matching_replay_prefix(&parsed.token_events, &signatures)),
+        Err(error) => {
+            verified_owned_fork_prefix(parsed, child_path, index, child_file).ok_or(error)
+        }
+    }
 }
 
 // A bounded-reference fork stores only its own requests. Accept this narrow case
@@ -2629,119 +2721,109 @@ fn sync_single_codex_file(
         ));
     }
 
-    let replay_prefix = if let Some(prefix) =
-        verified_owned_fork_prefix(&parsed, file_path, rollout_index)
-    {
-        prefix
-    } else {
-        match &parsed.parent {
-            ParentResolution::None | ParentResolution::Continuation { .. } => 0,
-            ParentResolution::Deferred(reason) => {
-                let pending_reason = if let Some(meta_id) = parsed.meta_thread_id.as_deref() {
-                    if rollout_index.contains_key(meta_id) {
-                        PendingReason::Retryable {
-                            reason: reason.clone(),
-                            parent_id: meta_id.to_string(),
-                            child_file,
-                            parent_files: parent_dependency_stamp(meta_id, rollout_index),
-                        }
-                    } else {
-                        PendingReason::Stable(reason.clone())
+    let replay_prefix = match &parsed.parent {
+        ParentResolution::None | ParentResolution::Continuation { .. } => 0,
+        ParentResolution::Deferred(reason) => {
+            let pending_reason = if let Some(meta_id) = parsed.meta_thread_id.as_deref() {
+                if rollout_index.contains_key(meta_id) {
+                    PendingReason::Retryable {
+                        reason: reason.clone(),
+                        parent_id: meta_id.to_string(),
+                        child_file,
+                        parent_files: parent_dependency_stamp(meta_id, rollout_index),
                     }
                 } else {
                     PendingReason::Stable(reason.clone())
-                };
+                }
+            } else {
+                PendingReason::Stable(reason.clone())
+            };
+            return Ok(mark_deferred(
+                file_path,
+                file_modified,
+                file_size,
+                pending_reason,
+            ));
+        }
+        ParentResolution::Parent(_)
+            if verified_ordinal_fork(&parsed) || verified_bounded_fork(&parsed, rollout_index) =>
+        {
+            0
+        }
+        ParentResolution::Parent(parent_id) => {
+            let Some(cutoff) = parsed.root_timestamp else {
                 return Ok(mark_deferred(
                     file_path,
                     file_modified,
                     file_size,
-                    pending_reason,
+                    PendingReason::Stable(
+                        "parented rollout 的 root meta 缺少有效 timestamp".to_string(),
+                    ),
                 ));
-            }
-            ParentResolution::Parent(_)
-                if verified_ordinal_fork(&parsed)
-                    || verified_bounded_fork(&parsed, rollout_index) =>
-            {
-                0
-            }
-            ParentResolution::Parent(parent_id) => {
-                let Some(cutoff) = parsed.root_timestamp else {
-                    return Ok(mark_deferred(
+            };
+            // 先把查询结果拷出来再释放锁：Rust 2021 下 `if let .. else` 的临时值活到
+            // else 分支结束，锁中毒时 Err 里仍攥着 guard，else 里再加锁会自锁。
+            // None = 锁已中毒（不走缓存），Some(None) = 未命中。
+            let cached_prefix = replay_caches().lock().ok().map(|caches| {
+                caches
+                    .replay_prefixes
+                    .get(file_path)
+                    .filter(|cached| cached.modified == file_modified && cached.size == file_size)
+                    .map(|cached| cached.prefix)
+            });
+            match cached_prefix {
+                Some(Some(prefix)) => prefix,
+                Some(None) => {
+                    let parent_files = parent_dependency_stamp(parent_id, rollout_index);
+                    let prefix = match resolve_parent_replay_prefix(
+                        parent_id,
+                        cutoff,
+                        rollout_index,
+                        &parsed,
                         file_path,
-                        file_modified,
-                        file_size,
-                        PendingReason::Stable(
-                            "parented rollout 的 root meta 缺少有效 timestamp".to_string(),
-                        ),
-                    ));
-                };
-                // 先把查询结果拷出来再释放锁：Rust 2021 下 `if let .. else` 的临时值活到
-                // else 分支结束，锁中毒时 Err 里仍攥着 guard，else 里再加锁会自锁。
-                // None = 锁已中毒（不走缓存），Some(None) = 未命中。
-                let cached_prefix = replay_caches().lock().ok().map(|caches| {
-                    caches
-                        .replay_prefixes
-                        .get(file_path)
-                        .filter(|cached| {
-                            cached.modified == file_modified && cached.size == file_size
-                        })
-                        .map(|cached| cached.prefix)
-                });
-                match cached_prefix {
-                    Some(Some(prefix)) => prefix,
-                    Some(None) => {
-                        let parent_files = parent_dependency_stamp(parent_id, rollout_index);
-                        let parent_signatures = match resolve_parent_signatures(
-                            parent_id,
-                            cutoff,
-                            rollout_index,
-                            &parsed,
-                        ) {
-                            Ok(signatures) => signatures,
-                            Err(error) => {
-                                let pending_reason = if rollout_index.contains_key(parent_id) {
-                                    PendingReason::Retryable {
-                                        reason: error.reason,
-                                        parent_id: parent_id.clone(),
-                                        child_file,
-                                        parent_files: if error.cacheable {
-                                            parent_files
-                                        } else {
-                                            None
-                                        },
-                                    }
-                                } else {
-                                    PendingReason::MissingParent(parent_id.clone())
-                                };
-                                return Ok(mark_deferred(
-                                    file_path,
-                                    file_modified,
-                                    file_size,
-                                    pending_reason,
-                                ));
-                            }
-                        };
-                        let prefix =
-                            matching_replay_prefix(&parsed.token_events, &parent_signatures);
-                        if let Ok(mut caches) = replay_caches().lock() {
-                            caches.replay_prefixes.insert(
-                                file_path.to_path_buf(),
-                                CachedReplayPrefix {
-                                    modified: file_modified,
-                                    size: file_size,
-                                    prefix,
-                                },
-                            );
+                        child_file,
+                    ) {
+                        Ok(prefix) => prefix,
+                        Err(error) => {
+                            let pending_reason = if rollout_index.contains_key(parent_id) {
+                                PendingReason::Retryable {
+                                    reason: error.reason,
+                                    parent_id: parent_id.clone(),
+                                    child_file,
+                                    parent_files: if error.cacheable { parent_files } else { None },
+                                }
+                            } else {
+                                PendingReason::MissingParent(parent_id.clone())
+                            };
+                            return Ok(mark_deferred(
+                                file_path,
+                                file_modified,
+                                file_size,
+                                pending_reason,
+                            ));
                         }
-                        prefix
+                    };
+                    if let Ok(mut caches) = replay_caches().lock() {
+                        caches.replay_prefixes.insert(
+                            file_path.to_path_buf(),
+                            CachedReplayPrefix {
+                                modified: file_modified,
+                                size: file_size,
+                                prefix,
+                            },
+                        );
                     }
-                    None => {
-                        let parent_signatures =
-                            resolve_parent_signatures(parent_id, cutoff, rollout_index, &parsed)
-                                .map_err(|error| AppError::Config(error.reason))?;
-                        matching_replay_prefix(&parsed.token_events, &parent_signatures)
-                    }
+                    prefix
                 }
+                None => resolve_parent_replay_prefix(
+                    parent_id,
+                    cutoff,
+                    rollout_index,
+                    &parsed,
+                    file_path,
+                    child_file,
+                )
+                .map_err(|error| AppError::Config(error.reason))?,
             }
         }
     };
@@ -3157,6 +3239,8 @@ mod tests {
     thread_local! {
         static CODEX_PARSE_COUNTS: std::cell::RefCell<HashMap<PathBuf, usize>> =
             std::cell::RefCell::new(HashMap::new());
+        static FORK_EVIDENCE_READ_COUNTS: std::cell::RefCell<HashMap<PathBuf, usize>> =
+            std::cell::RefCell::new(HashMap::new());
     }
 
     pub(super) fn record_codex_parse(path: &Path) {
@@ -3167,6 +3251,16 @@ mod tests {
 
     fn codex_parse_count(path: &Path) -> usize {
         CODEX_PARSE_COUNTS.with(|counts| counts.borrow().get(path).copied().unwrap_or(0))
+    }
+
+    pub(super) fn record_fork_evidence_read(path: &Path) {
+        FORK_EVIDENCE_READ_COUNTS.with(|counts| {
+            *counts.borrow_mut().entry(path.to_path_buf()).or_default() += 1;
+        });
+    }
+
+    fn fork_evidence_read_count(path: &Path) -> usize {
+        FORK_EVIDENCE_READ_COUNTS.with(|counts| counts.borrow().get(path).copied().unwrap_or(0))
     }
 
     fn retryable_parent_and_child(dir: &Path) -> (PathBuf, PathBuf) {
@@ -3878,6 +3972,372 @@ mod tests {
             assert!(result.deferred, "{case}");
             assert!(codex_usage_rows(&db)?.is_empty(), "{case}");
         }
+        Ok(())
+    }
+
+    fn read_test_records(path: &Path) -> Vec<serde_json::Value> {
+        fs::read_to_string(path)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect()
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_normal_forks_skip_request_evidence_reads() -> Result<(), AppError> {
+        for owned in [false, true] {
+            for compressed in [false, true] {
+                clear_codex_replay_caches();
+                let dir = tempdir().unwrap();
+                let db = Database::memory()?;
+                let (parent, child) = if owned {
+                    owned_legacy_fork(dir.path())
+                } else {
+                    archived_legacy_fork(dir.path())
+                };
+                append_jsonl(&parent, turn_context_at("2026-07-10T03:00:30Z"));
+                let parent = if compressed {
+                    compress_rollout(&parent)
+                } else {
+                    parent
+                };
+                let files = [parent.as_path(), child.as_path()];
+                assert_eq!(sync_test_file(&db, &child, &files)?.imported, 1);
+                append_jsonl(
+                    &child,
+                    token_count_with_last_at(
+                        275,
+                        140,
+                        28,
+                        25,
+                        15,
+                        3,
+                        "codex",
+                        "2026-07-10T03:00:22Z",
+                    ),
+                );
+                assert_eq!(sync_test_file(&db, &child, &files)?.imported, 1);
+                assert_eq!(fork_evidence_read_count(&parent), 0);
+                assert_eq!(fork_evidence_read_count(&child), 0);
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_legacy_idle_fork_without_request_records_skips_evidence_reads() -> Result<(), AppError>
+    {
+        let dir = tempdir().unwrap();
+        let db = Database::memory()?;
+        let (archive, child) = archived_legacy_fork(dir.path());
+        let parent = rollout_path(dir.path(), PARENT_ID);
+        fs::rename(archive, &parent).unwrap();
+        let result = sync_test_file(&db, &child, &[&parent, &child])?;
+        assert!(result.deferred);
+        assert_eq!(fork_evidence_read_count(&parent), 0);
+        assert_eq!(fork_evidence_read_count(&child), 0);
+        Ok(())
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_owned_fork_caches_prefix_and_parent_evidence_on_append() -> Result<(), AppError> {
+        for compressed in [false, true] {
+            clear_codex_replay_caches();
+            let dir = tempdir().unwrap();
+            let db = Database::memory()?;
+            let (parent, child) = owned_legacy_fork(dir.path());
+            let parent = if compressed {
+                compress_rollout(&parent)
+            } else {
+                parent
+            };
+            let files = [parent.as_path(), child.as_path()];
+            assert_eq!(sync_test_file(&db, &child, &files)?.imported, 1);
+            assert_eq!(
+                replay_caches()
+                    .lock()
+                    .unwrap()
+                    .replay_prefixes
+                    .get(&child)
+                    .unwrap()
+                    .prefix,
+                2
+            );
+            assert_eq!(fork_evidence_read_count(&parent), 1);
+            assert_eq!(fork_evidence_read_count(&child), 1);
+            // Force a reparse with an unchanged child: a prefix-cache hit must
+            // bypass ownership recovery, not just reuse evidence after rereading.
+            lock_conn!(db.conn).execute("DELETE FROM session_log_sync", [])?;
+            assert_eq!(sync_test_file(&db, &child, &files)?.imported, 0);
+            assert_eq!(fork_evidence_read_count(&parent), 1);
+            assert_eq!(fork_evidence_read_count(&child), 1);
+            let mut usage =
+                token_usage_record_at("resp_new_cached", 25, 15, 3, "2026-07-10T03:00:22Z");
+            usage["payload"]["thread_id"] = serde_json::json!(CHILD_A_ID);
+            append_jsonl(&child, usage);
+            append_jsonl(
+                &child,
+                token_count_with_last_at(275, 140, 28, 25, 15, 3, "codex", "2026-07-10T03:00:22Z"),
+            );
+            assert_eq!(sync_test_file(&db, &child, &files)?.imported, 1);
+            assert_eq!(
+                fork_evidence_read_count(&parent),
+                1,
+                "unchanged parent must not be decompressed again"
+            );
+            assert_eq!(fork_evidence_read_count(&child), 2);
+        }
+        Ok(())
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_owned_fork_ignores_heartbeats_without_losing_pending_record() -> Result<(), AppError> {
+        let dir = tempdir().unwrap();
+        let db = Database::memory()?;
+        let (parent, child) = owned_legacy_fork(dir.path());
+        for path in [&parent, &child] {
+            let mut result = Vec::new();
+            for value in read_test_records(path) {
+                let is_record = value["type"] == "token_usage_record";
+                let timestamp = value["timestamp"].clone();
+                result.push(value);
+                if is_record {
+                    for payload in [
+                        serde_json::Value::Null,
+                        serde_json::json!({}),
+                        serde_json::json!({"type": null}),
+                        serde_json::json!({"type": "token_count", "info": null}),
+                        serde_json::json!({"type": "token_count", "info": {}}),
+                    ] {
+                        result.push(serde_json::json!({"timestamp":timestamp,"type":"event_msg","payload":payload}));
+                    }
+                    result.push(serde_json::json!({"timestamp":timestamp,"type":"event_msg"}));
+                }
+            }
+            write_jsonl(path, &result);
+        }
+        let result = sync_test_file(&db, &child, &[&parent, &child])?;
+        assert_eq!(
+            (result.imported, result.skipped, result.deferred),
+            (1, 2, false)
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_valid_total_only_event_consumes_pending_evidence_like_main_parser(
+    ) -> Result<(), AppError> {
+        let dir = tempdir().unwrap();
+        let db = Database::memory()?;
+        let (parent, child) = owned_legacy_fork(dir.path());
+        let mut values = read_test_records(&child);
+        let last_usage = values
+            .iter()
+            .rposition(|v| v["type"] == "token_usage_record")
+            .unwrap();
+        values.insert(
+            last_usage + 1,
+            token_count_at(250, 125, 25, "2026-07-10T03:00:20.999Z"),
+        );
+        write_jsonl(&child, &values);
+        // A valid total-only snapshot consumes the pending record in the main
+        // parser too. Do not attach that stale identity to the following request.
+        let result = sync_test_file(&db, &child, &[&parent, &child])?;
+        assert!(result.deferred);
+        assert!(codex_usage_rows(&db)?.is_empty());
+        assert!(!read_fork_file_evidence(&child)
+            .unwrap()
+            .token_lines
+            .contains_key(&(values.len() as i64)));
+        Ok(())
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_legacy_recovery_only_checks_events_after_copied_prefix() -> Result<(), AppError> {
+        for owned in [false, true] {
+            for mode in ["original_timestamp", "same_millisecond", "cumulative_only"] {
+                clear_codex_replay_caches();
+                let dir = tempdir().unwrap();
+                let db = Database::memory()?;
+                let (parent, child) = if owned {
+                    owned_legacy_fork(dir.path())
+                } else {
+                    archived_legacy_fork(dir.path())
+                };
+                for path in [&parent, &child] {
+                    let mut values = read_test_records(path);
+                    let mut tokens = 0;
+                    for value in &mut values {
+                        if value
+                            .pointer("/payload/type")
+                            .and_then(serde_json::Value::as_str)
+                            == Some("token_count")
+                        {
+                            tokens += 1;
+                            if tokens <= 2 {
+                                if path == &child {
+                                    value["timestamp"] =
+                                        serde_json::json!(if mode == "original_timestamp" {
+                                            "2026-07-10T03:00:02Z"
+                                        } else {
+                                            "2026-07-10T03:00:20Z"
+                                        });
+                                }
+                                if mode == "cumulative_only" {
+                                    value["payload"]["info"]
+                                        .as_object_mut()
+                                        .unwrap()
+                                        .remove("last_token_usage");
+                                }
+                            }
+                        }
+                    }
+                    write_jsonl(path, &values);
+                }
+                let result = sync_test_file(&db, &child, &[&parent, &child])?;
+                assert_eq!(
+                    (result.imported, result.skipped, result.deferred),
+                    (1, 2, false),
+                    "{owned} {mode}"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_legacy_recovery_still_rejects_invalid_live_request_boundaries() -> Result<(), AppError>
+    {
+        for owned in [false, true] {
+            for mode in ["before_fork", "at_fork", "missing_last"] {
+                clear_codex_replay_caches();
+                let dir = tempdir().unwrap();
+                let db = Database::memory()?;
+                let (parent, child) = if owned {
+                    owned_legacy_fork(dir.path())
+                } else {
+                    archived_legacy_fork(dir.path())
+                };
+                let mut values = read_test_records(&child);
+                let last = values.last_mut().unwrap();
+                match mode {
+                    "before_fork" => last["timestamp"] = serde_json::json!("2026-07-10T03:00:19Z"),
+                    "at_fork" => last["timestamp"] = serde_json::json!("2026-07-10T03:00:20Z"),
+                    "missing_last" => {
+                        last["payload"]["info"]
+                            .as_object_mut()
+                            .unwrap()
+                            .remove("last_token_usage");
+                    }
+                    _ => unreachable!(),
+                }
+                write_jsonl(&child, &values);
+                assert!(
+                    sync_test_file(&db, &child, &[&parent, &child])?.deferred,
+                    "{owned} {mode}"
+                );
+                assert!(codex_usage_rows(&db)?.is_empty());
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_request_evidence_keeps_latest_duplicate_timestamp() {
+        let dir = tempdir().unwrap();
+        let (_, child) = owned_legacy_fork(dir.path());
+        let mut values = read_test_records(&child);
+        let record = values
+            .iter()
+            .find(|v| v["type"] == "token_usage_record")
+            .unwrap()
+            .clone();
+        let id = record["payload"]["response_id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let mut future = record.clone();
+        future["timestamp"] = serde_json::json!("2026-07-10T03:00:30Z");
+        values.push(future);
+        values.push(record);
+        write_jsonl(&child, &values);
+        let evidence = read_fork_file_evidence(&child).unwrap();
+        assert_eq!(
+            evidence.requests[&id].0,
+            "2026-07-10T03:00:30Z".parse::<DateTime<Utc>>().unwrap()
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_owned_fork_rejects_child_changed_since_primary_parse() -> Result<(), AppError> {
+        let dir = tempdir().unwrap();
+        let (parent, child) = owned_legacy_fork(dir.path());
+        let parsed = parse_codex_file(&child, Some(CHILD_A_ID.to_string()))?;
+        let stamp = ParentFileStamp::from_file(&fs::File::open(&child).unwrap()).unwrap();
+        let index = build_rollout_index(&[parent.clone(), child.clone()]);
+        assert_eq!(
+            verified_owned_fork_prefix(&parsed, &child, &index, Some(stamp)),
+            Some(2)
+        );
+        append_jsonl(&child, turn_context_at("2026-07-10T03:00:22Z"));
+        assert_eq!(
+            verified_owned_fork_prefix(&parsed, &child, &index, Some(stamp)),
+            None
+        );
+        assert_eq!(
+            verified_owned_fork_prefix(&parsed, &child, &index, None),
+            None
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_transient_final_parent_stamp_failure_does_not_poison_cache() -> Result<(), AppError> {
+        clear_codex_replay_caches();
+        let dir = tempdir().unwrap();
+        let (parent, _) = owned_legacy_fork(dir.path());
+        let stamp = ParentFileStamp::from_file(&fs::File::open(&parent).unwrap()).unwrap();
+        let incomplete = Arc::new(ParentTokenTimeline {
+            events: Vec::new(),
+            max_timestamp: None,
+            has_token_without_timestamp: false,
+            high_water: None,
+            verified_snapshot: false,
+        });
+        cache_parent_timeline(&parent, Some(stamp), None, &incomplete);
+        assert!(!replay_caches()
+            .lock()
+            .unwrap()
+            .parent_timelines
+            .contains_key(&parent));
+        let mut changed = stamp;
+        changed.size += 1;
+        cache_parent_timeline(&parent, Some(stamp), Some(changed), &incomplete);
+        assert!(!replay_caches()
+            .lock()
+            .unwrap()
+            .parent_timelines
+            .contains_key(&parent));
+        // Once metadata is readable again, the unchanged parent must be read
+        // successfully rather than reuse a permanently unverified timeline.
+        let recovered = load_parent_timeline(&parent).unwrap();
+        assert!(recovered.verified_snapshot);
+        assert_eq!(recovered.events.len(), 3);
+        assert!(replay_caches()
+            .lock()
+            .unwrap()
+            .parent_timelines
+            .contains_key(&parent));
         Ok(())
     }
 
