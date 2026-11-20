@@ -4327,6 +4327,7 @@
     "expandSidebar": "사이드바 확장",
     "collapseSidebar": "사이드바 접기",
     "appsGroup": "앱",
+    "toolsGroup": "도구",
     "today": "오늘 {{value}}",
     "todayRequests": "요청 {{value}}회",
     "todayHitRate": "적중률 {{value}}",
@@ -4345,7 +4346,6 @@
       "stack": "통합"
     },
     "needsAttention": "주의가 필요함",
-    "back": "뒤로",
     "plugins": "플러그인"
   },
   "appsPage": {

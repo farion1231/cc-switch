@@ -71,63 +71,66 @@ export function PageTabs<T extends string>({
       className={cn(
         small
           ? "flex h-8 items-end gap-3"
-          : "flex h-9 items-end gap-4 border-b border-border",
+          : "relative flex h-9 items-end gap-4",
         className,
       )}
     >
-      <div
-        ref={indicator.ref}
-        role="tablist"
-        aria-label={rest["aria-label"]}
-        className={cn(
-          "relative flex h-full items-end",
-          small ? "gap-3" : "gap-4",
-        )}
-      >
-        {/* 下划线单独一条，切换时滑过去；一级页签压住整行底线 */}
-        <TabUnderline
-          rect={indicator.rect}
-          animate={indicator.animate}
-          className={small ? undefined : "-bottom-px"}
+      {!small && (
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-border"
         />
-        {items.map((item) => {
-          const selected = item.value === value;
-          return (
-            <button
-              key={item.value}
-              ref={(element) => {
-                refs.current[item.value] = element;
-              }}
-              type="button"
-              role="tab"
-              id={idPrefix ? `${idPrefix}-${item.value}` : undefined}
-              aria-selected={selected}
-              aria-controls={controls}
-              tabIndex={selected ? 0 : -1}
-              disabled={item.disabled}
-              onClick={() => onValueChange(item.value)}
-              onKeyDown={onKeyDown}
-              className={cn(
-                "h-full whitespace-nowrap border-b-2 px-0.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:text-fg-3",
-                small
-                  ? "inline-flex items-center gap-1.5 text-caption"
-                  : "-mb-px text-body",
-                "border-transparent",
-                selected
-                  ? "font-semibold text-fg-1"
-                  : "font-medium text-fg-2 hover:text-fg-1",
-              )}
-            >
-              {item.label}
-            </button>
-          );
-        })}
+      )}
+      <div className="relative h-full min-w-0 flex-1 overflow-x-auto no-scrollbar">
+        <div
+          ref={indicator.ref}
+          role="tablist"
+          aria-label={rest["aria-label"]}
+          className={cn(
+            "relative flex h-full w-max min-w-full items-end pe-3",
+            small ? "gap-3" : "gap-4",
+          )}
+        >
+          {/* 下划线单独一条，切换时滑过去；一级页签压住整行底线 */}
+          <TabUnderline rect={indicator.rect} animate={indicator.animate} />
+          {items.map((item) => {
+            const selected = item.value === value;
+            return (
+              <button
+                key={item.value}
+                ref={(element) => {
+                  refs.current[item.value] = element;
+                }}
+                type="button"
+                role="tab"
+                id={idPrefix ? `${idPrefix}-${item.value}` : undefined}
+                aria-selected={selected}
+                aria-controls={controls}
+                tabIndex={selected ? 0 : -1}
+                disabled={item.disabled}
+                onClick={() => onValueChange(item.value)}
+                onKeyDown={onKeyDown}
+                className={cn(
+                  "h-full whitespace-nowrap border-b-2 px-0.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:text-fg-3",
+                  small
+                    ? "inline-flex items-center gap-1.5 text-caption"
+                    : "text-body",
+                  "border-transparent",
+                  selected
+                    ? "font-semibold text-fg-1"
+                    : "font-medium text-fg-2 hover:text-fg-1",
+                )}
+              >
+                {item.label}
+              </button>
+            );
+          })}
+        </div>
       </div>
       {trailing && (
-        <>
-          <div className="flex-1" />
-          <div className="flex h-full items-center">{trailing}</div>
-        </>
+        <div className="relative flex h-full shrink-0 items-center">
+          {trailing}
+        </div>
       )}
     </div>
   );

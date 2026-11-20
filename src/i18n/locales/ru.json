@@ -4325,6 +4325,7 @@
     "expandSidebar": "Развернуть боковую панель",
     "collapseSidebar": "Свернуть боковую панель",
     "appsGroup": "Приложения",
+    "toolsGroup": "Инструменты",
     "today": "Сегодня {{value}}",
     "todayRequests": "{{value}} запр.",
     "todayHitRate": "Попадания {{value}}",
@@ -4343,7 +4344,6 @@
       "stack": "Агрегация"
     },
     "needsAttention": "Требует внимания",
-    "back": "Назад",
     "plugins": "Плагины"
   },
   "appsPage": {

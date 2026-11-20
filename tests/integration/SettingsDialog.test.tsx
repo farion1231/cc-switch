@@ -16,6 +16,10 @@ import { server } from "../msw/server";
 const toastSuccessMock = vi.fn();
 const toastErrorMock = vi.fn();
 
+vi.mock("@/contexts/UpdateContext", () => ({
+  useUpdate: () => ({ hasUpdate: false, updateInfo: null }),
+}));
+
 vi.mock("sonner", () => ({
   toast: {
     success: (...args: unknown[]) => toastSuccessMock(...args),
@@ -86,6 +90,7 @@ const renderDialog = (
       <Suspense fallback={<div data-testid="loading">loading</div>}>
         <SettingsPage
           section="data"
+          onSectionChange={() => {}}
           onOpenApps={() => {}}
           onOpenApp={() => {}}
           {...props}
