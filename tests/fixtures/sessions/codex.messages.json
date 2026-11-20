@@ -556,5 +556,21 @@
       "outputTokens": 402,
       "stopReason": "final_answer"
     }
+  },
+  {
+    "role": "system",
+    "ts": 1791015101000,
+    "turnId": "019a8c35-77aa-7f03-b1d4-6c2e8a9f0b33",
+    "blocks": [
+      {
+        "type": "event",
+        "kind": "goal",
+        "text": "complete"
+      },
+      {
+        "type": "text",
+        "text": "Fix every broken link under docs/ and keep the guide's anchors stable."
+      }
+    ]
   }
 ]

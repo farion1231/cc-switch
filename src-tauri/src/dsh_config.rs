@@ -2335,7 +2335,7 @@ mod tests {
                 live_config_managed: Some(managed),
                 ..Default::default()
             });
-            state.db.save_provider("dsh", &provider).unwrap();
+            state.db.save_provider(&AppType::Dsh, &provider).unwrap();
         }
         for (id, enabled) in [("fetch", true), ("disabled", false)] {
             state

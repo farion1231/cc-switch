@@ -9,10 +9,11 @@
 //! 2. 本机 Codex 自带的列表（`codex debug models --bundled`）：和账号无关，可能缺账号专属
 //!    的模型。
 //!
-//! 不用 `~/.codex/models_cache.json`：它是哪个账号、哪个版本写的，CC Switch 证明不了。
+//! 不用 `~/.codex/models_cache.json` 里的模型：它是哪个账号写的，CC Switch 证明不了。只取
+//! 它记下的 `client_version`，当作「最近跑过的 Codex 是哪个版本」。
 //!
-//! 服务端按 `client_version` 裁剪列表，版本取本机在用的 Codex 里最新的那个（见
-//! [`newest_codex_version`]）。一个来源里没有一条能在模型选择器里选的模型（`visibility`
+//! 服务端按 `client_version` 裁剪列表（报旧了拉不到新模型，GPT-6.2 就是），版本取本机在用的
+//! Codex 里最新的那个（见 [`newest_codex_version`]）。一个来源里没有一条能在模型选择器里选的模型（`visibility`
 //! 都不是 `list`）就不算合格：照写的话官方模型全被藏起来，选择器里只剩第三方的（#8014）。
 //!
 //! 凭据取自操作之后 Codex 实际会用的登录（目标登录，见 `codex_direct`）。托管账号的
@@ -21,7 +22,7 @@
 //! 自己刷新。
 //!
 //! 缓存分两个问题：**能不能用**看身份和本机 Codex 版本；**新不新**看 `fetched_at` 是否在
-//! 6 小时内。切换时能用而过期的条目先照用，同时在后台刷新，不在切换锁里等网络；后台另有
+//! 1 小时内。切换时能用而过期的条目先照用，同时在后台刷新，不在切换锁里等网络；后台另有
 //! 启动时和每 15 分钟一次的检查（`controller::check_codex_official_models`）。
 //!
 //! 刷新存进了变化的列表之后，客户端文件要按它重写。重写可能失败（登录恰好变了、
@@ -40,8 +41,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::codex_config::{
-    extract_codex_auth_user_identity, get_codex_config_dir, load_codex_bundled_models,
-    normalize_codex_native_rows, read_codex_config_text, CodexBundledModelsError,
+    codex_desktop_cli_versions, extract_codex_auth_user_identity, get_codex_config_dir,
+    load_codex_bundled_models, normalize_codex_native_rows, read_codex_config_text,
+    CodexBundledModelsError,
 };
 use crate::codex_state_db::{codex_state_db_is_lockable, codex_state_db_paths};
 use crate::database::Database;
@@ -51,8 +53,10 @@ use crate::services::subscription::{
 };
 
 pub(crate) const CACHE_FILENAME: &str = "codex-official-models.json";
-/// 离 `fetched_at` 不到这么久算新的。目录只在 Codex 启动时读，刷新得再勤也要重启才看得到。
-const FRESH_FOR: Duration = Duration::from_secs(6 * 60 * 60);
+/// 离 `fetched_at` 不到这么久算新的。目录只在 Codex 启动时读，刷新得再勤也要重启才看得到；
+/// 但新模型分批开放时，过期之前拉到的列表一直缺它，用户只能关掉聚合才看得到（GPT-6.2）。
+/// 刷新带 `If-None-Match`，没变时服务端只回 304，短一点代价很小。
+const FRESH_FOR: Duration = Duration::from_secs(60 * 60);
 const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 /// 后台检查的间隔（只读缓存文件；过期了才联网）。
@@ -128,7 +132,11 @@ impl Env {
             codex_version: Box::new(|| {
                 newest_codex_version(
                     crate::commands::local_tool_version("codex"),
-                    recent_thread_versions(),
+                    recent_thread_versions()
+                        .into_iter()
+                        .chain(codex_desktop_cli_versions())
+                        .chain(models_cache_client_version())
+                        .collect(),
                 )
             }),
             fetch: Box::new(fetch_models),
@@ -187,14 +195,15 @@ fn usable_version(version: &str) -> bool {
         && core.split('.').any(|part| part.bytes().any(|b| b != b'0'))
 }
 
-/// 本机在用的 Codex 里最新的版本：PATH 上的 `codex`，和 Codex 最近创建的线程记下的版本
-/// （每个线程带创建它的客户端的 `cli_version`）。桌面版、编辑器插件自带的 Codex 不在 PATH
-/// 上，只装桌面版的人 PATH 上又常留着早年装的旧 CLI：只看它，`0.140` 及更早拉到的官方
-/// 模型全是隐藏的。目录是各个客户端共用的，按最新的拉；更旧的客户端读到驱动不了的模型时
-/// 该升级。
-fn newest_codex_version(path: Option<String>, threads: Vec<String>) -> Option<String> {
+/// 本机在用的 Codex 里最新的版本：PATH 上的 `codex`，加上别处记下的版本——Codex 最近创建的
+/// 线程（每个线程带创建它的客户端的 `cli_version`）、桌面版自带的 CLI、Codex 自己的模型缓存。
+/// 桌面版、编辑器插件自带的 Codex 不在 PATH 上，只装桌面版的人 PATH 上又常留着早年装的旧
+/// CLI：只看它，`0.140` 及更早拉到的官方模型全是隐藏的。线程要等用新版本建了对话才有，
+/// 桌面版刚自动更新时只有它自带的 CLI 是新的。目录是各个客户端共用的，按最新的拉；更旧的
+/// 客户端读到驱动不了的模型时该升级。
+fn newest_codex_version(path: Option<String>, others: Vec<String>) -> Option<String> {
     path.into_iter()
-        .chain(threads)
+        .chain(others)
         .map(|version| version.trim().to_string())
         .filter(|version| usable_version(version))
         .max_by(|a, b| compare_versions(a, b))
@@ -245,6 +254,17 @@ fn compare_versions(a: &str, b: &str) -> CmpOrdering {
         (Some(_), None) => CmpOrdering::Less,
         (Some(a), Some(b)) => compare_pre(a, b),
     })
+}
+
+/// Codex 自己的模型缓存记下的客户端版本：最近一次不带目录启动的 Codex 写的。聚合模式下
+/// Codex 读目录、不碰这个缓存，它停在进入聚合之前；关掉聚合跑过一次新版本之后再打开，就靠它。
+fn models_cache_client_version() -> Option<String> {
+    #[derive(Deserialize)]
+    struct Head {
+        client_version: Option<String>,
+    }
+    let bytes = std::fs::read(get_codex_config_dir().join("models_cache.json")).ok()?;
+    serde_json::from_slice::<Head>(&bytes).ok()?.client_version
 }
 
 /// Codex 最近创建的线程记下的客户端版本（各个 state DB 合起来）。读不了就是空的。
@@ -723,7 +743,7 @@ pub(crate) fn needs_refresh(login: &OfficialLogin) -> Option<String> {
 
 /// 后台检查不用刷新时（条目还新，或拿不到版本）调：上次写目录时官方列表没用上，而这个
 /// 登录现在有能用的条目，就记下客户端落后，让检查按它重写。不联网。不补的话要等条目过了
-/// 新鲜期、刷新拿到 304 才重写（见 [`refresh`]），最多晚 6 小时：比如写目录那一刻钥匙串没读
+/// 新鲜期、刷新拿到 304 才重写（见 [`refresh`]），最多晚 1 小时：比如写目录那一刻钥匙串没读
 /// 出来，过一会儿又读得出了。
 pub(crate) fn catch_up_after_fallback(login: &OfficialLogin) {
     if !fell_back_from_official() {
@@ -779,7 +799,7 @@ pub(crate) fn after_refresh() {
     });
 }
 
-/// CC Switch 启动时开始后台检查：先查一次，之后每 15 分钟一次。不是「每 6 小时」的
+/// CC Switch 启动时开始后台检查：先查一次，之后每 15 分钟一次。不是「每 1 小时」的
 /// 定时器：从进程启动开始计时的话，每次只运行几小时的用户永远等不到刷新。
 pub(crate) fn start_background_checks(state: crate::store::AppState) {
     let _ = state_slot().set(state.clone());
@@ -1068,8 +1088,8 @@ mod tests {
         );
         assert_eq!(last_source(), Some(NativeSource::Fetched));
 
-        // 一小时后：新的，不联网。
-        *setup.now.lock().unwrap() = T0 + HOUR;
+        // 半小时后：新的，不联网。
+        *setup.now.lock().unwrap() = T0 + HOUR / 2;
         assert_eq!(
             slugs(&rows_for_switch(&Ok(login.clone()))),
             vec!["gpt-6-sol"]
@@ -1197,7 +1217,12 @@ mod tests {
     #[serial]
     fn a_fresh_entry_after_falling_back_rewrites_the_client_without_fetching() {
         let _scope = Scope::new();
-        seed_cache("ws|sub:alice", T0 - HOUR, "0.158.0", models(&["cached"]));
+        seed_cache(
+            "ws|sub:alice",
+            T0 - HOUR / 2,
+            "0.158.0",
+            models(&["cached"]),
+        );
         let setup = install(Some("0.158.0"), Vec::new(), Some(models(&["bundled"])));
         let bob = OfficialLogin::of(&login("ws", "bob")).unwrap();
         let alice = OfficialLogin::of(&login("ws", "alice")).unwrap();
@@ -1476,6 +1501,25 @@ mod tests {
             .unwrap();
         assert!(thread_versions(&old).is_empty());
         assert!(thread_versions(&dir.path().join("missing.sqlite")).is_empty());
+    }
+
+    /// 只取模型缓存记下的版本；文件没有或认不出就当没有。
+    #[test]
+    #[serial]
+    fn the_models_cache_only_contributes_its_client_version() {
+        let scope = Scope::new();
+        assert_eq!(models_cache_client_version(), None);
+        let codex_dir = scope._dir.path().join(".codex");
+        std::fs::create_dir_all(&codex_dir).unwrap();
+        let cache = codex_dir.join("models_cache.json");
+        std::fs::write(&cache, "not json").unwrap();
+        assert_eq!(models_cache_client_version(), None);
+        std::fs::write(
+            &cache,
+            json!({ "client_version": "0.169.0", "models": models(&["gpt-6.2-sol"]) }).to_string(),
+        )
+        .unwrap();
+        assert_eq!(models_cache_client_version(), Some("0.169.0".to_string()));
     }
 
     #[test]
