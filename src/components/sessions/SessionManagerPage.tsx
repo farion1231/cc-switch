@@ -272,7 +272,7 @@ export function SessionManagerPage({
     status: indexStatus,
     isSearching: isSearchingContent,
   } = useSessionContentSearch({
-    query,
+    query: debouncedQuery,
     enabled: contentSearchEnabled,
     listIsSuccess: isSuccess,
     listUpdatedAt: dataUpdatedAt,
@@ -280,14 +280,11 @@ export function SessionManagerPage({
   });
   const contentHitOf = useCallback(
     (session: SessionMeta) =>
-      debouncedQuery.trim() === query.trim()
-        ? contentHits.get(
-            getContentHitKey(session.providerId, session.sourcePath),
-          )
-        : undefined,
-    [contentHits, debouncedQuery, query],
+      contentHits.get(getContentHitKey(session.providerId, session.sourcePath)),
+    [contentHits],
   );
-  const trimmedQuery = query.trim();
+  // 列表、正文摘录和高亮始终使用同一轮搜索；输入框仍即时更新。
+  const trimmedQuery = debouncedQuery.trim();
   // 搜索时全部展开，否则匹配到的会话会藏在收起的项目里
   const isGroupOpen = useCallback(
     (key: string) => trimmedQuery !== "" || expanded.has(key),
@@ -299,8 +296,7 @@ export function SessionManagerPage({
   );
   // 元数据命中（前端 FlexSearch）+ 正文命中（后端索引），按会话去重
   const matches = useMemo(() => {
-    if (contentHits.size === 0 || debouncedQuery.trim() !== trimmedQuery)
-      return metaMatches;
+    if (contentHits.size === 0) return metaMatches;
     const seen = new Set(metaMatches.map(getSessionKey));
     const contentOnly = scopedSessions.filter(
       (session) =>
@@ -309,15 +305,7 @@ export function SessionManagerPage({
         contentHitOf(session) !== undefined,
     );
     return sortSessionsByTime([...metaMatches, ...contentOnly]);
-  }, [
-    metaMatches,
-    debouncedQuery,
-    trimmedQuery,
-    contentHits,
-    scopedSessions,
-    appFilter,
-    contentHitOf,
-  ]);
+  }, [metaMatches, contentHits, scopedSessions, appFilter, contentHitOf]);
 
   // Keep persistence and index cleanup in one operation. Settings refresh before
   // autoSaveSettings finishes (e.g. tray updates); enabling in that gap could

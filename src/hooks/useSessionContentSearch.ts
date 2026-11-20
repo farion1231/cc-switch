@@ -4,9 +4,6 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { sessionsApi } from "@/lib/api/sessions";
 import type { SessionContentHit, SessionIndexStatus } from "@/types";
 
-/** 输入停顿多久后才查正文（毫秒） */
-const SEARCH_DEBOUNCE_MS = 250;
-
 export const sessionContentKeys = {
   all: ["sessionContentSearch"] as const,
   search: (query: string, providerIds: string[]) =>
@@ -20,7 +17,7 @@ export const getContentHitKey = (
 ) => `${providerId}:${sourcePath ?? ""}`;
 
 interface UseSessionContentSearchOptions {
-  /** 列表的搜索词（未 trim 也可以） */
+  /** 列表当前生效的搜索词；由页面统一防抖（未 trim 也可以） */
   query: string;
   /** 「搜索消息正文」开关 */
   enabled: boolean;
@@ -57,21 +54,7 @@ export function useSessionContentSearch({
 }: UseSessionContentSearchOptions): UseSessionContentSearchResult {
   const queryClient = useQueryClient();
   const [status, setStatus] = useState<SessionIndexStatus | null>(null);
-  const [debounced, setDebounced] = useState(() => query.trim());
-
-  useEffect(() => {
-    const next = query.trim();
-    // 清空是即时的，输入才防抖
-    if (!next) {
-      setDebounced("");
-      return;
-    }
-    const timer = window.setTimeout(
-      () => setDebounced(next),
-      SEARCH_DEBOUNCE_MS,
-    );
-    return () => window.clearTimeout(timer);
-  }, [query]);
+  const searchQuery = query.trim();
 
   // 进度事件：索引每前进一批就重查一次，边建边能搜到
   useEffect(() => {
@@ -121,24 +104,24 @@ export function useSessionContentSearch({
   const providerKey = useMemo(() => [...providerIds].sort(), [providerIds]);
 
   const search = useQuery({
-    queryKey: sessionContentKeys.search(debounced, providerKey),
-    queryFn: () => sessionsApi.searchContent(debounced, providerKey),
-    enabled: enabled && debounced !== "" && providerKey.length > 0,
+    queryKey: sessionContentKeys.search(searchQuery, providerKey),
+    queryFn: () => sessionsApi.searchContent(searchQuery, providerKey),
+    enabled: enabled && searchQuery !== "" && providerKey.length > 0,
     staleTime: 0,
   });
 
   const hits = useMemo(() => {
     const map = new Map<string, SessionContentHit>();
-    if (!enabled || !debounced || debounced !== query.trim()) return map;
+    if (!enabled || !searchQuery) return map;
     search.data?.hits.forEach((hit) =>
       map.set(getContentHitKey(hit.providerId, hit.sourcePath), hit),
     );
     return map;
-  }, [enabled, debounced, query, search.data]);
+  }, [enabled, searchQuery, search.data]);
 
   return {
     hits,
     status: enabled ? (status ?? search.data?.status ?? null) : null,
-    isSearching: enabled && query.trim() !== "" && search.isFetching,
+    isSearching: enabled && searchQuery !== "" && search.isFetching,
   };
 }
