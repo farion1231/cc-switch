@@ -378,6 +378,7 @@
     "openclawModelNotFound": "選択したモデルは存在しません。更新してからもう一度お試しください。",
     "backfillWarning": "切り替え成功しましたが、前のプロバイダーへの設定保存に失敗しました",
     "codexAuthCleanupFailed": "切り替えは成功しましたが、auth.json を削除できませんでした。公式ログイン資格情報がディスクに残っています。完全に削除するには Codex 設定ディレクトリの auth.json を手動で削除してください",
+    "omoVariantCleanupFailed": "切り替えに成功しましたが、もう一方の OMO バリアント（OMO / OMO Slim）の設定ファイルを削除できませんでした。OpenCode が両方を読み込む可能性があります。OpenCode の設定ディレクトリから手動で削除してください",
     "windowControlFailed": "ウィンドウ操作に失敗しました: {{error}}",
     "officialBlockedByProxy": "ローカルルーティングモード中は公式プロバイダーに切り替えできません。ルーティング経由で公式 API にアクセスするとアカウントが停止される可能性があります。",
     "proxyOfficialWarning": "現在のプロバイダー {{name}} は公式です。ローカルルーティングを使用する前にサードパーティプロバイダーに切り替えてください。",
@@ -463,8 +464,7 @@
     "tabProxy": "ルーティング",
     "authCenter": {
       "description": "GitHub Copilot、ChatGPT、xAI のサブスクリプションをプロバイダーとして使えます。認証情報はルーティングサービスが注入するため、これらのプロバイダーはルーティングモードで使います（Codex の公式ログインのバインドを除く）。Antigravity アカウントは agy の公式ログインの切り替えに使います。",
-      "beta": "Beta",
-      "xaiOauthDescription": "xAI / Grok アカウントを管理します"
+      "beta": "Beta"
     },
     "advanced": {
       "configDir": {
@@ -1121,7 +1121,6 @@
       "pricingModelSourceLabel": "課金モード",
       "pricingModelSourceRequest": "リクエストモデル",
       "pricingModelSourceResponse": "レスポンスモデル",
-      "pricingSave": "課金設定を保存",
       "pricingSaved": "課金設定を保存しました",
       "pricingSaveFailed": "課金設定の保存に失敗しました: {{error}}",
       "pricingLoadFailed": "課金設定の読み込みに失敗しました: {{error}}"
@@ -2937,7 +2936,6 @@
     "geminiTitle": "Gemini MCP 管理",
     "unifiedPanel": {
       "title": "MCP サーバー管理",
-      "deleteServer": "サーバーを削除",
       "deleteConfirm": "サーバー「{{id}}」を削除しますか？この操作は元に戻せません。",
       "enabledApps": "有効なアプリ",
       "importSuccess": "{{count}} 個の MCP サーバーをインポートしました",
@@ -2984,28 +2982,20 @@
       "tagsPlaceholder": "stdio, time, utility",
       "homepage": "ホームページ",
       "docs": "ドキュメント",
-      "jsonPlaceholder": "{\n  \"type\": \"stdio\",\n  \"command\": \"uvx\",\n  \"args\": [\"mcp-server-fetch\"]\n}",
-      "tomlConfig": "TOML 全設定",
-      "tomlPlaceholder": "type = \"stdio\"\ncommand = \"uvx\"\nargs = [\"mcp-server-fetch\"]",
-      "syncOtherSide": "{{target}} にも反映"
+      "tomlConfig": "TOML 全設定"
     },
     "wizard": {
       "title": "MCP 設定ウィザード",
       "hint": "MCP サーバーを素早く設定し JSON を自動生成します",
       "type": "タイプ",
-      "typeStdio": "stdio",
-      "typeSse": "sse",
       "command": "コマンド",
       "commandPlaceholder": "npx または uvx",
       "args": "引数",
-      "argsPlaceholder": "arg1\narg2",
       "env": "環境変数",
-      "envPlaceholder": "KEY1=value1\nKEY2=value2",
       "url": "URL",
       "urlPlaceholder": "https://api.example.com/mcp",
       "urlRequired": "URL を入力してください",
       "headers": "ヘッダー（任意）",
-      "headersPlaceholder": "Authorization: Bearer your_token_here\nContent-Type: application/json",
       "preview": "設定プレビュー",
       "apply": "設定を反映"
     },
@@ -3528,7 +3518,6 @@
       "archiveDownloadTooLarge": "リポジトリのアーカイブがダウンロード上限 {{limit_mb}} MB を超えたため中止しました",
       "archiveTooManyEntries": "アーカイブのエントリ数が多すぎます（{{count}}）。上限は {{limit}} です",
       "downloadFailed": "ダウンロードに失敗しました: HTTP {{status}}",
-      "httpError": "HTTP エラー {{status}}",
       "http403": "GitHub へのアクセスが制限されています（レート制限の可能性）",
       "http404": "リポジトリまたはブランチが見つかりません。URL を確認してください。プライベートリポジトリは先に「スキルリポジトリを管理」でアクセストークンを設定してください",
       "http429": "リクエストが多すぎます。時間をおいて再試行してください",
@@ -3541,7 +3530,6 @@
       "repoTokenStorageFailed": "{{host}} のアクセストークンを読み書きできませんでした。システムの資格情報ストアが使えるか確認してください",
       "getHomeDirFailed": "ユーザーのホームディレクトリを取得できません",
       "noSkillsInZip": "ZIP ファイルにスキルが見つかりません（SKILL.md ファイルが必要です）",
-      "networkError": "ネットワークエラー",
       "unknownError": "不明なエラー",
       "suggestion": {
         "checkNetwork": "ネットワーク接続を確認してください",
@@ -3769,7 +3757,6 @@
       "repo": "GitHub リポジトリ",
       "directory": "対象ディレクトリ",
       "branch": "ブランチ",
-      "skillsPath": "スキルパス",
       "hint": "この操作でスキルリポジトリが一覧に追加されます。",
       "hintDetail": "追加後、スキル管理ページから個別のスキルをインストールできます。"
     },
@@ -3866,7 +3853,6 @@
   },
   "proxy": {
     "panel": {
-      "currentProvider": "現在のプロバイダー:",
       "openSettings": "ルーティングサービスを設定",
       "stats": {
         "activeConnections": "アクティブ接続",
@@ -3927,10 +3913,6 @@
           "label": "非ストリーミングタイムアウト（秒）",
           "description": "非ストリーミングリクエストの総タイムアウト"
         }
-      },
-      "validation": {
-        "retryMin": "リトライ回数は負の値にできません",
-        "retryMax": "リトライ回数は10を超えることはできません"
       },
       "actions": {
         "save": "設定を保存"
@@ -5481,5 +5463,11 @@
     "installFailed": "アップデートのインストールに失敗しました",
     "downloadingInline": "新しいバージョンをバックグラウンドでダウンロード中…",
     "downloadedInline": "ダウンロード完了"
+  },
+  "unreadableEntry": {
+    "title": "「{{name}}」のデータを読み取れません",
+    "hint": "新しいバージョンの CC Switch で保存された可能性があります。データはそのまま保持され、編集や有効化はできません。アップグレードすると復元されます。削除することもできます。",
+    "confirmTitle": "読み取れない項目を削除",
+    "confirmMessage": "「{{name}}」を削除しますか？CC Switch のこの記録だけを削除し、各アプリの設定ファイルは変更しません。"
   }
 }

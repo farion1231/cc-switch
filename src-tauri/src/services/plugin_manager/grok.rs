@@ -11,7 +11,9 @@ use std::path::Path;
 
 use serde_json::Value;
 
-use super::{read_manifest_any, str_field, PluginEntry, PluginListing, PluginMarketplace};
+use super::{
+    read_manifest_any, resolve_cli_path, str_field, PluginEntry, PluginListing, PluginMarketplace,
+};
 
 /// 插件清单可能放的位置：Grok 自己的、Claude Code 兼容的、插件根目录。
 const MANIFEST_DIRS: [&str; 3] = [".grok-plugin", ".claude-plugin", ""];
@@ -52,13 +54,14 @@ pub(super) fn is_enabled(config_text: &str, name: &str) -> bool {
     !listed("disabled") || listed("enabled")
 }
 
-fn parse_entry(item: &Value, config_text: &str) -> Option<PluginEntry> {
+fn parse_entry(item: &Value, config_text: &str, wsl_root: Option<&Path>) -> Option<PluginEntry> {
     let name = str_field(item, "name")?;
     let installed = str_field(item, "status").as_deref() == Some("installed");
     let path = installed.then(|| str_field(item, "path")).flatten();
     let manifest = path
         .as_deref()
-        .map(|p| read_manifest_any(Path::new(p), &MANIFEST_DIRS))
+        .and_then(|p| resolve_cli_path(p, wsl_root))
+        .map(|p| read_manifest_any(&p, &MANIFEST_DIRS))
         .unwrap_or_default();
     Some(PluginEntry {
         id: name.clone(),
@@ -74,6 +77,7 @@ fn parse_entry(item: &Value, config_text: &str) -> Option<PluginEntry> {
         removable: true,
         installable: true,
         installed_id: None,
+        catalog_id: None,
         install_path: path,
         updated_at: None,
         name,
@@ -81,13 +85,17 @@ fn parse_entry(item: &Value, config_text: &str) -> Option<PluginEntry> {
 }
 
 /// `plugin list --json [--available]`：一个数组，每项的 `status` 是 `installed` 或 `available`。
-pub(super) fn parse_listing(value: &Value, config_text: &str) -> PluginListing {
+pub(super) fn parse_listing(
+    value: &Value,
+    config_text: &str,
+    wsl_root: Option<&Path>,
+) -> PluginListing {
     let entries: Vec<PluginEntry> = value
         .as_array()
         .map(|items| {
             items
                 .iter()
-                .filter_map(|item| parse_entry(item, config_text))
+                .filter_map(|item| parse_entry(item, config_text, wsl_root))
                 .collect()
         })
         .unwrap_or_default();
@@ -190,7 +198,7 @@ mod tests {
         .unwrap();
         let value = listing_fixture(&dir.path().to_string_lossy());
 
-        let listing = parse_listing(&value, "");
+        let listing = parse_listing(&value, "", None);
         assert_eq!(listing.installed.len(), 1);
         let hello = &listing.installed[0];
         assert_eq!(hello.id, "hello");
@@ -210,7 +218,7 @@ mod tests {
 
         // CLI 停用后写的就是这个样子
         let disabled = "[plugins]\nenabled = []\ndisabled = [\"hello\"]\n";
-        assert!(!parse_listing(&value, disabled).installed[0].enabled);
+        assert!(!parse_listing(&value, disabled, None).installed[0].enabled);
     }
 
     #[test]
@@ -252,5 +260,23 @@ mod tests {
         assert!(update_changed("x: updated (0.1.0 -> 0.2.0)\n"));
         assert!(!update_changed("All plugins are up to date.\n"));
         assert!(update_changed("Updated hello\n"));
+    }
+
+    #[test]
+    fn listing_reads_manifest_from_wsl_linux_path() {
+        let fake_wsl = tempfile::tempdir().unwrap();
+        let plugin_dir = fake_wsl.path().join("home/me/.grok/plugins/hello");
+        std::fs::create_dir_all(plugin_dir.join(".grok-plugin")).unwrap();
+        std::fs::write(
+            plugin_dir.join(".grok-plugin/plugin.json"),
+            r#"{"name":"hello","description":"From WSL Grok"}"#,
+        )
+        .unwrap();
+        let value = listing_fixture("/home/me/.grok/plugins/hello");
+        let listing = parse_listing(&value, "", Some(fake_wsl.path()));
+        assert_eq!(
+            listing.installed[0].description.as_deref(),
+            Some("From WSL Grok")
+        );
     }
 }

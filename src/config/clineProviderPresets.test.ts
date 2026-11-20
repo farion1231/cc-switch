@@ -33,7 +33,8 @@ describe("clineProviderPresets", () => {
     const admitted = piProviderPresets.filter(
       (preset) =>
         preset.settingsConfig.api !== "bedrock-converse-stream" &&
-        preset.settingsConfig.api !== "google-generative-ai",
+        preset.settingsConfig.api !== "google-generative-ai" &&
+        preset.settingsConfig.api !== "mistral-conversations",
     );
     const names = clineProviderPresets.map((preset) => preset.name);
     for (const preset of admitted) expect(names).toContain(preset.name);

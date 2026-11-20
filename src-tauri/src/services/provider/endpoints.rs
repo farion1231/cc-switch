@@ -13,8 +13,8 @@ pub fn get_custom_endpoints(
     app_type: AppType,
     provider_id: &str,
 ) -> Result<Vec<CustomEndpoint>, AppError> {
-    let providers = state.db.get_all_providers(&app_type)?;
-    let Some(provider) = providers.get(provider_id) else {
+    let providers = state.db.get_provider_rows(&app_type)?;
+    let Some(provider) = providers.get(provider_id)? else {
         return Ok(vec![]);
     };
     let Some(meta) = provider.meta.as_ref() else {

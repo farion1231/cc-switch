@@ -265,8 +265,9 @@ const BUILTIN_TARGETS: Record<string, BuiltinTarget> = {
   "cc-switch-lmstudio": { id: "lmstudio" },
 };
 
-// Bedrock's signed Converse API and Gemini's native API have no catalog
-// equivalent here, so only OpenAI- and Anthropic-style endpoints are admitted.
+// Bedrock's signed Converse API and Gemini's and Mistral's native APIs have no
+// catalog equivalent here, so only OpenAI- and Anthropic-style endpoints are
+// admitted.
 const CLINE_API_FORMATS: Partial<Record<PiApiFormat, ClineProtocol>> = {
   "openai-completions": "openai-chat",
   "openai-responses": "openai-responses",
