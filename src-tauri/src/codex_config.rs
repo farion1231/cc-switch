@@ -1597,6 +1597,64 @@ const CODEX_DESKTOP_CLI_IN_BUNDLE: &[&str] = &[
     "Contents/Resources/codex",
 ];
 
+/// 新结构的 bundle 里，自带 CLI 的包描述（`version` 字段就是它的版本）。旧结构没有。
+const CODEX_DESKTOP_CLI_PACKAGE_IN_BUNDLE: &str = "Contents/Resources/codex-cli/codex-package.json";
+
+/// 桌面版自带的 Codex CLI 的版本，读文件、不跑子进程：
+///
+/// - macOS：ChatGPT.app / Codex.app 里 `codex-cli/codex-package.json` 的 `version`；
+/// - Windows：`%LOCALAPPDATA%\OpenAI\Codex\bin` 下装着 `codex.exe` 的版本目录名。
+///
+/// 桌面版自动更新后、用它建新对话之前，Codex 线程里记的还都是旧版本，而只装桌面版的人 PATH
+/// 上又没有 `codex`：不看这里就一直按旧版本拉官方模型列表。版本号认不认得由调用方判断。
+pub(crate) fn codex_desktop_cli_versions() -> Vec<String> {
+    codex_desktop_cli_versions_in(&get_home_dir())
+}
+
+fn codex_desktop_cli_versions_in(home: &Path) -> Vec<String> {
+    let mut versions = Vec::new();
+    for bundle in CODEX_DESKTOP_APP_BUNDLES {
+        for applications in [PathBuf::from("/Applications"), home.join("Applications")] {
+            let package = applications
+                .join(bundle)
+                .join(CODEX_DESKTOP_CLI_PACKAGE_IN_BUNDLE);
+            let version = fs::read(&package)
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+                .and_then(|package| package.get("version")?.as_str().map(str::to_string));
+            versions.extend(version);
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        if let Some(local_appdata) = std::env::var_os("LOCALAPPDATA") {
+            versions.extend(codex_cli_version_dir_names(
+                &PathBuf::from(local_appdata)
+                    .join("OpenAI")
+                    .join("Codex")
+                    .join("bin"),
+                "codex.exe",
+            ));
+        }
+    }
+
+    versions
+}
+
+/// `versions_dir` 下装着 `exe` 的子目录名（桌面版按版本号建目录）。
+#[cfg(any(windows, test))]
+fn codex_cli_version_dir_names(versions_dir: &Path, exe: &str) -> Vec<String> {
+    let Ok(entries) = fs::read_dir(versions_dir) else {
+        return Vec::new();
+    };
+    entries
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().join(exe).is_file())
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .collect()
+}
+
 fn push_codex_cli_candidate(
     candidates: &mut Vec<PathBuf>,
     seen: &mut HashSet<String>,
@@ -6601,6 +6659,35 @@ wire_api = "responses"
         push_codex_cli_candidates_newest_first(&mut candidates, &mut seen, root, "codex.exe");
 
         assert_eq!(candidates, vec![newer, older]);
+    }
+
+    #[test]
+    fn desktop_cli_versions_come_from_the_bundled_package_and_version_dirs() {
+        let temp_home = tempfile::tempdir().expect("create temp home");
+        let applications = temp_home.path().join("Applications");
+        let package = applications
+            .join("ChatGPT.app")
+            .join(CODEX_DESKTOP_CLI_PACKAGE_IN_BUNDLE);
+        std::fs::create_dir_all(package.parent().unwrap()).unwrap();
+        std::fs::write(&package, r#"{"version":"0.169.0-alpha.11.1","target":"x"}"#).unwrap();
+        // 旧结构没有包描述：不算，也不报错。
+        create_cli_candidate(&desktop_cli(
+            &applications,
+            "Codex.app",
+            CODEX_DESKTOP_CLI_IN_BUNDLE[1],
+        ));
+
+        // 本机 /Applications 里真装着的桌面版也会读到，只看临时 home 里的这一份。
+        let versions = codex_desktop_cli_versions_in(temp_home.path());
+        assert!(versions.contains(&"0.169.0-alpha.11.1".to_string()));
+
+        let bin = temp_home.path().join("bin");
+        create_cli_candidate(&bin.join("0.169.0").join("codex.exe"));
+        std::fs::create_dir_all(bin.join("logs")).unwrap();
+        assert_eq!(
+            codex_cli_version_dir_names(&bin, "codex.exe"),
+            vec!["0.169.0".to_string()]
+        );
     }
 
     #[test]

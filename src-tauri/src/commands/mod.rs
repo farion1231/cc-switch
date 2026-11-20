@@ -25,6 +25,7 @@ mod omp;
 mod openclaw;
 mod pi;
 mod plugin;
+mod plugin_manager;
 mod profile;
 mod prompt;
 mod provider;
@@ -74,6 +75,7 @@ pub(crate) use omp::*;
 pub use openclaw::*;
 pub(crate) use pi::*;
 pub use plugin::*;
+pub use plugin_manager::*;
 pub use profile::*;
 pub use prompt::*;
 pub use provider::*;
@@ -116,6 +118,7 @@ pub(crate) use misc::tool_discovery::{login_shell_path, merge_path_segments};
 #[cfg(not(target_os = "windows"))]
 pub(crate) use misc::tool_process::CommandDeadline;
 pub(crate) use misc::tool_process::{
-    detected_tool_command, run_detected_tool_command_with_timeout, terminate_child_tree,
+    detected_tool_command, is_safe_tool_command_arg, run_detected_tool_command_with_timeout,
+    terminate_child_tree,
 };
 pub(crate) use misc::tool_version::local_tool_version;
