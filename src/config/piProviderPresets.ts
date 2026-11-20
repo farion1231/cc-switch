@@ -17,7 +17,8 @@ export type PiApiFormat =
   | "openai-responses"
   | "anthropic-messages"
   | "google-generative-ai"
-  | "bedrock-converse-stream";
+  | "bedrock-converse-stream"
+  | "mistral-conversations";
 
 export type PiPresetModel = PiCatalogModel & {
   thinkingLevelMap?: PiThinkingLevelMap;
@@ -277,6 +278,21 @@ const miniMaxModels = (): PiPresetModel[] => [
     id: "MiniMax-M3",
     maxTokens: 131072,
   }),
+];
+
+// Named after the lineup, not a provider: presets that sell the same models
+// share the list. A provider that diverges gets its own list instead of
+// editing these.
+const claude55Models = (): PiPresetModel[] => [
+  piModel("anthropic/claude-opus-5.5", { id: "claude-opus-5-5" }),
+  piModel("anthropic/claude-sonnet-5.5", { id: "claude-sonnet-5-5" }),
+  piModel("anthropic/claude-haiku-5.5", { id: "claude-haiku-5-5" }),
+];
+
+const gpt6Models = (): PiPresetModel[] => [
+  piModel("openai/gpt-6.1-sol", { id: "gpt-6.1-sol" }),
+  piModel("openai/gpt-6-sol", { id: "gpt-6-sol" }),
+  piModel("openai/gpt-6-astra", { id: "gpt-6-astra" }),
 ];
 
 /**
@@ -2397,6 +2413,40 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     icon: "cline",
   },
   {
+    name: "Mistral AI",
+    // Pi 内置的 mistral provider 用同名 ID，加前缀避免遮蔽内置定义
+    providerKey: "cc-switch-mistral",
+    websiteUrl: "https://mistral.ai",
+    // Vibe（原 Le Chat）订阅额度与 API 共用，Key 在 Code > Vibe CLI 页创建，
+    // 免费 / 订阅 / 按量付费通用（同其他应用的 Mistral 预设）
+    apiKeyUrl: "https://chat.mistral.ai/code/extensions",
+    settingsConfig: {
+      name: "Mistral AI",
+      // 走 Pi 原生的 mistral-conversations 协议（Pi 1.5.0 内置 mistral provider
+      // 同此写法，base 不带 /v1，由 Pi 自拼 /v1/chat/completions）。Pi 的
+      // openai-completions 通道没有 Mistral 专用处理，推理时流式 content 是
+      // thinking/text 分块数组，走那条路会丢正文，故不用。档位映射照 Pi 内置
+      // 目录：Large 4 只收 low / medium / high，Small 4 只收 none / high。
+      // 2026-11-08 用真 Key 经 Pi 1.5.0 冒烟：两模型对话、各思考档位（越界档位
+      // 由 Pi 收拢到可用档）、流式 thinking、并行工具调用与多轮回传均正常
+      baseUrl: "https://api.mistral.ai",
+      api: "mistral-conversations",
+      apiKey: "",
+      models: [
+        piModel("mistral/mistral-large-4", {
+          id: "mistral-large-4",
+          thinkingProfile: "lowMediumHighOnly",
+        }),
+        piModel("mistral/mistral-small-2603", {
+          id: "mistral-small-2603",
+          thinkingProfile: "noneOrHigh",
+        }),
+      ],
+    },
+    category: "cn_official",
+    icon: "mistral",
+  },
+  {
     name: "Groq",
     // Pi 是否内置 groq provider 未证实，加前缀两种情况都不会遮蔽内置定义
     providerKey: "cc-switch-groq",
@@ -2546,11 +2596,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       baseUrl: "https://YOUR_RESOURCE_NAME.services.ai.azure.com/anthropic",
       api: "anthropic-messages",
       apiKey: "",
-      models: [
-        piModel("anthropic/claude-opus-5.5", { id: "claude-opus-5-5" }),
-        piModel("anthropic/claude-sonnet-5.5", { id: "claude-sonnet-5-5" }),
-        piModel("anthropic/claude-haiku-5.5", { id: "claude-haiku-5-5" }),
-      ],
+      models: claude55Models(),
     },
     category: "cloud_provider",
     icon: "azure",
@@ -2566,20 +2612,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       baseUrl: "https://cc-api.pipellm.ai",
       api: "anthropic-messages",
       apiKey: "",
-      models: [
-        piModel("anthropic/claude-opus-5.5", {
-          id: "claude-opus-5-5",
-          name: "claude-opus-5",
-        }),
-        piModel("anthropic/claude-sonnet-5.5", {
-          id: "claude-sonnet-5-5",
-          name: "claude-sonnet-5",
-        }),
-        piModel("anthropic/claude-haiku-5.5", {
-          id: "claude-haiku-5-5",
-          name: "claude-haiku-4-5-20251001",
-        }),
-      ],
+      models: claude55Models(),
     },
     category: "aggregator",
     icon: "pipellm",
@@ -2594,14 +2627,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       baseUrl: "https://api.aicodewith.ai/v1",
       api: "openai-responses",
       apiKey: "",
-      models: [
-        piModel("openai/gpt-6.1-sol", {
-          id: "gpt-6.1-sol",
-          name: "gpt-5.6-sol",
-        }),
-        piModel("openai/gpt-6-sol", { id: "gpt-6-sol" }),
-        piModel("openai/gpt-6-astra", { id: "gpt-6-astra" }),
-      ],
+      models: gpt6Models(),
     },
     category: "aggregator",
     icon: "aicodewith",
@@ -2617,17 +2643,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       baseUrl: "https://e-flowcode.cc/v1",
       api: "openai-responses",
       apiKey: "",
-      models: [
-        piModel("openai/gpt-6.1-sol", {
-          id: "gpt-6.1-sol",
-          name: "gpt-5.2-codex",
-        }),
-        piModel("openai/gpt-6-sol", { id: "gpt-6-sol" }),
-        piModel("openai/gpt-6-astra", {
-          id: "gpt-6-astra",
-          name: "gpt-5.3-codex",
-        }),
-      ],
+      models: gpt6Models(),
     },
     category: "third_party",
     icon: "eflowcode",

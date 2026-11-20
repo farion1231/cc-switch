@@ -15,7 +15,6 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use once_cell::sync::OnceCell;
 use serde::Serialize;
 use tauri::{AppHandle, Manager};
 
@@ -151,10 +150,7 @@ fn agy_app_row(state: &AppState) -> Option<WidgetApp> {
         crate::mode::current::Purpose::InUse,
     )
     .ok()??;
-    let provider = state
-        .db
-        .get_provider_by_id(&id, AppType::Agy.as_str())
-        .ok()??;
+    let provider = state.db.get_provider_by_id(&id, &AppType::Agy).ok()??;
     let tiers = crate::services::provider::agy_direct::is_official(&provider)
         .then(|| {
             let bound = provider
@@ -198,7 +194,7 @@ fn embedded_app_group() -> Option<String> {
 
 /// 本次运行能不能给小组件供数：只在 macOS、且嵌入了扩展（或用环境变量指定）时有值。
 pub fn app_group() -> Option<&'static str> {
-    static GROUP: OnceCell<Option<String>> = OnceCell::new();
+    static GROUP: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
     GROUP
         .get_or_init(|| {
             if !cfg!(target_os = "macos") {

@@ -89,7 +89,7 @@ fn test_home_override() -> Option<PathBuf> {
 
 /// 获取 Claude Code 配置目录路径
 pub fn get_claude_config_dir() -> PathBuf {
-    if let Some(custom) = crate::settings::get_claude_override_dir() {
+    if let Some(custom) = crate::settings::get_override_dir(&crate::app_config::AppType::Claude) {
         return custom;
     }
 
@@ -284,7 +284,8 @@ fn derive_mcp_path_from_override(dir: &Path) -> PathBuf {
 
 /// 获取 Claude MCP 配置文件路径
 pub fn get_claude_mcp_path() -> PathBuf {
-    if let Some(custom_dir) = crate::settings::get_claude_override_dir() {
+    if let Some(custom_dir) = crate::settings::get_override_dir(&crate::app_config::AppType::Claude)
+    {
         if let Some(path) = default_mcp_path_for_config_dir(&custom_dir) {
             return path;
         }
@@ -1180,7 +1181,8 @@ mod tests {
         // 进程级环境变量的读写必须与同样改它们的测试互斥。锁是模块级共享的
         // （写成测试函数体内的 static 只能锁住自己，等于没锁），见
         // `proxy::http_client` 里同一套 env_lock() 用法。
-        let _guard = env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        use crate::sync_utils::MutexExt;
+        let _guard = env_lock().lock_recover();
 
         // 假装 HOME 指向另一处，并且那里有一份 db——正是会触发回退的形状
         let legacy_home = tempfile::tempdir().expect("tempdir");
@@ -1189,22 +1191,13 @@ mod tests {
         std::fs::write(legacy_dir.join("cc-switch.db"), b"legacy").expect("seed legacy db");
 
         let test_home = tempfile::tempdir().expect("tempdir");
-        let saved_home = std::env::var_os("HOME");
-        let saved_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
-
-        std::env::set_var("HOME", legacy_home.path());
-        std::env::set_var("CC_SWITCH_TEST_HOME", test_home.path());
+        let env = crate::test_support::EnvVars::new()
+            .set("HOME", legacy_home.path())
+            .set("CC_SWITCH_TEST_HOME", test_home.path());
 
         let dir = get_app_config_dir();
 
-        match saved_test_home {
-            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
-            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
-        }
-        match saved_home {
-            Some(value) => std::env::set_var("HOME", value),
-            None => std::env::remove_var("HOME"),
-        }
+        drop(env);
 
         let expected = test_home.path().join(".cc-switch");
         assert_eq!(

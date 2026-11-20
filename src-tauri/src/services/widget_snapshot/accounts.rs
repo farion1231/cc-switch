@@ -13,10 +13,9 @@
 //! 每轮（10 分钟）查，其余 30 分钟查一次；要重新登录的号不查。最多 3 个请求并发。
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
-use once_cell::sync::Lazy;
 use serde::Serialize;
 use tauri::{AppHandle, Manager};
 
@@ -170,12 +169,13 @@ struct CachedQuota {
     quota: AccountQuota,
 }
 
-static LISTED: Lazy<Mutex<Option<Vec<ListedAccount>>>> = Lazy::new(|| Mutex::new(None));
-static QUOTAS: Lazy<Mutex<HashMap<String, CachedQuota>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+static LISTED: LazyLock<Mutex<Option<Vec<ListedAccount>>>> = LazyLock::new(|| Mutex::new(None));
+static QUOTAS: LazyLock<Mutex<HashMap<String, CachedQuota>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 /// DeepSeek Harness 的账号（授权中心「DeepSeek Harness」）：只有一个号、状态和余额一次查回来，
 /// 不走上面的账号列表；30 分钟查一次。
-static DSH: Lazy<Mutex<Option<(Instant, crate::services::dsh_account::DshAccountStatus)>>> =
-    Lazy::new(|| Mutex::new(None));
+static DSH: LazyLock<Mutex<Option<(Instant, crate::services::dsh_account::DshAccountStatus)>>> =
+    LazyLock::new(|| Mutex::new(None));
 static DSH_IN_FLIGHT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// 余额照授权中心 `DshAccount.tsx` 的 formatWallet：两位小数，人民币 ¥、美元 $，别的币种写在后面。
@@ -262,9 +262,9 @@ fn spawn_dsh_query_if_due() -> Option<tauri::async_runtime::JoinHandle<()>> {
 }
 
 /// 正在查的账号（同一个号同时只查一份）
-static IN_FLIGHT: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
-static QUERY_SLOTS: Lazy<std::sync::Arc<tokio::sync::Semaphore>> =
-    Lazy::new(|| std::sync::Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_QUERIES)));
+static IN_FLIGHT: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
+static QUERY_SLOTS: LazyLock<std::sync::Arc<tokio::sync::Semaphore>> =
+    LazyLock::new(|| std::sync::Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_QUERIES)));
 
 fn truncate_message(message: String) -> String {
     if message.chars().count() <= MAX_MESSAGE_CHARS {
@@ -318,7 +318,7 @@ fn collect_bindings(state: &AppState) -> (HashSet<Binding>, Vec<Binding>) {
         )
         .ok()
         .flatten();
-        let Ok(providers) = state.db.get_all_providers(app.as_str()) else {
+        let Ok(providers) = state.db.get_all_providers(&app) else {
             continue;
         };
         for (id, provider) in &providers {
@@ -419,7 +419,7 @@ async fn list_accounts(app: &AppHandle) -> Vec<ListedAccount> {
         if auth_provider == "agy_oauth" && !cfg!(target_os = "macos") {
             continue;
         }
-        let accounts = crate::commands::auth_list_accounts(
+        let accounts = crate::commands::auth_get_status(
             auth_provider.to_string(),
             app.state(),
             app.state(),
@@ -430,7 +430,7 @@ async fn list_accounts(app: &AppHandle) -> Vec<ListedAccount> {
         )
         .await;
         let accounts = match accounts {
-            Ok(accounts) => accounts,
+            Ok(status) => status.accounts,
             Err(e) => {
                 log::debug!("[Widget] 读取 {service_name} 账号失败: {e}");
                 continue;

@@ -98,6 +98,7 @@ import {
   type FetchedModelSelection,
 } from "./FetchedModelPicker";
 import { LocalProxyRequestOverridesField } from "./LocalProxyRequestOverridesField";
+import { BillingMultiplierField } from "./BillingMultiplierField";
 import { cn } from "@/lib/utils";
 import { useCommittableRef } from "@/hooks/useLatestRef";
 import { useModelMetadataFill } from "@/hooks/useModelMetadataFill";
@@ -252,6 +253,9 @@ interface CodexFormFieldsProps {
   // Local proxy User-Agent override
   customUserAgent: string;
   onCustomUserAgentChange: (value: string) => void;
+  /** 供应商费用倍率；不传 onBillingMultiplierChange 时不显示（官方卡等）。 */
+  billingMultiplier?: string;
+  onBillingMultiplierChange?: (value: string) => void;
   localProxyHeadersOverride: string;
   onLocalProxyHeadersOverrideChange: (value: string) => void;
   localProxyBodyOverride: string;
@@ -707,6 +711,8 @@ export function CodexFormFields({
   speedTestEndpoints,
   customUserAgent,
   onCustomUserAgentChange,
+  billingMultiplier = "",
+  onBillingMultiplierChange,
   localProxyHeadersOverride,
   onLocalProxyHeadersOverrideChange,
   localProxyBodyOverride,
@@ -771,6 +777,7 @@ export function CodexFormFields({
   const hasAnyAdvancedValue =
     isCopilotPreset ||
     !!customUserAgent ||
+    !!billingMultiplier ||
     hasRequestOverrides ||
     isAnthropicFormat ||
     supportsThinking ||
@@ -796,7 +803,10 @@ export function CodexFormFields({
   // Stack 布局的高级区（思考能力、Anthropic 专有项、User-Agent、请求覆盖）：填了 UA 或请求
   // 覆盖才展开，其余多是预设自带的。
   const [stackAdvancedExpanded, setStackAdvancedExpanded] = useState(
-    isFullUrl || !!customUserAgent || hasRequestOverrides,
+    isFullUrl ||
+      !!customUserAgent ||
+      !!billingMultiplier ||
+      hasRequestOverrides,
   );
 
   // 显示用的顺序。挪动默认那一行不算修改：没动过列表时保存仍是原来的顺序。
@@ -958,9 +968,13 @@ export function CodexFormFields({
                   model.supports_parallel_tool_calls ??
                   existing.get(model.id)?.supportsParallelToolCalls ??
                   false,
-                inputModalities: existing.get(model.id)?.inputModalities ?? [
-                  "text",
-                ],
+                ...(model.supports_vision !== undefined
+                  ? {
+                      inputModalities: model.supports_vision
+                        ? ["text", "image"]
+                        : ["text"],
+                    }
+                  : {}),
                 ...(model.reasoning_effort !== undefined
                   ? { reasoningLevels: model.reasoning_effort }
                   : {}),
@@ -1702,19 +1716,26 @@ export function CodexFormFields({
     </>
   );
 
-  // 两项都只在路由模式下生效：在分组开头说一次，各自的作用收进字段名后的「?」。
+  // 这一组都只在路由模式下生效：在分组开头说一次，各自的作用收进字段名后的「?」。
   // Copilot 的请求由转发层按 Copilot 客户端的样子发，UA 和请求覆盖都会被跳过，不显示。
   const userAgentAndOverrides = isCopilotPreset ? null : (
     <>
       <p className="text-xs leading-relaxed text-fg-2">
         {isGrokBuild
           ? t("grokBuild.routeOnlySettingsHint", {
-              defaultValue: "以下两项只在路由模式下生效。",
+              defaultValue: "以下设置只在路由模式下生效。",
             })
           : t("codexConfig.routeOnlySettingsHint", {
-              defaultValue: "以下两项只在路由、聚合模式下生效。",
+              defaultValue: "以下设置只在路由、聚合模式下生效。",
             })}
       </p>
+      {onBillingMultiplierChange && (
+        <BillingMultiplierField
+          id="codex-billing-multiplier"
+          value={billingMultiplier}
+          onChange={onBillingMultiplierChange}
+        />
+      )}
       <CustomUserAgentField
         id="codex-custom-user-agent"
         value={customUserAgent}

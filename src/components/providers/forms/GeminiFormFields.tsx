@@ -94,7 +94,18 @@ export function GeminiFormFields({
     setIsFetchingModels(true);
     (agy
       ? getAgyModels({ apiKey, baseUrl: modelBaseUrl })
-      : fetchModelsForConfig(modelBaseUrl, apiKey, false)
+      : // Gemini CLI 只说 Gemini 原生协议（v1beta + x-goog-api-key），能被它用的
+        // 网关也必然认这一套；按默认的 Bearer + /v1/models 取，官方 401、网关回 0 条（#8546）。
+        fetchModelsForConfig(
+          modelBaseUrl,
+          apiKey,
+          false,
+          undefined,
+          undefined,
+          {
+            apiFormat: "google-generative-ai",
+          },
+        )
     )
       .then((models) => {
         setFetchedModels(models);

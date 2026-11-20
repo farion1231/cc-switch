@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 /// 获取 Gemini 配置目录路径（支持设置覆盖）
 pub fn get_gemini_dir() -> PathBuf {
-    if let Some(custom) = crate::settings::get_gemini_override_dir() {
+    if let Some(custom) = crate::settings::get_override_dir(&crate::app_config::AppType::Gemini) {
         return custom;
     }
 
@@ -22,7 +22,6 @@ pub fn get_gemini_env_path() -> PathBuf {
 /// 解析 .env 文件内容为键值对
 ///
 /// 此函数宽松地解析 .env 文件，跳过无效行。
-/// 对于需要严格验证的场景，请使用 `parse_env_file_strict`。
 pub fn parse_env_file(content: &str) -> HashMap<String, String> {
     let mut map = HashMap::new();
 
@@ -50,79 +49,6 @@ pub fn parse_env_file(content: &str) -> HashMap<String, String> {
     }
 
     map
-}
-
-/// 严格解析 .env 文件内容，返回详细的错误信息
-///
-/// 与 `parse_env_file` 不同，此函数在遇到无效行时会返回错误，
-/// 包含行号和详细的错误信息。
-///
-/// # 错误
-///
-/// 返回 `AppError` 如果遇到以下情况：
-/// - 行不包含 `=` 分隔符
-/// - Key 为空或包含无效字符
-/// - Key 不符合环境变量命名规范
-///
-/// # 使用场景
-///
-/// 此函数为未来的严格验证场景预留，当前运行时使用宽松的 `parse_env_file`。
-/// 可用于：
-/// - 配置导入验证
-/// - CLI 工具的严格模式
-/// - 配置文件错误诊断
-///
-/// 已有完整的测试覆盖，可直接使用。
-#[allow(dead_code)]
-pub fn parse_env_file_strict(content: &str) -> Result<HashMap<String, String>, AppError> {
-    let mut map = HashMap::new();
-
-    for (line_num, line) in content.lines().enumerate() {
-        let line = line.trim();
-        let line_number = line_num + 1; // 行号从 1 开始
-
-        // 跳过空行和注释
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-
-        // 检查是否包含 =
-        if !line.contains('=') {
-            return Err(AppError::localized(
-                "gemini.env.parse_error.no_equals",
-                format!("Gemini .env 文件格式错误（第 {line_number} 行）：缺少 '=' 分隔符\n行内容: {line}"),
-                format!("Invalid Gemini .env format (line {line_number}): missing '=' separator\nLine: {line}"),
-            ));
-        }
-
-        // 解析 KEY=VALUE
-        if let Some((key, value)) = line.split_once('=') {
-            let key = key.trim();
-            let value = value.trim();
-
-            // 验证 key 不为空
-            if key.is_empty() {
-                return Err(AppError::localized(
-                    "gemini.env.parse_error.empty_key",
-                    format!("Gemini .env 文件格式错误（第 {line_number} 行）：环境变量名不能为空\n行内容: {line}"),
-                    format!("Invalid Gemini .env format (line {line_number}): variable name cannot be empty\nLine: {line}"),
-                ));
-            }
-
-            // 验证 key 只包含字母、数字和下划线
-            if !key.chars().all(|c| c.is_alphanumeric() || c == '_') {
-                return Err(AppError::localized(
-                    "gemini.env.parse_error.invalid_key",
-                    format!("Gemini .env 文件格式错误（第 {line_number} 行）：环境变量名只能包含字母、数字和下划线\n变量名: {key}"),
-                    format!("Invalid Gemini .env format (line {line_number}): variable name can only contain letters, numbers, and underscores\nVariable: {key}"),
-                ));
-            }
-
-            map.insert(key.to_string(), value.to_string());
-        }
-    }
-
-    Ok(map)
 }
 
 /// 读取 Gemini .env 文件
@@ -396,84 +322,7 @@ export GEMINI_MODEL=gemini-2.5-pro
     }
 
     #[test]
-    fn test_parse_env_file_strict_success() {
-        // 测试严格模式下正常解析
-        let content = r#"
-# Comment line
-GOOGLE_GEMINI_BASE_URL=https://example.com
-GEMINI_API_KEY=sk-test123
-GEMINI_MODEL=gemini-3.5-flash
-
-# Another comment
-"#;
-
-        let result = parse_env_file_strict(content);
-        assert!(result.is_ok());
-
-        let map = result.unwrap();
-        assert_eq!(map.len(), 3);
-        assert_eq!(
-            map.get("GOOGLE_GEMINI_BASE_URL"),
-            Some(&"https://example.com".to_string())
-        );
-        assert_eq!(map.get("GEMINI_API_KEY"), Some(&"sk-test123".to_string()));
-        assert_eq!(
-            map.get("GEMINI_MODEL"),
-            Some(&"gemini-3.5-flash".to_string())
-        );
-    }
-
-    #[test]
-    fn test_parse_env_file_strict_missing_equals() {
-        // 测试严格模式下检测缺少 = 的行
-        let content = "GOOGLE_GEMINI_BASE_URL=https://example.com
-INVALID_LINE_WITHOUT_EQUALS
-GEMINI_API_KEY=sk-test123";
-
-        let result = parse_env_file_strict(content);
-        assert!(result.is_err());
-
-        let err = result.unwrap_err();
-        let err_msg = format!("{err:?}");
-        assert!(err_msg.contains("第 2 行") || err_msg.contains("line 2"));
-        assert!(err_msg.contains("INVALID_LINE_WITHOUT_EQUALS"));
-    }
-
-    #[test]
-    fn test_parse_env_file_strict_empty_key() {
-        // 测试严格模式下检测空 key
-        let content = "GOOGLE_GEMINI_BASE_URL=https://example.com
-=value_without_key
-GEMINI_API_KEY=sk-test123";
-
-        let result = parse_env_file_strict(content);
-        assert!(result.is_err());
-
-        let err = result.unwrap_err();
-        let err_msg = format!("{err:?}");
-        assert!(err_msg.contains("第 2 行") || err_msg.contains("line 2"));
-        assert!(err_msg.contains("empty") || err_msg.contains("空"));
-    }
-
-    #[test]
-    fn test_parse_env_file_strict_invalid_key_characters() {
-        // 测试严格模式下检测无效字符（如空格、特殊符号）
-        let content = "GOOGLE_GEMINI_BASE_URL=https://example.com
-INVALID KEY WITH SPACES=value
-GEMINI_API_KEY=sk-test123";
-
-        let result = parse_env_file_strict(content);
-        assert!(result.is_err());
-
-        let err = result.unwrap_err();
-        let err_msg = format!("{err:?}");
-        assert!(err_msg.contains("第 2 行") || err_msg.contains("line 2"));
-        assert!(err_msg.contains("INVALID KEY WITH SPACES"));
-    }
-
-    #[test]
-    fn test_parse_env_file_lax_vs_strict() {
-        // 测试宽松模式和严格模式的差异
+    fn test_parse_env_file_skips_invalid_lines() {
         let content = "VALID_KEY=value
 INVALID LINE
 KEY_WITH-DASH=value";
@@ -482,10 +331,6 @@ KEY_WITH-DASH=value";
         let lax_result = parse_env_file(content);
         assert_eq!(lax_result.len(), 1); // 只有 VALID_KEY
         assert_eq!(lax_result.get("VALID_KEY"), Some(&"value".to_string()));
-
-        // 严格模式：遇到无效行立即返回错误
-        let strict_result = parse_env_file_strict(content);
-        assert!(strict_result.is_err());
     }
 
     #[test]
