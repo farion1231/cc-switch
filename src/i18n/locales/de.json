@@ -4623,6 +4623,9 @@
     "exitAllTitle": "Alle Apps zurück auf Direkt stellen?",
     "exitAllMessage": "Für Apps im Modus Routing oder Aggregation wird ihre Direkt-Konfiguration zurückgeschrieben, danach wird der Routing-Dienst gestoppt. Routing-Ziele, Warteschlangen und Aggregationslisten bleiben erhalten.",
     "exitAllConfirm": "Alle zurück auf Direkt stellen",
+    "countTokens": "Token-Zählung",
+    "countTokensFollowCurrent": "Aktuellem Anbieter folgen",
+    "countTokensHelp": "Claude Desktop erfragt die Kontext-Tokenzahl beim hier gewählten Anbieter; bleibt das Feld leer, wird der aktuelle Anbieter verwendet. Beim Zählen wird der Kontext an diesen Anbieter gesendet, aber nichts generiert; unterstützt keiner der beiden den Endpunkt, schätzt CC Switch lokal.",
     "failoverHelp": "Passen Sie hier Timeouts, Wiederholungen und Circuit Breaker jeder App an. Warteschlangen werden auf dem Tab „Routing“ der jeweiligen App verwaltet."
   },
   "quota": {
