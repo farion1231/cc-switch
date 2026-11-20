@@ -44,6 +44,23 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   "about",
 ];
 
+/** 侧栏主目录中部的全局页顺序（展示顺序与换页动画方向共用）。 */
+export const SIDEBAR_MAIN_GLOBAL_ORDER = [
+  "mcp",
+  "skills",
+  "plugins",
+  "prompts",
+  "sessions",
+  "auth",
+  "usage",
+] as const satisfies readonly GlobalPage[];
+
+/** 侧栏里全局页的上下顺序（应用排在它们上面），换页时用来定新页面从哪边进来。 */
+export const SIDEBAR_GLOBAL_ORDER = [
+  ...SIDEBAR_MAIN_GLOBAL_ORDER,
+  "apps",
+] as const satisfies readonly GlobalPage[];
+
 const APP_PAGES: AppPage[] = [
   "providers",
   "workspace",

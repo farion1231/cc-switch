@@ -77,6 +77,7 @@ import {
   readStoredView,
   SETTINGS_SECTIONS,
   sharedFeatureAppOf,
+  SIDEBAR_GLOBAL_ORDER,
   storeView,
   type GlobalPage,
   type SettingsSection,
@@ -232,16 +233,6 @@ const getInitialApp = (): AppId => {
   return "claude";
 };
 
-// 侧栏里全局页的上下顺序（应用排在它们上面），换页时用来定新页面从哪边进来
-const SIDEBAR_GLOBAL_ORDER = [
-  "mcp",
-  "skills",
-  "prompts",
-  "sessions",
-  "auth",
-  "usage",
-  "apps",
-];
 // OpenClaw / Hermes 页面页签、OpenClaw 配置二级页签的左右顺序
 const APP_SUBPAGE_ORDER: View[] = [
   "providers",

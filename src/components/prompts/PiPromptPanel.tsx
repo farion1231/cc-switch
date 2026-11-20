@@ -66,6 +66,7 @@ const PiPromptPanel: React.FC<PiPromptPanelProps> = ({
   const [searchQuery, setSearchQuery] = useState("");
   const [templateQuery, setTemplateQuery] = useState("");
   const [busy, setBusy] = useState(false);
+  const [nativeEditing, setNativeEditing] = useState(false);
   const templatesRef = useRef<PiPromptTemplatesHandle>(null);
 
   const {
@@ -387,6 +388,7 @@ const PiPromptPanel: React.FC<PiPromptPanelProps> = ({
       apps={apps}
       onAppChange={onAppChange}
       appSwitchDisabled={navigationBlocked}
+      editing={isFormOpen || nativeEditing}
       count={promptEntries.length}
       help={{ title: t("prompts.helpPiTitle"), text: t("prompts.helpPiText") }}
       primary={
@@ -522,12 +524,13 @@ const PiPromptPanel: React.FC<PiPromptPanelProps> = ({
           />
         )
       ) : activeTab === "system" ? (
-        <PiSystemPromptFiles />
+        <PiSystemPromptFiles onEditingChange={setNativeEditing} />
       ) : (
         <PiPromptTemplates
           ref={templatesRef}
           search={templateQuery}
           onClearSearch={() => setTemplateQuery("")}
+          onEditingChange={setNativeEditing}
         />
       )}
 

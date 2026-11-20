@@ -483,6 +483,7 @@ const StandardPromptPanel: React.FC<PromptPanelProps> = ({
       apps={apps}
       onAppChange={onAppChange}
       appSwitchDisabled={navigationBlocked}
+      editing={isFormOpen}
       count={promptEntries.length}
       help={
         isHermes

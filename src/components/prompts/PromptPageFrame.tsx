@@ -27,6 +27,7 @@ import { HoverTip } from "@/components/ui/hover-tip";
 import { promptsApi, type AppId } from "@/lib/api";
 import { promptKeys } from "@/lib/query/prompts";
 import { SearchField } from "@/components/ui/search-field";
+import { useEnterTransition } from "@/hooks/useEnterTransition";
 import { cn } from "@/lib/utils";
 import { renderSegs } from "./promptUtils";
 
@@ -66,6 +67,8 @@ interface PromptPageFrameProps {
     resultCount?: number;
     width?: number;
   } | null;
+  /** 正在打开整页编辑器：关闭后页面从左侧滑回 */
+  editing?: boolean;
   notices?: ReactNode;
   children: ReactNode;
 }
@@ -83,13 +86,20 @@ export function PromptPageFrame({
   segments,
   target,
   search,
+  editing = false,
   notices,
   children,
 }: PromptPageFrameProps) {
   const { t } = useTranslation();
+  // 编辑页打开时它自己从右边推进来；关掉后这页从左边滑回（和 MCP / 会话阅读页一样）
+  const pageRef = useEnterTransition<HTMLDivElement, boolean>(editing, {
+    skipInitial: true,
+    from: (_, isEditing) => (isEditing ? "none" : "start"),
+    preserveHeader: true,
+  });
 
   return (
-    <>
+    <div ref={pageRef} className="flex min-h-0 flex-1 flex-col">
       <AppPageHeader
         icon={<BookOpen className="h-[18px] w-[18px]" strokeWidth={2} />}
         title={t("nav.prompts")}
@@ -185,7 +195,7 @@ export function PromptPageFrame({
       )}
 
       <div className="flex min-h-0 flex-1 flex-col px-6 pb-5">{children}</div>
-    </>
+    </div>
   );
 }
 

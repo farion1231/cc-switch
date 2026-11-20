@@ -26,7 +26,7 @@ import type { AppId } from "@/lib/api";
 import type { VisibleApps } from "@/types";
 import { orderAppIds } from "@/config/appConfig";
 import type { GlobalPage, SettingsSection, View } from "@/lib/navigation";
-import { isAppPage } from "@/lib/navigation";
+import { isAppPage, SIDEBAR_MAIN_GLOBAL_ORDER } from "@/lib/navigation";
 import { SkillsIcon } from "@/components/BrandIcons";
 import { useUpdate } from "@/contexts/UpdateContext";
 import { sidebarWidth, useSidebarCollapsed } from "@/hooks/useSidebarCollapsed";
@@ -118,8 +118,12 @@ export function Sidebar(props: SidebarProps) {
       </a>
       <SidebarTopBar collapsed={collapsed} onToggle={toggle} />
       {/* 进设置目录像推进一层：从右边滑进；返回时主目录从左边滑回。
-          isolate：选中块垫在整个目录的所有行下面（见 SelectionPill） */}
-      <div ref={directoryRef} className="isolate flex min-h-0 flex-1 flex-col">
+          isolate：选中块垫在整个目录的所有行下面（见 SelectionPill）；
+          overflow-hidden：滑块从滚动区边沿滑出时不会盖到上面的顶栏 */}
+      <div
+        ref={directoryRef}
+        className="isolate flex min-h-0 flex-1 flex-col overflow-hidden"
+      >
         {inSettings ? (
           <SettingsDirectory {...props} collapsed={collapsed} />
         ) : (
@@ -291,33 +295,38 @@ function MainDirectory({
       : undefined;
   const todayTrailing = todayValues.length > 1 ? todayValues : todayText;
 
-  const globals: {
-    page: GlobalPage;
+  type GlobalNavSpec = {
     label: string;
     icon: IconComponent;
     trailing?: string | string[];
     trailingLabel?: string;
     alert?: string;
-  }[] = [
-    { page: "mcp", label: "MCP", icon: Server },
-    { page: "skills", label: "Skills", icon: SkillsIcon },
-    { page: "plugins", label: t("nav.plugins"), icon: Puzzle },
-    { page: "prompts", label: t("nav.prompts"), icon: BookOpen },
-    { page: "sessions", label: t("nav.sessions"), icon: History },
-    {
-      page: "auth",
+  };
+  const globalByPage: Record<
+    (typeof SIDEBAR_MAIN_GLOBAL_ORDER)[number],
+    GlobalNavSpec
+  > = {
+    mcp: { label: "MCP", icon: Server },
+    skills: { label: "Skills", icon: SkillsIcon },
+    plugins: { label: t("nav.plugins"), icon: Puzzle },
+    prompts: { label: t("nav.prompts"), icon: BookOpen },
+    sessions: { label: t("nav.sessions"), icon: History },
+    auth: {
       label: t("nav.auth"),
       icon: KeyRound,
       alert: authNeedsAttention ? t("nav.authNeedsReauth") : undefined,
     },
-    {
-      page: "usage",
+    usage: {
       label: t("nav.usage"),
       icon: ChartColumn,
       trailing: todayTrailing,
       trailingLabel: todayText,
     },
-  ];
+  };
+  const globals = SIDEBAR_MAIN_GLOBAL_ORDER.map((page) => ({
+    page,
+    ...globalByPage[page],
+  }));
 
   const isGlobalSelected = (page: GlobalPage) =>
     view === page || (page === "skills" && view === "skillsDiscovery");
@@ -325,6 +334,7 @@ function MainDirectory({
   return (
     <>
       <div
+        data-sidebar-scroll=""
         className={cn(
           "flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden pb-2 pt-0.5",
           // 图标轨只有 72 宽，放不下滚动条
@@ -445,6 +455,16 @@ function selectionKeyOf({
   return view === "skillsDiscovery" ? "skills" : view;
 }
 
+function visiblePillRect(el: Element): DOMRect | null {
+  const rect = el.getBoundingClientRect();
+  const scroll = el.closest("[data-sidebar-scroll]");
+  if (!scroll) return rect;
+  const bounds = scroll.getBoundingClientRect();
+  // 完全滚出应用列表可视范围时跳过滑动，避免从顶栏上方或全局项后面飞进/飞出
+  if (rect.bottom <= bounds.top || rect.top >= bounds.bottom) return null;
+  return rect;
+}
+
 /**
  * 侧栏选中项的底色只有一块，换选中项时从上一项滑过去，而不是这一行灭、那一行亮。
  * 做法是 FLIP：换之前量旧块的位置，换完量新块的位置，让新块从旧位置用 transform 滑回原位。
@@ -466,7 +486,7 @@ function useSelectionSlide(
     const old = navRef.current?.querySelector(PILL_SELECTOR);
     flip.current = {
       key: selectionKey,
-      from: !relayout && old ? old.getBoundingClientRect() : null,
+      from: !relayout && old ? visiblePillRect(old) : null,
     };
   }
 
@@ -477,8 +497,8 @@ function useSelectionSlide(
     const pill = navRef.current?.querySelector<HTMLElement>(PILL_SELECTOR);
     if (!pill || typeof pill.animate !== "function" || prefersReducedMotion())
       return;
-    const to = pill.getBoundingClientRect();
-    if (!to.width || !to.height) return;
+    const to = visiblePillRect(pill);
+    if (!to || !to.width || !to.height) return;
     const dx = from.left - to.left;
     const dy = from.top - to.top;
     const sx = from.width / to.width;

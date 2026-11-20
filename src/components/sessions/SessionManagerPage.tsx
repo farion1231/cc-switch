@@ -1029,9 +1029,8 @@ export function SessionManagerPage({
               "inset-x-0 top-0",
               sticky ? "sticky z-[2]" : "absolute",
               reflowing &&
+                !revealed &&
                 "transition-transform duration-200 ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none",
-              revealed &&
-                "duration-200 animate-in fade-in-0 slide-in-from-top-1 motion-reduce:animate-none",
             )}
             style={
               sticky ? undefined : { transform: `translateY(${item.start}px)` }
@@ -1049,7 +1048,15 @@ export function SessionManagerPage({
             ) : row.kind === "project" ? (
               renderProjectHeader(row.group, row.first)
             ) : (
-              renderRow(row.session, row.bordered)
+              <div
+                className={
+                  revealed
+                    ? "duration-200 animate-in fade-in-0 slide-in-from-top-1 motion-reduce:animate-none"
+                    : undefined
+                }
+              >
+                {renderRow(row.session, row.bordered)}
+              </div>
             )}
           </div>
         );
