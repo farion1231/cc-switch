@@ -241,10 +241,10 @@ fn imports_the_current_account_with_its_whole_bundle() {
     assert_eq!(status.current_account_id.as_deref(), Some("u-1"));
 
     // 账号表 0600、能重新加载
-    let store_path = fixture.data_dir.join(STORE_FILENAME);
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
+        let store_path = fixture.data_dir.join(STORE_FILENAME);
         let mode = std::fs::metadata(&store_path).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600);
     }
