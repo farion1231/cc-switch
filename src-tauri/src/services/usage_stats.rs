@@ -139,7 +139,8 @@ pub struct ProviderStats {
     pub est_speed_duration_ms: u64,
     /// 首字时间中位数（毫秒）：经路由服务、成功的流式明细请求；没有这样的请求时为 None。
     pub first_token_median_ms: Option<u64>,
-    /// 估算首字中位数（毫秒）：会话日志导入、按时间戳推出了首字的明细请求。
+    /// 估算首字中位数（毫秒）：会话日志导入、按时间戳推出了首字的明细请求；
+    /// 模型表里还可能来自 WorkBuddy 的模型级估算（见 `session_usage_workbuddy`）。
     /// 和上面分开：口径不同，界面上只在没有精确值时显示，带 ≈。
     pub est_first_token_median_ms: Option<u64>,
 }
@@ -265,6 +266,7 @@ pub struct ModelStats {
     pub est_speed_output_tokens: u64,
     pub est_speed_duration_ms: u64,
     /// 首字时间中位数，口径同 [`ProviderStats`] 的那两个字段。
+    /// 没有明细值时，WorkBuddy 的模型还会用模型级估算补位（见 `get_model_stats`）。
     pub first_token_median_ms: Option<u64>,
     pub est_first_token_median_ms: Option<u64>,
 }
@@ -1924,6 +1926,22 @@ impl Database {
             stats.push(row?);
         }
 
+        // WorkBuddy 的会话日志没有首字时间戳，明细行一律是 NULL（见
+        // `session_usage_workbuddy`）；这里在模型表里补一个模型级的耗时估算。
+        // 只在查询没限定别的 app 时做，免得把 WorkBuddy 的估算安到别的来源同名的模型上。
+        if app_type.is_none() || app_type == Some("workbuddy") {
+            for stat in &mut stats {
+                if stat.first_token_median_ms.is_none() && stat.est_first_token_median_ms.is_none()
+                {
+                    stat.est_first_token_median_ms =
+                        crate::services::session_usage_workbuddy::estimated_model_first_token_ms(
+                            &conn,
+                            &stat.model,
+                        );
+                }
+            }
+        }
+
         Ok(stats)
     }
 
@@ -2812,6 +2830,54 @@ mod tests {
             [],
         )?;
         Ok(())
+    }
+
+    #[test]
+    fn model_stats_use_model_level_first_token_for_workbuddy() {
+        let db = Database::memory().unwrap();
+        let now = chrono::Utc::now().timestamp();
+        {
+            let conn = db.conn.lock().unwrap();
+            // 耗时 = 2000 + 6 × 输出：WorkBuddy 的行没有首字，只能用这个关系估
+            for i in 0..260i64 {
+                let output = 100 + (i * 37) % 900;
+                conn.execute(
+                    "INSERT INTO proxy_request_logs (
+                        request_id, provider_id, app_type, model, latency_ms, status_code,
+                        created_at, data_source, output_tokens
+                     ) VALUES (?1, '_workbuddy_session', 'workbuddy', 'wb-estimate', ?2, 200, ?3, 'workbuddy_session', ?4)",
+                    params![
+                        format!("wb-estimate-{i}"),
+                        2_000 + 6 * output,
+                        now,
+                        output
+                    ],
+                )
+                .unwrap();
+            }
+        }
+
+        let stats = db
+            .get_model_stats(None, None, Some("workbuddy"), None, None)
+            .unwrap();
+        let row = stats
+            .iter()
+            .find(|stat| stat.model == "wb-estimate")
+            .expect("model row");
+        assert!(row.first_token_median_ms.is_none());
+        let estimate = row.est_first_token_median_ms.expect("model-level estimate");
+        assert!(
+            (estimate as i64 - 2_000).abs() <= 120,
+            "estimate {estimate} 偏离 2000 太多"
+        );
+
+        // 限定别的 app 时不能把 WorkBuddy 的估算贴上去
+        let others = db
+            .get_model_stats(None, None, Some("codex"), None, None)
+            .unwrap();
+        assert!(others
+            .iter()
+            .all(|stat| stat.est_first_token_median_ms.is_none()));
     }
 
     #[test]
