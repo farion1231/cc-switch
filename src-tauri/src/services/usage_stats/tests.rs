@@ -5049,3 +5049,51 @@ fn pricing_snapshot_matches_sql_and_refreshes_after_mutations() -> Result<(), Ap
     );
     Ok(())
 }
+
+#[test]
+fn model_stats_use_model_level_first_token_for_workbuddy() {
+    let db = Database::memory().unwrap();
+    let now = chrono::Utc::now().timestamp();
+    {
+        let conn = db.conn.lock().unwrap();
+        // 耗时 = 2000 + 6 × 输出：WorkBuddy 的行没有首字，只能用这个关系估
+        for i in 0..260i64 {
+            let output = 100 + (i * 37) % 900;
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, latency_ms, status_code,
+                    created_at, data_source, output_tokens
+                 ) VALUES (?1, '_workbuddy_session', 'workbuddy', 'wb-estimate', ?2, 200, ?3, 'workbuddy_session', ?4)",
+                params![
+                    format!("wb-estimate-{i}"),
+                    2_000 + 6 * output,
+                    now,
+                    output
+                ],
+            )
+            .unwrap();
+        }
+    }
+
+    let stats = db
+        .get_model_stats(None, None, Some("workbuddy"), None, None)
+        .unwrap();
+    let row = stats
+        .iter()
+        .find(|stat| stat.model == "wb-estimate")
+        .expect("model row");
+    assert!(row.first_token_median_ms.is_none());
+    let estimate = row.est_first_token_median_ms.expect("model-level estimate");
+    assert!(
+        (estimate as i64 - 2_000).abs() <= 120,
+        "estimate {estimate} 偏离 2000 太多"
+    );
+
+    // 限定别的 app 时不能把 WorkBuddy 的估算贴上去
+    let others = db
+        .get_model_stats(None, None, Some("codex"), None, None)
+        .unwrap();
+    assert!(others
+        .iter()
+        .all(|stat| stat.est_first_token_median_ms.is_none()));
+}

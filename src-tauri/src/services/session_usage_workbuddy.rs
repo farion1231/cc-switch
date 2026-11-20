@@ -17,6 +17,9 @@
 //! 匹配上就用 span 的 duration 覆盖锚点值——锚点差值含「工具结果落盘 + 组装上下文」
 //! 的应用开销（实测中位 0.12s、p75 0.92s），留在耗时里会让估算速度偏低（速度按
 //! 输出 ÷ 整段耗时算，不减首字）。只处理本轮新入库的行，不回写历史。
+//!
+//! 首字不做逐行估算（日志没有这个时间戳，逐行数字给不出精度）；汇总表按模型用
+//! 耗时回归给一个量级参考，见 [`estimated_model_first_token_ms`]。
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use crate::proxy::usage::parser::TokenUsage;
@@ -32,9 +35,11 @@ use crate::session_manager::providers::workbuddy;
 use rust_decimal::Decimal;
 use serde_json::Value;
 use std::{
+    collections::HashMap,
     fs,
     io::{BufRead, BufReader, Seek, SeekFrom},
     path::{Path, PathBuf},
+    sync::{Mutex, OnceLock},
 };
 
 const DATA_SOURCE: &str = "workbuddy_session";
@@ -569,6 +574,116 @@ fn collect_generation_spans(files: &[TraceFile]) -> Vec<(i64, i64)> {
     spans
 }
 
+/// 模型级首字估算的最小样本量和拟合门槛（与聚合口径无关，只决定「估不估」）。
+const TTFT_ESTIMATE_MIN_SAMPLES: usize = 200;
+const TTFT_ESTIMATE_MIN_R2: f64 = 0.5;
+/// 只用最近这么多天的样本：模型的下游、批次、负载都会变，越久的数据越不代表现在。
+const TTFT_ESTIMATE_WINDOW_SECS: i64 = 30 * 24 * 3600;
+/// 估算结果缓存多久。看板刷新间隔最短 5s，没有缓存等于每次刷新都重算一遍。
+const TTFT_ESTIMATE_TTL_MS: i64 = 10 * 60 * 1000;
+
+/// 模型级首字估算：WorkBuddy 的会话日志和 trace 都没有首字时间戳，只能从耗时里拆。
+///
+/// 对同一模型最近的请求拟合 `耗时 = a + b × 输出 token`，再取
+/// `median(耗时 − b × 输出)` 当典型首字。用中位数而不是截距：耗时分布右偏，
+/// 截距会被长尾排队抬高，而汇总额本来就是中位数口径。
+///
+/// 只用于汇总表按模型展示，不写进明细行：系数会随批次和负载漂移，同一个请求
+/// 换个窗口重算能差半秒以上，逐行数字给不出这个精度。样本不足、解码项非正或
+/// R² 不达标时返回 `None`（界面显示「—」）。
+pub(crate) fn estimated_model_first_token_ms(
+    conn: &rusqlite::Connection,
+    model: &str,
+) -> Option<u64> {
+    /// 模型 → (算出来的时刻, 估算值)
+    type Cache = Mutex<HashMap<String, (i64, Option<u64>)>>;
+    static CACHE: OnceLock<Cache> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let now = chrono::Utc::now().timestamp_millis();
+    {
+        let guard = cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some((computed_at, value)) = guard.get(model) {
+            if now - computed_at < TTFT_ESTIMATE_TTL_MS {
+                return *value;
+            }
+        }
+    }
+
+    let value = fit_first_token_ms(conn, model, now / 1000 - TTFT_ESTIMATE_WINDOW_SECS);
+    let mut guard = cache
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    guard.insert(model.to_owned(), (now, value));
+    value
+}
+
+fn fit_first_token_ms(conn: &rusqlite::Connection, model: &str, since_secs: i64) -> Option<u64> {
+    let mut stmt = conn
+        .prepare_cached(
+            "SELECT output_tokens, latency_ms FROM proxy_request_logs
+             WHERE app_type = 'workbuddy' AND data_source = ?1 AND model = ?2
+               AND latency_ms > 0 AND output_tokens > 0 AND created_at >= ?3",
+        )
+        .ok()?;
+    let samples: Vec<(f64, f64)> = stmt
+        .query_map(rusqlite::params![DATA_SOURCE, model, since_secs], |row| {
+            Ok((row.get::<_, f64>(0)?, row.get::<_, f64>(1)?))
+        })
+        .ok()?
+        .filter_map(Result::ok)
+        .collect();
+    if samples.len() < TTFT_ESTIMATE_MIN_SAMPLES {
+        return None;
+    }
+
+    let count = samples.len() as f64;
+    let (mut sx, mut sy, mut sxx, mut sxy) = (0.0, 0.0, 0.0, 0.0);
+    for &(x, y) in &samples {
+        sx += x;
+        sy += y;
+        sxx += x * x;
+        sxy += x * y;
+    }
+    let denominator = count * sxx - sx * sx;
+    if !(denominator.is_finite() && denominator > 0.0) {
+        return None;
+    }
+    let slope = (count * sxy - sx * sy) / denominator;
+    let intercept = (sy - slope * sx) / count;
+    // 解码速度必须为正，否则说明样本被少数长尾主导，估出来的「首字」没有意义。
+    if !(slope.is_finite() && slope > 0.0) {
+        return None;
+    }
+
+    let mut residuals = Vec::with_capacity(samples.len());
+    let mut durations = Vec::with_capacity(samples.len());
+    let mut ss_res = 0.0;
+    let mut ss_tot = 0.0;
+    let mean = sy / count;
+    for &(x, y) in &samples {
+        ss_res += (y - (intercept + slope * x)).powi(2);
+        ss_tot += (y - mean).powi(2);
+        residuals.push(y - slope * x);
+        durations.push(y);
+    }
+    if !ss_tot.is_finite() || ss_tot <= 0.0 || 1.0 - ss_res / ss_tot < TTFT_ESTIMATE_MIN_R2 {
+        return None;
+    }
+
+    residuals.sort_by(|left, right| left.total_cmp(right));
+    durations.sort_by(|left, right| left.total_cmp(right));
+    let median = residuals[residuals.len() / 2];
+    // 首字不可能超过同一批请求的典型耗时，也不该落到不合理的区间外。
+    let ceiling = durations[durations.len() / 2];
+    let estimate = median.min(ceiling).clamp(
+        MIN_PLAUSIBLE_LATENCY_MS as f64,
+        MAX_PLAUSIBLE_LATENCY_MS as f64,
+    );
+    Some(estimate.round() as u64)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1033,6 +1148,67 @@ mod tests {
         assert_eq!(latency_of(&db, "workbuddy:s1:a1"), 5_000);
     }
 
+    /// 插一条最简的 WorkBuddy 明细：只给估算用得到的字段。
+    fn insert_duration_sample(db: &Database, model: &str, output: i64, latency: i64) {
+        let now = chrono::Utc::now().timestamp();
+        let mut conn = db.conn.lock().unwrap();
+        let tx = conn.transaction().unwrap();
+        tx.execute(
+            "INSERT INTO proxy_request_logs (
+                request_id, provider_id, app_type, model, latency_ms, status_code,
+                created_at, data_source, output_tokens
+             ) VALUES (?1, '_workbuddy_session', 'workbuddy', ?2, ?3, 200, ?4, ?5, ?6)",
+            rusqlite::params![
+                format!("workbuddy:test:{}", uuid_like()),
+                model,
+                latency,
+                now,
+                DATA_SOURCE,
+                output
+            ],
+        )
+        .unwrap();
+        tx.commit().unwrap();
+    }
+
+    fn uuid_like() -> u64 {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    }
+
+    #[test]
+    fn workbuddy_model_first_token_estimation_follows_durations() {
+        let db = Database::memory().unwrap();
+        // 耗时 = 2000 + 6 × 输出（外加一点抖动），首字应该估到 2000 附近
+        for i in 0..300i64 {
+            let output = 100 + (i * 37) % 900;
+            let jitter = (i * 7919) % 400 - 200;
+            insert_duration_sample(&db, "estimate-ok", output, 2_000 + 6 * output + jitter);
+        }
+        let conn = db.conn.lock().unwrap();
+        let estimate = estimated_model_first_token_ms(&conn, "estimate-ok").unwrap();
+        assert!(
+            (estimate as i64 - 2_000).abs() <= 120,
+            "estimate {estimate} 偏离 2000 太多"
+        );
+    }
+
+    #[test]
+    fn workbuddy_model_first_token_estimation_rejects_no_signal() {
+        let db = Database::memory().unwrap();
+        // 耗时和输出无关：拆不出解码项，不估
+        for i in 0..300i64 {
+            insert_duration_sample(&db, "estimate-flat", 100 + i % 500, 5_000);
+        }
+        // 样本不足
+        for i in 0..50i64 {
+            insert_duration_sample(&db, "estimate-few", 100 + i, 1_000 + 6 * i);
+        }
+        let conn = db.conn.lock().unwrap();
+        assert!(estimated_model_first_token_ms(&conn, "estimate-flat").is_none());
+        assert!(estimated_model_first_token_ms(&conn, "estimate-few").is_none());
+    }
     #[test]
     fn workbuddy_latency_ignores_span_claimed_by_two_requests() {
         let dir = tempfile::tempdir().unwrap();
