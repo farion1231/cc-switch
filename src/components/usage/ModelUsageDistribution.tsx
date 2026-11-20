@@ -10,13 +10,6 @@ import {
   type PieLabelRenderProps,
 } from "recharts";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import {
   fmtInt,
   formatTokensCompact,
   getLocaleFromLanguage,
@@ -299,14 +292,14 @@ function DistributionChartCard({
   };
 
   return (
-    <Card className="min-w-0 overflow-hidden rounded-panel border-border bg-surface shadow-none">
-      <CardHeader className="px-4 pb-2 pt-3">
-        <CardTitle className="text-section">{title}</CardTitle>
-        <CardDescription className="truncate text-caption" title={description}>
+    <div className="min-w-0 overflow-hidden rounded-panel border border-border bg-surface">
+      <header className="space-y-1.5 px-4 pb-2 pt-3">
+        <h3 className="text-section">{title}</h3>
+        <p className="truncate text-caption text-fg-2" title={description}>
           {description}
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-2 px-4 pb-3">
+        </p>
+      </header>
+      <div className="space-y-2 px-4 pb-3">
         <div className="relative h-[280px] min-w-0">
           {isZero && !hasInvalidData && (
             <div
@@ -382,8 +375,8 @@ function DistributionChartCard({
                 : t("usage.modelDistribution.zeroCost")}
           </p>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 }
 

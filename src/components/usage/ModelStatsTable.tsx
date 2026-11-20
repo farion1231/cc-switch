@@ -1,12 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ArrowDown } from "lucide-react";
+import { ArrowDown, ChevronDown } from "lucide-react";
 import {
-  Accordion,
-  AccordionContent,
-  AccordionItem,
-  AccordionTrigger,
-} from "@/components/ui/accordion";
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { useModelStats } from "@/lib/query/usage";
 import { TablePagination, useClientPagination } from "./TablePagination";
 import { cn } from "@/lib/utils";
@@ -41,7 +40,7 @@ export function ModelStatsTable({
   const { t, i18n } = useTranslation();
   const { money, moneyTitle } = useMoneyFormat();
   const locale = getLocaleFromLanguage(getResolvedLang(i18n));
-  const [chartsOpen, setChartsOpen] = useState("");
+  const [chartsOpen, setChartsOpen] = useState(false);
   const [hiddenModels, setHiddenModels] = useState<Set<string>>(new Set());
   const {
     data: stats,
@@ -124,30 +123,30 @@ export function ModelStatsTable({
         </p>
       )}
       {distribution.rows.length > 0 && (
-        <Accordion
-          type="single"
-          collapsible
-          value={chartsOpen}
-          onValueChange={setChartsOpen}
+        <Collapsible
+          open={chartsOpen}
+          onOpenChange={setChartsOpen}
+          className="overflow-hidden rounded-panel border border-border bg-surface"
         >
-          <AccordionItem
-            value="distribution"
-            className="overflow-hidden rounded-panel border border-border bg-surface"
-          >
-            <AccordionTrigger className="px-4 py-3 text-left text-strong text-fg-1 hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
+          <CollapsibleTrigger className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left text-strong text-fg-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring [&[data-state=open]>svg]:rotate-180">
+            <span>
               {t("usage.modelDistribution.tokenShare")} /{" "}
               {t("usage.modelDistribution.costShare")}
-            </AccordionTrigger>
-            <AccordionContent className="px-4 pt-1">
-              <ModelUsageDistribution
-                distribution={distribution}
-                hiddenModels={hiddenModels}
-                onToggleModel={toggleModel}
-                onShowAll={() => setHiddenModels(new Set())}
-              />
-            </AccordionContent>
-          </AccordionItem>
-        </Accordion>
+            </span>
+            <ChevronDown
+              aria-hidden="true"
+              className="h-4 w-4 shrink-0 transition-transform"
+            />
+          </CollapsibleTrigger>
+          <CollapsibleContent className="px-4 pb-4 pt-1">
+            <ModelUsageDistribution
+              distribution={distribution}
+              hiddenModels={hiddenModels}
+              onToggleModel={toggleModel}
+              onShowAll={() => setHiddenModels(new Set())}
+            />
+          </CollapsibleContent>
+        </Collapsible>
       )}
       <div className="flex min-w-0 flex-col">
         <div className={usageTable.scroller}>
