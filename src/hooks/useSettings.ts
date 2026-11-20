@@ -23,6 +23,7 @@ import {
   type ResolvedDirectories,
 } from "./useDirectorySettings";
 import { useSettingsMetadata } from "./useSettingsMetadata";
+import { subagentKeys } from "./useSubagents";
 
 interface SaveResult {
   requiresRestart: boolean;
@@ -423,6 +424,9 @@ export function useSettings(): UseSettingsResult {
               syncResult.error,
             );
           }
+        }
+        if (dirChanged("claudeConfigDir")) {
+          await queryClient.invalidateQueries({ queryKey: subagentKeys.all });
         }
         if (dirChanged("piConfigDir")) {
           await invalidatePiDirectoryCaches(queryClient);
