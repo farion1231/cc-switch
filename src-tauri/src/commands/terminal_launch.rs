@@ -1941,70 +1941,17 @@ read -r _
     #[cfg(target_os = "linux")]
     {
         use std::os::unix::fs::PermissionsExt;
-        use std::process::Command;
 
         std::fs::write(&script_file, &script_content)
             .map_err(|e| format!("写入启动脚本失败: {e}"))?;
         std::fs::set_permissions(&script_file, std::fs::Permissions::from_mode(0o755))
             .map_err(|e| format!("设置脚本权限失败: {e}"))?;
 
-        let preferred = crate::settings::get_preferred_terminal();
-        let default_terminals = [
-            ("gnome-terminal", vec!["--"]),
-            ("konsole", vec!["-e"]),
-            ("xfce4-terminal", vec!["-e"]),
-            ("mate-terminal", vec!["--"]),
-            ("lxterminal", vec!["-e"]),
-            ("alacritty", vec!["-e"]),
-            ("kitty", vec!["-e"]),
-            ("ghostty", vec!["-e"]),
-        ];
-
-        let terminals_to_try: Vec<(&str, Vec<&str>)> = if let Some(ref pref) = preferred {
-            let pref_args = default_terminals
-                .iter()
-                .find(|(name, _)| *name == pref.as_str())
-                .map(|(_, args)| args.to_vec())
-                .unwrap_or_else(|| vec!["-e"]);
-            let mut list = vec![(pref.as_str(), pref_args)];
-            for (name, args) in &default_terminals {
-                if *name != pref.as_str() {
-                    list.push((*name, args.to_vec()));
-                }
-            }
-            list
-        } else {
-            default_terminals
-                .iter()
-                .map(|(name, args)| (*name, args.to_vec()))
-                .collect()
-        };
-
-        let mut last_error = String::from("未找到可用的终端");
-
-        for (terminal, args) in terminals_to_try {
-            let terminal_exists = which_command(terminal)
-                || ["/usr/bin", "/bin", "/usr/local/bin"]
-                    .iter()
-                    .any(|dir| std::path::Path::new(&format!("{}/{}", dir, terminal)).exists());
-
-            if terminal_exists {
-                let spawn_result = Command::new(terminal)
-                    .args(&args)
-                    .arg("sh")
-                    .arg(script_file.to_string_lossy().as_ref())
-                    .spawn();
-                match spawn_result {
-                    Ok(_) => return Ok(()),
-                    Err(e) => {
-                        last_error = format!("执行 {} 失败: {}", terminal, e);
-                    }
-                }
-            }
+        let result = launch_linux_terminal(&script_file);
+        if result.is_err() {
+            let _ = std::fs::remove_file(&script_file);
         }
-
-        let _ = std::fs::remove_file(&script_file);
-        Err(last_error)
+        result
     }
 
     #[cfg(target_os = "windows")]
