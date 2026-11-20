@@ -4,7 +4,7 @@ import {
   getApiKeyFromConfig,
   setApiKeyInConfig,
   hasApiKeyField,
-} from "@/utils/providerConfigUtils";
+} from "@/utils/codexConfigUtils";
 
 interface UseApiKeyStateProps {
   initialConfig?: string;

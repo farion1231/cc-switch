@@ -3,7 +3,7 @@ import {
   getApiKeyFromConfig,
   hasApiKeyField,
   setApiKeyInConfig,
-} from "@/utils/providerConfigUtils";
+} from "@/utils/codexConfigUtils";
 
 const bedrockConfig = (env: Record<string, string>, extra = {}) =>
   JSON.stringify({

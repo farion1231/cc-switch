@@ -75,7 +75,7 @@ import {
   applyTemplateValues,
   getApiKeyFromConfig,
   hasApiKeyField,
-} from "@/utils/providerConfigUtils";
+} from "@/utils/codexConfigUtils";
 import { mergeProviderMeta } from "@/utils/providerMetaUtils";
 import {
   BillingMultiplierField,
@@ -87,7 +87,7 @@ import {
   setCodexWireApi,
   extractCodexModelName,
   setCodexModelName as setCodexModelNameInConfig,
-} from "@/utils/providerConfigUtils";
+} from "@/utils/codexConfigUtils";
 import { getCodexCustomTemplate } from "@/config/codexTemplates";
 import CodexConfigEditor from "./CodexConfigEditor";
 import { CommonConfigEditor } from "./CommonConfigEditor";

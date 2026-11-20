@@ -255,7 +255,7 @@ impl CodexCatalogToolProfile {
 /// exactly these five; 0.148 is the same minus `amazon-bedrock-runtime`).
 /// `oss` / `ollama-chat` are NOT reserved on 0.148/0.149 — both load as
 /// ordinary custom tables — so listing them here would strand their bearer
-/// token in the ignored top level. The frontend copy in providerConfigUtils.ts
+/// token in the ignored top level. The frontend copy in codexConfigUtils.ts
 /// is checked against this by `frontend_parity_tests`.
 pub(crate) const CODEX_RESERVED_MODEL_PROVIDER_IDS: &[&str] = &[
     "amazon-bedrock",
