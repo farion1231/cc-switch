@@ -58,7 +58,7 @@ pub(crate) fn maybe_relaunch_without_redirection_guard() {
     let _ = std::fs::remove_file(&stamp);
 }
 
-fn is_redirection_trust_enforced() -> bool {
+pub(crate) fn is_redirection_trust_enforced() -> bool {
     use windows::Win32::System::SystemServices::PROCESS_MITIGATION_REDIRECTION_TRUST_POLICY;
     use windows::Win32::System::Threading::{
         GetCurrentProcess, GetProcessMitigationPolicy, ProcessRedirectionTrustPolicy,

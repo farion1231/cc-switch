@@ -871,18 +871,44 @@ pub(super) fn effective_path_string() -> String {
         .and_then(|k| k.get_value::<String, &str>("Path"))
         .map(|raw| expand_env_chars(&raw))
         .unwrap_or_default();
-    let fnm = fnm_default_alias_dir_candidates(
-        std::env::var_os("FNM_DIR"),
-        &dirs::home_dir().unwrap_or_default(),
-        dirs::data_dir(),
-    )
-    .into_iter()
-    .filter(|dir| dir.is_dir())
-    .map(|dir| dir.to_string_lossy().into_owned())
-    .collect::<Vec<_>>()
-    .join(";");
+    let rg_enforced = crate::windows_launch_guard::is_redirection_trust_enforced();
+    let fnm = collect_existing_fnm_dirs_with(
+        fnm_default_alias_dir_candidates(
+            std::env::var_os("FNM_DIR"),
+            &dirs::home_dir().unwrap_or_default(),
+            dirs::data_dir(),
+        ),
+        rg_enforced,
+        |dir| dir.is_dir(),
+    );
     let merged = merge_path_segments_win(&[&process, &user, &machine, &fnm]);
-    expand_reparse_path_segments_win(&merged)
+    if rg_enforced {
+        expand_reparse_path_segments_win(&merged)
+    } else {
+        merged
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn collect_existing_fnm_dirs_with(
+    candidates: Vec<PathBuf>,
+    rg_enforced: bool,
+    is_dir: impl Fn(&Path) -> bool,
+) -> String {
+    candidates
+        .into_iter()
+        .filter(|dir| {
+            if rg_enforced {
+                resolve_windows_reparse_path(dir)
+                    .as_deref()
+                    .map_or_else(|| is_dir(dir), &is_dir)
+            } else {
+                is_dir(dir)
+            }
+        })
+        .map(|dir| dir.to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join(";")
 }
 
 /// Merge several Windows PATH strings (`;`-separated) in order, keeping only
@@ -975,18 +1001,19 @@ fn resolve_windows_reparse_path(path: &Path) -> Option<PathBuf> {
                     if (meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT) != 0
                         || meta.file_type().is_symlink()
                     {
-                        if let Ok(target) = std::fs::read_link(&rebuilt) {
-                            let target = strip_windows_reparse_prefix(&target);
-                            if target.is_absolute() {
-                                rebuilt = target;
-                            } else {
-                                rebuilt.pop();
-                                rebuilt.push(target);
+                        if let Ok(raw_target) = std::fs::read_link(&rebuilt) {
+                            if let Some(target) = normalize_windows_reparse_target(&raw_target) {
+                                if target.is_absolute() {
+                                    rebuilt = target;
+                                } else {
+                                    rebuilt.pop();
+                                    rebuilt.push(target);
+                                }
+                                rebuilt.extend(components);
+                                redirected = true;
+                                saw_reparse = true;
+                                break;
                             }
-                            rebuilt.extend(components);
-                            redirected = true;
-                            saw_reparse = true;
-                            break;
                         }
                     }
                 }
@@ -1029,10 +1056,25 @@ fn strip_windows_reparse_prefix(path: &Path) -> std::path::PathBuf {
         .strip_prefix(r"\\?\")
         .or_else(|| raw.strip_prefix(r"\??\"))
     {
-        std::path::PathBuf::from(local)
+        let bytes = local.as_bytes();
+        if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+            std::path::PathBuf::from(local)
+        } else {
+            path.to_path_buf()
+        }
     } else {
         path.to_path_buf()
     }
+}
+
+#[cfg(target_os = "windows")]
+fn normalize_windows_reparse_target(raw_target: &Path) -> Option<PathBuf> {
+    let normalized = strip_windows_reparse_prefix(raw_target);
+    let raw = normalized.to_string_lossy();
+    if raw.starts_with(r"\\?\") || raw.starts_with(r"\??\") {
+        return None;
+    }
+    Some(normalized)
 }
 
 #[cfg(target_os = "windows")]
@@ -1944,7 +1986,7 @@ mod tests {
             let segments: Vec<&str> = expanded.split(';').collect();
             assert!(
                 segments[0]
-                    .eq_ignore_ascii_case(&PathBuf::from(&expected).to_string_lossy().as_ref()),
+                    .eq_ignore_ascii_case(PathBuf::from(&expected).to_string_lossy().as_ref()),
                 "expanded PATH should put physical target first under RedirectionGuard: {expanded}"
             );
             return;
@@ -1975,5 +2017,187 @@ mod tests {
             .unwrap();
         assert!(output.status.success(), "{output:?}");
         assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn strip_windows_reparse_prefix_preserves_volume_guid_and_skips_in_normalization() {
+        let verbatim_vol = r"\\?\Volume{12345678-1234-1234-1234-1234567890ab}\";
+        let nt_vol = r"\??\Volume{12345678-1234-1234-1234-1234567890ab}\";
+        assert_eq!(
+            strip_windows_reparse_prefix(Path::new(verbatim_vol)),
+            PathBuf::from(verbatim_vol)
+        );
+        assert_eq!(
+            strip_windows_reparse_prefix(Path::new(nt_vol)),
+            PathBuf::from(nt_vol)
+        );
+        assert_eq!(
+            normalize_windows_reparse_target(Path::new(verbatim_vol)),
+            None
+        );
+        assert_eq!(normalize_windows_reparse_target(Path::new(nt_vol)), None);
+
+        assert_eq!(
+            normalize_windows_reparse_target(Path::new(r"\??\C:\nvm\v22")),
+            Some(PathBuf::from(r"C:\nvm\v22"))
+        );
+        assert_eq!(
+            normalize_windows_reparse_target(Path::new(r"\??\UNC\server\share\node")),
+            Some(PathBuf::from(r"\\server\share\node"))
+        );
+        assert_eq!(
+            normalize_windows_reparse_target(Path::new(r"..\v22")),
+            Some(PathBuf::from(r"..\v22"))
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn effective_path_string_gates_reparse_expansion_and_resolves_fnm_junction_under_rg() {
+        use std::os::windows::process::CommandExt;
+        use windows::Win32::System::SystemServices::PROCESS_MITIGATION_REDIRECTION_TRUST_POLICY;
+        use windows::Win32::System::Threading::{
+            ProcessRedirectionTrustPolicy, SetProcessMitigationPolicy,
+        };
+
+        const CHILD_MODE: &str = "CC_SWITCH_TEST_EFFECTIVE_PATH_MODE";
+        const CHILD_PATH_JUNCTION: &str = "CC_SWITCH_TEST_PATH_JUNCTION";
+        const CHILD_PATH_REAL: &str = "CC_SWITCH_TEST_PATH_REAL";
+        const CHILD_FNM_DEFAULT: &str = "CC_SWITCH_TEST_FNM_DEFAULT";
+        const CHILD_FNM_REAL: &str = "CC_SWITCH_TEST_FNM_REAL";
+
+        if let Some(mode) = std::env::var_os(CHILD_MODE) {
+            let path_junction = std::env::var(CHILD_PATH_JUNCTION).unwrap();
+            let path_real = std::env::var(CHILD_PATH_REAL).unwrap();
+            let fnm_default = std::env::var(CHILD_FNM_DEFAULT).unwrap();
+            let fnm_real = std::env::var(CHILD_FNM_REAL).unwrap();
+
+            if mode == "rg" {
+                let mut policy = PROCESS_MITIGATION_REDIRECTION_TRUST_POLICY::default();
+                policy.Anonymous.Flags = 0x1;
+                unsafe {
+                    SetProcessMitigationPolicy(
+                        ProcessRedirectionTrustPolicy,
+                        &policy as *const _ as *const std::ffi::c_void,
+                        std::mem::size_of::<PROCESS_MITIGATION_REDIRECTION_TRUST_POLICY>(),
+                    )
+                }
+                .expect("SetProcessMitigationPolicy should succeed");
+                assert!(crate::windows_launch_guard::is_redirection_trust_enforced());
+
+                // Also verify the fnm filter keeps the junction even when direct
+                // `dir.is_dir()` on the junction returns false (ERROR_UNTRUSTED_MOUNT_POINT).
+                let junction_path = PathBuf::from(&fnm_default);
+                let real_path = PathBuf::from(&fnm_real);
+                assert_eq!(
+                    collect_existing_fnm_dirs_with(vec![junction_path.clone()], false, |p| {
+                        p != junction_path && p.is_dir()
+                    }),
+                    ""
+                );
+                assert_eq!(
+                    collect_existing_fnm_dirs_with(vec![junction_path.clone()], true, |p| {
+                        p != junction_path && p.is_dir()
+                    }),
+                    fnm_default
+                );
+                assert!(real_path.is_dir());
+
+                let effective = effective_path_string();
+                let segments: Vec<&str> = effective.split(';').collect();
+                let pos_path_real = segments
+                    .iter()
+                    .position(|s| s.eq_ignore_ascii_case(&path_real))
+                    .expect("resolved PATH target should be present under RG");
+                let pos_path_junction = segments
+                    .iter()
+                    .position(|s| s.eq_ignore_ascii_case(&path_junction))
+                    .expect("original PATH junction should remain under RG");
+                assert!(pos_path_real < pos_path_junction);
+
+                let pos_fnm_real = segments
+                    .iter()
+                    .position(|s| s.eq_ignore_ascii_case(&fnm_real))
+                    .expect("resolved fnm target should not be filtered out under RG");
+                let pos_fnm_default = segments
+                    .iter()
+                    .position(|s| s.eq_ignore_ascii_case(&fnm_default))
+                    .expect("fnm aliases\\default junction should not be filtered out under RG");
+                assert!(pos_fnm_real < pos_fnm_default);
+            } else {
+                assert!(!crate::windows_launch_guard::is_redirection_trust_enforced());
+                let effective = effective_path_string();
+                let segments: Vec<&str> = effective.split(';').collect();
+                assert!(
+                    segments
+                        .iter()
+                        .any(|s| s.eq_ignore_ascii_case(&path_junction)),
+                    "junction should remain in PATH without RedirectionGuard: {effective}"
+                );
+                assert!(
+                    !segments.iter().any(|s| s.eq_ignore_ascii_case(&path_real)),
+                    "resolved physical dir should not be prepended without RedirectionGuard: {effective}"
+                );
+                assert!(
+                    segments
+                        .iter()
+                        .any(|s| s.eq_ignore_ascii_case(&fnm_default)),
+                    "fnm junction should remain in PATH without RedirectionGuard: {effective}"
+                );
+                assert!(
+                    !segments.iter().any(|s| s.eq_ignore_ascii_case(&fnm_real)),
+                    "fnm physical dir should not be prepended without RedirectionGuard: {effective}"
+                );
+            }
+            return;
+        }
+
+        let dir = tempfile::tempdir().expect("temp dir should be created");
+        let path_real = dir.path().join("path_real");
+        let path_junction = dir.path().join("path_junction");
+        std::fs::create_dir_all(&path_real).unwrap();
+
+        let fnm_dir = dir.path().join("fnm");
+        let fnm_real = fnm_dir
+            .join("node-versions")
+            .join("v22.0.0")
+            .join("installation");
+        let fnm_aliases = fnm_dir.join("aliases");
+        let fnm_default = fnm_aliases.join("default");
+        std::fs::create_dir_all(&fnm_real).unwrap();
+        std::fs::create_dir_all(&fnm_aliases).unwrap();
+
+        for (junction, target) in [(&path_junction, &path_real), (&fnm_default, &fnm_real)] {
+            let status = std::process::Command::new("cmd")
+                .args(["/D", "/C", "mklink", "/J"])
+                .arg(junction)
+                .arg(target)
+                .creation_flags(CREATE_NO_WINDOW)
+                .status()
+                .expect("mklink /J should execute");
+            assert!(status.success(), "mklink /J failed: {status}");
+        }
+
+        let exe = std::env::current_exe().unwrap();
+        for mode in ["normal", "rg"] {
+            let output = std::process::Command::new(&exe)
+                .args([
+                    "--exact",
+                    "commands::misc::tests::effective_path_string_gates_reparse_expansion_and_resolves_fnm_junction_under_rg",
+                    "--nocapture",
+                ])
+                .env(CHILD_MODE, mode)
+                .env("PATH", &path_junction)
+                .env("FNM_DIR", &fnm_dir)
+                .env(CHILD_PATH_JUNCTION, windows_shell_compatible_path(&path_junction))
+                .env(CHILD_PATH_REAL, windows_shell_compatible_path(&path_real))
+                .env(CHILD_FNM_DEFAULT, windows_shell_compatible_path(&fnm_default))
+                .env(CHILD_FNM_REAL, windows_shell_compatible_path(&fnm_real))
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "mode={mode} failed: {output:?}");
+            assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
+        }
     }
 }
