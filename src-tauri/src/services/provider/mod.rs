@@ -2701,6 +2701,29 @@ requires_openai_auth = true
 
     #[test]
     #[serial]
+    fn switching_omo_variant_warns_when_the_other_variant_config_cannot_be_removed() {
+        with_test_home(|state, _| {
+            // 另一个变体的配置位置被一个目录占着，删不掉。
+            let other = crate::opencode_config::get_opencode_dir()
+                .join(crate::services::omo::SLIM.preferred_filename);
+            fs::create_dir_all(other.join("blocker")).unwrap();
+            ProviderService::add(
+                state,
+                AppType::OpenCode,
+                opencode_omo_provider("omo-a", "omo"),
+                false,
+            )
+            .unwrap();
+
+            let result = ProviderService::switch(state, AppType::OpenCode, "omo-a")
+                .expect("enabling the variant itself succeeded");
+
+            assert_eq!(result.warnings, vec!["omo_variant_cleanup_failed:omo-a"]);
+        });
+    }
+
+    #[test]
+    #[serial]
     fn sync_current_provider_for_app_preserves_legacy_live_opencode_provider() {
         with_test_home(|state, _| {
             let provider = opencode_provider("legacy-opencode");
@@ -7425,8 +7448,14 @@ impl ProviderService {
                     .db
                     .set_omo_provider_current(&app_type, id, enable.category)?;
                 crate::services::OmoService::write_config_to_file(state, enable)?;
-                let _ = crate::services::OmoService::delete_config_file(disable);
-                return Ok(SwitchResult::default());
+                let mut result = SwitchResult::default();
+                if let Err(err) = crate::services::OmoService::delete_config_file(disable) {
+                    log::warn!("切到 {id} 后删除另一个 OMO 变体的配置失败: {err}");
+                    result
+                        .warnings
+                        .push(format!("omo_variant_cleanup_failed:{id}"));
+                }
+                return Ok(result);
             }
         }
 
