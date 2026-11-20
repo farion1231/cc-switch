@@ -39,6 +39,7 @@ import {
 import { useStreamCheck } from "@/hooks/useStreamCheck";
 import { ProviderCard } from "@/components/providers/ProviderCard";
 import { ProviderEmptyState } from "@/components/providers/ProviderEmptyState";
+import { UnreadableEntriesNotice } from "@/components/common/UnreadableEntriesNotice";
 import {
   useCurrentOmoProviderId,
   useCurrentOmoSlimProviderId,
@@ -51,8 +52,10 @@ import { cn } from "@/lib/utils";
 import { isTextEditableTarget } from "@/utils/domUtils";
 import { extractProviderBaseUrl } from "@/utils/providerConfigUtils";
 import { usePiCurrentState } from "@/lib/query/pi";
-import { isPiFamilyApp } from "@/config/appConfig";
+import { isOfficialAccount } from "@/utils/providerCapabilities";
 import { isHermesReadOnlyProvider } from "@/config/hermesProviderPresets";
+import { isWorkBuddyOfficial } from "@/components/providers/workbuddyOfficial";
+import { useWorkBuddyOfficial } from "@/components/providers/useWorkBuddyOfficial";
 import {
   DshAccountCard,
   accountName as dshAccountName,
@@ -66,6 +69,7 @@ import {
   type ProviderSection,
   type SwitchModeInput,
 } from "@/components/providers/presentation";
+import { appHas } from "@/config/appSpecs";
 
 /** 切换式应用（Claude Code / Codex / Gemini CLI / Grok Build）的模式状态和动作，由供应商页传入。 */
 export type SwitchModeProps = Omit<SwitchModeInput, "app" | "t" | "providers">;
@@ -171,8 +175,17 @@ export function ProviderList({
     isPending: isPiCurrentStatePending,
     isError: isPiCurrentStateError,
     error: piCurrentStateError,
-  } = usePiCurrentState(isPiFamilyApp(appId), appId === "omp" ? "omp" : "pi");
-  const isPiStateReady = !isPiFamilyApp(appId) || isPiCurrentStateSuccess;
+  } = usePiCurrentState(
+    appHas(appId, "piFamily"),
+    appId === "omp" ? "omp" : "pi",
+  );
+  const isPiStateReady = !appHas(appId, "piFamily") || isPiCurrentStateSuccess;
+  // WorkBuddy 官方登录卡：有这种卡时才去读账号和运行状态
+  const hasWorkBuddyOfficial =
+    appId === "workbuddy" &&
+    Object.values(providers).some((provider) => isWorkBuddyOfficial(provider));
+  const { state: workbuddyOfficial, switchTo: switchWorkBuddyAccount } =
+    useWorkBuddyOfficial(hasWorkBuddyOfficial);
   // 累加式应用要等 live 里有哪些供应商读回来（成功或失败）才知道卡片该进哪个分区；
   // 在那之前按加载中画骨架，不然卡片先全落进「可添加」，读回来再整体搬到「已添加」。
   // 一张卡都没有时不用等，直接出空状态
@@ -180,7 +193,7 @@ export function ProviderList({
     (appId === "opencode" && isOpencodeLiveIdsPending) ||
     (appId === "openclaw" && isOpenclawLiveIdsPending) ||
     (appId === "hermes" && isHermesLiveIdsPending) ||
-    (isPiFamilyApp(appId) && isPiCurrentStatePending);
+    (appHas(appId, "piFamily") && isPiCurrentStatePending);
 
   const isInConfig = useCallback(
     (provider: Provider): boolean => {
@@ -188,6 +201,8 @@ export function ProviderList({
         case "kimi":
         case "dsh":
         case "mcode":
+        case "copilot":
+        case "workbuddy":
           return provider.meta?.liveConfigManaged === true;
         case "opencode":
           return opencodeLiveIds?.includes(provider.id) ?? false;
@@ -406,10 +421,17 @@ export function ProviderList({
           .map((model) => ({ id: model.id, name: model.name }));
       },
       hermesCurrentId: hermesModelConfig?.provider ?? null,
+      // Hermes 删掉的 dict 条目不再归它管（导入不会清理，只读就删不掉）；
+      // 读不到 Hermes 配置时无从判断，仍按托管处理
       isHermesManaged: (provider) =>
-        isHermesReadOnlyProvider(provider.settingsConfig),
-      piStateUnavailable: isPiFamilyApp(appId) && !isPiStateReady,
+        isHermesReadOnlyProvider(provider.settingsConfig) &&
+        (!hermesLiveIds ||
+          !!hermesLiveIdsError ||
+          hermesLiveIds.includes(provider.id)),
+      piStateUnavailable: appHas(appId, "piFamily") && !isPiStateReady,
       kimiCurrentId: currentProviderId,
+      workbuddyOfficial,
+      copilotDefaultId: appId === "copilot" ? currentProviderId : null,
       extraAdded: showDshAccountCard ? 1 : 0,
       actions: {
         add: onSwitch,
@@ -422,6 +444,8 @@ export function ProviderList({
             ? onDisableOmoSlim?.()
             : onDisableOmo?.(),
         setDefault: (provider, modelId) => onSetAsDefault?.(provider, modelId),
+        switchAccount: (provider) => void switchWorkBuddyAccount(provider),
+        openTerminal: (provider) => onOpenTerminal?.(provider),
       },
     });
   }, [
@@ -437,6 +461,8 @@ export function ProviderList({
     isInConfig,
     currentOmoId,
     currentOmoSlimId,
+    hermesLiveIds,
+    hermesLiveIdsError,
     hermesModelConfig?.provider,
     isPiStateReady,
     currentProviderId,
@@ -446,16 +472,18 @@ export function ProviderList({
     onDisableOmo,
     onDisableOmoSlim,
     onSetAsDefault,
+    workbuddyOfficial,
+    switchWorkBuddyAccount,
   ]);
 
   const piStateRawError =
-    isPiFamilyApp(appId) && isPiCurrentStateError
+    appHas(appId, "piFamily") && isPiCurrentStateError
       ? extractErrorMessage(piCurrentStateError)
       : "";
   const piStateError =
     translatePiProviderMutationError(piStateRawError, t) || piStateRawError;
   const piStateErrorNotice =
-    isPiFamilyApp(appId) && isPiCurrentStateError ? (
+    appHas(appId, "piFamily") && isPiCurrentStateError ? (
       <Notice
         tone="warning"
         title={t(`${appId}.current.readFailed`, {
@@ -495,6 +523,16 @@ export function ProviderList({
     </Notice>
   ) : null;
 
+  // 库里读不出来的供应商不在 providers 里（不能编辑、切换），单独列出、只能删除
+  const unreadableNotice = (
+    <UnreadableEntriesNotice
+      queryKey={["providers", appId, "unreadable"]}
+      load={() => providersApi.getUnreadable(appId)}
+      remove={(id) => providersApi.delete(id, appId)}
+      invalidate={[["providers", appId]]}
+    />
+  );
+
   if (isLoading || (isLiveMembershipPending && sortedProviders.length > 0)) {
     return (
       <div className="space-y-2">
@@ -513,14 +551,16 @@ export function ProviderList({
       <div className="space-y-4">
         {piStateErrorNotice}
         {liveConfigErrorNotice}
+        {unreadableNotice}
         <ProviderEmptyState
           appId={appId}
-          onCreate={isPiFamilyApp(appId) ? undefined : onCreate}
+          onCreate={appHas(appId, "piFamily") ? undefined : onCreate}
           onImport={
-            isPiFamilyApp(appId) ||
+            appHas(appId, "piFamily") ||
             appId === "mcode" ||
             appId === "kimi" ||
-            appId === "dsh"
+            appId === "dsh" ||
+            appId === "workbuddy"
               ? undefined
               : () => importMutation.mutate()
           }
@@ -530,10 +570,10 @@ export function ProviderList({
   }
 
   // 「当前」只用来决定官方订阅 / OAuth 额度自动刷新：Pi 没有当前项，OMO / Hermes 各看自己的当前项；
-  // Antigravity 没有「启用」，每张卡都随时能打开，额度一律照常显示
+  // Antigravity 没有「启用」，每张卡都随时能打开，额度一律照常显示；Copilot CLI 只有官方卡有额度，同理
   const isCurrentFor = (provider: Provider) => {
-    if (isPiFamilyApp(appId)) return false;
-    if (appId === "agy") return true;
+    if (appHas(appId, "piFamily")) return false;
+    if (appId === "agy" || appId === "copilot") return true;
     if (provider.category === "omo") return provider.id === currentOmoId;
     if (provider.category === "omo-slim")
       return provider.id === currentOmoSlimId;
@@ -555,8 +595,13 @@ export function ProviderList({
         onConfigureUsage ? (item) => onConfigureUsage(item) : () => undefined
       }
       onOpenWebsite={onOpenWebsite}
-      // Antigravity 的「打开终端」已经是主按钮，「更多」菜单里不再重复
-      onOpenTerminal={appId === "agy" ? undefined : onOpenTerminal}
+      // Antigravity 和 Copilot CLI 官方卡的「打开终端」已经是主按钮，「更多」菜单里不再重复
+      onOpenTerminal={
+        appId === "agy" ||
+        (appId === "copilot" && isOfficialAccount(appId, provider))
+          ? undefined
+          : onOpenTerminal
+      }
       onTest={handleTest}
       isTesting={isChecking(provider.id)}
     />
@@ -647,6 +692,7 @@ export function ProviderList({
     <div className="space-y-4">
       {piStateErrorNotice}
       {liveConfigErrorNotice}
+      {unreadableNotice}
       {searchSlot && createPortal(searchField, searchSlot)}
       {showListHeader && (
         <div

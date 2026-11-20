@@ -1,0 +1,11 @@
+{
+  "command": "update",
+  "outcome": "ok",
+  "plugin": "hello@ccs-test",
+  "pluginId": "hello@ccs-test",
+  "scope": "user",
+  "message": "hello is already at the latest version (0.1.0).",
+  "updateOutcome": "up_to_date",
+  "oldVersion": "0.1.0",
+  "newVersion": "0.1.0"
+}

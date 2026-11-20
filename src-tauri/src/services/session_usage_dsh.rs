@@ -29,11 +29,11 @@
 
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
-use crate::proxy::usage::{calculator::CostCalculator, parser::TokenUsage};
+use crate::proxy::usage::parser::TokenUsage;
 use crate::services::{
     session_usage::{
-        estimated_first_token_ms, estimated_latency_ms, load_sync_cursors, metadata_modified_nanos,
-        SessionSyncResult, SyncCursor,
+        cost_columns, estimated_first_token_ms, estimated_latency_ms, load_sync_cursors,
+        metadata_modified_nanos, SessionSyncResult, SyncCursor,
     },
     sql_helpers::INPUT_TOKEN_SEMANTICS_FRESH,
     usage_stats::find_model_pricing,
@@ -250,7 +250,12 @@ fn sync_file(
         // 面板的模型分组也按它收敛，避免同一个模型被拆成两行。
         let pricing_model = resolve_pricing_model(&tx, &request.model);
         let priced_as = pricing_model.as_deref().unwrap_or(&request.model);
-        let amounts = costs(&tx, priced_as, &request.usage);
+        let amounts = cost_columns(
+            DSH_APP_TYPE,
+            &request.usage,
+            find_model_pricing(&tx, priced_as).as_ref(),
+            Decimal::ONE,
+        );
         tx.execute(
             "INSERT OR IGNORE INTO proxy_request_logs (
                 request_id, provider_id, app_type, model, request_model, pricing_model,
@@ -627,24 +632,6 @@ fn resolve_pricing_model(conn: &rusqlite::Connection, model: &str) -> Option<Str
     }
     let (_, stripped) = model.split_once(':')?;
     (!stripped.is_empty()).then(|| stripped.to_string())
-}
-
-/// 按模型定价算五项费用；没有定价的模型记 0（与其余会话导入器一致）。
-fn costs(conn: &rusqlite::Connection, model: &str, usage: &TokenUsage) -> [String; 5] {
-    find_model_pricing(conn, model)
-        .map(|pricing| {
-            let cost =
-                CostCalculator::calculate_for_app(DSH_APP_TYPE, usage, &pricing, Decimal::ONE);
-            [
-                cost.input_cost,
-                cost.output_cost,
-                cost.cache_read_cost,
-                cost.cache_creation_cost,
-                cost.total_cost,
-            ]
-        })
-        .unwrap_or([Decimal::ZERO; 5])
-        .map(|value| value.to_string())
 }
 
 #[cfg(test)]

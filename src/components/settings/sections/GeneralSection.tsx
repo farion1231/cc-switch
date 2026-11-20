@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { ChevronRight, Monitor, Moon, Sun } from "lucide-react";
 import type { SettingsFormState } from "@/hooks/useSettings";
+import { LANGUAGES, type Language } from "@/i18n/languages";
 import { useTheme } from "@/components/theme-provider";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import {
@@ -28,18 +29,8 @@ import {
   SettingsSwitchRow,
 } from "@/components/settings/SettingsLayout";
 
-type Language = SettingsFormState["language"];
-
 /** 0 表示自动 */
 const SESSION_SCAN_CONCURRENCY_OPTIONS = [0, 1, 2, 4, 6, 8, 12, 16, 24, 32];
-
-const LANGUAGES: { value: Language; labelKey: string }[] = [
-  { value: "zh", labelKey: "settings.languageOptionChinese" },
-  { value: "zh-TW", labelKey: "settings.languageOptionTraditionalChinese" },
-  { value: "en", labelKey: "settings.languageOptionEnglish" },
-  { value: "ja", labelKey: "settings.languageOptionJapanese" },
-  { value: "tr", labelKey: "settings.languageOptionTurkish" },
-];
 
 interface GeneralSectionProps {
   settings: SettingsFormState;
@@ -86,7 +77,7 @@ export function GeneralSection({
                 </SelectTrigger>
                 <SelectContent>
                   {LANGUAGES.map((language) => (
-                    <SelectItem key={language.value} value={language.value}>
+                    <SelectItem key={language.id} value={language.id}>
                       {t(language.labelKey)}
                     </SelectItem>
                   ))}

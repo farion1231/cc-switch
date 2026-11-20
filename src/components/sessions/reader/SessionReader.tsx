@@ -14,6 +14,7 @@ import { ArrowDown } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
+  clearSessionImageCache,
   transcriptTraceId,
   type SessionTranscriptResult,
 } from "@/lib/query/sessions";
@@ -37,6 +38,7 @@ import {
   agentTurnTs,
 } from "./SessionAgentAvatar";
 import { SessionFinalReply } from "./SessionFinalReply";
+import { SessionChapterRow } from "./SessionChapterRow";
 import { SessionOutline } from "./SessionOutline";
 import { SessionQuestion } from "./SessionQuestion";
 import {
@@ -49,6 +51,7 @@ import { isFailureStep } from "./toolSummary";
 import {
   buildTurnIndex,
   buildTurns,
+  chapterRowKey,
   estimateRowHeight,
   findMatchPositionForMessage,
   findMatchRowIndex,
@@ -59,6 +62,7 @@ import {
   type ReaderRow,
   type SearchMatch,
   type SessionTurn,
+  type TurnChapter,
 } from "./turns";
 
 /** 「展开全部过程」偏好（与会话列表的分组方式一样存在 localStorage） */
@@ -186,6 +190,9 @@ export function SessionReader({
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const findInputRef = useRef<HTMLInputElement>(null);
   const findButtonRef = useRef<HTMLButtonElement>(null);
+
+  // 离开阅读页时立即释放缓存的会话图片 Blob URL，避免常驻 WebView 内存
+  useEffect(() => () => clearSessionImageCache(), []);
 
   const [filter, setFilter] = useState<ReaderFilter>("all");
   const [expandAll, setExpandAll] = useState(readExpandAll);
@@ -373,6 +380,16 @@ export function SessionReader({
           (row) => row.turn === turn.index && AGENT_ROW_KINDS.has(row.kind),
         );
       }
+      scrollToRow(index >= 0 ? index : findTurnRowIndex(rows, turns, turn.key));
+    },
+    [rows, scrollToRow, turns],
+  );
+
+  /** 目录里点章节：跳到章节行；被「只看改动」过滤掉时退回这一轮的第一行 */
+  const jumpToChapter = useCallback(
+    (turn: SessionTurn, chapter: TurnChapter) => {
+      const key = chapterRowKey(turn, chapter);
+      const index = rows.findIndex((row) => row.key === key);
       scrollToRow(index >= 0 ? index : findTurnRowIndex(rows, turns, turn.key));
     },
     [rows, scrollToRow, turns],
@@ -652,6 +669,8 @@ export function SessionReader({
             />
           </div>
         ) : null;
+      case "chapter":
+        return <SessionChapterRow chapter={row.chapter} />;
       case "event":
         return <SessionEventRow block={row.block} body={row.body} />;
       case "injected":
@@ -856,6 +875,7 @@ export function SessionReader({
               activeTurn={activeTurn}
               onJumpQuestion={jumpToQuestion}
               onJumpReply={jumpToReply}
+              onJumpChapter={jumpToChapter}
             />
           )}
         </div>

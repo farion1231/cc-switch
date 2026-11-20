@@ -148,7 +148,7 @@ pub fn resolve_model(client_id: &str, models: &[CopilotModel]) -> Option<Resolve
     Some(ResolvedCopilotModel {
         id: model.id.clone(),
         vendor: model.vendor.clone(),
-        transport: transport_for(model, CodexCopilotApiFormat::Auto),
+        transport: transport_for(&model.supported_endpoints, CodexCopilotApiFormat::Auto),
     })
 }
 
@@ -163,7 +163,7 @@ pub fn resolve_model_with_format(
     Some(ResolvedCopilotModel {
         id: model.id.clone(),
         vendor: model.vendor.clone(),
-        transport: transport_for(model, api_format),
+        transport: transport_for(&model.supported_endpoints, api_format),
     })
 }
 
@@ -191,7 +191,20 @@ fn match_copilot_model<'a>(
         });
     }
 
-    let fallback = family_fallback(target, models, fallback_format)?;
+    let Some(fallback) = family_fallback(target, models, fallback_format) else {
+        // 没有系列退回可用（如 Fable）时，带 1M 的请求退回同版本的普通模型：
+        // Copilot 列表里多半没有 `-1m` 变体，直接发会被 400 拒掉。
+        let (base, true) = split_one_m_suffix(target) else {
+            return None;
+        };
+        let model = models
+            .iter()
+            .find(|model| model.id.eq_ignore_ascii_case(base))?;
+        return Some(CopilotModelMatch {
+            model,
+            replacement_id: (!model.id.eq_ignore_ascii_case(client_id)).then(|| model.id.clone()),
+        });
+    };
     let model = models
         .iter()
         .find(|model| model.id.eq_ignore_ascii_case(&fallback))?;
@@ -201,12 +214,12 @@ fn match_copilot_model<'a>(
     })
 }
 
-fn transport_for(
-    model: &CopilotModel,
+pub fn transport_for(
+    supported_endpoints: &[String],
     api_format: CodexCopilotApiFormat,
 ) -> Option<CopilotTransport> {
     let supported = |expected: &[&str]| {
-        model.supported_endpoints.iter().find_map(|endpoint| {
+        supported_endpoints.iter().find_map(|endpoint| {
             let path = endpoint
                 .split_once('?')
                 .map_or(endpoint.as_str(), |(path, _)| path)
@@ -280,7 +293,9 @@ fn family_fallback(
                     models
                         .iter()
                         .find(|model| model.id.eq_ignore_ascii_case(&m.id))
-                        .is_some_and(|model| transport_for(model, format).is_some())
+                        .is_some_and(|model| {
+                            transport_for(&model.supported_endpoints, format).is_some()
+                        })
                 })
             })
             .filter_map(|m| extract_major_minor(&m.id).map(|v| (m, v)))
@@ -422,6 +437,7 @@ mod tests {
             context_window: None,
             supported_endpoints: Vec::new(),
             supports_parallel_tool_calls: None,
+            supports_vision: None,
             reasoning_effort: None,
         }
     }
@@ -919,6 +935,45 @@ mod tests {
                 .unwrap()
                 .transport,
             None
+        );
+    }
+
+    #[test]
+    fn one_m_without_family_falls_back_to_same_version_base() {
+        // Fable 不在系列退回里；Copilot 只列普通 id，带 1M 时退回同版本，不升到 5.2。
+        let models = [
+            model("claude-fable-5.1"),
+            model("claude-fable-5.2"),
+            model("gpt-6-astra"),
+        ];
+        for client in [
+            "claude-fable-5-1[1M]",
+            "claude-fable-5.1[1m]",
+            "claude-fable-5.1-1M",
+        ] {
+            assert_eq!(
+                resolve_against_models(client, &models),
+                Some("claude-fable-5.1".to_string()),
+                "{client}"
+            );
+            assert_eq!(
+                resolve_model(client, &models).unwrap().id,
+                "claude-fable-5.1"
+            );
+        }
+        // 列表里有 1M 变体时照用；同版本也没有时照旧找不到。
+        let with_variant = [model("claude-fable-5.1"), model("claude-fable-5.1-1m")];
+        assert_eq!(
+            resolve_against_models("claude-fable-5-1[1M]", &with_variant),
+            Some("claude-fable-5.1-1m".to_string())
+        );
+        assert_eq!(
+            resolve_against_models("claude-fable-5-3[1M]", &models),
+            None
+        );
+        assert_eq!(
+            resolve_against_models("gpt-6-astra-1m", &models),
+            Some("gpt-6-astra".to_string())
         );
     }
 

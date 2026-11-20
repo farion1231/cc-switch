@@ -63,6 +63,7 @@ import {
   type YamlNodeError,
 } from "./helpers/yamlNode";
 import {
+  OMP_API_FORMATS,
   ompProviderPresets,
   type OmpProviderPreset,
 } from "@/config/ompProviderPresets";
@@ -104,6 +105,7 @@ const PI_API_FORMATS = [
   { value: "anthropic-messages", label: "Anthropic Messages" },
   { value: "google-generative-ai", label: "Google Generative AI" },
   { value: "bedrock-converse-stream", label: "Amazon Bedrock" },
+  { value: "mistral-conversations", label: "Mistral" },
 ] as const satisfies ReadonlyArray<{ value: PiApiFormat; label: string }>;
 
 const ROOT_CONTROLLED_KEYS = new Set([
@@ -1604,9 +1606,10 @@ export function PiProviderForm({
     }),
     [t],
   );
-  const isKnownApiFormat = PI_API_FORMATS.some(
-    (format) => format.value === api,
-  );
+  const apiFormats = isOmp
+    ? PI_API_FORMATS.filter((format) => OMP_API_FORMATS.includes(format.value))
+    : PI_API_FORMATS;
+  const isKnownApiFormat = apiFormats.some((format) => format.value === api);
 
   return (
     <Form {...form}>
@@ -1704,7 +1707,7 @@ export function PiProviderForm({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {PI_API_FORMATS.map((format) => (
+                  {apiFormats.map((format) => (
                     <SelectItem key={format.value} value={format.value}>
                       {format.label}
                     </SelectItem>

@@ -888,6 +888,34 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    #[test]
+    fn file_parse_cache_recovers_after_poison_and_caches_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session.jsonl");
+        std::fs::write(&path, "alpha").unwrap();
+        let cache = FileParseCache::new();
+        assert!(std::panic::catch_unwind(|| {
+            let _guard = cache.entries.lock().unwrap();
+            panic!("interrupted scan cache update");
+        })
+        .is_err());
+
+        let calls = AtomicUsize::new(0);
+        for _ in 0..2 {
+            let sessions = cache.scan(vec![path.clone()], |path| {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Ok(meta_from_file(path))
+            });
+            assert_eq!(sessions.len(), 1);
+        }
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "the second scan should reuse the recovered cache"
+        );
+        assert!(!cache.entries.is_poisoned());
+    }
+
     fn meta_from_file(path: &Path) -> Option<SessionMeta> {
         let text = std::fs::read_to_string(path).ok()?;
         if text.trim() == "skip" {

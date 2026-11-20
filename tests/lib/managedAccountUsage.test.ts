@@ -125,3 +125,33 @@ describe("findManagedAccountUsers", () => {
     ]);
   });
 });
+
+describe("findManagedAccountUsers — WorkBuddy", () => {
+  it("counts official sign-in cards bound to the account, never via default", () => {
+    const card = (id: string, accountId: string) =>
+      provider(id, {
+        category: "official",
+        meta: {
+          authBinding: {
+            source: "managed_account",
+            authProvider: "workbuddy_account",
+            accountId,
+          },
+        },
+      });
+    const workbuddy = byId(
+      card("wb-a", "u-1"),
+      card("wb-b", "u-2"),
+      provider("custom"),
+    );
+    const users = findManagedAccountUsers("workbuddy_account", ["u-1"], "u-1", {
+      workbuddy,
+    });
+    expect(users.map((u) => [u.appId, u.providerId, u.viaDefault])).toEqual([
+      ["workbuddy", "wb-a", false],
+    ]);
+    expect(groupUsersByApp(users)).toEqual([
+      { appId: "workbuddy", names: ["wb-a"] },
+    ]);
+  });
+});
