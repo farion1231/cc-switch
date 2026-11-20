@@ -41,6 +41,7 @@ const mocks = vi.hoisted(() => ({
   runToolLifecycleAction: vi.fn(),
   prepareToolUninstall: vi.fn(),
   copyText: vi.fn(),
+  openExternal: vi.fn(async () => {}),
   info: vi.fn(),
   success: vi.fn(),
   warning: vi.fn(),
@@ -380,10 +381,371 @@ describe("AppsPage concurrent CLI upgrades", () => {
     );
     expect(
       within(screen.getByRole("dialog")).getByRole("heading", {
-        name: "settings.manualInstallCommands",
+        name: "appsPage.manualCommands",
       }),
     ).toBeInTheDocument();
+    const installDialog = within(screen.getByRole("dialog"));
+    await user.click(
+      installDialog.getByRole("button", { name: "appsPage.installDownload" }),
+    );
+    expect(mocks.openExternal).toHaveBeenLastCalledWith(
+      "https://claude.com/product/claude-code",
+    );
+    await user.click(
+      installDialog.getByRole("button", { name: "Antigravity CLI" }),
+    );
+    await user.click(
+      installDialog.getByRole("button", { name: "appsPage.installDownload" }),
+    );
+    expect(mocks.openExternal).toHaveBeenLastCalledWith(
+      "https://antigravity.google/download#antigravity-cli",
+    );
+    expect(mocks.runToolLifecycleAction).not.toHaveBeenCalled();
   });
+
+  it("links to both official WorkBuddy downloads without running a CLI install", async () => {
+    const user = userEvent.setup();
+    mocks.getConfigStatus.mockResolvedValueOnce({
+      exists: false,
+      path: "/home/me/.workbuddy",
+    });
+    await renderApps();
+    await user.click(
+      card("WorkBuddy").getByRole("button", { name: "settings.toolInstall" }),
+    );
+    const dialog = within(screen.getByRole("dialog"));
+    expect(dialog.getByRole("heading", { name: "WorkBuddy" })).toBeVisible();
+    expect(dialog.getByText("appsPage.installDownloadRequired")).toBeVisible();
+    expect(dialog.queryByRole("button", { name: /^common.copy/ })).toBeNull();
+    await user.click(
+      dialog.getByRole("button", { name: "appsPage.installDownloadChina" }),
+    );
+    expect(mocks.openExternal).toHaveBeenLastCalledWith(
+      "https://www.workbuddy.cn/",
+    );
+    await user.click(
+      dialog.getByRole("button", { name: "appsPage.installDownloadGlobal" }),
+    );
+    expect(mocks.openExternal).toHaveBeenLastCalledWith(
+      "https://www.workbuddy.ai/",
+    );
+    await user.click(dialog.getByRole("button", { name: "MiniMax Code" }));
+    await user.click(
+      dialog.getByRole("button", { name: "appsPage.installDownloadChina" }),
+    );
+    expect(mocks.openExternal).toHaveBeenLastCalledWith(
+      "https://code.minimax.cn/about",
+    );
+    await user.click(
+      dialog.getByRole("button", { name: "appsPage.installDownloadGlobal" }),
+    );
+    expect(mocks.openExternal).toHaveBeenLastCalledWith(
+      "https://code.minimax.io/about",
+    );
+    expect(mocks.runToolLifecycleAction).not.toHaveBeenCalled();
+  });
+
+  it("shows a manual install entry when a detected Windows OpenCode update is available", async () => {
+    const platform = vi
+      .spyOn(navigator, "userAgent", "get")
+      .mockReturnValue("Windows NT 10.0");
+    try {
+      const getVersions = mocks.getToolVersions.getMockImplementation()!;
+      mocks.getToolVersions.mockImplementation(async (tools: string[]) =>
+        (await getVersions(tools)).map((result: ToolVersions[number]) =>
+          result.name === "opencode"
+            ? {
+                ...result,
+                env_type: "windows",
+                version: "2.3.1",
+                latest_version: "2.3.2",
+                manual_update_only: true,
+              }
+            : result,
+        ),
+      );
+      await renderApps();
+      const row = card("OpenCode");
+      expect(row.getByText("appsPage.newVersion")).toBeVisible();
+      expect(
+        row.queryByRole("button", { name: "settings.toolUpdate" }),
+      ).toBeNull();
+      await userEvent.click(
+        row.getByRole("button", { name: "appsPage.manualCommands" }),
+      );
+      const dialog = within(screen.getByRole("dialog"));
+      expect(dialog.getByRole("heading", { name: "OpenCode" })).toBeVisible();
+      expect(dialog.getByText("appsPage.installManualUpdate")).toBeVisible();
+      expect(dialog.queryByRole("button", { name: /^common.copy/ })).toBeNull();
+      await userEvent.click(dialog.getByRole("button", { name: "WSL" }));
+      expect(
+        dialog.getByRole("button", { name: "common.copy npm ≤ 11.15" }),
+      ).toBeEnabled();
+      expect(mocks.runToolLifecycleAction).not.toHaveBeenCalled();
+    } finally {
+      platform.mockRestore();
+    }
+  });
+
+  it("does not suggest V2 commands when updating a native OpenCode 1 installation in WSL", async () => {
+    const platform = vi
+      .spyOn(navigator, "userAgent", "get")
+      .mockReturnValue("Windows NT 10.0");
+    try {
+      const getVersions = mocks.getToolVersions.getMockImplementation()!;
+      mocks.getToolVersions.mockImplementation(async (tools: string[]) =>
+        (await getVersions(tools)).map((result: ToolVersions[number]) =>
+          result.name === "opencode"
+            ? {
+                ...result,
+                version: "1.19.6",
+                latest_version: "1.20.0",
+                env_type: "wsl",
+                wsl_distro: "Ubuntu",
+                manual_update_only: true,
+              }
+            : result,
+        ),
+      );
+      await renderApps();
+      const row = card("OpenCode");
+      expect(
+        row.queryByRole("button", { name: "settings.toolUpdate" }),
+      ).toBeNull();
+      await userEvent.click(
+        row.getByRole("button", { name: "appsPage.manualCommands" }),
+      );
+      const dialog = within(screen.getByRole("dialog"));
+      expect(dialog.getByText("WSL · Ubuntu")).toBeVisible();
+      expect(
+        dialog.getByRole("button", { name: "appsPage.installDownload" }),
+      ).toBeEnabled();
+      expect(dialog.queryByRole("button", { name: /^common.copy/ })).toBeNull();
+      expect(dialog.getByText("appsPage.installManualUpdate")).toBeVisible();
+      await userEvent.click(dialog.getByRole("button", { name: "Windows" }));
+      expect(
+        dialog.getByRole("button", { name: "common.copy npm (OpenCode 1)" }),
+      ).toBeEnabled();
+      expect(mocks.runToolLifecycleAction).not.toHaveBeenCalled();
+    } finally {
+      platform.mockRestore();
+    }
+  });
+
+  it("offers the original package manager for a manual-only Linux OpenCode update", async () => {
+    const platform = vi
+      .spyOn(navigator, "userAgent", "get")
+      .mockReturnValue("X11; Linux x86_64");
+    const platformName = vi
+      .spyOn(navigator, "platform", "get")
+      .mockReturnValue("Linux x86_64");
+    try {
+      const getVersions = mocks.getToolVersions.getMockImplementation()!;
+      mocks.getToolVersions.mockImplementation(async (tools: string[]) =>
+        (await getVersions(tools)).map((result: ToolVersions[number]) =>
+          result.name === "opencode"
+            ? {
+                ...result,
+                env_type: "linux",
+                version: "2.3.1",
+                latest_version: "2.3.2",
+                manual_update_only: true,
+              }
+            : result,
+        ),
+      );
+      await renderApps();
+      const row = card("OpenCode");
+      expect(
+        row.queryByRole("button", { name: "settings.toolUpdate" }),
+      ).toBeNull();
+      await userEvent.click(
+        row.getByRole("button", { name: "appsPage.manualCommands" }),
+      );
+      const dialog = within(screen.getByRole("dialog"));
+      expect(dialog.getByText("appsPage.installManualUpdate")).toBeVisible();
+      expect(dialog.queryByRole("button", { name: /^common.copy/ })).toBeNull();
+      expect(
+        dialog.queryByRole("button", { name: /^settings.toolInstall / }),
+      ).toBeNull();
+    } finally {
+      platform.mockRestore();
+      platformName.mockRestore();
+    }
+  });
+
+  it("waits for WSL detection before offering copyable install commands", async () => {
+    const platform = vi
+      .spyOn(navigator, "userAgent", "get")
+      .mockReturnValue("Windows NT 10.0");
+    const detection = deferred<ToolVersions>();
+    mocks.getToolVersions.mockImplementation(() => detection.promise);
+    try {
+      const user = userEvent.setup();
+      const { AppsPage } = await import("@/components/apps/AppsPage");
+      mountApps(AppsPage);
+      await user.click(
+        screen.getByRole("button", { name: "appsPage.moreActions" }),
+      );
+      await user.click(
+        await screen.findByRole("menuitem", {
+          name: "appsPage.manualCommands",
+        }),
+      );
+      const dialog = within(screen.getByRole("dialog"));
+      expect(dialog.getByRole("status")).toHaveTextContent(
+        "appsPage.installEnvironmentPending",
+      );
+      expect(dialog.queryByRole("button", { name: /^common.copy/ })).toBeNull();
+      await user.click(dialog.getByRole("button", { name: "Windows" }));
+      expect(
+        dialog.getByRole("button", { name: "common.copy PowerShell" }),
+      ).toBeEnabled();
+      await user.click(dialog.getByRole("button", { name: "WSL" }));
+      expect(
+        dialog.getByRole("button", { name: "common.copy curl" }),
+      ).toBeEnabled();
+      expect(
+        dialog.getByText("appsPage.installWslDetectionHint"),
+      ).toBeVisible();
+      await act(async () =>
+        detection.resolve([
+          {
+            name: "claude",
+            version: null,
+            latest_version: null,
+            error: null,
+            installed_but_broken: false,
+            env_type: "wsl",
+            wsl_distro: "Ubuntu",
+            update_blocked_by_node: null,
+          },
+        ]),
+      );
+      expect(
+        dialog.queryByRole("button", { name: /^settings.toolInstall / }),
+      ).toBeNull();
+      expect(dialog.getByText("WSL · Ubuntu")).toBeVisible();
+      expect(
+        dialog.getByRole("button", { name: "common.copy curl" }),
+      ).toBeEnabled();
+      expect(
+        dialog.queryByRole("button", { name: "common.copy PowerShell" }),
+      ).toBeNull();
+    } finally {
+      platform.mockRestore();
+    }
+  });
+
+  it.each([
+    ["Macintosh", false, false],
+    ["X11; Linux x86_64", true, false],
+    ["Windows NT 10.0", false, true],
+    ["Windows NT 10.0 (WSL)", true, false],
+  ])(
+    "filters OpenCode install channels for %s",
+    async (userAgent, hasAur, downloadsOnly) => {
+      const platform = vi
+        .spyOn(navigator, "userAgent", "get")
+        .mockReturnValue(userAgent);
+      try {
+        const wsl = userAgent.endsWith("(WSL)");
+        if (wsl) {
+          const getVersions = mocks.getToolVersions.getMockImplementation()!;
+          mocks.getToolVersions.mockImplementation(async (tools: string[]) =>
+            (await getVersions(tools)).map((result: ToolVersions[number]) =>
+              result.name === "opencode"
+                ? { ...result, env_type: "wsl", wsl_distro: "Ubuntu" }
+                : result,
+            ),
+          );
+        }
+        const user = userEvent.setup();
+        await renderApps();
+        await user.click(
+          screen.getByRole("button", { name: "appsPage.moreActions" }),
+        );
+        await user.click(
+          await screen.findByRole("menuitem", {
+            name: "appsPage.manualCommands",
+          }),
+        );
+        const dialog = within(screen.getByRole("dialog"));
+        if (userAgent.startsWith("Windows")) {
+          expect(
+            dialog.getByText("winget install Anthropic.ClaudeCode"),
+          ).toBeVisible();
+          expect(
+            dialog.queryByText("brew install --cask claude-code"),
+          ).toBeNull();
+        }
+        const search = dialog.getByRole("searchbox", {
+          name: "appsPage.installCommandApp",
+        });
+        const appList = within(
+          dialog.getByRole("list", { name: "appsPage.manualCommands" }),
+        );
+        const names = appList
+          .getAllByRole("button")
+          .map((button) => button.lastElementChild?.textContent ?? "");
+        expect(names).toEqual(
+          [...names].sort((a, b) => a.localeCompare(b, "en")),
+        );
+        await user.type(search, "NO-SUCH-APP");
+        expect(appList.getByRole("status")).toHaveTextContent(
+          "appsPage.installAppNotFound",
+        );
+        await user.clear(search);
+        await user.type(search, "OPENCODE");
+        expect(appList.getAllByRole("button")).toHaveLength(1);
+        await user.click(appList.getByRole("button", { name: "OpenCode" }));
+        if (wsl) expect(dialog.getByText("WSL · Ubuntu")).toBeVisible();
+        expect(dialog.queryByText("paru -S opencode-beta") !== null).toBe(
+          hasAur,
+        );
+        await user.click(
+          dialog.getByRole("button", { name: "appsPage.installDownload" }),
+        );
+        expect(mocks.openExternal).toHaveBeenLastCalledWith(
+          "https://opencode.ai/docs/#cli",
+        );
+        expect(dialog.queryByText(/claude-code@latest/)).toBeNull();
+        if (!downloadsOnly) {
+          await user.click(
+            dialog.getByRole("button", { name: "common.copy npm ≤ 11.15" }),
+          );
+          expect(mocks.copyText).toHaveBeenLastCalledWith(
+            "npm install -g --ignore-scripts=false @opencode/cli",
+          );
+        } else {
+          expect(
+            dialog.queryByText(
+              "npm install -g --ignore-scripts=false @opencode/cli",
+            ),
+          ).toBeNull();
+          await user.click(
+            dialog.getByRole("button", {
+              name: "common.copy npm (OpenCode 1)",
+            }),
+          );
+          expect(mocks.copyText).toHaveBeenLastCalledWith(
+            "npm install -g opencode-ai@latest --ignore-scripts=false --include=optional --allow-scripts=opencode-ai",
+          );
+        }
+        await user.clear(search);
+        await user.type(search, "GitHub Copilot CLI");
+        await user.click(
+          appList.getByRole("button", { name: "GitHub Copilot CLI" }),
+        );
+        expect(
+          dialog.queryByText("brew install --cask copilot-cli") !== null,
+        ).toBe(userAgent === "Macintosh");
+        expect(mocks.runToolLifecycleAction).not.toHaveBeenCalled();
+      } finally {
+        platform.mockRestore();
+      }
+    },
+  );
 
   it.each([["Windows NT 10.0"], ["X11; Linux x86_64"]])(
     "shows the official Hermes uninstall command for %s",
@@ -589,9 +951,14 @@ describe("AppsPage concurrent CLI upgrades", () => {
       } else {
         expect(environmentSelect).toHaveTextContent("Windows / WSL · Ubuntu");
         const opencodeRow = within(
-          dialog.getByText("bun remove -g opencode-ai").closest("li")!,
+          dialog.getByText("bun remove -g @opencode/cli").closest("li")!,
         );
         expect(opencodeRow.getByText("WSL · Ubuntu")).toBeInTheDocument();
+        expect(
+          opencodeRow.getByRole("button", {
+            name: "settings.copyToolUninstallCommand",
+          }),
+        ).toBeVisible();
         const openclawRow = within(
           dialog.getByText("bun remove -g openclaw").closest("li")!,
         );
@@ -710,14 +1077,129 @@ describe("AppsPage concurrent CLI upgrades", () => {
     ).toBeInTheDocument();
   });
 
-  it("puts Claude Desktop under not installed when it is not on this machine", async () => {
+  it.each([
+    ["Macintosh", "https://claude.com/download"],
+    ["Windows NT 10.0", "https://claude.com/download"],
+    [
+      "X11; Linux x86_64",
+      "https://code.claude.com/docs/en/desktop-linux#install",
+    ],
+  ])(
+    "opens Claude Desktop install options from its app row on %s",
+    async (userAgent, downloadUrl) => {
+      const platform = vi
+        .spyOn(navigator, "userAgent", "get")
+        .mockReturnValue(userAgent);
+      try {
+        mocks.desktopStatus = {
+          supported: true,
+          installed: false,
+          configured: false,
+        };
+        await renderApps();
+        expect(rowApps("appsPage.sectionNotInstalled")).toEqual([
+          "claude-desktop",
+        ]);
+        fireEvent.click(
+          card("Claude Desktop").getByRole("button", {
+            name: "settings.toolInstall",
+          }),
+        );
+        const dialog = within(screen.getByRole("dialog"));
+        expect(
+          dialog.getByRole("heading", { name: "Claude Desktop" }),
+        ).toBeVisible();
+        fireEvent.click(
+          dialog.getByRole("button", { name: "appsPage.installDownload" }),
+        );
+        expect(mocks.openExternal).toHaveBeenLastCalledWith(downloadUrl);
+        expect(mocks.runToolLifecycleAction).not.toHaveBeenCalled();
+      } finally {
+        platform.mockRestore();
+      }
+    },
+    15000,
+  );
+
+  const alphabeticalOrder = [
+    "agy",
+    "claude",
+    "claude-desktop",
+    "codex",
+    "dsh",
+    "gemini",
+    "copilot",
+    "grokbuild",
+    "hermes",
+    "kimi",
+    "mcode",
+    "omp",
+    "openclaw",
+    "opencode",
+    "pi",
+    "workbuddy",
+  ];
+
+  it("sorts each installation section by app name by default", async () => {
+    missing.add("opencode").add("codex");
+    await renderApps();
+    expect(rowApps("appsPage.sectionInstalled")).toEqual(
+      alphabeticalOrder.filter((app) => !missing.has(app)),
+    );
+    expect(rowApps("appsPage.sectionNotInstalled")).toEqual([
+      "codex",
+      "opencode",
+    ]);
+  });
+
+  it("lets users apply alphabetical order to a saved app order", async () => {
+    mocks.settings = {
+      appOrder: ["workbuddy", ...APP_IDS.filter((app) => app !== "workbuddy")],
+    };
+    const user = userEvent.setup();
+    await renderApps();
+    await user.click(
+      screen.getByRole("button", { name: "appsPage.moreActions" }),
+    );
+    expect(
+      screen.queryByRole("menuitem", { name: "appsPage.sortByName" }),
+    ).toBeNull();
+    await user.keyboard("{Escape}");
+    await user.click(
+      screen.getByRole("button", { name: "appsPage.sortByName" }),
+    );
+    expect(mocks.autoSaveSettings).toHaveBeenCalledWith({
+      appOrder: alphabeticalOrder,
+    });
+  });
+
+  it("refreshes desktop installation status with the Apps page refresh", async () => {
     mocks.desktopStatus = {
       supported: true,
       installed: false,
       configured: false,
     };
+    mocks.getConfigStatus.mockResolvedValueOnce({
+      exists: false,
+      path: "/home/me/.workbuddy",
+    });
     await renderApps();
-    expect(rowApps("appsPage.sectionNotInstalled")).toEqual(["claude-desktop"]);
+    expect(rowApps("appsPage.sectionNotInstalled")).toEqual([
+      "claude-desktop",
+      "workbuddy",
+    ]);
+    mocks.desktopStatus = {
+      supported: true,
+      installed: true,
+      configured: false,
+    };
+    fireEvent.click(
+      screen.getByRole("button", { name: "appsPage.checkUpdates" }),
+    );
+    await waitFor(() => {
+      expect(rowApps("appsPage.sectionInstalled")).toContain("claude-desktop");
+      expect(rowApps("appsPage.sectionInstalled")).toContain("workbuddy");
+    });
   });
 
   it("orders rows by the saved app order within each section", async () => {
@@ -773,12 +1255,11 @@ describe("AppsPage concurrent CLI upgrades", () => {
       } as unknown as DragEndEvent);
     });
     const next = [
+      "agy",
       "claude-desktop",
       "codex",
       "claude",
-      ...APP_IDS.filter(
-        (app) => !["claude", "claude-desktop", "codex"].includes(app),
-      ),
+      ...alphabeticalOrder.slice(4),
     ];
     expect(mocks.updateSettings).toHaveBeenCalledWith({ appOrder: next });
     expect(mocks.autoSaveSettings).toHaveBeenCalledWith({ appOrder: next });
@@ -1370,83 +1851,59 @@ describe("AppsPage concurrent CLI upgrades", () => {
     await act(async () => runs.get("claude")!.resolve());
   });
 
-  it.each(["install", "update"] as const)(
-    "restores an ongoing %s after remount and receives its completion",
-    async (action) => {
-      if (action === "install") missing.add("claude");
-      const running = deferred<void>();
-      mocks.runToolLifecycleAction.mockImplementationOnce(async () => {
-        await running.promise;
-        upgraded.add("claude");
-        missing.delete("claude");
-      });
-      const actionButton = () =>
-        card("Claude Code").getByRole("button", {
-          name:
-            action === "install"
-              ? "settings.toolInstall"
-              : "settings.toolUpdate",
-        });
-      const view = await renderApps();
-      fireEvent.click(actionButton());
-      await waitFor(() =>
-        expect(mocks.runToolLifecycleAction).toHaveBeenCalledTimes(1),
-      );
-      view.unmount();
-      await renderApps();
-      const versionChecks = mocks.getToolVersions.mock.calls.length;
-      expect(actionButton()).toBeDisabled();
-      expect(actionButton()).toHaveAttribute("aria-busy", "true");
-      expect(updateButton("Codex")).toBeEnabled();
-      fireEvent.click(actionButton());
-      expect(mocks.runToolLifecycleAction).toHaveBeenCalledTimes(1);
-      expect(mocks.getToolVersions).toHaveBeenCalledTimes(versionChecks);
-      expect(mocks.info).not.toHaveBeenCalled();
-      expect(mocks.error).not.toHaveBeenCalled();
-      expect(mocks.warning).not.toHaveBeenCalled();
-      expect(mocks.success).not.toHaveBeenCalled();
+  it("restores an ongoing upgrade after remount and receives its completion", async () => {
+    const running = deferred<void>();
+    mocks.runToolLifecycleAction.mockImplementationOnce(async () => {
+      await running.promise;
+      upgraded.add("claude");
+      missing.delete("claude");
+    });
+    const actionButton = () => updateButton("Claude Code");
+    const view = await renderApps();
+    fireEvent.click(actionButton());
+    await waitFor(() =>
+      expect(mocks.runToolLifecycleAction).toHaveBeenCalledTimes(1),
+    );
+    view.unmount();
+    await renderApps();
+    const versionChecks = mocks.getToolVersions.mock.calls.length;
+    expect(actionButton()).toBeDisabled();
+    expect(actionButton()).toHaveAttribute("aria-busy", "true");
+    expect(updateButton("Codex")).toBeEnabled();
+    fireEvent.click(actionButton());
+    expect(mocks.runToolLifecycleAction).toHaveBeenCalledTimes(1);
+    expect(mocks.getToolVersions).toHaveBeenCalledTimes(versionChecks);
+    expect(mocks.info).not.toHaveBeenCalled();
+    expect(mocks.error).not.toHaveBeenCalled();
+    expect(mocks.warning).not.toHaveBeenCalled();
+    expect(mocks.success).not.toHaveBeenCalled();
 
-      await act(async () => running.resolve());
-      expect(isReady("Claude Code")).toBe(true);
-      expect(
-        screen.getByRole("button", { name: "appsPage.checkUpdates" }),
-      ).toBeEnabled();
-      expect(mocks.success).toHaveBeenCalledTimes(1);
-    },
-  );
+    await act(async () => running.resolve());
+    expect(isReady("Claude Code")).toBe(true);
+    expect(
+      screen.getByRole("button", { name: "appsPage.checkUpdates" }),
+    ).toBeEnabled();
+    expect(mocks.success).toHaveBeenCalledTimes(1);
+  });
 
-  it.each(["install", "update"] as const)(
-    "shows an informational toast when the backend reports an ongoing %s",
-    async (action) => {
-      if (action === "install") missing.add("claude");
-      mocks.runToolLifecycleAction.mockRejectedValueOnce(
-        "TOOL_ACTION_IN_PROGRESS",
-      );
-      await renderApps();
-      const versionChecks = mocks.getToolVersions.mock.calls.length;
-      fireEvent.click(
-        card("Claude Code").getByRole("button", {
-          name:
-            action === "install"
-              ? "settings.toolInstall"
-              : "settings.toolUpdate",
-        }),
-      );
-      await waitFor(() =>
-        expect(mocks.info).toHaveBeenCalledWith(
-          "settings.toolActionInProgress",
-          {
-            description: "settings.toolActionInProgressDetail",
-            closeButton: true,
-          },
-        ),
-      );
-      expect(mocks.getToolVersions).toHaveBeenCalledTimes(versionChecks);
-      expect(mocks.error).not.toHaveBeenCalled();
-      expect(mocks.warning).not.toHaveBeenCalled();
-      expect(mocks.success).not.toHaveBeenCalled();
-    },
-  );
+  it("shows an informational toast when the backend reports an ongoing upgrade", async () => {
+    mocks.runToolLifecycleAction.mockRejectedValueOnce(
+      "TOOL_ACTION_IN_PROGRESS",
+    );
+    await renderApps();
+    const versionChecks = mocks.getToolVersions.mock.calls.length;
+    fireEvent.click(updateButton("Claude Code"));
+    await waitFor(() =>
+      expect(mocks.info).toHaveBeenCalledWith("settings.toolActionInProgress", {
+        description: "settings.toolActionInProgressDetail",
+        closeButton: true,
+      }),
+    );
+    expect(mocks.getToolVersions).toHaveBeenCalledTimes(versionChecks);
+    expect(mocks.error).not.toHaveBeenCalled();
+    expect(mocks.warning).not.toHaveBeenCalled();
+    expect(mocks.success).not.toHaveBeenCalled();
+  });
 
   it("ignores a late probe from the old page after the remounted page upgrades a tool", async () => {
     const stale = deferred<ToolVersions>();
@@ -1874,7 +2331,30 @@ describe("AppsPage concurrent CLI upgrades", () => {
     expect(updateButton("Codex")).toBeEnabled();
   });
 
-  it("does not block another installation submission while an upgrade is running", async () => {
+  it("passes the reviewed upgrade token when confirming an installation", async () => {
+    const user = userEvent.setup();
+    mocks.probeToolInstallations.mockResolvedValueOnce([
+      report("claude", {
+        needs_confirmation: true,
+        confirmation_token: "reviewed-token",
+      }),
+    ]);
+    await renderApps();
+    await user.click(updateButton("Claude Code"));
+    const dialog = within(await screen.findByRole("dialog"));
+    await user.click(
+      dialog.getByRole("button", { name: "settings.toolUpgradeConfirmBtn" }),
+    );
+    expect(mocks.runToolLifecycleAction).toHaveBeenCalledWith(
+      ["claude"],
+      "update",
+      {},
+      undefined,
+      "reviewed-token",
+    );
+  });
+
+  it("opens the selected app’s install commands while another app is upgrading", async () => {
     const claudeRun = deferred<void>();
     missing.add("codex");
     mocks.runToolLifecycleAction.mockImplementation(
@@ -1894,15 +2374,79 @@ describe("AppsPage concurrent CLI upgrades", () => {
     });
     expect(install).toBeEnabled();
     fireEvent.click(install);
-    await waitFor(() => expect(isReady("Codex")).toBe(true));
-    expect(mocks.runToolLifecycleAction).toHaveBeenCalledWith(
-      ["codex"],
-      "install",
-      {},
+    const dialog = within(screen.getByRole("dialog"));
+    expect(dialog.getByRole("heading", { name: "Codex" })).toBeVisible();
+    expect(
+      dialog.getByText("npm install -g @openai/codex@latest"),
+    ).toBeVisible();
+    expect(mocks.runToolLifecycleAction).toHaveBeenCalledTimes(1);
+    fireEvent.click(
+      dialog.getByRole("button", { name: "appsPage.installDownload" }),
     );
+    expect(mocks.openExternal).toHaveBeenLastCalledWith(
+      "https://github.com/openai/codex/releases/latest",
+    );
+    fireEvent.click(dialog.getByRole("button", { name: "common.close" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(install).toBeEnabled();
     expect(updateButton("Claude Code")).toBeDisabled();
     await act(async () => claudeRun.resolve());
   });
+
+  it.each([
+    ["curl", "curl"],
+    ["Homebrew", "homebrew"],
+  ])(
+    "installs Codex through the selected %s channel and refreshes detection",
+    async (label, method) => {
+      const platform = vi
+        .spyOn(navigator, "userAgent", "get")
+        .mockReturnValue("Macintosh; Intel Mac OS X");
+      const run = deferred<void>();
+      try {
+        missing.add("codex");
+        mocks.runToolLifecycleAction.mockImplementation(async () => {
+          await run.promise;
+          missing.delete("codex");
+        });
+        await renderApps();
+        fireEvent.click(
+          card("Codex").getByRole("button", { name: "settings.toolInstall" }),
+        );
+        const dialog = within(screen.getByRole("dialog"));
+        const install = dialog.getByRole("button", {
+          name: `settings.toolInstall ${label}`,
+        });
+        expect(
+          dialog.getByRole("button", { name: `common.copy ${label}` })
+            .nextElementSibling,
+        ).toBe(install);
+        fireEvent.click(install);
+        await waitFor(() =>
+          expect(mocks.runToolLifecycleAction).toHaveBeenCalledWith(
+            ["codex"],
+            "install",
+            {},
+            undefined,
+            undefined,
+            method,
+          ),
+        );
+        expect(install).toBeDisabled();
+        expect(
+          dialog.queryByRole("button", { name: "settings.toolInstall npm" }),
+        ).toBeNull();
+        await act(async () => run.resolve());
+        await waitFor(() => expect(install).toBeEnabled());
+        fireEvent.click(dialog.getByRole("button", { name: "common.close" }));
+        expect(
+          card("Codex").queryByRole("button", { name: "settings.toolInstall" }),
+        ).toBeNull();
+      } finally {
+        platform.mockRestore();
+      }
+    },
+  );
 
   it("shows the queue, elapsed time and latest output on the running rows", async () => {
     const claudeRun = deferred<void>();
@@ -2155,7 +2699,7 @@ describe("AppsPage visibility column", () => {
     }
   });
 
-  it("gives WorkBuddy only the sidebar switch, like Claude Desktop", async () => {
+  it("keeps the sidebar switch and connection status for a connected WorkBuddy", async () => {
     vi.resetModules();
     await renderApps();
     const row = screen
@@ -2163,19 +2707,12 @@ describe("AppsPage visibility column", () => {
       .closest("[data-tool-row]") as HTMLElement;
     expect(row).not.toBeNull();
     expect(within(row).getByRole("switch")).toBeInTheDocument();
-    // 和 Claude Desktop 一样：接入状态 + 说明，没有操作按钮
     expect(
       await within(row).findByText("appsPage.desktopConnected"),
     ).toBeInTheDocument();
     expect(mocks.getConfigStatus).toHaveBeenCalledWith("workbuddy");
-    // 除了「已安装」组的拖动把手，唯一的按钮是说明的问号
     expect(
-      within(row)
-        .getAllByRole("button")
-        .filter(
-          (button) =>
-            button.getAttribute("aria-label") !== "appsPage.dragHandle",
-        ),
-    ).toEqual([within(row).getByRole("button", { name: "WorkBuddy" })]);
+      within(row).getByRole("button", { name: "settings.toolInstall" }),
+    ).toBeEnabled();
   });
 });

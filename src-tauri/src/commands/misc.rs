@@ -174,6 +174,7 @@ pub struct ToolVersion {
     wsl_distro: Option<String>,
     /// 有新版本、但新版本要求的 Node 比这处安装用的新：前端不给升级按钮，提示先升级 Node。
     update_blocked_by_node: Option<tool_node_requirement::NodeRequirementGap>,
+    manual_update_only: bool,
 }
 
 /// 「应用」页管理的一个 CLI 工具。新增工具只在 `TOOLS` 里加一项。
@@ -273,6 +274,8 @@ impl ToolSpec {
 
 /// 不认识的工具名：没有 npm 包、没有自升级命令。
 static UNKNOWN_TOOL: ToolSpec = ToolSpec::not_on_npm("", "Unknown");
+
+const OPENCODE_V2_NPM_PACKAGE: &str = "@opencode/cli";
 
 /// 顺序即「应用」页与批量安装 / 升级的顺序。
 static TOOLS: [ToolSpec; 14] = [
@@ -383,7 +386,9 @@ impl Default for ToolLifecycleCoordinator {
         Self {
             tools: TOOLS
                 .iter()
-                .map(|tool| (tool.id, Arc::new(tokio::sync::Mutex::new(()))))
+                .map(|tool| tool.id)
+                .chain(["claude-desktop"])
+                .map(|id| (id, Arc::new(tokio::sync::Mutex::new(()))))
                 .collect(),
             execution: Arc::new(tokio::sync::Mutex::new(())),
         }
@@ -488,6 +493,48 @@ pub async fn prepare_tool_uninstall(
     .map_err(|e| format!("uninstall plan task join error: {e}"))?
 }
 
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum InstallMethod {
+    Curl,
+    Homebrew,
+}
+
+#[derive(serde::Deserialize)]
+struct AppInstaller {
+    platforms: Vec<String>,
+    command: String,
+}
+
+fn app_install_command(
+    app: &str,
+    method: InstallMethod,
+    platform: &str,
+) -> Result<&'static str, String> {
+    type InstallCatalogue = HashMap<String, HashMap<String, AppInstaller>>;
+    static INSTALLERS: LazyLock<Result<InstallCatalogue, serde_json::Error>> =
+        LazyLock::new(|| {
+            serde_json::from_str(include_str!("../../../src/config/appInstallers.json"))
+        });
+    let method = match method {
+        InstallMethod::Curl => "curl",
+        InstallMethod::Homebrew => "homebrew",
+    };
+    INSTALLERS
+        .as_ref()
+        .map_err(|_| "Invalid bundled installation catalogue".to_string())?
+        .get(app)
+        .and_then(|channels| channels.get(method))
+        .filter(|installer| {
+            matches!(platform, "macos" | "linux")
+                && installer.platforms.iter().any(|target| target == platform)
+        })
+        .map(|installer| installer.command.as_str())
+        .ok_or_else(|| {
+            "This install method is unavailable for the selected app and platform.".into()
+        })
+}
+
 #[tauri::command]
 pub async fn run_tool_lifecycle_action(
     app: AppHandle,
@@ -495,7 +542,40 @@ pub async fn run_tool_lifecycle_action(
     action: String,
     wsl_shell_by_tool: Option<HashMap<String, WslShellPreferenceInput>>,
     uninstall_plan: Option<ToolUninstallPlan>,
+    confirmed_update: Option<String>,
+    install_method: Option<InstallMethod>,
 ) -> Result<(), String> {
+    if let Some(method) = install_method {
+        if action != "install"
+            || tools.len() != 1
+            || confirmed_update.is_some()
+            || uninstall_plan.is_some()
+        {
+            return Err("Select one app and one installation method.".into());
+        }
+        let app_id = if tools[0] == "claude-desktop" {
+            "claude-desktop"
+        } else {
+            normalize_requested_tools(&tools)
+                .into_iter()
+                .next()
+                .ok_or("Unsupported installation target.")?
+        };
+        let command = app_install_command(app_id, method, std::env::consts::OS)?;
+        let requested = vec![app_id];
+        let progress = ToolLifecycleProgress::from_app(app, &requested);
+        let queued = progress.clone();
+        return TOOL_LIFECYCLE
+            .run_with_queue_notice(
+                requested,
+                move || queued.queued(),
+                move |_| {
+                    progress.running();
+                    run_tool_lifecycle_silently(command, "tool_install", &progress)
+                },
+            )
+            .await;
+    }
     let requested = normalize_requested_tools(&tools);
     if requested.is_empty() {
         return Err("No supported tools selected".to_string());
@@ -532,6 +612,11 @@ pub async fn run_tool_lifecycle_action(
         }
     }
 
+    if confirmed_update.is_some()
+        && (requested.len() != 1 || !matches!(action, ToolLifecycleAction::Update))
+    {
+        return Err("Update confirmation must match one requested update.".into());
+    }
     let label = match action {
         ToolLifecycleAction::Install => "tool_install",
         ToolLifecycleAction::Update => "tool_update",
@@ -546,8 +631,35 @@ pub async fn run_tool_lifecycle_action(
             move || queued.queued(),
             move |tools| {
                 progress.running();
-                let command_line =
-                    build_tool_lifecycle_command(tools, action, wsl_shell_by_tool.as_ref())?;
+                #[cfg(target_os = "windows")]
+                let opencode_wsl =
+                    if matches!(action, ToolLifecycleAction::Update) && tools == ["opencode"] {
+                        wsl_distro_for_tool("opencode")
+                    } else {
+                        None
+                    };
+                #[cfg(target_os = "windows")]
+                if let Some(distro) = opencode_wsl {
+                    if confirmed_update.is_some() {
+                        return Err(
+                            "The installation environment changed. Confirm the update again."
+                                .into(),
+                        );
+                    }
+                    let pref = wsl_shell_by_tool
+                        .as_ref()
+                        .and_then(|prefs| prefs.get("opencode"));
+                    let process = tool_uninstall::wsl_opencode_update_process(&distro, pref)?;
+                    let output = tool_lifecycle_progress::run_with_progress(process, &progress)
+                        .map_err(|e| format!("Cannot start the OpenCode WSL update: {e}"))?;
+                    return finish_lifecycle_output(&output);
+                }
+                let command_line = build_tool_lifecycle_command(
+                    tools,
+                    action,
+                    wsl_shell_by_tool.as_ref(),
+                    confirmed_update.as_deref(),
+                )?;
                 run_tool_lifecycle_silently(&command_line, label, &progress)
             },
         )
@@ -936,7 +1048,8 @@ pub struct ToolInstallationReport {
     is_conflict: bool,
     /// 宽阈值：≥2 处。升级确认据此弹窗（升级只动一处，任何多处都该让用户知情）。
     needs_confirmation: bool,
-    /// 锚定后将执行的升级命令（仅展示；真正执行时后端会重新生成，不信任前端回传）。
+    confirmation_token: Option<String>,
+    /// 锚定后将执行的升级命令。执行时重新生成并核对已确认的安装。
     command: String,
     /// 是否成功锚定到某处具体安装。false = 退到裸 fallback 命令（无法确定命令行实际
     /// 命中哪处，或该处无同级 npm）；前端据此给出"默认入口无法确定"的诚实文案。
@@ -971,6 +1084,8 @@ pub async fn probe_tool_installations(
                 let is_conflict = is_conflicting(&installs);
                 ToolInstallationReport {
                     tool: tool.to_string(),
+                    confirmation_token: (needs_confirmation && !unmanaged)
+                        .then(|| update_confirmation_token(tool, &command, &installs)),
                     installs,
                     is_conflict,
                     needs_confirmation,
@@ -1067,6 +1182,24 @@ pub async fn set_window_theme(window: tauri::Window, theme: String) -> Result<()
 mod tests {
 
     use super::*;
+
+    #[test]
+    fn direct_install_commands_match_the_selected_app_and_platform() {
+        assert_eq!(
+            app_install_command("codex", InstallMethod::Homebrew, "macos"),
+            Ok("brew install --cask codex")
+        );
+        assert_eq!(
+            app_install_command("opencode", InstallMethod::Homebrew, "linux"),
+            Ok("brew install anomalyco/tap/opencode-v2")
+        );
+        assert!(app_install_command("codex", InstallMethod::Curl, "linux")
+            .unwrap()
+            .contains("https://chatgpt.com/codex/install.sh"));
+        assert!(app_install_command("codex", InstallMethod::Homebrew, "linux").is_err());
+        assert!(app_install_command("codex", InstallMethod::Curl, "windows").is_err());
+        assert!(app_install_command("workbuddy", InstallMethod::Homebrew, "macos").is_err());
+    }
 
     /// 前端「应用」页的工具表（`TOOL_NAMES` / `TOOL_DISPLAY_NAMES`）对照
     /// `tests/config/tools.json`，这份文件由这里从 [`TOOLS`] 生成。改了 `TOOLS` 后用

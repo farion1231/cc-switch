@@ -10,6 +10,7 @@ import { listen } from "@tauri-apps/api/event";
 import { toast } from "@/lib/toast";
 import { settingsApi } from "@/lib/api";
 import type {
+  InstallMethod,
   NodeRequirementGap,
   ToolInstallation,
   ToolInstallationReport,
@@ -37,6 +38,7 @@ export interface ToolVersion {
   wsl_distro: string | null;
   // 有新版本、但这处安装用的 Node 达不到新版本的要求：不给升级，提示先升级 Node。
   update_blocked_by_node: NodeRequirementGap | null;
+  manual_update_only?: boolean;
 }
 
 export const TOOL_NAMES = [
@@ -114,119 +116,6 @@ export const ENV_BADGE_CONFIG: Record<
       "bg-green-500/10 text-green-600 dark:text-green-400 border-green-500/20",
   },
 };
-
-const posixScriptInstallCommand = (url: string) =>
-  `bash -c 'tmp=$(mktemp) && curl -fsSL ${url} -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'`;
-
-const HERMES_WINDOWS_INSTALL_SCRIPT =
-  "irm https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.ps1 | iex";
-
-const powershellEncodedCommand = (script: string): string => {
-  let binary = "";
-  for (let i = 0; i < script.length; i += 1) {
-    const code = script.charCodeAt(i);
-    binary += String.fromCharCode(code & 0xff, code >> 8);
-  }
-  return btoa(binary);
-};
-
-const HERMES_WINDOWS_INSTALL_COMMAND = `powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${powershellEncodedCommand(
-  HERMES_WINDOWS_INSTALL_SCRIPT,
-)}`;
-
-const MCODE_WINDOWS_INSTALL_COMMAND = `powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${powershellEncodedCommand(
-  "irm https://filecdn.minimax.chat/public/install.ps1 | iex",
-)}`;
-
-const KIMI_WINDOWS_INSTALL_COMMAND = `powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${powershellEncodedCommand(
-  "irm https://code.kimi.com/kimi-code/install.ps1 | iex",
-)}`;
-
-const AGY_WINDOWS_INSTALL_COMMAND = `powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${powershellEncodedCommand(
-  "irm https://antigravity.google/cli/install.ps1 | iex",
-)}`;
-
-// 与后端 npm_install_command_for("claude") 保持一致：原生依赖和 postinstall 缺一不可，
-// 否则 bin/claude.exe 会保留文本占位文件，在 Windows 上报兼容性错误。
-const CLAUDE_NPM_INSTALL_COMMAND =
-  "npm i -g @anthropic-ai/claude-code@latest --ignore-scripts=false --include=optional --allow-scripts=@anthropic-ai/claude-code";
-
-// 与后端 npm_install_command_for("mcode") 保持一致：npm 12 默认拦截依赖的 install
-// 脚本，不放行 better-sqlite3 时 SQLite 不可用。
-const MCODE_NPM_INSTALL_COMMAND =
-  'npm i -g @minimax-ai/code@latest --ignore-scripts=false --include=optional "--allow-scripts=@minimax-ai/code,better-sqlite3"';
-
-// 与后端 npm_install_command_for("opencode") 保持一致：postinstall 负责把平台二进制
-// 铺到 bin/opencode.exe，npm 12 拦截后只剩文本占位文件。
-const OPENCODE_NPM_INSTALL_COMMAND =
-  "npm i -g opencode-ai@latest --ignore-scripts=false --include=optional --allow-scripts=opencode-ai";
-
-// 与后端 npm_install_command_for("grok") 保持一致：postinstall 负责把平台二进制解到
-// ~/.grok/bin 并 relink，npm 12 拦截后升级会一直跑旧版。
-const GROK_NPM_INSTALL_COMMAND =
-  "npm i -g @xai-official/grok@latest --ignore-scripts=false --include=optional --allow-scripts=@xai-official/grok";
-
-const POSIX_ONE_CLICK_INSTALL_COMMANDS = `# Claude Code
-${posixScriptInstallCommand("https://claude.ai/install.sh")} || ${CLAUDE_NPM_INSTALL_COMMAND}
-# Codex
-npm i -g @openai/codex@latest
-# Gemini CLI
-npm i -g @google/gemini-cli@latest
-# Grok Build
-${GROK_NPM_INSTALL_COMMAND}
-# OpenCode
-${posixScriptInstallCommand("https://opencode.ai/install")} || ${OPENCODE_NPM_INSTALL_COMMAND}
-# OpenClaw
-npm i -g openclaw@latest
-# Hermes
-${posixScriptInstallCommand("https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh")}
-# Pi
-npm i -g @earendil-works/pi-coding-agent@latest
-# MiniMax Code
-${posixScriptInstallCommand("https://filecdn.minimax.chat/public/install.sh")} || ${MCODE_NPM_INSTALL_COMMAND}
-# DeepSeek Harness
-npm i -g @deepseek-ai/dsh@latest --engine-strict
-# Kimi Code
-${posixScriptInstallCommand("https://code.kimi.com/kimi-code/install.sh")}
-# Antigravity CLI
-${posixScriptInstallCommand("https://antigravity.google/cli/install.sh")}
-# Oh My Pi
-bun install -g @oh-my-pi/pi-coding-agent@latest
-# GitHub Copilot CLI
-npm i -g @github/copilot@latest`;
-
-const WINDOWS_ONE_CLICK_INSTALL_COMMANDS = `# Claude Code
-${CLAUDE_NPM_INSTALL_COMMAND}
-# Codex
-npm i -g @openai/codex@latest
-# Gemini CLI
-npm i -g @google/gemini-cli@latest
-# Grok Build
-${GROK_NPM_INSTALL_COMMAND}
-# OpenCode
-${OPENCODE_NPM_INSTALL_COMMAND}
-# OpenClaw
-npm i -g openclaw@latest
-# Hermes
-${HERMES_WINDOWS_INSTALL_COMMAND}
-# Pi
-npm i -g @earendil-works/pi-coding-agent@latest
-# MiniMax Code
-${MCODE_WINDOWS_INSTALL_COMMAND}
-# DeepSeek Harness
-npm i -g @deepseek-ai/dsh@latest --engine-strict
-# Kimi Code
-${KIMI_WINDOWS_INSTALL_COMMAND}
-# Antigravity CLI
-${AGY_WINDOWS_INSTALL_COMMAND}
-# Oh My Pi
-bun install -g @oh-my-pi/pi-coding-agent@latest
-# GitHub Copilot CLI
-npm i -g @github/copilot@latest`;
-
-export const ONE_CLICK_INSTALL_COMMANDS = isWindows()
-  ? WINDOWS_ONE_CLICK_INSTALL_COMMANDS
-  : POSIX_ONE_CLICK_INSTALL_COMMANDS;
 
 export const TOOL_DISPLAY_NAMES: Record<ToolName, string> = {
   claude: "Claude Code",
@@ -473,6 +362,7 @@ export function useToolManagement() {
           !busyTools.has(toolName) &&
           !loadingTools[toolName] &&
           !tool?.update_blocked_by_node &&
+          !tool?.manual_update_only &&
           isUpdateAvailable(tool?.version, tool?.latest_version)
         );
       }),
@@ -644,19 +534,6 @@ export function useToolManagement() {
     ]);
   }, [loadAllToolVersions, loadInstallations]);
 
-  const handleCopyInstallCommands = useCallback(async () => {
-    try {
-      await navigator.clipboard.writeText(ONE_CLICK_INSTALL_COMMANDS);
-      toast.success(t("settings.installCommandsCopied"), { closeButton: true });
-    } catch (error) {
-      console.error(
-        "[useToolManagement] Failed to copy install commands",
-        error,
-      );
-      toast.error(t("settings.installCommandsCopyFailed"));
-    }
-  }, [t]);
-
   // 升级后自动补诊单个工具：静默后台执行。有冲突写入结果；无冲突则清掉该工具可能残留
   // 的过期冲突展示（外部卸载/修复后冲突可能已消失，不清会一直显示旧列表）。不弹 toast、
   // 不报错打扰——与用户主动点的全量诊断区别对待。
@@ -741,6 +618,8 @@ export function useToolManagement() {
       action: ToolLifecycleAction,
       wslOverrides: Record<string, WslShellPreference>,
       uninstallPlan?: ToolUninstallPlan,
+      confirmedPlans: ToolInstallationReport[] = [],
+      installMethod?: InstallMethod,
     ) => {
       const isBatch = toolNames.length > 1;
 
@@ -762,12 +641,34 @@ export function useToolManagement() {
             const previousVersion = previousTool?.version ?? null;
             const previousLatestVersion = previousTool?.latest_version ?? null;
 
+            const confirmation =
+              action === "update"
+                ? confirmedPlans.find((plan) => plan.tool === toolName)
+                    ?.confirmation_token
+                : null;
             if (action === "uninstall") {
               await settingsApi.runToolLifecycleAction(
                 [toolName],
                 action,
                 wslOverrides,
                 uninstallPlan,
+              );
+            } else if (installMethod) {
+              await settingsApi.runToolLifecycleAction(
+                [toolName],
+                action,
+                wslOverrides,
+                undefined,
+                undefined,
+                installMethod,
+              );
+            } else if (confirmation) {
+              await settingsApi.runToolLifecycleAction(
+                [toolName],
+                action,
+                wslOverrides,
+                undefined,
+                confirmation ?? undefined,
               );
             } else {
               await settingsApi.runToolLifecycleAction(
@@ -985,7 +886,11 @@ export function useToolManagement() {
     async (
       requestedTools: ToolName[],
       action: ToolLifecycleAction,
-      options?: { fromBatchEntry?: boolean; uninstallPlan?: ToolUninstallPlan },
+      options?: {
+        fromBatchEntry?: boolean;
+        uninstallPlan?: ToolUninstallPlan;
+        installMethod?: InstallMethod;
+      },
     ) => {
       const toolNames = requestedTools.filter(
         (name) => !toolManagementState.busyTools.has(name),
@@ -1019,6 +924,8 @@ export function useToolManagement() {
             action,
             wslOverrides,
             options?.uninstallPlan,
+            [],
+            options?.installMethod,
           );
           return;
         }
@@ -1100,13 +1007,20 @@ export function useToolManagement() {
     });
     const {
       toolNames,
+      plans,
       fromBatchEntry,
       wslShellByTool: wslOverrides,
     } = pendingUpgrade;
     if (fromBatchEntry) {
       updateToolManagementState({ batchAction: "update" });
     }
-    void executeRun(toolNames, "update", wslOverrides).finally(() => {
+    void executeRun(
+      toolNames,
+      "update",
+      wslOverrides,
+      undefined,
+      plans,
+    ).finally(() => {
       if (fromBatchEntry) {
         updateToolManagementState({ batchAction: null });
       }
@@ -1153,6 +1067,5 @@ export function useToolManagement() {
     handleRunToolAction,
     handleConfirmUpgrade,
     handleCancelUpgrade,
-    handleCopyInstallCommands,
   };
 }

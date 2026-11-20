@@ -46,7 +46,7 @@ export interface AppCaps {
   officialSubscription: boolean;
 }
 
-/** 键的顺序就是应用的默认顺序（侧栏、应用页）。 */
+/** 键的顺序用于能力列表。侧栏和应用页的展示顺序由 orderAppIds 决定。 */
 export const APP_SPECS = {
   claude: {
     localProxy: true,
