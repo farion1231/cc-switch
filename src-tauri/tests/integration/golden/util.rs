@@ -96,12 +96,12 @@ pub fn seed_providers(state: &AppState, app: &AppType, providers: &[Provider], c
     for provider in providers {
         state
             .db
-            .save_provider(app.as_str(), provider)
+            .save_provider(app, provider)
             .expect("save provider");
     }
     state
         .db
-        .set_current_provider(app.as_str(), current)
+        .set_current_provider(app, current)
         .expect("set current provider");
 }
 

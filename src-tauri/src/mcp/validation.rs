@@ -2,12 +2,13 @@
 
 use serde_json::Value;
 
-use crate::{app_config::AppType, error::AppError};
+use crate::{
+    app_config::{AppType, McpAppOverrides},
+    error::AppError,
+};
 
 /// Validate every independent spec before saving or touching any live file.
-pub(crate) fn validate_app_overrides(
-    server: &crate::app_config::McpServer,
-) -> Result<(), AppError> {
+pub(crate) fn validate_app_overrides(overrides: &McpAppOverrides) -> Result<(), AppError> {
     for (app, key) in [
         (AppType::Claude, "mcp.error.invalidOverrideClaude"),
         (AppType::Codex, "mcp.error.invalidOverrideCodex"),
@@ -24,7 +25,7 @@ pub(crate) fn validate_app_overrides(
         (AppType::Agy, "mcp.error.invalidOverrideAgy"),
         (AppType::Omp, "mcp.error.invalidOverrideOmp"),
     ] {
-        let Some(spec) = server.app_overrides.get(&app) else {
+        let Some(spec) = overrides.get(&app) else {
             continue;
         };
         let invalid = || AppError::McpValidation(key.to_string());

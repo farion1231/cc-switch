@@ -16,12 +16,19 @@ pub(crate) fn sync_and_commit<T>(
 }
 
 pub(crate) fn import(state: &AppState) -> Result<usize, AppError> {
-    let mut existing = state.db.get_all_mcp_servers()?;
+    let (mut existing, unreadable) = state
+        .db
+        .get_mcp_server_rows()?
+        .into_readable_and_unreadable_ids();
     let mut count = 0;
     for entry in crate::dsh_config::mcp_entries()? {
         let Some(id) = entry["config"]["serverName"].as_str() else {
             continue;
         };
+        if unreadable.iter().any(|stored| stored == id) {
+            log::warn!("Skipping Dsh MCP import of '{id}': the stored server is unreadable");
+            continue;
+        }
         let Ok(mut spec) = serde_json::to_value(&entry["config"]) else {
             continue;
         };

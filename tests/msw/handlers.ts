@@ -57,6 +57,9 @@ export const handlers = [
     return success(getProviders(app));
   }),
 
+  http.post(`${TAURI_ENDPOINT}/get_unreadable_providers`, () => success([])),
+  http.post(`${TAURI_ENDPOINT}/get_unreadable_mcp_servers`, () => success([])),
+
   http.post(`${TAURI_ENDPOINT}/workbuddy_model_owners`, () =>
     success(getWorkBuddyModelOwners()),
   ),
@@ -259,6 +262,21 @@ export const handlers = [
     success("/home/test/.cc-switch/skills"),
   ),
   http.post(`${TAURI_ENDPOINT}/open_cc_switch_skills_dir`, () => success(true)),
+  // 仓库访问令牌（#9666）：默认一个都没有，保存 / 删除原样回主机名
+  http.post(`${TAURI_ENDPOINT}/get_skill_repo_tokens`, () =>
+    success({ hosts: [], secureStorage: true }),
+  ),
+  http.post(`${TAURI_ENDPOINT}/set_skill_repo_token`, async ({ request }) => {
+    const { host } = (await request.json()) as { host: string };
+    return success(host);
+  }),
+  http.post(
+    `${TAURI_ENDPOINT}/delete_skill_repo_token`,
+    async ({ request }) => {
+      const { host } = (await request.json()) as { host: string };
+      return success(host);
+    },
+  ),
   http.post(`${TAURI_ENDPOINT}/get_session_usage_last_sync`, () =>
     success(null),
   ),

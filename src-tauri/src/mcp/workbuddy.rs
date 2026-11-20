@@ -107,7 +107,10 @@ fn sync_file(path: &Path, id: &str, spec: Option<&Value>) -> Result<(), AppError
 
 pub fn import(state: &AppState) -> Result<usize, AppError> {
     let document = read(&config_path())?;
-    let mut existing = state.db.get_all_mcp_servers()?;
+    let (mut existing, unreadable) = state
+        .db
+        .get_mcp_server_rows()?
+        .into_readable_and_unreadable_ids();
     let mut count = 0;
     let mut skipped = Vec::new();
     for (id, native) in document
@@ -116,6 +119,10 @@ pub fn import(state: &AppState) -> Result<usize, AppError> {
         .into_iter()
         .flatten()
     {
+        if unreadable.contains(id) {
+            skipped.push(format!("'{id}': stored server is unreadable"));
+            continue;
+        }
         if is_connector(native) {
             continue;
         }

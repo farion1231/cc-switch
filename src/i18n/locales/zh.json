@@ -318,7 +318,7 @@
     "supports1mShort": "1M",
     "directModelListTitle": "模型列表",
     "directModelListCollapsedHint": "原生 Claude 模型供应商通常不用填写，Claude Desktop 会自动读取 /v1/models。",
-    "directModelListHint": "配置 Claude Desktop 可用的 Sonnet、Opus、Haiku 模型。留空时 Claude Desktop 会自动读取 /v1/models；勾选 1M 会声明支持 1M 上下文。",
+    "directModelListHint": "配置 Claude Desktop 可用的 Sonnet、Opus、Haiku 模型。直连时留空，Claude Desktop 会自动读取 /v1/models；路由模式下留空只提供默认的 Claude 模型名，要用供应商的模型请在这里填写。勾选 1M 会声明支持 1M 上下文。",
     "directModelInvalid": "直连模型必须使用 Claude Desktop 可识别的 Sonnet / Opus / Haiku 模型名",
     "addModel": "添加模型",
     "addRoute": "添加模型",
@@ -378,6 +378,7 @@
     "openclawModelNotFound": "所选模型已不存在，请刷新后重试",
     "backfillWarning": "切换成功，但旧供应商配置回填失败，您手动修改的配置可能未保存",
     "codexAuthCleanupFailed": "切换成功，但未能删除 auth.json，官方登录凭据仍留在磁盘上；如需彻底移除请手动删除 Codex 配置目录中的 auth.json",
+    "omoVariantCleanupFailed": "切换成功，但未能删除另一个 OMO 变体（OMO / OMO Slim）的配置文件，OpenCode 可能同时加载两者；请在 OpenCode 配置目录中手动删除它",
     "windowControlFailed": "窗口控制失败：{{error}}",
     "officialBlockedByProxy": "本地路由模式下不能切换到官方供应商，使用路由访问官方 API 可能导致账号被封禁",
     "proxyOfficialWarning": "当前供应商 {{name}} 是官方供应商，建议切换到第三方供应商后再使用本地路由",
@@ -463,8 +464,7 @@
     "tabProxy": "路由",
     "authCenter": {
       "description": "把 GitHub Copilot、ChatGPT、xAI 订阅当作供应商用。凭据由路由服务注入，相关供应商要在路由模式下使用（Codex 官方登录绑定除外）。Antigravity 账号用来切换 agy 的官方登录。",
-      "beta": "Beta",
-      "xaiOauthDescription": "管理 xAI / Grok 账号"
+      "beta": "Beta"
     },
     "advanced": {
       "configDir": {
@@ -1121,7 +1121,6 @@
       "pricingModelSourceLabel": "计费模式",
       "pricingModelSourceRequest": "请求模型",
       "pricingModelSourceResponse": "返回模型",
-      "pricingSave": "保存计费配置",
       "pricingSaved": "计费配置已保存",
       "pricingSaveFailed": "保存计费配置失败：{{error}}",
       "pricingLoadFailed": "加载计费配置失败：{{error}}"
@@ -1443,7 +1442,7 @@
     "keyFieldsHint": "默认模型（models.default）和它指向的模型表随供应商切换；其余是 Grok Build 全局设置，保存后对所有供应商生效。",
     "inactiveFieldsHint": "这些是旧版存进卡里的设置，现在切换不会写出去。点一下复制 TOML，需要时粘贴到上方。",
     "inactiveFieldCopied": "已复制",
-    "routeOnlySettingsHint": "以下两项只在路由模式下生效。"
+    "routeOnlySettingsHint": "以下设置只在路由模式下生效。"
   },
   "sessionManager": {
     "searchPlaceholder": "搜索标题、目录、首末消息或会话 ID",
@@ -1658,7 +1657,17 @@
         "prLink": "已关联 PR #{{number}}",
         "prLinkPlain": "已关联 PR",
         "slashCommand": "运行了 {{command}}",
-        "subAgent": "子代理 {{name}}"
+        "subAgent": "子代理 {{name}}",
+        "goal": "目标 · {{status}}",
+        "goalPlain": "目标",
+        "goalStatus": {
+          "active": "进行中",
+          "paused": "已暂停",
+          "blocked": "受阻",
+          "usageLimited": "额度已用尽",
+          "budgetLimited": "已达预算",
+          "complete": "已完成"
+        }
       },
       "injectedToggle": "显示注入的上下文",
       "injectedRow": "上下文 · {{label}} · {{chars}} 字",
@@ -1725,6 +1734,7 @@
       "outlineFailed": "有失败步骤",
       "outlineAborted": "已中断",
       "outlineNoReply": "没有回复",
+      "chapter": "章节",
       "viewOptions": "显示选项",
       "noChanges": "这个会话没有文件改动",
       "rawMatch": "原文中的匹配",
@@ -1740,6 +1750,9 @@
     "openReleaseNotesFailed": "打开更新日志失败:"
   },
   "providerForm": {
+    "billingMultiplier": "供应商费用倍率",
+    "billingMultiplierHelp": "该供应商所有模型的参考价都乘以这个值，用来估算经本地路由的请求花了多少钱。0.5 即半价，留空为 1 倍。只影响之后的请求；不开路由（直连）时从会话记录导入的用量仍按 1 倍统计。",
+    "billingMultiplierInvalid": "请输入 0 到 1000 的数字，或留空使用 1 倍。",
     "nativeConfig": {
       "title": "配置文件 {{path}}（只显示这一家）",
       "hint": "按应用自己的格式显示这一家在文件里的部分，保存后写进这个文件；默认模型等全局设置不在这里。在这里写的注释不会保存。",
@@ -1914,6 +1927,8 @@
     "requestModelLabel": "实际请求模型",
     "modelOneMHeader": "声明支持 1M",
     "modelOneMLabel": "1M",
+    "copilotOneMUnavailable": "Copilot 没有这个模型的 1M 版本",
+    "copilotOneMMismatch": "Copilot 没有 {{models}} 的 1M 版本：请求会退回普通版本，但 Claude Code 仍按 1M 规划上下文，长会话可能超出上限。建议取消勾选 1M。",
     "fallbackModelLabel": "默认兜底模型",
     "fallbackModelHelpDirect": "写进 ANTHROPIC_MODEL，是 Claude Code 启动时用的主模型。后台任务另用 Haiku 那一档。",
     "fallbackModelHelp": "没落到 Sonnet、Opus、Fable、Haiku 任一档的请求，改用这个模型发给上游。",
@@ -2233,7 +2248,7 @@
     "inactiveFieldCopied": "已复制",
     "upstreamFormatCopilotRouteHint": "所有模式都需要开启路由，由路由注入 Copilot 账号凭据；手动指定的协议模型不支持时会报错。",
     "maxOutputTokensWarning": "不要超过模型或网关的真实输出上限，否则会返回 400。",
-    "routeOnlySettingsHint": "以下两项只在路由、聚合模式下生效。"
+    "routeOnlySettingsHint": "以下设置只在路由、聚合模式下生效。"
   },
   "geminiConfig": {
     "envFile": "环境变量 (.env)",
@@ -2735,7 +2750,9 @@
       "speedEstimateTooFew": "输出不到 200 token，不估速度",
       "noTimingSession": "会话日志没有计时数据",
       "noFirstToken": "没有首字计时，不算速度",
-      "providerId": "供应商 ID"
+      "providerId": "供应商 ID",
+      "copyRequestId": "复制请求 ID",
+      "requestIdCopied": "已复制请求 ID"
     },
     "sources": {
       "scanTitle": "自动扫描会话日志",
@@ -2919,7 +2936,6 @@
     "geminiTitle": "Gemini MCP 管理",
     "unifiedPanel": {
       "title": "MCP 服务器管理",
-      "deleteServer": "删除服务器",
       "deleteConfirm": "确定要删除服务器 \"{{id}}\" 吗？此操作无法撤销。",
       "enabledApps": "启用的应用",
       "importSuccess": "成功导入 {{count}} 个 MCP 服务器",
@@ -2966,28 +2982,20 @@
       "tagsPlaceholder": "stdio, time, utility",
       "homepage": "主页链接",
       "docs": "文档链接",
-      "jsonPlaceholder": "{\n  \"type\": \"stdio\",\n  \"command\": \"uvx\",\n  \"args\": [\"mcp-server-fetch\"]\n}",
-      "tomlConfig": "完整的 TOML 配置",
-      "tomlPlaceholder": "type = \"stdio\"\ncommand = \"uvx\"\nargs = [\"mcp-server-fetch\"]",
-      "syncOtherSide": "同步到 {{target}}"
+      "tomlConfig": "完整的 TOML 配置"
     },
     "wizard": {
       "title": "MCP 配置向导",
       "hint": "快速配置 MCP 服务器，自动生成 JSON 配置",
       "type": "类型",
-      "typeStdio": "stdio",
-      "typeSse": "sse",
       "command": "命令",
       "commandPlaceholder": "npx 或 uvx",
       "args": "参数",
-      "argsPlaceholder": "arg1\narg2",
       "env": "环境变量",
-      "envPlaceholder": "KEY1=value1\nKEY2=value2",
       "url": "URL",
       "urlPlaceholder": "https://api.example.com/mcp",
       "urlRequired": "请输入 URL",
       "headers": "请求头（可选）",
-      "headersPlaceholder": "Authorization: Bearer your_token_here\nContent-Type: application/json",
       "preview": "配置预览",
       "apply": "应用配置"
     },
@@ -3524,13 +3532,18 @@
       "archiveDownloadTooLarge": "仓库压缩包下载超过 {{limit_mb}} MB 上限，已中止",
       "archiveTooManyEntries": "压缩包条目过多（{{count}}），上限 {{limit}}",
       "downloadFailed": "下载失败：HTTP {{status}}",
-      "httpError": "HTTP 错误 {{status}}",
       "http403": "GitHub 访问受限，可能是请求频率过高",
-      "http404": "仓库或分支不存在，请检查地址",
+      "http404": "仓库或分支不存在，请检查地址；私有仓库需要先在「管理技能仓库」里设置访问令牌",
       "http429": "请求过于频繁，请等待后重试",
+      "http401Token": "访问令牌无效或已过期，请在「管理技能仓库」里重新设置",
+      "http403Token": "访问令牌没有读取这个仓库的权限，或请求过于频繁",
+      "http404Token": "仓库或分支不存在，或访问令牌无权读取这个仓库",
+      "httpAuthRequired": "这个站点需要登录才能读取，请在「管理技能仓库」里为它设置访问令牌",
+      "invalidTokenHost": "站点无效：{{host}}。只填主机名，例如 gitlab.example.com",
+      "invalidRepoToken": "令牌格式不对：只能包含字母、数字和 - _ . ~ + / =，最长 {{limit}} 个字符",
+      "repoTokenStorageFailed": "无法读写 {{host}} 的访问令牌，请检查系统的凭据存储是否可用",
       "getHomeDirFailed": "无法获取用户主目录",
       "noSkillsInZip": "ZIP 文件中未找到技能（需包含 SKILL.md 文件）",
-      "networkError": "网络错误",
       "unknownError": "未知错误",
       "suggestion": {
         "checkNetwork": "请检查网络连接",
@@ -3544,7 +3557,7 @@
     },
     "repo": {
       "title": "管理技能仓库",
-      "description": "添加或删除 GitHub / GitLab 技能仓库源",
+      "description": "添加或删除 GitHub / GitLab / Gitea 技能仓库源",
       "url": "仓库 URL",
       "urlPlaceholder": "owner/name、https://github.com/owner/name 或 https://gitlab.com/group/project",
       "branch": "分支",
@@ -3554,7 +3567,20 @@
       "list": "已添加的仓库",
       "empty": "暂无仓库",
       "invalidUrl": "无效的仓库 URL 格式",
-      "httpsOnly": "GitLab 仓库只支持 https 地址",
+      "httpsOnly": "GitLab / Gitea 仓库只支持 https 地址",
+      "token": {
+        "title": "访问令牌",
+        "description": "读取私有仓库时使用。令牌按站点保存在系统的凭据存储里（macOS 钥匙串、Windows 凭据管理器），不随云同步，只需要只读权限。",
+        "descriptionFile": "读取私有仓库时使用。令牌按站点保存在本机仅自己可读的文件里，不随云同步，只需要只读权限。",
+        "host": "站点",
+        "hostPlaceholder": "github.com 或 gitlab.example.com",
+        "value": "令牌",
+        "valuePlaceholder": "粘贴访问令牌",
+        "save": "保存令牌",
+        "empty": "还没有设置访问令牌",
+        "removeAria": "删除 {{host}} 的访问令牌",
+        "missingFields": "请填写站点和令牌"
+      },
       "addSuccess": "仓库 {{owner}}/{{name}} 已添加，识别到 {{count}} 个技能",
       "addFailed": "添加失败",
       "removeSuccess": "仓库 {{owner}}/{{name}} 已删除",
@@ -3745,7 +3771,6 @@
       "repo": "GitHub 仓库",
       "directory": "目标目录",
       "branch": "分支",
-      "skillsPath": "Skills 路径",
       "hint": "此操作将添加 Skill 仓库到列表。",
       "hintDetail": "添加后，您可以在 Skills 管理界面中选择安装具体的 Skill。"
     },
@@ -3842,7 +3867,6 @@
   },
   "proxy": {
     "panel": {
-      "currentProvider": "当前 Provider：",
       "openSettings": "配置路由服务",
       "stats": {
         "activeConnections": "活跃连接",
@@ -3903,10 +3927,6 @@
           "label": "非流式超时（秒）",
           "description": "非流式请求的总超时时间"
         }
-      },
-      "validation": {
-        "retryMin": "重试次数不能为负",
-        "retryMax": "重试次数不能超过10"
       },
       "actions": {
         "save": "保存配置"
@@ -4340,7 +4360,8 @@
       "stack": "聚合"
     },
     "needsAttention": "需要处理",
-    "back": "返回"
+    "back": "返回",
+    "plugins": "插件"
   },
   "appsPage": {
     "showInSidebar": "在侧栏显示 {{name}}",
@@ -4760,7 +4781,7 @@
       "failedTitle": "有应用没有读到",
       "filesTitle": "读取了哪些文件",
       "claudeNote": "（顶层 mcpServers）",
-      "dshNote": "（写入所有已初始化的 profile：web、desktop、headless、acp）",
+      "dshNote": "（写入所有已初始化的 profile：web、desktop、headless、acp。home 级的 ~/.dsh/cordis.patch.yml 不读取也不改写，其中的 MCP 请在该文件里管理）",
       "ok": "知道了"
     },
     "templateLabels": {
@@ -5039,6 +5060,88 @@
     },
     "updateAllCount": "全部更新（{{count}} 个）",
     "updatingProgress": "正在更新 {{done}}/{{total}}…"
+  },
+  "pluginsPage": {
+    "title": "插件",
+    "helpTitle": "插件",
+    "help": "安装、启用、移除 Claude Code、Codex、Grok Build、MiniMax Code、OpenClaw 和 Pi 的插件。CC Switch 调用各应用自带的命令行，效果和在终端里执行它的插件命令一样。Pi 的插件就是 Pi 包，目录取自 npm。",
+    "appAria": "应用",
+    "viewAria": "插件视图",
+    "viewInstalled": "已安装",
+    "viewInstalledCount": "已安装 · {{count}}",
+    "viewDiscover": "发现",
+    "viewDiscoverCount": "发现 · {{count}}",
+    "viewMarketplaces": "市场",
+    "searchPlaceholder": "搜索插件",
+    "searchAria": "搜索插件",
+    "count": "{{count}} 个插件",
+    "countFiltered": "{{shown}} / {{count}}",
+    "noMatches": "没有匹配「{{query}}」的插件",
+    "loading": "正在读取 {{app}} 的插件…",
+    "loadFailed": "读取 {{app}} 的插件失败",
+    "catalogLoadFailed": "读取市场目录失败",
+    "loadingCatalog": "正在读取 {{app}} 的市场目录…",
+    "refreshing": "正在刷新…",
+    "marketsLoadFailed": "读取插件市场失败",
+    "cliMissingTitle": "未安装 {{app}}",
+    "cliMissingBody": "插件通过 {{app}} 命令行管理。请先在「应用」页安装，再回到这里。",
+    "emptyInstalledTitle": "还没有安装插件",
+    "emptyInstalledBody": "去插件市场看看，为 {{app}} 添加技能、命令、子代理和 MCP 服务器。",
+    "browse": "浏览插件",
+    "emptyDiscoverTitle": "没有可新装的插件",
+    "emptyDiscoverBody": "已添加市场里的插件都装好了。添加更多市场可以看到更多插件。",
+    "emptyCatalogBody": "目录里的插件都装好了。",
+    "emptyMarketsTitle": "还没有添加市场",
+    "emptyMarketsBody": "{{app}} 仍会显示内置目录。添加 GitHub 仓库或 Git 地址可以列出更多插件。",
+    "builtIn": "内置",
+    "builtInPlugin": "随应用自带，可以开关，不能卸载。",
+    "scope": "{{scope}} 范围",
+    "scopeReadOnly": "安装在 {{scope}} 范围，请在对应项目里用命令行管理。",
+    "enableAria": "启用 {{name}}",
+    "moreActions": "{{name}} 的更多操作",
+    "working": "处理中…",
+    "install": "安装",
+    "installing": "安装中…",
+    "notInstallable": "不可安装",
+    "update": "更新",
+    "uninstall": "卸载",
+    "restartNote": "改动在新的 {{app}} 会话中生效。",
+    "restartNoteGateway": "改动在 {{app}} Gateway 重启后生效。",
+    "refreshMarketplaces": "刷新市场",
+    "refreshCatalog": "刷新目录",
+    "addMarketplace": "添加市场",
+    "addMarketplaceTitle": "添加 {{app}} 插件市场",
+    "addMarketplaceBody": "GitHub 的 owner/repo、Git 地址，或本地文件夹（用正斜杠，不含空格）。",
+    "addMarketplaceWaiting": "正在下载市场仓库，仓库大时可能要几分钟（最长 5 分钟）。可以先关掉这个窗口，完成后会提示。",
+    "sourceLabel": "来源",
+    "removeMarketplace": "移除",
+    "confirmUninstallTitle": "卸载 {{name}}？",
+    "confirmUninstallBody": "从 {{app}} 移除这个插件和它的缓存文件。之后可以在「发现」里重新安装。",
+    "confirmUninstallClaudeBody": "从 {{app}} 卸载插件并保留其数据目录。若这是最后一份安装，保存的选项和凭据会被删除，重新安装无法恢复。",
+    "confirmInstallTitle": "安装 {{name}}？",
+    "confirmInstallBody": "插件以你的权限运行：{{app}} 会加载它的技能、钩子和 MCP 服务器，并授予它声明的能力。只安装来源可信的插件。",
+    "confirmRemoveMarketTitle": "移除市场 {{name}}？",
+    "confirmRemoveMarketBody": "{{app}} 将不再列出这个市场里的插件，从这个市场装的插件也可能被一并卸载。之后可以重新添加。",
+    "toast": {
+      "installed": "已安装 {{name}}",
+      "installFailed": "安装 {{name}} 失败",
+      "installNeedsTerminal": "这个插件安装时要在本机运行市场声明的命令，CC Switch 不会替你同意。请在终端里运行 {{command}}，确认后再回来刷新。",
+      "authRequired": "{{app}} 需要先登录账号。请在终端里运行 {{command}} 登录，再回来重试。",
+      "uninstalled": "已卸载 {{name}}",
+      "uninstallFailed": "卸载 {{name}} 失败",
+      "enabled": "已启用 {{name}}",
+      "disabled": "已停用 {{name}}",
+      "toggleFailed": "切换 {{name}} 失败",
+      "updated": "已更新 {{name}}",
+      "upToDate": "{{name}} 已是最新版本",
+      "updateFailed": "更新 {{name}} 失败",
+      "refreshed": "插件市场已刷新",
+      "refreshFailed": "刷新插件市场失败",
+      "marketAdded": "已添加市场 {{source}}",
+      "marketAddFailed": "添加市场失败",
+      "marketRemoved": "已移除市场 {{name}}",
+      "marketRemoveFailed": "移除 {{name}} 失败"
+    }
   },
   "newLayoutNotice": {
     "title": "界面改版了",
@@ -5321,5 +5424,11 @@
     "installFailed": "安装更新失败",
     "downloadingInline": "正在后台下载新版本…",
     "downloadedInline": "已下载完毕"
+  },
+  "unreadableEntry": {
+    "title": "「{{name}}」的数据无法读取",
+    "hint": "可能由更新版本的 CC Switch 写入。数据已原样保留，不能编辑或启用；升级后即可恢复，也可以删除。",
+    "confirmTitle": "删除无法读取的条目",
+    "confirmMessage": "删除「{{name}}」？只删除 CC Switch 里的这条记录，不改动各应用自己的配置文件。"
   }
 }

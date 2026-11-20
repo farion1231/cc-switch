@@ -85,7 +85,7 @@ fn dsh_provider_lifecycle_preserves_native_plugins_and_reusable_profiles() {
     ProviderService::delete(&state, AppType::Dsh, "draft").unwrap();
     assert!(state
         .db
-        .get_provider_by_id("draft", "dsh")
+        .get_provider_by_id("draft", &AppType::Dsh)
         .unwrap()
         .is_none());
 }

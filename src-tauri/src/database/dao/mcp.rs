@@ -2,7 +2,8 @@
 //!
 //! 提供 MCP 服务器的 CRUD 操作。
 
-use crate::app_config::{AppType, McpApps, McpServer};
+use super::{Rows, UnreadableEntry};
+use crate::app_config::{AppType, McpAppOverrides, McpApps, McpServer};
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use indexmap::IndexMap;
@@ -14,11 +15,9 @@ const MCP_SERVER_SELECT: &str =
 fn row_to_mcp_server(row: &Row<'_>) -> rusqlite::Result<(String, McpServer)> {
     let id: String = row.get(0)?;
     let name: String = row.get(1)?;
-    let server_config_str: String = row.get(2)?;
     let description: Option<String> = row.get(3)?;
     let homepage: Option<String> = row.get(4)?;
     let docs: Option<String> = row.get(5)?;
-    let tags_str: String = row.get(6)?;
     let enabled_claude: bool = row.get(7)?;
     let enabled_codex: bool = row.get(8)?;
     let enabled_gemini: bool = row.get(9)?;
@@ -26,11 +25,10 @@ fn row_to_mcp_server(row: &Row<'_>) -> rusqlite::Result<(String, McpServer)> {
     let enabled_opencode: bool = row.get(11)?;
     let enabled_hermes: bool = row.get(12)?;
 
-    let server = serde_json::from_str(&server_config_str).unwrap_or_default();
-    let tags = serde_json::from_str(&tags_str).unwrap_or_default();
-    let app_overrides = serde_json::from_str(&row.get::<_, String>(21)?).map_err(|e| {
-        rusqlite::Error::FromSqlConversionFailure(21, rusqlite::types::Type::Text, Box::new(e))
-    })?;
+    let entry = format!("MCP 服务器 {id}");
+    let server = super::json_column(row, 2, &entry)?;
+    let tags = super::json_column(row, 6, &entry)?;
+    let app_overrides = super::json_column(row, 21, &entry)?;
 
     Ok((
         id.clone(),
@@ -68,45 +66,79 @@ impl Database {
     pub(crate) fn validate_mcp_app_overrides_on_conn(
         conn: &rusqlite::Connection,
     ) -> Result<(), AppError> {
-        let mut stmt = conn.prepare(MCP_SERVER_SELECT)?;
-        for row in stmt.query_map([], row_to_mcp_server)? {
-            let (_, server) = row?;
-            crate::mcp::validation::validate_app_overrides(&server)?;
+        // Existing unreadable base fields can be restored and listed separately.
+        let mut stmt = conn.prepare("SELECT id, app_overrides FROM mcp_servers")?;
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            let id: String = row.get(0)?;
+            let entry = format!("MCP 服务器 {id}");
+            let overrides: McpAppOverrides = super::json_column(row, 1, &entry)?;
+            crate::mcp::validation::validate_app_overrides(&overrides)?;
         }
         Ok(())
     }
 
-    /// 获取所有 MCP 服务器
+    /// 获取所有 MCP 服务器。一行读不出来就整体报错（见 [`super::Rows::into_strict`]）；
+    /// 只展示、不写的地方用 [`Self::get_mcp_server_rows`]。
     pub fn get_all_mcp_servers(&self) -> Result<IndexMap<String, McpServer>, AppError> {
+        self.get_mcp_server_rows()?.into_strict()
+    }
+
+    /// 能读的 MCP 服务器照常返回，读不出来的单独列出。
+    pub fn get_mcp_server_rows(&self) -> Result<Rows<McpServer>, AppError> {
         let conn = lock_conn!(self.conn);
         let mut stmt = conn
             .prepare(&format!("{MCP_SERVER_SELECT} ORDER BY name ASC, id ASC"))
             .map_err(|e| AppError::Database(e.to_string()))?;
 
         let server_iter = stmt
-            .query_map([], row_to_mcp_server)
+            .query_map([], |row| super::read_row(row, row_to_mcp_server))
             .map_err(|e| AppError::Database(e.to_string()))?;
 
-        let mut servers = IndexMap::new();
+        let mut rows = Rows {
+            readable: IndexMap::new(),
+            unreadable: Vec::new(),
+        };
         for server_res in server_iter {
-            let (id, server) = server_res.map_err(|e| AppError::Database(e.to_string()))?;
-            servers.insert(id, server);
+            match server_res.map_err(|e| AppError::Database(e.to_string()))? {
+                Ok((id, server)) => {
+                    rows.readable.insert(id, server);
+                }
+                Err(entry) => rows.unreadable.push(entry),
+            }
         }
-        Ok(servers)
+        Ok(rows)
+    }
+
+    /// 这一行在库里、但存的 JSON 读不出来。
+    pub fn get_unreadable_mcp_server(&self, id: &str) -> Result<Option<UnreadableEntry>, AppError> {
+        let conn = lock_conn!(self.conn);
+        let result = conn
+            .query_row(
+                &format!("{MCP_SERVER_SELECT} WHERE id = ?1"),
+                params![id],
+                |row| super::read_row(row, row_to_mcp_server),
+            )
+            .optional()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(result.and_then(Result::err))
     }
 
     /// Atomically update one application's flag and return the authoritative row.
     ///
     /// The update and read share the same connection lock, so concurrent toggles
     /// for different applications cannot overwrite one another through a stale
-    /// whole-row snapshot.
+    /// whole-row snapshot. A row that can't be read back rolls the flag change back.
     pub fn update_mcp_server_app_enabled(
         &self,
         id: &str,
         app: &AppType,
         enabled: bool,
     ) -> Result<Option<McpServer>, AppError> {
-        let conn = lock_conn!(self.conn);
+        let mut conn = lock_conn!(self.conn);
+        let conn = conn
+            .transaction()
+            .map_err(|e| AppError::Database(e.to_string()))?;
         let column = match app {
             AppType::Claude => Some("enabled_claude"),
             AppType::Codex => Some("enabled_codex"),
@@ -137,13 +169,17 @@ impl Database {
             }
         }
 
-        conn.query_row(
-            &format!("{MCP_SERVER_SELECT} WHERE id = ?1"),
-            params![id],
-            |row| row_to_mcp_server(row).map(|(_, server)| server),
-        )
-        .optional()
-        .map_err(|e| AppError::Database(e.to_string()))
+        let server = conn
+            .query_row(
+                &format!("{MCP_SERVER_SELECT} WHERE id = ?1"),
+                params![id],
+                |row| row_to_mcp_server(row).map(|(_, server)| server),
+            )
+            .optional()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.commit()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(server)
     }
 
     /// 保存 MCP 服务器
@@ -156,7 +192,7 @@ impl Database {
         conn: &rusqlite::Connection,
         server: &McpServer,
     ) -> Result<(), AppError> {
-        crate::mcp::validation::validate_app_overrides(server)?;
+        crate::mcp::validation::validate_app_overrides(&server.app_overrides)?;
         conn.execute(
             "INSERT OR REPLACE INTO mcp_servers (
                 id, name, server_config, description, homepage, docs, tags,
@@ -327,5 +363,38 @@ mod tests {
             .expect("server exists");
         assert!(returned.apps.pi);
         assert!(db.get_all_mcp_servers().unwrap()["shared-server"].apps.pi);
+    }
+
+    #[test]
+    fn unreadable_stored_server_config_is_reported_and_left_untouched() {
+        let db = Database::memory().unwrap();
+        db.save_mcp_server(&test_server()).unwrap();
+        let read_raw = |db: &Database| -> (String, String) {
+            db.conn
+                .lock()
+                .unwrap()
+                .query_row(
+                    "SELECT server_config, tags FROM mcp_servers WHERE id = 'shared-server'",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .unwrap()
+        };
+        db.conn
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE mcp_servers SET server_config = '{\"command\":' WHERE id = 'shared-server'",
+                [],
+            )
+            .unwrap();
+        let stored = read_raw(&db);
+
+        let error = db.get_all_mcp_servers().unwrap_err().to_string();
+        assert!(
+            error.contains("shared-server") && error.contains("server_config"),
+            "{error}"
+        );
+        assert_eq!(read_raw(&db), stored);
     }
 }

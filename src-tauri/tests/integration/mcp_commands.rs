@@ -478,11 +478,11 @@ fn import_default_config_claude_persists_provider() {
     // 验证内存状态
     let providers = state
         .db
-        .get_all_providers(AppType::Claude.as_str())
+        .get_all_providers(&AppType::Claude)
         .expect("get all providers");
     let current_id = state
         .db
-        .get_current_provider(AppType::Claude.as_str())
+        .get_current_provider(&AppType::Claude)
         .expect("get current provider");
     assert_eq!(current_id.as_deref(), Some("default"));
     let default_provider = providers.get("default").expect("default provider");
@@ -534,7 +534,7 @@ context_window = 500000
 
     let providers = state
         .db
-        .get_all_providers(AppType::GrokBuild.as_str())
+        .get_all_providers(&AppType::GrokBuild)
         .expect("get all providers");
     assert!(
         providers.get("default").is_some(),
@@ -551,7 +551,7 @@ context_window = 500000
     // 激活的仍是导入的原配置，官方入口只是备选
     let current_id = state
         .db
-        .get_current_provider(AppType::GrokBuild.as_str())
+        .get_current_provider(&AppType::GrokBuild)
         .expect("get current provider");
     assert_eq!(current_id.as_deref(), Some("default"));
 }
@@ -581,7 +581,7 @@ fn import_default_config_grokbuild_official_live_imports_official_as_current() {
 
     let providers = state
         .db
-        .get_all_providers(AppType::GrokBuild.as_str())
+        .get_all_providers(&AppType::GrokBuild)
         .expect("get all providers");
     let official = providers
         .get("grokbuild-official")
@@ -594,7 +594,7 @@ fn import_default_config_grokbuild_official_live_imports_official_as_current() {
 
     let current_id = state
         .db
-        .get_current_provider(AppType::GrokBuild.as_str())
+        .get_current_provider(&AppType::GrokBuild)
         .expect("get current provider");
     assert_eq!(
         current_id.as_deref(),
@@ -628,7 +628,7 @@ fn startup_import_grokbuild_official_live_does_not_resurrect_official() {
 
     let providers = state
         .db
-        .get_all_providers(AppType::GrokBuild.as_str())
+        .get_all_providers(&AppType::GrokBuild)
         .expect("get all providers");
     assert!(
         providers.is_empty(),
@@ -660,7 +660,7 @@ fn import_default_config_grokbuild_broken_custom_live_still_errors() {
 
     let providers = state
         .db
-        .get_all_providers(AppType::GrokBuild.as_str())
+        .get_all_providers(&AppType::GrokBuild)
         .expect("get all providers");
     assert!(
         providers.get("grokbuild-official").is_some(),
@@ -669,7 +669,7 @@ fn import_default_config_grokbuild_broken_custom_live_still_errors() {
     assert!(providers.get("default").is_none(), "nothing was imported");
     let current_id = state
         .db
-        .get_current_provider(AppType::GrokBuild.as_str())
+        .get_current_provider(&AppType::GrokBuild)
         .expect("get current provider");
     assert_ne!(
         current_id.as_deref(),
@@ -706,7 +706,7 @@ fn import_default_config_without_live_file_returns_error() {
     // 失败的导入不应该向数据库写入任何供应商
     let providers = state
         .db
-        .get_all_providers(AppType::Claude.as_str())
+        .get_all_providers(&AppType::Claude)
         .expect("get all providers");
     assert!(
         providers.is_empty(),

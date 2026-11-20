@@ -27,7 +27,7 @@ fn prompt_list_refreshes_external_edits_without_changing_inactive_templates() {
             enabled: false,
             ..active.clone()
         };
-        state.db.save_prompt(app.as_str(), &inactive).unwrap();
+        state.db.save_prompt(&app, &inactive).unwrap();
         PromptService::upsert_prompt(&state, app.clone(), &active.id, active.clone()).unwrap();
         let path = home.join(relative_path);
 
@@ -42,16 +42,16 @@ fn prompt_list_refreshes_external_edits_without_changing_inactive_templates() {
             assert_eq!(prompts["inactive"].content, "original");
             assert_eq!(fs::read_to_string(&path).unwrap(), content);
             assert_eq!(
-                state.db.get_prompts(app.as_str()).unwrap()["active"].content,
+                state.db.get_prompts(&app).unwrap()["active"].content,
                 content
             );
         }
 
-        let mut saved = state.db.get_prompts(app.as_str()).unwrap()["active"].clone();
+        let mut saved = state.db.get_prompts(&app).unwrap()["active"].clone();
         saved.content = "saved instructions".into();
         fs::write(&path, &saved.content).unwrap();
         saved.updated_at = Some(42);
-        state.db.save_prompt(app.as_str(), &saved).unwrap();
+        state.db.save_prompt(&app, &saved).unwrap();
         assert_eq!(
             PromptService::get_prompts(&state, app.clone()).unwrap()["active"].updated_at,
             Some(42)
@@ -65,7 +65,7 @@ fn prompt_list_refreshes_external_edits_without_changing_inactive_templates() {
             assert_eq!(prompts["inactive"].content, "original");
             assert_eq!(fs::read_to_string(&path).unwrap(), content);
             assert_eq!(
-                state.db.get_prompts(app.as_str()).unwrap()["active"].content,
+                state.db.get_prompts(&app).unwrap()["active"].content,
                 saved.content
             );
         }
@@ -80,11 +80,11 @@ fn prompt_list_refreshes_external_edits_without_changing_inactive_templates() {
         assert_eq!(prompts["inactive"].content, "original");
         assert_eq!(fs::read(&path).unwrap(), utf16);
         assert_eq!(
-            state.db.get_prompts(app.as_str()).unwrap()["active"].updated_at,
+            state.db.get_prompts(&app).unwrap()["active"].updated_at,
             Some(42)
         );
         assert_eq!(
-            state.db.get_prompts(app.as_str()).unwrap()["active"].content,
+            state.db.get_prompts(&app).unwrap()["active"].content,
             saved.content
         );
         assert!(PromptService::get_current_file_content(app.clone()).is_err());
@@ -97,7 +97,7 @@ fn prompt_list_refreshes_external_edits_without_changing_inactive_templates() {
         assert!(!path.exists());
 
         saved.enabled = false;
-        state.db.save_prompt(app.as_str(), &saved).unwrap();
+        state.db.save_prompt(&app, &saved).unwrap();
         fs::write(&path, "unmanaged instructions").unwrap();
         assert_eq!(
             PromptService::get_prompts(&state, app).unwrap()["active"].content,
@@ -157,7 +157,7 @@ fn saving_inactive_prompts_keeps_a_hand_written_file_until_the_last_enabled_one_
         let imported_id = PromptService::import_from_file(&state, app.clone()).unwrap();
         assert_eq!(fs::read_to_string(&path).unwrap(), hand_written);
         assert_eq!(
-            state.db.get_prompts(app.as_str()).unwrap()[&imported_id].content,
+            state.db.get_prompts(&app).unwrap()[&imported_id].content,
             hand_written
         );
 
@@ -174,7 +174,7 @@ fn saving_inactive_prompts_keeps_a_hand_written_file_until_the_last_enabled_one_
         assert_eq!(fs::read_to_string(&path).unwrap(), "linked content");
         assert!(state
             .db
-            .get_prompts(app.as_str())
+            .get_prompts(&app)
             .unwrap()
             .values()
             .any(|prompt| !prompt.enabled && prompt.content == "fresh hand-written\n"));
@@ -182,7 +182,7 @@ fn saving_inactive_prompts_keeps_a_hand_written_file_until_the_last_enabled_one_
         // Disabling the last enabled prompt still empties the file.
         let disabled = Prompt {
             enabled: false,
-            ..state.db.get_prompts(app.as_str()).unwrap()["linked"].clone()
+            ..state.db.get_prompts(&app).unwrap()["linked"].clone()
         };
         PromptService::upsert_prompt(&state, app.clone(), "linked", disabled).unwrap();
         assert_eq!(fs::read_to_string(&path).unwrap(), "");
