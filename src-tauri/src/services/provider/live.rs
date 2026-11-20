@@ -873,10 +873,31 @@ pub(crate) fn sync_current_provider_for_app_respecting_mode(
 
 /// Populate newly encountered DSH profiles with managed providers and enabled MCP servers.
 /// The native writer records completion locally so later native deletions remain intentional.
+///
+/// An unreadable MCP row of another application is ignored. An unreadable DSH provider, or an
+/// unreadable MCP row enabled for DSH, defers seeding without writing the receipt: seeding is
+/// one-time, so skipping the row would leave it out of the new profile for good, and dropping its
+/// id would hide a managed node the profile may already carry. It only fails while some profile
+/// is actually waiting, so it can't break every later sync.
 pub(crate) fn initialize_dsh_profiles(state: &AppState) -> Result<(), AppError> {
-    let providers = state
-        .db
-        .get_all_providers(&AppType::Dsh)?
+    let provider_rows = state.db.get_provider_rows(&AppType::Dsh)?;
+    let server_rows = state.db.get_mcp_server_rows()?;
+    let dsh_server_ids = state.db.mcp_server_ids_enabled_for(&AppType::Dsh)?;
+    let blocking = provider_rows.unreadable.iter().chain(
+        server_rows
+            .unreadable
+            .iter()
+            .filter(|entry| dsh_server_ids.contains(&entry.id)),
+    );
+    if let Some(entry) = blocking.into_iter().next() {
+        if crate::dsh_config::has_uninitialized_profiles()? {
+            return Err(AppError::Database(entry.error.clone()));
+        }
+        return Ok(());
+    }
+
+    let providers = provider_rows
+        .readable
         .into_iter()
         .filter(|(_, provider)| {
             provider
@@ -887,9 +908,8 @@ pub(crate) fn initialize_dsh_profiles(state: &AppState) -> Result<(), AppError> 
         })
         .map(|(id, provider)| (id, provider.settings_config))
         .collect();
-    let servers = state
-        .db
-        .get_all_mcp_servers()?
+    let servers = server_rows
+        .readable
         .into_iter()
         .filter(|(_, server)| server.apps.dsh)
         .map(|(id, server)| (id, server.server))

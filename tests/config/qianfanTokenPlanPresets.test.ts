@@ -33,14 +33,14 @@ describe("Baidu Qianfan Token Plan presets", () => {
     expect(env.ANTHROPIC_BASE_URL).toBe(ANTHROPIC_BASE);
     // 官方 Claude Code 接入页（2026-07-30 版）全角色 deepseek-v4-pro，
     // 2026-10-25 起因 Pro 贵且效果不如 Flash 改为全角色 deepseek-v4-flash；
-    // 各档预勾 1M（模型名带 [1M] 标记）
+    // 各档预勾 1M（模型名带 [1m] 标记）
     for (const key of [
       "ANTHROPIC_MODEL",
       "ANTHROPIC_DEFAULT_HAIKU_MODEL",
       "ANTHROPIC_DEFAULT_SONNET_MODEL",
       "ANTHROPIC_DEFAULT_OPUS_MODEL",
     ]) {
-      expect(env[key], key).toBe("deepseek-v4-flash[1M]");
+      expect(env[key], key).toBe("deepseek-v4-flash[1m]");
     }
   });
 

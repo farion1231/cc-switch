@@ -26,7 +26,7 @@ use axum::{
     Router,
 };
 use hyper_util::rt::TokioIo;
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use tokio::sync::{oneshot, RwLock};
 use tokio::task::JoinHandle;
@@ -107,10 +107,7 @@ impl ProxyServer {
             return Err(ProxyError::AlreadyRunning);
         }
 
-        let addr: SocketAddr =
-            format!("{}:{}", self.config.listen_address, self.config.listen_port)
-                .parse()
-                .map_err(|e| ProxyError::BindFailed(format!("无效的地址: {e}")))?;
+        let addr = listen_socket_addr(&self.config.listen_address, self.config.listen_port)?;
 
         // 创建关闭通道
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
@@ -464,6 +461,24 @@ impl ProxyServer {
     }
 }
 
+/// 监听地址 + 端口拼成 SocketAddr。不能拼字符串再 parse：裸 IPv6（`::1`）拼出来是
+/// `::1:15721`，`SocketAddr` 只认 `[::1]:15721`（#9743）。方括号写法也收；`localhost`
+/// 是旧库可能留下的值，按 IPv4 回环处理（设置页保存时也是这么改写的）。
+fn listen_socket_addr(listen_address: &str, port: u16) -> Result<SocketAddr, ProxyError> {
+    let host = listen_address.trim();
+    let host = host
+        .strip_prefix('[')
+        .and_then(|h| h.strip_suffix(']'))
+        .unwrap_or(host);
+    let ip = if host.eq_ignore_ascii_case("localhost") {
+        IpAddr::V4(Ipv4Addr::LOCALHOST)
+    } else {
+        host.parse::<IpAddr>()
+            .map_err(|e| ProxyError::BindFailed(format!("无效的地址: {e}")))?
+    };
+    Ok(SocketAddr::new(ip, port))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -501,6 +516,47 @@ mod tests {
             0,
             "listener socket is inheritable"
         );
+    }
+
+    #[test]
+    fn listen_address_accepts_bare_and_bracketed_ipv6() {
+        for (input, expected) in [
+            ("127.0.0.1", "127.0.0.1:15721"),
+            ("0.0.0.0", "0.0.0.0:15721"),
+            ("::1", "[::1]:15721"),
+            ("[::1]", "[::1]:15721"),
+            ("::", "[::]:15721"),
+            (" ::1 ", "[::1]:15721"),
+            ("localhost", "127.0.0.1:15721"),
+        ] {
+            let addr = listen_socket_addr(input, 15721).expect(input);
+            assert_eq!(addr.to_string(), expected, "{input}");
+        }
+        for input in ["", "not-an-ip", "[::1", "::1:15721", "999.0.0.1"] {
+            assert!(listen_socket_addr(input, 15721).is_err(), "{input}");
+        }
+    }
+
+    /// IPv6 回环上能起服务；本机没有 IPv6 时跳过。
+    #[tokio::test]
+    async fn proxy_starts_on_ipv6_loopback() {
+        if std::net::TcpListener::bind("[::1]:0").is_err() {
+            return;
+        }
+        let db = Arc::new(Database::memory().expect("memory database"));
+        let proxy = ProxyServer::new(
+            ProxyConfig {
+                listen_address: "::1".to_string(),
+                listen_port: 0,
+                ..ProxyConfig::default()
+            },
+            db,
+            None,
+        );
+        let info = proxy.start().await.expect("start proxy on ::1");
+        assert_ne!(info.port, 0);
+        std::net::TcpStream::connect(("::1", info.port)).expect("connect to [::1]");
+        proxy.stop().await.expect("stop test proxy");
     }
 
     /// Codex 内置的 openai 先用 WebSocket 连 Responses：握手回 426 它才立刻改走 HTTP。
