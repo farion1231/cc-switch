@@ -2357,6 +2357,7 @@ impl SkillService {
         let pi_dir = Self::get_app_skills_dir(&AppType::Pi)?;
         let pi_uses_old_ssot = Self::paths_alias(&old_dir, &pi_dir);
         let pi_uses_new_ssot = Self::paths_alias(&new_dir, &pi_dir);
+        let mut migrated_directories = HashSet::new();
         let mut pi_deployments = Vec::new();
         let mut mcode_deployments = Vec::new();
         let mut pi_native_sources = Vec::new();
@@ -2401,6 +2402,7 @@ impl SkillService {
                     .ok()
                     .flatten()
             };
+            let mut native_deployments = Vec::new();
             for app in [
                 AppType::Mcode,
                 AppType::Agy,
@@ -2416,7 +2418,7 @@ impl SkillService {
                             .ok()
                             .flatten()
                     {
-                        mcode_deployments.push((directory.clone(), destination, deployment));
+                        native_deployments.push((directory.clone(), destination, deployment));
                     }
                 }
             }
@@ -2427,11 +2429,13 @@ impl SkillService {
                     .ok()
                     .flatten()
             {
-                mcode_deployments.push((directory.clone(), omp_destination, deployment));
+                native_deployments.push((directory.clone(), omp_destination, deployment));
             }
             // 优先 rename（同文件系统原子操作），失败则 copy+delete
             match fs::rename(&src, &dst) {
                 Ok(()) => {
+                    migrated_directories.insert(directory.clone());
+                    mcode_deployments.extend(native_deployments);
                     result.migrated_count += 1;
                     if pi_uses_old_ssot || pi_uses_new_ssot {
                         pi_native_sources.push(directory);
@@ -2442,6 +2446,8 @@ impl SkillService {
                 Err(_) => match Self::copy_dir_recursive(&src, &dst) {
                     Ok(()) => {
                         let _ = fs::remove_dir_all(&src);
+                        migrated_directories.insert(directory.clone());
+                        mcode_deployments.extend(native_deployments);
                         result.migrated_count += 1;
                         if pi_uses_old_ssot || pi_uses_new_ssot {
                             pi_native_sources.push(directory);
@@ -2468,28 +2474,46 @@ impl SkillService {
             }
         }
 
-        // 4. 删除已管理 Skill 的旧投影，再按目标模式重建。
-        for skill in skills.values() {
-            let directory = match Self::require_valid_directory(&skill.directory) {
-                Ok(directory) => directory,
-                Err(_) => continue,
-            };
-            let mut protected_dirs = vec![old_dir.clone(), new_dir.clone()];
-            if pi_uses_old_ssot || pi_uses_new_ssot {
-                protected_dirs.push(pi_dir.clone());
-            }
-            if let Err(err) = Self::remove_skill_from_projection_dirs(&directory, &protected_dirs) {
+        // 4. 只清理成功迁移项中指向旧 SSOT 的链接。真实目录留给用户对账。
+        let protected_dirs = [old_dir.clone(), new_dir.clone()];
+        for directory in &migrated_directories {
+            if let Err(err) =
+                Self::remove_skill_from_projection_dirs(directory, &old_dir, &protected_dirs)
+            {
                 result.errors.push(format!("{directory}: {err}"));
             }
         }
 
-        // 5. 刷新所有应用目录的 symlink（指向新 SSOT）
+        // 5. 仅重建成功迁移项中缺失的投影，避免全量同步触碰跳过项或用户副本。
         for app in AppType::all() {
-            if target == SkillStorageLocation::Unified && app.scans_agents_skills_dir() {
+            if !Self::is_sync_managed_app(&app)
+                || (target == SkillStorageLocation::Unified && app.scans_agents_skills_dir())
+            {
                 continue;
             }
-            if let Err(err) = Self::sync_to_app_unlocked(db, &app) {
-                result.errors.push(format!("{}: {err}", app.as_str()));
+            let app_dir = Self::get_app_skills_dir(&app)?;
+            if Self::is_protected_reconciliation_root(&app_dir)?
+                || protected_dirs
+                    .iter()
+                    .any(|root| Self::paths_overlap(&app_dir, root))
+            {
+                continue;
+            }
+            for skill in skills.values() {
+                if !migrated_directories.contains(&skill.directory)
+                    || !skill.apps.is_enabled_for(&app)
+                {
+                    continue;
+                }
+                let destination = app_dir.join(&skill.directory);
+                if destination.exists() || Self::is_symlink(&destination) {
+                    continue;
+                }
+                if let Err(err) = Self::sync_to_app_dir(&skill.directory, &app) {
+                    result
+                        .errors
+                        .push(format!("{} ({}): {err}", skill.directory, app.as_str()));
+                }
             }
         }
         for (directory, deployment) in pi_deployments {
@@ -3328,42 +3352,42 @@ impl SkillService {
 
     fn remove_skill_from_projection_dirs(
         directory: &str,
+        old_dir: &Path,
         protected_dirs: &[PathBuf],
     ) -> Result<()> {
         let directory = Self::require_valid_directory(directory)?;
+        let old_source = old_dir.join(&directory);
         for app in AppType::all() {
-            if matches!(
-                app,
-                AppType::Pi
-                    | AppType::Mcode
-                    | AppType::Agy
-                    | AppType::Kimi
-                    | AppType::Dsh
-                    | AppType::Omp
-            ) {
+            // Native deployments are refreshed separately with ownership checks.
+            if !Self::is_sync_managed_app(&app)
+                || matches!(
+                    app,
+                    AppType::Mcode
+                        | AppType::Agy
+                        | AppType::Kimi
+                        | AppType::Dsh
+                        | AppType::Copilot
+                        | AppType::WorkBuddy
+                )
+            {
                 continue;
             }
             let app_dir = Self::get_app_skills_dir(&app)?;
-            if protected_dirs
-                .iter()
-                .any(|protected| Self::paths_alias(&app_dir, protected))
+            if Self::is_protected_reconciliation_root(&app_dir)?
+                || protected_dirs
+                    .iter()
+                    .any(|root| Self::paths_overlap(&app_dir, root))
             {
                 continue;
             }
             let path = app_dir.join(&directory);
-            if path.exists() || Self::is_symlink(&path) {
-                Self::remove_path(&path)?;
-            }
-        }
-        if let Some(agents_dir) = get_agents_skills_dir() {
-            if !protected_dirs
-                .iter()
-                .any(|protected| Self::paths_alias(&agents_dir, protected))
+            if Self::is_symlink(&path)
+                && matches!(
+                    Self::inspect_pi_skill_destination(&old_source, &path, &directory),
+                    Ok(Some(PiSkillDeployment::Symlink { .. }))
+                )
             {
-                let path = agents_dir.join(&directory);
-                if path.exists() || Self::is_symlink(&path) {
-                    Self::remove_path(&path)?;
-                }
+                Self::remove_path(&path)?;
             }
         }
         Ok(())
@@ -9486,6 +9510,120 @@ mod tests {
             pi_skill.canonicalize().expect("resolve Pi symlink"),
             new_source.canonicalize().expect("resolve new source")
         );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn migrate_storage_preserves_foreign_projections_and_native_directories() {
+        let temp = tempdir().unwrap();
+        let _home = TestHomeGuard::set(temp.path());
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
+        let db = Arc::new(Database::memory().unwrap());
+        let mut skill = poisoned_skill("local:managed", "managed");
+        skill.apps.claude = true;
+        skill.apps.gemini = true;
+        db.save_skill(&skill).unwrap();
+        let source = SkillService::get_ssot_dir().unwrap().join("managed");
+        write_skill(&source, "managed");
+        for app in [
+            AppType::Claude,
+            AppType::ClaudeDesktop,
+            AppType::OpenClaw,
+            AppType::Copilot,
+            AppType::WorkBuddy,
+        ] {
+            write_skill(
+                &SkillService::get_app_skills_dir(&app)
+                    .unwrap()
+                    .join("managed"),
+                "user content",
+            );
+        }
+        let external = temp.path().join("external");
+        write_skill(&external, "external content");
+        for (app, target) in [(AppType::Codex, &source), (AppType::Gemini, &external)] {
+            let root = SkillService::get_app_skills_dir(&app).unwrap();
+            fs::create_dir_all(&root).unwrap();
+            SkillService::create_symlink(target, &root.join("managed")).unwrap();
+        }
+
+        let result = SkillService::migrate_storage(&db, SkillStorageLocation::Unified).unwrap();
+        assert_eq!(result.migrated_count, 1);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        for app in [
+            AppType::Claude,
+            AppType::ClaudeDesktop,
+            AppType::OpenClaw,
+            AppType::Copilot,
+            AppType::WorkBuddy,
+        ] {
+            let path = SkillService::get_app_skills_dir(&app)
+                .unwrap()
+                .join("managed");
+            assert!(!SkillService::is_symlink(&path));
+            assert!(fs::read_to_string(path.join("SKILL.md"))
+                .unwrap()
+                .contains("user content"));
+        }
+        let codex = SkillService::get_app_skills_dir(&AppType::Codex)
+            .unwrap()
+            .join("managed");
+        assert!(!SkillService::is_symlink(&codex));
+        let gemini = SkillService::get_app_skills_dir(&AppType::Gemini)
+            .unwrap()
+            .join("managed");
+        assert_eq!(
+            gemini.canonicalize().unwrap(),
+            external.canonicalize().unwrap()
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn migrate_storage_preserves_skipped_and_failed_skill_projections() {
+        for fail_copy in [false, true] {
+            let temp = tempdir().unwrap();
+            let _home = TestHomeGuard::set(temp.path());
+            let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
+            let db = Arc::new(Database::memory().unwrap());
+            let mut skill = poisoned_skill("local:managed", "managed");
+            skill.apps.claude = true;
+            skill.apps.workbuddy = true;
+            db.save_skill(&skill).unwrap();
+            let source = SkillService::get_ssot_dir().unwrap().join("managed");
+            write_skill(&source, "original");
+            let target_root = temp.path().join(".agents/skills");
+            fs::create_dir_all(&target_root).unwrap();
+            if fail_copy {
+                SkillService::create_symlink(
+                    &temp.path().join("missing"),
+                    &target_root.join("managed"),
+                )
+                .unwrap();
+            } else {
+                write_skill(&target_root.join("managed"), "conflicting target");
+            }
+            for app in [AppType::Claude, AppType::Codex, AppType::WorkBuddy] {
+                let root = SkillService::get_app_skills_dir(&app).unwrap();
+                fs::create_dir_all(&root).unwrap();
+                SkillService::create_symlink(&source, &root.join("managed")).unwrap();
+            }
+
+            let result = SkillService::migrate_storage(&db, SkillStorageLocation::Unified).unwrap();
+            assert_eq!(result.migrated_count, 0);
+            if fail_copy {
+                assert!(!result.errors.is_empty());
+            } else {
+                assert_eq!(result.skipped_count, 1);
+            }
+            assert!(source.join("SKILL.md").is_file());
+            for app in [AppType::Claude, AppType::Codex, AppType::WorkBuddy] {
+                let path = SkillService::get_app_skills_dir(&app)
+                    .unwrap()
+                    .join("managed");
+                assert_eq!(fs::read_link(path).unwrap(), source);
+            }
+        }
     }
 
     #[test]
