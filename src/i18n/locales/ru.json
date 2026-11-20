@@ -1084,6 +1084,7 @@
     "toolUpgradeUnanchoredHint": "Не удалось определить, какую установку использует командная строка; будет выполнена команда обновления по умолчанию (может установить пакет в первый npm из PATH).",
     "toolUpgradeUnmanagedTitle": "Обновление этих инструментов пропущено",
     "toolUpgradeUnmanagedDetail": "{{tool}} ({{path}}) установлен не через npm и не распознанным установщиком, поэтому CC Switch не знает, как его обновить. Обновите тем же способом, которым ставили (напр. winget, Scoop или официальный install-скрипт).",
+    "toolUpgradeDesktopManagedDetail": "Этот OpenCode CLI входит в состав OpenCode Desktop и обновляется вместе с приложением Desktop.",
     "envBadge": {
       "wsl": "WSL",
       "windows": "Windows",

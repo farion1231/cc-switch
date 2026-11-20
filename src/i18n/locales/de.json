@@ -1084,6 +1084,7 @@
     "toolUpgradeUnanchoredHint": "Es lässt sich nicht bestimmen, welche Installation Ihre Kommandozeile verwendet; der Standard-Upgrade-Befehl wird ausgeführt (installiert möglicherweise in das erste npm im PATH).",
     "toolUpgradeUnmanagedTitle": "Upgrade dieser Tools übersprungen",
     "toolUpgradeUnmanagedDetail": "{{tool}} ({{path}}) wurde weder per npm noch mit einem bekannten Installer installiert, daher kann CC Switch nicht erkennen, wie es zu aktualisieren ist. Aktualisieren Sie es auf dem Weg, auf dem Sie es installiert haben (z. B. winget, Scoop oder erneutes Ausführen des offiziellen Installationsskripts).",
+    "toolUpgradeDesktopManagedDetail": "Diese OpenCode-CLI ist in OpenCode Desktop enthalten und wird zusammen mit der Desktop-App aktualisiert.",
     "envBadge": {
       "wsl": "WSL",
       "windows": "Win",

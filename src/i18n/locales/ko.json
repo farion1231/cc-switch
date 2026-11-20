@@ -1084,6 +1084,7 @@
     "toolUpgradeUnanchoredHint": "명령줄에서 어떤 설치를 사용하는지 확인할 수 없어 기본 업그레이드 명령을 실행합니다. PATH에서 가장 먼저 찾은 npm을 통해 설치될 수 있습니다.",
     "toolUpgradeUnmanagedTitle": "이 도구 업그레이드를 건너뛰었습니다.",
     "toolUpgradeUnmanagedDetail": "{{tool}} ({{path}}) 항목은 npm이나 인식 가능한 설치 프로그램으로 설치되지 않아 CC Switch에서 업그레이드 방법을 판단할 수 없습니다. 처음 설치할 때 사용한 방식으로 업그레이드하세요(예: winget, Scoop 또는 공식 설치 스크립트 다시 실행).",
+    "toolUpgradeDesktopManagedDetail": "이 OpenCode CLI는 OpenCode Desktop에 포함되어 있으며 Desktop 앱과 함께 업데이트됩니다.",
     "envBadge": {
       "wsl": "WSL",
       "windows": "Win",
