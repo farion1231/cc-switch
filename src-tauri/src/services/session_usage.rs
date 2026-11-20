@@ -264,10 +264,10 @@ struct ParsedAssistantUsage {
 }
 
 /// 估算出的请求耗时短于这个毫秒数就不要：真实请求不可能这么快，多半是起点取错了。
-const MIN_PLAUSIBLE_LATENCY_MS: i64 = 100;
+pub(crate) const MIN_PLAUSIBLE_LATENCY_MS: i64 = 100;
 
 /// 估算出的请求耗时长于这个毫秒数也不要：中间多半夹了休眠或长时间的重试等待。
-const MAX_PLAUSIBLE_LATENCY_MS: i64 = 60 * 60 * 1000;
+pub(crate) const MAX_PLAUSIBLE_LATENCY_MS: i64 = 60 * 60 * 1000;
 
 /// 会话日志没有请求计时，耗时只能拿两个时间戳相减估出来（含首字等待）。
 /// 落在合理范围之外的返回 None，入库时写 0，表示没有计时。
