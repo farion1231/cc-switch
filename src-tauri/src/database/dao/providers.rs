@@ -152,16 +152,36 @@ impl Database {
         app_type: &AppType,
         id: &str,
     ) -> Result<Option<UnreadableEntry>, AppError> {
+        Ok(self.read_provider(app_type, id)?.and_then(Result::err))
+    }
+
+    /// 按 id 读一行，读不出来时放在内层的 `Err` 里：调用方可以把它当成跳过的一项，
+    /// 不必让整个操作失败。
+    pub fn read_provider(
+        &self,
+        app_type: &AppType,
+        id: &str,
+    ) -> Result<Option<Result<Provider, UnreadableEntry>>, AppError> {
         let conn = lock_conn!(self.conn);
-        let result = conn
-            .query_row(
-                &format!("{PROVIDER_SELECT} WHERE id = ?1 AND app_type = ?2"),
-                params![id, app_type],
-                |row| super::read_row(row, row_to_provider),
-            )
-            .optional()
-            .map_err(|e| AppError::Database(e.to_string()))?;
-        Ok(result.and_then(Result::err))
+        conn.query_row(
+            &format!("{PROVIDER_SELECT} WHERE id = ?1 AND app_type = ?2"),
+            params![id, app_type],
+            |row| super::read_row(row, row_to_provider),
+        )
+        .optional()
+        .map_err(|e| AppError::Database(e.to_string()))
+    }
+
+    /// 库里有没有这一行，不解析它存的 JSON：只问「在不在」的地方（指针校验、种子、
+    /// 起名查重）不该因为这一行读不出来就失败。
+    pub fn provider_exists(&self, id: &str, app_type: &AppType) -> Result<bool, AppError> {
+        let conn = lock_conn!(self.conn);
+        conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM providers WHERE id = ?1 AND app_type = ?2)",
+            params![id, app_type],
+            |row| row.get(0),
+        )
+        .map_err(|e| AppError::Database(e.to_string()))
     }
 
     /// 路由只加载故障转移队列；端点一次批量读取，避免每张卡再查一次。
@@ -605,6 +625,21 @@ impl Database {
         Ok(())
     }
 
+    /// 这一类（`omo` / `omo-slim`）全部取消启用。只改 `is_current`，不读各行存的 JSON。
+    pub fn clear_omo_category_current(
+        &self,
+        app_type: &AppType,
+        category: &str,
+    ) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        conn.execute(
+            "UPDATE providers SET is_current = 0 WHERE app_type = ?1 AND category = ?2",
+            params![app_type, category],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+
     pub fn get_current_omo_provider(
         &self,
         app_type: &AppType,
@@ -779,7 +814,7 @@ impl Database {
             let app_type = &seed.app_type;
 
             // 若该 id 已存在（极端情况：用户曾手动用过同 id），跳过
-            if self.get_provider_by_id(seed.id, app_type)?.is_some() {
+            if self.provider_exists(seed.id, app_type)? {
                 continue;
             }
 
@@ -837,7 +872,7 @@ impl Database {
                 ))
             })?;
 
-        if self.get_provider_by_id(seed_id, &app_type)?.is_some() {
+        if self.provider_exists(seed_id, &app_type)? {
             return Ok(false);
         }
 

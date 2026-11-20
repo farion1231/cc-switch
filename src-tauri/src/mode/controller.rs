@@ -1399,7 +1399,12 @@ pub async fn sync_stack_order(state: &AppState, app: &AppType) -> Result<(), Str
     if current.members.len() < 2 {
         return Ok(());
     }
-    let providers = state.db.get_all_providers(app).map_err(err)?;
+    // 只读排序；读不出来的成员和不在库里的一样排到最后。
+    let providers = state
+        .db
+        .get_provider_rows(app)
+        .map_err(err)?
+        .into_readable("Stack 排序");
     let mut next = current.clone();
     // 稳定排序：sort_index 相同或缺失时保留原名单顺序。
     next.members.sort_by_key(|id| {

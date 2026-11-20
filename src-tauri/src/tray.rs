@@ -1460,7 +1460,16 @@ fn collect_app_snapshot(
         app,
         crate::mode::current::Purpose::InUse,
     )?
-    .filter(|id| rows.contains_key(id));
+    .filter(|id| {
+        let readable = rows.contains_key(id);
+        if !readable {
+            log::warn!(
+                "{} 正在用的 {id} 读不出来，托盘按没有当前供应商显示",
+                app.as_str()
+            );
+        }
+        readable
+    });
     let mode = tray_mode(app_state, app);
 
     let queue = if mode == TrayMode::Failover {
@@ -3652,6 +3661,67 @@ mod tests {
         .expect("the tray still builds");
         let ids: Vec<&str> = snapshot.providers.iter().map(|p| p.id.as_str()).collect();
         assert_eq!(ids, ["good"]);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn the_tray_still_builds_when_the_provider_in_use_is_unreadable() {
+        use std::sync::Arc;
+        let home = tempfile::tempdir().unwrap();
+        let _env = crate::test_support::EnvVars::new()
+            .set("CC_SWITCH_TEST_HOME", home.path())
+            .set("HOME", home.path());
+        crate::settings::reload_settings().unwrap();
+        let state = AppState::new(Arc::new(crate::database::Database::memory().unwrap()));
+        for id in ["good", "broken"] {
+            let provider = crate::provider::Provider::with_id(
+                id.into(),
+                id.into(),
+                serde_json::json!({"env": {}}),
+                None,
+            );
+            state.db.save_provider(&AppType::Codex, &provider).unwrap();
+        }
+        state
+            .db
+            .conn
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE providers SET meta = '{' WHERE app_type = 'codex' AND id = 'broken'",
+                [],
+            )
+            .unwrap();
+        let snapshot = || {
+            collect_app_snapshot(
+                &state,
+                &en(),
+                &crate::settings::AppSettings::default(),
+                &AppType::Codex,
+                None,
+                &[],
+            )
+            .expect("the tray still builds")
+        };
+
+        // 直连指针指着读不出来的那行：按没有当前供应商显示，其余照常列出。
+        crate::settings::set_current_provider(&AppType::Codex, Some("broken")).unwrap();
+        let direct = snapshot();
+        assert_eq!(direct.current_id, None);
+        let ids: Vec<&str> = direct.providers.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(ids, ["good"]);
+
+        // 代理路由指着它也一样。
+        crate::mode::state::update(&crate::live::engine::DeviceStore::for_device(), |live| {
+            let codex = live.apps.entry("codex".to_string()).or_default();
+            codex.mode = Some(crate::mode::state::Mode::Proxy);
+            codex.proxy_route = Some("broken".to_string());
+        })
+        .unwrap();
+        crate::settings::set_current_provider(&AppType::Codex, Some("good")).unwrap();
+        assert_eq!(snapshot().current_id, None);
+
+        crate::settings::set_current_provider(&AppType::Codex, None).unwrap();
     }
 
     // ─── 基础 ───
