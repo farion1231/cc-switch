@@ -440,5 +440,3 @@ export function mergeOpencodeExtraOptionRows(
     }
   }
 }
-
-export { buildOmoProfilePreview } from "@/types/omo";

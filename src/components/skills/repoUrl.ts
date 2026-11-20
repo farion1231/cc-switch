@@ -114,3 +114,26 @@ export function isInsecureRepoUrl(url: string): boolean {
   if (!/^http:\/\//i.test(trimmed)) return false;
   return Boolean(parseRepoUrl(trimmed)?.host);
 }
+
+/**
+ * 访问令牌按主机存，输入框却常被贴进整条仓库地址：从中取出主机（带端口），
+ * 小写。`gitlab.example.com/group/x`、`https://…`、`git@host:…` 都认；
+ * 取不出就原样（去空白、小写）交给后端校验，由它报「站点无效」。
+ */
+export function tokenHostFromInput(input: string): string {
+  const trimmed = input.trim();
+  let host = trimmed.split("/")[0] ?? "";
+  const scp = trimmed.match(/^git@([^:/]+):/);
+  if (scp) {
+    host = scp[1];
+  } else if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)) {
+    try {
+      const parsed = new URL(trimmed);
+      // 与 parseRepoUrl 一致：ssh:// 的端口是 SSH 的，下载走 https 默认端口，不算进主机
+      host = /^ssh:/i.test(trimmed) ? parsed.hostname : parsed.host;
+    } catch {
+      host = trimmed;
+    }
+  }
+  return host.toLowerCase().replace(/^www\.(?=github\.com$)/, "");
+}

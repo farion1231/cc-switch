@@ -318,7 +318,7 @@
     "supports1mShort": "1M",
     "directModelListTitle": "모델 목록",
     "directModelListCollapsedHint": "네이티브 Claude 모델 공급자는 일반적으로 설정할 필요가 없습니다. Claude Desktop이 /v1/models를 자동으로 가져옵니다.",
-    "directModelListHint": "Claude Desktop에 사용할 수 있는 Sonnet, Opus 및 Haiku 모델을 설정합니다. Claude Desktop이 /v1/models를 자동으로 가져오도록 하려면 이 항목을 비워 두세요. 1M을 선택하면 1M 컨텍스트 지원이 선언됩니다.",
+    "directModelListHint": "Claude Desktop에 사용할 수 있는 Sonnet, Opus 및 Haiku 모델을 설정합니다. 직접 연결에서는 비워 두면 Claude Desktop이 /v1/models를 자동으로 가져옵니다. 라우팅 모드에서는 비워 두면 기본 Claude 모델 이름만 제공되므로, 공급자의 모델을 사용하려면 여기에 입력하세요. 1M을 선택하면 1M 컨텍스트 지원이 선언됩니다.",
     "directModelInvalid": "직접 연결 모델에는 Claude Desktop이 인식하는 Sonnet / Opus / Haiku 모델 ID를 사용해야 합니다",
     "addModel": "모델 추가",
     "addRoute": "모델 추가",
@@ -378,6 +378,7 @@
     "openclawModelNotFound": "선택한 모델이 더 이상 존재하지 않습니다. 새로 고침하고 다시 시도하세요.",
     "backfillWarning": "전환은 완료되었지만 이전 공급자의 설정을 다시 저장하지 못해 수동으로 변경한 설정이 저장되지 않았을 수 있습니다.",
     "codexAuthCleanupFailed": "전환은 완료되었지만 auth.json을 삭제하지 못해 공식 로그인 자격 증명이 디스크에 남아 있습니다. 완전히 제거하려면 Codex 설정 디렉터리의 auth.json을 직접 삭제하세요.",
+    "omoVariantCleanupFailed": "전환에 성공했지만 다른 OMO 변형(OMO / OMO Slim)의 설정 파일을 삭제하지 못해 OpenCode가 둘 다 불러올 수 있습니다. OpenCode 설정 디렉터리에서 직접 삭제하세요",
     "windowControlFailed": "창 제어 실패: {{error}}",
     "officialBlockedByProxy": "로컬 라우팅이 활성화된 동안에는 공식 공급자로 전환할 수 없습니다. 공식 API와 함께 라우팅을 사용하면 계정이 차단될 수 있습니다.",
     "proxyOfficialWarning": "현재 선택한 공급자({{name}})는 공식 공급자입니다. 로컬 라우팅을 사용하기 전에 타사 공급자로 전환하는 것을 고려하세요.",
@@ -463,8 +464,7 @@
     "tabProxy": "라우팅",
     "authCenter": {
       "description": "GitHub Copilot, ChatGPT 및 xAI 구독을 공급자로 사용할 수 있습니다. 자격 증명은 라우팅 서비스가 주입하므로 관련 공급자는 라우팅 모드에서 사용해야 합니다(Codex 공식 로그인 연결 제외). Antigravity 계정은 agy의 공식 로그인을 전환하는 데 사용합니다.",
-      "beta": "베타",
-      "xaiOauthDescription": "xAI/Grok 계정 관리"
+      "beta": "베타"
     },
     "advanced": {
       "configDir": {
@@ -1121,7 +1121,6 @@
       "pricingModelSourceLabel": "요금 적용 기준 모델",
       "pricingModelSourceRequest": "요청 모델",
       "pricingModelSourceResponse": "응답 모델",
-      "pricingSave": "기본 요금 설정 저장",
       "pricingSaved": "기본 요금 설정을 저장했습니다",
       "pricingSaveFailed": "기본 요금 설정 저장 실패: {{error}}",
       "pricingLoadFailed": "기본 요금 설정을 불러오지 못했습니다: {{error}}"
@@ -1445,7 +1444,7 @@
     "keyFieldsHint": "기본 모델(models.default)과 해당 모델 테이블은 공급자를 전환하면 함께 바뀝니다. 나머지는 Grok Build 전역 설정이며 저장하면 모든 공급자에 적용됩니다.",
     "inactiveFieldsHint": "이전 버전에서 이 공급자에 저장한 설정으로, 이제 공급자를 전환해도 적용되지 않습니다. 항목을 선택하여 TOML을 복사한 뒤 필요한 경우 위에 붙여 넣으세요.",
     "inactiveFieldCopied": "복사됨",
-    "routeOnlySettingsHint": "아래 두 가지 설정은 라우팅 모드에서만 적용됩니다."
+    "routeOnlySettingsHint": "아래 설정은 라우팅 모드에서만 적용됩니다."
   },
   "sessionManager": {
     "searchPlaceholder": "제목, 폴더, 첫 번째/마지막 메시지 또는 세션 ID 검색",
@@ -1659,7 +1658,17 @@
         "prLink": "연결된 PR #{{number}}",
         "prLinkPlain": "PR을 연결했습니다",
         "slashCommand": "{{command}}을(를) 실행",
-        "subAgent": "서브에이전트 {{name}}"
+        "subAgent": "서브에이전트 {{name}}",
+        "goal": "목표 · {{status}}",
+        "goalPlain": "목표",
+        "goalStatus": {
+          "active": "진행 중",
+          "paused": "일시 중지됨",
+          "blocked": "막힘",
+          "usageLimited": "사용 한도 도달",
+          "budgetLimited": "예산 도달",
+          "complete": "완료"
+        }
       },
       "injectedToggle": "주입된 컨텍스트 표시",
       "injectedRow": "컨텍스트 · {{label}} · {{chars}}자",
@@ -1726,6 +1735,7 @@
       "outlineFailed": "실패한 단계가 있음",
       "outlineAborted": "중단됨",
       "outlineNoReply": "답변 없음",
+      "chapter": "챕터",
       "viewOptions": "표시 옵션",
       "noChanges": "이 세션에는 파일 변경 사항이 없습니다",
       "rawMatch": "원문에서 일치하는 내용",
@@ -1742,6 +1752,9 @@
     "openReleaseNotesFailed": "릴리스 노트를 열지 못했습니다:"
   },
   "providerForm": {
+    "billingMultiplier": "공급자 비용 배율",
+    "billingMultiplierHelp": "이 공급자의 모든 모델 기준 가격에 이 값을 곱해 로컬 라우팅을 거친 요청의 비용을 추정합니다. 0.5는 반값이며 비워 두면 1배입니다. 이후 요청에만 적용됩니다. 라우팅을 끈 직접 연결 모드에서는 세션 기록에서 가져온 사용량이 계속 1배로 집계됩니다.",
+    "billingMultiplierInvalid": "0부터 1000까지의 숫자를 입력하거나 1배를 쓰려면 비워 두세요.",
     "nativeConfig": {
       "title": "설정 파일 {{path}} (이 공급자만 해당)",
       "hint": "앱에서 사용하는 설정 형식으로 파일 내 이 공급자에 해당하는 부분을 표시하며, 저장 시 해당 파일에 반영합니다. 기본 모델 등의 전역 설정은 포함되지 않습니다. 여기에 입력한 주석은 저장되지 않습니다.",
@@ -2237,7 +2250,7 @@
     "inactiveFieldCopied": "복사됨",
     "upstreamFormatCopilotRouteHint": "모든 모드에는 Copilot 계정 자격 증명을 삽입하는 라우팅이 필요합니다. 명시적으로 선택한 프로토콜은 해당 프로토콜을 지원하지 않는 모델에서는 실패합니다.",
     "maxOutputTokensWarning": "모델이나 게이트웨이의 실제 출력 한도를 초과하면 요청에 400 오류가 반환됩니다.",
-    "routeOnlySettingsHint": "아래 두 설정은 라우팅 및 통합 모드에서만 적용됩니다."
+    "routeOnlySettingsHint": "아래 설정은 라우팅 및 통합 모드에서만 적용됩니다."
   },
   "geminiConfig": {
     "envFile": "환경 변수(.env)",
@@ -2734,7 +2747,9 @@
       "speedEstimateTooFew": "출력이 200토큰 미만이므로 속도를 추정하지 않습니다.",
       "noTimingSession": "세션 로그에는 타이밍 데이터가 없습니다.",
       "noFirstToken": "첫 토큰 시간 데이터가 없어 속도를 계산하지 않습니다.",
-      "providerId": "공급자 ID"
+      "providerId": "공급자 ID",
+      "copyRequestId": "요청 ID 복사",
+      "requestIdCopied": "요청 ID를 복사했습니다"
     },
     "sources": {
       "scanTitle": "세션 로그를 자동으로 스캔",
@@ -2923,7 +2938,6 @@
     "geminiTitle": "Gemini MCP 관리",
     "unifiedPanel": {
       "title": "MCP 서버 관리",
-      "deleteServer": "서버 삭제",
       "deleteConfirm": "정말로 \"{{id}}\" 서버를 삭제하시겠습니까? 이 작업은 취소할 수 없습니다.",
       "enabledApps": "활성화된 앱",
       "importSuccess": "MCP 서버 {{count}}개를 성공적으로 가져왔습니다.",
@@ -2970,28 +2984,20 @@
       "tagsPlaceholder": "stdio, time, utility",
       "homepage": "홈페이지",
       "docs": "문서",
-      "jsonPlaceholder": "{\n  \"type\": \"stdio\",\n  \"command\": \"uvx\",\n  \"args\": [\"mcp-server-fetch\"]\n}",
-      "tomlConfig": "전체 TOML 설정",
-      "tomlPlaceholder": "type = \"stdio\"\ncommand = \"uvx\"\nargs = [\"mcp-server-fetch\"]",
-      "syncOtherSide": "{{target}}에 동기화"
+      "tomlConfig": "전체 TOML 설정"
     },
     "wizard": {
       "title": "MCP 설정 마법사",
       "hint": "MCP 서버를 빠르게 설정하고 JSON 설정을 자동 생성합니다.",
       "type": "유형",
-      "typeStdio": "stdio",
-      "typeSse": "sse",
       "command": "명령",
       "commandPlaceholder": "npx 또는 uvx",
       "args": "인수",
-      "argsPlaceholder": "arg1\narg2",
       "env": "환경 변수",
-      "envPlaceholder": "KEY1=value1\nKEY2=value2",
       "url": "URL",
       "urlPlaceholder": "https://api.example.com/mcp",
       "urlRequired": "URL을 입력하세요",
       "headers": "헤더(선택 사항)",
-      "headersPlaceholder": "Authorization: Bearer your_token_here\nContent-Type: application/json",
       "preview": "설정 미리보기",
       "apply": "설정 적용"
     },
@@ -3514,13 +3520,18 @@
       "archiveDownloadTooLarge": "저장소 아카이브 다운로드가 {{limit_mb}} MB 제한을 초과했습니다. 중단됨",
       "archiveTooManyEntries": "압축 파일의 항목 수({{count}}개)가 최대 허용 개수({{limit}}개)를 초과했습니다.",
       "downloadFailed": "다운로드 실패: HTTP {{status}}",
-      "httpError": "HTTP 오류 {{status}}",
       "http403": "GitHub 접근이 제한되었습니다. 요청 빈도 제한일 수 있습니다",
-      "http404": "저장소 또는 브랜치를 찾을 수 없습니다. URL을 확인하세요.",
+      "http404": "저장소 또는 브랜치를 찾을 수 없습니다. URL을 확인하세요. 비공개 저장소는 먼저 '스킬 저장소 관리'에서 액세스 토큰을 설정하세요.",
       "http429": "요청이 너무 많습니다. 잠시 기다렸다가 다시 시도해 주세요.",
+      "http401Token": "액세스 토큰이 유효하지 않거나 만료되었습니다. '스킬 저장소 관리'에서 다시 설정하세요.",
+      "http403Token": "액세스 토큰에 이 저장소를 읽을 권한이 없거나 요청이 너무 많습니다.",
+      "http404Token": "저장소 또는 브랜치를 찾을 수 없거나, 액세스 토큰에 이 저장소를 읽을 권한이 없습니다.",
+      "httpAuthRequired": "이 사이트는 로그인이 필요합니다. '스킬 저장소 관리'에서 액세스 토큰을 설정하세요.",
+      "invalidTokenHost": "잘못된 사이트: {{host}}. gitlab.example.com처럼 호스트 이름만 입력하세요.",
+      "invalidRepoToken": "잘못된 토큰: 영문자, 숫자와 - _ . ~ + / =만 사용할 수 있으며 최대 {{limit}}자입니다.",
+      "repoTokenStorageFailed": "{{host}}의 액세스 토큰을 읽거나 쓰지 못했습니다. 시스템 자격 증명 저장소를 사용할 수 있는지 확인하세요.",
       "getHomeDirFailed": "사용자 홈 디렉터리를 가져올 수 없습니다.",
       "noSkillsInZip": "ZIP 파일에 스킬이 없습니다 (SKILL.md 파일 필요)",
-      "networkError": "네트워크 오류",
       "unknownError": "알 수 없는 오류",
       "suggestion": {
         "checkNetwork": "네트워크 연결을 확인해 주세요.",
@@ -3545,6 +3556,19 @@
       "empty": "저장소 없음",
       "invalidUrl": "잘못된 저장소 URL 형식",
       "httpsOnly": "GitLab / Gitea 저장소는 https 주소만 지원합니다",
+      "token": {
+        "title": "액세스 토큰",
+        "description": "비공개 저장소를 읽을 때 사용합니다. 토큰은 사이트별로 시스템 자격 증명 저장소(macOS 키체인, Windows 자격 증명 관리자)에 저장되며 클라우드 동기화되지 않습니다. 읽기 권한만 있으면 됩니다.",
+        "descriptionFile": "비공개 저장소를 읽을 때 사용합니다. 토큰은 사이트별로 이 컴퓨터에서 본인만 읽을 수 있는 파일에 저장되며 클라우드 동기화되지 않습니다. 읽기 권한만 있으면 됩니다.",
+        "host": "사이트",
+        "hostPlaceholder": "github.com 또는 gitlab.example.com",
+        "value": "토큰",
+        "valuePlaceholder": "액세스 토큰 붙여넣기",
+        "save": "토큰 저장",
+        "empty": "아직 설정된 액세스 토큰이 없습니다",
+        "removeAria": "{{host}}의 액세스 토큰 삭제",
+        "missingFields": "사이트와 토큰을 모두 입력하세요"
+      },
       "addSuccess": "저장소 {{owner}}/{{name}}을(를) 추가하고 스킬 {{count}}개를 찾았습니다",
       "addFailed": "추가하지 못했습니다.",
       "removeSuccess": "저장소 {{owner}}/{{name}} 제거를 완료했습니다.",
@@ -3735,7 +3759,6 @@
       "repo": "GitHub 저장소",
       "directory": "대상 디렉터리",
       "branch": "브랜치",
-      "skillsPath": "스킬 경로",
       "hint": "이 작업을 수행하면 스킬 저장소가 목록에 추가됩니다.",
       "hintDetail": "추가 후 스킬 관리 페이지에서 특정 스킬을 설치할 수 있습니다."
     },
@@ -3832,7 +3855,6 @@
   },
   "proxy": {
     "panel": {
-      "currentProvider": "현재 공급자:",
       "openSettings": "라우팅 서비스 설정",
       "stats": {
         "activeConnections": "활성 연결",
@@ -3893,10 +3915,6 @@
           "label": "비스트리밍 제한 시간(초)",
           "description": "스트리밍되지 않는 요청의 총 제한 시간"
         }
-      },
-      "validation": {
-        "retryMin": "재시도 횟수는 음수일 수 없습니다.",
-        "retryMax": "재시도 횟수는 10을 초과할 수 없습니다."
       },
       "actions": {
         "save": "설정 저장"
@@ -4330,7 +4348,8 @@
       "stack": "통합"
     },
     "needsAttention": "주의가 필요함",
-    "back": "뒤로"
+    "back": "뒤로",
+    "plugins": "플러그인"
   },
   "appsPage": {
     "showInSidebar": "사이드바에 {{name}} 표시",
@@ -4755,7 +4774,7 @@
       "filesTitle": "읽은 파일",
       "claudeNote": " (최상위 mcpServers)",
       "ok": "확인",
-      "dshNote": " (초기화된 모든 프로필에 기록: web, desktop, headless, acp)"
+      "dshNote": " (초기화된 모든 프로필에 기록: web, desktop, headless, acp. 홈 수준의 ~/.dsh/cordis.patch.yml은 읽거나 쓰지 않으므로, 그 안의 MCP는 해당 파일에서 관리하세요)"
     },
     "templateLabels": {
       "sequential-thinking": "순차적 사고"
@@ -5027,6 +5046,88 @@
     },
     "updateAllCount": "모두 업데이트 ({{count}}개)",
     "updatingProgress": "업데이트 중 {{done}}/{{total}}…"
+  },
+  "pluginsPage": {
+    "title": "플러그인",
+    "helpTitle": "플러그인",
+    "help": "Claude Code, Codex, Grok Build, MiniMax Code, OpenClaw, Pi의 플러그인을 설치, 활성화, 제거합니다. CC Switch는 각 앱의 자체 CLI를 실행하므로 터미널에서 플러그인 명령을 사용하는 것과 결과가 같습니다. Pi의 경우 플러그인은 Pi 패키지이며 카탈로그는 npm에서 가져옵니다.",
+    "appAria": "앱",
+    "viewAria": "플러그인 보기",
+    "viewInstalled": "설치됨",
+    "viewInstalledCount": "설치됨 · {{count}}",
+    "viewDiscover": "탐색",
+    "viewDiscoverCount": "탐색 · {{count}}",
+    "viewMarketplaces": "마켓플레이스",
+    "searchPlaceholder": "플러그인 검색",
+    "searchAria": "플러그인 검색",
+    "count": "플러그인 {{count}}개",
+    "countFiltered": "{{count}}개 중 {{shown}}개",
+    "noMatches": "“{{query}}”와(과) 일치하는 플러그인이 없습니다",
+    "loading": "{{app}} 플러그인을 읽는 중…",
+    "loadFailed": "{{app}} 플러그인을 읽을 수 없습니다",
+    "catalogLoadFailed": "마켓플레이스 카탈로그를 읽을 수 없습니다",
+    "loadingCatalog": "{{app}} 마켓플레이스 카탈로그를 읽는 중…",
+    "refreshing": "새로 고치는 중…",
+    "marketsLoadFailed": "마켓플레이스를 읽을 수 없습니다",
+    "cliMissingTitle": "{{app}}이(가) 설치되어 있지 않습니다",
+    "cliMissingBody": "플러그인은 {{app}} CLI를 통해 관리됩니다. 앱 페이지에서 설치한 후 다시 돌아오세요.",
+    "emptyInstalledTitle": "설치된 플러그인이 없습니다",
+    "emptyInstalledBody": "마켓플레이스를 둘러보고 {{app}}에 스킬, 명령, 에이전트, MCP 서버를 추가하세요.",
+    "browse": "플러그인 둘러보기",
+    "emptyDiscoverTitle": "새로 설치할 항목이 없습니다",
+    "emptyDiscoverBody": "마켓플레이스의 모든 플러그인이 설치되어 있습니다. 더 보려면 마켓플레이스를 추가하세요.",
+    "emptyCatalogBody": "카탈로그의 모든 플러그인이 설치되어 있습니다.",
+    "emptyMarketsTitle": "추가된 마켓플레이스가 없습니다",
+    "emptyMarketsBody": "{{app}}은(는) 여전히 내장 카탈로그를 표시합니다. 더 많은 플러그인을 보려면 GitHub 저장소나 Git URL을 추가하세요.",
+    "builtIn": "내장",
+    "builtInPlugin": "앱에 기본 포함되어 있습니다. 켜거나 끌 수는 있지만 제거할 수는 없습니다.",
+    "scope": "{{scope}} 범위",
+    "scopeReadOnly": "{{scope}} 범위에 설치되어 있습니다. 해당 프로젝트에서 CLI로 관리하세요.",
+    "enableAria": "{{name}} 활성화",
+    "moreActions": "{{name}} 추가 작업",
+    "working": "처리 중…",
+    "install": "설치",
+    "installing": "설치 중…",
+    "notInstallable": "사용할 수 없음",
+    "update": "업데이트",
+    "uninstall": "제거",
+    "restartNote": "변경 사항은 새 {{app}} 세션부터 적용됩니다.",
+    "restartNoteGateway": "변경 사항은 {{app}} Gateway가 다시 시작된 후 적용됩니다.",
+    "refreshMarketplaces": "마켓플레이스 새로 고침",
+    "refreshCatalog": "카탈로그 새로 고침",
+    "addMarketplace": "마켓플레이스 추가",
+    "addMarketplaceTitle": "{{app}} 마켓플레이스 추가",
+    "addMarketplaceBody": "GitHub owner/repo, Git URL 또는 로컬 폴더(슬래시(/)를 사용하고 공백은 넣지 마세요).",
+    "addMarketplaceWaiting": "마켓플레이스 저장소를 내려받는 중입니다. 저장소가 크면 몇 분 걸릴 수 있습니다(최대 5분). 이 창을 닫아도 되며, 완료되면 알려 드립니다.",
+    "sourceLabel": "소스",
+    "removeMarketplace": "제거",
+    "confirmUninstallTitle": "{{name}}을(를) 제거할까요?",
+    "confirmUninstallBody": "{{app}}에서 플러그인과 캐시된 파일을 제거합니다. 탐색에서 다시 설치할 수 있습니다.",
+    "confirmUninstallClaudeBody": "{{app}}에서 플러그인을 제거하고 데이터 디렉터리는 유지합니다. 마지막 설치본인 경우 저장된 옵션과 자격 증명이 삭제되며, 다시 설치해도 복원되지 않습니다.",
+    "confirmInstallTitle": "{{name}}을(를) 설치할까요?",
+    "confirmInstallBody": "플러그인은 사용자의 권한으로 실행됩니다. {{app}}이(가) 플러그인의 스킬, 훅, MCP 서버를 로드하고 플러그인이 선언한 기능을 부여합니다. 신뢰할 수 있는 소스의 플러그인만 설치하세요.",
+    "confirmRemoveMarketTitle": "마켓플레이스 {{name}}을(를) 제거할까요?",
+    "confirmRemoveMarketBody": "{{app}}이(가) 이 마켓플레이스의 플러그인을 더 이상 표시하지 않으며, 여기에서 설치한 플러그인이 제거될 수 있습니다. 나중에 다시 추가할 수 있습니다.",
+    "toast": {
+      "installed": "{{name}}을(를) 설치했습니다",
+      "installFailed": "{{name}}을(를) 설치할 수 없습니다",
+      "installNeedsTerminal": "이 플러그인은 설치 중 마켓플레이스에 선언된 명령을 사용자의 컴퓨터에서 실행하며, CC Switch는 이를 대신 승인하지 않습니다. 터미널에서 {{command}}을(를) 실행해 승인한 다음 돌아와서 새로 고치세요.",
+      "authRequired": "{{app}}에 먼저 로그인해야 합니다. 터미널에서 {{command}}을(를) 실행한 다음 돌아와서 다시 시도하세요.",
+      "uninstalled": "{{name}}을(를) 제거했습니다",
+      "uninstallFailed": "{{name}}을(를) 제거할 수 없습니다",
+      "enabled": "{{name}}을(를) 활성화했습니다",
+      "disabled": "{{name}}을(를) 비활성화했습니다",
+      "toggleFailed": "{{name}}을(를) 변경할 수 없습니다",
+      "updated": "{{name}}을(를) 업데이트했습니다",
+      "upToDate": "{{name}}은(는) 이미 최신 버전입니다",
+      "updateFailed": "{{name}}을(를) 업데이트할 수 없습니다",
+      "refreshed": "마켓플레이스를 새로 고쳤습니다",
+      "refreshFailed": "마켓플레이스를 새로 고칠 수 없습니다",
+      "marketAdded": "마켓플레이스 {{source}}을(를) 추가했습니다",
+      "marketAddFailed": "마켓플레이스를 추가할 수 없습니다",
+      "marketRemoved": "마켓플레이스 {{name}}을(를) 제거했습니다",
+      "marketRemoveFailed": "{{name}}을(를) 제거할 수 없습니다"
+    }
   },
   "newLayoutNotice": {
     "title": "CC Switch의 디자인이 새로워졌습니다",
@@ -5309,5 +5410,11 @@
     "installFailed": "업데이트 설치에 실패했습니다",
     "downloadingInline": "새 버전을 백그라운드에서 다운로드하는 중…",
     "downloadedInline": "다운로드 완료"
+  },
+  "unreadableEntry": {
+    "title": "“{{name}}”의 데이터를 읽을 수 없습니다",
+    "hint": "최신 버전의 CC Switch에서 저장되었을 수 있습니다. 데이터는 그대로 보존되며 편집하거나 활성화할 수 없습니다. 업그레이드하면 복원되며, 삭제할 수도 있습니다.",
+    "confirmTitle": "읽을 수 없는 항목 삭제",
+    "confirmMessage": "“{{name}}”을(를) 삭제할까요? CC Switch의 이 기록만 삭제되며 각 앱의 설정 파일은 변경되지 않습니다."
   }
 }

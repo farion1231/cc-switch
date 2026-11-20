@@ -318,7 +318,7 @@
     "supports1mShort": "1 milyon",
     "directModelListTitle": "Model Listesi",
     "directModelListCollapsedHint": "Yerel Claude modeli sağlayıcılarında buna genellikle gerek yoktur. Claude Desktop, /v1/models uç noktasını otomatik sorgular.",
-    "directModelListHint": "Claude Desktop için kullanılabilen Sonnet, Opus ve Haiku modellerini yapılandırın. Claude Desktop’ın /v1/models uç noktasını otomatik sorgulaması için boş bırakın. 1M seçeneğini işaretlemek, 1 milyon token bağlam desteğini bildirir.",
+    "directModelListHint": "Claude Desktop için kullanılabilen Sonnet, Opus ve Haiku modellerini yapılandırın. Doğrudan modda boş bırakırsanız Claude Desktop /v1/models uç noktasını otomatik sorgular; yönlendirme modunda boş liste yalnızca varsayılan Claude model adlarını sunar, sağlayıcının modellerini kullanmak için buraya girin. 1M seçeneğini işaretlemek, 1 milyon token bağlam desteğini bildirir.",
     "directModelInvalid": "Doğrudan modeller Claude Desktop tarafından tanınan Sonnet / Opus / Haiku model kimliklerini kullanmalıdır",
     "addModel": "Model ekle",
     "addRoute": "Model ekle",
@@ -378,6 +378,7 @@
     "openclawModelNotFound": "Seçilen model artık mevcut değil. Yenileyin ve tekrar deneyin.",
     "backfillWarning": "Başarılı bir şekilde geçiş yapıldı ancak değişiklikler önceki sağlayıcıya kaydedilemedi",
     "codexAuthCleanupFailed": "Başarılı bir şekilde geçiş yapıldı ancak auth.json kaldırılamadı; resmi oturum açma kimlik bilgileri hâlâ diskte; bunları kaldırmak için auth.json'u Codex yapılandırma dizininden silin",
+    "omoVariantCleanupFailed": "Geçiş başarılı, ancak diğer OMO varyantının (OMO / OMO Slim) yapılandırma dosyası silinemedi, bu yüzden OpenCode ikisini birden yükleyebilir; dosyayı OpenCode yapılandırma dizininden elle silin",
     "windowControlFailed": "Pencere kontrolü başarısız oldu: {{error}}",
     "officialBlockedByProxy": "Yerel yönlendirme etkinken resmi sağlayıcıya geçilemez. Yönlendirmenin resmi API'lerle kullanılması hesabın yasaklanmasına neden olabilir.",
     "proxyOfficialWarning": "Mevcut sağlayıcı {{name}} resmidir. Yerel yönlendirmeyi kullanmadan önce üçüncü taraf bir sağlayıcıya geçmeyi düşünün.",
@@ -463,8 +464,7 @@
     "tabProxy": "Yönlendirme",
     "authCenter": {
       "description": "Sağlayıcı olarak GitHub Copilot, ChatGPT ve xAI aboneliklerini kullanın. Yönlendirme hizmeti kimlik bilgilerini enjekte eder, böylece bu sağlayıcılar Yönlendirme modunda çalışır (Codex'in resmî oturum açma entegrasyonu hariç). Antigravity hesapları agy'nin resmî oturum açma hesabını değiştirir.",
-      "beta": "beta",
-      "xaiOauthDescription": "xAI / Grok hesaplarını yönetin"
+      "beta": "beta"
     },
     "advanced": {
       "configDir": {
@@ -1121,7 +1121,6 @@
       "pricingModelSourceLabel": "Fiyatlandırma Modeli Kaynağı",
       "pricingModelSourceRequest": "İstek modeli",
       "pricingModelSourceResponse": "Yanıt modeli",
-      "pricingSave": "Fiyatlandırma Varsayılanlarını Kaydet",
       "pricingSaved": "Fiyatlandırma varsayılanları kaydedildi",
       "pricingSaveFailed": "Fiyatlandırma varsayılanları kaydedilemedi: {{error}}",
       "pricingLoadFailed": "Fiyatlandırma varsayılanları yüklenemedi: {{error}}"
@@ -1375,7 +1374,7 @@
     "keyFieldsHint": "Sağlayıcıyı takip etmek için varsayılan model (models.default) ve işaret ettiği model tablosu; geri kalan her şey Grok Build genel ayarlarıdır ve kaydettikten sonra her sağlayıcı için geçerlidir.",
     "inactiveFieldsHint": "Bu sağlayıcıya daha eski bir sürümle kaydedilmiş; geçiş artık bunları uygulamamaktadır. TOML'yi kopyalamak ve ihtiyacınız varsa yukarıya yapıştırmak için birine tıklayın.",
     "inactiveFieldCopied": "Kopyalandı",
-    "routeOnlySettingsHint": "Aşağıdaki iki ayar yalnızca yönlendirme modunda geçerlidir."
+    "routeOnlySettingsHint": "Aşağıdaki ayarlar yalnızca yönlendirme modunda geçerlidir."
   },
   "sessionManager": {
     "searchPlaceholder": "Başlıkları, klasörleri, ilk/son mesajları veya oturum kimliklerini arayın",
@@ -1590,7 +1589,17 @@
         "prLink": "Bağlantılı Halkla İlişkiler #{{number}}",
         "prLinkPlain": "PR bağlantılı",
         "slashCommand": "{{command}} koştu",
-        "subAgent": "Alt ajan {{name}}"
+        "subAgent": "Alt ajan {{name}}",
+        "goal": "Hedef · {{status}}",
+        "goalPlain": "Hedef",
+        "goalStatus": {
+          "active": "Etkin",
+          "paused": "Duraklatıldı",
+          "blocked": "Engellendi",
+          "usageLimited": "Kullanım sınırına ulaşıldı",
+          "budgetLimited": "Bütçeye ulaşıldı",
+          "complete": "Tamamlandı"
+        }
       },
       "injectedToggle": "Enjekte edilen bağlamı göster",
       "injectedRow": "Bağlam · {{label}} · {{chars}} karakterleri",
@@ -1657,6 +1666,7 @@
       "outlineFailed": "Başarısız adımlar var",
       "outlineAborted": "Kesintiye uğradı",
       "outlineNoReply": "Yanıt yok",
+      "chapter": "Bölüm",
       "viewOptions": "Görüntüleme seçenekleri",
       "noChanges": "Bu oturumda dosya değişikliği yok",
       "rawMatch": "Kaynaktaki eşleşmeler",
@@ -1672,6 +1682,9 @@
     "openReleaseNotesFailed": "Sürüm notları açılamadı:"
   },
   "providerForm": {
+    "billingMultiplier": "Sağlayıcı maliyet çarpanı",
+    "billingMultiplierHelp": "Bu sağlayıcıdaki her modelin referans fiyatı, yerel yönlendirmeden geçen isteklerin maliyetini tahmin etmek için bu değerle çarpılır. 0.5 yarı fiyat demektir; 1× için boş bırakın. Yalnızca sonraki istekleri etkiler; doğrudan modda (yönlendirme kapalı) oturum kayıtlarından içe aktarılan kullanım yine 1× olarak sayılır.",
+    "billingMultiplierInvalid": "0 ile 1000 arasında bir sayı girin veya 1× için boş bırakın.",
     "nativeConfig": {
       "title": "Yapılandırma dosyası {{path}} (yalnızca bu sağlayıcı)",
       "hint": "Bu sağlayıcının dosyadaki bölümünü uygulamanın kendi biçiminde gösterir ve kaydettiğinizde oraya yazar. Varsayılan model gibi genel ayarlar burada yer almaz. Buraya yazılan yorumlar kaydedilmez.",
@@ -2167,7 +2180,7 @@
     "inactiveFieldCopied": "Kopyalandı",
     "upstreamFormatCopilotRouteHint": "Her mod, Copilot hesap kimlik bilgilerini içeren yönlendirmeyi gerektirir. Seçtiğiniz bir protokol, onu desteklemeyen modeller için açıkça başarısız olur.",
     "maxOutputTokensWarning": "Modelin veya ağ geçidinin gerçek çıkış sınırını aşmayın, aksi halde istekler 400 değerini döndürür.",
-    "routeOnlySettingsHint": "Aşağıdaki iki ayar yalnızca yönlendirme ve Birleştirme modlarında geçerlidir."
+    "routeOnlySettingsHint": "Aşağıdaki ayarlar yalnızca yönlendirme ve Birleştirme modlarında geçerlidir."
   },
   "geminiConfig": {
     "envFile": "Ortam Değişkenleri (.env)",
@@ -2669,7 +2682,9 @@
       "speedEstimateTooFew": "Çıkış tokenu 200'ün altında olduğundan tahmin yok",
       "noTimingSession": "Oturum günlüklerinde zamanlama verisi yok",
       "noFirstToken": "İlk token zamanlaması yok, dolayısıyla hız yok",
-      "providerId": "Sağlayıcı kimliği"
+      "providerId": "Sağlayıcı kimliği",
+      "copyRequestId": "Talep kimliğini kopyala",
+      "requestIdCopied": "Talep kimliği kopyalandı"
     },
     "sources": {
       "scanTitle": "Oturum günlüklerini otomatik olarak tara",
@@ -2853,7 +2868,6 @@
     "geminiTitle": "Gemini MCP Yönetimi",
     "unifiedPanel": {
       "title": "MCP Sunucu Yönetimi",
-      "deleteServer": "Sunucuyu Sil",
       "deleteConfirm": "\"{{id}}\" sunucusunu silmek istediğinizden emin misiniz? Bu eylem geri alınamaz.",
       "enabledApps": "Etkin Uygulamalar",
       "importSuccess": "{{count}} MCP sunucuları başarıyla içe aktarıldı",
@@ -2900,28 +2914,20 @@
       "tagsPlaceholder": "stdio, time, utility",
       "homepage": "Ana sayfa",
       "docs": "Dokümanlar",
-      "jsonPlaceholder": "{\n  \"type\": \"stdio\",\n  \"command\": \"uvx\",\n  \"args\": [\"mcp-server-fetch\"]\n}",
-      "tomlConfig": "Tam TOML Yapılandırması",
-      "tomlPlaceholder": "type = \"stdio\"\ncommand = \"uvx\"\nargs = [\"mcp-server-fetch\"]",
-      "syncOtherSide": "{{target}}'ye aynalama"
+      "tomlConfig": "Tam TOML Yapılandırması"
     },
     "wizard": {
       "title": "MCP Yapılandırma Sihirbazı",
       "hint": "MCP sunucusunu hızla yapılandırın ve JSON yapılandırmasını otomatik olarak oluşturun",
       "type": "Tür",
-      "typeStdio": "stdio",
-      "typeSse": "sse",
       "command": "Komut",
       "commandPlaceholder": "npx veya uvx",
       "args": "Argümanlar",
-      "argsPlaceholder": "arg1\narg2",
       "env": "Ortam Değişkenleri",
-      "envPlaceholder": "KEY1=value1\nKEY2=value2",
       "url": "URL'si",
       "urlPlaceholder": "https://api.example.com/mcp",
       "urlRequired": "Lütfen URL'yi girin",
       "headers": "Başlıklar (isteğe bağlı)",
-      "headersPlaceholder": "Authorization: Bearer your_token_here\nContent-Type: application/json",
       "preview": "Yapılandırma Önizlemesi",
       "apply": "Yapılandırmayı Uygula"
     },
@@ -3444,13 +3450,18 @@
       "archiveDownloadTooLarge": "Depo arşivi {{limit_mb}} MB sınırını aşıyor; indirme durduruldu.",
       "archiveTooManyEntries": "Arşivde çok fazla giriş var ({{count}}); sınır {{limit}}'dir",
       "downloadFailed": "İndirme başarısız oldu: HTTP {{status}}",
-      "httpError": "HTTP hatası {{status}}",
       "http403": "GitHub erişimi kısıtlı, muhtemelen hız sınırlı",
-      "http404": "Depo veya şube bulunamadı, lütfen URL'yi kontrol edin",
+      "http404": "Depo veya şube bulunamadı, lütfen URL'yi kontrol edin. Özel depolar için önce Beceri Depolarını Yönet bölümünde bir erişim belirteci ayarlayın",
       "http429": "Çok fazla istek var, lütfen bekleyip yeniden deneyin",
+      "http401Token": "Erişim belirteci geçersiz veya süresi dolmuş. Beceri Depolarını Yönet bölümünde yeniden ayarlayın",
+      "http403Token": "Erişim belirtecinin bu depoyu okuma izni yok ya da çok fazla istek gönderildi",
+      "http404Token": "Depo veya şube bulunamadı ya da erişim belirtecinin bu depoyu okuma izni yok",
+      "httpAuthRequired": "Bu site oturum açmayı gerektiriyor. Beceri Depolarını Yönet bölümünde bunun için bir erişim belirteci ayarlayın",
+      "invalidTokenHost": "Geçersiz site: {{host}}. Yalnızca ana makine adını girin, örneğin gitlab.example.com",
+      "invalidRepoToken": "Geçersiz belirteç: yalnızca harf, rakam ve - _ . ~ + / = kullanılabilir, en fazla {{limit}} karakter",
+      "repoTokenStorageFailed": "{{host}} için erişim belirteci okunamadı veya yazılamadı. Sistemin kimlik bilgisi deposunun kullanılabilir olduğunu kontrol edin",
       "getHomeDirFailed": "Kullanıcı ana dizini alınamıyor",
       "noSkillsInZip": "ZIP dosyasında beceri bulunamadı (SKILL.md dosyası gerektirir)",
-      "networkError": "Ağ hatası",
       "unknownError": "Bilinmeyen hata",
       "suggestion": {
         "checkNetwork": "Lütfen ağ bağlantısını kontrol edin",
@@ -3475,6 +3486,19 @@
       "empty": "Depo yok",
       "invalidUrl": "Geçersiz kod deposu URL biçimi",
       "httpsOnly": "GitLab ve Gitea depoları yalnızca https adresiyle desteklenir",
+      "token": {
+        "title": "Erişim belirteçleri",
+        "description": "Özel depoları okumak için kullanılır. Belirteçler site başına sistemin kimlik bilgisi deposunda (macOS Anahtar Zinciri, Windows Kimlik Bilgileri Yöneticisi) saklanır ve asla eşitlenmez. Salt okuma izni yeterlidir.",
+        "descriptionFile": "Özel depoları okumak için kullanılır. Belirteçler site başına bu bilgisayarda yalnızca sizin okuyabileceğiniz bir dosyada saklanır ve asla eşitlenmez. Salt okuma izni yeterlidir.",
+        "host": "Site",
+        "hostPlaceholder": "github.com veya gitlab.example.com",
+        "value": "Belirteç",
+        "valuePlaceholder": "Erişim belirtecini yapıştırın",
+        "save": "Belirteci kaydet",
+        "empty": "Henüz erişim belirteci yok",
+        "removeAria": "{{host}} için erişim belirtecini kaldır",
+        "missingFields": "Site ve belirteç girin"
+      },
       "addSuccess": "{{owner}}/{{name}} deposu eklendi, {{count}} becerileri algılandı",
       "addFailed": "Eklenemedi",
       "removeSuccess": "Depo {{owner}}/{{name}} kaldırıldı",
@@ -3665,7 +3689,6 @@
       "repo": "GitHub Deposu",
       "directory": "Hedef Dizin",
       "branch": "Şube",
-      "skillsPath": "Beceri Yolu",
       "hint": "Bu, Beceri deposunu listeye ekleyecektir.",
       "hintDetail": "Ekledikten sonra, Beceri yönetimi sayfasından belirli Becerileri yükleyebilirsiniz."
     },
@@ -3762,7 +3785,6 @@
   },
   "proxy": {
     "panel": {
-      "currentProvider": "Mevcut Sağlayıcı:",
       "openSettings": "Yönlendirme Hizmetini Yapılandırma",
       "stats": {
         "activeConnections": "Aktif Bağlantılar",
@@ -3823,10 +3845,6 @@
           "label": "Yayın Dışı Zaman Aşımı (sn)",
           "description": "Akış dışı istekler için toplam zaman aşımı"
         }
-      },
-      "validation": {
-        "retryMin": "Yeniden deneme sayısı negatif olamaz",
-        "retryMax": "Yeniden deneme sayısı 10'u aşamaz"
       },
       "actions": {
         "save": "Yapılandırmayı Kaydet"
@@ -4260,7 +4278,8 @@
       "stack": "Birleştirme"
     },
     "needsAttention": "Dikkat edilmesi gerekiyor",
-    "back": "Geri"
+    "back": "Geri",
+    "plugins": "Eklentiler"
   },
   "appsPage": {
     "showInSidebar": "Kenar çubuğunda {{name}}'yi göster",
@@ -4684,7 +4703,7 @@
       "failedTitle": "Bazı uygulamalar okunamadı",
       "filesTitle": "Hangi dosyalar okundu",
       "claudeNote": " (üst düzey mcpServers)",
-      "dshNote": " (başlatılmış her profile yazılır: web, desktop, headless, acp)",
+      "dshNote": " (başlatılmış her profile yazılır: web, desktop, headless, acp. Ana düzeydeki ~/.dsh/cordis.patch.yml okunmaz ve yazılmaz; içindeki MCP sunucularını o dosyada yönetin)",
       "ok": "Anladım"
     },
     "templateLabels": {
@@ -4957,6 +4976,88 @@
     },
     "updateAllCount": "Tümünü güncelle ({{count}})",
     "updatingProgress": "{{done}}/{{total}} güncelleniyor…"
+  },
+  "pluginsPage": {
+    "title": "Eklentiler",
+    "helpTitle": "Eklentiler",
+    "help": "Claude Code, Codex, Grok Build, MiniMax Code, OpenClaw ve Pi eklentilerini yükleyin, etkinleştirin ve kaldırın. CC Switch her uygulamanın kendi CLI'ını çalıştırır; sonuç terminalde eklenti komutunu kullanmakla aynıdır. Pi'de eklentiler Pi paketleridir ve katalog npm'den gelir.",
+    "appAria": "Uygulama",
+    "viewAria": "Eklenti görünümleri",
+    "viewInstalled": "Yüklü",
+    "viewInstalledCount": "Yüklü · {{count}}",
+    "viewDiscover": "Keşfet",
+    "viewDiscoverCount": "Keşfet · {{count}}",
+    "viewMarketplaces": "Pazar yerleri",
+    "searchPlaceholder": "Eklenti ara",
+    "searchAria": "Eklenti ara",
+    "count": "{{count}} eklenti",
+    "countFiltered": "{{shown}} / {{count}}",
+    "noMatches": "“{{query}}” ile eşleşen eklenti yok",
+    "loading": "{{app}} eklentileri okunuyor…",
+    "loadFailed": "{{app}} eklentileri okunamadı",
+    "catalogLoadFailed": "Pazar yeri kataloğu okunamadı",
+    "loadingCatalog": "{{app}} pazar yeri kataloğu okunuyor…",
+    "refreshing": "Yenileniyor…",
+    "marketsLoadFailed": "Pazar yerleri okunamadı",
+    "cliMissingTitle": "{{app}} yüklü değil",
+    "cliMissingBody": "Eklentiler {{app}} CLI'ı ile yönetilir. Uygulamalar sayfasından yükleyip buraya dönün.",
+    "emptyInstalledTitle": "Yüklü eklenti yok",
+    "emptyInstalledBody": "{{app}} için beceri, komut, ajan ve MCP sunucusu eklemek üzere pazar yerlerine göz atın.",
+    "browse": "Eklentilere göz at",
+    "emptyDiscoverTitle": "Yüklenecek yeni eklenti yok",
+    "emptyDiscoverBody": "Pazar yerlerinizdeki tüm eklentiler yüklü. Daha fazlası için bir pazar yeri ekleyin.",
+    "emptyCatalogBody": "Katalogdaki tüm eklentiler yüklü.",
+    "emptyMarketsTitle": "Pazar yeri eklenmedi",
+    "emptyMarketsBody": "{{app}} yerleşik kataloğunu göstermeye devam eder. Daha fazla eklenti için bir GitHub deposu veya Git URL'si ekleyin.",
+    "builtIn": "Yerleşik",
+    "builtInPlugin": "Uygulamayla birlikte gelir. Açıp kapatabilirsiniz ama kaldıramazsınız.",
+    "scope": "{{scope}} kapsamı",
+    "scopeReadOnly": "{{scope}} kapsamında yüklü. O projede CLI ile yönetin.",
+    "enableAria": "{{name}} eklentisini etkinleştir",
+    "moreActions": "{{name}} için diğer işlemler",
+    "working": "İşleniyor…",
+    "install": "Yükle",
+    "installing": "Yükleniyor…",
+    "notInstallable": "Kullanılamıyor",
+    "update": "Güncelle",
+    "uninstall": "Kaldır",
+    "restartNote": "Değişiklikler yeni {{app}} oturumlarında geçerli olur.",
+    "restartNoteGateway": "Değişiklikler {{app}} Gateway yeniden başlatıldıktan sonra geçerli olur.",
+    "refreshMarketplaces": "Pazar yerlerini yenile",
+    "refreshCatalog": "Kataloğu yenile",
+    "addMarketplace": "Pazar yeri ekle",
+    "addMarketplaceTitle": "{{app}} pazar yeri ekle",
+    "addMarketplaceBody": "GitHub owner/repo, bir Git URL'si veya yerel bir klasör (eğik çizgi kullanın, boşluk olmasın).",
+    "addMarketplaceWaiting": "Pazar yeri deposu indiriliyor. Büyük depolar birkaç dakika sürebilir (en fazla 5). Bu pencereyi kapatabilirsiniz; bittiğinde bildirim alırsınız.",
+    "sourceLabel": "Kaynak",
+    "removeMarketplace": "Kaldır",
+    "confirmUninstallTitle": "{{name}} kaldırılsın mı?",
+    "confirmUninstallBody": "Eklentiyi ve önbellek dosyalarını {{app}} uygulamasından kaldırır. Keşfet'ten yeniden yükleyebilirsiniz.",
+    "confirmUninstallClaudeBody": "Eklentiyi {{app}} uygulamasından kaldırır ve veri dizinini korur. Bu son kurulumsa kayıtlı seçenekler ve kimlik bilgileri silinir; yeniden yüklemek bunları geri getirmez.",
+    "confirmInstallTitle": "{{name}} yüklensin mi?",
+    "confirmInstallBody": "Eklentiler sizin izinlerinizle çalışır: {{app}} eklentinin becerilerini, kancalarını ve MCP sunucularını yükler ve bildirdiği yetenekleri verir. Yalnızca güvendiğiniz kaynaklardan eklenti yükleyin.",
+    "confirmRemoveMarketTitle": "{{name}} pazar yeri kaldırılsın mı?",
+    "confirmRemoveMarketBody": "{{app}} bu pazar yerindeki eklentileri artık listelemez ve buradan yüklediğiniz eklentileri de kaldırabilir. Daha sonra yeniden ekleyebilirsiniz.",
+    "toast": {
+      "installed": "{{name}} yüklendi",
+      "installFailed": "{{name}} yüklenemedi",
+      "installNeedsTerminal": "Bu eklenti kurulum sırasında pazar yerinin bildirdiği bir komutu bilgisayarınızda çalıştırır ve CC Switch bunu sizin yerinize onaylamaz. Bir terminalde {{command}} komutunu çalıştırıp orada onaylayın, ardından geri dönüp yenileyin.",
+      "authRequired": "{{app}} önce oturum açmanızı istiyor. Bir terminalde {{command}} komutunu çalıştırıp oturum açın, ardından geri dönüp tekrar deneyin.",
+      "uninstalled": "{{name}} kaldırıldı",
+      "uninstallFailed": "{{name}} kaldırılamadı",
+      "enabled": "{{name}} etkinleştirildi",
+      "disabled": "{{name}} devre dışı bırakıldı",
+      "toggleFailed": "{{name}} değiştirilemedi",
+      "updated": "{{name}} güncellendi",
+      "upToDate": "{{name}} zaten güncel",
+      "updateFailed": "{{name}} güncellenemedi",
+      "refreshed": "Pazar yerleri yenilendi",
+      "refreshFailed": "Pazar yerleri yenilenemedi",
+      "marketAdded": "{{source}} pazar yeri eklendi",
+      "marketAddFailed": "Pazar yeri eklenemedi",
+      "marketRemoved": "{{name}} pazar yeri kaldırıldı",
+      "marketRemoveFailed": "{{name}} kaldırılamadı"
+    }
   },
   "newLayoutNotice": {
     "title": "CC Switch yeni bir görünüme sahip",
@@ -5309,5 +5410,11 @@
     "installFailed": "Güncelleme kurulamadı",
     "downloadingInline": "Yeni sürüm arka planda indiriliyor…",
     "downloadedInline": "İndirildi"
+  },
+  "unreadableEntry": {
+    "title": "“{{name}}” okunamıyor",
+    "hint": "CC Switch'in daha yeni bir sürümüyle kaydedilmiş olabilir. Veriler olduğu gibi korunur, düzenlenemez veya etkinleştirilemez; güncelleme verileri geri getirir ya da kaydı silebilirsiniz.",
+    "confirmTitle": "Okunamayan kaydı sil",
+    "confirmMessage": "“{{name}}” silinsin mi? Yalnızca bu CC Switch kaydı silinir; uygulamaların kendi yapılandırma dosyaları değişmez."
   }
 }

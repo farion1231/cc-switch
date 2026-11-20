@@ -12,8 +12,17 @@ use std::time::Duration;
 /// 全局 HTTP 客户端实例
 static GLOBAL_CLIENT: OnceLock<RwLock<Client>> = OnceLock::new();
 
+/// 不跟随重定向的全局客户端（与 GLOBAL_CLIENT 共享代理配置，避免高频重建连接池）
+static NO_REDIRECT_CLIENT: OnceLock<RwLock<Client>> = OnceLock::new();
+
+/// 仅允许 HTTPS 的全局客户端（与 GLOBAL_CLIENT 共享代理配置）
+static HTTPS_ONLY_CLIENT: OnceLock<RwLock<Client>> = OnceLock::new();
+
 /// 不走任何代理的客户端：上游是本机地址（Ollama、LM Studio 等）时使用
 static DIRECT_CLIENT: OnceLock<Client> = OnceLock::new();
+
+/// 不走代理且不跟随重定向的本机直连客户端
+static DIRECT_NO_REDIRECT_CLIENT: OnceLock<Client> = OnceLock::new();
 
 /// 当前代理 URL（用于日志和状态查询）
 static CURRENT_PROXY_URL: OnceLock<RwLock<Option<String>>> = OnceLock::new();
@@ -55,6 +64,8 @@ fn get_proxy_port() -> u16 {
 pub fn init(proxy_url: Option<&str>) -> Result<(), String> {
     let effective_url = proxy_url.filter(|s| !s.trim().is_empty());
     let client = build_client(effective_url)?;
+    let no_redirect_client = build_no_redirect_client(effective_url)?;
+    let https_only_client = build_https_only_client(effective_url)?;
 
     // 尝试初始化全局客户端，如果已存在则记录警告并使用 apply_proxy 更新
     if GLOBAL_CLIENT.set(RwLock::new(client.clone())).is_err() {
@@ -67,6 +78,9 @@ pub fn init(proxy_url: Option<&str>) -> Result<(), String> {
         // 已初始化，改用 apply_proxy 更新
         return apply_proxy(proxy_url);
     }
+
+    set_or_replace_client(&NO_REDIRECT_CLIENT, no_redirect_client)?;
+    set_or_replace_client(&HTTPS_ONLY_CLIENT, https_only_client)?;
 
     // 初始化代理 URL 记录
     let _ = CURRENT_PROXY_URL.set(RwLock::new(effective_url.map(|s| s.to_string())));
@@ -108,6 +122,8 @@ pub fn validate_proxy(proxy_url: Option<&str>) -> Result<(), String> {
 pub fn apply_proxy(proxy_url: Option<&str>) -> Result<(), String> {
     let effective_url = proxy_url.filter(|s| !s.trim().is_empty());
     let new_client = build_client(effective_url)?;
+    let new_no_redirect = build_no_redirect_client(effective_url)?;
+    let new_https_only = build_https_only_client(effective_url)?;
 
     // 更新客户端
     if let Some(lock) = GLOBAL_CLIENT.get() {
@@ -120,6 +136,9 @@ pub fn apply_proxy(proxy_url: Option<&str>) -> Result<(), String> {
         // 如果还没初始化，则初始化
         return init(proxy_url);
     }
+
+    set_or_replace_client(&NO_REDIRECT_CLIENT, new_no_redirect)?;
+    set_or_replace_client(&HTTPS_ONLY_CLIENT, new_https_only)?;
 
     // 更新代理 URL 记录
     if let Some(lock) = CURRENT_PROXY_URL.get() {
@@ -243,13 +262,83 @@ fn base_builder() -> reqwest::ClientBuilder {
         .no_zstd()
 }
 
+fn set_or_replace_client(slot: &OnceLock<RwLock<Client>>, client: Client) -> Result<(), String> {
+    if let Some(lock) = slot.get() {
+        let mut guard = lock
+            .write()
+            .map_err(|_| "Failed to update HTTP client: lock poisoned".to_string())?;
+        *guard = client;
+    } else if let Err(existing) = slot.set(RwLock::new(client)) {
+        // 并发初始化竞争：改写已存在的槽位
+        if let Some(lock) = slot.get() {
+            let mut guard = lock
+                .write()
+                .map_err(|_| "Failed to update HTTP client: lock poisoned".to_string())?;
+            *guard = existing
+                .into_inner()
+                .map_err(|_| "Failed to update HTTP client: lock poisoned".to_string())?;
+        }
+    }
+    Ok(())
+}
+
+fn build_no_redirect_client(proxy_url: Option<&str>) -> Result<Client, String> {
+    build_client_from(
+        base_builder().redirect(reqwest::redirect::Policy::none()),
+        proxy_url,
+    )
+}
+
+fn build_https_only_client(proxy_url: Option<&str>) -> Result<Client, String> {
+    build_client_from(base_builder().https_only(true), proxy_url)
+}
+
+fn direct_no_redirect_client() -> Result<Client, String> {
+    if let Some(client) = DIRECT_NO_REDIRECT_CLIENT.get() {
+        return Ok(client.clone());
+    }
+    let client = base_builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
+    let _ = DIRECT_NO_REDIRECT_CLIENT.set(client.clone());
+    Ok(DIRECT_NO_REDIRECT_CLIENT.get().cloned().unwrap_or(client))
+}
+
 /// 不跟随重定向的客户端，代理设置与全局客户端一致。带自定义凭据请求头（如 `x-dsh-auth-token`）
 /// 的请求用它：reqwest 跨主机重定向时只剥掉标准认证头，自定义头会被带到新主机。
 pub fn no_redirect() -> Result<Client, String> {
-    build_client_from(
-        base_builder().redirect(reqwest::redirect::Policy::none()),
-        get_current_proxy_url().as_deref(),
-    )
+    if let Some(lock) = NO_REDIRECT_CLIENT.get() {
+        if let Ok(client) = lock.read() {
+            return Ok(client.clone());
+        }
+    }
+    let client = build_no_redirect_client(get_current_proxy_url().as_deref())?;
+    let _ = NO_REDIRECT_CLIENT.set(RwLock::new(client.clone()));
+    Ok(NO_REDIRECT_CLIENT
+        .get()
+        .and_then(|lock| lock.read().ok())
+        .map(|c| c.clone())
+        .unwrap_or(client))
+}
+
+/// 只走 https 的客户端（跳转到 http 直接报错），代理设置与全局客户端一致。
+/// 带 `Authorization` 的请求用它：reqwest 只在换主机或换端口时去掉认证头，同主机
+/// 同端口从 https 跳到 http（非默认端口时会发生）会把凭据明文发出去。
+pub fn https_only() -> Result<Client, String> {
+    if let Some(lock) = HTTPS_ONLY_CLIENT.get() {
+        if let Ok(client) = lock.read() {
+            return Ok(client.clone());
+        }
+    }
+    let client = build_https_only_client(get_current_proxy_url().as_deref())?;
+    let _ = HTTPS_ONLY_CLIENT.set(RwLock::new(client.clone()));
+    Ok(HTTPS_ONLY_CLIENT
+        .get()
+        .and_then(|lock| lock.read().ok())
+        .map(|c| c.clone())
+        .unwrap_or(client))
 }
 
 /// A one-off no-redirect client for an explicit proxy (`None` follows the system
@@ -270,11 +359,7 @@ pub(crate) fn no_redirect_with_proxy(
 /// 不跟随重定向、按目标地址选代理的客户端：本机地址直连，其余同 [`no_redirect`]。
 pub fn no_redirect_for_url(url: &str) -> Result<Client, String> {
     if is_loopback_url(url) {
-        base_builder()
-            .no_proxy()
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .map_err(|e| format!("Failed to build HTTP client: {e}"))
+        direct_no_redirect_client()
     } else {
         no_redirect()
     }
@@ -607,5 +692,60 @@ mod tests {
         for key in &keys {
             std::env::remove_var(key);
         }
+    }
+
+    #[tokio::test]
+    async fn test_no_redirect_for_url_reuses_keep_alive_connection() {
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        };
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let accepts = Arc::new(AtomicUsize::new(0));
+        let accepts_srv = accepts.clone();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            loop {
+                let Ok((mut stream, _)) = listener.accept().await else {
+                    break;
+                };
+                accepts_srv.fetch_add(1, Ordering::SeqCst);
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 1024];
+                    while let Ok(n) = stream.read(&mut buf).await {
+                        if n == 0 {
+                            break;
+                        }
+                        let resp =
+                            b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\nok";
+                        if stream.write_all(resp).await.is_err() {
+                            break;
+                        }
+                    }
+                });
+            }
+        });
+
+        let url = format!("http://{addr}/ping");
+        for _ in 0..10 {
+            let body = no_redirect_for_url(&url)
+                .unwrap()
+                .get(&url)
+                .send()
+                .await
+                .unwrap()
+                .bytes()
+                .await
+                .unwrap();
+            assert_eq!(body.as_ref(), b"ok");
+        }
+        server.abort();
+
+        assert!(
+            accepts.load(Ordering::SeqCst) <= 2,
+            "cached no_redirect_for_url client should reuse keep-alive TCP connection"
+        );
     }
 }

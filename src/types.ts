@@ -9,6 +9,14 @@ export type ProviderCategory =
   | "omo" // Oh My OpenCode
   | "omo-slim"; // Oh My OpenCode Slim
 
+/** 库里有、但存的数据读不出来的一条记录：只能删除，原始数据保持不动。 */
+export interface UnreadableEntry {
+  id: string;
+  name: string;
+  /** 后端的解析错误，点名是哪一列 */
+  error: string;
+}
+
 export interface Provider {
   id: string;
   name: string;
@@ -29,11 +37,6 @@ export interface Provider {
   iconColor?: string; // 图标颜色（Hex 格式，如 "#00A67E"）
   // 是否加入故障转移队列
   inFailoverQueue?: boolean;
-}
-
-export interface AppConfig {
-  providers: Record<string, Provider>;
-  current: string;
 }
 
 // 自定义端点配置
@@ -176,6 +179,8 @@ export interface LocalProxyRequestOverrides {
 
 // 供应商元数据（字段名与后端一致，保持 snake_case）
 export interface ProviderMeta {
+  /** Explicit multiplier for future local-proxy reference costs; absent means 1. */
+  billingMultiplier?: string;
   // 自定义端点：以 URL 为键，值为端点信息
   custom_endpoints?: Record<string, CustomEndpoint>;
   // 是否在切换/同步到 live 时应用通用配置片段
@@ -639,6 +644,7 @@ export type EventKind =
   | "info"
   | "error"
   | "sub_agent"
+  | "goal"
   | "other";
 
 /** 大内容的「按需取」引用：前端不解析，原样回传给后端 */

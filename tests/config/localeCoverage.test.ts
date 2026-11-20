@@ -66,7 +66,6 @@ describe("Turkish locale", () => {
       "codexConfig.configToml",
       "providerPreset.plan.aksk",
       "mcp.envPlaceholder",
-      "mcp.wizard.envPlaceholder",
       "skills.searchSource.skillssh",
     ];
 
@@ -116,12 +115,6 @@ describe("Korean locale", () => {
     const translations = flattenStrings(ko);
     const exactLiterals = [
       "codexConfig.authJsonPlaceholder",
-      "mcp.form.jsonPlaceholder",
-      "mcp.form.tomlPlaceholder",
-      "mcp.wizard.headersPlaceholder",
-      "mcp.wizard.argsPlaceholder",
-      "mcp.wizard.typeStdio",
-      "mcp.wizard.typeSse",
       "mcp.presets.fetch.name",
       "mcp.presets.time.name",
       "mcp.presets.memory.name",
@@ -142,7 +135,6 @@ describe("Korean locale", () => {
       "codexConfig.configToml",
       "providerPreset.plan.aksk",
       "mcp.envPlaceholder",
-      "mcp.wizard.envPlaceholder",
       "skills.searchSource.skillssh",
     ];
 
@@ -191,7 +183,6 @@ describe("Russian locale", () => {
       "codexConfig.configToml",
       "providerPreset.plan.aksk",
       "mcp.envPlaceholder",
-      "mcp.wizard.envPlaceholder",
       "skills.searchSource.skillssh",
     ];
     for (const key of exactLiterals.filter((key) => translations.has(key))) {

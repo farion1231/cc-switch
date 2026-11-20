@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use tauri::Manager;
 
+use crate::app_config::AppType;
 use crate::database::Database;
 use crate::provider::{Provider, UniversalProvider};
 use crate::services::model_pricing::ModelPricingInfo;
@@ -78,9 +79,10 @@ fn startup_database_commands_yield_during_session_sync_contention() {
         serde_json::json!({}),
         None,
     );
-    db.save_provider("opencode", &provider).unwrap();
-    db.save_provider("claude", &provider).unwrap();
-    db.set_current_provider("claude", &provider.id).unwrap();
+    db.save_provider(&AppType::OpenCode, &provider).unwrap();
+    db.save_provider(&AppType::Claude, &provider).unwrap();
+    db.set_current_provider(&AppType::Claude, &provider.id)
+        .unwrap();
     let app = tauri::test::mock_builder()
         .manage(AppState::new(db.clone()))
         .build(tauri::test::mock_context(tauri::test::noop_assets()))
@@ -166,7 +168,7 @@ fn startup_database_commands_yield_during_session_sync_contention() {
         }),
         None,
     );
-    db.save_provider("kimi", &kimi).unwrap();
+    db.save_provider(&AppType::Kimi, &kimi).unwrap();
     query!(add_provider_to_live_config, "kimi".into(), kimi.id.clone());
     query!(
         remove_provider_from_live_config,
@@ -174,7 +176,10 @@ fn startup_database_commands_yield_during_session_sync_contention() {
         kimi.id.clone()
     );
     query!(delete_provider, "kimi".into(), kimi.id.clone());
-    assert!(db.get_provider_by_id(&kimi.id, "kimi").unwrap().is_none());
+    assert!(db
+        .get_provider_by_id(&kimi.id, &AppType::Kimi)
+        .unwrap()
+        .is_none());
 }
 
 /// Representative commands per page a user can reach while session sync still
@@ -191,8 +196,9 @@ fn remaining_database_commands_yield_during_session_sync_contention() {
         serde_json::json!({}),
         None,
     );
-    db.save_provider("claude", &provider).unwrap();
-    db.set_current_provider("claude", &provider.id).unwrap();
+    db.save_provider(&AppType::Claude, &provider).unwrap();
+    db.set_current_provider(&AppType::Claude, &provider.id)
+        .unwrap();
     let app = tauri::test::mock_builder()
         .manage(AppState::new(db.clone()))
         .build(tauri::test::mock_context(tauri::test::noop_assets()))
@@ -342,8 +348,9 @@ fn profile_and_universal_mutations_wait_for_their_serial_locks() {
         serde_json::json!({}),
         None,
     );
-    db.save_provider("claude", &provider).unwrap();
-    db.set_current_provider("claude", &provider.id).unwrap();
+    db.save_provider(&AppType::Claude, &provider).unwrap();
+    db.set_current_provider(&AppType::Claude, &provider.id)
+        .unwrap();
     let app = tauri::test::mock_builder()
         .manage(AppState::new(db.clone()))
         .build(tauri::test::mock_context(tauri::test::noop_assets()))

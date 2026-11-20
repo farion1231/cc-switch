@@ -56,7 +56,7 @@ fn setup(providers: &[Provider], current: &str) -> AppState {
 fn switch_and_check(state: &AppState, target: &str) {
     let row = state
         .db
-        .get_provider_by_id(target, AppType::Claude.as_str())
+        .get_provider_by_id(target, &AppType::Claude)
         .expect("query provider")
         .expect("provider exists");
     ProviderService::switch(state, AppType::Claude, target).expect("switch provider");
@@ -179,7 +179,7 @@ fn legacy_bedrock_api_key_row_is_projected_to_the_bearer_env() {
     assert!(live.get("apiKey").is_none(), "live: {live:#}");
     let row = state
         .db
-        .get_provider_by_id("bedrock", AppType::Claude.as_str())
+        .get_provider_by_id("bedrock", &AppType::Claude)
         .expect("query")
         .expect("row");
     assert_eq!(row.settings_config, legacy.settings_config);
