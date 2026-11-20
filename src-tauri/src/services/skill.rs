@@ -2924,14 +2924,11 @@ impl SkillService {
                 }
             }
             // 勾选的应用里还没有这个 Skill（它是在别处发现的）：导入时就投影过去。
-            // 如果当前应用目录就是导入源，也要重建为托管投影；其他已有副本保留给对账弹窗处理。
+            // 已存在的应用目录（包括导入源）保持原样，避免用旧 SSOT 覆盖用户的修改。
             // 只存标志的话，界面显示已启用、应用却读不到，要等下次切换供应商才补上。
             // 投影失败就不记这个应用的启用，
             // 让库里的标志始终等于磁盘上的事实。
             for app in AppType::all() {
-                let is_import_source = Self::get_app_skills_dir(&app)
-                    .map(|app_dir| app_dir.join(&dir_name) == source)
-                    .unwrap_or(false);
                 if matches!(
                     app,
                     AppType::Pi
@@ -2943,12 +2940,9 @@ impl SkillService {
                         | AppType::Copilot
                         | AppType::WorkBuddy
                 ) || !apps.is_enabled_for(&app)
-                    || (Self::skill_exists_in_app(&dir_name, &app) && !is_import_source)
+                    || Self::skill_exists_in_app(&dir_name, &app)
                 {
                     continue;
-                }
-                if is_import_source {
-                    Self::remove_path(&source)?;
                 }
                 if let Err(error) = Self::sync_to_app_dir(&dir_name, &app) {
                     log::warn!("导入 Skill {dir_name} 时同步到 {app:?} 失败: {error:#}");
@@ -8176,6 +8170,40 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
+    fn import_preserves_ssot_when_selected_app_root_aliases_it() {
+        let temp = tempdir().unwrap();
+        let _home = TestHomeGuard::set(temp.path());
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
+        let db = Arc::new(Database::memory().unwrap());
+        let ssot = SkillService::get_ssot_dir().unwrap();
+        let source = ssot.join("test-skill");
+        write_skill(&source, "original content");
+        let claude = SkillService::get_app_skills_dir(&AppType::Claude).unwrap();
+        fs::create_dir_all(claude.parent().unwrap()).unwrap();
+        SkillService::create_symlink(&ssot, &claude).unwrap();
+
+        let imported = SkillService::import_from_apps(
+            &db,
+            vec![ImportSkillSelection {
+                directory: "test-skill".into(),
+                apps: SkillApps {
+                    claude: true,
+                    ..Default::default()
+                },
+            }],
+        )
+        .unwrap();
+
+        assert_eq!(imported.len(), 1);
+        assert!(imported[0].apps.claude);
+        assert!(!SkillService::is_symlink(&source));
+        assert!(fs::read_to_string(source.join("SKILL.md"))
+            .unwrap()
+            .contains("original content"));
+    }
+
+    #[test]
+    #[serial_test::serial]
     fn import_deploys_the_skill_to_selected_apps_that_do_not_have_it() {
         let temp = tempdir().unwrap();
         let _home = TestHomeGuard::set(temp.path());
@@ -8213,9 +8241,9 @@ mod tests {
                 "{app:?} must have the skill right after import"
             );
         }
-        // 没勾的应用不写；选中的普通应用目录会重建为 SSOT 投影。
+        // 没勾的应用不写；已有的导入源保留为真实目录。
         assert!(!app_copy(AppType::OpenCode).exists());
-        assert!(SkillService::is_symlink(&app_copy(AppType::Claude)));
+        assert!(!SkillService::is_symlink(&app_copy(AppType::Claude)));
     }
 
     #[test]
