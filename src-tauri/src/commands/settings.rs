@@ -93,6 +93,7 @@ pub async fn save_settings(
             != existing.codex_stack_subagent_reasoning_effort
         || merged.codex_stack_auto_review_model != existing.codex_stack_auto_review_model;
     let tray_style_changed = merged.native_tray_menu != existing.native_tray_menu;
+    let auto_update_disabled = existing.auto_update_enabled && !merged.auto_update_enabled;
     let without_login_changed =
         merged.codex_proxy_without_official_login != existing.codex_proxy_without_official_login;
     let preserve_login_changed = merged.preserve_codex_official_auth_on_switch
@@ -102,6 +103,11 @@ pub async fn save_settings(
     // 原生托盘菜单 / 托盘面板当场切换，不用重启。
     if tray_style_changed {
         crate::tray::apply_tray_style(&app);
+    }
+
+    // 关闭自动更新时立即释放内存里已下载的安装包字节，避免几十 MB 常驻进程。
+    if auto_update_disabled {
+        crate::app_update::discard_pending(&app);
     }
 
     // 立即重写，失败时回滚设置，免得界面显示已改好、客户端还是旧的。
