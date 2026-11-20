@@ -221,6 +221,9 @@ async fn copilot_auto_forwarding_pairs_model_and_session_and_retries_both_401s()
     use axum::{body::to_bytes, extract::Request, response::IntoResponse, Json};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    // nextest starts a fresh process, so the app's Rustls setup has not run.
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
         .await
         .unwrap();
