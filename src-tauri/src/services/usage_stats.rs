@@ -3552,11 +3552,7 @@ mod tests {
         // request_model 剥离前缀后为 unknown 时不放宽匹配
         conn.execute(
             "UPDATE proxy_request_logs SET model = ?1, request_model = ?2 WHERE request_id = ?3",
-            params![
-                "upstream-routed-model",
-                "cpa/unknown",
-                "codex-proxy-prefix"
-            ],
+            params!["upstream-routed-model", "cpa/unknown", "codex-proxy-prefix"],
         )?;
         assert!(!has_matching_proxy_usage_log(&conn, &key)?);
 
