@@ -1,0 +1,66 @@
+{
+  "installed": [
+    {
+      "id": "hello@ccs-test",
+      "version": "0.1.0",
+      "scope": "user",
+      "enabled": false,
+      "installPath": "C:\\fixture\\cfg\\plugins\\cache\\ccs-test\\hello\\0.1.0",
+      "readFromFolder": "C:\\fixture\\mkt\\plugins\\hello",
+      "folderVersion": "0.1.0",
+      "installedAt": "2026-11-06T14:50:12.538Z",
+      "lastUpdated": "2026-11-06T14:50:12.538Z",
+      "projectEnabled": false
+    }
+  ],
+  "available": [
+    {
+      "pluginId": "cmdplug@ccs-test",
+      "name": "cmdplug",
+      "description": "command source",
+      "marketplaceName": "ccs-test",
+      "source": {
+        "source": "command",
+        "command": "echo hi"
+      }
+    },
+    {
+      "pluginId": "superpowers@anthropic-plugin-directory",
+      "name": "superpowers",
+      "description": "Core skills library for Claude Code: TDD, debugging, collaboration patterns, and proven techniques",
+      "marketplaceName": "anthropic-plugin-directory",
+      "version": "6.4.2",
+      "source": {
+        "source": "url",
+        "url": "https://github.com/obra/superpowers.git",
+        "sha": "8ca22dba9a94f28898bbce59f2537ff4d87c747d"
+      }
+    },
+    {
+      "pluginId": "frontend-design@anthropic-plugin-directory",
+      "name": "frontend-design",
+      "description": "Frontend design skill for UI/UX implementation",
+      "marketplaceName": "anthropic-plugin-directory",
+      "version": "1.1.1",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/anthropics/claude-plugins-official",
+        "path": "plugins/frontend-design",
+        "sha": "a1ecfbc7f138a0ef455088f7f28cda2d22a0f853"
+      }
+    },
+    {
+      "pluginId": "design@anthropic-plugin-directory",
+      "name": "design",
+      "description": "Accelerate design workflows — critique, design system management, UX writing, accessibility audits, research synthesis, and dev handoff. From exploration to pixel-perfect specs.",
+      "marketplaceName": "anthropic-plugin-directory",
+      "version": "1.2.0",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/anthropics/knowledge-work-plugins",
+        "path": "design",
+        "sha": "ab4cb1cd383b4eb87383be8cf4e70cb5b2a2348d"
+      }
+    }
+  ]
+}

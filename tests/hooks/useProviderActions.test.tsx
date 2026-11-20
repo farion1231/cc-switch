@@ -291,6 +291,43 @@ describe("useProviderActions", () => {
     );
   });
 
+  it("names a failed OMO variant cleanup instead of blaming a backfill", async () => {
+    switchProviderMutateAsync.mockResolvedValueOnce({
+      warnings: ["omo_variant_cleanup_failed:omo-a"],
+    });
+    const { wrapper } = createWrapper();
+    const { result } = renderHook(() => useProviderActions("opencode"), {
+      wrapper,
+    });
+    await act(async () => {
+      await result.current.switchProvider(
+        createProvider({ id: "omo-a", category: "omo" }),
+      );
+    });
+    expect(toastWarningMock.mock.calls.map(([message]) => message)).toEqual([
+      "切换成功，但未能删除另一个 OMO 变体（OMO / OMO Slim）的配置文件，OpenCode 可能同时加载两者；请在 OpenCode 配置目录中手动删除它",
+    ]);
+  });
+
+  it("still reports an uncoded warning as a failed backfill", async () => {
+    switchProviderMutateAsync.mockResolvedValueOnce({
+      warnings: ["omo_variant_cleanup_failed:omo-a", "backfill: boom"],
+    });
+    const { wrapper } = createWrapper();
+    const { result } = renderHook(() => useProviderActions("opencode"), {
+      wrapper,
+    });
+    await act(async () => {
+      await result.current.switchProvider(
+        createProvider({ id: "omo-a", category: "omo" }),
+      );
+    });
+    expect(toastWarningMock.mock.calls.map(([message]) => message)).toEqual([
+      "切换成功，但未能删除另一个 OMO 变体（OMO / OMO Slim）的配置文件，OpenCode 可能同时加载两者；请在 OpenCode 配置目录中手动删除它",
+      "切换成功，但旧供应商配置回填失败，您手动修改的配置可能未保存",
+    ]);
+  });
+
   it("does not infer a hot switch solely from the UI takeover flag", async () => {
     switchProviderMutateAsync.mockResolvedValueOnce({ warnings: [] });
     const { wrapper } = createWrapper();

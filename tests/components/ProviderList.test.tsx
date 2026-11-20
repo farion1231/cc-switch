@@ -1,5 +1,5 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { useState, type ReactElement } from "react";
 import { http, HttpResponse } from "msw";
@@ -10,6 +10,7 @@ import {
 } from "@/components/providers/ProviderList";
 import { hermesKeys } from "@/hooks/useHermes";
 import { server } from "../msw/server";
+import { createTestQueryClient } from "../utils/testQueryClient";
 
 vi.mock("sonner", () => ({
   toast: {
@@ -132,9 +133,7 @@ function createProvider(overrides: Partial<Provider> = {}): Provider {
 }
 
 function renderWithQueryClient(ui: ReactElement) {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
+  const queryClient = createTestQueryClient();
 
   return {
     ...render(
@@ -261,6 +260,57 @@ describe("ProviderList Component", () => {
 
     fireEvent.click(addButton);
     expect(handleCreate).toHaveBeenCalledTimes(1);
+  });
+
+  const serveOneUnreadableProvider = () =>
+    server.use(
+      http.post("http://tauri.local/get_unreadable_providers", () =>
+        HttpResponse.json([
+          {
+            id: "broken",
+            name: "Broken",
+            error: "供应商 broken 的 meta 无法解析",
+          },
+        ]),
+      ),
+    );
+
+  it("lists unreadable providers apart, even when no readable one is left", async () => {
+    serveOneUnreadableProvider();
+    renderWithQueryClient(
+      <ProviderList {...baseProps} providers={{}} appId="claude" />,
+    );
+
+    expect(
+      await screen.findByText("「Broken」的数据无法读取"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "provider.noProviders" }),
+    ).toBeInTheDocument();
+  });
+
+  it("lists unreadable providers apart next to the readable ones", async () => {
+    serveOneUnreadableProvider();
+    const provider = createProvider({ id: "a", name: "A" });
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [provider],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    renderWithQueryClient(
+      <ProviderList
+        {...baseProps}
+        providers={{ a: provider }}
+        appId="claude"
+      />,
+    );
+
+    expect(
+      await screen.findByText("「Broken」的数据无法读取"),
+    ).toBeInTheDocument();
+    expect(
+      providerCardRenderSpy.mock.calls.map(([p]) => p.provider.id),
+    ).toEqual(expect.arrayContaining(["a"]));
   });
 
   it("renders in the order returned by useDragSort and wires the mode actions", () => {
@@ -447,9 +497,7 @@ describe("ProviderList Component", () => {
       onSetAsDefault,
       onRemoveFromConfig,
     };
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
+    const client = createTestQueryClient();
     const { rerender } = render(
       <QueryClientProvider client={client}>
         <ProviderList {...props} currentProviderId="current" />
@@ -1052,9 +1100,7 @@ describe("ProviderList Component", () => {
       onOpenWebsite: vi.fn(),
     };
     const onSearchOpenChange = vi.fn();
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
+    const queryClient = createTestQueryClient();
     const ui = (searchOpen: boolean) => (
       <QueryClientProvider client={queryClient}>
         <ProviderList

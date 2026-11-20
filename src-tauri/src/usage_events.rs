@@ -5,7 +5,7 @@
 //! 立刻 invalidate 查询缓存而无需等待轮询周期。
 //!
 //! 设计要点：
-//! - 全局单例 AppHandle：写日志路径上不持有 AppHandle，用 OnceCell 共享。
+//! - 全局单例 AppHandle：写日志路径上不持有 AppHandle，用 OnceLock 共享。
 //! - 200ms 防抖合并：流式响应等场景在短时间内可能写入多条日志，
 //!   合并成一次事件可避免前端连续 invalidate。
 //! - 不阻塞写入：通知失败仅记录 warn 日志，不向上传播错误。

@@ -69,9 +69,10 @@ interface AccountQuotaColumnProps {
 
 /**
  * 授权中心账号行右侧的额度（v7 Auth 画板）：额度条（条和数字按设置写剩余或已用，
- * 平时 --chart-1；不到 20% 换 warning，用完换 danger）+ 84 宽的「x 分钟前 ↻」。
- * 档名、数值、倒计时三格定宽，倒计时格没有也留着；整列宽度只随分组卡片宽度变
- * （.auth-quota-col，见 index.css），各账号、各分组的条起点和长度一致。
+ * 平时 --chart-1；不到 20% 换 warning，用完换 danger）+ 右边的「x 分钟前 ↻」。
+ * 条、数值、倒计时三格宽度由 .auth-quota-col 变量控制（随界面密度联动），倒计时格没有也留着，
+ * 条的宽度只随分组卡片宽度变（见 index.css）；档名格按最长的档名放宽（56–112），
+ * 短档名不再留出一大块空白、把账号名挤短。
  * 打开页面时查一次，不轮询；↻ 手动重查。
  */
 export function AccountQuotaColumn({
@@ -89,12 +90,21 @@ export function AccountQuotaColumn({
   if (!state) return null;
   // 倒计时格始终留着（没有重置时间就空着），别的号的条才不会因此变宽或挪位
   const resetCell = (line: QuotaLine) => (
-    <ResetSlot countdown={countdownStr(line.resetsAt, now)} className="" />
+    <ResetSlot
+      countdown={countdownStr(line.resetsAt, now)}
+      className="w-[var(--auth-quota-reset)]"
+    />
   );
 
   return (
     <>
-      <div className="auth-quota-col flex shrink-0 flex-col gap-0.5">
+      <div
+        className={cn(
+          "auth-quota-col flex shrink-0 flex-col gap-0.5",
+          // 不是额度条时收紧到最小列宽，长原因截断，不把列撑宽
+          state.kind !== "rows" && "auth-quota-col-static",
+        )}
+      >
         {state.kind === "rows" &&
           state.rows.map(({ label, line }) =>
             line.breakdown ? (
@@ -136,8 +146,8 @@ export function AccountQuotaColumn({
           </>
         )}
         {state.kind === "note" && (
-          // 写在额度行数值（「剩余 91%」）那一格：右边让出倒计时格（52）和间距（8），和别的号的数值对齐
-          <span className="me-[60px] self-end text-caption text-fg-3">
+          // 写在额度行数值那一格：右边让出倒计时格和间距，和别的号的数值对齐
+          <span className="me-[calc(var(--auth-quota-reset)+var(--auth-quota-gap))] max-w-full truncate self-end text-caption text-fg-3">
             {state.text}
           </span>
         )}
@@ -166,7 +176,7 @@ interface QuotaRefreshCellProps {
 }
 
 /**
- * 额度列右边 84 宽的「x 分钟前 ↻」。各服务的账号行共用，刷新按钮的位置和样式一致；
+ * 额度列右边的「x 分钟前 ↻」。各服务的账号行共用，刷新按钮的位置和样式一致；
  * 不是额度条的服务（DeepSeek 账号的余额）也直接用它。
  */
 export function QuotaRefreshCell({
@@ -184,10 +194,9 @@ export function QuotaRefreshCell({
     : ago;
 
   return (
-    <div className="flex w-[84px] shrink-0 items-center justify-end gap-0.5 whitespace-nowrap text-caption text-fg-3">
-      <span id={agoId} className="truncate">
-        {agoText}
-      </span>
+    // 保留轻量最小宽度（见 .auth-quota-refresh），避免「刚刚」「更新中…」和未查询状态来回切换时把进度条推得横向抖动
+    <div className="auth-quota-refresh flex shrink-0 items-center justify-end gap-0.5 whitespace-nowrap text-caption text-fg-3">
+      <span id={agoId}>{agoText}</span>
       <HoverTip
         content={t("authCenter.quota.refresh", { defaultValue: "刷新额度" })}
       >
@@ -217,7 +226,8 @@ export function QuotaRefreshCell({
   );
 }
 
-const ROW_CLASS = "flex h-[18px] items-center gap-2 text-caption";
+const ROW_CLASS =
+  "flex h-[18px] items-center gap-[var(--auth-quota-gap)] text-caption";
 
 /** 一行额度：档名 + 额度条（或一句说明）+ 剩余 */
 function QuotaRowCells({
@@ -234,16 +244,20 @@ function QuotaRowCells({
   const value = line.value ?? line.text;
   return (
     <>
-      {/* 定宽：「Claude/GPT 每周」这类长档名不再把条挤短；更长的截断，悬停看全名 */}
+      {/* 按内容放宽，列内各行一起撑到最长的档名（最宽 112，更长的截断，悬停看全名）；下限保住短档名不被长说明挤成省略号 */}
       <span
         title={label}
-        className="w-[112px] shrink-0 truncate whitespace-nowrap text-fg-2"
+        className="min-w-[3.5em] flex-auto truncate whitespace-nowrap text-fg-2"
       >
         {label}
       </span>
+      {/* 说明文字至少和条一样宽，舒适模式字大了放不下「12月2日到期」时往左借空间；超过上限后由内层截断 */}
       {line.caption ? (
-        <span className="flex min-w-0 flex-1 items-center gap-0.5 text-fg-3">
-          <span className="truncate">{line.caption}</span>
+        <span
+          title={line.caption}
+          className="flex min-w-[var(--auth-quota-bar)] max-w-[132px] shrink items-center gap-0.5 text-fg-3"
+        >
+          <span className="min-w-0 truncate">{line.caption}</span>
           {trailing}
         </span>
       ) : (
@@ -253,7 +267,7 @@ function QuotaRowCells({
           aria-valuemin={0}
           aria-valuemax={100}
           aria-valuenow={Math.round(width)}
-          className="relative h-1 min-w-0 flex-1 overflow-hidden rounded-full bg-chart-grid"
+          className="relative h-1 w-[var(--auth-quota-bar)] shrink-0 overflow-hidden rounded-full bg-chart-grid"
         >
           <span
             className={cn(
@@ -265,8 +279,8 @@ function QuotaRowCells({
         </span>
       )}
       {/* 旁边已有额度条，正常时数值不上色 */}
-      {/* 64 宽放得下「剩余 100%」，和「剩余 99%」右边对齐 */}
-      <span className="w-16 shrink-0 whitespace-nowrap text-end tabular-nums text-fg-1">
+      {/* 至少占 --auth-quota-value 宽以对齐常规文案；长译文不截断，直接撑宽该格 */}
+      <span className="min-w-[var(--auth-quota-value)] shrink-0 whitespace-nowrap text-end tabular-nums text-fg-1">
         <TonedText
           text={value}
           line={line}
@@ -353,34 +367,53 @@ export function CopilotAccountQuota({
   );
 }
 
-/** xAI 账号的订阅额度（get_xai_oauth_quota(accountId)） */
-export function XaiAccountQuota({
-  accountId,
-  login,
-}: {
-  accountId: string;
-  login: string;
-}) {
-  const { t, i18n } = useTranslation();
-  const display = useQuotaDisplay();
-  const {
-    data: quota,
-    isFetching: loading,
-    refetch,
-  } = useXaiOauthQuotaByAccountId(accountId, {
-    enabled: true,
-    autoQuery: false,
-  });
-  return (
-    <AccountQuotaColumn
-      login={login}
-      state={subscriptionQuotaState(t, quota, loading, i18n.language, display)}
-      queriedAt={quota?.queriedAt ?? null}
-      loading={loading}
-      onRefresh={() => void refetch()}
-    />
-  );
+/** 按账号查的订阅额度列：xAI、Antigravity、Claude 只是查询 hook 不同 */
+function subscriptionAccountQuota(
+  useQuota: (
+    accountId: string,
+    options: { enabled: boolean; autoQuery: boolean },
+  ) => {
+    data: SubscriptionQuota | undefined;
+    isFetching: boolean;
+    refetch: () => unknown;
+  },
+) {
+  return function SubscriptionAccountQuota({
+    accountId,
+    login,
+  }: {
+    accountId: string;
+    login: string;
+  }) {
+    const { t, i18n } = useTranslation();
+    const display = useQuotaDisplay();
+    const {
+      data: quota,
+      isFetching: loading,
+      refetch,
+    } = useQuota(accountId, { enabled: true, autoQuery: false });
+    return (
+      <AccountQuotaColumn
+        login={login}
+        state={subscriptionQuotaState(
+          t,
+          quota,
+          loading,
+          i18n.language,
+          display,
+        )}
+        queriedAt={quota?.queriedAt ?? null}
+        loading={loading}
+        onRefresh={() => void refetch()}
+      />
+    );
+  };
 }
+
+/** xAI 账号的订阅额度（get_xai_oauth_quota(accountId)） */
+export const XaiAccountQuota = subscriptionAccountQuota(
+  useXaiOauthQuotaByAccountId,
+);
 
 /** Kimi 官方账号的剩余额度（kimi_oauth_quota(accountId)，不用先切号） */
 export function KimiAccountQuota({
@@ -421,56 +454,12 @@ export function KimiAccountQuota({
 }
 
 /** Antigravity 账号的剩余额度（agy_account_quota(accountId)，不用先切号） */
-export function AgyAccountQuota({
-  accountId,
-  login,
-}: {
-  accountId: string;
-  login: string;
-}) {
-  const { t, i18n } = useTranslation();
-  const display = useQuotaDisplay();
-  const {
-    data: quota,
-    isFetching: loading,
-    refetch,
-  } = useAgyAccountQuota(accountId, { enabled: true, autoQuery: false });
-  return (
-    <AccountQuotaColumn
-      login={login}
-      state={subscriptionQuotaState(t, quota, loading, i18n.language, display)}
-      queriedAt={quota?.queriedAt ?? null}
-      loading={loading}
-      onRefresh={() => void refetch()}
-    />
-  );
-}
+export const AgyAccountQuota = subscriptionAccountQuota(useAgyAccountQuota);
 
 /** Claude 官方账号的订阅额度（get_claude_account_quota(accountId)，不用先切号） */
-export function ClaudeAccountQuota({
-  accountId,
-  login,
-}: {
-  accountId: string;
-  login: string;
-}) {
-  const { t, i18n } = useTranslation();
-  const display = useQuotaDisplay();
-  const {
-    data: quota,
-    isFetching: loading,
-    refetch,
-  } = useClaudeAccountQuota(accountId, { enabled: true, autoQuery: false });
-  return (
-    <AccountQuotaColumn
-      login={login}
-      state={subscriptionQuotaState(t, quota, loading, i18n.language, display)}
-      queriedAt={quota?.queriedAt ?? null}
-      loading={loading}
-      onRefresh={() => void refetch()}
-    />
-  );
-}
+export const ClaudeAccountQuota = subscriptionAccountQuota(
+  useClaudeAccountQuota,
+);
 
 /**
  * WorkBuddyQuota → 额度列状态：一行「套餐名  额度条  剩余积分」，悬停写全剩余 / 总量 / 已用；

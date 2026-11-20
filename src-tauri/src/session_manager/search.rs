@@ -14,11 +14,12 @@
 //! FTS 行的 rowid 由「源 id × 2^24 + 消息序号」组成，重建一个会话时按 rowid 区间删除，
 //! 不必扫全表。
 
+use crate::sync_utils::MutexExt;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{LazyLock, Mutex, MutexGuard};
+use std::sync::{LazyLock, Mutex};
 use std::time::UNIX_EPOCH;
 
 use rusqlite::{params, Connection, OptionalExtension};
@@ -544,10 +545,6 @@ static STATUS: LazyLock<Mutex<IndexStatus>> = LazyLock::new(|| Mutex::new(IndexS
 static RUNNING: AtomicBool = AtomicBool::new(false);
 static RERUN: AtomicBool = AtomicBool::new(false);
 
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|e| e.into_inner())
-}
-
 pub fn index_path() -> PathBuf {
     crate::config::get_app_config_dir().join(INDEX_FILE)
 }
@@ -557,7 +554,7 @@ pub fn enabled() -> bool {
 }
 
 pub fn status() -> IndexStatus {
-    *lock(&STATUS)
+    *STATUS.lock_recover()
 }
 
 /// 打开（必要时创建）索引后执行 `f`；功能关闭时不碰磁盘
@@ -575,7 +572,7 @@ fn with_index_in<T>(
     is_enabled: impl Fn() -> bool,
     f: impl FnOnce(&mut SessionIndex) -> rusqlite::Result<T>,
 ) -> Result<T, String> {
-    let mut guard = lock(slot);
+    let mut guard = slot.lock_recover();
     if !is_enabled() {
         return Err("Session content search is disabled".to_string());
     }
@@ -632,10 +629,10 @@ fn clear_in(
     status: &Mutex<IndexStatus>,
     path: &Path,
 ) -> Result<(), String> {
-    let mut guard = lock(slot);
+    let mut guard = slot.lock_recover();
     *guard = None;
     let result = remove_index_files(path);
-    *lock(status) = IndexStatus::default();
+    *status.lock_recover() = IndexStatus::default();
     result.map_err(|e| e.to_string())
 }
 
@@ -696,7 +693,7 @@ where
 }
 
 fn set_status(status: IndexStatus, on_status: &dyn Fn(IndexStatus)) {
-    *lock(&STATUS) = status;
+    *STATUS.lock_recover() = status;
     on_status(status);
 }
 
@@ -1544,8 +1541,8 @@ mod tests {
         let enabled = AtomicBool::new(false);
 
         assert!(clear_in(&slot, &status, &path).is_err());
-        assert!(lock(&slot).is_none());
-        assert_eq!(*lock(&status), IndexStatus::default());
+        assert!(slot.lock_recover().is_none());
+        assert_eq!(*status.lock_recover(), IndexStatus::default());
         assert!(!dir.path().join(format!("{INDEX_FILE}-wal")).exists());
         assert!(!dir.path().join(format!("{INDEX_FILE}-shm")).exists());
         assert!(
@@ -1578,7 +1575,7 @@ mod tests {
         let enabled = Arc::new(AtomicBool::new(true));
 
         // 模拟 clear：持锁期间关闭开关、删文件；写入线程此时已经在等锁
-        let guard = lock(&slot);
+        let guard = slot.lock_recover();
         let writer = {
             let slot = Arc::clone(&slot);
             let enabled = Arc::clone(&enabled);

@@ -25,6 +25,16 @@ import {
   MONO_FIELD_CLASS,
 } from "@/components/mcp/formBits";
 import { repoFailureKey } from "./repoFailures";
+import {
+  RepoTokenSection,
+  type RepoTokenSectionProps,
+} from "./RepoTokenSection";
+import {
+  GITHUB_HOST,
+  isInsecureRepoUrl,
+  parseRepoUrl,
+  repoWebUrl,
+} from "./repoUrl";
 
 interface RepoManagerPanelProps {
   repos: SkillRepo[];
@@ -35,21 +45,12 @@ interface RepoManagerPanelProps {
   onRemove: (owner: string, name: string) => Promise<void>;
   /** 勾掉 = 停用（不参与发现），不删除 */
   onToggle?: (repo: SkillRepo, enabled: boolean) => Promise<void>;
+  /** 访问令牌区（读私有仓库用）；不传就不显示 */
+  tokens?: Omit<RepoTokenSectionProps, "knownHosts">;
   onClose: () => void;
 }
 
-export function parseRepoUrl(
-  url: string,
-): { owner: string; name: string } | null {
-  let cleaned = url.trim();
-  cleaned = cleaned.replace(/^https?:\/\/github\.com\//, "");
-  cleaned = cleaned.replace(/\.git$/, "").replace(/\/+$/, "");
-  const parts = cleaned.split("/");
-  if (parts.length === 2 && parts[0] && parts[1]) {
-    return { owner: parts[0], name: parts[1] };
-  }
-  return null;
-}
+export { parseRepoUrl };
 
 /**
  * 发现结果里的 `repoBranch` 是实际下载成功的分支，不一定等于配置的分支：
@@ -85,9 +86,13 @@ export function RepoManagerPanel({
   onAdd,
   onRemove,
   onToggle,
+  tokens,
   onClose,
 }: RepoManagerPanelProps) {
   const { t } = useTranslation();
+  const knownHosts = [
+    ...new Set(repos.map((repo) => repo.host || GITHUB_HOST)),
+  ];
   const failureByRepo = new Map(
     failures.map((failure) => [repoFailureKey(failure), failure]),
   );
@@ -98,6 +103,10 @@ export function RepoManagerPanel({
 
   const handleAdd = async () => {
     setError("");
+    if (isInsecureRepoUrl(repoUrl)) {
+      setError(t("skills.repo.httpsOnly"));
+      return;
+    }
     const parsed = parseRepoUrl(repoUrl);
     if (!parsed) {
       setError(t("skills.repo.invalidUrl"));
@@ -106,6 +115,7 @@ export function RepoManagerPanel({
     setAdding(true);
     try {
       await onAdd({
+        ...(parsed.host ? { host: parsed.host } : {}),
         owner: parsed.owner,
         name: parsed.name,
         branch: branch.trim() || "main",
@@ -120,9 +130,9 @@ export function RepoManagerPanel({
     }
   };
 
-  const handleOpenRepo = async (owner: string, name: string) => {
+  const handleOpenRepo = async (repo: SkillRepo) => {
     try {
-      await settingsApi.openExternal(`https://github.com/${owner}/${name}`);
+      await settingsApi.openExternal(repoWebUrl(repo));
     } catch (err) {
       console.error("Failed to open URL:", err);
     }
@@ -247,6 +257,9 @@ export function RepoManagerPanel({
                           {id}
                         </span>
                         <span className="text-caption text-fg-2">
+                          {repo.host && repo.host !== GITHUB_HOST
+                            ? `${repo.host} · `
+                            : ""}
                           {repo.branch || "main"}
                           {" · "}
                           {!repo.enabled ? (
@@ -273,9 +286,7 @@ export function RepoManagerPanel({
                           aria-label={t("skillsPage.repos.openAria", {
                             repo: id,
                           })}
-                          onClick={() =>
-                            void handleOpenRepo(repo.owner, repo.name)
-                          }
+                          onClick={() => void handleOpenRepo(repo)}
                         >
                           <ExternalLink className="h-4 w-4" strokeWidth={1.5} />
                         </Button>
@@ -300,6 +311,8 @@ export function RepoManagerPanel({
               </ul>
             )}
           </section>
+
+          {tokens && <RepoTokenSection {...tokens} knownHosts={knownHosts} />}
         </SheetBody>
       </SheetContent>
     </Sheet>

@@ -272,13 +272,20 @@ pub(crate) fn discover_ids() -> Result<Vec<String>, AppError> {
 pub fn import(state: &AppState) -> Result<usize, AppError> {
     let document = read(&crate::copilot_config::mcp_config_path())?;
     let disabled = disabled_servers();
-    let mut existing = state.db.get_all_mcp_servers()?;
+    let (mut existing, unreadable) = state
+        .db
+        .get_mcp_server_rows()?
+        .into_readable_and_unreadable_ids();
     let mut count = 0;
     let mut skipped = Vec::new();
     for (id, native) in document["mcpServers"].as_object().into_iter().flatten() {
         let spec = unified_spec(native);
         if super::validation::validate_server_spec(&spec).is_err() {
             skipped.push(format!("'{id}': invalid transport configuration"));
+            continue;
+        }
+        if unreadable.contains(id) {
+            skipped.push(format!("'{id}': stored server is unreadable"));
             continue;
         }
         let enabled = !disabled.iter().any(|name| name == id);
