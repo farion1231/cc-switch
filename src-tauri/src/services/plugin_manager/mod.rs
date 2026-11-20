@@ -24,7 +24,9 @@ mod mcode;
 mod openclaw;
 mod pi;
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -76,6 +78,18 @@ impl PluginApp {
             PluginApp::Pi => "pi",
         }
     }
+
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+    fn app_type(self) -> AppType {
+        match self {
+            PluginApp::Claude => AppType::Claude,
+            PluginApp::Codex => AppType::Codex,
+            PluginApp::Grok => AppType::GrokBuild,
+            PluginApp::Mcode => AppType::Mcode,
+            PluginApp::Openclaw => AppType::OpenClaw,
+            PluginApp::Pi => AppType::Pi,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
@@ -105,6 +119,9 @@ pub struct PluginEntry {
     /// 目录条目装好后在已安装列表里的 id，和 `id` 不同时才有：OpenClaw 目录给的是 ClawHub
     /// 包名（`@openclaw/memory-lancedb`），装好后的插件 id 是 `memory-lancedb`。
     pub installed_id: Option<String>,
+    /// 已安装条目在目录里对应的 id，和 `id` 不同时才有：Pi 钉了版本的 npm 包
+    /// （`npm:foo@1.0.0`）对应目录里的 `npm:foo`。
+    pub catalog_id: Option<String>,
     pub install_path: Option<String>,
     pub updated_at: Option<String>,
 }
@@ -485,6 +502,75 @@ fn split_id(id: &str) -> (String, String) {
 
 // ───────────────────────────── 插件清单（plugin.json） ─────────────────────────────
 
+/// 从 WSL UNC 路径取出发行版根（`\\wsl$\Ubuntu` 或 `\\wsl.localhost\Ubuntu`）。
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn wsl_unc_root(dir: &Path) -> Option<PathBuf> {
+    let text = dir.to_string_lossy();
+    let normalized = text.replace('/', "\\");
+    let rest = if normalized
+        .get(..8)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(r"\\?\UNC\"))
+    {
+        &normalized[8..]
+    } else {
+        normalized.strip_prefix(r"\\")?
+    };
+    let mut parts = rest.split('\\');
+    let host = parts.next()?;
+    if !(host.eq_ignore_ascii_case("wsl$") || host.eq_ignore_ascii_case("wsl.localhost")) {
+        return None;
+    }
+    let distro = parts.next()?;
+    if distro.is_empty() || distro.starts_with('-') || distro == "." || distro == ".." {
+        return None;
+    }
+    Some(PathBuf::from(format!(r"\\{host}\{distro}")))
+}
+
+/// 当前应用在 WSL 里跑时返回对应发行版的 Windows UNC 根；本机或非 Windows 返回 `None`。
+pub(super) fn wsl_root_for_app(app: PluginApp) -> Option<PathBuf> {
+    #[cfg(target_os = "windows")]
+    {
+        let override_dir = crate::settings::get_override_dir(&app.app_type())?;
+        wsl_unc_root(&override_dir)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = app;
+        None
+    }
+}
+
+/// 把 CLI 返回的目录路径转成本机文件 API 可直接读的路径。
+///
+/// Windows 调 WSL 里的 CLI 时，输出里的安装目录是 Linux 路径（`/home/me/…`），
+/// 直接交给 `std::fs` 会失败；拼到对应发行版的 UNC 根（`\\wsl.localhost\<distro>`）下即可读到清单。
+pub(super) fn resolve_cli_path(raw: &str, wsl_root: Option<&Path>) -> Option<PathBuf> {
+    let Some(root) = wsl_root else {
+        return Some(PathBuf::from(raw));
+    };
+    if !raw.starts_with('/') || raw.starts_with("//") {
+        return Some(PathBuf::from(raw));
+    }
+    let mut segments: Vec<&str> = Vec::new();
+    for part in raw.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                segments.pop();
+            }
+            // 含 Windows 盘符冒号或反斜杠的段不能直接 push 到 PathBuf，避免跳出 UNC 根
+            other if other.contains('\\') || other.contains(':') => return None,
+            other => segments.push(other),
+        }
+    }
+    let mut path = root.to_path_buf();
+    for segment in segments {
+        path.push(segment);
+    }
+    Some(path)
+}
+
 #[derive(Default)]
 struct ManifestInfo {
     display_name: Option<String>,
@@ -518,7 +604,7 @@ fn read_manifest_file(path: &Path) -> Option<ManifestInfo> {
 
 // ───────────────────────────── Claude Code ─────────────────────────────
 
-fn parse_claude_listing(value: &Value) -> PluginListing {
+fn parse_claude_listing(value: &Value, wsl_root: Option<&Path>) -> PluginListing {
     // 不带 --available 时是数组；带了是 {installed, available}
     let (installed_raw, available_raw) = match value {
         Value::Array(items) => (items.clone(), Vec::new()),
@@ -562,7 +648,8 @@ fn parse_claude_listing(value: &Value) -> PluginListing {
             let install_path = str_field(item, "installPath");
             let manifest = install_path
                 .as_deref()
-                .map(|p| read_manifest(Path::new(p), ".claude-plugin"))
+                .and_then(|p| resolve_cli_path(p, wsl_root))
+                .map(|p| read_manifest(&p, ".claude-plugin"))
                 .unwrap_or_default();
             let catalog_description = available
                 .iter()
@@ -584,6 +671,7 @@ fn parse_claude_listing(value: &Value) -> PluginListing {
                 removable: scope.as_deref().is_none_or(|s| s == "user"),
                 installable: true,
                 installed_id: None,
+                catalog_id: None,
                 scope,
                 install_path,
                 updated_at: str_field(item, "lastUpdated")
@@ -626,7 +714,7 @@ fn parse_claude_marketplaces(value: &Value) -> Vec<PluginMarketplace> {
 
 // ───────────────────────────── Codex ─────────────────────────────
 
-fn parse_codex_entry(item: &Value) -> Option<PluginEntry> {
+fn parse_codex_entry(item: &Value, wsl_root: Option<&Path>) -> Option<PluginEntry> {
     let id = str_field(item, "pluginId")?;
     let (name, market) = split_id(&id);
     let source_path = item
@@ -635,7 +723,8 @@ fn parse_codex_entry(item: &Value) -> Option<PluginEntry> {
         .and_then(|s| str_field(s, "path"));
     let manifest = source_path
         .as_deref()
-        .map(|p| read_manifest(Path::new(p), ".codex-plugin"))
+        .and_then(|p| resolve_cli_path(p, wsl_root))
+        .map(|p| read_manifest(&p, ".codex-plugin"))
         .unwrap_or_default();
     Some(PluginEntry {
         name: str_field(item, "name").unwrap_or(name),
@@ -656,6 +745,7 @@ fn parse_codex_entry(item: &Value) -> Option<PluginEntry> {
         removable: true,
         installable: str_field(item, "installPolicy").as_deref() != Some("NOT_AVAILABLE"),
         installed_id: None,
+        catalog_id: None,
         install_path: None,
         updated_at: None,
         scope: None,
@@ -663,12 +753,17 @@ fn parse_codex_entry(item: &Value) -> Option<PluginEntry> {
     })
 }
 
-fn parse_codex_listing(value: &Value) -> PluginListing {
+fn parse_codex_listing(value: &Value, wsl_root: Option<&Path>) -> PluginListing {
     let collect = |key: &str| -> Vec<PluginEntry> {
         value
             .get(key)
             .and_then(Value::as_array)
-            .map(|items| items.iter().filter_map(parse_codex_entry).collect())
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| parse_codex_entry(item, wsl_root))
+                    .collect()
+            })
             .unwrap_or_default()
     };
     let installed = collect("installed");
@@ -761,11 +856,14 @@ fn run_list(app: PluginApp, with_catalog: bool) -> Result<PluginListing, String>
         &["plugin", "list", "--json"]
     };
     let value = run_json(app, args, LIST_TIMEOUT)?;
+    let wsl_root = wsl_root_for_app(app);
     Ok(match app {
-        PluginApp::Claude => parse_claude_listing(&value),
-        PluginApp::Codex => parse_codex_listing(&value),
+        PluginApp::Claude => parse_claude_listing(&value, wsl_root.as_deref()),
+        PluginApp::Codex => parse_codex_listing(&value, wsl_root.as_deref()),
         PluginApp::Mcode => mcode::parse_listing(&value),
-        PluginApp::Grok => grok::parse_listing(&value, &grok::read_config_text()),
+        PluginApp::Grok => {
+            grok::parse_listing(&value, &grok::read_config_text(), wsl_root.as_deref())
+        }
         // OpenClaw、Pi 的列表命令不同，不走这里
         PluginApp::Openclaw | PluginApp::Pi => {
             return Err(unsupported(app, "plugin list --available"))
@@ -809,6 +907,7 @@ fn catalog_from_listing(listing: PluginListing) -> Vec<PluginEntry> {
                 scope: None,
                 manageable: true,
                 removable: true,
+                catalog_id: None,
                 install_path: None,
                 updated_at: None,
                 ..entry
@@ -993,6 +1092,42 @@ pub fn set_plugin_enabled(
     }
 }
 
+/// 记录每个 Codex 插件最近一次经 CC Switch 切换开关的序号和目标值。
+/// 更新停用的 Codex 插件期间如果中途改过开关，装完按最新的意愿收尾，不再误把它停用回去。
+static CODEX_TOGGLE_STATE: OnceLock<Mutex<HashMap<String, (u64, bool)>>> = OnceLock::new();
+
+fn codex_toggle_state() -> &'static Mutex<HashMap<String, (u64, bool)>> {
+    CODEX_TOGGLE_STATE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn codex_toggle_epoch(id: &str) -> u64 {
+    codex_toggle_state()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(id)
+        .map_or(0, |&(epoch, _)| epoch)
+}
+
+fn record_codex_toggle(id: &str, enabled: bool) {
+    let mut map = codex_toggle_state()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let next = map.get(id).map_or(1, |&(epoch, _)| epoch + 1);
+    map.insert(id.to_string(), (next, enabled));
+}
+
+/// 按更新前后的开关记录决定 `codex plugin add` 结束后是否需要写回 `enabled = false`。
+fn should_restore_codex_disabled(
+    was_disabled: bool,
+    epoch_before: u64,
+    current_toggle: Option<(u64, bool)>,
+) -> bool {
+    match current_toggle {
+        Some((epoch, enabled)) if epoch != epoch_before => !enabled,
+        _ => was_disabled,
+    }
+}
+
 /// 改 `config.toml` 里这个插件的开关；返回文件是否有变化。
 ///
 /// 插件管理里只有这一步是 CC Switch 自己写文件，和切换供应商写 `config.toml` 走同一条路：
@@ -1010,7 +1145,40 @@ fn write_codex_plugin_enabled(db: &Database, id: &str, enabled: bool) -> Result<
             PendingTarget::default(),
         )
         .map_err(|e| e.to_string())?;
+    record_codex_toggle(id, enabled);
     Ok(!report.changed.is_empty())
+}
+
+/// `codex plugin add` 结束后按需写回 `enabled = false`；在 Codex 写锁内复查期间是否被切换过。
+fn restore_codex_plugin_disabled_if_needed(
+    db: &Database,
+    id: &str,
+    was_disabled: bool,
+    epoch_before: u64,
+) -> Result<(), String> {
+    if !was_disabled && codex_toggle_epoch(id) == epoch_before {
+        return Ok(());
+    }
+    let write = AppWrite::begin(db, AppType::Codex.as_str()).map_err(|e| e.to_string())?;
+    let current = codex_toggle_state()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(id)
+        .copied();
+    if !should_restore_codex_disabled(was_disabled, epoch_before, current) {
+        return Ok(());
+    }
+    write
+        .run(
+            op::APPLY,
+            &[FileChange {
+                file: LiveFile::private(crate::codex_config::get_codex_config_path()),
+                patch: &codex_plugin_enabled_patch(id, false),
+            }],
+            PendingTarget::default(),
+        )
+        .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 /// 更新到市场里的最新版。Claude Code、Grok Build、OpenClaw、Pi 有这个命令；Codex 先刷新市场再
@@ -1032,7 +1200,8 @@ pub fn update_plugin(
         }
         PluginApp::Codex => {
             let (_, market) = split_id(id);
-            let config =
+            let mut epoch_before = codex_toggle_epoch(id);
+            let mut config =
                 crate::codex_config::read_codex_config_text().map_err(|e| e.to_string())?;
             // upgrade 只适用于配置的 Git 市场；本地和内置/托管市场直接交给 add。
             if codex_marketplace_needs_upgrade(&config, &market)? {
@@ -1042,15 +1211,17 @@ pub fn update_plugin(
                     NETWORK_TIMEOUT,
                 )?;
                 codex_action_result(&out)?;
+                // 市场升级期间开关可能改过，以 `plugin add` 前的最新状态为准。
+                epoch_before = codex_toggle_epoch(id);
+                config =
+                    crate::codex_config::read_codex_config_text().map_err(|e| e.to_string())?;
             }
-            // `plugin add` 会把开关写回 enabled = true；用户停用过的，装完再停用回去。
+            // `plugin add` 会把开关写回 enabled = true；停用过且期间没被重新启用的，装完再停用回去。
             let was_disabled = codex_plugin_enabled_in_text(&config, id) == Some(false);
             let outcome = run_cli(app, &["plugin", "add", id, "--json"], NETWORK_TIMEOUT)
                 .and_then(|out| codex_action_result(&out))
                 .map(|v| ok_outcome(&v))?;
-            if was_disabled {
-                write_codex_plugin_enabled(db, id, false)?;
-            }
+            restore_codex_plugin_disabled_if_needed(db, id, was_disabled, epoch_before)?;
             Ok(outcome)
         }
         PluginApp::Grok => {
@@ -1347,7 +1518,7 @@ mod tests {
                 }
             ]
         });
-        let listing = parse_claude_listing(&value);
+        let listing = parse_claude_listing(&value, None);
         assert_eq!(listing.installed.len(), 2);
         let fd = &listing.installed[0];
         assert_eq!(fd.name, "frontend-design");
@@ -1398,7 +1569,7 @@ mod tests {
 
     #[test]
     fn claude_listing_accepts_plain_array() {
-        let listing = parse_claude_listing(&json!([{ "id": "a@b", "enabled": true }]));
+        let listing = parse_claude_listing(&json!([{ "id": "a@b", "enabled": true }]), None);
         assert_eq!(listing.installed.len(), 1);
         assert!(listing.installed[0].enabled);
         assert!(listing.available.is_empty());
@@ -1439,7 +1610,7 @@ mod tests {
                 }
             ]
         });
-        let listing = parse_codex_listing(&value);
+        let listing = parse_codex_listing(&value, None);
         assert_eq!(listing.installed.len(), 1);
         let gs = &listing.installed[0];
         assert_eq!(gs.display_name.as_deref(), Some("Game Studio"));
@@ -1720,5 +1891,124 @@ enabled = false
 
         let again = set_plugin_enabled(&db, PluginApp::Codex, "a@m", false).unwrap();
         assert!(!again.changed);
+    }
+
+    #[test]
+    fn wsl_paths_resolve_to_unc_root_for_manifest_reads() {
+        assert_eq!(
+            wsl_unc_root(Path::new(r"\\wsl$\Ubuntu\home\jane\.claude")),
+            Some(PathBuf::from(r"\\wsl$\Ubuntu"))
+        );
+        assert_eq!(
+            wsl_unc_root(Path::new(
+                r"\\wsl.localhost\Ubuntu-22.04\home\jane\.pi\agent"
+            )),
+            Some(PathBuf::from(r"\\wsl.localhost\Ubuntu-22.04"))
+        );
+        assert_eq!(
+            wsl_unc_root(Path::new(r"\\?\UNC\wsl.localhost\Ubuntu\home\jane\.codex")),
+            Some(PathBuf::from(r"\\wsl.localhost\Ubuntu"))
+        );
+        for non_wsl in [
+            r"C:\Users\jane\.claude",
+            r"C:\用户\.codex",
+            "/home/jane/.claude",
+            r"\\server\share\claude",
+            r"\\wsl$\",
+            r"\\wsl$\-bad\home\jane",
+        ] {
+            assert_eq!(wsl_unc_root(Path::new(non_wsl)), None, "{non_wsl}");
+        }
+
+        let fake_wsl = tempfile::tempdir().unwrap();
+        let claude_dir = fake_wsl.path().join("home/jane/.claude/plugins/hello");
+        std::fs::create_dir_all(claude_dir.join(".claude-plugin")).unwrap();
+        std::fs::write(
+            claude_dir.join(".claude-plugin/plugin.json"),
+            r#"{"name":"hello","description":"From WSL Claude"}"#,
+        )
+        .unwrap();
+        let claude_listing = parse_claude_listing(
+            &json!([{
+                "id": "hello@mkt",
+                "version": "1.0.0",
+                "scope": "user",
+                "enabled": true,
+                "installPath": "/home/jane/.claude/plugins/hello"
+            }]),
+            Some(fake_wsl.path()),
+        );
+        assert_eq!(
+            claude_listing.installed[0].description.as_deref(),
+            Some("From WSL Claude")
+        );
+
+        let codex_dir = fake_wsl.path().join("home/jane/.codex/plugins/studio");
+        std::fs::create_dir_all(codex_dir.join(".codex-plugin")).unwrap();
+        std::fs::write(
+            codex_dir.join(".codex-plugin/plugin.json"),
+            r#"{"interface":{"displayName":"WSL Studio","shortDescription":"From WSL Codex"}}"#,
+        )
+        .unwrap();
+        let codex_listing = parse_codex_listing(
+            &json!({
+                "installed": [{
+                    "pluginId": "studio@mkt",
+                    "name": "studio",
+                    "installed": true,
+                    "enabled": true,
+                    "source": { "source": "local", "path": "/home/jane/.codex/plugins/studio" }
+                }]
+            }),
+            Some(fake_wsl.path()),
+        );
+        assert_eq!(
+            codex_listing.installed[0].display_name.as_deref(),
+            Some("WSL Studio")
+        );
+        assert_eq!(
+            codex_listing.installed[0].description.as_deref(),
+            Some("From WSL Codex")
+        );
+
+        assert_eq!(
+            resolve_cli_path("/home/jane/a/../b", Some(fake_wsl.path())),
+            Some(fake_wsl.path().join("home").join("jane").join("b"))
+        );
+        assert_eq!(
+            resolve_cli_path("/home/C:/evil", Some(fake_wsl.path())),
+            None
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn codex_update_does_not_re_disable_plugin_re_enabled_mid_update() {
+        let home = HomeGuard::new();
+        let config = home.0.path().join(".codex").join("config.toml");
+        std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+        std::fs::write(&config, "[plugins.\"a@m\"]\nenabled = false\n").unwrap();
+        let db = Database::memory().unwrap();
+
+        assert!(should_restore_codex_disabled(true, 1, None));
+        assert!(should_restore_codex_disabled(true, 1, Some((1, false))));
+        assert!(!should_restore_codex_disabled(true, 1, Some((2, true))));
+        assert!(should_restore_codex_disabled(false, 1, Some((2, false))));
+        assert!(!should_restore_codex_disabled(false, 1, Some((1, true))));
+
+        // 1) 停用中的插件更新期间被重新启用：更新收尾不再写回 false
+        let epoch_before = codex_toggle_epoch("a@m");
+        set_plugin_enabled(&db, PluginApp::Codex, "a@m", true).unwrap();
+        restore_codex_plugin_disabled_if_needed(&db, "a@m", true, epoch_before).unwrap();
+        let text = std::fs::read_to_string(&config).unwrap();
+        assert_eq!(codex_plugin_enabled_in_text(&text, "a@m"), Some(true));
+
+        // 2) 停用中的插件更新期间没人改开关：模拟 `plugin add` 写成 true 后，收尾写回 false
+        set_plugin_enabled(&db, PluginApp::Codex, "a@m", false).unwrap();
+        let epoch_before = codex_toggle_epoch("a@m");
+        std::fs::write(&config, "[plugins.\"a@m\"]\nenabled = true\n").unwrap();
+        restore_codex_plugin_disabled_if_needed(&db, "a@m", true, epoch_before).unwrap();
+        let text = std::fs::read_to_string(&config).unwrap();
+        assert_eq!(codex_plugin_enabled_in_text(&text, "a@m"), Some(false));
     }
 }

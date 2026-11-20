@@ -67,8 +67,9 @@ export interface QwenProviderPreset
 }
 
 // Only native protocol equivalents are admitted. Bedrock's signed Converse API
-// has no equivalent in Qwen Code and must not become an OpenAI/Anthropic preset;
-// Gemini presets are not offered (see QWEN_EDITABLE_AUTH_TYPES).
+// and Mistral's native Conversations API have no equivalent in Qwen Code and
+// must not become OpenAI/Anthropic presets; Gemini presets are not offered (see
+// QWEN_EDITABLE_AUTH_TYPES).
 const QWEN_API_FORMATS: Partial<Record<PiApiFormat, QwenAuthType>> = {
   "openai-completions": "openai",
   "openai-responses": "openai-responses",

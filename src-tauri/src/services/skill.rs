@@ -318,20 +318,12 @@ enum PiSkillDeployment {
 
 // ========== skills.sh API 类型 ==========
 
-/// skills.sh API 原始响应
-///
-/// 注意：API 命名不一致（searchType 是 camelCase，duration_ms 是 snake_case），
-/// 因此不能用 rename_all，需要逐字段指定。
+/// skills.sh API 原始响应（只取用到的字段，其余由 serde 忽略）
 #[derive(Debug, Clone, Deserialize)]
 struct SkillsShApiResponse {
     pub query: String,
-    #[serde(rename = "searchType")]
-    #[allow(dead_code)]
-    pub search_type: String,
     pub skills: Vec<SkillsShApiSkill>,
     pub count: usize,
-    #[allow(dead_code)]
-    pub duration_ms: u64,
 }
 
 /// skills.sh API 原始技能条目

@@ -21,6 +21,7 @@ describe("qwenProviderPresets", () => {
     const compatible = piProviderPresets.filter(
       (preset) =>
         preset.settingsConfig.api !== "bedrock-converse-stream" &&
+        preset.settingsConfig.api !== "mistral-conversations" &&
         !preset.settingsConfig.compat &&
         preset.settingsConfig.models.length > 0,
     );

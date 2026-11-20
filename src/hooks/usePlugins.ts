@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useSyncExternalStore } from "react";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { readLocalCache, writeLocalCache } from "@/lib/localCache";
 import {
@@ -27,9 +27,48 @@ export const pluginKeys = {
 
 const installedCacheKey = (app: PluginApp) => `plugins:${app}:installed`;
 
-/** 每个应用进行中的写操作数，和操作结束后要重读的查询。 */
+/** 每个应用进行中的写操作数、各条目的转圈状态，和操作结束后要重读的查询。 */
 const pending = new Map<PluginApp, number>();
 const reconcileTargets = new Map<PluginApp, Set<ReconcileTarget>>();
+const EMPTY_BUSY: Readonly<Record<string, string>> = Object.freeze({});
+const busyByApp = new Map<PluginApp, Readonly<Record<string, string>>>();
+const busyListeners = new Set<() => void>();
+
+function emitBusy() {
+  for (const listener of busyListeners) listener();
+}
+
+function subscribeBusy(listener: () => void) {
+  busyListeners.add(listener);
+  return () => {
+    busyListeners.delete(listener);
+  };
+}
+
+function busySnapshot(app: PluginApp): Readonly<Record<string, string>> {
+  return busyByApp.get(app) ?? EMPTY_BUSY;
+}
+
+function setBusyKey(app: PluginApp, key: string, action: string) {
+  busyByApp.set(app, { ...busySnapshot(app), [key]: action });
+  emitBusy();
+}
+
+function clearBusyKey(app: PluginApp, key: string) {
+  const prev = busyByApp.get(app);
+  if (!prev || !(key in prev)) return;
+  const next = { ...prev };
+  delete next[key];
+  if (Object.keys(next).length === 0) {
+    busyByApp.delete(app);
+  } else {
+    busyByApp.set(app, next);
+  }
+  emitBusy();
+}
+
+export const isPluginWriteBusy = (app: PluginApp, key: string) =>
+  Boolean(busySnapshot(app)[key]);
 
 export const hasPendingPluginWrites = (app: PluginApp) =>
   (pending.get(app) ?? 0) > 0;
@@ -42,6 +81,8 @@ export function resetPluginWriteState() {
   pending.clear();
   reconcileTargets.clear();
   prefetched.clear();
+  busyByApp.clear();
+  emitBusy();
 }
 
 /** 有写操作在跑时不自动刷新：刷新读到的是操作前的状态，会把乐观结果盖回去。 */
@@ -143,6 +184,7 @@ export function installedFromCatalog(
     // 没有市场概念的应用（OpenClaw、Pi）已装条目不显示来源
     marketplace: app === "openclaw" || app === "pi" ? "" : entry.marketplace,
     installedId: null,
+    catalogId: null,
     installed: true,
     enabled: true,
     manageable: true,
@@ -201,18 +243,22 @@ export interface PluginWriteResult {
   error?: unknown;
 }
 
-/** 插件页的写操作。`busy` 是进行中操作的 key → 操作名，供行内显示转圈。 */
+/**
+ * 插件页的写操作。`busy` 按应用存在模块级，切到别的应用或离开页面再回来时，
+ * 还没跑完的操作继续转圈并禁用对应控件。
+ */
 export function usePluginWrites(app: PluginApp) {
   const queryClient = useQueryClient();
-  const [busy, setBusy] = useState<Record<string, string>>({});
-
-  // 换应用时转圈状态不跟过去（那边的操作照常在后台跑完、对账）
-  useEffect(() => setBusy({}), [app]);
+  const busy = useSyncExternalStore(
+    subscribeBusy,
+    () => busySnapshot(app),
+    () => EMPTY_BUSY,
+  );
 
   const run = useCallback(
     async (write: PluginWrite): Promise<PluginWriteResult> => {
       pending.set(app, (pending.get(app) ?? 0) + 1);
-      setBusy((prev) => ({ ...prev, [write.key]: write.action }));
+      setBusyKey(app, write.key, write.action);
       try {
         if (write.optimistic) {
           // 正在跑的刷新读的是操作前的状态，晚到会把乐观结果盖掉
@@ -234,11 +280,7 @@ export function usePluginWrites(app: PluginApp) {
           return { ok: false, error };
         }
       } finally {
-        setBusy((prev) => {
-          const next = { ...prev };
-          delete next[write.key];
-          return next;
-        });
+        clearBusyKey(app, write.key);
         finishWrite(queryClient, app, write.reconcile);
       }
     },
