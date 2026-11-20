@@ -1731,11 +1731,6 @@ export function CodexFormFields({
   // Copilot 的请求由转发层按 Copilot 客户端的样子发，UA 和请求覆盖都会被跳过，不显示。
   const userAgentAndOverrides = isCopilotPreset ? null : (
     <>
-      <ProviderProxyField
-        id="codex-provider-proxy-url"
-        value={proxyUrl}
-        onChange={onProxyUrlChange}
-      />
       <p className="border-t border-border pt-3 text-xs leading-relaxed text-fg-2">
         {isGrokBuild
           ? t("grokBuild.routeOnlySettingsHint", {
@@ -2169,12 +2164,6 @@ export function CodexFormFields({
   if (variant === "stack") {
     const showFormatFields = shouldShowSpeedTest && !isXaiOauthPreset;
     const showReasoning = isChatFormat && canEditReasoning;
-    // Copilot 不显示 UA 和请求覆盖，Responses 格式下高级区就空了。
-    const hasStackAdvancedContent =
-      showFullUrlToggle ||
-      (showFormatFields && isAnthropicFormat) ||
-      showReasoning ||
-      userAgentAndOverrides !== null;
     return (
       <>
         {oauthSections}
@@ -2231,68 +2220,69 @@ export function CodexFormFields({
         )}
         {defaultModelField}
 
-        {hasStackAdvancedContent && (
-          <Collapsible
-            open={stackAdvancedExpanded}
-            onOpenChange={setStackAdvancedExpanded}
-            className="rounded-lg border border-border p-4"
-          >
-            <CollapsibleTrigger asChild>
-              <Button
-                type="button"
-                variant={null}
-                size="sm"
-                className="h-8 w-full justify-start gap-1.5 px-0 text-sm font-medium text-fg-1 hover:opacity-70 active:scale-100"
-              >
-                {stackAdvancedExpanded ? (
-                  <ChevronDown className="h-4 w-4" />
-                ) : (
-                  <ChevronRight className="h-4 w-4" />
+        <Collapsible
+          open={stackAdvancedExpanded}
+          onOpenChange={setStackAdvancedExpanded}
+          className="rounded-lg border border-border p-4"
+        >
+          <CollapsibleTrigger asChild>
+            <Button
+              type="button"
+              variant={null}
+              size="sm"
+              className="h-8 w-full justify-start gap-1.5 px-0 text-sm font-medium text-fg-1 hover:opacity-70 active:scale-100"
+            >
+              {stackAdvancedExpanded ? (
+                <ChevronDown className="h-4 w-4" />
+              ) : (
+                <ChevronRight className="h-4 w-4" />
+              )}
+              {t("providerForm.advancedOptionsToggle", {
+                defaultValue: "高级选项",
+              })}
+            </Button>
+          </CollapsibleTrigger>
+          <CollapsibleContent className="space-y-3 pt-3">
+            {showFullUrlToggle && (
+              <FullUrlToggle
+                checked={isFullUrl}
+                onCheckedChange={onFullUrlChange}
+              />
+            )}
+            {showFormatFields &&
+              isAnthropicFormat &&
+              impersonateClaudeCodeToggle}
+            {showFormatFields && isAnthropicFormat && maxOutputTokensField}
+            {showReasoning && (
+              <div
+                className={cn(
+                  "space-y-3",
+                  showFormatFields &&
+                    isAnthropicFormat &&
+                    "border-t border-border pt-3",
                 )}
-                {t("providerForm.advancedOptionsToggle", {
-                  defaultValue: "高级选项",
-                })}
-              </Button>
-            </CollapsibleTrigger>
-            <CollapsibleContent className="space-y-3 pt-3">
-              {showFullUrlToggle && (
-                <FullUrlToggle
-                  checked={isFullUrl}
-                  onCheckedChange={onFullUrlChange}
-                />
+              >
+                {reasoningFields}
+              </div>
+            )}
+            <div
+              className={cn(
+                "space-y-3",
+                (showFullUrlToggle ||
+                  (showFormatFields && isAnthropicFormat) ||
+                  showReasoning) &&
+                  "border-t border-border pt-3",
               )}
-              {showFormatFields &&
-                isAnthropicFormat &&
-                impersonateClaudeCodeToggle}
-              {showFormatFields && isAnthropicFormat && maxOutputTokensField}
-              {showReasoning && (
-                <div
-                  className={cn(
-                    "space-y-3",
-                    showFormatFields &&
-                      isAnthropicFormat &&
-                      "border-t border-border pt-3",
-                  )}
-                >
-                  {reasoningFields}
-                </div>
-              )}
-              {userAgentAndOverrides && (
-                <div
-                  className={cn(
-                    "space-y-3",
-                    (showFullUrlToggle ||
-                      (showFormatFields && isAnthropicFormat) ||
-                      showReasoning) &&
-                      "border-t border-border pt-3",
-                  )}
-                >
-                  {userAgentAndOverrides}
-                </div>
-              )}
-            </CollapsibleContent>
-          </Collapsible>
-        )}
+            >
+              <ProviderProxyField
+                id="codex-provider-proxy-url"
+                value={proxyUrl}
+                onChange={onProxyUrlChange}
+              />
+              {userAgentAndOverrides}
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
 
         {speedTestModal}
       </>
@@ -2561,17 +2551,22 @@ export function CodexFormFields({
               </div>
             )}
 
-            {userAgentAndOverrides && (
-              <div
-                className={cn(
-                  "space-y-3",
-                  (shouldShowSpeedTest || (isChatFormat && canEditReasoning)) &&
-                    "border-t border-border pt-3",
-                )}
-              >
-                {userAgentAndOverrides}
-              </div>
-            )}
+            <div
+              className={cn(
+                "space-y-3",
+                (shouldShowSpeedTest ||
+                  isCopilotPreset ||
+                  (isChatFormat && canEditReasoning)) &&
+                  "border-t border-border pt-3",
+              )}
+            >
+              <ProviderProxyField
+                id="codex-provider-proxy-url"
+                value={proxyUrl}
+                onChange={onProxyUrlChange}
+              />
+              {userAgentAndOverrides}
+            </div>
           </CollapsibleContent>
         </Collapsible>
       )}

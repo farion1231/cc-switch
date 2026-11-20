@@ -1494,14 +1494,12 @@ export function ClaudeDesktopProviderForm({
               )}
             </div>
 
-            {activeProviderType !== "github_copilot" && (
-              <ProviderProxyField
-                id="claude-desktop-provider-proxy-url"
-                value={proxyUrl}
-                onChange={setProxyUrl}
-                directOnly={effectiveMode !== "proxy"}
-              />
-            )}
+            <ProviderProxyField
+              id="claude-desktop-provider-proxy-url"
+              value={proxyUrl}
+              onChange={setProxyUrl}
+              directOnly={effectiveMode !== "proxy"}
+            />
 
             <FormField
               control={form.control}

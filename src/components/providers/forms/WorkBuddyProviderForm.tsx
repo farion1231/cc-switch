@@ -49,6 +49,8 @@ import {
   type FetchedModelSelection,
 } from "./FetchedModelPicker";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
+import { ProviderProxyField } from "./ProviderProxyField";
+import { withProviderProxy } from "@/lib/proxyUrl";
 import {
   fillWorkBuddyModel,
   metadataFilledAnything,
@@ -173,6 +175,7 @@ export function WorkBuddyProviderForm({
   );
   // 名称默认跟着选中账号的昵称；用户改过名称就不再覆盖
   const autoName = useRef<string | null>(null);
+  const [proxyUrl, setProxyUrl] = useState(initialData?.meta?.proxyUrl ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   // The key is stored on every models.json entry this provider owns, so it is
@@ -325,6 +328,7 @@ export function WorkBuddyProviderForm({
     setIsFetchingModels(true);
     fetchModelsForConfig(baseUrl, apiKey, undefined, undefined, undefined, {
       apiFormat: CHAT_COMPLETIONS,
+      proxyUrl: proxyUrl.trim() || undefined,
     })
       .then((result) => {
         if (generation !== modelFetchGeneration.current) return;
@@ -347,7 +351,7 @@ export function WorkBuddyProviderForm({
           setIsFetchingModels(false);
         }
       });
-  }, [apiKey, baseUrl, t]);
+  }, [apiKey, baseUrl, proxyUrl, t]);
 
   const fillModelMetadata = useModelMetadataFill({
     baseUrl,
@@ -408,6 +412,7 @@ export function WorkBuddyProviderForm({
     setProviderKey(official ? "" : (selected?.providerKey ?? ""));
     setAccountId(null);
     autoName.current = null;
+    setProxyUrl("");
     form.reset({
       // 官方登录卡的名称在选账号时填成昵称
       name: official ? "" : (selected?.name ?? ""),
@@ -431,11 +436,13 @@ export function WorkBuddyProviderForm({
           setError("");
           try {
             if (isOfficial) {
+              const officialMeta = { ...(initialData?.meta ?? {}) };
+              delete officialMeta.proxyUrl;
               await onSubmit({
                 ...identity,
                 name: identity.name.trim(),
                 meta: {
-                  ...initialData?.meta,
+                  ...officialMeta,
                   authBinding: {
                     source: "managed_account",
                     authProvider: WORKBUDDY_ACCOUNT_AUTH_PROVIDER,
@@ -463,7 +470,7 @@ export function WorkBuddyProviderForm({
             await onSubmit({
               ...identity,
               name: identity.name.trim(),
-              meta: initialData?.meta,
+              meta: withProviderProxy(initialData?.meta, proxyUrl),
               providerKey: isEdit ? providerId : providerKey,
               presetCategory: category,
               settingsConfig: JSON.stringify(cleaned),
@@ -572,6 +579,13 @@ export function WorkBuddyProviderForm({
                 placeholder="https://api.example.com/v1/chat/completions"
                 hint={t("workbuddy.form.urlHint")}
                 showManageButton={false}
+              />
+
+              <ProviderProxyField
+                id="workbuddy-provider-proxy-url"
+                value={proxyUrl}
+                onChange={setProxyUrl}
+                directOnly
               />
 
               <div className="space-y-2">

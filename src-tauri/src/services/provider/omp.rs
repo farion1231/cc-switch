@@ -284,7 +284,7 @@ mod tests {
         let saved_proxy = |state: &AppState| {
             state
                 .db
-                .get_provider_by_id("cc-switch-test", "omp")
+                .get_provider_by_id("cc-switch-test", &AppType::Omp)
                 .unwrap()
                 .unwrap()
                 .meta
@@ -315,7 +315,7 @@ mod tests {
         assert_eq!(saved_proxy(&state).as_deref(), Some(proxy));
         let meta = state
             .db
-            .get_provider_by_id("cc-switch-test", "omp")
+            .get_provider_by_id("cc-switch-test", &AppType::Omp)
             .unwrap()
             .unwrap()
             .meta

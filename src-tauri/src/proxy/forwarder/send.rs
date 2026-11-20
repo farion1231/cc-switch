@@ -44,9 +44,8 @@ impl RequestForwarder {
             log::debug!(
                 "[Forwarder] Using pooled reqwest client (preserve_exact_header_case={preserve_exact_header_case}, socks_proxy={is_socks_proxy})"
             );
-            let client =
-                crate::proxy::http_client::get_for_provider(url, provider_proxy_url)
-                    .map_err(ProxyError::ForwardFailed)?;
+            let client = crate::proxy::http_client::get_for_provider(url, provider_proxy_url)
+                .map_err(ProxyError::ForwardFailed)?;
             let mut request = client.request(method.clone(), url);
             if request_is_streaming {
                 // reqwest 的 timeout 是整请求超时；流式请求交给 response_processor

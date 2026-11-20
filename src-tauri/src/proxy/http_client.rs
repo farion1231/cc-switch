@@ -905,4 +905,23 @@ mod tests {
             "cached no_redirect_for_url client should reuse keep-alive TCP connection"
         );
     }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_provider_client_cache_is_bounded() {
+        for i in 0..(MAX_CACHED_PROVIDER_CLIENTS + 5) {
+            let proxy = format!("http://127.0.0.1:{}", 20000 + i);
+            let client = cached_provider_client(&proxy);
+            assert!(client.is_ok());
+            let count = PROVIDER_CLIENTS
+                .get()
+                .and_then(|lock| lock.lock().ok())
+                .map(|map| map.len())
+                .unwrap_or(0);
+            assert!(
+                count <= MAX_CACHED_PROVIDER_CLIENTS,
+                "cache grew to {count}, exceeding {MAX_CACHED_PROVIDER_CLIENTS}"
+            );
+        }
+    }
 }

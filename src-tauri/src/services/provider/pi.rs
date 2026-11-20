@@ -404,7 +404,7 @@ mod tests {
         let saved_proxy = |state: &AppState| {
             state
                 .db
-                .get_provider_by_id("cc-switch-test", "pi")
+                .get_provider_by_id("cc-switch-test", &AppType::Pi)
                 .unwrap()
                 .unwrap()
                 .meta
