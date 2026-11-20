@@ -103,7 +103,7 @@ const CopilotQuotaFooter: React.FC<CopilotQuotaFooterProps> = ({
 
   if (!quota) {
     return manualIdle ? (
-      <ManualQuotaIdle inline={inline} refetch={refetch} />
+      <ManualQuotaIdle inline={inline} loading={loading} refetch={refetch} />
     ) : null;
   }
 

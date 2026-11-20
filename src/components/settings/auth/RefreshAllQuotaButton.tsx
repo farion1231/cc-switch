@@ -8,6 +8,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { DSH_ACCOUNT_STATUS_KEY } from "@/components/providers/DshAccount";
+import { WORKBUDDY_QUOTA_KEY } from "@/components/providers/workbuddyQuota";
 
 /** 授权中心各组账号行的额度缓存：`[服务, "quota", 账号]` */
 const QUOTA_SERVICES = new Set([
@@ -30,6 +31,7 @@ function isShownAccountQuotaQuery(query: Query): boolean {
 function isAccountQuotaQuery({ queryKey }: Query): boolean {
   const [service, kind] = queryKey;
   if (service === DSH_ACCOUNT_STATUS_KEY[0]) return true;
+  if (service === WORKBUDDY_QUOTA_KEY[0]) return true;
   return (
     typeof service === "string" &&
     QUOTA_SERVICES.has(service) &&

@@ -12,6 +12,7 @@ import { createInstance } from "i18next";
 import { I18nextProvider, initReactI18next } from "react-i18next";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { useClaudeAccountQuota } from "@/lib/query/subscription";
+import { useWorkBuddyAccountQuota } from "@/components/providers/workbuddyQuota";
 import { SubscriptionQuotaView } from "@/components/SubscriptionQuotaFooter";
 import { AutoQuotaToggle } from "@/components/settings/auth/AutoQuotaToggle";
 import { RefreshAllQuotaButton } from "@/components/settings/auth/RefreshAllQuotaButton";
@@ -19,6 +20,7 @@ import zh from "@/i18n/locales/zh.json";
 
 const mocks = vi.hoisted(() => ({
   getClaudeAccountQuota: vi.fn(),
+  workbuddyAccountQuota: vi.fn(),
   getSettings: vi.fn(),
   saveSettings: vi.fn(),
 }));
@@ -27,6 +29,7 @@ vi.mock("@/lib/api/subscription", () => ({
 }));
 vi.mock("@/lib/api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/api")>()),
+  authApi: { workbuddyAccountQuota: mocks.workbuddyAccountQuota },
   settingsApi: { get: mocks.getSettings, save: mocks.saveSettings },
 }));
 
@@ -64,6 +67,11 @@ const newClient = () =>
 describe("manual-only official quota (#8990)", () => {
   beforeEach(() => {
     mocks.getClaudeAccountQuota.mockReset().mockResolvedValue(quota);
+    mocks.workbuddyAccountQuota.mockReset().mockResolvedValue({
+      snapshot: null,
+      current: false,
+      unavailable: "not_running",
+    });
     mocks.getSettings.mockReset();
     mocks.saveSettings.mockReset().mockResolvedValue(true);
   });
@@ -156,6 +164,56 @@ describe("manual-only official quota (#8990)", () => {
     expect(screen.getByText(zh.quota.manualIdle)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button"));
     expect(refetch).toHaveBeenCalled();
+  });
+
+  it("keeps the idle placeholder spinning during the initial manual fetch", () => {
+    const refetch = vi.fn(() => new Promise(() => {}));
+    const { rerender } = render(
+      <I18nextProvider i18n={i18n}>
+        <SubscriptionQuotaView
+          quota={undefined}
+          loading={false}
+          refetch={refetch}
+          inline
+          idle
+        />
+      </I18nextProvider>,
+    );
+    fireEvent.click(screen.getByRole("button"));
+    rerender(
+      <I18nextProvider i18n={i18n}>
+        <SubscriptionQuotaView
+          quota={undefined}
+          loading
+          refetch={refetch}
+          inline
+          idle
+        />
+      </I18nextProvider>,
+    );
+    expect(screen.getByText(zh.quota.manualIdle)).toBeInTheDocument();
+    const button = screen.getByRole("button");
+    expect(button).toHaveAttribute("aria-busy", "true");
+    expect(button).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByTestId("quota-refresh-icon")).toHaveClass(
+      "motion-safe:animate-spin",
+    );
+  });
+
+  it("gates WorkBuddy account quota queries behind the manual-only policy", async () => {
+    mocks.getSettings.mockResolvedValue({ officialQuotaManualOnly: true });
+    const { result } = renderHook(
+      () => useWorkBuddyAccountQuota("wb-1", { autoRefresh: true }),
+      { wrapper: wrapperFor(newClient()) },
+    );
+    await waitFor(() => expect(result.current.manualIdle).toBe(true));
+    expect(mocks.workbuddyAccountQuota).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await result.current.refresh();
+    });
+    expect(mocks.workbuddyAccountQuota).toHaveBeenCalledWith("wb-1", true);
+    await waitFor(() => expect(result.current.manualIdle).toBe(false));
   });
 
   it("saves the Auth Center switch into settings", async () => {

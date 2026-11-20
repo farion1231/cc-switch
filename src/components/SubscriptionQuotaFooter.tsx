@@ -223,9 +223,11 @@ export function quotaFailureReason(
 /** 「额度只在手动刷新时查询」开着、还没查过时的占位：一句灰字 + 刷新 */
 export function ManualQuotaIdle({
   inline,
+  loading = false,
   refetch,
 }: {
   inline: boolean;
+  loading?: boolean;
   refetch: () => unknown;
 }) {
   const { t } = useTranslation();
@@ -235,7 +237,7 @@ export function ManualQuotaIdle({
       <QuotaLines
         lines={[{ key: "idle", left: Infinity, tone: "muted", text }]}
         queriedAt={null}
-        loading={false}
+        loading={loading}
         onRefresh={refetch}
       />
     );
@@ -245,7 +247,7 @@ export function ManualQuotaIdle({
       className="mt-3"
       title={t("subscription.title")}
       rows={[]}
-      loading={false}
+      loading={loading}
       onRefresh={refetch}
       footer={<p className="text-caption text-fg-3">{text}</p>}
     />
@@ -272,9 +274,11 @@ export const SubscriptionQuotaView: React.FC<SubscriptionQuotaViewProps> = ({
 }) => {
   const { t, i18n } = useTranslation();
 
-  // 只手动查询、还没查过：写一句提示，点刷新再查
+  // 只手动查询、还没查过：写一句提示，点刷新再查（首次手动加载期间也保留占位让图标转圈）
   if (!quota && idle) {
-    return <ManualQuotaIdle inline={inline} refetch={refetch} />;
+    return (
+      <ManualQuotaIdle inline={inline} loading={loading} refetch={refetch} />
+    );
   }
 
   // 无凭据 / 凭据解析错误 → 不显示（静默）

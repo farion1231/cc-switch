@@ -20,10 +20,13 @@ export function useQuotaPolicy(): QuotaPolicy {
   return { autoAllowed: !isPending && !manualOnly, manualOnly };
 }
 
-/** 只手动查询、还没查过（也没在查）：界面放一句「点刷新查询额度」，不然这一格什么都没有 */
+/**
+ * 只手动查询、还没查过：界面放一句「点刷新查询额度」（首次手动加载期间也保留这行，
+ * 让刷新图标继续转圈），不然这一格什么都没有
+ */
 export function isManualIdle(
   policy: QuotaPolicy,
-  query: { data: unknown; isFetching: boolean },
+  query: { data: unknown },
 ): boolean {
-  return policy.manualOnly && query.data === undefined && !query.isFetching;
+  return policy.manualOnly && query.data === undefined;
 }
