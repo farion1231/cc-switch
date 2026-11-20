@@ -12,7 +12,7 @@ use crate::services::sql_helpers::{
 use chrono::{Local, NaiveDate, TimeZone, Timelike};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::str::FromStr;
 use std::sync::LazyLock;
 
@@ -448,8 +448,7 @@ fn providers_join(log_alias: &str, provider_alias: &str) -> String {
 }
 
 /// SQL 标量表达式：行的「有效计价模型」—— pricing_model 非空优先，NULL/'' 回落
-/// model。这是 `get_model_stats` 的分组键，也是 Dashboard 模型筛选的匹配口径：
-/// 筛选值来自模型统计列表，两边必须用同一表达式才能选得中。
+/// model。统计展示可合并同价的推理档位，原始请求仍保留此计价基准。
 fn effective_model_sql(alias: &str) -> String {
     format!("COALESCE(NULLIF({alias}.pricing_model, ''), {alias}.model)")
 }
@@ -508,7 +507,13 @@ struct UsageFilter<'a> {
 impl UsageFilter<'_> {
     /// 追加筛选条件。传了 `provider_name` 时 FROM 里必须有 [`Self::join`]（或同样的
     /// `LEFT JOIN providers`），否则 `{provider_alias}.name` 无法解析。
-    fn push_to(&self, conditions: &mut SqlWhere, log_alias: &str, provider_alias: &str) {
+    fn push_to(
+        &self,
+        conn: &Connection,
+        conditions: &mut SqlWhere,
+        log_alias: &str,
+        provider_alias: &str,
+    ) -> Result<(), AppError> {
         if let Some(app_type) = self.app_type {
             let column = format!("{log_alias}.app_type");
             conditions.push(
@@ -523,11 +528,26 @@ impl UsageFilter<'_> {
             );
         }
         if let Some(model) = self.model {
-            conditions.push(
-                format!("{} = ?", effective_model_sql(log_alias)),
-                model.to_string(),
-            );
+            let expr = effective_model_sql(log_alias);
+            let suffixes = merged_reasoning_suffixes_for_filter(conn, model)?;
+            if suffixes.is_empty() {
+                conditions.push(format!("{expr} = ?"), model.to_string());
+            } else {
+                let char_len = i64::try_from(model.chars().count()).unwrap_or(i64::MAX);
+                let placeholders = vec!["?"; suffixes.len()].join(", ");
+                conditions.push_condition(format!(
+                    "({expr} = ? OR (SUBSTR({expr}, 1, ?) = ? AND LOWER(SUBSTR({expr}, ?)) IN ({placeholders})))"
+                ));
+                conditions.params.push(Box::new(model.to_string()));
+                conditions.params.push(Box::new(char_len));
+                conditions.params.push(Box::new(model.to_string()));
+                conditions.params.push(Box::new(char_len.saturating_add(1)));
+                for suffix in suffixes {
+                    conditions.params.push(Box::new(suffix));
+                }
+            }
         }
+        Ok(())
     }
 
     /// 只有按 Provider 筛选时才需要连 providers 表。
@@ -556,17 +576,77 @@ impl UsageFilter<'_> {
         if let Some(end) = end_date {
             conditions.push("l.created_at <= ?", end);
         }
-        self.push_to(&mut conditions, "l", "p");
+        self.push_to(conn, &mut conditions, "l", "p")?;
         Ok(conditions)
     }
 
     /// 汇总表 `r`（providers 别名 `p2`）：只算被范围完整覆盖的本地自然日，再加筛选。
-    fn rollup_where(&self, bounds: &RollupDateBounds) -> SqlWhere {
+    fn rollup_where(
+        &self,
+        conn: &Connection,
+        bounds: &RollupDateBounds,
+    ) -> Result<SqlWhere, AppError> {
         let mut conditions = SqlWhere::default();
         push_rollup_date_filters(&mut conditions, "r.date", bounds);
-        self.push_to(&mut conditions, "r", "p2");
-        conditions
+        self.push_to(conn, &mut conditions, "r", "p2")?;
+        Ok(conditions)
     }
+}
+
+/// 仅合并四项 token 单价完全一致且基础模型本身有明确价格的推理档位；
+/// 缺失基础定价、或任意一项存在自定义差价时保持独立。
+fn statistics_model(conn: &Connection, model: &str) -> Result<String, AppError> {
+    let targets = reasoning_tier_merge_targets(model);
+    if targets.is_empty() {
+        return Ok(model.to_string());
+    }
+    let parse = |row: (String, String, String, String)| {
+        ModelPricing::from_strings(&row.0, &row.1, &row.2, &row.3).ok()
+    };
+    let Some(pricing) = find_model_pricing_row(conn, model)?.and_then(parse) else {
+        return Ok(model.to_string());
+    };
+    for target in targets {
+        if let Some(base_pricing) = find_direct_model_pricing_row(conn, target)?.and_then(parse) {
+            if pricing.input_cost_per_million == base_pricing.input_cost_per_million
+                && pricing.output_cost_per_million == base_pricing.output_cost_per_million
+                && pricing.cache_read_cost_per_million == base_pricing.cache_read_cost_per_million
+                && pricing.cache_creation_cost_per_million
+                    == base_pricing.cache_creation_cost_per_million
+            {
+                return Ok(target.to_string());
+            }
+        }
+    }
+    Ok(model.to_string())
+}
+
+fn merged_reasoning_suffixes_for_filter(
+    conn: &Connection,
+    model: &str,
+) -> Result<Vec<String>, AppError> {
+    if statistics_model(conn, model)? != model {
+        return Ok(Vec::new());
+    }
+    let mut candidate_suffixes: Vec<String> = REASONING_EFFORT_SUFFIXES
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect();
+    let tiered_probe = format!("{model}-tiered");
+    if strip_statistics_tiered_suffix(&tiered_probe).is_some() {
+        candidate_suffixes.push("-tiered".to_string());
+        for effort in REASONING_EFFORT_SUFFIXES {
+            candidate_suffixes.push(format!("-tiered{effort}"));
+        }
+    }
+    let mut matched = Vec::new();
+    for suffix in candidate_suffixes {
+        let variant = format!("{model}{suffix}");
+        if statistics_model(conn, &variant)? == model {
+            matched.push(suffix);
+        }
+    }
+    Ok(matched)
 }
 
 /// 跨来源去重的模型匹配条件。
@@ -1084,7 +1164,8 @@ impl Database {
 
         // Only include rolled-up rows for full local days that are fully covered by the range.
         let rollup_bounds = compute_rollup_date_bounds(start_date, end_date)?;
-        let (rollup_where, rollup_params) = filter.rollup_where(&rollup_bounds).into_where();
+        let (rollup_where, rollup_params) =
+            filter.rollup_where(&conn, &rollup_bounds)?.into_where();
         let rollup_join = filter.join("r", "p2");
 
         let fresh_input_detail = fresh_input_sql("l");
@@ -1190,7 +1271,8 @@ impl Database {
         let detail_join = filter.join("l", "p");
 
         let rollup_bounds = compute_rollup_date_bounds(start_date, end_date)?;
-        let (rollup_where, rollup_params) = filter.rollup_where(&rollup_bounds).into_where();
+        let (rollup_where, rollup_params) =
+            filter.rollup_where(&conn, &rollup_bounds)?.into_where();
         let rollup_join = filter.join("r", "p2");
 
         let fresh_input_detail = fresh_input_sql("l");
@@ -1330,7 +1412,7 @@ impl Database {
             }
 
             let mut extra = SqlWhere::default();
-            filter.push_to(&mut extra, "l", "p");
+            filter.push_to(&conn, &mut extra, "l", "p")?;
             let (extra_filter, extra_params) = extra.into_and();
             let detail_join = filter.join("l", "p");
 
@@ -1424,7 +1506,7 @@ impl Database {
         let bucket_count = (end_day.signed_duration_since(start_day).num_days() + 1) as usize;
 
         let mut extra = SqlWhere::default();
-        filter.push_to(&mut extra, "l", "p");
+        filter.push_to(&conn, &mut extra, "l", "p")?;
         let (extra_filter, extra_params) = extra.into_and();
         let detail_join = filter.join("l", "p");
 
@@ -1481,7 +1563,8 @@ impl Database {
         }
 
         let rollup_bounds = compute_rollup_date_bounds(Some(start_ts), Some(end_ts))?;
-        let (rollup_where, rollup_params) = filter.rollup_where(&rollup_bounds).into_where();
+        let (rollup_where, rollup_params) =
+            filter.rollup_where(&conn, &rollup_bounds)?.into_where();
         let rollup_join = filter.join("r", "p2");
 
         let fresh_input_rollup = fresh_input_sql("r");
@@ -1589,7 +1672,7 @@ impl Database {
             model,
         };
         let mut detail = SqlWhere::default();
-        filter.push_to(&mut detail, "l", "p");
+        filter.push_to(&conn, &mut detail, "l", "p")?;
         let (detail_where, detail_params) = detail.into_where();
         let detail_join = filter.join("l", "p");
         let detail_param_refs: Vec<&dyn rusqlite::ToSql> =
@@ -1606,7 +1689,7 @@ impl Database {
             .transpose()?;
 
         let mut rollup = SqlWhere::default();
-        filter.push_to(&mut rollup, "r", "p2");
+        filter.push_to(&conn, &mut rollup, "r", "p2")?;
         let (rollup_where, rollup_params) = rollup.into_where();
         let rollup_join = filter.join("r", "p2");
         let rollup_param_refs: Vec<&dyn rusqlite::ToSql> =
@@ -1651,7 +1734,8 @@ impl Database {
             .into_where();
 
         let rollup_bounds = compute_rollup_date_bounds(start_date, end_date)?;
-        let (rollup_where, rollup_params) = filter.rollup_where(&rollup_bounds).into_where();
+        let (rollup_where, rollup_params) =
+            filter.rollup_where(&conn, &rollup_bounds)?.into_where();
 
         // UNION detail logs + rollup data, then aggregate
         let detail_pname = provider_name_coalesce("l", "p");
@@ -1800,7 +1884,8 @@ impl Database {
         let detail_join = filter.join("l", "p");
 
         let rollup_bounds = compute_rollup_date_bounds(start_date, end_date)?;
-        let (rollup_where, rollup_params) = filter.rollup_where(&rollup_bounds).into_where();
+        let (rollup_where, rollup_params) =
+            filter.rollup_where(&conn, &rollup_bounds)?.into_where();
         let rollup_join = filter.join("r", "p2");
 
         // UNION detail logs + rollup data
@@ -1859,70 +1944,108 @@ impl Database {
             ORDER BY total_cost DESC"
         );
 
-        let (first_token_ms, est_first_token_ms) = {
-            let detail_refs: Vec<&dyn rusqlite::ToSql> =
-                detail_params.iter().map(|p| p.as_ref()).collect();
-            let from_sql = format!("FROM proxy_request_logs l {detail_join}");
-            let medians = |eligible_sql: String| {
-                first_token_medians(
-                    &conn,
-                    &detail_model,
-                    &from_sql,
-                    &detail_where,
-                    &eligible_sql,
-                    &detail_refs,
-                )
-            };
-            (
-                medians(first_token_eligible_sql("l"))?,
-                medians(est_first_token_eligible_sql("l"))?,
+        let mut stmt = conn.prepare(&sql)?;
+        let mut params: Vec<&dyn rusqlite::ToSql> =
+            detail_params.iter().map(|p| p.as_ref()).collect();
+        params.extend(rollup_params.iter().map(|p| p.as_ref()));
+        let rows = stmt.query_map(params.as_slice(), |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?.max(0) as u64,
+                row.get::<_, i64>(2)?.max(0) as u64,
+                row.get::<_, f64>(3)?,
+                row.get::<_, i64>(4)?.max(0) as u64,
+                row.get::<_, i64>(5)?.max(0) as u64,
+                row.get::<_, i64>(6)?.max(0) as u64,
+                row.get::<_, i64>(7)?.max(0) as u64,
+                row.get::<_, i64>(8)?.max(0) as u64,
+            ))
+        })?;
+        let mut grouped: HashMap<String, (ModelStats, f64, u64)> = HashMap::new();
+        let mut model_cases = Vec::new();
+        for row in rows {
+            let (raw, count, tokens, cost, successes, output, ms, est_output, est_ms) = row?;
+            let model = statistics_model(&conn, &raw)?;
+            if model != raw {
+                // 来自数据库的模型名作为 SQL 字符串字面量使用。
+                model_cases.push(format!(
+                    "WHEN '{}' THEN '{}'",
+                    raw.replace('\'', "''"),
+                    model.replace('\'', "''")
+                ));
+            }
+            let (stats, total_cost, success_count) =
+                grouped.entry(model.clone()).or_insert_with(|| {
+                    (
+                        ModelStats {
+                            model,
+                            request_count: 0,
+                            total_tokens: 0,
+                            total_cost: String::new(),
+                            avg_cost_per_request: String::new(),
+                            success_rate: 0.0,
+                            speed_output_tokens: 0,
+                            speed_generation_ms: 0,
+                            est_speed_output_tokens: 0,
+                            est_speed_duration_ms: 0,
+                            first_token_median_ms: None,
+                            est_first_token_median_ms: None,
+                        },
+                        0.0,
+                        0,
+                    )
+                });
+            stats.request_count += count;
+            stats.total_tokens += tokens;
+            stats.speed_output_tokens += output;
+            stats.speed_generation_ms += ms;
+            stats.est_speed_output_tokens += est_output;
+            stats.est_speed_duration_ms += est_ms;
+            *total_cost += cost;
+            *success_count += successes;
+        }
+
+        // 首字时间按合并后的全部样本取中位数，不能平均各档位的中位数。
+        let median_model = if model_cases.is_empty() {
+            detail_model
+        } else {
+            format!(
+                "CASE {detail_model} {} ELSE {detail_model} END",
+                model_cases.join(" ")
             )
         };
-
-        let mut stmt = conn.prepare(&sql)?;
-        let mut params: Vec<Box<dyn rusqlite::ToSql>> = detail_params;
-        params.extend(rollup_params);
-        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
-        let row_mapper = |row: &rusqlite::Row| {
-            let request_count: i64 = row.get(1)?;
-            let model: String = row.get(0)?;
-            let first_token_median_ms = first_token_ms.get(&model).copied();
-            let est_first_token_median_ms = est_first_token_ms.get(&model).copied();
-            let total_cost: f64 = row.get(3)?;
-            let avg_cost = if request_count > 0 {
-                total_cost / request_count as f64
-            } else {
-                0.0
-            };
-            let success_count: i64 = row.get(4)?;
-            let success_rate = if request_count > 0 {
-                (success_count as f32 / request_count as f32) * 100.0
-            } else {
-                0.0
-            };
-
-            Ok(ModelStats {
-                model,
-                request_count: request_count as u64,
-                total_tokens: row.get::<_, i64>(2)? as u64,
-                total_cost: format!("{total_cost:.6}"),
-                avg_cost_per_request: format!("{avg_cost:.6}"),
-                success_rate,
-                speed_output_tokens: row.get::<_, i64>(5)?.max(0) as u64,
-                speed_generation_ms: row.get::<_, i64>(6)?.max(0) as u64,
-                est_speed_output_tokens: row.get::<_, i64>(7)?.max(0) as u64,
-                est_speed_duration_ms: row.get::<_, i64>(8)?.max(0) as u64,
-                first_token_median_ms,
-                est_first_token_median_ms,
-            })
+        let detail_refs: Vec<&dyn rusqlite::ToSql> =
+            detail_params.iter().map(|p| p.as_ref()).collect();
+        let from_sql = format!("FROM proxy_request_logs l {detail_join}");
+        let medians = |eligible_sql: String| {
+            first_token_medians(
+                &conn,
+                &median_model,
+                &from_sql,
+                &detail_where,
+                &eligible_sql,
+                &detail_refs,
+            )
         };
-
-        let rows = stmt.query_map(param_refs.as_slice(), row_mapper)?;
-
-        let mut stats = Vec::new();
-        for row in rows {
-            stats.push(row?);
-        }
+        let first_token_ms = medians(first_token_eligible_sql("l"))?;
+        let est_first_token_ms = medians(est_first_token_eligible_sql("l"))?;
+        let mut stats: Vec<_> = grouped
+            .into_values()
+            .map(|(mut stat, cost, successes)| {
+                stat.total_cost = format!("{cost:.6}");
+                if stat.request_count > 0 {
+                    stat.avg_cost_per_request = format!("{:.6}", cost / stat.request_count as f64);
+                    stat.success_rate = successes as f32 / stat.request_count as f32 * 100.0;
+                } else {
+                    stat.avg_cost_per_request = "0.000000".to_string();
+                }
+                stat.first_token_median_ms = first_token_ms.get(&stat.model).copied();
+                stat.est_first_token_median_ms = est_first_token_ms.get(&stat.model).copied();
+                (stat, cost)
+            })
+            .collect();
+        stats.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.model.cmp(&b.0.model)));
+        let stats = stats.into_iter().map(|(stat, _)| stat).collect();
 
         Ok(stats)
     }
@@ -1951,7 +2074,7 @@ impl Database {
         // 应用仅过滤口径折叠 claude-desktop→claude；行投影仍返回原始 app_type，
         // 详情面板据此展示真实入口（路由接管账单审计需要）。Provider/模型与 Dashboard
         // 顶部下拉筛选同口径（会话占位行如 "Claude (Session)" 也能命中）。
-        filter.push_to(&mut conditions, "l", "p");
+        filter.push_to(&conn, &mut conditions, "l", "p")?;
         if let Some(status) = filters.status_code {
             conditions.push("l.status_code = ?", status as i64);
         }
@@ -2165,10 +2288,6 @@ impl Database {
             return Ok(false);
         }
 
-        let pricing = match Self::get_log_model_pricing_cached(conn, pricing_cache, log)? {
-            Some(info) => info,
-            None => return Ok(false),
-        };
         let multiplier =
             rust_decimal::Decimal::from_str(&log.cost_multiplier).unwrap_or_else(|e| {
                 log::warn!(
@@ -2178,6 +2297,15 @@ impl Database {
                 );
                 rust_decimal::Decimal::ONE
             });
+        // 倍率为 0 的行总价本来就是 0，不是缺价：回填只会重写分项费用、每次读日志都 UPDATE 一遍。
+        if multiplier.is_zero() {
+            return Ok(false);
+        }
+
+        let pricing = match Self::get_log_model_pricing_cached(conn, pricing_cache, log)? {
+            Some(info) => info,
+            None => return Ok(false),
+        };
 
         let million = rust_decimal::Decimal::from(1_000_000u64);
 
@@ -2211,12 +2339,26 @@ impl Database {
         // 总成本 = 基础成本之和 × 倍率
         let base_total = input_cost + output_cost + cache_read_cost + cache_creation_cost;
         let total_cost = base_total * multiplier;
+        // 单价全为 0（免费模型）时算出来仍是 0，写回去下次照样当缺价，只是白白 UPDATE。
+        if total_cost.is_zero() {
+            return Ok(false);
+        }
 
-        log.input_cost_usd = format!("{input_cost:.6}");
-        log.output_cost_usd = format!("{output_cost:.6}");
-        log.cache_read_cost_usd = format!("{cache_read_cost:.6}");
-        log.cache_creation_cost_usd = format!("{cache_creation_cost:.6}");
-        log.total_cost_usd = format!("{total_cost:.6}");
+        // 至少 6 位小数、不截断：只存 6 位会把极小额（几个 token、低倍率）写成 0，
+        // 下次读取又被当成缺价重算。界面显示时再舍入。
+        fn cost_string(value: rust_decimal::Decimal) -> String {
+            let value = value.normalize();
+            if value.scale() < 6 {
+                format!("{value:.6}")
+            } else {
+                value.to_string()
+            }
+        }
+        log.input_cost_usd = cost_string(input_cost);
+        log.output_cost_usd = cost_string(output_cost);
+        log.cache_read_cost_usd = cost_string(cache_read_cost);
+        log.cache_creation_cost_usd = cost_string(cache_creation_cost);
+        log.total_cost_usd = cost_string(total_cost);
 
         conn.execute(
             "UPDATE proxy_request_logs
@@ -2320,6 +2462,59 @@ pub(crate) fn find_model_pricing(conn: &Connection, model_id: &str) -> Option<Mo
         })
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PricingCandidate {
+    model_id: String,
+    allow_prefix_match: bool,
+}
+
+/// 直接定价查询：只认精确匹配及命名空间/版本/日期/点号标准化后的精确匹配，
+/// 不走推理档位回退，也不走 `LIKE 'base-%'` 前缀匹配，避免缺失基础定价时借用邻近档位价格。
+fn find_direct_model_pricing_row(
+    conn: &Connection,
+    model_id: &str,
+) -> Result<Option<(String, String, String, String)>, AppError> {
+    let cleaned = clean_model_id_for_pricing(model_id);
+    if is_placeholder_pricing_model(&cleaned) {
+        return Ok(None);
+    }
+
+    let mut candidates = Vec::new();
+    let mut queue = VecDeque::from([cleaned]);
+    while let Some(candidate) = queue.pop_front() {
+        if candidate.is_empty() || candidates.iter().any(|existing| existing == &candidate) {
+            continue;
+        }
+        candidates.push(candidate.clone());
+        if let Some(stripped) = strip_known_model_namespace(&candidate) {
+            queue.push_back(stripped);
+        }
+        if let Some(stripped) = strip_claude_desktop_non_anthropic_prefix(&candidate) {
+            queue.push_back(stripped);
+        }
+        if let Some(stripped) = strip_bedrock_model_version_suffix(&candidate) {
+            queue.push_back(stripped);
+        }
+        if candidate.starts_with("claude-")
+            && candidate.contains('.')
+            && strip_claude_desktop_non_anthropic_prefix(&candidate).is_none()
+        {
+            queue.push_back(candidate.replace('.', "-"));
+        }
+        if let Some(stripped) = strip_model_date_suffix(&candidate) {
+            queue.push_back(stripped);
+        }
+    }
+
+    for candidate in &candidates {
+        if let Some(row) = query_model_pricing_exact(conn, candidate)? {
+            return Ok(Some(row));
+        }
+    }
+
+    Ok(None)
+}
+
 pub(crate) fn find_model_pricing_row(
     conn: &Connection,
     model_id: &str,
@@ -2330,14 +2525,14 @@ pub(crate) fn find_model_pricing_row(
     }
 
     for candidate in &candidates {
-        if let Some(row) = query_model_pricing_exact(conn, candidate)? {
+        if let Some(row) = query_model_pricing_exact(conn, &candidate.model_id)? {
             return Ok(Some(row));
         }
     }
 
     for candidate in &candidates {
-        if should_try_pricing_prefix_match(candidate) {
-            if let Some(row) = query_model_pricing_prefix(conn, candidate)? {
+        if candidate.allow_prefix_match && should_try_pricing_prefix_match(&candidate.model_id) {
+            if let Some(row) = query_model_pricing_prefix(conn, &candidate.model_id)? {
                 return Ok(Some(row));
             }
         }
@@ -2349,7 +2544,10 @@ pub(crate) fn find_model_pricing_row(
 /// 精准回填的行筛选：log 的任一模型字段归一化后与目标模型的 candidates 相交，
 /// 或可按查价层的前缀规则命中目标，即视为相关。镜像 find_model_pricing_row 的
 /// 匹配语义，宁可误纳（后续查价会兜底）不可漏筛。
-fn log_pricing_scope_matches(log: &RequestLogDetail, target_candidates: &[String]) -> bool {
+fn log_pricing_scope_matches(
+    log: &RequestLogDetail,
+    target_candidates: &[PricingCandidate],
+) -> bool {
     [
         Some(log.model.as_str()),
         log.request_model.as_deref(),
@@ -2360,10 +2558,12 @@ fn log_pricing_scope_matches(log: &RequestLogDetail, target_candidates: &[String
     .any(|field| {
         model_pricing_candidates(field).iter().any(|candidate| {
             target_candidates.iter().any(|target| {
-                target == candidate
-                    || (should_try_pricing_prefix_match(candidate)
+                target.model_id == candidate.model_id
+                    || (candidate.allow_prefix_match
+                        && should_try_pricing_prefix_match(&candidate.model_id)
                         && target
-                            .strip_prefix(candidate.as_str())
+                            .model_id
+                            .strip_prefix(candidate.model_id.as_str())
                             .is_some_and(|rest| rest.starts_with('-')))
             })
         })
@@ -2424,42 +2624,91 @@ fn query_model_pricing_prefix(
     .map_err(|e| AppError::Database(format!("查询模型前缀定价失败: {e}")))
 }
 
-fn model_pricing_candidates(model_id: &str) -> Vec<String> {
+fn model_pricing_candidates(model_id: &str) -> Vec<PricingCandidate> {
     let cleaned = clean_model_id_for_pricing(model_id);
     if is_placeholder_pricing_model(&cleaned) {
         return Vec::new();
     }
 
     let mut candidates = Vec::new();
-    let mut queue = vec![cleaned];
+    let mut queue = VecDeque::from([PricingCandidate {
+        model_id: cleaned,
+        allow_prefix_match: true,
+    }]);
 
-    while let Some(candidate) = queue.pop() {
+    while let Some(candidate) = queue.pop_front() {
+        let allow_prefix_match = candidate.allow_prefix_match;
         if !push_unique_candidate(&mut candidates, candidate.clone()) {
             continue;
         }
+        let candidate = candidate.model_id;
+        let push_derived = |queue: &mut VecDeque<PricingCandidate>, model_id: String| {
+            queue.push_back(PricingCandidate {
+                model_id,
+                allow_prefix_match,
+            });
+        };
 
         if let Some(stripped) = strip_known_model_namespace(&candidate) {
-            queue.push(stripped);
+            push_derived(&mut queue, stripped);
         }
         if let Some(stripped) = strip_claude_desktop_non_anthropic_prefix(&candidate) {
-            queue.push(stripped);
+            push_derived(&mut queue, stripped);
         }
         if let Some(stripped) = strip_bedrock_model_version_suffix(&candidate) {
-            queue.push(stripped);
+            push_derived(&mut queue, stripped);
+        }
+        if candidate.starts_with("claude-")
+            && candidate.contains('.')
+            && strip_claude_desktop_non_anthropic_prefix(&candidate).is_none()
+        {
+            push_derived(&mut queue, candidate.replace('.', "-"));
         }
         if let Some(stripped) = strip_model_date_suffix(&candidate) {
-            queue.push(stripped);
+            push_derived(&mut queue, stripped);
         }
         if let Some(stripped) = strip_reasoning_effort_suffix(&candidate) {
-            queue.push(stripped);
+            push_derived(&mut queue, stripped);
         }
-        // AGY's "Gemini 4 Hydrogen (Orchestrator)" is the same Hydrogen worker.
-        // Keep the raw ID and any exact custom price; otherwise use the base API estimate.
-        if candidate == "gemini-4-hydrogen-orchestrator" {
-            queue.push("gemini-4-hydrogen".to_string());
+        // AGY's built-in subagents (such as browser) and native generations report
+        // Gemini Flash thinking-level endpoints as `gemini-<ver>-flash-tiered`.
+        // Keep the raw ID and any exact custom price; otherwise fall back only to an
+        // exact `gemini-<ver>-flash` row so missing base Flash models never prefix-match
+        // sibling `gemini-<ver>-flash-lite` or custom sub-tier entries.
+        if let Some(stripped) = strip_gemini_flash_tiered_suffix(&candidate) {
+            queue.push_back(PricingCandidate {
+                model_id: stripped,
+                allow_prefix_match: false,
+            });
         }
-        if candidate.starts_with("claude-") && candidate.contains('.') {
-            queue.push(candidate.replace('.', "-"));
+        // AGY records some Hydrogen generations as `gemini-4-hydrogen-tiered[-<effort>]`.
+        // FIFO keeps exact variant prices ahead of this exact-only base estimate.
+        if candidate == "gemini-4-hydrogen-tiered" {
+            queue.push_back(PricingCandidate {
+                model_id: "gemini-4-hydrogen".to_string(),
+                allow_prefix_match: false,
+            });
+        }
+        // AGY's "Gemini 4 Hydrogen (Orchestrator)" and per-step worker alias
+        // `gemini-flash-worker-agy` are the same Hydrogen worker.
+        // Keep the raw ID and any exact custom price; otherwise fall back only to an
+        // exact `gemini-4-hydrogen` row.
+        if matches!(
+            candidate.as_str(),
+            "gemini-4-hydrogen-orchestrator" | "gemini-flash-worker-agy"
+        ) {
+            queue.push_back(PricingCandidate {
+                model_id: "gemini-4-hydrogen".to_string(),
+                allow_prefix_match: false,
+            });
+        }
+        // AGY records "Claude Opus 4.6 (Thinking)" as `claude-opus-4.6-thinking`. Extended
+        // thinking is billed at the model's own rates, so price it exactly like the base
+        // Claude ID, including the usual short-ID-to-dated-row match (Sonnet 4.5 only has a
+        // dated row). Only Claude: other `-thinking` IDs (such as `kimi-k2-thinking`) are
+        // separately priced models.
+        if let Some(stripped) = strip_claude_thinking_suffix(&candidate) {
+            push_derived(&mut queue, stripped);
         }
     }
 
@@ -2483,8 +2732,21 @@ fn clean_model_id_for_pricing(model_id: &str) -> String {
         .to_string()
 }
 
-fn push_unique_candidate(candidates: &mut Vec<String>, candidate: String) -> bool {
-    if candidate.is_empty() || candidates.iter().any(|existing| existing == &candidate) {
+fn push_unique_candidate(
+    candidates: &mut Vec<PricingCandidate>,
+    candidate: PricingCandidate,
+) -> bool {
+    if candidate.model_id.is_empty() {
+        return false;
+    }
+    if let Some(existing) = candidates
+        .iter_mut()
+        .find(|existing| existing.model_id == candidate.model_id)
+    {
+        if !existing.allow_prefix_match && candidate.allow_prefix_match {
+            existing.allow_prefix_match = true;
+            return true;
+        }
         return false;
     }
     candidates.push(candidate);
@@ -2605,18 +2867,86 @@ fn strip_model_date_suffix(model_id: &str) -> Option<String> {
     None
 }
 
+const REASONING_EFFORT_SUFFIXES: &[&str] = &["-minimal", "-low", "-medium", "-high", "-xhigh"];
+
+fn strip_ascii_case_insensitive_suffix<'a>(s: &'a str, suffix: &str) -> Option<&'a str> {
+    if s.len() <= suffix.len() {
+        return None;
+    }
+    let split = s.len() - suffix.len();
+    if !s.is_char_boundary(split) {
+        return None;
+    }
+    s[split..]
+        .eq_ignore_ascii_case(suffix)
+        .then_some(&s[..split])
+}
+
 fn strip_reasoning_effort_suffix(model_id: &str) -> Option<String> {
-    for suffix in ["-minimal", "-low", "-medium", "-high", "-xhigh"] {
-        if let Some(stripped) = model_id.strip_suffix(suffix) {
-            if !stripped.is_empty() {
-                return Some(stripped.to_string());
-            }
+    for suffix in REASONING_EFFORT_SUFFIXES {
+        if let Some(stripped) = strip_ascii_case_insensitive_suffix(model_id, suffix) {
+            return Some(stripped.to_string());
         }
     }
     None
 }
 
+fn strip_statistics_tiered_suffix(model_id: &str) -> Option<&str> {
+    let stripped = strip_ascii_case_insensitive_suffix(model_id, "-tiered")?;
+    let tail = model_id.rsplit_once('/').map_or(model_id, |(_, r)| r);
+    let lower_tail = tail.to_ascii_lowercase();
+    let normalized_tail = strip_known_model_namespace(&lower_tail).unwrap_or(lower_tail);
+    let is_known_tiered = normalized_tail == "gemini-4-hydrogen-tiered"
+        || strip_gemini_flash_tiered_suffix(&normalized_tail).is_some();
+    is_known_tiered.then_some(stripped)
+}
+
+fn reasoning_tier_merge_targets(model_id: &str) -> Vec<&str> {
+    let mut targets = Vec::new();
+    let after_effort = REASONING_EFFORT_SUFFIXES
+        .iter()
+        .find_map(|suffix| strip_ascii_case_insensitive_suffix(model_id, suffix));
+    if let Some(base_after_effort) = after_effort {
+        if let Some(base_after_tiered) = strip_statistics_tiered_suffix(base_after_effort) {
+            targets.push(base_after_tiered);
+        }
+        targets.push(base_after_effort);
+    } else if let Some(base_after_tiered) = strip_statistics_tiered_suffix(model_id) {
+        targets.push(base_after_tiered);
+    }
+    targets
+}
+
+fn strip_gemini_flash_tiered_suffix(model_id: &str) -> Option<String> {
+    let version = model_id
+        .strip_prefix("gemini-")?
+        .strip_suffix("-flash-tiered")?;
+    (!version.is_empty()
+        && version
+            .split('.')
+            .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit())))
+    .then(|| format!("gemini-{version}-flash"))
+}
+
+fn strip_claude_thinking_suffix(model_id: &str) -> Option<String> {
+    if !model_id.starts_with("claude-")
+        || strip_claude_desktop_non_anthropic_prefix(model_id).is_some()
+    {
+        return None;
+    }
+    let base = model_id.strip_suffix("-thinking")?;
+    (base.len() > "claude-".len()).then(|| base.to_string())
+}
+
 fn should_try_pricing_prefix_match(model_id: &str) -> bool {
+    if matches!(
+        model_id,
+        "gemini-4-hydrogen-tiered" | "gemini-4-hydrogen-orchestrator" | "gemini-flash-worker-agy"
+    ) || strip_gemini_flash_tiered_suffix(model_id).is_some()
+    {
+        return false;
+    }
+
     let dash_count = model_id.matches('-').count();
 
     if model_id.starts_with("claude-") {
@@ -3690,6 +4020,90 @@ mod tests {
         )?;
         assert_eq!(input_cost, "5.000000");
         assert_eq!(total_cost, "7.500000");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_backfill_skips_zero_multiplier_rows() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        {
+            let conn = lock_conn!(db.conn);
+            insert_usage_log(
+                &conn,
+                "codex-gpt-5-5-free",
+                "codex",
+                "free-relay",
+                "gpt-5.5",
+                "proxy",
+                1000,
+                1_000_000,
+                0,
+                0,
+                0,
+                200,
+                "0",
+            )?;
+            conn.execute(
+                "UPDATE proxy_request_logs
+                 SET cost_multiplier = '0', input_cost_usd = '1.000000'
+                 WHERE request_id = 'codex-gpt-5-5-free'",
+                [],
+            )?;
+        }
+
+        // 已按 0 倍率计过价的行不是缺价行：回填不得重写它，也不得每次读取都 UPDATE。
+        assert_eq!(db.backfill_missing_usage_costs()?, 0);
+        let detail = db
+            .get_request_detail("codex-gpt-5-5-free")?
+            .expect("row exists");
+        assert_eq!(detail.input_cost_usd, "1.000000");
+        assert_eq!(detail.total_cost_usd, "0");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_backfill_keeps_sub_micro_dollar_costs() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT OR REPLACE INTO model_pricing
+                 (model_id, display_name, input_cost_per_million, output_cost_per_million)
+                 VALUES ('tiny-model', 'Tiny', '2', '0')",
+                [],
+            )?;
+            insert_usage_log(
+                &conn,
+                "tiny-request",
+                "claude",
+                "relay",
+                "tiny-model",
+                "proxy",
+                1000,
+                3,
+                0,
+                0,
+                0,
+                200,
+                "0",
+            )?;
+            conn.execute(
+                "UPDATE proxy_request_logs SET cost_multiplier = '0.07'
+                 WHERE request_id = 'tiny-request'",
+                [],
+            )?;
+        }
+
+        // 3 token × $2/M × 0.07 = $0.00000042：按 6 位小数存会变成 0，下次读取又被当成缺价重算。
+        assert_eq!(db.backfill_missing_usage_costs()?, 1);
+        let detail = db.get_request_detail("tiny-request")?.expect("row exists");
+        assert_eq!(detail.input_cost_usd, "0.000006");
+        assert_eq!(detail.total_cost_usd, "0.00000042");
+        assert_eq!(db.backfill_missing_usage_costs()?, 0);
 
         Ok(())
     }
@@ -5805,6 +6219,282 @@ mod tests {
     }
 
     #[test]
+    fn test_hydrogen_tiered_pricing_preserves_exact_overrides() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+        let base = find_model_pricing_row(&conn, "gemini-4-hydrogen")?;
+        assert!(base.is_some());
+        for model in [
+            "gemini-4-hydrogen-tiered",
+            "gemini-4-hydrogen-tiered-high",
+            "gemini-4-hydrogen-tiered-medium",
+            "gemini-4-hydrogen-tiered-low",
+            "gemini-4-hydrogen-tiered-xhigh",
+            "models/gemini-4-hydrogen-tiered-high",
+            "google/GEMINI-4-HYDROGEN-TIERED-HIGH",
+            "google.gemini-4-hydrogen-tiered-high:free",
+            "claude-gemini-4-hydrogen-tiered-high",
+            "gemini-4-hydrogen-tiered-high-2026-11-18",
+        ] {
+            assert_eq!(find_model_pricing_row(&conn, model)?, base, "{model}");
+        }
+        for model in [
+            "gemini-4-hydrogen-tiered-preview",
+            "gemini-4-carbon-tiered-high",
+            "gemini-4-argon-tiered-high",
+            "custom-tiered-high",
+        ] {
+            assert!(find_model_pricing_row(&conn, model)?.is_none(), "{model}");
+        }
+
+        conn.execute(
+            "INSERT INTO model_pricing VALUES ('gemini-4-hydrogen-tiered-high',
+             'Custom Hydrogen Tiered High', '3', '12', '0.2', '0')",
+            [],
+        )?;
+        for model in [
+            "gemini-4-hydrogen-tiered-high",
+            "google.gemini-4-hydrogen-tiered-high",
+            "claude-gemini-4-hydrogen-tiered-high",
+        ] {
+            assert_eq!(
+                find_model_pricing_row(&conn, model)?,
+                Some(("3".into(), "12".into(), "0.2".into(), "0".into())),
+                "{model}"
+            );
+        }
+        conn.execute(
+            "INSERT INTO model_pricing VALUES ('gemini-4-hydrogen-tiered',
+             'Custom Hydrogen Tiered', '2', '10', '0.1', '0')",
+            [],
+        )?;
+        assert_eq!(
+            find_model_pricing_row(&conn, "gemini-4-hydrogen-tiered-high")?,
+            Some(("3".into(), "12".into(), "0.2".into(), "0".into()))
+        );
+        assert_eq!(
+            find_model_pricing_row(&conn, "gemini-4-hydrogen-tiered-medium")?,
+            Some(("2".into(), "10".into(), "0.1".into(), "0".into()))
+        );
+        conn.execute(
+            "DELETE FROM model_pricing WHERE model_id IN
+             ('gemini-4-hydrogen', 'gemini-4-hydrogen-tiered', 'gemini-4-hydrogen-tiered-high')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO model_pricing VALUES ('gemini-4-hydrogen-preview',
+             'Custom Hydrogen Preview', '4', '16', '0.3', '0')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO model_pricing VALUES ('gemini-4-hydrogen-tiered-low',
+             'Custom Hydrogen Tiered Low', '1', '5', '0.1', '0')",
+            [],
+        )?;
+        // A missing exact base must not borrow a preview or another tier's price.
+        assert!(find_model_pricing_row(&conn, "gemini-4-hydrogen-tiered-high")?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn test_hydrogen_tiered_backfills_without_transcripts() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            for (id, model, cost) in [
+                ("tiered-history", "gemini-4-hydrogen-tiered-high", "0"),
+                ("unresolved-mode", "orchestrator-carbon", "0"),
+                ("already-priced", "gemini-4-hydrogen-tiered-high", "9"),
+            ] {
+                insert_usage_log(
+                    &conn,
+                    id,
+                    "agy",
+                    "_agy_session",
+                    model,
+                    "agy_session",
+                    1000,
+                    1_000_000,
+                    100_000,
+                    1_000_000,
+                    0,
+                    200,
+                    cost,
+                )?;
+            }
+            conn.execute(
+                "UPDATE proxy_request_logs SET request_model=model, input_token_semantics=?1",
+                [INPUT_TOKEN_SEMANTICS_FRESH],
+            )?;
+        }
+        assert_eq!(
+            db.backfill_missing_usage_costs_for_model("gemini-4-hydrogen")?,
+            1
+        );
+        assert_eq!(db.backfill_missing_usage_costs()?, 0);
+        let conn = lock_conn!(db.conn);
+        let row: (String, String, String) = conn.query_row(
+            "SELECT model, request_model, total_cost_usd FROM proxy_request_logs
+             WHERE request_id='tiered-history'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )?;
+        assert_eq!(
+            row,
+            (
+                "gemini-4-hydrogen-tiered-high".into(),
+                "gemini-4-hydrogen-tiered-high".into(),
+                "2.325000".into(),
+            )
+        );
+        for (id, expected) in [("unresolved-mode", "0"), ("already-priced", "9")] {
+            let cost: String = conn.query_row(
+                "SELECT total_cost_usd FROM proxy_request_logs WHERE request_id=?1",
+                [id],
+                |r| r.get(0),
+            )?;
+            assert_eq!(cost, expected);
+        }
+        let totals: (i64, i64, i64, i64) = conn.query_row(
+            "SELECT COUNT(*),SUM(input_tokens),SUM(output_tokens),SUM(cache_read_tokens)
+             FROM proxy_request_logs",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )?;
+        assert_eq!(totals, (3, 3_000_000, 300_000, 3_000_000));
+        Ok(())
+    }
+
+    #[test]
+    fn test_claude_thinking_pricing_matches_base_model() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+        let opus = find_model_pricing_row(&conn, "claude-opus-4-6")?;
+        let sonnet = find_model_pricing_row(&conn, "claude-sonnet-4-6")?;
+        assert!(opus.is_some() && sonnet.is_some());
+        for model in [
+            "claude-opus-4.6-thinking",
+            "claude-opus-4-6-thinking",
+            "models/claude-opus-4.6-thinking",
+            "anthropic.claude-opus-4-6-thinking",
+        ] {
+            assert_eq!(find_model_pricing_row(&conn, model)?, opus, "{model}");
+        }
+        for model in ["claude-sonnet-4.6-thinking", "claude-sonnet-4-6-thinking"] {
+            assert_eq!(find_model_pricing_row(&conn, model)?, sonnet, "{model}");
+        }
+        // A thinking variant resolves exactly like its base ID, including bases that only
+        // have a dated row (short ID -> dated row is the normal Claude lookup).
+        for base in [
+            "claude-opus-4-1",
+            "claude-opus-4-5",
+            "claude-opus-4-6",
+            "claude-opus-4-8",
+            "claude-opus-5-5",
+            "claude-sonnet-4-5",
+            "claude-sonnet-4-6",
+            "claude-haiku-4-5",
+        ] {
+            let expected = find_model_pricing_row(&conn, base)?;
+            assert!(expected.is_some(), "{base}");
+            let dotted = format!("{}.{}", &base[..base.len() - 2], &base[base.len() - 1..]);
+            for model in [format!("{base}-thinking"), format!("{dotted}-thinking")] {
+                assert_eq!(find_model_pricing_row(&conn, &model)?, expected, "{model}");
+            }
+        }
+
+        // Other `-thinking` models are separately priced; never strip them to a base ID.
+        let kimi_thinking = query_model_pricing_exact(&conn, "kimi-k2-thinking")?;
+        assert!(kimi_thinking.is_some());
+        assert_ne!(kimi_thinking, query_model_pricing_exact(&conn, "kimi-k2")?);
+        for model in ["kimi-k2-thinking", "claude-kimi-k2-thinking"] {
+            assert_eq!(
+                find_model_pricing_row(&conn, model)?,
+                kimi_thinking,
+                "{model}"
+            );
+        }
+        assert_eq!(
+            strip_claude_thinking_suffix("claude-kimi-k2-thinking"),
+            None
+        );
+        assert_eq!(strip_claude_thinking_suffix("claude-thinking"), None);
+
+        // An exact custom thinking price still wins over the base estimate.
+        conn.execute(
+            "INSERT INTO model_pricing VALUES ('claude-opus-4-6-thinking',
+             'Custom Opus 4.6 Thinking', '9', '45', '0.9', '11.25')",
+            [],
+        )?;
+        assert_eq!(
+            find_model_pricing_row(&conn, "claude-opus-4.6-thinking")?,
+            Some(("9".into(), "45".into(), "0.9".into(), "11.25".into()))
+        );
+
+        // Unknown Claude versions stay unpriced instead of borrowing another family's price.
+        assert!(find_model_pricing_row(&conn, "claude-opus-9-9-thinking")?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn test_claude_thinking_backfills_without_transcripts() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            for (id, model, cost) in [
+                ("thinking-history", "claude-opus-4.6-thinking", "0"),
+                ("already-priced", "claude-opus-4.6-thinking", "9"),
+            ] {
+                insert_usage_log(
+                    &conn,
+                    id,
+                    "agy",
+                    "_agy_session",
+                    model,
+                    "agy_session",
+                    1000,
+                    1_000_000,
+                    100_000,
+                    1_000_000,
+                    0,
+                    200,
+                    cost,
+                )?;
+            }
+            conn.execute(
+                "UPDATE proxy_request_logs SET request_model='Claude Opus 4.6 (Thinking)',
+                 input_token_semantics=?1",
+                [INPUT_TOKEN_SEMANTICS_FRESH],
+            )?;
+        }
+        // Updating the base Opus 4.6 price must reach the retained thinking row.
+        assert_eq!(
+            db.backfill_missing_usage_costs_for_model("claude-opus-4-6")?,
+            1
+        );
+        assert_eq!(db.backfill_missing_usage_costs()?, 0);
+        let conn = lock_conn!(db.conn);
+        for (id, expected) in [("thinking-history", "8.000000"), ("already-priced", "9")] {
+            let row: (String, String, String) = conn.query_row(
+                "SELECT model, request_model, total_cost_usd FROM proxy_request_logs
+                 WHERE request_id=?1",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )?;
+            assert_eq!(
+                row,
+                (
+                    "claude-opus-4.6-thinking".into(),
+                    "Claude Opus 4.6 (Thinking)".into(),
+                    expected.into(),
+                ),
+                "{id}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn test_hydrogen_orchestrator_backfills_without_transcripts() -> Result<(), AppError> {
         let db = Database::memory()?;
         {
@@ -5876,6 +6566,457 @@ mod tests {
             [], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)),
         )?;
         assert_eq!(totals, (3, 3_000_000, 300_000, 3_000_000));
+        Ok(())
+    }
+
+    #[test]
+    fn test_gemini_flash_tiered_pricing_preserves_exact_overrides() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+        let base_38 = find_model_pricing_row(&conn, "gemini-3.8-flash")?;
+        let base_37 = find_model_pricing_row(&conn, "gemini-3.7-flash")?;
+        assert!(base_38.is_some());
+        assert!(base_37.is_some());
+        // Built-in seeds contain `gemini-3.1-flash-lite` (no `gemini-3.1-flash`) and
+        // `gemini-3-flash-preview` (no `gemini-3-flash`); verify they exist before
+        // asserting that `-tiered` never prefix-matches across sub-tiers or previews.
+        assert!(find_model_pricing_row(&conn, "gemini-3.1-flash-lite")?.is_some());
+        assert!(find_model_pricing_row(&conn, "gemini-3-flash-preview")?.is_some());
+
+        for model in [
+            "gemini-3.8-flash-tiered",
+            "models/gemini-3.8-flash-tiered",
+            "google/GEMINI-3.8-FLASH-TIERED",
+            "google.gemini-3.8-flash-tiered:free",
+            "gemini-3.8-flash@tiered",
+            "gemini-3.8-flash-tiered-high",
+            "gemini-3.8-flash-tiered-2026-09-02",
+            "claude-gemini-3.8-flash-tiered",
+        ] {
+            assert_eq!(find_model_pricing_row(&conn, model)?, base_38, "{model}");
+        }
+        for model in ["gemini-3.7-flash-tiered", "models/gemini-3.7-flash-tiered"] {
+            assert_eq!(find_model_pricing_row(&conn, model)?, base_37, "{model}");
+        }
+
+        // `-tiered` is a Gemini Flash endpoint suffix, not a generic suffix for other families,
+        // and must not prefix-match `gemini-3.1-flash-lite` or `-preview` when the exact base
+        // `gemini-<ver>-flash` entry is absent.
+        for model in [
+            "gemini-3.1-flash-tiered",
+            "models/gemini-3.1-flash-tiered",
+            "claude-gemini-3.1-flash-tiered",
+            "gemini-3.1-flash-tiered-high",
+            "gemini-3.1-flash-tiered-2026-09-02",
+            "gemini-3-flash-tiered",
+            "gemini-4-argon-tiered",
+            "gemini-3.1-pro-tiered",
+            "gemini-3.5-flash-lite-tiered",
+            "gemini-3.8-flash-tiered-preview",
+            "gemini-pro-flash-tiered",
+            "gemini-.8-flash-tiered",
+            "gemini-3.-flash-tiered",
+            "gemini--flash-tiered",
+            "gemini-3..8-flash-tiered",
+            "step-3.7-flash-tiered",
+            "custom-flash-tiered",
+            "gemini-3.8-flash-n",
+        ] {
+            assert!(find_model_pricing_row(&conn, model)?.is_none(), "{model}");
+        }
+
+        // Deleting an existing base Flash row or adding only a sub-tier row must also
+        // stay unpriced rather than falling into `LIKE 'gemini-<ver>-flash-%'`.
+        conn.execute(
+            "DELETE FROM model_pricing WHERE model_id = 'gemini-3.5-flash'",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO model_pricing VALUES ('gemini-3.9-flash-low',
+             'Custom Gemini 3.9 Flash Low', '0.2', '1.0', '0.02', '0')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO model_pricing VALUES ('gemini-3.9-flash-tiered-low',
+             'Custom Gemini 3.9 Flash Tiered Low', '0.4', '2.0', '0.04', '0')",
+            [],
+        )?;
+        assert!(find_model_pricing_row(&conn, "gemini-3.5-flash-lite")?.is_some());
+        assert!(find_model_pricing_row(&conn, "gemini-3.5-flash-tiered")?.is_none());
+        assert!(find_model_pricing_row(&conn, "gemini-3.9-flash-tiered")?.is_none());
+        assert!(find_model_pricing_row(&conn, "models/gemini-3.9-flash-tiered")?.is_none());
+        assert!(find_model_pricing_row(&conn, "gemini-3.9-flash-tiered-high")?.is_none());
+        assert_eq!(
+            find_model_pricing_row(&conn, "gemini-3.9-flash-tiered-low")?,
+            Some(("0.4".into(), "2.0".into(), "0.04".into(), "0".into()))
+        );
+
+        // Single-integer major versions still match when an exact `gemini-<major>-flash` row exists.
+        conn.execute(
+            "INSERT INTO model_pricing VALUES ('gemini-4-flash',
+             'Custom Gemini 4 Flash', '1', '5', '0.1', '0')",
+            [],
+        )?;
+        assert_eq!(
+            find_model_pricing_row(&conn, "gemini-4-flash-tiered")?,
+            Some(("1".into(), "5".into(), "0.1".into(), "0".into()))
+        );
+
+        conn.execute(
+            "INSERT INTO model_pricing VALUES ('gemini-3.8-flash-tiered',
+             'Custom Gemini 3.8 Flash Tiered', '2', '8', '0.2', '0')",
+            [],
+        )?;
+        for model in [
+            "gemini-3.8-flash-tiered",
+            "models/gemini-3.8-flash-tiered",
+            "google.gemini-3.8-flash-tiered:free",
+            "claude-gemini-3.8-flash-tiered",
+            "gemini-3.8-flash-tiered-high",
+            "google.gemini-3.8-flash-tiered-high",
+        ] {
+            assert_eq!(
+                find_model_pricing_row(&conn, model)?,
+                Some(("2".into(), "8".into(), "0.2".into(), "0".into())),
+                "{model}"
+            );
+        }
+        assert_eq!(
+            find_model_pricing_row(&conn, "gemini-3.7-flash-tiered")?,
+            base_37
+        );
+
+        conn.execute(
+            "INSERT INTO model_pricing VALUES ('gemini-3.8-flash-tiered-high',
+             'Custom Gemini 3.8 Flash Tiered High', '3', '12', '0.3', '0')",
+            [],
+        )?;
+        for model in [
+            "gemini-3.8-flash-tiered-high",
+            "models/gemini-3.8-flash-tiered-high",
+            "google.gemini-3.8-flash-tiered-high:free",
+            "claude-gemini-3.8-flash-tiered-high",
+            "bedrock.google.gemini-3.8-flash-tiered-high-v1:0",
+        ] {
+            assert_eq!(
+                find_model_pricing_row(&conn, model)?,
+                Some(("3".into(), "12".into(), "0.3".into(), "0".into())),
+                "{model}"
+            );
+        }
+        assert_eq!(
+            find_model_pricing_row(&conn, "google.gemini-3.8-flash-tiered-low")?,
+            Some(("2".into(), "8".into(), "0.2".into(), "0".into()))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_gemini_flash_tiered_backfills_without_transcripts() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            for (id, model, cost) in [
+                ("browser-38", "gemini-3.8-flash-tiered", "0"),
+                ("browser-37", "gemini-3.7-flash-tiered", "0"),
+                ("unpriced-31", "gemini-3.1-flash-tiered", "0"),
+                ("unpriced-n", "gemini-3.8-flash-n", "0"),
+                ("already-priced", "gemini-3.8-flash-tiered", "5"),
+            ] {
+                insert_usage_log(
+                    &conn,
+                    id,
+                    "agy",
+                    "_agy_session",
+                    model,
+                    "agy_session",
+                    1000,
+                    1_000_000,
+                    100_000,
+                    1_000_000,
+                    0,
+                    200,
+                    cost,
+                )?;
+            }
+            conn.execute(
+                "UPDATE proxy_request_logs SET input_token_semantics=?1",
+                [INPUT_TOKEN_SEMANTICS_FRESH],
+            )?;
+        }
+
+        // Scoped Flash Lite updates and full backfills must never misprice `gemini-3.1-flash-tiered`.
+        assert_eq!(
+            db.backfill_missing_usage_costs_for_model("gemini-3.1-flash-lite")?,
+            0
+        );
+        // Scoped base-model updates must only backfill matching Flash version rows.
+        assert_eq!(
+            db.backfill_missing_usage_costs_for_model("gemini-3.8-flash")?,
+            1
+        );
+        assert_eq!(
+            db.backfill_missing_usage_costs_for_model("gemini-3.7-flash")?,
+            1
+        );
+        assert_eq!(db.backfill_missing_usage_costs()?, 0);
+
+        {
+            let conn = lock_conn!(db.conn);
+            for (id, expected_model) in [
+                ("browser-38", "gemini-3.8-flash-tiered"),
+                ("browser-37", "gemini-3.7-flash-tiered"),
+            ] {
+                let row: (String, String, String, String, String) = conn.query_row(
+                    "SELECT model,input_cost_usd,output_cost_usd,cache_read_cost_usd,total_cost_usd
+                     FROM proxy_request_logs WHERE request_id=?1",
+                    [id],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+                )?;
+                assert_eq!(
+                    row,
+                    (
+                        expected_model.into(),
+                        "0.750000".into(),
+                        "0.375000".into(),
+                        "0.075000".into(),
+                        "1.200000".into(),
+                    )
+                );
+            }
+            for (id, expected) in [
+                ("unpriced-31", "0"),
+                ("unpriced-n", "0"),
+                ("already-priced", "5"),
+            ] {
+                let cost: String = conn.query_row(
+                    "SELECT total_cost_usd FROM proxy_request_logs WHERE request_id=?1",
+                    [id],
+                    |r| r.get(0),
+                )?;
+                assert_eq!(cost, expected, "{id}");
+            }
+            conn.execute(
+                "INSERT INTO model_pricing VALUES ('gemini-3.1-flash-tiered-high',
+                 'Custom Gemini 3.1 Flash Tiered High', '3', '12', '0.3', '0')",
+                [],
+            )?;
+        }
+
+        // Adding a custom per-effort `-tiered-high` entry must not misprice bare `-tiered` rows
+        // and permanently lock them out of a later base-model backfill.
+        assert_eq!(
+            db.backfill_missing_usage_costs_for_model("gemini-3.1-flash-tiered-high")?,
+            0
+        );
+        assert_eq!(db.backfill_missing_usage_costs()?, 0);
+
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO model_pricing VALUES ('gemini-3.1-flash',
+                 'Custom Gemini 3.1 Flash', '0.5', '2.5', '0.05', '0')",
+                [],
+            )?;
+        }
+
+        // Once an exact base `gemini-3.1-flash` entry is added, scoped backfill reprices it.
+        assert_eq!(
+            db.backfill_missing_usage_costs_for_model("gemini-3.1-flash")?,
+            1
+        );
+        let conn = lock_conn!(db.conn);
+        let cost_31: String = conn.query_row(
+            "SELECT total_cost_usd FROM proxy_request_logs WHERE request_id='unpriced-31'",
+            [],
+            |r| r.get(0),
+        )?;
+        assert_eq!(cost_31, "0.800000");
+        let totals: (i64, i64, i64, i64) = conn.query_row(
+            "SELECT COUNT(*),SUM(input_tokens),SUM(output_tokens),SUM(cache_read_tokens) FROM proxy_request_logs",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )?;
+        assert_eq!(totals, (5, 5_000_000, 500_000, 5_000_000));
+        Ok(())
+    }
+
+    #[test]
+    fn test_orchestrator_cli_worker_alias_pricing_and_orphan_backfill() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            let base = find_model_pricing_row(&conn, "gemini-4-hydrogen")?;
+            assert!(base.is_some());
+            for model in [
+                "gemini-flash-worker-agy",
+                "google/GEMINI-FLASH-WORKER-AGY",
+                "google.gemini-flash-worker-agy:free",
+                "gemini-flash-worker-agy-high",
+            ] {
+                assert_eq!(find_model_pricing_row(&conn, model)?, base, "{model}");
+            }
+            for model in [
+                "gemini-flash",
+                "gemini-flash-worker",
+                "gemini-flash-worker-agy-preview",
+                "gemini-pro-orchestrator",
+            ] {
+                assert!(find_model_pricing_row(&conn, model)?.is_none(), "{model}");
+            }
+
+            conn.execute(
+                "INSERT INTO model_pricing VALUES ('gemini-flash-worker-agy',
+                 'Custom Hydrogen Worker', '3', '12', '0.2', '0')",
+                [],
+            )?;
+            for model in [
+                "gemini-flash-worker-agy",
+                "google.gemini-flash-worker-agy:free",
+                "claude-gemini-flash-worker-agy",
+                "gemini-flash-worker-agy-high",
+                "google.gemini-flash-worker-agy-high",
+            ] {
+                assert_eq!(
+                    find_model_pricing_row(&conn, model)?,
+                    Some(("3".into(), "12".into(), "0.2".into(), "0".into())),
+                    "{model}"
+                );
+            }
+            conn.execute(
+                "INSERT INTO model_pricing VALUES ('gemini-flash-worker-agy-high',
+                 'Custom Hydrogen Worker High', '4', '16', '0.3', '0')",
+                [],
+            )?;
+            for model in [
+                "gemini-flash-worker-agy-high",
+                "models/gemini-flash-worker-agy-high",
+                "google.gemini-flash-worker-agy-high:free",
+                "claude-gemini-flash-worker-agy-high",
+            ] {
+                assert_eq!(
+                    find_model_pricing_row(&conn, model)?,
+                    Some(("4".into(), "16".into(), "0.3".into(), "0".into())),
+                    "{model}"
+                );
+            }
+            assert_eq!(
+                find_model_pricing_row(&conn, "google.gemini-flash-worker-agy-low")?,
+                Some(("3".into(), "12".into(), "0.2".into(), "0".into()))
+            );
+            conn.execute(
+                "DELETE FROM model_pricing WHERE model_id LIKE 'gemini-flash-worker-agy%'",
+                [],
+            )?;
+
+            // When base `gemini-4-hydrogen` is absent, neither `gemini-flash-worker-agy` nor its
+            // base fallback may prefix-match sibling `gemini-4-hydrogen-*` or `-high` entries.
+            conn.execute(
+                "DELETE FROM model_pricing WHERE model_id = 'gemini-4-hydrogen'",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO model_pricing VALUES ('gemini-4-hydrogen-orchestrator',
+                 'Custom Hydrogen Orchestrator', '5', '20', '0.5', '0')",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO model_pricing VALUES ('gemini-flash-worker-agy-high',
+                 'Custom Hydrogen Worker High', '4', '16', '0.3', '0')",
+                [],
+            )?;
+            assert!(find_model_pricing_row(&conn, "gemini-flash-worker-agy")?.is_none());
+            assert!(find_model_pricing_row(&conn, "google.gemini-flash-worker-agy")?.is_none());
+
+            for (id, model, cost) in [
+                ("worker-orphan", "gemini-flash-worker-agy", "0"),
+                ("unresolved-planner", "gemini-pro-orchestrator", "0"),
+                ("already-priced", "gemini-flash-worker-agy", "7"),
+            ] {
+                insert_usage_log(
+                    &conn,
+                    id,
+                    "agy",
+                    "_agy_session",
+                    model,
+                    "agy_session",
+                    1000,
+                    1_000_000,
+                    100_000,
+                    1_000_000,
+                    0,
+                    200,
+                    cost,
+                )?;
+            }
+            conn.execute(
+                "UPDATE proxy_request_logs SET input_token_semantics=?1",
+                [INPUT_TOKEN_SEMANTICS_FRESH],
+            )?;
+        }
+
+        // Sibling custom entries must never misprice bare `gemini-flash-worker-agy` rows when
+        // base `gemini-4-hydrogen` is absent.
+        assert_eq!(
+            db.backfill_missing_usage_costs_for_model("gemini-flash-worker-agy-high")?,
+            0
+        );
+        assert_eq!(
+            db.backfill_missing_usage_costs_for_model("gemini-4-hydrogen-orchestrator")?,
+            0
+        );
+        assert_eq!(db.backfill_missing_usage_costs()?, 0);
+
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "DELETE FROM model_pricing
+                 WHERE model_id IN ('gemini-4-hydrogen-orchestrator', 'gemini-flash-worker-agy-high')",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO model_pricing VALUES ('gemini-4-hydrogen',
+                 'Gemini 4 Hydrogen', '1.5', '7.5', '0.075', '0')",
+                [],
+            )?;
+        }
+
+        // Retained worker rows whose transcripts are gone still reprice on Hydrogen updates.
+        assert_eq!(
+            db.backfill_missing_usage_costs_for_model("gemini-4-hydrogen")?,
+            1
+        );
+        assert_eq!(db.backfill_missing_usage_costs()?, 0);
+
+        let conn = lock_conn!(db.conn);
+        let row: (String, String, String, String, String) = conn.query_row(
+            "SELECT model,request_model,input_cost_usd,output_cost_usd,cache_read_cost_usd
+             FROM proxy_request_logs WHERE request_id='worker-orphan'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        )?;
+        assert_eq!(
+            row,
+            (
+                "gemini-flash-worker-agy".into(),
+                "gemini-flash-worker-agy".into(),
+                "1.500000".into(),
+                "0.750000".into(),
+                "0.075000".into(),
+            )
+        );
+        for (id, expected) in [
+            ("worker-orphan", "2.325000"),
+            ("unresolved-planner", "0"),
+            ("already-priced", "7"),
+        ] {
+            let cost: String = conn.query_row(
+                "SELECT total_cost_usd FROM proxy_request_logs WHERE request_id=?1",
+                [id],
+                |r| r.get(0),
+            )?;
+            assert_eq!(cost, expected, "{id}");
+        }
         Ok(())
     }
 
@@ -6068,6 +7209,312 @@ mod tests {
                 .total_requests,
             2
         );
+        Ok(())
+    }
+
+    #[test]
+    fn test_reasoning_statistics_require_equal_prices_and_known_base() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+        conn.execute(
+            "INSERT OR REPLACE INTO model_pricing VALUES
+            ('gemini-3.8-flash', 'Flash', '0.75', '3.75', '0.075', '0'),
+            ('gemini-3.8-flash-high', 'High', '0.750', '3.750', '0.0750', '0.0'),
+            ('gemini-3.8-flash-low', 'Low', '0.75', '3.75', '0.15', '0'),
+            ('gemini-3.8-flash-minimal', 'Minimal', '0.75', '3.75', '0.075', '1'),
+            ('gemini-9-pro-low', 'Nine Low', '1', '5', '0.1', '0'),
+            ('gemini-9-pro-high', 'Nine High', '2', '10', '0.2', '0'),
+            ('claude-opus-5-5', 'Opus', '4', '20', '0.2', '5')",
+            [],
+        )?;
+
+        for (model, expected) in [
+            ("gemini-3.8-flash-high", "gemini-3.8-flash"),
+            ("gemini-3.8-flash-medium", "gemini-3.8-flash"),
+            ("gemini-3.8-flash-tiered", "gemini-3.8-flash"),
+            ("gemini-3.8-flash-tiered-high", "gemini-3.8-flash"),
+            ("models/gemini-3.8-flash-tiered", "models/gemini-3.8-flash"),
+            ("google/GEMINI-3.8-FLASH-TIERED", "google/GEMINI-3.8-FLASH"),
+            ("gemini-4-hydrogen-high", "gemini-4-hydrogen"),
+            ("gemini-4-hydrogen-tiered", "gemini-4-hydrogen"),
+            ("gemini-4-hydrogen-tiered-high", "gemini-4-hydrogen"),
+            (
+                "models/gemini-4-hydrogen-tiered-HIGH",
+                "models/gemini-4-hydrogen",
+            ),
+            ("gemini-4-neon-high", "gemini-4-neon"),
+            ("gemini-4-neon-xhigh", "gemini-4-neon"),
+            ("claude-opus-5.5-medium", "claude-opus-5.5"),
+            ("GPT-5.5-HIGH", "GPT-5.5"),
+        ] {
+            assert_eq!(statistics_model(&conn, model)?, expected, "{model}");
+        }
+
+        // 缺失基础模型定价（gemini-9-pro、devstral、magistral、gemini-3.1-flash）绝不能通过前缀匹配合并；
+        // 自定义差价、Flash Lite 与未知模型同样保持独立。
+        for model in [
+            "gemini-3.8-flash-low",
+            "gemini-3.8-flash-minimal",
+            "gemini-9-pro-low",
+            "gemini-9-pro-medium",
+            "gemini-9-pro-high",
+            "devstral-medium",
+            "magistral-medium",
+            "missing-high",
+            "gemini-3.5-flash-lite",
+            "gemini-3.1-flash-tiered",
+            "custom-tiered",
+        ] {
+            assert_eq!(statistics_model(&conn, model)?, model, "{model}");
+        }
+
+        // 输入或输出差价同样不能合并。
+        for column in ["input_cost_per_million", "output_cost_per_million"] {
+            conn.execute(
+                &format!(
+                    "UPDATE model_pricing SET {column} = '99' WHERE model_id = 'gemini-3.8-flash-high'"
+                ),
+                [],
+            )?;
+            assert_eq!(
+                statistics_model(&conn, "gemini-3.8-flash-high")?,
+                "gemini-3.8-flash-high"
+            );
+            conn.execute(
+                "UPDATE model_pricing SET input_cost_per_million = '0.75', output_cost_per_million = '3.75' WHERE model_id = 'gemini-3.8-flash-high'",
+                [],
+            )?;
+        }
+
+        // 为 `-tiered` 单独配置差价后，`-tiered` 保持独立，`-tiered-high` 只合并到 `-tiered`。
+        conn.execute(
+            "INSERT OR REPLACE INTO model_pricing VALUES
+            ('gemini-4-hydrogen-tiered', 'Custom Hydrogen Tiered', '2', '10', '0.1', '0')",
+            [],
+        )?;
+        assert_eq!(
+            statistics_model(&conn, "gemini-4-hydrogen-tiered")?,
+            "gemini-4-hydrogen-tiered"
+        );
+        assert_eq!(
+            statistics_model(&conn, "gemini-4-hydrogen-tiered-high")?,
+            "gemini-4-hydrogen-tiered"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_flash_and_hydrogen_tiered_pricing_backfill_and_grouping() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            for (id, model) in [
+                ("flash-tiered", "gemini-3.8-flash-tiered"),
+                ("flash-medium", "gemini-3.8-flash-medium"),
+                ("h-tiered-high", "gemini-4-hydrogen-tiered-high"),
+                ("h-low", "gemini-4-hydrogen-low"),
+                ("neon-high", "gemini-4-neon-high"),
+            ] {
+                insert_usage_log(
+                    &conn,
+                    id,
+                    "agy",
+                    "_agy_session",
+                    model,
+                    "agy_session",
+                    1000,
+                    100,
+                    200,
+                    0,
+                    0,
+                    200,
+                    "0",
+                )?;
+            }
+        }
+        assert_eq!(
+            db.backfill_missing_usage_costs_for_model("gemini-3.8-flash")?,
+            2
+        );
+        assert_eq!(
+            db.backfill_missing_usage_costs_for_model("gemini-4-hydrogen")?,
+            2
+        );
+        assert_eq!(
+            db.backfill_missing_usage_costs_for_model("gemini-4-neon")?,
+            1
+        );
+
+        let flash_stats =
+            db.get_model_stats(None, None, Some("agy"), None, Some("gemini-3.8-flash"))?;
+        assert_eq!(flash_stats.len(), 1);
+        assert_eq!(flash_stats[0].model, "gemini-3.8-flash");
+        assert_eq!(flash_stats[0].request_count, 2);
+        assert_eq!(flash_stats[0].total_cost, "0.001650");
+
+        let hydrogen_stats =
+            db.get_model_stats(None, None, Some("agy"), None, Some("gemini-4-hydrogen"))?;
+        assert_eq!(hydrogen_stats.len(), 1);
+        assert_eq!(hydrogen_stats[0].model, "gemini-4-hydrogen");
+        assert_eq!(hydrogen_stats[0].request_count, 2);
+        assert_eq!(hydrogen_stats[0].total_cost, "0.003300");
+
+        let neon_stats =
+            db.get_model_stats(None, None, Some("agy"), None, Some("gemini-4-neon"))?;
+        assert_eq!(neon_stats.len(), 1);
+        assert_eq!(neon_stats[0].model, "gemini-4-neon");
+        assert_eq!(neon_stats[0].request_count, 1);
+        assert_eq!(neon_stats[0].total_cost, "0.003300");
+
+        let detail = db
+            .get_request_detail("flash-tiered")?
+            .expect("tiered request");
+        assert_eq!(detail.model, "gemini-3.8-flash-tiered");
+        assert_eq!(detail.total_cost_usd, "0.000825");
+        Ok(())
+    }
+
+    #[test]
+    fn test_merged_reasoning_models_keep_totals_filters_and_pooled_medians() -> Result<(), AppError>
+    {
+        let db = Database::memory()?;
+        let ts = local_ts(2026, 6, 10, 12, 0, 0);
+        {
+            let conn = lock_conn!(db.conn);
+            // 样本分布在三个档位：base=[10]、high=[20, 30]、medium=[1000, 2000, 3000]。
+            // 全样本合并中位数 = (30 + 1000) / 2 = 515；
+            // 各档位中位数 [10, 25, 2000] 的中位数 = 25、均值 = 678、加权均值 = 1010，互不相同。
+            for (id, model, first, cost) in [
+                ("base", "gemini-4-argon", 10, "1"),
+                ("high-1", "gemini-4-argon-high", 20, "2"),
+                ("high-2", "gemini-4-argon-HIGH", 30, "3"),
+                ("medium-1", "gemini-4-argon-medium", 1000, "4"),
+                ("medium-2", "gemini-4-argon-medium", 2000, "5"),
+                ("medium-3", "gemini-4-argon-medium", 3000, "6"),
+            ] {
+                insert_usage_log(
+                    &conn,
+                    id,
+                    "agy",
+                    "_agy_session",
+                    model,
+                    "proxy",
+                    ts,
+                    100,
+                    200,
+                    0,
+                    0,
+                    200,
+                    cost,
+                )?;
+                conn.execute(
+                    "UPDATE proxy_request_logs SET first_token_ms = ?1, latency_ms = ?1 + 1000 WHERE request_id = ?2",
+                    params![first, id],
+                )?;
+            }
+            conn.execute(
+                "UPDATE proxy_request_logs SET model = 'routed-alias', pricing_model = 'gemini-4-argon-medium' WHERE request_id = 'medium-1'",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO usage_daily_rollups (
+                    date, app_type, provider_id, model, request_count, success_count,
+                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                    total_cost_usd, avg_latency_ms
+                ) VALUES ('2026-06-08', 'agy', '_agy_session', 'gemini-4-argon-high', 2, 1, 200, 400, 0, 0, '5', 1000)",
+                [],
+            )?;
+            // 带前缀的 `-tiered` 也要支持合并及筛选回查。
+            insert_usage_log(
+                &conn,
+                "prefixed-tiered",
+                "agy",
+                "_agy_session",
+                "models/gemini-3.8-flash-tiered",
+                "agy_session",
+                ts,
+                100,
+                200,
+                0,
+                0,
+                200,
+                "1",
+            )?;
+        }
+
+        let stats = db.get_model_stats(None, None, Some("agy"), None, None)?;
+        assert_eq!(stats.len(), 2);
+        let stat = stats
+            .iter()
+            .find(|s| s.model == "gemini-4-argon")
+            .expect("merged argon stat");
+        assert_eq!(stat.request_count, 8);
+        assert_eq!(stat.total_tokens, 2400);
+        assert_eq!(stat.total_cost, "26.000000");
+        assert_eq!(stat.avg_cost_per_request, "3.250000");
+        assert!((stat.success_rate - 700.0 / 8.0).abs() < 0.001);
+        assert_eq!(stat.speed_output_tokens, 1200);
+        assert_eq!(stat.speed_generation_ms, 6000);
+        assert_eq!(stat.first_token_median_ms, Some(515));
+
+        let model = Some("gemini-4-argon");
+        let summary = db.get_usage_summary(None, None, Some("agy"), None, model)?;
+        assert_eq!(summary.total_requests, 8);
+        assert_eq!(summary.total_cost, "26.000000");
+        assert_eq!(
+            db.get_usage_summary_by_app(None, None, None, model)?[0]
+                .summary
+                .total_requests,
+            8
+        );
+        assert_eq!(
+            db.get_provider_stats(None, None, Some("agy"), None, model)?[0].request_count,
+            8
+        );
+        assert_eq!(
+            db.get_model_stats(None, None, Some("agy"), None, model)?[0].request_count,
+            8
+        );
+        assert_eq!(
+            db.get_first_usage_date(Some("agy"), None, model)?
+                .as_deref(),
+            Some("2026-06-08")
+        );
+        let trends = db.get_daily_trends(
+            Some(local_ts(2026, 6, 8, 0, 0, 0)),
+            Some(ts + 1),
+            Some("agy"),
+            None,
+            model,
+        )?;
+        assert_eq!(trends.iter().map(|t| t.request_count).sum::<u64>(), 8);
+        let hourly =
+            db.get_daily_trends(Some(ts - 3600), Some(ts + 1), Some("agy"), None, model)?;
+        assert_eq!(hourly.iter().map(|t| t.request_count).sum::<u64>(), 6);
+        let logs = db.get_request_logs(
+            &LogFilters {
+                model: model.map(str::to_string),
+                ..Default::default()
+            },
+            0,
+            10,
+        )?;
+        assert_eq!(logs.total, 6);
+        assert!(logs.data.iter().any(|l| l.model == "gemini-4-argon-high"));
+        assert!(logs.data.iter().any(|l| l.model == "gemini-4-argon-HIGH"));
+        assert!(logs.data.iter().any(|l| l.model == "routed-alias"));
+
+        // `models/` 前缀的 `-tiered` 合并与筛选闭环。
+        let prefixed = db.get_model_stats(
+            None,
+            None,
+            Some("agy"),
+            None,
+            Some("models/gemini-3.8-flash"),
+        )?;
+        assert_eq!(prefixed.len(), 1);
+        assert_eq!(prefixed[0].model, "models/gemini-3.8-flash");
+        assert_eq!(prefixed[0].request_count, 1);
         Ok(())
     }
 }

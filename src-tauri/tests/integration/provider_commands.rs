@@ -41,7 +41,11 @@ fn agy_missing_native_config_is_not_imported_or_created_by_full_sync() {
             ..
         }
     ));
-    assert!(state.db.get_all_providers("agy").unwrap().is_empty());
+    assert!(state
+        .db
+        .get_all_providers(&AppType::Agy)
+        .unwrap()
+        .is_empty());
     assert!(cc_switch_lib::mode::current::provider_for(
         &state.db,
         &AppType::Agy,
@@ -84,7 +88,10 @@ fn agy_import_skips_empty_settings_but_keeps_model_configs() {
             Err(error) => panic!("{error}"),
         };
         assert_eq!(imported, should_import);
-        let provider = state.db.get_provider_by_id("default", "agy").unwrap();
+        let provider = state
+            .db
+            .get_provider_by_id("default", &AppType::Agy)
+            .unwrap();
         assert_eq!(provider.is_some(), should_import);
         if let Some(provider) = provider {
             assert_eq!(
@@ -148,7 +155,7 @@ fn grokbuild_import_and_switch_write_live_config() {
 
     let imported = state
         .db
-        .get_provider_by_id("default", AppType::GrokBuild.as_str())
+        .get_provider_by_id("default", &AppType::GrokBuild)
         .expect("query imported provider")
         .expect("imported provider exists");
     assert_eq!(
@@ -163,7 +170,7 @@ fn grokbuild_import_and_switch_write_live_config() {
     state
         .db
         .save_provider(
-            AppType::GrokBuild.as_str(),
+            &AppType::GrokBuild,
             &Provider::with_id(
                 "relay".to_string(),
                 "Relay".to_string(),
@@ -183,7 +190,7 @@ fn grokbuild_import_and_switch_write_live_config() {
     assert_eq!(
         state
             .db
-            .get_current_provider(AppType::GrokBuild.as_str())
+            .get_current_provider(&AppType::GrokBuild)
             .expect("read Grok Build current provider")
             .as_deref(),
         Some("relay")
@@ -210,7 +217,7 @@ fn grokbuild_switch_back_after_client_changed_default_model() {
         state
             .db
             .save_provider(
-                AppType::GrokBuild.as_str(),
+                &AppType::GrokBuild,
                 &Provider::with_id(
                     id.to_string(),
                     name.to_string(),
@@ -236,7 +243,7 @@ fn grokbuild_switch_back_after_client_changed_default_model() {
 
     let backfilled_a = state
         .db
-        .get_provider_by_id("a", AppType::GrokBuild.as_str())
+        .get_provider_by_id("a", &AppType::GrokBuild)
         .expect("query provider a")
         .expect("provider a exists")
         .settings_config
@@ -279,7 +286,7 @@ fn codex_startup_import_fresh_install_imports_once_and_syncs_current_setting() {
 
     let providers = state
         .db
-        .get_all_providers(AppType::Codex.as_str())
+        .get_all_providers(&AppType::Codex)
         .expect("get codex providers after import");
     assert_eq!(
         providers.len(),
@@ -293,7 +300,7 @@ fn codex_startup_import_fresh_install_imports_once_and_syncs_current_setting() {
 
     let current_id = state
         .db
-        .get_current_provider(AppType::Codex.as_str())
+        .get_current_provider(&AppType::Codex)
         .expect("get codex current provider");
     assert_eq!(current_id.as_deref(), Some("default"));
 
@@ -315,7 +322,7 @@ fn codex_startup_import_fresh_install_imports_once_and_syncs_current_setting() {
         .expect("seed official providers");
     let providers_after_seed = state
         .db
-        .get_all_providers(AppType::Codex.as_str())
+        .get_all_providers(&AppType::Codex)
         .expect("get codex providers after seed");
     assert_eq!(
         providers_after_seed.len(),
@@ -365,7 +372,7 @@ experimental_bearer_token = "live-key"
 
     let providers = state
         .db
-        .get_all_providers(AppType::Codex.as_str())
+        .get_all_providers(&AppType::Codex)
         .expect("get codex providers after import");
     let provider = providers.get("default").expect("default provider exists");
     assert_eq!(
@@ -407,7 +414,7 @@ command = "echo"
 
     let providers = state
         .db
-        .get_all_providers(AppType::Codex.as_str())
+        .get_all_providers(&AppType::Codex)
         .expect("get codex providers after import");
     let provider = providers.get("default").expect("default provider exists");
 
@@ -442,7 +449,7 @@ fn codex_startup_import_skips_when_only_official_seed_exists() {
 
     let providers_before = state
         .db
-        .get_all_providers(AppType::Codex.as_str())
+        .get_all_providers(&AppType::Codex)
         .expect("get codex providers before restart check");
     assert_eq!(
         providers_before.len(),
@@ -459,7 +466,7 @@ fn codex_startup_import_skips_when_only_official_seed_exists() {
 
     let providers_after = state
         .db
-        .get_all_providers(AppType::Codex.as_str())
+        .get_all_providers(&AppType::Codex)
         .expect("get codex providers after restart check");
     assert_eq!(
         providers_after.len(),
@@ -587,7 +594,7 @@ command = "say"
 
     let current_id = app_state
         .db
-        .get_current_provider(AppType::Codex.as_str())
+        .get_current_provider(&AppType::Codex)
         .expect("get current provider");
     assert_eq!(
         current_id.as_deref(),
@@ -597,7 +604,7 @@ command = "say"
 
     let providers = app_state
         .db
-        .get_all_providers(AppType::Codex.as_str())
+        .get_all_providers(&AppType::Codex)
         .expect("get all providers");
     let legacy = providers
         .get("old-provider")
@@ -707,7 +714,7 @@ fn switch_provider_updates_claude_live_and_state() {
 
     let current_id = app_state
         .db
-        .get_current_provider(AppType::Claude.as_str())
+        .get_current_provider(&AppType::Claude)
         .expect("get current provider");
     assert_eq!(
         current_id.as_deref(),
@@ -717,7 +724,7 @@ fn switch_provider_updates_claude_live_and_state() {
 
     let providers = app_state
         .db
-        .get_all_providers(AppType::Claude.as_str())
+        .get_all_providers(&AppType::Claude)
         .expect("get all providers");
 
     let legacy_provider = providers
@@ -760,7 +767,7 @@ fn switch_provider_updates_claude_live_and_state() {
     // 验证当前供应商已更新
     let current_id = app_state
         .db
-        .get_current_provider(AppType::Claude.as_str())
+        .get_current_provider(&AppType::Claude)
         .expect("get current provider");
     assert_eq!(
         current_id.as_deref(),
@@ -807,7 +814,7 @@ fn switch_provider_codex_missing_auth_returns_error_and_keeps_state() {
 
     let current_id = app_state
         .db
-        .get_current_provider(AppType::Codex.as_str())
+        .get_current_provider(&AppType::Codex)
         .expect("get current provider");
     // 切换失败后，由于数据库操作是先设置再验证，current 可能已被设为 "invalid"
     // 但由于 live 配置写入失败，状态应该回滚
@@ -837,7 +844,7 @@ fn import_refuses_live_config_under_proxy_takeover() {
 
     let providers = state
         .db
-        .get_all_providers(AppType::Codex.as_str())
+        .get_all_providers(&AppType::Codex)
         .expect("get codex providers");
     assert!(
         providers.is_empty(),

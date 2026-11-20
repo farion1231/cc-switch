@@ -45,6 +45,8 @@ import {
   useRestoreSkillBackup,
   useScanUnmanagedSkills,
   useSkillBackups,
+  useSkillRepoTokenActions,
+  useSkillRepoTokens,
   useSkillRepos,
   useToggleSkillApp,
   useUninstallSkill,
@@ -2130,6 +2132,8 @@ function RepoManagerContainer({ onClose }: { onClose: () => void }) {
   const { data: discoverable = [] } = useDiscoverableSkills();
   const { data: failures = [] } = useDiscoverableSkillsFailures();
   const { addRepo, removeRepo, setRepoEnabled } = useSkillRepoActions();
+  const { data: repoTokens } = useSkillRepoTokens();
+  const { setToken, deleteToken } = useSkillRepoTokenActions();
   return (
     <RepoManagerPanel
       repos={repos}
@@ -2138,6 +2142,12 @@ function RepoManagerContainer({ onClose }: { onClose: () => void }) {
       onAdd={addRepo}
       onRemove={removeRepo}
       onToggle={setRepoEnabled}
+      tokens={{
+        hosts: repoTokens?.hosts ?? [],
+        secureStorage: repoTokens?.secureStorage ?? true,
+        onSave: setToken,
+        onRemove: deleteToken,
+      }}
       onClose={onClose}
     />
   );

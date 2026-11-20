@@ -1597,6 +1597,64 @@ const CODEX_DESKTOP_CLI_IN_BUNDLE: &[&str] = &[
     "Contents/Resources/codex",
 ];
 
+/// 新结构的 bundle 里，自带 CLI 的包描述（`version` 字段就是它的版本）。旧结构没有。
+const CODEX_DESKTOP_CLI_PACKAGE_IN_BUNDLE: &str = "Contents/Resources/codex-cli/codex-package.json";
+
+/// 桌面版自带的 Codex CLI 的版本，读文件、不跑子进程：
+///
+/// - macOS：ChatGPT.app / Codex.app 里 `codex-cli/codex-package.json` 的 `version`；
+/// - Windows：`%LOCALAPPDATA%\OpenAI\Codex\bin` 下装着 `codex.exe` 的版本目录名。
+///
+/// 桌面版自动更新后、用它建新对话之前，Codex 线程里记的还都是旧版本，而只装桌面版的人 PATH
+/// 上又没有 `codex`：不看这里就一直按旧版本拉官方模型列表。版本号认不认得由调用方判断。
+pub(crate) fn codex_desktop_cli_versions() -> Vec<String> {
+    codex_desktop_cli_versions_in(&get_home_dir())
+}
+
+fn codex_desktop_cli_versions_in(home: &Path) -> Vec<String> {
+    let mut versions = Vec::new();
+    for bundle in CODEX_DESKTOP_APP_BUNDLES {
+        for applications in [PathBuf::from("/Applications"), home.join("Applications")] {
+            let package = applications
+                .join(bundle)
+                .join(CODEX_DESKTOP_CLI_PACKAGE_IN_BUNDLE);
+            let version = fs::read(&package)
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+                .and_then(|package| package.get("version")?.as_str().map(str::to_string));
+            versions.extend(version);
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        if let Some(local_appdata) = std::env::var_os("LOCALAPPDATA") {
+            versions.extend(codex_cli_version_dir_names(
+                &PathBuf::from(local_appdata)
+                    .join("OpenAI")
+                    .join("Codex")
+                    .join("bin"),
+                "codex.exe",
+            ));
+        }
+    }
+
+    versions
+}
+
+/// `versions_dir` 下装着 `exe` 的子目录名（桌面版按版本号建目录）。
+#[cfg(any(windows, test))]
+fn codex_cli_version_dir_names(versions_dir: &Path, exe: &str) -> Vec<String> {
+    let Ok(entries) = fs::read_dir(versions_dir) else {
+        return Vec::new();
+    };
+    entries
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().join(exe).is_file())
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .collect()
+}
+
 fn push_codex_cli_candidate(
     candidates: &mut Vec<PathBuf>,
     seen: &mut HashSet<String>,
@@ -2573,11 +2631,16 @@ pub(crate) fn codex_single_model_catalog(
     config_text: &str,
     profile: CodexCatalogToolProfile,
 ) -> Result<Value, AppError> {
-    let spec = CodexCatalogModelSpec {
+    let specs = [CodexCatalogModelSpec {
         model: model.to_string(),
         ..CodexCatalogModelSpec::default()
-    };
-    codex_catalog_from_specs_for_row(&[spec], config_text, profile)
+    }];
+    let mut catalog = codex_catalog_from_specs_for_row(&specs, config_text, profile)?;
+    // 行里本来就没配目录：Lite 跟 Codex 自己的默认（同 `codex_stack_third_party_rows`）。
+    if let Some(Value::Array(entries)) = catalog.get_mut("models") {
+        apply_codex_responses_lite(entries, &specs, profile, true);
+    }
+    Ok(catalog)
 }
 
 /// 一家第三方供应商发布的模型：行里的模型目录；没有配置目录时只有行的 `model`。
@@ -2739,10 +2802,6 @@ pub(crate) fn plan_codex_stack_catalog(
                 "description".to_string(),
                 json!(crate::mode::stack::model_description(&model, window)),
             );
-            // 第三方不支持 Responses Lite 协议。
-            if obj.get("use_responses_lite") == Some(&Value::Bool(true)) {
-                obj.insert("use_responses_lite".to_string(), Value::Bool(false));
-            }
             entries.push(entry);
         }
     }
@@ -2784,11 +2843,45 @@ pub(crate) fn codex_stack_third_party_rows(
         },
         _ => Vec::new(),
     };
+    let follows_codex_default = codex_catalog_model_specs(row.settings).is_empty();
     let windows = RowWindows::of(row.config_text);
     for entry in &mut entries {
         sink_row_windows(entry, &windows, true);
     }
+    apply_codex_responses_lite(&mut entries, &specs, row.profile, follows_codex_default);
     Ok(entries)
+}
+
+/// 决定 CC Switch 替一家第三方生成的目录行用不用 Responses Lite。
+///
+/// 行里没配模型目录时，这家在直连、路由下不写目录，Codex 用自己的官方条目，GPT-6 系列
+/// 走 Responses Lite（请求带 `reasoning.context = "all_turns"`）。CC Switch 不得不替它写
+/// 目录时（聚合的合并目录、「打开终端」盖掉上一家留下的指针）照着来，同一家在各条路径上
+/// 发的请求一致：按官方客户端转给官方后端的中转会自己加 Lite 头，请求里缺 all_turns 就被拒
+/// （#9665）。显式配了目录的行、走转换的行仍不用 Lite（转换层不认识它）。
+fn apply_codex_responses_lite(
+    entries: &mut [Value],
+    specs: &[CodexCatalogModelSpec],
+    profile: CodexCatalogToolProfile,
+    row_has_no_catalog: bool,
+) {
+    let official = if row_has_no_catalog && profile == CodexCatalogToolProfile::NativeResponses {
+        codex_openai_official_models()
+    } else {
+        Vec::new()
+    };
+    for (entry, spec) in entries.iter_mut().zip(specs) {
+        let lite = find_codex_official_model(&spec.model, &official)
+            .and_then(|found| found.get("use_responses_lite"))
+            == Some(&Value::Bool(true));
+        if let Some(obj) = entry.as_object_mut() {
+            if lite {
+                obj.insert("use_responses_lite".to_string(), Value::Bool(true));
+            } else if obj.get("use_responses_lite") == Some(&Value::Bool(true)) {
+                obj.insert("use_responses_lite".to_string(), Value::Bool(false));
+            }
+        }
+    }
 }
 
 /// 一家行里配置的窗口类全局键（见 [`sink_row_windows`]）。
@@ -5746,6 +5839,89 @@ wire_api = "responses"
         assert_eq!(models[1]["supports_image_detail_original"], false);
     }
 
+    /// #9665：没配目录的行在直连下由 Codex 用官方条目（GPT-6 走 Lite），聚合下要一致；
+    /// 显式配了目录的行、走 Chat 转换的行仍不用 Lite。
+    #[test]
+    fn stacked_rows_without_catalog_follow_codex_responses_lite_default() {
+        let models = with_official_models(official_gpt_rows(), || {
+            let bare = json!({});
+            let explicit = json!({ "modelCatalog": { "models": [{ "model": "gpt-6-sol" }] } });
+            let member = |key, settings, profile| CodexStackCatalogMember {
+                key,
+                provider_name: key,
+                row: CodexCatalogRow {
+                    settings,
+                    config_text: "model = \"gpt-6-sol\"\n",
+                    profile,
+                },
+            };
+            plan_codex_stack_catalog(
+                CodexStackRoute::ThirdParty(CodexCatalogRow {
+                    settings: &bare,
+                    config_text: "model = \"gpt-6-sol\"\n",
+                    profile: CodexCatalogToolProfile::NativeResponses,
+                }),
+                &[
+                    member("bare", &bare, CodexCatalogToolProfile::NativeResponses),
+                    member(
+                        "listed",
+                        &explicit,
+                        CodexCatalogToolProfile::NativeResponses,
+                    ),
+                    member("chat", &bare, CodexCatalogToolProfile::ProxyChat),
+                ],
+                false,
+            )
+            .unwrap()["models"]
+                .as_array()
+                .unwrap()
+                .clone()
+        });
+        let lite: Vec<_> = models
+            .iter()
+            .map(|model| {
+                (
+                    model["slug"].as_str().unwrap().to_string(),
+                    model["use_responses_lite"].clone(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            lite,
+            vec![
+                ("gpt-6-sol".to_string(), json!(true)),
+                ("ccs-bare/gpt-6-sol".to_string(), json!(true)),
+                ("ccs-listed/gpt-6-sol".to_string(), json!(false)),
+                ("ccs-chat/gpt-6-sol".to_string(), json!(false)),
+            ]
+        );
+    }
+
+    /// 「打开终端」给没配目录的卡盖掉上一家留下的指针时生成的单模型目录，Lite 同样跟 Codex
+    /// 的默认走（#9665）；走转换的卡、对不上官方条目的模型仍不用 Lite。
+    #[test]
+    fn single_model_catalog_follows_codex_responses_lite_default() {
+        let lite = |model: &str, profile| {
+            with_official_models(official_gpt_rows(), || {
+                codex_single_model_catalog(model, "", profile).unwrap()["models"][0]
+                    ["use_responses_lite"]
+                    .clone()
+            })
+        };
+        assert_eq!(
+            lite("gpt-6-sol", CodexCatalogToolProfile::NativeResponses),
+            json!(true)
+        );
+        assert_eq!(
+            lite("gpt-6-sol", CodexCatalogToolProfile::ProxyChat),
+            json!(false)
+        );
+        assert_ne!(
+            lite("kimi-k2", CodexCatalogToolProfile::NativeResponses),
+            json!(true)
+        );
+    }
+
     #[test]
     fn mirrored_rows_round_trip_as_bare_models() {
         let (catalog, simplified) = with_official_models(official_gpt_rows(), || {
@@ -6483,6 +6659,35 @@ wire_api = "responses"
         push_codex_cli_candidates_newest_first(&mut candidates, &mut seen, root, "codex.exe");
 
         assert_eq!(candidates, vec![newer, older]);
+    }
+
+    #[test]
+    fn desktop_cli_versions_come_from_the_bundled_package_and_version_dirs() {
+        let temp_home = tempfile::tempdir().expect("create temp home");
+        let applications = temp_home.path().join("Applications");
+        let package = applications
+            .join("ChatGPT.app")
+            .join(CODEX_DESKTOP_CLI_PACKAGE_IN_BUNDLE);
+        std::fs::create_dir_all(package.parent().unwrap()).unwrap();
+        std::fs::write(&package, r#"{"version":"0.169.0-alpha.11.1","target":"x"}"#).unwrap();
+        // 旧结构没有包描述：不算，也不报错。
+        create_cli_candidate(&desktop_cli(
+            &applications,
+            "Codex.app",
+            CODEX_DESKTOP_CLI_IN_BUNDLE[1],
+        ));
+
+        // 本机 /Applications 里真装着的桌面版也会读到，只看临时 home 里的这一份。
+        let versions = codex_desktop_cli_versions_in(temp_home.path());
+        assert!(versions.contains(&"0.169.0-alpha.11.1".to_string()));
+
+        let bin = temp_home.path().join("bin");
+        create_cli_candidate(&bin.join("0.169.0").join("codex.exe"));
+        std::fs::create_dir_all(bin.join("logs")).unwrap();
+        assert_eq!(
+            codex_cli_version_dir_names(&bin, "codex.exe"),
+            vec!["0.169.0".to_string()]
+        );
     }
 
     #[test]
