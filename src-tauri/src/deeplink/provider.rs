@@ -439,6 +439,11 @@ pub(crate) fn build_provider_from_request(
                 "Add WorkBuddy providers from the WorkBuddy page".into(),
             ))
         }
+        AppType::QoderCn => {
+            return Err(AppError::InvalidInput(
+                "Add Qoder CN providers from the Qoder CN page".into(),
+            ))
+        }
         AppType::Agy => {
             let mut settings = build_gemini_settings(request);
             settings["env"]

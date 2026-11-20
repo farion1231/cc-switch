@@ -306,6 +306,10 @@ impl ProxyServer {
                 "/workbuddy/:provider_id/v1/chat/completions",
                 post(super::workbuddy::handle),
             )
+            .route(
+                "/qoder-cn/:provider_id/v1/chat/completions",
+                post(super::workbuddy::handle_qoder_cn),
+            )
             .route("/status", get(handlers::get_status))
             // Claude API (支持带前缀和不带前缀两种格式)
             .route("/v1/messages", post(handlers::handle_messages))

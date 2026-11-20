@@ -282,7 +282,8 @@ export function useProviderActions(
             activeApp === "opencode" ||
             activeApp === "openclaw" ||
             activeApp === "mcode" ||
-            activeApp === "workbuddy"
+            activeApp === "workbuddy" ||
+            activeApp === "qoder-cn"
           ) {
             messageKey = "notifications.addToConfigSuccess";
             defaultMessage = "已添加到配置";

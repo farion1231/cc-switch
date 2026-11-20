@@ -50,6 +50,7 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         // 用户级说明是当前账号目录下的 MEMORY.md（MemoryCollector 以 <user_instructions> 注入，
         // 每次最多 4000 字）。目录随登录的账号变，没登录时是数据目录本身。
         AppType::WorkBuddy => crate::services::workbuddy_account::user_data_dir(),
+        AppType::QoderCn => crate::qoder_cn_config::data_dir(),
         AppType::ClaudeDesktop => unreachable!("handled above"),
     };
 
@@ -67,6 +68,7 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         | AppType::Omp => "AGENTS.md",
         AppType::Copilot => "copilot-instructions.md",
         AppType::WorkBuddy => "MEMORY.md",
+        AppType::QoderCn => "AGENTS.md",
         AppType::ClaudeDesktop => unreachable!("handled above"),
     };
 

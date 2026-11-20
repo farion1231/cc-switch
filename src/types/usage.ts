@@ -211,7 +211,8 @@ export type AppType =
   | "dsh"
   | "agy"
   | "copilot"
-  | "workbuddy";
+  | "workbuddy"
+  | "qoder-cn";
 
 export type AppTypeFilter = "all" | AppType;
 
@@ -229,6 +230,7 @@ export const KNOWN_APP_TYPES: ReadonlyArray<AppType> = [
   "agy",
   "copilot",
   "workbuddy",
+  "qoder-cn",
 ];
 
 /**
@@ -258,6 +260,7 @@ const PARTIAL_CACHE_WRITE_APP_TYPES: ReadonlySet<string> = new Set([
   "mcode",
   "kimi",
   "workbuddy",
+  "qoder-cn",
 ]);
 
 export type CacheWriteAvailability = "ok" | "partial" | "na";

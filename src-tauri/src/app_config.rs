@@ -78,7 +78,7 @@ macro_rules! app_flags {
                     AppType::Agy => Some(&mut self.agy),
                     AppType::Copilot => Some(&mut self.copilot),
                     AppType::WorkBuddy => Some(&mut self.workbuddy),
-                    AppType::OpenClaw | AppType::ClaudeDesktop => None,
+                    AppType::OpenClaw | AppType::ClaudeDesktop | AppType::QoderCn => None,
                 }
             }
 
@@ -333,6 +333,8 @@ pub enum AppType {
     Copilot,
     #[serde(rename = "workbuddy", alias = "work-buddy")]
     WorkBuddy,
+    #[serde(rename = "qoder-cn", alias = "qoder_cn", alias = "qodercn")]
+    QoderCn,
 }
 
 /// 一个应用支持哪些功能。每个应用都在 [`AppType::spec`] 里写全每一项，新增应用时漏写
@@ -473,6 +475,13 @@ impl AppType {
                 route_mode: false,
                 stack: false,
             },
+            AppType::QoderCn => AppSpec {
+                id: "qoder-cn",
+                additive: true,
+                local_proxy: false,
+                route_mode: false,
+                stack: false,
+            },
         }
     }
 
@@ -481,7 +490,7 @@ impl AppType {
     }
 
     /// 所有应用，按默认顺序
-    pub const ALL: [AppType; 16] = [
+    pub const ALL: [AppType; 17] = [
         AppType::Claude,
         AppType::ClaudeDesktop,
         AppType::Codex,
@@ -498,6 +507,7 @@ impl AppType {
         AppType::Omp,
         AppType::Copilot,
         AppType::WorkBuddy,
+        AppType::QoderCn,
     ];
 
     pub fn all() -> impl Iterator<Item = AppType> {
@@ -529,10 +539,11 @@ impl FromStr for AppType {
                 Ok(AppType::Copilot)
             }
             "workbuddy" | "work-buddy" | "work_buddy" => Ok(AppType::WorkBuddy),
+            "qoder-cn" | "qoder_cn" | "qodercn" => Ok(AppType::QoderCn),
             other => Err(AppError::localized(
                 "unsupported_app",
-                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp, copilot, workbuddy。"),
-                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp, copilot, workbuddy."),
+                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp, copilot, workbuddy, qoder-cn。"),
+                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp, copilot, workbuddy, qoder-cn."),
             )),
         }
     }
@@ -890,7 +901,8 @@ impl MultiAppConfig {
             | AppType::Agy
             | AppType::Omp
             | AppType::Copilot
-            | AppType::WorkBuddy => return Ok(false),
+            | AppType::WorkBuddy
+            | AppType::QoderCn => return Ok(false),
         };
 
         prompts.insert(id, prompt);
@@ -941,7 +953,8 @@ impl MultiAppConfig {
                 | AppType::Agy
                 | AppType::Omp
                 | AppType::Copilot
-                | AppType::WorkBuddy => continue, // Pi didn't exist in v3.6.x, skip
+                | AppType::WorkBuddy
+                | AppType::QoderCn => continue, // Pi didn't exist in v3.6.x, skip
             };
 
             for (id, entry) in old_servers {

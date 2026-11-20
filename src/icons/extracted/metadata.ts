@@ -764,6 +764,14 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: [],
     defaultColor: "currentColor",
   },
+  qoder: {
+    name: "qoder",
+    displayName: "Qoder",
+    category: "ai-provider",
+    shape: "tile",
+    keywords: ["qoder", "qoder cn", "alibaba"],
+    defaultColor: "currentColor",
+  },
   workbuddy: {
     name: "workbuddy",
     displayName: "WorkBuddy",

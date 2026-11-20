@@ -1201,7 +1201,8 @@
     "agy": "Antigravity",
     "omp": "Oh My Pi",
     "copilot": "Copilot CLI",
-    "workbuddy": "WorkBuddy"
+    "workbuddy": "WorkBuddy",
+    "qoder-cn": "Qoder CN"
   },
   "mcode": {
     "empty": {
@@ -4304,7 +4305,11 @@
       "omp": "Resmi komut dosyasıyla yüklenir",
       "copilot": "npm ile kurulur"
     },
-    "workbuddyHelp": "WorkBuddy bir masaüstü uygulamasıdır; buradan kurulamaz veya yükseltilemez, kendini günceller. CC Switch ona yapılandırma dosyası (~/.workbuddy/models.json) üzerinden bağlanır."
+    "workbuddyHelp": "WorkBuddy bir masaüstü uygulamasıdır; buradan kurulamaz veya yükseltilemez, kendini günceller. CC Switch ona yapılandırma dosyası (~/.workbuddy/models.json) üzerinden bağlanır.",
+    "qoderCnHelp": "Qoder CN bir masaüstü uygulamasıdır; buradan kurulamaz veya yükseltilemez. CC Switch, Grok OAuth sağlayıcısını ~/.qoder-cn/settings.json dosyasına yazar ve OAuth belirtecini o dosyaya koymaz. Kullanırken CC Switch açık kalsın; model görünmezse Qoder CN'i yeniden başlatın.",
+    "qoderCnHint": "Kaydetmek Qoder CN'e özel bir sağlayıcı yazar. OAuth belirteci CC Switch'te kalır.",
+    "qoderCnModelsHint": "Model kimliği grok- ile başlamalıdır. Yeni modeli buraya satır olarak ekleyin. Bağlam, araçlar, görseller ve düşünme düzeyleri varsayılan kalır.",
+    "qoderCnAlreadyAdded": "Bir Grok OAuth kartı zaten var. Onu düzenleyin."
   },
   "appPage": {
     "moreActions": "{{name}} için diğer işlemler",

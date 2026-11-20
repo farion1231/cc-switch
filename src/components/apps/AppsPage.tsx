@@ -111,11 +111,13 @@ const SOURCE_LABEL: Record<string, string> = {
 type Row =
   | { kind: "tool"; tool: ToolName }
   | { kind: "desktop" }
-  | { kind: "workbuddy" };
+  | { kind: "workbuddy" }
+  | { kind: "qoder-cn" };
 
 const ROW_BY_APP = Object.fromEntries([
   ["claude-desktop", { kind: "desktop" }],
   ["workbuddy", { kind: "workbuddy" }],
+  ["qoder-cn", { kind: "qoder-cn" }],
   ...TOOL_NAMES.map((tool) => [TOOL_APP_IDS[tool], { kind: "tool", tool }]),
 ]) as Record<AppId, Row>;
 
@@ -126,7 +128,9 @@ const rowKey = (row: Row): AppId =>
     ? "claude-desktop"
     : row.kind === "workbuddy"
       ? "workbuddy"
-      : TOOL_APP_IDS[row.tool];
+      : row.kind === "qoder-cn"
+        ? "qoder-cn"
+        : TOOL_APP_IDS[row.tool];
 
 // 只上下拖，且停在本组的列表框里：列表框裁掉超出的部分，拖出去整行会看不见
 const verticalDragModifiers: Modifier[] = [
@@ -197,6 +201,11 @@ export function AppsPage() {
       queryFn: () => settingsApi.getConfigStatus("workbuddy"),
       staleTime: 30_000,
     });
+  const { data: qoderCnStatus, isPending: isQoderCnStatusPending } = useQuery({
+    queryKey: ["config-status", "qoder-cn"],
+    queryFn: () => settingsApi.getConfigStatus("qoder-cn"),
+    staleTime: 30_000,
+  });
 
   // 按「已安装 / 未安装」分两组。Claude Desktop 没有命令可探，用后端按数据目录 / 应用包推断的结果。
   // 首次探测还没出结果时不分组，免得各行探完一个跳一个；之后重新检查时沿用上次结果，位置不动。
@@ -207,6 +216,9 @@ export function AppsPage() {
     // WorkBuddy 同样没有命令可探，按配置目录（~/.workbuddy）在不在判断
     if (row.kind === "workbuddy") {
       return isWorkbuddyStatusPending ? null : Boolean(workbuddyStatus?.exists);
+    }
+    if (row.kind === "qoder-cn") {
+      return isQoderCnStatusPending ? null : Boolean(qoderCnStatus?.exists);
     }
     const info = tools.toolVersionByName.get(row.tool);
     if (!info && tools.isLoadingTools) return null;
@@ -371,6 +383,23 @@ export function AppsPage() {
           </span>
         }
         visibility={visibilitySwitch("workbuddy")}
+      />
+    ) : row.kind === "qoder-cn" ? (
+      <AppRow
+        key="qoder-cn"
+        app="qoder-cn"
+        name={<span className="truncate">{APP_DISPLAY_NAME["qoder-cn"]}</span>}
+        version={
+          <span className="inline-flex items-center gap-1 text-caption text-fg-2">
+            {qoderCnStatus?.exists
+              ? t("appsPage.desktopConnected")
+              : t("appsPage.desktopNotConnected")}
+            <HelpTip title={APP_DISPLAY_NAME["qoder-cn"]} align="end">
+              {t("appsPage.qoderCnHelp")}
+            </HelpTip>
+          </span>
+        }
+        visibility={visibilitySwitch("qoder-cn")}
       />
     ) : row.kind === "desktop" ? (
       <AppRow

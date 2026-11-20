@@ -42,6 +42,8 @@ pub(crate) fn provider_exists_in_live_config(
         AppType::Copilot => crate::copilot_config::provider_key_exists(provider_id),
         AppType::WorkBuddy => crate::workbuddy_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
+        AppType::QoderCn => crate::qoder_cn_config::get_providers()
+            .map(|providers| providers.contains_key(provider_id)),
         _ => Ok(false),
     }
 }
@@ -317,6 +319,7 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
         | AppType::Omp
         | AppType::Copilot
         | AppType::WorkBuddy
+        | AppType::QoderCn
         | AppType::ClaudeDesktop => false,
     }
 }
@@ -399,7 +402,8 @@ pub(crate) fn remove_common_config_from_settings(
         | AppType::Agy
         | AppType::Omp
         | AppType::Copilot
-        | AppType::WorkBuddy => Ok(settings.clone()),
+        | AppType::WorkBuddy
+        | AppType::QoderCn => Ok(settings.clone()),
     }
 }
 
@@ -455,7 +459,7 @@ pub(crate) fn write_live_for_state(
         return Ok(());
     }
 
-    if matches!(app_type, AppType::WorkBuddy) && provider.is_xai_oauth() {
+    if matches!(app_type, AppType::WorkBuddy | AppType::QoderCn) && provider.is_xai_oauth() {
         let config = tauri::async_runtime::block_on(async {
             state
                 .proxy_service
@@ -467,9 +471,17 @@ pub(crate) fn write_live_for_state(
                 .build_proxy_urls()
                 .await
                 .map_err(AppError::Message)?;
-            crate::workbuddy_config::oauth_live_config(provider, &origin)
+            match app_type {
+                AppType::WorkBuddy => crate::workbuddy_config::oauth_live_config(provider, &origin),
+                AppType::QoderCn => crate::qoder_cn_config::oauth_live_config(provider, &origin),
+                _ => unreachable!("checked above"),
+            }
         })?;
-        return crate::workbuddy_config::set_provider(&provider.id, &config);
+        return match app_type {
+            AppType::WorkBuddy => crate::workbuddy_config::set_provider(&provider.id, &config),
+            AppType::QoderCn => crate::qoder_cn_config::set_provider(&provider.id, &config),
+            _ => unreachable!("checked above"),
+        };
     }
 
     write_live_snapshot(app_type, provider)
@@ -748,6 +760,11 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                 return Ok(());
             }
             crate::workbuddy_config::set_provider(&provider.id, &provider.settings_config)?
+        }
+        AppType::QoderCn => {
+            return Err(AppError::InvalidInput(
+                "Qoder CN providers are written through the OAuth gateway".into(),
+            ));
         }
         AppType::Pi => {
             return Err(AppError::InvalidInput(
@@ -1096,6 +1113,7 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
         AppType::Kimi => Ok(json!(crate::kimi_config::get_providers()?)),
         AppType::Dsh => Ok(json!(crate::dsh_config::get_providers()?)),
         AppType::WorkBuddy => Ok(json!(crate::workbuddy_config::get_providers()?)),
+        AppType::QoderCn => Ok(json!(crate::qoder_cn_config::get_providers()?)),
         AppType::Pi => Err(AppError::InvalidInput(
             "Pi providers are read from Pi's native models file".to_string(),
         )),
@@ -1240,7 +1258,8 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         | AppType::Kimi
         | AppType::Dsh
         | AppType::Omp
-        | AppType::WorkBuddy => {
+        | AppType::WorkBuddy
+        | AppType::QoderCn => {
             unreachable!("additive mode apps are handled by early return")
         }
     };

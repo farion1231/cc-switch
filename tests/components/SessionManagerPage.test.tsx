@@ -591,6 +591,7 @@ describe("SessionManagerPage", () => {
         omp: false,
         copilot: false,
         workbuddy: false,
+        "qoder-cn": false,
       },
     });
     renderPage("codex");

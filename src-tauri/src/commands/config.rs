@@ -144,6 +144,12 @@ pub async fn get_config_status(
                 .to_string_lossy()
                 .into_owned(),
         }),
+        AppType::QoderCn => Ok(ConfigStatus {
+            exists: crate::qoder_cn_config::settings_path().exists(),
+            path: crate::qoder_cn_config::data_dir()
+                .to_string_lossy()
+                .into_owned(),
+        }),
     }
 }
 
@@ -174,6 +180,7 @@ fn app_config_dir(app: &str) -> Result<std::path::PathBuf, String> {
         AppType::Agy => crate::agy_config::agy_dir(),
         AppType::Copilot => crate::copilot_config::copilot_dir(),
         AppType::WorkBuddy => crate::workbuddy_config::data_dir(),
+        AppType::QoderCn => crate::qoder_cn_config::data_dir(),
     };
 
     Ok(dir)

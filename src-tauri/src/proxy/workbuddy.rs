@@ -2,7 +2,7 @@
 //! Credentials stay in the existing OAuth manager. Requests use the Responses
 //! pipeline (privacy filtering, token refresh, cancellation and usage logging).
 use super::{handlers, server::ProxyState, ProxyError};
-use crate::{app_config::AppType, mode::stack::StackTarget};
+use crate::{app_config::AppType, error::AppError, mode::stack::StackTarget};
 use axum::{
     body::Body,
     extract::{Path, State},
@@ -25,12 +25,62 @@ pub(super) async fn handle(
     Path(id): Path<String>,
     request: Request<Body>,
 ) -> Result<Response, ProxyError> {
+    bridge(state, id, request, Client::WorkBuddy).await
+}
+
+pub(super) async fn handle_qoder_cn(
+    State(state): State<ProxyState>,
+    Path(id): Path<String>,
+    request: Request<Body>,
+) -> Result<Response, ProxyError> {
+    bridge(state, id, request, Client::QoderCn).await
+}
+
+#[derive(Clone, Copy)]
+enum Client {
+    WorkBuddy,
+    QoderCn,
+}
+
+impl Client {
+    fn app_id(self) -> &'static str {
+        match self {
+            Self::WorkBuddy => "workbuddy",
+            Self::QoderCn => "qoder-cn",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::WorkBuddy => "WorkBuddy",
+            Self::QoderCn => "Qoder CN",
+        }
+    }
+
+    fn is_installed(self, id: &str) -> Result<bool, AppError> {
+        match self {
+            Self::WorkBuddy => {
+                crate::workbuddy_config::get_providers().map(|providers| providers.contains_key(id))
+            }
+            Self::QoderCn => {
+                crate::qoder_cn_config::get_providers().map(|providers| providers.contains_key(id))
+            }
+        }
+    }
+}
+
+async fn bridge(
+    state: ProxyState,
+    id: String,
+    request: Request<Body>,
+    client: Client,
+) -> Result<Response, ProxyError> {
     let provider = state
         .db
-        .get_provider_by_id(&id, "workbuddy")
+        .get_provider_by_id(&id, client.app_id())
         .map_err(|e| ProxyError::DatabaseError(e.to_string()))?
         .filter(|p| p.is_xai_oauth())
-        .ok_or_else(|| invalid("Unknown WorkBuddy OAuth provider"))?;
+        .ok_or_else(|| invalid(&format!("Unknown {} OAuth provider", client.label())))?;
     let expected = provider
         .settings_config
         .get("apiKey")
@@ -43,15 +93,20 @@ pub(super) async fn handle(
         .and_then(|v| v.strip_prefix("Bearer "))
         .unwrap_or_default();
     if expected.len() < 32 || !bool::from(expected.as_bytes().ct_eq(supplied.as_bytes())) {
-        return Err(ProxyError::AuthError(
-            "Invalid WorkBuddy gateway key".into(),
-        ));
+        return Err(ProxyError::AuthError(format!(
+            "Invalid {} gateway key",
+            client.label()
+        )));
     }
-    // Removing the provider from WorkBuddy must revoke access without deleting the account.
-    let installed = crate::workbuddy_config::get_providers()
-        .map_err(|e| ProxyError::ConfigError(e.to_string()))?;
-    if !installed.contains_key(&id) {
-        return Err(invalid("WorkBuddy provider is not enabled"));
+    // Removing the provider from the client must revoke access without deleting the account.
+    if !client
+        .is_installed(&id)
+        .map_err(|e| ProxyError::ConfigError(e.to_string()))?
+    {
+        return Err(invalid(&format!(
+            "{} provider is not enabled",
+            client.label()
+        )));
     }
     let (mut parts, body) = request.into_parts();
     let bytes = axum::body::to_bytes(body, 32 * 1024 * 1024)
@@ -98,8 +153,8 @@ pub(super) async fn handle(
         state,
         request,
         AppType::Codex,
-        "WorkBuddy",
-        "workbuddy",
+        client.label(),
+        client.app_id(),
         handlers::ResponsesEndpoint::Responses,
         Some(target),
     )

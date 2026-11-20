@@ -391,6 +391,7 @@ describe("UsageDashboard", () => {
         omp: false,
         copilot: false,
         workbuddy: false,
+        "qoder-cn": false,
       },
     });
     renderDashboard({ initialAppType: "gemini" });

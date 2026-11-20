@@ -1199,6 +1199,7 @@
     "pi": "Pi",
     "mcode": "MiniMax Code",
     "workbuddy": "WorkBuddy",
+    "qoder-cn": "Qoder CN",
     "agy": "Antigravity",
     "copilot": "Copilot CLI",
     "omp": "Oh My Pi"
@@ -4350,6 +4351,10 @@
     "visibleHelp": "When off, the app no longer appears in the sidebar, the tray menu, the MCP / Skills app columns, or the app pickers on Prompts and Sessions. It is only hidden: its providers, MCP servers and other settings stay, and its own config files are left untouched.",
     "desktopHelp": "Claude Desktop is a desktop app and can't be installed or upgraded here; CC Switch connects to it through its config file.",
     "workbuddyHelp": "WorkBuddy is a desktop app and can't be installed or upgraded here; it updates itself. CC Switch connects to it through its config file (~/.workbuddy/models.json).",
+    "qoderCnHelp": "Qoder CN is a desktop app and can't be installed or upgraded here. CC Switch writes a Grok OAuth custom provider into ~/.qoder-cn/settings.json and does not put the OAuth token in that file. Keep CC Switch running, and restart Qoder CN if the model does not show up.",
+    "qoderCnHint": "Saving writes a Qoder CN custom provider. The OAuth token stays in CC Switch.",
+    "qoderCnModelsHint": "Model IDs must start with grok-. Add a row when a new model is released. Context, tools, images and thinking use defaults.",
+    "qoderCnAlreadyAdded": "A Grok OAuth card already exists. Edit that one.",
     "desktopUnsupported": "Not supported on this system",
     "desktopConnected": "Connected",
     "desktopNotConnected": "Not connected",

@@ -188,7 +188,12 @@ fn lock_native_provider_operations(
 ) -> Option<tokio::sync::OwnedMutexGuard<()>> {
     matches!(
         app_type,
-        AppType::Mcode | AppType::Kimi | AppType::Dsh | AppType::Copilot | AppType::WorkBuddy
+        AppType::Mcode
+            | AppType::Kimi
+            | AppType::Dsh
+            | AppType::Copilot
+            | AppType::WorkBuddy
+            | AppType::QoderCn
     )
     .then(|| {
         futures::executor::block_on(state.proxy_service.lock_switch_for_app(app_type.as_str()))
@@ -6764,6 +6769,7 @@ impl ProviderService {
                     AppType::Kimi => crate::kimi_config::remove_provider(id)?,
                     AppType::Dsh => crate::dsh_config::remove_provider(id)?,
                     AppType::WorkBuddy => crate::workbuddy_config::remove_provider(id)?,
+                    AppType::QoderCn => crate::qoder_cn_config::remove_provider(id)?,
                     _ => {}
                 }
             }
@@ -6944,6 +6950,7 @@ impl ProviderService {
             AppType::Kimi => crate::kimi_config::remove_provider(id)?,
             AppType::Dsh => crate::dsh_config::remove_provider(id)?,
             AppType::WorkBuddy => crate::workbuddy_config::remove_provider(id)?,
+            AppType::QoderCn => crate::qoder_cn_config::remove_provider(id)?,
             _ => {
                 return Err(AppError::Message(format!(
                     "App {} does not support remove from live config",
@@ -7259,6 +7266,7 @@ impl ProviderService {
                     AppType::Kimi => crate::kimi_config::remove_provider(&provider.id),
                     AppType::Dsh => crate::dsh_config::remove_provider(&provider.id),
                     AppType::WorkBuddy => crate::workbuddy_config::remove_provider(&provider.id),
+                    AppType::QoderCn => crate::qoder_cn_config::remove_provider(&provider.id),
                     _ => Ok(()),
                 };
 
@@ -7529,7 +7537,8 @@ impl ProviderService {
             | AppType::Agy
             | AppType::Omp
             | AppType::Copilot
-            | AppType::WorkBuddy => Ok(String::new()),
+            | AppType::WorkBuddy
+            | AppType::QoderCn => Ok(String::new()),
         }
     }
 
@@ -7554,7 +7563,8 @@ impl ProviderService {
             | AppType::Agy
             | AppType::Omp
             | AppType::Copilot
-            | AppType::WorkBuddy => Ok(String::new()),
+            | AppType::WorkBuddy
+            | AppType::QoderCn => Ok(String::new()),
         }
     }
 
@@ -8333,6 +8343,14 @@ impl ProviderService {
             }
             AppType::WorkBuddy => {
                 crate::workbuddy_config::validate_provider(&provider.settings_config)?
+            }
+            AppType::QoderCn if provider.is_xai_oauth() => {
+                crate::qoder_cn_config::oauth_live_config(provider, "http://127.0.0.1")?;
+            }
+            AppType::QoderCn => {
+                return Err(AppError::InvalidInput(
+                    "Qoder CN only supports the Grok OAuth provider".into(),
+                ));
             }
             AppType::Pi => {
                 crate::pi_config::validate_provider_node(&provider.id, &provider.settings_config)?;

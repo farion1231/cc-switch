@@ -1199,6 +1199,7 @@
     "pi": "Pi",
     "mcode": "MiniMax Code",
     "workbuddy": "WorkBuddy",
+    "qoder-cn": "Qoder CN",
     "agy": "Antigravity",
     "copilot": "Copilot CLI",
     "omp": "Oh My Pi"
@@ -4350,6 +4351,10 @@
     "visibleHelp": "끄면 앱이 사이드바, 트레이 메뉴, MCP / 스킬의 앱 열, 프롬프트 및 세션의 앱 선택기에 표시되지 않습니다. 화면에서만 숨겨지며, 공급자와 MCP 서버 등의 설정 및 앱 자체 설정 파일은 변경되지 않습니다.",
     "desktopHelp": "Claude Desktop은 데스크톱 앱이므로 여기에서 설치하거나 업그레이드할 수 없습니다. CC Switch는 설정 파일을 통해 연결됩니다.",
     "workbuddyHelp": "WorkBuddy는 데스크톱 앱이므로 여기서 설치하거나 업그레이드할 수 없으며 스스로 업데이트됩니다. CC Switch는 구성 파일(~/.workbuddy/models.json)을 통해 연결합니다.",
+    "qoderCnHelp": "Qoder CN은 데스크톱 앱이라 여기서 설치하거나 업그레이드할 수 없습니다. CC Switch는 Grok OAuth를 ~/.qoder-cn/settings.json의 사용자 지정 공급자로 기록하며 OAuth 토큰은 그 파일에 넣지 않습니다. 사용할 때 CC Switch를 켜 두세요. 모델이 보이지 않으면 Qoder CN을 다시 시작하세요.",
+    "qoderCnHint": "저장하면 Qoder CN 사용자 지정 공급자에 기록됩니다. OAuth 토큰은 CC Switch에 남습니다.",
+    "qoderCnModelsHint": "모델 ID는 grok- 로 시작해야 합니다. 새 모델은 여기에 한 줄 추가하세요. 컨텍스트, 도구, 이미지, 사고 강도는 기본값입니다.",
+    "qoderCnAlreadyAdded": "Grok OAuth 카드가 이미 있습니다. 그 카드를 편집하세요.",
     "desktopUnsupported": "이 시스템에서는 지원되지 않습니다",
     "desktopConnected": "연결됨",
     "desktopNotConnected": "연결되지 않음",

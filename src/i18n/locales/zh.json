@@ -1199,6 +1199,7 @@
     "pi": "Pi",
     "mcode": "MiniMax Code",
     "workbuddy": "WorkBuddy",
+    "qoder-cn": "Qoder CN",
     "agy": "Antigravity",
     "copilot": "Copilot CLI",
     "omp": "Oh My Pi"
@@ -4350,6 +4351,10 @@
     "visibleHelp": "关掉后，这个应用不再出现在侧栏、托盘菜单、MCP / Skills 的应用列，以及提示词和会话的应用下拉里。只是不显示：它的供应商、MCP 等配置都还在，它自己的配置文件也不会被改动。",
     "desktopHelp": "Claude Desktop 是桌面应用，不能在这里安装或升级；CC Switch 通过它的配置文件接入。",
     "workbuddyHelp": "WorkBuddy 是桌面应用，不能在这里安装或升级，它会自己更新；CC Switch 通过它的配置文件（~/.workbuddy/models.json）接入。",
+    "qoderCnHelp": "Qoder CN 是桌面应用，不能在这里安装或升级。CC Switch 把 Grok OAuth 写成它的自定义供应商（~/.qoder-cn/settings.json），不会把 OAuth 令牌写进这个文件。使用时保持 CC Switch 运行；模型没出现就重启一次 Qoder CN。",
+    "qoderCnHint": "保存后写入 Qoder CN 的自定义供应商。OAuth 令牌只留在 CC Switch。",
+    "qoderCnModelsHint": "模型 ID 以 grok- 开头，上新时在这里加一条。上下文、工具、图片和思考档位用默认值。",
+    "qoderCnAlreadyAdded": "已经有一张 Grok OAuth 卡，请编辑那一张。",
     "desktopUnsupported": "当前系统不支持",
     "desktopConnected": "已接入",
     "desktopNotConnected": "未接入",

@@ -171,6 +171,14 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
     badgeClass:
       "bg-teal-500/10 text-teal-700 dark:text-teal-300 hover:bg-teal-500/20 border-0 gap-1.5",
   },
+  "qoder-cn": {
+    label: "Qoder CN",
+    icon: <ProviderIcon icon="qoder" name="Qoder CN" size={14} />,
+    activeClass:
+      "bg-orange-500/10 ring-1 ring-orange-500/20 hover:bg-orange-500/20 text-orange-700 dark:text-orange-300",
+    badgeClass:
+      "bg-orange-500/10 text-orange-700 dark:text-orange-300 hover:bg-orange-500/20 border-0 gap-1.5",
+  },
   agy: {
     label: "Antigravity",
     icon: (

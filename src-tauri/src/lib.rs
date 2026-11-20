@@ -47,6 +47,7 @@ mod prompt_files;
 mod provider;
 mod provider_kind;
 mod proxy;
+mod qoder_cn_config;
 mod services;
 mod session_manager;
 mod settings;

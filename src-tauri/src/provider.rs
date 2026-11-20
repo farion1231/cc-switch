@@ -274,6 +274,10 @@ impl Provider {
                     .unwrap_or(url);
                 (base_url, pick("apiKey"))
             }
+            AppType::QoderCn => (
+                str_at(settings.get("baseUrl")),
+                str_at(settings.get("apiKey")),
+            ),
             // OpenCode (OMO) nests credentials under `options` (the SDK options object).
             AppType::OpenCode | AppType::Mcode => {
                 let options = settings.get("options");
