@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/lib/toast";
 import { useTranslation } from "react-i18next";
@@ -52,6 +52,7 @@ export function useProviderActions(
   const deleteProviderMutation = useDeleteProviderMutation(activeApp);
   const switchProviderMutation = useSwitchProviderMutation(activeApp);
   const deactivateProviderMutation = useDeactivateProviderMutation(activeApp);
+  const deactivatingApps = useRef(new Set<AppId>());
 
   // Claude 插件同步逻辑
   const syncClaudePlugin = useCallback(
@@ -314,6 +315,9 @@ export function useProviderActions(
   // 退出使用当前供应商（恢复默认配置）
   const deactivateProvider = useCallback(
     async (id: string) => {
+      const inFlight = deactivatingApps.current;
+      if (inFlight.has(activeApp)) return;
+      inFlight.add(activeApp);
       try {
         const result = await deactivateProviderMutation.mutateAsync(id);
         await syncClaudePlugin(null);
@@ -341,6 +345,8 @@ export function useProviderActions(
         });
       } catch {
         // 错误提示由 mutation 处理
+      } finally {
+        inFlight.delete(activeApp);
       }
     },
     [deactivateProviderMutation, syncClaudePlugin, activeApp, t],
@@ -522,6 +528,7 @@ export function useProviderActions(
     updateProvider,
     switchProvider,
     deactivateProvider,
+    isDeactivating: deactivateProviderMutation.isPending,
     deleteProvider,
     saveUsageScript,
     setAsDefaultModel,

@@ -4019,6 +4019,15 @@ fn deactivate_claude_restores_defaults_and_allows_deleting_last_provider() {
         );
     }
 
+    let store = cc_switch_lib::live::engine::DeviceStore::for_device();
+    let live_state = || cc_switch_lib::mode::state::load(&store).unwrap();
+    assert!(live_state().apps["claude"].skip_startup_import);
+    ProviderService::switch(&state, AppType::Claude, "only-claude").expect("resume management");
+    assert!(!live_state().apps.contains_key("claude"));
+    ProviderService::deactivate(&state, AppType::Claude, "only-claude")
+        .expect("deactivate again before deleting");
+    assert!(live_state().apps["claude"].skip_startup_import);
+
     // Deleting the last provider now succeeds.
     ProviderService::delete(&state, AppType::Claude, "only-claude")
         .expect("delete last claude provider after deactivate");
@@ -4036,6 +4045,63 @@ fn deactivate_claude_restores_defaults_and_allows_deleting_last_provider() {
     assert!(
         ProviderService::import_default_config(&state, AppType::Claude).unwrap(),
         "an explicit import still works"
+    );
+}
+
+#[test]
+fn deactivate_claude_checks_for_missing_park_directory_before_writing_settings() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let home = ensure_test_home();
+    let state = create_test_state().expect("create test state");
+    let settings_path = get_claude_settings_path();
+    let before = br#"{"model":"claude-sonnet-4-5","includeCoAuthoredBy":false}"#;
+    std::fs::create_dir_all(settings_path.parent().unwrap()).unwrap();
+    std::fs::write(&settings_path, before).unwrap();
+    std::fs::write(
+        home.join(".claude.json"),
+        br#"{"oauthAccount":{"accountUuid":"account","organizationUuid":"org"}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        home.join(".cc-switch/claude_accounts.json"),
+        br#"{"accounts":{"account:org":{"localId":"0123456789abcdef0123456789abcdef","addedAt":0}}}"#,
+    )
+    .unwrap();
+    let mut provider = Provider::with_id(
+        "bound".into(),
+        "Bound Claude".into(),
+        json!({"model": "claude-sonnet-4-5"}),
+        None,
+    );
+    provider.category = Some("official".into());
+    provider.meta = Some(
+        serde_json::from_value(json!({
+            "authBinding": {
+                "source": "managed_account",
+                "authProvider": "claude_official",
+                "accountId": "account:org"
+            }
+        }))
+        .unwrap(),
+    );
+    state.db.save_provider("claude", &provider).unwrap();
+    state
+        .db
+        .set_current_provider("claude", &provider.id)
+        .unwrap();
+
+    let error = ProviderService::deactivate(&state, AppType::Claude, &provider.id)
+        .expect_err("active account has nowhere to park");
+    assert!(error.to_string().contains("账号目录"), "{error}");
+    assert_eq!(std::fs::read(settings_path).unwrap(), before);
+    let store = cc_switch_lib::live::engine::DeviceStore::for_device();
+    assert!(cc_switch_lib::mode::state::pending(&store, "claude")
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        ProviderService::current(&state, AppType::Claude).unwrap(),
+        provider.id
     );
 }
 
@@ -4117,6 +4183,190 @@ fn deactivate_codex_restores_defaults_and_allows_deleting_last_provider() {
     assert!(ProviderService::list(&state, AppType::Codex)
         .unwrap()
         .is_empty());
+}
+
+#[test]
+fn deactivate_codex_official_api_key_restores_stashed_oauth() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let _home = ensure_test_home();
+    let state = create_test_state().expect("create test state");
+    let native_auth = json!({
+        "auth_mode": "chatgpt",
+        "tokens": { "access_token": "access", "id_token": "id", "refresh_token": "refresh" }
+    });
+    write_codex_live_atomic(&native_auth, Some("approval_policy = \"on-request\"\n")).unwrap();
+
+    let card_auth = json!({"OPENAI_API_KEY": "sk-official-card"});
+    let mut provider = Provider::with_id(
+        "official-key".into(),
+        "Official API Key".into(),
+        json!({"auth": card_auth, "config": ""}),
+        None,
+    );
+    provider.category = Some("official".into());
+    state.db.save_provider("codex", &provider).unwrap();
+    ProviderService::switch(&state, AppType::Codex, &provider.id).unwrap();
+    let auth_path = cc_switch_lib::get_codex_auth_path();
+    assert_eq!(
+        read_json_file::<serde_json::Value>(&auth_path).unwrap(),
+        card_auth
+    );
+
+    ProviderService::deactivate(&state, AppType::Codex, &provider.id).unwrap();
+    assert_eq!(
+        read_json_file::<serde_json::Value>(&auth_path).unwrap(),
+        native_auth
+    );
+    assert!(ProviderService::current(&state, AppType::Codex)
+        .unwrap()
+        .is_empty());
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[allow(
+    clippy::await_holding_lock,
+    reason = "test HOME and settings must stay isolated across async mode changes"
+)]
+async fn proxy_add_after_deactivate_preserves_claude_and_codex_contracts() {
+    use cc_switch_lib::mode::{controller, current};
+
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let _home = ensure_test_home();
+    let state = create_test_state().expect("create test state");
+    let mut proxy_config = state.db.get_global_proxy_config().await.unwrap();
+    proxy_config.listen_port = 0;
+    state
+        .db
+        .update_global_proxy_config(proxy_config)
+        .await
+        .unwrap();
+
+    let claude = json!({"env": {
+        "ANTHROPIC_BASE_URL": "https://relay.example.com",
+        "ANTHROPIC_AUTH_TOKEN": "sk-claude"
+    }});
+    let codex = json!({
+        "auth": {"OPENAI_API_KEY": "sk-codex"},
+        "config": concat!(
+            "model_provider = \"custom\"\n",
+            "[model_providers.custom]\n",
+            "name = \"Custom\"\n",
+            "base_url = \"https://relay.example.com/v1\"\n",
+            "wire_api = \"responses\"\n",
+        )
+    });
+    for (app, settings, paths) in [
+        (AppType::Claude, claude, vec![get_claude_settings_path()]),
+        (
+            AppType::Codex,
+            codex,
+            vec![
+                cc_switch_lib::get_codex_config_path(),
+                cc_switch_lib::get_codex_auth_path(),
+            ],
+        ),
+    ] {
+        let provider = |id: &str| Provider::with_id(id.into(), id.into(), settings.clone(), None);
+        let direct = || current::provider_for(&state.db, &app, current::Purpose::Direct).unwrap();
+        let files = || {
+            paths
+                .iter()
+                .map(|path| match std::fs::read(path) {
+                    Ok(bytes) => Some(bytes),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                    Err(error) => panic!("read {}: {error}", path.display()),
+                })
+                .collect::<Vec<_>>()
+        };
+        ProviderService::add(&state, app.clone(), provider("first"), true).unwrap();
+        assert_eq!(direct().as_deref(), Some("first"));
+        ProviderService::deactivate(&state, app.clone(), "first").unwrap();
+
+        let before = files();
+        ProviderService::add(&state, app.clone(), provider("direct-add"), true).unwrap();
+        assert_eq!(direct(), None);
+        assert_eq!(files(), before);
+
+        controller::enter_with_route(&state, &app, false, Some("first"))
+            .await
+            .unwrap();
+        let proxy = current::mode_state(&app);
+        assert!(proxy.is_proxy() && proxy.attached && proxy.contract.is_some());
+        let before = files();
+        assert!(before[0].is_some());
+        ProviderService::add(&state, app.clone(), provider("proxy-add"), true).unwrap();
+        assert!(state
+            .db
+            .get_provider_by_id("proxy-add", app.as_str())
+            .unwrap()
+            .is_some());
+        if app == AppType::Claude {
+            let mut edited = provider("editor-add");
+            let base = ProviderService::editor_view(&state, app.clone(), &json!({}), None)
+                .unwrap()
+                .settings;
+            let env = edited.settings_config["env"].clone();
+            edited.settings_config = base.clone();
+            edited.settings_config["env"] = env;
+            ProviderService::add_from_editor(
+                &state,
+                app.clone(),
+                edited,
+                true,
+                Some(editor_save(&base, "refuse")),
+            )
+            .unwrap();
+        }
+        assert_eq!(direct(), None);
+        assert_eq!(files(), before);
+        assert_eq!(current::mode_state(&app), proxy);
+        controller::exit(&state, &app).await.unwrap();
+    }
+}
+
+#[cfg(any(target_os = "macos", windows))]
+#[test]
+fn deactivate_claude_desktop_restores_official_mode() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let home = ensure_test_home();
+    let state = create_test_state().expect("create test state");
+    #[cfg(target_os = "macos")]
+    let root = home.join("Library/Application Support");
+    #[cfg(windows)]
+    let root = home.join("AppData/Local");
+    let config = root.join("Claude/claude_desktop_config.json");
+    let third_party = root.join("Claude-3p");
+    let meta_path = third_party.join("configLibrary/_meta.json");
+    let provider = Provider::with_id(
+        "desktop-relay".into(),
+        "Desktop Relay".into(),
+        json!({"env": {
+            "ANTHROPIC_BASE_URL": "https://desktop.example.com",
+            "ANTHROPIC_AUTH_TOKEN": "sk-desktop"
+        }}),
+        None,
+    );
+    let app = AppType::ClaudeDesktop;
+    ProviderService::add(&state, app.clone(), provider.clone(), true).unwrap();
+    let meta: serde_json::Value = read_json_file(&meta_path).unwrap();
+    let profile = meta_path.with_file_name(format!("{}.json", meta["appliedId"].as_str().unwrap()));
+    let live: serde_json::Value = read_json_file(&profile).unwrap();
+    assert_eq!(live["inferenceGatewayApiKey"], "sk-desktop");
+
+    ProviderService::deactivate(&state, app.clone(), &provider.id).unwrap();
+    for path in [config, third_party.join("claude_desktop_config.json")] {
+        let live: serde_json::Value = read_json_file(&path).unwrap();
+        assert_eq!(live["deploymentMode"], "1p");
+    }
+    let live: serde_json::Value = read_json_file(&profile).unwrap();
+    assert!(live.get("inferenceGatewayApiKey").is_none());
+    assert!(ProviderService::current(&state, app.clone())
+        .unwrap()
+        .is_empty());
+    ProviderService::delete(&state, app, &provider.id).unwrap();
 }
 
 #[test]

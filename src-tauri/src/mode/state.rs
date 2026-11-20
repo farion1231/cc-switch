@@ -306,6 +306,7 @@ impl PendingTarget {
     pub fn is_empty(&self) -> bool {
         self.pointer.is_none()
             && !self.clear_pointer
+            && self.vacate_claude_account.is_none()
             && self.state.is_none()
             && self.written.is_none()
             && self.stack.is_none()

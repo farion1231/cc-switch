@@ -433,9 +433,17 @@ pub fn commit_target(
         db.set_current_provider(app, id)?;
     }
     // 模式、写入记录和 Stack 模型在同一次状态文件写入里落定。
-    if target.state.is_some() || target.written.is_some() || target.stack.is_some() {
+    let resume_management = !target.clear_pointer && target.pointer.is_some();
+    if resume_management
+        || target.state.is_some()
+        || target.written.is_some()
+        || target.stack.is_some()
+    {
         state::update(store, |live| {
             let entry = live.apps.entry(app.to_string()).or_default();
+            if resume_management {
+                entry.skip_startup_import = false;
+            }
             if let Some(mode) = &target.state {
                 entry.set_mode_state(mode.clone());
             }

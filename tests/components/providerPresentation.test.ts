@@ -114,6 +114,20 @@ describe("buildSwitchSections — direct", () => {
     );
   });
 
+  it("disables the In Use action while deactivation is pending", () => {
+    const { sections } = build({
+      active: "direct",
+      view: "direct",
+      isDeactivating: true,
+    });
+
+    expect(item(sections, "relay").status).toMatchObject({
+      label: "providerCard.status.inUse",
+      disabled: true,
+      onClick: expect.any(Function),
+    });
+  });
+
   it("offers back-to-direct while viewing direct from routing, except for providers that need routing", () => {
     const { sections, input } = build({
       active: "route",

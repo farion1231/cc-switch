@@ -398,12 +398,13 @@ fn auth_target<'a>(goal: &'a AuthGoal, op_name: &str) -> AuthTarget<'a> {
         AuthGoal::ThirdParty => AuthTarget::ThirdParty {
             preserve: preserve_login(op_name),
         },
-        AuthGoal::KeepNative => AuthTarget::ProxyThirdParty {
+        AuthGoal::Deactivate if op_name == op::SWITCH => AuthTarget::Deactivate,
+        // 分离或退出路由时没有直连卡，沿用代理登录处理，避免还回过期的暂存（#8573）。
+        AuthGoal::KeepNative | AuthGoal::Deactivate => AuthTarget::ProxyThirdParty {
             restore_last: op_name == op::ENTER || op_name == op::ATTACH,
         },
         AuthGoal::Official(row_auth) => AuthTarget::Official { row_auth },
         AuthGoal::Managed(auth) => AuthTarget::Managed { auth },
-        AuthGoal::Deactivate => AuthTarget::Deactivate,
     }
 }
 
@@ -1393,8 +1394,24 @@ pub(crate) fn preflight(db: &Database, provider: &Provider) -> Result<(), AppErr
 
 #[cfg(test)]
 mod tests {
-    use super::{is_proxy_base_url, stack_subagent_nested};
+    use super::{auth_target, is_proxy_base_url, op, stack_subagent_nested, AuthGoal, AuthTarget};
     use serde_json::json;
+
+    #[test]
+    fn returning_to_no_direct_provider_restores_stash_only_on_deactivate() {
+        for op_name in [op::DETACH, op::EXIT] {
+            assert!(matches!(
+                auth_target(&AuthGoal::Deactivate, op_name),
+                AuthTarget::ProxyThirdParty {
+                    restore_last: false
+                }
+            ));
+        }
+        assert!(matches!(
+            auth_target(&AuthGoal::Deactivate, op::SWITCH),
+            AuthTarget::Deactivate
+        ));
+    }
 
     /// 子代理设置按合并目录校验：不在目录里、或者父 agent 用新版工具时会拒收的
     /// （`multi_agent_version = "disabled"`）都不写；强度不在档位里只写模型。

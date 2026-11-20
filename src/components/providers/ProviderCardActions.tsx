@@ -113,8 +113,9 @@ export function ProviderCardActions({
               <button
                 type="button"
                 onClick={status.onClick}
+                disabled={status.disabled}
                 aria-label={status.tip ?? status.label}
-                className="inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-control px-2 py-1 text-body font-medium text-fg-1 transition-colors hover:bg-black/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:hover:bg-white/[0.08]"
+                className="inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-control px-2 py-1 text-body font-medium text-fg-1 transition-colors enabled:hover:bg-black/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 dark:enabled:hover:bg-white/[0.08]"
               >
                 <span
                   aria-hidden="true"

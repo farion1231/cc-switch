@@ -411,6 +411,7 @@ function App() {
     updateProvider,
     switchProvider,
     deactivateProvider,
+    isDeactivating,
     deleteProvider,
     saveUsageScript,
     setAsDefaultModel,
@@ -1671,6 +1672,7 @@ function App() {
           scrollRef={providerScrollContainerRef}
           onSwitch={switchProvider}
           onDeactivate={deactivateProvider}
+          isDeactivating={isDeactivating}
           onOpenRoutingSettings={() => openSettings("routing")}
           needsRouteRequest={
             trayNeedsRoute?.app === modeAppId ? trayNeedsRoute : undefined

@@ -997,7 +997,7 @@ describe("useProviderActions", () => {
     });
   });
 
-  it("deactivates the active provider and syncs Claude plugin back to official", async () => {
+  it("deduplicates deactivation and syncs the Claude plugin once", async () => {
     deactivateProviderMutateAsync.mockResolvedValueOnce({ warnings: [] });
     settingsApiGetMock.mockResolvedValueOnce({
       enableClaudePluginIntegration: true,
@@ -1010,11 +1010,37 @@ describe("useProviderActions", () => {
     });
 
     await act(async () => {
-      await result.current.deactivateProvider("provider-a");
+      await Promise.all([
+        result.current.deactivateProvider("provider-a"),
+        result.current.deactivateProvider("provider-a"),
+      ]);
     });
 
     expect(deactivateProviderMutateAsync).toHaveBeenCalledWith("provider-a");
+    expect(deactivateProviderMutateAsync).toHaveBeenCalledTimes(1);
     expect(settingsApiApplyMock).toHaveBeenCalledWith({ official: true });
+    expect(settingsApiApplyMock).toHaveBeenCalledTimes(1);
+    expect(toastSuccessMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports pending deactivation and allows retry after an error", async () => {
+    deactivateProviderMutateAsync
+      .mockRejectedValueOnce(new Error("deactivate failed"))
+      .mockResolvedValueOnce({ warnings: [] });
+    const { wrapper } = createWrapper();
+    const { result, rerender } = renderHook(() => useProviderActions("codex"), {
+      wrapper,
+    });
+
+    deactivateProviderMutation.isPending = true;
+    rerender();
+    expect(result.current.isDeactivating).toBe(true);
+
+    await act(async () => {
+      await result.current.deactivateProvider("provider-a");
+      await result.current.deactivateProvider("provider-a");
+    });
+    expect(deactivateProviderMutateAsync).toHaveBeenCalledTimes(2);
     expect(toastSuccessMock).toHaveBeenCalledTimes(1);
   });
 });

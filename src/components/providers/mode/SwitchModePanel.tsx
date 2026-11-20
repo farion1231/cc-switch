@@ -81,6 +81,7 @@ interface SwitchModePanelProps extends ListCallbacks {
     options?: { acknowledgedRouting?: boolean },
   ) => unknown;
   onDeactivate?: (id: string) => unknown;
+  isDeactivating?: boolean;
   onOpenRoutingSettings: () => void;
   startupFailure?: StartupAttachFailure;
   onDismissStartupFailure?: () => void;
@@ -108,6 +109,7 @@ export function SwitchModePanel({
   scrollRef,
   onSwitch,
   onDeactivate,
+  isDeactivating,
   onOpenRoutingSettings,
   startupFailure,
   onDismissStartupFailure,
@@ -247,6 +249,7 @@ export function SwitchModePanel({
     queue: queueIds,
     stackMembers,
     serviceRunning,
+    isDeactivating,
     routingReason: (provider: Provider) =>
       getRoutingReason(app, provider, t) ?? "",
     actions: {

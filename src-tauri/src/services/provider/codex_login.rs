@@ -210,7 +210,7 @@ pub(crate) enum AuthTarget<'a> {
     Official { row_auth: &'a Value },
     /// 托管账号：整份写它的登录。
     Managed { auth: &'a Value },
-    /// 退出使用状态：清掉托管账号登录和第三方残留 Key，保留用户原生登录。
+    /// 退出使用状态：清掉卡片写入的登录和第三方残留 Key，保留用户原生登录。
     Deactivate,
 }
 
@@ -251,9 +251,13 @@ pub(crate) fn plan(input: AuthInput<'_>) -> AuthPlan {
     let native = input
         .live
         .filter(|auth| !managed && !residue && codex_auth_has_login_material(auth));
+    let leaving_card_key = matches!(input.target, AuthTarget::Deactivate)
+        && input.leaving_official.is_some_and(|row_auth| {
+            is_api_key_credential(row_auth) && input.live == Some(row_auth)
+        });
 
     if let Some(row_auth) = input.leaving_official {
-        if native.is_none() && !managed {
+        if native.is_none() && !managed && !leaving_card_key {
             match oauth_identity(row_auth) {
                 Some(id) => {
                     stash.take(&id);
@@ -301,7 +305,12 @@ pub(crate) fn plan(input: AuthInput<'_>) -> AuthPlan {
         AuthTarget::Official { row_auth } => {
             official(row_auth, native, managed || residue, &mut stash)
         }
-        AuthTarget::Deactivate => official(&Value::Null, native, managed || residue, &mut stash),
+        AuthTarget::Deactivate => official(
+            &Value::Null,
+            native.filter(|_| !leaving_card_key),
+            managed || residue || leaving_card_key,
+            &mut stash,
+        ),
     };
 
     // 只算 Codex 会拿来登录的东西（OAuth token、API Key 等），Bedrock 凭据和元数据不算。
@@ -415,6 +424,45 @@ mod tests {
             version: STASH_VERSION,
             initialized: true,
             ..LoginStash::default()
+        }
+    }
+
+    #[test]
+    fn deactivating_an_official_api_key_restores_the_native_login_or_removes_the_key() {
+        let card = json!({"OPENAI_API_KEY": "sk-card"});
+        let native = with_access_exp(login("alice"), NOW + 3600);
+        let mut stash = ready();
+        stash.put(&native);
+        let restore = plan(AuthInput {
+            leaving_official: Some(&card),
+            ..input(Some(&card), AuthTarget::Deactivate, stash)
+        });
+        assert_eq!(restore.auth, Some(Some(native)));
+        assert!(restore.login_on_disk);
+        assert!(restore.stash.unwrap().logins.is_empty());
+
+        let clear = plan(AuthInput {
+            leaving_official: Some(&card),
+            ..input(Some(&card), AuthTarget::Deactivate, ready())
+        });
+        assert_eq!(clear.auth, Some(None));
+        assert!(!clear.login_on_disk);
+    }
+
+    #[test]
+    fn deactivating_keeps_an_independent_native_api_key() {
+        let card = json!({"OPENAI_API_KEY": "sk-card"});
+        let native = json!({"OPENAI_API_KEY": "sk-native"});
+        for leaving_official in [Some(&card), None] {
+            let mut stash = ready();
+            stash.put(&login("alice"));
+            let keep = plan(AuthInput {
+                leaving_official,
+                ..input(Some(&native), AuthTarget::Deactivate, stash)
+            });
+            assert_eq!(keep.auth, None);
+            assert_eq!(keep.stash, None);
+            assert!(keep.login_on_disk);
         }
     }
 
@@ -776,14 +824,16 @@ mod tests {
         let mut stash = ready();
         stash.put(&stale);
 
-        let attach = plan(input(
-            None,
-            AuthTarget::ProxyThirdParty { restore_last: true },
-            stash.clone(),
-        ));
-        assert_eq!(attach.auth, None, "auth.json stays absent");
-        assert!(!attach.login_on_disk);
-        assert_eq!(attach.stash, None, "the login stays in the stash");
+        for restore_last in [false, true] {
+            let proxy = plan(input(
+                None,
+                AuthTarget::ProxyThirdParty { restore_last },
+                stash.clone(),
+            ));
+            assert_eq!(proxy.auth, None, "auth.json stays absent");
+            assert!(!proxy.login_on_disk);
+            assert_eq!(proxy.stash, None, "the login stays in the stash");
+        }
 
         // 切回官方卡照常还回去（Codex 自己会提示重新登录）。
         let empty = json!({});

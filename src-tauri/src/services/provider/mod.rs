@@ -161,19 +161,35 @@ impl EditorSaveKind {
         mode: &crate::mode::state::ModeState,
         id: &str,
     ) -> Result<bool, AppError> {
-        if mode.is_proxy() {
-            return Ok(false);
+        if self == Self::Add {
+            return should_activate_on_add(state, app_type, mode);
         }
-        let direct = crate::mode::current::provider_for(
+        Ok(!mode.is_proxy()
+            && crate::mode::current::provider_for(
+                &state.db,
+                app_type,
+                crate::mode::current::Purpose::Direct,
+            )?
+            .as_deref()
+                == Some(id))
+    }
+}
+
+fn should_activate_on_add(
+    state: &AppState,
+    app_type: &AppType,
+    mode: &crate::mode::state::ModeState,
+) -> Result<bool, AppError> {
+    // 还有供应商但没有直连指针时，保留用户退出使用后的状态。
+    Ok(!mode.is_proxy()
+        && crate::mode::current::provider_for(
             &state.db,
             app_type,
             crate::mode::current::Purpose::Direct,
-        )?;
-        Ok(match self {
-            Self::Add => direct.is_none(),
-            Self::Update => direct.as_deref() == Some(id),
-        })
-    }
+        )?
+        .is_none()
+        && (!app_type.spec().route_mode
+            || !state.db.has_any_provider_for_app(app_type.as_str())?))
 }
 
 /// Provider business logic service
@@ -5808,6 +5824,12 @@ impl ProviderService {
         } else {
             None
         };
+        let activate = !app_type.spec().additive
+            && should_activate_on_add(
+                state,
+                &app_type,
+                &crate::mode::current::mode_state(&app_type),
+            )?;
 
         // Save to database
         state.db.save_provider(app_type.as_str(), &provider)?;
@@ -5834,13 +5856,7 @@ impl ProviderService {
             );
         }
 
-        // For other apps: Check if sync is needed (if this is current provider, or no current provider)
-        let current = crate::mode::current::provider_for(
-            &state.db,
-            &app_type,
-            crate::mode::current::Purpose::Direct,
-        )?;
-        if current.is_none() {
+        if activate {
             // 第一个供应商同样只写关键字段，不覆盖用户已有的配置文件。
             match app_type {
                 AppType::Claude => {
@@ -5858,10 +5874,8 @@ impl ProviderService {
                     return Ok(true);
                 }
                 AppType::ClaudeDesktop => {
-                    // 要经路由的卡直连写不进去，路由模式下配置文件归路由那家：只存行。
-                    if !crate::mode::current::is_proxy(&app_type)
-                        && !crate::claude_desktop_config::needs_routing(&provider)
-                    {
+                    // 要经路由的卡直连写不进去，只存行。
+                    if !crate::claude_desktop_config::needs_routing(&provider) {
                         crate::claude_desktop_config::write_direct(
                             state.db.as_ref(),
                             crate::mode::state::op::SWITCH,
@@ -5884,19 +5898,18 @@ impl ProviderService {
         Ok(true)
     }
 
-    /// 新增 Codex 供应商。还没有当前供应商时，它就是第一个：行、live 和指针一起提交，
+    /// 新增 Codex 供应商。直连模式下新增第一个供应商时，行、live 和指针一起提交，
     /// live 只写关键字段，不覆盖用户已有的 config.toml。写 live 失败时撤回刚存的行，
     /// 免得留下一个看得见却用不了的供应商。
     fn add_codex(state: &AppState, provider: Provider) -> Result<bool, AppError> {
         let app_type = AppType::Codex;
         // 和切换互斥：等着的切换不能看到只存了一半的托管账号绑定。
         let _switch_guard = crate::mode::controller::lock_settled_blocking(state, &app_type)?;
-        let current = crate::mode::current::provider_for(
-            &state.db,
+        if !should_activate_on_add(
+            state,
             &app_type,
-            crate::mode::current::Purpose::Direct,
-        )?;
-        if current.is_some() {
+            &crate::mode::current::mode_state(&app_type),
+        )? {
             state.db.save_provider(app_type.as_str(), &provider)?;
             return Ok(true);
         }
@@ -6270,12 +6283,11 @@ impl ProviderService {
         let existing = state
             .db
             .get_provider_by_id(&provider.id, app_type.as_str())?;
-        let first = crate::mode::current::provider_for(
-            &state.db,
+        let first = should_activate_on_add(
+            state,
             &app_type,
-            crate::mode::current::Purpose::Direct,
-        )?
-        .is_none();
+            &crate::mode::current::mode_state(&app_type),
+        )?;
         state.db.save_provider(app_type.as_str(), &provider)?;
 
         let key_fields = first.then_some(claude_editor::KeyFieldWrite {
@@ -7457,6 +7469,9 @@ impl ProviderService {
         match app_type {
             AppType::Claude => {
                 target.vacate_claude_account = claude_official::bound_account(&prev);
+                if let Some(account) = &target.vacate_claude_account {
+                    claude_official::preflight_vacate(account)?;
+                }
                 let prev_proj =
                     crate::live::project::claude::ClaudeProjection::of(&prev.settings_config);
                 let empty = crate::live::project::claude::ClaudeProjection::default();

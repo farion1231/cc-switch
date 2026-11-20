@@ -71,6 +71,7 @@ export interface CardPresentation {
     label: string;
     dot: CardTone | "muted";
     onClick?: () => void;
+    disabled?: boolean;
     tip?: string;
   };
   buttons: CardButton[];
@@ -153,6 +154,7 @@ export interface SwitchModeInput {
   /** 需要路由的原因（悬停「需要路由」时的说明） */
   routingReason: (provider: Provider) => string;
   serviceRunning: boolean;
+  isDeactivating?: boolean;
   actions: {
     switchDirect: (provider: Provider) => void;
     deactivateDirect?: (provider: Provider) => void;
@@ -276,6 +278,7 @@ function buildSwitchSectionsByView(input: SwitchModeInput): ProviderSection[] {
                     label: t("providerCard.status.inUse"),
                     dot: "direct",
                     tip: t("providerCard.action.deactivate"),
+                    disabled: input.isDeactivating,
                     onClick: actions.deactivateDirect
                       ? () => actions.deactivateDirect?.(p)
                       : undefined,
