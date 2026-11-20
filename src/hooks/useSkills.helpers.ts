@@ -3,6 +3,7 @@ import type {
   InstalledSkill,
   SkillDiscoveryResult,
 } from "@/lib/api/skills";
+import { GITHUB_HOST } from "@/components/skills/repoUrl";
 
 function discoverableInstallName(directory: string): string {
   const trimmed = directory.replace(/[/\\]+$/, "");
@@ -11,9 +12,10 @@ function discoverableInstallName(directory: string): string {
 }
 
 function discoverableDedupKey(skill: DiscoverableSkill): string {
+  const host = (skill.repoHost || GITHUB_HOST).toLowerCase();
   const installName = discoverableInstallName(skill.directory).toLowerCase();
   const uniqueName = installName || skill.key.toLowerCase();
-  return `${skill.repoOwner.toLowerCase()}\u0000${skill.repoName.toLowerCase()}\u0000${uniqueName}`;
+  return `${host}\u0000${skill.repoOwner.toLowerCase()}\u0000${skill.repoName.toLowerCase()}\u0000${uniqueName}`;
 }
 
 function discoverablePathPriority(

@@ -3566,23 +3566,21 @@ impl SkillService {
             };
 
             let install_name = Self::discoverable_install_name(&directory);
-            if Self::sanitize_install_name(install_name).is_none() {
+            if Self::sanitize_install_name(install_name).is_some() {
+                let doc_path = skill_md
+                    .strip_prefix(base_dir)
+                    .unwrap_or(skill_md.as_path())
+                    .to_string_lossy()
+                    .replace('\\', "/");
+
+                if let Ok(skill) =
+                    self.build_skill_from_metadata(&skill_md, &directory, &doc_path, repo)
+                {
+                    skills.push(skill);
+                }
+
                 return Ok(());
             }
-
-            let doc_path = skill_md
-                .strip_prefix(base_dir)
-                .unwrap_or(skill_md.as_path())
-                .to_string_lossy()
-                .replace('\\', "/");
-
-            if let Ok(skill) =
-                self.build_skill_from_metadata(&skill_md, &directory, &doc_path, repo)
-            {
-                skills.push(skill);
-            }
-
-            return Ok(());
         }
 
         for entry in fs::read_dir(current_dir)? {
@@ -4426,12 +4424,17 @@ impl SkillService {
         trimmed.rsplit(['/', '\\']).next().unwrap_or(trimmed)
     }
 
-    /// 计算同一仓库内技能的去重标识：(repo_owner, repo_name, install_name)
+    /// 计算同一仓库内技能的去重标识：(repo_host, repo_owner, repo_name, install_name)
     ///
     /// 安装时会剥去前置路径、只取 `directory` 最后一段落盘到 SSOT，因此同一仓库下
     /// 末段相同的多个路径（例如 `skills/ponytail` 与 `.openclaw/skills/ponytail`）
     /// 对应同一个可安装技能，不能在发现列表里重复出现。
-    fn discoverable_dedup_key(skill: &DiscoverableSkill) -> (String, String, String) {
+    fn discoverable_dedup_key(skill: &DiscoverableSkill) -> (String, String, String, String) {
+        let host = if skill.repo_host.is_empty() {
+            GITHUB_HOST.to_string()
+        } else {
+            skill.repo_host.to_lowercase()
+        };
         let install_name = Self::discoverable_install_name(&skill.directory);
         let unique_name = if install_name.is_empty() {
             skill.key.to_lowercase()
@@ -4439,6 +4442,7 @@ impl SkillService {
             install_name.to_lowercase()
         };
         (
+            host,
             skill.repo_owner.to_lowercase(),
             skill.repo_name.to_lowercase(),
             unique_name,
@@ -4471,7 +4475,8 @@ impl SkillService {
 
     /// 去重技能列表：同一仓库内按安装目录名去重并择优保留，不同仓库的同名 skill 分开显示
     fn deduplicate_discoverable_skills(skills: &mut Vec<DiscoverableSkill>) {
-        let mut best_index_by_key: HashMap<(String, String, String), usize> = HashMap::new();
+        let mut best_index_by_key: HashMap<(String, String, String, String), usize> =
+            HashMap::new();
         let mut keep = vec![false; skills.len()];
 
         for (idx, skill) in skills.iter().enumerate() {
@@ -10039,6 +10044,7 @@ mod tests {
             description: format!("from {owner}/{repo_name} ({directory})"),
             directory: directory.to_string(),
             readme_url: None,
+            repo_host: default_repo_host(),
             repo_owner: owner.to_string(),
             repo_name: repo_name.to_string(),
             repo_branch: "main".to_string(),
@@ -10058,6 +10064,35 @@ mod tests {
                 .map(|s| (s.repo_owner.as_str(), s.directory.as_str()))
                 .collect::<Vec<_>>(),
             vec![("owner-a", "skills/pdf"), ("owner-b", "skills/pdf")]
+        );
+    }
+
+    #[test]
+    fn scan_dir_recursive_continues_into_subdirs_when_invalid_dir_has_skill_md() {
+        let temp = tempdir().expect("tempdir");
+        write_skill_with_desc(&temp.path().join(".github"), ".github", "Invalid leaf");
+        write_skill_with_desc(
+            &temp
+                .path()
+                .join(".github")
+                .join("skills")
+                .join("valid-skill"),
+            "valid-skill",
+            "Nested under invalid dir",
+        );
+
+        let target_repo = repo("owner", "repo", true);
+        let mut remote_skills = Vec::new();
+        SkillService::new()
+            .scan_dir_recursive(temp.path(), temp.path(), &target_repo, &mut remote_skills)
+            .expect("scan skills");
+
+        assert_eq!(
+            remote_skills
+                .iter()
+                .map(|s| s.directory.as_str())
+                .collect::<Vec<_>>(),
+            vec![".github/skills/valid-skill"]
         );
     }
 
