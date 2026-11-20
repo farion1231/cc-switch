@@ -484,4 +484,35 @@ describe("useSessionImage", () => {
     expect(ok.result.current).toMatchObject({ url: null, isLoading: true });
     expect(bad.result.current.error).toBeNull();
   });
+
+  it("clearSessionImageCache 后在途请求返回不会创建孤儿 Blob URL", async () => {
+    let resolveStale: (value: ArrayBuffer) => void = () => {};
+    api.getImage.mockImplementationOnce(
+      () => new Promise<ArrayBuffer>((ok) => (resolveStale = ok)),
+    );
+    const first = renderHook(() =>
+      useSessionImage("codex", "/a", image("/stale.png")),
+    );
+    first.unmount();
+    clearSessionImageCache();
+
+    // 清空后同一张图重新发起加载
+    const second = renderHook(() =>
+      useSessionImage("codex", "/a", image("/stale.png")),
+    );
+    await waitFor(() => expect(second.result.current.url).toBeTruthy());
+    const activeUrl = second.result.current.url;
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+
+    // 旧请求迟到返回：不应创建新 Blob URL 或覆盖现有缓存项
+    await act(async () => {
+      resolveStale(new ArrayBuffer(4));
+    });
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+
+    second.unmount();
+    clearSessionImageCache();
+    expect(revokeObjectURL).toHaveBeenCalledTimes(1);
+    expect(revokeObjectURL).toHaveBeenCalledWith(activeUrl);
+  });
 });
