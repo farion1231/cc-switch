@@ -78,6 +78,13 @@ impl<T> Rows<T> {
         self.readable
     }
 
+    /// 导入用：能读的行，加上读不出来的那些 id。导入要跳过这些 id 并报告，
+    /// 不能当成「没有」再按同一个 id 新建一行盖掉它。
+    pub fn into_readable_and_unreadable_ids(self) -> (IndexMap<String, T>, Vec<String>) {
+        let ids = self.unreadable.into_iter().map(|entry| entry.id).collect();
+        (self.readable, ids)
+    }
+
     /// 只要其中一行：它本身读不出来就报错并点名，别的行坏了不影响。
     pub fn get(&self, id: &str) -> Result<Option<&T>, AppError> {
         if let Some(entry) = self.unreadable.iter().find(|entry| entry.id == id) {
