@@ -9,7 +9,7 @@ use crate::proxy::CircuitBreakerConfig;
 use crate::store::AppState;
 use std::str::FromStr;
 
-/// 有 `proxy_config` 行的应用：重试、熔断、故障转移这些设置只对它们有意义。
+/// 支持完整本地路由的应用，可配置重试、熔断和故障转移。
 fn require_proxy_app(app_type: &str) -> Result<crate::app_config::AppType, String> {
     let app = crate::app_config::AppType::from_str(app_type)
         .map_err(|error| format!("无效的应用类型: {error}"))?;

@@ -49,6 +49,24 @@ fn desktop_default_proxy_config() -> AppProxyConfig {
     }
 }
 
+fn decode_desktop_proxy_config(raw: &str) -> serde_json::Result<AppProxyConfig> {
+    use serde_json::{Map, Value};
+
+    match serde_json::from_str(raw) {
+        Err(error) if error.is_data() => {}
+        result => return result,
+    }
+
+    let mut saved: Map<String, Value> = serde_json::from_str(raw)?;
+    // 只补缺失字段，保留旧版已经保存的开关、超时和熔断设置。
+    if let Value::Object(defaults) = serde_json::to_value(desktop_default_proxy_config())? {
+        for (key, value) in defaults {
+            saved.entry(key).or_insert(value);
+        }
+    }
+    serde_json::from_value(Value::Object(saved))
+}
+
 impl Database {
     // ==================== Claude Desktop（存在 settings 表） ====================
 
@@ -56,7 +74,7 @@ impl Database {
         let Some(raw) = self.get_setting(DESKTOP_PROXY_CONFIG_KEY)? else {
             return Ok(desktop_default_proxy_config());
         };
-        match serde_json::from_str::<AppProxyConfig>(&raw) {
+        match decode_desktop_proxy_config(&raw) {
             Ok(mut config) => {
                 config.app_type = DESKTOP_APP_TYPE.to_string();
                 Ok(config)
@@ -143,24 +161,18 @@ impl Database {
 
     /// 获取计费模式来源
     pub async fn get_pricing_model_source(&self, app_type: &AppType) -> Result<String, AppError> {
-        if *app_type == AppType::ClaudeDesktop {
+        let app_type = if *app_type == AppType::ClaudeDesktop {
             // Desktop 现在有独立设置（存在 settings 表）。键不存在时回退到 Claude 的设置，
             // 避免升级后用户之前的「按请求模型」配置对 Desktop 悄悄失效。
             if let Some(value) = self.get_setting(DESKTOP_PRICING_SOURCE_KEY)? {
-                if validate_pricing_source(&value).is_ok() {
-                    return Ok(value);
+                if let Ok(trimmed) = validate_pricing_source(&value) {
+                    return Ok(trimmed.to_string());
                 }
             }
-            // 回退到 Claude 的设置（直接查询避免异步递归）
-            let conn = lock_conn!(self.conn);
-            let result: Result<String, rusqlite::Error> = conn.query_row(
-                "SELECT pricing_model_source FROM proxy_config WHERE app_type = ?1",
-                [&AppType::Claude],
-                |row| row.get(0),
-            );
-            drop(conn);
-            return Ok(result.unwrap_or_else(|_| PRICING_SOURCE_RESPONSE.to_string()));
-        }
+            &AppType::Claude
+        } else {
+            app_type
+        };
         let result = {
             let conn = lock_conn!(self.conn);
             conn.query_row(
@@ -706,6 +718,9 @@ impl Database {
 
 #[cfg(test)]
 mod tests {
+    use super::{
+        desktop_default_proxy_config, DESKTOP_PRICING_SOURCE_KEY, DESKTOP_PROXY_CONFIG_KEY,
+    };
     use crate::app_config::AppType;
     use crate::database::Database;
     use crate::error::AppError;
@@ -773,10 +788,21 @@ mod tests {
             2
         );
 
-        db.set_pricing_model_source(&AppType::ClaudeDesktop, "request")
+        db.set_pricing_model_source(&AppType::Claude, "request")
             .await?;
         assert_eq!(
             db.get_pricing_model_source(&AppType::ClaudeDesktop).await?,
+            "request"
+        );
+
+        db.set_pricing_model_source(&AppType::ClaudeDesktop, "response")
+            .await?;
+        assert_eq!(
+            db.get_pricing_model_source(&AppType::ClaudeDesktop).await?,
+            "response"
+        );
+        assert_eq!(
+            db.get_pricing_model_source(&AppType::Claude).await?,
             "request"
         );
 
@@ -795,6 +821,50 @@ mod tests {
             )
             .unwrap();
         assert_eq!(rows, 0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn claude_desktop_config_defaults_only_missing_fields() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        db.set_setting(
+            DESKTOP_PROXY_CONFIG_KEY,
+            r#"{"enabled":true,"autoFailoverEnabled":true,"maxRetries":0,"streamingIdleTimeout":37,"circuitFailureThreshold":2}"#,
+        )?;
+
+        let config = db.get_proxy_config_for_app(&AppType::ClaudeDesktop).await?;
+        let defaults = desktop_default_proxy_config();
+        assert!(config.enabled && config.auto_failover_enabled);
+        assert_eq!(config.max_retries, 0);
+        assert_eq!(config.streaming_idle_timeout, 37);
+        assert_eq!(config.circuit_failure_threshold, 2);
+        assert_eq!(config.app_type, defaults.app_type);
+        assert_eq!(
+            config.circuit_timeout_seconds,
+            defaults.circuit_timeout_seconds
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn claude_desktop_pricing_source_trims_and_preserves_database_errors(
+    ) -> Result<(), AppError> {
+        let db = Database::memory()?;
+        db.set_setting(DESKTOP_PRICING_SOURCE_KEY, "\trequest \n")?;
+        assert_eq!(
+            db.get_pricing_model_source(&AppType::ClaudeDesktop).await?,
+            "request"
+        );
+
+        db.set_setting(DESKTOP_PRICING_SOURCE_KEY, "unknown")?;
+        db.conn.lock().unwrap().execute(
+            "ALTER TABLE proxy_config RENAME COLUMN pricing_model_source TO old_pricing_model_source",
+            [],
+        )?;
+        assert!(matches!(
+            db.get_pricing_model_source(&AppType::ClaudeDesktop).await,
+            Err(AppError::Database(_))
+        ));
         Ok(())
     }
 }

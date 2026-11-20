@@ -3,7 +3,7 @@
 //! 管理代理模式下的故障转移队列（基于 providers 表的 in_failover_queue 字段）
 
 use crate::app_config::AppType;
-use crate::database::FailoverQueueItem;
+use crate::database::{Database, FailoverQueueItem};
 use crate::provider::Provider;
 use crate::store::AppState;
 use std::str::FromStr;
@@ -18,7 +18,7 @@ fn require_failover_app(app_type: &str) -> Result<AppType, String> {
 }
 
 fn require_failover_provider(
-    db: &crate::database::Database,
+    db: &Database,
     app_type: &AppType,
     provider_id: &str,
 ) -> Result<Provider, String> {
@@ -43,9 +43,25 @@ fn require_failover_provider(
     Ok(provider)
 }
 
+fn visible_failover_queue(db: &Database, app: &AppType) -> Result<Vec<FailoverQueueItem>, String> {
+    let queue = db.get_failover_queue(app)?;
+    if !matches!(app, AppType::Codex | AppType::ClaudeDesktop) {
+        return Ok(queue);
+    }
+    let providers = db.get_all_providers(app)?;
+    Ok(queue
+        .into_iter()
+        .filter(|item| {
+            providers.get(&item.provider_id).is_some_and(|provider| {
+                crate::proxy::provider_router::provider_supports_failover(app, provider)
+            })
+        })
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{require_failover_app, require_failover_provider};
+    use super::{require_failover_app, require_failover_provider, visible_failover_queue};
     use crate::app_config::AppType;
     use crate::database::Database;
     use crate::provider::{AuthBinding, AuthBindingSource, Provider, ProviderMeta};
@@ -144,6 +160,14 @@ mod tests {
             &ready.id
         )
         .is_ok());
+
+        // 手工导入的官方卡可能绕过命令层入队校验，读取时也要过滤。
+        let desktop = &AppType::ClaudeDesktop;
+        db.add_to_failover_queue(desktop, &official.id).unwrap();
+        db.add_to_failover_queue(desktop, &ready.id).unwrap();
+        let queue = visible_failover_queue(&db, desktop).unwrap();
+        assert_eq!(queue.len(), 1);
+        assert_eq!(queue[0].provider_id, ready.id);
     }
 }
 
@@ -153,19 +177,7 @@ pub async fn get_failover_queue(
     app_type: String,
 ) -> Result<Vec<FailoverQueueItem>, String> {
     let app_enum = require_failover_app(&app_type)?;
-    let queue = state.db.get_failover_queue(&app_enum)?;
-    if app_enum != AppType::Codex {
-        return Ok(queue);
-    }
-    let providers = state.db.get_all_providers(&app_enum)?;
-    Ok(queue
-        .into_iter()
-        .filter(|item| {
-            providers.get(&item.provider_id).is_some_and(|provider| {
-                crate::proxy::provider_router::provider_supports_failover(&app_enum, provider)
-            })
-        })
-        .collect())
+    visible_failover_queue(&state.db, &app_enum)
 }
 
 /// 添加供应商到故障转移队列。托盘的故障转移子菜单只列队列成员：队列一变就重建。

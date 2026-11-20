@@ -139,7 +139,6 @@ export function SwitchModePanel({
   const serviceRunning = proxyStatus?.running ?? false;
   const { data: settings } = useSettingsQuery();
   const pauseOfficialLogin = useCodexPauseOfficialLogin();
-  // Claude Desktop 没有故障转移和路由设置（没有 proxy_config 行）
   const hasFailover = appHas(app, "localProxy");
   const { data: failoverOn = false } = useAutoFailoverEnabled(app, hasFailover);
   const { data: queue } = useFailoverQueue(app, hasFailover);
