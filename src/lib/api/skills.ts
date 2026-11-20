@@ -223,6 +223,13 @@ export const skillsApi = {
   },
 
   /** 安装 Skill（统一安装） */
+  async installRepoSkills(
+    skills: DiscoverableSkill[],
+    currentApp: AppId,
+  ): Promise<({ Ok: InstalledSkill } | { Err: string })[]> {
+    return invoke("install_repo_skills", { skills, currentApp });
+  },
+
   async installUnified(
     skill: DiscoverableSkill,
     currentApp: AppId,
@@ -336,6 +343,12 @@ export const skillsApi = {
   /** 获取仓库列表 */
   async getRepos(): Promise<SkillRepo[]> {
     return await invoke("get_skill_repos");
+  },
+
+  async discoverAndAddRepo(
+    repo: SkillRepo,
+  ): Promise<[string, SkillDiscoveryResult]> {
+    return invoke("discover_and_add_skill_repo", { repo });
   },
 
   /** 添加仓库 */

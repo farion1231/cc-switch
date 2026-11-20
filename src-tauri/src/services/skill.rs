@@ -616,7 +616,11 @@ struct LocalSkillMetadataCandidate {
     new_hash: String,
 }
 
+type InstallArchive = std::result::Result<(tempfile::TempDir, String), String>;
+
 pub struct SkillService {
+    #[cfg(test)]
+    fixture_downloads: AtomicU64,
     #[cfg(test)]
     repo_fixture: Option<PathBuf>,
     /// 发现结果按仓库缓存（键是 owner/name/branch），只存读成功的仓库。
@@ -649,6 +653,8 @@ impl SkillService {
         Self {
             #[cfg(test)]
             repo_fixture: None,
+            #[cfg(test)]
+            fixture_downloads: AtomicU64::new(0),
             discovery_cache: Mutex::new(HashMap::new()),
             platform_cache: Mutex::new(HashMap::new()),
             credential_epoch: AtomicU64::new(0),
@@ -947,6 +953,48 @@ impl SkillService {
         skill: &DiscoverableSkill,
         current_app: &AppType,
     ) -> Result<InstalledSkill> {
+        self.install_from_archive(db, skill, current_app, &mut None)
+            .await
+    }
+
+    /// Share one extracted archive for this request only. Keep per-Skill failures
+    /// independent, including errors synchronizing an individual application.
+    pub async fn install_repo_batch(
+        &self,
+        db: &Arc<Database>,
+        skills: &[DiscoverableSkill],
+        current_app: &AppType,
+    ) -> Result<Vec<std::result::Result<InstalledSkill, String>>> {
+        let Some(first) = skills.first() else {
+            return Ok(Vec::new());
+        };
+        if skills.iter().any(|s| {
+            s.repo_host != first.repo_host
+                || s.repo_owner != first.repo_owner
+                || s.repo_name != first.repo_name
+                || s.repo_branch != first.repo_branch
+        }) {
+            return Err(anyhow!("Select Skills from a single repository and branch"));
+        }
+        let mut archive = None;
+        let mut results = Vec::with_capacity(skills.len());
+        for skill in skills {
+            results.push(
+                self.install_from_archive(db, skill, current_app, &mut archive)
+                    .await
+                    .map_err(|e| e.to_string()),
+            );
+        }
+        Ok(results)
+    }
+
+    async fn install_from_archive(
+        &self,
+        db: &Arc<Database>,
+        skill: &DiscoverableSkill,
+        current_app: &AppType,
+        archive: &mut Option<InstallArchive>,
+    ) -> Result<InstalledSkill> {
         let ssot_dir = Self::get_ssot_dir()?;
 
         // 允许多级目录（如 a/b/c），但必须是安全的相对路径。
@@ -985,7 +1033,7 @@ impl SkillService {
         let mut repo_branch = skill.repo_branch.clone();
         // 真实解析出的源目录推导的文档路径（仅本次真正下载解析时可得）
         let mut resolved_doc_path: Option<String> = None;
-        let mut downloaded_source: Option<(tempfile::TempDir, PathBuf)> = None;
+        let mut downloaded_source: Option<PathBuf> = None;
 
         // 如果已存在则跳过下载
         if !dest.exists() {
@@ -997,10 +1045,20 @@ impl SkillService {
                 enabled: true,
             };
 
-            // 下载仓库
-            let (temp_guard, used_branch) = self.download_repo_bounded(&repo).await?;
+            if archive.is_none() {
+                *archive = Some(
+                    self.download_repo_bounded(&repo)
+                        .await
+                        .map_err(|error| error.to_string()),
+                );
+            }
+            let (temp_guard, used_branch) = archive
+                .as_ref()
+                .expect("archive initialized")
+                .as_ref()
+                .map_err(|error| anyhow!("{error}"))?;
             let temp_dir = temp_guard.path();
-            repo_branch = used_branch;
+            repo_branch = used_branch.clone();
 
             // 复制到 SSOT
             let source =
@@ -1035,7 +1093,7 @@ impl SkillService {
             // skillId（末级目录名），嵌套目录场景直接拼接会丢路径、链接 404（#6111）
             resolved_doc_path = Self::doc_path_for_source(&canonical_temp, &canonical_source);
 
-            downloaded_source = Some((temp_guard, canonical_source));
+            downloaded_source = Some(canonical_source);
 
             // 使用实际下载成功的分支，避免 readme_url / repo_branch 与真实分支不一致。
             if repo_branch != skill.repo_branch {
@@ -1077,7 +1135,6 @@ impl SkillService {
         if !dest.exists() {
             let source = downloaded_source
                 .as_ref()
-                .map(|(_, source)| source)
                 .ok_or_else(|| anyhow!("Skill directory changed during install; please retry"))?;
             Self::preflight_install_destination(source, &install_name, current_app)?;
             Self::copy_dir_recursive(source, &dest)?;

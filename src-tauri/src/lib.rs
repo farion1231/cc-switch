@@ -1726,6 +1726,7 @@ pub fn run() {
             commands::get_skill_backups,
             commands::delete_skill_backup,
             commands::install_skill_unified,
+            commands::install_repo_skills,
             commands::uninstall_skill_unified,
             commands::restore_skill_backup,
             commands::toggle_skill_app,
@@ -1744,6 +1745,7 @@ pub fn run() {
             // Skill management (legacy API compatibility)
             commands::get_skill_repos,
             commands::add_skill_repo,
+            commands::discover_and_add_skill_repo,
             commands::remove_skill_repo,
             commands::get_skill_repo_tokens,
             commands::set_skill_repo_token,

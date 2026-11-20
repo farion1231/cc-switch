@@ -236,6 +236,24 @@ export function useInstallSkill() {
   });
 }
 
+export function useInstallRepoSkills() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      skills,
+      currentApp,
+    }: {
+      skills: DiscoverableSkill[];
+      currentApp: AppId;
+    }) => skillsApi.installRepoSkills(skills, currentApp),
+    onSettled: () =>
+      Promise.all([
+        client.invalidateQueries({ queryKey: ["skills", "installed"] }),
+        client.invalidateQueries({ queryKey: ["skills", "unmanaged"] }),
+      ]),
+  });
+}
+
 /**
  * 卸载 Skill
  * 成功后直接移除已安装缓存，并在结束后收敛备份与未管理列表
@@ -425,6 +443,24 @@ export function useSkillRepos() {
   });
 }
 
+export function useDiscoverAndAddSkillRepo() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: skillsApi.discoverAndAddRepo,
+    onMutate: nextRepoMutation,
+    onSuccess: async ([, discovery], repo, ctx) => {
+      void queryClient.invalidateQueries({ queryKey: ["skills", "repos"] });
+      if (isLatestRepoMutation(ctx)) {
+        await patchRepoDiscovery(queryClient, repo, discovery, () =>
+          isLatestRepoMutation(ctx),
+        );
+      }
+    },
+  });
+}
+
+const latestPreview = new Map<string, symbol>();
+
 /** Refresh a saved source; temporary branches and disabled sources stay out of Discover. */
 export function useDiscoverSkillRepo() {
   const queryClient = useQueryClient();
@@ -436,6 +472,7 @@ export function useDiscoverSkillRepo() {
       repo: SkillRepo;
       branch: string;
     }) => {
+      const requestSeq = discoverRequestSeq;
       const requestedBranch =
         repo.branch === "" && branch === "main" ? "" : branch;
       const discovery = await skillsApi.discoverRepo(
@@ -445,23 +482,32 @@ export function useDiscoverSkillRepo() {
         requestedBranch,
         true,
       );
-      return { discovery, requestSeq: discoverRequestSeq };
+      return { discovery, requestSeq };
     },
-    onMutate: ({ repo }) => {
+    onMutate: ({ repo, branch }) => {
       const key = `${repo.owner}/${repo.name}`;
-      return {
-        key,
-        seq: repoMutationSeq.get(key) ?? 0,
-      };
+      const preview = Symbol();
+      if (repo.enabled && (repo.branch.trim() || "main") === branch)
+        latestPreview.set(key, preview);
+      return { key, seq: repoMutationSeq.get(key) ?? 0, preview };
     },
     onSuccess: ({ discovery, requestSeq }, { repo, branch }, ctx) => {
-      if (discovery.failures.length || !isLatestRepoMutation(ctx)) return;
+      const isCurrent = () =>
+        isLatestRepoMutation(ctx) &&
+        latestPreview.get(ctx.key) === ctx.preview &&
+        requestSeq === discoverRequestSeq;
+      if (discovery.failures.length || !isCurrent()) return;
       const reconcile = async () => {
-        const current = (await skillsApi.getRepos()).find(
+        const registry = await queryClient.fetchQuery({
+          queryKey: ["skills", "repos"],
+          queryFn: () => skillsApi.getRepos(),
+          staleTime: Infinity,
+        });
+        const current = registry.find(
           (item) => item.owner === repo.owner && item.name === repo.name,
         );
         if (
-          !isLatestRepoMutation(ctx) ||
+          !isCurrent() ||
           !current?.enabled ||
           current.branch !== repo.branch ||
           (current.branch.trim() || "main") !== branch ||
@@ -469,7 +515,7 @@ export function useDiscoverSkillRepo() {
             (repo.host || "github.com").toLowerCase()
         )
           return;
-        if (requestSeq !== discoverRequestSeq) return;
+
         const query = queryClient.getQueryCache().find({
           queryKey: DISCOVERABLE_QUERY_KEY,
           exact: true,
@@ -482,28 +528,8 @@ export function useDiscoverSkillRepo() {
             if (!isCancelledError(error)) throw error;
           }
         }
-        if (!isLatestRepoMutation(ctx) || requestSeq !== discoverRequestSeq)
-          return;
-        // The backend retains the newest completed per-repository cache entry.
-        const latest = await skillsApi.discoverRepo(
-          current.owner,
-          current.name,
-          true,
-          current.branch,
-          false,
-        );
-        if (
-          latest.failures.length ||
-          !isLatestRepoMutation(ctx) ||
-          requestSeq !== discoverRequestSeq
-        )
-          return;
-        await patchRepoDiscovery(
-          queryClient,
-          current,
-          latest,
-          () => isLatestRepoMutation(ctx) && requestSeq === discoverRequestSeq,
-        );
+        if (!isCurrent()) return;
+        await patchRepoDiscovery(queryClient, current, discovery, isCurrent);
       };
       // Cache maintenance must not delay or invalidate a successful fetch.
       void reconcile().catch((error) => {

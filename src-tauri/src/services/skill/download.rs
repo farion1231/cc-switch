@@ -214,6 +214,7 @@ impl SkillService {
         // Exercise the real install/update flow without network access in unit tests.
         #[cfg(test)]
         if let Some(fixture) = &self.repo_fixture {
+            self.fixture_downloads.fetch_add(1, Ordering::Relaxed);
             Self::copy_dir_recursive(fixture, temp_path)?;
             return Ok((temp_dir, repo.branch.clone()));
         }
