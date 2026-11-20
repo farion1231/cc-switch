@@ -180,6 +180,11 @@ const PromptPanel = lazy(() => import("@/components/prompts/PromptPanel"));
 const UnifiedSkillsPanel = lazy(
   () => import("@/components/skills/UnifiedSkillsPanel"),
 );
+const PluginsPage = lazy(() =>
+  import("@/components/plugins/PluginsPage").then((m) => ({
+    default: m.PluginsPage,
+  })),
+);
 const WorkspaceFilesPanel = lazy(
   () => import("@/components/workspace/WorkspaceFilesPanel"),
 );
@@ -1419,6 +1424,16 @@ function App() {
 
   const handleImportSuccess = async () => {
     try {
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: ["custom-apps"],
+          refetchType: "all",
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["custom-app-providers"],
+          refetchType: "all",
+        }),
+      ]);
       await queryClient.invalidateQueries({
         queryKey: ["providers"],
         refetchType: "all",
@@ -1862,6 +1877,13 @@ function App() {
               currentView === "skillsDiscovery" ? "discover" : "installed"
             }
             onNavigationBlockedChange={setSkillsNavigationBusy}
+          />
+        );
+      case "plugins":
+        return (
+          <PluginsPage
+            apps={APP_IDS_WITH.plugins.filter((app) => visibleApps[app])}
+            initialApp={appHas(activeApp, "plugins") ? activeApp : "claude"}
           />
         );
       case "prompts":

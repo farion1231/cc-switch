@@ -1,8 +1,9 @@
 import type { ReactNode } from "react";
 import type { TFunction } from "i18next";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { renderHook, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { createTestQueryClient } from "../utils/testQueryClient";
 
 const copilotGetUsageForAccount = vi.hoisted(() => vi.fn());
 
@@ -32,9 +33,7 @@ const detail = (
 });
 
 function wrapper({ children }: { children: ReactNode }) {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
+  const client = createTestQueryClient();
   return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
 }
 

@@ -1,9 +1,9 @@
 //! Local OpenAI Chat Completions routes for user-defined app profiles.
 
 use crate::{
-    database::Database,
+    database::{custom_app_namespace, Database},
     error::AppError,
-    mode::current::{custom_app_namespace, custom_app_provider_in_use},
+    mode::current::custom_app_provider_in_use,
     provider::Provider,
     store::AppState,
 };
@@ -48,7 +48,7 @@ pub(crate) struct CustomProvider {
     base_url: String,
     model: String,
     #[serde(default, skip_serializing)]
-    api_key: String,
+    api_key: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -64,6 +64,7 @@ struct ProviderCard {
     id: String,
     name: String,
     model: String,
+    base_url: String,
 }
 
 fn profiles(db: &Database) -> Result<Vec<StoredApp>, AppError> {
@@ -77,12 +78,16 @@ fn profiles(db: &Database) -> Result<Vec<StoredApp>, AppError> {
 fn create_app(db: &Database, name: String) -> Result<CustomApp, AppError> {
     let name = name.trim().to_string();
     if name.is_empty() || name.chars().count() > 80 {
-        return Err(AppError::Config("Enter a name of 1–80 characters.".into()));
+        return Err(AppError::localized(
+            "customApps.invalidName",
+            "请输入1–80个字符的名称",
+            "Enter a name of 1–80 characters.",
+        ));
     }
     let id = Uuid::new_v4().simple().to_string();
     let token = format!("ccs-{}", Uuid::new_v4().simple());
     // Keep profile creation atomic across concurrent invocations.
-    db.update_json_setting::<Vec<StoredApp>>(PROFILE_KEY, |profiles| {
+    db.update_json_setting::<Vec<StoredApp>>(PROFILE_KEY, |profiles, _tx| {
         profiles.push(StoredApp {
             id: id.clone(),
             name: name.clone(),
@@ -126,41 +131,150 @@ fn require_app(db: &Database, id: &str) -> Result<String, AppError> {
         .iter()
         .any(|profile| profile.id == id)
         .then(|| custom_app_namespace(id))
-        .ok_or_else(|| AppError::Config("Custom app profile was not found.".into()))
+        .ok_or_else(|| {
+            AppError::localized(
+                "customApps.notFound",
+                "未找到自定义应用",
+                "Custom app profile was not found.",
+            )
+        })
 }
 
-fn add_provider(db: &Database, app_id: &str, provider: CustomProvider) -> Result<String, AppError> {
-    let namespace = require_app(db, app_id)?;
-    provider_endpoint(&provider.base_url).map_err(|error| AppError::Config(error.into()))?;
+fn provider_row(id: String, provider: &CustomProvider) -> Result<Provider, AppError> {
+    provider_endpoint(&provider.base_url).map_err(|error| {
+        AppError::localized(
+            "customApps.invalidUrl",
+            "请输入不含凭据、查询参数或片段的 HTTP 或 HTTPS 基础 URL",
+            error,
+        )
+    })?;
     let name = provider.name.trim();
     let model = provider.model.trim();
     if name.is_empty() || model.is_empty() {
-        return Err(AppError::Config("Enter a provider name and model.".into()));
+        return Err(AppError::localized(
+            "customApps.invalidProvider",
+            "请输入供应商名称和模型",
+            "Enter a provider name and model.",
+        ));
     }
-    let id = Uuid::new_v4().simple().to_string();
-    let row = Provider::with_id(
-        id.clone(),
+    Ok(Provider::with_id(
+        id,
         name.to_string(),
         json!({
             "name": name,
             "baseUrl": provider.base_url.trim(),
             "model": model,
-            "apiKey": provider.api_key.trim(),
+            "apiKey": provider.api_key.as_deref().unwrap_or("").trim(),
         }),
         None,
-    );
-    db.save_provider(&namespace, &row)?;
+    ))
+}
+
+fn add_provider(db: &Database, app_id: &str, provider: CustomProvider) -> Result<String, AppError> {
+    let id = Uuid::new_v4().simple().to_string();
+    let row = provider_row(id.clone(), &provider)?;
+    db.save_custom_provider(app_id, &row, false, false)?;
     Ok(id)
 }
 
 fn select_provider(db: &Database, app_id: &str, provider_id: &str) -> Result<(), AppError> {
-    let namespace = require_app(db, app_id)?;
-    if db.get_provider_by_id(provider_id, &namespace)?.is_none() {
-        return Err(AppError::Config(
-            "Provider was not found in this profile.".into(),
+    db.select_custom_provider_row(app_id, provider_id)
+}
+
+fn rename_app(db: &Database, app_id: &str, name: &str) -> Result<(), AppError> {
+    let name = name.trim();
+    if name.is_empty() || name.chars().count() > 80 {
+        return Err(AppError::localized(
+            "customApps.invalidName",
+            "请输入1–80个字符的名称",
+            "Enter a name of 1–80 characters.",
         ));
     }
-    db.set_current_provider(&namespace, provider_id)
+    db.update_json_setting::<Vec<StoredApp>>(PROFILE_KEY, |profiles, _tx| {
+        let app = profiles
+            .iter_mut()
+            .find(|app| app.id == app_id)
+            .ok_or_else(|| {
+                AppError::localized(
+                    "customApps.notFound",
+                    "未找到自定义应用",
+                    "Custom app profile was not found.",
+                )
+            })?;
+        app.name = name.into();
+        Ok(())
+    })
+}
+
+fn delete_app(db: &Database, app_id: &str) -> Result<(), AppError> {
+    db.update_json_setting::<Vec<StoredApp>>(PROFILE_KEY, |profiles, tx| {
+        let index = profiles
+            .iter()
+            .position(|app| app.id == app_id)
+            .ok_or_else(|| {
+                AppError::localized(
+                    "customApps.notFound",
+                    "未找到自定义应用",
+                    "Custom app profile was not found.",
+                )
+            })?;
+        // The profile and its providers disappear together, or neither changes.
+        tx.execute(
+            "DELETE FROM providers WHERE app_type = ?1",
+            [custom_app_namespace(app_id)],
+        )?;
+        profiles.remove(index);
+        Ok(())
+    })
+}
+
+fn update_provider(
+    db: &Database,
+    app_id: &str,
+    provider_id: &str,
+    provider: CustomProvider,
+) -> Result<(), AppError> {
+    let row = provider_row(provider_id.into(), &provider)?;
+    db.save_custom_provider(app_id, &row, true, provider.api_key.is_none())
+}
+
+#[tauri::command]
+pub(crate) fn rename_custom_app(
+    state: tauri::State<'_, AppState>,
+    app_id: String,
+    name: String,
+) -> Result<(), String> {
+    rename_app(&state.db, &app_id, &name).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub(crate) fn delete_custom_app(
+    state: tauri::State<'_, AppState>,
+    app_id: String,
+) -> Result<(), String> {
+    delete_app(&state.db, &app_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub(crate) fn update_custom_provider(
+    state: tauri::State<'_, AppState>,
+    app_id: String,
+    provider_id: String,
+    provider: CustomProvider,
+) -> Result<(), String> {
+    update_provider(&state.db, &app_id, &provider_id, provider).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub(crate) fn delete_custom_provider(
+    state: tauri::State<'_, AppState>,
+    app_id: String,
+    provider_id: String,
+) -> Result<(), String> {
+    state
+        .db
+        .delete_custom_provider_row(&app_id, &provider_id)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -194,11 +308,17 @@ pub(crate) fn rotate_custom_app_token(
     let token = format!("ccs-{}", Uuid::new_v4().simple());
     state
         .db
-        .update_json_setting::<Vec<StoredApp>>(PROFILE_KEY, |profiles| {
+        .update_json_setting::<Vec<StoredApp>>(PROFILE_KEY, |profiles, _tx| {
             let profile = profiles
                 .iter_mut()
                 .find(|profile| profile.id == app_id)
-                .ok_or_else(|| AppError::Config("Custom app profile was not found.".into()))?;
+                .ok_or_else(|| {
+                    AppError::localized(
+                        "customApps.notFound",
+                        "未找到自定义应用",
+                        "Custom app profile was not found.",
+                    )
+                })?;
             profile.token_hash = Sha256::digest(token.as_bytes()).into();
             Ok(())
         })
@@ -212,18 +332,20 @@ pub(crate) fn list_custom_providers(
     app_id: String,
 ) -> Result<ProviderList, String> {
     let read = || -> Result<ProviderList, AppError> {
-        let namespace = require_app(&state.db, &app_id)?;
+        require_app(&state.db, &app_id)?;
         let selected = custom_app_provider_in_use(&state.db, &app_id)?;
         let providers = state
             .db
-            .get_all_providers(&namespace)?
+            .custom_provider_rows(&app_id)?
             .into_iter()
-            .map(|(id, row)| {
+            .map(|row| {
+                let id = row.id.clone();
                 let provider = load_provider(row)?;
                 Ok(ProviderCard {
                     id,
                     name: provider.name,
                     model: provider.model,
+                    base_url: provider.base_url,
                 })
             })
             .collect::<Result<_, AppError>>()?;
@@ -301,25 +423,15 @@ const STORAGE_ERROR: RouteError = (
     "Could not read custom app configuration.",
 );
 
-async fn forward(
-    state: &ProxyState,
-    id: &str,
-    headers: &HeaderMap,
-    body: &mut Value,
-) -> Result<reqwest::Response, RouteError> {
+async fn authenticate(state: &ProxyState, id: &str, headers: &HeaderMap) -> Result<(), RouteError> {
     let status = state.status.read().await;
-    let is_loopback = status
-        .address
-        .trim_matches(['[', ']'])
-        .parse::<std::net::IpAddr>()
-        .is_ok_and(|address| address.is_loopback());
+    let is_loopback = super::browser_guard::is_loopback_listener(&status.address);
     if !is_loopback {
         return Err((
             StatusCode::FORBIDDEN,
             "Custom app routes require a loopback listener.",
         ));
     }
-    let (listen_address, listen_port) = (status.address.clone(), status.port);
     drop(status);
     let app = profiles(&state.db)
         .map_err(|_| STORAGE_ERROR)?
@@ -335,7 +447,51 @@ async fn forward(
     if !bool::from(app.token_hash.ct_eq(&token_hash)) {
         return Err((StatusCode::UNAUTHORIZED, "Invalid custom app token."));
     }
-    let namespace = custom_app_namespace(id);
+    Ok(())
+}
+
+pub(super) async fn models(
+    State(state): State<ProxyState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    if let Err((status, message)) = authenticate(&state, &id, &headers).await {
+        return route_error(status, message);
+    }
+    let read = || -> Result<Value, AppError> {
+        let selected = custom_app_provider_in_use(&state.db, &id)?;
+        let model = selected
+            .map(|selected| {
+                state
+                    .db
+                    .custom_provider(&id, &selected)?
+                    .map(load_provider)
+                    .transpose()
+            })
+            .transpose()?
+            .flatten();
+        Ok(
+            json!({"object": "list", "data": model.into_iter().map(|p| json!({
+            "id": p.model, "object": "model", "created": 0, "owned_by": "custom-app"
+        })).collect::<Vec<_>>()}),
+        )
+    };
+    match read() {
+        Ok(body) => Json(body).into_response(),
+        Err(_) => route_error(STORAGE_ERROR.0, STORAGE_ERROR.1),
+    }
+}
+
+async fn forward(
+    state: &ProxyState,
+    id: &str,
+    headers: &HeaderMap,
+    body: &mut Value,
+) -> Result<reqwest::Response, RouteError> {
+    authenticate(state, id, headers).await?;
+    let status = state.status.read().await;
+    let (listen_address, listen_port) = (status.address.clone(), status.port);
+    drop(status);
     let missing_provider = (
         StatusCode::SERVICE_UNAVAILABLE,
         "Select a provider for this custom app.",
@@ -345,7 +501,7 @@ async fn forward(
         .ok_or(missing_provider)?;
     let row = state
         .db
-        .get_provider_by_id(&provider_id, &namespace)
+        .custom_provider(id, &provider_id)
         .map_err(|_| STORAGE_ERROR)?
         .ok_or(missing_provider)?;
     let provider = load_provider(row).map_err(|_| STORAGE_ERROR)?;
@@ -382,8 +538,8 @@ async fn forward(
         )
     })?;
     let mut request = client.post(endpoint).json(body);
-    if !provider.api_key.is_empty() {
-        request = request.bearer_auth(provider.api_key);
+    if let Some(key) = provider.api_key.filter(|key| !key.is_empty()) {
+        request = request.bearer_auth(key);
     }
     request
         .send()
@@ -394,9 +550,69 @@ async fn forward(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proxy::{server::ProxyServer, ProxyConfig};
+    use crate::proxy::{server::ProxyServer, types::ProxyConfig};
     use axum::{routing::post, Router};
     use std::sync::Arc;
+
+    #[test]
+    fn custom_app_lifecycle_is_atomic_and_preserves_secrets() {
+        let db = Database::memory().unwrap();
+        let app = create_app(&db, "Notes".into()).unwrap();
+        let other = create_app(&db, "Other".into()).unwrap();
+        let config = |key| CustomProvider {
+            name: "Local".into(),
+            base_url: "http://localhost:11434/v1".into(),
+            model: "test".into(),
+            api_key: key,
+        };
+        let id = add_provider(&db, &app.id, config(Some("private-key".into()))).unwrap();
+        rename_app(&db, &app.id, "Renamed").unwrap();
+        assert_eq!(profiles(&db).unwrap()[0].name, "Renamed");
+        assert!(rename_app(&db, &app.id, "  ").is_err());
+        select_provider(&db, &app.id, &id).unwrap();
+        assert!(select_provider(&db, &app.id, "missing").is_err());
+        assert_eq!(
+            custom_app_provider_in_use(&db, &app.id).unwrap(),
+            Some(id.clone())
+        );
+        update_provider(&db, &app.id, &id, config(None)).unwrap();
+        let saved = load_provider(db.custom_provider(&app.id, &id).unwrap().unwrap()).unwrap();
+        assert_eq!(saved.api_key.as_deref(), Some("private-key"));
+        assert!(!serde_json::to_string(&saved)
+            .unwrap()
+            .contains("private-key"));
+        assert!(update_provider(&db, &other.id, &id, config(None)).is_err());
+        assert!(db.delete_custom_provider_row(&other.id, &id).is_err());
+        update_provider(&db, &app.id, &id, config(Some("".into()))).unwrap();
+        assert_eq!(
+            load_provider(db.custom_provider(&app.id, &id).unwrap().unwrap())
+                .unwrap()
+                .api_key
+                .as_deref(),
+            Some("")
+        );
+        // Force the settings write to fail after the DELETE, exercising rollback.
+        db.conn.lock().unwrap().execute_batch("CREATE TRIGGER fail_profile_update BEFORE INSERT ON settings WHEN NEW.key = 'custom_app_profiles' BEGIN SELECT RAISE(ABORT, 'fixture failure'); END;").unwrap();
+        assert!(delete_app(&db, &app.id).is_err());
+        assert!(profiles(&db).unwrap().iter().any(|p| p.id == app.id));
+        assert!(db.custom_provider(&app.id, &id).unwrap().is_some());
+        db.conn
+            .lock()
+            .unwrap()
+            .execute_batch("DROP TRIGGER fail_profile_update")
+            .unwrap();
+        delete_app(&db, &app.id).unwrap();
+        assert!(db.custom_provider(&app.id, &id).unwrap().is_none());
+        assert!(add_provider(&db, &app.id, config(None)).is_err());
+        assert!(update_provider(&db, &app.id, &id, config(None)).is_err());
+        let remaining = add_provider(&db, &other.id, config(None)).unwrap();
+        select_provider(&db, &other.id, &remaining).unwrap();
+        db.delete_custom_provider_row(&other.id, &remaining)
+            .unwrap();
+        assert!(custom_app_provider_in_use(&db, &other.id)
+            .unwrap()
+            .is_none());
+    }
 
     #[tokio::test]
     async fn custom_profiles_switch_independently_over_http() {
@@ -445,7 +661,7 @@ mod tests {
                     name: model.into(),
                     base_url: base_url.clone(),
                     model: model.into(),
-                    api_key: format!("key-{model}"),
+                    api_key: Some(format!("key-{model}")),
                 },
             )
             .unwrap()
@@ -473,6 +689,7 @@ mod tests {
                     app.id
                 ))
                 .bearer_auth(token)
+                .header(header::ORIGIN, "tauri://localhost")
                 .json(&json!({"model": "fixed-client-alias", "stream": stream}))
                 .send()
         };
@@ -486,6 +703,49 @@ mod tests {
             send(&second, second_token, false).await.unwrap().status(),
             503
         );
+        let models_url = format!("http://127.0.0.1:{port}/apps/{}/v1/models", first.id);
+        assert_eq!(
+            client
+                .get(&models_url)
+                .header(header::ORIGIN, "tauri://localhost")
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            401
+        );
+        assert_eq!(
+            client
+                .get(&models_url)
+                .bearer_auth(second_token)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            401
+        );
+        assert_eq!(
+            client
+                .get(&models_url)
+                .bearer_auth(first_token)
+                .header(header::HOST, "evil.example")
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            403
+        );
+        let discover: Value = client
+            .get(&models_url)
+            .bearer_auth(first_token)
+            .header(header::ORIGIN, "tauri://localhost")
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(discover["data"][0]["id"], "a");
         select_provider(&db, &second.id, &c).unwrap();
 
         let mut streaming = send(&first, first_token, true).await.unwrap();
@@ -511,11 +771,26 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(switched["model"], "b");
+        let discover: Value = client
+            .get(&models_url)
+            .bearer_auth(first_token)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(discover["data"][0]["id"], "b");
         assert_eq!(independent["model"], "c");
         finish_stream.notify_one();
         let rest = streaming.text().await.unwrap();
         assert!(rest.contains("\"model\":\"a\"") && rest.contains("[DONE]"));
 
+        delete_app(&db, &second.id).unwrap();
+        assert_eq!(
+            send(&second, second_token, false).await.unwrap().status(),
+            404
+        );
         server.stop().await.unwrap();
         let restarted = ProxyServer::new(config, db.clone(), None);
         let port = restarted.start().await.unwrap().port;
