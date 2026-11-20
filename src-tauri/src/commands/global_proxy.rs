@@ -22,10 +22,7 @@ pub async fn diagnose_ip(url: String) -> Result<crate::services::ip_diagnostics:
 pub async fn get_global_proxy_url(
     state: tauri::State<'_, AppState>,
 ) -> Result<Option<String>, String> {
-    let result = run_db_task(&state, |state| {
-        state.db.get_global_proxy_url().map_err(|e| e.to_string())
-    })
-    .await?;
+    let result = run_db_task(&state, |state| state.db.get_global_proxy_url()).await?;
     log::debug!(
         "[GlobalProxy] [GP-010] Read from database: {}",
         result
@@ -68,10 +65,7 @@ pub async fn set_global_proxy_url(
     // 2. 验证成功后保存到数据库
     let stored = url_opt.map(str::to_owned);
     run_db_task(&state, move |state| {
-        state
-            .db
-            .set_global_proxy_url(stored.as_deref())
-            .map_err(|e| e.to_string())
+        state.db.set_global_proxy_url(stored.as_deref())
     })
     .await?;
 
@@ -174,18 +168,6 @@ pub async fn test_proxy_url(url: String) -> Result<ProxyTestResult, String> {
         latency_ms: latency,
         error: Some(error_msg),
     })
-}
-
-/// 获取当前出站代理状态
-///
-/// 返回当前是否启用了出站代理以及代理 URL。
-#[tauri::command]
-pub fn get_upstream_proxy_status() -> UpstreamProxyStatus {
-    let url = http_client::get_current_proxy_url();
-    UpstreamProxyStatus {
-        enabled: url.is_some(),
-        proxy_url: url,
-    }
 }
 
 /// 出站代理状态信息

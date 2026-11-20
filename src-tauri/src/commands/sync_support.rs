@@ -118,9 +118,7 @@ pub(crate) async fn test_connection<B: SyncBackend>(
 ) -> Result<Value, String> {
     let preserve_empty = preserve_empty_secret.unwrap_or(true);
     let resolved = resolve_secret_for_request::<B>(settings, B::load(), preserve_empty);
-    B::check_connection(&resolved)
-        .await
-        .map_err(|e| e.to_string())?;
+    B::check_connection(&resolved).await?;
     Ok(json!({
         "success": true,
         "message": format!("{} connection ok", B::NAME)
@@ -184,16 +182,21 @@ pub(crate) async fn sync_save_settings<B: SyncBackend>(
         *B::status_mut(&mut sync_settings) = status;
     }
 
-    B::normalize_and_validate(&mut sync_settings).map_err(|e| e.to_string())?;
-    B::store(Some(sync_settings)).map_err(|e| e.to_string())?;
+    B::normalize_and_validate(&mut sync_settings)?;
+    B::store(Some(sync_settings))?;
+    Ok(json!({ "success": true }))
+}
+
+/// Forget the saved config (connection, credentials, remote root, status) on
+/// this device. Remote snapshots are left untouched.
+pub(crate) async fn sync_clear_settings<B: SyncBackend>() -> Result<Value, String> {
+    run_with_sync_lock(async { B::store(None) }).await?;
     Ok(json!({ "success": true }))
 }
 
 pub(crate) async fn sync_fetch_remote_info<B: SyncBackend>() -> Result<Value, String> {
     let settings = require_enabled_settings::<B>()?;
-    let info = B::fetch_remote_info(&settings)
-        .await
-        .map_err(|e| e.to_string())?;
+    let info = B::fetch_remote_info(&settings).await?;
     Ok(info.unwrap_or(json!({ "empty": true })))
 }
 
@@ -275,7 +278,8 @@ pub(crate) fn success_payload_with_warning(backup_id: String, warning: Option<St
 mod tests {
     use super::{
         attach_warning, map_sync_result, persist_sync_error, post_sync_warning_from_result,
-        require_enabled_settings, resolve_secret_for_request, run_download_with_lock, SyncBackend,
+        require_enabled_settings, resolve_secret_for_request, run_download_with_lock,
+        sync_clear_settings, SyncBackend,
     };
     use crate::commands::{s3_sync::S3Backend, webdav_sync::WebDavBackend};
     use crate::error::AppError;
@@ -451,6 +455,33 @@ mod tests {
         assert_eq!(without_status(&settings), without_status(&sample(true)));
     }
 
+    async fn clear_waits_for_lock_then_forgets<B: SyncBackend>(sample: fn(bool) -> B::Settings) {
+        use_test_home::<B>("clear");
+        B::store(Some(sample(true))).expect("seed settings");
+
+        let guard = sync_mutex().lock().await;
+        let clear = sync_clear_settings::<B>();
+        tokio::pin!(clear);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(40), clear.as_mut())
+                .await
+                .is_err(),
+            "clearing must wait while a sync operation holds the global lock"
+        );
+        assert!(
+            B::load().is_some(),
+            "the config must survive until the lock is free"
+        );
+
+        drop(guard);
+        let result = tokio::time::timeout(Duration::from_secs(1), clear.as_mut())
+            .await
+            .expect("clear should finish after lock release")
+            .expect("clear should succeed");
+        assert_eq!(result, json!({ "success": true }));
+        assert!(B::load().is_none(), "the saved config must be gone");
+    }
+
     /// Every behavior test runs for each backend, so a backend can only
     /// differ in its `SyncBackend` impl, never in the command logic.
     macro_rules! backend_tests {
@@ -487,6 +518,12 @@ mod tests {
                 #[serial]
                 fn require_enabled_settings_checks_enabled() {
                     super::require_enabled_settings_checks_enabled::<$backend>($sample);
+                }
+
+                #[tokio::test]
+                #[serial]
+                async fn clear_settings_waits_for_the_sync_lock_then_forgets_the_config() {
+                    super::clear_waits_for_lock_then_forgets::<$backend>($sample).await;
                 }
             }
         };

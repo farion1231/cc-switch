@@ -1,12 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import {
   OpenTerminalDialog,
   terminalAvailable,
   terminalNeedsRoute,
 } from "@/components/providers/OpenTerminalDialog";
 import type { Provider } from "@/types";
+import { createTestQueryClient } from "../utils/testQueryClient";
 
 const openTerminalMock = vi.fn();
 const pickDirectoryMock = vi.fn();
@@ -51,9 +52,7 @@ function renderDialog(
   target: Provider = provider,
   appId: "claude" | "codex" | "agy" | "grokbuild" | "copilot" = "claude",
 ) {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
+  const client = createTestQueryClient();
   render(
     <QueryClientProvider client={client}>
       <OpenTerminalDialog provider={target} appId={appId} onClose={onClose} />

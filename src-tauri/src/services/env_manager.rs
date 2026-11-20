@@ -161,80 +161,6 @@ fn delete_single_env(conflict: &EnvConflict) -> Result<(), String> {
     }
 }
 
-/// Restore environment variables from backup
-pub fn restore_from_backup(backup_path: String) -> Result<(), String> {
-    // Read backup file
-    let content = fs::read_to_string(&backup_path).map_err(|e| format!("读取备份文件失败: {e}"))?;
-
-    let backup_info: BackupInfo =
-        serde_json::from_str(&content).map_err(|e| format!("解析备份文件失败: {e}"))?;
-
-    // Restore each variable
-    for conflict in &backup_info.conflicts {
-        restore_single_env(conflict)?;
-    }
-
-    Ok(())
-}
-
-/// Restore a single environment variable
-#[cfg(target_os = "windows")]
-fn restore_single_env(conflict: &EnvConflict) -> Result<(), String> {
-    match conflict.source_type.as_str() {
-        "system" => {
-            if conflict.source_path.contains("HKEY_CURRENT_USER") {
-                let (hkcu, _) = RegKey::predef(HKEY_CURRENT_USER)
-                    .create_subkey("Environment")
-                    .map_err(|e| format!("打开注册表失败: {}", e))?;
-
-                hkcu.set_value(&conflict.var_name, &conflict.var_value)
-                    .map_err(|e| format!("恢复注册表项失败: {}", e))?;
-            } else if conflict.source_path.contains("HKEY_LOCAL_MACHINE") {
-                let (hklm, _) = RegKey::predef(HKEY_LOCAL_MACHINE)
-                    .create_subkey(
-                        "SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment",
-                    )
-                    .map_err(|e| format!("打开系统注册表失败 (需要管理员权限): {}", e))?;
-
-                hklm.set_value(&conflict.var_name, &conflict.var_value)
-                    .map_err(|e| format!("恢复系统注册表项失败: {}", e))?;
-            }
-            Ok(())
-        }
-        _ => Err(format!(
-            "无法恢复类型为 {} 的环境变量",
-            conflict.source_type
-        )),
-    }
-}
-
-#[cfg(not(target_os = "windows"))]
-fn restore_single_env(conflict: &EnvConflict) -> Result<(), String> {
-    match conflict.source_type.as_str() {
-        "file" => {
-            // Parse file path from source_path
-            let file_path = parse_file_source_path(&conflict.source_path)?;
-
-            // Read file content
-            let mut content = fs::read_to_string(file_path)
-                .map_err(|e| format!("读取文件失败 {file_path}: {e}"))?;
-
-            // Append the environment variable line
-            let export_line = format!("\nexport {}={}", conflict.var_name, conflict.var_value);
-            content.push_str(&export_line);
-
-            // Write back to file
-            fs::write(file_path, content).map_err(|e| format!("写入文件失败 {file_path}: {e}"))?;
-
-            Ok(())
-        }
-        _ => Err(format!(
-            "无法恢复类型为 {} 的环境变量",
-            conflict.source_type
-        )),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -260,7 +186,7 @@ mod tests {
 
     #[cfg(not(target_os = "windows"))]
     #[test]
-    fn delete_and_restore_file_env_with_colon_in_path() {
+    fn delete_file_env_with_colon_in_path() {
         let temp = tempdir().expect("create temp directory");
         let colon_dir = temp.path().join("foo:bar");
         fs::create_dir(&colon_dir).expect("create colon directory");
@@ -277,9 +203,5 @@ mod tests {
         delete_single_env(&conflict).expect("delete variable from shell config");
         let deleted = fs::read_to_string(&file_path).expect("read updated shell config");
         assert!(!deleted.contains("OPENAI_API_KEY"));
-
-        restore_single_env(&conflict).expect("restore variable to shell config");
-        let restored = fs::read_to_string(&file_path).expect("read restored shell config");
-        assert!(restored.contains("export OPENAI_API_KEY=original"));
     }
 }

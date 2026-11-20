@@ -11,7 +11,12 @@ import {
   type StepMeta,
   type Translate,
 } from "./toolSummary";
-import type { SessionTurn, TimelineStep, TurnEvent } from "./turns";
+import type {
+  SessionTurn,
+  TimelineStep,
+  TurnChapter,
+  TurnEvent,
+} from "./turns";
 
 /**
  * 「复制这一轮 / 复制整段为 Markdown」（§3.4 旧功能落点）：提问原文、步骤写成
@@ -101,6 +106,10 @@ const eventLine = (event: TurnEvent, t: Translate) => {
   return `> ${label}${url ? ` (${url})` : ""}${detail ? `\n>\n> ${detail.replace(/\n/g, "\n> ")}` : ""}`;
 };
 
+/** 章节写成小标题，摘要作为引用跟在后面 */
+const chapterSection = (chapter: TurnChapter) =>
+  `### ${chapter.title}${chapter.summary ? `\n\n> ${chapter.summary}` : ""}`;
+
 const heading = (label: string, ts?: number) =>
   `**${label}**${ts ? ` ${formatMessageTime(ts)}` : ""}`;
 
@@ -126,8 +135,25 @@ export const turnToMarkdown = (
         .join("\n\n"),
     );
   }
-  const steps = turn.steps.flatMap((step) => stepLines(step, options));
-  if (steps.length) sections.push(steps.join("\n"));
+  // 步骤列表在章节处断开：章节小标题插在它后面第一个步骤之前
+  let lines: string[] = [];
+  const flush = () => {
+    if (lines.length) sections.push(lines.join("\n"));
+    lines = [];
+  };
+  const pushChapters = (stepId?: string) =>
+    turn.chapters
+      .filter((chapter) => chapter.beforeStepId === stepId)
+      .forEach((chapter) => {
+        flush();
+        sections.push(chapterSection(chapter));
+      });
+  turn.steps.forEach((step) => {
+    pushChapters(step.id);
+    lines.push(...stepLines(step, options));
+  });
+  pushChapters();
+  flush();
   if (turn.final) {
     sections.push(
       `${heading(options.appName, turn.final.ts)}\n\n${turn.final.text}`,
