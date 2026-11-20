@@ -326,7 +326,6 @@ pub enum AppType {
     Omp,
     Copilot,
     WorkBuddy,
-    #[serde(rename = "qoder-cn", alias = "qoder_cn", alias = "qodercn")]
     QoderCn,
 }
 

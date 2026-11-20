@@ -43,11 +43,15 @@ enum Client {
 }
 
 impl Client {
-    fn app_id(self) -> &'static str {
+    fn app_type(self) -> AppType {
         match self {
-            Self::WorkBuddy => "workbuddy",
-            Self::QoderCn => "qoder-cn",
+            Self::WorkBuddy => AppType::WorkBuddy,
+            Self::QoderCn => AppType::QoderCn,
         }
+    }
+
+    fn app_id(self) -> &'static str {
+        self.app_type().spec().id
     }
 
     fn label(self) -> &'static str {
@@ -77,7 +81,7 @@ async fn bridge(
 ) -> Result<Response, ProxyError> {
     let provider = state
         .db
-        .get_provider_by_id(&id, client.app_id())
+        .get_provider_by_id(&id, &client.app_type())
         .map_err(|e| ProxyError::DatabaseError(e.to_string()))?
         .filter(|p| p.is_xai_oauth())
         .ok_or_else(|| invalid(&format!("Unknown {} OAuth provider", client.label())))?;
