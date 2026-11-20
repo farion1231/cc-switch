@@ -88,8 +88,9 @@ pub fn import_mcp_from_deeplink(
         ));
     }
 
-    // Get existing servers to check for duplicates
-    let existing_servers = state.db.get_all_mcp_servers()?;
+    // Get existing servers to check for duplicates. An id whose stored row is unreadable is
+    // refused by `upsert_server` and lands in `failed`; the other ids still import.
+    let existing_servers = state.db.get_mcp_server_rows()?.readable;
 
     // Import each MCP server
     let mut imported_ids = Vec::new();

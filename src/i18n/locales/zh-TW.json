@@ -5403,5 +5403,11 @@
     "installFailed": "安裝更新失敗",
     "downloadingInline": "正在背景下載新版本…",
     "downloadedInline": "已下載完畢"
+  },
+  "unreadableEntry": {
+    "title": "「{{name}}」的資料無法讀取",
+    "hint": "可能由較新版本的 CC Switch 寫入。資料已原樣保留，無法編輯或啟用；升級後即可恢復，也可以刪除。",
+    "confirmTitle": "刪除無法讀取的項目",
+    "confirmMessage": "刪除「{{name}}」？只刪除 CC Switch 中的這筆記錄，不變更各應用自己的設定檔。"
   }
 }

@@ -5403,5 +5403,11 @@
     "installFailed": "업데이트 설치에 실패했습니다",
     "downloadingInline": "새 버전을 백그라운드에서 다운로드하는 중…",
     "downloadedInline": "다운로드 완료"
+  },
+  "unreadableEntry": {
+    "title": "“{{name}}”의 데이터를 읽을 수 없습니다",
+    "hint": "최신 버전의 CC Switch에서 저장되었을 수 있습니다. 데이터는 그대로 보존되며 편집하거나 활성화할 수 없습니다. 업그레이드하면 복원되며, 삭제할 수도 있습니다.",
+    "confirmTitle": "읽을 수 없는 항목 삭제",
+    "confirmMessage": "“{{name}}”을(를) 삭제할까요? CC Switch의 이 기록만 삭제되며 각 앱의 설정 파일은 변경되지 않습니다."
   }
 }
