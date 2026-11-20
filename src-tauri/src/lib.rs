@@ -1755,6 +1755,8 @@ pub fn run() {
             // Skill management (v3.10.0+ unified)
             commands::get_installed_skills,
             commands::refresh_local_skill_metadata,
+            commands::get_skill_reconciliation_candidates,
+            commands::remove_skill_reconciliation_duplicate,
             commands::get_skill_backups,
             commands::delete_skill_backup,
             commands::install_skill_unified,

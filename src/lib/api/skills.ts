@@ -165,6 +165,13 @@ export interface MigrationResult {
   errors: string[];
 }
 
+export interface SkillReconciliationCandidate {
+  app: string;
+  directory: string;
+  name: string;
+  path: string;
+}
+
 /** skills.sh 可发现的技能 */
 export interface SkillsShDiscoverableSkill {
   key: string;
@@ -210,6 +217,20 @@ export const skillsApi = {
   /** 刷新本地 Skill 的过期元数据，返回实际更新的数量 */
   async refreshLocalMetadata(): Promise<number> {
     return await invoke("refresh_local_skill_metadata");
+  },
+
+  async getReconciliationCandidates(): Promise<SkillReconciliationCandidate[]> {
+    return await invoke("get_skill_reconciliation_candidates");
+  },
+
+  async removeReconciliationDuplicate(
+    app: string,
+    directory: string,
+  ): Promise<boolean> {
+    return await invoke("remove_skill_reconciliation_duplicate", {
+      app,
+      directory,
+    });
   },
 
   /** 获取可恢复的 Skill 备份列表 */

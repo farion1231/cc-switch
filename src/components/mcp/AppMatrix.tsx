@@ -1,7 +1,7 @@
 import * as React from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import { AlertTriangle, BookOpen, Check } from "lucide-react";
+import { AlertTriangle, BookOpen, Check, Lock } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { settingsApi } from "@/lib/api";
 import * as PopoverPrimitive from "@radix-ui/react-popover";
@@ -99,6 +99,7 @@ interface MatrixCellProps {
   label: string;
   onClick: () => void;
   disabled?: boolean;
+  locked?: boolean;
 }
 
 /**
@@ -111,6 +112,7 @@ export function MatrixCell({
   label,
   onClick,
   disabled,
+  locked = false,
 }: MatrixCellProps) {
   const tracking = useColumnTracking(app);
   return (
@@ -118,7 +120,7 @@ export function MatrixCell({
       <HoverTip content={label}>
         <button
           type="button"
-          aria-pressed={state === "on"}
+          aria-pressed={locked || state === "on"}
           aria-label={label}
           disabled={disabled}
           data-state={state}
@@ -141,7 +143,9 @@ export function MatrixCell({
                 "border-warning bg-warning-soft text-warning-text",
             )}
           >
-            {state === "fail" ? (
+            {locked ? (
+              <Lock className="h-2.5 w-2.5" strokeWidth={2.25} />
+            ) : state === "fail" ? (
               <AlertTriangle className="h-3 w-3" strokeWidth={2.25} />
             ) : (
               <Check

@@ -4808,6 +4808,14 @@
     "noun": "Beceriler",
     "helpTitle": "Beceriler nasıl eşitle edilir?",
     "help": "Ana kopya CC Switch’in klasöründe bulunur ve işaretlediğiniz uygulamalarla eşitle edilir. Claude Desktop ve OpenClaw, Becerileri desteklemediğinden sütunları yoktur.",
+    "lockedInUnified": "Birleşik depolama modunda {{app}}, ~/.agents/skills içindeki tüm Skill’leri okur; bu nedenle ayrı ayrı açılıp kapatılamazlar.",
+    "reconciliation": {
+      "title": "Yinelenen Skill’ler bulundu",
+      "lead": "Yönetilen bu Skill’ler, ajanların veya uygulamaların Skills klasörlerinde de bulunuyor. Kaldırmak istediğiniz kopyaları seçin. Seçilmeyen kopyalar korunur. Varsayılan olarak hiçbir öğe seçilmez. Gerçek klasörler değişikliklerinizi içerebilir; kaldırmadan önce yedekleyin.",
+      "path": "Yinelenen kopyanın yolu: {{path}}",
+      "remove": "Seçilenleri kaldır ({{count}})",
+      "success": "Seçilen yinelenen Skill’ler kaldırıldı."
+    },
     "add": "Beceri Ekle",
     "addMenu": {
       "discover": "Keşfet'te Göz Atın",

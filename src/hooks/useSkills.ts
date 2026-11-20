@@ -17,6 +17,7 @@ import {
   type SkillDiscoveryResult,
   type SkillUpdateCheckResult,
   type SkillUpdateInfo,
+  type SkillReconciliationCandidate,
 } from "@/lib/api/skills";
 import type { AppId } from "@/lib/api/types";
 import {
@@ -62,6 +63,36 @@ export function useRefreshLocalSkillMetadata() {
     },
     staleTime: Infinity,
     retry: false,
+  });
+}
+
+export function useSkillReconciliationCandidates() {
+  return useQuery<SkillReconciliationCandidate[]>({
+    queryKey: ["skills", "reconciliation"],
+    queryFn: () => skillsApi.getReconciliationCandidates(),
+    staleTime: 0,
+  });
+}
+
+export function useRemoveSkillReconciliationDuplicate() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (
+      candidates: Array<{ app: string; directory: string }>,
+    ) => {
+      for (const { app, directory } of candidates) {
+        await skillsApi.removeReconciliationDuplicate(app, directory);
+      }
+    },
+    // Refresh once after the batch, including partially completed batches.
+    onSettled: () =>
+      Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: ["skills", "reconciliation"],
+        }),
+        queryClient.invalidateQueries({ queryKey: ["skills", "installed"] }),
+        queryClient.invalidateQueries({ queryKey: ["skills", "unmanaged"] }),
+      ]),
   });
 }
 
@@ -221,6 +252,9 @@ export function useInstallSkill() {
     // Always refresh the authoritative list, including rejected mutations.
     onSettled: () =>
       Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: ["skills", "reconciliation"],
+        }),
         queryClient.invalidateQueries({ queryKey: ["skills", "installed"] }),
         queryClient.invalidateQueries({ queryKey: ["skills", "unmanaged"] }),
       ]),
@@ -261,6 +295,9 @@ export function useUninstallSkill() {
     // unmanaged copy after a successful uninstall.
     onSettled: () =>
       Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: ["skills", "reconciliation"],
+        }),
         queryClient.invalidateQueries({ queryKey: ["skills", "backups"] }),
         queryClient.invalidateQueries({ queryKey: ["skills", "unmanaged"] }),
       ]),
@@ -279,6 +316,9 @@ export function useRestoreSkillBackup() {
     }) => skillsApi.restoreBackup(backupId, currentApp),
     onSettled: () =>
       Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: ["skills", "reconciliation"],
+        }),
         queryClient.invalidateQueries({ queryKey: ["skills", "installed"] }),
         queryClient.invalidateQueries({ queryKey: ["skills", "backups"] }),
       ]),
@@ -324,6 +364,8 @@ export function useToggleSkillApp() {
         queryClient.setQueryData(["skills", "installed"], context.previous);
       }
     },
+    onSettled: () =>
+      queryClient.invalidateQueries({ queryKey: ["skills", "reconciliation"] }),
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: ["skills", "installed"] }),
   });
@@ -346,7 +388,12 @@ export function useBulkToggleSkillApp() {
         skillsApi.toggleApp(id, app, enabled),
       ),
     onSettled: () =>
-      queryClient.invalidateQueries({ queryKey: ["skills", "installed"] }),
+      Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: ["skills", "reconciliation"],
+        }),
+        queryClient.invalidateQueries({ queryKey: ["skills", "installed"] }),
+      ]),
   });
 }
 
@@ -397,6 +444,9 @@ export function useImportSkillsFromApps() {
       discoverGeneration += 1;
       void queryClient.invalidateQueries({
         queryKey: ["skills", "discoverable"],
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ["skills", "reconciliation"],
       });
       return Promise.all([
         queryClient.invalidateQueries({ queryKey: ["skills", "installed"] }),
@@ -535,6 +585,9 @@ export function useInstallSkillsFromZip() {
     // fails, so refresh even when the mutation rejects.
     onSettled: () =>
       Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: ["skills", "reconciliation"],
+        }),
         queryClient.invalidateQueries({ queryKey: ["skills", "installed"] }),
         queryClient.invalidateQueries({ queryKey: ["skills", "unmanaged"] }),
       ]),
@@ -586,7 +639,12 @@ export function useUpdateSkill() {
     // Updating creates an uninstall-style backup before replacing SSOT files;
     // refresh even when replacement or persistence fails later.
     onSettled: () =>
-      queryClient.invalidateQueries({ queryKey: ["skills", "backups"] }),
+      Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: ["skills", "reconciliation"],
+        }),
+        queryClient.invalidateQueries({ queryKey: ["skills", "backups"] }),
+      ]),
   });
 }
 
@@ -632,7 +690,12 @@ export function useResyncSkillsToApps() {
     mutationKey: SKILLS_RESYNC_MUTATION_KEY,
     mutationFn: () => skillsApi.resyncToApps(),
     onSettled: () =>
-      queryClient.invalidateQueries({ queryKey: ["skills", "installed"] }),
+      Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: ["skills", "reconciliation"],
+        }),
+        queryClient.invalidateQueries({ queryKey: ["skills", "installed"] }),
+      ]),
   });
 }
 

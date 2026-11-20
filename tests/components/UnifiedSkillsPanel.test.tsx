@@ -18,6 +18,13 @@ const m = vi.hoisted(() => ({
   toggle: vi.fn(),
   bulkToggle: vi.fn(),
   uninstall: vi.fn(),
+  reconcile: vi.fn(),
+  candidates: [] as Array<{
+    app: string;
+    directory: string;
+    name: string;
+    path: string;
+  }>,
   importSkills: vi.fn(),
   installFromZip: vi.fn(),
   deleteBackup: vi.fn(),
@@ -36,6 +43,13 @@ const m = vi.hoisted(() => ({
   repoFailures: [] as SkillRepoFailure[],
   checking: false,
   visibleApps: ["claude", "codex", "pi"] as string[],
+  storageLocation: "cc_switch" as "cc_switch" | "unified",
+}));
+
+vi.mock("@/lib/query/queries", () => ({
+  useSettingsQuery: () => ({
+    data: { skillStorageLocation: m.storageLocation },
+  }),
 }));
 
 vi.mock("sonner", () => ({
@@ -65,6 +79,14 @@ vi.mock("@/hooks/useSkills", () => ({
     refetch: vi.fn(),
   }),
   useRefreshLocalSkillMetadata: () => ({}),
+  useSkillReconciliationCandidates: () => ({
+    data: m.candidates,
+    isLoading: false,
+  }),
+  useRemoveSkillReconciliationDuplicate: () => ({
+    mutateAsync: m.reconcile,
+    isPending: false,
+  }),
   useSkillBackups: () => ({
     data: m.backups,
     refetch: m.refetchBackups,
@@ -176,11 +198,14 @@ async function openMenu(trigger: string, item: string) {
 describe("UnifiedSkillsPanel", () => {
   beforeEach(() => {
     m.installed = [];
+    m.candidates = [];
+    m.reconcile.mockReset().mockResolvedValue(undefined);
     m.backups = [];
     m.updates = [];
     m.repoFailures = [];
     m.checking = false;
     m.visibleApps = ["claude", "codex", "pi"];
+    m.storageLocation = "cc_switch";
     m.scanUnmanaged.mockReset().mockResolvedValue({
       data: [
         {
@@ -216,6 +241,89 @@ describe("UnifiedSkillsPanel", () => {
     ]) {
       fn.mockReset();
     }
+  });
+
+  it("offers reconciliation in a dismissible notice without opening a modal", async () => {
+    m.installed = [makeSkill()];
+    m.candidates = [
+      {
+        app: "codex",
+        directory: "alpha-skill",
+        name: "Duplicate Alpha",
+        path: "/tmp/alpha",
+      },
+    ];
+    renderPanel();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(
+      screen.getByText("skillsPage.reconciliation.title"),
+    ).toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("button", { name: "skillsPage.banner.close" }),
+    );
+    expect(
+      screen.queryByText("skillsPage.reconciliation.title"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("opens reconciliation manually and holds the write lock through the batch", async () => {
+    m.installed = [makeSkill()];
+    const candidates = [
+      {
+        app: "codex",
+        directory: "alpha-skill",
+        name: "Duplicate Alpha",
+        path: "/tmp/alpha",
+      },
+    ];
+    m.candidates = candidates;
+    let finish!: () => void;
+    m.reconcile.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    renderPanel();
+    const view = screen.getByRole("button", { name: "common.view" });
+    await userEvent.click(view);
+    const dialog = screen.getByRole("dialog");
+    await userEvent.click(within(dialog).getByRole("checkbox"));
+    const remove = within(dialog).getByRole("button", {
+      name: "skillsPage.reconciliation.remove",
+    });
+    await userEvent.dblClick(remove);
+    expect(m.reconcile).toHaveBeenCalledTimes(1);
+    expect(m.reconcile).toHaveBeenCalledWith(candidates);
+    expect(
+      within(dialog).getByRole("button", { name: "common.cancel" }),
+    ).toBeDisabled();
+    expect(view).toBeDisabled();
+    await act(async () => {
+      finish();
+    });
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    expect(screen.getByRole("button", { name: "common.view" })).toBeEnabled();
+  });
+
+  it("locks native scanners when skills use Unified storage", async () => {
+    m.storageLocation = "unified";
+    m.installed = [makeSkill()];
+    renderPanel();
+
+    const lockedLabel = "skillsPage.lockedInUnified";
+    const codexCell = screen.getByRole("button", { name: lockedLabel });
+    expect(codexCell).toHaveAttribute("aria-pressed", "true");
+    expect(codexCell.querySelector("svg.lucide-lock")).not.toBeNull();
+    expect(columns()[1]).toBeDisabled();
+    expect(columns()[1]).toHaveTextContent("1");
+
+    await userEvent.click(codexCell);
+
+    expect(m.toggle).not.toHaveBeenCalled();
+    expect(m.toastInfo).toHaveBeenCalledWith(lockedLabel);
   });
 
   it("always shows the Pi column and toggles it like the other apps", async () => {

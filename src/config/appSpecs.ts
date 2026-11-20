@@ -4,7 +4,7 @@ import type { AppId } from "@/lib/api/types";
  * 每个应用支持哪些功能，全部写在这一张表里。新增应用时 `satisfies` 要求它把每一项都写成
  * true 或 false，漏写一项就是类型错误；下面的应用列表和类型都从这张表派生，不要再手写应用清单。
  *
- * `localProxy`、`routeMode`、`stack`、`additive` 和后端 `AppType::spec` 是同一份事实，
+ * `localProxy`、`routeMode`、`stack`、`additive`、`scansAgentsSkillsDir` 和后端 `AppType::spec` 是同一份事实，
  * `tests/config/appSpecs.json` 由后端测试生成，`tests/config/appSpecs.test.ts` 比对两边。
  */
 export interface AppCaps {
@@ -22,6 +22,8 @@ export interface AppCaps {
    * 自带模型卡累加写进 providers.json，官方卡仍是启动式（只有「打开终端」）。
    */
   additive: boolean;
+  /** 原生读取 ~/.agents/skills（后端 AppSpec::scans_agents_skills_dir） */
+  scansAgentsSkillsDir: boolean;
   /** 在 Skills 面板里出现 */
   skills: boolean;
   /** 由 CC Switch 管理 MCP。Claude Desktop、OpenClaw 不管；Pi 1.0 起内置 MCP（`~/.pi/agent/mcp.json`） */
@@ -49,6 +51,7 @@ export interface AppCaps {
 /** 键的顺序就是应用的默认顺序（侧栏、应用页）。 */
 export const APP_SPECS = {
   claude: {
+    scansAgentsSkillsDir: false,
     localProxy: true,
     routeMode: true,
     stack: true,
@@ -63,6 +66,7 @@ export const APP_SPECS = {
     officialSubscription: true,
   },
   "claude-desktop": {
+    scansAgentsSkillsDir: false,
     localProxy: false,
     routeMode: true,
     stack: true,
@@ -77,6 +81,7 @@ export const APP_SPECS = {
     officialSubscription: false,
   },
   codex: {
+    scansAgentsSkillsDir: true,
     localProxy: true,
     routeMode: true,
     stack: true,
@@ -91,6 +96,7 @@ export const APP_SPECS = {
     officialSubscription: true,
   },
   gemini: {
+    scansAgentsSkillsDir: true,
     localProxy: true,
     routeMode: true,
     stack: false,
@@ -105,6 +111,7 @@ export const APP_SPECS = {
     officialSubscription: true,
   },
   grokbuild: {
+    scansAgentsSkillsDir: false,
     localProxy: true,
     routeMode: true,
     stack: false,
@@ -119,6 +126,7 @@ export const APP_SPECS = {
     officialSubscription: true,
   },
   opencode: {
+    scansAgentsSkillsDir: true,
     localProxy: false,
     routeMode: false,
     stack: false,
@@ -133,6 +141,7 @@ export const APP_SPECS = {
     officialSubscription: false,
   },
   openclaw: {
+    scansAgentsSkillsDir: true,
     localProxy: false,
     routeMode: false,
     stack: false,
@@ -147,6 +156,7 @@ export const APP_SPECS = {
     officialSubscription: false,
   },
   hermes: {
+    scansAgentsSkillsDir: false,
     localProxy: false,
     routeMode: false,
     stack: false,
@@ -161,6 +171,7 @@ export const APP_SPECS = {
     officialSubscription: false,
   },
   pi: {
+    scansAgentsSkillsDir: false,
     localProxy: false,
     routeMode: false,
     stack: false,
@@ -175,6 +186,7 @@ export const APP_SPECS = {
     officialSubscription: false,
   },
   mcode: {
+    scansAgentsSkillsDir: false,
     localProxy: false,
     routeMode: false,
     stack: false,
@@ -189,6 +201,7 @@ export const APP_SPECS = {
     officialSubscription: false,
   },
   kimi: {
+    scansAgentsSkillsDir: false,
     localProxy: false,
     routeMode: false,
     stack: false,
@@ -203,6 +216,7 @@ export const APP_SPECS = {
     officialSubscription: false,
   },
   dsh: {
+    scansAgentsSkillsDir: false,
     localProxy: false,
     routeMode: false,
     stack: false,
@@ -217,6 +231,7 @@ export const APP_SPECS = {
     officialSubscription: false,
   },
   agy: {
+    scansAgentsSkillsDir: false,
     localProxy: false,
     routeMode: false,
     stack: false,
@@ -231,6 +246,7 @@ export const APP_SPECS = {
     officialSubscription: true,
   },
   omp: {
+    scansAgentsSkillsDir: false,
     localProxy: false,
     routeMode: false,
     stack: false,
@@ -245,6 +261,7 @@ export const APP_SPECS = {
     officialSubscription: false,
   },
   copilot: {
+    scansAgentsSkillsDir: false,
     localProxy: false,
     routeMode: false,
     stack: false,
@@ -259,6 +276,7 @@ export const APP_SPECS = {
     officialSubscription: false,
   },
   workbuddy: {
+    scansAgentsSkillsDir: false,
     localProxy: false,
     routeMode: false,
     stack: false,
