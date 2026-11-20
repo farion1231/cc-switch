@@ -872,4 +872,21 @@ describe("SessionManagerPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "退出选择" }));
     expect(screen.queryByText(/已选/)).not.toBeInTheDocument();
   });
+
+  it("animates newly expanded session rows inside an inner wrapper instead of the translateY container", async () => {
+    window.localStorage.removeItem(EXPANDED_KEY);
+    renderPage("codex");
+
+    const toggle = await screen.findByRole("button", { name: /^codex/ });
+    fireEvent.click(toggle);
+
+    const sessionBtn = screen.getByRole("button", { name: "Alpha Session" });
+    const innerAnimated = sessionBtn.closest(".animate-in");
+    expect(innerAnimated).not.toBeNull();
+    // 外层虚拟定位节点只保留 translateY，不能同时挂 animate-in 或 transition-transform
+    const outerPositioned = innerAnimated!.parentElement!;
+    expect(outerPositioned.style.transform).toContain("translateY(");
+    expect(outerPositioned.className).not.toContain("animate-in");
+    expect(outerPositioned.className).not.toContain("transition-transform");
+  });
 });

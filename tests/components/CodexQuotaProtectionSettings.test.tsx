@@ -133,7 +133,10 @@ describe("Codex official quota protection settings", () => {
     expect(save).toHaveBeenLastCalledWith({
       codexQuotaProtection: { ...ENABLED, enabled: false },
     });
-    expect(screen.queryByRole("spinbutton")).not.toBeInTheDocument();
+    // 阈值行收起有高度动画，播完才从 DOM 里拿掉
+    await waitFor(() =>
+      expect(screen.queryAllByRole("spinbutton")).toHaveLength(0),
+    );
     await act(async () => {
       fireEvent.click(toggle);
     });
@@ -212,7 +215,10 @@ describe("Codex official quota protection settings", () => {
         weeklyThreshold: 98,
       },
     });
-    expect(screen.queryByRole("spinbutton")).not.toBeInTheDocument();
+    // 阈值行收起有高度动画，播完才从 DOM 里拿掉
+    await waitFor(() =>
+      expect(screen.queryAllByRole("spinbutton")).toHaveLength(0),
+    );
   });
 
   it("keeps unsaved edits retryable when saving fails", async () => {

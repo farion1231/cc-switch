@@ -1,5 +1,6 @@
 import {
   forwardRef,
+  useEffect,
   useId,
   useImperativeHandle,
   useMemo,
@@ -333,10 +334,18 @@ function PiInstructionFileEditor({
 }
 
 /** Pi · 系统提示：两个固定文件，文件存在就生效，不加启用开关（Pi 规范 §5）。 */
-export function PiSystemPromptFiles() {
+export function PiSystemPromptFiles({
+  onEditingChange,
+}: {
+  onEditingChange?: (editing: boolean) => void;
+} = {}) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState<EditablePiPromptFileKind | null>(null);
+  useEffect(() => {
+    onEditingChange?.(editing !== null);
+  }, [editing, onEditingChange]);
+  useEffect(() => () => onEditingChange?.(false), [onEditingChange]);
   const files = [
     useQuery({
       queryKey: promptFileKey("system_append"),
@@ -762,18 +771,26 @@ interface PiPromptTemplatesProps {
   /** 搜索框在页面工具行里，这里只按它过滤 */
   search?: string;
   onClearSearch?: () => void;
+  onEditingChange?: (editing: boolean) => void;
 }
 
 /** Pi · 模板：~/.pi/agent/prompts/<命令>.md，不用启用，在 Pi 里输入 /命令名 调用。 */
 export const PiPromptTemplates = forwardRef<
   PiPromptTemplatesHandle,
   PiPromptTemplatesProps
->(function PiPromptTemplates({ search = "", onClearSearch }, ref) {
+>(function PiPromptTemplates(
+  { search = "", onClearSearch, onEditingChange },
+  ref,
+) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [editor, setEditor] = useState<
     { mode: "create" } | { mode: "edit"; template: PiPromptTemplate } | null
   >(null);
+  useEffect(() => {
+    onEditingChange?.(editor !== null);
+  }, [editor, onEditingChange]);
+  useEffect(() => () => onEditingChange?.(false), [onEditingChange]);
 
   const templates = usePiPromptTemplatesQuery();
 

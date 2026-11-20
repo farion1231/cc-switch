@@ -37,6 +37,8 @@ import {
   ROUTE_MODE_APP_IDS,
   type AppIdWith,
 } from "@/config/appSpecs";
+import { EnterTransition } from "@/components/common/EnterTransition";
+import { directionByOrder } from "@/hooks/useEnterTransition";
 
 interface RoutingSectionProps {
   /** 「前往」打开这个应用的供应商页 */
@@ -212,7 +214,7 @@ export function RoutingSection({ onOpenApp }: RoutingSectionProps) {
                 <span
                   aria-hidden="true"
                   className={cn(
-                    "h-1.5 w-1.5 rounded-full",
+                    "h-1.5 w-1.5 rounded-full transition-colors duration-200",
                     running ? "bg-route" : "bg-fg-3",
                   )}
                 />
@@ -224,7 +226,8 @@ export function RoutingSection({ onOpenApp }: RoutingSectionProps) {
               </div>
             </div>
             {running && (
-              <dl className="flex gap-6 text-end">
+              // 启动后统计数字淡入，不是一下冒出来
+              <dl className="flex gap-6 text-end motion-safe:duration-200 motion-safe:animate-in motion-safe:fade-in-0">
                 {[
                   [
                     t("routingSettings.totalRequests"),
@@ -441,7 +444,13 @@ export function RoutingSection({ onOpenApp }: RoutingSectionProps) {
               label: APP_DISPLAY_NAME[app],
             }))}
           />
-          <AutoFailoverConfigPanel key={failoverApp} appType={failoverApp} />
+          {/* 换应用时下面的配置跟着分段滑块的方向滑进来 */}
+          <EnterTransition
+            transitionKey={failoverApp}
+            from={directionByOrder(APP_IDS_WITH.localProxy, "x")}
+          >
+            <AutoFailoverConfigPanel key={failoverApp} appType={failoverApp} />
+          </EnterTransition>
         </div>
       </SettingsBlock>
 
