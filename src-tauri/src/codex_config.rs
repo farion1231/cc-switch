@@ -5171,235 +5171,113 @@ wire_api = "responses"
     }
 
     #[test]
-    fn copilot_auto_auto_injected_into_catalog_when_top_level_model() {
-        let config = "model = \"copilot-fusion-auto\"\n";
-        let settings = json!({
-            "modelCatalog": {
-                "models": [
-                    { "model": "gpt-5.5" }
-                ]
+    fn copilot_auto_catalog_projects_only_configured_models() {
+        use CodexCatalogToolProfile::{Copilot, ProxyChat};
+        let fixed = r#"model = "gpt-5.5""#;
+        let auto = r#"model = "copilot-fusion-auto""#;
+        let marked = r#"model = "copilot-fusion-auto[1M]""#;
+        let configured = |models| json!({"modelCatalog": {"models": models}});
+        for (profile, config, settings, expected) in [
+            (
+                Copilot,
+                auto,
+                configured(json!([{"model": "gpt-5.5"}])),
+                vec!["copilot-fusion-auto", "gpt-5.5"],
+            ),
+            (Copilot, auto, json!({}), vec!["copilot-fusion-auto"]),
+            (Copilot, marked, json!({}), vec!["copilot-fusion-auto"]),
+            (Copilot, fixed, json!({}), vec!["gpt-5.5"]),
+            (Copilot, "", json!({}), vec![]),
+            (
+                Copilot,
+                fixed,
+                configured(json!([{"model": "gpt-5.5"}])),
+                vec!["gpt-5.5"],
+            ),
+            (
+                ProxyChat,
+                fixed,
+                configured(json!([{"model": "gpt-5.5"}])),
+                vec!["gpt-5.5"],
+            ),
+        ] {
+            let catalog = codex_model_catalog_from_settings(&settings, config, profile).unwrap();
+            if expected.is_empty() {
+                assert!(catalog.is_none());
+                continue;
             }
-        });
-        let catalog =
-            codex_model_catalog_from_settings(&settings, config, CodexCatalogToolProfile::Copilot)
-                .unwrap()
-                .expect("catalog should be generated");
-        let models = catalog["models"].as_array().unwrap();
-        assert_eq!(models[0]["slug"], "copilot-fusion-auto");
-        assert_eq!(models[0]["display_name"], "GitHub Copilot Auto");
-        assert_eq!(models[1]["slug"], "gpt-5.5");
-
-        let empty_settings = json!({});
-        let catalog_empty = codex_model_catalog_from_settings(
-            &empty_settings,
-            config,
-            CodexCatalogToolProfile::Copilot,
-        )
-        .unwrap()
-        .expect("catalog should be generated for virtual model");
-        let models_empty = catalog_empty["models"].as_array().unwrap();
-        assert_eq!(models_empty.len(), 1);
-        assert_eq!(models_empty[0]["slug"], "copilot-fusion-auto");
-    }
-
-    #[test]
-    fn copilot_auto_is_not_injected_alongside_concrete_top_level_model() {
-        let config = "model = \"gpt-5.5\"\n";
-        let settings = json!({
-            "modelCatalog": {
-                "models": [
-                    { "model": "gpt-5.5" }
-                ]
-            }
-        });
-        let catalog =
-            codex_model_catalog_from_settings(&settings, config, CodexCatalogToolProfile::Copilot)
-                .unwrap()
-                .expect("catalog should be generated");
-        let models = catalog["models"].as_array().unwrap();
-        assert_eq!(models.len(), 1, "Auto needs account catalogue evidence");
-        assert_eq!(models[0]["slug"], "gpt-5.5");
-    }
-
-    #[test]
-    fn copilot_auto_is_not_injected_without_account_capability_evidence() {
-        let config = "model = \"gpt-5.5\"\n";
-        let empty_settings = json!({});
-        let catalog = codex_model_catalog_from_settings(
-            &empty_settings,
-            config,
-            CodexCatalogToolProfile::Copilot,
-        )
-        .unwrap()
-        .expect("catalog should be generated for configured model");
-        let models = catalog["models"].as_array().unwrap();
-        assert_eq!(models.len(), 1);
-        assert_eq!(models[0]["slug"], "gpt-5.5");
-    }
-
-    #[test]
-    fn copilot_auto_auto_not_published_for_non_copilot_profile() {
-        let config = "model = \"gpt-5.5\"\n";
-        let settings = json!({
-            "modelCatalog": {
-                "models": [
-                    { "model": "gpt-5.5" }
-                ]
-            }
-        });
-        let catalog = codex_model_catalog_from_settings(
-            &settings,
-            config,
-            CodexCatalogToolProfile::ProxyChat,
-        )
-        .unwrap()
-        .expect("catalog should be generated");
-        let models = catalog["models"].as_array().unwrap();
-        assert_eq!(models.len(), 1);
-        assert_eq!(models[0]["slug"], "gpt-5.5");
-    }
-
-    #[test]
-    fn copilot_auto_is_absent_without_any_configured_model() {
-        // A Copilot card without a directory/model has no Auto capability evidence.
-        assert!(codex_model_catalog_from_settings(
-            &json!({}),
-            "",
-            CodexCatalogToolProfile::Copilot
-        )
-        .unwrap()
-        .is_none());
-    }
-
-    #[test]
-    fn copilot_auto_auto_user_configured_entry_is_preserved() {
-        // 用户在卡上显式配置了虚拟项：不得重复插入，也不得改动用户的行。
-        let config = "model = \"gpt-5.5\"\n";
-        let settings = json!({
-            "modelCatalog": {
-                "models": [
-                    {
-                        "model": "copilot-fusion-auto",
-                        "displayName": "My Auto",
-                        "contextWindow": 1000000
-                    },
-                    { "model": "gpt-5.5" }
-                ]
-            }
-        });
-        let catalog =
-            codex_model_catalog_from_settings(&settings, config, CodexCatalogToolProfile::Copilot)
-                .unwrap()
-                .expect("catalog should be generated");
-        let models = catalog["models"].as_array().unwrap();
-        let slugs: Vec<&str> = models.iter().filter_map(|m| m["slug"].as_str()).collect();
-        assert_eq!(
-            slugs
+            let catalog = catalog.unwrap();
+            let models = catalog["models"].as_array().unwrap();
+            let slugs: Vec<_> = models
                 .iter()
-                .filter(|s| **s == "copilot-fusion-auto")
-                .count(),
-            1,
-            "virtual entry must not be duplicated"
-        );
-        assert_eq!(models[0]["display_name"], "My Auto");
-        assert_eq!(models[0]["context_window"], json!(1000000));
-        assert!(slugs.contains(&"gpt-5.5"));
-    }
-
-    #[test]
-    fn copilot_auto_auto_marked_top_model_is_not_duplicated_as_a_concrete_entry() {
-        // 行内模型带着 [1M] 本地标记时仍按剥掉标记的有效模型识别虚拟项：
-        // 目录只补发干净的虚拟项，不把带标记的原文当具体模型再发一份。
-        let config = "model = \"copilot-fusion-auto[1M]\"\n";
-        let catalog =
-            codex_model_catalog_from_settings(&json!({}), config, CodexCatalogToolProfile::Copilot)
-                .unwrap()
-                .expect("catalog should be generated");
-        let models = catalog["models"].as_array().unwrap();
-        let slugs: Vec<&str> = models.iter().filter_map(|m| m["slug"].as_str()).collect();
-        assert_eq!(slugs, vec!["copilot-fusion-auto"]);
-        assert_eq!(models[0]["display_name"], "GitHub Copilot Auto");
-
-        let published = codex_published_models(&json!({}), config);
-        assert_eq!(published, vec!["copilot-fusion-auto".to_string()]);
-    }
-
-    #[test]
-    fn copilot_auto_auto_marked_user_entry_keeps_the_auto_display_name() {
-        // 用户自己配的带标记虚拟行保持原样，不重复补发虚拟项；展示名回退也按
-        // 剥标记后的有效模型认出这是虚拟项。
-        let settings = json!({
-            "modelCatalog": {
-                "models": [
-                    { "model": "copilot-fusion-auto[1M]" },
-                    { "model": "gpt-5.5" }
-                ]
+                .map(|model| model["slug"].as_str().unwrap())
+                .collect();
+            assert_eq!(slugs, expected, "{profile:?}, {config}, {settings}");
+            if expected[0] == "copilot-fusion-auto" {
+                assert_eq!(models[0]["display_name"], "GitHub Copilot Auto");
             }
-        });
-        let config = "model = \"gpt-5.5\"\n";
-        let catalog =
-            codex_model_catalog_from_settings(&settings, config, CodexCatalogToolProfile::Copilot)
-                .unwrap()
-                .expect("catalog should be generated");
-        let models = catalog["models"].as_array().unwrap();
-        let slugs: Vec<&str> = models.iter().filter_map(|m| m["slug"].as_str()).collect();
-        assert_eq!(slugs, vec!["copilot-fusion-auto[1M]", "gpt-5.5"]);
-        assert_eq!(models[0]["display_name"], "GitHub Copilot Auto");
+        }
     }
 
     #[test]
-    fn copilot_auto_auto_published_in_aggregation_rows_for_copilot_profile() {
-        // 聚合行的行内目录按工具 profile 发布虚拟项：合并目录的 /model 与子代理下拉
-        // 都从这些行取数据。
-        let settings = json!({
-            "modelCatalog": {
-                "models": [
-                    { "model": "gpt-5.5" }
-                ]
-            }
-        });
-        let config = "model = \"gpt-5.5\"\n";
-        let row = CodexCatalogRow {
-            settings: &settings,
-            config_text: config,
-            profile: CodexCatalogToolProfile::Copilot,
-        };
-        let entries = codex_stack_third_party_rows(&row).unwrap();
-        let slugs: Vec<&str> = entries
-            .iter()
-            .filter_map(|entry| entry.get("slug").and_then(Value::as_str))
-            .collect();
-        assert_eq!(slugs, vec!["gpt-5.5"]);
-
-        let plain_row = CodexCatalogRow {
-            settings: &settings,
-            config_text: config,
-            profile: CodexCatalogToolProfile::ProxyChat,
-        };
-        let plain_entries = codex_stack_third_party_rows(&plain_row).unwrap();
-        let plain_slugs: Vec<&str> = plain_entries
-            .iter()
-            .filter_map(|entry| entry.get("slug").and_then(Value::as_str))
-            .collect();
-        assert_eq!(plain_slugs, vec!["gpt-5.5"]);
+    fn copilot_auto_catalog_preserves_configured_rows_and_auto_display_names() {
+        for (id, display, expected) in [
+            ("copilot-fusion-auto", json!("My Auto"), "My Auto"),
+            (
+                "copilot-fusion-auto[1M]",
+                Value::Null,
+                "GitHub Copilot Auto",
+            ),
+        ] {
+            let config = r#"model = "gpt-5.5""#;
+            let settings = json!({"modelCatalog": {"models": [
+                {"model": id, "displayName": display, "contextWindow": 1_000_000},
+                {"model": "gpt-5.5"}
+            ]}});
+            let catalog = codex_model_catalog_from_settings(
+                &settings,
+                config,
+                CodexCatalogToolProfile::Copilot,
+            )
+            .unwrap()
+            .unwrap();
+            let models = catalog["models"].as_array().unwrap();
+            assert_eq!(models.len(), 2);
+            assert_eq!(models[0]["slug"], id);
+            assert_eq!(models[0]["display_name"], expected);
+            assert_eq!(models[0]["context_window"], 1_000_000);
+            assert_eq!(models[1]["slug"], "gpt-5.5");
+        }
     }
 
     #[test]
-    fn copilot_auto_auto_published_models_recognized_for_failover() {
-        // 故障转移按这份名单判断「这家有没有模型 X」：Copilot 卡要认出虚拟项，
-        // 否则虚拟模型的请求故障转移到聚合成员会被改写成成员默认模型。
-        let settings = json!({
-            "modelCatalog": {
-                "models": [
-                    { "model": "gpt-5.5" }
-                ]
+    fn copilot_auto_catalog_keeps_stack_and_failover_model_lists_aligned() {
+        let settings = json!({"modelCatalog": {"models": [{"model": "gpt-5.5"}]}});
+        for (config, expected) in [
+            (r#"model = "gpt-5.5""#, vec!["gpt-5.5"]),
+            (
+                r#"model = "copilot-fusion-auto[1M]""#,
+                vec!["copilot-fusion-auto", "gpt-5.5"],
+            ),
+        ] {
+            assert_eq!(codex_published_models(&settings, config), expected);
+            for profile in [
+                CodexCatalogToolProfile::Copilot,
+                CodexCatalogToolProfile::ProxyChat,
+            ] {
+                let row = CodexCatalogRow {
+                    settings: &settings,
+                    config_text: config,
+                    profile,
+                };
+                let entries = codex_stack_third_party_rows(&row).unwrap();
+                let slugs: Vec<_> = entries
+                    .iter()
+                    .map(|entry| entry["slug"].as_str().unwrap())
+                    .collect();
+                assert_eq!(slugs, expected);
             }
-        });
-        let config = "model = \"gpt-5.5\"\n";
-        assert_eq!(
-            codex_published_models(&settings, config),
-            vec!["gpt-5.5".to_string()]
-        );
+        }
     }
 
     #[test]

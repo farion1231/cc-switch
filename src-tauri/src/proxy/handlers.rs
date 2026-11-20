@@ -23,25 +23,23 @@ use super::{
         codex_chat_common::extract_reasoning_field_text,
         codex_chat_history::record_responses_sse_stream,
         get_adapter, get_claude_api_format,
-        streaming::create_anthropic_sse_stream_with_terminal_hook,
+        streaming::create_anthropic_sse_stream,
         streaming_codex_anthropic::{
-            create_responses_sse_stream_from_anthropic_with_context_and_terminal_hook,
+            create_responses_sse_stream_from_anthropic_with_context,
             responses_sse_events_from_anthropic_message,
         },
-        streaming_codex_chat::create_responses_sse_stream_from_chat_with_context_and_terminal_hook,
+        streaming_codex_chat::create_responses_sse_stream_from_chat_with_context,
         streaming_gemini::create_anthropic_sse_stream_from_gemini,
-        streaming_responses::{
-            create_anthropic_sse_stream_from_responses_with_terminal_hook,
-            create_anthropic_sse_stream_from_responses_with_web_search_options,
-        },
+        streaming_responses::create_anthropic_sse_stream_from_responses_with_web_search_options,
         transform, transform_codex_anthropic, transform_codex_chat,
         transform_codex_responses_namespace, transform_codex_responses_xai_sanitize,
         transform_gemini, transform_responses,
     },
     response_processor::{
-        create_logged_passthrough_stream, create_usage_collector, process_response,
-        read_decoded_body, strip_entity_headers_for_rebuilt_body,
-        strip_hop_by_hop_response_headers, usage_logging_enabled, SseUsageCollector,
+        create_logged_passthrough_stream_with_terminal_hook, create_usage_collector,
+        process_response, read_decoded_body, strip_entity_headers_for_rebuilt_body,
+        strip_hop_by_hop_response_headers, terminal_value_response_succeeded,
+        usage_logging_enabled, SseUsageCollector,
     },
     server::ProxyState,
     sse::{strip_sse_field, SseBlocks},
@@ -676,12 +674,38 @@ async fn handle_claude_transform(
         let sse_stream: Box<
             dyn futures::Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin,
         > = if api_format == "openai_responses" {
+            let stream: std::pin::Pin<
+                Box<dyn futures::Stream<Item = Result<Bytes, std::io::Error>> + Send>,
+            > = if let Some(hook) = terminal_hook.take() {
+                let succeeded = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let flag = succeeded.clone();
+                terminal_hook = Some(Box::new(move || {
+                    Box::pin(async move {
+                        if succeeded.load(std::sync::atomic::Ordering::Relaxed) {
+                            hook().await;
+                        }
+                    })
+                }));
+                Box::pin(create_logged_passthrough_stream_with_terminal_hook(
+                    stream,
+                    ctx.tag,
+                    None,
+                    ctx.streaming_timeout_config(),
+                    None,
+                    Some(Box::new(move || {
+                        Box::pin(async move {
+                            flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                        })
+                    })),
+                ))
+            } else {
+                Box::pin(stream)
+            };
             Box::new(Box::pin(
-                create_anthropic_sse_stream_from_responses_with_terminal_hook(
+                create_anthropic_sse_stream_from_responses_with_web_search_options(
                     stream,
                     hosted_web_search_name.clone(),
                     hosted_web_search_max_uses,
-                    terminal_hook,
                 ),
             ))
         } else if api_format == "gemini_native" {
@@ -693,10 +717,7 @@ async fn handle_claude_transform(
                 tool_schema_hints.clone(),
             )))
         } else {
-            Box::new(Box::pin(create_anthropic_sse_stream_with_terminal_hook(
-                stream,
-                terminal_hook,
-            )))
+            Box::new(Box::pin(create_anthropic_sse_stream(stream)))
         };
 
         // 创建使用量收集器；关闭 usage logging 时不要再解析转换后的 SSE。
@@ -772,12 +793,13 @@ async fn handle_claude_transform(
         // 获取流式超时配置
         let timeout_config = ctx.streaming_timeout_config();
 
-        let logged_stream = create_logged_passthrough_stream(
+        let logged_stream = create_logged_passthrough_stream_with_terminal_hook(
             sse_stream,
             "Claude/OpenRouter",
             usage_collector,
             timeout_config,
             connection_guard,
+            terminal_hook,
         );
 
         let mut headers = axum::http::HeaderMap::new();
@@ -891,12 +913,11 @@ async fn handle_claude_transform(
     // Anthropic mapper intentionally treats unknown/incomplete upstream endings as
     // `end_turn` for ordinary proxy compatibility, so that field cannot authorize
     // clearing an Auto-compaction retry token by itself.
-    let auto_compaction_summary_succeeded = upstream_response
-        .as_ref()
-        .is_some_and(|response| auto_compaction_summary_succeeded(response, api_format))
-        || direct_anthropic_response
+    let successful_terminal = terminal_hook.is_some()
+        && upstream_response
             .as_ref()
-            .is_some_and(anthropic_message_summary_succeeded);
+            .or(direct_anthropic_response.as_ref())
+            .is_some_and(terminal_value_response_succeeded);
 
     // 根据 api_format 选择非流式转换器
     let transform_result = match (direct_anthropic_response, upstream_response) {
@@ -942,7 +963,7 @@ async fn handle_claude_transform(
         .get("stop_reason")
         .and_then(Value::as_str)
         == Some("end_turn")
-        && auto_compaction_summary_succeeded
+        && successful_terminal
     {
         if let Some(hook) = terminal_hook.take() {
             hook().await;
@@ -980,101 +1001,6 @@ async fn handle_claude_transform(
         log::error!("[Claude] 构建响应失败: {e}");
         ProxyError::Internal(format!("Failed to build response: {e}"))
     })
-}
-
-fn auto_compaction_summary_succeeded(response: &Value, api_format: &str) -> bool {
-    match api_format {
-        "openai_responses" => {
-            response.get("status").and_then(Value::as_str) == Some("completed")
-                && response
-                    .get("output")
-                    .and_then(Value::as_array)
-                    .is_some_and(|items| {
-                        !items.iter().any(|item| {
-                            item.get("type").and_then(Value::as_str) == Some("function_call")
-                        }) && !crate::proxy::providers::codex_compaction::summary_from_output_items(
-                            items,
-                        )
-                        .trim()
-                        .is_empty()
-                    })
-        }
-        "openai_chat" => {
-            let Some(choice) = response
-                .get("choices")
-                .and_then(Value::as_array)
-                .and_then(|choices| choices.first())
-            else {
-                return false;
-            };
-            let normal_stop = matches!(
-                choice.get("finish_reason").and_then(Value::as_str),
-                Some("stop" | "end_turn" | "stop_sequence")
-            );
-            let message = choice.get("message");
-            let has_text = message
-                .and_then(|message| message.get("content"))
-                .is_some_and(|content| match content {
-                    Value::String(text) => !text.trim().is_empty(),
-                    Value::Array(parts) => parts.iter().any(|part| {
-                        part.get("text")
-                            .and_then(Value::as_str)
-                            .is_some_and(|text| !text.trim().is_empty())
-                    }),
-                    _ => false,
-                });
-            normal_stop
-                && has_text
-                && message
-                    .and_then(|message| message.get("tool_calls"))
-                    .and_then(Value::as_array)
-                    .is_none_or(|calls| calls.is_empty())
-        }
-        "gemini_native" => {
-            let Some(candidate) = response
-                .get("candidates")
-                .and_then(Value::as_array)
-                .and_then(|candidates| candidates.first())
-            else {
-                return false;
-            };
-            candidate.get("finishReason").and_then(Value::as_str) == Some("STOP")
-                && candidate
-                    .pointer("/content/parts")
-                    .and_then(Value::as_array)
-                    .is_some_and(|parts| {
-                        !parts.iter().any(|part| part.get("functionCall").is_some())
-                            && parts.iter().any(|part| {
-                                part.get("text")
-                                    .and_then(Value::as_str)
-                                    .is_some_and(|text| !text.trim().is_empty())
-                            })
-                    })
-        }
-        "anthropic" | "anthropic_native" | "anthropic_messages" => {
-            anthropic_message_summary_succeeded(response)
-        }
-        _ => false,
-    }
-}
-
-fn anthropic_message_summary_succeeded(response: &Value) -> bool {
-    response.get("stop_reason").and_then(Value::as_str) == Some("end_turn")
-        && response
-            .get("content")
-            .and_then(Value::as_array)
-            .is_some_and(|blocks| {
-                !blocks
-                    .iter()
-                    .any(|block| block.get("type").and_then(Value::as_str) == Some("tool_use"))
-                    && blocks.iter().any(|block| {
-                        block.get("type").and_then(Value::as_str) == Some("text")
-                            && block
-                                .get("text")
-                                .and_then(Value::as_str)
-                                .is_some_and(|text| !text.trim().is_empty())
-                    })
-            })
 }
 
 fn endpoint_with_query(uri: &axum::http::Uri, endpoint: &str) -> String {
@@ -1494,15 +1420,15 @@ async fn handle_codex_native_compaction_response(
 
     let compaction_stream = super::providers::codex_compaction::create_native_compaction_sse_stream(
         codex_native_responses_stream(response, ctx),
-        terminal_hook,
     );
     let usage_collector = create_usage_collector(ctx, state, status.as_u16(), &CODEX_PARSER_CONFIG);
-    let logged_stream = create_logged_passthrough_stream(
+    let logged_stream = create_logged_passthrough_stream_with_terminal_hook(
         compaction_stream,
         ctx.tag,
         usage_collector,
         ctx.streaming_timeout_config(),
         connection_guard,
+        terminal_hook,
     );
 
     builder
@@ -1668,18 +1594,20 @@ async fn handle_codex_late_arguments_repair(
         .await;
     }
 
+    let (response, terminal_hook) = response.take_success_terminal_hook();
     let builder = rewritten_sse_response_builder(status, response.headers());
     let repair_stream =
         super::providers::responses_late_arguments::create_late_arguments_repair_stream(
             codex_native_responses_stream(response, ctx),
         );
     let usage_collector = create_usage_collector(ctx, state, status.as_u16(), &CODEX_PARSER_CONFIG);
-    let logged_stream = create_logged_passthrough_stream(
+    let logged_stream = create_logged_passthrough_stream_with_terminal_hook(
         repair_stream,
         ctx.tag,
         usage_collector,
         ctx.streaming_timeout_config(),
         connection_guard,
+        terminal_hook,
     );
     builder
         .body(axum::body::Body::from_stream(logged_stream))
@@ -1746,15 +1674,14 @@ async fn handle_codex_xai_native_responses_rewrite(
             );
         let usage_collector =
             create_usage_collector(ctx, state, status.as_u16(), &CODEX_PARSER_CONFIG);
-        let logged_stream =
-            crate::proxy::response_processor::create_logged_passthrough_stream_with_terminal_hook(
-                restore_stream,
-                ctx.tag,
-                usage_collector,
-                ctx.streaming_timeout_config(),
-                connection_guard,
-                terminal_hook,
-            );
+        let logged_stream = create_logged_passthrough_stream_with_terminal_hook(
+            restore_stream,
+            ctx.tag,
+            usage_collector,
+            ctx.streaming_timeout_config(),
+            connection_guard,
+            terminal_hook,
+        );
 
         let body = axum::body::Body::from_stream(logged_stream);
         return builder.body(body).map_err(|e| {
@@ -1886,11 +1813,7 @@ async fn handle_codex_chat_to_responses_transform(
 
     if is_stream || response.is_sse() {
         let stream = response.bytes_stream();
-        let sse_stream = create_responses_sse_stream_from_chat_with_context_and_terminal_hook(
-            stream,
-            tool_context,
-            terminal_hook,
-        );
+        let sse_stream = create_responses_sse_stream_from_chat_with_context(stream, tool_context);
         let sse_stream = record_responses_sse_stream(
             sse_stream,
             state.codex_chat_history.clone(),
@@ -1963,12 +1886,13 @@ async fn handle_codex_chat_to_responses_transform(
             None
         };
 
-        let logged_stream = create_logged_passthrough_stream(
+        let logged_stream = create_logged_passthrough_stream_with_terminal_hook(
             sse_stream,
             ctx.tag,
             usage_collector,
             ctx.streaming_timeout_config(),
             connection_guard,
+            terminal_hook,
         );
 
         let mut headers = axum::http::HeaderMap::new();
@@ -2023,7 +1947,8 @@ async fn handle_codex_chat_to_responses_transform(
             ));
         }
     };
-    let successful_terminal = auto_compaction_summary_succeeded(&chat_response, "openai_chat");
+    let successful_terminal =
+        terminal_hook.is_some() && terminal_value_response_succeeded(&chat_response);
     let responses_response = transform_codex_chat::chat_completion_to_response_with_context(
         chat_response,
         &tool_context,
@@ -2148,17 +2073,15 @@ async fn handle_codex_anthropic_to_responses_transform(
     // envelopes and gateways that ignore stream:true can be converted faithfully.
     if response.is_sse() || (is_stream && !response.is_json()) {
         let stream = response.bytes_stream();
-        let sse_stream = create_responses_sse_stream_from_anthropic_with_context_and_terminal_hook(
-            stream,
-            codex_tool_context,
-            terminal_hook,
-        );
+        let sse_stream =
+            create_responses_sse_stream_from_anthropic_with_context(stream, codex_tool_context);
         return build_codex_anthropic_sse_response(
             sse_stream,
             ctx,
             state,
             status,
             connection_guard,
+            terminal_hook,
         );
     }
 
@@ -2207,11 +2130,13 @@ async fn handle_codex_anthropic_to_responses_transform(
             state,
             status,
             connection_guard,
+            terminal_hook,
         );
     }
 
     let _connection_guard = connection_guard;
-    let successful_terminal = anthropic_message_summary_succeeded(&anthropic_response);
+    let successful_terminal =
+        terminal_hook.is_some() && terminal_value_response_succeeded(&anthropic_response);
     let responses_response =
         transform_codex_anthropic::anthropic_response_to_responses_with_context(
             anthropic_response,
@@ -2303,6 +2228,7 @@ fn build_codex_anthropic_sse_response(
     state: &ProxyState,
     status: StatusCode,
     connection_guard: Option<ActiveConnectionGuard>,
+    terminal_hook: Option<super::hyper_client::SuccessTerminalHook>,
 ) -> Result<axum::response::Response, ProxyError> {
     let usage_collector = if usage_logging_enabled(state) {
         let state = state.clone();
@@ -2363,12 +2289,13 @@ fn build_codex_anthropic_sse_response(
         None
     };
 
-    let logged_stream = create_logged_passthrough_stream(
+    let logged_stream = create_logged_passthrough_stream_with_terminal_hook(
         sse_stream,
         ctx.tag,
         usage_collector,
         ctx.streaming_timeout_config(),
         connection_guard,
+        terminal_hook,
     );
 
     let mut headers = axum::http::HeaderMap::new();
@@ -4893,6 +4820,50 @@ mod copilot_native_responses_tests {
         let (body, _) = body_and_events(response).await;
 
         assert_eq!(body.as_ref(), input.as_bytes());
+    }
+
+    #[tokio::test]
+    async fn copilot_auto_compaction_hook_requires_a_successful_summary_after_repair_or_conversion()
+    {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let (state, ctx) = context(true).await;
+        for (chat, success) in [(true, true), (true, false), (false, true), (false, false)] {
+            let fired = Arc::new(AtomicBool::new(false));
+            let hook = fired.clone();
+            let wire = if chat {
+                let finish = if success { "stop" } else { "length" };
+                let event = json!({"id":"chat", "choices":[{"index":0,
+                    "delta":{"content":"A summary"}, "finish_reason":finish}]});
+                format!("data: {event}\n\ndata: [DONE]\n\n")
+            } else {
+                let status = if success { "completed" } else { "incomplete" };
+                let event = json!({"type":"response.completed", "response": {
+                    "id":"compact", "status":status, "output":[{"type":"compaction",
+                    "id":"cmp_1","encrypted_content":"opaque-summary"}]
+                }});
+                format!("data: {event}\n\n")
+            };
+            let upstream = upstream(&wire).with_success_terminal_hook(Box::new(move || {
+                Box::pin(async move { hook.store(true, Ordering::Relaxed) })
+            }));
+            let response = if chat {
+                let tools = transform_codex_chat::build_codex_tool_context_from_request(
+                    &json!({"input":[{"type":"compaction_trigger"}]}),
+                );
+                handle_codex_chat_to_responses_transform(upstream, &ctx, &state, true, None, tools)
+                    .await
+            } else {
+                handle_codex_late_arguments_repair(upstream, &ctx, &state, true, None).await
+            }
+            .unwrap();
+            let (_, events) = body_and_events(response).await;
+            assert!(!events.is_empty());
+            assert_eq!(
+                fired.load(Ordering::Relaxed),
+                success,
+                "chat={chat}, success={success}"
+            );
+        }
     }
 
     #[tokio::test]

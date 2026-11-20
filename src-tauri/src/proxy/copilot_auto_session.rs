@@ -40,9 +40,7 @@ pub struct AutoSessionKey {
 pub struct AutoSessionSnapshot {
     pub selected_model: String,
     pub session_token: String,
-    pub created_at: Instant,
-    pub expires_at: Option<Instant>,
-    pub credential_generation: u64,
+    expires_at: Instant,
 }
 
 impl std::fmt::Debug for AutoSessionSnapshot {
@@ -50,22 +48,8 @@ impl std::fmt::Debug for AutoSessionSnapshot {
         f.debug_struct("AutoSessionSnapshot")
             .field("selected_model", &self.selected_model)
             .field("session_token", &"[REDACTED]")
-            .field("created_at", &self.created_at)
             .field("expires_at", &self.expires_at)
-            .field("credential_generation", &self.credential_generation)
             .finish()
-    }
-}
-
-impl AutoSessionSnapshot {
-    /// Returns true if this resolution is still valid (not expired)
-    pub fn is_valid(&self) -> bool {
-        if let Some(exp) = self.expires_at {
-            if Instant::now() >= exp {
-                return false;
-            }
-        }
-        true
     }
 }
 
@@ -121,7 +105,7 @@ impl AutoSessionManager {
             if now.duration_since(record.last_accessed) > SESSION_IDLE_TTL {
                 return None;
             }
-            if !record.snapshot.is_valid() {
+            if record.snapshot.expires_at <= now {
                 return None;
             }
             record.last_accessed = now;
@@ -227,15 +211,13 @@ impl AutoSessionManager {
         )
         .await?;
 
-        self.create_snapshot_from_response(key, response)
+        Self::snapshot_from_response(response)
     }
 
     /// /auto 响应 → 会话快照。期限取顶层 `expires_at` 与 session token 可解码 `exp`
     /// 中较早者；两者都不可证（缺失、类型错误、已过期）时报解析错误，不虚构默认期限。
     /// token 的 exp 只是本地期限提示，不代表签名验证。
-    fn create_snapshot_from_response(
-        &self,
-        key: &AutoSessionKey,
+    fn snapshot_from_response(
         response: CopilotAutoResponse,
     ) -> Result<AutoSessionSnapshot, ProxyError> {
         let now = Instant::now();
@@ -246,39 +228,25 @@ impl AutoSessionManager {
                     "Copilot /auto 响应顶层 expires_at 无效: {reason}"
                 ))
             })?;
-        let token_secs = ParsedSessionToken::parse(&response.session_token).and_then(|p| p.exp);
-
-        // 期限是绝对 unix 时间戳：换算成「距现在多久」再叠加到单调时钟上。
+        let token_secs = ParsedSessionToken::parse(&response.session_token)
+            .and_then(|p| p.exp)
+            .and_then(|exp| i64::try_from(exp).ok());
+        let expires_at = top_level_secs
+            .into_iter()
+            .chain(token_secs)
+            .min()
+            .ok_or_else(|| ProxyError::TransformError("Copilot /auto 响应缺少可证期限".into()))?;
         let system_now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        let to_instant = |unix_secs: i64| {
-            now + Duration::from_secs((unix_secs.max(0) as u64).saturating_sub(system_now))
-        };
-
-        let expires_at = match (top_level_secs, token_secs) {
-            (Some(top), Some(token_exp)) => {
-                // 两个期限来源不一致时记录无敏感内容的诊断，取较早者。
-                if top.abs_diff(token_exp as i64) > 60 {
-                    log::warn!(
-                        "[Copilot/Auto] 期限来源冲突: 顶层 expires_at={}s, token exp={}s, 取较早者",
-                        top,
-                        token_exp
-                    );
-                }
-                to_instant(top.min(token_exp as i64))
-            }
-            (Some(top), None) => to_instant(top),
-            (None, Some(token_exp)) => to_instant(token_exp as i64),
-            (None, None) => {
-                return Err(ProxyError::TransformError(
-                    "Copilot /auto 响应缺少可证期限: 顶层 expires_at 与 token exp 均不可用，\
-                     不虚构默认授权时长"
-                        .to_string(),
-                ));
-            }
-        };
+        let expires_at = now
+            .checked_add(Duration::from_secs(
+                (expires_at.max(0) as u64).saturating_sub(system_now),
+            ))
+            .ok_or_else(|| {
+                ProxyError::TransformError("Copilot /auto 响应的授权期限超出范围".into())
+            })?;
 
         if expires_at <= now {
             return Err(ProxyError::TransformError(
@@ -289,9 +257,7 @@ impl AutoSessionManager {
         Ok(AutoSessionSnapshot {
             selected_model: response.selected_model.model_id().to_string(),
             session_token: response.session_token,
-            created_at: now,
-            expires_at: Some(expires_at),
-            credential_generation: key.credential_generation,
+            expires_at,
         })
     }
 
@@ -301,7 +267,8 @@ impl AutoSessionManager {
 
         // Evict expired / idle entries
         sessions.retain(|_, rec| {
-            now.duration_since(rec.last_accessed) <= SESSION_IDLE_TTL && rec.snapshot.is_valid()
+            now.duration_since(rec.last_accessed) <= SESSION_IDLE_TTL
+                && rec.snapshot.expires_at > now
         });
 
         // Evict oldest by last_accessed if capacity exceeded
@@ -376,13 +343,11 @@ mod tests {
         }
     }
 
-    fn dummy_snapshot(model: &str, generation: u64) -> AutoSessionSnapshot {
+    fn dummy_snapshot(model: &str) -> AutoSessionSnapshot {
         AutoSessionSnapshot {
             selected_model: model.to_string(),
             session_token: "mock-session-token".to_string(),
-            created_at: Instant::now(),
-            expires_at: Some(Instant::now() + Duration::from_secs(3600)),
-            credential_generation: generation,
+            expires_at: Instant::now() + Duration::from_secs(3600),
         }
     }
 
@@ -390,7 +355,7 @@ mod tests {
     async fn test_session_manager_insert_and_get() {
         let manager = AutoSessionManager::default();
         let key = dummy_key("session-1", 1);
-        let snapshot = dummy_snapshot("gpt-5.6-luna", 1);
+        let snapshot = dummy_snapshot("gpt-5.6-luna");
 
         manager.insert(key.clone(), snapshot.clone()).await;
 
@@ -409,10 +374,10 @@ mod tests {
         key2.account_id = "user_b".to_string();
 
         manager
-            .insert(key1.clone(), dummy_snapshot("model-a", 1))
+            .insert(key1.clone(), dummy_snapshot("model-a"))
             .await;
         manager
-            .insert(key2.clone(), dummy_snapshot("model-b", 1))
+            .insert(key2.clone(), dummy_snapshot("model-b"))
             .await;
 
         assert_eq!(manager.get(&key1).await.unwrap().selected_model, "model-a");
@@ -432,7 +397,7 @@ mod tests {
         let key_v2 = dummy_key("session-1", 2);
 
         manager
-            .insert(key_v1.clone(), dummy_snapshot("model-v1", 1))
+            .insert(key_v1.clone(), dummy_snapshot("model-v1"))
             .await;
 
         assert!(manager.get(&key_v1).await.is_some());
@@ -443,8 +408,8 @@ mod tests {
     async fn test_session_manager_expired_token() {
         let manager = AutoSessionManager::default();
         let key = dummy_key("session-exp", 1);
-        let mut snapshot = dummy_snapshot("model-1", 1);
-        snapshot.expires_at = Some(Instant::now() - Duration::from_secs(1)); // Expired
+        let mut snapshot = dummy_snapshot("model-1");
+        snapshot.expires_at = Instant::now() - Duration::from_secs(1); // Expired
 
         manager.insert(key.clone(), snapshot).await;
         assert!(manager.get(&key).await.is_none());
@@ -458,7 +423,7 @@ mod tests {
         for i in 0..MAX_CACHED_SESSIONS {
             let key = dummy_key(&format!("session-{i}"), 1);
             manager
-                .insert(key, dummy_snapshot(&format!("model-{i}"), 1))
+                .insert(key, dummy_snapshot(&format!("model-{i}")))
                 .await;
         }
 
@@ -471,7 +436,7 @@ mod tests {
         // Insert session-256 (257th entry)
         let key_new = dummy_key("session-256", 1);
         manager
-            .insert(key_new.clone(), dummy_snapshot("model-256", 1))
+            .insert(key_new.clone(), dummy_snapshot("model-256"))
             .await;
 
         // Total should stay capped at 256
@@ -485,9 +450,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_past_expiration_token_rejected_immediately() {
-        let manager = AutoSessionManager::default();
-        let key = dummy_key("session-past-exp", 1);
-
         // JWT with exp in 2020 (UNIX: 1577836800)
         let token = "eyJhbGciOiJFUzI1NiJ9.eyJleHAiOjE1Nzc4MzY4MDAsImF1dG9fc2Vzc2lvbl9pZCI6IjEyMyIsImF1dG9fdGllciI6ImJhbGFuY2UiLCJleGVjdXRpb25fbW9kZSI6ImZ1c2lvbiJ9.sig";
         let auto_resp = CopilotAutoResponse {
@@ -498,7 +460,7 @@ mod tests {
             expires_at: None,
         };
 
-        let result = manager.create_snapshot_from_response(&key, auto_resp);
+        let result = AutoSessionManager::snapshot_from_response(auto_resp);
         assert!(
             matches!(result, Err(ProxyError::TransformError(_))),
             "an already-expired resolution must be rejected, got {result:?}"
@@ -508,9 +470,6 @@ mod tests {
     #[tokio::test]
     async fn test_snapshot_expiry_takes_earlier_of_top_level_and_token_exp() {
         use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-
-        let manager = AutoSessionManager::default();
-        let key = dummy_key("session-expiry-min", 1);
 
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -531,12 +490,9 @@ mod tests {
             expires_at: Some(serde_json::json!(top_level)),
         };
 
-        let snapshot = manager
-            .create_snapshot_from_response(&key, auto_resp)
-            .expect("valid expiry");
+        let snapshot = AutoSessionManager::snapshot_from_response(auto_resp).expect("valid expiry");
         let remaining = snapshot
             .expires_at
-            .unwrap()
             .saturating_duration_since(Instant::now());
         assert!(
             remaining > Duration::from_secs(3500) && remaining <= Duration::from_secs(3600),
@@ -546,9 +502,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_snapshot_without_provable_expiry_is_rejected() {
-        let manager = AutoSessionManager::default();
-        let key = dummy_key("session-no-expiry", 1);
-
         // Neither top-level expires_at nor a decodable token exp: the previous
         // implementation fabricated a 24h grant; that fallback must stay gone.
         let auto_resp = CopilotAutoResponse {
@@ -559,7 +512,7 @@ mod tests {
             expires_at: None,
         };
 
-        let result = manager.create_snapshot_from_response(&key, auto_resp);
+        let result = AutoSessionManager::snapshot_from_response(auto_resp);
         assert!(
             matches!(result, Err(ProxyError::TransformError(_))),
             "unprovable expiry must fail resolution instead of defaulting to 24h"
@@ -568,9 +521,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_snapshot_with_unparseable_top_level_expiry_is_rejected() {
-        let manager = AutoSessionManager::default();
-        let key = dummy_key("session-bad-expiry", 1);
-
         let auto_resp = CopilotAutoResponse {
             session_token: "not-a-jwt".to_string(),
             selected_model: crate::proxy::providers::copilot_auto::SelectedModelPayload::String(
@@ -579,7 +529,7 @@ mod tests {
             expires_at: Some(serde_json::json!({"deadline": "soon"})),
         };
 
-        let result = manager.create_snapshot_from_response(&key, auto_resp);
+        let result = AutoSessionManager::snapshot_from_response(auto_resp);
         assert!(
             matches!(result, Err(ProxyError::TransformError(_))),
             "a malformed expires_at must fail resolution, not fall back"
@@ -591,10 +541,10 @@ mod tests {
         let manager = AutoSessionManager::default();
         let key = dummy_key("session-concurrent", 1);
 
-        let mut old_snapshot = dummy_snapshot("gpt-5.6-luna", 1);
+        let mut old_snapshot = dummy_snapshot("gpt-5.6-luna");
         old_snapshot.session_token = "token-v1".to_string();
 
-        let mut new_snapshot = dummy_snapshot("gpt-5.6-luna", 1);
+        let mut new_snapshot = dummy_snapshot("gpt-5.6-luna");
         new_snapshot.session_token = "token-v2".to_string();
 
         // 1. Initial state has token-v1

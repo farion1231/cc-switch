@@ -101,7 +101,7 @@ pub enum ProxyResponse {
     },
     WithSuccessTerminalHook {
         response: Box<ProxyResponse>,
-        hook: Option<SuccessTerminalHook>,
+        hook: SuccessTerminalHook,
     },
 }
 
@@ -129,15 +129,15 @@ impl ProxyResponse {
     pub fn with_success_terminal_hook(self, hook: SuccessTerminalHook) -> Self {
         Self::WithSuccessTerminalHook {
             response: Box::new(self),
-            hook: Some(hook),
+            hook,
         }
     }
 
     /// Remove the optional semantic completion callback before a response is
-    /// consumed by a converter. Wrapping an already wrapped response is safe.
+    /// consumed by a converter.
     pub fn take_success_terminal_hook(self) -> (Self, Option<SuccessTerminalHook>) {
         match self {
-            Self::WithSuccessTerminalHook { response, hook } => (*response, hook),
+            Self::WithSuccessTerminalHook { response, hook } => (*response, Some(hook)),
             response => (response, None),
         }
     }

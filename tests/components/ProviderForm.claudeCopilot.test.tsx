@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
@@ -139,12 +145,25 @@ describe("Claude Copilot provider form", () => {
         // 让高级区在挂载时自动展开（hasAnyAdvancedValue）。
         customUserAgent: "claude-copilot-test/1.0",
       },
-      { ANTHROPIC_MODEL: "copilot-fusion-auto" },
+      {
+        ANTHROPIC_MODEL: "copilot-fusion-auto",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "copilot-fusion-auto",
+      },
     );
 
     expect(
       await screen.findByRole("textbox", { name: "默认兜底模型" }),
     ).toHaveDisplayValue("copilot-fusion-auto");
+
+    for (const id of ["claudeModel", "claudeDefaultSonnetModel"]) {
+      const input = document.getElementById(id);
+      expect(input).toHaveValue("copilot-fusion-auto");
+      expect(
+        within(input!.closest<HTMLElement>(".grid")!).getByRole("checkbox", {
+          name: "1M",
+        }),
+      ).toBeDisabled();
+    }
 
     fireEvent.click(screen.getByRole("button", { name: "save" }));
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));

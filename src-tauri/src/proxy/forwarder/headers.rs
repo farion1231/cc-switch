@@ -295,8 +295,6 @@ pub(super) fn is_protected_local_proxy_override_header(name: &http::HeaderName) 
             | "chatgpt-account-id"
             | "session_id"
             | "copilot-session-token"
-            | "session-token"
-            | "session_token"
             | "x-client-request-id"
             | "x-codex-window-id"
             | "x-forwarded-host"
@@ -420,23 +418,11 @@ impl OutboundHeaderPlan<'_> {
         let mut saw_user_agent = false;
         let mut saw_anthropic_beta = false;
         let mut saw_anthropic_version = false;
-        let mut saw_copilot_auto_session_token = false;
 
         for (key, value) in headers {
             let key_str = key.as_str();
 
-            if matches!(
-                key_str,
-                "copilot-session-token" | "session-token" | "session_token"
-            ) {
-                if !saw_copilot_auto_session_token {
-                    if let Some(token) = &self.copilot_auto_session_token {
-                        if let Ok(name) = http::HeaderName::from_bytes(key.as_str().as_bytes()) {
-                            ordered_headers.append(name, token.clone());
-                        }
-                    }
-                    saw_copilot_auto_session_token = true;
-                }
+            if self.is_copilot && key_str == "copilot-session-token" {
                 continue;
             }
 
@@ -619,10 +605,8 @@ impl OutboundHeaderPlan<'_> {
             ordered_headers.append(key.clone(), value.clone());
         }
 
-        if !saw_copilot_auto_session_token {
-            if let Some(token) = self.copilot_auto_session_token {
-                ordered_headers.insert("copilot-session-token", token);
-            }
+        if let Some(token) = self.copilot_auto_session_token {
+            ordered_headers.insert("copilot-session-token", token);
         }
 
         // 如果原始请求中没有认证头，在末尾追加

@@ -43,7 +43,10 @@ import {
   copilotGetModelsForAccount,
 } from "@/lib/api/copilot";
 import type { CopilotModel } from "@/lib/api/copilot";
-import { copilotFetchedModels as buildCopilotFetchedModels } from "@/lib/copilot-model-options";
+import {
+  COPILOT_AUTO_MODEL_ID,
+  copilotFetchedModels as buildCopilotFetchedModels,
+} from "@/lib/copilot-model-options";
 import {
   fetchCodexOauthModels,
   fetchXaiOauthModels,
@@ -733,9 +736,14 @@ export function ClaudeFormFields({
     handleRoleModelChange(row, setClaudeOneMMarker(row.model, enabled));
   };
 
+  const isCopilotAuto = (model: string) =>
+    isCopilotPreset &&
+    stripClaudeOneMMarker(model).trim() === COPILOT_AUTO_MODEL_ID;
   // Copilot 取到模型列表后才知道哪些模型有 1M 版本；没有的不让勾，已勾的提示取消。
   const copilotLacksOneM = (model: string) =>
-    isCopilotPreset && copilotOneMAvailable(model, copilotModels) === false;
+    isCopilotPreset &&
+    (isCopilotAuto(model) ||
+      copilotOneMAvailable(model, copilotModels) === false);
   // 兜底模型常和某一档相同，去重后再列。
   const copilotOneMMismatches = [
     ...new Set(
@@ -1339,7 +1347,10 @@ export function ClaudeFormFields({
                       (value) =>
                         handleRoleModelChange(
                           row,
-                          setClaudeOneMMarker(value, usesOneM),
+                          setClaudeOneMMarker(
+                            value,
+                            usesOneM && !isCopilotAuto(value),
+                          ),
                         ),
                     )}
                     <label
@@ -1400,7 +1411,10 @@ export function ClaudeFormFields({
                   (value) =>
                     onModelChange(
                       "ANTHROPIC_MODEL",
-                      setClaudeOneMMarker(value, fallbackUsesOneM),
+                      setClaudeOneMMarker(
+                        value,
+                        fallbackUsesOneM && !isCopilotAuto(value),
+                      ),
                     ),
                 )}
                 <label
@@ -1411,11 +1425,7 @@ export function ClaudeFormFields({
                 >
                   <Checkbox
                     checked={fallbackUsesOneM}
-                    disabled={
-                      fallbackOneMBlocked ||
-                      stripClaudeOneMMarker(claudeModel).trim() ===
-                        "copilot-fusion-auto"
-                    }
+                    disabled={fallbackOneMBlocked}
                     onCheckedChange={(checked) => {
                       const base = stripClaudeOneMMarker(claudeModel).trim();
                       if (!base) return;

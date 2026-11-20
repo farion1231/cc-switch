@@ -2368,11 +2368,10 @@ fn order_anthropic_web_search_result_stream(
 ///
 /// 状态机跟踪: message_id, current_model, has_sent_message_start, item/content index map
 /// SSE 解析支持 named events (event: + data: 行)
-#[cfg(test)]
 pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 'static>(
     stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
-    create_anthropic_sse_stream_from_responses_with_terminal_hook(stream, None, None, None)
+    create_anthropic_sse_stream_from_responses_with_web_search_options(stream, None, None)
 }
 
 pub(crate) fn create_anthropic_sse_stream_from_responses_with_web_search_options<
@@ -2381,22 +2380,6 @@ pub(crate) fn create_anthropic_sse_stream_from_responses_with_web_search_options
     stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
     hosted_web_search_name: Option<String>,
     max_web_search_uses: Option<u64>,
-) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
-    create_anthropic_sse_stream_from_responses_with_terminal_hook(
-        stream,
-        hosted_web_search_name,
-        max_web_search_uses,
-        None,
-    )
-}
-
-pub(crate) fn create_anthropic_sse_stream_from_responses_with_terminal_hook<
-    E: std::error::Error + Send + 'static,
->(
-    stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
-    hosted_web_search_name: Option<String>,
-    max_web_search_uses: Option<u64>,
-    terminal_hook: Option<crate::proxy::hyper_client::SuccessTerminalHook>,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     let can_preserve_web_search_citations = hosted_web_search_name
         .as_deref()
@@ -2409,7 +2392,6 @@ pub(crate) fn create_anthropic_sse_stream_from_responses_with_terminal_hook<
         hosted_web_search_name.clone(),
         max_web_search_uses,
         can_preserve_web_search_citations,
-        terminal_hook,
     );
     order_anthropic_web_search_result_stream(raw_stream, hosted_web_search_name)
 }
@@ -2419,7 +2401,6 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
     hosted_web_search_name: String,
     max_web_search_uses: Option<u64>,
     can_preserve_web_search_citations: bool,
-    mut terminal_hook: Option<crate::proxy::hyper_client::SuccessTerminalHook>,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
         let mut sse = SseBuffer::new();
@@ -2457,7 +2438,6 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
         let mut reasoning_text_by_index: HashMap<u32, String> = HashMap::new();
         let mut legacy_reasoning_index: Option<u32> = None;
         let mut has_substantive_output = false;
-        let mut has_summary_text = false;
         let mut terminated = false;
 
         // Append an EOF sentinel so the same parser handles a final SSE event that
@@ -2491,9 +2471,6 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                     if looks_like_json && is_eof {
                         match serde_json::from_str::<Value>(sse.pending().trim()) {
                             Ok(body) => {
-                                if response_successful_for_summary_hook(&body) {
-                                    if let Some(hook) = terminal_hook.take() { hook().await; }
-                                }
                                 for event in responses_json_to_anthropic_sse(
                                     body,
                                     Some(hosted_web_search_name.as_str()),
@@ -2720,7 +2697,6 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                             // ================================================
                             "response.output_text.delta" => {
                                 if let Some(delta) = data.get("delta").and_then(|d| d.as_str()) {
-                                    has_summary_text |= !delta.trim().is_empty();
                                     if preserve_web_search_citations {
                                         buffered_citation_text.record_delta(&data, delta);
                                         if current_text_index.is_none() {
@@ -3582,9 +3558,6 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                                             "completed"
                                         });
                                     }
-                                    if response_successful_for_summary_hook(&terminal_body) {
-                                        if let Some(hook) = terminal_hook.take() { hook().await; }
-                                    }
                                     for event in responses_json_to_anthropic_sse(
                                         terminal_body,
                                         Some(hosted_web_search_name.as_str()),
@@ -4077,22 +4050,6 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                                 log::debug!("[Claude/Responses] >>> Anthropic SSE: message_delta");
                                 yield Ok(Bytes::from(sse));
 
-                                if terminal_status == Some("completed")
-                                    && stop_reason == Some("end_turn")
-                                    && !has_tool_use
-                                    && (has_summary_text
-                                        || response_obj
-                                            .get("output")
-                                            .and_then(Value::as_array)
-                                            .is_some_and(|items| {
-                                                !crate::proxy::providers::codex_compaction::summary_from_output_items(items)
-                                                    .trim()
-                                                    .is_empty()
-                                            }))
-                                {
-                                    if let Some(hook) = terminal_hook.take() { hook().await; }
-                                }
-
                                 // Emit message_stop
                                 let stop_event = json!({"type": "message_stop"});
                                 let stop_sse = format!("event: message_stop\ndata: {}\n\n",
@@ -4122,10 +4079,6 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                             // Lifecycle events that don't need Anthropic counterparts.
                             // Listed explicitly so new events trigger a match-completeness review.
                             "response.output_text.done" => {
-                                has_summary_text |= data
-                                    .get("text")
-                                    .and_then(Value::as_str)
-                                    .is_some_and(|text| !text.trim().is_empty());
                                 if preserve_web_search_citations {
                                     buffered_citation_text.record_done_event(&data);
                                     continue;
@@ -4151,13 +4104,6 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                                     continue;
                                 };
                                 let item_type = item.get("type").and_then(Value::as_str);
-                                if item_type == Some("message")
-                                    && !crate::proxy::providers::codex_compaction::summary_from_output_items(
-                                        std::slice::from_ref(item),
-                                    ).trim().is_empty()
-                                {
-                                    has_summary_text = true;
-                                }
                                 if can_preserve_web_search_citations
                                     && item_type == Some("web_search_call")
                                 {
@@ -4761,22 +4707,6 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
     }
 }
 
-fn response_successful_for_summary_hook(response: &Value) -> bool {
-    response.get("status").and_then(Value::as_str) == Some("completed")
-        && response.get("error").is_none_or(Value::is_null)
-        && response
-            .get("output")
-            .and_then(Value::as_array)
-            .is_some_and(|items| {
-                !items
-                    .iter()
-                    .any(|item| item.get("type").and_then(Value::as_str) == Some("function_call"))
-                    && !crate::proxy::providers::codex_compaction::summary_from_output_items(items)
-                        .trim()
-                        .is_empty()
-            })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4844,7 +4774,6 @@ mod tests {
             "web_search".to_string(),
             None,
             true,
-            None,
         )
         .collect::<Vec<_>>()
         .await
