@@ -58,7 +58,7 @@ mod tests {
     use super::*;
     use crate::database::Database;
     use crate::proxy::server::ProxyServer;
-    use crate::proxy::ProxyConfig;
+    use crate::proxy::types::ProxyConfig;
     use std::sync::Arc;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;

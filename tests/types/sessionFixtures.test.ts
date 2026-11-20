@@ -163,6 +163,7 @@ const EVENT_KINDS = allOf<EventKind>()([
   "info",
   "error",
   "sub_agent",
+  "goal",
   "other",
 ] as const);
 const BLOCK_TYPES = allOf<SessionBlock["type"]>()([

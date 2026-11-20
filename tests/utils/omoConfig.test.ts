@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   buildOmoProfilePreview,
-  buildOmoSlimProfilePreview,
   OMO_SLIM_BUILTIN_AGENTS,
   OMO_SLIM_DISABLEABLE_AGENTS,
   parseOmoOtherFieldsObject,
@@ -32,13 +31,15 @@ describe("buildOmoProfilePreview", () => {
   });
 });
 
-describe("buildOmoSlimProfilePreview", () => {
+describe("buildOmoProfilePreview (slim)", () => {
   it("保留 top-level council 配置，同时写入 council agent 模型", () => {
-    const preview = buildOmoSlimProfilePreview(
+    const preview = buildOmoProfilePreview(
       {
         council: { model: "openai/gpt-5.4-mini" },
       },
+      undefined,
       '{ "council": { "default_preset": "default" }, "fallback": { "enabled": true } }',
+      { slim: true },
     );
 
     expect(preview).toEqual({
