@@ -279,7 +279,7 @@ describe("Skills install and import mutation hooks", () => {
       void mutation.catch(() => undefined);
     });
 
-    await waitFor(() => expect(invalidateSpy).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(invalidateSpy).toHaveBeenCalledTimes(3));
     expect(result.current.isPending).toBe(true);
     expect(invalidateSpy).toHaveBeenCalledWith({
       queryKey: ["skills", "installed"],

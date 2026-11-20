@@ -170,7 +170,9 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [reconciliationOpen, setReconciliationOpen] = useState(false);
-  const [reconciliationDismissed, setReconciliationDismissed] = useState(false);
+  const [dismissedReconciliation, setDismissedReconciliation] = useState<
+    string | null
+  >(null);
   const [restoreOpen, setRestoreOpen] = useState(false);
   const [storageOpen, setStorageOpen] = useState(false);
   const [repoManagerOpen, setRepoManagerOpen] = useState(false);
@@ -244,6 +246,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
   const dialogOpen =
     importOpen ||
     reconciliationOpen ||
+    storageOpen ||
     restoreOpen ||
     confirm !== null ||
     repoManagerOpen;
@@ -260,16 +263,6 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
   useEffect(() => {
     onNavigationBlockedChange?.(navigationBlocked);
   }, [navigationBlocked, onNavigationBlockedChange]);
-
-  useEffect(() => {
-    if (
-      !reconciliationDismissed &&
-      !reconciliationOpen &&
-      (reconciliationQuery.data?.length ?? 0) > 0
-    ) {
-      setReconciliationOpen(true);
-    }
-  }, [reconciliationDismissed, reconciliationOpen, reconciliationQuery.data]);
 
   useEffect(
     () => () => {
@@ -764,17 +757,17 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
   const handleReconciliation = async (
     candidates: Array<{ app: string; directory: string }>,
   ) => {
+    if (candidates.length === 0 || !beginWrite(true)) return;
     try {
-      for (const candidate of candidates) {
-        await reconciliationMutation.mutateAsync(candidate);
-      }
+      await reconciliationMutation.mutateAsync(candidates);
       setReconciliationOpen(false);
-      setReconciliationDismissed(true);
       toast.success(t("skillsPage.reconciliation.success"), {
         closeButton: true,
       });
     } catch (error) {
       toast.error(t("common.error"), { description: String(error) });
+    } finally {
+      endWrite();
     }
   };
 
@@ -1412,7 +1405,16 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     nUnmanaged > 0 && dismissedUnmanaged !== nUnmanaged && nInstalled > 0;
   const showUpdateRepoFailBanner =
     updateRepoFailures.length > 0 && dismissedRepoFailAt !== updatesCheckedAt;
-  const showNotices = showUnmanagedBanner || showUpdateRepoFailBanner;
+  const reconciliationSignature = JSON.stringify(
+    (reconciliationQuery.data ?? [])
+      .map(({ app, directory }) => `${app}:${directory}`)
+      .sort(),
+  );
+  const showReconciliationBanner =
+    (reconciliationQuery.data?.length ?? 0) > 0 &&
+    dismissedReconciliation !== reconciliationSignature;
+  const showNotices =
+    showUnmanagedBanner || showUpdateRepoFailBanner || showReconciliationBanner;
   const showInstalledToolbar = loadOk && nInstalled > 0;
 
   const uninstallTargets =
@@ -1678,6 +1680,28 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
                 {t("skillsPage.repoFail.updatesBody")}
               </Notice>
             )}
+            {showReconciliationBanner && (
+              <Notice
+                title={t("skillsPage.reconciliation.title")}
+                actions={
+                  <Button
+                    type="button"
+                    variant="quiet"
+                    size="compact"
+                    disabled={controlsDisabled || interactionBlocked}
+                    onClick={() => {
+                      if (!interactionBlocked) setReconciliationOpen(true);
+                    }}
+                  >
+                    {t("common.view")}
+                  </Button>
+                }
+                onDismiss={() =>
+                  setDismissedReconciliation(reconciliationSignature)
+                }
+                dismissLabel={t("skillsPage.banner.close")}
+              />
+            )}
             {showUnmanagedBanner && (
               <Notice
                 title={t("skillsPage.banner.unmanaged", {
@@ -1816,11 +1840,10 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
       {reconciliationOpen && reconciliationQuery.data && (
         <SkillReconciliationDialog
           candidates={reconciliationQuery.data}
-          isRemoving={reconciliationMutation.isPending}
+          isRemoving={reconciliationMutation.isPending || writePending}
           onRemove={(directories) => void handleReconciliation(directories)}
           onClose={() => {
             setReconciliationOpen(false);
-            setReconciliationDismissed(true);
           }}
         />
       )}

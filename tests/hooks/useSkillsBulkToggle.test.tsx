@@ -74,7 +74,10 @@ describe("Skills management mutation hooks", () => {
     });
 
     await waitFor(() => expect(toggleAppMock).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(invalidateSpy).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(invalidateSpy).toHaveBeenCalledTimes(2));
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: ["skills", "reconciliation"],
+    });
     expect(result.current.isPending).toBe(true);
 
     releaseInvalidation?.();
@@ -147,12 +150,15 @@ describe("Skills management mutation hooks", () => {
       });
     });
 
-    await waitFor(() => expect(invalidateSpy).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(invalidateSpy).toHaveBeenCalledTimes(3));
     expect(invalidateSpy).toHaveBeenCalledWith({
       queryKey: ["skills", "installed"],
     });
     expect(invalidateSpy).toHaveBeenCalledWith({
       queryKey: ["skills", "backups"],
+    });
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: ["skills", "reconciliation"],
     });
     expect(result.current.isPending).toBe(true);
 
@@ -188,7 +194,10 @@ describe("Skills management mutation hooks", () => {
       void mutation.catch(() => undefined);
     });
 
-    await waitFor(() => expect(invalidateSpy).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(invalidateSpy).toHaveBeenCalledTimes(3));
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: ["skills", "reconciliation"],
+    });
     expect(result.current.isPending).toBe(true);
     expect(invalidateSpy).toHaveBeenCalledWith({
       queryKey: ["skills", "installed"],
@@ -257,7 +266,10 @@ describe("Skills management mutation hooks", () => {
       void mutation.catch(() => undefined);
     });
 
-    await waitFor(() => expect(invalidateSpy).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(invalidateSpy).toHaveBeenCalledTimes(3));
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: ["skills", "reconciliation"],
+    });
     expect(result.current.isPending).toBe(true);
     expect(invalidateSpy).toHaveBeenCalledWith({
       queryKey: ["skills", "backups"],
@@ -295,7 +307,10 @@ describe("Skills management mutation hooks", () => {
       void mutation.catch(() => undefined);
     });
 
-    await waitFor(() => expect(invalidateSpy).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(invalidateSpy).toHaveBeenCalledTimes(2));
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: ["skills", "reconciliation"],
+    });
     expect(result.current.isPending).toBe(true);
     expect(invalidateSpy).toHaveBeenCalledWith({
       queryKey: ["skills", "backups"],
