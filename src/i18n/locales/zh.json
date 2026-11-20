@@ -5403,5 +5403,35 @@
     "installFailed": "安装更新失败",
     "downloadingInline": "正在后台下载新版本…",
     "downloadedInline": "已下载完毕"
+  },
+  "desktopMigration": {
+    "source": "来源账号 / 配置",
+    "target": "目标账号 / 配置",
+    "chooseProfile": "选择已有配置",
+    "lastKnown": "上次登录账号",
+    "profileHint": "账号和组织分别列出。“上次登录”标记不代表当前正在运行的配置。",
+    "empty": "未找到已保存的 Desktop 配置。先用目标账号打开 Claude Desktop，再刷新。",
+    "preview": "预览恢复",
+    "apply": "执行恢复",
+    "verifyHint": "文件回读校验成功。请用目标配置重新打开 Desktop，检查记录是否可见、可用；CC Switch 未启动会话或任务。",
+    "selected": "已选 {{count}} 项",
+    "disposition": {
+      "ready": "可复制",
+      "exists": "已存在，保留目标记录"
+    },
+    "showArchived": "包含已归档历史",
+    "active": "活跃",
+    "archived": "已归档",
+    "noSessions": "没有符合筛选条件的历史记录。",
+    "problem": {
+      "deleted": "已删除，排除",
+      "unverified": "无法确认记录状态",
+      "targetArchived": "目标存在归档标记"
+    },
+    "title": "迁移 Desktop 会话",
+    "description": "将选中的 Claude Desktop 记录复制到本机另一个已有账号或配置。",
+    "applyHint": "执行前请退出 Claude Desktop。保留目标中的已有记录，不改动来源记录，归档会话保持归档状态。",
+    "receipt": "已复制 {{sessions}} 条会话记录，跳过 {{skipped}} 条已有记录。",
+    "transcriptHint": "此操作复制 Desktop 元数据，不会恢复缺失的对话文件或项目目录。"
   }
 }

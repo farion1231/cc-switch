@@ -5403,5 +5403,35 @@
     "installFailed": "アップデートのインストールに失敗しました",
     "downloadingInline": "新しいバージョンをバックグラウンドでダウンロード中…",
     "downloadedInline": "ダウンロード完了"
+  },
+  "desktopMigration": {
+    "source": "移行元のアカウント / プロファイル",
+    "target": "移行先のアカウント / プロファイル",
+    "chooseProfile": "既存のプロファイルを選択",
+    "lastKnown": "最後にログインしたアカウント",
+    "profileHint": "アカウントと組織は別々に表示されます。最終ログインの表示は実行中のプロファイルを示すものではありません。",
+    "empty": "保存済みの Desktop プロファイルがありません。対象アカウントで Claude Desktop を開いてから更新してください。",
+    "preview": "復元内容を確認",
+    "apply": "復元を適用",
+    "verifyHint": "ファイルの読み戻しを確認しました。移行先のプロファイルで Desktop を開き、表示と利用可否を確認してください。CC Switch は会話やタスクを起動していません。",
+    "selected": "{{count}} 件選択",
+    "disposition": {
+      "ready": "コピー可能",
+      "exists": "既存の移行先項目を維持"
+    },
+    "showArchived": "アーカイブ済みの履歴を含める",
+    "active": "有効",
+    "archived": "アーカイブ済み",
+    "noSessions": "このフィルターに一致する履歴はありません。",
+    "problem": {
+      "deleted": "削除済みのため対象外",
+      "unverified": "記録の状態を確認できません",
+      "targetArchived": "移行先にアーカイブ済みの記録があります"
+    },
+    "title": "Desktop の会話を移行",
+    "description": "選択した Claude Desktop の記録を、この Mac の別の既存アカウントまたはプロファイルにコピーします。",
+    "applyHint": "実行前に Claude Desktop を終了してください。移行先の既存記録と移行元は変更せず、アーカイブ状態を保持します。",
+    "receipt": "会話記録を {{sessions}} 件コピーし、既存の {{skipped}} 件をスキップしました。",
+    "transcriptHint": "Desktop のメタデータをコピーします。欠落した会話ファイルやプロジェクトフォルダは復元されません。"
   }
 }

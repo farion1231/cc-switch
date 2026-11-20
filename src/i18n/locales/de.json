@@ -5403,5 +5403,35 @@
     "installFailed": "Update-Installation fehlgeschlagen",
     "downloadingInline": "Neue Version wird im Hintergrund heruntergeladen…",
     "downloadedInline": "Heruntergeladen"
+  },
+  "desktopMigration": {
+    "source": "Quellkonto / Profil",
+    "target": "Zielkonto / Profil",
+    "chooseProfile": "Vorhandenes Profil auswählen",
+    "lastKnown": "zuletzt angemeldetes Konto",
+    "profileHint": "Konten und Organisationen bleiben getrennt. Der letzte Anmeldehinweis kennzeichnet kein laufendes Profil.",
+    "empty": "Keine gespeicherten Desktop-Profile gefunden. Claude Desktop zuerst mit dem gewünschten Konto öffnen, dann aktualisieren.",
+    "preview": "Wiederherstellung prüfen",
+    "apply": "Wiederherstellen",
+    "verifyHint": "Die Dateien wurden erfolgreich zurückgelesen. Desktop mit dem Zielprofil öffnen und Sichtbarkeit sowie Verfügbarkeit prüfen. CC Switch hat keine Sitzung oder Aufgabe gestartet.",
+    "selected": "{{count}} ausgewählt",
+    "disposition": {
+      "ready": "Bereit zum Kopieren",
+      "exists": "Bereits vorhanden; Ziel beibehalten"
+    },
+    "showArchived": "Archivierten Verlauf einschließen",
+    "active": "Aktiv",
+    "archived": "Archiviert",
+    "noSessions": "Kein Verlauf für diesen Filter.",
+    "problem": {
+      "deleted": "Gelöscht; ausgeschlossen",
+      "unverified": "Zustand nicht überprüfbar",
+      "targetArchived": "Ziel hat eine Archivmarkierung"
+    },
+    "title": "Desktop-Sitzungen migrieren",
+    "description": "Ausgewählte Claude-Desktop-Einträge in ein anderes vorhandenes Konto oder Profil auf diesem Mac kopieren.",
+    "applyHint": "Beenden Sie Claude Desktop vor der Ausführung. Bestehende Zieleinträge und Quelldaten bleiben unverändert; archivierte Sitzungen bleiben archiviert.",
+    "receipt": "{{sessions}} Sitzungseinträge kopiert; {{skipped}} vorhandene Einträge übersprungen.",
+    "transcriptHint": "Kopiert Desktop-Metadaten. Fehlende Gesprächsdateien und Projektordner werden nicht wiederhergestellt."
   }
 }

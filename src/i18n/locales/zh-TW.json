@@ -5403,5 +5403,35 @@
     "installFailed": "安裝更新失敗",
     "downloadingInline": "正在背景下載新版本…",
     "downloadedInline": "已下載完畢"
+  },
+  "desktopMigration": {
+    "source": "來源帳號 / 設定檔",
+    "target": "目的帳號 / 設定檔",
+    "chooseProfile": "選擇現有設定檔",
+    "lastKnown": "上次登入的帳號",
+    "profileHint": "帳號與組織分別列出。「上次登入」標記不代表目前正在執行的設定檔。",
+    "empty": "找不到已儲存的 Desktop 設定檔。請先以目標帳號開啟 Claude Desktop，再重新整理。",
+    "preview": "預覽復原",
+    "apply": "套用復原",
+    "verifyHint": "檔案回讀驗證成功。請以目標設定檔重新開啟 Desktop，檢查紀錄是否可見、可用；CC Switch 未啟動會話或任務。",
+    "selected": "已選取 {{count}} 項",
+    "disposition": {
+      "ready": "可複製",
+      "exists": "已存在，保留目的地紀錄"
+    },
+    "showArchived": "包含已封存歷史",
+    "active": "使用中",
+    "archived": "已封存",
+    "noSessions": "沒有符合篩選條件的歷史紀錄。",
+    "problem": {
+      "deleted": "已刪除，排除",
+      "unverified": "無法確認紀錄狀態",
+      "targetArchived": "目的地有封存標記"
+    },
+    "title": "遷移 Desktop 對話",
+    "description": "將選取的 Claude Desktop 記錄複製到本機另一個現有帳號或設定檔。",
+    "applyHint": "執行前請結束 Claude Desktop。保留目標的現有記錄，不變更來源記錄，封存對話維持封存狀態。",
+    "receipt": "已複製 {{sessions}} 筆對話記錄，略過 {{skipped}} 筆現有記錄。",
+    "transcriptHint": "此操作複製 Desktop 中繼資料，不會還原遺失的對話檔案或專案目錄。"
   }
 }
