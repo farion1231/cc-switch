@@ -591,7 +591,21 @@ const PiPromptPanel: React.FC<PiPromptPanelProps> = ({
             editingGlobal ? globalPromptApps(editingGlobal) : undefined
           }
           editingId={editingId ?? undefined}
-          initialData={editingId ? prompts[editingId] : undefined}
+          initialData={
+            editingId
+              ? editingGlobal
+                ? {
+                    id: editingId,
+                    name: editingGlobal.name,
+                    content: editingGlobal.content,
+                    description: editingGlobal.description,
+                    enabled: prompts[editingId]?.enabled ?? false,
+                    createdAt: editingGlobal.createdAt,
+                    updatedAt: editingGlobal.updatedAt,
+                  }
+                : prompts[editingId]
+              : undefined
+          }
           onSave={handleSave}
           onClose={() => setIsFormOpen(false)}
         />

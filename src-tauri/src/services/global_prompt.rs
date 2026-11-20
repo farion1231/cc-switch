@@ -71,10 +71,8 @@ fn ensure_supported(app: &AppType) -> Result<(), AppError> {
     }
 }
 
-fn lock() -> Result<std::sync::MutexGuard<'static, ()>, AppError> {
-    GLOBAL_PROMPT_LOCK
-        .lock()
-        .map_err(|error| AppError::Message(error.to_string()))
+fn lock() -> std::sync::MutexGuard<'static, ()> {
+    crate::sync_utils::lock_file_operation(&GLOBAL_PROMPT_LOCK)
 }
 
 fn now() -> i64 {
@@ -90,7 +88,7 @@ fn app_prompts(state: &AppState, app: &AppType) -> Result<IndexMap<String, Promp
     if matches!(app, AppType::Pi) {
         PromptService::get_prompts(state, AppType::Pi)
     } else {
-        state.db.get_prompts(app.as_str())
+        state.db.get_prompts(app)
     }
 }
 
@@ -188,7 +186,7 @@ impl GlobalPromptService {
         state: &AppState,
         mut prompt: GlobalPrompt,
     ) -> Result<GlobalPromptSaveResult, AppError> {
-        let _guard = lock()?;
+        let _guard = lock();
         if prompt.name.trim().is_empty() {
             return Err(AppError::InvalidInput("提示词名称不能为空".to_string()));
         }
@@ -207,8 +205,14 @@ impl GlobalPromptService {
         let linked_id = linked_prompt_id(&prompt.id);
         let mut links = Vec::new();
         for app in global_prompt_apps() {
-            if state.db.get_prompts(app.as_str())?.contains_key(&linked_id) {
+            let prompts = state.db.get_prompts(&app)?;
+            let Some(linked) = prompts.get(&linked_id) else {
+                continue;
+            };
+            if linked.enabled {
                 validate_prompt_content(&app, &prompt.content)?;
+                links.push(app);
+            } else if validate_prompt_content(&app, &prompt.content).is_ok() {
                 links.push(app);
             }
         }
@@ -235,7 +239,7 @@ impl GlobalPromptService {
     /// 删除全局提示词。还在某个应用里启用时拒绝（和应用自己的列表一致：启用中的不能删）；
     /// 未启用的关联记录随之删除。
     pub fn delete(state: &AppState, id: &str) -> Result<(), AppError> {
-        let _guard = lock()?;
+        let _guard = lock();
         let linked_id = linked_prompt_id(id);
         let mut active_apps = Vec::new();
         for app in global_prompt_apps() {
@@ -275,7 +279,7 @@ impl GlobalPromptService {
         enabled: bool,
     ) -> Result<(), AppError> {
         ensure_supported(&app)?;
-        let _guard = lock()?;
+        let _guard = lock();
         let global = state
             .db
             .get_global_prompt(id)?
@@ -322,7 +326,7 @@ impl GlobalPromptService {
         }
         if let Err(error) = PromptService::enable_prompt(state, app.clone(), &linked_id) {
             if created {
-                if let Err(cleanup) = state.db.delete_prompt(app.as_str(), &linked_id) {
+                if let Err(cleanup) = state.db.delete_prompt(&app, &linked_id) {
                     log::warn!(
                         "启用失败后清理 {} 的关联记录也失败: {cleanup}",
                         app.as_str()
@@ -338,7 +342,7 @@ impl GlobalPromptService {
     /// （启用状态不变），目标文件不动。返回新的全局提示词 id。
     pub fn promote(state: &AppState, app: AppType, id: &str) -> Result<String, AppError> {
         ensure_supported(&app)?;
-        let _guard = lock()?;
+        let _guard = lock();
         if let Some(global_id) = id.strip_prefix(GLOBAL_PROMPT_LINK_PREFIX) {
             if state.db.get_global_prompt(global_id)?.is_some() {
                 return Err(AppError::InvalidInput(
@@ -348,7 +352,7 @@ impl GlobalPromptService {
         }
         let source = state
             .db
-            .get_prompts(app.as_str())?
+            .get_prompts(&app)?
             .shift_remove(id)
             .ok_or_else(|| AppError::InvalidInput(format!("提示词 {id} 不存在")))?;
 
@@ -367,7 +371,7 @@ impl GlobalPromptService {
         };
         state
             .db
-            .promote_prompt_to_global(app.as_str(), id, &linked, &global)?;
+            .promote_prompt_to_global(&app, id, &linked, &global)?;
         repoint_profile_prompts(state, &app, id, &linked.id);
         Ok(global.id)
     }
@@ -535,7 +539,7 @@ mod tests {
         // 停用：清空该应用的文件；关联记录留在列表里（项目快照还能按 id 启用回来）
         GlobalPromptService::set_app_enabled(&state, &id, AppType::Codex, false).expect("off");
         assert_eq!(read(&AppType::Codex), "");
-        let codex = state.db.get_prompts("codex").unwrap();
+        let codex = state.db.get_prompts(&AppType::Codex).unwrap();
         assert!(!codex[&linked_prompt_id(&id)].enabled);
         assert_eq!(read(&AppType::Claude), "shared v2");
         assert_eq!(apps_of(&state, &id), vec!["claude"]);
@@ -545,7 +549,7 @@ mod tests {
         edited.content = "shared v3".to_string();
         GlobalPromptService::upsert(&state, edited).expect("edit again");
         assert_eq!(
-            state.db.get_prompts("codex").unwrap()[&linked_prompt_id(&id)].content,
+            state.db.get_prompts(&AppType::Codex).unwrap()[&linked_prompt_id(&id)].content,
             "shared v3"
         );
         PromptService::enable_prompt(&state, AppType::Codex, &linked_prompt_id(&id)).unwrap();
@@ -562,7 +566,7 @@ mod tests {
         crate::config::write_text_file(&path, "hand written").unwrap();
         state
             .db
-            .save_prompt("claude", &local("mine", "mine body", false))
+            .save_prompt(&AppType::Claude, &local("mine", "mine body", false))
             .unwrap();
 
         let id = GlobalPromptService::upsert(&state, global("g", "shared"))
@@ -573,7 +577,7 @@ mod tests {
         // 文件里原来的内容按旧流程存成了「原始提示词」
         assert!(state
             .db
-            .get_prompts("claude")
+            .get_prompts(&AppType::Claude)
             .unwrap()
             .values()
             .any(|prompt| prompt.content == "hand written" && !prompt.enabled));
@@ -620,14 +624,14 @@ mod tests {
         // 在应用列表里换掉后只剩未启用的关联记录，删除时一并清掉
         state
             .db
-            .save_prompt("claude", &local("other", "other", false))
+            .save_prompt(&AppType::Claude, &local("other", "other", false))
             .unwrap();
         PromptService::enable_prompt(&state, AppType::Claude, "other").unwrap();
         GlobalPromptService::delete(&state, &id).expect("delete");
         assert!(state.db.get_global_prompt(&id).unwrap().is_none());
         assert!(!state
             .db
-            .get_prompts("claude")
+            .get_prompts(&AppType::Claude)
             .unwrap()
             .contains_key(&linked_prompt_id(&id)));
         assert_eq!(read(&AppType::Claude), "other");
@@ -640,7 +644,7 @@ mod tests {
         let state = state();
         state
             .db
-            .save_prompt("claude", &local("team", "team rules", false))
+            .save_prompt(&AppType::Claude, &local("team", "team rules", false))
             .unwrap();
         PromptService::enable_prompt(&state, AppType::Claude, "team").unwrap();
 
@@ -667,7 +671,7 @@ mod tests {
         assert_eq!(repointed.prompts.claude, Some(linked_prompt_id(&id)));
         // 别的应用的同名 id 是另一条提示词，不动
         assert_eq!(repointed.prompts.codex, Some("team".to_string()));
-        let prompts = state.db.get_prompts("claude").unwrap();
+        let prompts = state.db.get_prompts(&AppType::Claude).unwrap();
         assert!(!prompts.contains_key("team"));
         let linked = &prompts[&linked_prompt_id(&id)];
         assert!(linked.enabled);
@@ -694,12 +698,19 @@ mod tests {
 
         let mut huge = state.db.get_global_prompt(&id).unwrap().unwrap();
         huge.content = "a".repeat(32 * 1024 + 1);
-        assert!(GlobalPromptService::upsert(&state, huge).is_err());
+        assert!(GlobalPromptService::upsert(&state, huge.clone()).is_err());
         assert_eq!(
             state.db.get_global_prompt(&id).unwrap().unwrap().content,
             "small"
         );
         assert_eq!(read(&AppType::Mcode), "small");
+
+        // 停用 mcode 后虽然库里仍保留未启用的关联行，但编辑超 32 KiB 应允许保存，直到再次勾选才拦截
+        GlobalPromptService::set_app_enabled(&state, &id, AppType::Mcode, false).unwrap();
+        let result =
+            GlobalPromptService::upsert(&state, huge).expect("disabled mcode does not block");
+        assert!(result.failures.is_empty());
+        assert!(GlobalPromptService::set_app_enabled(&state, &id, AppType::Mcode, true).is_err());
     }
 
     #[test]
@@ -720,7 +731,7 @@ mod tests {
         // Pi 的启用前备份照旧
         assert!(state
             .db
-            .get_prompts("pi")
+            .get_prompts(&AppType::Pi)
             .unwrap()
             .values()
             .any(|prompt| prompt.content == "native pi instructions"));
@@ -765,7 +776,7 @@ mod tests {
         let state = state();
         state
             .db
-            .save_prompt("pi", &local("old", "shared", false))
+            .save_prompt(&AppType::Pi, &local("old", "shared", false))
             .unwrap();
         let id = GlobalPromptService::upsert(&state, global("g", "shared"))
             .unwrap()
@@ -809,17 +820,17 @@ mod tests {
             crate::config::write_text_file(&path, "external local edit").unwrap();
             state
                 .db
-                .save_prompt(app.as_str(), &local("other", "other", false))
+                .save_prompt(&app, &local("other", "other", false))
                 .unwrap();
             PromptService::enable_prompt(&state, app.clone(), "other").unwrap();
             assert_eq!(
-                state.db.get_prompts(app.as_str()).unwrap()[&linked_prompt_id(&id)].content,
+                state.db.get_prompts(&app).unwrap()[&linked_prompt_id(&id)].content,
                 "external local edit"
             );
             PromptService::enable_prompt(&state, app.clone(), &linked_prompt_id(&id)).unwrap();
             assert_eq!(read(&app), "shared");
             assert_eq!(
-                state.db.get_prompts(app.as_str()).unwrap()[&linked_prompt_id(&id)].content,
+                state.db.get_prompts(&app).unwrap()[&linked_prompt_id(&id)].content,
                 "shared"
             );
         }

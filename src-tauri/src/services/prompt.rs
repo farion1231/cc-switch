@@ -486,7 +486,7 @@ fn enable_mcode_prompt(state: &AppState, id: &str, target_path: &Path) -> Result
     crate::mcode_config::write_and_commit(
         target_path,
         || write_text_file(target_path, content),
-        || state.db.save_app_prompts("mcode", &prompts),
+        || state.db.save_app_prompts(&AppType::Mcode, &prompts),
     )
 }
 
@@ -563,7 +563,21 @@ fn upsert_pi_prompt(state: &AppState, id: &str, prompt: Prompt) -> Result<(), Ap
         } else {
             Ok(())
         }
-    })
+    })?;
+    if requested_active {
+        for (other_id, other) in &prompts {
+            if other_id != id && other.enabled {
+                state.db.save_prompt(
+                    &AppType::Pi,
+                    &Prompt {
+                        enabled: false,
+                        ..other.clone()
+                    },
+                )?;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn persist_pi_prompt_with_native_update(
@@ -629,7 +643,7 @@ fn enable_pi_prompt(state: &AppState, id: &str) -> Result<(), AppError> {
     crate::mcode_config::write_and_commit(
         &prompt_file_path(&AppType::Pi)?,
         || guard.replace(&snapshot.revision, &content),
-        || state.db.save_app_prompts(AppType::Pi.as_str(), &prompts),
+        || state.db.save_app_prompts(&AppType::Pi, &prompts),
     )
 }
 
@@ -1059,8 +1073,8 @@ mod pi_prompt_tests {
         let mut target = current.clone();
         target.id = "target".to_string();
         target.content = "new content".to_string();
-        state.db.save_prompt("pi", &current).unwrap();
-        state.db.save_prompt("pi", &target).unwrap();
+        state.db.save_prompt(&AppType::Pi, &current).unwrap();
+        state.db.save_prompt(&AppType::Pi, &target).unwrap();
         PromptService::enable_prompt(&state, AppType::Pi, &current.id).unwrap();
         state
             .db

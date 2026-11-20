@@ -1,11 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { appHas } from "@/config/appSpecs";
-import {
-  promptsApi,
-  type AppId,
-  type GlobalPromptEntry,
-  type Prompt,
-} from "@/lib/api";
+import { promptsApi, type AppId, type GlobalPromptEntry } from "@/lib/api";
 
 /**
  * 提示词查询的 key。提示词页自己的列表走 usePromptActions；写完后 invalidate
@@ -22,20 +16,6 @@ export const promptKeys = {
 export const GLOBAL_PROMPT_SCOPE = "global" as const;
 export type PromptScope = AppId | typeof GLOBAL_PROMPT_SCOPE;
 
-/** 应用页对应的提示词应用；不支持提示词的返回 null。 */
-export function promptAppOf(app: AppId): AppId | null {
-  if (app === "claude-desktop") return "claude";
-  return appHas(app, "prompts") ? app : null;
-}
-
-export function usePromptListQuery(app: AppId | null, enabled = true) {
-  return useQuery({
-    queryKey: promptKeys.list(app ?? "claude"),
-    queryFn: () => promptsApi.getPrompts(app as AppId),
-    enabled: enabled && app !== null,
-  });
-}
-
 export function usePromptFileLocationQuery(app: AppId) {
   return useQuery({
     queryKey: promptKeys.location(app),
@@ -51,11 +31,4 @@ export function useGlobalPromptsQuery(enabled = true) {
     queryFn: () => promptsApi.getGlobalPrompts(),
     enabled,
   });
-}
-
-export function enabledPromptOf(
-  prompts: Record<string, Prompt> | undefined,
-): Prompt | undefined {
-  if (!prompts) return undefined;
-  return Object.values(prompts).find((prompt) => prompt.enabled);
 }

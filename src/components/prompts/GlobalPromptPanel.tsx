@@ -26,6 +26,7 @@ import {
   type PromptScope,
 } from "@/lib/query/prompts";
 import { cn } from "@/lib/utils";
+import { useTauriEvent } from "@/hooks/useTauriEvent";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import PromptFormPanel from "./PromptFormPanel";
 import {
@@ -136,6 +137,10 @@ const GlobalPromptPanel: React.FC<GlobalPromptPanelProps> = ({
     window.addEventListener("focus", handleFocus);
     return () => window.removeEventListener("focus", handleFocus);
   }, [open]);
+
+  useTauriEvent("profile-applied", () => {
+    void queryClient.invalidateQueries({ queryKey: promptKeys.all });
+  });
 
   const beginWrite = () => {
     if (busyRef.current) return false;

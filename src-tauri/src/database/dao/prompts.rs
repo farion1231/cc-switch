@@ -79,7 +79,7 @@ impl Database {
     // Backfill and activation must commit together with the managed file.
     pub(crate) fn save_app_prompts(
         &self,
-        app_type: &str,
+        app_type: &AppType,
         prompts: &IndexMap<String, Prompt>,
     ) -> Result<(), AppError> {
         let mut conn = lock_conn!(self.conn);
@@ -196,7 +196,7 @@ impl Database {
     /// 关联 id（其余字段、启用状态原样保留），同一事务提交，不碰目标文件。
     pub(crate) fn promote_prompt_to_global(
         &self,
-        app_type: &str,
+        app_type: &AppType,
         old_id: &str,
         linked: &Prompt,
         global: &GlobalPrompt,

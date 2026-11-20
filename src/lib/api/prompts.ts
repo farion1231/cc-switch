@@ -37,12 +37,7 @@ export interface GlobalPromptSaveResult {
   failures: Array<{ app: AppId; error: string }>;
 }
 
-export const GLOBAL_PROMPT_LINK_PREFIX = "global-";
-
-/** 全局提示词在各应用列表里对应的那条记录的 id */
-export function linkedPromptId(globalId: string): string {
-  return `${GLOBAL_PROMPT_LINK_PREFIX}${globalId}`;
-}
+const GLOBAL_PROMPT_LINK_PREFIX = "global-";
 
 /** 应用列表里的一条如果是全局提示词的关联记录，返回全局 id */
 export function globalIdOfLinked(promptId: string): string | null {

@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { toast } from "@/lib/toast";
 import { profilesApi, providersApi } from "@/lib/api";
 import type { ProfileScope } from "@/lib/api/profiles";
+import { promptKeys } from "@/lib/query/prompts";
 import { extractErrorMessage } from "@/utils/errorUtils";
 
 const updateTrayMenuSafely = async () => {
@@ -129,6 +130,7 @@ export const useApplyProfileMutation = () => {
       await queryClient.invalidateQueries({ queryKey: ["providers", "codex"] });
       await queryClient.invalidateQueries({ queryKey: ["mcp", "all"] });
       await queryClient.invalidateQueries({ queryKey: ["skills"] });
+      await queryClient.invalidateQueries({ queryKey: promptKeys.all });
       await updateTrayMenuSafely();
 
       if (warnings.length > 0) {

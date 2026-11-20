@@ -4,12 +4,7 @@ export { providersApi, universalProvidersApi } from "./providers";
 export { settingsApi } from "./settings";
 export { backupsApi } from "./settings";
 export { profilesApi } from "./profiles";
-export {
-  promptsApi,
-  linkedPromptId,
-  globalIdOfLinked,
-  GLOBAL_PROMPT_LINK_PREFIX,
-} from "./prompts";
+export { promptsApi, globalIdOfLinked } from "./prompts";
 export { skillsApi } from "./skills";
 export { usageApi } from "./usage";
 export { vscodeApi } from "./vscode";
@@ -20,7 +15,6 @@ export * as copilotApi from "./copilot";
 export type { ProviderSwitchEvent } from "./providers";
 export type {
   Prompt,
-  GlobalPrompt,
   GlobalPromptEntry,
   GlobalPromptSaveResult,
 } from "./prompts";

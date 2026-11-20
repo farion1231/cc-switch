@@ -11,12 +11,13 @@ import {
   type GlobalPromptSaveResult,
   type Prompt,
 } from "@/lib/api";
-import { PROMPT_APP_IDS, useGlobalPromptsQuery } from "@/lib/query/prompts";
+import { APP_IDS_WITH } from "@/config/appSpecs";
+import { useGlobalPromptsQuery } from "@/lib/query/prompts";
 import { showPromptToast } from "./promptUtils";
 
 /** 正在使用这条全局提示词的应用，按侧栏顺序 */
 export function globalPromptApps(entry: GlobalPromptEntry): AppId[] {
-  return PROMPT_APP_IDS.filter((app) => entry.apps[app]);
+  return APP_IDS_WITH.prompts.filter((app) => entry.apps[app]);
 }
 
 export function joinAppNames(t: TFunction, apps: AppId[]): string {
