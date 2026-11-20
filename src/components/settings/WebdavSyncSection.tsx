@@ -93,6 +93,19 @@ function detectPreset(url: string): string {
   return "custom";
 }
 
+/** Match an S3 endpoint to one of the preset providers, or "custom". */
+function detectS3Preset(endpoint?: string | null): string {
+  const value = endpoint?.trim().toLowerCase() ?? "";
+  // No endpoint means the AWS default endpoint is in use.
+  if (!value) return "aws-s3";
+  if (value.includes(".r2.cloudflarestorage.com")) return "s3-r2";
+  if (value.includes(".aliyuncs.com")) return "s3-oss";
+  if (value.includes(".myqcloud.com")) return "s3-cos";
+  if (value.includes(".myhuaweicloud.com")) return "s3-obs";
+  if (value.includes("amazonaws.com")) return "aws-s3";
+  return "s3-custom";
+}
+
 // ─── S3 service presets ──────────────────────────────────────
 
 interface S3Preset {
@@ -147,6 +160,14 @@ const S3_PRESETS: S3Preset[] = [
     regionPlaceholder: "us-east-1",
   },
 ];
+
+/** Restore the saved preset, ignoring ids this build does not know. */
+function resolveS3Preset(config?: S3SyncSettings): string {
+  const saved = config?.preset;
+  return saved && S3_PRESETS.some((preset) => preset.id === saved)
+    ? saved
+    : detectS3Preset(config?.endpoint);
+}
 
 /** Format an RFC 3339 date string for display; falls back to raw string. */
 function formatDate(rfc3339: string): string {
@@ -275,7 +296,10 @@ export function WebdavSyncSection({
   }));
 
   // ─── S3 form state ─────────────────────────────────────────
-  const [s3Preset, setS3Preset] = useState("aws-s3");
+  // Keep the saved preset id so an explicit choice (MinIO, whose endpoint cannot
+  // be inferred) survives reopening the page; fall back to the endpoint for
+  // configs saved before the preset was persisted (#6663).
+  const [s3Preset, setS3Preset] = useState(() => resolveS3Preset(s3Config));
   const [s3Region, setS3Region] = useState(s3Config?.region ?? "");
   const [s3Bucket, setS3Bucket] = useState(s3Config?.bucket ?? "");
   const [s3AccessKeyId, setS3AccessKeyId] = useState(
@@ -320,6 +344,8 @@ export function WebdavSyncSection({
   // Set while a cleared config is still on its way down from the parent, so
   // the sync effect below does not refill the form from the stale `config`.
   const awaitingClearedConfigRef = useRef(false);
+  const [showS3ClearConfirm, setShowS3ClearConfirm] = useState(false);
+  const awaitingClearedS3ConfigRef = useRef(false);
 
   const closeDialog = useCallback(() => {
     setDialogType(null);
@@ -384,12 +410,17 @@ export function WebdavSyncSection({
 
   // Sync S3 form when s3Config is loaded/updated from backend
   useEffect(() => {
-    if (!s3Config || s3Dirty) return;
+    if (!s3Config) {
+      awaitingClearedS3ConfigRef.current = false;
+      return;
+    }
+    if (s3Dirty || awaitingClearedS3ConfigRef.current) return;
     setS3Region(s3Config.region ?? "");
     setS3Bucket(s3Config.bucket ?? "");
     setS3AccessKeyId(s3Config.accessKeyId ?? "");
     setS3SecretAccessKey(s3Config.secretAccessKey ?? "");
     setS3Endpoint(s3Config.endpoint ?? "");
+    setS3Preset(resolveS3Preset(s3Config));
     setS3RemoteRoot(s3Config.remoteRoot ?? "cc-switch-sync");
     setS3Profile(s3Config.profile ?? "default");
     setS3AutoSync(s3Config.autoSync ?? false);
@@ -723,6 +754,7 @@ export function WebdavSyncSection({
       endpoint: s3Endpoint.trim() || undefined,
       remoteRoot: s3RemoteRoot.trim() || "cc-switch-sync",
       profile: s3Profile.trim() || "default",
+      preset: s3Preset,
     };
   }, [
     s3Enabled,
@@ -734,6 +766,7 @@ export function WebdavSyncSection({
     s3Endpoint,
     s3RemoteRoot,
     s3Profile,
+    s3Preset,
   ]);
 
   // ─── S3 Handlers ──────────────────────────────────────────
@@ -766,6 +799,7 @@ export function WebdavSyncSection({
       return;
     }
     setS3ActionState("saving");
+    awaitingClearedS3ConfigRef.current = false;
     try {
       await settingsApi.s3SyncSaveSettings(s3Settings, s3SecretTouched);
       setS3Dirty(false);
@@ -803,6 +837,39 @@ export function WebdavSyncSection({
       setS3ActionState("idle");
     }
   }, [buildS3Settings, s3SecretTouched, queryClient, t]);
+
+  /** Forget the saved S3 config on this device; remote data is kept. */
+  const handleS3ClearConfirm = useCallback(async () => {
+    setShowS3ClearConfirm(false);
+    setS3ActionState("clearing");
+    try {
+      await settingsApi.s3SyncClearSettings();
+      awaitingClearedS3ConfigRef.current = true;
+      setS3Preset("aws-s3");
+      setS3Region("");
+      setS3Bucket("");
+      setS3AccessKeyId("");
+      setS3SecretAccessKey("");
+      setS3Endpoint("");
+      setS3RemoteRoot("cc-switch-sync");
+      setS3Profile("default");
+      setS3AutoSync(false);
+      setS3Enabled(false);
+      setS3Dirty(false);
+      setS3SecretTouched(false);
+      setS3JustSaved(false);
+      await queryClient.invalidateQueries();
+      toast.success(t("settings.s3Sync.clearSuccess"));
+    } catch (error) {
+      toast.error(
+        t("settings.s3Sync.clearFailed", {
+          error: (error as Error)?.message ?? String(error),
+        }),
+      );
+    } finally {
+      setS3ActionState("idle");
+    }
+  }, [queryClient, t]);
 
   const handleS3UploadClick = useCallback(async () => {
     if (s3Dirty) {
@@ -1521,6 +1588,19 @@ export function WebdavSyncSection({
               activeLabel={t("settings.s3Sync.saving")}
               idleLabel={t("settings.s3Sync.save")}
             />
+            {hasS3SavedConfig && (
+              <ActionButton
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setShowS3ClearConfirm(true)}
+                actionState={s3ActionState}
+                targetState="clearing"
+                icon={Trash2}
+                activeLabel={t("settings.s3Sync.clearing")}
+                idleLabel={t("settings.s3Sync.clear")}
+              />
+            )}
 
             {/* Save status indicator */}
             {s3Dirty && (
@@ -1911,6 +1991,17 @@ export function WebdavSyncSection({
         confirmText={t("settings.webdavSync.clearConfirm.confirm")}
         onConfirm={() => void handleClearConfirm()}
         onCancel={() => setShowClearConfirm(false)}
+      />
+
+      {/* ─── Clear S3 config confirmation dialog ──────────── */}
+      <ConfirmDialog
+        isOpen={showS3ClearConfirm}
+        variant="destructive"
+        title={t("settings.s3Sync.clearConfirm.title")}
+        message={t("settings.s3Sync.clearConfirm.message")}
+        confirmText={t("settings.s3Sync.clearConfirm.confirm")}
+        onConfirm={() => void handleS3ClearConfirm()}
+        onCancel={() => setShowS3ClearConfirm(false)}
       />
     </section>
   );

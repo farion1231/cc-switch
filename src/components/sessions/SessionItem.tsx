@@ -140,13 +140,9 @@ export function SessionItem({
     .join("\n");
 
   const deleteReason = !deletable
-    ? t(
-        nativeDeleteHintKey(session.providerId) ??
-          "sessionManager.mcodeDeleteHint",
-        {
-          defaultValue: "请在 MiniMax Code 中删除",
-        },
-      )
+    ? t(nativeDeleteHintKey(session) ?? "sessionManager.mcodeDeleteHint", {
+        defaultValue: "请在 MiniMax Code 中删除",
+      })
     : null;
 
   const row = (

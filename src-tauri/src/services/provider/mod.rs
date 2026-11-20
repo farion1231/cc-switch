@@ -29,11 +29,11 @@ mod pi;
 mod usage;
 
 use indexmap::IndexMap;
-use regex::Regex;
 use serde::Deserialize;
 use serde_json::Value;
 
 use crate::app_config::AppType;
+use crate::database::UnreadableEntry;
 use crate::error::AppError;
 use crate::provider::{Provider, ProviderMeta, UsageResult};
 use crate::services::mcp::McpService;
@@ -97,8 +97,8 @@ pub fn reapply_current_codex_official_live(state: &AppState) -> Result<bool, App
     if current_id.is_empty() {
         return Ok(false);
     }
-    let providers = state.db.get_all_providers(AppType::Codex.as_str())?;
-    let Some(provider) = providers.get(&current_id) else {
+    let providers = state.db.get_provider_rows(&AppType::Codex)?;
+    let Some(provider) = providers.get(&current_id)? else {
         return Ok(false);
     };
     if !codex_direct::is_official(provider) {
@@ -125,8 +125,8 @@ pub fn reapply_current_codex_third_party_live(state: &AppState) -> Result<bool, 
     else {
         return Ok(false);
     };
-    let providers = state.db.get_all_providers(AppType::Codex.as_str())?;
-    let Some(provider) = providers.get(&current_id) else {
+    let providers = state.db.get_provider_rows(&AppType::Codex)?;
+    let Some(provider) = providers.get(&current_id)? else {
         return Ok(false);
     };
     if codex_direct::is_official(provider) {
@@ -232,92 +232,34 @@ mod tests {
     };
     #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
     use crate::provider::{ClaudeDesktopMode, ClaudeDesktopModelRoute};
-    use crate::proxy::types::ProxyConfig;
     use crate::store::AppState;
+    use crate::sync_utils::MutexExt;
+    use crate::test_support::{EnvVars, TempUserHome};
     use serde_json::json;
     use serial_test::serial;
-    use std::env;
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::sync::{Arc, Mutex, OnceLock};
-    use tempfile::TempDir;
 
+    /// A temp user home that also pins the Claude Desktop paths under it
+    /// (`LOCALAPPDATA` on Windows, `XDG_CONFIG_HOME` unset on Linux).
     struct TempHome {
-        #[allow(dead_code)]
-        dir: TempDir,
-        original_home: Option<String>,
-        #[cfg(windows)]
-        original_local_app_data: Option<String>,
-        original_userprofile: Option<String>,
-        original_test_home: Option<String>,
-        #[cfg(target_os = "linux")]
-        original_xdg_config_home: Option<std::ffi::OsString>,
+        _desktop_env: EnvVars,
+        home: TempUserHome,
     }
 
     impl TempHome {
         fn new() -> Self {
-            let dir = TempDir::new().expect("failed to create temp home");
-            let original_home = env::var("HOME").ok();
+            let home = TempUserHome::new();
+            let desktop_env = EnvVars::new();
             #[cfg(windows)]
-            let original_local_app_data = env::var("LOCALAPPDATA").ok();
-            let original_userprofile = env::var("USERPROFILE").ok();
-            let original_test_home = env::var("CC_SWITCH_TEST_HOME").ok();
+            let desktop_env =
+                desktop_env.set("LOCALAPPDATA", home.path().join("AppData").join("Local"));
             #[cfg(target_os = "linux")]
-            let original_xdg_config_home = env::var_os("XDG_CONFIG_HOME");
-
-            env::set_var("HOME", dir.path());
-            #[cfg(windows)]
-            env::set_var("LOCALAPPDATA", dir.path().join("AppData").join("Local"));
-            env::set_var("USERPROFILE", dir.path());
-            env::set_var("CC_SWITCH_TEST_HOME", dir.path());
-            // Claude Desktop Linux paths follow XDG_CONFIG_HOME; pin them under the temp home.
-            #[cfg(target_os = "linux")]
-            env::remove_var("XDG_CONFIG_HOME");
-
+            let desktop_env = desktop_env.remove("XDG_CONFIG_HOME");
             Self {
-                dir,
-                original_home,
-                #[cfg(windows)]
-                original_local_app_data,
-                original_userprofile,
-                original_test_home,
-                #[cfg(target_os = "linux")]
-                original_xdg_config_home,
-            }
-        }
-    }
-
-    impl Drop for TempHome {
-        fn drop(&mut self) {
-            match &self.original_home {
-                Some(value) => env::set_var("HOME", value),
-                None => env::remove_var("HOME"),
-            }
-
-            #[cfg(windows)]
-            {
-                match &self.original_local_app_data {
-                    Some(value) => env::set_var("LOCALAPPDATA", value),
-                    None => env::remove_var("LOCALAPPDATA"),
-                }
-            }
-
-            match &self.original_userprofile {
-                Some(value) => env::set_var("USERPROFILE", value),
-                None => env::remove_var("USERPROFILE"),
-            }
-
-            match &self.original_test_home {
-                Some(value) => env::set_var("CC_SWITCH_TEST_HOME", value),
-                None => env::remove_var("CC_SWITCH_TEST_HOME"),
-            }
-
-            #[cfg(target_os = "linux")]
-            {
-                match &self.original_xdg_config_home {
-                    Some(value) => env::set_var("XDG_CONFIG_HOME", value),
-                    None => env::remove_var("XDG_CONFIG_HOME"),
-                }
+                _desktop_env: desktop_env,
+                home,
             }
         }
     }
@@ -350,32 +292,20 @@ mod tests {
 
     fn test_guard() -> std::sync::MutexGuard<'static, ()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|err| err.into_inner())
+        LOCK.get_or_init(|| Mutex::new(())).lock_recover()
     }
 
     fn with_test_home<T>(test: impl FnOnce(&AppState, &Path) -> T) -> T {
         let _guard = test_guard();
         let temp = tempfile::tempdir().expect("tempdir");
-        let old_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
-        let old_home = std::env::var_os("HOME");
-        std::env::set_var("CC_SWITCH_TEST_HOME", temp.path());
-        std::env::set_var("HOME", temp.path());
+        let env = EnvVars::new()
+            .set("CC_SWITCH_TEST_HOME", temp.path())
+            .set("HOME", temp.path());
 
         let db = Arc::new(Database::memory().expect("in-memory database"));
         let state = AppState::new(db);
         let result = test(&state, temp.path());
-
-        match old_test_home {
-            Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
-            None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
-        }
-        match old_home {
-            Some(value) => std::env::set_var("HOME", value),
-            None => std::env::remove_var("HOME"),
-        }
-
+        drop(env);
         result
     }
 
@@ -392,6 +322,182 @@ mod tests {
                  wire_api = \"chat\"\n"
             )
         })
+    }
+
+    fn break_stored_settings(state: &AppState, app: &str, id: &str) -> String {
+        let conn = state.db.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE providers SET settings_config = '{\"env\":' WHERE app_type = ?1 AND id = ?2",
+            [app, id],
+        )
+        .unwrap();
+        conn.query_row(
+            "SELECT settings_config || '|' || meta || '|' || is_current FROM providers WHERE app_type = ?1 AND id = ?2",
+            [app, id],
+            |row| row.get(0),
+        )
+        .unwrap()
+    }
+
+    fn stored_row(state: &AppState, app: &str, id: &str) -> Option<String> {
+        use rusqlite::OptionalExtension;
+        state
+            .db
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT settings_config || '|' || meta || '|' || is_current FROM providers WHERE app_type = ?1 AND id = ?2",
+                [app, id],
+                |row| row.get(0),
+            )
+            .optional()
+            .unwrap()
+    }
+
+    #[test]
+    #[serial]
+    fn an_unreadable_provider_is_listed_apart_left_untouched_and_can_only_be_deleted() {
+        with_test_home(|state, _| {
+            for id in ["good", "broken"] {
+                let mut provider = Provider::with_id(
+                    id.into(),
+                    format!("{id} name"),
+                    json!({"npm": "@ai-sdk/openai-compatible", "options": {"baseURL": format!("https://{id}.example")}}),
+                    None,
+                );
+                provider.category = Some("custom".into());
+                state
+                    .db
+                    .save_provider(&AppType::OpenCode, &provider)
+                    .unwrap();
+            }
+            let stored = break_stored_settings(state, "opencode", "broken");
+
+            let listed = ProviderService::list(state, AppType::OpenCode).expect("list still loads");
+            assert_eq!(listed.keys().collect::<Vec<_>>(), ["good"]);
+            let unreadable = ProviderService::list_unreadable(state, AppType::OpenCode).unwrap();
+            assert_eq!(unreadable.len(), 1);
+            assert_eq!(
+                (unreadable[0].id.as_str(), unreadable[0].name.as_str()),
+                ("broken", "broken name")
+            );
+            assert!(
+                unreadable[0].error.contains("settings_config"),
+                "{}",
+                unreadable[0].error
+            );
+
+            // 不能切换、编辑；这些失败都不改库里的字节。
+            assert!(ProviderService::switch(state, AppType::OpenCode, "broken").is_err());
+            let mut edited = listed["good"].clone();
+            edited.id = "broken".into();
+            assert!(ProviderService::update(state, AppType::OpenCode, None, edited).is_err());
+            assert_eq!(stored_row(state, "opencode", "broken"), Some(stored));
+
+            ProviderService::delete(state, AppType::OpenCode, "broken").expect("delete is allowed");
+            assert_eq!(stored_row(state, "opencode", "broken"), None);
+            assert!(ProviderService::list_unreadable(state, AppType::OpenCode)
+                .unwrap()
+                .is_empty());
+            assert!(stored_row(state, "opencode", "good").is_some());
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn listing_a_native_app_never_overwrites_an_unreadable_row_with_its_native_entry() {
+        with_test_home(|state, _| {
+            let config = json!({
+                "name": "Relay", "kind": "custom", "enabled": true, "api": "openai-completions",
+                "options": {"baseURL": "https://relay.example/v1", "apiKey": "sk-test"},
+                "models": {"m": {"name": "m"}}
+            });
+            state
+                .db
+                .save_provider(
+                    &AppType::Mcode,
+                    &Provider::with_id("relay".into(), "Relay".into(), config.clone(), None),
+                )
+                .unwrap();
+            let stored = break_stored_settings(state, "mcode", "relay");
+            // MCode 自己的配置里有同 id 的条目：合并时会把它当成「库里没有」补存。
+            crate::mcode_config::set_provider("relay", config).unwrap();
+
+            let listed = ProviderService::list(state, AppType::Mcode).expect("list still loads");
+            assert!(listed.is_empty(), "{:?}", listed.keys());
+            assert_eq!(stored_row(state, "mcode", "relay"), Some(stored));
+            assert_eq!(
+                ProviderService::list_unreadable(state, AppType::Mcode)
+                    .unwrap()
+                    .len(),
+                1
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn an_unreadable_row_only_fails_what_reads_that_row() {
+        with_test_home(|state, _| {
+            for id in ["good", "broken"] {
+                let mut provider = Provider::with_id(
+                    id.into(),
+                    format!("{id} name"),
+                    codex_settings(&format!("https://{id}.example/v1"), &format!("sk-{id}")),
+                    None,
+                );
+                provider.category = Some("custom".into());
+                provider.meta = Some(ProviderMeta::default());
+                state.db.save_provider(&AppType::Codex, &provider).unwrap();
+            }
+            state
+                .db
+                .add_custom_endpoint(&AppType::Codex, "good", "https://mirror.example/v1")
+                .unwrap();
+            ProviderService::switch(state, AppType::Codex, "broken").unwrap();
+            let stored = break_stored_settings(state, "codex", "broken");
+
+            // 指针照样指着读不出来的那行：解析当前供应商不报错，删除按「正在使用」拒绝。
+            assert_eq!(
+                ProviderService::current(state, AppType::Codex).unwrap(),
+                "broken"
+            );
+            let refused = ProviderService::delete(state, AppType::Codex, "broken")
+                .unwrap_err()
+                .to_string();
+            assert!(refused.contains("正在使用"), "{refused}");
+
+            // 只读另一行的操作不受影响；读这一行的点名报错。
+            let endpoints = ProviderService::get_custom_endpoints(state, AppType::Codex, "good")
+                .expect("endpoints of another row");
+            assert_eq!(endpoints.len(), 1);
+            let error = ProviderService::get_custom_endpoints(state, AppType::Codex, "broken")
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("broken"), "{error}");
+            for (id, names_broken) in [("good", false), ("broken", true)] {
+                let error =
+                    futures::executor::block_on(usage::query_usage(state, AppType::Codex, id))
+                        .unwrap_err()
+                        .to_string();
+                assert_eq!(error.contains("broken"), names_broken, "{id}: {error}");
+            }
+
+            // 从读不出来的那家切走可以（之后才能删它），它的字节不变。
+            ProviderService::switch(state, AppType::Codex, "good").expect("switch away");
+            assert_eq!(
+                ProviderService::current(state, AppType::Codex).unwrap(),
+                "good"
+            );
+            // 只有 is_current（最后一段）跟着指针变，存的 JSON 不动。
+            let json_part = |row: &str| row.rsplit_once('|').unwrap().0.to_string();
+            assert_eq!(
+                stored_row(state, "codex", "broken").map(|row| json_part(&row)),
+                Some(json_part(&stored))
+            );
+            ProviderService::delete(state, AppType::Codex, "broken").expect("delete once unused");
+        });
     }
 
     #[test]
@@ -423,7 +529,7 @@ mod tests {
             stored.meta = Some(meta.clone());
             state
                 .db
-                .save_provider(AppType::Codex.as_str(), &stored)
+                .save_provider(&AppType::Codex, &stored)
                 .expect("store Copilot provider");
 
             for (provider_id, draft_meta) in [(None, Some(&meta)), (Some(stored.id.as_str()), None)]
@@ -734,7 +840,7 @@ mod tests {
 
             let saved = state
                 .db
-                .get_provider_by_id("codex-a", AppType::Codex.as_str())
+                .get_provider_by_id("codex-a", &AppType::Codex)
                 .expect("query saved provider")
                 .expect("saved provider should exist");
             let script = saved
@@ -762,7 +868,7 @@ mod tests {
             );
             state
                 .db
-                .save_provider(AppType::Codex.as_str(), &provider)
+                .save_provider(&AppType::Codex, &provider)
                 .expect("seed provider with explicit usage credentials");
 
             let mut updated = provider.clone();
@@ -773,7 +879,7 @@ mod tests {
 
             let saved = state
                 .db
-                .get_provider_by_id("codex-usage-old", AppType::Codex.as_str())
+                .get_provider_by_id("codex-usage-old", &AppType::Codex)
                 .expect("query updated provider")
                 .expect("updated provider should exist");
             let script = saved
@@ -812,7 +918,7 @@ mod tests {
 
             let saved_after_add = state
                 .db
-                .get_provider_by_id("codex-copy", AppType::Codex.as_str())
+                .get_provider_by_id("codex-copy", &AppType::Codex)
                 .expect("query copied provider")
                 .expect("copied provider should exist");
             let script_after_add = saved_after_add
@@ -831,7 +937,7 @@ mod tests {
 
             let saved_after_update = state
                 .db
-                .get_provider_by_id("codex-copy", AppType::Codex.as_str())
+                .get_provider_by_id("codex-copy", &AppType::Codex)
                 .expect("query edited provider")
                 .expect("edited provider should exist");
             let script_after_update = saved_after_update
@@ -863,7 +969,7 @@ mod tests {
             );
             state
                 .db
-                .save_provider(AppType::Codex.as_str(), &provider)
+                .save_provider(&AppType::Codex, &provider)
                 .expect("seed provider with distinct usage credentials");
 
             let mut updated = provider.clone();
@@ -882,7 +988,7 @@ mod tests {
 
             let saved = state
                 .db
-                .get_provider_by_id("codex-current", AppType::Codex.as_str())
+                .get_provider_by_id("codex-current", &AppType::Codex)
                 .expect("query updated provider")
                 .expect("updated provider should exist");
             let script = saved
@@ -913,7 +1019,7 @@ mod tests {
 
             let saved = state
                 .db
-                .get_provider_by_id("codex-distinct", AppType::Codex.as_str())
+                .get_provider_by_id("codex-distinct", &AppType::Codex)
                 .expect("query saved provider")
                 .expect("saved provider should exist");
             let script = saved
@@ -947,7 +1053,7 @@ mod tests {
 
             let saved = state
                 .db
-                .get_provider_by_id("codex-token-plan", AppType::Codex.as_str())
+                .get_provider_by_id("codex-token-plan", &AppType::Codex)
                 .expect("query saved provider")
                 .expect("saved provider should exist");
             let script = saved
@@ -994,7 +1100,7 @@ mod tests {
             let fixed_id = crate::database::CODEX_OFFICIAL_PROVIDER_ID;
             state
                 .db
-                .set_current_provider(AppType::Codex.as_str(), fixed_id)
+                .set_current_provider(&AppType::Codex, fixed_id)
                 .expect("set database current");
             crate::settings::set_current_provider(&AppType::Codex, Some(fixed_id))
                 .expect("set local current");
@@ -1013,7 +1119,7 @@ mod tests {
 
             let providers = state
                 .db
-                .get_all_providers(AppType::Codex.as_str())
+                .get_all_providers(&AppType::Codex)
                 .expect("read providers");
             assert!(providers.contains_key("follow-login-a"));
             assert!(providers.contains_key("follow-login-b"));
@@ -1047,11 +1153,11 @@ mod tests {
             unbound.category = Some("official".to_string());
             state
                 .db
-                .save_provider(AppType::Codex.as_str(), &unbound)
+                .save_provider(&AppType::Codex, &unbound)
                 .expect("save unbound card");
             state
                 .db
-                .set_current_provider(AppType::Codex.as_str(), provider_id)
+                .set_current_provider(&AppType::Codex, provider_id)
                 .expect("set database current");
             crate::settings::set_current_provider(&AppType::Codex, Some(provider_id))
                 .expect("set local current");
@@ -1063,7 +1169,7 @@ mod tests {
 
             let saved_bound = state
                 .db
-                .get_provider_by_id(provider_id, AppType::Codex.as_str())
+                .get_provider_by_id(provider_id, &AppType::Codex)
                 .expect("query bound card")
                 .expect("bound card should keep its ID");
             assert_eq!(
@@ -1073,7 +1179,7 @@ mod tests {
             assert_eq!(
                 state
                     .db
-                    .get_current_provider(AppType::Codex.as_str())
+                    .get_current_provider(&AppType::Codex)
                     .expect("read database current")
                     .as_deref(),
                 Some(provider_id)
@@ -1090,7 +1196,7 @@ mod tests {
 
             let saved_unbound = state
                 .db
-                .get_provider_by_id(provider_id, AppType::Codex.as_str())
+                .get_provider_by_id(provider_id, &AppType::Codex)
                 .expect("query unbound card")
                 .expect("unbound card should keep its ID");
             assert!(ProviderService::managed_codex_oauth_account_id(&saved_unbound).is_none());
@@ -1098,7 +1204,7 @@ mod tests {
             assert_eq!(
                 state
                     .db
-                    .get_current_provider(AppType::Codex.as_str())
+                    .get_current_provider(&AppType::Codex)
                     .expect("read database current")
                     .as_deref(),
                 Some(provider_id)
@@ -1221,7 +1327,7 @@ mod tests {
 
     fn seed_leaked_gemini_state(db: &Arc<Database>) {
         db.set_config_snippet(
-            "gemini",
+            &AppType::Gemini,
             Some(
                 json!({
                     "GOOGLE_API_KEY": "key-A-leaked",
@@ -1244,7 +1350,8 @@ mod tests {
             }}),
             None,
         );
-        db.save_provider("gemini", &victim).expect("save victim");
+        db.save_provider(&AppType::Gemini, &victim)
+            .expect("save victim");
 
         // 供应商 C：自己写了同名键但值不同，不能被误删
         let unrelated = Provider::with_id(
@@ -1256,7 +1363,8 @@ mod tests {
             }}),
             None,
         );
-        db.save_provider("gemini", &unrelated).expect("save c");
+        db.save_provider(&AppType::Gemini, &unrelated)
+            .expect("save c");
     }
 
     /// Saving the active provider while takeover has never been enabled must
@@ -1280,9 +1388,9 @@ mod tests {
             }),
             None,
         );
-        db.save_provider("claude", &original)
+        db.save_provider(&AppType::Claude, &original)
             .expect("save provider");
-        db.set_current_provider("claude", "p1")
+        db.set_current_provider(&AppType::Claude, "p1")
             .expect("set current provider");
         crate::settings::set_current_provider(&AppType::Claude, Some("p1"))
             .expect("set local current provider");
@@ -1320,7 +1428,7 @@ mod tests {
             }}),
             None,
         );
-        db.save_provider("claude", &original)
+        db.save_provider(&AppType::Claude, &original)
             .expect("save provider");
         ProviderService::switch(&state, AppType::Claude, "ds").expect("switch");
         let mut live: Value = read_json_file(&get_claude_settings_path()).expect("read live");
@@ -1334,6 +1442,10 @@ mod tests {
             .remove("CLAUDE_CODE_DISABLE_ARTIFACT");
         ProviderService::update(&state, AppType::Claude, None, updated).expect("update");
 
+        // 开着的会话先读到空串（撤掉旧值），几秒后再删
+        let live: Value = read_json_file(&get_claude_settings_path()).expect("read live");
+        assert_eq!(live["env"]["CLAUDE_CODE_DISABLE_ARTIFACT"], json!(""));
+        claude_direct::settle_tombstones();
         let live: Value = read_json_file(&get_claude_settings_path()).expect("read live");
         assert_eq!(
             live,
@@ -1363,7 +1475,7 @@ mod tests {
                 json!({ "env": { "ANTHROPIC_BASE_URL": url } }),
                 None,
             );
-            db.save_provider("claude", &provider)
+            db.save_provider(&AppType::Claude, &provider)
                 .expect("save provider");
         }
         ProviderService::switch(&state, AppType::Claude, "a").expect("switch to a");
@@ -1379,7 +1491,7 @@ mod tests {
             json!("https://b.example")
         );
         assert_eq!(
-            db.get_current_provider("claude")
+            db.get_current_provider(&AppType::Claude)
                 .expect("current")
                 .as_deref(),
             Some("a"),
@@ -1388,7 +1500,7 @@ mod tests {
 
         crate::mode::operation::recover_on_startup(&db);
         assert_eq!(
-            db.get_current_provider("claude")
+            db.get_current_provider(&AppType::Claude)
                 .expect("current")
                 .as_deref(),
             Some("b")
@@ -1419,15 +1531,15 @@ mod tests {
             }),
             None,
         );
-        db.save_provider("claude", &original)
+        db.save_provider(&AppType::Claude, &original)
             .expect("save provider");
-        db.set_current_provider("claude", "p1")
+        db.set_current_provider(&AppType::Claude, "p1")
             .expect("set current provider");
         crate::settings::set_current_provider(&AppType::Claude, Some("p1"))
             .expect("set local current provider");
         write_live_for_state(&state, &AppType::Claude, &original).expect("seed live file");
         db.save_live_backup(
-            "claude",
+            &AppType::Claude,
             &serde_json::to_string(&original.settings_config).expect("serialize backup"),
         )
         .await
@@ -1469,15 +1581,15 @@ mod tests {
             }),
             None,
         );
-        db.save_provider("claude", &original)
+        db.save_provider(&AppType::Claude, &original)
             .expect("save provider");
-        db.set_current_provider("claude", "p1")
+        db.set_current_provider(&AppType::Claude, "p1")
             .expect("set current provider");
         crate::settings::set_current_provider(&AppType::Claude, Some("p1"))
             .expect("set local current provider");
         write_live_for_state(&state, &AppType::Claude, &original).expect("seed live file");
         let mut config = db
-            .get_proxy_config_for_app("claude")
+            .get_proxy_config_for_app(&AppType::Claude)
             .await
             .expect("read proxy config");
         config.enabled = true;
@@ -1514,7 +1626,7 @@ mod tests {
 
         // 片段：凭据清掉，可共享配置保留
         let snippet = db
-            .get_config_snippet("gemini")
+            .get_config_snippet(&AppType::Gemini)
             .expect("read snippet")
             .expect("snippet must still exist");
         let snippet: Value = serde_json::from_str(&snippet).expect("valid json");
@@ -1527,7 +1639,7 @@ mod tests {
         );
 
         // 受害者 B：扩散过去的那一份被清掉
-        let providers = db.get_all_providers("gemini").expect("providers");
+        let providers = db.get_all_providers(&AppType::Gemini).expect("providers");
         let victim_env = &providers["b"].settings_config["env"];
         assert!(
             victim_env.get("GOOGLE_API_KEY").is_none(),
@@ -1554,7 +1666,7 @@ mod tests {
             .expect("scrub must succeed");
 
         // 这条最容易写错成「按键名一刀切」：C 自己的密钥值与片段不同，是它自己的凭据
-        let providers = db.get_all_providers("gemini").expect("providers");
+        let providers = db.get_all_providers(&AppType::Gemini).expect("providers");
         assert_eq!(
             providers["c"].settings_config["env"]
                 .get("GOOGLE_API_KEY")
@@ -1744,7 +1856,7 @@ GEMINI_TIMEOUT_MS=30000
 
         // 关代理时这份快照会被原样写回 live。若清不动它却照样清了片段、置了完成标记，
         // 代理一停凭据就复活，而一次性标记保证不会再清第二次。
-        db.save_live_backup("gemini", "}not json{")
+        db.save_live_backup(&AppType::Gemini, "}not json{")
             .await
             .expect("seed backup");
 
@@ -1757,7 +1869,7 @@ GEMINI_TIMEOUT_MS=30000
         // 片段是「该剥哪些键」的唯一知识来源，中止后必须原样留着，否则下次重试
         // 会因为 poison 为空而直接短路，反倒把标记置上
         let snippet = db
-            .get_config_snippet("gemini")
+            .get_config_snippet(&AppType::Gemini)
             .expect("read snippet")
             .expect("snippet must still exist");
         assert!(
@@ -1789,12 +1901,12 @@ GEMINI_TIMEOUT_MS=30000
         // 就不再认识这个键，live 里的残留会被 backfill 永久写进供应商配置。
         // 清理必须是原子的——清完之后，任何地方都不该再有那个值。
         let snippet = db
-            .get_config_snippet("gemini")
+            .get_config_snippet(&AppType::Gemini)
             .expect("read snippet")
             .unwrap_or_default();
         assert!(!snippet.contains("key-A-leaked"));
 
-        for (id, provider) in db.get_all_providers("gemini").expect("providers") {
+        for (id, provider) in db.get_all_providers(&AppType::Gemini).expect("providers") {
             assert!(
                 !provider
                     .settings_config
@@ -1820,7 +1932,7 @@ GEMINI_TIMEOUT_MS=30000
 
         // 第二次必须是 no-op：用户清理后重新填的凭据不能被再抹一遍
         db.set_config_snippet(
-            "gemini",
+            &AppType::Gemini,
             Some(json!({"GOOGLE_API_KEY": "restored"}).to_string()),
         )
         .expect("user re-adds a value");
@@ -1830,7 +1942,7 @@ GEMINI_TIMEOUT_MS=30000
             .expect("second run");
 
         let snippet = db
-            .get_config_snippet("gemini")
+            .get_config_snippet(&AppType::Gemini)
             .expect("read snippet")
             .expect("snippet exists");
         assert!(
@@ -2030,25 +2142,6 @@ GEMINI_TIMEOUT_MS=30000
     }
 
     #[test]
-    fn extract_credentials_returns_expected_values() {
-        let provider = Provider::with_id(
-            "claude".into(),
-            "Claude".into(),
-            json!({
-                "env": {
-                    "ANTHROPIC_AUTH_TOKEN": "token",
-                    "ANTHROPIC_BASE_URL": "https://claude.example"
-                }
-            }),
-            None,
-        );
-        let (api_key, base_url) =
-            ProviderService::extract_credentials(&provider, &AppType::Claude).unwrap();
-        assert_eq!(api_key, "token");
-        assert_eq!(base_url, "https://claude.example");
-    }
-
-    #[test]
     fn extract_codex_common_config_strips_provider_fields_and_injected_artifacts() {
         // 顶层 experimental_bearer_token 模拟无活跃路由时的 fallback 注入；
         // web_search = "disabled" 是 cc-switch 对黑名单网关注入的哨兵；
@@ -2181,9 +2274,9 @@ command = "legacy-cmd"
             }),
             None,
         );
-        db.save_provider("claude", &original)
+        db.save_provider(&AppType::Claude, &original)
             .expect("save provider");
-        db.set_current_provider("claude", "p1")
+        db.set_current_provider(&AppType::Claude, "p1")
             .expect("set current provider");
         crate::settings::set_current_provider(&AppType::Claude, Some("p1"))
             .expect("set local current provider");
@@ -2200,12 +2293,16 @@ command = "legacy-cmd"
         )
         .expect("seed live file");
 
-        db.update_proxy_config(ProxyConfig {
-            listen_port: 0,
-            ..Default::default()
-        })
-        .await
-        .expect("update proxy config");
+        let mut proxy = db
+            .get_global_proxy_config()
+            .await
+            .expect("update proxy config");
+
+        proxy.listen_port = 0;
+
+        db.update_global_proxy_config(proxy)
+            .await
+            .expect("update proxy config");
         crate::mode::controller::enter(&state, &AppType::Claude, false)
             .await
             .expect("enter routing mode");
@@ -2293,18 +2390,23 @@ requires_openai_auth = true
             api_format: Some("openai_responses".into()),
             ..Default::default()
         });
-        db.save_provider("codex", &original).expect("save provider");
-        db.set_current_provider("codex", "p1")
+        db.save_provider(&AppType::Codex, &original)
+            .expect("save provider");
+        db.set_current_provider(&AppType::Codex, "p1")
             .expect("set current provider");
         crate::settings::set_current_provider(&AppType::Codex, Some("p1"))
             .expect("set local current provider");
 
-        db.update_proxy_config(ProxyConfig {
-            listen_port: 0,
-            ..Default::default()
-        })
-        .await
-        .expect("update proxy config");
+        let mut proxy = db
+            .get_global_proxy_config()
+            .await
+            .expect("update proxy config");
+
+        proxy.listen_port = 0;
+
+        db.update_global_proxy_config(proxy)
+            .await
+            .expect("update proxy config");
         crate::mode::controller::enter(&state, &AppType::Codex, false)
             .await
             .expect("enter routing mode");
@@ -2372,12 +2474,14 @@ requires_openai_auth = true
         crate::settings::reload_settings().expect("reload settings");
 
         let db = Arc::new(Database::memory().expect("init db"));
-        db.update_proxy_config(ProxyConfig {
-            listen_port: 0,
-            ..Default::default()
-        })
-        .await
-        .expect("ephemeral proxy port");
+        let mut proxy = db
+            .get_global_proxy_config()
+            .await
+            .expect("ephemeral proxy port");
+        proxy.listen_port = 0;
+        db.update_global_proxy_config(proxy)
+            .await
+            .expect("ephemeral proxy port");
         let state = AppState::new(db.clone());
 
         let mut original = Provider::with_id(
@@ -2404,9 +2508,9 @@ requires_openai_auth = true
             )]),
             ..Default::default()
         });
-        db.save_provider("claude-desktop", &original)
+        db.save_provider(&AppType::ClaudeDesktop, &original)
             .expect("save provider");
-        db.set_current_provider("claude-desktop", "p1")
+        db.set_current_provider(&AppType::ClaudeDesktop, "p1")
             .expect("set current provider");
         crate::settings::set_current_provider(&AppType::ClaudeDesktop, Some("p1"))
             .expect("set local current provider");
@@ -2458,7 +2562,7 @@ requires_openai_auth = true
         .expect("join update")
         .expect("update route provider");
 
-        let profile_path = claude_desktop_profile_path(home.dir.path());
+        let profile_path = claude_desktop_profile_path(home.home.path());
         let profile: Value = read_json_file(&profile_path).expect("read desktop profile");
         assert_eq!(
             profile["inferenceGatewayBaseUrl"],
@@ -2504,7 +2608,7 @@ requires_openai_auth = true
             assert!(
                 state
                     .db
-                    .get_provider_by_id("deepseek-copy", AppType::OpenClaw.as_str())
+                    .get_provider_by_id("deepseek-copy", &AppType::OpenClaw)
                     .expect("query renamed provider")
                     .is_none(),
                 "rename must not create a new row when originalId is stale"
@@ -2522,7 +2626,7 @@ requires_openai_auth = true
 
             let stored = state
                 .db
-                .get_provider_by_id("deepseek", AppType::OpenClaw.as_str())
+                .get_provider_by_id("deepseek", &AppType::OpenClaw)
                 .expect("query stored provider")
                 .expect("provider should exist");
             assert_eq!(
@@ -2548,7 +2652,7 @@ requires_openai_auth = true
 
             let saved = state
                 .db
-                .get_provider_by_id("deepseek", AppType::OpenClaw.as_str())
+                .get_provider_by_id("deepseek", &AppType::OpenClaw)
                 .expect("query updated provider")
                 .expect("updated provider should exist");
             assert_eq!(saved.name, "DeepSeek Edited");
@@ -2597,6 +2701,29 @@ requires_openai_auth = true
 
     #[test]
     #[serial]
+    fn switching_omo_variant_warns_when_the_other_variant_config_cannot_be_removed() {
+        with_test_home(|state, _| {
+            // 另一个变体的配置位置被一个目录占着，删不掉。
+            let other = crate::opencode_config::get_opencode_dir()
+                .join(crate::services::omo::SLIM.preferred_filename);
+            fs::create_dir_all(other.join("blocker")).unwrap();
+            ProviderService::add(
+                state,
+                AppType::OpenCode,
+                opencode_omo_provider("omo-a", "omo"),
+                false,
+            )
+            .unwrap();
+
+            let result = ProviderService::switch(state, AppType::OpenCode, "omo-a")
+                .expect("enabling the variant itself succeeded");
+
+            assert_eq!(result.warnings, vec!["omo_variant_cleanup_failed:omo-a"]);
+        });
+    }
+
+    #[test]
+    #[serial]
     fn sync_current_provider_for_app_preserves_legacy_live_opencode_provider() {
         with_test_home(|state, _| {
             let provider = opencode_provider("legacy-opencode");
@@ -2604,14 +2731,14 @@ requires_openai_auth = true
                 .expect("seed opencode live provider");
             state
                 .db
-                .save_provider(AppType::OpenCode.as_str(), &provider)
+                .save_provider(&AppType::OpenCode, &provider)
                 .expect("seed legacy opencode provider in db");
 
             let mut updated = provider.clone();
             updated.settings_config["options"]["apiKey"] = Value::String("updated-key".to_string());
             state
                 .db
-                .save_provider(AppType::OpenCode.as_str(), &updated)
+                .save_provider(&AppType::OpenCode, &updated)
                 .expect("update legacy opencode provider in db");
 
             ProviderService::sync_current_provider_for_app(state, AppType::OpenCode)
@@ -2637,7 +2764,7 @@ requires_openai_auth = true
             let provider = opencode_provider("legacy-opencode-reset");
             state
                 .db
-                .save_provider(AppType::OpenCode.as_str(), &provider)
+                .save_provider(&AppType::OpenCode, &provider)
                 .expect("seed legacy opencode provider in db");
 
             ProviderService::sync_current_provider_for_app(state, AppType::OpenCode)
@@ -2665,7 +2792,7 @@ requires_openai_auth = true
             ]);
             state
                 .db
-                .save_provider(AppType::OpenClaw.as_str(), &provider)
+                .save_provider(&AppType::OpenClaw, &provider)
                 .expect("seed legacy openclaw provider in db");
 
             ProviderService::sync_current_provider_for_app(state, AppType::OpenClaw)
@@ -2702,7 +2829,7 @@ requires_openai_auth = true
             );
             assert!(state
                 .db
-                .get_provider_by_id(&provider.id, AppType::Codex.as_str())
+                .get_provider_by_id(&provider.id, &AppType::Codex)
                 .expect("query provider")
                 .is_none());
             assert!(!crate::codex_config::get_codex_auth_path().exists());
@@ -2758,11 +2885,11 @@ requires_openai_auth = true
 
             state
                 .db
-                .save_provider(AppType::Codex.as_str(), &managed)
+                .save_provider(&AppType::Codex, &managed)
                 .expect("save managed provider");
             state
                 .db
-                .save_provider(AppType::Codex.as_str(), &unbound)
+                .save_provider(&AppType::Codex, &unbound)
                 .expect("save unbound provider");
 
             ProviderService::switch(state, AppType::Codex, "managed-official")
@@ -2814,7 +2941,7 @@ requires_openai_auth = true
 
             let saved_managed = state
                 .db
-                .get_provider_by_id("managed-official", AppType::Codex.as_str())
+                .get_provider_by_id("managed-official", &AppType::Codex)
                 .expect("query managed provider")
                 .expect("managed provider should exist");
             assert_eq!(
@@ -2863,7 +2990,7 @@ wire_api = "responses"
             for provider in [&provider_a, &provider_b, &third_party] {
                 state
                     .db
-                    .save_provider(AppType::Codex.as_str(), provider)
+                    .save_provider(&AppType::Codex, provider)
                     .expect("save provider");
             }
 
@@ -2960,12 +3087,12 @@ wire_api = "responses"
             let provider = managed_codex_provider("managed-official-a", "acct-a");
             state
                 .db
-                .save_provider(AppType::Codex.as_str(), &provider)
+                .save_provider(&AppType::Codex, &provider)
                 .expect("save managed official provider");
             ProviderService::switch(state, AppType::Codex, &provider.id)
                 .expect("activate managed account A");
             assert!(
-                tauri::async_runtime::block_on(state.db.get_live_backup(AppType::Codex.as_str()))
+                tauri::async_runtime::block_on(state.db.get_live_backup(&AppType::Codex))
                     .expect("read initial live backup")
                     .is_none(),
                 "direct update precondition requires no takeover backup"
@@ -3008,7 +3135,7 @@ wire_api = "responses"
             );
             let saved = state
                 .db
-                .get_provider_by_id(&provider.id, AppType::Codex.as_str())
+                .get_provider_by_id(&provider.id, &AppType::Codex)
                 .expect("read updated provider")
                 .expect("updated provider exists");
             assert_eq!(saved.name, updated.name);
@@ -3033,7 +3160,7 @@ wire_api = "responses"
                 "clearing outgoing account A must not remove account B's marker"
             );
             assert!(
-                tauri::async_runtime::block_on(state.db.get_live_backup(AppType::Codex.as_str()))
+                tauri::async_runtime::block_on(state.db.get_live_backup(&AppType::Codex))
                     .expect("read live backup after direct update")
                     .is_none(),
                 "direct update must not create a takeover backup"
@@ -3061,7 +3188,7 @@ wire_api = "responses"
             let provider = managed_codex_provider("managed-same-account", "acct-managed");
             state
                 .db
-                .save_provider(AppType::Codex.as_str(), &provider)
+                .save_provider(&AppType::Codex, &provider)
                 .expect("save managed provider");
             ProviderService::switch(state, AppType::Codex, &provider.id)
                 .expect("activate managed provider");
@@ -3116,7 +3243,7 @@ wire_api = "responses"
             assert_eq!(
                 state
                     .db
-                    .get_provider_by_id(&provider.id, AppType::Codex.as_str())
+                    .get_provider_by_id(&provider.id, &AppType::Codex)
                     .expect("read provider after rejected update")
                     .expect("provider remains present")
                     .name,
@@ -3157,7 +3284,7 @@ wire_api = "responses"
             for provider in [&managed, &unbound] {
                 state
                     .db
-                    .save_provider(AppType::Codex.as_str(), provider)
+                    .save_provider(&AppType::Codex, provider)
                     .expect("save provider");
             }
             ProviderService::switch(state, AppType::Codex, &managed.id)
@@ -3197,7 +3324,7 @@ wire_api = "responses"
                 assert_eq!(
                     state
                         .db
-                        .get_current_provider(AppType::Codex.as_str())
+                        .get_current_provider(&AppType::Codex)
                         .expect("read current provider")
                         .as_deref(),
                     Some(managed.id.as_str()),
@@ -3237,7 +3364,7 @@ wire_api = "responses"
             let provider = managed_codex_provider("managed-auth-center", "acct-managed");
             state
                 .db
-                .save_provider(AppType::Codex.as_str(), &provider)
+                .save_provider(&AppType::Codex, &provider)
                 .expect("save managed provider");
             ProviderService::switch(state, AppType::Codex, &provider.id)
                 .expect("activate managed provider");
@@ -3259,7 +3386,7 @@ wire_api = "responses"
             assert_eq!(
                 state
                     .db
-                    .get_provider_by_id(&provider.id, AppType::Codex.as_str())
+                    .get_provider_by_id(&provider.id, &AppType::Codex)
                     .expect("read provider")
                     .and_then(|provider| provider.meta)
                     .and_then(|meta| meta.managed_account_id_for("codex_oauth"))
@@ -3316,12 +3443,12 @@ wire_api = "responses"
                         )
                         .unwrap();
                     runtime.block_on(async {
-                        let mut config = state.db.get_proxy_config().await.unwrap();
+                        let mut config = state.db.get_global_proxy_config().await.unwrap();
                         config.listen_port = 0;
-                        state.db.update_proxy_config(config).await.unwrap();
+                        state.db.update_global_proxy_config(config).await.unwrap();
                     });
                     let current = managed_codex_provider("current", "old-local-id");
-                    state.db.save_provider("codex", &current).unwrap();
+                    state.db.save_provider(&AppType::Codex, &current).unwrap();
                     ProviderService::switch(state, AppType::Codex, &current.id).unwrap();
                     if mode == "proxy" {
                         runtime
@@ -3357,7 +3484,7 @@ wire_api = "responses"
                         ProviderService::managed_codex_oauth_account_id(
                             &state
                                 .db
-                                .get_provider_by_id("current", "codex")
+                                .get_provider_by_id("current", &AppType::Codex)
                                 .unwrap()
                                 .unwrap()
                         )
@@ -3389,7 +3516,7 @@ wire_api = "responses"
                         ProviderService::update(state, AppType::Codex, None, target.clone())
                             .unwrap();
                     } else {
-                        state.db.save_provider("codex", &target).unwrap();
+                        state.db.save_provider(&AppType::Codex, &target).unwrap();
                         ProviderService::switch(state, AppType::Codex, &target.id).unwrap();
                     }
                     let auth: Value = read_json_file(&crate::codex_config::get_codex_auth_path())
@@ -3499,9 +3626,9 @@ wire_api = "responses"
                     .unwrap()
                     .source = AuthBindingSource::ProviderConfig;
                 for provider in [&current, &legacy, &other, &foreign, &unrelated] {
-                    state.db.save_provider("codex", provider).unwrap();
+                    state.db.save_provider(&AppType::Codex, provider).unwrap();
                 }
-                state.db.save_provider("claude", &current).unwrap();
+                state.db.save_provider(&AppType::Claude, &current).unwrap();
                 state
                     .db
                     .conn
@@ -3527,14 +3654,18 @@ wire_api = "responses"
                     .unwrap();
                 }
                 for id in ["current", "legacy"] {
-                    let saved = state.db.get_provider_by_id(id, "codex").unwrap().unwrap();
+                    let saved = state
+                        .db
+                        .get_provider_by_id(id, &AppType::Codex)
+                        .unwrap()
+                        .unwrap();
                     assert!(saved.meta.unwrap().auth_binding.is_none());
                     assert_eq!(saved.settings_config["auth"], json!({}));
                     assert_eq!(saved.category.as_deref(), Some("official"));
                 }
                 let saved_legacy = state
                     .db
-                    .get_provider_by_id("legacy", "codex")
+                    .get_provider_by_id("legacy", &AppType::Codex)
                     .unwrap()
                     .unwrap();
                 assert_eq!(saved_legacy.notes, legacy.notes);
@@ -3551,24 +3682,24 @@ wire_api = "responses"
                     )
                     .unwrap();
                 assert_eq!(future, "keep");
-                let bound_to = |id: &str, app: &str| {
+                let bound_to = |id: &str, app: AppType| {
                     state
                         .db
-                        .get_provider_by_id(id, app)
+                        .get_provider_by_id(id, &app)
                         .unwrap()
                         .unwrap()
                         .meta
                         .unwrap()
                         .managed_account_id_for("codex_oauth")
                 };
-                assert_eq!(bound_to("other", "codex").is_none(), logout_all);
+                assert_eq!(bound_to("other", AppType::Codex).is_none(), logout_all);
                 assert_eq!(
-                    bound_to("foreign", "codex").as_deref(),
+                    bound_to("foreign", AppType::Codex).as_deref(),
                     Some("acct-other-device")
                 );
                 assert!(state
                     .db
-                    .get_provider_by_id("unrelated", "codex")
+                    .get_provider_by_id("unrelated", &AppType::Codex)
                     .unwrap()
                     .unwrap()
                     .meta
@@ -3577,7 +3708,7 @@ wire_api = "responses"
                     .is_some());
                 assert!(state
                     .db
-                    .get_provider_by_id("current", "claude")
+                    .get_provider_by_id("current", &AppType::Claude)
                     .unwrap()
                     .unwrap()
                     .meta
@@ -3615,7 +3746,7 @@ wire_api = "responses"
                 let second = managed_codex_provider("z-second", "acct-old");
                 let target = managed_codex_provider("target", "acct-new");
                 for provider in [&current, &second, &target] {
-                    state.db.save_provider("codex", provider).unwrap();
+                    state.db.save_provider(&AppType::Codex, provider).unwrap();
                 }
                 ProviderService::switch(state, AppType::Codex, &current.id).unwrap();
                 state
@@ -3638,7 +3769,7 @@ wire_api = "responses"
                     assert_eq!(
                         state
                             .db
-                            .get_provider_by_id(id, "codex")
+                            .get_provider_by_id(id, &AppType::Codex)
                             .unwrap()
                             .unwrap()
                             .meta
@@ -3688,12 +3819,12 @@ wire_api = "responses"
                     )
                     .await
                     .unwrap();
-                let mut config = state.db.get_proxy_config().await.unwrap();
+                let mut config = state.db.get_global_proxy_config().await.unwrap();
                 config.listen_port = 0;
-                state.db.update_proxy_config(config).await.unwrap();
+                state.db.update_global_proxy_config(config).await.unwrap();
             });
             let current = managed_codex_provider("current", "old-local-id");
-            state.db.save_provider("codex", &current).unwrap();
+            state.db.save_provider(&AppType::Codex, &current).unwrap();
             ProviderService::switch(&state, AppType::Codex, "current").unwrap();
             runtime.block_on(async {
                 crate::mode::controller::enter(&state, &AppType::Codex, false)
@@ -3748,7 +3879,7 @@ wire_api = "responses"
                 ProviderService::managed_codex_oauth_account_id(
                     &restarted
                         .db
-                        .get_provider_by_id("current", "codex")
+                        .get_provider_by_id("current", &AppType::Codex)
                         .unwrap()
                         .unwrap()
                 )
@@ -3776,7 +3907,7 @@ wire_api = "responses"
                 assert!(
                     !restarted
                         .db
-                        .get_proxy_config_for_app("codex")
+                        .get_proxy_config_for_app(&AppType::Codex)
                         .await
                         .unwrap()
                         .enabled
@@ -3805,7 +3936,7 @@ wire_api = "responses"
                 assert!(
                     restarted
                         .db
-                        .get_proxy_config_for_app("codex")
+                        .get_proxy_config_for_app(&AppType::Codex)
                         .await
                         .unwrap()
                         .enabled
@@ -3897,7 +4028,7 @@ wire_api = "responses"
             let provider = managed_codex_provider("managed-logout-lock", "acct-managed");
             state
                 .db
-                .save_provider(AppType::Codex.as_str(), &provider)
+                .save_provider(&AppType::Codex, &provider)
                 .expect("save managed provider");
             ProviderService::switch(state, AppType::Codex, &provider.id)
                 .expect("activate managed provider");
@@ -3988,11 +4119,11 @@ wire_api = "responses"
 
             state
                 .db
-                .save_provider(AppType::Codex.as_str(), &baseline)
+                .save_provider(&AppType::Codex, &baseline)
                 .expect("save baseline");
             state
                 .db
-                .save_provider(AppType::Codex.as_str(), &managed)
+                .save_provider(&AppType::Codex, &managed)
                 .expect("save managed");
 
             ProviderService::switch(state, AppType::Codex, "baseline").expect("switch to baseline");
@@ -4059,7 +4190,10 @@ wire_api = "responses"
                     native.clone(),
                     None,
                 );
-                state.db.save_provider("opencode", &existing).unwrap();
+                state
+                    .db
+                    .save_provider(&AppType::OpenCode, &existing)
+                    .unwrap();
                 crate::opencode_config::set_provider_with_format(
                     "anthropic",
                     native.clone(),
@@ -4070,7 +4204,7 @@ wire_api = "responses"
                 assert_eq!(import_opencode_providers_from_live(state).unwrap(), 0);
                 let mut saved = state
                     .db
-                    .get_provider_by_id("anthropic", "opencode")
+                    .get_provider_by_id("anthropic", &AppType::OpenCode)
                     .unwrap()
                     .unwrap();
                 assert_eq!(saved.name, "Existing name");
@@ -4131,7 +4265,10 @@ wire_api = "responses"
                 with_test_home(|state, _| {
                     let provider = opencode_provider("shared");
                     if existing {
-                        state.db.save_provider("opencode", &provider).unwrap();
+                        state
+                            .db
+                            .save_provider(&AppType::OpenCode, &provider)
+                            .unwrap();
                     }
                     let mut expected = json!({
                         "provider": {"shared": provider.settings_config},
@@ -4146,7 +4283,7 @@ wire_api = "responses"
                     import_opencode_providers_from_live(state).unwrap();
                     let mut saved = state
                         .db
-                        .get_provider_by_id("shared", "opencode")
+                        .get_provider_by_id("shared", &AppType::OpenCode)
                         .unwrap()
                         .unwrap();
                     assert_eq!(saved.settings_config, provider.settings_config, "{native}");
@@ -4169,7 +4306,7 @@ wire_api = "responses"
                     assert_eq!(
                         state
                             .db
-                            .get_provider_by_id("shared", "opencode")
+                            .get_provider_by_id("shared", &AppType::OpenCode)
                             .unwrap()
                             .unwrap()
                             .settings_config,
@@ -4177,7 +4314,7 @@ wire_api = "responses"
                     );
 
                     saved.settings_config["options"]["apiKey"] = json!("fake-synced");
-                    state.db.save_provider("opencode", &saved).unwrap();
+                    state.db.save_provider(&AppType::OpenCode, &saved).unwrap();
                     ProviderService::sync_current_provider_for_app(state, AppType::OpenCode)
                         .unwrap();
                     expected["provider"]["shared"] = saved.settings_config;
@@ -4206,7 +4343,7 @@ wire_api = "responses"
             import_opencode_providers_from_live(state).unwrap();
             let mut edited = state
                 .db
-                .get_provider_by_id("native", "opencode")
+                .get_provider_by_id("native", &AppType::OpenCode)
                 .unwrap()
                 .unwrap();
             // OpenCode requires tools, input and output together.
@@ -4221,13 +4358,13 @@ wire_api = "responses"
 
             let saved = state
                 .db
-                .get_provider_by_id("native", "opencode")
+                .get_provider_by_id("native", &AppType::OpenCode)
                 .unwrap()
                 .unwrap();
             assert_eq!(saved.settings_config, native);
             assert!(state
                 .db
-                .get_provider_by_id("added", "opencode")
+                .get_provider_by_id("added", &AppType::OpenCode)
                 .unwrap()
                 .is_none());
             assert_eq!(
@@ -4274,7 +4411,7 @@ wire_api = "responses"
             assert_eq!(import_opencode_providers_from_live(state).unwrap(), 1);
             let mut saved = state
                 .db
-                .get_provider_by_id(&provider.id, AppType::OpenCode.as_str())
+                .get_provider_by_id(&provider.id, &AppType::OpenCode)
                 .unwrap()
                 .expect("imported provider");
             assert_eq!(saved.settings_config, provider.settings_config);
@@ -4330,7 +4467,7 @@ wire_api = "responses"
 
             let saved = state
                 .db
-                .get_provider_by_id(&provider.id, AppType::OpenCode.as_str())
+                .get_provider_by_id(&provider.id, &AppType::OpenCode)
                 .expect("query imported opencode provider")
                 .expect("imported opencode provider should exist");
             assert_eq!(
@@ -4351,7 +4488,7 @@ wire_api = "responses"
             let provider = opencode_provider("existing-opencode");
             state
                 .db
-                .save_provider(AppType::OpenCode.as_str(), &provider)
+                .save_provider(&AppType::OpenCode, &provider)
                 .expect("seed existing opencode provider");
 
             let mut live_settings = provider.settings_config.clone();
@@ -4367,7 +4504,7 @@ wire_api = "responses"
 
             let saved = state
                 .db
-                .get_provider_by_id(&provider.id, AppType::OpenCode.as_str())
+                .get_provider_by_id(&provider.id, &AppType::OpenCode)
                 .expect("query updated opencode provider")
                 .expect("opencode provider should exist");
             assert_eq!(saved.name, provider.name);
@@ -4398,7 +4535,7 @@ wire_api = "responses"
 
             let saved = state
                 .db
-                .get_provider_by_id(&provider.id, AppType::OpenClaw.as_str())
+                .get_provider_by_id(&provider.id, &AppType::OpenClaw)
                 .expect("query imported openclaw provider")
                 .expect("imported openclaw provider should exist");
             assert_eq!(
@@ -4425,7 +4562,7 @@ wire_api = "responses"
             ]);
             state
                 .db
-                .save_provider(AppType::OpenClaw.as_str(), &provider)
+                .save_provider(&AppType::OpenClaw, &provider)
                 .expect("seed existing openclaw provider");
 
             let mut live_settings = provider.settings_config.clone();
@@ -4440,7 +4577,7 @@ wire_api = "responses"
 
             let saved = state
                 .db
-                .get_provider_by_id(&provider.id, AppType::OpenClaw.as_str())
+                .get_provider_by_id(&provider.id, &AppType::OpenClaw)
                 .expect("query updated openclaw provider")
                 .expect("openclaw provider should exist");
             assert_eq!(saved.name, provider.name);
@@ -4462,7 +4599,7 @@ wire_api = "responses"
             let provider = hermes_provider("existing-hermes");
             state
                 .db
-                .save_provider(AppType::Hermes.as_str(), &provider)
+                .save_provider(&AppType::Hermes, &provider)
                 .expect("seed existing hermes provider");
 
             let mut live_settings = provider.settings_config.clone();
@@ -4477,7 +4614,7 @@ wire_api = "responses"
 
             let saved = state
                 .db
-                .get_provider_by_id(&provider.id, AppType::Hermes.as_str())
+                .get_provider_by_id(&provider.id, &AppType::Hermes)
                 .expect("query updated hermes provider")
                 .expect("hermes provider should exist");
             assert_eq!(saved.name, provider.name);
@@ -4502,7 +4639,7 @@ wire_api = "responses"
             let provider = openclaw_provider("legacy-provider");
             state
                 .db
-                .save_provider(AppType::OpenClaw.as_str(), &provider)
+                .save_provider(&AppType::OpenClaw, &provider)
                 .expect("seed legacy provider without live_config_managed marker");
 
             let openclaw_dir = home.join(".openclaw");
@@ -4530,7 +4667,7 @@ wire_api = "responses"
                 let provider = opencode_omo_provider(&format!("{category}-provider"), category);
                 state
                     .db
-                    .save_provider(AppType::OpenCode.as_str(), &provider)
+                    .save_provider(&AppType::OpenCode, &provider)
                     .unwrap_or_else(|err| panic!("seed {category} provider: {err}"));
 
                 let mut updated = provider.clone();
@@ -4543,7 +4680,7 @@ wire_api = "responses"
 
                 let saved = state
                     .db
-                    .get_provider_by_id(&provider.id, AppType::OpenCode.as_str())
+                    .get_provider_by_id(&provider.id, &AppType::OpenCode)
                     .unwrap_or_else(|err| panic!("query updated {category} provider: {err}"))
                     .unwrap_or_else(|| panic!("{category} provider should exist"));
 
@@ -4565,11 +4702,11 @@ wire_api = "responses"
                 let provider = opencode_omo_provider(&format!("{category}-current"), category);
                 state
                     .db
-                    .save_provider(AppType::OpenCode.as_str(), &provider)
+                    .save_provider(&AppType::OpenCode, &provider)
                     .unwrap_or_else(|err| panic!("seed current {category} provider: {err}"));
                 state
                     .db
-                    .set_omo_provider_current(AppType::OpenCode.as_str(), &provider.id, category)
+                    .set_omo_provider_current(&AppType::OpenCode, &provider.id, category)
                     .unwrap_or_else(|err| panic!("set current {category} provider: {err}"));
 
                 let mut updated = provider.clone();
@@ -4584,7 +4721,7 @@ wire_api = "responses"
 
                 let saved = state
                     .db
-                    .get_provider_by_id(&provider.id, AppType::OpenCode.as_str())
+                    .get_provider_by_id(&provider.id, &AppType::OpenCode)
                     .unwrap_or_else(|err| panic!("query current {category} provider: {err}"))
                     .unwrap_or_else(|| panic!("current {category} provider should exist"));
                 assert_eq!(saved.name, format!("Current {category} updated"));
@@ -4615,11 +4752,11 @@ wire_api = "responses"
             let provider = opencode_omo_provider("omo-current", "omo");
             state
                 .db
-                .save_provider(AppType::OpenCode.as_str(), &provider)
+                .save_provider(&AppType::OpenCode, &provider)
                 .unwrap_or_else(|err| panic!("seed current omo provider: {err}"));
             state
                 .db
-                .set_omo_provider_current(AppType::OpenCode.as_str(), &provider.id, "omo")
+                .set_omo_provider_current(&AppType::OpenCode, &provider.id, "omo")
                 .unwrap_or_else(|err| panic!("set current omo provider: {err}"));
 
             let config_dir = home.join(".config").join("opencode");
@@ -4637,7 +4774,7 @@ wire_api = "responses"
 
             let saved = state
                 .db
-                .get_provider_by_id(&provider.id, AppType::OpenCode.as_str())
+                .get_provider_by_id(&provider.id, &AppType::OpenCode)
                 .unwrap_or_else(|err| panic!("query current omo provider: {err}"))
                 .unwrap_or_else(|| panic!("current omo provider should exist"));
 
@@ -4657,11 +4794,11 @@ wire_api = "responses"
             let provider = opencode_omo_provider("omo-current", "omo");
             state
                 .db
-                .save_provider(AppType::OpenCode.as_str(), &provider)
+                .save_provider(&AppType::OpenCode, &provider)
                 .unwrap_or_else(|err| panic!("seed current omo provider: {err}"));
             state
                 .db
-                .set_omo_provider_current(AppType::OpenCode.as_str(), &provider.id, "omo")
+                .set_omo_provider_current(&AppType::OpenCode, &provider.id, "omo")
                 .unwrap_or_else(|err| panic!("set current omo provider: {err}"));
 
             let config_path = omo_config_path(home, "omo");
@@ -4696,7 +4833,7 @@ wire_api = "responses"
 
             let saved = state
                 .db
-                .get_provider_by_id(&provider.id, AppType::OpenCode.as_str())
+                .get_provider_by_id(&provider.id, &AppType::OpenCode)
                 .unwrap_or_else(|err| panic!("query current omo provider: {err}"))
                 .unwrap_or_else(|| panic!("current omo provider should exist"));
 
@@ -4739,7 +4876,7 @@ wire_api = "responses"
             assert!(ProviderService::sync_universal_to_apps(state, "icon").is_err());
             assert!(state
                 .db
-                .get_provider_by_id("universal-claude-icon", "claude")
+                .get_provider_by_id("universal-claude-icon", &AppType::Claude)
                 .unwrap()
                 .is_none());
         });
@@ -4769,7 +4906,10 @@ wire_api = "responses"
             ProviderService::sync_universal_to_apps(state, &universal.id).unwrap();
 
             let mut expected = Vec::new();
-            for (index, app) in ["claude", "codex", "gemini"].iter().enumerate() {
+            for (index, app) in [AppType::Claude, AppType::Codex, AppType::Gemini]
+                .iter()
+                .enumerate()
+            {
                 let id = format!("universal-{app}-metadata");
                 let mut child = state.db.get_provider_by_id(&id, app).unwrap().unwrap();
                 assert_eq!(
@@ -4778,7 +4918,7 @@ wire_api = "responses"
                 );
                 child.meta = Some(
                     serde_json::from_value(json!({
-                        "usage_script": {"enabled": true, "language": "javascript", "code": app,
+                        "usage_script": {"enabled": true, "language": "javascript", "code": app.as_str(),
                             "apiKey": "usage-only-key", "autoQueryInterval": 15},
                         "commonConfigEnabled": false,
                         "endpointAutoSelect": true
@@ -4787,7 +4927,7 @@ wire_api = "responses"
                 );
                 child.created_at = Some(123 + index as i64);
                 child.sort_index = Some(10 + index);
-                child.settings_config["local_setting"] = json!(app);
+                child.settings_config["local_setting"] = json!(app.as_str());
                 state.db.save_provider(app, &child).unwrap();
                 state
                     .db
@@ -4811,7 +4951,10 @@ wire_api = "responses"
                 universal.meta = parent_meta;
                 state.db.save_universal_provider(&universal).unwrap();
                 ProviderService::sync_universal_to_apps(state, &universal.id).unwrap();
-                for (app, before) in ["claude", "codex", "gemini"].iter().zip(&expected) {
+                for (app, before) in [AppType::Claude, AppType::Codex, AppType::Gemini]
+                    .iter()
+                    .zip(&expected)
+                {
                     let after = state
                         .db
                         .get_provider_by_id(&before.id, app)
@@ -4826,10 +4969,10 @@ wire_api = "responses"
                     assert_eq!(after.sort_index, before.sort_index, "{app}");
                     assert_eq!(after.name, "Updated");
                     assert_eq!(after.notes.as_deref(), Some("shared note"));
-                    assert_eq!(after.settings_config["local_setting"], json!(app));
-                    let generated = match *app {
-                        "claude" => universal.to_claude_provider(),
-                        "codex" => universal.to_codex_provider(),
+                    assert_eq!(after.settings_config["local_setting"], json!(app.as_str()));
+                    let generated = match app {
+                        AppType::Claude => universal.to_claude_provider(),
+                        AppType::Codex => universal.to_codex_provider(),
                         _ => universal.to_gemini_provider(),
                     }
                     .unwrap();
@@ -4876,11 +5019,11 @@ wire_api = "responses"
                 .expect("claude child provider");
             state
                 .db
-                .save_provider("claude", &child)
+                .save_provider(&AppType::Claude, &child)
                 .expect("seed child provider");
             state
                 .db
-                .set_current_provider("claude", &child.id)
+                .set_current_provider(&AppType::Claude, &child.id)
                 .expect("set current child");
             crate::settings::set_current_provider(&AppType::Claude, Some(&child.id))
                 .expect("set local current child");
@@ -4920,7 +5063,7 @@ wire_api = "responses"
             assert!(
                 state
                     .db
-                    .get_provider_by_id(&provider.id, AppType::Codex.as_str())
+                    .get_provider_by_id(&provider.id, &AppType::Codex)
                     .expect("query failed managed add")
                     .is_none(),
                 "failed preflight must not leave an orphan provider row"
@@ -4928,7 +5071,7 @@ wire_api = "responses"
             assert_eq!(
                 state
                     .db
-                    .get_current_provider(AppType::Codex.as_str())
+                    .get_current_provider(&AppType::Codex)
                     .expect("read current after failed add"),
                 None
             );
@@ -4987,7 +5130,7 @@ wire_api = "responses"
             // 文件已经发布：行留着，pending 等着补完指针，live 不回滚。
             assert!(state
                 .db
-                .get_provider_by_id(&provider.id, AppType::Codex.as_str())
+                .get_provider_by_id(&provider.id, &AppType::Codex)
                 .expect("query provider")
                 .is_some());
             assert!(crate::mode::operation::has_pending(AppType::Codex.as_str()));
@@ -5010,7 +5153,7 @@ wire_api = "responses"
             assert_eq!(
                 state
                     .db
-                    .get_current_provider(AppType::Codex.as_str())
+                    .get_current_provider(&AppType::Codex)
                     .expect("read current after recovery")
                     .as_deref(),
                 Some(provider.id.as_str())
@@ -5039,7 +5182,7 @@ wire_api = "responses"
                         )
                         .unwrap();
                     let current = managed_codex_provider("current", "old");
-                    state.db.save_provider("codex", &current).unwrap();
+                    state.db.save_provider(&AppType::Codex, &current).unwrap();
                     ProviderService::switch(state, AppType::Codex, "current").unwrap();
                     let mut auth: Value =
                         read_json_file(&crate::codex_config::get_codex_auth_path()).unwrap();
@@ -5047,9 +5190,9 @@ wire_api = "responses"
                         runtime.block_on(async {
                             // 端口 0 启动后实际端口会记进库，重开的 AppState 不启动代理
                             // 也能算出契约地址。
-                            let mut config = state.db.get_proxy_config().await.unwrap();
+                            let mut config = state.db.get_global_proxy_config().await.unwrap();
                             config.listen_port = 0;
-                            state.db.update_proxy_config(config).await.unwrap();
+                            state.db.update_global_proxy_config(config).await.unwrap();
                             crate::mode::controller::enter(state, &AppType::Codex, false)
                                 .await
                                 .unwrap();
@@ -5077,7 +5220,7 @@ wire_api = "responses"
                         codex_settings("https://example.test/v1", "sk-target"),
                         None,
                     );
-                    state.db.save_provider("codex", &target).unwrap();
+                    state.db.save_provider(&AppType::Codex, &target).unwrap();
                     let before = crate::codex_config::CodexLiveStateSnapshot::capture().unwrap();
                     let result = ProviderService::switch(&restarted, AppType::Codex, "target");
                     if corrupt {
@@ -5168,11 +5311,11 @@ wire_api = "responses"
             let provider_b = managed_provider("managed-b", "acct-managed-b", "gpt-5.4-managed-b");
             state
                 .db
-                .save_provider(AppType::Codex.as_str(), &provider_a)
+                .save_provider(&AppType::Codex, &provider_a)
                 .expect("save first managed provider");
             state
                 .db
-                .save_provider(AppType::Codex.as_str(), &provider_b)
+                .save_provider(&AppType::Codex, &provider_b)
                 .expect("save second managed provider");
 
             ProviderService::switch(state, AppType::Codex, &provider_a.id)
@@ -5257,7 +5400,7 @@ wire_api = "responses"
             assert_eq!(
                 state
                     .db
-                    .get_current_provider(AppType::Codex.as_str())
+                    .get_current_provider(&AppType::Codex)
                     .expect("read DB current after recovery")
                     .as_deref(),
                 Some(provider_b.id.as_str())
@@ -5308,11 +5451,11 @@ wire_api = "responses"
             });
             state
                 .db
-                .save_provider(AppType::Codex.as_str(), &official)
+                .save_provider(&AppType::Codex, &official)
                 .expect("save official A");
             state
                 .db
-                .set_current_provider(AppType::Codex.as_str(), &official.id)
+                .set_current_provider(&AppType::Codex, &official.id)
                 .expect("set official current");
             crate::settings::set_current_provider(&AppType::Codex, Some(&official.id))
                 .expect("set local official current");
@@ -5334,7 +5477,7 @@ wire_api = "responses"
             third_party.category = Some("custom".to_string());
             state
                 .db
-                .save_provider(AppType::Codex.as_str(), &third_party)
+                .save_provider(&AppType::Codex, &third_party)
                 .expect("save third party");
 
             let mut updated = official.clone();
@@ -5363,7 +5506,7 @@ wire_api = "responses"
                 // allowed to inspect current/existing state.
                 state
                     .db
-                    .set_current_provider(AppType::Codex.as_str(), &third_party.id)
+                    .set_current_provider(&AppType::Codex, &third_party.id)
                     .expect("switch DB current to third party");
                 crate::settings::set_current_provider(
                     &AppType::Codex,
@@ -5384,7 +5527,7 @@ wire_api = "responses"
             assert_eq!(
                 state
                     .db
-                    .get_current_provider(AppType::Codex.as_str())
+                    .get_current_provider(&AppType::Codex)
                     .expect("read DB current")
                     .as_deref(),
                 Some(third_party.id.as_str())
@@ -5397,7 +5540,7 @@ wire_api = "responses"
             );
             let saved_official = state
                 .db
-                .get_provider_by_id(&official.id, AppType::Codex.as_str())
+                .get_provider_by_id(&official.id, &AppType::Codex)
                 .expect("read saved official")
                 .expect("official exists");
             assert_eq!(
@@ -5554,7 +5697,14 @@ impl ProviderService {
             } else {
                 crate::mcode_config::get_providers()?
             };
-            let mut saved = state.db.get_all_providers(app_type.as_str())?;
+            let mut saved = match state.db.get_all_providers(&app_type) {
+                Ok(saved) => saved,
+                // 有读不出来的行时不合并：按「库里没有」补存原生条目会盖掉那一行。
+                Err(error) => {
+                    log::warn!("Not merging native {app_type:?} providers: {error}");
+                    return Ok(state.db.get_provider_rows(&app_type)?.readable);
+                }
+            };
             let nicknames = if app_type == AppType::Kimi {
                 crate::services::kimi_oauth::account_nicknames()
             } else {
@@ -5583,19 +5733,34 @@ impl ProviderService {
                         nicknames.get(id).map(String::as_str),
                     );
                 }
-                state.db.save_provider(app_type.as_str(), provider)?;
+                state.db.save_provider(&app_type, provider)?;
             }
             return Ok(saved);
         }
-        state.db.get_all_providers(app_type.as_str())
+        Ok(state.db.get_provider_rows(&app_type)?.readable)
+    }
+
+    /// 库里读不出来的供应商：界面单独列出，只能删除。
+    pub fn list_unreadable(
+        state: &AppState,
+        app_type: AppType,
+    ) -> Result<Vec<UnreadableEntry>, AppError> {
+        Ok(state.db.get_provider_rows(&app_type)?.unreadable)
     }
 
     /// GitHub Copilot CLI 的列表：自带模型卡和 `providers.json` 合并（文件里有、库里没有的
     /// 显示成卡片；库里有的用文件里的 provider / models 覆盖，保留卡片自己的推理强度）。
     /// 官方卡不参与合并，永远不是「已添加」。旧版环境变量形状的自带模型卡就地转成新形状。
     fn list_copilot(state: &AppState) -> Result<IndexMap<String, Provider>, AppError> {
-        let app = AppType::Copilot.as_str();
-        let mut saved = state.db.get_all_providers(app)?;
+        let app = &AppType::Copilot;
+        let mut saved = match state.db.get_all_providers(app) {
+            Ok(saved) => saved,
+            // 同上：有读不出来的行时不合并 providers.json，免得补存时盖掉那一行。
+            Err(error) => {
+                log::warn!("Not merging Copilot providers.json: {error}");
+                return Ok(state.db.get_provider_rows(app)?.readable);
+            }
+        };
         let native = match crate::copilot_config::get_providers() {
             Ok(native) => native,
             Err(error) => {
@@ -5617,7 +5782,7 @@ impl ProviderService {
                 provider.settings_config.clone(),
                 Self::provider_live_config_managed(provider),
             );
-            if provider.category.as_deref() != Some("official") {
+            if !provider.has_official_category() {
                 if let Some(converted) =
                     crate::copilot_config::convert_legacy_settings(&provider.settings_config)
                 {
@@ -5665,7 +5830,7 @@ impl ProviderService {
             );
         }
         // Additive mode apps have no "current" provider concept
-        if app_type.is_additive_mode() {
+        if app_type.spec().additive {
             return Ok(String::new());
         }
         // 代理模式下界面上的「当前」是代理路由到的那家。
@@ -5691,12 +5856,12 @@ impl ProviderService {
                     Some(provider.settings_config.clone()),
                     create,
                     || {
-                        state.db.save_provider(app_type.as_str(), provider)?;
+                        state.db.save_provider(app_type, provider)?;
                         Ok(true)
                     },
                 )
             } else {
-                state.db.save_provider(app_type.as_str(), provider)?;
+                state.db.save_provider(app_type, provider)?;
                 Ok(true)
             };
         }
@@ -5708,12 +5873,12 @@ impl ProviderService {
                     Some(&provider.settings_config),
                     create,
                     || {
-                        state.db.save_provider("copilot", provider)?;
+                        state.db.save_provider(&AppType::Copilot, provider)?;
                         Ok(true)
                     },
                 )
             } else {
-                state.db.save_provider("copilot", provider)?;
+                state.db.save_provider(&AppType::Copilot, provider)?;
                 Ok(true)
             };
         }
@@ -5724,17 +5889,17 @@ impl ProviderService {
                     Some(provider.settings_config.clone()),
                     create,
                     || {
-                        state.db.save_provider("kimi", provider)?;
+                        state.db.save_provider(&AppType::Kimi, provider)?;
                         Ok(true)
                     },
                 )
             } else {
-                state.db.save_provider("kimi", provider)?;
+                state.db.save_provider(&AppType::Kimi, provider)?;
                 Ok(true)
             };
         }
-        let previous = state.db.get_provider_by_id(&provider.id, "mcode")?;
-        state.db.save_provider("mcode", provider)?;
+        let previous = state.db.get_provider_by_id(&provider.id, &AppType::Mcode)?;
+        state.db.save_provider(&AppType::Mcode, provider)?;
         if write_live {
             let config = provider.settings_config.clone();
             let written = if create {
@@ -5744,8 +5909,8 @@ impl ProviderService {
             };
             if let Err(error) = written {
                 match previous {
-                    Some(previous) => state.db.save_provider("mcode", &previous)?,
-                    None => state.db.delete_provider("mcode", &provider.id)?,
+                    Some(previous) => state.db.save_provider(&AppType::Mcode, &previous)?,
+                    None => state.db.delete_provider(&AppType::Mcode, &provider.id)?,
                 }
                 return Err(error);
             }
@@ -5774,14 +5939,14 @@ impl ProviderService {
         app_type: AppType,
         provider: Provider,
     ) -> Result<bool, AppError> {
-        if app_type.is_additive_mode() {
+        if app_type.spec().additive {
             return Self::add(state, app_type, provider, false);
         }
         let mut provider = provider;
         Self::prepare_new_provider(&app_type, &mut provider)?;
         // 和切换互斥：等着的切换不能看到只存了一半的行
         let _switch_guard = crate::mode::controller::lock_settled_blocking(state, &app_type)?;
-        state.db.save_provider(app_type.as_str(), &provider)?;
+        state.db.save_provider(&app_type, &provider)?;
         Ok(true)
     }
 
@@ -5813,7 +5978,7 @@ impl ProviderService {
         // Copilot 官方卡只存行、不写文件：前端新增默认带 addToLive=true，不当错误。
         let add_to_live = add_to_live
             && !(app_type == AppType::Copilot && copilot_direct::is_official(&provider));
-        if app_type.is_additive_mode() {
+        if app_type.spec().additive {
             Self::set_provider_live_config_managed(&mut provider, add_to_live);
         }
 
@@ -5830,7 +5995,7 @@ impl ProviderService {
             // the live write repeats the check under MCode's file lock.
             if state
                 .db
-                .get_provider_by_id(&provider.id, app_type.as_str())?
+                .get_provider_by_id(&provider.id, &app_type)?
                 .is_some()
                 || if matches!(app_type, AppType::Dsh) {
                     crate::dsh_config::provider_key_exists(&provider.id)?
@@ -5859,7 +6024,7 @@ impl ProviderService {
             && crate::workbuddy_config::is_official_provider(&provider)
         {
             Self::set_provider_live_config_managed(&mut provider, false);
-            state.db.save_provider(app_type.as_str(), &provider)?;
+            state.db.save_provider(&app_type, &provider)?;
             return Ok(true);
         }
 
@@ -5867,7 +6032,7 @@ impl ProviderService {
         // write it first so a refusal leaves no orphan row behind.
         if app_type == AppType::WorkBuddy && add_to_live {
             write_live_for_state(state, &app_type, &provider)?;
-            if let Err(error) = state.db.save_provider(app_type.as_str(), &provider) {
+            if let Err(error) = state.db.save_provider(&app_type, &provider) {
                 if let Err(rollback) = crate::workbuddy_config::remove_provider(&provider.id) {
                     log::warn!("Failed to roll back WorkBuddy models.json: {rollback}");
                 }
@@ -5877,19 +6042,17 @@ impl ProviderService {
         }
 
         // 累加式写 live 失败（如配置文件解析不了）时要撤回这一行，先记下原来的
-        let existing_row = if app_type.is_additive_mode() {
-            state
-                .db
-                .get_provider_by_id(&provider.id, app_type.as_str())?
+        let existing_row = if app_type.spec().additive {
+            state.db.get_provider_by_id(&provider.id, &app_type)?
         } else {
             None
         };
 
         // Save to database
-        state.db.save_provider(app_type.as_str(), &provider)?;
+        state.db.save_provider(&app_type, &provider)?;
 
         // Additive mode apps (OpenCode, OpenClaw, Hermes): optionally write to live config.
-        if app_type.is_additive_mode() {
+        if app_type.spec().additive {
             // OMO / OMO Slim providers use exclusive mode and write to dedicated config file.
             if matches!(app_type, AppType::OpenCode)
                 && matches!(provider.category.as_deref(), Some("omo") | Some("omo-slim"))
@@ -5951,9 +6114,7 @@ impl ProviderService {
             }
             // No current provider, set as current and sync. Managed Codex adds
             // use the transactional path above because token resolution can fail.
-            state
-                .db
-                .set_current_provider(app_type.as_str(), &provider.id)?;
+            state.db.set_current_provider(&app_type, &provider.id)?;
             write_live_for_state(state, &app_type, &provider)?;
         }
 
@@ -5973,16 +6134,14 @@ impl ProviderService {
             crate::mode::current::Purpose::Direct,
         )?;
         if current.is_some() {
-            state.db.save_provider(app_type.as_str(), &provider)?;
+            state.db.save_provider(&app_type, &provider)?;
             return Ok(true);
         }
 
         // 行有问题（会把官方登录发给第三方等）在存行之前就拒绝。
         codex_direct::preflight(state.db.as_ref(), &provider)?;
-        let previous = state
-            .db
-            .get_provider_by_id(&provider.id, app_type.as_str())?;
-        state.db.save_provider(app_type.as_str(), &provider)?;
+        let previous = state.db.get_provider_by_id(&provider.id, &app_type)?;
+        state.db.save_provider(&app_type, &provider)?;
         let written = codex_direct::write_direct(
             state.db.as_ref(),
             &state.codex_oauth_manager,
@@ -5998,8 +6157,8 @@ impl ProviderService {
                 return Err(error);
             }
             let rollback = match &previous {
-                Some(previous) => state.db.save_provider(app_type.as_str(), previous),
-                None => state.db.delete_provider(app_type.as_str(), &provider.id),
+                Some(previous) => state.db.save_provider(&app_type, previous),
+                None => state.db.delete_provider(&app_type, &provider.id),
             };
             if let Err(rollback) = rollback {
                 return Err(AppError::Message(format!(
@@ -6039,7 +6198,7 @@ impl ProviderService {
                 let stored_meta = match (meta, provider_id) {
                     (None, Some(id)) => state
                         .db
-                        .get_provider_by_id(id, AppType::Codex.as_str())?
+                        .get_provider_by_id(id, &AppType::Codex)?
                         .and_then(|provider| provider.meta),
                     _ => None,
                 };
@@ -6072,7 +6231,7 @@ impl ProviderService {
         let Some(id) = provider_id else {
             return Ok(category);
         };
-        let Some(row) = state.db.get_provider_by_id(id, app_type.as_str())? else {
+        let Some(row) = state.db.get_provider_by_id(id, app_type)? else {
             return Ok(category);
         };
         let official = match app_type {
@@ -6164,9 +6323,7 @@ impl ProviderService {
     ) -> Result<bool, AppError> {
         let app_type = AppType::Codex;
         let _switch_guard = crate::mode::controller::lock_settled_blocking(state, &app_type)?;
-        let existing = state
-            .db
-            .get_provider_by_id(&provider.id, app_type.as_str())?;
+        let existing = state.db.get_provider_by_id(&provider.id, &app_type)?;
         let mut provider = provider;
         let plan = codex_editor::plan_save(
             existing.as_ref().map(|row| &row.settings_config),
@@ -6191,7 +6348,7 @@ impl ProviderService {
         let mode = crate::mode::current::mode_state(&app_type);
         let key_fields = kind.writes_key_fields(state, &app_type, &mode, &provider.id)?;
 
-        state.db.save_provider(app_type.as_str(), &provider)?;
+        state.db.save_provider(&app_type, &provider)?;
         let written = if key_fields {
             codex_editor::write_live(
                 state.db.as_ref(),
@@ -6227,9 +6384,7 @@ impl ProviderService {
         kind: EditorSaveKind,
     ) -> Result<bool, AppError> {
         let _switch_guard = crate::mode::controller::lock_settled_blocking(state, &app_type)?;
-        let existing = state
-            .db
-            .get_provider_by_id(&provider.id, app_type.as_str())?;
+        let existing = state.db.get_provider_by_id(&provider.id, &app_type)?;
         let stored = existing.as_ref().map(|row| &row.settings_config);
         let mut provider = provider;
         enum Edits {
@@ -6266,7 +6421,7 @@ impl ProviderService {
         let key_fields = kind.writes_key_fields(state, &app_type, &mode, &provider.id)?;
         let set_pointer = kind == EditorSaveKind::Add;
 
-        state.db.save_provider(app_type.as_str(), &provider)?;
+        state.db.save_provider(&app_type, &provider)?;
         let written = match &edits {
             Edits::Gemini(edits) => gemini_editor::write_live(
                 state.db.as_ref(),
@@ -6302,8 +6457,8 @@ impl ProviderService {
             return Err(error);
         }
         let rollback = match existing {
-            Some(existing) => state.db.save_provider(app_type.as_str(), existing),
-            None => state.db.delete_provider(app_type.as_str(), provider_id),
+            Some(existing) => state.db.save_provider(app_type, existing),
+            None => state.db.delete_provider(app_type, provider_id),
         };
         if let Err(rollback) = rollback {
             log::warn!(
@@ -6343,16 +6498,14 @@ impl ProviderService {
         Self::normalize_usage_script_credential_overrides(&app_type, &mut provider);
         keep_common_config_for_old_versions(&mut provider);
 
-        let existing = state
-            .db
-            .get_provider_by_id(&provider.id, app_type.as_str())?;
+        let existing = state.db.get_provider_by_id(&provider.id, &app_type)?;
         let first = crate::mode::current::provider_for(
             &state.db,
             &app_type,
             crate::mode::current::Purpose::Direct,
         )?
         .is_none();
-        state.db.save_provider(app_type.as_str(), &provider)?;
+        state.db.save_provider(&app_type, &provider)?;
 
         let key_fields = first.then_some(claude_editor::KeyFieldWrite {
             prev: None,
@@ -6373,9 +6526,7 @@ impl ProviderService {
     ) -> Result<bool, AppError> {
         let app_type = AppType::Claude;
         let _switch_guard = crate::mode::controller::lock_settled_blocking(state, &app_type)?;
-        let existing = state
-            .db
-            .get_provider_by_id(&provider.id, app_type.as_str())?;
+        let existing = state.db.get_provider_by_id(&provider.id, &app_type)?;
         let mut provider = provider;
         Self::normalize_provider_if_claude(&app_type, &mut provider);
         let plan = claude_editor::plan_save(
@@ -6399,7 +6550,7 @@ impl ProviderService {
                 set_pointer: false,
             });
 
-        state.db.save_provider(app_type.as_str(), &provider)?;
+        state.db.save_provider(&app_type, &provider)?;
         let written =
             claude_editor::write_live(state.db.as_ref(), &plan, editor.on_conflict, key_fields)
                 .and_then(|()| Self::resync_proxy_for_saved_row(state, &app_type, &provider));
@@ -6449,13 +6600,11 @@ impl ProviderService {
         // 保存写完，这里也不会在读完模式之后、写 live 之前被它们改掉模式（否则直连的关键
         // 字段会盖掉刚写的代理契约）。Codex 还要在锁里读旧行，看它是不是托管账号的行。
         let _switch_guard = crate::mode::controller::lock_settled_blocking(state, &app_type)?;
-        let existing_provider = state
-            .db
-            .get_provider_by_id(&original_id, app_type.as_str())?;
+        let existing_provider = state.db.get_provider_by_id(&original_id, &app_type)?;
         // Normalize Claude model keys
         Self::normalize_provider_if_claude(&app_type, &mut provider);
         Self::validate_provider_settings(&app_type, &provider)?;
-        if matches!(app_type, AppType::Codex) && provider.category.as_deref() == Some("official") {
+        if matches!(app_type, AppType::Codex) && provider.has_official_category() {
             crate::codex_config::strip_codex_unified_session_bucket_from_settings(
                 &mut provider.settings_config,
             )?;
@@ -6463,7 +6612,7 @@ impl ProviderService {
         Self::normalize_usage_script_credential_overrides(&app_type, &mut provider);
 
         if provider_id_changed {
-            if !app_type.is_additive_mode() {
+            if !app_type.spec().additive {
                 return Err(AppError::Message(
                     "Only additive-mode providers support changing provider key".to_string(),
                 ));
@@ -6511,7 +6660,7 @@ impl ProviderService {
             )?;
             if state
                 .db
-                .get_provider_by_id(&provider.id, app_type.as_str())?
+                .get_provider_by_id(&provider.id, &app_type)?
                 .is_some()
                 || next_id_in_live
             {
@@ -6525,8 +6674,8 @@ impl ProviderService {
             Self::set_provider_live_config_managed(&mut provider, false);
             let was_current = crate::mode::current::local_direct_pointer(&app_type).as_deref()
                 == Some(original_id.as_str());
-            state.db.save_provider(app_type.as_str(), &provider)?;
-            state.db.delete_provider(app_type.as_str(), &original_id)?;
+            state.db.save_provider(&app_type, &provider)?;
+            state.db.delete_provider(&app_type, &original_id)?;
 
             if was_current {
                 crate::settings::set_current_provider(&app_type, Some(provider.id.as_str()))?;
@@ -6537,7 +6686,7 @@ impl ProviderService {
 
         // Additive mode apps (OpenCode, OpenClaw): only sync to live when the provider
         // already exists in live config. Editing a DB-only provider must not auto-add it.
-        if app_type.is_additive_mode() {
+        if app_type.spec().additive {
             let omo_variant = if matches!(app_type, AppType::OpenCode) {
                 match provider.category.as_deref() {
                     Some("omo") => Some(&crate::services::omo::STANDARD),
@@ -6548,15 +6697,14 @@ impl ProviderService {
                 None
             };
             if let Some(variant) = omo_variant {
-                let is_current = state.db.is_omo_provider_current(
-                    app_type.as_str(),
-                    &provider.id,
-                    variant.category,
-                )?;
+                let is_current =
+                    state
+                        .db
+                        .is_omo_provider_current(&app_type, &provider.id, variant.category)?;
                 if is_current {
                     crate::services::OmoService::write_provider_config_to_file(&provider, variant)?;
                 }
-                if let Err(err) = state.db.save_provider(app_type.as_str(), &provider) {
+                if let Err(err) = state.db.save_provider(&app_type, &provider) {
                     if is_current {
                         if let Err(rollback_err) =
                             crate::services::OmoService::write_config_to_file(state, variant)
@@ -6576,7 +6724,7 @@ impl ProviderService {
                 && crate::workbuddy_config::is_official_provider(&provider)
             {
                 Self::set_provider_live_config_managed(&mut provider, false);
-                state.db.save_provider(app_type.as_str(), &provider)?;
+                state.db.save_provider(&app_type, &provider)?;
                 return Ok(true);
             }
             let live_config_managed = Self::check_live_config_exists(
@@ -6611,13 +6759,13 @@ impl ProviderService {
             // leaves the saved row unchanged too.
             if app_type == AppType::WorkBuddy && live_config_managed {
                 write_live_for_state(state, &app_type, &provider)?;
-                state.db.save_provider(app_type.as_str(), &provider)?;
+                state.db.save_provider(&app_type, &provider)?;
                 return Ok(true);
             }
 
             // Save to database after live-config presence is resolved so parse errors
             // do not report failure after already mutating DB state.
-            state.db.save_provider(app_type.as_str(), &provider)?;
+            state.db.save_provider(&app_type, &provider)?;
 
             if !live_config_managed {
                 return Ok(true);
@@ -6656,7 +6804,7 @@ impl ProviderService {
         }
 
         // Save to database
-        state.db.save_provider(app_type.as_str(), &provider)?;
+        state.db.save_provider(&app_type, &provider)?;
 
         if is_direct_current || mode.is_proxy() {
             let outcome = live::sync_live_for_provider_respecting_mode(
@@ -6696,14 +6844,14 @@ impl ProviderService {
         let app_type = AppType::Codex;
         let mode = crate::mode::current::mode_state(&app_type);
         if !mode.is_proxy() && !is_direct_current {
-            state.db.save_provider(app_type.as_str(), provider)?;
+            state.db.save_provider(&app_type, provider)?;
             return Ok(true);
         }
         if !mode.is_proxy() {
             codex_direct::preflight(state.db.as_ref(), provider)?;
         }
 
-        state.db.save_provider(app_type.as_str(), provider)?;
+        state.db.save_provider(&app_type, provider)?;
         let written = if mode.is_proxy() {
             Self::resync_proxy_for_saved_row(state, &app_type, provider)
         } else {
@@ -6722,7 +6870,7 @@ impl ProviderService {
                 return Err(error);
             }
             if let Some(existing) = existing {
-                if let Err(rollback) = state.db.save_provider(app_type.as_str(), existing) {
+                if let Err(rollback) = state.db.save_provider(&app_type, existing) {
                     return Err(AppError::Message(format!(
                         "更新 Codex 供应商失败: {error}; 恢复供应商数据同时失败: {rollback}"
                     )));
@@ -6748,32 +6896,35 @@ impl ProviderService {
     /// 对于累加模式应用（OpenCode, OpenClaw），可以随时删除任意供应商，同时从 live 配置中移除。
     pub fn delete(state: &AppState, app_type: AppType, id: &str) -> Result<(), AppError> {
         let _native_guard = lock_native_provider_operations(state, &app_type);
+        if state.db.get_unreadable_provider(&app_type, id)?.is_some() {
+            return Self::delete_unreadable(state, &app_type, id);
+        }
         if app_type == AppType::Pi {
             return pi::delete(state, id);
         }
         if matches!(app_type, AppType::Dsh) {
             return crate::dsh_config::save_and_commit(id, None, false, || {
-                state.db.delete_provider(app_type.as_str(), id)
+                state.db.delete_provider(&app_type, id)
             });
         }
         if app_type == AppType::Copilot {
             // 官方卡不在文件里；自带模型卡连同 providers.json 里的条目一起删（默认那家拒绝）。
             let official = state
                 .db
-                .get_provider_by_id(id, "copilot")?
+                .get_provider_by_id(id, &AppType::Copilot)?
                 .is_some_and(|row| copilot_direct::is_official(&row));
             if official {
-                return state.db.delete_provider("copilot", id);
+                return state.db.delete_provider(&AppType::Copilot, id);
             }
             return crate::copilot_config::save_and_commit(id, None, false, || {
-                state.db.delete_provider("copilot", id)
+                state.db.delete_provider(&AppType::Copilot, id)
             });
         }
         if app_type == AppType::Kimi {
             Self::ensure_kimi_provider_editable(id)?;
-            let saved = state.db.get_provider_by_id(id, "kimi")?;
+            let saved = state.db.get_provider_by_id(id, &AppType::Kimi)?;
             crate::kimi_config::save_and_commit(id, None, false, || {
-                state.db.delete_provider("kimi", id)
+                state.db.delete_provider(&AppType::Kimi, id)
             })?;
             // The official node is already gone from Kimi (otherwise editing is
             // refused above); its CC Switch-owned credential goes with the card.
@@ -6792,9 +6943,9 @@ impl ProviderService {
         }
 
         // Additive mode apps - no current provider concept
-        if app_type.is_additive_mode() {
+        if app_type.spec().additive {
             // Single DB read shared across all additive-mode sub-paths below.
-            let existing = state.db.get_provider_by_id(id, app_type.as_str())?;
+            let existing = state.db.get_provider_by_id(id, &app_type)?;
 
             if matches!(app_type, AppType::OpenCode) {
                 let provider_category = existing.as_ref().and_then(|p| p.category.clone());
@@ -6804,12 +6955,11 @@ impl ProviderService {
                     _ => None,
                 };
                 if let Some(variant) = omo_variant {
-                    let was_current = state.db.is_omo_provider_current(
-                        app_type.as_str(),
-                        id,
-                        variant.category,
-                    )?;
-                    state.db.delete_provider(app_type.as_str(), id)?;
+                    let was_current =
+                        state
+                            .db
+                            .is_omo_provider_current(&app_type, id, variant.category)?;
+                    state.db.delete_provider(&app_type, id)?;
                     if was_current {
                         crate::services::OmoService::delete_config_file(variant)?;
                     }
@@ -6843,7 +6993,7 @@ impl ProviderService {
                     _ => {}
                 }
             }
-            state.db.delete_provider(app_type.as_str(), id)?;
+            state.db.delete_provider(&app_type, id)?;
             return Ok(());
         }
 
@@ -6866,8 +7016,22 @@ impl ProviderService {
             .map_err(|error| AppError::Message(error.message))?;
         }
 
-        state.db.delete_provider(app_type.as_str(), id)?;
+        state.db.delete_provider(&app_type, id)?;
         Ok(())
+    }
+
+    /// 读不出来的行只删库里这一行：不知道它往 live 写过什么，所以不碰 live，也不写回任何东西。
+    /// 正被使用的照样不能删。
+    fn delete_unreadable(state: &AppState, app_type: &AppType, id: &str) -> Result<(), AppError> {
+        if !app_type.spec().additive
+            && !matches!(app_type, AppType::Agy)
+            && crate::mode::current::is_referenced(&state.db, app_type, id)?
+        {
+            return Err(AppError::Message(
+                "无法删除当前正在使用的供应商".to_string(),
+            ));
+        }
+        state.db.delete_provider(app_type, id)
     }
 
     /// Kimi「添加」：把卡片写进 config.toml，但不改 default_model（「切换」才改）。
@@ -6890,12 +7054,12 @@ impl ProviderService {
         }
         let mut provider = state
             .db
-            .get_provider_by_id(id, "kimi")?
+            .get_provider_by_id(id, &AppType::Kimi)?
             .ok_or_else(|| AppError::Message(format!("供应商 {id} 不存在")))?;
         crate::services::kimi_oauth::ensure_profile_signed_in(&provider.settings_config)?;
         Self::set_provider_live_config_managed(&mut provider, true);
         crate::kimi_config::add_and_commit(id, provider.settings_config.clone(), || {
-            state.db.save_provider("kimi", &provider)
+            state.db.save_provider(&AppType::Kimi, &provider)
         })
     }
 
@@ -6904,7 +7068,7 @@ impl ProviderService {
     fn add_copilot_to_live(state: &AppState, id: &str) -> Result<(), AppError> {
         let mut provider = state
             .db
-            .get_provider_by_id(id, "copilot")?
+            .get_provider_by_id(id, &AppType::Copilot)?
             .ok_or_else(|| AppError::Message(format!("供应商 {id} 不存在")))?;
         if copilot_direct::is_official(&provider) {
             return Err(copilot_official_not_added());
@@ -6912,7 +7076,7 @@ impl ProviderService {
         Self::validate_provider_settings(&AppType::Copilot, &provider)?;
         Self::set_provider_live_config_managed(&mut provider, true);
         crate::copilot_config::add_and_commit(id, &provider.settings_config, || {
-            state.db.save_provider("copilot", &provider)
+            state.db.save_provider(&AppType::Copilot, &provider)
         })
     }
 
@@ -6932,9 +7096,9 @@ impl ProviderService {
         }
         if matches!(app_type, AppType::Dsh) {
             return crate::dsh_config::save_and_commit(id, None, false, || {
-                if let Some(mut provider) = state.db.get_provider_by_id(id, app_type.as_str())? {
+                if let Some(mut provider) = state.db.get_provider_by_id(id, &app_type)? {
                     Self::set_provider_live_config_managed(&mut provider, false);
-                    state.db.save_provider(app_type.as_str(), &provider)?;
+                    state.db.save_provider(&app_type, &provider)?;
                 }
                 Ok(())
             });
@@ -6942,15 +7106,15 @@ impl ProviderService {
         if app_type == AppType::Copilot {
             if state
                 .db
-                .get_provider_by_id(id, "copilot")?
+                .get_provider_by_id(id, &AppType::Copilot)?
                 .is_some_and(|row| copilot_direct::is_official(&row))
             {
                 return Err(copilot_official_not_added());
             }
             return crate::copilot_config::save_and_commit(id, None, false, || {
-                if let Some(mut provider) = state.db.get_provider_by_id(id, "copilot")? {
+                if let Some(mut provider) = state.db.get_provider_by_id(id, &AppType::Copilot)? {
                     Self::set_provider_live_config_managed(&mut provider, false);
-                    state.db.save_provider("copilot", &provider)?;
+                    state.db.save_provider(&AppType::Copilot, &provider)?;
                 }
                 Ok(())
             });
@@ -6959,9 +7123,9 @@ impl ProviderService {
             // An official account leaves Kimi's config but keeps its login and card,
             // so「添加」can put it back.
             return crate::kimi_config::save_and_commit(id, None, false, || {
-                if let Some(mut provider) = state.db.get_provider_by_id(id, "kimi")? {
+                if let Some(mut provider) = state.db.get_provider_by_id(id, &AppType::Kimi)? {
                     Self::set_provider_live_config_managed(&mut provider, false);
-                    state.db.save_provider("kimi", &provider)?;
+                    state.db.save_provider(&AppType::Kimi, &provider)?;
                 }
                 Ok(())
             });
@@ -6972,10 +7136,10 @@ impl ProviderService {
         }
 
         if app_type == AppType::WorkBuddy {
-            if let Some(mut provider) = state.db.get_provider_by_id(id, app_type.as_str())? {
+            if let Some(mut provider) = state.db.get_provider_by_id(id, &app_type)? {
                 if crate::workbuddy_config::is_official_provider(&provider) {
                     Self::set_provider_live_config_managed(&mut provider, false);
-                    state.db.save_provider(app_type.as_str(), &provider)?;
+                    state.db.save_provider(&app_type, &provider)?;
                     return Ok(());
                 }
             }
@@ -6985,7 +7149,7 @@ impl ProviderService {
             AppType::OpenCode => {
                 let provider_category = state
                     .db
-                    .get_provider_by_id(id, app_type.as_str())?
+                    .get_provider_by_id(id, &app_type)?
                     .and_then(|p| p.category);
 
                 let omo_variant = match provider_category.as_deref() {
@@ -6996,10 +7160,10 @@ impl ProviderService {
                 if let Some(variant) = omo_variant {
                     state
                         .db
-                        .clear_omo_provider_current(app_type.as_str(), id, variant.category)?;
+                        .clear_omo_provider_current(&app_type, id, variant.category)?;
                     let still_has_current = state
                         .db
-                        .get_current_omo_provider("opencode", variant.category)?
+                        .get_current_omo_provider(&AppType::OpenCode, variant.category)?
                         .is_some();
                     if still_has_current {
                         crate::services::OmoService::write_config_to_file(state, variant)?;
@@ -7028,9 +7192,9 @@ impl ProviderService {
             }
         }
 
-        if let Some(mut provider) = state.db.get_provider_by_id(id, app_type.as_str())? {
+        if let Some(mut provider) = state.db.get_provider_by_id(id, &app_type)? {
             Self::set_provider_live_config_managed(&mut provider, false);
-            state.db.save_provider(app_type.as_str(), &provider)?;
+            state.db.save_provider(&app_type, &provider)?;
         }
 
         Ok(())
@@ -7046,7 +7210,7 @@ impl ProviderService {
         }
         Ok(state
             .db
-            .get_provider_by_id(id, "kimi")?
+            .get_provider_by_id(id, &AppType::Kimi)?
             .filter(|saved| crate::kimi_config::is_official_provider(&saved.settings_config))
             .map(|saved| saved.settings_config["provider"].clone()))
     }
@@ -7128,11 +7292,13 @@ impl ProviderService {
             return omp::enable(state, id);
         }
 
-        // Check if provider exists
-        let providers = state.db.get_all_providers(app_type.as_str())?;
-        let _provider = providers
-            .get(id)
+        // Check if provider exists. 别的行读不出来不拦这次切换（它们在下面只用来找上一家；
+        // 上一家读不出来就和它不在库里一样处理）；要切到的这一行读不出来则报错。
+        let rows = state.db.get_provider_rows(&app_type)?;
+        let _provider = rows
+            .get(id)?
             .ok_or_else(|| AppError::Message(format!("供应商 {id} 不存在")))?;
+        let providers = &rows.readable;
         // WorkBuddy 官方登录卡不写 models.json，卡片的「添加」走账号切换（还原绑定账号的登录文件）
         if app_type == AppType::WorkBuddy
             && crate::workbuddy_config::is_official_provider(_provider)
@@ -7151,7 +7317,7 @@ impl ProviderService {
                 id,
                 Some(provider.settings_config.clone()),
                 false,
-                || state.db.save_provider(app_type.as_str(), &provider),
+                || state.db.save_provider(&app_type, &provider),
             )?;
             return Ok(SwitchResult::default());
         }
@@ -7164,7 +7330,7 @@ impl ProviderService {
                 provider.settings_config.clone(),
                 |config| {
                     provider.settings_config = config;
-                    state.db.save_provider("kimi", &provider)
+                    state.db.save_provider(&AppType::Kimi, &provider)
                 },
             )?;
             return Ok(SwitchResult::default());
@@ -7172,14 +7338,14 @@ impl ProviderService {
 
         // OMO providers are switched through their own exclusive path.
         if matches!(app_type, AppType::OpenCode) && _provider.category.as_deref() == Some("omo") {
-            return Self::switch_normal(state, app_type, id, &providers);
+            return Self::switch_normal(state, app_type, id, providers);
         }
 
         // OMO Slim providers are switched through their own exclusive path.
         if matches!(app_type, AppType::OpenCode)
             && _provider.category.as_deref() == Some("omo-slim")
         {
-            return Self::switch_normal(state, app_type, id, &providers);
+            return Self::switch_normal(state, app_type, id, providers);
         }
 
         // 切换和进入 / 退出代理都会改客户端文件和指针。按应用串行，拿到锁、补完上一次
@@ -7190,7 +7356,7 @@ impl ProviderService {
         if crate::mode::current::is_proxy(&app_type) {
             // 代理模式：只换代理路由，直连指针不变。契约没变时客户端文件不读也不写；
             // 变了在同一个操作里先改写客户端，再发布路由。
-            if _provider.category.as_deref() == Some("official")
+            if _provider.has_official_category()
                 && !official_provider_supports_proxy_takeover(&app_type, _provider)
             {
                 return Err(AppError::localized(
@@ -7220,7 +7386,7 @@ impl ProviderService {
         }
 
         // Normal mode: full switch with Live config write
-        Self::switch_normal(state, app_type, id, &providers)
+        Self::switch_normal(state, app_type, id, providers)
     }
 
     /// Normal switch flow (non-proxy mode)
@@ -7234,7 +7400,7 @@ impl ProviderService {
             .get(id)
             .ok_or_else(|| AppError::Message(format!("供应商 {id} 不存在")))?;
 
-        if app_type.is_additive_mode() {
+        if app_type.spec().additive {
             log::info!("[SWITCH] {} 写入 {id}（累加式应用）", app_type.as_str());
         } else {
             let previous = crate::mode::current::provider_for(
@@ -7280,19 +7446,25 @@ impl ProviderService {
             if let Some((enable, disable)) = omo_pair {
                 state
                     .db
-                    .set_omo_provider_current(app_type.as_str(), id, enable.category)?;
+                    .set_omo_provider_current(&app_type, id, enable.category)?;
                 crate::services::OmoService::write_config_to_file(state, enable)?;
-                let _ = crate::services::OmoService::delete_config_file(disable);
-                return Ok(SwitchResult::default());
+                let mut result = SwitchResult::default();
+                if let Err(err) = crate::services::OmoService::delete_config_file(disable) {
+                    log::warn!("切到 {id} 后删除另一个 OMO 变体的配置失败: {err}");
+                    result
+                        .warnings
+                        .push(format!("omo_variant_cleanup_failed:{id}"));
+                }
+                return Ok(result);
             }
         }
 
         let mut result = SwitchResult::default();
 
         // Additive mode apps skip setting is_current (no such concept).
-        if !app_type.is_additive_mode() {
+        if !app_type.spec().additive {
             crate::settings::set_current_provider(&app_type, Some(id))?;
-            state.db.set_current_provider(app_type.as_str(), id)?;
+            state.db.set_current_provider(&app_type, id)?;
         }
 
         // 写 live（Claude Desktop、累加式应用；切换式应用在上面各自的分支里写完了）。
@@ -7323,11 +7495,10 @@ impl ProviderService {
         //
         // If persisting the marker fails, roll back the just-written live config so we don't leave
         // the provider in a silent inconsistent state (present in live, but still marked DB-only).
-        if app_type.is_additive_mode() && Self::provider_live_config_managed(provider) != Some(true)
-        {
+        if app_type.spec().additive && Self::provider_live_config_managed(provider) != Some(true) {
             let mut updated = provider.clone();
             Self::set_provider_live_config_managed(&mut updated, true);
-            if let Err(e) = state.db.save_provider(app_type.as_str(), &updated) {
+            if let Err(e) = state.db.save_provider(&app_type, &updated) {
                 let rollback_result = match app_type {
                     AppType::OpenCode => remove_opencode_provider_from_live(&provider.id),
                     AppType::OpenClaw => remove_openclaw_provider_from_live(&provider.id),
@@ -7487,7 +7658,7 @@ impl ProviderService {
         state: &AppState,
         app_type: AppType,
     ) -> Result<(), AppError> {
-        if app_type.is_additive_mode() {
+        if app_type.spec().additive {
             return sync_additive_app_to_live(state, &app_type);
         }
         // 没有正在用的那家、或者在代理模式（客户端文件没按直连重写）时不重投影 MCP。
@@ -7503,11 +7674,11 @@ impl ProviderService {
         app_type: AppType,
         legacy_snippet: &str,
     ) -> Result<(), AppError> {
-        if app_type.is_additive_mode() || legacy_snippet.trim().is_empty() {
+        if app_type.spec().additive || legacy_snippet.trim().is_empty() {
             return Ok(());
         }
 
-        let providers = state.db.get_all_providers(app_type.as_str())?;
+        let providers = state.db.get_all_providers(&app_type)?;
 
         for provider in providers.values() {
             if provider
@@ -7544,9 +7715,7 @@ impl ProviderService {
                 }
             }
 
-            state
-                .db
-                .save_provider(app_type.as_str(), &updated_provider)?;
+            state.db.save_provider(&app_type, &updated_provider)?;
         }
 
         Ok(())
@@ -7556,11 +7725,11 @@ impl ProviderService {
         state: &AppState,
         app_type: AppType,
     ) -> Result<(), AppError> {
-        if app_type.is_additive_mode() {
+        if app_type.spec().additive {
             return Ok(());
         }
 
-        let Some(snippet) = state.db.get_config_snippet(app_type.as_str())? else {
+        let Some(snippet) = state.db.get_config_snippet(&app_type)? else {
             return Ok(());
         };
 
@@ -7585,9 +7754,9 @@ impl ProviderService {
             return Err(AppError::Message("No current provider".to_string()));
         }
 
-        let providers = state.db.get_all_providers(app_type.as_str())?;
+        let providers = state.db.get_provider_rows(&app_type)?;
         let provider = providers
-            .get(&current_id)
+            .get(&current_id)?
             .ok_or_else(|| AppError::Message(format!("Provider {current_id} not found")))?;
 
         match app_type {
@@ -7929,7 +8098,7 @@ impl ProviderService {
             return Ok(());
         }
 
-        let Some(snippet_text) = state.db.get_config_snippet(app.as_str())? else {
+        let Some(snippet_text) = state.db.get_config_snippet(&app)? else {
             state.db.set_setting(FLAG, "true")?;
             return Ok(());
         };
@@ -7966,7 +8135,7 @@ impl ProviderService {
             .map_err(|e| AppError::Message(format!("Serialization failed: {e}")))?;
 
         // 1) 先算出各供应商清理后的配置，但**先不落库**
-        let providers = state.db.get_all_providers(app.as_str())?;
+        let providers = state.db.get_all_providers(&app)?;
         let mut pending: Vec<(String, Provider, Value)> = Vec::new();
         for (id, provider) in providers {
             let cleaned = match live::remove_common_config_from_settings(
@@ -8030,7 +8199,7 @@ impl ProviderService {
         for (id, provider, cleaned) in pending {
             let mut updated = provider;
             updated.settings_config = cleaned;
-            state.db.save_provider(app.as_str(), &updated)?;
+            state.db.save_provider(&app, &updated)?;
             log::info!("已从 Gemini 供应商 '{id}' 中清除泄漏的共享凭据");
         }
 
@@ -8044,14 +8213,14 @@ impl ProviderService {
         //
         //    带错返回是安全的失败方式：调用方（lib.rs:1189）只记 warn 不中断启动，
         //    片段和标记都原样留着，下次启动照原样重来。
-        if let Some(backup) = state.db.get_live_backup(app.as_str()).await? {
+        if let Some(backup) = state.db.get_live_backup(&app).await? {
             let original: Value = serde_json::from_str(&backup.original_config)
                 .map_err(|e| AppError::Message(format!("解析 Gemini 代理接管备份失败: {e}")))?;
             let cleaned = live::remove_common_config_from_settings(&app, &original, &poison_text)?;
             if cleaned != original {
                 let text = serde_json::to_string(&cleaned)
                     .map_err(|e| AppError::Message(format!("Serialization failed: {e}")))?;
-                state.db.save_live_backup(app.as_str(), &text).await?;
+                state.db.save_live_backup(&app, &text).await?;
                 log::info!("已从 Gemini 代理接管备份中清除泄漏的共享凭据");
             }
         }
@@ -8090,13 +8259,11 @@ impl ProviderService {
         //    should_auto_extract_config_snippet 永远为 false，用户的合法共享配置再也
         //    重建不回来。同理绝不置 cleared 标记。
         if clean.is_empty() {
-            state.db.set_config_snippet(app.as_str(), None)?;
+            state.db.set_config_snippet(&app, None)?;
         } else {
             let cleaned_snippet = serde_json::to_string_pretty(&Value::Object(clean))
                 .map_err(|e| AppError::Message(format!("Serialization failed: {e}")))?;
-            state
-                .db
-                .set_config_snippet(app.as_str(), Some(cleaned_snippet))?;
+            state.db.set_config_snippet(&app, Some(cleaned_snippet))?;
         }
 
         state.db.set_setting(FLAG, "true")?;
@@ -8198,16 +8365,6 @@ impl ProviderService {
         endpoints::remove_custom_endpoint(state, app_type, provider_id, url)
     }
 
-    /// Update endpoint last used timestamp (re-export)
-    pub fn update_endpoint_last_used(
-        state: &AppState,
-        app_type: AppType,
-        provider_id: &str,
-        url: String,
-    ) -> Result<(), AppError> {
-        endpoints::update_endpoint_last_used(state, app_type, provider_id, url)
-    }
-
     /// Update provider sort order
     pub fn update_sort_order(
         state: &AppState,
@@ -8218,9 +8375,7 @@ impl ProviderService {
             .into_iter()
             .map(|update| (update.id, update.sort_index))
             .collect();
-        state
-            .db
-            .update_provider_sort_indexes(app_type.as_str(), &updates)?;
+        state.db.update_provider_sort_indexes(&app_type, &updates)?;
         Ok(true)
     }
 
@@ -8263,6 +8418,13 @@ impl ProviderService {
     }
 
     fn validate_provider_settings(app_type: &AppType, provider: &Provider) -> Result<(), AppError> {
+        if let Some(raw) = provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.billing_multiplier.as_deref())
+        {
+            crate::provider::parse_billing_multiplier(raw).map_err(AppError::InvalidInput)?;
+        }
         icon::validate_icon(provider.icon.as_deref())?;
         match app_type {
             AppType::Claude => {
@@ -8346,7 +8508,7 @@ impl ProviderService {
                             "Grok Build configuration is missing the config field",
                         )
                     })?;
-                if provider.category.as_deref() == Some("official") {
+                if provider.has_official_category() {
                     // 官方条目走 Grok CLI 自带 OAuth：空 config 合法，
                     // 其余内容只要求 TOML 语法合法。
                     crate::grok_config::validate_config_toml_syntax(config)?;
@@ -8434,284 +8596,6 @@ impl ProviderService {
         }
 
         Ok(())
-    }
-
-    #[allow(dead_code)]
-    fn extract_credentials(
-        provider: &Provider,
-        app_type: &AppType,
-    ) -> Result<(String, String), AppError> {
-        match app_type {
-            AppType::Claude => {
-                let env = provider
-                    .settings_config
-                    .get("env")
-                    .and_then(|v| v.as_object())
-                    .ok_or_else(|| {
-                        AppError::localized(
-                            "provider.claude.env.missing",
-                            "配置格式错误: 缺少 env",
-                            "Invalid configuration: missing env section",
-                        )
-                    })?;
-
-                let api_key = env
-                    .get("ANTHROPIC_AUTH_TOKEN")
-                    .or_else(|| env.get("ANTHROPIC_API_KEY"))
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        AppError::localized(
-                            "provider.claude.api_key.missing",
-                            "缺少 API Key",
-                            "API key is missing",
-                        )
-                    })?
-                    .to_string();
-
-                let base_url = env
-                    .get("ANTHROPIC_BASE_URL")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        AppError::localized(
-                            "provider.claude.base_url.missing",
-                            "缺少 ANTHROPIC_BASE_URL 配置",
-                            "Missing ANTHROPIC_BASE_URL configuration",
-                        )
-                    })?
-                    .to_string();
-
-                Ok((api_key, base_url))
-            }
-            AppType::GrokBuild => {
-                let config_toml = provider
-                    .settings_config
-                    .get("config")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| {
-                        AppError::localized(
-                            "provider.grokbuild.config.missing",
-                            "Grok Build 配置缺少 config 字段",
-                            "Grok Build configuration is missing the config field",
-                        )
-                    })?;
-                let (base_url, api_key) = crate::grok_config::extract_credentials(config_toml)
-                    .ok_or_else(|| {
-                        AppError::localized(
-                            "provider.grokbuild.credentials.missing",
-                            "Grok Build 配置缺少 Base URL 或 API Key",
-                            "Grok Build configuration is missing the base URL or API key",
-                        )
-                    })?;
-                Ok((api_key, base_url))
-            }
-            AppType::ClaudeDesktop => {
-                let credentials =
-                    crate::claude_desktop_config::direct_gateway_credentials(provider)?;
-                Ok((credentials.api_key, credentials.base_url))
-            }
-            AppType::Codex => {
-                let _auth = provider
-                    .settings_config
-                    .get("auth")
-                    .and_then(|v| v.as_object())
-                    .ok_or_else(|| {
-                        AppError::localized(
-                            "provider.codex.auth.missing",
-                            "配置格式错误: 缺少 auth",
-                            "Invalid configuration: missing auth section",
-                        )
-                    })?;
-
-                let config_toml = provider
-                    .settings_config
-                    .get("config")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-
-                let api_key = crate::codex_config::extract_codex_api_key(
-                    provider.settings_config.get("auth"),
-                    Some(config_toml),
-                )
-                .ok_or_else(|| {
-                    AppError::localized(
-                        "provider.codex.api_key.missing",
-                        "缺少 API Key",
-                        "API key is missing",
-                    )
-                })?;
-
-                let base_url = if config_toml.contains("base_url") {
-                    let re = Regex::new(r#"base_url\s*=\s*["']([^"']+)["']"#).map_err(|e| {
-                        AppError::localized(
-                            "provider.regex_init_failed",
-                            format!("正则初始化失败: {e}"),
-                            format!("Failed to initialize regex: {e}"),
-                        )
-                    })?;
-                    re.captures(config_toml)
-                        .and_then(|caps| caps.get(1))
-                        .map(|m| m.as_str().to_string())
-                        .ok_or_else(|| {
-                            AppError::localized(
-                                "provider.codex.base_url.invalid",
-                                "config.toml 中 base_url 格式错误",
-                                "base_url in config.toml has invalid format",
-                            )
-                        })?
-                } else {
-                    return Err(AppError::localized(
-                        "provider.codex.base_url.missing",
-                        "config.toml 中缺少 base_url 配置",
-                        "base_url is missing from config.toml",
-                    ));
-                };
-
-                Ok((api_key, base_url))
-            }
-            AppType::Gemini | AppType::Agy => {
-                use crate::gemini_config::json_to_env;
-
-                let env_map = json_to_env(&provider.settings_config)?;
-
-                let api_key = env_map.get("GEMINI_API_KEY").cloned().ok_or_else(|| {
-                    AppError::localized(
-                        "gemini.missing_api_key",
-                        "缺少 GEMINI_API_KEY",
-                        "Missing GEMINI_API_KEY",
-                    )
-                })?;
-
-                let base_url = env_map
-                    .get("GOOGLE_GEMINI_BASE_URL")
-                    .cloned()
-                    .unwrap_or_else(|| "https://generativelanguage.googleapis.com".to_string());
-
-                Ok((api_key, base_url))
-            }
-            AppType::Copilot => {
-                // 新形状在 provider 节点；旧版环境变量形状的行还没被列表转换时兜底。
-                let settings =
-                    crate::copilot_config::convert_legacy_settings(&provider.settings_config)
-                        .unwrap_or_else(|| provider.settings_config.clone());
-                let get = |key: &str| {
-                    settings
-                        .get("provider")
-                        .and_then(|provider| provider.get(key))
-                        .and_then(Value::as_str)
-                        .map(str::trim)
-                        .filter(|value| !value.is_empty())
-                        .map(str::to_string)
-                };
-                let api_key = get("apiKey")
-                    .or_else(|| get("bearerToken"))
-                    .unwrap_or_default();
-                let base_url = get("baseUrl").ok_or_else(|| {
-                    AppError::localized(
-                        "copilot.missing_base_url",
-                        "缺少自带模型的接口地址",
-                        "Missing the bring-your-own-model endpoint",
-                    )
-                })?;
-                Ok((api_key, base_url))
-            }
-            AppType::OpenCode => {
-                // OpenCode uses options.apiKey and options.baseURL
-                let options = provider
-                    .settings_config
-                    .get("options")
-                    .and_then(|v| v.as_object())
-                    .ok_or_else(|| {
-                        AppError::localized(
-                            "provider.opencode.options.missing",
-                            "配置格式错误: 缺少 options",
-                            "Invalid configuration: missing options section",
-                        )
-                    })?;
-
-                let api_key = options
-                    .get("apiKey")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        AppError::localized(
-                            "provider.opencode.api_key.missing",
-                            "缺少 API Key",
-                            "API key is missing",
-                        )
-                    })?
-                    .to_string();
-
-                let base_url = options
-                    .get("baseURL")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-
-                Ok((api_key, base_url))
-            }
-            AppType::Dsh => Ok((
-                provider
-                    .settings_config
-                    .pointer("/options/apiKey")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .into(),
-                provider
-                    .settings_config
-                    .pointer("/options/baseURL")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .into(),
-            )),
-            AppType::Kimi => Ok((
-                provider
-                    .settings_config
-                    .pointer("/provider/api_key")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .into(),
-                provider
-                    .settings_config
-                    .pointer("/provider/base_url")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .into(),
-            )),
-            AppType::WorkBuddy => {
-                let (base_url, api_key) = provider.resolve_usage_credentials(&AppType::WorkBuddy);
-                if api_key.is_empty() {
-                    return Err(AppError::localized(
-                        "provider.openclaw.api_key.missing",
-                        "缺少 API Key",
-                        "API key is missing",
-                    ));
-                }
-                Ok((api_key, base_url))
-            }
-            AppType::OpenClaw | AppType::Hermes | AppType::Pi | AppType::Mcode | AppType::Omp => {
-                // These native formats use apiKey and baseUrl directly on the object.
-                let api_key = provider
-                    .settings_config
-                    .get("apiKey")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        AppError::localized(
-                            "provider.openclaw.api_key.missing",
-                            "缺少 API Key",
-                            "API key is missing",
-                        )
-                    })?
-                    .to_string();
-
-                let base_url = provider
-                    .settings_config
-                    .get("baseUrl")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-
-                Ok((api_key, base_url))
-            }
-        }
     }
 }
 
@@ -8811,14 +8695,6 @@ impl ProviderService {
         state.db.get_all_universal_providers()
     }
 
-    /// 获取单个统一供应商
-    pub fn get_universal(
-        state: &AppState,
-        id: &str,
-    ) -> Result<Option<UniversalProvider>, AppError> {
-        state.db.get_universal_provider(id)
-    }
-
     /// 添加或更新统一供应商（不自动同步，需手动调用 sync_universal_to_apps）
     pub fn upsert_universal(
         state: &AppState,
@@ -8843,15 +8719,15 @@ impl ProviderService {
         if let Some(p) = provider {
             if p.apps.claude {
                 let claude_id = format!("universal-claude-{id}");
-                let _ = state.db.delete_provider("claude", &claude_id);
+                let _ = state.db.delete_provider(&AppType::Claude, &claude_id);
             }
             if p.apps.codex {
                 let codex_id = format!("universal-codex-{id}");
-                let _ = state.db.delete_provider("codex", &codex_id);
+                let _ = state.db.delete_provider(&AppType::Codex, &codex_id);
             }
             if p.apps.gemini {
                 let gemini_id = format!("universal-gemini-{id}");
-                let _ = state.db.delete_provider("gemini", &gemini_id);
+                let _ = state.db.delete_provider(&AppType::Gemini, &gemini_id);
             }
         }
 
@@ -8875,7 +8751,10 @@ impl ProviderService {
         // 同步到 Claude
         if let Some(mut claude_provider) = provider.to_claude_provider() {
             // 合并已有配置
-            if let Some(existing) = state.db.get_provider_by_id(&claude_provider.id, "claude")? {
+            if let Some(existing) = state
+                .db
+                .get_provider_by_id(&claude_provider.id, &AppType::Claude)?
+            {
                 let mut merged = existing.settings_config.clone();
                 Self::merge_json(&mut merged, &claude_provider.settings_config);
                 claude_provider.settings_config = merged;
@@ -8884,7 +8763,7 @@ impl ProviderService {
                 claude_provider.created_at = existing.created_at;
                 claude_provider.sort_index = existing.sort_index;
             }
-            state.db.save_provider("claude", &claude_provider)?;
+            state.db.save_provider(&AppType::Claude, &claude_provider)?;
             Self::project_universal_child_to_live(
                 state,
                 AppType::Claude,
@@ -8894,13 +8773,16 @@ impl ProviderService {
         } else {
             // 如果禁用了 Claude，删除对应的子供应商
             let claude_id = format!("universal-claude-{id}");
-            let _ = state.db.delete_provider("claude", &claude_id);
+            let _ = state.db.delete_provider(&AppType::Claude, &claude_id);
         }
 
         // 同步到 Codex
         if let Some(mut codex_provider) = provider.to_codex_provider() {
             // 合并已有配置
-            if let Some(existing) = state.db.get_provider_by_id(&codex_provider.id, "codex")? {
+            if let Some(existing) = state
+                .db
+                .get_provider_by_id(&codex_provider.id, &AppType::Codex)?
+            {
                 let mut merged = existing.settings_config.clone();
                 Self::merge_json(&mut merged, &codex_provider.settings_config);
                 codex_provider.settings_config = merged;
@@ -8909,7 +8791,7 @@ impl ProviderService {
                 codex_provider.created_at = existing.created_at;
                 codex_provider.sort_index = existing.sort_index;
             }
-            state.db.save_provider("codex", &codex_provider)?;
+            state.db.save_provider(&AppType::Codex, &codex_provider)?;
             Self::project_universal_child_to_live(
                 state,
                 AppType::Codex,
@@ -8918,13 +8800,16 @@ impl ProviderService {
             );
         } else {
             let codex_id = format!("universal-codex-{id}");
-            let _ = state.db.delete_provider("codex", &codex_id);
+            let _ = state.db.delete_provider(&AppType::Codex, &codex_id);
         }
 
         // 同步到 Gemini
         if let Some(mut gemini_provider) = provider.to_gemini_provider() {
             // 合并已有配置
-            if let Some(existing) = state.db.get_provider_by_id(&gemini_provider.id, "gemini")? {
+            if let Some(existing) = state
+                .db
+                .get_provider_by_id(&gemini_provider.id, &AppType::Gemini)?
+            {
                 let mut merged = existing.settings_config.clone();
                 Self::merge_json(&mut merged, &gemini_provider.settings_config);
                 gemini_provider.settings_config = merged;
@@ -8933,7 +8818,7 @@ impl ProviderService {
                 gemini_provider.created_at = existing.created_at;
                 gemini_provider.sort_index = existing.sort_index;
             }
-            state.db.save_provider("gemini", &gemini_provider)?;
+            state.db.save_provider(&AppType::Gemini, &gemini_provider)?;
             Self::project_universal_child_to_live(
                 state,
                 AppType::Gemini,
@@ -8942,7 +8827,7 @@ impl ProviderService {
             );
         } else {
             let gemini_id = format!("universal-gemini-{id}");
-            let _ = state.db.delete_provider("gemini", &gemini_id);
+            let _ = state.db.delete_provider(&AppType::Gemini, &gemini_id);
         }
 
         if live_failures.is_empty() {
