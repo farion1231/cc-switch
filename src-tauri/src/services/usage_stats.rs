@@ -511,9 +511,8 @@ fn session_proxy_model_match_sql(
             OR (
                 {session_app_type} = 'codex'
                 AND {session_data_source} = 'codex_session'
-                AND NULLIF(TRIM({proxy_request_model}), '') IS NOT NULL
-                AND LOWER(TRIM({proxy_request_model})) <> 'unknown'
                 AND NULLIF({p_req_model}, '') IS NOT NULL
+                AND LOWER({p_req_model}) <> 'unknown'
                 AND NULLIF({s_model}, '') IS NOT NULL
                 AND LOWER({p_req_model}) = LOWER({s_model})
             )
@@ -3528,12 +3527,34 @@ mod tests {
         conn.execute(
             "UPDATE proxy_request_logs SET model = ?1, request_model = ?2 WHERE request_id = ?3",
             params![
-                "gemini-3.8-flash-high",
+                "upstream-routed-model",
                 "antigravity/gemini-3.8-flash-high",
                 "codex-proxy-prefix"
             ],
         )?;
         assert!(has_matching_proxy_usage_log(&conn, &key)?);
+
+        // 多级前缀在 request_model 回退分支中也能正确识别
+        conn.execute(
+            "UPDATE proxy_request_logs SET model = ?1, request_model = ?2 WHERE request_id = ?3",
+            params![
+                "upstream-routed-model",
+                "cpa/antigravity/gemini-3.8-flash-high",
+                "codex-proxy-prefix"
+            ],
+        )?;
+        assert!(has_matching_proxy_usage_log(&conn, &key)?);
+
+        // request_model 剥离前缀后为 unknown 时不放宽匹配
+        conn.execute(
+            "UPDATE proxy_request_logs SET model = ?1, request_model = ?2 WHERE request_id = ?3",
+            params![
+                "upstream-routed-model",
+                "cpa/unknown",
+                "codex-proxy-prefix"
+            ],
+        )?;
+        assert!(!has_matching_proxy_usage_log(&conn, &key)?);
 
         // 多级前缀（如 cpa/antigravity/gemini-3.8-flash-high）同样与最后一个 '/' 之后的模型对齐
         conn.execute(
@@ -3622,6 +3643,35 @@ mod tests {
         conn.execute(
             "UPDATE proxy_request_logs SET model = ?1, request_model = ?1 WHERE request_id = ?2",
             params![
+                "cpa/antigravity/gemini-3.8-flash-high",
+                "codex-proxy-prefix"
+            ],
+        )?;
+        let filter = effective_usage_log_filter("l");
+        let sql = format!(
+            "SELECT request_id FROM proxy_request_logs l WHERE {filter} ORDER BY request_id"
+        );
+        let request_ids = conn
+            .prepare(&sql)?
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(request_ids, vec!["codex-proxy-prefix".to_string()]);
+
+        let range_filter = effective_usage_log_filter_for_range(&conn, "l", None, None)?;
+        let range_sql = format!(
+            "SELECT request_id FROM proxy_request_logs l WHERE {range_filter} ORDER BY request_id"
+        );
+        let range_ids = conn
+            .prepare(&range_sql)?
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(range_ids, vec!["codex-proxy-prefix".to_string()]);
+
+        // 当代理的 model 被上游路由改写、依赖多级 request_model 回退去重时，单行过滤与 range JOIN 同样正确去重
+        conn.execute(
+            "UPDATE proxy_request_logs SET model = ?1, request_model = ?2 WHERE request_id = ?3",
+            params![
+                "upstream-routed-model",
                 "cpa/antigravity/gemini-3.8-flash-high",
                 "codex-proxy-prefix"
             ],
