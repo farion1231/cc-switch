@@ -160,6 +160,7 @@ pub(crate) fn decompress_body_with_limit(
 
 /// 无输出上限的 [`decompress_body_with_limit`] 版本，供请求侧等已有自身
 /// 体积约束的调用方使用。
+#[cfg(test)]
 pub(crate) fn decompress_body(
     content_encoding: &str,
     body: &[u8],
