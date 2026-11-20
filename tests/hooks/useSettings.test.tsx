@@ -14,6 +14,7 @@ const updateTrayMenuMock = vi.fn();
 const getCurrentMock = vi.fn();
 const getAllMock = vi.fn();
 const getQueryDataMock = vi.fn();
+const invalidateQueriesMock = vi.fn(async (..._args: unknown[]) => {});
 const invalidatePiDirectoryCachesMock = vi.fn();
 const toastErrorMock = vi.fn();
 const toastSuccessMock = vi.fn();
@@ -60,7 +61,7 @@ vi.mock("@tanstack/react-query", async () => {
     ...actual,
     useQueryClient: () => ({
       getQueryData: (...args: unknown[]) => getQueryDataMock(...args),
-      invalidateQueries: async () => {},
+      invalidateQueries: (...args: unknown[]) => invalidateQueriesMock(...args),
     }),
   };
 });
@@ -157,6 +158,8 @@ describe("useSettings hook", () => {
     getCurrentMock.mockReset();
     getAllMock.mockReset();
     getQueryDataMock.mockReset();
+    invalidateQueriesMock.mockReset();
+    invalidateQueriesMock.mockResolvedValue(undefined);
     toastErrorMock.mockReset();
     toastSuccessMock.mockReset();
     window.localStorage.clear();
@@ -375,6 +378,7 @@ describe("useSettings hook", () => {
     ["piConfigDir", 0],
     ["ompConfigDir", 0],
     ["dshConfigDir", 0],
+    ["agyConfigDir", 0],
   ] as const)(
     "saves a changed %s and projects providers %i time(s)",
     async (field, syncCalls) => {
@@ -412,6 +416,46 @@ describe("useSettings hook", () => {
     expect(payload.piConfigDir).toBe("/custom/pi");
     expect(syncCurrentProvidersLiveMock).not.toHaveBeenCalled();
     expect(invalidatePiDirectoryCachesMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("invalidates agy providers, skills, sessions, prompts, mcp, and subscription quota when agyConfigDir changes", async () => {
+    settingsFormMock = createSettingsFormMock({
+      settings: {
+        ...serverSettings,
+        agyConfigDir:
+          "  \\\\wsl.localhost\\Ubuntu-26.04\\home\\alice\\.gemini  ",
+      },
+    });
+
+    const { result } = renderHook(() => useSettings());
+
+    await act(async () => {
+      await result.current.saveSettings(undefined, { silent: true });
+    });
+
+    const payload = mutateAsyncMock.mock.calls[0][0] as Settings;
+    expect(payload.agyConfigDir).toBe(
+      "\\\\wsl.localhost\\Ubuntu-26.04\\home\\alice\\.gemini",
+    );
+    expect(syncCurrentProvidersLiveMock).not.toHaveBeenCalled();
+    expect(invalidateQueriesMock).toHaveBeenCalledWith({
+      queryKey: ["providers", "agy"],
+    });
+    expect(invalidateQueriesMock).toHaveBeenCalledWith({
+      queryKey: ["skills"],
+    });
+    expect(invalidateQueriesMock).toHaveBeenCalledWith({
+      queryKey: ["sessions"],
+    });
+    expect(invalidateQueriesMock).toHaveBeenCalledWith({
+      queryKey: ["prompts"],
+    });
+    expect(invalidateQueriesMock).toHaveBeenCalledWith({
+      queryKey: ["mcp", "all"],
+    });
+    expect(invalidateQueriesMock).toHaveBeenCalledWith({
+      queryKey: ["subscription", "quota", "agy"],
+    });
   });
 
   it("auto-saves the persisted directory, not an unsaved draft", async () => {

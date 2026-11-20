@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ProviderCard } from "@/components/providers/ProviderCard";
 import type { AppId, ManagedAuthStatus } from "@/lib/api";
 import { agyAuthStatusQuery } from "@/lib/query/subscription";
-import type { Provider } from "@/types";
+import type { Provider, Settings } from "@/types";
 import { createTestQueryClient } from "../utils/testQueryClient";
 
 vi.mock("@/components/providers/ProviderCardActions", () => ({
@@ -25,12 +25,16 @@ vi.mock("@/components/AgyAccountQuotaFooter", () => ({
     <span data-testid="agy-account-quota">{accountId}</span>
   ),
 }));
-const platform = vi.hoisted(() => ({ mac: false, linux: false }));
+const platform = vi.hoisted(() => ({
+  mac: false,
+  linux: false,
+  windows: false,
+}));
 vi.mock("@/lib/platform", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/platform")>()),
   isMac: () => platform.mac,
   isLinux: () => platform.linux,
-  isWindows: () => false,
+  isWindows: () => platform.windows,
 }));
 vi.mock("@/lib/query/failover", () => ({
   useProviderHealth: () => ({ data: undefined }),
@@ -43,11 +47,15 @@ function renderCard(
   provider: Provider,
   appId: AppId = "agy",
   cachedAgyAuthStatus?: ManagedAuthStatus,
+  cachedSettings?: Partial<Settings>,
 ) {
   const queryClient = createTestQueryClient();
   if (cachedAgyAuthStatus) {
     // A disabled React Query observer still receives existing cache entries.
     queryClient.setQueryData(agyAuthStatusQuery.queryKey, cachedAgyAuthStatus);
+  }
+  if (cachedSettings) {
+    queryClient.setQueryData(["settings"], cachedSettings);
   }
   return render(
     <QueryClientProvider client={queryClient}>
@@ -69,6 +77,7 @@ function renderCard(
 afterEach(() => {
   platform.mac = false;
   platform.linux = false;
+  platform.windows = false;
 });
 
 const relay: Provider = {
@@ -171,6 +180,28 @@ describe("ProviderCard Antigravity official quota", () => {
     expect(screen.getByTestId("subscription-quota")).toHaveTextContent("agy");
     expect(screen.queryByTestId("agy-account-quota")).not.toBeInTheDocument();
   });
+
+  it("shows the bound account's quota on Windows when agyConfigDir is local", () => {
+    platform.windows = true;
+    renderCard(bound, "agy", undefined, {
+      agyConfigDir: "C:\\Users\\alice\\.gemini",
+    });
+    expect(screen.getByTestId("agy-account-quota")).toHaveTextContent("sub-b");
+    expect(screen.queryByTestId("subscription-quota")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    "\\\\wsl.localhost\\Ubuntu-26.04\\home\\alice\\.gemini",
+    "\\\\wsl$\\Ubuntu-26.04\\home\\alice\\.gemini",
+  ])(
+    "ignores the local binding and queries live WSL quota on Windows for %s",
+    (wslDir) => {
+      platform.windows = true;
+      renderCard(bound, "agy", undefined, { agyConfigDir: wslDir });
+      expect(screen.getByTestId("subscription-quota")).toHaveTextContent("agy");
+      expect(screen.queryByTestId("agy-account-quota")).not.toBeInTheDocument();
+    },
+  );
 });
 
 describe("ProviderCard cached Antigravity auth status isolation", () => {
@@ -288,6 +319,29 @@ describe("ProviderCard cached Antigravity auth status isolation", () => {
 
     expect(screen.getByText("bob@example.com")).toBeInTheDocument();
     expect(screen.queryByText("alice@example.com")).not.toBeInTheDocument();
+    expect(screen.queryByText("authCenter.inUseBy")).not.toBeInTheDocument();
+  });
+
+  it("hides cached local agy account email and badge on Windows when agyConfigDir points to WSL", () => {
+    platform.windows = true;
+    renderCard(
+      {
+        ...agyOfficial,
+        meta: {
+          authBinding: {
+            source: "managed_account",
+            authProvider: "agy_oauth",
+            accountId: "agy-active",
+          },
+        },
+      },
+      "agy",
+      cachedAgyAuthStatus,
+      { agyConfigDir: "\\\\wsl.localhost\\Ubuntu-26.04\\home\\alice\\.gemini" },
+    );
+
+    expect(screen.queryByText("alice@example.com")).not.toBeInTheDocument();
+    expect(screen.queryByText("bob@example.com")).not.toBeInTheDocument();
     expect(screen.queryByText("authCenter.inUseBy")).not.toBeInTheDocument();
   });
 });

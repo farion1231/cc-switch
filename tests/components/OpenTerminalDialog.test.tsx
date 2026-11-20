@@ -6,14 +6,15 @@ import {
   terminalAvailable,
   terminalNeedsRoute,
 } from "@/components/providers/OpenTerminalDialog";
-import type { Provider } from "@/types";
+import type { Provider, Settings } from "@/types";
 import { createTestQueryClient } from "../utils/testQueryClient";
 
 const openTerminalMock = vi.fn();
 const pickDirectoryMock = vi.fn();
+const settingsGetMock = vi.fn();
 const agyStatusMock = vi.fn();
 const agyRunningMock = vi.fn();
-const platform = vi.hoisted(() => ({ linux: false }));
+const platform = vi.hoisted(() => ({ linux: false, windows: false }));
 
 vi.mock("@/lib/api", () => ({
   providersApi: {
@@ -21,6 +22,7 @@ vi.mock("@/lib/api", () => ({
   },
   settingsApi: {
     pickDirectory: (...args: unknown[]) => pickDirectoryMock(...args),
+    get: () => settingsGetMock(),
   },
   authApi: {
     authGetStatus: (...args: unknown[]) => agyStatusMock(...args),
@@ -29,8 +31,9 @@ vi.mock("@/lib/api", () => ({
 }));
 vi.mock("@/lib/platform", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/platform")>()),
-  isMac: () => !platform.linux,
+  isMac: () => !platform.linux && !platform.windows,
   isLinux: () => platform.linux,
+  isWindows: () => platform.windows,
 }));
 
 vi.mock("@/lib/toast", () => ({
@@ -53,8 +56,12 @@ function renderDialog(
   onClose = vi.fn(),
   target: Provider = provider,
   appId: "claude" | "codex" | "agy" | "grokbuild" | "copilot" = "claude",
+  cachedSettings?: Partial<Settings>,
 ) {
   const client = createTestQueryClient();
+  if (cachedSettings) {
+    client.setQueryData(["settings"], cachedSettings);
+  }
   render(
     <QueryClientProvider client={client}>
       <OpenTerminalDialog provider={target} appId={appId} onClose={onClose} />
@@ -66,9 +73,11 @@ function renderDialog(
 describe("OpenTerminalDialog", () => {
   beforeEach(() => {
     platform.linux = false;
+    platform.windows = false;
     window.localStorage.clear();
     openTerminalMock.mockReset().mockResolvedValue(true);
     pickDirectoryMock.mockReset();
+    settingsGetMock.mockReset().mockResolvedValue({});
     agyStatusMock.mockReset().mockResolvedValue({
       provider: "agy_oauth",
       authenticated: true,
@@ -149,6 +158,32 @@ describe("OpenTerminalDialog", () => {
     agyStatusMock.mockClear();
     renderDialog(vi.fn(), agyOfficial(), "agy");
     expect(agyStatusMock).not.toHaveBeenCalled();
+  });
+
+  it("hides the local account switch notice on Windows when agyConfigDir points to WSL", async () => {
+    platform.windows = true;
+    settingsGetMock.mockResolvedValue({
+      agyConfigDir: "\\\\wsl.localhost\\Ubuntu-26.04\\home\\alice\\.gemini",
+    });
+    renderDialog(vi.fn(), agyOfficial("b"), "agy", {
+      agyConfigDir: "\\\\wsl.localhost\\Ubuntu-26.04\\home\\alice\\.gemini",
+    });
+    expect(agyStatusMock).not.toHaveBeenCalled();
+    expect(agyRunningMock).not.toHaveBeenCalled();
+    expect(screen.queryByText(/切换到/)).not.toBeInTheDocument();
+  });
+
+  it("still shows the account switch notice on Windows when agyConfigDir is local", async () => {
+    platform.windows = true;
+    settingsGetMock.mockResolvedValue({
+      agyConfigDir: "C:\\Users\\alice\\.gemini",
+    });
+    renderDialog(vi.fn(), agyOfficial("b"), "agy", {
+      agyConfigDir: "C:\\Users\\alice\\.gemini",
+    });
+    expect(
+      await screen.findByText(/打开前把 agy 的登录切换到 b@example.com/),
+    ).toBeInTheDocument();
   });
 
   it("explains first and only opens the folder picker on request", async () => {

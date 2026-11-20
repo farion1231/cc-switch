@@ -112,10 +112,10 @@ pub async fn get_config_status(
             })
         }
         AppType::Agy => {
-            let dir = crate::agy_config::agy_dir();
+            let root = crate::agy_config::agy_gemini_root();
             Ok(ConfigStatus {
                 exists: crate::agy_config::settings_path().exists(),
-                path: dir.to_string_lossy().into_owned(),
+                path: root.to_string_lossy().into_owned(),
             })
         }
         AppType::Omp => {
@@ -184,7 +184,7 @@ fn app_config_dir(app: &str) -> Result<std::path::PathBuf, String> {
             .parent()
             .unwrap()
             .to_path_buf(),
-        AppType::Agy => crate::agy_config::agy_dir(),
+        AppType::Agy => crate::agy_config::agy_gemini_root(),
         AppType::Copilot => crate::copilot_config::copilot_dir(),
         AppType::WorkBuddy => crate::workbuddy_config::data_dir(),
         AppType::Codebuddy => crate::codebuddy_config::data_dir(),

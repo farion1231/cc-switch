@@ -775,10 +775,7 @@ impl SkillService {
                 return Ok(crate::omp_config::get_omp_agent_dir()?.join("skills"));
             }
             AppType::Agy => {
-                return Ok(crate::config::get_home_dir()
-                    .join(".gemini")
-                    .join("config")
-                    .join("skills"));
+                return Ok(crate::agy_config::customizations_dir().join("skills"));
             }
         }
 
@@ -804,7 +801,7 @@ impl SkillService {
             AppType::Hermes => crate::hermes_config::get_hermes_dir().join("skills"),
             AppType::Pi => crate::pi_config::get_pi_agent_dir()?.join("skills"),
             AppType::Omp => crate::omp_config::get_omp_agent_dir()?.join("skills"),
-            AppType::Agy => home.join(".gemini").join("config").join("skills"),
+            AppType::Agy => crate::agy_config::customizations_dir().join("skills"),
             AppType::ZCode => crate::zcode_config::get_zcode_dir().join("skills"),
         })
     }

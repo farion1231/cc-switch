@@ -221,6 +221,20 @@ impl SkillService {
         crate::settings::get_skill_sync_method()
     }
 
+    /// Auto copies onto a WSL UNC directory. Symlink and Copy stay as configured,
+    /// matching Claude, Gemini, and Pi.
+    pub(super) fn effective_sync_method(dest: &Path) -> SyncMethod {
+        Self::sync_method_for(Self::get_sync_method(), dest)
+    }
+
+    pub(super) fn sync_method_for(configured: SyncMethod, dest: &Path) -> SyncMethod {
+        if matches!(configured, SyncMethod::Auto) && crate::config::is_wsl_path(dest) {
+            SyncMethod::Copy
+        } else {
+            configured
+        }
+    }
+
     /// 同步 Skill 到应用目录（使用 symlink 或 copy）
     ///
     /// 根据配置和平台选择最佳同步方式：
@@ -261,15 +275,11 @@ impl SkillService {
             Self::ensure_pi_skill_destination_matches(&source, &dest, &directory, app)?;
         }
 
-        let sync_method = Self::get_sync_method();
         // WSL targets reject directory symlinks outright (ERROR_ACCESS_DENIED),
-        // so Auto skips the doomed symlink attempt and goes straight to copy.
-        let sync_method =
-            if matches!(sync_method, SyncMethod::Auto) && crate::config::is_wsl_path(&dest) {
-                SyncMethod::Copy
-            } else {
-                sync_method
-            };
+        // and a Windows symlink into the WSL tree would point at the NTFS skill
+        // store, which agy inside the distro cannot follow. Auto copies instead.
+        // The same rule applies to every app, including Antigravity.
+        let sync_method = Self::effective_sync_method(&dest);
 
         match sync_method {
             SyncMethod::Auto => {

@@ -834,12 +834,12 @@ fn decode_windows_command_output(bytes: &[u8]) -> String {
 /// `win_quote_path_for_batch`(给锚定路径用)都基于它,避免两份 quoter 各自演化、
 /// 未来对同一路径产生不一致引用形态。镜像 POSIX 侧 `shell_single_quote` 与
 /// `quote_path_if_spaced` 的"重量基础 + 轻量条件包装"两层结构。
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", test))]
 fn win_double_quote(value: &str) -> String {
     format!("\"{}\"", value.replace('"', "\\\""))
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", test))]
 pub(super) fn windows_cmd_double_quote_arg(value: &str) -> String {
     win_double_quote(value)
 }
@@ -869,7 +869,7 @@ pub(super) fn wsl_auto_shell_command(payload: &str, flag: Option<&str>) -> Strin
 
 /// 校验 WSL 发行版名称是否合法
 /// WSL 发行版名称只允许字母、数字、连字符、下划线和点（如 `Ubuntu-22.04`）
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", test))]
 pub(super) fn is_valid_wsl_distro_name(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 64
@@ -887,7 +887,7 @@ pub(super) fn is_valid_shell(shell: &str) -> bool {
 }
 
 /// Validate that the given shell flag is one of the allowed flags.
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", test))]
 fn is_valid_shell_flag(flag: &str) -> bool {
     matches!(flag, "-c" | "-lc" | "-lic")
 }
@@ -1108,6 +1108,32 @@ pub(super) fn wsl_distro_for_tool(tool: &str) -> Option<String> {
     wsl_distro_from_path(&override_dir)
 }
 
+#[cfg(test)]
+fn wsl_distro_for_override(tool: &str, raw: &str) -> Option<String> {
+    let app = known_tool(tool)?
+        .id
+        .parse::<crate::app_config::AppType>()
+        .ok()?;
+    if !matches!(
+        app,
+        crate::app_config::AppType::Claude
+            | crate::app_config::AppType::Codex
+            | crate::app_config::AppType::Gemini
+            | crate::app_config::AppType::GrokBuild
+            | crate::app_config::AppType::OpenCode
+            | crate::app_config::AppType::OpenClaw
+            | crate::app_config::AppType::Hermes
+            | crate::app_config::AppType::Pi
+            | crate::app_config::AppType::Omp
+            | crate::app_config::AppType::Dsh
+            | crate::app_config::AppType::Agy
+    ) {
+        return None;
+    }
+    let (distro, _) = crate::config::wsl_unc_to_linux(raw)?;
+    is_valid_wsl_distro_name(&distro).then_some(distro)
+}
+
 /// 从 UNC 路径中提取 WSL 发行版名称
 /// 支持 `\\wsl$\Ubuntu\...` 和 `\\wsl.localhost\Ubuntu\...` 两种格式
 #[cfg(target_os = "windows")]
@@ -1136,6 +1162,255 @@ fn wsl_distro_from_path(path: &Path) -> Option<String> {
 #[cfg_attr(windows, allow(dead_code))]
 pub(super) fn shell_single_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+/// Carries user-controlled paths, arguments, credentials, and the final POSIX payload
+/// across `WSLENV` (`/u`) so none of them ever touch Windows `.bat` bytes or `wsl.exe` argv.
+#[cfg(any(target_os = "windows", test))]
+#[derive(Default)]
+pub(super) struct WslEnvCarrier {
+    pub(super) entries: Vec<(String, String)>,
+}
+
+#[cfg(any(target_os = "windows", test))]
+impl WslEnvCarrier {
+    pub(super) fn var_for(&mut self, value: &str) -> String {
+        if let Some((name, _)) = self.entries.iter().find(|(_, existing)| existing == value) {
+            return name.clone();
+        }
+        let name = format!("CC_SWITCH_INTERNAL_WSL_{}", self.entries.len());
+        self.entries.push((name.clone(), value.to_string()));
+        name
+    }
+
+    pub(super) fn finish_exec(&mut self, mut steps: Vec<String>, exec_args: &[String]) -> String {
+        steps.push(
+            "if [ -d \"$HOME/.local/bin\" ]; then case \":$PATH:\" in *\":$HOME/.local/bin:\"*) ;; *) PATH=\"$PATH:$HOME/.local/bin\";; esac; fi"
+                .to_string(),
+        );
+        steps.push(format!("set -- {}", exec_args.join(" ")));
+        let payload_var = format!("CC_SWITCH_INTERNAL_WSL_{}", self.entries.len());
+        let mut unset_names: Vec<&str> =
+            self.entries.iter().map(|(name, _)| name.as_str()).collect();
+        unset_names.push(&payload_var);
+        steps.push(format!("unset {}", unset_names.join(" ")));
+        steps.push("exec agy \"$@\"".to_string());
+        let payload = steps.join(" && ");
+        self.entries.push((payload_var.clone(), payload));
+        payload_var
+    }
+
+    pub(super) fn wslenv_spec(&self) -> String {
+        self.entries
+            .iter()
+            .map(|(name, _)| format!("{name}/u"))
+            .collect::<Vec<_>>()
+            .join(":")
+    }
+
+    pub(super) fn wslenv_set_lines(&self) -> String {
+        let spec = self.wslenv_spec();
+        if spec.is_empty() {
+            return String::new();
+        }
+        format!(
+            "if defined WSLENV set \"WSLENV=%WSLENV%:{spec}\"\r\nif not defined WSLENV set \"WSLENV={spec}\"\r\n"
+        )
+    }
+}
+
+/// Runs `$SHELL` with an appropriate login/interactive flag to populate `PATH`, then
+/// delegates POSIX setup and `exec agy` in `$payload_var` to POSIX `sh`. Safe even
+/// when `$SHELL` is `fish`, `dash`, or `sh`.
+#[cfg(any(target_os = "windows", test))]
+pub(super) fn wsl_login_inner(payload_var: &str) -> String {
+    format!(
+        "s=${{SHELL:-sh}}; case ${{s##*/}} in dash|sh) f=-c;; fish) f=-lc;; bash|zsh) f=-lic;; *) s=sh; f=-c;; esac; exec \"$s\" $f 'exec sh -c \"${payload_var}\"'"
+    )
+}
+
+#[cfg(any(target_os = "windows", test))]
+pub(super) fn wsl_login_args(distro: &str, payload_var: &str) -> Result<Vec<String>, String> {
+    if !is_valid_wsl_distro_name(distro) {
+        return Err(format!("Invalid WSL distro name: {distro}"));
+    }
+    Ok(vec![
+        "-d".to_string(),
+        distro.to_string(),
+        "--exec".to_string(),
+        "sh".to_string(),
+        "-c".to_string(),
+        wsl_login_inner(payload_var),
+    ])
+}
+
+#[cfg(any(target_os = "windows", test))]
+pub(super) fn wsl_login_command_line(distro: &str, payload_var: &str) -> Result<String, String> {
+    let args = wsl_login_args(distro, payload_var)?;
+    Ok(format!(
+        "wsl.exe -d {} --exec sh -c {}",
+        args[1],
+        windows_cmd_double_quote_arg(&args[5])
+    ))
+}
+
+#[cfg(test)]
+fn agy_wsl_lifecycle_command(distro: &str, action: ToolLifecycleAction) -> Result<String, String> {
+    let inner = wsl_tool_action_shell_command("agy", action)
+        .ok_or_else(|| "Unsupported tool action target: agy".to_string())?;
+    build_wsl_tool_action_line(distro, &inner, None, None)
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn agy_wsl_usage_payload(
+    distro: &str,
+    gemini_root: &str,
+) -> Result<(String, WslEnvCarrier), String> {
+    let root = crate::config::path_into_wsl(gemini_root, distro)
+        .ok_or_else(|| format!("Antigravity config directory is not inside WSL distro {distro}"))?;
+    let mut carrier = WslEnvCarrier::default();
+    let root_var = carrier.var_for(&root);
+    let steps = vec![
+        "unset GEMINI_API_KEY GOOGLE_GEMINI_BASE_URL".to_string(),
+        format!(
+            "echo {}",
+            crate::services::subscription_agy::USAGE_OUTPUT_SENTINEL
+        ),
+    ];
+    let payload_var = carrier.finish_exec(
+        steps,
+        &[
+            format!("\"--gemini_dir=${root_var}\""),
+            "--print".to_string(),
+            "/usage".to_string(),
+            "--output-format".to_string(),
+            "json".to_string(),
+        ],
+    );
+    Ok((payload_var, carrier))
+}
+
+#[cfg(test)]
+fn agy_wsl_usage_command(distro: &str, gemini_root: &str) -> Result<String, String> {
+    let (payload_var, _) = agy_wsl_usage_payload(distro, gemini_root)?;
+    wsl_login_command_line(distro, &payload_var)
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn agy_wsl_models_payload(
+    distro: &str,
+    gemini_root: &str,
+    profile_dir: Option<&str>,
+    api_key: Option<&str>,
+    base_url: Option<&str>,
+) -> Result<(String, WslEnvCarrier), String> {
+    let dir = match profile_dir {
+        Some(path) => crate::config::path_into_wsl(path, distro).ok_or_else(|| {
+            format!("Cannot use this Antigravity profile inside WSL distro {distro}")
+        })?,
+        None => crate::config::path_into_wsl(gemini_root, distro).ok_or_else(|| {
+            format!("Antigravity config directory is not inside WSL distro {distro}")
+        })?,
+    };
+    let mut carrier = WslEnvCarrier::default();
+    let dir_var = carrier.var_for(&dir);
+    let mut steps = Vec::new();
+    if let Some(key) = api_key {
+        let key_var = carrier.var_for(key);
+        steps.push(format!("export GEMINI_API_KEY=\"${key_var}\""));
+        if let Some(url) = base_url {
+            let url_var = carrier.var_for(url);
+            steps.push(format!("export GOOGLE_GEMINI_BASE_URL=\"${url_var}\""));
+        } else {
+            steps.push("unset GOOGLE_GEMINI_BASE_URL".to_string());
+        }
+    } else {
+        steps.push("unset GEMINI_API_KEY GOOGLE_GEMINI_BASE_URL".to_string());
+    }
+    let payload_var = carrier.finish_exec(
+        steps,
+        &[format!("\"--gemini_dir=${dir_var}\""), "models".to_string()],
+    );
+    Ok((payload_var, carrier))
+}
+
+#[cfg(test)]
+fn agy_wsl_models_command(
+    distro: &str,
+    gemini_root: &str,
+    profile_dir: Option<&str>,
+    api_key: Option<&str>,
+    base_url: Option<&str>,
+) -> Result<String, String> {
+    let (payload_var, _) =
+        agy_wsl_models_payload(distro, gemini_root, profile_dir, api_key, base_url)?;
+    wsl_login_command_line(distro, &payload_var)
+}
+
+#[cfg(target_os = "windows")]
+fn run_wsl_login_payload(
+    distro: &str,
+    payload_var: &str,
+    carrier: &WslEnvCarrier,
+    timeout: Option<std::time::Duration>,
+) -> Result<std::process::Output, String> {
+    use std::process::{Command, Stdio};
+
+    let args = wsl_login_args(distro, payload_var)
+        .map_err(|_| format!("[WSL:{distro}] invalid distro name"))?;
+    let deadline = CommandDeadline::from_timeout(timeout);
+    let mut cmd = Command::new("wsl.exe");
+    cmd.args(&args)
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    for (name, value) in &carrier.entries {
+        cmd.env(name, value);
+    }
+    let spec = carrier.wslenv_spec();
+    if !spec.is_empty() {
+        let wslenv = match std::env::var("WSLENV") {
+            Ok(existing) if !existing.trim().is_empty() => format!("{existing}:{spec}"),
+            _ => spec,
+        };
+        cmd.env("WSLENV", wslenv);
+    }
+    let child = cmd
+        .spawn()
+        .map_err(|e| format!("[WSL:{distro}] failed to run agy: {e}"))?;
+    wait_child_output(child, deadline)
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn run_agy_wsl_usage(
+    timeout: Option<std::time::Duration>,
+) -> Result<std::process::Output, String> {
+    let distro = wsl_distro_for_tool("agy")
+        .ok_or_else(|| "agy is not configured to run in WSL".to_string())?;
+    let root = crate::agy_config::agy_gemini_root();
+    let (payload_var, carrier) = agy_wsl_usage_payload(&distro, &root.to_string_lossy())?;
+    run_wsl_login_payload(&distro, &payload_var, &carrier, timeout)
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn run_agy_wsl_models(
+    profile_dir: Option<&str>,
+    api_key: Option<&str>,
+    base_url: Option<&str>,
+    timeout: Option<std::time::Duration>,
+) -> Result<std::process::Output, String> {
+    let distro = wsl_distro_for_tool("agy")
+        .ok_or_else(|| "agy is not configured to run in WSL".to_string())?;
+    let root = crate::agy_config::agy_gemini_root();
+    let (payload_var, carrier) = agy_wsl_models_payload(
+        &distro,
+        &root.to_string_lossy(),
+        profile_dir,
+        api_key,
+        base_url,
+    )?;
+    run_wsl_login_payload(&distro, &payload_var, &carrier, timeout)
 }
 
 /// 设置窗口主题（Windows/macOS 标题栏颜色）
@@ -1699,5 +1974,301 @@ mod tests {
             .unwrap();
         assert!(output.status.success(), "{output:?}");
         assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
+    }
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_shell_compatible_path_strips_verbatim_prefixes() {
+        assert_eq!(
+            windows_shell_compatible_path(Path::new(r"\\?\C:\tools\codex.cmd")),
+            PathBuf::from(r"C:\tools\codex.cmd")
+        );
+        assert_eq!(
+            windows_shell_compatible_path(Path::new(r"\\?\UNC\server\share\tools\codex.cmd")),
+            PathBuf::from(r"\\server\share\tools\codex.cmd")
+        );
+        assert_eq!(
+            windows_shell_compatible_path(Path::new(r"C:\tools\codex.cmd")),
+            PathBuf::from(r"C:\tools\codex.cmd")
+        );
+    }
+
+    #[test]
+    fn agy_wsl_override_uses_the_distro_and_wsl_exe() {
+        let root = r"\\wsl.localhost\Ubuntu-26.04\home\alice\.gemini";
+        assert_eq!(
+            wsl_distro_for_override("agy", root).as_deref(),
+            Some("Ubuntu-26.04")
+        );
+        assert_eq!(
+            wsl_distro_for_override("agy", r"\\wsl$\Ubuntu-26.04\home\alice\.gemini").as_deref(),
+            Some("Ubuntu-26.04")
+        );
+        assert!(wsl_distro_for_override("agy", r"C:\Users\alice\.gemini").is_none());
+        assert!(wsl_distro_for_override(
+            "not-a-tool",
+            r"\\wsl.localhost\Ubuntu-26.04\home\alice\.gemini"
+        )
+        .is_none());
+
+        let version = wsl_version_probe_command_line("agy", "Ubuntu-26.04").unwrap();
+        assert!(
+            version.starts_with("wsl.exe -d Ubuntu-26.04 -- sh -c "),
+            "{version}"
+        );
+        assert!(version.contains("agy --version"), "{version}");
+
+        let install =
+            agy_wsl_lifecycle_command("Ubuntu-26.04", ToolLifecycleAction::Install).unwrap();
+        assert!(
+            install.starts_with("wsl.exe -d Ubuntu-26.04 -- "),
+            "{install}"
+        );
+        assert!(
+            install.contains("https://antigravity.google/cli/install.sh"),
+            "{install}"
+        );
+        assert!(
+            !install.contains("powershell") && !install.contains(".ps1"),
+            "{install}"
+        );
+
+        let update =
+            agy_wsl_lifecycle_command("Ubuntu-26.04", ToolLifecycleAction::Update).unwrap();
+        assert!(
+            update.starts_with("wsl.exe -d Ubuntu-26.04 -- "),
+            "{update}"
+        );
+        assert!(update.contains("agy update"), "{update}");
+
+        let (usage_var, usage_carrier) = agy_wsl_usage_payload("Ubuntu-26.04", root).unwrap();
+        let usage = agy_wsl_usage_command("Ubuntu-26.04", root).unwrap();
+        assert!(
+            usage.starts_with("wsl.exe -d Ubuntu-26.04 --exec sh -c "),
+            "{usage}"
+        );
+        assert!(!usage.contains(" -- sh -c "), "{usage}");
+        let usage_args = wsl_login_args("Ubuntu-26.04", &usage_var).unwrap();
+        assert_eq!(
+            &usage_args[..5],
+            ["-d", "Ubuntu-26.04", "--exec", "sh", "-c"]
+        );
+        assert_eq!(usage_args[5], wsl_login_inner(&usage_var));
+        let parsed_usage = parse_windows_command_line(&usage);
+        assert_eq!(parsed_usage[0], "wsl.exe");
+        assert_eq!(&parsed_usage[1..], usage_args.as_slice());
+        assert!(!usage.contains("/home/alice/.gemini"), "{usage}");
+        let usage_payload = &usage_carrier
+            .entries
+            .iter()
+            .find(|(name, _)| name == &usage_var)
+            .unwrap()
+            .1;
+        assert!(
+            usage_payload.contains(crate::services::subscription_agy::USAGE_OUTPUT_SENTINEL),
+            "{usage_payload}"
+        );
+        assert!(
+            usage_carrier
+                .entries
+                .iter()
+                .any(|(_, val)| val == "/home/alice/.gemini"),
+            "{:?}",
+            usage_carrier.entries
+        );
+
+        let (models_var, models_carrier) = agy_wsl_models_payload(
+            "Ubuntu-26.04",
+            root,
+            None,
+            Some(r#"sk-secret-"&calc"#),
+            Some("https://example.test/v1?a=1&b=2"),
+        )
+        .unwrap();
+        let models = agy_wsl_models_command(
+            "Ubuntu-26.04",
+            root,
+            None,
+            Some(r#"sk-secret-"&calc"#),
+            Some("https://example.test/v1?a=1&b=2"),
+        )
+        .unwrap();
+        assert!(
+            models.starts_with("wsl.exe -d Ubuntu-26.04 --exec sh -c "),
+            "{models}"
+        );
+        assert!(!models.contains(" -- sh -c "), "{models}");
+        let models_args = wsl_login_args("Ubuntu-26.04", &models_var).unwrap();
+        assert_eq!(
+            &models_args[..5],
+            ["-d", "Ubuntu-26.04", "--exec", "sh", "-c"]
+        );
+        assert_eq!(models_args[5], wsl_login_inner(&models_var));
+        let parsed_models = parse_windows_command_line(&models);
+        assert_eq!(parsed_models[0], "wsl.exe");
+        assert_eq!(&parsed_models[1..], models_args.as_slice());
+        assert!(!models.contains("sk-secret"), "{models}");
+        assert!(!models.contains("example.test"), "{models}");
+        assert!(!models.contains("/home/alice/.gemini"), "{models}");
+        let models_payload = &models_carrier
+            .entries
+            .iter()
+            .find(|(name, _)| name == &models_var)
+            .unwrap()
+            .1;
+        assert!(
+            models_payload.contains("export GEMINI_API_KEY="),
+            "{models_payload}"
+        );
+        assert!(!models_payload.contains("sk-secret"), "{models_payload}");
+        assert!(!models_payload.contains("example.test"), "{models_payload}");
+        assert!(
+            models_carrier
+                .entries
+                .iter()
+                .any(|(_, val)| val == r#"sk-secret-"&calc"#),
+            "{:?}",
+            models_carrier.entries
+        );
+    }
+
+    /// Minimal Win32 `CommandLineToArgvW` decoder for testing `wsl.exe` command lines.
+    fn parse_windows_command_line(line: &str) -> Vec<String> {
+        let mut args = Vec::new();
+        let mut chars = line.chars().peekable();
+        while let Some(&ch) = chars.peek() {
+            if ch.is_ascii_whitespace() {
+                chars.next();
+                continue;
+            }
+            let mut arg = String::new();
+            let mut in_quotes = false;
+            while let Some(c) = chars.next() {
+                match c {
+                    '\\' => {
+                        let mut slashes = 1usize;
+                        while chars.peek() == Some(&'\\') {
+                            chars.next();
+                            slashes += 1;
+                        }
+                        if chars.peek() == Some(&'"') {
+                            arg.push_str(&"\\".repeat(slashes / 2));
+                            if slashes % 2 == 1 {
+                                chars.next();
+                                arg.push('"');
+                            }
+                        } else {
+                            arg.push_str(&"\\".repeat(slashes));
+                        }
+                    }
+                    '"' => {
+                        in_quotes = !in_quotes;
+                    }
+                    c if c.is_ascii_whitespace() && !in_quotes => break,
+                    other => arg.push(other),
+                }
+            }
+            args.push(arg);
+        }
+        args
+    }
+
+    /// Models `wsl.exe`'s `--exec` vs `--` dispatch boundary:
+    /// - `--exec <prog> [args...]` runs `<prog>` directly with `[args...]` (no extra shell).
+    /// - `-- ...` joins remaining tokens into a command string executed by the distro shell,
+    ///   which prematurely expands `${s##*/}`, `$s`, and `$f` inside double quotes.
+    #[cfg(unix)]
+    #[test]
+    fn wsl_login_exec_boundary_avoids_outer_shell_expansion_for_usage_and_models() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let bin_dir = tmp.path().join("bin");
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        let fake_agy = bin_dir.join("agy");
+        std::fs::write(
+            &fake_agy,
+            "#!/bin/sh\nprintf 'KEY=%s\\n' \"$GEMINI_API_KEY\"\nprintf 'ARG=%s\\n' \"$@\"\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&fake_agy, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let root = r"\\wsl.localhost\Ubuntu-26.04\home\alice\.gemini";
+        let path_env = format!(
+            "{}:{}",
+            bin_dir.display(),
+            std::env::var("PATH").unwrap_or_default()
+        );
+
+        let (usage_var, usage_carrier) = agy_wsl_usage_payload("Ubuntu-26.04", root).unwrap();
+        let (models_var, models_carrier) = agy_wsl_models_payload(
+            "Ubuntu-26.04",
+            root,
+            None,
+            Some(r#"sk-boundary-"&1"#),
+            Some("https://relay.example/v1"),
+        )
+        .unwrap();
+
+        for (label, payload_var, carrier, expected_line) in [
+            ("usage", usage_var, usage_carrier, "ARG=/usage"),
+            (
+                "models",
+                models_var,
+                models_carrier,
+                r#"KEY=sk-boundary-"&1"#,
+            ),
+        ] {
+            // 1. Direct argv path used by `run_wsl_login_payload`.
+            let direct_args = wsl_login_args("Ubuntu-26.04", &payload_var).unwrap();
+            assert_eq!(direct_args[2], "--exec", "{label}: {direct_args:?}");
+
+            // 2. `.bat` command-line path used by `wsl_login_command_line`.
+            let cmd_line = wsl_login_command_line("Ubuntu-26.04", &payload_var).unwrap();
+            let parsed = parse_windows_command_line(&cmd_line);
+            assert_eq!(parsed[0], "wsl.exe", "{label}: {parsed:?}");
+            assert_eq!(&parsed[1..], direct_args.as_slice(), "{label}: {parsed:?}");
+
+            // Simulate `wsl.exe --exec`: invoke parsed[4] (`sh`) directly with parsed[5..].
+            let mut exec_cmd = std::process::Command::new(&parsed[4]);
+            exec_cmd.args(&parsed[5..]);
+            for (k, v) in &carrier.entries {
+                exec_cmd.env(k, v);
+            }
+            exec_cmd.env("PATH", &path_env);
+            exec_cmd.env("SHELL", "/bin/sh");
+            let exec_out = exec_cmd.output().unwrap();
+            assert!(
+                exec_out.status.success(),
+                "{label} --exec failed: status={:?}\nstdout={}\nstderr={}",
+                exec_out.status,
+                String::from_utf8_lossy(&exec_out.stdout),
+                String::from_utf8_lossy(&exec_out.stderr)
+            );
+            let stdout = String::from_utf8_lossy(&exec_out.stdout);
+            assert!(
+                stdout.lines().any(|line| line == expected_line),
+                "{label} missing `{expected_line}` in stdout:\n{stdout}"
+            );
+
+            // Contrast: what `wsl.exe -- sh -c "<inner>"` does when WSL wraps the remaining
+            // tokens in the distro's default shell before invoking `sh -c`.
+            let legacy_shell_joined = format!(
+                "sh -c {}",
+                windows_cmd_double_quote_arg(&wsl_login_inner(&payload_var))
+            );
+            let mut legacy_cmd = std::process::Command::new("sh");
+            legacy_cmd.arg("-c").arg(&legacy_shell_joined);
+            for (k, v) in &carrier.entries {
+                legacy_cmd.env(k, v);
+            }
+            legacy_cmd.env("PATH", &path_env);
+            legacy_cmd.env("SHELL", "/bin/sh");
+            let legacy_out = legacy_cmd.output().unwrap();
+            assert!(
+                !legacy_out.status.success(),
+                "{label} expected outer-shell expansion under `--` to fail, but succeeded: {}",
+                String::from_utf8_lossy(&legacy_out.stdout)
+            );
+        }
     }
 }

@@ -24,6 +24,7 @@ import ClaudeAccountQuotaFooter from "@/components/ClaudeAccountQuotaFooter";
 import { claudePlanLabel } from "@/lib/claudePlan";
 import {
   subscriptionKeys,
+  useAgyRuntime,
   useClaudeDefaultPlan,
 } from "@/lib/query/subscription";
 import { useQuotaPlan } from "@/lib/query/accountPlans";
@@ -366,9 +367,15 @@ export function ProviderCard({
         PROVIDER_TYPES.XAI_OAUTH,
       )?.trim() || undefined
     : undefined;
-  // 支持 agy 切号的平台上，Antigravity 官方卡查询所绑定账号的额度与在用状态（由条件挂载的子组件订阅缓存）。
+  // 支持 agy 切号的平台上（且未配置到 WSL 时），Antigravity 官方卡查询所绑定账号的额度与在用状态（由条件挂载的子组件订阅缓存）。
+  // WSL 模式下运行的是发行版里的 agy，本机授权中心绑定不参与启动与额度查询。
+  const agyRuntime = useAgyRuntime(appId === "agy" && isOfficial);
   const canShowAgyAccount =
-    appId === "agy" && isOfficial && canSwitchAgyAccount();
+    appId === "agy" &&
+    isOfficial &&
+    canSwitchAgyAccount() &&
+    agyRuntime.resolved &&
+    !agyRuntime.runsInWsl;
   const agyBoundAccountId = canShowAgyAccount
     ? resolveManagedAccountId(provider.meta, "agy_oauth")?.trim() || null
     : null;
@@ -405,7 +412,10 @@ export function ProviderCard({
           : null
         : appId === "kimi" && isOfficial
           ? ["kimi_oauth", "quota", provider.id]
-          : isOfficial && officialSubscriptionEnabled && appId !== "claude"
+          : isOfficial &&
+              officialSubscriptionEnabled &&
+              appId !== "claude" &&
+              (appId !== "agy" || agyRuntime.resolved)
             ? agyBoundAccountId
               ? ["agy_oauth", "quota", agyBoundAccountId]
               : subscriptionKeys.quota(appId)
@@ -711,7 +721,8 @@ export function ProviderCard({
                   />
                 ) : null
               ) : isOfficial ? (
-                officialSubscriptionEnabled ? (
+                officialSubscriptionEnabled &&
+                (appId !== "agy" || agyRuntime.resolved) ? (
                   agyBoundAccountId ? (
                     <AgyAccountQuotaFooter
                       accountId={agyBoundAccountId}

@@ -15,10 +15,18 @@ pub(crate) const QUOTA_REUSE_INTERACTIVE: Duration = Duration::from_secs(20);
 
 pub struct AgyAccountState(pub Arc<AgyAccountManager>);
 
-/// 上一次 `/usage` 的结果：查的时候 agy 登着哪个号、什么时候查的。查询期间持锁，
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum LiveQueryScope {
+    /// WSL 发行版里的 live `agy -p /usage`（不关联本机钥匙串账号）。
+    Wsl,
+    /// 本机钥匙串上的当前账号（`None` 表示尚未收录到授权中心）。
+    Local(Option<String>),
+}
+
+/// 上一次 `/usage` 的结果：查的时候属于哪个运行环境/账号、什么时候查的。查询期间持锁，
 /// 同时来的请求排队等这一次的结果，不另起 agy。
 struct LiveQuery {
-    account_id: Option<String>,
+    scope: LiveQueryScope,
     at: Instant,
     quota: SubscriptionQuota,
 }
@@ -70,19 +78,78 @@ pub(crate) fn remember_account_quota(
     crate::tray::schedule_tray_refresh(app);
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AgyQuotaRoute<'a> {
+    /// 不能切号的平台：直接跑 CLI `/usage`，不碰钥匙串管理器。
+    CliUsage,
+    /// Windows 且配置为 WSL 运行，官方卡查当前登录（`account_id: None`）：
+    /// 走 WSL `/usage` 并独立复用缓存，绝不读写 Windows 钥匙串账号记录。
+    WslCliUsage,
+    /// Windows 且配置为 WSL 运行，授权中心/托盘显式查本机钥匙串账号：
+    /// 仅在它是本机当前号时跑本机 `agy -p /usage`（绝不走 WSL），否则读它上次记录。
+    LocalAccountOnly(&'a str),
+    /// 本地运行（非 WSL）：沿用本机钥匙串账号状态与 `/usage` 查询。
+    LocalManaged(Option<&'a str>),
+}
+
+fn agy_quota_route<'a>(
+    keychain_supported: bool,
+    runs_in_wsl: bool,
+    account_id: Option<&'a str>,
+) -> AgyQuotaRoute<'a> {
+    if !keychain_supported {
+        return AgyQuotaRoute::CliUsage;
+    }
+    if runs_in_wsl {
+        return match account_id {
+            Some(account_id) => AgyQuotaRoute::LocalAccountOnly(account_id),
+            None => AgyQuotaRoute::WslCliUsage,
+        };
+    }
+    AgyQuotaRoute::LocalManaged(account_id)
+}
+
 /// Antigravity 官方登录的额度，只问 agy 自己的 `/usage`（不用 agy 的身份发请求）。
 /// 不指定账号就是 agy 现在登着的号；指定的号不是 agy 当前登录时，返回它最后一次查到的。
 /// `reuse` 内查过同一个号就不再起 agy。查成功的结果按账号记下。
+///
+/// Windows 指向 WSL 目录时：官方卡（`account_id: None`）查 WSL 里的 `agy -p /usage`，
+/// 不读写本机钥匙串账号；授权中心/托盘显式传 `account_id` 时仍查本机钥匙串账号与本机 `agy`。
 pub(crate) async fn agy_quota(
     manager: &AgyAccountManager,
     account_id: Option<&str>,
     reuse: Duration,
 ) -> Result<SubscriptionQuota, String> {
-    if !crate::services::agy_account::keychain::supported() {
-        return crate::services::subscription_agy::get_agy_subscription_quota().await;
-    }
+    let route = agy_quota_route(
+        crate::services::agy_account::keychain::supported(),
+        crate::commands::tool_runs_in_wsl(TOOL),
+        account_id,
+    );
+    let (target_account_id, force_local_cli) = match route {
+        AgyQuotaRoute::CliUsage => {
+            return crate::services::subscription_agy::get_agy_subscription_quota().await;
+        }
+        AgyQuotaRoute::WslCliUsage => {
+            let mut last = LAST_LIVE_QUERY.lock().await;
+            if let Some(query) = last.as_ref() {
+                if query.scope == LiveQueryScope::Wsl && query.at.elapsed() < reuse {
+                    return Ok(query.quota.clone());
+                }
+            }
+            let quota = crate::services::subscription_agy::get_agy_subscription_quota().await?;
+            *last = Some(LiveQuery {
+                scope: LiveQueryScope::Wsl,
+                at: Instant::now(),
+                quota: quota.clone(),
+            });
+            return Ok(quota);
+        }
+        AgyQuotaRoute::LocalAccountOnly(account_id) => (Some(account_id), true),
+        AgyQuotaRoute::LocalManaged(account_id) => (account_id, false),
+    };
+
     let current = manager.current_account_id().await;
-    if let Some(account_id) = account_id {
+    if let Some(account_id) = target_account_id {
         if current.as_deref() != Some(account_id) {
             return Ok(manager
                 .last_quota(account_id)
@@ -91,18 +158,23 @@ pub(crate) async fn agy_quota(
         }
     }
 
+    let scope = LiveQueryScope::Local(current.clone());
     let mut last = LAST_LIVE_QUERY.lock().await;
     if let Some(query) = last.as_ref() {
-        if query.account_id == current && query.at.elapsed() < reuse {
+        if query.scope == scope && query.at.elapsed() < reuse {
             return Ok(query.quota.clone());
         }
     }
-    let quota = crate::services::subscription_agy::get_agy_subscription_quota().await?;
+    let quota = if force_local_cli {
+        crate::services::subscription_agy::get_local_agy_subscription_quota().await?
+    } else {
+        crate::services::subscription_agy::get_agy_subscription_quota().await?
+    };
     // 查询要七八秒：期间在别处换了号，这份结果就不知道是谁的，不记到任何账号上
     let still_current = manager.current_account_id().await == current;
     if still_current {
         *last = Some(LiveQuery {
-            account_id: current.clone(),
+            scope,
             at: Instant::now(),
             quota: quota.clone(),
         });
@@ -130,4 +202,40 @@ pub(crate) async fn open_agy_login_terminal() -> Result<(), String> {
     })
     .await
     .map_err(|e| format!("launch task join error: {e}"))?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn agy_quota_route_uses_wsl_cli_for_live_cards_while_preserving_auth_center_queries() {
+        // Windows + WSL: live/provider-card quota routes to WSL `/usage` without touching
+        // the Windows keychain account manager, while Auth Center / Tray queries stay local.
+        assert_eq!(
+            agy_quota_route(true, true, None),
+            AgyQuotaRoute::WslCliUsage
+        );
+        assert_eq!(
+            agy_quota_route(true, true, Some("win-acct-a")),
+            AgyQuotaRoute::LocalAccountOnly("win-acct-a")
+        );
+
+        // Local Windows / macOS / Linux with keychain support.
+        assert_eq!(
+            agy_quota_route(true, false, None),
+            AgyQuotaRoute::LocalManaged(None)
+        );
+        assert_eq!(
+            agy_quota_route(true, false, Some("acct-a")),
+            AgyQuotaRoute::LocalManaged(Some("acct-a"))
+        );
+
+        // Platform without keychain support always falls back to CLI `/usage`.
+        assert_eq!(agy_quota_route(false, false, None), AgyQuotaRoute::CliUsage);
+        assert_eq!(
+            agy_quota_route(false, false, Some("acct-a")),
+            AgyQuotaRoute::CliUsage
+        );
+    }
 }
