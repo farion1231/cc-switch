@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { replaceRepoDiscovery } from "@/hooks/useSkills.helpers";
 import {
   useAddSkillRepo,
+  useDiscoverSkillRepo,
   useDiscoverableSkills,
   useRefreshDiscoverableSkills,
   useRemoveSkillRepo,
@@ -16,6 +17,7 @@ import type {
 } from "@/lib/api/skills";
 
 const apiMocks = vi.hoisted(() => ({
+  getRepos: vi.fn(),
   addRepo: vi.fn(),
   removeRepo: vi.fn(),
   discoverRepo: vi.fn(),
@@ -276,5 +278,72 @@ describe("useRefreshDiscoverableSkills", () => {
 
     expect(apiMocks.discoverAvailable).toHaveBeenLastCalledWith(true);
     queryClient.clear();
+  });
+});
+
+describe("single repository preview", () => {
+  it.each([
+    [{ ...repoA, enabled: false }, "main"],
+    [repoA, "feature"],
+  ] as const)(
+    "keeps a disabled source or temporary branch out of Discover",
+    async (repo, branch) => {
+      const { wrapper, queryClient } = setup();
+      const old = { skills: [], failures: [] };
+      const fresh = { skills: [skill("a", "one", "alpha")], failures: [] };
+      queryClient.setQueryData(DISCOVERABLE, old);
+      apiMocks.getRepos.mockResolvedValue([repo]);
+      apiMocks.discoverRepo.mockReset().mockResolvedValue(fresh);
+      const { result } = renderHook(() => useDiscoverSkillRepo(), { wrapper });
+      await act(async () => {
+        expect(
+          (await result.current.mutateAsync({ repo, branch })).discovery,
+        ).toEqual(fresh);
+      });
+      expect(apiMocks.discoverRepo).toHaveBeenCalledTimes(1);
+      expect(queryClient.getQueryData(DISCOVERABLE)).toEqual(old);
+    },
+  );
+
+  it("merges the first response without a second repository fetch", async () => {
+    const { wrapper, queryClient } = setup();
+    const fresh = { skills: [skill("a", "one", "demo")], failures: [] };
+    queryClient.setQueryData(DISCOVERABLE, { skills: [], failures: [] });
+    queryClient.setQueryData(["skills", "repos"], [repoA]);
+    apiMocks.getRepos.mockClear();
+    apiMocks.discoverRepo.mockReset().mockResolvedValue(fresh);
+    const preview = renderHook(() => useDiscoverSkillRepo(), { wrapper });
+    await act(async () => {
+      await preview.result.current.mutateAsync({ repo: repoA, branch: "main" });
+    });
+    expect(queryClient.getQueryData(DISCOVERABLE)).toEqual(fresh);
+    expect(apiMocks.discoverRepo).toHaveBeenCalledTimes(1);
+    expect(apiMocks.getRepos).not.toHaveBeenCalled();
+  });
+  it("lets a full refresh started during reconciliation win", async () => {
+    const { wrapper, queryClient } = setup();
+    let release!: (repos: SkillRepo[]) => void;
+    apiMocks.getRepos.mockReturnValue(
+      new Promise<SkillRepo[]>((resolve) => {
+        release = resolve;
+      }),
+    );
+    apiMocks.discoverRepo
+      .mockReset()
+      .mockResolvedValue({ skills: [skill("a", "one", "old")], failures: [] });
+    const newer = { skills: [skill("a", "one", "new")], failures: [] };
+    apiMocks.discoverAvailable.mockResolvedValue(newer);
+    const preview = renderHook(() => useDiscoverSkillRepo(), { wrapper });
+    await act(async () => {
+      await preview.result.current.mutateAsync({ repo: repoA, branch: "main" });
+    });
+    renderHook(() => useDiscoverableSkills(), { wrapper });
+    await vi.waitFor(() =>
+      expect(queryClient.getQueryData(DISCOVERABLE)).toEqual(newer),
+    );
+    await act(async () => {
+      release([repoA]);
+    });
+    expect(queryClient.getQueryData(DISCOVERABLE)).toEqual(newer);
   });
 });

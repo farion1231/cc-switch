@@ -19,14 +19,13 @@ import {
 import { MatrixSearch, NeutralBadge } from "@/components/mcp/AppMatrix";
 import { AppGlyph, APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import {
-  useAddSkillRepo,
+  useDiscoverAndAddSkillRepo,
   useDiscoverSkillRepo,
   useInstalledSkills,
-  useInstallSkill,
+  useInstallRepoSkills,
   useSkillRepos,
 } from "@/hooks/useSkills";
 import { settingsApi } from "@/lib/api";
-import { skillsApi } from "@/lib/api/skills";
 import type { DiscoverableSkill } from "@/lib/api/skills";
 import type { AppId } from "@/lib/api/types";
 import { skillErrorReason } from "@/lib/errors/skillErrorParser";
@@ -91,11 +90,11 @@ export function GitSkillsDialog({
   onClose,
 }: GitSkillsDialogProps) {
   const { t } = useTranslation();
-  const addRepo = useAddSkillRepo();
+  const addRepo = useDiscoverAndAddSkillRepo();
   const discoverRepo = useDiscoverSkillRepo();
-  const install = useInstallSkill();
+  const install = useInstallRepoSkills();
   const { data: installed = [] } = useInstalledSkills();
-  const { data: repos = [] } = useSkillRepos();
+  const { data: repos = [], refetch: refreshRepos } = useSkillRepos();
   const [url, setUrl] = useState("");
   const [branch, setBranch] = useState("main");
   const [skills, setSkills] = useState<DiscoverableSkill[] | null>(null);
@@ -176,7 +175,8 @@ export function GitSkillsDialog({
       const requestedBranch = branch.trim() || "main";
       // Read the current registry before deciding whether to add a new source.
       // Re-adding an existing source would overwrite its branch and enabled state.
-      const existingRepo = (await skillsApi.getRepos()).find(
+      const { data: registry } = await refreshRepos({ throwOnError: true });
+      const existingRepo = registry?.find(
         (item) =>
           item.owner.toLowerCase() === repo.owner.toLowerCase() &&
           item.name.toLowerCase() === repo.name.toLowerCase(),
@@ -188,30 +188,24 @@ export function GitSkillsDialog({
       ) {
         throw new Error(t("skills.github.hostConflict"));
       }
-      const result = existingRepo
-        ? (
-            await discoverRepo.mutateAsync({
-              repo: existingRepo,
-              branch: requestedBranch,
-            })
-          ).discovery
-        : await addRepo.mutateAsync({
-            ...repo,
-            branch: requestedBranch,
-            enabled: true,
-          });
-      if (!result) throw new Error(t("skills.repo.addFailed"));
-      if (result.failures.length) throw new Error(result.failures[0].error);
-      const resolvedBranch = result.skills[0]?.repoBranch;
+      let result;
+      let resolvedBranch;
+      if (existingRepo) {
+        ({ discovery: result } = await discoverRepo.mutateAsync({
+          repo: existingRepo,
+          branch: requestedBranch,
+        }));
+        if (result.failures.length) throw new Error(result.failures[0].error);
+        resolvedBranch = result.skills[0]?.repoBranch;
+      } else {
+        [resolvedBranch, result] = await addRepo.mutateAsync({
+          ...repo,
+          branch: requestedBranch,
+          enabled: true,
+        });
+      }
       if (resolvedBranch && resolvedBranch !== requestedBranch) {
-        if (!existingRepo) {
-          await addRepo.mutateAsync({
-            ...repo,
-            branch: resolvedBranch,
-            enabled: true,
-          });
-        }
-        setBranch(resolvedBranch);
+        if (!existingRepo) setBranch(resolvedBranch);
         setBranchNotice(
           t("skills.github.branchFallback", {
             requested: requestedBranch,
@@ -236,51 +230,54 @@ export function GitSkillsDialog({
     const apps = [...targets];
     const destinations = new Set(installedByDirectory.keys());
     try {
+      const pending: DiscoverableSkill[] = [];
+      const errors: Record<string, string> = {};
       for (const skill of skills ?? []) {
         if (!selected.has(skill.key) || unavailable(skill)) continue;
         const destination = destinationFor(skill);
         if (destinations.has(destination)) {
-          setFailures((previous) => ({
-            ...previous,
-            [skill.key]: t("skills.github.occupied"),
-          }));
+          errors[skill.key] = t("skills.github.occupied");
           continue;
         }
-        // Reserve before awaiting: installation may persist before app sync fails.
         destinations.add(destination);
-        setFailures((previous) => {
-          const next = { ...previous };
-          delete next[skill.key];
-          return next;
-        });
-        try {
-          const result = await installTo(
-            async (currentApp) => [
-              await install.mutateAsync({ skill, currentApp }),
-            ],
-            apps,
-          );
-          setCompleted((previous) => new Set(previous).add(skill.key));
-          setSelected((previous) => {
-            const next = new Set(previous);
-            next.delete(skill.key);
-            return next;
-          });
-          if (result.failures.length) {
-            setFailures((previous) => ({
-              ...previous,
-              [skill.key]: result.failures
-                .map(
-                  (failure) =>
-                    `${APP_DISPLAY_NAME[failure.app]}: ${explain(failure.error)}`,
-                )
-                .join("\n"),
-            }));
-          }
-        } catch (e) {
-          setFailures((previous) => ({ ...previous, [skill.key]: explain(e) }));
-        }
+        pending.push(skill);
       }
+      const installedKeys = new Map<string, string>();
+      const completedKeys = new Set<string>();
+      const result = await installTo(async (currentApp) => {
+        const outcomes = await install.mutateAsync({
+          skills: pending,
+          currentApp,
+        });
+        return outcomes.flatMap((outcome, index) => {
+          const key = pending[index].key;
+          if ("Err" in outcome) {
+            errors[key] = explain(outcome.Err);
+            return [];
+          }
+          completedKeys.add(key);
+          installedKeys.set(outcome.Ok.id, key);
+          return [outcome.Ok];
+        });
+      }, apps);
+      for (const failure of result.failures) {
+        const message =
+          APP_DISPLAY_NAME[failure.app] + ": " + explain(failure.error);
+        const key = installedKeys.get(failure.id)!;
+        errors[key] = [errors[key], message].filter(Boolean).join("\n");
+      }
+      setFailures((previous) => {
+        const next = { ...previous };
+        for (const skill of pending) delete next[skill.key];
+        return { ...next, ...errors };
+      });
+      setCompleted((previous) => new Set([...previous, ...completedKeys]));
+      setSelected(
+        (previous) =>
+          new Set([...previous].filter((key) => !completedKeys.has(key))),
+      );
+    } catch (error) {
+      setError(explain(error));
     } finally {
       lock.current = false;
       setBusy(false);
@@ -394,7 +391,15 @@ export function GitSkillsDialog({
             </Select>
           </div>
         )}
-        <div className="grid shrink-0 grid-cols-1 gap-3 sm:grid-cols-[1fr_140px]">
+        <div
+          className="grid shrink-0 grid-cols-1 gap-3 sm:grid-cols-[1fr_140px]"
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !event.nativeEvent.isComposing) {
+              event.preventDefault();
+              void fetchSkills();
+            }
+          }}
+        >
           <label className={LABEL_CLASS}>
             {t("skills.repo.url")}
             <input
@@ -531,7 +536,7 @@ export function GitSkillsDialog({
                       )}
                       {failures[skill.key] && (
                         <span
-                          className="block whitespace-pre-wrap text-caption text-destructive"
+                          className="block whitespace-pre-wrap text-caption text-danger-text"
                           role="alert"
                         >
                           {failures[skill.key]}
@@ -588,7 +593,7 @@ export function GitSkillsDialog({
         )}
       </fieldset>
       {error && (
-        <p role="alert" className="text-caption text-destructive">
+        <p role="alert" className="text-caption text-danger-text">
           {error}
         </p>
       )}
