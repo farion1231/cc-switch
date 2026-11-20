@@ -3510,6 +3510,7 @@
       "skillNotFound": "스킬을 찾을 수 없음: {{directory}}",
       "missingRepoInfo": "저장소 정보(owner 또는 name)가 없습니다",
       "downloadTimeout": "저장소 {{owner}}/{{name}} 다운로드 시간 초과 ({{timeout}}초)",
+      "downloadStalled": "저장소 {{owner}}/{{name}} 다운로드가 멈췄습니다 ({{timeout}}초 동안 데이터를 받지 못함)",
       "skillDirNotFound": "스킬 디렉터리를 찾을 수 없습니다: {{path}}",
       "directoryConflict": "스킬 디렉터리 '{{directory}}' 항목을 {{existing_repo}}에서 이미 사용 중이므로 {{new_repo}}에서 설치할 수 없습니다.",
       "emptyArchive": "다운로드한 아카이브가 비어 있습니다.",

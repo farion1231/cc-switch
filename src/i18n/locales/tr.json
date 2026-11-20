@@ -3441,6 +3441,7 @@
       "skillNotFound": "Beceri bulunamadı: {{directory}}",
       "missingRepoInfo": "Depo bilgileri eksik (sahip veya ad)",
       "downloadTimeout": "İndirme deposu {{owner}}/{{name}} zaman aşımı ({{timeout}}'ler)",
+      "downloadStalled": "{{owner}}/{{name}} deposunun indirmesi durdu: {{timeout}} sn boyunca veri alınmadı",
       "skillDirNotFound": "Beceri dizini bulunamadı: {{path}}",
       "directoryConflict": "'{{directory}}' beceri dizini zaten {{existing_repo}} tarafından kullanılıyor, {{new_repo}}'den yüklenemiyor",
       "emptyArchive": "İndirilen arşiv boş",

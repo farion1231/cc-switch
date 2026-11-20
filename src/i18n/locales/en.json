@@ -3510,6 +3510,7 @@
       "skillNotFound": "Skill not found: {{directory}}",
       "missingRepoInfo": "Missing repository info (owner or name)",
       "downloadTimeout": "Download repository {{owner}}/{{name}} timeout ({{timeout}}s)",
+      "downloadStalled": "Download of repository {{owner}}/{{name}} stalled: no data received for {{timeout}}s",
       "skillDirNotFound": "Skill directory not found: {{path}}",
       "directoryConflict": "Skill directory '{{directory}}' is already occupied by {{existing_repo}}, cannot install from {{new_repo}}",
       "emptyArchive": "Downloaded archive is empty",
