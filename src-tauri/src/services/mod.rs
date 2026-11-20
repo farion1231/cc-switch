@@ -15,6 +15,7 @@ pub mod ip_diagnostics;
 pub mod kimi_oauth;
 pub mod mcp;
 pub mod mcp_connectivity;
+pub mod mcp_tool_pins;
 pub mod model_fetch;
 pub mod model_pricing;
 pub mod omo;
