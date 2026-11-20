@@ -151,12 +151,25 @@ pub const SPEED_MIN_OUTPUT_TOKENS: i64 = 100;
 /// 或短回复整段落在同一个网络包里，算出来的是传输突发而不是生成速度。
 pub const SPEED_MIN_GENERATION_MS: i64 = 100;
 
-/// 明细行能不能计速度的 SQL 条件（和前端 `isSpeedEligible` 同口径）。会话日志导入的行
-/// 也可能有首字（按时间戳推出来的），所以先按来源分开，不能只看有没有首字。
-fn speed_eligible_sql(alias: &str) -> String {
+/// 数据源本身提供毫秒级精确 `first_token_ms` 与 `latency_ms`（而非按日志写盘时间戳反推）：
+/// 路由服务（`proxy`）以及从原生 `conversations/<id>.db` 读取 `first_token + streaming`
+/// 的 Antigravity（`agy_session`）。其余会话日志仍走含首字等待的估算口径。
+fn exact_timing_source_sql(alias: &str) -> String {
     let data_source = data_source_expr(alias);
+    format!("{data_source} IN ('proxy', 'agy_session')")
+}
+
+fn estimated_timing_source_sql(alias: &str) -> String {
+    let data_source = data_source_expr(alias);
+    format!("{data_source} NOT IN ('proxy', 'agy_session')")
+}
+
+/// 明细行能不能计速度的 SQL 条件（和前端 `isSpeedEligible` 同口径）。带原生精确计时的
+/// `agy_session` 与路由服务 `proxy` 同口径扣除首字；其余按时间戳反推的会话日志仍走估算。
+fn speed_eligible_sql(alias: &str) -> String {
+    let exact_source = exact_timing_source_sql(alias);
     format!(
-        "{data_source} = 'proxy' AND {alias}.first_token_ms IS NOT NULL \
+        "{exact_source} AND {alias}.first_token_ms IS NOT NULL \
          AND {alias}.output_tokens >= {SPEED_MIN_OUTPUT_TOKENS} \
          AND {alias}.latency_ms - {alias}.first_token_ms >= {SPEED_MIN_GENERATION_MS}"
     )
@@ -171,32 +184,32 @@ pub const SPEED_ESTIMATE_MIN_OUTPUT_TOKENS: i64 = 200;
 pub const SPEED_ESTIMATE_MIN_DURATION_MS: i64 = 1000;
 
 /// 明细行能不能估速度的 SQL 条件（和前端 `isSpeedEstimateEligible` 同口径）：
-/// 会话日志导入的行，耗时是导入时按日志时间戳估的。估算速度仍按整段耗时算（含首字
-/// 等待），不减推出来的首字：只有部分请求推得出首字，减了会让同一行里两种算法混在一起。
+/// 按时间戳估算耗时的会话日志导入行。估算速度仍按整段耗时算（含首字等待），
+/// 不减推出来的首字：只有部分请求推得出首字，减了会让同一行里两种算法混在一起。
 fn speed_estimate_eligible_sql(alias: &str) -> String {
-    let data_source = data_source_expr(alias);
+    let estimated_source = estimated_timing_source_sql(alias);
     format!(
-        "{data_source} <> 'proxy' \
+        "{estimated_source} \
          AND {alias}.output_tokens >= {SPEED_ESTIMATE_MIN_OUTPUT_TOKENS} \
          AND {alias}.latency_ms >= {SPEED_ESTIMATE_MIN_DURATION_MS}"
     )
 }
 
-/// 明细行能不能计首字时间的 SQL 条件：经路由服务、成功、有首字计时（流式请求）。
+/// 明细行能不能计首字时间的 SQL 条件：经路由服务或 Antigravity 原生计时、成功、有首字计时。
 fn first_token_eligible_sql(alias: &str) -> String {
-    let data_source = data_source_expr(alias);
+    let exact_source = exact_timing_source_sql(alias);
     format!(
-        "{data_source} = 'proxy' AND {alias}.first_token_ms IS NOT NULL \
+        "{exact_source} AND {alias}.first_token_ms IS NOT NULL \
          AND {alias}.status_code >= 200 AND {alias}.status_code < 300"
     )
 }
 
-/// 估算首字的 SQL 条件：会话日志导入、导入时按时间戳推出了首字的行。
-/// 和路由的精确首字分开取中位数：估算的起点是上一条日志写盘的时刻，含客户端
+/// 估算首字的 SQL 条件：按时间戳推首字的会话日志行。
+/// 和精确首字分开取中位数：估算的起点是上一条日志写盘的时刻，含客户端
 /// 组装请求的时间，系统性偏高。
 fn est_first_token_eligible_sql(alias: &str) -> String {
-    let data_source = data_source_expr(alias);
-    format!("{data_source} <> 'proxy' AND {alias}.first_token_ms IS NOT NULL")
+    let estimated_source = estimated_timing_source_sql(alias);
+    format!("{estimated_source} AND {alias}.first_token_ms IS NOT NULL")
 }
 
 /// 按分组键取首字时间的中位数（毫秒）。首字时间长尾明显，偶尔一次排队就是十几秒，
@@ -5666,6 +5679,135 @@ mod tests {
         // 估算的不混进精确口径
         assert_eq!(stats[0].speed_output_tokens, 0);
         assert_eq!(stats[0].speed_generation_ms, 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_agy_session_uses_exact_speed_and_first_token_stats() -> Result<(), AppError> {
+        let db = Database::memory()?;
+
+        {
+            let conn = lock_conn!(db.conn);
+            let insert = |id: &str,
+                          provider: &str,
+                          app: &str,
+                          model: &str,
+                          output: i64,
+                          latency: i64,
+                          first: Option<i64>,
+                          source: &str| {
+                conn.execute(
+                    "INSERT INTO proxy_request_logs (
+                        request_id, provider_id, app_type, model,
+                        input_tokens, output_tokens, total_cost_usd,
+                        latency_ms, first_token_ms, status_code, created_at, data_source
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    params![
+                        id, provider, app, model, 10, output, "0", latency, first, 200, 1000,
+                        source
+                    ],
+                )
+            };
+            // Antigravity 原生计时：扣除首字，使用精确流式生成窗口（>=100 tok 且生成窗>=100ms）
+            insert(
+                "agy-long",
+                "_agy_session",
+                "agy",
+                "gemini-4-neon",
+                2_900,
+                69_000,
+                Some(43_000),
+                "agy_session",
+            )?;
+            insert(
+                "agy-mid",
+                "_agy_session",
+                "agy",
+                "gemini-4-neon",
+                150,
+                38_000,
+                Some(36_500),
+                "agy_session",
+            )?;
+            // 不计入精确速度，也不得回落到估算速度：输出 < 100 / 生成窗 < 100ms / 无计时
+            insert(
+                "agy-short",
+                "_agy_session",
+                "agy",
+                "gemini-4-neon",
+                90,
+                6_000,
+                Some(6_000),
+                "agy_session",
+            )?;
+            insert(
+                "agy-burst",
+                "_agy_session",
+                "agy",
+                "gemini-4-neon",
+                300,
+                5_050,
+                Some(5_000),
+                "agy_session",
+            )?;
+            insert(
+                "agy-untimed",
+                "_agy_session",
+                "agy",
+                "gemini-4-neon",
+                1_000,
+                0,
+                None,
+                "agy_session",
+            )?;
+            // 其余会话日志仍走含首字等待的估算口径
+            insert(
+                "codex-est",
+                "_codex_session",
+                "codex",
+                "gpt-5.4",
+                500,
+                10_000,
+                Some(3_300),
+                "codex_session",
+            )?;
+        }
+
+        let providers = db.get_provider_stats(None, None, None, None, None)?;
+        let agy_provider = providers
+            .iter()
+            .find(|s| s.provider_id == "_agy_session")
+            .expect("_agy_session");
+        assert_eq!(agy_provider.speed_output_tokens, 3_050);
+        assert_eq!(agy_provider.speed_generation_ms, 27_500);
+        // 有首字的 4 条：[5_000, 6_000, 36_500, 43_000] -> 中位数 (6_000 + 36_500) / 2
+        assert_eq!(agy_provider.first_token_median_ms, Some(21_250));
+        assert_eq!(agy_provider.est_speed_output_tokens, 0);
+        assert_eq!(agy_provider.est_speed_duration_ms, 0);
+        assert_eq!(agy_provider.est_first_token_median_ms, None);
+
+        let codex_provider = providers
+            .iter()
+            .find(|s| s.provider_id == "_codex_session")
+            .expect("_codex_session");
+        assert_eq!(codex_provider.speed_output_tokens, 0);
+        assert_eq!(codex_provider.first_token_median_ms, None);
+        assert_eq!(codex_provider.est_speed_output_tokens, 500);
+        assert_eq!(codex_provider.est_speed_duration_ms, 10_000);
+        assert_eq!(codex_provider.est_first_token_median_ms, Some(3_300));
+
+        let models = db.get_model_stats(None, None, None, None, None)?;
+        let neon = models
+            .iter()
+            .find(|s| s.model == "gemini-4-neon")
+            .expect("gemini-4-neon");
+        assert_eq!(neon.speed_output_tokens, 3_050);
+        assert_eq!(neon.speed_generation_ms, 27_500);
+        assert_eq!(neon.first_token_median_ms, Some(21_250));
+        assert_eq!(neon.est_speed_output_tokens, 0);
+        assert_eq!(neon.est_speed_duration_ms, 0);
+        assert_eq!(neon.est_first_token_median_ms, None);
 
         Ok(())
     }

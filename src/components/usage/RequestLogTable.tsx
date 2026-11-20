@@ -29,7 +29,7 @@ import {
   formatOutputTokensPerSecond,
   formatTokensCompact,
   getLocaleFromLanguage,
-  isSessionLogRequest,
+  hasExactTimingSource,
   parseFiniteNumber,
 } from "./format";
 import {
@@ -384,8 +384,8 @@ export function RequestLogTable({
     const latency = parseFiniteNumber(log.latencyMs);
     const firstToken = parseFiniteNumber(log.firstTokenMs);
     const firstTokenText = formatFirstTokenSeconds(firstToken);
-    // 会话日志的耗时和首字都是按时间戳估的，带 ≈
-    const isSession = isSessionLogRequest(log);
+    // 其余会话日志的耗时和首字按时间戳估算，带 ≈；路由请求和 Antigravity 原生计时是精确值
+    const hasExactTiming = hasExactTimingSource(log);
     const timing =
       latency != null && latency > 0
         ? {
@@ -396,7 +396,7 @@ export function RequestLogTable({
     const timingTip =
       timing == null
         ? undefined
-        : !isSession
+        : hasExactTiming
           ? timing.ttft != null
             ? t("usage.timingTip", timing)
             : undefined
@@ -584,7 +584,7 @@ export function RequestLogTable({
           )}
           title={timingTip}
         >
-          {isSession && firstTokenText != null && "≈"}
+          {!hasExactTiming && firstTokenText != null && "≈"}
           {firstTokenText ?? "—"}
         </td>
       ),
@@ -594,10 +594,12 @@ export function RequestLogTable({
           title={
             timing == null
               ? undefined
-              : `${isSession ? "≈" : ""}${fmtInt(latency, locale)} ms`
+              : `${!hasExactTiming ? "≈" : ""}${fmtInt(latency, locale)} ms`
           }
         >
-          {timing == null ? "—" : `${isSession ? "≈" : ""}${timing.duration}s`}
+          {timing == null
+            ? "—"
+            : `${!hasExactTiming ? "≈" : ""}${timing.duration}s`}
         </td>
       ),
       statusCode: (
