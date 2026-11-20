@@ -308,7 +308,7 @@ export function ClaudeStackModelsField({
               variant="outline"
               size="sm"
               onClick={() =>
-                onRowsChange([...rows, createClaudeStackModelRow()])
+                commitRows([...rowsRef.current, createClaudeStackModelRow()])
               }
               className="h-7 gap-1"
             >
@@ -491,8 +491,10 @@ export function ClaudeStackModelsField({
                     variant="ghost"
                     size="icon"
                     onClick={() =>
-                      onRowsChange(
-                        rows.filter((other) => other.rowId !== row.rowId),
+                      commitRows(
+                        rowsRef.current.filter(
+                          (other) => other.rowId !== row.rowId,
+                        ),
                       )
                     }
                     aria-label={t("common.delete")}

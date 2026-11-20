@@ -6320,7 +6320,11 @@ model_provider = "c"
         assert_eq!(max_context().as_deref(), Some("400000"));
         pick_model(Some("ccs-claude-a--wide-m"));
 
-        let mut route = state.db.get_provider_by_id("a", "claude").unwrap().unwrap();
+        let mut route = state
+            .db
+            .get_provider_by_id("a", &AppType::Claude)
+            .unwrap()
+            .unwrap();
         for (window, selected, max) in [
             (1_000_000, "ccs-claude-a--wide-m[1M]", "200000"),
             (128_000, "ccs-claude-a--wide-m", "128000"),

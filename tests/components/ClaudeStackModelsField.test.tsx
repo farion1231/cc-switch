@@ -240,4 +240,41 @@ describe("ClaudeStackModelsField context window fill", () => {
       ).toBeNull();
     },
   );
+
+  it("uses the latest committed rows when adding or deleting before a re-render", () => {
+    const first = createClaudeStackModelRow({ model: "kimi-k3" });
+    const second = createClaudeStackModelRow({ model: "glm-5.2" });
+    const onRowsChange = vi.fn();
+    render(
+      <FormShell>
+        <ClaudeStackModelsField
+          rows={[first, second]}
+          onRowsChange={onRowsChange}
+          fetchedModels={[]}
+          onFetchModels={vi.fn()}
+          isFetchingModels={false}
+        />
+      </FormShell>,
+    );
+
+    const windowInputs = screen.getAllByLabelText("窗口 token 数");
+    fireEvent.change(windowInputs[0], { target: { value: "256000" } });
+    fireEvent.click(screen.getByRole("button", { name: "手动添加" }));
+    const deleteButtons = screen.getAllByRole("button", {
+      name: "common.delete",
+    });
+    fireEvent.click(deleteButtons[1]);
+
+    expect(onRowsChange).toHaveBeenCalledTimes(3);
+    expect(onRowsChange.mock.calls[1][0]).toHaveLength(3);
+    expect(onRowsChange.mock.calls[1][0][0]).toMatchObject({
+      rowId: first.rowId,
+      contextWindow: 256000,
+    });
+    expect(onRowsChange.mock.calls[2][0]).toHaveLength(2);
+    expect(onRowsChange.mock.calls[2][0][0]).toMatchObject({
+      rowId: first.rowId,
+      contextWindow: 256000,
+    });
+  });
 });
