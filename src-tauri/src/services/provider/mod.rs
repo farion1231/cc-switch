@@ -2601,6 +2601,36 @@ requires_openai_auth = true
 
     #[test]
     #[serial]
+    fn syncing_opencode_succeeds_with_omo_presets_and_leaves_them_out_of_opencode_json() {
+        with_test_home(|state, _| {
+            // OMO / OMO Slim 预设由 OmoService 写自己的文件，不进 opencode.json；
+            // 导入的不带 meta，在界面里添加的带 live_config_managed = true。
+            let omo = opencode_omo_provider("omo-imported", "omo");
+            let mut slim = opencode_omo_provider("omo-slim-added", "omo-slim");
+            slim.meta = Some(crate::provider::ProviderMeta {
+                live_config_managed: Some(true),
+                ..Default::default()
+            });
+            let good = opencode_provider("z-good");
+            for provider in [&omo, &slim, &good] {
+                state
+                    .db
+                    .save_provider(&AppType::OpenCode, provider)
+                    .unwrap();
+            }
+
+            ProviderService::sync_current_provider_for_app(state, AppType::OpenCode)
+                .expect("OMO presets are not opencode.json providers");
+
+            let live = crate::opencode_config::get_providers().unwrap();
+            assert!(live.contains_key("z-good"), "{live:?}");
+            assert!(!live.contains_key("omo-imported"), "{live:?}");
+            assert!(!live.contains_key("omo-slim-added"), "{live:?}");
+        });
+    }
+
+    #[test]
+    #[serial]
     fn sync_current_provider_for_app_preserves_legacy_live_opencode_provider() {
         with_test_home(|state, _| {
             let provider = opencode_provider("legacy-opencode");

@@ -445,6 +445,14 @@ pub(crate) fn write_live_for_state(
         return Ok(());
     }
 
+    if matches!(app_type, AppType::OpenCode)
+        && matches!(provider.category.as_deref(), Some("omo") | Some("omo-slim"))
+    {
+        // OMO / OMO Slim 预设不是 opencode.json 里的供应商：OmoService 把正在用的那份写进
+        // 它自己的文件（切换、编辑各自处理），全量同步这里没有要写的。
+        return Ok(());
+    }
+
     if matches!(app_type, AppType::ClaudeDesktop) {
         crate::claude_desktop_config::apply_provider(db, provider)?;
         log::info!(
