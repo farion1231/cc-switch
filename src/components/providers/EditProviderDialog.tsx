@@ -136,7 +136,8 @@ export function EditProviderDialog({
 
   // Claude：底部 JSON 显示「切到这个供应商之后 settings.json 的样子」，保存时拿它做三方比较。
   const [editorView, setEditorView] = useState<ProviderEditorView | null>(null);
-  const { submitWithConflictRetry, conflictDialog } = useLiveEditConflict();
+  const { submitWithConflictRetry, conflictDialog } =
+    useLiveEditConflict(formSessionToken);
 
   const closeDialog = useCallback(() => {
     setAuthSettingsTarget(null);
