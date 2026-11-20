@@ -12,8 +12,9 @@
 
 use super::codex_compaction;
 use super::transform_codex_chat::{
-    build_codex_tool_context_from_request, response_tool_call_item_from_chat_name,
-    response_tool_call_item_id_from_chat_name, CodexToolContext,
+    build_codex_tool_context_from_request, response_message_item_id_indexed,
+    response_tool_call_item_from_chat_name, response_tool_call_item_id_from_chat_name,
+    CodexToolContext,
 };
 use super::transform_responses::{sanitize_anthropic_tool_use_input, TOOL_RESULT_ERROR_MARKER};
 use crate::proxy::error::ProxyError;
@@ -1329,7 +1330,7 @@ pub(crate) fn anthropic_response_to_responses_with_context(
         if !text_parts.is_empty() {
             let idx = output.len();
             output.push(json!({
-                "id": format!("{response_id}_msg_{idx}"),
+                "id": response_message_item_id_indexed(&response_id, idx),
                 "type": "message",
                 "status": "completed",
                 "role": "assistant",
@@ -2503,6 +2504,7 @@ mod tests {
         assert_eq!(result["id"], "resp_msg_1");
         assert_eq!(result["status"], "completed");
         assert_eq!(result["output"][0]["type"], "message");
+        assert_eq!(result["output"][0]["id"], "msg_msg_1_0");
         assert_eq!(result["output"][0]["content"][0]["type"], "output_text");
         assert_eq!(result["output"][0]["content"][0]["text"], "Hello!");
         assert_eq!(result["usage"]["input_tokens"], 10);

@@ -2260,7 +2260,7 @@ fn chat_message_to_response_output_item(message: &Value, response_id: &str) -> O
     }
 
     Some(json!({
-        "id": format!("{response_id}_msg"),
+        "id": response_message_item_id(response_id),
         "type": "message",
         "status": "completed",
         "role": "assistant",
@@ -2607,6 +2607,30 @@ pub(crate) fn response_id_from_chat_id(id: Option<&str>) -> String {
     } else {
         format!("resp_{id}")
     }
+}
+
+/// Derive the ID of a Responses `message` output item from its response ID.
+///
+/// A `message` item ID must begin with `msg_`: Codex persists converted
+/// output items in the thread history and replays them as input, and strict
+/// Responses upstreams reject any message item whose ID does not carry that
+/// prefix (`invalid_id_prefix`). Building the item ID as `{response_id}_msg`
+/// produces `resp_..._msg`, which poisons the stored thread once the user
+/// switches to an official/native Responses provider (see #9054). Rewriting
+/// the response ID's own `resp_` prefix to `msg_` keeps the item traceable to
+/// its response while satisfying the prefix rule.
+pub(crate) fn response_message_item_id(response_id: &str) -> String {
+    let suffix = response_id.strip_prefix("resp_").unwrap_or(response_id);
+    format!("msg_{suffix}")
+}
+
+/// [`response_message_item_id`] for one of several message items belonging to
+/// the same response, disambiguated by output index.
+pub(crate) fn response_message_item_id_indexed(
+    response_id: &str,
+    output_index: impl std::fmt::Display,
+) -> String {
+    format!("{}_{output_index}", response_message_item_id(response_id))
 }
 
 pub(crate) fn response_status_from_finish_reason(finish_reason: Option<&str>) -> &'static str {
@@ -6508,6 +6532,7 @@ mod tests {
             "I should check the weather before answering."
         );
         assert_eq!(result["output"][1]["type"], "message");
+        assert_eq!(result["output"][1]["id"], "msg_chatcmpl_1");
         assert_eq!(result["output"][1]["content"][0]["text"], "Let me check.");
         assert_eq!(result["output"][2]["type"], "function_call");
         assert_eq!(result["output"][2]["call_id"], "call_1");
@@ -6522,6 +6547,29 @@ mod tests {
             result["usage"]["input_tokens_details"]["cache_write_tokens"],
             2
         );
+    }
+
+    #[test]
+    fn message_item_ids_use_msg_prefix() {
+        // Regression test for #9054: deriving the message item ID as
+        // `{response_id}_msg` yields `resp_..._msg`, which strict Responses
+        // upstreams reject with `invalid_id_prefix` when the stored thread is
+        // replayed under an official/native provider.
+        assert_eq!(
+            response_message_item_id("resp_chatcmpl_1"),
+            "msg_chatcmpl_1"
+        );
+        assert_eq!(
+            response_message_item_id("resp_8dd313c3703bd26593ad5912844d12f8"),
+            "msg_8dd313c3703bd26593ad5912844d12f8"
+        );
+        assert_eq!(
+            response_message_item_id_indexed("resp_msg_1", 0),
+            "msg_msg_1_0"
+        );
+        // IDs without a `resp_` prefix still gain the required `msg_` prefix.
+        assert_eq!(response_message_item_id("resp_ccswitch"), "msg_ccswitch");
+        assert_eq!(response_message_item_id("ccswitch"), "msg_ccswitch");
     }
 
     #[test]
