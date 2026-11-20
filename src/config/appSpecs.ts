@@ -280,6 +280,7 @@ export const APP_SPECS = {
     skills: true,
     mcp: true,
     prompts: true,
+    plugins: false,
     managedAccount: false,
     piFamily: false,
     editorView: false,

@@ -246,5 +246,3 @@ export const CodebuddyAccountSection: React.FC<
     </ManagedAccountsGroup>
   );
 };
-
-export default CodebuddyAccountSection;

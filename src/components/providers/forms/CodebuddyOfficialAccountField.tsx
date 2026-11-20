@@ -318,5 +318,3 @@ export function CodebuddyOfficialAccountField({
     </div>
   );
 }
-
-export default CodebuddyOfficialAccountField;
