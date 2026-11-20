@@ -175,6 +175,10 @@ export const providersApi = {
     return await invoke("switch_provider", { id, app: appId });
   },
 
+  async deactivate(appId: AppId, id: string): Promise<SwitchResult> {
+    return await invoke("deactivate_provider", { app: appId, id });
+  },
+
   async importDefault(appId: AppId): Promise<boolean> {
     return await invoke("import_default_config", { app: appId });
   },

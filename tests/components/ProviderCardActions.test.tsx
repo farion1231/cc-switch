@@ -188,3 +188,57 @@ describe("ProviderCardActions — open terminal", () => {
     ).not.toBeInTheDocument();
   });
 });
+
+describe("ProviderCardActions — status action", () => {
+  it("renders a clickable status button when status.onClick is provided", async () => {
+    const user = userEvent.setup();
+    const onDeactivate = vi.fn();
+    render(
+      <ProviderCardActions
+        providerName="Relay"
+        presentation={{
+          status: {
+            label: "providerCard.status.inUse",
+            dot: "direct",
+            tip: "providerCard.action.deactivate",
+            onClick: onDeactivate,
+          },
+          buttons: [],
+          chips: [],
+        }}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+
+    const statusButton = screen.getByRole("button", {
+      name: "providerCard.action.deactivate",
+    });
+    expect(statusButton).toHaveTextContent("providerCard.status.inUse");
+    await user.click(statusButton);
+    expect(onDeactivate).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders static status text when status.onClick is absent", () => {
+    render(
+      <ProviderCardActions
+        providerName="Relay"
+        presentation={{
+          status: {
+            label: "providerCard.status.routing",
+            dot: "route",
+          },
+          buttons: [],
+          chips: [],
+        }}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("providerCard.status.routing")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "providerCard.status.routing" }),
+    ).not.toBeInTheDocument();
+  });
+});

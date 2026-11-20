@@ -122,6 +122,15 @@ export const handlers = [
     return success(true);
   }),
 
+  http.post(`${TAURI_ENDPOINT}/deactivate_provider`, async ({ request }) => {
+    const { app, id } = await withJson<{ app: AppId; id: string }>(request);
+    const current = getCurrentProviderId(app);
+    if (current && current !== id)
+      return HttpResponse.json(false, { status: 409 });
+    setCurrentProviderId(app, "");
+    return success({ warnings: [] });
+  }),
+
   http.post(`${TAURI_ENDPOINT}/add_provider`, async ({ request }) => {
     const { provider, app } = await withJson<{
       provider: Provider & { id?: string };

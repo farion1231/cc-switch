@@ -33,6 +33,7 @@ const converted = provider("converted", { meta: { apiFormat: "openai_chat" } });
 function actions() {
   return {
     switchDirect: vi.fn(),
+    deactivateDirect: vi.fn(),
     needsRouteDialog: vi.fn(),
     exitAndUse: vi.fn(),
     routeTo: vi.fn(),
@@ -94,9 +95,15 @@ describe("buildSwitchSections — direct", () => {
 
     expect(item(sections, "relay")).toMatchObject({
       tone: "direct",
-      status: { label: "providerCard.status.inUse", dot: "direct" },
+      status: {
+        label: "providerCard.status.inUse",
+        dot: "direct",
+        tip: "providerCard.action.deactivate",
+      },
       buttons: [],
     });
+    item(sections, "relay").status?.onClick?.();
+    expect(input.actions.deactivateDirect).toHaveBeenCalledWith(relay);
     button(sections, "backup", "switch").onClick();
     expect(input.actions.switchDirect).toHaveBeenCalledWith(backup);
 
@@ -120,6 +127,21 @@ describe("buildSwitchSections — direct", () => {
     expect(
       button(sections, "converted", "exitAndUse").disabledReason,
     ).toBeTruthy();
+  });
+
+  it("allows switching and deleting all providers when directId is null", () => {
+    const { sections, input } = build({
+      active: "direct",
+      view: "direct",
+      providers: [relay],
+      directId: null,
+    });
+    const card = item(sections, "relay");
+    expect(card.tone).toBeUndefined();
+    expect(card.status).toBeUndefined();
+    expect(card.deleteDisabledReason).toBeUndefined();
+    button(sections, "relay", "switch").onClick();
+    expect(input.actions.switchDirect).toHaveBeenCalledWith(relay);
   });
 });
 

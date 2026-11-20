@@ -23,6 +23,7 @@ const addProviderMutateAsync = vi.fn();
 const updateProviderMutateAsync = vi.fn();
 const deleteProviderMutateAsync = vi.fn();
 const switchProviderMutateAsync = vi.fn();
+const deactivateProviderMutateAsync = vi.fn();
 
 const addProviderMutation = {
   mutateAsync: addProviderMutateAsync,
@@ -40,17 +41,25 @@ const switchProviderMutation = {
   mutateAsync: switchProviderMutateAsync,
   isPending: false,
 };
+const deactivateProviderMutation = {
+  mutateAsync: deactivateProviderMutateAsync,
+  isPending: false,
+};
 
 const useAddProviderMutationMock = vi.fn(() => addProviderMutation);
 const useUpdateProviderMutationMock = vi.fn(() => updateProviderMutation);
 const useDeleteProviderMutationMock = vi.fn(() => deleteProviderMutation);
 const useSwitchProviderMutationMock = vi.fn(() => switchProviderMutation);
+const useDeactivateProviderMutationMock = vi.fn(
+  () => deactivateProviderMutation,
+);
 
 vi.mock("@/lib/query", () => ({
   useAddProviderMutation: () => useAddProviderMutationMock(),
   useUpdateProviderMutation: () => useUpdateProviderMutationMock(),
   useDeleteProviderMutation: () => useDeleteProviderMutationMock(),
   useSwitchProviderMutation: () => useSwitchProviderMutationMock(),
+  useDeactivateProviderMutation: () => useDeactivateProviderMutationMock(),
 }));
 
 const providersApiUpdateMock = vi.fn();
@@ -119,6 +128,7 @@ beforeEach(() => {
   updateProviderMutateAsync.mockReset();
   deleteProviderMutateAsync.mockReset();
   switchProviderMutateAsync.mockReset();
+  deactivateProviderMutateAsync.mockReset();
   providersApiUpdateMock.mockReset();
   providersApiUpdateTrayMenuMock.mockReset();
   piApiUpdateProviderUsageScriptMock.mockReset();
@@ -137,11 +147,13 @@ beforeEach(() => {
   updateProviderMutation.isPending = false;
   deleteProviderMutation.isPending = false;
   switchProviderMutation.isPending = false;
+  deactivateProviderMutation.isPending = false;
 
   useAddProviderMutationMock.mockClear();
   useUpdateProviderMutationMock.mockClear();
   useDeleteProviderMutationMock.mockClear();
   useSwitchProviderMutationMock.mockClear();
+  useDeactivateProviderMutationMock.mockClear();
 });
 
 describe("useProviderActions", () => {
@@ -984,12 +996,34 @@ describe("useProviderActions", () => {
       customPolicy: "preserve-me",
     });
   });
+
+  it("deactivates the active provider and syncs Claude plugin back to official", async () => {
+    deactivateProviderMutateAsync.mockResolvedValueOnce({ warnings: [] });
+    settingsApiGetMock.mockResolvedValueOnce({
+      enableClaudePluginIntegration: true,
+    });
+    settingsApiApplyMock.mockResolvedValueOnce(true);
+
+    const { wrapper } = createWrapper();
+    const { result } = renderHook(() => useProviderActions("claude"), {
+      wrapper,
+    });
+
+    await act(async () => {
+      await result.current.deactivateProvider("provider-a");
+    });
+
+    expect(deactivateProviderMutateAsync).toHaveBeenCalledWith("provider-a");
+    expect(settingsApiApplyMock).toHaveBeenCalledWith({ official: true });
+    expect(toastSuccessMock).toHaveBeenCalledTimes(1);
+  });
 });
 it("clears loading flag when all mutations idle", () => {
   addProviderMutation.isPending = false;
   updateProviderMutation.isPending = false;
   deleteProviderMutation.isPending = false;
   switchProviderMutation.isPending = false;
+  deactivateProviderMutation.isPending = false;
 
   const { wrapper } = createWrapper();
   const { result } = renderHook(() => useProviderActions("claude"), {

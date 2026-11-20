@@ -844,6 +844,13 @@ requires_openai_auth = true
         live_config.contains("experimental_bearer_token = \"third-party-key\""),
         "the third-party key must be injected as the provider-scoped bearer token; got:\n{live_config}"
     );
+    ProviderService::deactivate(&state, AppType::Codex, "third-party").unwrap();
+    let restored: serde_json::Value =
+        read_json_file(&cc_switch_lib::get_codex_auth_path()).unwrap();
+    assert_eq!(
+        restored, live_auth,
+        "deactivation restores the stashed native sign-in"
+    );
 }
 
 #[test]
@@ -3921,4 +3928,321 @@ fn omp_edit_save_keeps_every_byte_outside_the_edited_entry() {
     );
     assert!(after.contains("name: Duolalab"), "{after}");
     assert!(after.ends_with(sibling), "{after}");
+}
+
+#[test]
+fn deactivate_claude_restores_defaults_and_allows_deleting_last_provider() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let settings_path = get_claude_settings_path();
+    std::fs::create_dir_all(settings_path.parent().unwrap()).unwrap();
+    std::fs::write(
+        &settings_path,
+        serde_json::to_string_pretty(&json!({
+            "includeCoAuthoredBy": false,
+            "model": "claude-sonnet-4-5",
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://relay.example.com",
+                "ANTHROPIC_AUTH_TOKEN": "sk-relay",
+                "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "32000",
+                "CLAUDE_CODE_USE_POWERSHELL_TOOL": "1"
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let mut config = MultiAppConfig::default();
+    let manager = config.get_manager_mut(&AppType::Claude).unwrap();
+    manager.current = "only-claude".to_string();
+    manager.providers.insert(
+        "only-claude".to_string(),
+        Provider::with_id(
+            "only-claude".to_string(),
+            "OnlyClaude".to_string(),
+            json!({
+                "model": "claude-sonnet-4-5",
+                "env": {
+                    "ANTHROPIC_BASE_URL": "https://relay.example.com",
+                    "ANTHROPIC_AUTH_TOKEN": "sk-relay",
+                    "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "32000"
+                }
+            }),
+            None,
+        ),
+    );
+
+    let state = create_test_state_with_config(&config).expect("create test state");
+    assert!(ProviderService::delete(&state, AppType::Claude, "only-claude").is_err());
+
+    let before = std::fs::read(&settings_path).unwrap();
+    assert!(ProviderService::deactivate(&state, AppType::Claude, "stale-card").is_err());
+    assert_eq!(
+        ProviderService::current(&state, AppType::Claude).unwrap(),
+        "only-claude"
+    );
+    assert_eq!(std::fs::read(&settings_path).unwrap(), before);
+
+    ProviderService::deactivate(&state, AppType::Claude, "only-claude").expect("deactivate claude");
+
+    assert_eq!(
+        ProviderService::current(&state, AppType::Claude).unwrap(),
+        ""
+    );
+    assert_eq!(
+        cc_switch_lib::mode::current::local_direct_pointer(&AppType::Claude),
+        None
+    );
+
+    let after: serde_json::Value = read_json_file(&settings_path).expect("read settings.json");
+    assert!(
+        after.get("model").is_none(),
+        "floor top key removed: {after}"
+    );
+    assert_eq!(after.get("includeCoAuthoredBy"), Some(&json!(false)));
+    let env = after.get("env").and_then(|v| v.as_object()).unwrap();
+    assert_eq!(
+        env.get("CLAUDE_CODE_USE_POWERSHELL_TOOL"),
+        Some(&json!("1"))
+    );
+    for key in [
+        "ANTHROPIC_BASE_URL",
+        "ANTHROPIC_AUTH_TOKEN",
+        "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+    ] {
+        let val = env.get(key).and_then(|v| v.as_str());
+        assert!(
+            val.is_none() || val == Some(""),
+            "expected {key} cleared or tombstoned, got {val:?} in {after}"
+        );
+    }
+
+    // Deleting the last provider now succeeds.
+    ProviderService::delete(&state, AppType::Claude, "only-claude")
+        .expect("delete last claude provider after deactivate");
+    assert!(ProviderService::list(&state, AppType::Claude)
+        .unwrap()
+        .is_empty());
+
+    // Idempotent when already deactivated.
+    ProviderService::deactivate(&state, AppType::Claude, "only-claude")
+        .expect("idempotent deactivate");
+    assert!(
+        !ProviderService::should_import_default_config_on_startup(&state, &AppType::Claude)
+            .unwrap()
+    );
+    assert!(
+        ProviderService::import_default_config(&state, AppType::Claude).unwrap(),
+        "an explicit import still works"
+    );
+}
+
+#[test]
+fn deactivate_codex_restores_defaults_and_allows_deleting_last_provider() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let config_path = cc_switch_lib::get_codex_config_path();
+    let auth_path = cc_switch_lib::get_codex_auth_path();
+    std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+    let provider_toml = concat!(
+        "model_provider = \"custom\"\n",
+        "model = \"gpt-5\"\n",
+        "model_context_window = 200000\n",
+        "\n",
+        "[model_providers.custom]\n",
+        "name = \"Custom\"\n",
+        "base_url = \"https://relay.example.com/v1\"\n",
+        "wire_api = \"responses\"\n",
+        "experimental_bearer_token = \"sk-codex\"\n",
+    );
+    std::fs::write(
+        &config_path,
+        format!("approval_policy = \"on-request\"\n{provider_toml}"),
+    )
+    .unwrap();
+    std::fs::write(
+        &auth_path,
+        serde_json::to_string_pretty(&json!({ "OPENAI_API_KEY": "sk-codex" })).unwrap(),
+    )
+    .unwrap();
+
+    let mut config = MultiAppConfig::default();
+    let manager = config.get_manager_mut(&AppType::Codex).unwrap();
+    manager.current = "only-codex".to_string();
+    manager.providers.insert(
+        "only-codex".to_string(),
+        Provider::with_id(
+            "only-codex".to_string(),
+            "OnlyCodex".to_string(),
+            json!({
+                "auth": { "OPENAI_API_KEY": "sk-codex" },
+                "config": provider_toml
+            }),
+            None,
+        ),
+    );
+
+    let state = create_test_state_with_config(&config).expect("create test state");
+    assert!(ProviderService::delete(&state, AppType::Codex, "only-codex").is_err());
+
+    ProviderService::deactivate(&state, AppType::Codex, "only-codex").expect("deactivate codex");
+
+    assert_eq!(
+        ProviderService::current(&state, AppType::Codex).unwrap(),
+        ""
+    );
+    let after_toml = std::fs::read_to_string(&config_path).unwrap();
+    assert!(
+        after_toml.contains("approval_policy = \"on-request\""),
+        "{after_toml}"
+    );
+    assert!(!after_toml.contains("model_provider ="), "{after_toml}");
+    assert!(!after_toml.contains("model ="), "{after_toml}");
+    assert!(!after_toml.contains("model_context_window"), "{after_toml}");
+    assert!(
+        !after_toml.contains("experimental_bearer_token"),
+        "{after_toml}"
+    );
+    assert!(
+        !auth_path.exists(),
+        "third-party api key residue in auth.json should be cleaned"
+    );
+
+    ProviderService::delete(&state, AppType::Codex, "only-codex")
+        .expect("delete last codex provider after deactivate");
+    assert!(ProviderService::list(&state, AppType::Codex)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn deactivate_gemini_and_grokbuild_restore_defaults_and_allow_deleting_last_provider() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    let gemini_env_path = home.join(".gemini/.env");
+    let gemini_settings_path = home.join(".gemini/settings.json");
+    std::fs::create_dir_all(gemini_env_path.parent().unwrap()).unwrap();
+    std::fs::write(
+        &gemini_env_path,
+        "GEMINI_SANDBOX=true\nGOOGLE_GEMINI_BASE_URL=https://relay.example.com\nGEMINI_API_KEY=sk-gem\nGEMINI_MODEL=gemini-2.5-pro\n",
+    )
+    .unwrap();
+    std::fs::write(
+        &gemini_settings_path,
+        serde_json::to_string_pretty(&json!({
+            "security": { "auth": { "selectedType": "gemini-api-key" } },
+            "model": { "name": "gemini-2.5-pro" },
+            "theme": "Default"
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let grok_config_path = cc_switch_lib::get_grok_config_path();
+    std::fs::create_dir_all(grok_config_path.parent().unwrap()).unwrap();
+    let grok_toml = concat!(
+        "[models]\n",
+        "default = \"my-grok\"\n",
+        "\n",
+        "[model.my-grok]\n",
+        "model = \"grok-4\"\n",
+        "name = \"My Grok\"\n",
+        "base_url = \"https://relay.example.com/v1\"\n",
+        "api_key = \"sk-grok\"\n",
+        "api_backend = \"responses\"\n",
+        "context_window = 131072\n",
+    );
+    std::fs::write(&grok_config_path, format!("theme = \"dark\"\n{grok_toml}")).unwrap();
+
+    let mut config = MultiAppConfig::default();
+    let gemini = config.get_manager_mut(&AppType::Gemini).unwrap();
+    gemini.current = "only-gemini".to_string();
+    gemini.providers.insert(
+        "only-gemini".to_string(),
+        Provider::with_id(
+            "only-gemini".to_string(),
+            "OnlyGemini".to_string(),
+            json!({
+                "env": {
+                    "GOOGLE_GEMINI_BASE_URL": "https://relay.example.com",
+                    "GEMINI_API_KEY": "sk-gem",
+                    "GEMINI_MODEL": "gemini-2.5-pro"
+                },
+                "config": {
+                    "model": { "name": "gemini-2.5-pro" }
+                }
+            }),
+            None,
+        ),
+    );
+    let grok = config.get_manager_mut(&AppType::GrokBuild).unwrap();
+    grok.current = "only-grok".to_string();
+    grok.providers.insert(
+        "only-grok".to_string(),
+        Provider::with_id(
+            "only-grok".to_string(),
+            "OnlyGrok".to_string(),
+            json!({ "config": grok_toml }),
+            None,
+        ),
+    );
+
+    let state = create_test_state_with_config(&config).expect("create test state");
+
+    ProviderService::deactivate(&state, AppType::Gemini, "only-gemini").expect("deactivate gemini");
+    assert_eq!(
+        ProviderService::current(&state, AppType::Gemini).unwrap(),
+        ""
+    );
+    let env_after = std::fs::read_to_string(&gemini_env_path).unwrap();
+    assert!(env_after.contains("GEMINI_SANDBOX=true"), "{env_after}");
+    assert!(!env_after.contains("GOOGLE_GEMINI_BASE_URL"), "{env_after}");
+    assert!(!env_after.contains("GEMINI_API_KEY"), "{env_after}");
+    assert!(!env_after.contains("GEMINI_MODEL"), "{env_after}");
+    let settings_after: serde_json::Value = read_json_file(&gemini_settings_path).unwrap();
+    assert_eq!(settings_after.get("theme"), Some(&json!("Default")));
+    assert!(settings_after
+        .pointer("/security/auth/selectedType")
+        .is_none());
+    assert!(settings_after.pointer("/model/name").is_none());
+    ProviderService::delete(&state, AppType::Gemini, "only-gemini").expect("delete last gemini");
+
+    ProviderService::deactivate(&state, AppType::GrokBuild, "only-grok")
+        .expect("deactivate grokbuild");
+    assert_eq!(
+        ProviderService::current(&state, AppType::GrokBuild).unwrap(),
+        ""
+    );
+    let grok_after = std::fs::read_to_string(&grok_config_path).unwrap();
+    assert!(grok_after.contains("theme = \"dark\""), "{grok_after}");
+    assert!(!grok_after.contains("[models]"), "{grok_after}");
+    assert!(!grok_after.contains("[model.my-grok]"), "{grok_after}");
+    ProviderService::delete(&state, AppType::GrokBuild, "only-grok").expect("delete last grok");
+}
+
+#[test]
+fn deactivate_rejects_non_route_mode_and_active_proxy_mode() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let state = create_test_state().expect("create test state");
+    assert!(ProviderService::deactivate(&state, AppType::Agy, "test").is_err());
+
+    let store = cc_switch_lib::live::engine::DeviceStore::for_device();
+    cc_switch_lib::mode::state::update(&store, |live| {
+        let entry = live.apps.entry("claude".to_string()).or_default();
+        entry.mode = Some(cc_switch_lib::mode::state::Mode::Proxy);
+        entry.attached = true;
+    })
+    .unwrap();
+    let err = ProviderService::deactivate(&state, AppType::Claude, "only-claude")
+        .expect_err("deactivate while proxy mode active should fail");
+    assert!(err.to_string().contains("直连"), "{err}");
 }

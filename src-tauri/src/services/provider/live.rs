@@ -1313,6 +1313,16 @@ pub fn should_import_default_config_on_startup(
     if !imports_default_config(app_type) {
         return Ok(false);
     }
+    if app_type.spec().route_mode {
+        let device = crate::live::engine::DeviceStore::for_device();
+        if crate::mode::state::load(&device)?
+            .apps
+            .get(app_type.as_str())
+            .is_some_and(|a| a.skip_startup_import)
+        {
+            return Ok(false);
+        }
+    }
 
     Ok(!state.db.has_any_provider_for_app(app_type)?)
 }

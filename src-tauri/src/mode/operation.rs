@@ -414,7 +414,20 @@ pub fn commit_target(
     app: &str,
     target: &PendingTarget,
 ) -> Result<(), AppError> {
-    if let Some(id) = target.pointer.as_deref() {
+    if target.clear_pointer {
+        let app_type: crate::app_config::AppType = app.parse()?;
+        if let Some(account) = &target.vacate_claude_account {
+            crate::services::provider::claude_official::vacate_login(account)?;
+        }
+        state::update(store, |live| {
+            live.apps
+                .entry(app.to_owned())
+                .or_default()
+                .skip_startup_import = true;
+        })?;
+        crate::settings::set_current_provider(&app_type, None)?;
+        db.clear_current_provider(&app_type)?;
+    } else if let Some(id) = target.pointer.as_deref() {
         let app_type: crate::app_config::AppType = app.parse()?;
         crate::settings::set_current_provider(&app_type, Some(id))?;
         db.set_current_provider(&app_type, id)?;

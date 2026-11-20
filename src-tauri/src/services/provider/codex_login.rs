@@ -210,6 +210,8 @@ pub(crate) enum AuthTarget<'a> {
     Official { row_auth: &'a Value },
     /// 托管账号：整份写它的登录。
     Managed { auth: &'a Value },
+    /// 退出使用状态：清掉托管账号登录和第三方残留 Key，保留用户原生登录。
+    Deactivate,
 }
 
 pub(crate) struct AuthInput<'a> {
@@ -299,6 +301,7 @@ pub(crate) fn plan(input: AuthInput<'_>) -> AuthPlan {
         AuthTarget::Official { row_auth } => {
             official(row_auth, native, managed || residue, &mut stash)
         }
+        AuthTarget::Deactivate => official(&Value::Null, native, managed || residue, &mut stash),
     };
 
     // 只算 Codex 会拿来登录的东西（OAuth token、API Key 等），Bedrock 凭据和元数据不算。

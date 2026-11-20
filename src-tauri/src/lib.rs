@@ -1592,6 +1592,7 @@ pub fn run() {
             commands::add_provider_to_live_config,
             commands::remove_provider_from_live_config,
             commands::switch_provider,
+            commands::deactivate_provider,
             commands::import_default_config,
             commands::get_claude_desktop_status,
             commands::get_claude_desktop_default_routes,

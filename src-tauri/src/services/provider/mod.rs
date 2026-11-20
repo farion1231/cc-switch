@@ -7402,6 +7402,122 @@ impl ProviderService {
         Ok(SwitchResult::default())
     }
 
+    /// 退出「使用中」状态：清除当前供应商指针，并把对应客户端配置文件中的供应商参数
+    /// 恢复为默认（只清关键字段与上一家的独有字段，用户自己的其他设置不动）。
+    pub fn deactivate(
+        state: &AppState,
+        app_type: AppType,
+        expected_id: &str,
+    ) -> Result<SwitchResult, AppError> {
+        let app = app_type.as_str().to_string();
+        let result = Self::deactivate_inner(state, app_type, expected_id);
+        match &result {
+            Ok(_) => log::info!("[DEACTIVATE] {app} 退出使用状态完成，配置已恢复默认"),
+            Err(error) => log::error!(
+                "[DEACTIVATE] {app} 退出使用状态失败: {}",
+                crate::error_for_log(&error.to_string())
+            ),
+        }
+        result
+    }
+
+    fn deactivate_inner(
+        state: &AppState,
+        app_type: AppType,
+        expected_id: &str,
+    ) -> Result<SwitchResult, AppError> {
+        if !app_type.spec().route_mode {
+            return Err(AppError::InvalidInput(format!(
+                "{} does not have an active provider to deactivate",
+                app_type.as_str()
+            )));
+        }
+
+        let _switch_guard = crate::mode::controller::lock_settled_blocking(state, &app_type)?;
+
+        if crate::mode::current::is_proxy(&app_type) {
+            return Err(AppError::localized(
+                "deactivate.proxy_active",
+                "请先回到直连模式，再退出使用中的供应商",
+                "Switch back to direct mode before deactivating the active provider",
+            ));
+        }
+
+        let Some(prev) = crate::mode::current::direct_provider(&state.db, &app_type)? else {
+            return Ok(SwitchResult::default());
+        };
+        if prev.id != expected_id {
+            return Err(AppError::localized(
+                "deactivate.current_changed",
+                "使用中的供应商已更改，请刷新后重试",
+                "The active provider changed. Refresh and try again.",
+            ));
+        }
+        let mut target = crate::mode::state::PendingTarget::clear_pointer();
+
+        match app_type {
+            AppType::Claude => {
+                target.vacate_claude_account = claude_official::bound_account(&prev);
+                let prev_proj =
+                    crate::live::project::claude::ClaudeProjection::of(&prev.settings_config);
+                let empty = crate::live::project::claude::ClaudeProjection::default();
+                let mut patch =
+                    crate::live::project::claude::direct_patch(Some(&prev_proj), &empty);
+                claude_official::strip_from_patch(&mut patch);
+                claude_direct::run(
+                    state.db.as_ref(),
+                    crate::mode::state::op::SWITCH,
+                    Some(&patch),
+                    target,
+                )?;
+                if let Err(err) = McpService::sync_enabled_for_app(state, &AppType::Claude) {
+                    log::warn!("退出使用状态后重投影 claude MCP 失败（将在下次同步时自愈）: {err}");
+                }
+            }
+            AppType::Codex => {
+                let owner = codex_direct::Owner::Provider(&prev);
+                codex_direct::write_direct(
+                    state.db.as_ref(),
+                    &state.codex_oauth_manager,
+                    crate::mode::state::op::SWITCH,
+                    owner,
+                    None,
+                    target,
+                )?;
+            }
+            AppType::Gemini => {
+                let empty = crate::live::project::gemini::GeminiProjection::empty();
+                gemini_direct::run(
+                    state.db.as_ref(),
+                    crate::mode::state::op::SWITCH,
+                    Some(&empty),
+                    target,
+                )?;
+            }
+            AppType::GrokBuild => {
+                let empty = crate::live::project::grok::GrokProjection { table: None };
+                grok_direct::run(
+                    state.db.as_ref(),
+                    crate::mode::state::op::SWITCH,
+                    Some(&prev),
+                    Some(&empty),
+                    target,
+                )?;
+            }
+            AppType::ClaudeDesktop => {
+                crate::claude_desktop_config::write_direct(
+                    state.db.as_ref(),
+                    crate::mode::state::op::SWITCH,
+                    None,
+                    target,
+                )?;
+            }
+            _ => unreachable!("route_mode apps already checked"),
+        }
+
+        Ok(SwitchResult::default())
+    }
+
     /// Sync current provider to live configuration (re-export)
     pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
         sync_current_to_live(state)
