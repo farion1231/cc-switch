@@ -4,111 +4,127 @@
     "additive": false,
     "localProxy": true,
     "routeMode": true,
-    "stack": true
+    "stack": true,
+    "scansAgentsSkillsDir": false
   },
   {
     "id": "claude-desktop",
     "additive": false,
     "localProxy": false,
     "routeMode": true,
-    "stack": true
+    "stack": true,
+    "scansAgentsSkillsDir": false
   },
   {
     "id": "codex",
     "additive": false,
     "localProxy": true,
     "routeMode": true,
-    "stack": true
+    "stack": true,
+    "scansAgentsSkillsDir": true
   },
   {
     "id": "gemini",
     "additive": false,
     "localProxy": true,
     "routeMode": true,
-    "stack": false
+    "stack": false,
+    "scansAgentsSkillsDir": true
   },
   {
     "id": "grokbuild",
     "additive": false,
     "localProxy": true,
     "routeMode": true,
-    "stack": false
+    "stack": false,
+    "scansAgentsSkillsDir": false
   },
   {
     "id": "opencode",
     "additive": true,
     "localProxy": false,
     "routeMode": false,
-    "stack": false
+    "stack": false,
+    "scansAgentsSkillsDir": true
   },
   {
     "id": "openclaw",
     "additive": true,
     "localProxy": false,
     "routeMode": false,
-    "stack": false
+    "stack": false,
+    "scansAgentsSkillsDir": true
   },
   {
     "id": "hermes",
     "additive": true,
     "localProxy": false,
     "routeMode": false,
-    "stack": false
+    "stack": false,
+    "scansAgentsSkillsDir": false
   },
   {
     "id": "pi",
     "additive": true,
     "localProxy": false,
     "routeMode": false,
-    "stack": false
+    "stack": false,
+    "scansAgentsSkillsDir": false
   },
   {
     "id": "mcode",
     "additive": true,
     "localProxy": false,
     "routeMode": false,
-    "stack": false
+    "stack": false,
+    "scansAgentsSkillsDir": false
   },
   {
     "id": "kimi",
     "additive": true,
     "localProxy": false,
     "routeMode": false,
-    "stack": false
+    "stack": false,
+    "scansAgentsSkillsDir": false
   },
   {
     "id": "dsh",
     "additive": true,
     "localProxy": false,
     "routeMode": false,
-    "stack": false
+    "stack": false,
+    "scansAgentsSkillsDir": false
   },
   {
     "id": "agy",
     "additive": false,
     "localProxy": false,
     "routeMode": false,
-    "stack": false
+    "stack": false,
+    "scansAgentsSkillsDir": false
   },
   {
     "id": "omp",
     "additive": true,
     "localProxy": false,
     "routeMode": false,
-    "stack": false
+    "stack": false,
+    "scansAgentsSkillsDir": false
   },
   {
     "id": "copilot",
     "additive": true,
     "localProxy": false,
     "routeMode": false,
-    "stack": false
+    "stack": false,
+    "scansAgentsSkillsDir": false
   },
   {
     "id": "workbuddy",
     "additive": true,
     "localProxy": false,
     "routeMode": false,
-    "stack": false
+    "stack": false,
+    "scansAgentsSkillsDir": false
   }
 ]

@@ -143,7 +143,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
   const lockedApps = useMemo<AppId[]>(
     () =>
       settings?.skillStorageLocation === "unified"
-        ? ["codex", "gemini", "opencode", "openclaw"]
+        ? APP_IDS_WITH.scansAgentsSkillsDir
         : [],
     [settings?.skillStorageLocation],
   );

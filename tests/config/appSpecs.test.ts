@@ -17,6 +17,7 @@ describe("APP_SPECS matches the backend AppType::spec", () => {
       localProxy: caps.localProxy,
       routeMode: caps.routeMode,
       stack: caps.stack,
+      scansAgentsSkillsDir: caps.scansAgentsSkillsDir,
     }).toEqual(spec);
   });
 });

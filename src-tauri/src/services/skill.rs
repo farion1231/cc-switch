@@ -2487,7 +2487,7 @@ impl SkillService {
         // 5. 仅重建成功迁移项中缺失的投影，避免全量同步触碰跳过项或用户副本。
         for app in AppType::all() {
             if !Self::is_sync_managed_app(&app)
-                || (target == SkillStorageLocation::Unified && app.scans_agents_skills_dir())
+                || (target == SkillStorageLocation::Unified && app.spec().scans_agents_skills_dir)
             {
                 continue;
             }
@@ -3070,7 +3070,7 @@ impl SkillService {
 
     fn uses_unified_skill_discovery(app: &AppType) -> bool {
         crate::settings::get_skill_storage_location() == SkillStorageLocation::Unified
-            && app.scans_agents_skills_dir()
+            && app.spec().scans_agents_skills_dir
     }
 
     fn preflight_install_destination(source: &Path, directory: &str, app: &AppType) -> Result<()> {

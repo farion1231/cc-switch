@@ -348,17 +348,11 @@ pub struct AppSpec {
     pub route_mode: bool,
     /// 支持 Stack 模式（`mode::stack`）
     pub stack: bool,
+    /// 原生读取 `~/.agents/skills/`，Unified 模式不需要额外投影。
+    pub scans_agents_skills_dir: bool,
 }
 
 impl AppType {
-    /// Whether this agent natively scans `~/.agents/skills/`.
-    pub fn scans_agents_skills_dir(&self) -> bool {
-        matches!(
-            self,
-            Self::Codex | Self::Gemini | Self::OpenCode | Self::OpenClaw
-        )
-    }
-
     /// 这个应用的功能表。不要加 `_ =>` 分支：新增应用必须在这里写全每一项。
     pub const fn spec(&self) -> AppSpec {
         match self {
@@ -368,6 +362,7 @@ impl AppType {
                 local_proxy: true,
                 route_mode: true,
                 stack: true,
+                scans_agents_skills_dir: false,
             },
             AppType::ClaudeDesktop => AppSpec {
                 id: "claude-desktop",
@@ -375,6 +370,7 @@ impl AppType {
                 local_proxy: false,
                 route_mode: true,
                 stack: true,
+                scans_agents_skills_dir: false,
             },
             AppType::Codex => AppSpec {
                 id: "codex",
@@ -382,6 +378,7 @@ impl AppType {
                 local_proxy: true,
                 route_mode: true,
                 stack: true,
+                scans_agents_skills_dir: true,
             },
             AppType::Gemini => AppSpec {
                 id: "gemini",
@@ -389,6 +386,7 @@ impl AppType {
                 local_proxy: true,
                 route_mode: true,
                 stack: false,
+                scans_agents_skills_dir: true,
             },
             AppType::GrokBuild => AppSpec {
                 id: "grokbuild",
@@ -396,6 +394,7 @@ impl AppType {
                 local_proxy: true,
                 route_mode: true,
                 stack: false,
+                scans_agents_skills_dir: false,
             },
             AppType::OpenCode => AppSpec {
                 id: "opencode",
@@ -403,6 +402,7 @@ impl AppType {
                 local_proxy: false,
                 route_mode: false,
                 stack: false,
+                scans_agents_skills_dir: true,
             },
             AppType::OpenClaw => AppSpec {
                 id: "openclaw",
@@ -410,6 +410,7 @@ impl AppType {
                 local_proxy: false,
                 route_mode: false,
                 stack: false,
+                scans_agents_skills_dir: true,
             },
             AppType::Hermes => AppSpec {
                 id: "hermes",
@@ -417,6 +418,7 @@ impl AppType {
                 local_proxy: false,
                 route_mode: false,
                 stack: false,
+                scans_agents_skills_dir: false,
             },
             AppType::Pi => AppSpec {
                 id: "pi",
@@ -424,6 +426,7 @@ impl AppType {
                 local_proxy: false,
                 route_mode: false,
                 stack: false,
+                scans_agents_skills_dir: false,
             },
             AppType::Mcode => AppSpec {
                 id: "mcode",
@@ -431,6 +434,7 @@ impl AppType {
                 local_proxy: false,
                 route_mode: false,
                 stack: false,
+                scans_agents_skills_dir: false,
             },
             AppType::Kimi => AppSpec {
                 id: "kimi",
@@ -438,6 +442,7 @@ impl AppType {
                 local_proxy: false,
                 route_mode: false,
                 stack: false,
+                scans_agents_skills_dir: false,
             },
             AppType::Dsh => AppSpec {
                 id: "dsh",
@@ -445,6 +450,7 @@ impl AppType {
                 local_proxy: false,
                 route_mode: false,
                 stack: false,
+                scans_agents_skills_dir: false,
             },
             AppType::Agy => AppSpec {
                 id: "agy",
@@ -452,6 +458,7 @@ impl AppType {
                 local_proxy: false,
                 route_mode: false,
                 stack: false,
+                scans_agents_skills_dir: false,
             },
             AppType::Omp => AppSpec {
                 id: "omp",
@@ -459,6 +466,7 @@ impl AppType {
                 local_proxy: false,
                 route_mode: false,
                 stack: false,
+                scans_agents_skills_dir: false,
             },
             AppType::Copilot => AppSpec {
                 id: "copilot",
@@ -466,6 +474,7 @@ impl AppType {
                 local_proxy: false,
                 route_mode: false,
                 stack: false,
+                scans_agents_skills_dir: false,
             },
             AppType::WorkBuddy => AppSpec {
                 id: "workbuddy",
@@ -473,6 +482,7 @@ impl AppType {
                 local_proxy: false,
                 route_mode: false,
                 stack: false,
+                scans_agents_skills_dir: false,
             },
         }
     }
