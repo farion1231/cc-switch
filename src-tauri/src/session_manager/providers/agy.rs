@@ -801,7 +801,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::incompatible_msrv)]
     fn agy_delete_refuses_open_ide_and_unrecognized_conversations_without_changes() {
         if crate::config::sqlite_unsupported_in_temp_dir() {
             return;
