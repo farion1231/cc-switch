@@ -105,6 +105,7 @@ import type { DirectModeFormatNotice } from "./shared";
 import {
   claudeStackModelsFromEnv,
   createClaudeStackModelRow,
+  hasInvalidClaudeStackWindow,
   normalizeClaudeStackModels,
   type ClaudeStackModelRow,
 } from "./ClaudeStackModelsField";
@@ -1396,6 +1397,19 @@ function ProviderFormFull({
         t("providerForm.billingMultiplierInvalid", {
           defaultValue:
             "Enter a decimal from 0 to 1000, or leave blank for 1×.",
+        }),
+      );
+      return;
+    }
+    if (
+      appId === "claude" &&
+      category !== "official" &&
+      claudeStackRows?.some(hasInvalidClaudeStackWindow)
+    ) {
+      toast.error(
+        t("providerForm.modelContextWindowInvalid", {
+          defaultValue:
+            "请输入正整数 token 数（如 262144 或 262,144），不要使用单位、小数或科学计数法；留空则继承默认值。",
         }),
       );
       return;
