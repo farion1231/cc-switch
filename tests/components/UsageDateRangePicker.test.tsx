@@ -88,6 +88,47 @@ describe("UsageDateRangePicker bounds", () => {
     expect(applied.customStartDate).toBe(toTs(new Date(2025, 5, 1)));
   });
 
+  // #9699：逐位键入年份时浏览器先给出 0002、0020、0202 这样没打完的值，
+  // 不能提交成 1902 / 1905，也不能把框里的值改掉打断输入
+  it("keeps a year being typed digit by digit", () => {
+    const onApply = openPicker();
+    const [startInput] =
+      document.querySelectorAll<HTMLInputElement>('input[type="date"]');
+    for (const value of [
+      "0002-11-18",
+      "0020-11-18",
+      "0202-11-18",
+      "2025-11-18",
+    ]) {
+      fireEvent.change(startInput, { target: { value } });
+      expect(startInput.value).toBe(value);
+    }
+    fireEvent.click(screen.getByRole("button", { name: "common.confirm" }));
+
+    const applied = new Date(onApply.mock.calls[0][0].customStartDate * 1000);
+    expect([
+      applied.getFullYear(),
+      applied.getMonth(),
+      applied.getDate(),
+    ]).toEqual([2025, 10, 18]);
+  });
+
+  it("drops an unfinished year on blur without changing the start", () => {
+    const onApply = openPicker();
+    const [startInput] =
+      document.querySelectorAll<HTMLInputElement>('input[type="date"]');
+    const original = startInput.value;
+    fireEvent.focus(startInput);
+    fireEvent.change(startInput, { target: { value: "0002-11-18" } });
+    expect(startInput.value).toBe("0002-11-18");
+    fireEvent.blur(startInput);
+    expect(startInput.value).toBe(original);
+
+    fireEvent.click(screen.getByRole("button", { name: "common.confirm" }));
+    const applied = new Date(onApply.mock.calls[0][0].customStartDate * 1000);
+    expect(applied.getFullYear()).toBe(Number(original.slice(0, 4)));
+  });
+
   it("clamps an end date typed after today", () => {
     const onApply = openPicker();
     const [, endInput] =
