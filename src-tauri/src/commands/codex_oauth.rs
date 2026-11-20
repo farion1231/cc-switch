@@ -6,7 +6,7 @@
 //! 此处定义 State wrapper 以及 Codex OAuth 专属的订阅额度和模型列表查询命令。
 
 use crate::proxy::providers::codex_oauth_auth::{
-    ChatgptProxyConfig, CodexOAuthError, CodexOAuthManager, CHATGPT_PROXY_CONFIG_KEY,
+    ChatgptProxyConfig, CodexOAuthError, CodexOAuthManager,
 };
 use crate::services::model_fetch::FetchedModel;
 use crate::services::subscription::{
@@ -23,33 +23,21 @@ use tauri::State;
 pub struct CodexOAuthState(pub Arc<CodexOAuthManager>);
 
 #[tauri::command]
-pub fn get_chatgpt_proxy_config(
+pub async fn get_chatgpt_proxy_config(
     app_state: State<'_, crate::store::AppState>,
 ) -> Result<ChatgptProxyConfig, String> {
-    let saved = app_state
-        .db
-        .get_setting(CHATGPT_PROXY_CONFIG_KEY)
-        .map_err(|e| e.to_string())?;
-    saved
-        .map(|value| serde_json::from_str(&value).map_err(|e| e.to_string()))
-        .transpose()
-        .map(|config| config.unwrap_or_default())
+    super::run_db_task(&app_state, |state| state.chatgpt_proxy_config()).await
 }
 
 #[tauri::command]
-pub fn set_chatgpt_proxy_config(
+pub async fn set_chatgpt_proxy_config(
     app_state: State<'_, crate::store::AppState>,
-    mut config: ChatgptProxyConfig,
+    config: ChatgptProxyConfig,
 ) -> Result<(), String> {
-    config.url = config.url.trim().to_string();
-    // Validate before writing; the manager changes only after persistence succeeds.
-    config.validate()?;
-    let value = serde_json::to_string(&config).map_err(|e| e.to_string())?;
-    app_state
-        .db
-        .set_setting(CHATGPT_PROXY_CONFIG_KEY, &value)
-        .map_err(|e| e.to_string())?;
-    app_state.codex_oauth_manager.set_account_proxy(&config)
+    super::run_db_task(&app_state, move |state| {
+        state.save_chatgpt_proxy_config(config)
+    })
+    .await
 }
 
 /// 查询 Codex OAuth (ChatGPT Plus/Pro) 订阅额度

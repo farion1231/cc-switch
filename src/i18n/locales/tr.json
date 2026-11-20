@@ -5075,6 +5075,15 @@
     "confirm": "Anladım"
   },
   "authCenter": {
+    "loginProxy": {
+      "label": "ChatGPT hesap istekleri için proxy kullan",
+      "url": "ChatGPT hesabı için proxy URL’si",
+      "hint": "Kaydettikten sonra ChatGPT oturum açma, belirteç yenileme, kota ve hesap model listesi sorguları bu proxy’yi kullanır. Kapalıyken bu istekler genel veya sistem proxy ayarlarını kullanır. Yetkilendirme sayfası tarayıcının proxy ayarlarını kullanır.",
+      "required": "ChatGPT hesabı için bir proxy URL’si girin.",
+      "save": "Proxy ayarlarını kaydet",
+      "saved": "ChatGPT proxy ayarları kaydedildi",
+      "loadFailed": "Proxy ayarları yüklenemedi. Yeniden deneyin veya yeni ayarları kaydedin."
+    },
     "helpTitle": "Hesaplar Nedir?",
     "group": {
       "helpTitle": "{{service}} hesapları nasıl kullanılır?",

@@ -1,4 +1,5 @@
 import { http, HttpResponse } from "msw";
+import type { ChatgptProxyConfig } from "@/lib/api/auth";
 import type { AppId } from "@/lib/api/types";
 import type { Provider, Settings } from "@/types";
 import {
@@ -6,6 +7,7 @@ import {
   deleteProvider,
   deleteSession,
   getCurrentProviderId,
+  getChatgptProxyConfig,
   getLiveProviderIds,
   getSessionMessages,
   getProviders,
@@ -15,6 +17,7 @@ import {
   searchSessionContent,
   resetProviderState,
   setCurrentProviderId,
+  setChatgptProxyConfig,
   ackPendingDeepLink,
   peekPendingDeepLink,
   updateProvider,
@@ -494,6 +497,19 @@ export const handlers = [
       realTotalTokens: 0,
       cacheHitRate: 0,
     }),
+  ),
+  http.post(`${TAURI_ENDPOINT}/get_chatgpt_proxy_config`, () =>
+    success(getChatgptProxyConfig()),
+  ),
+  http.post(
+    `${TAURI_ENDPOINT}/set_chatgpt_proxy_config`,
+    async ({ request }) => {
+      const { config } = await withJson<{ config: ChatgptProxyConfig }>(
+        request,
+      );
+      setChatgptProxyConfig(config);
+      return success(null);
+    },
   ),
   http.post(`${TAURI_ENDPOINT}/auth_get_status`, async ({ request }) => {
     const { authProvider } = await withJson<{ authProvider: string }>(request);

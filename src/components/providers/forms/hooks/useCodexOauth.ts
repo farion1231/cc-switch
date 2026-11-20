@@ -6,9 +6,6 @@ import type { CodexLoginMethod } from "@/lib/api/auth";
  *
  * 复用通用 useManagedAuth，仅指定 provider 为 "codex_oauth"
  */
-export function useCodexOauth(
-  loginMethod: CodexLoginMethod = "browser",
-  loginProxyUrl?: string,
-) {
-  return useManagedAuth("codex_oauth", undefined, loginMethod, loginProxyUrl);
+export function useCodexOauth(loginMethod: CodexLoginMethod = "browser") {
+  return useManagedAuth("codex_oauth", undefined, loginMethod);
 }

@@ -19,14 +19,12 @@ type LoginRequest = {
   targetAccountId?: string;
   generation: number;
   loginMethod?: ManagedLoginMethod;
-  loginProxyUrl?: string;
 };
 
 export function useManagedAuth(
   authProvider: ManagedAuthProvider,
   githubDomain?: string,
   loginMethod?: CodexLoginMethod,
-  loginProxyUrl?: string,
 ) {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
@@ -135,18 +133,15 @@ export function useManagedAuth(
   }, [cancelBackendFlow, stopPolling]);
 
   const startLoginMutation = useMutation({
-    mutationFn: ({
-      targetAccountId,
-      loginMethod,
-      loginProxyUrl,
-    }: LoginRequest) =>
-      authApi.authStartLogin(
-        authProvider,
-        githubDomain,
-        targetAccountId,
-        loginMethod,
-        loginProxyUrl,
-      ),
+    mutationFn: ({ targetAccountId, loginMethod: method }: LoginRequest) =>
+      method
+        ? authApi.authStartLogin(
+            authProvider,
+            githubDomain,
+            targetAccountId,
+            method,
+          )
+        : authApi.authStartLogin(authProvider, githubDomain, targetAccountId),
     onSuccess: async (response, request) => {
       if (request.generation !== flowGenerationRef.current) {
         void cancelBackendFlow(response.device_code);
@@ -387,7 +382,6 @@ export function useManagedAuth(
           targetAccountId,
           generation,
           loginMethod: method,
-          loginProxyUrl,
         });
       });
     },
@@ -397,7 +391,6 @@ export function useManagedAuth(
       startLoginMutation,
       stopPolling,
       loginMethod,
-      loginProxyUrl,
     ],
   );
 

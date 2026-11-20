@@ -153,23 +153,13 @@ impl CodexOAuthManager {
     pub async fn start_browser_flow(
         &self,
         target_account_id: Option<&str>,
-        login_proxy_url: Option<&str>,
     ) -> Result<GitHubDeviceCodeResponse, CodexOAuthError> {
-        let client = crate::proxy::http_client::login_client(login_proxy_url)
-            .map_err(CodexOAuthError::TokenFetchFailed)?;
-        let response = self
-            .start_browser_flow_at_port(
-                target_account_id,
-                1455,
-                Duration::from_secs(LOGIN_LIFETIME),
-            )
-            .await?;
-        let mut pending = self.pending_device_codes.write().await;
-        let entry = pending
-            .get_mut(&response.device_code)
-            .ok_or(CodexOAuthError::ExpiredToken)?;
-        entry.client = client;
-        Ok(response)
+        self.start_browser_flow_at_port(
+            target_account_id,
+            1455,
+            Duration::from_secs(LOGIN_LIFETIME),
+        )
+        .await
     }
 
     async fn start_browser_flow_at_port(
@@ -214,7 +204,7 @@ impl CodexOAuthManager {
             epoch,
             PendingDeviceCode {
                 user_code: String::new(),
-                client: crate::proxy::http_client::get(),
+                client: self.account_client(),
                 expires_at_ms: expires_at,
                 target_account_id: target,
                 target_generation: generation,

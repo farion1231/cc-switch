@@ -203,6 +203,9 @@ pub(crate) async fn sync_fetch_remote_info<B: SyncBackend>() -> Result<Value, St
 pub(crate) fn run_post_import_sync(app_state: &AppState) -> Result<(), AppError> {
     let mut failures = Vec::new();
 
+    if let Err(error) = app_state.reload_chatgpt_proxy_config() {
+        failures.push(format!("ChatGPT account proxy: {error}"));
+    }
     if let Err(error) = ProviderService::sync_current_to_live(app_state) {
         failures.push(format!("live configuration: {error}"));
     }

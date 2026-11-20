@@ -34,8 +34,6 @@ use super::copilot_auth::{GitHubAccount, GitHubDeviceCodeResponse};
 
 mod browser;
 
-pub const CHATGPT_PROXY_CONFIG_KEY: &str = "chatgpt_account_proxy_config";
-
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ChatgptProxyConfig {
     pub enabled: bool,
@@ -43,9 +41,9 @@ pub struct ChatgptProxyConfig {
 }
 
 impl ChatgptProxyConfig {
-    pub fn validate(&self) -> Result<(), String> {
+    pub(crate) fn build_client(&self) -> Result<Option<reqwest::Client>, String> {
         if !self.enabled {
-            return Ok(());
+            return Ok(None);
         }
         let url = self.url.trim();
         if !url.contains("://") {
@@ -59,7 +57,7 @@ impl ChatgptProxyConfig {
                 "Proxy URL must include a host (for example http://127.0.0.1:7890)".to_string(),
             );
         }
-        crate::proxy::http_client::login_client(Some(url)).map(|_| ())
+        crate::proxy::http_client::build_https_only_client(Some(url)).map(Some)
     }
 }
 
@@ -461,25 +459,16 @@ impl CodexOAuthManager {
     pub fn account_client(&self) -> reqwest::Client {
         self.account_proxy_client
             .read()
-            .ok()
-            .and_then(|client| client.clone())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
             .unwrap_or_else(crate::proxy::http_client::get)
     }
 
-    pub fn set_account_proxy(&self, config: &ChatgptProxyConfig) -> Result<(), String> {
-        config.validate()?;
-        let client = if config.enabled {
-            Some(crate::proxy::http_client::login_client(Some(
-                config.url.trim(),
-            ))?)
-        } else {
-            None
-        };
+    pub(crate) fn replace_account_proxy(&self, client: Option<reqwest::Client>) {
         *self
             .account_proxy_client
             .write()
-            .map_err(|e| e.to_string())? = client;
-        Ok(())
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = client;
     }
 
     // ==================== 设备码流程 ====================
@@ -493,10 +482,8 @@ impl CodexOAuthManager {
     pub async fn start_device_flow(
         &self,
         target_account_id: Option<&str>,
-        login_proxy_url: Option<&str>,
     ) -> Result<GitHubDeviceCodeResponse, CodexOAuthError> {
-        let client = crate::proxy::http_client::login_client(login_proxy_url)
-            .map_err(CodexOAuthError::TokenFetchFailed)?;
+        let client = self.account_client();
         log::info!("[CodexOAuth] 启动 Device Code 流程");
         let (login_epoch, target_account_id, target_generation) =
             self.prepare_login_target(target_account_id).await?;
@@ -2261,21 +2248,23 @@ mod tests {
                 enabled: true,
                 url: url.into()
             }
-            .validate()
+            .build_client()
             .is_err());
         }
         assert!(ChatgptProxyConfig {
             enabled: true,
             url: "http://127.0.0.1:7890".into(),
         }
-        .validate()
-        .is_ok());
+        .build_client()
+        .unwrap()
+        .is_some());
         assert!(ChatgptProxyConfig {
             enabled: false,
             url: String::new()
         }
-        .validate()
-        .is_ok());
+        .build_client()
+        .unwrap()
+        .is_none());
     }
 
     #[tokio::test]

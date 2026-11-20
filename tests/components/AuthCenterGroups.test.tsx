@@ -1,10 +1,11 @@
-import { render, screen, within } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { TFunction } from "i18next";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CopilotAuthSection } from "@/components/providers/forms/CopilotAuthSection";
 import { CodexOAuthSection } from "@/components/providers/forms/CodexOAuthSection";
 import { XaiOAuthSection } from "@/components/providers/forms/XaiOAuthSection";
+import { renderWithQueryClient as render } from "../utils/testQueryClient";
 
 const mocks = vi.hoisted(() => ({
   useCopilotAuth: vi.fn(),

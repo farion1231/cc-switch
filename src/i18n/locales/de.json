@@ -5144,6 +5144,15 @@
     "confirm": "Verstanden"
   },
   "authCenter": {
+    "loginProxy": {
+      "label": "Proxy für ChatGPT-Kontoanfragen verwenden",
+      "url": "Proxy-URL für das ChatGPT-Konto",
+      "hint": "Nach dem Speichern verwenden ChatGPT-Anmeldung, Token-Aktualisierung sowie Kontingent- und Modelllistenabfragen diesen Proxy. Ist er deaktiviert, gelten die globalen oder die System-Proxy-Einstellungen. Die Autorisierungsseite verwendet die Proxy-Einstellungen des Browsers.",
+      "required": "Gib eine Proxy-URL für das ChatGPT-Konto ein.",
+      "save": "Proxy-Einstellungen speichern",
+      "saved": "ChatGPT-Proxy-Einstellungen gespeichert",
+      "loadFailed": "Die Proxy-Einstellungen konnten nicht geladen werden. Versuche es erneut oder speichere neue Einstellungen."
+    },
     "helpTitle": "Was ist „Konten“?",
     "group": {
       "helpTitle": "Wie {{service}}-Konten verwendet werden",
