@@ -294,6 +294,8 @@ const imageCache = new Map<string, CachedImage>();
 const imageLoads = new Map<string, Promise<string>>();
 /** 每张图还在等加载结果、尚未占用的等待方个数；有等待方的图不淘汰 */
 const imageWaiters = new Map<string, number>();
+/** 每次 clearSessionImageCache 递增，防止在途请求完成后把过期 Blob URL 回写进缓存 */
+let imageCacheGeneration = 0;
 
 const startWaiting = (key: string) =>
   imageWaiters.set(key, (imageWaiters.get(key) ?? 0) + 1);
@@ -325,9 +327,13 @@ const loadImageUrl = (
 ) => {
   let pending = imageLoads.get(key);
   if (!pending) {
-    pending = sessionsApi
+    const gen = imageCacheGeneration;
+    const req = sessionsApi
       .getImage(providerId, sourcePath, image)
       .then((bytes) => {
+        if (gen !== imageCacheGeneration) return "";
+        const existing = imageCache.get(key);
+        if (existing) return existing.url;
         const url = URL.createObjectURL(
           new Blob([bytes], { type: image.mediaType }),
         );
@@ -335,7 +341,12 @@ const loadImageUrl = (
         evictImages();
         return url;
       })
-      .finally(() => imageLoads.delete(key));
+      .finally(() => {
+        if (imageLoads.get(key) === req) {
+          imageLoads.delete(key);
+        }
+      });
+    pending = req;
     imageLoads.set(key, pending);
   }
   return pending;
@@ -358,6 +369,7 @@ const releaseImage = (key: string) => {
 
 /** 清空图片缓存并 revoke 全部 Blob URL（离开阅读页、测试用） */
 export const clearSessionImageCache = () => {
+  imageCacheGeneration += 1;
   imageCache.forEach((entry) => URL.revokeObjectURL(entry.url));
   imageCache.clear();
   imageLoads.clear();

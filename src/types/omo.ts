@@ -281,13 +281,3 @@ export function buildOmoProfilePreview(
 
   return result;
 }
-
-/** @deprecated Use buildOmoProfilePreview with options.slim=true */
-export function buildOmoSlimProfilePreview(
-  agents: Record<string, Record<string, unknown>>,
-  otherFieldsStr: string,
-): Record<string, unknown> {
-  return buildOmoProfilePreview(agents, undefined, otherFieldsStr, {
-    slim: true,
-  });
-}

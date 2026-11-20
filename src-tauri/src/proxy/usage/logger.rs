@@ -268,47 +268,8 @@ impl<'a> UsageLogger<'a> {
         .map_err(|error| AppError::Database(format!("查询 usage request_id 失败: {error}")))
     }
 
-    /// 记录失败的请求
+    /// 记录失败的请求（带请求上下文）
     ///
-    /// 用于记录无法从上游获取 usage 信息的失败请求
-    #[allow(dead_code, clippy::too_many_arguments)]
-    pub fn log_error(
-        &self,
-        request_id: String,
-        provider_id: String,
-        app_type: String,
-        model: String,
-        status_code: u16,
-        error_message: String,
-        latency_ms: u64,
-    ) -> Result<(), AppError> {
-        let request_model = model.clone();
-        let log = RequestLog {
-            request_id,
-            provider_id,
-            app_type,
-            model,
-            request_model,
-            // 错误行未经过计价，留空（回填的 has_usage 闸门也不会碰全 0 行）
-            pricing_model: String::new(),
-            usage: TokenUsage::default(),
-            cost: None,
-            latency_ms,
-            first_token_ms: None,
-            status_code,
-            error_message: Some(error_message),
-            session_id: None,
-            provider_type: None,
-            is_streaming: false,
-            cost_multiplier: "1.0".to_string(),
-        };
-
-        self.log_request(&log)
-    }
-
-    /// 记录失败的请求（带更多上下文信息）
-    ///
-    /// 相比 log_error，这个方法接受更多参数以提供完整的请求上下文。
     /// `model` 是发往上游的模型名，`request_model` 是客户端请求里的原名（没映射时两者相同）。
     #[allow(clippy::too_many_arguments)]
     pub fn log_error_with_context(
@@ -808,14 +769,18 @@ mod tests {
         let db = Database::memory()?;
         let logger = UsageLogger::new(&db);
 
-        logger.log_error(
+        logger.log_error_with_context(
             "req-error".to_string(),
             "provider-1".to_string(),
             "claude".to_string(),
             "unknown-model".to_string(),
+            "unknown-model".to_string(),
             500,
             "Internal Server Error".to_string(),
             50,
+            false,
+            None,
+            None,
         )?;
 
         // 验证错误记录已插入
@@ -857,14 +822,18 @@ mod tests {
         // #6706：中转站返回数 MB 的整页 HTML 报错，不能原样入库
         let prefix = "HTTP 502 Bad Gateway: <html><title>上游错误</title>";
         let body = format!("{prefix}{}", "🦀".repeat(MAX_ERROR_MESSAGE_CHARS * 100));
-        logger.log_error(
+        logger.log_error_with_context(
             "req-huge-error".to_string(),
             "provider-1".to_string(),
             "claude".to_string(),
             "claude-sonnet-4-5".to_string(),
+            "claude-sonnet-4-5".to_string(),
             502,
             body,
             50,
+            false,
+            None,
+            None,
         )?;
 
         let conn = crate::database::lock_conn!(db.conn);

@@ -156,6 +156,49 @@ describe("PiProviderForm", () => {
     ).toBeInTheDocument();
   });
 
+  it("offers the Mistral API format in Pi but not in omp", async () => {
+    const user = userEvent.setup();
+    for (const appId of ["pi", "omp"] as const) {
+      const { unmount } = render(
+        <PiProviderForm
+          appId={appId}
+          submitLabel="Save"
+          onSubmit={() => {}}
+          onCancel={() => {}}
+          initialData={{
+            name: "gateway",
+            settingsConfig: { api: "openai-completions" },
+          }}
+        />,
+      );
+      await user.click(document.querySelector("#pi-provider-api-select")!);
+      await screen.findByRole("option", { name: "Anthropic Messages" });
+      const mistral = screen.queryByRole("option", { name: "Mistral" });
+      if (appId === "pi") expect(mistral).toBeInTheDocument();
+      else expect(mistral).not.toBeInTheDocument();
+      await user.keyboard("{Escape}");
+      unmount();
+    }
+  });
+
+  it("keeps showing an existing omp API value the format list no longer offers", () => {
+    render(
+      <PiProviderForm
+        appId="omp"
+        submitLabel="Save"
+        onSubmit={() => {}}
+        onCancel={() => {}}
+        initialData={{
+          name: "legacy",
+          settingsConfig: { api: "mistral-conversations" },
+        }}
+      />,
+    );
+    expect(document.querySelector("#pi-provider-api-select")).toHaveTextContent(
+      "mistral-conversations",
+    );
+  });
+
   it("starts in the same editable custom state as OpenCode", async () => {
     const onSubmitReadyChange = vi.fn();
     const { container } = render(
