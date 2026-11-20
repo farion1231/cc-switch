@@ -386,6 +386,7 @@ describe("UsageScriptModal WorkBuddy credentials", () => {
       expect(getBalance).toHaveBeenCalledWith(
         "https://api.deepseek.com/v1",
         "sk-test-workbuddy",
+        undefined,
       );
     } finally {
       getBalance.mockRestore();
