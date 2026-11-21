@@ -205,6 +205,7 @@ jobs:
           bash parity/ci/macos-egress.sh check
 
       - name: Run the cases
+        timeout-minutes: 25
         env:
           RECORD: ${{ contains(github.event.head_commit.message, '[parity record]') || contains(github.event.head_commit.message, '[parity record macos]') }}
         run: |
@@ -212,11 +213,28 @@ jobs:
           cases=(); while IFS= read -r f; do cases+=("$f"); done < <(find parity/cases -name '*.case.ts' -not -path '*/_scratch/*' | sort)
           common=(--os macos --app "$RUNNER_TEMP/app/CC Switch.app" --helper "$RUNNER_TEMP/parity-helper" --out "$RUNNER_TEMP/out/cases")
           if [ "$RECORD" = "true" ]; then
-            node parity/kit/internal/cli/main.ts record "${common[@]}" "${cases[@]}" 2>&1 | tee "$RUNNER_TEMP/out-cases.log"
+            mode=record; list=("${cases[@]}")
           else
-            repeated=(); for i in $(seq 10); do repeated+=("${cases[@]}"); done
-            node parity/kit/internal/cli/main.ts check "${common[@]}" "${repeated[@]}" 2>&1 | tee "$RUNNER_TEMP/out-cases.log"
+            mode=check; list=(); for i in $(seq 10); do list+=("${cases[@]}"); done
           fi
+          ( node parity/kit/internal/cli/main.ts "$mode" "${common[@]}" "${list[@]}" 2>&1 | tee "$RUNNER_TEMP/out-cases.log" ) &
+          run=$!
+          # A hung run stops here with the stacks of what it waited on, instead of keeping pf up until
+          # the runner loses its connection and the logs with it. A full check run takes about 9 minutes.
+          for _ in $(seq 1200); do kill -0 "$run" 2>/dev/null || break; sleep 1; done
+          if kill -0 "$run" 2>/dev/null; then
+            echo "::error::the cases were still running after 20 minutes; sampling the app and the helper"
+            hang="$RUNNER_TEMP/out/cases/hang"; mkdir -p "$hang"
+            ps -axo pid,ppid,stat,etime,command | grep -E "node|CC Switch|parity-helper" | grep -v grep > "$hang/ps.txt" || true
+            cat "$hang/ps.txt"
+            for p in $(pgrep -f "CC Switch.app/Contents/MacOS/|parity-helper" || true); do
+              sample "$p" 5 -file "$hang/sample-$p.txt" >/dev/null 2>&1 || sudo -n sample "$p" 5 -file "$hang/sample-$p.txt" >/dev/null 2>&1 || true
+            done
+            pkill -f "kit/internal/cli/main.ts" || true
+            pkill -f "CC Switch.app/Contents/MacOS/" || true
+            exit 1
+          fi
+          wait "$run"
 
       - name: Restore networking
         if: always()
