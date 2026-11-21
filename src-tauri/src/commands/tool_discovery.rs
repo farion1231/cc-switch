@@ -632,12 +632,34 @@ pub(super) fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
     search_paths.into_iter().collect()
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", test))]
 fn is_windows_command_script(path: &Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
         .map(|ext| ext.eq_ignore_ascii_case("cmd") || ext.eq_ignore_ascii_case("bat"))
         .unwrap_or(false)
+}
+
+#[cfg(any(target_os = "windows", test))]
+pub(super) fn classify_windows_path_default_launch_error(
+    path_default: &Path,
+    err: &std::io::Error,
+) -> Result<ShellProbe, String> {
+    // `where` 会列出 npm 留下的无扩展名 POSIX sh shim（同目录无 .cmd/.exe），终端按 PATHEXT 会跳过它
+    // 去执行后方入口；交给目录扫描判断（别处有能跑的以它为准，都跑不起来扫描也会报 FoundButFailed）。
+    if path_default.extension().is_none() {
+        return Ok(ShellProbe::NotFound(NOT_INSTALLED.to_string()));
+    }
+    // `.cmd`/`.bat` 经由 cmd.exe 启动，spawn 失败说明 shell 本身不可用，维持探测失败 Err。
+    if is_windows_command_script(path_default) {
+        return Err(format!("Failed to probe {}: {err}", path_default.display()));
+    }
+    // 已定位到 PATH 上的可执行文件（如损坏的 `.exe` 或 npm 12 文本占位文件）但无法启动：
+    // 确认已安装但无法运行，且不 fallback 到别处旧版本掩盖。
+    Ok(ShellProbe::FoundButFailed(launch_failure_detail(
+        path_default,
+        err,
+    )))
 }
 #[cfg(target_os = "windows")]
 fn windows_runnable_sibling_for_extensionless_tool(path: &Path) -> Option<std::path::PathBuf> {
@@ -800,53 +822,42 @@ fn run_windows_tool_version_command(
 /// the directory scan, so the displayed version matches what `tool` resolves
 /// to in a terminal (#4701).
 ///
-/// Returns `NotFound` when no entry is resolved on PATH, or the resolved entry
-/// fails to launch (the caller falls back to `scan_cli_version` over the
-/// hardcoded/registry dirs, which still reports it as broken when nothing else
-/// runs); `FoundButFailed` when an entry ran but no version came out of it —
-/// it exited non-zero or printed nothing (installed but not runnable).
-/// That is reported as-is without falling back, so an old
-/// install elsewhere cannot mask a broken default.
+/// Returns `Ok(NotFound)` when PATH has no usable entry or resolves to an
+/// extensionless shim that Windows terminals skip via `PATHEXT` (letting the
+/// directory scan check runnable installs). Resolution failures and `cmd.exe`
+/// script spawn failures return `Err`; an unlaunchable `.exe` returns
+/// `FoundButFailed`. A successful run whose output has no version is
+/// `VersionUnknown`; a non-zero exit is `FoundButFailed`. Neither falls back
+/// to another install.
 #[cfg(target_os = "windows")]
-pub(super) fn probe_path_default_version(tool: &str) -> ShellProbe {
-    let path_default = match resolve_path_default(tool, None) {
-        Ok(Some(p)) => p,
-        _ => return ShellProbe::NotFound(NOT_INSTALLED.to_string()),
+pub(super) fn probe_path_default_version(tool: &str) -> Result<ShellProbe, String> {
+    let Some(path_default) = resolve_path_default(tool, None)? else {
+        return Ok(ShellProbe::NotFound(NOT_INSTALLED.to_string()));
     };
-    let current_path = effective_path_string();
-    match run_windows_tool_version_command(&path_default, &current_path) {
-        Ok(out) => {
-            let stdout = decode_command_output(&out.stdout).trim().to_string();
-            let stderr = decode_command_output(&out.stderr).trim().to_string();
-            if out.status.success() {
-                let raw = if stdout.is_empty() { &stderr } else { &stdout };
-                if raw.is_empty() {
-                    ShellProbe::FoundButFailed(silent_version_probe_detail(out.status))
-                } else {
-                    ShellProbe::Found(extract_version(raw))
-                }
-            } else {
-                let err = if stderr.is_empty() { stdout } else { stderr };
-                if err.is_empty() {
-                    ShellProbe::FoundButFailed(silent_version_probe_detail(out.status))
-                } else {
-                    ShellProbe::FoundButFailed(last_lines(err.trim(), 4))
-                }
-            }
-        }
-        // 启动不了不一定是装坏了：`where` 会列出 npm 留下的无扩展名 sh shim，同目录
-        // 没有 .cmd 时它可能排在最前，而终端会跳过它、去跑后面那份。交给目录扫描判断：
-        // 别处有能跑的就以它为准，都跑不起来扫描也会报「装了但跑不起来」。
-        Err(_) => ShellProbe::NotFound(NOT_INSTALLED.to_string()),
-    }
+    let out = match run_windows_tool_version_command(&path_default, &effective_path_string()) {
+        Ok(out) => out,
+        Err(e) => return classify_windows_path_default_launch_error(&path_default, &e),
+    };
+    let stdout = decode_command_output(&out.stdout);
+    let stderr = decode_command_output(&out.stderr);
+    Ok(if out.status.success() {
+        super::tool_version::successful_version_probe(&stdout, &stderr)
+    } else {
+        ShellProbe::FoundButFailed(super::tool_version::failed_version_probe_detail(
+            &stdout, &stderr, out.status,
+        ))
+    })
 }
 
 /// 扫描常见路径查找 CLI（PATH 主命令未命中时的兜底单探）。
-pub(super) fn scan_cli_version(tool: &str) -> ShellProbe {
+pub(super) fn scan_cli_version(tool: &str) -> Result<ShellProbe, String> {
     scan_cli_version_in(tool, &build_tool_search_paths(tool))
 }
 
-pub(super) fn scan_cli_version_in(tool: &str, search_paths: &[std::path::PathBuf]) -> ShellProbe {
+pub(super) fn scan_cli_version_in(
+    tool: &str,
+    search_paths: &[std::path::PathBuf],
+) -> Result<ShellProbe, String> {
     #[cfg(not(target_os = "windows"))]
     use std::process::Command;
 
@@ -877,7 +888,8 @@ pub(super) fn scan_cli_version_in(tool: &str, search_paths: &[std::path::PathBuf
             }
 
             #[cfg(target_os = "windows")]
-            let output = run_windows_tool_version_command(&tool_path, &new_path);
+            let output = run_windows_tool_version_command(&tool_path, &new_path)
+                .map_err(|e| launch_failure_detail(&tool_path, &e));
 
             #[cfg(not(target_os = "windows"))]
             let output = {
@@ -885,41 +897,46 @@ pub(super) fn scan_cli_version_in(tool: &str, search_paths: &[std::path::PathBuf
                     .arg("--version")
                     .env("PATH", &new_path)
                     .output()
+                    .map_err(|e| launch_failure_detail(&tool_path, &e))
             };
 
             let out = match output {
                 Ok(out) => out,
                 Err(e) => {
-                    silent_diagnostic.get_or_insert_with(|| launch_failure_detail(&tool_path, &e));
+                    silent_diagnostic.get_or_insert(e);
                     continue;
                 }
             };
-            let stdout = decode_command_output(&out.stdout).trim().to_string();
-            let stderr = decode_command_output(&out.stderr).trim().to_string();
+            let stdout = decode_command_output(&out.stdout);
+            let stderr = decode_command_output(&out.stderr);
             if out.status.success() {
-                let raw = if stdout.is_empty() { &stderr } else { &stdout };
-                if !raw.is_empty() {
-                    return ShellProbe::Found(extract_version(raw));
-                }
-                silent_diagnostic.get_or_insert_with(|| silent_version_probe_detail(out.status));
-            } else {
-                let detail = if stderr.is_empty() { stdout } else { stderr };
-                let detail = detail.trim();
-                if detail.is_empty() {
+                if version_output(&stdout, &stderr).is_empty() {
                     silent_diagnostic
                         .get_or_insert_with(|| silent_version_probe_detail(out.status));
-                } else if exec_diagnostic.is_none() {
-                    exec_diagnostic = Some(last_lines(detail, 4));
+                    continue;
                 }
+                return Ok(super::tool_version::successful_version_probe(
+                    &stdout, &stderr,
+                ));
+            }
+            let detail = if stderr.trim().is_empty() {
+                stdout.trim()
+            } else {
+                stderr.trim()
+            };
+            if detail.is_empty() {
+                silent_diagnostic.get_or_insert_with(|| silent_version_probe_detail(out.status));
+            } else if exec_diagnostic.is_none() {
+                exec_diagnostic = Some(last_lines(detail, 4));
             }
         }
     }
 
     // 有诊断 = 找到了可执行文件但拿不到版本（装了跑不起来），具体报错优先；否则视作未安装。
-    match exec_diagnostic.or(silent_diagnostic) {
+    Ok(match exec_diagnostic.or(silent_diagnostic) {
         Some(detail) => ShellProbe::FoundButFailed(detail),
         None => ShellProbe::NotFound(NOT_INSTALLED.to_string()),
-    }
+    })
 }
 
 /// 单个工具在系统中的一处安装，用于"多处安装互相打架"的冲突诊断。
@@ -1104,41 +1121,30 @@ pub(crate) fn cached_login_shell_path() -> Option<String> {
 
 /// 用与 `try_get_version` 相同的登录 shell 解析 PATH 默认命中的可执行文件路径，
 /// canonicalize 后作为"命令行默认 / 升级目标"的锚点（与升级会作用的那处对齐）。
+///
+/// `command -v` 的输出走独占临时文件。rc 与 shell 共用 stdout 时，OSC 会粘在路径前面，
+/// 于是没有任何一行以 `/` 开头。
 #[cfg(not(target_os = "windows"))]
 pub(super) fn resolve_path_default(
     tool: &str,
     deadline: Option<CommandDeadline>,
 ) -> Result<Option<std::path::PathBuf>, String> {
-    use std::process::{Command, Stdio};
-
-    let shell = std::env::var("SHELL")
-        .ok()
-        .filter(|s| is_valid_shell(s))
-        .unwrap_or_else(|| "sh".to_string());
-    let flag = default_flag_for_shell(&shell);
-    let mut cmd = Command::new(shell);
-    cmd.arg(flag)
-        .arg(format!("command -v {tool}"))
-        // 改 spawn 后 stdin 不再像 output() 那样默认置 null，须显式关闭：
-        // 继承来的 stdin 可能是终端/管道，交互式 rc 里的读操作会永久阻塞。
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    isolate_child_process_group(&mut cmd);
-    let child = cmd
-        .spawn()
-        .map_err(|e| format!("Failed to locate {tool}: {e}"))?;
-    let out = wait_child_output(child, deadline)?;
-    if !out.status.success() {
-        return Ok(None);
-    }
+    let out = super::tool_version::capture_login_shell(&format!("command -v {tool}"), deadline)?;
     let raw = decode_command_output(&out.stdout);
-    // 不能死取第一行：交互式 .zshrc 可能先打印欢迎语（如 "🚀 Welcome back"），
-    // command -v 的真实路径在其后；取第一个 `/` 开头的行才稳。
+    // rc 的退出 trap 可以改写 shell 状态；已经有路径输出时仍以载荷为准。
     let Some(first) = first_abs_path_line(&raw) else {
-        return Ok(None);
+        // dash 和 fish 的 `command -v` 用 127 表示命令不存在。
+        if out.status.success() || matches!(out.status.code(), Some(1) | Some(127)) {
+            return Ok(None);
+        }
+        return Err(format!(
+            "Failed to locate {tool}: {}",
+            decode_command_output(&out.stderr).trim()
+        ));
     };
-    Ok(std::fs::canonicalize(first).ok())
+    std::fs::canonicalize(first)
+        .map(Some)
+        .map_err(|e| format!("Cannot resolve {tool} path {first}: {e}"))
 }
 
 #[cfg(target_os = "windows")]
@@ -1184,8 +1190,14 @@ pub(super) fn resolve_path_default(
         .spawn()
         .map_err(|e| format!("Failed to locate {tool}: {e}"))?;
     let out = wait_child_output(child, deadline)?;
-    if !out.status.success() {
+    if out.status.code() == Some(1) {
         return Ok(None);
+    }
+    if !out.status.success() {
+        return Err(format!(
+            "Failed to locate {tool}: {}",
+            decode_command_output(&out.stderr).trim()
+        ));
     }
     let raw = decode_command_output(&out.stdout);
     // `where` lists every match on PATH in order. Skip entries that cannot be
@@ -1194,7 +1206,9 @@ pub(super) fn resolve_path_default(
     let Some(preferred) = windows_preferred_path_default(tool, &raw) else {
         return Ok(None);
     };
-    Ok(std::fs::canonicalize(preferred).ok())
+    std::fs::canonicalize(&preferred)
+        .map(Some)
+        .map_err(|e| format!("Cannot resolve {tool} path {}: {e}", preferred.display()))
 }
 
 /// 升级预检/冲突诊断的单条子进程探测预算。枚举会对每个工具开一次登录 shell、对每处
@@ -1252,21 +1266,18 @@ pub(super) fn run_probe_version_command(
 /// 枚举工具在系统中的所有安装（不短路）。与 `scan_cli_version` 共用
 /// `build_tool_search_paths`，但不在首个命中处停止——而是对每个去重后的真实
 /// 可执行文件都跑一次 `--version`，从而能发现"升级写入 A 处、PATH 实际用 B 处"。
-pub(super) fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
+pub(super) fn enumerate_tool_installations(tool: &str) -> Result<Vec<ToolInstallation>, String> {
     let search_paths = build_tool_search_paths(tool);
     #[cfg(target_os = "windows")]
     let current_path = effective_path_string();
     #[cfg(not(target_os = "windows"))]
     let current_path = effective_path_os().unwrap_or_default();
     // 必须带超时：deadline 传 None 时 wait_child_output 无限等，登录 shell 一挂
-    // 整个预检就永久卡死（且前端此阶段无任何反馈）。定位失败仅丢失 is_path_default
-    // 标记，非致命。
+    // 整个预检就永久卡死。默认入口解析失败则中断，不能改去升级另一处安装。
     let mut path_default = resolve_path_default(
         tool,
         CommandDeadline::from_timeout(Some(INSTALL_PROBE_TIMEOUT)),
-    )
-    .ok()
-    .flatten();
+    )?;
 
     let mut seen: std::collections::HashSet<std::path::PathBuf> = std::collections::HashSet::new();
     let mut installs: Vec<ToolInstallation> = Vec::new();
@@ -1321,8 +1332,12 @@ pub(super) fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> 
                 Ok(out) if out.status.success() => {
                     let stdout = decode_command_output(&out.stdout).trim().to_string();
                     let stderr = decode_command_output(&out.stderr).trim().to_string();
-                    let raw = if stdout.is_empty() { stderr } else { stdout };
-                    (Some(extract_version(&raw)), true, None, false)
+                    (
+                        extract_version(version_output(&stdout, &stderr)),
+                        true,
+                        None,
+                        false,
+                    )
                 }
                 Ok(out) => {
                     let stderr = decode_command_output(&out.stderr).trim().to_string();
@@ -1363,7 +1378,7 @@ pub(super) fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> 
     }
     // PATH 默认那处排最前，UI 一眼看到"命令行默认用的是哪处"。
     installs.sort_by_key(|i| std::cmp::Reverse(i.is_path_default));
-    installs
+    Ok(installs)
 }
 
 /// mise 的 shim 是指向 mise 本体的软链，canonicalize 只能解析到 mise（Homebrew 装的 mise
