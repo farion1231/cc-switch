@@ -4739,3 +4739,116 @@ fn test_merged_reasoning_models_keep_totals_filters_and_pooled_medians() -> Resu
     assert_eq!(prefixed[0].request_count, 1);
     Ok(())
 }
+
+#[test]
+fn selection_median_matches_sort_for_duplicates_and_extreme_values() {
+    for len in 1..100 {
+        let input: Vec<_> = (0..len)
+            .map(|i| ((i * 7919 + len * 13) % 37) as u64)
+            .collect();
+        let mut sorted = input.clone();
+        sorted.sort_unstable();
+        let middle = len / 2;
+        let expected = if len % 2 == 0 {
+            (sorted[middle - 1] + sorted[middle]) / 2
+        } else {
+            sorted[middle]
+        };
+        assert_eq!(select_median(&mut input.clone()), expected);
+    }
+    assert_eq!(select_median(&mut [u64::MAX, u64::MAX - 2]), u64::MAX - 1);
+}
+
+#[test]
+fn app_and_pricing_filters_use_matching_indexes() -> Result<(), AppError> {
+    let db = Database::memory()?;
+    let conn = lock_conn!(db.conn);
+    let filter = UsageFilter {
+        app_type: Some("claude"),
+        provider_name: None,
+        model: None,
+        pricing: OnceCell::new(),
+    };
+    let mut conditions = SqlWhere::default();
+    filter.push_to(&conn, &mut conditions, "l", "p")?;
+    conditions.push("l.created_at >= ?", 100i64);
+    conditions.push("l.created_at <= ?", 200i64);
+    let (clause, params) = conditions.into_where();
+    let refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+    let mut stmt = conn.prepare(&format!(
+        "EXPLAIN QUERY PLAN SELECT l.request_id FROM proxy_request_logs l {clause}"
+    ))?;
+    let plans = stmt
+        .query_map(refs.as_slice(), |row| row.get::<_, String>(3))?
+        .collect::<Result<Vec<_>, _>>()?;
+    assert!(
+        plans
+            .iter()
+            .any(|plan| plan.contains("idx_request_logs_app_created_at")
+                && plan.contains("app_type=?")),
+        "{plans:?}"
+    );
+    let plan: String = conn.query_row("EXPLAIN QUERY PLAN SELECT input_cost_per_million FROM model_pricing WHERE model_id = ? COLLATE NOCASE", ["GPT-5"], |row| row.get(3))?;
+    assert!(plan.contains("idx_model_pricing_nocase"), "{plan}");
+    Ok(())
+}
+
+#[test]
+fn pricing_snapshot_matches_sql_and_refreshes_after_mutations() -> Result<(), AppError> {
+    let db = Database::memory()?;
+    let conn = lock_conn!(db.conn);
+    conn.execute("INSERT INTO model_pricing (model_id, display_name, input_cost_per_million, output_cost_per_million) VALUES ('gpt-under_score-a', 'test', '1', '2'), ('gpt-underXscore-b', 'test', '3', '4'), ('gpt-50%-a', 'test', '5', '6'), ('gpt-500-a', 'test', '7', '8')", [])?;
+    // Preserve the original rowid tie break when a user has case variants.
+    conn.execute("INSERT INTO model_pricing (model_id, display_name, input_cost_per_million, output_cost_per_million) VALUES ('gpt-CASE-a', 'test', '11', '12'), ('GPT-case-A', 'test', '13', '14')", [])?;
+    let catalog = PricingCatalog::load(&conn)?;
+    assert_eq!(catalog.exact("gpt-case-a")?.unwrap().0, "11");
+    assert_eq!(
+        query_model_pricing_exact(&conn, "gpt-case-a")?.unwrap().0,
+        "11"
+    );
+    let models = {
+        let mut stmt = conn.prepare("SELECT model_id FROM model_pricing")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        rows.collect::<Result<Vec<_>, _>>()?
+    };
+    for model in models {
+        for candidate in [
+            model.clone(),
+            model.to_ascii_uppercase(),
+            format!("{model}-high"),
+            format!("models/{model}"),
+        ] {
+            assert_eq!(
+                lookup_model_pricing(&catalog, &candidate)?,
+                find_model_pricing_row(&conn, &candidate)?,
+                "{candidate}"
+            );
+        }
+    }
+    for (base, expected) in [("gpt-under_score", "1"), ("gpt-50%", "5")] {
+        let row = query_model_pricing_prefix(&conn, base)?.unwrap();
+        assert_eq!(row.0, expected);
+        assert_eq!(catalog.prefix(base)?, Some(row));
+    }
+    conn.execute(
+        "UPDATE model_pricing SET input_cost_per_million='9' WHERE model_id='gpt-under_score-a'",
+        [],
+    )?;
+    assert_eq!(catalog.exact("GPT-UNDER_SCORE-A")?.unwrap().0, "1");
+    assert_eq!(
+        PricingCatalog::load(&conn)?
+            .exact("GPT-UNDER_SCORE-A")?
+            .unwrap()
+            .0,
+        "9"
+    );
+    conn.execute_batch("BEGIN; DELETE FROM model_pricing; ROLLBACK;")?;
+    assert_eq!(
+        PricingCatalog::load(&conn)?
+            .exact("GPT-UNDER_SCORE-A")?
+            .unwrap()
+            .0,
+        "9"
+    );
+    Ok(())
+}
