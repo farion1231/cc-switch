@@ -20,6 +20,8 @@ export const OPAQUE: readonly OpaqueRule[] = [
   { glob: ".local/share/com.ccswitch.desktop", kind: "tree", reason: "WebKit storage and caches", owner: "parity" },
   { glob: ".cache/com.ccswitch.desktop", kind: "tree", reason: "runtime caches (tray icon)", owner: "parity" },
   { glob: "AppData/Local/com.ccswitch.desktop", kind: "tree", reason: "Windows: Tauri's per-identifier folder for webview data", owner: "parity" },
+  { glob: "Library/WebKit/com.ccswitch.desktop", kind: "tree", reason: "macOS: WebKit website data, with random salts and hashed origin folders", owner: "parity" },
+  { glob: "Library/Caches/com.ccswitch.desktop", kind: "tree", reason: "macOS: WebKit network and cache storage, with random salts", owner: "parity" },
 ];
 
 /**
