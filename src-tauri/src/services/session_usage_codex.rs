@@ -10,7 +10,7 @@
 //!
 //! ## 解析的事件类型
 //! - `session_meta` → 提取唯一 thread_id（子代理的 session_id 指向父线程）
-//! - `turn_context` / `event_msg` (type=thread_settings_applied) → 提取当前 model
+//! - `turn_context` / `event_msg` (type=thread_settings_applied) → 提取当前 model 与 service_tier
 //! - `event_msg` (type=token_count) → 提取累计 token 用量，计算 delta
 //! - `token_usage_record` → 随后的 token_count last 为 0 时补记这次用量
 
@@ -221,8 +221,8 @@ struct ParsedTokenEvent {
     /// 避免把后面每次请求的 `event_index` 都往后挤。
     request_suffix: Option<String>,
     model: String,
-    /// 解析到该事件时生效的 `service_tier`（`thread_settings_applied` 设置）；
-    /// 与该次输入量一起决定定价变体（fast/flex/长上下文，见 [`pricing_model_id`]）。
+    /// 解析到该事件时生效的 `service_tier`（`turn_context` / `thread_settings_applied` 设置）；
+    /// 与该次输入量一起决定定价变体（fast/flex/长上下文，见 [`resolve_pricing_variant`]）。
     service_tier: String,
     timestamp: Option<String>,
     /// 按事件时间戳估出来的请求耗时（含首字等待）和首字时间；估不出来为 None。
@@ -777,6 +777,34 @@ fn token_snapshot_source(payload: &serde_json::Value) -> Option<String> {
         .map(str::to_owned)
 }
 
+/// 单次同步 pass 内的模型定价缓存，隔离常规查价与档位变体精确查价，
+/// 命中与未命中均缓存，避免全量重导时反复执行 SELECT。
+#[derive(Default)]
+struct CodexPricingCache {
+    base: HashMap<String, Option<ModelPricing>>,
+    exact: HashMap<String, Option<ModelPricing>>,
+}
+
+impl CodexPricingCache {
+    fn get_base(&mut self, conn: &rusqlite::Connection, model: &str) -> Option<ModelPricing> {
+        if let Some(cached) = self.base.get(model) {
+            return cached.clone();
+        }
+        let pricing = find_codex_pricing(conn, model);
+        self.base.insert(model.to_string(), pricing.clone());
+        pricing
+    }
+
+    fn get_exact(&mut self, conn: &rusqlite::Connection, variant_id: &str) -> Option<ModelPricing> {
+        if let Some(cached) = self.exact.get(variant_id) {
+            return cached.clone();
+        }
+        let pricing = find_codex_pricing_exact(conn, variant_id);
+        self.exact.insert(variant_id.to_string(), pricing.clone());
+        pricing
+    }
+}
+
 /// 单个同步 pass 的共享状态。
 ///
 /// - `cursors`：pass 开始时一次性预载的 `session_log_sync` 快照，替代逐文件
@@ -791,7 +819,7 @@ struct CodexSyncPass {
     /// rollout 逻辑文件名（去掉 `.zst`）→ 记过游标的路径，供游标继承按名查找
     rollout_cursor_paths: HashMap<String, Vec<String>>,
     byte_offsets: HashMap<String, Option<i64>>,
-    pricing: HashMap<String, Option<ModelPricing>>,
+    pricing: CodexPricingCache,
 }
 
 impl CodexSyncPass {
@@ -829,7 +857,7 @@ impl CodexSyncPass {
             cursors,
             rollout_cursor_paths,
             byte_offsets,
-            pricing: HashMap::new(),
+            pricing: CodexPricingCache::default(),
         })
     }
 }
@@ -1282,8 +1310,8 @@ fn parse_codex_file_with_index(
     let mut meta_thread_id = None;
     let mut parent = ParentResolution::None;
     let mut current_model = "unknown".to_string();
-    // 最近一次 `thread_settings_applied` 的 `service_tier`（默认 standard）；
-    // 与每次请求的输入量一起决定定价变体（见 [`pricing_model_id`]）。
+    // 最近一次 `turn_context` / `thread_settings_applied` 的 `service_tier`（默认 standard）；
+    // 与每次请求的输入量一起决定定价变体（见 [`resolve_pricing_variant`]）。
     let mut current_service_tier = "default".to_string();
     // `total_token_usage` is session-cumulative, including across model and
     // rate-limit bucket changes. Divergent snapshots are handled by preferring
@@ -1459,15 +1487,19 @@ fn parse_codex_file_with_index(
                     {
                         current_model = normalize_codex_model(model);
                     }
-                    // 档位也可能写在 turn_context 的 payload 上（与
-                    // thread_settings_applied 的 thread_settings.service_tier
-                    // 是两个位置）。显式 null 清除已启用的 Fast/Flex 档位。
-                    if let Some(tier) = payload.get("service_tier") {
-                        current_service_tier = tier
-                            .as_str()
-                            .unwrap_or("default")
-                            .trim()
-                            .to_ascii_lowercase();
+                    // 档位也可能写在 turn_context 的 payload（或 payload.info）上，与
+                    // thread_settings_applied 的 thread_settings.service_tier 是两个位置。
+                    // 显式 null 清除已启用的 Fast/Flex 档位；非字符串/非 null 畸形值忽略。
+                    if let Some(tier) = payload
+                        .get("service_tier")
+                        .or_else(|| {
+                            payload
+                                .get("info")
+                                .and_then(|info| info.get("service_tier"))
+                        })
+                        .and_then(parse_service_tier_update)
+                    {
+                        current_service_tier = tier;
                     }
                 }
             }
@@ -1490,17 +1522,14 @@ fn parse_codex_file_with_index(
                     {
                         current_model = normalize_codex_model(model);
                     }
-                    // 同一事件也带 `service_tier`（真实 rollout 里它只出现在这里）。
-                    // 显式 null 清除已启用的 Fast/Flex 档位，回到标准价。
+                    // 同一事件也带 `service_tier`；显式 null 清除已启用的 Fast/Flex 档位，
+                    // 回到标准价；非字符串/非 null 畸形值忽略。
                     if let Some(tier) = payload
                         .get("thread_settings")
                         .and_then(|settings| settings.get("service_tier"))
+                        .and_then(parse_service_tier_update)
                     {
-                        current_service_tier = tier
-                            .as_str()
-                            .unwrap_or("default")
-                            .trim()
-                            .to_ascii_lowercase();
+                        current_service_tier = tier;
                     }
                     continue;
                 }
@@ -2647,19 +2676,20 @@ fn insert_codex_session_entry(
         timestamp,
         None,
         suspected_duplicates,
-        &mut HashMap::new(),
+        &mut CodexPricingCache::default(),
     )
 }
 
 /// 插入单条 Codex 会话记录到 proxy_request_logs。
 ///
-/// 调用方负责持锁/事务；`pricing_cache` 按定价 id 字符串键控（
-/// `find_codex_pricing` 是纯函数式查找，同串必同结果），全量重导时把
-/// 每事件一次的定价 SELECT 降为每模型一次。`timing` 是按事件时间戳估出来的
+/// 调用方负责持锁/事务；`pricing_cache` 在单个同步 pass 内缓存常规与变体精确查价，
+/// 全量重导时把每事件一次的定价 SELECT 降为每模型/变体一次。`timing` 是按事件时间戳估出来的
 /// 请求耗时和首字时间（见 [`RequestTimer`]），估不出来传 None。`service_tier`
-/// 是解析到该请求时生效的档位，与输入量一起决定定价变体（见
-/// [`pricing_model_id`]）；变体价行查不到时回退基础模型价，行存在时把变体 id
-/// 写进 `pricing_model` 列（标准路径保持原样、列留空）。
+/// 是解析到该请求时生效的档位，与输入量一起决定定价变体（见 [`resolve_pricing_variant`]）：
+/// - 标准路径按基础模型计价，`pricing_model` 留空；
+/// - 已知变体（`-fast`/`-flex`/`-long`/`-fast-long`/`-flex-long`）精确命中时写入
+///   `pricing_model`，变体行缺失时回退基础模型价并留空；
+/// - 未知档位（如 `auto`）仅精确匹配自定义行，行缺失时保留变体名并保持未计价（0 成本）。
 #[allow(clippy::too_many_arguments)]
 fn insert_codex_session_entry_on_conn(
     conn: &rusqlite::Connection,
@@ -2671,7 +2701,7 @@ fn insert_codex_session_entry_on_conn(
     timestamp: Option<&str>,
     timing: Option<EstimatedTiming>,
     suspected_duplicates: &mut u32,
-    pricing_cache: &mut HashMap<String, Option<ModelPricing>>,
+    pricing_cache: &mut CodexPricingCache,
 ) -> Result<bool, AppError> {
     let created_at = timestamp
         .and_then(|ts| {
@@ -2720,30 +2750,33 @@ fn insert_codex_session_entry_on_conn(
         message_id: None,
     };
 
-    // 档位变体（fast/flex/长上下文）优先按变体 id 查价；变体行不存在（用户删过
-    // 播种行）时回退基础模型价，避免把真实用量算成 0。标准路径 variant == model，
-    // pricing_model 列保持空串（与既有行的语义一致：空 = 按模型名计价）。
-    let variant_id = pricing_model_id(model, delta.input, service_tier);
-    let (pricing_lookup_id, pricing_model_column) = if variant_id == model {
-        (model.to_string(), String::new())
-    } else {
-        // 变体查价（精确命中）结果直接进缓存；不存在则回退基础模型
-        let variant_pricing = find_codex_pricing_exact(conn, &variant_id);
-        match variant_pricing {
-            Some(_) => {
-                pricing_cache.insert(variant_id.clone(), variant_pricing);
-                (variant_id.clone(), variant_id)
+    // 档位变体（fast/flex/长上下文）按变体 id 精确查价：
+    // - 已知档位行缺失（如用户删过播种行）时回退基础模型价、`pricing_model` 留空；
+    // - 未知档位（如 auto）不回退标准价，查不到自定义行则保持 0 成本并保留变体名；
+    // - 标准路径 `pricing_model` 保持空串（与既有行语义一致：空 = 按模型名计价）。
+    let (pricing, pricing_model_column) =
+        match resolve_pricing_variant(model, delta.input, service_tier) {
+            PricingVariant::Base => (pricing_cache.get_base(conn, model), String::new()),
+            PricingVariant::Known(variant_id) => {
+                if let Some(variant_pricing) = pricing_cache.get_exact(conn, &variant_id) {
+                    (Some(variant_pricing), variant_id)
+                } else {
+                    log::debug!(
+                        "[CODEX-SYNC] 档位变体 {variant_id} 无价格行，按基础模型 {model} 计价"
+                    );
+                    (pricing_cache.get_base(conn, model), String::new())
+                }
             }
-            None => {
-                log::debug!("[CODEX-SYNC] 档位变体 {variant_id} 无价格行，按基础模型 {model} 计价");
-                (model.to_string(), String::new())
+            PricingVariant::Unknown(variant_id) => {
+                let variant_pricing = pricing_cache.get_exact(conn, &variant_id);
+                if variant_pricing.is_none() {
+                    log::debug!(
+                        "[CODEX-SYNC] 未知档位变体 {variant_id} 无自定义价格行，保持未计价"
+                    );
+                }
+                (variant_pricing, variant_id)
             }
-        }
-    };
-
-    let pricing = pricing_cache
-        .entry(pricing_lookup_id.clone())
-        .or_insert_with(|| find_codex_pricing(conn, &pricing_lookup_id));
+        };
     let [input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost] =
         cost_columns("codex", &usage, pricing.as_ref(), Decimal::ONE);
     let inserted_rows = conn
@@ -2795,59 +2828,91 @@ fn find_codex_pricing(conn: &rusqlite::Connection, model_id: &str) -> Option<Mod
     find_model_pricing(conn, &normalize_codex_model(model_id))
 }
 
-/// 档位变体专用的**精确**查价。不能用 [`find_codex_pricing`]：它的前缀匹配
-/// （`LIKE '<id>-%'`）会把缺行的 `-fast` 请求匹配到 `-fast-long` 的价格行，
-/// 把标准档请求按更贵的长上下文档计费。变体行没播种/被删时由调用方回退
-/// 基础模型价。
+/// 解析 `turn_context` / `thread_settings_applied` 中的 `service_tier` 字段更新：
+/// - 显式 `null` 或空白字符串 → 重置为 `"default"`（回到标准档）；
+/// - 字符串 → trim + 小写；
+/// - 其他非字符串畸形值 → 返回 `None`（忽略，不破坏当前生效档位）。
+fn parse_service_tier_update(value: &serde_json::Value) -> Option<String> {
+    if value.is_null() {
+        return Some("default".to_string());
+    }
+    let tier = value.as_str()?.trim().to_ascii_lowercase();
+    if tier.is_empty() {
+        Some("default".to_string())
+    } else {
+        Some(tier)
+    }
+}
+
+/// 档位变体专用的**精确**查价（大小写无关，命中 `idx_model_pricing_nocase`）。
+/// 不能用 [`find_codex_pricing`]：它的前缀匹配（`LIKE '<id>-%'`）会把缺行的 `-fast`
+/// 请求匹配到 `-fast-long` 的价格行，把短上下文请求按更贵的长上下文档计费。
 fn find_codex_pricing_exact(conn: &rusqlite::Connection, model_id: &str) -> Option<ModelPricing> {
-    let normalized = normalize_codex_model(model_id);
-    conn.query_row(
-        "SELECT input_cost_per_million, output_cost_per_million,
-                cache_read_cost_per_million, cache_creation_cost_per_million
-         FROM model_pricing WHERE model_id = ?1",
-        [normalized],
-        |row| {
-            let input: String = row.get(0)?;
-            let output: String = row.get(1)?;
-            let read: String = row.get(2)?;
-            let write: String = row.get(3)?;
-            ModelPricing::from_strings(&input, &output, &read, &write).map_err(|e| {
-                rusqlite::Error::FromSqlConversionFailure(
-                    0,
-                    rusqlite::types::Type::Text,
-                    Box::new(e),
-                )
-            })
-        },
-    )
+    let mut stmt = conn
+        .prepare_cached(
+            "SELECT input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+             FROM model_pricing
+             WHERE model_id = ?1 COLLATE NOCASE ORDER BY rowid LIMIT 1",
+        )
+        .ok()?;
+    stmt.query_row([model_id], |row| {
+        let input: String = row.get(0)?;
+        let output: String = row.get(1)?;
+        let read: String = row.get(2)?;
+        let write: String = row.get(3)?;
+        ModelPricing::from_strings(&input, &output, &read, &write).map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e))
+        })
+    })
     .ok()
 }
 
-/// 单次请求的定价变体 id：`service_tier`（`thread_settings_applied` 设置）与
-/// 该次输入量（>272K 视为长上下文）组合出后缀。费率推导与内置价格行的
+/// 单次请求的定价变体分类。
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PricingVariant {
+    /// 标准档 + 短上下文，或非 GPT-6.x 档位家族的模型
+    Base,
+    /// 已知内置档位/长上下文变体（`-fast`/`-flex`/`-long`/`-fast-long`/`-flex-long`）：
+    /// 精确命中按变体计费；变体行被删时回退基础模型价
+    Known(String),
+    /// 未知档位（如 `auto`）：仅精确匹配自定义行；查不到保持未计价（不回退标准价）
+    Unknown(String),
+}
+
+/// 单次请求的定价变体解析：`service_tier`（`turn_context` / `thread_settings_applied`
+/// 设置）与该次输入量（>272K 视为长上下文）组合出后缀。费率推导与内置价格行的
 /// 档位播种一一对应（见 `seed_model_pricing` 的档位循环；倍率出自 OpenAI
 /// 定价文档，#7832 / 已关闭的 #7834）。
 ///
 /// 只有内置表带档位行的 GPT-6.x 家族响应档位：其他模型忽略 `service_tier`
 /// （第三方供应商没有 OpenAI 的档位概念，别把现在能计费的行变成查不到）；
 /// 未知档位（如 auto，可能解析到 rollout 元数据里没有的项目专属档）原样
-/// 后缀——查不到价行就不计费，宁可 0 也不按标准档错算。
-fn pricing_model_id(model: &str, input: u32, service_tier: &str) -> String {
+/// 后缀——查不到自定义价行就不计费，宁可 0 也不按标准档错算。
+fn resolve_pricing_variant(model: &str, input: u32, service_tier: &str) -> PricingVariant {
     if !matches!(model, "gpt-6.1-sol" | "gpt-6-astra" | "gpt-6-luna") {
-        return model.to_owned();
+        return PricingVariant::Base;
     }
     let tier = match service_tier {
         "priority" | "fast" => Some("fast"),
         "flex" => Some("flex"),
         "default" | "" => None,
-        other => return format!("{model}-{other}"),
+        other => return PricingVariant::Unknown(format!("{model}-{other}")),
     };
     let long = input > 272_000;
     match (tier, long) {
-        (None, false) => model.to_owned(),
-        (None, true) => format!("{model}-long"),
-        (Some(tier), false) => format!("{model}-{tier}"),
-        (Some(tier), true) => format!("{model}-{tier}-long"),
+        (None, false) => PricingVariant::Base,
+        (None, true) => PricingVariant::Known(format!("{model}-long")),
+        (Some(tier), false) => PricingVariant::Known(format!("{model}-{tier}")),
+        (Some(tier), true) => PricingVariant::Known(format!("{model}-{tier}-long")),
+    }
+}
+
+#[cfg(test)]
+fn pricing_model_id(model: &str, input: u32, service_tier: &str) -> String {
+    match resolve_pricing_variant(model, input, service_tier) {
+        PricingVariant::Base => model.to_owned(),
+        PricingVariant::Known(id) | PricingVariant::Unknown(id) => id,
     }
 }
 
@@ -3518,7 +3583,8 @@ mod tests {
     #[test]
     fn session_tier_is_read_from_turn_context_too() -> Result<(), AppError> {
         // 档位有两个落点：turn_context 的 payload.service_tier 与
-        // thread_settings_applied 的 thread_settings.service_tier，两个都要认
+        // thread_settings_applied 的 thread_settings.service_tier，两个都要认；
+        // 非法非字符串值忽略，显式 null 清除档位。
         let db = Database::memory()?;
         let temp = tempdir().unwrap();
         let path = rollout_path(temp.path(), PARENT_ID);
@@ -3531,6 +3597,43 @@ mod tests {
                     serde_json::json!("priority"),
                     "2026-07-10T03:00:01Z",
                 ),
+                // 非字符串/非 null 畸形值不覆盖当前生效档位
+                turn_context_tier_at("gpt-6.1-sol", serde_json::json!(42), "2026-07-10T03:00:02Z"),
+                token_count_at(100, 10, 20, "2026-07-10T03:00:03Z"),
+                // turn_context 显式 null 清除档位
+                turn_context_tier_at(
+                    "gpt-6.1-sol",
+                    serde_json::Value::Null,
+                    "2026-07-10T03:00:04Z",
+                ),
+                token_count_at(200, 20, 40, "2026-07-10T03:00:05Z"),
+            ],
+        );
+
+        sync_test_file(&db, &path, &[&path])?;
+
+        let rows = codex_pricing_rows(&db)?;
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].1, "gpt-6.1-sol-fast");
+        assert_eq!(rows[1].1, "");
+        Ok(())
+    }
+
+    #[test]
+    fn session_unknown_tier_stays_unpriced_and_respects_exact_custom_pricing(
+    ) -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let path = rollout_path(temp.path(), PARENT_ID);
+        write_jsonl(
+            &path,
+            &[
+                session_meta(PARENT_ID),
+                thread_settings_tier_at(
+                    serde_json::json!("gpt-6.1-sol"),
+                    serde_json::json!("auto"),
+                    "2026-07-10T03:00:01Z",
+                ),
                 token_count_at(100, 10, 20, "2026-07-10T03:00:02Z"),
             ],
         );
@@ -3539,7 +3642,84 @@ mod tests {
 
         let rows = codex_pricing_rows(&db)?;
         assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].1, "gpt-6.1-sol-fast");
+        assert_eq!(rows[0].1, "gpt-6.1-sol-auto");
+        assert_eq!(
+            rows[0].2.parse::<rust_decimal::Decimal>().unwrap(),
+            rust_decimal::Decimal::ZERO,
+            "未知档位无自定义价格行时必须保持 0 成本，不能回退标准价"
+        );
+
+        // 全量回填也不应借用基础行 gpt-6.1-sol 把未知档位错算成标准价
+        assert_eq!(db.backfill_missing_usage_costs()?, 0);
+
+        // 添加大小写混合的精确自定义价格行后，回填与新导入都应命中该行
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO model_pricing (
+                    model_id, display_name, input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+                 ) VALUES ('GPT-6.1-SOL-AUTO', 'Custom Auto', '10', '50', '1', '0')",
+                [],
+            )?;
+        }
+        assert_eq!(
+            db.backfill_missing_usage_costs_for_model("GPT-6.1-SOL-AUTO")?,
+            1
+        );
+
+        let second_path = rollout_path(temp.path(), CHILD_A_ID);
+        write_jsonl(
+            &second_path,
+            &[
+                session_meta(CHILD_A_ID),
+                thread_settings_tier_at(
+                    serde_json::json!("gpt-6.1-sol"),
+                    serde_json::json!("auto"),
+                    "2026-07-10T04:00:01Z",
+                ),
+                token_count_at(100, 10, 20, "2026-07-10T04:00:02Z"),
+            ],
+        );
+        sync_test_file(&db, &second_path, &[&path, &second_path])?;
+
+        let rows = codex_pricing_rows(&db)?;
+        assert_eq!(rows.len(), 2);
+        // fresh=90 @ $10/M (0.0009) + cached=10 @ $1/M (0.00001) + output=20 @ $50/M (0.001) = 0.00191
+        let expected = "0.00191".parse::<rust_decimal::Decimal>().unwrap();
+        for row in rows {
+            assert_eq!(row.1, "gpt-6.1-sol-auto");
+            assert_eq!(row.2.parse::<rust_decimal::Decimal>().unwrap(), expected);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn codex_pricing_cache_reuses_exact_hits_and_misses_within_pass() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+        let mut cache = CodexPricingCache::default();
+
+        // 首次查询精确变体并缓存命中与未命中
+        let fast = cache.get_exact(&conn, "gpt-6.1-sol-fast");
+        assert!(fast.is_some());
+        assert!(cache.get_exact(&conn, "gpt-6.1-sol-auto").is_none());
+
+        // 同 pass 内改表后，缓存仍返回已缓存结果（证明未绕过缓存重查 SQLite）
+        conn.execute(
+            "DELETE FROM model_pricing WHERE model_id = 'gpt-6.1-sol-fast'",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO model_pricing (
+                model_id, display_name, input_cost_per_million, output_cost_per_million,
+                cache_read_cost_per_million, cache_creation_cost_per_million
+             ) VALUES ('gpt-6.1-sol-auto', 'Custom Auto', '10', '50', '1', '0')",
+            [],
+        )?;
+
+        assert!(cache.get_exact(&conn, "gpt-6.1-sol-fast").is_some());
+        assert!(cache.get_exact(&conn, "gpt-6.1-sol-auto").is_none());
         Ok(())
     }
 
