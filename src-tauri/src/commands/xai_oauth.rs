@@ -97,7 +97,9 @@ pub(crate) async fn query_xai_oauth_quota_for(
 /// Grok CLI 只在自己运行时刷新 ~/.grok/auth.json 的访问令牌（约 6 小时过期），
 /// 几天不用 Grok 卡片就会一直「令牌待刷新」。授权中心的 xAI 账号与 Grok CLI 是
 /// 同一个 OAuth client，令牌由 cc-switch 自己刷新；只要账号 id 与 Grok CLI 登录的
-/// `user_id` 一致，查到的就是同一份订阅额度。只读，不改 Grok CLI 的凭据文件。
+/// `user_id` 一致，查到的就是同一份订阅额度。不切换 Grok CLI 登录的账号；只有兜底刷新
+/// 轮换了两边共用的 refresh token 时，才把新令牌写回 `auth.json`（`sync_grok_cli_after_refresh`），
+/// 让 Grok CLI 保持登录。
 /// 瞬时失败（`Err`）不兜底，保持前端 retry + 保留上次成功值的语义。
 pub(crate) async fn query_grokbuild_quota_with_managed_fallback(
     state: Option<&XaiOAuthState>,
