@@ -40,6 +40,7 @@ import {
   detectCodingPlanProvider,
 } from "@/config/codingPlanProviders";
 import { appHas } from "@/config/appSpecs";
+import { promptKeys } from "@/lib/query/prompts";
 
 const API_FORMAT_LABELS: Record<
   NonNullable<DeepLinkImportRequest["apiFormat"]>,
@@ -317,6 +318,7 @@ export function DeepLinkImportDialog() {
             closeButton: true,
           });
         } else if (result.type === "prompt") {
+          await queryClient.invalidateQueries({ queryKey: promptKeys.all });
           // Prompts don't use React Query, trigger a custom event for refresh
           window.dispatchEvent(
             new CustomEvent("prompt-imported", {

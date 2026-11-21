@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import {
   BookOpen,
   Check,
+  Globe,
   ChevronDown,
   MoreHorizontal,
   Plus,
@@ -25,7 +26,12 @@ import {
 } from "@/components/ui/popover";
 import { HoverTip } from "@/components/ui/hover-tip";
 import { promptsApi, type AppId } from "@/lib/api";
-import { promptKeys } from "@/lib/query/prompts";
+import {
+  GLOBAL_PROMPT_SCOPE,
+  promptKeys,
+  useGlobalPromptsQuery,
+  type PromptScope,
+} from "@/lib/query/prompts";
 import { SearchField } from "@/components/ui/search-field";
 import { cn } from "@/lib/utils";
 import { renderSegs } from "./promptUtils";
@@ -44,9 +50,10 @@ export interface PromptMoreItem {
 }
 
 interface PromptPageFrameProps {
-  app: AppId;
+  /** 当前应用；`"global"` 是全局提示词 */
+  app: PromptScope;
   apps: AppId[];
-  onAppChange: (app: AppId) => void;
+  onAppChange: (scope: PromptScope) => void;
   /** 有未保存的抽屉 / 正在写入时不能换应用 */
   appSwitchDisabled?: boolean;
   /** 当前应用的条数（列表里现成的，不另外查） */
@@ -109,44 +116,46 @@ export function PromptPageFrame({
                 {primary.label}
               </Button>
             ) : null}
-            <DropdownMenu>
-              <HoverTip content={t("common.more")}>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="quiet"
-                    size="icon-compact"
-                    className="h-8 w-8"
-                    aria-label={t("prompts.moreActions")}
-                  >
-                    <MoreHorizontal className="h-4 w-4" />
-                  </Button>
-                </DropdownMenuTrigger>
-              </HoverTip>
-              <DropdownMenuContent
-                align="end"
-                className={cn(promptMenuContentClass, "w-[300px]")}
-              >
-                {moreItems.map((item) => (
-                  <DropdownMenuItem
-                    key={item.key}
-                    disabled={Boolean(item.reason)}
-                    onSelect={item.onSelect}
-                    className={cn(
-                      promptMenuItemClass,
-                      "flex-col items-start gap-0",
-                      item.reason && "text-fg-3",
-                    )}
-                  >
-                    <span>{item.label}</span>
-                    {item.reason ? (
-                      <span className="text-caption text-fg-2">
-                        {renderSegs(item.reason)}
-                      </span>
-                    ) : null}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
+            {moreItems.length > 0 ? (
+              <DropdownMenu>
+                <HoverTip content={t("common.more")}>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="quiet"
+                      size="icon-compact"
+                      className="h-8 w-8"
+                      aria-label={t("prompts.moreActions")}
+                    >
+                      <MoreHorizontal className="h-4 w-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                </HoverTip>
+                <DropdownMenuContent
+                  align="end"
+                  className={cn(promptMenuContentClass, "w-[300px]")}
+                >
+                  {moreItems.map((item) => (
+                    <DropdownMenuItem
+                      key={item.key}
+                      disabled={Boolean(item.reason)}
+                      onSelect={item.onSelect}
+                      className={cn(
+                        promptMenuItemClass,
+                        "flex-col items-start gap-0",
+                        item.reason && "text-fg-3",
+                      )}
+                    >
+                      <span>{item.label}</span>
+                      {item.reason ? (
+                        <span className="text-caption text-fg-2">
+                          {renderSegs(item.reason)}
+                        </span>
+                      ) : null}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : null}
           </>
         }
       />
@@ -225,14 +234,15 @@ function PromptAppPicker({
   disabled,
   onAppChange,
 }: {
-  app: AppId;
+  app: PromptScope;
   apps: AppId[];
   count: number;
   disabled: boolean;
-  onAppChange: (app: AppId) => void;
+  onAppChange: (scope: PromptScope) => void;
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
+  const isGlobal = app === GLOBAL_PROMPT_SCOPE;
   // 弹层里每个应用的条数：打开时才读，读的是和应用页页头入口同一份缓存
   const counts = useQueries({
     queries: apps.map((id) => ({
@@ -241,6 +251,8 @@ function PromptAppPicker({
       enabled: open,
     })),
   });
+  const globalList = useGlobalPromptsQuery(open && !isGlobal);
+  const globalCount = isGlobal ? count : globalList.data?.length;
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -252,8 +264,18 @@ function PromptAppPicker({
           className="shrink-0 gap-2 pe-2 ps-2.5"
         >
           <span className="sr-only">{t("prompts.appLabel")}</span>
-          <AppGlyph app={app} size={16} badgeClassName="bg-surface" />
-          <span>{APP_DISPLAY_NAME[app]}</span>
+          {isGlobal ? (
+            <Globe
+              aria-hidden="true"
+              strokeWidth={1.75}
+              className="h-4 w-4 shrink-0"
+            />
+          ) : (
+            <AppGlyph app={app} size={16} badgeClassName="bg-surface" />
+          )}
+          <span>
+            {isGlobal ? t("prompts.global.scopeName") : APP_DISPLAY_NAME[app]}
+          </span>
           <span className="text-caption font-normal tabular-nums text-fg-2">
             {count}
           </span>
@@ -268,6 +290,44 @@ function PromptAppPicker({
         aria-label={t("prompts.appSelect")}
         className="flex w-[300px] flex-col rounded-panel border-border bg-surface p-1 shadow-v7-md"
       >
+        <button
+          type="button"
+          aria-pressed={isGlobal}
+          onClick={() => {
+            setOpen(false);
+            if (!isGlobal) onAppChange(GLOBAL_PROMPT_SCOPE);
+          }}
+          className={cn(
+            "flex min-h-8 w-full items-center gap-2 rounded-control pe-2 ps-2.5 text-left text-body text-fg-1 transition-colors hover:bg-subtle",
+            isGlobal ? "font-medium" : "font-normal",
+          )}
+        >
+          <Globe
+            aria-hidden="true"
+            strokeWidth={1.75}
+            className="h-4 w-4 shrink-0 text-fg-2"
+          />
+          <span className="min-w-0 flex-1 truncate">
+            {t("prompts.global.scopeName")}
+          </span>
+          <span
+            className={cn(
+              "text-caption font-normal tabular-nums",
+              globalCount ? "text-fg-2" : "text-fg-3",
+            )}
+          >
+            {globalCount ?? ""}
+          </span>
+          <Check
+            aria-hidden="true"
+            strokeWidth={1.5}
+            className={cn(
+              "h-3.5 w-3.5 shrink-0",
+              isGlobal ? "visible" : "invisible",
+            )}
+          />
+        </button>
+        <div aria-hidden="true" className="mx-1.5 my-1 h-px bg-border" />
         {apps.map((id, index) => {
           const selected = id === app;
           const data = counts[index]?.data;

@@ -109,6 +109,7 @@ import { EnvWarningBanner } from "@/components/env/EnvWarningBanner";
 import { SwitchModePanel } from "@/components/providers/mode/SwitchModePanel";
 import { proxyApi } from "@/lib/api/proxy";
 import type { AppMode, StartupAttachFailure } from "@/types/proxy";
+import { promptKeys, type PromptScope } from "@/lib/query/prompts";
 import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
 import { FirstRunNoticeDialog } from "@/components/FirstRunNoticeDialog";
 import { WhatsNewNotice } from "@/components/WhatsNewDialog";
@@ -244,7 +245,7 @@ function App() {
   const settingsReturnViewRef = useRef<View>("providers");
   const [openclawConfigTab, setOpenclawConfigTab] =
     useState<OpenClawConfigTab>("env");
-  const [promptsApp, setPromptsApp] = useState<AppId>(() =>
+  const [promptsApp, setPromptsApp] = useState<PromptScope>(() =>
     appHas(sharedFeatureApp, "prompts") ? sharedFeatureApp : "claude",
   );
   const [isAddOpen, setIsAddOpen] = useState(false);
@@ -587,6 +588,7 @@ function App() {
     await queryClient.invalidateQueries({ queryKey: ["profiles"] });
     await queryClient.invalidateQueries({ queryKey: ["mcp", "all"] });
     await queryClient.invalidateQueries({ queryKey: ["skills"] });
+    await queryClient.invalidateQueries({ queryKey: promptKeys.all });
     await queryClient.invalidateQueries({
       queryKey: proxyKeys.takeoverStatus,
     });
@@ -1422,6 +1424,7 @@ function App() {
         queryKey: ["providers"],
         type: "all",
       });
+      await queryClient.invalidateQueries({ queryKey: promptKeys.all });
     } catch (error) {
       console.error("[App] Failed to refresh providers after import", error);
       await refetch();

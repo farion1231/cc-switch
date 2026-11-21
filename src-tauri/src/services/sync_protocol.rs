@@ -113,6 +113,7 @@ pub(crate) fn should_trigger_auto_sync_for_table(table: &str) -> bool {
             | "provider_endpoints"
             | "mcp_servers"
             | "prompts"
+            | "global_prompts"
             | "skills"
             | "skill_repos"
             | "profiles"
@@ -578,6 +579,7 @@ mod tests {
             "provider_endpoints",
             "mcp_servers",
             "prompts",
+            "global_prompts",
             "skills",
             "skill_repos",
             "profiles",

@@ -10,6 +10,7 @@ import {
 import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import type { Prompt, AppId } from "@/lib/api";
 import { fieldClass } from "@/components/ui/input";
+import { Notice } from "@/components/ui/notice";
 import { cn } from "@/lib/utils";
 import {
   MCODE_PROMPT_LIMIT,
@@ -20,7 +21,13 @@ import {
 } from "./promptUtils";
 
 interface PromptFormPanelProps {
-  appId: AppId;
+  /** 所属应用；编辑全局提示词库里的条目时不传 */
+  appId?: AppId;
+  /**
+   * 传了就是全局提示词：保存会同步到这些正在使用它的应用。
+   * 在应用列表里编辑一条关联记录时也传，改的是全局那份。
+   */
+  globalApps?: AppId[];
   editingId?: string;
   initialData?: Prompt;
   onSave: (id: string, prompt: Prompt) => Promise<void | boolean>;
@@ -52,6 +59,7 @@ export function FieldError({ id, children }: { id: string; children: string }) {
  */
 const PromptFormPanel: React.FC<PromptFormPanelProps> = ({
   appId,
+  globalApps,
   editingId,
   initialData,
   onSave,
@@ -59,11 +67,15 @@ const PromptFormPanel: React.FC<PromptFormPanelProps> = ({
 }) => {
   const { t } = useTranslation();
   const baseId = useId();
-  const appName = APP_DISPLAY_NAME[appId];
-  const fileName = promptFileName(appId);
-  const isHermes = appId === "hermes";
-  const isPi = appId === "pi";
+  const isGlobal = globalApps !== undefined;
+  const appName = appId ? APP_DISPLAY_NAME[appId] : "";
+  const fileName = appId ? promptFileName(appId) : "AGENTS.md";
+  const isHermes = appId === "hermes" && !isGlobal;
+  const isPi = appId === "pi" && !isGlobal;
   const isActive = Boolean(editingId && initialData?.enabled);
+  const globalAppNames = (globalApps ?? [])
+    .map((app) => APP_DISPLAY_NAME[app])
+    .join(t("prompts.listSeparator"));
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [content, setContent] = useState("");
@@ -82,7 +94,10 @@ const PromptFormPanel: React.FC<PromptFormPanelProps> = ({
   }, [initialData]);
 
   const bodyBytes = utf8Bytes(content);
-  const limit = appId === "mcode" ? MCODE_PROMPT_LIMIT : undefined;
+  const limit =
+    appId === "mcode" || globalApps?.includes("mcode")
+      ? MCODE_PROMPT_LIMIT
+      : undefined;
   const overLimit = limit !== undefined && bodyBytes > limit;
   const nameError = !name.trim()
     ? t(isHermes ? "prompts.nameRequiredHermes" : "prompts.nameRequired")
@@ -131,17 +146,25 @@ const PromptFormPanel: React.FC<PromptFormPanelProps> = ({
     if (!savingRef.current) onClose();
   };
 
-  const title = editingId
-    ? t("prompts.editTitle")
-    : t("prompts.addTitle", { appName });
+  const title = isGlobal
+    ? editingId
+      ? t("prompts.global.editTitle")
+      : t("prompts.global.addTitle")
+    : editingId
+      ? t("prompts.editTitle")
+      : t("prompts.addTitle", { appName });
 
   const submitLabel = !editingId
     ? t("prompts.addSubmit")
-    : isActive
-      ? isPi
-        ? t("prompts.saveAndWritePi")
-        : t("prompts.saveAndOverwrite", { file: fileName })
-      : t("common.save");
+    : isGlobal
+      ? globalApps.length
+        ? t("prompts.global.saveAndSync", { count: globalApps.length })
+        : t("common.save")
+      : isActive
+        ? isPi
+          ? t("prompts.saveAndWritePi")
+          : t("prompts.saveAndOverwrite", { file: fileName })
+        : t("common.save");
 
   const countText = limit
     ? `${formatSize(bodyBytes)} / 32 KB`
@@ -170,10 +193,23 @@ const PromptFormPanel: React.FC<PromptFormPanelProps> = ({
         }}
       >
         <SheetDescription className="sr-only">
-          {t("prompts.formDescription", { file: fileName })}
+          {isGlobal
+            ? t("prompts.global.formDescription")
+            : t("prompts.formDescription", { file: fileName })}
         </SheetDescription>
 
         <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto scroll-stable overscroll-contain px-6 pb-6 pt-5">
+          {isGlobal ? (
+            <Notice
+              tone="neutral"
+              className="shrink-0"
+              title={
+                globalApps.length
+                  ? t("prompts.global.formNote", { apps: globalAppNames })
+                  : t("prompts.global.formNoteNone")
+              }
+            />
+          ) : null}
           <div className="flex shrink-0 flex-col gap-1.5">
             <label
               htmlFor={`${baseId}-name`}
@@ -248,12 +284,14 @@ const PromptFormPanel: React.FC<PromptFormPanelProps> = ({
               autoCorrect="off"
               autoCapitalize="off"
               placeholder={
-                isHermes
-                  ? t("prompts.contentPlaceholderHermes")
-                  : t("prompts.contentPlaceholder", {
-                      filename: fileName,
-                      appName,
-                    })
+                isGlobal
+                  ? t("prompts.global.contentPlaceholder")
+                  : isHermes
+                    ? t("prompts.contentPlaceholderHermes")
+                    : t("prompts.contentPlaceholder", {
+                        filename: fileName,
+                        appName,
+                      })
               }
               aria-invalid={showBodyError}
               aria-describedby={
