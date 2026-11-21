@@ -624,4 +624,67 @@ describe("useManagedAuth", () => {
       expect(toastMocks.success).toHaveBeenCalledWith("账号已移除"),
     );
   });
+
+  // 移除/登出的 xAI 号若正是 Grok CLI 当前登录，后端会让出 CLI 登录；
+  // 没绑号的 Grok 官方卡查的就是 CLI 当前登录，成功失败都要重查
+  it.each([
+    ["remove", false],
+    ["remove", true],
+    ["logout", false],
+    ["logout", true],
+  ] as const)(
+    "invalidates the Grok CLI quota after xAI %s (failed=%s)",
+    async (operation, fails) => {
+      const queryClient = new QueryClient({
+        defaultOptions: {
+          queries: { retry: false },
+          mutations: { retry: false },
+        },
+      });
+      const quotaKey = ["subscription", "quota", "grokbuild"];
+      queryClient.setQueryData(quotaKey, { success: true, tiers: [] });
+      const { result } = renderHook(() => useManagedAuth("xai_oauth"), {
+        wrapper: createWrapper(queryClient),
+      });
+      await waitFor(() => expect(result.current.isStatusSuccess).toBe(true));
+      if (fails) {
+        (operation === "remove"
+          ? apiMocks.authRemoveAccount
+          : apiMocks.authLogout
+        ).mockRejectedValue(new Error("boom"));
+      }
+      act(() =>
+        operation === "remove"
+          ? result.current.removeAccount("acct-1")
+          : result.current.logout(),
+      );
+      await waitFor(() =>
+        expect(queryClient.getQueryState(quotaKey)?.isInvalidated).toBe(true),
+      );
+    },
+  );
+
+  it("leaves the Grok CLI quota alone for other providers", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
+    });
+    const quotaKey = ["subscription", "quota", "grokbuild"];
+    queryClient.setQueryData(quotaKey, { success: true, tiers: [] });
+    queryClient.setQueryData(["providers", "codex"], { current: "x" });
+    const { result } = renderHook(() => useManagedAuth("codex_oauth"), {
+      wrapper: createWrapper(queryClient),
+    });
+    await waitFor(() => expect(result.current.isStatusSuccess).toBe(true));
+    act(() => result.current.removeAccount("acct-1"));
+    await waitFor(() => expect(toastMocks.success).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(
+        queryClient.getQueryState(["providers", "codex"])?.isInvalidated,
+      ).toBe(true),
+    );
+    expect(queryClient.getQueryState(quotaKey)?.isInvalidated).toBe(false);
+  });
 });
