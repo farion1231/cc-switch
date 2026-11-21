@@ -1,4 +1,40 @@
 {
+  "qoderCnDesktop": {
+    "title": "Qoder CN для ПК",
+    "add": "Добавить провайдера",
+    "gateway": "Локальный шлюз",
+    "running": "Запущен",
+    "stopped": "Остановлен",
+    "stop": "Отключить шлюз",
+    "start": "Запустить шлюз",
+    "setup": "Добавьте в Qoder CN модель OpenAI Compatible, выберите Responses API и укажите эти три значения.",
+    "copy": "Скопировать {{label}}",
+    "copied": "Скопировано",
+    "name": "Имя провайдера",
+    "format": "Протокол провайдера",
+    "upstreamModel": "ID модели провайдера",
+    "replaceKey": "Новый ключ API (необязательно)",
+    "xApiKey": "Использовать x-api-key для Anthropic",
+    "providers": "Провайдеры",
+    "source": "Выберите провайдера Claude Code",
+    "import": "Скопировать провайдера",
+    "empty": "Добавьте провайдера с ключом API или скопируйте существующего провайдера Claude Code.",
+    "active": "Активен",
+    "select": "Переключиться на этого провайдера",
+    "errors": {
+      "selectProvider": "Сначала выберите провайдера Qoder CN.",
+      "invalidUrl": "Укажите допустимый базовый URL провайдера.",
+      "unsupportedUrl": "Используйте HTTPS или локальный тестовый адрес HTTP.",
+      "keyRequired": "Укажите ключ API провайдера.",
+      "nameAndModelRequired": "Укажите имя провайдера и модель.",
+      "invalidKey": "Ключ API содержит недопустимые символы.",
+      "providerMissing": "Провайдер Qoder CN больше не существует.",
+      "sourceMissing": "Исходный провайдер больше не существует.",
+      "sourceUnsupported": "Настройки ключа API исходного провайдера нельзя использовать повторно.",
+      "providerIncomplete": "Настройки провайдера Qoder CN заполнены не полностью.",
+      "activeProvider": "Выберите другого провайдера перед удалением активного."
+    }
+  },
   "app": {
     "title": "CC Switch",
     "description": "Универсальный помощник для Claude Code, Codex и Gemini CLI"

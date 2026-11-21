@@ -110,6 +110,7 @@ impl VisibleApps {
             AppType::Omp => self.omp,
             AppType::Copilot => self.copilot,
             AppType::WorkBuddy => self.workbuddy,
+            AppType::QoderCnDesktop => true,
         }
     }
 }
@@ -1328,7 +1329,8 @@ pub fn get_override_dir(app: &AppType) -> Option<PathBuf> {
         | AppType::Kimi
         | AppType::Agy
         | AppType::Copilot
-        | AppType::WorkBuddy => return None,
+        | AppType::WorkBuddy
+        | AppType::QoderCnDesktop => return None,
     };
     dir.as_deref().map(resolve_override_path)
 }
@@ -1399,7 +1401,8 @@ pub fn get_current_provider(app_type: &AppType) -> Option<String> {
         | AppType::Kimi
         | AppType::Dsh
         | AppType::Omp
-        | AppType::WorkBuddy => None,
+        | AppType::WorkBuddy
+        | AppType::QoderCnDesktop => None,
     }
 }
 
@@ -1425,7 +1428,8 @@ pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), 
         | AppType::Kimi
         | AppType::Dsh
         | AppType::Omp
-        | AppType::WorkBuddy => {}
+        | AppType::WorkBuddy
+        | AppType::QoderCnDesktop => {}
     })
 }
 
