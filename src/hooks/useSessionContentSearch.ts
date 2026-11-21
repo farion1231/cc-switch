@@ -121,9 +121,16 @@ export function useSessionContentSearch({
   const providerKey = useMemo(() => [...providerIds].sort(), [providerIds]);
 
   const search = useQuery({
-    queryKey: sessionContentKeys.search(debounced, providerKey),
-    queryFn: () => sessionsApi.searchContent(debounced, providerKey),
-    enabled: enabled && debounced !== "" && providerKey.length > 0,
+    // Changing the raw input detaches the old observer immediately, aborting
+    // SQLite work during the debounce interval as well as on unmount.
+    queryKey: sessionContentKeys.search(query.trim(), providerKey),
+    queryFn: ({ signal }) =>
+      sessionsApi.searchContent(debounced, providerKey, signal),
+    enabled:
+      enabled &&
+      debounced !== "" &&
+      debounced === query.trim() &&
+      providerKey.length > 0,
     staleTime: 0,
   });
 

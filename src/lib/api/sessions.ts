@@ -1,4 +1,5 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
+import { generateUUID } from "@/utils/uuid";
 import type {
   ContentRef,
   ImageRef,
@@ -50,8 +51,26 @@ export const sessionsApi = {
   async searchContent(
     query: string,
     providerIds?: string[],
+    signal?: AbortSignal,
   ): Promise<SessionContentSearchResult> {
-    return await invoke("search_session_content", { query, providerIds });
+    if (signal?.aborted)
+      throw new DOMException("Search cancelled", "AbortError");
+    const requestId = generateUUID();
+    const cancel = () => {
+      void invoke("cancel_session_content_search", { requestId }).catch(
+        (error) => console.warn("取消会话正文搜索失败", error),
+      );
+    };
+    signal?.addEventListener("abort", cancel, { once: true });
+    try {
+      return await invoke("search_session_content", {
+        query,
+        providerIds,
+        requestId,
+      });
+    } finally {
+      signal?.removeEventListener("abort", cancel);
+    }
   },
 
   /** 删除正文索引文件（关闭「搜索消息正文」时） */

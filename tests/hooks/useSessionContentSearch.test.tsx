@@ -155,3 +155,49 @@ describe("useSessionContentSearch index synchronization", () => {
     );
   });
 });
+
+describe("useSessionContentSearch cancellation", () => {
+  it("aborts the previous request as soon as input changes, before debounce", async () => {
+    const signals: AbortSignal[] = [];
+    const search = vi
+      .spyOn(sessionsApi, "searchContent")
+      .mockImplementation((_query, _providers, signal) => {
+        signals.push(signal!);
+        return new Promise((resolve) => {
+          signal!.addEventListener("abort", () =>
+            resolve({
+              hits: [],
+              status: { running: false, processed: 0, total: 0 },
+            }),
+          );
+        });
+      });
+    const client = createTestQueryClient();
+    const providerIds = ["codex"];
+    const { rerender, unmount } = renderHook(
+      ({ query }) =>
+        useSessionContentSearch({
+          query,
+          enabled: true,
+          listIsSuccess: false,
+          listUpdatedAt: 0,
+          providerIds,
+        }),
+      {
+        initialProps: { query: "first" },
+        wrapper: ({ children }: { children: ReactNode }) => (
+          <QueryClientProvider client={client}>{children}</QueryClientProvider>
+        ),
+      },
+    );
+    await waitFor(() => expect(signals).toHaveLength(1));
+    rerender({ query: "second" });
+    expect(signals[0].aborted).toBe(true);
+    expect(signals).toHaveLength(1);
+    await waitFor(() => expect(signals).toHaveLength(2));
+    unmount();
+    expect(signals[1].aborted).toBe(true);
+    search.mockRestore();
+    client.clear();
+  });
+});
