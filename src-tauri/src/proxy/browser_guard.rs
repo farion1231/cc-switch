@@ -22,9 +22,9 @@ use axum::{
 use serde_json::json;
 use std::net::IpAddr;
 
-/// Claude Desktop's namespace already requires its gateway token, which a page
-/// cannot know, so the desktop app is not held to the header rules.
-const TOKEN_PROTECTED_PREFIX: &str = "/claude-desktop/";
+/// These namespaces authenticate every supported route using their own token.
+/// Origin is allowed for desktop WebViews; the Host guard still applies.
+const TOKEN_PROTECTED_PREFIXES: &[&str] = &["/claude-desktop/", "/apps/"];
 
 pub(super) async fn reject_browser_requests(
     State(state): State<ProxyState>,
@@ -66,7 +66,11 @@ fn check_request(
     listen_address: &str,
     client_host: Option<&str>,
 ) -> Result<(), &'static str> {
-    if !path.starts_with(TOKEN_PROTECTED_PREFIX) && headers.contains_key(header::ORIGIN) {
+    if !TOKEN_PROTECTED_PREFIXES
+        .iter()
+        .any(|prefix| path.starts_with(prefix))
+        && headers.contains_key(header::ORIGIN)
+    {
         return Err("requests from web pages are not accepted");
     }
     if is_loopback_listener(listen_address) {
@@ -82,7 +86,7 @@ fn check_request(
 
 /// A listener on a LAN address is reached under whatever names that network uses,
 /// so the Host rule only applies when the proxy listens on this machine alone.
-fn is_loopback_listener(listen_address: &str) -> bool {
+pub(super) fn is_loopback_listener(listen_address: &str) -> bool {
     let address = listen_address.trim().trim_matches(['[', ']']);
     address.eq_ignore_ascii_case("localhost")
         // `to_canonical`：`::ffff:127.0.0.1` 也绑在回环上，但 IPv6 的 is_loopback 不认它

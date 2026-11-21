@@ -5416,5 +5416,32 @@
     "hint": "최신 버전의 CC Switch에서 저장되었을 수 있습니다. 데이터는 그대로 보존되며 편집하거나 활성화할 수 없습니다. 업그레이드하면 복원되며, 삭제할 수도 있습니다.",
     "confirmTitle": "읽을 수 없는 항목 삭제",
     "confirmMessage": "“{{name}}”을(를) 삭제할까요? CC Switch의 이 기록만 삭제되며 각 앱의 설정 파일은 변경되지 않습니다."
+  },
+  "customApps": {
+    "title": "사용자 지정 앱",
+    "addApp": "사용자 지정 앱 추가",
+    "appName": "앱 이름",
+    "endpoint": "로컬 API 기본 URL",
+    "token": "클라이언트 토큰 (지금 복사)",
+    "replaceToken": "새 토큰 생성",
+    "confirmReplaceToken": "새 토큰을 생성하면 현재 토큰이 무효화됩니다. 계속하시겠습니까?",
+    "startProxy": "로컬 라우팅 시작",
+    "loopbackRequired": "사용자 지정 앱에는 루프백 주소가 필요합니다. 로컬 라우팅 설정에서 주소를 변경하세요.",
+    "providerName": "공급자 이름",
+    "baseUrl": "공급자 API 기본 URL",
+    "model": "모델 ID",
+    "apiKey": "API 키 (선택 사항)",
+    "addProvider": "공급자 추가",
+    "inUse": "사용 중",
+    "switch": "전환",
+    "renameApp": "앱 이름 변경",
+    "deleteApp": "앱 삭제",
+    "confirmDeleteApp": "이 앱과 모든 공급자를 삭제할까요? 클라이언트가 접근 권한을 잃습니다.",
+    "editProvider": "공급자 편집",
+    "deleteProvider": "공급자 삭제",
+    "confirmDeleteProvider": "이 공급자를 삭제할까요? 사용 중이면 다른 공급자를 선택하여 요청을 재개하세요.",
+    "saveProvider": "공급자 저장",
+    "keepKey": "저장된 키를 유지하려면 API 키를 비워 두세요.",
+    "clearKey": "저장된 API 키 제거"
   }
 }

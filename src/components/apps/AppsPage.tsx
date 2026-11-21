@@ -181,7 +181,9 @@ function formatCheckedAt(timestamp: number, locale: string): string {
  * 「应用」页（v7）：每个应用一行 = 安装状态 / 版本 + 安装 / 升级 + 在侧栏显示的开关 + 「⋯」菜单（卸载）。
  * 隐藏一个应用只影响界面（侧栏、MCP / Skills 的列、提示词和会话的下拉），配置照常同步。
  */
-export function AppsPage() {
+export function AppsPage({
+  onAddCustomApp,
+}: { onAddCustomApp?: () => void } = {}) {
   const { t, i18n } = useTranslation();
   const tools = useToolManagement();
   const { settings, updateSettings, autoSaveSettings } = useSettings();
@@ -422,6 +424,11 @@ export function AppsPage() {
         }
         actions={
           <>
+            {onAddCustomApp && (
+              <Button variant="neutral" size="regular" onClick={onAddCustomApp}>
+                {t("customApps.addApp")}
+              </Button>
+            )}
             <span className="whitespace-nowrap text-caption text-fg-3">
               {lastChecked}
             </span>

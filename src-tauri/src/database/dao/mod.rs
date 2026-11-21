@@ -2,6 +2,7 @@
 //!
 //! Database access operations for each domain
 
+pub(crate) mod custom_apps;
 pub mod custom_icons;
 pub mod failover;
 pub mod mcp;

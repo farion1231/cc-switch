@@ -5416,5 +5416,32 @@
     "hint": "可能由更新版本的 CC Switch 写入。数据已原样保留，不能编辑或启用；升级后即可恢复，也可以删除。",
     "confirmTitle": "删除无法读取的条目",
     "confirmMessage": "删除「{{name}}」？只删除 CC Switch 里的这条记录，不改动各应用自己的配置文件。"
+  },
+  "customApps": {
+    "title": "自定义应用",
+    "addApp": "添加自定义应用",
+    "appName": "应用名称",
+    "endpoint": "本地 API 基础地址",
+    "token": "客户端令牌（请立即复制）",
+    "replaceToken": "生成新令牌",
+    "confirmReplaceToken": "生成新令牌会使当前令牌失效。是否继续？",
+    "startProxy": "启动本地路由",
+    "loopbackRequired": "自定义应用需要回环监听地址。请在本地路由设置中修改地址。",
+    "providerName": "供应商名称",
+    "baseUrl": "供应商 API 基础地址",
+    "model": "模型 ID",
+    "apiKey": "API 密钥（可选）",
+    "addProvider": "添加供应商",
+    "inUse": "使用中",
+    "switch": "切换",
+    "renameApp": "重命名应用",
+    "deleteApp": "删除应用",
+    "confirmDeleteApp": "删除此应用及其所有供应商？客户端将失去访问权限。",
+    "editProvider": "编辑供应商",
+    "deleteProvider": "删除供应商",
+    "confirmDeleteProvider": "删除此供应商？若正在使用，请选择其他供应商以恢复请求。",
+    "saveProvider": "保存供应商",
+    "keepKey": "API 密钥留空可保留已保存的密钥。",
+    "clearKey": "移除已保存的 API 密钥"
   }
 }
