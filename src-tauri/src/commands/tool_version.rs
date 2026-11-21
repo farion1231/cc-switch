@@ -543,6 +543,23 @@ fn try_get_version(tool: &str) -> ShellProbe {
         Err(_) => ShellProbe::NotFound(NOT_INSTALLED.to_string()),
     }
 }
+#[cfg(any(target_os = "windows", test))]
+fn wsl_version_probe_shell_command(tool: &str, flag: Option<&str>) -> String {
+    wsl_auto_shell_command(&version_probe_payload(tool), flag)
+}
+
+#[cfg(test)]
+pub(super) fn wsl_version_probe_command_line(tool: &str, distro: &str) -> Result<String, String> {
+    if !is_valid_wsl_distro_name(distro) {
+        return Err(format!("Invalid WSL distro name: {distro}"));
+    }
+    let cmd = wsl_version_probe_shell_command(tool, None);
+    Ok(format!(
+        "wsl.exe -d {distro} -- sh -c {}",
+        windows_cmd_double_quote_arg(&cmd)
+    ))
+}
+
 #[cfg(target_os = "windows")]
 fn try_get_version_wsl(
     tool: &str,
@@ -583,7 +600,7 @@ fn try_get_version_wsl(
                 return ShellProbe::NotFound(format!("[WSL:{distro}] invalid shell flag: {flag}"));
             }
         }
-        let cmd = wsl_auto_shell_command(&version_probe_payload(tool), force_shell_flag);
+        let cmd = wsl_version_probe_shell_command(tool, force_shell_flag);
 
         ("sh".to_string(), "-c", cmd)
     };

@@ -74,8 +74,21 @@ fn sort_order(name: &str) -> usize {
     }
 }
 
+pub(crate) const USAGE_OUTPUT_SENTINEL: &str = "__CCSWITCH_AGY_USAGE__";
+
+fn after_usage_sentinel(stdout: &[u8]) -> &[u8] {
+    let needle = USAGE_OUTPUT_SENTINEL.as_bytes();
+    match stdout
+        .windows(needle.len())
+        .rposition(|window| window == needle)
+    {
+        Some(pos) => &stdout[pos + needle.len()..],
+        None => stdout,
+    }
+}
+
 fn parse_usage(stdout: &[u8]) -> Option<Vec<QuotaTier>> {
-    let output: UsageOutput = serde_json::from_slice(stdout).ok()?;
+    let output: UsageOutput = serde_json::from_slice(after_usage_sentinel(stdout)).ok()?;
     if output.status.as_deref() != Some("SUCCESS") {
         return None;
     }
@@ -117,6 +130,16 @@ pub(crate) fn collect_tiers(
 /// 由 `subscription::get_subscription_quota("agy")` 分发。没装 agy 时按「没有凭据」处理（卡片不显示）；
 /// 超时、没登录或输出看不懂都写成查询失败，错误里不带 agy 的原始输出。
 pub(crate) async fn get_agy_subscription_quota() -> Result<SubscriptionQuota, String> {
+    // 配置目录在 WSL 里时，额度属于那个发行版里已登录的 agy，不能问 Windows 上的另一份。
+    #[cfg(target_os = "windows")]
+    if crate::commands::tool_runs_in_wsl(TOOL) {
+        let output =
+            tokio::task::spawn_blocking(|| crate::commands::run_agy_wsl_usage(Some(TIMEOUT)))
+                .await
+                .map_err(|e| e.to_string())?
+                .map_err(|e| e.to_string())?;
+        return quota_from_usage_output(&output);
+    }
     let Some(bin) = tokio::task::spawn_blocking(crate::agy_config::real_agy_bin)
         .await
         .map_err(|e| e.to_string())?
@@ -124,6 +147,12 @@ pub(crate) async fn get_agy_subscription_quota() -> Result<SubscriptionQuota, St
         return Ok(SubscriptionQuota::not_found(TOOL));
     };
     let mut command = crate::agy_config::background_command(&bin);
+    if let Some(dir) = crate::agy_config::non_default_gemini_root(
+        &crate::agy_config::agy_gemini_root(),
+        &crate::config::get_home_dir(),
+    ) {
+        command.arg(format!("--gemini_dir={}", dir.to_string_lossy()));
+    }
     command
         .args(["--print", "/usage", "--output-format", "json"])
         // 只问官方登录：GUI 进程里残留的 Key 会让 agy 改走 Key 模式。
@@ -136,6 +165,10 @@ pub(crate) async fn get_agy_subscription_quota() -> Result<SubscriptionQuota, St
         Ok(Err(_)) => return Ok(SubscriptionQuota::not_found(TOOL)),
         Err(_) => return Err("Antigravity quota query timed out".to_string()),
     };
+    quota_from_usage_output(&output)
+}
+
+fn quota_from_usage_output(output: &std::process::Output) -> Result<SubscriptionQuota, String> {
     let tiers = output
         .status
         .success()
@@ -222,5 +255,31 @@ mod tests {
             br#"{"status":"SUCCESS","command":{"data":{"groups":[{"buckets":[{"id":"gemini-5h"}]}]}}}"#
         )
         .is_none());
+    }
+
+    #[test]
+    fn parses_usage_after_login_shell_startup_noise_and_sentinel() {
+        let mut noisy = Vec::new();
+        noisy.extend_from_slice(b"\x1b]0;user@host: ~\x07welcome to ubuntu\nnvm is ready\n");
+        noisy.extend_from_slice(USAGE_OUTPUT_SENTINEL.as_bytes());
+        noisy.push(b'\n');
+        noisy.extend_from_slice(SAMPLE.as_bytes());
+        assert_eq!(parse_usage(&noisy).unwrap().len(), 5);
+
+        let mut repeated = Vec::new();
+        repeated.extend_from_slice(b"banner ");
+        repeated.extend_from_slice(USAGE_OUTPUT_SENTINEL.as_bytes());
+        repeated.extend_from_slice(b"\nnot json\n");
+        repeated.extend_from_slice(USAGE_OUTPUT_SENTINEL.as_bytes());
+        repeated.push(b'\n');
+        repeated.extend_from_slice(SAMPLE.as_bytes());
+        assert_eq!(parse_usage(&repeated).unwrap().len(), 5);
+
+        let mut non_utf8 = Vec::new();
+        non_utf8.extend_from_slice(b"\xff\xfe\xfd\n");
+        non_utf8.extend_from_slice(USAGE_OUTPUT_SENTINEL.as_bytes());
+        non_utf8.push(b'\n');
+        non_utf8.extend_from_slice(SAMPLE.as_bytes());
+        assert_eq!(parse_usage(&non_utf8).unwrap().len(), 5);
     }
 }

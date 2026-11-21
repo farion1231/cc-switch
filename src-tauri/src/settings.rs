@@ -647,6 +647,10 @@ pub struct AppSettings {
     /// DeepSeek Harness 主目录（相当于 `DSH_HOME`，优先于环境变量）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dsh_config_dir: Option<String>,
+    /// Antigravity 的 `.gemini` 根目录（其下是 `antigravity-cli/` 和 `config/`）。
+    /// 指向 `\\wsl.localhost\<发行版>\...` 时，版本、安装和打开终端都进那个发行版里的 agy。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agy_config_dir: Option<String>,
 
     // ===== 当前供应商 ID（设备级）=====
     /// 当前 Claude 供应商 ID（本地存储，优先于数据库 is_current）
@@ -797,6 +801,7 @@ impl Default for AppSettings {
             pi_config_dir: None,
             omp_config_dir: None,
             dsh_config_dir: None,
+            agy_config_dir: None,
             current_provider_claude: None,
             current_provider_claude_desktop: None,
             current_provider_codex: None,
@@ -848,6 +853,7 @@ impl AppSettings {
             &mut self.pi_config_dir,
             &mut self.omp_config_dir,
             &mut self.dsh_config_dir,
+            &mut self.agy_config_dir,
         ] {
             *dir = dir
                 .as_deref()
@@ -1323,10 +1329,10 @@ pub fn get_override_dir(app: &AppType) -> Option<PathBuf> {
         AppType::Pi => &settings.pi_config_dir,
         AppType::Omp => &settings.omp_config_dir,
         AppType::Dsh => &settings.dsh_config_dir,
+        AppType::Agy => &settings.agy_config_dir,
         AppType::ClaudeDesktop
         | AppType::Mcode
         | AppType::Kimi
-        | AppType::Agy
         | AppType::Copilot
         | AppType::WorkBuddy => return None,
     };
@@ -1573,6 +1579,7 @@ mod tests {
             pi_config_dir: Some("/custom/pi".into()),
             omp_config_dir: Some("/custom/omp".into()),
             dsh_config_dir: Some("/custom/dsh".into()),
+            agy_config_dir: Some("/custom/agy".into()),
             current_provider_claude: Some("local-provider".into()),
             webdav_sync: Some(WebDavSyncSettings::default()),
             s3_sync: Some(S3SyncSettings::default()),
@@ -1600,6 +1607,7 @@ mod tests {
             (AppType::Pi, "pi"),
             (AppType::Omp, "omp"),
             (AppType::Dsh, "dsh"),
+            (AppType::Agy, "agy"),
         ] {
             poison();
             assert_eq!(
@@ -1636,6 +1644,39 @@ mod tests {
             Some("updated-provider")
         );
         assert!(!settings_store().is_poisoned());
+    }
+
+    #[test]
+    fn agy_config_dir_round_trips_and_blank_is_cleared() {
+        let saved: AppSettings = serde_json::from_value(serde_json::json!({
+            "agyConfigDir": r"  \\wsl.localhost\Ubuntu-26.04\home\alice\.gemini  "
+        }))
+        .expect("parse settings");
+        assert_eq!(
+            saved.agy_config_dir.as_deref(),
+            Some(r"  \\wsl.localhost\Ubuntu-26.04\home\alice\.gemini  ")
+        );
+        let mut normalized = saved.clone();
+        normalized.normalize_paths();
+        assert_eq!(
+            normalized.agy_config_dir.as_deref(),
+            Some(r"\\wsl.localhost\Ubuntu-26.04\home\alice\.gemini")
+        );
+        assert_eq!(
+            serde_json::to_value(&normalized).expect("serialize")["agyConfigDir"],
+            serde_json::json!(r"\\wsl.localhost\Ubuntu-26.04\home\alice\.gemini")
+        );
+
+        let mut blank = AppSettings {
+            agy_config_dir: Some("   ".into()),
+            ..Default::default()
+        };
+        blank.normalize_paths();
+        assert!(blank.agy_config_dir.is_none());
+        assert!(serde_json::to_value(&blank)
+            .expect("serialize")
+            .get("agyConfigDir")
+            .is_none());
     }
 
     #[test]

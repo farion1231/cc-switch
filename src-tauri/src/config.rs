@@ -30,27 +30,118 @@ pub fn get_home_dir() -> PathBuf {
     })
 }
 
-/// 检测路径是否为 WSL 网络路径（如 \\wsl$\Ubuntu\... 或 \\wsl.localhost\Ubuntu\...）
-/// 注意：仅检测直接 UNC 路径，映射磁盘符（如 Z: -> \\wsl$\...）无法检测
-#[cfg(windows)]
+/// 检测路径是否为 WSL 网络路径（如 `\\wsl$\Ubuntu\...` 或 `\\wsl.localhost\Ubuntu\...`）。
+/// 映射盘符（如 `Z:` → `\\wsl$\...`）认不出来。字符串形态在非 Windows 上也能认，
+/// 这样技能同步对 UNC 目标走复制，测试不必真的挂载 WSL。
 pub(crate) fn is_wsl_path(path: &Path) -> bool {
-    use std::path::Prefix;
-    if let Some(Component::Prefix(prefix)) = path.components().next() {
-        match prefix.kind() {
-            Prefix::UNC(server, _) | Prefix::VerbatimUNC(server, _) => {
-                let s = server.to_string_lossy();
-                s.eq_ignore_ascii_case("wsl$") || s.eq_ignore_ascii_case("wsl.localhost")
+    if wsl_unc_to_linux(&path.to_string_lossy()).is_some() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::path::Prefix;
+        if let Some(Component::Prefix(prefix)) = path.components().next() {
+            if let Prefix::UNC(server, _) | Prefix::VerbatimUNC(server, _) = prefix.kind() {
+                let server = server.to_string_lossy();
+                return server.eq_ignore_ascii_case("wsl$")
+                    || server.eq_ignore_ascii_case("wsl.localhost");
             }
-            _ => false,
         }
+    }
+    false
+}
+
+/// `\\wsl.localhost\<distro>\home\...`, `\\wsl$\<distro>\...`, `//wsl.localhost/...`,
+/// and `\\?\UNC\wsl.localhost\...`. Returns `(distro, /linux/path)`.
+pub(crate) fn wsl_unc_to_linux(raw: &str) -> Option<(String, String)> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let slashed = trimmed.replace('/', "\\");
+    let verbatim = r"\\?\UNC\";
+    let normalized = if slashed
+        .as_bytes()
+        .get(..verbatim.len())
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(verbatim.as_bytes()))
+    {
+        format!(r"\\{}", &slashed[verbatim.len()..])
     } else {
-        false
+        slashed
+    };
+    let rest = normalized.strip_prefix(r"\\")?;
+    let mut parts = rest.split('\\').filter(|part| !part.is_empty());
+    let server = parts.next()?;
+    if !server.eq_ignore_ascii_case("wsl.localhost") && !server.eq_ignore_ascii_case("wsl$") {
+        return None;
+    }
+    let distro = parts.next()?.to_string();
+    if !is_wsl_distro_name(&distro) {
+        return None;
+    }
+    let mut linux = String::new();
+    for part in parts {
+        if part == "." || part == ".." {
+            return None;
+        }
+        linux.push('/');
+        linux.push_str(part);
+    }
+    if linux.is_empty() {
+        return None;
+    }
+    Some((distro, linux))
+}
+
+fn is_wsl_distro_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 64
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+}
+
+/// Confirm `path` stays under `root`. Uses filesystem canonicalization first so
+/// symlinks cannot escape `root`; when a WSL UNC path cannot be canonicalized,
+/// falls back to comparing same-distro `wsl_unc_to_linux` prefixes (rejecting `.`/`..`).
+pub(crate) fn path_stays_inside(root: &Path, path: &Path) -> Result<bool, String> {
+    if let (Ok(root), Ok(path)) = (root.canonicalize(), path.canonicalize()) {
+        return Ok(path == root || path.starts_with(root));
+    }
+    match (
+        wsl_unc_to_linux(&root.to_string_lossy()),
+        wsl_unc_to_linux(&path.to_string_lossy()),
+    ) {
+        (Some((root_distro, root_linux)), Some((path_distro, path_linux))) => Ok(root_distro
+            .eq_ignore_ascii_case(&path_distro)
+            && (path_linux == root_linux || path_linux.starts_with(&format!("{root_linux}/")))),
+        _ => Err(format!(
+            "cannot confirm {} stays inside {}",
+            path.display(),
+            root.display()
+        )),
     }
 }
 
-#[cfg(not(windows))]
-pub(crate) fn is_wsl_path(_path: &Path) -> bool {
-    false
+/// A WSL UNC path in `distro`, or a Windows drive path (`C:\...` -> `/mnt/c/...`).
+#[cfg(any(windows, test))]
+pub(crate) fn path_into_wsl(raw: &str, distro: &str) -> Option<String> {
+    if let Some((found, linux)) = wsl_unc_to_linux(raw) {
+        return found.eq_ignore_ascii_case(distro).then_some(linux);
+    }
+    let normalized = raw.trim().replace('/', "\\");
+    let mut chars = normalized.chars();
+    let drive = chars.next()?;
+    if !drive.is_ascii_alphabetic() || chars.next() != Some(':') {
+        return None;
+    }
+    let rest = chars.as_str().trim_start_matches('\\');
+    let mut linux = format!("/mnt/{}", drive.to_ascii_lowercase());
+    if !rest.is_empty() {
+        linux.push('/');
+        linux.push_str(&rest.replace('\\', "/"));
+    }
+    Some(linux)
 }
 
 /// 临时目录在 WSL 共享路径上时（WSL2 夜间测试），SQLite 拿不到文件锁，
@@ -140,7 +231,7 @@ fn comparable_path_key(path: &Path) -> String {
     key
 }
 
-fn path_eq_lexical(left: &Path, right: &Path) -> bool {
+pub(crate) fn path_eq_lexical(left: &Path, right: &Path) -> bool {
     comparable_path_key(left) == comparable_path_key(right)
 }
 
@@ -1204,6 +1295,83 @@ mod tests {
             dir, expected,
             "测试 home 优先：不得回退到 HOME 下的旧库目录"
         );
+    }
+
+    #[test]
+    fn non_ascii_paths_do_not_panic_and_parse_wsl_unc_roots() {
+        for path in [
+            "/Users/张三/.claude.json",
+            r"D:\开发\project",
+            "/home/用户/.gemini",
+            "中文路径",
+        ] {
+            assert!(
+                !is_wsl_path(Path::new(path)),
+                "unexpected WSL match: {path}"
+            );
+            assert_eq!(wsl_unc_to_linux(path), None);
+        }
+
+        for raw in [
+            r"\\wsl.localhost\Ubuntu\home\张三\.gemini",
+            r"\\wsl$\Ubuntu\home\张三\.gemini",
+            r"\\?\UNC\wsl.localhost\Ubuntu\home\张三\.gemini",
+        ] {
+            assert!(is_wsl_path(Path::new(raw)), "expected WSL match: {raw}");
+            assert_eq!(
+                wsl_unc_to_linux(raw),
+                Some(("Ubuntu".into(), "/home/张三/.gemini".into())),
+                "{raw}"
+            );
+        }
+
+        assert_eq!(
+            path_into_wsl(r"D:\开发\project", "Ubuntu"),
+            Some("/mnt/d/开发/project".into())
+        );
+    }
+
+    #[test]
+    fn path_stays_inside_checks_canonical_paths_and_wsl_unc_fallbacks() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("root");
+        let child = root.join("brain/sess/transcript_full.jsonl");
+        let outside = dir.path().join("outside");
+        std::fs::create_dir_all(child.parent().unwrap()).unwrap();
+        std::fs::write(&child, "").unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let outside_file = outside.join("secret");
+        std::fs::write(&outside_file, "").unwrap();
+
+        assert_eq!(path_stays_inside(&root, &child), Ok(true));
+        assert_eq!(path_stays_inside(&root, &outside_file), Ok(false));
+
+        #[cfg(unix)]
+        {
+            let link = root.join("escape");
+            std::os::unix::fs::symlink(&outside, &link).unwrap();
+            assert_eq!(path_stays_inside(&root, &link.join("secret")), Ok(false));
+        }
+
+        let wsl_root =
+            Path::new(r"\\wsl.localhost\Ubuntu-26.04\home\alice\.gemini\antigravity-cli");
+        let wsl_inside = Path::new(
+            r"\\WSL$\ubuntu-26.04\home\alice\.gemini\antigravity-cli\conversations\abc.db",
+        );
+        let wsl_sibling = Path::new(
+            r"\\wsl.localhost\Ubuntu-26.04\home\alice\.gemini\antigravity-cli-other\conversations\abc.db",
+        );
+        let wsl_other_distro = Path::new(
+            r"\\wsl.localhost\Debian\home\alice\.gemini\antigravity-cli\conversations\abc.db",
+        );
+        let wsl_traversal = Path::new(
+            r"\\wsl.localhost\Ubuntu-26.04\home\alice\.gemini\antigravity-cli\..\other\abc.db",
+        );
+
+        assert_eq!(path_stays_inside(wsl_root, wsl_inside), Ok(true));
+        assert_eq!(path_stays_inside(wsl_root, wsl_sibling), Ok(false));
+        assert_eq!(path_stays_inside(wsl_root, wsl_other_distro), Ok(false));
+        assert!(path_stays_inside(wsl_root, wsl_traversal).is_err());
     }
 }
 

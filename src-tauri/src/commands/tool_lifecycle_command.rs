@@ -475,8 +475,11 @@ fn tool_action_shell_command(tool: &str, action: ToolLifecycleAction) -> Option<
 /// 出的版本会包含 Windows batch 语义(例如 `|| call npm ...`)且 hermes 会返回
 /// Windows PowerShell installer,但跨 `wsl.exe` 边界后跑的是 Linux。这个 wrapper
 /// 强制生成 POSIX 版命令。
-#[cfg(target_os = "windows")]
-fn wsl_tool_action_shell_command(tool: &str, action: ToolLifecycleAction) -> Option<String> {
+#[cfg(any(target_os = "windows", test))]
+pub(super) fn wsl_tool_action_shell_command(
+    tool: &str,
+    action: ToolLifecycleAction,
+) -> Option<String> {
     match action {
         ToolLifecycleAction::Install => {
             let command = posix_install_command_for(tool);
@@ -567,8 +570,8 @@ fn build_tool_action_line(
     }
 }
 
-#[cfg(target_os = "windows")]
-fn build_wsl_tool_action_line(
+#[cfg(any(target_os = "windows", test))]
+pub(super) fn build_wsl_tool_action_line(
     distro: &str,
     command: &str,
     force_shell: Option<&str>,

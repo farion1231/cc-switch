@@ -351,6 +351,7 @@ describe("SettingsPage integration", () => {
     ["pi", "piConfigDir", "settings.browsePlaceholderPi", "/env/pi-agent"],
     ["omp", "ompConfigDir", "settings.browsePlaceholderOmp", "/env/omp-agent"],
     ["dsh", "dshConfigDir", "settings.browsePlaceholderDsh", "/env/dsh-home"],
+    ["agy", "agyConfigDir", "settings.browsePlaceholderAgy", "/env/agy-home"],
   ] as const)(
     "restores backend-resolved %s default after draft discard",
     async (targetApp, field, placeholder, backendDefault) => {
