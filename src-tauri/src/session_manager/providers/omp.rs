@@ -397,7 +397,6 @@ mod tests {
     }
 
     /// resume_command 读取进程环境（profile、XDG、会话目录），断言完整命令前先清干净。
-    /// 只有 Windows 的 PowerShell 用例用到。
     #[cfg(windows)]
     struct SavedEnv(Vec<(&'static str, Option<std::ffi::OsString>)>);
     #[cfg(windows)]

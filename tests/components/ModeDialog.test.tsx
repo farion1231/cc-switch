@@ -55,9 +55,7 @@ describe("ModeDialog exit", () => {
       screen.getByRole("button", { name: "mode.dialog.confirmDirect" }),
     );
 
-    await waitFor(() =>
-      expect(props.onExit).toHaveBeenCalledWith("deepseek"),
-    );
+    await waitFor(() => expect(props.onExit).toHaveBeenCalledWith("deepseek"));
   });
 
   it("keeps the dialog open and shows the error when leaving fails", async () => {

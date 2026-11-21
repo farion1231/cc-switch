@@ -128,7 +128,9 @@ describe("ProviderForm Stack layout (Claude Code)", () => {
     expect(screen.getByDisplayValue("m-s")).toBeInTheDocument();
     expect(screen.getByDisplayValue("Model S")).toBeInTheDocument();
     // 没有 ★：第一行是默认模型，写在「模型列表」后面的「?」里。
-    expect(screen.getByRole("button", { name: "模型列表" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "模型列表" }),
+    ).toBeInTheDocument();
     expect(screen.queryByText("providerForm.modelMappingLabel")).toBeNull();
     expect(screen.queryByText("默认兜底模型")).toBeNull();
   });
@@ -136,10 +138,14 @@ describe("ProviderForm Stack layout (Claude Code)", () => {
   it("简化面板的说明收进「?」，高级选项折叠时不挂说明", () => {
     renderForm("claude", vi.fn());
 
-    expect(screen.getByRole("button", { name: "上游格式" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "上游格式" }),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/一般无需修改/)).toBeNull();
     fireEvent.click(
-      screen.getByRole("button", { name: "providerForm.advancedOptionsToggle" }),
+      screen.getByRole("button", {
+        name: "providerForm.advancedOptionsToggle",
+      }),
     );
     expect(
       screen.getByText("以下设置只在路由、聚合模式下生效。"),
@@ -295,7 +301,9 @@ describe("ProviderForm Stack layout (Codex)", () => {
       ],
     });
 
-    expect(screen.getByRole("button", { name: "模型列表" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "模型列表" }),
+    ).toBeInTheDocument();
     // 有列表时第一行就是默认模型，不再单独显示默认模型框。
     expect(document.getElementById("codexDefaultModel")).toBeNull();
     fireEvent.change(screen.getByDisplayValue("m-1"), {
