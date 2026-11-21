@@ -31,6 +31,11 @@ impl Database {
     ///
     /// 从 claude 行读取（三行镜像一致）
     pub async fn get_global_proxy_config(&self) -> Result<GlobalProxyConfig, AppError> {
+        self.run_blocking(move |db| db.get_global_proxy_config_sync())
+            .await
+    }
+
+    fn get_global_proxy_config_sync(&self) -> Result<GlobalProxyConfig, AppError> {
         // 使用 block 限制 conn 的作用域，避免跨 await 持有锁
         let result = {
             let conn = lock_conn!(self.conn);
@@ -54,7 +59,7 @@ impl Database {
             Ok(config) => Ok(config),
             Err(rusqlite::Error::QueryReturnedNoRows) => {
                 // 如果不存在，创建默认配置
-                self.init_proxy_config_rows().await?;
+                self.init_proxy_config_rows()?;
                 Ok(GlobalProxyConfig {
                     proxy_enabled: false,
                     listen_address: "127.0.0.1".to_string(),
@@ -71,6 +76,11 @@ impl Database {
         &self,
         config: GlobalProxyConfig,
     ) -> Result<(), AppError> {
+        self.run_blocking(move |db| db.update_global_proxy_config_sync(config))
+            .await
+    }
+
+    fn update_global_proxy_config_sync(&self, config: GlobalProxyConfig) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
 
         conn.execute(
@@ -94,6 +104,27 @@ impl Database {
 
     /// 获取计费模式来源
     pub async fn get_pricing_model_source(&self, app_type: &AppType) -> Result<String, AppError> {
+        if let Some(value) = self.read_cache.pricing_source.get(app_type.as_str()) {
+            return Ok(value);
+        }
+        let app_type = app_type.clone();
+        self.run_blocking(move |db| db.get_pricing_model_source_sync(&app_type))
+            .await
+    }
+
+    /// Already-blocking usage workers use this directly, avoiding nested worker waits.
+    pub(crate) fn get_pricing_model_source_sync(
+        &self,
+        app_type: &AppType,
+    ) -> Result<String, AppError> {
+        self.read_cache
+            .pricing_source
+            .get_or_load(app_type.as_str(), || {
+                self.load_pricing_model_source(app_type)
+            })
+    }
+
+    fn load_pricing_model_source(&self, app_type: &AppType) -> Result<String, AppError> {
         let result = {
             let conn = lock_conn!(self.conn);
             conn.query_row(
@@ -106,7 +137,7 @@ impl Database {
         match result {
             Ok(value) => Ok(value),
             Err(rusqlite::Error::QueryReturnedNoRows) => {
-                self.init_proxy_config_rows().await?;
+                self.init_proxy_config_rows()?;
                 Ok(PRICING_SOURCE_RESPONSE.to_string())
             }
             Err(e) => Err(AppError::Database(e.to_string())),
@@ -115,6 +146,17 @@ impl Database {
 
     /// 设置计费模式来源
     pub async fn set_pricing_model_source(
+        &self,
+        app_type: &AppType,
+        value: &str,
+    ) -> Result<(), AppError> {
+        let app_type = app_type.clone();
+        let value = value.to_owned();
+        self.run_blocking(move |db| db.set_pricing_model_source_sync(&app_type, &value))
+            .await
+    }
+
+    fn set_pricing_model_source_sync(
         &self,
         app_type: &AppType,
         value: &str,
@@ -139,6 +181,22 @@ impl Database {
 
     /// 获取应用级代理配置
     pub async fn get_proxy_config_for_app(
+        &self,
+        app_type: &AppType,
+    ) -> Result<AppProxyConfig, AppError> {
+        if let Some(value) = self.read_cache.proxy.get(app_type.as_str()) {
+            return Ok(value);
+        }
+        let app_type = app_type.clone();
+        self.run_blocking(move |db| {
+            db.read_cache.proxy.get_or_load(app_type.as_str(), || {
+                db.get_proxy_config_for_app_sync(&app_type)
+            })
+        })
+        .await
+    }
+
+    fn get_proxy_config_for_app_sync(
         &self,
         app_type: &AppType,
     ) -> Result<AppProxyConfig, AppError> {
@@ -175,7 +233,7 @@ impl Database {
             Ok(config) => Ok(config),
             Err(rusqlite::Error::QueryReturnedNoRows) => {
                 // 如果不存在，创建默认配置
-                self.init_proxy_config_rows().await?;
+                self.init_proxy_config_rows()?;
                 Ok(AppProxyConfig {
                     app_type: app_type.to_string(),
                     enabled: false,
@@ -200,6 +258,11 @@ impl Database {
         &self,
         config: AppProxyConfig,
     ) -> Result<(), AppError> {
+        self.run_blocking(move |db| db.update_proxy_config_for_app_sync(config))
+            .await
+    }
+
+    fn update_proxy_config_for_app_sync(&self, config: AppProxyConfig) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
 
         conn.execute(
@@ -280,7 +343,7 @@ impl Database {
     /// 初始化 proxy_config 表的三行数据
     ///
     /// 使用与 schema.rs seed 相同的 per-app 默认值
-    async fn init_proxy_config_rows(&self) -> Result<(), AppError> {
+    fn init_proxy_config_rows(&self) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
 
         // 使用与 schema.rs seed 相同的 per-app 默认值
@@ -353,6 +416,17 @@ impl Database {
         provider_id: &str,
         app_type: &AppType,
     ) -> Result<ProviderHealth, AppError> {
+        let provider_id = provider_id.to_owned();
+        let app_type = app_type.clone();
+        self.run_blocking(move |db| db.get_provider_health_sync(&provider_id, &app_type))
+            .await
+    }
+
+    fn get_provider_health_sync(
+        &self,
+        provider_id: &str,
+        app_type: &AppType,
+    ) -> Result<ProviderHealth, AppError> {
         let result = {
             let conn = lock_conn!(self.conn);
 
@@ -399,6 +473,28 @@ impl Database {
     /// # Arguments
     /// * `failure_threshold` - 连续失败多少次后标记为不健康
     pub async fn update_provider_health_with_threshold(
+        &self,
+        provider_id: &str,
+        app_type: &AppType,
+        success: bool,
+        error_msg: Option<String>,
+        failure_threshold: u32,
+    ) -> Result<(), AppError> {
+        let provider_id = provider_id.to_owned();
+        let app_type = app_type.clone();
+        self.run_blocking(move |db| {
+            db.update_provider_health_with_threshold_sync(
+                &provider_id,
+                &app_type,
+                success,
+                error_msg,
+                failure_threshold,
+            )
+        })
+        .await
+    }
+
+    fn update_provider_health_with_threshold_sync(
         &self,
         provider_id: &str,
         app_type: &AppType,
@@ -464,6 +560,12 @@ impl Database {
 
     /// 清空指定应用的健康状态（关闭单个代理时使用）
     pub async fn clear_provider_health_for_app(&self, app_type: &AppType) -> Result<(), AppError> {
+        let app_type = app_type.clone();
+        self.run_blocking(move |db| db.clear_provider_health_for_app_sync(&app_type))
+            .await
+    }
+
+    fn clear_provider_health_for_app_sync(&self, app_type: &AppType) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
 
         conn.execute(
@@ -478,6 +580,11 @@ impl Database {
 
     /// 清空所有Provider健康状态（代理停止时调用）
     pub async fn clear_all_provider_health(&self) -> Result<(), AppError> {
+        self.run_blocking(move |db| db.clear_all_provider_health_sync())
+            .await
+    }
+
+    fn clear_all_provider_health_sync(&self) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
 
         conn.execute("DELETE FROM provider_health", [])
@@ -495,6 +602,13 @@ impl Database {
         app_type: &AppType,
         config_json: &str,
     ) -> Result<(), AppError> {
+        let app_type = app_type.clone();
+        let config_json = config_json.to_owned();
+        self.run_blocking(move |db| db.save_live_backup_sync(&app_type, &config_json))
+            .await
+    }
+
+    fn save_live_backup_sync(&self, app_type: &AppType, config_json: &str) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
         let now = chrono::Utc::now().to_rfc3339();
 
@@ -514,6 +628,12 @@ impl Database {
         &self,
         app_type: &AppType,
     ) -> Result<Option<LiveBackup>, AppError> {
+        let app_type = app_type.clone();
+        self.run_blocking(move |db| db.get_live_backup_sync(&app_type))
+            .await
+    }
+
+    fn get_live_backup_sync(&self, app_type: &AppType) -> Result<Option<LiveBackup>, AppError> {
         let conn = lock_conn!(self.conn);
 
         let result = conn.query_row(
@@ -537,6 +657,12 @@ impl Database {
 
     /// 删除 Live 配置备份
     pub async fn delete_live_backup(&self, app_type: &AppType) -> Result<(), AppError> {
+        let app_type = app_type.clone();
+        self.run_blocking(move |db| db.delete_live_backup_sync(&app_type))
+            .await
+    }
+
+    fn delete_live_backup_sync(&self, app_type: &AppType) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
 
         conn.execute(

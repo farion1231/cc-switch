@@ -111,11 +111,36 @@ impl RequestContext {
             .await
             .map_err(|e| ProxyError::DatabaseError(e.to_string()))?;
 
-        // 从数据库读取整流器配置
-        let rectifier_config = state.db.get_rectifier_config().unwrap_or_default();
-        let optimizer_config = state.db.get_optimizer_config().unwrap_or_default();
-        let copilot_optimizer_config = state.db.get_copilot_optimizer_config().unwrap_or_default();
-        let privacy_filter_config = state.db.get_privacy_filter_config().unwrap_or_default();
+        let app = app_type.clone();
+        let needs_route = stack.is_none();
+        let check_stack = needs_route && app_config.auto_failover_enabled;
+        let (
+            rectifier_config,
+            optimizer_config,
+            copilot_optimizer_config,
+            privacy_filter_config,
+            current_provider,
+            stack_mode,
+        ) = state
+            .db
+            .run_blocking(move |db| {
+                Ok((
+                    db.get_rectifier_config().unwrap_or_default(),
+                    db.get_optimizer_config().unwrap_or_default(),
+                    db.get_copilot_optimizer_config().unwrap_or_default(),
+                    db.get_privacy_filter_config().unwrap_or_default(),
+                    if needs_route {
+                        crate::mode::current::provider_in_use(db, &app)
+                            .ok()
+                            .flatten()
+                    } else {
+                        None
+                    },
+                    check_stack && crate::mode::stack::stack_mode_now(&app),
+                ))
+            })
+            .await
+            .map_err(|e| ProxyError::DatabaseError(e.to_string()))?;
 
         // 提取 Session ID
         let session_result = extract_session_id(headers, body, app_type_str);
@@ -153,9 +178,6 @@ impl RequestContext {
                 )
             }
             None => {
-                let current_provider = crate::mode::current::provider_in_use(&state.db, &app_type)
-                    .ok()
-                    .flatten();
                 let current_provider_id = current_provider
                     .as_ref()
                     .map(|provider| provider.id.clone())
@@ -170,8 +192,6 @@ impl RequestContext {
 
                 // Stack 模式不做故障转移：只发往默认那家，和故障转移关着时一样跳过熔断器选家；
                 // 队列留着，回到路由模式恢复。故障转移本来就关着时不用读模式。
-                let stack_mode = app_config.auto_failover_enabled
-                    && crate::mode::stack::stack_mode_now(&app_type);
                 let providers = if stack_mode {
                     app_config.auto_failover_enabled = false;
                     vec![current_provider.ok_or(ProxyError::NoProvidersConfigured)?]

@@ -112,6 +112,30 @@ pub struct BackupEntry {
 }
 
 impl Database {
+    fn replace_from_staging(
+        &self,
+        source: &Connection,
+        destination: &mut Connection,
+        context: &str,
+    ) -> Result<(), AppError> {
+        let page_size: i64 = destination.query_row("PRAGMA page_size", [], |row| row.get(0))?;
+        let source_page_size: i64 = source.query_row("PRAGMA page_size", [], |row| row.get(0))?;
+        if source_page_size != page_size {
+            // Rebuild the disposable staging DB, never disable WAL on the live DB.
+            source.execute_batch(&format!(
+                "PRAGMA journal_mode = DELETE; PRAGMA page_size = {page_size}; VACUUM;"
+            ))?;
+        }
+        let result = {
+            let backup =
+                Backup::new(source, destination).map_err(|e| AppError::Database(e.to_string()))?;
+            Self::complete_backup(&backup, context)
+        };
+        self.read_cache.invalidate_all();
+        result?;
+        Self::configure_connection(destination)
+    }
+
     /// 导出为 SQLite 兼容的 SQL 文本（内存字符串，完整导出）
     pub fn export_sql_string(&self) -> Result<String, AppError> {
         let snapshot = self.snapshot_to_memory()?;
@@ -235,9 +259,7 @@ impl Database {
             if !preserve_tables.is_empty() {
                 Self::restore_tables(&main_conn, &temp_conn, preserve_tables)?;
             }
-            let backup = Backup::new(&temp_conn, &mut main_conn)
-                .map_err(|e| AppError::Database(e.to_string()))?;
-            Self::complete_backup(&backup, "替换主数据库")?;
+            self.replace_from_staging(&temp_conn, &mut main_conn, "替换主数据库")?;
             backup_path
         };
 
@@ -1070,9 +1092,7 @@ impl Database {
                 &[backup_path.as_path()],
             )?;
             before_replace(safety_backup.as_deref())?;
-            let backup = Backup::new(&staging_conn, &mut main_conn)
-                .map_err(|e| AppError::Database(e.to_string()))?;
-            Self::complete_backup(&backup, "恢复主数据库")?;
+            self.replace_from_staging(&staging_conn, &mut main_conn, "恢复主数据库")?;
             safety_backup
         };
         let safety_id = safety_backup
@@ -1182,6 +1202,82 @@ mod tests {
     use crate::test_support::EnvVars;
     use rusqlite::Connection;
     use serial_test::serial;
+
+    #[tokio::test]
+    #[serial]
+    async fn wal_import_and_restore_keep_pragmas_and_invalidate_cached_reads() {
+        use crate::app_config::AppType;
+        let home = TestHomeGuard::new();
+        let db_path = home.temp_dir.path().join(".cc-switch/cc-switch.db");
+        // Real databases may use a non-default page size. Backup into a WAL DB
+        // must align the disposable source first, otherwise SQLite returns READONLY.
+        Connection::open(&db_path)
+            .unwrap()
+            .execute_batch("PRAGMA page_size=8192; VACUUM;")
+            .unwrap();
+        let db = Database::init().unwrap();
+        let source = Database::memory().unwrap();
+        source
+            .set_setting(
+                "privacy_filter_config",
+                r#"{"enabled":true,"filterToolResults":true}"#,
+            )
+            .unwrap();
+        source
+            .set_pricing_model_source(&AppType::Claude, "request")
+            .await
+            .unwrap();
+        let snapshot = source.backup_database_file().unwrap().unwrap();
+        assert!(!db.get_privacy_filter_config().unwrap().enabled);
+        assert_eq!(
+            db.get_pricing_model_source(&AppType::Claude).await.unwrap(),
+            "response"
+        );
+        db.import_sql_string(&source.export_sql_string().unwrap())
+            .unwrap();
+        assert!(db.get_privacy_filter_config().unwrap().enabled);
+        assert_eq!(
+            db.get_pricing_model_source(&AppType::Claude).await.unwrap(),
+            "request"
+        );
+        db.set_setting(
+            "privacy_filter_config",
+            r#"{"enabled":false,"filterToolResults":false}"#,
+        )
+        .unwrap();
+        assert!(!db.get_privacy_filter_config().unwrap().enabled);
+        db.restore_from_backup(snapshot.file_name().unwrap().to_str().unwrap())
+            .unwrap();
+        assert!(db.get_privacy_filter_config().unwrap().enabled);
+        {
+            let conn = db.conn.lock().unwrap();
+            let mode: String = conn
+                .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+                .unwrap();
+            assert_eq!(mode, "wal");
+            for (pragma, expected) in [
+                ("synchronous", 1),
+                ("busy_timeout", 5000),
+                ("temp_store", 2),
+                ("cache_size", -16000),
+                ("page_size", 8192),
+            ] {
+                let value: i64 = conn
+                    .query_row(&format!("PRAGMA {pragma}"), [], |row| row.get(0))
+                    .unwrap();
+                assert_eq!(value, expected, "{pragma}");
+            }
+        }
+        db.checkpoint_wal().unwrap();
+        let wal = db_path.with_extension("db-wal");
+        assert_eq!(std::fs::metadata(wal).unwrap().len(), 0);
+        // Reopening the checkpointed file sees restored data without its sidecar.
+        let reopened = Connection::open(&db_path).unwrap();
+        let mode: String = reopened
+            .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(mode, "wal");
+    }
 
     #[test]
     #[serial]
