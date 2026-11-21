@@ -464,6 +464,72 @@ impl Database {
         Ok(())
     }
 
+    /// Replace a provider's catalog key and all database-owned references atomically.
+    pub fn replace_provider_id(
+        &self,
+        app_type: &AppType,
+        original_id: &str,
+        provider: &Provider,
+    ) -> Result<(), AppError> {
+        let mut conn = lock_conn!(self.conn);
+        let tx = conn
+            .transaction()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let (is_current, in_failover_queue): (bool, bool) = tx
+            .query_row(
+                "SELECT is_current, in_failover_queue FROM providers WHERE id = ?1 AND app_type = ?2",
+                params![original_id, app_type],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        let mut meta = provider.meta.clone().unwrap_or_default();
+        // Custom endpoints are stored in their own table and copied below.
+        meta.custom_endpoints.clear();
+        tx.execute(
+            "INSERT INTO providers (
+                id, app_type, name, settings_config, website_url, category,
+                created_at, sort_index, notes, icon, icon_color, meta, is_current, in_failover_queue
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            params![
+                provider.id,
+                app_type,
+                provider.name,
+                serde_json::to_string(&provider.settings_config).map_err(
+                    |e| AppError::Database(format!("Failed to serialize settings_config: {e}"))
+                )?,
+                provider.website_url,
+                provider.category,
+                provider.created_at,
+                provider.sort_index,
+                provider.notes,
+                provider.icon,
+                provider.icon_color,
+                serde_json::to_string(&meta)
+                    .map_err(|e| AppError::Database(format!("Failed to serialize meta: {e}")))?,
+                is_current,
+                in_failover_queue,
+            ],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        tx.execute(
+            "UPDATE provider_endpoints SET provider_id = ?1 WHERE provider_id = ?2 AND app_type = ?3",
+            params![provider.id, original_id, app_type],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        tx.execute(
+            "UPDATE provider_health SET provider_id = ?1 WHERE provider_id = ?2 AND app_type = ?3",
+            params![provider.id, original_id, app_type],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        tx.execute(
+            "DELETE FROM providers WHERE id = ?1 AND app_type = ?2",
+            params![original_id, app_type],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        tx.commit().map_err(|e| AppError::Database(e.to_string()))
+    }
+
     pub fn delete_provider(&self, app_type: &AppType, id: &str) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
         conn.execute(

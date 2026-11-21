@@ -3267,8 +3267,13 @@ mod tests {
         let home = dirs::home_dir().expect("home should resolve");
         let bun_bin = home.join(".bun").join("bin");
         assert!(build_tool_search_paths("omp").contains(&bun_bin));
-        // Other Bun-installable tools keep their previous search set.
-        assert!(!build_tool_search_paths("gemini").contains(&bun_bin));
+        // Other tools must not add Bun's directory as an app-specific fallback.
+        // If the caller already has it on PATH, all tools naturally inherit it.
+        let inherited_from_path = std::env::var_os("PATH")
+            .is_some_and(|path| std::env::split_paths(&path).any(|entry| entry == bun_bin));
+        if !inherited_from_path {
+            assert!(!build_tool_search_paths("gemini").contains(&bun_bin));
+        }
     }
 
     #[cfg(target_os = "windows")]
