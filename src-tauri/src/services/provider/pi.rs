@@ -20,7 +20,7 @@ pub(super) fn list(state: &AppState) -> Result<IndexMap<String, Provider>, AppEr
             log::warn!("Failed to read Pi providers; showing saved catalog: {error}");
         }
     }
-    state.db.get_all_providers(&AppType::Pi)
+    Ok(state.db.get_provider_rows(&AppType::Pi)?.readable)
 }
 
 pub(super) fn import_from_live(state: &AppState) -> Result<usize, AppError> {

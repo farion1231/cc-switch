@@ -19,9 +19,9 @@ pub async fn stream_check_provider(
     provider_id: String,
 ) -> Result<StreamCheckResult, AppError> {
     let app_type: AppType = app_type.parse()?;
-    let providers = state.db.get_all_providers(&app_type)?;
+    let providers = state.db.get_provider_rows(&app_type)?;
     let provider = providers
-        .get(&provider_id)
+        .get(&provider_id)?
         .ok_or_else(|| AppError::Message(format!("供应商 {provider_id} 不存在")))?;
 
     // Copilot 端点是动态的（随 OAuth token 解析），需预先取出 host 再探测；

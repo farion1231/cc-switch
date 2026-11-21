@@ -202,6 +202,8 @@
       "extraArgsPlaceholder": "例如 --debug --append-system-prompt \"简洁回答\"",
       "extraArgsHint": "接在启动命令后面，只用于这次打开的终端。用空格分隔，含空格的值用引号括起来。",
       "agySwitchTitle": "会切换 agy 的登录",
+      "agyBindingMissing": "这张卡绑定的 Antigravity 账号不在本机。你可以在授权中心添加它，或本次使用 agy 当前登录。",
+      "agyUseCurrentLogin": "本次使用 agy 当前登录",
       "agySwitchBody": "打开前把 agy 的登录切换到 {{account}}，之后新开的 agy 都用这个号。",
       "agySwitchRunning": "检测到 agy 正在运行：已打开的 agy 仍用原账号，还可能把原账号写回去，最好先退出它们。",
       "isolationBodyCopilot": "这个终端里的 copilot 以 --model 选中「{{name}}」的第一个模型，只对这次会话生效；地址和 Key 读自 Copilot 的 providers.json，在别的终端里也能用 /model 选到它。"
@@ -318,7 +320,7 @@
     "supports1mShort": "1M",
     "directModelListTitle": "模型列表",
     "directModelListCollapsedHint": "原生 Claude 模型供应商通常不用填写，Claude Desktop 会自动读取 /v1/models。",
-    "directModelListHint": "配置 Claude Desktop 可用的 Sonnet、Opus、Haiku 模型。留空时 Claude Desktop 会自动读取 /v1/models；勾选 1M 会声明支持 1M 上下文。",
+    "directModelListHint": "配置 Claude Desktop 可用的 Sonnet、Opus、Haiku 模型。直连时留空，Claude Desktop 会自动读取 /v1/models；路由模式下留空只提供默认的 Claude 模型名，要用供应商的模型请在这里填写。勾选 1M 会声明支持 1M 上下文。",
     "directModelInvalid": "直连模型必须使用 Claude Desktop 可识别的 Sonnet / Opus / Haiku 模型名",
     "addModel": "添加模型",
     "addRoute": "添加模型",
@@ -378,6 +380,7 @@
     "openclawModelNotFound": "所选模型已不存在，请刷新后重试",
     "backfillWarning": "切换成功，但旧供应商配置回填失败，您手动修改的配置可能未保存",
     "codexAuthCleanupFailed": "切换成功，但未能删除 auth.json，官方登录凭据仍留在磁盘上；如需彻底移除请手动删除 Codex 配置目录中的 auth.json",
+    "omoVariantCleanupFailed": "切换成功，但未能删除另一个 OMO 变体（OMO / OMO Slim）的配置文件，OpenCode 可能同时加载两者；请在 OpenCode 配置目录中手动删除它",
     "windowControlFailed": "窗口控制失败：{{error}}",
     "officialBlockedByProxy": "本地路由模式下不能切换到官方供应商，使用路由访问官方 API 可能导致账号被封禁",
     "proxyOfficialWarning": "当前供应商 {{name}} 是官方供应商，建议切换到第三方供应商后再使用本地路由",
@@ -463,8 +466,7 @@
     "tabProxy": "路由",
     "authCenter": {
       "description": "把 GitHub Copilot、ChatGPT、xAI 订阅当作供应商用。凭据由路由服务注入，相关供应商要在路由模式下使用（Codex 官方登录绑定除外）。Antigravity 账号用来切换 agy 的官方登录。",
-      "beta": "Beta",
-      "xaiOauthDescription": "管理 xAI / Grok 账号"
+      "beta": "Beta"
     },
     "advanced": {
       "configDir": {
@@ -1121,7 +1123,6 @@
       "pricingModelSourceLabel": "计费模式",
       "pricingModelSourceRequest": "请求模型",
       "pricingModelSourceResponse": "返回模型",
-      "pricingSave": "保存计费配置",
       "pricingSaved": "计费配置已保存",
       "pricingSaveFailed": "保存计费配置失败：{{error}}",
       "pricingLoadFailed": "加载计费配置失败：{{error}}"
@@ -1735,6 +1736,7 @@
       "outlineFailed": "有失败步骤",
       "outlineAborted": "已中断",
       "outlineNoReply": "没有回复",
+      "chapter": "章节",
       "viewOptions": "显示选项",
       "noChanges": "这个会话没有文件改动",
       "rawMatch": "原文中的匹配",
@@ -2936,7 +2938,6 @@
     "geminiTitle": "Gemini MCP 管理",
     "unifiedPanel": {
       "title": "MCP 服务器管理",
-      "deleteServer": "删除服务器",
       "deleteConfirm": "确定要删除服务器 \"{{id}}\" 吗？此操作无法撤销。",
       "enabledApps": "启用的应用",
       "importSuccess": "成功导入 {{count}} 个 MCP 服务器",
@@ -2983,28 +2984,20 @@
       "tagsPlaceholder": "stdio, time, utility",
       "homepage": "主页链接",
       "docs": "文档链接",
-      "jsonPlaceholder": "{\n  \"type\": \"stdio\",\n  \"command\": \"uvx\",\n  \"args\": [\"mcp-server-fetch\"]\n}",
-      "tomlConfig": "完整的 TOML 配置",
-      "tomlPlaceholder": "type = \"stdio\"\ncommand = \"uvx\"\nargs = [\"mcp-server-fetch\"]",
-      "syncOtherSide": "同步到 {{target}}"
+      "tomlConfig": "完整的 TOML 配置"
     },
     "wizard": {
       "title": "MCP 配置向导",
       "hint": "快速配置 MCP 服务器，自动生成 JSON 配置",
       "type": "类型",
-      "typeStdio": "stdio",
-      "typeSse": "sse",
       "command": "命令",
       "commandPlaceholder": "npx 或 uvx",
       "args": "参数",
-      "argsPlaceholder": "arg1\narg2",
       "env": "环境变量",
-      "envPlaceholder": "KEY1=value1\nKEY2=value2",
       "url": "URL",
       "urlPlaceholder": "https://api.example.com/mcp",
       "urlRequired": "请输入 URL",
       "headers": "请求头（可选）",
-      "headersPlaceholder": "Authorization: Bearer your_token_here\nContent-Type: application/json",
       "preview": "配置预览",
       "apply": "应用配置"
     },
@@ -3519,6 +3512,7 @@
       "skillNotFound": "技能不存在：{{directory}}",
       "missingRepoInfo": "缺少仓库信息（owner 或 name）",
       "downloadTimeout": "下载仓库 {{owner}}/{{name}} 超时（{{timeout}}秒）",
+      "downloadStalled": "下载仓库 {{owner}}/{{name}} 时连续 {{timeout}} 秒没有收到数据，已中止",
       "skillDirNotFound": "技能目录不存在：{{path}}",
       "directoryConflict": "技能目录 '{{directory}}' 已被 {{existing_repo}} 占用，无法从 {{new_repo}} 安装",
       "emptyArchive": "下载的压缩包为空",
@@ -3527,7 +3521,6 @@
       "archiveDownloadTooLarge": "仓库压缩包下载超过 {{limit_mb}} MB 上限，已中止",
       "archiveTooManyEntries": "压缩包条目过多（{{count}}），上限 {{limit}}",
       "downloadFailed": "下载失败：HTTP {{status}}",
-      "httpError": "HTTP 错误 {{status}}",
       "http403": "GitHub 访问受限，可能是请求频率过高",
       "http404": "仓库或分支不存在，请检查地址；私有仓库需要先在「管理技能仓库」里设置访问令牌",
       "http429": "请求过于频繁，请等待后重试",
@@ -3540,7 +3533,6 @@
       "repoTokenStorageFailed": "无法读写 {{host}} 的访问令牌，请检查系统的凭据存储是否可用",
       "getHomeDirFailed": "无法获取用户主目录",
       "noSkillsInZip": "ZIP 文件中未找到技能（需包含 SKILL.md 文件）",
-      "networkError": "网络错误",
       "unknownError": "未知错误",
       "suggestion": {
         "checkNetwork": "请检查网络连接",
@@ -3770,7 +3762,6 @@
       "repo": "GitHub 仓库",
       "directory": "目标目录",
       "branch": "分支",
-      "skillsPath": "Skills 路径",
       "hint": "此操作将添加 Skill 仓库到列表。",
       "hintDetail": "添加后，您可以在 Skills 管理界面中选择安装具体的 Skill。"
     },
@@ -3867,7 +3858,6 @@
   },
   "proxy": {
     "panel": {
-      "currentProvider": "当前 Provider：",
       "openSettings": "配置路由服务",
       "stats": {
         "activeConnections": "活跃连接",
@@ -3928,10 +3918,6 @@
           "label": "非流式超时（秒）",
           "description": "非流式请求的总超时时间"
         }
-      },
-      "validation": {
-        "retryMin": "重试次数不能为负",
-        "retryMax": "重试次数不能超过10"
       },
       "actions": {
         "save": "保存配置"
@@ -4353,6 +4339,7 @@
     "usage": "用量统计",
     "auth": "授权中心",
     "authNeedsReauth": "有账号需要重新登录",
+    "skills": "Skills",
     "prompts": "提示词",
     "sessions": "会话",
     "apps": "应用",
@@ -4786,7 +4773,7 @@
       "failedTitle": "有应用没有读到",
       "filesTitle": "读取了哪些文件",
       "claudeNote": "（顶层 mcpServers）",
-      "dshNote": "（写入所有已初始化的 profile：web、desktop、headless、acp）",
+      "dshNote": "（写入所有已初始化的 profile：web、desktop、headless、acp。home 级的 ~/.dsh/cordis.patch.yml 不读取也不改写，其中的 MCP 请在该文件里管理）",
       "ok": "知道了"
     },
     "templateLabels": {
@@ -5423,5 +5410,11 @@
     "installFailed": "安装更新失败",
     "downloadingInline": "正在后台下载新版本…",
     "downloadedInline": "已下载完毕"
+  },
+  "unreadableEntry": {
+    "title": "「{{name}}」的数据无法读取",
+    "hint": "可能由更新版本的 CC Switch 写入。数据已原样保留，不能编辑或启用；升级后即可恢复，也可以删除。",
+    "confirmTitle": "删除无法读取的条目",
+    "confirmMessage": "删除「{{name}}」？只删除 CC Switch 里的这条记录，不改动各应用自己的配置文件。"
   }
 }

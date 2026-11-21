@@ -107,7 +107,7 @@ const enableSwitch = () =>
   screen.findByRole("switch", { name: "pluginsPage.enableAria" });
 
 describe("plugin list helpers", () => {
-  it("filters by id, display name, description and marketplace", () => {
+  it("filters by id, name, display name, description and marketplace", () => {
     const entries = [
       plugin(),
       plugin({
@@ -122,8 +122,14 @@ describe("plugin list helpers", () => {
         displayName: "Game Studio",
         description: null,
       }),
+      plugin({
+        id: "git:github.com/org/repo",
+        name: "@scope/handy-tools",
+        marketplace: "",
+        description: null,
+      }),
     ];
-    expect(filterPlugins(entries, "  ")).toHaveLength(3);
+    expect(filterPlugins(entries, "  ")).toHaveLength(4);
     expect(filterPlugins(entries, "FRONTEND").map((e) => e.id)).toEqual([
       "frontend-design@official",
     ]);
@@ -131,6 +137,9 @@ describe("plugin list helpers", () => {
       "x@other",
     ]);
     expect(filterPlugins(entries, "studio").map((e) => e.id)).toEqual(["y@m"]);
+    expect(filterPlugins(entries, "handy-tools").map((e) => e.id)).toEqual([
+      "git:github.com/org/repo",
+    ]);
   });
 
   it("derives Discover from the catalog and fills missing details", () => {
@@ -178,6 +187,37 @@ describe("plugin list helpers", () => {
     ]);
     expect(withCatalogDetails(installed, catalog)[0].description).toBe(
       "LanceDB memory",
+    );
+  });
+
+  it("matches pinned Pi packages via catalogId", () => {
+    const installed = [
+      plugin({
+        id: "npm:pi-pinned@1.0.0",
+        name: "pi-pinned",
+        catalogId: "npm:pi-pinned",
+        marketplace: "",
+        description: null,
+      }),
+    ];
+    const catalog = [
+      catalogItem({
+        id: "npm:pi-pinned",
+        name: "pi-pinned",
+        marketplace: "",
+        description: "Pinned package",
+      }),
+      catalogItem({
+        id: "npm:pi-other",
+        name: "pi-other",
+        marketplace: "",
+      }),
+    ];
+    expect(availableFromCatalog(catalog, installed).map((e) => e.id)).toEqual([
+      "npm:pi-other",
+    ]);
+    expect(withCatalogDetails(installed, catalog)[0].description).toBe(
+      "Pinned package",
     );
   });
 });
@@ -492,6 +532,30 @@ describe("PluginsPage", () => {
       await screen.findByText("pluginsPage.cliMissingTitle"),
     ).toBeInTheDocument();
     expect(screen.queryByText("common.retry")).not.toBeInTheDocument();
+  });
+
+  it("shows loading again while retrying a failed read", async () => {
+    // 有上次的结果时，重试中查询仍是 error 状态（没有结果才回到 pending）
+    localStorage.setItem(
+      "cc-switch-cache:plugins:claude:installed",
+      JSON.stringify([plugin({ name: "cached-plugin", id: "cached@m" })]),
+    );
+    m.listInstalled.mockRejectedValueOnce("Command timed out after 90s");
+    renderPage();
+    expect(
+      await screen.findByText("Command timed out after 90s"),
+    ).toBeInTheDocument();
+
+    const retry = deferred<PluginEntry[]>();
+    m.listInstalled.mockReturnValue(retry.promise);
+    await userEvent.click(screen.getByRole("button", { name: "common.retry" }));
+    expect(await screen.findByText("pluginsPage.loading")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Command timed out after 90s"),
+    ).not.toBeInTheDocument();
+
+    await act(async () => retry.resolve([plugin()]));
+    expect(await screen.findByText("frontend-design")).toBeInTheDocument();
   });
 
   it("prefetches the other app and switches to it", async () => {
@@ -837,6 +901,120 @@ describe("PluginsPage", () => {
     await waitFor(() =>
       expect(m.install).toHaveBeenCalledWith("pi", "npm:pi-review"),
     );
+  });
+
+  it("removes a previously pinned Pi package from Discover after uninstall and reinstall", async () => {
+    const pinnedInstalled = plugin({
+      id: "npm:pi-pinned@1.0.0",
+      name: "pi-pinned",
+      catalogId: "npm:pi-pinned",
+      marketplace: "",
+      scope: null,
+    });
+    const catalogEntry = catalogItem({
+      id: "npm:pi-pinned",
+      name: "pi-pinned",
+      marketplace: "",
+      description: "Pinned package",
+    });
+    m.listInstalled.mockResolvedValue([pinnedInstalled]);
+    m.listCatalog.mockResolvedValue([catalogEntry]);
+    m.uninstall.mockResolvedValue({ changed: true });
+    m.install.mockResolvedValue({ changed: true });
+
+    renderPage({ apps: ["pi"] });
+    await screen.findByText("pi-pinned");
+
+    // 卸载固定版本的包，对账返回空列表
+    m.listInstalled.mockResolvedValue([]);
+    await userEvent.click(
+      screen.getByRole("button", { name: "pluginsPage.moreActions" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: "pluginsPage.uninstall" }),
+    );
+    const uninstallDialog = await screen.findByRole("dialog");
+    await userEvent.click(
+      within(uninstallDialog).getByRole("button", {
+        name: "pluginsPage.uninstall",
+      }),
+    );
+    await waitFor(() =>
+      expect(m.uninstall).toHaveBeenCalledWith("pi", "npm:pi-pinned@1.0.0"),
+    );
+
+    // 切到「发现」能看到它；重新安装后立刻消失，且对账返回不带版本的 npm:pi-pinned 后仍留在已安装
+    await userEvent.click(
+      screen.getByRole("tab", { name: "pluginsPage.viewDiscoverCount" }),
+    );
+    expect(await screen.findByText("pi-pinned")).toBeInTheDocument();
+
+    m.listInstalled.mockResolvedValue([
+      plugin({
+        id: "npm:pi-pinned",
+        name: "pi-pinned",
+        catalogId: null,
+        marketplace: "",
+        scope: null,
+      }),
+    ]);
+    await userEvent.click(
+      screen.getByRole("button", { name: "pluginsPage.install" }),
+    );
+    const installDialog = await screen.findByRole("dialog");
+    await userEvent.click(
+      within(installDialog).getByRole("button", { name: "pluginsPage.install" }),
+    );
+    await waitFor(() =>
+      expect(m.install).toHaveBeenCalledWith("pi", "npm:pi-pinned"),
+    );
+    await waitFor(() =>
+      expect(screen.queryByText("pi-pinned")).not.toBeInTheDocument(),
+    );
+    // 目录没有因为装卸被重读
+    expect(m.listCatalog).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the in-flight spinner and disabled controls when switching apps and back", async () => {
+    const updating = deferred<{ changed: boolean }>();
+    m.update.mockReturnValue(updating.promise);
+    m.listInstalled.mockImplementation(async (app) =>
+      app === "codex"
+        ? [plugin({ id: "studio@mkt", name: "studio", enabled: false })]
+        : [plugin()],
+    );
+    renderPage({ apps: ["codex", "claude"] });
+    await screen.findByText("studio");
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "pluginsPage.moreActions" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: "pluginsPage.update" }),
+    );
+    expect(screen.getByLabelText("pluginsPage.working")).toBeInTheDocument();
+    expect(await enableSwitch()).toBeDisabled();
+
+    // 切到 Claude Code：不会把 Codex 的转圈带过去
+    await userEvent.click(screen.getByRole("button", { name: /Claude Code/ }));
+    await screen.findByText("frontend-design");
+    expect(
+      screen.queryByLabelText("pluginsPage.working"),
+    ).not.toBeInTheDocument();
+
+    // 切回 Codex：转圈仍在，开关仍禁用，不能在中途重新启用
+    await userEvent.click(screen.getByRole("button", { name: /Codex/ }));
+    await screen.findByText("studio");
+    expect(screen.getByLabelText("pluginsPage.working")).toBeInTheDocument();
+    expect(await enableSwitch()).toBeDisabled();
+
+    await act(async () => updating.resolve({ changed: true }));
+    await waitFor(() =>
+      expect(
+        screen.queryByLabelText("pluginsPage.working"),
+      ).not.toBeInTheDocument(),
+    );
+    expect(await enableSwitch()).toBeEnabled();
   });
 
   it("offers no update for apps without an update command", async () => {

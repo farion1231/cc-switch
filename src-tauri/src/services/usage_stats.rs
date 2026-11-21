@@ -649,9 +649,14 @@ fn merged_reasoning_suffixes_for_filter(
     Ok(matched)
 }
 
+fn strip_model_prefix_sql(expr: &str) -> String {
+    format!("REPLACE(TRIM({expr}), RTRIM(TRIM({expr}), REPLACE(TRIM({expr}), '/', '')), '')")
+}
+
 /// 跨来源去重的模型匹配条件。
 ///
-/// 常规路径按上游回显模型匹配。仅 Codex 会话允许再匹配代理记录的请求模型：
+/// 常规路径按上游回显模型匹配（支持剥离 `provider/` 等命名空间前缀，如 `antigravity/`）。
+/// 仅 Codex 会话允许再匹配代理记录的请求模型：
 /// Codex rollout 保留客户端别名，而代理 `model` 可能已被映射为实际上游模型。
 /// 空白或 `unknown` 请求模型不能放宽匹配，避免无有效别名时扩大启发式去重范围。
 fn session_proxy_model_match_sql(
@@ -661,17 +666,25 @@ fn session_proxy_model_match_sql(
     session_app_type: &str,
     session_data_source: &str,
 ) -> String {
+    let p_model = strip_model_prefix_sql(proxy_model);
+    let s_model = strip_model_prefix_sql(session_model);
+    let p_req_model = strip_model_prefix_sql(proxy_request_model);
     format!(
         "(
-            LOWER({proxy_model}) = LOWER({session_model})
-            OR LOWER({proxy_model}) = 'unknown'
-            OR LOWER({session_model}) = 'unknown'
+            (
+                NULLIF({p_model}, '') IS NOT NULL
+                AND NULLIF({s_model}, '') IS NOT NULL
+                AND LOWER({p_model}) = LOWER({s_model})
+            )
+            OR LOWER(TRIM({proxy_model})) = 'unknown'
+            OR LOWER(TRIM({session_model})) = 'unknown'
             OR (
                 {session_app_type} = 'codex'
                 AND {session_data_source} = 'codex_session'
-                AND NULLIF(TRIM({proxy_request_model}), '') IS NOT NULL
-                AND LOWER(TRIM({proxy_request_model})) <> 'unknown'
-                AND LOWER(TRIM({proxy_request_model})) = LOWER(TRIM({session_model}))
+                AND NULLIF({p_req_model}, '') IS NOT NULL
+                AND LOWER({p_req_model}) <> 'unknown'
+                AND NULLIF({s_model}, '') IS NOT NULL
+                AND LOWER({p_req_model}) = LOWER({s_model})
             )
         )"
     )
@@ -2702,6 +2715,14 @@ fn model_pricing_candidates(model_id: &str) -> Vec<PricingCandidate> {
                 allow_prefix_match: false,
             });
         }
+        // AGY records "Claude Opus 4.6 (Thinking)" as `claude-opus-4.6-thinking`. Extended
+        // thinking is billed at the model's own rates, so price it exactly like the base
+        // Claude ID, including the usual short-ID-to-dated-row match (Sonnet 4.5 only has a
+        // dated row). Only Claude: other `-thinking` IDs (such as `kimi-k2-thinking`) are
+        // separately priced models.
+        if let Some(stripped) = strip_claude_thinking_suffix(&candidate) {
+            push_derived(&mut queue, stripped);
+        }
     }
 
     candidates
@@ -2918,6 +2939,16 @@ fn strip_gemini_flash_tiered_suffix(model_id: &str) -> Option<String> {
             .split('.')
             .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit())))
     .then(|| format!("gemini-{version}-flash"))
+}
+
+fn strip_claude_thinking_suffix(model_id: &str) -> Option<String> {
+    if !model_id.starts_with("claude-")
+        || strip_claude_desktop_non_anthropic_prefix(model_id).is_some()
+    {
+        return None;
+    }
+    let base = model_id.strip_suffix("-thinking")?;
+    (base.len() > "claude-".len()).then(|| base.to_string())
 }
 
 fn should_try_pricing_prefix_match(model_id: &str) -> bool {
@@ -3449,6 +3480,221 @@ mod tests {
             params!["gpt-5.6-sol-joybuilder", "codex-proxy-alias"],
         )?;
         assert!(!has_matching_proxy_usage_log(&conn, &key)?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_matching_proxy_log_matches_codex_prefix_model() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+        insert_usage_log(
+            &conn,
+            "codex-proxy-prefix",
+            "codex",
+            "provider-cpa",
+            "antigravity/gemini-3.8-flash-high",
+            "proxy",
+            1_000,
+            2_341,
+            228,
+            116_000,
+            0,
+            200,
+            "0.08",
+        )?;
+        conn.execute(
+            "UPDATE proxy_request_logs SET request_model = ?1 WHERE request_id = ?2",
+            params!["antigravity/gemini-3.8-flash-high", "codex-proxy-prefix"],
+        )?;
+
+        // 会话日志经过 normalize_codex_model 剥离了前缀
+        let key = DedupKey {
+            app_type: "codex",
+            data_source: "codex_session",
+            model: "gemini-3.8-flash-high",
+            input_tokens: 2_341,
+            output_tokens: 228,
+            cache_read_tokens: 116_000,
+            cache_creation_tokens: 0,
+            created_at: 1_001,
+        };
+
+        assert!(has_matching_proxy_usage_log(&conn, &key)?);
+        assert!(should_skip_session_insert(
+            &conn,
+            "codex-session-prefix",
+            &key
+        )?);
+
+        // 如果代理的 request_model 带有前缀，而实际 model 被路由改写，也能识别
+        conn.execute(
+            "UPDATE proxy_request_logs SET model = ?1, request_model = ?2 WHERE request_id = ?3",
+            params![
+                "upstream-routed-model",
+                "antigravity/gemini-3.8-flash-high",
+                "codex-proxy-prefix"
+            ],
+        )?;
+        assert!(has_matching_proxy_usage_log(&conn, &key)?);
+
+        // 多级前缀在 request_model 回退分支中也能正确识别
+        conn.execute(
+            "UPDATE proxy_request_logs SET model = ?1, request_model = ?2 WHERE request_id = ?3",
+            params![
+                "upstream-routed-model",
+                "cpa/antigravity/gemini-3.8-flash-high",
+                "codex-proxy-prefix"
+            ],
+        )?;
+        assert!(has_matching_proxy_usage_log(&conn, &key)?);
+
+        // request_model 剥离前缀后为 unknown 时不放宽匹配
+        conn.execute(
+            "UPDATE proxy_request_logs SET model = ?1, request_model = ?2 WHERE request_id = ?3",
+            params!["upstream-routed-model", "cpa/unknown", "codex-proxy-prefix"],
+        )?;
+        assert!(!has_matching_proxy_usage_log(&conn, &key)?);
+
+        // 多级前缀（如 cpa/antigravity/gemini-3.8-flash-high）同样与最后一个 '/' 之后的模型对齐
+        conn.execute(
+            "UPDATE proxy_request_logs SET model = ?1, request_model = ?1 WHERE request_id = ?2",
+            params![
+                "cpa/antigravity/gemini-3.8-flash-high",
+                "codex-proxy-prefix"
+            ],
+        )?;
+        assert!(has_matching_proxy_usage_log(&conn, &key)?);
+        assert!(should_skip_session_insert(
+            &conn,
+            "codex-session-prefix",
+            &key
+        )?);
+
+        // 模型名不同则不误伤
+        let mut different_model = key;
+        different_model.model = "gemini-2.5-pro";
+        assert!(!has_matching_proxy_usage_log(&conn, &different_model)?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_effective_filter_dedups_codex_prefix_model() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+        insert_usage_log(
+            &conn,
+            "codex-proxy-prefix",
+            "codex",
+            "provider-cpa",
+            "antigravity/gemini-3.8-flash-high",
+            "proxy",
+            1_000,
+            2_341,
+            228,
+            116_000,
+            0,
+            200,
+            "0.08",
+        )?;
+        conn.execute(
+            "UPDATE proxy_request_logs SET request_model = ?1 WHERE request_id = ?2",
+            params!["antigravity/gemini-3.8-flash-high", "codex-proxy-prefix"],
+        )?;
+        insert_usage_log(
+            &conn,
+            "codex-session-prefix",
+            "codex",
+            "_codex_session",
+            "gemini-3.8-flash-high",
+            "codex_session",
+            1_001,
+            2_341,
+            228,
+            116_000,
+            0,
+            200,
+            "0.08",
+        )?;
+
+        let filter = effective_usage_log_filter("l");
+        let sql = format!(
+            "SELECT request_id FROM proxy_request_logs l WHERE {filter} ORDER BY request_id"
+        );
+        let request_ids = conn
+            .prepare(&sql)?
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(request_ids, vec!["codex-proxy-prefix".to_string()]);
+
+        // range filter (JOIN 路径) 同样正确去重
+        let range_filter = effective_usage_log_filter_for_range(&conn, "l", None, None)?;
+        let range_sql = format!(
+            "SELECT request_id FROM proxy_request_logs l WHERE {range_filter} ORDER BY request_id"
+        );
+        let range_ids = conn
+            .prepare(&range_sql)?
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(range_ids, vec!["codex-proxy-prefix".to_string()]);
+
+        // 多级前缀在单行过滤与 range JOIN 中也能正确去重
+        conn.execute(
+            "UPDATE proxy_request_logs SET model = ?1, request_model = ?1 WHERE request_id = ?2",
+            params![
+                "cpa/antigravity/gemini-3.8-flash-high",
+                "codex-proxy-prefix"
+            ],
+        )?;
+        let filter = effective_usage_log_filter("l");
+        let sql = format!(
+            "SELECT request_id FROM proxy_request_logs l WHERE {filter} ORDER BY request_id"
+        );
+        let request_ids = conn
+            .prepare(&sql)?
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(request_ids, vec!["codex-proxy-prefix".to_string()]);
+
+        let range_filter = effective_usage_log_filter_for_range(&conn, "l", None, None)?;
+        let range_sql = format!(
+            "SELECT request_id FROM proxy_request_logs l WHERE {range_filter} ORDER BY request_id"
+        );
+        let range_ids = conn
+            .prepare(&range_sql)?
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(range_ids, vec!["codex-proxy-prefix".to_string()]);
+
+        // 当代理的 model 被上游路由改写、依赖多级 request_model 回退去重时，单行过滤与 range JOIN 同样正确去重
+        conn.execute(
+            "UPDATE proxy_request_logs SET model = ?1, request_model = ?2 WHERE request_id = ?3",
+            params![
+                "upstream-routed-model",
+                "cpa/antigravity/gemini-3.8-flash-high",
+                "codex-proxy-prefix"
+            ],
+        )?;
+        let filter = effective_usage_log_filter("l");
+        let sql = format!(
+            "SELECT request_id FROM proxy_request_logs l WHERE {filter} ORDER BY request_id"
+        );
+        let request_ids = conn
+            .prepare(&sql)?
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(request_ids, vec!["codex-proxy-prefix".to_string()]);
+
+        let range_filter = effective_usage_log_filter_for_range(&conn, "l", None, None)?;
+        let range_sql = format!(
+            "SELECT request_id FROM proxy_request_logs l WHERE {range_filter} ORDER BY request_id"
+        );
+        let range_ids = conn
+            .prepare(&range_sql)?
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(range_ids, vec!["codex-proxy-prefix".to_string()]);
 
         Ok(())
     }
@@ -6344,6 +6590,135 @@ mod tests {
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         )?;
         assert_eq!(totals, (3, 3_000_000, 300_000, 3_000_000));
+        Ok(())
+    }
+
+    #[test]
+    fn test_claude_thinking_pricing_matches_base_model() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+        let opus = find_model_pricing_row(&conn, "claude-opus-4-6")?;
+        let sonnet = find_model_pricing_row(&conn, "claude-sonnet-4-6")?;
+        assert!(opus.is_some() && sonnet.is_some());
+        for model in [
+            "claude-opus-4.6-thinking",
+            "claude-opus-4-6-thinking",
+            "models/claude-opus-4.6-thinking",
+            "anthropic.claude-opus-4-6-thinking",
+        ] {
+            assert_eq!(find_model_pricing_row(&conn, model)?, opus, "{model}");
+        }
+        for model in ["claude-sonnet-4.6-thinking", "claude-sonnet-4-6-thinking"] {
+            assert_eq!(find_model_pricing_row(&conn, model)?, sonnet, "{model}");
+        }
+        // A thinking variant resolves exactly like its base ID, including bases that only
+        // have a dated row (short ID -> dated row is the normal Claude lookup).
+        for base in [
+            "claude-opus-4-1",
+            "claude-opus-4-5",
+            "claude-opus-4-6",
+            "claude-opus-4-8",
+            "claude-opus-5-5",
+            "claude-sonnet-4-5",
+            "claude-sonnet-4-6",
+            "claude-haiku-4-5",
+        ] {
+            let expected = find_model_pricing_row(&conn, base)?;
+            assert!(expected.is_some(), "{base}");
+            let dotted = format!("{}.{}", &base[..base.len() - 2], &base[base.len() - 1..]);
+            for model in [format!("{base}-thinking"), format!("{dotted}-thinking")] {
+                assert_eq!(find_model_pricing_row(&conn, &model)?, expected, "{model}");
+            }
+        }
+
+        // Other `-thinking` models are separately priced; never strip them to a base ID.
+        let kimi_thinking = query_model_pricing_exact(&conn, "kimi-k2-thinking")?;
+        assert!(kimi_thinking.is_some());
+        assert_ne!(kimi_thinking, query_model_pricing_exact(&conn, "kimi-k2")?);
+        for model in ["kimi-k2-thinking", "claude-kimi-k2-thinking"] {
+            assert_eq!(
+                find_model_pricing_row(&conn, model)?,
+                kimi_thinking,
+                "{model}"
+            );
+        }
+        assert_eq!(
+            strip_claude_thinking_suffix("claude-kimi-k2-thinking"),
+            None
+        );
+        assert_eq!(strip_claude_thinking_suffix("claude-thinking"), None);
+
+        // An exact custom thinking price still wins over the base estimate.
+        conn.execute(
+            "INSERT INTO model_pricing VALUES ('claude-opus-4-6-thinking',
+             'Custom Opus 4.6 Thinking', '9', '45', '0.9', '11.25')",
+            [],
+        )?;
+        assert_eq!(
+            find_model_pricing_row(&conn, "claude-opus-4.6-thinking")?,
+            Some(("9".into(), "45".into(), "0.9".into(), "11.25".into()))
+        );
+
+        // Unknown Claude versions stay unpriced instead of borrowing another family's price.
+        assert!(find_model_pricing_row(&conn, "claude-opus-9-9-thinking")?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn test_claude_thinking_backfills_without_transcripts() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            for (id, model, cost) in [
+                ("thinking-history", "claude-opus-4.6-thinking", "0"),
+                ("already-priced", "claude-opus-4.6-thinking", "9"),
+            ] {
+                insert_usage_log(
+                    &conn,
+                    id,
+                    "agy",
+                    "_agy_session",
+                    model,
+                    "agy_session",
+                    1000,
+                    1_000_000,
+                    100_000,
+                    1_000_000,
+                    0,
+                    200,
+                    cost,
+                )?;
+            }
+            conn.execute(
+                "UPDATE proxy_request_logs SET request_model='Claude Opus 4.6 (Thinking)',
+                 input_token_semantics=?1",
+                [INPUT_TOKEN_SEMANTICS_FRESH],
+            )?;
+        }
+        // Updating the base Opus 4.6 price must reach the retained thinking row.
+        assert_eq!(
+            db.backfill_missing_usage_costs_for_model("claude-opus-4-6")?,
+            1
+        );
+        assert_eq!(db.backfill_missing_usage_costs()?, 0);
+        let conn = lock_conn!(db.conn);
+        for (id, expected) in [("thinking-history", "8.000000"), ("already-priced", "9")] {
+            let row: (String, String, String) = conn.query_row(
+                "SELECT model, request_model, total_cost_usd FROM proxy_request_logs
+                 WHERE request_id=?1",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )?;
+            assert_eq!(
+                row,
+                (
+                    "claude-opus-4.6-thinking".into(),
+                    "Claude Opus 4.6 (Thinking)".into(),
+                    expected.into(),
+                ),
+                "{id}"
+            );
+        }
         Ok(())
     }
 

@@ -202,6 +202,8 @@
       "extraArgsPlaceholder": "e.g. --debug --append-system-prompt \"Be brief\"",
       "extraArgsHint": "Added after the launch command, for this terminal only. Separate with spaces; quote values that contain spaces.",
       "agySwitchTitle": "This switches agy's sign-in",
+      "agyBindingMissing": "The Antigravity account bound to this card is missing on this computer. Add it in Auth Center or use agy's current sign-in for this launch.",
+      "agyUseCurrentLogin": "Use agy's current sign-in for this launch",
       "agySwitchBody": "Before opening, agy's sign-in switches to {{account}}, and agy sessions started afterwards use this account.",
       "agySwitchRunning": "agy is running: open agy sessions keep the previous account and may write it back. Quit them first if you can.",
       "isolationBodyCopilot": "copilot in this terminal starts with --model set to the first model of \"{{name}}\", for this session only. The endpoint and key come from Copilot's providers.json, so other terminals can pick it with /model too."
@@ -318,7 +320,7 @@
     "supports1mShort": "1M",
     "directModelListTitle": "Model List",
     "directModelListCollapsedHint": "Native Claude model providers usually do not need this. Claude Desktop will fetch /v1/models automatically.",
-    "directModelListHint": "Configure the Sonnet, Opus, and Haiku models available to Claude Desktop. Leave this empty to let Claude Desktop fetch /v1/models automatically. Checking 1M declares 1M context support.",
+    "directModelListHint": "Configure the Sonnet, Opus, and Haiku models available to Claude Desktop. In direct mode, leave this empty to let Claude Desktop fetch /v1/models automatically; in route mode, an empty list only offers the default Claude model names, so fill it in to use the provider's models. Checking 1M declares 1M context support.",
     "directModelInvalid": "Direct models must use Claude Desktop-recognized Sonnet / Opus / Haiku model IDs",
     "addModel": "Add model",
     "addRoute": "Add model",
@@ -378,6 +380,7 @@
     "openclawModelNotFound": "The selected model no longer exists. Refresh and try again.",
     "backfillWarning": "Switched successfully, but failed to save changes back to the previous provider",
     "codexAuthCleanupFailed": "Switched successfully, but auth.json could not be removed — the official login credentials are still on disk; delete auth.json from the Codex config directory to remove them",
+    "omoVariantCleanupFailed": "Switched successfully, but the other OMO variant's config file (OMO / OMO Slim) could not be removed, so OpenCode may load both; delete it from the OpenCode config directory",
     "windowControlFailed": "Window control failed: {{error}}",
     "officialBlockedByProxy": "Cannot switch to official provider while local routing is active. Using routing with official APIs may cause account bans.",
     "proxyOfficialWarning": "Current provider {{name}} is official. Consider switching to a third-party provider before using local routing.",
@@ -463,8 +466,7 @@
     "tabProxy": "Routing",
     "authCenter": {
       "description": "Use GitHub Copilot, ChatGPT and xAI subscriptions as providers. The routing service injects their credentials, so these providers run in Routing mode (except Codex's official-login binding). Antigravity accounts switch agy's official sign-in.",
-      "beta": "Beta",
-      "xaiOauthDescription": "Manage xAI / Grok accounts"
+      "beta": "Beta"
     },
     "advanced": {
       "configDir": {
@@ -1121,7 +1123,6 @@
       "pricingModelSourceLabel": "Pricing Model Source",
       "pricingModelSourceRequest": "Request model",
       "pricingModelSourceResponse": "Response model",
-      "pricingSave": "Save Pricing Defaults",
       "pricingSaved": "Pricing defaults saved",
       "pricingSaveFailed": "Failed to save pricing defaults: {{error}}",
       "pricingLoadFailed": "Failed to load pricing defaults: {{error}}"
@@ -1735,6 +1736,7 @@
       "outlineFailed": "Has failed steps",
       "outlineAborted": "Interrupted",
       "outlineNoReply": "No reply",
+      "chapter": "Chapter",
       "viewOptions": "Display options",
       "noChanges": "No file changes in this session",
       "rawMatch": "Matches in source",
@@ -2936,7 +2938,6 @@
     "geminiTitle": "Gemini MCP Management",
     "unifiedPanel": {
       "title": "MCP Server Management",
-      "deleteServer": "Delete Server",
       "deleteConfirm": "Are you sure you want to delete server \"{{id}}\"? This action cannot be undone.",
       "enabledApps": "Enabled Apps",
       "importSuccess": "Successfully imported {{count}} MCP servers",
@@ -2983,28 +2984,20 @@
       "tagsPlaceholder": "stdio, time, utility",
       "homepage": "Homepage",
       "docs": "Docs",
-      "jsonPlaceholder": "{\n  \"type\": \"stdio\",\n  \"command\": \"uvx\",\n  \"args\": [\"mcp-server-fetch\"]\n}",
-      "tomlConfig": "Full TOML Configuration",
-      "tomlPlaceholder": "type = \"stdio\"\ncommand = \"uvx\"\nargs = [\"mcp-server-fetch\"]",
-      "syncOtherSide": "Mirror to {{target}}"
+      "tomlConfig": "Full TOML Configuration"
     },
     "wizard": {
       "title": "MCP Configuration Wizard",
       "hint": "Quickly configure MCP server and auto-generate JSON configuration",
       "type": "Type",
-      "typeStdio": "stdio",
-      "typeSse": "sse",
       "command": "Command",
       "commandPlaceholder": "npx or uvx",
       "args": "Arguments",
-      "argsPlaceholder": "arg1\narg2",
       "env": "Environment Variables",
-      "envPlaceholder": "KEY1=value1\nKEY2=value2",
       "url": "URL",
       "urlPlaceholder": "https://api.example.com/mcp",
       "urlRequired": "Please enter URL",
       "headers": "Headers (optional)",
-      "headersPlaceholder": "Authorization: Bearer your_token_here\nContent-Type: application/json",
       "preview": "Configuration Preview",
       "apply": "Apply Configuration"
     },
@@ -3519,6 +3512,7 @@
       "skillNotFound": "Skill not found: {{directory}}",
       "missingRepoInfo": "Missing repository info (owner or name)",
       "downloadTimeout": "Download repository {{owner}}/{{name}} timeout ({{timeout}}s)",
+      "downloadStalled": "Download of repository {{owner}}/{{name}} stalled: no data received for {{timeout}}s",
       "skillDirNotFound": "Skill directory not found: {{path}}",
       "directoryConflict": "Skill directory '{{directory}}' is already occupied by {{existing_repo}}, cannot install from {{new_repo}}",
       "emptyArchive": "Downloaded archive is empty",
@@ -3527,7 +3521,6 @@
       "archiveDownloadTooLarge": "Repository archive download exceeds the {{limit_mb}} MB limit; aborted",
       "archiveTooManyEntries": "Archive has too many entries ({{count}}); the limit is {{limit}}",
       "downloadFailed": "Download failed: HTTP {{status}}",
-      "httpError": "HTTP error {{status}}",
       "http403": "GitHub access restricted, possibly rate limited",
       "http404": "Repository or branch not found, please check URL. Private repositories need an access token set in Manage Skill Repositories first",
       "http429": "Too many requests, please wait and retry",
@@ -3540,7 +3533,6 @@
       "repoTokenStorageFailed": "Couldn't read or write the access token for {{host}}. Check that the system credential store is available",
       "getHomeDirFailed": "Unable to get user home directory",
       "noSkillsInZip": "No skills found in ZIP file (requires SKILL.md file)",
-      "networkError": "Network error",
       "unknownError": "Unknown error",
       "suggestion": {
         "checkNetwork": "Please check network connection",
@@ -3770,7 +3762,6 @@
       "repo": "GitHub Repository",
       "directory": "Target Directory",
       "branch": "Branch",
-      "skillsPath": "Skills Path",
       "hint": "This will add the Skill repository to the list.",
       "hintDetail": "After adding, you can install specific Skills from the Skills management page."
     },
@@ -3867,7 +3858,6 @@
   },
   "proxy": {
     "panel": {
-      "currentProvider": "Current Provider:",
       "openSettings": "Configure Routing Service",
       "stats": {
         "activeConnections": "Active Connections",
@@ -3928,10 +3918,6 @@
           "label": "Non-Streaming Timeout (sec)",
           "description": "Total timeout for non-streaming requests"
         }
-      },
-      "validation": {
-        "retryMin": "Retry count cannot be negative",
-        "retryMax": "Retry count cannot exceed 10"
       },
       "actions": {
         "save": "Save Configuration"
@@ -4353,6 +4339,7 @@
     "usage": "Usage",
     "auth": "Accounts",
     "authNeedsReauth": "An account needs to sign in again",
+    "skills": "Skills",
     "prompts": "Prompts",
     "sessions": "Sessions",
     "apps": "Apps",
@@ -4786,7 +4773,7 @@
       "failedTitle": "Some apps couldn't be read",
       "filesTitle": "Which files were read",
       "claudeNote": " (top-level mcpServers)",
-      "dshNote": " (written to every initialized profile: web, desktop, headless, acp)",
+      "dshNote": " (written to every initialized profile: web, desktop, headless, acp. The home-level ~/.dsh/cordis.patch.yml is neither read nor written; manage the MCP servers in it there)",
       "ok": "Got it"
     },
     "templateLabels": {
@@ -5423,5 +5410,11 @@
     "installFailed": "Update installation failed",
     "downloadingInline": "Downloading the new version in the background…",
     "downloadedInline": "Downloaded"
+  },
+  "unreadableEntry": {
+    "title": "“{{name}}” can't be read",
+    "hint": "It may have been saved by a newer version of CC Switch. The stored data is kept as is and can't be edited or enabled; upgrading restores it, or you can delete it.",
+    "confirmTitle": "Delete unreadable entry",
+    "confirmMessage": "Delete “{{name}}”? Only this CC Switch record is removed; the apps' own config files are not changed."
   }
 }
