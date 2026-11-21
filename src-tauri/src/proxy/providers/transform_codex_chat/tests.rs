@@ -3804,6 +3804,7 @@ fn chat_response_to_responses_maps_text_tool_calls_and_usage() {
         "I should check the weather before answering."
     );
     assert_eq!(result["output"][1]["type"], "message");
+    assert_eq!(result["output"][1]["id"], "msg_chatcmpl_1");
     assert_eq!(result["output"][1]["content"][0]["text"], "Let me check.");
     assert_eq!(result["output"][2]["type"], "function_call");
     assert_eq!(result["output"][2]["call_id"], "call_1");
@@ -3818,6 +3819,29 @@ fn chat_response_to_responses_maps_text_tool_calls_and_usage() {
         result["usage"]["input_tokens_details"]["cache_write_tokens"],
         2
     );
+}
+
+#[test]
+fn message_item_ids_use_msg_prefix() {
+    // Regression test for #9054: deriving the message item ID as
+    // `{response_id}_msg` yields `resp_..._msg`, which strict Responses
+    // upstreams reject with `invalid_id_prefix` when the stored thread is
+    // replayed under an official/native provider.
+    assert_eq!(
+        response_message_item_id("resp_chatcmpl_1"),
+        "msg_chatcmpl_1"
+    );
+    assert_eq!(
+        response_message_item_id("resp_8dd313c3703bd26593ad5912844d12f8"),
+        "msg_8dd313c3703bd26593ad5912844d12f8"
+    );
+    assert_eq!(
+        response_message_item_id_indexed("resp_msg_1", 0),
+        "msg_msg_1_0"
+    );
+    // IDs without a `resp_` prefix still gain the required `msg_` prefix.
+    assert_eq!(response_message_item_id("resp_ccswitch"), "msg_ccswitch");
+    assert_eq!(response_message_item_id("ccswitch"), "msg_ccswitch");
 }
 
 #[test]
@@ -4665,4 +4689,647 @@ fn developer_resize_notice_between_call_and_output_preserves_commentary_merge() 
     assert_eq!(messages[2]["tool_calls"].as_array().unwrap().len(), 1);
     assert_eq!(messages[2]["tool_calls"][0]["id"], "call_0");
     assert_eq!(messages[3]["tool_call_id"], "call_0");
+}
+
+#[tokio::test]
+async fn colliding_namespace_boundaries_preserve_both_tools_and_round_trip_everywhere() {
+    use bytes::Bytes;
+    use futures::{stream, StreamExt};
+
+    let request = json!({
+        "model": "gpt-5.4",
+        "tools": [
+            {
+                "type": "namespace",
+                "name": "a__b",
+                "tools": [{
+                    "type": "function",
+                    "name": "c",
+                    "description": "Tool from namespace a__b.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": { "from_ab": { "type": "string" } },
+                        "required": ["from_ab"]
+                    }
+                }]
+            },
+            {
+                "type": "namespace",
+                "name": "a",
+                "tools": [{
+                    "type": "function",
+                    "name": "b__c",
+                    "description": "Tool from namespace a.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": { "from_a": { "type": "integer" } },
+                        "required": ["from_a"]
+                    }
+                }]
+            }
+        ],
+        "input": [
+            {
+                "type": "message",
+                "role": "user",
+                "content": "Start."
+            },
+            {
+                "type": "function_call",
+                "call_id": "hist_ab",
+                "namespace": "a__b",
+                "name": "c",
+                "arguments": "{\"from_ab\":\"hello\"}"
+            },
+            {
+                "type": "function_call_output",
+                "call_id": "hist_ab",
+                "output": "ok_ab"
+            },
+            {
+                "type": "function_call",
+                "call_id": "hist_a",
+                "namespace": "a",
+                "name": "b__c",
+                "arguments": "{\"from_a\":42}"
+            },
+            {
+                "type": "function_call_output",
+                "call_id": "hist_a",
+                "output": "ok_a"
+            },
+            {
+                "type": "message",
+                "role": "user",
+                "content": "Invoke both tools."
+            }
+        ]
+    });
+
+    let tool_context = build_codex_tool_context_from_request(&request);
+    let chat_req =
+        responses_to_chat_completions_with_reasoning(request.clone(), None, true).unwrap();
+    let tools = chat_req["tools"].as_array().expect("tools array");
+    assert_eq!(
+        tools.len(),
+        2,
+        "neither colliding namespace tool may be dropped"
+    );
+
+    let chat_name_ab = tools[0]["function"]["name"].as_str().unwrap();
+    let chat_name_a = tools[1]["function"]["name"].as_str().unwrap();
+    assert_ne!(chat_name_ab, chat_name_a);
+    for name in [chat_name_ab, chat_name_a] {
+        assert!(!name.is_empty() && name.len() <= CHAT_TOOL_NAME_MAX_LEN);
+        assert!(
+            name.chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-'),
+            "invalid chat tool name: {name}"
+        );
+    }
+
+    // Distinct schemas & descriptions preserved
+    assert_eq!(
+        tools[0]["function"]["description"],
+        "Tool from namespace a__b."
+    );
+    assert!(tools[0]["function"]["parameters"]["properties"]
+        .get("from_ab")
+        .is_some());
+    assert_eq!(
+        tools[1]["function"]["description"],
+        "Tool from namespace a."
+    );
+    assert!(tools[1]["function"]["parameters"]["properties"]
+        .get("from_a")
+        .is_some());
+
+    // Historical assistant function_call items map to each tool's disambiguated chat_name
+    assert_eq!(
+        chat_req["messages"][1]["tool_calls"][0]["function"]["name"],
+        chat_name_ab
+    );
+    assert_eq!(
+        chat_req["messages"][3]["tool_calls"][0]["function"]["name"],
+        chat_name_a
+    );
+
+    // Non-streaming Chat response round-trip
+    let chat_resp = json!({
+        "id": "chatcmpl_ns_collide",
+        "created": 1700000000,
+        "model": "gpt-5.4",
+        "choices": [{
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": null,
+                "tool_calls": [
+                    {
+                        "id": "call_out_ab",
+                        "type": "function",
+                        "function": {
+                            "name": chat_name_ab,
+                            "arguments": "{\"from_ab\":\"world\"}"
+                        }
+                    },
+                    {
+                        "id": "call_out_a",
+                        "type": "function",
+                        "function": {
+                            "name": chat_name_a,
+                            "arguments": "{\"from_a\":7}"
+                        }
+                    }
+                ]
+            },
+            "finish_reason": "tool_calls"
+        }]
+    });
+    let restored = chat_completion_to_response_with_context(chat_resp, &tool_context).unwrap();
+    assert_eq!(restored["output"][0]["type"], "function_call");
+    assert_eq!(restored["output"][0]["namespace"], "a__b");
+    assert_eq!(restored["output"][0]["name"], "c");
+    assert_eq!(restored["output"][1]["type"], "function_call");
+    assert_eq!(restored["output"][1]["namespace"], "a");
+    assert_eq!(restored["output"][1]["name"], "b__c");
+
+    // Anthropic request + non-streaming response round-trip
+    let anth_req =
+        super::super::transform_codex_anthropic::responses_request_to_anthropic(request, 4096)
+            .unwrap();
+    let anth_tools = anth_req["tools"].as_array().unwrap();
+    assert_eq!(anth_tools.len(), 2);
+    assert_eq!(anth_tools[0]["name"], chat_name_ab);
+    assert_eq!(anth_tools[1]["name"], chat_name_a);
+    assert_eq!(anth_req["messages"][1]["content"][0]["name"], chat_name_ab);
+    assert_eq!(anth_req["messages"][3]["content"][0]["name"], chat_name_a);
+    let anth_resp = json!({
+        "id": "msg_ns_collide",
+        "type": "message",
+        "role": "assistant",
+        "model": "claude-sonnet-4-6",
+        "stop_reason": "tool_use",
+        "content": [
+            {
+                "type": "tool_use",
+                "id": "toolu_ab",
+                "name": chat_name_ab,
+                "input": { "from_ab": "anth" }
+            },
+            {
+                "type": "tool_use",
+                "id": "toolu_a",
+                "name": chat_name_a,
+                "input": { "from_a": 99 }
+            }
+        ],
+        "usage": { "input_tokens": 10, "output_tokens": 5 }
+    });
+    let anth_restored =
+        super::super::transform_codex_anthropic::anthropic_response_to_responses_with_context(
+            anth_resp,
+            &tool_context,
+        )
+        .unwrap();
+    assert_eq!(anth_restored["output"][0]["namespace"], "a__b");
+    assert_eq!(anth_restored["output"][0]["name"], "c");
+    assert_eq!(anth_restored["output"][1]["namespace"], "a");
+    assert_eq!(anth_restored["output"][1]["name"], "b__c");
+
+    // Streaming Chat SSE round-trip
+    let chunk_1 = format!(
+        "data: {}\n\n",
+        json!({
+            "id": "chatcmpl_stream_ns",
+            "created": 1700000000,
+            "model": "gpt-5.4",
+            "choices": [{
+                "index": 0,
+                "delta": {
+                    "tool_calls": [
+                        {
+                            "index": 0,
+                            "id": "call_s_ab",
+                            "type": "function",
+                            "function": { "name": chat_name_ab, "arguments": "{\"from_ab\":\"s\"}" }
+                        },
+                        {
+                            "index": 1,
+                            "id": "call_s_a",
+                            "type": "function",
+                            "function": { "name": chat_name_a, "arguments": "{\"from_a\":1}" }
+                        }
+                    ]
+                },
+                "finish_reason": "tool_calls"
+            }]
+        })
+    );
+    let chunks: Vec<Result<Bytes, std::io::Error>> = vec![
+        Ok(Bytes::from(chunk_1)),
+        Ok(Bytes::from_static(b"data: [DONE]\n\n")),
+    ];
+    let sse_stream =
+        super::super::streaming_codex_chat::create_responses_sse_stream_from_chat_with_context(
+            stream::iter(chunks),
+            tool_context,
+        );
+    let raw_bytes: Vec<Bytes> = sse_stream.map(|frame| frame.unwrap()).collect().await;
+    let sse_text = String::from_utf8(raw_bytes.concat()).unwrap();
+    let events: Vec<Value> = sse_text
+        .split("\n\n")
+        .filter_map(|block| {
+            let data = block.lines().find_map(|line| line.strip_prefix("data: "))?;
+            serde_json::from_str(data).ok()
+        })
+        .collect();
+    let completed = events
+        .iter()
+        .find(|ev| ev["type"] == "response.completed")
+        .expect("response.completed event");
+    assert_eq!(completed["response"]["output"][0]["namespace"], "a__b");
+    assert_eq!(completed["response"]["output"][0]["name"], "c");
+    assert_eq!(completed["response"]["output"][1]["namespace"], "a");
+    assert_eq!(completed["response"]["output"][1]["name"], "b__c");
+}
+
+#[test]
+fn top_level_and_namespaced_tool_collision_round_trips_in_both_declaration_orders() {
+    let top_level_tool = json!({
+        "type": "function",
+        "name": "files__read",
+        "description": "Top-level files__read.",
+        "parameters": {
+            "type": "object",
+            "properties": { "top_path": { "type": "string" } }
+        }
+    });
+    let namespaced_tool = json!({
+        "type": "namespace",
+        "name": "files",
+        "tools": [{
+            "type": "function",
+            "name": "read",
+            "description": "Namespaced files/read.",
+            "parameters": {
+                "type": "object",
+                "properties": { "ns_path": { "type": "string" } }
+            }
+        }]
+    });
+
+    for tools_array in [
+        vec![top_level_tool.clone(), namespaced_tool.clone()],
+        vec![namespaced_tool, top_level_tool],
+    ] {
+        let request = json!({
+            "model": "gpt-5.4",
+            "tools": tools_array,
+            "tool_choice": {
+                "type": "function",
+                "namespace": "files",
+                "name": "read"
+            },
+            "input": [
+                {
+                    "type": "function_call",
+                    "call_id": "call_top_hist",
+                    "name": "files__read",
+                    "arguments": "{\"top_path\":\"/a\"}"
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_top_hist",
+                    "output": "top_ok"
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "call_ns_hist",
+                    "namespace": "files",
+                    "name": "read",
+                    "arguments": "{\"ns_path\":\"/b\"}"
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_ns_hist",
+                    "output": "ns_ok"
+                },
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": "Run both."
+                }
+            ]
+        });
+
+        let tool_context = build_codex_tool_context_from_request(&request);
+        let chat_req = responses_to_chat_completions_with_reasoning(request, None, true).unwrap();
+        let emitted_tools = chat_req["tools"].as_array().unwrap();
+        assert_eq!(emitted_tools.len(), 2, "must emit both tools in any order");
+
+        let top_chat_name = tool_context.chat_name_for_response_function("files__read", None);
+        let ns_chat_name = tool_context.chat_name_for_response_function("read", Some("files"));
+        assert_eq!(top_chat_name, "files__read");
+        assert_ne!(top_chat_name, ns_chat_name);
+        assert!(ns_chat_name.len() <= CHAT_TOOL_NAME_MAX_LEN);
+
+        assert_eq!(chat_req["tool_choice"]["function"]["name"], ns_chat_name);
+        assert_eq!(
+            chat_req["messages"][0]["tool_calls"][0]["function"]["name"],
+            top_chat_name
+        );
+        assert_eq!(
+            chat_req["messages"][2]["tool_calls"][0]["function"]["name"],
+            ns_chat_name
+        );
+
+        let chat_resp = json!({
+            "id": "chatcmpl_order",
+            "created": 1700000001,
+            "model": "gpt-5.4",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [
+                        {
+                            "id": "c_top",
+                            "type": "function",
+                            "function": { "name": top_chat_name, "arguments": "{\"top_path\":\"/x\"}" }
+                        },
+                        {
+                            "id": "c_ns",
+                            "type": "function",
+                            "function": { "name": ns_chat_name, "arguments": "{\"ns_path\":\"/y\"}" }
+                        }
+                    ]
+                },
+                "finish_reason": "tool_calls"
+            }]
+        });
+        let restored = chat_completion_to_response_with_context(chat_resp, &tool_context).unwrap();
+        assert_eq!(restored["output"][0]["name"], "files__read");
+        assert!(restored["output"][0].get("namespace").is_none());
+        assert_eq!(restored["output"][1]["name"], "read");
+        assert_eq!(restored["output"][1]["namespace"], "files");
+    }
+}
+
+#[test]
+fn non_colliding_long_namespace_tool_preserves_legacy_flattened_name() {
+    let ns = "mcp__codex_apps__github";
+    let name = "_list_pull_request_review_comments_for_repo";
+    let expected = "mcp__codex_apps__github___list_pull_request_re__b9df71aaf1654d40";
+
+    assert_eq!(flatten_namespace_tool_name(ns, name), expected);
+
+    let request = json!({
+        "model": "gpt-5.4",
+        "tools": [{
+            "type": "namespace",
+            "name": ns,
+            "tools": [{
+                "type": "function",
+                "name": name,
+                "parameters": { "type": "object", "properties": {} }
+            }]
+        }],
+        "tool_choice": {
+            "type": "function",
+            "namespace": ns,
+            "name": name
+        },
+        "input": [
+            {
+                "type": "function_call",
+                "call_id": "call_mcp_1",
+                "namespace": ns,
+                "name": name,
+                "arguments": "{}"
+            },
+            {
+                "type": "function_call_output",
+                "call_id": "call_mcp_1",
+                "output": "[]"
+            },
+            {
+                "type": "message",
+                "role": "user",
+                "content": "List review comments."
+            }
+        ]
+    });
+
+    let tool_context = build_codex_tool_context_from_request(&request);
+    let chat_req =
+        responses_to_chat_completions_with_reasoning(request.clone(), None, true).unwrap();
+    assert_eq!(chat_req["tools"][0]["function"]["name"], expected);
+    assert_eq!(chat_req["tool_choice"]["function"]["name"], expected);
+    assert_eq!(
+        chat_req["messages"][0]["tool_calls"][0]["function"]["name"],
+        expected
+    );
+
+    let anth_req =
+        super::super::transform_codex_anthropic::responses_request_to_anthropic(request, 4096)
+            .unwrap();
+    assert_eq!(anth_req["tools"][0]["name"], expected);
+
+    let chat_resp = json!({
+        "id": "chatcmpl_mcp_long",
+        "created": 1700000003,
+        "model": "gpt-5.4",
+        "choices": [{
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": null,
+                "tool_calls": [{
+                    "id": "call_mcp_out",
+                    "type": "function",
+                    "function": { "name": expected, "arguments": "{}" }
+                }]
+            },
+            "finish_reason": "tool_calls"
+        }]
+    });
+    let restored = chat_completion_to_response_with_context(chat_resp, &tool_context).unwrap();
+    assert_eq!(restored["output"][0]["namespace"], ns);
+    assert_eq!(restored["output"][0]["name"], name);
+}
+
+#[test]
+fn long_colliding_tool_names_produce_distinct_valid_hashes_and_round_trip() {
+    let tail = "c".repeat(70);
+    let name_for_a = format!("b__{tail}");
+    let long_top_name = format!("top__{}", "z".repeat(75));
+
+    let preferred_ab = flatten_namespace_tool_name("a__b", &tail);
+    let preferred_a = flatten_namespace_tool_name("a", &name_for_a);
+    assert_eq!(preferred_ab, preferred_a);
+    assert!(preferred_ab.len() <= CHAT_TOOL_NAME_MAX_LEN);
+
+    let request = json!({
+        "model": "gpt-5.4",
+        "tools": [
+            {
+                "type": "namespace",
+                "name": "a__b",
+                "tools": [{
+                    "type": "function",
+                    "name": tail,
+                    "parameters": { "type": "object", "properties": { "k1": { "type": "string" } } }
+                }]
+            },
+            {
+                "type": "namespace",
+                "name": "a",
+                "tools": [{
+                    "type": "function",
+                    "name": name_for_a,
+                    "parameters": { "type": "object", "properties": { "k2": { "type": "string" } } }
+                }]
+            },
+            {
+                "type": "function",
+                "name": long_top_name,
+                "parameters": { "type": "object", "properties": { "k3": { "type": "string" } } }
+            }
+        ],
+        "input": [
+            {
+                "type": "function_call",
+                "call_id": "call_l1",
+                "namespace": "a__b",
+                "name": tail,
+                "arguments": "{}"
+            },
+            {
+                "type": "function_call_output",
+                "call_id": "call_l1",
+                "output": "ok1"
+            },
+            {
+                "type": "function_call",
+                "call_id": "call_l3",
+                "name": long_top_name,
+                "arguments": "{}"
+            },
+            {
+                "type": "function_call_output",
+                "call_id": "call_l3",
+                "output": "ok3"
+            },
+            {
+                "type": "message",
+                "role": "user",
+                "content": "go"
+            }
+        ]
+    });
+
+    let tool_context = build_codex_tool_context_from_request(&request);
+    let chat_req = responses_to_chat_completions_with_reasoning(request, None, true).unwrap();
+    let tools = chat_req["tools"].as_array().unwrap();
+    assert_eq!(tools.len(), 3);
+
+    let n0 = tools[0]["function"]["name"].as_str().unwrap();
+    let n1 = tools[1]["function"]["name"].as_str().unwrap();
+    let n2 = tools[2]["function"]["name"].as_str().unwrap();
+    assert_ne!(n0, n1);
+    assert_ne!(n0, n2);
+    assert_ne!(n1, n2);
+    for n in [n0, n1, n2] {
+        assert!(n.len() <= CHAT_TOOL_NAME_MAX_LEN, "len={} for {n}", n.len());
+        assert!(n
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-'));
+    }
+    assert_eq!(
+        chat_req["messages"][0]["tool_calls"][0]["function"]["name"],
+        n0
+    );
+    assert_eq!(
+        chat_req["messages"][2]["tool_calls"][0]["function"]["name"],
+        n2
+    );
+
+    let chat_resp = json!({
+        "id": "chatcmpl_long",
+        "created": 1700000002,
+        "model": "gpt-5.4",
+        "choices": [{
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": null,
+                "tool_calls": [
+                    { "id": "r0", "type": "function", "function": { "name": n0, "arguments": "{}" } },
+                    { "id": "r1", "type": "function", "function": { "name": n1, "arguments": "{}" } },
+                    { "id": "r2", "type": "function", "function": { "name": n2, "arguments": "{}" } }
+                ]
+            },
+            "finish_reason": "tool_calls"
+        }]
+    });
+    let restored = chat_completion_to_response_with_context(chat_resp, &tool_context).unwrap();
+    assert_eq!(restored["output"][0]["namespace"], "a__b");
+    assert_eq!(restored["output"][0]["name"], tail);
+    assert_eq!(restored["output"][1]["namespace"], "a");
+    assert_eq!(restored["output"][1]["name"], name_for_a);
+    assert!(restored["output"][2].get("namespace").is_none());
+    assert_eq!(restored["output"][2]["name"], long_top_name);
+}
+
+#[test]
+fn duplicate_exact_tool_identity_is_idempotent_without_panic() {
+    let request = json!({
+        "model": "gpt-5.4",
+        "tools": [
+            {
+                "type": "namespace",
+                "name": "files",
+                "tools": [
+                    {
+                        "type": "function",
+                        "name": "read",
+                        "description": "First namespaced read.",
+                        "parameters": { "type": "object", "properties": {} }
+                    },
+                    {
+                        "type": "function",
+                        "name": "read",
+                        "description": "Duplicate namespaced read.",
+                        "parameters": { "type": "object", "properties": {} }
+                    }
+                ]
+            },
+            {
+                "type": "function",
+                "name": "shell",
+                "description": "First shell.",
+                "parameters": { "type": "object", "properties": {} }
+            },
+            {
+                "type": "function",
+                "name": "shell",
+                "description": "Duplicate shell.",
+                "parameters": { "type": "object", "properties": {} }
+            }
+        ],
+        "input": "hello"
+    });
+
+    let chat_req = responses_to_chat_completions_with_reasoning(request, None, true).unwrap();
+    let tools = chat_req["tools"].as_array().unwrap();
+    assert_eq!(tools.len(), 2);
+    assert_eq!(tools[0]["function"]["name"], "files__read");
+    assert_eq!(
+        tools[0]["function"]["description"],
+        "First namespaced read."
+    );
+    assert_eq!(tools[1]["function"]["name"], "shell");
+    assert_eq!(tools[1]["function"]["description"], "First shell.");
 }
