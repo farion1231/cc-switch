@@ -12,8 +12,9 @@
 
 use super::codex_compaction;
 use super::transform_codex_chat::{
-    build_codex_tool_context_from_request, response_tool_call_item_from_chat_name,
-    response_tool_call_item_id_from_chat_name, CodexToolContext,
+    build_codex_tool_context_from_request, response_message_item_id_indexed,
+    response_tool_call_item_from_chat_name, response_tool_call_item_id_from_chat_name,
+    CodexToolContext,
 };
 use super::transform_responses::{sanitize_anthropic_tool_use_input, TOOL_RESULT_ERROR_MARKER};
 use crate::proxy::error::ProxyError;
@@ -500,10 +501,14 @@ fn map_tool_choice_to_anthropic(tool_choice: &Value, tool_context: &CodexToolCon
                 let upstream_name = tool_context.chat_name_for_response_function(name, namespace);
                 json!({ "type": "tool", "name": upstream_name })
             }
-            Some("custom") => json!({
-                "type": "tool",
-                "name": obj.get("name").and_then(|value| value.as_str()).unwrap_or("")
-            }),
+            Some("custom") => {
+                let name = obj
+                    .get("name")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("");
+                let upstream_name = tool_context.chat_name_for_response_function(name, None);
+                json!({ "type": "tool", "name": upstream_name })
+            }
             Some("tool_search") => {
                 json!({ "type": "tool", "name": TOOL_SEARCH_PROXY_NAME })
             }
@@ -594,6 +599,7 @@ fn convert_input_to_messages(
                     .get("name")
                     .and_then(|value| value.as_str())
                     .unwrap_or("");
+                let upstream_name = tool_context.chat_name_for_response_function(name, None);
                 let input = item.get("input").cloned().unwrap_or_else(|| json!(""));
                 push_block(
                     &mut messages,
@@ -601,7 +607,7 @@ fn convert_input_to_messages(
                     json!({
                         "type": "tool_use",
                         "id": call_id,
-                        "name": name,
+                        "name": upstream_name,
                         "input": { "input": input }
                     }),
                 );
@@ -1329,7 +1335,7 @@ pub(crate) fn anthropic_response_to_responses_with_context(
         if !text_parts.is_empty() {
             let idx = output.len();
             output.push(json!({
-                "id": format!("{response_id}_msg_{idx}"),
+                "id": response_message_item_id_indexed(&response_id, idx),
                 "type": "message",
                 "status": "completed",
                 "role": "assistant",
@@ -2325,6 +2331,36 @@ mod tests {
     }
 
     #[test]
+    fn test_request_long_custom_tool_uses_the_same_name_in_choice_and_history() {
+        let name = format!("custom_{}", "a".repeat(64));
+        let request = json!({
+            "model": "claude",
+            "tools": [{ "type": "custom", "name": name }],
+            "tool_choice": { "type": "custom", "name": name },
+            "input": [
+                { "role": "user", "content": "Use the custom tool." },
+                { "type": "custom_tool_call", "call_id": "call_1", "name": name, "input": "text" },
+                { "type": "custom_tool_call_output", "call_id": "call_1", "output": "done" }
+            ]
+        });
+
+        let result = responses_request_to_anthropic(request, 4096).unwrap();
+        let upstream_name = result["tools"][0]["name"].as_str().unwrap();
+        assert_ne!(upstream_name, name);
+        assert!(upstream_name.len() <= 64);
+        assert_eq!(result["tool_choice"]["name"], upstream_name);
+        assert_eq!(
+            result["messages"][1]["content"][0],
+            json!({
+                "type": "tool_use",
+                "id": "call_1",
+                "name": upstream_name,
+                "input": { "input": "text" }
+            })
+        );
+    }
+
+    #[test]
     fn test_request_forced_tool_choice_disables_thinking_instead_of_downgrading() {
         let input = json!({
             "model": "c",
@@ -2503,6 +2539,7 @@ mod tests {
         assert_eq!(result["id"], "resp_msg_1");
         assert_eq!(result["status"], "completed");
         assert_eq!(result["output"][0]["type"], "message");
+        assert_eq!(result["output"][0]["id"], "msg_msg_1_0");
         assert_eq!(result["output"][0]["content"][0]["type"], "output_text");
         assert_eq!(result["output"][0]["content"][0]["text"], "Hello!");
         assert_eq!(result["usage"]["input_tokens"], 10);

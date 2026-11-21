@@ -386,7 +386,7 @@ export function ProviderCard({
   const isXaiOauth =
     provider.meta?.providerType === PROVIDER_TYPES.XAI_OAUTH ||
     Boolean(grokBoundAccountId);
-  // Antigravity 官方卡绑了授权中心的账号：额度查绑定的号（只有 macOS、Windows 能切号，其他平台忽略绑定）
+  // 支持 agy 切号的平台上，Antigravity 官方卡查询所绑定账号的额度。
   const agyBoundAccountId =
     appId === "agy" && isOfficial && canSwitchAgyAccount()
       ? resolveManagedAccountId(provider.meta, "agy_oauth")?.trim() || null
