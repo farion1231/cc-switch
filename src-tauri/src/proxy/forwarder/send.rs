@@ -18,12 +18,37 @@ impl RequestForwarder {
         body_bytes: Vec<u8>,
         request_is_streaming: bool,
         preserve_exact_header_case: bool,
+        deadline: Option<tokio::time::Instant>,
     ) -> Result<ProxyResponse, ProxyError> {
         // 确定超时
         let timeout = if self.non_streaming_timeout.is_zero() {
             std::time::Duration::from_secs(600) // 默认 600 秒
         } else {
             self.non_streaming_timeout
+        };
+        let timeout = deadline
+            .map(|at| at.saturating_duration_since(tokio::time::Instant::now()))
+            .unwrap_or(timeout);
+        if timeout.is_zero() {
+            return Err(ProxyError::Timeout(
+                "Copilot Auto request deadline elapsed".into(),
+            ));
+        }
+        let started = tokio::time::Instant::now();
+        let effective_deadline = if request_is_streaming {
+            let configured = if self.streaming_first_byte_timeout.is_zero() {
+                timeout
+            } else {
+                timeout.min(self.streaming_first_byte_timeout)
+            };
+            let first_chunk_deadline = started + configured;
+            Some(
+                deadline
+                    .map(|at| at.min(first_chunk_deadline))
+                    .unwrap_or(first_chunk_deadline),
+            )
+        } else {
+            deadline
         };
 
         // 获取全局代理 URL（上游是本机地址时直连，不送进代理）
@@ -47,26 +72,26 @@ impl RequestForwarder {
             if request_is_streaming {
                 // reqwest 的 timeout 是整请求超时；流式请求交给 response_processor
                 // 的首包/静默期超时控制，避免长流被总时长误杀。
+                // Only bound waiting for response headers here. Once headers arrive the
+                // stream owns its first-chunk and idle windows; a short total reqwest
+                // timeout would truncate otherwise healthy long completions.
                 request = request.timeout(std::time::Duration::from_secs(24 * 60 * 60));
-            } else if !self.non_streaming_timeout.is_zero() {
-                request = request.timeout(self.non_streaming_timeout);
+            } else if deadline.is_some() || !self.non_streaming_timeout.is_zero() {
+                request = request.timeout(timeout);
             }
             for (key, value) in &headers {
                 request = request.header(key, value);
             }
             let send = request.body(body_bytes).send();
             let send_result = if request_is_streaming {
-                let header_timeout = if self.streaming_first_byte_timeout.is_zero() {
-                    timeout
-                } else {
-                    self.streaming_first_byte_timeout
-                };
-                tokio::time::timeout(header_timeout, send)
+                let header_deadline =
+                    effective_deadline.expect("streaming requests have a header deadline");
+                tokio::time::timeout_at(header_deadline, send)
                     .await
                     .map_err(|_| {
                         ProxyError::Timeout(format!(
                             "流式响应首包超时: {}s（上游未返回响应头）",
-                            header_timeout.as_secs()
+                            header_deadline.saturating_duration_since(started).as_secs()
                         ))
                     })?
             } else {
@@ -80,7 +105,7 @@ impl RequestForwarder {
             let uri: http::Uri = url.parse().map_err(|e| {
                 ProxyError::ForwardFailed(format!("Invalid upstream URL ({target_for_log}): {e}"))
             })?;
-            crate::proxy::hyper_client::send_request(
+            let send = crate::proxy::hyper_client::send_request(
                 uri,
                 target_for_log,
                 method.clone(),
@@ -89,8 +114,16 @@ impl RequestForwarder {
                 body_bytes,
                 timeout,
                 upstream_proxy_url.as_deref(),
-            )
-            .await?
+            );
+            if let Some(deadline) = effective_deadline {
+                tokio::time::timeout_at(deadline, send)
+                    .await
+                    .map_err(|_| {
+                        ProxyError::Timeout("Upstream response header deadline elapsed".into())
+                    })??
+            } else {
+                send.await?
+            }
         })
     }
 }

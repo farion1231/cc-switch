@@ -136,8 +136,14 @@ const renderCodexOauthForm = (overrides: Partial<ClaudeFormFieldsProps> = {}) =>
 
 describe("ClaudeFormFields", () => {
   beforeEach(() => {
-    copilotApiMock.copilotGetModels.mockResolvedValue([]);
-    copilotApiMock.copilotGetModelsForAccount.mockResolvedValue([]);
+    copilotApiMock.copilotGetModels.mockResolvedValue({
+      models: [],
+      autoRoutingSupported: false,
+    });
+    copilotApiMock.copilotGetModelsForAccount.mockResolvedValue({
+      models: [],
+      autoRoutingSupported: false,
+    });
     modelFetchApiMock.fetchCodexOauthModels.mockResolvedValue([]);
     modelFetchApiMock.fetchModelsForConfig.mockResolvedValue([]);
   });
@@ -168,9 +174,7 @@ describe("ClaudeFormFields", () => {
         isCopilotPreset: false,
         apiFormat: "openai_chat",
       });
-      expect(
-        screen.getByRole("combobox", { name: "思考档位" }),
-      ).toBeVisible();
+      expect(screen.getByRole("combobox", { name: "思考档位" })).toBeVisible();
       unmount();
 
       renderCopilotForm({

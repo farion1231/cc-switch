@@ -171,7 +171,7 @@ fn is_warmup_request(body: &Value, has_anthropic_beta: bool, is_compact: bool) -
 /// 1. system prompt — Claude Code compact 模式会设置专用 system prompt，用户无法手动设置
 /// 2. "CRITICAL: Respond with TEXT ONLY. Do NOT call any tools." — 机器指令
 /// 3. 同时包含 "Pending Tasks:" 和 "Current Work:" — Claude Code compact 的结构标记
-fn is_compact_request(body: &Value) -> bool {
+pub(super) fn is_compact_request(body: &Value) -> bool {
     // 信号 1: system prompt 以 Claude Code compact 专用前缀开头
     // 用户在 Claude Code 中无法直接控制 system prompt，这是最可靠的信号
     let system_text = extract_system_text(body);
