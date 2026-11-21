@@ -1,0 +1,11 @@
+{
+  "name": "@cc-switch/parity",
+  "private": true,
+  "type": "module",
+  "description": "v4 to v5 behaviour parity suite. Zero dependencies; runs on Node 22 with type stripping.",
+  "imports": {
+    "#kit": "./kit/index.ts",
+    "#screens": "./screens/index.ts",
+    "#internal/*": "./kit/internal/*"
+  }
+}

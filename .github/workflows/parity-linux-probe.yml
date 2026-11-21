@@ -1,7 +1,8 @@
 name: Parity Linux probe
 
-# Delivery unit 2 of the parity suite: can a parity build of CC Switch be driven and observed
-# offline in the pinned Linux image? Runs only on parity/** branches, never on main or PRs.
+# Delivery unit 2 of the parity suite: drive and observe a parity build of CC Switch offline in
+# the pinned Linux image, then check every case against its recording. Runs only on parity/**
+# branches, never on main or PRs.
 on:
   push:
     branches: ["parity/**"]
@@ -9,6 +10,11 @@ on:
       - "parity/spike/linux/**"
       - "parity/spike/common.mjs"
       - "parity/docker/**"
+      - "parity/kit/**"
+      - "parity/screens/**"
+      - "parity/cases/**"
+      - "parity/baseline/**"
+      - "parity/volatile.ts"
       - ".github/workflows/parity-linux-probe.yml"
       - "src-tauri/**"
       - "src/**"
@@ -47,10 +53,19 @@ jobs:
           mkdir -p parity/.out/linux
           parity/spike/linux/lane.sh probe 2>&1 | tee parity/.out/linux/probe.log
 
+      - name: Cases (compare with the recordings, no network)
+        if: always()
+        env:
+          PARITY_CACHE: ${{ runner.temp }}/parity-cache
+        run: |
+          set -o pipefail
+          mapfile -t cases < <(find parity/cases -name '*.case.ts' -not -path '*/_scratch/*' | sort)
+          parity/spike/linux/lane.sh cases check "${cases[@]}" 2>&1 | tee parity/.out/linux/cases.log
+
       - name: Summary
         if: always()
         run: |
-          { echo '### Linux'; echo '```'; grep -E '^run |"pass"' parity/.out/linux/probe.log 2>/dev/null; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          { echo '### Linux'; echo '```'; grep -E '^run |"pass"' parity/.out/linux/probe.log 2>/dev/null; grep -E ': (pass|FAIL)' parity/.out/linux/cases.log 2>/dev/null; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v4
         if: always()
@@ -60,4 +75,6 @@ jobs:
             parity/.out/linux/*.json
             parity/.out/linux/*.png
             parity/.out/linux/probe.log
+            parity/.out/linux/cases.log
+            parity/.out/linux/cases/**
           retention-days: 7

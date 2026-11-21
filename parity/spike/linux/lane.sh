@@ -56,8 +56,27 @@ case "${1:-}" in
         for i in $(seq 50); do [ -e /tmp/.X11-unix/X99 ] && break; sleep 0.1; done
         dbus-run-session -- node /spike/linux/probe.mjs run --app /app/cc-switch --runs '"$RUNS"' --out /out/results.json'
     ;;
+  cases)
+    # cases record|check <case file relative to parity/>... : run the parity case runner offline.
+    shift
+    test -x "$OUT/cc-switch" || { echo "no binary at $OUT/cc-switch; run '$0 build' first" >&2; exit 2; }
+    mode=${1:?record or check}; shift
+    files=()
+    for f in "$@"; do files+=("/parity/${f#parity/}"); done
+    docker run --rm --network none "${no_proxy_env[@]}" \
+      -e HOME=/tmp/sentinel-home -e XDG_RUNTIME_DIR=/tmp/xdg-runtime -e OWNER="$(id -u):$(id -g)" \
+      -v "$OUT/cc-switch:/app/cc-switch:ro" -v "$REPO/parity:/parity" \
+      "$IMAGE" bash -c '
+        set -e
+        trap "chown -R \$OWNER /parity/baseline /parity/.out 2>/dev/null || true" EXIT
+        mkdir -p "$HOME" && mkdir -m 700 -p "$XDG_RUNTIME_DIR"
+        Xvfb :99 -screen 0 1280x800x24 -nolisten tcp >/tmp/xvfb.log 2>&1 &
+        export DISPLAY=:99
+        for i in $(seq 50); do [ -e /tmp/.X11-unix/X99 ] && break; sleep 0.1; done
+        dbus-run-session -- node /parity/kit/internal/cli/main.ts "$@"' _ "$mode" --app /app/cc-switch ${PARITY_RUNS_FLAG:-} "${files[@]}"
+    ;;
   *)
-    echo "usage: $0 build|probe" >&2
+    echo "usage: $0 build|probe|cases" >&2
     exit 2
     ;;
 esac
