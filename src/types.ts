@@ -179,6 +179,8 @@ export interface LocalProxyRequestOverrides {
 
 // 供应商元数据（字段名与后端一致，保持 snake_case）
 export interface ProviderMeta {
+  /** Opt-in protection against accidental credential changes, not a security boundary. */
+  credentialEditProtected?: boolean;
   /** Explicit multiplier for future local-proxy reference costs; absent means 1. */
   billingMultiplier?: string;
   // 自定义端点：以 URL 为键，值为端点信息
