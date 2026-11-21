@@ -57,6 +57,9 @@ mod sync_utils;
 #[cfg(test)]
 mod test_support;
 
+#[cfg(target_os = "windows")]
+mod webview_recovery;
+
 mod tray;
 #[cfg(target_os = "windows")]
 mod tray_compat;
@@ -466,6 +469,10 @@ fn handle_second_instance(app: &tauri::AppHandle, args: Vec<String>) {
     // Show and focus window regardless
     if let Some(window) = app.get_webview_window("main") {
         tray::reveal_main_window(&window, "single-instance");
+        // 渲染进程死亡后自动恢复没能完成时，借二次启动补一次重载；
+        // 正常情况下标志未置位，这里不会多余地打断用户
+        #[cfg(target_os = "windows")]
+        crate::webview_recovery::reload_if_renderer_failure_pending(&window);
     }
 }
 
@@ -495,6 +502,20 @@ pub fn run() {
                     if webview.label() == "main" {
                         disable_windows_general_autofill(&webview);
                     }
+                })
+                .build(),
+        );
+    }
+
+    // Windows: 渲染进程被系统（常见于内存压力）杀掉后 WebView2 只留白屏，
+    // wry/tauri 都不暴露 ProcessFailed；对每个新建 WebView（主窗口与托盘面板，
+    // 含轻量模式重建）挂 COM 事件，死亡发生时自动重载
+    #[cfg(target_os = "windows")]
+    {
+        builder = builder.plugin(
+            tauri::plugin::Builder::<_, ()>::new("windows-webview-recovery")
+                .on_webview_ready(|webview| {
+                    crate::webview_recovery::install_for_webview(&webview);
                 })
                 .build(),
         );
