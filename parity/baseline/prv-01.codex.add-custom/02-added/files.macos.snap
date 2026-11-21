@@ -1,6 +1,6 @@
 dir .cc-switch 755
 dir .cc-switch/backups 755
-opaque .cc-switch/backups/db_backup_<time>.db 600
+opaque .cc-switch/backups/db_backup_20310314_090000.db 600
 dir .cc-switch/backups/live-first-write 755
 file .cc-switch/backups/live-first-write/3f432a8ab9b5-codex-login-stash.json.source 600 lf no-final-newline
   | <HOME>/.cc-switch/codex-login-stash.json
@@ -11,7 +11,7 @@ file .cc-switch/codex-catalog-history.json 644 lf no-final-newline
   | [
   |   {
   |     "fingerprint": "none",
-  |     "sinceMs": <time>
+  |     "sinceMs": 1931245200000
   |   }
   | ]
 file .cc-switch/codex-login-stash.json 600 lf no-final-newline
@@ -93,17 +93,17 @@ file .cc-switch/settings.json 600 lf no-final-newline
   |   "skillStorageLocation": "cc_switch",
   |   "localMigrations": {
   |     "codexThirdPartyHistoryProviderBucketV1": {
-  |       "completedAt": "<time>",
+  |       "completedAt": "2031-03-14T09:00:00+00:00",
   |       "targetProviderId": "custom",
   |       "migratedJsonlFiles": 0,
   |       "migratedStateRows": 0,
   |       "scannedHistoryFiles": true
   |     },
   |     "codexProviderTemplateV1": {
-  |       "completedAt": "<time>"
+  |       "completedAt": "2031-03-14T09:00:00+00:00"
   |     },
   |     "codexLegacyOfficialHistoryBucketV1": {
-  |       "completedAt": "<time>",
+  |       "completedAt": "2031-03-14T09:00:00+00:00",
   |       "targetProviderId": "openai",
   |       "migratedJsonlFiles": 0,
   |       "migratedStateRows": 0,

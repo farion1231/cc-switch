@@ -1,0 +1,63 @@
+window main "Claude Code 供应商切换器" scheme=light
+focused: (none)
+tree:
+  navigation "Main navigation"
+    link "Skip to main content"
+    text "CC Switch"
+    button "Collapse sidebar"
+    group "Apps"
+      button "Claude Code"
+      button "Claude Desktop"
+      button "Codex"
+      button "Gemini CLI"
+      button "Grok Build"
+      button "OpenCode"
+      button "OpenClaw"
+      button "Hermes"
+      button "Pi"
+      button "MiniMax Code"
+      button "Kimi Code"
+      button "DeepSeek Harness"
+      button "Antigravity"
+      button "Oh My Pi"
+      button "Copilot CLI"
+      button "WorkBuddy"
+    button "MCP"
+    button "Skills"
+    button "Plugins"
+    button "Prompts"
+    button "Sessions"
+    button "Accounts"
+    button "Usage" [current=page]
+    button "Apps"
+    button "Settings"
+  main
+    heading "Usage"
+    text "View AI model usage and cost statistics"
+    button "Usage" [collapsed]
+    button "Synced just now"
+    button "Usage settings"
+    button "Today" [collapsed]
+    group "Filter by app"
+      button "All" [pressed]
+      button "Claude Code" [not-pressed]
+      button "Codex" [not-pressed]
+      button "Gemini CLI" [not-pressed]
+      button "Grok Build" [not-pressed]
+      button "OpenCode" [not-pressed]
+      button "Pi" [not-pressed]
+      button "Oh My Pi" [not-pressed]
+      button "MiniMax Code" [not-pressed]
+      button "Kimi Code" [not-pressed]
+      button "DeepSeek Harness" [not-pressed]
+      button "Antigravity" [not-pressed]
+      button "Copilot CLI" [not-pressed]
+      button "WorkBuddy" [not-pressed]
+    button "Provider / Model" [collapsed]
+    text "No usage data yet"
+    text "Usage from session logs and from requests through the routing service shows up here."
+    button "Sync Now"
+    button "Configure model pricing"
+  region "Notifications alt+T"
+announcements since the previous checkpoint:
+  "Loading..."
