@@ -2492,11 +2492,13 @@ mod tests {
             "fresh",
             &model_counters("grok-4.5-build", 8, 1, 0, 1),
         ));
+        let fork_mtime = file_mtime(&fork);
         let mut file = std::fs::File::create(&fork).expect("rewrite fork");
         for line in &fresh_lines {
             writeln!(file, "{line}").expect("write");
         }
         drop(file);
+        set_file_mtime(&fork, fork_mtime + std::time::Duration::from_secs(10));
 
         let again = sync_file(&db, &fork);
         assert_eq!(again.imported, 1);
