@@ -1902,7 +1902,7 @@ async fn codex_copilot_validates_client_model_before_runtime_lookup() {
                     extensions: &Extensions::new(),
                     adapter: adapter.as_ref(),
                 },
-                &body,
+                body.clone(),
                 &mut codex_upstream_format,
             )
             .await
@@ -1996,7 +1996,7 @@ async fn codex_copilot_capability_failure_tries_healthy_later_provider() {
             &AppType::Codex,
             http::Method::POST,
             "/v1/responses",
-            &body,
+            wire_body(body.clone()),
             HeaderMap::new(),
             Extensions::new(),
             &[copilot, healthy],
@@ -2831,7 +2831,7 @@ mod codex_stack {
                 &AppType::Codex,
                 http::Method::POST,
                 endpoint,
-                &body,
+                wire_body(body.clone()),
                 chatgpt_headers(),
                 Extensions::new(),
                 &[provider],
@@ -3246,11 +3246,11 @@ mod codex_stack {
                 &AppType::Claude,
                 http::Method::POST,
                 "/v1/messages",
-                &json!({
+                wire_body(json!({
                     "model": "stacked-model",
                     "max_tokens": 16,
                     "messages": [{ "role": "user", "content": "hi" }]
-                }),
+                })),
                 headers,
                 Extensions::new(),
                 &[provider],
@@ -3600,7 +3600,7 @@ mod codex_stack {
                 &AppType::Codex,
                 http::Method::POST,
                 "/responses",
-                &history_with_foreign_reasoning(),
+                wire_body(history_with_foreign_reasoning()),
                 chatgpt_headers(),
                 Extensions::new(),
                 &[provider],
@@ -3663,7 +3663,7 @@ mod codex_stack {
                 &AppType::Codex,
                 http::Method::POST,
                 "/responses",
-                &request,
+                wire_body(request.clone()),
                 chatgpt_headers(),
                 Extensions::new(),
                 &[provider(&upstream, "openai_responses")],
@@ -3704,7 +3704,7 @@ mod codex_stack {
                 &AppType::Codex,
                 http::Method::POST,
                 "/responses",
-                &request,
+                wire_body(request.clone()),
                 chatgpt_headers(),
                 Extensions::new(),
                 &[provider(&upstream, "openai_responses")],
@@ -3949,7 +3949,7 @@ mod codex_stack {
                         &AppType::Claude,
                         http::Method::POST,
                         "/v1/messages",
-                        &request,
+                        wire_body(request.clone()),
                         HeaderMap::new(),
                         Extensions::new(),
                         &[provider],
@@ -4121,7 +4121,7 @@ mod codex_stack {
                 &AppType::Codex,
                 http::Method::POST,
                 "/responses",
-                &request,
+                wire_body(request.clone()),
                 chatgpt_headers(),
                 Extensions::new(),
                 &[provider(upstream, "openai_responses")],
@@ -4320,7 +4320,7 @@ mod codex_stack {
                 &AppType::Codex,
                 http::Method::POST,
                 "/responses",
-                &sub_agent_request(Vec::new()),
+                wire_body(sub_agent_request(Vec::new())),
                 chatgpt_headers(),
                 Extensions::new(),
                 &[provider(&upstream, "openai_responses")],
@@ -4450,7 +4450,7 @@ mod bookkeeping {
                 app_type,
                 http::Method::POST,
                 "/v1/messages",
-                &body,
+                wire_body(body.clone()),
                 headers,
                 Extensions::new(),
                 &providers,
@@ -5251,7 +5251,7 @@ mod bookkeeping {
                     &AppType::ClaudeDesktop,
                     http::Method::POST,
                     "/v1/messages",
-                    &body,
+                    wire_body(body.clone()),
                     HeaderMap::new(),
                     Extensions::new(),
                     &[kimi],
@@ -5295,4 +5295,49 @@ mod bookkeeping {
         assert_eq!(books(&fwd).await, untouched());
         assert!(breaker_untouched(&fwd, "kimi").await);
     }
+}
+
+fn wire_body(body: Value) -> ForwardBody {
+    let bytes = Bytes::from(serde_json::to_vec(&body).unwrap());
+    ForwardBody::from_parsed(body, bytes)
+}
+
+#[test]
+fn owned_attempt_moves_history_and_replay_restores_the_resolved_model() {
+    let original = json!({"model": "stack-alias", "messages": [{"role":"user", "content": "x".repeat(1024 * 1024)}]});
+    let bytes = Bytes::from(serde_json::to_vec(&original).unwrap());
+    let mut resolved = original.clone();
+    resolved["model"] = json!("upstream-model");
+    let pointer = resolved["messages"][0]["content"]
+        .as_str()
+        .unwrap()
+        .as_ptr();
+    let mut replay = ForwardBody::from_parsed(resolved, bytes);
+    let mut first = replay.next().unwrap();
+    assert_eq!(
+        first["messages"][0]["content"].as_str().unwrap().as_ptr(),
+        pointer,
+        "the first attempt must take the original allocation"
+    );
+    first["messages"][0]["content"] = json!("rewritten for the first provider");
+    first["model"] = json!("provider-specific-model");
+    let retried = replay.next().unwrap();
+    assert_eq!(retried["model"], "upstream-model");
+    assert_eq!(retried["messages"], original["messages"]);
+    let mut empty = ForwardBody::from_parsed(Value::Null, Bytes::new());
+    assert_eq!(empty.next().unwrap(), Value::Null);
+    assert_eq!(empty.next().unwrap(), Value::Null);
+}
+
+#[test]
+fn no_op_copilot_rewrites_do_not_require_another_privacy_scan() {
+    use super::super::copilot_optimizer::{
+        merge_tool_results_with_changes, sanitize_orphan_tool_results_with_changes,
+    };
+    let body = json!({"messages": [{"role":"user", "content":"hello"}, {"role":"assistant", "content":"hi"}]});
+    let (sanitized, changed) = sanitize_orphan_tool_results_with_changes(body.clone());
+    assert!(!changed);
+    let (merged, changed) = merge_tool_results_with_changes(sanitized);
+    assert!(!changed);
+    assert_eq!(merged, body);
 }
