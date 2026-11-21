@@ -1061,12 +1061,25 @@ pub async fn set_window_theme(window: tauri::Window, theme: String) -> Result<()
     window.set_theme(tauri_theme).map_err(|e| e.to_string())
 }
 
-/// 读取当前系统的深浅色模式（Linux 上通过 XDG Desktop Portal 读取）
-#[tauri::command]
-pub async fn get_system_theme() -> Result<Option<&'static str>, String> {
-    const DETECT_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(1500);
-    let detect = tauri::async_runtime::spawn_blocking(detect_system_theme_blocking);
-    match tokio::time::timeout(DETECT_TIMEOUT, detect).await {
+static SYSTEM_THEME_DETECT_PERMIT: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+
+async fn detect_system_theme_single_flight<F>(
+    permit_gate: &'static tokio::sync::Semaphore,
+    timeout: std::time::Duration,
+    detect_fn: F,
+) -> Result<Option<&'static str>, String>
+where
+    F: FnOnce() -> Option<&'static str> + Send + 'static,
+{
+    let Ok(permit) = permit_gate.try_acquire() else {
+        log::debug!("System theme detect already in flight; falling back to matchMedia");
+        return Ok(None);
+    };
+    let detect = tauri::async_runtime::spawn_blocking(move || {
+        let _permit = permit;
+        detect_fn()
+    });
+    match tokio::time::timeout(timeout, detect).await {
         Ok(Ok(mode)) => Ok(mode),
         Ok(Err(e)) => {
             log::debug!("System theme detect task failed: {e}");
@@ -1077,6 +1090,18 @@ pub async fn get_system_theme() -> Result<Option<&'static str>, String> {
             Ok(None)
         }
     }
+}
+
+/// 读取当前系统的深浅色模式（Linux 上通过 XDG Desktop Portal 读取）
+#[tauri::command]
+pub async fn get_system_theme() -> Result<Option<&'static str>, String> {
+    const DETECT_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(1500);
+    detect_system_theme_single_flight(
+        &SYSTEM_THEME_DETECT_PERMIT,
+        DETECT_TIMEOUT,
+        detect_system_theme_blocking,
+    )
+    .await
 }
 
 fn map_system_theme_mode(mode: dark_light::Mode) -> Option<&'static str> {
@@ -1756,5 +1781,61 @@ mod tests {
         if let Ok(Some(theme)) = res {
             assert!(theme == "dark" || theme == "light");
         }
+    }
+
+    #[tokio::test]
+    async fn detect_system_theme_single_flight_prevents_piling_up_after_timeout() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        static TEST_GATE: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+
+        // First probe hangs past the timeout; it must detach without releasing the gate.
+        let first = detect_system_theme_single_flight(
+            &TEST_GATE,
+            std::time::Duration::from_millis(40),
+            move || {
+                let _ = started_tx.send(());
+                let _ = release_rx.recv();
+                Some("dark")
+            },
+        )
+        .await;
+        assert_eq!(first, Ok(None));
+        started_rx.await.expect("first blocking probe started");
+
+        // Second poll while the hung probe is still blocked must immediately bail out
+        // without spawning another blocking detection task.
+        let second_invocations = Arc::new(AtomicUsize::new(0));
+        let second_counter = second_invocations.clone();
+        let second = detect_system_theme_single_flight(
+            &TEST_GATE,
+            std::time::Duration::from_secs(2),
+            move || {
+                second_counter.fetch_add(1, Ordering::SeqCst);
+                Some("light")
+            },
+        )
+        .await;
+        assert_eq!(second, Ok(None));
+        assert_eq!(second_invocations.load(Ordering::SeqCst), 0);
+
+        // Once the stalled blocking probe finishes, the permit is released and subsequent probes recover.
+        release_tx.send(()).expect("release hung probe");
+        let permit = tokio::time::timeout(std::time::Duration::from_secs(2), TEST_GATE.acquire())
+            .await
+            .expect("permit should be released after hung probe completes")
+            .expect("semaphore should stay open");
+        drop(permit);
+
+        let third = detect_system_theme_single_flight(
+            &TEST_GATE,
+            std::time::Duration::from_secs(2),
+            || Some("light"),
+        )
+        .await;
+        assert_eq!(third, Ok(Some("light")));
     }
 }
