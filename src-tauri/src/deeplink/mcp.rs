@@ -15,6 +15,7 @@ use serde_json::Value;
 /// 深链接导入 MCP 时直接拒绝的高危扩展字段：
 /// - `bearer_token_env_var` / `env_http_headers` / `env_vars`：会让客户端静默读取宿主机环境变量并外发；
 /// - `http_headers_helper`：会在看似纯 HTTP 的 MCP 配置中执行本机命令。
+///
 /// 与 `codex_link.rs` / `grok_link.rs` 保持一致，深链接直接拒绝，确有需要请由用户手工配置。
 const REJECTED_DEEPLINK_MCP_KEYS: &[&str] = &[
     "bearer_token_env_var",
