@@ -647,22 +647,86 @@ input[type="password"]::-ms-clear {
 }
 
 /*
- * Auth center quota column (AccountQuotaColumn): fixed width so every
- * account's bars start at the same x and have the same length. It widens only
- * when the group card itself has room — a viewport breakpoint would also fire
- * with the sidebar open at the 900px minimum window width and squeeze the
- * account name. Cells: label 112 + bar + value 64 + countdown 52 + 3 × 8 gap.
+ * Auth center quota column (AccountQuotaColumn): the bar, value and countdown
+ * cells keep aligned widths (widened in comfortable density via CSS vars) and
+ * the column hugs its right edge. The label cell takes the longest tier name
+ * in the account (56–112px) instead of always reserving 112px, so short names
+ * ("5-hour") don't leave a gap that squeezes the account name. The bar widens
+ * only when the group card itself has room — a viewport breakpoint would also
+ * fire with the sidebar open at the 900px minimum window width. At very narrow
+ * card widths (e.g. 1.25x zoom with sidebar open), the quota block wraps onto
+ * a second line so account details stay readable.
  */
 .auth-group {
   container-type: inline-size;
 }
 
 .auth-quota-col {
-  width: 332px;
+  --auth-quota-label-min: 56px;
+  --auth-quota-label-max: 112px;
+  --auth-quota-bar: 72px;
+  --auth-quota-value: 72px;
+  --auth-quota-reset: 54px;
+  --auth-quota-gap: 8px;
+  --auth-quota-col-min: calc(
+    var(--auth-quota-label-min) + var(--auth-quota-bar) +
+      var(--auth-quota-value) + var(--auth-quota-reset) + 3 *
+      var(--auth-quota-gap)
+  );
+  min-width: var(--auth-quota-col-min);
+  max-width: calc(
+    var(--auth-quota-label-max) + var(--auth-quota-bar) +
+      var(--auth-quota-value) + var(--auth-quota-reset) + 3 *
+      var(--auth-quota-gap)
+  );
+}
+
+.auth-quota-col-static {
+  width: var(--auth-quota-col-min);
+}
+
+/* 舒适密度下 --fs-caption 从 12px 升到 13px：数值最小宽度与倒计时格按比例放宽 */
+html[data-density="comfortable"] .auth-quota-col {
+  --auth-quota-value: 80px;
+  --auth-quota-reset: 60px;
+}
+
+.auth-account-quota:empty {
+  display: none;
+}
+
+.auth-quota-refresh {
+  min-width: 68px;
 }
 
 @container (min-width: 800px) {
   .auth-quota-col {
-    width: 368px;
+    --auth-quota-bar: 104px;
+  }
+}
+
+@container (max-width: 560px) {
+  .auth-account-row {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+
+  .auth-account-quota {
+    order: 1;
+    flex-basis: 100%;
+    justify-content: flex-end;
+    padding-inline-start: 40px;
+    gap: 8px;
+  }
+
+  .auth-quota-col,
+  .auth-quota-col-static {
+    width: auto;
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+
+  .auth-quota-refresh {
+    min-width: 0;
   }
 }

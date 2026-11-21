@@ -6127,7 +6127,7 @@ model_provider = "c"
             picker(),
             Some(vec![
                 "ccs-claude-a--claude-sonnet-4-6".to_string(),
-                "ccs-claude-zhipu--glm-5.2[1M]".to_string(),
+                "ccs-claude-zhipu--glm-5.2[1m]".to_string(),
             ])
         );
         let env = settings()["env"].clone();
@@ -6400,18 +6400,18 @@ model_provider = "c"
         let env = settings()["env"].clone();
         assert_eq!(
             env["ANTHROPIC_DEFAULT_SONNET_MODEL"],
-            "ccs-claude-zhipu--glm-5.2[1M]"
+            "ccs-claude-zhipu--glm-5.2[1m]"
         );
         assert_eq!(
             env["ANTHROPIC_DEFAULT_HAIKU_MODEL"],
-            "ccs-claude-zhipu--glm-5.2[1M]"
+            "ccs-claude-zhipu--glm-5.2[1m]"
         );
         let with_a = settings();
         set_member(&state, "a", false).await;
         assert_eq!(stack_state().members, vec!["zhipu"]);
         assert_eq!(
             picker(),
-            Some(vec!["ccs-claude-zhipu--glm-5.2[1M]".to_string()])
+            Some(vec!["ccs-claude-zhipu--glm-5.2[1m]".to_string()])
         );
         let env = settings()["env"].clone();
         assert_eq!(env, with_a["env"], "a is not the default any more");
