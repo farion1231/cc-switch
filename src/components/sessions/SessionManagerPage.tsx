@@ -255,8 +255,9 @@ export function SessionManagerPage({
   );
 
   const { search: searchSessions } = useSessionSearch({
-    sessions: scopedSessions,
+    sessions,
     providerFilter: appFilter,
+    providerIds: availableApps,
   });
   const contentProviderIds = useMemo<string[]>(
     () => (appFilter === "all" ? availableApps : [appFilter]),
@@ -284,7 +285,7 @@ export function SessionManagerPage({
     (key: string) => trimmedQuery !== "" || expanded.has(key),
     [trimmedQuery, expanded],
   );
-  // 元数据命中（前端 FlexSearch）+ 正文命中（后端索引），按会话去重
+  // 元数据命中（前端子串扫描）+ 正文命中（后端索引），按会话去重
   const matches = useMemo(() => {
     const metaMatches = searchSessions(query);
     if (contentHits.size === 0) return sortSessionsByTime(metaMatches);

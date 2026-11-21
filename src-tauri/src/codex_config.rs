@@ -88,14 +88,28 @@ const CODEX_WEB_SEARCH_REJECT_HOSTS: &[&str] = &[
 const CODEX_WEB_SEARCH_REJECT_MODEL_PREFIXES: &[&str] =
     &["mimo", "longcat", "minimax", "qwen3-coder", "glm"];
 
+/// The URL without its `scheme://`, or the whole input when it has none. Only a
+/// real scheme (a letter, then letters, digits, `+`, `-`, `.`) counts, so a
+/// `https://` inside a schemeless URL's path or query is not taken for one.
+pub(crate) fn url_after_scheme(url: &str) -> &str {
+    match url.split_once("://") {
+        Some((scheme, rest))
+            if scheme.starts_with(|c: char| c.is_ascii_alphabetic())
+                && scheme
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.')) =>
+        {
+            rest
+        }
+        _ => url,
+    }
+}
+
 /// Host component of a base URL (or a bare host), lowercased, without scheme,
 /// userinfo, port, path or query. Tolerates the loose forms users paste into
 /// the provider form (`example.com`, `https://user@Example.com:8443/v1`).
 pub(crate) fn codex_url_host(url_or_host: &str) -> String {
-    let trimmed = url_or_host.trim();
-    let rest = trimmed
-        .split_once("://")
-        .map_or(trimmed, |(_scheme, rest)| rest);
+    let rest = url_after_scheme(url_or_host.trim());
     let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
     let host_port = authority.rsplit('@').next().unwrap_or(authority);
     let host = if let Some(ipv6) = host_port.strip_prefix('[') {

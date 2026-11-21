@@ -52,8 +52,8 @@ pnpm dev
 | `pnpm build` | Production build and packaging |
 | `pnpm build:renderer` | Build the frontend only, output to `dist/` |
 | `pnpm typecheck` | TypeScript type checking (strict; unused imports or parameters are errors) |
-| `pnpm format` | Format `src/` with Prettier |
-| `pnpm format:check` | Check code formatting in `src/` |
+| `pnpm format` | Format `src/` and `tests/` with Prettier |
+| `pnpm format:check` | Check code formatting in `src/` and `tests/` |
 | `pnpm test:unit` | Run frontend unit tests |
 | `pnpm test:unit:watch` | Run frontend unit tests in watch mode |
 
@@ -309,8 +309,8 @@ pnpm dev
 | `pnpm build` | 构建生产版本并打包 |
 | `pnpm build:renderer` | 只构建前端，输出到 `dist/` |
 | `pnpm typecheck` | TypeScript 类型检查（strict，未使用的 import 或参数会报错） |
-| `pnpm format` | 用 Prettier 格式化 `src/` |
-| `pnpm format:check` | 检查 `src/` 的代码格式 |
+| `pnpm format` | 用 Prettier 格式化 `src/` 和 `tests/` |
+| `pnpm format:check` | 检查 `src/` 和 `tests/` 的代码格式 |
 | `pnpm test:unit` | 运行前端单元测试 |
 | `pnpm test:unit:watch` | 以监听模式运行前端单元测试 |
 
