@@ -417,14 +417,18 @@ describe("display currency", () => {
       autoExchangeRates: { CNY: 6.9 },
     };
     expect(resolveRateSource(fetched)).toBe("manual");
-    expect(resolveMoneyDisplay(fetched)).toEqual({ currency: "CNY", rate: 6.8 });
-    expect(resolveMoneyDisplay({ ...fetched, exchangeRates: { CNY: 7.1 } })).toEqual(
-      { currency: "CNY", rate: 7.1 },
-    );
-    // 用户主动选了自动才用取到的值
+    expect(resolveMoneyDisplay(fetched)).toEqual({
+      currency: "CNY",
+      rate: 6.8,
+    });
     expect(
-      resolveMoneyDisplay({ ...fetched, rateSource: "auto" }),
-    ).toEqual({ currency: "CNY", rate: 6.9 });
+      resolveMoneyDisplay({ ...fetched, exchangeRates: { CNY: 7.1 } }),
+    ).toEqual({ currency: "CNY", rate: 7.1 });
+    // 用户主动选了自动才用取到的值
+    expect(resolveMoneyDisplay({ ...fetched, rateSource: "auto" })).toEqual({
+      currency: "CNY",
+      rate: 6.9,
+    });
   });
 
   it("refreshes automatic rates only when the cache is missing or stale", () => {
