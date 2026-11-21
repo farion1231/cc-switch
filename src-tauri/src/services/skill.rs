@@ -751,6 +751,9 @@ impl SkillService {
                     return Ok(custom.join("skills"));
                 }
             }
+            AppType::QoderCnDesktop => {
+                anyhow::bail!("Qoder CN Desktop skills are managed by Qoder.")
+            }
             AppType::ClaudeDesktop
             | AppType::Mcode
             | AppType::Kimi
@@ -782,6 +785,7 @@ impl SkillService {
             AppType::Kimi => crate::kimi_config::data_dir().join("skills"),
             AppType::Copilot => crate::copilot_config::skills_dir(),
             AppType::WorkBuddy => crate::workbuddy_config::data_dir().join("skills"),
+            AppType::QoderCnDesktop => unreachable!("handled above"),
             AppType::Claude => home.join(".claude").join("skills"),
             AppType::ClaudeDesktop => home.join(".claude-desktop").join("skills"),
             AppType::Codex => home.join(".codex").join("skills"),

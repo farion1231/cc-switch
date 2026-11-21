@@ -7882,7 +7882,8 @@ impl ProviderService {
             | AppType::Agy
             | AppType::Omp
             | AppType::Copilot
-            | AppType::WorkBuddy => Ok(String::new()),
+            | AppType::WorkBuddy
+            | AppType::QoderCnDesktop => Ok(String::new()),
         }
     }
 
@@ -7907,7 +7908,8 @@ impl ProviderService {
             | AppType::Agy
             | AppType::Omp
             | AppType::Copilot
-            | AppType::WorkBuddy => Ok(String::new()),
+            | AppType::WorkBuddy
+            | AppType::QoderCnDesktop => Ok(String::new()),
         }
     }
 
@@ -8677,6 +8679,11 @@ impl ProviderService {
                 crate::mcode_config::validate_provider(&provider.id, &provider.settings_config)?
             }
             // 官方登录卡只存账号绑定，没有模型配置
+            AppType::QoderCnDesktop => {
+                return Err(AppError::InvalidInput(
+                    "Use the Qoder CN Desktop provider page.".into(),
+                ))
+            }
             AppType::WorkBuddy if crate::workbuddy_config::is_official_provider(provider) => {
                 if !provider.settings_config.is_object() {
                     return Err(AppError::InvalidInput(

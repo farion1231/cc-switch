@@ -124,9 +124,10 @@ pub enum ProviderType {
 pub fn get_adapter(app_type: &AppType) -> Option<Box<dyn ProviderAdapter>> {
     Some(match app_type {
         AppType::Claude | AppType::ClaudeDesktop => Box::new(ClaudeAdapter::new()),
-        AppType::Codex => Box::new(CodexAdapter::new()),
+        AppType::Codex | AppType::GrokBuild | AppType::QoderCnDesktop => {
+            Box::new(CodexAdapter::new())
+        }
         AppType::Gemini => Box::new(GeminiAdapter::new()),
-        AppType::GrokBuild => Box::new(CodexAdapter::new()),
         AppType::OpenCode | AppType::OpenClaw | AppType::Hermes => Box::new(CodexAdapter::new()),
         AppType::Pi
         | AppType::Mcode

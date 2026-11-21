@@ -317,7 +317,8 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
         | AppType::Omp
         | AppType::Copilot
         | AppType::WorkBuddy
-        | AppType::ClaudeDesktop => false,
+        | AppType::ClaudeDesktop
+        | AppType::QoderCnDesktop => false,
     }
 }
 
@@ -399,7 +400,8 @@ pub(crate) fn remove_common_config_from_settings(
         | AppType::Agy
         | AppType::Omp
         | AppType::Copilot
-        | AppType::WorkBuddy => Ok(settings.clone()),
+        | AppType::WorkBuddy
+        | AppType::QoderCnDesktop => Ok(settings.clone()),
     }
 }
 
@@ -755,6 +757,7 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                 "Oh My Pi providers use the Oh My Pi provider service".to_string(),
             ));
         }
+        AppType::QoderCnDesktop => return Ok(()),
         AppType::Copilot => {
             return Err(AppError::Config(
                 "GitHub Copilot CLI providers are written through the Copilot provider service"
@@ -1119,6 +1122,7 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
         AppType::Kimi => Ok(json!(crate::kimi_config::get_providers()?)),
         AppType::Dsh => Ok(json!(crate::dsh_config::get_providers()?)),
         AppType::WorkBuddy => Ok(json!(crate::workbuddy_config::get_providers()?)),
+        AppType::QoderCnDesktop => Ok(json!({})),
         AppType::Pi => Err(AppError::InvalidInput(
             "Pi providers are read from Pi's native models file".to_string(),
         )),
@@ -1163,6 +1167,7 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
     }
 
     let settings_config = match app_type {
+        AppType::QoderCnDesktop => return Ok(false),
         AppType::Codex => crate::codex_config::read_codex_live_settings()?,
         AppType::GrokBuild => {
             let mut settings = crate::grok_config::read_grok_live_settings()?;

@@ -1,4 +1,40 @@
 {
+  "qoderCnDesktop": {
+    "title": "Qoder CN 桌面版",
+    "add": "添加供应商",
+    "gateway": "本地网关",
+    "running": "运行中",
+    "stopped": "已停止",
+    "stop": "停用网关",
+    "start": "启动网关",
+    "setup": "在 Qoder CN 添加 OpenAI Compatible 模型，选择 Responses API 后填入这三项。",
+    "copy": "复制 {{label}}",
+    "copied": "已复制",
+    "name": "供应商名称",
+    "format": "上游协议",
+    "upstreamModel": "上游模型 ID",
+    "replaceKey": "新 API Key（选填）",
+    "xApiKey": "Anthropic 使用 x-api-key",
+    "providers": "供应商",
+    "source": "选择 Claude Code 供应商",
+    "import": "复制供应商",
+    "empty": "添加 API Key 供应商，或复制已有的 Claude Code 供应商。",
+    "active": "使用中",
+    "select": "切换到此",
+    "errors": {
+      "selectProvider": "请先选择一个 Qoder CN 供应商。",
+      "invalidUrl": "请输入有效的供应商 Base URL。",
+      "unsupportedUrl": "请使用 HTTPS 供应商地址或本机 HTTP 测试地址。",
+      "keyRequired": "请输入供应商 API Key。",
+      "nameAndModelRequired": "请填写供应商名称和模型。",
+      "invalidKey": "API Key 包含无效字符。",
+      "providerMissing": "该 Qoder CN 供应商已不存在。",
+      "sourceMissing": "来源供应商已不存在。",
+      "sourceUnsupported": "该来源供应商缺少可复用的 API Key 配置。",
+      "providerIncomplete": "该 Qoder CN 供应商配置不完整。",
+      "activeProvider": "请切换到其他供应商，再删除当前供应商。"
+    }
+  },
   "app": {
     "title": "CC Switch",
     "description": "Claude Code / Codex / Gemini CLI 全方位辅助工具"

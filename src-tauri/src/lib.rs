@@ -1406,6 +1406,9 @@ pub fn run() {
                 // 定下各应用的直连 / 代理模式（处理旧版遗留的接管状态），再把代理模式的
                 // 应用接上。要排在通用配置片段的自动提取之后：它读的是直连的 live。
                 crate::mode::controller::startup(&state).await;
+                if let Err(error) = commands::restore_qoder_cn_desktop_gateway(&state).await {
+                    log::warn!("Qoder CN Desktop gateway startup failed: {error}");
+                }
                 // #8268 测试版给 agy 装过包装脚本、改过 shell 启动文件，撤掉带标记的部分。
                 if let Err(e) =
                     crate::services::provider::agy_direct::migrate_legacy_launcher(&state.db)
@@ -1753,6 +1756,12 @@ pub fn run() {
             commands::set_auto_launch,
             // Proxy server management
             commands::start_proxy_server,
+            commands::qoder_cn_desktop_status,
+            commands::qoder_cn_desktop_set_gateway,
+            commands::qoder_cn_desktop_save_provider,
+            commands::qoder_cn_desktop_import_provider,
+            commands::qoder_cn_desktop_select_provider,
+            commands::qoder_cn_desktop_delete_provider,
             commands::stop_proxy_server,
             commands::stop_proxy_with_restore,
             commands::get_proxy_takeover_status,

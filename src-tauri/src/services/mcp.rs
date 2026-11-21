@@ -400,6 +400,7 @@ impl McpService {
             AppType::Agy => mcp::agy::sync(&server.id, Some(&server.server))?,
             AppType::Omp => mcp::sync_single_server_to_omp(&server.id, &server.server)?,
             AppType::WorkBuddy => mcp::workbuddy::sync(&server.id, Some(&server.server))?,
+            AppType::QoderCnDesktop => {}
         }
         Ok(())
     }
@@ -448,6 +449,7 @@ impl McpService {
             AppType::Agy => mcp::agy::sync(id, None)?,
             AppType::Omp => mcp::remove_server_from_omp(id)?,
             AppType::WorkBuddy => mcp::workbuddy::sync(id, None)?,
+            AppType::QoderCnDesktop => {}
         }
         Ok(())
     }
@@ -602,7 +604,7 @@ impl McpService {
             AppType::Pi => return mcp::pi::import(state),
             AppType::Omp => return mcp::omp::import(state),
             AppType::Copilot => return mcp::copilot::import(state),
-            AppType::ClaudeDesktop | AppType::OpenClaw => return Ok(0),
+            AppType::ClaudeDesktop | AppType::OpenClaw | AppType::QoderCnDesktop => return Ok(0),
         };
 
         let mut temp_config = MultiAppConfig::default();

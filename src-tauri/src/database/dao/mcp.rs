@@ -76,7 +76,7 @@ fn mcp_flag_column(app: &AppType) -> Option<&'static str> {
         AppType::Pi => Some("enabled_pi"),
         AppType::Omp => Some("enabled_omp"),
         AppType::Agy => Some("enabled_agy"),
-        AppType::ClaudeDesktop | AppType::OpenClaw => None,
+        AppType::ClaudeDesktop | AppType::OpenClaw | AppType::QoderCnDesktop => None,
     }
 }
 

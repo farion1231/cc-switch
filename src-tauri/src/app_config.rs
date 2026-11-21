@@ -78,7 +78,7 @@ macro_rules! app_flags {
                     AppType::Agy => Some(&mut self.agy),
                     AppType::Copilot => Some(&mut self.copilot),
                     AppType::WorkBuddy => Some(&mut self.workbuddy),
-                    AppType::OpenClaw | AppType::ClaudeDesktop => None,
+                    AppType::OpenClaw | AppType::ClaudeDesktop | AppType::QoderCnDesktop => None,
                 }
             }
 
@@ -315,6 +315,7 @@ pub enum AppType {
     Codex,
     Gemini,
     GrokBuild,
+    QoderCnDesktop,
     OpenCode,
     OpenClaw,
     Hermes,
@@ -387,6 +388,13 @@ impl AppType {
                 additive: false,
                 local_proxy: true,
                 route_mode: true,
+                stack: false,
+            },
+            AppType::QoderCnDesktop => AppSpec {
+                id: "qoder-cn-desktop",
+                additive: false,
+                local_proxy: false,
+                route_mode: false,
                 stack: false,
             },
             AppType::OpenCode => AppSpec {
@@ -473,7 +481,7 @@ impl AppType {
         self.spec().id
     }
 
-    /// 所有应用，按默认顺序
+    /// 通用应用管理入口。Qoder CN 桌面版使用独立的网关页面，不接管客户端文件。
     pub const ALL: [AppType; 16] = [
         AppType::Claude,
         AppType::ClaudeDesktop,
@@ -515,6 +523,7 @@ impl FromStr for AppType {
             "codex" => Ok(AppType::Codex),
             "gemini" => Ok(AppType::Gemini),
             "grokbuild" | "grok-build" | "grok_build" | "grok" => Ok(AppType::GrokBuild),
+            "qoder-cn-desktop" => Ok(AppType::QoderCnDesktop),
             "opencode" => Ok(AppType::OpenCode),
             "openclaw" => Ok(AppType::OpenClaw),
             "hermes" => Ok(AppType::Hermes),
@@ -889,7 +898,8 @@ impl MultiAppConfig {
             | AppType::Agy
             | AppType::Omp
             | AppType::Copilot
-            | AppType::WorkBuddy => return Ok(false),
+            | AppType::WorkBuddy
+            | AppType::QoderCnDesktop => return Ok(false),
         };
 
         prompts.insert(id, prompt);
@@ -940,7 +950,8 @@ impl MultiAppConfig {
                 | AppType::Agy
                 | AppType::Omp
                 | AppType::Copilot
-                | AppType::WorkBuddy => continue, // Pi didn't exist in v3.6.x, skip
+                | AppType::WorkBuddy
+                | AppType::QoderCnDesktop => continue,
             };
 
             for (id, entry) in old_servers {

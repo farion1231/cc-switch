@@ -1,4 +1,40 @@
 {
+  "qoderCnDesktop": {
+    "title": "Qoder CN Desktop",
+    "add": "Add provider",
+    "gateway": "Local gateway",
+    "running": "Running",
+    "stopped": "Stopped",
+    "stop": "Disable gateway",
+    "start": "Start gateway",
+    "setup": "In Qoder CN, add an OpenAI Compatible model using Responses API and enter these three values.",
+    "copy": "Copy {{label}}",
+    "copied": "Copied",
+    "name": "Provider name",
+    "format": "Upstream protocol",
+    "upstreamModel": "Upstream model ID",
+    "replaceKey": "New API key (optional)",
+    "xApiKey": "Use x-api-key for Anthropic",
+    "providers": "Providers",
+    "source": "Choose a Claude Code provider",
+    "import": "Copy provider",
+    "empty": "Add an API-key provider or copy an existing Claude Code provider.",
+    "active": "Active",
+    "select": "Switch to this provider",
+    "errors": {
+      "selectProvider": "Select a Qoder CN provider first.",
+      "invalidUrl": "Enter a valid provider Base URL.",
+      "unsupportedUrl": "Use an HTTPS provider URL or a local HTTP test endpoint.",
+      "keyRequired": "Enter the provider API key.",
+      "nameAndModelRequired": "Provider name and model are required.",
+      "invalidKey": "The API key contains invalid characters.",
+      "providerMissing": "The Qoder CN provider no longer exists.",
+      "sourceMissing": "The source provider no longer exists.",
+      "sourceUnsupported": "This source provider does not have reusable API-key settings.",
+      "providerIncomplete": "The Qoder CN provider is incomplete.",
+      "activeProvider": "Select another provider before removing the active one."
+    }
+  },
   "app": {
     "title": "CC Switch",
     "description": "All-in-One Assistant for Claude Code, Codex & Gemini CLI"

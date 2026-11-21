@@ -278,7 +278,7 @@ impl RequestForwarder {
         if matches!(app_type, AppType::Claude | AppType::ClaudeDesktop) {
             return detect_opaque_state_rejection(error, &self.rectifier_config, request, false);
         }
-        if !matches!(app_type, AppType::Codex | AppType::GrokBuild)
+        if !uses_openai_responses_adapter(app_type)
             || codex_upstream_format != Some(CodexUpstreamFormat::NativeResponses)
         {
             return None;
@@ -1367,13 +1367,10 @@ impl RequestForwarder {
         // Codex upstream conversion mode — computed early because the [1m]-suffix strip
         // below must be skipped on the Anthropic path (the marker has to survive to
         // catalog matching and to the transform's own strip+beta detection).
-        let mut codex_responses_to_chat = matches!(app_type, AppType::Codex | AppType::GrokBuild)
+        let mut codex_responses_to_chat = uses_openai_responses_adapter(app_type)
             && super::providers::should_convert_codex_responses_to_chat(provider, endpoint);
-        let mut codex_responses_to_anthropic =
-            matches!(app_type, AppType::Codex | AppType::GrokBuild)
-                && super::providers::should_convert_codex_responses_to_anthropic(
-                    provider, endpoint,
-                );
+        let mut codex_responses_to_anthropic = uses_openai_responses_adapter(app_type)
+            && super::providers::should_convert_codex_responses_to_anthropic(provider, endpoint);
         let mut copilot_endpoint_override: Option<String> = None;
         let codex_official_auth_passthrough = matches!(app_type, AppType::Codex)
             && super::providers::is_codex_official_provider(provider);
@@ -1499,7 +1496,7 @@ impl RequestForwarder {
         // Grok Build exposes a stable client-side model profile in config.toml.
         // Route requests to the provider's real upstream model before applying
         // the optional Responses -> Chat/Anthropic bridge.
-        if matches!(app_type, AppType::GrokBuild) {
+        if matches!(app_type, AppType::GrokBuild | AppType::QoderCnDesktop) {
             super::providers::apply_codex_upstream_model(provider, &mut mapped_body);
         }
 
@@ -1639,7 +1636,7 @@ impl RequestForwarder {
             codex_responses_to_anthropic = false;
         }
 
-        let codex_upstream_format = if matches!(app_type, AppType::Codex | AppType::GrokBuild)
+        let codex_upstream_format = if uses_openai_responses_adapter(app_type)
             && super::providers::is_codex_responses_endpoint(endpoint)
         {
             Some(if codex_responses_to_anthropic {
@@ -2028,7 +2025,7 @@ impl RequestForwarder {
         // One gate so rebase conflicts stay here plus the isolate file, not
         // scattered across sanitizers. Flatten namespaces first; then apply
         // xAI request rewrites (schema, agent_message, unknown models).
-        if matches!(app_type, AppType::Codex | AppType::GrokBuild)
+        if uses_openai_responses_adapter(app_type)
             && !codex_responses_to_chat
             && !codex_responses_to_anthropic
             && (!provider.is_github_copilot() || is_copilot_codex_responses)
@@ -2096,7 +2093,7 @@ impl RequestForwarder {
             }
         }
 
-        if matches!(app_type, AppType::Codex | AppType::GrokBuild) {
+        if uses_openai_responses_adapter(app_type) {
             self.apply_media_prevention(&mut request_body, provider);
         }
 
@@ -2361,7 +2358,7 @@ impl RequestForwarder {
         );
 
         // 序列化后释放工作副本；只有带着上游签发状态的流式请求，判流内拒绝时还要用请求体。
-        let opaque_state_request = (matches!(app_type, AppType::Codex | AppType::GrokBuild)
+        let opaque_state_request = (uses_openai_responses_adapter(app_type)
             && !codex_responses_to_chat
             && !codex_responses_to_anthropic
             && request_is_streaming
@@ -2478,6 +2475,13 @@ fn refresh_success_rate(status: &mut ProxyStatus) {
         status.success_rate =
             (status.success_requests as f32 / status.total_requests as f32) * 100.0;
     }
+}
+
+fn uses_openai_responses_adapter(app_type: &AppType) -> bool {
+    matches!(
+        app_type,
+        AppType::Codex | AppType::GrokBuild | AppType::QoderCnDesktop
+    )
 }
 
 /// Providers whose errors can come from an Anthropic Messages endpoint and therefore

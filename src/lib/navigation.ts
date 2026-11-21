@@ -15,6 +15,7 @@ export type AppPage =
   | "hermesMemory";
 
 export type GlobalPage =
+  | "qoderCnDesktop"
   | "usage"
   | "auth"
   | "mcp"
@@ -52,6 +53,7 @@ const APP_PAGES: AppPage[] = [
 ];
 
 const GLOBAL_PAGES: GlobalPage[] = [
+  "qoderCnDesktop",
   "usage",
   "auth",
   "mcp",
