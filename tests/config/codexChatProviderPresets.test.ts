@@ -116,6 +116,17 @@ const expectedChatPresets = new Map<
       },
     },
   ],
+  [
+    "Gemini",
+    {
+      baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai/v1/",
+      contextWindows: {
+        "gemini-4-carbon": 1048576,
+        "gemini-4-hydrogen": 1048576,
+        "gemini-4-neon": 1048576,
+      },
+    },
+  ],
 ]);
 
 describe("Codex Chat provider presets", () => {

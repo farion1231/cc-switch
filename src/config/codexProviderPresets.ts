@@ -1785,6 +1785,57 @@ requires_openai_auth = true`,
     iconColor: "#00A67E",
   },
   {
+    // Google Gemini 官方 OpenAI 兼容端点（Chat Completions，不支持原生 /v1/responses）：
+    // - API 请求地址与官网对齐用户/AI Studio 配置（/v1beta/openai/v1/）
+    // - gemini-4-carbon（low/medium/high）、gemini-4-hydrogen & gemini-4-neon（low/medium/high/xhigh）
+    //   均为 1M（1,048,576）上下文、支持图文输入，且均不支持关闭思考或 minimal
+    // - 后端已对 Chat 历史中的 Gemini thought_signature 自动回填兜底
+    name: "Gemini",
+    websiteUrl: "https://aistudio.google.com/",
+    apiKeyUrl: "https://aistudio.google.com/app/apikey",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "gemini",
+      "https://generativelanguage.googleapis.com/v1beta/openai/v1/",
+      "gemini-4-carbon",
+    ),
+    endpointCandidates: [
+      "https://generativelanguage.googleapis.com/v1beta/openai/v1/",
+    ],
+    apiFormat: "openai_chat",
+    modelCatalog: [
+      {
+        model: "gemini-4-carbon",
+        contextWindow: 1048576,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["low", "medium", "high"],
+      },
+      {
+        model: "gemini-4-hydrogen",
+        contextWindow: 1048576,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["low", "medium", "high", "xhigh"],
+      },
+      {
+        model: "gemini-4-neon",
+        contextWindow: 1048576,
+        inputModalities: ["text", "image"],
+        reasoningLevels: ["low", "medium", "high", "xhigh"],
+      },
+    ],
+    codexChatReasoning: {
+      supportsThinking: false,
+      supportsEffort: true,
+      thinkingParam: "none",
+      effortParam: "reasoning_effort",
+      effortValueMode: "passthrough",
+      outputFormat: "auto",
+    },
+    category: "cn_official",
+    icon: "gemini",
+    iconColor: "#4285F4",
+  },
+  {
     name: "DeepSeek",
     websiteUrl: "https://platform.deepseek.com",
     apiKeyUrl: "https://platform.deepseek.com/api_keys",
