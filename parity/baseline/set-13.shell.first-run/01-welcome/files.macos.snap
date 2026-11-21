@@ -41,7 +41,7 @@ file .cc-switch/model-pricing.json 644 lf
   |     "selectedModelKeys": [],
   |     "excludedCommonModelKeys": [],
   |     "lastSyncAt": null,
-  |     "lastSyncError": null
+  |     "lastSyncError": "Request to models.dev failed: error sending request: client error (Connect): tcp connect error: Connection refused (os error 61)"
   |   },
   |   "models": [],
   |   "deletedModelIds": []
@@ -98,7 +98,6 @@ file .cc-switch/settings.json 600 lf no-final-newline
   |     "codexQuotaProtectionDefaultOnV1": true
   |   }
   | }
-dir Library 755
 dir Library/Caches 755
 opaque-dir Library/Caches/com.ccswitch.desktop 755
 dir Library/WebKit 755

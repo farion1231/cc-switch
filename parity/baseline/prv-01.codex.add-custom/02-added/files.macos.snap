@@ -51,7 +51,7 @@ file .cc-switch/model-pricing.json 644 lf
   |     "selectedModelKeys": [],
   |     "excludedCommonModelKeys": [],
   |     "lastSyncAt": null,
-  |     "lastSyncError": null
+  |     "lastSyncError": "Request to models.dev failed: error sending request: client error (Connect): tcp connect error: Connection refused (os error 61)"
   |   },
   |   "models": [],
   |   "deletedModelIds": []
@@ -124,7 +124,6 @@ file .codex/config.toml 600 lf
   | requires_openai_auth = false
   | base_url = "https://beta.relay.example/v1"
   | experimental_bearer_token = "sk-parity-beta"
-dir Library 755
 dir Library/Caches 755
 opaque-dir Library/Caches/com.ccswitch.desktop 755
 dir Library/WebKit 755
