@@ -250,7 +250,13 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         drop(listener);
 
-        let error = reqwest::Client::new()
+        let client = reqwest::Client::builder()
+            // Keep ambient HTTP(S)_PROXY settings from turning this local
+            // connection-refused test into a proxy response.
+            .no_proxy()
+            .build()
+            .unwrap();
+        let error = client
             .get(format!(
                 "http://127.0.0.1:{port}/v1/responses?key=secret-token"
             ))
