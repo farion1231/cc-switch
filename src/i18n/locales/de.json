@@ -4272,6 +4272,12 @@
     "suggestedDefaultsHint": "Empfohlene Standardmodell-Konfiguration dieser Vorlage verwenden"
   },
   "subscription": {
+    "membership": {
+      "validUntil": "{{plan}} · Abonnement gültig bis {{date}}",
+      "expired": "{{plan}} · Abonnement am {{date}} abgelaufen",
+      "unavailable": "{{plan}} · Ablaufdatum des Abonnements nicht verfügbar",
+      "hint": "Die Gültigkeit des Abonnements ist unabhängig von Kontingent-Zurücksetzungen und dem Ablauf des Anmeldetokens. Den Status der automatischen Verlängerung findest du in der ChatGPT-Abonnementverwaltung."
+    },
     "title": "Abonnement-Kontingent",
     "short": {
       "fiveHour": "5 Std.",
