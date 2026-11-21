@@ -1,4 +1,4 @@
-use rquickjs::{Context, Function, Runtime};
+use rquickjs::{Context, Function, Persistent, Runtime};
 use serde_json::Value;
 use std::collections::HashMap;
 use url::{Host, Url};
@@ -29,44 +29,12 @@ pub async fn execute_usage_script(
         validate_base_url(base_url)?;
     }
 
-    // 3. 在独立作用域中提取 request 配置（确保 Runtime/Context 在 await 前释放）
-    // 用量脚本允许的最长执行时间（秒）。脚本来自不可信来源（deeplink、同步导入），
-    // 必须限制其 CPU / 内存 / 栈占用，防止一个恶意/ buggy 脚本挂死整个后端。
-    const USAGE_SCRIPT_TIMEOUT_SECS: u64 = 5;
-    // 16 MiB 对仅构造 request 配置 / extractor 的脚本已经足够。
-    const USAGE_SCRIPT_MEMORY_LIMIT_BYTES: usize = 16 * 1024 * 1024;
-
-    /// 创建一个受控的 QuickJS Runtime：限制内存与栈，并安装执行时间中断器。
-    fn create_script_runtime() -> Result<Runtime, AppError> {
-        let runtime = Runtime::new().map_err(|e| {
-            AppError::localized(
-                "usage_script.runtime_create_failed",
-                format!("创建 JS 运行时失败: {e}"),
-                format!("Failed to create JS runtime: {e}"),
-            )
-        })?;
-
-        // 内存和栈限制必须在 eval 前设置。
-        runtime.set_memory_limit(USAGE_SCRIPT_MEMORY_LIMIT_BYTES);
-        // set_max_stack_size 默认 256 KiB 够用，这里显式重申请求它保持一致。
-        runtime.set_max_stack_size(256 * 1024);
-
-        // 时间片中断器：每轮解释器循环检查是否超时，超时则抛出不可捕获的异常。
-        let deadline = std::time::Instant::now()
-            .checked_add(std::time::Duration::from_secs(USAGE_SCRIPT_TIMEOUT_SECS))
-            .ok_or_else(|| {
-                AppError::localized(
-                    "usage_script.invalid_timeout",
-                    "无法计算脚本执行截止时间",
-                    "Unable to compute script execution deadline",
-                )
-            })?;
-        runtime.set_interrupt_handler(Some(Box::new(move || std::time::Instant::now() > deadline)));
-
-        Ok(runtime)
-    }
-
-    let request_config = {
+    // QuickJS values never leave this blocking worker. Reuse its runtime and evaluated
+    // config across HTTP, which is still driven by the Tokio executor. The worker is
+    // reserved for this query (HTTP is bounded to 30s); async workers remain available.
+    let base_url = base_url.to_owned();
+    let executor = tokio::runtime::Handle::current();
+    tokio::task::spawn_blocking(move || {
         let runtime = create_script_runtime()?;
         let context = Context::full(&runtime).map_err(|e| {
             AppError::localized(
@@ -76,9 +44,9 @@ pub async fn execute_usage_script(
             )
         })?;
 
-        context.with(|ctx| {
+        let (request_json, config) = context.with(|ctx| {
             // 执行用户代码，获取配置对象
-            let config: rquickjs::Object = ctx.eval(script_with_vars.clone()).map_err(|e| {
+            let config: rquickjs::Object = ctx.eval(script_with_vars).map_err(|e| {
                 AppError::localized(
                     "usage_script.config_parse_failed",
                     format!("解析配置失败: {e}"),
@@ -121,46 +89,25 @@ pub async fn execute_usage_script(
                     )
                 })?;
 
-            Ok::<_, AppError>(request_json)
-        })?
-    }; // Runtime 和 Context 在这里被 drop
-
-    // 4. 解析 request 配置
-    let request: RequestConfig = serde_json::from_str(&request_config).map_err(|e| {
-        AppError::localized(
-            "usage_script.request_format_invalid",
-            format!("request 配置格式错误: {e}"),
-            format!("Invalid request config format: {e}"),
-        )
-    })?;
-
-    // 5. 验证请求 URL（HTTPS 强制 + 同源检查）
-    validate_request_url(&request.url, base_url, is_custom_template)?;
-
-    // 6. 发送 HTTP 请求
-    let response_data = send_http_request(&request, timeout_secs).await?;
-
-    // 7. 在独立作用域中执行 extractor（确保 Runtime/Context 在函数结束前释放）
-    let result: Value = {
-        let runtime = create_script_runtime()?;
-        let context = Context::full(&runtime).map_err(|e| {
-            AppError::localized(
-                "usage_script.context_create_failed",
-                format!("创建 JS 上下文失败: {e}"),
-                format!("Failed to create JS context: {e}"),
-            )
+            Ok::<_, AppError>((request_json, Persistent::save(&ctx, config)))
         })?;
 
-        context.with(|ctx| {
-            // 重新 eval 获取配置对象
-            let config: rquickjs::Object = ctx.eval(script_with_vars.clone()).map_err(|e| {
-                AppError::localized(
-                    "usage_script.config_reparse_failed",
-                    format!("重新解析配置失败: {e}"),
-                    format!("Failed to re-parse config: {e}"),
-                )
-            })?;
+        let request: RequestConfig = serde_json::from_str(&request_json).map_err(|e| {
+            AppError::localized(
+                "usage_script.request_format_invalid",
+                format!("request 配置格式错误: {e}"),
+                format!("Invalid request config format: {e}"),
+            )
+        })?;
+        validate_request_url(&request.url, &base_url, is_custom_template)?;
+        let response_data = executor.block_on(send_http_request(&request, timeout_secs))?;
 
+        // Network latency does not consume the extractor's CPU time budget.
+        reset_script_deadline(&runtime)?;
+        let result = context.with(|ctx| {
+            let config = config
+                .restore(&ctx)
+                .map_err(|e| AppError::Message(e.to_string()))?;
             // 提取 extractor 函数
             let extractor: Function = config.get("extractor").map_err(|e| {
                 AppError::localized(
@@ -223,13 +170,60 @@ pub async fn execute_usage_script(
                     format!("JSON parse failed: {e}"),
                 )
             })
-        })?
-    }; // Runtime 和 Context 在这里被 drop
+        })?;
+        validate_result(&result)?;
+        Ok(result)
+    })
+    .await
+    .map_err(|e| {
+        AppError::localized(
+            "usage_script.worker_failed",
+            format!("用量脚本工作线程失败: {e}"),
+            format!("Usage script worker failed: {e}"),
+        )
+    })?
+}
 
-    // 8. 验证返回值格式
-    validate_result(&result)?;
+// 用量脚本允许的最长执行时间（秒）。脚本来自不可信来源（deeplink、同步导入），
+// 必须限制其 CPU / 内存 / 栈占用，防止一个恶意/ buggy 脚本挂死整个后端。
+const USAGE_SCRIPT_TIMEOUT_SECS: u64 = 5;
+// 16 MiB 对仅构造 request 配置 / extractor 的脚本已经足够。
+const USAGE_SCRIPT_MEMORY_LIMIT_BYTES: usize = 16 * 1024 * 1024;
 
-    Ok(result)
+/// 创建一个受控的 QuickJS Runtime：限制内存与栈，并安装执行时间中断器。
+fn create_script_runtime() -> Result<Runtime, AppError> {
+    let runtime = Runtime::new().map_err(|e| {
+        AppError::localized(
+            "usage_script.runtime_create_failed",
+            format!("创建 JS 运行时失败: {e}"),
+            format!("Failed to create JS runtime: {e}"),
+        )
+    })?;
+
+    // 内存和栈限制必须在 eval 前设置。
+    runtime.set_memory_limit(USAGE_SCRIPT_MEMORY_LIMIT_BYTES);
+    // set_max_stack_size 默认 256 KiB 够用，这里显式重申请求它保持一致。
+    runtime.set_max_stack_size(256 * 1024);
+
+    reset_script_deadline(&runtime)?;
+
+    Ok(runtime)
+}
+
+fn reset_script_deadline(runtime: &Runtime) -> Result<(), AppError> {
+    // 时间片中断器：每轮解释器循环检查是否超时，超时则抛出不可捕获的异常。
+    let deadline = std::time::Instant::now()
+        .checked_add(std::time::Duration::from_secs(USAGE_SCRIPT_TIMEOUT_SECS))
+        .ok_or_else(|| {
+            AppError::localized(
+                "usage_script.invalid_timeout",
+                "无法计算脚本执行截止时间",
+                "Unable to compute script execution deadline",
+            )
+        })?;
+    runtime.set_interrupt_handler(Some(Box::new(move || std::time::Instant::now() > deadline)));
+
+    Ok(())
 }
 
 /// 请求配置结构
@@ -704,15 +698,29 @@ mod tests {
             .enable_time()
             .build()
             .expect("tokio runtime for test")
-            .block_on(execute_usage_script(
-                script,
-                "sk-test",
-                "https://api.example.com",
-                30,
-                None,
-                None,
-                None,
-            ));
+            .block_on(async {
+                let start = std::time::Instant::now();
+                let heartbeat = async {
+                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                    assert!(
+                        start.elapsed() < std::time::Duration::from_secs(2),
+                        "QuickJS blocked the async executor"
+                    );
+                };
+                let (_, result) = tokio::join!(
+                    heartbeat,
+                    execute_usage_script(
+                        script,
+                        "sk-test",
+                        "https://api.example.com",
+                        30,
+                        None,
+                        None,
+                        None,
+                    )
+                );
+                result
+            });
         let elapsed = start.elapsed();
 
         assert!(
@@ -724,5 +732,71 @@ mod tests {
             elapsed < std::time::Duration::from_secs(15),
             "interruption took too long: {elapsed:?}"
         );
+    }
+
+    async fn serve_usage_response(
+        delay: std::time::Duration,
+    ) -> (String, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let app = axum::Router::new().route(
+            "/",
+            axum::routing::get(move || async move {
+                tokio::time::sleep(delay).await;
+                axum::Json(serde_json::json!({}))
+            }),
+        );
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (url, server)
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn script_is_evaluated_once_and_http_does_not_use_extractor_budget() {
+        let (url, server) = serve_usage_response(std::time::Duration::from_millis(5200)).await;
+        // Reading request mutates closure state. Re-evaluating the script loses it.
+        let script = format!(
+            r#"(() => {{
+            let reads = 0;
+            return {{
+                get request() {{ reads++; return {{ url: "{url}", method: "GET" }}; }},
+                extractor: () => {{
+                    let sum = 0;
+                    for (let i = 0; i < 100000; i++) sum += i;
+                    return {{ remaining: reads, isValid: sum > 0 }};
+                }}
+            }};
+        }})()"#
+        );
+        let result = execute_usage_script(&script, "", &url, 15, None, None, None).await;
+        server.abort();
+        assert_eq!(
+            result.unwrap(),
+            serde_json::json!({"remaining": 1, "isValid": true})
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn extractor_timeout_does_not_block_async_timers() {
+        let (url, server) = serve_usage_response(std::time::Duration::ZERO).await;
+        let script = format!(
+            r#"({{
+            request: {{ url: "{url}", method: "GET" }},
+            extractor: () => {{ while (true) {{ Math.sqrt(Math.random()); }} }}
+        }})"#
+        );
+        let start = std::time::Instant::now();
+        let heartbeat = async {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            assert!(start.elapsed() < std::time::Duration::from_secs(2));
+        };
+        let (_, result) = tokio::join!(
+            heartbeat,
+            execute_usage_script(&script, "", &url, 15, None, None, None)
+        );
+        server.abort();
+        assert!(result.unwrap_err().to_string().contains("extractor"));
+        assert!(start.elapsed() < std::time::Duration::from_secs(15));
     }
 }
