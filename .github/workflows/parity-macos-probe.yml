@@ -7,6 +7,7 @@ on:
     branches: ["parity/**"]
     paths:
       - "parity/spike/macos/**"
+      - "parity/spike/common.mjs"
       - ".github/workflows/parity-macos-probe.yml"
       - "src-tauri/**"
       - "src/**"
@@ -32,7 +33,6 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: "20"
-          cache: pnpm
 
       - name: Read pinned Rust toolchain
         id: rust-toolchain
@@ -45,13 +45,6 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ steps.rust-toolchain.outputs.channel }}
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          workspaces: src-tauri -> target
-          shared-key: parity-macos
-          save-if: true
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -116,6 +109,15 @@ jobs:
             --helper "$RUNNER_TEMP/parity-helper" \
             --runs 7 \
             --out "$RUNNER_TEMP/out/results-${{ matrix.vm }}.json" | tee "$RUNNER_TEMP/out/probe.log"
+
+      - name: Collect crash reports
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/out/crash"
+          for d in "$HOME/Library/Logs/DiagnosticReports" /Library/Logs/DiagnosticReports; do
+            find "$d" -type f -newer parity-app.tar 2>/dev/null | while read -r f; do cp "$f" "$RUNNER_TEMP/out/crash/" || true; done
+          done
+          ls -la "$RUNNER_TEMP/out/crash"
 
       - name: Summary
         if: always()
