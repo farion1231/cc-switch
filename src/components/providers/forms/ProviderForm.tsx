@@ -3127,6 +3127,7 @@ function ProviderFormFull({
                 authValue={codexAuth}
                 configValue={codexConfig}
                 showRemoteCompaction={category !== "official"}
+                showStandaloneWebSearch={category !== "official"}
                 isProxyTakeover={isProxyTakeover}
                 onAuthChange={setCodexAuth}
                 onConfigChange={handleCodexConfigChange}

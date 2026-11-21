@@ -19,6 +19,7 @@ import { codexProviderPresets } from "@/config/codexProviderPresets";
 import type { CodexCopilotApiFormat, ProviderMeta } from "@/types";
 import { server } from "../msw/server";
 import { createTestQueryClient } from "../utils/testQueryClient";
+import { parse as parseToml } from "smol-toml";
 
 const copilotAuthState = vi.hoisted(() => ({
   isAuthenticated: true,
@@ -246,6 +247,47 @@ describe("Codex Copilot provider form", () => {
       );
       expect(JSON.parse(saved.settingsConfig).modelCatalog.models).toEqual(
         getCopilotPreset().modelCatalog,
+      );
+    },
+  );
+
+  it.each([true, false])(
+    "saves the standalone web search capability as %s",
+    async (enabled) => {
+      const onSubmit = renderForm();
+      const toggle = screen.getByRole("checkbox", {
+        name: "codexConfig.enableStandaloneWebSearch",
+      });
+      fireEvent.click(toggle);
+      if (!enabled) fireEvent.click(toggle);
+      fireEvent.click(screen.getByRole("button", { name: "save" }));
+      await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+      const settings = JSON.parse(onSubmit.mock.calls[0][0].settingsConfig);
+      const config = parseToml(settings.config) as any;
+      expect(
+        config.model_providers[config.model_provider]
+          .supports_standalone_web_search,
+      ).toBe(enabled);
+      expect(config.model_providers[config.model_provider].wire_api).toBe(
+        "responses",
+      );
+    },
+  );
+
+  it.each([true, false])(
+    "saves the live web search preference as %s",
+    async (enabled) => {
+      const onSubmit = renderForm();
+      const toggle = screen.getByRole("checkbox", {
+        name: "codexConfig.enableLiveWebSearch",
+      });
+      fireEvent.click(toggle);
+      if (!enabled) fireEvent.click(toggle);
+      fireEvent.click(screen.getByRole("button", { name: "save" }));
+      await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+      const settings = JSON.parse(onSubmit.mock.calls[0][0].settingsConfig);
+      expect(parseToml(settings.config).web_search).toBe(
+        enabled ? "live" : "cached",
       );
     },
   );
