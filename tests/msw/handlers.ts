@@ -645,4 +645,43 @@ export const handlers = [
       error: null,
     }),
   ),
+  http.post(`${TAURI_ENDPOINT}/list_app_config_backups`, () => success([])),
+  http.post(
+    `${TAURI_ENDPOINT}/preview_app_config_backup`,
+    async ({ request }) => {
+      const { app, backupId } = await withJson<{
+        app: AppId;
+        backupId: string;
+      }>(request);
+      return success({
+        entry: {
+          id: backupId,
+          app,
+          reason: "import",
+          createdAt: "2026-11-17T06:00:00Z",
+          pinned: true,
+          label: null,
+          totalSizeBytes: 0,
+          files: [],
+        },
+        files: [],
+      });
+    },
+  ),
+  http.post(
+    `${TAURI_ENDPOINT}/restore_app_config_backup`,
+    async ({ request }) => {
+      const { app, backupId } = await withJson<{
+        app: AppId;
+        backupId: string;
+      }>(request);
+      return success({
+        app,
+        restoredBackupId: backupId,
+        safetyBackupId: "mock-safety-1",
+        restoredFiles: [],
+      });
+    },
+  ),
+  http.post(`${TAURI_ENDPOINT}/delete_app_config_backup`, () => success(null)),
 ];

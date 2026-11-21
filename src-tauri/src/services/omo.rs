@@ -249,6 +249,33 @@ impl OmoService {
         Self::find_config_location(v, &home_dirs, &opencode_dir)?.ok_or(AppError::OmoConfigNotFound)
     }
 
+    /// Include absent files so restoring an older snapshot also removes variants created later.
+    pub(crate) fn backup_target_paths() -> Vec<(String, PathBuf, bool)> {
+        let opencode_dir = get_opencode_dir();
+        let native_home = get_home_dir();
+        let mut targets = Vec::new();
+        for (tag, variant) in [("standard", &STANDARD), ("slim", &SLIM)] {
+            for name in variant.config_candidates {
+                targets.push((format!("omo/{tag}/{name}"), opencode_dir.join(name), false));
+            }
+        }
+        for home in Self::unified_home_candidates(&native_home, &opencode_dir) {
+            let tag = if home == native_home {
+                "unified"
+            } else {
+                "unified-wsl"
+            };
+            for name in UNIFIED_CONFIG_FILENAMES {
+                targets.push((
+                    format!("omo/{tag}/{name}"),
+                    home.join(".omo").join(name),
+                    false,
+                ));
+            }
+        }
+        targets
+    }
+
     fn read_jsonc_object(path: &Path) -> Result<Map<String, Value>, AppError> {
         let content = std::fs::read_to_string(path).map_err(|e| AppError::io(path, e))?;
         let parsed: Value = json5::from_str(&content)
@@ -379,6 +406,13 @@ impl OmoService {
             std::fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
         }
 
+        if let Err(err) = crate::services::config_backup::backup_before_edit(
+            &crate::app_config::AppType::OpenCode,
+            Some("write_omo_config"),
+        ) {
+            log::warn!("Failed to back up OpenCode/OMO config before write: {err}");
+        }
+
         let (previous_contents, expected_contents) = match &location {
             OmoConfigLocation::Unified(path) => {
                 let mut document = UnifiedConfigDocument::load(path)?;
@@ -424,6 +458,12 @@ impl OmoService {
         if expected_contents.is_some() {
             log::info!("{} config written to {config_path:?}", v.label);
         }
+        if let Err(err) = crate::services::config_backup::backup_on_save(
+            &crate::app_config::AppType::OpenCode,
+            Some("save_omo_config"),
+        ) {
+            log::warn!("Failed to back up OpenCode/OMO config after save: {err}");
+        }
         Ok(())
     }
 
@@ -448,6 +488,15 @@ impl OmoService {
         }
 
         let mut applied_changes = Vec::new();
+
+        if unified_path.is_some() || !legacy_paths.is_empty() {
+            if let Err(err) = crate::services::config_backup::backup_before_edit(
+                &crate::app_config::AppType::OpenCode,
+                Some("delete_omo_config"),
+            ) {
+                log::warn!("Failed to back up OpenCode/OMO config before delete: {err}");
+            }
+        }
 
         let outcome =
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<(), AppError> {
@@ -542,6 +591,12 @@ impl OmoService {
         v: &OmoVariant,
     ) -> Result<crate::provider::Provider, AppError> {
         let location = Self::resolve_local_config_location(v)?;
+        if let Err(err) = crate::services::config_backup::ensure_import_backup(
+            &crate::app_config::AppType::OpenCode,
+            Some("import_omo_local"),
+        ) {
+            log::warn!("Failed to create initial OpenCode/OMO config backup: {err}");
+        }
         let obj = Self::read_config_object(&location)?;
 
         let mut settings = Map::new();

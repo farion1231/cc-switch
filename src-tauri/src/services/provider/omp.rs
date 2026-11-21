@@ -22,6 +22,11 @@ fn prepare(provider: &mut Provider) -> Result<(), AppError> {
 
 pub(super) fn list(state: &AppState) -> Result<IndexMap<String, Provider>, AppError> {
     let _guard = futures::executor::block_on(state.proxy_service.lock_switch_for_app("omp"));
+    if let Err(err) =
+        crate::services::config_backup::ensure_import_backup(&AppType::Omp, Some("import_omp_live"))
+    {
+        log::warn!("Failed to create initial Oh My Pi config backup: {err}");
+    }
     if let Err(error) = sync_native(state) {
         log::warn!("Failed to read Oh My Pi providers; showing saved catalog: {error}");
     }
@@ -53,6 +58,11 @@ fn sync_native(state: &AppState) -> Result<usize, AppError> {
 }
 pub(super) fn import_from_live(state: &AppState) -> Result<usize, AppError> {
     let _guard = futures::executor::block_on(state.proxy_service.lock_switch_for_app("omp"));
+    if let Err(err) =
+        crate::services::config_backup::ensure_import_backup(&AppType::Omp, Some("import_omp_live"))
+    {
+        log::warn!("Failed to create initial Oh My Pi config backup: {err}");
+    }
     sync_native(state)
 }
 pub(super) fn add(

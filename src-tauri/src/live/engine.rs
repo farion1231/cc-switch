@@ -53,6 +53,10 @@ impl DeviceStore {
     pub fn first_write_backup_dir(&self) -> PathBuf {
         self.root.join("backups").join("live-first-write")
     }
+
+    pub fn app_config_backup_dir(&self) -> PathBuf {
+        self.root.join("backups").join("app-configs")
+    }
 }
 
 /// 一个受引擎管理的客户端文件。`private` 为真时按 0600 写（文件里有 Key）。

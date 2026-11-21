@@ -467,6 +467,14 @@ fn write_models_document(
     bytes.push(b'\n');
     ensure_private_models_parent(path)?;
     ensure_models_revision(path, expected_revision)?;
+    if path.exists() && get_pi_models_path().ok().as_deref() == Some(path) {
+        if let Err(err) = crate::services::config_backup::backup_before_edit(
+            &crate::app_config::AppType::Pi,
+            Some("save_pi_models"),
+        ) {
+            log::warn!("Failed to back up Pi models.json before write: {err}");
+        }
+    }
     atomic_write_private(path, &bytes)
 }
 

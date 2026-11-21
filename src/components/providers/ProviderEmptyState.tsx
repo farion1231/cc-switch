@@ -1,4 +1,6 @@
-import { Download, Plus, Server } from "lucide-react";
+import { useState } from "react";
+import { ProviderConfigHistoryPanel } from "./ProviderConfigHistoryPanel";
+import { Download, History, Plus, Server } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { HelpTip } from "@/components/ui/help-tip";
 import { Button } from "@/components/ui/button";
@@ -21,6 +23,7 @@ export function ProviderEmptyState({
   onImport,
 }: ProviderEmptyStateProps) {
   const { t } = useTranslation();
+  const [historyApp, setHistoryApp] = useState<AppId | null>(null);
   // Pi / MiniMax Code / Oh My Pi 的"当前供应商"可以是原生应用自管的内置账号（不在可管理的
   // live 节点里），没有可导入的内容，列表也不提供导入按钮，因此不能沿用
   // "请点击导入当前配置"的通用文案。
@@ -37,6 +40,16 @@ export function ProviderEmptyState({
   // Antigravity 没有切换，这句「切换只替换关键字段」对它不成立
   const showKeyFieldsHint = appHas(appId, "editorView");
 
+  if (historyApp === appId) {
+    return (
+      <ProviderConfigHistoryPanel
+        key={appId}
+        appId={appId}
+        standalone
+        onClose={() => setHistoryApp(null)}
+      />
+    );
+  }
   return (
     <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
       <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl border border-border bg-subtle text-fg-2">
@@ -57,29 +70,35 @@ export function ProviderEmptyState({
           {t("provider.noProvidersDescriptionKeyFields")}
         </p>
       )}
-      {(onImport || onCreate) && (
-        <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
-          {onImport && (
-            <Button variant="neutral" size="regular" onClick={onImport}>
-              <Download className="h-4 w-4" />
-              {appId === "claude-desktop"
-                ? t("provider.importFromClaude")
-                : t("provider.importCurrent")}
-            </Button>
-          )}
-          {onCreate && (
-            <Button variant="neutral" size="regular" onClick={onCreate}>
-              <Plus className="h-4 w-4" />
-              {t("provider.addProvider")}
-            </Button>
-          )}
-          {!emptyCopyNs && onImport && (
-            <HelpTip title={t("provider.noProviders")}>
-              {t("provider.noProvidersDescription")}
-            </HelpTip>
-          )}
-        </div>
-      )}
+      <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+        {onImport && (
+          <Button variant="neutral" size="regular" onClick={onImport}>
+            <Download className="h-4 w-4" />
+            {appId === "claude-desktop"
+              ? t("provider.importFromClaude")
+              : t("provider.importCurrent")}
+          </Button>
+        )}
+        {onCreate && (
+          <Button variant="neutral" size="regular" onClick={onCreate}>
+            <Plus className="h-4 w-4" />
+            {t("provider.addProvider")}
+          </Button>
+        )}
+        <Button
+          variant="neutral"
+          size="regular"
+          onClick={() => setHistoryApp(appId)}
+        >
+          <History className="h-4 w-4" />
+          {t("provider.configHistory.button")}
+        </Button>
+        {!emptyCopyNs && onImport && (
+          <HelpTip title={t("provider.noProviders")}>
+            {t("provider.noProvidersDescription")}
+          </HelpTip>
+        )}
+      </div>
     </div>
   );
 }

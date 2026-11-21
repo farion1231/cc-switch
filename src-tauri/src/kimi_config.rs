@@ -294,6 +294,14 @@ fn write(path: &Path, before: &Value, after: &Value) -> Result<(), AppError> {
         }
         document.to_string()
     };
+    if path.exists() && path == config_path() {
+        if let Err(err) = crate::services::config_backup::backup_before_edit(
+            &crate::app_config::AppType::Kimi,
+            Some("save_kimi_config"),
+        ) {
+            log::warn!("Failed to back up Kimi config.toml before write: {err}");
+        }
+    }
     atomic_write_private(path, text.as_bytes())
 }
 

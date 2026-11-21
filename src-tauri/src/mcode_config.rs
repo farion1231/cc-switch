@@ -306,6 +306,14 @@ fn write_entry(
     }
     let yaml = serde_yaml::to_string(&document)
         .map_err(|_| AppError::Config("Cannot serialize MCode configuration".into()))?;
+    if path.exists() && path == config_path() {
+        if let Err(err) = crate::services::config_backup::backup_before_edit(
+            &crate::app_config::AppType::Mcode,
+            Some("save_mcode_config"),
+        ) {
+            log::warn!("Failed to back up MCode config.yaml before write: {err}");
+        }
+    }
     atomic_write_private(&path, yaml.as_bytes())
 }
 

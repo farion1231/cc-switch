@@ -38,6 +38,47 @@ pub(crate) fn profile_path(name: &str) -> PathBuf {
     profile_dir(name).join("cordis.patch.yml")
 }
 
+pub(crate) fn backup_target_paths() -> Vec<(String, PathBuf, bool)> {
+    let mut seen: Vec<PathBuf> = Vec::new();
+    let mut out = Vec::new();
+    for name in TARGET_PROFILES {
+        let path = profile_path(name);
+        if DISPLAY_PROFILES.contains(&name) || path.exists() {
+            let identity = path_identity(&path);
+            if !seen.contains(&identity) {
+                seen.push(identity);
+                out.push((format!("profiles/{name}/cordis.patch.yml"), path, true));
+            }
+        }
+    }
+    let creds = credentials_path();
+    if creds.exists() {
+        out.push((".credentials.yaml".to_string(), creds, true));
+    }
+    let home_patch = home_patch_path();
+    if home_patch.exists() {
+        out.push(("cordis.patch.yml".to_string(), home_patch, true));
+    }
+    out
+}
+
+pub(crate) fn resolve_backup_target_path(key: &str) -> Option<(PathBuf, bool)> {
+    if key == ".credentials.yaml" {
+        return Some((credentials_path(), true));
+    }
+    if key == "cordis.patch.yml" {
+        return Some((home_patch_path(), true));
+    }
+    let profile = key
+        .strip_prefix("profiles/")
+        .and_then(|rest| rest.strip_suffix("/cordis.patch.yml"))?;
+    if TARGET_PROFILES.contains(&profile) {
+        Some((profile_path(profile), true))
+    } else {
+        None
+    }
+}
+
 /// Always prepare Web and Desktop: DSH's initProfile preserves an existing patch and supplies
 /// the remaining files on first launch. Optional runtime profiles are only written if present.
 ///
@@ -411,6 +452,18 @@ fn edit_files_and_commit<T>(
             next.len(),
             paths.len()
         )));
+    }
+    let has_changes = current
+        .iter()
+        .zip(&next)
+        .any(|(curr, next_val)| curr != next_val);
+    if has_changes && previous.iter().any(Option::is_some) {
+        if let Err(err) = crate::services::config_backup::backup_before_edit(
+            &crate::app_config::AppType::Dsh,
+            Some("save_dsh_config"),
+        ) {
+            log::warn!("Failed to back up DeepSeek Harness config before write: {err}");
+        }
     }
     let mut written = vec![];
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {

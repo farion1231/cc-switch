@@ -254,6 +254,12 @@ fn import_default_config_internal(state: &AppState, app_type: AppType) -> Result
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or_default();
             if crate::grok_config::is_official_live_config(config) {
+                if let Err(err) = crate::services::config_backup::ensure_import_backup(
+                    &AppType::GrokBuild,
+                    Some("import_default_config"),
+                ) {
+                    log::warn!("Failed to create initial GrokBuild config backup: {err}");
+                }
                 state.db.ensure_official_seed_by_id(
                     crate::database::GROKBUILD_OFFICIAL_PROVIDER_ID,
                     AppType::GrokBuild,

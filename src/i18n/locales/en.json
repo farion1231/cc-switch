@@ -278,7 +278,40 @@
     "formSubtitleStack": "{{app}} (Aggregation mode)",
     "editCurrentNoticeFile": "This is the provider in use. Saving writes it to",
     "editCurrentNoticeFileEnd": " right away; the next request uses it.",
-    "editCurrentNotice": "This is the provider in use. Saving takes effect right away; the next request uses the new settings."
+    "editCurrentNotice": "This is the provider in use. Saving takes effect right away; the next request uses the new settings.",
+    "configHistory": {
+      "button": "Config History",
+      "panelTitle": "{{app}} Config History",
+      "panelDescription": "Snapshots captured on initial import and on every save for {{app}}.",
+      "backToList": "Back to list",
+      "empty": "No local config snapshots yet. A snapshot will be created automatically on import or save.",
+      "preview": "Preview",
+      "previewFailed": "Failed to load snapshot preview",
+      "restore": "Rollback",
+      "restoring": "Rolling back...",
+      "confirmRestoreAction": "Confirm Rollback",
+      "loadFailed": "Could not load configuration history",
+      "confirmRestoreDirect": "Rolling back {{app}} to the snapshot from {{date}} will overwrite the current local config files. CC Switch will clear the active provider. Select a provider again to resume managing this configuration.",
+      "confirmRestoreMessage": "Rolling back {{app}} to the snapshot from {{date}} will overwrite the current local config files.",
+      "restoreSuccess": "Rolled back {{app}} configuration",
+      "restoreFailed": "Rollback failed",
+      "delete": "Delete",
+      "deleting": "Deleting...",
+      "deleteSuccess": "Snapshot deleted",
+      "deleteFailed": "Failed to delete snapshot",
+      "confirmDeleteMessage": "This snapshot will be permanently deleted. This action cannot be undone.",
+      "confirmDeletePinnedMessage": "This is a pinned initial-import snapshot of your pre-CC Switch local config. Deleting it cannot be undone.",
+      "notExisted": "Not present",
+      "missingFileHint": "This file did not exist when the snapshot was taken. Rolling back will remove it if present.",
+      "binaryFileHint": "Binary file content cannot be previewed.",
+      "truncatedHint": "Preview truncated to 64 KB.",
+      "reasons": {
+        "import": "Initial Import",
+        "edit": "On Save",
+        "rollback": "Before Rollback",
+        "manual": "Manual"
+      }
+    }
   },
   "claudeCode": {
     "needsRouting": "Needs Routing"
@@ -634,6 +667,10 @@
         "database": {
           "name": "Database backups",
           "hint": "Automatic and manual database snapshots."
+        },
+        "appConfigs": {
+          "name": "App config backups",
+          "hint": "Per-app local configuration snapshots captured on initial import and on every save."
         },
         "skills": {
           "name": "Skill uninstall backups",

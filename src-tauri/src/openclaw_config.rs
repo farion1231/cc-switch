@@ -348,6 +348,15 @@ impl OpenClawConfigDocument {
             .transpose()?
             .map(|path| path.display().to_string());
 
+        if current_source.is_some() && self.path == get_openclaw_config_path() {
+            if let Err(err) = crate::services::config_backup::backup_before_edit(
+                &crate::app_config::AppType::OpenClaw,
+                Some("save_openclaw_config"),
+            ) {
+                log::warn!("Failed to back up OpenClaw config before write: {err}");
+            }
+        }
+
         atomic_write(&self.path, next_source.as_bytes())?;
 
         let warnings = scan_openclaw_health_from_value(

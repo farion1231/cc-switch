@@ -1112,6 +1112,14 @@ fn transact<T>(
         staged.discard();
         return Err(external_change(path));
     }
+    if original.is_some() && path == providers_path() {
+        if let Err(err) = crate::services::config_backup::backup_before_edit(
+            &crate::app_config::AppType::Copilot,
+            Some("save_copilot_config"),
+        ) {
+            log::warn!("Failed to back up Copilot providers.json before write: {err}");
+        }
+    }
     staged.commit()?;
     if read_providers(path)? != after {
         return Err(external_change(path));

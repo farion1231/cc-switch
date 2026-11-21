@@ -934,6 +934,12 @@ pub(crate) fn initialize_dsh_profiles(state: &AppState) -> Result<(), AppError> 
         .filter(|(_, server)| server.apps.dsh)
         .map(|(id, server)| (id, server.server))
         .collect();
+    if let Err(err) = crate::services::config_backup::ensure_import_backup(
+        &AppType::Dsh,
+        Some("initialize_dsh_profiles"),
+    ) {
+        log::warn!("Failed to create initial DSH config backup: {err}");
+    }
     crate::dsh_config::initialize_profiles(&providers, &servers)
 }
 
@@ -1268,6 +1274,16 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         }
     };
 
+    if let Err(err) = crate::services::config_backup::ensure_import_backup(
+        &app_type,
+        Some("import_default_config"),
+    ) {
+        log::warn!(
+            "Failed to create initial config backup for {}: {err}",
+            app_type.as_str()
+        );
+    }
+
     let mut provider = Provider::with_id(
         "default".to_string(),
         "default".to_string(),
@@ -1353,6 +1369,16 @@ pub fn should_import_default_config_on_startup(
     if !imports_default_config(app_type) {
         return Ok(false);
     }
+    if app_type.spec().route_mode {
+        let device = crate::live::engine::DeviceStore::for_device();
+        if crate::mode::state::load(&device)?
+            .apps
+            .get(app_type.as_str())
+            .is_some_and(|a| a.skip_startup_import)
+        {
+            return Ok(false);
+        }
+    }
 
     Ok(!state.db.has_any_provider_for_app(app_type)?)
 }
@@ -1385,6 +1411,13 @@ pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, Ap
     use crate::opencode_config;
     use crate::provider::{OpenCodeConfigFormat, OpenCodeProviderConfig};
     use serde::Deserialize;
+
+    if let Err(err) = crate::services::config_backup::ensure_import_backup(
+        &AppType::OpenCode,
+        Some("import_opencode_live"),
+    ) {
+        log::warn!("Failed to create initial OpenCode config backup: {err}");
+    }
 
     let providers = opencode_config::get_providers_with_format()?;
     if providers.is_empty() {
@@ -1480,6 +1513,13 @@ pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, Ap
 pub fn import_openclaw_providers_from_live(state: &AppState) -> Result<usize, AppError> {
     use crate::openclaw_config;
 
+    if let Err(err) = crate::services::config_backup::ensure_import_backup(
+        &AppType::OpenClaw,
+        Some("import_openclaw_live"),
+    ) {
+        log::warn!("Failed to create initial OpenClaw config backup: {err}");
+    }
+
     let providers = openclaw_config::get_typed_providers()?;
     if providers.is_empty() {
         return Ok(0);
@@ -1567,6 +1607,13 @@ pub fn import_openclaw_providers_from_live(state: &AppState) -> Result<usize, Ap
 /// database with is_current set to false.
 pub fn import_hermes_providers_from_live(state: &AppState) -> Result<usize, AppError> {
     use crate::hermes_config;
+
+    if let Err(err) = crate::services::config_backup::ensure_import_backup(
+        &AppType::Hermes,
+        Some("import_hermes_live"),
+    ) {
+        log::warn!("Failed to create initial Hermes config backup: {err}");
+    }
 
     let providers = hermes_config::get_providers()?;
     if providers.is_empty() {

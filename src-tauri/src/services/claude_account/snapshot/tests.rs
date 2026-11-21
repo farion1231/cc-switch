@@ -878,6 +878,21 @@ fn vacate_moves_the_login_back_out_of_an_empty_default() {
 }
 
 #[test]
+fn retry_vacate_after_credentials_were_parked_clears_the_remaining_profile() {
+    let fx = Fixture::new();
+    let (work, work_dir) = fx.account("work", "org-work", "rt-work");
+    fx.sign_in_default("work", "org-work", "rt-work");
+    fx.store.put(&fx.default(), Secret(Default::default()));
+
+    vacate(&fx.ctx(), &work, &work_dir).unwrap();
+    assert!(default_owner(&fx.default()).is_none());
+    assert_eq!(
+        fx.refresh_of(&Slot::Account(work_dir)).as_deref(),
+        Some("rt-work")
+    );
+}
+
+#[test]
 fn vacate_leaves_a_different_login_alone() {
     let fx = Fixture::new();
     let (work, work_dir) = fx.account("work", "org-work", "rt-work");

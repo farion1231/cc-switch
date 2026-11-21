@@ -320,6 +320,20 @@ fn update(path: &Path, id: &str, config: Option<&Value>) -> Result<(), AppError>
         }
     }
 
+    if path.exists() && path == config_path() {
+        if let Err(err) = crate::services::config_backup::ensure_import_backup(
+            &crate::app_config::AppType::WorkBuddy,
+            Some("first-write"),
+        ) {
+            log::warn!("Failed to create initial WorkBuddy config backup: {err}");
+        }
+        if let Err(err) = crate::services::config_backup::backup_before_edit(
+            &crate::app_config::AppType::WorkBuddy,
+            Some("save_workbuddy_config"),
+        ) {
+            log::warn!("Failed to back up WorkBuddy models.json before write: {err}");
+        }
+    }
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
     }

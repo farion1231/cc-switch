@@ -296,13 +296,16 @@ pub fn vacate(ctx: &Ctx<'_>, target: &str, target_dir: &Path) -> Result<(), AppE
     let default = &ctx.default;
     // 目标槽位的锁由 park 拿（锁不可重入，这里先拿会自己等自己）
     let _refresh = refresh_locks(default)?;
-    let Some(live) = ctx.store.read(default)?.filter(has_login) else {
-        return Ok(());
-    };
     if default_owner(default).as_deref() != Some(target) {
         return Ok(());
     }
+    let Some(live) = ctx.store.read(default)?.filter(has_login) else {
+        // A previous attempt may have parked the credentials before clearing the profile.
+        write_profile(&default.global_config(), None)?;
+        return Ok(());
+    };
     let live_profile = read_profile(&default.global_config());
+    owner_of(Some(&live), live_profile.as_ref())?;
     park(
         ctx.store,
         &live,
@@ -310,6 +313,7 @@ pub fn vacate(ctx: &Ctx<'_>, target: &str, target_dir: &Path) -> Result<(), AppE
         target,
         &Slot::Account(target_dir.to_path_buf()),
     )?;
+    update_state(ctx.data_dir, |state| note_expiry(state, target, &live))?;
     {
         let _storage = storage_lock(default)?;
         let now = ctx.store.read(default)?;
@@ -319,7 +323,6 @@ pub fn vacate(ctx: &Ctx<'_>, target: &str, target_dir: &Path) -> Result<(), AppE
         strip_account_keys(ctx.store, default, &live)?;
     }
     write_profile(&default.global_config(), None)?;
-    update_state(ctx.data_dir, |state| note_expiry(state, target, &live))?;
     log::info!("[ClaudeAccount] 已把登录移回账号目录，默认登录恢复为空");
     Ok(())
 }

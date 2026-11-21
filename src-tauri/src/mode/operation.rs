@@ -128,6 +128,21 @@ pub fn run(
             let current = read_current(&current_planned.file.path)?;
             if digest(current.as_deref()) == current_planned.pre {
                 ensure_first_write_backup(store, &current_planned.file.path, current.as_deref())?;
+                if !pending.published
+                    && op != state::op::RESTORE_CONFIG
+                    && crate::services::config_backup::is_auto_backup_enabled()
+                    && crate::services::config_backup::is_device_store(store)
+                {
+                    if let Ok(app_type) = guard.app().parse::<crate::app_config::AppType>() {
+                        if let Err(err) = crate::services::config_backup::backup_before_edit_in(
+                            store,
+                            &app_type,
+                            Some(op),
+                        ) {
+                            log::warn!("[{}] 写前配置备份失败: {err}", app_type.as_str());
+                        }
+                    }
+                }
                 // 换进第一个文件之前先记下「已开始发布」，记不下来就不发布：换进去之后才记的
                 // 话，中间崩溃、这个文件又被客户端改掉（Codex 刷新登录），恢复时就分不出发布
                 // 开始过没有，还没发布的登录暂存会被当成没用的丢掉。
@@ -414,7 +429,20 @@ pub fn commit_target(
     app: &str,
     target: &PendingTarget,
 ) -> Result<(), AppError> {
-    if let Some(id) = target.pointer.as_deref() {
+    if target.clear_pointer {
+        let app_type: crate::app_config::AppType = app.parse()?;
+        if let Some(account) = &target.vacate_claude_account {
+            crate::services::provider::claude_official::vacate_login(account)?;
+        }
+        state::update(store, |live| {
+            live.apps
+                .entry(app.to_owned())
+                .or_default()
+                .skip_startup_import = true;
+        })?;
+        crate::settings::set_current_provider(&app_type, None)?;
+        db.clear_current_provider(&app_type)?;
+    } else if let Some(id) = target.pointer.as_deref() {
         let app_type: crate::app_config::AppType = app.parse()?;
         crate::settings::set_current_provider(&app_type, Some(id))?;
         db.set_current_provider(&app_type, id)?;

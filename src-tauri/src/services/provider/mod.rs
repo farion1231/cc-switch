@@ -5817,6 +5817,17 @@ impl ProviderService {
             } else {
                 Default::default()
             };
+            if !native.is_empty() {
+                if let Err(err) = crate::services::config_backup::ensure_import_backup(
+                    &app_type,
+                    Some("import_native_live"),
+                ) {
+                    log::warn!(
+                        "Failed to create initial config backup for {}: {err}",
+                        app_type.as_str()
+                    );
+                }
+            }
             for (id, config) in &native {
                 if !saved.contains_key(id) {
                     let name = config.get("name").and_then(Value::as_str).unwrap_or(id);
@@ -5876,6 +5887,14 @@ impl ProviderService {
                 return Ok(saved);
             }
         };
+        if !native.is_empty() {
+            if let Err(err) = crate::services::config_backup::ensure_import_backup(
+                &AppType::Copilot,
+                Some("import_copilot_live"),
+            ) {
+                log::warn!("Failed to create initial Copilot config backup: {err}");
+            }
+        }
         for (id, config) in &native {
             if !saved.contains_key(id) {
                 saved.insert(
@@ -6364,12 +6383,13 @@ impl ProviderService {
         add_to_live: bool,
         editor: Option<EditorSave>,
     ) -> Result<bool, AppError> {
-        match (app_type, editor) {
+        let app_for_backup = app_type.clone();
+        let saved = match (app_type, editor) {
             (AppType::Claude, Some(editor)) => {
-                Self::add_claude_from_editor(state, provider, editor)
+                Self::add_claude_from_editor(state, provider, editor)?
             }
             (AppType::Codex, Some(editor)) => {
-                Self::save_codex_from_editor(state, provider, editor, EditorSaveKind::Add)
+                Self::save_codex_from_editor(state, provider, editor, EditorSaveKind::Add)?
             }
             (app_type @ (AppType::Gemini | AppType::GrokBuild), Some(editor)) => {
                 Self::save_gemini_or_grok_from_editor(
@@ -6378,10 +6398,22 @@ impl ProviderService {
                     provider,
                     editor,
                     EditorSaveKind::Add,
-                )
+                )?
             }
-            (app_type, _) => Self::add(state, app_type, provider, add_to_live),
+            (app_type, _) => Self::add(state, app_type, provider, add_to_live)?,
+        };
+        if saved {
+            if let Err(err) = crate::services::config_backup::backup_on_save(
+                &app_for_backup,
+                Some("save_provider"),
+            ) {
+                log::warn!(
+                    "Failed to create config backup on save for {}: {err}",
+                    app_for_backup.as_str()
+                );
+            }
         }
+        Ok(saved)
     }
 
     /// 从编辑器保存供应商。Claude Code、Codex、Gemini CLI、Grok Build 按关键字段拆开保存
@@ -6393,16 +6425,17 @@ impl ProviderService {
         provider: Provider,
         editor: Option<EditorSave>,
     ) -> Result<bool, AppError> {
-        match (app_type, editor) {
+        let app_for_backup = app_type.clone();
+        let saved = match (app_type, editor) {
             (AppType::Claude, Some(editor))
                 if original_id.is_none_or(|original| original == provider.id) =>
             {
-                Self::update_claude_from_editor(state, provider, editor)
+                Self::update_claude_from_editor(state, provider, editor)?
             }
             (AppType::Codex, Some(editor))
                 if original_id.is_none_or(|original| original == provider.id) =>
             {
-                Self::save_codex_from_editor(state, provider, editor, EditorSaveKind::Update)
+                Self::save_codex_from_editor(state, provider, editor, EditorSaveKind::Update)?
             }
             (app_type @ (AppType::Gemini | AppType::GrokBuild), Some(editor))
                 if original_id.is_none_or(|original| original == provider.id) =>
@@ -6413,10 +6446,22 @@ impl ProviderService {
                     provider,
                     editor,
                     EditorSaveKind::Update,
-                )
+                )?
             }
-            (app_type, _) => Self::update(state, app_type, original_id, provider),
+            (app_type, _) => Self::update(state, app_type, original_id, provider)?,
+        };
+        if saved {
+            if let Err(err) = crate::services::config_backup::backup_on_save(
+                &app_for_backup,
+                Some("save_provider"),
+            ) {
+                log::warn!(
+                    "Failed to create config backup on save for {}: {err}",
+                    app_for_backup.as_str()
+                );
+            }
         }
+        Ok(saved)
     }
 
     /// 从编辑器新增或保存 Codex 供应商：关键字段、独有字段存回行，其余改动作为全局设置

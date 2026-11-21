@@ -278,7 +278,40 @@
     "formSubtitleStack": "{{app}} (Aggregationsmodus)",
     "editCurrentNoticeFile": "Dies ist der verwendete Anbieter. Beim Speichern wird er sofort geschrieben nach",
     "editCurrentNoticeFileEnd": "; die nächste Anfrage verwendet ihn.",
-    "editCurrentNotice": "Dies ist der verwendete Anbieter. Das Speichern wirkt sofort; die nächste Anfrage verwendet die neuen Einstellungen."
+    "editCurrentNotice": "Dies ist der verwendete Anbieter. Das Speichern wirkt sofort; die nächste Anfrage verwendet die neuen Einstellungen.",
+    "configHistory": {
+      "button": "Konfigurationsverlauf",
+      "panelTitle": "{{app}} Konfigurationsverlauf",
+      "panelDescription": "Snapshots von {{app}}, die beim Erstimport und bei jedem Speichern erstellt werden.",
+      "backToList": "Zurück zur Liste",
+      "empty": "Noch keine lokalen Konfigurations-Snapshots vorhanden. Sie werden beim Import oder Speichern automatisch erstellt.",
+      "preview": "Vorschau",
+      "previewFailed": "Vorschau konnte nicht geladen werden",
+      "restore": "Zurücksetzen",
+      "restoring": "Wird zurückgesetzt...",
+      "confirmRestoreAction": "Rollback bestätigen",
+      "loadFailed": "Der Konfigurationsverlauf konnte nicht geladen werden",
+      "confirmRestoreDirect": "Das Zurücksetzen von {{app}} auf den Snapshot vom {{date}} überschreibt die aktuellen lokalen Konfigurationsdateien. CC Switch hebt die Auswahl des aktiven Anbieters auf. Wähle erneut einen Anbieter, um diese Konfiguration wieder zu verwalten.",
+      "confirmRestoreMessage": "Das Zurücksetzen von {{app}} auf den Snapshot vom {{date}} überschreibt die aktuellen lokalen Konfigurationsdateien.",
+      "restoreSuccess": "Konfiguration von {{app}} zurückgesetzt",
+      "restoreFailed": "Rollback fehlgeschlagen",
+      "delete": "Löschen",
+      "deleting": "Wird gelöscht...",
+      "deleteSuccess": "Snapshot gelöscht",
+      "deleteFailed": "Snapshot konnte nicht gelöscht werden",
+      "confirmDeleteMessage": "Dieser Snapshot wird dauerhaft gelöscht. Diese Aktion kann nicht rückgängig gemacht werden.",
+      "confirmDeletePinnedMessage": "Dies ist ein angehefteter Erstimport-Snapshot Ihrer ursprünglichen Konfiguration. Das Löschen kann nicht rückgängig gemacht werden.",
+      "notExisted": "Nicht vorhanden",
+      "missingFileHint": "Diese Datei existierte zum Zeitpunkt des Snapshots noch nicht. Beim Rollback wird sie entfernt, falls vorhanden.",
+      "binaryFileHint": "Binärdateiinhalte können nicht angezeigt werden.",
+      "truncatedHint": "Vorschau auf 64 KB gekürzt.",
+      "reasons": {
+        "import": "Erstimport",
+        "edit": "Beim Speichern",
+        "rollback": "Vor Rollback",
+        "manual": "Manuell"
+      }
+    }
   },
   "claudeCode": {
     "needsRouting": "Routing erforderlich"
@@ -634,6 +667,10 @@
         "database": {
           "name": "Datenbanksicherungen",
           "hint": "Automatische und manuelle Datenbank-Snapshots."
+        },
+        "appConfigs": {
+          "name": "App-Konfigurationssicherungen",
+          "hint": "Lokale Konfigurations-Snapshots pro App vom Erstimport und jedem Speichern."
         },
         "skills": {
           "name": "Sicherungen deinstallierter Skills",
