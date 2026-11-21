@@ -1,0 +1,63 @@
+name: Parity Linux probe
+
+# Delivery unit 2 of the parity suite: can a parity build of CC Switch be driven and observed
+# offline in the pinned Linux image? Runs only on parity/** branches, never on main or PRs.
+on:
+  push:
+    branches: ["parity/**"]
+    paths:
+      - "parity/spike/linux/**"
+      - "parity/spike/common.mjs"
+      - "parity/docker/**"
+      - ".github/workflows/parity-linux-probe.yml"
+      - "src-tauri/**"
+      - "src/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: parity-linux-probe-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    # No Actions cache: the repository's cache quota is shared with main, and a parity build
+    # cache would evict main's. Builds start cold.
+    env:
+      PARITY_RUNS: "7"
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build the lane image
+        run: docker build -t ccs-parity-linux:dev -f parity/docker/linux.Dockerfile parity/docker
+
+      - name: Build the parity binary in the image
+        env:
+          PARITY_CACHE: ${{ runner.temp }}/parity-cache
+        run: parity/spike/linux/lane.sh build
+
+      - name: Probe (7 fresh launches, no network)
+        env:
+          PARITY_CACHE: ${{ runner.temp }}/parity-cache
+        run: |
+          set -o pipefail
+          mkdir -p parity/.out/linux
+          parity/spike/linux/lane.sh probe 2>&1 | tee parity/.out/linux/probe.log
+
+      - name: Summary
+        if: always()
+        run: |
+          { echo '### Linux'; echo '```'; grep -E '^run |"pass"' parity/.out/linux/probe.log 2>/dev/null; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: probe-linux
+          path: |
+            parity/.out/linux/*.json
+            parity/.out/linux/*.png
+            parity/.out/linux/probe.log
+          retention-days: 7
