@@ -898,6 +898,8 @@
     "launchOnStartupDescription": "CC Switch beim Start des Systems automatisch ausführen",
     "silentStartup": "Stiller Start",
     "silentStartupDescription": "Im Hintergrund starten, ohne das Hauptfenster anzuzeigen",
+    "restoreClientsOnExit": "Clients beim Beenden wiederherstellen",
+    "restoreClientsOnExitHelp": "Leitet Clients, die Routing oder Aggregation nutzen (Claude Code, Codex, Gemini CLI, Grok Build), beim Beenden von CC Switch wieder auf ihren direkten Anbieter um und verbindet sie beim nächsten Start erneut.\n\nWenn deaktiviert, zeigen Clients auch nach dem Beenden von CC Switch weiter auf den lokalen Router und können keine Verbindung herstellen, bis CC Switch wieder läuft. Geeignet, wenn CC Switch dauerhaft läuft oder beim Systemstart startet: Neustarts schreiben Client-Konfigurationen nicht mehr hin und her, und Auswahlen wie /model bleiben erhalten. Eine Client-Konfiguration, die Sie ändern, während CC Switch geschlossen ist, wird beim nächsten Start nicht überschrieben; die App wechselt zurück zu Direkt und Sie erhalten einen Hinweis.",
     "autoLaunchFailed": "Autostart konnte nicht eingerichtet werden",
     "minimizeToTray": "Beim Schließen in den Tray minimieren",
     "minimizeToTrayDescription": "Wenn aktiviert, blendet die Schließen-Schaltfläche das Fenster im System-Tray aus, andernfalls wird die App direkt beendet.",
@@ -4465,7 +4467,9 @@
       "officialLoginPaused": "Offizielle Codex-Anmeldung pausiert",
       "officialLoginPausedBody": "Offizielle Modelle können nicht verwendet werden, und Ihre vorhandenen Threads unter „Projekte“ in der Codex-Seitenleiste sind vorerst ausgeblendet. Sobald das offizielle Kontingent wieder verfügbar ist, klicken Sie auf „Offizielle Anmeldung fortsetzen“ und beenden Sie Codex vollständig und öffnen es neu.",
       "resumeOfficialLogin": "Offizielle Anmeldung fortsetzen",
-      "attachFailed": "{{mode}} konnte sich beim letzten Mal nicht wieder verbinden, daher ist {{app}} auf Direkt zurückgegangen."
+      "attachFailed": "{{mode}} konnte sich beim letzten Mal nicht wieder verbinden, daher ist {{app}} auf Direkt zurückgegangen.",
+      "attachDrifted": "Die Konfiguration von {{app}} wurde geändert, während CC Switch geschlossen war; {{mode}} wurde nicht erneut verbunden und die Datei blieb unverändert.",
+      "attachUnreadable": "Die Konfigurationsdatei von {{app}} konnte nicht gelesen werden (fehlt oder ist nicht lesbar); {{mode}} wurde nicht erneut verbunden und ist zu Direkt zurückgekehrt."
     },
     "toast": {
       "enteredRoute": "{{app}} läuft jetzt über Routing → {{provider}}.",
