@@ -208,6 +208,44 @@ describe("TrayPanel window layout", () => {
     );
   });
 
+  it("shows all five Antigravity quota lines on the app row", async () => {
+    const line = (text: string) => ({
+      text,
+      left: 80,
+      warn: false,
+      resetsAt: null,
+      emphasis: null,
+    });
+    vi.mocked(trayPanelApi.state).mockResolvedValue({
+      ...state,
+      apps: [
+        {
+          ...state.apps[0],
+          app: "agy",
+          name: "Antigravity",
+          quota: {
+            lines: [
+              line("Gemini 5-hour 85% left"),
+              line("Gemini weekly 82% left"),
+              line("Argon weekly 61% left"),
+              line("Claude/GPT 5-hour 100% left"),
+              line("Claude/GPT weekly 100% left"),
+            ],
+            note: null,
+            resetCredits: null,
+          },
+        },
+      ],
+    });
+    vi.mocked(trayPanelApi.placement).mockResolvedValue(windows);
+    renderPanel();
+
+    expect(await screen.findByText("Gemini 5-hour 85% left")).toBeVisible();
+    expect(screen.getByText("Argon weekly 61% left")).toBeVisible();
+    expect(screen.getByText("Claude/GPT 5-hour 100% left")).toBeVisible();
+    expect(screen.getByText("Claude/GPT weekly 100% left")).toBeVisible();
+  });
+
   it("shows the frame with Open main window and Quit before the panel data arrives", async () => {
     let resolveState: (value: TrayPanelState) => void = () => {};
     vi.mocked(trayPanelApi.state).mockReturnValue(

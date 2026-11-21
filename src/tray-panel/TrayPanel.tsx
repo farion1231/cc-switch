@@ -175,7 +175,8 @@ function QuotaBlock({
     return null;
   }
   const now = new Date();
-  const lines = quota.lines.slice(0, compact ? 2 : 3).map((line) => ({
+  // 应用行最多 5 档：Antigravity 有 Gemini 和 Claude/GPT 两组各自的 5 小时 / 每周，再加 Argon 每周。
+  const lines = quota.lines.slice(0, compact ? 2 : 5).map((line) => ({
     ...line,
     when: line.resetsAt ? formatResetIn(line.resetsAt, now, texts) : null,
   }));
