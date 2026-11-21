@@ -33,6 +33,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::app_config::AppType;
+use crate::database::UnreadableEntry;
 use crate::error::AppError;
 use crate::provider::{Provider, ProviderMeta, UsageResult};
 use crate::services::mcp::McpService;
@@ -96,8 +97,8 @@ pub fn reapply_current_codex_official_live(state: &AppState) -> Result<bool, App
     if current_id.is_empty() {
         return Ok(false);
     }
-    let providers = state.db.get_all_providers(&AppType::Codex)?;
-    let Some(provider) = providers.get(&current_id) else {
+    let providers = state.db.get_provider_rows(&AppType::Codex)?;
+    let Some(provider) = providers.get(&current_id)? else {
         return Ok(false);
     };
     if !codex_direct::is_official(provider) {
@@ -124,8 +125,8 @@ pub fn reapply_current_codex_third_party_live(state: &AppState) -> Result<bool, 
     else {
         return Ok(false);
     };
-    let providers = state.db.get_all_providers(&AppType::Codex)?;
-    let Some(provider) = providers.get(&current_id) else {
+    let providers = state.db.get_provider_rows(&AppType::Codex)?;
+    let Some(provider) = providers.get(&current_id)? else {
         return Ok(false);
     };
     if codex_direct::is_official(provider) {
@@ -321,6 +322,182 @@ mod tests {
                  wire_api = \"chat\"\n"
             )
         })
+    }
+
+    fn break_stored_settings(state: &AppState, app: &str, id: &str) -> String {
+        let conn = state.db.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE providers SET settings_config = '{\"env\":' WHERE app_type = ?1 AND id = ?2",
+            [app, id],
+        )
+        .unwrap();
+        conn.query_row(
+            "SELECT settings_config || '|' || meta || '|' || is_current FROM providers WHERE app_type = ?1 AND id = ?2",
+            [app, id],
+            |row| row.get(0),
+        )
+        .unwrap()
+    }
+
+    fn stored_row(state: &AppState, app: &str, id: &str) -> Option<String> {
+        use rusqlite::OptionalExtension;
+        state
+            .db
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT settings_config || '|' || meta || '|' || is_current FROM providers WHERE app_type = ?1 AND id = ?2",
+                [app, id],
+                |row| row.get(0),
+            )
+            .optional()
+            .unwrap()
+    }
+
+    #[test]
+    #[serial]
+    fn an_unreadable_provider_is_listed_apart_left_untouched_and_can_only_be_deleted() {
+        with_test_home(|state, _| {
+            for id in ["good", "broken"] {
+                let mut provider = Provider::with_id(
+                    id.into(),
+                    format!("{id} name"),
+                    json!({"npm": "@ai-sdk/openai-compatible", "options": {"baseURL": format!("https://{id}.example")}}),
+                    None,
+                );
+                provider.category = Some("custom".into());
+                state
+                    .db
+                    .save_provider(&AppType::OpenCode, &provider)
+                    .unwrap();
+            }
+            let stored = break_stored_settings(state, "opencode", "broken");
+
+            let listed = ProviderService::list(state, AppType::OpenCode).expect("list still loads");
+            assert_eq!(listed.keys().collect::<Vec<_>>(), ["good"]);
+            let unreadable = ProviderService::list_unreadable(state, AppType::OpenCode).unwrap();
+            assert_eq!(unreadable.len(), 1);
+            assert_eq!(
+                (unreadable[0].id.as_str(), unreadable[0].name.as_str()),
+                ("broken", "broken name")
+            );
+            assert!(
+                unreadable[0].error.contains("settings_config"),
+                "{}",
+                unreadable[0].error
+            );
+
+            // 不能切换、编辑；这些失败都不改库里的字节。
+            assert!(ProviderService::switch(state, AppType::OpenCode, "broken").is_err());
+            let mut edited = listed["good"].clone();
+            edited.id = "broken".into();
+            assert!(ProviderService::update(state, AppType::OpenCode, None, edited).is_err());
+            assert_eq!(stored_row(state, "opencode", "broken"), Some(stored));
+
+            ProviderService::delete(state, AppType::OpenCode, "broken").expect("delete is allowed");
+            assert_eq!(stored_row(state, "opencode", "broken"), None);
+            assert!(ProviderService::list_unreadable(state, AppType::OpenCode)
+                .unwrap()
+                .is_empty());
+            assert!(stored_row(state, "opencode", "good").is_some());
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn listing_a_native_app_never_overwrites_an_unreadable_row_with_its_native_entry() {
+        with_test_home(|state, _| {
+            let config = json!({
+                "name": "Relay", "kind": "custom", "enabled": true, "api": "openai-completions",
+                "options": {"baseURL": "https://relay.example/v1", "apiKey": "sk-test"},
+                "models": {"m": {"name": "m"}}
+            });
+            state
+                .db
+                .save_provider(
+                    &AppType::Mcode,
+                    &Provider::with_id("relay".into(), "Relay".into(), config.clone(), None),
+                )
+                .unwrap();
+            let stored = break_stored_settings(state, "mcode", "relay");
+            // MCode 自己的配置里有同 id 的条目：合并时会把它当成「库里没有」补存。
+            crate::mcode_config::set_provider("relay", config).unwrap();
+
+            let listed = ProviderService::list(state, AppType::Mcode).expect("list still loads");
+            assert!(listed.is_empty(), "{:?}", listed.keys());
+            assert_eq!(stored_row(state, "mcode", "relay"), Some(stored));
+            assert_eq!(
+                ProviderService::list_unreadable(state, AppType::Mcode)
+                    .unwrap()
+                    .len(),
+                1
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn an_unreadable_row_only_fails_what_reads_that_row() {
+        with_test_home(|state, _| {
+            for id in ["good", "broken"] {
+                let mut provider = Provider::with_id(
+                    id.into(),
+                    format!("{id} name"),
+                    codex_settings(&format!("https://{id}.example/v1"), &format!("sk-{id}")),
+                    None,
+                );
+                provider.category = Some("custom".into());
+                provider.meta = Some(ProviderMeta::default());
+                state.db.save_provider(&AppType::Codex, &provider).unwrap();
+            }
+            state
+                .db
+                .add_custom_endpoint(&AppType::Codex, "good", "https://mirror.example/v1")
+                .unwrap();
+            ProviderService::switch(state, AppType::Codex, "broken").unwrap();
+            let stored = break_stored_settings(state, "codex", "broken");
+
+            // 指针照样指着读不出来的那行：解析当前供应商不报错，删除按「正在使用」拒绝。
+            assert_eq!(
+                ProviderService::current(state, AppType::Codex).unwrap(),
+                "broken"
+            );
+            let refused = ProviderService::delete(state, AppType::Codex, "broken")
+                .unwrap_err()
+                .to_string();
+            assert!(refused.contains("正在使用"), "{refused}");
+
+            // 只读另一行的操作不受影响；读这一行的点名报错。
+            let endpoints = ProviderService::get_custom_endpoints(state, AppType::Codex, "good")
+                .expect("endpoints of another row");
+            assert_eq!(endpoints.len(), 1);
+            let error = ProviderService::get_custom_endpoints(state, AppType::Codex, "broken")
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("broken"), "{error}");
+            for (id, names_broken) in [("good", false), ("broken", true)] {
+                let error =
+                    futures::executor::block_on(usage::query_usage(state, AppType::Codex, id))
+                        .unwrap_err()
+                        .to_string();
+                assert_eq!(error.contains("broken"), names_broken, "{id}: {error}");
+            }
+
+            // 从读不出来的那家切走可以（之后才能删它），它的字节不变。
+            ProviderService::switch(state, AppType::Codex, "good").expect("switch away");
+            assert_eq!(
+                ProviderService::current(state, AppType::Codex).unwrap(),
+                "good"
+            );
+            // 只有 is_current（最后一段）跟着指针变，存的 JSON 不动。
+            let json_part = |row: &str| row.rsplit_once('|').unwrap().0.to_string();
+            assert_eq!(
+                stored_row(state, "codex", "broken").map(|row| json_part(&row)),
+                Some(json_part(&stored))
+            );
+            ProviderService::delete(state, AppType::Codex, "broken").expect("delete once unused");
+        });
     }
 
     #[test]
@@ -2519,6 +2696,136 @@ requires_openai_auth = true
                 !live_providers.contains_key(&provider.id),
                 "db-only openclaw provider should not be written to live during sync"
             );
+        });
+    }
+
+    /// 一个新 OpenCode 标识缺 npm/models：在新机器上导入备份时 live 里没有同名条目，写不进去。
+    fn opencode_row_without_definition(id: &str) -> Provider {
+        let mut provider = opencode_provider(id);
+        provider.settings_config = json!({
+            "name": format!("Provider {id}"),
+            "options": {"baseURL": "https://api.example.com/v1", "apiKey": "test-key"}
+        });
+        provider
+    }
+
+    #[test]
+    #[serial]
+    fn full_live_sync_reports_failed_additive_provider_and_still_writes_the_rest() {
+        with_test_home(|state, _| {
+            // 排序在前的那家写失败，后面那家照样要写进 live。
+            let bad = opencode_row_without_definition("a-bad");
+            let mut good = opencode_provider("z-good");
+            good.sort_index = Some(1);
+            state.db.save_provider(&AppType::OpenCode, &bad).unwrap();
+            state.db.save_provider(&AppType::OpenCode, &good).unwrap();
+
+            let error = ProviderService::sync_current_to_live(state)
+                .expect_err("a provider that could not be written must not be reported as synced")
+                .to_string();
+            assert!(error.contains("provider/opencode"), "{error}");
+            assert!(error.contains("a-bad"), "{error}");
+            assert!(!error.contains("z-good"), "{error}");
+
+            let live = crate::opencode_config::get_providers().unwrap();
+            assert!(live.contains_key("z-good"), "{live:?}");
+            assert!(!live.contains_key("a-bad"), "{live:?}");
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn additive_app_sync_reports_failed_provider_and_still_projects_mcp() {
+        with_test_home(|state, _| {
+            // OpenCode 装了（配置目录在），MCP 才会投影过去。
+            fs::create_dir_all(crate::opencode_config::get_opencode_dir()).unwrap();
+            state
+                .db
+                .save_provider(
+                    &AppType::OpenCode,
+                    &opencode_row_without_definition("a-bad"),
+                )
+                .unwrap();
+            state
+                .db
+                .save_mcp_server(&crate::app_config::McpServer {
+                    id: "ctx".into(),
+                    name: "ctx".into(),
+                    server: json!({"type": "stdio", "command": "ctx-server"}),
+                    apps: crate::app_config::McpApps {
+                        opencode: true,
+                        ..Default::default()
+                    },
+                    description: None,
+                    homepage: None,
+                    docs: None,
+                    tags: vec![],
+                })
+                .unwrap();
+
+            let error = ProviderService::sync_current_provider_for_app(state, AppType::OpenCode)
+                .expect_err("failed provider must be reported")
+                .to_string();
+            assert!(error.contains("a-bad"), "{error}");
+            assert!(
+                crate::opencode_config::get_mcp_servers()
+                    .unwrap()
+                    .contains_key("ctx"),
+                "MCP must still be projected after a provider failure"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn syncing_opencode_succeeds_with_omo_presets_and_leaves_them_out_of_opencode_json() {
+        with_test_home(|state, _| {
+            // OMO / OMO Slim 预设由 OmoService 写自己的文件，不进 opencode.json；
+            // 导入的不带 meta，在界面里添加的带 live_config_managed = true。
+            let omo = opencode_omo_provider("omo-imported", "omo");
+            let mut slim = opencode_omo_provider("omo-slim-added", "omo-slim");
+            slim.meta = Some(crate::provider::ProviderMeta {
+                live_config_managed: Some(true),
+                ..Default::default()
+            });
+            let good = opencode_provider("z-good");
+            for provider in [&omo, &slim, &good] {
+                state
+                    .db
+                    .save_provider(&AppType::OpenCode, provider)
+                    .unwrap();
+            }
+
+            ProviderService::sync_current_provider_for_app(state, AppType::OpenCode)
+                .expect("OMO presets are not opencode.json providers");
+
+            let live = crate::opencode_config::get_providers().unwrap();
+            assert!(live.contains_key("z-good"), "{live:?}");
+            assert!(!live.contains_key("omo-imported"), "{live:?}");
+            assert!(!live.contains_key("omo-slim-added"), "{live:?}");
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn switching_omo_variant_warns_when_the_other_variant_config_cannot_be_removed() {
+        with_test_home(|state, _| {
+            // 另一个变体的配置位置被一个目录占着，删不掉。
+            let other = crate::opencode_config::get_opencode_dir()
+                .join(crate::services::omo::SLIM.preferred_filename);
+            fs::create_dir_all(other.join("blocker")).unwrap();
+            ProviderService::add(
+                state,
+                AppType::OpenCode,
+                opencode_omo_provider("omo-a", "omo"),
+                false,
+            )
+            .unwrap();
+
+            let result = ProviderService::switch(state, AppType::OpenCode, "omo-a")
+                .expect("enabling the variant itself succeeded");
+
+            assert_eq!(result.warnings, vec!["omo_variant_cleanup_failed:omo-a"]);
         });
     }
 
@@ -5497,7 +5804,14 @@ impl ProviderService {
             } else {
                 crate::mcode_config::get_providers()?
             };
-            let mut saved = state.db.get_all_providers(&app_type)?;
+            let mut saved = match state.db.get_all_providers(&app_type) {
+                Ok(saved) => saved,
+                // 有读不出来的行时不合并：按「库里没有」补存原生条目会盖掉那一行。
+                Err(error) => {
+                    log::warn!("Not merging native {app_type:?} providers: {error}");
+                    return Ok(state.db.get_provider_rows(&app_type)?.readable);
+                }
+            };
             let nicknames = if app_type == AppType::Kimi {
                 crate::services::kimi_oauth::account_nicknames()
             } else {
@@ -5530,7 +5844,15 @@ impl ProviderService {
             }
             return Ok(saved);
         }
-        state.db.get_all_providers(&app_type)
+        Ok(state.db.get_provider_rows(&app_type)?.readable)
+    }
+
+    /// 库里读不出来的供应商：界面单独列出，只能删除。
+    pub fn list_unreadable(
+        state: &AppState,
+        app_type: AppType,
+    ) -> Result<Vec<UnreadableEntry>, AppError> {
+        Ok(state.db.get_provider_rows(&app_type)?.unreadable)
     }
 
     /// GitHub Copilot CLI 的列表：自带模型卡和 `providers.json` 合并（文件里有、库里没有的
@@ -5538,7 +5860,14 @@ impl ProviderService {
     /// 官方卡不参与合并，永远不是「已添加」。旧版环境变量形状的自带模型卡就地转成新形状。
     fn list_copilot(state: &AppState) -> Result<IndexMap<String, Provider>, AppError> {
         let app = &AppType::Copilot;
-        let mut saved = state.db.get_all_providers(app)?;
+        let mut saved = match state.db.get_all_providers(app) {
+            Ok(saved) => saved,
+            // 同上：有读不出来的行时不合并 providers.json，免得补存时盖掉那一行。
+            Err(error) => {
+                log::warn!("Not merging Copilot providers.json: {error}");
+                return Ok(state.db.get_provider_rows(app)?.readable);
+            }
+        };
         let native = match crate::copilot_config::get_providers() {
             Ok(native) => native,
             Err(error) => {
@@ -6674,6 +7003,9 @@ impl ProviderService {
     /// 对于累加模式应用（OpenCode, OpenClaw），可以随时删除任意供应商，同时从 live 配置中移除。
     pub fn delete(state: &AppState, app_type: AppType, id: &str) -> Result<(), AppError> {
         let _native_guard = lock_native_provider_operations(state, &app_type);
+        if state.db.get_unreadable_provider(&app_type, id)?.is_some() {
+            return Self::delete_unreadable(state, &app_type, id);
+        }
         if app_type == AppType::Pi {
             return pi::delete(state, id);
         }
@@ -6793,6 +7125,20 @@ impl ProviderService {
 
         state.db.delete_provider(&app_type, id)?;
         Ok(())
+    }
+
+    /// 读不出来的行只删库里这一行：不知道它往 live 写过什么，所以不碰 live，也不写回任何东西。
+    /// 正被使用的照样不能删。
+    fn delete_unreadable(state: &AppState, app_type: &AppType, id: &str) -> Result<(), AppError> {
+        if !app_type.spec().additive
+            && !matches!(app_type, AppType::Agy)
+            && crate::mode::current::is_referenced(&state.db, app_type, id)?
+        {
+            return Err(AppError::Message(
+                "无法删除当前正在使用的供应商".to_string(),
+            ));
+        }
+        state.db.delete_provider(app_type, id)
     }
 
     /// Kimi「添加」：把卡片写进 config.toml，但不改 default_model（「切换」才改）。
@@ -7053,11 +7399,13 @@ impl ProviderService {
             return omp::enable(state, id);
         }
 
-        // Check if provider exists
-        let providers = state.db.get_all_providers(&app_type)?;
-        let _provider = providers
-            .get(id)
+        // Check if provider exists. 别的行读不出来不拦这次切换（它们在下面只用来找上一家；
+        // 上一家读不出来就和它不在库里一样处理）；要切到的这一行读不出来则报错。
+        let rows = state.db.get_provider_rows(&app_type)?;
+        let _provider = rows
+            .get(id)?
             .ok_or_else(|| AppError::Message(format!("供应商 {id} 不存在")))?;
+        let providers = &rows.readable;
         // WorkBuddy 官方登录卡不写 models.json，卡片的「添加」走账号切换（还原绑定账号的登录文件）
         if app_type == AppType::WorkBuddy
             && crate::workbuddy_config::is_official_provider(_provider)
@@ -7097,14 +7445,14 @@ impl ProviderService {
 
         // OMO providers are switched through their own exclusive path.
         if matches!(app_type, AppType::OpenCode) && _provider.category.as_deref() == Some("omo") {
-            return Self::switch_normal(state, app_type, id, &providers);
+            return Self::switch_normal(state, app_type, id, providers);
         }
 
         // OMO Slim providers are switched through their own exclusive path.
         if matches!(app_type, AppType::OpenCode)
             && _provider.category.as_deref() == Some("omo-slim")
         {
-            return Self::switch_normal(state, app_type, id, &providers);
+            return Self::switch_normal(state, app_type, id, providers);
         }
 
         // 切换和进入 / 退出代理都会改客户端文件和指针。按应用串行，拿到锁、补完上一次
@@ -7145,7 +7493,7 @@ impl ProviderService {
         }
 
         // Normal mode: full switch with Live config write
-        Self::switch_normal(state, app_type, id, &providers)
+        Self::switch_normal(state, app_type, id, providers)
     }
 
     /// Normal switch flow (non-proxy mode)
@@ -7207,8 +7555,14 @@ impl ProviderService {
                     .db
                     .set_omo_provider_current(&app_type, id, enable.category)?;
                 crate::services::OmoService::write_config_to_file(state, enable)?;
-                let _ = crate::services::OmoService::delete_config_file(disable);
-                return Ok(SwitchResult::default());
+                let mut result = SwitchResult::default();
+                if let Err(err) = crate::services::OmoService::delete_config_file(disable) {
+                    log::warn!("切到 {id} 后删除另一个 OMO 变体的配置失败: {err}");
+                    result
+                        .warnings
+                        .push(format!("omo_variant_cleanup_failed:{id}"));
+                }
+                return Ok(result);
             }
         }
 
@@ -7507,9 +7861,9 @@ impl ProviderService {
             return Err(AppError::Message("No current provider".to_string()));
         }
 
-        let providers = state.db.get_all_providers(&app_type)?;
+        let providers = state.db.get_provider_rows(&app_type)?;
         let provider = providers
-            .get(&current_id)
+            .get(&current_id)?
             .ok_or_else(|| AppError::Message(format!("Provider {current_id} not found")))?;
 
         match app_type {

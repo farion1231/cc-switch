@@ -36,10 +36,7 @@ pub fn sync_copilot_usage(db: &Database) -> Result<SessionSyncResult, AppError> 
 fn sync_sessions(db: &Database, root: &Path) -> Result<SessionSyncResult, AppError> {
     let mut result = SessionSyncResult::default();
     let cursors = load_sync_cursors(db)?;
-    let provider_ids: HashSet<String> = db
-        .get_all_providers(&AppType::Copilot)?
-        .into_keys()
-        .collect();
+    let provider_ids: HashSet<String> = db.get_provider_ids(&AppType::Copilot)?;
     let Ok(sessions) = fs::read_dir(root) else {
         return Ok(result);
     };

@@ -121,6 +121,7 @@ export const READER_DEFAULTS: Record<string, string> = {
   outlineFailed: "有失败步骤",
   outlineAborted: "已中断",
   outlineNoReply: "没有回复",
+  chapter: "章节",
   viewOptions: "显示选项",
   noChanges: "这个会话没有文件改动",
   rawMatch: "原文中的匹配",

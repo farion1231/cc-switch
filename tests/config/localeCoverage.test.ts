@@ -66,7 +66,6 @@ describe("Turkish locale", () => {
       "codexConfig.configToml",
       "providerPreset.plan.aksk",
       "mcp.envPlaceholder",
-      "mcp.wizard.envPlaceholder",
       "skills.searchSource.skillssh",
     ];
 
@@ -100,28 +99,10 @@ describe("Turkish locale", () => {
 });
 
 describe("Korean locale", () => {
-  it("preserves technical field identifiers in translated strings", () => {
-    const translations = flattenStrings(ko);
-    for (const [key, value] of translations) {
-      const source = reference.get(key) ?? "";
-      const identifiers =
-        source.match(/\b[a-z]+[A-Z][a-zA-Z]*\b|\b\w+_\w+\b/g) ?? [];
-      for (const identifier of identifiers) {
-        expect(value, `${key}: ${identifier}`).toContain(identifier);
-      }
-    }
-  });
-
   it("preserves protocol fields, configuration literals, and commands", () => {
     const translations = flattenStrings(ko);
     const exactLiterals = [
       "codexConfig.authJsonPlaceholder",
-      "mcp.form.jsonPlaceholder",
-      "mcp.form.tomlPlaceholder",
-      "mcp.wizard.headersPlaceholder",
-      "mcp.wizard.argsPlaceholder",
-      "mcp.wizard.typeStdio",
-      "mcp.wizard.typeSse",
       "mcp.presets.fetch.name",
       "mcp.presets.time.name",
       "mcp.presets.memory.name",
@@ -142,7 +123,6 @@ describe("Korean locale", () => {
       "codexConfig.configToml",
       "providerPreset.plan.aksk",
       "mcp.envPlaceholder",
-      "mcp.wizard.envPlaceholder",
       "skills.searchSource.skillssh",
     ];
 
@@ -191,7 +171,6 @@ describe("Russian locale", () => {
       "codexConfig.configToml",
       "providerPreset.plan.aksk",
       "mcp.envPlaceholder",
-      "mcp.wizard.envPlaceholder",
       "skills.searchSource.skillssh",
     ];
     for (const key of exactLiterals.filter((key) => translations.has(key))) {

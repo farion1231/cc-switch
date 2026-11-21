@@ -1431,7 +1431,8 @@ impl RequestForwarder {
                         "Codex official route requires a bearer token".to_string(),
                     )
                 })?;
-                super::codex_quota_protection::admit(token, headers).await?;
+                let request_model = body.get("model").and_then(|value| value.as_str());
+                super::codex_quota_protection::admit(token, headers, request_model).await?;
                 quota_token = Some(token);
             }
         }

@@ -7,6 +7,7 @@ import {
 import {
   buildTurnIndex,
   buildTurns,
+  chapterRowKey,
   effectiveBlocks,
   estimateRowHeight,
   FAILURE_PREVIEW_LINES,
@@ -16,6 +17,7 @@ import {
   findTurnRowIndex,
   flattenRows,
   isChangeStep,
+  isChapterCall,
   isTimelineExpanded,
   LEGACY_CALL_PREFIX,
   MAX_PINNED_FAILURES,
@@ -1002,5 +1004,152 @@ describe("查找命中在预览可见行之外", () => {
     const row = flattenRows(turns).find((r) => r.kind === "step");
     if (!row || row.kind !== "step") throw new Error("no step row");
     expect(row.previewLines).toBe(FAILURE_PREVIEW_LINES);
+  });
+});
+
+describe("章节（mark_chapter）", () => {
+  const chapterCall = (id: string, title: string, summary?: string) =>
+    call(id, "mcp", {
+      rawName: "mcp__ccd_session__mark_chapter",
+      server: "ccd_session",
+      title,
+      detail: summary,
+    });
+
+  const messages: SessionMessage[] = [
+    msg("user", [text("重构支付模块")], { turnId: "t1" }),
+    msg(
+      "assistant",
+      [
+        chapterCall("ch1", "梳理现状", "读代码"),
+        call("c1"),
+        call("c2"),
+        chapterCall("ch2", "动手改"),
+        call("c3", "edit"),
+      ],
+      { turnId: "t1" },
+    ),
+    msg(
+      "tool",
+      [result("ch1"), result("c1"), result("c2"), result("ch2"), result("c3")],
+      { turnId: "t1" },
+    ),
+    msg("assistant", [text("改完了"), chapterCall("ch3", "收尾")], {
+      turnId: "t1",
+    }),
+    msg("tool", [result("ch3")], { turnId: "t1" }),
+  ];
+  const [turn] = buildTurns(messages);
+
+  it("章节不算步骤，返回值不显示，也不影响最终回复的判定", () => {
+    expect(toolTitles(turn.steps)).toEqual(["cmd c1", "cmd c2", "cmd c3"]);
+    expect(turn.final?.text).toBe("改完了");
+    expect(
+      turn.chapters.map(({ title, summary, beforeStepId }) => ({
+        title,
+        summary,
+        beforeStepId,
+      })),
+    ).toEqual([
+      { title: "梳理现状", summary: "读代码", beforeStepId: turn.steps[0].id },
+      { title: "动手改", summary: undefined, beforeStepId: turn.steps[2].id },
+      { title: "收尾", summary: undefined, beforeStepId: undefined },
+    ]);
+  });
+
+  it("展开时章节行插在对应步骤之前，折叠时排在摘要行之前", () => {
+    expect(rowKinds(flattenRows([turn], { expandAll: true }))).toEqual([
+      "question",
+      "timeline",
+      "chapter",
+      "step",
+      "step",
+      "chapter",
+      "step",
+      "chapter",
+      "final",
+    ]);
+    expect(rowKinds(flattenRows([turn]))).toEqual([
+      "question",
+      "chapter",
+      "chapter",
+      "chapter",
+      "timeline",
+      "final",
+    ]);
+  });
+
+  it("「只看对话」保留章节行，「只看改动」不出章节行", () => {
+    expect(rowKinds(flattenRows([turn], { filter: "conversation" }))).toEqual([
+      "question",
+      "chapter",
+      "chapter",
+      "chapter",
+      "final",
+    ]);
+    expect(rowKinds(flattenRows([turn], { filter: "changes" }))).toEqual([
+      "question",
+      "step",
+    ]);
+  });
+
+  it("合并步骤里的第一步后面有章节时，章节排在合并步骤之前", () => {
+    const [merged] = buildTurns(
+      [
+        msg("user", [text("查一下")], { turnId: "t1" }),
+        msg(
+          "assistant",
+          [
+            call("m1", "mcp", { server: "docs", title: "docs.search" }),
+            chapterCall("ch1", "中途章节"),
+            call("m2", "mcp", { server: "docs", title: "docs.read" }),
+          ],
+          { turnId: "t1" },
+        ),
+        msg("tool", [result("m1"), result("ch1"), result("m2")], {
+          turnId: "t1",
+        }),
+      ],
+      { style: AGENT_READER_STYLES.claude },
+    );
+    expect(merged.steps.map((step) => step.kind)).toEqual(["merged"]);
+    expect(merged.chapters[0].beforeStepId).toBe(merged.steps[0].id);
+  });
+
+  it("查找能命中章节标题和摘要，并定位到章节行", () => {
+    const hits = findSearchHits([turn], "读代码");
+    expect(hits?.matches).toEqual([
+      {
+        turn: 0,
+        target: "chapter",
+        targetId: turn.chapters[0].id,
+        count: 1,
+      },
+    ]);
+    const rows = flattenRows([turn]);
+    expect(rows[findMatchRowIndex(rows, hits!.matches[0])]).toMatchObject({
+      kind: "chapter",
+      key: chapterRowKey(turn, turn.chapters[0]),
+    });
+  });
+
+  it("拿不到章节标题的调用按普通 MCP 步骤显示", () => {
+    const plain = call("x", "mcp", {
+      rawName: "mcp__ccd_session__mark_chapter",
+      server: "ccd_session",
+      title: "ccd_session.mark_chapter",
+    });
+    expect(isChapterCall(plain)).toBe(false);
+    expect(
+      isChapterCall(
+        call("y", "shell", { rawName: "mark_chapter", title: "x" }),
+      ),
+    ).toBe(false);
+    const [only] = buildTurns([
+      msg("assistant", [plain], { turnId: "t1" }),
+      msg("tool", [result("x")], { turnId: "t1" }),
+    ]);
+    expect(only.chapters).toEqual([]);
+    expect(toolTitles(only.steps)).toEqual(["ccd_session.mark_chapter"]);
   });
 });

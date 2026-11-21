@@ -1,0 +1,33 @@
+{
+  "version": "4.0.36",
+  "items": [
+    {
+      "type": "new",
+      "zh": "新增插件页面，管理 Claude Code、Codex 等应用的插件",
+      "zh-TW": "新增外掛頁面，管理 Claude Code、Codex 等應用的外掛",
+      "en": "New Plugins page for managing plugins in Claude Code, Codex and more",
+      "ja": "プラグインページを追加し、Claude Code や Codex などのプラグインを管理"
+    },
+    {
+      "type": "new",
+      "zh": "技能仓库可以用访问令牌读取私有仓库",
+      "zh-TW": "技能倉庫可以用存取權杖讀取私有倉庫",
+      "en": "Skill repositories can read private repos with access tokens",
+      "ja": "アクセストークンで非公開のスキルリポジトリを読み込めるように"
+    },
+    {
+      "type": "new",
+      "zh": "经路由的供应商可以设置费用倍率",
+      "zh-TW": "經路由的供應商可以設定費用倍率",
+      "en": "Routed providers can set a cost multiplier",
+      "ja": "ルーティング経由のプロバイダーに料金倍率を設定可能に"
+    },
+    {
+      "type": "fix",
+      "zh": "修复 Codex 额度保护把免费的自动审批也拦下",
+      "zh-TW": "修正 Codex 額度保護把免費的自動審批也擋下",
+      "en": "Codex quota protection no longer blocks the free auto-review",
+      "ja": "Codex のクォータ保護が無料の自動承認まで止める問題を修正"
+    }
+  ]
+}

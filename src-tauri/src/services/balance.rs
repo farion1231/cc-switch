@@ -11,6 +11,7 @@
 //!   立即透出错误文案。判定按 reqwest 错误种类在折叠点完成，不依赖错误文案匹配。
 
 use super::usage_http::{parse_f64, send_for_json, JsonReply};
+use crate::codex_config::codex_url_host_matches_any;
 use crate::provider::{UsageData, UsageResult};
 use std::time::Duration;
 
@@ -26,22 +27,34 @@ enum BalanceProvider {
 }
 
 fn detect_provider(base_url: &str) -> Option<BalanceProvider> {
-    let url = base_url.to_lowercase();
-    if url.contains("api.deepseek.com") {
+    let host_is = |hosts: &[&str]| codex_url_host_matches_any(base_url, hosts);
+    if host_is(&["api.deepseek.com"]) {
         Some(BalanceProvider::DeepSeek)
-    } else if url.contains("api.stepfun.ai") || url.contains("api.stepfun.com") {
+    } else if host_is(&["api.stepfun.ai", "api.stepfun.com"]) {
         Some(BalanceProvider::StepFun)
-    } else if url.contains("api.siliconflow.cn") {
+    } else if host_is(&["api.siliconflow.cn"]) {
         Some(BalanceProvider::SiliconFlow)
-    } else if url.contains("api.siliconflow.com") {
+    } else if host_is(&["api.siliconflow.com"]) {
         Some(BalanceProvider::SiliconFlowEn)
-    } else if url.contains("openrouter.ai") {
+    } else if host_is(&["openrouter.ai"]) {
         Some(BalanceProvider::OpenRouter)
-    } else if url.contains("api.novita.ai") {
+    } else if host_is(&["api.novita.ai"]) {
         Some(BalanceProvider::NovitaAI)
     } else {
         None
     }
+}
+
+/// 按地址认出的余额供应商 id，取值与前端 `BALANCE_PROVIDERS` 的 `id` 一致（两站点的硅基流动同为 `siliconflow`）。
+#[cfg(test)]
+pub(crate) fn detect_provider_id(base_url: &str) -> Option<&'static str> {
+    Some(match detect_provider(base_url)? {
+        BalanceProvider::DeepSeek => "deepseek",
+        BalanceProvider::StepFun => "stepfun",
+        BalanceProvider::SiliconFlow | BalanceProvider::SiliconFlowEn => "siliconflow",
+        BalanceProvider::OpenRouter => "openrouter",
+        BalanceProvider::NovitaAI => "novita",
+    })
 }
 
 fn make_error(msg: String) -> UsageResult {
@@ -338,7 +351,7 @@ pub(crate) async fn query_zhipu_balance(
     base_url: &str,
     api_key: &str,
 ) -> Result<UsageResult, String> {
-    let is_cn = base_url.to_lowercase().contains("bigmodel.cn");
+    let is_cn = codex_url_host_matches_any(base_url, &["bigmodel.cn"]);
     let host = if is_cn {
         "https://open.bigmodel.cn"
     } else {
@@ -634,5 +647,37 @@ mod tests {
         .error
         .unwrap();
         assert!(msg.contains("令牌已过期"), "{msg}");
+    }
+
+    /// 余额接口只认供应商自己的域名（含子域、端口、大小写、末尾的点）；中转站地址里
+    /// 带着这些域名不算，否则会拿中转站的 Key 去查供应商余额。
+    #[test]
+    fn balance_provider_is_detected_by_host_not_substring() {
+        for url in [
+            "https://api.deepseek.com/anthropic",
+            "HTTPS://API.DEEPSEEK.COM",
+            "https://eu.api.deepseek.com:8443/v1",
+            "https://api.deepseek.com./v1",
+            "api.deepseek.com/v1",
+        ] {
+            assert!(
+                matches!(detect_provider(url), Some(BalanceProvider::DeepSeek)),
+                "{url}"
+            );
+        }
+        assert!(matches!(
+            detect_provider("https://openrouter.ai/api/v1"),
+            Some(BalanceProvider::OpenRouter)
+        ));
+        for url in [
+            "https://relay.example.com/api.deepseek.com/v1",
+            "https://relay.example.com/v1?upstream=https://api.deepseek.com",
+            "https://api.deepseek.com.relay.example.com/v1",
+            "https://xapi.deepseek.com/v1",
+            "https://relay.example.com/openrouter.ai/api/v1",
+            "https://openrouter.ai.cn/api",
+        ] {
+            assert!(detect_provider(url).is_none(), "{url}");
+        }
     }
 }

@@ -9,6 +9,14 @@ export type ProviderCategory =
   | "omo" // Oh My OpenCode
   | "omo-slim"; // Oh My OpenCode Slim
 
+/** 库里有、但存的数据读不出来的一条记录：只能删除，原始数据保持不动。 */
+export interface UnreadableEntry {
+  id: string;
+  name: string;
+  /** 后端的解析错误，点名是哪一列 */
+  error: string;
+}
+
 export interface Provider {
   id: string;
   name: string;
@@ -29,11 +37,6 @@ export interface Provider {
   iconColor?: string; // 图标颜色（Hex 格式，如 "#00A67E"）
   // 是否加入故障转移队列
   inFailoverQueue?: boolean;
-}
-
-export interface AppConfig {
-  providers: Record<string, Provider>;
-  current: string;
 }
 
 // 自定义端点配置
