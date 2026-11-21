@@ -15,7 +15,7 @@
 //!   报“待刷新”，刷新令牌也没了才引导用户重新 `grok login`。
 
 use std::collections::HashMap;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
 
 use crate::services::subscription::{
     CredentialStatus, QuotaTier, SubscriptionQuota, TIER_CREDITS, TIER_MONTHLY, TIER_WEEKLY_LIMIT,
@@ -164,7 +164,7 @@ fn select_preferred_entry(
 
 /// 判断 ISO 8601 时间串是否已过期；无法解析时不视为过期
 fn is_iso_expired(iso: &str) -> bool {
-    let now_secs = SystemTime::now()
+    let now_secs = crate::clock::system_now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs() as i64;
@@ -786,14 +786,14 @@ pub(crate) async fn get_grok_subscription_quota() -> Result<SubscriptionQuota, S
 // ── 辅助函数 ──────────────────────────────────────────────
 
 fn now_secs() -> i64 {
-    SystemTime::now()
+    crate::clock::system_now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs() as i64
 }
 
 fn now_millis() -> i64 {
-    SystemTime::now()
+    crate::clock::system_now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as i64

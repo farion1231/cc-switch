@@ -35,7 +35,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -151,7 +151,7 @@ impl Env {
             }),
             keychain: Box::new(crate::services::subscription::read_codex_keychain_login),
             now: Box::new(|| {
-                SystemTime::now()
+                crate::clock::system_now()
                     .duration_since(UNIX_EPOCH)
                     .map(|elapsed| elapsed.as_secs())
                     .unwrap_or_default()

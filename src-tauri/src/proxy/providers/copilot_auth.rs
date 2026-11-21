@@ -463,7 +463,7 @@ pub struct CopilotToken {
 impl CopilotToken {
     /// 检查令牌是否即将过期（提前 60 秒）
     pub fn is_expiring_soon(&self) -> bool {
-        let now = chrono::Utc::now().timestamp();
+        let now = crate::clock::now().timestamp();
         self.expires_at - now < TOKEN_REFRESH_BUFFER_SECONDS
     }
 }
@@ -728,7 +728,7 @@ impl CopilotAuthManager {
         let account_data = GitHubAccountData {
             github_token,
             user,
-            authenticated_at: chrono::Utc::now().timestamp(),
+            authenticated_at: crate::clock::now().timestamp(),
             github_domain,
         };
         let account = GitHubAccount::from(&account_data);
@@ -1559,7 +1559,7 @@ impl CopilotAuthManager {
             .ok_or_else(|| CopilotAuthError::IoError("无效的存储文件名".to_string()))?
             .to_string_lossy()
             .to_string();
-        let ts = std::time::SystemTime::now()
+        let ts = crate::clock::os_now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos();

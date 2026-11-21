@@ -123,7 +123,7 @@ pub fn import_provider_from_deeplink(
         let slug = if slug.is_empty() { "provider" } else { &slug };
         format!("{slug}-{}", uuid::Uuid::new_v4().simple())
     } else {
-        let timestamp = chrono::Utc::now().timestamp_millis();
+        let timestamp = crate::clock::now().timestamp_millis();
         let sanitized_name = name
             .chars()
             .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_')

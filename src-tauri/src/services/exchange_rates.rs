@@ -87,7 +87,7 @@ async fn fetch_source(
 }
 
 fn now_ms() -> i64 {
-    std::time::SystemTime::now()
+    crate::clock::system_now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|elapsed| elapsed.as_millis() as i64)
         .unwrap_or(0)

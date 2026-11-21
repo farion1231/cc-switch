@@ -18,7 +18,6 @@ use crate::settings::{
     CodexProviderTemplateMigration, CodexThirdPartyHistoryProviderBucketMigration,
 };
 use crate::sync_utils::MutexExt;
-use chrono::{Local, Utc};
 use rusqlite::{backup::Backup, params_from_iter, Connection};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -134,7 +133,7 @@ pub fn maybe_migrate_codex_third_party_history_provider_bucket(
     if source_provider_ids.is_empty() {
         crate::settings::mark_codex_third_party_history_provider_bucket_migrated(
             CodexThirdPartyHistoryProviderBucketMigration {
-                completed_at: Utc::now().to_rfc3339(),
+                completed_at: crate::clock::now().to_rfc3339(),
                 target_provider_id: CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string(),
                 source_provider_ids: Vec::new(),
                 migrated_jsonl_files: 0,
@@ -158,7 +157,7 @@ pub fn maybe_migrate_codex_third_party_history_provider_bucket(
     let source_provider_ids_vec: Vec<String> = source_provider_ids.iter().cloned().collect();
     crate::settings::mark_codex_third_party_history_provider_bucket_migrated(
         CodexThirdPartyHistoryProviderBucketMigration {
-            completed_at: Utc::now().to_rfc3339(),
+            completed_at: crate::clock::now().to_rfc3339(),
             target_provider_id: CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string(),
             source_provider_ids: source_provider_ids_vec.clone(),
             migrated_jsonl_files,
@@ -188,7 +187,7 @@ pub fn maybe_migrate_codex_provider_template_bucket(
     let backup_root = migration_backup_root(MIGRATION_NAME);
     let outcome = migrate_codex_provider_templates_to_custom(db, &backup_root)?;
     crate::settings::mark_codex_provider_template_migrated(CodexProviderTemplateMigration {
-        completed_at: Utc::now().to_rfc3339(),
+        completed_at: crate::clock::now().to_rfc3339(),
         migrated_provider_ids: outcome.migrated_provider_ids.clone(),
     })?;
 
@@ -284,7 +283,7 @@ pub fn maybe_migrate_codex_official_history_to_unified_bucket(
     // 与关闭路径（update_settings + 清标记）共用同一把锁，无检查-写入窗口。
     let marker_written = crate::settings::mark_codex_official_history_unify_migrated_if_enabled(
         CodexOfficialHistoryUnifyMigration {
-            completed_at: Utc::now().to_rfc3339(),
+            completed_at: crate::clock::now().to_rfc3339(),
             target_provider_id: CC_SWITCH_CODEX_MODEL_PROVIDER_ID.to_string(),
             migrated_jsonl_files,
             migrated_state_rows,
@@ -442,7 +441,7 @@ pub fn maybe_migrate_codex_legacy_official_history_to_openai_bucket(
 
     crate::settings::mark_codex_legacy_official_history_bucket_migrated(
         CodexLegacyOfficialHistoryBucketMigration {
-            completed_at: Utc::now().to_rfc3339(),
+            completed_at: crate::clock::now().to_rfc3339(),
             target_provider_id: OFFICIAL_OPENAI_CODEX_MODEL_PROVIDER_ID.to_string(),
             migrated_jsonl_files,
             migrated_state_rows,
@@ -947,7 +946,11 @@ fn migration_backup_root(migration_name: &str) -> PathBuf {
     get_app_config_dir()
         .join("backups")
         .join(migration_name)
-        .join(Local::now().format("%Y%m%d_%H%M%S").to_string())
+        .join(
+            crate::clock::now_local()
+                .format("%Y%m%d_%H%M%S")
+                .to_string(),
+        )
 }
 
 fn is_known_cc_switch_legacy_codex_model_provider_id(provider_id: &str) -> bool {

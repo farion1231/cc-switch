@@ -1903,7 +1903,7 @@ async fn drain_legacy_backup(state: &AppState, app: &AppType) -> bool {
         .join(".cc-switch")
         .join("backups")
         .join("proxy-live-backup");
-    let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
+    let stamp = crate::clock::now().format("%Y%m%dT%H%M%SZ");
     let path = dir.join(format!("{}-{stamp}.json", app.as_str()));
     let saved = serde_json::to_vec_pretty(&json!({
         "app": app.as_str(),

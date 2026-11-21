@@ -345,7 +345,7 @@ pub fn delete_session(root: &Path, path: &Path, session_id: &str) -> Result<bool
     }
     let mark = root.join(".index-dirty").join(format!(
         "{session_id}.{}",
-        chrono::Utc::now().timestamp_millis()
+        crate::clock::now().timestamp_millis()
     ));
     if let Err(e) =
         fs::create_dir_all(root.join(".index-dirty")).and_then(|_| fs::write(&mark, b""))

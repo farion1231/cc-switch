@@ -513,7 +513,7 @@ pub(crate) fn stage_write(
         .ok_or_else(|| AppError::Config("无效的文件名".to_string()))?
         .to_string_lossy()
         .to_string();
-    let ts = std::time::SystemTime::now()
+    let ts = crate::clock::os_now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();

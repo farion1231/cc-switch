@@ -375,13 +375,14 @@ fn import_records_with_cursor(
         tx.prepare_cached(
             "INSERT OR REPLACE INTO session_log_sync
                  (file_path, last_modified, last_line_offset, last_synced_at, last_byte_offset, parser_state)
-             VALUES (?1, ?2, 0, unixepoch(), ?3, ?4)",
+             VALUES (?1, ?2, 0, ?5, ?3, ?4)",
         )?
         .execute(params![
             cursor.key,
             cursor.modified,
             cursor.size,
             parser_state,
+            crate::clock::now().timestamp(),
         ])?;
     }
     tx.commit()?;

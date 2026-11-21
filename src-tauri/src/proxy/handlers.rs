@@ -91,7 +91,7 @@ pub async fn health_check(headers: axum::http::HeaderMap) -> axum::response::Res
         StatusCode::OK,
         Json(json!({
             "status": "healthy",
-            "timestamp": chrono::Utc::now().to_rfc3339(),
+            "timestamp": crate::clock::now().to_rfc3339(),
         })),
     )
         .into_response();
@@ -2381,7 +2381,7 @@ fn codex_context_window_sse_response(
     let response = json!({
         "id": format!("resp_{}", uuid::Uuid::new_v4().simple()),
         "object": "response",
-        "created_at": chrono::Utc::now().timestamp(),
+        "created_at": crate::clock::now().timestamp(),
         "status": "failed",
         "model": model,
         "output": [],

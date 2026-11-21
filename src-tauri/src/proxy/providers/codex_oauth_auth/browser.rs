@@ -198,7 +198,7 @@ impl CodexOAuthManager {
         let router = Router::new()
             .route("/auth/callback", get(callback))
             .with_state(callback_state.clone());
-        let expires_at = chrono::Utc::now().timestamp_millis() + lifetime.as_millis() as i64;
+        let expires_at = crate::clock::now().timestamp_millis() + lifetime.as_millis() as i64;
         self.register_pending_device_code(
             flow_id.clone(),
             String::new(),
@@ -293,7 +293,7 @@ impl CodexOAuthManager {
             self.cancel_device_flow(flow_id).await;
             return Err(CodexOAuthError::ExpiredToken);
         };
-        if entry.expires_at_ms <= chrono::Utc::now().timestamp_millis() {
+        if entry.expires_at_ms <= crate::clock::now().timestamp_millis() {
             self.cancel_device_flow(flow_id).await;
             return Err(CodexOAuthError::ExpiredToken);
         }

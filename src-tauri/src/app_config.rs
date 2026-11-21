@@ -848,7 +848,7 @@ impl MultiAppConfig {
         log::info!("发现提示词文件，自动导入: {file_path:?}");
 
         // 创建提示词对象
-        let timestamp = std::time::SystemTime::now()
+        let timestamp = crate::clock::system_now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
             .unwrap_or_else(|_| {
@@ -861,7 +861,7 @@ impl MultiAppConfig {
             id: id.clone(),
             name: format!(
                 "Auto-imported Prompt {}",
-                chrono::Local::now().format("%Y-%m-%d %H:%M")
+                crate::clock::now_local().format("%Y-%m-%d %H:%M")
             ),
             content,
             description: Some("Automatically imported on first launch".to_string()),

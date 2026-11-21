@@ -222,7 +222,7 @@ fn account_status(
         avatar_url: identity.and_then(|identity| identity.avatar.clone()),
         primary: id == PROVIDER_ID,
         authenticated: can_refresh
-            || (has_access && expires_at.is_some_and(|t| t > chrono::Utc::now().timestamp())),
+            || (has_access && expires_at.is_some_and(|t| t > crate::clock::now().timestamp())),
         region,
         expires_at,
         error: None,
@@ -547,7 +547,7 @@ fn parse_credential(payload: &Value) -> Result<Value, String> {
     let expires = seconds(payload, "expires_in", None)?;
     Ok(json!({
         "access_token": access, "refresh_token": refresh,
-        "expires_at": chrono::Utc::now().timestamp() + expires as i64,
+        "expires_at": crate::clock::now().timestamp() + expires as i64,
         "expires_in": expires, "token_type": payload["token_type"].as_str().unwrap_or("Bearer"),
         "scope": payload["scope"].as_str().unwrap_or("")
     }))

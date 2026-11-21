@@ -322,7 +322,7 @@ fn clear_stale_lock(lock: &Path) -> bool {
     let too_old = fs::metadata(lock)
         .and_then(|metadata| metadata.modified())
         .ok()
-        .and_then(|modified| modified.elapsed().ok())
+        .and_then(|modified| crate::clock::os_now().duration_since(modified).ok())
         .is_some_and(|age| age > STALE_LOCK_AGE);
     (owner_gone || too_old) && fs::remove_file(lock).is_ok()
 }

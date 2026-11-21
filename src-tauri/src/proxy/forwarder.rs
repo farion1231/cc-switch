@@ -122,7 +122,7 @@ pub(crate) struct ActiveConnectionGuard {
 
 impl ActiveConnectionGuard {
     pub(crate) async fn acquire(status: Arc<RwLock<ProxyStatus>>) -> Self {
-        let last_request_at = chrono::Utc::now().to_rfc3339();
+        let last_request_at = crate::clock::now().to_rfc3339();
         {
             let mut s = status.write().await;
             s.active_connections = s.active_connections.saturating_add(1);

@@ -236,7 +236,7 @@ fn write_entry(
         let stale = fs::metadata(&lock_path)
             .and_then(|metadata| metadata.modified())
             .ok()
-            .and_then(|mtime| mtime.elapsed().ok())
+            .and_then(|mtime| crate::clock::os_now().duration_since(mtime).ok())
             .is_some_and(|age| age > Duration::from_secs(10));
         if !stale {
             return Err(AppError::Conflict(

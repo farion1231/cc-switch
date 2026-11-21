@@ -5,7 +5,7 @@
 use super::{lock_conn, Database};
 use crate::config::get_app_config_dir;
 use crate::error::AppError;
-use chrono::{Local, Utc};
+use chrono::Utc;
 use rusqlite::backup::{Backup, StepResult};
 use rusqlite::types::ValueRef;
 use rusqlite::Connection;
@@ -430,7 +430,9 @@ impl Database {
                 let needs_backup = match latest {
                     None => true,
                     Some(last_modified) => {
-                        last_modified.elapsed().unwrap_or_default()
+                        crate::clock::os_now()
+                            .duration_since(last_modified)
+                            .unwrap_or_default()
                             > std::time::Duration::from_secs(interval_secs)
                     }
                 };
@@ -518,7 +520,10 @@ impl Database {
 
         fs::create_dir_all(&backup_dir).map_err(|e| AppError::io(&backup_dir, e))?;
 
-        let base_id = format!("db_backup_{}", Local::now().format("%Y%m%d_%H%M%S"));
+        let base_id = format!(
+            "db_backup_{}",
+            crate::clock::now_local().format("%Y%m%d_%H%M%S")
+        );
         let mut next_suffix = 0;
         let mut backup_path =
             Self::next_available_backup_path(&backup_dir, &base_id, &mut next_suffix);
@@ -702,7 +707,7 @@ impl Database {
     /// 导出数据库为 SQL 文本
     fn dump_sql(conn: &Connection, skip_tables: &[&str]) -> Result<String, AppError> {
         let mut output = String::new();
-        let timestamp = Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        let timestamp = crate::clock::now().format("%Y-%m-%d %H:%M:%S").to_string();
         let user_version: i64 = conn
             .query_row("PRAGMA user_version;", [], |row| row.get(0))
             .unwrap_or(0);

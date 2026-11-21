@@ -1,0 +1,8 @@
+# Wall-clock reads go through crate::clock, so parity builds can pin the time the app records and
+# shows. Durations use std::time::Instant, which stays allowed.
+disallowed-methods = [
+  { path = "chrono::Utc::now", reason = "use crate::clock::now()" },
+  { path = "chrono::Local::now", reason = "use crate::clock::now_local()" },
+  { path = "std::time::SystemTime::now", reason = "use crate::clock::system_now(), or crate::clock::os_now() for times the OS keeps" },
+  { path = "std::time::SystemTime::elapsed", reason = "use crate::clock::os_now().duration_since(t) for times the OS keeps" },
+]

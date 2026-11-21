@@ -314,7 +314,7 @@ fn child_cutoff(
     if let Some(cursor) = cursors.get(cutoff_key) {
         return Ok(cursor.last_synced_at);
     }
-    let now = chrono::Utc::now().timestamp();
+    let now = crate::clock::now().timestamp();
     let conn = lock_conn!(db.conn);
     conn.execute(
         "INSERT INTO session_log_sync (file_path, last_modified, last_line_offset, last_synced_at)

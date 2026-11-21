@@ -7,7 +7,7 @@ use super::subscription::{
     CredentialStatus, QuotaTier, SubscriptionQuota, TIER_FIVE_HOUR, TIER_MONTHLY, TIER_WEEKLY_LIMIT,
 };
 use super::usage_http::{parse_f64, send_for_json, JsonReply};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
 
 // ── 供应商检测 ──────────────────────────────────────────────
 
@@ -100,7 +100,7 @@ pub(crate) fn detect_provider_id(base_url: &str) -> Option<&'static str> {
 }
 
 fn now_millis() -> i64 {
-    SystemTime::now()
+    crate::clock::system_now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as i64
@@ -1404,7 +1404,7 @@ async fn volcengine_openapi_call(
         region,
         &canonical_query,
         body,
-        chrono::Utc::now(),
+        crate::clock::now(),
     );
 
     let resp = client

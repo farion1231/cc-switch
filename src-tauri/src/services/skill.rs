@@ -14,7 +14,7 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, RwLock, RwLockReadGuard, RwLockWriteGuard};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, UNIX_EPOCH};
 use tokio::time::timeout;
 
 use crate::app_config::{AppType, InstalledSkill, SkillApps, UnmanagedSkill};
@@ -1096,7 +1096,7 @@ impl SkillService {
             repo_branch: Some(repo_branch),
             readme_url,
             apps: SkillApps::only(current_app),
-            installed_at: chrono::Utc::now().timestamp(),
+            installed_at: crate::clock::now().timestamp(),
             content_hash,
             updated_at: 0,
         };
@@ -1828,7 +1828,7 @@ impl SkillService {
             apps: skill.apps.clone(),
             installed_at: skill.installed_at,
             content_hash: new_hash,
-            updated_at: chrono::Utc::now().timestamp(),
+            updated_at: crate::clock::now().timestamp(),
         };
 
         let mut updated_skill = if skill.apps.mcode
@@ -2153,7 +2153,7 @@ impl SkillService {
             skill.name = candidate.name;
             skill.description = candidate.description;
             skill.content_hash = Some(candidate.new_hash);
-            skill.updated_at = chrono::Utc::now().timestamp();
+            skill.updated_at = crate::clock::now().timestamp();
             if db.update_skill_metadata(&skill)? {
                 refreshed += 1;
                 log::info!("已刷新本地 Skill {} 的过期元数据", candidate.directory);
@@ -2438,7 +2438,7 @@ impl SkillService {
 
         let mut restored_skill = metadata.skill;
         restored_skill.directory = directory;
-        restored_skill.installed_at = Utc::now().timestamp();
+        restored_skill.installed_at = crate::clock::now().timestamp();
         restored_skill.apps = SkillApps::only(current_app);
         restored_skill.updated_at = 0;
 
@@ -2787,7 +2787,7 @@ impl SkillService {
                 repo_branch,
                 readme_url,
                 apps,
-                installed_at: chrono::Utc::now().timestamp(),
+                installed_at: crate::clock::now().timestamp(),
                 content_hash,
                 updated_at: 0,
             };
@@ -3166,7 +3166,7 @@ impl SkillService {
             .ok_or_else(|| anyhow!("Invalid skill destination: {}", dest.display()))?;
         fs::create_dir_all(parent)?;
 
-        let nonce = SystemTime::now()
+        let nonce = crate::clock::os_now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos();
@@ -5020,7 +5020,7 @@ impl SkillService {
         };
 
         let backup_root = Self::get_backup_dir()?;
-        let timestamp = Utc::now().format("%Y%m%d_%H%M%S");
+        let timestamp = crate::clock::now().format("%Y%m%d_%H%M%S");
         let slug = Self::sanitize_backup_segment(&skill.directory);
         let mut backup_path = backup_root.join(format!("{timestamp}_{slug}"));
         let mut counter = 1;
@@ -5035,7 +5035,7 @@ impl SkillService {
 
             let metadata = SkillBackupMetadata {
                 skill: skill.clone(),
-                backup_created_at: Utc::now().timestamp(),
+                backup_created_at: crate::clock::now().timestamp(),
                 source_path: source_path.to_string_lossy().to_string(),
             };
             let metadata_path = backup_path.join("meta.json");
@@ -5291,7 +5291,7 @@ impl SkillService {
                 repo_branch: None,
                 readme_url: None,
                 apps: SkillApps::only(current_app),
-                installed_at: chrono::Utc::now().timestamp(),
+                installed_at: crate::clock::now().timestamp(),
                 content_hash,
                 updated_at: 0,
             };
@@ -5714,7 +5714,7 @@ pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
             repo_branch,
             readme_url,
             apps,
-            installed_at: chrono::Utc::now().timestamp(),
+            installed_at: crate::clock::now().timestamp(),
             content_hash,
             updated_at: 0,
         };

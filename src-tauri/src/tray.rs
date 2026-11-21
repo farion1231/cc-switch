@@ -2242,7 +2242,7 @@ fn collect_model(app_state: &AppState, texts: &TrayTexts) -> Result<TrayModel, A
         &status,
         &snapshots,
         crate::lightweight::is_lightweight_mode(),
-        chrono::Local::now(),
+        crate::clock::now_local(),
     );
     Ok(TrayModel { entries, status })
 }
@@ -2491,7 +2491,7 @@ fn panel_rows(
 pub(crate) fn collect_panel_model(app_state: &AppState) -> Result<PanelModel, AppError> {
     let texts = TrayTexts::current();
     let (snapshots, status) = collect_status(app_state, &texts)?;
-    let now = chrono::Local::now();
+    let now = crate::clock::now_local();
 
     let mut apps = Vec::with_capacity(snapshots.len());
     for snapshot in &snapshots {

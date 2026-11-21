@@ -8,6 +8,7 @@ mod auto_launch;
 mod claude_desktop_config;
 mod claude_mcp;
 mod claude_plugin;
+pub(crate) mod clock;
 mod codex_config;
 mod codex_history_migration;
 mod codex_rollout_file;
@@ -43,6 +44,8 @@ mod omp_config;
 mod openclaw_config;
 mod opencode_config;
 mod panic_hook;
+#[cfg(feature = "parity")]
+mod parity;
 mod pi_config;
 mod prompt;
 mod prompt_files;
@@ -503,6 +506,11 @@ pub fn run() {
     #[cfg(all(feature = "parity", target_os = "macos"))]
     {
         builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
+    }
+
+    #[cfg(feature = "parity")]
+    {
+        builder = builder.plugin(parity::plugin());
     }
 
     #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]

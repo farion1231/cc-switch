@@ -5,7 +5,6 @@
 
 use std::collections::BTreeMap;
 
-use chrono::Utc;
 use serde_json::Value;
 
 use crate::error::AppError;
@@ -159,7 +158,7 @@ fn persist_sync_success(
     etag: Option<String>,
 ) -> Result<(), AppError> {
     let status = WebDavSyncStatus {
-        last_sync_at: Some(Utc::now().timestamp()),
+        last_sync_at: Some(crate::clock::now().timestamp()),
         last_error: None,
         last_error_source: None,
         last_local_manifest_hash: Some(manifest_hash.clone()),

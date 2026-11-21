@@ -15,7 +15,7 @@ use std::{
         Arc,
     },
     thread,
-    time::{Duration, SystemTime},
+    time::Duration,
 };
 
 const STALE: Duration = Duration::from_secs(5);
@@ -68,7 +68,7 @@ fn prepare(home: &Path, name: &str) -> Result<PathBuf, String> {
 
 fn touch(dir: &Path) {
     if let Ok(file) = fs::File::open(dir) {
-        let _ = file.set_modified(SystemTime::now());
+        let _ = file.set_modified(crate::clock::os_now());
     }
 }
 
@@ -83,7 +83,7 @@ fn try_acquire(dir: &Path) -> Result<bool, String> {
             let stale = fs::metadata(dir)
                 .and_then(|meta| meta.modified())
                 .map(|modified| {
-                    SystemTime::now()
+                    crate::clock::os_now()
                         .duration_since(modified)
                         .is_ok_and(|age| age > STALE)
                 })
@@ -120,7 +120,7 @@ fn hold(dir: PathBuf) -> CredentialLock {
                 if fs::metadata(&dir)
                     .and_then(|meta| meta.modified())
                     .ok()
-                    .and_then(|modified| SystemTime::now().duration_since(modified).ok())
+                    .and_then(|modified| crate::clock::os_now().duration_since(modified).ok())
                     .is_some_and(|age| age >= TOUCH_EVERY)
                 {
                     touch(&dir);
@@ -179,6 +179,7 @@ pub(super) fn acquire_blocking(home: &Path, name: &str) -> Result<Option<Credent
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    use std::time::SystemTime;
 
     #[tokio::test]
     async fn waits_for_a_live_holder_takes_over_a_stale_one_and_cleans_up() {

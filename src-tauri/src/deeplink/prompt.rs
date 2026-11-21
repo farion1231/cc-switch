@@ -49,7 +49,7 @@ pub fn import_prompt_from_deeplink(
         .map_err(|e| AppError::InvalidInput(format!("Invalid UTF-8 in content: {e}")))?;
 
     // Generate ID
-    let timestamp = chrono::Utc::now().timestamp_millis();
+    let timestamp = crate::clock::now().timestamp_millis();
     let sanitized_name = name
         .chars()
         .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_')

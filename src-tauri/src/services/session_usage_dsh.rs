@@ -312,7 +312,7 @@ fn update_dsh_sync_state(
     byte_offset: i64,
     parser_state: &str,
 ) -> Result<(), AppError> {
-    let now = std::time::SystemTime::now()
+    let now = crate::clock::system_now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_secs() as i64)
         .unwrap_or(0);

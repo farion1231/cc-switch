@@ -179,7 +179,7 @@ pub async fn account_quota(
             None,
         ));
     }
-    let now = chrono::Utc::now().timestamp_millis();
+    let now = crate::clock::now().timestamp_millis();
     if !force {
         if let Some(cached) = &ctx.cached {
             if now - cached.queried_at < QUOTA_CACHE_TTL_MS {
@@ -525,7 +525,7 @@ async fn session<S: AsyncRead + AsyncWrite + Unpin>(
         return Err(FetchError::NotSignedIn);
     }
 
-    let now = chrono::Utc::now().timestamp_millis();
+    let now = crate::clock::now().timestamp_millis();
     let summary = fetch(
         &mut writer,
         &mut reader,
@@ -603,7 +603,7 @@ async fn fetch_expiries<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
     let has_any = |group: &[&str]| codes.iter().any(|code| group.contains(&code.as_str()));
     let mut bodies = Vec::new();
     if has_any(FREE_PACKAGE_CODES) {
-        let (start, end) = slice_period(chrono::Local::now().naive_local().date());
+        let (start, end) = slice_period(crate::clock::now_local().naive_local().date());
         let body = json!({
             "PageNumber": 1,
             "PageSize": PACKAGES_PAGE_SIZE,
@@ -624,7 +624,7 @@ async fn fetch_expiries<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
         });
         bodies.push(fetch(writer, reader, channel, 4, PAID_PACKAGES_PATH, body).await?);
     }
-    parse_packages(&bodies, chrono::Utc::now().timestamp_millis())
+    parse_packages(&bodies, crate::clock::now().timestamp_millis())
 }
 
 /// 当天 0 点到 23:59:59（本地时间，同 WorkBuddy 的 `buildSlicePeriodRange`）。

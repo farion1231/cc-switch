@@ -892,7 +892,7 @@ const LAUNCH_ENV_PREFIX: &str = "CC_SWITCH_LAUNCH_ENV_";
 fn unique_temp_path(stem: &str, ext: &str) -> PathBuf {
     use std::sync::atomic::{AtomicU64, Ordering};
     static SEQ: AtomicU64 = AtomicU64::new(0);
-    let nanos = std::time::SystemTime::now()
+    let nanos = crate::clock::os_now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.subsec_nanos())
         .unwrap_or_default();

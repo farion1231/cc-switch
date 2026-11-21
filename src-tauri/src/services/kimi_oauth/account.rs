@@ -193,7 +193,7 @@ pub(super) fn read_credential(path: &Path) -> Result<Credential, String> {
 }
 
 fn now() -> i64 {
-    chrono::Utc::now().timestamp()
+    crate::clock::now().timestamp()
 }
 
 fn access_valid(credential: &Value) -> bool {
@@ -388,7 +388,7 @@ fn quota_status(status: CredentialStatus, message: &str) -> SubscriptionQuota {
         credits_balance: None,
         plan_name: None,
         error: None,
-        queried_at: Some(chrono::Utc::now().timestamp_millis()),
+        queried_at: Some(crate::clock::now().timestamp_millis()),
     }
 }
 

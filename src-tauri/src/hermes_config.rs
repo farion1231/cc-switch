@@ -33,7 +33,6 @@
 use crate::config::{atomic_write, get_app_config_dir};
 use crate::error::AppError;
 use crate::settings::{effective_backup_retain_count, get_override_dir};
-use chrono::Local;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -364,7 +363,10 @@ fn create_hermes_backup(source: &str) -> Result<PathBuf, AppError> {
     let backup_dir = get_app_config_dir().join("backups").join("hermes");
     fs::create_dir_all(&backup_dir).map_err(|e| AppError::io(&backup_dir, e))?;
 
-    let base_id = format!("hermes_{}", Local::now().format("%Y%m%d_%H%M%S"));
+    let base_id = format!(
+        "hermes_{}",
+        crate::clock::now_local().format("%Y%m%d_%H%M%S")
+    );
     let mut filename = format!("{base_id}.yaml");
     let mut backup_path = backup_dir.join(&filename);
     let mut counter = 1;

@@ -15,7 +15,7 @@ use std::{
     collections::HashMap,
     future::Future,
     sync::{Mutex, OnceLock},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, UNIX_EPOCH},
 };
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
@@ -284,7 +284,7 @@ fn cache() -> &'static QuotaCache {
 }
 
 fn now_unix() -> i64 {
-    SystemTime::now()
+    crate::clock::system_now()
         .duration_since(UNIX_EPOCH)
         .map(|elapsed| elapsed.as_secs() as i64)
         .unwrap_or_default()

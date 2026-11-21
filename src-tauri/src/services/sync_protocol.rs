@@ -9,7 +9,6 @@ use std::process::Command;
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tempfile::tempdir;
@@ -237,7 +236,7 @@ pub(crate) fn build_local_snapshot(
         version: PROTOCOL_VERSION,
         db_compat_version: Some(DB_COMPAT_VERSION),
         device_name: detect_system_device_name().unwrap_or_else(|| "Unknown Device".to_string()),
-        created_at: Utc::now().to_rfc3339(),
+        created_at: crate::clock::now().to_rfc3339(),
         artifacts,
         snapshot_id,
     };

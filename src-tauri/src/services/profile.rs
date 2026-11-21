@@ -266,7 +266,7 @@ impl ProfileService {
             return Err(AppError::InvalidInput("Profile name is empty".to_string()));
         }
         let payload = Self::snapshot_current(state, scope)?;
-        let now = chrono::Utc::now().timestamp();
+        let now = crate::clock::now().timestamp();
         let profile = Profile {
             id: uuid::Uuid::new_v4().to_string(),
             name: name.to_string(),
@@ -312,7 +312,7 @@ impl ProfileService {
             profile.payload = serde_json::to_string(&payload)
                 .map_err(|e| AppError::Config(format!("序列化 profile payload 失败: {e}")))?;
         }
-        profile.updated_at = Some(chrono::Utc::now().timestamp());
+        profile.updated_at = Some(crate::clock::now().timestamp());
         state.db.save_profile(&profile)?;
         Ok(profile)
     }

@@ -244,7 +244,7 @@ fn sync_single_grok_file(
     }
     let mut reader = BufReader::new(file);
 
-    let now = SystemTime::now()
+    let now = crate::clock::system_now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);

@@ -1148,7 +1148,7 @@ fn local_day_start_rfc3339(day: NaiveDate) -> String {
             chrono::LocalResult::Ambiguous(earliest, _) => Some(earliest),
             chrono::LocalResult::None => None,
         })
-        .unwrap_or_else(Local::now);
+        .unwrap_or_else(crate::clock::now_local);
 
     local_midnight.to_rfc3339()
 }
@@ -1404,7 +1404,7 @@ impl Database {
             model,
         };
 
-        let end_ts = end_date.unwrap_or_else(|| Local::now().timestamp());
+        let end_ts = end_date.unwrap_or_else(|| crate::clock::now_local().timestamp());
         let mut start_ts = start_date.unwrap_or_else(|| end_ts - 24 * 60 * 60);
 
         if start_ts >= end_ts {

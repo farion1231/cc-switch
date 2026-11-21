@@ -11,7 +11,7 @@ use crate::store::AppState;
 
 /// 安全地获取当前 Unix 时间戳
 fn get_unix_timestamp() -> Result<i64, AppError> {
-    std::time::SystemTime::now()
+    crate::clock::system_now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .map_err(|e| AppError::Message(format!("Failed to get system time: {e}")))
@@ -175,7 +175,7 @@ impl PromptService {
                             .values()
                             .any(|p| p.content.trim() == live_content.trim());
                         if !content_exists {
-                            let timestamp = std::time::SystemTime::now()
+                            let timestamp = crate::clock::system_now()
                                 .duration_since(std::time::UNIX_EPOCH)
                                 .unwrap_or_default()
                                 .as_secs() as i64;
@@ -184,7 +184,7 @@ impl PromptService {
                                 id: backup_id.clone(),
                                 name: format!(
                                     "原始提示词 {}",
-                                    chrono::Local::now().format("%Y-%m-%d %H:%M")
+                                    crate::clock::now_local().format("%Y-%m-%d %H:%M")
                                 ),
                                 content: live_content,
                                 description: Some("自动备份的原始提示词".to_string()),
@@ -244,7 +244,7 @@ impl PromptService {
             id: id.clone(),
             name: format!(
                 "导入的提示词 {}",
-                chrono::Local::now().format("%Y-%m-%d %H:%M")
+                crate::clock::now_local().format("%Y-%m-%d %H:%M")
             ),
             content,
             description: Some("从现有配置文件导入".to_string()),
@@ -374,7 +374,7 @@ impl PromptService {
             id: id.clone(),
             name: format!(
                 "Auto-imported Prompt {}",
-                chrono::Local::now().format("%Y-%m-%d %H:%M")
+                crate::clock::now_local().format("%Y-%m-%d %H:%M")
             ),
             content,
             description: Some("Automatically imported on first launch".to_string()),
@@ -449,7 +449,7 @@ fn enable_mcode_prompt(state: &AppState, id: &str, target_path: &Path) -> Result
                     id: backup_id,
                     name: format!(
                         "原始提示词 {}",
-                        chrono::Local::now().format("%Y-%m-%d %H:%M")
+                        crate::clock::now_local().format("%Y-%m-%d %H:%M")
                     ),
                     content: live_content,
                     description: Some("自动备份的原始提示词".to_string()),
@@ -584,7 +584,7 @@ fn enable_pi_prompt(state: &AppState, id: &str) -> Result<(), AppError> {
                 id: unique_pi_backup_id(&prompts, timestamp),
                 name: format!(
                     "原始提示词 {}",
-                    chrono::Local::now().format("%Y-%m-%d %H:%M")
+                    crate::clock::now_local().format("%Y-%m-%d %H:%M")
                 ),
                 content: content.clone(),
                 description: Some("自动备份的原始提示词".to_string()),

@@ -1,5 +1,4 @@
 use crate::error::AppError;
-use chrono::Utc;
 use std::fs;
 use std::path::Path;
 
@@ -15,7 +14,7 @@ impl ConfigService {
             return Ok(String::new());
         }
 
-        let timestamp = Utc::now().format("%Y%m%d_%H%M%S");
+        let timestamp = crate::clock::now().format("%Y%m%d_%H%M%S");
         let backup_id = format!("backup_{timestamp}");
 
         let backup_dir = config_path

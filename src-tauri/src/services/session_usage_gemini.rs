@@ -259,7 +259,7 @@ fn insert_gemini_session_entry(
                 .map(|dt| dt.timestamp())
         })
         .unwrap_or_else(|| {
-            SystemTime::now()
+            crate::clock::system_now()
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .map(|d| d.as_secs() as i64)
                 .unwrap_or(0)

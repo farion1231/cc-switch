@@ -4,7 +4,7 @@
 //! 第一层：仅读取凭据，不实现登录/刷新。
 
 use serde::{Deserialize, Serialize};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
 
 use std::collections::{HashMap, HashSet};
 
@@ -341,7 +341,7 @@ fn parse_claude_credentials_json(
 
 /// 判断 token 是否过期，兼容 Unix 时间戳（秒/毫秒）和 ISO 字符串
 fn is_token_expired(expires_at: &serde_json::Value) -> bool {
-    let now_secs = SystemTime::now()
+    let now_secs = crate::clock::system_now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
@@ -854,7 +854,7 @@ pub(crate) fn parse_codex_credentials_json(content: &str) -> CodexCredentials {
 
 /// 判断 Codex token 是否可能过期（Codex CLI 在 >8 天时自动刷新）
 fn is_codex_token_stale(last_refresh: &str) -> bool {
-    let now_secs = SystemTime::now()
+    let now_secs = crate::clock::system_now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
@@ -1039,7 +1039,7 @@ async fn query_codex_reset_credits(
         return None;
     }
     let raw = resp.bytes().await.ok()?;
-    parse_codex_reset_credits(&raw, chrono::Utc::now())
+    parse_codex_reset_credits(&raw, crate::clock::now())
 }
 
 /// 查询 Codex / ChatGPT 反代订阅额度（连同存下的重置次数，两个请求并行）
@@ -1903,7 +1903,7 @@ pub async fn get_subscription_quota(tool: &str) -> Result<SubscriptionQuota, Str
 // ── 辅助函数 ──────────────────────────────────────────────
 
 fn now_millis() -> i64 {
-    SystemTime::now()
+    crate::clock::system_now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as i64

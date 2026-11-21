@@ -108,9 +108,9 @@ fn sync_from_database(
 fn save_watermark(tx: &rusqlite::Transaction, key: &str, id: i64) -> Result<(), AppError> {
     tx.execute(
         "INSERT INTO session_log_sync (file_path, last_modified, last_line_offset, last_synced_at)
-         VALUES (?1, 0, ?2, unixepoch()) ON CONFLICT(file_path) DO UPDATE SET
+         VALUES (?1, 0, ?2, ?3) ON CONFLICT(file_path) DO UPDATE SET
          last_line_offset = excluded.last_line_offset, last_synced_at = excluded.last_synced_at",
-        params![key, id],
+        params![key, id, crate::clock::now().timestamp()],
     )?;
     Ok(())
 }
@@ -155,7 +155,7 @@ fn fill_timings(
         [&timing_key],
         |row| row.get::<_, i64>(0),
     )?;
-    let settled_before = chrono::Utc::now().timestamp_millis() - TIMING_SETTLE_MS;
+    let settled_before = crate::clock::now().timestamp_millis() - TIMING_SETTLE_MS;
     let mut settling = true;
     let mut rows = usage.query([mark, cursor])?;
     while let Some(row) = rows.next()? {

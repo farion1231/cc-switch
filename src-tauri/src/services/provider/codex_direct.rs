@@ -303,7 +303,7 @@ fn predicted_auth(
         leaving_official: planned.leaving_official.as_ref(),
         target: auth_target(&planned.auth, op::SWITCH),
         stash,
-        now: chrono::Utc::now().timestamp(),
+        now: crate::clock::now().timestamp(),
     });
     Ok((auth_plan, live))
 }
@@ -1222,7 +1222,7 @@ pub(crate) fn run_with_edits(
         leaving_official: planned.leaving_official.as_ref(),
         target: auth_target(&planned.auth, op),
         stash,
-        now: chrono::Utc::now().timestamp(),
+        now: crate::clock::now().timestamp(),
     });
     let config_text = read_config_text();
     // 目录里的官方行是按拿锁前预测的登录取的：实际的目标登录换了人（Codex 恰好重新登录、

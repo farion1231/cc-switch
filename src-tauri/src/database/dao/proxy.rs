@@ -79,12 +79,13 @@ impl Database {
                 listen_address = ?2,
                 listen_port = ?3,
                 enable_logging = ?4,
-                updated_at = datetime('now')",
+                updated_at = ?5",
             rusqlite::params![
                 if config.proxy_enabled { 1 } else { 0 },
                 config.listen_address,
                 config.listen_port as i32,
                 if config.enable_logging { 1 } else { 0 },
+                crate::clock::sqlite_datetime(),
             ],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
@@ -128,9 +129,9 @@ impl Database {
         conn.execute(
             "UPDATE proxy_config SET
                 pricing_model_source = ?2,
-                updated_at = datetime('now')
+                updated_at = ?3
              WHERE app_type = ?1",
-            rusqlite::params![app_type, trimmed],
+            rusqlite::params![app_type, trimmed, crate::clock::sqlite_datetime()],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
@@ -215,7 +216,7 @@ impl Database {
                 circuit_timeout_seconds = ?10,
                 circuit_error_rate_threshold = ?11,
                 circuit_min_requests = ?12,
-                updated_at = datetime('now')
+                updated_at = ?13
              WHERE app_type = ?1",
             rusqlite::params![
                 config.app_type,
@@ -230,6 +231,7 @@ impl Database {
                 config.circuit_timeout_seconds as i32,
                 config.circuit_error_rate_threshold,
                 config.circuit_min_requests as i32,
+                crate::clock::sqlite_datetime(),
             ],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
@@ -388,7 +390,7 @@ impl Database {
                 last_success_at: None,
                 last_failure_at: None,
                 last_error: None,
-                updated_at: chrono::Utc::now().to_rfc3339(),
+                updated_at: crate::clock::now().to_rfc3339(),
             }),
             Err(e) => Err(AppError::Database(e.to_string())),
         }
@@ -408,7 +410,7 @@ impl Database {
     ) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
 
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = crate::clock::now().to_rfc3339();
 
         // 先查询当前状态
         let current = conn.query_row(
@@ -496,7 +498,7 @@ impl Database {
         config_json: &str,
     ) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = crate::clock::now().to_rfc3339();
 
         conn.execute(
             "INSERT OR REPLACE INTO proxy_live_backup (app_type, original_config, backed_up_at)
@@ -603,11 +605,12 @@ impl Database {
         let conn = lock_conn!(self.conn);
 
         conn.execute(
-            "UPDATE proxy_config SET enabled = ?2, auto_failover_enabled = ?3, updated_at = datetime('now') WHERE app_type = ?1",
+            "UPDATE proxy_config SET enabled = ?2, auto_failover_enabled = ?3, updated_at = ?4 WHERE app_type = ?1",
             rusqlite::params![
                 app_type,
                 if enabled { 1 } else { 0 },
                 if auto_failover_enabled { 1 } else { 0 },
+                crate::clock::sqlite_datetime(),
             ],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;

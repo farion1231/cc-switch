@@ -120,7 +120,7 @@ impl StreamCheckService {
             message: "Check failed".to_string(),
             response_time_ms: None,
             http_status: None,
-            tested_at: chrono::Utc::now().timestamp(),
+            tested_at: crate::clock::now().timestamp(),
             retry_count: config.max_retries,
         }))
     }
@@ -267,7 +267,7 @@ impl StreamCheckService {
         response_time: u64,
         degraded_threshold_ms: u64,
     ) -> StreamCheckResult {
-        let tested_at = chrono::Utc::now().timestamp();
+        let tested_at = crate::clock::now().timestamp();
         match result {
             Ok(status) => StreamCheckResult {
                 status: Self::determine_status(response_time, degraded_threshold_ms),

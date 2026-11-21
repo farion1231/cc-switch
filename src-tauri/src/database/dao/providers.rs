@@ -524,7 +524,7 @@ impl Database {
         url: &str,
     ) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
-        let added_at = chrono::Utc::now().timestamp_millis();
+        let added_at = crate::clock::now().timestamp_millis();
         conn.execute(
             "INSERT INTO provider_endpoints (provider_id, app_type, url, added_at) VALUES (?1, ?2, ?3, ?4)",
             params![provider_id, app_type, url, added_at],
@@ -808,7 +808,7 @@ impl Database {
         }
 
         let mut inserted = 0_usize;
-        let now_ms = chrono::Utc::now().timestamp_millis();
+        let now_ms = crate::clock::now().timestamp_millis();
 
         for seed in OFFICIAL_SEEDS {
             let app_type = &seed.app_type;
@@ -882,7 +882,7 @@ impl Database {
             })?;
 
         let next_sort_index = self.next_sort_index_for_app(&app_type)?;
-        let now_ms = chrono::Utc::now().timestamp_millis();
+        let now_ms = crate::clock::now().timestamp_millis();
 
         let mut provider = Provider::with_id(
             seed.id.to_string(),

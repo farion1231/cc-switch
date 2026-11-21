@@ -365,7 +365,7 @@ pub(crate) async fn test_connection(creds: &S3Credentials) -> Result<(), AppErro
         &mut headers,
         &body_hash,
         creds,
-        chrono::Utc::now(),
+        crate::clock::now(),
     );
 
     let resp = client
@@ -408,7 +408,7 @@ pub(crate) async fn put_object(
         &mut headers,
         &body_hash,
         creds,
-        chrono::Utc::now(),
+        crate::clock::now(),
     );
 
     let resp = client
@@ -452,7 +452,7 @@ pub(crate) async fn get_object(
         &mut headers,
         &body_hash,
         creds,
-        chrono::Utc::now(),
+        crate::clock::now(),
     );
 
     let request = client
@@ -523,7 +523,7 @@ pub(crate) async fn head_object(
         &mut headers,
         &body_hash,
         creds,
-        chrono::Utc::now(),
+        crate::clock::now(),
     );
 
     let resp = client

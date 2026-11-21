@@ -119,7 +119,7 @@ struct CachedAccessToken {
 
 impl CachedAccessToken {
     fn is_expiring_soon(&self) -> bool {
-        self.expires_at_ms - chrono::Utc::now().timestamp_millis() < TOKEN_REFRESH_BUFFER_MS
+        self.expires_at_ms - crate::clock::now().timestamp_millis() < TOKEN_REFRESH_BUFFER_MS
     }
 }
 
@@ -239,7 +239,7 @@ impl XaiOAuthManager {
             .clamp(1, MAX_POLL_INTERVAL_SECS)
             .saturating_add(POLLING_SAFETY_MARGIN_SECS);
         let expires_in = device.expires_in.clamp(1, MAX_DEVICE_CODE_LIFETIME_SECS);
-        let now_ms = chrono::Utc::now().timestamp_millis();
+        let now_ms = crate::clock::now().timestamp_millis();
 
         {
             let mut pending = self.pending_device_codes.write().await;
@@ -274,7 +274,7 @@ impl XaiOAuthManager {
         &self,
         device_code: &str,
     ) -> Result<Option<XaiOAuthAccount>, XaiOAuthError> {
-        let now_ms = chrono::Utc::now().timestamp_millis();
+        let now_ms = crate::clock::now().timestamp_millis();
         let entry = {
             let pending = self.pending_device_codes.read().await;
             pending.get(device_code).cloned()
@@ -601,7 +601,7 @@ impl XaiOAuthManager {
             account_id: account_id.clone(),
             login,
             refresh_token,
-            authenticated_at: chrono::Utc::now().timestamp(),
+            authenticated_at: crate::clock::now().timestamp(),
             requires_reauth: false,
         };
         let account = XaiOAuthAccount::from(&data);
@@ -736,7 +736,7 @@ impl XaiOAuthManager {
 
     async fn schedule_next_poll(&self, device_code: &str, interval_secs: u64) {
         if let Some(entry) = self.pending_device_codes.write().await.get_mut(device_code) {
-            entry.next_poll_at_ms = chrono::Utc::now().timestamp_millis().saturating_add(
+            entry.next_poll_at_ms = crate::clock::now().timestamp_millis().saturating_add(
                 i64::try_from(interval_secs)
                     .unwrap_or(i64::MAX)
                     .saturating_mul(1_000),
@@ -750,7 +750,7 @@ impl XaiOAuthManager {
                 .interval_secs
                 .saturating_add(5)
                 .min(MAX_POLL_INTERVAL_SECS + POLLING_SAFETY_MARGIN_SECS);
-            entry.next_poll_at_ms = chrono::Utc::now().timestamp_millis().saturating_add(
+            entry.next_poll_at_ms = crate::clock::now().timestamp_millis().saturating_add(
                 i64::try_from(entry.interval_secs)
                     .unwrap_or(i64::MAX)
                     .saturating_mul(1_000),
@@ -843,7 +843,7 @@ impl XaiOAuthManager {
             .file_name()
             .ok_or_else(|| XaiOAuthError::IoError("无效的存储文件名".to_string()))?
             .to_string_lossy();
-        let nonce = std::time::SystemTime::now()
+        let nonce = crate::clock::os_now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos();
@@ -899,7 +899,7 @@ fn default_poll_interval() -> u64 {
 }
 
 fn compute_expires_at_ms(expires_in: Option<i64>) -> i64 {
-    chrono::Utc::now().timestamp_millis().saturating_add(
+    crate::clock::now().timestamp_millis().saturating_add(
         expires_in
             .unwrap_or(DEFAULT_TOKEN_LIFETIME_SECS)
             .max(1)

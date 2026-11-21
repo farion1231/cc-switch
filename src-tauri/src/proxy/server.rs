@@ -225,7 +225,7 @@ impl ProxyServer {
         Ok(ProxyServerInfo {
             address: self.config.listen_address.clone(),
             port: actual_port,
-            started_at: chrono::Utc::now().to_rfc3339(),
+            started_at: crate::clock::now().to_rfc3339(),
         })
     }
 

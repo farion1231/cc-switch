@@ -6,7 +6,6 @@
 use crate::config::{atomic_write, get_app_config_dir};
 use crate::error::AppError;
 use crate::settings::{effective_backup_retain_count, get_override_dir};
-use chrono::Local;
 use indexmap::IndexMap;
 use json_five::rt::parser::{
     from_str as rt_from_str, JSONKeyValuePair as RtJSONKeyValuePair,
@@ -376,7 +375,10 @@ fn create_openclaw_backup(source: &str) -> Result<PathBuf, AppError> {
     let backup_dir = get_app_config_dir().join("backups").join("openclaw");
     fs::create_dir_all(&backup_dir).map_err(|e| AppError::io(&backup_dir, e))?;
 
-    let base_id = format!("openclaw_{}", Local::now().format("%Y%m%d_%H%M%S"));
+    let base_id = format!(
+        "openclaw_{}",
+        crate::clock::now_local().format("%Y%m%d_%H%M%S")
+    );
     let mut filename = format!("{base_id}.json5");
     let mut backup_path = backup_dir.join(&filename);
     let mut counter = 1;

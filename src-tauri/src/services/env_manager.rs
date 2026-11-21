@@ -1,5 +1,4 @@
 use super::env_checker::EnvConflict;
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -46,7 +45,7 @@ fn create_backup(conflicts: &[EnvConflict]) -> Result<BackupInfo, String> {
     fs::create_dir_all(&backup_dir).map_err(|e| format!("创建备份目录失败: {e}"))?;
 
     // Generate backup file name with timestamp
-    let timestamp = Utc::now().format("%Y%m%d_%H%M%S").to_string();
+    let timestamp = crate::clock::now().format("%Y%m%d_%H%M%S").to_string();
     let backup_file = backup_dir.join(format!("env-backup-{timestamp}.json"));
 
     // Create backup data

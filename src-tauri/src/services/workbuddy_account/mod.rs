@@ -35,7 +35,7 @@ pub use quota::{account_quota, WorkBuddyQuota, WorkBuddyQuotaSnapshot};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde::{Deserialize, Serialize};
@@ -212,7 +212,7 @@ impl From<&AccountData> for WorkBuddyAccount {
             captured_at: data.captured_at,
             expired: data
                 .refresh_expires_at
-                .is_some_and(|at| at <= chrono::Utc::now().timestamp()),
+                .is_some_and(|at| at <= crate::clock::now().timestamp()),
         }
     }
 }
@@ -610,7 +610,7 @@ impl WorkBuddyAccountManager {
             }
             LiveLogin::None => return Ok(None),
         };
-        let marker = chrono::Utc::now()
+        let marker = crate::clock::now()
             .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
             .into_bytes();
         crate::config::atomic_write_private(&self.paths.logout_marker(), &marker)?;
@@ -739,7 +739,7 @@ impl WorkBuddyAccountManager {
         *self.reauth_outcome.lock_recover() = Some((
             Instant::now(),
             WorkBuddyReauthOutcome {
-                id: chrono::Utc::now().timestamp_millis(),
+                id: crate::clock::now().timestamp_millis(),
                 target_id: pending.target,
                 target_login,
                 account_id: account.id.clone(),
@@ -763,7 +763,7 @@ impl WorkBuddyAccountManager {
         let fresh_lock = std::fs::metadata(self.paths.lock_dir())
             .and_then(|meta| meta.modified())
             .ok()
-            .and_then(|modified| SystemTime::now().duration_since(modified).ok())
+            .and_then(|modified| crate::clock::os_now().duration_since(modified).ok())
             .is_some_and(|age| age < LOCK_FRESH);
         if fresh_lock {
             return Err(AppError::localized(
@@ -894,7 +894,7 @@ impl WorkBuddyAccountManager {
     fn stash_unrecognized(&self, bundle: &Bundle) -> Result<(), AppError> {
         let content = serde_json::to_vec_pretty(&serde_json::json!({
             "bundle": bundle,
-            "saved_at": chrono::Utc::now().timestamp_millis(),
+            "saved_at": crate::clock::now().timestamp_millis(),
         }))
         .map_err(|source| AppError::JsonSerialize { source })?;
         crate::config::atomic_write_private(&self.data_dir.join(STASH_FILENAME), &content)
@@ -944,7 +944,7 @@ fn absorb_known(
 }
 
 fn upsert(store: &mut StoreFile, bundle: Bundle, identity: Identity) -> WorkBuddyAccount {
-    let now = chrono::Utc::now().timestamp();
+    let now = crate::clock::now().timestamp();
     let entry = store
         .accounts
         .entry(identity.id.clone())

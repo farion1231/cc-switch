@@ -200,7 +200,7 @@ pub fn sync_all_unlocked(db: &Database) -> SessionSyncResult {
         crate::services::session_usage_dsh::sync_dsh_usage(db),
     );
     notify_sync_result(&result);
-    record_sync_completed(chrono::Utc::now().timestamp_millis());
+    record_sync_completed(crate::clock::now().timestamp_millis());
     result
 }
 
@@ -970,7 +970,7 @@ fn update_claude_sync_state_on_conn(
     byte_offset: i64,
     tail_fingerprint: Option<i64>,
 ) -> Result<(), AppError> {
-    let now = SystemTime::now()
+    let now = crate::clock::system_now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
@@ -1043,7 +1043,7 @@ pub(crate) fn update_sync_state_on_conn(
     last_modified: i64,
     last_offset: i64,
 ) -> Result<(), AppError> {
-    let now = SystemTime::now()
+    let now = crate::clock::system_now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
@@ -1067,7 +1067,7 @@ pub(crate) fn update_byte_sync_state(
     byte_offset: i64,
 ) -> Result<(), AppError> {
     let conn = lock_conn!(db.conn);
-    let now = SystemTime::now()
+    let now = crate::clock::system_now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
@@ -1313,7 +1313,7 @@ fn upsert_session_log_entry_on_conn(
                 .map(|dt| dt.timestamp())
         })
         .unwrap_or_else(|| {
-            SystemTime::now()
+            crate::clock::system_now()
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .map(|d| d.as_secs() as i64)
                 .unwrap_or(0)

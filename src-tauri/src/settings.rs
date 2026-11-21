@@ -1028,7 +1028,7 @@ fn backup_settings_file(path: &Path) -> std::io::Result<PathBuf> {
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|| "settings.json".to_string());
-    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+    let stamp = crate::clock::now_local().format("%Y%m%d-%H%M%S");
     let dest = path.with_file_name(format!("{file_name}.broken-{stamp}.bak"));
     // fs::copy 在 Unix 上连同权限位一起复制，副本和原文件一样是 0600（里面可能有同步密码）。
     fs::copy(path, &dest)?;

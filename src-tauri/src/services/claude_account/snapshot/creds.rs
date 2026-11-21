@@ -131,7 +131,7 @@ pub(super) fn read_login(
     store: &dyn CredentialStore,
     slot: &Slot,
 ) -> Result<Option<Secret>, AppError> {
-    let now = chrono::Utc::now().timestamp_millis();
+    let now = crate::clock::now().timestamp_millis();
     Ok(store
         .read(slot)?
         .filter(|secret| has_login(secret) && login_expiry(secret).is_none_or(|at| at > now)))

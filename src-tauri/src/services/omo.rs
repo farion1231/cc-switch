@@ -563,7 +563,7 @@ impl OmoService {
         let name = format!(
             "{} {}",
             v.import_label,
-            chrono::Local::now().format("%Y-%m-%d %H:%M")
+            crate::clock::now_local().format("%Y-%m-%d %H:%M")
         );
         let settings_config =
             serde_json::to_value(&settings).unwrap_or_else(|_| serde_json::json!({}));
@@ -574,7 +574,7 @@ impl OmoService {
             settings_config,
             website_url: None,
             category: Some(v.category.to_string()),
-            created_at: Some(chrono::Utc::now().timestamp_millis()),
+            created_at: Some(crate::clock::now().timestamp_millis()),
             sort_index: None,
             notes: None,
             meta: None,

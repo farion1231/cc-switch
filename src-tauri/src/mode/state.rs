@@ -312,7 +312,7 @@ pub fn load(store: &DeviceStore) -> Result<LiveState, AppError> {
     match serde_json::from_slice::<LiveState>(&bytes) {
         Ok(state) => Ok(state),
         Err(err) => {
-            let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
+            let stamp = crate::clock::now().format("%Y%m%dT%H%M%SZ");
             let aside = path.with_file_name(format!("live-state.json.corrupt-{stamp}"));
             log::warn!(
                 "live-state.json 无法解析（{err}），已移到 {} 并从空状态开始",

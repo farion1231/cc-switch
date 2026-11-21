@@ -183,7 +183,7 @@ struct CachedAccessToken {
 
 impl CachedAccessToken {
     fn is_expiring_soon(&self) -> bool {
-        let now = chrono::Utc::now().timestamp_millis();
+        let now = crate::clock::now().timestamp_millis();
         self.expires_at_ms - now < TOKEN_REFRESH_BUFFER_MS
     }
 }
@@ -465,7 +465,7 @@ impl CodexOAuthManager {
 
         let interval = parse_interval(device.interval.as_ref());
         let expires_in = device.expires_in.unwrap_or(DEVICE_CODE_DEFAULT_EXPIRES_IN);
-        let expires_at_ms = chrono::Utc::now().timestamp_millis() + (expires_in as i64) * 1000;
+        let expires_at_ms = crate::clock::now().timestamp_millis() + (expires_in as i64) * 1000;
 
         self.register_pending_device_code(
             device.device_auth_id.clone(),
@@ -537,7 +537,7 @@ impl CodexOAuthManager {
             return Err(CodexOAuthError::ExpiredToken);
         }
 
-        let now_ms = chrono::Utc::now().timestamp_millis();
+        let now_ms = crate::clock::now().timestamp_millis();
         pending.retain(|_, entry| entry.expires_at_ms > now_ms);
         pending.insert(
             device_auth_id,
@@ -591,7 +591,7 @@ impl CodexOAuthManager {
             )
         })?;
 
-        if entry.expires_at_ms <= chrono::Utc::now().timestamp_millis() {
+        if entry.expires_at_ms <= crate::clock::now().timestamp_millis() {
             let mut pending = self.pending_device_codes.write().await;
             pending.remove(device_code);
             return Err(CodexOAuthError::ExpiredToken);
@@ -683,7 +683,7 @@ impl CodexOAuthManager {
             ));
         }
 
-        let obtained_at_ms = chrono::Utc::now().timestamp_millis();
+        let obtained_at_ms = crate::clock::now().timestamp_millis();
         // 登录提交与该账号的 refresh/adopt 共用一把 generation 锁；账号和
         // access cache 一次写入，旧刷新响应因此不能覆盖新登录链。
         let account = self
@@ -964,7 +964,7 @@ impl CodexOAuthManager {
             result => result?,
         };
 
-        let obtained_at_ms = chrono::Utc::now().timestamp_millis();
+        let obtained_at_ms = crate::clock::now().timestamp_millis();
 
         // 如果服务端返回了新的 refresh_token 或 id_token，更新存储
         let mut needs_save = false;
@@ -1022,7 +1022,7 @@ impl CodexOAuthManager {
         };
 
         let last_refresh = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(obtained_at_ms)
-            .unwrap_or_else(chrono::Utc::now)
+            .unwrap_or_else(crate::clock::now)
             .to_rfc3339_opts(chrono::SecondsFormat::Nanos, true);
         let refreshed_auth = crate::codex_config::codex_managed_oauth_auth_value(
             &chatgpt_account_id,
@@ -1116,7 +1116,7 @@ impl CodexOAuthManager {
         }
         let last_refresh =
             chrono::DateTime::<chrono::Utc>::from_timestamp_millis(cached.obtained_at_ms)
-                .unwrap_or_else(chrono::Utc::now)
+                .unwrap_or_else(crate::clock::now)
                 .to_rfc3339_opts(chrono::SecondsFormat::Nanos, true);
         let (chatgpt_account_id, id_token, refresh_token) = {
             let accounts = self.accounts.read().await;
@@ -1309,7 +1309,7 @@ impl CodexOAuthManager {
                 let adopted_at = last_refresh_ms
                     .filter(|observed| *observed > account.token_updated_at_ms)
                     .unwrap_or_else(|| {
-                        chrono::Utc::now()
+                        crate::clock::now()
                             .timestamp_millis()
                             .max(account.token_updated_at_ms.saturating_add(1))
                     });
@@ -1331,7 +1331,7 @@ impl CodexOAuthManager {
                     // "live is older" decision on the next retry.
                     account.token_updated_at_ms = last_refresh_ms
                         .filter(|observed| *observed > 0)
-                        .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
+                        .unwrap_or_else(|| crate::clock::now().timestamp_millis());
                     changed = true;
                 } else if let Some(observed) = last_refresh_ms {
                     if observed > account.token_updated_at_ms {
@@ -1696,8 +1696,8 @@ impl CodexOAuthManager {
             Some(lock) => Some(lock.lock().await),
             None => None,
         };
-        let now = chrono::Utc::now().timestamp();
-        let now_ms = chrono::Utc::now().timestamp_millis();
+        let now = crate::clock::now().timestamp();
+        let now_ms = crate::clock::now().timestamp_millis();
 
         if replacing_existing {
             let accounts = self.accounts.read().await;
@@ -1790,7 +1790,8 @@ impl CodexOAuthManager {
                 }
                 _ => false,
             };
-            if pending.expires_at_ms <= chrono::Utc::now().timestamp_millis() || !generation_matches
+            if pending.expires_at_ms <= crate::clock::now().timestamp_millis()
+                || !generation_matches
             {
                 return Err(CodexOAuthError::ExpiredToken);
             }
@@ -1993,7 +1994,7 @@ impl CodexOAuthManager {
             .ok_or_else(|| CodexOAuthError::IoError("无效的存储文件名".to_string()))?
             .to_string_lossy()
             .to_string();
-        let ts = std::time::SystemTime::now()
+        let ts = crate::clock::os_now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos();
@@ -2110,7 +2111,7 @@ fn parse_interval(value: Option<&serde_json::Value>) -> u64 {
 
 /// 从 expires_in（秒）计算过期时间戳（毫秒）
 fn compute_expires_at_ms(expires_in: Option<i64>) -> i64 {
-    let now_ms = chrono::Utc::now().timestamp_millis();
+    let now_ms = crate::clock::now().timestamp_millis();
     let secs = expires_in.unwrap_or(3600);
     now_ms + secs * 1000
 }

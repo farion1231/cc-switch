@@ -97,7 +97,7 @@ fn client_headers(request: reqwest::RequestBuilder, token: &str) -> reqwest::Req
 
 /// The Platform client identity DSH Web sends (bundle id intentionally empty).
 fn identity_headers(request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-    let offset = chrono::Local::now().offset().local_minus_utc();
+    let offset = crate::clock::now_local().offset().local_minus_utc();
     request
         .header("x-client-platform", "web")
         .header("x-client-bundle-id", "")

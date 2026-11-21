@@ -161,7 +161,7 @@ struct TombstoneMarker {
 }
 
 fn now_ms() -> u64 {
-    std::time::SystemTime::now()
+    crate::clock::system_now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_millis() as u64)
 }

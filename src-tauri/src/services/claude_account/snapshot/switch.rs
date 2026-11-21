@@ -255,7 +255,7 @@ pub(super) fn finish(
         // 资料写回来
         account.insert(
             "profileFetchedAt".to_string(),
-            Value::from(chrono::Utc::now().timestamp_millis()),
+            Value::from(crate::clock::now().timestamp_millis()),
         );
     }
     if profile.is_object() {

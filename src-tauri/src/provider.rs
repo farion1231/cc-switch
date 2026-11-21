@@ -914,7 +914,7 @@ impl UniversalProvider {
             icon: None,
             icon_color: None,
             meta: None,
-            created_at: Some(chrono::Utc::now().timestamp_millis()),
+            created_at: Some(crate::clock::now().timestamp_millis()),
             sort_index: None,
         }
     }

@@ -570,7 +570,7 @@ impl AgyAccountManager {
     fn stash_unrecognized(&self, raw: &str) -> Result<(), AppError> {
         let content = serde_json::to_vec_pretty(&serde_json::json!({
             "raw": raw,
-            "saved_at": chrono::Utc::now().timestamp_millis(),
+            "saved_at": crate::clock::now().timestamp_millis(),
         }))
         .map_err(|source| AppError::JsonSerialize { source })?;
         crate::config::atomic_write_private(&self.data_dir.join(STASH_FILENAME), &content)
@@ -659,7 +659,7 @@ fn upsert(store: &mut StoreFile, credential: Value, claims: &oauth::IdentityClai
     let sub = claims.sub.clone().unwrap_or_default();
     store.dismissed.retain(|id| *id != sub);
     store.dismissed_emails.remove(&sub);
-    let now = chrono::Utc::now().timestamp();
+    let now = crate::clock::now().timestamp();
     let entry = store
         .accounts
         .entry(sub.clone())

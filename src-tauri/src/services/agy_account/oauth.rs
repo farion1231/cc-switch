@@ -328,7 +328,7 @@ pub async fn fetch_identity(access_token: &str) -> Option<IdentityClaims> {
 
 /// agy 钥匙串里那份 JSON 的过期时间：本地时区的 RFC 3339，带微秒（和 Go 的 time.Time 一致）。
 pub fn expiry_from_now(expires_in: i64) -> String {
-    (chrono::Local::now() + chrono::Duration::seconds(expires_in.max(0)))
+    (crate::clock::now_local() + chrono::Duration::seconds(expires_in.max(0)))
         .to_rfc3339_opts(chrono::SecondsFormat::Micros, false)
 }
 
@@ -373,7 +373,7 @@ pub fn usable_access_token(credential: &Value, margin: Duration) -> Option<&str>
     let expiry = credential.pointer("/token/expiry")?.as_str()?;
     let expiry = chrono::DateTime::parse_from_rfc3339(expiry).ok()?;
     let margin = chrono::Duration::from_std(margin).ok()?;
-    (!token.is_empty() && expiry > chrono::Utc::now() + margin).then_some(token)
+    (!token.is_empty() && expiry > crate::clock::now() + margin).then_some(token)
 }
 
 #[cfg(test)]

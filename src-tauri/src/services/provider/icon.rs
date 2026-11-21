@@ -295,7 +295,7 @@ pub fn add_library_icon(
         id: uuid::Uuid::new_v4().to_string(),
         name,
         data: data.to_string(),
-        created_at: chrono::Utc::now().timestamp_millis(),
+        created_at: crate::clock::now().timestamp_millis(),
         extra: serde_json::Map::new(),
     };
     icons.insert(0, icon.clone());

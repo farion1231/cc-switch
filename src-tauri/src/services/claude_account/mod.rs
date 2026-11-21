@@ -390,7 +390,7 @@ impl ClaudeAccountManager {
                 .or_else(|| status.as_ref().and_then(|s| s.org_name.clone())),
             plan: status.and_then(|s| s.subscription_type),
             rate_limit_tier: None,
-            added_at: chrono::Utc::now().timestamp(),
+            added_at: crate::clock::now().timestamp(),
         };
         let replaced = store.accounts.insert(found.key.clone(), data);
         self.persist(&store)?;
@@ -629,7 +629,7 @@ impl snapshot::Adopter for DiskAccounts {
                 org_name: found.org_name.clone(),
                 plan: None,
                 rate_limit_tier: None,
-                added_at: chrono::Utc::now().timestamp(),
+                added_at: crate::clock::now().timestamp(),
             },
         );
         persist_store(&self.data_dir, &store)?;

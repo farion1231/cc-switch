@@ -55,7 +55,7 @@ pub(crate) async fn agy_quota(
             credits_balance: None,
             plan_name: quota.plan,
             error: None,
-            queried_at: Some(chrono::Utc::now().timestamp_millis()),
+            queried_at: Some(crate::clock::now().timestamp_millis()),
         },
         Err(AccountQuotaError::NotFound) => SubscriptionQuota::not_found(TOOL),
         Err(AccountQuotaError::NeedsReauth) => SubscriptionQuota::error(

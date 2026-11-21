@@ -115,7 +115,7 @@ impl ProxyService {
                 address: status.address,
                 port: status.port,
                 // 无法精确取回首次启动时间，返回当前时间用于 UI 展示即可
-                started_at: chrono::Utc::now().to_rfc3339(),
+                started_at: crate::clock::now().to_rfc3339(),
             });
         }
 

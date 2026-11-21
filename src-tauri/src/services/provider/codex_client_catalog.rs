@@ -20,7 +20,7 @@
 use crate::sync_utils::MutexExt;
 use std::process::Output;
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -123,7 +123,7 @@ impl Env {
             process_table: Box::new(read_process_table),
             daemon_started: Box::new(read_daemon_started),
             now_ms: Box::new(|| {
-                SystemTime::now()
+                crate::clock::system_now()
                     .duration_since(UNIX_EPOCH)
                     .map(|elapsed| elapsed.as_millis() as u64)
                     .unwrap_or_default()

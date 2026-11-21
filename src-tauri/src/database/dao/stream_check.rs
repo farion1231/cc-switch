@@ -9,7 +9,7 @@ impl Database {
     /// Delete stream check logs older than `retain_days` days.
     /// Returns the number of deleted rows.
     pub fn cleanup_old_stream_check_logs(&self, retain_days: i64) -> Result<u64, AppError> {
-        let cutoff = chrono::Utc::now().timestamp() - retain_days * 86400;
+        let cutoff = crate::clock::now().timestamp() - retain_days * 86400;
         let conn = lock_conn!(self.conn);
         let deleted = conn
             .execute(

@@ -92,7 +92,7 @@ impl Drop for CcLock {
 /// 锁过期了就返回它的 mtime。
 fn stale_mtime(path: &Path, stale: Duration) -> Option<SystemTime> {
     let modified = mtime_of(path)?;
-    SystemTime::now()
+    crate::clock::os_now()
         .duration_since(modified)
         .is_ok_and(|age| age > stale)
         .then_some(modified)

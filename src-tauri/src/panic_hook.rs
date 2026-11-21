@@ -143,13 +143,13 @@ pub fn setup_panic_hook() {
 
         // 构建崩溃信息（使用 catch_unwind 保护时间格式化，避免嵌套 panic）
         let timestamp = std::panic::catch_unwind(|| {
-            chrono::Local::now()
+            crate::clock::now_local()
                 .format("%Y-%m-%d %H:%M:%S%.3f")
                 .to_string()
         })
         .unwrap_or_else(|_| {
             // chrono panic 时回退到 unix timestamp
-            std::time::SystemTime::now()
+            crate::clock::system_now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| format!("unix:{}.{:03}", d.as_secs(), d.subsec_millis()))
                 .unwrap_or_else(|_| "unknown".to_string())
