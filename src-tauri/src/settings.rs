@@ -1111,17 +1111,10 @@ pub(crate) fn resolve_override_path(raw: &str) -> PathBuf {
     };
 
     if raw == "~" {
-        if let Some(home) = dirs::home_dir() {
-            return home;
-        }
-    } else if let Some(stripped) = raw.strip_prefix("~/") {
-        if let Some(home) = dirs::home_dir() {
-            return join_home(home, stripped);
-        }
-    } else if let Some(stripped) = raw.strip_prefix("~\\") {
-        if let Some(home) = dirs::home_dir() {
-            return join_home(home, stripped);
-        }
+        return crate::config::get_home_dir();
+    }
+    if let Some(stripped) = raw.strip_prefix("~/").or_else(|| raw.strip_prefix("~\\")) {
+        return join_home(crate::config::get_home_dir(), stripped);
     }
 
     PathBuf::from(raw)
@@ -1844,11 +1837,31 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn override_paths_expand_windows_style_tilde_separators() {
-        let home = dirs::home_dir().expect("home directory");
+        let home = crate::config::get_home_dir();
         assert_eq!(
             resolve_override_path(r"~\pi\agent"),
             home.join("pi").join("agent")
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn override_paths_honor_test_home_override() {
+        use crate::test_support::EnvVars;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _guard = EnvVars::new().set("CC_SWITCH_TEST_HOME", temp.path());
+
+        assert_eq!(resolve_override_path("~"), temp.path());
+        assert_eq!(
+            resolve_override_path("~/pi/agent"),
+            temp.path().join("pi").join("agent")
+        );
+        assert_eq!(
+            resolve_override_path(r"~\pi\agent"),
+            temp.path().join("pi").join("agent")
         );
     }
 
