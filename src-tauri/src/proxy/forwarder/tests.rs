@@ -211,6 +211,59 @@ fn test_forwarder(
     }
 }
 
+/// 流式请求在 hyper 路径上必须用 `streaming_first_byte_timeout` 等响应头，
+/// 不能沿用非流式超时：否则 Claude 供应商会卡到 10 分钟才触发故障转移。
+#[tokio::test]
+async fn streaming_header_wait_uses_first_byte_timeout_on_hyper_path() {
+    // 应用启动时会安装 rustls provider；测试进程里手动装一次，hyper-util 客户端
+    // 才能构建 TLS connector（http:// 目标本身不走 TLS）。
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    // 接受连接、读完请求后一直不写响应头，直到客户端超时断开。
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let server = std::thread::spawn(move || {
+        if let Ok((mut stream, _)) = listener.accept() {
+            let mut buf = [0u8; 2048];
+            let _ = std::io::Read::read(&mut stream, &mut buf);
+            // 不写响应头，并且保持连接超过非流式超时，确保「拿不到响应头」时只能由
+            // 首包超时结束，而不是服务端主动断开。连接可能被客户端连接池保活，
+            // 读不到 EOF，所以有界等待后退出。
+            std::thread::sleep(Duration::from_secs(15));
+        }
+    });
+
+    let forwarder = test_forwarder(Duration::from_secs(10), Duration::from_millis(300));
+    let started = std::time::Instant::now();
+    let error = tokio::time::timeout(
+        Duration::from_secs(12),
+        forwarder.send_upstream(
+            &format!("http://{addr}/v1/messages"),
+            "stalled upstream",
+            &http::Method::POST,
+            http::HeaderMap::new(),
+            &http::Extensions::new(),
+            b"{}".to_vec(),
+            true, // streaming
+            true, // preserve_exact_header_case → hyper path
+        ),
+    )
+    .await
+    .expect("send_upstream must not hang")
+    .err()
+    .expect("stalled upstream must time out");
+    assert!(
+        matches!(error, ProxyError::Timeout(_)),
+        "expected timeout, got {error:?}"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "streaming header wait should use the 300ms first-byte timeout, took {:?}",
+        started.elapsed()
+    );
+    // 不 join：服务端连接可能仍被客户端连接池保活，有界等待结束后线程自行退出。
+    drop(server);
+}
+
 #[test]
 fn codex_failover_model_mapping_skips_standalone_endpoints() {
     let mut forwarder = test_forwarder(Duration::ZERO, Duration::ZERO);
