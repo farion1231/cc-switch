@@ -26,13 +26,33 @@ export function recordedCheckpoints(root: string, caseId: string): string[] {
   return existsSync(dir) ? readdirSync(dir).filter((d) => /^\d{2}-/.test(d)).sort() : [];
 }
 
-/** Replaces the case's recording with these observations. */
-export function writeRecording(root: string, caseId: string, observations: readonly CheckpointObservation[]): void {
+/** The OS whose recordings are the shared, unsuffixed files. */
+export const PRIMARY_OS: Os = "linux";
+
+/**
+ * Writes a case's recording. The primary OS writes the shared files and drops checkpoints that
+ * no longer exist. Any other OS writes `<channel>.<os>.snap` only where it differs from the
+ * shared file, and deletes its own file where it no longer differs.
+ */
+export function writeRecording(root: string, caseId: string, observations: readonly CheckpointObservation[], os: Os): void {
   const dir = join(root, caseId);
-  rmSync(dir, { recursive: true, force: true });
+  const dirs = observations.map((o, i) => checkpointDir(i, o.name));
+  if (os === PRIMARY_OS && existsSync(dir)) {
+    for (const d of readdirSync(dir)) if (!dirs.includes(d)) rmSync(join(dir, d), { recursive: true, force: true });
+  }
   observations.forEach((o, i) => {
-    const d = join(dir, checkpointDir(i, o.name));
+    const d = join(dir, dirs[i]);
     mkdirSync(d, { recursive: true });
-    for (const [channel, text] of Object.entries(o.channels)) writeFileSync(join(d, `${channel}.snap`), `${text}\n`);
+    for (const [channel, text] of Object.entries(o.channels)) {
+      if (os === PRIMARY_OS) {
+        writeFileSync(join(d, `${channel}.snap`), `${text}\n`);
+        continue;
+      }
+      const shared = join(d, `${channel}.snap`);
+      const own = join(d, `${channel}.${os}.snap`);
+      const same = existsSync(shared) && readFileSync(shared, "utf8").replace(/\n$/, "") === text;
+      if (same) rmSync(own, { force: true });
+      else writeFileSync(own, `${text}\n`);
+    }
   });
 }

@@ -65,10 +65,54 @@ async function waitReady(wd: WebDriver, timeoutMs = 30000): Promise<void> {
 }
 
 /** Linux: tauri-driver in front of WebKitWebDriver, under Xvfb and a D-Bus session. */
-export async function launchLinux(opts: { binary: string; home: string; port?: number }): Promise<AppSession> {
-  const port = opts.port ?? 4444;
-  const driver: ChildProcess = spawn("tauri-driver", ["--port", String(port), "--native-driver", "/usr/bin/WebKitWebDriver"], {
+export function launchLinux(opts: { binary: string; home: string; port?: number }): Promise<AppSession> {
+  return launchThroughTauriDriver({
+    driver: "tauri-driver",
+    nativeDriver: "/usr/bin/WebKitWebDriver",
+    binary: opts.binary,
+    port: opts.port ?? 4444,
     env: appEnv(opts.home, { TAURI_WEBVIEW_AUTOMATION: "true" }),
+    kill: async () => {
+      try { execFileSync("pkill", ["-x", "cc-switch"]); } catch {}
+      for (let i = 0; i < 25; i++) {
+        try { execFileSync("pgrep", ["-x", "cc-switch"]); } catch { break; }
+        await sleep(200);
+      }
+    },
+  });
+}
+
+/**
+ * Windows: tauri-driver in front of msedgedriver (WebView2). There is no HOME redirection: the
+ * disposable VM's profile is HOME and the app runs exactly as shipped.
+ */
+export function launchWindows(opts: { binary: string; driver: string; edgeDriver: string; port?: number }): Promise<AppSession> {
+  const env: Record<string, string> = {};
+  for (const [k, v] of Object.entries(process.env)) {
+    if (v === undefined || /^(https?|all|no|ftp)_proxy$/i.test(k)) continue;
+    env[k] = v;
+  }
+  return launchThroughTauriDriver({
+    driver: opts.driver,
+    nativeDriver: opts.edgeDriver,
+    binary: opts.binary,
+    port: opts.port ?? 4444,
+    env,
+    kill: async () => {
+      for (const image of ["cc-switch.exe", "msedgedriver.exe"]) {
+        try { execFileSync("taskkill", ["/F", "/T", "/IM", image], { stdio: "ignore" }); } catch {}
+      }
+      await sleep(1000);
+    },
+  });
+}
+
+async function launchThroughTauriDriver(o: {
+  driver: string; nativeDriver: string; binary: string; port: number; env: Record<string, string>; kill: () => Promise<void>;
+}): Promise<AppSession> {
+  const { port } = o;
+  const driver: ChildProcess = spawn(o.driver, ["--port", String(port), "--native-driver", o.nativeDriver], {
+    env: o.env,
     stdio: ["ignore", "pipe", "pipe"],
   });
   let log = "";
@@ -79,18 +123,14 @@ export async function launchLinux(opts: { binary: string; home: string; port?: n
     await wd.deleteSession();
     driver.kill("SIGTERM");
     await Promise.race([new Promise((r) => driver.once("exit", r)), sleep(5000)]);
-    try { execFileSync("pkill", ["-x", "cc-switch"]); } catch {}
-    for (let i = 0; i < 25; i++) {
-      try { execFileSync("pgrep", ["-x", "cc-switch"]); } catch { break; }
-      await sleep(200);
-    }
+    await o.kill();
     return { log: log.slice(-8000) };
   };
   try {
     for (let i = 0; ; i++) {
       try { await wd.call("GET", "/status", undefined, 2000); break; } catch { if (i > 100) throw new Error("tauri-driver did not start"); await sleep(200); }
     }
-    await wd.newSession({ alwaysMatch: { "tauri:options": { application: opts.binary } } });
+    await wd.newSession({ alwaysMatch: { "tauri:options": { application: o.binary } } });
     await waitReady(wd);
   } catch (e) {
     await close();

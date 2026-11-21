@@ -8,7 +8,9 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { CaseSpec } from "../../case.ts";
-import { launchLinux } from "../driver/app.ts";
+import { WINDOWS_PROFILE_NOISE } from "../../../volatile.ts";
+import { launchLinux, launchWindows } from "../driver/app.ts";
+import { scanHome, signatures } from "../observe/channels.ts";
 import { runCase, type CaseRun, type HostOptions } from "../host/run.ts";
 import { firstDifference } from "../observe/compare.ts";
 import { checkpointDir, readRecording, recordedCheckpoints, writeRecording, type Os } from "../observe/store.ts";
@@ -34,13 +36,47 @@ async function loadCase(file: string): Promise<CaseSpec> {
   return spec;
 }
 
-function hostFor(os: Os, app: string): HostOptions {
-  if (os !== "linux") throw new Error(`host for ${os} is not implemented yet`);
-  return {
-    home: "/home/parity",
-    sentinels: [process.env.HOME ?? "/tmp/sentinel-home"],
-    launch: (home) => launchLinux({ binary: app, home }),
-  };
+function hostFor(os: Os, app: string, flags: Record<string, string>): HostOptions {
+  if (os === "linux") {
+    const home = "/home/parity";
+    return {
+      home,
+      exclude: [],
+      reset: () => {
+        rmSync(home, { recursive: true, force: true });
+        mkdirSync(home, { recursive: true, mode: 0o755 });
+      },
+      sentinels: [process.env.HOME ?? "/tmp/sentinel-home"],
+      launch: (h) => launchLinux({ binary: app, home: h }),
+    };
+  }
+  if (os === "windows") {
+    const home = process.env.USERPROFILE;
+    if (!home) throw new Error("USERPROFILE is not set");
+    if (process.env.PARITY_DISPOSABLE_HOST !== "1") throw new Error("Windows cases use the real profile; set PARITY_DISPOSABLE_HOST=1 only on a disposable VM");
+    const exclude = WINDOWS_PROFILE_NOISE.map((r) => r.glob);
+    let initial: Map<string, string> | null = null;
+    return {
+      home,
+      exclude,
+      // The first reset takes the profile as it is. Later resets delete what was added since.
+      reset: () => {
+        const now = scanHome(home, exclude);
+        if (!initial) {
+          initial = signatures(now);
+          return;
+        }
+        const base = initial;
+        const added = [...now.keys()].filter((p) => !base.has(p)).sort((a, b) => b.length - a.length);
+        for (const p of added) rmSync(join(home, p), { recursive: true, force: true });
+        const changed = [...now].filter(([p, s]) => base.has(p) && base.get(p) !== s.sig && s.kind !== "dir").map(([p]) => p);
+        if (changed.length) throw new Error(`reset cannot restore profile files an earlier case changed: ${changed.join(", ")}`);
+      },
+      sentinels: [],
+      launch: () => launchWindows({ binary: app, driver: flags.driver ?? "tauri-driver", edgeDriver: flags.edge ?? "msedgedriver" }),
+    };
+  }
+  throw new Error(`host for ${os} is not implemented yet`);
 }
 
 function saveRun(out: string, run: CaseRun, label: string): void {
@@ -84,7 +120,7 @@ async function main() {
   const app = flags.app ?? "/app/cc-switch";
   const baseline = resolve(flags.baseline ?? join(PARITY, "baseline"));
   const out = resolve(flags.out ?? join(PARITY, ".out", os, "cases"));
-  const host = hostFor(os, app);
+  const host = hostFor(os, app, flags);
   let failed = 0;
   const report: unknown[] = [];
 
@@ -110,7 +146,7 @@ async function main() {
         console.log(`${spec.id}: recording REFUSED\n${problems.join("\n")}`);
         if (runs.some((r) => r.tree)) console.log(`UI tree at the failure:\n${runs.find((r) => r.tree)?.tree}`);
       } else {
-        writeRecording(baseline, spec.id, runs[0].checkpoints);
+        writeRecording(baseline, spec.id, runs[0].checkpoints, os);
         console.log(`${spec.id}: recorded ${runs[0].checkpoints.length} checkpoints from ${runs.length} identical runs`);
       }
       report.push({ case: spec.id, mode, problems, ms: runs.map((r) => r.ms) });

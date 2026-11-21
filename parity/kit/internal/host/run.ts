@@ -1,17 +1,21 @@
 // Runs one case once: reset HOME, launch, journey with checkpoints, teardown, sentinel check.
 // Every step is idempotent and reset comes first, so a crashed case cannot poison the next one.
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { CaseSpec, Expect, HomePath, Journey } from "../../case.ts";
 import type { AppSession } from "../driver/app.ts";
 import { isVisible, makeUi, settleUi, StepError, type StepLog } from "../driver/verbs.ts";
-import { CHANNELS } from "../observe/channels.ts";
+import { CHANNELS, scanHome, signatures } from "../observe/channels.ts";
 import { Binder } from "../observe/normalise.ts";
 import type { CheckpointObservation } from "../observe/store.ts";
 
 export interface HostOptions {
   /** The app's HOME. A fixed path per OS, so paths written into files compare across runs. */
   readonly home: string;
+  /** Brings HOME back to its state before the first case. Throws if that is impossible. */
+  readonly reset: () => void;
+  /** Globs under HOME that belong to the OS or the runner, never walked. */
+  readonly exclude: readonly string[];
   /** Places outside HOME the app must not touch. Each must be unchanged after the case. */
   readonly sentinels: readonly string[];
   readonly launch: (home: string) => Promise<AppSession>;
@@ -86,8 +90,8 @@ function makeExpect(home: string, app: AppSession, failures: string[]): Expect {
 export async function runCase(spec: CaseSpec, host: HostOptions): Promise<CaseRun> {
   if (spec.seed !== "fresh") throw new Error(`case ${spec.id}: seeds other than "fresh" are not implemented yet`);
   const run: CaseRun = { caseId: spec.id, checkpoints: [], intentFailures: [], errors: [], steps: [], ms: 0 };
-  rmSync(host.home, { recursive: true, force: true });
-  mkdirSync(host.home, { recursive: true, mode: 0o755 });
+  host.reset();
+  const pristine = signatures(scanHome(host.home, host.exclude));
   const before = host.sentinels.map(listing);
   const startMs = Date.now();
   let app: AppSession | null = null;
@@ -103,7 +107,7 @@ export async function runCase(spec: CaseSpec, host: HostOptions): Promise<CaseRu
         if (run.checkpoints.some((c) => c.name === name)) throw new Error(`checkpoint "${name}" is used twice`);
         const binder = new Binder({ startMs, endMs: Date.now() }, host.home);
         const channels: Record<string, string> = {};
-        for (const ch of CHANNELS) channels[ch.name] = await ch.capture({ app: a, home: host.home, binder });
+        for (const ch of CHANNELS) channels[ch.name] = await ch.capture({ app: a, home: host.home, binder, pristine, exclude: host.exclude });
         run.checkpoints.push({ name, channels });
       },
     };

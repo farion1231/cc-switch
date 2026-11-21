@@ -31,7 +31,9 @@ export class Binder {
   }
 
   text(s: string): string {
-    let out = s.split(this.home).join("<HOME>");
+    // The raw path, its JSON-escaped form and its forward-slash form (Windows writes all three).
+    let out = s;
+    for (const form of new Set([this.home.replace(/\\/g, "\\\\"), this.home, this.home.replace(/\\/g, "/")])) out = out.split(form).join("<HOME>");
     out = out.replace(ISO, (m, y, mo, d, h, mi, se, frac, zone) => {
       const iso = `${y}-${mo}-${d}T${h}:${mi}:${se}${frac ?? ""}${zone ? (zone === "Z" ? "Z" : zone.length === 5 ? `${zone.slice(0, 3)}:${zone.slice(3)}` : zone) : "Z"}`;
       const ms = Date.parse(iso);

@@ -9,6 +9,11 @@ on:
     paths:
       - "parity/spike/windows/**"
       - "parity/spike/common.mjs"
+      - "parity/kit/**"
+      - "parity/screens/**"
+      - "parity/cases/**"
+      - "parity/baseline/**"
+      - "parity/volatile.ts"
       - ".github/workflows/parity-windows-probe.yml"
       - "src-tauri/**"
       - "src/**"
@@ -138,4 +143,86 @@ jobs:
         with:
           name: probe-windows-${{ matrix.vm }}
           path: ${{ runner.temp }}/out
+          retention-days: 7
+
+  # The cases, on the VM's real profile (no HOME redirection on Windows). A push whose head commit
+  # message contains "[parity record]" records the Windows variants and uploads them; any other
+  # push checks every case 10 times per VM against the recordings.
+  cases:
+    needs: build
+    runs-on: windows-2022
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        vm: [1, 2]
+    env:
+      PARITY_DISPOSABLE_HOST: "1"
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: parity-app-windows
+          path: ${{ runner.temp }}/app
+
+      - name: Install tauri-driver
+        run: cargo install tauri-driver --version 2.1.0 --locked
+
+      - name: Fetch msedgedriver for the installed WebView2 runtime
+        shell: pwsh
+        run: |
+          $key = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+          $wv = (Get-ItemProperty $key -ErrorAction SilentlyContinue).pv
+          if (-not $wv) { throw "WebView2 runtime version not found" }
+          Write-Output "WebView2 runtime: $wv"
+          $dest = Join-Path $env:RUNNER_TEMP 'edgedriver'
+          Invoke-WebRequest "https://msedgedriver.microsoft.com/$wv/edgedriver_win64.zip" -OutFile edgedriver.zip
+          Expand-Archive edgedriver.zip -DestinationPath $dest -Force
+
+      - name: Block outbound traffic for the app and WebView2
+        shell: pwsh
+        run: |
+          Set-NetFirewallProfile -All -Enabled True
+          $app = Join-Path $env:RUNNER_TEMP 'app\cc-switch.exe'
+          $webview = Get-ChildItem 'C:\Program Files (x86)\Microsoft\EdgeWebView\Application' -Recurse -Filter msedgewebview2.exe | Select-Object -ExpandProperty FullName
+          foreach ($p in @($app) + @($webview)) {
+            New-NetFirewallRule -DisplayName "parity-block-egress" -Direction Outbound -Program $p -Action Block | Out-Null
+          }
+
+      - name: Run the cases
+        shell: bash
+        env:
+          RECORD: ${{ contains(github.event.head_commit.message, '[parity record]') }}
+        run: |
+          set -o pipefail
+          mapfile -t cases < <(find parity/cases -name '*.case.ts' -not -path '*/_scratch/*' | sort)
+          common=(--os windows --app "$RUNNER_TEMP/app/cc-switch.exe" --driver "$USERPROFILE/.cargo/bin/tauri-driver.exe"
+                  --edge "$RUNNER_TEMP/edgedriver/msedgedriver.exe" --out "$RUNNER_TEMP/out/cases")
+          if [ "$RECORD" = "true" ]; then
+            node parity/kit/internal/cli/main.ts record "${common[@]}" "${cases[@]}" 2>&1 | tee "$RUNNER_TEMP/out-cases.log"
+          else
+            repeated=(); for i in $(seq 10); do repeated+=("${cases[@]}"); done
+            node parity/kit/internal/cli/main.ts check "${common[@]}" "${repeated[@]}" 2>&1 | tee "$RUNNER_TEMP/out-cases.log"
+          fi
+
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+          { echo '### Windows cases, VM ${{ matrix.vm }}'; echo '```'; grep -E ': (pass|FAIL|recorded|recording REFUSED)' "$RUNNER_TEMP/out-cases.log" 2>/dev/null | sort | uniq -c; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cases-windows-${{ matrix.vm }}
+          path: |
+            ${{ runner.temp }}/out-cases.log
+            ${{ runner.temp }}/out/cases/**
+            parity/baseline/**
           retention-days: 7
