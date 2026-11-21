@@ -19,6 +19,7 @@ export function useManagedAccountUsers(
   const { data: agy } = useProvidersQuery("agy");
   const { data: copilot } = useProvidersQuery("copilot");
   const { data: workbuddy } = useProvidersQuery("workbuddy");
+  const { data: codebuddy } = useProvidersQuery("codebuddy");
 
   return useCallback(
     (accountIds: readonly string[]): ManagedAccountUser[] =>
@@ -29,6 +30,7 @@ export function useManagedAccountUsers(
         agy: agy?.providers,
         copilot: copilot?.providers,
         workbuddy: workbuddy?.providers,
+        codebuddy: codebuddy?.providers,
       }),
     [
       authProvider,
@@ -39,6 +41,7 @@ export function useManagedAccountUsers(
       agy,
       copilot,
       workbuddy,
+      codebuddy,
     ],
   );
 }

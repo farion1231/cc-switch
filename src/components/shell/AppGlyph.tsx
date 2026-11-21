@@ -21,6 +21,7 @@ export const APP_DISPLAY_NAME: Record<AppId, string> = {
   omp: "Oh My Pi",
   copilot: "Copilot CLI",
   workbuddy: "WorkBuddy",
+  codebuddy: "CodeBuddy Code",
 };
 
 const APP_ICON_NAME: Record<AppId, string> = {
@@ -40,6 +41,7 @@ const APP_ICON_NAME: Record<AppId, string> = {
   omp: "omp",
   copilot: "githubcopilot",
   workbuddy: "workbuddy",
+  codebuddy: "codebuddy",
 };
 
 // Claude Code 和 Claude Desktop 用同一个图标，靠右下角的小角标区分终端与桌面

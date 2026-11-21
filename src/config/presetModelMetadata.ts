@@ -9,6 +9,7 @@ import {
 } from "@/lib/modelMetadata";
 import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
 import type { OpenCodeModel } from "@/types";
+import { codebuddyProviderPresets } from "./codebuddyProviderPresets";
 import { codexProviderPresets } from "./codexProviderPresets";
 import { hermesProviderPresets } from "./hermesProviderPresets";
 import { kimiProviderPresets } from "./kimiProviderPresets";
@@ -166,4 +167,22 @@ export const kimiPresetModelSources = lazy(() =>
       }),
     ),
   ),
+);
+
+// CodeBuddy 的一张卡片就是一个模型，卡片 key 即模型 ID。
+export const codebuddyPresetModelSources = lazy(() =>
+  codebuddyProviderPresets
+    .filter((preset) => preset.category !== "official")
+    .flatMap((preset) =>
+      buildSources(
+        [preset.settingsConfig.url],
+        [[preset.providerKey, preset.settingsConfig] as const],
+        (model) => ({
+          contextWindow: positiveInteger(model.maxInputTokens),
+          maxOutputTokens: positiveInteger(model.maxOutputTokens),
+          reasoning: model.supportsReasoning,
+          inputModalities: model.supportsImages ? ["text", "image"] : undefined,
+        }),
+      ),
+    ),
 );

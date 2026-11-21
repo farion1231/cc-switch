@@ -31,6 +31,7 @@ import {
   DSH_ACCOUNT_PRESET_ID,
 } from "@/config/dshProviderPresets";
 import { codexProviderPresets } from "@/config/codexProviderPresets";
+import { codebuddyProviderPresets } from "@/config/codebuddyProviderPresets";
 import { workbuddyOfficialPreset } from "@/config/workbuddyProviderPresets";
 import {
   PRESET_FAMILIES,
@@ -547,6 +548,33 @@ describe("ProviderPresetSelector", () => {
       expect(
         (locale.providerPreset.loginWith as Record<string, string>).workbuddy,
       ).toContain("WorkBuddy");
+    }
+  });
+
+  it("shows the CodeBuddy account subtitle for the CodeBuddy official preset", async () => {
+    const codebuddyOfficialPreset = codebuddyProviderPresets.find(
+      (preset) => preset.category === "official",
+    )!;
+    render(
+      <TwoSteps
+        appId="codebuddy"
+        onPresetChange={vi.fn()}
+        presetEntries={[
+          { id: "codebuddy-official", preset: codebuddyOfficialPreset },
+        ]}
+      />,
+    );
+    const host = await screen.findByTestId("host");
+    expect(
+      within(host).getByText("providerPreset.loginWith.codebuddy"),
+    ).toBeInTheDocument();
+    expect(
+      within(host).queryByText("providerPreset.loginWith.claude"),
+    ).not.toBeInTheDocument();
+    for (const locale of [zh, zhTW, en, ja, tr]) {
+      expect(
+        (locale.providerPreset.loginWith as Record<string, string>).codebuddy,
+      ).toContain("CodeBuddy");
     }
   });
 

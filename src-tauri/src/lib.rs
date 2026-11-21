@@ -8,6 +8,7 @@ mod auto_launch;
 mod claude_desktop_config;
 mod claude_mcp;
 mod claude_plugin;
+mod codebuddy_config;
 mod codex_config;
 mod codex_history_migration;
 mod codex_rollout_file;
@@ -1143,6 +1144,7 @@ pub fn run() {
                     crate::app_config::AppType::Pi,
                     crate::app_config::AppType::Mcode,
                     crate::app_config::AppType::WorkBuddy,
+                    crate::app_config::AppType::Codebuddy,
                 ] {
                     match crate::services::prompt::PromptService::import_from_file_on_first_launch(
                         &app_state,
@@ -1341,6 +1343,22 @@ pub fn run() {
                 use crate::services::workbuddy_account::WorkBuddyAccountManager;
                 let manager = WorkBuddyAccountManager::new(crate::config::get_app_config_dir());
                 app.manage(commands::WorkBuddyAccountState(Arc::new(manager)));
+            }
+            // CodeBuddy Code 官方账号（授权中心收录、切 CodeBuddy 的全局登录）
+            {
+                use crate::services::codebuddy_account::CodebuddyAccountManager;
+                let manager = Arc::new(CodebuddyAccountManager::new(
+                    crate::config::get_app_config_dir(),
+                ));
+                app.manage(commands::CodebuddyAccountState(manager.clone()));
+                // 上次退出时终端登录还没登完：删掉 CC Switch 写的登出标记，恢复原来的登录
+                tauri::async_runtime::spawn(async move {
+                    match manager.recover_stale_marker().await {
+                        Ok(true) => log::info!("[CodebuddyAccount] 已恢复上次未完成登录前的登录"),
+                        Ok(false) => {}
+                        Err(error) => log::warn!("[CodebuddyAccount] 恢复上次登录前的登出标记失败: {error}"),
+                    }
+                });
             }
 
             // Claude Code 官方订阅账号（授权中心加号；每个账号一个 CLAUDE_CONFIG_DIR）
@@ -1908,6 +1926,11 @@ pub fn run() {
             commands::workbuddy_account_prepare_new_login,
             commands::workbuddy_account_open_app,
             commands::workbuddy_account_quota,
+            commands::codebuddy_account_live,
+            commands::codebuddy_account_import_current,
+            commands::codebuddy_account_open_login_terminal,
+            commands::codebuddy_account_quota,
+            commands::codebuddy_account_switch_provider,
             commands::claude_account_submit_paste,
             commands::get_claude_account_quota,
             commands::get_claude_default_plan,

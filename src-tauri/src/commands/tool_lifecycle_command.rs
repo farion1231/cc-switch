@@ -1042,7 +1042,10 @@ fn grok_native_update_command(update: String) -> String {
 fn prefers_official_update(tool: &str, shell: LifecycleCommandShell) -> bool {
     match shell {
         LifecycleCommandShell::Posix => {
-            matches!(tool, "claude" | "opencode" | "openclaw" | "kimi" | "omp")
+            matches!(
+                tool,
+                "claude" | "opencode" | "openclaw" | "kimi" | "omp" | "codebuddy"
+            )
         }
         LifecycleCommandShell::WindowsBatch => {
             matches!(
@@ -1051,7 +1054,7 @@ fn prefers_official_update(tool: &str, shell: LifecycleCommandShell) -> bool {
                 // 安装方式探测失败弹交互 prompt（spawn npm.cmd 没传 shell:true）；静默
                 // lifecycle 没有 stdin 会挂死，Windows 先锚到包管理器路径，等上游修了
                 // 再把 opencode 加回这里。
-                "claude" | "openclaw" | "kimi" | "omp"
+                "claude" | "openclaw" | "kimi" | "omp" | "codebuddy"
             )
         }
     }
@@ -1793,6 +1796,48 @@ mod tests {
                 Some(format!("omp update || {OMP_INSTALL_UNIX}").as_str())
             );
         }
+    }
+
+    #[test]
+    fn codebuddy_lifecycle_metadata_uses_self_update_with_npm_fallback() {
+        let requested = vec!["unsupported".to_string(), "codebuddy".to_string()];
+        assert_eq!(normalize_requested_tools(&requested), vec!["codebuddy"]);
+        let spec = tool_spec("codebuddy");
+        assert_eq!(spec.display_name, "CodeBuddy Code");
+        assert_eq!(spec.npm_package, Some("@tencent-ai/codebuddy-code"));
+        let npm = "npm i -g @tencent-ai/codebuddy-code@latest";
+        // No dependency runs an install script, so npm 12 needs no `--allow-scripts`.
+        assert_eq!(spec.npm_install_command().as_deref(), Some(npm));
+        // `codebuddy update` never prompts and exits 1 when it cannot update.
+        assert_eq!(spec.official_update_args, Some("update"));
+
+        assert_eq!(
+            tool_action_shell_command_for_shell(
+                "codebuddy",
+                ToolLifecycleAction::Install,
+                LifecycleCommandShell::Posix,
+            )
+            .as_deref(),
+            Some(npm)
+        );
+        assert_eq!(
+            tool_action_shell_command_for_shell(
+                "codebuddy",
+                ToolLifecycleAction::Update,
+                LifecycleCommandShell::Posix,
+            )
+            .as_deref(),
+            Some(format!("codebuddy update || {npm}").as_str())
+        );
+        assert_eq!(
+            tool_action_shell_command_for_shell(
+                "codebuddy",
+                ToolLifecycleAction::Update,
+                LifecycleCommandShell::WindowsBatch,
+            )
+            .as_deref(),
+            Some(format!("codebuddy update || call {npm}").as_str())
+        );
     }
 
     #[test]
