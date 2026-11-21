@@ -216,9 +216,14 @@ const MCP_DANGEROUS_FIELDS = new Set([
   "bearer_token_env_var",
   "env_http_headers",
   "http_headers_helper",
+  "headershelper",
+  "headers_helper",
   "env_vars",
+  "authprovidertype",
+  "auth_provider_type",
   "cwd",
   "working_dir",
+  "server",
 ]);
 
 export function classifyMcpField(key: unknown): RiskKind | null {
@@ -226,6 +231,32 @@ export function classifyMcpField(key: unknown): RiskKind | null {
   return MCP_DANGEROUS_FIELDS.has(key.toLowerCase())
     ? "mcpDangerousField"
     : null;
+}
+
+/**
+ * 检测字符串是否包含客户端会展开的宿主机环境变量引用：
+ * - `${VAR}` / `${VAR:-default}`（Claude Code / Gemini CLI）
+ * - `$VAR`（Gemini CLI）
+ * - `%VAR%`（Gemini CLI / Windows，排除 `%E4%B8%AD` 类双十六进制 URL 编码）
+ */
+export function containsEnvVarReference(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  if (
+    /\$\{[A-Za-z_][A-Za-z0-9_]*[^}]*\}|\$[A-Za-z_][A-Za-z0-9_]*/.test(value)
+  ) {
+    return true;
+  }
+  const winEnvRegex = /%([A-Za-z_][A-Za-z0-9_]*)%/g;
+  let match: RegExpExecArray | null;
+  while ((match = winEnvRegex.exec(value)) !== null) {
+    const inner = match[1];
+    if (inner.length >= 2 && !/^[0-9A-Fa-f]{2}$/.test(inner)) {
+      return true;
+    }
+    // 回退到结尾 `%` 继续扫描，防止 `%E4%OPENAI_API_KEY%` 借前导编码绕过
+    winEnvRegex.lastIndex = match.index + inner.length + 1;
+  }
+  return false;
 }
 
 /**

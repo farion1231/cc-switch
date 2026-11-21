@@ -7,6 +7,7 @@ import {
   classifyEndpoint,
   classifyEnvKey,
   classifyMcpField,
+  containsEnvVarReference,
   maskValue,
   riskI18nKey,
   type RiskKind,
@@ -22,6 +23,13 @@ const KNOWN_MCP_FIELDS = new Set([
   "http_headers",
   "env",
 ]);
+
+const MCP_URL_FIELDS = new Set(["url", "httpurl", "serverurl"]);
+
+function classifyUrlValue(value: unknown): RiskKind | null {
+  if (containsEnvVarReference(value)) return "mcpDangerousField";
+  return classifyEndpoint(value);
+}
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -72,19 +80,33 @@ export function McpConfirmation({
       if (!isPlainObject(spec)) continue;
       const commandRisk = classifyCommand(spec.command, spec.args);
       if (commandRisk) found.add(commandRisk);
-      if (typeof spec.url === "string") {
-        const urlRisk = classifyEndpoint(spec.url);
-        if (urlRisk) found.add(urlRisk);
-      }
       if (isPlainObject(spec.env)) {
         for (const key of Object.keys(spec.env)) {
           const envRisk = classifyEnvKey(key);
           if (envRisk) found.add(envRisk);
         }
       }
-      for (const key of Object.keys(spec)) {
+      for (const [key, value] of Object.entries(spec)) {
+        const lower = key.toLowerCase();
         const fieldRisk = classifyMcpField(key);
         if (fieldRisk) found.add(fieldRisk);
+        if (MCP_URL_FIELDS.has(lower)) {
+          const endpointRisk = classifyEndpoint(value);
+          if (endpointRisk) found.add(endpointRisk);
+          if (containsEnvVarReference(value)) {
+            found.add("mcpDangerousField");
+          }
+        }
+        if (
+          (lower === "headers" || lower === "http_headers") &&
+          isPlainObject(value)
+        ) {
+          for (const headerVal of Object.values(value)) {
+            if (containsEnvVarReference(headerVal)) {
+              found.add("mcpDangerousField");
+            }
+          }
+        }
       }
     }
     return [...found];
@@ -215,22 +237,32 @@ export function McpConfirmation({
                       <Row
                         label={t("deeplink.mcp.url")}
                         value={formatScalarOrJson(spec.url)}
-                        risk={classifyEndpoint(spec.url)}
+                        risk={classifyUrlValue(spec.url)}
                       />
                     )}
-                    {headerEntries.map(([key, value], index) => (
-                      <Row
-                        key={`headers-${key}`}
-                        label={
-                          index === 0
-                            ? t("deeplink.mcp.headers", {
-                                defaultValue: "Headers",
-                              })
-                            : ""
-                        }
-                        value={`${key}=${formatMaskedEntryValue(key, value)}`}
-                      />
-                    ))}
+                    {headerEntries.map(([key, value], index) => {
+                      const envRefRisk: RiskKind | null =
+                        containsEnvVarReference(value)
+                          ? "mcpDangerousField"
+                          : null;
+                      const displayValue = envRefRisk
+                        ? formatScalarOrJson(value)
+                        : formatMaskedEntryValue(key, value);
+                      return (
+                        <Row
+                          key={`headers-${key}`}
+                          label={
+                            index === 0
+                              ? t("deeplink.mcp.headers", {
+                                  defaultValue: "Headers",
+                                })
+                              : ""
+                          }
+                          value={`${key}=${displayValue}`}
+                          risk={envRefRisk}
+                        />
+                      );
+                    })}
                     {spec.headers !== undefined &&
                       !isPlainObject(spec.headers) && (
                         <Row
@@ -240,13 +272,23 @@ export function McpConfirmation({
                           value={formatScalarOrJson(spec.headers)}
                         />
                       )}
-                    {httpHeaderEntries.map(([key, value], index) => (
-                      <Row
-                        key={`http-headers-${key}`}
-                        label={index === 0 ? "http_headers" : ""}
-                        value={`${key}=${formatMaskedEntryValue(key, value)}`}
-                      />
-                    ))}
+                    {httpHeaderEntries.map(([key, value], index) => {
+                      const envRefRisk: RiskKind | null =
+                        containsEnvVarReference(value)
+                          ? "mcpDangerousField"
+                          : null;
+                      const displayValue = envRefRisk
+                        ? formatScalarOrJson(value)
+                        : formatMaskedEntryValue(key, value);
+                      return (
+                        <Row
+                          key={`http-headers-${key}`}
+                          label={index === 0 ? "http_headers" : ""}
+                          value={`${key}=${displayValue}`}
+                          risk={envRefRisk}
+                        />
+                      );
+                    })}
                     {spec.http_headers !== undefined &&
                       !isPlainObject(spec.http_headers) && (
                         <Row
@@ -270,10 +312,15 @@ export function McpConfirmation({
                     )}
                     {/* 完整展示其余所有扩展/未知字段，绝不静默丢弃；命中高危字段时原样展示（不脱敏环境变量名）并标红告警。 */}
                     {extraEntries.map(([key, value]) => {
-                      const fieldRisk = classifyMcpField(key);
-                      const displayValue = fieldRisk
-                        ? formatScalarOrJson(value)
-                        : formatMaskedEntryValue(key, value);
+                      const fieldRisk =
+                        classifyMcpField(key) ??
+                        (MCP_URL_FIELDS.has(key.toLowerCase())
+                          ? classifyUrlValue(value)
+                          : null);
+                      const displayValue =
+                        fieldRisk === "mcpDangerousField"
+                          ? formatScalarOrJson(value)
+                          : formatMaskedEntryValue(key, value);
                       return (
                         <Row
                           key={`extra-${key}`}
