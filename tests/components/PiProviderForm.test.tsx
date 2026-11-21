@@ -1720,6 +1720,71 @@ describe("PiProviderForm", () => {
     });
   });
 
+  it("replaces an auto-filled display name when another model is selected", async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/fetch_models_for_config`, () =>
+        HttpResponse.json([
+          {
+            id: "model-a",
+            ownedBy: null,
+            metadata: { meta: { models_dev: { name: "Model A" } } },
+          },
+          {
+            id: "model-b",
+            ownedBy: null,
+            metadata: { meta: { models_dev: { name: "Model B" } } },
+          },
+        ]),
+      ),
+      http.post(`${TAURI_ENDPOINT}/fetch_models_dev`, () =>
+        HttpResponse.error(),
+      ),
+    );
+
+    render(
+      <PiProviderForm
+        appId="pi"
+        submitLabel="Save manual provider"
+        onSubmit={vi.fn()}
+        onCancel={() => {}}
+      />,
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "providerPreset.custom" }),
+    );
+    fireEvent.change(screen.getByPlaceholderText("my-provider"), {
+      target: { value: "autofilled-provider" },
+    });
+    fireEvent.change(screen.getByLabelText("pi.form.credential"), {
+      target: { value: "literal-key" },
+    });
+    fireEvent.change(
+      screen.getByPlaceholderText("https://api.example.com/v1"),
+      {
+        target: { value: "https://api.example.com/v1" },
+      },
+    );
+    await user.click(screen.getByRole("button", { name: "pi.form.addModel" }));
+    await fetchModelsAndClosePicker(user);
+
+    const modelIdInput = screen.getByLabelText("pi.form.modelId");
+    const openModelMenu = async () =>
+      user.click(
+        within(modelIdInput.parentElement as HTMLElement).getByRole("button"),
+      );
+
+    await openModelMenu();
+    await user.click(await screen.findByRole("option", { name: "model-a" }));
+    const modelNameInput = screen.getByLabelText("pi.form.modelName");
+    await waitFor(() => expect(modelNameInput).toHaveValue("Model A"));
+
+    await openModelMenu();
+    await user.click(await screen.findByRole("option", { name: "model-b" }));
+    await waitFor(() => expect(modelNameInput).toHaveValue("Model B"));
+  });
+
   it("adds the compat a preset thinking map depends on", async () => {
     const user = userEvent.setup();
     server.use(
@@ -1770,6 +1835,138 @@ describe("PiProviderForm", () => {
         thinkingLevelMap: piThinkingProfiles.kimi3.map,
         compat: { supportsReasoningEffort: true, thinkingFormat: "openai" },
       }),
+    );
+  });
+
+  it("keeps the preset thinking map when models.dev only knows fewer levels", async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/fetch_models_for_config`, () =>
+        HttpResponse.json([{ id: "kimi-k3", ownedBy: "moonshot" }]),
+      ),
+      http.post(`${TAURI_ENDPOINT}/fetch_models_dev`, () =>
+        HttpResponse.json(
+          JSON.stringify({
+            moonshot: {
+              api: "https://api.moonshot.cn/v1",
+              models: {
+                "kimi-k3": {
+                  reasoning: true,
+                  reasoning_options: [
+                    { type: "effort", values: ["low", "high"] },
+                  ],
+                },
+              },
+            },
+          }),
+        ),
+      ),
+    );
+
+    render(
+      <PiProviderForm
+        appId="pi"
+        submitLabel="Save manual provider"
+        onSubmit={vi.fn()}
+        onCancel={() => {}}
+      />,
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "providerPreset.custom" }),
+    );
+    fireEvent.change(screen.getByPlaceholderText("my-provider"), {
+      target: { value: "my-moonshot" },
+    });
+    fireEvent.change(screen.getByLabelText("pi.form.credential"), {
+      target: { value: "literal-key" },
+    });
+    fireEvent.change(
+      screen.getByPlaceholderText("https://api.example.com/v1"),
+      { target: { value: "https://api.moonshot.cn/v1" } },
+    );
+    await user.click(screen.getByRole("button", { name: "pi.form.addModel" }));
+    await fetchModelsAndClosePicker(user);
+    const modelIdInput = screen.getByLabelText("pi.form.modelId");
+    await user.click(
+      within(modelIdInput.parentElement as HTMLElement).getByRole("button"),
+    );
+    await user.click(await screen.findByRole("option", { name: "kimi-k3" }));
+
+    // models.dev 比人工核对的预设少几档，但它优先级更低，不能把预设抹掉。
+    const configEditor = screen.getByLabelText(
+      "provider.configJson",
+    ) as HTMLTextAreaElement;
+    await waitFor(() =>
+      expect(JSON.parse(configEditor.value).models[0].thinkingLevelMap).toEqual(
+        piThinkingProfiles.kimi3.map,
+      ),
+    );
+  });
+
+  it("trims the preset thinking map to the gateway's declared levels", async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/fetch_models_for_config`, () =>
+        HttpResponse.json([
+          {
+            id: "kimi-k3",
+            ownedBy: "moonshot",
+            metadata: {
+              meta: {
+                models_dev: {
+                  reasoning_options: [
+                    { type: "effort", values: ["low", "high"] },
+                  ],
+                },
+              },
+            },
+          },
+        ]),
+      ),
+      http.post(`${TAURI_ENDPOINT}/fetch_models_dev`, () =>
+        HttpResponse.error(),
+      ),
+    );
+
+    render(
+      <PiProviderForm
+        appId="pi"
+        submitLabel="Save manual provider"
+        onSubmit={vi.fn()}
+        onCancel={() => {}}
+      />,
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "providerPreset.custom" }),
+    );
+    fireEvent.change(screen.getByPlaceholderText("my-provider"), {
+      target: { value: "my-moonshot" },
+    });
+    fireEvent.change(screen.getByLabelText("pi.form.credential"), {
+      target: { value: "literal-key" },
+    });
+    fireEvent.change(
+      screen.getByPlaceholderText("https://api.example.com/v1"),
+      { target: { value: "https://api.moonshot.cn/v1" } },
+    );
+    await user.click(screen.getByRole("button", { name: "pi.form.addModel" }));
+    await fetchModelsAndClosePicker(user);
+    const modelIdInput = screen.getByLabelText("pi.form.modelId");
+    await user.click(
+      within(modelIdInput.parentElement as HTMLElement).getByRole("button"),
+    );
+    await user.click(await screen.findByRole("option", { name: "kimi-k3" }));
+
+    // 网关只说支持 low/high：预设里多出来的 max 要隐藏掉。
+    const configEditor = screen.getByLabelText(
+      "provider.configJson",
+    ) as HTMLTextAreaElement;
+    await waitFor(() =>
+      expect(JSON.parse(configEditor.value).models[0].thinkingLevelMap).toEqual(
+        { ...piThinkingProfiles.kimi3.map, max: null },
+      ),
     );
   });
 

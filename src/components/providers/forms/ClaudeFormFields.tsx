@@ -52,6 +52,7 @@ import {
   showFetchModelsError,
   type FetchedModel,
 } from "@/lib/api/model-fetch";
+import { metadataFromGateway } from "@/lib/modelMetadata";
 import { CustomUserAgentField } from "./CustomUserAgentField";
 import {
   ClaudeStackModelsField,
@@ -330,6 +331,24 @@ export function ClaudeFormFields({
   // 通用模型获取（非 Copilot 供应商）
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
   const [isFetchingModels, setIsFetchingModels] = useState(false);
+  const modelFetchGenerationRef = useRef(0);
+
+  // 请求身份变化后旧列表和在途响应都作废：列表条目带的元数据只属于当时的地址。
+  useEffect(() => {
+    modelFetchGenerationRef.current += 1;
+    setFetchedModels((prev) => (prev.length === 0 ? prev : []));
+    setIsFetchingModels(false);
+    return () => {
+      modelFetchGenerationRef.current += 1;
+    };
+  }, [
+    baseUrl,
+    apiKey,
+    isFullUrl,
+    customUserAgent,
+    apiFormat,
+    localProxyHeadersOverride,
+  ]);
 
   // 聚合布局的模型列表拉取成功后直接打开选择弹窗，不再提示成功。
   const opensModelPicker = variant === "stack" && !!onStackModelRowsChange;
@@ -360,6 +379,8 @@ export function ClaudeFormFields({
     });
     const modelsUrl = matchedPreset?.modelsUrl;
 
+    const generation = ++modelFetchGenerationRef.current;
+    setFetchedModels([]);
     setIsFetchingModels(true);
     fetchModelsForConfig(
       baseUrl,
@@ -373,14 +394,20 @@ export function ClaudeFormFields({
       },
     )
       .then((models) => {
+        if (generation !== modelFetchGenerationRef.current) return;
         setFetchedModels(models);
         showModelFetchResult(models.length);
       })
       .catch((err) => {
+        if (generation !== modelFetchGenerationRef.current) return;
         console.warn("[ModelFetch] Failed:", err);
         showFetchModelsError(err, t);
       })
-      .finally(() => setIsFetchingModels(false));
+      .finally(() => {
+        if (generation === modelFetchGenerationRef.current) {
+          setIsFetchingModels(false);
+        }
+      });
   }, [
     baseUrl,
     apiKey,
@@ -549,6 +576,7 @@ export function ClaudeFormFields({
     field: ClaudeModelEnvField,
     placeholder?: string,
     onValueChange?: (value: string) => void,
+    onSelect?: (value: string) => void,
   ) => {
     const updateValue =
       onValueChange ?? ((next: string) => onModelChange(field, next));
@@ -559,6 +587,7 @@ export function ClaudeFormFields({
           id={id}
           value={value}
           onChange={updateValue}
+          onSelect={onSelect}
           placeholder={placeholder}
           fetchedModels={codexOauthModels}
           isLoading={codexOauthModelsLoading}
@@ -572,6 +601,7 @@ export function ClaudeFormFields({
           id={id}
           value={value}
           onChange={updateValue}
+          onSelect={onSelect}
           placeholder={placeholder}
           fetchedModels={xaiOauthModels}
           isLoading={xaiOauthModelsLoading}
@@ -597,7 +627,10 @@ export function ClaudeFormFields({
             autoComplete="off"
             className="flex-1"
           />
-          <ModelDropdown models={copilotFetchedModels} onSelect={updateValue} />
+          <ModelDropdown
+            models={copilotFetchedModels}
+            onSelect={onSelect ?? updateValue}
+          />
         </div>
       );
     }
@@ -640,6 +673,7 @@ export function ClaudeFormFields({
         id={id}
         value={value}
         onChange={updateValue}
+        onSelect={onSelect}
         placeholder={placeholder}
         fetchedModels={fetchedModels}
         isLoading={isFetchingModels}
@@ -705,6 +739,11 @@ export function ClaudeFormFields({
     },
   ];
 
+  // 用户手动取消过 1M 的模型；自动补全不再把它打开。
+  const oneMOptOutRef = useRef(new Set<string>());
+  const oneMOptOutKey = (row: ModelRoleRow, model: string) =>
+    `${row.modelField}:${stripClaudeOneMMarker(model).trim()}`;
+
   const handleRoleModelChange = (row: ModelRoleRow, value: string) => {
     const oldModelBase = stripClaudeOneMMarker(row.model).trim();
     const nextModelBase = stripClaudeOneMMarker(value).trim();
@@ -717,6 +756,9 @@ export function ClaudeFormFields({
   };
 
   const handleRoleOneMChange = (row: ModelRoleRow, enabled: boolean) => {
+    const key = oneMOptOutKey(row, row.model);
+    if (enabled) oneMOptOutRef.current.delete(key);
+    else oneMOptOutRef.current.add(key);
     handleRoleModelChange(row, setClaudeOneMMarker(row.model, enabled));
   };
 
@@ -738,6 +780,35 @@ export function ClaudeFormFields({
   const copilotOneMUnavailableTip = t("providerForm.copilotOneMUnavailable", {
     defaultValue: "Copilot 没有这个模型的 1M 版本",
   });
+
+  // 从下拉选模型时，用网关的模型资料补显示名；上游声明 1M 时一并声明。
+  const handleRoleModelSelect = (row: ModelRoleRow, modelId: string) => {
+    const metadata = metadataFromGateway(
+      fetchedModels.find((model) => model.id === modelId)?.metadata,
+    );
+    const base = stripClaudeOneMMarker(modelId).trim();
+    const currentBase = stripClaudeOneMMarker(row.model).trim();
+    const displayName = row.displayName?.trim() ?? "";
+    const previousMetadata = metadataFromGateway(
+      fetchedModels.find((model) => model.id === currentBase)?.metadata,
+    );
+    const previousAutoName = previousMetadata?.displayName?.trim();
+    const labelFollowsModel =
+      !displayName ||
+      displayName === currentBase ||
+      (!!previousAutoName && displayName === previousAutoName);
+    const optedOut = oneMOptOutRef.current.has(oneMOptOutKey(row, modelId));
+    const usesOneM = optedOut
+      ? false
+      : metadata?.contextWindow !== undefined &&
+          metadata.contextWindow >= 1_000_000
+        ? true
+        : hasClaudeOneMMarker(row.model);
+    handleRoleModelChange(row, setClaudeOneMMarker(modelId, usesOneM));
+    if (row.displayNameField && labelFollowsModel) {
+      onModelChange(row.displayNameField, metadata?.displayName ?? base);
+    }
+  };
 
   const oauthSections = (
     <>
@@ -1326,6 +1397,7 @@ export function ClaudeFormFields({
                           row,
                           setClaudeOneMMarker(value, usesOneM),
                         ),
+                      (value) => handleRoleModelSelect(row, value),
                     )}
                     <label
                       className={`flex h-9 items-center gap-2 text-sm text-fg-2${oneMBlocked ? " opacity-50" : ""}`}

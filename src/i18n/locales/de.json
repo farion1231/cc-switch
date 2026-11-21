@@ -1953,7 +1953,8 @@
     "modelMetadataFilledMany": "Kontextfenster und weitere Parameter für {{count}} Modelle wurden ergänzt (Quelle: {{source}}). Bitte prüfen Sie sie noch einmal.",
     "gptContextWindowHint": "GPT bei Relays stammt meist aus ChatGPT-Abonnements, deren Fenster nur 272K beträgt. Ein größeres Fenster verzögert die Komprimierung, bis der Upstream die Anfrage ablehnt und der Durchgang fehlschlägt; nutzen Sie es nur, wenn dieser Anbieter es unterstützt.",
     "modelMetadataSourcePreset": "Preset",
-    "modelMetadataSourceBoth": "Preset und models.dev",
+    "modelMetadataSourceGateway": "Gateway",
+    "modelMetadataSourceModelsDev": "models.dev",
     "modelPicker": {
       "title": "Modelle auswählen",
       "lead": "Markierte Modelle werden zur Liste hinzugefügt; wird die Markierung entfernt, verschwindet das Modell aus der Liste.",
