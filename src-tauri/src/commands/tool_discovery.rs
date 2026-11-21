@@ -633,7 +633,7 @@ pub(super) fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
 }
 
 #[cfg(target_os = "windows")]
-fn is_windows_command_script(path: &Path) -> bool {
+pub(super) fn is_windows_command_script(path: &Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
         .map(|ext| ext.eq_ignore_ascii_case("cmd") || ext.eq_ignore_ascii_case("bat"))
