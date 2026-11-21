@@ -28,7 +28,8 @@ export function webdriver(base) {
     return json.value;
   }
   const exec = (sid, script, a = []) => wd("POST", `/session/${sid}/execute/sync`, { script, args: a });
-  return { wd, exec };
+  const execAsync = (sid, script, a = []) => wd("POST", `/session/${sid}/execute/async`, { script, args: a });
+  return { wd, exec, execAsync };
 }
 
 // In-page serialiser: role, accessible name and states, never DOM structure or CSS.
@@ -193,6 +194,32 @@ export async function screenshot(wd, sid) {
 // settle loop retries, instead of one call eating the whole settle budget. Returns true or the error.
 export function scriptTimeout(wd, sid, ms = 5000) {
   return wd("POST", `/session/${sid}/timeouts`, { script: ms }).then(() => true, (e) => String(e.message || e).slice(0, 200));
+}
+
+// Waits until the document has loaded. The driver can accept a script before the first page has
+// committed, and on macOS such an evaluation sometimes never returns, so this phase uses a 1 s
+// script timeout and retries. It ends at the first evaluation that sees the app's document complete;
+// after that, settle treats any lost evaluation as a failure. Returns what it retried.
+export async function waitReady(wd, exec, sid, timeoutMs = 30000) {
+  const start = Date.now();
+  const retried = [];
+  await scriptTimeout(wd, sid, 1000);
+  try {
+    while (Date.now() - start < timeoutMs) {
+      const state = await exec(sid, "return [document.readyState, location.href];").catch((e) => {
+        retried.push(`+${Date.now() - start} ms ${String(e.message || e).slice(0, 160)}`);
+        return null;
+      });
+      // The initial about:blank is also "complete"; only the app's own document counts.
+      if (state && state[0] === "complete" && state[1] !== "about:blank") return { readyMs: Date.now() - start, href: state[1], retried };
+      await sleep(200);
+    }
+  } finally {
+    await scriptTimeout(wd, sid);
+  }
+  const err = new Error(`document never reached readyState complete in ${timeoutMs} ms`);
+  err.detail = { retried: retried.slice(-8) };
+  throw err;
 }
 
 // Polls the tree until 3 reads in a row agree. Failed script calls are kept in `errors`, which the

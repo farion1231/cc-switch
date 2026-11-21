@@ -14,7 +14,7 @@ import { spawn, execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { args, scriptTimeout, pixelDiff, RECORD, screenshot, settle, sha, sleep, summarise, TARGET, TREE, webdriver } from "../common.mjs";
+import { args, waitReady, scriptTimeout, pixelDiff, RECORD, screenshot, settle, sha, sleep, summarise, TARGET, TREE, webdriver } from "../common.mjs";
 
 const PORT = 4445;
 const { wd, exec } = webdriver(`http://127.0.0.1:${PORT}`);
@@ -54,6 +54,7 @@ async function oneRun(app, helper, index) {
     if (handles.includes("main")) await wd("POST", `/session/${sid}/window`, { handle: "main" });
     result.scriptTimeoutSet = await scriptTimeout(wd, sid);
 
+    result.ready = await waitReady(wd, exec, sid);
     result.settleErrors = [];
     const tree = await settle(exec, sid, 30000, result.settleErrors);
     if (result.settleErrors.length) result.failures.push(`settled only after ${result.settleErrors.length} failed script call(s), first: ${result.settleErrors[0]}`);

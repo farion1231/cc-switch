@@ -98,6 +98,22 @@ jobs:
           system_profiler SPDisplaysDataType | grep -E "Resolution|Retina" || true
           echo "Accessibility trusted: $("$RUNNER_TEMP/parity-helper" trusted)"
 
+      # The parity design denies egress at the OS level on every platform. Without it the
+      # updater reaches GitHub and an update badge appears on its own schedule. pf refuses every
+      # new outbound TCP connection and all outbound UDP except on loopback, and passes packets of
+      # connections that already exist, so the runner keeps talking to GitHub.
+      - name: Deny new outbound connections
+        run: |
+          sudo pfctl -s info 2>/dev/null | head -1 || true
+          printf '%s\n' \
+            'set skip on lo0' \
+            'block return out quick proto tcp all flags S/SA' \
+            'block return out quick proto udp all' \
+            'pass all no state' > "$RUNNER_TEMP/parity-pf.conf"
+          sudo pfctl -f "$RUNNER_TEMP/parity-pf.conf" -E 2>&1 | grep -v ALTQ || true
+          if curl -sS -m 10 -o /dev/null https://api.github.com 2>/dev/null; then echo "egress still open" >&2; exit 1; fi
+          echo "new outbound connections are refused"
+
       - name: Probe (7 fresh launches)
         env:
           PARITY_OUT_DIR: ${{ runner.temp }}/out
@@ -109,6 +125,12 @@ jobs:
             --helper "$RUNNER_TEMP/parity-helper" \
             --runs 7 \
             --out "$RUNNER_TEMP/out/results-${{ matrix.vm }}.json" | tee "$RUNNER_TEMP/out/probe.log"
+
+      - name: Restore networking
+        if: always()
+        run: |
+          sudo pfctl -d 2>&1 | tail -1 || true
+          sudo pfctl -f /etc/pf.conf 2>&1 | grep -v ALTQ || true
 
       - name: Collect crash reports
         if: always()

@@ -100,6 +100,20 @@ jobs:
           & (Join-Path $dest 'msedgedriver.exe') --version
           Get-CimInstance Win32_VideoController | Select-Object CurrentHorizontalResolution, CurrentVerticalResolution
 
+      # The parity design denies egress at the OS level on every platform. Without it the
+      # updater reaches GitHub and an update badge appears after the tree has settled.
+      - name: Block outbound traffic for the app and WebView2
+        shell: pwsh
+        run: |
+          Get-NetFirewallProfile | Format-Table Name, Enabled, DefaultInboundAction, DefaultOutboundAction
+          Set-NetFirewallProfile -All -Enabled True
+          $app = Join-Path $env:RUNNER_TEMP 'app\cc-switch.exe'
+          $webview = Get-ChildItem 'C:\Program Files (x86)\Microsoft\EdgeWebView\Application' -Recurse -Filter msedgewebview2.exe | Select-Object -ExpandProperty FullName
+          foreach ($p in @($app) + @($webview)) {
+            New-NetFirewallRule -DisplayName "parity-block-egress" -Direction Outbound -Program $p -Action Block | Out-Null
+            Write-Output "blocked outbound: $p"
+          }
+
       - name: Probe (7 fresh launches)
         shell: bash
         run: |

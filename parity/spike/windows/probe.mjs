@@ -7,6 +7,8 @@
 //   3. a W3C pointer click does not reach the page as a trusted event, or does not change the tree;
 //   4. the user profile the app was not given gains .cc-switch, .claude, .codex or .gemini;
 //   5. the WebView2 profile carries state from one launch into the next.
+// It also records what lands in the identifier's LocalAppData and AppData folders and whether
+// WebView2 honoured WEBVIEW2_USER_DATA_FOLDER; the first runs decide what to assert there.
 //
 // Windows has no HOME redirection. The app's own paths follow CC_SWITCH_TEST_HOME, and WebView2's
 // user data folder follows WEBVIEW2_USER_DATA_FOLDER. Code that asks the OS for the profile
@@ -14,13 +16,13 @@
 //
 //   node probe.mjs run --app <cc-switch.exe> --driver <tauri-driver.exe> --edge <msedgedriver.exe> --runs <n> --out <file.json>
 import { spawn, execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, sep } from "node:path";
-import { args, FOCUS, pixelDiff, RECORD, screenshot, scriptTimeout, settle, sha, sleep, summarise, TARGET, webdriver } from "../common.mjs";
+import { args, waitReady, FOCUS, pixelDiff, RECORD, screenshot, scriptTimeout, settle, sha, sleep, summarise, TARGET, webdriver } from "../common.mjs";
 
 const PORT = 4444;
-const { wd, exec } = webdriver(`http://127.0.0.1:${PORT}`);
+const { wd, exec, execAsync } = webdriver(`http://127.0.0.1:${PORT}`);
 const IDENTIFIER = "com.ccswitch.desktop";
 
 function cleanEnv(home, webviewData) {
@@ -32,14 +34,22 @@ function cleanEnv(home, webviewData) {
   return { ...env, CC_SWITCH_TEST_HOME: home, WEBVIEW2_USER_DATA_FOLDER: webviewData, LANG: "en_US.UTF-8", TZ: "UTC" };
 }
 
-// Places the app could write that are outside what it was given.
-function outsideMarks() {
-  const profile = process.env.USERPROFILE, local = process.env.LOCALAPPDATA, roaming = process.env.APPDATA;
-  return [
-    ...[".cc-switch", ".claude", ".codex", ".gemini"].map((d) => join(profile, d)),
-    join(local, IDENTIFIER),
-    join(roaming, IDENTIFIER),
-  ].filter((p) => existsSync(p));
+// The user profile the app was not given. Any of these appearing is a failure.
+function profileMarks() {
+  const profile = process.env.USERPROFILE;
+  return [".cc-switch", ".claude", ".codex", ".gemini"].map((d) => join(profile, d)).filter((p) => existsSync(p));
+}
+
+// Per-identifier folders Tauri and WebView2 may use regardless of CC_SWITCH_TEST_HOME. Listed after
+// every launch so the first runs show what lives there; whether that state leaks between
+// launches is judged by the localStorage marker.
+function identifierDirs() {
+  const out = {};
+  for (const root of [process.env.LOCALAPPDATA, process.env.APPDATA]) {
+    const dir = join(root, IDENTIFIER);
+    if (existsSync(dir)) out[dir] = list(dir, 3);
+  }
+  return out;
 }
 
 function list(dir, depth = 4) {
@@ -59,7 +69,7 @@ function killApp() {
 async function oneRun(app, driverExe, edgeExe, index, outDir) {
   const home = mkdtempSync(join(tmpdir(), `parity-home-${index}-`));
   const webviewData = mkdtempSync(join(tmpdir(), `parity-webview-${index}-`));
-  const before = outsideMarks();
+  const before = profileMarks();
   const t0 = Date.now();
   const driver = spawn(driverExe, ["--port", String(PORT), "--native-driver", edgeExe], {
     env: cleanEnv(home, webviewData),
@@ -79,10 +89,12 @@ async function oneRun(app, driverExe, edgeExe, index, outDir) {
     const session = await wd("POST", "/session", { capabilities: { alwaysMatch: { "tauri:options": { application: app } } } });
     sid = session.sessionId;
     result.browserVersion = session.capabilities?.browserVersion;
+    result.capabilities = session.capabilities;
     result.serverUpMs = Date.now() - t0;
     result.scriptTimeoutSet = await scriptTimeout(wd, sid);
     step("session created; waiting for the tree to settle");
 
+    result.ready = await waitReady(wd, exec, sid);
     result.settleErrors = [];
     const tree = await settle(exec, sid, 30000, result.settleErrors);
     if (result.settleErrors.length) result.failures.push(`settled only after ${result.settleErrors.length} failed script call(s), first: ${result.settleErrors[0]}`);
@@ -92,9 +104,25 @@ async function oneRun(app, driverExe, edgeExe, index, outDir) {
     result.tree = JSON.parse(tree);
 
     // The WebView2 profile must start empty on every launch: a marker left by launch N must be
-    // gone in launch N+1.
-    result.carriedMarker = await exec(sid, `const m = localStorage.getItem("__parity_marker"); localStorage.setItem("__parity_marker", "launch-${index}"); return m;`);
-    if (result.carriedMarker !== null) result.failures.push(`WebView2 profile carried state from ${result.carriedMarker}`);
+    // gone in launch N+1. The marker goes into IndexedDB and the script waits for the write
+    // transaction to complete, so a forced kill at teardown cannot be why it is missing later.
+    result.carriedMarker = await execAsync(sid, `const done = arguments[arguments.length - 1];
+      const req = indexedDB.open("__parity", 1);
+      req.onupgradeneeded = () => req.result.createObjectStore("m");
+      req.onerror = () => done({ error: String(req.error) });
+      req.onsuccess = () => {
+        const tx = req.result.transaction("m", "readwrite");
+        const store = tx.objectStore("m");
+        const get = store.get("marker");
+        get.onsuccess = () => {
+          const prev = get.result === undefined ? null : get.result;
+          store.put("launch-${index}", "marker");
+          tx.oncomplete = () => done({ prev });
+        };
+        tx.onerror = () => done({ error: String(tx.error) });
+      };`);
+    if (result.carriedMarker?.error) result.failures.push(`IndexedDB marker failed: ${result.carriedMarker.error}`);
+    else if (result.carriedMarker?.prev !== null) result.failures.push(`WebView2 profile carried state from ${result.carriedMarker?.prev}`);
 
     const focus = await exec(sid, FOCUS);
     const s1 = await screenshot(wd, sid);
@@ -150,12 +178,14 @@ async function oneRun(app, driverExe, edgeExe, index, outDir) {
     killApp();
     await sleep(1000);
     result.totalMs = Date.now() - t0;
-    const touched = outsideMarks().filter((p) => !before.includes(p));
-    result.outsideTouched = touched;
-    if (touched.length) result.failures.push(`wrote outside what it was given: ${touched.join(", ")}`);
+    const touched = profileMarks().filter((p) => !before.includes(p));
+    result.profileTouched = touched;
+    if (touched.length) result.failures.push(`wrote into the real profile: ${touched.join(", ")}`);
+    result.identifierDirs = identifierDirs();
     result.webviewDataUsed = readdirSync(webviewData).length > 0;
-    if (!result.webviewDataUsed) result.failures.push("WebView2 did not use WEBVIEW2_USER_DATA_FOLDER");
     result.redirectedHome = list(home);
+    const appLog = join(home, ".cc-switch", "logs", "cc-switch.log");
+    if (existsSync(appLog)) writeFileSync(join(outDir, `app-log-${index}.txt`), readFileSync(appLog));
     if (result.failures.length) result.log = log.slice(-4000);
     for (const d of [home, webviewData]) {
       try { rmSync(d, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 }); } catch (e) { step(`cleanup ${d}: ${e.message}`); }

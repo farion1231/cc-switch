@@ -13,7 +13,7 @@ import { spawn, execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { args, scriptTimeout, encodePng, FOCUS, pixelDiff, RECORD, settle, sha, sleep, summarise, TARGET, TREE, webdriver } from "../common.mjs";
+import { args, waitReady, scriptTimeout, encodePng, FOCUS, pixelDiff, RECORD, settle, sha, sleep, summarise, TARGET, TREE, webdriver } from "../common.mjs";
 
 const PORT = 4444;
 const { wd, exec } = webdriver(`http://127.0.0.1:${PORT}`);
@@ -112,6 +112,7 @@ async function oneRun(app, index, outDir) {
     result.serverUpMs = Date.now() - t0;
     step("session created; waiting for the tree to settle");
 
+    result.ready = await waitReady(wd, exec, sid);
     result.settleErrors = [];
     const tree = await settle(exec, sid, 30000, result.settleErrors);
     if (result.settleErrors.length) result.failures.push(`settled only after ${result.settleErrors.length} failed script call(s), first: ${result.settleErrors[0]}`);
