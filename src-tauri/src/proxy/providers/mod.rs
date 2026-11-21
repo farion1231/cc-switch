@@ -8,7 +8,6 @@
 //! - `claude`: Claude (Anthropic) 适配器
 //! - `codex`: Codex (OpenAI) 适配器
 //! - `gemini`: Gemini (Google) 适配器
-//! - `models`: API 数据模型
 //! - `transform`: 格式转换
 
 mod adapter;
@@ -30,7 +29,6 @@ mod gemini;
 pub(crate) mod gemini_schema;
 pub mod gemini_shadow;
 pub(crate) mod inline_think;
-pub mod models;
 pub(crate) mod reasoning_bridge;
 pub(crate) mod responses_late_arguments;
 pub mod streaming;
@@ -54,6 +52,30 @@ use crate::app_config::AppType;
 pub const CHATGPT_CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
 pub const XAI_API_BASE_URL: &str = "https://api.x.ai/v1";
 
+/// 上游是不是 Mistral 官方 API。只认 `api.mistral.ai` 这个主机：名字、路径或
+/// 模型名里带 "mistral" 的中转站不算，它们照各自的协议处理。
+pub fn is_mistral_api(base_url: &str) -> bool {
+    url::Url::parse(base_url).is_ok_and(|url| url.host_str() == Some("api.mistral.ai"))
+}
+
+/// 上游主机是 `suffixes` 里的某一个，或是它的子域名（按标签边界比，不按子串）。
+/// 解析不了或没有主机时为 false。
+fn url_host_is_or_under(base_url: &str, suffixes: &[&str]) -> bool {
+    let Ok(url) = url::Url::parse(base_url.trim()) else {
+        return false;
+    };
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    let host = host.to_ascii_lowercase();
+    suffixes.iter().any(|suffix| {
+        host == *suffix
+            || host
+                .strip_suffix(suffix)
+                .is_some_and(|prefix| prefix.ends_with('.'))
+    })
+}
+
 // 公开导出
 pub use adapter::ProviderAdapter;
 pub use auth::{AuthInfo, AuthStrategy};
@@ -64,8 +86,7 @@ pub use claude::{
 };
 pub use codex::CodexAdapter;
 pub use codex::{
-    apply_codex_chat_upstream_model, apply_codex_upstream_model,
-    codex_chat_upstream_rejects_reasoning_content, codex_provider_upstream_model,
+    apply_codex_chat_upstream_model, apply_codex_upstream_model, codex_provider_upstream_model,
     codex_stack_upstream_rejects_web_search, inject_codex_chat_prompt_cache_key,
     is_codex_official_provider, is_codex_responses_endpoint,
     provider_needs_responses_late_arguments_repair, provider_needs_responses_namespace_flatten,
@@ -116,4 +137,26 @@ pub fn get_adapter(app_type: &AppType) -> Option<Box<dyn ProviderAdapter>> {
         | AppType::Copilot
         | AppType::WorkBuddy => return None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mistral_api_is_only_the_official_host() {
+        // 官方域名（含带路径 / 大小写差异 / 首尾空白的写法）。
+        assert!(is_mistral_api("https://api.mistral.ai/v1"));
+        assert!(is_mistral_api("https://api.mistral.ai"));
+        assert!(is_mistral_api("https://API.MISTRAL.AI/v1/chat/completions"));
+        assert!(is_mistral_api(" https://api.mistral.ai/v1\n"));
+
+        // 其他网关、相似域名、路径里带官方域名的中转、非法 URL 都不算。
+        assert!(!is_mistral_api("https://api.deepseek.com"));
+        assert!(!is_mistral_api("https://api.mistral.ai.example/v1"));
+        assert!(!is_mistral_api("https://relay.example/api.mistral.ai"));
+        assert!(!is_mistral_api("https://mistral-relay.example/v1"));
+        assert!(!is_mistral_api("not a url"));
+        assert!(!is_mistral_api(""));
+    }
 }

@@ -173,8 +173,9 @@ pub async fn open_provider_terminal(
     cwd: Option<String>,
     #[allow(non_snake_case)] skipPermissions: Option<bool>,
     #[allow(non_snake_case)] extraArgs: Option<String>,
+    #[allow(non_snake_case)] agyUseCurrentLogin: Option<bool>,
 ) -> Result<bool, String> {
-    let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    let app_type = AppType::from_str(&app)?;
     let launch_cwd = resolve_launch_cwd(cwd)?;
     // 先拆参数：填错了直接报错，不必等到切完 agy 登录、写完临时文件。
     let extra_args = split_launch_args(extraArgs.as_deref().unwrap_or_default())?;
@@ -189,7 +190,9 @@ pub async fn open_provider_terminal(
 
     let mut launch = match app_type {
         AppType::Agy => {
-            switch_agy_to_bound_account(&agy_accounts.0, provider).await?;
+            if !(cfg!(target_os = "linux") && agyUseCurrentLogin == Some(true)) {
+                switch_agy_to_bound_account(&agy_accounts.0, provider).await?;
+            }
             agy_terminal_launch(provider)?
         }
         AppType::Copilot => {
@@ -200,7 +203,7 @@ pub async fn open_provider_terminal(
         AppType::GrokBuild => grok_terminal_launch(state.db.as_ref(), provider)?,
         AppType::Claude => {
             use crate::services::provider::claude_official::{terminal_account, AccountTerminal};
-            match terminal_account(provider).map_err(|e| e.to_string())? {
+            match terminal_account(provider)? {
                 Some(AccountTerminal::Dir(config_dir)) => {
                     crate::services::claude_account::sync_shared(&config_dir);
                     claude_account_terminal_launch(Some(config_dir))
@@ -208,8 +211,7 @@ pub async fn open_provider_terminal(
                 Some(AccountTerminal::Default) => {
                     crate::services::provider::claude_official::ensure_default_terminal_is_official(
                         &state.db,
-                    )
-                    .map_err(|e| e.to_string())?;
+                    )?;
                     claude_account_terminal_launch(None)
                 }
                 None => {
@@ -483,7 +485,7 @@ fn codex_terminal_launch(
     provider: &crate::provider::Provider,
 ) -> Result<ProviderLaunch, String> {
     use crate::services::provider::codex_terminal;
-    let plan = codex_terminal::terminal_launch(db, provider).map_err(|e| e.to_string())?;
+    let plan = codex_terminal::terminal_launch(db, provider)?;
     let mut overrides = plan.overrides;
     let mut cleanup = Vec::new();
     if let Some(catalog) = plan.catalog {
@@ -557,8 +559,7 @@ fn grok_terminal_launch(
     provider: &crate::provider::Provider,
 ) -> Result<ProviderLaunch, String> {
     use crate::mode::current::{self, Purpose};
-    let in_use = current::provider_for(db, &AppType::GrokBuild, Purpose::InUse)
-        .map_err(|e| e.to_string())?;
+    let in_use = current::provider_for(db, &AppType::GrokBuild, Purpose::InUse)?;
     if in_use.as_deref() != Some(provider.id.as_str()) {
         return Err(crate::error::AppError::localized(
             "grokbuild.terminal.not_current",
@@ -663,7 +664,7 @@ fn claude_account_terminal_launch(config_dir: Option<PathBuf>) -> ProviderLaunch
 }
 
 /// 官方卡绑了授权中心的账号时，先把 agy 的全局登录切到它（已经是它就不写）。没绑的卡跟着
-/// agy 当前的登录走。不能切号的平台（目前除 macOS、Windows 外）忽略绑定，照常打开。
+/// agy 当前的登录走。不能切号的平台忽略绑定，照常打开。
 async fn switch_agy_to_bound_account(
     accounts: &crate::services::agy_account::AgyAccountManager,
     provider: &crate::provider::Provider,
@@ -711,8 +712,7 @@ async fn switch_agy_to_bound_account(
 /// Antigravity CLI：官方登录卡跑 `agy`，卡上设了模型就加 `--model`（只对这次会话生效）；
 /// Key 卡用它的私有 `--gemini_dir`，Key 和地址只经环境变量传给这一个进程。
 fn agy_terminal_launch(provider: &crate::provider::Provider) -> Result<ProviderLaunch, String> {
-    let launch = crate::services::provider::agy_direct::terminal_launch(provider)
-        .map_err(|e| e.to_string())?;
+    let launch = crate::services::provider::agy_direct::terminal_launch(provider)?;
     let Some(dir) = launch.gemini_dir else {
         let (args, batch_command, batch_vars) = match launch.model {
             Some(model) => (
@@ -807,8 +807,7 @@ fn copilot_terminal_launch(
     provider: &crate::provider::Provider,
     account: Option<(String, String)>,
 ) -> Result<ProviderLaunch, String> {
-    let launch = crate::services::provider::copilot_direct::terminal_launch(provider)
-        .map_err(|e| e.to_string())?;
+    let launch = crate::services::provider::copilot_direct::terminal_launch(provider)?;
     copilot_launch_command(&provider.name, launch, account)
 }
 

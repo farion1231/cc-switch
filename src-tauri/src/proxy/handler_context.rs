@@ -62,7 +62,6 @@ pub struct RequestContext {
     /// 应用类型字符串（如 "claude"、"codex"、"gemini"）
     pub app_type_str: &'static str,
     /// 应用类型（预留，目前通过 app_type_str 使用）
-    #[allow(dead_code)]
     pub app_type: AppType,
     /// Session ID（从客户端请求提取或新生成）
     pub session_id: String,
@@ -108,7 +107,7 @@ impl RequestContext {
         // 从数据库读取应用级代理配置（per-app）
         let mut app_config = state
             .db
-            .get_proxy_config_for_app(app_type_str)
+            .get_proxy_config_for_app(&app_type)
             .await
             .map_err(|e| ProxyError::DatabaseError(e.to_string()))?;
 
@@ -182,7 +181,7 @@ impl RequestContext {
                     state
                         .provider_router
                         .select_providers_with_current(
-                            app_type_str,
+                            &app_type,
                             current_provider,
                             app_config.auto_failover_enabled,
                         )

@@ -17,8 +17,8 @@ use super::transform_codex_anthropic::{
     decode_anthropic_thinking_block, ANTHROPIC_THINKING_ENCRYPTED_PREFIX,
 };
 use super::transform_codex_chat::{
-    response_tool_call_item_from_chat_name, response_tool_call_item_id_from_chat_name,
-    CodexToolContext,
+    response_message_item_id_indexed, response_tool_call_item_from_chat_name,
+    response_tool_call_item_id_from_chat_name, CodexToolContext,
 };
 use super::transform_responses::sanitize_anthropic_tool_use_input_json;
 use crate::proxy::json_canonical::canonicalize_tool_arguments_str;
@@ -177,7 +177,7 @@ impl AnthropicToResponsesState {
         match block_type {
             "text" => {
                 let output_index = self.next_output_index();
-                let item_id = format!("{}_msg_{output_index}", self.response_id);
+                let item_id = response_message_item_id_indexed(&self.response_id, output_index);
                 events.push(sse::message_item_added(output_index, &item_id));
                 events.push(sse::message_content_part_added(output_index, &item_id));
                 self.blocks.insert(
@@ -713,14 +713,6 @@ pub(crate) fn responses_sse_events_from_anthropic_message(
     events
 }
 
-/// Convert the upstream Anthropic Messages SSE into the Responses SSE that Codex expects.
-#[allow(dead_code)]
-pub fn create_responses_sse_stream_from_anthropic<E: std::error::Error + Send + 'static>(
-    stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
-) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
-    create_responses_sse_stream_from_anthropic_with_context(stream, CodexToolContext::default())
-}
-
 pub(crate) fn create_responses_sse_stream_from_anthropic_with_context<
     E: std::error::Error + Send + 'static,
 >(
@@ -836,7 +828,10 @@ mod tests {
         let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
             input.as_bytes().to_vec(),
         ))]);
-        let converted = create_responses_sse_stream_from_anthropic(upstream);
+        let converted = create_responses_sse_stream_from_anthropic_with_context(
+            upstream,
+            CodexToolContext::default(),
+        );
         let chunks: Vec<_> = converted.collect().await;
         chunks
             .into_iter()

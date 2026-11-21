@@ -179,6 +179,11 @@ const PromptPanel = lazy(() => import("@/components/prompts/PromptPanel"));
 const UnifiedSkillsPanel = lazy(
   () => import("@/components/skills/UnifiedSkillsPanel"),
 );
+const PluginsPage = lazy(() =>
+  import("@/components/plugins/PluginsPage").then((m) => ({
+    default: m.PluginsPage,
+  })),
+);
 const WorkspaceFilesPanel = lazy(
   () => import("@/components/workspace/WorkspaceFilesPanel"),
 );
@@ -1104,7 +1109,6 @@ function App() {
     editorSave?: ProviderEditorSave;
   }) => {
     await updateProvider(provider, originalId, editorSave);
-    editProviderStore.close();
   };
 
   // 累加式应用的「已添加」和「默认」都现读客户端文件，移除前后重读一遍
@@ -1852,6 +1856,13 @@ function App() {
               currentView === "skillsDiscovery" ? "discover" : "installed"
             }
             onNavigationBlockedChange={setSkillsNavigationBusy}
+          />
+        );
+      case "plugins":
+        return (
+          <PluginsPage
+            apps={APP_IDS_WITH.plugins.filter((app) => visibleApps[app])}
+            initialApp={appHas(activeApp, "plugins") ? activeApp : "claude"}
           />
         );
       case "prompts":

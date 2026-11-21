@@ -257,8 +257,9 @@ export function SessionManagerPage({
   );
 
   const { search: searchSessions } = useSessionSearch({
-    sessions: scopedSessions,
+    sessions,
     providerFilter: appFilter,
+    providerIds: availableApps,
   });
   const debouncedQuery = useDebouncedValue(query, 300, {
     immediateIf: isEmptySearchQuery,
@@ -271,6 +272,8 @@ export function SessionManagerPage({
     hits: contentHits,
     status: indexStatus,
     isSearching: isSearchingContent,
+    error: contentSearchError,
+    retry: retryContentSearch,
   } = useSessionContentSearch({
     query: debouncedQuery,
     enabled: contentSearchEnabled,
@@ -294,7 +297,7 @@ export function SessionManagerPage({
     () => sortSessionsByTime(searchSessions(debouncedQuery)),
     [searchSessions, debouncedQuery],
   );
-  // 元数据命中（前端 FlexSearch）+ 正文命中（后端索引），按会话去重
+  // 元数据命中（前端子串扫描）+ 正文命中（后端索引），按会话去重
   const matches = useMemo(() => {
     if (contentHits.size === 0) return metaMatches;
     const seen = new Set(metaMatches.map(getSessionKey));
@@ -1004,6 +1007,28 @@ export function SessionManagerPage({
   // ─── 空状态 ────────────────────────────────────────────────────────────
   const renderEmpty = () => {
     if (trimmedQuery) {
+      // 正文索引查不出来时，空结果不代表「正文里没有这个词」
+      if (contentSearchEnabled && contentSearchError) {
+        return (
+          <EmptyState
+            title={t("sessionManager.contentSearchFailed", {
+              defaultValue: "正文搜索失败，暂时只能按标题、目录和首末消息查找",
+            })}
+            hint={contentSearchError}
+            primaryAction={{
+              label: t("common.retry", { defaultValue: "重试" }),
+              onClick: retryContentSearch,
+            }}
+            action={t("sessionManager.clearSearchAction", {
+              defaultValue: "清除搜索",
+            })}
+            onAction={() => {
+              setQuery("");
+              focusSoon(["session-search"]);
+            }}
+          />
+        );
+      }
       return (
         <EmptyState
           title={
@@ -1367,6 +1392,34 @@ export function SessionManagerPage({
               ]}
             />
           </div>
+
+          {/* 还有标题/目录命中时列表照常显示，只在上面说明正文部分不可用；
+              一条都没命中时由空状态承载同样的说明（见 renderEmpty） */}
+          {trimmedQuery &&
+            contentSearchEnabled &&
+            contentSearchError &&
+            matches.length > 0 && (
+              <div role="status" className="mx-6 mt-2 shrink-0">
+                <Notice
+                  tone="warning"
+                  title={t("sessionManager.contentSearchFailed", {
+                    defaultValue:
+                      "正文搜索失败，暂时只能按标题、目录和首末消息查找",
+                  })}
+                  actions={
+                    <Button
+                      variant="neutral"
+                      size="compact"
+                      onClick={retryContentSearch}
+                    >
+                      {t("common.retry", { defaultValue: "重试" })}
+                    </Button>
+                  }
+                >
+                  {contentSearchError}
+                </Notice>
+              </div>
+            )}
 
           {trimmedQuery && indexStatus?.running && (
             <p

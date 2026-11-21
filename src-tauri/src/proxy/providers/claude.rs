@@ -317,9 +317,7 @@ fn should_preserve_reasoning_content_for_openai_chat(provider: &Provider, body: 
     // over model-name hints; retain the existing behavior for other gateways.
     if ClaudeAdapter::new()
         .extract_base_url(provider)
-        .ok()
-        .and_then(|base_url| url::Url::parse(&base_url).ok())
-        .is_some_and(|url| url.host_str() == Some("api.mistral.ai"))
+        .is_ok_and(|base_url| super::is_mistral_api(&base_url))
     {
         return false;
     }
@@ -363,7 +361,7 @@ fn claude_responses_targets_xai(provider: &Provider) -> bool {
     .into_iter()
     .flatten()
     .filter_map(Value::as_str)
-    .any(|url| url.to_ascii_lowercase().contains("api.x.ai"))
+    .any(|url| crate::codex_config::codex_url_host_matches_any(url, &["api.x.ai"]))
 }
 
 pub fn transform_claude_request_for_api_format(
@@ -493,6 +491,17 @@ pub fn transform_claude_request_for_api_format(
             if is_copilot {
                 if let Some(obj) = result.as_object_mut() {
                     obj.remove("stop");
+                }
+                // Copilot 的 chat 端点给 Gemini 模型转格式时，把所有 system 消息都提进
+                // 开头的指令；Claude Code 每轮追加的中途 system 消息于是改写请求开头，
+                // 前缀缓存只命中到 system 为止（#9613）。只对 Copilot 的 Gemini 模型
+                // 把中途 system 原位改成 user 发出。
+                let is_gemini = result
+                    .get("model")
+                    .and_then(Value::as_str)
+                    .is_some_and(|model| model.to_ascii_lowercase().contains("gemini"));
+                if is_gemini {
+                    super::transform::demote_mid_conversation_system_messages(&mut result);
                 }
             }
             super::claude_reasoning::apply(&mut result, api_format, effort_plan);
@@ -1002,21 +1011,6 @@ impl ProviderAdapter for ClaudeAdapter {
             None,
         )
     }
-
-    fn transform_response(&self, body: serde_json::Value) -> Result<serde_json::Value, ProxyError> {
-        // Heuristic: detect response format by presence of top-level fields.
-        // The ProviderAdapter trait's transform_response doesn't receive the Provider
-        // config, so we can't check api_format here. Instead we rely on the fact that
-        // Responses API always returns "output" while Chat Completions returns "choices".
-        // This is safe because the two formats are structurally disjoint.
-        if body.get("candidates").is_some() || body.get("promptFeedback").is_some() {
-            super::transform_gemini::gemini_to_anthropic(body)
-        } else if body.get("output").is_some() {
-            super::transform_responses::responses_to_anthropic(body)
-        } else {
-            super::transform::openai_to_anthropic(body)
-        }
-    }
 }
 
 #[cfg(test)]
@@ -1210,7 +1204,7 @@ mod tests {
     }
 
     #[test]
-    fn codex_oauth_generation_uses_gpt6_compatible_identity() {
+    fn codex_oauth_generation_uses_current_client_identity() {
         let headers: http::HeaderMap = ClaudeAdapter::new()
             .get_auth_headers(&AuthInfo::new(
                 "test-token".into(),
@@ -1227,10 +1221,9 @@ mod tests {
             .split('.')
             .map(|part| part.parse().unwrap())
             .collect();
-        // GPT-6.1 Sol requires the newer Codex client identity on ChatGPT accounts.
         assert!(
-            version.as_slice() >= [0, 159, 0].as_slice(),
-            "gpt-6.1-sol requires Codex >= 0.159.0; sent {version:?}"
+            version.as_slice() >= [0, 169, 0].as_slice(),
+            "ChatGPT OAuth requests should advertise Codex >= 0.169.0; sent {version:?}"
         );
     }
 
@@ -2349,6 +2342,72 @@ mod tests {
     }
 
     #[test]
+    fn copilot_gemini_chat_sends_mid_conversation_system_as_user() {
+        // #9613: Copilot hoists every system message into the Gemini instruction,
+        // so only Gemini models on Copilot get later system messages as user ones.
+        let copilot = create_provider(json!({
+            "env": { "ANTHROPIC_BASE_URL": "https://api.githubcopilot.com" }
+        }));
+        let generic = create_provider(json!({
+            "env": { "ANTHROPIC_BASE_URL": "https://openrouter.ai/api/v1" }
+        }));
+        let body = |model: &str| {
+            json!({
+                "model": model,
+                "system": "You are Claude Code.",
+                "max_tokens": 64,
+                "messages": [
+                    { "role": "user", "content": "hello" },
+                    { "role": "assistant", "content": "hi" },
+                    { "role": "system", "content": "<total_tokens>9 tokens left</total_tokens>" },
+                    { "role": "user", "content": "go on" }
+                ]
+            })
+        };
+        let roles = |transformed: &Value| -> Vec<String> {
+            transformed["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|m| m["role"].as_str().unwrap().to_string())
+                .collect()
+        };
+
+        let transformed = transform_claude_request_for_api_format(
+            body("gemini-4-carbon"),
+            &copilot,
+            "openai_chat",
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            roles(&transformed),
+            ["system", "user", "assistant", "user", "user"]
+        );
+        assert_eq!(
+            transformed["messages"][3]["content"],
+            "<total_tokens>9 tokens left</total_tokens>"
+        );
+
+        for (model, provider) in [("gpt-4.1", &copilot), ("gemini-4-carbon", &generic)] {
+            let transformed = transform_claude_request_for_api_format(
+                body(model),
+                provider,
+                "openai_chat",
+                None,
+                None,
+            )
+            .unwrap();
+            assert_eq!(
+                roles(&transformed),
+                ["system", "user", "assistant", "system", "user"],
+                "{model}"
+            );
+        }
+    }
+
+    #[test]
     fn test_transform_claude_request_openai_chat_strips_stop_for_copilot_env_url() {
         // 兼容旧/手动 Copilot provider：即使没有 meta.provider_type，
         // 只要 ANTHROPIC_BASE_URL 指向 Copilot，也应移除 stop。
@@ -3129,5 +3188,50 @@ mod tests {
         assert!(changed);
         assert_eq!(body["thinking"]["type"], "disabled");
         assert!(body.get("output_config").is_none());
+    }
+
+    /// 只有发往 xAI 的 Responses 请求改写托管搜索的 tool_choice；中转站地址里带着
+    /// api.x.ai 不算发往 xAI。
+    #[test]
+    fn xai_web_search_rewrite_follows_the_base_url_host() {
+        let forced_search = |base_url: &str| {
+            let provider = create_provider_with_meta(
+                json!({"env": {"ANTHROPIC_BASE_URL": base_url, "ANTHROPIC_API_KEY": "sk"}}),
+                ProviderMeta {
+                    api_format: Some("openai_responses".to_string()),
+                    ..Default::default()
+                },
+            );
+            transform_claude_request_for_api_format(
+                json!({
+                    "model": "grok-4.5",
+                    "max_tokens": 256,
+                    "messages": [{"role": "user", "content": "search"}],
+                    "tools": [{"type": "web_search_20250305", "name": "web_search"}],
+                    "tool_choice": {"type": "tool", "name": "web_search"}
+                }),
+                &provider,
+                "openai_responses",
+                None,
+                None,
+            )
+            .unwrap()["tool_choice"]
+                .clone()
+        };
+        for url in [
+            "https://api.x.ai/v1",
+            "https://API.X.AI/v1",
+            "https://eu.api.x.ai:8443/v1",
+            "https://api.x.ai./v1",
+        ] {
+            assert_eq!(forced_search(url), json!("required"), "{url}");
+        }
+        for url in [
+            "https://relay.example.com/api.x.ai/v1",
+            "https://relay.example.com/v1?upstream=https://api.x.ai/v1",
+            "https://api.x.ai.relay.example.com/v1",
+        ] {
+            assert_ne!(forced_search(url), json!("required"), "{url}");
+        }
     }
 }

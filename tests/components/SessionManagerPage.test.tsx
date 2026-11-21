@@ -459,47 +459,101 @@ describe("SessionManagerPage", () => {
       expect(screen.getByText("Beta Session")).toBeInTheDocument();
     });
 
-    it("ignores an older response arriving after the committed query's response", async () => {
-      let resolveOld!: (result: SearchResult) => void;
-      let resolveNew!: (result: SearchResult) => void;
+    it.each(["hits", "error"])(
+      "ignores an older %s arriving after the committed query's response",
+      async (lateResult) => {
+        let resolveOld!: (result: SearchResult) => void;
+        let rejectOld!: (reason: string) => void;
+        let resolveNew!: (result: SearchResult) => void;
+        const searchSpy = vi
+          .spyOn(sessionsApi, "searchContent")
+          .mockImplementation(
+            (query) =>
+              new Promise((resolve, reject) => {
+                if (query === "old body") {
+                  resolveOld = resolve;
+                  rejectOld = reject;
+                }
+                if (query === "new body") resolveNew = resolve;
+              }),
+          );
+        renderPage("codex");
+        await screen.findByText("Alpha Session");
+        const search = screen.getByRole("textbox", { name: "搜索会话" });
+        await waitFor(() =>
+          expect(search).toHaveAttribute(
+            "placeholder",
+            "搜索标题、目录、消息正文或会话 ID",
+          ),
+        );
+        startSearchClock();
+        fireEvent.change(search, { target: { value: "old body" } });
+        await advance(300);
+        expect(searchSpy).toHaveBeenLastCalledWith("old body", ["codex"]);
+        fireEvent.change(search, { target: { value: "new body" } });
+        await advance(300);
+        expect(searchSpy).toHaveBeenLastCalledWith("new body", ["codex"]);
+
+        await act(async () => {
+          resolveNew(resultFor("/mock/codex/session-2.jsonl", "new body"));
+        });
+        await advance(1);
+        expect(screen.getByText("Beta Session")).toBeInTheDocument();
+        await act(async () => {
+          if (lateResult === "error") rejectOld("late index failure");
+          else resolveOld(resultFor("/mock/codex/session-1.jsonl", "old body"));
+        });
+        await advance(1);
+        expect(screen.queryByText("Alpha Session")).not.toBeInTheDocument();
+        expect(screen.getByText("正文：new body")).toBeInTheDocument();
+        expect(
+          screen.queryByText("late index failure"),
+        ).not.toBeInTheDocument();
+        expect(searchSpy).toHaveBeenCalledTimes(2);
+      },
+    );
+
+    it("retries the displayed query and re-syncs while a new query is debouncing", async () => {
+      const failureLabel = "正文搜索失败，暂时只能按标题、目录和首末消息查找";
+      const syncSpy = vi.spyOn(sessionsApi, "syncContentIndex");
       const searchSpy = vi
         .spyOn(sessionsApi, "searchContent")
-        .mockImplementation(
-          (query) =>
-            new Promise((resolve) => {
-              if (query === "old body") resolveOld = resolve;
-              if (query === "new body") resolveNew = resolve;
-            }),
+        .mockRejectedValueOnce("malformed index")
+        .mockRejectedValueOnce("retry failed")
+        .mockResolvedValue(
+          resultFor("/mock/codex/session-2.jsonl", "Alp body"),
         );
       renderPage("codex");
       await screen.findByText("Alpha Session");
       const search = screen.getByRole("textbox", { name: "搜索会话" });
-      await waitFor(() =>
-        expect(search).toHaveAttribute(
-          "placeholder",
-          "搜索标题、目录、消息正文或会话 ID",
-        ),
-      );
-      startSearchClock();
-      fireEvent.change(search, { target: { value: "old body" } });
-      await advance(300);
-      expect(searchSpy).toHaveBeenLastCalledWith("old body", ["codex"]);
-      fireEvent.change(search, { target: { value: "new body" } });
-      await advance(300);
-      expect(searchSpy).toHaveBeenLastCalledWith("new body", ["codex"]);
+      fireEvent.change(search, { target: { value: "Al" } });
+      await screen.findByText(failureLabel);
+      expect(searchSpy).toHaveBeenCalledTimes(1);
 
-      await act(async () => {
-        resolveNew(resultFor("/mock/codex/session-2.jsonl", "new body"));
-      });
+      startSearchClock();
+      fireEvent.change(search, { target: { value: "Alp" } });
+      expect(screen.getByText(failureLabel)).toBeInTheDocument();
+      expect(screen.getByText("malformed index")).toBeInTheDocument();
+      expect(
+        within(sessionList()).getByRole("button", { name: "Alpha Session" }),
+      ).toBeInTheDocument();
+      const syncBefore = syncSpy.mock.calls.length;
+      fireEvent.click(screen.getByRole("button", { name: "重试" }));
+      expect(searchSpy).toHaveBeenLastCalledWith("Al", ["codex"]);
+      expect(syncSpy).toHaveBeenCalledTimes(syncBefore + 1);
+      await advance(1);
+      expect(screen.getByText("retry failed")).toBeInTheDocument();
+      await advance(298);
+      expect(searchSpy).toHaveBeenCalledTimes(2);
+      expect(screen.getByText(failureLabel)).toBeInTheDocument();
+      await advance(1);
+      expect(searchSpy).toHaveBeenCalledTimes(3);
+      expect(searchSpy).toHaveBeenLastCalledWith("Alp", ["codex"]);
       await advance(1);
       expect(screen.getByText("Beta Session")).toBeInTheDocument();
-      await act(async () => {
-        resolveOld(resultFor("/mock/codex/session-1.jsonl", "old body"));
-      });
-      await advance(1);
-      expect(screen.queryByText("Alpha Session")).not.toBeInTheDocument();
-      expect(screen.getByText("正文：new body")).toBeInTheDocument();
-      expect(searchSpy).toHaveBeenCalledTimes(2);
+      expect(screen.getByText("正文：Alp body")).toBeInTheDocument();
+      expect(screen.queryByText(failureLabel)).not.toBeInTheDocument();
+      expect(screen.queryByText("retry failed")).not.toBeInTheDocument();
     });
 
     it.each(["", "   "])(
@@ -677,6 +731,60 @@ describe("SessionManagerPage", () => {
     expect(
       await screen.findByText("没有标题、目录或首末消息匹配“const a”的会话"),
     ).toBeInTheDocument();
+  });
+
+  it("reports a text index failure instead of claiming there are no matches", async () => {
+    const searchSpy = vi
+      .spyOn(sessionsApi, "searchContent")
+      .mockRejectedValue(
+        "Session index error: database disk image is malformed",
+      );
+    renderPage("codex");
+    await screen.findByText("Alpha Session");
+
+    fireEvent.change(screen.getByRole("textbox", { name: "搜索会话" }), {
+      target: { value: "const a" },
+    });
+
+    // 索引读不出来时不能声称「没有会话包含…」
+    expect(
+      await screen.findByText(
+        "正文搜索失败，暂时只能按标题、目录和首末消息查找",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("没有会话的标题、目录或消息正文包含“const a”"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "重试" })).toBeInTheDocument();
+    searchSpy.mockRestore();
+  });
+
+  it("keeps title matches and explains the partial result when only text search fails", async () => {
+    // 标题命中照常列出：正文索引坏了不该把整个搜索变成失败
+    const searchSpy = vi
+      .spyOn(sessionsApi, "searchContent")
+      .mockRejectedValue(
+        "Session index error: database disk image is malformed",
+      );
+    renderPage("codex");
+    await screen.findByText("Alpha Session");
+
+    fireEvent.change(screen.getByRole("textbox", { name: "搜索会话" }), {
+      target: { value: "Alpha" },
+    });
+
+    expect(
+      await screen.findByText(
+        "正文搜索失败，暂时只能按标题、目录和首末消息查找",
+      ),
+    ).toBeInTheDocument();
+    // 标题命中仍在列表里（不是空状态），提示里带上具体原因
+    expect(
+      within(sessionList()).getAllByRole("button", { name: /Alpha Session/ })
+        .length,
+    ).toBeGreaterThan(0);
+    expect(screen.getByText(/malformed/)).toBeInTheDocument();
+    searchSpy.mockRestore();
   });
 
   it("keeps message text search off by default and offers it from an empty search", async () => {

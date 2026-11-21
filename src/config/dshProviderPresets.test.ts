@@ -145,9 +145,11 @@ describe("DeepSeek Harness presets", () => {
 
   it("does not advertise transports the native adapter cannot use", () => {
     const unsupported = piProviderPresets.filter((preset) =>
-      ["google-generative-ai", "bedrock-converse-stream"].includes(
-        preset.settingsConfig.api,
-      ),
+      [
+        "google-generative-ai",
+        "bedrock-converse-stream",
+        "mistral-conversations",
+      ].includes(preset.settingsConfig.api),
     );
     for (const preset of unsupported) {
       expect(
