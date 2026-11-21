@@ -1,0 +1,131 @@
+dir .cc-switch 755
+dir .cc-switch/backups 755
+opaque .cc-switch/backups/db_backup_<time>.db 600
+dir .cc-switch/backups/live-first-write 755
+file .cc-switch/backups/live-first-write/3f432a8ab9b5-codex-login-stash.json.source 600 lf no-final-newline
+  | <HOME>/.cc-switch/codex-login-stash.json
+file .cc-switch/backups/live-first-write/82a763c47761-config.toml.source 600 lf no-final-newline
+  | <HOME>/.codex/config.toml
+opaque .cc-switch/cc-switch.db 644
+file .cc-switch/codex-catalog-history.json 644 lf no-final-newline
+  | [
+  |   {
+  |     "fingerprint": "none",
+  |     "sinceMs": <time>
+  |   }
+  | ]
+file .cc-switch/codex-login-stash.json 600 lf no-final-newline
+  | {
+  |   "logins": {},
+  |   "version": 1
+  | }
+file .cc-switch/live-state.json 600 lf no-final-newline
+  | {
+  |   "version": 1,
+  |   "apps": {
+  |     "claude": {
+  |       "mode": "direct"
+  |     },
+  |     "claude-desktop": {
+  |       "mode": "direct"
+  |     },
+  |     "codex": {
+  |       "mode": "direct"
+  |     },
+  |     "gemini": {
+  |       "mode": "direct"
+  |     },
+  |     "grokbuild": {
+  |       "mode": "direct"
+  |     }
+  |   }
+  | }
+dir .cc-switch/logs 755
+opaque .cc-switch/logs/cc-switch.log 644
+file .cc-switch/model-pricing.json 644 lf
+  | {
+  |   "version": 1,
+  |   "modelsDevSync": {
+  |     "autoSyncEnabled": true,
+  |     "includeCommonModels": true,
+  |     "selectedModelKeys": [],
+  |     "excludedCommonModelKeys": [],
+  |     "lastSyncAt": null,
+  |     "lastSyncError": null
+  |   },
+  |   "models": [],
+  |   "deletedModelIds": []
+  | }
+file .cc-switch/settings.json 600 lf no-final-newline
+  | {
+  |   "showInTray": true,
+  |   "minimizeToTrayOnClose": true,
+  |   "useAppWindowControls": false,
+  |   "enableClaudePluginIntegration": false,
+  |   "skipClaudeOnboarding": false,
+  |   "launchOnStartup": false,
+  |   "silentStartup": false,
+  |   "lightweightMode": false,
+  |   "enableLocalProxy": false,
+  |   "enableStackMode": false,
+  |   "sessionAutoSyncEnabled": true,
+  |   "sessionContentSearchEnabled": false,
+  |   "enableFailoverToggle": false,
+  |   "showProfileSwitcher": false,
+  |   "showProviderSearch": true,
+  |   "checkToolUpdatesOnStartup": false,
+  |   "autoUpdateEnabled": false,
+  |   "nativeTrayMenu": false,
+  |   "preserveCodexOfficialAuthOnSwitch": false,
+  |   "codexQuotaProtection": {
+  |     "enabled": true,
+  |     "fiveHourThreshold": 95,
+  |     "weeklyThreshold": 98
+  |   },
+  |   "codexProxyWithoutOfficialLogin": false,
+  |   "unifyCodexSessionHistory": false,
+  |   "codexStackClassicTools": true,
+  |   "firstRunNoticeConfirmed": true,
+  |   "newLayoutNoticeConfirmed": true,
+  |   "whatsNewSeenVersion": "4.0.37",
+  |   "currentProviderCodex": "<uuid:1>",
+  |   "skillSyncMethod": "auto",
+  |   "skillStorageLocation": "cc_switch",
+  |   "localMigrations": {
+  |     "codexThirdPartyHistoryProviderBucketV1": {
+  |       "completedAt": "<time>",
+  |       "targetProviderId": "custom",
+  |       "migratedJsonlFiles": 0,
+  |       "migratedStateRows": 0,
+  |       "scannedHistoryFiles": true
+  |     },
+  |     "codexProviderTemplateV1": {
+  |       "completedAt": "<time>"
+  |     },
+  |     "codexLegacyOfficialHistoryBucketV1": {
+  |       "completedAt": "<time>",
+  |       "targetProviderId": "openai",
+  |       "migratedJsonlFiles": 0,
+  |       "migratedStateRows": 0,
+  |       "codexConfigDir": "<HOME>/.codex"
+  |     },
+  |     "codexQuotaProtectionDefaultOnV1": true
+  |   }
+  | }
+dir .codex 755
+file .codex/config.toml 600 lf
+  | model_provider = "custom"
+  | model = "gpt-5.6-sol"
+  | model_reasoning_effort = "high"
+  | 
+  | [model_providers.custom]
+  | name = "custom"
+  | wire_api = "responses"
+  | requires_openai_auth = false
+  | base_url = "https://beta.relay.example/v1"
+  | experimental_bearer_token = "sk-parity-beta"
+dir Library 755
+dir Library/Caches 755
+opaque-dir Library/Caches/com.ccswitch.desktop 755
+dir Library/WebKit 755
+opaque-dir Library/WebKit/com.ccswitch.desktop 755
