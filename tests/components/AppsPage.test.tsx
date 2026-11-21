@@ -2119,8 +2119,50 @@ describe("AppsPage concurrent CLI upgrades", () => {
     await renderApps();
     await waitFor(() => expect(mocks.listToolInstallations).toHaveBeenCalled());
     expect(
-      mocks.listToolInstallations.mock.calls.some(([tools]) => tools.length > 1),
+      mocks.listToolInstallations.mock.calls.some(
+        ([tools]) => tools.length > 1,
+      ),
     ).toBe(true);
+  });
+
+  it("does not overwrite newer tool versions when the background OpenCode probe finishes late", async () => {
+    outdated.clear();
+    outdated.add("opencode");
+    const pendingBgProbe = deferred<ToolInstallationReport[]>();
+    mocks.listToolInstallations.mockImplementation((tools: string[]) => {
+      if (tools.length === 1 && tools[0] === "opencode") {
+        return pendingBgProbe.promise;
+      }
+      return Promise.resolve(tools.map((tool) => report(tool)));
+    });
+
+    const { checkToolUpdatesInBackground } = await import(
+      "@/components/apps/useToolManagement"
+    );
+    const bgPromise = checkToolUpdatesInBackground();
+    await waitFor(() =>
+      expect(mocks.listToolInstallations).toHaveBeenCalledWith(["opencode"]),
+    );
+
+    // A newer page load completes with updated OpenCode version while the
+    // background OpenCode installation probe is still in flight.
+    outdated.clear();
+    await renderApps();
+    await waitFor(() =>
+      expect(card("OpenCode").getByText("2.0.0")).toBeInTheDocument(),
+    );
+
+    await act(async () => {
+      pendingBgProbe.resolve([
+        report("opencode", {
+          unmanaged: true,
+          command: "",
+        }),
+      ]);
+      await bgPromise;
+    });
+
+    expect(card("OpenCode").getByText("2.0.0")).toBeInTheDocument();
   });
 
   it("does not offer a separate upgrade for OpenCode Desktop's bundled CLI", async () => {

@@ -428,12 +428,25 @@ export async function checkToolUpdatesInBackground(): Promise<void> {
     } else {
       nextInstallReports = toolManagementState.installReports;
     }
+    const fresh = current.filter(
+      (tool) => latestToolVersionRequests.get(tool.name) === requestId,
+    );
     const latest = toolManagementState.toolVersionsCache;
+    if (
+      fresh.length === 0 &&
+      nextInstallReports === toolManagementState.installReports
+    ) {
+      return;
+    }
     updateToolManagementState({
-      toolVersionsCache: {
-        data: mergeToolVersions(latest?.data ?? [], current),
-        at: Date.now(),
-      },
+      ...(fresh.length > 0
+        ? {
+            toolVersionsCache: {
+              data: mergeToolVersions(latest?.data ?? [], fresh),
+              at: Date.now(),
+            },
+          }
+        : {}),
       installReports: nextInstallReports,
     });
   } catch (error) {
@@ -1090,14 +1103,16 @@ export function useToolManagement() {
         if (unmanaged.length > 0) {
           toast.warning(t("settings.toolUpgradeUnmanagedTitle"), {
             description: unmanaged
-              .map((r) =>
-                t("settings.toolUpgradeUnmanagedDetail", {
-                  tool: toolDisplayName(r.tool),
-                  path:
-                    (r.installs.find((i) => i.is_path_default) ?? r.installs[0])
-                      ?.path ?? "",
-                }),
-              )
+              .map((r) => {
+                const defaultInstall =
+                  r.installs.find((i) => i.is_path_default) ?? r.installs[0];
+                return defaultInstall?.source === "desktop"
+                  ? t("settings.toolUpgradeDesktopManagedDetail")
+                  : t("settings.toolUpgradeUnmanagedDetail", {
+                      tool: toolDisplayName(r.tool),
+                      path: defaultInstall?.path ?? "",
+                    });
+              })
               .join("\n"),
             closeButton: true,
           });
