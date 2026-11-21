@@ -21,6 +21,7 @@ import {
   MoreHorizontal,
 } from "lucide-react";
 import { useSessionSearch } from "@/hooks/useSessionSearch";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import {
   getContentHitKey,
   useSessionContentSearch,
@@ -77,6 +78,7 @@ import {
 } from "./utils";
 
 const CONTENT_SEARCH_TOGGLE_KEY = ["sessionContentSearchToggle"] as const;
+const isEmptySearchQuery = (value: string) => !value.trim();
 
 const GROUP_MODE_STORAGE_KEY = "cc-switch.sessionManager.groupMode";
 // 按项目分组时默认全部收起，只记住用户手动展开过的项目。
@@ -259,6 +261,9 @@ export function SessionManagerPage({
     providerFilter: appFilter,
     providerIds: availableApps,
   });
+  const debouncedQuery = useDebouncedValue(query, 300, {
+    immediateIf: isEmptySearchQuery,
+  });
   const contentProviderIds = useMemo<string[]>(
     () => (appFilter === "all" ? availableApps : [appFilter]),
     [appFilter, availableApps],
@@ -270,7 +275,7 @@ export function SessionManagerPage({
     error: contentSearchError,
     retry: retryContentSearch,
   } = useSessionContentSearch({
-    query,
+    query: debouncedQuery,
     enabled: contentSearchEnabled,
     listIsSuccess: isSuccess,
     listUpdatedAt: dataUpdatedAt,
@@ -281,16 +286,20 @@ export function SessionManagerPage({
       contentHits.get(getContentHitKey(session.providerId, session.sourcePath)),
     [contentHits],
   );
-  const trimmedQuery = query.trim();
+  // 列表、正文摘录和高亮始终使用同一轮搜索；输入框仍即时更新。
+  const trimmedQuery = debouncedQuery.trim();
   // 搜索时全部展开，否则匹配到的会话会藏在收起的项目里
   const isGroupOpen = useCallback(
     (key: string) => trimmedQuery !== "" || expanded.has(key),
     [trimmedQuery, expanded],
   );
+  const metaMatches = useMemo(
+    () => sortSessionsByTime(searchSessions(debouncedQuery)),
+    [searchSessions, debouncedQuery],
+  );
   // 元数据命中（前端子串扫描）+ 正文命中（后端索引），按会话去重
   const matches = useMemo(() => {
-    const metaMatches = searchSessions(query);
-    if (contentHits.size === 0) return sortSessionsByTime(metaMatches);
+    if (contentHits.size === 0) return metaMatches;
     const seen = new Set(metaMatches.map(getSessionKey));
     const contentOnly = scopedSessions.filter(
       (session) =>
@@ -299,14 +308,7 @@ export function SessionManagerPage({
         contentHitOf(session) !== undefined,
     );
     return sortSessionsByTime([...metaMatches, ...contentOnly]);
-  }, [
-    searchSessions,
-    query,
-    contentHits,
-    scopedSessions,
-    appFilter,
-    contentHitOf,
-  ]);
+  }, [metaMatches, contentHits, scopedSessions, appFilter, contentHitOf]);
 
   // Keep persistence and index cleanup in one operation. Settings refresh before
   // autoSaveSettings finishes (e.g. tray updates); enabling in that gap could
