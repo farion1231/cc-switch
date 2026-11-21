@@ -96,6 +96,9 @@ pub struct ForwardResult {
     /// 活跃连接 RAII guard：随响应一起流转到 response_processor / handle_claude_transform，
     /// 最终被 move 进流式 body future（或非流式响应作用域），覆盖整个响应生命周期。
     pub(crate) connection_guard: Option<ActiveConnectionGuard>,
+    /// 流式响应的成功记账推迟到 body 结束：正常结束由 guard 的 Drop 补记，
+    /// 中途断流则改记失败。这样同一请求在熔断器里只有一个结果。
+    pub(crate) stream_success_deferred: bool,
 }
 
 pub struct ForwardError {
@@ -118,6 +121,9 @@ pub struct ForwardError {
 /// 不需要每条出口路径都手动调用。
 pub(crate) struct ActiveConnectionGuard {
     status: Arc<RwLock<ProxyStatus>>,
+    /// 流式响应在 body 结束时补记的 outcome。`finish_success` 对普通流式请求不记
+    /// 成功，由这里在正常结束时补记；中途断流/超时时由处理器改记失败。
+    stream_outcome: Option<StreamOutcomeReporter>,
 }
 
 impl ActiveConnectionGuard {
@@ -129,25 +135,135 @@ impl ActiveConnectionGuard {
             s.total_requests = s.total_requests.saturating_add(1);
             s.last_request_at = Some(last_request_at);
         }
-        Self { status }
+        Self {
+            status,
+            stream_outcome: None,
+        }
+    }
+
+    pub(crate) fn attach_stream_outcome(&mut self, reporter: StreamOutcomeReporter) {
+        self.stream_outcome = Some(reporter);
+    }
+
+    /// 流式 body 在上游侧失败（传输错误或首包/静默期超时）。只上报一次，
+    /// 同时取消 Drop 里补记的成功。
+    pub(crate) fn report_stream_failure(&mut self, message: String) {
+        if let Some(reporter) = self.stream_outcome.take() {
+            reporter.report_failure(message);
+        }
+    }
+}
+
+/// 响应已提交之后才能确定的 provider 记账结果。
+///
+/// 普通流式请求的成功记账推迟到这里：正常结束（包括客户端主动断开）由 guard 的
+/// Drop 补记成功；上游中途断流/超时由处理器上报失败。这样同一请求在熔断器里
+/// 只有一个结果，连续断流才能真正累加连续失败数。
+pub(crate) struct StreamOutcomeReporter {
+    router: Arc<ProviderRouter>,
+    status: Arc<RwLock<ProxyStatus>>,
+    provider_id: String,
+    app_type: AppType,
+    deferred_success: bool,
+}
+
+impl StreamOutcomeReporter {
+    pub(crate) fn new(
+        router: Arc<ProviderRouter>,
+        status: Arc<RwLock<ProxyStatus>>,
+        provider_id: String,
+        app_type: AppType,
+        deferred_success: bool,
+    ) -> Self {
+        Self {
+            router,
+            status,
+            provider_id,
+            app_type,
+            deferred_success,
+        }
+    }
+
+    /// 上报不能阻塞流的收尾（此刻客户端还在等最后一块），调度到 runtime 执行。
+    fn report_failure(self, message: String) {
+        let last_error = format!("流式响应中断: {message}");
+        let Some(handle) = tokio::runtime::Handle::try_current().ok() else {
+            log::warn!("[StreamOutcome] 无 runtime，跳过失败上报: {last_error}");
+            return;
+        };
+        let Self {
+            router,
+            status,
+            provider_id,
+            app_type,
+            ..
+        } = self;
+        handle.spawn(async move {
+            let _ = router
+                .record_result(
+                    &provider_id,
+                    &app_type,
+                    false,
+                    false,
+                    Some(last_error.clone()),
+                )
+                .await;
+            status.write().await.last_error = Some(last_error);
+        });
+    }
+
+    /// 流正常结束（或客户端主动断开）才补记成功；HalfOpen 探测和非流式请求
+    /// 在首包时已经记过，这里不重复。
+    fn report_success(self) {
+        if !self.deferred_success {
+            return;
+        }
+        let Some(handle) = tokio::runtime::Handle::try_current().ok() else {
+            log::warn!(
+                "[StreamOutcome] 无 runtime，跳过成功上报: provider_id={}",
+                self.provider_id
+            );
+            return;
+        };
+        let Self {
+            router,
+            provider_id,
+            app_type,
+            ..
+        } = self;
+        handle.spawn(async move {
+            if let Err(e) = router
+                .record_result(&provider_id, &app_type, false, true, None)
+                .await
+            {
+                log::warn!(
+                    "[StreamOutcome] 记录流式成功结果失败: provider_id={provider_id}, error={e}"
+                );
+            }
+        });
     }
 }
 
 impl Drop for ActiveConnectionGuard {
     fn drop(&mut self) {
+        let outcome = self.stream_outcome.take();
         if let Ok(mut status) = self.status.try_write() {
             status.active_connections = status.active_connections.saturating_sub(1);
-            return;
+        } else {
+            // Drop 不能 await：把减量操作调度到 tokio runtime
+            let status = self.status.clone();
+            if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                handle.spawn(async move {
+                    let mut s = status.write().await;
+                    s.active_connections = s.active_connections.saturating_sub(1);
+                });
+            }
+            // 没有 runtime 时静默丢失计数（仅 UI 展示用，可接受最终一致性）
         }
-        // Drop 不能 await：把减量操作调度到 tokio runtime
-        let status = self.status.clone();
-        if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            handle.spawn(async move {
-                let mut s = status.write().await;
-                s.active_connections = s.active_connections.saturating_sub(1);
-            });
+        // 流正常结束或客户端主动断开：补记推迟的成功。失败路径已把 reporter take 走。
+        if let Some(reporter) = outcome {
+            reporter.report_success();
         }
-        // 没有 runtime 时静默丢失计数（仅 UI 展示用，可接受最终一致性）
     }
 }
 
@@ -579,6 +695,13 @@ impl RequestForwarder {
         ),
         codex_upstream_format: Option<CodexUpstreamFormat>,
     ) -> ForwardResult {
+        // 流式响应在首包时就记成功，会让「每次首包成功、随后断流」的供应商在熔断器里
+        // 变成「成功、失败、成功、失败……」：连续失败数始终是 1，错误率最高 50%。
+        // 所以流式（非 Buffered）且不是 HalfOpen 探测时，把成功记账推迟到 body 结束：
+        // 正常结束由 guard 的 Drop 补记，中途断流由处理器改记失败。
+        let defer_stream_success = self.routing_state_enabled()
+            && !used_half_open_permit
+            && !matches!(response, ProxyResponse::Buffered { .. });
         let result = ForwardResult {
             response,
             provider: provider.clone(),
@@ -586,6 +709,7 @@ impl RequestForwarder {
             codex_upstream_format,
             outbound_model,
             connection_guard: None,
+            stream_success_deferred: defer_stream_success,
         };
         if !self.routing_state_enabled() {
             return result;
@@ -593,8 +717,10 @@ impl RequestForwarder {
 
         // 普通闭合熔断状态异步记录，避免阻塞流式首包返回；
         // HalfOpen 探测仍同步等待，保证熔断状态在归还名额前就转回 Closed。
-        self.record_success_result(&provider.id, app_type, used_half_open_permit)
-            .await;
+        if !defer_stream_success {
+            self.record_success_result(&provider.id, app_type, used_half_open_permit)
+                .await;
+        }
 
         {
             let mut current_providers = self.current_providers.write().await;
@@ -698,7 +824,7 @@ impl RequestForwarder {
                 )
                 .await;
         }
-        let guard = ActiveConnectionGuard::acquire(self.status.clone()).await;
+        let mut guard = ActiveConnectionGuard::acquire(self.status.clone()).await;
         let result = self
             .forward_with_retry_inner(
                 app_type, method, endpoint, body, headers, extensions, providers,
@@ -708,6 +834,15 @@ impl RequestForwarder {
         // 在流式 body 的 future 内才真正 drop。
         // Err 路径：guard 在函数 scope 内随返回值落地时自动 drop。
         result.map(|mut fr| {
+            // 流式请求的成功记账推迟到 body 结束：正常结束由 guard 的 Drop 补记，
+            // 中途断流/超时由处理器改记失败。非流式与 HalfOpen 探测在这里不重复记账。
+            guard.attach_stream_outcome(StreamOutcomeReporter::new(
+                self.router.clone(),
+                self.status.clone(),
+                fr.provider.id.clone(),
+                app_type.clone(),
+                fr.stream_success_deferred,
+            ));
             fr.connection_guard = Some(guard);
             fr
         })
