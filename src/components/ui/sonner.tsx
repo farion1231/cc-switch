@@ -21,7 +21,7 @@ export function Toaster() {
         classNames: {
           toast:
             "group flex w-full items-center gap-2.5 rounded-panel border border-border bg-surface py-2.5 pe-3.5 ps-3 text-body text-fg-1 shadow-v7-lg",
-          content: "flex min-w-0 flex-1 flex-col gap-0.5",
+          content: "flex min-w-0 flex-1 flex-col gap-0.5 selectable",
           title: "text-body font-medium",
           description: "text-caption text-fg-2",
           // 状态靠图标颜色区分：成功绿、失败红、警告琥珀、提示灰
