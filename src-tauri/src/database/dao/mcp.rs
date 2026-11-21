@@ -3,14 +3,14 @@
 //! 提供 MCP 服务器的 CRUD 操作。
 
 use super::{Rows, UnreadableEntry};
-use crate::app_config::{AppType, McpApps, McpServer};
+use crate::app_config::{AppType, McpAppOverrides, McpApps, McpServer};
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use indexmap::IndexMap;
 use rusqlite::{params, OptionalExtension, Row};
 
 const MCP_SERVER_SELECT: &str =
-    "SELECT id, name, server_config, description, homepage, docs, tags, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes, enabled_mcode, enabled_pi, enabled_agy, enabled_kimi, enabled_omp, enabled_dsh, enabled_copilot, enabled_workbuddy FROM mcp_servers";
+    "SELECT id, name, server_config, description, homepage, docs, tags, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes, enabled_mcode, enabled_pi, enabled_agy, enabled_kimi, enabled_omp, enabled_dsh, enabled_copilot, enabled_workbuddy, app_overrides FROM mcp_servers";
 
 fn row_to_mcp_server(row: &Row<'_>) -> rusqlite::Result<(String, McpServer)> {
     let id: String = row.get(0)?;
@@ -28,6 +28,7 @@ fn row_to_mcp_server(row: &Row<'_>) -> rusqlite::Result<(String, McpServer)> {
     let entry = format!("MCP 服务器 {id}");
     let server = super::json_column(row, 2, &entry)?;
     let tags = super::json_column(row, 6, &entry)?;
+    let app_overrides = super::json_column(row, 21, &entry)?;
 
     Ok((
         id.clone(),
@@ -35,6 +36,7 @@ fn row_to_mcp_server(row: &Row<'_>) -> rusqlite::Result<(String, McpServer)> {
             id,
             name,
             server,
+            app_overrides,
             apps: McpApps {
                 claude: enabled_claude,
                 codex: enabled_codex,
@@ -81,6 +83,22 @@ fn mcp_flag_column(app: &AppType) -> Option<&'static str> {
 }
 
 impl Database {
+    /// Restore/import must reject unusable MCP overrides while data is staged.
+    pub(crate) fn validate_mcp_app_overrides_on_conn(
+        conn: &rusqlite::Connection,
+    ) -> Result<(), AppError> {
+        // Existing unreadable base fields can be restored and listed separately.
+        let mut stmt = conn.prepare("SELECT id, app_overrides FROM mcp_servers")?;
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            let id: String = row.get(0)?;
+            let entry = format!("MCP 服务器 {id}");
+            let overrides: McpAppOverrides = super::json_column(row, 1, &entry)?;
+            crate::mcp::validation::validate_app_overrides(&overrides)?;
+        }
+        Ok(())
+    }
+
     /// 获取所有 MCP 服务器。一行读不出来就整体报错（见 [`super::Rows::into_strict`]）；
     /// 只展示、不写的地方用 [`Self::get_mcp_server_rows`]。
     pub fn get_all_mcp_servers(&self) -> Result<IndexMap<String, McpServer>, AppError> {
@@ -187,11 +205,19 @@ impl Database {
     /// 保存 MCP 服务器
     pub fn save_mcp_server(&self, server: &McpServer) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
+        Self::save_mcp_server_on_conn(&conn, server)
+    }
+
+    pub(crate) fn save_mcp_server_on_conn(
+        conn: &rusqlite::Connection,
+        server: &McpServer,
+    ) -> Result<(), AppError> {
+        crate::mcp::validation::validate_app_overrides(&server.app_overrides)?;
         conn.execute(
             "INSERT OR REPLACE INTO mcp_servers (
                 id, name, server_config, description, homepage, docs, tags,
-                enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes, enabled_mcode, enabled_pi, enabled_agy, enabled_kimi, enabled_omp, enabled_dsh, enabled_copilot, enabled_workbuddy
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
+                enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes, enabled_mcode, enabled_pi, enabled_agy, enabled_kimi, enabled_omp, enabled_dsh, enabled_copilot, enabled_workbuddy, app_overrides
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
             params![
                 server.id,
                 server.name,
@@ -217,6 +243,8 @@ impl Database {
                 server.apps.dsh,
                 server.apps.copilot,
                 server.apps.workbuddy,
+                serde_json::to_string(&server.app_overrides)
+                    .map_err(|e| AppError::Database(format!("Failed to serialize MCP app overrides: {e}")))?,
             ],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
@@ -241,6 +269,7 @@ mod tests {
 
     fn test_server() -> McpServer {
         McpServer {
+            app_overrides: Default::default(),
             id: "shared-server".to_string(),
             name: "Shared Server".to_string(),
             server: json!({ "command": "echo", "args": ["hello"] }),

@@ -153,6 +153,7 @@ command = "say"
     servers.insert(
         "echo-server".into(),
         McpServer {
+            app_overrides: Default::default(),
             id: "echo-server".into(),
             name: "Echo Server".into(),
             server: json!({
@@ -1650,6 +1651,7 @@ fn switch_codex_ignores_a_broken_claude_json() {
     servers.insert(
         "echo-server".into(),
         McpServer {
+            app_overrides: Default::default(),
             id: "echo-server".into(),
             name: "Echo Server".into(),
             server: json!({
@@ -1719,6 +1721,7 @@ fn sync_all_enabled_reports_broken_app_but_projects_the_rest() {
     servers.insert(
         "echo-server".into(),
         McpServer {
+            app_overrides: Default::default(),
             id: "echo-server".into(),
             name: "Echo Server".into(),
             server: json!({

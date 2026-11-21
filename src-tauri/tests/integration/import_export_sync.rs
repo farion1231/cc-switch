@@ -292,6 +292,7 @@ command = "echo"
     config.mcp.servers.as_mut().unwrap().insert(
         "existing".to_string(),
         cc_switch_lib::McpServer {
+            app_overrides: Default::default(),
             id: "existing".to_string(),
             name: "existing".to_string(),
             server: json!({
@@ -373,6 +374,7 @@ fn import_from_claude_merges_into_config() {
     config.mcp.servers.as_mut().unwrap().insert(
         "stdio-enabled".to_string(),
         cc_switch_lib::McpServer {
+            app_overrides: Default::default(),
             id: "stdio-enabled".to_string(),
             name: "stdio-enabled".to_string(),
             server: json!({

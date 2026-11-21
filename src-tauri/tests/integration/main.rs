@@ -16,6 +16,8 @@ mod hermes_roundtrip;
 mod import_export_sync;
 mod kimi_commands;
 mod mcode_commands;
+mod mcp_app_overrides;
+mod mcp_app_overrides_agents;
 mod mcp_commands;
 mod profile_roundtrip;
 mod prompt_live_sync;

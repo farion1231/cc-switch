@@ -1,3 +1,5 @@
+import type { AppIdWith } from "@/config/appSpecs";
+
 export type ProviderCategory =
   | "official" // 官方
   | "cn_official" // 开源官方（原"国产官方"）
@@ -859,6 +861,8 @@ export interface McpServer {
   id: string;
   name: string;
   server: McpServerSpec;
+  /** Complete connection specs; absent entries use the shared server config. */
+  appOverrides?: Partial<Record<AppIdWith<"mcp">, McpServerSpec>>;
   apps: McpApps; // v3.7.0: 标记应用到哪些客户端
   description?: string;
   tags?: string[];
