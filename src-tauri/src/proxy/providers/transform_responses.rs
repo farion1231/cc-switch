@@ -299,7 +299,7 @@ pub(crate) fn sanitize_anthropic_tool_use_input_json(name: &str, raw: &str) -> S
 /// Anthropic versions its hosted web-search tool in the `type` field
 /// (`web_search_20250305`, and potentially newer date-suffixed variants).
 /// Match the semantic tool family instead of pinning the bridge to one release.
-fn is_anthropic_web_search_tool(tool: &Value) -> bool {
+pub(crate) fn is_anthropic_web_search_tool(tool: &Value) -> bool {
     tool.get("type")
         .and_then(Value::as_str)
         .is_some_and(|tool_type| tool_type == "web_search" || tool_type.starts_with("web_search_"))
