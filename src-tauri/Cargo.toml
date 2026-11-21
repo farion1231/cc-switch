@@ -96,6 +96,7 @@ tauri-plugin-single-instance = "2"
 [target.'cfg(target_os = "linux")'.dependencies]
 webkit2gtk = { version = "2.0.1", features = ["v2_16"] }
 gtk = "0.18"
+secret-service = { version = "~5.1.0", features = ["rt-async-io-crypto-rust"] }
 
 [target.'cfg(not(target_os = "windows"))'.dependencies]
 libc = "0.2"
@@ -122,7 +123,8 @@ rquickjs = { version = "0.8", features = ["bindgen"] }
 [target.'cfg(target_os = "macos")'.dependencies]
 # 托盘面板的原生玻璃：NSGlassEffectView（macOS 26）/ NSVisualEffectView
 objc2 = "0.6"
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSGeometry", "NSString"] }
+block2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSGeometry", "NSNotification", "NSOperation", "NSString", "block2"] }
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSAppearance", "NSGlassEffectView", "NSGraphics", "NSResponder", "NSScreen", "NSView", "NSVisualEffectView", "NSWindow"] }
 
 # 本地 `cargo test` / `tauri dev` 和 CI 用同一份调试信息级别：只留行号表。

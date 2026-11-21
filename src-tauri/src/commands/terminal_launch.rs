@@ -173,6 +173,7 @@ pub async fn open_provider_terminal(
     cwd: Option<String>,
     #[allow(non_snake_case)] skipPermissions: Option<bool>,
     #[allow(non_snake_case)] extraArgs: Option<String>,
+    #[allow(non_snake_case)] agyUseCurrentLogin: Option<bool>,
 ) -> Result<bool, String> {
     let app_type = AppType::from_str(&app)?;
     let launch_cwd = resolve_launch_cwd(cwd)?;
@@ -189,7 +190,9 @@ pub async fn open_provider_terminal(
 
     let mut launch = match app_type {
         AppType::Agy => {
-            switch_agy_to_bound_account(&agy_accounts.0, provider).await?;
+            if !(cfg!(target_os = "linux") && agyUseCurrentLogin == Some(true)) {
+                switch_agy_to_bound_account(&agy_accounts.0, provider).await?;
+            }
             agy_terminal_launch(provider)?
         }
         AppType::Copilot => {
@@ -661,7 +664,7 @@ fn claude_account_terminal_launch(config_dir: Option<PathBuf>) -> ProviderLaunch
 }
 
 /// 官方卡绑了授权中心的账号时，先把 agy 的全局登录切到它（已经是它就不写）。没绑的卡跟着
-/// agy 当前的登录走。不能切号的平台（目前除 macOS、Windows 外）忽略绑定，照常打开。
+/// agy 当前的登录走。不能切号的平台忽略绑定，照常打开。
 async fn switch_agy_to_bound_account(
     accounts: &crate::services::agy_account::AgyAccountManager,
     provider: &crate::provider::Provider,
