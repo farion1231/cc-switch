@@ -754,6 +754,7 @@ impl SkillService {
             AppType::ClaudeDesktop
             | AppType::Mcode
             | AppType::Kimi
+            | AppType::Qwen
             | AppType::Dsh
             | AppType::Copilot
             | AppType::WorkBuddy => {}
@@ -780,6 +781,7 @@ impl SkillService {
             AppType::Mcode => crate::mcode_config::data_dir().join("skills"),
             AppType::Dsh => crate::dsh_config::data_dir().join("skills"),
             AppType::Kimi => crate::kimi_config::data_dir().join("skills"),
+            AppType::Qwen => crate::qwen_config::data_dir().join("skills"),
             AppType::Copilot => crate::copilot_config::skills_dir(),
             AppType::WorkBuddy => crate::workbuddy_config::data_dir().join("skills"),
             AppType::Claude => home.join(".claude").join("skills"),
@@ -1144,6 +1146,7 @@ impl SkillService {
                         AppType::Mcode,
                         AppType::Agy,
                         AppType::Kimi,
+                        AppType::Qwen,
                         AppType::Dsh,
                         AppType::Copilot,
                         AppType::WorkBuddy,
@@ -1237,8 +1240,9 @@ impl SkillService {
                                 | AppType::Mcode
                                 | AppType::Agy
                                 | AppType::Kimi
-                                | AppType::Dsh
+                                | AppType::Qwen
                                 | AppType::Omp
+                                | AppType::Dsh
                                 | AppType::Copilot
                         ) {
                             continue;
@@ -1753,6 +1757,7 @@ impl SkillService {
             AppType::Mcode,
             AppType::Agy,
             AppType::Kimi,
+            AppType::Qwen,
             AppType::Dsh,
             AppType::Omp,
             AppType::Copilot,
@@ -1777,6 +1782,7 @@ impl SkillService {
         if !(skill.apps.mcode
             || skill.apps.agy
             || skill.apps.kimi
+            || skill.apps.qwen
             || skill.apps.dsh
             || skill.apps.copilot
             || skill.apps.workbuddy)
@@ -1788,6 +1794,7 @@ impl SkillService {
         let metadata_source = if skill.apps.mcode
             || skill.apps.agy
             || skill.apps.kimi
+            || skill.apps.qwen
             || skill.apps.dsh
             || skill.apps.copilot
             || skill.apps.workbuddy
@@ -1834,6 +1841,7 @@ impl SkillService {
         let mut updated_skill = if skill.apps.mcode
             || skill.apps.agy
             || skill.apps.kimi
+            || skill.apps.qwen
             || skill.apps.dsh
             || skill.apps.copilot
             || skill.apps.workbuddy
@@ -1847,6 +1855,7 @@ impl SkillService {
                     AppType::Mcode,
                     AppType::Agy,
                     AppType::Kimi,
+                    AppType::Qwen,
                     AppType::Dsh,
                     AppType::Copilot,
                     AppType::WorkBuddy,
@@ -1884,6 +1893,7 @@ impl SkillService {
                     | AppType::Mcode
                     | AppType::Agy
                     | AppType::Kimi
+                    | AppType::Qwen
                     | AppType::Dsh
                     | AppType::Omp
                     | AppType::Copilot
@@ -2242,6 +2252,7 @@ impl SkillService {
                 AppType::Mcode,
                 AppType::Agy,
                 AppType::Kimi,
+                AppType::Qwen,
                 AppType::Dsh,
                 AppType::Copilot,
                 AppType::WorkBuddy,
@@ -2482,7 +2493,12 @@ impl SkillService {
 
         if matches!(
             app,
-            AppType::Agy | AppType::Kimi | AppType::Dsh | AppType::Copilot | AppType::WorkBuddy
+            AppType::Agy
+                | AppType::Kimi
+                | AppType::Qwen
+                | AppType::Dsh
+                | AppType::Copilot
+                | AppType::WorkBuddy
         ) {
             if !enabled && !skill.apps.is_enabled_for(app) {
                 return Ok(());
@@ -2700,6 +2716,7 @@ impl SkillService {
                 AppType::Mcode,
                 AppType::Agy,
                 AppType::Kimi,
+                AppType::Qwen,
                 AppType::Dsh,
                 AppType::Copilot,
                 AppType::WorkBuddy,
@@ -2751,6 +2768,7 @@ impl SkillService {
                         | AppType::Mcode
                         | AppType::Agy
                         | AppType::Kimi
+                        | AppType::Qwen
                         | AppType::Dsh
                         | AppType::Omp
                         | AppType::Copilot
@@ -2871,6 +2889,7 @@ impl SkillService {
                 | AppType::Mcode
                 | AppType::Agy
                 | AppType::Kimi
+                | AppType::Qwen
                 | AppType::Dsh
                 | AppType::Omp
                 | AppType::Copilot
@@ -3059,6 +3078,7 @@ impl SkillService {
                 | AppType::Mcode
                 | AppType::Agy
                 | AppType::Kimi
+                | AppType::Qwen
                 | AppType::Dsh
                 | AppType::Omp
                 | AppType::Copilot
@@ -3263,6 +3283,7 @@ impl SkillService {
                     | AppType::Mcode
                     | AppType::Agy
                     | AppType::Kimi
+                    | AppType::Qwen
                     | AppType::Dsh
                     | AppType::Omp
                     | AppType::Copilot
@@ -3336,7 +3357,7 @@ impl SkillService {
             .map(|skill| (skill.directory.to_lowercase(), skill))
             .collect();
 
-        // Unselected MCode, Agy, Kimi, Copilot and WorkBuddy directories may have been installed outside CC Switch.
+        // Unselected MCode, Agy, Kimi, Qwen, Copilot and WorkBuddy directories may have been installed outside CC Switch.
         // Explicit disable/uninstall handles removal of managed deployments.
         if app_dir.exists()
             && !matches!(
@@ -3344,6 +3365,7 @@ impl SkillService {
                 AppType::Mcode
                     | AppType::Agy
                     | AppType::Kimi
+                    | AppType::Qwen
                     | AppType::Dsh
                     | AppType::Copilot
                     | AppType::WorkBuddy
@@ -4913,6 +4935,7 @@ impl SkillService {
                 AppType::Mcode
                     | AppType::Agy
                     | AppType::Kimi
+                    | AppType::Qwen
                     | AppType::Dsh
                     | AppType::Copilot
                     | AppType::WorkBuddy
@@ -7410,6 +7433,7 @@ mod tests {
         for app in [
             AppType::Agy,
             AppType::Kimi,
+            AppType::Qwen,
             AppType::Dsh,
             AppType::WorkBuddy,
         ] {
@@ -7666,6 +7690,7 @@ mod tests {
                 apps: SkillApps {
                     mcode: true,
                     kimi: false,
+                    qwen: false,
                     dsh: false,
                     ..Default::default()
                 },
@@ -7696,6 +7721,7 @@ mod tests {
                 apps: SkillApps {
                     mcode: true,
                     kimi: false,
+                    qwen: false,
                     dsh: false,
                     ..Default::default()
                 },
@@ -7733,6 +7759,7 @@ mod tests {
                     apps: SkillApps {
                         mcode: true,
                         kimi: false,
+                        qwen: false,
                         dsh: false,
                         ..Default::default()
                     },
@@ -7782,6 +7809,7 @@ mod tests {
                 apps: SkillApps {
                     mcode: true,
                     kimi: false,
+                    qwen: false,
                     dsh: false,
                     ..Default::default()
                 },
@@ -8197,6 +8225,7 @@ mod tests {
         for app in [
             AppType::Mcode,
             AppType::Kimi,
+            AppType::Qwen,
             AppType::Dsh,
             AppType::WorkBuddy,
         ] {
@@ -9008,6 +9037,7 @@ mod tests {
             AppType::Pi,
             AppType::Mcode,
             AppType::Kimi,
+            AppType::Qwen,
             AppType::Dsh,
             AppType::WorkBuddy,
         ] {

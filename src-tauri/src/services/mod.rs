@@ -35,6 +35,7 @@ pub mod session_usage_grokbuild;
 pub mod session_usage_omp;
 pub mod session_usage_opencode;
 pub mod session_usage_pi;
+pub mod session_usage_qwen;
 pub mod skill;
 pub mod skill_repo_tokens;
 pub mod speedtest;

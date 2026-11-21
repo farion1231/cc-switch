@@ -101,6 +101,7 @@ impl Database {
             enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
             enabled_agy BOOLEAN NOT NULL DEFAULT 0,
             enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
+            enabled_qwen BOOLEAN NOT NULL DEFAULT 0,
             enabled_dsh BOOLEAN NOT NULL DEFAULT 0,
             enabled_copilot BOOLEAN NOT NULL DEFAULT 0,
             enabled_workbuddy BOOLEAN NOT NULL DEFAULT 0,
@@ -138,6 +139,7 @@ impl Database {
             enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
             enabled_agy BOOLEAN NOT NULL DEFAULT 0,
             enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
+            enabled_qwen BOOLEAN NOT NULL DEFAULT 0,
             enabled_dsh BOOLEAN NOT NULL DEFAULT 0,
             enabled_copilot BOOLEAN NOT NULL DEFAULT 0,
             enabled_workbuddy BOOLEAN NOT NULL DEFAULT 0,
@@ -732,18 +734,28 @@ impl Database {
                         // 技能仓库支持 GitLab：仓库和已安装的技能各记一个主机。
                         // 老行不用回填——skill_repos.host 靠列默认值就是 github.com，
                         // skills.repo_host 为 NULL 也按 github.com 读。
-                        if Self::table_exists(conn, "skill_repos")? {
-                            Self::add_column_if_missing(
-                                conn,
-                                "skill_repos",
-                                "host",
-                                "TEXT NOT NULL DEFAULT 'github.com'",
-                            )?;
-                        }
-                        if Self::table_exists(conn, "skills")? {
-                            Self::add_column_if_missing(conn, "skills", "repo_host", "TEXT")?;
-                        }
+                        Self::add_skill_repo_host_columns(conn)?;
                         Self::set_user_version(conn, 27)?;
+                    }
+                    27 => {
+                        // Qwen：MCP 与 Skills 都记启用开关。
+                        // 早期开发版把 enabled_qwen 记作 v26 或 v27，这样的库会跳过上游的
+                        // v25→v26（WorkBuddy）或 v26→v27（GitLab 技能仓库），这里一并按
+                        // "缺失才加"补齐，保证幂等。
+                        for table in ["mcp_servers", "skills"] {
+                            if Self::table_exists(conn, table)? {
+                                for column in ["enabled_workbuddy", "enabled_qwen"] {
+                                    Self::add_column_if_missing(
+                                        conn,
+                                        table,
+                                        column,
+                                        "BOOLEAN NOT NULL DEFAULT 0",
+                                    )?;
+                                }
+                            }
+                        }
+                        Self::add_skill_repo_host_columns(conn)?;
+                        Self::set_user_version(conn, 28)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -768,6 +780,22 @@ impl Database {
                 Err(e)
             }
         }
+    }
+
+    /// v26→v27：技能仓库支持 GitLab（`skill_repos.host`、`skills.repo_host`），缺失才加
+    fn add_skill_repo_host_columns(conn: &Connection) -> Result<(), AppError> {
+        if Self::table_exists(conn, "skill_repos")? {
+            Self::add_column_if_missing(
+                conn,
+                "skill_repos",
+                "host",
+                "TEXT NOT NULL DEFAULT 'github.com'",
+            )?;
+        }
+        if Self::table_exists(conn, "skills")? {
+            Self::add_column_if_missing(conn, "skills", "repo_host", "TEXT")?;
+        }
+        Ok(())
     }
 
     /// v0 -> v1 迁移：补齐所有缺失列
@@ -4203,6 +4231,45 @@ mod tests {
         )?;
         assert_eq!(codex_values, (1, 9));
 
+        Ok(())
+    }
+
+    #[test]
+    fn qwen_migration_preserves_existing_flags_and_defaults_to_disabled() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch("CREATE TABLE mcp_servers(id TEXT PRIMARY KEY, enabled_kimi BOOLEAN); CREATE TABLE skills(id TEXT PRIMARY KEY, enabled_kimi BOOLEAN); INSERT INTO mcp_servers VALUES ('m',1); INSERT INTO skills VALUES ('s',1);")?;
+        Database::set_user_version(&conn, 22)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        for table in ["mcp_servers", "skills"] {
+            let flags = conn.query_row(
+                &format!("SELECT enabled_kimi, enabled_qwen FROM {table}"),
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )?;
+            assert_eq!(flags, (1, 0));
+        }
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        Ok(())
+    }
+
+    #[test]
+    fn qwen_clean_database_persists_mcp_and_skill_flags_independently() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let server = serde_json::from_value(serde_json::json!({"id":"m", "name":"m", "server":{"command":"echo"}, "apps":{"qwen":true,"kimi":true}})).unwrap();
+        db.save_mcp_server(&server)?;
+        db.update_mcp_server_app_enabled("m", &crate::app_config::AppType::Qwen, false)?;
+        let saved = db.get_all_mcp_servers()?;
+        assert!(!saved["m"].apps.qwen);
+        assert!(saved["m"].apps.kimi);
+        let skill = serde_json::from_value(serde_json::json!({"id":"s", "name":"s", "description":"", "directory":"s", "apps":{"qwen":true,"claude":true}, "installedAt":0})).unwrap();
+        db.save_skill(&skill)?;
+        let saved = db.get_installed_skill("s")?.unwrap();
+        assert!(saved.apps.qwen && saved.apps.claude);
+        let mut apps = saved.apps.clone();
+        apps.qwen = false;
+        db.update_skill_apps("s", &apps)?;
+        assert!(!db.get_all_installed_skills()?["s"].apps.qwen);
         Ok(())
     }
 

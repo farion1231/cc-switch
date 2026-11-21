@@ -31,6 +31,7 @@ fn commits_with_db(app: &AppType) -> bool {
             | AppType::Dsh
             | AppType::Omp
             | AppType::Copilot
+            | AppType::Qwen
             | AppType::WorkBuddy
     )
 }
@@ -105,15 +106,26 @@ impl McpService {
                 save_with_omp()
             }
         };
+        let save_with_qwen = || {
+            if server.apps.qwen || prev_apps.qwen {
+                mcp::qwen::sync_and_commit(
+                    &server.id,
+                    server.apps.qwen.then_some(&server.server),
+                    save_with_workbuddy,
+                )
+            } else {
+                save_with_workbuddy()
+            }
+        };
         let save_with_dsh = || {
             if server.apps.dsh || prev_apps.dsh {
                 mcp::dsh::sync_and_commit(
                     &server.id,
                     server.apps.dsh.then_some(&server.server),
-                    save_with_workbuddy,
+                    save_with_qwen,
                 )
             } else {
-                save_with_workbuddy()
+                save_with_qwen()
             }
         };
         let save_with_kimi = || {
@@ -197,11 +209,18 @@ impl McpService {
                     delete_with_copilot()
                 }
             };
-            let delete_with_dsh = || {
-                if server.apps.dsh {
-                    mcp::dsh::sync_and_commit(id, None, delete_with_workbuddy)
+            let delete_with_qwen = || {
+                if server.apps.qwen {
+                    mcp::qwen::sync_and_commit(id, None, delete_with_workbuddy)
                 } else {
                     delete_with_workbuddy()
+                }
+            };
+            let delete_with_dsh = || {
+                if server.apps.dsh {
+                    mcp::dsh::sync_and_commit(id, None, delete_with_qwen)
+                } else {
+                    delete_with_qwen()
                 }
             };
             let delete_with_kimi = || {
@@ -308,6 +327,8 @@ impl McpService {
                     mcp::dsh::sync_and_commit(server_id, spec, commit)?;
                 } else if app == AppType::Kimi {
                     mcp::kimi::sync_and_commit(server_id, spec, commit)?;
+                } else if app == AppType::Qwen {
+                    mcp::qwen::sync_and_commit(server_id, spec, commit)?;
                 } else if app == AppType::Copilot {
                     mcp::copilot::sync_and_commit(server_id, spec, commit)?;
                 } else if app == AppType::WorkBuddy {
@@ -394,6 +415,7 @@ impl McpService {
             }
             AppType::Mcode => mcp::mcode::sync(&server.id, Some(&server.server))?,
             AppType::Kimi => mcp::kimi::sync(&server.id, Some(&server.server))?,
+            AppType::Qwen => mcp::qwen::sync(&server.id, Some(&server.server))?,
             AppType::Dsh => mcp::dsh::sync(&server.id, Some(&server.server))?,
             AppType::Copilot => mcp::copilot::sync(&server.id, Some(&server.server))?,
             AppType::Pi => mcp::pi::sync(&server.id, Some(&server.server))?,
@@ -442,6 +464,7 @@ impl McpService {
             }
             AppType::Mcode => mcp::mcode::sync(id, None)?,
             AppType::Kimi => mcp::kimi::sync(id, None)?,
+            AppType::Qwen => mcp::qwen::sync(id, None)?,
             AppType::Dsh => mcp::dsh::sync(id, None)?,
             AppType::Copilot => mcp::copilot::sync(id, None)?,
             AppType::Pi => mcp::pi::sync(id, None)?,
@@ -602,6 +625,7 @@ impl McpService {
             AppType::Pi => return mcp::pi::import(state),
             AppType::Omp => return mcp::omp::import(state),
             AppType::Copilot => return mcp::copilot::import(state),
+            AppType::Qwen => return mcp::qwen::import(state),
             AppType::ClaudeDesktop | AppType::OpenClaw => return Ok(0),
         };
 
@@ -659,6 +683,7 @@ impl McpService {
             AppType::Hermes,
             AppType::Mcode,
             AppType::Kimi,
+            AppType::Qwen,
             AppType::Dsh,
             AppType::WorkBuddy,
             AppType::Agy,

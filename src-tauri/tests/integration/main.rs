@@ -22,5 +22,6 @@ mod prompt_live_sync;
 mod provider_commands;
 mod provider_service;
 mod proxy_commands;
+mod qwen_commands;
 mod skill_sync;
 mod workbuddy_commands;
