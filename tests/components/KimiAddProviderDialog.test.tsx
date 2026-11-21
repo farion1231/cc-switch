@@ -138,9 +138,7 @@ describe("Kimi account entry in the add-provider dialog", () => {
     const { onSubmit } = setup();
     const group = await openAuthCenter();
     // 先选登录区域，再在选择块里点登录
-    fireEvent.click(
-      within(group).getByRole("button", { name: "添加账号" }),
-    );
+    fireEvent.click(within(group).getByRole("button", { name: "添加账号" }));
     fireEvent.click(
       within(group).getByRole("button", { name: "kimi.oauth.signIn" }),
     );

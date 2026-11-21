@@ -3,6 +3,8 @@ use crate::test_support::TestHome;
 use serde_json::json;
 use serial_test::serial;
 
+mod reasoning_overrides;
+
 #[test]
 fn official_proxy_route_is_recognized_by_its_address() {
     let proxy = |url: &str| url == "http://127.0.0.1:15721/v1";
@@ -2053,8 +2055,8 @@ fn native_gpt_rows_mirror_the_official_entry() {
     let models = with_official_models(official_gpt_rows(), || {
         catalog_for(
             json!([
-                // 提示词、工具和思考档位保持官方值；未填窗口时也保留官方默认。
-                { "model": "gpt-6-sol", "reasoningLevels": ["none"] },
+                // 未声明覆盖时，提示词、工具、思考档位和窗口保持官方值。
+                { "model": "gpt-6-sol" },
                 { "model": "glm-5" }
             ]),
             "",

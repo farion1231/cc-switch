@@ -9,11 +9,19 @@ use super::*;
 struct MemoryLogin {
     value: StdMutex<Option<String>>,
     writes: StdMutex<usize>,
+    locked: StdMutex<bool>,
 }
 
 impl AgyLoginStore for MemoryLogin {
     fn read(&self) -> Result<Option<String>, AppError> {
+        if *self.locked.lock().unwrap() {
+            return Err(AppError::Config("test keychain is locked".into()));
+        }
         Ok(self.value.lock().unwrap().clone())
+    }
+    fn read_for_switch(&self) -> Result<Option<String>, AppError> {
+        *self.locked.lock().unwrap() = false;
+        self.read()
     }
     fn write(&self, value: &str) -> Result<(), AppError> {
         *self.value.lock().unwrap() = Some(value.to_string());
@@ -63,8 +71,8 @@ async fn add(manager: &AgyAccountManager, sub: &str) {
     manager.persist(&store).unwrap();
 }
 
-// 以下测试只在能切号的平台（macOS、Windows）上有意义：其他平台 status 不读钥匙串、切换直接报不支持。
-#[cfg(any(target_os = "macos", windows))]
+// 以下测试只在支持切号的平台上有意义。
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 mod switching {
     use super::*;
 
@@ -80,6 +88,27 @@ mod switching {
             Some("alice@example.com")
         );
         assert_eq!(*login.writes.lock().unwrap(), 0, "查看状态不写钥匙串");
+    }
+
+    #[tokio::test]
+    async fn status_leaves_a_locked_keychain_alone_but_switch_can_unlock_it() {
+        let (_dir, login, manager) = manager();
+        set_live(&login, &credential("alice", "a1"));
+        add(&manager, "bob").await;
+        *login.locked.lock().unwrap() = true;
+
+        let status = manager.status().await.unwrap();
+        assert!(status.current_account_id.is_none());
+        assert_eq!(status.accounts.len(), 1);
+        assert!(*login.locked.lock().unwrap());
+
+        manager.switch_to("bob").await.unwrap();
+        assert_eq!(live_sub(&login).as_deref(), Some("bob"));
+        assert!(manager
+            .list()
+            .await
+            .iter()
+            .any(|account| account.id == "alice"));
     }
 
     #[tokio::test]
@@ -365,6 +394,7 @@ mod switching {
     /// Windows 经凭据管理器）、原地更新、读回都正常。默认不跑：`cargo test agy_account -- --ignored`。
     #[test]
     #[ignore]
+    #[cfg(any(target_os = "macos", windows))]
     fn real_keychain_round_trip_on_a_test_item() {
         let store = keychain::SystemKeychain::named("cc-switch-agy-selftest", "probe");
         let first = keychain::encode(&credential("probe", "one")).unwrap();

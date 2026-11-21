@@ -20,7 +20,6 @@ use tauri::menu::{
 };
 use tauri::tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconEvent};
 use tauri::{Emitter, Manager};
-use tauri_plugin_opener::OpenerExt;
 
 use crate::app_config::AppType;
 use crate::error::AppError;
@@ -3055,24 +3054,43 @@ fn navigate(app: &tauri::AppHandle, navigation: TrayNavigation) {
     refresh_tray_menu(app);
 }
 
+pub(crate) fn hide_main_to_tray(window: &tauri::Window) -> bool {
+    if let Err(err) = window.hide() {
+        log::warn!("主窗口隐藏失败: {err}");
+        return false;
+    }
+    // An already-unfocused window may emit no blur/resize.
+    let _ = window.emit("main-window-visibility-changed", ());
+    #[cfg(target_os = "windows")]
+    let _ = window.set_skip_taskbar(true);
+    #[cfg(target_os = "macos")]
+    apply_tray_policy(window.app_handle(), false);
+    log::info!("关闭请求已处理：最小化到托盘");
+    true
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn reveal_main_window(window: &tauri::WebviewWindow, _source: &'static str) {
+    crate::macos_tray_window::show(window);
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn reveal_main_window(window: &tauri::WebviewWindow, _source: &'static str) {
+    // 从托盘或静默启动唤回时，同时恢复 Windows 任务栏图标。
+    #[cfg(target_os = "windows")]
+    let _ = window.set_skip_taskbar(false);
+    let _ = window.unminimize();
+    crate::window_fit::fit_to_work_area(window);
+    let _ = window.show();
+    let _ = window.set_focus();
+    #[cfg(target_os = "linux")]
+    crate::linux_fix::nudge_main_window(window.clone(), _source);
+}
+
 /// 显示并聚焦主窗口；轻量模式下重建窗口。
 pub fn show_main_window(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
-        #[cfg(target_os = "windows")]
-        {
-            let _ = window.set_skip_taskbar(false);
-        }
-        let _ = window.unminimize();
-        let _ = window.show();
-        let _ = window.set_focus();
-        #[cfg(target_os = "linux")]
-        {
-            crate::linux_fix::nudge_main_window(window.clone(), "tray-show-main");
-        }
-        #[cfg(target_os = "macos")]
-        {
-            apply_tray_policy(app, true);
-        }
+        reveal_main_window(&window, "tray-show-main");
     } else if crate::lightweight::is_lightweight_mode() {
         if let Err(e) = crate::lightweight::exit_lightweight_mode(app) {
             log::error!("退出轻量模式重建窗口失败: {e}");
@@ -3343,7 +3361,7 @@ pub fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
             });
         }
         "open_website" => {
-            if let Err(e) = app.opener().open_url("https://ccswitch.io", None::<String>) {
+            if let Err(e) = crate::host_open::open_url(app, "https://ccswitch.io") {
                 log::error!("打开官方网站失败: {e}");
             }
         }
