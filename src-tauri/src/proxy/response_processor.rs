@@ -20,6 +20,7 @@ use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
 use serde_json::Value;
 use std::{
+    collections::VecDeque,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, OnceLock,
@@ -352,7 +353,38 @@ pub async fn process_response(
 // SSE 使用量收集器
 // ============================================================================
 
+const MAX_HEAD_USAGE_EVENTS: usize = 32;
+const MAX_TAIL_USAGE_EVENTS: usize = 256;
+const MAX_PENDING_SSE_BYTES: usize = 4 * 1024 * 1024;
+
 type UsageCallbackWithTiming = Arc<dyn Fn(Vec<Value>, Option<u64>) + Send + Sync + 'static>;
+
+#[derive(Default)]
+struct CollectedSseEvents {
+    head: Vec<Value>,
+    tail: VecDeque<Value>,
+    dropped: usize,
+}
+
+impl CollectedSseEvents {
+    fn push(&mut self, event: Value) {
+        if self.head.len() < MAX_HEAD_USAGE_EVENTS {
+            self.head.push(event);
+            return;
+        }
+        if self.tail.len() == MAX_TAIL_USAGE_EVENTS {
+            self.tail.pop_front();
+            self.dropped += 1;
+        }
+        self.tail.push_back(event);
+    }
+
+    fn into_vec(self) -> Vec<Value> {
+        let mut events = self.head;
+        events.extend(self.tail);
+        events
+    }
+}
 
 /// SSE 使用量收集器
 #[derive(Clone)]
@@ -361,7 +393,7 @@ pub struct SseUsageCollector {
 }
 
 struct SseUsageCollectorInner {
-    events: Mutex<Vec<Value>>,
+    events: Mutex<CollectedSseEvents>,
     first_output_time: OnceLock<std::time::Instant>,
     start_time: std::time::Instant,
     on_complete: UsageCallbackWithTiming,
@@ -379,7 +411,7 @@ impl SseUsageCollector {
         let on_complete: UsageCallbackWithTiming = Arc::new(callback);
         Self {
             inner: Arc::new(SseUsageCollectorInner {
-                events: Mutex::new(Vec::new()),
+                events: Mutex::new(CollectedSseEvents::default()),
                 first_output_time: OnceLock::new(),
                 start_time,
                 on_complete,
@@ -422,10 +454,19 @@ impl SseUsageCollector {
             return;
         }
 
-        let events = {
+        let collected = {
             let mut guard = self.inner.events.lock().await;
             std::mem::take(&mut *guard)
         };
+        if collected.dropped > 0 {
+            log::debug!(
+                "SSE usage collector retained {} head + {} tail events (dropped {} middle events)",
+                collected.head.len(),
+                collected.tail.len(),
+                collected.dropped
+            );
+        }
+        let events = collected.into_vec();
 
         let first_token_ms = self
             .inner
@@ -744,11 +785,12 @@ pub fn create_logged_passthrough_stream(
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
         let _conn_guard = connection_guard;
-        let mut sse = SseBuffer::new();
+        let mut sse = SseBuffer::with_max_pending_bytes(MAX_PENDING_SSE_BYTES);
         let mut collector = usage_collector;
         let mut finish_guard = collector.clone().map(SseUsageFinishGuard::new);
         let inspect_sse_events =
             collector.is_some() || log::log_enabled!(log::Level::Debug);
+        let mut sse_overflow_warned = false;
         let mut is_first_chunk = true;
 
         // 超时配置
@@ -799,40 +841,48 @@ pub fn create_logged_passthrough_stream(
                         );
                     }
                     is_first_chunk = false;
-                    if inspect_sse_events {
+                    if inspect_sse_events && !sse.is_overflowed() {
                         sse.push_bytes(&bytes);
-
-                        // 尝试解析并记录完整的 SSE 事件
-                        while let Some(event_text) = sse.next_block() {
-                            if !event_text.trim().is_empty() {
-                                let event_name = event_text
-                                    .lines()
-                                    .find_map(|line| strip_sse_field(line, "event"));
-                                // 提取 data 部分；只有 usage collector 存在时才解析 JSON。
-                                for line in event_text.lines() {
-                                    if let Some(data) = strip_sse_field(line, "data") {
-                                        if let Some(c) = &collector {
-                                            c.observe_data(event_name, data);
-                                        }
-                                        if data.trim() != "[DONE]" {
-                                            let collected = match &collector {
-                                                Some(c) if c.should_collect(data) => {
-                                                    match serde_json::from_str::<Value>(data) {
-                                                        Ok(json_value) => {
-                                                            c.push(json_value).await;
-                                                            true
+                        if sse.is_overflowed() {
+                            if !sse_overflow_warned {
+                                sse_overflow_warned = true;
+                                log::warn!(
+                                    "[{tag}] SSE inspection buffer exceeded {MAX_PENDING_SSE_BYTES} bytes; stopping SSE log/usage parsing for remainder of stream"
+                                );
+                            }
+                        } else {
+                            // 尝试解析并记录完整的 SSE 事件
+                            while let Some(event_text) = sse.next_block() {
+                                if !event_text.trim().is_empty() {
+                                    let event_name = event_text
+                                        .lines()
+                                        .find_map(|line| strip_sse_field(line, "event"));
+                                    // 提取 data 部分；只有 usage collector 存在时才解析 JSON。
+                                    for line in event_text.lines() {
+                                        if let Some(data) = strip_sse_field(line, "data") {
+                                            if let Some(c) = &collector {
+                                                c.observe_data(event_name, data);
+                                            }
+                                            if data.trim() != "[DONE]" {
+                                                let collected = match &collector {
+                                                    Some(c) if c.should_collect(data) => {
+                                                        match serde_json::from_str::<Value>(data) {
+                                                            Ok(json_value) => {
+                                                                c.push(json_value).await;
+                                                                true
+                                                            }
+                                                            Err(_) => false,
                                                         }
-                                                        Err(_) => false,
                                                     }
-                                                }
-                                                _ => false,
-                                            };
-                                            log::trace!(
-                                                "[{tag}] <<< SSE data: bytes={}, usage_collected={collected} (content omitted)",
-                                                data.len()
-                                            );
-                                        } else {
-                                            log::debug!("[{tag}] <<< SSE: [DONE]");
+                                                    _ => false,
+                                                };
+                                                log::trace!(
+                                                    "[{tag}] <<< SSE data: bytes={}, usage_collected={collected} (content omitted)",
+                                                    data.len()
+                                                );
+                                            } else {
+                                                log::debug!("[{tag}] <<< SSE: [DONE]");
+                                            }
                                         }
                                     }
                                 }
@@ -1595,5 +1645,103 @@ mod tests {
         assert_eq!(usage.cache_read_tokens, 160);
         assert_eq!(usage.model.as_deref(), Some("gemini-3.8-flash"));
         assert_eq!(usage.message_id.as_deref(), Some("resp_1"));
+    }
+
+    #[tokio::test]
+    async fn sse_usage_collector_bounds_events_and_preserves_head_and_tail() {
+        let collected = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let collector = SseUsageCollector::new(std::time::Instant::now(), None, {
+            let collected = collected.clone();
+            move |events, _| {
+                *collected.lock().unwrap() = events;
+            }
+        });
+
+        let total = 1200usize;
+        collector
+            .push(serde_json::json!({
+                "type": "message_start",
+                "index": 0,
+                "message": {
+                    "id": "msg_1",
+                    "model": "claude-sonnet-4-5",
+                    "usage": { "input_tokens": 123 }
+                }
+            }))
+            .await;
+        for i in 1..(total - 1) {
+            collector
+                .push(serde_json::json!({
+                    "type": "content_block_delta",
+                    "index": i
+                }))
+                .await;
+        }
+        collector
+            .push(serde_json::json!({
+                "type": "message_delta",
+                "index": total - 1,
+                "usage": { "output_tokens": 45 }
+            }))
+            .await;
+
+        collector.finish().await;
+
+        let events = collected.lock().unwrap().clone();
+        assert_eq!(events.len(), MAX_HEAD_USAGE_EVENTS + MAX_TAIL_USAGE_EVENTS);
+        let retained_indices: Vec<usize> = events
+            .iter()
+            .map(|e| e["index"].as_u64().unwrap() as usize)
+            .collect();
+        let expected_head: Vec<usize> = (0..MAX_HEAD_USAGE_EVENTS).collect();
+        let expected_tail: Vec<usize> = ((total - MAX_TAIL_USAGE_EVENTS)..total).collect();
+        assert_eq!(&retained_indices[..MAX_HEAD_USAGE_EVENTS], expected_head);
+        assert_eq!(&retained_indices[MAX_HEAD_USAGE_EVENTS..], expected_tail);
+
+        let usage = TokenUsage::from_claude_stream_events(&events).expect("usage parsed");
+        assert_eq!(usage.input_tokens, 123);
+        assert_eq!(usage.output_tokens, 45);
+        assert_eq!(usage.model.as_deref(), Some("claude-sonnet-4-5"));
+        assert_eq!(usage.message_id.as_deref(), Some("msg_1"));
+    }
+
+    #[tokio::test]
+    async fn logged_passthrough_stream_keeps_client_bytes_when_sse_buffer_overflows() {
+        let head = Bytes::from("data: {\"type\":\"message_start\"}\n\n");
+        let giant_unterminated = Bytes::from(vec![b'a'; MAX_PENDING_SSE_BYTES + 1024]);
+        let tail = Bytes::from("data: [DONE]\n\n");
+        let expected_len = head.len() + giant_unterminated.len() + tail.len();
+
+        let collected = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let collector = SseUsageCollector::new(std::time::Instant::now(), None, {
+            let collected = collected.clone();
+            move |events, _| {
+                *collected.lock().unwrap() = events;
+            }
+        });
+
+        let upstream = futures::stream::iter(vec![
+            Ok::<_, std::io::Error>(head),
+            Ok(giant_unterminated),
+            Ok(tail),
+        ]);
+        let passthrough = create_logged_passthrough_stream(
+            upstream,
+            "test",
+            Some(collector),
+            StreamingTimeoutConfig {
+                first_byte_timeout: 0,
+                idle_timeout: 0,
+            },
+            None,
+        );
+        futures::pin_mut!(passthrough);
+        let mut client_bytes = 0usize;
+        while let Some(chunk) = passthrough.next().await {
+            client_bytes += chunk.expect("client passthrough chunk").len();
+        }
+
+        assert_eq!(client_bytes, expected_len);
+        assert_eq!(collected.lock().unwrap().len(), 1);
     }
 }

@@ -87,6 +87,8 @@ pub(crate) struct SseBuffer {
     consumed: usize,
     /// Where the next delimiter scan starts; always `>= consumed`.
     scan_from: usize,
+    max_pending_bytes: Option<usize>,
+    overflowed: bool,
 }
 
 impl SseBuffer {
@@ -94,21 +96,49 @@ impl SseBuffer {
         Self::default()
     }
 
+    pub(crate) fn with_max_pending_bytes(max_pending_bytes: usize) -> Self {
+        Self {
+            max_pending_bytes: Some(max_pending_bytes),
+            ..Self::default()
+        }
+    }
+
+    pub(crate) fn is_overflowed(&self) -> bool {
+        self.overflowed
+    }
+
     /// Append raw bytes; multi-byte characters split across chunks are held
     /// back until complete (see [`append_utf8_safe`]).
     pub(crate) fn push_bytes(&mut self, bytes: &[u8]) {
+        if self.overflowed {
+            return;
+        }
         self.compact();
+        if self.would_overflow(bytes.len()) {
+            self.mark_overflow();
+            return;
+        }
         append_utf8_safe(&mut self.text, &mut self.utf8_remainder, bytes);
     }
 
     pub(crate) fn push_str(&mut self, text: &str) {
+        if self.overflowed {
+            return;
+        }
         self.compact();
+        if self.would_overflow(text.len()) {
+            self.mark_overflow();
+            return;
+        }
         self.text.push_str(text);
     }
 
     /// Next complete event (without its delimiter), or `None` until more data
     /// arrives.
     pub(crate) fn next_block(&mut self) -> Option<&str> {
+        if self.overflowed {
+            return None;
+        }
         let pending = &self.text[self.consumed..];
         match find_sse_block_from(pending, self.scan_from - self.consumed) {
             Some((end, next)) => {
@@ -139,6 +169,9 @@ impl SseBuffer {
     /// End of stream: the pending text plus any incomplete UTF-8 tail,
     /// decoded lossily.
     pub(crate) fn take_tail(&mut self) -> String {
+        if self.overflowed {
+            return String::new();
+        }
         self.compact();
         if !self.utf8_remainder.is_empty() {
             let remainder = std::mem::take(&mut self.utf8_remainder);
@@ -146,6 +179,26 @@ impl SseBuffer {
         }
         self.scan_from = 0;
         std::mem::take(&mut self.text)
+    }
+
+    fn would_overflow(&self, incoming_len: usize) -> bool {
+        let Some(max_pending_bytes) = self.max_pending_bytes else {
+            return false;
+        };
+        self.text
+            .len()
+            .saturating_add(self.utf8_remainder.len())
+            .saturating_add(incoming_len)
+            > max_pending_bytes
+    }
+
+    fn mark_overflow(&mut self) {
+        self.overflowed = true;
+        self.text.clear();
+        self.text.shrink_to_fit();
+        self.utf8_remainder.clear();
+        self.consumed = 0;
+        self.scan_from = 0;
     }
 
     fn compact(&mut self) {
@@ -555,5 +608,27 @@ mod tests {
             replacement_count, 4,
             "each invalid byte should produce one U+FFFD"
         );
+    }
+
+    #[test]
+    fn bounded_sse_buffer_drops_unterminated_overflow_without_panic() {
+        let mut sse = SseBuffer::with_max_pending_bytes(64);
+        sse.push_bytes(b"data: ok\n\n");
+        assert_eq!(drain_blocks(&mut sse), ["data: ok"]);
+        assert!(!sse.is_overflowed());
+
+        sse.push_bytes(&[b'x'; 40]);
+        assert!(!sse.is_overflowed());
+        sse.push_bytes(&[b'y'; 40]);
+
+        assert!(sse.is_overflowed());
+        assert!(sse.pending().is_empty());
+        assert!(drain_blocks(&mut sse).is_empty());
+        assert!(sse.take_tail().is_empty());
+
+        sse.push_bytes(b"data: after\n\n");
+        sse.push_str("data: more\n\n");
+        assert!(drain_blocks(&mut sse).is_empty());
+        assert!(sse.take_tail().is_empty());
     }
 }
