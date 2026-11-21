@@ -178,6 +178,17 @@ impl StreamCheckService {
             AppType::Hermes => Self::extract_hermes_base_url(provider),
             AppType::Pi => crate::pi_config::provider_base_url(&provider.settings_config),
             AppType::Omp => crate::omp_config::provider_base_url(&provider.settings_config),
+            AppType::ZCode => provider
+                .settings_config
+                .get("options")
+                .and_then(|o| o.get("baseURL"))
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|s| s.trim_end_matches('/').to_string())
+                .ok_or_else(|| {
+                    AppError::Message("ZCode provider is missing options.baseURL".into())
+                }),
             AppType::ClaudeDesktop => ClaudeAdapter::new()
                 .extract_base_url(provider)
                 .map_err(|e| AppError::Message(format!("Failed to extract base_url: {e}"))),

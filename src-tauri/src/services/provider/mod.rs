@@ -43,7 +43,7 @@ use crate::store::AppState;
 // Re-export sub-module functions for external access
 pub use live::{
     import_default_config, import_hermes_providers_from_live, import_openclaw_providers_from_live,
-    import_opencode_providers_from_live, read_live_settings,
+    import_opencode_providers_from_live, import_zcode_providers_from_live, read_live_settings,
     should_import_default_config_on_startup, sync_current_to_live,
 };
 
@@ -7097,6 +7097,7 @@ impl ProviderService {
                     AppType::Kimi => crate::kimi_config::remove_provider(id)?,
                     AppType::Dsh => crate::dsh_config::remove_provider(id)?,
                     AppType::WorkBuddy => crate::workbuddy_config::remove_provider(id)?,
+                    AppType::ZCode => crate::zcode_config::remove_provider(id)?,
                     _ => {}
                 }
             }
@@ -7291,6 +7292,7 @@ impl ProviderService {
             AppType::Kimi => crate::kimi_config::remove_provider(id)?,
             AppType::Dsh => crate::dsh_config::remove_provider(id)?,
             AppType::WorkBuddy => crate::workbuddy_config::remove_provider(id)?,
+            AppType::ZCode => crate::zcode_config::remove_provider(id)?,
             _ => {
                 return Err(AppError::Message(format!(
                     "App {} does not support remove from live config",
@@ -7882,7 +7884,8 @@ impl ProviderService {
             | AppType::Agy
             | AppType::Omp
             | AppType::Copilot
-            | AppType::WorkBuddy => Ok(String::new()),
+            | AppType::WorkBuddy
+            | AppType::ZCode => Ok(String::new()),
         }
     }
 
@@ -7907,7 +7910,8 @@ impl ProviderService {
             | AppType::Agy
             | AppType::Omp
             | AppType::Copilot
-            | AppType::WorkBuddy => Ok(String::new()),
+            | AppType::WorkBuddy
+            | AppType::ZCode => Ok(String::new()),
         }
     }
 
@@ -8692,6 +8696,13 @@ impl ProviderService {
             }
             AppType::Omp => {
                 crate::omp_config::validate_provider(&provider.id, &provider.settings_config)?;
+            }
+            AppType::ZCode => {
+                if !provider.settings_config.is_object() {
+                    return Err(AppError::InvalidInput(
+                        "ZCode configuration must be a JSON object".into(),
+                    ));
+                }
             }
         }
 

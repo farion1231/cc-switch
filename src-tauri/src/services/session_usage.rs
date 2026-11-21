@@ -185,6 +185,11 @@ pub fn sync_all_unlocked(db: &Database) -> SessionSyncResult {
     );
     merge_sync_step(
         &mut result,
+        "ZCode",
+        crate::services::session_usage_zcode::sync_zcode_usage(db),
+    );
+    merge_sync_step(
+        &mut result,
         "GitHub Copilot CLI",
         crate::services::session_usage_copilot::sync_copilot_usage(db),
     );

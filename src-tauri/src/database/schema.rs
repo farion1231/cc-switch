@@ -106,7 +106,8 @@ impl Database {
             enabled_workbuddy BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             enabled_pi BOOLEAN NOT NULL DEFAULT 0,
-            enabled_omp BOOLEAN NOT NULL DEFAULT 0
+            enabled_omp BOOLEAN NOT NULL DEFAULT 0,
+            enabled_zcode BOOLEAN NOT NULL DEFAULT 0
         )",
             [],
         )
@@ -141,6 +142,7 @@ impl Database {
             enabled_dsh BOOLEAN NOT NULL DEFAULT 0,
             enabled_copilot BOOLEAN NOT NULL DEFAULT 0,
             enabled_workbuddy BOOLEAN NOT NULL DEFAULT 0,
+            enabled_zcode BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             installed_at INTEGER NOT NULL DEFAULT 0,
             content_hash TEXT,
@@ -744,6 +746,20 @@ impl Database {
                             Self::add_column_if_missing(conn, "skills", "repo_host", "TEXT")?;
                         }
                         Self::set_user_version(conn, 27)?;
+                    }
+                    27 => {
+                        // ZCode 接入：MCP 与 Skills 各加一个启用标志列。
+                        for table in ["mcp_servers", "skills"] {
+                            if Self::table_exists(conn, table)? {
+                                Self::add_column_if_missing(
+                                    conn,
+                                    table,
+                                    "enabled_zcode",
+                                    "BOOLEAN NOT NULL DEFAULT 0",
+                                )?;
+                            }
+                        }
+                        Self::set_user_version(conn, 28)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(

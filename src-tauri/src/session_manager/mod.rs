@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 pub use model::SessionMessage;
 use providers::{
     agy, claude, codex, copilot, dsh, gemini, grokbuild, hermes, kimi, mcode, omp, openclaw,
-    opencode, pi, workbuddy,
+    opencode, pi, workbuddy, zcode,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -97,7 +97,7 @@ pub(crate) struct SessionScan {
 pub(crate) fn scan_sessions_with_status() -> SessionScan {
     use providers::utils::ScanStatus;
     type Scanner = fn(&mut ScanStatus) -> Vec<SessionMeta>;
-    let scanners: [(&str, Scanner); 15] = [
+    let scanners: [(&str, Scanner); 16] = [
         ("codex", codex::scan_sessions_with_status),
         ("claude", claude::scan_sessions_with_status),
         ("opencode", opencode::scan_sessions_with_status),
@@ -114,6 +114,7 @@ pub(crate) fn scan_sessions_with_status() -> SessionScan {
         ("dsh", |_| dsh::scan_sessions()),
         ("agy", |_| agy::scan_sessions()),
         ("workbuddy", |_| workbuddy::scan_sessions()),
+        ("zcode", |_| zcode::scan_sessions()),
     ];
     let mut scan = SessionScan {
         sessions: Vec::new(),
@@ -161,6 +162,10 @@ pub fn load_messages(provider_id: &str, source_path: &str) -> Result<Vec<Session
     }
     if provider_id == "hermes" && source_path.starts_with("sqlite:") {
         return hermes::load_messages_sqlite(source_path);
+    }
+    // ZCode 的会话源形如 `zcode:<sessionId>`，读的是自己的 SQLite
+    if provider_id == "zcode" {
+        return zcode::load_messages(source_path);
     }
 
     let path = Path::new(source_path);
@@ -249,6 +254,11 @@ fn delete_session_source(
         return Err(
             "Delete this session in MCode so its runtime state and history are removed together"
                 .into(),
+        );
+    }
+    if provider_id == "zcode" {
+        return Err(
+            "Delete this session in ZCode so its history and usage records stay consistent".into(),
         );
     }
     // SQLite sessions bypass the file-based deletion path

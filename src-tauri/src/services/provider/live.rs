@@ -317,6 +317,7 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
         | AppType::Omp
         | AppType::Copilot
         | AppType::WorkBuddy
+        | AppType::ZCode
         | AppType::ClaudeDesktop => false,
     }
 }
@@ -399,7 +400,8 @@ pub(crate) fn remove_common_config_from_settings(
         | AppType::Agy
         | AppType::Omp
         | AppType::Copilot
-        | AppType::WorkBuddy => Ok(settings.clone()),
+        | AppType::WorkBuddy
+        | AppType::ZCode => Ok(settings.clone()),
     }
 }
 
@@ -732,6 +734,25 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
         }
         AppType::Mcode => {
             crate::mcode_config::set_provider(&provider.id, provider.settings_config.clone())?
+        }
+        AppType::ZCode => {
+            use crate::provider::ZCodeProviderConfig;
+            match serde_json::from_value::<ZCodeProviderConfig>(provider.settings_config.clone()) {
+                Ok(config) => crate::zcode_config::set_typed_provider(&provider.id, &config)?,
+                Err(e) => {
+                    log::warn!(
+                        "Failed to parse ZCode provider config for '{}': {}",
+                        provider.id,
+                        e
+                    );
+                    // 结构不完整时按原样写入：ZCode 侧仍是合法的个人规则片段，
+                    // 用户可以在原生界面里继续编辑。
+                    crate::zcode_config::set_provider(
+                        &provider.id,
+                        provider.settings_config.clone(),
+                    )?;
+                }
+            }
         }
         AppType::WorkBuddy => {
             // 官方登录卡只绑定账号，没有模型条目：任何写 live 的路径（全量同步等）都跳过它
@@ -1116,6 +1137,7 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
             Ok(config)
         }
         AppType::Mcode => Ok(json!(crate::mcode_config::get_providers()?)),
+        AppType::ZCode => Ok(json!(crate::zcode_config::get_providers()?)),
         AppType::Kimi => Ok(json!(crate::kimi_config::get_providers()?)),
         AppType::Dsh => Ok(json!(crate::dsh_config::get_providers()?)),
         AppType::WorkBuddy => Ok(json!(crate::workbuddy_config::get_providers()?)),
@@ -1263,7 +1285,8 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         | AppType::Kimi
         | AppType::Dsh
         | AppType::Omp
-        | AppType::WorkBuddy => {
+        | AppType::WorkBuddy
+        | AppType::ZCode => {
             unreachable!("additive mode apps are handled by early return")
         }
     };
@@ -1470,6 +1493,91 @@ pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, Ap
     }
 
     Ok(imported + updated)
+}
+
+/// 从 ZCode 的个人规则文件导入供应商到数据库。
+///
+/// ZCode 自管的条目（`builtin:` / `account:` / 按模板 id 建号的）由 ZCode 自己维护，
+/// 导入时跳过，避免把「登录得到的连接」变成可删除的 CC Switch 卡片。
+pub fn import_zcode_providers_from_live(state: &AppState) -> Result<usize, AppError> {
+    let providers = crate::zcode_config::get_providers()?;
+    if providers.is_empty() {
+        return Ok(0);
+    }
+
+    let mut imported = 0;
+    let mut updated = 0;
+    let existing_ids = state.db.get_provider_ids(&AppType::ZCode)?;
+
+    for (id, settings_config) in providers {
+        if crate::zcode_config::is_zcode_managed_provider_id(&id) {
+            continue;
+        }
+
+        let name = settings_config
+            .get("name")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .unwrap_or_else(|| id.clone());
+
+        if existing_ids.contains(&id) {
+            match state.db.get_provider_by_id(&id, &AppType::ZCode) {
+                Ok(Some(existing)) => {
+                    // 字段级合并：只覆盖 ZCode 原生配置里真正存在的字段，
+                    // 保留用户在 CC Switch 里改过的其余内容（如 notes、category）。
+                    if existing.settings_config != settings_config || existing.name != name {
+                        let mut provider = existing;
+                        provider.name = name;
+                        provider.settings_config =
+                            merge_zcode_settings(&provider.settings_config, &settings_config);
+                        if let Err(e) = state.db.save_provider(&AppType::ZCode, &provider) {
+                            log::warn!(
+                                "Failed to update ZCode provider '{id}' from live config: {e}"
+                            );
+                        } else {
+                            updated += 1;
+                            log::info!("Updated ZCode provider '{id}' from live config");
+                        }
+                    }
+                }
+                Ok(None) => {
+                    log::warn!("ZCode provider '{id}' disappeared while importing live config")
+                }
+                Err(e) => log::warn!("Failed to look up ZCode provider '{id}': {e}"),
+            }
+            continue;
+        }
+
+        let mut provider = Provider::with_id(id.clone(), name, settings_config, None);
+        provider.meta = Some(crate::provider::ProviderMeta {
+            live_config_managed: Some(true),
+            ..Default::default()
+        });
+
+        if let Err(e) = state.db.save_provider(&AppType::ZCode, &provider) {
+            log::warn!("Failed to import ZCode provider '{id}': {e}");
+            continue;
+        }
+
+        imported += 1;
+        log::info!("Imported ZCode provider '{id}' from live config");
+    }
+
+    Ok(imported + updated)
+}
+
+/// 把 live 里的字段合并进已有配置：live 有的一律以 live 为准，
+/// live 没有的保留数据库里的原值。顶层做浅合并即可——ZCode 的
+/// 一条规则就是一层已知字段加一层 `extra`。
+fn merge_zcode_settings(current: &Value, live: &Value) -> Value {
+    let (Some(current_obj), Some(live_obj)) = (current.as_object(), live.as_object()) else {
+        return live.clone();
+    };
+    let mut merged = current_obj.clone();
+    for (key, value) in live_obj {
+        merged.insert(key.clone(), value.clone());
+    }
+    Value::Object(merged)
 }
 
 /// Import all providers from OpenClaw live config to database

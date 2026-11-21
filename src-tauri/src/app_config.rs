@@ -26,6 +26,8 @@ macro_rules! app_flags {
             #[serde(default)]
             pub copilot: bool,
             #[serde(default)]
+            pub zcode: bool,
+            #[serde(default)]
             pub claude: bool,
             #[serde(default)]
             pub codex: bool,
@@ -45,7 +47,7 @@ macro_rules! app_flags {
 
         impl $name {
             /// [`Self::enabled_apps`] 的顺序：同步、移除都按它走，不要随意调整
-            const ORDER: [AppType; 14] = [
+            const ORDER: [AppType; 15] = [
                 AppType::Claude,
                 AppType::Codex,
                 AppType::Gemini,
@@ -60,6 +62,7 @@ macro_rules! app_flags {
                 AppType::Hermes,
                 AppType::Pi,
                 AppType::Omp,
+                AppType::ZCode,
             ];
 
             fn slot(&mut self, app: &AppType) -> Option<&mut bool> {
@@ -78,6 +81,7 @@ macro_rules! app_flags {
                     AppType::Agy => Some(&mut self.agy),
                     AppType::Copilot => Some(&mut self.copilot),
                     AppType::WorkBuddy => Some(&mut self.workbuddy),
+                    AppType::ZCode => Some(&mut self.zcode),
                     AppType::OpenClaw | AppType::ClaudeDesktop => None,
                 }
             }
@@ -326,6 +330,7 @@ pub enum AppType {
     Omp,
     Copilot,
     WorkBuddy,
+    ZCode,
 }
 
 /// 一个应用支持哪些功能。每个应用都在 [`AppType::spec`] 里写全每一项，新增应用时漏写
@@ -466,6 +471,13 @@ impl AppType {
                 route_mode: false,
                 stack: false,
             },
+            AppType::ZCode => AppSpec {
+                id: "zcode",
+                additive: true,
+                local_proxy: false,
+                route_mode: false,
+                stack: false,
+            },
         }
     }
 
@@ -474,7 +486,7 @@ impl AppType {
     }
 
     /// 所有应用，按默认顺序
-    pub const ALL: [AppType; 16] = [
+    pub const ALL: [AppType; 17] = [
         AppType::Claude,
         AppType::ClaudeDesktop,
         AppType::Codex,
@@ -491,6 +503,7 @@ impl AppType {
         AppType::Omp,
         AppType::Copilot,
         AppType::WorkBuddy,
+        AppType::ZCode,
     ];
 
     pub fn all() -> impl Iterator<Item = AppType> {
@@ -528,10 +541,11 @@ impl FromStr for AppType {
                 Ok(AppType::Copilot)
             }
             "workbuddy" | "work-buddy" | "work_buddy" => Ok(AppType::WorkBuddy),
+            "zcode" | "z-code" | "z_code" => Ok(AppType::ZCode),
             other => Err(AppError::localized(
                 "unsupported_app",
-                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp, copilot, workbuddy。"),
-                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp, copilot, workbuddy."),
+                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp, copilot, workbuddy, zcode。"),
+                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp, copilot, workbuddy, zcode."),
             )),
         }
     }
@@ -886,6 +900,7 @@ impl MultiAppConfig {
             | AppType::Mcode
             | AppType::Kimi
             | AppType::Dsh
+            | AppType::ZCode
             | AppType::Agy
             | AppType::Omp
             | AppType::Copilot
@@ -937,6 +952,7 @@ impl MultiAppConfig {
                 | AppType::Mcode
                 | AppType::Kimi
                 | AppType::Dsh
+                | AppType::ZCode
                 | AppType::Agy
                 | AppType::Omp
                 | AppType::Copilot

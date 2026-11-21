@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import type { AppId } from "@/lib/api";
 import type { ProviderPreset } from "@/config/claudeProviderPresets";
 import type { CodexProviderPreset } from "@/config/codexProviderPresets";
+import type { ZCodeProviderPreset } from "@/config/zcodeProviderPresets";
 import type { ProviderMeta, EndpointCandidate } from "@/types";
 import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
 
@@ -155,5 +156,46 @@ export function useSpeedTestEndpoints({
     return Array.from(map.values());
   }, [appId, codexBaseUrl, initialData, selectedPresetId, presetEntries]);
 
-  return appId === "codex" ? codexEndpoints : claudeEndpoints;
+  const zcodeEndpoints = useMemo<EndpointCandidate[]>(() => {
+    if (appId !== "zcode") return [];
+
+    const map = new Map<string, EndpointCandidate>();
+    const add = (url?: string, isCustom = false) => {
+      if (!url) return;
+      const sanitized = url.trim().replace(/\/+$/, "");
+      if (!sanitized || map.has(sanitized)) return;
+      map.set(sanitized, { url: sanitized, isCustom });
+    };
+
+    // 1. 当前 Base URL
+    if (baseUrl) {
+      add(baseUrl);
+    }
+
+    // 2. 编辑模式：初始数据中的 options.baseURL
+    const initialOptions = initialData?.settingsConfig as
+      | { options?: { baseURL?: string } }
+      | undefined;
+    if (typeof initialOptions?.options?.baseURL === "string") {
+      add(initialOptions.options.baseURL);
+    }
+
+    // 3. 选中预设的 baseURL 与候选端点
+    if (selectedPresetId && selectedPresetId !== "custom") {
+      const entry = presetEntries.find((item) => item.id === selectedPresetId);
+      if (entry) {
+        const preset = entry.preset as ZCodeProviderPreset & {
+          endpointCandidates?: string[];
+        };
+        add(preset.settingsConfig?.options?.baseURL);
+        preset.endpointCandidates?.forEach((url) => add(url));
+      }
+    }
+
+    return Array.from(map.values());
+  }, [appId, baseUrl, initialData, selectedPresetId, presetEntries]);
+
+  if (appId === "codex") return codexEndpoints;
+  if (appId === "zcode") return zcodeEndpoints;
+  return claudeEndpoints;
 }

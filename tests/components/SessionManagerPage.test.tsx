@@ -591,6 +591,7 @@ describe("SessionManagerPage", () => {
         omp: false,
         copilot: false,
         workbuddy: false,
+        zcode: false,
       },
     });
     renderPage("codex");

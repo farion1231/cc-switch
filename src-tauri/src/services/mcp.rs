@@ -400,6 +400,7 @@ impl McpService {
             AppType::Agy => mcp::agy::sync(&server.id, Some(&server.server))?,
             AppType::Omp => mcp::sync_single_server_to_omp(&server.id, &server.server)?,
             AppType::WorkBuddy => mcp::workbuddy::sync(&server.id, Some(&server.server))?,
+            AppType::ZCode => mcp::sync_single_server_to_zcode(&server.id, &server.server)?,
         }
         Ok(())
     }
@@ -448,6 +449,7 @@ impl McpService {
             AppType::Agy => mcp::agy::sync(id, None)?,
             AppType::Omp => mcp::remove_server_from_omp(id)?,
             AppType::WorkBuddy => mcp::workbuddy::sync(id, None)?,
+            AppType::ZCode => mcp::remove_server_from_zcode(id)?,
         }
         Ok(())
     }
@@ -594,6 +596,7 @@ impl McpService {
             AppType::GrokBuild => mcp::import_from_grokbuild,
             AppType::OpenCode => mcp::import_from_opencode,
             AppType::Hermes => mcp::import_from_hermes,
+            AppType::ZCode => mcp::import_from_zcode,
             AppType::Mcode => return mcp::mcode::import(state),
             AppType::Kimi => return mcp::kimi::import(state),
             AppType::Dsh => return mcp::dsh::import(state),

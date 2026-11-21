@@ -291,6 +291,11 @@ impl ApiFormat {
             (AppType::Copilot, OpenAiChat) => Some("completions"),
             (AppType::Copilot, OpenAiResponses) => Some("responses"),
             (AppType::WorkBuddy, OpenAiChat) => Some("openai-completions"),
+            // ZCode 的个人规则用 `kind` 选协议：anthropic-messages /
+            // openai-chat-completions / openai-responses（ZCode 原生取值）。
+            (AppType::ZCode, Anthropic) => Some("anthropic-messages"),
+            (AppType::ZCode, OpenAiChat) => Some("openai-chat-completions"),
+            (AppType::ZCode, OpenAiResponses) => Some("openai-responses"),
             _ => None,
         }
     }
@@ -428,6 +433,7 @@ pub(crate) fn build_provider_from_request(
         AppType::Gemini => build_gemini_settings(request),
         AppType::GrokBuild => build_grokbuild_settings(request)?,
         AppType::OpenCode => build_opencode_settings(request, api_format),
+        AppType::ZCode => build_zcode_settings(request, api_format),
         AppType::OpenClaw => build_additive_app_settings(request, api_format),
         AppType::Hermes => build_hermes_settings(request, api_format),
         AppType::Pi => build_pi_settings(request, api_format)?,
@@ -1031,6 +1037,41 @@ fn build_opencode_settings(
         "options": options,
         "models": models
     })
+}
+
+/// Build settings for ZCode (`~/.zcode/v2/provider_config.json` 的个人规则)。
+/// 结构与 OpenCode 同类：`kind` 指定协议，凭据放在 `options.baseURL` / `options.apiKey`。
+fn build_zcode_settings(
+    request: &DeepLinkImportRequest,
+    api_format: Option<ApiFormat>,
+) -> serde_json::Value {
+    let endpoint = get_primary_endpoint(request);
+
+    let mut options = serde_json::Map::new();
+    if !endpoint.is_empty() {
+        options.insert("baseURL".to_string(), json!(endpoint));
+    }
+    if let Some(api_key) = &request.api_key {
+        options.insert("apiKey".to_string(), json!(api_key));
+    }
+
+    let mut models = serde_json::Map::new();
+    if let Some(model) = &request.model {
+        models.insert(model.clone(), json!({}));
+    }
+
+    let mut config = serde_json::Map::new();
+    config.insert(
+        "name".to_string(),
+        json!(request.name.clone().unwrap_or_default()),
+    );
+    config.insert(
+        "kind".to_string(),
+        json!(native_protocol(&AppType::ZCode, api_format)),
+    );
+    config.insert("options".to_string(), json!(options));
+    config.insert("models".to_string(), json!(models));
+    config.into()
 }
 
 /// Build settings for OpenClaw (camelCase live config).

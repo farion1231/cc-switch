@@ -19,3 +19,4 @@ pub mod dsh;
 pub mod kimi;
 pub mod mcode;
 pub mod workbuddy;
+pub mod zcode;
