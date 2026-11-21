@@ -524,6 +524,9 @@ pub fn run() {
                 && !crate::settings::get_settings().silent_startup
             {
                 let window = webview.window();
+                if let Some(main) = webview.app_handle().get_webview_window("main") {
+                    window_fit::fit_to_work_area(&main);
+                }
                 if window.show().is_ok() {
                     let _ = window.emit("main-window-visibility-changed", ());
                 }
@@ -719,6 +722,7 @@ pub fn run() {
                         {
                             let _ = window.set_skip_taskbar(false);
                         }
+                        window_fit::fit_to_work_area(&window);
                         let _ = window.show();
                         let _ = window.set_focus();
                     }
