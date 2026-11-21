@@ -67,7 +67,9 @@ fn create_backup(conflicts: &[EnvConflict]) -> Result<BackupInfo, String> {
 
 /// Get backup directory path
 pub(crate) fn backup_dir() -> Result<PathBuf, String> {
-    Ok(crate::config::get_home_dir().join(".cc-switch").join("backups"))
+    Ok(crate::config::get_home_dir()
+        .join(".cc-switch")
+        .join("backups"))
 }
 
 /// Delete a single environment variable
