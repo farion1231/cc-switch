@@ -928,3 +928,53 @@ fn second_pass_may_relabel_across_kinds_once() {
     assert_eq!(third.redacted, second.redacted);
     assert_eq!(third.count, 0);
 }
+
+#[test]
+fn keyword_gate_preserves_unicode_lowercase_and_custom_keywords() {
+    use super::secrets::SecretDetector;
+    for keywords in [r#"["key", "i", "s"]"#, r#"["éclair", "ος", "密钥"]"#] {
+        let config = format!(
+            r#"[[rules]]
+id = "unicode"
+regex = 'abc[0-9]+'
+keywords = {keywords}
+"#
+        );
+        let detector = SecretDetector::from_gitleaks_toml(&config);
+        for text in [
+            "中文，KEY。",
+            "KEY",
+            "İ",
+            "ſ",
+            "ÉCLAIR",
+            "ΟΣ",
+            "这里是密钥",
+            "🦀",
+        ] {
+            assert_eq!(
+                detector.active_rules(text),
+                detector.active_rules_naive(text),
+                "{text}"
+            );
+        }
+    }
+}
+
+#[test]
+fn pii_prechecks_preserve_digit_free_email_and_numeric_entities() {
+    for (text, kind) in [
+        ("联系 alice@example.com，谢谢", Kind::Email),
+        ("电话 13800138000", Kind::Phone),
+        ("地址 192.168.1.2", Kind::Ip),
+        ("卡号 4111111111111111", Kind::BankCard),
+        ("身份证 11010519491231002X", Kind::IdCard),
+    ] {
+        assert!(
+            super::pii::detect(text)
+                .iter()
+                .any(|span| span.kind == kind),
+            "{text}"
+        );
+    }
+    assert!(super::pii::detect("纯中文和普通标点。没有个人资料").is_empty());
+}
