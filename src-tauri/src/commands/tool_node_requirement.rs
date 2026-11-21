@@ -18,9 +18,9 @@ pub struct NodeRequirementGap {
 pub(super) async fn update_node_gap(
     client: &reqwest::Client,
     tool: &str,
+    package: &str,
     target: &str,
 ) -> Option<NodeRequirementGap> {
-    let package = tool_spec(tool).npm_package?;
     // MiniMax Code 的官方 installer 在系统 Node 不达标时会自带一份 Node。
     if tool == "mcode" {
         return None;
@@ -42,7 +42,19 @@ pub(super) async fn update_node_gap(
 
 /// 执行升级前的检查：目标是 `latest`（`npm i -g <pkg>@latest` 与各家 self-update 的稳定通道）。
 pub(super) async fn ensure_update_node(tool: &str) -> Result<(), String> {
-    let Some(package) = tool_spec(tool).npm_package else {
+    #[cfg(target_os = "windows")]
+    if wsl_distro_for_tool(tool).is_some() {
+        return Ok(());
+    }
+    let version = if tool == "opencode" {
+        tokio::task::spawn_blocking(|| local_tool_version("opencode"))
+            .await
+            .ok()
+            .flatten()
+    } else {
+        None
+    };
+    let Some(package) = tool_version::npm_package_for_version(tool, version.as_deref()) else {
         return Ok(());
     };
     let client = crate::proxy::http_client::get();
@@ -52,7 +64,7 @@ pub(super) async fn ensure_update_node(tool: &str) -> Result<(), String> {
     else {
         return Ok(());
     };
-    match update_node_gap(&client, tool, &latest).await {
+    match update_node_gap(&client, tool, package, &latest).await {
         Some(gap) => {
             let name = tool_spec(tool).display_name;
             Err(format!(

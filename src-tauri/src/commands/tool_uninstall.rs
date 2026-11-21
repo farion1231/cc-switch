@@ -219,7 +219,7 @@ fn brew_uninstall_command(tool: &str, real: &str) -> Result<Option<String>, Stri
                 ],
                 "codex" => &[("/Caskroom/", "codex")],
                 "gemini" => &[("/Cellar/", "gemini-cli")],
-                "opencode" => &[("/Cellar/", "opencode")],
+                "opencode" => &[("/Cellar/", "opencode"), ("/Cellar/", "opencode-v2")],
                 "agy" => &[("/Caskroom/", "antigravity-cli")],
                 "copilot" => &[("/Caskroom/", "copilot-cli")],
                 _ => &[],
@@ -282,14 +282,19 @@ fn manager_next_to(entry: &str, manager: &str) -> Option<String> {
     }
 }
 
-/// Read package metadata instead of assuming every script or native binary is npm-owned.
-/// The explicit prefix also supports user npm prefixes without a sibling npm executable.
-fn npm_prefix(tool: &str, inst: &ToolInstallation) -> Option<PathBuf> {
-    npm_prefix_for_layout(tool, inst, cfg!(target_os = "windows"))
+fn npm_uninstall_packages(tool: &str) -> impl Iterator<Item = &'static str> {
+    tool_spec(tool)
+        .npm_package
+        .into_iter()
+        .chain((tool == "opencode").then_some(OPENCODE_V2_NPM_PACKAGE))
 }
 
-fn npm_prefix_for_layout(tool: &str, inst: &ToolInstallation, windows: bool) -> Option<PathBuf> {
-    let package = tool_spec(tool).npm_package?;
+/// Verify both the global layout and which package owns the selected launcher.
+fn npm_installation_for_layout(
+    tool: &str,
+    inst: &ToolInstallation,
+    windows: bool,
+) -> Option<(PathBuf, &'static str)> {
     let launcher = Path::new(&inst.path);
     let bin = launcher.parent()?;
     // A local node_modules/.bin entry is never a global npm launcher. Pi's
@@ -310,27 +315,39 @@ fn npm_prefix_for_layout(tool: &str, inst: &ToolInstallation, windows: bool) -> 
     } else {
         "lib/node_modules"
     });
-    let package_dir = std::fs::canonicalize(modules.join(package)).ok()?;
-    let value: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(package_dir.join("package.json")).ok()?).ok()?;
-    if value.get("name").and_then(|name| name.as_str()) != Some(package) {
-        return None;
-    }
-    let owns_target = inst.real.starts_with(&package_dir);
-    // Windows npm shims are files, not symlinks. Their package reference is
-    // required as well as the manifest and the global launcher layout.
-    let owns_shim = windows
-        && !is_native_executable(launcher)
-        && std::fs::read_to_string(launcher).is_ok_and(|script| {
-            script
-                .replace('\\', "/")
-                .contains(&format!("node_modules/{package}/"))
-        });
-    (owns_target || owns_shim).then(|| prefix.to_path_buf())
+    // Windows shims are files, so verify their package reference as well as the manifest.
+    let shim = (windows && !is_native_executable(launcher))
+        .then(|| std::fs::read_to_string(launcher).ok())
+        .flatten()
+        .map(|script| script.replace('\\', "/"));
+    let mut owners = npm_uninstall_packages(tool).filter(|package| {
+        let Ok(package_dir) = std::fs::canonicalize(modules.join(package)) else {
+            return false;
+        };
+        let name = std::fs::read(package_dir.join("package.json"))
+            .ok()
+            .and_then(|data| serde_json::from_slice::<serde_json::Value>(&data).ok());
+        if name
+            .as_ref()
+            .and_then(|value| value.get("name"))
+            .and_then(serde_json::Value::as_str)
+            != Some(*package)
+        {
+            return false;
+        }
+        inst.real.starts_with(&package_dir)
+            || shim
+                .as_ref()
+                .is_some_and(|script| script.contains(&format!("node_modules/{package}/")))
+    });
+    let package = owners.next()?;
+    owners
+        .next()
+        .is_none()
+        .then(|| (prefix.to_path_buf(), package))
 }
 
 fn node_package_uninstall_command(tool: &str, inst: &ToolInstallation) -> Option<String> {
-    let package = tool_spec(tool).npm_package?;
     // A source badge or a sibling manager is not proof of package ownership.
     // pnpm/Bun commands remain available manually for the clients that document
     // them; until their global roots are verified, do not guess or fall back to npm.
@@ -353,7 +370,7 @@ fn node_package_uninstall_command(tool: &str, inst: &ToolInstallation) -> Option
     {
         return None;
     }
-    let prefix = npm_prefix(tool, inst)?;
+    let (prefix, package) = npm_installation_for_layout(tool, inst, cfg!(target_os = "windows"))?;
     let npm = manager_next_to(&inst.path, "npm").or_else(|| {
         resolve_path_default(
             "npm",
@@ -571,15 +588,12 @@ fn wsl_plan(
     wsl_plan_and_process(tool, distro, pref).map(|(plan, _)| plan)
 }
 
-/// The plan plus the exact process it describes. Without an explicit shell, the probe
-/// tries the version check's flags in order and the removal reuses the winning flag.
 #[cfg(target_os = "windows")]
-fn wsl_plan_and_process(
+fn probe_wsl_installation(
     tool: &str,
     distro: &str,
-    pref: Option<&WslShellPreferenceInput>,
-) -> Result<(ToolUninstallPlan, std::process::Command), String> {
-    let shell = WslShell::from_pref(pref)?;
+    shell: &WslShell<'_>,
+) -> Result<String, String> {
     let probe = wsl_probe_script(tool);
     let child = wsl_process(distro, &shell.probe_args(&probe))?
         .spawn()
@@ -589,7 +603,63 @@ fn wsl_plan_and_process(
         CommandDeadline::from_timeout(Some(INSTALL_PROBE_TIMEOUT)),
     )?;
     finish_lifecycle_output(&output)?;
-    let stdout = decode_command_output(&output.stdout);
+    Ok(decode_command_output(&output.stdout))
+}
+
+#[cfg(target_os = "windows")]
+pub(super) fn wsl_installed_paths(
+    tool: &str,
+    distro: &str,
+    pref: &WslShellPreferenceInput,
+) -> Option<(PathBuf, PathBuf)> {
+    let shell = WslShell::from_pref(Some(pref)).ok()?;
+    let stdout = probe_wsl_installation(tool, distro, &shell).ok()?;
+    let (entry, real) = parse_wsl_installation(&stdout).ok()?;
+    Some((PathBuf::from(entry), PathBuf::from(real)))
+}
+
+#[cfg(target_os = "windows")]
+pub(super) fn wsl_opencode_update_process(
+    distro: &str,
+    pref: Option<&WslShellPreferenceInput>,
+) -> Result<std::process::Command, String> {
+    let shell = WslShell::from_pref(pref)?;
+    let stdout = probe_wsl_installation("opencode", distro, &shell)?;
+    let (entry, real) = parse_wsl_installation(&stdout)?;
+    let (prefix, package) = verified_wsl_opencode_npm_owner(&entry, &real)
+        .ok_or("Use the original installer or package manager to update OpenCode.")?;
+    let auto_flag = match shell {
+        WslShell::Explicit { .. } => None,
+        WslShell::Auto { .. } => Some(parse_wsl_shell_flag(&stdout)?),
+    };
+    // Check the anchored executable again just before starting the update.
+    let payload = concat!(
+        r#"entry=$1; expected=$2; prefix=$3; package=$4; "#,
+        r#"[ "$(readlink -f -- "$entry")" = "$expected" ] || exit 1; "#,
+        r#"if test -x "$prefix/bin/npm"; then PATH="$prefix/bin:$PATH"; export PATH; fi; "#,
+        r#"npm i -g --prefix "$prefix" "$package@latest" --ignore-scripts=false --include=optional "--allow-scripts=$package""#,
+    );
+    let script = format!(
+        "sh -c {} cc-switch {} {} {} {}",
+        shell_single_quote(payload),
+        shell_single_quote(&entry),
+        shell_single_quote(&real),
+        shell_single_quote(prefix),
+        shell_single_quote(package),
+    );
+    wsl_process(distro, &shell.run_args(&script, auto_flag))
+}
+
+/// The plan plus the exact process it describes. Without an explicit shell, the probe
+/// tries the version check's flags in order and the removal reuses the winning flag.
+#[cfg(target_os = "windows")]
+fn wsl_plan_and_process(
+    tool: &str,
+    distro: &str,
+    pref: Option<&WslShellPreferenceInput>,
+) -> Result<(ToolUninstallPlan, std::process::Command), String> {
+    let shell = WslShell::from_pref(pref)?;
+    let stdout = probe_wsl_installation(tool, distro, &shell)?;
     let (path, real_path) = parse_wsl_installation(&stdout)?;
     let auto_flag = match shell {
         WslShell::Explicit { .. } => None,
@@ -760,12 +830,12 @@ fn wsl_uninstall_command(tool: &str, path: &str, real: &str) -> Result<String, S
     let removal = if tool == "hermes" {
         format!("{} uninstall --yes", shell_single_quote(path))
     } else {
-        let package = tool_spec(tool)
-            .npm_package
-            .ok_or("Use the original installer to uninstall this WSL application.")?;
-        let (prefix, _) = real
-            .split_once(&format!("/lib/node_modules/{package}/"))
-            .filter(|(prefix, _)| !prefix.is_empty() && path == format!("{prefix}/bin/{tool}"))
+        let (prefix, package) = npm_uninstall_packages(tool)
+            .find_map(|package| {
+                let (prefix, _) = real.split_once(&format!("/lib/node_modules/{package}/"))?;
+                (!prefix.is_empty() && path == format!("{prefix}/bin/{tool}"))
+                    .then_some((prefix, package))
+            })
             .ok_or(
                 "Use the original installer or package manager to uninstall this WSL application.",
             )?;
@@ -1052,16 +1122,59 @@ mod tests {
         std::fs::write(package.join("package.json"), r#"{"name":"@openai/codex"}"#).unwrap();
         let executable = temp.path().join("codex.cmd");
         std::fs::write(&executable, "unrelated launcher").unwrap();
-        assert!(npm_prefix("codex", &installation(&executable)).is_none());
+        assert!(npm_installation_for_layout("codex", &installation(&executable), true).is_none());
         std::fs::write(
             &executable,
             r#"node "%dp0%\node_modules\@openai\codex\bin\codex.js""#,
         )
         .unwrap();
         assert_eq!(
-            npm_prefix_for_layout("codex", &installation(&executable), true),
-            Some(temp.path().to_path_buf())
+            npm_installation_for_layout("codex", &installation(&executable), true),
+            Some((temp.path().to_path_buf(), "@openai/codex"))
         );
+    }
+
+    #[test]
+    fn opencode_uninstall_matches_the_selected_package_when_both_are_installed() {
+        let temp = tempfile::tempdir().unwrap();
+        let prefix = temp.path();
+        let modules = prefix.join("lib/node_modules");
+        let launcher = prefix.join("bin/opencode");
+        std::fs::create_dir_all(launcher.parent().unwrap()).unwrap();
+        std::fs::write(&launcher, "launcher").unwrap();
+        for package in ["opencode-ai", "@opencode/cli"] {
+            let package_dir = modules.join(package);
+            std::fs::create_dir_all(&package_dir).unwrap();
+            std::fs::write(
+                package_dir.join("package.json"),
+                format!(r#"{{"name":"{package}"}}"#),
+            )
+            .unwrap();
+        }
+        for package in ["opencode-ai", "@opencode/cli"] {
+            let executable = modules.join(package).join("opencode");
+            std::fs::write(&executable, "launcher").unwrap();
+            let inst = ToolInstallation {
+                real: executable.canonicalize().unwrap(),
+                ..installation(&launcher)
+            };
+            assert_eq!(
+                npm_installation_for_layout("opencode", &inst, false),
+                Some((prefix.to_path_buf(), package))
+            );
+            let real = format!("/home/test/.npm/lib/node_modules/{package}/opencode");
+            let wsl_command =
+                wsl_uninstall_command("opencode", "/home/test/.npm/bin/opencode", &real).unwrap();
+            let removal = format!(
+                "npm uninstall -g --prefix {} {package}",
+                shell_single_quote("/home/test/.npm")
+            );
+            let escaped = shell_single_quote(&removal);
+            assert!(
+                wsl_command.contains(&escaped[1..escaped.len() - 1]),
+                "{wsl_command}"
+            );
+        }
     }
 
     #[test]
@@ -1085,14 +1198,16 @@ mod tests {
                 real: std::fs::canonicalize(&executable).unwrap(),
                 ..installation(&local_bin)
             };
-            assert!(npm_prefix_for_layout("pi", &inst, windows).is_none());
+            assert!(npm_installation_for_layout("pi", &inst, windows).is_none());
             // Even a direct package target is not a global installation.
-            assert!(npm_prefix_for_layout("pi", &installation(&executable), windows).is_none());
+            assert!(
+                npm_installation_for_layout("pi", &installation(&executable), windows).is_none()
+            );
 
             let bin = temp.path().join(".local/bin/pi");
             std::fs::create_dir_all(bin.parent().unwrap()).unwrap();
             std::fs::write(&bin, "#!/bin/sh\nexec release/node_modules/.bin/pi").unwrap();
-            assert!(npm_prefix_for_layout("pi", &installation(&bin), windows).is_none());
+            assert!(npm_installation_for_layout("pi", &installation(&bin), windows).is_none());
         }
     }
 
@@ -1109,12 +1224,15 @@ mod tests {
             path: prefix.join("bin/codex").to_string_lossy().into_owned(),
             ..installation(&executable)
         };
-        assert_eq!(npm_prefix_for_layout("codex", &inst, false), Some(prefix));
+        assert_eq!(
+            npm_installation_for_layout("codex", &inst, false),
+            Some((prefix, "@openai/codex"))
+        );
         let unrelated = ToolInstallation {
             path: temp.path().join("bin/codex").to_string_lossy().into_owned(),
             ..inst
         };
-        assert!(npm_prefix_for_layout("codex", &unrelated, false).is_none());
+        assert!(npm_installation_for_layout("codex", &unrelated, false).is_none());
     }
 
     #[test]
@@ -1484,6 +1602,7 @@ mod tests {
             ("codex", "Caskroom", "codex", "--cask"),
             ("gemini", "Cellar", "gemini-cli", "--formula"),
             ("opencode", "Cellar", "opencode", "--formula"),
+            ("opencode", "Cellar", "opencode-v2", "--formula"),
             ("agy", "Caskroom", "antigravity-cli", "--cask"),
         ] {
             let real = format!("{prefix}/{location}/{token}/1/bin/{tool}");

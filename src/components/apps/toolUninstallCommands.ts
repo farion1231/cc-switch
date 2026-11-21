@@ -28,7 +28,17 @@ const COMMANDS: Record<UninstallMethod, UninstallCommand[]> = {
     { tool: "codex", command: "npm uninstall -g @openai/codex" },
     { tool: "gemini", command: "npm uninstall -g @google/gemini-cli" },
     { tool: "grok", command: "npm uninstall -g @xai-official/grok" },
-    { tool: "opencode", command: "npm uninstall -g opencode-ai" },
+    {
+      tool: "opencode",
+      command: "npm uninstall -g opencode-ai",
+      variant: "opencode-ai",
+    },
+    {
+      tool: "opencode",
+      command: "npm uninstall -g @opencode/cli",
+      environments: ["macos", "linux"],
+      variant: "@opencode/cli",
+    },
     { tool: "openclaw", command: "npm uninstall -g openclaw" },
     { tool: "pi", command: "npm uninstall -g @earendil-works/pi-coding-agent" },
     { tool: "mcode", command: "npm uninstall -g @minimax-ai/code" },
@@ -36,7 +46,17 @@ const COMMANDS: Record<UninstallMethod, UninstallCommand[]> = {
     { tool: "copilot", command: "npm uninstall -g @github/copilot" },
   ],
   pnpm: [
-    { tool: "opencode", command: "pnpm remove -g opencode-ai" },
+    {
+      tool: "opencode",
+      command: "pnpm remove -g opencode-ai",
+      variant: "opencode-ai",
+    },
+    {
+      tool: "opencode",
+      command: "pnpm remove -g @opencode/cli",
+      environments: ["macos", "linux"],
+      variant: "@opencode/cli",
+    },
     { tool: "openclaw", command: "pnpm remove -g openclaw" },
   ],
   bun: [
@@ -44,6 +64,13 @@ const COMMANDS: Record<UninstallMethod, UninstallCommand[]> = {
       tool: "opencode",
       command: "bun remove -g opencode-ai",
       environments: ["macos", "linux"],
+      variant: "opencode-ai",
+    },
+    {
+      tool: "opencode",
+      command: "bun remove -g @opencode/cli",
+      environments: ["macos", "linux"],
+      variant: "@opencode/cli",
     },
     { tool: "openclaw", command: "bun remove -g openclaw" },
     { tool: "omp", command: "bun remove -g @oh-my-pi/pi-coding-agent" },
@@ -53,6 +80,12 @@ const COMMANDS: Record<UninstallMethod, UninstallCommand[]> = {
       tool: "gemini",
       command: "brew uninstall --formula gemini-cli",
       environments: ["macos", "linux"],
+    },
+    {
+      tool: "opencode",
+      command: "brew uninstall --formula anomalyco/tap/opencode-v2",
+      environments: ["macos", "linux"],
+      variant: "opencode-v2",
     },
     {
       tool: "opencode",

@@ -19,7 +19,7 @@ export const APP_DISPLAY_NAME: Record<AppId, string> = {
   dsh: "DeepSeek Harness",
   agy: "Antigravity",
   omp: "Oh My Pi",
-  copilot: "Copilot CLI",
+  copilot: "GitHub Copilot CLI",
   workbuddy: "WorkBuddy",
 };
 

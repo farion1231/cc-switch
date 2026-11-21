@@ -31,6 +31,7 @@ pub(super) fn build_tool_lifecycle_command(
     tools: &[&str],
     action: ToolLifecycleAction,
     wsl_shell_by_tool: Option<&HashMap<String, WslShellPreferenceInput>>,
+    confirmed_update: Option<&str>,
 ) -> Result<String, String> {
     let mut lines = Vec::new();
 
@@ -63,6 +64,7 @@ pub(super) fn build_tool_lifecycle_command(
             action,
             pref.and_then(|p| p.wsl_shell.as_deref()),
             pref.and_then(|p| p.wsl_shell_flag.as_deref()),
+            confirmed_update,
         )?;
         lines.push(line);
 
@@ -486,10 +488,51 @@ fn wsl_tool_action_shell_command(tool: &str, action: ToolLifecycleAction) -> Opt
                 Some(command)
             }
         }
+        ToolLifecycleAction::Update if tool == "opencode" => bare_official_update_command(tool),
         ToolLifecycleAction::Update => {
             tool_action_shell_command_for_shell(tool, action, LifecycleCommandShell::Posix)
         }
     }
+}
+
+pub(super) fn update_confirmation_token(
+    tool: &str,
+    command: &str,
+    installs: &[ToolInstallation],
+) -> String {
+    use sha2::{Digest, Sha256};
+    let mut entries: Vec<_> = installs.iter().collect();
+    entries.sort_by(|left, right| left.path.cmp(&right.path));
+    let mut digest = Sha256::new();
+    digest.update(tool.as_bytes());
+    digest.update([0]);
+    digest.update(command.as_bytes());
+    for entry in entries {
+        digest.update([0]);
+        digest.update(entry.path.as_bytes());
+        digest.update([0]);
+        digest.update(entry.real.as_os_str().as_encoded_bytes());
+        digest.update([u8::from(entry.is_path_default)]);
+    }
+    format!("{:x}", digest.finalize())
+}
+
+fn checked_update_command(
+    tool: &str,
+    installs: &[ToolInstallation],
+    confirmed_update: Option<&str>,
+) -> Result<String, String> {
+    let command = match resolve_update_command(tool, installs) {
+        UpdateCommand::Anchored(command) | UpdateCommand::Static(command) => command,
+        UpdateCommand::Unmanaged => return Err(unmanaged_update_error(tool, installs)),
+    };
+    if installs.len() >= 2 || confirmed_update.is_some() {
+        let current = update_confirmation_token(tool, &command, installs);
+        if confirmed_update != Some(current.as_str()) {
+            return Err("The installation changed or needs review. Check the installed versions and confirm the update again.".to_string());
+        }
+    }
+    Ok(command)
 }
 
 fn build_tool_action_line(
@@ -497,6 +540,7 @@ fn build_tool_action_line(
     action: ToolLifecycleAction,
     wsl_shell: Option<&str>,
     wsl_shell_flag: Option<&str>,
+    confirmed_update: Option<&str>,
 ) -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
@@ -508,6 +552,14 @@ fn build_tool_action_line(
         //    后者在 Windows target 给 hermes 返回 PowerShell installer,且 Windows batch
         //    语义也不适合跨 wsl.exe;这里统一替换为 POSIX 版安装/更新命令。
         if let Some(distro) = wsl_distro_for_tool(tool) {
+            if confirmed_update.is_some() {
+                return Err(
+                    "The installation environment changed. Confirm the update again.".into(),
+                );
+            }
+            if tool == "opencode" && matches!(action, ToolLifecycleAction::Update) {
+                return Err("Run the OpenCode WSL update separately.".into());
+            }
             let command = wsl_tool_action_shell_command(tool, action)
                 .ok_or_else(|| format!("Unsupported tool action target: {tool}"))?;
             return build_wsl_tool_action_line(&distro, &command, wsl_shell, wsl_shell_flag);
@@ -520,12 +572,7 @@ fn build_tool_action_line(
         let command = match action {
             ToolLifecycleAction::Update => {
                 let installs = enumerate_tool_installations(tool);
-                match resolve_update_command(tool, &installs) {
-                    UpdateCommand::Anchored(command) | UpdateCommand::Static(command) => command,
-                    UpdateCommand::Unmanaged => {
-                        return Err(unmanaged_update_error(tool, &installs));
-                    }
-                }
+                checked_update_command(tool, &installs, confirmed_update)?
             }
             ToolLifecycleAction::Install => {
                 static_fallback_command_for(tool, ToolLifecycleAction::Install)
@@ -551,11 +598,17 @@ fn build_tool_action_line(
         let command = match action {
             ToolLifecycleAction::Update => {
                 let installs = enumerate_tool_installations(tool);
-                match resolve_update_command(tool, &installs) {
-                    UpdateCommand::Anchored(command) | UpdateCommand::Static(command) => command,
-                    UpdateCommand::Unmanaged => {
-                        return Err(unmanaged_update_error(tool, &installs));
-                    }
+                let command = checked_update_command(tool, &installs, confirmed_update)?;
+                if confirmed_update.is_some() {
+                    let target = default_install(&installs)
+                        .ok_or("The confirmed update target is unavailable.")?;
+                    format!(
+                        r#"[[ {} -ef {} ]] || {{ echo 'The confirmed update target changed.' >&2; exit 1; }}; {command}"#,
+                        shell_single_quote(&target.path),
+                        shell_single_quote(&target.real.to_string_lossy()),
+                    )
+                } else {
+                    command
                 }
             }
             ToolLifecycleAction::Install => install_command_for(tool),
@@ -1113,6 +1166,14 @@ fn codex_repair_command(_bin_path: &str, _real: &str) -> Option<String> {
 }
 
 #[cfg(not(target_os = "windows"))]
+fn installed_npm_package_for_update(tool: &str, real_target: &str) -> Option<&'static str> {
+    if tool == "opencode" && real_target.contains("/node_modules/@opencode/cli/") {
+        return Some(OPENCODE_V2_NPM_PACKAGE);
+    }
+    tool_spec(tool).npm_package
+}
+
+#[cfg(not(target_os = "windows"))]
 fn package_manager_anchored_command_from_paths(
     tool: &str,
     bin_path: &str,
@@ -1131,7 +1192,7 @@ fn package_manager_anchored_command_from_paths(
         let brew = sibling_bin(bin_path, "brew")?;
         return Some(format!("{} upgrade {formula}", quote_path_if_spaced(&brew)));
     }
-    let pkg = tool_spec(tool).npm_package?;
+    let pkg = installed_npm_package_for_update(tool, real_target)?;
     let source = infer_install_source(Path::new(bin_path));
     // omp 的 npm 包只能由 bun 运行：除 bun 外的 node 管理器装不出能跑的 omp。
     if tool == "omp" && source != "bun" {
@@ -1155,10 +1216,12 @@ fn package_manager_anchored_command_from_paths(
         // self-update，上层会直接锚到 CLI 自身；否则返回 None 走静态兜底。
         _ => return None,
     }
-    anchored_npm_command(
-        bin_path,
-        &format!("i -g {pkg}@latest{}", tool_spec(tool).npm_install_args),
-    )
+    let args = if pkg == OPENCODE_V2_NPM_PACKAGE {
+        " --ignore-scripts=false --include=optional --allow-scripts=@opencode/cli"
+    } else {
+        tool_spec(tool).npm_install_args
+    };
+    anchored_npm_command(bin_path, &format!("i -g {pkg}@latest{args}"))
 }
 
 /// 给定工具、原始 bin 路径（命令行命中的入口）、canonicalize 后的真身路径，
@@ -1253,7 +1316,9 @@ pub(super) fn anchored_command_from_paths(
         // Bun-installed OpenCode upgrades through bun, not npm.
         let npm_scripts_package = match tool {
             "claude" => Some("@anthropic-ai/claude-code"),
-            "opencode" if !real_lower.contains("/.bun/") => Some("opencode-ai"),
+            "opencode" if !real_lower.contains("/.bun/") => {
+                installed_npm_package_for_update(tool, real_target)
+            }
             _ => None,
         };
         if let Some(pkg) = npm_scripts_package {
@@ -1444,11 +1509,55 @@ pub(super) enum UpdateCommand {
     Unmanaged,
 }
 
+pub(super) fn verified_wsl_opencode_npm_owner<'a>(
+    entry: &'a str,
+    real: &str,
+) -> Option<(&'a str, &'static str)> {
+    let prefix = entry
+        .strip_suffix("/bin/opencode")
+        .filter(|prefix| prefix.starts_with('/'))?;
+    let package = ["opencode-ai", OPENCODE_V2_NPM_PACKAGE]
+        .into_iter()
+        .find(|package| real.starts_with(&format!("{prefix}/lib/node_modules/{package}/")))?;
+    Some((prefix, package))
+}
+
+pub(super) fn opencode_update_is_manual(env: &str, installation: Option<(&Path, &Path)>) -> bool {
+    if env == "wsl" {
+        return installation.is_none_or(|(entry, real)| {
+            verified_wsl_opencode_npm_owner(&entry.to_string_lossy(), &real.to_string_lossy())
+                .is_none()
+        });
+    }
+    env == "windows"
+        || (env == "linux"
+            && installation.is_some_and(|(entry, real)| {
+                let is_system_path = |path: &Path| {
+                    let path = path.to_string_lossy();
+                    path.starts_with("/usr/bin/") || path.starts_with("/usr/lib/")
+                };
+                (is_system_path(entry) || is_system_path(real))
+                    && !real.to_string_lossy().contains("/node_modules/")
+            }))
+}
+
 pub(super) fn resolve_update_command(tool: &str, installs: &[ToolInstallation]) -> UpdateCommand {
+    if tool == "opencode"
+        && default_install(installs).is_some_and(|install| {
+            tool_version::npm_package_for_version(tool, install.version.as_deref())
+                == Some(OPENCODE_V2_NPM_PACKAGE)
+                && opencode_update_is_manual(
+                    std::env::consts::OS,
+                    Some((Path::new(&install.path), &install.real)),
+                )
+        })
+    {
+        return UpdateCommand::Unmanaged;
+    }
     if let Some(command) = installs_anchored_command(tool, installs) {
         return UpdateCommand::Anchored(command);
     }
-    if default_install(installs).is_some_and(is_unmanaged_native_install) {
+    if installs.len() >= 2 || default_install(installs).is_some_and(is_unmanaged_native_install) {
         return UpdateCommand::Unmanaged;
     }
     UpdateCommand::Static(static_fallback_command(tool))
@@ -1592,6 +1701,59 @@ pub(super) fn is_conflicting(installs: &[ToolInstallation]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wsl_opencode_requires_a_verified_npm_owner() {
+        let entry = Path::new("/home/test/.local/bin/opencode");
+        assert!(opencode_update_is_manual(
+            "wsl",
+            Some((entry, Path::new("/opt/distro/opencode")))
+        ));
+        assert!(!opencode_update_is_manual(
+            "wsl",
+            Some((
+                entry,
+                Path::new("/home/test/.local/lib/node_modules/@opencode/cli/bin/opencode")
+            ))
+        ));
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn confirmed_upgrade_rejects_a_changed_default_installation() {
+        let installation = |path: &str, is_path_default| ToolInstallation {
+            path: path.into(),
+            real: PathBuf::from(if is_path_default {
+                "/test/first/Cellar/gemini-cli/1.0.0/bin/gemini"
+            } else {
+                "/test/second/Cellar/gemini-cli/1.0.0/bin/gemini"
+            }),
+            version: Some("1.0.0".into()),
+            runnable: true,
+            error: None,
+            exited_with_error: false,
+            source: "system".into(),
+            is_path_default,
+        };
+        let mut installs = [
+            installation("/test/first/bin/gemini", true),
+            installation("/test/second/bin/gemini", false),
+        ];
+        let command = match resolve_update_command("gemini", &installs) {
+            UpdateCommand::Anchored(command) => command,
+            other => panic!("Expected an anchored command, got {other:?}"),
+        };
+        let confirmed = update_confirmation_token("gemini", &command, &installs);
+        assert_eq!(
+            checked_update_command("gemini", &installs, Some(&confirmed)),
+            Ok(command)
+        );
+        assert!(checked_update_command("gemini", &installs, None).is_err());
+        installs[0].is_path_default = false;
+        installs[1].is_path_default = true;
+        assert!(checked_update_command("gemini", &installs, Some(&confirmed)).is_err());
+        assert!(checked_update_command("gemini", &installs[1..], Some(&confirmed)).is_err());
+    }
 
     #[test]
     fn grok_lifecycle_metadata_is_consistent() {
@@ -2727,6 +2889,17 @@ mod tests {
             let cmd = install_command_for("pi");
             assert_eq!(cmd, "npm i -g @earendil-works/pi-coding-agent@latest");
             assert!(!cmd.contains("||"));
+        }
+
+        #[test]
+        fn opencode_v2_npm_upgrade_keeps_the_selected_package() {
+            let bin = "/home/test/.nvm/versions/node/v24/bin/opencode";
+            let real =
+                "/home/test/.nvm/versions/node/v24/lib/node_modules/@opencode/cli/bin/opencode";
+            let command = anchored_command_from_paths("opencode", bin, real).unwrap();
+            assert!(command.contains("npm_config_allow_scripts=@opencode/cli"));
+            assert!(command.contains("npm i -g @opencode/cli@latest"));
+            assert!(!command.contains("opencode-ai"));
         }
 
         #[test]

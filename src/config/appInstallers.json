@@ -1,0 +1,102 @@
+{
+  "claude-desktop": {
+    "homebrew": {
+      "platforms": ["macos"],
+      "command": "brew install --cask claude"
+    }
+  },
+  "claude": {
+    "curl": {
+      "platforms": ["macos", "linux"],
+      "command": "sh -c 'tmp=$(mktemp) || exit; curl -fsSL \"https://claude.ai/install.sh\" -o \"$tmp\" && bash \"$tmp\"; status=$?; rm -f -- \"$tmp\"; exit \"$status\"'"
+    },
+    "homebrew": {
+      "platforms": ["macos"],
+      "command": "brew install --cask claude-code"
+    }
+  },
+  "codex": {
+    "curl": {
+      "platforms": ["macos", "linux"],
+      "command": "sh -c 'tmp=$(mktemp) || exit; curl -fsSL \"https://chatgpt.com/codex/install.sh\" -o \"$tmp\" && sh \"$tmp\"; status=$?; rm -f -- \"$tmp\"; exit \"$status\"'"
+    },
+    "homebrew": {
+      "platforms": ["macos"],
+      "command": "brew install --cask codex"
+    }
+  },
+  "gemini": {
+    "homebrew": {
+      "platforms": ["macos", "linux"],
+      "command": "brew install gemini-cli"
+    }
+  },
+  "grok": {
+    "curl": {
+      "platforms": ["macos", "linux"],
+      "command": "sh -c 'tmp=$(mktemp) || exit; curl -fsSL \"https://x.ai/cli/install.sh\" -o \"$tmp\" && bash \"$tmp\"; status=$?; rm -f -- \"$tmp\"; exit \"$status\"'"
+    }
+  },
+  "opencode": {
+    "curl": {
+      "platforms": ["macos", "linux"],
+      "command": "sh -c 'tmp=$(mktemp) || exit; curl -fsSL \"https://opencode.ai/v2/install\" -o \"$tmp\" && bash \"$tmp\"; status=$?; rm -f -- \"$tmp\"; exit \"$status\"'"
+    },
+    "homebrew": {
+      "platforms": ["macos", "linux"],
+      "command": "brew install anomalyco/tap/opencode-v2"
+    }
+  },
+  "openclaw": {
+    "curl": {
+      "platforms": ["macos", "linux"],
+      "command": "sh -c 'tmp=$(mktemp) || exit; curl -fsSL \"https://openclaw.ai/install.sh\" -o \"$tmp\" && bash \"$tmp\"; status=$?; rm -f -- \"$tmp\"; exit \"$status\"'"
+    }
+  },
+  "hermes": {
+    "curl": {
+      "platforms": ["macos", "linux"],
+      "command": "sh -c 'tmp=$(mktemp) || exit; curl -fsSL \"https://hermes-agent.nousresearch.com/install.sh\" -o \"$tmp\" && bash \"$tmp\"; status=$?; rm -f -- \"$tmp\"; exit \"$status\"'"
+    }
+  },
+  "pi": {
+    "curl": {
+      "platforms": ["macos", "linux"],
+      "command": "sh -c 'tmp=$(mktemp) || exit; curl -fsSL \"https://pi.dev/install.sh\" -o \"$tmp\" && sh \"$tmp\"; status=$?; rm -f -- \"$tmp\"; exit \"$status\"'"
+    }
+  },
+  "mcode": {
+    "curl": {
+      "platforms": ["macos", "linux"],
+      "command": "sh -c 'tmp=$(mktemp) || exit; curl -fsSL \"https://filecdn.minimax.chat/public/install.sh\" -o \"$tmp\" && bash \"$tmp\"; status=$?; rm -f -- \"$tmp\"; exit \"$status\"'"
+    }
+  },
+  "kimi": {
+    "curl": {
+      "platforms": ["macos", "linux"],
+      "command": "sh -c 'tmp=$(mktemp) || exit; curl -fsSL \"https://code.kimi.com/kimi-code/install.sh\" -o \"$tmp\" && bash \"$tmp\"; status=$?; rm -f -- \"$tmp\"; exit \"$status\"'"
+    }
+  },
+  "agy": {
+    "curl": {
+      "platforms": ["macos", "linux"],
+      "command": "sh -c 'tmp=$(mktemp) || exit; curl -fsSL \"https://antigravity.google/cli/install.sh\" -o \"$tmp\" && bash \"$tmp\"; status=$?; rm -f -- \"$tmp\"; exit \"$status\"'"
+    }
+  },
+  "omp": {
+    "curl": {
+      "platforms": ["macos", "linux"],
+      "command": "sh -c 'tmp=$(mktemp) || exit; curl -fsSL \"https://omp.sh/install\" -o \"$tmp\" && sh \"$tmp\"; status=$?; rm -f -- \"$tmp\"; exit \"$status\"'"
+    }
+  },
+  "copilot": {
+    "curl": {
+      "platforms": ["macos", "linux"],
+      "command": "sh -c 'tmp=$(mktemp) || exit; curl -fsSL \"https://gh.io/copilot-install\" -o \"$tmp\" && bash \"$tmp\"; status=$?; rm -f -- \"$tmp\"; exit \"$status\"'"
+    },
+    "homebrew": {
+      "platforms": ["macos"],
+      "command": "brew install --cask copilot-cli"
+    }
+  }
+}

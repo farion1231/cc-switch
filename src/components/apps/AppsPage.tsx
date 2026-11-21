@@ -33,10 +33,10 @@ import {
   AlertTriangle,
   ArrowUpCircle,
   ChevronDown,
-  Copy,
   Download,
   GripVertical,
   LayoutGrid,
+  ListOrdered,
   Loader2,
   MoreHorizontal,
   RefreshCw,
@@ -44,23 +44,18 @@ import {
 } from "lucide-react";
 import { settingsApi, type AppId } from "@/lib/api";
 import { providersApi } from "@/lib/api/providers";
-import type { ToolInstallationReport } from "@/lib/api/settings";
+import type { InstallMethod, ToolInstallationReport } from "@/lib/api/settings";
 import type { VisibleApps } from "@/types";
 import { DEFAULT_VISIBLE_APPS, orderAppIds } from "@/config/appConfig";
 import { useSettings } from "@/hooks/useSettings";
+import { toast } from "@/lib/toast";
+import { extractErrorMessage } from "@/utils/errorUtils";
 import { isUpdateAvailable } from "@/lib/version";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { HelpTip } from "@/components/ui/help-tip";
 import { HoverTip } from "@/components/ui/hover-tip";
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -80,10 +75,12 @@ import { ToolUpgradeConfirmDialog } from "@/components/settings/ToolUpgradeConfi
 import { ToolInstallRow } from "@/components/settings/ToolInstallRow";
 import { ToolErrorMessage } from "@/components/settings/ToolErrorMessage";
 import { ToolUninstallConfirmDialog } from "./ToolUninstallConfirmDialog";
+import type { InstallApp } from "./installCommands";
+import "./appsPage.css";
+import { InstallCommandsDialog } from "./InstallCommandsDialog";
 import { ManualUninstallDialog } from "./ManualUninstallDialog";
 import {
   ENV_BADGE_CONFIG,
-  ONE_CLICK_INSTALL_COMMANDS,
   TOOL_APP_IDS,
   TOOL_NAMES,
   toolDisplayName,
@@ -184,19 +181,68 @@ function formatCheckedAt(timestamp: number, locale: string): string {
 export function AppsPage() {
   const { t, i18n } = useTranslation();
   const tools = useToolManagement();
+  const [desktopInstalling, setDesktopInstalling] = useState(false);
   const { settings, updateSettings, autoSaveSettings } = useSettings();
   const tableRef = useRef<HTMLDivElement>(null);
-  const { data: desktopStatus, isPending: isDesktopStatusPending } = useQuery({
+  const {
+    data: desktopStatus,
+    isPending: isDesktopStatusPending,
+    refetch: refreshClaudeDesktop,
+  } = useQuery({
     queryKey: ["claude-desktop-status"],
     queryFn: () => providersApi.getClaudeDesktopStatus(),
     staleTime: 30_000,
   });
-  const { data: workbuddyStatus, isPending: isWorkbuddyStatusPending } =
-    useQuery({
-      queryKey: ["config-status", "workbuddy"],
-      queryFn: () => settingsApi.getConfigStatus("workbuddy"),
-      staleTime: 30_000,
-    });
+  const {
+    data: workbuddyStatus,
+    isPending: isWorkbuddyStatusPending,
+    refetch: refreshWorkBuddy,
+  } = useQuery({
+    queryKey: ["config-status", "workbuddy"],
+    queryFn: () => settingsApi.getConfigStatus("workbuddy"),
+    staleTime: 30_000,
+  });
+
+  const installFromChannel = async (app: InstallApp, method: InstallMethod) => {
+    if (app === "workbuddy") return;
+    if (app !== "claude-desktop") {
+      await tools.handleRunToolAction([app], "install", {
+        installMethod: method,
+      });
+      return;
+    }
+    setDesktopInstalling(true);
+    try {
+      await settingsApi.runToolLifecycleAction(
+        [app],
+        "install",
+        undefined,
+        undefined,
+        undefined,
+        method,
+      );
+      const { data } = await refreshClaudeDesktop();
+      if (!data?.installed) {
+        toast.warning(t("settings.toolActionInstalledNotRunnable"));
+        return;
+      }
+      toast.success(
+        t("settings.toolActionDone", {
+          count: 1,
+          action: t("settings.toolInstall"),
+        }),
+      );
+    } catch (error) {
+      const detail = extractErrorMessage(error);
+      if (detail === "TOOL_ACTION_IN_PROGRESS") {
+        toast.info(t("settings.toolActionInProgress"));
+      } else {
+        toast.error(t("settings.toolActionFailed"), { description: detail });
+      }
+    } finally {
+      setDesktopInstalling(false);
+    }
+  };
 
   // 按「已安装 / 未安装」分两组。Claude Desktop 没有命令可探，用后端按数据目录 / 应用包推断的结果。
   // 首次探测还没出结果时不分组，免得各行探完一个跳一个；之后重新检查时沿用上次结果，位置不动。
@@ -204,7 +250,7 @@ export function AppsPage() {
     if (row.kind === "desktop") {
       return isDesktopStatusPending ? null : Boolean(desktopStatus?.installed);
     }
-    // WorkBuddy 同样没有命令可探，按配置目录（~/.workbuddy）在不在判断
+    // WorkBuddy 同样没有命令可探，按配置文件（默认 ~/.workbuddy/models.json）在不在判断
     if (row.kind === "workbuddy") {
       return isWorkbuddyStatusPending ? null : Boolean(workbuddyStatus?.exists);
     }
@@ -269,7 +315,8 @@ export function AppsPage() {
     return () => observer.disconnect();
   }, [sectionLayoutKey]);
 
-  const [showCommands, setShowCommands] = useState(false);
+  const [installCommandsFor, setInstallCommandsFor] =
+    useState<InstallApp | null>(null);
   const [showUninstallCommands, setShowUninstallCommands] = useState(false);
   const [pendingUninstall, setPendingUninstall] = useState<ToolName | null>(
     null,
@@ -346,13 +393,33 @@ export function AppsPage() {
     const oldIndex = appOrder.indexOf(active.id as AppId);
     const newIndex = appOrder.indexOf(over.id as AppId);
     if (oldIndex === -1 || newIndex === -1) return;
-    const next = arrayMove(appOrder, oldIndex, newIndex);
+    saveAppOrder(arrayMove(appOrder, oldIndex, newIndex));
+  };
+
+  const saveAppOrder = (next: AppId[]) => {
+    if (!settings) return;
     const previous = settings.appOrder;
     updateSettings({ appOrder: next });
     void autoSaveSettings({ appOrder: next }).catch(() =>
       updateSettings({ appOrder: previous }),
     );
   };
+
+  const desktopInstallButton = (app: "workbuddy" | "claude-desktop") => (
+    <Button
+      variant="neutral"
+      size="compact"
+      disabled={app === "claude-desktop" && desktopInstalling}
+      onClick={() => setInstallCommandsFor(app)}
+    >
+      {app === "claude-desktop" && desktopInstalling ? (
+        <Loader2 className="size-3.5 motion-safe:animate-spin" />
+      ) : (
+        <Download className="size-3.5" />
+      )}
+      {t("settings.toolInstall")}
+    </Button>
+  );
 
   const renderRow = (row: Row) =>
     row.kind === "workbuddy" ? (
@@ -370,6 +437,7 @@ export function AppsPage() {
             </HelpTip>
           </span>
         }
+        action={desktopInstallButton("workbuddy")}
         visibility={visibilitySwitch("workbuddy")}
       />
     ) : row.kind === "desktop" ? (
@@ -391,6 +459,9 @@ export function AppsPage() {
             </HelpTip>
           </span>
         }
+        action={
+          rowInstalled(row) === false && desktopInstallButton("claude-desktop")
+        }
         visibility={visibilitySwitch("claude-desktop")}
       />
     ) : (
@@ -398,6 +469,7 @@ export function AppsPage() {
         key={row.tool}
         tool={row.tool}
         tools={tools}
+        onInstall={() => setInstallCommandsFor(row.tool)}
         onUninstall={() => setPendingUninstall(row.tool)}
         expanded={expanded[row.tool] ?? false}
         onToggleExpanded={() =>
@@ -451,7 +523,13 @@ export function AppsPage() {
               variant="neutral"
               size="regular"
               disabled={tools.isLoadingTools || tools.isAnyBusy}
-              onClick={() => void tools.checkForUpdates()}
+              onClick={() =>
+                void Promise.all([
+                  tools.checkForUpdates(),
+                  refreshClaudeDesktop(),
+                  refreshWorkBuddy(),
+                ])
+              }
             >
               <RefreshCw
                 className={cn(
@@ -499,7 +577,9 @@ export function AppsPage() {
                 >
                   {t("settings.toolDiagnose")}
                 </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => setShowCommands(true)}>
+                <DropdownMenuItem
+                  onSelect={() => setInstallCommandsFor("claude")}
+                >
                   {t("appsPage.manualCommands")}
                 </DropdownMenuItem>
                 <DropdownMenuItem
@@ -522,10 +602,21 @@ export function AppsPage() {
           <div
             className={cn(
               APP_ROW_GRID,
-              "mx-px h-8 px-4 text-caption font-medium text-fg-2",
+              "mx-px h-9 px-4 text-caption font-medium text-fg-2",
             )}
           >
-            <SectionTitle title={sections[0]?.title} />
+            <div className="flex min-w-0 items-center gap-2">
+              <SectionTitle title={sections[0]?.title} />
+              <Button
+                variant="ghost"
+                size="compact"
+                disabled={!settings}
+                onClick={() => saveAppOrder(orderAppIds(undefined))}
+              >
+                <ListOrdered className="size-3.5" aria-hidden />
+                {t("appsPage.sortByName")}
+              </Button>
+            </div>
             <span className="text-end">{t("appsPage.columnVersion")}</span>
             {/* 看不见的「安装 / 升级」按钮只用来量宽：操作列始终留出按钮的位置，
                 版本号加载完或检查到新版本、按钮冒出来时，版本列不会被推开。 */}
@@ -555,7 +646,7 @@ export function AppsPage() {
           {sections.map((section, index) => (
             <section key={section.key} aria-label={section.title}>
               {index > 0 && (
-                <div className="mx-px mt-4 flex h-8 items-center px-4">
+                <div className="mx-px mt-5 flex h-9 items-center px-4">
                   <SectionTitle title={section.title} />
                 </div>
               )}
@@ -571,7 +662,7 @@ export function AppsPage() {
                     items={section.rows.map(rowKey)}
                     strategy={verticalListSortingStrategy}
                   >
-                    <div className="divide-y divide-border overflow-hidden rounded-panel border border-border bg-surface">
+                    <div className="apps-group-frame">
                       {section.rows.map((row) => (
                         <SortableAppRow key={rowKey(row)} id={rowKey(row)}>
                           {renderRow(row)}
@@ -581,7 +672,7 @@ export function AppsPage() {
                   </SortableContext>
                 </DndContext>
               ) : (
-                <div className="divide-y divide-border overflow-hidden rounded-panel border border-border bg-surface">
+                <div className="apps-group-frame">
                   {section.rows.map(renderRow)}
                 </div>
               )}
@@ -590,38 +681,24 @@ export function AppsPage() {
         </div>
       </div>
 
-      <Dialog open={showCommands} onOpenChange={setShowCommands}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>{t("settings.manualInstallCommands")}</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3 px-6">
-            <p className="text-body text-fg-2">
-              {t("settings.oneClickInstallHint")}
-            </p>
-            <pre className="max-h-[50vh] overflow-auto rounded-control border border-border bg-subtle px-3 py-2.5 font-mono text-caption">
-              {ONE_CLICK_INSTALL_COMMANDS}
-            </pre>
-          </div>
-          <DialogFooter>
-            <Button
-              variant="neutral"
-              size="regular"
-              onClick={() => setShowCommands(false)}
-            >
-              {t("common.close")}
-            </Button>
-            <Button
-              variant="solid"
-              size="regular"
-              onClick={() => void tools.handleCopyInstallCommands()}
-            >
-              <Copy className="h-3.5 w-3.5" />
-              {t("common.copy")}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {installCommandsFor && (
+        <InstallCommandsDialog
+          initialTool={installCommandsFor}
+          onClose={() => setInstallCommandsFor(null)}
+          toolVersionByName={tools.toolVersionByName}
+          onInstall={installFromChannel}
+          isInstallBusy={(app) =>
+            app === "claude-desktop"
+              ? desktopInstalling
+              : app !== "workbuddy" && tools.busyTools.has(app)
+          }
+          isInstallQueued={(app) =>
+            app !== "claude-desktop" &&
+            app !== "workbuddy" &&
+            tools.toolProgress.get(app)?.stage === "queued"
+          }
+        />
+      )}
 
       <ManualUninstallDialog
         open={showUninstallCommands}
@@ -680,13 +757,16 @@ function AppRow({
   const { t } = useTranslation();
   const dragHandle = useContext(DragHandleContext);
   return (
-    <div data-tool-row={app} className="group relative px-4 py-3">
+    <div
+      data-tool-row={app}
+      className="group relative px-4 py-3 focus-within:bg-subtle"
+    >
       {dragHandle && (
         // 放在行首的内边距里，不占列宽，表头和各列照旧对齐
         <button
           type="button"
           className={cn(
-            "absolute start-0 top-3 flex h-10 w-4 cursor-grab items-center justify-center text-fg-3 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 active:cursor-grabbing",
+            "absolute start-0 top-3 flex h-10 w-4 cursor-grab items-center justify-center text-fg-3 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring active:cursor-grabbing",
             dragHandle.isDragging && "cursor-grabbing opacity-100",
           )}
           aria-label={t("appsPage.dragHandle", { name: APP_DISPLAY_NAME[app] })}
@@ -736,6 +816,7 @@ function Pill({ children }: { children: React.ReactNode }) {
 function ToolRow({
   tool,
   tools,
+  onInstall,
   onUninstall,
   expanded,
   onToggleExpanded,
@@ -743,6 +824,7 @@ function ToolRow({
 }: {
   tool: ToolName;
   tools: ReturnType<typeof useToolManagement>;
+  onInstall: () => void;
   onUninstall: () => void;
   expanded: boolean;
   onToggleExpanded: () => void;
@@ -764,6 +846,7 @@ function ToolRow({
     (tools.isLoadingTools && !tools.toolVersionByName.has(tool));
   const isOutdated = isUpdateAvailable(info?.version, info?.latest_version);
   const nodeGap = isOutdated ? info?.update_blocked_by_node : null;
+  const manualUpdate = isOutdated && info?.manual_update_only;
   const broken = Boolean(info?.installed_but_broken);
   const isBusy = tools.busyTools.has(tool);
   const busyAction = tools.busyTools.get(tool);
@@ -772,7 +855,7 @@ function ToolRow({
     (busyAction !== "uninstall" ? busyAction : undefined) ??
     (isVersionLoading || broken
       ? null
-      : !info?.version
+      : !info?.version || manualUpdate
         ? "install"
         : isOutdated && !nodeGap
           ? "update"
@@ -817,7 +900,11 @@ function ToolRow({
     <Button
       variant="neutral"
       size="compact"
-      onClick={() => void tools.handleRunToolAction([tool], action)}
+      onClick={
+        action === "install"
+          ? onInstall
+          : () => void tools.handleRunToolAction([tool], action)
+      }
       disabled={isVersionLoading || isBusy}
       aria-busy={isBusy}
     >
@@ -829,12 +916,11 @@ function ToolRow({
         <ArrowUpCircle className="h-3.5 w-3.5" />
       )}
       {action === "install"
-        ? t("settings.toolInstall")
+        ? t(manualUpdate ? "appsPage.manualCommands" : "settings.toolInstall")
         : t("settings.toolUpdate")}
     </Button>
   ) : null;
 
-  const installHint = t(`appsPage.installHint.${tool}`, { defaultValue: "" });
   // 执行期间副行换成进度：排队中，或已用时间 + 命令最新一行输出
   const progress = isBusy ? tools.toolProgress.get(tool) : undefined;
   const progressMeta =
@@ -874,10 +960,6 @@ function ToolRow({
         </button>
       )}
     </>
-  ) : !info?.version && !isVersionLoading ? (
-    <span className="truncate" title={installHint}>
-      {installHint}
-    </span>
   ) : null;
 
   const wslControls =
@@ -1071,7 +1153,7 @@ function SortableAppRow({
     <div
       ref={setNodeRef}
       style={style}
-      className={cn(isDragging && "bg-surface shadow-v7-md")}
+      className={cn(isDragging && "bg-surface ring-1 ring-inset ring-ring")}
     >
       <DragHandleContext.Provider value={{ attributes, listeners, isDragging }}>
         {children}

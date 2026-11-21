@@ -31,6 +31,8 @@ export interface WebDavSyncResult {
   status: string;
 }
 
+export type InstallMethod = "curl" | "homebrew";
+
 export const settingsApi = {
   async get(): Promise<Settings> {
     return await invoke("get_settings");
@@ -289,6 +291,7 @@ export const settingsApi = {
       env_type: "windows" | "wsl" | "macos" | "linux" | "unknown";
       wsl_distro: string | null;
       update_blocked_by_node: NodeRequirementGap | null;
+      manual_update_only?: boolean;
     }>
   > {
     return await invoke("get_tool_versions", { tools, wslShellByTool });
@@ -302,12 +305,16 @@ export const settingsApi = {
       { wslShell?: string | null; wslShellFlag?: string | null }
     >,
     uninstallPlan?: ToolUninstallPlan,
+    confirmedUpdate?: string,
+    installMethod?: InstallMethod,
   ): Promise<void> {
     await invoke("run_tool_lifecycle_action", {
       tools,
       action,
       wslShellByTool,
       uninstallPlan,
+      confirmedUpdate,
+      ...(installMethod && { installMethod }),
     });
   },
 
@@ -409,6 +416,7 @@ export interface ToolInstallationReport {
   installs: ToolInstallation[];
   is_conflict: boolean;
   needs_confirmation: boolean;
+  confirmation_token?: string | null;
   command: string;
   anchored: boolean;
   /** 默认那处是认不出安装渠道的原生可执行文件：不执行升级，command 为空。 */

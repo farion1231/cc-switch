@@ -1109,6 +1109,15 @@ pub(super) fn resolve_path_default(
     tool: &str,
     deadline: Option<CommandDeadline>,
 ) -> Result<Option<std::path::PathBuf>, String> {
+    Ok(resolve_path_default_paths(tool, deadline)?.map(|(_, real)| real))
+}
+
+/// Keep the shell entry together with its resolved target for ownership checks.
+#[cfg(not(target_os = "windows"))]
+pub(super) fn resolve_path_default_paths(
+    tool: &str,
+    deadline: Option<CommandDeadline>,
+) -> Result<Option<(PathBuf, PathBuf)>, String> {
     use std::process::{Command, Stdio};
 
     let shell = std::env::var("SHELL")
@@ -1138,7 +1147,8 @@ pub(super) fn resolve_path_default(
     let Some(first) = first_abs_path_line(&raw) else {
         return Ok(None);
     };
-    Ok(std::fs::canonicalize(first).ok())
+    let entry = PathBuf::from(first);
+    Ok(std::fs::canonicalize(&entry).ok().map(|real| (entry, real)))
 }
 
 #[cfg(target_os = "windows")]
@@ -1659,14 +1669,14 @@ mod tests {
         }
 
         #[test]
-        fn unknown_default_keeps_static_command() {
-            // 多处安装又定位不到默认那处:不知道命令行用的是哪份,维持旧行为(前端会弹确认)。
+        fn unknown_default_requires_manual_update() {
+            // 多处安装但无法定位更新目标时，不能确认一条取决于 PATH 的命令。
             let dir = tempfile::tempdir().unwrap();
             let a = installed(&dir, "a/bin/gemini", &MACH_O_64, false);
             let b = installed(&dir, "b/bin/gemini", &MACH_O_64, false);
             assert_eq!(
                 resolve_update_command("gemini", &[a, b]),
-                UpdateCommand::Static(static_fallback_command("gemini"))
+                UpdateCommand::Unmanaged
             );
         }
 
