@@ -704,7 +704,8 @@ function AppRow({
               {name}
             </div>
             {meta && (
-              <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-caption text-fg-2">
+              // 放不下时「另有 N 处安装」整个换到下一行，路径保持一行；路径本身比整列还长才按字符折
+              <div className="mt-0.5 flex min-w-0 flex-wrap items-baseline gap-x-1.5 gap-y-0.5 text-caption text-fg-2">
                 {meta}
               </div>
             )}
@@ -841,22 +842,21 @@ function ToolRow({
     progress?.stage === "queued" ? (
       <span className="truncate">{t("appsPage.toolQueued")}</span>
     ) : progress?.stage === "running" ? (
-      <>
+      <span className="flex w-full min-w-0 items-center gap-1.5">
         <ElapsedTime since={progress.startedAt} />
         {progress.line && (
           <span className="min-w-0 truncate font-mono" title={progress.line}>
             {progress.line}
           </span>
         )}
-      </>
+      </span>
     ) : null;
   const meta = progressMeta ? (
     progressMeta
   ) : defaultInstall ? (
     <>
-      <span className="min-w-0 truncate font-mono" title={defaultInstall.path}>
-        {defaultInstall.path}
-      </span>
+      {/* 路径写全、放不下就折行，不截断、不靠悬停看全文 */}
+      <span className="min-w-0 break-all font-mono">{defaultInstall.path}</span>
       {otherInstalls > 0 && (
         <button
           type="button"
@@ -875,9 +875,8 @@ function ToolRow({
       )}
     </>
   ) : !info?.version && !isVersionLoading ? (
-    <span className="truncate" title={installHint}>
-      {installHint}
-    </span>
+    // 未安装时的安装方式提示：同样写全、放不下就折行，不挂悬停提示
+    <span>{installHint}</span>
   ) : null;
 
   const wslControls =
