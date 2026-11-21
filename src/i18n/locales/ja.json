@@ -2806,6 +2806,25 @@
       "title": "使用量の設定",
       "pricingSummary": "モデルごとに 100 万トークンあたりの料金を設定します。models.dev から同期することもできます",
       "managePricing": "料金を管理…"
+    },
+    "tray": {
+      "allApps": "すべて",
+      "filterBy": "絞り込み",
+      "clearFilters": "絞り込みを解除",
+      "allProviders": "すべてのプロバイダー",
+      "allModels": "すべてのモデル",
+      "viewDetails": "詳細を見る",
+      "backToOverview": "概要に戻る",
+      "byApp": "アプリ別",
+      "byProvider": "プロバイダー別",
+      "byModel": "モデル別",
+      "successRate": "成功率",
+      "avgPerReq": "平均/回",
+      "peak": "ピーク",
+      "selectedBucket": "選択中",
+      "cacheShare": "キャッシュ比率",
+      "hitRateShort": "ヒット率",
+      "noBreakdown": "内訳データなし"
     }
   },
   "usageScript": {

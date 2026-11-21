@@ -2806,6 +2806,25 @@
       "title": "Nutzungseinstellungen",
       "pricingSummary": "Preise pro Million Token je Modell festlegen oder von models.dev synchronisieren",
       "managePricing": "Preise verwalten …"
+    },
+    "tray": {
+      "allApps": "Alle",
+      "filterBy": "Filter",
+      "clearFilters": "Filter zurücksetzen",
+      "allProviders": "Alle Anbieter",
+      "allModels": "Alle Modelle",
+      "viewDetails": "Details anzeigen",
+      "backToOverview": "Zurück zur Übersicht",
+      "byApp": "Nach App",
+      "byProvider": "Nach Anbieter",
+      "byModel": "Nach Modell",
+      "successRate": "Erfolg",
+      "avgPerReq": "Ø/Anfr.",
+      "peak": "Spitze",
+      "selectedBucket": "Ausgewählt",
+      "cacheShare": "Cache-Anteil",
+      "hitRateShort": "Treffer %",
+      "noBreakdown": "Keine Aufschlüsselung"
     }
   },
   "usageScript": {
