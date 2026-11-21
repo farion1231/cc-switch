@@ -46,6 +46,7 @@ export const SESSION_SOURCE_PATHS: Record<SessionAppId, string[]> = {
   workbuddy: ["~/.workbuddy/projects"],
   agy: [
     "~/.gemini/antigravity-cli/brain/<conversation>/.system_generated/logs",
+    "~/.gemini/antigravity/brain/<conversation>/.system_generated/logs",
   ],
   copilot: ["~/.copilot/session-state"],
 };
