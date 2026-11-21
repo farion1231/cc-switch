@@ -74,6 +74,7 @@ export function AddProviderDialog({
     appId !== "dsh" &&
     appId !== "kimi" &&
     appId !== "copilot" &&
+    appId !== "liveagent" &&
     appId !== "workbuddy" &&
     appId !== "grokbuild" &&
     appId !== "claude-desktop";

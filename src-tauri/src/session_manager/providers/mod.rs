@@ -17,5 +17,6 @@ pub(crate) mod utils;
 
 pub mod dsh;
 pub mod kimi;
+pub mod liveagent;
 pub mod mcode;
 pub mod workbuddy;

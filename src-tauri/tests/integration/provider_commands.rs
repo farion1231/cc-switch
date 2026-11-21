@@ -552,6 +552,7 @@ command = "say"
                 kimi: false,
                 copilot: false,
                 dsh: false,
+                liveagent: false,
                 workbuddy: false,
                 pi: false,
                 omp: false,

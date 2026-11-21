@@ -263,6 +263,7 @@ pub fn import_from_opencode(config: &mut MultiAppConfig) -> Result<usize, AppErr
                         kimi: false,
                         copilot: false,
                         dsh: false,
+                        liveagent: false,
                         workbuddy: false,
                         pi: false,
                         omp: false,

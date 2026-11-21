@@ -83,6 +83,7 @@ const createDefaultProviders = (): ProvidersByApp => ({
   agy: {},
   omp: {},
   copilot: {},
+  liveagent: {},
   workbuddy: {},
 });
 
@@ -102,6 +103,7 @@ const createDefaultCurrent = (): CurrentProviderState => ({
   agy: "",
   omp: "",
   copilot: "",
+  liveagent: "",
   workbuddy: "",
 });
 

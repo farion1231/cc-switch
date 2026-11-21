@@ -17,6 +17,7 @@ mod global_proxy;
 mod hermes;
 mod import_export;
 mod kimi_oauth;
+pub mod liveagent;
 mod mcp;
 mod misc;
 mod model_fetch;

@@ -9,4 +9,9 @@ describe("getCacheWriteAvailability", () => {
     expect(getCacheWriteAvailability(["claude", "codex"])).toBe("partial");
     expect(getCacheWriteAvailability([])).toBe("ok");
   });
+
+  it("treats LiveAgent as partial because it mixes protocols under one app type", () => {
+    expect(getCacheWriteAvailability(["liveagent"])).toBe("partial");
+    expect(getCacheWriteAvailability(["claude", "liveagent"])).toBe("partial");
+  });
 });

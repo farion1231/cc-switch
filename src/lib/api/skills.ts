@@ -17,7 +17,8 @@ export type AppType =
   | "dsh"
   | "agy"
   | "omp"
-  | "copilot";
+  | "copilot"
+  | "liveagent";
 
 /** Skill 应用启用状态 */
 export interface SkillApps {
@@ -36,6 +37,7 @@ export interface SkillApps {
   agy?: boolean;
   omp?: boolean;
   copilot?: boolean;
+  liveagent?: boolean;
   workbuddy?: boolean;
 }
 
