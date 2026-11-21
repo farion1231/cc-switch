@@ -13,6 +13,7 @@ const openTerminalMock = vi.fn();
 const pickDirectoryMock = vi.fn();
 const agyStatusMock = vi.fn();
 const agyRunningMock = vi.fn();
+const platform = vi.hoisted(() => ({ linux: false }));
 
 vi.mock("@/lib/api", () => ({
   providersApi: {
@@ -28,7 +29,8 @@ vi.mock("@/lib/api", () => ({
 }));
 vi.mock("@/lib/platform", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/platform")>()),
-  isMac: () => true,
+  isMac: () => !platform.linux,
+  isLinux: () => platform.linux,
 }));
 
 vi.mock("@/lib/toast", () => ({
@@ -63,6 +65,7 @@ function renderDialog(
 
 describe("OpenTerminalDialog", () => {
   beforeEach(() => {
+    platform.linux = false;
     window.localStorage.clear();
     openTerminalMock.mockReset().mockResolvedValue(true);
     pickDirectoryMock.mockReset();
@@ -102,6 +105,41 @@ describe("OpenTerminalDialog", () => {
       await screen.findByText(/打开前把 agy 的登录切换到 b@example.com/),
     ).toBeInTheDocument();
     expect(await screen.findByText(/检测到 agy 正在运行/)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("checkbox", {
+        name: "provider.openTerminalDialog.agyUseCurrentLogin",
+      }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("can use agy's current login once on Linux when a synced binding is missing", async () => {
+    platform.linux = true;
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(["/work/alpha"]));
+    const onClose = renderDialog(vi.fn(), agyOfficial("remote"), "agy");
+
+    expect(
+      await screen.findByText("provider.openTerminalDialog.agyBindingMissing"),
+    ).toBeInTheDocument();
+    const useCurrent = screen.getByRole("checkbox", {
+      name: "provider.openTerminalDialog.agyUseCurrentLogin",
+    });
+    expect(useCurrent).not.toBeChecked();
+    fireEvent.click(useCurrent);
+    expect(
+      screen.queryByText("provider.openTerminalDialog.agyBindingMissing"),
+    ).not.toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "provider.openTerminalDialog.confirm",
+      }),
+    );
+
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(openTerminalMock).toHaveBeenCalledWith("agy-official", "agy", {
+      cwd: "/work/alpha",
+      skipPermissions: false,
+      agyUseCurrentLogin: true,
+    });
   });
 
   it("stays quiet when the bound account is already signed in, or nothing is bound", async () => {

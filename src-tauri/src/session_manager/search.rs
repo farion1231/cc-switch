@@ -31,7 +31,7 @@ use super::model::{SessionBlock, SessionMessage};
 
 const INDEX_FILE: &str = "session-index.db";
 /// 索引格式版本；表结构或收录规则变了就加一，旧索引整体重建
-const INDEX_VERSION: i64 = 2;
+const INDEX_VERSION: i64 = 3;
 /// rowid 里留给消息序号的位数（单个会话最多 1600 万条消息，超出部分不收）
 const ROW_SHIFT: u32 = 24;
 const MAX_MESSAGES_PER_SOURCE: usize = 1 << ROW_SHIFT;
