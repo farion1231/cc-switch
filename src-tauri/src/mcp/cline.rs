@@ -151,10 +151,17 @@ fn transport_spec(spec: &Value) -> Value {
 
 pub fn import(state: &AppState) -> Result<usize, AppError> {
     let document = read(&path())?;
-    let mut existing = state.db.get_all_mcp_servers()?;
+    let (mut existing, unreadable) = state
+        .db
+        .get_mcp_server_rows()?
+        .into_readable_and_unreadable_ids();
     let mut count = 0;
     let mut skipped = Vec::new();
     for (id, native) in document["mcpServers"].as_object().into_iter().flatten() {
+        if unreadable.contains(id) {
+            skipped.push(format!("'{id}': stored server is unreadable"));
+            continue;
+        }
         let spec = transport_spec(native);
         if super::validation::validate_server_spec(&spec).is_err() {
             skipped.push(format!("'{id}': invalid transport configuration"));
@@ -292,5 +299,64 @@ mod tests {
         fs::write(&path, "{invalid").unwrap();
         assert!(sync_file(&path, "test", Some(&json!({"command": "node"}))).is_err());
         assert_eq!(fs::read_to_string(&path).unwrap(), "{invalid");
+    }
+
+    /// A stored server that can't be read (corrupt, or from a newer version) is skipped and
+    /// left as is; the others are still imported.
+    #[test]
+    #[serial_test::serial]
+    fn import_skips_a_stored_server_it_cannot_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let _env = crate::test_support::EnvVars::new()
+            .set("CC_SWITCH_TEST_HOME", dir.path())
+            .set("CLINE_DIR", dir.path())
+            .remove("CLINE_DATA_DIR")
+            .remove("CLINE_MCP_SETTINGS_PATH");
+        let path = path();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            "{\"mcpServers\":{\"shared\":{\"command\":\"node\"},\"fresh\":{\"command\":\"node\"}}}",
+        )
+        .unwrap();
+        let state = AppState::new(std::sync::Arc::new(
+            crate::database::Database::memory().unwrap(),
+        ));
+        state
+            .db
+            .save_mcp_server(&McpServer {
+                id: "shared".into(),
+                name: "shared".into(),
+                server: json!({"type": "stdio", "command": "node"}),
+                apps: McpApps::default(),
+                description: None,
+                homepage: None,
+                docs: None,
+                tags: vec![],
+            })
+            .unwrap();
+        state
+            .db
+            .conn
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE mcp_servers SET server_config = '{\"command\":' WHERE id = 'shared'",
+                [],
+            )
+            .unwrap();
+
+        let error = import(&state).unwrap_err().to_string();
+        assert!(
+            error.contains("'shared': stored server is unreadable"),
+            "{error}"
+        );
+        let (readable, unreadable) = state
+            .db
+            .get_mcp_server_rows()
+            .unwrap()
+            .into_readable_and_unreadable_ids();
+        assert_eq!(unreadable, vec!["shared".to_string()]);
+        assert!(readable["fresh"].apps.cline);
     }
 }
