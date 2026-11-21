@@ -121,6 +121,30 @@ pub struct BackupEntry {
 }
 
 impl Database {
+    fn replace_from_staging(
+        &self,
+        source: &Connection,
+        destination: &mut Connection,
+        context: &str,
+    ) -> Result<(), AppError> {
+        let page_size: i64 = destination.query_row("PRAGMA page_size", [], |row| row.get(0))?;
+        let source_page_size: i64 = source.query_row("PRAGMA page_size", [], |row| row.get(0))?;
+        if source_page_size != page_size {
+            // Rebuild the disposable staging DB, never disable WAL on the live DB.
+            source.execute_batch(&format!(
+                "PRAGMA journal_mode = DELETE; PRAGMA page_size = {page_size}; VACUUM;"
+            ))?;
+        }
+        let result = {
+            let backup =
+                Backup::new(source, destination).map_err(|e| AppError::Database(e.to_string()))?;
+            Self::complete_backup(&backup, context)
+        };
+        self.read_cache.invalidate_all();
+        result?;
+        Self::configure_connection(destination)
+    }
+
     /// 导出为 SQLite 兼容的 SQL 文本（内存字符串，完整导出）
     pub fn export_sql_string(&self) -> Result<String, AppError> {
         let snapshot = self.snapshot_to_memory()?;
@@ -244,9 +268,7 @@ impl Database {
             if !preserve_tables.is_empty() {
                 Self::restore_tables(&main_conn, &temp_conn, preserve_tables)?;
             }
-            let backup = Backup::new(&temp_conn, &mut main_conn)
-                .map_err(|e| AppError::Database(e.to_string()))?;
-            Self::complete_backup(&backup, "替换主数据库")?;
+            self.replace_from_staging(&temp_conn, &mut main_conn, "替换主数据库")?;
             backup_path
         };
 
@@ -1175,9 +1197,7 @@ impl Database {
                 &[backup_path.as_path()],
             )?;
             before_replace(safety_backup.as_deref())?;
-            let backup = Backup::new(&staging_conn, &mut main_conn)
-                .map_err(|e| AppError::Database(e.to_string()))?;
-            Self::complete_backup(&backup, "恢复主数据库")?;
+            self.replace_from_staging(&staging_conn, &mut main_conn, "恢复主数据库")?;
             safety_backup
         };
         let safety_id = safety_backup

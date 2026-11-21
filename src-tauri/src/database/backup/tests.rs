@@ -5,6 +5,82 @@ use crate::test_support::EnvVars;
 use rusqlite::Connection;
 use serial_test::serial;
 
+#[tokio::test]
+#[serial]
+async fn wal_import_and_restore_keep_pragmas_and_invalidate_cached_reads() {
+    use crate::app_config::AppType;
+    let home = TestHomeGuard::new();
+    let db_path = home.temp_dir.path().join(".cc-switch/cc-switch.db");
+    // Real databases may use a non-default page size. Backup into a WAL DB
+    // must align the disposable source first, otherwise SQLite returns READONLY.
+    Connection::open(&db_path)
+        .unwrap()
+        .execute_batch("PRAGMA page_size=8192; VACUUM;")
+        .unwrap();
+    let db = Database::init().unwrap();
+    let source = Database::memory().unwrap();
+    source
+        .set_setting(
+            "privacy_filter_config",
+            r#"{"enabled":true,"filterToolResults":true}"#,
+        )
+        .unwrap();
+    source
+        .set_pricing_model_source(&AppType::Claude, "request")
+        .await
+        .unwrap();
+    let snapshot = source.backup_database_file().unwrap().unwrap();
+    assert!(!db.get_privacy_filter_config().unwrap().enabled);
+    assert_eq!(
+        db.get_pricing_model_source(&AppType::Claude).await.unwrap(),
+        "response"
+    );
+    db.import_sql_string(&source.export_sql_string().unwrap())
+        .unwrap();
+    assert!(db.get_privacy_filter_config().unwrap().enabled);
+    assert_eq!(
+        db.get_pricing_model_source(&AppType::Claude).await.unwrap(),
+        "request"
+    );
+    db.set_setting(
+        "privacy_filter_config",
+        r#"{"enabled":false,"filterToolResults":false}"#,
+    )
+    .unwrap();
+    assert!(!db.get_privacy_filter_config().unwrap().enabled);
+    db.restore_from_backup(snapshot.file_name().unwrap().to_str().unwrap())
+        .unwrap();
+    assert!(db.get_privacy_filter_config().unwrap().enabled);
+    {
+        let conn = db.conn.lock().unwrap();
+        let mode: String = conn
+            .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(mode, "wal");
+        for (pragma, expected) in [
+            ("synchronous", 1),
+            ("busy_timeout", 5000),
+            ("temp_store", 2),
+            ("cache_size", -16000),
+            ("page_size", 8192),
+        ] {
+            let value: i64 = conn
+                .query_row(&format!("PRAGMA {pragma}"), [], |row| row.get(0))
+                .unwrap();
+            assert_eq!(value, expected, "{pragma}");
+        }
+    }
+    db.checkpoint_wal().unwrap();
+    let wal = db_path.with_extension("db-wal");
+    assert_eq!(std::fs::metadata(wal).unwrap().len(), 0);
+    // Reopening the checkpointed file sees restored data without its sidecar.
+    let reopened = Connection::open(&db_path).unwrap();
+    let mode: String = reopened
+        .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(mode, "wal");
+}
+
 #[test]
 #[serial]
 fn backups_recover_after_poisoned_file_operation() {
