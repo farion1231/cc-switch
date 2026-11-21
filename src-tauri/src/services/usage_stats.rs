@@ -649,9 +649,14 @@ fn merged_reasoning_suffixes_for_filter(
     Ok(matched)
 }
 
+fn strip_model_prefix_sql(expr: &str) -> String {
+    format!("REPLACE(TRIM({expr}), RTRIM(TRIM({expr}), REPLACE(TRIM({expr}), '/', '')), '')")
+}
+
 /// 跨来源去重的模型匹配条件。
 ///
-/// 常规路径按上游回显模型匹配。仅 Codex 会话允许再匹配代理记录的请求模型：
+/// 常规路径按上游回显模型匹配（支持剥离 `provider/` 等命名空间前缀，如 `antigravity/`）。
+/// 仅 Codex 会话允许再匹配代理记录的请求模型：
 /// Codex rollout 保留客户端别名，而代理 `model` 可能已被映射为实际上游模型。
 /// 空白或 `unknown` 请求模型不能放宽匹配，避免无有效别名时扩大启发式去重范围。
 fn session_proxy_model_match_sql(
@@ -661,17 +666,25 @@ fn session_proxy_model_match_sql(
     session_app_type: &str,
     session_data_source: &str,
 ) -> String {
+    let p_model = strip_model_prefix_sql(proxy_model);
+    let s_model = strip_model_prefix_sql(session_model);
+    let p_req_model = strip_model_prefix_sql(proxy_request_model);
     format!(
         "(
-            LOWER({proxy_model}) = LOWER({session_model})
-            OR LOWER({proxy_model}) = 'unknown'
-            OR LOWER({session_model}) = 'unknown'
+            (
+                NULLIF({p_model}, '') IS NOT NULL
+                AND NULLIF({s_model}, '') IS NOT NULL
+                AND LOWER({p_model}) = LOWER({s_model})
+            )
+            OR LOWER(TRIM({proxy_model})) = 'unknown'
+            OR LOWER(TRIM({session_model})) = 'unknown'
             OR (
                 {session_app_type} = 'codex'
                 AND {session_data_source} = 'codex_session'
-                AND NULLIF(TRIM({proxy_request_model}), '') IS NOT NULL
-                AND LOWER(TRIM({proxy_request_model})) <> 'unknown'
-                AND LOWER(TRIM({proxy_request_model})) = LOWER(TRIM({session_model}))
+                AND NULLIF({p_req_model}, '') IS NOT NULL
+                AND LOWER({p_req_model}) <> 'unknown'
+                AND NULLIF({s_model}, '') IS NOT NULL
+                AND LOWER({p_req_model}) = LOWER({s_model})
             )
         )"
     )
