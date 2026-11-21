@@ -3744,7 +3744,10 @@
       "command": "Command",
       "args": "Args",
       "env": "Env",
-      "url": "URL"
+      "url": "URL",
+      "type": "Type",
+      "cwd": "CWD",
+      "headers": "Headers"
     },
     "prompt": {
       "title": "Import System Prompt",
@@ -3778,7 +3781,8 @@
     "risk": {
       "envHijack": "This config sets environment variables that change how processes load code (e.g. injecting libraries or replacing CA certificates). Import only from a source you trust.",
       "privateEndpoint": "This address points at localhost or a private network. Do not import unless it is your own local service.",
-      "shellCommand": "This config runs a full command line through a shell — what actually executes is in the arguments. Review each line."
+      "shellCommand": "This config runs a full command line through a shell — what actually executes is in the arguments. Review each line.",
+      "mcpDangerousField": "This MCP config contains high-risk fields that can read host environment variables (e.g. bearer_token_env_var, env_http_headers, env_vars), execute helper commands (http_headers_helper), or override the working directory (cwd). Import only if you fully trust the source."
     }
   },
   "iconPicker": {
