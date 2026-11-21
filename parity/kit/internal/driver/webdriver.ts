@@ -55,6 +55,10 @@ export class WebDriver {
   exec<T = unknown>(script: string, args: unknown[] = []): Promise<T> {
     return this.call<T>("POST", this.s("/execute/sync"), { script, args });
   }
+  /** Runs a script that reports through the callback WebDriver passes as its last argument. */
+  execAsync<T = unknown>(script: string, args: unknown[] = []): Promise<T> {
+    return this.call<T>("POST", this.s("/execute/async"), { script, args });
+  }
   actions(actions: unknown[]): Promise<unknown> {
     return this.call("POST", this.s("/actions"), { actions });
   }

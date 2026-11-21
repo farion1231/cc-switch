@@ -128,11 +128,35 @@ function runDifferences(a: CaseRun, b: CaseRun): string[] {
   return out;
 }
 
+/**
+ * Every OS denies the app's egress, and a run must not start without it. One launch asks the page
+ * for a public URL: the webview's network process is the client a denial is most likely to miss,
+ * because it is not always a child of the app. Every OS refuses at once (no network on Linux, a
+ * reset from pf on macOS, a firewall error on Windows), so only an immediate error counts. An
+ * answer, or none, fails the run.
+ */
+async function egressDenied(host: HostOptions, url: string): Promise<void> {
+  host.reset();
+  const app = await host.launch(host.home);
+  let answer: string;
+  try {
+    answer = await app.egress(url);
+  } finally {
+    await app.close();
+  }
+  host.reset();
+  if (!answer.startsWith("refused")) {
+    console.error(`egress is not denied: the app's page asked for ${url} and got ${answer === "open" ? "an answer" : `"${answer}"`}`);
+    process.exit(1);
+  }
+  console.log(`egress from the page is denied (${answer})`);
+}
+
 async function main() {
   const { flags, rest } = parseArgs(process.argv.slice(2));
   const mode = rest.shift();
   if ((mode !== "record" && mode !== "check") || rest.length === 0) {
-    console.error("usage: main.ts record|check [--app <binary>] [--runs n] [--baseline dir] [--out dir] <case file>...");
+    console.error("usage: main.ts record|check [--os linux|windows|macos] [--app <binary>] [--egress-url url] [--runs n] [--baseline dir] [--out dir] <case file>...");
     process.exit(2);
   }
   const os = (flags.os ?? "linux") as Os;
@@ -140,6 +164,7 @@ async function main() {
   const baseline = resolve(flags.baseline ?? join(PARITY, "baseline"));
   const out = resolve(flags.out ?? join(PARITY, ".out", os, "cases"));
   const host = hostFor(os, app, flags);
+  await egressDenied(host, flags["egress-url"] ?? "https://api.github.com/zen");
   let failed = 0;
   const report: unknown[] = [];
 

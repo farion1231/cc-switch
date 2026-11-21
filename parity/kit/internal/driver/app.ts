@@ -16,6 +16,8 @@ export interface AppSession {
   chord(keys: readonly string[]): Promise<void>;
   /** The platform's modifier for `Mod`. */
   readonly mod: string;
+  /** Requests a public URL from the main window's page: "open", or why it could not leave. */
+  egress(url: string): Promise<string>;
   close(): Promise<{ log: string }>;
 }
 
@@ -63,6 +65,12 @@ async function waitReady(wd: WebDriver, timeoutMs = 30000): Promise<void> {
   }
   throw new Error(`the app's document did not load within ${timeoutMs} ms`);
 }
+
+// The script timeout after waitReady is 5 s; the page gives up first, so the answer always arrives.
+const EGRESS_SCRIPT = `const done = arguments[arguments.length - 1];
+const timer = new Promise((r) => setTimeout(() => r("no answer within 4 s"), 4000));
+const req = fetch(arguments[0], { cache: "no-store", mode: "no-cors" }).then(() => "open", (e) => "refused: " + e);
+Promise.race([req, timer]).then(done);`;
 
 /** Linux: tauri-driver in front of WebKitWebDriver, under Xvfb and a D-Bus session. */
 export function launchLinux(opts: { binary: string; home: string; port?: number }): Promise<AppSession> {
@@ -126,11 +134,15 @@ export async function launchMacos(opts: { app: string; helper: string; home: str
   const wd = new WebDriver(`http://127.0.0.1:${port}`);
   const close = async () => {
     await wd.deleteSession();
+    // How the app ended, so a crash at quit shows in the run's log.
+    const ended = child.exitCode !== null || child.signalCode !== null ? "before quit: " : "";
+    const t0 = Date.now();
     child.kill("SIGTERM");
-    const exited = await Promise.race([new Promise((r) => child.once("exit", () => r(true))), sleep(10000).then(() => false)]);
+    const exited = ended || (await Promise.race([new Promise((r) => child.once("exit", () => r(true))), sleep(10000).then(() => false)]));
     if (!exited) child.kill("SIGKILL");
     try { helper("move", 1, 1); } catch {}
-    return { log: log.slice(-8000) };
+    const how = `\n[parity] app ended ${ended}${exited ? `code ${child.exitCode} signal ${child.signalCode} after ${Date.now() - t0} ms` : "only after SIGKILL"}`;
+    return { log: log.slice(-8000) + how };
   };
   try {
     for (let i = 0; ; i++) {
@@ -153,6 +165,7 @@ export async function launchMacos(opts: { app: string; helper: string; home: str
   return {
     mod: "Meta",
     probe: <T>(cmd: ProbeCmd) => wd.exec<T>(PROBE_SCRIPT, [cmd]),
+    egress: (url: string) => wd.execAsync<string>(EGRESS_SCRIPT, [url]),
     async click(x, y) {
       await activate();
       const [wx, wy] = helper("bounds", child.pid!).split(/\s+/).map(Number);
@@ -202,6 +215,7 @@ async function launchThroughTauriDriver(o: {
   return {
     mod: "Control",
     probe: <T>(cmd: ProbeCmd) => wd.exec<T>(PROBE_SCRIPT, [cmd]),
+    egress: (url: string) => wd.execAsync<string>(EGRESS_SCRIPT, [url]),
     async click(x, y) {
       await wd.actions([{
         type: "pointer", id: "mouse", parameters: { pointerType: "mouse" },
