@@ -4331,6 +4331,7 @@
     "expandSidebar": "Expand sidebar",
     "collapseSidebar": "Collapse sidebar",
     "appsGroup": "Apps",
+    "toolsGroup": "Tools",
     "today": "Today {{value}}",
     "todayRequests": "{{value}} req",
     "todayHitRate": "Hit {{value}}",
@@ -4350,7 +4351,6 @@
       "stack": "Aggregation"
     },
     "needsAttention": "Needs attention",
-    "back": "Back",
     "plugins": "Plugins"
   },
   "appsPage": {

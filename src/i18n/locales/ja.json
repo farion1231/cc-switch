@@ -4331,6 +4331,7 @@
     "expandSidebar": "サイドバーを展開",
     "collapseSidebar": "サイドバーを折りたたむ",
     "appsGroup": "アプリ",
+    "toolsGroup": "ツール",
     "today": "今日 {{value}}",
     "todayRequests": "{{value}} 回",
     "todayHitRate": "ヒット {{value}}",
@@ -4350,7 +4351,6 @@
       "stack": "集約"
     },
     "needsAttention": "対応が必要",
-    "back": "戻る",
     "plugins": "プラグイン"
   },
   "appsPage": {

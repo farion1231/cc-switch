@@ -4332,6 +4332,7 @@
     "expandSidebar": "Seitenleiste ausklappen",
     "collapseSidebar": "Seitenleiste einklappen",
     "appsGroup": "Apps",
+    "toolsGroup": "Werkzeuge",
     "today": "Heute {{value}}",
     "todayRequests": "{{value}} Anfr.",
     "todayHitRate": "Treffer {{value}}",
@@ -4350,7 +4351,6 @@
       "stack": "Aggregation"
     },
     "needsAttention": "Erfordert Aufmerksamkeit",
-    "back": "Zurück",
     "plugins": "Plugins"
   },
   "appsPage": {
