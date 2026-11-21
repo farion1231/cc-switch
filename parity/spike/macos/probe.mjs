@@ -6,7 +6,7 @@
 //   2. Is the accessibility-style tree identical across fresh launches?
 //   3. Are webview screenshots identical (decoded RGBA) within a session and across launches?
 //   4. Does a real OS click (CGEvent) reach the page as a trusted event and change the tree?
-//   5. Does the app leave the runner's real HOME untouched when HOME is redirected?
+//   5. Does the app leave the runner's real HOME and keychains untouched when HOME is redirected?
 //
 //   node probe.mjs run --app <CC Switch.app> --helper <helper> --runs <n> --out <file.json>
 //   node probe.mjs compare <results.json>...
@@ -30,11 +30,28 @@ function cleanEnv(home) {
 
 const realHomeMarks = (home) => [".cc-switch", ".claude", ".codex", ".gemini"].filter((d) => existsSync(join(home, d)));
 
+// Every item in the user's keychains, by class, service and account. Attributes only: without -d
+// the dump prints no secrets. A launch must not add, remove or rename any item.
+function keychainItems() {
+  let dump = "";
+  try { dump = execFileSync("security", ["dump-keychain"], { maxBuffer: 32 << 20, stdio: ["ignore", "pipe", "ignore"] }).toString(); } catch { return null; }
+  const items = [];
+  for (const block of dump.split(/^keychain: /m).slice(1)) {
+    const cls = /^class: (.*)$/m.exec(block)?.[1] ?? "";
+    const svce = /"svce"<blob>=(.*)$/m.exec(block)?.[1] ?? "";
+    const acct = /"acct"<blob>=(.*)$/m.exec(block)?.[1] ?? "";
+    const labl = /0x00000007 <blob>=(.*)$/m.exec(block)?.[1] ?? "";
+    items.push([block.split("\n")[0], cls, svce, acct, labl].join(" | "));
+  }
+  return items.sort();
+}
+
 async function oneRun(app, helper, index) {
   const exe = join(app, "Contents/MacOS", execFileSync("plutil", ["-extract", "CFBundleExecutable", "raw", join(app, "Contents/Info.plist")]).toString().trim());
   const home = mkdtempSync(join(tmpdir(), `parity-home-${index}-`));
   const realHome = process.env.HOME;
   const before = realHomeMarks(realHome);
+  const keychainBefore = keychainItems();
   try { execFileSync(helper, ["move", "1", "1"]); } catch {}
   const t0 = Date.now();
   const child = spawn(exe, [], { env: cleanEnv(home), stdio: ["ignore", "pipe", "pipe"] });
@@ -122,6 +139,15 @@ async function oneRun(app, helper, index) {
     const touched = realHomeMarks(realHome).filter((d) => !before.includes(d));
     result.realHomeTouched = touched;
     if (touched.length) result.failures.push(`real HOME gained ${touched.join(", ")}`);
+    const keychainAfter = keychainItems();
+    if (keychainBefore === null || keychainAfter === null) {
+      result.failures.push("could not read the keychain");
+    } else {
+      result.keychainItems = keychainAfter.length;
+      const added = keychainAfter.filter((i) => !keychainBefore.includes(i));
+      const removed = keychainBefore.filter((i) => !keychainAfter.includes(i));
+      if (added.length || removed.length) result.failures.push(`keychain changed: +${JSON.stringify(added)} -${JSON.stringify(removed)}`);
+    }
     result.redirectedHome = execFileSync("find", [home, "-maxdepth", "3"]).toString().split("\n").filter(Boolean).map((p) => p.slice(home.length) || "/").sort();
     if (result.failures.length) result.log = log.slice(-4000);
     rmSync(home, { recursive: true, force: true });
@@ -144,6 +170,24 @@ async function main() {
   }
   if (process.env.PARITY_OUT_DIR) mkdirSync(process.env.PARITY_OUT_DIR, { recursive: true });
   const axTrusted = execFileSync(a.helper, ["trusted"]).toString().trim();
+  // The keychain check must be able to see a change, or a clean result means nothing.
+  const keychainSelfCheck = (() => {
+    const base = keychainItems();
+    if (base === null) return "security dump-keychain failed";
+    try {
+      execFileSync("security", ["add-generic-password", "-s", "parity-selfcheck", "-a", "probe", "-w", "x"], { stdio: "ignore" });
+      const seen = keychainItems().some((i) => i.includes('"parity-selfcheck"'));
+      execFileSync("security", ["delete-generic-password", "-s", "parity-selfcheck", "-a", "probe"], { stdio: "ignore" });
+      const gone = !keychainItems().some((i) => i.includes('"parity-selfcheck"'));
+      return seen && gone ? true : `planted item seen=${seen} removed=${gone}`;
+    } catch (e) {
+      return `self-check failed: ${String(e.message || e).slice(0, 200)}`;
+    }
+  })();
+  if (keychainSelfCheck !== true) {
+    console.error(`keychain check is blind: ${keychainSelfCheck}`);
+    process.exit(1);
+  }
   const runs = [];
   for (let i = 0; i < Number(a.runs || 3); i++) {
     const r = await oneRun(a.app, a.helper, i);
@@ -151,7 +195,7 @@ async function main() {
     runs.push(r);
   }
   const summary = summarise(runs);
-  const out = { axTrusted, summary, runs };
+  const out = { axTrusted, keychainSelfCheck, summary, runs };
   writeFileSync(a.out || "probe-results.json", JSON.stringify(out, null, 2));
   console.log(JSON.stringify({ axTrusted, ...summary }, null, 2));
   process.exit(summary.pass ? 0 : 1);
