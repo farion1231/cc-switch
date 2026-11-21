@@ -30,6 +30,7 @@ import {
   formatOutputTokensPerSecond,
   getLocaleFromLanguage,
   getResolvedLang,
+  hasExactTimingSource,
   parseFiniteNumber,
 } from "./format";
 import { appDisplayName } from "./RequestLogTable";
@@ -126,6 +127,7 @@ function useDetailSections(request: RequestLog) {
   const unpriced = isUnpricedUsage(request);
   const multiplier = parseFiniteNumber(request.costMultiplier);
   const isProxy = !request.dataSource || request.dataSource === "proxy";
+  const hasExactTiming = hasExactTimingSource(request);
   const tps = formatOutputTokensPerSecond(request);
   const estimatedTps = formatEstimatedTokensPerSecond(request);
   const latency = parseFiniteNumber(request.latencyMs);
@@ -261,8 +263,8 @@ function useDetailSections(request: RequestLog) {
   });
 
   let performance: DetailRow[];
-  if (!isProxy) {
-    // 会话日志的耗时和首字是导入时按日志时间戳估的（耗时 0 = 没估出来）
+  if (!hasExactTiming) {
+    // 其余会话日志的耗时和首字是导入时按日志时间戳估的（耗时 0 = 没估出来）
     if (latency == null || latency <= 0) {
       performance = [
         {
@@ -305,6 +307,15 @@ function useDetailSections(request: RequestLog) {
         });
       }
     }
+  } else if (!isProxy && (latency == null || latency <= 0)) {
+    performance = [
+      {
+        key: "speed",
+        label: t("usage.speed"),
+        value: t("usage.detail.noTimingSession"),
+        muted: true,
+      },
+    ];
   } else {
     const speedRow: DetailRow =
       tps != null
