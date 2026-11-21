@@ -112,6 +112,8 @@ export function formatResetIn(
   iso: string,
   now: Date,
   texts: PanelTexts,
+  /** 只要时长（「5d 11h」），不套「Resets in …」：额度行放不下时用 */
+  bare = false,
 ): string | null {
   const at = new Date(iso);
   if (Number.isNaN(at.getTime()) || at <= now) return null;
@@ -136,10 +138,8 @@ export function formatResetIn(
             minutes > 0 && unit(texts.durationMinutes, minutes),
           ]
         : [unit(texts.durationMinutes, minutes)];
-  return texts.resetsIn.replace(
-    "{when}",
-    parts.filter(Boolean).join(texts.durationSep),
-  );
+  const duration = parts.filter(Boolean).join(texts.durationSep);
+  return bare ? duration : texts.resetsIn.replace("{when}", duration);
 }
 
 /** 只给数值上绿色（「余额 82.10 CNY」里的金额），和主界面 `TONE_TEXT.normal` 同色。 */
@@ -171,19 +171,37 @@ function QuotaBlock({
   /** 子面板里：最多两档 */
   compact?: boolean;
 }) {
+  // 档名长的一块（Antigravity 的「Claude/GPT weekly 100% left」）三列排不下时，重置时间只写
+  // 时长，完整的「Resets in …」放到悬停提示里；排得下的（Claude、Codex）照旧。
+  const gridRef = useRef<HTMLDivElement>(null);
+  const signature = quota.lines.map((line) => line.text).join("\n");
+  const [tightFor, setTightFor] = useState<string | null>(null);
+  const tight = tightFor === signature;
+  useLayoutEffect(() => {
+    const grid = gridRef.current;
+    if (!tight && grid && grid.scrollWidth > grid.clientWidth) {
+      setTightFor(signature);
+    }
+  }, [signature, tight]);
+
   if (quota.lines.length === 0 && !quota.note && quota.resetCredits == null) {
     return null;
   }
   const now = new Date();
-  const lines = quota.lines.slice(0, compact ? 2 : 3).map((line) => ({
+  // 应用行最多 5 档：Antigravity 有 Gemini 和 Claude/GPT 两组各自的 5 小时 / 每周，再加 Argon 每周。
+  const lines = quota.lines.slice(0, compact ? 2 : 5).map((line) => ({
     ...line,
     when: line.resetsAt ? formatResetIn(line.resetsAt, now, texts) : null,
+    whenBare: line.resetsAt
+      ? formatResetIn(line.resetsAt, now, texts, true)
+      : null,
   }));
   // 各档共用一张网格（文字 | 进度条 | 多久重置），进度条的起止才对得齐；
   // 整块都没有重置时间时不留第三列，免得右边空出一截间距。
   const hasWhen = lines.some((line) => line.when);
   return (
     <div
+      ref={gridRef}
       className={cn(
         "grid items-center gap-x-2 gap-y-1",
         hasWhen
@@ -221,8 +239,11 @@ function QuotaBlock({
               </span>
             )}
             {hasWhen && (
-              <span className="justify-self-end whitespace-nowrap text-[10.5px] tabular-nums text-muted-foreground">
-                {line.when}
+              <span
+                className="justify-self-end whitespace-nowrap text-[10.5px] tabular-nums text-muted-foreground"
+                title={tight ? (line.when ?? undefined) : undefined}
+              >
+                {tight ? line.whenBare : line.when}
               </span>
             )}
           </div>

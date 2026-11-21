@@ -208,6 +208,85 @@ describe("TrayPanel window layout", () => {
     );
   });
 
+  it("writes only the duration when a quota block is too wide, and keeps the full text otherwise", async () => {
+    const resetsAt = new Date(
+      Date.now() + (5 * 24 + 11) * 3_600_000 + 30_000,
+    ).toISOString();
+    const quotaApp = (
+      app: TrayPanelState["apps"][number]["app"],
+      name: string,
+      text: string,
+    ) => ({
+      ...state.apps[0],
+      app,
+      name,
+      quota: {
+        lines: [{ text, left: 100, warn: false, resetsAt, emphasis: null }],
+        note: null,
+        resetCredits: null,
+      },
+    });
+    vi.mocked(trayPanelApi.state).mockResolvedValue({
+      ...state,
+      apps: [
+        quotaApp("codex", "Codex", "Weekly 85% left"),
+        quotaApp("agy", "Antigravity", "Claude/GPT weekly 100% left"),
+      ],
+    });
+    // 只有 Antigravity 那一块排不下
+    vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockImplementation(
+      function (this: HTMLElement) {
+        return this.textContent?.includes("Claude/GPT") ? 280 : 200;
+      },
+    );
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(240);
+    vi.mocked(trayPanelApi.placement).mockResolvedValue(windows);
+    renderPanel();
+
+    await screen.findByText("Claude/GPT weekly 100% left");
+    expect(screen.getByText("Resets in 5d 11h")).toBeVisible();
+    const bare = await screen.findByText("5d 11h");
+    expect(bare).toHaveAttribute("title", "Resets in 5d 11h");
+  });
+
+  it("shows all five Antigravity quota lines on the app row", async () => {
+    const line = (text: string) => ({
+      text,
+      left: 80,
+      warn: false,
+      resetsAt: null,
+      emphasis: null,
+    });
+    vi.mocked(trayPanelApi.state).mockResolvedValue({
+      ...state,
+      apps: [
+        {
+          ...state.apps[0],
+          app: "agy",
+          name: "Antigravity",
+          quota: {
+            lines: [
+              line("Gemini 5-hour 85% left"),
+              line("Gemini weekly 82% left"),
+              line("Argon weekly 61% left"),
+              line("Claude/GPT 5-hour 100% left"),
+              line("Claude/GPT weekly 100% left"),
+            ],
+            note: null,
+            resetCredits: null,
+          },
+        },
+      ],
+    });
+    vi.mocked(trayPanelApi.placement).mockResolvedValue(windows);
+    renderPanel();
+
+    expect(await screen.findByText("Gemini 5-hour 85% left")).toBeVisible();
+    expect(screen.getByText("Argon weekly 61% left")).toBeVisible();
+    expect(screen.getByText("Claude/GPT 5-hour 100% left")).toBeVisible();
+    expect(screen.getByText("Claude/GPT weekly 100% left")).toBeVisible();
+  });
+
   it("shows the frame with Open main window and Quit before the panel data arrives", async () => {
     let resolveState: (value: TrayPanelState) => void = () => {};
     vi.mocked(trayPanelApi.state).mockReturnValue(
@@ -975,5 +1054,12 @@ describe("formatResetIn", () => {
     expect(formatResetIn(at(20_000), now, texts)).toBe("Resets in 1m");
     expect(formatResetIn(at(-MIN), now, texts)).toBeNull();
     expect(formatResetIn("not a date", now, texts)).toBeNull();
+  });
+
+  it("can write just the duration", () => {
+    expect(
+      formatResetIn(at((5 * 1440 + 11 * 60) * MIN), now, texts, true),
+    ).toBe("5d 11h");
+    expect(formatResetIn(at(-MIN), now, texts, true)).toBeNull();
   });
 });

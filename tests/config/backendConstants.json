@@ -152,7 +152,8 @@
         "claude-desktop": false,
         "codex": false,
         "gemini": false,
-        "grokbuild": false
+        "grokbuild": false,
+        "agy": false
       }
     },
     {
@@ -170,7 +171,8 @@
         "claude-desktop": true,
         "codex": true,
         "gemini": false,
-        "grokbuild": true
+        "grokbuild": true,
+        "agy": false
       }
     },
     {
@@ -188,7 +190,8 @@
         "claude-desktop": false,
         "codex": true,
         "gemini": false,
-        "grokbuild": true
+        "grokbuild": true,
+        "agy": false
       }
     },
     {
@@ -206,7 +209,8 @@
         "claude-desktop": false,
         "codex": true,
         "gemini": false,
-        "grokbuild": true
+        "grokbuild": true,
+        "agy": false
       }
     },
     {
@@ -224,7 +228,8 @@
         "claude-desktop": false,
         "codex": true,
         "gemini": false,
-        "grokbuild": true
+        "grokbuild": true,
+        "agy": false
       }
     },
     {
@@ -245,7 +250,8 @@
         "claude-desktop": false,
         "codex": true,
         "gemini": false,
-        "grokbuild": true
+        "grokbuild": true,
+        "agy": false
       }
     },
     {
@@ -266,7 +272,8 @@
         "claude-desktop": false,
         "codex": false,
         "gemini": false,
-        "grokbuild": false
+        "grokbuild": false,
+        "agy": false
       }
     },
     {
@@ -284,7 +291,8 @@
         "claude-desktop": true,
         "codex": false,
         "gemini": false,
-        "grokbuild": false
+        "grokbuild": false,
+        "agy": false
       }
     },
     {
@@ -303,7 +311,8 @@
         "claude-desktop": false,
         "codex": false,
         "gemini": false,
-        "grokbuild": false
+        "grokbuild": false,
+        "agy": false
       }
     }
   ]
