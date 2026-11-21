@@ -389,4 +389,63 @@ describe("ProviderForm Stack layout (Codex)", () => {
     expect(screen.getByText("模型列表")).toBeInTheDocument();
     expect(screen.queryByTestId("codex-config-editor")).toBeNull();
   });
+
+  it("重复实际模型时阻止保存、显示原因并聚焦第一条重复行", async () => {
+    settingsState.enableStackMode = false;
+    const onSubmit = vi.fn();
+    renderForm("codex", onSubmit, {
+      codexCatalog: [
+        { model: "m-2", displayName: "M2" },
+        { model: "m-1", displayName: "M1" },
+      ],
+    });
+
+    const modelInputs = screen.getAllByPlaceholderText(
+      "例如: deepseek-v4-flash",
+    );
+    expect(codexRowModels()).toEqual(["m-1", "m-2"]);
+    fireEvent.change(modelInputs[0], { target: { value: "m-2" } });
+    expect(codexRowModels()).toEqual(["m-2", "m-2"]);
+    expect(document.getElementById("codexSubagentModel")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "save-provider" }));
+    expect(
+      await screen.findByText("无法保存：实际请求模型重复"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("m-2")).toBeInTheDocument();
+    expect(
+      screen.getByText("请调整菜单配置，避免“实际请求模型”重复。"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("重复菜单：")).toBeInTheDocument();
+    expect(screen.getAllByText("菜单显示名：")).toHaveLength(2);
+    expect(onSubmit).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "返回修改" }));
+    await waitFor(() => expect(document.activeElement).toBe(modelInputs[0]));
+
+    // 手动删除第二条重复行后才能保存；编辑行的显示名保留。
+    fireEvent.click(screen.getAllByRole("button", { name: "删除" })[1]);
+    const { settings } = await save(onSubmit);
+    expect(settings.config).toContain('model = "m-2"');
+    expect(settings.modelCatalog.models).toEqual([
+      { model: "m-2", displayName: "M1" },
+    ]);
+  });
+
+  it("相同显示名但实际模型不同时允许保存", async () => {
+    settingsState.enableStackMode = false;
+    const onSubmit = vi.fn();
+    renderForm("codex", onSubmit, {
+      codexCatalog: [
+        { model: "m-1", displayName: "Same" },
+        { model: "m-2", displayName: "Same" },
+      ],
+    });
+
+    const { settings } = await save(onSubmit);
+    expect(settings.modelCatalog.models).toEqual([
+      { model: "m-1", displayName: "Same" },
+      { model: "m-2", displayName: "Same" },
+    ]);
+  });
 });
