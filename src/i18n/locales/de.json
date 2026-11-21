@@ -53,9 +53,51 @@
   },
   "firstRunNotice": {
     "title": "Willkommen bei CC Switch",
-    "bodyDefault": "Mit CC Switch wechseln Sie mit einem Klick zwischen mehreren Anbietern für Claude Code / Codex / Gemini CLI. Wenn Sie diese Tools bereits konfiguriert hatten, hat CC Switch Ihre bestehende Einrichtung als Anbieter mit dem Namen „default“ gespeichert, sodass keine Ihrer bisherigen Konfigurationen verloren geht.",
-    "bodyOfficial": "In der Liste finden Sie außerdem eine Voreinstellung „Official“ – klicken Sie darauf, wenn Sie jederzeit zur offiziellen Standardeinstellung zurückwechseln möchten. CC Switch sichert Ihre aktuelle Konfiguration vor dem Wechsel automatisch unter „default“, sodass Sie frei hin- und herwechseln können. So funktioniert CC Switch 😊",
-    "confirm": "Verstanden"
+    "bodyDefault": "Mit CC Switch wechseln Sie mit einem Klick zwischen Anbietern für Claude Code, Codex, Gemini CLI und weitere KI-Coding-Tools und verwalten MCP, Skills sowie Sitzungen zentral.",
+    "bodyBackup": "Wenn Sie diese Tools bereits konfiguriert hatten, hat CC Switch Ihre bestehende Einrichtung automatisch als Anbieter „default“ gespeichert, sodass keine Konfiguration verloren geht.",
+    "bodyOfficial": "Eine Voreinstellung „Official“ ist ebenfalls enthalten, damit Sie jederzeit zu den offiziellen Standardwerten zurückkehren können. Vor jedem Wechsel sichert CC Switch Ihre aktuelle Konfiguration automatisch unter „default“."
+  },
+  "tutorial": {
+    "open": "Einführung",
+    "progress": "Schritt {{current}} von {{total}}",
+    "stepCounter": "{{current}} / {{total}}",
+    "skip": "Überspringen",
+    "back": "Zurück",
+    "next": "Weiter",
+    "done": "Loslegen",
+    "apps": {
+      "title": "App auswählen",
+      "body": "Diese Seitenleiste zeigt die von CC Switch verwalteten Apps (Claude Code, Codex, Gemini CLI usw.). Wählen Sie eine App aus, um rechts ihre Anbieter zu sehen. Über „Apps“ unten können Sie Tools installieren oder festlegen, welche Apps hier angezeigt werden."
+    },
+    "providers": {
+      "title": "Anbieter wechseln & verwalten",
+      "body": "Jede Karte steht für einen Anbieter. Klicken Sie rechts auf der Karte auf das Aktionssymbol (z. B. „Wechseln ▶“ oder „Aktivieren“), um ihn in die Konfigurationsdatei der App zu schreiben – oder wechseln Sie schnell über das Tray-Menü.",
+      "empty": "Diese App hat noch keine Anbieter. Klicken Sie unten auf „Aktuelle Konfiguration importieren“ oder „Anbieter hinzufügen“, um Ihre erste Karte anzulegen, und aktivieren Sie sie anschließend über das Aktionssymbol der Karte."
+    },
+    "add": {
+      "title": "Anbieter hinzufügen",
+      "body": "Klicken Sie hier, um einen Anbieter hinzuzufügen. Für gängige Dienste gibt es fertige Voreinstellungen – einfach auswählen und API-Schlüssel einfügen, oder einen eigenen Endpunkt samt Modellen eintragen."
+    },
+    "modes": {
+      "title": "Verbindungsmodi",
+      "body": "Bei unterstützten Apps legen Sie in der oberen Leiste fest, wie Anfragen gesendet werden:",
+      "directTitle": "Direkt",
+      "directDesc": "Standardmodus. Die App verbindet sich ohne lokalen Proxy direkt mit dem aktiven Anbieter.",
+      "routeTitle": "Routing",
+      "routeDesc": "Anfragen laufen über den lokalen Routing-Dienst von CC Switch – für nahtlosen Wechsel, Failover-Warteschlangen und Nutzungserfassung.",
+      "stackTitle": "Aggregation",
+      "stackDesc": "Für Claude Code, Codex und Claude Desktop direkt in den oberen Tabs auswählbar, um Modelle mehrerer Anbieter gemeinsam bereitzustellen.",
+      "unavailable": "Die aktuelle App verwendet keine Verbindungsmodi. Wählen Sie Claude Code, Codex, Gemini CLI, Grok Build oder Claude Desktop, um die Modus-Tabs oben anzuzeigen."
+    },
+    "shared": {
+      "title": "MCP, Skills, Prompts & Sitzungen",
+      "body": "Auf den Seiten MCP, Skills und Prompts verwalten Sie gemeinsame Konfigurationen zentral und synchronisieren jeden Eintrag mit ausgewählten Apps. Unter „Sitzungen“ können Sie frühere Gespräche durchsuchen und fortsetzen."
+    },
+    "more": {
+      "title": "Konten, Nutzung & Einstellungen",
+      "body": "Unter „Konten“ verwalten Sie Anmeldungen für Abonnements wie GitHub Copilot oder ChatGPT. „Nutzung“ zeigt Anfragen, Tokens und Kosten. In den „Einstellungen“ passen Sie allgemeine Optionen, Konfigurationsordner, lokales Routing, Netzwerk und Backups an.",
+      "replay": "Möchten Sie die Einführung erneut ansehen? Sie können sie jederzeit unter Einstellungen → Über wieder öffnen."
+    }
   },
   "apiKeyInput": {
     "placeholder": "API-Schlüssel eingeben",

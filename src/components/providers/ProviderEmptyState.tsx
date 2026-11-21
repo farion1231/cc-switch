@@ -39,47 +39,52 @@ export function ProviderEmptyState({
 
   return (
     <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
-      <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl border border-border bg-subtle text-fg-2">
-        <Server className="h-6 w-6" strokeWidth={1.5} aria-hidden="true" />
-      </div>
-      <h2 className="text-section text-fg-1">
-        {emptyCopyNs
-          ? t(`${emptyCopyNs}.empty.title`)
-          : t("provider.noProviders")}
-      </h2>
-      {emptyCopyNs && (
-        <p className="mt-2 max-w-lg text-body text-fg-2">
-          {t(`${emptyCopyNs}.empty.description`)}
-        </p>
-      )}
-      {showKeyFieldsHint && (
-        <p className="mt-2 max-w-lg text-body text-fg-2">
-          {t("provider.noProvidersDescriptionKeyFields")}
-        </p>
-      )}
-      {(onImport || onCreate) && (
-        <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
-          {onImport && (
-            <Button variant="neutral" size="regular" onClick={onImport}>
-              <Download className="h-4 w-4" />
-              {appId === "claude-desktop"
-                ? t("provider.importFromClaude")
-                : t("provider.importCurrent")}
-            </Button>
-          )}
-          {onCreate && (
-            <Button variant="neutral" size="regular" onClick={onCreate}>
-              <Plus className="h-4 w-4" />
-              {t("provider.addProvider")}
-            </Button>
-          )}
-          {!emptyCopyNs && onImport && (
-            <HelpTip title={t("provider.noProviders")}>
-              {t("provider.noProvidersDescription")}
-            </HelpTip>
-          )}
+      <div
+        data-tour="provider-empty"
+        className="flex max-w-lg flex-col items-center rounded-panel px-6 py-4"
+      >
+        <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl border border-border bg-subtle text-fg-2">
+          <Server className="h-6 w-6" strokeWidth={1.5} aria-hidden="true" />
         </div>
-      )}
+        <h2 className="text-section text-fg-1">
+          {emptyCopyNs
+            ? t(`${emptyCopyNs}.empty.title`)
+            : t("provider.noProviders")}
+        </h2>
+        {emptyCopyNs && (
+          <p className="mt-2 max-w-lg text-body text-fg-2">
+            {t(`${emptyCopyNs}.empty.description`)}
+          </p>
+        )}
+        {showKeyFieldsHint && (
+          <p className="mt-2 max-w-lg text-body text-fg-2">
+            {t("provider.noProvidersDescriptionKeyFields")}
+          </p>
+        )}
+        {(onImport || onCreate) && (
+          <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+            {onImport && (
+              <Button variant="neutral" size="regular" onClick={onImport}>
+                <Download className="h-4 w-4" />
+                {appId === "claude-desktop"
+                  ? t("provider.importFromClaude")
+                  : t("provider.importCurrent")}
+              </Button>
+            )}
+            {onCreate && (
+              <Button variant="neutral" size="regular" onClick={onCreate}>
+                <Plus className="h-4 w-4" />
+                {t("provider.addProvider")}
+              </Button>
+            )}
+            {!emptyCopyNs && onImport && (
+              <HelpTip title={t("provider.noProviders")}>
+                {t("provider.noProvidersDescription")}
+              </HelpTip>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

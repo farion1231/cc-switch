@@ -53,9 +53,51 @@
   },
   "firstRunNotice": {
     "title": "歡迎使用 CC Switch",
-    "bodyDefault": "CC Switch 可以協助您在 Claude Code / Codex / Gemini CLI 的多個供應商之間一鍵切換。如果您之前已經設定過這些工具，CC Switch 會自動將現有設定儲存為名為 default 的供應商，確保您的設定不會遺失。",
-    "bodyOfficial": "清單中還預設了「官方 (Official)」供應商，隨時點擊即可切換回官方預設設定。切換前 CC Switch 會自動將目前設定備份回 default，可以放心來回切換。這就是 CC Switch 的運作方式。",
-    "confirm": "我了解了"
+    "bodyDefault": "CC Switch 可以協助您在 Claude Code、Codex、Gemini CLI 等 AI 程式設計工具的多個供應商之間一鍵切換，並統一管理 MCP、Skills 與歷史工作階段。",
+    "bodyBackup": "如果您之前已經設定過這些工具，CC Switch 已自動將現有設定儲存為名為「default」的供應商，可以放心試用，原有設定不會遺失。",
+    "bodyOfficial": "清單中還預設了「官方 (Official)」供應商，隨時可切換回官方設定；每次切換前 CC Switch 都會先把目前設定自動備份到 default，可以放心來回切換。"
+  },
+  "tutorial": {
+    "open": "使用教學",
+    "progress": "第 {{current}} 步，共 {{total}} 步",
+    "stepCounter": "{{current}} / {{total}}",
+    "skip": "略過",
+    "back": "上一步",
+    "next": "下一步",
+    "done": "開始使用",
+    "apps": {
+      "title": "選擇應用",
+      "body": "側欄這一列是 CC Switch 管理的應用（Claude Code、Codex、Gemini CLI 等），點選後右側就會顯示它的供應商。想安裝應用或調整側欄顯示哪些應用，可點底部的「應用」。"
+    },
+    "providers": {
+      "title": "切換與管理供應商",
+      "body": "每張卡片是一個供應商。點擊卡片右側的操作圖示（如「切換 ▶」或「啟用」）即可寫入這個應用的設定檔；系統匣選單裡也能快速切換。",
+      "empty": "這個應用還沒有供應商。可以先點擊下方的「匯入目前設定」或「新增供應商」建立第一張卡片，之後在卡片右側即可一鍵切換或啟用。"
+    },
+    "add": {
+      "title": "新增供應商",
+      "body": "點這裡新增供應商。常見服務商都準備好了預設，選中後只需填入 API Key；也支援自訂請求位址與模型。"
+    },
+    "modes": {
+      "title": "連線模式：直連、路由與聚合",
+      "body": "部分應用支援在頂部切換請求方式，按需選擇即可：",
+      "directTitle": "直連",
+      "directDesc": "預設模式。應用直接請求目前的供應商，不經過本機代理。",
+      "routeTitle": "路由",
+      "routeDesc": "請求先經過本機的路由服務，支援熱切換、按佇列做故障轉移並記錄用量。",
+      "stackTitle": "聚合",
+      "stackDesc": "Claude Code、Codex 和 Claude Desktop 可直接在頂部切到「聚合」，把多家供應商的模型同時放進模型清單。",
+      "unavailable": "目前的應用沒有連線模式切換。選中 Claude Code、Codex、Gemini CLI、Grok Build 或 Claude Desktop，頁面頂部就會出現模式標籤。"
+    },
+    "shared": {
+      "title": "MCP、Skills、提示詞與工作階段",
+      "body": "MCP、Skills 和提示詞頁面集中管理跨應用的共享設定，每一項都可以選擇同步到哪些應用；「工作階段」頁面可以瀏覽並恢復各個應用的歷史對話。"
+    },
+    "more": {
+      "title": "授權、用量與設定",
+      "body": "「授權中心」管理 GitHub Copilot、ChatGPT 等訂閱帳號的登入；「用量統計」查看請求次數、Token 與費用；「設定」裡可調整偏好、應用設定目錄、本機路由和資料備份。",
+      "replay": "想隨時重溫這份教學，可以在「設定 → 關於」裡重新開啟。"
+    }
   },
   "apiKeyInput": {
     "placeholder": "請輸入 API Key",
