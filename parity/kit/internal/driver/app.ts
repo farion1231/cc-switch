@@ -107,6 +107,69 @@ export function launchWindows(opts: { binary: string; driver: string; edgeDriver
   });
 }
 
+/**
+ * macOS: the parity build embeds a WebDriver server (tauri-plugin-wdio-webdriver), which locates
+ * and reads. Input is real: the helper posts CGEvents at the HID tap after activating the app.
+ */
+export async function launchMacos(opts: { app: string; helper: string; home: string; port?: number }): Promise<AppSession> {
+  const port = opts.port ?? 4445;
+  const plist = join(opts.app, "Contents/Info.plist");
+  const exe = join(opts.app, "Contents/MacOS", execFileSync("plutil", ["-extract", "CFBundleExecutable", "raw", plist]).toString().trim());
+  const child = spawn(exe, [], {
+    env: appEnv(opts.home, { CFFIXED_USER_HOME: opts.home, TAURI_WEBDRIVER_PORT: String(port) }),
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let log = "";
+  child.stdout?.on("data", (d) => (log += d));
+  child.stderr?.on("data", (d) => (log += d));
+  const helper = (...a: (string | number)[]) => execFileSync(opts.helper, a.map(String)).toString().trim();
+  const wd = new WebDriver(`http://127.0.0.1:${port}`);
+  const close = async () => {
+    await wd.deleteSession();
+    child.kill("SIGTERM");
+    const exited = await Promise.race([new Promise((r) => child.once("exit", () => r(true))), sleep(10000).then(() => false)]);
+    if (!exited) child.kill("SIGKILL");
+    try { helper("move", 1, 1); } catch {}
+    return { log: log.slice(-8000) };
+  };
+  try {
+    for (let i = 0; ; i++) {
+      try { await wd.call("GET", "/status", undefined, 2000); break; } catch { if (i > 150) throw new Error("the embedded WebDriver server did not start"); await sleep(200); }
+    }
+    await wd.newSession({});
+    const handles = await wd.call<string[]>("GET", `/session/${wd.sid}/window/handles`);
+    if (handles.includes("main")) await wd.call("POST", `/session/${wd.sid}/window`, { handle: "main" });
+    await waitReady(wd);
+  } catch (e) {
+    await close();
+    throw e;
+  }
+  // The helper's names for the chord keys the verbs use.
+  const NAMES: Record<string, string> = { Meta: "cmd", Control: "ctrl", Shift: "shift", Alt: "alt", Backspace: "backspace", Enter: "return", Escape: "escape", Tab: "tab", Delete: "delete", Space: "space", ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right" };
+  const activate = async () => {
+    helper("activate", child.pid!);
+    await sleep(150);
+  };
+  return {
+    mod: "Meta",
+    probe: <T>(cmd: ProbeCmd) => wd.exec<T>(PROBE_SCRIPT, [cmd]),
+    async click(x, y) {
+      await activate();
+      const [wx, wy] = helper("bounds", child.pid!).split(/\s+/).map(Number);
+      helper("click", wx + x, wy + y);
+    },
+    async type(_element, text) {
+      await activate();
+      helper("type", text);
+    },
+    async chord(keys) {
+      await activate();
+      helper("key", keys.map((k) => NAMES[k] ?? k.toLowerCase()).join("+"));
+    },
+    close,
+  };
+}
+
 async function launchThroughTauriDriver(o: {
   driver: string; nativeDriver: string; binary: string; port: number; env: Record<string, string>; kill: () => Promise<void>;
 }): Promise<AppSession> {

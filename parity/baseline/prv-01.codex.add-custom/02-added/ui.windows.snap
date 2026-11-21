@@ -1,0 +1,69 @@
+window main "Claude Code 供应商切换器" scheme=light
+focused: (none)
+tree:
+  navigation "Main navigation"
+    link "Skip to main content"
+    text "CC Switch"
+    button "Collapse sidebar"
+    group "Apps"
+      button "Claude Code"
+      button "Claude Desktop"
+      button "Codex" [current=page]
+      button "Gemini CLI"
+      button "Grok Build"
+      button "OpenCode"
+      button "OpenClaw"
+      button "Hermes"
+      button "Pi"
+      button "MiniMax Code"
+      button "Kimi Code"
+      button "DeepSeek Harness"
+      button "Antigravity"
+      button "Oh My Pi"
+      button "Copilot CLI"
+      button "WorkBuddy"
+    button "MCP"
+    button "Skills"
+    button "Plugins"
+    button "Prompts"
+    button "Sessions"
+    button "Accounts"
+    button "Usage"
+    button "Apps"
+    button "Settings"
+  main
+    heading "Codex"
+    text "Direct"
+    text "Beta Relay"
+    button "Search providers" [not-pressed]
+    button "Add Provider"
+    button "More actions for Codex" [collapsed]
+    button "Minimize window"
+    button "Maximize window"
+    button "Close window"
+    group "Connection mode"
+      button "Direct" [pressed]
+      button "Routing" [not-pressed]
+      button "Aggregation" [not-pressed]
+    text "Direct: CC Switch never touches your requests; the client talks to the chosen provider itself for the most native experience."
+    text "Routing: requests go through CC Switch on this machine, unlocking hot-switching providers, failover, format conversion, and other advanced features."
+    text "Aggregation: models from several providers sit together in /model, so you can switch between them seamlessly inside the client."
+    button "How the connection modes differ" [collapsed]
+    button "Drag to reorder"
+    heading "OpenAI Official"
+    text "Official"
+    text "The account changes with the current Codex CLI login"
+    button "Switch"
+    button "Edit OpenAI Official"
+    button "More actions for OpenAI Official" [collapsed]
+    button "Drag to reorder"
+    heading "Beta Relay"
+    button "https://beta.relay.example/v1"
+    text "In use"
+    button "Open a terminal with Beta Relay"
+    button "Edit Beta Relay"
+    button "More actions for Beta Relay" [collapsed]
+    status
+  region "Notifications alt+T"
+announcements since the previous checkpoint:
+  "Provider added"

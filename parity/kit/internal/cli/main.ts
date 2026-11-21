@@ -9,7 +9,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { CaseSpec } from "../../case.ts";
 import { WINDOWS_PROFILE_NOISE } from "../../../volatile.ts";
-import { launchLinux, launchWindows } from "../driver/app.ts";
+import { launchLinux, launchMacos, launchWindows } from "../driver/app.ts";
 import { scanHome, signatures } from "../observe/channels.ts";
 import { runCase, type CaseRun, type HostOptions } from "../host/run.ts";
 import { firstDifference } from "../observe/compare.ts";
@@ -74,6 +74,22 @@ function hostFor(os: Os, app: string, flags: Record<string, string>): HostOption
       },
       sentinels: [],
       launch: () => launchWindows({ binary: app, driver: flags.driver ?? "tauri-driver", edgeDriver: flags.edge ?? "msedgedriver" }),
+    };
+  }
+  if (os === "macos") {
+    const real = process.env.HOME;
+    if (!real) throw new Error("HOME is not set");
+    // A fixed path, so paths written into files are the same on every hosted runner.
+    const home = join(real, "parity-home");
+    return {
+      home,
+      exclude: [],
+      reset: () => {
+        rmSync(home, { recursive: true, force: true });
+        mkdirSync(home, { recursive: true, mode: 0o755 });
+      },
+      sentinels: [".cc-switch", ".claude", ".codex", ".gemini", ".config/opencode", "Library/Application Support/com.ccswitch.desktop"].map((d) => join(real, d)),
+      launch: (h) => launchMacos({ app, helper: flags.helper ?? "parity-helper", home: h }),
     };
   }
   throw new Error(`host for ${os} is not implemented yet`);

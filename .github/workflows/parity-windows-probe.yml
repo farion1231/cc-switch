@@ -198,7 +198,7 @@ jobs:
       - name: Run the cases
         shell: bash
         env:
-          RECORD: ${{ contains(github.event.head_commit.message, '[parity record]') }}
+          RECORD: ${{ contains(github.event.head_commit.message, '[parity record]') || contains(github.event.head_commit.message, '[parity record windows]') }}
         run: |
           set -o pipefail
           mapfile -t cases < <(find parity/cases -name '*.case.ts' -not -path '*/_scratch/*' | sort)
