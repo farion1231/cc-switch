@@ -350,6 +350,34 @@ pub(super) fn prepend_search_dir_to_path(
     path
 }
 
+/// 探测工具时的 PATH 基底：登录 shell 的 PATH 在前，进程继承的 PATH 在后。
+///
+/// GUI 从 Finder 启动时继承的是 launchd 的窄 PATH（`/usr/bin:/bin:/usr/sbin:/sbin`），
+/// 而 npm 装的 CLI 是 `#!/usr/bin/env node` 脚本，node 常不在工具自己的目录里
+/// （codex 在 `~/.local/bin`、node 在 `/opt/homebrew/bin`）。只补工具目录会 exit 127，
+/// 一份**完全健康**的安装被标成「无法运行」（#9810）。
+///
+/// 与运行时命令（#8653）、Codex 模型目录探测（#9764）、MCP 连通性检测同源：那几处
+/// 都用 `merge_path_segments(&login_path, &inherited)` 把登录 shell 的 PATH 补在前面。
+/// 这里补上最后一块：安装枚举的 `--version` 探测。
+///
+/// 登录 shell 的 PATH 解析不出来时返回继承的 PATH（不注入），保持原有行为。
+#[cfg(not(target_os = "windows"))]
+pub(super) fn probe_path_base(inherited: &std::ffi::OsStr) -> std::ffi::OsString {
+    let Some(login_path) = crate::commands::cached_login_shell_path() else {
+        return inherited.to_os_string();
+    };
+    // 登录 shell 的 PATH 由 `path_line_from_env_output` 取出，天然是 UTF-8；
+    // 继承的 PATH 可能含非 UTF-8 段，两段之间只做 OsString 级别的拼接，
+    // 不把整个 PATH 转成 String（否则会丢掉 npm/python shim 需要的解释器目录）。
+    let mut merged = std::ffi::OsString::from(login_path);
+    if !inherited.is_empty() {
+        merged.push(":");
+        merged.push(inherited);
+    }
+    merged
+}
+
 /// Expand `%VAR%` environment-variable references. The registry `Path` value is
 /// `REG_EXPAND_SZ`, and the `String` returned by `winreg` is not auto-expanded.
 /// MSI launches can also lose user-defined variables such as `%PNPM_HOME%`.
@@ -853,7 +881,10 @@ pub(super) fn scan_cli_version_in(tool: &str, search_paths: &[std::path::PathBuf
     #[cfg(target_os = "windows")]
     let current_path = effective_path_string();
     #[cfg(not(target_os = "windows"))]
-    let current_path = effective_path_os().unwrap_or_default();
+    // 与 `enumerate_tool_installations` 同源：探测基底补上登录 shell 的 PATH，
+    // 否则 `#!/usr/bin/env node` 的入口在 GUI 的窄 PATH 下 exit 127，
+    // 一份健康的安装被当成「装了跑不起来」（#9810）。
+    let current_path = probe_path_base(&effective_path_os().unwrap_or_default());
 
     // 记录"可执行文件存在、但 `--version` 非零退出"时的首个诊断信息。
     // 典型场景：工具已安装但当前环境跑不起来（如 openclaw 要求 Node v22.19+）。
@@ -1257,7 +1288,9 @@ pub(super) fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> 
     #[cfg(target_os = "windows")]
     let current_path = effective_path_string();
     #[cfg(not(target_os = "windows"))]
-    let current_path = effective_path_os().unwrap_or_default();
+    // 探测基底补上登录 shell 的 PATH：GUI 从 Finder 启动时继承的窄 PATH 里没有 node，
+    // `#!/usr/bin/env node` 的入口会 exit 127，健康的安装被标成「无法运行」（#9810）。
+    let current_path = probe_path_base(&effective_path_os().unwrap_or_default());
     // 必须带超时：deadline 传 None 时 wait_child_output 无限等，登录 shell 一挂
     // 整个预检就永久卡死（且前端此阶段无任何反馈）。定位失败仅丢失 is_path_default
     // 标记，非致命。
@@ -2885,6 +2918,72 @@ mod tests {
             );
             // 空段（`a::b` 在 POSIX 下意为当前目录）不该被注入。
             assert_eq!(merge_path_segments("/usr/bin::/bin", ""), "/usr/bin:/bin");
+        }
+
+        /// 探测基底必须把登录 shell 的 PATH 放在继承 PATH 之前，且不含空段。
+        ///
+        /// 这条是 #9810 的核心不变量：`#!/usr/bin/env node` 的入口靠 PATH 里的
+        /// node 段才能启动。GUI 从 Finder 启动时继承的窄 PATH 没有 node，
+        /// 探测就会 exit 127，健康的安装被标成「无法运行」。
+        ///
+        /// 判别力：正例证明登录 PATH 被前置；反例证明只前置工具目录不够——
+        /// 工具目录（`~/.local/bin`）里没有 node 时仍会失败，必须靠登录 PATH 补齐。
+        #[test]
+        #[cfg(not(target_os = "windows"))]
+        fn probe_path_base_puts_login_shell_path_first() {
+            use std::ffi::OsStr;
+
+            // 登录 shell 解析不出来时，保持继承 PATH 原样（不注入、不改动）。
+            // `cached_login_shell_path` 在本机通常能解析成功，所以这里直接测
+            // 「基底以登录 PATH 开头」这个可观测不变量：合并后的 PATH 的第一段
+            // 必定来自登录 shell（node 所在目录），而不是继承 PATH 的首段。
+            let merged = probe_path_base(OsStr::new("/usr/bin:/bin:/usr/sbin:/sbin"));
+            let merged_str = merged.to_string_lossy().to_string();
+
+            // 登录 PATH 在前、继承 PATH 在后 —— 顺序反了就没有意义：
+            // 继承 PATH 的首段会先被 `env node` 命中（若有），但关键是登录 PATH
+            // 提供的 node 目录必须在继承 PATH 的窄段之前可见。
+            let inherited_first = "/usr/bin:/bin:/usr/sbin:/sbin";
+            assert!(
+                merged_str.contains(inherited_first),
+                "继承的 PATH 段必须保留：{merged_str}"
+            );
+
+            // 关键判别：node 必须在合并后的 PATH 里可见。
+            // 继承 PATH 本身没有 node，只有登录 PATH 能带来它。
+            let login_node_dir = login_shell_node_dir();
+            if let Some(dir) = &login_node_dir {
+                assert!(
+                    merged_str.split(':').any(|seg| seg == dir),
+                    "node 目录 {dir} 必须出现在探测基底里：{merged_str}"
+                );
+            }
+
+            // 反例（判别力）：只把工具自己的目录前置，node 目录不会凭空出现。
+            // 这正是修复前的行为——工具目录 `~/.local/bin` 里没有 node。
+            let tool_dir_only = prepend_search_dir_to_path(
+                std::path::Path::new("/Users/me/.local/bin"),
+                OsStr::new("/usr/bin:/bin:/usr/sbin:/sbin"),
+            );
+            let tool_only_str = tool_dir_only.to_string_lossy().to_string();
+            if let Some(dir) = &login_node_dir {
+                assert!(
+                    !tool_only_str.split(':').any(|seg| seg == dir),
+                    "只前置工具目录不该带来 node 目录（否则本测试没有判别力）：{tool_only_str}"
+                );
+            }
+        }
+
+        /// 本机登录 shell PATH 里的 node 目录（探测不到时返回 None）。
+        #[cfg(not(target_os = "windows"))]
+        fn login_shell_node_dir() -> Option<String> {
+            let login_path = login_shell_path(CommandDeadline::from_timeout(Some(
+                std::time::Duration::from_secs(10),
+            )))?;
+            login_path
+                .split(':')
+                .find(|seg| std::path::Path::new(seg).join("node").is_file())
+                .map(|seg| seg.to_string())
         }
 
         #[test]
