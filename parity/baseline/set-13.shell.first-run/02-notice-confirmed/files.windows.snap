@@ -1,12 +1,12 @@
 dir .cc-switch -
 dir .cc-switch/backups -
-opaque .cc-switch/backups/db_backup_<time>.db -
+opaque .cc-switch/backups/db_backup_20310314_090000.db -
 opaque .cc-switch/cc-switch.db -
 file .cc-switch/codex-catalog-history.json - lf no-final-newline
   | [
   |   {
   |     "fingerprint": "none",
-  |     "sinceMs": <time>
+  |     "sinceMs": 1931245200000
   |   }
   | ]
 file .cc-switch/live-state.json - lf no-final-newline
@@ -82,17 +82,17 @@ file .cc-switch/settings.json - lf no-final-newline
   |   "skillStorageLocation": "cc_switch",
   |   "localMigrations": {
   |     "codexThirdPartyHistoryProviderBucketV1": {
-  |       "completedAt": "<time>",
+  |       "completedAt": "2031-03-14T09:00:00+00:00",
   |       "targetProviderId": "custom",
   |       "migratedJsonlFiles": 0,
   |       "migratedStateRows": 0,
   |       "scannedHistoryFiles": true
   |     },
   |     "codexProviderTemplateV1": {
-  |       "completedAt": "<time>"
+  |       "completedAt": "2031-03-14T09:00:00+00:00"
   |     },
   |     "codexLegacyOfficialHistoryBucketV1": {
-  |       "completedAt": "<time>",
+  |       "completedAt": "2031-03-14T09:00:00+00:00",
   |       "targetProviderId": "openai",
   |       "migratedJsonlFiles": 0,
   |       "migratedStateRows": 0,
