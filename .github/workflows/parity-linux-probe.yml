@@ -80,7 +80,7 @@ jobs:
       - name: Summary
         if: always()
         run: |
-          { echo '### Linux'; echo '```'; grep -E '^run |"pass"' parity/.out/linux/probe.log 2>/dev/null; grep -E ': (pass|FAIL)' parity/.out/linux/cases.log 2>/dev/null; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          { echo '### Linux'; echo '```'; grep -E '^run |"pass"' parity/.out/linux/probe.log 2>/dev/null || true; grep -E ': (pass|FAIL|recorded|recording REFUSED)' parity/.out/linux/cases.log 2>/dev/null || true; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v4
         if: always()

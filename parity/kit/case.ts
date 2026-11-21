@@ -39,6 +39,11 @@ export interface Journey {
   /**
    * Moves the app's time forward. Time starts at the same instant in every run and stands still
    * otherwise, so anything that depends on time passing happens only when a case says so.
+   *
+   * Some ids come from the time (prompts, deep-link imports, backups), so two of them made at the
+   * same instant are the same id and the second replaces the first, as in v4 when both land in
+   * one millisecond or second. A case that makes more than one advances the clock between them
+   * and checks that every one of them exists.
    */
   advanceClock(by: Duration): Promise<void>;
   readonly expect: Expect;
