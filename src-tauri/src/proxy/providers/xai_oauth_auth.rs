@@ -463,13 +463,17 @@ impl XaiOAuthManager {
 
     /// 把 Grok CLI 现在登录的号收进授权中心：已有这个号且 refresh token 不同（CLI 轮换过、
     /// 或另登了一次）时换成 CLI 的；没有这个号就新加一个。先用 CLI 的 refresh token 刷新一次
-    /// 确认还有效，失效的不收。CLI 那边的令牌若因此被轮换，立刻写回去。返回是否收了。
+    /// 确认还有效，失效的不收。CLI 那边的令牌若因此被轮换，立刻写回去。
+    ///
+    /// 返回这次自己写回 `auth.json` 的那条登录（没写回为 `None`）：调用方拿它更新联网前读到
+    /// 的 live，作为之后发布时的比对基准，而不是联网后再读一遍盘——那样会把这期间 Grok CLI
+    /// 轮换出来的令牌或用户新登录的号当成基准，接着把它们覆盖掉。
     pub(crate) async fn absorb_grok_cli_login(
         &self,
         live: &crate::grok_auth::LiveLogin,
-    ) -> Result<bool, XaiOAuthError> {
+    ) -> Result<Option<crate::grok_auth::LiveLogin>, XaiOAuthError> {
         let Some(cli_refresh) = live.refresh_token.as_deref() else {
-            return Ok(false);
+            return Ok(None);
         };
         let account_id = live.user_id.as_str();
         let refresh_lock = self.get_refresh_lock(account_id).await;
@@ -480,12 +484,12 @@ impl XaiOAuthManager {
             .as_ref()
             .is_some_and(|account| account.refresh_token == cli_refresh && !account.requires_reauth)
         {
-            return Ok(false);
+            return Ok(None);
         }
 
         let tokens = match self.refresh_with_token(cli_refresh).await {
             Ok(tokens) => tokens,
-            Err(XaiOAuthError::RefreshTokenInvalid) => return Ok(false),
+            Err(XaiOAuthError::RefreshTokenInvalid) => return Ok(None),
             Err(error) => return Err(error),
         };
         let new_refresh = tokens
@@ -510,32 +514,36 @@ impl XaiOAuthManager {
         )
         .await?;
 
-        if new_refresh != cli_refresh {
-            self.sync_grok_cli_after_refresh(account_id, cli_refresh, &cached)
-                .await;
+        if new_refresh == cli_refresh {
+            return Ok(None);
         }
-        Ok(true)
+        Ok(self
+            .sync_grok_cli_after_refresh(account_id, cli_refresh, &cached)
+            .await)
     }
 
-    /// cc-switch 刷新换了 refresh token 后，同步给共用这个令牌的 Grok CLI（失败只记日志）
+    /// cc-switch 刷新换了 refresh token 后，同步给共用这个令牌的 Grok CLI（失败只记日志）。
+    /// 返回写进 `auth.json` 的那条登录，没写为 `None`。
     async fn sync_grok_cli_after_refresh(
         &self,
         account_id: &str,
         consumed_refresh: &str,
         access: &CachedAccessToken,
-    ) {
-        let Some(account) = self.accounts.read().await.get(account_id).cloned() else {
-            return;
-        };
+    ) -> Option<crate::grok_auth::LiveLogin> {
+        let account = self.accounts.read().await.get(account_id).cloned()?;
         let login = cli_login_from(&account, access.token.clone(), Some(access.expires_at_ms));
         match crate::grok_auth::sync_after_refresh(consumed_refresh, &login) {
-            Ok(true) => {
-                log::info!("[XaiOAuth] 已把刷新后的令牌同步给 Grok CLI（account={account_id}）")
+            Ok(Some(written)) => {
+                log::info!("[XaiOAuth] 已把刷新后的令牌同步给 Grok CLI（account={account_id}）");
+                Some(written)
             }
-            Ok(false) => {}
-            Err(err) => log::warn!(
-                "[XaiOAuth] 同步刷新后的令牌给 Grok CLI 失败（account={account_id}）: {err}"
-            ),
+            Ok(None) => None,
+            Err(err) => {
+                log::warn!(
+                    "[XaiOAuth] 同步刷新后的令牌给 Grok CLI 失败（account={account_id}）: {err}"
+                );
+                None
+            }
         }
     }
 
@@ -869,7 +877,8 @@ impl XaiOAuthManager {
             .insert(account_id.to_string(), cached.clone());
         drop(_mutation_guard);
         if next_refresh_token != used_refresh_token {
-            self.sync_grok_cli_after_refresh(account_id, used_refresh_token, &cached)
+            let _ = self
+                .sync_grok_cli_after_refresh(account_id, used_refresh_token, &cached)
                 .await;
         }
         Ok(access_token)

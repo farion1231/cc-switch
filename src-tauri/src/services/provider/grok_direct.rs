@@ -85,6 +85,23 @@ pub(crate) fn prepare_login(
 pub(crate) type XaiManager =
     std::sync::Arc<tokio::sync::RwLock<crate::proxy::providers::xai_oauth_auth::XaiOAuthManager>>;
 
+/// 联网准备好的登录，和发布时 `auth.json` 应当还是的样子
+struct PreparedLogin {
+    login: Option<GrokCliLogin>,
+    /// 发布前的比对基准：联网前读到的 live，只换上收进授权中心时自己写回去的那条。
+    /// 不在联网后重读盘面：那期间 Grok CLI 轮换的令牌、用户新登录的号都不是我们写的，
+    /// 拿它们当基准就会在发布时把它们覆盖掉。
+    expected: Option<LiveLogin>,
+}
+
+/// 联网前读到的 `live`，换上收进授权中心时自己写回 `auth.json` 的那条（没写回就原样）
+fn expected_after_absorb(
+    live: Option<LiveLogin>,
+    absorbed_write_back: Option<LiveLogin>,
+) -> Option<LiveLogin> {
+    absorbed_write_back.or(live)
+}
+
 /// 先把 Grok CLI 现在的登录（`live`）收进授权中心（CLI 可能轮换过 refresh token，或是没在
 /// 授权中心的号；收不进来就不切换，免得丢掉它），再取 `account_id` 的登录。在独立线程里跑：
 /// 调用方可能已在 tokio 运行时里。
@@ -92,13 +109,14 @@ fn absorb_then_login(
     manager: &XaiManager,
     live: Option<LiveLogin>,
     account_id: Option<String>,
-) -> Result<Option<GrokCliLogin>, AppError> {
+) -> Result<PreparedLogin, AppError> {
     let manager = manager.clone();
     std::thread::spawn(move || {
         tauri::async_runtime::block_on(async move {
             let manager = manager.read().await;
+            let mut absorbed_write_back = None;
             if let Some(live) = &live {
-                manager.absorb_grok_cli_login(live).await.map_err(|e| {
+                absorbed_write_back = manager.absorb_grok_cli_login(live).await.map_err(|e| {
                     AppError::localized(
                         "grokbuild.login.absorb_failed",
                         format!("无法确认 Grok CLI 现在的登录，为避免丢掉它，本次没有切换：{e}"),
@@ -108,10 +126,14 @@ fn absorb_then_login(
                     )
                 })?;
             }
+            let expected = expected_after_absorb(live, absorbed_write_back);
             let Some(account_id) = account_id else {
-                return Ok(None);
+                return Ok(PreparedLogin {
+                    login: None,
+                    expected,
+                });
             };
-            manager.grok_cli_login(&account_id).await.map(Some).map_err(|e| {
+            let login = manager.grok_cli_login(&account_id).await.map_err(|e| {
                 // 刷新令牌时网络 / 端点暂时失败不代表登录失效，别让用户白白去重新登录
                 if e.is_transient() {
                     AppError::localized(
@@ -130,6 +152,10 @@ fn absorb_then_login(
                         ),
                     )
                 }
+            })?;
+            Ok(PreparedLogin {
+                login: Some(login),
+                expected,
             })
         })
     })
@@ -158,14 +184,6 @@ fn read_live() -> Result<LiveAuth, AppError> {
     })
 }
 
-/// 收进授权中心时可能刚把新令牌写回 CLI：按现在的盘面做发布前的比对
-fn patch_against_disk(write: LoginWrite) -> GrokAuthPatch {
-    GrokAuthPatch {
-        write,
-        expected: crate::grok_auth::read_live_login_from_disk(),
-    }
-}
-
 fn prepare_bound(
     manager: &XaiManager,
     account_id: String,
@@ -185,7 +203,8 @@ fn prepare_bound(
             GrokLoginStash::capture(entry, file_existed).to_bytes(),
         )),
     };
-    let Some(login) = absorb_then_login(manager, live, Some(account_id))? else {
+    let PreparedLogin { login, expected } = absorb_then_login(manager, live, Some(account_id))?;
+    let Some(login) = login else {
         return Ok(None);
     };
     let write = LoginWrite::Set {
@@ -193,7 +212,7 @@ fn prepare_bound(
         base: None,
     };
     Ok(Some(LoginChange {
-        auth: Some(patch_against_disk(write)),
+        auth: Some(GrokAuthPatch { write, expected }),
         stash,
     }))
 }
@@ -209,8 +228,12 @@ fn prepare_restore(manager: &XaiManager) -> Result<Option<LoginChange>, AppError
         // 换回原来的号；原来没登录就删掉这一条。要换掉的是托管账号的登录，CLI 可能轮换过
         // 令牌，先收进授权中心。
         _ => {
-            let login = absorb_then_login(manager, live, stash.user_id.clone())?;
-            Some(patch_against_disk(stash.restore_write(login)))
+            let PreparedLogin { login, expected } =
+                absorb_then_login(manager, live, stash.user_id.clone())?;
+            Some(GrokAuthPatch {
+                write: stash.restore_write(login),
+                expected,
+            })
         }
     };
     Ok(Some(LoginChange {
@@ -355,4 +378,168 @@ pub(crate) fn run(
         });
     }
     app_write.run(op, &changes, target)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::live::patch::{LivePatch, LiveWriteError};
+    use crate::proxy::providers::xai_oauth_auth::XaiOAuthManager;
+    use crate::test_support::TestHome;
+    use serial_test::serial;
+    use std::io::{Read, Write};
+
+    fn auth_json(user: &str, refresh: &str) -> String {
+        serde_json::json!({
+            (crate::grok_auth::oidc_scope()): {"user_id": user, "refresh_token": refresh}
+        })
+        .to_string()
+    }
+
+    fn write_auth(user: &str, refresh: &str) {
+        let path = crate::grok_auth::auth_path();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, auth_json(user, refresh)).unwrap();
+    }
+
+    fn disk_auth() -> Vec<u8> {
+        std::fs::read(crate::grok_auth::auth_path()).unwrap()
+    }
+
+    /// 本机令牌端点：依次应答 `responses`。每条应答前先跑它的 `before`（模拟联网期间
+    /// Grok CLI 改了 `auth.json`）。
+    type BeforeReply = Box<dyn FnOnce() + Send>;
+    fn serve_token_responses(responses: Vec<(Option<BeforeReply>, serde_json::Value)>) -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for (before, body) in responses {
+                let Ok((mut socket, _)) = listener.accept() else {
+                    return;
+                };
+                let mut buf = [0u8; 8192];
+                let _ = socket.read(&mut buf);
+                if let Some(before) = before {
+                    before();
+                }
+                let body = body.to_string();
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = socket.write_all(response.as_bytes());
+            }
+        });
+        format!("http://{addr}/oauth2/token")
+    }
+
+    fn tokens(access: &str, refresh: &str) -> serde_json::Value {
+        serde_json::json!({"access_token": access, "refresh_token": refresh, "expires_in": 3600})
+    }
+
+    /// 授权中心里有一个绑定用的号 `bound`，令牌端点按 `responses` 应答：
+    /// 第一次是收 CLI 登录（`cli-user`）时的刷新，第二次是取 `bound` 的登录时的刷新。
+    fn manager_with(
+        home: &TestHome,
+        responses: Vec<(Option<BeforeReply>, serde_json::Value)>,
+    ) -> XaiManager {
+        let endpoint = serve_token_responses(responses);
+        let manager = XaiOAuthManager::new(home.path().join("xai-data"));
+        let manager = std::sync::Arc::new(tokio::sync::RwLock::new(manager));
+        let seeded = manager.clone();
+        std::thread::spawn(move || {
+            tauri::async_runtime::block_on(async move {
+                seeded
+                    .read()
+                    .await
+                    .seed_test_account_with_token_endpoint("bound", "rt-bound", endpoint)
+                    .await;
+            })
+        })
+        .join()
+        .unwrap();
+        manager
+    }
+
+    fn conflict(result: Result<Vec<u8>, LiveWriteError>) -> bool {
+        matches!(result, Err(LiveWriteError::Conflict { .. }))
+    }
+
+    /// 收进授权中心联网期间 Grok CLI 改了 `auth.json`（轮换了令牌 / 用户换号登录）：基准是
+    /// 联网前读到的 live，发布时比对不上，拒绝写入，不把新登录覆盖掉。
+    #[test]
+    #[serial]
+    fn concurrent_change_during_absorb_fails_the_guard() {
+        for (user, refresh) in [
+            ("cli-user", "rt-rotated-by-cli"),
+            ("someone-else", "rt-other"),
+        ] {
+            let home = TestHome::new();
+            write_auth("cli-user", "rt-1");
+            let manager = manager_with(
+                &home,
+                vec![
+                    (
+                        Some(Box::new(move || write_auth(user, refresh))),
+                        tokens("at-cli", "rt-absorbed"),
+                    ),
+                    (None, tokens("at-bound", "rt-bound-2")),
+                ],
+            );
+
+            let LiveAuth { login: live, .. } = read_live().unwrap();
+            let PreparedLogin { login, expected } =
+                absorb_then_login(&manager, live, Some("bound".to_string())).unwrap();
+            let patch = GrokAuthPatch {
+                write: LoginWrite::Set {
+                    login: Box::new(login.unwrap()),
+                    base: None,
+                },
+                expected,
+            };
+
+            let path = crate::grok_auth::auth_path();
+            let disk = disk_auth();
+            assert_eq!(disk, auth_json(user, refresh).into_bytes());
+            assert!(conflict(patch.apply(&path, Some(&disk))), "{user}");
+        }
+    }
+
+    /// 收进授权中心时自己把轮换出的令牌写回了 `auth.json`：基准换成自己写的那条，照常写入。
+    #[test]
+    #[serial]
+    fn own_write_back_during_absorb_becomes_the_baseline() {
+        let home = TestHome::new();
+        write_auth("cli-user", "rt-1");
+        let manager = manager_with(
+            &home,
+            vec![
+                (None, tokens("at-cli", "rt-absorbed")),
+                (None, tokens("at-bound", "rt-bound-2")),
+            ],
+        );
+
+        let LiveAuth { login: live, .. } = read_live().unwrap();
+        let PreparedLogin { login, expected } =
+            absorb_then_login(&manager, live, Some("bound".to_string())).unwrap();
+        assert_eq!(
+            expected.as_ref().and_then(|l| l.refresh_token.as_deref()),
+            Some("rt-absorbed")
+        );
+        let patch = GrokAuthPatch {
+            write: LoginWrite::Set {
+                login: Box::new(login.unwrap()),
+                base: None,
+            },
+            expected,
+        };
+
+        let path = crate::grok_auth::auth_path();
+        let written = patch.apply(&path, Some(&disk_auth())).unwrap();
+        let after = crate::grok_auth::read_live_login(&path, Some(&written))
+            .unwrap()
+            .unwrap();
+        assert_eq!(after.user_id, "bound");
+        assert_eq!(after.refresh_token.as_deref(), Some("rt-bound-2"));
+    }
 }

@@ -349,11 +349,12 @@ pub(crate) fn write_now(patch: &GrokAuthPatch) -> Result<(), String> {
 /// cc-switch 刷新账号后，把新令牌同步给共用同一个 refresh token 的 Grok CLI。
 ///
 /// 只有 live 那一条就是这个账号、且拿着这次被换掉的 `consumed_refresh` 时才写；CLI 自己
-/// 登录的另一套会话（refresh token 不同）不碰。返回是否写了。
+/// 登录的另一套会话（refresh token 不同）不碰。写了就返回写进去的那条登录（调用方据此
+/// 认出盘上哪个变化是自己写的），没写返回 `None`。
 pub(crate) fn sync_after_refresh(
     consumed_refresh: &str,
     login: &GrokCliLogin,
-) -> Result<bool, String> {
+) -> Result<Option<LiveLogin>, String> {
     let path = auth_path();
     let pre = crate::live::engine::read_current(&path).map_err(|e| e.to_string())?;
     let live = read_live_login(&path, pre.as_deref()).map_err(|e| e.to_string())?;
@@ -361,11 +362,12 @@ pub(crate) fn sync_after_refresh(
         live.user_id == login.account_id && live.refresh_token.as_deref() == Some(consumed_refresh)
     });
     if !shares_session {
-        return Ok(false);
+        return Ok(None);
     }
     let bytes = merge_login(&path, pre.as_deref(), login, None).map_err(|e| e.to_string())?;
+    let written = read_live_login(&path, Some(&bytes)).map_err(|e| e.to_string())?;
     crate::config::atomic_write_private(&path, &bytes).map_err(|e| e.to_string())?;
-    Ok(true)
+    Ok(written)
 }
 
 #[cfg(test)]
