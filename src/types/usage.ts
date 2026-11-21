@@ -260,6 +260,7 @@ const PARTIAL_CACHE_WRITE_APP_TYPES: ReadonlySet<string> = new Set([
   "mcode",
   "kimi",
   "workbuddy",
+  "liveagent",
 ]);
 
 export type CacheWriteAvailability = "ok" | "partial" | "na";

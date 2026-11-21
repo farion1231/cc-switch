@@ -9,16 +9,23 @@ const APP: &str = "liveagent";
 
 pub(super) fn list(state: &AppState) -> Result<IndexMap<String, Provider>, AppError> {
     let _guard = futures::executor::block_on(state.proxy_service.lock_switch_for_app(APP));
+    let mut saved = match state.db.get_all_providers(&AppType::LiveAgent) {
+        Ok(saved) => saved,
+        // 有读不出来的行时不合并：按「库里没有」补存原生条目会盖掉那一行。
+        Err(error) => {
+            log::warn!("Not merging native LiveAgent providers: {error}");
+            return Ok(state.db.get_provider_rows(&AppType::LiveAgent)?.readable);
+        }
+    };
     // An unreadable config.json must not hide the saved catalog, and must not mark
     // every provider as removed from LiveAgent either.
     let live = match native::get_providers() {
         Ok(live) => live,
         Err(error) => {
             log::warn!("Failed to read LiveAgent providers; showing saved catalog: {error}");
-            return state.db.get_all_providers(&AppType::LiveAgent);
+            return Ok(saved);
         }
     };
-    let mut saved = state.db.get_all_providers(&AppType::LiveAgent)?;
     for (id, config) in &live {
         let entry = saved
             .entry(id.clone())
@@ -308,5 +315,60 @@ mod tests {
         state.db.conn.lock().unwrap().execute_batch("CREATE TRIGGER reject_liveagent BEFORE INSERT ON providers BEGIN SELECT RAISE(ABORT,'test failure'); END;").unwrap();
         assert!(add(&state, provider("p"), true).is_err());
         assert_eq!(fs::read(&path).unwrap(), before);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn listing_never_overwrites_an_unreadable_row_with_its_native_entry() {
+        let root = native::test_support::TestRoot::new();
+        let state = AppState::new(Arc::new(Database::memory().unwrap()));
+        state
+            .db
+            .save_provider(&AppType::LiveAgent, &provider("relay"))
+            .unwrap();
+        let stored_row = || -> String {
+            state
+                .db
+                .conn
+                .lock()
+                .unwrap()
+                .query_row(
+                    "SELECT settings_config || '|' || meta || '|' || is_current FROM providers WHERE app_type = 'liveagent' AND id = 'relay'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap()
+        };
+        state
+            .db
+            .conn
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE providers SET settings_config = '{\"env\":' WHERE app_type = 'liveagent' AND id = 'relay'",
+                [],
+            )
+            .unwrap();
+        let stored = stored_row();
+        // LiveAgent's own config.json has an entry with the same id: merging would
+        // treat it as missing from the database and save over the unreadable row.
+        fs::write(
+            root.dir.path().join("config.json"),
+            json!({"providers":{"relay":provider("relay").settings_config}}).to_string(),
+        )
+        .unwrap();
+
+        let listed = list(&state).expect("list still loads");
+        assert!(listed.is_empty(), "{:?}", listed.keys());
+        assert_eq!(stored_row(), stored);
+        assert_eq!(
+            state
+                .db
+                .get_provider_rows(&AppType::LiveAgent)
+                .unwrap()
+                .unreadable
+                .len(),
+            1
+        );
     }
 }

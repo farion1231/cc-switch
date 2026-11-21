@@ -549,7 +549,8 @@ pub(crate) fn validate_provider(id: &str, provider: &Value) -> Result<(), AppErr
     }
     // 内置类型供应商可以不写 models，由 LiveAgent 运行时获取，按空列表处理。
     let models = match provider.get("models") {
-        None if typed => &[][..],
+        // Go 解码时 null 与缺省同为零值。
+        None | Some(Value::Null) if typed => &[][..],
         models => models
             .and_then(Value::as_array)
             .map(Vec::as_slice)
@@ -725,7 +726,8 @@ pub(crate) mod running {
 
     /// K-brain `cmd/kn/backend.go` and `internal/datapath`: `-data-dir` (made
     /// absolute against the process cwd), else `LIVEAGENT_HOME`, else
-    /// `K_BRAIN_HOME`, else `$HOME/.liveagent`. Go's flag package lets the last
+    /// `K_BRAIN_HOME`, else `$HOME/.liveagent` (following its `data-dir.json`
+    /// pointer). Go's flag package lets the last
     /// occurrence win and stops at the first non-flag argument.
     pub(crate) fn backend_root(
         args: &[String],
@@ -776,9 +778,10 @@ pub(crate) mod running {
                 return absolute(value);
             }
         }
+        // Like `data_dir()`, the default root may redirect via `data-dir.json`.
         env.get("HOME")
             .filter(|h| !h.is_empty())
-            .map(|home| Path::new(home).join(".liveagent"))
+            .map(|home| super::resolve_pointer(&Path::new(home).join(".liveagent")))
     }
 
     /// Same directory despite spelling: `dir/`, `dir//`, `dir/./`, `..`, symlinks.
@@ -1194,6 +1197,17 @@ mod tests {
         )
         .unwrap();
         assert!(validate_provider("b", &json!({"baseUrl":"","apiKey":"","models":[]})).is_err());
+        // Go decodes null as the zero value: typed providers accept a null models list.
+        validate_provider(
+            "b",
+            &json!({"type":"deepseek","baseUrl":"","apiKey":"","models":null}),
+        )
+        .unwrap();
+        assert!(validate_provider(
+            "b",
+            &json!({"api":"openai-completions","baseUrl":"","apiKey":"","models":null})
+        )
+        .is_err());
     }
 
     #[test]
@@ -1290,6 +1304,20 @@ mod tests {
             &tmp.path().join(".liveagent")
         ));
         assert!(!serves(&proc(&listen, None, &[("HOME", &home)]), &root));
+        // $HOME/.liveagent/data-dir.json redirects the default root, like data_dir().
+        let pointer_home = tmp.path().join("pointer-home");
+        std::fs::create_dir_all(pointer_home.join(".liveagent")).unwrap();
+        std::fs::write(
+            pointer_home.join(".liveagent").join("data-dir.json"),
+            serde_json::to_vec(&json!({ "path": r })).unwrap(),
+        )
+        .unwrap();
+        let ph = pointer_home.display().to_string();
+        assert!(serves(&proc(&listen, None, &[("HOME", &ph)]), &root));
+        assert!(!serves(
+            &proc(&listen, None, &[("HOME", &ph)]),
+            &pointer_home.join(".liveagent")
+        ));
         // The flag wins over the environment.
         assert!(!serves(
             &proc(&["-data-dir", &e], None, &[("LIVEAGENT_HOME", &r)]),

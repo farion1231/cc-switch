@@ -129,11 +129,14 @@ export function initialLiveAgentConfig(
   settingsConfig?: Record<string, unknown>,
 ): LiveAgentProviderConfig {
   if (settingsConfig) {
+    // K-brain (Go) decodes `null` as the zero value, so a stored `null` must not
+    // override the defaults the form relies on (e.g. `config.models.length`).
+    const { baseUrl, apiKey, models } = settingsConfig;
     return {
-      baseUrl: "",
-      apiKey: "",
-      models: [],
       ...settingsConfig,
+      baseUrl: typeof baseUrl === "string" ? baseUrl : "",
+      apiKey: typeof apiKey === "string" ? apiKey : "",
+      models: Array.isArray(models) ? models : [],
     } as LiveAgentProviderConfig;
   }
   return { api: "openai-completions", baseUrl: "", apiKey: "", models: [] };

@@ -52,6 +52,20 @@ describe("liveagentProvider", () => {
     expect(initialLiveAgentConfig().api).toBe("openai-completions");
   });
 
+  it("falls back to empty values when stored fields are null", () => {
+    const config = initialLiveAgentConfig({
+      type: "deepseek",
+      baseUrl: null,
+      apiKey: null,
+      models: null,
+    });
+    expect(config.type).toBe("deepseek");
+    expect(config.baseUrl).toBe("");
+    expect(config.apiKey).toBe("");
+    expect(config.models).toEqual([]);
+    expect(addLiveAgentModel(config).models).toHaveLength(1);
+  });
+
   it("enables each newly added model once its id is typed", () => {
     let config = addLiveAgentModel(addLiveAgentModel(base));
     expect(config.activeModels).toEqual(["a"]);

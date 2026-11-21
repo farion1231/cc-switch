@@ -244,6 +244,55 @@ describe("UsageScriptModal Oh My Pi credentials", () => {
   });
 });
 
+/**
+ * LiveAgent keeps `baseUrl` / `apiKey` flat at the top level of settingsConfig
+ * (camelCase), like OpenClaw. The Test button must pass them to the balance API
+ * just like the backend resolver does.
+ */
+describe("UsageScriptModal LiveAgent credentials", () => {
+  it("passes the LiveAgent card's base URL and key to the balance test", async () => {
+    const getBalance = vi.fn().mockResolvedValue({ success: true, data: [] });
+    vi.doMock("@/lib/api/subscription", () => ({
+      subscriptionApi: { getBalance },
+    }));
+    const { default: Modal } = await import("@/components/UsageScriptModal");
+    const client = createTestQueryClient();
+    render(
+      <QueryClientProvider client={client}>
+        <Modal
+          provider={{
+            id: "liveagent-deepseek",
+            name: "DeepSeek",
+            settingsConfig: {
+              type: "openai",
+              baseUrl: "https://api.deepseek.com/v1/",
+              apiKey: "sk-liveagent",
+              models: [],
+            },
+          }}
+          appId="liveagent"
+          isOpen
+          onClose={() => {}}
+          onSave={() => {}}
+        />
+      </QueryClientProvider>,
+    );
+
+    await userEvent.click(screen.getByRole("switch"));
+    await userEvent.click(
+      screen.getByRole("button", { name: "confirm.usage.confirm" }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "usageScript.testScript" }),
+    );
+
+    expect(getBalance).toHaveBeenCalledWith(
+      "https://api.deepseek.com/v1",
+      "sk-liveagent",
+    );
+  });
+});
+
 describe("UsageScriptModal DeepSeek Harness credentials", () => {
   const dshProvider: Provider = {
     id: "deepseek-dsh",

@@ -361,8 +361,9 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
               ?.replace(/\/+$/, "")
               .replace(/\/chat\/completions$/, ""),
           };
-        } else if (appId === "openclaw") {
-          // OpenClaw: settingsConfig 顶层扁平（camelCase，对应 openclaw.json）
+        } else if (appId === "openclaw" || appId === "liveagent") {
+          // OpenClaw / LiveAgent: settingsConfig 顶层扁平（camelCase baseUrl / apiKey），
+          // 与后端 Provider::resolve_usage_credentials 一致。
           return {
             apiKey: (config as any).apiKey,
             baseUrl: (config as any).baseUrl,

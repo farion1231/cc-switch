@@ -216,12 +216,20 @@ fn transport(spec: &Value) -> Value {
 
 pub(crate) fn import(state: &AppState) -> Result<usize, AppError> {
     let servers = liveagent_config::read_mcp()?;
-    let mut existing = state.db.get_all_mcp_servers()?;
+    let (mut existing, unreadable) = state
+        .db
+        .get_mcp_server_rows()?
+        .into_readable_and_unreadable_ids();
     let mut count = 0;
     let mut skipped = 0;
     for (id, native) in &servers {
         // LiveAgent manages its own computer-use server.
         if id.eq_ignore_ascii_case("cua-driver") {
+            continue;
+        }
+        // An unreadable stored row must not be overwritten as if it were missing.
+        if unreadable.contains(id) {
+            skipped += 1;
             continue;
         }
         let Ok(spec) = unified(native) else {
@@ -514,5 +522,70 @@ mod tests {
         );
         McpService::delete_server(&state, "test").unwrap();
         assert!(liveagent_config::read_mcp().unwrap().get("test").is_none());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn import_skips_a_native_server_whose_stored_row_is_unreadable() {
+        use crate::database::Database;
+        let root = liveagent_config::test_support::TestRoot::new();
+        std::fs::write(
+            root.dir.path().join("config.json"),
+            json!({"providers":{},"mcp":{
+                "broken":{"command":["node","broken.js"],"enabled":true},
+                "fresh":{"command":["node","fresh.js"],"enabled":true}
+            }})
+            .to_string(),
+        )
+        .unwrap();
+        let state = AppState::new(std::sync::Arc::new(Database::memory().unwrap()));
+        state
+            .db
+            .save_mcp_server(&McpServer {
+                id: "broken".into(),
+                name: "broken".into(),
+                server: json!({"type":"stdio","command":"node","args":["old.js"]}),
+                apps: McpApps::default(),
+                description: None,
+                homepage: None,
+                docs: None,
+                tags: vec![],
+            })
+            .unwrap();
+        let read_raw = || -> String {
+            state
+                .db
+                .conn
+                .lock()
+                .unwrap()
+                .query_row(
+                    "SELECT server_config FROM mcp_servers WHERE id = 'broken'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap()
+        };
+        state
+            .db
+            .conn
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE mcp_servers SET server_config = '{\"command\":' WHERE id = 'broken'",
+                [],
+            )
+            .unwrap();
+        let stored = read_raw();
+
+        let error = import(&state).unwrap_err().to_string();
+        assert!(
+            error.contains("Imported 1") && error.contains("skipped 1"),
+            "{error}"
+        );
+        assert_eq!(read_raw(), stored);
+        let rows = state.db.get_mcp_server_rows().unwrap();
+        let (readable, unreadable) = rows.into_readable_and_unreadable_ids();
+        assert!(readable["fresh"].apps.liveagent);
+        assert_eq!(unreadable, ["broken"]);
     }
 }

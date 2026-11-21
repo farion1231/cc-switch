@@ -1200,7 +1200,8 @@
     "workbuddy": "WorkBuddy",
     "copilot": "Copilot CLI",
     "agy": "Antigravity",
-    "omp": "Oh My Pi"
+    "omp": "Oh My Pi",
+    "liveagent": "LiveAgent"
   },
   "mcode": {
     "empty": {
