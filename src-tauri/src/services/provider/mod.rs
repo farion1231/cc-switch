@@ -411,6 +411,42 @@ mod tests {
 
     #[test]
     #[serial]
+    fn listing_trae_never_overwrites_an_unreadable_row_with_its_native_table() {
+        with_test_home(|state, home| {
+            let config = json!({
+                "provider": {"name": "Relay", "base_url": "https://relay.example/v1"},
+                "model": "m"
+            });
+            state
+                .db
+                .save_provider(
+                    &AppType::Trae,
+                    &Provider::with_id("relay".into(), "Relay".into(), config, None),
+                )
+                .unwrap();
+            let stored = break_stored_settings(state, "trae", "relay");
+            // traecli.toml 里有同 id 的表：合并时会把它当成「库里没有」补存。
+            std::fs::create_dir_all(home.join(".trae")).unwrap();
+            std::fs::write(
+                home.join(".trae").join("traecli.toml"),
+                "[model_providers.relay]\nname = \"Relay\"\nbase_url = \"https://relay.example/v1\"\n",
+            )
+            .unwrap();
+
+            let listed = ProviderService::list(state, AppType::Trae).expect("list still loads");
+            assert!(!listed.contains_key("relay"), "{:?}", listed.keys());
+            assert_eq!(stored_row(state, "trae", "relay"), Some(stored));
+            assert_eq!(
+                ProviderService::list_unreadable(state, AppType::Trae)
+                    .unwrap()
+                    .len(),
+                1
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
     fn listing_a_native_app_never_overwrites_an_unreadable_row_with_its_native_entry() {
         with_test_home(|state, _| {
             let config = json!({
@@ -5964,7 +6000,14 @@ impl ProviderService {
     /// the model of providers that are not currently selected.
     fn list_trae(state: &AppState) -> Result<IndexMap<String, Provider>, AppError> {
         let native = crate::trae_config::get_providers()?;
-        let mut saved = state.db.get_all_providers(&AppType::Trae)?;
+        let mut saved = match state.db.get_all_providers(&AppType::Trae) {
+            Ok(saved) => saved,
+            // 同上：有读不出来的行时不合并 traecli.toml，免得补存时盖掉那一行。
+            Err(error) => {
+                log::warn!("Not merging traecli.toml providers: {error}");
+                return Ok(state.db.get_provider_rows(&AppType::Trae)?.readable);
+            }
+        };
         for (id, config) in &native {
             if !saved.contains_key(id) {
                 let name = config
