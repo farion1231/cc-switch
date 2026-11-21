@@ -50,7 +50,6 @@ describe("codexProviderPresets managed OAuth snapshots", () => {
         contextWindow: 272000,
         reasoningLevels: ["low", "medium", "high", "xhigh", "max"],
         supportsParallelToolCalls: true,
-        inputModalities: ["text"],
       },
       ...["Sol", "Terra"].map((name) => ({
         model: `gpt-5.6-${name.toLowerCase()}`,
@@ -58,7 +57,6 @@ describe("codexProviderPresets managed OAuth snapshots", () => {
         contextWindow: 272000,
         reasoningLevels: ["none", "low", "medium", "high", "xhigh", "max"],
         supportsParallelToolCalls: true,
-        inputModalities: ["text"],
       })),
       {
         model: "gpt-5.6-luna",
@@ -66,7 +64,6 @@ describe("codexProviderPresets managed OAuth snapshots", () => {
         contextWindow: 200000,
         reasoningLevels: ["none", "low", "medium", "high", "xhigh", "max"],
         supportsParallelToolCalls: true,
-        inputModalities: ["text"],
       },
       {
         model: "gpt-5.5",
@@ -74,7 +71,6 @@ describe("codexProviderPresets managed OAuth snapshots", () => {
         contextWindow: 272000,
         reasoningLevels: ["none", "low", "medium", "high", "xhigh"],
         supportsParallelToolCalls: true,
-        inputModalities: ["text"],
       },
     ]);
   });

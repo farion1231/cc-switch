@@ -5,7 +5,7 @@
 use super::{lock_conn, to_json_string, Database};
 use crate::app_config::MultiAppConfig;
 use crate::error::AppError;
-use rusqlite::{params, Connection};
+use rusqlite::params;
 
 impl Database {
     /// 从 MultiAppConfig 迁移数据到数据库
@@ -19,25 +19,6 @@ impl Database {
 
         tx.commit()
             .map_err(|e| AppError::Database(format!("Commit migration failed: {e}")))?;
-        Ok(())
-    }
-
-    /// 运行迁移的 dry-run 模式（在内存数据库中验证，不写入磁盘）
-    ///
-    /// 用于部署前验证迁移逻辑是否正确。
-    pub fn migrate_from_json_dry_run(config: &MultiAppConfig) -> Result<(), AppError> {
-        let mut conn =
-            Connection::open_in_memory().map_err(|e| AppError::Database(e.to_string()))?;
-        Self::create_tables_on_conn(&conn)?;
-        Self::apply_schema_migrations_on_conn(&conn)?;
-
-        let tx = conn
-            .transaction()
-            .map_err(|e| AppError::Database(e.to_string()))?;
-        Self::migrate_from_json_tx(&tx, config)?;
-
-        // 显式 drop transaction 而不提交（内存数据库会被丢弃）
-        drop(tx);
         Ok(())
     }
 

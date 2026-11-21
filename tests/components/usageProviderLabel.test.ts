@@ -20,6 +20,9 @@ describe("getUsageProviderLabel", () => {
     expect(getUsageProviderLabel("Gemini (Session)", t).label).toBe(
       "usage.sessionProvider.label:Gemini CLI",
     );
+    expect(getUsageProviderLabel("Oh My Pi (Session)", t).label).toBe(
+      "usage.sessionProvider.label:Oh My Pi",
+    );
   });
 
   it("translates every placeholder name the backend can return", () => {
@@ -32,11 +35,19 @@ describe("getUsageProviderLabel", () => {
       (m) => m[1],
     );
     expect(names).toContain("Antigravity (Session)");
+    expect(names).toContain("DeepSeek Harness (Session)");
     for (const name of names) {
       expect(getUsageProviderLabel(name, t).shortLabel).toBe(
         "usage.sessionProvider.short",
       );
     }
+    // 认得出走的是官方账号登录（OAuth）的占位名，单独一种说明
+    expect(rust).toContain("THEN 'DeepSeek Harness (OAuth)'");
+    expect(getUsageProviderLabel("DeepSeek Harness (OAuth)", t)).toEqual({
+      label: "usage.sessionAccountProvider.label:DeepSeek Harness",
+      shortLabel: "usage.sessionAccountProvider.short",
+      hint: "usage.sessionAccountProvider.hint",
+    });
   });
 
   it("keeps real provider names as-is", () => {

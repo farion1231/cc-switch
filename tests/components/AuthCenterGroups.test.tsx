@@ -12,6 +12,10 @@ const mocks = vi.hoisted(() => ({
   useXaiOauth: vi.fn(),
 }));
 
+vi.mock("@/lib/query/accountPlans", () => ({
+  useAccountQuotaPlans: () => ({}),
+}));
+
 vi.mock("@/components/providers/forms/hooks/useCopilotAuth", () => ({
   useCopilotAuth: mocks.useCopilotAuth,
 }));
@@ -143,7 +147,7 @@ describe("Auth Center account groups", () => {
     });
     render(<CopilotAuthSection />);
 
-    // 只有一个账号时没有「删除全部」的 ⋯
+    // 标题行没有 ⋯，只有账号行有
     expect(
       screen.queryByRole("button", { name: "GitHub Copilot 的更多操作" }),
     ).not.toBeInTheDocument();
@@ -176,17 +180,14 @@ describe("Auth Center account groups", () => {
     expect(auth.refetchStatus).toHaveBeenCalledTimes(1);
   });
 
-  it("shows the empty state with a sign-in button", async () => {
+  it("keeps the add button in the header when there are no accounts", async () => {
     const user = userEvent.setup();
     const auth = baseAuth();
     mocks.useCodexOauth.mockReturnValue(auth);
     render(<CodexOAuthSection showAccountQuota />);
 
     expect(screen.getByText("还没有登录 ChatGPT 账号。")).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "添加账号" }),
-    ).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /使用 ChatGPT 登录/ }));
+    await user.click(screen.getByRole("button", { name: "添加账号" }));
     expect(auth.addAccount).toHaveBeenCalledTimes(1);
   });
 
@@ -329,7 +330,12 @@ describe("AccountQuotaColumn", () => {
                       value: "2 次",
                       tone: "warning",
                     },
-                    { key: "b", label: "不会过期", value: "1 次", tone: "normal" },
+                    {
+                      key: "b",
+                      label: "不会过期",
+                      value: "1 次",
+                      tone: "normal",
+                    },
                   ],
                 },
               },
@@ -343,11 +349,69 @@ describe("AccountQuotaColumn", () => {
     await user.click(
       screen.getByRole("button", { name: "查看 3 次重置各自的到期时间" }),
     );
-    const dialog = await screen.findByRole("dialog", { name: "存下的限额重置" });
+    const dialog = await screen.findByRole("dialog", {
+      name: "存下的限额重置",
+    });
     expect(
       within(dialog)
         .getAllByRole("listitem")
         .map((item) => item.textContent),
     ).toEqual(["10月6日2d0h后2 次", "不会过期1 次"]);
+  });
+
+  it("caps static quota states and protects caption and value cells from overflowing", async () => {
+    const { AccountQuotaColumn } = await import(
+      "@/components/settings/auth/AccountQuota"
+    );
+    const { container, rerender } = render(
+      <AccountQuotaColumn
+        login="me@example.com"
+        loading={false}
+        onRefresh={vi.fn()}
+        state={{ kind: "failed", reason: "HTTP 500 internal server error" }}
+      />,
+    );
+
+    expect(container.querySelector(".auth-quota-col")).toHaveClass(
+      "auth-quota-col-static",
+    );
+    expect(container.querySelector(".auth-quota-refresh")).toBeInTheDocument();
+
+    rerender(
+      <AccountQuotaColumn
+        login="me@example.com"
+        loading={false}
+        onRefresh={vi.fn()}
+        state={{
+          kind: "rows",
+          rows: [
+            {
+              label: "重置",
+              line: {
+                key: "reset_credits",
+                text: "重置剩余 10 次",
+                value: "重置剩余 10 次",
+                caption: "2027年12月2日到期",
+                tone: "normal",
+                left: Infinity,
+              },
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(container.querySelector(".auth-quota-col")).not.toHaveClass(
+      "auth-quota-col-static",
+    );
+    const captionText = screen.getByText("2027年12月2日到期");
+    expect(captionText).toHaveClass("min-w-0", "truncate");
+    expect(captionText.parentElement).not.toHaveClass("shrink-0");
+    const valueCell = screen.getByText("重置剩余 10 次");
+    expect(valueCell).toHaveClass(
+      "min-w-[var(--auth-quota-value)]",
+      "whitespace-nowrap",
+    );
+    expect(valueCell).not.toHaveClass("truncate");
   });
 });

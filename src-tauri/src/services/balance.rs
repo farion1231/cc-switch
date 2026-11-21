@@ -10,6 +10,8 @@
 //! - `Ok(success:false)` = 确定性失败（空 key/未知供应商/鉴权/非 2xx/响应体非法 JSON），
 //!   立即透出错误文案。判定按 reqwest 错误种类在折叠点完成，不依赖错误文案匹配。
 
+use super::usage_http::{parse_f64, send_for_json, JsonReply};
+use crate::codex_config::codex_url_host_matches_any;
 use crate::provider::{UsageData, UsageResult};
 use std::time::Duration;
 
@@ -25,22 +27,34 @@ enum BalanceProvider {
 }
 
 fn detect_provider(base_url: &str) -> Option<BalanceProvider> {
-    let url = base_url.to_lowercase();
-    if url.contains("api.deepseek.com") {
+    let host_is = |hosts: &[&str]| codex_url_host_matches_any(base_url, hosts);
+    if host_is(&["api.deepseek.com"]) {
         Some(BalanceProvider::DeepSeek)
-    } else if url.contains("api.stepfun.ai") || url.contains("api.stepfun.com") {
+    } else if host_is(&["api.stepfun.ai", "api.stepfun.com"]) {
         Some(BalanceProvider::StepFun)
-    } else if url.contains("api.siliconflow.cn") {
+    } else if host_is(&["api.siliconflow.cn"]) {
         Some(BalanceProvider::SiliconFlow)
-    } else if url.contains("api.siliconflow.com") {
+    } else if host_is(&["api.siliconflow.com"]) {
         Some(BalanceProvider::SiliconFlowEn)
-    } else if url.contains("openrouter.ai") {
+    } else if host_is(&["openrouter.ai"]) {
         Some(BalanceProvider::OpenRouter)
-    } else if url.contains("api.novita.ai") {
+    } else if host_is(&["api.novita.ai"]) {
         Some(BalanceProvider::NovitaAI)
     } else {
         None
     }
+}
+
+/// 按地址认出的余额供应商 id，取值与前端 `BALANCE_PROVIDERS` 的 `id` 一致（两站点的硅基流动同为 `siliconflow`）。
+#[cfg(test)]
+pub(crate) fn detect_provider_id(base_url: &str) -> Option<&'static str> {
+    Some(match detect_provider(base_url)? {
+        BalanceProvider::DeepSeek => "deepseek",
+        BalanceProvider::StepFun => "stepfun",
+        BalanceProvider::SiliconFlow | BalanceProvider::SiliconFlowEn => "siliconflow",
+        BalanceProvider::OpenRouter => "openrouter",
+        BalanceProvider::NovitaAI => "novita",
+    })
 }
 
 fn make_error(msg: String) -> UsageResult {
@@ -75,47 +89,23 @@ fn make_auth_error(status: reqwest::StatusCode) -> UsageResult {
 async fn query_deepseek(api_key: &str) -> Result<UsageResult, String> {
     let client = crate::proxy::http_client::get();
 
-    let resp = client
+    let request = client
         .get("https://api.deepseek.com/user/balance")
         .header("Authorization", format!("Bearer {api_key}"))
         .header("Accept", "application/json")
-        .timeout(Duration::from_secs(15))
-        .send()
-        .await;
-
-    let resp = match resp {
-        Ok(r) => r,
-        Err(e) => return Err(format!("Network error: {e}")),
-    };
-
-    let status = resp.status();
-    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        return Ok(make_auth_error(status));
-    }
-    if !status.is_success() {
-        let body = resp.text().await.unwrap_or_default();
-        return Ok(make_error(format!("API error (HTTP {status}): {body}")));
-    }
-
-    // 先 bytes() 再解析：读体失败（超时/连接中断）是瞬时 → Err；拿到完整响应体
-    // 后解析失败才是确定性。reqwest 的 json() 把读体错误也包成 decode，无法区分。
-    let raw = match resp.bytes().await {
-        Ok(b) => b,
-        Err(e) => return Err(format!("Failed to read response: {e}")),
-    };
-    let body: serde_json::Value = match serde_json::from_slice(&raw) {
-        Ok(v) => v,
-        Err(e) => return Ok(make_error(format!("Failed to parse response: {e}"))),
+        .timeout(Duration::from_secs(15));
+    let body = match send_for_json(request).await? {
+        JsonReply::Body(body) => body,
+        JsonReply::Denied(status) => return Ok(make_auth_error(status)),
+        JsonReply::Failed(message) => return Ok(make_error(message)),
     };
 
     Ok(parse_deepseek_balance(&body))
 }
 
+// `is_available` 只表示余额够不够调用，不代表 Key 失效（失效是 401/403，上面已处理），
+// 所以不拿它判 is_valid，否则零余额 / 欠费会被显示成「套餐已过期」；交给 UI 按余额红字显示（#8812）。
 fn parse_deepseek_balance(body: &serde_json::Value) -> UsageResult {
-    let is_available = body
-        .get("is_available")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(true);
     let mut data = Vec::new();
 
     if let Some(infos) = body.get("balance_infos").and_then(|v| v.as_array()) {
@@ -132,19 +122,15 @@ fn parse_deepseek_balance(body: &serde_json::Value) -> UsageResult {
                 total: None,
                 used: None,
                 unit: Some(currency.to_string()),
-                is_valid: Some(is_available),
-                invalid_message: if !is_available {
-                    Some("Insufficient balance".to_string())
-                } else {
-                    None
-                },
+                is_valid: Some(true),
+                invalid_message: None,
                 extra: None,
             });
         }
     }
 
     // 同一账号会列出 CNY / USD 两个币种钱包，扣费走有钱的那个。只要还有币种有余额，
-    // 就不再列出空钱包：否则空的那一行会显示「余额已用完」，两行还会让卡片自动展开（#8170）。
+    // 就不再列出空钱包：否则空的那一行会显示一条红字余额，两行还会让卡片自动展开（#8170）。
     if data.iter().any(|d| d.remaining.is_some_and(|v| v > 0.0)) {
         data.retain(|d| d.remaining.is_none_or(|v| v > 0.0));
     }
@@ -163,37 +149,15 @@ fn parse_deepseek_balance(body: &serde_json::Value) -> UsageResult {
 async fn query_stepfun(api_key: &str) -> Result<UsageResult, String> {
     let client = crate::proxy::http_client::get();
 
-    let resp = client
+    let request = client
         .get("https://api.stepfun.com/v1/accounts")
         .header("Authorization", format!("Bearer {api_key}"))
         .header("Accept", "application/json")
-        .timeout(Duration::from_secs(15))
-        .send()
-        .await;
-
-    let resp = match resp {
-        Ok(r) => r,
-        Err(e) => return Err(format!("Network error: {e}")),
-    };
-
-    let status = resp.status();
-    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        return Ok(make_auth_error(status));
-    }
-    if !status.is_success() {
-        let body = resp.text().await.unwrap_or_default();
-        return Ok(make_error(format!("API error (HTTP {status}): {body}")));
-    }
-
-    // 先 bytes() 再解析：读体失败（超时/连接中断）是瞬时 → Err；拿到完整响应体
-    // 后解析失败才是确定性。reqwest 的 json() 把读体错误也包成 decode，无法区分。
-    let raw = match resp.bytes().await {
-        Ok(b) => b,
-        Err(e) => return Err(format!("Failed to read response: {e}")),
-    };
-    let body: serde_json::Value = match serde_json::from_slice(&raw) {
-        Ok(v) => v,
-        Err(e) => return Ok(make_error(format!("Failed to parse response: {e}"))),
+        .timeout(Duration::from_secs(15));
+    let body = match send_for_json(request).await? {
+        JsonReply::Body(body) => body,
+        JsonReply::Denied(status) => return Ok(make_auth_error(status)),
+        JsonReply::Failed(message) => return Ok(make_error(message)),
     };
 
     let balance = parse_f64_field(&body, "balance").unwrap_or(0.0);
@@ -228,37 +192,15 @@ async fn query_siliconflow(api_key: &str, is_cn: bool) -> Result<UsageResult, St
     };
     let url = format!("https://{domain}/v1/user/info");
 
-    let resp = client
+    let request = client
         .get(&url)
         .header("Authorization", format!("Bearer {api_key}"))
         .header("Accept", "application/json")
-        .timeout(Duration::from_secs(15))
-        .send()
-        .await;
-
-    let resp = match resp {
-        Ok(r) => r,
-        Err(e) => return Err(format!("Network error: {e}")),
-    };
-
-    let status = resp.status();
-    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        return Ok(make_auth_error(status));
-    }
-    if !status.is_success() {
-        let body = resp.text().await.unwrap_or_default();
-        return Ok(make_error(format!("API error (HTTP {status}): {body}")));
-    }
-
-    // 先 bytes() 再解析：读体失败（超时/连接中断）是瞬时 → Err；拿到完整响应体
-    // 后解析失败才是确定性。reqwest 的 json() 把读体错误也包成 decode，无法区分。
-    let raw = match resp.bytes().await {
-        Ok(b) => b,
-        Err(e) => return Err(format!("Failed to read response: {e}")),
-    };
-    let body: serde_json::Value = match serde_json::from_slice(&raw) {
-        Ok(v) => v,
-        Err(e) => return Ok(make_error(format!("Failed to parse response: {e}"))),
+        .timeout(Duration::from_secs(15));
+    let body = match send_for_json(request).await? {
+        JsonReply::Body(body) => body,
+        JsonReply::Denied(status) => return Ok(make_auth_error(status)),
+        JsonReply::Failed(message) => return Ok(make_error(message)),
     };
 
     let data = match body.get("data") {
@@ -299,37 +241,15 @@ async fn query_siliconflow(api_key: &str, is_cn: bool) -> Result<UsageResult, St
 async fn query_openrouter(api_key: &str) -> Result<UsageResult, String> {
     let client = crate::proxy::http_client::get();
 
-    let resp = client
+    let request = client
         .get("https://openrouter.ai/api/v1/credits")
         .header("Authorization", format!("Bearer {api_key}"))
         .header("Accept", "application/json")
-        .timeout(Duration::from_secs(15))
-        .send()
-        .await;
-
-    let resp = match resp {
-        Ok(r) => r,
-        Err(e) => return Err(format!("Network error: {e}")),
-    };
-
-    let status = resp.status();
-    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        return Ok(make_auth_error(status));
-    }
-    if !status.is_success() {
-        let body = resp.text().await.unwrap_or_default();
-        return Ok(make_error(format!("API error (HTTP {status}): {body}")));
-    }
-
-    // 先 bytes() 再解析：读体失败（超时/连接中断）是瞬时 → Err；拿到完整响应体
-    // 后解析失败才是确定性。reqwest 的 json() 把读体错误也包成 decode，无法区分。
-    let raw = match resp.bytes().await {
-        Ok(b) => b,
-        Err(e) => return Err(format!("Failed to read response: {e}")),
-    };
-    let body: serde_json::Value = match serde_json::from_slice(&raw) {
-        Ok(v) => v,
-        Err(e) => return Ok(make_error(format!("Failed to parse response: {e}"))),
+        .timeout(Duration::from_secs(15));
+    let body = match send_for_json(request).await? {
+        JsonReply::Body(body) => body,
+        JsonReply::Denied(status) => return Ok(make_auth_error(status)),
+        JsonReply::Failed(message) => return Ok(make_error(message)),
     };
 
     Ok(parse_openrouter_balance(&body))
@@ -375,37 +295,15 @@ fn parse_openrouter_balance(body: &serde_json::Value) -> UsageResult {
 async fn query_novita(api_key: &str) -> Result<UsageResult, String> {
     let client = crate::proxy::http_client::get();
 
-    let resp = client
+    let request = client
         .get("https://api.novita.ai/v3/user/balance")
         .header("Authorization", format!("Bearer {api_key}"))
         .header("Accept", "application/json")
-        .timeout(Duration::from_secs(15))
-        .send()
-        .await;
-
-    let resp = match resp {
-        Ok(r) => r,
-        Err(e) => return Err(format!("Network error: {e}")),
-    };
-
-    let status = resp.status();
-    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        return Ok(make_auth_error(status));
-    }
-    if !status.is_success() {
-        let body = resp.text().await.unwrap_or_default();
-        return Ok(make_error(format!("API error (HTTP {status}): {body}")));
-    }
-
-    // 先 bytes() 再解析：读体失败（超时/连接中断）是瞬时 → Err；拿到完整响应体
-    // 后解析失败才是确定性。reqwest 的 json() 把读体错误也包成 decode，无法区分。
-    let raw = match resp.bytes().await {
-        Ok(b) => b,
-        Err(e) => return Err(format!("Failed to read response: {e}")),
-    };
-    let body: serde_json::Value = match serde_json::from_slice(&raw) {
-        Ok(v) => v,
-        Err(e) => return Ok(make_error(format!("Failed to parse response: {e}"))),
+        .timeout(Duration::from_secs(15));
+    let body = match send_for_json(request).await? {
+        JsonReply::Body(body) => body,
+        JsonReply::Denied(status) => return Ok(make_auth_error(status)),
+        JsonReply::Failed(message) => return Ok(make_error(message)),
     };
 
     Ok(parse_novita_balance(&body))
@@ -428,7 +326,7 @@ fn parse_novita_balance(body: &serde_json::Value) -> UsageResult {
             total: None,
             used: None,
             unit: Some("USD".to_string()),
-            // 余额为 0 或负数不代表 key 失效：交给 UI 显示「余额已用完」，
+            // 余额为 0 或负数不代表 key 失效：交给 UI 按余额红字显示，
             // 而不是标成套餐已过期（同 OpenRouter，#8175）
             is_valid: Some(true),
             invalid_message: None,
@@ -453,7 +351,7 @@ pub(crate) async fn query_zhipu_balance(
     base_url: &str,
     api_key: &str,
 ) -> Result<UsageResult, String> {
-    let is_cn = base_url.to_lowercase().contains("bigmodel.cn");
+    let is_cn = codex_url_host_matches_any(base_url, &["bigmodel.cn"]);
     let host = if is_cn {
         "https://open.bigmodel.cn"
     } else {
@@ -461,40 +359,18 @@ pub(crate) async fn query_zhipu_balance(
     };
     let client = crate::proxy::http_client::get();
 
-    let resp = client
+    let request = client
         .get(format!(
             "{host}/api/biz/account/query-customer-account-report"
         ))
         .header("Authorization", api_key) // 与套餐接口一致，不加 Bearer
         .header("Accept", "application/json")
         .header("Accept-Language", "en-US,en")
-        .timeout(Duration::from_secs(15))
-        .send()
-        .await;
-
-    let resp = match resp {
-        Ok(r) => r,
-        Err(e) => return Err(format!("Network error: {e}")),
-    };
-
-    let status = resp.status();
-    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        return Ok(make_auth_error(status));
-    }
-    if !status.is_success() {
-        let body = resp.text().await.unwrap_or_default();
-        return Ok(make_error(format!("API error (HTTP {status}): {body}")));
-    }
-
-    // 先 bytes() 再解析：读体失败（超时/连接中断）是瞬时 → Err；拿到完整响应体
-    // 后解析失败才是确定性。reqwest 的 json() 把读体错误也包成 decode，无法区分。
-    let raw = match resp.bytes().await {
-        Ok(b) => b,
-        Err(e) => return Err(format!("Failed to read response: {e}")),
-    };
-    let body: serde_json::Value = match serde_json::from_slice(&raw) {
-        Ok(v) => v,
-        Err(e) => return Ok(make_error(format!("Failed to parse response: {e}"))),
+        .timeout(Duration::from_secs(15));
+    let body = match send_for_json(request).await? {
+        JsonReply::Body(body) => body,
+        JsonReply::Denied(status) => return Ok(make_auth_error(status)),
+        JsonReply::Failed(message) => return Ok(make_error(message)),
     };
 
     Ok(parse_zhipu_balance(&body, is_cn))
@@ -525,7 +401,7 @@ fn parse_zhipu_balance(body: &serde_json::Value, is_cn: bool) -> UsageResult {
             total: None,
             used: None,
             unit: Some(if is_cn { "CNY" } else { "USD" }.to_string()),
-            // 余额为 0 不代表 Key 失效，交给 UI 显示「余额已用完」（同 OpenRouter，#8175）
+            // 余额为 0 不代表 Key 失效，交给 UI 按余额红字显示（同 OpenRouter，#8175）
             is_valid: Some(true),
             invalid_message: None,
             extra: None,
@@ -538,10 +414,7 @@ fn parse_zhipu_balance(body: &serde_json::Value, is_cn: bool) -> UsageResult {
 
 /// 解析 JSON 字段为 f64，兼容数字和字符串格式
 fn parse_f64_field(obj: &serde_json::Value, field: &str) -> Option<f64> {
-    obj.get(field).and_then(|v| {
-        v.as_f64()
-            .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
-    })
+    obj.get(field).and_then(parse_f64)
 }
 
 // ── 公开入口 ────────────────────────────────────────────────
@@ -680,6 +553,21 @@ mod tests {
     }
 
     #[test]
+    fn deepseek_unavailable_balance_does_not_determine_key_validity() {
+        for (raw, expected) in [("-24.96", -24.96), ("-0.00", 0.0)] {
+            let result = parse_deepseek_balance(&json!({
+                "is_available": false,
+                "balance_infos": [{ "currency": "CNY", "total_balance": raw }]
+            }));
+            assert!(result.success);
+            let balance = result.data.unwrap().remove(0);
+            assert_eq!(balance.remaining, Some(expected));
+            assert_eq!(balance.is_valid, Some(true));
+            assert!(balance.invalid_message.is_none());
+        }
+    }
+
+    #[test]
     fn novita_balance_does_not_determine_key_validity() {
         for (raw, available) in [(0.0, 0.0), (-50000.0, -5.0), (255000.0, 25.5)] {
             let result = parse_novita_balance(&json!({ "availableBalance": raw }));
@@ -759,5 +647,37 @@ mod tests {
         .error
         .unwrap();
         assert!(msg.contains("令牌已过期"), "{msg}");
+    }
+
+    /// 余额接口只认供应商自己的域名（含子域、端口、大小写、末尾的点）；中转站地址里
+    /// 带着这些域名不算，否则会拿中转站的 Key 去查供应商余额。
+    #[test]
+    fn balance_provider_is_detected_by_host_not_substring() {
+        for url in [
+            "https://api.deepseek.com/anthropic",
+            "HTTPS://API.DEEPSEEK.COM",
+            "https://eu.api.deepseek.com:8443/v1",
+            "https://api.deepseek.com./v1",
+            "api.deepseek.com/v1",
+        ] {
+            assert!(
+                matches!(detect_provider(url), Some(BalanceProvider::DeepSeek)),
+                "{url}"
+            );
+        }
+        assert!(matches!(
+            detect_provider("https://openrouter.ai/api/v1"),
+            Some(BalanceProvider::OpenRouter)
+        ));
+        for url in [
+            "https://relay.example.com/api.deepseek.com/v1",
+            "https://relay.example.com/v1?upstream=https://api.deepseek.com",
+            "https://api.deepseek.com.relay.example.com/v1",
+            "https://xapi.deepseek.com/v1",
+            "https://relay.example.com/openrouter.ai/api/v1",
+            "https://openrouter.ai.cn/api",
+        ] {
+            assert!(detect_provider(url).is_none(), "{url}");
+        }
     }
 }

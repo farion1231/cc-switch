@@ -1,7 +1,8 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createTestQueryClient } from "../utils/testQueryClient";
 
 const {
   getModelsDevSyncConfig,
@@ -50,6 +51,12 @@ vi.mock("@/lib/modelsDevAutoSync", () => ({
   syncModelsDevPricing,
 }));
 
+const invokeMock = vi.hoisted(() => vi.fn());
+
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: invokeMock,
+}));
+
 import { ModelsDevAutoSyncPanel } from "@/components/usage/ModelsDevAutoSyncPanel";
 
 const state = {
@@ -65,9 +72,7 @@ const state = {
 };
 
 function renderPanel() {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
+  const client = createTestQueryClient();
   return render(
     <QueryClientProvider client={client}>
       <ModelsDevAutoSyncPanel />
@@ -89,34 +94,33 @@ describe("ModelsDevAutoSyncPanel", () => {
       changed: 1,
       syncedAt: Date.now(),
     });
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => ({
-          openai: {
-            name: "OpenAI",
-            models: {
-              "gpt-5": {
-                name: "GPT-5",
-                release_date: "2025-08-01",
-                cost: { input: 1, output: 2 },
-              },
+    invokeMock.mockImplementation(async (command: string) => {
+      if (command !== "fetch_models_dev") {
+        throw new Error(`Unexpected command: ${command}`);
+      }
+      return JSON.stringify({
+        openai: {
+          name: "OpenAI",
+          models: {
+            "gpt-5": {
+              name: "GPT-5",
+              release_date: "2025-08-01",
+              cost: { input: 1, output: 2 },
             },
           },
-          deepseek: {
-            name: "DeepSeek",
-            models: {
-              "deepseek-chat": {
-                name: "DeepSeek Chat",
-                release_date: "2025-12-01",
-                cost: { input: 0.3, output: 1.2 },
-              },
+        },
+        deepseek: {
+          name: "DeepSeek",
+          models: {
+            "deepseek-chat": {
+              name: "DeepSeek Chat",
+              release_date: "2025-12-01",
+              cost: { input: 0.3, output: 1.2 },
             },
           },
-        }),
-      }),
-    );
+        },
+      });
+    });
   });
 
   it("loads automatic sync as disabled by default", async () => {

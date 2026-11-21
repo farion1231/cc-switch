@@ -1,42 +1,14 @@
 use serde::{Deserialize, Serialize};
 
 /// 代理服务器配置
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ProxyConfig {
     /// 监听地址
     pub listen_address: String,
     /// 监听端口
     pub listen_port: u16,
-    /// 最大重试次数
-    pub max_retries: u8,
-    /// 请求超时时间（秒）- 已废弃，保留兼容
-    pub request_timeout: u64,
     /// 是否启用日志
     pub enable_logging: bool,
-    /// 是否正在接管 Live 配置
-    #[serde(default)]
-    pub live_takeover_active: bool,
-    /// 流式首字超时（秒）- 等待首个数据块的最大时间，范围 1-120 秒，默认 60 秒
-    #[serde(default = "default_streaming_first_byte_timeout")]
-    pub streaming_first_byte_timeout: u64,
-    /// 流式静默超时（秒）- 两个数据块之间的最大间隔，范围 60-600 秒，填 0 禁用（防止中途卡住）
-    #[serde(default = "default_streaming_idle_timeout")]
-    pub streaming_idle_timeout: u64,
-    /// 非流式总超时（秒）- 非流式请求的总超时时间，范围 60-1200 秒，默认 600 秒（10 分钟）
-    #[serde(default = "default_non_streaming_timeout")]
-    pub non_streaming_timeout: u64,
-}
-
-fn default_streaming_first_byte_timeout() -> u64 {
-    60
-}
-
-fn default_streaming_idle_timeout() -> u64 {
-    120
-}
-
-fn default_non_streaming_timeout() -> u64 {
-    600
 }
 
 impl Default for ProxyConfig {
@@ -44,13 +16,7 @@ impl Default for ProxyConfig {
         Self {
             listen_address: "127.0.0.1".to_string(),
             listen_port: 15721, // 使用较少占用的高位端口
-            max_retries: 3,
-            request_timeout: 600,
             enable_logging: true,
-            live_takeover_active: false,
-            streaming_first_byte_timeout: 60,
-            streaming_idle_timeout: 120,
-            non_streaming_timeout: 600,
         }
     }
 }
@@ -116,8 +82,6 @@ pub struct ProxyTakeoverStatus {
     pub grokbuild: bool,
     #[serde(rename = "claude-desktop", default)]
     pub claude_desktop: bool,
-    pub opencode: bool,
-    pub openclaw: bool,
 }
 
 /// Provider健康状态
@@ -268,6 +232,21 @@ impl Default for OptimizerConfig {
             cache_injection: true,
         }
     }
+}
+
+/// 隐私过滤器配置
+///
+/// 存储在 settings 表中，key = "privacy_filter_config"
+/// 开启后代理在转发前脱敏请求文本里的 PII 与密钥（见 `proxy::privacy_filter`）
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrivacyFilterConfig {
+    /// 总开关（默认关闭，用户需手动启用）。只管用户输入和系统提示
+    #[serde(default)]
+    pub enabled: bool,
+    /// 同时过滤工具结果（默认关闭）。模型拿不到原文，改文件可能失败或写回占位符
+    #[serde(default)]
+    pub filter_tool_results: bool,
 }
 
 /// Copilot 优化器配置

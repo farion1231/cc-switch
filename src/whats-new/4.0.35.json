@@ -1,0 +1,33 @@
+{
+  "version": "4.0.35",
+  "items": [
+    {
+      "type": "new",
+      "zh": "Claude Code 的 ChatGPT 账号卡片可用 GPT-6.2",
+      "zh-TW": "Claude Code 的 ChatGPT 帳號卡片可用 GPT-6.2",
+      "en": "ChatGPT-account Codex cards in Claude Code now support GPT-6.2",
+      "ja": "Claude Code の ChatGPT アカウント Codex カードが GPT-6.2 に対応"
+    },
+    {
+      "type": "new",
+      "zh": "会话管理里显示 Codex /goal 的完整目标",
+      "zh-TW": "對話管理裡顯示 Codex /goal 的完整目標",
+      "en": "Session history shows the full Codex /goal objective",
+      "ja": "セッション履歴に Codex /goal の目標全文を表示"
+    },
+    {
+      "type": "fix",
+      "zh": "修复 Claude Code 的 auto 模式在关不掉思考的模型上被拦下",
+      "zh-TW": "修正 Claude Code 的 auto 模式在關不掉思考的模型上被擋下",
+      "en": "Claude Code auto mode no longer blocked by models that keep thinking on",
+      "ja": "思考をオフにできないモデルで Claude Code の auto モードが止まる問題を修正"
+    },
+    {
+      "type": "fix",
+      "zh": "修复 Codex 聚合模式报 Responses-Lite 错误",
+      "zh-TW": "修正 Codex 聚合模式報 Responses-Lite 錯誤",
+      "en": "Codex aggregation no longer fails with the Responses-Lite error",
+      "ja": "Codex の集約モードで Responses-Lite エラーになる問題を修正"
+    }
+  ]
+}

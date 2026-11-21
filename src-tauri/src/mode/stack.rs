@@ -50,14 +50,6 @@ const KEY_MAX_LEN: usize = 24;
 /// Claude Code 在没有 `CLAUDE_CODE_MAX_CONTEXT_TOKENS` 时按这个窗口算。
 pub const CLAUDE_DEFAULT_WINDOW: u64 = 200_000;
 
-/// 支持 Stack 模型的应用。
-pub fn supports_stack(app: &AppType) -> bool {
-    matches!(
-        app,
-        AppType::Claude | AppType::Codex | AppType::ClaudeDesktop
-    )
-}
-
 /// 给 `provider` 一个 key：登记过就用原来的（移除后重新加入，旧会话里的 id 继续有效），
 /// 没有就按图标、名称生成一个新的写进登记簿。
 ///
@@ -113,7 +105,7 @@ fn slug(text: &str) -> String {
     out.trim_end_matches('-').to_string()
 }
 
-/// Stack 模型 id。Claude 的上游是 1M 窗口时末尾带 `[1M]`，Claude Code 才按 1M 计算；Claude
+/// Stack 模型 id。Claude 的上游是 1M 窗口时末尾带 `[1m]`，Claude Code 才按 1M 计算；Claude
 /// Desktop 的 1M 写在模型条目里（`supports1m` + `prefer1m`），id 不带标记。
 pub fn encode(app: &AppType, key: &str, model: &str, one_m: bool) -> String {
     match app {
@@ -215,7 +207,7 @@ pub struct StackModel {
     pub display_name: String,
     /// 选择器里的说明。
     pub description: String,
-    /// 上游是 1M 窗口（id 带 `[1M]`）。
+    /// 上游是 1M 窗口（id 带 `[1m]`）。
     pub one_m: bool,
     /// 非 1M 模型的窗口：行里的 `CLAUDE_CODE_MAX_CONTEXT_TOKENS`，没有是 200K。
     pub window: u64,
@@ -355,7 +347,7 @@ fn stack_models(key: &str, provider: &Provider, found: Vec<Found>) -> Vec<StackM
                 id: encode(&AppType::Claude, key, &found.model, found.one_m),
                 display_name: display_name(&name, &provider.name),
                 name,
-                description: model_description(&found.model, shown_window),
+                description: provider_model_description(&provider.name, &found.model, shown_window),
                 upstream: found.upstream,
                 one_m: found.one_m,
                 window,
@@ -387,6 +379,8 @@ pub struct DesktopStackModel {
     pub upstream: String,
     /// 选择器里显示的名字（`labelOverride`）：`<供应商名> / <模型显示名>`。
     pub label: String,
+    /// 供应商名（模型说明里用）。
+    pub provider_name: String,
     /// 映射表里这个模型标了 1M。
     pub supports_1m: bool,
 }
@@ -412,6 +406,7 @@ pub fn desktop_models(key: &str, provider: &Provider) -> Vec<DesktopStackModel> 
         models.push(DesktopStackModel {
             id: encode(&AppType::ClaudeDesktop, key, &route.upstream_model, false),
             label: format!("{} / {name}", provider.name),
+            provider_name: provider.name.clone(),
             upstream: route.upstream_model,
             supports_1m: route.supports_1m,
         });
@@ -446,13 +441,23 @@ pub fn display_name(model: &str, provider_name: &str) -> String {
     format!("{model}（{provider_name}）")
 }
 
-/// 选择器里 Stack 模型的说明：`<上游模型名> · <窗口>`。显示名可以是用户自己起的，id 又带着
+/// Codex Stack 模型的说明：`<上游模型名> · <窗口>`。显示名可以是用户自己起的，id 又带着
 /// 前缀，上游真正的模型名只有这里看得到；供应商名已经在显示名里，不再重复。窗口未知
 /// （`0`）时只写模型名。
 pub fn model_description(model: &str, window: u64) -> String {
     match window_label(window) {
         Some(window) => format!("{model} · {window}"),
         None => model.to_string(),
+    }
+}
+
+/// Claude Code、Claude Desktop 里模型的说明：`<供应商名> · <上游模型名> · <窗口>`。路由那家的
+/// 档位、聚合模式的模型、「打开终端」的菜单都用它。供应商名为空时同 [`model_description`]。
+pub fn provider_model_description(provider_name: &str, model: &str, window: u64) -> String {
+    let description = model_description(model, window);
+    match provider_name.trim() {
+        "" => description,
+        name => format!("{name} · {description}"),
     }
 }
 
@@ -509,8 +514,17 @@ pub fn members(
             log::warn!("{} 的 Stack 模型成员 {id} 没有登记 key，跳过", app.as_str());
             continue;
         };
-        let Some(provider) = db.get_provider_by_id(id, app.as_str())? else {
-            continue;
+        let provider = match db.read_provider(app, id)? {
+            Some(Ok(provider)) => provider,
+            Some(Err(entry)) => {
+                log::warn!(
+                    "{} 的 Stack 成员 {id} 读不出来，跳过: {}",
+                    app.as_str(),
+                    entry.error
+                );
+                continue;
+            }
+            None => continue,
         };
         let route = route == Some(id.as_str());
         let model_ids = model_ids_of(app, key, &provider, route);
@@ -539,7 +553,7 @@ pub fn published_members(
     stack: &StackState,
     route: Option<&str>,
 ) -> Result<Vec<Member>, AppError> {
-    if !stack.enabled || stack.members.is_empty() || !supports_stack(app) {
+    if !stack.enabled || stack.members.is_empty() || !app.spec().stack {
         return Ok(Vec::new());
     }
     let mut members = members(db, app, stack, route)?;
@@ -568,7 +582,7 @@ pub fn claude_route_default(members: &[Member]) -> Option<StackModel> {
 
 /// 这个应用在 Stack 模式（代理模式且 Stack 模式开着）。读不出状态按不在处理。
 pub fn stack_mode_now(app: &AppType) -> bool {
-    if !supports_stack(app) {
+    if !app.spec().stack {
         return false;
     }
     state::stack_mode(&DeviceStore::for_device(), app.as_str()).unwrap_or_else(|error| {
@@ -582,7 +596,7 @@ pub fn stack_mode_now(app: &AppType) -> bool {
 
 /// 在 Stack 名单里（不管什么模式）。
 pub fn is_member(app: &AppType, provider_id: &str) -> Result<bool, AppError> {
-    if !supports_stack(app) {
+    if !app.spec().stack {
         return Ok(false);
     }
     Ok(state::stack(&DeviceStore::for_device(), app.as_str())?.is_member(provider_id))
@@ -695,7 +709,7 @@ pub fn resolve(
     let Some(provider_id) = stack.keys.get(key) else {
         return Ok(Resolved::Miss(StackMiss::Unknown));
     };
-    let provider = db.get_provider_by_id(provider_id, app.as_str())?;
+    let provider = db.get_provider_by_id(provider_id, app)?;
     let Some(provider) = provider else {
         return Ok(Resolved::Miss(StackMiss::Deleted));
     };
@@ -760,7 +774,8 @@ fn resolve_desktop(
         }
     }
     let find = |key: &str, provider_id: &str| -> Result<bool, AppError> {
-        let Some(provider) = db.get_provider_by_id(provider_id, app.as_str())? else {
+        // 读不出来的成员发布不了模型，和不在库里一样不算命中，不拖累其余成员。
+        let Some(Ok(provider)) = db.read_provider(app, provider_id)? else {
             return Ok(false);
         };
         Ok(desktop_models(key, &provider)
@@ -1010,11 +1025,11 @@ mod tests {
             models,
             vec![
                 StackModel {
-                    id: "ccs-claude-zhipu--glm-5.2[1M]".to_string(),
+                    id: "ccs-claude-zhipu--glm-5.2[1m]".to_string(),
                     upstream: "glm-5.2[1M]".to_string(),
                     name: "GLM 5.2".to_string(),
                     display_name: "GLM 5.2（Zhipu）".to_string(),
-                    description: "glm-5.2 · 1M".to_string(),
+                    description: "Zhipu · glm-5.2 · 1M".to_string(),
                     one_m: true,
                     window: 128_000,
                 },
@@ -1023,7 +1038,7 @@ mod tests {
                     upstream: "glm-4.7-air".to_string(),
                     name: "glm-4.7-air".to_string(),
                     display_name: "glm-4.7-air（Zhipu）".to_string(),
-                    description: "glm-4.7-air · 128K".to_string(),
+                    description: "Zhipu · glm-4.7-air · 128K".to_string(),
                     one_m: false,
                     window: 128_000,
                 },
@@ -1045,6 +1060,12 @@ mod tests {
         assert_eq!(model_description("glm-5.2", 1_000_000), "glm-5.2 · 1M");
         assert_eq!(model_description("glm-5.2", 1_050_000), "glm-5.2 · 1050K");
         assert_eq!(model_description("m", 0), "m");
+        // Claude Code、Claude Desktop 的说明带供应商名。
+        assert_eq!(
+            provider_model_description("Kimi", "kimi-k3", 256_000),
+            "Kimi · kimi-k3 · 256K"
+        );
+        assert_eq!(provider_model_description(" ", "m", 0), "m");
     }
 
     fn with_stack_models(mut provider: Provider, models: Value) -> Provider {
@@ -1112,15 +1133,15 @@ mod tests {
             summary,
             vec![
                 (
-                    "ccs-claude-kimi--kimi-k3[1M]".to_string(),
-                    "kimi-k3[1M]".to_string(),
+                    "ccs-claude-kimi--kimi-k3[1m]".to_string(),
+                    "kimi-k3[1m]".to_string(),
                     "Kimi K3（Kimi）".to_string(),
                     true,
                     256_000,
                 ),
                 (
-                    "ccs-claude-kimi--kimi-k3-thinking[1M]".to_string(),
-                    "kimi-k3-thinking[1M]".to_string(),
+                    "ccs-claude-kimi--kimi-k3-thinking[1m]".to_string(),
+                    "kimi-k3-thinking[1m]".to_string(),
                     "kimi-k3-thinking（Kimi）".to_string(),
                     true,
                     256_000,
@@ -1156,7 +1177,7 @@ mod tests {
             ),
             provider("gone", "Gone", None, json!({ "ANTHROPIC_MODEL": "g-1" })),
         ] {
-            db.save_provider("claude", &row).unwrap();
+            db.save_provider(&AppType::Claude, &row).unwrap();
         }
         state::update(&store, |live| {
             let claude = live.apps.entry("claude".to_string()).or_default();
@@ -1220,7 +1241,7 @@ mod tests {
         let default = claude_route_default(&members(Some("zhipu"))).unwrap();
         assert_eq!(
             (default.id.as_str(), default.name.as_str()),
-            ("ccs-claude-zhipu--glm-5.2[1M]", "glm-5.2")
+            ("ccs-claude-zhipu--glm-5.2[1m]", "glm-5.2")
         );
 
         // 界面上标出路由那家，它的模型 id 照常列出。
@@ -1233,6 +1254,32 @@ mod tests {
             .map(|view| (view.provider_id.as_str(), view.route, view.model_ids.len()))
             .collect();
         assert_eq!(route_flags, vec![("kimi", true, 1), ("zhipu", false, 1)]);
+    }
+
+    fn break_row(db: &Database, app: &str, id: &str) {
+        db.conn
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE providers SET meta = '{' WHERE app_type = ?1 AND id = ?2",
+                [app, id],
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn an_unreadable_member_is_left_out_and_the_others_still_publish_and_resolve() {
+        let fx = fixture();
+        break_row(&fx.db, "claude", "zhipu");
+        let stack = state::stack(&fx.store, "claude").unwrap();
+
+        let members = super::members(&fx.db, &AppType::Claude, &stack, None).unwrap();
+        let ids: Vec<&str> = members.iter().map(|m| m.provider.id.as_str()).collect();
+        assert_eq!(ids, ["kimi"]);
+        assert_eq!(
+            hit(resolve_in(&fx, AppType::Claude, "ccs-claude-kimi--kimi-k3")).0,
+            "kimi"
+        );
     }
 
     #[test]
@@ -1250,7 +1297,7 @@ mod tests {
                 { "model": "kimi-k3" }
             ]),
         );
-        fx.db.save_provider("claude", &kimi).unwrap();
+        fx.db.save_provider(&AppType::Claude, &kimi).unwrap();
         let stack = state::stack(&fx.store, "claude").unwrap();
         let published = published_members(&fx.db, &AppType::Claude, &stack, Some("kimi")).unwrap();
         let default = claude_route_default(&published).unwrap();
@@ -1267,7 +1314,7 @@ mod tests {
             vec![
                 "ccs-claude-kimi--kimi-k3-mini".to_string(),
                 "ccs-claude-kimi--kimi-k3".to_string(),
-                "ccs-claude-zhipu--glm-5.2[1M]".to_string(),
+                "ccs-claude-zhipu--glm-5.2[1m]".to_string(),
             ]
         );
     }
@@ -1358,7 +1405,7 @@ mod tests {
             "config": "model = \"deepseek-v4-flash\"\n",
             "modelCatalog": { "models": [{ "model": "deepseek-v4-pro" }] },
         });
-        fx.db.save_provider("codex", &deepseek).unwrap();
+        fx.db.save_provider(&AppType::Codex, &deepseek).unwrap();
         state::update(&fx.store, |live| {
             let stack = &mut live.apps.entry("codex".to_string()).or_default().stack;
             stack.members = vec!["ds".to_string()];
@@ -1497,7 +1544,7 @@ mod tests {
                 ),
                 card("gone", "Gone", &[("claude-sonnet-5", "g-1", None, false)]),
             ] {
-                db.save_provider("claude-desktop", &row).unwrap();
+                db.save_provider(&AppType::ClaudeDesktop, &row).unwrap();
             }
             state::update(&store, |live| {
                 let desktop = live.apps.entry("claude-desktop".to_string()).or_default();
@@ -1606,8 +1653,8 @@ mod tests {
                     ))
                     .collect::<Vec<_>>(),
                 vec![
-                    ("kimi-k3-turbo", "Kimi / kimi-k3-turbo", false),
                     ("kimi-k3", "Kimi / Kimi K3", true),
+                    ("kimi-k3-turbo", "Kimi / kimi-k3-turbo", false),
                 ]
             );
             assert!(published.iter().all(|model| desktop_keeps(&model.id)));
@@ -1639,6 +1686,20 @@ mod tests {
                     .collect::<Vec<_>>(),
                 vec!["glm-5.2"]
             );
+        }
+
+        #[test]
+        fn unreadable_rows_neither_resolve_nor_break_the_other_ids() {
+            let fx = fixture();
+            // zhipu 是名单里的路由那家；gone 是移除了的成员，查不到时才会去读它。
+            for id in ["zhipu", "gone"] {
+                super::break_row(&fx.db, "claude-desktop", id);
+            }
+            let app = AppType::ClaudeDesktop;
+            let kimi = encode(&app, "kimi", "kimi-k3", false);
+            assert_eq!(hit(resolve_in(&fx, app.clone(), &kimi)).0, "kimi");
+            let gone = encode(&app, "gone", "g-1", false);
+            assert_eq!(miss(resolve_in(&fx, app, &gone)), StackMiss::Unknown);
         }
 
         #[test]
@@ -1702,7 +1763,7 @@ mod tests {
             };
             for key in ["relay-484", "relay-1944"] {
                 let row = card(key, key, &[("claude-sonnet-5", "kimi-k3", None, false)]);
-                fx.db.save_provider("claude-desktop", &row).unwrap();
+                fx.db.save_provider(&AppType::ClaudeDesktop, &row).unwrap();
             }
             state::update(&fx.store, |live| {
                 let desktop = live.apps.entry("claude-desktop".to_string()).or_default();

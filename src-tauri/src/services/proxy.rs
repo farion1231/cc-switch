@@ -25,22 +25,6 @@ pub struct ProxyService {
     switch_locks: SwitchLockManager,
 }
 
-/// 重启失败时写回库的那份配置：设置页只动四个全局字段，旧接口是整份七个字段。
-enum SavedProxyConfig {
-    Global(GlobalProxyConfig),
-    Legacy(ProxyConfig),
-}
-
-impl SavedProxyConfig {
-    async fn write(&self, db: &Database) -> Result<(), String> {
-        match self {
-            Self::Global(config) => db.update_global_proxy_config(config.clone()).await,
-            Self::Legacy(config) => db.update_proxy_config(config.clone()).await,
-        }
-        .map_err(|e| format!("恢复原代理配置失败: {e}"))
-    }
-}
-
 /// 客户端连接代理用的地址。`host` 是设置里的客户端地址，没设时是监听地址，后者可能是
 /// `0.0.0.0` / `::`（监听所有网卡），客户端连不上这个地址，改用本机回环；IPv6 加方括号。
 pub(crate) fn proxy_origin(host: &str, listen_port: u16) -> String {
@@ -120,7 +104,7 @@ impl ProxyService {
         // 2. 获取配置
         let config = self
             .db
-            .get_proxy_config()
+            .get_listen_config()
             .await
             .map_err(|e| format!("获取代理配置失败: {e}"))?;
 
@@ -196,9 +180,6 @@ impl ProxyService {
             gemini,
             grokbuild,
             claude_desktop,
-            // OpenCode and OpenClaw don't support proxy features
-            opencode: false,
-            openclaw: false,
         })
     }
 
@@ -251,7 +232,7 @@ impl ProxyService {
     pub(crate) async fn build_proxy_urls(&self) -> Result<(String, String), String> {
         let config = self
             .db
-            .get_proxy_config()
+            .get_listen_config()
             .await
             .map_err(|e| format!("获取代理配置失败: {e}"))?;
 
@@ -316,16 +297,6 @@ impl ProxyService {
             AppType::GrokBuild => Self::is_grok_live_taken_over(config),
             _ => false,
         }
-    }
-
-    /// 是否有应用处于代理模式
-    pub async fn is_takeover_active(&self) -> Result<bool, String> {
-        let status = self.get_takeover_status().await?;
-        Ok(status.claude
-            || status.codex
-            || status.gemini
-            || status.grokbuild
-            || status.claude_desktop)
     }
 
     fn is_claude_live_taken_over(config: &Value) -> bool {
@@ -462,43 +433,9 @@ impl ProxyService {
         }
     }
 
-    /// 获取代理配置
-    pub async fn get_config(&self) -> Result<ProxyConfig, String> {
-        self.db
-            .get_proxy_config()
-            .await
-            .map_err(|e| format!("获取代理配置失败: {e}"))
-    }
-
-    /// 更新代理配置（旧接口：七个字段整份写进四行）。返回代理是否因地址或端口变了而重启：
-    /// 重启后调用方要按新地址重写接上代理的客户端（`mode::controller::resync_route`）。
-    pub async fn update_config(&self, config: &ProxyConfig) -> Result<bool, String> {
-        // 记录旧配置用于判定是否需要重启
-        let previous = self
-            .db
-            .get_proxy_config()
-            .await
-            .map_err(|e| format!("获取代理配置失败: {e}"))?;
-
-        // 保存到数据库（保持 live_takeover_active 状态不变）
-        let mut new_config = config.clone();
-        new_config.live_takeover_active = previous.live_takeover_active;
-
-        self.db
-            .update_proxy_config(new_config.clone())
-            .await
-            .map_err(|e| format!("保存代理配置失败: {e}"))?;
-
-        // 判断是否需要重启（地址或端口变更）
-        let require_restart = new_config.listen_address != previous.listen_address
-            || new_config.listen_port != previous.listen_port;
-        self.apply_saved_config(require_restart, SavedProxyConfig::Legacy(previous))
-            .await
-    }
-
-    /// 设置页「保存并重启服务」：只写四个全局字段。各应用自己的重试次数和超时不碰——
-    /// [`Self::update_config`] 走的旧 DAO 读的是 claude 行、写的是四行，会把 claude 的
-    /// 应用级字段广播给其他三家。返回值同 [`Self::update_config`]。
+    /// 设置页「保存并重启服务」：只写四个全局字段，各应用自己的重试次数和超时不碰。返回代理
+    /// 是否因地址或端口变了而重启：重启后调用方要按新地址重写接上代理的客户端
+    /// （`mode::controller::resync_route`）。
     pub async fn update_global_config(&self, config: &GlobalProxyConfig) -> Result<bool, String> {
         let previous = self
             .db
@@ -513,8 +450,7 @@ impl ProxyService {
 
         let require_restart = config.listen_address != previous.listen_address
             || config.listen_port != previous.listen_port;
-        self.apply_saved_config(require_restart, SavedProxyConfig::Global(previous))
-            .await
+        self.apply_saved_config(require_restart, previous).await
     }
 
     /// 让运行中的服务用上刚写进库的配置：地址或端口变了就重启（返回 true），否则实时应用。
@@ -524,7 +460,7 @@ impl ProxyService {
     async fn apply_saved_config(
         &self,
         require_restart: bool,
-        previous: SavedProxyConfig,
+        previous: GlobalProxyConfig,
     ) -> Result<bool, String> {
         let mut server_guard = self.server.write().await;
         if server_guard.is_none() {
@@ -532,7 +468,7 @@ impl ProxyService {
         }
         let new_config = self
             .db
-            .get_proxy_config()
+            .get_listen_config()
             .await
             .map_err(|e| format!("获取代理配置失败: {e}"))?;
 
@@ -585,11 +521,14 @@ impl ProxyService {
         Ok(server)
     }
 
-    async fn restore_and_start(&self, previous: SavedProxyConfig) -> Result<ProxyServer, String> {
-        previous.write(&self.db).await?;
+    async fn restore_and_start(&self, previous: GlobalProxyConfig) -> Result<ProxyServer, String> {
+        self.db
+            .update_global_proxy_config(previous)
+            .await
+            .map_err(|e| format!("恢复原代理配置失败: {e}"))?;
         let config = self
             .db
-            .get_proxy_config()
+            .get_listen_config()
             .await
             .map_err(|e| format!("获取代理配置失败: {e}"))?;
         self.start_with(&config).await
@@ -606,26 +545,10 @@ impl ProxyService {
         self.server.try_read().ok().map(|server| server.is_some())
     }
 
-    /// 热更新熔断器配置
-    ///
-    /// 如果代理服务器正在运行，将新配置应用到所有已创建的熔断器实例
-    pub async fn update_circuit_breaker_configs(
-        &self,
-        config: crate::proxy::CircuitBreakerConfig,
-    ) -> Result<(), String> {
-        if let Some(server) = self.server.read().await.as_ref() {
-            server.update_circuit_breaker_configs(config).await;
-            log::info!("已热更新运行中的熔断器配置");
-        } else {
-            log::debug!("代理服务器未运行，熔断器配置将在下次启动时生效");
-        }
-        Ok(())
-    }
-
     /// 热更新指定应用的熔断器配置
     pub async fn update_circuit_breaker_config_for_app(
         &self,
-        app_type: &str,
+        app_type: &AppType,
         config: crate::proxy::CircuitBreakerConfig,
     ) -> Result<(), String> {
         if let Some(server) = self.server.read().await.as_ref() {
@@ -639,21 +562,44 @@ impl ProxyService {
         Ok(())
     }
 
-    /// 重置指定 Provider 的熔断器
-    ///
-    /// 如果代理服务器正在运行，立即重置内存中的熔断器状态
-    pub async fn reset_provider_circuit_breaker(
+    /// 移出故障转移队列：DB 清掉它的健康状态，运行中的路由也丢掉它的熔断器，
+    /// 再加回队列时路由和卡片显示的一样是健康的。
+    pub async fn remove_from_failover_queue(
         &self,
+        app_type: &AppType,
         provider_id: &str,
-        app_type: &str,
-    ) -> Result<(), String> {
-        if let Some(server) = self.server.read().await.as_ref() {
-            server
-                .reset_provider_circuit_breaker(provider_id, app_type)
-                .await;
-            log::info!("已重置 Provider {provider_id} (app: {app_type}) 的熔断器");
-        }
+    ) -> Result<(), crate::error::AppError> {
+        self.db.remove_from_failover_queue(app_type, provider_id)?;
+        self.forget_circuit_breakers(app_type, Some(provider_id))
+            .await;
         Ok(())
+    }
+
+    /// 清掉一个应用的健康状态，DB 和运行中路由的熔断器一起清。
+    pub async fn clear_provider_health_for_app(
+        &self,
+        app_type: &AppType,
+    ) -> Result<(), crate::error::AppError> {
+        self.db.clear_provider_health_for_app(app_type).await?;
+        self.forget_circuit_breakers(app_type, None).await;
+        Ok(())
+    }
+
+    async fn forget_circuit_breakers(&self, app_type: &AppType, provider_id: Option<&str>) {
+        if let Some(server) = self.server.read().await.as_ref() {
+            server.forget_circuit_breakers(app_type, provider_id).await;
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn provider_router(
+        &self,
+    ) -> Option<Arc<crate::proxy::provider_router::ProviderRouter>> {
+        self.server
+            .read()
+            .await
+            .as_ref()
+            .map(|server| server.provider_router())
     }
 }
 
@@ -662,8 +608,13 @@ mod tests {
     use super::*;
     async fn seed_distinct_app_proxy_configs(db: &Database) -> Vec<Value> {
         let mut configs = Vec::new();
-        for (app, retries) in [("claude", 6), ("codex", 0), ("gemini", 2), ("grokbuild", 3)] {
-            let mut config = db.get_proxy_config_for_app(app).await.unwrap();
+        for (app, retries) in [
+            (AppType::Claude, 6),
+            (AppType::Codex, 0),
+            (AppType::Gemini, 2),
+            (AppType::GrokBuild, 3),
+        ] {
+            let mut config = db.get_proxy_config_for_app(&app).await.unwrap();
             config.enabled = retries % 2 == 0;
             config.auto_failover_enabled = retries % 2 != 0;
             config.max_retries = retries;
@@ -679,10 +630,78 @@ mod tests {
 
     async fn assert_app_proxy_configs_unchanged(db: &Database, configs: &[Value]) {
         for expected in configs {
-            let app = expected["appType"].as_str().unwrap();
-            let actual = db.get_proxy_config_for_app(app).await.unwrap();
+            let app: AppType = expected["appType"].as_str().unwrap().parse().unwrap();
+            let actual = db.get_proxy_config_for_app(&app).await.unwrap();
             assert_eq!(serde_json::to_value(actual).unwrap(), *expected, "{app}");
         }
+    }
+
+    async fn routed(
+        router: &crate::proxy::provider_router::ProviderRouter,
+        app: &AppType,
+    ) -> Vec<String> {
+        match router.select_providers(app).await {
+            Ok(providers) => providers.into_iter().map(|p| p.id).collect(),
+            Err(_) => Vec::new(),
+        }
+    }
+
+    async fn trip(
+        router: &crate::proxy::provider_router::ProviderRouter,
+        app: &AppType,
+        id: &str,
+        threshold: u32,
+    ) {
+        for _ in 0..threshold {
+            router
+                .record_result(id, app, false, false, None)
+                .await
+                .unwrap();
+        }
+    }
+
+    /// 卡片读 DB 里的健康状态；DB 被清掉后，运行中的路由也必须当这家是健康的。
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn clearing_health_makes_a_tripped_provider_routable_again() {
+        let _home = crate::test_support::TempUserHome::new();
+        crate::settings::reload_settings().expect("reload settings");
+        let db = Arc::new(Database::memory().unwrap());
+        let app = AppType::Claude;
+        for id in ["a", "b"] {
+            db.save_provider(
+                &app,
+                &Provider::with_id(id.into(), id.into(), json!({}), None),
+            )
+            .unwrap();
+            db.add_to_failover_queue(&app, id).unwrap();
+        }
+        let mut config = db.get_proxy_config_for_app(&app).await.unwrap();
+        config.auto_failover_enabled = true;
+        let threshold = config.circuit_failure_threshold;
+        db.update_proxy_config_for_app(config).await.unwrap();
+        let mut global = db.get_global_proxy_config().await.unwrap();
+        global.listen_port = 0;
+        db.update_global_proxy_config(global).await.unwrap();
+
+        let service = ProxyService::new(db.clone());
+        service.start().await.expect("start proxy");
+        let router = service.provider_router().await.expect("running router");
+        // 移出队列再加回来：卡片是健康的，路由也要能选到它。
+        trip(&router, &app, "b", threshold).await;
+        assert_eq!(routed(&router, &app).await, vec!["a"]);
+        service.remove_from_failover_queue(&app, "b").await.unwrap();
+        db.add_to_failover_queue(&app, "b").unwrap();
+        assert_eq!(routed(&router, &app).await, vec!["a", "b"]);
+
+        // 退出路由时整个应用的健康状态清零，熔断器也一起清。
+        trip(&router, &app, "a", threshold).await;
+        trip(&router, &app, "b", threshold).await;
+        assert!(routed(&router, &app).await.is_empty());
+        service.clear_provider_health_for_app(&app).await.unwrap();
+        assert_eq!(routed(&router, &app).await, vec!["a", "b"]);
+
+        service.stop().await.expect("stop proxy");
     }
 
     #[tokio::test]
@@ -690,7 +709,7 @@ mod tests {
         let db = Arc::new(Database::memory().unwrap());
         let configs = seed_distinct_app_proxy_configs(&db).await;
         let service = ProxyService::new(db.clone());
-        let mut config = db.get_proxy_config().await.unwrap();
+        let mut config = db.get_listen_config().await.unwrap();
         config.listen_port = 0;
         let mut expected_global = db.get_global_proxy_config().await.unwrap();
         expected_global.listen_port = 23456;

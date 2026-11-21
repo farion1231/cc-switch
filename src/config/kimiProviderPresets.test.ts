@@ -3,6 +3,8 @@ import {
   KIMI_CAPABILITIES,
   kimiConfigSchema,
   kimiProviderPresets,
+  kimiAccountPreset,
+  KIMI_ACCOUNT_PRESET_ID,
 } from "./kimiProviderPresets";
 import { piProviderPresets } from "./piProviderPresets";
 import { getVisiblePresetRows } from "@/components/providers/forms/ProviderPresetSelector";
@@ -21,9 +23,33 @@ const model = (name: string, id: string) => {
 };
 
 describe("kimiProviderPresets", () => {
+  it("keeps official account login separate from the API-key vendor family", () => {
+    const t = ((key: string) => key) as TFunction;
+    const rows = getVisiblePresetRows(
+      [
+        { id: KIMI_ACCOUNT_PRESET_ID, preset: kimiAccountPreset },
+        ...kimiProviderPresets.map((preset) => ({
+          id: preset.providerKey,
+          preset,
+        })),
+      ],
+      { query: "Kimi", t },
+    );
+    const login = rows.find(
+      ({ row }) => row.key === KIMI_ACCOUNT_PRESET_ID,
+    )!.row;
+    expect(presetRowGroup(login)).toBe("login");
+    expect(login.family).toBeUndefined();
+    expect(
+      rows.find(({ row }) => row.family === "kimi")!.row.versions,
+    ).toHaveLength(4);
+  });
   it("provides the compatible catalog across vendors, platforms, cloud and local groups", () => {
+    // Bedrock and Mistral's native protocol have no Kimi Code equivalent.
     const compatible = piProviderPresets.filter(
-      (preset) => preset.settingsConfig.api !== "bedrock-converse-stream",
+      (preset) =>
+        preset.settingsConfig.api !== "bedrock-converse-stream" &&
+        preset.settingsConfig.api !== "mistral-conversations",
     );
     expect(kimiProviderPresets.map((preset) => preset.name)).toEqual(
       compatible.map((preset) => preset.name),
@@ -84,6 +110,15 @@ describe("kimiProviderPresets", () => {
         "dynamically_loaded_tools",
       ]),
     );
+    for (const preset of ["Kimi", "Kimi Global"]) {
+      for (const id of ["kimi-k3.1-pro", "kimi-k3.1-pro-highspeed"]) {
+        expect(model(preset, id)).toMatchObject({
+          max_context_size: 1048576,
+          support_efforts: ["low", "high", "max"],
+          default_effort: "high",
+        });
+      }
+    }
   });
 
   it("uses cloud providers' real protocols and excludes Bedrock's unsupported signing protocol", () => {
