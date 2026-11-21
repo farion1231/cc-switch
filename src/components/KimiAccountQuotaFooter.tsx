@@ -33,6 +33,7 @@ const KimiAccountQuotaFooter: React.FC<KimiAccountQuotaFooterProps> = ({
     data: quota,
     isFetching: loading,
     refetch,
+    manualIdle,
   } = useKimiAccountQuota(accountId, {
     enabled: true,
     autoQuery: isCurrent,
@@ -59,6 +60,7 @@ const KimiAccountQuotaFooter: React.FC<KimiAccountQuotaFooterProps> = ({
       quota={quota}
       loading={loading}
       refetch={refetch}
+      idle={manualIdle}
       appIdForExpiredHint="kimi"
       inline={inline}
       display={display}

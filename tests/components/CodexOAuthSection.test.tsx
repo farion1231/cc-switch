@@ -54,6 +54,9 @@ vi.mock("@/components/settings/auth/WorkBuddyAccountSection", () => ({
   WorkBuddyAccountSection: () => <div />,
 }));
 
+vi.mock("@/components/settings/auth/AutoQuotaToggle", () => ({
+  AutoQuotaToggle: () => null,
+}));
 vi.mock("@/components/providers/DshAccount", () => ({
   DshAccountLogin: () => <div />,
 }));

@@ -3,6 +3,7 @@ import type { TFunction } from "i18next";
 import { useQuery } from "@tanstack/react-query";
 import { authApi } from "@/lib/api";
 import type { WorkBuddyQuota } from "@/lib/api/auth";
+import { isManualIdle, useQuotaPolicy } from "@/lib/query/quotaPolicy";
 import {
   countdownStr,
   failedLines,
@@ -28,6 +29,8 @@ export function useWorkBuddyAccountQuota(
   options: { autoRefresh?: boolean } = {},
 ) {
   const force = useRef(false);
+  const policy = useQuotaPolicy();
+  const autoAllowed = policy.autoAllowed;
   const query = useQuery({
     queryKey: [...WORKBUDDY_QUOTA_KEY, accountId],
     queryFn: () => {
@@ -35,9 +38,10 @@ export function useWorkBuddyAccountQuota(
       force.current = false;
       return authApi.workbuddyAccountQuota(accountId!, skipCache);
     },
-    enabled: Boolean(accountId),
+    enabled: autoAllowed && Boolean(accountId),
     staleTime: REFETCH_INTERVAL,
-    refetchInterval: options.autoRefresh ? REFETCH_INTERVAL : false,
+    refetchInterval:
+      autoAllowed && options.autoRefresh ? REFETCH_INTERVAL : false,
     refetchOnWindowFocus: false,
     retry: false,
   });
@@ -45,7 +49,7 @@ export function useWorkBuddyAccountQuota(
     force.current = true;
     return query.refetch();
   };
-  return { ...query, refresh };
+  return { ...query, refresh, manualIdle: isManualIdle(policy, query) };
 }
 
 /** 积分数：一万以上用紧凑写法（「12.3万」「12.3K」） */
