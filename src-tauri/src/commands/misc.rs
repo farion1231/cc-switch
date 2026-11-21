@@ -358,15 +358,15 @@ pub async fn get_tool_versions(
         Some(tools) => normalize_requested_tools(tools),
         None => TOOLS.iter().map(|tool| tool.id).collect(),
     };
-    let mut results = Vec::new();
-
-    for tool in requested {
+    // 各工具互不依赖，并发探测：总耗时取最慢的那个，而不是逐个累加（启动后台检查一次
+    // 传入全部工具）。join_all 保持输入顺序。
+    let results = futures::future::join_all(requested.into_iter().map(|tool| {
         let pref = wsl_shell_by_tool.as_ref().and_then(|m| m.get(tool));
         let tool_wsl_shell = pref.and_then(|p| p.wsl_shell.as_deref());
         let tool_wsl_shell_flag = pref.and_then(|p| p.wsl_shell_flag.as_deref());
-
-        results.push(get_single_tool_version_impl(tool, tool_wsl_shell, tool_wsl_shell_flag).await);
-    }
+        get_single_tool_version_impl(tool, tool_wsl_shell, tool_wsl_shell_flag)
+    }))
+    .await;
 
     Ok(results)
 }
