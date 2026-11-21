@@ -599,6 +599,20 @@ describe("SessionReader", () => {
     const outline = screen.getByRole("navigation", { name: "对话目录" });
     fireEvent.click(within(outline).getByRole("button", { name: /梳理现状/ }));
 
+    // 只看章节：目录里只留章节，提问和回复收起来；再点一次恢复
+    const chaptersOnly = within(outline).getByRole("button", {
+      name: /只看章节/,
+    });
+    expect(within(outline).getByText("重构支付模块")).toBeInTheDocument();
+    fireEvent.click(chaptersOnly);
+    expect(chaptersOnly).toHaveAttribute("aria-pressed", "true");
+    expect(within(outline).queryByText("重构支付模块")).not.toBeInTheDocument();
+    expect(
+      within(outline).getByRole("button", { name: /梳理现状/ }),
+    ).toBeInTheDocument();
+    fireEvent.click(chaptersOnly);
+    expect(within(outline).getByText("重构支付模块")).toBeInTheDocument();
+
     await userEvent.click(
       screen.getByRole("button", { name: "claude 会话 的更多操作" }),
     );

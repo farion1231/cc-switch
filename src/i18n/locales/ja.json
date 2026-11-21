@@ -1737,6 +1737,7 @@
       "outlineAborted": "中断",
       "outlineNoReply": "返信なし",
       "chapter": "チャプター",
+      "outlineChaptersOnly": "チャプターのみ",
       "viewOptions": "表示オプション",
       "noChanges": "このセッションにはファイルの変更がありません",
       "rawMatch": "原文での一致",
