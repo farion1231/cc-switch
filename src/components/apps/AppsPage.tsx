@@ -422,7 +422,7 @@ export function AppsPage() {
         }
         actions={
           <>
-            <span className="whitespace-nowrap text-caption text-fg-3">
+            <span className="whitespace-nowrap text-hint text-fg-3">
               {lastChecked}
             </span>
             {(updatableCount > 0 || tools.batchAction) && (
@@ -704,7 +704,9 @@ function AppRow({
               {name}
             </div>
             {meta && (
-              <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-caption text-fg-2">
+              // 名称下面的补充说明（安装路径、安装提示）：和设置项的说明同一种小字。
+              // 放不下时「另有 N 处安装」整个换到下一行，路径保持一行；路径本身比整列还长才按字符折
+              <div className="mt-1 flex min-w-0 flex-wrap items-baseline gap-x-1.5 gap-y-0.5 text-hint text-fg-3">
                 {meta}
               </div>
             )}
@@ -799,7 +801,7 @@ function ToolRow({
         {info.version}
       </div>
       {isOutdated && info.latest_version && (
-        <div className="text-caption text-fg-2">
+        <div className="mt-0.5 text-hint text-fg-3">
           {t("appsPage.newVersion", { version: info.latest_version })}
         </div>
       )}
@@ -841,22 +843,21 @@ function ToolRow({
     progress?.stage === "queued" ? (
       <span className="truncate">{t("appsPage.toolQueued")}</span>
     ) : progress?.stage === "running" ? (
-      <>
+      <span className="flex w-full min-w-0 items-center gap-1.5">
         <ElapsedTime since={progress.startedAt} />
         {progress.line && (
           <span className="min-w-0 truncate font-mono" title={progress.line}>
             {progress.line}
           </span>
         )}
-      </>
+      </span>
     ) : null;
   const meta = progressMeta ? (
     progressMeta
   ) : defaultInstall ? (
     <>
-      <span className="min-w-0 truncate font-mono" title={defaultInstall.path}>
-        {defaultInstall.path}
-      </span>
+      {/* 路径写全、放不下就折行，不截断、不靠悬停看全文 */}
+      <span className="min-w-0 break-all font-mono">{defaultInstall.path}</span>
       {otherInstalls > 0 && (
         <button
           type="button"
@@ -875,9 +876,8 @@ function ToolRow({
       )}
     </>
   ) : !info?.version && !isVersionLoading ? (
-    <span className="truncate" title={installHint}>
-      {installHint}
-    </span>
+    // 未安装时的安装方式提示：同样写全、放不下就折行，不挂悬停提示
+    <span>{installHint}</span>
   ) : null;
 
   const wslControls =
