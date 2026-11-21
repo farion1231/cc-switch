@@ -2,7 +2,9 @@
 //!
 //! The page clock: when the harness pins the app's time (see [`crate::clock`]), every webview's
 //! `Date` reads the same pinned instant. Each new webview starts at the instant pinned when it is
-//! created, and a change of the clock file reaches every open webview within a poll interval.
+//! created, and a change of the clock file reaches every open webview within a poll interval. The
+//! new instant is pushed again for a second after a change of the time or of the set of windows,
+//! because a page still loading has no `__parityClock` to receive it yet.
 //! Timers and `performance.now()` keep running in real time.
 
 use std::time::Duration;
@@ -10,6 +12,8 @@ use tauri::plugin::Plugin;
 use tauri::{AppHandle, Manager, Runtime};
 
 const POLL: Duration = Duration::from_millis(50);
+/// Polls to keep pushing after a change, for pages that were still loading when it happened.
+const REPEAT: u32 = 20;
 
 /// Replaces `Date` and the clock reads of `Intl.DateTimeFormat`. `window.__parityClock(ms)` moves
 /// the page's time; the latest value survives a reload of the same webview.
@@ -81,19 +85,32 @@ impl<R: Runtime> Plugin<R> for ParityPlugin {
         std::thread::Builder::new()
             .name("parity-clock".into())
             .spawn(move || {
+                let labels = |app: &AppHandle<R>| {
+                    let mut l: Vec<String> = app.webview_windows().into_keys().collect();
+                    l.sort();
+                    l
+                };
                 let mut sent = crate::clock::now().timestamp_millis();
+                let mut windows = labels(&app);
+                let mut repeat = 0;
                 loop {
                     std::thread::sleep(POLL);
                     let ms = crate::clock::now().timestamp_millis();
-                    if ms == sent {
+                    let now_windows = labels(&app);
+                    if ms != sent || now_windows != windows {
+                        sent = ms;
+                        windows = now_windows;
+                        repeat = REPEAT;
+                    }
+                    if repeat == 0 {
                         continue;
                     }
+                    repeat -= 1;
                     for webview in app.webview_windows().values() {
                         let _ = webview.eval(format!(
                             "window.__parityClock && window.__parityClock({ms})"
                         ));
                     }
-                    sent = ms;
                 }
             })?;
         Ok(())

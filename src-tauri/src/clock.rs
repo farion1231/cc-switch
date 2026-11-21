@@ -6,11 +6,13 @@
 //! - [`now`], [`now_local`] and [`system_now`] give the app's time: what it writes into files,
 //!   the database and the UI, what it puts into file names, and what it compares with timestamps
 //!   it stored itself (expiry, retention, "today").
-//! - [`os_now`] gives the operating system's time, for comparing with times the OS keeps (file
-//!   modification times, lock ages), for setting those times, and for values that only need to
-//!   be unique. Its value is never stored or shown.
+//! - [`os_now`] and [`os_now_utc`] give the operating system's time, for comparing with times the
+//!   OS keeps (file modification times, lock ages), for setting those times, for values that only
+//!   need to be unique, and for deadlines and poll throttles kept only in memory, which measure how
+//!   much time has passed. Their value is never stored or shown.
 //!
-//! Durations, timeouts and deadlines use [`std::time::Instant`], which this module leaves alone.
+//! New durations, timeouts and deadlines use [`std::time::Instant`], which this module leaves
+//! alone.
 //!
 //! In a build with the `parity` feature, when `CC_SWITCH_PARITY_CLOCK` names a file, the app's
 //! time is the RFC 3339 instant in that file and stays there until the file changes. Other
@@ -49,10 +51,15 @@ pub fn system_now() -> SystemTime {
     SystemTime::now()
 }
 
-/// The operating system's time, for comparing with or setting times the OS keeps and for values
-/// that only need to be unique. Never store or show it.
+/// The operating system's time, for comparing with or setting times the OS keeps, for values that
+/// only need to be unique, and for deadlines kept only in memory. Never store or show it.
 pub fn os_now() -> SystemTime {
     SystemTime::now()
+}
+
+/// [`os_now`] as a chrono time, for in-memory deadlines kept in Unix milliseconds.
+pub fn os_now_utc() -> DateTime<Utc> {
+    Utc::now()
 }
 
 /// The parity suite's pinned clock.
@@ -108,15 +115,17 @@ mod tests {
     use std::path::Path;
 
     /// SQLite's own clock functions bypass this module, so statements bind the time instead. The
-    /// column defaults in `database/schema.rs` stay, because removing one needs a table rebuild.
+    /// column defaults and migrations in `database/schema.rs` stay, because removing a default
+    /// needs a table rebuild.
     #[test]
     fn sql_binds_the_time_instead_of_reading_sqlite_clock() {
+        // `'now'` covers datetime, date, time, julianday, strftime and unixepoch with 'now'.
         const READS: [&str; 5] = [
-            "datetime('now'",
-            "date('now'",
-            "time('now'",
-            "unixepoch(",
+            "'now'",
+            "unixepoch()",
             "CURRENT_TIMESTAMP",
+            "CURRENT_DATE",
+            "CURRENT_TIME",
         ];
         let mut found = Vec::new();
         visit(
@@ -131,9 +140,7 @@ mod tests {
                 {
                     return;
                 }
-                // Test code may use SQLite's clock; it never runs in a parity build.
-                let code = text.split("#[cfg(test)]").next().unwrap_or_default();
-                for (i, line) in code.lines().enumerate() {
+                for (i, line) in without_test_items(text).lines().enumerate() {
                     if READS.iter().any(|r| line.contains(r))
                         && !line.trim_start().starts_with("//")
                     {
@@ -147,6 +154,119 @@ mod tests {
             "bind crate::clock::sqlite_datetime() or crate::clock::now() instead:\n{}",
             found.join("\n")
         );
+    }
+
+    #[test]
+    fn test_items_are_blanked_and_the_rest_is_kept() {
+        let src = concat!(
+            "a\n",
+            "#[cfg(test)]\n",
+            "mod tests;\n",
+            "b\n",
+            "#[cfg(all(test, unix))]\n",
+            "mod t {\n",
+            "    let s = \"}\"; let r = r#\"{\n",
+            "    \"x\": }\"#; // }\n",
+            "    fn f() { '{'; }\n",
+            "}\n",
+            "c\n",
+        );
+        let kept = without_test_items(src);
+        let kept: Vec<&str> = kept.lines().collect();
+        assert_eq!(kept, ["a", "", "", "b", "", "", "", "", "", "", "c"]);
+    }
+
+    /// Blanks every item that a `#[cfg(test)]` or `#[cfg(all(test, ...))]` attribute applies to,
+    /// keeping line numbers: a `mod name;` line, or a braced item up to its closing brace. Braces
+    /// inside strings, raw strings, chars and comments do not count.
+    fn without_test_items(src: &str) -> String {
+        let b = src.as_bytes();
+        let mut blank = vec![false; b.len()];
+        let mut line_start = 0;
+        while line_start < b.len() {
+            let line_end = src[line_start..]
+                .find('\n')
+                .map_or(b.len(), |n| line_start + n);
+            let t = src[line_start..line_end].trim_start();
+            if t.starts_with("#[cfg(test)]") || t.starts_with("#[cfg(all(test") {
+                let end = item_end(b, line_end);
+                blank[line_start..end].iter_mut().for_each(|x| *x = true);
+                line_start = end;
+            } else {
+                line_start = line_end + 1;
+            }
+        }
+        b.iter()
+            .zip(&blank)
+            .filter(|(c, blanked)| !**blanked || **c == b'\n')
+            .map(|(c, _)| *c as char)
+            .collect()
+    }
+
+    /// Where the item after the attribute line ending at `from` ends: after its `;` when it has no
+    /// body, or after the brace that closes its body.
+    fn item_end(b: &[u8], from: usize) -> usize {
+        let (mut k, mut depth) = (from, 0i32);
+        while k < b.len() {
+            match b[k] {
+                b'/' if b.get(k + 1) == Some(&b'/') => {
+                    while k < b.len() && b[k] != b'\n' {
+                        k += 1;
+                    }
+                }
+                b'/' if b.get(k + 1) == Some(&b'*') => {
+                    k += 2;
+                    while k + 1 < b.len() && !(b[k] == b'*' && b[k + 1] == b'/') {
+                        k += 1;
+                    }
+                    k += 1;
+                }
+                b'r' if matches!(b.get(k + 1), Some(b'"' | b'#'))
+                    && !b[k.saturating_sub(1)].is_ascii_alphanumeric() =>
+                {
+                    let hashes = b[k + 1..].iter().take_while(|c| **c == b'#').count();
+                    if b.get(k + 1 + hashes) == Some(&b'"') {
+                        k += 2 + hashes;
+                        while k < b.len()
+                            && !(b[k] == b'"'
+                                && b[k + 1..]
+                                    .iter()
+                                    .take(hashes)
+                                    .filter(|c| **c == b'#')
+                                    .count()
+                                    == hashes)
+                        {
+                            k += 1;
+                        }
+                        k += hashes;
+                    }
+                }
+                b'"' => {
+                    k += 1;
+                    while k < b.len() && b[k] != b'"' {
+                        k += if b[k] == b'\\' { 2 } else { 1 };
+                    }
+                }
+                b'\'' if b.get(k + 2) == Some(&b'\'') => k += 2,
+                b'\'' if b.get(k + 1) == Some(&b'\\') => {
+                    while k + 1 < b.len() && b[k + 1] != b'\'' {
+                        k += 1;
+                    }
+                    k += 1;
+                }
+                b';' if depth == 0 => return k + 1,
+                b'{' => depth += 1,
+                b'}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return k + 1;
+                    }
+                }
+                _ => {}
+            }
+            k += 1;
+        }
+        b.len()
     }
 
     fn visit(dir: &Path, f: &mut dyn FnMut(&Path, &str)) {

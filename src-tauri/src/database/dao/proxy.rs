@@ -260,8 +260,8 @@ impl Database {
                 app_type, max_retries,
                 streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
                 circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
-                circuit_error_rate_threshold, circuit_min_requests
-            ) VALUES (?1, ?2, ?3, ?4, 600, ?5, ?6, ?7, ?8, ?9)",
+                circuit_error_rate_threshold, circuit_min_requests, created_at, updated_at
+            ) VALUES (?1, ?2, ?3, ?4, 600, ?5, ?6, ?7, ?8, ?9, ?10, ?10)",
             rusqlite::params![
                 app_type,
                 retries,
@@ -271,7 +271,8 @@ impl Database {
                 cb_succ,
                 cb_timeout,
                 cb_rate,
-                cb_min
+                cb_min,
+                crate::clock::sqlite_datetime()
             ],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
@@ -284,6 +285,7 @@ impl Database {
     /// 使用与 schema.rs seed 相同的 per-app 默认值
     async fn init_proxy_config_rows(&self) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
+        let now = crate::clock::sqlite_datetime();
 
         // 使用与 schema.rs seed 相同的 per-app 默认值
         // claude: 更激进的重试和超时配置
@@ -292,9 +294,9 @@ impl Database {
                 app_type, max_retries,
                 streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
                 circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
-                circuit_error_rate_threshold, circuit_min_requests
-            ) VALUES ('claude', 6, 90, 180, 600, 8, 3, 90, 0.7, 15)",
-            [],
+                circuit_error_rate_threshold, circuit_min_requests, created_at, updated_at
+            ) VALUES ('claude', 6, 90, 180, 600, 8, 3, 90, 0.7, 15, ?1, ?1)",
+            [&now],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
@@ -304,9 +306,9 @@ impl Database {
                 app_type, max_retries,
                 streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
                 circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
-                circuit_error_rate_threshold, circuit_min_requests
-            ) VALUES ('codex', 3, 60, 120, 600, 4, 2, 60, 0.6, 10)",
-            [],
+                circuit_error_rate_threshold, circuit_min_requests, created_at, updated_at
+            ) VALUES ('codex', 3, 60, 120, 600, 4, 2, 60, 0.6, 10, ?1, ?1)",
+            [&now],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
@@ -316,9 +318,9 @@ impl Database {
                 app_type, max_retries,
                 streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
                 circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
-                circuit_error_rate_threshold, circuit_min_requests
-            ) VALUES ('gemini', 5, 60, 120, 600, 4, 2, 60, 0.6, 10)",
-            [],
+                circuit_error_rate_threshold, circuit_min_requests, created_at, updated_at
+            ) VALUES ('gemini', 5, 60, 120, 600, 4, 2, 60, 0.6, 10, ?1, ?1)",
+            [&now],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
@@ -328,9 +330,9 @@ impl Database {
                 app_type, max_retries,
                 streaming_first_byte_timeout, streaming_idle_timeout, non_streaming_timeout,
                 circuit_failure_threshold, circuit_success_threshold, circuit_timeout_seconds,
-                circuit_error_rate_threshold, circuit_min_requests
-            ) VALUES ('grokbuild', 3, 60, 120, 600, 4, 2, 60, 0.6, 10)",
-            [],
+                circuit_error_rate_threshold, circuit_min_requests, created_at, updated_at
+            ) VALUES ('grokbuild', 3, 60, 120, 600, 4, 2, 60, 0.6, 10, ?1, ?1)",
+            [&now],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 

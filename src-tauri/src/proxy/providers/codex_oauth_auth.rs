@@ -465,7 +465,8 @@ impl CodexOAuthManager {
 
         let interval = parse_interval(device.interval.as_ref());
         let expires_in = device.expires_in.unwrap_or(DEVICE_CODE_DEFAULT_EXPIRES_IN);
-        let expires_at_ms = crate::clock::now().timestamp_millis() + (expires_in as i64) * 1000;
+        let expires_at_ms =
+            crate::clock::os_now_utc().timestamp_millis() + (expires_in as i64) * 1000;
 
         self.register_pending_device_code(
             device.device_auth_id.clone(),
@@ -537,7 +538,7 @@ impl CodexOAuthManager {
             return Err(CodexOAuthError::ExpiredToken);
         }
 
-        let now_ms = crate::clock::now().timestamp_millis();
+        let now_ms = crate::clock::os_now_utc().timestamp_millis();
         pending.retain(|_, entry| entry.expires_at_ms > now_ms);
         pending.insert(
             device_auth_id,
@@ -591,7 +592,7 @@ impl CodexOAuthManager {
             )
         })?;
 
-        if entry.expires_at_ms <= crate::clock::now().timestamp_millis() {
+        if entry.expires_at_ms <= crate::clock::os_now_utc().timestamp_millis() {
             let mut pending = self.pending_device_codes.write().await;
             pending.remove(device_code);
             return Err(CodexOAuthError::ExpiredToken);
@@ -1790,7 +1791,7 @@ impl CodexOAuthManager {
                 }
                 _ => false,
             };
-            if pending.expires_at_ms <= crate::clock::now().timestamp_millis()
+            if pending.expires_at_ms <= crate::clock::os_now_utc().timestamp_millis()
                 || !generation_matches
             {
                 return Err(CodexOAuthError::ExpiredToken);

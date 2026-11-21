@@ -239,7 +239,7 @@ impl XaiOAuthManager {
             .clamp(1, MAX_POLL_INTERVAL_SECS)
             .saturating_add(POLLING_SAFETY_MARGIN_SECS);
         let expires_in = device.expires_in.clamp(1, MAX_DEVICE_CODE_LIFETIME_SECS);
-        let now_ms = crate::clock::now().timestamp_millis();
+        let now_ms = crate::clock::os_now_utc().timestamp_millis();
 
         {
             let mut pending = self.pending_device_codes.write().await;
@@ -274,7 +274,7 @@ impl XaiOAuthManager {
         &self,
         device_code: &str,
     ) -> Result<Option<XaiOAuthAccount>, XaiOAuthError> {
-        let now_ms = crate::clock::now().timestamp_millis();
+        let now_ms = crate::clock::os_now_utc().timestamp_millis();
         let entry = {
             let pending = self.pending_device_codes.read().await;
             pending.get(device_code).cloned()
@@ -736,11 +736,13 @@ impl XaiOAuthManager {
 
     async fn schedule_next_poll(&self, device_code: &str, interval_secs: u64) {
         if let Some(entry) = self.pending_device_codes.write().await.get_mut(device_code) {
-            entry.next_poll_at_ms = crate::clock::now().timestamp_millis().saturating_add(
-                i64::try_from(interval_secs)
-                    .unwrap_or(i64::MAX)
-                    .saturating_mul(1_000),
-            );
+            entry.next_poll_at_ms = crate::clock::os_now_utc()
+                .timestamp_millis()
+                .saturating_add(
+                    i64::try_from(interval_secs)
+                        .unwrap_or(i64::MAX)
+                        .saturating_mul(1_000),
+                );
         }
     }
 
@@ -750,11 +752,13 @@ impl XaiOAuthManager {
                 .interval_secs
                 .saturating_add(5)
                 .min(MAX_POLL_INTERVAL_SECS + POLLING_SAFETY_MARGIN_SECS);
-            entry.next_poll_at_ms = crate::clock::now().timestamp_millis().saturating_add(
-                i64::try_from(entry.interval_secs)
-                    .unwrap_or(i64::MAX)
-                    .saturating_mul(1_000),
-            );
+            entry.next_poll_at_ms = crate::clock::os_now_utc()
+                .timestamp_millis()
+                .saturating_add(
+                    i64::try_from(entry.interval_secs)
+                        .unwrap_or(i64::MAX)
+                        .saturating_mul(1_000),
+                );
         }
     }
 
