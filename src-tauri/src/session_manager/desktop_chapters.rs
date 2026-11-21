@@ -9,21 +9,9 @@
 //! 这是桌面端未公开的内部格式：任何一步读不到、解不开都当作「没有章节」，只记日志。
 //! 永不写回，也不打开桌面端正在用的目录（它持有 LOCK）：复制一份到临时目录再读。
 
-use std::collections::{HashMap, HashSet};
-use std::fs;
-use std::io::{BufRead, BufReader};
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock};
-use std::time::SystemTime;
+use std::path::Path;
 
-use rusty_leveldb::{Options, DB};
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
-
-/// Local Storage 里的键：`_<origin>\0\x01<key>`（\x01 表示键名是 Latin-1 编码）
-const STORAGE_KEY: &[u8] = b"_https://claude.ai\x00\x01epitaxy-chapters-v2";
-/// 复制目录时的上限，防止异常大的目录拖慢阅读页
-const MAX_COPY_BYTES: u64 = 256 * 1024 * 1024;
+use serde::Serialize;
 
 /// 章节锚在哪：一次工具调用，或一条 assistant 消息里的第 N 个 text 块。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -49,309 +37,362 @@ pub struct DesktopChapter {
     pub anchor: ChapterAnchor,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct StoredChapter {
-    id: String,
-    title: String,
-    after_id: String,
-}
+/// 读取与定位的实现。`rusty-leveldb` 只在 macOS 上是正式依赖（其它平台不读桌面端存储，
+/// 不把它编进产物）；测试在所有平台上都跑，靠 dev-dependency 提供。
+#[cfg(any(target_os = "macos", test))]
+mod store {
+    use std::collections::{HashMap, HashSet};
+    use std::fs;
+    use std::io::{BufRead, BufReader};
+    use std::path::{Path, PathBuf};
+    use std::sync::{Arc, Mutex, OnceLock};
+    use std::time::SystemTime;
 
-#[derive(Deserialize)]
-struct RawStore {
-    state: RawState,
-}
+    use rusty_leveldb::{Options, DB};
+    use serde::Deserialize;
+    use serde_json::Value;
 
-#[derive(Deserialize)]
-struct RawState {
-    #[serde(rename = "bySession", default)]
-    by_session: HashMap<String, RawSession>,
-}
+    use super::{ChapterAnchor, DesktopChapter};
 
-#[derive(Deserialize)]
-struct RawSession {
-    #[serde(rename = "userChapters", default)]
-    user_chapters: Vec<Value>,
-}
+    /// Local Storage 里的键：`_<origin>\0\x01<key>`（\x01 表示键名是 Latin-1 编码）
+    pub(super) const STORAGE_KEY: &[u8] = b"_https://claude.ai\x00\x01epitaxy-chapters-v2";
+    /// 复制目录时的上限，防止异常大的目录拖慢阅读页
+    const MAX_COPY_BYTES: u64 = 256 * 1024 * 1024;
 
-/// 桌面端的 Local Storage 目录。目前只在 macOS 上实测过，其它平台不读。
-fn default_storage_dir() -> Option<PathBuf> {
-    #[cfg(target_os = "macos")]
-    {
-        dirs::data_dir().map(|dir| dir.join("Claude").join("Local Storage").join("leveldb"))
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub(super) struct StoredChapter {
+        pub(super) id: String,
+        pub(super) title: String,
+        pub(super) after_id: String,
     }
-    #[cfg(not(target_os = "macos"))]
-    {
-        None
-    }
-}
 
-/// Local Storage 的值：首字节 0 = UTF-16LE，1 = Latin-1。
-fn decode_storage_value(value: &[u8]) -> Option<String> {
-    let (prefix, body) = value.split_first()?;
-    match prefix {
-        0 => {
-            let units: Vec<u16> = body
-                .chunks_exact(2)
-                .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
-                .collect();
-            String::from_utf16(&units).ok()
+    #[derive(Deserialize)]
+    struct RawStore {
+        state: RawState,
+    }
+
+    #[derive(Deserialize)]
+    struct RawState {
+        #[serde(rename = "bySession", default)]
+        by_session: HashMap<String, RawSession>,
+    }
+
+    #[derive(Deserialize)]
+    struct RawSession {
+        #[serde(rename = "userChapters", default)]
+        user_chapters: Vec<Value>,
+    }
+
+    /// Local Storage 的值：首字节 0 = UTF-16LE，1 = Latin-1。
+    pub(super) fn decode_storage_value(value: &[u8]) -> Option<String> {
+        let (prefix, body) = value.split_first()?;
+        match prefix {
+            0 => {
+                let units: Vec<u16> = body
+                    .chunks_exact(2)
+                    .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+                    .collect();
+                String::from_utf16(&units).ok()
+            }
+            1 => Some(body.iter().map(|&byte| byte as char).collect()),
+            _ => None,
         }
-        1 => Some(body.iter().map(|&byte| byte as char).collect()),
-        _ => None,
     }
-}
 
-fn parse_store(json: &str) -> Result<Vec<StoredChapter>, String> {
-    let store: RawStore = serde_json::from_str(json).map_err(|e| e.to_string())?;
-    let mut chapters = Vec::new();
-    for session in store.state.by_session.into_values() {
-        for raw in session.user_chapters {
-            let field = |key: &str| {
-                raw.get(key)
-                    .and_then(Value::as_str)
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .map(str::to_string)
+    pub(super) fn parse_store(json: &str) -> Result<Vec<StoredChapter>, String> {
+        let store: RawStore = serde_json::from_str(json).map_err(|e| e.to_string())?;
+        let mut chapters = Vec::new();
+        for session in store.state.by_session.into_values() {
+            for raw in session.user_chapters {
+                let field = |key: &str| {
+                    raw.get(key)
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(str::to_string)
+                };
+                // 字段不全的记录跳过，不影响其它章节
+                if let (Some(id), Some(title), Some(after_id)) =
+                    (field("id"), field("title"), field("afterId"))
+                {
+                    chapters.push(StoredChapter {
+                        id,
+                        title,
+                        after_id,
+                    });
+                }
+            }
+        }
+        Ok(chapters)
+    }
+
+    /// 目录指纹：文件数、总大小、最新修改时间。桌面端一写入就会变。
+    fn dir_fingerprint(dir: &Path) -> std::io::Result<(usize, u64, Option<SystemTime>)> {
+        let mut count = 0;
+        let mut bytes = 0;
+        let mut latest = None;
+        for entry in fs::read_dir(dir)? {
+            // 桌面端做 compaction 时会删掉旧的 .ldb / .log：枚举到一半消失的文件直接跳过
+            let meta = match entry.and_then(|entry| entry.metadata()) {
+                Ok(meta) => meta,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(error),
             };
-            // 字段不全的记录跳过，不影响其它章节
-            if let (Some(id), Some(title), Some(after_id)) =
-                (field("id"), field("title"), field("afterId"))
-            {
-                chapters.push(StoredChapter {
-                    id,
-                    title,
-                    after_id,
-                });
-            }
-        }
-    }
-    Ok(chapters)
-}
-
-/// 目录指纹：文件数、总大小、最新修改时间。桌面端一写入就会变。
-fn dir_fingerprint(dir: &Path) -> std::io::Result<(usize, u64, Option<SystemTime>)> {
-    let mut count = 0;
-    let mut bytes = 0;
-    let mut latest = None;
-    for entry in fs::read_dir(dir)? {
-        let meta = entry?.metadata()?;
-        if !meta.is_file() {
-            continue;
-        }
-        count += 1;
-        bytes += meta.len();
-        let modified = meta.modified().ok();
-        if modified > latest {
-            latest = modified;
-        }
-    }
-    Ok((count, bytes, latest))
-}
-
-/// 把 LevelDB 目录复制到临时目录后只读打开，取出章节存储。
-fn read_store(dir: &Path) -> Result<Vec<StoredChapter>, String> {
-    let (_, bytes, _) = dir_fingerprint(dir).map_err(|e| e.to_string())?;
-    if bytes > MAX_COPY_BYTES {
-        return Err(format!("Local Storage directory too large ({bytes} bytes)"));
-    }
-    let copy = tempfile::tempdir().map_err(|e| e.to_string())?;
-    for entry in fs::read_dir(dir).map_err(|e| e.to_string())? {
-        let entry = entry.map_err(|e| e.to_string())?;
-        let name = entry.file_name();
-        // LOCK 归正在运行的桌面端所有，不复制；副本里由 rusty-leveldb 自己建
-        if name == "LOCK" || !entry.path().is_file() {
-            continue;
-        }
-        fs::copy(entry.path(), copy.path().join(&name)).map_err(|e| e.to_string())?;
-    }
-    let options = Options {
-        create_if_missing: false,
-        ..Default::default()
-    };
-    let mut db = DB::open(copy.path(), options).map_err(|e| e.to_string())?;
-    let Some(value) = db.get(STORAGE_KEY) else {
-        return Ok(Vec::new());
-    };
-    let json = decode_storage_value(&value).ok_or("unknown Local Storage value encoding")?;
-    parse_store(&json)
-}
-
-type Fingerprint = (PathBuf, usize, u64, Option<SystemTime>);
-type CachedStore = Option<(Fingerprint, Arc<Vec<StoredChapter>>)>;
-
-fn store_cache() -> &'static Mutex<CachedStore> {
-    static CACHE: OnceLock<Mutex<CachedStore>> = OnceLock::new();
-    CACHE.get_or_init(|| Mutex::new(None))
-}
-
-/// 读章节存储，按目录指纹缓存；桌面端正在写入时副本可能不完整，失败重试一次。
-fn load_store(dir: &Path) -> Result<Arc<Vec<StoredChapter>>, String> {
-    let (count, bytes, latest) = dir_fingerprint(dir).map_err(|e| e.to_string())?;
-    let fingerprint = (dir.to_path_buf(), count, bytes, latest);
-    if let Ok(cache) = store_cache().lock() {
-        if let Some((cached, chapters)) = cache.as_ref() {
-            if *cached == fingerprint {
-                return Ok(chapters.clone());
-            }
-        }
-    }
-    let chapters = Arc::new(read_store(dir).or_else(|_| read_store(dir))?);
-    if let Ok(mut cache) = store_cache().lock() {
-        *cache = Some((fingerprint, chapters.clone()));
-    }
-    Ok(chapters)
-}
-
-/// `msg_…-tN` → (`msg_…`, N)
-fn split_text_anchor(after_id: &str) -> Option<(&str, u32)> {
-    let (message_id, index) = after_id.rsplit_once("-t")?;
-    if message_id.is_empty() {
-        return None;
-    }
-    Some((message_id, index.parse().ok()?))
-}
-
-/// 在会话 jsonl 里给章节找锚点；找不到锚点的章节不属于这个会话，丢掉。
-fn resolve(chapters: &[StoredChapter], source: &Path) -> std::io::Result<Vec<DesktopChapter>> {
-    // 要找的 tool_use id 与 message.id
-    let mut wanted_tools: HashSet<&str> = HashSet::new();
-    let mut wanted_messages: HashSet<&str> = HashSet::new();
-    for chapter in chapters {
-        match split_text_anchor(&chapter.after_id) {
-            Some((message_id, _)) if !chapter.after_id.starts_with("toolu_") => {
-                wanted_messages.insert(message_id);
-            }
-            _ => {
-                wanted_tools.insert(chapter.after_id.as_str());
-            }
-        }
-    }
-    if wanted_tools.is_empty() && wanted_messages.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let mut found_tools: HashSet<String> = HashSet::new();
-    // message.id → (各行 uuid, text 块总数)
-    let mut found_messages: HashMap<String, (Vec<String>, u32)> = HashMap::new();
-    // 有的 jsonl 会把同一段行重复写一遍：同一个 uuid 只算一次
-    let mut seen_rows: HashSet<String> = HashSet::new();
-
-    for line in BufReader::new(fs::File::open(source)?).lines() {
-        let line = line?;
-        // 大文件里绝大多数行与章节无关：先做子串判断，命中才解析 JSON
-        if !wanted_tools.iter().any(|id| line.contains(id))
-            && !wanted_messages.iter().any(|id| line.contains(id))
-        {
-            continue;
-        }
-        let Ok(record) = serde_json::from_str::<Value>(&line) else {
-            continue;
-        };
-        // 同样的 id 还会出现在 tool_result（user 行）等记录里，只认 assistant
-        if record.get("type").and_then(Value::as_str) != Some("assistant") {
-            continue;
-        }
-        let Some(message) = record.get("message") else {
-            continue;
-        };
-        let uuid = record
-            .get("uuid")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        if !uuid.is_empty() && !seen_rows.insert(uuid.to_string()) {
-            continue;
-        }
-        let blocks = message
-            .get("content")
-            .and_then(Value::as_array)
-            .map(Vec::as_slice)
-            .unwrap_or_default();
-        fn block_type(block: &Value) -> Option<&str> {
-            block.get("type").and_then(Value::as_str)
-        }
-        for block in blocks {
-            if block_type(block) != Some("tool_use") {
+            if !meta.is_file() {
                 continue;
             }
-            if let Some(id) = block.get("id").and_then(Value::as_str) {
-                if wanted_tools.contains(id) {
-                    found_tools.insert(id.to_string());
-                }
+            count += 1;
+            bytes += meta.len();
+            let modified = meta.modified().ok();
+            if modified > latest {
+                latest = modified;
             }
         }
-        if let Some(message_id) = message.get("id").and_then(Value::as_str) {
-            if wanted_messages.contains(message_id) {
-                let entry = found_messages.entry(message_id.to_string()).or_default();
-                if !uuid.is_empty() {
-                    entry.0.push(uuid.to_string());
-                }
-                entry.1 += blocks
-                    .iter()
-                    .filter(|block| block_type(block) == Some("text"))
-                    .count() as u32;
-            }
-        }
+        Ok((count, bytes, latest))
     }
 
-    let mut resolved = Vec::new();
-    let mut seen_chapters: HashSet<&str> = HashSet::new();
-    for chapter in chapters {
-        let anchor = if found_tools.contains(&chapter.after_id) {
-            Some(ChapterAnchor::Tool {
-                call_id: chapter.after_id.clone(),
-            })
-        } else {
-            split_text_anchor(&chapter.after_id).and_then(|(message_id, text_index)| {
-                let (message_ids, texts) = found_messages.get(message_id)?;
-                (text_index < *texts && !message_ids.is_empty()).then(|| ChapterAnchor::Text {
-                    message_ids: message_ids.clone(),
-                    text_index,
-                })
-            })
+    /// 把 LevelDB 目录复制到临时目录后只读打开，取出章节存储。
+    fn read_store(dir: &Path) -> Result<Vec<StoredChapter>, String> {
+        let (_, bytes, _) = dir_fingerprint(dir).map_err(|e| e.to_string())?;
+        if bytes > MAX_COPY_BYTES {
+            return Err(format!("Local Storage directory too large ({bytes} bytes)"));
+        }
+        let copy = tempfile::tempdir().map_err(|e| e.to_string())?;
+        for entry in fs::read_dir(dir).map_err(|e| e.to_string())? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let name = entry.file_name();
+            // LOCK 归正在运行的桌面端所有，不复制；副本里由 rusty-leveldb 自己建
+            if name == "LOCK" || !entry.path().is_file() {
+                continue;
+            }
+            // 复制途中被 compaction 删掉的文件会让这一轮失败，由 load_store 整体重试
+            fs::copy(entry.path(), copy.path().join(&name)).map_err(|e| e.to_string())?;
+        }
+        let options = Options {
+            create_if_missing: false,
+            ..Default::default()
         };
-        if let Some(anchor) = anchor {
-            // fork 出来的会话会带着父会话的章节记录，同一条章节只留一次
-            if seen_chapters.insert(chapter.id.as_str()) {
-                resolved.push(DesktopChapter {
-                    id: chapter.id.clone(),
-                    title: chapter.title.clone(),
-                    anchor,
-                });
+        let mut db = DB::open(copy.path(), options).map_err(|e| e.to_string())?;
+        let Some(value) = db.get(STORAGE_KEY) else {
+            return Ok(Vec::new());
+        };
+        let json = decode_storage_value(&value).ok_or("unknown Local Storage value encoding")?;
+        parse_store(&json)
+    }
+
+    type Fingerprint = (PathBuf, usize, u64, Option<SystemTime>);
+    type CachedStore = Option<(Fingerprint, Arc<Vec<StoredChapter>>)>;
+
+    fn store_cache() -> &'static Mutex<CachedStore> {
+        static CACHE: OnceLock<Mutex<CachedStore>> = OnceLock::new();
+        CACHE.get_or_init(|| Mutex::new(None))
+    }
+
+    /// 读章节存储，按目录指纹缓存。
+    fn load_store_once(dir: &Path) -> Result<Arc<Vec<StoredChapter>>, String> {
+        let (count, bytes, latest) = dir_fingerprint(dir).map_err(|e| e.to_string())?;
+        let fingerprint = (dir.to_path_buf(), count, bytes, latest);
+        if let Ok(cache) = store_cache().lock() {
+            if let Some((cached, chapters)) = cache.as_ref() {
+                if *cached == fingerprint {
+                    return Ok(chapters.clone());
+                }
             }
         }
+        let chapters = Arc::new(read_store(dir)?);
+        if let Ok(mut cache) = store_cache().lock() {
+            *cache = Some((fingerprint, chapters.clone()));
+        }
+        Ok(chapters)
     }
-    Ok(resolved)
-}
 
-fn chapters_in(storage_dir: &Path, source: &Path) -> Vec<DesktopChapter> {
-    if !storage_dir.is_dir() {
-        return Vec::new();
+    /// 桌面端正在写入（尤其是 compaction 增删文件）时，指纹和副本都可能读到一半：
+    /// 指纹计算和读取一起重试一次。
+    fn load_store(dir: &Path) -> Result<Arc<Vec<StoredChapter>>, String> {
+        load_store_once(dir).or_else(|_| load_store_once(dir))
     }
-    let chapters = match load_store(storage_dir) {
-        Ok(chapters) => chapters,
-        Err(error) => {
-            log::debug!("Skip Claude desktop chapters: {error}");
+
+    /// `msg_…-tN` → (`msg_…`, N)
+    fn split_text_anchor(after_id: &str) -> Option<(&str, u32)> {
+        let (message_id, index) = after_id.rsplit_once("-t")?;
+        if message_id.is_empty() {
+            return None;
+        }
+        Some((message_id, index.parse().ok()?))
+    }
+
+    /// 在会话 jsonl 里给章节找锚点；找不到锚点的章节不属于这个会话，丢掉。
+    pub(super) fn resolve(
+        chapters: &[StoredChapter],
+        source: &Path,
+    ) -> std::io::Result<Vec<DesktopChapter>> {
+        // 要找的 tool_use id 与 message.id
+        let mut wanted_tools: HashSet<&str> = HashSet::new();
+        let mut wanted_messages: HashSet<&str> = HashSet::new();
+        for chapter in chapters {
+            match split_text_anchor(&chapter.after_id) {
+                Some((message_id, _)) if !chapter.after_id.starts_with("toolu_") => {
+                    wanted_messages.insert(message_id);
+                }
+                _ => {
+                    wanted_tools.insert(chapter.after_id.as_str());
+                }
+            }
+        }
+        if wanted_tools.is_empty() && wanted_messages.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut found_tools: HashSet<String> = HashSet::new();
+        // message.id → (各行 uuid, text 块总数)
+        let mut found_messages: HashMap<String, (Vec<String>, u32)> = HashMap::new();
+        // 有的 jsonl 会把同一段行重复写一遍：同一个 uuid 只算一次
+        let mut seen_rows: HashSet<String> = HashSet::new();
+
+        for line in BufReader::new(fs::File::open(source)?).lines() {
+            let line = line?;
+            // 大文件里绝大多数行与章节无关：先做子串判断，命中才解析 JSON
+            if !wanted_tools.iter().any(|id| line.contains(id))
+                && !wanted_messages.iter().any(|id| line.contains(id))
+            {
+                continue;
+            }
+            let Ok(record) = serde_json::from_str::<Value>(&line) else {
+                continue;
+            };
+            // 同样的 id 还会出现在 tool_result（user 行）等记录里，只认 assistant
+            if record.get("type").and_then(Value::as_str) != Some("assistant") {
+                continue;
+            }
+            // 以下口径与 providers/claude.rs 的解析保持一致，前端才能按同样的块去数：
+            // 子代理 / 元信息记录不进阅读页
+            let flagged = |key: &str| record.get(key).and_then(Value::as_bool) == Some(true);
+            if flagged("isSidechain") || flagged("isMeta") {
+                continue;
+            }
+            let Some(message) = record.get("message") else {
+                continue;
+            };
+            let uuid = record
+                .get("uuid")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if !uuid.is_empty() && !seen_rows.insert(uuid.to_string()) {
+                continue;
+            }
+            let content = message.get("content");
+            let blocks = content
+                .and_then(Value::as_array)
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+            fn block_type(block: &Value) -> Option<&str> {
+                block.get("type").and_then(Value::as_str)
+            }
+            fn not_blank(text: Option<&str>) -> bool {
+                text.is_some_and(|text| !text.trim().is_empty())
+            }
+            for block in blocks {
+                if !matches!(block_type(block), Some("tool_use" | "server_tool_use")) {
+                    continue;
+                }
+                if let Some(id) = block.get("id").and_then(Value::as_str) {
+                    if wanted_tools.contains(id) {
+                        found_tools.insert(id.to_string());
+                    }
+                }
+            }
+            if let Some(message_id) = message.get("id").and_then(Value::as_str) {
+                if wanted_messages.contains(message_id) {
+                    let entry = found_messages.entry(message_id.to_string()).or_default();
+                    if !uuid.is_empty() {
+                        entry.0.push(uuid.to_string());
+                    }
+                    // 空白 text 块解析时会被丢掉，不计数；content 是纯字符串时算一个 text 块
+                    entry.1 += blocks
+                        .iter()
+                        .filter(|block| {
+                            block_type(block) == Some("text")
+                                && not_blank(block.get("text").and_then(Value::as_str))
+                        })
+                        .count() as u32;
+                    if not_blank(content.and_then(Value::as_str)) {
+                        entry.1 += 1;
+                    }
+                }
+            }
+        }
+
+        let mut resolved = Vec::new();
+        let mut seen_chapters: HashSet<&str> = HashSet::new();
+        for chapter in chapters {
+            let anchor = if found_tools.contains(&chapter.after_id) {
+                Some(ChapterAnchor::Tool {
+                    call_id: chapter.after_id.clone(),
+                })
+            } else {
+                split_text_anchor(&chapter.after_id).and_then(|(message_id, text_index)| {
+                    let (message_ids, texts) = found_messages.get(message_id)?;
+                    (text_index < *texts && !message_ids.is_empty()).then(|| ChapterAnchor::Text {
+                        message_ids: message_ids.clone(),
+                        text_index,
+                    })
+                })
+            };
+            if let Some(anchor) = anchor {
+                // fork 出来的会话会带着父会话的章节记录，同一条章节只留一次
+                if seen_chapters.insert(chapter.id.as_str()) {
+                    resolved.push(DesktopChapter {
+                        id: chapter.id.clone(),
+                        title: chapter.title.clone(),
+                        anchor,
+                    });
+                }
+            }
+        }
+        Ok(resolved)
+    }
+
+    pub(super) fn chapters_in(storage_dir: &Path, source: &Path) -> Vec<DesktopChapter> {
+        if !storage_dir.is_dir() {
             return Vec::new();
         }
-    };
-    resolve(&chapters, source).unwrap_or_else(|error| {
-        log::debug!("Skip Claude desktop chapters: {error}");
-        Vec::new()
-    })
+        let chapters = match load_store(storage_dir) {
+            Ok(chapters) => chapters,
+            Err(error) => {
+                log::debug!("Skip Claude desktop chapters: {error}");
+                return Vec::new();
+            }
+        };
+        resolve(&chapters, source).unwrap_or_else(|error| {
+            log::debug!("Skip Claude desktop chapters: {error}");
+            Vec::new()
+        })
+    }
 }
 
 /// 某个 Claude 会话文件里，用户在桌面端手动 pin 的章节。
-/// 没装桌面端、格式变了、读失败：一律返回空。
+/// 没装桌面端、格式变了、读失败：一律返回空。目前只在 macOS 上实测过，其它平台不读。
+#[cfg(target_os = "macos")]
 pub fn chapters_for_source(source: &Path) -> Vec<DesktopChapter> {
-    default_storage_dir()
-        .map(|dir| chapters_in(&dir, source))
+    dirs::data_dir()
+        .map(|dir| dir.join("Claude").join("Local Storage").join("leveldb"))
+        .map(|dir| store::chapters_in(&dir, source))
         .unwrap_or_default()
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn chapters_for_source(_source: &Path) -> Vec<DesktopChapter> {
+    Vec::new()
 }
 
 #[cfg(test)]
 mod tests {
+    use super::store::*;
     use super::*;
+    use rusty_leveldb::{Options, DB};
     use serde_json::json;
+    use serde_json::Value;
+    use std::fs;
     use std::io::Write;
 
     fn utf16_value(text: &str) -> Vec<u8> {
@@ -432,6 +473,24 @@ mod tests {
                 "msg_01B",
                 json!([{ "type": "text", "text": "first" }]),
             ),
+            // 子代理记录不进阅读页，里面的 id 不能当锚点
+            json!({ "type": "assistant", "uuid": "s1", "isSidechain": true,
+                "message": { "id": "msg_side", "role": "assistant", "content": [
+                    { "type": "text", "text": "side" },
+                    { "type": "tool_use", "id": "toolu_side", "name": "Bash", "input": {} }
+                ] } }),
+            // 空白 text 块不计数；server_tool_use 和 tool_use 一样能当锚点
+            assistant(
+                "b1",
+                "msg_blank",
+                json!([
+                    { "type": "text", "text": "  \n" },
+                    { "type": "text", "text": "real" },
+                    { "type": "server_tool_use", "id": "srvtoolu_01", "name": "web_search", "input": {} }
+                ]),
+            ),
+            // content 是纯字符串
+            assistant("c1", "msg_plain", json!("plain text")),
             // tool_result 里也有同一个 id，不能当锚点
             json!({ "type": "user", "uuid": "u2", "message": { "role": "user", "content": [
                 { "type": "tool_result", "tool_use_id": "toolu_elsewhere", "content": "ok" }
@@ -552,5 +611,45 @@ mod tests {
         };
         DB::open(&empty, options).unwrap().flush().unwrap();
         assert!(chapters_in(&empty, &session).is_empty());
+    }
+
+    #[test]
+    fn anchors_follow_the_same_filters_as_the_claude_parser() {
+        let temp = tempfile::tempdir().unwrap();
+        let session = temp.path().join("session.jsonl");
+        write_session(&session);
+        let stored = |id: &str, after_id: &str| StoredChapter {
+            id: id.into(),
+            title: id.into(),
+            after_id: after_id.into(),
+        };
+        let chapters = resolve(
+            &[
+                stored("side-tool", "toolu_side"),
+                stored("side-text", "msg_side-t0"),
+                stored("server-tool", "srvtoolu_01"),
+                stored("blank-0", "msg_blank-t0"),
+                stored("blank-1", "msg_blank-t1"),
+                stored("plain", "msg_plain-t0"),
+            ],
+            &session,
+        )
+        .unwrap();
+        let ids: Vec<&str> = chapters.iter().map(|chapter| chapter.id.as_str()).collect();
+        // 子代理记录里的锚点、超出非空白 text 块数量的下标都不算
+        assert_eq!(ids, ["server-tool", "blank-0", "plain"]);
+        assert_eq!(
+            chapters[0].anchor,
+            ChapterAnchor::Tool {
+                call_id: "srvtoolu_01".into()
+            }
+        );
+        assert_eq!(
+            chapters[2].anchor,
+            ChapterAnchor::Text {
+                message_ids: vec!["c1".into()],
+                text_index: 0,
+            }
+        );
     }
 }
