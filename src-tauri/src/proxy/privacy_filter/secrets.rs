@@ -260,12 +260,12 @@ pub(super) struct SecretDetector {
 
 /// 关键词预筛，语义与「`text.to_lowercase()` 后逐条 `contains(keyword)`」完全一致。
 ///
-/// aho-corasick 的 `ascii_case_insensitive` 只忽略 ASCII 大小写，而 `to_lowercase` 还会把
-/// 开尔文符号 `K`（U+212A）变成 `k`、把 `İ` 变成 `i̇` 等。所以纯 ASCII 文本直接在原文上扫，
-/// 含非 ASCII 的文本仍先整体 `to_lowercase()` 再扫，两条路径都与旧实现等价。
+/// ASCII 关键词直接扫描原文；只有会小写展开到 ASCII 的 K / İ 或非 ASCII 关键词
+/// 才需要 Unicode 小写副本。中文对话不因此分配整块副本。
 struct KeywordGate {
     /// 由全部规则的关键词（小写、去重）构建的自动机；构建失败时为 None，退回逐条 contains
     automaton: Option<AhoCorasick>,
+    ascii_keywords: bool,
     /// 自动机里第 i 个关键词 → 带这个关键词的规则下标
     keyword_rules: Vec<Vec<usize>>,
     /// 没有关键词（或含空关键词）的规则，始终参与
@@ -311,6 +311,7 @@ impl KeywordGate {
             }
         };
         Self {
+            ascii_keywords: keywords.iter().all(|keyword| keyword.is_ascii()),
             automaton,
             keyword_rules,
             always_active,
@@ -347,7 +348,7 @@ impl KeywordGate {
             return active;
         };
         let lowered;
-        let haystack = if text.is_ascii() {
+        let haystack = if self.ascii_keywords && !text.contains(['K', 'İ']) {
             text
         } else {
             lowered = text.to_lowercase();
@@ -555,7 +556,7 @@ impl SecretDetector {
                 if r.allowlists.iter().any(|a| a.allows(text, whole, m)) {
                     continue;
                 }
-                if r.entropy > 0.0 && shannon_entropy(cand) < r.entropy {
+                if r.entropy > 0.0 && !entropy_at_least(cand, r.entropy) {
                     continue; // 复刻 gitleaks 的熵阈值
                 }
                 // 专用规则已识别凭证格式，不能再把 webhook URL、hex 或 UUID 密钥当误报。
@@ -590,10 +591,12 @@ impl SecretDetector {
             let m = caps.get(1).unwrap();
             let (s, e) = (m.start(), m.end());
             let cand = m.as_str();
-            let strong = has_strong_secret_context(text, s, e);
+            let context = secret_context(text, s, e);
             // 强上下文（Bearer / token= 等）凌驾于路径检查，避免 Bearer abc/xyz== 被误放
             // 边界从 name= 之前检查，避免将赋值号当成路径；替换范围仍只包含 value。
-            if !strong && is_on_path_or_url_boundary(text, whole.start(), e) {
+            if context != ContextStrength::Strong
+                && is_on_path_or_url_boundary(text, whole.start(), e)
+            {
                 continue;
             }
             if is_template_var(cand)
@@ -603,12 +606,12 @@ impl SecretDetector {
             {
                 continue;
             }
-            let threshold = if has_secret_context(text, s, e) {
+            let threshold = if context != ContextStrength::None {
                 ENTROPY_MIN
             } else {
                 ENTROPY_MIN_STRICT
             };
-            if shannon_entropy(cand) >= threshold {
+            if entropy_at_least(cand, threshold) {
                 push(&mut spans, s, e);
             }
         }
@@ -663,30 +666,33 @@ fn is_on_path_or_url_boundary(text: &str, start: usize, end: usize) -> bool {
     URL_PREFIXES.iter().any(|p| look.contains(p))
 }
 
-/// 回溯区间内是否出现密钥语义关键词
-fn has_secret_context(text: &str, start: usize, end: usize) -> bool {
-    RE_SECRET_CONTEXT.is_match(&text[lookback_start(text, start, CONTEXT_LOOKBACK)..end])
+#[derive(Debug, PartialEq, Eq)]
+enum ContextStrength {
+    None,
+    Weak,
+    Strong,
 }
 
-/// 比 has_secret_context 更严：关键词紧贴候选串，中间只能是赋值分隔字符。
-/// 命中时高熵兜底绕过路径检查，避免漏掉 Bearer xxx==/yyy 这类带 / 的真密钥。
-fn has_strong_secret_context(text: &str, start: usize, end: usize) -> bool {
+/// One context scan supplies both the entropy threshold and path exemption.
+fn secret_context(text: &str, start: usize, end: usize) -> ContextStrength {
     let lo = lookback_start(text, start, CONTEXT_LOOKBACK);
     if RE_AUTH_HEADER_PREFIX.is_match(&text[lo..start]) {
-        return true;
+        return ContextStrength::Strong;
     }
     let region = &text[lo..end];
     let Some(last) = RE_SECRET_CONTEXT.find_iter(region).last() else {
-        return false;
+        return ContextStrength::None;
     };
     let cand_start = start - lo;
-    // 关键词与候选串有交叠：整个落在候选串里（token=xxx），或跨过候选串起点（api key=xxx）→ 强
-    if last.end() > cand_start {
-        return true;
+    if last.end() > cand_start
+        || region.as_bytes()[last.end()..cand_start]
+            .iter()
+            .all(|c| ASSIGNMENT_CHARS.contains(c))
+    {
+        ContextStrength::Strong
+    } else {
+        ContextStrength::Weak
     }
-    region.as_bytes()[last.end()..cand_start]
-        .iter()
-        .all(|c| ASSIGNMENT_CHARS.contains(c))
 }
 
 fn is_template_var(s: &str) -> bool {
@@ -721,21 +727,95 @@ fn is_business_id_assignment(s: &str) -> bool {
     BENIGN_ID_SUFFIXES.iter().any(|suf| name.ends_with(suf))
 }
 
-/// 按字节计算香农熵（bits/byte）
-fn shannon_entropy(s: &str) -> f64 {
+/// Maximum byte entropy for each alphabet size, shared by all thresholds.
+static MAX_ENTROPY: LazyLock<[f64; 257]> =
+    LazyLock::new(|| std::array::from_fn(|n| if n == 0 { 0.0 } else { (n as f64).log2() }));
+
+fn entropy_at_least(s: &str, threshold: f64) -> bool {
     if s.is_empty() {
-        return 0.0;
+        return 0.0 >= threshold;
     }
     let mut freq = [0u32; 256];
+    let mut distinct = 0;
     for &c in s.as_bytes() {
-        freq[c as usize] += 1;
+        let count = &mut freq[c as usize];
+        distinct += usize::from(*count == 0);
+        *count += 1;
+    }
+    // H(X) <= log2(alphabet size): most code identifiers stop before any
+    // per-frequency floating point work. Keep the original sum at the boundary.
+    // Leave a rounding margin: an exactly uniform reference sum may round
+    // a few ulps above log2(distinct).
+    if MAX_ENTROPY[distinct] + 1e-12 < threshold {
+        return false;
     }
     let n = s.len() as f64;
-    freq.iter()
+    let entropy: f64 = freq
+        .iter()
         .filter(|&&c| c > 0)
         .map(|&c| {
             let p = f64::from(c) / n;
             -p * p.log2()
         })
-        .sum()
+        .sum();
+    entropy >= threshold
+}
+
+#[cfg(test)]
+mod optimization_tests {
+    use super::*;
+
+    #[test]
+    fn ascii_lowercase_expansions_use_the_unicode_fallback() {
+        for c in (128..=0x10ffff).filter_map(char::from_u32) {
+            if c.to_lowercase().any(|lower| lower.is_ascii()) {
+                assert!(matches!(c, 'K' | 'İ'), "new ASCII expansion: {c}");
+            }
+        }
+    }
+
+    #[test]
+    fn entropy_thresholds_match_reference_including_boundaries() {
+        for size in 1..=94 {
+            for repetitions in [1, 2, 7] {
+                let s: String = (0..size)
+                    .map(|i| char::from(b'!' + i))
+                    .collect::<String>()
+                    .repeat(repetitions);
+                let mut counts = [0usize; 256];
+                for b in s.bytes() {
+                    counts[b as usize] += 1;
+                }
+                let reference: f64 = counts
+                    .into_iter()
+                    .filter(|&n| n > 0)
+                    .map(|n| {
+                        let p = n as f64 / s.len() as f64;
+                        -p * p.log2()
+                    })
+                    .sum();
+                for threshold in [0.0, 3.0, 4.0, 4.8, 5.0, reference] {
+                    assert_eq!(
+                        entropy_at_least(&s, threshold),
+                        reference >= threshold,
+                        "size={size}, threshold={threshold}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn context_strength_retains_weak_and_strong_cases() {
+        for (prefix, expected) in [
+            ("ordinary ", ContextStrength::None),
+            ("token mentioned nearby ", ContextStrength::Weak),
+            ("token = ", ContextStrength::Strong),
+            ("Authorization: Basic ", ContextStrength::Strong),
+            ("密钥 = ", ContextStrength::Strong),
+        ] {
+            let text = format!("{prefix}abc/DEF0123456789xyz+");
+            assert_eq!(secret_context(&text, prefix.len(), text.len()), expected);
+        }
+    }
 }
