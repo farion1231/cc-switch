@@ -19,6 +19,7 @@ mod mcode_commands;
 mod mcp_commands;
 mod profile_roundtrip;
 mod prompt_live_sync;
+mod provider_bulk_import;
 mod provider_commands;
 mod provider_service;
 mod proxy_commands;
