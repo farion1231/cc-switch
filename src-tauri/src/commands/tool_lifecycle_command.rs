@@ -1445,6 +1445,11 @@ pub(super) enum UpdateCommand {
 }
 
 pub(super) fn resolve_update_command(tool: &str, installs: &[ToolInstallation]) -> UpdateCommand {
+    // The Desktop app updates its bundled CLI; npm would install a different copy.
+    if tool == "opencode" && default_install(installs).is_some_and(|inst| inst.source == "desktop")
+    {
+        return UpdateCommand::Unmanaged;
+    }
     if let Some(command) = installs_anchored_command(tool, installs) {
         return UpdateCommand::Anchored(command);
     }
@@ -1490,9 +1495,14 @@ pub(super) fn is_native_executable(path: &Path) -> bool {
 /// 执行路径的兜底报错。正常流程里前端已按 probe 的 `unmanaged` 跳过该工具并给出
 /// 本地化提示；只有 probe 失败、前端直接执行时才会走到这里。
 fn unmanaged_update_error(tool: &str, installs: &[ToolInstallation]) -> String {
-    let path = default_install(installs)
-        .map(|inst| inst.path.as_str())
-        .unwrap_or_default();
+    let default = default_install(installs);
+    let path = default.map(|inst| inst.path.as_str()).unwrap_or_default();
+    if tool == "opencode" && default.is_some_and(|inst| inst.source == "desktop") {
+        return format!(
+            "{} at {path} is bundled with OpenCode Desktop; update it with the Desktop app",
+            tool_spec(tool).display_name
+        );
+    }
     format!(
         "{} at {path} was not installed by npm or a recognized installer; update it the way it was installed",
         tool_spec(tool).display_name
@@ -1592,6 +1602,45 @@ pub(super) fn is_conflicting(installs: &[ToolInstallation]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn opencode_desktop_cli_is_not_updated_separately() {
+        let path = Path::new("desktop/opencode-cli.exe");
+        let desktop = ToolInstallation {
+            path: path.display().to_string(),
+            version: Some("1.0.0".to_string()),
+            runnable: true,
+            error: None,
+            exited_with_error: false,
+            source: "desktop".to_string(),
+            is_path_default: true,
+            real: path.to_path_buf(),
+        };
+        assert_eq!(
+            resolve_update_command("opencode", &[desktop]),
+            UpdateCommand::Unmanaged
+        );
+    }
+
+    #[test]
+    fn standalone_default_still_upgrades_when_desktop_is_also_installed() {
+        let installation = |path: &str, source: &str, default: bool| ToolInstallation {
+            path: path.to_string(),
+            version: Some("1.0.0".to_string()),
+            runnable: true,
+            error: None,
+            exited_with_error: false,
+            source: source.to_string(),
+            is_path_default: default,
+            real: Path::new(path).to_path_buf(),
+        };
+        let desktop = installation("desktop/opencode-cli.exe", "desktop", false);
+        let standalone = installation("/tmp/node_modules/opencode-ai/bin/opencode", "system", true);
+        assert_ne!(
+            resolve_update_command("opencode", &[desktop, standalone]),
+            UpdateCommand::Unmanaged
+        );
+    }
 
     #[test]
     fn grok_lifecycle_metadata_is_consistent() {

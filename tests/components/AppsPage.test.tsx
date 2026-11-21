@@ -2059,6 +2059,185 @@ describe("AppsPage concurrent CLI upgrades", () => {
     ).toBeEnabled();
   });
 
+  it("waits for the OpenCode install source before offering an upgrade", async () => {
+    outdated.clear();
+    outdated.add("opencode");
+    const pending = deferred<ToolInstallationReport[]>();
+    let requestedTools: string[] = [];
+    mocks.listToolInstallations.mockImplementationOnce((tools: string[]) => {
+      requestedTools = tools;
+      return pending.promise;
+    });
+
+    await renderApps();
+    await waitFor(() =>
+      expect(card("OpenCode").getByText("1.0.0")).toBeInTheDocument(),
+    );
+    expect(
+      card("OpenCode").queryByRole("button", { name: "settings.toolUpdate" }),
+    ).toBeNull();
+
+    await act(async () => {
+      pending.resolve(requestedTools.map((tool) => report(tool)));
+      await pending.promise;
+    });
+
+    await waitFor(() => expect(updateButton("OpenCode")).toBeEnabled());
+  });
+
+  it("does not advertise a Desktop-managed OpenCode update from the background check", async () => {
+    outdated.clear();
+    outdated.add("opencode");
+    mocks.listToolInstallations.mockImplementation(async (tools: string[]) =>
+      tools.map((tool) =>
+        report(tool, {
+          unmanaged: tool === "opencode",
+          command: tool === "opencode" ? "" : `${tool} update`,
+        }),
+      ),
+    );
+
+    const { checkToolUpdatesInBackground, useToolUpdatesAvailable } =
+      await import("@/components/apps/useToolManagement");
+    await act(async () => {
+      await checkToolUpdatesInBackground();
+    });
+
+    function UpdateIndicator() {
+      return (
+        <span data-testid="updates-available">
+          {String(useToolUpdatesAvailable())}
+        </span>
+      );
+    }
+    render(<UpdateIndicator />);
+
+    expect(screen.getByTestId("updates-available")).toHaveTextContent("false");
+    expect(mocks.listToolInstallations).toHaveBeenCalledWith(["opencode"]);
+
+    mocks.listToolInstallations.mockClear();
+    await renderApps();
+    await waitFor(() => expect(mocks.listToolInstallations).toHaveBeenCalled());
+    expect(
+      mocks.listToolInstallations.mock.calls.some(
+        ([tools]) => tools.length > 1,
+      ),
+    ).toBe(true);
+  });
+
+  it("does not overwrite newer tool versions when the background OpenCode probe finishes late", async () => {
+    outdated.clear();
+    outdated.add("opencode");
+    const pendingBgProbe = deferred<ToolInstallationReport[]>();
+    mocks.listToolInstallations.mockImplementation((tools: string[]) => {
+      if (tools.length === 1 && tools[0] === "opencode") {
+        return pendingBgProbe.promise;
+      }
+      return Promise.resolve(tools.map((tool) => report(tool)));
+    });
+
+    const { checkToolUpdatesInBackground } = await import(
+      "@/components/apps/useToolManagement"
+    );
+    const bgPromise = checkToolUpdatesInBackground();
+    await waitFor(() =>
+      expect(mocks.listToolInstallations).toHaveBeenCalledWith(["opencode"]),
+    );
+
+    // A newer page load completes with updated OpenCode version while the
+    // background OpenCode installation probe is still in flight.
+    outdated.clear();
+    await renderApps();
+    await waitFor(() =>
+      expect(card("OpenCode").getByText("2.0.0")).toBeInTheDocument(),
+    );
+
+    await act(async () => {
+      pendingBgProbe.resolve([
+        report("opencode", {
+          unmanaged: true,
+          command: "",
+        }),
+      ]);
+      await bgPromise;
+    });
+
+    expect(card("OpenCode").getByText("2.0.0")).toBeInTheDocument();
+  });
+
+  it("does not offer a separate upgrade for OpenCode Desktop's bundled CLI", async () => {
+    outdated.add("opencode");
+    mocks.listToolInstallations.mockImplementation(async (tools: string[]) =>
+      tools.map((tool) =>
+        tool === "opencode"
+          ? report(tool, {
+              unmanaged: true,
+              command: "",
+              anchored: false,
+              installs: [
+                {
+                  path: "C:\\Users\\me\\AppData\\Local\\OpenCode\\resources\\opencode-cli.exe",
+                  version: "1.0.0",
+                  runnable: true,
+                  error: null,
+                  source: "desktop",
+                  is_path_default: true,
+                },
+              ],
+            })
+          : report(tool),
+      ),
+    );
+
+    await renderApps();
+    await waitFor(() =>
+      expect(
+        card("OpenCode").getByText("OpenCode Desktop"),
+      ).toBeInTheDocument(),
+    );
+    expect(
+      card("OpenCode").queryByRole("button", { name: "settings.toolUpdate" }),
+    ).toBeNull();
+    expect(
+      card("OpenCode").getByText("settings.toolUpgradeDesktopManagedDetail"),
+    ).toBeInTheDocument();
+
+    fireEvent.click(updateAllButton());
+    await waitFor(() => expect(isReady("Claude Code")).toBe(true));
+    expect(isReady("Codex")).toBe(true);
+    expect(isReady("Gemini CLI")).toBe(true);
+    expect(
+      mocks.runToolLifecycleAction.mock.calls.map(([tools]) => tools),
+    ).toEqual([["claude"], ["codex"], ["gemini"]]);
+    expect(
+      mocks.runToolLifecycleAction.mock.calls.flatMap(([tools]) => tools),
+    ).not.toContain("opencode");
+  });
+
+  it("explains why an outdated unmanaged install is skipped", async () => {
+    outdated.clear();
+    outdated.add("claude");
+    mocks.listToolInstallations.mockImplementation(async (tools: string[]) =>
+      tools.map((tool) =>
+        tool === "claude"
+          ? report(tool, { unmanaged: true, command: "", anchored: false })
+          : report(tool),
+      ),
+    );
+
+    await renderApps();
+    await waitFor(() =>
+      expect(
+        card("Claude Code").getByText("settings.toolUpgradeUnmanagedDetail"),
+      ).toBeInTheDocument(),
+    );
+    expect(
+      card("Claude Code").queryByRole("button", {
+        name: "settings.toolUpdate",
+      }),
+    ).toBeNull();
+  });
+
   it("withholds the upgrade when the new version needs a newer Node and leaves it out of update all", async () => {
     const defaultVersions = mocks.getToolVersions.getMockImplementation()!;
     mocks.getToolVersions.mockImplementation(async (tools: string[]) =>
