@@ -2017,6 +2017,8 @@ pub fn run() {
         if matches!(event, RunEvent::Exit) {
             if !RESTART_REQUESTED.load(Ordering::SeqCst) {
                 cleanup_before_system_exit(app_handle);
+            } else {
+                checkpoint_before_restart(app_handle);
             }
             return;
         }
@@ -2055,6 +2057,9 @@ pub async fn cleanup_before_exit(app_handle: &tauri::AppHandle) {
             crate::services::provider::claude_direct::finish_tombstones_before_exit,
         )
         .await;
+        if let Err(error) = state.db.run_blocking(|db| db.checkpoint_wal()).await {
+            log::warn!("退出时 WAL checkpoint 失败: {error}");
+        }
         log::info!("退出清理完成：客户端已指回直连，代理已停止");
     }
 }
@@ -2386,6 +2391,14 @@ pub fn destroy_single_instance_lock(app_handle: &tauri::AppHandle) {
     tauri_plugin_single_instance::destroy(app_handle);
 }
 
+fn checkpoint_before_restart(app_handle: &tauri::AppHandle) {
+    if let Some(state) = app_handle.try_state::<store::AppState>() {
+        if let Err(error) = state.db.checkpoint_wal() {
+            log::warn!("重启时 WAL checkpoint 失败: {error}");
+        }
+    }
+}
+
 /// 清理托盘图标、释放 single-instance 锁后重启当前应用。
 ///
 /// 直接 spawn 新进程 + `exit(0)`（macOS 经 `open -n`，见 `relaunch_macos_bundle`），不经过事件
@@ -2397,6 +2410,7 @@ pub fn destroy_single_instance_lock(app_handle: &tauri::AppHandle) {
 /// 图标，而 macOS 的 NSStatusItem 操作要求主线程；`set_visible(false)` 走
 /// `run_item_main_thread` 代理，跨线程安全（见 `remove_tray_icon_before_exit`）。
 pub fn restart_process(app_handle: &tauri::AppHandle) -> ! {
+    checkpoint_before_restart(app_handle);
     remove_tray_icon_before_exit(app_handle);
     destroy_single_instance_lock(app_handle);
     let env = app_handle.env();
