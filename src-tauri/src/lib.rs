@@ -15,6 +15,7 @@ mod codex_state_db;
 mod commands;
 mod config;
 mod copilot_config;
+mod copilot_vscode;
 mod database;
 mod deeplink;
 mod dsh_config;
@@ -1931,6 +1932,10 @@ pub fn run() {
             commands::copilot_get_usage,
             commands::copilot_get_usage_for_account,
             commands::copilot_cli_signed_in_account,
+            // Copilot CLI model sync to VS Code
+            commands::get_copilot_vscode_targets,
+            commands::get_copilot_vscode_sync_status,
+            commands::sync_copilot_vscode,
             // OMO commands
             commands::read_omo_local_file,
             commands::get_current_omo_provider_id,

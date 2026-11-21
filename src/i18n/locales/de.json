@@ -903,6 +903,14 @@
     "minimizeToTrayDescription": "Wenn aktiviert, blendet die Schließen-Schaltfläche das Fenster im System-Tray aus, andernfalls wird die App direkt beendet.",
     "useAppWindowControls": "Fenstersteuerung der App aktivieren",
     "useAppWindowControlsDescription": "Integrierte Schaltflächen zum Minimieren, Maximieren/Wiederherstellen und Schließen in der Kopfzeile der App verwenden.",
+    "copilotVscode": {
+      "enable": "Auf die VS-Code-Erweiterung Copilot anwenden",
+      "description": "Übernimmt die in der CLI hinzugefügten Modelle und API-Schlüssel automatisch in alle erkannten VS-Code-Profile. Änderungen an Anbietern werden automatisch synchronisiert.",
+      "pending": "Synchronisierung der VS-Code-Modelle ausstehend",
+      "pendingDescription": "VS Code verwendet möglicherweise noch die vorherige Konfiguration. Versuchen Sie es erneut, um die neuesten Änderungen zu synchronisieren.",
+      "noTargets": "Keine VS-Code-Konfiguration gefunden. Starten Sie VS Code einmal und versuchen Sie es erneut.",
+      "failed": "Synchronisierung mit VS Code Copilot fehlgeschlagen"
+    },
     "enableClaudePluginIntegration": "Auf die Claude-Code-Erweiterung anwenden",
     "enableClaudePluginIntegrationDescription": "Wenn aktiviert, wechselt der Anbieter der VS-Code-Erweiterung Claude Code zusammen mit dieser App",
     "skipClaudeOnboarding": "Erstbestätigung von Claude Code überspringen",
