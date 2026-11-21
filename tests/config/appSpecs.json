@@ -77,6 +77,13 @@
     "stack": false
   },
   {
+    "id": "cline",
+    "additive": true,
+    "localProxy": false,
+    "routeMode": false,
+    "stack": false
+  },
+  {
     "id": "dsh",
     "additive": true,
     "localProxy": false,

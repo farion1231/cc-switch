@@ -36,6 +36,10 @@ export const getApiKeyFromConfig = (
       return typeof config?.provider?.api_key === "string"
         ? config.provider.api_key
         : "";
+    if (appType === "cline")
+      return typeof config?.settings?.apiKey === "string"
+        ? config.settings.apiKey
+        : "";
     const env = config?.env;
 
     if (!env) return "";
@@ -1152,6 +1156,7 @@ export const extractProviderBaseUrl = (
     (isPlainObject(object.provider)
       ? object.provider.base_url || object.provider.baseUrl
       : undefined) ||
+    (isPlainObject(object.settings) ? object.settings.baseUrl : undefined) ||
     object.baseUrl ||
     object.base_url ||
     object.options?.baseURL ||

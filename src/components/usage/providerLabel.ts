@@ -16,6 +16,7 @@ const SESSION_PROVIDER_APPS: Record<string, AppId> = {
   "MiniMax Code (Session)": "mcode",
   "Kimi Code (Session)": "kimi",
   "WorkBuddy (Session)": "workbuddy",
+  "Cline (Session)": "cline",
   "Pi (Session)": "pi",
   "Oh My Pi (Session)": "omp",
   "Antigravity (Session)": "agy",

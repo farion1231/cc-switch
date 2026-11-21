@@ -33,6 +33,7 @@ const COMMANDS: Record<UninstallMethod, UninstallCommand[]> = {
     { tool: "pi", command: "npm uninstall -g @earendil-works/pi-coding-agent" },
     { tool: "mcode", command: "npm uninstall -g @minimax-ai/code" },
     { tool: "kimi", command: "npm uninstall -g @moonshot-ai/kimi-code" },
+    { tool: "cline", command: "npm uninstall -g cline" },
     { tool: "copilot", command: "npm uninstall -g @github/copilot" },
   ],
   pnpm: [

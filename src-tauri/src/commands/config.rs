@@ -121,6 +121,12 @@ pub async fn get_config_status(
                 path: dir.to_string_lossy().into_owned(),
             })
         }
+        AppType::Cline => Ok(ConfigStatus {
+            exists: crate::cline_config::providers_path().exists(),
+            path: crate::cline_config::cline_dir()
+                .to_string_lossy()
+                .into_owned(),
+        }),
         AppType::Omp => {
             let config_path = crate::omp_config::get_omp_models_path()?;
             let path = crate::omp_config::get_omp_agent_dir()?
@@ -172,6 +178,7 @@ fn app_config_dir(app: &str) -> Result<std::path::PathBuf, String> {
             .unwrap()
             .to_path_buf(),
         AppType::Agy => crate::agy_config::agy_dir(),
+        AppType::Cline => crate::cline_config::cline_dir(),
         AppType::Copilot => crate::copilot_config::copilot_dir(),
         AppType::WorkBuddy => crate::workbuddy_config::data_dir(),
     };
