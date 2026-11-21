@@ -64,10 +64,10 @@ const DropdownMenuTrigger = React.forwardRef<
       event: React.SyntheticEvent<HTMLButtonElement>,
       canToggle: boolean,
     ) => {
-      if (event.defaultPrevented) return;
+      if (event.defaultPrevented || disabled || !canToggle) return;
       if (animation?.isTransitioning()) {
         event.preventDefault();
-      } else if (!disabled && canToggle) {
+      } else {
         animation?.beginTransition();
       }
     };
@@ -75,7 +75,7 @@ const DropdownMenuTrigger = React.forwardRef<
     return (
       <DropdownMenuPrimitive.Trigger
         {...props}
-        className={cn("data-[state=open]:pointer-events-auto", className)}
+        className={cn("aria-expanded:pointer-events-auto", className)}
         disabled={disabled}
         ref={setRefs}
         onPointerDown={(event) => {
