@@ -1,4 +1,6 @@
 import React from "react";
+import { useQuery } from "@tanstack/react-query";
+import { authApi } from "@/lib/api";
 import { useClaudeAccountQuota } from "@/lib/query/subscription";
 import { SubscriptionQuotaView } from "@/components/SubscriptionQuotaFooter";
 import { useQuotaDisplay } from "@/components/quota/useQuotaDisplay";
@@ -22,14 +24,23 @@ const ClaudeAccountQuotaFooter: React.FC<ClaudeAccountQuotaFooterProps> = ({
   autoQueryInterval = 5,
 }) => {
   const display = useQuotaDisplay();
+  // 和授权中心同一份查询。WSL 里的额度还没接到发行版内的 Claude Code，先不查，免得报错。
+  const loginSwitch = useQuery({
+    queryKey: ["claude-login-switch"],
+    queryFn: () => authApi.getClaudeLoginSwitch(),
+    staleTime: 30000,
+  });
+  const wslAccounts = loginSwitch.data?.wslAccounts === true;
   const {
     data: quota,
     isFetching: loading,
     refetch,
   } = useClaudeAccountQuota(accountId, {
-    autoQuery: isCurrent && autoQueryInterval > 0,
+    enabled: !loginSwitch.isPending && !wslAccounts,
+    autoQuery: isCurrent && autoQueryInterval > 0 && !wslAccounts,
     autoQueryIntervalMinutes: autoQueryInterval,
   });
+  if (wslAccounts) return null;
 
   return (
     <SubscriptionQuotaView
