@@ -8,7 +8,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { CaseSpec } from "../../case.ts";
-import { WINDOWS_PROFILE_NOISE } from "../../../volatile.ts";
+import { MACOS_PROFILE_NOISE, WINDOWS_PROFILE_NOISE } from "../../../volatile.ts";
 import { launchLinux, launchMacos, launchWindows } from "../driver/app.ts";
 import { scanHome, signatures } from "../observe/channels.ts";
 import { runCase, type CaseRun, type HostOptions } from "../host/run.ts";
@@ -83,10 +83,13 @@ function hostFor(os: Os, app: string, flags: Record<string, string>): HostOption
     const home = join(real, "parity-home");
     return {
       home,
-      exclude: [],
+      exclude: MACOS_PROFILE_NOISE.map((r) => r.glob),
+      // A macOS home always has ~/Library and ~/Library/Application Support, owner-only; the app
+      // never creates them. Without them, whichever process creates Library first sets its mode.
       reset: () => {
         rmSync(home, { recursive: true, force: true });
         mkdirSync(home, { recursive: true, mode: 0o755 });
+        mkdirSync(join(home, "Library", "Application Support"), { recursive: true, mode: 0o700 });
       },
       sentinels: [".cc-switch", ".claude", ".codex", ".gemini", ".config/opencode", "Library/Application Support/com.ccswitch.desktop"].map((d) => join(real, d)),
       launch: (h) => launchMacos({ app, helper: flags.helper ?? "parity-helper", home: h }),

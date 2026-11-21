@@ -37,10 +37,19 @@ export const WINDOWS_PROFILE_NOISE: readonly OpaqueRule[] = [
   { glob: "AppData/LocalLow", kind: "tree", reason: "OS state", owner: "parity" },
   { glob: "AppData/Local/ConnectedDevicesPlatform", kind: "tree", reason: "OS state", owner: "parity" },
   { glob: "AppData/Local/D3DSCache", kind: "tree", reason: "GPU shader cache", owner: "parity" },
+  { glob: "AppData/Roaming/Mozilla", kind: "tree", reason: "Firefox's background agent on the runner image, on its own schedule; it holds a lock file there", owner: "parity" },
   { glob: ".cargo", kind: "tree", reason: "the harness's Rust toolchain (tauri-driver install)", owner: "parity" },
   { glob: ".rustup", kind: "tree", reason: "the harness's Rust toolchain", owner: "parity" },
   { glob: "NTUSER*", kind: "file", reason: "registry hive files, written by the OS", owner: "parity" },
   { glob: "ntuser*", kind: "file", reason: "registry hive files, written by the OS", owner: "parity" },
+];
+
+/**
+ * Paths under the macOS sandbox HOME that the OS's own frameworks create inside the app's process,
+ * not the app. They are never walked or compared.
+ */
+export const MACOS_PROFILE_NOISE: readonly OpaqueRule[] = [
+  { glob: "Library/Application Support/CrashReporter", kind: "tree", reason: "created by the OS's crash-reporting support on some launches and not others, with no app crash behind it", owner: "parity" },
 ];
 
 export interface TransientUiRule {
