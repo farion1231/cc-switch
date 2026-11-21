@@ -607,7 +607,11 @@ struct LocalSkillMetadataCandidate {
     new_hash: String,
 }
 
+type InstallArchive = std::result::Result<(tempfile::TempDir, String), String>;
+
 pub struct SkillService {
+    #[cfg(test)]
+    fixture_downloads: AtomicU64,
     #[cfg(test)]
     repo_fixture: Option<PathBuf>,
     /// 发现结果按仓库缓存（键是 owner/name/branch），只存读成功的仓库。
@@ -640,6 +644,8 @@ impl SkillService {
         Self {
             #[cfg(test)]
             repo_fixture: None,
+            #[cfg(test)]
+            fixture_downloads: AtomicU64::new(0),
             discovery_cache: Mutex::new(HashMap::new()),
             platform_cache: Mutex::new(HashMap::new()),
             credential_epoch: AtomicU64::new(0),
@@ -938,6 +944,48 @@ impl SkillService {
         skill: &DiscoverableSkill,
         current_app: &AppType,
     ) -> Result<InstalledSkill> {
+        self.install_from_archive(db, skill, current_app, &mut None)
+            .await
+    }
+
+    /// Share one extracted archive for this request only. Keep per-Skill failures
+    /// independent, including errors synchronizing an individual application.
+    pub async fn install_repo_batch(
+        &self,
+        db: &Arc<Database>,
+        skills: &[DiscoverableSkill],
+        current_app: &AppType,
+    ) -> Result<Vec<std::result::Result<InstalledSkill, String>>> {
+        let Some(first) = skills.first() else {
+            return Ok(Vec::new());
+        };
+        if skills.iter().any(|s| {
+            s.repo_host != first.repo_host
+                || s.repo_owner != first.repo_owner
+                || s.repo_name != first.repo_name
+                || s.repo_branch != first.repo_branch
+        }) {
+            return Err(anyhow!("Select Skills from a single repository and branch"));
+        }
+        let mut archive = None;
+        let mut results = Vec::with_capacity(skills.len());
+        for skill in skills {
+            results.push(
+                self.install_from_archive(db, skill, current_app, &mut archive)
+                    .await
+                    .map_err(|e| e.to_string()),
+            );
+        }
+        Ok(results)
+    }
+
+    async fn install_from_archive(
+        &self,
+        db: &Arc<Database>,
+        skill: &DiscoverableSkill,
+        current_app: &AppType,
+        archive: &mut Option<InstallArchive>,
+    ) -> Result<InstalledSkill> {
         let ssot_dir = Self::get_ssot_dir()?;
 
         // 允许多级目录（如 a/b/c），但必须是安全的相对路径。
@@ -976,7 +1024,7 @@ impl SkillService {
         let mut repo_branch = skill.repo_branch.clone();
         // 真实解析出的源目录推导的文档路径（仅本次真正下载解析时可得）
         let mut resolved_doc_path: Option<String> = None;
-        let mut downloaded_source: Option<(tempfile::TempDir, PathBuf)> = None;
+        let mut downloaded_source: Option<PathBuf> = None;
 
         // 如果已存在则跳过下载
         if !dest.exists() {
@@ -988,10 +1036,20 @@ impl SkillService {
                 enabled: true,
             };
 
-            // 下载仓库
-            let (temp_guard, used_branch) = self.download_repo_bounded(&repo).await?;
+            if archive.is_none() {
+                *archive = Some(
+                    self.download_repo_bounded(&repo)
+                        .await
+                        .map_err(|error| error.to_string()),
+                );
+            }
+            let (temp_guard, used_branch) = archive
+                .as_ref()
+                .expect("archive initialized")
+                .as_ref()
+                .map_err(|error| anyhow!("{error}"))?;
             let temp_dir = temp_guard.path();
-            repo_branch = used_branch;
+            repo_branch = used_branch.clone();
 
             // 复制到 SSOT
             let source =
@@ -1026,7 +1084,7 @@ impl SkillService {
             // skillId（末级目录名），嵌套目录场景直接拼接会丢路径、链接 404（#6111）
             resolved_doc_path = Self::doc_path_for_source(&canonical_temp, &canonical_source);
 
-            downloaded_source = Some((temp_guard, canonical_source));
+            downloaded_source = Some(canonical_source);
 
             // 使用实际下载成功的分支，避免 readme_url / repo_branch 与真实分支不一致。
             if repo_branch != skill.repo_branch {
@@ -1068,7 +1126,6 @@ impl SkillService {
         if !dest.exists() {
             let source = downloaded_source
                 .as_ref()
-                .map(|(_, source)| source)
                 .ok_or_else(|| anyhow!("Skill directory changed during install; please retry"))?;
             Self::preflight_install_destination(source, &install_name, current_app)?;
             Self::copy_dir_recursive(source, &dest)?;
@@ -3440,6 +3497,23 @@ impl SkillService {
         Ok(SkillDiscoveryResult { skills, failures })
     }
 
+    pub async fn discover_saved_repo(
+        &self,
+        mut repo: SkillRepo,
+        include_disabled: bool,
+        branch: Option<String>,
+        force_refresh: bool,
+    ) -> Result<SkillDiscoveryResult> {
+        repo.enabled |= include_disabled;
+        if let Some(branch) = branch {
+            repo.branch = branch;
+        }
+        if force_refresh {
+            return self.discover_available_report(vec![repo], true).await;
+        }
+        Ok(self.discover_repo(&repo).await)
+    }
+
     /// 只发现一个仓库（添加、重新启用仓库时用），不碰其它仓库。
     pub async fn discover_repo(&self, repo: &SkillRepo) -> SkillDiscoveryResult {
         if !repo.enabled {
@@ -3462,6 +3536,34 @@ impl SkillService {
                 }
             }
         }
+    }
+
+    pub async fn discover_and_add_repo(
+        &self,
+        db: &Database,
+        mut repo: SkillRepo,
+    ) -> Result<(String, SkillDiscoveryResult)> {
+        repo.host = repo.host.trim().to_ascii_lowercase();
+        repo.enabled = true;
+        Self::validate_repo(&repo)?;
+        let started_at = Instant::now();
+        let (branch, mut skills) = self.fetch_repo_skills(&repo).await?;
+        repo.branch = branch;
+        Self::deduplicate_discoverable_skills(&mut skills);
+        skills.sort_by_key(|skill| skill.name.to_lowercase());
+        db.insert_skill_repo(&repo)?;
+        let mut cache = self.discovery_cache.lock_recover();
+        let key = Self::discovery_cache_key(&repo);
+        if cache.get(&key).is_none_or(|(at, _)| *at <= started_at) {
+            cache.insert(key, (started_at, skills.clone()));
+        }
+        Ok((
+            repo.branch,
+            SkillDiscoveryResult {
+                skills,
+                failures: Vec::new(),
+            },
+        ))
     }
 
     fn discovery_cache_key(repo: &SkillRepo) -> RepoCacheKey {
@@ -3493,7 +3595,7 @@ impl SkillService {
         }
 
         let started_at = Instant::now();
-        let skills = self.fetch_repo_skills(repo).await?;
+        let (_, skills) = self.fetch_repo_skills(repo).await?;
         let mut cache = self.discovery_cache.lock_recover();
         if cache
             .get(&key)
@@ -3505,7 +3607,10 @@ impl SkillService {
     }
 
     /// 从仓库获取技能列表
-    async fn fetch_repo_skills(&self, repo: &SkillRepo) -> Result<Vec<DiscoverableSkill>> {
+    async fn fetch_repo_skills(
+        &self,
+        repo: &SkillRepo,
+    ) -> Result<(String, Vec<DiscoverableSkill>)> {
         let (temp_guard, resolved_branch) = self.download_repo_bounded(repo).await?;
 
         let mut skills = Vec::new();
@@ -3514,7 +3619,7 @@ impl SkillService {
         resolved_repo.branch = resolved_branch;
         self.scan_dir_recursive(scan_dir, scan_dir, &resolved_repo, &mut skills)?;
 
-        Ok(skills)
+        Ok((resolved_repo.branch, skills))
     }
 
     /// 递归扫描目录查找 SKILL.md
@@ -4419,6 +4524,7 @@ impl SkillService {
         // Exercise the real install/update flow without network access in unit tests.
         #[cfg(test)]
         if let Some(fixture) = &self.repo_fixture {
+            self.fixture_downloads.fetch_add(1, Ordering::Relaxed);
             Self::copy_dir_recursive(fixture, temp_path)?;
             return Ok((temp_dir, repo.branch.clone()));
         }
@@ -9687,6 +9793,118 @@ mod tests {
             branch: "main".to_string(),
             enabled,
         }
+    }
+
+    #[tokio::test]
+    async fn saved_repo_preview_respects_enable_branch_and_force_refresh() {
+        let remote = tempdir().unwrap();
+        let service = SkillService {
+            repo_fixture: Some(remote.path().to_owned()),
+            ..SkillService::new()
+        };
+        let saved = repo("team", "skills", false);
+        write_skill(&remote.path().join("one"), "one");
+        assert!(service
+            .discover_saved_repo(saved.clone(), false, None, true)
+            .await
+            .unwrap()
+            .skills
+            .is_empty());
+        let preview =
+            || service.discover_saved_repo(saved.clone(), true, Some("feature".into()), false);
+        let found = preview().await.unwrap();
+        assert_eq!(found.skills[0].repo_branch, "feature");
+        write_skill(&remote.path().join("two"), "two");
+        assert_eq!(preview().await.unwrap().skills.len(), 1);
+        assert_eq!(
+            service
+                .discover_saved_repo(saved, true, Some("feature".into()), true)
+                .await
+                .unwrap()
+                .skills
+                .len(),
+            2
+        );
+        assert_eq!(service.fixture_downloads.load(Ordering::Relaxed), 2);
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn picker_batch_shares_archive_and_reports_individual_failures() {
+        let home = tempdir().unwrap();
+        let guard = TestHomeGuard::set(home.path());
+        let _storage = StorageLocationGuard::set(&guard, SkillStorageLocation::CcSwitch);
+        let remote = tempdir().unwrap();
+        let service = SkillService {
+            repo_fixture: Some(remote.path().to_owned()),
+            ..SkillService::new()
+        };
+        let db = Arc::new(Database::memory().unwrap());
+        for name in ["one", "two"] {
+            write_skill(&remote.path().join(name), name);
+        }
+        let mut skills = vec![];
+        service
+            .scan_dir_recursive(
+                remote.path(),
+                remote.path(),
+                &repo("team", "skills", true),
+                &mut skills,
+            )
+            .unwrap();
+        let mut other = skills[0].clone();
+        other.repo_branch = "different".into();
+        assert!(service
+            .install_repo_batch(&db, &[skills[0].clone(), other], &AppType::Codex)
+            .await
+            .is_err());
+        let mut missing = skills[0].clone();
+        missing.directory = "missing".into();
+        missing.key = "team/skills:missing".into();
+        skills.insert(1, missing);
+        let outcomes = service
+            .install_repo_batch(&db, &skills, &AppType::Codex)
+            .await
+            .unwrap();
+        assert!(
+            outcomes[0].is_ok() && outcomes[1].is_err() && outcomes[2].is_ok(),
+            "{outcomes:?}"
+        );
+        assert_eq!(service.fixture_downloads.load(Ordering::Relaxed), 1);
+        assert_eq!(db.get_all_installed_skills().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn picker_saves_only_readable_sources_and_reuses_discovery() {
+        let db = Database::memory().unwrap();
+        let remote = tempdir().unwrap();
+        let archive = remote.path().join("repo");
+        let service = SkillService {
+            repo_fixture: Some(archive.clone()),
+            ..SkillService::new()
+        };
+        let source = repo("team", "skills", true);
+        assert!(service
+            .discover_and_add_repo(&db, source.clone())
+            .await
+            .is_err());
+        assert!(db.get_skill_repos().unwrap().is_empty());
+        write_skill(&archive.join("demo"), "demo");
+        let (branch, found) = service
+            .discover_and_add_repo(&db, source.clone())
+            .await
+            .unwrap();
+        assert_eq!(branch, "main");
+        assert_eq!(found.skills.len(), 1);
+        let mut conflicting = source.clone();
+        conflicting.host = "gitlab.com".into();
+        assert!(service
+            .discover_and_add_repo(&db, conflicting)
+            .await
+            .is_err());
+        assert_eq!(db.get_skill_repos().unwrap()[0].host, source.host);
+        std::fs::remove_dir_all(archive).unwrap();
+        assert_eq!(service.discover_repo(&source).await.skills.len(), 1);
     }
 
     #[tokio::test]

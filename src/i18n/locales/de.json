@@ -3472,6 +3472,25 @@
     }
   },
   "skills": {
+    "github": {
+      "saveHint": "Neue Repositories werden beim Abrufen in der Repository-Verwaltung gespeichert.",
+      "chooseRepo": "Aus gespeicherten Repositories",
+      "chooseRepoPlaceholder": "Hinzugefügtes Repository auswählen",
+      "title": "Aus Git beziehen",
+      "lead": "Ein öffentliches GitHub-, GitLab-, Gitea- oder Forgejo-Repository abrufen und die zu installierenden Skills auswählen.",
+      "fetch": "Skills abrufen",
+      "search": "Skills suchen…",
+      "count": "{{selected}} / {{total}} Skills ausgewählt",
+      "occupied": "Das Verzeichnis wird von einem anderen Skill verwendet. Verwalten Sie ihn unter „Installiert“.",
+      "open": "{{name}} im Repository öffnen",
+      "empty": "Keine passenden Skills",
+      "install": "Ausgewählte installieren",
+      "found": "{{count}} Skills in diesem Repository gefunden",
+      "selectAll": "Alle auswählen",
+      "selectNone": "Auswahl aufheben",
+      "hostConflict": "Ein Repository mit diesem Eigentümer und Namen ist bereits auf einem anderen Host gespeichert. Bitte zuerst in der Repository-Verwaltung prüfen.",
+      "branchFallback": "{{requested}} angefordert; Skills aus {{resolved}} werden angezeigt. Prüfen Sie die Auswahl vor der Installation."
+    },
     "manage": "Skills",
     "title": "Skills-Verwaltung",
     "description": "Skills aus beliebten Repositories entdecken und installieren, um die Fähigkeiten von Claude Code/Codex/Gemini zu erweitern",

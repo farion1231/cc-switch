@@ -3684,7 +3684,26 @@
       "syncCopyDesc": "ディスク容量を多く使い、更新のたびにコピーし直します",
       "moveHint": "場所を切り替えると {{count}} 個の Skill を移動します。"
     },
-    "updatesIncomplete": "更新は見つかりませんでしたが、{{count}} 個のリポジトリを読み込めませんでした"
+    "updatesIncomplete": "更新は見つかりませんでしたが、{{count}} 個のリポジトリを読み込めませんでした",
+    "github": {
+      "saveHint": "新しいリポジトリは取得時にリポジトリ管理へ保存されます。",
+      "chooseRepo": "保存済みリポジトリから選択",
+      "chooseRepoPlaceholder": "追加済みリポジトリを選択",
+      "title": "Git リポジトリから取得",
+      "lead": "公開の GitHub、GitLab、Gitea、Forgejo リポジトリを取得し、インストールする Skills を選択します。",
+      "fetch": "Skills を取得",
+      "search": "Skills を検索…",
+      "count": "選択 {{selected}} / 全 {{total}} Skills",
+      "occupied": "ディレクトリは別の Skill が使用しています。インストール済み画面で管理できます。",
+      "open": "リポジトリで {{name}} を開く",
+      "empty": "一致する Skills がありません",
+      "install": "選択項目をインストール",
+      "found": "{{count}} 個の Skills が見つかりました",
+      "selectAll": "すべて選択",
+      "selectNone": "すべて解除",
+      "hostConflict": "同じ所有者と名前のリポジトリが別のホストに登録されています。先にリポジトリ管理で確認してください。",
+      "branchFallback": "{{requested}} を指定しましたが、{{resolved}} の Skills を表示しています。インストール前に確認してください。"
+    }
   },
   "deeplink": {
     "confirmImport": "プロバイダーのインポートを確認",

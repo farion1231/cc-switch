@@ -3684,7 +3684,26 @@
       "syncCopyDesc": "占用更多空间，更新后会重新复制",
       "moveHint": "切换位置会把 {{count}} 个 Skill 移动过去。"
     },
-    "updatesIncomplete": "没有发现更新，但有 {{count}} 个仓库没有读到"
+    "updatesIncomplete": "没有发现更新，但有 {{count}} 个仓库没有读到",
+    "github": {
+      "saveHint": "获取时，新的仓库会自动保存到仓库管理。",
+      "chooseRepo": "从已保存的仓库选择",
+      "chooseRepoPlaceholder": "选择已添加的仓库",
+      "title": "从 Git 仓库获取",
+      "lead": "读取公开的 GitHub、GitLab、Gitea 或 Forgejo 仓库，并选择要安装的 Skills。",
+      "fetch": "获取 Skills",
+      "search": "搜索 Skills…",
+      "count": "已选 {{selected}} / 共 {{total}} 个 Skills",
+      "occupied": "目录已被其他 Skill 使用，可在“已安装”页面管理。",
+      "open": "在仓库中打开 {{name}}",
+      "empty": "没有匹配的 Skills",
+      "install": "安装所选",
+      "found": "搜索获取到了 {{count}} 个 Skills",
+      "selectAll": "全选",
+      "selectNone": "全不选",
+      "hostConflict": "其他站点已有同名仓库来源，请先在仓库管理中处理。",
+      "branchFallback": "请求分支为 {{requested}}，当前显示 {{resolved}} 分支的 Skills，请确认后再安装。"
+    }
   },
   "deeplink": {
     "confirmImport": "确认导入供应商配置",
