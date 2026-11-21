@@ -445,6 +445,14 @@ pub(crate) fn write_live_for_state(
         return Ok(());
     }
 
+    if matches!(app_type, AppType::OpenCode)
+        && matches!(provider.category.as_deref(), Some("omo") | Some("omo-slim"))
+    {
+        // OMO / OMO Slim 预设不是 opencode.json 里的供应商：OmoService 把正在用的那份写进
+        // 它自己的文件（切换、编辑各自处理），全量同步这里没有要写的。
+        return Ok(());
+    }
+
     if matches!(app_type, AppType::ClaudeDesktop) {
         crate::claude_desktop_config::apply_provider(db, provider)?;
         log::info!(
@@ -764,6 +772,8 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
 fn sync_all_providers_to_live(state: &AppState, app_type: &AppType) -> Result<(), AppError> {
     let providers = state.db.get_all_providers(app_type)?;
     let mut synced_count = 0usize;
+    // 一家写失败不拦其余各家（逐家写入是幂等的），但失败要报给调用方，不能当成功。
+    let mut failures = Vec::new();
 
     for provider in providers.values() {
         if provider
@@ -781,13 +791,18 @@ fn sync_all_providers_to_live(state: &AppState, app_type: &AppType) -> Result<()
                 app_type,
                 provider.id
             );
+            failures.push(format!("{}: {e}", provider.id));
             continue;
         }
         synced_count += 1;
     }
 
     log::info!("Synced {synced_count} {app_type:?} providers to live config");
-    Ok(())
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(AppError::Message(failures.join("; ")))
+    }
 }
 
 /// 把累加式应用的全部供应商同步到 live，再重投影它的 MCP。
@@ -795,14 +810,19 @@ pub(crate) fn sync_additive_app_to_live(
     state: &AppState,
     app_type: &AppType,
 ) -> Result<(), AppError> {
-    sync_all_providers_to_live(state, app_type)?;
+    let providers = sync_all_providers_to_live(state, app_type);
 
     // 本函数语义是"把这个应用同步到 live"，MCP 重投影也只针对该应用；
     // 全量 sync_all_enabled 会把无关应用的 live 损坏牵连进来。投影失败
     // 上抛（不降级）：这里没有已变更的 DB 状态需要保护，调用方重试即可。
-    McpService::sync_enabled_for_app(state, app_type)?;
+    // 某家供应商写失败也照常重投影 MCP，两边的失败一起上抛。
+    let mcp = McpService::sync_enabled_for_app(state, app_type);
 
-    Ok(())
+    match (providers, mcp) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+        (Err(providers), Err(mcp)) => Err(AppError::Message(format!("{providers}; mcp: {mcp}"))),
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -863,8 +883,8 @@ pub(crate) fn sync_current_provider_for_app_respecting_mode(
         None => return Ok(None),
     };
 
-    let providers = state.db.get_all_providers(app_type)?;
-    let Some(provider) = providers.get(&current_id) else {
+    let providers = state.db.get_provider_rows(app_type)?;
+    let Some(provider) = providers.get(&current_id)? else {
         return Ok(None);
     };
 
@@ -873,10 +893,31 @@ pub(crate) fn sync_current_provider_for_app_respecting_mode(
 
 /// Populate newly encountered DSH profiles with managed providers and enabled MCP servers.
 /// The native writer records completion locally so later native deletions remain intentional.
+///
+/// An unreadable MCP row of another application is ignored. An unreadable DSH provider, or an
+/// unreadable MCP row enabled for DSH, defers seeding without writing the receipt: seeding is
+/// one-time, so skipping the row would leave it out of the new profile for good, and dropping its
+/// id would hide a managed node the profile may already carry. It only fails while some profile
+/// is actually waiting, so it can't break every later sync.
 pub(crate) fn initialize_dsh_profiles(state: &AppState) -> Result<(), AppError> {
-    let providers = state
-        .db
-        .get_all_providers(&AppType::Dsh)?
+    let provider_rows = state.db.get_provider_rows(&AppType::Dsh)?;
+    let server_rows = state.db.get_mcp_server_rows()?;
+    let dsh_server_ids = state.db.mcp_server_ids_enabled_for(&AppType::Dsh)?;
+    let blocking = provider_rows.unreadable.iter().chain(
+        server_rows
+            .unreadable
+            .iter()
+            .filter(|entry| dsh_server_ids.contains(&entry.id)),
+    );
+    if let Some(entry) = blocking.into_iter().next() {
+        if crate::dsh_config::has_uninitialized_profiles()? {
+            return Err(AppError::Database(entry.error.clone()));
+        }
+        return Ok(());
+    }
+
+    let providers = provider_rows
+        .readable
         .into_iter()
         .filter(|(_, provider)| {
             provider
@@ -887,9 +928,8 @@ pub(crate) fn initialize_dsh_profiles(state: &AppState) -> Result<(), AppError> 
         })
         .map(|(id, provider)| (id, provider.settings_config))
         .collect();
-    let servers = state
-        .db
-        .get_all_mcp_servers()?
+    let servers = server_rows
+        .readable
         .into_iter()
         .filter(|(_, server)| server.apps.dsh)
         .map(|(id, server)| (id, server.server))

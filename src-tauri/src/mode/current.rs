@@ -59,8 +59,8 @@ pub fn provider_for(
     purpose: Purpose,
 ) -> Result<Option<String>, AppError> {
     if purpose == Purpose::InUse {
-        if let Some(route) = proxy_route_row(db, app)? {
-            return Ok(Some(route.id));
+        if let Some(route) = proxy_route_id(db, app)? {
+            return Ok(Some(route));
         }
     }
     crate::settings::get_effective_current_provider(db, app)
@@ -68,15 +68,15 @@ pub fn provider_for(
 
 /// 正在用的那一行（见 [`Purpose::InUse`]）。
 pub fn provider_in_use(db: &Database, app: &AppType) -> Result<Option<Provider>, AppError> {
-    match proxy_route_row(db, app)? {
-        Some(route) => Ok(Some(route)),
+    match proxy_route_id(db, app)? {
+        Some(route) => db.get_provider_by_id(&route, app),
         None => direct_provider(db, app),
     }
 }
 
-/// 代理模式下代理路由那一行；不在代理模式、或者路由那家在库里不存在（按直连处理）时
-/// 为 `None`。
-fn proxy_route_row(db: &Database, app: &AppType) -> Result<Option<Provider>, AppError> {
+/// 代理模式下代理路由那一家的 id；不在代理模式、或者路由那家在库里不存在（按直连处理）
+/// 时为 `None`。只看在不在、不解析那一行：它读不出来时指针照样指着它。
+fn proxy_route_id(db: &Database, app: &AppType) -> Result<Option<String>, AppError> {
     let mode = mode_state(app);
     if !mode.is_proxy() {
         return Ok(None);
@@ -84,14 +84,14 @@ fn proxy_route_row(db: &Database, app: &AppType) -> Result<Option<Provider>, App
     let Some(route) = mode.proxy_route else {
         return Ok(None);
     };
-    let row = db.get_provider_by_id(&route, app)?;
-    if row.is_none() {
-        log::warn!(
-            "{} 的代理路由 {route} 在数据库中不存在，按直连指针处理",
-            app.as_str()
-        );
+    if db.provider_exists(&route, app)? {
+        return Ok(Some(route));
     }
-    Ok(row)
+    log::warn!(
+        "{} 的代理路由 {route} 在数据库中不存在，按直连指针处理",
+        app.as_str()
+    );
+    Ok(None)
 }
 
 /// 直连指针指向的那一行。

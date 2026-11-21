@@ -25,7 +25,7 @@ pub(super) fn list(state: &AppState) -> Result<IndexMap<String, Provider>, AppEr
     if let Err(error) = sync_native(state) {
         log::warn!("Failed to read Oh My Pi providers; showing saved catalog: {error}");
     }
-    state.db.get_all_providers(&AppType::Omp)
+    Ok(state.db.get_provider_rows(&AppType::Omp)?.readable)
 }
 fn sync_native(state: &AppState) -> Result<usize, AppError> {
     let native = omp_config::get_providers()?;

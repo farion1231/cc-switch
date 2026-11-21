@@ -1109,7 +1109,6 @@ function App() {
     editorSave?: ProviderEditorSave;
   }) => {
     await updateProvider(provider, originalId, editorSave);
-    editProviderStore.close();
   };
 
   // 累加式应用的「已添加」和「默认」都现读客户端文件，移除前后重读一遍

@@ -11,6 +11,7 @@ import {
   OUTPUT_SIZE,
 } from "@/utils/customIcon";
 import { providerNeedsRouting } from "@/utils/providerCapabilities";
+import { detectBalanceProvider } from "@/config/balanceProviders";
 import { detectCodingPlanProvider } from "@/config/codingPlanProviders";
 import { COPILOT_REASONING_EFFORTS } from "@/config/copilotConfig";
 import {
@@ -70,6 +71,13 @@ describe("frontend copies of backend constants", () => {
     "detects the same coding plan for %s",
     (url, id) => {
       expect(detectCodingPlanProvider(url)).toBe(id);
+    },
+  );
+
+  it.each(Object.entries(backend.balanceProviderByUrl))(
+    "detects the same balance provider for %s",
+    (url, id) => {
+      expect(detectBalanceProvider(url)?.id ?? null).toBe(id);
     },
   );
 

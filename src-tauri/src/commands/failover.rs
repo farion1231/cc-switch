@@ -48,7 +48,7 @@ fn visible_failover_queue(db: &Database, app: &AppType) -> Result<Vec<FailoverQu
     if !matches!(app, AppType::Codex | AppType::ClaudeDesktop) {
         return Ok(queue);
     }
-    let providers = db.get_all_providers(app)?;
+    let providers = db.get_provider_rows(app)?.into_readable("故障转移队列");
     Ok(queue
         .into_iter()
         .filter(|item| {
@@ -205,8 +205,9 @@ pub async fn remove_from_failover_queue(
 ) -> Result<(), String> {
     let app_enum = require_failover_app(&app_type)?;
     state
-        .db
-        .remove_from_failover_queue(&app_enum, &provider_id)?;
+        .proxy_service
+        .remove_from_failover_queue(&app_enum, &provider_id)
+        .await?;
     crate::tray::refresh_tray_menu(&app);
     Ok(())
 }
@@ -250,7 +251,10 @@ pub async fn set_auto_failover_enabled(
     // 队列为空时把当前供应商自动加入作为 P1，避免用户陷入"必须先加队列才能开启"的死锁
     let mut auto_added_provider_id: Option<String> = None;
     let p1_provider_id = if enabled {
-        let all_providers = state.db.get_all_providers(&app_enum)?;
+        let all_providers = state
+            .db
+            .get_provider_rows(&app_enum)?
+            .into_readable("开启故障转移");
         let mut queue = state
             .db
             .get_failover_queue(&app_enum)?
@@ -318,7 +322,10 @@ pub async fn set_auto_failover_enabled(
         .await
         {
             if let Some(provider_id) = auto_added_provider_id {
-                let _ = state.db.remove_from_failover_queue(&app_enum, &provider_id);
+                let _ = state
+                    .proxy_service
+                    .remove_from_failover_queue(&app_enum, &provider_id)
+                    .await;
             }
             return Err(e);
         }

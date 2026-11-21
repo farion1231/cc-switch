@@ -73,6 +73,18 @@ export function useSkillRepoActions() {
 
   const addRepo = async (repo: SkillRepo) => {
     const discovery = await addRepoMutation.mutateAsync(repo);
+    // 已入库但没读到（下载失败、不是压缩包…）：别报「识别到 0 个」，把原因说出来（#9812）
+    const failures = discovery?.failures ?? [];
+    if (failures.length > 0) {
+      toast.warning(
+        t("skillsPage.repoFail.title", {
+          count: failures.length,
+          repos: describeRepoFailures(failures, t),
+        }),
+        { closeButton: true },
+      );
+      return;
+    }
     toast.success(
       t("skills.repo.addSuccess", {
         owner: repo.owner,

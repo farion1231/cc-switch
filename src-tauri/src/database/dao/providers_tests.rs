@@ -220,3 +220,75 @@ fn unchanged_metadata_maps_do_not_emit_database_changes_after_reload() {
         "changed"
     );
 }
+
+/// 新版本写入、本版本认不出的 meta（比如新增的枚举值）：读出来要报错点名，不能换成默认值，
+/// 库里的原文一个字节都不能动；同应用里别的供应商单独读仍然正常。
+#[test]
+fn unreadable_stored_json_is_reported_and_left_untouched() {
+    let db = Database::memory().unwrap();
+    db.save_provider(&AppType::Claude, &provider("good"))
+        .unwrap();
+    db.save_provider(&AppType::Claude, &provider("newer"))
+        .unwrap();
+    db.save_provider(&AppType::Claude, &provider("broken"))
+        .unwrap();
+    let newer_meta = json!({
+        "claudeDesktopMode": "mode-from-a-newer-version",
+        "usageScript": {"enabled": true, "language": "javascript", "code": "return 1"}
+    })
+    .to_string();
+    let raw = |id: &str| -> (String, String) {
+        db.conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT settings_config, meta FROM providers WHERE app_type = 'claude' AND id = ?1",
+                [id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap()
+    };
+    {
+        let conn = db.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE providers SET meta = ?1 WHERE app_type = 'claude' AND id = 'newer'",
+            [&newer_meta],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE providers SET settings_config = '{\"env\":' WHERE app_type = 'claude' AND id = 'broken'",
+            [],
+        )
+        .unwrap();
+    }
+    let stored = (raw("newer"), raw("broken"));
+
+    let error = db
+        .get_all_providers(&AppType::Claude)
+        .unwrap_err()
+        .to_string();
+    // 列表停在第一条读不出的行（按排序是 broken），并点名它。
+    assert!(
+        error.contains("broken") && error.contains("settings_config"),
+        "{error}"
+    );
+    let error = db
+        .get_provider_by_id("newer", &AppType::Claude)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("newer") && error.contains("meta"), "{error}");
+    let error = db
+        .get_provider_by_id("broken", &AppType::Claude)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("broken") && error.contains("settings_config"),
+        "{error}"
+    );
+
+    assert!(db
+        .get_provider_by_id("good", &AppType::Claude)
+        .unwrap()
+        .is_some());
+    assert_eq!((raw("newer"), raw("broken")), stored);
+}
