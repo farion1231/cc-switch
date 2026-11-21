@@ -15,6 +15,7 @@ import {
   ManagedAccountRemoveDialog,
   type ManagedAccountRemoveTarget,
 } from "./ManagedAccountRemoveDialog";
+import { useManagedAccountUsers } from "./hooks/useManagedAccountUsers";
 import {
   ManagedAccountsGroup,
   type GroupAccountRow,
@@ -63,6 +64,10 @@ export const CodebuddyAccountSection: React.FC<
     removeAccount,
     refetchStatus,
   } = login.auth;
+  const accountUsers = useManagedAccountUsers(
+    "codebuddy_oauth",
+    defaultAccountId,
+  );
   const [removeTarget, setRemoveTarget] =
     React.useState<ManagedAccountRemoveTarget | null>(null);
   // 账号表变了（终端登录收录、删除）或 CodeBuddy 换了号时凭据文件的状态也跟着变
@@ -136,7 +141,7 @@ export const CodebuddyAccountSection: React.FC<
       details: details.filter(Boolean),
       isDefault: defaultAccountId === account.id,
       needsReauth: account.requires_reauth,
-      users: [],
+      users: accountUsers([account.id]),
       quota: (
         <CodebuddyAccountQuota accountId={account.id} login={account.login} />
       ),
@@ -233,7 +238,11 @@ export const CodebuddyAccountSection: React.FC<
       <ManagedAccountRemoveDialog
         target={removeTarget}
         serviceName="CodeBuddy"
-        users={[]}
+        users={
+          removeTarget?.kind === "one"
+            ? accountUsers([removeTarget.accountId])
+            : []
+        }
         othersRemain={accounts.length > 1}
         note={t("authCenter.codebuddy.removeNote", {
           defaultValue:

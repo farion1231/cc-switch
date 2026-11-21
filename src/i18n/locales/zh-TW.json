@@ -2357,6 +2357,7 @@
     "loginWith": {
       "deepseek": "使用 DeepSeek 帳號登入",
       "workbuddy": "用 WorkBuddy 帳號登入",
+      "codebuddy": "用 CodeBuddy 帳號登入",
       "kimi": "使用 Kimi 帳號登入",
       "claude": "用 Claude 帳號登入",
       "chatgpt": "用 ChatGPT 帳號登入",

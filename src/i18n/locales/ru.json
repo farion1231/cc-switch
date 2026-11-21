@@ -2357,6 +2357,7 @@
     "loginWith": {
       "deepseek": "Войти через аккаунт DeepSeek",
       "workbuddy": "Войти через аккаунт WorkBuddy",
+      "codebuddy": "Войти через аккаунт CodeBuddy",
       "kimi": "Войти через аккаунт Kimi",
       "claude": "Войти через аккаунт Claude",
       "chatgpt": "Войти через аккаунт ChatGPT",

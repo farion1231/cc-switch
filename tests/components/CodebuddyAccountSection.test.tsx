@@ -10,6 +10,8 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CodebuddyAccountSection } from "@/components/providers/forms/CodebuddyAccountSection";
 import { codebuddyRegion } from "@/components/providers/forms/CodebuddyLogin";
+import { RefreshAllQuotaButton } from "@/components/settings/auth/RefreshAllQuotaButton";
+import { setProviders } from "../msw/state";
 import { createTestQueryClient } from "../utils/testQueryClient";
 
 const mocks = vi.hoisted(() => ({
@@ -339,7 +341,9 @@ describe("CodebuddyAccountSection", () => {
 
     // 套餐在账号行第二行，额度行标签只写「积分」
     expect(await screen.findByText(/体验版/)).toBeInTheDocument();
-    expect(screen.getByRole("meter", { name: "积分: 150" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("meter", { name: "积分: 150" }),
+    ).toBeInTheDocument();
     expect(screen.getByText(/令牌待 CodeBuddy 续期/)).toBeInTheDocument();
     expect(mocks.quota).toHaveBeenCalledWith(
       "100@www.codebuddy.cn",
@@ -365,5 +369,66 @@ describe("CodebuddyAccountSection", () => {
     expect(codebuddyRegion("copilot.tencent.com")).toBe("mainland");
     expect(codebuddyRegion("example.com")).toBeNull();
     expect(codebuddyRegion("")).toBeNull();
+  });
+
+  it("shows bound official cards in the removal warning dialog", async () => {
+    setProviders("codebuddy", {
+      "codebuddy-official-alice": {
+        id: "codebuddy-official-alice",
+        name: "Alice Official Card",
+        category: "official",
+        settingsConfig: {},
+        meta: {
+          authBinding: {
+            source: "managed_account",
+            authProvider: "codebuddy_oauth",
+            accountId: "100@www.codebuddy.cn",
+          },
+        },
+      },
+    });
+    const auth = baseAuth();
+    auth.accounts = [account("100", "www.codebuddy.cn", "alice")];
+    mocks.useManagedAuth.mockReturnValue(auth);
+    render(<CodebuddyAccountSection />);
+
+    const usage = await screen.findByText("1 个供应商在用");
+    expect(usage).toHaveAttribute("title", "在用的供应商：Alice Official Card");
+    await userEvent.click(
+      screen.getByRole("button", { name: "alice 的更多操作" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: /删除/ }),
+    );
+    const dialog = await screen.findByRole("alertdialog");
+    expect(within(dialog).getByText(/Alice Official Card/)).toBeInTheDocument();
+  });
+
+  it("refreshes CodeBuddy quotas past the cache when Refresh All is clicked", async () => {
+    const auth = baseAuth();
+    auth.accounts = [account("100", "www.codebuddy.cn", "alice")];
+    mocks.useManagedAuth.mockReturnValue(auth);
+    render(
+      <>
+        <RefreshAllQuotaButton />
+        <CodebuddyAccountSection />
+      </>,
+    );
+
+    await screen.findByRole("meter", { name: "积分: 150" });
+    expect(mocks.quota).toHaveBeenCalledWith(
+      "100@www.codebuddy.cn",
+      "zh",
+      false,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "全部刷新" }));
+    await waitFor(() =>
+      expect(mocks.quota).toHaveBeenCalledWith(
+        "100@www.codebuddy.cn",
+        "zh",
+        true,
+      ),
+    );
   });
 });

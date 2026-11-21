@@ -32,7 +32,7 @@ export interface AppCaps {
   plugins: boolean;
   /**
    * 能用授权中心里的托管账号。Antigravity 官方卡只算明确绑了号的（没绑的跟着 agy 自己的
-   * 登录）；WorkBuddy 官方登录卡一定绑了号。
+   * 登录）；WorkBuddy、CodeBuddy 官方登录卡一定绑了号。
    */
   managedAccount: boolean;
   /** Pi 一族：Oh My Pi 是 Pi 的分支，供应商表单、启用状态和用量脚本命令与 Pi 共用 */
@@ -281,7 +281,7 @@ export const APP_SPECS = {
     mcp: true,
     prompts: true,
     plugins: false,
-    managedAccount: false,
+    managedAccount: true,
     piFamily: false,
     editorView: false,
     officialSubscription: false,

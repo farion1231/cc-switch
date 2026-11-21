@@ -2357,6 +2357,7 @@
     "loginWith": {
       "deepseek": "Mit einem DeepSeek-Konto anmelden",
       "workbuddy": "Mit einem WorkBuddy-Konto anmelden",
+      "codebuddy": "Mit einem CodeBuddy-Konto anmelden",
       "kimi": "Mit einem Kimi-Konto anmelden",
       "claude": "Mit einem Claude-Konto anmelden",
       "chatgpt": "Mit einem ChatGPT-Konto anmelden",

@@ -2288,6 +2288,7 @@
     "loginWith": {
       "deepseek": "DeepSeek hesabıyla giriş yap",
       "workbuddy": "WorkBuddy hesabıyla giriş yap",
+      "codebuddy": "CodeBuddy hesabıyla giriş yap",
       "kimi": "Kimi hesabıyla oturum aç",
       "claude": "Claude hesabıyla oturum açın",
       "chatgpt": "ChatGPT hesabıyla oturum açın",

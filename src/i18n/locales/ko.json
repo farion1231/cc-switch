@@ -2357,6 +2357,7 @@
     "loginWith": {
       "deepseek": "DeepSeek 계정으로 로그인",
       "workbuddy": "WorkBuddy 계정으로 로그인",
+      "codebuddy": "CodeBuddy 계정으로 로그인",
       "kimi": "Kimi 계정으로 로그인",
       "claude": "Claude 계정으로 로그인",
       "chatgpt": "ChatGPT 계정으로 로그인",
