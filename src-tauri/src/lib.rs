@@ -33,6 +33,8 @@ mod lightweight;
 #[cfg(target_os = "linux")]
 mod linux_fix;
 pub mod live;
+#[cfg(target_os = "macos")]
+mod macos_tray_window;
 mod mcode_config;
 mod mcp;
 pub mod mode;
@@ -354,17 +356,7 @@ fn handle_deeplink_url(
 
     if focus_main_window {
         if let Some(window) = app.get_webview_window("main") {
-            #[cfg(target_os = "windows")]
-            {
-                let _ = window.set_skip_taskbar(false);
-            }
-            let _ = window.unminimize();
-            let _ = window.show();
-            let _ = window.set_focus();
-            #[cfg(target_os = "linux")]
-            {
-                linux_fix::nudge_main_window(window.clone(), "deeplink");
-            }
+            tray::reveal_main_window(&window, "deeplink");
             log::info!("✓ Window shown and focused");
         }
     }
@@ -473,20 +465,7 @@ fn handle_second_instance(app: &tauri::AppHandle, args: Vec<String>) {
 
     // Show and focus window regardless
     if let Some(window) = app.get_webview_window("main") {
-        // 防御性重置 Windows 的 skip_taskbar：single_instance 触发时，
-        // 原进程可能因 silent_startup / 关闭到托盘等处于 skip_taskbar(true) 状态，
-        // 仅 show() 不会重置该状态，会导致窗口可见但不在任务栏、最小化后消失。
-        #[cfg(target_os = "windows")]
-        {
-            let _ = window.set_skip_taskbar(false);
-        }
-        let _ = window.unminimize();
-        let _ = window.show();
-        let _ = window.set_focus();
-        #[cfg(target_os = "linux")]
-        {
-            linux_fix::nudge_main_window(window.clone(), "single-instance");
-        }
+        tray::reveal_main_window(&window, "single-instance");
     }
 }
 
@@ -578,19 +557,11 @@ pub fn run() {
 
                 if settings.minimize_to_tray_on_close {
                     api.prevent_close();
-                    if window.hide().is_ok() {
-                        // An already-unfocused window may emit no blur/resize.
-                        let _ = window.emit("main-window-visibility-changed", ());
-                    }
-                    log::info!("关闭请求已处理：最小化到托盘");
-                    #[cfg(target_os = "windows")]
-                    {
-                        let _ = window.set_skip_taskbar(true);
-                    }
                     #[cfg(target_os = "macos")]
-                    {
-                        tray::apply_tray_policy(window.app_handle(), false);
+                    if window.label() == "main" && macos_tray_window::close_to_tray(window) {
+                        return;
                     }
+                    tray::hide_main_to_tray(window);
                 } else {
                     api.prevent_close();
                     log::info!("关闭请求已处理：退出应用");
@@ -2056,20 +2027,7 @@ pub fn run() {
             // RunEvent::Opened（ccswitch:// 链接）不在这里处理：deep-link 插件的 on_event 已把它
             // 转成 on_open_url 回调，这里再处理一遍会让同一条链接触发两次导入。
             if let RunEvent::Reopen { .. } = event {
-                if let Some(window) = app_handle.get_webview_window("main") {
-                    #[cfg(target_os = "windows")]
-                    {
-                        let _ = window.set_skip_taskbar(false);
-                    }
-                    let _ = window.unminimize();
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                    tray::apply_tray_policy(app_handle, true);
-                } else if crate::lightweight::is_lightweight_mode() {
-                    if let Err(e) = crate::lightweight::exit_lightweight_mode(app_handle) {
-                        log::error!("退出轻量模式重建窗口失败: {e}");
-                    }
-                }
+                tray::show_main_window(app_handle);
             }
         }
 
