@@ -126,8 +126,12 @@ impl ProxyServer {
 
         log::info!("[{}] 代理服务器启动于 {local_addr}", log_srv::STARTED);
 
-        // 更新全局代理端口，用于系统代理检测
+        // 更新全局代理端口，用于系统代理检测；并登记活跃监听器以阻止内部请求回打自身代理
         crate::proxy::http_client::set_proxy_port(actual_port);
+        let active_listener_guard = crate::proxy::http_client::register_active_proxy_listener(
+            self.config.listen_address.clone(),
+            actual_port,
+        );
 
         // 保存关闭句柄
         *self.shutdown_tx.write().await = Some(shutdown_tx);
@@ -146,6 +150,7 @@ impl ProxyServer {
         // 开启 preserve_header_case 以捕获客户端请求头的原始大小写
         let state = self.state.clone();
         let handle = tokio::spawn(async move {
+            let _active_listener_guard = active_listener_guard;
             let mut shutdown_rx = shutdown_rx;
             loop {
                 tokio::select! {

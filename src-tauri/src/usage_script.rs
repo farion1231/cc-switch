@@ -226,6 +226,9 @@ fn reset_script_deadline(runtime: &Runtime) -> Result<(), AppError> {
     Ok(())
 }
 
+/// 用量查询响应体最大字节数（2 MiB），防止恶意或异常端点导致 OOM
+const MAX_USAGE_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
+
 /// 请求配置结构
 #[derive(Debug, serde::Deserialize)]
 struct RequestConfig {
@@ -237,10 +240,72 @@ struct RequestConfig {
     body: Option<String>,
 }
 
+/// 流式读取响应文本并强制执行字节数上限
+async fn read_response_text_limited(
+    mut resp: reqwest::Response,
+    max_bytes: usize,
+) -> Result<String, AppError> {
+    if resp
+        .content_length()
+        .is_some_and(|len| len > max_bytes as u64)
+    {
+        return Err(AppError::localized(
+            "usage_script.response_too_large",
+            format!("响应体过大，超过 {max_bytes} 字节上限"),
+            format!("Response body exceeds limit of {max_bytes} bytes"),
+        ));
+    }
+
+    let mut buf = Vec::new();
+    while let Some(chunk) = resp.chunk().await.map_err(|e| {
+        AppError::localized(
+            "usage_script.read_response_failed",
+            format!("读取响应失败: {e}"),
+            format!("Failed to read response: {e}"),
+        )
+    })? {
+        if buf.len().saturating_add(chunk.len()) > max_bytes {
+            return Err(AppError::localized(
+                "usage_script.response_too_large",
+                format!("响应体过大，超过 {max_bytes} 字节上限"),
+                format!("Response body exceeds limit of {max_bytes} bytes"),
+            ));
+        }
+        buf.extend_from_slice(&chunk);
+    }
+
+    Ok(String::from_utf8_lossy(&buf).into_owned())
+}
+
 /// 发送 HTTP 请求
 async fn send_http_request(config: &RequestConfig, timeout_secs: u64) -> Result<String, AppError> {
-    // 使用全局 HTTP 客户端（已包含代理配置）
-    let client = crate::proxy::http_client::get();
+    // 禁止用量脚本访问 CC Switch 自身的本地代理监听端口，防止回打消耗其他供应商额度
+    for (listen_address, listen_port) in crate::proxy::http_client::active_proxy_listeners() {
+        crate::proxy::upstream_guard::reject_self_forwarding(
+            &config.url,
+            &listen_address,
+            listen_port,
+        )
+        .await
+        .map_err(|_| {
+            AppError::localized(
+                "usage_script.self_forwarding_blocked",
+                "请求地址不能指向 CC Switch 自身代理端口",
+                "Request URL cannot target CC Switch's own proxy listener",
+            )
+        })?;
+    }
+
+    // 使用不跟随重定向的客户端（本机地址直连，其余继承全局代理配置）：
+    // 1. 防止 301/302/307/308 重定向绕过 validate_request_url 的同源与 HTTPS 限制（SSRF）；
+    // 2. 防止跨主机或降级重定向泄露自定义认证头（如 x-api-key）与 POST 请求体。
+    let client = crate::proxy::http_client::no_redirect_for_url(&config.url).map_err(|e| {
+        AppError::localized(
+            "usage_script.http_client_failed",
+            format!("创建 HTTP 客户端失败: {e}"),
+            format!("Failed to build HTTP client: {e}"),
+        )
+    })?;
     // 约束超时范围，防止异常配置导致长时间阻塞（最小 2 秒，最大 30 秒）
     let request_timeout = std::time::Duration::from_secs(timeout_secs.clamp(2, 30));
 
@@ -277,13 +342,7 @@ async fn send_http_request(config: &RequestConfig, timeout_secs: u64) -> Result<
     })?;
 
     let status = resp.status();
-    let text = resp.text().await.map_err(|e| {
-        AppError::localized(
-            "usage_script.read_response_failed",
-            format!("读取响应失败: {e}"),
-            format!("Failed to read response: {e}"),
-        )
-    })?;
+    let text = read_response_text_limited(resp, MAX_USAGE_RESPONSE_BYTES).await?;
 
     if !status.is_success() {
         let preview = if text.len() > 200 {
@@ -415,7 +474,30 @@ fn validate_single_usage(result: &Value) -> Result<(), AppError> {
     Ok(())
 }
 
-/// 构建替换变量后的脚本，保持与旧版脚本的兼容性
+/// 转义插入到 JS 字符串字面量（双引号、单引号或模板字符串）中的变量内容，
+/// 防止凭据或 URL 中包含引号、反斜杠、换行或 `${...}` 时跳出字符串造成 JS 注入。
+fn escape_js_string_content(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '\\' => escaped.push_str(r"\\"),
+            '"' => escaped.push_str(r#"\""#),
+            '\'' => escaped.push_str(r"\'"),
+            '`' => escaped.push_str(r"\`"),
+            '$' => escaped.push_str(r"\$"),
+            '\n' => escaped.push_str(r"\n"),
+            '\r' => escaped.push_str(r"\r"),
+            '\0' => escaped.push_str(r"\u0000"),
+            '\u{2028}' => escaped.push_str(r"\u2028"),
+            '\u{2029}' => escaped.push_str(r"\u2029"),
+            _ => escaped.push(ch),
+        }
+    }
+    escaped
+}
+
+/// 构建替换变量后的脚本（单遍扫描 + JS 字符串转义），保持与旧版脚本的兼容性，
+/// 同时防止字符串逃逸与跨变量占位符二次展开。
 fn build_script_with_vars(
     script_code: &str,
     api_key: &str,
@@ -423,18 +505,40 @@ fn build_script_with_vars(
     access_token: Option<&str>,
     user_id: Option<&str>,
 ) -> String {
-    let mut replaced = script_code
-        .replace("{{apiKey}}", api_key)
-        .replace("{{baseUrl}}", base_url);
+    let escaped_api_key = escape_js_string_content(api_key);
+    let escaped_base_url = escape_js_string_content(base_url);
+    let escaped_access_token = access_token.map(escape_js_string_content);
+    let escaped_user_id = user_id.map(escape_js_string_content);
 
-    if let Some(token) = access_token {
-        replaced = replaced.replace("{{accessToken}}", token);
+    let mut out = String::with_capacity(script_code.len());
+    let mut rest = script_code;
+    while let Some(idx) = rest.find("{{") {
+        out.push_str(&rest[..idx]);
+        rest = &rest[idx..];
+        if let Some(after) = rest.strip_prefix("{{apiKey}}") {
+            out.push_str(&escaped_api_key);
+            rest = after;
+        } else if let Some(after) = rest.strip_prefix("{{baseUrl}}") {
+            out.push_str(&escaped_base_url);
+            rest = after;
+        } else if let (Some(token), Some(after)) = (
+            escaped_access_token.as_deref(),
+            rest.strip_prefix("{{accessToken}}"),
+        ) {
+            out.push_str(token);
+            rest = after;
+        } else if let (Some(uid), Some(after)) =
+            (escaped_user_id.as_deref(), rest.strip_prefix("{{userId}}"))
+        {
+            out.push_str(uid);
+            rest = after;
+        } else {
+            out.push_str("{{");
+            rest = &rest[2..];
+        }
     }
-    if let Some(uid) = user_id {
-        replaced = replaced.replace("{{userId}}", uid);
-    }
-
-    replaced
+    out.push_str(rest);
+    out
 }
 
 /// 验证 base_url 的基本安全性
@@ -455,6 +559,14 @@ fn validate_base_url(base_url: &str) -> Result<(), AppError> {
             format!("Invalid base_url: {e}"),
         )
     })?;
+
+    if !matches!(parsed_url.scheme(), "http" | "https") {
+        return Err(AppError::localized(
+            "usage_script.base_url_scheme_invalid",
+            format!("base_url 仅支持 HTTP/HTTPS 协议: {}", parsed_url.scheme()),
+            format!("base_url must use HTTP or HTTPS: {}", parsed_url.scheme()),
+        ));
+    }
 
     let is_loopback = is_loopback_host(&parsed_url);
 
@@ -507,6 +619,20 @@ fn validate_request_url(
         )
     })?;
 
+    if !matches!(parsed_request.scheme(), "http" | "https") {
+        return Err(AppError::localized(
+            "usage_script.request_scheme_invalid",
+            format!(
+                "请求 URL 仅支持 HTTP/HTTPS 协议: {}",
+                parsed_request.scheme()
+            ),
+            format!(
+                "Request URL must use HTTP or HTTPS: {}",
+                parsed_request.scheme()
+            ),
+        ));
+    }
+
     let is_request_loopback = is_loopback_host(&parsed_request);
 
     // 必须使用 HTTPS（允许 localhost 用于开发）
@@ -531,7 +657,23 @@ fn validate_request_url(
             )
         })?;
 
-        // 核心安全检查：必须与 base_url 同源（相同域名和端口）
+        // 核心安全检查：必须与 base_url 同源（相同协议、域名和端口）
+        if parsed_request.scheme() != parsed_base.scheme() {
+            return Err(AppError::localized(
+                "usage_script.request_scheme_mismatch",
+                format!(
+                    "请求协议 {} 与 base_url 协议 {} 不匹配（必须是同源请求）",
+                    parsed_request.scheme(),
+                    parsed_base.scheme()
+                ),
+                format!(
+                    "Request scheme {} must match base_url scheme {} (same-origin required)",
+                    parsed_request.scheme(),
+                    parsed_base.scheme()
+                ),
+            ));
+        }
+
         if parsed_request.host_str() != parsed_base.host_str() {
             return Err(AppError::localized(
                 "usage_script.request_host_mismatch",
@@ -578,12 +720,18 @@ fn validate_request_url(
     Ok(())
 }
 
-/// 判断 URL 是否指向本机（localhost / loopback）
+/// 判断 URL 是否指向本机（localhost / loopback，含 IPv4 映射的 IPv6 回环地址）
 fn is_loopback_host(url: &Url) -> bool {
     match url.host() {
-        Some(Host::Domain(d)) => d.eq_ignore_ascii_case("localhost"),
+        Some(Host::Domain(d)) => {
+            let trimmed = d.trim_end_matches('.');
+            trimmed.eq_ignore_ascii_case("localhost")
+                || trimmed.to_ascii_lowercase().ends_with(".localhost")
+        }
         Some(Host::Ipv4(ip)) => ip.is_loopback(),
-        Some(Host::Ipv6(ip)) => ip.is_loopback(),
+        Some(Host::Ipv6(ip)) => {
+            ip.is_loopback() || ip.to_ipv4_mapped().is_some_and(|v4| v4.is_loopback())
+        }
         _ => false,
     }
 }
@@ -798,5 +946,269 @@ mod tests {
         server.abort();
         assert!(result.unwrap_err().to_string().contains("extractor"));
         assert!(start.elapsed() < std::time::Duration::from_secs(15));
+    }
+
+    #[tokio::test]
+    async fn redirect_response_is_not_followed_and_does_not_leak_headers_or_body() {
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        };
+
+        let victim_hits = Arc::new(AtomicUsize::new(0));
+        let victim_hits_clone = Arc::clone(&victim_hits);
+        let victim_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let victim_addr = victim_listener.local_addr().unwrap();
+        let victim_app = axum::Router::new().route(
+            "/v1/messages",
+            axum::routing::post(move || {
+                let hits = Arc::clone(&victim_hits_clone);
+                async move {
+                    hits.fetch_add(1, Ordering::SeqCst);
+                    axum::Json(serde_json::json!({ "remaining": 999 }))
+                }
+            }),
+        );
+        let victim_server = tokio::spawn(async move {
+            let _ = axum::serve(victim_listener, victim_app).await;
+        });
+
+        let redirect_target = format!("http://{victim_addr}/v1/messages");
+        let attacker_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let attacker_addr = attacker_listener.local_addr().unwrap();
+        let attacker_url = format!("http://{attacker_addr}");
+        let attacker_app = axum::Router::new().route(
+            "/usage",
+            axum::routing::post(move || {
+                let target = redirect_target.clone();
+                async move {
+                    axum::http::Response::builder()
+                        .status(axum::http::StatusCode::TEMPORARY_REDIRECT)
+                        .header(axum::http::header::LOCATION, target)
+                        .body(axum::body::Body::empty())
+                        .unwrap()
+                }
+            }),
+        );
+        let attacker_server = tokio::spawn(async move {
+            let _ = axum::serve(attacker_listener, attacker_app).await;
+        });
+
+        let script = r#"({
+            request: {
+                url: "{{baseUrl}}/usage",
+                method: "POST",
+                headers: {
+                    "x-api-key": "{{apiKey}}",
+                    "Content-Type": "application/json"
+                },
+                body: "{\"prompt\":\"hi\"}"
+            },
+            extractor: (response) => ({ isValid: true, remaining: response.remaining })
+        })"#;
+
+        let result = execute_usage_script(
+            script,
+            "sk-secret-token",
+            &attacker_url,
+            5,
+            None,
+            None,
+            None,
+        )
+        .await;
+
+        attacker_server.abort();
+        victim_server.abort();
+
+        assert!(
+            result.is_err(),
+            "307 redirect must be rejected instead of followed, got: {result:?}"
+        );
+        assert_eq!(
+            victim_hits.load(Ordering::SeqCst),
+            0,
+            "redirect target must never receive the forwarded POST request or credentials"
+        );
+    }
+
+    #[tokio::test]
+    async fn oversized_response_body_is_rejected() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let base_url = format!("http://{addr}");
+        let app = axum::Router::new().route(
+            "/usage",
+            axum::routing::get(|| async {
+                let padding = "a".repeat(2 * 1024 * 1024 + 4096);
+                let payload = format!(r#"{{"pad":"{padding}"}}"#);
+                axum::http::Response::builder()
+                    .status(axum::http::StatusCode::OK)
+                    .header(axum::http::header::CONTENT_TYPE, "application/json")
+                    .body(axum::body::Body::from(payload))
+                    .unwrap()
+            }),
+        );
+        let server = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        let script = r#"({
+            request: { url: "{{baseUrl}}/usage", method: "GET" },
+            extractor: () => ({ isValid: true, remaining: 1 })
+        })"#;
+
+        let result = execute_usage_script(script, "sk-test", &base_url, 5, None, None, None).await;
+        server.abort();
+
+        assert!(
+            result.is_err(),
+            "oversized response body (>2 MiB) must be rejected, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn build_script_with_vars_prevents_js_string_breakout_and_cross_expansion() {
+        let evil_key = r#"sk-1", url: "https://evil.example/steal", _x: ""#;
+        let evil_token = r#"tok' + (1+1) + '"#;
+        let evil_uid = "u1\n`${1+1}`{{apiKey}}";
+        let script = r#"({
+            request: {
+                url: "{{baseUrl}}/v1/usage",
+                method: "GET",
+                headers: {
+                    "X-Double": "{{apiKey}}",
+                    "X-Single": '{{accessToken}}',
+                    "X-Template": `{{userId}}`
+                }
+            }
+        })"#;
+
+        let built = build_script_with_vars(
+            script,
+            evil_key,
+            "https://api.example.com",
+            Some(evil_token),
+            Some(evil_uid),
+        );
+
+        let runtime = Runtime::new().unwrap();
+        let context = Context::full(&runtime).unwrap();
+        let request_json: String = context
+            .with(|ctx| {
+                let obj: rquickjs::Object = ctx.eval(built).unwrap();
+                let req: rquickjs::Object = obj.get("request").unwrap();
+                ctx.json_stringify(req).unwrap().unwrap().get()
+            })
+            .unwrap();
+        let parsed: RequestConfig = serde_json::from_str(&request_json).unwrap();
+        assert_eq!(parsed.url, "https://api.example.com/v1/usage");
+        assert_eq!(parsed.headers.get("X-Double").unwrap(), evil_key);
+        assert_eq!(parsed.headers.get("X-Single").unwrap(), evil_token);
+        assert_eq!(parsed.headers.get("X-Template").unwrap(), evil_uid);
+    }
+
+    #[test]
+    fn validate_urls_reject_non_http_schemes_and_loopback_downgrade() {
+        assert!(validate_base_url("file://localhost/etc/passwd").is_err());
+        assert!(validate_request_url(
+            "file://localhost/etc/passwd",
+            "https://localhost:8443",
+            false
+        )
+        .is_err());
+        assert!(validate_request_url("file:///etc/passwd", "", true).is_err());
+        assert!(
+            validate_request_url("http://localhost:8443/v1", "https://localhost:8443", false)
+                .is_err()
+        );
+        assert!(is_loopback_host(
+            &Url::parse("http://[::ffff:127.0.0.1]:8080/v1").unwrap()
+        ));
+    }
+
+    #[tokio::test]
+    async fn oversized_chunked_response_body_without_content_length_is_rejected() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let base_url = format!("http://{addr}");
+        let app = axum::Router::new().route(
+            "/usage",
+            axum::routing::get(|| async {
+                let chunks = (0..65).map(|_| Ok::<_, std::io::Error>(vec![b'a'; 64 * 1024]));
+                axum::http::Response::builder()
+                    .status(axum::http::StatusCode::OK)
+                    .body(axum::body::Body::from_stream(futures::stream::iter(chunks)))
+                    .unwrap()
+            }),
+        );
+        let server = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        let script = r#"({
+            request: { url: "{{baseUrl}}/usage", method: "GET" },
+            extractor: () => ({ isValid: true, remaining: 1 })
+        })"#;
+
+        let result = execute_usage_script(script, "sk-test", &base_url, 5, None, None, None).await;
+        server.abort();
+
+        assert!(
+            result.is_err(),
+            "chunked response exceeding limit must be rejected, got: {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn request_targeting_active_proxy_listener_is_blocked() {
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        };
+
+        let hits = Arc::new(AtomicUsize::new(0));
+        let hits_clone = Arc::clone(&hits);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let base_url = format!("http://{addr}");
+        let app = axum::Router::new().route(
+            "/v1/messages",
+            axum::routing::post(move || {
+                let hits = Arc::clone(&hits_clone);
+                async move {
+                    hits.fetch_add(1, Ordering::SeqCst);
+                    axum::Json(serde_json::json!({ "remaining": 100 }))
+                }
+            }),
+        );
+        let server = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        let _guard =
+            crate::proxy::http_client::register_active_proxy_listener("127.0.0.1", addr.port());
+
+        let script = r#"({
+            request: { url: "{{baseUrl}}/v1/messages", method: "POST" },
+            extractor: (r) => ({ isValid: true, remaining: r.remaining })
+        })"#;
+
+        for template_type in [None, Some("custom")] {
+            let result =
+                execute_usage_script(script, "sk-test", &base_url, 5, None, None, template_type)
+                    .await;
+            assert!(
+                result.is_err(),
+                "self-forwarding to active proxy listener must be blocked (template={template_type:?}), got: {result:?}"
+            );
+        }
+
+        server.abort();
+        assert_eq!(
+            hits.load(Ordering::SeqCst),
+            0,
+            "active proxy listener must never receive usage_script requests"
+        );
     }
 }
