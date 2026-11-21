@@ -1825,6 +1825,7 @@ pub fn run() {
             commands::search_session_content,
             commands::clear_session_index,
             commands::get_session_messages,
+            commands::get_session_desktop_chapters,
             commands::stream_session_messages,
             commands::get_session_block_content,
             commands::get_session_image,

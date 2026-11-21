@@ -7,6 +7,7 @@ import {
 import { sessionsApi } from "@/lib/api/sessions";
 import type {
   ContentRef,
+  DesktopChapter,
   ImageRef,
   SessionMessage,
   TranscriptChunk,
@@ -23,6 +24,8 @@ export const sessionKeys = {
     ["sessionMessages", providerId, sourcePath] as const,
   transcript: (providerId?: string, sourcePath?: string) =>
     ["sessionTranscript", providerId, sourcePath] as const,
+  desktopChapters: (providerId?: string, sourcePath?: string) =>
+    ["sessionDesktopChapters", providerId, sourcePath] as const,
   blockContent: (providerId?: string, sourcePath?: string, ref?: ContentRef) =>
     [
       "sessionBlockContent",
@@ -43,6 +46,29 @@ export const stableKey = (value: unknown): string => {
     return `{${entries.join(",")}}`;
   }
   return JSON.stringify(value);
+};
+
+// ─── 桌面端手动 pin 的章节 ────────────────────────────────────────────────
+
+const NO_DESKTOP_CHAPTERS: DesktopChapter[] = [];
+
+/**
+ * Claude 会话里用户在 Claude Code desktop 手动 pin 的章节。
+ * 只是锦上添花：读不到就当没有，不重试、不报错，也不挡正文渲染。
+ */
+export const useSessionDesktopChapters = (
+  providerId?: string,
+  sourcePath?: string,
+): DesktopChapter[] => {
+  const { data } = useQuery<DesktopChapter[]>({
+    queryKey: sessionKeys.desktopChapters(providerId, sourcePath),
+    queryFn: async () =>
+      sessionsApi.getDesktopChapters(providerId!, sourcePath!),
+    enabled: providerId === "claude" && Boolean(sourcePath),
+    staleTime: 30 * 1000,
+    retry: false,
+  });
+  return data ?? NO_DESKTOP_CHAPTERS;
 };
 
 // ─── 一次性读取（旧接口，复制整段等场景） ─────────────────────────────────

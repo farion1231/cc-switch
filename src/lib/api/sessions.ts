@@ -4,6 +4,7 @@ import type {
   ImageRef,
   SessionContentSearchResult,
   SessionIndexStatus,
+  DesktopChapter,
   SessionMessage,
   SessionMeta,
   TranscriptChunk,
@@ -64,6 +65,20 @@ export const sessionsApi = {
     sourcePath: string,
   ): Promise<SessionMessage[]> {
     return await invoke("get_session_messages", { providerId, sourcePath });
+  },
+
+  /**
+   * Claude 会话里用户在 Claude Code desktop 手动 pin 的章节（只读）。
+   * 没装桌面端、读不到都返回空数组。
+   */
+  async getDesktopChapters(
+    providerId: string,
+    sourcePath: string,
+  ): Promise<DesktopChapter[]> {
+    return await invoke("get_session_desktop_chapters", {
+      providerId,
+      sourcePath,
+    });
   },
 
   /**

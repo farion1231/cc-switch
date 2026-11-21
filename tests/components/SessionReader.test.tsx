@@ -755,6 +755,45 @@ describe("SessionReader", () => {
     ).toBeInTheDocument();
   });
 
+  it("桌面端手动 pin 的章节：读到后补进正文和目录", async () => {
+    const load = vi.spyOn(sessionsApi, "getDesktopChapters").mockResolvedValue([
+      {
+        id: "uch-1",
+        title: "下单流程",
+        anchor: { kind: "tool", callId: "c2" },
+      },
+    ]);
+    renderReader("claude", [
+      msg("user", [text("接入行情")], { turnId: "t1" }),
+      msg("assistant", [call("c1"), call("c2")], { turnId: "t1" }),
+      msg("tool", [result("c1"), result("c2")], { turnId: "t1" }),
+      msg("assistant", [text("接好了")], { turnId: "t1" }),
+    ]);
+
+    // 正文先出，章节是后到的
+    expect(
+      await within(conversation()).findByText("下单流程"),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/执行过程 · 2 步/)).toBeInTheDocument();
+    expect(load).toHaveBeenCalledWith("claude", expect.any(String));
+    const outline = screen.getByRole("navigation", { name: "对话目录" });
+    fireEvent.click(
+      within(outline).getByRole("button", { name: /置顶的章节.*下单流程/ }),
+    );
+    load.mockRestore();
+  });
+
+  it("不是 Claude 的会话不去读桌面端章节", async () => {
+    const load = vi.spyOn(sessionsApi, "getDesktopChapters");
+    renderReader("codex", [
+      msg("user", [text("你好")], { turnId: "t1" }),
+      msg("assistant", [text("在")], { turnId: "t1" }),
+    ]);
+    await within(conversation()).findByText("在");
+    expect(load).not.toHaveBeenCalled();
+    load.mockRestore();
+  });
+
   it("Antigravity 工具详情：还原大驼峰改动、隐藏空改动标题、展示多行 CommandLine 与无命令 shell 参数", () => {
     const editInput = JSON.stringify({
       TargetFile: `${PROJECT}/src/main.rs`,

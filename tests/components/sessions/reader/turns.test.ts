@@ -1141,7 +1141,9 @@ describe("章节（mark_chapter）", () => {
     });
     expect(isChapterCall(plain)).toBe(false);
     expect(
-      isChapterCall(call("y", "shell", { rawName: "mark_chapter", title: "x" })),
+      isChapterCall(
+        call("y", "shell", { rawName: "mark_chapter", title: "x" }),
+      ),
     ).toBe(false);
     const [only] = buildTurns([
       msg("assistant", [plain], { turnId: "t1" }),
@@ -1149,5 +1151,153 @@ describe("章节（mark_chapter）", () => {
     ]);
     expect(only.chapters).toEqual([]);
     expect(toolTitles(only.steps)).toEqual(["ccd_session.mark_chapter"]);
+  });
+});
+
+describe("章节（桌面端手动 pin）", () => {
+  const session = (): SessionMessage[] => [
+    msg("user", [text("接入行情")], { turnId: "t1", id: "u1" }),
+    msg("assistant", [thinking("想一下"), text("先看文档")], {
+      turnId: "t1",
+      id: "a1",
+    }),
+    msg("assistant", [call("c1"), call("c2")], { turnId: "t1", id: "a2" }),
+    msg("tool", [result("c1"), result("c2")], { turnId: "t1" }),
+    msg("assistant", [text("第一段"), text("第二段")], {
+      turnId: "t1",
+      id: "a3",
+    }),
+    msg("user", [text("继续")], { turnId: "t2", id: "u2" }),
+    msg("assistant", [text("好的")], { turnId: "t2", id: "a4" }),
+  ];
+
+  it("锚在工具调用上：章节行排在那次调用正前面", () => {
+    const [turn] = buildTurns(session(), {
+      pinnedChapters: [
+        {
+          id: "uch-1",
+          title: "下单流程",
+          anchor: { kind: "tool", callId: "c2" },
+        },
+      ],
+    });
+    expect(turn.chapters).toEqual([
+      expect.objectContaining({
+        title: "下单流程",
+        source: "user",
+        beforeStepId: turn.steps[3].id,
+      }),
+    ]);
+    const rows = flattenRows([turn], { expandAll: true });
+    const at = rows.findIndex((row) => row.kind === "chapter");
+    const next = rows[at + 1];
+    expect(
+      next.kind === "step" && next.step.kind === "tool" && next.step.call?.id,
+    ).toBe("c2");
+  });
+
+  it("锚在文本上：跨消息数文本块；落在最终回复里的排在回复正前面", () => {
+    const [turn, second] = buildTurns(session(), {
+      pinnedChapters: [
+        {
+          id: "uch-note",
+          title: "过程里的说明",
+          anchor: { kind: "text", messageIds: ["a1", "a2"], textIndex: 0 },
+        },
+        {
+          id: "uch-final",
+          title: "结论",
+          anchor: { kind: "text", messageIds: ["a3"], textIndex: 1 },
+        },
+        {
+          id: "uch-next",
+          title: "下一轮",
+          anchor: { kind: "text", messageIds: ["a4"], textIndex: 0 },
+        },
+      ],
+    });
+    const byTitle = (title: string) =>
+      turn.chapters.find((chapter) => chapter.title === title);
+    // 「先看文档」是第 2 个步骤（前面是 thinking）
+    expect(byTitle("过程里的说明")?.beforeStepId).toBe(turn.steps[1].id);
+    expect(byTitle("结论")?.beforeStepId).toBeUndefined();
+    expect(second.chapters.map((chapter) => chapter.title)).toEqual(["下一轮"]);
+    // 收起时章节也在：排在执行过程摘要行之前
+    expect(
+      rowKinds(flattenRows([turn])).filter((kind) => kind === "chapter"),
+    ).toHaveLength(2);
+  });
+
+  it("文本块数不到时退到那条消息开头；同一章节只放一次；没匹配的不显示", () => {
+    const messages = session();
+    // 同一次调用被重复写了一遍
+    messages.splice(
+      3,
+      0,
+      msg("assistant", [call("c1")], { turnId: "t1", id: "a2b" }),
+    );
+    const [turn] = buildTurns(messages, {
+      pinnedChapters: [
+        {
+          id: "uch-far",
+          title: "数不到",
+          anchor: { kind: "text", messageIds: ["a2"], textIndex: 3 },
+        },
+        {
+          id: "uch-dup",
+          title: "重复",
+          anchor: { kind: "tool", callId: "c1" },
+        },
+        {
+          id: "uch-miss",
+          title: "别的会话",
+          anchor: { kind: "tool", callId: "zz" },
+        },
+      ],
+    });
+    expect(turn.chapters.map((chapter) => chapter.title).sort()).toEqual(
+      ["数不到", "重复"].sort(),
+    );
+    const far = turn.chapters.find((chapter) => chapter.title === "数不到");
+    expect(far?.beforeStepId).toBe(turn.steps[2].id);
+  });
+
+  it("和模型章节并存，搜索能命中", () => {
+    const turns = buildTurns(
+      [
+        msg("user", [text("问")], { turnId: "t1" }),
+        msg(
+          "assistant",
+          [
+            call("ch", "mcp", {
+              rawName: "mcp__ccd_session__mark_chapter",
+              server: "ccd_session",
+              title: "模型章节",
+            }),
+            call("c1"),
+          ],
+          { turnId: "t1" },
+        ),
+        msg("tool", [result("ch"), result("c1")], { turnId: "t1" }),
+      ],
+      {
+        pinnedChapters: [
+          {
+            id: "uch-1",
+            title: "手动章节",
+            anchor: { kind: "tool", callId: "c1" },
+          },
+        ],
+      },
+    );
+    expect(
+      turns[0].chapters.map(({ title, source }) => [title, source]),
+    ).toEqual([
+      ["模型章节", undefined],
+      ["手动章节", "user"],
+    ]);
+    expect(
+      findSearchHits(turns, "手动")?.matches.map((match) => match.target),
+    ).toEqual(["chapter"]);
   });
 });

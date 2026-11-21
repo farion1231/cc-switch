@@ -778,6 +778,19 @@ export interface MessageMeta {
   stopReason?: string;
 }
 
+/** Claude Code desktop 里用户手动 pin 的章节锚在哪 */
+export type DesktopChapterAnchor =
+  | { kind: "tool"; callId: string }
+  /** 同一条 API 消息的各行 id；在这些消息里顺着数第 textIndex 个文本块 */
+  | { kind: "text"; messageIds: string[]; textIndex: number };
+
+/** get_session_desktop_chapters 的返回：这个会话里用户在桌面端 pin 的章节 */
+export interface DesktopChapter {
+  id: string;
+  title: string;
+  anchor: DesktopChapterAnchor;
+}
+
 export interface SessionMessage {
   role: string;
   /**
