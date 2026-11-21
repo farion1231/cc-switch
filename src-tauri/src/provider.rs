@@ -754,6 +754,13 @@ impl ProviderMeta {
     /// 解析指定托管认证供应商绑定的账号 ID。
     ///
     /// 新版优先读取 authBinding，旧版继续兼容 githubAccountId。
+    pub(crate) fn has_managed_account_binding(&self, auth_provider: &str) -> bool {
+        self.auth_binding.as_ref().is_some_and(|binding| {
+            binding.source == AuthBindingSource::ManagedAccount
+                && binding.auth_provider.as_deref() == Some(auth_provider)
+        })
+    }
+
     pub fn managed_account_id_for(&self, auth_provider: &str) -> Option<String> {
         if let Some(binding) = self.auth_binding.as_ref() {
             if binding.source == AuthBindingSource::ManagedAccount

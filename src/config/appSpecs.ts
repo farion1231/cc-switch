@@ -211,7 +211,7 @@ export const APP_SPECS = {
     mcp: true,
     prompts: true,
     plugins: false,
-    managedAccount: false,
+    managedAccount: true,
     piFamily: false,
     editorView: false,
     officialSubscription: false,

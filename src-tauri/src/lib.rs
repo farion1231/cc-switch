@@ -1625,6 +1625,7 @@ pub fn run() {
             // subscription quota
             commands::get_subscription_quota,
             commands::get_codex_oauth_quota,
+            commands::get_dsh_codex_quota,
             commands::get_codex_oauth_models,
             commands::get_xai_oauth_models,
             commands::get_xai_oauth_quota,
@@ -1907,6 +1908,9 @@ pub fn run() {
             commands::get_claude_login_switch,
             commands::kimi_oauth_status,
             commands::dsh_account_status,
+            commands::dsh_codex_account,
+            commands::dsh_codex_bind,
+            commands::dsh_codex_usage_update,
             commands::dsh_account_sign_out,
             commands::dsh_account_login_start,
             commands::dsh_account_login_poll,

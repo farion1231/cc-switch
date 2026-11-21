@@ -28,6 +28,7 @@ import { ClaudeBoundAccountLine } from "@/components/providers/forms/ClaudeOffic
 import ClaudeAccountQuotaFooter from "@/components/ClaudeAccountQuotaFooter";
 import { claudePlanLabel } from "@/lib/claudePlan";
 import {
+  codexOauthQuotaKey,
   subscriptionKeys,
   useClaudeDefaultPlan,
 } from "@/lib/query/subscription";
@@ -47,6 +48,8 @@ import {
 import {
   canSwitchAgyAccount,
   resolveManagedAccountId,
+  resolveDshCodexAccountId,
+  isDshCodexOAuthRoute,
 } from "@/lib/authBinding";
 import {
   isOfficialAccount,
@@ -237,10 +240,14 @@ export function ProviderCard({
   const { t } = useTranslation();
   const codexOfficialIdentity = resolveCodexOfficialIdentity(appId, provider);
   const isBoundCodexOfficial = codexOfficialIdentity === "managed_account";
+  const dshCodexAccountId = resolveDshCodexAccountId(appId, provider);
+  const hasManagedCodexQuota =
+    isBoundCodexOfficial || Boolean(dshCodexAccountId);
   const isCodexOauth =
-    appId === "codex"
+    Boolean(dshCodexAccountId) ||
+    (appId === "codex"
       ? isBoundCodexOfficial
-      : provider.meta?.providerType === PROVIDER_TYPES.CODEX_OAUTH;
+      : provider.meta?.providerType === PROVIDER_TYPES.CODEX_OAUTH);
   const managedCodexAccountId = resolveManagedAccountId(
     provider.meta,
     "codex_oauth",
@@ -312,9 +319,10 @@ export function ProviderCard({
   // 绑了账号的官方卡（Codex / Claude）默认查额度，和 Kimi、agy 的账号卡一样
   const usageEnabled =
     provider.meta?.usage_script?.enabled ??
-    (isBoundCodexOfficial || Boolean(claudeBoundAccountId));
+    (hasManagedCodexQuota || Boolean(claudeBoundAccountId));
   const supportsOfficialSubscription =
-    isOfficial && appHas(appId, "officialSubscription");
+    Boolean(dshCodexAccountId) ||
+    (isOfficial && appHas(appId, "officialSubscription"));
   const isOfficialSubscriptionUsage =
     provider.meta?.usage_script?.templateType ===
     TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION;
@@ -388,15 +396,11 @@ export function ProviderCard({
           "default",
       ]
     : isCodexOauth
-      ? !isBoundCodexOfficial || usageEnabled
-        ? [
-            "codex_oauth",
-            "quota",
-            resolveManagedAccountId(
-              provider.meta,
-              PROVIDER_TYPES.CODEX_OAUTH,
-            ) ?? "default",
-          ]
+      ? !hasManagedCodexQuota || usageEnabled
+        ? codexOauthQuotaKey(
+            dshCodexAccountId ?? managedCodexAccountId ?? null,
+            Boolean(dshCodexAccountId),
+          )
         : null
       : isXaiOauth
         ? [
@@ -427,7 +431,10 @@ export function ProviderCard({
   // 脚本用量只在「已启用 + 非官方 + 非官方订阅模板」时才查询；展开判定必须复用同一谓词，
   // 因为禁用的 React Query observer 仍会返回同 key 的旧缓存。
   const scriptUsageActive =
-    usageEnabled && !isOfficial && !isOfficialSubscriptionUsage;
+    usageEnabled &&
+    !dshCodexAccountId &&
+    !isOfficial &&
+    !isOfficialSubscriptionUsage;
   const { data: usage } = useUsageQuery(provider.id, appId, {
     enabled: scriptUsageActive,
     autoQueryInterval,
@@ -685,13 +692,14 @@ export function ProviderCard({
                   isCurrent={isCurrent}
                 />
               ) : isCodexOauth ? (
-                !isBoundCodexOfficial || usageEnabled ? (
+                !hasManagedCodexQuota || usageEnabled ? (
                   <CodexOauthQuotaFooter
                     meta={provider.meta}
+                    useDsh={Boolean(dshCodexAccountId)}
                     inline={true}
-                    isCurrent={isCurrent}
+                    isCurrent={isCurrent || Boolean(dshCodexAccountId)}
                     autoQueryInterval={
-                      isBoundCodexOfficial
+                      hasManagedCodexQuota
                         ? (provider.meta?.usage_script?.autoQueryInterval ?? 5)
                         : undefined
                     }
@@ -790,7 +798,9 @@ export function ProviderCard({
             onEdit={() => onEdit(provider)}
             onDelete={() => onDelete(provider)}
             onDuplicate={
-              onDuplicate && !(appId === "kimi" && isOfficial)
+              onDuplicate &&
+              !(appId === "kimi" && isOfficial) &&
+              !isDshCodexOAuthRoute(appId, provider.id, provider.settingsConfig)
                 ? () => onDuplicate(provider)
                 : undefined
             }
@@ -805,7 +815,7 @@ export function ProviderCard({
                 !supportsOfficialSubscription &&
                 !isCopilotCliOfficial) ||
               isCopilot ||
-              (isCodexOauth && !isBoundCodexOfficial) ||
+              (isCodexOauth && !hasManagedCodexQuota) ||
               isXaiOauth
                 ? undefined
                 : () => onConfigureUsage(provider)
