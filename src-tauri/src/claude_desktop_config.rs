@@ -28,7 +28,7 @@ const CONFIG_FILE: &str = "claude_desktop_config.json";
 const CONFIG_LIBRARY_DIR: &str = "configLibrary";
 const GATEWAY_TOKEN_SETTING_KEY: &str = "claude_desktop_gateway_token";
 const CLAUDE_DESKTOP_PROXY_PREFIX: &str = "/claude-desktop";
-pub const DEFAULT_CREATED_AT: &str = "2024-01-01T00:00:00Z";
+const DEFAULT_CREATED_AT: &str = "2024-01-01T00:00:00Z";
 /// `inferenceModels` 的上限（Desktop 的 schema 写着 `maxItems: 200`）。
 const MAX_INFERENCE_MODELS: usize = 200;
 const MIMO_REDACTED_THINKING_PLACEHOLDER: &str = "[redacted thinking]";
@@ -135,6 +135,7 @@ struct InferenceModelSpec {
     name: String,
     label_override: Option<String>,
     supports_1m: bool,
+    description: Option<String>,
 }
 
 /// 直连模式下把 `provider` 写进 Desktop 的配置（同步、编辑当前那家）。模型映射卡要经路由，
@@ -649,6 +650,7 @@ fn direct_inference_model_specs(provider: &Provider) -> Result<Vec<InferenceMode
                 .filter(|value| !value.is_empty())
                 .map(str::to_string),
             supports_1m,
+            description: None,
         });
     }
 
@@ -840,11 +842,7 @@ const MAX_MODEL_DESCRIPTION_CHARS: usize = 100;
 /// 本地 `/v1/models` 给 Desktop 的模型说明。没有说明时 Desktop 按 id 里的档位词显示
 /// Anthropic 写死的那句（`claude-fable-*` 一律是 Fable 的），映射到别家模型就名不副实；
 /// 上游就是 Claude 模型也看不出走的是哪家。所以一律写 `<供应商名> · <上游模型名> · <窗口>`。
-pub fn discovered_model_description(
-    provider_name: &str,
-    upstream: &str,
-    supports_1m: bool,
-) -> String {
+fn discovered_model_description(provider_name: &str, upstream: &str, supports_1m: bool) -> String {
     let window = if supports_1m { 1_000_000 } else { 0 };
     crate::mode::stack::provider_model_description(provider_name, upstream, window)
         .chars()
@@ -852,53 +850,76 @@ pub fn discovered_model_description(
         .collect()
 }
 
-pub fn model_list_response(provider: &Provider) -> Result<Value, AppError> {
-    let routes = proxy_model_routes(provider)?;
-    let data: Vec<Value> = routes
-        .iter()
-        .map(|route| {
-            let model_id = route.route_id.clone();
+fn model_list_response(models: impl IntoIterator<Item = InferenceModelSpec>) -> Value {
+    let data: Vec<Value> = models
+        .into_iter()
+        .map(|model| {
             let mut item = json!({
                 "type": "model",
-                "id": model_id,
+                "id": model.name,
                 "created_at": DEFAULT_CREATED_AT,
             });
-            if route.supports_1m {
+            if model.supports_1m {
                 item["supports1m"] = json!(true);
             }
-            item["description"] = json!(discovered_model_description(
-                &provider.name,
-                &route.upstream_model,
-                route.supports_1m,
-            ));
+            if let Some(label) = model.label_override {
+                item["display_name"] = json!(label);
+            }
+            if let Some(description) = model.description {
+                item["description"] = json!(description);
+            }
             item
         })
         .collect();
-    let first_id = data
-        .first()
-        .and_then(|item| item.get("id"))
-        .and_then(Value::as_str)
-        .map(str::to_string);
-    let last_id = data
-        .last()
-        .and_then(|item| item.get("id"))
-        .and_then(Value::as_str)
-        .map(str::to_string);
+    let first_id = data.first().map(|item| item["id"].clone());
+    let last_id = data.last().map(|item| item["id"].clone());
 
-    Ok(json!({
+    json!({
         "data": data,
         "has_more": false,
         "first_id": first_id,
         "last_id": last_id,
+    })
+}
+
+/// 模型发现读取上次写给 Desktop 的列表。自动故障转移只更新实时路由指针。
+pub(crate) fn published_model_list() -> Result<Option<Value>, AppError> {
+    let mode = state::mode_state(&DeviceStore::for_device(), AppType::ClaudeDesktop.as_str())?;
+    if !mode.is_proxy() || !mode.attached {
+        return Ok(None);
+    }
+    if let Some(models) = mode.contract.and_then(|contract| contract.desktop_models) {
+        return Ok(Some(models));
+    }
+
+    // 旧版没有保存发现数据，从已经发布的 profile 恢复列表和标签。
+    let profile = read_json_or_empty(&current_platform_paths()?.profile_path)?;
+    Ok(profile["inferenceModels"].as_array().map(|models| {
+        model_list_response(models.iter().filter_map(|item| {
+            let name = item.as_str().or_else(|| item["name"].as_str())?;
+            Some(InferenceModelSpec {
+                name: name.to_string(),
+                label_override: item["labelOverride"].as_str().map(str::to_string),
+                supports_1m: item["supports1m"].as_bool().unwrap_or(false),
+                description: None,
+            })
+        }))
     }))
 }
 
 pub fn map_proxy_request_model(mut body: Value, provider: &Provider) -> Result<Value, AppError> {
+    let upstream_model = proxy_request_upstream_model(&body, provider)?;
+    body["model"] = json!(upstream_model);
+    Ok(normalize_upstream_request(body, provider))
+}
+
+/// 这家能不能接这个请求的模型：只查映射，不改请求体。故障转移换家前先问一遍，查不到的那家
+/// 跳过（Desktop 发来的是进入路由时那家的模型名，别家的映射表不一定有）。
+pub fn proxy_request_upstream_model(body: &Value, provider: &Provider) -> Result<String, AppError> {
     let requested_raw = body
         .get("model")
         .and_then(Value::as_str)
         .map(str::trim)
-        .map(str::to_string)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| {
             AppError::localized(
@@ -907,15 +928,14 @@ pub fn map_proxy_request_model(mut body: Value, provider: &Provider) -> Result<V
                 "Claude Desktop request is missing the model field",
             )
         })?;
-    let requested = strip_one_m_suffix_for_route_lookup(&requested_raw);
+    let requested = strip_one_m_suffix_for_route_lookup(requested_raw);
 
     let routes = proxy_model_routes(provider)?;
     // 默认列表只提供进入路由时的角色菜单，不把原生的日期后缀或版本别名改成默认 ID。
     if uses_default_proxy_routes(provider) && is_claude_safe_model_id(requested) {
-        body["model"] = json!(requested);
-        return Ok(normalize_upstream_request(body, provider));
+        return Ok(requested.to_string());
     }
-    let upstream_model = routes
+    routes
         .iter()
         .find(|r| r.route_id == requested)
         .or_else(|| {
@@ -959,10 +979,7 @@ pub fn map_proxy_request_model(mut body: Value, provider: &Provider) -> Result<V
                 format!("Claude Desktop 模型路由未配置: {requested_raw}"),
                 format!("Claude Desktop model route is not configured: {requested_raw}"),
             )
-        })?;
-
-    body["model"] = json!(upstream_model);
-    Ok(normalize_upstream_request(body, provider))
+        })
 }
 
 /// 请求体的 `model` 已经是上游名（路由映射过，或聚合模型直接解出了上游名）之后，按上游的
@@ -1192,22 +1209,26 @@ pub fn gateway_base_url(proxy_url: &str) -> String {
     )
 }
 
-/// 路由模式的网关 profile：指向本地路由、带 gateway token，模型列表是路由那家的模型表
-/// （模型映射卡的映射表，直连卡的模型列表）。换路由那家，模型列表跟着变，要重写文件、
-/// 重启 Desktop。
-///
+/// 同一次发布写入 Desktop profile 的网关配置和供模型发现读取的数据。
+#[derive(Debug)]
+pub(crate) struct RoutePublication {
+    pub profile: Value,
+    pub models: Value,
+}
+
+/// 路由 profile 指向本地网关，模型列表来自写入时的路由供应商。
 /// 聚合模式下 `stack` 是其他几家发布的模型，排在路由那家后面（第一项是默认模型，仍是路由
 /// 那家的）。Desktop 最多收 200 条，多出的不写。
 ///
 /// 模型发现显式打开：只要有 `inferenceModels`，Desktop 就只用这份列表，发现到的条目只补
 /// 名字和说明，不会多出模型；不写这个开关时有列表就跳过发现，本地 `/v1/models` 给的说明
 /// 就用不上（见 [`discovered_model_description`]）。
-pub fn route_profile(
+pub(crate) fn route_publication(
     db: &Database,
     route: &Provider,
     proxy_url: &str,
     stack: &[DesktopStackModel],
-) -> Result<Value, AppError> {
+) -> Result<RoutePublication, AppError> {
     if is_official_provider(route) {
         return Err(AppError::localized(
             "claude_desktop.provider.official_not_routable",
@@ -1218,15 +1239,25 @@ pub fn route_profile(
     validate_proxy_provider(route)?;
     let mut model_specs = proxy_model_routes(route)?
         .into_iter()
-        .map(|route| InferenceModelSpec {
-            name: route.route_id,
-            label_override: route.label_override,
-            supports_1m: route.supports_1m,
+        .map(|model| InferenceModelSpec {
+            name: model.route_id,
+            label_override: model.label_override,
+            supports_1m: model.supports_1m,
+            description: Some(discovered_model_description(
+                &route.name,
+                &model.upstream_model,
+                model.supports_1m,
+            )),
         })
         .chain(stack.iter().map(|model| InferenceModelSpec {
             name: model.id.clone(),
             label_override: Some(model.label.clone()),
             supports_1m: model.supports_1m,
+            description: Some(discovered_model_description(
+                &model.provider_name,
+                &model.upstream,
+                model.supports_1m,
+            )),
         }))
         .collect::<Vec<_>>();
     if model_specs.len() > MAX_INFERENCE_MODELS {
@@ -1242,7 +1273,10 @@ pub fn route_profile(
         Some(model_specs.as_slice()),
     );
     profile["modelDiscoveryEnabled"] = json!(true);
-    Ok(profile)
+    Ok(RoutePublication {
+        profile,
+        models: model_list_response(model_specs),
+    })
 }
 
 fn write_profile_at_paths(
@@ -1726,7 +1760,7 @@ mod tests {
             let origin = gateway
                 .strip_suffix(CLAUDE_DESKTOP_PROXY_PREFIX)
                 .unwrap_or(&gateway);
-            Some(route_profile(db, provider, origin, &[])?)
+            Some(route_publication(db, provider, origin, &[])?.profile)
         } else {
             Some(direct_profile(provider)?)
         };
@@ -2149,8 +2183,9 @@ mod tests {
             }
             let before = serde_json::to_value(&provider).expect("provider snapshot");
             let db = test_db();
-            let profile = route_profile(&db, &provider, "http://127.0.0.1:15721", &[])
-                .expect("native provider should not need a pre-existing mapping");
+            let RoutePublication { profile, models } =
+                route_publication(&db, &provider, "http://127.0.0.1:15721", &[])
+                    .expect("native provider should not need a pre-existing mapping");
 
             assert_eq!(
                 profile["inferenceGatewayBaseUrl"],
@@ -2165,7 +2200,6 @@ mod tests {
                     "claude-haiku-4-5"
                 ])
             );
-            let models = model_list_response(&provider).expect("local model discovery");
             configured_proxy_model_routes(&provider)
                 .expect_err("bootstrap defaults must not become a configured catalog");
             assert_eq!(models["data"].as_array().expect("models").len(), 4);
@@ -2237,7 +2271,7 @@ mod tests {
 
         let error = validate_proxy_provider(&provider).expect_err("mapping is required");
         assert!(error.to_string().contains("至少需要一个模型路由映射"));
-        route_profile(&test_db(), &provider, "http://127.0.0.1:15721", &[])
+        route_publication(&test_db(), &provider, "http://127.0.0.1:15721", &[])
             .expect_err("an empty mapping must not silently become native defaults");
     }
 
@@ -2318,7 +2352,9 @@ mod tests {
         .expect("map route");
         assert_eq!(mapped["model"], json!("kimi-k2"));
 
-        let models = model_list_response(&provider).expect("model list");
+        let models = route_publication(&test_db(), &provider, "http://127.0.0.1:15721", &[])
+            .expect("model list")
+            .models;
         assert_eq!(models["data"][0]["id"], json!("claude-sonnet-4-6"));
         assert_eq!(models["data"][0]["supports1m"], json!(true));
         // 不带说明 Desktop 会按 id 里的 sonnet 显示 Anthropic 的那句。
@@ -2397,7 +2433,9 @@ mod tests {
                 "claude-haiku-5-5"
             ]
         );
-        let models = model_list_response(&provider).expect("model list");
+        let models = route_publication(&test_db(), &provider, "http://127.0.0.1:15721", &[])
+            .expect("model list")
+            .models;
         assert_eq!(models["data"][1]["id"], json!("claude-opus-5-5"));
         // 上游就是 Claude 模型的留给 Desktop 自己说明，别家模型换成真正的模型名。
         assert_eq!(

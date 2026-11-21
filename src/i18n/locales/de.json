@@ -332,6 +332,8 @@
     "statusMissingRouteMappings": "Der geroutete Anbieter hat keine gültige Modellzuordnung. Bearbeiten Sie ihn und fügen Sie mindestens eine Zuordnung hinzu.",
     "statusGatewayTokenMissing": "Das lokale Routing-Token wurde noch nicht erzeugt. Beim erneuten Wechsel zu diesem Anbieter wird ein neues lokales Token geschrieben.",
     "statusBaseUrlMismatch": "Das Claude-Desktop-Profil verweist auf eine andere URL als der aktuelle Anbieter. Aktuell: {{actual}}; erwartet: {{expected}}. Wechseln Sie erneut zum aktuellen Anbieter, um es zu reparieren.",
+    "failoverTitle": "Failover ist aktiv",
+    "failoverNote": "Nach einem automatischen Anbieterwechsel zeigt Claude Desktop weiterhin die veröffentlichte Modellliste an. Anfragen verwenden die Modellzuordnung des neuen Anbieters. Anbieter ohne passendes Modell werden übersprungen.",
     "route": {
       "tooltip": {
         "active": "Das lokale Routing von Claude Desktop läuft – {{address}}:{{port}}",

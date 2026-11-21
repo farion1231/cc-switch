@@ -35,6 +35,7 @@ pub fn claude(projection: &ClaudeProjection) -> Contract {
         version: CONTRACT_VERSION,
         key: key_of(&parts),
         exclusive: projection.exclusive.clone(),
+        desktop_models: None,
     }
 }
 
@@ -48,6 +49,7 @@ pub fn gemini(projection: &GeminiProjection) -> Contract {
             "projection": projection.to_value(),
         })),
         exclusive: Map::new(),
+        desktop_models: None,
     }
 }
 
@@ -62,12 +64,13 @@ pub fn grok(projection: &GrokProjection) -> Contract {
             "projection": projection.to_value(),
         })),
         exclusive: Map::new(),
+        desktop_models: None,
     }
 }
 
 /// Claude Desktop：路由模式写进 profile 的网关设置（本地路由地址、gateway token、路由那家的
 /// 模型列表）。模型列表跟着路由那家变，换路由时多半要重写文件、重启 Desktop。
-pub fn claude_desktop(profile: &Value) -> Contract {
+pub fn claude_desktop(profile: &Value, models: Value) -> Contract {
     Contract {
         version: CONTRACT_VERSION,
         key: key_of(&json!({
@@ -76,6 +79,7 @@ pub fn claude_desktop(profile: &Value) -> Contract {
             "profile": profile,
         })),
         exclusive: Map::new(),
+        desktop_models: Some(models),
     }
 }
 

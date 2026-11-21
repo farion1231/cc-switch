@@ -332,6 +332,8 @@
     "statusMissingRouteMappings": "The routed provider has no valid model mapping. Edit it and add at least one mapping.",
     "statusGatewayTokenMissing": "The local routing token has not been generated yet. Switching to this provider again will write a new local token.",
     "statusBaseUrlMismatch": "The Claude Desktop profile points to a different URL than the current provider. Current: {{actual}}; expected: {{expected}}. Switch to the current provider again to repair it.",
+    "failoverTitle": "Failover is on",
+    "failoverNote": "After automatic failover, Claude Desktop keeps its published model list. Requests use the new provider's model mapping, and providers without a matching model are skipped.",
     "route": {
       "tooltip": {
         "active": "Claude Desktop local routing is running - {{address}}:{{port}}",

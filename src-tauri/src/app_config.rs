@@ -341,10 +341,10 @@ pub struct AppSpec {
     /// GitHub Copilot CLI 是混合的：自带模型卡累加式写进 `providers.json`，官方登录卡仍是
     /// 启动式（只打开终端、不写文件，启动时照旧从 settings.json 导入）。
     pub additive: bool,
-    /// 有完整的本地路由和故障转移（`proxy_config` 行）
+    /// 有完整的本地路由和故障转移（应用级配置：`proxy_config` 行；Claude Desktop 的那一份表的
+    /// CHECK 不收，存在 `settings` 表里，见 `database::dao::proxy`）
     pub local_proxy: bool,
-    /// 有设备级的直连 / 路由模式（`live-state.json`，`mode::controller`）。Claude Desktop 经
-    /// 同一个路由服务转发，但没有 `proxy_config` 行、不做故障转移，所以只有这一项。
+    /// 有设备级的直连 / 路由模式（`live-state.json`，`mode::controller`）
     pub route_mode: bool,
     /// 支持 Stack 模式（`mode::stack`）
     pub stack: bool,
@@ -364,7 +364,7 @@ impl AppType {
             AppType::ClaudeDesktop => AppSpec {
                 id: "claude-desktop",
                 additive: false,
-                local_proxy: false,
+                local_proxy: true,
                 route_mode: true,
                 stack: true,
             },

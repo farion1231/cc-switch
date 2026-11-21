@@ -47,6 +47,7 @@ type SourceState = Record<AppIdWith<"localProxy">, PricingModelSource>;
 
 const DEFAULT_SOURCES: SourceState = {
   claude: "response",
+  "claude-desktop": "response",
   codex: "response",
   gemini: "response",
   grokbuild: "response",

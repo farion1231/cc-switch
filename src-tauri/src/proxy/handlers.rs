@@ -315,44 +315,10 @@ pub async fn handle_claude_desktop_models(
     headers: axum::http::HeaderMap,
 ) -> Result<Json<Value>, ProxyError> {
     validate_claude_desktop_gateway_auth(&state, &headers)?;
-    let providers = state
-        .provider_router
-        .select_providers(&AppType::ClaudeDesktop)
-        .await
-        .map_err(|e| ProxyError::DatabaseError(e.to_string()))?;
-    let provider = providers.first().ok_or(ProxyError::NoAvailableProvider)?;
-    let mut response = crate::claude_desktop_config::model_list_response(provider)
-        .map_err(|e| ProxyError::ConfigError(e.to_string()))?;
-    // 聚合的模型 Desktop 只从 profile 里拿，这里补上是为了带上说明，两边也一致
-    let stacked = crate::mode::stack::desktop_published_now(&state.db).unwrap_or_else(|error| {
-        log::warn!("[Claude Desktop] 读取聚合模型失败，只返回路由那家的: {error}");
-        Vec::new()
-    });
-    if let Some(data) = response.get_mut("data").and_then(Value::as_array_mut) {
-        data.extend(stacked.into_iter().map(|model| {
-            let mut item = json!({
-                "type": "model",
-                "id": model.id,
-                "display_name": model.label,
-                "created_at": crate::claude_desktop_config::DEFAULT_CREATED_AT,
-            });
-            if model.supports_1m {
-                item["supports1m"] = json!(true);
-            }
-            item["description"] =
-                json!(crate::claude_desktop_config::discovered_model_description(
-                    &model.provider_name,
-                    &model.upstream,
-                    model.supports_1m,
-                ));
-            item
-        }));
-        let last_id = data.last().and_then(|item| item.get("id")).cloned();
-        if let Some(last_id) = last_id {
-            response["last_id"] = last_id;
-        }
-    }
-    Ok(Json(response))
+    crate::claude_desktop_config::published_model_list()
+        .map_err(|e| ProxyError::ConfigError(e.to_string()))?
+        .map(Json)
+        .ok_or(ProxyError::NoAvailableProvider)
 }
 
 async fn handle_messages_for_app(

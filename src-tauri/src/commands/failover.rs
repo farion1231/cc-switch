@@ -3,7 +3,7 @@
 //! 管理代理模式下的故障转移队列（基于 providers 表的 in_failover_queue 字段）
 
 use crate::app_config::AppType;
-use crate::database::FailoverQueueItem;
+use crate::database::{Database, FailoverQueueItem};
 use crate::provider::Provider;
 use crate::store::AppState;
 use std::str::FromStr;
@@ -18,7 +18,7 @@ fn require_failover_app(app_type: &str) -> Result<AppType, String> {
 }
 
 fn require_failover_provider(
-    db: &crate::database::Database,
+    db: &Database,
     app_type: &AppType,
     provider_id: &str,
 ) -> Result<Provider, String> {
@@ -27,14 +27,41 @@ fn require_failover_provider(
         .map_err(|error| error.to_string())?
         .ok_or_else(|| format!("供应商不存在: {provider_id}"))?;
     if !crate::proxy::provider_router::provider_supports_failover(app_type, &provider) {
-        return Err("Codex Official 账号卡不支持自动故障转移".to_string());
+        return Err(if *app_type == crate::app_config::AppType::ClaudeDesktop {
+            "Claude Desktop 官方账号不经过本地路由，不支持自动故障转移 (The Claude Desktop official account does not go through local routing and cannot join failover)"
+                .to_string()
+        } else {
+            "Codex Official 账号卡不支持自动故障转移".to_string()
+        });
+    }
+    // Claude Desktop 换到这家时要按它的模型映射改写请求：缺地址、缺 Key 或映射表解析不了的卡
+    // 转移过去也发不出请求，入队时就拒绝。
+    if *app_type == crate::app_config::AppType::ClaudeDesktop {
+        crate::claude_desktop_config::validate_proxy_provider(&provider)
+            .map_err(|error| error.to_string())?;
     }
     Ok(provider)
 }
 
+fn visible_failover_queue(db: &Database, app: &AppType) -> Result<Vec<FailoverQueueItem>, String> {
+    let queue = db.get_failover_queue(app)?;
+    if !matches!(app, AppType::Codex | AppType::ClaudeDesktop) {
+        return Ok(queue);
+    }
+    let providers = db.get_provider_rows(app)?.into_readable("故障转移队列");
+    Ok(queue
+        .into_iter()
+        .filter(|item| {
+            providers.get(&item.provider_id).is_some_and(|provider| {
+                crate::proxy::provider_router::provider_supports_failover(app, provider)
+            })
+        })
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{require_failover_app, require_failover_provider};
+    use super::{require_failover_app, require_failover_provider, visible_failover_queue};
     use crate::app_config::AppType;
     use crate::database::Database;
     use crate::provider::{AuthBinding, AuthBindingSource, Provider, ProviderMeta};
@@ -43,6 +70,7 @@ mod tests {
     #[test]
     fn failover_rejects_apps_without_a_proxy_data_plane() {
         assert!(require_failover_app("claude").is_ok());
+        assert!(require_failover_app("claude-desktop").is_ok());
         assert!(require_failover_app("pi").is_err());
     }
 
@@ -69,6 +97,78 @@ mod tests {
 
         assert!(require_failover_provider(&db, &AppType::Codex, &official.id).is_err());
     }
+
+    /// Claude Desktop：官方账号不经路由，不能入队；缺 Key 的卡转移过去发不出请求，也不能；
+    /// 配好地址、Key 和模型映射的卡可以。
+    #[test]
+    fn failover_checks_claude_desktop_cards_before_queueing() {
+        let db = Database::memory().expect("memory db");
+        let official = Provider::with_id(
+            "claude-desktop-official".to_string(),
+            "Claude Desktop Official".to_string(),
+            json!({}),
+            None,
+        );
+        let mapping = |id: &str, key: &str| {
+            let mut provider = Provider::with_id(
+                id.to_string(),
+                id.to_string(),
+                json!({ "env": {
+                    "ANTHROPIC_BASE_URL": "https://example.com",
+                    "ANTHROPIC_AUTH_TOKEN": key,
+                }}),
+                None,
+            );
+            provider.meta = Some(ProviderMeta {
+                claude_desktop_mode: Some(crate::provider::ClaudeDesktopMode::Proxy),
+                claude_desktop_model_routes: [(
+                    "claude-sonnet-5".to_string(),
+                    crate::provider::ClaudeDesktopModelRoute {
+                        model: "kimi-k3".to_string(),
+                        label_override: None,
+                        supports_1m: None,
+                    },
+                )]
+                .into_iter()
+                .collect(),
+                ..Default::default()
+            });
+            provider
+        };
+        let ready = mapping("ready", "sk-test");
+        let keyless = mapping("keyless", "");
+        for provider in [&official, &ready, &keyless] {
+            db.save_provider(&crate::app_config::AppType::ClaudeDesktop, provider)
+                .expect("save");
+        }
+
+        assert!(require_failover_provider(
+            &db,
+            &crate::app_config::AppType::ClaudeDesktop,
+            &official.id
+        )
+        .is_err());
+        assert!(require_failover_provider(
+            &db,
+            &crate::app_config::AppType::ClaudeDesktop,
+            &keyless.id
+        )
+        .is_err());
+        assert!(require_failover_provider(
+            &db,
+            &crate::app_config::AppType::ClaudeDesktop,
+            &ready.id
+        )
+        .is_ok());
+
+        // 手工导入的官方卡可能绕过命令层入队校验，读取时也要过滤。
+        let desktop = &AppType::ClaudeDesktop;
+        db.add_to_failover_queue(desktop, &official.id).unwrap();
+        db.add_to_failover_queue(desktop, &ready.id).unwrap();
+        let queue = visible_failover_queue(&db, desktop).unwrap();
+        assert_eq!(queue.len(), 1);
+        assert_eq!(queue[0].provider_id, ready.id);
+    }
 }
 
 #[tauri::command]
@@ -77,22 +177,7 @@ pub async fn get_failover_queue(
     app_type: String,
 ) -> Result<Vec<FailoverQueueItem>, String> {
     let app_enum = require_failover_app(&app_type)?;
-    let queue = state.db.get_failover_queue(&app_enum)?;
-    if app_enum != AppType::Codex {
-        return Ok(queue);
-    }
-    let providers = state
-        .db
-        .get_provider_rows(&app_enum)?
-        .into_readable("故障转移队列");
-    Ok(queue
-        .into_iter()
-        .filter(|item| {
-            providers.get(&item.provider_id).is_some_and(|provider| {
-                crate::proxy::provider_router::provider_supports_failover(&app_enum, provider)
-            })
-        })
-        .collect())
+    visible_failover_queue(&state.db, &app_enum)
 }
 
 /// 添加供应商到故障转移队列。托盘的故障转移子菜单只列队列成员：队列一变就重建。

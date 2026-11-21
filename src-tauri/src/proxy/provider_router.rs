@@ -21,8 +21,14 @@ pub struct ProviderPermit {
 /// Codex Official requests carry the selected account's native Authorization
 /// header. Reusing that request against another account card would cross the
 /// account boundary, so these cards must never participate in provider retry.
+///
+/// Claude Desktop 的官方账号不经过本地路由，同样不进队列。
 pub(crate) fn provider_supports_failover(app_type: &AppType, provider: &Provider) -> bool {
-    *app_type != AppType::Codex || !crate::proxy::providers::is_codex_official_provider(provider)
+    match app_type {
+        AppType::Codex => !crate::proxy::providers::is_codex_official_provider(provider),
+        AppType::ClaudeDesktop => !crate::claude_desktop_config::is_official_provider(provider),
+        _ => true,
+    }
 }
 
 /// 供应商路由器
@@ -47,7 +53,11 @@ impl ProviderRouter {
     /// 返回按优先级排序的可用供应商列表：
     /// - 故障转移关闭时：仅返回当前供应商
     /// - 故障转移开启时：仅使用故障转移队列，按队列顺序依次尝试（P1 → P2 → ...）
-    pub async fn select_providers(&self, app_type: &AppType) -> Result<Vec<Provider>, AppError> {
+    #[cfg(test)]
+    pub(crate) async fn select_providers(
+        &self,
+        app_type: &AppType,
+    ) -> Result<Vec<Provider>, AppError> {
         // 代理模式下路由到代理路由那家，和直连指针无关。
         let current_provider = crate::mode::current::provider_in_use(&self.db, app_type)
             .ok()
@@ -63,9 +73,8 @@ impl ProviderRouter {
             .await
     }
 
-    /// 同 [`Self::select_providers`]，正在用的那家由调用方给出：处理请求时上下文已经读过
-    /// 一次（要读 `live-state.json` 和这一行），不用每个请求再读一遍，两处用的也一定是
-    /// 同一家。故障转移开关也沿用本次请求已读取的配置。
+    /// 沿用本次请求已读取的供应商和故障转移开关。Desktop 保留完整队列，由转发器先检查
+    /// 模型映射再申请熔断许可，以区分模型未配置和匹配的供应商暂时不可用。
     pub async fn select_providers_with_current(
         &self,
         app_type: &AppType,
@@ -94,6 +103,11 @@ impl ProviderRouter {
                     continue;
                 }
                 total_providers += 1;
+
+                if *app_type == AppType::ClaudeDesktop {
+                    result.push(provider);
+                    continue;
+                }
 
                 let breaker = self
                     .get_or_create_circuit_breaker(app_type, &provider.id)
