@@ -3515,6 +3515,7 @@
       "skillDirNotFound": "Каталог навыка не найден: {{path}}",
       "directoryConflict": "Каталог навыка '{{directory}}' уже занят {{existing_repo}}, установить из {{new_repo}} невозможно",
       "emptyArchive": "Загруженный архив пуст",
+      "archiveInvalid": "Загруженный файл не является ZIP-архивом: возможно, этот сайт не является репозиторием GitHub / GitLab / Gitea и пока не поддерживается",
       "invalidRepoRef": "Некорректный идентификатор репозитория: {{owner}}/{{name}}",
       "archiveTooLarge": "Архив превышает лимит распаковки {{limit_mb}} МБ; операция прервана",
       "archiveDownloadTooLarge": "Загрузка архива репозитория превышает лимит {{limit_mb}} MB; прервано",

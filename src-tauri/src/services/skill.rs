@@ -4619,8 +4619,24 @@ impl SkillService {
         }
 
         let file = body.into_inner().map_err(|e| e.into_error())?;
-        let archive = zip::ZipArchive::new(file)?;
+        let archive = Self::open_downloaded_archive(file)?;
         Self::extract_repo_archive(archive, dest)
+    }
+
+    /// 打开下载到的归档。不兼容 GitHub / GitLab / Gitea 接口的站点（如 cnb.cool，#9812）
+    /// 对任何地址都回 200 的网页，拿到的不是 ZIP：报成结构化错误，让仓库显示「没有读到」
+    /// 和原因，而不是 zip 库的原文。
+    fn open_downloaded_archive<R: std::io::Read + std::io::Seek>(
+        reader: R,
+    ) -> Result<zip::ZipArchive<R>> {
+        zip::ZipArchive::new(reader).map_err(|e| {
+            log::warn!("下载到的内容不是 ZIP 归档: {e}");
+            anyhow::anyhow!(format_skill_error(
+                "ARCHIVE_INVALID",
+                &[],
+                Some("checkRepoUrl"),
+            ))
+        })
     }
 
     /// 下载停滞的结构化错误。owner / name 由分支回落那一层的 `with_repo_context` 补上。
@@ -6825,6 +6841,17 @@ mod tests {
             .expect("within budget");
         assert_eq!(writer.len(), 64);
         assert_eq!(total, 64);
+    }
+
+    #[test]
+    fn downloaded_html_page_is_reported_as_invalid_archive() {
+        let page = std::io::Cursor::new(b"<!DOCTYPE html><html><body>app</body></html>".to_vec());
+        let err = SkillService::open_downloaded_archive(page).unwrap_err();
+        let value: serde_json::Value = serde_json::from_str(&err.to_string()).unwrap();
+        assert_eq!(value["code"], "ARCHIVE_INVALID");
+        assert_eq!(value["suggestion"], "checkRepoUrl");
+        // 不是 404，不能触发换分支重试
+        assert!(!SkillService::is_branch_not_found(&err));
     }
 
     #[test]

@@ -3517,6 +3517,7 @@
       "skillDirNotFound": "스킬 디렉터리를 찾을 수 없습니다: {{path}}",
       "directoryConflict": "스킬 디렉터리 '{{directory}}' 항목을 {{existing_repo}}에서 이미 사용 중이므로 {{new_repo}}에서 설치할 수 없습니다.",
       "emptyArchive": "다운로드한 아카이브가 비어 있습니다.",
+      "archiveInvalid": "다운로드한 파일이 ZIP 아카이브가 아닙니다. 이 사이트는 GitHub / GitLab / Gitea 저장소가 아닐 수 있으며 아직 지원되지 않습니다.",
       "invalidRepoRef": "잘못된 저장소 참조: {{owner}}/{{name}}",
       "archiveTooLarge": "아카이브가 {{limit_mb}} MB 추출 제한을 초과합니다. 중단됨",
       "archiveDownloadTooLarge": "저장소 아카이브 다운로드가 {{limit_mb}} MB 제한을 초과했습니다. 중단됨",
