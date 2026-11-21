@@ -334,7 +334,8 @@ pub struct RequestLogDetail {
     pub output_tokens: u32,
     pub cache_read_tokens: u32,
     pub cache_creation_tokens: u32,
-    #[serde(default)]
+    /// Internal 1h cache-write token count for cost backfill; omitted from the UI/API payload.
+    #[serde(skip)]
     pub cache_creation_1h_tokens: u32,
     /// Internal storage semantics; omitted from the UI/API payload.
     #[serde(skip)]
@@ -8214,6 +8215,8 @@ mod tests {
             rust_decimal::Decimal::new(16, 3)
         );
         assert_eq!(pure_1h_backfilled.total_cost_usd, "0.016000");
+        let serialized = serde_json::to_value(&pure_1h_backfilled).unwrap();
+        assert!(serialized.get("cacheCreation1hTokens").is_none());
 
         // 所有用例：缺价回填结果必须与 CostCalculator 即时计价完全一致
         for (id, input, output, cache_read, cache_creation, cache_creation_1h) in cases {

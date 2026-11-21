@@ -2204,17 +2204,100 @@ mod tests {
         assert_eq!(sync_single_file(&db, &file, None)?.imported, 1);
 
         let conn = lock_conn!(db.conn);
-        let cache_creation_cost: String = conn.query_row(
-            "SELECT cache_creation_cost_usd FROM proxy_request_logs WHERE request_id = 'session:msg_1h'",
+        let (cache_creation_tokens, cache_creation_1h_tokens, cache_creation_cost): (
+            i64,
+            i64,
+            String,
+        ) = conn.query_row(
+            "SELECT cache_creation_tokens, cache_creation_1h_tokens, cache_creation_cost_usd
+             FROM proxy_request_logs WHERE request_id = 'session:msg_1h'",
             [],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )?;
+        assert_eq!(cache_creation_tokens, 1000);
+        assert_eq!(cache_creation_1h_tokens, 600);
         // claude-opus-4-8：400 × $6.25/M + 600 × $10/M = 0.0085
         assert_eq!(
             cache_creation_cost.parse::<Decimal>().unwrap(),
             Decimal::new(85, 4)
         );
         drop(conn);
+
+        fs::remove_dir_all(&tmp).ok();
+        Ok(())
+    }
+
+    #[test]
+    fn test_session_1h_cache_writes_refresh_and_backfill_at_1h_rate() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let (tmp, file) = temp_session_file();
+
+        let first_block = [
+            chain_line("user", 1, None, "2026-06-07T13:00:00.000Z"),
+            format!(
+                r#"{{"parentUuid":"{}","type":"assistant","uuid":"{}","apiBlockIndex":0,"message":{{"id":"msg_sub_1h","model":"custom-session-1h-model","usage":{{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":0,"cache_creation_input_tokens":400,"cache_creation":{{"ephemeral_5m_input_tokens":200,"ephemeral_1h_input_tokens":200}}}},"stop_reason":null}},"timestamp":"2026-06-07T13:00:02.000Z","sessionId":"session-sub-1h"}}"#,
+                chain_uuid(1),
+                chain_uuid(2)
+            ),
+        ];
+        append_lines(&file, &first_block);
+        assert_eq!(sync_with_cursor(&db, &file)?.imported, 1);
+
+        {
+            let conn = lock_conn!(db.conn);
+            let row: (i64, i64, String) = conn.query_row(
+                "SELECT cache_creation_tokens, cache_creation_1h_tokens, total_cost_usd
+                 FROM proxy_request_logs WHERE request_id = 'session:msg_sub_1h'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )?;
+            assert_eq!(row, (400, 200, "0".to_string()));
+        }
+
+        let final_block = [format!(
+            r#"{{"parentUuid":"{}","type":"assistant","uuid":"{}","apiBlockIndex":1,"message":{{"id":"msg_sub_1h","model":"custom-session-1h-model","usage":{{"input_tokens":10,"output_tokens":50,"cache_read_input_tokens":0,"cache_creation_input_tokens":1000,"cache_creation":{{"ephemeral_5m_input_tokens":400,"ephemeral_1h_input_tokens":600}}}},"stop_reason":"end_turn"}},"timestamp":"2026-06-07T13:00:30.000Z","sessionId":"session-sub-1h"}}"#,
+            chain_uuid(2),
+            chain_uuid(3)
+        )];
+        append_lines(&file, &final_block);
+        assert_eq!(sync_with_cursor(&db, &file)?.imported, 1);
+
+        {
+            let conn = lock_conn!(db.conn);
+            let row: (i64, i64, String) = conn.query_row(
+                "SELECT cache_creation_tokens, cache_creation_1h_tokens, total_cost_usd
+                 FROM proxy_request_logs WHERE request_id = 'session:msg_sub_1h'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )?;
+            assert_eq!(row, (1000, 600, "0".to_string()));
+
+            conn.execute(
+                "INSERT INTO model_pricing (
+                    model_id, display_name, input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+                ) VALUES ('custom-session-1h-model', 'Custom Session 1H', '8', '24', '0.8', '10')",
+                [],
+            )?;
+        }
+
+        assert_eq!(db.backfill_missing_usage_costs()?, 1);
+
+        {
+            let conn = lock_conn!(db.conn);
+            let (tokens_1h, cache_creation_cost): (i64, String) = conn.query_row(
+                "SELECT cache_creation_1h_tokens, cache_creation_cost_usd
+                 FROM proxy_request_logs WHERE request_id = 'session:msg_sub_1h'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
+            assert_eq!(tokens_1h, 600);
+            // 400 × $10/M + 600 × 1.6 × $10/M = 0.004 + 0.0096 = 0.0136
+            assert_eq!(
+                cache_creation_cost.parse::<Decimal>().unwrap(),
+                Decimal::new(136, 4)
+            );
+        }
 
         fs::remove_dir_all(&tmp).ok();
         Ok(())

@@ -258,7 +258,7 @@ impl Database {
             data_source TEXT NOT NULL DEFAULT 'proxy'
         )", []).map_err(|e| AppError::Database(e.to_string()))?;
 
-        // 幂等补齐 1 小时缓存创建 token 列（不修改 SCHEMA_VERSION，兼容已存在的 v26 库与 SQL 备份导入）
+        // 幂等补齐 1 小时缓存创建 token 列（不修改 SCHEMA_VERSION，兼容已存在的存量库与 SQL 备份导入）
         Self::add_column_if_missing(
             conn,
             "proxy_request_logs",
@@ -4879,7 +4879,7 @@ mod tests {
     }
 
     #[test]
-    fn existing_v26_database_gains_cache_creation_1h_tokens_idempotently() -> Result<(), AppError> {
+    fn existing_database_gains_cache_creation_1h_tokens_idempotently() -> Result<(), AppError> {
         let conn = Connection::open_in_memory()?;
         conn.execute_batch(
             "CREATE TABLE proxy_request_logs (
@@ -4894,7 +4894,7 @@ mod tests {
              );
              INSERT INTO proxy_request_logs (
                 request_id, provider_id, app_type, model, cache_creation_tokens
-             ) VALUES ('legacy-v26-row', 'p1', 'claude', 'claude-sonnet-4-6', 800);",
+             ) VALUES ('legacy-row', 'p1', 'claude', 'claude-sonnet-4-6', 800);",
         )?;
         Database::set_user_version(&conn, SCHEMA_VERSION)?;
 
@@ -4908,7 +4908,7 @@ mod tests {
             "cache_creation_1h_tokens"
         )?);
         let default_1h: i64 = conn.query_row(
-            "SELECT cache_creation_1h_tokens FROM proxy_request_logs WHERE request_id = 'legacy-v26-row'",
+            "SELECT cache_creation_1h_tokens FROM proxy_request_logs WHERE request_id = 'legacy-row'",
             [],
             |row| row.get(0),
         )?;
