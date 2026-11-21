@@ -241,17 +241,19 @@
         "oauthHint": "Google Official verwendet die persönliche OAuth-Authentifizierung; ein API-Schlüssel ist nicht nötig. Beim ersten Gebrauch öffnet sich automatisch der Browser zur Anmeldung.",
         "apiKeyPlaceholder": "Gemini-API-Schlüssel eingeben"
       },
-      "claudeAccount": {
+      "managedAccount": {
         "label": "Anmeldemethode",
+        "missing": "Konto nicht auf diesem Computer vorhanden",
+        "reauthBadge": "Erneute Anmeldung erforderlich"
+      },
+      "claudeAccount": {
         "default": "Claude-Code-Anmeldung folgen",
         "defaultDescription": "Das Konto ändert sich mit der aktuellen Claude-Code-Anmeldung",
-        "missing": "Konto nicht auf diesem Computer vorhanden",
         "manage": "Claude-Konten hinzufügen oder verwalten",
         "helpTerminal": "Der Claude-Konfigurationsordner ist in den Optionen überschrieben, daher ändert der Wechsel zu dieser Karte die Anmeldung von Claude Code nicht. Verwenden Sie „Terminal öffnen“ auf der Karte, um das ausgewählte Konto zu nutzen.",
         "helpWsl": "Der Claude-Konfigurationsordner liegt in WSL, wo Claude-Konten noch nicht unterstützt werden. Der Wechsel zu dieser Karte ändert die Anmeldung von Claude Code nicht.",
         "help": "Der Wechsel zu dieser Karte ändert die Anmeldung von Claude Code sofort auf das ausgewählte Konto, auch für bereits laufende Sitzungen. Um mehrere Konten gleichzeitig zu nutzen, verwenden Sie „Terminal öffnen“ auf der Karte.",
         "claudeAccount": "Claude-Konto",
-        "reauthBadge": "Erneute Anmeldung erforderlich",
         "terminalHint": "Über „Terminal öffnen“ nutzen",
         "wslHint": "In WSL nicht unterstützt",
         "plan": {
@@ -263,6 +265,13 @@
           "teamPremium": "Team Premium",
           "enterprise": "Enterprise"
         }
+      },
+      "grokAccount": {
+        "default": "Grok-CLI-Anmeldung folgen",
+        "defaultDescription": "Verwendet das Konto, mit dem Grok CLI angemeldet ist",
+        "manage": "xAI-Konten hinzufügen oder verwalten",
+        "help": "Wenn Sie zu dieser Karte wechseln, wird die Anmeldung von Grok CLI (~/.grok/auth.json) auf das ausgewählte Konto umgestellt. Das zuvor angemeldete Konto wird zuerst in der Kontoverwaltung gespeichert und kehrt zurück, wenn Sie zur Karte „Grok-CLI-Anmeldung folgen“ wechseln.",
+        "xaiAccount": "xAI-Konto"
       }
     },
     "duplicateLiveIdsLoadFailed": "Anbieterkennungen konnten nicht aus der Konfiguration gelesen werden. Bitte beheben Sie die Konfiguration und versuchen Sie es erneut",

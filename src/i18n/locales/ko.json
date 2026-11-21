@@ -239,17 +239,19 @@
         "oauthHint": "Google 공식은 OAuth 개인 인증을 사용하므로 API 키를 입력할 필요가 없습니다. 처음 사용할 때 로그인을 위해 브라우저가 자동으로 열립니다.",
         "apiKeyPlaceholder": "Gemini API 키를 입력하세요"
       },
-      "claudeAccount": {
+      "managedAccount": {
         "label": "로그인 방식",
+        "missing": "이 컴퓨터에 없는 계정",
+        "reauthBadge": "다시 로그인 필요"
+      },
+      "claudeAccount": {
         "default": "Claude Code에 로그인된 계정 사용",
         "defaultDescription": "Claude Code에 로그인된 계정이 바뀌면 사용하는 계정도 함께 바뀝니다",
-        "missing": "이 컴퓨터에 없는 계정",
         "manage": "Claude 계정 추가 또는 관리",
         "helpTerminal": "설정에서 Claude 설정 디렉터리를 별도로 지정했으므로 이 카드로 전환해도 Claude Code의 로그인 계정은 바뀌지 않습니다. 선택한 계정을 사용하려면 카드의 ‘터미널 열기’를 이용하세요.",
         "helpWsl": "Claude 설정 디렉터리가 WSL에 있으면 아직 Claude 계정 기능을 사용할 수 없습니다. 이 카드로 전환해도 Claude Code의 로그인 계정은 바뀌지 않습니다.",
         "help": "이 카드로 전환하면 Claude Code의 로그인 계정이 즉시 선택한 계정으로 바뀝니다. 실행 중인 세션에도 적용됩니다. 여러 계정을 동시에 사용하려면 각 카드의 ‘터미널 열기’를 이용하세요.",
         "claudeAccount": "Claude 계정",
-        "reauthBadge": "다시 로그인 필요",
         "terminalHint": "카드의 ‘터미널 열기’로 사용",
         "wslHint": "WSL에서는 아직 지원되지 않음",
         "plan": {
@@ -261,6 +263,13 @@
           "teamPremium": "Team 프리미엄 시트",
           "enterprise": "Enterprise"
         }
+      },
+      "grokAccount": {
+        "default": "Grok CLI 로그인 따르기",
+        "defaultDescription": "Grok CLI에 로그인된 계정을 사용합니다",
+        "manage": "xAI 계정 추가 또는 관리",
+        "help": "이 카드로 전환하면 Grok CLI의 로그인(~/.grok/auth.json)이 선택한 계정으로 바뀝니다. 이전에 로그인된 계정은 먼저 인증 센터에 저장되며, \"Grok CLI 로그인 따르기\" 카드로 다시 전환하면 복원됩니다.",
+        "xaiAccount": "xAI 계정"
       }
     },
     "duplicateLiveIdsLoadFailed": "설정에서 공급자 식별자를 읽지 못했습니다. 설정을 수정하고 다시 시도해 주세요.",

@@ -241,17 +241,19 @@
         "oauthHint": "Google 官方使用 OAuth 個人驗證，無需填寫 API Key。首次使用時會自動開啟瀏覽器進行登入。",
         "apiKeyPlaceholder": "請輸入 Gemini API Key"
       },
-      "claudeAccount": {
+      "managedAccount": {
         "label": "登入方式",
+        "missing": "不在這台電腦上的帳號",
+        "reauthBadge": "需要重新登入"
+      },
+      "claudeAccount": {
         "default": "跟隨 Claude Code 登入",
         "defaultDescription": "帳號會隨 Claude Code 目前登入而變更",
-        "missing": "不在這台電腦上的帳號",
         "manage": "新增或管理 Claude 帳號",
         "helpTerminal": "設定裡覆寫了 Claude 設定目錄，切到這張卡不會切換 Claude Code 的登入，請從卡片「開啟終端機」使用選取的帳號。",
         "helpWsl": "Claude 設定目錄在 WSL 裡，暫不支援 Claude 帳號，切到這張卡不會切換 Claude Code 的登入。",
         "help": "切到這張卡後，Claude Code 的登入會即時換成選取的帳號，正在執行的工作階段也一樣。想同時用幾個帳號，從卡片「開啟終端機」。",
         "claudeAccount": "Claude 帳號",
-        "reauthBadge": "需要重新登入",
         "terminalHint": "從卡片開啟終端機使用",
         "wslHint": "WSL 暫不支援",
         "plan": {
@@ -263,6 +265,13 @@
           "teamPremium": "Team 進階席位",
           "enterprise": "Enterprise"
         }
+      },
+      "grokAccount": {
+        "default": "跟隨 Grok CLI 登入",
+        "defaultDescription": "帳號會隨 Grok CLI 目前的登入變化",
+        "manage": "新增或管理 xAI 帳號",
+        "help": "切到這張卡後，Grok CLI 的登入（~/.grok/auth.json）會換成選取的帳號；原本登入的帳號會先收進授權中心，切回「跟隨 Grok CLI 登入」的卡時還原。",
+        "xaiAccount": "xAI 帳號"
       }
     },
     "duplicateLiveIdsLoadFailed": "讀取設定中的供應商識別碼失敗，請先修復設定後再試",

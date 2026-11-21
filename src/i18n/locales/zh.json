@@ -241,17 +241,19 @@
         "oauthHint": "Google 官方使用 OAuth 个人认证，无需填写 API Key。首次使用时会自动打开浏览器进行登录。",
         "apiKeyPlaceholder": "请输入 Gemini API Key"
       },
-      "claudeAccount": {
+      "managedAccount": {
         "label": "登录方式",
+        "missing": "不在这台电脑上的账号",
+        "reauthBadge": "需要重新登录"
+      },
+      "claudeAccount": {
         "default": "跟随 Claude Code 登录",
         "defaultDescription": "账号会随 Claude Code 当前登录变化",
-        "missing": "不在这台电脑上的账号",
         "manage": "添加或管理 Claude 账号",
         "helpTerminal": "设置里覆盖了 Claude 配置目录，切到这张卡不会切换 Claude Code 的登录，请从卡片「打开终端」使用选中的账号。",
         "helpWsl": "Claude 配置目录在 WSL 里，暂不支持 Claude 账号，切到这张卡不会切换 Claude Code 的登录。",
         "help": "切到这张卡后，Claude Code 的登录会实时换成选中的账号，正在运行的会话也一样。想同时用几个号，从卡片「打开终端」。",
         "claudeAccount": "Claude 账号",
-        "reauthBadge": "需要重新登录",
         "terminalHint": "从卡片打开终端使用",
         "wslHint": "WSL 暂不支持",
         "plan": {
@@ -263,6 +265,13 @@
           "teamPremium": "Team 高级席位",
           "enterprise": "Enterprise"
         }
+      },
+      "grokAccount": {
+        "default": "跟随 Grok CLI 登录",
+        "defaultDescription": "账号会随 Grok CLI 当前登录变化",
+        "manage": "添加或管理 xAI 账号",
+        "help": "切到这张卡后，Grok CLI 的登录（~/.grok/auth.json）会换成选中的账号；原来登录的号会先收进授权中心，切回「跟随 Grok CLI 登录」的卡时还原。",
+        "xaiAccount": "xAI 账号"
       }
     },
     "duplicateLiveIdsLoadFailed": "读取配置中的供应商标识失败，请先修复配置后再试",
