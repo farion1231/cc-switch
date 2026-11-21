@@ -75,8 +75,11 @@ case "${1:-}" in
         for i in $(seq 50); do [ -e /tmp/.X11-unix/X99 ] && break; sleep 0.1; done
         dbus-run-session -- node /parity/kit/internal/cli/main.ts "$@"' _ "$mode" --app /app/cc-switch ${PARITY_RUNS_FLAG:-} "${files[@]}"
     ;;
+  lint)
+    docker run --rm --network none "${no_proxy_env[@]}" -v "$REPO/parity:/parity:ro" "$IMAGE" node /parity/kit/internal/cli/lint.ts
+    ;;
   *)
-    echo "usage: $0 build|probe|cases" >&2
+    echo "usage: $0 build|probe|cases|lint" >&2
     exit 2
     ;;
 esac

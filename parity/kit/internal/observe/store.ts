@@ -37,25 +37,38 @@ export const PRIMARY_OS: Os = "linux";
  * no longer exist. Any other OS writes `<channel>.<os>.snap` only where it differs from the
  * shared file, and deletes its own file where it no longer differs.
  */
-export function writeRecording(root: string, caseId: string, observations: readonly CheckpointObservation[], os: Os): void {
+export function writeRecording(root: string, caseId: string, observations: readonly CheckpointObservation[], steps: string, os: Os): void {
   const dir = join(root, caseId);
   const dirs = observations.map((o, i) => checkpointDir(i, o.name));
   if (os === PRIMARY_OS && existsSync(dir)) {
-    for (const d of readdirSync(dir)) if (!dirs.includes(d)) rmSync(join(dir, d), { recursive: true, force: true });
+    for (const d of readdirSync(dir)) if (/^\d{2}-/.test(d) && !dirs.includes(d)) rmSync(join(dir, d), { recursive: true, force: true });
   }
+  mkdirSync(dir, { recursive: true });
+  writeVariant(dir, "steps", steps, os);
   observations.forEach((o, i) => {
     const d = join(dir, dirs[i]);
     mkdirSync(d, { recursive: true });
-    for (const [channel, text] of Object.entries(o.channels)) {
-      if (os === PRIMARY_OS) {
-        writeFileSync(join(d, `${channel}.snap`), `${text}\n`);
-        continue;
-      }
-      const shared = join(d, `${channel}.snap`);
-      const own = join(d, `${channel}.${os}.snap`);
-      const same = existsSync(shared) && readSnap(shared) === text;
-      if (same) rmSync(own, { force: true });
-      else writeFileSync(own, `${text}\n`);
-    }
+    for (const [channel, text] of Object.entries(o.channels)) writeVariant(d, channel, text, os);
   });
+}
+
+/** The primary OS writes the shared file; another OS writes its own file only where it differs. */
+function writeVariant(dir: string, name: string, text: string, os: Os): void {
+  if (os === PRIMARY_OS) {
+    writeFileSync(join(dir, `${name}.snap`), `${text}\n`);
+    return;
+  }
+  const shared = join(dir, `${name}.snap`);
+  const own = join(dir, `${name}.${os}.snap`);
+  if (existsSync(shared) && readSnap(shared) === text) rmSync(own, { force: true });
+  else writeFileSync(own, `${text}\n`);
+}
+
+/** The recorded step prints of a case for this OS, or null. */
+export function readSteps(root: string, caseId: string, os: Os): string | null {
+  for (const f of [`steps.${os}.snap`, "steps.snap"]) {
+    const p = join(root, caseId, f);
+    if (existsSync(p)) return readSnap(p);
+  }
+  return null;
 }

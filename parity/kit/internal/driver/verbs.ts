@@ -40,7 +40,10 @@ export async function settleUi(app: AppSession, timeoutMs = 15000): Promise<Tree
   throw new StepError(`the UI did not settle within ${timeoutMs} ms`, tree?.text ?? null);
 }
 
-export function makeUi(app: AppSession, steps: StepLog[], deadlineMs = 10000): Ui {
+/** Called after every acting verb has settled, with the reason when the step declared itself inert. */
+export type OnStep = (step: { verb: string; target?: string; inert?: string }) => Promise<void>;
+
+export function makeUi(app: AppSession, steps: StepLog[], onStep: OnStep, deadlineMs = 10000): Ui {
   const treeText = async () => (await app.probe<TreeResult>(TREE_CMD).catch(() => null))?.text ?? null;
 
   // Waits until the target resolves to one actionable element, still across two reads.
@@ -66,11 +69,13 @@ export function makeUi(app: AppSession, steps: StepLog[], deadlineMs = 10000): U
     throw new StepError(`${describe(spec)} is not actionable after ${deadlineMs} ms: ${why}`, await treeText());
   };
 
-  const step = async (verb: string, t: Target | undefined, act: () => Promise<void>, _opts?: Inert) => {
+  const step = async (verb: string, t: Target | string | undefined, act: () => Promise<void>, opts?: Inert) => {
     const start = Date.now();
+    const target = t === undefined ? undefined : typeof t === "string" ? t : describe(specOf(t));
     await act();
     await settleUi(app);
-    steps.push({ verb, target: t ? describe(specOf(t)) : undefined, ms: Date.now() - start });
+    await onStep({ verb: `ui.${verb}`, target, inert: opts?.inert });
+    steps.push({ verb, target, ms: Date.now() - start });
   };
 
   const waitFor = async (t: Target, want: "visible" | "gone") => {
@@ -98,7 +103,7 @@ export function makeUi(app: AppSession, steps: StepLog[], deadlineMs = 10000): U
       await app.chord(["Backspace"]);
       await app.type(r.element, text);
     }, opts),
-    press: (chord, opts) => step("press", undefined, async () => {
+    press: (chord, opts) => step("press", chord, async () => {
       await app.chord(chord.split("+").map((k) => (k === "Mod" ? app.mod : k)));
     }, opts),
     see: async (t) => {

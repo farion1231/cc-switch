@@ -4,8 +4,10 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { CaseSpec, Expect, HomePath, Journey } from "../../case.ts";
 import type { AppSession } from "../driver/app.ts";
-import { isVisible, makeUi, settleUi, StepError, type StepLog } from "../driver/verbs.ts";
-import { CHANNELS, scanHome, signatures } from "../observe/channels.ts";
+import { createHash } from "node:crypto";
+import { TREE_CMD, type TreeResult } from "../driver/probe.ts";
+import { isVisible, makeUi, settleUi, StepError, type OnStep, type StepLog } from "../driver/verbs.ts";
+import { CHANNELS, files, scanHome, signatures } from "../observe/channels.ts";
 import { Binder } from "../observe/normalise.ts";
 import type { CheckpointObservation } from "../observe/store.ts";
 
@@ -24,6 +26,8 @@ export interface HostOptions {
 export interface CaseRun {
   readonly caseId: string;
   readonly checkpoints: CheckpointObservation[];
+  /** One line per step: what it did and a print of what was observable after it. */
+  readonly prints: string[];
   /** Hand-written intent lines that failed. A recording is refused when any did. */
   readonly intentFailures: string[];
   /** The journey could not complete. */
@@ -33,6 +37,8 @@ export interface CaseRun {
   tree?: string | null;
   driverLog?: string;
 }
+
+const sha12 = (s: string) => createHash("sha256").update(s).digest("hex").slice(0, 12);
 
 function listing(path: string): string[] {
   if (!existsSync(path)) return [];
@@ -89,7 +95,7 @@ function makeExpect(home: string, app: AppSession, failures: string[]): Expect {
 
 export async function runCase(spec: CaseSpec, host: HostOptions): Promise<CaseRun> {
   if (spec.seed !== "fresh") throw new Error(`case ${spec.id}: seeds other than "fresh" are not implemented yet`);
-  const run: CaseRun = { caseId: spec.id, checkpoints: [], intentFailures: [], errors: [], steps: [], ms: 0 };
+  const run: CaseRun = { caseId: spec.id, checkpoints: [], prints: [], intentFailures: [], errors: [], steps: [], ms: 0 };
   host.reset();
   const pristine = signatures(scanHome(host.home, host.exclude));
   const before = host.sentinels.map(listing);
@@ -100,8 +106,35 @@ export async function runCase(spec: CaseSpec, host: HostOptions): Promise<CaseRu
     await app.probe({ cmd: "install" });
     await settleUi(app);
     const a = app;
+    // A print of everything observable: the normalised tree and focus, the normalised HOME, and how
+    // many announcements have appeared. An acting step whose print equals the previous one did
+    // nothing a user or the agent could see, which fails as an inert step unless it says why.
+    type Print = { tree: string; home: string; announcements: number };
+    const printNow = async (): Promise<Print> => {
+      const binder = new Binder({ startMs, endMs: Date.now() }, host.home);
+      const tree = await a.probe<TreeResult>(TREE_CMD);
+      const homeText = await files.capture({ app: a, home: host.home, binder, pristine, exclude: host.exclude });
+      return {
+        tree: sha12(binder.text(JSON.stringify([tree.text, tree.focused]))),
+        home: sha12(homeText),
+        announcements: await a.probe<number>({ cmd: "announceCount" }),
+      };
+    };
+    const line = (n: number, step: string, p: Print, target?: string, inert?: string) =>
+      `${String(n).padStart(2, "0")} ${step}${target ? ` ${target}` : ""} | tree ${p.tree} | home ${p.home} | announcements ${p.announcements}${inert ? ` | inert: ${inert}` : ""}`;
+    let prev = await printNow();
+    run.prints.push(line(0, "launch", prev));
+    const onStep: OnStep = async ({ verb, target, inert }) => {
+      const now = await printNow();
+      const n = run.prints.length;
+      run.prints.push(line(n, verb, now, target, inert));
+      const same = now.tree === prev.tree && now.home === prev.home && now.announcements === prev.announcements;
+      prev = now;
+      if (same && !inert) throw new StepError(`inert step ${n}: ${verb} ${target ?? ""} changed nothing observable`, null);
+      if (!same && inert) throw new StepError(`step ${n}: ${verb} ${target ?? ""} was declared inert ("${inert}") but changed what is observable`, null);
+    };
     const journey: Journey = {
-      ui: makeUi(a, run.steps),
+      ui: makeUi(a, run.steps, onStep),
       expect: makeExpect(host.home, a, run.intentFailures),
       async checkpoint(name) {
         if (run.checkpoints.some((c) => c.name === name)) throw new Error(`checkpoint "${name}" is used twice`);

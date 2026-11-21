@@ -13,7 +13,7 @@ import { launchLinux, launchMacos, launchWindows } from "../driver/app.ts";
 import { scanHome, signatures } from "../observe/channels.ts";
 import { runCase, type CaseRun, type HostOptions } from "../host/run.ts";
 import { firstDifference } from "../observe/compare.ts";
-import { checkpointDir, readRecording, recordedCheckpoints, writeRecording, type Os } from "../observe/store.ts";
+import { checkpointDir, readRecording, readSteps, recordedCheckpoints, writeRecording, type Os } from "../observe/store.ts";
 
 const PARITY = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 
@@ -104,6 +104,7 @@ function saveRun(out: string, run: CaseRun, label: string): void {
     mkdirSync(d, { recursive: true });
     for (const [ch, text] of Object.entries(c.channels)) writeFileSync(join(d, `${ch}.snap`), `${text}\n`);
   });
+  writeFileSync(join(dir, "steps.snap"), `${run.prints.join("\n")}\n`);
   writeFileSync(join(dir, "run.json"), JSON.stringify({ ...run, checkpoints: run.checkpoints.map((c) => c.name) }, null, 2));
 }
 
@@ -115,7 +116,9 @@ function summary(run: CaseRun): string {
 function runDifferences(a: CaseRun, b: CaseRun): string[] {
   const out: string[] = [];
   const names = (r: CaseRun) => r.checkpoints.map((c) => c.name).join(", ");
-  if (names(a) !== names(b)) return [`checkpoints differ: [${names(a)}] vs [${names(b)}]`];
+  const steps = firstDifference(a.prints.join("\n"), b.prints.join("\n"));
+  if (steps) out.push(`steps:\n${steps}`);
+  if (names(a) !== names(b)) return [...out, `checkpoints differ: [${names(a)}] vs [${names(b)}]`];
   a.checkpoints.forEach((c, i) => {
     for (const [ch, text] of Object.entries(c.channels)) {
       const d = firstDifference(text, b.checkpoints[i].channels[ch] ?? "");
@@ -162,7 +165,7 @@ async function main() {
         console.log(`${spec.id}: recording REFUSED\n${problems.join("\n")}`);
         if (runs.some((r) => r.tree)) console.log(`UI tree at the failure:\n${runs.find((r) => r.tree)?.tree}`);
       } else {
-        writeRecording(baseline, spec.id, runs[0].checkpoints, os);
+        writeRecording(baseline, spec.id, runs[0].checkpoints, runs[0].prints.join("\n"), os);
         console.log(`${spec.id}: recorded ${runs[0].checkpoints.length} checkpoints from ${runs.length} identical runs`);
       }
       report.push({ case: spec.id, mode, problems, ms: runs.map((r) => r.ms) });
@@ -172,6 +175,12 @@ async function main() {
       const problems = [...r.errors, ...r.intentFailures.map((e) => `intent: ${e}`)];
       const recorded = recordedCheckpoints(baseline, spec.id);
       if (recorded.length === 0) problems.push("no recording");
+      const wantSteps = readSteps(baseline, spec.id, os);
+      if (wantSteps === null) problems.push("no recorded step prints");
+      else {
+        const d = firstDifference(wantSteps, r.prints.join("\n"));
+        if (d) problems.push(`steps (the first differing line is the first diverging step):\n${d}`);
+      }
       const actual = r.checkpoints.map((c, i) => checkpointDir(i, c.name));
       if (recorded.length && recorded.join() !== actual.join()) problems.push(`checkpoints differ: recorded [${recorded.join(", ")}], ran [${actual.join(", ")}]`);
       r.checkpoints.forEach((c, i) => {

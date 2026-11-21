@@ -14,6 +14,7 @@ on:
       - "parity/cases/**"
       - "parity/baseline/**"
       - "parity/volatile.ts"
+      - "parity/ci/**"
       - ".github/workflows/parity-macos-probe.yml"
       - "src-tauri/**"
       - "src/**"
@@ -251,3 +252,25 @@ jobs:
             ${{ runner.temp }}/out/cases/**
             parity/baseline/**
           retention-days: 7
+
+  # Commits the recordings back to the branch when this push asked for a macOS recording.
+  # Every VM must agree. Pushes made with GITHUB_TOKEN start no new workflow runs.
+  adopt:
+    needs: cases
+    if: contains(github.event.head_commit.message, '[parity record]') || contains(github.event.head_commit.message, '[parity record macos]')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.ref_name }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: cases-macos-*
+          path: ${{ runner.temp }}/rec
+      - name: Adopt the macOS recordings
+        run: |
+          mapfile -t dirs < <(find "$RUNNER_TEMP/rec" -type d -path '*parity/baseline' | sort)
+          echo "recorded by: ${dirs[*]}"
+          parity/ci/adopt-recordings.sh macos "${dirs[@]}"

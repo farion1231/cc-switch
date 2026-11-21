@@ -8,7 +8,8 @@ export type ProbeCmd =
   | { readonly cmd: "tree"; readonly transient: readonly string[] }
   | { readonly cmd: "resolve"; readonly target: TargetSpec; readonly element?: boolean; readonly act?: boolean }
   | { readonly cmd: "install" }
-  | { readonly cmd: "announcements" };
+  | { readonly cmd: "announcements"; readonly keep?: boolean }
+  | { readonly cmd: "announceCount" };
 
 export interface TreeResult {
   readonly title: string;
@@ -288,17 +289,21 @@ export function probe(c: ProbeCmd): unknown {
   }
 
   // Toasts and live-region messages are transient, so they are logged as they appear.
-  const w = window as unknown as { __parityAnn?: string[]; __parityObs?: MutationObserver };
+  const w = window as unknown as { __parityAnn?: string[]; __parityAnnTotal?: number; __parityObs?: MutationObserver };
   if (c.cmd === "install") {
     if (w.__parityObs) return true;
     w.__parityAnn = [];
+    w.__parityAnnTotal = 0;
     const seen = new WeakSet<Element>();
     const record = (el: Element) => {
       if (seen.has(el)) return;
       seen.add(el);
       setTimeout(() => {
         const t = textOf(el);
-        if (t) w.__parityAnn!.push(t);
+        if (t) {
+          w.__parityAnn!.push(t);
+          w.__parityAnnTotal = (w.__parityAnnTotal ?? 0) + 1;
+        }
       }, 80);
     };
     const scan = (n: Node) => {
@@ -313,8 +318,10 @@ export function probe(c: ProbeCmd): unknown {
     return true;
   }
 
+  if (c.cmd === "announceCount") return w.__parityAnnTotal ?? 0;
+
   if (c.cmd === "announcements") {
-    const out = w.__parityAnn ? w.__parityAnn.splice(0) : [];
+    const out = w.__parityAnn ? (c.keep ? w.__parityAnn.slice() : w.__parityAnn.splice(0)) : [];
     return out;
   }
   return null;

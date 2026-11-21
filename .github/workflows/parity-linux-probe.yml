@@ -15,6 +15,7 @@ on:
       - "parity/cases/**"
       - "parity/baseline/**"
       - "parity/volatile.ts"
+      - "parity/ci/**"
       - ".github/workflows/parity-linux-probe.yml"
       - "src-tauri/**"
       - "src/**"
@@ -53,14 +54,28 @@ jobs:
           mkdir -p parity/.out/linux
           parity/spike/linux/lane.sh probe 2>&1 | tee parity/.out/linux/probe.log
 
-      - name: Cases (compare with the recordings, no network)
+      - name: Lint the cases and screen map
+        run: parity/spike/linux/lane.sh lint
+
+      # A push whose head commit message asks for a Linux recording records every case; any other
+      # push checks every case against the recordings.
+      - name: Cases (no network)
         if: always()
         env:
           PARITY_CACHE: ${{ runner.temp }}/parity-cache
+          RECORD: ${{ contains(github.event.head_commit.message, '[parity record]') || contains(github.event.head_commit.message, '[parity record linux]') }}
         run: |
           set -o pipefail
           mapfile -t cases < <(find parity/cases -name '*.case.ts' -not -path '*/_scratch/*' | sort)
-          parity/spike/linux/lane.sh cases check "${cases[@]}" 2>&1 | tee parity/.out/linux/cases.log
+          mode=check; [ "$RECORD" = "true" ] && mode=record
+          parity/spike/linux/lane.sh cases "$mode" "${cases[@]}" 2>&1 | tee parity/.out/linux/cases.log
+
+      - uses: actions/upload-artifact@v4
+        if: contains(github.event.head_commit.message, '[parity record]') || contains(github.event.head_commit.message, '[parity record linux]')
+        with:
+          name: recordings-linux
+          path: parity/baseline/**
+          retention-days: 7
 
       - name: Summary
         if: always()
@@ -78,3 +93,24 @@ jobs:
             parity/.out/linux/cases.log
             parity/.out/linux/cases/**
           retention-days: 7
+
+  # Commits the recordings back to the branch when this push asked for a Linux recording.
+  # Every VM must agree. Pushes made with GITHUB_TOKEN start no new workflow runs.
+  adopt:
+    needs: probe
+    if: contains(github.event.head_commit.message, '[parity record]') || contains(github.event.head_commit.message, '[parity record linux]')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.ref_name }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: recordings-linux
+          path: ${{ runner.temp }}/rec
+      - name: Adopt the Linux recordings
+        run: |
+          # The artifact holds the baseline tree at its root.
+          parity/ci/adopt-recordings.sh linux "$RUNNER_TEMP/rec/recordings-linux"
