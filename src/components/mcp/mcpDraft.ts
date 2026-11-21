@@ -104,8 +104,7 @@ export function specOf(conn: McpDraftConnection, mask = false): McpServerSpec {
   if (conn.transport === "stdio") {
     spec.type = "stdio";
     spec.command = conn.command.trim();
-    const args = conn.args.filter((arg) => arg !== "");
-    if (args.length) spec.args = args;
+    if (conn.args.length) spec.args = [...conn.args];
     const env = objectOf(conn.env);
     if (Object.keys(env).length) spec.env = env;
     if (conn.cwd.trim()) spec.cwd = conn.cwd.trim();
