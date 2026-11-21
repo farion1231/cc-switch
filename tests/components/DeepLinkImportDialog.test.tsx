@@ -952,7 +952,7 @@ describe("DeepLinkImportDialog", () => {
       await waitFor(() => expect(ackSpy).toHaveBeenCalledTimes(1));
       await waitFor(() => expect(peekPendingDeepLink()).toBeNull());
 
-      expect(failure).toHaveBeenCalledWith("合并配置文件失败", {
+      expect(failure).toHaveBeenCalledWith("deeplink.configMergeError", {
         description: expect.stringContaining("Merge failed"),
       });
       const dialog = screen.getByTestId("deeplink-dialog");
