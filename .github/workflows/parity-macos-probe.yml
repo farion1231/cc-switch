@@ -1,0 +1,147 @@
+name: Parity macOS probe
+
+# Delivery unit 1 of the parity suite: can a parity build of CC Switch be driven and observed
+# on hosted macOS? Runs only on parity/** branches, never on main or PRs.
+on:
+  push:
+    branches: ["parity/**"]
+    paths:
+      - "parity/spike/macos/**"
+      - ".github/workflows/parity-macos-probe.yml"
+      - "src-tauri/**"
+      - "src/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: parity-macos-probe-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+          cache: pnpm
+
+      - name: Read pinned Rust toolchain
+        id: rust-toolchain
+        run: |
+          channel=$(sed -nE 's/^channel *= *"([^"]+)".*/\1/p' rust-toolchain.toml)
+          test -n "$channel"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: src-tauri -> target
+          shared-key: parity-macos
+          save-if: true
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build parity app bundle (release profile, feature parity, unsigned)
+        run: |
+          pnpm tauri build --bundles app --features parity \
+            --config '{"bundle":{"createUpdaterArtifacts":false}}'
+          tar -C src-tauri/target/release/bundle/macos -cf parity-app.tar "CC Switch.app"
+
+      - name: Release build must not contain the WebDriver plugin
+        run: |
+          cd src-tauri
+          if cargo tree -i tauri-plugin-wdio-webdriver --target aarch64-apple-darwin >/dev/null 2>&1; then
+            echo "plugin is in the default dependency graph"; exit 1
+          fi
+          cargo tree -i tauri-plugin-wdio-webdriver --target aarch64-apple-darwin --features parity
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: parity-app
+          path: parity-app.tar
+          retention-days: 3
+
+  probe:
+    needs: build
+    runs-on: macos-15
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        vm: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: parity-app
+
+      - name: Prepare app and helper
+        run: |
+          mkdir -p "$RUNNER_TEMP/app"
+          tar -C "$RUNNER_TEMP/app" -xf parity-app.tar
+          swiftc -O parity/spike/macos/helper.swift -o "$RUNNER_TEMP/parity-helper"
+          sw_vers
+          system_profiler SPDisplaysDataType | grep -E "Resolution|Retina" || true
+          echo "Accessibility trusted: $("$RUNNER_TEMP/parity-helper" trusted)"
+
+      - name: Probe (7 fresh launches)
+        env:
+          PARITY_OUT_DIR: ${{ runner.temp }}/out
+        run: |
+          set -o pipefail
+          node parity/spike/macos/probe.mjs run \
+            --app "$RUNNER_TEMP/app/CC Switch.app" \
+            --helper "$RUNNER_TEMP/parity-helper" \
+            --runs 7 \
+            --out "$RUNNER_TEMP/out/results-${{ matrix.vm }}.json" | tee "$RUNNER_TEMP/out/probe.log"
+
+      - name: Summary
+        if: always()
+        run: |
+          { echo '### VM ${{ matrix.vm }}'; echo '```'; tail -40 "$RUNNER_TEMP/out/probe.log" 2>/dev/null; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: probe-${{ matrix.vm }}
+          path: ${{ runner.temp }}/out
+          retention-days: 7
+
+  compare:
+    needs: probe
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: probe-*
+      - name: Compare across VMs
+        run: |
+          set -o pipefail
+          node parity/spike/macos/probe.mjs compare probe-*/results-*.json | tee compare.txt
+      - name: Summary
+        if: always()
+        run: |
+          { echo '### Across VMs'; echo '```'; cat compare.txt 2>/dev/null; echo '```'; } >> "$GITHUB_STEP_SUMMARY"

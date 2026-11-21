@@ -500,6 +500,11 @@ pub fn run() {
         );
     }
 
+    #[cfg(all(feature = "parity", target_os = "macos"))]
+    {
+        builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
+    }
+
     #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
     {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {

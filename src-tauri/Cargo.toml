@@ -20,6 +20,8 @@ doctest = false
 [features]
 default = []
 test-hooks = []
+# Test-only seams for the parity suite (parity/). Never enabled in release artifacts.
+parity = ["dep:tauri-plugin-wdio-webdriver"]
 
 [build-dependencies]
 tauri-build = { version = "2.4.0", features = [] }
@@ -121,6 +123,8 @@ windows-sys = { version = "0.61", features = [
 rquickjs = { version = "0.8", features = ["bindgen"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+# Embedded WebDriver server for the parity suite; only built with feature `parity`.
+tauri-plugin-wdio-webdriver = { version = "=1.5.1", optional = true }
 objc2 = "0.5"
 objc2-app-kit = { version = "0.2", features = ["NSColor"] }
 # 托盘面板的原生玻璃：NSGlassEffectView（macOS 26）/ NSVisualEffectView；0.2 那套没有前者
