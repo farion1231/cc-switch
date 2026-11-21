@@ -13,7 +13,7 @@ import { spawn, execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { args, scriptTimeout, encodePng, pixelDiff, RECORD, settle, sha, sleep, summarise, TARGET, TREE, webdriver } from "../common.mjs";
+import { args, scriptTimeout, encodePng, FOCUS, pixelDiff, RECORD, settle, sha, sleep, summarise, TARGET, TREE, webdriver } from "../common.mjs";
 
 const PORT = 4444;
 const { wd, exec } = webdriver(`http://127.0.0.1:${PORT}`);
@@ -68,11 +68,16 @@ function crop(img, { x, y, width, height }) {
 // The X server holds whatever WebKit last painted, built up from partial repaints during
 // animations, so its edges depend on frame timing. A screen capture is taken only after one
 // full repaint, the way the macOS lane's snapshot renders the whole view at capture time.
+// The repaint toggles the root's opacity: hiding the root instead would move focus to <body>.
 async function fullRepaint(sid) {
-  await exec(sid, `window.__parityVis = document.documentElement.style.visibility; document.documentElement.style.visibility = "hidden";`);
+  const before = [await exec(sid, TREE), await exec(sid, FOCUS)];
+  await exec(sid, `window.__parityOpacity = document.documentElement.style.opacity; document.documentElement.style.opacity = "0.5";`);
   await sleep(250);
-  await exec(sid, `document.documentElement.style.visibility = window.__parityVis; delete window.__parityVis;`);
+  await exec(sid, `document.documentElement.style.opacity = window.__parityOpacity; delete window.__parityOpacity;`);
   await sleep(400);
+  const after = [await exec(sid, TREE), await exec(sid, FOCUS)];
+  if (before[0] !== after[0]) throw new Error("the full repaint changed the tree");
+  if (before[1] !== after[1]) throw new Error(`the full repaint moved focus from "${before[1]}" to "${after[1]}"`);
 }
 
 async function xshot(sid) {
@@ -107,7 +112,9 @@ async function oneRun(app, index, outDir) {
     result.serverUpMs = Date.now() - t0;
     step("session created; waiting for the tree to settle");
 
-    const tree = await settle(exec, sid);
+    result.settleErrors = [];
+    const tree = await settle(exec, sid, 30000, result.settleErrors);
+    if (result.settleErrors.length) result.failures.push(`settled only after ${result.settleErrors.length} failed script call(s), first: ${result.settleErrors[0]}`);
     step("settled");
     result.settledMs = Date.now() - t0;
     result.treeHash = sha(tree);

@@ -102,6 +102,10 @@ export const TARGET = `return (() => {
            x: r.left + r.width / 2, y: r.top + r.height / 2, zoom: window.devicePixelRatio };
 })();`;
 
+// What has focus, so a step that must not move it can check.
+export const FOCUS = `const a = document.activeElement;
+  return a ? [a.tagName, a.id, a.getAttribute('aria-label') || '', (a.textContent || '').trim().slice(0, 40)].join('|') : '';`;
+
 export const RECORD = `window.__parity = []; for (const t of ['pointerdown','mousedown','click'])
   window.addEventListener(t, (e) => window.__parity.push({ type: e.type, trusted: e.isTrusted, x: e.clientX, y: e.clientY,
     target: (e.target.closest('button,[role=button]')?.textContent || '').trim().replace(/\\s+/g,' ').slice(0,60) }), true);
@@ -191,10 +195,12 @@ export function scriptTimeout(wd, sid, ms = 5000) {
   return wd("POST", `/session/${sid}/timeouts`, { script: ms }).then(() => true, (e) => String(e.message || e).slice(0, 200));
 }
 
-export async function settle(exec, sid, timeoutMs = 30000) {
+// Polls the tree until 3 reads in a row agree. Failed script calls are kept in `errors`, which the
+// caller may pass in, so a settle that recovered from a lost evaluation is still visible.
+export async function settle(exec, sid, timeoutMs = 30000, errors = []) {
   const start = Date.now();
   let last = null, same = 0;
-  const seen = [], errors = [];
+  const seen = [];
   let attempts = 0;
   while (Date.now() - start < timeoutMs) {
     attempts++;

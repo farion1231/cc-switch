@@ -54,7 +54,9 @@ async function oneRun(app, helper, index) {
     if (handles.includes("main")) await wd("POST", `/session/${sid}/window`, { handle: "main" });
     result.scriptTimeoutSet = await scriptTimeout(wd, sid);
 
-    const tree = await settle(exec, sid);
+    result.settleErrors = [];
+    const tree = await settle(exec, sid, 30000, result.settleErrors);
+    if (result.settleErrors.length) result.failures.push(`settled only after ${result.settleErrors.length} failed script call(s), first: ${result.settleErrors[0]}`);
     result.settledMs = Date.now() - t0;
     result.treeHash = sha(tree);
     result.tree = JSON.parse(tree);
