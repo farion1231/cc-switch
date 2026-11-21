@@ -40,10 +40,17 @@ export async function settleUi(app: AppSession, timeoutMs = 15000): Promise<Tree
   throw new StepError(`the UI did not settle within ${timeoutMs} ms`, tree?.text ?? null);
 }
 
-/** Called after every acting verb has settled, with the reason when the step declared itself inert. */
-export type OnStep = (step: { verb: string; target?: string; inert?: string }) => Promise<void>;
+/**
+ * The run's view of acting steps. `before` runs once the step's target is actionable and before
+ * it acts; `after` runs once the step has acted and the UI has settled, with the reason when the
+ * step declared itself inert.
+ */
+export interface StepHooks {
+  before(): Promise<void>;
+  after(step: { verb: string; target?: string; inert?: string }): Promise<void>;
+}
 
-export function makeUi(app: AppSession, steps: StepLog[], onStep: OnStep, deadlineMs = 10000): Ui {
+export function makeUi(app: AppSession, steps: StepLog[], hooks: StepHooks, deadlineMs = 10000): Ui {
   const treeText = async () => (await app.probe<TreeResult>(TREE_CMD).catch(() => null))?.text ?? null;
 
   // Waits until the target resolves to one actionable element, still across two reads.
@@ -69,12 +76,14 @@ export function makeUi(app: AppSession, steps: StepLog[], onStep: OnStep, deadli
     throw new StepError(`${describe(spec)} is not actionable after ${deadlineMs} ms: ${why}`, await treeText());
   };
 
-  const step = async (verb: string, t: Target | string | undefined, act: () => Promise<void>, opts?: Inert) => {
+  const step = async <R>(verb: string, t: Target | string | undefined, ready: () => Promise<R>, act: (r: R) => Promise<void>, opts?: Inert) => {
     const start = Date.now();
     const target = t === undefined ? undefined : typeof t === "string" ? t : describe(specOf(t));
-    await act();
+    const r = await ready();
+    await hooks.before();
+    await act(r);
     await settleUi(app);
-    await onStep({ verb: `ui.${verb}`, target, inert: opts?.inert });
+    await hooks.after({ verb: `ui.${verb}`, target, inert: opts?.inert });
     steps.push({ verb, target, ms: Date.now() - start });
   };
 
@@ -92,18 +101,16 @@ export function makeUi(app: AppSession, steps: StepLog[], onStep: OnStep, deadli
   };
 
   return {
-    click: (t, opts) => step("click", t, async () => {
-      const r = await actionable(t);
+    click: (t, opts) => step("click", t, () => actionable(t), async (r) => {
       await app.click(r.x, r.y);
     }, opts),
-    fill: (t, text, opts) => step("fill", t, async () => {
-      const r = await actionable(t, true);
+    fill: (t, text, opts) => step("fill", t, () => actionable(t, true), async (r) => {
       await app.click(r.x, r.y);
       await app.chord([app.mod, "a"]);
       await app.chord(["Backspace"]);
       await app.type(r.element, text);
     }, opts),
-    press: (chord, opts) => step("press", chord, async () => {
+    press: (chord, opts) => step("press", chord, async () => undefined, async () => {
       await app.chord(chord.split("+").map((k) => (k === "Mod" ? app.mod : k)));
     }, opts),
     see: async (t) => {

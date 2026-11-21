@@ -2,13 +2,14 @@
 // Every step is idempotent and reset comes first, so a crashed case cannot poison the next one.
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import type { CaseSpec, Expect, HomePath, Journey } from "../../case.ts";
+import type { CaseSpec, Duration, Expect, HomePath, Journey } from "../../case.ts";
 import type { AppSession } from "../driver/app.ts";
 import { createHash } from "node:crypto";
 import { TREE_CMD, type TreeResult } from "../driver/probe.ts";
-import { isVisible, makeUi, settleUi, StepError, type OnStep, type StepLog } from "../driver/verbs.ts";
+import { isVisible, makeUi, settleUi, StepError, type StepHooks, type StepLog } from "../driver/verbs.ts";
 import { CHANNELS, files, scanHome, signatures } from "../observe/channels.ts";
 import { Binder } from "../observe/normalise.ts";
+import { CLOCK_ENV, PinnedClock } from "./clock.ts";
 import type { CheckpointObservation } from "../observe/store.ts";
 
 export interface HostOptions {
@@ -20,7 +21,9 @@ export interface HostOptions {
   readonly exclude: readonly string[];
   /** Places outside HOME the app must not touch. Each must be unchanged after the case. */
   readonly sentinels: readonly string[];
-  readonly launch: (home: string) => Promise<AppSession>;
+  /** The pinned clock's file, outside HOME and outside anything observed. */
+  readonly clockFile: string;
+  readonly launch: (home: string, env?: Record<string, string>) => Promise<AppSession>;
 }
 
 export interface CaseRun {
@@ -39,6 +42,29 @@ export interface CaseRun {
 }
 
 const sha12 = (s: string) => createHash("sha256").update(s).digest("hex").slice(0, 12);
+
+function durationMs(d: Duration): number {
+  const ms = (((d.days ?? 0) * 24 + (d.hours ?? 0)) * 60 + (d.minutes ?? 0)) * 60_000 + (d.seconds ?? 0) * 1000;
+  if (!Number.isFinite(ms) || ms <= 0) throw new Error(`advanceClock needs a positive duration, got ${JSON.stringify(d)}`);
+  return ms;
+}
+
+const durationText = (d: Duration) =>
+  (["days", "hours", "minutes", "seconds"] as const).filter((k) => d[k]).map((k) => `${d[k]}${k[0]}`).join(" ");
+
+/**
+ * With the clock pinned nothing the app writes or shows may carry the real time. The binder turns
+ * every timestamp inside the run's real window into <time>, so any <time> left is a read that
+ * bypassed the clock seam.
+ */
+function clockLeaks(checkpoint: string, channels: Record<string, string>): string[] {
+  const out: string[] = [];
+  for (const [ch, text] of Object.entries(channels)) {
+    const lines = text.split("\n").filter((l) => l.includes("<time>"));
+    if (lines.length) out.push(`clock leak at ${checkpoint} ${ch}: ${lines.length} line(s) carry the real time, first: ${lines[0].trim()}`);
+  }
+  return out;
+}
 
 function listing(path: string): string[] {
   if (!existsSync(path)) return [];
@@ -97,18 +123,27 @@ export async function runCase(spec: CaseSpec, host: HostOptions): Promise<CaseRu
   if (spec.seed !== "fresh") throw new Error(`case ${spec.id}: seeds other than "fresh" are not implemented yet`);
   const run: CaseRun = { caseId: spec.id, checkpoints: [], prints: [], intentFailures: [], errors: [], steps: [], ms: 0 };
   host.reset();
+  const clock = new PinnedClock(host.clockFile);
+  clock.reset();
   const pristine = signatures(scanHome(host.home, host.exclude));
   const before = host.sentinels.map(listing);
   const startMs = Date.now();
   let app: AppSession | null = null;
   try {
-    app = await host.launch(host.home);
+    app = await host.launch(host.home, { [CLOCK_ENV]: host.clockFile });
+    const pageMs = await app.pageNow();
+    if (pageMs !== clock.ms) throw new Error(`the page's clock reads ${new Date(pageMs).toISOString()}, not the pinned ${new Date(clock.ms).toISOString()}; is this a parity build?`);
     await app.probe({ cmd: "install" });
     await settleUi(app);
     const a = app;
     // A print of everything observable: the normalised tree and focus, the normalised HOME, and how
     // many announcements have appeared. An acting step whose print equals the previous one did
     // nothing a user or the agent could see, which fails as an inert step unless it says why.
+    //
+    // A step's print is taken late: when the next step's target is actionable, at the next
+    // checkpoint or clock move, or when the journey ends, and after the UI settles again. By then
+    // the case's own waits (see, gone) have passed, so a slow response cannot land on either side
+    // of the print.
     type Print = { tree: string; home: string; announcements: number };
     const printNow = async (): Promise<Print> => {
       const binder = new Binder({ startMs, endMs: Date.now() }, host.home);
@@ -124,7 +159,12 @@ export async function runCase(spec: CaseSpec, host: HostOptions): Promise<CaseRu
       `${String(n).padStart(2, "0")} ${step}${target ? ` ${target}` : ""} | tree ${p.tree} | home ${p.home} | announcements ${p.announcements}${inert ? ` | inert: ${inert}` : ""}`;
     let prev = await printNow();
     run.prints.push(line(0, "launch", prev));
-    const onStep: OnStep = async ({ verb, target, inert }) => {
+    let pending: { verb: string; target?: string; inert?: string } | null = null;
+    const flush = async () => {
+      if (!pending) return;
+      const { verb, target, inert } = pending;
+      pending = null;
+      await settleUi(a);
       const now = await printNow();
       const n = run.prints.length;
       run.prints.push(line(n, verb, now, target, inert));
@@ -133,18 +173,40 @@ export async function runCase(spec: CaseSpec, host: HostOptions): Promise<CaseRu
       if (same && !inert) throw new StepError(`inert step ${n}: ${verb} ${target ?? ""} changed nothing observable`, null);
       if (!same && inert) throw new StepError(`step ${n}: ${verb} ${target ?? ""} was declared inert ("${inert}") but changed what is observable`, null);
     };
+    const hooks: StepHooks = {
+      before: flush,
+      after: async (step) => {
+        pending = step;
+      },
+    };
     const journey: Journey = {
-      ui: makeUi(a, run.steps, onStep),
+      ui: makeUi(a, run.steps, hooks),
       expect: makeExpect(host.home, a, run.intentFailures),
       async checkpoint(name) {
         if (run.checkpoints.some((c) => c.name === name)) throw new Error(`checkpoint "${name}" is used twice`);
+        await flush();
         const binder = new Binder({ startMs, endMs: Date.now() }, host.home);
         const channels: Record<string, string> = {};
         for (const ch of CHANNELS) channels[ch.name] = await ch.capture({ app: a, home: host.home, binder, pristine, exclude: host.exclude });
         run.checkpoints.push({ name, channels });
+        run.errors.push(...clockLeaks(name, channels));
+      },
+      async advanceClock(by) {
+        await flush();
+        clock.set(clock.ms + durationMs(by));
+        // The app polls the clock file and passes the new instant to every page.
+        const deadline = Date.now() + 5000;
+        while ((await a.pageNow()) !== clock.ms) {
+          if (Date.now() > deadline) throw new StepError(`the page's clock did not reach ${new Date(clock.ms).toISOString()} within 5 s`, null);
+          await new Promise((r) => setTimeout(r, 50));
+        }
+        await settleUi(a);
+        prev = await printNow();
+        run.prints.push(line(run.prints.length, "clock", prev, `+${durationText(by)}`));
       },
     };
     await spec.journey(journey);
+    await flush();
   } catch (e) {
     run.errors.push(e instanceof Error ? e.message : String(e));
     if (e instanceof StepError) run.tree = e.tree;

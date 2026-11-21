@@ -36,7 +36,19 @@ export interface Journey {
    * for this case and checkpoint. In record mode the observations become the recording.
    */
   checkpoint(name: string): Promise<void>;
+  /**
+   * Moves the app's time forward. Time starts at the same instant in every run and stands still
+   * otherwise, so anything that depends on time passing happens only when a case says so.
+   */
+  advanceClock(by: Duration): Promise<void>;
   readonly expect: Expect;
+}
+
+export interface Duration {
+  readonly days?: number;
+  readonly hours?: number;
+  readonly minutes?: number;
+  readonly seconds?: number;
 }
 
 export interface Expect {

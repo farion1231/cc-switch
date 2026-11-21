@@ -15,6 +15,8 @@ export const S = {
   shell: {
     /** An app in the sidebar, by the name the sidebar shows. */
     sidebarApp: (name: string) => by.role("button", name, { within: apps }),
+    /** A section below the apps in the sidebar: MCP, Skills, Usage, Settings and so on. */
+    section: (name: string) => by.role("button", name, { within: nav }),
   },
   providers: {
     addButton: by.role("button", "Add Provider", { within: main }),

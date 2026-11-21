@@ -1,9 +1,9 @@
-00 launch | tree 271b3561a813 | home d9694e8201db | announcements 0
-01 ui.click button "Got it" in dialog "Welcome to CC Switch" | tree db6bed2225d7 | home 7bf255712c39 | announcements 0
-02 ui.click button "Codex" in group "Apps" in navigation "Main navigation" | tree 088644625a70 | home 7bf255712c39 | announcements 0
-03 ui.click button "Add Provider" in main "" | tree 4c96061d3d87 | home 7bf255712c39 | announcements 0
-04 ui.click button "Custom Configuration" in main "" | tree 858033cb5848 | home 7bf255712c39 | announcements 0
-05 ui.fill field "Name" in main "" | tree 43b1ce8e2518 | home 7bf255712c39 | announcements 0
-06 ui.fill field "API Key" in main "" | tree 88effb16617c | home 7bf255712c39 | announcements 0
-07 ui.fill field "API Request URL" in main "" | tree 6155fffd1031 | home 7bf255712c39 | announcements 0
-08 ui.click button "Add" in main "" | tree c33649d1de25 | home e0b13e254c07 | announcements 1
+00 launch | tree 271b3561a813 | home 00fb8104dc54 | announcements 0
+01 ui.click button "Got it" in dialog "Welcome to CC Switch" | tree db6bed2225d7 | home 288070bd5962 | announcements 0
+02 ui.click button "Codex" in group "Apps" in navigation "Main navigation" | tree 088644625a70 | home 288070bd5962 | announcements 0
+03 ui.click button "Add Provider" in main "" | tree 4c96061d3d87 | home 288070bd5962 | announcements 0
+04 ui.click button "Custom Configuration" in main "" | tree 858033cb5848 | home 288070bd5962 | announcements 0
+05 ui.fill field "Name" in main "" | tree 43b1ce8e2518 | home 288070bd5962 | announcements 0
+06 ui.fill field "API Key" in main "" | tree 88effb16617c | home 288070bd5962 | announcements 0
+07 ui.fill field "API Request URL" in main "" | tree 6155fffd1031 | home 288070bd5962 | announcements 0
+08 ui.click button "Add" in main "" | tree c33649d1de25 | home 90f0f9a8784a | announcements 1

@@ -18,6 +18,8 @@ export interface AppSession {
   readonly mod: string;
   /** Requests a public URL from the main window's page: "open", or why it could not leave. */
   egress(url: string): Promise<string>;
+  /** `Date.now()` in the main window's page. */
+  pageNow(): Promise<number>;
   close(): Promise<{ log: string }>;
 }
 
@@ -73,13 +75,13 @@ const req = fetch(arguments[0], { cache: "no-store", mode: "no-cors" }).then(() 
 Promise.race([req, timer]).then(done);`;
 
 /** Linux: tauri-driver in front of WebKitWebDriver, under Xvfb and a D-Bus session. */
-export function launchLinux(opts: { binary: string; home: string; port?: number }): Promise<AppSession> {
+export function launchLinux(opts: { binary: string; home: string; env?: Record<string, string>; port?: number }): Promise<AppSession> {
   return launchThroughTauriDriver({
     driver: "tauri-driver",
     nativeDriver: "/usr/bin/WebKitWebDriver",
     binary: opts.binary,
     port: opts.port ?? 4444,
-    env: appEnv(opts.home, { TAURI_WEBVIEW_AUTOMATION: "true" }),
+    env: appEnv(opts.home, { ...opts.env, TAURI_WEBVIEW_AUTOMATION: "true" }),
     kill: async () => {
       try { execFileSync("pkill", ["-x", "cc-switch"]); } catch {}
       for (let i = 0; i < 25; i++) {
@@ -94,10 +96,10 @@ export function launchLinux(opts: { binary: string; home: string; port?: number 
  * Windows: tauri-driver in front of msedgedriver (WebView2). There is no HOME redirection: the
  * disposable VM's profile is HOME and the app runs exactly as shipped.
  */
-export function launchWindows(opts: { binary: string; driver: string; edgeDriver: string; port?: number }): Promise<AppSession> {
-  const env: Record<string, string> = {};
+export function launchWindows(opts: { binary: string; driver: string; edgeDriver: string; env?: Record<string, string>; port?: number }): Promise<AppSession> {
+  const env: Record<string, string> = { ...opts.env };
   for (const [k, v] of Object.entries(process.env)) {
-    if (v === undefined || /^(https?|all|no|ftp)_proxy$/i.test(k)) continue;
+    if (v === undefined || /^(https?|all|no|ftp)_proxy$/i.test(k) || k in env) continue;
     env[k] = v;
   }
   return launchThroughTauriDriver({
@@ -119,12 +121,12 @@ export function launchWindows(opts: { binary: string; driver: string; edgeDriver
  * macOS: the parity build embeds a WebDriver server (tauri-plugin-wdio-webdriver), which locates
  * and reads. Input is real: the helper posts CGEvents at the HID tap after activating the app.
  */
-export async function launchMacos(opts: { app: string; helper: string; home: string; port?: number }): Promise<AppSession> {
+export async function launchMacos(opts: { app: string; helper: string; home: string; env?: Record<string, string>; port?: number }): Promise<AppSession> {
   const port = opts.port ?? 4445;
   const plist = join(opts.app, "Contents/Info.plist");
   const exe = join(opts.app, "Contents/MacOS", execFileSync("plutil", ["-extract", "CFBundleExecutable", "raw", plist]).toString().trim());
   const child = spawn(exe, [], {
-    env: appEnv(opts.home, { CFFIXED_USER_HOME: opts.home, TAURI_WEBDRIVER_PORT: String(port) }),
+    env: appEnv(opts.home, { ...opts.env, CFFIXED_USER_HOME: opts.home, TAURI_WEBDRIVER_PORT: String(port) }),
     stdio: ["ignore", "pipe", "pipe"],
   });
   let log = "";
@@ -166,6 +168,7 @@ export async function launchMacos(opts: { app: string; helper: string; home: str
     mod: "Meta",
     probe: <T>(cmd: ProbeCmd) => wd.exec<T>(PROBE_SCRIPT, [cmd]),
     egress: (url: string) => wd.execAsync<string>(EGRESS_SCRIPT, [url]),
+    pageNow: () => wd.exec<number>("return Date.now();"),
     async click(x, y) {
       await activate();
       const [wx, wy] = helper("bounds", child.pid!).split(/\s+/).map(Number);
@@ -216,6 +219,7 @@ async function launchThroughTauriDriver(o: {
     mod: "Control",
     probe: <T>(cmd: ProbeCmd) => wd.exec<T>(PROBE_SCRIPT, [cmd]),
     egress: (url: string) => wd.execAsync<string>(EGRESS_SCRIPT, [url]),
+    pageNow: () => wd.exec<number>("return Date.now();"),
     async click(x, y) {
       await wd.actions([{
         type: "pointer", id: "mouse", parameters: { pointerType: "mouse" },
