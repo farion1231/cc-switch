@@ -1,0 +1,127 @@
+name: Parity Windows probe
+
+# Delivery unit 3 of the parity suite: can a parity build of CC Switch be driven and observed
+# on hosted Windows through tauri-driver and msedgedriver? Runs only on parity/** branches,
+# never on main or PRs. No Actions cache: the repository's cache quota is shared with main.
+on:
+  push:
+    branches: ["parity/**"]
+    paths:
+      - "parity/spike/windows/**"
+      - "parity/spike/common.mjs"
+      - ".github/workflows/parity-windows-probe.yml"
+      - "src-tauri/**"
+      - "src/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: parity-windows-probe-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+
+      - name: Read pinned Rust toolchain
+        id: rust-toolchain
+        shell: bash
+        run: |
+          channel=$(sed -nE 's/^channel *= *"([^"]+)".*/\1/p' rust-toolchain.toml)
+          test -n "$channel"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build parity binary (release profile, feature parity, no bundle)
+        run: pnpm tauri build --no-bundle --features parity
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: parity-app-windows
+          path: src-tauri/target/release/cc-switch.exe
+          retention-days: 3
+
+  probe:
+    needs: build
+    runs-on: windows-2022
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        vm: [1, 2]
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: parity-app-windows
+          path: ${{ runner.temp }}/app
+
+      - name: Install tauri-driver
+        run: cargo install tauri-driver --version 2.1.0 --locked
+
+      - name: Fetch msedgedriver for the installed WebView2 runtime
+        shell: pwsh
+        run: |
+          $key = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+          $wv = (Get-ItemProperty $key -ErrorAction SilentlyContinue).pv
+          $edge = (Get-Item 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe').VersionInfo.ProductVersion
+          Write-Output "WebView2 runtime: $wv"
+          Write-Output "Edge: $edge"
+          Write-Output "Preinstalled EdgeWebDriver: $env:EDGEWEBDRIVER"
+          if (-not $wv) { throw "WebView2 runtime version not found" }
+          $dest = Join-Path $env:RUNNER_TEMP 'edgedriver'
+          Invoke-WebRequest "https://msedgedriver.microsoft.com/$wv/edgedriver_win64.zip" -OutFile edgedriver.zip
+          Expand-Archive edgedriver.zip -DestinationPath $dest -Force
+          & (Join-Path $dest 'msedgedriver.exe') --version
+          Get-CimInstance Win32_VideoController | Select-Object CurrentHorizontalResolution, CurrentVerticalResolution
+
+      - name: Probe (7 fresh launches)
+        shell: bash
+        run: |
+          set -o pipefail
+          out="$RUNNER_TEMP/out"
+          mkdir -p "$out"
+          node parity/spike/windows/probe.mjs run \
+            --app "$RUNNER_TEMP/app/cc-switch.exe" \
+            --driver "$USERPROFILE/.cargo/bin/tauri-driver.exe" \
+            --edge "$RUNNER_TEMP/edgedriver/msedgedriver.exe" \
+            --runs 7 \
+            --out "$out/results-${{ matrix.vm }}.json" 2>&1 | tee "$out/probe.log"
+
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+          { echo '### Windows VM ${{ matrix.vm }}'; echo '```'; grep -E '^run |"pass"' "$RUNNER_TEMP/out/probe.log" 2>/dev/null; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: probe-windows-${{ matrix.vm }}
+          path: ${{ runner.temp }}/out
+          retention-days: 7
