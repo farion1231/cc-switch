@@ -666,12 +666,34 @@ pub(super) fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
     search_paths.into_iter().collect()
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", test))]
 fn is_windows_command_script(path: &Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
         .map(|ext| ext.eq_ignore_ascii_case("cmd") || ext.eq_ignore_ascii_case("bat"))
         .unwrap_or(false)
+}
+
+#[cfg(any(target_os = "windows", test))]
+pub(super) fn classify_windows_path_default_launch_error(
+    path_default: &Path,
+    err: &std::io::Error,
+) -> Result<ShellProbe, String> {
+    // `where` 会列出 npm 留下的无扩展名 POSIX sh shim（同目录无 .cmd/.exe），终端按 PATHEXT 会跳过它
+    // 去执行后方入口；交给目录扫描判断（别处有能跑的以它为准，都跑不起来扫描也会报 FoundButFailed）。
+    if path_default.extension().is_none() {
+        return Ok(ShellProbe::NotFound(NOT_INSTALLED.to_string()));
+    }
+    // `.cmd`/`.bat` 经由 cmd.exe 启动，spawn 失败说明 shell 本身不可用，维持探测失败 Err。
+    if is_windows_command_script(path_default) {
+        return Err(format!("Failed to probe {}: {err}", path_default.display()));
+    }
+    // 已定位到 PATH 上的可执行文件（如损坏的 `.exe` 或 npm 12 文本占位文件）但无法启动：
+    // 确认已安装但无法运行，且不 fallback 到别处旧版本掩盖。
+    Ok(ShellProbe::FoundButFailed(launch_failure_detail(
+        path_default,
+        err,
+    )))
 }
 #[cfg(target_os = "windows")]
 fn windows_runnable_sibling_for_extensionless_tool(path: &Path) -> Option<std::path::PathBuf> {
@@ -834,28 +856,30 @@ fn run_windows_tool_version_command(
 /// the directory scan, so the displayed version matches what `tool` resolves
 /// to in a terminal (#4701).
 ///
-/// Returns `Ok(NotFound)` only when PATH has no usable entry. Resolution and
-/// launch failures are `Err` and are not replaced by a directory scan.
-/// A successful run whose output has no version is `VersionUnknown`; a
-/// non-zero exit is `FoundButFailed`. Neither falls back to another install.
+/// Returns `Ok(NotFound)` when PATH has no usable entry or resolves to an
+/// extensionless shim that Windows terminals skip via `PATHEXT` (letting the
+/// directory scan check runnable installs). Resolution failures and `cmd.exe`
+/// script spawn failures return `Err`; an unlaunchable `.exe` returns
+/// `FoundButFailed`. A successful run whose output has no version is
+/// `VersionUnknown`; a non-zero exit is `FoundButFailed`. Neither falls back
+/// to another install.
 #[cfg(target_os = "windows")]
 pub(super) fn probe_path_default_version(tool: &str) -> Result<ShellProbe, String> {
     let Some(path_default) = resolve_path_default(tool, None)? else {
         return Ok(ShellProbe::NotFound(NOT_INSTALLED.to_string()));
     };
-    let out = run_windows_tool_version_command(&path_default, &effective_path_string())
-        .map_err(|e| format!("Failed to probe {}: {e}", path_default.display()))?;
+    let out = match run_windows_tool_version_command(&path_default, &effective_path_string()) {
+        Ok(out) => out,
+        Err(e) => return classify_windows_path_default_launch_error(&path_default, &e),
+    };
     let stdout = decode_command_output(&out.stdout);
     let stderr = decode_command_output(&out.stderr);
     Ok(if out.status.success() {
         super::tool_version::successful_version_probe(&stdout, &stderr)
     } else {
-        let detail = if stderr.trim().is_empty() {
-            &stdout
-        } else {
-            &stderr
-        };
-        ShellProbe::FoundButFailed(last_lines(detail.trim(), 4))
+        ShellProbe::FoundButFailed(super::tool_version::failed_version_probe_detail(
+            &stdout, &stderr, out.status,
+        ))
     })
 }
 
@@ -929,7 +953,11 @@ pub(super) fn scan_cli_version_in(
                     &stdout, &stderr,
                 ));
             }
-            let detail = version_output(&stdout, &stderr);
+            let detail = if stderr.trim().is_empty() {
+                stdout.trim()
+            } else {
+                stderr.trim()
+            };
             if detail.is_empty() {
                 silent_diagnostic.get_or_insert_with(|| silent_version_probe_detail(out.status));
             } else if exec_diagnostic.is_none() {
