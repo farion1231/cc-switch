@@ -38,21 +38,7 @@ pub fn exit_lightweight_mode(app: &tauri::AppHandle) -> Result<(), String> {
     use tauri::WebviewWindowBuilder;
 
     if let Some(window) = app.get_webview_window("main") {
-        let _ = window.unminimize();
-        let _ = window.show();
-        let _ = window.set_focus();
-        #[cfg(target_os = "linux")]
-        {
-            crate::linux_fix::nudge_main_window(window.clone(), "lightweight-exit");
-        }
-        #[cfg(target_os = "windows")]
-        {
-            let _ = window.set_skip_taskbar(false);
-        }
-        #[cfg(target_os = "macos")]
-        {
-            crate::tray::apply_tray_policy(app, true);
-        }
+        crate::tray::reveal_main_window(&window, "lightweight-exit");
         LIGHTWEIGHT_MODE.store(false, Ordering::Release);
         crate::session_manager::cache::global().set_enabled(true);
         persist_lightweight_mode(false);
@@ -75,26 +61,8 @@ pub fn exit_lightweight_mode(app: &tauri::AppHandle) -> Result<(), String> {
         .map_err(|e| format!("创建主窗口失败: {e}"))?;
 
     if let Some(window) = app.get_webview_window("main") {
-        // 重建时 window-state 插件同样会恢复旧位置
-        crate::window_fit::fit_to_work_area(&window);
-        let _ = window.unminimize();
-        let _ = window.show();
-        let _ = window.set_focus();
-        #[cfg(target_os = "linux")]
-        {
-            crate::linux_fix::nudge_main_window(window.clone(), "lightweight-recreated");
-        }
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        if let Some(window) = app.get_webview_window("main") {
-            let _ = window.set_skip_taskbar(false);
-        }
-    }
-    #[cfg(target_os = "macos")]
-    {
-        crate::tray::apply_tray_policy(app, true);
+        // 重建时 window-state 插件同样会恢复旧位置和尺寸，reveal_main_window 会在显示前调用 fit_to_work_area
+        crate::tray::reveal_main_window(&window, "lightweight-recreated");
     }
 
     LIGHTWEIGHT_MODE.store(false, Ordering::Release);

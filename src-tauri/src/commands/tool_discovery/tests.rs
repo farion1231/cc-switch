@@ -1676,6 +1676,68 @@ fn prepend_search_dir_to_path_preserves_non_utf8_bytes() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn install_probe_base_path_puts_login_path_before_inherited() {
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+    let inherited = std::ffi::OsString::from_vec(b"/usr/bin:/tmp/\xff/bin".to_vec());
+    assert_eq!(
+        install_probe_base_path(Some("/opt/homebrew/bin:/usr/bin"), &inherited)
+            .as_os_str()
+            .as_bytes(),
+        b"/opt/homebrew/bin:/usr/bin:/usr/bin:/tmp/\xff/bin"
+    );
+    // 解析不到登录 shell：沿用继承的 PATH。
+    assert_eq!(install_probe_base_path(None, &inherited), inherited);
+    assert_eq!(install_probe_base_path(Some(""), &inherited), inherited);
+    assert_eq!(
+        install_probe_base_path(Some("/login/bin"), std::ffi::OsStr::new("")),
+        std::ffi::OsString::from("/login/bin")
+    );
+}
+
+/// `#!/usr/bin/env node` 的启动器所在目录里没有 node、继承的 PATH 里也没有：只有补上登录
+/// shell 的 PATH，`--version` 探测才跑得起来（#9810）。
+#[cfg(unix)]
+#[test]
+fn install_probe_finds_interpreter_through_login_path() {
+    use std::os::unix::fs::PermissionsExt;
+    let write_exec = |path: &Path, body: &str| {
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("create dir");
+        std::fs::write(path, body).expect("write script");
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    };
+    let interpreter = "cc-switch-test-fake-node-9810";
+    let dir = tempfile::tempdir().expect("create temp dir");
+    let node_bin = dir.path().join("node/bin");
+    write_exec(
+        &node_bin.join(interpreter),
+        "#!/bin/sh\necho 'codex-cli 0.170.0'\n",
+    );
+    let npm_bin = dir.path().join("npm/bin");
+    let launcher = npm_bin.join("codex");
+    write_exec(&launcher, &format!("#!/usr/bin/env {interpreter}\n"));
+
+    let inherited = std::ffi::OsStr::new("/usr/bin:/bin:/usr/sbin:/sbin");
+    let without_login =
+        prepend_search_dir_to_path(&npm_bin, &install_probe_base_path(None, inherited));
+    let out = run_probe_version_command(&launcher, &without_login).expect("spawn");
+    assert!(!out.status.success());
+
+    let login_path = node_bin.to_string_lossy().into_owned();
+    let with_login = prepend_search_dir_to_path(
+        &npm_bin,
+        &install_probe_base_path(Some(&login_path), inherited),
+    );
+    let out = run_probe_version_command(&launcher, &with_login).expect("spawn");
+    assert!(out.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        "codex-cli 0.170.0"
+    );
+}
+
 #[cfg(target_os = "windows")]
 #[test]
 fn expand_env_chars_preserves_unknown_vars_and_plain_text() {

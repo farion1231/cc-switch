@@ -1202,6 +1202,27 @@ pub(super) fn resolve_path_default(
 /// 都会卡住整个"全部升级"预检——到点整组击杀，该条按探测失败降级，预检继续。
 pub(super) const INSTALL_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
+/// 安装枚举 `--version` 探测的基础 PATH（候选目录再前置在它前面）：登录 shell 的 PATH 在前、
+/// 继承的 PATH 垫底。Finder 启动时继承的是 launchd 的窄 PATH，`#!/usr/bin/env node` 的 npm
+/// 启动器只要所在目录里没有 node 就 exit 127，健康的安装被标成「无法运行」（#9810）；运行时
+/// 命令（#8653）、Codex 模型目录探测（#9764）早已这样补。解析不到登录 shell 时沿用继承的 PATH。
+/// 拼接用 `OsString`，继承 PATH 里的非 UTF-8 段原样保留。
+#[cfg(not(target_os = "windows"))]
+fn install_probe_base_path(
+    login_path: Option<&str>,
+    inherited: &std::ffi::OsStr,
+) -> std::ffi::OsString {
+    let Some(login_path) = login_path.filter(|path| !path.is_empty()) else {
+        return inherited.to_os_string();
+    };
+    let mut path = std::ffi::OsString::from(login_path);
+    if !inherited.is_empty() {
+        path.push(":");
+        path.push(inherited);
+    }
+    path
+}
+
 /// 带超时的 `--version` 探测（非 Windows）。与 `scan_cli_version` 的裸 `output()`
 /// 不同：stdin 显式置 null、经 `isolate_child_process_group` 进独立会话，超时可整组击杀。
 /// `new_path` 取 `&OsStr` 而非 `&str`：与 `prepend_search_dir_to_path` 同一约定，
@@ -1257,7 +1278,10 @@ pub(super) fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> 
     #[cfg(target_os = "windows")]
     let current_path = effective_path_string();
     #[cfg(not(target_os = "windows"))]
-    let current_path = effective_path_os().unwrap_or_default();
+    let current_path = install_probe_base_path(
+        cached_login_shell_path().as_deref(),
+        &effective_path_os().unwrap_or_default(),
+    );
     // 必须带超时：deadline 传 None 时 wait_child_output 无限等，登录 shell 一挂
     // 整个预检就永久卡死（且前端此阶段无任何反馈）。定位失败仅丢失 is_path_default
     // 标记，非致命。
