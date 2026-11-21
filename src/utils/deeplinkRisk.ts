@@ -46,16 +46,25 @@ const ENV_HIJACK_PATTERNS: RegExp[] = [
   /^DYLD_/i, // macOS 对应物
   /^NODE_OPTIONS$/i, // --require 任意脚本
   /^NODE_EXTRA_CA_CERTS$/i, // 注入 CA → TLS 中间人
+  /^SSL_CERT_(?:FILE|DIR)$/i, // OpenSSL/Python/Ruby 信任自定义 CA
+  /^REQUESTS_CA_BUNDLE$/i, // Python requests 自定义 CA
+  /^CURL_CA_BUNDLE$/i, // curl 自定义 CA
   /^PYTHONPATH$/i,
   /^PYTHONSTARTUP$/i,
   /^RUBYOPT$/i,
   /^PERL5OPT$/i,
   /^JAVA_TOOL_OPTIONS$/i,
+  /^GIT_SSH_COMMAND$/i, // git 子进程命令执行
+  /^GIT_EXEC_PATH$/i, // git 子命令目录劫持
   /^BASH_ENV$/i,
+  /^ZDOTDIR$/i, // zsh 启动脚本目录劫持
+  /^PROMPT_COMMAND$/i,
   /^ENV$/i,
   /^IFS$/i,
   /^PATH$/i, // 整体劫持命令解析
-  /^HTTPS?_PROXY$/i, // 全量流量转发
+  /^COMSPEC$/i, // Windows 默认命令解释器劫持
+  /^PATHEXT$/i, // Windows 可执行扩展名劫持
+  /^(?:HTTPS?|ALL)_PROXY$/i, // 全量流量转发
 ];
 
 /** 会被 shell 解释成"执行下面这段字符串"的调用形态。 */
@@ -213,20 +222,70 @@ export function classifyEnvKey(key: unknown): RiskKind | null {
  * 会抛错，把整个确认框炸成空白——那比显示一条误导性的 `Command: sh` 更糟，因为
  * 用户连"有东西要导入"都看不到了。
  */
+function isScriptingInlineExecution(base: string, args: unknown[]): boolean {
+  const stringArgs = args.filter(
+    (arg): arg is string => typeof arg === "string",
+  );
+
+  // Node.js / Bun: -e / -p / --eval / --print (or combined -pe / -ep)
+  if (/^(?:node|bun)(?:\.exe)?$/.test(base)) {
+    return stringArgs.some(
+      (arg) =>
+        /^-(?:[ep]+)$/.test(arg) ||
+        arg === "--eval" ||
+        arg === "--print" ||
+        arg.startsWith("--eval=") ||
+        arg.startsWith("--print="),
+    );
+  }
+
+  // Deno: `deno eval ...`
+  if (/^deno(?:\.exe)?$/.test(base)) {
+    const firstSubcommand = stringArgs.find((arg) => !arg.startsWith("-"));
+    return firstSubcommand === "eval";
+  }
+
+  // Python (python, python3, python3.12, py): -c or combined short options ending in c (-uc, -Bc)
+  if (/^(?:python(?:\d+(?:\.\d+)*)?|py)(?:\.exe)?$/.test(base)) {
+    return stringArgs.some((arg) => /^-[a-zA-Z]*c/.test(arg));
+  }
+
+  // Perl: -e / -E (or combined -pe / -ne)
+  if (/^perl(?:\.exe)?$/.test(base)) {
+    return stringArgs.some((arg) => /^-[a-zA-Z]*[eE]/.test(arg));
+  }
+
+  // Ruby: -e
+  if (/^ruby(?:\.exe)?$/.test(base)) {
+    return stringArgs.some((arg) => /^-[a-zA-Z]*e/.test(arg));
+  }
+
+  // PHP: -r
+  if (/^php(?:\.exe)?$/.test(base)) {
+    return stringArgs.some((arg) => /^-[a-zA-Z]*r/.test(arg));
+  }
+
+  return false;
+}
+
 export function classifyCommand(
   command: unknown,
   args?: unknown,
 ): RiskKind | null {
   if (typeof command !== "string" || !command) return null;
+  if (!Array.isArray(args)) return null;
 
   // 只取基名：`/bin/sh` 与 `sh` 是同一回事
   const base = command.split(/[/\\]/).pop()?.toLowerCase() ?? "";
-  if (!SHELL_INTERPRETERS.has(base)) return null;
+  if (SHELL_INTERPRETERS.has(base)) {
+    return args.some(
+      (arg) => typeof arg === "string" && isInlineCommandFlag(arg),
+    )
+      ? "shellCommand"
+      : null;
+  }
 
-  if (!Array.isArray(args)) return null;
-  return args.some((arg) => typeof arg === "string" && isInlineCommandFlag(arg))
-    ? "shellCommand"
-    : null;
+  return isScriptingInlineExecution(base, args) ? "shellCommand" : null;
 }
 
 /**

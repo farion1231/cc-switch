@@ -112,6 +112,17 @@ describe("classifyEnvKey", () => {
       "PATH",
       "HTTPS_PROXY",
       "https_proxy", // 大小写不敏感
+      "ALL_PROXY",
+      "SSL_CERT_FILE",
+      "SSL_CERT_DIR",
+      "REQUESTS_CA_BUNDLE",
+      "CURL_CA_BUNDLE",
+      "GIT_SSH_COMMAND",
+      "GIT_EXEC_PATH",
+      "ZDOTDIR",
+      "PROMPT_COMMAND",
+      "COMSPEC",
+      "PATHEXT",
     ]) {
       expect(classifyEnvKey(key), key).toBe("envHijack");
     }
@@ -185,6 +196,43 @@ describe("classifyCommand", () => {
     );
     // 不含 c 的短开关串不算
     expect(classifyCommand("bash", ["-l", "script.sh"])).toBeNull();
+  });
+
+  it("flags scripting interpreters invoked with inline code execution flags", () => {
+    expect(classifyCommand("node", ["-e", "require('child_process')"])).toBe(
+      "shellCommand",
+    );
+    expect(classifyCommand("/usr/bin/node", ["--eval=process.exit()"])).toBe(
+      "shellCommand",
+    );
+    expect(classifyCommand("node.exe", ["-p", "1+1"])).toBe("shellCommand");
+    expect(classifyCommand("bun", ["-e", "console.log(1)"])).toBe(
+      "shellCommand",
+    );
+    expect(classifyCommand("deno", ["eval", "console.log(1)"])).toBe(
+      "shellCommand",
+    );
+    expect(
+      classifyCommand("python3", ["-c", "import os; os.system('id')"]),
+    ).toBe("shellCommand");
+    expect(classifyCommand("python3.12", ["-uc", "print(1)"])).toBe(
+      "shellCommand",
+    );
+    expect(classifyCommand("py.exe", ["-c", "print(1)"])).toBe("shellCommand");
+    expect(classifyCommand("perl", ["-e", "system('id')"])).toBe(
+      "shellCommand",
+    );
+    expect(classifyCommand("ruby", ["-e", "system('id')"])).toBe(
+      "shellCommand",
+    );
+    expect(classifyCommand("php", ["-r", "system('id');"])).toBe(
+      "shellCommand",
+    );
+
+    // Normal script file launches remain clean.
+    expect(classifyCommand("python3", ["server.py"])).toBeNull();
+    expect(classifyCommand("node", ["dist/index.js"])).toBeNull();
+    expect(classifyCommand("deno", ["run", "server.ts"])).toBeNull();
   });
 });
 
