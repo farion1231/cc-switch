@@ -62,6 +62,8 @@ mod tray_panel;
 mod usage_events;
 mod usage_script;
 mod window_fit;
+#[cfg(target_os = "windows")]
+mod windows_launch_guard;
 mod workbuddy_config;
 
 use crate::sync_utils::MutexExt;
@@ -492,6 +494,9 @@ fn handle_second_instance(app: &tauri::AppHandle, args: Vec<String>) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(target_os = "windows")]
+    windows_launch_guard::maybe_relaunch_without_redirection_guard();
+
     // 设置 panic hook，在应用崩溃时记录日志到 <app_config_dir>/crash.log（默认 ~/.cc-switch/crash.log）
     panic_hook::setup_panic_hook();
 
