@@ -25,11 +25,36 @@ use axum::{
     routing::{any, get, post},
     Router,
 };
-use hyper_util::rt::TokioIo;
+use hyper_util::rt::{TokioIo, TokioTimer};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
-use tokio::sync::{oneshot, RwLock};
+use std::time::Duration;
+use tokio::sync::{oneshot, RwLock, Semaphore};
 use tokio::task::JoinHandle;
+
+/// 代理服务器并发连接上限，防止慢连接或泛洪耗尽文件描述符与任务资源。
+const MAX_CONCURRENT_CONNECTIONS: usize = 256;
+/// 建立 TCP 连接后等待首包（`stream.peek`）的最长时间，防止空连接永久挂起。
+const PEEK_HEADER_TIMEOUT: Duration = Duration::from_secs(5);
+/// HTTP/1.1 请求头读取超时，防止慢速请求头（Slowloris）占用连接槽位。
+const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(15);
+
+#[derive(Clone, Copy, Debug)]
+struct ProxyServerLimits {
+    max_connections: usize,
+    peek_timeout: Duration,
+    header_read_timeout: Duration,
+}
+
+impl Default for ProxyServerLimits {
+    fn default() -> Self {
+        Self {
+            max_connections: MAX_CONCURRENT_CONNECTIONS,
+            peek_timeout: PEEK_HEADER_TIMEOUT,
+            header_read_timeout: HEADER_READ_TIMEOUT,
+        }
+    }
+}
 
 /// 代理服务器状态（共享）
 #[derive(Clone)]
@@ -56,6 +81,7 @@ pub struct ProxyState {
 pub struct ProxyServer {
     config: ProxyConfig,
     state: ProxyState,
+    limits: ProxyServerLimits,
     shutdown_tx: Arc<RwLock<Option<oneshot::Sender<()>>>>,
     /// 服务器任务句柄，用于等待服务器实际关闭
     server_handle: Arc<RwLock<Option<JoinHandle<()>>>>,
@@ -96,9 +122,16 @@ impl ProxyServer {
         Self {
             config,
             state,
+            limits: ProxyServerLimits::default(),
             shutdown_tx: Arc::new(RwLock::new(None)),
             server_handle: Arc::new(RwLock::new(None)),
         }
+    }
+
+    #[cfg(test)]
+    fn with_limits(mut self, limits: ProxyServerLimits) -> Self {
+        self.limits = limits;
+        self
     }
 
     pub async fn start(&self) -> Result<ProxyServerInfo, ProxyError> {
@@ -145,12 +178,14 @@ impl ProxyServer {
         // 启动服务器 — 使用手动 hyper HTTP/1.1 accept loop
         // 开启 preserve_header_case 以捕获客户端请求头的原始大小写
         let state = self.state.clone();
+        let limits = self.limits;
+        let connection_permits = Arc::new(Semaphore::new(limits.max_connections));
         let handle = tokio::spawn(async move {
             let mut shutdown_rx = shutdown_rx;
             loop {
                 tokio::select! {
                     result = listener.accept() => {
-                        let (stream, _remote_addr) = match result {
+                        let (stream, remote_addr) = match result {
                             Ok(v) => v,
                             Err(e) => {
                                 log::error!("[{SRV}] accept 失败: {e}", SRV = log_srv::ACCEPT_ERR);
@@ -159,14 +194,34 @@ impl ProxyServer {
                             }
                         };
 
+                        let Ok(permit) = connection_permits.clone().try_acquire_owned() else {
+                            log::warn!(
+                                "[ProxyServer] concurrent connection limit ({}) reached, dropping connection from {remote_addr}",
+                                limits.max_connections
+                            );
+                            drop(stream);
+                            continue;
+                        };
+
                         let app = app.clone();
                         tokio::spawn(async move {
+                            let _permit = permit;
+                            let conn_addrs = browser_guard::ConnectionAddrs {
+                                remote: remote_addr,
+                                local: stream.local_addr().ok(),
+                            };
+
                             // Peek raw TCP bytes to capture original header casing
                             // before hyper parses (and lowercases) the header names.
+                            // Bounded by peek_timeout so silent connections cannot stall indefinitely.
                             let original_cases = {
                                 let mut peek_buf = vec![0u8; 8192];
-                                match stream.peek(&mut peek_buf).await {
-                                    Ok(n) => {
+                                match tokio::time::timeout(limits.peek_timeout, stream.peek(&mut peek_buf)).await {
+                                    Ok(Ok(0)) => {
+                                        log::debug!("[ProxyServer] peer {remote_addr} closed before sending bytes");
+                                        return;
+                                    }
+                                    Ok(Ok(n)) => {
                                         let cases = super::hyper_client::OriginalHeaderCases::from_raw_bytes(&peek_buf[..n]);
                                         log::debug!(
                                             "[ProxyServer] Peeked {} bytes, captured {} header casings",
@@ -174,9 +229,15 @@ impl ProxyServer {
                                         );
                                         cases
                                     }
-                                    Err(e) => {
+                                    Ok(Err(e)) => {
                                         log::debug!("[ProxyServer] peek failed (non-fatal): {e}");
                                         super::hyper_client::OriginalHeaderCases::default()
+                                    }
+                                    Err(_) => {
+                                        log::debug!(
+                                            "[ProxyServer] timed out waiting for initial bytes from {remote_addr}"
+                                        );
+                                        return;
                                     }
                                 }
                             };
@@ -191,6 +252,7 @@ impl ProxyServer {
 
                                     // Insert our own header case map alongside hyper's internal one
                                     parts.extensions.insert(cases);
+                                    parts.extensions.insert(conn_addrs);
 
                                     let body = axum::body::Body::new(body);
                                     let axum_req = http::Request::from_parts(parts, body);
@@ -199,6 +261,8 @@ impl ProxyServer {
                             });
 
                             if let Err(e) = hyper::server::conn::http1::Builder::new()
+                                .timer(TokioTimer::new())
+                                .header_read_timeout(limits.header_read_timeout)
                                 .preserve_header_case(true)
                                 .serve_connection(TokioIo::new(stream), service)
                                 .await
@@ -652,6 +716,147 @@ mod tests {
         assert_eq!(desktop.status(), StatusCode::UNAUTHORIZED);
 
         proxy.stop().await.expect("stop test proxy");
+    }
+
+    /// 即使代理监听在 0.0.0.0，来自本机回环的 DNS 重绑定请求仍必须被 Host 规则拦截。
+    #[tokio::test]
+    async fn wildcard_listener_still_rejects_loopback_dns_rebinding() {
+        let db = Arc::new(Database::memory().expect("memory database"));
+        let proxy = ProxyServer::new(
+            ProxyConfig {
+                listen_address: "0.0.0.0".to_string(),
+                listen_port: 0,
+                ..ProxyConfig::default()
+            },
+            db,
+            None,
+        );
+        let info = proxy.start().await.expect("start wildcard proxy");
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+
+        let rebinding = client
+            .get(format!("http://127.0.0.1:{}/status", info.port))
+            .header(header::HOST, format!("rebind.evil.example:{}", info.port))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            rebinding.status(),
+            StatusCode::FORBIDDEN,
+            "0.0.0.0 listener must still reject DNS rebinding Host headers from loopback peers"
+        );
+
+        let local_cli = client
+            .get(format!("http://127.0.0.1:{}/health", info.port))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(local_cli.status(), StatusCode::OK);
+
+        proxy.stop().await.expect("stop wildcard proxy");
+    }
+
+    #[tokio::test]
+    async fn silent_and_slow_header_connections_are_closed_by_timeouts() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let db = Arc::new(Database::memory().expect("memory database"));
+        let proxy = ProxyServer::new(
+            ProxyConfig {
+                listen_port: 0,
+                ..ProxyConfig::default()
+            },
+            db,
+            None,
+        )
+        .with_limits(ProxyServerLimits {
+            max_connections: 8,
+            peek_timeout: Duration::from_millis(120),
+            header_read_timeout: Duration::from_millis(180),
+        });
+        let info = proxy.start().await.expect("start proxy with short limits");
+
+        // 1. Silent TCP client must be disconnected by peek_timeout.
+        let mut silent = tokio::net::TcpStream::connect(("127.0.0.1", info.port))
+            .await
+            .unwrap();
+        let mut buf = [0u8; 16];
+        let silent_res = tokio::time::timeout(Duration::from_secs(2), silent.read(&mut buf)).await;
+        assert!(
+            matches!(silent_res, Ok(Ok(0)) | Ok(Err(_))),
+            "silent connection should be closed promptly by peek_timeout, got: {silent_res:?}"
+        );
+
+        // 2. Partial HTTP header (Slowloris) passes peek but must be closed by header_read_timeout.
+        let mut slow = tokio::net::TcpStream::connect(("127.0.0.1", info.port))
+            .await
+            .unwrap();
+        slow.write_all(b"GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\n")
+            .await
+            .unwrap();
+        let mut response = Vec::new();
+        let slow_res =
+            tokio::time::timeout(Duration::from_secs(2), slow.read_to_end(&mut response)).await;
+        assert!(
+            slow_res.is_ok(),
+            "slow partial header connection should be closed promptly by header_read_timeout"
+        );
+
+        proxy.stop().await.expect("stop proxy");
+    }
+
+    #[tokio::test]
+    async fn connection_limit_drops_excess_connections_and_recovers() {
+        use tokio::io::AsyncReadExt;
+
+        let db = Arc::new(Database::memory().expect("memory database"));
+        let proxy = ProxyServer::new(
+            ProxyConfig {
+                listen_port: 0,
+                ..ProxyConfig::default()
+            },
+            db,
+            None,
+        )
+        .with_limits(ProxyServerLimits {
+            max_connections: 2,
+            peek_timeout: Duration::from_secs(5),
+            header_read_timeout: Duration::from_secs(5),
+        });
+        let info = proxy.start().await.expect("start capped proxy");
+
+        // Hold both connection slots open.
+        let held1 = tokio::net::TcpStream::connect(("127.0.0.1", info.port))
+            .await
+            .unwrap();
+        let held2 = tokio::net::TcpStream::connect(("127.0.0.1", info.port))
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(60)).await;
+
+        // 3rd connection exceeds max_connections and must be dropped immediately.
+        let mut excess = tokio::net::TcpStream::connect(("127.0.0.1", info.port))
+            .await
+            .unwrap();
+        let mut buf = [0u8; 16];
+        let excess_res = tokio::time::timeout(Duration::from_secs(2), excess.read(&mut buf)).await;
+        assert!(
+            matches!(excess_res, Ok(Ok(0)) | Ok(Err(_))),
+            "excess connection beyond max_connections must be closed immediately, got: {excess_res:?}"
+        );
+
+        // Releasing held slots restores normal request handling.
+        drop(held1);
+        drop(held2);
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let resp = client
+            .get(format!("http://127.0.0.1:{}/health", info.port))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        proxy.stop().await.expect("stop capped proxy");
     }
 
     /// Regression for #3787: a provider accidentally pointing at the proxy must
