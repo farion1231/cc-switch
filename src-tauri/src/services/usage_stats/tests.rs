@@ -1165,6 +1165,70 @@ fn test_backfill_distinguishes_legacy_and_total_cache_semantics() -> Result<(), 
 }
 
 #[test]
+fn test_request_logs_report_fresh_input_like_the_summary() -> Result<(), AppError> {
+    let db = Database::memory()?;
+    {
+        let conn = lock_conn!(db.conn);
+        for (request_id, app_type) in [
+            ("codex-legacy", "codex"),
+            ("codex-total", "codex"),
+            ("claude", "claude"),
+        ] {
+            insert_usage_log(
+                &conn,
+                request_id,
+                app_type,
+                "p1",
+                "test-model",
+                "proxy",
+                1000,
+                1000,
+                50,
+                300,
+                600,
+                200,
+                "0.01",
+            )?;
+        }
+        conn.execute(
+            "UPDATE proxy_request_logs
+                 SET input_token_semantics = ?1
+                 WHERE request_id = 'codex-total'",
+            [INPUT_TOKEN_SEMANTICS_TOTAL],
+        )?;
+    }
+
+    let logs = db.get_request_logs(&LogFilters::default(), 0, 10)?;
+    let fresh: HashMap<&str, u32> = logs
+        .data
+        .iter()
+        .map(|log| (log.request_id.as_str(), log.fresh_input_tokens))
+        .collect();
+    assert_eq!(
+        fresh,
+        HashMap::from([
+            ("codex-legacy", 700),
+            ("codex-total", 100),
+            ("claude", 1000)
+        ])
+    );
+    let summary = db.get_usage_summary(None, None, None, None, None)?;
+    assert_eq!(
+        fresh.values().map(|&tokens| u64::from(tokens)).sum::<u64>(),
+        summary.total_input_tokens
+    );
+
+    let detail = db
+        .get_request_detail("codex-total")?
+        .expect("codex-total row");
+    assert_eq!(
+        serde_json::to_value(&detail).unwrap()["freshInputTokens"],
+        100
+    );
+    Ok(())
+}
+
+#[test]
 fn test_backfill_deducts_cache_read_for_grokbuild_total_rows() -> Result<(), AppError> {
     // 回归：回填侧的 cache-inclusive 判定曾硬编码 codex|gemini 漏掉
     // grokbuild，导致 TOTAL 行按全量 input 计价、cache_read 双算。
@@ -2893,6 +2957,134 @@ fn test_get_provider_stats_estimated_speed_sums_session_rows() -> Result<(), App
     // 估算的不混进精确口径
     assert_eq!(stats[0].speed_output_tokens, 0);
     assert_eq!(stats[0].speed_generation_ms, 0);
+
+    Ok(())
+}
+
+#[test]
+fn test_agy_session_uses_exact_speed_and_first_token_stats() -> Result<(), AppError> {
+    let db = Database::memory()?;
+
+    {
+        let conn = lock_conn!(db.conn);
+        let insert = |id: &str,
+                      provider: &str,
+                      app: &str,
+                      model: &str,
+                      output: i64,
+                      latency: i64,
+                      first: Option<i64>,
+                      source: &str| {
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                        request_id, provider_id, app_type, model,
+                        input_tokens, output_tokens, total_cost_usd,
+                        latency_ms, first_token_ms, status_code, created_at, data_source
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    id, provider, app, model, 10, output, "0", latency, first, 200, 1000, source
+                ],
+            )
+        };
+        // Antigravity 原生计时：扣除首字，使用精确流式生成窗口（>=100 tok 且生成窗>=100ms）
+        insert(
+            "agy-long",
+            "_agy_session",
+            "agy",
+            "gemini-4-neon",
+            2_900,
+            69_000,
+            Some(43_000),
+            "agy_session",
+        )?;
+        insert(
+            "agy-mid",
+            "_agy_session",
+            "agy",
+            "gemini-4-neon",
+            150,
+            38_000,
+            Some(36_500),
+            "agy_session",
+        )?;
+        // 不计入精确速度，也不得回落到估算速度：输出 < 100 / 生成窗 < 100ms / 无计时
+        insert(
+            "agy-short",
+            "_agy_session",
+            "agy",
+            "gemini-4-neon",
+            90,
+            6_000,
+            Some(6_000),
+            "agy_session",
+        )?;
+        insert(
+            "agy-burst",
+            "_agy_session",
+            "agy",
+            "gemini-4-neon",
+            300,
+            5_050,
+            Some(5_000),
+            "agy_session",
+        )?;
+        insert(
+            "agy-untimed",
+            "_agy_session",
+            "agy",
+            "gemini-4-neon",
+            1_000,
+            0,
+            None,
+            "agy_session",
+        )?;
+        // 其余会话日志仍走含首字等待的估算口径
+        insert(
+            "codex-est",
+            "_codex_session",
+            "codex",
+            "gpt-5.4",
+            500,
+            10_000,
+            Some(3_300),
+            "codex_session",
+        )?;
+    }
+
+    let providers = db.get_provider_stats(None, None, None, None, None)?;
+    let agy_provider = providers
+        .iter()
+        .find(|s| s.provider_id == "_agy_session")
+        .expect("_agy_session");
+    assert_eq!(agy_provider.speed_output_tokens, 3_050);
+    assert_eq!(agy_provider.speed_generation_ms, 27_500);
+    // 有首字的 4 条：[5_000, 6_000, 36_500, 43_000] -> 中位数 (6_000 + 36_500) / 2
+    assert_eq!(agy_provider.first_token_median_ms, Some(21_250));
+    assert_eq!(agy_provider.est_speed_output_tokens, 0);
+    assert_eq!(agy_provider.est_speed_duration_ms, 0);
+    assert_eq!(agy_provider.est_first_token_median_ms, None);
+
+    let codex_provider = providers
+        .iter()
+        .find(|s| s.provider_id == "_codex_session")
+        .expect("_codex_session");
+    assert_eq!(codex_provider.speed_output_tokens, 0);
+    assert_eq!(codex_provider.first_token_median_ms, None);
+    assert_eq!(codex_provider.est_speed_output_tokens, 500);
+    assert_eq!(codex_provider.est_speed_duration_ms, 10_000);
+    assert_eq!(codex_provider.est_first_token_median_ms, Some(3_300));
+
+    let models = db.get_model_stats(None, None, None, None, None)?;
+    let neon = models
+        .iter()
+        .find(|s| s.model == "gemini-4-neon")
+        .expect("gemini-4-neon");
+    assert_eq!(neon.speed_output_tokens, 3_050);
+    assert_eq!(neon.speed_generation_ms, 27_500);
+    assert_eq!(neon.first_token_median_ms, Some(21_250));
+    assert_eq!(neon.est_speed_output_tokens, 0);
+    assert_eq!(neon.est_speed_duration_ms, 0);
+    assert_eq!(neon.est_first_token_median_ms, None);
 
     Ok(())
 }
