@@ -3517,6 +3517,7 @@
       "skillDirNotFound": "技能目錄不存在：{{path}}",
       "directoryConflict": "技能目錄 '{{directory}}' 已被 {{existing_repo}} 佔用，無法從 {{new_repo}} 安裝",
       "emptyArchive": "下載的壓縮檔為空",
+      "archiveInvalid": "下載到的不是壓縮檔：這個站點可能不是 GitHub / GitLab / Gitea 儲存庫，暫不支援",
       "invalidRepoRef": "倉庫位址不合法：{{owner}}/{{name}}",
       "archiveTooLarge": "壓縮檔解壓後超過 {{limit_mb}} MB 上限，已中止",
       "archiveDownloadTooLarge": "倉庫壓縮檔下載超過 {{limit_mb}} MB 上限，已中止",
