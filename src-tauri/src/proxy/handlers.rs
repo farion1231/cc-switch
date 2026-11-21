@@ -371,7 +371,6 @@ async fn handle_messages_for_app(
     let body_bytes = read_request_body_limited(body, MAX_REQUEST_BODY_BYTES).await?;
     let mut body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
-    drop(body_bytes);
     let stack = match resolve_stack_target(&state, &app_type, &mut body) {
         Ok(stack) => stack,
         Err(rejected) => return Ok(*rejected),
@@ -401,6 +400,9 @@ async fn handle_messages_for_app(
         .and_then(|s| s.as_bool())
         .unwrap_or(false);
 
+    // Response bridges need tool schemas/names, not the full conversation history.
+    let response_body = serde_json::json!({ "tools": body.get("tools") });
+
     // 转发请求
     let forwarder = ctx.create_forwarder(&state);
     let mut result = match forwarder
@@ -408,7 +410,7 @@ async fn handle_messages_for_app(
             &app_type,
             method,
             endpoint,
-            &body,
+            super::forwarder::ForwardBody::from_parsed(body, body_bytes),
             headers,
             extensions,
             ctx.get_providers(),
@@ -455,15 +457,13 @@ async fn handle_messages_for_app(
             response,
             &ctx,
             &state,
-            &body,
+            &response_body,
             is_stream,
             &api_format,
             connection_guard,
         )
         .await;
     }
-
-    drop(body);
 
     // 通用响应处理（透传模式）
     process_response(
@@ -1041,7 +1041,6 @@ pub async fn handle_chat_completions(
     let body_bytes = decode_codex_request_body(&mut headers, body_bytes)?;
     let mut body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
-    drop(body_bytes);
     let stack = match resolve_stack_target(&state, &AppType::Codex, &mut body) {
         Ok(stack) => stack,
         Err(rejected) => return Ok(*rejected),
@@ -1070,7 +1069,7 @@ pub async fn handle_chat_completions(
             &AppType::Codex,
             method,
             &endpoint,
-            &body,
+            super::forwarder::ForwardBody::from_parsed(body, body_bytes),
             headers,
             extensions,
             ctx.get_providers(),
@@ -1087,7 +1086,6 @@ pub async fn handle_chat_completions(
             return build_codex_proxy_error_response(&ctx, &endpoint, &err.error, is_stream);
         }
     };
-    drop(body);
 
     let connection_guard = result.connection_guard.take();
     ctx.outbound_model = result.outbound_model.take();
@@ -1185,7 +1183,6 @@ async fn handle_responses_for_app(
     let body_bytes = decode_codex_request_body(&mut headers, body_bytes)?;
     let mut body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
-    drop(body_bytes);
     let stack = match resolve_stack_target(&state, &app_type, &mut body) {
         Ok(stack) => stack,
         Err(rejected) => return Ok(*rejected),
@@ -1222,7 +1219,7 @@ async fn handle_responses_for_app(
             &app_type,
             method,
             &endpoint,
-            &body,
+            super::forwarder::ForwardBody::from_parsed(body, body_bytes),
             headers,
             extensions,
             ctx.get_providers(),
@@ -1239,7 +1236,6 @@ async fn handle_responses_for_app(
             return build_codex_proxy_error_response(&ctx, &endpoint, &err.error, is_stream);
         }
     };
-    drop(body);
 
     let connection_guard = result.connection_guard.take();
     let codex_upstream_format = result.codex_upstream_format;
@@ -1458,7 +1454,6 @@ async fn handle_codex_standalone_passthrough(
     let body_bytes = decode_codex_request_body(&mut headers, body_bytes)?;
     let body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::InvalidRequest(format!("Failed to parse request body: {e}")))?;
-    drop(body_bytes);
 
     let mut ctx = RequestContext::new(
         &state,
@@ -1478,7 +1473,7 @@ async fn handle_codex_standalone_passthrough(
             &AppType::Codex,
             method,
             &endpoint,
-            &body,
+            super::forwarder::ForwardBody::from_parsed(body, body_bytes),
             headers,
             extensions,
             ctx.get_providers(),
@@ -1495,7 +1490,6 @@ async fn handle_codex_standalone_passthrough(
             return build_codex_proxy_error_response(&ctx, &endpoint, &err.error, false);
         }
     };
-    drop(body);
 
     let connection_guard = result.connection_guard.take();
     ctx.outbound_model = result.outbound_model.take();
@@ -2581,8 +2575,6 @@ pub async fn handle_gemini(
             .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?
     };
 
-    drop(body_bytes);
-
     // Gemini 的模型名称在 URI 中
     let mut ctx = RequestContext::new(
         &state,
@@ -2613,7 +2605,7 @@ pub async fn handle_gemini(
             &AppType::Gemini,
             method,
             endpoint,
-            &body,
+            super::forwarder::ForwardBody::from_parsed(body, body_bytes),
             headers,
             extensions,
             ctx.get_providers(),
@@ -2630,7 +2622,6 @@ pub async fn handle_gemini(
             return Err(err.error);
         }
     };
-    drop(body);
 
     let connection_guard = result.connection_guard.take();
     ctx.outbound_model = result.outbound_model.take();

@@ -2,16 +2,58 @@
 
 use super::*;
 
+/// Own the parsed request on its first attempt. Keep the already-read wire bytes
+/// for lazy reconstruction after an error instead of cloning the JSON tree on
+/// every successful request. Before forwarding, handlers only rewrite `model`
+/// (Stack resolution); remember that resolved value for retries as well.
+pub struct ForwardBody {
+    first: Option<Value>,
+    bytes: Bytes,
+    model: Option<Value>,
+}
+
+impl ForwardBody {
+    pub fn from_parsed(body: Value, bytes: Bytes) -> Self {
+        let model = body.get("model").cloned();
+        Self {
+            first: Some(body),
+            bytes,
+            model,
+        }
+    }
+
+    pub(super) fn initial(&self) -> &Value {
+        self.first.as_ref().expect("initial body has not been sent")
+    }
+
+    pub(super) fn replay(&self) -> Result<Value, ProxyError> {
+        let mut body: Value = if self.bytes.is_empty() {
+            Value::Null
+        } else {
+            serde_json::from_slice(&self.bytes)
+                .map_err(|e| ProxyError::Internal(format!("Failed to replay request body: {e}")))?
+        };
+        if let Some(model) = &self.model {
+            body["model"] = model.clone();
+        }
+        Ok(body)
+    }
+
+    pub(super) fn next(&mut self) -> Result<Value, ProxyError> {
+        self.first.take().map(Ok).unwrap_or_else(|| self.replay())
+    }
+}
+
 /// Shared request pipeline after native Responses transport selection.
 /// Normalize standalone receipts for third parties before the strict-Grok gate.
 pub(super) fn apply_native_responses_request_compat(
     provider: &Provider,
     body: &mut Value,
     keep_resolved_model: bool,
-) -> Result<(), ProxyError> {
-    if !crate::proxy::providers::is_codex_official_provider(provider)
-        && crate::proxy::providers::transform_codex_responses_xai_sanitize::rewrite_xai_call_id_less_tool_outputs(body)
-    {
+) -> Result<bool, ProxyError> {
+    let mut changed = !crate::proxy::providers::is_codex_official_provider(provider)
+        && crate::proxy::providers::transform_codex_responses_xai_sanitize::rewrite_xai_call_id_less_tool_outputs(body);
+    if changed {
         log::info!(
             "[Codex] Rewrote function_call_output items without call_id for native Responses upstream (provider={})",
             provider.id
@@ -21,11 +63,12 @@ pub(super) fn apply_native_responses_request_compat(
         provider,
         body.get("model").and_then(Value::as_str),
     ) {
-        return Ok(());
+        return Ok(changed);
     }
     if crate::proxy::providers::transform_codex_responses_namespace::flatten_request_namespaces(
         body,
     )? {
+        changed = true;
         log::debug!(
             "[Codex] Flattened namespace tools for native Responses upstream (provider={})",
             provider.id
@@ -38,13 +81,13 @@ pub(super) fn apply_native_responses_request_compat(
     } else {
         crate::proxy::providers::codex_provider_upstream_model(provider)
     };
-    crate::proxy::providers::transform_codex_responses_xai_sanitize::apply_xai_native_responses_request_compat(
+    changed |= crate::proxy::providers::transform_codex_responses_xai_sanitize::apply_xai_native_responses_request_compat(
         body,
         &provider.id,
         upstream_model.as_deref(),
         &provider.settings_config,
     );
-    Ok(())
+    Ok(changed)
 }
 
 pub(super) const CLAUDE_CODE_SYSTEM_IDENTITY: &str =

@@ -219,10 +219,16 @@ fn is_compact_request(body: &Value) -> bool {
 /// tool_result + text 的用户消息。text block 的存在让 Copilot 将其计为 premium request。
 ///
 /// **跨消息合并**（补充）：连续的 tool_result-only 用户消息合并为一条。
-pub fn merge_tool_results(mut body: Value) -> Value {
+#[cfg(test)]
+pub fn merge_tool_results(body: Value) -> Value {
+    merge_tool_results_with_changes(body).0
+}
+
+pub(crate) fn merge_tool_results_with_changes(mut body: Value) -> (Value, bool) {
+    let mut changed = false;
     let messages = match body.get_mut("messages").and_then(|m| m.as_array_mut()) {
         Some(msgs) if !msgs.is_empty() => msgs,
-        _ => return body,
+        _ => return (body, changed),
     };
 
     // Phase 1: 消息内部合并 — 将 text block 吸收进 tool_result block
@@ -260,15 +266,16 @@ pub fn merge_tool_results(mut body: Value) -> Value {
         // 合并策略（与参考实现对齐）
         let merged = merge_blocks_into_tool_results(tool_results, text_blocks);
         msg["content"] = Value::Array(merged);
+        changed = true;
     }
 
     // Phase 2: 跨消息合并 — 连续的 tool_result-only 用户消息合并
     let messages = match body.get("messages").and_then(|m| m.as_array()) {
         Some(messages) => messages.clone(),
-        None => return body,
+        None => return (body, changed),
     };
     if messages.len() <= 1 {
-        return body;
+        return (body, changed);
     }
 
     let mut merged_msgs: Vec<Value> = Vec::with_capacity(messages.len());
@@ -276,6 +283,7 @@ pub fn merge_tool_results(mut body: Value) -> Value {
 
     while i < messages.len() {
         if is_tool_result_only_message(&messages[i]) {
+            changed = true;
             let mut combined_content: Vec<Value> = Vec::new();
             while i < messages.len() && is_tool_result_only_message(&messages[i]) {
                 if let Some(content) = messages[i].get("content").and_then(|c| c.as_array()) {
@@ -296,7 +304,7 @@ pub fn merge_tool_results(mut body: Value) -> Value {
     }
 
     body["messages"] = Value::Array(merged_msgs);
-    body
+    (body, changed)
 }
 
 /// 基于最后一条用户消息内容生成确定性 Request ID。
@@ -408,10 +416,16 @@ fn detect_subagent(body: &Value) -> bool {
 /// 但后续 user 消息中的 tool_result 仍在。上游 API 可能因不匹配而报错/重试。
 ///
 /// 与 copilot-api 的 `sanitizeOrphanToolResults` 对齐。
-pub fn sanitize_orphan_tool_results(mut body: Value) -> Value {
+#[cfg(test)]
+pub fn sanitize_orphan_tool_results(body: Value) -> Value {
+    sanitize_orphan_tool_results_with_changes(body).0
+}
+
+pub(crate) fn sanitize_orphan_tool_results_with_changes(mut body: Value) -> (Value, bool) {
+    let mut changed = false;
     let messages = match body.get_mut("messages").and_then(|m| m.as_array_mut()) {
         Some(msgs) if msgs.len() >= 2 => msgs,
-        _ => return body,
+        _ => return (body, changed),
     };
 
     // Anthropic 协议要求 tool_result 紧跟其对应 tool_use 所在的 assistant turn。
@@ -468,6 +482,7 @@ pub fn sanitize_orphan_tool_results(mut body: Value) -> Value {
                         .join("\n"),
                     _ => String::new(),
                 };
+                changed = true;
                 *block = serde_json::json!({
                     "type": "text",
                     "text": format!("[Tool result for {}]: {}", tool_use_id, content_text)
@@ -476,7 +491,7 @@ pub fn sanitize_orphan_tool_results(mut body: Value) -> Value {
         }
     }
 
-    body
+    (body, changed)
 }
 
 /// 请求前主动剥离所有 assistant 消息里的 thinking / redacted_thinking block
