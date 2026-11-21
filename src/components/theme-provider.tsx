@@ -6,6 +6,7 @@ import React, {
   useState,
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { isLinux } from "@/lib/platform";
 
 type Theme = "light" | "dark" | "system";
 
@@ -81,34 +82,63 @@ export function ThemeProvider({
       return;
     }
 
-    const isDark =
-      theme === "system"
-        ? window.matchMedia &&
-          window.matchMedia("(prefers-color-scheme: dark)").matches
-        : theme === "dark";
-    applyColorScheme(isDark);
-  }, [theme]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") {
+    if (theme !== "system") {
+      applyColorScheme(theme === "dark");
       return;
     }
 
-    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
-    const handleChange = () => {
-      if (theme !== "system") {
-        return;
-      }
+    let isMounted = true;
+    let inFlight = false;
 
-      applyColorScheme(mediaQuery.matches);
+    const applyTheme = (isDark: boolean) => {
+      if (!isMounted) return;
+      applyColorScheme(isDark);
     };
 
-    if (theme === "system") {
-      handleChange();
-    }
+    const syncSystemTheme = async () => {
+      if (!isMounted || inFlight) return;
+      inFlight = true;
+      try {
+        const sysTheme = await invoke<string | null>("get_system_theme");
+        if (sysTheme === "dark") {
+          applyTheme(true);
+          return;
+        } else if (sysTheme === "light") {
+          applyTheme(false);
+          return;
+        }
+      } catch (e) {
+        console.debug("Failed to read system theme via get_system_theme:", e);
+      } finally {
+        inFlight = false;
+      }
 
-    mediaQuery.addEventListener("change", handleChange);
-    return () => mediaQuery.removeEventListener("change", handleChange);
+      // Fallback to matchMedia
+      const isDark = Boolean(
+        window.matchMedia &&
+          window.matchMedia("(prefers-color-scheme: dark)").matches,
+      );
+      applyTheme(isDark);
+    };
+
+    // Initial sync
+    void syncSystemTheme();
+
+    const mediaQuery = window.matchMedia?.("(prefers-color-scheme: dark)");
+    const handleMediaChange = () => {
+      void syncSystemTheme();
+    };
+    mediaQuery?.addEventListener("change", handleMediaChange);
+
+    // Fallback periodic polling for Linux/KDE Portal theme changes
+    // which may not emit WebKit mediaQuery events.
+    const intervalId = isLinux() ? setInterval(syncSystemTheme, 2000) : null;
+
+    return () => {
+      isMounted = false;
+      if (intervalId !== null) clearInterval(intervalId);
+      mediaQuery?.removeEventListener("change", handleMediaChange);
+    };
   }, [theme]);
 
   // Sync native window theme (Windows/macOS title bar)
