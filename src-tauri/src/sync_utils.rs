@@ -29,6 +29,19 @@ pub(crate) fn resume_after_rollback<T>(
     }
 }
 
+/// Lock a std `Mutex`, taking the guard even if a panic poisoned it. The poison
+/// flag stays set; call `clear_poison` where the caller resets the value.
+pub(crate) trait MutexExt<T: ?Sized> {
+    fn lock_recover(&self) -> MutexGuard<'_, T>;
+}
+
+impl<T: ?Sized> MutexExt<T> for Mutex<T> {
+    fn lock_recover(&self) -> MutexGuard<'_, T> {
+        self.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
 /// Serialize file operations without making one panicking caller disable the
 /// file for the rest of the process. These locks contain no in-memory state;
 /// callers must still reload/validate files and use their normal atomic writes

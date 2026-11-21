@@ -12,7 +12,7 @@ There are many ways to contribute:
 - **Suggest features** — Have an idea? [Submit a feature request](https://github.com/farion1231/cc-switch/issues/new?template=feature_request.yml).
 - **Improve docs** — Spot a typo or missing info? [Report a doc issue](https://github.com/farion1231/cc-switch/issues/new?template=doc_issue.yml).
 - **Contribute code** — Fix bugs or implement features via pull requests.
-- **Translate** — Help us improve translations for Simplified Chinese, Traditional Chinese, English, Japanese, Korean, Turkish, and Russian.
+- **Translate** — Help us improve translations for Simplified Chinese, Traditional Chinese, English, German, Japanese, Korean, Turkish, and Russian.
 
 > **Security vulnerabilities**: Please do NOT use public issues. See our [Security Policy](./SECURITY.md) instead.
 
@@ -83,7 +83,7 @@ For a debug build, append `--debug` to the command above. This single-quote form
 
 **Frontend**: vitest runs `*.test.ts(x)` under `tests/` and `src/`; Tauri calls are mocked with MSW (see `tests/msw/`); component tests use @testing-library/react.
 
-**Backend**: unit tests live next to the source (`#[cfg(test)]`), and integration tests live in `src-tauri/tests/`. CI runs `cargo test` on Linux, macOS, and Windows.
+**Backend**: unit tests live next to the source (`#[cfg(test)]`), and integration tests are modules of the single test binary in `src-tauri/tests/integration/` (register new ones in its `main.rs`; every top-level file under `tests/` would link the whole app again). CI runs `cargo test` on Linux, macOS, and Windows.
 
 > **Isolate your real config**: some backend tests read and write directories such as `~/.cc-switch` and `~/.codex`. When running them locally, point `CC_SWITCH_TEST_HOME` at a temporary directory:
 >
@@ -113,7 +113,7 @@ Backend (Tauri 2 + Rust)
 
 - **SSOT** (single source of truth): providers, MCP, prompts, Skills, projects, usage, and other data are all stored in `~/.cc-switch/cc-switch.db` (SQLite)
 - **Device-level settings**: settings that belong to this machine only, such as directory overrides and backup policy, are stored in `~/.cc-switch/settings.json` and are not cloud-synced
-- **Two write modes**: for switch-mode tools (Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build), direct switching updates provider-owned fields in the live config while preserving unrelated settings, without backfilling the previous live config into the previous provider; for coexist-mode tools (OpenCode, OpenClaw, Hermes, Pi, MiniMax Code), all providers coexist in a single live file and nothing is backfilled
+- **Two write modes**: for switch-mode tools (such as Claude Code and Codex), direct switching updates provider-owned fields in the live config while preserving unrelated settings, without backfilling the previous live config into the previous provider; for coexist-mode tools (such as OpenCode and Hermes), all providers coexist in a single live file and nothing is backfilled. Each tool's mode is the `additive` flag of its `AppSpec` in `src-tauri/src/app_config.rs`. The flag does not cover launch-only cards, which write no config file and only open a terminal with the card's settings: Antigravity CLI (`additive` is false, yet it is not switch-mode) and GitHub Copilot CLI's official sign-in card (Copilot is `additive`, but only its bring-your-own-model cards coexist)
 - **Atomic writes**: all live configs are written via "temp file + rename" to avoid corruption
 - **Concurrency safety**: the database connection is protected by a Mutex to avoid race conditions
 - **Layered architecture**: Commands (parameter validation and forwarding) → Services (business logic) → DAO → Database; the Commands layer stays thin
@@ -147,7 +147,7 @@ Backend (Tauri 2 + Rust)
 │   ├── config/               # Provider presets per tool (*ProviderPresets.ts), MCP presets
 │   ├── hooks/                # Custom hooks (business logic)
 │   ├── lib/api/              # Tauri invoke wrappers (lib/query/ holds the TanStack Query config)
-│   ├── i18n/locales/         # UI strings (zh / zh-TW / en / ja / ko / tr / ru)
+│   ├── i18n/locales/         # UI strings (zh / zh-TW / en / de / ja / ko / tr / ru)
 │   ├── icons/                # Provider icons (index is maintained by hand)
 │   └── types/ utils/ contexts/
 ├── src-tauri/                # Backend (Rust)
@@ -173,6 +173,7 @@ Backend (Tauri 2 + Rust)
 - **Frontend**: Prettier for formatting (`src/` only, default config), strict TypeScript (`pnpm typecheck`); the project does not use ESLint
 - **Backend**: `cargo fmt` for formatting, `cargo clippy -- -D warnings` for linting
 - **Tauri 2 commands**: the command name is the Rust function name and stays snake_case; when calling `invoke` from the frontend, write argument names in camelCase (e.g., Rust `provider_id` becomes `providerId` on the frontend). Register new commands in `generate_handler!` in `src-tauri/src/lib.rs`, and put the frontend wrappers in `src/lib/api/`
+- **Rules the frontend mirrors from the backend** (constants, URL detection, app capabilities, languages): don't rely on a "keep in sync" comment. A Rust test writes the backend values to a JSON fixture in `tests/config/` and a vitest test compares the frontend copy with it, so changing one side alone fails a test. See `src-tauri/src/frontend_parity_tests.rs` and `tests/config/backendConstants.test.ts`; after an intended backend change, regenerate with `CC_SWITCH_UPDATE_GOLDEN=1 cargo test <test name>` and review the fixture diff
 
 Run the same checks as CI before submitting:
 
@@ -195,7 +196,7 @@ cd src-tauri && cargo fmt --check && cargo clippy -- -D warnings && cargo test
 - [ ] `pnpm format:check` passes
 - [ ] `pnpm test:unit` passes
 - [ ] If Rust code changed: `cargo fmt --check`, `cargo clippy -- -D warnings`, and `cargo test` pass
-- [ ] If user-facing text changed: all four locale files are updated
+- [ ] If user-facing text changed: all eight locale files are updated
 
 ### Commit Convention
 
@@ -236,16 +237,16 @@ PRs that add a relay or aggregator preset outside the sponsorship program will b
 
 ## Internationalization (i18n)
 
-The CC Switch UI supports Simplified Chinese, Traditional Chinese, English, Japanese, Korean, Turkish, and Russian. When modifying user-facing text:
+The CC Switch UI supports Simplified Chinese, Traditional Chinese, English, German, Japanese, Korean, Turkish, and Russian. When modifying user-facing text:
 
-1. Update **all seven** locale files in `src/i18n/locales/`: `zh.json`, `zh-TW.json`, `en.json`, `ja.json`, `ko.json`, `tr.json`, `ru.json`. CI fails when a key is missing from any of them (`tests/config/localeParity.test.ts`). If you cannot write one of the languages, a careful machine translation is fine; say so in the PR description.
+1. Update **all eight** locale files in `src/i18n/locales/`: `zh.json`, `zh-TW.json`, `en.json`, `de.json`, `ja.json`, `ko.json`, `tr.json`, `ru.json`. CI fails when a key is missing from any of them (`tests/config/localeParity.test.ts`). If you cannot write one of the languages, a careful machine translation is fine; say so in the PR description.
 2. Keep `{{variables}}`, `<1>` tags, file names, commands, and other technical literals unchanged in every language.
 3. Use the `t()` function from i18next for all UI text.
 4. Never hardcode user-facing strings.
 
 Tray texts are not in the JSON files: the native tray menu (`src-tauri/src/tray.rs`) and the tray panel (`src-tauri/src/tray_panel.rs`) have one block per language, and every block must set every field.
 
-> Forgetting to update a locale file does not fail the build: the missing strings fall back to English, and if the English file lacks them too, the UI shows the raw key.
+> At runtime, a missing string falls back to English, and if the English file lacks it too, the UI shows the raw key. That is why the parity test above fails CI instead.
 
 ## Questions?
 
@@ -268,7 +269,7 @@ Tray texts are not in the JSON files: the native tray menu (`src-tauri/src/tray.
 - **建议功能** — 有想法？[提交功能请求](https://github.com/farion1231/cc-switch/issues/new?template=feature_request.yml)。
 - **改进文档** — 发现错误或缺失？[报告文档问题](https://github.com/farion1231/cc-switch/issues/new?template=doc_issue.yml)。
 - **贡献代码** — 通过 Pull Request 修复 Bug 或实现新功能。
-- **翻译** — 帮助改进简体中文、繁体中文、英文、日文、韩语、土耳其语和俄语的翻译。
+- **翻译** — 帮助改进简体中文、繁体中文、英文、德文、日文、韩语、土耳其语和俄语的翻译。
 
 > **安全漏洞**：请不要使用公开 Issue 报告。请参阅我们的[安全策略](./SECURITY.md)。
 
@@ -339,7 +340,7 @@ pnpm tauri build -c '{"bundle":{"createUpdaterArtifacts":false}}'
 
 **前端**：使用 vitest 运行 `tests/` 和 `src/` 下的 `*.test.ts(x)`；Tauri 调用由 MSW 模拟（见 `tests/msw/`）；组件测试使用 @testing-library/react。
 
-**后端**：单元测试写在源码旁边（`#[cfg(test)]`），集成测试放在 `src-tauri/tests/`。CI 会在 Linux、macOS 和 Windows 上运行 `cargo test`。
+**后端**：单元测试写在源码旁边（`#[cfg(test)]`），集成测试是 `src-tauri/tests/integration/` 这一个测试二进制里的模块（新文件在它的 `main.rs` 里登记；`tests/` 顶层每多一个文件就要把整个应用再链接一遍）。CI 会在 Linux、macOS 和 Windows 上运行 `cargo test`。
 
 > **隔离真实配置**：部分后端测试会读写 `~/.cc-switch`、`~/.codex` 等目录。本地运行时，建议把 `CC_SWITCH_TEST_HOME` 指向一个临时目录：
 >
@@ -369,7 +370,7 @@ Backend (Tauri 2 + Rust)
 
 - **SSOT**（单一事实源）：供应商、MCP、提示词、Skills、项目和用量等数据都存储在 `~/.cc-switch/cc-switch.db`（SQLite）
 - **设备级设置**：目录覆盖、备份策略等只属于本机的设置存放在 `~/.cc-switch/settings.json`，不参与云同步
-- **两种写入模式**：切换式工具（Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build）在直连模式下切换时，只更新 live 配置中归供应商所有的字段，保留其他设置，不再把原 live 配置回填到原供应商；共存式工具（OpenCode、OpenClaw、Hermes、Pi、MiniMax Code）的所有供应商共存于同一个 live 文件，不做回填
+- **两种写入模式**：切换式工具（如 Claude Code、Codex）在直连模式下切换时，只更新 live 配置中归供应商所有的字段，保留其他设置，不再把原 live 配置回填到原供应商；共存式工具（如 OpenCode、Hermes）的所有供应商共存于同一个 live 文件，不做回填。每个工具属于哪种，以 `src-tauri/src/app_config.rs` 里它的 `AppSpec` 的 `additive` 字段为准。这个字段不涵盖启动式卡片（不写配置文件，只带着卡片参数打开终端）：Antigravity CLI（`additive` 为 false，但不是切换式），以及 GitHub Copilot CLI 的官方登录卡（Copilot 的 `additive` 为 true，但只有自带模型卡是共存式）
 - **原子写入**：所有 live 配置都通过“临时文件 + 重命名”写入，避免配置损坏
 - **并发安全**：数据库连接由 Mutex 保护，避免竞态条件
 - **分层架构**：Commands（参数校验与转发）→ Services（业务逻辑）→ DAO → Database，Commands 层保持精简
@@ -403,7 +404,7 @@ Backend (Tauri 2 + Rust)
 │   ├── config/               # 各工具的供应商预设（*ProviderPresets.ts）、MCP 预设
 │   ├── hooks/                # 自定义 hooks（业务逻辑）
 │   ├── lib/api/              # Tauri invoke 封装（lib/query/ 为 TanStack Query 配置）
-│   ├── i18n/locales/         # 界面文案（zh / zh-TW / en / ja / ko / tr / ru）
+│   ├── i18n/locales/         # 界面文案（zh / zh-TW / en / de / ja / ko / tr / ru）
 │   ├── icons/                # 供应商图标（索引需手工维护）
 │   └── types/ utils/ contexts/
 ├── src-tauri/                # 后端（Rust）
@@ -429,6 +430,7 @@ Backend (Tauri 2 + Rust)
 - **前端**：Prettier 格式化（仅 `src/`，使用默认配置）、严格 TypeScript（`pnpm typecheck`）；项目没有使用 ESLint
 - **后端**：`cargo fmt` 格式化，`cargo clippy -- -D warnings` 检查
 - **Tauri 2 命令**：命令名就是 Rust 函数名，保持 snake_case；前端 `invoke` 传参时，参数名要写成 camelCase（例如 Rust 的 `provider_id` 在前端写成 `providerId`）。新命令需要在 `src-tauri/src/lib.rs` 的 `generate_handler!` 中注册，前端封装放在 `src/lib/api/`
+- **前端照抄后端的规则**（常量、URL 识别、应用能力、语言列表）：不要只靠“改一边要改另一边”的注释。由 Rust 测试把后端的值写进 `tests/config/` 下的 JSON fixture，再由 vitest 测试把前端那份和它比对，只改一边测试就会失败。参考 `src-tauri/src/frontend_parity_tests.rs` 和 `tests/config/backendConstants.test.ts`；后端有意改动后，用 `CC_SWITCH_UPDATE_GOLDEN=1 cargo test <测试名>` 重新生成，再审 fixture 的 diff
 
 提交前运行与 CI 相同的检查：
 
@@ -451,7 +453,7 @@ cd src-tauri && cargo fmt --check && cargo clippy -- -D warnings && cargo test
 - [ ] `pnpm format:check` 通过
 - [ ] `pnpm test:unit` 通过
 - [ ] 如修改了 Rust 代码：`cargo fmt --check`、`cargo clippy -- -D warnings`、`cargo test` 通过
-- [ ] 如修改了用户可见文本，已同步更新四个语言文件
+- [ ] 如修改了用户可见文本，已同步更新八个语言文件
 
 ### 提交信息规范
 
@@ -492,16 +494,16 @@ chore(deps): update dependencies
 
 ## 国际化（i18n）
 
-CC Switch 的界面支持简体中文、繁体中文、英文、日文、韩语、土耳其语和俄语。修改用户可见文本时：
+CC Switch 的界面支持简体中文、繁体中文、英文、德文、日文、韩语、土耳其语和俄语。修改用户可见文本时：
 
-1. **七个**语言文件都要改，都在 `src/i18n/locales/`：`zh.json`、`zh-TW.json`、`en.json`、`ja.json`、`ko.json`、`tr.json`、`ru.json`。任何一个缺 key，CI 都会失败（`tests/config/localeParity.test.ts`）。不会写的语言可以用认真校对过的机器翻译，在 PR 说明里注明即可。
+1. **八个**语言文件都要改，都在 `src/i18n/locales/`：`zh.json`、`zh-TW.json`、`en.json`、`de.json`、`ja.json`、`ko.json`、`tr.json`、`ru.json`。任何一个缺 key，CI 都会失败（`tests/config/localeParity.test.ts`）。不会写的语言可以用认真校对过的机器翻译，在 PR 说明里注明即可。
 2. 每种语言都要原样保留 `{{变量}}`、`<1>` 标签、文件名、命令等技术字面量。
 3. 所有界面文本使用 i18next 的 `t()` 函数。
 4. 不要硬编码用户可见文本。
 
 托盘文案不在 JSON 里：原生托盘菜单（`src-tauri/src/tray.rs`）和托盘快捷面板（`src-tauri/src/tray_panel.rs`）每种语言一整块，每块都要写全所有字段。
 
-> 漏掉某个语言文件不会导致构建失败：缺少的文案会回退显示英文，英文文件也缺时，界面上会直接显示 key 的字面量。
+> 运行时缺少的文案会回退显示英文，英文文件也缺时，界面上会直接显示 key 的字面量，所以由上面的一致性测试在 CI 里拦下。
 
 ## 有疑问？
 

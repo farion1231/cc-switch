@@ -1,3 +1,4 @@
+use crate::app_config::AppType;
 #[cfg(windows)]
 use crate::config::derive_wsl_home_dir;
 use crate::config::{atomic_write, get_home_dir, write_json_file_with_contents};
@@ -507,7 +508,9 @@ impl OmoService {
     }
 
     pub fn write_config_to_file(state: &AppState, v: &OmoVariant) -> Result<(), AppError> {
-        let current_omo = state.db.get_current_omo_provider("opencode", v.category)?;
+        let current_omo = state
+            .db
+            .get_current_omo_provider(&AppType::OpenCode, v.category)?;
         let profile_data = current_omo
             .as_ref()
             .map(|provider| Self::profile_data_from_provider(provider, v));
@@ -580,10 +583,10 @@ impl OmoService {
             in_failover_queue: false,
         };
 
-        state.db.save_provider("opencode", &provider)?;
+        state.db.save_provider(&AppType::OpenCode, &provider)?;
         state
             .db
-            .set_omo_provider_current("opencode", &provider.id, v.category)?;
+            .set_omo_provider_current(&AppType::OpenCode, &provider.id, v.category)?;
         Self::write_config_to_file(state, v)?;
         Ok(provider)
     }

@@ -1,5 +1,5 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { useState, type ReactElement } from "react";
 import { http, HttpResponse } from "msw";
@@ -8,7 +8,9 @@ import {
   ProviderList,
   type SwitchModeProps,
 } from "@/components/providers/ProviderList";
+import { hermesKeys } from "@/hooks/useHermes";
 import { server } from "../msw/server";
+import { createTestQueryClient } from "../utils/testQueryClient";
 
 vi.mock("sonner", () => ({
   toast: {
@@ -131,13 +133,14 @@ function createProvider(overrides: Partial<Provider> = {}): Provider {
 }
 
 function renderWithQueryClient(ui: ReactElement) {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
+  const queryClient = createTestQueryClient();
 
-  return render(
-    <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>,
-  );
+  return {
+    ...render(
+      <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>,
+    ),
+    queryClient,
+  };
 }
 
 beforeEach(() => {
@@ -257,6 +260,57 @@ describe("ProviderList Component", () => {
 
     fireEvent.click(addButton);
     expect(handleCreate).toHaveBeenCalledTimes(1);
+  });
+
+  const serveOneUnreadableProvider = () =>
+    server.use(
+      http.post("http://tauri.local/get_unreadable_providers", () =>
+        HttpResponse.json([
+          {
+            id: "broken",
+            name: "Broken",
+            error: "供应商 broken 的 meta 无法解析",
+          },
+        ]),
+      ),
+    );
+
+  it("lists unreadable providers apart, even when no readable one is left", async () => {
+    serveOneUnreadableProvider();
+    renderWithQueryClient(
+      <ProviderList {...baseProps} providers={{}} appId="claude" />,
+    );
+
+    expect(
+      await screen.findByText("「Broken」的数据无法读取"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "provider.noProviders" }),
+    ).toBeInTheDocument();
+  });
+
+  it("lists unreadable providers apart next to the readable ones", async () => {
+    serveOneUnreadableProvider();
+    const provider = createProvider({ id: "a", name: "A" });
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [provider],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    renderWithQueryClient(
+      <ProviderList
+        {...baseProps}
+        providers={{ a: provider }}
+        appId="claude"
+      />,
+    );
+
+    expect(
+      await screen.findByText("「Broken」的数据无法读取"),
+    ).toBeInTheDocument();
+    expect(
+      providerCardRenderSpy.mock.calls.map(([p]) => p.provider.id),
+    ).toEqual(expect.arrayContaining(["a"]));
   });
 
   it("renders in the order returned by useDragSort and wires the mode actions", () => {
@@ -443,9 +497,7 @@ describe("ProviderList Component", () => {
       onSetAsDefault,
       onRemoveFromConfig,
     };
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
+    const client = createTestQueryClient();
     const { rerender } = render(
       <QueryClientProvider client={client}>
         <ProviderList {...props} currentProviderId="current" />
@@ -1048,9 +1100,7 @@ describe("ProviderList Component", () => {
       onOpenWebsite: vi.fn(),
     };
     const onSearchOpenChange = vi.fn();
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
+    const queryClient = createTestQueryClient();
     const ui = (searchOpen: boolean) => (
       <QueryClientProvider client={queryClient}>
         <ProviderList
@@ -1297,6 +1347,105 @@ describe("ProviderList Component", () => {
       });
       expect(latestCardProps.presentation.deleteDisabledReason).toBe(
         "pi.current.stateUnavailableHint",
+      );
+    });
+  });
+
+  describe("Hermes providers from the providers: dict", () => {
+    const dictProvider = createProvider({
+      id: "dict-provider",
+      name: "Dict Provider",
+      settingsConfig: { _cc_source: "providers_dict" },
+    });
+    const latestPresentation = () =>
+      providerCardRenderSpy.mock.calls
+        .map(([props]) => props)
+        .filter((props) => props.provider.id === dictProvider.id)
+        .at(-1)?.presentation;
+
+    function renderHermes(liveIds: () => Response) {
+      useDragSortMock.mockReturnValue({
+        sortedProviders: [dictProvider],
+        sensors: [],
+        handleDragEnd: vi.fn(),
+      });
+      server.use(
+        http.post(`${TAURI_ENDPOINT}/get_hermes_live_provider_ids`, liveIds),
+      );
+      return renderWithQueryClient(
+        <ProviderList
+          providers={{ [dictProvider.id]: dictProvider }}
+          currentProviderId=""
+          appId="hermes"
+          onSwitch={vi.fn()}
+          onEdit={vi.fn()}
+          onDelete={vi.fn()}
+          onDuplicate={vi.fn()}
+          onOpenWebsite={vi.fn()}
+        />,
+      );
+    }
+
+    it("can be deleted once Hermes no longer defines them", async () => {
+      renderHermes(() => HttpResponse.json([]));
+
+      await waitFor(() =>
+        expect(latestPresentation()).toMatchObject({
+          editDisabledReason: undefined,
+          deleteDisabledReason: undefined,
+        }),
+      );
+    });
+
+    it("stay read-only while Hermes still defines them", async () => {
+      renderHermes(() => HttpResponse.json([dictProvider.id]));
+
+      await waitFor(() =>
+        expect(latestPresentation()?.deleteDisabledReason).toBe(
+          "provider.managedByHermesHint",
+        ),
+      );
+    });
+
+    it("stay read-only when the Hermes config cannot be read", async () => {
+      renderHermes(() =>
+        HttpResponse.json("Failed to parse Hermes config as YAML", {
+          status: 500,
+        }),
+      );
+
+      await screen.findByText("无法读取 apps.hermes 配置文件");
+      await waitFor(() =>
+        expect(latestPresentation()?.deleteDisabledReason).toBe(
+          "provider.managedByHermesHint",
+        ),
+      );
+    });
+
+    it("lock again when re-reading the Hermes config fails", async () => {
+      const { queryClient } = renderHermes(() => HttpResponse.json([]));
+      await waitFor(() =>
+        expect(latestPresentation()).toMatchObject({
+          deleteDisabledReason: undefined,
+        }),
+      );
+
+      // 刷新失败时 React Query 保留旧的 []，不能据此继续放开
+      server.use(
+        http.post(`${TAURI_ENDPOINT}/get_hermes_live_provider_ids`, () =>
+          HttpResponse.json("Failed to parse Hermes config as YAML", {
+            status: 500,
+          }),
+        ),
+      );
+      await queryClient.invalidateQueries({
+        queryKey: hermesKeys.liveProviderIds,
+      });
+
+      await waitFor(() =>
+        expect(latestPresentation()?.deleteDisabledReason).toBe(
+          "provider.managedByHermesHint",
+        ),
       );
     });
   });

@@ -1,5 +1,6 @@
 #![allow(non_snake_case)]
 
+use crate::error::AppError;
 use tauri::{AppHandle, Emitter};
 use tauri_plugin_updater::UpdaterExt;
 
@@ -92,15 +93,21 @@ pub async fn save_settings(
             != existing.codex_stack_subagent_reasoning_effort
         || merged.codex_stack_auto_review_model != existing.codex_stack_auto_review_model;
     let tray_style_changed = merged.native_tray_menu != existing.native_tray_menu;
+    let auto_update_disabled = existing.auto_update_enabled && !merged.auto_update_enabled;
     let without_login_changed =
         merged.codex_proxy_without_official_login != existing.codex_proxy_without_official_login;
     let preserve_login_changed = merged.preserve_codex_official_auth_on_switch
         != existing.preserve_codex_official_auth_on_switch;
-    crate::settings::update_settings(merged).map_err(|e| e.to_string())?;
+    crate::settings::update_settings(merged)?;
 
     // 原生托盘菜单 / 托盘面板当场切换，不用重启。
     if tray_style_changed {
         crate::tray::apply_tray_style(&app);
+    }
+
+    // 关闭自动更新时立即释放内存里已下载的安装包字节，避免几十 MB 常驻进程。
+    if auto_update_disabled {
+        crate::app_update::discard_pending(&app);
     }
 
     // 立即重写，失败时回滚设置，免得界面显示已改好、客户端还是旧的。
@@ -252,7 +259,7 @@ pub async fn has_codex_unify_history_backup() -> Result<bool, String> {
 /// （这时「经典子 agent 工具」开关不生效，界面上提示）。
 #[tauri::command]
 pub async fn codex_forces_multi_agent_v2() -> Result<bool, String> {
-    let text = crate::codex_config::read_codex_config_text().map_err(|e| e.to_string())?;
+    let text = crate::codex_config::read_codex_config_text()?;
     Ok(crate::codex_config::codex_config_forces_multi_agent_v2(
         &text,
     ))
@@ -260,8 +267,8 @@ pub async fn codex_forces_multi_agent_v2() -> Result<bool, String> {
 
 /// Codex 会话压缩开关（`[features] local_thread_store_compression`）当前是否开启。
 #[tauri::command]
-pub async fn get_codex_session_compression() -> Result<bool, String> {
-    crate::services::codex_session_compression::is_enabled().map_err(|e| e.to_string())
+pub async fn get_codex_session_compression() -> Result<bool, AppError> {
+    crate::services::codex_session_compression::is_enabled()
 }
 
 /// 开关 Codex 会话压缩，返回写入后的状态。
@@ -271,12 +278,11 @@ pub async fn set_codex_session_compression(
     enabled: bool,
 ) -> Result<bool, String> {
     let db = state.db.clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    Ok(tauri::async_runtime::spawn_blocking(move || {
         crate::services::codex_session_compression::set_enabled(&db, enabled)
     })
     .await
-    .map_err(|e| e.to_string())?
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())??)
 }
 
 /// Codex 会话目录（sessions + archived_sessions）当前占用的字节数。
@@ -297,8 +303,7 @@ pub async fn restore_codex_unified_history() -> Result<CodexUnifyHistoryRestoreR
         crate::codex_history_migration::restore_codex_official_history_from_backups()
     })
     .await
-    .map_err(|e| e.to_string())?
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| e.to_string())??;
 
     if let Some(reason) = &outcome.skipped_reason {
         log::debug!("○ Codex official history restore skipped: {reason}");
@@ -339,51 +344,69 @@ pub async fn restart_app(app: AppHandle) -> Result<bool, String> {
 
 /// 下载并安装应用更新，然后由后端直接重启应用。
 ///
-/// macOS 更新会原地替换 `.app` bundle。如果先返回前端、再让旧 WebView 调
-/// `process.relaunch()`，旧进程可能已经处在 bundle 被替换后的不稳定窗口期。
-/// 这里把退出清理、安装和重启串在同一个后端流程中，避免依赖旧前端继续执行。
+/// 自动更新已经在后台下好同一版本时直接用缓存的包（见 `app_update`）；检查更新失败
+/// （离线）但手里有下好的包，也装那个包。
 #[tauri::command]
 pub async fn install_update_and_restart(app: AppHandle) -> Result<bool, String> {
-    let builder = app.updater_builder();
-    // Windows 上 updater 以 `msiexec /passive /promptrestart` 安装 MSI。passive 没有模态框、
-    // 未指定重启选项时，安装目录里有文件被占用，Windows Installer 会不经确认直接重启系统
-    // （#8534）。`/promptrestart` 只对应 REBOOTPROMPT，挡不住这一点，因此显式追加
-    // REBOOT=ReallySuppress（即 `/norestart`）。旧版本的 updater 不带这个参数，
-    // 由 MSI 模板自身的 REBOOT 属性兜底。
-    #[cfg(target_os = "windows")]
-    let builder = builder.installer_arg("REBOOT=ReallySuppress");
-    let updater = builder
-        .build()
-        .map_err(|e| format!("初始化更新器失败: {e}"))?;
-
-    let Some(update) = updater
-        .check()
-        .await
-        .map_err(|e| format!("检查更新失败: {e}"))?
-    else {
+    // 弹窗、关于页、托盘可能先后点了安装：第二次直接拒绝，避免两次安装同时替换应用、做退出清理
+    let Some(_installing) = crate::app_update::begin_install() else {
+        return Err("正在安装更新，请稍候".to_string());
+    };
+    let checked = match crate::app_update::build_updater(&app)?.check().await {
+        Ok(update) => update,
+        Err(e) => {
+            if let Some((update, bytes)) = crate::app_update::any_pending() {
+                log::warn!("检查更新失败（{e}），改装已下载的 {}", update.version);
+                return install_and_restart(app, update, bytes).await;
+            }
+            return Err(format!("检查更新失败: {e}"));
+        }
+    };
+    let Some(update) = checked else {
+        // 已是最新（下好的版本被撤回了）：缓存的包不能再装，提示和托盘入口一起收起
+        crate::app_update::discard_pending(&app);
         return Ok(false);
     };
 
-    log::info!("开始下载应用更新: {}", update.version);
-    let progress_handle = app.clone();
-    let mut downloaded: u64 = 0;
-    let bytes = update
-        .download(
-            move |chunk_len, content_len| {
-                downloaded = downloaded.saturating_add(chunk_len as u64);
-                let _ = progress_handle.emit(
-                    "update-download-progress",
-                    UpdateDownloadProgress {
-                        downloaded,
-                        total: content_len,
+    let bytes = match crate::app_update::pending_bytes_for(&update.version) {
+        Some(bytes) => {
+            log::info!("使用已下载的应用更新: {}", update.version);
+            bytes
+        }
+        None => {
+            log::info!("开始下载应用更新: {}", update.version);
+            let progress_handle = app.clone();
+            let mut downloaded: u64 = 0;
+            update
+                .download(
+                    move |chunk_len, content_len| {
+                        downloaded = downloaded.saturating_add(chunk_len as u64);
+                        let _ = progress_handle.emit(
+                            "update-download-progress",
+                            UpdateDownloadProgress {
+                                downloaded,
+                                total: content_len,
+                            },
+                        );
                     },
-                );
-            },
-            || {},
-        )
-        .await
-        .map_err(|e| format!("下载更新失败: {e}"))?;
+                    || {},
+                )
+                .await
+                .map_err(|e| format!("下载更新失败: {e}"))?
+        }
+    };
 
+    install_and_restart(app, update, bytes).await
+}
+
+/// macOS 更新会原地替换 `.app` bundle。如果先返回前端、再让旧 WebView 调
+/// `process.relaunch()`，旧进程可能已经处在 bundle 被替换后的不稳定窗口期。
+/// 这里把退出清理、安装和重启串在同一个后端流程中，避免依赖旧前端继续执行。
+async fn install_and_restart(
+    app: AppHandle,
+    update: tauri_plugin_updater::Update,
+    bytes: Vec<u8>,
+) -> Result<bool, String> {
     log::info!("开始安装应用更新: {}", update.version);
 
     #[cfg(target_os = "windows")]
@@ -419,6 +442,27 @@ pub async fn install_update_and_restart(app: AppHandle) -> Result<bool, String> 
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         crate::restart_process(&app);
     }
+}
+
+/// 自动更新的状态：能不能自动安装、是否在下载、已下好待装的版本。
+#[tauri::command]
+pub async fn get_auto_update_status(
+    state: tauri::State<'_, crate::store::AppState>,
+) -> Result<crate::app_update::AutoUpdateStatus, String> {
+    Ok(crate::app_update::status(crate::tray::routing_in_use(
+        state.inner(),
+    )))
+}
+
+/// 立刻在后台检查并下载最新版本（打开自动更新开关时调用）。不支持自动安装的机器直接返回空。
+#[tauri::command]
+pub async fn download_app_update(
+    app: AppHandle,
+) -> Result<Option<crate::app_update::ReadyUpdate>, String> {
+    if !crate::app_update::auto_install_supported() {
+        return Ok(None);
+    }
+    crate::app_update::download_latest(&app).await
 }
 
 /// 检查是否有可用的应用更新，返回可用的新版本号（无更新时返回 None）。
@@ -801,15 +845,10 @@ mod tests {
 }
 
 #[tauri::command]
-pub async fn get_auto_launch_status() -> Result<bool, String> {
-    crate::auto_launch::is_auto_launch_enabled().map_err(|e| format!("获取开机自启状态失败: {e}"))
-}
-
-#[tauri::command]
 pub async fn get_rectifier_config(
     state: tauri::State<'_, crate::AppState>,
-) -> Result<crate::proxy::types::RectifierConfig, String> {
-    state.db.get_rectifier_config().map_err(|e| e.to_string())
+) -> Result<crate::proxy::types::RectifierConfig, AppError> {
+    state.db.get_rectifier_config()
 }
 
 #[tauri::command]
@@ -817,18 +856,15 @@ pub async fn set_rectifier_config(
     state: tauri::State<'_, crate::AppState>,
     config: crate::proxy::types::RectifierConfig,
 ) -> Result<bool, String> {
-    state
-        .db
-        .set_rectifier_config(&config)
-        .map_err(|e| e.to_string())?;
+    state.db.set_rectifier_config(&config)?;
     Ok(true)
 }
 
 #[tauri::command]
 pub async fn get_optimizer_config(
     state: tauri::State<'_, crate::AppState>,
-) -> Result<crate::proxy::types::OptimizerConfig, String> {
-    state.db.get_optimizer_config().map_err(|e| e.to_string())
+) -> Result<crate::proxy::types::OptimizerConfig, AppError> {
+    state.db.get_optimizer_config()
 }
 
 #[tauri::command]
@@ -836,21 +872,15 @@ pub async fn set_optimizer_config(
     state: tauri::State<'_, crate::AppState>,
     config: crate::proxy::types::OptimizerConfig,
 ) -> Result<bool, String> {
-    state
-        .db
-        .set_optimizer_config(&config)
-        .map_err(|e| e.to_string())?;
+    state.db.set_optimizer_config(&config)?;
     Ok(true)
 }
 
 #[tauri::command]
 pub async fn get_privacy_filter_config(
     state: tauri::State<'_, crate::AppState>,
-) -> Result<crate::proxy::types::PrivacyFilterConfig, String> {
-    state
-        .db
-        .get_privacy_filter_config()
-        .map_err(|e| e.to_string())
+) -> Result<crate::proxy::types::PrivacyFilterConfig, AppError> {
+    state.db.get_privacy_filter_config()
 }
 
 #[tauri::command]
@@ -858,10 +888,7 @@ pub async fn set_privacy_filter_config(
     state: tauri::State<'_, crate::AppState>,
     config: crate::proxy::types::PrivacyFilterConfig,
 ) -> Result<bool, String> {
-    state
-        .db
-        .set_privacy_filter_config(&config)
-        .map_err(|e| e.to_string())?;
+    state.db.set_privacy_filter_config(&config)?;
     if config.enabled {
         // 规则编译有一次性耗时，开关打开时在后台预热，不压到第一个请求上
         std::thread::spawn(crate::proxy::privacy_filter::warm_up);
@@ -870,32 +897,10 @@ pub async fn set_privacy_filter_config(
 }
 
 #[tauri::command]
-pub async fn get_copilot_optimizer_config(
-    state: tauri::State<'_, crate::AppState>,
-) -> Result<crate::proxy::types::CopilotOptimizerConfig, String> {
-    state
-        .db
-        .get_copilot_optimizer_config()
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub async fn set_copilot_optimizer_config(
-    state: tauri::State<'_, crate::AppState>,
-    config: crate::proxy::types::CopilotOptimizerConfig,
-) -> Result<bool, String> {
-    state
-        .db
-        .set_copilot_optimizer_config(&config)
-        .map_err(|e| e.to_string())?;
-    Ok(true)
-}
-
-#[tauri::command]
 pub async fn get_log_config(
     state: tauri::State<'_, crate::AppState>,
-) -> Result<crate::proxy::types::LogConfig, String> {
-    state.db.get_log_config().map_err(|e| e.to_string())
+) -> Result<crate::proxy::types::LogConfig, AppError> {
+    state.db.get_log_config()
 }
 
 #[tauri::command]
@@ -903,10 +908,7 @@ pub async fn set_log_config(
     state: tauri::State<'_, crate::AppState>,
     config: crate::proxy::types::LogConfig,
 ) -> Result<bool, String> {
-    state
-        .db
-        .set_log_config(&config)
-        .map_err(|e| e.to_string())?;
+    state.db.set_log_config(&config)?;
     log::set_max_level(config.to_level_filter());
     log::info!(
         "日志配置已更新: enabled={}, level={}",

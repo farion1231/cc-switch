@@ -1049,6 +1049,10 @@ fn tool_call_block(item: RawItem<'_>, index: usize, line: JsonlSpan) -> SessionB
     }
 }
 
+/// Claude Code desktop 标记章节的 MCP 工具名（完整名形如 `mcp__ccd_session__mark_chapter`）。
+/// 前端 `turns.ts` 的 `MARK_CHAPTER_TOOL` 与此一致。
+const MARK_CHAPTER_TOOL: &str = "mark_chapter";
+
 /// 按 §3.3 提炼 Claude 工具的 kind（Bash 细化为 search）、标题与次要信息。
 fn claude_tool_title(
     raw_name: &str,
@@ -1066,6 +1070,17 @@ fn claude_tool_title(
     if kind == ToolKind::Mcp {
         let (server, tool) = split_mcp_name(raw_name)
             .unwrap_or((normalized.server.as_deref().unwrap_or_default(), raw_name));
+        // Claude Code desktop 的章节标记：标题就是章节名，阅读页据此渲染成章节而不是普通步骤。
+        // 只认工具名，不认 server（`ccd_session` 是桌面端内部名，可能改）
+        if tool == MARK_CHAPTER_TOOL {
+            if let Some(title) = s("title") {
+                return (
+                    kind,
+                    one_line_title(title),
+                    s("summary").map(one_line_title),
+                );
+            }
+        }
         return (kind, title_mcp(server, tool), first_string_field(input));
     }
 
@@ -2569,6 +2584,49 @@ mod transcript_tests {
             &msgs[8].blocks[0],
             SessionBlock::ToolCall { by_user: true, .. }
         ));
+    }
+
+    #[test]
+    fn mark_chapter_call_uses_chapter_title() {
+        let (_t, _p, msgs, _) = parse_lines(&[assistant(
+            "a1",
+            "m1",
+            json!([
+                { "type": "tool_use", "id": "t1", "name": "mcp__ccd_session__mark_chapter", "input": { "title": "接入支付回调", "summary": "验签与幂等\n第二行" } },
+                { "type": "tool_use", "id": "t2", "name": "mcp__other__mark_chapter", "input": { "title": "No summary" } },
+                { "type": "tool_use", "id": "t3", "name": "mcp__ccd_session__mark_chapter", "input": { "title": "  ", "summary": "only summary" } },
+                { "type": "tool_use", "id": "t4", "name": "mcp__ccd_session__mark_chapter", "input": "broken" }
+            ]),
+        )]);
+        let calls: Vec<(String, Option<String>)> = msgs[0]
+            .blocks
+            .iter()
+            .map(|block| match block {
+                SessionBlock::ToolCall {
+                    kind,
+                    title,
+                    detail,
+                    ..
+                } => {
+                    assert_eq!(*kind, ToolKind::Mcp);
+                    (title.clone(), detail.clone())
+                }
+                other => panic!("unexpected {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            calls,
+            [
+                ("接入支付回调".to_string(), Some("验签与幂等…".to_string())),
+                ("No summary".to_string(), None),
+                // 没有可用标题：按普通 MCP 调用处理
+                (
+                    "ccd_session.mark_chapter".to_string(),
+                    Some("only summary".to_string())
+                ),
+                ("ccd_session.mark_chapter".to_string(), None),
+            ]
+        );
     }
 
     #[test]

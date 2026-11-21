@@ -15,12 +15,13 @@ use tauri::State;
 pub async fn stream_check_provider(
     state: State<'_, AppState>,
     copilot_state: State<'_, CopilotAuthState>,
-    app_type: AppType,
+    app_type: String,
     provider_id: String,
 ) -> Result<StreamCheckResult, AppError> {
-    let providers = state.db.get_all_providers(app_type.as_str())?;
+    let app_type: AppType = app_type.parse()?;
+    let providers = state.db.get_provider_rows(&app_type)?;
     let provider = providers
-        .get(&provider_id)
+        .get(&provider_id)?
         .ok_or_else(|| AppError::Message(format!("供应商 {provider_id} 不存在")))?;
 
     // Copilot 端点是动态的（随 OAuth token 解析），需预先取出 host 再探测；
@@ -41,7 +42,7 @@ async fn resolve_copilot_base_url_override(
     provider: &crate::provider::Provider,
     copilot_state: &State<'_, CopilotAuthState>,
 ) -> Result<Option<String>, AppError> {
-    let is_copilot = is_copilot_provider(provider);
+    let is_copilot = provider.is_github_copilot();
     let is_full_url = provider
         .meta
         .as_ref()
@@ -66,93 +67,90 @@ async fn resolve_copilot_base_url_override(
     Ok(Some(endpoint))
 }
 
-fn is_copilot_provider(provider: &crate::provider::Provider) -> bool {
-    provider
-        .meta
-        .as_ref()
-        .and_then(|meta| meta.provider_type.as_deref())
-        == Some("github_copilot")
-        || provider
-            .settings_config
-            .pointer("/env/ANTHROPIC_BASE_URL")
-            .and_then(|value| value.as_str())
-            .map(|url| url.contains("githubcopilot.com"))
-            .unwrap_or(false)
-}
-
 #[cfg(test)]
 mod tests {
-    use super::is_copilot_provider;
-    use crate::provider::{Provider, ProviderMeta};
+    use std::sync::Arc;
+
     use serde_json::json;
 
+    use super::CopilotAuthState;
+    use crate::app_config::AppType;
+    use crate::database::Database;
+    use crate::provider::Provider;
+    use crate::proxy::providers::copilot_auth::CopilotAuthManager;
+    use crate::store::AppState;
+
+    /// The frontend reaches this command over IPC with `appType`, so it must
+    /// accept the same app ids (aliases, any case) as the other commands.
     #[test]
-    fn copilot_provider_detection_accepts_provider_type_or_base_url() {
-        let typed_provider = Provider {
-            id: "p1".to_string(),
-            name: "typed".to_string(),
-            settings_config: json!({}),
-            website_url: None,
-            category: None,
-            created_at: None,
-            sort_index: None,
-            notes: None,
-            meta: Some(ProviderMeta {
-                provider_type: Some("github_copilot".to_string()),
-                ..Default::default()
-            }),
-            icon: None,
-            icon_color: None,
-            in_failover_queue: false,
-        };
-        assert!(is_copilot_provider(&typed_provider));
-
-        let url_provider = Provider {
-            id: "p2".to_string(),
-            name: "url".to_string(),
-            settings_config: json!({
-                "env": {
-                    "ANTHROPIC_BASE_URL": "https://api.githubcopilot.com"
-                }
-            }),
-            website_url: None,
-            category: None,
-            created_at: None,
-            sort_index: None,
-            notes: None,
-            meta: None,
-            icon: None,
-            icon_color: None,
-            in_failover_queue: false,
-        };
-        assert!(is_copilot_provider(&url_provider));
-    }
-
-    #[test]
-    fn copilot_full_url_metadata_is_available_for_override_guard() {
-        let provider = Provider {
-            id: "p3".to_string(),
-            name: "relay".to_string(),
-            settings_config: json!({}),
-            website_url: None,
-            category: None,
-            created_at: None,
-            sort_index: None,
-            notes: None,
-            meta: Some(ProviderMeta {
-                provider_type: Some("github_copilot".to_string()),
-                is_full_url: Some(true),
-                ..Default::default()
-            }),
-            icon: None,
-            icon_color: None,
-            in_failover_queue: false,
+    fn app_type_arg_accepts_the_same_ids_as_other_commands() {
+        let db = Arc::new(Database::memory().unwrap());
+        // Official providers fail before any network probe, which shows the
+        // lookup found the provider under the right app.
+        for app in [
+            AppType::Claude,
+            AppType::Kimi,
+            AppType::Omp,
+            AppType::Copilot,
+            AppType::WorkBuddy,
+        ] {
+            let mut provider = Provider::with_id(
+                format!("official-{app}"),
+                "Official".into(),
+                json!({}),
+                None,
+            );
+            provider.category = Some("official".into());
+            db.save_provider(&app, &provider).unwrap();
+        }
+        let home = tempfile::tempdir().unwrap();
+        let app = tauri::test::mock_builder()
+            .manage(AppState::new(db))
+            .manage(CopilotAuthState(Arc::new(tokio::sync::RwLock::new(
+                CopilotAuthManager::new(home.path().to_path_buf()),
+            ))))
+            .invoke_handler(tauri::generate_handler![super::stream_check_provider])
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+        let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
+            .build()
+            .unwrap();
+        let check = |app_type: &str, provider_id: &str| {
+            tauri::test::get_ipc_response(
+                &webview,
+                tauri::webview::InvokeRequest {
+                    cmd: "stream_check_provider".into(),
+                    callback: tauri::ipc::CallbackFn(0),
+                    error: tauri::ipc::CallbackFn(1),
+                    url: "http://tauri.localhost".parse().unwrap(),
+                    body: tauri::ipc::InvokeBody::Json(
+                        json!({"appType": app_type, "providerId": provider_id}),
+                    ),
+                    headers: Default::default(),
+                    invoke_key: tauri::test::INVOKE_KEY.to_string(),
+                },
+            )
+            .unwrap_err()
         };
 
-        assert!(is_copilot_provider(&provider));
-        assert_eq!(
-            provider.meta.as_ref().and_then(|meta| meta.is_full_url),
-            Some(true)
+        let official = json!("Official providers do not expose a reachability-check target");
+        for (app_type, provider_id) in [
+            ("claude", "official-claude"),
+            ("Claude", "official-claude"),
+            (" CLAUDE ", "official-claude"),
+            ("kimi-code", "official-kimi"),
+            ("oh-my-pi", "official-omp"),
+            ("github-copilot", "official-copilot"),
+            ("work_buddy", "official-workbuddy"),
+        ] {
+            assert_eq!(check(app_type, provider_id), official, "{app_type}");
+        }
+
+        let unknown = check("open-code", "official-claude");
+        let unknown = unknown.as_str().unwrap();
+        assert!(
+            unknown.contains("Unsupported app id: 'open-code'"),
+            "{unknown}"
         );
     }
 }

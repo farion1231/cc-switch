@@ -1,17 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import {
   OpenTerminalDialog,
   terminalAvailable,
   terminalNeedsRoute,
 } from "@/components/providers/OpenTerminalDialog";
 import type { Provider } from "@/types";
+import { createTestQueryClient } from "../utils/testQueryClient";
 
 const openTerminalMock = vi.fn();
 const pickDirectoryMock = vi.fn();
 const agyStatusMock = vi.fn();
 const agyRunningMock = vi.fn();
+const platform = vi.hoisted(() => ({ linux: false }));
 
 vi.mock("@/lib/api", () => ({
   providersApi: {
@@ -27,7 +29,8 @@ vi.mock("@/lib/api", () => ({
 }));
 vi.mock("@/lib/platform", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/platform")>()),
-  isMac: () => true,
+  isMac: () => !platform.linux,
+  isLinux: () => platform.linux,
 }));
 
 vi.mock("@/lib/toast", () => ({
@@ -51,9 +54,7 @@ function renderDialog(
   target: Provider = provider,
   appId: "claude" | "codex" | "agy" | "grokbuild" | "copilot" = "claude",
 ) {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
+  const client = createTestQueryClient();
   render(
     <QueryClientProvider client={client}>
       <OpenTerminalDialog provider={target} appId={appId} onClose={onClose} />
@@ -64,6 +65,7 @@ function renderDialog(
 
 describe("OpenTerminalDialog", () => {
   beforeEach(() => {
+    platform.linux = false;
     window.localStorage.clear();
     openTerminalMock.mockReset().mockResolvedValue(true);
     pickDirectoryMock.mockReset();
@@ -103,6 +105,41 @@ describe("OpenTerminalDialog", () => {
       await screen.findByText(/打开前把 agy 的登录切换到 b@example.com/),
     ).toBeInTheDocument();
     expect(await screen.findByText(/检测到 agy 正在运行/)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("checkbox", {
+        name: "provider.openTerminalDialog.agyUseCurrentLogin",
+      }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("can use agy's current login once on Linux when a synced binding is missing", async () => {
+    platform.linux = true;
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(["/work/alpha"]));
+    const onClose = renderDialog(vi.fn(), agyOfficial("remote"), "agy");
+
+    expect(
+      await screen.findByText("provider.openTerminalDialog.agyBindingMissing"),
+    ).toBeInTheDocument();
+    const useCurrent = screen.getByRole("checkbox", {
+      name: "provider.openTerminalDialog.agyUseCurrentLogin",
+    });
+    expect(useCurrent).not.toBeChecked();
+    fireEvent.click(useCurrent);
+    expect(
+      screen.queryByText("provider.openTerminalDialog.agyBindingMissing"),
+    ).not.toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "provider.openTerminalDialog.confirm",
+      }),
+    );
+
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(openTerminalMock).toHaveBeenCalledWith("agy-official", "agy", {
+      cwd: "/work/alpha",
+      skipPermissions: false,
+      agyUseCurrentLogin: true,
+    });
   });
 
   it("stays quiet when the bound account is already signed in, or nothing is bound", async () => {
@@ -230,6 +267,25 @@ describe("OpenTerminalDialog", () => {
     expect(
       window.localStorage.getItem("cc-switch:terminal:extra-args:codex"),
     ).toBeNull();
+  });
+
+  // 回车直接打开：确认按钮被挤到下面时也能用键盘确认（#9478）；输入法选词的回车不算
+  it("opens on Enter in the extra-arguments field, but not while composing", async () => {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(["/work/alpha"]));
+    const onClose = renderDialog();
+    const input = screen.getByLabelText(
+      "provider.openTerminalDialog.extraArgs",
+    );
+
+    fireEvent.keyDown(input, { key: "Enter", keyCode: 229 });
+    expect(openTerminalMock).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(openTerminalMock).toHaveBeenCalledWith("p1", "claude", {
+      cwd: "/work/alpha",
+      skipPermissions: false,
+    });
   });
 
   it("prefills the remembered extra arguments", () => {
