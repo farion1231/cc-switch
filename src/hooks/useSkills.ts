@@ -20,6 +20,8 @@ import {
 } from "@/lib/api/skills";
 import type { AppId } from "@/lib/api/types";
 import {
+  didResyncSkill,
+  hasSkillUpdateSyncFailures,
   mergeImportedSkills,
   replaceRepoDiscovery,
 } from "@/hooks/useSkills.helpers";
@@ -562,7 +564,12 @@ export function useUpdateSkill() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => skillsApi.updateSkill(id),
-    onSuccess: (updatedSkill) => {
+    onSuccess: (updatedOutcome) => {
+      const {
+        failedApps: _failedApps,
+        syncWarnings: _syncWarnings,
+        ...updatedSkill
+      } = updatedOutcome;
       queryClient.setQueryData<InstalledSkill[]>(
         ["skills", "installed"],
         (oldData) => {
@@ -572,16 +579,18 @@ export function useUpdateSkill() {
           );
         },
       );
-      queryClient.setQueryData<SkillUpdateCheckResult>(
-        ["skills", "updates"],
-        (oldData) => {
-          if (!oldData) return oldData;
-          return {
-            ...oldData,
-            updates: oldData.updates.filter((u) => u.id !== updatedSkill.id),
-          };
-        },
-      );
+      if (!hasSkillUpdateSyncFailures(updatedOutcome)) {
+        queryClient.setQueryData<SkillUpdateCheckResult>(
+          ["skills", "updates"],
+          (oldData) => {
+            if (!oldData) return oldData;
+            return {
+              ...oldData,
+              updates: oldData.updates.filter((u) => u.id !== updatedSkill.id),
+            };
+          },
+        );
+      }
     },
     // Updating creates an uninstall-style backup before replacing SSOT files;
     // refresh even when replacement or persistence fails later.
@@ -612,6 +621,8 @@ export function useSearchSkillsSh(
 
 // ========== 辅助类型 ==========
 
+export { hasSkillUpdateSyncFailures };
+
 export type {
   InstalledSkill,
   DiscoverableSkill,
@@ -631,6 +642,38 @@ export function useResyncSkillsToApps() {
   return useMutation({
     mutationKey: SKILLS_RESYNC_MUTATION_KEY,
     mutationFn: () => skillsApi.resyncToApps(),
+    onSuccess: (outcomes) => {
+      if (outcomes.length === 0) return;
+      const installed = queryClient.getQueryData<InstalledSkill[]>([
+        "skills",
+        "installed",
+      ]);
+      if (!installed) return;
+      const installedById = new Map(
+        installed.map((skill) => [skill.id, skill]),
+      );
+      queryClient.setQueryData<SkillUpdateCheckResult>(
+        ["skills", "updates"],
+        (oldData) => {
+          if (!oldData) return oldData;
+          return {
+            ...oldData,
+            updates: oldData.updates.filter((update) => {
+              const skill = installedById.get(update.id);
+              return (
+                !skill?.contentHash ||
+                skill.contentHash !== update.remoteHash ||
+                outcomes.some(
+                  (outcome) =>
+                    skill.apps[outcome.app] &&
+                    !didResyncSkill(outcome, skill.directory),
+                )
+              );
+            }),
+          };
+        },
+      );
+    },
     onSettled: () =>
       queryClient.invalidateQueries({ queryKey: ["skills", "installed"] }),
   });

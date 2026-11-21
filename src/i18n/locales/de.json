@@ -4970,7 +4970,9 @@
       "noUpdatesInSelection": "Für keinen der ausgewählten Skills gibt es Updates",
       "selectionAlreadyOn": "Die {{count}} ausgewählten Skills sind in {{app}} bereits aktiviert",
       "selectionAlreadyOff": "Keiner der {{count}} ausgewählten Skills ist in {{app}} aktiviert",
-      "disabledSelection": "{{count}} {{noun}} in {{app}} ausgeschaltet"
+      "disabledSelection": "{{count}} {{noun}} in {{app}} ausgeschaltet",
+      "updateSyncPartial": "Hauptkopie von {{name}} aktualisiert, aber Synchronisierung mit {{apps}} fehlgeschlagen; Ordnerberechtigungen prüfen und erneut versuchen oder neu synchronisieren",
+      "updateAllSyncPartial": "{{updatedCount}} Skills aktualisiert, davon {{failedCount}} bei der Synchronisierung mit {{apps}} fehlgeschlagen; Ordnerberechtigungen prüfen und erneut versuchen oder neu synchronisieren"
     },
     "installTo": {
       "prefix": "Installieren für: ",

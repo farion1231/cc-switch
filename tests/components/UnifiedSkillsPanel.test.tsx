@@ -52,12 +52,16 @@ vi.mock("@/components/mcp/useVisibleAppIds", () => ({
     ids.filter((id) => m.visibleApps.includes(id)),
 }));
 
-vi.mock("@/components/skills/SkillsStorageSheet", () => ({
-  SkillsStorageSheet: ({ open }: { open: boolean }) =>
-    open ? <div data-testid="storage-sheet" /> : null,
+vi.mock("@/hooks/useSettings", () => ({
+  useSettings: () => ({
+    settings: {},
+    updateSettings: vi.fn(),
+    autoSaveSettings: vi.fn(),
+  }),
 }));
 
 vi.mock("@/hooks/useSkills", () => ({
+  useCcSwitchSkillsDir: () => ({ data: undefined }),
   useInstalledSkills: () => ({
     data: m.installed,
     isLoading: false,
@@ -384,7 +388,9 @@ describe("UnifiedSkillsPanel", () => {
     await userEvent.click(
       screen.getByRole("button", { name: "skillsPage.fixSync" }),
     );
-    expect(screen.getByTestId("storage-sheet")).toBeInTheDocument();
+    expect(
+      screen.getByRole("dialog", { name: "skills.storageSheet.title" }),
+    ).toBeInTheDocument();
   });
 
   describe.each([true, false])("bulk undo feedback (enabled=%s)", (enabled) => {
@@ -998,7 +1004,9 @@ describe("UnifiedSkillsPanel", () => {
       "skills.storageSheet.resyncDone",
       { closeButton: true },
     );
-    expect(screen.queryByTestId("storage-sheet")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("dialog", { name: "skills.storageSheet.title" }),
+    ).not.toBeInTheDocument();
   });
 
   it("closes the backup dialog and reports an explicit refresh failure", async () => {
@@ -1055,4 +1063,80 @@ describe("UnifiedSkillsPanel", () => {
     expect(m.toastError).not.toHaveBeenCalled();
     consoleErrorSpy.mockRestore();
   });
+
+  it.each(["menu", "sheet"])(
+    "clears update sync errors after recovery via the %s",
+    async (entry) => {
+      const skill = makeSkill({
+        id: "owner/repo:alpha-skill",
+        name: "Alpha Skill",
+        apps: { claude: true, codex: true },
+      });
+      m.installed = [skill];
+      m.updates = [{ id: skill.id, name: skill.name, remoteHash: "hash-v2" }];
+      m.updateSkill.mockResolvedValueOnce({
+        ...skill,
+        failedApps: ["codex"],
+        syncWarnings: ["codex: Permission denied (~/.codex/skills)"],
+      });
+
+      renderPanel();
+
+      await userEvent.click(
+        screen.getByRole("button", { name: "skillsPage.rowUpdateAria" }),
+      );
+
+      await waitFor(() =>
+        expect(m.toastWarning).toHaveBeenCalledWith(
+          "skillsPage.toast.updateSyncPartial",
+          expect.objectContaining({
+            description: "Codex: Permission denied (~/.codex/skills)",
+            closeButton: true,
+          }),
+        ),
+      );
+      expect(m.toastSuccess).not.toHaveBeenCalled();
+      expect(
+        screen.getAllByRole("button", { name: "appMatrix.cell.fail" }),
+      ).toHaveLength(1);
+
+      // Codex recovered this skill even though another skill in that app failed.
+      m.resync.mockResolvedValueOnce([
+        { app: "claude", ok: true, failedSkills: [] },
+        {
+          app: "codex",
+          ok: false,
+          failedSkills: [{ directory: "other-skill", error: "Still blocked" }],
+        },
+      ]);
+      if (entry === "sheet") {
+        await userEvent.click(
+          screen.getByRole("button", { name: "skillsPage.fixSync" }),
+        );
+        const dialog = screen.getByRole("dialog", {
+          name: "skills.storageSheet.title",
+        });
+        await userEvent.click(
+          within(dialog).getByRole("button", {
+            name: "skills.storageSheet.resync",
+          }),
+        );
+        await userEvent.click(
+          within(dialog).getByRole("button", { name: "common.done" }),
+        );
+      } else {
+        await openMenu("skills.moreActions", "skills.storageSheet.resync");
+      }
+      await waitFor(() => expect(m.resync).toHaveBeenCalledTimes(1));
+      await waitFor(() =>
+        expect(
+          screen.queryAllByRole("button", { name: "appMatrix.cell.fail" }),
+        ).toHaveLength(0),
+      );
+      expect(
+        screen.queryByRole("button", { name: "skillsPage.fixSync" }),
+      ).not.toBeInTheDocument();
+      expect(screen.queryByText("skillsPage.rowFail")).not.toBeInTheDocument();
+    },
+  );
 });

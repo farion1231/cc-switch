@@ -10,7 +10,8 @@ use crate::error::AppError;
 use crate::services::skill::{
     DiscoverableSkill, ImportSkillSelection, MigrationResult, SkillAppSyncOutcome,
     SkillBackupEntry, SkillDiscoveryResult, SkillRepo, SkillService, SkillStorageLocation,
-    SkillUninstallResult, SkillUpdateCheckResult, SkillsShSearchResult, ZipInstallResult,
+    SkillUninstallResult, SkillUpdateCheckResult, SkillUpdateOutcome, SkillsShSearchResult,
+    ZipInstallResult,
 };
 use crate::services::skill_repo_tokens::RepoTokenList;
 use crate::store::AppState;
@@ -217,7 +218,7 @@ pub async fn update_skill(
     id: String,
     service: State<'_, SkillServiceState>,
     app_state: State<'_, AppState>,
-) -> Result<InstalledSkill, String> {
+) -> Result<SkillUpdateOutcome, String> {
     service
         .0
         .update_skill(&app_state.db, &id)

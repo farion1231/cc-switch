@@ -12,7 +12,7 @@ import {
   V7Dialog,
 } from "@/components/mcp/formBits";
 import { shortenHomePath } from "@/components/sessions/utils";
-import { skillsApi } from "@/lib/api/skills";
+import { skillsApi, type SkillAppSyncOutcome } from "@/lib/api/skills";
 import type { SkillStorageLocation, SkillSyncMethod } from "@/types";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { useSkillsResync } from "./useSkillsResync";
@@ -20,6 +20,7 @@ import { useSkillsResync } from "./useSkillsResync";
 interface SkillsStorageSheetProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onResyncComplete?: (outcomes: SkillAppSyncOutcome[]) => void;
 }
 
 const DEFAULT_CC_SWITCH_DIR = "~/.cc-switch/skills";
@@ -52,6 +53,7 @@ const RADIO_LABEL_CLASS =
 export function SkillsStorageSheet({
   open,
   onOpenChange,
+  onResyncComplete,
 }: SkillsStorageSheetProps) {
   const { t } = useTranslation();
   const { settings, updateSettings, autoSaveSettings } = useSettings();
@@ -138,6 +140,11 @@ export function SkillsStorageSheet({
     if (method === syncMethod) return;
     updateSettings({ skillSyncMethod: method });
     void autoSaveSettings({ skillSyncMethod: method }).catch(() => undefined);
+  };
+
+  const handleResync = async () => {
+    const outcomes = await resync();
+    if (outcomes) onResyncComplete?.(outcomes);
   };
 
   return (
@@ -276,7 +283,7 @@ export function SkillsStorageSheet({
                   size="compact"
                   className="shrink-0"
                   disabled={resyncPending}
-                  onClick={() => void resync()}
+                  onClick={() => void handleResync()}
                 >
                   {resyncPending ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />

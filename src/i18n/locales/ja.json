@@ -4970,7 +4970,9 @@
       "noUpdatesInSelection": "選択した Skill に更新はありません",
       "selectionAlreadyOn": "選択した {{count}} 件の Skill は既に {{app}} で有効です",
       "selectionAlreadyOff": "選択した {{count}} 件の Skill はどれも {{app}} で有効ではありません",
-      "disabledSelection": "{{app}} で {{count}} 件の {{noun}} をオフにしました"
+      "disabledSelection": "{{app}} で {{count}} 件の {{noun}} をオフにしました",
+      "updateSyncPartial": "{{name}} の本体を更新しましたが、{{apps}} への同期に失敗しました。権限を確認して再試行するか再同期してください",
+      "updateAllSyncPartial": "{{updatedCount}} 件の Skill を更新しましたが、うち {{failedCount}} 件で {{apps}} への同期に失敗しました。権限を確認して再試行するか再同期してください"
     },
     "installTo": {
       "prefix": "インストール先：",
