@@ -26,6 +26,19 @@ pub(crate) fn sync_and_commit<T>(
     FILE.sync_and_commit(id, spec, commit)
 }
 
+pub(crate) fn discover_ids() -> Result<Vec<String>, AppError> {
+    let document = FILE.read(&(FILE.path)())?;
+    Ok(document["mcpServers"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter(|(_, native)| {
+            super::validation::validate_server_spec(&FILE.unified_spec(native)).is_ok()
+        })
+        .map(|(id, _)| id.clone())
+        .collect())
+}
+
 pub fn import(state: &AppState) -> Result<usize, AppError> {
     FILE.import(state)
 }

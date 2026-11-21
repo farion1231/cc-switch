@@ -17,6 +17,7 @@ mod import_export_sync;
 mod kimi_commands;
 mod mcode_commands;
 mod mcp_commands;
+mod mcp_discovery;
 mod profile_roundtrip;
 mod prompt_live_sync;
 mod provider_commands;
