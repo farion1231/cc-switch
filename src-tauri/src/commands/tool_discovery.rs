@@ -442,7 +442,7 @@ fn expand_env_chars_with_lookup(
 /// 单探兜底 (`scan_cli_version`) 与全量枚举 (`enumerate_tool_installations`) 共用，
 /// 确保两条路径看到的是同一组安装位置。
 pub(super) fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
-    let home = dirs::home_dir().unwrap_or_default();
+    let home = crate::config::get_home_dir();
 
     // 常见的安装路径（原生安装优先）
     // Preserve search priority without scanning all previous paths for every insertion.
@@ -1509,9 +1509,7 @@ fn mise_shim_target(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     // GUI 进程的工作目录是 `/`；在 home 下解析，与新开终端看到的 mise 配置一致。
-    if let Some(home) = dirs::home_dir() {
-        cmd.current_dir(home);
-    }
+    cmd.current_dir(crate::config::get_home_dir());
     isolate_child_process_group(&mut cmd);
     let out = wait_child_output(cmd.spawn().ok()?, deadline).ok()?;
     if !out.status.success() {
@@ -3347,10 +3345,11 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn omp_search_paths_include_the_bun_global_bin() {
         // A GUI process does not inherit `~/.bun/bin`: without it a Bun global
         // omp is reported as not installed and updates lose their anchor.
-        let home = dirs::home_dir().expect("home should resolve");
+        let home = crate::config::get_home_dir();
         let bun_bin = home.join(".bun").join("bin");
         assert!(build_tool_search_paths("omp").contains(&bun_bin));
         // Other Bun-installable tools keep their previous search set.
