@@ -550,6 +550,10 @@ export interface Settings {
   // Linux: "gnome-terminal" | "konsole" | "xfce4-terminal" | "alacritty" | "kitty" | "ghostty"
   preferredTerminal?: string;
 
+  // ===== 会话页设置 =====
+  // 读取会话文件的最大并行数（0 或未设置 = 按 CPU 核数自动取值）
+  sessionScanConcurrency?: number;
+
   // ===== 本机自动迁移状态 =====
   localMigrations?: {
     codexThirdPartyHistoryProviderBucketV1?: {

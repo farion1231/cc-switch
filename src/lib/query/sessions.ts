@@ -5,6 +5,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { sessionsApi } from "@/lib/api/sessions";
+import { markSessionTrace, startSessionTrace } from "@/lib/sessionPerf";
 import type {
   ContentRef,
   ImageRef,
@@ -17,6 +18,10 @@ import { buildTurnIndex, buildTurns } from "@/components/sessions/reader/turns";
  * 会话阅读页的数据层：
  * 分块流式读取会话、按需取块全文、图片转 Blob URL。
  */
+
+/** 打开一个会话的打点 id：数据层记到收完数据，阅读页接着记到画出来 */
+export const transcriptTraceId = (sourcePath?: string) =>
+  `transcript:${sourcePath}`;
 
 export const sessionKeys = {
   messages: (providerId?: string, sourcePath?: string) =>
@@ -193,9 +198,20 @@ export const useSessionTranscript = (
     queryFn: async () => {
       const previous = queryClient.getQueryData<TranscriptState>(queryKey);
       const live = !previous?.done;
-      return loadTranscript(providerId!, sourcePath!, (state) => {
-        if (live) queryClient.setQueryData(queryKey, state);
+      const traceId = transcriptTraceId(sourcePath);
+      if (live) startSessionTrace(traceId);
+      const loaded = await loadTranscript(providerId!, sourcePath!, (state) => {
+        if (!live) return;
+        queryClient.setQueryData(queryKey, state);
+        if (state.header) {
+          markSessionTrace(traceId, "header");
+        }
+        if (state.messages.length > 0) {
+          markSessionTrace(traceId, "firstChunk");
+        }
       });
+      if (live) markSessionTrace(traceId, "received");
+      return loaded;
     },
     enabled: Boolean(providerId && sourcePath),
     staleTime: 30 * 1000,

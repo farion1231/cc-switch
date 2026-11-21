@@ -723,6 +723,11 @@ pub struct AppSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preferred_terminal: Option<String>,
 
+    // ===== 会话页设置 =====
+    /// 读取会话文件的最大并行数；未设置时按 CPU 核数自动取值，见 [`effective_session_scan_concurrency`]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_scan_concurrency: Option<u32>,
+
     // ===== 本机自动迁移状态 =====
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub local_migrations: Option<LocalMigrations>,
@@ -816,6 +821,7 @@ impl Default for AppSettings {
             backup_interval_hours: None,
             backup_retain_count: None,
             preferred_terminal: None,
+            session_scan_concurrency: None,
             local_migrations: None,
         }
     }
@@ -869,6 +875,12 @@ impl AppSettings {
             .map(|s| s.trim())
             .filter(|s| matches!(*s, "left" | "used"))
             .map(|s| s.to_string());
+
+        // 0 表示「自动」，和没设置一样
+        self.session_scan_concurrency = self
+            .session_scan_concurrency
+            .filter(|count| *count > 0)
+            .map(|count| count.min(SESSION_SCAN_MAX_CONCURRENCY));
 
         if let Some(sync) = &mut self.webdav_sync {
             sync.normalize();
@@ -1506,6 +1518,27 @@ pub fn get_preferred_terminal() -> Option<String> {
     read_settings().preferred_terminal.clone()
 }
 
+// ===== 会话页设置管理函数 =====
+
+/// 设置里能指定的最大并行数
+pub const SESSION_SCAN_MAX_CONCURRENCY: u32 = 32;
+/// 「自动」时的并行数上限：再往上读取已经不会明显变快（固态硬盘上 8 线程约为单线程的 4.4 倍）
+const SESSION_SCAN_AUTO_MAX: usize = 8;
+
+/// 读取会话文件实际使用的并行数
+pub fn effective_session_scan_concurrency() -> usize {
+    resolve_session_scan_concurrency(read_settings().session_scan_concurrency)
+}
+
+fn resolve_session_scan_concurrency(configured: Option<u32>) -> usize {
+    match configured.filter(|count| *count > 0) {
+        Some(count) => count.min(SESSION_SCAN_MAX_CONCURRENCY) as usize,
+        None => std::thread::available_parallelism()
+            .map_or(1, |cores| cores.get())
+            .min(SESSION_SCAN_AUTO_MAX),
+    }
+}
+
 // ===== WebDAV 同步设置管理函数 =====
 
 /// 获取 WebDAV 同步设置
@@ -1999,6 +2032,53 @@ mod tests {
         let saved: AppSettings =
             serde_json::from_str(&fs::read_to_string(&path).expect("read saved")).expect("parse");
         assert!(saved.claude_config_dir.is_none());
+    }
+
+    #[test]
+    fn session_scan_concurrency_normalizes_auto_and_out_of_range_values() {
+        let normalized = |value: Option<u32>| {
+            let mut settings = AppSettings {
+                session_scan_concurrency: value,
+                ..AppSettings::default()
+            };
+            settings.normalize_paths();
+            settings.session_scan_concurrency
+        };
+
+        assert_eq!(normalized(None), None);
+        assert_eq!(normalized(Some(0)), None);
+        assert_eq!(normalized(Some(6)), Some(6));
+        assert_eq!(normalized(Some(1000)), Some(SESSION_SCAN_MAX_CONCURRENCY));
+    }
+
+    #[test]
+    fn session_scan_concurrency_uses_the_configured_value() {
+        assert_eq!(resolve_session_scan_concurrency(Some(1)), 1);
+        assert_eq!(resolve_session_scan_concurrency(Some(16)), 16);
+        assert_eq!(
+            resolve_session_scan_concurrency(Some(1000)),
+            SESSION_SCAN_MAX_CONCURRENCY as usize
+        );
+    }
+
+    #[test]
+    fn session_scan_concurrency_auto_stays_within_bounds() {
+        for configured in [None, Some(0)] {
+            let auto = resolve_session_scan_concurrency(configured);
+            assert!((1..=SESSION_SCAN_AUTO_MAX).contains(&auto));
+        }
+    }
+
+    #[test]
+    fn session_scan_concurrency_round_trips_through_json() {
+        let settings = AppSettings {
+            session_scan_concurrency: Some(4),
+            ..AppSettings::default()
+        };
+        let json = serde_json::to_value(&settings).expect("serialize");
+        assert_eq!(json["sessionScanConcurrency"], 4);
+        let restored: AppSettings = serde_json::from_value(json).expect("deserialize");
+        assert_eq!(restored.session_scan_concurrency, Some(4));
     }
 
     #[test]
