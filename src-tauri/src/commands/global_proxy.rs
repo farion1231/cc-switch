@@ -2,18 +2,27 @@
 //!
 //! 提供获取、设置和测试全局代理的 Tauri 命令。
 
+use super::run_db_task;
 use crate::proxy::http_client;
 use crate::store::AppState;
 use serde::Serialize;
 use std::net::{Ipv4Addr, SocketAddrV4, TcpStream};
 use std::time::{Duration, Instant};
 
+/// Inspect the selected outbound route without persisting or changing it.
+#[tauri::command]
+pub async fn diagnose_ip(url: String) -> Result<crate::services::ip_diagnostics::IpReport, String> {
+    crate::services::ip_diagnostics::diagnose(&url).await
+}
+
 /// 获取全局代理 URL
 ///
 /// 返回当前配置的代理 URL，null 表示直连。
 #[tauri::command]
-pub fn get_global_proxy_url(state: tauri::State<'_, AppState>) -> Result<Option<String>, String> {
-    let result = state.db.get_global_proxy_url().map_err(|e| e.to_string())?;
+pub async fn get_global_proxy_url(
+    state: tauri::State<'_, AppState>,
+) -> Result<Option<String>, String> {
+    let result = run_db_task(&state, |state| state.db.get_global_proxy_url()).await?;
     log::debug!(
         "[GlobalProxy] [GP-010] Read from database: {}",
         result
@@ -32,7 +41,10 @@ pub fn get_global_proxy_url(state: tauri::State<'_, AppState>) -> Result<Option<
 /// 执行顺序：先验证 → 写 DB → 再应用
 /// 这样确保 DB 写失败时不会出现运行态与持久化不一致的问题
 #[tauri::command]
-pub fn set_global_proxy_url(state: tauri::State<'_, AppState>, url: String) -> Result<(), String> {
+pub async fn set_global_proxy_url(
+    state: tauri::State<'_, AppState>,
+    url: String,
+) -> Result<(), String> {
     // 调试：显示接收到的 URL 信息（不包含敏感内容）
     let has_auth = url.contains('@') && (url.starts_with("http://") || url.starts_with("socks"));
     log::debug!(
@@ -51,10 +63,11 @@ pub fn set_global_proxy_url(state: tauri::State<'_, AppState>, url: String) -> R
     http_client::validate_proxy(url_opt)?;
 
     // 2. 验证成功后保存到数据库
-    state
-        .db
-        .set_global_proxy_url(url_opt)
-        .map_err(|e| e.to_string())?;
+    let stored = url_opt.map(str::to_owned);
+    run_db_task(&state, move |state| {
+        state.db.set_global_proxy_url(stored.as_deref())
+    })
+    .await?;
 
     // 3. DB 写入成功后再应用到运行态
     http_client::apply_proxy(url_opt)?;
@@ -155,18 +168,6 @@ pub async fn test_proxy_url(url: String) -> Result<ProxyTestResult, String> {
         latency_ms: latency,
         error: Some(error_msg),
     })
-}
-
-/// 获取当前出站代理状态
-///
-/// 返回当前是否启用了出站代理以及代理 URL。
-#[tauri::command]
-pub fn get_upstream_proxy_status() -> UpstreamProxyStatus {
-    let url = http_client::get_current_proxy_url();
-    UpstreamProxyStatus {
-        enabled: url.is_some(),
-        proxy_url: url,
-    }
 }
 
 /// 出站代理状态信息

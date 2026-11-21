@@ -26,10 +26,8 @@ const INSERT_BATCH_MAX_BYTES: usize = 1024 * 1024;
 static BACKUP_FILE_OPERATION_LOCK: Mutex<()> = Mutex::new(());
 type BackupFileOperationGuard = MutexGuard<'static, ()>;
 
-fn lock_backup_file_operations() -> Result<BackupFileOperationGuard, AppError> {
-    BACKUP_FILE_OPERATION_LOCK
-        .lock()
-        .map_err(|e| AppError::Database(format!("Backup file operation lock failed: {e}")))
+fn lock_backup_file_operations() -> BackupFileOperationGuard {
+    crate::sync_utils::lock_file_operation(&BACKUP_FILE_OPERATION_LOCK)
 }
 
 /// `dump_sql` 会写出的 PRAGMA。其余 PRAGMA 一律拒绝——`temp_store_directory`
@@ -226,7 +224,7 @@ impl Database {
         crate::services::provider::icon::strip_invalid_custom_icons(&temp_conn)?;
         on_staging_ready()?;
 
-        let backup_file_guard = lock_backup_file_operations()?;
+        let backup_file_guard = lock_backup_file_operations();
         // Keep one main-DB guard across the safety snapshot, local-table read,
         // and final replacement so neither the rollback point nor preserved
         // device-local rows can miss writes that arrived during staging.
@@ -411,11 +409,11 @@ impl Database {
         Ok(())
     }
 
-    /// Periodic backup: create a new backup if the latest one is older than the configured interval
-    pub(crate) fn periodic_backup_if_needed(&self) -> Result<(), AppError> {
+    /// Create a backup if the latest one is older than the configured interval.
+    fn backup_if_needed(&self) -> Result<(), AppError> {
         let interval_hours = crate::settings::effective_backup_interval_hours();
         if interval_hours > 0 {
-            let backup_file_guard = lock_backup_file_operations()?;
+            let backup_file_guard = lock_backup_file_operations();
             let backup_dir = get_app_config_dir().join("backups");
             if !backup_dir.exists() {
                 self.backup_database_file_locked(&backup_file_guard)?;
@@ -446,37 +444,33 @@ impl Database {
             }
         }
 
-        // Periodic maintenance is always enabled, regardless of auto-backup settings.
-        let mut reclaimed_rows = 0u64;
-        match self.cleanup_old_stream_check_logs(7) {
-            Ok(deleted) => {
-                reclaimed_rows += deleted;
-            }
-            Err(e) => {
-                log::warn!("Periodic stream_check_logs cleanup failed: {e}");
-            }
+        Ok(())
+    }
+
+    /// Startup/daily maintenance. Cleanup also runs when backup is disabled or
+    /// fails, so a broken backup destination cannot prevent log retention.
+    pub(crate) fn periodic_backup_if_needed(&self) -> Result<(), AppError> {
+        let backup_result = self.backup_if_needed();
+        if let Err(e) = self.cleanup_old_stream_check_logs(7) {
+            log::warn!("Periodic stream_check_logs cleanup failed: {e}");
         }
-        match self.rollup_and_prune(30) {
-            Ok(deleted) => {
-                reclaimed_rows += deleted;
-            }
-            Err(e) => {
-                log::warn!("Periodic rollup_and_prune failed: {e}");
-            }
+        if let Err(e) = self.rollup_and_prune(30) {
+            log::warn!("Periodic rollup_and_prune failed: {e}");
         }
-        if reclaimed_rows > 0 {
+        // Also reclaim pages left by deletions before the last shutdown.
+        {
             let conn = lock_conn!(self.conn);
             if let Err(e) = Self::incremental_vacuum_on_conn(&conn) {
                 log::warn!("Periodic incremental vacuum failed: {e}");
             }
         }
 
-        Ok(())
+        backup_result
     }
 
     /// 生成一致性快照备份，返回备份文件路径（不存在主库时返回 None）
     pub(crate) fn backup_database_file(&self) -> Result<Option<PathBuf>, AppError> {
-        let backup_file_guard = lock_backup_file_operations()?;
+        let backup_file_guard = lock_backup_file_operations();
         self.backup_database_file_locked(&backup_file_guard)
     }
 
@@ -965,7 +959,7 @@ impl Database {
 
     /// List all database backup files, sorted by creation time (newest first)
     pub fn list_backups() -> Result<Vec<BackupEntry>, AppError> {
-        let _backup_file_guard = lock_backup_file_operations()?;
+        let _backup_file_guard = lock_backup_file_operations();
         let backup_dir = get_app_config_dir().join("backups");
         if !backup_dir.exists() {
             return Ok(vec![]);
@@ -1024,7 +1018,7 @@ impl Database {
             ));
         }
 
-        let backup_file_guard = lock_backup_file_operations()?;
+        let backup_file_guard = lock_backup_file_operations();
         let backup_dir = get_app_config_dir().join("backups");
         let backup_path = backup_dir.join(filename);
 
@@ -1131,7 +1125,7 @@ impl Database {
 
         let new_filename = format!("{name_part}.db");
 
-        let _backup_file_guard = lock_backup_file_operations()?;
+        let _backup_file_guard = lock_backup_file_operations();
         let backup_dir = get_app_config_dir().join("backups");
         let old_path = backup_dir.join(old_filename);
         let new_path = backup_dir.join(&new_filename);
@@ -1166,7 +1160,7 @@ impl Database {
             ));
         }
 
-        let _backup_file_guard = lock_backup_file_operations()?;
+        let _backup_file_guard = lock_backup_file_operations();
         let backup_path = get_app_config_dir().join("backups").join(filename);
         if !backup_path.exists() {
             return Err(AppError::InvalidInput(format!(
@@ -1185,19 +1179,49 @@ mod tests {
     use super::{lock_backup_file_operations, Database};
     use crate::error::AppError;
     use crate::settings::{get_settings, update_settings, AppSettings};
+    use crate::test_support::EnvVars;
     use rusqlite::Connection;
     use serial_test::serial;
 
+    #[test]
+    #[serial]
+    fn backups_recover_after_poisoned_file_operation() {
+        if !crate::sync_utils::in_isolated_process(
+            "database::backup::tests::backups_recover_after_poisoned_file_operation",
+        ) {
+            return;
+        }
+        let _home = TestHomeGuard::new();
+        let db = Database::memory().unwrap();
+        db.set_setting("kept", "yes").unwrap();
+        assert!(std::panic::catch_unwind(|| {
+            let _guard = lock_backup_file_operations();
+            panic!("backup operation interrupted");
+        })
+        .is_err());
+        let path = db
+            .backup_database_file()
+            .expect("backup after panic")
+            .expect("snapshot file");
+        let saved = Connection::open(path).unwrap();
+        let value: String = saved
+            .query_row("SELECT value FROM settings WHERE key = 'kept'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(value, "yes");
+        assert!(!super::BACKUP_FILE_OPERATION_LOCK.is_poisoned());
+    }
+
     struct TestHomeGuard {
-        previous_test_home: Option<std::ffi::OsString>,
+        _env: EnvVars,
         temp_dir: tempfile::TempDir,
     }
 
     impl TestHomeGuard {
         fn new() -> Self {
             let temp_dir = tempfile::tempdir().expect("create isolated test home");
-            let previous_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
-            std::env::set_var("CC_SWITCH_TEST_HOME", temp_dir.path());
+            let env = EnvVars::new().set("CC_SWITCH_TEST_HOME", temp_dir.path());
             // Prevent the Windows legacy-HOME fallback without mutating HOME:
             // an existing default DB keeps get_app_config_dir() anchored under
             // CC_SWITCH_TEST_HOME and makes import exercise its safety backup.
@@ -1206,7 +1230,7 @@ mod tests {
             std::fs::File::create(config_dir.join("cc-switch.db"))
                 .expect("create isolated database sentinel");
             let guard = Self {
-                previous_test_home,
+                _env: env,
                 temp_dir,
             };
             let resolved = crate::config::get_app_config_dir();
@@ -1220,15 +1244,6 @@ mod tests {
 
         fn path(&self) -> &std::path::Path {
             self.temp_dir.path()
-        }
-    }
-
-    impl Drop for TestHomeGuard {
-        fn drop(&mut self) {
-            match self.previous_test_home.as_ref() {
-                Some(previous) => std::env::set_var("CC_SWITCH_TEST_HOME", previous),
-                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
-            }
         }
     }
 
@@ -2427,7 +2442,7 @@ mod tests {
         visible_before.sort();
 
         let error = {
-            let backup_file_guard = lock_backup_file_operations()?;
+            let backup_file_guard = lock_backup_file_operations();
             let conn = crate::database::lock_conn!(db.conn);
             Database::backup_database_file_from_conn_with_hook(
                 &backup_file_guard,
@@ -2478,7 +2493,7 @@ mod tests {
         let mut claimed_path = None;
 
         let published_path = {
-            let backup_file_guard = lock_backup_file_operations()?;
+            let backup_file_guard = lock_backup_file_operations();
             let conn = crate::database::lock_conn!(db.conn);
             Database::backup_database_file_from_conn_with_hook(
                 &backup_file_guard,
@@ -3090,7 +3105,8 @@ mod tests {
 
     #[test]
     #[serial]
-    fn periodic_maintenance_runs_even_when_auto_backup_disabled() -> Result<(), AppError> {
+    fn startup_defers_cleanup_to_maintenance_even_when_auto_backup_disabled() -> Result<(), AppError>
+    {
         let _test_home = TestHomeGuard::new();
 
         let settings = AppSettings {
@@ -3099,7 +3115,7 @@ mod tests {
         };
         update_settings(settings).expect("disable auto backup");
 
-        let db = Database::memory()?;
+        let db = Database::init()?;
         let now = chrono::Utc::now().timestamp();
         let old_ts = now - 40 * 86400;
         let old_stream_ts = now - 8 * 86400;
@@ -3123,6 +3139,20 @@ mod tests {
             )?;
         }
 
+        drop(db);
+        let db = Database::init()?;
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            let logs: i64 =
+                conn.query_row("SELECT COUNT(*) FROM proxy_request_logs", [], |r| r.get(0))?;
+            let stream_logs: i64 =
+                conn.query_row("SELECT COUNT(*) FROM stream_check_logs", [], |r| r.get(0))?;
+            assert_eq!(
+                (logs, stream_logs),
+                (1, 1),
+                "database opening must defer log cleanup"
+            );
+        }
         db.periodic_backup_if_needed()?;
 
         let (remaining_request_logs, stream_logs, rollups): (i64, i64, i64) = {
@@ -3155,260 +3185,37 @@ mod tests {
         Ok(())
     }
 
-    /// 性能基准（不是回归测试）：用接近重度代理用户的行数测量
-    /// 导出 / 本地文件导入 / 同步导入三条路径的耗时与产物大小。
-    ///
-    /// 手动运行：`cargo test --lib perf_backup -- --ignored --nocapture`
     #[test]
-    #[ignore = "perf harness, run explicitly"]
     #[serial]
-    fn perf_backup_export_import_paths() -> Result<(), AppError> {
-        use std::time::Instant;
-
-        const LOG_ROWS: usize = 20_000;
-        const STREAM_ROWS: usize = 5_000;
-        const ROLLUP_ROWS: usize = 1_000;
-
+    fn maintenance_prunes_logs_even_when_backup_destination_is_invalid() -> Result<(), AppError> {
         let _test_home = TestHomeGuard::new();
-
-        fn populate(
-            db: &Database,
-            log_rows: usize,
-            stream_rows: usize,
-            rollup_rows: usize,
-        ) -> Result<(), AppError> {
-            let mut conn = crate::database::lock_conn!(db.conn);
-            let tx = conn.transaction()?;
-            for i in 0..50 {
-                tx.execute(
-                    "INSERT INTO providers (id, app_type, name, settings_config, meta)
-                     VALUES (?1, 'claude', ?2, '{}', '{}')",
-                    rusqlite::params![format!("p{i}"), format!("Provider {i}")],
-                )?;
-            }
-            for i in 0..log_rows {
-                tx.execute(
-                    "INSERT INTO proxy_request_logs (
-                        request_id, provider_id, app_type, model,
-                        input_tokens, output_tokens, total_cost_usd,
-                        latency_ms, status_code, created_at
-                    ) VALUES (?1, 'p1', 'claude', 'claude-3', 100, 50, '0.01', 120, 200, 1000)",
-                    [format!("req-{i}")],
-                )?;
-            }
-            for i in 0..stream_rows {
-                tx.execute(
-                    "INSERT INTO stream_check_logs (
-                        provider_id, provider_name, app_type, status, success, message,
-                        response_time_ms, http_status, model_used, retry_count, tested_at
-                    ) VALUES ('p1', 'Provider 1', 'claude', 'operational', 1, 'ok', 42, 200, 'claude-3', 0, ?1)",
-                    [1000i64 + i as i64],
-                )?;
-            }
-            for i in 0..rollup_rows {
-                // (date, app_type, provider_id, model, request_model, pricing_model)
-                // 上有 UNIQUE 约束，日期必须逐行唯一。
-                let date = format!(
-                    "{:04}-{:02}-{:02}",
-                    2025 + i / 336,
-                    i / 28 % 12 + 1,
-                    i % 28 + 1
-                );
-                tx.execute(
-                    "INSERT INTO usage_daily_rollups (
-                        date, app_type, provider_id, model, request_count, success_count,
-                        input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-                        total_cost_usd, avg_latency_ms
-                    ) VALUES (?1, 'claude', 'p1', 'claude-3', 7, 7, 700, 350, 0, 0, '0.07', 120)",
-                    [date],
-                )?;
-            }
-            tx.commit()?;
-            Ok(())
+        update_settings(AppSettings {
+            backup_interval_hours: Some(1),
+            ..AppSettings::default()
+        })?;
+        let db = Database::init()?;
+        let backup_dir = crate::config::get_app_config_dir().join("backups");
+        // Initialization may create migration backups in this isolated home.
+        if backup_dir.is_dir() {
+            std::fs::remove_dir_all(&backup_dir).map_err(|e| AppError::io(&backup_dir, e))?;
         }
-
-        let source = Database::memory()?;
-        populate(&source, LOG_ROWS, STREAM_ROWS, ROLLUP_ROWS)?;
-
-        let t = Instant::now();
-        let full_sql = source.export_sql_string()?;
-        println!(
-            "export_sql_string (full): {:?}, {} bytes",
-            t.elapsed(),
-            full_sql.len()
-        );
-
-        let t = Instant::now();
-        let import_target = Database::memory()?;
-        import_target.import_sql_string(&full_sql)?;
-        println!("import_sql_string (local file path): {:?}", t.elapsed());
+        std::fs::write(&backup_dir, "not a directory").map_err(|e| AppError::io(&backup_dir, e))?;
         {
-            let conn = crate::database::lock_conn!(import_target.conn);
-            let counts: (i64, i64, i64, i64) = conn.query_row(
-                "SELECT
-                    (SELECT COUNT(*) FROM providers),
-                    (SELECT COUNT(*) FROM proxy_request_logs),
-                    (SELECT COUNT(*) FROM stream_check_logs),
-                    (SELECT COUNT(*) FROM usage_daily_rollups)",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.execute(
+                "INSERT INTO proxy_request_logs (request_id, provider_id, app_type, model,
+                 input_tokens, output_tokens, total_cost_usd, latency_ms, status_code, created_at)
+                 VALUES ('old', 'p1', 'claude', 'test', 10, 5, '0.01', 1, 200, ?1)",
+                [chrono::Utc::now().timestamp() - 40 * 86400],
             )?;
-            assert_eq!(
-                counts,
-                (50, LOG_ROWS as i64, STREAM_ROWS as i64, ROLLUP_ROWS as i64)
-            );
         }
-
-        let sync_sql = source.export_sql_string_for_sync()?;
-        println!("sync payload: {} bytes", sync_sql.len());
-
-        // 同步导入的耗时大头在“保留本机日志表”——本机库必须带同样规模的日志行。
-        let local = Database::memory()?;
-        populate(&local, LOG_ROWS, STREAM_ROWS, ROLLUP_ROWS)?;
-        let t = Instant::now();
-        local.import_sql_string_for_sync(&sync_sql)?;
-        println!(
-            "import_sql_string_for_sync ({} preserved log rows): {:?}",
-            LOG_ROWS + STREAM_ROWS + ROLLUP_ROWS,
-            t.elapsed()
-        );
-        {
-            let conn = crate::database::lock_conn!(local.conn);
-            let counts: (i64, i64, i64) = conn.query_row(
-                "SELECT
-                    (SELECT COUNT(*) FROM proxy_request_logs),
-                    (SELECT COUNT(*) FROM stream_check_logs),
-                    (SELECT COUNT(*) FROM usage_daily_rollups)",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )?;
-            assert_eq!(
-                counts,
-                (LOG_ROWS as i64, STREAM_ROWS as i64, ROLLUP_ROWS as i64)
-            );
-        }
-        Ok(())
-    }
-
-    /// 分阶段拆解 import_sql_string 的耗时，定位慢在哪一步。
-    ///
-    /// 手动运行：`cargo test --lib perf_import_phases -- --ignored --nocapture`
-    #[test]
-    #[ignore = "perf diagnostic, run explicitly"]
-    fn perf_import_phases() -> Result<(), AppError> {
-        use rusqlite::Connection;
-        use std::time::Instant;
-        use tempfile::NamedTempFile;
-
-        const LOG_ROWS: usize = 20_000;
-
-        let source = Database::memory()?;
-        {
-            let mut conn = crate::database::lock_conn!(source.conn);
-            let tx = conn.transaction()?;
-            for i in 0..50 {
-                tx.execute(
-                    "INSERT INTO providers (id, app_type, name, settings_config, meta)
-                     VALUES (?1, 'claude', ?2, '{}', '{}')",
-                    rusqlite::params![format!("p{i}"), format!("Provider {i}")],
-                )?;
-            }
-            for i in 0..LOG_ROWS {
-                tx.execute(
-                    "INSERT INTO proxy_request_logs (
-                        request_id, provider_id, app_type, model,
-                        input_tokens, output_tokens, total_cost_usd,
-                        latency_ms, status_code, created_at
-                    ) VALUES (?1, 'p1', 'claude', 'claude-3', 100, 50, '0.01', 120, 200, 1000)",
-                    [format!("req-{i}")],
-                )?;
-            }
-            tx.commit()?;
-        }
-        let sql = source.export_sql_string()?;
-        println!("payload: {} bytes, {LOG_ROWS} log rows", sql.len());
-
-        let temp_file = NamedTempFile::new().expect("temp file");
-        let temp_conn = Connection::open(temp_file.path()).expect("open temp conn");
-
-        let t = Instant::now();
-        temp_conn
-            .execute_batch(&sql)
-            .expect("execute_batch should succeed");
-        println!("phase execute_batch: {:?}", t.elapsed());
-
-        let t = Instant::now();
-        Database::create_tables_on_conn(&temp_conn)?;
-        Database::apply_schema_migrations_on_conn(&temp_conn)?;
-        println!("phase schema+migrations: {:?}", t.elapsed());
-
-        let t = Instant::now();
-        let target = Database::memory()?;
-        {
-            let mut main_conn = crate::database::lock_conn!(target.conn);
-            let backup =
-                rusqlite::backup::Backup::new(&temp_conn, &mut main_conn).expect("backup init");
-            backup.step(-1).expect("backup step");
-        }
-        println!("phase backup-to-main: {:?}", t.elapsed());
-
-        // 对照组：同样的语句但临时库关掉 journal / synchronous。
-        let temp_file2 = NamedTempFile::new().expect("temp file 2");
-        let temp_conn2 = Connection::open(temp_file2.path()).expect("open temp conn 2");
-        temp_conn2
-            .execute_batch("PRAGMA journal_mode=MEMORY; PRAGMA synchronous=OFF;")
-            .expect("pragmas");
-        let t = Instant::now();
-        temp_conn2
-            .execute_batch(&sql)
-            .expect("execute_batch should succeed");
-        println!(
-            "phase execute_batch (journal=MEMORY, sync=OFF): {:?}",
-            t.elapsed()
-        );
-
-        // 对照组 B：同一份脚本跑在内存库上，区分“纯 CPU/解析”还是“文件 I/O”。
-        let mem_conn = Connection::open_in_memory().expect("open mem conn");
-        let t = Instant::now();
-        mem_conn
-            .execute_batch(&sql)
-            .expect("execute_batch mem should succeed");
-        println!("phase execute_batch (in-memory): {:?}", t.elapsed());
-
-        // 对照组 C：同样的数据改成多行 VALUES（每 200 行一条 INSERT），
-        // 验证“每行一条语句”的解析开销占比。
-        let mut batched = String::from("PRAGMA foreign_keys=OFF;\nBEGIN TRANSACTION;\n");
-        batched.push_str(
-            "CREATE TABLE bench_logs (
-                request_id TEXT, provider_id TEXT, app_type TEXT, model TEXT,
-                input_tokens INTEGER, output_tokens INTEGER, total_cost_usd TEXT,
-                latency_ms INTEGER, status_code INTEGER, created_at INTEGER
-            );\n",
-        );
-        const BATCH: usize = 200;
-        for chunk_start in (0..LOG_ROWS).step_by(BATCH) {
-            batched.push_str("INSERT INTO bench_logs VALUES ");
-            for i in chunk_start..(chunk_start + BATCH).min(LOG_ROWS) {
-                if i > chunk_start {
-                    batched.push(',');
-                }
-                batched.push_str(&format!(
-                    "('req-{i}','p1','claude','claude-3',100,50,'0.01',120,200,1000)"
-                ));
-            }
-            batched.push_str(";\n");
-        }
-        batched.push_str("COMMIT;\n");
-        let mem_conn2 = Connection::open_in_memory().expect("open mem conn 2");
-        let t = Instant::now();
-        mem_conn2
-            .execute_batch(&batched)
-            .expect("batched should succeed");
-        println!(
-            "phase execute_batch (in-memory, multi-row VALUES x{BATCH}): {:?}",
-            t.elapsed()
-        );
-
+        assert!(db.periodic_backup_if_needed().is_err());
+        let conn = crate::database::lock_conn!(db.conn);
+        let logs: i64 =
+            conn.query_row("SELECT COUNT(*) FROM proxy_request_logs", [], |r| r.get(0))?;
+        let rollups: i64 =
+            conn.query_row("SELECT COUNT(*) FROM usage_daily_rollups", [], |r| r.get(0))?;
+        assert_eq!((logs, rollups), (0, 1));
         Ok(())
     }
 }

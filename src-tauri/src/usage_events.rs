@@ -5,7 +5,7 @@
 //! 立刻 invalidate 查询缓存而无需等待轮询周期。
 //!
 //! 设计要点：
-//! - 全局单例 AppHandle：写日志路径上不持有 AppHandle，用 OnceCell 共享。
+//! - 全局单例 AppHandle：写日志路径上不持有 AppHandle，用 OnceLock 共享。
 //! - 200ms 防抖合并：流式响应等场景在短时间内可能写入多条日志，
 //!   合并成一次事件可避免前端连续 invalidate。
 //! - 不阻塞写入：通知失败仅记录 warn 日志，不向上传播错误。
@@ -58,8 +58,8 @@ pub fn notify_log_recorded() {
     }
 
     let handle = handle.clone();
-    std::thread::spawn(move || {
-        std::thread::sleep(DEBOUNCE_WINDOW);
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(DEBOUNCE_WINDOW).await;
         // 必须先清标志再 emit：万一 emit 期间又有新通知进来，
         // 下一轮防抖窗口会重新调度，不会丢失。
         EMIT_SCHEDULED.store(false, Ordering::Release);

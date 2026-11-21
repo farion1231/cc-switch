@@ -62,7 +62,7 @@ ccswitch://v1/import?resource=<種類>&<パラメーター>...
 2. CC Switch がインポート確認ダイアログを開き、リンクの内容をすべて表示します。エンドポイント、マスクされた Key、モデル、同梱された設定の原文、使用量クエリスクリプトの全文です。疑わしい内容は黄色で強調して警告します。たとえばローカルや社内ネットワークを指すアドレス、プロセスの読み込み動作を変えられる環境変数（`NODE_OPTIONS`、`LD_PRELOAD` など）、シェルでコマンド全体を実行する MCP などです。
 3. ユーザーが「インポート」を押すと、次のようになります。
    - **プロバイダー**：対応するアプリのプロバイダー一覧に追加されます。確認ダイアログの下部にスイッチが 1 つあり、初期値はリンクの `enabled` から取られ、ユーザーが変更できます。
-     - Claude Code、Codex、Gemini CLI、Grok Build：スイッチは「インポート後にこのプロバイダーへ切り替える」で、デフォルトはオフです。オンにすると、確認ダイアログに「クライアントのリクエストは上記のエンドポイントに送られます」という注意が表示されます。
+     - Claude Code、Codex、Gemini CLI、Antigravity CLI、Grok Build：スイッチは「インポート後にこのプロバイダーへ切り替える」で、デフォルトはオフです。オンにすると、確認ダイアログに「クライアントのリクエストは上記のエンドポイントに送られます」という注意が表示されます。
      - OpenCode、OpenClaw、Hermes、Pi：これらのアプリは複数のプロバイダーを同時に置けるため、スイッチは「インポート後に <アプリ名> の設定へ追加する」（Pi では「インポート後に Pi で有効にする」）で、デフォルトはオンです。オフにすると CC Switch の一覧に保存されるだけになります。
    - **MCP**：`apps` に挙げた各アプリの設定ファイルにすぐ書き込まれます。
    - **プロンプト**：プロンプト一覧に追加されます。確認ダイアログに「インポート後に有効にする」スイッチがあり、初期値はリンクの `enabled` から取られます。オンにすると、そのアプリの現在のプロンプトファイルが置き換えられ、それまで有効だったプロンプトは無効になります。
@@ -92,6 +92,7 @@ ccswitch://v1/import?resource=provider&app=claude&name=Example%20AI&endpoint=htt
 | `claude` | Claude Code | `anthropic` | 4 種類すべて | `{"env": {...}}`。`env` 内の変数はすべて保持 |
 | `codex` | Codex | `openai_responses` | `openai_responses`、`openai_chat`、`anthropic` | `config.toml` の全体または一部。後述 |
 | `gemini` | Gemini CLI | `gemini_native` | `gemini_native` のみ | `GEMINI_API_KEY`、`GOOGLE_GEMINI_BASE_URL`、`GEMINI_MODEL` の 3 キー。ほかは無視 |
+| `agy` | Antigravity CLI | `gemini_native` | `gemini_native` のみ | Gemini のフラットな環境キー、または `{env, config:{model:{name}}}`。URL パラメーターが優先され、モデルは `GEMINI_MODEL` より `config.model.name` が優先。ほかのネイティブ設定は無視 |
 | `grokbuild` | Grok Build | `openai_responses` | `openai_responses`、`openai_chat`、`anthropic` | `[model."<名前>"]` テーブル 1 つ。後述 |
 | `opencode` | OpenCode | `openai_chat` | 4 種類すべて | エンドポイントと Key のみ取得 |
 | `openclaw` | OpenClaw | `openai_chat` | 4 種類すべて | エンドポイントと Key のみ取得 |
@@ -407,14 +408,14 @@ Sub2API には CC Switch 向けの `GET /v1/usage` API が最初から用意さ�
 
 **MCP**（`resource=mcp`）
 
-- `apps` は必須で、カンマ区切りです：`claude`、`codex`、`gemini`、`grokbuild`、`opencode`、`hermes`、`pi`、`mcode`。`openclaw` は無視されます。
+- `apps` は必須で、カンマ区切りです：`claude`、`codex`、`gemini`、`agy`、`grokbuild`、`opencode`、`hermes`、`pi`、`mcode`。`openclaw` は無視されます。
 - `config` は `{"mcpServers": {"<ID>": {...}}}` を Base64 にしたもので、1 本のリンクに複数のサーバーを含められます。
 - ユーザーがすでに同じ ID のサーバーを持っている場合は、そのサーバーに新しいアプリのチェックが付くだけで、設定内容はリンクで上書きされません。設定を更新したい場合は別の ID にしてください。
 - インポートと同時にクライアントの設定ファイルへ書き込まれます。`enabled` パラメーターは現在効果がありません。
 
 **プロンプト**（`resource=prompt`）
 
-- `app` は `claude`、`codex`、`gemini`、`grokbuild`、`opencode`、`pi`、`mcode` のいずれかです。`openclaw`、`hermes` は CC Switch ではワークスペースエディターとメモリー管理が担当しているため、ディープリンクでプロンプトを配布することはお勧めしません。
+- `app` は `claude`、`codex`、`gemini`、`agy`、`grokbuild`、`opencode`、`pi`、`mcode` のいずれかです。`openclaw`、`hermes` は CC Switch ではワークスペースエディターとメモリー管理が担当しているため、ディープリンクでプロンプトを配布することはお勧めしません。
 - `name`、`content`（Base64 にした Markdown）は必須、`description` は任意です。
 - `enabled` は確認ダイアログの「インポート後に有効にする」スイッチの初期値です。有効にすると、この内容でユーザーの現在のプロンプトファイル（`CLAUDE.md` など）が置き換えられるため、通常は書かないでください。
 

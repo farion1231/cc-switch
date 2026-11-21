@@ -2,18 +2,18 @@
 
 use super::codex_responses_sse as sse;
 use super::{
-    codex_chat_common::extract_reasoning_field_text,
+    codex_chat_common::{extract_reasoning_field_text, tool_call_extra_content},
     codex_compaction,
     inline_think::InlineThinkSplitter,
     transform_codex_chat::{
-        chat_usage_to_responses_usage, custom_tool_input_from_chat_arguments,
-        response_id_from_chat_id, response_status_from_finish_reason,
-        response_tool_call_item_from_chat_name, response_tool_call_item_id_from_chat_name,
-        CodexToolContext,
+        chat_error_to_response_error, chat_usage_to_responses_usage,
+        custom_tool_input_from_chat_arguments, response_id_from_chat_id, response_message_item_id,
+        response_status_from_finish_reason, response_tool_call_item_from_chat_name,
+        response_tool_call_item_id_from_chat_name, CodexToolContext,
     },
 };
 use crate::proxy::json_canonical::canonicalize_tool_arguments_str;
-use crate::proxy::sse::{strip_sse_field, take_sse_block};
+use crate::proxy::sse::{strip_sse_field, SseBuffer};
 use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
 use serde_json::{json, Value};
@@ -45,6 +45,8 @@ struct ToolCallState {
     name: String,
     arguments: String,
     reasoning_content: String,
+    /// 上游 tool call 的 `extra_content`（Gemini thought signature），完成时原样挂回。
+    extra_content: Option<Value>,
     added: bool,
     done: bool,
 }
@@ -232,7 +234,7 @@ impl ChatToResponsesState {
 
         if !self.text.added {
             let output_index = self.next_output_index();
-            let item_id = format!("{}_msg", self.response_id);
+            let item_id = response_message_item_id(&self.response_id);
             self.text.output_index = Some(output_index);
             self.text.item_id = item_id.clone();
             self.text.added = true;
@@ -326,6 +328,9 @@ impl ChatToResponsesState {
             }
             if !args_delta.is_empty() {
                 state.arguments.push_str(&args_delta);
+            }
+            if let Some(extra) = tool_call_extra_content(tool_call) {
+                state.extra_content = Some(extra.clone());
             }
             if state.reasoning_content.is_empty() {
                 if let Some(reasoning) = reasoning.map(str::trim).filter(|value| !value.is_empty())
@@ -644,7 +649,7 @@ impl ChatToResponsesState {
             let output_index = state.output_index.unwrap_or(0);
             let arguments = canonicalize_tool_arguments_str(&state.arguments);
             let is_custom_tool = self.tool_context.is_custom_tool_chat_name(&state.name);
-            let item = response_tool_call_item_from_chat_name(
+            let mut item = response_tool_call_item_from_chat_name(
                 &state.item_id,
                 "completed",
                 &state.call_id,
@@ -653,6 +658,9 @@ impl ChatToResponsesState {
                 Some(&state.reasoning_content),
                 &self.tool_context,
             );
+            if let (Some(extra), Some(obj)) = (&state.extra_content, item.as_object_mut()) {
+                obj.insert("extra_content".to_string(), extra.clone());
+            }
             state.done = true;
             self.output_items.push((output_index, item.clone()));
 
@@ -714,11 +722,23 @@ impl ChatToResponsesState {
     }
 
     fn failed_event(&mut self, message: String, error_type: Option<String>) -> Bytes {
-        self.completed = true;
         let mut error = json!({ "message": message });
         if let Some(error_type) = error_type.filter(|value| !value.is_empty()) {
             error["type"] = json!(error_type);
         }
+        self.failed_event_with_error(error)
+    }
+
+    fn failed_event_with_error(&mut self, mut error: Value) -> Bytes {
+        // Codex expects Option<String>; other JSON types would hide the upstream message.
+        if let Some(code) = error
+            .get_mut("code")
+            .filter(|code| !code.is_string() && !code.is_null())
+        {
+            *code = json!(code.to_string());
+        }
+
+        self.completed = true;
 
         let mut response = self.base_response("failed", self.completed_output_items());
         response["error"] = error;
@@ -731,14 +751,6 @@ fn chat_delta_reasoning_text(delta: &Value) -> Option<String> {
     extract_reasoning_field_text(delta)
 }
 
-/// Create a stream that converts Chat Completions SSE chunks into Responses SSE events.
-#[allow(dead_code)]
-pub fn create_responses_sse_stream_from_chat<E: std::error::Error + Send + 'static>(
-    stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
-) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
-    create_responses_sse_stream_from_chat_with_context(stream, CodexToolContext::default())
-}
-
 /// Create a stream that converts Chat Completions SSE chunks into Responses SSE
 /// events while restoring Codex tool namespace/custom/tool_search metadata.
 pub fn create_responses_sse_stream_from_chat_with_context<E: std::error::Error + Send + 'static>(
@@ -746,8 +758,7 @@ pub fn create_responses_sse_stream_from_chat_with_context<E: std::error::Error +
     tool_context: CodexToolContext,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
-        let mut buffer = String::new();
-        let mut utf8_remainder: Vec<u8> = Vec::new();
+        let mut sse = SseBuffer::new();
         let mut state = ChatToResponsesState::with_tool_context(tool_context);
         let mut stream_failed = false;
 
@@ -756,9 +767,9 @@ pub fn create_responses_sse_stream_from_chat_with_context<E: std::error::Error +
         while let Some(chunk) = stream.next().await {
             match chunk {
                 Ok(bytes) => {
-                    crate::proxy::sse::append_utf8_safe(&mut buffer, &mut utf8_remainder, &bytes);
+                    sse.push_bytes(&bytes);
 
-                    while let Some(block) = take_sse_block(&mut buffer) {
+                    while let Some(block) = sse.next_block() {
                         if block.trim().is_empty() {
                             continue;
                         }
@@ -793,8 +804,8 @@ pub fn create_responses_sse_stream_from_chat_with_context<E: std::error::Error +
                         };
 
                         if event_name.as_deref() == Some("error") || chunk.get("error").is_some() {
-                            let (message, error_type) = extract_chat_sse_error(&chunk);
-                            yield Ok(state.failed_event(message, error_type));
+                            let normalized = chat_error_to_response_error(Some(&chunk));
+                            yield Ok(state.failed_event_with_error(normalized["error"].clone()));
                             stream_failed = true;
                             break;
                         }
@@ -837,28 +848,6 @@ pub fn create_responses_sse_stream_from_chat_with_context<E: std::error::Error +
             }
         }
     }
-}
-
-fn extract_chat_sse_error(value: &Value) -> (String, Option<String>) {
-    let error = value.get("error").unwrap_or(value);
-    let message = error
-        .as_str()
-        .map(ToString::to_string)
-        .or_else(|| {
-            error
-                .get("message")
-                .or_else(|| error.get("detail"))
-                .and_then(|v| v.as_str())
-                .map(ToString::to_string)
-        })
-        .unwrap_or_else(|| error.to_string());
-    let error_type = error
-        .get("type")
-        .or_else(|| error.get("code"))
-        .and_then(|v| v.as_str())
-        .map(ToString::to_string);
-
-    (message, error_type)
 }
 
 #[cfg(test)]
@@ -915,6 +904,25 @@ mod tests {
             2
         );
         assert_eq!(completed["response"]["usage"]["cache_read_input_tokens"], 2);
+    }
+
+    #[tokio::test]
+    async fn streamed_message_item_id_uses_msg_prefix() {
+        // Regression test for #9054 (streaming path): the message item ID
+        // must begin with `msg_`, not `resp_..._msg`.
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_1\",\"created\":123,\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"content\":\"Hi\"},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+        let events = parse_sse_events(&output);
+        let done = events
+            .iter()
+            .find(|event| {
+                event["type"] == "response.output_item.done" && event["item"]["type"] == "message"
+            })
+            .unwrap();
+        assert_eq!(done["item"]["id"], "msg_chatcmpl_1");
     }
 
     #[tokio::test]
@@ -1038,6 +1046,36 @@ mod tests {
         assert!(output.contains("event: response.function_call_arguments.done"));
         assert!(output.contains("\"type\":\"function_call\""));
         assert!(output.contains("\"call_id\":\"call_1\""));
+    }
+
+    #[tokio::test]
+    async fn keeps_gemini_tool_call_extra_content_on_done_item() {
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_gemini\",\"model\":\"gemini-4-argon\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"exec_command\",\"arguments\":\"{\\\"cmd\\\":\\\"ls\\\"}\"},\"extra_content\":{\"google\":{\"thought_signature\":\"sig-abc\"}}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+
+        let events = parse_sse_events(&output);
+        let done = events
+            .iter()
+            .find(|event| {
+                event["type"] == "response.output_item.done"
+                    && event["item"]["type"] == "function_call"
+            })
+            .unwrap();
+        assert_eq!(
+            done["item"]["extra_content"]["google"]["thought_signature"],
+            "sig-abc"
+        );
+        let completed = events
+            .iter()
+            .find(|event| event["type"] == "response.completed")
+            .unwrap();
+        assert_eq!(
+            completed["response"]["output"][0]["extra_content"]["google"]["thought_signature"],
+            "sig-abc"
+        );
     }
 
     #[tokio::test]
@@ -1431,7 +1469,10 @@ mod tests {
         let upstream = stream::iter(vec![Err::<Bytes, std::io::Error>(std::io::Error::other(
             "boom",
         ))]);
-        let converted = create_responses_sse_stream_from_chat(upstream);
+        let converted = create_responses_sse_stream_from_chat_with_context(
+            upstream,
+            CodexToolContext::default(),
+        );
         let bytes: Vec<Bytes> = converted.map(|item| item.unwrap()).collect().await;
         let output = String::from_utf8(bytes.concat()).unwrap();
 
@@ -1489,6 +1530,46 @@ mod tests {
         assert!(output.contains("event: response.failed"));
         assert!(output.contains("quota exceeded"));
         assert!(output.contains("rate_limit_exceeded"));
+        assert!(!output.contains("event: response.completed"));
+    }
+
+    #[tokio::test]
+    async fn gemini_sse_numeric_error_code_preserves_message() {
+        for prefix in ["", "event: error\n"] {
+            let chunk = format!(
+                "{prefix}data: {{\"error\":{{\"code\":429,\"status\":\"RESOURCE_EXHAUSTED\",\"message\":\"Quota exceeded for metric\"}}}}\n\n"
+            );
+            let output = collect(vec![&chunk, "data: [DONE]\n\n"]).await;
+            let events = parse_sse_events(&output);
+            let failed = events
+                .iter()
+                .find(|event| event["type"] == "response.failed")
+                .unwrap();
+
+            assert_eq!(failed["response"]["error"]["code"], "429");
+            assert_eq!(
+                failed["response"]["error"]["message"],
+                "Quota exceeded for metric"
+            );
+            assert!(!output.contains("event: response.completed"));
+        }
+    }
+
+    #[tokio::test]
+    async fn gemini_sse_overflow_preserves_the_code_codex_uses_for_compaction() {
+        let output = collect(vec![
+            "data: {\"error\":{\"code\":400,\"status\":\"INVALID_ARGUMENT\",\"message\":\"The input token count exceeds the maximum number of tokens allowed 1048576.\"}}\n\n",
+            "data: [DONE]\n\n",
+        ]).await;
+        let events = parse_sse_events(&output);
+        let failed = events
+            .iter()
+            .find(|event| event["type"] == "response.failed")
+            .unwrap();
+        assert_eq!(
+            failed["response"]["error"]["code"],
+            "context_length_exceeded"
+        );
         assert!(!output.contains("event: response.completed"));
     }
 
@@ -1596,11 +1677,14 @@ mod tests {
             Some(data) => chunks.push(Ok(Bytes::from(data.to_owned()))),
             None => {}
         }
-        create_responses_sse_stream_from_chat(futures::stream::iter(chunks))
-            .map(|chunk| String::from_utf8(chunk.unwrap().to_vec()).unwrap())
-            .collect::<Vec<_>>()
-            .await
-            .concat()
+        create_responses_sse_stream_from_chat_with_context(
+            futures::stream::iter(chunks),
+            CodexToolContext::default(),
+        )
+        .map(|chunk| String::from_utf8(chunk.unwrap().to_vec()).unwrap())
+        .collect::<Vec<_>>()
+        .await
+        .concat()
     }
 
     #[tokio::test]
@@ -1647,7 +1731,11 @@ mod tests {
         .chain(futures::stream::pending());
         tokio::time::timeout(
             std::time::Duration::from_secs(1),
-            create_responses_sse_stream_from_chat(upstream).collect::<Vec<_>>(),
+            create_responses_sse_stream_from_chat_with_context(
+                upstream,
+                CodexToolContext::default(),
+            )
+            .collect::<Vec<_>>(),
         )
         .await
         .expect("a terminal response must not await another upstream chunk");

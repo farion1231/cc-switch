@@ -13,10 +13,14 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { ArrowDown } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import type { SessionTranscriptResult } from "@/lib/query/sessions";
+import {
+  clearSessionImageCache,
+  type SessionTranscriptResult,
+} from "@/lib/query/sessions";
 import { toast } from "@/lib/toast";
 
 import { sessionsApi } from "@/lib/api";
+import { useMoneyFormat } from "@/hooks/useMoneyFormat";
 import { cn } from "@/lib/utils";
 import type { SessionMessage, SessionMeta, TurnIndex } from "@/types";
 import { extractErrorMessage } from "@/utils/errorUtils";
@@ -32,6 +36,7 @@ import {
   agentTurnTs,
 } from "./SessionAgentAvatar";
 import { SessionFinalReply } from "./SessionFinalReply";
+import { SessionChapterRow } from "./SessionChapterRow";
 import { SessionOutline } from "./SessionOutline";
 import { SessionQuestion } from "./SessionQuestion";
 import {
@@ -44,7 +49,9 @@ import { isFailureStep } from "./toolSummary";
 import {
   buildTurnIndex,
   buildTurns,
+  chapterRowKey,
   estimateRowHeight,
+  findMatchPositionForMessage,
   findMatchRowIndex,
   findSearchHits,
   findTurnRowIndex,
@@ -53,6 +60,7 @@ import {
   type ReaderRow,
   type SearchMatch,
   type SessionTurn,
+  type TurnChapter,
 } from "./turns";
 
 /** 「展开全部过程」偏好（与会话列表的分组方式一样存在 localStorage） */
@@ -133,6 +141,11 @@ export interface SessionReaderProps {
   transcript: SessionTranscriptResult;
   /** 列表的搜索词：阅读页里照样高亮 */
   listQuery: string;
+  /**
+   * 从正文搜索结果进入：打开时展开查找栏并填入查询词；会话读完后跳到
+   * `messageIndex` 那条消息上的命中（列表摘录所在处），而不是第一个匹配
+   */
+  initialFind?: { query: string; messageIndex?: number };
   /** 一键恢复用的终端名；不是 macOS 时为 null（只能复制命令） */
   launchTerminal: string | null;
   hasPrev: boolean;
@@ -156,6 +169,7 @@ export function SessionReader({
   appName,
   transcript,
   listQuery,
+  initialFind,
   launchTerminal,
   hasPrev,
   hasNext,
@@ -170,9 +184,13 @@ export function SessionReader({
 }: SessionReaderProps) {
   const { t } = useTranslation();
   const rt = useReaderT();
+  const { moneyCompact } = useMoneyFormat();
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const findInputRef = useRef<HTMLInputElement>(null);
   const findButtonRef = useRef<HTMLButtonElement>(null);
+
+  // 离开阅读页时立即释放缓存的会话图片 Blob URL，避免常驻 WebView 内存
+  useEffect(() => () => clearSessionImageCache(), []);
 
   const [filter, setFilter] = useState<ReaderFilter>("all");
   const [expandAll, setExpandAll] = useState(readExpandAll);
@@ -180,8 +198,8 @@ export function SessionReader({
   const [includeThinking, setIncludeThinking] = useState(false);
   const [turnOverrides, setTurnOverrides] = useState(EMPTY_OVERRIDES);
   const [stepOverrides, setStepOverrides] = useState(EMPTY_OVERRIDES);
-  const [findOpen, setFindOpen] = useState(false);
-  const [findQuery, setFindQuery] = useState("");
+  const [findOpen, setFindOpen] = useState(Boolean(initialFind));
+  const [findQuery, setFindQuery] = useState(initialFind?.query ?? "");
   const [findIndex, setFindIndex] = useState(1);
   const [flashKey, setFlashKey] = useState<string | null>(null);
   const [atBottom, setAtBottom] = useState<boolean | null>(null);
@@ -283,6 +301,19 @@ export function SessionReader({
     paddingEnd: 64,
   });
 
+  // 从正文搜索进入：等整段读完、命中算好后，把查找位置定到摘录所在的那条消息（只做一次）
+  const pendingMessageRef = useRef(initialFind?.messageIndex);
+  const transcriptReady =
+    !transcript.isLoading &&
+    !transcript.isStreaming &&
+    messages.length === transcript.messages.length;
+  useEffect(() => {
+    const target = pendingMessageRef.current;
+    if (target === undefined || !transcriptReady || !search) return;
+    pendingMessageRef.current = undefined;
+    setFindIndex(findMatchPositionForMessage(turns, search, target));
+  }, [search, transcriptReady, turns]);
+
   // 查找：跳到当前命中所在行
   useEffect(() => {
     if (activeRowIndex < 0) return;
@@ -328,6 +359,16 @@ export function SessionReader({
           (row) => row.turn === turn.index && AGENT_ROW_KINDS.has(row.kind),
         );
       }
+      scrollToRow(index >= 0 ? index : findTurnRowIndex(rows, turns, turn.key));
+    },
+    [rows, scrollToRow, turns],
+  );
+
+  /** 目录里点章节：跳到章节行；被「只看改动」过滤掉时退回这一轮的第一行 */
+  const jumpToChapter = useCallback(
+    (turn: SessionTurn, chapter: TurnChapter) => {
+      const key = chapterRowKey(turn, chapter);
+      const index = rows.findIndex((row) => row.key === key);
       scrollToRow(index >= 0 ? index : findTurnRowIndex(rows, turns, turn.key));
     },
     [rows, scrollToRow, turns],
@@ -396,9 +437,10 @@ export function SessionReader({
       youLabel: t("sessionManager.you", { defaultValue: "你" }),
       projectDir: session.projectDir ?? undefined,
       t: rt,
+      formatCost: moneyCompact,
       includeThinking,
     }),
-    [appName, includeThinking, rt, session.projectDir, style, t],
+    [appName, includeThinking, moneyCompact, rt, session.projectDir, style, t],
   );
 
   const copyTurn = useCallback(
@@ -606,6 +648,8 @@ export function SessionReader({
             />
           </div>
         ) : null;
+      case "chapter":
+        return <SessionChapterRow chapter={row.chapter} />;
       case "event":
         return <SessionEventRow block={row.block} body={row.body} />;
       case "injected":
@@ -810,6 +854,7 @@ export function SessionReader({
               activeTurn={activeTurn}
               onJumpQuestion={jumpToQuestion}
               onJumpReply={jumpToReply}
+              onJumpChapter={jumpToChapter}
             />
           )}
         </div>

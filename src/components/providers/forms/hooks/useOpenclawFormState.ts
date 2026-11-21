@@ -31,6 +31,7 @@ export interface OpenclawFormState {
   handleOpenclawApiChange: (api: string) => void;
   handleOpenclawModelsChange: (models: OpenClawModel[]) => void;
   handleOpenclawUserAgentChange: (enabled: boolean) => void;
+  syncOpenclawUserAgentFromConfig: (config: string) => void;
   resetOpenclawState: (config?: OpenClawProviderConfig) => void;
 }
 
@@ -184,6 +185,20 @@ export function useOpenclawFormState({
     [updateOpenclawConfig],
   );
 
+  // The JSON editor writes settingsConfig directly; keep the switch in step
+  // with header edits made there. Invalid drafts keep the last known state.
+  const syncOpenclawUserAgentFromConfig = useCallback((config: string) => {
+    try {
+      const parsed = JSON.parse(config);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        return;
+      }
+      setOpenclawUserAgent(hasUserAgentHeader(parsed.headers));
+    } catch {
+      // ignore incomplete JSON while typing
+    }
+  }, []);
+
   const resetOpenclawState = useCallback((config?: OpenClawProviderConfig) => {
     setOpenclawProviderKey("");
     setOpenclawBaseUrl(config?.baseUrl || "");
@@ -208,6 +223,7 @@ export function useOpenclawFormState({
     handleOpenclawApiChange,
     handleOpenclawModelsChange,
     handleOpenclawUserAgentChange,
+    syncOpenclawUserAgentFromConfig,
     resetOpenclawState,
   };
 }

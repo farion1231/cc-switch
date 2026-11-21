@@ -198,14 +198,14 @@ const DailyMemoryPanel: React.FC<DailyMemoryPanelProps> = ({
     }
   }, [isOpen, loadFiles]);
 
-  // Open file for editing
+  // Invalidate in-flight reads when panel visibility changes or the component unmounts.
   useEffect(() => {
-    // Ignore reads completed after closing the panel or unmounting it.
     return () => {
       contentRequestRef.current += 1;
     };
   }, [isOpen]);
 
+  // Open file for editing.
   const openFile = useCallback(
     async (filename: string) => {
       const request = ++contentRequestRef.current;

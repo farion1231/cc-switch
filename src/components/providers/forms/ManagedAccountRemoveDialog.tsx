@@ -1,4 +1,5 @@
 import { useTranslation } from "react-i18next";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -24,6 +25,8 @@ interface ManagedAccountRemoveDialogProps {
   users: ManagedAccountUser[];
   /** 删掉这一个之后还剩别的账号：跟着默认账号的供应商会改用新的默认账号 */
   othersRemain: boolean;
+  /** 跟在说明后面的一句补充（Antigravity：只删副本、不让 agy 登出） */
+  note?: string;
   pending?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
@@ -38,6 +41,7 @@ export function ManagedAccountRemoveDialog({
   serviceName,
   users,
   othersRemain,
+  note,
   pending = false,
   onConfirm,
   onCancel,
@@ -125,6 +129,7 @@ export function ManagedAccountRemoveDialog({
                       "会删除这 {{count}} 个账号保存在 CC Switch 里的登录凭据，无法撤销。",
                     count,
                   })}
+              {note && <> {note}</>}
             </DialogDescription>
           </div>
 
@@ -200,15 +205,20 @@ export function ManagedAccountRemoveDialog({
 /** 账号行上的「N 个供应商在用」；没有供应商在用时不显示 */
 export function ManagedAccountUsage({
   users,
+  className,
 }: {
   users: ManagedAccountUser[];
+  className?: string;
 }) {
   const { t } = useTranslation();
   if (users.length === 0) return null;
   const names = users.map((user) => user.name);
   return (
     <span
-      className="shrink-0 whitespace-nowrap text-caption text-fg-2"
+      className={cn(
+        "shrink-0 whitespace-nowrap text-caption text-fg-2",
+        className,
+      )}
       title={t("managedAuth.usedByTitle", {
         defaultValue: "在用的供应商：{{names}}",
         names: Array.from(new Set(names)).join(

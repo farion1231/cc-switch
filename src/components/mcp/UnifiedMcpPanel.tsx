@@ -1,7 +1,15 @@
 import React, { useMemo, useRef, useState } from "react";
 import { useDelayedFlag } from "@/hooks/useDelayedFlag";
+import { useMcpConnectivity } from "@/hooks/useMcpConnectivity";
 import { useTranslation } from "react-i18next";
-import { Download, MoreHorizontal, Pencil, Plus, Server } from "lucide-react";
+import {
+  Activity,
+  Download,
+  MoreHorizontal,
+  Pencil,
+  Plus,
+  Server,
+} from "lucide-react";
 import { toast } from "@/lib/toast";
 import { Button } from "@/components/ui/button";
 import { HelpTip } from "@/components/ui/help-tip";
@@ -28,12 +36,15 @@ import {
   useToggleMcpApp,
 } from "@/hooks/useMcp";
 import type { McpServer } from "@/types";
-import type { McpAppSyncOutcome } from "@/lib/api/mcp";
-import { MCP_APP_IDS, isMcpAppId, type McpAppId } from "@/config/appConfig";
+import { mcpApi, type McpAppSyncOutcome } from "@/lib/api/mcp";
+import { UnreadableEntriesNotice } from "@/components/common/UnreadableEntriesNotice";
 import { mcpPresets } from "@/config/mcpPresets";
 import { settingsApi } from "@/lib/api";
 import { copyText } from "@/lib/clipboard";
-import { extractErrorMessage } from "@/utils/errorUtils";
+import {
+  extractErrorMessage,
+  translateMcpBackendError,
+} from "@/utils/errorUtils";
 import { cn } from "@/lib/utils";
 import McpFormModal from "./McpFormModal";
 import {
@@ -42,12 +53,14 @@ import {
   MatrixColumnHighlight,
   MatrixSearch,
   NeutralBadge,
+  ompDiscoveryColumnNote,
   resolveBulkScope,
   showUndoToast,
 } from "./AppMatrix";
 import { DisclosureButton, V7ConfirmDialog, V7Dialog } from "./formBits";
-import { summaryOf, transportOf } from "./mcpDraft";
+import { summaryOf } from "./mcpDraft";
 import { useVisibleAppIds } from "./useVisibleAppIds";
+import { APP_IDS_WITH, type AppIdWith, appHas } from "@/config/appSpecs";
 
 function getMcpSearchText(id: string, server: McpServer): string {
   const spec = server.server ?? {};
@@ -77,7 +90,7 @@ function getMcpSearchText(id: string, server: McpServer): string {
 
 /** 导入时各应用读的用户级配置文件（只用于「读取了哪些文件」的说明） */
 const IMPORT_SOURCE_FILES: Record<
-  McpAppId,
+  AppIdWith<"mcp">,
   { file: string; noteKey?: string }
 > = {
   claude: { file: "~/.claude.json", noteKey: "mcpPage.import.claudeNote" },
@@ -87,11 +100,29 @@ const IMPORT_SOURCE_FILES: Record<
   opencode: { file: "~/.config/opencode/opencode.json" },
   hermes: { file: "~/.hermes/config.yaml" },
   pi: { file: "~/.pi/agent/mcp.json" },
+  agy: { file: "~/.gemini/config/mcp_config.json" },
+  dsh: {
+    file: "~/.dsh/profiles/<profile>/cordis.patch.yml",
+    noteKey: "mcpPage.import.dshNote",
+  },
+  kimi: { file: "~/.kimi-code/mcp.json" },
+  copilot: { file: "~/.copilot/mcp-config.json" },
+  workbuddy: { file: "~/.workbuddy/mcp.json" },
   mcode: { file: "~/.minimax/mcp.json" },
+  omp: { file: "~/.omp/agent/mcp.json" },
 };
 
 /** 先写配置文件、成功后才入库的应用：写失败时开关没变，重试要逐行重写 */
-const WRITE_THEN_SAVE_APPS: ReadonlySet<McpAppId> = new Set(["mcode", "pi"]);
+const WRITE_THEN_SAVE_APPS: ReadonlySet<AppIdWith<"mcp">> = new Set([
+  "mcode",
+  "kimi",
+  "dsh",
+  "workbuddy",
+  "pi",
+  "agy",
+  "omp",
+  "copilot",
+]);
 
 /** 写入失败：记下想要的状态，「重试」按这个值再写一次 */
 interface WriteFailure {
@@ -99,7 +130,7 @@ interface WriteFailure {
   error: string;
 }
 
-const failKey = (id: string, app: McpAppId) => `${id}\u0000${app}`;
+const failKey = (id: string, app: AppIdWith<"mcp">) => `${id}\u0000${app}`;
 
 interface UnifiedMcpPanelProps {
   onInteractionBlockedChange?: (blocked: boolean) => void;
@@ -119,7 +150,7 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
   onInteractionBlockedChange,
 }) => {
   const { t } = useTranslation();
-  const appIds = useVisibleAppIds(MCP_APP_IDS);
+  const appIds = useVisibleAppIds(APP_IDS_WITH.mcp);
   const [drawer, setDrawer] = useState<
     { mode: "add" } | { mode: "edit"; id: string } | null
   >(null);
@@ -129,9 +160,9 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
   const [searchQuery, setSearchQuery] = useState("");
   const [fails, setFails] = useState<Record<string, WriteFailure>>({});
   /** 整个应用重新同步失败（「重新同步到各应用」或通知条「重试」），不对应某一行 */
-  const [appFails, setAppFails] = useState<Partial<Record<McpAppId, string>>>(
-    {},
-  );
+  const [appFails, setAppFails] = useState<
+    Partial<Record<AppIdWith<"mcp">, string>>
+  >({});
   const [writePending, setWritePending] = useState(false);
   const writeLockRef = useRef(false);
 
@@ -142,6 +173,7 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
     error: loadError,
     refetch,
   } = useAllMcpServers();
+  const connectivity = useMcpConnectivity(isError ? undefined : serversMap);
   const toggleAppMutation = useToggleMcpApp();
   const bulkToggleAppMutation = useBulkToggleMcpApp();
   const deleteServerMutation = useDeleteMcpServer();
@@ -223,7 +255,7 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
   // ─── 写入与失败记录 ────────────────────────────────────────────────
   const recordResult = (
     id: string,
-    app: McpAppId,
+    app: AppIdWith<"mcp">,
     desired: boolean,
     error?: unknown,
   ) => {
@@ -231,12 +263,22 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
       const next = { ...prev };
       const key = failKey(id, app);
       if (error === undefined) delete next[key];
-      else next[key] = { desired, error: extractErrorMessage(error) };
+      else {
+        const detail = extractErrorMessage(error);
+        next[key] = {
+          desired,
+          error: translateMcpBackendError(detail, t) || detail,
+        };
+      }
       return next;
     });
   };
 
-  const writeOne = async (id: string, app: McpAppId, enabled: boolean) => {
+  const writeOne = async (
+    id: string,
+    app: AppIdWith<"mcp">,
+    enabled: boolean,
+  ) => {
     if (!beginWrite()) return;
     try {
       await toggleAppMutation.mutateAsync({ serverId: id, app, enabled });
@@ -250,14 +292,14 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
 
   /** 依次写一组（服务器, 应用）；返回成功写入的那些 */
   const writeMany = async (
-    pairs: Array<{ id: string; app: McpAppId }>,
+    pairs: Array<{ id: string; app: AppIdWith<"mcp"> }>,
     enabled: boolean,
   ) => {
-    const byApp = new Map<McpAppId, string[]>();
+    const byApp = new Map<AppIdWith<"mcp">, string[]>();
     for (const pair of pairs) {
       byApp.set(pair.app, [...(byApp.get(pair.app) ?? []), pair.id]);
     }
-    const succeeded: Array<{ id: string; app: McpAppId }> = [];
+    const succeeded: Array<{ id: string; app: AppIdWith<"mcp"> }> = [];
     let failed = 0;
     for (const [app, ids] of byApp) {
       try {
@@ -282,7 +324,11 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
     return { succeeded, failed };
   };
 
-  const handleCellClick = (id: string, server: McpServer, app: McpAppId) => {
+  const handleCellClick = (
+    id: string,
+    server: McpServer,
+    app: AppIdWith<"mcp">,
+  ) => {
     const failure = fails[failKey(id, app)];
     if (failure) {
       void writeOne(id, app, failure.desired);
@@ -296,10 +342,10 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
    * MiniMax Code 例外：它写失败时开关没有入库，重新同步补不上，行上的失败要留着按想要的值重试。
    */
   const applyResyncOutcomes = (outcomes: McpAppSyncOutcome[]) => {
-    const okApps = new Set<McpAppId>();
-    const failedApps: Partial<Record<McpAppId, string>> = {};
+    const okApps = new Set<AppIdWith<"mcp">>();
+    const failedApps: Partial<Record<AppIdWith<"mcp">, string>> = {};
     for (const outcome of outcomes) {
-      if (!isMcpAppId(outcome.app)) continue;
+      if (!appHas(outcome.app, "mcp")) continue;
       if (outcome.ok) okApps.add(outcome.app);
       else failedApps[outcome.app] = outcome.error || t("common.error");
     }
@@ -311,7 +357,7 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
     setFails((prev) => {
       const next = { ...prev };
       for (const key of Object.keys(next)) {
-        const app = key.split("\u0000")[1] as McpAppId;
+        const app = key.split("\u0000")[1] as AppIdWith<"mcp">;
         if (okApps.has(app) && !WRITE_THEN_SAVE_APPS.has(app)) delete next[key];
       }
       return next;
@@ -319,10 +365,10 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
     return outcomes.filter((outcome) => !outcome.ok);
   };
 
-  const rowFailsFor = (app: McpAppId) =>
+  const rowFailsFor = (app: AppIdWith<"mcp">) =>
     Object.entries(fails).filter(([key]) => key.endsWith(`\u0000${app}`));
 
-  const retryApp = async (app: McpAppId) => {
+  const retryApp = async (app: AppIdWith<"mcp">) => {
     if (!beginWrite()) return;
     try {
       const entries = rowFailsFor(app);
@@ -373,7 +419,7 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
             count: failed.length,
             apps: failed
               .map((outcome) =>
-                isMcpAppId(outcome.app)
+                appHas(outcome.app, "mcp")
                   ? APP_DISPLAY_NAME[outcome.app]
                   : outcome.app,
               )
@@ -391,7 +437,7 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
     }
   };
 
-  const handleBulk = async (app: McpAppId, enabled: boolean) => {
+  const handleBulk = async (app: AppIdWith<"mcp">, enabled: boolean) => {
     if (!beginWrite()) return;
     try {
       const targets = scope.rows
@@ -547,13 +593,13 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
   // ─── 派生显示 ───────────────────────────────────────────────────────
   /** 有写入失败的应用 → 通知条里显示的错误（整个应用的失败优先） */
   const failedApps = useMemo(() => {
-    const map = new Map<McpAppId, string>();
+    const map = new Map<AppIdWith<"mcp">, string>();
     for (const [key, failure] of Object.entries(fails)) {
-      const app = key.split("\u0000")[1] as McpAppId;
+      const app = key.split("\u0000")[1] as AppIdWith<"mcp">;
       if (!serversMap?.[key.split("\u0000")[0]]) continue;
       if (!map.has(app)) map.set(app, failure.error);
     }
-    for (const app of MCP_APP_IDS) {
+    for (const app of APP_IDS_WITH.mcp) {
       const error = appFails[app];
       if (error !== undefined) map.set(app, error);
     }
@@ -561,9 +607,9 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
   }, [fails, appFails, serversMap]);
 
   const enabledNames = (server: McpServer) =>
-    MCP_APP_IDS.filter((app) => server.apps[app]).map(
-      (app) => APP_DISPLAY_NAME[app],
-    );
+    APP_IDS_WITH.mcp
+      .filter((app) => server.apps[app])
+      .map((app) => APP_DISPLAY_NAME[app]);
 
   const deleteTarget = deleteId ? serversMap?.[deleteId] : undefined;
   const deleteApps = deleteTarget ? enabledNames(deleteTarget) : [];
@@ -582,6 +628,16 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
         }
         actions={
           <>
+            <Button
+              type="button"
+              variant="quiet"
+              size="regular"
+              disabled={!connectivity.canCheck || connectivity.checking}
+              onClick={connectivity.checkAll}
+            >
+              <Activity className="h-4 w-4" strokeWidth={2} />
+              {t("mcpPage.checkConnectivity")}
+            </Button>
             <Button
               type="button"
               variant="quiet"
@@ -698,6 +754,15 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
           ))}
         </NoticeSlot>
 
+        <div className="flex flex-col gap-2 px-6 pb-3 empty:hidden">
+          <UnreadableEntriesNotice
+            queryKey={["mcp", "unreadable"]}
+            load={mcpApi.getUnreadableServers}
+            remove={mcpApi.deleteUnifiedServer}
+            invalidate={[["mcp", "all"]]}
+          />
+        </div>
+
         <div className="flex min-h-0 flex-1 flex-col px-6 pb-5">
           {isLoading ? (
             <div className="py-12 text-center text-body text-fg-2">
@@ -790,6 +855,7 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
                             scopeKind={scope.kind}
                             noun={noun}
                             disabled={controlsDisabled}
+                            {...ompDiscoveryColumnNote(app, t)}
                             onEnableRest={() => void handleBulk(app, true)}
                             onDisableAll={() => void handleBulk(app, false)}
                           />
@@ -819,9 +885,12 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
                       className="m-0 list-none p-0"
                     >
                       {filteredServerEntries.map(([id, server], index) => {
-                        const enabled = MCP_APP_IDS.some(
+                        const enabled = APP_IDS_WITH.mcp.some(
                           (app) => server.apps[app],
                         );
+                        const connection = enabled
+                          ? (connectivity.states[id] ?? "unchecked")
+                          : "disabled";
                         const rowFailedApps = appIds.filter(
                           (app) => fails[failKey(id, app)],
                         );
@@ -833,6 +902,10 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
                           server.docs ||
                             server.homepage ||
                             mcpPresets.find((item) => item.id === id)?.docs,
+                        );
+                        const displayName = server.name?.trim() || id;
+                        const hasCustomName = Boolean(
+                          server.name?.trim() && server.name.trim() !== id,
                         );
                         return (
                           <li
@@ -846,14 +919,38 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
                             <div className="flex min-w-0 flex-1 flex-col pe-3">
                               <div className="flex min-w-0 items-center gap-1.5">
                                 <span
-                                  title={id}
+                                  role="img"
+                                  aria-label={t(
+                                    `mcpPage.connection.${connection}`,
+                                  )}
+                                  title={t(`mcpPage.connection.${connection}`)}
+                                  className={cn(
+                                    "h-2 w-2 shrink-0 rounded-full",
+                                    connection === "connected"
+                                      ? "bg-success"
+                                      : connection === "authRequired"
+                                        ? "bg-warning"
+                                        : connection === "disconnected"
+                                          ? "bg-danger"
+                                          : connection === "checking"
+                                            ? "animate-pulse bg-fg-3"
+                                            : "bg-fg-3",
+                                  )}
+                                />
+                                <span
+                                  title={displayName}
                                   className="min-w-0 truncate text-body font-medium"
                                 >
-                                  {id}
+                                  {displayName}
                                 </span>
-                                <NeutralBadge mono>
-                                  {transportOf(server.server)}
-                                </NeutralBadge>
+                                {hasCustomName && (
+                                  <span
+                                    title={id}
+                                    className="min-w-0 shrink truncate font-mono text-caption text-fg-3"
+                                  >
+                                    {id}
+                                  </span>
+                                )}
                                 {!enabled && (
                                   <NeutralBadge>
                                     {t("mcpPage.notEnabled")}
@@ -965,6 +1062,16 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
                                   align="end"
                                   className="min-w-[200px]"
                                 >
+                                  {enabled && (
+                                    <DropdownMenuItem
+                                      disabled={connection === "checking"}
+                                      onSelect={() =>
+                                        connectivity.checkServer(id)
+                                      }
+                                    >
+                                      {t("mcpPage.testConnection")}
+                                    </DropdownMenuItem>
+                                  )}
                                   <DropdownMenuItem
                                     onSelect={() =>
                                       void copyJson(
@@ -1034,7 +1141,9 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
 
       <V7ConfirmDialog
         open={deleteId !== null}
-        title={t("mcpPage.deleteTitle", { id: deleteId ?? "" })}
+        title={t("mcpPage.deleteTitle", {
+          id: deleteTarget?.name?.trim() || deleteId || "",
+        })}
         body={
           deleteApps.length
             ? t("mcpPage.deleteBodyApps", {

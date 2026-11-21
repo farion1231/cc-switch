@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  RouteSwitchResult,
   ProxyStatus,
   ProxyServerInfo,
   ProxyTakeoverStatus,
@@ -61,7 +62,10 @@ export const proxyApi = {
 
   // 指定路由目标（聚合模式下是默认那家）：直连时只记下来、下次进入路由 / 聚合模式时用它，
   // 已经在路由 / 聚合模式时当场生效
-  async setProxyRoute(appType: string, providerId: string): Promise<void> {
+  async setProxyRoute(
+    appType: string,
+    providerId: string,
+  ): Promise<RouteSwitchResult> {
     return invoke("set_proxy_route", { appType, providerId });
   },
 
@@ -79,11 +83,6 @@ export const proxyApi = {
   // Codex 先退回直连。返回退回直连的应用
   async exitProxyAppsInMode(stack: boolean): Promise<string[]> {
     return invoke("exit_proxy_apps_in_mode", { stack });
-  },
-
-  // 直连供应商：路由模式下退出路由时写回的那家（和路由到的那家互相独立）
-  async getDirectProvider(appType: string): Promise<string | null> {
-    return invoke("get_direct_provider", { appType });
   },
 
   // ========== Stack 模型 API ==========

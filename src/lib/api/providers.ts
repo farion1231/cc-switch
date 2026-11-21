@@ -5,8 +5,10 @@ import type {
   ProviderMeta,
   UniversalProvider,
   UniversalProvidersMap,
+  UnreadableEntry,
 } from "@/types";
 import type { AppId } from "./types";
+import type { RouteSwitchResult } from "@/types/proxy";
 
 export interface ProviderSortUpdate {
   id: string;
@@ -18,16 +20,38 @@ export interface ProviderSwitchEvent {
   providerId: string;
 }
 
+/**
+ * Codex 切换让新会话换了组（openai ↔ custom），统一会话历史又关着：
+ * 新版 Codex 只能继续当前组的会话，切换前那组从此只读。
+ */
+export interface CodexHistorySplitHint {
+  /** 切换前新会话记的 provider id（"openai" 或 "custom"） */
+  previousBucket: string;
+  currentBucket: string;
+  /** 记在切换前那组、现在只能查看的会话数 */
+  lockedThreads: number;
+}
+
 export interface SwitchResult {
   warnings: string[];
+  route?: RouteSwitchResult;
+  codexHistorySplit?: CodexHistorySplitHint;
 }
 
 export interface OpenTerminalOptions {
   cwd?: string;
+  /** 启动时跳过权限确认：Claude Code 与 agy 加 `--dangerously-skip-permissions`，Codex 加 `--dangerously-bypass-approvals-and-sandbox` */
+  skipPermissions?: boolean;
+  /** 追加在生成的参数后面，后端按空白拆分、引号括起的算一个 */
+  extraArgs?: string;
+  /** Linux 上本次启动使用 agy 当前登录。 */
+  agyUseCurrentLogin?: boolean;
 }
 
 export interface ClaudeDesktopStatus {
   supported: boolean;
+  /** 本机装了 Claude Desktop（按它的数据目录或 macOS 应用包推断；接入了也算） */
+  installed: boolean;
   configured: boolean;
   appliedId?: string | null;
   profilePath?: string | null;
@@ -68,6 +92,12 @@ export interface ClaudeDesktopDefaultRoute {
   routeId: string;
   envKey: string;
   supports1m: boolean;
+}
+
+/** WorkBuddy models.json 里的一个模型 id 及归属（CC Switch 供应商 id；null 是用户自己加的）。 */
+export interface WorkBuddyModelOwner {
+  id: string;
+  owner: string | null;
 }
 
 export const providersApi = {
@@ -131,6 +161,16 @@ export const providersApi = {
     return await invoke("delete_provider", { id, app: appId });
   },
 
+  /** 库里读不出来的供应商：不在 getAll 里，只能删除 */
+  async getUnreadable(appId: AppId): Promise<UnreadableEntry[]> {
+    return await invoke("get_unreadable_providers", { app: appId });
+  },
+
+  /** Kimi「添加」：写进 config.toml 但不改默认模型（「切换」才改） */
+  async addToLiveConfig(id: string, appId: AppId): Promise<boolean> {
+    return await invoke("add_provider_to_live_config", { id, app: appId });
+  },
+
   /**
    * Remove provider from live config only (for additive mode apps like OpenCode)
    * Does NOT delete from database - provider remains in the list
@@ -153,10 +193,6 @@ export const providersApi = {
 
   async ensureClaudeDesktopOfficialProvider(): Promise<boolean> {
     return await invoke("ensure_claude_desktop_official_provider");
-  },
-
-  async ensureCodexOfficialProvider(): Promise<boolean> {
-    return await invoke("ensure_codex_official_provider");
   },
 
   async ensureGrokBuildOfficialProvider(): Promise<boolean> {
@@ -201,11 +237,15 @@ export const providersApi = {
     appId: AppId,
     options?: OpenTerminalOptions,
   ): Promise<boolean> {
-    const { cwd } = options ?? {};
+    const { cwd, skipPermissions, extraArgs, agyUseCurrentLogin } =
+      options ?? {};
     return await invoke("open_provider_terminal", {
       providerId,
       app: appId,
       cwd,
+      skipPermissions,
+      extraArgs,
+      agyUseCurrentLogin,
     });
   },
 
@@ -223,6 +263,15 @@ export const providersApi = {
    */
   async getOpenCodeLiveProviderIds(): Promise<string[]> {
     return await invoke("get_opencode_live_provider_ids");
+  },
+
+  /** OpenCode 顶层 model（`<provider>/<model>`），没写时为 null */
+  async getOpenCodeDefaultModel(): Promise<string | null> {
+    return await invoke("get_opencode_default_model");
+  },
+
+  async setOpenCodeDefaultModel(model: string): Promise<void> {
+    await invoke("set_opencode_default_model", { model });
   },
 
   /**
@@ -256,6 +305,14 @@ export const providersApi = {
   async importHermesFromLive(): Promise<number> {
     return await invoke("import_hermes_providers_from_live");
   },
+
+  /**
+   * WorkBuddy models.json 里已有的模型 id 及归属。WorkBuddy 里一个模型 id 只能属于一张卡
+   * （id 既是唯一键又是发给上游的模型名），表单据此跳过或标出被占用的 id。
+   */
+  async getWorkBuddyModelOwners(): Promise<WorkBuddyModelOwner[]> {
+    return await invoke("workbuddy_model_owners");
+  },
 };
 
 // ============================================================================
@@ -268,13 +325,6 @@ export const universalProvidersApi = {
    */
   async getAll(): Promise<UniversalProvidersMap> {
     return await invoke("get_universal_providers");
-  },
-
-  /**
-   * 获取单个统一供应商
-   */
-  async get(id: string): Promise<UniversalProvider | null> {
-    return await invoke("get_universal_provider", { id });
   },
 
   /**

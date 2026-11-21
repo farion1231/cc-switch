@@ -20,7 +20,7 @@ pub(super) async fn update_node_gap(
     tool: &str,
     target: &str,
 ) -> Option<NodeRequirementGap> {
-    let package = npm_package_for(tool)?;
+    let package = tool_spec(tool).npm_package?;
     // MiniMax Code 的官方 installer 在系统 Node 不达标时会自带一份 Node。
     if tool == "mcode" {
         return None;
@@ -42,7 +42,7 @@ pub(super) async fn update_node_gap(
 
 /// 执行升级前的检查：目标是 `latest`（`npm i -g <pkg>@latest` 与各家 self-update 的稳定通道）。
 pub(super) async fn ensure_update_node(tool: &str) -> Result<(), String> {
-    let Some(package) = npm_package_for(tool) else {
+    let Some(package) = tool_spec(tool).npm_package else {
         return Ok(());
     };
     let client = crate::proxy::http_client::get();
@@ -54,7 +54,7 @@ pub(super) async fn ensure_update_node(tool: &str) -> Result<(), String> {
     };
     match update_node_gap(&client, tool, &latest).await {
         Some(gap) => {
-            let name = tool_display_name(tool);
+            let name = tool_spec(tool).display_name;
             Err(format!(
                 "{name} {latest} requires Node {}, but this installation runs on Node {}. Upgrade Node first, then update {name}.",
                 gap.required, gap.current

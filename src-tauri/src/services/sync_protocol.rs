@@ -7,6 +7,7 @@ use std::fs;
 use std::future::Future;
 use std::process::Command;
 use std::sync::OnceLock;
+use std::time::Duration;
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -35,6 +36,49 @@ pub(crate) const REMOTE_MANIFEST: &str = "manifest.json";
 pub(crate) const MAX_DEVICE_NAME_LEN: usize = 64;
 pub(crate) const MAX_MANIFEST_BYTES: usize = 1024 * 1024;
 pub(crate) const MAX_SYNC_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024;
+
+// ─── Transfer timeouts ──────────────────────────────────────
+
+/// Floor of the overall timeout for large transfers (db.sql, skills.zip).
+const TRANSFER_BASE_TIMEOUT_SECS: u64 = 300;
+/// Slowest throughput the overall timeout still accommodates (16 KiB/s).
+const TRANSFER_MIN_BYTES_PER_SEC: u64 = 16 * 1024;
+/// A transfer that makes no progress for this long (waiting for response
+/// headers, or between two body chunks) is treated as stalled.
+pub(crate) const TRANSFER_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Overall timeout for transferring up to `len` bytes.
+///
+/// reqwest's request timeout covers the whole body, so a fixed 300 s cut off
+/// healthy-but-slow downloads of large skills.zip archives mid-stream (#8428).
+/// The budget now grows with the payload size; stalls are caught separately by
+/// [`TRANSFER_IDLE_TIMEOUT`] where the transport can observe progress.
+pub(crate) fn transfer_timeout(len: u64) -> Duration {
+    Duration::from_secs(TRANSFER_BASE_TIMEOUT_SECS.saturating_add(len / TRANSFER_MIN_BYTES_PER_SEC))
+}
+
+/// Describe a WebDAV/S3 transport failure as `(zh, en)`: a short category plus
+/// the reqwest cause chain (URL stripped).
+///
+/// `is_request()` means the request was built but failed while being sent
+/// (connection reset or closed mid-body, TLS / HTTP-2 errors…); only
+/// `is_builder()` is a request build failure. Labelling the former "request
+/// build failed" and dropping the cause left users with nothing to act on (#9559).
+pub(crate) fn transport_failure_reason(err: reqwest::Error) -> (String, String) {
+    let (zh, en) = if err.is_timeout() {
+        ("请求超时", "request timed out")
+    } else if err.is_connect() {
+        ("连接失败", "connection failed")
+    } else if err.is_builder() {
+        ("请求构造失败", "request build failed")
+    } else if err.is_request() {
+        ("发送失败", "failed to send")
+    } else {
+        ("网络请求失败", "network request failed")
+    };
+    let detail = crate::proxy::error::describe_reqwest_error(err);
+    (format!("{zh}: {detail}"), format!("{en}: {detail}"))
+}
 
 // ─── Sync operation lock ────────────────────────────────────
 
@@ -460,6 +504,50 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn transport_failure_reason_reports_send_failure_with_cause() {
+        // #9559: a server dropping the connection mid-PUT is a send failure, not a
+        // request build failure, and the cause must survive into the message.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            if let Ok((socket, _)) = listener.accept().await {
+                drop(socket);
+            }
+        });
+
+        let err = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .unwrap()
+            .put(format!(
+                "http://127.0.0.1:{port}/dav/db.sql?token=secret-token"
+            ))
+            .body(vec![0u8; 64 * 1024])
+            .send()
+            .await
+            .expect_err("connection is dropped before a response");
+        assert!(err.is_request() && !err.is_connect() && !err.is_builder());
+
+        let (zh, en) = transport_failure_reason(err);
+        assert!(zh.starts_with("发送失败: error sending request"), "{zh}");
+        assert!(
+            en.starts_with("failed to send: error sending request: "),
+            "{en}"
+        );
+        assert!(!en.contains("secret-token"), "{en}");
+    }
+
+    #[test]
+    fn transfer_timeout_grows_with_payload_size() {
+        assert_eq!(transfer_timeout(0), Duration::from_secs(300));
+        // #8428: a ~90 MiB skills.zip took ~927 s at ~99 KiB/s; the budget must
+        // cover it with room to spare instead of cutting off at 300 s.
+        let skills_zip = transfer_timeout(94_218_061);
+        assert!(skills_zip > Duration::from_secs(927 * 2), "{skills_zip:?}");
+        assert!(transfer_timeout(MAX_SYNC_ARTIFACT_BYTES) > transfer_timeout(94_218_061));
+    }
 
     #[tokio::test]
     async fn webdav_and_s3_operations_share_one_sync_mutex() {

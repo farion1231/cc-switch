@@ -1,4 +1,5 @@
 import { useSettings } from "@/hooks/useSettings";
+import { useAutoExchangeRates } from "@/hooks/useAutoExchangeRates";
 import type { SettingsFormState } from "@/hooks/useSettings";
 import type { AppTypeFilter } from "@/types/usage";
 import { UsageDashboard } from "./UsageDashboard";
@@ -26,6 +27,13 @@ export function UsagePage({
     }
   };
 
+  // 自动模式的汇率：进用量页时过期就取一次，取到后写回设置
+  useAutoExchangeRates(
+    settings?.usageDisplay,
+    (usageDisplay) => save({ usageDisplay }),
+    settings != null,
+  );
+
   return (
     <UsageDashboard
       refreshIntervalMs={settings?.usageDashboardRefreshIntervalMs}
@@ -39,6 +47,8 @@ export function UsagePage({
       }
       initialAppType={initialAppType}
       onOpenRoutingSettings={onOpenRoutingSettings}
+      usageDisplay={settings?.usageDisplay}
+      onUsageDisplayChange={(usageDisplay) => save({ usageDisplay })}
     />
   );
 }

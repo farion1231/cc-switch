@@ -1,0 +1,8 @@
+{
+  "marketplaces": [
+    {
+      "name": "ccs-test",
+      "root": "C:\\fixture\\cmkt"
+    }
+  ]
+}

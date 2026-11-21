@@ -9,13 +9,21 @@ export interface DeepLinkImportRequest {
   // Common fields
   app?:
     | "claude"
+    | "claude-desktop"
     | "codex"
     | "gemini"
+    | "agy"
+    | "copilot"
     | "grokbuild"
     | "opencode"
     | "openclaw"
     | "hermes"
-    | "pi";
+    | "pi"
+    | "mcode"
+    | "kimi"
+    | "dsh"
+    | "omp"
+    | "workbuddy";
   name?: string;
   enabled?: boolean;
 
@@ -65,15 +73,6 @@ export interface DeepLinkImportRequest {
   usageAutoInterval?: number;
 }
 
-export interface McpImportResult {
-  importedCount: number;
-  importedIds: string[];
-  failed: Array<{
-    id: string;
-    error: string;
-  }>;
-}
-
 export type ImportResult =
   | { type: "provider"; id: string }
   | { type: "prompt"; id: string }
@@ -108,15 +107,6 @@ export const deeplinkApi = {
   /** Clear the pending deep link after it has been shown; a stale id is ignored */
   ackPendingDeeplink: async (id: number): Promise<void> => {
     return invoke("ack_pending_deeplink", { id });
-  },
-
-  /**
-   * Parse a deep link URL
-   * @param url The ccswitch:// URL to parse
-   * @returns Parsed deep link request
-   */
-  parseDeeplink: async (url: string): Promise<DeepLinkImportRequest> => {
-    return invoke("parse_deeplink", { url });
   },
 
   /**

@@ -11,6 +11,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { buildInputDiff } from "@/components/sessions/reader/SessionDiff";
 import { SessionReader } from "@/components/sessions/reader/SessionReader";
 import { sessionsApi } from "@/lib/api/sessions";
 import {
@@ -19,6 +20,7 @@ import {
 } from "@/lib/query/sessions";
 import type { SessionMessage, SessionMeta } from "@/types";
 import { call, fixtures, msg, result, text } from "./sessions/reader/helpers";
+import { createTestQueryClient } from "../utils/testQueryClient";
 
 // jsdom 没有布局，虚拟列表一条都不渲染；这里让它把全部行都画出来
 vi.mock("@tanstack/react-virtual", () => ({
@@ -65,9 +67,7 @@ const renderReader = (
   providerId: string,
   messages: SessionMessage[],
 ): ReturnType<typeof render> => {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
+  const client = createTestQueryClient();
   const ui: ReactElement = (
     <QueryClientProvider client={client}>
       <SessionReader
@@ -452,6 +452,98 @@ describe("SessionReader", () => {
     expect(screen.getByText(/^1 \/ \d+$/)).toBeInTheDocument();
   });
 
+  it("Unicode 查找数量、高亮与上下处导航保持一致", async () => {
+    renderReader("claude", [
+      msg("user", [text("İstanbul")], { turnId: "t1" }),
+      msg("assistant", [text("İZMİR")], { turnId: "t1" }),
+    ]);
+    fireEvent.click(screen.getByRole("button", { name: "在会话中查找" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "查找内容" }), {
+      target: { value: "i\u0307" },
+    });
+
+    expect(await screen.findByText("1 / 3")).toBeInTheDocument();
+    expect(
+      Array.from(
+        conversation().querySelectorAll("mark"),
+        (mark) => mark.textContent,
+      ),
+    ).toEqual(["İ", "İ", "İ"]);
+    fireEvent.click(screen.getByRole("button", { name: "下一个匹配" }));
+    expect(await screen.findByText("2 / 3")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "上一个匹配" }));
+    expect(await screen.findByText("1 / 3")).toBeInTheDocument();
+  });
+
+  it.each([
+    ["İ".repeat(100) + "/NEEDLE/" + "x".repeat(200), "needle", "NEEDLE"],
+    ["x".repeat(80) + "/İ/" + "x".repeat(80), "i\u0307", "İ"],
+    ["A" + "\u0301".repeat(100) + "Σ", "ς", "Σ"],
+    [
+      "😀" + "a".repeat(59) + "NEEDLE" + "b".repeat(59) + "😀",
+      "needle",
+      "NEEDLE",
+    ],
+  ])(
+    "原文片段把 Unicode 小写偏移映射回原文：%s",
+    async (path, query, expected) => {
+      renderReader("claude", [
+        msg("user", [text("查看链接")], { turnId: "t1" }),
+        msg("assistant", [text(`[docs](https://example.test/${path})`)], {
+          turnId: "t1",
+        }),
+      ]);
+      fireEvent.click(screen.getByRole("button", { name: "在会话中查找" }));
+      fireEvent.change(screen.getByRole("textbox", { name: "查找内容" }), {
+        target: { value: query },
+      });
+
+      expect(await screen.findByText("1 / 1")).toBeInTheDocument();
+      const rawMatch =
+        within(conversation()).getByText("原文中的匹配").parentElement!;
+      expect(
+        Array.from(
+          rawMatch.querySelectorAll("mark"),
+          (mark) => mark.textContent,
+        ),
+      ).toEqual([expected]);
+      if (path.includes("😀")) {
+        expect(rawMatch.textContent?.match(/😀/gu)).toHaveLength(2);
+      }
+      expect(
+        within(conversation()).getByRole("link", { name: "docs" }),
+      ).toBeInTheDocument();
+    },
+  );
+
+  it("保留相邻原文片段重叠区域里的全部高亮", async () => {
+    const path = "x" + "a".repeat(49) + "x" + "a".repeat(49) + "x";
+    renderReader("claude", [
+      msg("user", [text("查看链接")], { turnId: "t1" }),
+      msg("assistant", [text(`[docs](https://host.test/${path})`)], {
+        turnId: "t1",
+      }),
+    ]);
+    fireEvent.click(screen.getByRole("button", { name: "在会话中查找" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "查找内容" }), {
+      target: { value: "x" },
+    });
+
+    expect(await screen.findByText("1 / 3")).toBeInTheDocument();
+    const rawMatch =
+      within(conversation()).getByText("原文中的匹配").parentElement!;
+    const snippets = rawMatch.querySelectorAll("p");
+    expect(snippets).toHaveLength(2);
+    for (const snippet of snippets) {
+      expect(
+        Array.from(
+          snippet.querySelectorAll("mark"),
+          (mark) => mark.textContent,
+        ),
+      ).toEqual(["x", "x"]);
+    }
+  });
+
   it("右侧对话目录区分人和 Agent，可开关", () => {
     renderReader("claude", fixtures.claude);
     const outline = screen.getByRole("navigation", { name: "对话目录" });
@@ -474,6 +566,47 @@ describe("SessionReader", () => {
     expect(window.localStorage.getItem("cc-switch.sessionReader.outline")).toBe(
       "false",
     );
+  });
+
+  it("章节：正文里成行、目录里可点、导出为小标题", async () => {
+    const chapter = (id: string, title: string, detail?: string) =>
+      call(id, "mcp", {
+        rawName: "mcp__ccd_session__mark_chapter",
+        server: "ccd_session",
+        title,
+        detail,
+      });
+    renderReader("claude", [
+      msg("user", [text("重构支付模块")], { turnId: "t1" }),
+      msg(
+        "assistant",
+        [chapter("ch1", "梳理现状", "先读代码"), call("c1"), call("c2")],
+        { turnId: "t1" },
+      ),
+      msg("tool", [result("ch1"), result("c1"), result("c2")], {
+        turnId: "t1",
+      }),
+      msg("assistant", [text("改完了")], { turnId: "t1" }),
+    ]);
+
+    // 正文：章节单独成行，不计入执行步骤，也不显示成 MCP 调用
+    expect(within(conversation()).getByText("梳理现状")).toBeInTheDocument();
+    expect(within(conversation()).getByText("先读代码")).toBeInTheDocument();
+    expect(screen.getByText(/执行过程 · 2 步/)).toBeInTheDocument();
+    expect(screen.queryByText(/mark_chapter/)).not.toBeInTheDocument();
+
+    // 目录：章节标题可点（不报错即可，滚动由虚拟列表负责）
+    const outline = screen.getByRole("navigation", { name: "对话目录" });
+    fireEvent.click(within(outline).getByRole("button", { name: /梳理现状/ }));
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "claude 会话 的更多操作" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: "复制整段为 Markdown" }),
+    );
+    const [markdown] = onCopy.mock.calls[0] as [string, string];
+    expect(markdown).toContain("### 梳理现状\n\n> 先读代码");
   });
 
   it("导出为 Markdown 文件：用会话标题做文件名，内容与复制为 Markdown 一致", async () => {
@@ -619,6 +752,185 @@ describe("SessionReader", () => {
     ).toBeInTheDocument();
     expect(
       within(conversation()).getByText(/cargo build 一直报 tokio_util 找不到/),
+    ).toBeInTheDocument();
+  });
+
+  it("Antigravity 工具详情：还原大驼峰改动、隐藏空改动标题、展示多行 CommandLine 与无命令 shell 参数", () => {
+    const editInput = JSON.stringify({
+      TargetFile: `${PROJECT}/src/main.rs`,
+      ReplacementChunks: [
+        {
+          TargetContent: "old_line",
+          ReplacementContent: "new_line_1\nnew_line_2",
+        },
+      ],
+    });
+    const truncatedWriteInput = JSON.stringify({
+      Path: `${PROJECT}/src/big.rs`,
+      Content: "fn main() {}\n".repeat(40),
+    });
+    const multiCmdInput = JSON.stringify({
+      CommandLine: "export FOO=1\ncargo test --lib agy",
+      WaitMsBeforeAsync: 5000,
+    });
+    const taskInput = JSON.stringify({
+      Action: "status",
+      TaskId: "conv-1/task-8",
+    });
+
+    const fullInput = (obj: Record<string, unknown>) => {
+      const s = JSON.stringify(obj);
+      return { inputPreview: s, inputTotalLen: s.length };
+    };
+
+    expect(
+      buildInputDiff(
+        call("c-edit", "edit", {
+          rawName: "edit_file",
+          ...fullInput({
+            Path: "/a.rs",
+            Target: "before",
+            Replacement: "after",
+          }),
+        }),
+      ),
+    ).toBe("@@\n-before\n+after");
+    expect(
+      buildInputDiff(
+        call("c-incomplete", "edit", {
+          rawName: "multi_replace_file_content",
+          ...fullInput({
+            TargetFile: "/a.rs",
+            ReplacementChunks: [{ TargetContent: "only_old" }],
+          }),
+        }),
+      ),
+    ).toBeNull();
+    expect(
+      buildInputDiff(
+        call("c-write", "write", {
+          rawName: "write_to_file",
+          ...fullInput({
+            TargetFile: "/a.rs",
+            CodeContent: "line1\nline2\n",
+          }),
+        }),
+      ),
+    ).toBe("@@\n+line1\n+line2");
+    expect(
+      buildInputDiff(
+        call("c-empty", "write", {
+          rawName: "write_file",
+          ...fullInput({ Path: "/.gitkeep", Content: "" }),
+        }),
+      ),
+    ).toBeNull();
+
+    renderReader("agy", [
+      msg("user", [text("检查工具展示")], { turnId: "t1" }),
+      msg(
+        "assistant",
+        [
+          call("agy-edit", "edit", {
+            rawName: "multi_replace_file_content",
+            title: `${PROJECT}/src/main.rs`,
+            inputPreview: editInput,
+            inputTotalLen: editInput.length,
+            diff: {
+              files: [
+                {
+                  path: `${PROJECT}/src/main.rs`,
+                  op: "update",
+                  added: 2,
+                  removed: 1,
+                },
+              ],
+              added: 2,
+              removed: 1,
+            },
+          }),
+          call("agy-write-trunc", "write", {
+            rawName: "write_file",
+            title: `${PROJECT}/src/big.rs`,
+            inputPreview: truncatedWriteInput.slice(0, 400),
+            inputTotalLen: truncatedWriteInput.length,
+            diff: {
+              files: [
+                {
+                  path: `${PROJECT}/src/big.rs`,
+                  op: "add",
+                  added: 40,
+                  removed: 0,
+                },
+              ],
+              added: 40,
+              removed: 0,
+            },
+          }),
+          call("agy-cmd", "shell", {
+            rawName: "run_command",
+            title: "export FOO=1…",
+            inputPreview: multiCmdInput,
+            inputTotalLen: multiCmdInput.length,
+          }),
+          call("agy-task", "shell", {
+            rawName: "manage_task",
+            title: "conv-1/task-8",
+            detail: "status",
+            inputPreview: taskInput,
+            inputTotalLen: taskInput.length,
+          }),
+        ],
+        { turnId: "t1" },
+      ),
+      msg(
+        "tool",
+        [
+          result("agy-edit"),
+          result("agy-write-trunc"),
+          result("agy-cmd"),
+          result("agy-task"),
+        ],
+        { turnId: "t1" },
+      ),
+    ]);
+
+    // 1. ReplacementChunks 还原出改动内容
+    fireEvent.click(stepButton(/修改 src\/main\.rs/));
+    const editRegion = screen.getByRole("region", {
+      name: /修改 src\/main\.rs/,
+    });
+    expect(within(editRegion).getByText("改动")).toBeInTheDocument();
+    expect(within(editRegion).getByText("old_line")).toBeInTheDocument();
+    expect(within(editRegion).getByText("new_line_2")).toBeInTheDocument();
+
+    // 2. 单文件参数被截断且无 diff.full 时，不渲染空的「改动」标题
+    fireEvent.click(stepButton(/写入 src\/big\.rs/));
+    const writeRegion = screen.getByRole("region", {
+      name: /写入 src\/big\.rs/,
+    });
+    expect(within(writeRegion).queryByText("改动")).not.toBeInTheDocument();
+
+    // 3. <= 400 字的多行 CommandLine 展示完整代码块，且不重复展示 JSON 参数区
+    fireEvent.click(stepButton(/运行 export FOO=1…/));
+    const cmdRegion = screen.getByRole("region", {
+      name: /运行 export FOO=1…/,
+    });
+    expect(
+      within(cmdRegion).getByText(/cargo test --lib agy/),
+    ).toBeInTheDocument();
+    expect(within(cmdRegion).queryByText("参数")).not.toBeInTheDocument();
+
+    // 4. 无命令字段的 shell 工具（manage_task）保留可展开的「参数」区
+    fireEvent.click(stepButton(/运行 conv-1\/task-8/));
+    const taskRegion = screen.getByRole("region", {
+      name: /运行 conv-1\/task-8/,
+    });
+    const paramsBtn = within(taskRegion).getByRole("button", { name: "参数" });
+    expect(paramsBtn).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(paramsBtn);
+    expect(
+      within(taskRegion).getByText(/"TaskId": "conv-1\/task-8"/),
     ).toBeInTheDocument();
   });
 });

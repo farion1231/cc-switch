@@ -17,6 +17,22 @@ describe("skillErrorReason", () => {
     expect(skillErrorReason(error, t)).toBe("skills.error.http403");
   });
 
+  it("explains token problems instead of a bare HTTP status (#9666)", () => {
+    for (const suggestion of [
+      "http401Token",
+      "http403Token",
+      "http404Token",
+      "httpAuthRequired",
+    ]) {
+      const error = JSON.stringify({
+        code: "DOWNLOAD_FAILED",
+        context: { status: "401" },
+        suggestion,
+      });
+      expect(skillErrorReason(error, t)).toBe(`skills.error.${suggestion}`);
+    }
+  });
+
   it("uses the error code text with its context otherwise", () => {
     const error = JSON.stringify({
       code: "DOWNLOAD_TIMEOUT",
@@ -25,6 +41,17 @@ describe("skillErrorReason", () => {
     });
     expect(skillErrorReason(error, t)).toBe(
       'skills.error.downloadTimeout:{"owner":"a","name":"b","timeout":"60"}',
+    );
+  });
+
+  it("tells an oversized download apart from the extraction limit", () => {
+    // #8421：下载体超限曾复用 ARCHIVE_TOO_LARGE，被说成「解压后超过上限」
+    const error = JSON.stringify({
+      code: "ARCHIVE_DOWNLOAD_TOO_LARGE",
+      context: { limit_mb: "512" },
+    });
+    expect(skillErrorReason(error, t)).toBe(
+      'skills.error.archiveDownloadTooLarge:{"limit_mb":"512"}',
     );
   });
 
