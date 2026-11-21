@@ -518,7 +518,26 @@ pub(super) fn successful_version_probe(stdout: &str, stderr: &str) -> ShellProbe
     let raw = version_output(stdout, stderr);
     match extract_version(raw) {
         Some(version) => ShellProbe::Found(version),
+        None if raw.is_empty() => ShellProbe::VersionUnknown(VERSION_UNKNOWN.to_string()),
         None => ShellProbe::VersionUnknown(format!("{VERSION_UNKNOWN}: {}", last_lines(raw, 4))),
+    }
+}
+
+/// 非零退出时优先展示 `stderr` 诊断；双流均为空时回退退出码说明，避免前端收到空错误串。
+pub(super) fn failed_version_probe_detail(
+    stdout: &str,
+    stderr: &str,
+    status: std::process::ExitStatus,
+) -> String {
+    let detail = if stderr.trim().is_empty() {
+        stdout.trim()
+    } else {
+        stderr.trim()
+    };
+    if detail.is_empty() {
+        silent_version_probe_detail(status)
+    } else {
+        last_lines(detail, 4)
     }
 }
 
@@ -594,12 +613,7 @@ fn try_get_version(tool: &str) -> Result<ShellProbe, String> {
     } else if out.status.code() == Some(127) {
         ShellProbe::NotFound(NOT_INSTALLED.to_string())
     } else {
-        let detail = if stderr.trim().is_empty() {
-            &stdout
-        } else {
-            &stderr
-        };
-        ShellProbe::FoundButFailed(last_lines(detail.trim(), 4))
+        ShellProbe::FoundButFailed(failed_version_probe_detail(&stdout, &stderr, out.status))
     })
 }
 #[cfg(target_os = "windows")]
@@ -673,10 +687,12 @@ fn try_get_version_wsl(
                 Ok(if not_found {
                     ShellProbe::NotFound(format!("[WSL:{distro}] {NOT_INSTALLED}"))
                 } else {
-                    ShellProbe::FoundButFailed(format!(
-                        "[WSL:{distro}] {}",
+                    let detail = if err.trim().is_empty() {
+                        silent_version_probe_detail(out.status)
+                    } else {
                         last_lines(err.trim(), 4)
-                    ))
+                    };
+                    ShellProbe::FoundButFailed(format!("[WSL:{distro}] {detail}"))
                 })
             }
         }
@@ -1070,6 +1086,10 @@ mod tests {
         let silent_failure = make_dir("silent-failure", Some("exit 3"));
         let not_executable = make_dir("not-executable", None);
         let loud_failure = make_dir("loud-failure", Some("echo boom >&2\nexit 1"));
+        let mixed_failure = make_dir(
+            "mixed-failure",
+            Some("echo banner-stdout\necho real-stderr >&2\nexit 1"),
+        );
         let working = make_dir("working", Some("echo 'kimi 1.2.3'"));
         let empty = root.path().join("empty");
         std::fs::create_dir_all(&empty).expect("dir should be created");
@@ -1093,8 +1113,9 @@ mod tests {
         assert!(
             broken_detail(std::slice::from_ref(&not_executable)).starts_with("failed to launch")
         );
-        // 具体报错优先于笼统诊断
+        // 具体报错优先于笼统诊断；非零退出同时输出 stdout 与 stderr 时，保留 stderr 诊断
         assert_eq!(broken_detail(&[silent.clone(), loud_failure]), "boom");
+        assert_eq!(broken_detail(&[mixed_failure]), "real-stderr");
         // 别处有能跑的安装仍以它为准
         assert!(matches!(
             scan_cli_version_in("kimi", &[silent, working]),
@@ -1104,6 +1125,64 @@ mod tests {
             scan_cli_version_in("kimi", &[empty, same_name_dir]),
             Ok(ShellProbe::NotFound(_))
         ));
+    }
+
+    #[test]
+    fn windows_path_default_launch_error_preserves_shim_and_broken_exe_semantics() {
+        let err = std::io::Error::other("not a valid Win32 application");
+
+        // Extensionless POSIX sh shim falls back to directory scan (NotFound)
+        assert!(matches!(
+            classify_windows_path_default_launch_error(Path::new("C:/npm/claude"), &err),
+            Ok(ShellProbe::NotFound(_))
+        ));
+
+        // Batch script spawn failure means cmd.exe itself failed to launch (Err)
+        assert!(
+            classify_windows_path_default_launch_error(Path::new("C:/npm/claude.cmd"), &err)
+                .is_err()
+        );
+        assert!(
+            classify_windows_path_default_launch_error(Path::new("C:/npm/claude.BAT"), &err)
+                .is_err()
+        );
+
+        // Corrupt/unlaunchable .exe on PATH is reported as installed-but-broken, not probe error
+        assert!(matches!(
+            classify_windows_path_default_launch_error(Path::new("C:/tools/kimi.exe"), &err),
+            Ok(ShellProbe::FoundButFailed(detail)) if detail.starts_with("failed to launch")
+        ));
+    }
+
+    #[test]
+    fn successful_version_probe_omits_dangling_colon_on_empty_output() {
+        assert!(matches!(
+            successful_version_probe("", ""),
+            ShellProbe::VersionUnknown(msg) if msg == VERSION_UNKNOWN
+        ));
+        assert!(matches!(
+            successful_version_probe("dev-build", ""),
+            ShellProbe::VersionUnknown(msg) if msg == format!("{VERSION_UNKNOWN}: dev-build")
+        ));
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn failed_version_probe_detail_prefers_stderr_and_handles_silent_exit() {
+        let status = std::process::Command::new("/bin/sh")
+            .args(["-c", "exit 23"])
+            .status()
+            .expect("sh exit status");
+        assert_eq!(
+            failed_version_probe_detail("stdout banner", "stderr boom", status),
+            "stderr boom"
+        );
+        assert_eq!(
+            failed_version_probe_detail("stdout fallback", "   ", status),
+            "stdout fallback"
+        );
+        assert!(failed_version_probe_detail("", "", status)
+            .contains("exited with code 23 and printed nothing"));
     }
 
     #[cfg(unix)]
