@@ -783,35 +783,24 @@ fn token_snapshot_source(payload: &serde_json::Value) -> Option<String> {
 ///   不丢数据、不双算。
 /// - `pricing`：模型定价 pass 级缓存。定价表在 pass 进行中被修改时本 pass
 ///   仍用旧价，下一个同步 pass 生效。
-struct CodexSyncPass {
-    cursors: HashMap<String, (i64, i64)>,
+struct CodexSyncPass<'a> {
+    cursors: std::borrow::Cow<'a, crate::services::session_usage::SyncCursors>,
     /// rollout 逻辑文件名（去掉 `.zst`）→ 记过游标的路径，供游标继承按名查找
     rollout_cursor_paths: HashMap<String, Vec<String>>,
-    byte_offsets: HashMap<String, Option<i64>>,
     pricing: HashMap<String, Option<ModelPricing>>,
 }
 
-impl CodexSyncPass {
+impl<'a> CodexSyncPass<'a> {
+    #[cfg(test)]
     fn load(db: &Database) -> Result<Self, AppError> {
-        let conn = lock_conn!(db.conn);
-        let mut stmt = conn
-            .prepare("SELECT file_path, last_modified, last_line_offset FROM session_log_sync")
-            .map_err(|e| AppError::Database(format!("预载同步游标失败: {e}")))?;
-        let cursors = stmt
-            .query_map([], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    (row.get::<_, i64>(1)?, row.get::<_, i64>(2)?),
-                ))
-            })
-            .and_then(|rows| rows.collect::<Result<HashMap<_, _>, _>>())
-            .map_err(|e| AppError::Database(format!("预载同步游标失败: {e}")))?;
-        let mut stmt = conn.prepare("SELECT file_path, last_byte_offset FROM session_log_sync")?;
-        let byte_offsets = stmt
-            .query_map([], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, Option<i64>>(1)?))
-            })?
-            .collect::<Result<HashMap<_, _>, _>>()?;
+        Ok(Self::from_cursors(std::borrow::Cow::Owned(
+            crate::services::session_usage::load_sync_cursors(db)?,
+        )))
+    }
+
+    fn from_cursors(
+        cursors: std::borrow::Cow<'a, crate::services::session_usage::SyncCursors>,
+    ) -> Self {
         let mut rollout_cursor_paths: HashMap<String, Vec<String>> = HashMap::new();
         for path in cursors.keys() {
             let name = codex_rollout_file::logical_file_name(path);
@@ -822,12 +811,11 @@ impl CodexSyncPass {
                     .push(path.clone());
             }
         }
-        Ok(Self {
+        Self {
             cursors,
             rollout_cursor_paths,
-            byte_offsets,
             pricing: HashMap::new(),
-        })
+        }
     }
 }
 
@@ -843,7 +831,11 @@ fn get_codex_sync_state(
     pass: &CodexSyncPass,
 ) -> Result<(i64, i64), AppError> {
     let file_path_str = file_path.to_string_lossy().to_string();
-    let state = pass.cursors.get(&file_path_str).copied().unwrap_or((0, 0));
+    let state = pass
+        .cursors
+        .get(&file_path_str)
+        .map(|c| (c.last_modified, c.last_line_offset))
+        .unwrap_or((0, 0));
     let logical_name = codex_rollout_file::logical_file_name(&file_path_str);
     let Some(paths) = pass.rollout_cursor_paths.get(logical_name) else {
         return Ok(state);
@@ -854,7 +846,7 @@ fn get_codex_sync_state(
         .iter()
         .filter(|path| path.as_str() != file_path_str)
         .filter_map(|path| pass.cursors.get(path))
-        .map(|&(modified, offset)| (offset, modified))
+        .map(|cursor| (cursor.last_line_offset, cursor.last_modified))
         .max();
 
     match inherited {
@@ -1059,10 +1051,17 @@ struct CodexFileSyncResult {
 
 /// 同步 Codex 使用数据（从 JSONL 会话日志）
 pub fn sync_codex_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
+    sync_codex_usage_with_cursors(db, &crate::services::session_usage::load_sync_cursors(db)?)
+}
+
+pub(crate) fn sync_codex_usage_with_cursors(
+    db: &Database,
+    cursors: &crate::services::session_usage::SyncCursors,
+) -> Result<SessionSyncResult, AppError> {
     let codex_dir = get_codex_config_dir();
     let files = collect_codex_session_files(&codex_dir);
     let rollout_index = build_rollout_index(&files);
-    let mut pass = CodexSyncPass::load(db)?;
+    let mut pass = CodexSyncPass::from_cursors(std::borrow::Cow::Borrowed(cursors));
 
     let mut result = SessionSyncResult {
         imported: 0,
@@ -2329,7 +2328,10 @@ fn sync_single_codex_file(
 
     // Windows may keep mtime unchanged while Codex holds its write handle open.
     // Legacy cursors have no byte offset: rescan once to catch up and persist it.
-    let last_byte_offset = pass.byte_offsets.get(&file_path_str).copied().flatten();
+    let last_byte_offset = pass
+        .cursors
+        .get(&file_path_str)
+        .and_then(|c| c.last_byte_offset);
     if file_modified == last_modified && last_byte_offset == i64::try_from(file_size).ok() {
         return Ok(CodexFileSyncResult::default());
     }
