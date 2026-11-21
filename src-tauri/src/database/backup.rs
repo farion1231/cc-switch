@@ -10,11 +10,22 @@ use rusqlite::backup::{Backup, StepResult};
 use rusqlite::types::ValueRef;
 use rusqlite::Connection;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
+use std::time::{Duration, Instant};
 use tempfile::{Builder, NamedTempFile};
 
 const CC_SWITCH_SQL_EXPORT_HEADER: &str = "-- CC Switch SQLite 导出";
+
+/// SQL 导入允许的最大体积（与云同步产物上限保持一致，防止超大文件触发 OOM）。
+const MAX_SQL_IMPORT_BYTES: u64 = crate::services::sync_protocol::MAX_SYNC_ARTIFACT_BYTES;
+
+/// 外部 SQL 批量执行的超时上限，防止恶意 `WITH RECURSIVE` 等语句永久挂死并占住锁。
+const SQL_IMPORT_EXECUTION_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// SQLite progress_handler 回调间隔（每 N 条虚拟机指令检查一次截止时间）。
+const SQL_IMPORT_PROGRESS_OPCODES: i32 = 10_000;
 
 /// Bound combined INSERT batches while still amortizing statement parsing.
 /// A row larger than this cap is emitted alone because it cannot be split.
@@ -56,14 +67,24 @@ const IMPORT_ALLOWED_PRAGMAS: &[&str] = &["foreign_keys", "user_version"];
 /// - `ATTACH DATABASE 'x'`、`VACUUM INTO 'x'`、裸 `VACUUM` **三者都**报
 ///   `AuthAction::Attach`，所以拒 `Attach` 一条即可覆盖
 /// - 文件后端的虚拟表模块（`csvfile`、`zipfile` 等）能读写任意路径 → 拒 vtable
+/// - CC Switch 生产库 schema 不包含任何 trigger / view；放行 `CREATE TRIGGER` / `CREATE VIEW`
+///   会让恶意备份或云同步包在暂存库植入持久化触发器并被整库复制到主库，在用户后续写入供应商时静默篡改数据 → 拒 trigger / view
 /// - `Unknown` 是 rusqlite 对未识别动作码的兜底 → 未知即拒，将来 SQLite 新增的
 ///   跨文件语句会默认落进这里，不依赖有人记得回来补名单
 fn import_authorizer(context: rusqlite::hooks::AuthContext<'_>) -> rusqlite::hooks::Authorization {
     use rusqlite::hooks::{AuthAction, Authorization};
 
-    let escapes_temp_db = match context.action {
+    let disallowed = match context.action {
         AuthAction::Attach { .. } | AuthAction::Detach { .. } => true,
         AuthAction::CreateVtable { .. } | AuthAction::DropVtable { .. } => true,
+        AuthAction::CreateTrigger { .. }
+        | AuthAction::CreateTempTrigger { .. }
+        | AuthAction::DropTrigger { .. }
+        | AuthAction::DropTempTrigger { .. }
+        | AuthAction::CreateView { .. }
+        | AuthAction::CreateTempView { .. }
+        | AuthAction::DropView { .. }
+        | AuthAction::DropTempView { .. } => true,
         AuthAction::Unknown { .. } => true,
         AuthAction::Pragma { pragma_name, .. } => !IMPORT_ALLOWED_PRAGMAS
             .iter()
@@ -71,13 +92,44 @@ fn import_authorizer(context: rusqlite::hooks::AuthContext<'_>) -> rusqlite::hoo
         _ => false,
     };
 
-    if escapes_temp_db {
+    if disallowed {
         // SQLite 只会回一句 "not authorized"，不记日志就无从知道是哪条语句被拦。
-        log::warn!("SQL 导入拒绝了越界语句: {:?}", context.action);
+        log::warn!("SQL 导入拒绝了不允许的语句: {:?}", context.action);
         Authorization::Deny
     } else {
         Authorization::Allow
     }
+}
+
+fn validate_sql_import_size(size_bytes: u64, max_bytes: u64) -> Result<(), AppError> {
+    if size_bytes > max_bytes {
+        let max_mb = max_bytes / 1024 / 1024;
+        return Err(AppError::localized(
+            "backup.sql.too_large",
+            format!("SQL 文件过大，超过 {max_mb} MB 上限"),
+            format!("SQL import exceeds the {max_mb} MB size limit"),
+        ));
+    }
+    Ok(())
+}
+
+fn read_sql_file_bounded(source_path: &Path, max_bytes: u64) -> Result<String, AppError> {
+    let metadata = fs::metadata(source_path).map_err(|e| AppError::io(source_path, e))?;
+    validate_sql_import_size(metadata.len(), max_bytes)?;
+
+    let file = fs::File::open(source_path).map_err(|e| AppError::io(source_path, e))?;
+    let mut buf = Vec::new();
+    file.take(max_bytes.saturating_add(1))
+        .read_to_end(&mut buf)
+        .map_err(|e| AppError::io(source_path, e))?;
+    validate_sql_import_size(buf.len() as u64, max_bytes)?;
+
+    String::from_utf8(buf).map_err(|e| {
+        AppError::InvalidInput(format!(
+            "SQL 文件不是有效的 UTF-8 编码 ({}): {e}",
+            source_path.display()
+        ))
+    })
 }
 
 /// Tables whose data rows are skipped when exporting for WebDAV sync.
@@ -144,7 +196,7 @@ impl Database {
             )));
         }
 
-        let sql_raw = fs::read_to_string(source_path).map_err(|e| AppError::io(source_path, e))?;
+        let sql_raw = read_sql_file_bounded(source_path, MAX_SQL_IMPORT_BYTES)?;
         let sql_content = sql_raw.trim_start_matches('\u{feff}');
         self.import_sql_string(sql_content)
     }
@@ -177,6 +229,25 @@ impl Database {
     where
         F: FnOnce() -> Result<(), AppError>,
     {
+        self.import_sql_string_inner_with_options(
+            sql_raw,
+            preserve_tables,
+            SQL_IMPORT_EXECUTION_TIMEOUT,
+            on_staging_ready,
+        )
+    }
+
+    fn import_sql_string_inner_with_options<F>(
+        &self,
+        sql_raw: &str,
+        preserve_tables: &[&str],
+        execution_timeout: Duration,
+        on_staging_ready: F,
+    ) -> Result<String, AppError>
+    where
+        F: FnOnce() -> Result<(), AppError>,
+    {
+        validate_sql_import_size(sql_raw.len() as u64, MAX_SQL_IMPORT_BYTES)?;
         let sql_content = sql_raw.trim_start_matches('\u{feff}');
         Self::validate_cc_switch_sql_export(sql_content)?;
 
@@ -195,15 +266,42 @@ impl Database {
             .execute("PRAGMA auto_vacuum = INCREMENTAL;", [])
             .map_err(|e| AppError::Database(format!("设置暂存库 auto_vacuum 失败: {e}")))?;
 
-        // authorizer 只覆盖外部 SQL，执行完立刻摘掉：紧随其后的
+        // authorizer 与 progress_handler 只覆盖外部 SQL，执行完立刻摘掉：紧随其后的
         // `create_tables_on_conn` / `apply_schema_migrations_on_conn` 是本程序自己的
         // schema 维护语句，不属于需要设防的输入，没必要让它们也过一遍守卫。
+        let deadline = Instant::now().checked_add(execution_timeout);
         temp_conn.authorizer(Some(import_authorizer));
+        if let Some(deadline) = deadline {
+            temp_conn.progress_handler(
+                SQL_IMPORT_PROGRESS_OPCODES,
+                Some(move || Instant::now() > deadline),
+            );
+        }
         let batch_result = temp_conn.execute_batch(sql_content);
+        temp_conn.progress_handler(0, None::<fn() -> bool>);
         temp_conn.authorizer(
             None::<fn(rusqlite::hooks::AuthContext<'_>) -> rusqlite::hooks::Authorization>,
         );
-        batch_result.map_err(|e| AppError::Database(format!("执行 SQL 导入失败: {e}")))?;
+        batch_result.map_err(|e| {
+            if matches!(
+                e,
+                rusqlite::Error::SqliteFailure(
+                    rusqlite::ffi::Error {
+                        code: rusqlite::ErrorCode::OperationInterrupted,
+                        ..
+                    },
+                    _
+                )
+            ) {
+                AppError::localized(
+                    "backup.sql.execution_timeout",
+                    "SQL 导入执行超时，文件可能包含异常循环语句",
+                    "SQL import timed out; the file may contain an abusive query",
+                )
+            } else {
+                AppError::Database(format!("执行 SQL 导入失败: {e}"))
+            }
+        })?;
         if !temp_conn.is_autocommit() {
             let _ = temp_conn.execute_batch("ROLLBACK;");
             return Err(AppError::localized(
@@ -694,6 +792,22 @@ impl Database {
                 "backup.sql.invalid_schema",
                 format!("导入的 SQL 缺少 CC Switch 必需表：{names}"),
                 format!("The imported SQL is missing required CC Switch tables: {names}"),
+            ));
+        }
+
+        // 纵深防御：CC Switch 生产 schema 不含 trigger/view，即便 authorizer 被绕过也不允许落盘
+        let disallowed_objects: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type IN ('trigger', 'view')",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        if disallowed_objects > 0 {
+            return Err(AppError::localized(
+                "backup.sql.disallowed_schema_objects",
+                "导入的 SQL 包含不允许的触发器或视图对象",
+                "The imported SQL contains disallowed trigger or view objects",
             ));
         }
         Ok(())
@@ -1307,6 +1421,132 @@ mod tests {
                 target.display()
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn import_rejects_triggers_and_views_that_would_persist_in_main_db() -> Result<(), AppError> {
+        let _test_home = TestHomeGuard::new();
+        let baseline = Database::memory()?;
+        let base_export = baseline.export_sql_string()?;
+        let insert_point = base_export
+            .rfind("COMMIT;")
+            .expect("export should contain COMMIT");
+
+        let hostile_trigger = r#"
+CREATE TRIGGER hijack_future_provider
+AFTER INSERT ON providers
+BEGIN
+    UPDATE providers
+       SET settings_config = '{"env":{"ANTHROPIC_BASE_URL":"https://attacker.example"}}'
+     WHERE id = NEW.id AND app_type = NEW.app_type;
+END;
+"#;
+        let hostile_temp_trigger = r#"
+CREATE TEMP TRIGGER temp_hijack
+AFTER INSERT ON providers
+BEGIN
+    SELECT 1;
+END;
+"#;
+        let hostile_view = "CREATE VIEW spoofed_view AS SELECT * FROM providers;\n";
+
+        for (label, snippet) in [
+            ("trigger", hostile_trigger),
+            ("temp-trigger", hostile_temp_trigger),
+            ("view", hostile_view),
+        ] {
+            let mut malicious_sql = String::new();
+            malicious_sql.push_str(&base_export[..insert_point]);
+            malicious_sql.push_str(snippet);
+            malicious_sql.push_str(&base_export[insert_point..]);
+
+            let target = Database::memory()?;
+            let res = target.import_sql_string(&malicious_sql);
+            let err = res.expect_err(&format!(
+                "malicious SQL containing {label} must be rejected"
+            ));
+            assert!(
+                err.to_string().to_ascii_lowercase().contains("authoriz"),
+                "{label} must be blocked by import_authorizer, got: {err}"
+            );
+
+            // Confirm no trigger/view survived in main DB.
+            let conn = crate::database::lock_conn!(target.conn);
+            let count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type IN ('trigger', 'view')",
+                [],
+                |row| row.get(0),
+            )?;
+            assert_eq!(count, 0, "no trigger/view may persist in main DB");
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn validate_imported_schema_rejects_triggers_and_views_defense_in_depth() -> Result<(), AppError>
+    {
+        let db = Database::memory()?;
+        let conn = crate::database::lock_conn!(db.conn);
+        assert!(Database::validate_imported_schema(&conn).is_ok());
+
+        conn.execute_batch(
+            "CREATE TRIGGER persisted_evil AFTER INSERT ON providers BEGIN SELECT 1; END;",
+        )?;
+        assert!(
+            Database::validate_imported_schema(&conn).is_err(),
+            "schema validation must reject triggers"
+        );
+        conn.execute_batch("DROP TRIGGER persisted_evil;")?;
+
+        conn.execute_batch("CREATE VIEW persisted_view AS SELECT * FROM providers;")?;
+        assert!(
+            Database::validate_imported_schema(&conn).is_err(),
+            "schema validation must reject views"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn read_sql_file_bounded_enforces_size_limit() -> Result<(), AppError> {
+        let temp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(temp.path(), "SELECT 1;").unwrap();
+        assert!(super::read_sql_file_bounded(temp.path(), 9).is_ok());
+        assert!(super::read_sql_file_bounded(temp.path(), 8).is_err());
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn import_interrupts_infinite_recursive_cte_before_hanging() -> Result<(), AppError> {
+        let _test_home = TestHomeGuard::new();
+        let db = Database::memory()?;
+        let dos_sql = format!(
+            "{}\nWITH RECURSIVE cnt(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM cnt) SELECT MAX(x) FROM cnt;\n",
+            super::CC_SWITCH_SQL_EXPORT_HEADER
+        );
+
+        let started = std::time::Instant::now();
+        let err = db
+            .import_sql_string_inner_with_options(
+                &dos_sql,
+                &[],
+                std::time::Duration::from_millis(150),
+                || Ok(()),
+            )
+            .expect_err("infinite recursive CTE must time out");
+        let elapsed = started.elapsed();
+
+        assert!(
+            err.to_string().contains("timed out") || err.to_string().contains("超时"),
+            "expected timeout error, got: {err}"
+        );
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "progress_handler interruption took too long: {elapsed:?}"
+        );
         Ok(())
     }
 
