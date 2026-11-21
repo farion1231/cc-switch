@@ -145,6 +145,9 @@ pub enum LiveWriteError {
     /// 写完之后客户端实际走的路由不是目标供应商：当前生效的 profile 覆盖了选路。
     #[error("Codex 当前生效的 profile \"{profile}\" 覆盖了 {key}")]
     Route { profile: String, key: String },
+    /// 供应商切换补丁会改动用户自己的配置段，拒绝写入。
+    #[error("{path} 的供应商切换补丁会改动用户配置 {keys:?}，为避免配置丢失，没有写入")]
+    ConfigLoss { path: PathBuf, keys: Vec<String> },
 }
 
 /// 编辑冲突的错误码。命令返回 JSON 字符串，前端据此让用户选保留哪一边。
@@ -198,6 +201,17 @@ impl From<LiveWriteError> for crate::error::AppError {
                 ),
                 format!(
                     "The active Codex profile \"{profile}\" ([profiles.{profile}]) sets {key}, so requests would keep following it instead of the target provider. Remove {key} from that profile or change the top-level profile. Nothing was written"
+                ),
+            ),
+            LiveWriteError::ConfigLoss { path, keys } => AppError::localized(
+                "live.config_loss_guard",
+                format!(
+                    "{} 的供应商切换补丁会改动用户配置 {keys:?}。为避免插件、MCP、Hook 等配置丢失，本次没有写入任何文件",
+                    path.display()
+                ),
+                format!(
+                    "The provider-switch patch for {} would modify user-owned config {keys:?}. Nothing was written, to avoid losing plugins, MCP servers, hooks, or other settings",
+                    path.display()
                 ),
             ),
             LiveWriteError::EditConflict { path, keys } => AppError::Message(
