@@ -72,6 +72,9 @@ impl ProviderRouter {
         current_provider: Option<Provider>,
         auto_failover_enabled: bool,
     ) -> Result<Vec<Provider>, AppError> {
+        if let Some(provider) = &current_provider {
+            provider.validate_app_restriction(app_type)?;
+        }
         let mut result = Vec::new();
         let mut total_providers = 0usize;
         let mut circuit_open_count = 0usize;
@@ -90,7 +93,9 @@ impl ProviderRouter {
             // 故障转移开启：仅按队列顺序依次尝试（P1 → P2 → ...）
             // 使用 DAO 返回的排序结果，确保和前端展示一致
             for provider in self.db.get_failover_providers(app_type)? {
-                if !provider_supports_failover(app_type, &provider) {
+                if provider.validate_app_restriction(app_type).is_err()
+                    || !provider_supports_failover(app_type, &provider)
+                {
                     continue;
                 }
                 total_providers += 1;
@@ -754,5 +759,60 @@ mod tests {
                 .await
                 .allowed
         );
+    }
+}
+
+#[cfg(test)]
+mod allowed_apps_tests {
+    use super::*;
+    use crate::provider::ProviderMeta;
+
+    #[tokio::test]
+    async fn allowed_apps_router_rejects_incompatible_current_provider() {
+        let router = ProviderRouter::new(Arc::new(Database::memory().unwrap()));
+        let mut provider = Provider::with_id(
+            "scoped".into(),
+            "Scoped".into(),
+            serde_json::json!({}),
+            None,
+        );
+        provider.meta = Some(ProviderMeta {
+            allowed_apps: Some(vec!["claude".into()]),
+            ..Default::default()
+        });
+        assert!(router
+            .select_providers_with_current(&AppType::Codex, Some(provider), false)
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn allowed_apps_router_skips_incompatible_failover_provider() {
+        let db = Arc::new(Database::memory().unwrap());
+        for id in ["incompatible", "compatible"] {
+            let provider = Provider::with_id(id.into(), id.into(), serde_json::json!({}), None);
+            db.save_provider(&AppType::Codex, &provider).unwrap();
+            db.add_to_failover_queue(&AppType::Codex, id).unwrap();
+        }
+        // An imported database can contain provider rows written before this validation.
+        db.conn
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE providers SET meta = ?1 WHERE app_type = ?2 AND id = ?3",
+                rusqlite::params![
+                    serde_json::json!({"allowedApps": ["claude"]}).to_string(),
+                    AppType::Codex,
+                    "incompatible"
+                ],
+            )
+            .unwrap();
+        let router = ProviderRouter::new(db);
+        let providers = router
+            .select_providers_with_current(&AppType::Codex, None, true)
+            .await
+            .unwrap();
+        assert_eq!(providers.len(), 1);
+        assert_eq!(providers[0].id, "compatible");
     }
 }

@@ -959,3 +959,42 @@ it("previews agy model and masks its key before confirmation", async () => {
   expect(screen.queryByText("secret-agy-key")).not.toBeInTheDocument();
   expect(screen.getAllByText("secr************").length).toBeGreaterThan(0);
 });
+
+it("shows allowed applications and retains them in the confirmed import", async () => {
+  const importProvider = vi.fn();
+  server.use(
+    http.post(
+      "http://tauri.local/import_from_deeplink_unified",
+      async ({ request }) => {
+        importProvider(await request.json());
+        return HttpResponse.json({ type: "provider", id: "scoped" });
+      },
+    ),
+  );
+  render(<DeepLinkImportDialog />, { wrapper: Wrapper });
+  act(() =>
+    deliverDeepLink({
+      version: "v1",
+      resource: "provider",
+      app: "claude",
+      name: "Scoped",
+      endpoint: "https://example.com",
+      apiKey: "public-test-key",
+      allowedApps: ["claude", "claude-desktop"],
+    }),
+  );
+  expect(await screen.findByText("claude, claude-desktop")).toBeInTheDocument();
+  expect(screen.getByText("deeplink.allowedAppsHint")).toBeInTheDocument();
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "deeplink.import" }));
+  await waitFor(() =>
+    expect(importProvider).toHaveBeenCalledWith(
+      expect.objectContaining({
+        request: expect.objectContaining({
+          allowedApps: ["claude", "claude-desktop"],
+        }),
+      }),
+    ),
+  );
+});

@@ -3618,6 +3618,8 @@
     "updatesIncomplete": "Güncelleme bulunamadı ancak {{count}} depoları okunamadı"
   },
   "deeplink": {
+    "allowedApps": "İzin verilen uygulamalar",
+    "allowedAppsHint": "Bu kısıtlama yapılandırma için geçerlidir. Erişim izinlerini ağ geçidi denetler.",
     "confirmImport": "İçe Aktarma Sağlayıcısını Onayla",
     "confirmImportDescription": "Aşağıdaki yapılandırma derin bağlantıdan CC Switch uygulamasını aktarılacak",
     "importPrompt": "İçe Aktarma İstemi",
