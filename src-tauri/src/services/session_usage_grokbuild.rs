@@ -187,6 +187,199 @@ fn collect_files_named(root: &Path, name: &str, files: &mut Vec<PathBuf>, depth:
     }
 }
 
+enum GrokUsageSource {
+    Own,
+    FoldedIntoParent,
+    Forked { parent_updates: PathBuf },
+}
+
+/// Grok 行的 `session_log_sync.parser_state`：记下当前 mtime 上已经做过的清理，
+/// 未变化的文件据此跳过重复 DELETE 和重读父文件。
+const FOLDED_ROWS_PURGED: &str = "folded";
+
+/// fork 的复制 prompt_id 已按这个父文件 mtime 清过。父文件变了要重算。
+fn fork_copies_dropped(parent_modified: i64) -> String {
+    format!("fork:{parent_modified}")
+}
+
+/// 不再入账的轮次：子代理整份折进父轮，fork 只跳过从父会话复制来的 prompt_id。
+enum SkippedTurns {
+    All,
+    CopiedFromParent(std::collections::HashSet<String>),
+}
+
+impl SkippedTurns {
+    fn skips(&self, prompt_id: &str) -> bool {
+        match self {
+            SkippedTurns::All => true,
+            SkippedTurns::CopiedFromParent(ids) => !prompt_id.is_empty() && ids.contains(prompt_id),
+        }
+    }
+}
+
+fn session_id_from_updates(file_path: &Path) -> String {
+    file_path
+        .parent()
+        .and_then(|dir| dir.file_name())
+        .and_then(|name| name.to_str())
+        .unwrap_or("unknown")
+        .to_string()
+}
+
+fn grok_usage_source(updates_path: &Path) -> GrokUsageSource {
+    let Some(session_dir) = updates_path.parent() else {
+        return GrokUsageSource::Own;
+    };
+    let summary_path = session_dir.join("summary.json");
+    let Ok(text) = fs::read_to_string(&summary_path) else {
+        return GrokUsageSource::Own;
+    };
+    let Ok(summary) = serde_json::from_str::<serde_json::Value>(&text) else {
+        log::warn!(
+            "[GROK-SYNC] 无法解析 {}，按独立会话导入",
+            summary_path.display()
+        );
+        return GrokUsageSource::Own;
+    };
+    let kind = summary
+        .get("session_kind")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    match kind {
+        "subagent" | "subagent_fork" | "subagent_resume" => GrokUsageSource::FoldedIntoParent,
+        "fork" => forked_usage_source(updates_path, summary.get("parent_session_id")),
+        _ => GrokUsageSource::Own,
+    }
+}
+
+fn forked_usage_source(
+    updates_path: &Path,
+    parent_session_id: Option<&serde_json::Value>,
+) -> GrokUsageSource {
+    let parent_id = parent_session_id
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    if parent_id.is_empty() {
+        log::warn!(
+            "[GROK-SYNC] fork 会话缺少 parent_session_id，整文件导入: {}",
+            updates_path.display()
+        );
+        return GrokUsageSource::Own;
+    }
+    let Some(parent_updates) = find_parent_updates(updates_path, parent_id) else {
+        log::warn!(
+            "[GROK-SYNC] 找不到 fork 父会话 {parent_id} 的 updates.jsonl，整文件导入: {}",
+            updates_path.display()
+        );
+        return GrokUsageSource::Own;
+    };
+    GrokUsageSource::Forked { parent_updates }
+}
+
+fn find_parent_updates(child_updates: &Path, parent_id: &str) -> Option<PathBuf> {
+    let session_dir = child_updates.parent()?;
+    let project_dir = session_dir.parent()?;
+    let sibling = project_dir.join(parent_id).join("updates.jsonl");
+    if sibling.is_file() && sibling != child_updates {
+        return Some(sibling);
+    }
+    let sessions_root = project_dir.parent()?;
+    let grok_home = sessions_root.parent()?;
+    for root_name in ["sessions", "archived_sessions"] {
+        let Ok(entries) = fs::read_dir(grok_home.join(root_name)) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            if entry
+                .metadata()
+                .map(|meta| meta.is_symlink())
+                .unwrap_or(true)
+            {
+                continue;
+            }
+            let candidate = entry.path().join(parent_id).join("updates.jsonl");
+            if candidate.is_file() && candidate != child_updates {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
+fn prompt_ids_in_updates(path: &Path) -> Option<std::collections::HashSet<String>> {
+    let file = fs::File::open(path).ok()?;
+    let mut reader = BufReader::new(file);
+    let mut prompt_ids = std::collections::HashSet::new();
+    loop {
+        match read_capped_jsonl_line(&mut reader, MAX_GROK_LINE_BYTES).ok()? {
+            GrokLine::Eof => return Some(prompt_ids),
+            GrokLine::Oversized { .. } => {}
+            GrokLine::Complete(buf) => {
+                let event = std::str::from_utf8(&buf)
+                    .ok()
+                    .and_then(parse_grok_usage_event_line);
+                if let Some(event) = event.filter(|event| !event.prompt_id.is_empty()) {
+                    prompt_ids.insert(event.prompt_id);
+                }
+            }
+        }
+    }
+}
+
+fn delete_grok_session_rows(
+    db: &Database,
+    session_id: &str,
+    turn_key: Option<&str>,
+) -> Result<(), AppError> {
+    if session_id.is_empty() || session_id == "unknown" {
+        return Ok(());
+    }
+    let mut prefix = format!("grok_session:{session_id}:");
+    if let Some(turn_key) = turn_key {
+        if turn_key.is_empty() {
+            return Ok(());
+        }
+        prefix.push_str(turn_key);
+        prefix.push(':');
+    }
+    // request_id 是 BINARY 主键。默认 LIKE 不区分大小写，用不上这个索引，
+    // 会扫整张 30 天明细表。idx_request_logs_session 只有 session_id，
+    // 删单轮时范围比主键前缀更宽。前缀以 ':' 结尾，';' 是下一字节，
+    // [prefix, upper) 恰好是 prefix*；request_id 后部出现 ';' 也不会把范围撑大。
+    debug_assert!(prefix.ends_with(':'));
+    let upper = format!("{};", &prefix[..prefix.len() - 1]);
+    let conn = lock_conn!(db.conn);
+    conn.execute(
+        "DELETE FROM proxy_request_logs
+         WHERE data_source = 'grok_session' AND request_id >= ?1 AND request_id < ?2",
+        rusqlite::params![prefix, upper],
+    )
+    .map_err(|error| AppError::Database(format!("删除已折进父轮的 Grok 用量失败: {error}")))?;
+    Ok(())
+}
+
+fn drop_copied_fork_rows(
+    db: &Database,
+    session_id: &str,
+    copied_prompt_ids: &std::collections::HashSet<String>,
+) -> Result<(), AppError> {
+    for prompt_id in copied_prompt_ids {
+        delete_grok_session_rows(db, session_id, Some(prompt_id))?;
+    }
+    Ok(())
+}
+
+/// 只改清理标记，保留游标。未变化的存量文件可能还在用旧的事件计数游标。
+fn update_grok_parser_state(db: &Database, file_path: &str, state: &str) -> Result<(), AppError> {
+    let conn = lock_conn!(db.conn);
+    conn.execute(
+        "UPDATE session_log_sync SET parser_state = ?2 WHERE file_path = ?1",
+        rusqlite::params![file_path, state],
+    )
+    .map_err(|error| AppError::Database(format!("更新同步状态失败: {error}")))?;
+    Ok(())
+}
+
 /// 同步单个 updates.jsonl 文件。游标来自调用方批量预取。
 fn sync_single_grok_file(
     db: &Database,
@@ -202,19 +395,52 @@ fn sync_single_grok_file(
 
     let cursor = cursors.get(&file_path_str);
     let last_modified = cursor.map_or(0, |c| c.last_modified);
-    if file_modified <= last_modified {
+    let file_changed = file_modified > last_modified;
+    let cleanup_state = cursor.and_then(|c| c.parser_state.as_deref());
+    if !file_changed && cleanup_state == Some(FOLDED_ROWS_PURGED) {
         return Ok(SessionSyncResult::default());
     }
 
     // 会话 ID = 会话目录名（与 summary.json 的 info.id 一致）。request_id
     // 唯一性押在该 UUIDv7 全局唯一上：同 ID 的归档/活跃副本经 UPSERT 幂等
     // 收敛（有意），不同 <enc-cwd> 下撞 ID 视为不可能。
-    let session_id = file_path
-        .parent()
-        .and_then(|dir| dir.file_name())
-        .and_then(|n| n.to_str())
-        .unwrap_or("unknown")
-        .to_string();
+    let session_id = session_id_from_updates(file_path);
+
+    // 游标只看 updates.jsonl 的 mtime。升级前已经入库的重复行，文件本身不再变化，
+    // 仍要靠 summary.json 把它们清掉。30 天 rollup 已经剪掉的明细不在这张表里，清不掉。
+    let (parser_state, skipped_turns) = match grok_usage_source(file_path) {
+        GrokUsageSource::Own => (None, None),
+        GrokUsageSource::FoldedIntoParent => {
+            delete_grok_session_rows(db, &session_id, None)?;
+            (
+                Some(FOLDED_ROWS_PURGED.to_string()),
+                Some(SkippedTurns::All),
+            )
+        }
+        GrokUsageSource::Forked { parent_updates } => {
+            let parent_modified = fs::metadata(&parent_updates)
+                .map(|metadata| metadata_modified_nanos(&metadata))
+                .unwrap_or(0);
+            let state = fork_copies_dropped(parent_modified);
+            if !file_changed && cleanup_state == Some(state.as_str()) {
+                return Ok(SessionSyncResult::default());
+            }
+            match prompt_ids_in_updates(&parent_updates) {
+                Some(copied) => {
+                    drop_copied_fork_rows(db, &session_id, &copied)?;
+                    (Some(state), Some(SkippedTurns::CopiedFromParent(copied)))
+                }
+                None => (None, None),
+            }
+        }
+    };
+    if !file_changed {
+        if let Some(state) = &parser_state {
+            update_grok_parser_state(db, &file_path_str, state)?;
+        }
+        return Ok(SessionSyncResult::default());
+    }
+    let parser_state = parser_state.as_deref();
 
     let last_byte_offset = cursor.and_then(|c| c.last_byte_offset);
     // 升级前 Grok 把 last_line_offset 写成「已解析事件数」而不是行号/字节。
@@ -232,7 +458,7 @@ fn sync_single_grok_file(
             "[GROK-SYNC] 文件被截断，游标钉至 EOF、不重放旧区间: {}",
             file_path.display()
         );
-        update_byte_sync_state(db, &file_path_str, file_modified, file_size)?;
+        update_byte_sync_state(db, &file_path_str, file_modified, file_size, parser_state)?;
         return Ok(SessionSyncResult::default());
     }
 
@@ -311,6 +537,19 @@ fn sync_single_grok_file(
             break;
         }
 
+        if skipped_turns
+            .as_ref()
+            .is_some_and(|skipped| skipped.skips(&event.prompt_id))
+        {
+            result.skipped += event
+                .per_model
+                .iter()
+                .filter(|(_, turn)| !turn.is_zero())
+                .count() as u32;
+            committed_offset = line_start + consumed;
+            continue;
+        }
+
         // 接管守卫按事件时刻判定一次，整条事件的所有模型行同进退；
         // 被守卫跳过的 token 已由代理行记账，跳过即终态（同步状态照常
         // 推进）。已知局限：守卫无 session 维度，见 usage_stats.rs 注释。
@@ -373,9 +612,21 @@ fn sync_single_grok_file(
     if deferred {
         result.deferred_files += 1;
         // 推进字节游标、保留旧 mtime：文件不再增长时沉降窗到期仍能续读。
-        update_byte_sync_state(db, &file_path_str, last_modified, committed_offset)?;
+        update_byte_sync_state(
+            db,
+            &file_path_str,
+            last_modified,
+            committed_offset,
+            parser_state,
+        )?;
     } else {
-        update_byte_sync_state(db, &file_path_str, file_modified, committed_offset)?;
+        update_byte_sync_state(
+            db,
+            &file_path_str,
+            file_modified,
+            committed_offset,
+            parser_state,
+        )?;
     }
 
     Ok(result)
@@ -1677,6 +1928,595 @@ mod tests {
             files.len(),
             1,
             "only the real updates.jsonl should be collected; symlink cycle must not crash"
+        );
+    }
+
+    fn write_summary(updates_path: &Path, kind: &str, parent_id: Option<&str>) {
+        let session_dir = updates_path.parent().expect("session dir");
+        let parent_field = match parent_id {
+            Some(id) => format!(r#","parent_session_id":"{id}""#),
+            None => String::new(),
+        };
+        std::fs::write(
+            session_dir.join("summary.json"),
+            format!(r#"{{"session_kind":"{kind}"{parent_field}}}"#),
+        )
+        .expect("write summary.json");
+    }
+
+    fn sync_file(db: &Database, path: &Path) -> SessionSyncResult {
+        sync_single_grok_file(
+            db,
+            path,
+            &crate::services::session_usage::load_sync_cursors(db).unwrap(),
+        )
+        .expect("sync")
+    }
+
+    #[test]
+    fn subagent_turns_already_folded_into_the_parent_are_not_imported_twice() {
+        let db = Database::memory().expect("memory db");
+        let temp = tempdir().expect("tempdir");
+        let parent = write_session_file(
+            temp.path(),
+            "parent-sess",
+            &[usage_event_line(
+                OLD_EPOCH,
+                "parent-turn",
+                &model_counters("grok-4.5-build", 100, 10, 0, 2),
+            )],
+        );
+        let child = write_session_file(
+            temp.path(),
+            "child-sess",
+            &[usage_event_line(
+                OLD_EPOCH,
+                "child-turn",
+                &model_counters("grok-4.5-build", 40, 4, 0, 1),
+            )],
+        );
+        write_summary(&child, "subagent", Some("parent-sess"));
+
+        let child_result = sync_file(&db, &child);
+        let parent_result = sync_file(&db, &parent);
+
+        assert_eq!(
+            child_result.imported, 0,
+            "folded subagent file must not be imported"
+        );
+        assert_eq!(parent_result.imported, 1);
+        let rows = query_rows(&db).expect("rows");
+        assert_eq!(rows.len(), 1, "parent and child must not both land");
+        assert_eq!(
+            rows[0].0,
+            "grok_session:parent-sess:parent-turn:grok-4.5-build"
+        );
+        assert_eq!(rows[0].1, 100);
+    }
+
+    #[test]
+    fn subagent_fork_and_resume_are_not_imported_on_top_of_the_parent() {
+        for kind in ["subagent_fork", "subagent_resume"] {
+            let db = Database::memory().expect("memory db");
+            let temp = tempdir().expect("tempdir");
+            let parent = write_session_file(
+                temp.path(),
+                "parent-sess",
+                &[usage_event_line(
+                    OLD_EPOCH,
+                    "parent-turn",
+                    &model_counters("grok-4.5-build", 80, 8, 0, 2),
+                )],
+            );
+            let child = write_session_file(
+                temp.path(),
+                "child-sess",
+                &[usage_event_line(
+                    OLD_EPOCH,
+                    "child-turn",
+                    &model_counters("grok-4.5-build", 20, 2, 0, 1),
+                )],
+            );
+            write_summary(&child, kind, Some("parent-sess"));
+
+            let child_result = sync_file(&db, &child);
+            sync_file(&db, &parent);
+
+            assert_eq!(child_result.imported, 0, "{kind}");
+            assert_eq!(query_rows(&db).expect("rows").len(), 1, "{kind}");
+        }
+    }
+
+    #[test]
+    fn user_fork_drops_the_copied_prefix_and_keeps_turns_appended_after_it() {
+        let db = Database::memory().expect("memory db");
+        let temp = tempdir().expect("tempdir");
+        let parent = write_session_file(
+            temp.path(),
+            "parent-sess",
+            &[
+                usage_event_line(
+                    OLD_EPOCH,
+                    "copied-a",
+                    &model_counters("grok-4.5-build", 100, 10, 0, 1),
+                ),
+                usage_event_line(
+                    OLD_EPOCH + 1,
+                    "copied-b",
+                    &model_counters("grok-4.5-build", 50, 5, 0, 1),
+                ),
+            ],
+        );
+        let fork = write_session_file(
+            temp.path(),
+            "fork-sess",
+            &[
+                usage_event_line(
+                    OLD_EPOCH,
+                    "copied-a",
+                    &model_counters("grok-4.5-build", 100, 10, 0, 1),
+                ),
+                usage_event_line(
+                    OLD_EPOCH + 1,
+                    "copied-b",
+                    &model_counters("grok-4.5-build", 50, 5, 0, 1),
+                ),
+                usage_event_line(
+                    OLD_EPOCH + 2,
+                    "new-turn",
+                    &model_counters("grok-4.5-build", 7, 1, 0, 1),
+                ),
+            ],
+        );
+        write_summary(&fork, "fork", Some("parent-sess"));
+
+        let fork_result = sync_file(&db, &fork);
+        let parent_result = sync_file(&db, &parent);
+
+        assert_eq!(
+            fork_result.imported, 1,
+            "only the turn written after the fork"
+        );
+        assert_eq!(parent_result.imported, 2);
+        let rows = query_rows(&db).expect("rows");
+        assert_eq!(rows.len(), 3);
+        assert_eq!(
+            rows.iter().filter(|row| row.0.contains("copied-a")).count(),
+            1
+        );
+        assert_eq!(
+            rows.iter().filter(|row| row.0.contains("copied-b")).count(),
+            1
+        );
+        assert!(rows.iter().any(|row| {
+            row.0.contains("fork-sess") && row.0.contains("new-turn") && row.1 == 7
+        }));
+    }
+
+    #[test]
+    fn user_fork_drops_prompt_ids_copied_from_an_archived_parent() {
+        let db = Database::memory().expect("memory db");
+        let temp = tempdir().expect("tempdir");
+        let parent_dir = temp
+            .path()
+            .join("archived_sessions")
+            .join("enc-old")
+            .join("parent-sess");
+        std::fs::create_dir_all(&parent_dir).expect("archived parent dir");
+        let parent = parent_dir.join("updates.jsonl");
+        std::fs::write(
+            &parent,
+            format!(
+                "{}\n",
+                usage_event_line(
+                    OLD_EPOCH,
+                    "copied",
+                    &model_counters("grok-4.5-build", 30, 3, 0, 1),
+                )
+            ),
+        )
+        .expect("write archived parent");
+        let fork = write_session_file(
+            temp.path(),
+            "fork-sess",
+            &[
+                usage_event_line(
+                    OLD_EPOCH,
+                    "copied",
+                    &model_counters("grok-4.5-build", 30, 3, 0, 1),
+                ),
+                usage_event_line(
+                    OLD_EPOCH + 1,
+                    "after-fork",
+                    &model_counters("grok-4.5-build", 4, 1, 0, 1),
+                ),
+            ],
+        );
+        write_summary(&fork, "fork", Some("parent-sess"));
+
+        let fork_result = sync_file(&db, &fork);
+        let parent_result = sync_file(&db, &parent);
+
+        assert_eq!(fork_result.imported, 1);
+        assert_eq!(parent_result.imported, 1);
+        let rows = query_rows(&db).expect("rows");
+        assert_eq!(rows.len(), 2);
+        assert_eq!(
+            rows.iter().filter(|row| row.0.contains("copied")).count(),
+            1
+        );
+    }
+
+    #[test]
+    fn fork_whose_parent_file_is_missing_keeps_the_only_remaining_copy() {
+        let db = Database::memory().expect("memory db");
+        let temp = tempdir().expect("tempdir");
+        let fork = write_session_file(
+            temp.path(),
+            "fork-sess",
+            &[usage_event_line(
+                OLD_EPOCH,
+                "only-copy",
+                &model_counters("grok-4.5-build", 9, 1, 0, 1),
+            )],
+        );
+        write_summary(&fork, "fork", Some("missing-parent"));
+
+        let result = sync_file(&db, &fork);
+
+        assert_eq!(result.imported, 1);
+        let rows = query_rows(&db).expect("rows");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].1, 9);
+    }
+
+    #[test]
+    fn already_imported_subagent_rows_are_removed_when_the_file_is_unchanged() {
+        let db = Database::memory().expect("memory db");
+        let temp = tempdir().expect("tempdir");
+        let child = write_session_file(
+            temp.path(),
+            "child-sess",
+            &[usage_event_line(
+                OLD_EPOCH,
+                "child-turn",
+                &model_counters("grok-4.5-build", 40, 4, 0, 1),
+            )],
+        );
+        assert_eq!(sync_file(&db, &child).imported, 1);
+
+        write_summary(&child, "subagent", Some("parent-sess"));
+        let again = sync_file(&db, &child);
+
+        assert_eq!(again.imported, 0);
+        assert!(
+            query_rows(&db).expect("rows").is_empty(),
+            "the child row was already inside the parent turn"
+        );
+    }
+
+    #[test]
+    fn already_imported_fork_prefix_is_removed_when_the_file_is_unchanged() {
+        let db = Database::memory().expect("memory db");
+        let temp = tempdir().expect("tempdir");
+        let parent = write_session_file(
+            temp.path(),
+            "parent-sess",
+            &[usage_event_line(
+                OLD_EPOCH,
+                "copied",
+                &model_counters("grok-4.5-build", 30, 3, 0, 1),
+            )],
+        );
+        let fork = write_session_file(
+            temp.path(),
+            "fork-sess",
+            &[
+                usage_event_line(
+                    OLD_EPOCH,
+                    "copied",
+                    &model_counters("grok-4.5-build", 30, 3, 0, 1),
+                ),
+                usage_event_line(
+                    OLD_EPOCH + 1,
+                    "after-fork",
+                    &model_counters("grok-4.5-build", 4, 1, 0, 1),
+                ),
+            ],
+        );
+        assert_eq!(sync_file(&db, &fork).imported, 2);
+        assert_eq!(sync_file(&db, &parent).imported, 1);
+
+        write_summary(&fork, "fork", Some("parent-sess"));
+        sync_file(&db, &fork);
+
+        let rows = query_rows(&db).expect("rows");
+        assert_eq!(rows.len(), 2);
+        assert_eq!(
+            rows.iter().filter(|row| row.0.contains(":copied:")).count(),
+            1,
+            "only the parent copy of the shared prompt_id remains"
+        );
+        assert!(rows.iter().any(|row| row.0.contains("after-fork")));
+    }
+
+    #[test]
+    fn headless_and_worktree_sessions_are_still_imported() {
+        for kind in ["headless", "worktree"] {
+            let db = Database::memory().expect("memory db");
+            let temp = tempdir().expect("tempdir");
+            let path = write_session_file(
+                temp.path(),
+                "sess",
+                &[usage_event_line(
+                    OLD_EPOCH,
+                    "turn",
+                    &model_counters("grok-4.5-build", 11, 1, 0, 1),
+                )],
+            );
+            write_summary(&path, kind, None);
+
+            let result = sync_file(&db, &path);
+
+            assert_eq!(result.imported, 1, "{kind}");
+            assert_eq!(query_rows(&db).expect("rows").len(), 1, "{kind}");
+        }
+    }
+
+    fn file_mtime(path: &Path) -> std::time::SystemTime {
+        std::fs::metadata(path)
+            .expect("metadata")
+            .modified()
+            .expect("mtime")
+    }
+
+    fn set_file_mtime(path: &Path, mtime: std::time::SystemTime) {
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .expect("open")
+            .set_modified(mtime)
+            .expect("set mtime");
+    }
+
+    fn insert_grok_request(
+        db: &Database,
+        request_id: &str,
+        data_source: &str,
+    ) -> Result<(), AppError> {
+        let conn = lock_conn!(db.conn);
+        conn.execute(
+            "INSERT INTO proxy_request_logs (
+                request_id, provider_id, app_type, model, request_model,
+                input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                total_cost_usd, latency_ms, status_code, created_at, data_source
+            ) VALUES (?1, 'p', 'grokbuild', 'm', 'm', 1, 1, 0, 0, '0', 1, 200, 1, ?2)",
+            rusqlite::params![request_id, data_source],
+        )
+        .map_err(|error| AppError::Database(error.to_string()))?;
+        Ok(())
+    }
+
+    fn all_request_ids(db: &Database) -> Result<Vec<String>, AppError> {
+        let conn = lock_conn!(db.conn);
+        let mut stmt = conn
+            .prepare("SELECT request_id FROM proxy_request_logs ORDER BY request_id")
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        let ids = stmt
+            .query_map([], |row| row.get(0))
+            .map_err(|error| AppError::Database(error.to_string()))?
+            .filter_map(Result::ok)
+            .collect();
+        Ok(ids)
+    }
+
+    #[test]
+    fn prefix_range_delete_stays_exact_when_semicolon_appears_in_request_id() {
+        let db = Database::memory().expect("memory db");
+        let drop_id = "grok_session:sess:turn;id:grok;4";
+        let proxy_id = "grok_session:sess:turn;id:kept-proxy";
+        let keep = [
+            "grok_session:sess:turn;id;extra:model",
+            "grok_session:ses:turn;id:model",
+            "grok_session:sess:turn:model",
+            "grok_session:sess;nope:turn:model",
+        ];
+        insert_grok_request(&db, drop_id, "grok_session").expect("insert");
+        insert_grok_request(&db, proxy_id, "proxy").expect("insert");
+        for request_id in keep {
+            insert_grok_request(&db, request_id, "grok_session").expect("insert");
+        }
+
+        delete_grok_session_rows(&db, "sess", Some("turn;id")).expect("delete turn");
+
+        let ids = all_request_ids(&db).expect("ids");
+        assert!(!ids.iter().any(|id| id == drop_id));
+        assert!(ids.iter().any(|id| id == proxy_id));
+        for request_id in keep {
+            assert!(
+                ids.iter().any(|id| id == request_id),
+                "{request_id} must stay"
+            );
+        }
+
+        delete_grok_session_rows(&db, "sess", None).expect("delete session");
+        let ids = all_request_ids(&db).expect("ids");
+        assert!(ids.iter().any(|id| id == proxy_id));
+        assert!(ids.iter().any(|id| id == "grok_session:ses:turn;id:model"));
+        assert!(ids
+            .iter()
+            .any(|id| id == "grok_session:sess;nope:turn:model"));
+        assert!(!ids
+            .iter()
+            .any(|id| { id.starts_with("grok_session:sess:") && id != proxy_id }));
+    }
+
+    #[test]
+    fn unchanged_subagent_skips_repeat_delete_after_cleanup() {
+        let db = Database::memory().expect("memory db");
+        let temp = tempdir().expect("tempdir");
+        let child = write_session_file(
+            temp.path(),
+            "child-sess",
+            &[usage_event_line(
+                OLD_EPOCH,
+                "child-turn",
+                &model_counters("grok-4.5-build", 40, 4, 0, 1),
+            )],
+        );
+        assert_eq!(sync_file(&db, &child).imported, 1);
+
+        write_summary(&child, "subagent", Some("parent-sess"));
+        sync_file(&db, &child);
+        assert!(query_rows(&db).expect("rows").is_empty());
+
+        insert_grok_request(
+            &db,
+            "grok_session:child-sess:child-turn:grok-4.5-build",
+            "grok_session",
+        )
+        .expect("insert stray row");
+        sync_file(&db, &child);
+        assert_eq!(
+            query_rows(&db).expect("rows").len(),
+            1,
+            "an unchanged subagent file must not delete again"
+        );
+
+        set_file_mtime(
+            &child,
+            file_mtime(&child) + std::time::Duration::from_secs(10),
+        );
+        sync_file(&db, &child);
+        assert!(
+            query_rows(&db).expect("rows").is_empty(),
+            "a changed subagent file still purges its rows"
+        );
+    }
+
+    #[test]
+    fn unchanged_fork_does_not_reread_parent_after_cleanup() {
+        let db = Database::memory().expect("memory db");
+        let temp = tempdir().expect("tempdir");
+        let parent_line = usage_event_line(
+            OLD_EPOCH,
+            "copied",
+            &model_counters("grok-4.5-build", 30, 3, 0, 1),
+        );
+        let parent = write_session_file(
+            temp.path(),
+            "parent-sess",
+            std::slice::from_ref(&parent_line),
+        );
+        let fork_lines = vec![
+            usage_event_line(
+                OLD_EPOCH,
+                "copied",
+                &model_counters("grok-4.5-build", 30, 3, 0, 1),
+            ),
+            usage_event_line(
+                OLD_EPOCH + 1,
+                "after-fork",
+                &model_counters("grok-4.5-build", 4, 1, 0, 1),
+            ),
+        ];
+        let fork = write_session_file(temp.path(), "fork-sess", &fork_lines);
+        assert_eq!(sync_file(&db, &fork).imported, 2);
+        assert_eq!(sync_file(&db, &parent).imported, 1);
+
+        write_summary(&fork, "fork", Some("parent-sess"));
+        sync_file(&db, &fork);
+        assert!(query_rows(&db)
+            .expect("rows")
+            .iter()
+            .any(|row| row.0.contains("after-fork")));
+
+        let parent_mtime = file_mtime(&parent);
+        let parent_nanos = metadata_modified_nanos(&std::fs::metadata(&parent).expect("metadata"));
+        std::fs::write(
+            &parent,
+            format!(
+                "{parent_line}\n{}\n",
+                usage_event_line(
+                    OLD_EPOCH + 1,
+                    "after-fork",
+                    &model_counters("grok-4.5-build", 4, 1, 0, 1),
+                )
+            ),
+        )
+        .expect("rewrite parent");
+        set_file_mtime(&parent, parent_mtime);
+        assert_eq!(
+            metadata_modified_nanos(&std::fs::metadata(&parent).expect("metadata")),
+            parent_nanos,
+            "restored parent mtime must match the cursor"
+        );
+
+        sync_file(&db, &fork);
+        assert!(
+            query_rows(&db)
+                .expect("rows")
+                .iter()
+                .any(|row| row.0.contains("after-fork")),
+            "an unchanged parent must not be reread"
+        );
+
+        std::fs::write(&parent, format!("{parent_line}\n")).expect("restore parent");
+        set_file_mtime(&parent, parent_mtime + std::time::Duration::from_secs(10));
+        insert_grok_request(
+            &db,
+            "grok_session:fork-sess:copied:grok-4.5-build",
+            "grok_session",
+        )
+        .expect("reinsert copied row");
+        sync_file(&db, &fork);
+        let rows = query_rows(&db).expect("rows");
+        assert_eq!(
+            rows.iter()
+                .filter(|row| row.0.contains("fork-sess") && row.0.contains(":copied:"))
+                .count(),
+            0,
+            "a changed parent recomputes the copied set"
+        );
+        assert_eq!(
+            rows.iter()
+                .filter(|row| row.0.contains("after-fork"))
+                .count(),
+            1,
+            "turns written after the fork stay"
+        );
+
+        let mut fresh_lines = fork_lines;
+        fresh_lines.push(usage_event_line(
+            OLD_EPOCH + 2,
+            "fresh",
+            &model_counters("grok-4.5-build", 8, 1, 0, 1),
+        ));
+        let fork_mtime = file_mtime(&fork);
+        let mut file = std::fs::File::create(&fork).expect("rewrite fork");
+        for line in &fresh_lines {
+            writeln!(file, "{line}").expect("write");
+        }
+        drop(file);
+        set_file_mtime(&fork, fork_mtime + std::time::Duration::from_secs(10));
+
+        let again = sync_file(&db, &fork);
+        assert_eq!(again.imported, 1);
+        let rows = query_rows(&db).expect("rows");
+        assert!(rows
+            .iter()
+            .any(|row| { row.0.contains("fork-sess") && row.0.contains("fresh") && row.1 == 8 }));
+        assert_eq!(
+            rows.iter()
+                .filter(|row| row.0.contains("fork-sess") && row.0.contains(":copied:"))
+                .count(),
+            0
+        );
+        assert_eq!(
+            rows.iter()
+                .filter(|row| row.0.contains("after-fork"))
+                .count(),
+            1
         );
     }
 }

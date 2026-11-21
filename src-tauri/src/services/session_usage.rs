@@ -1065,6 +1065,7 @@ pub(crate) fn update_byte_sync_state(
     file_path: &str,
     last_modified: i64,
     byte_offset: i64,
+    parser_state: Option<&str>,
 ) -> Result<(), AppError> {
     let conn = lock_conn!(db.conn);
     let now = SystemTime::now()
@@ -1074,15 +1075,16 @@ pub(crate) fn update_byte_sync_state(
 
     conn.prepare_cached(
         "INSERT OR REPLACE INTO session_log_sync
-         (file_path, last_modified, last_line_offset, last_synced_at, last_byte_offset)
-         VALUES (?1, ?2, 0, ?3, ?4)",
+         (file_path, last_modified, last_line_offset, last_synced_at, last_byte_offset, parser_state)
+         VALUES (?1, ?2, 0, ?3, ?4, ?5)",
     )
     .and_then(|mut stmt| {
         stmt.execute(rusqlite::params![
             file_path,
             last_modified,
             now,
-            byte_offset
+            byte_offset,
+            parser_state
         ])
     })
     .map_err(|e| AppError::Database(format!("更新同步状态失败: {e}")))?;
