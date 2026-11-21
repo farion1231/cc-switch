@@ -500,10 +500,14 @@ fn map_tool_choice_to_anthropic(tool_choice: &Value, tool_context: &CodexToolCon
                 let upstream_name = tool_context.chat_name_for_response_function(name, namespace);
                 json!({ "type": "tool", "name": upstream_name })
             }
-            Some("custom") => json!({
-                "type": "tool",
-                "name": obj.get("name").and_then(|value| value.as_str()).unwrap_or("")
-            }),
+            Some("custom") => {
+                let name = obj
+                    .get("name")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("");
+                let upstream_name = tool_context.chat_name_for_response_function(name, None);
+                json!({ "type": "tool", "name": upstream_name })
+            }
             Some("tool_search") => {
                 json!({ "type": "tool", "name": TOOL_SEARCH_PROXY_NAME })
             }
@@ -594,6 +598,7 @@ fn convert_input_to_messages(
                     .get("name")
                     .and_then(|value| value.as_str())
                     .unwrap_or("");
+                let upstream_name = tool_context.chat_name_for_response_function(name, None);
                 let input = item.get("input").cloned().unwrap_or_else(|| json!(""));
                 push_block(
                     &mut messages,
@@ -601,7 +606,7 @@ fn convert_input_to_messages(
                     json!({
                         "type": "tool_use",
                         "id": call_id,
-                        "name": name,
+                        "name": upstream_name,
                         "input": { "input": input }
                     }),
                 );
@@ -2322,6 +2327,36 @@ mod tests {
         assert_eq!(result["tools"].as_array().unwrap().len(), 1);
         assert_eq!(result["tools"][0]["name"], "apply_patch");
         assert_eq!(result["tool_choice"], json!({ "type": "any" }));
+    }
+
+    #[test]
+    fn test_request_long_custom_tool_uses_the_same_name_in_choice_and_history() {
+        let name = format!("custom_{}", "a".repeat(64));
+        let request = json!({
+            "model": "claude",
+            "tools": [{ "type": "custom", "name": name }],
+            "tool_choice": { "type": "custom", "name": name },
+            "input": [
+                { "role": "user", "content": "Use the custom tool." },
+                { "type": "custom_tool_call", "call_id": "call_1", "name": name, "input": "text" },
+                { "type": "custom_tool_call_output", "call_id": "call_1", "output": "done" }
+            ]
+        });
+
+        let result = responses_request_to_anthropic(request, 4096).unwrap();
+        let upstream_name = result["tools"][0]["name"].as_str().unwrap();
+        assert_ne!(upstream_name, name);
+        assert!(upstream_name.len() <= 64);
+        assert_eq!(result["tool_choice"]["name"], upstream_name);
+        assert_eq!(
+            result["messages"][1]["content"][0],
+            json!({
+                "type": "tool_use",
+                "id": "call_1",
+                "name": upstream_name,
+                "input": { "input": "text" }
+            })
+        );
     }
 
     #[test]
