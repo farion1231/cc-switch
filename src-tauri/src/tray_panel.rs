@@ -513,6 +513,11 @@ fn reveal(window: &WebviewWindow) {
         return;
     }
     let _ = window.show();
+    // 非激活面板 show 时已成为 key window；再激活应用会把人切到主窗口所在的桌面。
+    #[cfg(target_os = "macos")]
+    if platform::is_nonactivating_panel() {
+        return;
+    }
     let _ = window.set_focus();
 }
 
@@ -669,15 +674,17 @@ struct Frame {
 #[cfg(target_os = "macos")]
 mod platform {
     use std::cell::RefCell;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::OnceLock;
 
     use objc2_06::rc::Retained;
-    use objc2_06::runtime::{AnyClass, AnyObject, NSObjectProtocol};
+    use objc2_06::runtime::{AnyClass, AnyObject, Bool, ClassBuilder, NSObjectProtocol, Sel};
     use objc2_06::{msg_send, sel, MainThreadMarker};
     use objc2_app_kit_03::{
         NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua, NSAppearanceNameDarkAqua,
         NSGlassEffectView, NSGlassEffectViewStyle, NSScreen, NSView, NSVisualEffectBlendingMode,
         NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWindow,
-        NSWindowCollectionBehavior, NSWindowOrderingMode,
+        NSWindowCollectionBehavior, NSWindowOrderingMode, NSWindowStyleMask,
     };
     use objc2_foundation_03::{NSPoint, NSRect, NSSize};
     use tauri::WebviewWindow;
@@ -708,8 +715,78 @@ mod platform {
                     ns_window.collectionBehavior()
                         | NSWindowCollectionBehavior::FullScreenAuxiliary,
                 );
+                NONACTIVATING.store(make_nonactivating_panel(ns_window), Ordering::Release);
             }
         });
+    }
+
+    /// 面板窗口已换成非激活面板时为 true；换不了时退回「显示后激活应用」的老路。
+    static NONACTIVATING: AtomicBool = AtomicBool::new(false);
+
+    pub fn is_nonactivating_panel() -> bool {
+        NONACTIVATING.load(Ordering::Acquire)
+    }
+
+    /// 只加 `FullScreenAuxiliary` 还不够：普通 `NSWindow` 在应用没激活时显示，会落到别的桌面；
+    /// 显示后再激活应用，macOS 会把人切到主窗口所在的桌面，在全屏应用里永远看不到面板。
+    /// 菜单栏面板的标准做法是非激活面板（`NSPanel` + `NonactivatingPanel`）：不激活应用
+    /// 也能成为 key window，直接出现在当前 Space 上，包括别的应用的全屏 Space。
+    /// tao 只建 `NSWindow`，这里把窗口的类换成 `NSPanel` 的子类（同 tauri-nspanel 的做法）。
+    fn make_nonactivating_panel(ns_window: &NSWindow) -> bool {
+        let Some(panel_class) = panel_class() else {
+            log::warn!("[TrayPanel] 注册非激活面板类失败，面板在全屏应用里会弹到别的桌面");
+            return false;
+        };
+        let current = ns_window.class();
+        if current == panel_class {
+            return true;
+        }
+        // tao 的 TaoWindow 在 NSWindow 上多了成员变量；新类的实例不能比现有对象大，
+        // 否则换类后读写会越过对象的内存。
+        if panel_class.instance_size() > current.instance_size() {
+            log::warn!(
+                "[TrayPanel] 面板类比 {} 大，保持普通窗口",
+                current.name().to_string_lossy()
+            );
+            return false;
+        }
+        let object: *const NSWindow = ns_window;
+        // SAFETY: 主线程上调用；新类是 NSPanel（NSWindow 的子类）的子类，没有新增成员，
+        // 上面确认过实例大小不超过原对象。原类 TaoWindow 重写的方法里，canBecomeKeyWindow /
+        // canBecomeMainWindow 由新类重写，sendEvent: 只处理面板用不到的背景拖动。
+        unsafe {
+            objc2_06::ffi::object_setClass(object.cast_mut().cast::<AnyObject>(), panel_class);
+        }
+        ns_window.setStyleMask(ns_window.styleMask() | NSWindowStyleMask::NonactivatingPanel);
+        // NSPanel 默认在应用失去激活时自动隐藏；面板收起由失焦逻辑负责。
+        ns_window.setHidesOnDeactivate(false);
+        true
+    }
+
+    fn panel_class() -> Option<&'static AnyClass> {
+        static CLASS: OnceLock<Option<&'static AnyClass>> = OnceLock::new();
+        *CLASS.get_or_init(|| {
+            let superclass = AnyClass::get(c"NSPanel")?;
+            let mut builder = ClassBuilder::new(c"CCSwitchTrayPanel", superclass)?;
+            extern "C-unwind" fn yes(_: &AnyObject, _: Sel) -> Bool {
+                Bool::YES
+            }
+            extern "C-unwind" fn no(_: &AnyObject, _: Sel) -> Bool {
+                Bool::NO
+            }
+            // SAFETY: 两个选择子都是无参、返回 BOOL 的实例方法。
+            unsafe {
+                builder.add_method(
+                    sel!(canBecomeKeyWindow),
+                    yes as extern "C-unwind" fn(_, _) -> _,
+                );
+                builder.add_method(
+                    sel!(canBecomeMainWindow),
+                    no as extern "C-unwind" fn(_, _) -> _,
+                );
+            }
+            Some(builder.register())
+        })
     }
 
     fn ns_window(window: &WebviewWindow) -> Option<&NSWindow> {
