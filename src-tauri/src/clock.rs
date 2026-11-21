@@ -112,21 +112,26 @@ pub(crate) mod pinned {
 
 #[cfg(test)]
 mod tests {
+    use regex::Regex;
     use std::path::Path;
 
-    /// SQLite's own clock functions bypass this module, so statements bind the time instead. The
-    /// column defaults and migrations in `database/schema.rs` stay, because removing a default
-    /// needs a table rebuild.
+    /// SQLite reads its own clock for `'now'` in any letter case, for the date functions called
+    /// with no time value, for `strftime` with only a format, and for `CURRENT_TIMESTAMP`,
+    /// `CURRENT_DATE` and `CURRENT_TIME`. Matched only inside string literals, where SQL lives,
+    /// so Rust calls such as `.date()` do not count.
+    fn sqlite_clock_read() -> Regex {
+        Regex::new(
+            r"(?i)'now'|\b(datetime|date|time|julianday|unixepoch)\s*\(\s*\)|\bstrftime\s*\(\s*'[^']*'\s*\)|\bcurrent_(timestamp|date|time)\b",
+        )
+        .unwrap()
+    }
+
+    /// SQLite's own clock bypasses this module, so statements bind the time instead. The column
+    /// defaults and migrations in `database/schema.rs` stay, because removing a default needs a
+    /// table rebuild.
     #[test]
     fn sql_binds_the_time_instead_of_reading_sqlite_clock() {
-        // `'now'` covers datetime, date, time, julianday, strftime and unixepoch with 'now'.
-        const READS: [&str; 5] = [
-            "'now'",
-            "unixepoch()",
-            "CURRENT_TIMESTAMP",
-            "CURRENT_DATE",
-            "CURRENT_TIME",
-        ];
+        let read = sqlite_clock_read();
         let mut found = Vec::new();
         visit(
             &Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
@@ -140,11 +145,10 @@ mod tests {
                 {
                     return;
                 }
-                for (i, line) in without_test_items(text).lines().enumerate() {
-                    if READS.iter().any(|r| line.contains(r))
-                        && !line.trim_start().starts_with("//")
-                    {
-                        found.push(format!("{}:{}: {}", path.display(), i + 1, line.trim()));
+                let code = without_test_items(text);
+                for (line, literal) in string_literals(&code) {
+                    if read.is_match(&literal) {
+                        found.push(format!("{}:{line}: {}", path.display(), literal.trim()));
                     }
                 }
             },
@@ -154,6 +158,31 @@ mod tests {
             "bind crate::clock::sqlite_datetime() or crate::clock::now() instead:\n{}",
             found.join("\n")
         );
+    }
+
+    #[test]
+    fn sqlite_clock_reads_are_recognised() {
+        let read = sqlite_clock_read();
+        for sql in [
+            "datetime('now')",
+            "DATE('NOW')",
+            "datetime()",
+            "julianday( )",
+            "unixepoch()",
+            "strftime('%s')",
+            "current_timestamp",
+            "CURRENT_DATE",
+        ] {
+            assert!(read.is_match(sql), "{sql}");
+        }
+        for sql in [
+            "datetime(?1)",
+            "strftime('%s', ?1)",
+            "updated_at = ?3",
+            "date(created_at)",
+        ] {
+            assert!(!read.is_match(sql), "{sql}");
+        }
     }
 
     #[test]
@@ -169,104 +198,225 @@ mod tests {
             "    \"x\": }\"#; // }\n",
             "    fn f() { '{'; }\n",
             "}\n",
-            "c\n",
+            "c 中\n",
+            "struct S {\n",
+            "    #[cfg(test)]\n",
+            "    hook: Option<fn(u8, u8)>,\n",
+            "    kept: u8,\n",
+            "}\n",
+            "fn g() -> S {\n",
+            "    S {\n",
+            "        #[cfg(test)]\n",
+            "        hook: None,\n",
+            "        kept: 1\n",
+            "    }\n",
+            "}\n",
+            "fn h(S { #[cfg(test)]\n",
+            "    hook, kept }: S) {}\n",
+            "d\n",
         );
         let kept = without_test_items(src);
         let kept: Vec<&str> = kept.lines().collect();
-        assert_eq!(kept, ["a", "", "", "b", "", "", "", "", "", "", "c"]);
+        assert_eq!(
+            kept,
+            [
+                "a",
+                "",
+                "",
+                "b",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "c 中",
+                "struct S {",
+                "    ",
+                "",
+                "    kept: u8,",
+                "}",
+                "fn g() -> S {",
+                "    S {",
+                "        ",
+                "",
+                "        kept: 1",
+                "    }",
+                "}",
+                "fn h(S { ",
+                " kept }: S) {}",
+                "d",
+            ]
+        );
+    }
+
+    #[test]
+    fn string_literals_are_found_with_their_lines() {
+        let src = concat!(
+            "let a = \"x\";\n",
+            "// \"not\"\n",
+            "let b = r#\"y\n",
+            "\"z\"#; let c = '\"';\n",
+            "let d = br#\"{\"q\"#; let e = \"时w\";\n",
+            "let f = ['\\'','\"','中','\"']; let g = \"u\";\n",
+        );
+        assert_eq!(
+            string_literals(src),
+            [
+                (1, "x".to_string()),
+                (3, "y\n\"z".to_string()),
+                (5, "{\"q".to_string()),
+                (5, "时w".to_string()),
+                (6, "u".to_string()),
+            ]
+        );
     }
 
     /// Blanks every item that a `#[cfg(test)]` or `#[cfg(all(test, ...))]` attribute applies to,
-    /// keeping line numbers: a `mod name;` line, or a braced item up to its closing brace. Braces
-    /// inside strings, raw strings, chars and comments do not count.
+    /// keeping line numbers: a module, function, impl or other item, a struct field, a field in a
+    /// struct literal, or a pattern. Brackets inside strings, raw strings, chars and comments do
+    /// not count.
     fn without_test_items(src: &str) -> String {
         let b = src.as_bytes();
         let mut blank = vec![false; b.len()];
-        let mut line_start = 0;
-        while line_start < b.len() {
-            let line_end = src[line_start..]
-                .find('\n')
-                .map_or(b.len(), |n| line_start + n);
-            let t = src[line_start..line_end].trim_start();
-            if t.starts_with("#[cfg(test)]") || t.starts_with("#[cfg(all(test") {
-                let end = item_end(b, line_end);
-                blank[line_start..end].iter_mut().for_each(|x| *x = true);
-                line_start = end;
+        let mut k = 0;
+        while k < b.len() {
+            let rest = &b[k..];
+            if rest.starts_with(b"#[cfg(test)]") || rest.starts_with(b"#[cfg(all(test") {
+                let attr_end = k + rest
+                    .iter()
+                    .position(|c| *c == b']')
+                    .map_or(rest.len(), |n| n + 1);
+                let end = item_end(b, attr_end);
+                blank[k..end].iter_mut().for_each(|x| *x = true);
+                k = end;
             } else {
-                line_start = line_end + 1;
+                k = literal_at(b, k).map_or(k + 1, |(_, end)| end);
             }
         }
-        b.iter()
+        let kept: Vec<u8> = b
+            .iter()
             .zip(&blank)
             .filter(|(c, blanked)| !**blanked || **c == b'\n')
-            .map(|(c, _)| *c as char)
-            .collect()
+            .map(|(c, _)| *c)
+            .collect();
+        String::from_utf8(kept).unwrap()
     }
 
-    /// Where the item after the attribute line ending at `from` ends: after its `;` when it has no
-    /// body, or after the brace that closes its body.
+    /// Where the thing after an attribute ends. An item ends after its `;` or after the brace
+    /// that closes its body. A field or pattern ends after the `,` that follows it, or before the
+    /// bracket that closes the enclosing list.
     fn item_end(b: &[u8], from: usize) -> usize {
         let (mut k, mut depth) = (from, 0i32);
         while k < b.len() {
+            if let Some((_, end)) = literal_at(b, k) {
+                k = end;
+                continue;
+            }
             match b[k] {
-                b'/' if b.get(k + 1) == Some(&b'/') => {
-                    while k < b.len() && b[k] != b'\n' {
-                        k += 1;
-                    }
-                }
-                b'/' if b.get(k + 1) == Some(&b'*') => {
-                    k += 2;
-                    while k + 1 < b.len() && !(b[k] == b'*' && b[k + 1] == b'/') {
-                        k += 1;
-                    }
-                    k += 1;
-                }
-                b'r' if matches!(b.get(k + 1), Some(b'"' | b'#'))
-                    && !b[k.saturating_sub(1)].is_ascii_alphanumeric() =>
-                {
-                    let hashes = b[k + 1..].iter().take_while(|c| **c == b'#').count();
-                    if b.get(k + 1 + hashes) == Some(&b'"') {
-                        k += 2 + hashes;
-                        while k < b.len()
-                            && !(b[k] == b'"'
-                                && b[k + 1..]
-                                    .iter()
-                                    .take(hashes)
-                                    .filter(|c| **c == b'#')
-                                    .count()
-                                    == hashes)
-                        {
-                            k += 1;
-                        }
-                        k += hashes;
-                    }
-                }
-                b'"' => {
-                    k += 1;
-                    while k < b.len() && b[k] != b'"' {
-                        k += if b[k] == b'\\' { 2 } else { 1 };
-                    }
-                }
-                b'\'' if b.get(k + 2) == Some(&b'\'') => k += 2,
-                b'\'' if b.get(k + 1) == Some(&b'\\') => {
-                    while k + 1 < b.len() && b[k + 1] != b'\'' {
-                        k += 1;
-                    }
-                    k += 1;
-                }
-                b';' if depth == 0 => return k + 1,
-                b'{' => depth += 1,
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' if depth == 0 => return k,
+                b')' | b']' => depth -= 1,
                 b'}' => {
                     depth -= 1;
                     if depth == 0 {
                         return k + 1;
                     }
                 }
+                b';' | b',' if depth == 0 => return k + 1,
                 _ => {}
             }
             k += 1;
         }
         b.len()
+    }
+
+    /// A comment, string, raw string or char literal starting at `k`: the byte range of a
+    /// string's contents (none for the others) and where the literal ends.
+    #[allow(clippy::type_complexity)]
+    fn literal_at(b: &[u8], k: usize) -> Option<(Option<(usize, usize)>, usize)> {
+        let ident = |i: usize| b[i].is_ascii_alphanumeric() || b[i] == b'_';
+        let after_ident = k > 0 && ident(k - 1);
+        // `r` opens a raw string on its own or after a `b` or `c` prefix, as in `br#"..."#`.
+        let raw_start =
+            !after_ident || (matches!(b[k - 1], b'b' | b'c') && (k < 2 || !ident(k - 2)));
+        match b[k] {
+            b'/' if b.get(k + 1) == Some(&b'/') => {
+                let end = b[k..]
+                    .iter()
+                    .position(|c| *c == b'\n')
+                    .map_or(b.len(), |n| k + n);
+                Some((None, end))
+            }
+            b'/' if b.get(k + 1) == Some(&b'*') => {
+                let end = (k + 2..b.len().saturating_sub(1))
+                    .find(|&i| b[i] == b'*' && b[i + 1] == b'/')
+                    .map_or(b.len(), |i| i + 2);
+                Some((None, end))
+            }
+            b'r' if raw_start && matches!(b.get(k + 1), Some(b'"' | b'#')) => {
+                let hashes = b[k + 1..].iter().take_while(|c| **c == b'#').count();
+                if b.get(k + 1 + hashes) != Some(&b'"') {
+                    return None;
+                }
+                let start = k + 2 + hashes;
+                let close = (start..b.len())
+                    .find(|&i| {
+                        b[i] == b'"'
+                            && b[i + 1..]
+                                .iter()
+                                .take(hashes)
+                                .filter(|c| **c == b'#')
+                                .count()
+                                == hashes
+                    })
+                    .unwrap_or(b.len());
+                Some((Some((start, close)), (close + 1 + hashes).min(b.len())))
+            }
+            b'"' => {
+                let mut i = k + 1;
+                while i < b.len() && b[i] != b'"' {
+                    i += if b[i] == b'\\' { 2 } else { 1 };
+                }
+                let close = i.min(b.len());
+                Some((Some((k + 1, close)), (close + 1).min(b.len())))
+            }
+            // An escape takes at least two bytes, as in '\'' or '\u{1F600}'.
+            b'\'' if b.get(k + 1) == Some(&b'\\') => {
+                let close = (k + 3..b.len()).find(|&i| b[i] == b'\'').unwrap_or(b.len());
+                Some((None, (close + 1).min(b.len())))
+            }
+            // One character of one to four bytes; anything else is a lifetime or a label.
+            b'\'' if k + 1 < b.len() => {
+                let len = match b[k + 1] {
+                    c if c < 0x80 => 1,
+                    c if c >= 0xF0 => 4,
+                    c if c >= 0xE0 => 3,
+                    _ => 2,
+                };
+                (b.get(k + 1 + len) == Some(&b'\'')).then_some((None, k + 2 + len))
+            }
+            _ => None,
+        }
+    }
+
+    /// Every string literal in `src`, with the line it starts on.
+    fn string_literals(src: &str) -> Vec<(usize, String)> {
+        let b = src.as_bytes();
+        let (mut out, mut k) = (Vec::new(), 0);
+        while k < b.len() {
+            match literal_at(b, k) {
+                Some((range, end)) => {
+                    if let Some((s, e)) = range {
+                        let line = 1 + b[..k].iter().filter(|c| **c == b'\n').count();
+                        out.push((line, String::from_utf8_lossy(&b[s..e]).into_owned()));
+                    }
+                    k = end;
+                }
+                None => k += 1,
+            }
+        }
+        out
     }
 
     fn visit(dir: &Path, f: &mut dyn FnMut(&Path, &str)) {

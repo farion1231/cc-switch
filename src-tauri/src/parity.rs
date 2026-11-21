@@ -2,13 +2,14 @@
 //!
 //! The page clock: when the harness pins the app's time (see [`crate::clock`]), every webview's
 //! `Date` reads the same pinned instant. Each new webview starts at the instant pinned when it is
-//! created, and a change of the clock file reaches every open webview within a poll interval. The
-//! new instant is pushed again for a second after a change of the time or of the set of windows,
-//! because a page still loading has no `__parityClock` to receive it yet.
-//! Timers and `performance.now()` keep running in real time.
+//! created, every page that finishes loading gets the current instant, and a change of the clock
+//! file reaches every open webview within a poll interval. After a change of the time or of the
+//! set of windows the instant is pushed again for a second, because a page still loading has no
+//! `__parityClock` to receive it yet. Timers and `performance.now()` keep running in real time.
 
 use std::time::Duration;
 use tauri::plugin::Plugin;
+use tauri::webview::{PageLoadEvent, PageLoadPayload, Webview};
 use tauri::{AppHandle, Manager, Runtime};
 
 const POLL: Duration = Duration::from_millis(50);
@@ -71,6 +72,18 @@ impl<R: Runtime> Plugin<R> for ParityPlugin {
         crate::clock::pinned::path()?;
         let ms = crate::clock::now().timestamp_millis();
         Some(PAGE_CLOCK.replace("__PINNED_MS__", &ms.to_string()))
+    }
+
+    /// A page that loaded after the instant changed started from the instant baked into its
+    /// webview or kept in its sessionStorage; give it the current one.
+    fn on_page_load(&mut self, webview: &Webview<R>, payload: &PageLoadPayload<'_>) {
+        if payload.event() != PageLoadEvent::Finished || crate::clock::pinned::path().is_none() {
+            return;
+        }
+        let ms = crate::clock::now().timestamp_millis();
+        let _ = webview.eval(format!(
+            "window.__parityClock && window.__parityClock({ms})"
+        ));
     }
 
     fn initialize(
