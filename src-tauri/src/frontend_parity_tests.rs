@@ -37,6 +37,42 @@ const CODING_PLAN_URLS: &[&str] = &[
     "https://ollama.com.example.com/v1",
     "https://proxy.example.com/ollama.com/v1",
     "https://api.openai.com/v1",
+    // Hosts are matched on label boundaries (port and trailing dot allowed);
+    // a plan host inside a relay's path or query, or a look-alike suffix, is not.
+    "https://api.kimi.com:443/coding/v1",
+    "https://opencode.ai./zen/go",
+    "https://relay.example.com/api.kimi.com/coding/v1",
+    "https://relay.example.com/v1?upstream=https://open.bigmodel.cn",
+    "https://api.z.ai.relay.example.com/api/anthropic",
+    "https://zenmux.example.com/api",
+    "https://relay.example.com/ark.cn-beijing.volces.com/api/plan/v3",
+    "https://relay.example.com/api.commandcode.ai/provider",
+    // A schemeless URL carrying a plan URL in its query is the relay, not the plan.
+    "relay.example.com/v1?upstream=https://api.kimi.com/coding",
+    "api.kimi.com/v1?next=https://relay.example.com/coding",
+];
+
+/// Base URLs whose balance-provider detection both sides must agree on.
+const BALANCE_URLS: &[&str] = &[
+    "https://api.deepseek.com",
+    "https://api.deepseek.com/v1",
+    "https://api.stepfun.ai/v1",
+    "https://api.stepfun.com/v1",
+    "https://api.siliconflow.cn/v1",
+    "https://api.siliconflow.com/v1",
+    "https://openrouter.ai/api/v1",
+    "https://api.novita.ai/openai",
+    "HTTPS://API.DEEPSEEK.COM:443/v1",
+    "https://api.deepseek.com./v1",
+    // A balance host inside a relay's path or query, or a look-alike suffix, is the relay.
+    "https://relay.example.com/openrouter.ai/api/v1",
+    "https://relay.example.com/v1?upstream=https://api.novita.ai",
+    "https://api.deepseek.com.relay.example.com/v1",
+    "https://notopenrouter.ai/api/v1",
+    "relay.example.com/v1?upstream=https://api.stepfun.ai",
+    // Any URL scheme is stripped, not only http(s).
+    "wss://api.deepseek.com/v1",
+    "https://api.openai.com/v1",
 ];
 
 /// Header values whose validity both sides must agree on: trimmed-empty means
@@ -109,6 +145,13 @@ fn backend_constants_match_shared_fixture() {
             (url.to_string(), json!(id))
         })
         .collect();
+    let balance: Map<String, Value> = BALANCE_URLS
+        .iter()
+        .map(|url| {
+            let id = crate::services::balance::detect_provider_id(url);
+            (url.to_string(), json!(id))
+        })
+        .collect();
     let profile_scope: Map<String, Value> = AppType::all()
         .map(|app| {
             let scope = crate::services::profile::ProfileScope::for_app(&app);
@@ -149,6 +192,7 @@ fn backend_constants_match_shared_fixture() {
             "dict": crate::hermes_config::PROVIDER_SOURCE_DICT,
         },
         "codingPlanProviderByUrl": coding_plan,
+        "balanceProviderByUrl": balance,
         "quotaWarnBelowPercent": crate::tray::WARN_BELOW_PERCENT,
         "exchangeRateCurrencies": crate::services::exchange_rates::TARGET_CURRENCIES,
         "customIcon": {

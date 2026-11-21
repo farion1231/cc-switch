@@ -3157,6 +3157,17 @@ mod tests {
     }
 
     #[test]
+    fn downloaded_html_page_is_reported_as_invalid_archive() {
+        let page = std::io::Cursor::new(b"<!DOCTYPE html><html><body>app</body></html>".to_vec());
+        let err = SkillService::open_downloaded_archive(page).unwrap_err();
+        let value: serde_json::Value = serde_json::from_str(&err.to_string()).unwrap();
+        assert_eq!(value["code"], "ARCHIVE_INVALID");
+        assert_eq!(value["suggestion"], "checkRepoUrl");
+        // 不是 404，不能触发换分支重试
+        assert!(!SkillService::is_branch_not_found(&err));
+    }
+
+    #[test]
     fn extract_repo_archive_rejects_too_many_entries() {
         use std::io::Write;
         use zip::write::SimpleFileOptions;

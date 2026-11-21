@@ -44,6 +44,8 @@ export interface OpenTerminalOptions {
   skipPermissions?: boolean;
   /** 追加在生成的参数后面，后端按空白拆分、引号括起的算一个 */
   extraArgs?: string;
+  /** Linux 上本次启动使用 agy 当前登录。 */
+  agyUseCurrentLogin?: boolean;
 }
 
 export interface ClaudeDesktopStatus {
@@ -235,13 +237,15 @@ export const providersApi = {
     appId: AppId,
     options?: OpenTerminalOptions,
   ): Promise<boolean> {
-    const { cwd, skipPermissions, extraArgs } = options ?? {};
+    const { cwd, skipPermissions, extraArgs, agyUseCurrentLogin } =
+      options ?? {};
     return await invoke("open_provider_terminal", {
       providerId,
       app: appId,
       cwd,
       skipPermissions,
       extraArgs,
+      agyUseCurrentLogin,
     });
   },
 
