@@ -785,6 +785,7 @@ dependencies = [
  "auto-launch",
  "axum",
  "base64 0.22.1",
+ "block2 0.6.2",
  "brotli 7.0.0",
  "bytes",
  "chrono",
