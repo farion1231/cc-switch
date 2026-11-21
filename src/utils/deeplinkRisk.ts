@@ -5,7 +5,11 @@
 // Ollama / LM Studio 的常规用法），拦下来会打断合法场景。真正的缺口是用户在
 // 点「导入」时看不到自己在同意什么——所以补的是可见性，不是黑名单。
 
-export type RiskKind = "envHijack" | "privateEndpoint" | "shellCommand";
+export type RiskKind =
+  | "envHijack"
+  | "privateEndpoint"
+  | "shellCommand"
+  | "mcpDangerousField";
 
 const SENSITIVE_CONFIG_KEY_MARKERS = [
   "TOKEN",
@@ -199,6 +203,28 @@ export function classifyEnvKey(key: unknown): RiskKind | null {
   if (typeof key !== "string") return null;
   return ENV_HIJACK_PATTERNS.some((pattern) => pattern.test(key))
     ? "envHijack"
+    : null;
+}
+
+/**
+ * MCP 服务器配置中能读取宿主机环境变量、借壳执行辅助命令或劫持工作目录的扩展字段。
+ *
+ * 确认弹窗必须把这些字段原样展示（绝不能因为字段名含 `token` 就脱敏掉被窃取的
+ * 宿主机环境变量名），并用醒目的风险警告提示用户。
+ */
+const MCP_DANGEROUS_FIELDS = new Set([
+  "bearer_token_env_var",
+  "env_http_headers",
+  "http_headers_helper",
+  "env_vars",
+  "cwd",
+  "working_dir",
+]);
+
+export function classifyMcpField(key: unknown): RiskKind | null {
+  if (typeof key !== "string") return null;
+  return MCP_DANGEROUS_FIELDS.has(key.toLowerCase())
+    ? "mcpDangerousField"
     : null;
 }
 
