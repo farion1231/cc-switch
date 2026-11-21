@@ -1,5 +1,13 @@
 import { useTranslation } from "react-i18next";
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
+import { ChevronDown } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { HelpTip } from "@/components/ui/help-tip";
 import JsonEditor from "@/components/JsonEditor";
@@ -16,11 +24,17 @@ const QUICK_TOGGLES = [
   "disableAutoModeServer",
 ] as const;
 
+/** `advisorModel` 接受的别名；也可以填完整模型 ID。不设该键即关闭 advisor。 */
+const ADVISOR_MODEL_ALIASES = ["opus", "sonnet", "fable"] as const;
+const DEFAULT_ADVISOR_MODEL = "opus";
+
 interface CommonConfigEditorProps {
   value: string;
   onChange: (value: string) => void;
   /** 行里保存着、但不随切换生效的字段；可以一键加进上方 JSON（保存后成为全局设置）。 */
   inactiveFields?: ProviderEditorInactiveField[];
+  /** advisor 只在 Anthropic 官方 API 上可用；非官方登录的供应商不显示该选项。 */
+  showAdvisorModel?: boolean;
 }
 
 /** 把一个字段写进 JSON 文本；解析不了就原样返回。 */
@@ -49,6 +63,7 @@ export function CommonConfigEditor({
   value,
   onChange,
   inactiveFields = [],
+  showAdvisorModel = false,
 }: CommonConfigEditorProps) {
   const { t } = useTranslation();
   const [isDarkMode, setIsDarkMode] = useState(false);
@@ -178,6 +193,39 @@ export function CommonConfigEditor({
     [localValue, handleLocalChange],
   );
 
+  const advisorModel = useMemo(() => {
+    try {
+      const value = JSON.parse(localValue || "{}")?.advisorModel;
+      return typeof value === "string" ? value : "";
+    } catch {
+      return "";
+    }
+  }, [localValue]);
+
+  // 取消勾选后再勾上，恢复上次填的模型，而不是退回默认值。
+  const lastAdvisorModel = useRef(DEFAULT_ADVISOR_MODEL);
+  useEffect(() => {
+    if (advisorModel.trim()) lastAdvisorModel.current = advisorModel;
+  }, [advisorModel]);
+
+  /** 写入或删除顶层 `advisorModel`：空值即删除（Claude Code 里未设置 = 关闭 advisor）。 */
+  const setAdvisorModel = useCallback(
+    (model: string) => {
+      try {
+        const config = JSON.parse(localValue || "{}");
+        if (model.trim()) {
+          config.advisorModel = model.trim();
+        } else {
+          delete config.advisorModel;
+        }
+        handleLocalChange(JSON.stringify(config, null, 2));
+      } catch {
+        // Don't modify if JSON is invalid
+      }
+    },
+    [localValue, handleLocalChange],
+  );
+
   const handleAddInactiveField = useCallback(
     (field: ProviderEditorInactiveField) => {
       const next = setFieldInConfig(localValue, field);
@@ -230,6 +278,56 @@ export function CommonConfigEditor({
             </HelpTip>
           </span>
         ))}
+        {showAdvisorModel && (
+          <span className="inline-flex items-center gap-1">
+            <label className="inline-flex items-center gap-2 text-sm text-fg-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={advisorModel.trim() !== ""}
+                onChange={(e) =>
+                  setAdvisorModel(
+                    e.target.checked ? lastAdvisorModel.current : "",
+                  )
+                }
+                className="ui-checkbox"
+              />
+              <span>{t("claudeConfig.advisorModel")}</span>
+            </label>
+            <HelpTip title={t("claudeConfig.advisorModel")}>
+              {t("claudeConfig.advisorModelHelp")}
+            </HelpTip>
+            <span className="relative ml-1">
+              <Input
+                value={advisorModel}
+                onChange={(e) => setAdvisorModel(e.target.value)}
+                placeholder={DEFAULT_ADVISOR_MODEL}
+                aria-label={t("claudeConfig.advisorModelInput")}
+                className="h-6 w-36 pl-2 pr-6 text-sm"
+              />
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    aria-label={t("claudeConfig.advisorModelPresets")}
+                    className="absolute inset-y-0 right-0 flex w-6 items-center justify-center text-fg-3 hover:text-fg-1"
+                  >
+                    <ChevronDown className="h-3.5 w-3.5" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="z-[200] min-w-36">
+                  {ADVISOR_MODEL_ALIASES.map((alias) => (
+                    <DropdownMenuItem
+                      key={alias}
+                      onSelect={() => setAdvisorModel(alias)}
+                    >
+                      {alias}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </span>
+          </span>
+        )}
       </div>
       <JsonEditor
         value={localValue}

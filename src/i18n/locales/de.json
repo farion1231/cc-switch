@@ -79,6 +79,10 @@
     "disableArtifactHelp": "Lässt das Artifact-Tool in Anfragen weg. Manche Drittanbieter-Gateways lehnen sein Schema ab und antworten bei jeder Anfrage mit 400. Wechselt mit dem Anbieter.",
     "disableAutoModeServer": "Serverseitige Prüfungen des Auto-Modus deaktivieren",
     "disableAutoModeServerHelp": "Gateways können die serverseitige Prüfung nicht ausführen, daher pausiert der Auto-Modus einmal pro Sitzung mit dem Hinweis „nicht berechtigt“ und greift nach Drücken der Eingabetaste auf die lokale Prüfung zurück. Bei aktivierter Option wird sofort und ohne Hinweis die lokale Prüfung verwendet. Bei offiziellen Endpunkten deaktiviert lassen.",
+    "advisorModel": "Advisor-Modell",
+    "advisorModelHelp": "Lässt Claude über das serverseitige Advisor-Tool ein stärkeres Modell konsultieren. Leer lassen, um den Advisor zu deaktivieren. Akzeptiert opus, sonnet, fable oder eine vollständige Modell-ID; der Advisor muss mindestens so leistungsfähig sein wie das Hauptmodell. Funktioniert nur über die Anthropic-API; andere Endpunkte ignorieren diese Option. Wechselt mit dem Anbieter.",
+    "advisorModelInput": "Name des Advisor-Modells",
+    "advisorModelPresets": "Advisor-Modell-Voreinstellungen",
     "keyFieldsHint": "Endpunkt, Schlüssel, Modelle, Kontextfenster und Kompatibilitätsschalter folgen dem Anbieter; alles andere sind globale Claude-Code-Einstellungen und gilt nach dem Speichern für jeden Anbieter.",
     "inactiveFieldsHint": "Von einer älteren Version in diesem Anbieter gespeichert; beim Wechsel werden sie nicht mehr angewendet. Klicken Sie auf einen Eintrag, um ihn oben hinzuzufügen; nach dem Speichern gilt er für jeden Anbieter.",
     "addToGlobalSettings": "Zu globalen Einstellungen hinzufügen"
