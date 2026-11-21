@@ -361,7 +361,7 @@ fn claude_responses_targets_xai(provider: &Provider) -> bool {
     .into_iter()
     .flatten()
     .filter_map(Value::as_str)
-    .any(|url| url.to_ascii_lowercase().contains("api.x.ai"))
+    .any(|url| crate::codex_config::codex_url_host_matches_any(url, &["api.x.ai"]))
 }
 
 pub fn transform_claude_request_for_api_format(
@@ -3188,5 +3188,50 @@ mod tests {
         assert!(changed);
         assert_eq!(body["thinking"]["type"], "disabled");
         assert!(body.get("output_config").is_none());
+    }
+
+    /// 只有发往 xAI 的 Responses 请求改写托管搜索的 tool_choice；中转站地址里带着
+    /// api.x.ai 不算发往 xAI。
+    #[test]
+    fn xai_web_search_rewrite_follows_the_base_url_host() {
+        let forced_search = |base_url: &str| {
+            let provider = create_provider_with_meta(
+                json!({"env": {"ANTHROPIC_BASE_URL": base_url, "ANTHROPIC_API_KEY": "sk"}}),
+                ProviderMeta {
+                    api_format: Some("openai_responses".to_string()),
+                    ..Default::default()
+                },
+            );
+            transform_claude_request_for_api_format(
+                json!({
+                    "model": "grok-4.5",
+                    "max_tokens": 256,
+                    "messages": [{"role": "user", "content": "search"}],
+                    "tools": [{"type": "web_search_20250305", "name": "web_search"}],
+                    "tool_choice": {"type": "tool", "name": "web_search"}
+                }),
+                &provider,
+                "openai_responses",
+                None,
+                None,
+            )
+            .unwrap()["tool_choice"]
+                .clone()
+        };
+        for url in [
+            "https://api.x.ai/v1",
+            "https://API.X.AI/v1",
+            "https://eu.api.x.ai:8443/v1",
+            "https://api.x.ai./v1",
+        ] {
+            assert_eq!(forced_search(url), json!("required"), "{url}");
+        }
+        for url in [
+            "https://relay.example.com/api.x.ai/v1",
+            "https://relay.example.com/v1?upstream=https://api.x.ai/v1",
+            "https://api.x.ai.relay.example.com/v1",
+        ] {
+            assert_ne!(forced_search(url), json!("required"), "{url}");
+        }
     }
 }

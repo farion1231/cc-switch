@@ -1,9 +1,9 @@
-import { isMac, isWindows } from "@/lib/platform";
+import { isLinux, isMac, isWindows } from "@/lib/platform";
 import type { ProviderMeta } from "@/types";
 
-/** 能不能切 agy 的全局登录：和后端 `agy_account::keychain::supported` 一致（macOS 钥匙串、Windows 凭据管理器）。 */
+/** 能不能切 agy 的全局登录：和后端 `agy_account::keychain::supported` 一致。 */
 export function canSwitchAgyAccount(): boolean {
-  return isMac() || isWindows();
+  return isMac() || isWindows() || isLinux();
 }
 
 export function resolveManagedAccountId(

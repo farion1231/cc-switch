@@ -12,6 +12,7 @@ use crate::services::sql_helpers::{
 use chrono::{Local, NaiveDate, TimeZone, Timelike};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
+use std::cell::OnceCell;
 use std::collections::{HashMap, VecDeque};
 use std::str::FromStr;
 use std::sync::LazyLock;
@@ -199,53 +200,65 @@ fn est_first_token_eligible_sql(alias: &str) -> String {
     format!("{data_source} <> 'proxy' AND {alias}.first_token_ms IS NOT NULL")
 }
 
-/// 按分组键取首字时间的中位数（毫秒）。首字时间长尾明显，偶尔一次排队就是十几秒，
-/// 平均值会被拉高，所以用中位数；SQLite 没有中位数函数，取出排好序的值在这里算。
-/// `key_sql` 是分组键表达式，`from_sql` 是 `FROM ... JOIN ...`，`detail_where` 是统计查询
-/// 明细部分的 `WHERE ...`（可为空），`params` 是它的参数。
+/// Read exact and estimated samples together, then select each median in O(n).
+/// SQL need not sort either population or scan the same detail rows twice.
+type MedianGroups = HashMap<String, u64>;
 fn first_token_medians(
     conn: &Connection,
     key_sql: &str,
     from_sql: &str,
     detail_where: &str,
-    eligible_sql: &str,
     params: &[&dyn rusqlite::ToSql],
-) -> Result<HashMap<String, u64>, AppError> {
+) -> Result<(MedianGroups, MedianGroups), AppError> {
     let connector = if detail_where.is_empty() {
         "WHERE"
     } else {
         "AND"
     };
+    let exact = first_token_eligible_sql("l");
+    let estimated = est_first_token_eligible_sql("l");
     let sql = format!(
-        "SELECT {key_sql} AS k, l.first_token_ms {from_sql} {detail_where} {connector} {eligible_sql}
-         ORDER BY k, l.first_token_ms"
+        "SELECT {key_sql}, l.first_token_ms, ({exact}) {from_sql} {detail_where}
+         {connector} (({exact}) OR ({estimated}))"
     );
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(params, |row| {
         Ok((
             row.get::<_, String>(0)?,
             row.get::<_, i64>(1)?.max(0) as u64,
+            row.get::<_, bool>(2)?,
         ))
     })?;
-
-    let mut grouped: HashMap<String, Vec<u64>> = HashMap::new();
+    let mut exact_groups: HashMap<String, Vec<u64>> = HashMap::new();
+    let mut estimated_groups: HashMap<String, Vec<u64>> = HashMap::new();
     for row in rows {
-        let (key, ms) = row?;
-        grouped.entry(key).or_default().push(ms);
+        let (key, ms, exact) = row?;
+        let groups = if exact {
+            &mut exact_groups
+        } else {
+            &mut estimated_groups
+        };
+        groups.entry(key).or_default().push(ms);
     }
-    Ok(grouped
-        .into_iter()
-        .map(|(key, values)| {
-            // 已按值升序取出
-            let mid = values.len() / 2;
-            let median = if values.len() % 2 == 0 {
-                (values[mid - 1] + values[mid]) / 2
-            } else {
-                values[mid]
-            };
-            (key, median)
-        })
-        .collect())
+    let medians = |groups: HashMap<String, Vec<u64>>| {
+        groups
+            .into_iter()
+            .map(|(key, mut values)| (key, select_median(&mut values)))
+            .collect()
+    };
+    Ok((medians(exact_groups), medians(estimated_groups)))
+}
+
+fn select_median(values: &mut [u64]) -> u64 {
+    let mid = values.len() / 2;
+    let even = values.len() % 2 == 0;
+    let (lower, middle, _) = values.select_nth_unstable(mid);
+    if even {
+        let low = *lower.iter().max().expect("nonempty lower half");
+        low + (*middle - low) / 2
+    } else {
+        *middle
+    }
 }
 
 /// 模型统计
@@ -497,14 +510,21 @@ impl SqlWhere {
 /// 应用按 [`folded_app_type_sql`] 匹配（claude-desktop 算 claude）；Provider 按展示名
 /// 精确匹配（复用 [`provider_name_coalesce`]，会话占位行的可读名如 "Claude (Session)"
 /// 也能选中）；模型按 [`effective_model_sql`] 匹配。
-#[derive(Clone, Copy)]
 struct UsageFilter<'a> {
     app_type: Option<&'a str>,
     provider_name: Option<&'a str>,
     model: Option<&'a str>,
+    pricing: OnceCell<PricingCatalog>,
 }
 
 impl UsageFilter<'_> {
+    fn pricing(&self, conn: &Connection) -> Result<&PricingCatalog, AppError> {
+        if self.pricing.get().is_none() {
+            let _ = self.pricing.set(PricingCatalog::load(conn)?);
+        }
+        Ok(self.pricing.get().expect("loaded above"))
+    }
+
     /// 追加筛选条件。传了 `provider_name` 时 FROM 里必须有 [`Self::join`]（或同样的
     /// `LEFT JOIN providers`），否则 `{provider_alias}.name` 无法解析。
     fn push_to(
@@ -516,10 +536,15 @@ impl UsageFilter<'_> {
     ) -> Result<(), AppError> {
         if let Some(app_type) = self.app_type {
             let column = format!("{log_alias}.app_type");
-            conditions.push(
-                format!("{} = ?", folded_app_type_sql(&column)),
-                app_type.to_string(),
-            );
+            // Keep the indexed column bare; CASE remains only in grouping.
+            if app_type == "claude" {
+                conditions.push_condition(format!("{column} IN ('claude', 'claude-desktop')"));
+            } else if app_type == "claude-desktop" {
+                // This UI filter names folded apps; Desktop is part of Claude.
+                conditions.push_condition("0");
+            } else {
+                conditions.push(format!("{column} = ?"), app_type.to_string());
+            }
         }
         if let Some(name) = self.provider_name {
             conditions.push(
@@ -529,7 +554,7 @@ impl UsageFilter<'_> {
         }
         if let Some(model) = self.model {
             let expr = effective_model_sql(log_alias);
-            let suffixes = merged_reasoning_suffixes_for_filter(conn, model)?;
+            let suffixes = merged_reasoning_suffixes_for_filter(self.pricing(conn)?, model)?;
             if suffixes.is_empty() {
                 conditions.push(format!("{expr} = ?"), model.to_string());
             } else {
@@ -595,7 +620,7 @@ impl UsageFilter<'_> {
 
 /// 仅合并四项 token 单价完全一致且基础模型本身有明确价格的推理档位；
 /// 缺失基础定价、或任意一项存在自定义差价时保持独立。
-fn statistics_model(conn: &Connection, model: &str) -> Result<String, AppError> {
+fn statistics_model_with(conn: &impl PricingLookup, model: &str) -> Result<String, AppError> {
     let targets = reasoning_tier_merge_targets(model);
     if targets.is_empty() {
         return Ok(model.to_string());
@@ -603,7 +628,7 @@ fn statistics_model(conn: &Connection, model: &str) -> Result<String, AppError> 
     let parse = |row: (String, String, String, String)| {
         ModelPricing::from_strings(&row.0, &row.1, &row.2, &row.3).ok()
     };
-    let Some(pricing) = find_model_pricing_row(conn, model)?.and_then(parse) else {
+    let Some(pricing) = lookup_model_pricing(conn, model)?.and_then(parse) else {
         return Ok(model.to_string());
     };
     for target in targets {
@@ -622,10 +647,10 @@ fn statistics_model(conn: &Connection, model: &str) -> Result<String, AppError> 
 }
 
 fn merged_reasoning_suffixes_for_filter(
-    conn: &Connection,
+    conn: &impl PricingLookup,
     model: &str,
 ) -> Result<Vec<String>, AppError> {
-    if statistics_model(conn, model)? != model {
+    if statistics_model_with(conn, model)? != model {
         return Ok(Vec::new());
     }
     let mut candidate_suffixes: Vec<String> = REASONING_EFFORT_SUFFIXES
@@ -642,16 +667,21 @@ fn merged_reasoning_suffixes_for_filter(
     let mut matched = Vec::new();
     for suffix in candidate_suffixes {
         let variant = format!("{model}{suffix}");
-        if statistics_model(conn, &variant)? == model {
+        if statistics_model_with(conn, &variant)? == model {
             matched.push(suffix);
         }
     }
     Ok(matched)
 }
 
+fn strip_model_prefix_sql(expr: &str) -> String {
+    format!("REPLACE(TRIM({expr}), RTRIM(TRIM({expr}), REPLACE(TRIM({expr}), '/', '')), '')")
+}
+
 /// 跨来源去重的模型匹配条件。
 ///
-/// 常规路径按上游回显模型匹配。仅 Codex 会话允许再匹配代理记录的请求模型：
+/// 常规路径按上游回显模型匹配（支持剥离 `provider/` 等命名空间前缀，如 `antigravity/`）。
+/// 仅 Codex 会话允许再匹配代理记录的请求模型：
 /// Codex rollout 保留客户端别名，而代理 `model` 可能已被映射为实际上游模型。
 /// 空白或 `unknown` 请求模型不能放宽匹配，避免无有效别名时扩大启发式去重范围。
 fn session_proxy_model_match_sql(
@@ -661,17 +691,25 @@ fn session_proxy_model_match_sql(
     session_app_type: &str,
     session_data_source: &str,
 ) -> String {
+    let p_model = strip_model_prefix_sql(proxy_model);
+    let s_model = strip_model_prefix_sql(session_model);
+    let p_req_model = strip_model_prefix_sql(proxy_request_model);
     format!(
         "(
-            LOWER({proxy_model}) = LOWER({session_model})
-            OR LOWER({proxy_model}) = 'unknown'
-            OR LOWER({session_model}) = 'unknown'
+            (
+                NULLIF({p_model}, '') IS NOT NULL
+                AND NULLIF({s_model}, '') IS NOT NULL
+                AND LOWER({p_model}) = LOWER({s_model})
+            )
+            OR LOWER(TRIM({proxy_model})) = 'unknown'
+            OR LOWER(TRIM({session_model})) = 'unknown'
             OR (
                 {session_app_type} = 'codex'
                 AND {session_data_source} = 'codex_session'
-                AND NULLIF(TRIM({proxy_request_model}), '') IS NOT NULL
-                AND LOWER(TRIM({proxy_request_model})) <> 'unknown'
-                AND LOWER(TRIM({proxy_request_model})) = LOWER(TRIM({session_model}))
+                AND NULLIF({p_req_model}, '') IS NOT NULL
+                AND LOWER({p_req_model}) <> 'unknown'
+                AND NULLIF({s_model}, '') IS NOT NULL
+                AND LOWER({p_req_model}) = LOWER({s_model})
             )
         )"
     )
@@ -1156,6 +1194,7 @@ impl Database {
             app_type,
             provider_name,
             model,
+            pricing: OnceCell::new(),
         };
         let (where_clause, params_vec) = filter
             .detail_where(&conn, start_date, end_date)?
@@ -1264,6 +1303,7 @@ impl Database {
             app_type: None,
             provider_name,
             model,
+            pricing: OnceCell::new(),
         };
         let (detail_where, detail_params) = filter
             .detail_where(&conn, start_date, end_date)?
@@ -1389,6 +1429,7 @@ impl Database {
             app_type,
             provider_name,
             model,
+            pricing: OnceCell::new(),
         };
 
         let end_ts = end_date.unwrap_or_else(|| Local::now().timestamp());
@@ -1670,6 +1711,7 @@ impl Database {
             app_type,
             provider_name,
             model,
+            pricing: OnceCell::new(),
         };
         let mut detail = SqlWhere::default();
         filter.push_to(&conn, &mut detail, "l", "p")?;
@@ -1728,6 +1770,7 @@ impl Database {
             app_type,
             provider_name,
             model,
+            pricing: OnceCell::new(),
         };
         let (detail_where, detail_params) = filter
             .detail_where(&conn, start_date, end_date)?
@@ -1799,21 +1842,14 @@ impl Database {
         let (first_token_ms, est_first_token_ms) = {
             let detail_refs: Vec<&dyn rusqlite::ToSql> =
                 detail_params.iter().map(|p| p.as_ref()).collect();
-            let medians = |eligible_sql: String| {
-                first_token_medians(
-                    &conn,
-                    "l.provider_id || char(31) || l.app_type",
-                    "FROM proxy_request_logs l
-                     LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type",
-                    &detail_where,
-                    &eligible_sql,
-                    &detail_refs,
-                )
-            };
-            (
-                medians(first_token_eligible_sql("l"))?,
-                medians(est_first_token_eligible_sql("l"))?,
-            )
+            first_token_medians(
+                &conn,
+                "l.provider_id || char(31) || l.app_type",
+                "FROM proxy_request_logs l
+                 LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type",
+                &detail_where,
+                &detail_refs,
+            )?
         };
 
         let mut stmt = conn.prepare(&sql)?;
@@ -1877,6 +1913,7 @@ impl Database {
             app_type,
             provider_name,
             model,
+            pricing: OnceCell::new(),
         };
         let (detail_where, detail_params) = filter
             .detail_where(&conn, start_date, end_date)?
@@ -1965,7 +2002,7 @@ impl Database {
         let mut model_cases = Vec::new();
         for row in rows {
             let (raw, count, tokens, cost, successes, output, ms, est_output, est_ms) = row?;
-            let model = statistics_model(&conn, &raw)?;
+            let model = statistics_model_with(filter.pricing(&conn)?, &raw)?;
             if model != raw {
                 // 来自数据库的模型名作为 SQL 字符串字面量使用。
                 model_cases.push(format!(
@@ -2017,18 +2054,8 @@ impl Database {
         let detail_refs: Vec<&dyn rusqlite::ToSql> =
             detail_params.iter().map(|p| p.as_ref()).collect();
         let from_sql = format!("FROM proxy_request_logs l {detail_join}");
-        let medians = |eligible_sql: String| {
-            first_token_medians(
-                &conn,
-                &median_model,
-                &from_sql,
-                &detail_where,
-                &eligible_sql,
-                &detail_refs,
-            )
-        };
-        let first_token_ms = medians(first_token_eligible_sql("l"))?;
-        let est_first_token_ms = medians(est_first_token_eligible_sql("l"))?;
+        let (first_token_ms, est_first_token_ms) =
+            first_token_medians(&conn, &median_model, &from_sql, &detail_where, &detail_refs)?;
         let mut stats: Vec<_> = grouped
             .into_values()
             .map(|(mut stat, cost, successes)| {
@@ -2063,6 +2090,7 @@ impl Database {
             app_type: filters.app_type.as_deref(),
             provider_name: filters.provider_name.as_deref(),
             model: filters.model.as_deref(),
+            pricing: OnceCell::new(),
         };
         let mut conditions = SqlWhere::default();
         conditions.push_condition(effective_usage_log_filter_for_range(
@@ -2471,7 +2499,7 @@ struct PricingCandidate {
 /// 直接定价查询：只认精确匹配及命名空间/版本/日期/点号标准化后的精确匹配，
 /// 不走推理档位回退，也不走 `LIKE 'base-%'` 前缀匹配，避免缺失基础定价时借用邻近档位价格。
 fn find_direct_model_pricing_row(
-    conn: &Connection,
+    conn: &impl PricingLookup,
     model_id: &str,
 ) -> Result<Option<(String, String, String, String)>, AppError> {
     let cleaned = clean_model_id_for_pricing(model_id);
@@ -2507,7 +2535,7 @@ fn find_direct_model_pricing_row(
     }
 
     for candidate in &candidates {
-        if let Some(row) = query_model_pricing_exact(conn, candidate)? {
+        if let Some(row) = conn.exact(candidate)? {
             return Ok(Some(row));
         }
     }
@@ -2517,6 +2545,18 @@ fn find_direct_model_pricing_row(
 
 pub(crate) fn find_model_pricing_row(
     conn: &Connection,
+    model: &str,
+) -> Result<Option<PricingRow>, AppError> {
+    lookup_model_pricing(conn, model)
+}
+
+#[cfg(test)]
+fn statistics_model(conn: &Connection, model: &str) -> Result<String, AppError> {
+    statistics_model_with(conn, model)
+}
+
+fn lookup_model_pricing(
+    conn: &impl PricingLookup,
     model_id: &str,
 ) -> Result<Option<(String, String, String, String)>, AppError> {
     let candidates = model_pricing_candidates(model_id);
@@ -2525,14 +2565,14 @@ pub(crate) fn find_model_pricing_row(
     }
 
     for candidate in &candidates {
-        if let Some(row) = query_model_pricing_exact(conn, &candidate.model_id)? {
+        if let Some(row) = conn.exact(&candidate.model_id)? {
             return Ok(Some(row));
         }
     }
 
     for candidate in &candidates {
         if candidate.allow_prefix_match && should_try_pricing_prefix_match(&candidate.model_id) {
-            if let Some(row) = query_model_pricing_prefix(conn, &candidate.model_id)? {
+            if let Some(row) = conn.prefix(&candidate.model_id)? {
                 return Ok(Some(row));
             }
         }
@@ -2575,6 +2615,76 @@ pub(crate) fn is_placeholder_pricing_model(model_id: &str) -> bool {
     normalized.is_empty() || matches!(normalized.as_str(), "unknown" | "null" | "none")
 }
 
+type PricingRow = (String, String, String, String);
+
+trait PricingLookup {
+    fn exact(&self, model: &str) -> Result<Option<PricingRow>, AppError>;
+    fn prefix(&self, model: &str) -> Result<Option<PricingRow>, AppError>;
+}
+
+impl PricingLookup for Connection {
+    fn exact(&self, model: &str) -> Result<Option<PricingRow>, AppError> {
+        query_model_pricing_exact(self, model)
+    }
+    fn prefix(&self, model: &str) -> Result<Option<PricingRow>, AppError> {
+        query_model_pricing_prefix(self, model)
+    }
+}
+
+/// A statistics request owns one immutable pricing snapshot. Every reasoning
+/// suffix lookup is then a hash lookup, and subsequent requests see all edits,
+/// imports and transaction rollbacks without a second invalidation protocol.
+struct PricingCatalog {
+    exact: HashMap<String, PricingRow>,
+    prefixes: HashMap<String, PricingRow>,
+}
+
+impl PricingCatalog {
+    fn load(conn: &Connection) -> Result<Self, AppError> {
+        let mut stmt = conn.prepare(
+            "SELECT model_id, input_cost_per_million, output_cost_per_million,
+            cache_read_cost_per_million, cache_creation_cost_per_million FROM model_pricing
+            ORDER BY LENGTH(model_id), rowid",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                (
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                ),
+            ))
+        })?;
+        let mut catalog = Self {
+            exact: HashMap::new(),
+            prefixes: HashMap::new(),
+        };
+        for row in rows {
+            let (model, pricing) = row?;
+            let model = model.to_ascii_lowercase();
+            for (at, _) in model.match_indices('-') {
+                catalog
+                    .prefixes
+                    .entry(model[..at].to_string())
+                    .or_insert_with(|| pricing.clone());
+            }
+            catalog.exact.entry(model).or_insert(pricing);
+        }
+        Ok(catalog)
+    }
+}
+
+impl PricingLookup for PricingCatalog {
+    fn exact(&self, model: &str) -> Result<Option<PricingRow>, AppError> {
+        Ok(self.exact.get(&model.to_ascii_lowercase()).cloned())
+    }
+    fn prefix(&self, model: &str) -> Result<Option<PricingRow>, AppError> {
+        Ok(self.prefixes.get(&model.to_ascii_lowercase()).cloned())
+    }
+}
+
 fn query_model_pricing_exact(
     conn: &Connection,
     model_id: &str,
@@ -2583,7 +2693,7 @@ fn query_model_pricing_exact(
         "SELECT input_cost_per_million, output_cost_per_million,
                 cache_read_cost_per_million, cache_creation_cost_per_million
          FROM model_pricing
-         WHERE model_id = ?1 COLLATE NOCASE",
+         WHERE model_id = ?1 COLLATE NOCASE ORDER BY rowid LIMIT 1",
         [model_id],
         |row| {
             Ok((
@@ -2602,13 +2712,17 @@ fn query_model_pricing_prefix(
     conn: &Connection,
     model_id: &str,
 ) -> Result<Option<(String, String, String, String)>, AppError> {
-    let pattern = format!("{model_id}-%");
+    let escaped = model_id
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
+    let pattern = format!("{escaped}-%");
     conn.query_row(
         "SELECT input_cost_per_million, output_cost_per_million,
                 cache_read_cost_per_million, cache_creation_cost_per_million
          FROM model_pricing
-         WHERE model_id LIKE ?1
-         ORDER BY LENGTH(model_id) ASC
+         WHERE model_id LIKE ?1 ESCAPE '\\'
+         ORDER BY LENGTH(model_id) ASC, rowid
          LIMIT 1",
         [pattern],
         |row| {
@@ -3467,6 +3581,221 @@ mod tests {
             params!["gpt-5.6-sol-joybuilder", "codex-proxy-alias"],
         )?;
         assert!(!has_matching_proxy_usage_log(&conn, &key)?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_matching_proxy_log_matches_codex_prefix_model() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+        insert_usage_log(
+            &conn,
+            "codex-proxy-prefix",
+            "codex",
+            "provider-cpa",
+            "antigravity/gemini-3.8-flash-high",
+            "proxy",
+            1_000,
+            2_341,
+            228,
+            116_000,
+            0,
+            200,
+            "0.08",
+        )?;
+        conn.execute(
+            "UPDATE proxy_request_logs SET request_model = ?1 WHERE request_id = ?2",
+            params!["antigravity/gemini-3.8-flash-high", "codex-proxy-prefix"],
+        )?;
+
+        // 会话日志经过 normalize_codex_model 剥离了前缀
+        let key = DedupKey {
+            app_type: "codex",
+            data_source: "codex_session",
+            model: "gemini-3.8-flash-high",
+            input_tokens: 2_341,
+            output_tokens: 228,
+            cache_read_tokens: 116_000,
+            cache_creation_tokens: 0,
+            created_at: 1_001,
+        };
+
+        assert!(has_matching_proxy_usage_log(&conn, &key)?);
+        assert!(should_skip_session_insert(
+            &conn,
+            "codex-session-prefix",
+            &key
+        )?);
+
+        // 如果代理的 request_model 带有前缀，而实际 model 被路由改写，也能识别
+        conn.execute(
+            "UPDATE proxy_request_logs SET model = ?1, request_model = ?2 WHERE request_id = ?3",
+            params![
+                "upstream-routed-model",
+                "antigravity/gemini-3.8-flash-high",
+                "codex-proxy-prefix"
+            ],
+        )?;
+        assert!(has_matching_proxy_usage_log(&conn, &key)?);
+
+        // 多级前缀在 request_model 回退分支中也能正确识别
+        conn.execute(
+            "UPDATE proxy_request_logs SET model = ?1, request_model = ?2 WHERE request_id = ?3",
+            params![
+                "upstream-routed-model",
+                "cpa/antigravity/gemini-3.8-flash-high",
+                "codex-proxy-prefix"
+            ],
+        )?;
+        assert!(has_matching_proxy_usage_log(&conn, &key)?);
+
+        // request_model 剥离前缀后为 unknown 时不放宽匹配
+        conn.execute(
+            "UPDATE proxy_request_logs SET model = ?1, request_model = ?2 WHERE request_id = ?3",
+            params!["upstream-routed-model", "cpa/unknown", "codex-proxy-prefix"],
+        )?;
+        assert!(!has_matching_proxy_usage_log(&conn, &key)?);
+
+        // 多级前缀（如 cpa/antigravity/gemini-3.8-flash-high）同样与最后一个 '/' 之后的模型对齐
+        conn.execute(
+            "UPDATE proxy_request_logs SET model = ?1, request_model = ?1 WHERE request_id = ?2",
+            params![
+                "cpa/antigravity/gemini-3.8-flash-high",
+                "codex-proxy-prefix"
+            ],
+        )?;
+        assert!(has_matching_proxy_usage_log(&conn, &key)?);
+        assert!(should_skip_session_insert(
+            &conn,
+            "codex-session-prefix",
+            &key
+        )?);
+
+        // 模型名不同则不误伤
+        let mut different_model = key;
+        different_model.model = "gemini-2.5-pro";
+        assert!(!has_matching_proxy_usage_log(&conn, &different_model)?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_effective_filter_dedups_codex_prefix_model() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+        insert_usage_log(
+            &conn,
+            "codex-proxy-prefix",
+            "codex",
+            "provider-cpa",
+            "antigravity/gemini-3.8-flash-high",
+            "proxy",
+            1_000,
+            2_341,
+            228,
+            116_000,
+            0,
+            200,
+            "0.08",
+        )?;
+        conn.execute(
+            "UPDATE proxy_request_logs SET request_model = ?1 WHERE request_id = ?2",
+            params!["antigravity/gemini-3.8-flash-high", "codex-proxy-prefix"],
+        )?;
+        insert_usage_log(
+            &conn,
+            "codex-session-prefix",
+            "codex",
+            "_codex_session",
+            "gemini-3.8-flash-high",
+            "codex_session",
+            1_001,
+            2_341,
+            228,
+            116_000,
+            0,
+            200,
+            "0.08",
+        )?;
+
+        let filter = effective_usage_log_filter("l");
+        let sql = format!(
+            "SELECT request_id FROM proxy_request_logs l WHERE {filter} ORDER BY request_id"
+        );
+        let request_ids = conn
+            .prepare(&sql)?
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(request_ids, vec!["codex-proxy-prefix".to_string()]);
+
+        // range filter (JOIN 路径) 同样正确去重
+        let range_filter = effective_usage_log_filter_for_range(&conn, "l", None, None)?;
+        let range_sql = format!(
+            "SELECT request_id FROM proxy_request_logs l WHERE {range_filter} ORDER BY request_id"
+        );
+        let range_ids = conn
+            .prepare(&range_sql)?
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(range_ids, vec!["codex-proxy-prefix".to_string()]);
+
+        // 多级前缀在单行过滤与 range JOIN 中也能正确去重
+        conn.execute(
+            "UPDATE proxy_request_logs SET model = ?1, request_model = ?1 WHERE request_id = ?2",
+            params![
+                "cpa/antigravity/gemini-3.8-flash-high",
+                "codex-proxy-prefix"
+            ],
+        )?;
+        let filter = effective_usage_log_filter("l");
+        let sql = format!(
+            "SELECT request_id FROM proxy_request_logs l WHERE {filter} ORDER BY request_id"
+        );
+        let request_ids = conn
+            .prepare(&sql)?
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(request_ids, vec!["codex-proxy-prefix".to_string()]);
+
+        let range_filter = effective_usage_log_filter_for_range(&conn, "l", None, None)?;
+        let range_sql = format!(
+            "SELECT request_id FROM proxy_request_logs l WHERE {range_filter} ORDER BY request_id"
+        );
+        let range_ids = conn
+            .prepare(&range_sql)?
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(range_ids, vec!["codex-proxy-prefix".to_string()]);
+
+        // 当代理的 model 被上游路由改写、依赖多级 request_model 回退去重时，单行过滤与 range JOIN 同样正确去重
+        conn.execute(
+            "UPDATE proxy_request_logs SET model = ?1, request_model = ?2 WHERE request_id = ?3",
+            params![
+                "upstream-routed-model",
+                "cpa/antigravity/gemini-3.8-flash-high",
+                "codex-proxy-prefix"
+            ],
+        )?;
+        let filter = effective_usage_log_filter("l");
+        let sql = format!(
+            "SELECT request_id FROM proxy_request_logs l WHERE {filter} ORDER BY request_id"
+        );
+        let request_ids = conn
+            .prepare(&sql)?
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(request_ids, vec!["codex-proxy-prefix".to_string()]);
+
+        let range_filter = effective_usage_log_filter_for_range(&conn, "l", None, None)?;
+        let range_sql = format!(
+            "SELECT request_id FROM proxy_request_logs l WHERE {range_filter} ORDER BY request_id"
+        );
+        let range_ids = conn
+            .prepare(&range_sql)?
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(range_ids, vec!["codex-proxy-prefix".to_string()]);
 
         Ok(())
     }
@@ -7515,6 +7844,116 @@ mod tests {
         assert_eq!(prefixed.len(), 1);
         assert_eq!(prefixed[0].model, "models/gemini-3.8-flash");
         assert_eq!(prefixed[0].request_count, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn selection_median_matches_sort_for_duplicates_and_extreme_values() {
+        for len in 1..100 {
+            let input: Vec<_> = (0..len)
+                .map(|i| ((i * 7919 + len * 13) % 37) as u64)
+                .collect();
+            let mut sorted = input.clone();
+            sorted.sort_unstable();
+            let middle = len / 2;
+            let expected = if len % 2 == 0 {
+                (sorted[middle - 1] + sorted[middle]) / 2
+            } else {
+                sorted[middle]
+            };
+            assert_eq!(select_median(&mut input.clone()), expected);
+        }
+        assert_eq!(select_median(&mut [u64::MAX, u64::MAX - 2]), u64::MAX - 1);
+    }
+
+    #[test]
+    fn app_and_pricing_filters_use_matching_indexes() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+        let filter = UsageFilter {
+            app_type: Some("claude"),
+            provider_name: None,
+            model: None,
+            pricing: OnceCell::new(),
+        };
+        let mut conditions = SqlWhere::default();
+        filter.push_to(&conn, &mut conditions, "l", "p")?;
+        conditions.push("l.created_at >= ?", 100i64);
+        conditions.push("l.created_at <= ?", 200i64);
+        let (clause, params) = conditions.into_where();
+        let refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let mut stmt = conn.prepare(&format!(
+            "EXPLAIN QUERY PLAN SELECT l.request_id FROM proxy_request_logs l {clause}"
+        ))?;
+        let plans = stmt
+            .query_map(refs.as_slice(), |row| row.get::<_, String>(3))?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert!(
+            plans
+                .iter()
+                .any(|plan| plan.contains("idx_request_logs_app_created_at")
+                    && plan.contains("app_type=?")),
+            "{plans:?}"
+        );
+        let plan: String = conn.query_row("EXPLAIN QUERY PLAN SELECT input_cost_per_million FROM model_pricing WHERE model_id = ? COLLATE NOCASE", ["GPT-5"], |row| row.get(3))?;
+        assert!(plan.contains("idx_model_pricing_nocase"), "{plan}");
+        Ok(())
+    }
+
+    #[test]
+    fn pricing_snapshot_matches_sql_and_refreshes_after_mutations() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+        conn.execute("INSERT INTO model_pricing (model_id, display_name, input_cost_per_million, output_cost_per_million) VALUES ('gpt-under_score-a', 'test', '1', '2'), ('gpt-underXscore-b', 'test', '3', '4'), ('gpt-50%-a', 'test', '5', '6'), ('gpt-500-a', 'test', '7', '8')", [])?;
+        // Preserve the original rowid tie break when a user has case variants.
+        conn.execute("INSERT INTO model_pricing (model_id, display_name, input_cost_per_million, output_cost_per_million) VALUES ('gpt-CASE-a', 'test', '11', '12'), ('GPT-case-A', 'test', '13', '14')", [])?;
+        let catalog = PricingCatalog::load(&conn)?;
+        assert_eq!(catalog.exact("gpt-case-a")?.unwrap().0, "11");
+        assert_eq!(
+            query_model_pricing_exact(&conn, "gpt-case-a")?.unwrap().0,
+            "11"
+        );
+        let models = {
+            let mut stmt = conn.prepare("SELECT model_id FROM model_pricing")?;
+            let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        for model in models {
+            for candidate in [
+                model.clone(),
+                model.to_ascii_uppercase(),
+                format!("{model}-high"),
+                format!("models/{model}"),
+            ] {
+                assert_eq!(
+                    lookup_model_pricing(&catalog, &candidate)?,
+                    find_model_pricing_row(&conn, &candidate)?,
+                    "{candidate}"
+                );
+            }
+        }
+        for (base, expected) in [("gpt-under_score", "1"), ("gpt-50%", "5")] {
+            let row = query_model_pricing_prefix(&conn, base)?.unwrap();
+            assert_eq!(row.0, expected);
+            assert_eq!(catalog.prefix(base)?, Some(row));
+        }
+        conn.execute("UPDATE model_pricing SET input_cost_per_million='9' WHERE model_id='gpt-under_score-a'", [])?;
+        assert_eq!(catalog.exact("GPT-UNDER_SCORE-A")?.unwrap().0, "1");
+        assert_eq!(
+            PricingCatalog::load(&conn)?
+                .exact("GPT-UNDER_SCORE-A")?
+                .unwrap()
+                .0,
+            "9"
+        );
+        conn.execute_batch("BEGIN; DELETE FROM model_pricing; ROLLBACK;")?;
+        assert_eq!(
+            PricingCatalog::load(&conn)?
+                .exact("GPT-UNDER_SCORE-A")?
+                .unwrap()
+                .0,
+            "9"
+        );
         Ok(())
     }
 }

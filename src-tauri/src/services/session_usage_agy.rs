@@ -9,7 +9,7 @@ use crate::proxy::usage::parser::TokenUsage;
 use crate::{
     database::{lock_conn, Database},
     error::AppError,
-    session_manager::providers::agy,
+    session_manager::providers::agy::{self, model_from_settings_change},
 };
 use rusqlite::{params, OptionalExtension};
 use serde_json::Value;
@@ -92,27 +92,6 @@ fn sync_agy_usage_from_files(
         }
     }
     Ok(result)
-}
-
-/// agy 把模型切换写进会话正文：`changed setting \`Model Selection\` from X to Y`。
-/// 逐条响应本身没有模型字段，按 step 顺序继承最近一次切换即可还原当时的模型。
-fn model_from_settings_change(content: &str) -> Option<String> {
-    let start = content.find("Model Selection")?;
-    let rest = &content[start..];
-    let to = rest.find(" to ")? + 4;
-    let tail = &rest[to..];
-    // 模型名里本身有点（Gemini 3.8），只把「句号 + 空格」当成句子结束。
-    let end = tail
-        .find(". ")
-        .or_else(|| tail.find('\n'))
-        .or_else(|| tail.find('`'))
-        .unwrap_or(tail.len());
-    let model = tail[..end].trim().trim_matches('.').trim();
-    if model.is_empty() || model.eq_ignore_ascii_case("none") {
-        None
-    } else {
-        Some(model.to_string())
-    }
 }
 
 /// agy 记下的是显示名（`Gemini 3.8 Flash (High)`）；换成 `agy models` 第一列那样的 ID
@@ -1043,5 +1022,46 @@ mod tests {
         .unwrap();
         let r5 = sync_agy_usage_from_files(&db, agy::transcript_files_in_roots(&roots)).unwrap();
         assert_eq!((r5.files_scanned, r5.imported, r5.skipped), (1, 1, 1));
+    }
+
+    #[test]
+    fn sync_agy_usage_imports_subagent_transcripts_excluded_from_session_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("brain");
+        for (id, lines) in [
+            (
+                "main-1",
+                concat!(
+                    "{\"step_index\":0,\"type\":\"USER_INPUT\",\"content\":\"<USER_REQUEST>\\nhello\\n</USER_REQUEST>\"}\n",
+                    "{\"step_index\":1,\"type\":\"PLANNER_RESPONSE\",\"status\":\"DONE\",\"input_tokens\":40,\"output_tokens\":10}\n",
+                ),
+            ),
+            (
+                "subagent-1",
+                concat!(
+                    "{\"step_index\":0,\"type\":\"SYSTEM_MESSAGE\",\"content\":\"subagent task\"}\n",
+                    "{\"step_index\":1,\"type\":\"PLANNER_RESPONSE\",\"status\":\"DONE\",\"input_tokens\":120,\"output_tokens\":30}\n",
+                ),
+            ),
+        ] {
+            let logs = root.join(id).join(".system_generated/logs");
+            std::fs::create_dir_all(&logs).unwrap();
+            std::fs::write(logs.join("transcript_full.jsonl"), lines).unwrap();
+        }
+        let db = Database::memory().unwrap();
+        let files = agy::transcript_files_in_roots(&[(root, None)]);
+        let res = sync_agy_usage_from_files(&db, files).unwrap();
+        assert_eq!(res.files_scanned, 2);
+        assert_eq!(res.imported, 2);
+        assert!(res.errors.is_empty());
+        let conn = db.conn.lock().unwrap();
+        let total_input: i64 = conn
+            .query_row(
+                "SELECT SUM(input_tokens) FROM proxy_request_logs WHERE app_type='agy'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(total_input, 160);
     }
 }

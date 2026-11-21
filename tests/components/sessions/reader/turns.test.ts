@@ -1141,7 +1141,9 @@ describe("章节（mark_chapter）", () => {
     });
     expect(isChapterCall(plain)).toBe(false);
     expect(
-      isChapterCall(call("y", "shell", { rawName: "mark_chapter", title: "x" })),
+      isChapterCall(
+        call("y", "shell", { rawName: "mark_chapter", title: "x" }),
+      ),
     ).toBe(false);
     const [only] = buildTurns([
       msg("assistant", [plain], { turnId: "t1" }),
