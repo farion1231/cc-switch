@@ -6,6 +6,7 @@ import { SettingsSwitchRow } from "@/components/settings/SettingsLayout";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { settingsApi } from "@/lib/api";
 import { formatBytes } from "@/components/settings/BackupStorageSection";
+import { CodexQuotaProtectionSettings } from "./CodexQuotaProtectionSettings";
 
 interface CodexAuthSettingsProps {
   settings: SettingsFormState;
@@ -131,9 +132,11 @@ export function CodexAuthSettings({
     }
   };
 
-  // 设置 → 应用配置 → Codex 卡片里的三行（经典子 agent 开关在 Codex 聚合页签的「聚合设置」里）
+  // 设置 → 应用配置 → Codex 卡片里的认证、额度与会话设置
+  // 经典子 agent 开关在 Codex 聚合页签的「聚合设置」里。
   return (
     <>
+      <CodexQuotaProtectionSettings settings={settings} onChange={onChange} />
       <SettingsSwitchRow
         label={t("settings.preserveCodexOfficialAuthOnSwitch")}
         help={{
@@ -179,6 +182,8 @@ export function CodexAuthSettings({
         title={t("confirm.unifyCodexHistory.title")}
         message={t("confirm.unifyCodexHistory.message")}
         checkboxLabel={t("confirm.unifyCodexHistory.migrateExisting")}
+        // 新版 Codex 会锁住留在官方组的会话，默认勾上迁入
+        checkboxDefaultChecked
         confirmText={t("confirm.unifyCodexHistory.confirm")}
         variant="info"
         onConfirm={handleEnableConfirm}

@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { McpServer } from "@/types";
 import McpFormModal from "@/components/mcp/McpFormModal";
-import { MCP_APP_IDS } from "@/config/appConfig";
+import { APP_IDS_WITH } from "@/config/appSpecs";
 
 const mocks = vi.hoisted(() => ({
   upsert: vi.fn(),
@@ -35,7 +35,7 @@ vi.mock("@/hooks/useMcp", () => ({
   useUpsertMcpServer: () => ({ mutateAsync: mocks.upsert }),
 }));
 
-const ALL_ON = Object.fromEntries(MCP_APP_IDS.map((app) => [app, true]));
+const ALL_ON = Object.fromEntries(APP_IDS_WITH.mcp.map((app) => [app, true]));
 
 function renderForm(
   props: Partial<React.ComponentProps<typeof McpFormModal>> = {},
@@ -304,6 +304,49 @@ describe("McpFormModal (drawer)", () => {
       claude: true,
       hermes: true,
     });
+  });
+
+  it("warns when an SSE server is written to apps without SSE support", async () => {
+    renderForm({
+      editingId: "remote",
+      visibleAppIds: ["claude", "codex", "pi"],
+      initialData: {
+        id: "remote",
+        name: "remote",
+        server: { type: "sse", url: "http://127.0.0.1:60002/sse" },
+        apps: { claude: true, codex: true, pi: true } as McpServer["apps"],
+      },
+    });
+    expect(
+      screen.getByText("mcpPage.drawer.sseAsHttpTitle"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("mcpPage.drawer.sseRejectedTitle"),
+    ).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("checkbox", { name: /Codex/ }));
+    expect(
+      screen.queryByText("mcpPage.drawer.sseAsHttpTitle"),
+    ).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "HTTP" }));
+    expect(
+      screen.queryByText("mcpPage.drawer.sseRejectedTitle"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("follows the JSON tab when checking for SSE", async () => {
+    renderForm({ visibleAppIds: ["claude", "codex"] });
+    expect(
+      screen.queryByText("mcpPage.drawer.sseAsHttpTitle"),
+    ).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "JSON" }));
+    fireEvent.change(screen.getByLabelText("mcpPage.drawer.jsonLabel"), {
+      target: { value: '{"type":"sse","url":"http://127.0.0.1:60002/sse"}' },
+    });
+    expect(
+      screen.getByText("mcpPage.drawer.sseAsHttpTitle"),
+    ).toBeInTheDocument();
   });
 
   it("reports a save failure and keeps the drawer open", async () => {

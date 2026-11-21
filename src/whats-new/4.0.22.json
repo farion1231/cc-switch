@@ -1,0 +1,33 @@
+{
+  "version": "4.0.22",
+  "items": [
+    {
+      "type": "new",
+      "zh": "支持 DeepSeek Harness，Web 和 Desktop 一起管理",
+      "zh-TW": "支援 DeepSeek Harness，Web 和 Desktop 一起管理",
+      "en": "DeepSeek Harness support, managing its Web and Desktop together",
+      "ja": "DeepSeek Harness に対応。Web と Desktop をまとめて管理"
+    },
+    {
+      "type": "new",
+      "zh": "「打开终端」可跳过权限确认、追加参数，Codex 卡片也能打开",
+      "zh-TW": "「開啟終端機」可跳過權限確認、附加參數，Codex 卡片也能開啟",
+      "en": "Open Terminal can skip permission prompts and add arguments, now on Codex cards too",
+      "ja": "「ターミナルを開く」で権限確認のスキップと引数の追加が可能に。Codex カードにも対応"
+    },
+    {
+      "type": "improve",
+      "zh": "GitHub Copilot 的 Claude 模型提示缓存命中率大幅提高",
+      "zh-TW": "GitHub Copilot 的 Claude 模型提示快取命中率大幅提高",
+      "en": "Much higher prompt cache hit rate for Claude models on GitHub Copilot",
+      "ja": "GitHub Copilot の Claude モデルでプロンプトキャッシュのヒット率が大幅に向上"
+    },
+    {
+      "type": "fix",
+      "zh": "修复 macOS 连了 OAuth 远程 MCP 时切换 Claude 账号失败",
+      "zh-TW": "修正 macOS 連了 OAuth 遠端 MCP 時切換 Claude 帳號失敗",
+      "en": "Fixed Claude account switching on macOS with OAuth remote MCP servers connected",
+      "ja": "macOS で OAuth リモート MCP 接続中の Claude アカウント切り替え失敗を修正"
+    }
+  ]
+}

@@ -1,9 +1,10 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { UsageDashboard } from "@/components/usage/UsageDashboard";
 import { emitTauriEvent } from "../msw/tauriMocks";
+import { createTestQueryClient } from "../utils/testQueryClient";
 
 /**
  * 不 mock 子组件，把整页（指标、趋势图、四个页签）真渲染一遍，接口用假数据。
@@ -22,6 +23,7 @@ const usageApiMock = vi.hoisted(() => ({
   saveModelsDevSyncConfig: vi.fn(),
   syncSessionUsage: vi.fn(),
   getSessionUsageLastSync: vi.fn().mockResolvedValue(null),
+  getUsageFirstDate: vi.fn().mockResolvedValue(null),
   rebuildCodexUsage: vi.fn(),
 }));
 
@@ -142,9 +144,7 @@ describe("UsageDashboard (smoke)", () => {
 
   it("scans session logs on open and shows imported usage via the backend event", async () => {
     vi.useFakeTimers();
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
+    const client = createTestQueryClient();
     usageApiMock.syncSessionUsage.mockImplementation(async () => {
       usageApiMock.getUsageSummaryByApp.mockResolvedValue([
         { appType: "claude", summary: { ...summary, totalCost: "43.1" } },
@@ -168,9 +168,7 @@ describe("UsageDashboard (smoke)", () => {
 
   it("scans at the interval and re-runs statistics only once a minute for rolling ranges", async () => {
     vi.useFakeTimers();
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
+    const client = createTestQueryClient();
     usageApiMock.syncSessionUsage.mockResolvedValue({
       imported: 0,
       filesScanned: 1,
@@ -191,6 +189,7 @@ describe("UsageDashboard (smoke)", () => {
       usageApiMock.getRequestLogs,
     ];
     const counts = queries.map((query) => query.mock.calls.length);
+    // 三个页签的计数都查，没打开的页签也有数字
     expect(counts.every((count) => count > 0)).toBe(true);
     // 没有新用量：扫描不触发重查，只有「今天」这类范围每分钟重算一次
     await act(() => vi.advanceTimersByTimeAsync(59000));
@@ -205,9 +204,7 @@ describe("UsageDashboard (smoke)", () => {
 
   it("hides the scan interval and never scans while auto scanning is off", async () => {
     vi.useFakeTimers();
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
+    const client = createTestQueryClient();
     render(
       <QueryClientProvider client={client}>
         <UsageDashboard
@@ -224,11 +221,9 @@ describe("UsageDashboard (smoke)", () => {
     client.clear();
   });
 
-  it("renders metrics, trend, and every tab with real children", async () => {
+  it("renders metrics, trend, every tab and pricing with real children", async () => {
     const user = userEvent.setup();
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
+    const client = createTestQueryClient();
     render(
       <QueryClientProvider client={client}>
         <UsageDashboard />
@@ -240,26 +235,45 @@ describe("UsageDashboard (smoke)", () => {
     expect(screen.getByText("18.2M")).toBeInTheDocument();
     // 「全部」时由各应用的 token 重新算：16.6M ÷ (1M + 0.2M + 16.6M)
     expect(screen.getByText("93.3%")).toBeInTheDocument();
-    expect(screen.getByText("usage.trend.title")).toBeInTheDocument();
+    expect(screen.getByText("usage.trend.titleMetric")).toBeInTheDocument();
 
-    // 更多指标
-    await user.click(
-      screen.getByRole("button", { name: "usage.metrics.more" }),
-    );
-    expect(
-      screen.getByRole("button", { name: "usage.metrics.more" }),
-    ).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByText("usage.cacheWrite")).toBeInTheDocument();
+    // Tokens 的 4 个组成部分默认收起（整行 inert），展开后占第二行
+    const more = screen.getByRole("button", { name: "usage.metrics.more" });
+    expect(more).toHaveAttribute("aria-expanded", "false");
+    const cacheWriteLabel = screen.getByText("usage.logColumns.cacheWrite");
+    expect(cacheWriteLabel.closest("[inert]")).not.toBeNull();
+    await user.click(more);
+    expect(more).toHaveAttribute("aria-expanded", "true");
+    expect(cacheWriteLabel.closest("[inert]")).toBeNull();
+    // 点指标格切换图表画的指标
+    const costCell = screen.getByRole("button", { name: /^usage\.totalCost / });
+    expect(costCell).toHaveAttribute("aria-pressed", "false");
+    await user.click(costCell);
+    expect(costCell).toHaveAttribute("aria-pressed", "true");
 
     // 供应商：汇总速度 92000 / 1000 s = 92 tok/s
-    await user.click(screen.getByRole("tab", { name: "usage.tabs.providers" }));
-    const providerRow = (await screen.findByText("DeepSeek")).closest("tr")!;
+    await user.click(
+      screen.getByRole("tab", { name: /^usage\.tabs\.providers/ }),
+    );
+    // 应用筛选条上也有一个 DeepSeek 图标（图标的 <title> 同样是 "DeepSeek"），
+    // 所以只在表格行里认供应商行。
+    const providerRow = (await screen.findAllByText("DeepSeek"))
+      .map((element) => element.closest("tr"))
+      .find((row) => row !== null) as HTMLTableRowElement;
     expect(within(providerRow).getByText("92")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("tab", { name: "usage.tabs.models" }));
+    await user.click(screen.getByRole("tab", { name: /^usage\.tabs\.models/ }));
     expect(await screen.findByText("kimi-k2.6")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("tab", { name: "usage.tabs.settings" }));
+    // 定价：用量设置抽屉 → 管理定价
+    await user.click(
+      screen.getByRole("button", { name: "usage.settings.title" }),
+    );
+    await user.click(
+      await screen.findByRole("button", {
+        name: "usage.settings.managePricing",
+      }),
+    );
     expect(await screen.findByText("DeepSeek V4 Pro")).toBeInTheDocument();
     expect(screen.getByText("$1.32")).toBeInTheDocument();
     expect(screen.getByText("$0.044")).toBeInTheDocument();
