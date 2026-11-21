@@ -247,7 +247,7 @@ async fn copilot_auto_forwarding_pairs_model_and_session_and_retries_both_401s()
                     let expires_at = chrono::Utc::now().timestamp() + 3600;
                     requests.lock().await.push((path.to_owned(), parts.headers.clone(), body.clone()));
                     match path {
-                        "/token" => {
+                        "/copilot_internal/v2/token" => {
                             let n = tokens.fetch_add(1, Ordering::Relaxed) + 1;
                             Json(json!({"token": format!("bearer-{n}"), "expires_at": expires_at})).into_response()
                         }
@@ -418,7 +418,10 @@ async fn copilot_auto_forwarding_pairs_model_and_session_and_retries_both_401s()
     assert_eq!(headers["session_token"], "underscore");
     assert_eq!(tokens.load(Ordering::Relaxed), 3);
     let paths: Vec<_> = requests.iter().map(|(path, _, _)| path.as_str()).collect();
-    assert_eq!(&paths[..3], ["/token", "/models", "/v1/messages"]);
+    assert_eq!(
+        &paths[..3],
+        ["/copilot_internal/v2/token", "/models", "/v1/messages"]
+    );
     assert_eq!(paths.iter().filter(|&&path| path == "/auto").count(), 4);
     assert!(!is_copilot_auto_messages_endpoint(
         "/v1/messages/count_tokens"
