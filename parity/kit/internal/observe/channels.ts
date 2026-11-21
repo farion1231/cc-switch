@@ -40,6 +40,9 @@ interface Stat {
   readonly sig: string;
 }
 
+/** Permission bits mean something only on POSIX hosts; Windows reports 666 for everything. */
+const POSIX = process.platform !== "win32";
+
 /** Lists HOME with stat signatures only. Cheap enough to repeat for the quiet check. */
 export function scanHome(home: string, exclude: readonly string[]): Map<string, Stat> {
   const out = new Map<string, Stat>();
@@ -51,7 +54,7 @@ export function scanHome(home: string, exclude: readonly string[]): Map<string, 
       if (exclude.some((g) => globMatch(g, path))) continue;
       let st;
       try { st = lstatSync(join(home, path)); } catch { continue; }
-      const mode = (st.mode & 0o777).toString(8);
+      const mode = POSIX ? (st.mode & 0o777).toString(8) : "-";
       const opaque = OPAQUE.find((r) => globMatch(r.glob, path));
       if (st.isSymbolicLink()) {
         out.set(path, { kind: "link", mode, sig: `link|${st.size}|${st.mtimeMs}` });

@@ -10,13 +10,16 @@ export interface CheckpointObservation {
   readonly channels: Readonly<Record<string, string>>;
 }
 
+/** Recordings are LF text. A checkout that converted them to CRLF must not read as a difference. */
+const readSnap = (p: string) => readFileSync(p, "utf8").replace(/\r\n/g, "\n").replace(/\n$/, "");
+
 export const checkpointDir = (index: number, name: string) => `${String(index + 1).padStart(2, "0")}-${name}`;
 
 export function readRecording(root: string, caseId: string, index: number, checkpoint: string, channel: string, os: Os): string | null {
   const dir = join(root, caseId, checkpointDir(index, checkpoint));
   for (const f of [`${channel}.${os}.snap`, `${channel}.snap`]) {
     const p = join(dir, f);
-    if (existsSync(p)) return readFileSync(p, "utf8").replace(/\n$/, "");
+    if (existsSync(p)) return readSnap(p);
   }
   return null;
 }
@@ -50,7 +53,7 @@ export function writeRecording(root: string, caseId: string, observations: reado
       }
       const shared = join(d, `${channel}.snap`);
       const own = join(d, `${channel}.${os}.snap`);
-      const same = existsSync(shared) && readFileSync(shared, "utf8").replace(/\n$/, "") === text;
+      const same = existsSync(shared) && readSnap(shared) === text;
       if (same) rmSync(own, { force: true });
       else writeFileSync(own, `${text}\n`);
     }
