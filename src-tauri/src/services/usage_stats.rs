@@ -2631,6 +2631,13 @@ impl PricingLookup for Connection {
     }
 }
 
+const TIER_PRICING_VARIANT_SUFFIXES: [&str; 5] =
+    ["-fast", "-flex", "-long", "-fast-long", "-flex-long"];
+
+fn is_tier_pricing_variant_suffix(suffix: &str) -> bool {
+    TIER_PRICING_VARIANT_SUFFIXES.contains(&suffix)
+}
+
 /// A statistics request owns one immutable pricing snapshot. Every reasoning
 /// suffix lookup is then a hash lookup, and subsequent requests see all edits,
 /// imports and transaction rollbacks without a second invalidation protocol.
@@ -2665,6 +2672,12 @@ impl PricingCatalog {
             let (model, pricing) = row?;
             let model = model.to_ascii_lowercase();
             for (at, _) in model.match_indices('-') {
+                // 排除档位变体后缀，与 query_model_pricing_prefix 保持一致：
+                // 基础行缺失时前缀回退不得借用 -fast/-flex/-long 等变体价，
+                // -fast 行缺失时也不得落到 -fast-long。
+                if is_tier_pricing_variant_suffix(&model[at..]) {
+                    continue;
+                }
                 catalog
                     .prefixes
                     .entry(model[..at].to_string())
@@ -2717,14 +2730,29 @@ fn query_model_pricing_prefix(
         .replace('%', "\\%")
         .replace('_', "\\_");
     let pattern = format!("{escaped}-%");
+    // 排除候选 id 自身的档位变体行（GPT-6.x 的 fast/flex/长上下文，见
+    // session_usage_codex::pricing_model_id 与 seed_model_pricing 的档位播种）：
+    // 基础行缺失时前缀回退会在这些变体里任取一条，把标准价请求按 0.5×~4× 的
+    // 档位价错算。`-fast` 的候选同时排除 `-long`（candidate+"-long"），避免
+    // fast 行被删后请求落到 fast-long 的价上。COLLATE NOCASE 保证与 LIKE 以及
+    // PricingCatalog 的大小写无关语义一致。
+    let exclusions = TIER_PRICING_VARIANT_SUFFIXES.map(|suffix| format!("{model_id}{suffix}"));
     conn.query_row(
         "SELECT input_cost_per_million, output_cost_per_million,
                 cache_read_cost_per_million, cache_creation_cost_per_million
          FROM model_pricing
          WHERE model_id LIKE ?1 ESCAPE '\\'
+           AND model_id COLLATE NOCASE NOT IN (?2, ?3, ?4, ?5, ?6)
          ORDER BY LENGTH(model_id) ASC, rowid
          LIMIT 1",
-        [pattern],
+        rusqlite::params![
+            pattern,
+            exclusions[0],
+            exclusions[1],
+            exclusions[2],
+            exclusions[3],
+            exclusions[4]
+        ],
         |row| {
             Ok((
                 row.get::<_, String>(0)?,
@@ -7954,6 +7982,66 @@ mod tests {
                 .0,
             "9"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn prefix_pricing_excludes_tier_variants_in_sql_and_catalog() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let conn = lock_conn!(db.conn);
+
+        // 删除基础行但保留 5 个档位变体：无论 SQL 还是 PricingCatalog，
+        // 大小写任意的前缀回退都不能借用 -fast/-flex/-long/-fast-long/-flex-long。
+        conn.execute(
+            "DELETE FROM model_pricing WHERE model_id = 'gpt-6.1-sol'",
+            [],
+        )?;
+        let catalog = PricingCatalog::load(&conn)?;
+        for query in ["gpt-6.1-sol", "GPT-6.1-SOL", "gpt-6.1-sol-high"] {
+            assert_eq!(
+                find_model_pricing_row(&conn, query)?,
+                None,
+                "SQL 不应将 {query} 回退到档位变体"
+            );
+            assert_eq!(
+                lookup_model_pricing(&catalog, query)?,
+                None,
+                "PricingCatalog 不应将 {query} 回退到档位变体"
+            );
+        }
+        assert_eq!(query_model_pricing_prefix(&conn, "GPT-6.1-SOL")?, None);
+        assert_eq!(catalog.prefix("GPT-6.1-SOL")?, None);
+
+        // 删除 -fast 行但保留 -fast-long：-fast 也不应借用 -fast-long（含大小写混合变体行）
+        conn.execute(
+            "DELETE FROM model_pricing WHERE model_id = 'gpt-6.1-sol-fast'",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO model_pricing (model_id, display_name, input_cost_per_million, output_cost_per_million)
+             VALUES ('GPT-6.1-SOL-FLEX', 'Mixed Case Flex', '1', '5')",
+            [],
+        )?;
+        let catalog = PricingCatalog::load(&conn)?;
+        for query in [
+            "gpt-6.1-sol",
+            "GPT-6.1-SOL",
+            "gpt-6.1-sol-fast",
+            "GPT-6.1-SOL-FAST",
+        ] {
+            assert_eq!(
+                query_model_pricing_prefix(&conn, query)?,
+                None,
+                "SQL {query}"
+            );
+            assert_eq!(catalog.prefix(query)?, None, "catalog {query}");
+            assert_eq!(find_model_pricing_row(&conn, query)?, None, "row {query}");
+            assert_eq!(
+                lookup_model_pricing(&catalog, query)?,
+                None,
+                "lookup {query}"
+            );
+        }
         Ok(())
     }
 }
