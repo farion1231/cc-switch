@@ -254,8 +254,7 @@ fn provider_is_xai_native_responses(provider: &Provider) -> bool {
     }
 
     extract_codex_base_url(config_text)
-        .map(|url| url.to_ascii_lowercase())
-        .is_some_and(|url| url.contains("api.x.ai"))
+        .is_some_and(|url| crate::codex_config::codex_url_host_matches_any(&url, &["api.x.ai"]))
 }
 
 /// 原生 Responses 透传的响应要不要补迟到的函数调用参数（见 `responses_late_arguments`）：
@@ -2950,5 +2949,38 @@ wire_api = "responses"
         assert!(!strip_codex_openai_only_request_fields(&mut body));
         assert_eq!(body, once);
         assert_eq!(body, json!({ "input": [] }));
+    }
+
+    /// API-key Grok 卡按 base_url 的 host 认 xAI；中转站地址里带着 api.x.ai 不算。
+    #[test]
+    fn xai_namespace_flatten_follows_the_base_url_host() {
+        let responses_card = |base_url: &str| {
+            create_provider(json!({
+                "auth": { "OPENAI_API_KEY": "sk-x" },
+                "config": format!(
+                    "model_provider = \"custom\"\n[model_providers.custom]\nbase_url = \"{base_url}\"\nwire_api = \"responses\"\n"
+                )
+            }))
+        };
+        for url in [
+            "https://api.x.ai/v1",
+            "https://API.X.AI:443/v1",
+            "https://api.x.ai./v1",
+        ] {
+            assert!(
+                provider_needs_responses_namespace_flatten(&responses_card(url), None),
+                "{url}"
+            );
+        }
+        for url in [
+            "https://relay.example.com/api.x.ai/v1",
+            "https://relay.example.com/v1?upstream=https://api.x.ai/v1",
+            "https://api.x.ai.relay.example.com/v1",
+        ] {
+            assert!(
+                !provider_needs_responses_namespace_flatten(&responses_card(url), None),
+                "{url}"
+            );
+        }
     }
 }
