@@ -2461,6 +2461,43 @@ fn test_mcode_link_is_added_to_config_yaml() {
 }
 
 #[test]
+fn test_dsh_link_imports_a_comma_separated_model_list_in_order() {
+    let url = provider_link("dsh", None).replace(
+        "model=example-model",
+        "model=first-model%2Csecond-model%2Cfirst-model",
+    );
+    let request = parse_deeplink_url(&url).expect("parse model list");
+    let provider = super::provider::build_provider_from_request(&AppType::Dsh, &request)
+        .expect("build DSH provider");
+    let models = provider.settings_config["models"].as_object().unwrap();
+
+    assert_eq!(
+        models.keys().collect::<Vec<_>>(),
+        ["first-model", "second-model"]
+    );
+    assert_eq!(models["second-model"]["name"], "second-model");
+}
+
+#[test]
+fn test_dsh_link_rejects_an_empty_model_list_entry() {
+    let url = provider_link("dsh", None).replace("model=example-model", "model=first%2C%2Csecond");
+    let err = parse_deeplink_url(&url).expect_err("empty model entries are ambiguous");
+    assert!(err.to_string().contains("empty entry"), "{err}");
+}
+
+#[test]
+fn test_mcode_keeps_a_comma_inside_one_model_name() {
+    let url = provider_link("mcode", None).replace("model=example-model", "model=one%2Ctwo");
+    let provider = super::provider::build_provider_from_request(
+        &AppType::Mcode,
+        &parse_deeplink_url(&url).expect("parse link"),
+    )
+    .expect("build provider");
+
+    assert!(provider.settings_config["models"].get("one,two").is_some());
+}
+
+#[test]
 #[serial_test::serial]
 fn test_dsh_link_is_added_to_every_profile() {
     let home = TempUserHome::new();
