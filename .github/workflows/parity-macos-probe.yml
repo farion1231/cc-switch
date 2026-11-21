@@ -136,6 +136,7 @@ jobs:
       - name: Restore networking
         if: always()
         run: |
+          bash parity/ci/macos-runner-diag.sh
           sudo pfctl -d 2>&1 | tail -1 || true
           sudo pfctl -f /etc/pf.conf 2>&1 | grep -v ALTQ || true
 
@@ -235,6 +236,7 @@ jobs:
       - name: Restore networking
         if: always()
         run: |
+          bash parity/ci/macos-runner-diag.sh
           sudo pfctl -d 2>&1 | tail -1 || true
           sudo pfctl -f /etc/pf.conf 2>&1 | grep -v ALTQ || true
 
