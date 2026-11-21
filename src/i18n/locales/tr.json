@@ -4306,6 +4306,7 @@
     "desktopConnected": "Bağlı",
     "desktopNotConnected": "Bağlı değil",
     "newVersion": "{{version}} mevcut",
+    "notDetected": "Algılanamadı",
     "notRunnable": "Çalıştırılamıyor",
     "updateNeedsNode": "{{version}} sürümü Node {{required}} gerektiriyor; bu kurulumda Node {{current}} çalışıyor. Önce Node'u yükseltin.",
     "otherInstalls": "{{count}} daha fazla yükleme",

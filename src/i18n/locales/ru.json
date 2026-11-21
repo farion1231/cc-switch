@@ -4374,6 +4374,7 @@
     "desktopConnected": "Подключено",
     "desktopNotConnected": "Не подключено",
     "newVersion": "Доступна {{version}}",
+    "notDetected": "Не обнаружено",
     "notRunnable": "Не запускается",
     "updateNeedsNode": "Для {{version}} требуется Node {{required}}, но эта установка работает на Node {{current}}. Сначала обновите Node.",
     "otherInstalls": "Других установок: {{count}}",
