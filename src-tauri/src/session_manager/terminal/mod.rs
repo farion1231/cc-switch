@@ -1,5 +1,24 @@
+#[cfg(not(target_os = "windows"))]
 use std::process::Command;
 
+/// Windows 没有 `osascript`/`open` 这条链路，恢复会话改走和供应商卡片「打开终端」
+/// 相同的 `cmd /C start` + 临时 .bat 实现；首选终端由后端设置读取，`target` 不参与。
+#[cfg(target_os = "windows")]
+pub fn launch_terminal(
+    target: &str,
+    command: &str,
+    cwd: Option<&str>,
+    custom_config: Option<&str>,
+) -> Result<(), String> {
+    if command.trim().is_empty() {
+        return Err("Resume command is empty".to_string());
+    }
+
+    let _ = (target, custom_config);
+    crate::launch_windows_session_command(command, cwd)
+}
+
+#[cfg(not(target_os = "windows"))]
 pub fn launch_terminal(
     target: &str,
     command: &str,
@@ -31,6 +50,7 @@ pub fn launch_terminal(
     }
 }
 
+#[cfg(not(target_os = "windows"))]
 fn launch_macos_terminal(command: &str, cwd: Option<&str>) -> Result<(), String> {
     let full_command = build_shell_command(command, cwd);
     let escaped = escape_osascript(&full_command);
@@ -153,6 +173,7 @@ fn is_executable_file(path: &std::path::Path) -> bool {
         .unwrap_or(false)
 }
 
+#[cfg(not(target_os = "windows"))]
 fn launch_iterm(command: &str, cwd: Option<&str>) -> Result<(), String> {
     let full_command = build_shell_command(command, cwd);
     let escaped = escape_osascript(&full_command);
@@ -180,6 +201,7 @@ end tell"#
     }
 }
 
+#[cfg(not(target_os = "windows"))]
 fn launch_ghostty(command: &str, cwd: Option<&str>) -> Result<(), String> {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
 
@@ -214,6 +236,7 @@ fn launch_ghostty(command: &str, cwd: Option<&str>) -> Result<(), String> {
     }
 }
 
+#[cfg(not(target_os = "windows"))]
 fn launch_kitty(command: &str, cwd: Option<&str>) -> Result<(), String> {
     let full_command = build_shell_command(command, cwd);
 
@@ -239,6 +262,7 @@ fn launch_kitty(command: &str, cwd: Option<&str>) -> Result<(), String> {
     }
 }
 
+#[cfg(not(target_os = "windows"))]
 fn launch_wezterm(command: &str, cwd: Option<&str>) -> Result<(), String> {
     // wezterm start --cwd ... -- command
     // To invoke via `open`, we use `open -na "WezTerm" --args start ...`
@@ -256,6 +280,7 @@ fn launch_wezterm(command: &str, cwd: Option<&str>) -> Result<(), String> {
     }
 }
 
+#[cfg(not(target_os = "windows"))]
 fn launch_kaku(command: &str, cwd: Option<&str>) -> Result<(), String> {
     // Kaku is a WezTerm-derived terminal and keeps a compatible `start` entrypoint.
     let args = build_wezterm_compatible_args("Kaku", command, cwd);
@@ -272,11 +297,13 @@ fn launch_kaku(command: &str, cwd: Option<&str>) -> Result<(), String> {
     }
 }
 
+#[cfg(not(target_os = "windows"))]
 fn build_wezterm_compatible_args(app_name: &str, command: &str, cwd: Option<&str>) -> Vec<String> {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
     build_wezterm_compatible_args_with_shell(app_name, command, cwd, &shell)
 }
 
+#[cfg(not(target_os = "windows"))]
 fn build_wezterm_compatible_args_with_shell(
     app_name: &str,
     command: &str,
@@ -346,6 +373,7 @@ fn launch_warp(command: &str, cwd: Option<&str>) -> Result<(), String> {
     }
 }
 
+#[cfg(not(target_os = "windows"))]
 fn launch_alacritty(command: &str, cwd: Option<&str>) -> Result<(), String> {
     // Alacritty: open -na Alacritty --args --working-directory ... -e shell -c command
     let full_command = build_shell_command(command, None);
@@ -375,6 +403,7 @@ fn launch_alacritty(command: &str, cwd: Option<&str>) -> Result<(), String> {
     }
 }
 
+#[cfg(not(target_os = "windows"))]
 fn launch_custom(
     command: &str,
     cwd: Option<&str>,
@@ -417,6 +446,7 @@ fn launch_custom(
     }
 }
 
+#[cfg(not(target_os = "windows"))]
 fn build_shell_command(command: &str, cwd: Option<&str>) -> String {
     match cwd {
         Some(dir) if !dir.trim().is_empty() => {
@@ -438,11 +468,12 @@ pub(crate) fn shell_escape(value: &str) -> String {
     format!("'{}'", value.replace('\'', r"'\''"))
 }
 
+#[cfg(not(target_os = "windows"))]
 fn escape_osascript(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_os = "windows")))]
 mod tests {
     use super::*;
 
