@@ -110,6 +110,7 @@ jobs:
           PARITY_OUT_DIR: ${{ runner.temp }}/out
         run: |
           set -o pipefail
+          mkdir -p "$RUNNER_TEMP/out"
           node parity/spike/macos/probe.mjs run \
             --app "$RUNNER_TEMP/app/CC Switch.app" \
             --helper "$RUNNER_TEMP/parity-helper" \

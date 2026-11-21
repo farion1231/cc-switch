@@ -179,14 +179,18 @@ async function screenshot(sid) {
 async function settle(sid, timeoutMs = 30000) {
   const start = Date.now();
   let last = null, same = 0;
+  const seen = [], errors = [];
   while (Date.now() - start < timeoutMs) {
-    const tree = await exec(sid, TREE).catch(() => null);
+    const tree = await exec(sid, TREE).catch((e) => { errors.push(String(e.message || e).slice(0, 200)); return null; });
     if (tree && tree !== "[]" && tree === last) { if (++same >= 3) return tree; }
     else same = 0;
+    if (tree && tree !== seen[seen.length - 1]) seen.push(tree);
     last = tree;
     await sleep(300);
   }
-  throw new Error(`tree did not settle in ${timeoutMs} ms`);
+  const err = new Error(`tree did not settle in ${timeoutMs} ms`);
+  err.detail = { distinctTrees: seen.length, lastTrees: seen.slice(-2).map((t) => JSON.parse(t)), errors: errors.slice(-5) };
+  throw err;
 }
 
 function cleanEnv(home) {
@@ -205,6 +209,7 @@ async function oneRun(app, helper, index) {
   const home = mkdtempSync(join(tmpdir(), `parity-home-${index}-`));
   const realHome = process.env.HOME;
   const before = realHomeMarks(realHome);
+  try { execFileSync(helper, ["move", "1", "1"]); } catch {}
   const t0 = Date.now();
   const child = spawn(exe, [], { env: cleanEnv(home), stdio: ["ignore", "pipe", "pipe"] });
   let log = "";
@@ -241,16 +246,25 @@ async function oneRun(app, helper, index) {
       result.failures.push("no clickable button found");
     } else {
       await exec(sid, RECORD);
-      const [wx, wy] = execFileSync(helper, ["bounds", String(child.pid)]).toString().trim().split(/\s+/).map(Number);
+      const helperOut = (...a) => execFileSync(helper, a.map(String)).toString().trim();
+      const [wx, wy] = helperOut("bounds", child.pid).split(/\s+/).map(Number);
       const point = { x: wx + target.x, y: wy + target.y };
-      result.click = { window: [wx, wy], point };
-      execFileSync(helper, ["click", String(point.x), String(point.y)]);
-      await sleep(800);
-      const events = await exec(sid, "return window.__parity;");
-      result.click.events = events;
+      result.click = { window: [wx, wy], point, frontmostBefore: Number(helperOut("frontmost")), appPid: child.pid };
+      result.click.activate = helperOut("activate", child.pid);
+      await sleep(600);
+      result.click.frontmostAfterActivate = Number(helperOut("frontmost"));
+      result.click.attempts = [];
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        helperOut("click", point.x, point.y);
+        await sleep(800);
+        const events = await exec(sid, "return window.__parity;");
+        result.click.attempts.push({ attempt, events });
+        if (events.length) break;
+      }
+      const events = result.click.attempts.at(-1).events;
       const trusted = events.filter((e) => e.trusted);
       if (trusted.length === 0) {
-        result.failures.push(events.length ? "click arrived but not as a trusted event" : "no event reached the page from the OS click");
+        result.failures.push(events.length ? "click arrived but not as a trusted event" : "no event reached the page from two OS clicks");
       } else if (!trusted.some((e) => e.target === target.name)) {
         result.failures.push(`trusted click landed on "${trusted[0].target}", expected "${target.name}"`);
       }
@@ -261,7 +275,9 @@ async function oneRun(app, helper, index) {
     await wd("DELETE", `/session/${sid}`).catch(() => {});
   } catch (e) {
     result.failures.push(String(e.message || e));
+    if (e.detail) result.settleDetail = e.detail;
   } finally {
+    try { execFileSync(helper, ["move", "1", "1"]); } catch {}
     child.kill("SIGTERM");
     const exited = await Promise.race([new Promise((r) => child.once("exit", (code, sig) => r({ code, sig }))), sleep(10000).then(() => null)]);
     if (!exited) { child.kill("SIGKILL"); result.failures.push("app did not exit within 10 s of SIGTERM"); }
@@ -284,7 +300,8 @@ function summarise(runs) {
   const distinct = (k) => [...new Set(ok.map((r) => r[k]))];
   if (distinct("treeHash").length > 1) failures.push(`tree differs across runs: ${distinct("treeHash").join(", ")}`);
   if (distinct("pixelsHash").length > 1) failures.push(`pixels differ across runs: ${distinct("pixelsHash").join(", ")}`);
-  const homes = [...new Set(ok.map((r) => JSON.stringify(r.redirectedHome)))];
+  const stamp = (p) => p.replace(/\d{8}_\d{6}/g, "<ts>");
+  const homes = [...new Set(ok.map((r) => JSON.stringify(r.redirectedHome.map(stamp))))];
   if (homes.length > 1) failures.push("redirected HOME file list differs across runs");
   return { pass: failures.length === 0, failures, treeHashes: distinct("treeHash"), pixelsHashes: distinct("pixelsHash") };
 }

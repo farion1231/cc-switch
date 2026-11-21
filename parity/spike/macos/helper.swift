@@ -3,6 +3,9 @@
 //   helper trusted          prints "true" or "false" (AXIsProcessTrusted)
 //   helper bounds <pid>     prints "x y w h" of the largest on-screen window owned by pid, in global points
 //   helper click <x> <y>    posts a real left click at a global point
+//   helper move <x> <y>     moves the cursor to a global point
+//   helper activate <pid>   asks the app with this pid to become frontmost
+//   helper frontmost        prints the pid of the frontmost app
 import AppKit
 import ApplicationServices
 import CoreGraphics
@@ -40,7 +43,7 @@ func post(_ type: CGEventType, at point: CGPoint) {
 }
 
 let args = CommandLine.arguments
-guard args.count >= 2 else { fail("usage: helper trusted | bounds <pid> | click <x> <y>") }
+guard args.count >= 2 else { fail("usage: helper trusted | bounds <pid> | click <x> <y> | move <x> <y> | activate <pid> | frontmost") }
 
 switch args[1] {
 case "trusted":
@@ -59,6 +62,17 @@ case "click":
     post(.leftMouseDown, at: point)
     usleep(60_000)
     post(.leftMouseUp, at: point)
+case "move":
+    guard args.count == 4, let x = Double(args[2]), let y = Double(args[3]) else {
+        fail("usage: helper move <x> <y>")
+    }
+    post(.mouseMoved, at: CGPoint(x: x, y: y))
+case "activate":
+    guard args.count == 3, let pid = pid_t(args[2]),
+          let app = NSRunningApplication(processIdentifier: pid) else { fail("usage: helper activate <pid>") }
+    print(app.activate(options: [.activateAllWindows]) ? "requested" : "refused")
+case "frontmost":
+    print(NSWorkspace.shared.frontmostApplication?.processIdentifier ?? -1)
 default:
     fail("unknown command \(args[1])")
 }
