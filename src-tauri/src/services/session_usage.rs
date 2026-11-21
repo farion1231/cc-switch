@@ -1266,18 +1266,21 @@ fn refresh_session_log_entry_on_conn(
 
     let [input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost] =
         session_costs(conn, msg, pricing_cache);
+    let cache_creation_1h_tokens = msg.cache_creation_1h_tokens.min(msg.cache_creation_tokens);
     conn.execute(
         "UPDATE proxy_request_logs SET
             input_tokens = ?1, output_tokens = ?2, cache_read_tokens = ?3,
-            cache_creation_tokens = ?4, input_cost_usd = ?5, output_cost_usd = ?6,
-            cache_read_cost_usd = ?7, cache_creation_cost_usd = ?8, total_cost_usd = ?9,
-            latency_ms = ?10, first_token_ms = ?11
-         WHERE request_id = ?12",
+            cache_creation_tokens = ?4, cache_creation_1h_tokens = ?5,
+            input_cost_usd = ?6, output_cost_usd = ?7,
+            cache_read_cost_usd = ?8, cache_creation_cost_usd = ?9, total_cost_usd = ?10,
+            latency_ms = ?11, first_token_ms = ?12
+         WHERE request_id = ?13",
         rusqlite::params![
             msg.input_tokens,
             msg.output_tokens,
             msg.cache_read_tokens,
             msg.cache_creation_tokens,
+            cache_creation_1h_tokens,
             input_cost,
             output_cost,
             cache_read_cost,
@@ -1346,16 +1349,18 @@ fn upsert_session_log_entry_on_conn(
 
     let [input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost] =
         session_costs(conn, msg, pricing_cache);
+    let cache_creation_1h_tokens = msg.cache_creation_1h_tokens.min(msg.cache_creation_tokens);
 
     let inserted_rows = conn
         .execute(
             "INSERT OR IGNORE INTO proxy_request_logs (
             request_id, provider_id, app_type, model, request_model,
             input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+            cache_creation_1h_tokens,
             input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
             latency_ms, first_token_ms, status_code, error_message, session_id,
             provider_type, is_streaming, cost_multiplier, created_at, data_source
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)",
             rusqlite::params![
                 request_id,
                 "_session",         // provider_id: 标记为会话来源
@@ -1366,6 +1371,7 @@ fn upsert_session_log_entry_on_conn(
                 msg.output_tokens,
                 msg.cache_read_tokens,
                 msg.cache_creation_tokens,
+                cache_creation_1h_tokens,
                 input_cost,
                 output_cost,
                 cache_read_cost,
@@ -2198,17 +2204,100 @@ mod tests {
         assert_eq!(sync_single_file(&db, &file, None)?.imported, 1);
 
         let conn = lock_conn!(db.conn);
-        let cache_creation_cost: String = conn.query_row(
-            "SELECT cache_creation_cost_usd FROM proxy_request_logs WHERE request_id = 'session:msg_1h'",
+        let (cache_creation_tokens, cache_creation_1h_tokens, cache_creation_cost): (
+            i64,
+            i64,
+            String,
+        ) = conn.query_row(
+            "SELECT cache_creation_tokens, cache_creation_1h_tokens, cache_creation_cost_usd
+             FROM proxy_request_logs WHERE request_id = 'session:msg_1h'",
             [],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )?;
+        assert_eq!(cache_creation_tokens, 1000);
+        assert_eq!(cache_creation_1h_tokens, 600);
         // claude-opus-4-8：400 × $6.25/M + 600 × $10/M = 0.0085
         assert_eq!(
             cache_creation_cost.parse::<Decimal>().unwrap(),
             Decimal::new(85, 4)
         );
         drop(conn);
+
+        fs::remove_dir_all(&tmp).ok();
+        Ok(())
+    }
+
+    #[test]
+    fn test_session_1h_cache_writes_refresh_and_backfill_at_1h_rate() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let (tmp, file) = temp_session_file();
+
+        let first_block = [
+            chain_line("user", 1, None, "2026-06-07T13:00:00.000Z"),
+            format!(
+                r#"{{"parentUuid":"{}","type":"assistant","uuid":"{}","apiBlockIndex":0,"message":{{"id":"msg_sub_1h","model":"custom-session-1h-model","usage":{{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":0,"cache_creation_input_tokens":400,"cache_creation":{{"ephemeral_5m_input_tokens":200,"ephemeral_1h_input_tokens":200}}}},"stop_reason":null}},"timestamp":"2026-06-07T13:00:02.000Z","sessionId":"session-sub-1h"}}"#,
+                chain_uuid(1),
+                chain_uuid(2)
+            ),
+        ];
+        append_lines(&file, &first_block);
+        assert_eq!(sync_with_cursor(&db, &file)?.imported, 1);
+
+        {
+            let conn = lock_conn!(db.conn);
+            let row: (i64, i64, String) = conn.query_row(
+                "SELECT cache_creation_tokens, cache_creation_1h_tokens, total_cost_usd
+                 FROM proxy_request_logs WHERE request_id = 'session:msg_sub_1h'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )?;
+            assert_eq!(row, (400, 200, "0".to_string()));
+        }
+
+        let final_block = [format!(
+            r#"{{"parentUuid":"{}","type":"assistant","uuid":"{}","apiBlockIndex":1,"message":{{"id":"msg_sub_1h","model":"custom-session-1h-model","usage":{{"input_tokens":10,"output_tokens":50,"cache_read_input_tokens":0,"cache_creation_input_tokens":1000,"cache_creation":{{"ephemeral_5m_input_tokens":400,"ephemeral_1h_input_tokens":600}}}},"stop_reason":"end_turn"}},"timestamp":"2026-06-07T13:00:30.000Z","sessionId":"session-sub-1h"}}"#,
+            chain_uuid(2),
+            chain_uuid(3)
+        )];
+        append_lines(&file, &final_block);
+        assert_eq!(sync_with_cursor(&db, &file)?.imported, 1);
+
+        {
+            let conn = lock_conn!(db.conn);
+            let row: (i64, i64, String) = conn.query_row(
+                "SELECT cache_creation_tokens, cache_creation_1h_tokens, total_cost_usd
+                 FROM proxy_request_logs WHERE request_id = 'session:msg_sub_1h'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )?;
+            assert_eq!(row, (1000, 600, "0".to_string()));
+
+            conn.execute(
+                "INSERT INTO model_pricing (
+                    model_id, display_name, input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+                ) VALUES ('custom-session-1h-model', 'Custom Session 1H', '8', '24', '0.8', '10')",
+                [],
+            )?;
+        }
+
+        assert_eq!(db.backfill_missing_usage_costs()?, 1);
+
+        {
+            let conn = lock_conn!(db.conn);
+            let (tokens_1h, cache_creation_cost): (i64, String) = conn.query_row(
+                "SELECT cache_creation_1h_tokens, cache_creation_cost_usd
+                 FROM proxy_request_logs WHERE request_id = 'session:msg_sub_1h'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
+            assert_eq!(tokens_1h, 600);
+            // 400 × $10/M + 600 × 1.6 × $10/M = 0.004 + 0.0096 = 0.0136
+            assert_eq!(
+                cache_creation_cost.parse::<Decimal>().unwrap(),
+                Decimal::new(136, 4)
+            );
+        }
 
         fs::remove_dir_all(&tmp).ok();
         Ok(())

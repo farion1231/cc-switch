@@ -35,11 +35,16 @@ struct UsageSemantic {
     output_tokens: u32,
     cache_read_tokens: u32,
     cache_creation_tokens: u32,
+    cache_creation_1h_tokens: u32,
     status_code: u16,
 }
 
 impl UsageSemantic {
     fn from_log(log: &RequestLog, input_token_semantics: i64) -> Self {
+        let cache_creation_1h_tokens = log
+            .usage
+            .cache_creation_1h_tokens
+            .min(log.usage.cache_creation_tokens);
         Self {
             app_type: log.app_type.clone(),
             provider_id: log.provider_id.clone(),
@@ -49,6 +54,7 @@ impl UsageSemantic {
             output_tokens: log.usage.output_tokens,
             cache_read_tokens: log.usage.cache_read_tokens,
             cache_creation_tokens: log.usage.cache_creation_tokens,
+            cache_creation_1h_tokens,
             status_code: log.status_code,
         }
     }
@@ -63,6 +69,7 @@ impl UsageSemantic {
             self.output_tokens,
             self.cache_read_tokens,
             self.cache_creation_tokens,
+            self.cache_creation_1h_tokens,
             self.status_code,
         ))
         .expect("usage semantic tuple is serializable");
@@ -175,6 +182,10 @@ impl<'a> UsageLogger<'a> {
             }
         };
 
+        let cache_creation_1h_tokens = log
+            .usage
+            .cache_creation_1h_tokens
+            .min(log.usage.cache_creation_tokens);
         let insert_verb = if replace_session_log {
             "INSERT OR REPLACE"
         } else {
@@ -185,11 +196,11 @@ impl<'a> UsageLogger<'a> {
             "{insert_verb} INTO proxy_request_logs (
                 request_id, provider_id, app_type, model, request_model, pricing_model,
                 input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-                input_token_semantics,
+                cache_creation_1h_tokens, input_token_semantics,
                 input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
                 latency_ms, first_token_ms, status_code, error_message, session_id,
                 provider_type, is_streaming, cost_multiplier, created_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)"
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)"
         );
         let affected_rows = conn
             .execute(
@@ -205,6 +216,7 @@ impl<'a> UsageLogger<'a> {
                     log.usage.output_tokens,
                     log.usage.cache_read_tokens,
                     log.usage.cache_creation_tokens,
+                    cache_creation_1h_tokens,
                     input_token_semantics,
                     input_cost,
                     output_cost,
@@ -244,10 +256,13 @@ impl<'a> UsageLogger<'a> {
         conn.query_row(
             "SELECT data_source, app_type, provider_id, model, input_token_semantics,
                     input_tokens, output_tokens, cache_read_tokens,
-                    cache_creation_tokens, status_code
+                    cache_creation_tokens, cache_creation_1h_tokens, status_code
              FROM proxy_request_logs WHERE request_id = ?1",
             [request_id],
             |row| {
+                let cache_creation_tokens = row.get::<_, i64>(8)?.max(0) as u32;
+                let cache_creation_1h_tokens =
+                    (row.get::<_, i64>(9)?.max(0) as u32).min(cache_creation_tokens);
                 Ok((
                     row.get(0)?,
                     UsageSemantic {
@@ -255,11 +270,12 @@ impl<'a> UsageLogger<'a> {
                         provider_id: row.get(2)?,
                         model: row.get(3)?,
                         input_token_semantics: row.get(4)?,
-                        input_tokens: row.get::<_, i64>(5)? as u32,
-                        output_tokens: row.get::<_, i64>(6)? as u32,
-                        cache_read_tokens: row.get::<_, i64>(7)? as u32,
-                        cache_creation_tokens: row.get::<_, i64>(8)? as u32,
-                        status_code: row.get::<_, i64>(9)? as u16,
+                        input_tokens: row.get::<_, i64>(5)?.max(0) as u32,
+                        output_tokens: row.get::<_, i64>(6)?.max(0) as u32,
+                        cache_read_tokens: row.get::<_, i64>(7)?.max(0) as u32,
+                        cache_creation_tokens,
+                        cache_creation_1h_tokens,
+                        status_code: row.get::<_, i64>(10)? as u16,
                     },
                 ))
             },
@@ -879,6 +895,44 @@ mod tests {
             |row| row.get(0),
         )?;
         assert_eq!(semantics, INPUT_TOKEN_SEMANTICS_TOTAL);
+        Ok(())
+    }
+
+    #[test]
+    fn log_request_persists_and_clamps_cache_creation_1h_tokens() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let logger = UsageLogger::new(&db);
+
+        let mut mixed = request_log("req-1h-mixed", 100);
+        mixed.app_type = "claude".to_string();
+        mixed.usage.cache_creation_tokens = 600;
+        mixed.usage.cache_creation_1h_tokens = 400;
+        logger.log_request(&mixed)?;
+
+        let mut clamped = request_log("req-1h-clamped", 100);
+        clamped.app_type = "claude".to_string();
+        clamped.usage.cache_creation_tokens = 300;
+        clamped.usage.cache_creation_1h_tokens = 500;
+        logger.log_request(&clamped)?;
+        // 幂等重放也应按钳位后的 1h 数量匹配，不触发 collision 分支
+        logger.log_request(&clamped)?;
+
+        let conn = crate::database::lock_conn!(db.conn);
+        let mixed_row: (i64, i64) = conn.query_row(
+            "SELECT cache_creation_tokens, cache_creation_1h_tokens
+             FROM proxy_request_logs WHERE request_id = 'req-1h-mixed'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        let clamped_row: (i64, i64, i64) = conn.query_row(
+            "SELECT cache_creation_tokens, cache_creation_1h_tokens,
+                    (SELECT COUNT(*) FROM proxy_request_logs WHERE request_id LIKE 'req-1h-clamped%')
+             FROM proxy_request_logs WHERE request_id = 'req-1h-clamped'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(mixed_row, (600, 400));
+        assert_eq!(clamped_row, (300, 300, 1));
         Ok(())
     }
 }
