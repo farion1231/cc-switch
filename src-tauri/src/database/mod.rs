@@ -155,6 +155,20 @@ impl Database {
 
         let conn = Connection::open(&db_path).map_err(|e| AppError::Database(e.to_string()))?;
 
+        // 数据库包含供应商 API Key 与账号凭据，在 Unix 上始终收紧为仅属主可读写（0600）。
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Err(e) =
+                std::fs::set_permissions(&db_path, std::fs::Permissions::from_mode(0o600))
+            {
+                log::warn!(
+                    "Failed to restrict permissions on {}: {e}",
+                    db_path.display()
+                );
+            }
+        }
+
         // 启用外键约束
         conn.execute("PRAGMA foreign_keys = ON;", [])
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -346,5 +360,30 @@ impl Database {
             .query_row("SELECT COUNT(*) FROM prompts", [], |row| row.get(0))
             .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(count == 0)
+    }
+}
+
+#[cfg(all(test, unix))]
+mod permission_tests {
+    use super::Database;
+    use crate::test_support::TempUserHome;
+    use serial_test::serial;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    #[serial]
+    fn database_init_restricts_db_file_to_0600_on_unix() {
+        let _home = TempUserHome::new();
+        let _db = Database::init().expect("Database::init");
+        let db_path = crate::config::get_app_config_dir().join("cc-switch.db");
+        let mode = std::fs::metadata(&db_path)
+            .expect("db metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(
+            mode, 0o600,
+            "cc-switch.db contains credentials and must be 0600 on Unix, got {mode:o}"
+        );
     }
 }

@@ -439,7 +439,18 @@ pub(crate) fn shell_escape(value: &str) -> String {
 }
 
 fn escape_osascript(value: &str) -> String {
-    value.replace('\\', "\\\\").replace('"', "\\\"")
+    let mut out = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '\\' => out.push_str(r"\\"),
+            '"' => out.push_str(r#"\""#),
+            '\r' => out.push_str(r"\r"),
+            '\n' => out.push_str(r"\n"),
+            '\0' => {}
+            _ => out.push(ch),
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -571,6 +582,19 @@ mod tests {
 
         // AppleScript 把 `\\` 求值回单个 `\`，于是 shell 拿到的正是 escaped 本身。
         assert_eq!(for_applescript.replace(r"\\", r"\"), escaped);
+    }
+
+    #[test]
+    fn escape_osascript_neutralizes_newlines_and_nul() {
+        let hostile = "cd '/tmp/dir\n\"do shell script \"id\"'\r\0";
+        let escaped = escape_osascript(hostile);
+        assert!(
+            !escaped.contains('\n') && !escaped.contains('\r') && !escaped.contains('\0'),
+            "escaped AppleScript literal must not contain raw CR, LF, or NUL: {escaped:?}"
+        );
+        assert!(escaped.contains(r"\n"));
+        assert!(escaped.contains(r"\r"));
+        assert!(escaped.contains(r#"\""#));
     }
 
     #[test]
