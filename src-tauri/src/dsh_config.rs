@@ -7,6 +7,7 @@ use crate::error::AppError;
 use indexmap::IndexMap;
 use serde_json::{json, Value};
 use serde_yaml::Value as Yaml;
+use sha2::{Digest, Sha256};
 use std::{
     fs,
     io::Write,
@@ -571,6 +572,35 @@ pub(crate) fn codex_binding() -> Result<Option<String>, AppError> {
     Ok((!account.trim().is_empty()).then(|| account.trim().to_owned()))
 }
 
+/// Use the native marker to scope sidecar read failures to its owning account.
+pub(crate) fn codex_binding_matches_for_refresh(account_id: &str) -> Result<bool, AppError> {
+    match codex_binding() {
+        Ok(binding) => Ok(binding.as_deref() == Some(account_id)),
+        Err(error) => match credential_document(&credentials_path()) {
+            Ok(document) if codex_document_owner(&document) != Some(account_id) => Ok(false),
+            _ => Err(error),
+        },
+    }
+}
+
+fn codex_refresh_fingerprint(refresh_token: &str) -> String {
+    format!("{:x}", Sha256::digest(refresh_token.as_bytes()))
+}
+
+fn codex_document_has_owned_generation(document: &Yaml) -> bool {
+    let expected = document["records"][CODEX_BINDING]["payload"]["refreshFingerprint"].as_str();
+    expected.is_some()
+        && document["records"][CODEX_RECORD]["payload"]["refresh"]
+            .as_str()
+            .map(codex_refresh_fingerprint)
+            .as_deref()
+            == expected
+}
+
+fn codex_document_owner(document: &Yaml) -> Option<&str> {
+    document["records"][CODEX_BINDING]["payload"]["accountId"].as_str()
+}
+
 pub(crate) struct CodexGrantGuard {
     _lock: FileLock,
     document: Yaml,
@@ -590,6 +620,27 @@ impl CodexGrantGuard {
             document,
         }))
     }
+    pub(crate) fn acquire_for_binding(expected: Option<&str>) -> Result<Self, AppError> {
+        let lock = FileLock::acquire(&credentials_path())?;
+        if codex_binding()?.as_deref() != expected {
+            return Err(AppError::Conflict(
+                "DSH login changed while preparing the binding; retry".into(),
+            ));
+        }
+        Ok(Self {
+            _lock: lock,
+            document: credential_document(&credentials_path())?,
+        })
+    }
+
+    pub(crate) fn is_bound_to(&self, account_id: &str) -> bool {
+        codex_document_owner(&self.document) == Some(account_id)
+    }
+
+    pub(crate) fn snapshot(&self) -> Yaml {
+        codex_document_snapshot(&self.document)
+    }
+
     pub(crate) fn payload(&self) -> Result<Value, AppError> {
         let record = &self.document["records"][CODEX_RECORD];
         if record["kind"].as_str() != Some("grant") {
@@ -600,7 +651,32 @@ impl CodexGrantGuard {
         serde_json::to_value(&record["payload"])
             .map_err(|_| AppError::Config("Invalid DSH Codex credential".into()))
     }
-    pub(crate) fn save(&mut self, payload: &Value) -> Result<(), AppError> {
+    pub(crate) fn prepare_legacy_provenance(&mut self, managed_refresh: &str) {
+        let marker = &self.document["records"][CODEX_BINDING]["payload"];
+        if marker.get("refreshFingerprint").is_some() {
+            return;
+        }
+        let native_refresh = self.document["records"][CODEX_RECORD]["payload"]["refresh"].as_str();
+        // Null records that ownership was checked but could not be established.
+        self.document["records"][CODEX_BINDING]["payload"]["refreshFingerprint"] =
+            if native_refresh == Some(managed_refresh) {
+                Yaml::from(codex_refresh_fingerprint(managed_refresh))
+            } else {
+                Yaml::Null
+            };
+    }
+
+    pub(crate) fn save(
+        &mut self,
+        payload: &Value,
+        advance_owned_generation: bool,
+    ) -> Result<(), AppError> {
+        if advance_owned_generation && codex_document_has_owned_generation(&self.document) {
+            if let Some(refresh) = payload["refresh"].as_str() {
+                self.document["records"][CODEX_BINDING]["payload"]["refreshFingerprint"] =
+                    Yaml::from(codex_refresh_fingerprint(refresh));
+            }
+        }
         self.document["records"][CODEX_RECORD] =
             serde_yaml::to_value(json!({"kind":"grant","payload":payload}))
                 .map_err(|_| AppError::Config("Invalid DSH Codex credential".into()))?;
@@ -610,67 +686,194 @@ impl CodexGrantGuard {
     }
 }
 
-pub(crate) fn unlink_codex(
+pub(crate) fn unlink_codex_and_commit(
     account_id: &str,
-    identity: Option<&str>,
-    workspace: Option<&str>,
+    owner: Option<&CodexGrantOwner>,
+    commit: impl FnOnce() -> Result<(), AppError>,
 ) -> Result<(), AppError> {
-    let Some(mut guard) = CodexGrantGuard::acquire(account_id)? else {
-        return Ok(());
-    };
-    let access = guard.document["records"][CODEX_RECORD]["payload"]["access"].as_str();
-    let owned = identity.is_some()
-        && workspace.is_some()
-        && guard.document["records"][CODEX_RECORD]["payload"]["accountId"].as_str() == workspace
-        && access
-            .and_then(crate::codex_config::extract_codex_id_token_user_identity)
-            .as_deref()
-            == identity;
-    let records = guard.document["records"]
+    if !codex_binding_matches_for_refresh(account_id)? {
+        return commit();
+    }
+    edit_files_and_commit(
+        &[codex_binding_path(), credentials_path()],
+        |texts| {
+            if texts[0].trim() != account_id {
+                return Ok(texts.to_vec());
+            }
+            let mut next = vec![String::new(), texts[1].clone()];
+            let mut document = credential_document_from(&texts[1])?;
+            if codex_document_owner(&document) == Some(account_id) {
+                // A different refresh token for the same user/workspace can be a
+                // rotation or a separate sign-in. Do not report a complete sign-out
+                // while silently leaving a potentially active managed grant behind.
+                if owner.is_some_and(|owner| {
+                    owner.matches_identity(&document) && !owner.matches(&document)
+                }) {
+                    return Err(AppError::Conflict(
+                        "The DSH Codex login has changed. Sign out in DSH, or remove the provider to keep the native login, then retry removing this account.".into(),
+                    ));
+                }
+                let owned = owner.is_some_and(|owner| owner.matches(&document));
+                remove_codex_records(&mut document, owned)?;
+                next[1] = serialize_credentials(&document)?;
+            }
+            Ok(next)
+        },
+        commit,
+    )
+}
+
+fn remove_codex_records(document: &mut Yaml, owned: bool) -> Result<(), AppError> {
+    let records = document["records"]
         .as_mapping_mut()
         .ok_or_else(|| AppError::Config("Invalid DSH credential records".into()))?;
     if owned {
         records.remove(Yaml::from(CODEX_RECORD));
     }
     records.remove(Yaml::from(CODEX_BINDING));
-    let text = serde_yaml::to_string(&guard.document)
-        .map_err(|_| AppError::Config("Cannot serialize DSH credentials".into()))?;
-    atomic_write_private(&credentials_path(), text.as_bytes())?;
-    atomic_write_private(&codex_binding_path(), b"")
+    Ok(())
 }
 
-pub(crate) fn codex_snapshot() -> Result<Yaml, AppError> {
-    let doc = credential_document(&credentials_path())?;
-    Ok(serde_yaml::to_value(vec![
+fn serialize_credentials(document: &Yaml) -> Result<String, AppError> {
+    serde_yaml::to_string(document)
+        .map_err(|_| AppError::Config("Cannot serialize DSH credentials".into()))
+}
+
+pub(crate) struct CodexGrantOwner {
+    pub(crate) identity: String,
+    pub(crate) workspace: String,
+    pub(crate) refresh_token: String,
+    pub(crate) allow_legacy_match: bool,
+}
+
+impl CodexGrantOwner {
+    fn matches_identity(&self, document: &Yaml) -> bool {
+        let payload = &document["records"][CODEX_RECORD]["payload"];
+        payload["accountId"].as_str() == Some(self.workspace.as_str())
+            && payload["access"]
+                .as_str()
+                .and_then(crate::codex_config::extract_codex_id_token_user_identity)
+                .as_deref()
+                == Some(self.identity.as_str())
+    }
+
+    fn matches(&self, document: &Yaml) -> bool {
+        if !self.matches_identity(document) {
+            return false;
+        }
+        let marker = &document["records"][CODEX_BINDING]["payload"];
+        if marker.get("refreshFingerprint").is_none() {
+            // For bindings predating provenance, an unchanged token is the
+            // only acceptable proof. Adopted generations record null instead.
+            return self.allow_legacy_match
+                && document["records"][CODEX_RECORD]["payload"]["refresh"].as_str()
+                    == Some(self.refresh_token.as_str());
+        }
+        codex_document_has_owned_generation(document)
+    }
+}
+
+/// Remove the provider and its binding in a single transaction with the DB update.
+pub(crate) fn remove_codex_provider<T>(
+    expected_account: Option<&str>,
+    owner: Option<&CodexGrantOwner>,
+    expected_snapshot: Option<&Yaml>,
+    commit: impl FnOnce() -> Result<T, AppError>,
+) -> Result<T, AppError> {
+    let profiles: Vec<_> = target_paths()
+        .into_iter()
+        .filter(|path| path.exists())
+        .collect();
+    let mut paths = vec![codex_binding_path()];
+    if expected_account.is_some() {
+        paths.push(credentials_path());
+    }
+    paths.extend(profiles.iter().cloned());
+    edit_files_and_commit(
+        &paths,
+        |texts| {
+            let sidecar = texts[0].trim();
+            if (!sidecar.is_empty()).then_some(sidecar) != expected_account {
+                return Err(AppError::Conflict(
+                    "DSH login changed while removing Codex; retry".into(),
+                ));
+            }
+            let mut next = vec![String::new()];
+            if let Some(account) = expected_account {
+                let mut document = credential_document_from(&texts[1])?;
+                if expected_snapshot != Some(&codex_document_snapshot(&document)) {
+                    return Err(AppError::Conflict(
+                        "DSH credentials changed while removing Codex; retry".into(),
+                    ));
+                }
+                if codex_document_owner(&document) == Some(account) {
+                    // A direct native sign-in can replace a grant with the same user/workspace.
+                    // The fingerprint records binding provenance, independently of reconciliation.
+                    let owned = owner.is_some_and(|owner| owner.matches(&document));
+                    remove_codex_records(&mut document, owned)?;
+                    next.push(serialize_credentials(&document)?);
+                } else {
+                    next.push(texts[1].clone());
+                }
+            } else {
+                next[0] = texts[0].clone();
+            }
+            let profile_texts = &texts[next.len()..];
+            if !profiles.is_empty() {
+                ensure_provider_copies_agree(
+                    &profiles,
+                    authoritative_index(&profiles),
+                    profile_texts,
+                    "openai-codex",
+                )?;
+            }
+            for text in profile_texts {
+                next.push(update_provider(text, "openai-codex", None, false)?);
+            }
+            Ok(next)
+        },
+        commit,
+    )
+}
+
+fn codex_document_snapshot(doc: &Yaml) -> Yaml {
+    Yaml::Sequence(vec![
         doc["records"][CODEX_RECORD].clone(),
         doc["records"][CODEX_BINDING].clone(),
     ])
-    .unwrap())
 }
 
 pub(crate) fn bind_codex(
     account_id: &str,
     payload: Value,
+    expected_account: Option<&str>,
     expected: &Yaml,
     config: Option<&Value>,
     commit: impl FnOnce() -> Result<(), AppError>,
 ) -> Result<(), AppError> {
     ensure_providers_not_shadowed(&home_patch_path())?;
+    let profiles = target_paths();
     let mut paths = vec![credentials_path(), codex_binding_path()];
-    paths.extend(target_paths());
+    paths.extend(profiles.iter().cloned());
     edit_files_and_commit(
         &paths,
         |texts| {
             let mut doc = credential_document_from(&texts[0])?;
-            let snapshot = serde_yaml::to_value(vec![
-                doc["records"][CODEX_RECORD].clone(),
-                doc["records"][CODEX_BINDING].clone(),
-            ])
-            .unwrap();
-            if &snapshot != expected {
+            let sidecar = texts[1].trim();
+            if (!sidecar.is_empty()).then_some(sidecar) != expected_account
+                || &codex_document_snapshot(&doc) != expected
+            {
                 return Err(AppError::Conflict(
                     "DSH login changed while switching; retry".into(),
                 ));
+            }
+            if config.is_some() {
+                ensure_provider_copies_agree(
+                    &profiles,
+                    authoritative_index(&profiles),
+                    &texts[2..],
+                    "openai-codex",
+                )?;
             }
             if doc["records"].is_null() {
                 doc["records"] = Yaml::Mapping(Default::default());
@@ -680,9 +883,18 @@ pub(crate) fn bind_codex(
             }
             doc["records"][CODEX_RECORD] =
                 serde_yaml::to_value(json!({"kind":"grant","payload":payload})).unwrap();
-            doc["records"][CODEX_BINDING] =
-                serde_yaml::to_value(json!({"kind":"grant","payload":{"accountId":account_id}}))
-                    .unwrap();
+            let refresh = payload["refresh"]
+                .as_str()
+                .filter(|refresh| !refresh.is_empty())
+                .ok_or_else(|| AppError::Config("Missing DSH Codex refresh token".into()))?;
+            doc["records"][CODEX_BINDING] = serde_yaml::to_value(json!({
+                "kind": "grant",
+                "payload": {
+                    "accountId": account_id,
+                    "refreshFingerprint": codex_refresh_fingerprint(refresh),
+                },
+            }))
+            .unwrap();
             let mut result = vec![
                 serde_yaml::to_string(&doc)
                     .map_err(|_| AppError::Config("Cannot serialize DSH credentials".into()))?,
@@ -692,7 +904,8 @@ pub(crate) fn bind_codex(
                 let mut entry = provider_entry(text)?;
                 let providers = entry["config"]["providers"].as_mapping_mut().unwrap();
                 if let Some(config) = config {
-                    let (_, native) = native_provider("openai-codex", config, "")?;
+                    validate_codex_binding(config)?;
+                    let (_, native) = build_native_provider("openai-codex", config, "")?;
                     providers.insert(
                         Yaml::from("openai-codex"),
                         serde_yaml::to_value(native)
@@ -917,8 +1130,16 @@ fn get_providers_from(
                     }
                 }
                 model["limit"] = Value::Object(limits);
-                if let Some(efforts) = model.get("reasoningEfforts") {
-                    model["reasoning"] = json!(efforts.is_object());
+                if let Some(efforts) = model.get("reasoningEfforts").cloned() {
+                    match normalize_reasoning_efforts(&efforts) {
+                        Some(normalized) => {
+                            model["reasoning"] = json!(normalized.is_object());
+                            model["reasoningEfforts"] = normalized;
+                        }
+                        None => {
+                            model.as_object_mut().unwrap().remove("reasoningEfforts");
+                        }
+                    }
                 }
                 if let Some(input) = model.get("input").cloned() {
                     model["modalities"] = json!({"input":input,"output":["text"]});
@@ -935,6 +1156,18 @@ fn get_providers_from(
 }
 
 pub(crate) fn validate_provider(id: &str, config: &Value) -> Result<(), AppError> {
+    validate_provider_config(id, config, false)
+}
+
+pub(crate) fn validate_codex_binding(config: &Value) -> Result<(), AppError> {
+    validate_provider_config("openai-codex", config, true)
+}
+
+fn validate_provider_config(
+    id: &str,
+    config: &Value,
+    native_codex_oauth: bool,
+) -> Result<(), AppError> {
     if id.is_empty()
         || id == "deepseek-official"
         || id.starts_with('-')
@@ -946,7 +1179,12 @@ pub(crate) fn validate_provider(id: &str, config: &Value) -> Result<(), AppError
     {
         return Err(AppError::InvalidInput("DeepSeek Harness provider ids must be lowercase hyphenated identifiers; deepseek-official is reserved".into()));
     }
-    if id != "openai-codex" {
+    if !config.is_object() {
+        return Err(AppError::InvalidInput(
+            "DeepSeek Harness provider settings must be an object".into(),
+        ));
+    }
+    if !native_codex_oauth {
         if !matches!(
             config["api"].as_str(),
             Some("openai-completions" | "openai-responses" | "anthropic-messages")
@@ -989,7 +1227,7 @@ pub(crate) fn validate_provider(id: &str, config: &Value) -> Result<(), AppError
         .as_object()
         .filter(|models| !models.is_empty())
     else {
-        if id == "openai-codex" {
+        if native_codex_oauth {
             return Ok(());
         }
         return Err(AppError::InvalidInput(
@@ -1052,16 +1290,23 @@ fn update_provider(
 fn restore_headless_credentials(
     path: &Path,
     text: &str,
+    id: &str,
     native: &Value,
     credentials_text: &str,
 ) -> Result<String, AppError> {
-    let stored = native
-        .get("apiKeyEnv")
-        .and_then(Value::as_str)
-        .is_some_and(|reference| {
-            credential_document_from(credentials_text)
-                .is_ok_and(|credentials| credentials["refs"][reference].is_string())
-        });
+    if profile_name(path) != "headless" {
+        return Ok(text.to_owned());
+    }
+    let stored = credential_document_from(credentials_text).is_ok_and(|credentials| {
+        match native.get("apiKeyEnv").and_then(Value::as_str) {
+            Some(reference) => credentials["refs"][reference].is_string(),
+            None => {
+                id == "openai-codex"
+                    && credentials["records"][CODEX_RECORD]["payload"]["type"].as_str()
+                        == Some("oauth")
+            }
+        }
+    });
     if !stored {
         return Ok(text.to_owned());
     }
@@ -1147,6 +1392,7 @@ fn save_paths_and_commit<T>(
                 next.push(restore_headless_credentials(
                     path,
                     &text,
+                    id,
                     &native,
                     &credentials,
                 )?);
@@ -1168,6 +1414,28 @@ pub(crate) fn initialize_profiles(
     initialize_profiles_and_commit(providers, servers, || Ok(()))
 }
 
+/// Whether some target profile has not been seeded yet. Lets a caller that can't build the full
+/// seed (an unreadable managed row) defer only when there is a profile it would actually miss.
+pub(crate) fn has_uninitialized_profiles() -> Result<bool, AppError> {
+    let initialized = parse_profile_receipt(&read_text(&profile_receipt_path())?)?;
+    Ok(target_paths()
+        .iter()
+        .any(|path| !initialized.contains(&profile_name(path))))
+}
+
+fn profile_receipt_path() -> PathBuf {
+    data_dir().join(".cc-switch-profile-sync.json")
+}
+
+fn parse_profile_receipt(text: &str) -> Result<Vec<String>, AppError> {
+    if text.trim().is_empty() {
+        Ok(vec![])
+    } else {
+        serde_json::from_str(text)
+            .map_err(|_| AppError::Config("Invalid DeepSeek Harness profile sync receipt".into()))
+    }
+}
+
 fn initialize_profiles_and_commit<T>(
     providers: &IndexMap<String, Value>,
     servers: &IndexMap<String, Value>,
@@ -1177,16 +1445,8 @@ fn initialize_profiles_and_commit<T>(
         return commit();
     }
     let profiles = target_paths();
-    let receipt = data_dir().join(".cc-switch-profile-sync.json");
-    let parse_receipt = |text: &str| -> Result<Vec<String>, AppError> {
-        if text.trim().is_empty() {
-            Ok(vec![])
-        } else {
-            serde_json::from_str(text).map_err(|_| {
-                AppError::Config("Invalid DeepSeek Harness profile sync receipt".into())
-            })
-        }
-    };
+    let receipt = profile_receipt_path();
+    let parse_receipt = parse_profile_receipt;
     let initialized = parse_receipt(&read_text(&receipt)?)?;
     if profiles
         .iter()
@@ -1238,6 +1498,18 @@ fn initialize_profiles_and_commit<T>(
                         }
                         let native = match native {
                             Some(native) => native,
+                            None if id == "openai-codex"
+                                && !provider_is_custom_codex(config)
+                                && credential_document_from(&next[0]).is_ok_and(|document| {
+                                    codex_document_owner(&document).is_some()
+                                        && document["records"][CODEX_RECORD]["payload"]["type"]
+                                            .as_str()
+                                            == Some("oauth")
+                                }) =>
+                            {
+                                validate_codex_binding(config)?;
+                                build_native_provider(id, config, &next[0])?.1
+                            }
                             None => {
                                 let (credentials, native) = native_provider(id, config, &next[0])?;
                                 next[0] = credentials;
@@ -1247,7 +1519,7 @@ fn initialize_profiles_and_commit<T>(
                         let text =
                             update_provider(&next[index + 1], id, Some(native.clone()), true)?;
                         next[index + 1] =
-                            restore_headless_credentials(path, &text, &native, &next[0])?;
+                            restore_headless_credentials(path, &text, id, &native, &next[0])?;
                     }
                 }
                 if !has_servers {
@@ -1432,18 +1704,70 @@ fn diverged_mcp_error(id: &str, other: Option<&PathBuf>, source: Option<&PathBuf
     )
 }
 
+/// Keys accepted by DSH's `llm-pi-ai` schema for a model's `reasoningEfforts` map.
+const DSH_REASONING_EFFORT_LEVELS: [&str; 7] =
+    ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+
+/// Normalize `reasoningEfforts` to what `llm-pi-ai` accepts (`false` or a non-empty map keyed by
+/// [`DSH_REASONING_EFFORT_LEVELS`] with `string | null` values).
+///
+/// YAML 1.1 parsers turn unquoted `off: null` into boolean `false: null`, which `serde_json::to_value`
+/// then surfaces as the `"false"` key; map `"false"` back to `"off"` when `"off"` is absent, and
+/// drop unknown keys or invalid value types so one bad entry cannot fail the whole `llm-pi-ai` block
+/// (#9785).
+fn normalize_reasoning_efforts(value: &Value) -> Option<Value> {
+    match value {
+        Value::Bool(false) => Some(Value::Bool(false)),
+        Value::Object(map) => {
+            let mut normalized = serde_json::Map::new();
+            for (key, entry) in map {
+                if !(entry.is_string() || entry.is_null()) {
+                    continue;
+                }
+                if DSH_REASONING_EFFORT_LEVELS.contains(&key.as_str()) {
+                    normalized.insert(key.clone(), entry.clone());
+                } else if key == "false" {
+                    normalized
+                        .entry("off".to_string())
+                        .or_insert_with(|| entry.clone());
+                }
+            }
+            (!normalized.is_empty()).then_some(Value::Object(normalized))
+        }
+        _ => None,
+    }
+}
+
 /// The native `llm-pi-ai` provider node for an editor config, and the credentials text with a new
 /// key stored under CC Switch's reference (unchanged when the key is unchanged).
+fn provider_is_custom_codex(config: &Value) -> bool {
+    [config.get("apiKeyEnv"), config.pointer("/options/apiKey")]
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .any(|credential| !credential.trim().is_empty())
+}
+
 fn native_provider(
+    id: &str,
+    config: &Value,
+    credentials_text: &str,
+) -> Result<(String, Value), AppError> {
+    validate_provider(id, config)?;
+    build_native_provider(id, config, credentials_text)
+}
+
+fn build_native_provider(
     id: &str,
     config: &Value,
     credentials_text: &str,
 ) -> Result<(String, Value), AppError> {
     let mut credentials_next = credentials_text.to_owned();
     let native = {
-        validate_provider(id, config)?;
         let mut native = config.clone();
-        let object = native.as_object_mut().unwrap();
+        let object = native.as_object_mut().ok_or_else(|| {
+            AppError::InvalidInput("DeepSeek Harness provider settings must be an object".into())
+        })?;
         object.remove("name");
         object.remove("options");
         object.remove("kind");
@@ -1497,13 +1821,25 @@ fn native_provider(
             object.remove("modalities");
             if object.get("reasoning") == Some(&Value::Bool(false)) {
                 object.insert("reasoningEfforts".into(), Value::Bool(false));
-            } else if object.get("reasoning") == Some(&Value::Bool(true))
-                && !object.contains_key("reasoningEfforts")
-            {
-                object.insert(
-                    "reasoningEfforts".into(),
-                    json!({"off":null,"low":"low","medium":"medium","high":"high"}),
-                );
+            } else {
+                if let Some(efforts) = object.get("reasoningEfforts").cloned() {
+                    match normalize_reasoning_efforts(&efforts) {
+                        Some(normalized) => {
+                            object.insert("reasoningEfforts".into(), normalized);
+                        }
+                        None => {
+                            object.remove("reasoningEfforts");
+                        }
+                    }
+                }
+                if object.get("reasoning") == Some(&Value::Bool(true))
+                    && !object.contains_key("reasoningEfforts")
+                {
+                    object.insert(
+                        "reasoningEfforts".into(),
+                        json!({"off":null,"low":"low","medium":"medium","high":"high"}),
+                    );
+                }
             }
             object.remove("reasoning");
             models.push(model);
@@ -1923,6 +2259,89 @@ mod tests {
         assert_eq!(model("test-model")["input"], json!(["text", "image"]));
         assert!(model("pdf-only").get("input").is_none());
         assert!(model("pdf-only").get("modalities").is_none());
+    }
+
+    #[test]
+    fn provider_reasoning_efforts_normalizes_false_key_and_filters_unknown_entries() {
+        let mut config = editor_config();
+        config["models"]["false-alias"] = json!({
+            "name": "False Alias",
+            "reasoning": true,
+            "reasoningEfforts": {
+                "false": null,
+                "low": "low",
+                "medium": "medium",
+                "max": "max",
+                "turbo": "turbo",
+                "high": 123
+            }
+        });
+        config["models"]["explicit-off-wins"] = json!({
+            "name": "Explicit Off",
+            "reasoning": true,
+            "reasoningEfforts": {
+                "false": null,
+                "off": "none",
+                "low": "low"
+            }
+        });
+        config["models"]["only-invalid-reasoning-on"] = json!({
+            "name": "Only Invalid On",
+            "reasoning": true,
+            "reasoningEfforts": { "bogus": "x" }
+        });
+        config["models"]["only-invalid-no-flag"] = json!({
+            "name": "Only Invalid",
+            "reasoningEfforts": { "bogus": "x" }
+        });
+        config["models"]["disabled-efforts"] = json!({
+            "name": "Disabled",
+            "reasoningEfforts": false
+        });
+
+        let (_, native) = native_provider("gateway", &config, "").unwrap();
+        let models = native["models"].as_array().unwrap();
+        let model = |id: &str| models.iter().find(|model| model["id"] == id).unwrap();
+
+        assert_eq!(
+            model("false-alias")["reasoningEfforts"],
+            json!({"off": null, "low": "low", "medium": "medium", "max": "max"})
+        );
+        assert_eq!(
+            model("explicit-off-wins")["reasoningEfforts"],
+            json!({"off": "none", "low": "low"})
+        );
+        assert_eq!(
+            model("only-invalid-reasoning-on")["reasoningEfforts"],
+            json!({"off": null, "low": "low", "medium": "medium", "high": "high"})
+        );
+        assert!(model("only-invalid-no-flag")
+            .get("reasoningEfforts")
+            .is_none());
+        assert_eq!(model("disabled-efforts")["reasoningEfforts"], json!(false));
+    }
+
+    #[test]
+    fn get_providers_normalizes_yaml_boolean_false_reasoning_effort_key() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("cordis.patch.yml");
+        let credentials = temp.path().join(".credentials.yaml");
+        fs::write(
+            &path,
+            "- id: llm-pi-ai\n  config:\n    providers:\n      volcengine:\n        api: openai-completions\n        baseURL: https://ark.example/v1\n        models:\n          - id: m1\n            name: Model 1\n            reasoningEfforts:\n              false: null\n              low: low\n              max: max\n              bogus: nope\n          - id: m2\n            name: Model 2\n            reasoningEfforts: false\n",
+        )
+        .unwrap();
+
+        let providers = get_providers_from(&path, &credentials).unwrap();
+        let m1 = &providers["volcengine"]["models"]["m1"];
+        assert_eq!(m1["reasoning"], json!(true));
+        assert_eq!(
+            m1["reasoningEfforts"],
+            json!({"off": null, "low": "low", "max": "max"})
+        );
+        let m2 = &providers["volcengine"]["models"]["m2"];
+        assert_eq!(m2["reasoning"], json!(false));
+        assert_eq!(m2["reasoningEfforts"], json!(false));
     }
 
     #[test]
@@ -2597,6 +3016,111 @@ mod tests {
         assert!(!profile_path("acp").exists());
     }
 
+    fn seed_rows_with_one_unreadable_mcp(dsh_enabled: bool) -> crate::store::AppState {
+        use crate::app_config::{AppType, McpApps, McpServer};
+        use crate::provider::{Provider, ProviderMeta};
+
+        let state = crate::store::AppState::new(std::sync::Arc::new(
+            crate::database::Database::memory().unwrap(),
+        ));
+        let mut provider =
+            Provider::with_id("gateway".into(), "gateway".into(), editor_config(), None);
+        provider.meta = Some(ProviderMeta {
+            live_config_managed: Some(true),
+            ..Default::default()
+        });
+        state.db.save_provider(&AppType::Dsh, &provider).unwrap();
+        for (id, dsh) in [("fetch", true), ("broken", dsh_enabled)] {
+            state
+                .db
+                .save_mcp_server(&McpServer {
+                    id: id.into(),
+                    name: id.into(),
+                    server: json!({"command":"node","args":["fetch.js"]}),
+                    apps: McpApps {
+                        dsh,
+                        claude: true,
+                        ..Default::default()
+                    },
+                    description: None,
+                    homepage: None,
+                    docs: None,
+                    tags: vec![],
+                })
+                .unwrap();
+        }
+        state
+            .db
+            .conn
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE mcp_servers SET server_config = '{\"command\":' WHERE id = 'broken'",
+                [],
+            )
+            .unwrap();
+        state
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn profile_initialization_ignores_an_unreadable_mcp_row_of_another_app() {
+        use crate::services::provider::initialize_dsh_profiles;
+
+        let home = DshHome::new();
+        init_profiles(home.dir.path(), &["web"]);
+        let state = seed_rows_with_one_unreadable_mcp(false);
+
+        initialize_dsh_profiles(&state).expect("another app's bad row must not block DSH");
+
+        let web = profile_path("web");
+        assert!(get_providers_from(&web, &credentials_path())
+            .unwrap()
+            .contains_key("gateway"));
+        let text = read_text(&web).unwrap();
+        assert!(existing_mcp_entry(&text, "fetch").unwrap().is_some());
+        assert!(existing_mcp_entry(&text, "broken").unwrap().is_none());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn profile_initialization_defers_while_a_dsh_row_is_unreadable() {
+        use crate::app_config::AppType;
+        use crate::services::provider::initialize_dsh_profiles;
+
+        let home = DshHome::new();
+        init_profiles(home.dir.path(), &["web"]);
+        let web = profile_path("web");
+        let before = read_text(&web).unwrap();
+        let state = seed_rows_with_one_unreadable_mcp(true);
+
+        // Seeding is one-time: going ahead without the row would leave it out for good.
+        assert!(initialize_dsh_profiles(&state).is_err());
+        assert_eq!(read_text(&web).unwrap(), before);
+        assert!(has_uninitialized_profiles().unwrap());
+
+        // Once the bad row is gone, the deferred profile is seeded on the next attempt.
+        state.db.delete_mcp_server("broken").unwrap();
+        initialize_dsh_profiles(&state).unwrap();
+        assert!(existing_mcp_entry(&read_text(&web).unwrap(), "fetch")
+            .unwrap()
+            .is_some());
+        assert!(!has_uninitialized_profiles().unwrap());
+
+        // With nothing waiting, a bad DSH row no longer fails later syncs.
+        state
+            .db
+            .conn
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE providers SET settings_config = '{\"providers\":' WHERE app_type = ?1 AND id = 'gateway'",
+                [AppType::Dsh.as_str()],
+            )
+            .unwrap();
+        initialize_dsh_profiles(&state).expect("no profile is waiting");
+    }
+
     #[test]
     #[serial_test::serial]
     fn profile_initialization_rolls_back_its_receipt_and_can_retry() {
@@ -3037,6 +3561,184 @@ mod tests {
         let text = "- id: a\n  config: &shared\n    x: 1\n- id: b\n  config: *shared\n";
         assert!(replace_entry(text, "a", None).is_err());
         assert!(replace_entry(text, "b", None).is_ok());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn deleting_codex_provider_unlinks_owned_grant_and_rolls_back_on_database_failure() {
+        let _home = DshHome::new();
+        let account = "fixture-account";
+        let workspace = "fixture-workspace";
+        let profile = profile_path("web");
+        let path = credentials_path();
+        let before_profile = "- id: llm-pi-ai\n  config:\n    providers:\n      openai-codex: {displayName: Codex}\n";
+        let write_grant = |subject, refresh| {
+            let before = json!({"version":1,"records":{
+                CODEX_BINDING: {"kind":"grant","payload":{"accountId":account,"refreshFingerprint":codex_refresh_fingerprint("owned-refresh")}},
+                CODEX_RECORD: {"kind":"grant","payload":{
+                    "access":crate::codex_config::test_codex_id_token(subject),
+                    "accountId":workspace, "refresh":refresh
+                }},
+                "another-provider": {"kind":"grant","payload":{}}
+            }})
+            .to_string();
+            fs::create_dir_all(profile.parent().unwrap()).unwrap();
+            fs::write(&profile, before_profile).unwrap();
+            fs::write(&path, &before).unwrap();
+            fs::write(codex_binding_path(), account).unwrap();
+            before
+        };
+        let before = write_grant("owner", "owned-refresh");
+        let owner = CodexGrantOwner {
+            identity: "sub:owner".into(),
+            workspace: workspace.into(),
+            refresh_token: "owned-refresh".into(),
+            allow_legacy_match: true,
+        };
+        let remove = |commit: fn() -> Result<(), AppError>| {
+            let snapshot = codex_document_snapshot(&credential_document(&path).unwrap());
+            remove_codex_provider(Some(account), Some(&owner), Some(&snapshot), commit)
+        };
+        assert!(remove(|| Err(AppError::Database("test failure".into()))).is_err());
+        assert_eq!(read_text(&profile).unwrap(), before_profile);
+        assert_eq!(read_text(&path).unwrap(), before);
+        assert_eq!(codex_binding().unwrap().as_deref(), Some(account));
+
+        remove(|| Ok(())).unwrap();
+        let removed = credential_document(&path).unwrap();
+        assert!(removed["records"][CODEX_RECORD].is_null());
+        assert!(removed["records"][CODEX_BINDING].is_null());
+        assert!(!removed["records"]["another-provider"].is_null());
+        assert!(codex_binding().unwrap().is_none());
+        assert!(!read_text(&profile).unwrap().contains("openai-codex"));
+
+        for (subject, refresh) in [
+            ("different-user", "owned-refresh"),
+            ("owner", "replacement"),
+        ] {
+            write_grant(subject, refresh);
+            remove(|| Ok(())).unwrap();
+            let preserved = credential_document(&path).unwrap();
+            assert!(!preserved["records"][CODEX_RECORD].is_null());
+            assert!(preserved["records"][CODEX_BINDING].is_null());
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn binding_rejects_a_rotated_snapshot_and_divergent_profiles() {
+        let _home = DshHome::new();
+        let initial = CodexGrantGuard::acquire_for_binding(None)
+            .unwrap()
+            .snapshot();
+        let new_payload = json!({"type":"oauth","refresh":"new"});
+        bind_codex(
+            "owner",
+            new_payload.clone(),
+            None,
+            &initial,
+            None,
+            || Ok(()),
+        )
+        .unwrap();
+        assert!(validate_codex_binding(&Value::Null).is_err());
+        assert!(validate_provider("openai-codex", &json!({})).is_err());
+        assert!(validate_codex_binding(&json!({})).is_ok());
+        let headless = profile_path("headless");
+        fs::create_dir_all(headless.parent().unwrap()).unwrap();
+        fs::write(&headless, "[]").unwrap();
+        initialize_profiles(
+            &IndexMap::from([("openai-codex".into(), json!({"name":"Codex"}))]),
+            &IndexMap::new(),
+        )
+        .unwrap();
+        let initialized = entries(&read_text(&headless).unwrap()).unwrap();
+        assert!(initialized.iter().any(|entry| {
+            entry["id"] == "credentials" && entry["disabled"].as_bool() == Some(false)
+        }));
+
+        let snapshot = CodexGrantGuard::acquire_for_binding(Some("owner"))
+            .unwrap()
+            .snapshot();
+        let mut rotated = CodexGrantGuard::acquire("owner").unwrap().unwrap();
+        rotated
+            .save(&json!({"type":"oauth","refresh":"rotated"}), false)
+            .unwrap();
+        drop(rotated);
+        assert!(matches!(
+            bind_codex(
+                "other",
+                new_payload.clone(),
+                Some("owner"),
+                &snapshot,
+                None,
+                || Ok(())
+            ),
+            Err(AppError::Conflict(_))
+        ));
+        let snapshot = CodexGrantGuard::acquire_for_binding(Some("owner"))
+            .unwrap()
+            .snapshot();
+
+        let web = profile_path("web");
+        let desktop = profile_path("desktop");
+        let override_text =
+            "- id: llm-pi-ai\n  config:\n    providers:\n      openai-codex: {displayName: Desktop only}\n";
+        fs::write(&desktop, override_text).unwrap();
+        let original_web = read_text(&web).unwrap();
+        assert!(matches!(
+            bind_codex(
+                "owner",
+                new_payload,
+                Some("owner"),
+                &snapshot,
+                Some(&json!({"name":"Changed"})),
+                || Ok(())
+            ),
+            Err(AppError::Localized {
+                key: "dsh.provider_diverged",
+                ..
+            })
+        ));
+        assert_eq!(read_text(&web).unwrap(), original_web);
+        assert_eq!(read_text(&desktop).unwrap(), override_text);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn unlink_clears_a_sidecar_without_removing_an_unowned_grant() {
+        let _home = DshHome::new();
+        let account = "fixture-account";
+        let credentials = credentials_path();
+        let grant = json!({"version":1,"records":{
+            CODEX_RECORD: {"kind":"grant","payload":{"refresh":"native-only"}}
+        }})
+        .to_string();
+        fs::write(&credentials, &grant).unwrap();
+        fs::write(codex_binding_path(), account).unwrap();
+        unlink_codex_and_commit(account, None, || Ok(())).unwrap();
+        assert!(codex_binding().unwrap().is_none());
+        assert_eq!(read_text(&credentials).unwrap(), grant);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn unreadable_codex_sidecar_only_blocks_its_owner() {
+        let _home = DshHome::new();
+        fs::write(
+            credentials_path(),
+            json!({"version":1,"records":{
+                CODEX_BINDING: {"kind":"grant","payload":{"accountId":"bound"}}
+            }})
+            .to_string(),
+        )
+        .unwrap();
+        // Invalid UTF-8 exercises the file-read error on all platforms.
+        fs::write(codex_binding_path(), [0xff]).unwrap();
+        assert!(codex_binding_matches_for_refresh("bound").is_err());
+        assert!(!codex_binding_matches_for_refresh("unrelated").unwrap());
+        fs::write(credentials_path(), "[").unwrap();
+        assert!(codex_binding_matches_for_refresh("unrelated").is_err());
     }
 
     #[test]

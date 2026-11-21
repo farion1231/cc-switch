@@ -31,7 +31,7 @@ use super::model::{SessionBlock, SessionMessage};
 
 const INDEX_FILE: &str = "session-index.db";
 /// 索引格式版本；表结构或收录规则变了就加一，旧索引整体重建
-const INDEX_VERSION: i64 = 2;
+const INDEX_VERSION: i64 = 3;
 /// rowid 里留给消息序号的位数（单个会话最多 1600 万条消息，超出部分不收）
 const ROW_SHIFT: u32 = 24;
 const MAX_MESSAGES_PER_SOURCE: usize = 1 << ROW_SHIFT;
@@ -545,6 +545,9 @@ static STATUS: LazyLock<Mutex<IndexStatus>> = LazyLock::new(|| Mutex::new(IndexS
 static RUNNING: AtomicBool = AtomicBool::new(false);
 static RERUN: AtomicBool = AtomicBool::new(false);
 
+/// [`with_index_in`] 在持锁后再次检查开关时返回的哨兵：功能被关掉不是失败。
+const DISABLED: &str = "Session content search is disabled";
+
 pub fn index_path() -> PathBuf {
     crate::config::get_app_config_dir().join(INDEX_FILE)
 }
@@ -574,7 +577,7 @@ fn with_index_in<T>(
 ) -> Result<T, String> {
     let mut guard = slot.lock_recover();
     if !is_enabled() {
-        return Err("Session content search is disabled".to_string());
+        return Err(DISABLED.to_string());
     }
     if guard.is_none() {
         if let Some(dir) = path.parent() {
@@ -591,7 +594,20 @@ fn with_index_in<T>(
         *guard = Some(index?);
     }
     let index = guard.as_mut().expect("index opened above");
-    f(index).map_err(|e| format!("Session index error: {e}"))
+    f(index).map_err(|error| {
+        // Open validates the schema, but corrupt FTS segments may only fail on query.
+        // Close and remove the cache under the same lock used by background sync.
+        if matches!(
+            error.sqlite_error_code(),
+            Some(rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase)
+        ) {
+            *guard = None;
+            if let Err(cleanup) = remove_index_files(path) {
+                log::warn!("清理损坏的会话正文索引失败: {cleanup}");
+            }
+        }
+        format!("Session index error: {error}")
+    })
 }
 
 fn remove_index_files(path: &Path) -> std::io::Result<()> {
@@ -646,21 +662,45 @@ pub fn forget_source(provider_id: &str, source_path: &str) {
     }
 }
 
-pub fn search(query: &str, providers: Option<Vec<String>>, limit: usize) -> ContentSearchResult {
+/// 在消息正文里搜索。索引打不开或查询失败时上报错误，不返回空结果：
+/// 空结果会被界面当成「正文里没有这个词」，而索引只是缓存，坏了是可以修的。
+pub fn search(
+    query: &str,
+    providers: Option<Vec<String>>,
+    limit: usize,
+) -> Result<ContentSearchResult, String> {
+    search_in(&INDEX, &index_path(), enabled, query, providers, limit)
+}
+
+/// [`search`] 的实现，索引槽、路径、开关可替换（测试用）。
+fn search_in(
+    slot: &Mutex<Option<SessionIndex>>,
+    path: &Path,
+    is_enabled: impl Fn() -> bool,
+    query: &str,
+    providers: Option<Vec<String>>,
+    limit: usize,
+) -> Result<ContentSearchResult, String> {
     let status = status();
-    if !enabled() || query.trim().is_empty() {
-        return ContentSearchResult {
+    if !is_enabled() || query.trim().is_empty() {
+        return Ok(ContentSearchResult {
             hits: Vec::new(),
             status,
-        };
+        });
     }
     let providers: Option<HashSet<String>> = providers.map(|list| list.into_iter().collect());
-    let hits =
-        with_index(|index| index.search(query, providers.as_ref(), limit)).unwrap_or_else(|e| {
-            log::warn!("会话正文搜索失败: {e}");
-            Vec::new()
-        });
-    ContentSearchResult { hits, status }
+    let hits = with_index_in(slot, path, is_enabled, |index| {
+        index.search(query, providers.as_ref(), limit)
+    })
+    .or_else(|error| {
+        // 等待期间被关掉：这不是失败，界面不该弹错误（开关本身已经说明了状态）
+        if error == DISABLED {
+            return Ok(Vec::new());
+        }
+        log::warn!("会话正文搜索失败: {error}");
+        Err(error)
+    })?;
+    Ok(ContentSearchResult { hits, status })
 }
 
 /// 在后台线程里把索引同步到当前的会话列表；已经在跑时只记一次「跑完再来一遍」。
@@ -1550,6 +1590,123 @@ mod tests {
         );
         assert!(!enabled.load(Ordering::SeqCst));
         assert!(path.is_dir());
+    }
+
+    #[test]
+    fn non_corruption_errors_preserve_the_index() {
+        let index = SessionIndex::open_in_memory().unwrap();
+        let slot = Mutex::new(Some(index));
+        let result: Result<(), String> = with_index_in(
+            &slot,
+            Path::new("unused-index-path"),
+            || true,
+            |_| Err(rusqlite::Error::InvalidQuery),
+        );
+        assert!(result.is_err());
+        assert!(slot.lock_recover().is_some());
+    }
+
+    #[test]
+    fn search_recovers_from_corrupt_fts_segments() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(INDEX_FILE);
+        {
+            let mut index = SessionIndex::open(&path).unwrap();
+            index
+                .replace_source("codex", "/synthetic", fp(1), &rows(&["needle"]))
+                .unwrap();
+            index
+                .conn
+                .execute(
+                    "UPDATE message_text_data SET block = x'00' WHERE id > 10",
+                    [],
+                )
+                .unwrap();
+        }
+        // Opening succeeds even though reading the FTS segment fails.
+        let index = SessionIndex::open(&path).unwrap();
+        assert_eq!(
+            index
+                .search("needle", None, 10)
+                .unwrap_err()
+                .sqlite_error_code(),
+            Some(rusqlite::ErrorCode::DatabaseCorrupt)
+        );
+        let slot = Mutex::new(Some(index));
+        assert!(search_in(&slot, &path, || true, "needle", None, 10).is_err());
+        assert!(slot.lock_recover().is_none());
+        assert!(
+            !path.exists(),
+            "corrupt cache must be removed before releasing the lock"
+        );
+        with_index_in(
+            &slot,
+            &path,
+            || true,
+            |index| index.replace_source("codex", "/synthetic", fp(1), &rows(&["needle"])),
+        )
+        .unwrap();
+        assert_eq!(
+            search_in(&slot, &path, || true, "needle", None, 10)
+                .unwrap()
+                .hits
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn search_reports_index_failures_instead_of_empty_hits() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(INDEX_FILE);
+        // 索引文件位置被一个目录占着：打不开，也删不掉
+        fs::create_dir(&path).unwrap();
+        let slot = Mutex::new(None);
+        let enabled = AtomicBool::new(true);
+
+        let result = search_in(
+            &slot,
+            &path,
+            || enabled.load(Ordering::SeqCst),
+            "needle",
+            None,
+            10,
+        );
+        // 空命中会被界面当成「正文里没有这个词」，这里必须报错
+        let error = result.expect_err("an unreadable index must not look empty");
+        assert!(!error.trim().is_empty(), "the failure needs a reason");
+
+        // 索引只是缓存：挡路的目录挪开后，界面上的「重试」要能自愈
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        fs::remove_dir(&path).unwrap();
+        let recovered = search_in(
+            &slot,
+            &path,
+            || enabled.load(Ordering::SeqCst),
+            "needle",
+            None,
+            10,
+        )
+        .expect("the retry must rebuild the index");
+        assert!(recovered.hits.is_empty());
+
+        // 功能关着时不算失败：没有索引是正常状态
+        enabled.store(false, Ordering::SeqCst);
+        let empty = search_in(
+            &slot,
+            &path,
+            || enabled.load(Ordering::SeqCst),
+            "needle",
+            None,
+            10,
+        )
+        .expect("a disabled search is not a failure");
+        assert!(empty.hits.is_empty());
     }
 
     #[test]

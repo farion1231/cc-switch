@@ -28,6 +28,7 @@ import { ClaudeBoundAccountLine } from "@/components/providers/forms/ClaudeOffic
 import ClaudeAccountQuotaFooter from "@/components/ClaudeAccountQuotaFooter";
 import { claudePlanLabel } from "@/lib/claudePlan";
 import {
+  codexOauthQuotaKey,
   subscriptionKeys,
   useClaudeDefaultPlan,
 } from "@/lib/query/subscription";
@@ -48,6 +49,7 @@ import {
   canSwitchAgyAccount,
   resolveManagedAccountId,
   resolveDshCodexAccountId,
+  isDshCodexOAuthRoute,
 } from "@/lib/authBinding";
 import {
   isOfficialAccount,
@@ -379,7 +381,7 @@ export function ProviderCard({
   );
   // xAI OAuth (SuperGrok 反代)：额度经自管 OAuth token 自动显示，与 codex_oauth 同构
   const isXaiOauth = provider.meta?.providerType === PROVIDER_TYPES.XAI_OAUTH;
-  // Antigravity 官方卡绑了授权中心的账号：额度查绑定的号（只有 macOS、Windows 能切号，其他平台忽略绑定）
+  // 支持 agy 切号的平台上，Antigravity 官方卡查询所绑定账号的额度。
   const agyBoundAccountId =
     appId === "agy" && isOfficial && canSwitchAgyAccount()
       ? resolveManagedAccountId(provider.meta, "agy_oauth")?.trim() || null
@@ -395,14 +397,10 @@ export function ProviderCard({
       ]
     : isCodexOauth
       ? !hasManagedCodexQuota || usageEnabled
-        ? [
-            "codex_oauth",
-            "quota",
-            resolveManagedAccountId(
-              provider.meta,
-              PROVIDER_TYPES.CODEX_OAUTH,
-            ) ?? "default",
-          ]
+        ? codexOauthQuotaKey(
+            dshCodexAccountId ?? managedCodexAccountId ?? null,
+            Boolean(dshCodexAccountId),
+          )
         : null
       : isXaiOauth
         ? [
@@ -697,6 +695,7 @@ export function ProviderCard({
                 !hasManagedCodexQuota || usageEnabled ? (
                   <CodexOauthQuotaFooter
                     meta={provider.meta}
+                    useDsh={Boolean(dshCodexAccountId)}
                     inline={true}
                     isCurrent={isCurrent || Boolean(dshCodexAccountId)}
                     autoQueryInterval={
@@ -799,7 +798,9 @@ export function ProviderCard({
             onEdit={() => onEdit(provider)}
             onDelete={() => onDelete(provider)}
             onDuplicate={
-              onDuplicate && !(appId === "kimi" && isOfficial)
+              onDuplicate &&
+              !(appId === "kimi" && isOfficial) &&
+              !isDshCodexOAuthRoute(appId, provider.id, provider.settingsConfig)
                 ? () => onDuplicate(provider)
                 : undefined
             }

@@ -2699,6 +2699,113 @@ requires_openai_auth = true
         });
     }
 
+    /// 一个新 OpenCode 标识缺 npm/models：在新机器上导入备份时 live 里没有同名条目，写不进去。
+    fn opencode_row_without_definition(id: &str) -> Provider {
+        let mut provider = opencode_provider(id);
+        provider.settings_config = json!({
+            "name": format!("Provider {id}"),
+            "options": {"baseURL": "https://api.example.com/v1", "apiKey": "test-key"}
+        });
+        provider
+    }
+
+    #[test]
+    #[serial]
+    fn full_live_sync_reports_failed_additive_provider_and_still_writes_the_rest() {
+        with_test_home(|state, _| {
+            // 排序在前的那家写失败，后面那家照样要写进 live。
+            let bad = opencode_row_without_definition("a-bad");
+            let mut good = opencode_provider("z-good");
+            good.sort_index = Some(1);
+            state.db.save_provider(&AppType::OpenCode, &bad).unwrap();
+            state.db.save_provider(&AppType::OpenCode, &good).unwrap();
+
+            let error = ProviderService::sync_current_to_live(state)
+                .expect_err("a provider that could not be written must not be reported as synced")
+                .to_string();
+            assert!(error.contains("provider/opencode"), "{error}");
+            assert!(error.contains("a-bad"), "{error}");
+            assert!(!error.contains("z-good"), "{error}");
+
+            let live = crate::opencode_config::get_providers().unwrap();
+            assert!(live.contains_key("z-good"), "{live:?}");
+            assert!(!live.contains_key("a-bad"), "{live:?}");
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn additive_app_sync_reports_failed_provider_and_still_projects_mcp() {
+        with_test_home(|state, _| {
+            // OpenCode 装了（配置目录在），MCP 才会投影过去。
+            fs::create_dir_all(crate::opencode_config::get_opencode_dir()).unwrap();
+            state
+                .db
+                .save_provider(
+                    &AppType::OpenCode,
+                    &opencode_row_without_definition("a-bad"),
+                )
+                .unwrap();
+            state
+                .db
+                .save_mcp_server(&crate::app_config::McpServer {
+                    id: "ctx".into(),
+                    name: "ctx".into(),
+                    server: json!({"type": "stdio", "command": "ctx-server"}),
+                    apps: crate::app_config::McpApps {
+                        opencode: true,
+                        ..Default::default()
+                    },
+                    description: None,
+                    homepage: None,
+                    docs: None,
+                    tags: vec![],
+                })
+                .unwrap();
+
+            let error = ProviderService::sync_current_provider_for_app(state, AppType::OpenCode)
+                .expect_err("failed provider must be reported")
+                .to_string();
+            assert!(error.contains("a-bad"), "{error}");
+            assert!(
+                crate::opencode_config::get_mcp_servers()
+                    .unwrap()
+                    .contains_key("ctx"),
+                "MCP must still be projected after a provider failure"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn syncing_opencode_succeeds_with_omo_presets_and_leaves_them_out_of_opencode_json() {
+        with_test_home(|state, _| {
+            // OMO / OMO Slim 预设由 OmoService 写自己的文件，不进 opencode.json；
+            // 导入的不带 meta，在界面里添加的带 live_config_managed = true。
+            let omo = opencode_omo_provider("omo-imported", "omo");
+            let mut slim = opencode_omo_provider("omo-slim-added", "omo-slim");
+            slim.meta = Some(crate::provider::ProviderMeta {
+                live_config_managed: Some(true),
+                ..Default::default()
+            });
+            let good = opencode_provider("z-good");
+            for provider in [&omo, &slim, &good] {
+                state
+                    .db
+                    .save_provider(&AppType::OpenCode, provider)
+                    .unwrap();
+            }
+
+            ProviderService::sync_current_provider_for_app(state, AppType::OpenCode)
+                .expect("OMO presets are not opencode.json providers");
+
+            let live = crate::opencode_config::get_providers().unwrap();
+            assert!(live.contains_key("z-good"), "{live:?}");
+            assert!(!live.contains_key("omo-imported"), "{live:?}");
+            assert!(!live.contains_key("omo-slim-added"), "{live:?}");
+        });
+    }
+
     #[test]
     #[serial]
     fn switching_omo_variant_warns_when_the_other_variant_config_cannot_be_removed() {
@@ -5727,16 +5834,23 @@ impl ProviderService {
                     provider.settings_config = config.clone();
                 }
                 if app_type == AppType::Dsh && id == "openai-codex" {
-                    provider
-                        .meta
-                        .get_or_insert_with(Default::default)
-                        .auth_binding = crate::dsh_config::codex_binding()?.map(|account_id| {
-                        crate::provider::AuthBinding {
-                            source: crate::provider::AuthBindingSource::ManagedAccount,
-                            auth_provider: Some("codex_oauth".into()),
-                            account_id: Some(account_id),
+                    match crate::dsh_config::codex_binding() {
+                        Ok(account_id) => {
+                            let meta = provider.meta.get_or_insert_with(Default::default);
+                            if account_id.is_some()
+                                || meta.has_managed_account_binding("codex_oauth")
+                            {
+                                meta.auth_binding = Some(crate::provider::AuthBinding {
+                                    source: crate::provider::AuthBindingSource::ManagedAccount,
+                                    auth_provider: Some("codex_oauth".into()),
+                                    account_id,
+                                });
+                            }
                         }
-                    });
+                        Err(error) => {
+                            log::warn!("Cannot read the DSH Codex account binding: {error}")
+                        }
+                    }
                 }
                 Self::set_provider_live_config_managed(provider, native.contains_key(id));
                 if app_type == AppType::Kimi {
@@ -6906,6 +7020,28 @@ impl ProviderService {
     ///
     /// 直连指针或代理路由指着的供应商不能删（见 `mode::current::is_referenced`）。
     /// 对于累加模式应用（OpenCode, OpenClaw），可以随时删除任意供应商，同时从 live 配置中移除。
+    fn remove_dsh_provider<T>(
+        state: &AppState,
+        id: &str,
+        commit: impl FnOnce() -> Result<T, AppError>,
+    ) -> Result<T, AppError> {
+        if id != "openai-codex" {
+            return crate::dsh_config::save_and_commit(id, None, false, commit);
+        }
+        let account = crate::dsh_config::codex_binding()?;
+        let prepared = account
+            .as_deref()
+            .map(|id| {
+                futures::executor::block_on(state.codex_oauth_manager.prepare_dsh_grant_removal(id))
+            })
+            .transpose()?;
+        let (owner, snapshot) = match prepared.as_ref() {
+            Some((owner, snapshot)) => (owner.as_ref(), Some(snapshot)),
+            None => (None, None),
+        };
+        crate::dsh_config::remove_codex_provider(account.as_deref(), owner, snapshot, commit)
+    }
+
     pub fn delete(state: &AppState, app_type: AppType, id: &str) -> Result<(), AppError> {
         let _native_guard = lock_native_provider_operations(state, &app_type);
         if state.db.get_unreadable_provider(&app_type, id)?.is_some() {
@@ -6915,7 +7051,7 @@ impl ProviderService {
             return pi::delete(state, id);
         }
         if matches!(app_type, AppType::Dsh) {
-            return crate::dsh_config::save_and_commit(id, None, false, || {
+            return Self::remove_dsh_provider(state, id, || {
                 state.db.delete_provider(&app_type, id)
             });
         }
@@ -7107,8 +7243,17 @@ impl ProviderService {
             return pi::remove(state, id);
         }
         if matches!(app_type, AppType::Dsh) {
-            return crate::dsh_config::save_and_commit(id, None, false, || {
+            return Self::remove_dsh_provider(state, id, || {
                 if let Some(mut provider) = state.db.get_provider_by_id(id, &app_type)? {
+                    if id == "openai-codex" {
+                        if let Some(binding) = provider
+                            .meta
+                            .as_mut()
+                            .and_then(|meta| meta.auth_binding.as_mut())
+                        {
+                            binding.account_id = None;
+                        }
+                    }
                     Self::set_provider_live_config_managed(&mut provider, false);
                     state.db.save_provider(&app_type, &provider)?;
                 }
@@ -7324,6 +7469,16 @@ impl ProviderService {
 
         if matches!(app_type, AppType::Dsh) {
             let mut provider = _provider.clone();
+            if id == "openai-codex"
+                && provider
+                    .meta
+                    .as_ref()
+                    .is_some_and(|meta| meta.has_managed_account_binding("codex_oauth"))
+            {
+                return Err(AppError::InvalidInput(
+                    "Select a Codex account before adding this DSH provider".into(),
+                ));
+            }
             Self::set_provider_live_config_managed(&mut provider, true);
             crate::dsh_config::save_and_commit(
                 id,

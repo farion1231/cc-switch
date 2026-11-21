@@ -834,6 +834,7 @@ async fn query_provider_usage_inner(
             crate::commands::codex_oauth::query_codex_oauth_quota_for(
                 &state.codex_oauth_manager,
                 &account_id,
+                true,
             )
             .await?
         } else if provider.map(Provider::is_xai_oauth).unwrap_or(false) {

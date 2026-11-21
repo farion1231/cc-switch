@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AlertTriangle } from "lucide-react";
 import {
@@ -86,12 +86,19 @@ export function LiveEditConflictDialog({
  * {@link LiveEditConflictDialog}，按用户选的策略再提交一次。重试失败的提示由保存的
  * mutation 负责，编辑器保持打开。
  */
-export function useLiveEditConflict() {
+export function useLiveEditConflict(sessionToken = 0) {
+  const currentSessionToken = useRef(sessionToken);
+  currentSessionToken.current = sessionToken;
   const [pendingConflict, setPendingConflict] = useState<{
+    sessionToken: number;
     keys: string[];
     retry: (policy: EditorConflictPolicy) => Promise<void>;
+    resolving: boolean;
   } | null>(null);
-  const [isResolving, setIsResolving] = useState(false);
+  // Closing/reopening an editor invalidates both the prompt and an in-flight
+  // retry immediately, without waiting for an effect or the old request.
+  const conflict =
+    pendingConflict?.sessionToken === sessionToken ? pendingConflict : null;
 
   const submitWithConflictRetry = useCallback(
     async (submit: (policy: EditorConflictPolicy) => Promise<void>) => {
@@ -100,34 +107,46 @@ export function useLiveEditConflict() {
       } catch (error) {
         const conflict = parseLiveEditConflict(error);
         if (!conflict) throw error;
-        setPendingConflict({ keys: conflict.keys, retry: submit });
+        if (currentSessionToken.current === sessionToken) {
+          setPendingConflict({
+            sessionToken,
+            keys: conflict.keys,
+            retry: submit,
+            resolving: false,
+          });
+        }
       }
     },
-    [],
+    [sessionToken],
   );
 
   const resolve = useCallback(
     async (policy: EditorConflictPolicy) => {
-      if (!pendingConflict) return;
-      setIsResolving(true);
+      if (!conflict || currentSessionToken.current !== sessionToken) return;
+      setPendingConflict({ ...conflict, resolving: true });
       try {
-        await pendingConflict.retry(policy);
+        await conflict.retry(policy);
       } catch {
         // 失败提示由保存的 mutation 负责。
       } finally {
-        setIsResolving(false);
-        setPendingConflict(null);
+        if (currentSessionToken.current === sessionToken) {
+          setPendingConflict(null);
+        }
       }
     },
-    [pendingConflict],
+    [conflict, sessionToken],
   );
 
   const conflictDialog = (
     <LiveEditConflictDialog
-      keys={pendingConflict?.keys ?? null}
-      pending={isResolving}
+      keys={conflict?.keys ?? null}
+      pending={conflict?.resolving ?? false}
       onResolve={(policy) => void resolve(policy)}
-      onCancel={() => setPendingConflict(null)}
+      onCancel={() => {
+        if (currentSessionToken.current === sessionToken) {
+          setPendingConflict(null);
+        }
+      }}
     />
   );
 
