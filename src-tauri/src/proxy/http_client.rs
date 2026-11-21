@@ -289,7 +289,7 @@ fn build_no_redirect_client(proxy_url: Option<&str>) -> Result<Client, String> {
     )
 }
 
-fn build_https_only_client(proxy_url: Option<&str>) -> Result<Client, String> {
+pub(crate) fn build_https_only_client(proxy_url: Option<&str>) -> Result<Client, String> {
     build_client_from(base_builder().https_only(true), proxy_url)
 }
 
