@@ -35,12 +35,14 @@ const COPILOT_UNIT_PREMIUM: &str = "requests";
 pub const TRAY_ID: &str = "cc-switch";
 
 /// 进托盘的应用，顺序和侧栏一致。累加式应用没有「当前供应商」，不进托盘。
-pub const TRAY_APPS: [AppType; 5] = [
+/// Antigravity 的卡片没有「启用」，在托盘里只看额度，点供应商行打开它的应用页。
+pub const TRAY_APPS: [AppType; 6] = [
     AppType::Claude,
     AppType::ClaudeDesktop,
     AppType::Codex,
     AppType::Gemini,
     AppType::GrokBuild,
+    AppType::Agy,
 ];
 
 /// 应用全称（产品名，不翻译）。用全称是为了把 Claude Code 和 Claude Desktop 分开。
@@ -134,6 +136,11 @@ pub struct TrayTexts {
     pub tier_gemini_flash: &'static str,
     pub tier_gemini_flash_lite: &'static str,
     pub tier_premium: &'static str,
+    pub tier_agy_gemini_five_hour: &'static str,
+    pub tier_agy_gemini_weekly: &'static str,
+    pub tier_agy_gemini_argon_weekly: &'static str,
+    pub tier_agy_third_party_five_hour: &'static str,
+    pub tier_agy_third_party_weekly: &'static str,
     pub tier_left: &'static str,
     pub tier_used: &'static str,
     pub tier_used_up: &'static str,
@@ -245,6 +252,11 @@ impl TrayTexts {
                 tier_gemini_flash: "Flash",
                 tier_gemini_flash_lite: "Flash Lite",
                 tier_premium: "Credits",
+                tier_agy_gemini_five_hour: "Gemini 5-hour",
+                tier_agy_gemini_weekly: "Gemini weekly",
+                tier_agy_gemini_argon_weekly: "Argon weekly",
+                tier_agy_third_party_five_hour: "Claude/GPT 5-hour",
+                tier_agy_third_party_weekly: "Claude/GPT weekly",
                 tier_left: "{label} {value}% left",
                 tier_used: "{label} {value}% used",
                 tier_used_up: "{label} used up",
@@ -300,6 +312,11 @@ impl TrayTexts {
                 tier_gemini_flash: "Flash",
                 tier_gemini_flash_lite: "Flash Lite",
                 tier_premium: "프리미엄 요청",
+                tier_agy_gemini_five_hour: "Gemini 5시간",
+                tier_agy_gemini_weekly: "Gemini 주간",
+                tier_agy_gemini_argon_weekly: "Argon 주간",
+                tier_agy_third_party_five_hour: "Claude/GPT 5시간",
+                tier_agy_third_party_weekly: "Claude/GPT 주간",
                 tier_left: "{label} {value}% 남음",
                 tier_used: "{label} {value}% 사용",
                 tier_used_up: "{label} 소진됨",
@@ -357,6 +374,11 @@ impl TrayTexts {
                 tier_gemini_flash: "Flash",
                 tier_gemini_flash_lite: "Flash Lite",
                 tier_premium: "Credits",
+                tier_agy_gemini_five_hour: "Gemini 5 Stunden",
+                tier_agy_gemini_weekly: "Gemini wöchentlich",
+                tier_agy_gemini_argon_weekly: "Argon wöchentlich",
+                tier_agy_third_party_five_hour: "Claude/GPT 5 Stunden",
+                tier_agy_third_party_weekly: "Claude/GPT wöchentlich",
                 tier_left: "{label}: {value} % übrig",
                 tier_used: "{label}: {value} % verbraucht",
                 tier_used_up: "{label}: aufgebraucht",
@@ -412,6 +434,11 @@ impl TrayTexts {
                 tier_gemini_flash: "Flash",
                 tier_gemini_flash_lite: "Flash Lite",
                 tier_premium: "Credits",
+                tier_agy_gemini_five_hour: "Gemini, 5 часов",
+                tier_agy_gemini_weekly: "Gemini, неделя",
+                tier_agy_gemini_argon_weekly: "Argon, неделя",
+                tier_agy_third_party_five_hour: "Claude/GPT, 5 часов",
+                tier_agy_third_party_weekly: "Claude/GPT, неделя",
                 tier_left: "{label}: осталось {value}%",
                 tier_used: "{label}: использовано {value}%",
                 tier_used_up: "{label}: исчерпано",
@@ -467,6 +494,11 @@ impl TrayTexts {
                 tier_gemini_flash: "Flash",
                 tier_gemini_flash_lite: "Flash Lite",
                 tier_premium: "Credits",
+                tier_agy_gemini_five_hour: "Gemini 5 saatlik",
+                tier_agy_gemini_weekly: "Gemini haftalık",
+                tier_agy_gemini_argon_weekly: "Argon haftalık",
+                tier_agy_third_party_five_hour: "Claude/GPT 5 saatlik",
+                tier_agy_third_party_weekly: "Claude/GPT haftalık",
                 tier_left: "{label} %{value} kaldı",
                 tier_used: "{label} %{value} kullanıldı",
                 tier_used_up: "{label} tükendi",
@@ -524,6 +556,11 @@ impl TrayTexts {
                 tier_gemini_flash: "Flash",
                 tier_gemini_flash_lite: "Flash Lite",
                 tier_premium: "Credits",
+                tier_agy_gemini_five_hour: "Gemini 5時間",
+                tier_agy_gemini_weekly: "Gemini 週間",
+                tier_agy_gemini_argon_weekly: "Argon 週間",
+                tier_agy_third_party_five_hour: "Claude/GPT 5時間",
+                tier_agy_third_party_weekly: "Claude/GPT 週間",
                 tier_left: "{label} 残り {value}%",
                 tier_used: "{label} 使用済み {value}%",
                 tier_used_up: "{label} 使い切り",
@@ -579,6 +616,11 @@ impl TrayTexts {
                 tier_gemini_flash: "Flash",
                 tier_gemini_flash_lite: "Flash Lite",
                 tier_premium: "Credits",
+                tier_agy_gemini_five_hour: "Gemini 5 小時",
+                tier_agy_gemini_weekly: "Gemini 每週",
+                tier_agy_gemini_argon_weekly: "Argon 每週",
+                tier_agy_third_party_five_hour: "Claude/GPT 5 小時",
+                tier_agy_third_party_weekly: "Claude/GPT 每週",
                 tier_left: "{labelSp}剩餘 {value}%",
                 tier_used: "{labelSp}已用 {value}%",
                 tier_used_up: "{labelSp}已用完",
@@ -634,6 +676,11 @@ impl TrayTexts {
                 tier_gemini_flash: "Flash",
                 tier_gemini_flash_lite: "Flash Lite",
                 tier_premium: "Credits",
+                tier_agy_gemini_five_hour: "Gemini 5 小时",
+                tier_agy_gemini_weekly: "Gemini 每周",
+                tier_agy_gemini_argon_weekly: "Argon 每周",
+                tier_agy_third_party_five_hour: "Claude/GPT 5 小时",
+                tier_agy_third_party_weekly: "Claude/GPT 每周",
                 tier_left: "{labelSp}剩余 {value}%",
                 tier_used: "{labelSp}已用 {value}%",
                 tier_used_up: "{labelSp}已用完",
@@ -718,10 +765,17 @@ enum TierGroup {
     GeminiFlash,
     GeminiFlashLite,
     Premium,
+    /// Antigravity 的 Gemini 组和 Claude/GPT 组各自限额，不能并进通用的 5 小时 / 每周。
+    AgyGeminiFiveHour,
+    AgyGeminiWeekly,
+    AgyGeminiArgonWeekly,
+    AgyThirdPartyFiveHour,
+    AgyThirdPartyWeekly,
 }
 
 const TIER_GROUPS: &[(TierGroup, &[&str])] = {
     use crate::services::subscription as s;
+    use crate::services::subscription_agy as agy;
     &[
         (TierGroup::FiveHour, &[s::TIER_FIVE_HOUR]),
         (
@@ -740,6 +794,23 @@ const TIER_GROUPS: &[(TierGroup, &[&str])] = {
         (TierGroup::GeminiFlash, &[s::TIER_GEMINI_FLASH]),
         (TierGroup::GeminiFlashLite, &[s::TIER_GEMINI_FLASH_LITE]),
         (TierGroup::Premium, &["premium"]),
+        (
+            TierGroup::AgyGeminiFiveHour,
+            &[agy::TIER_AGY_GEMINI_FIVE_HOUR],
+        ),
+        (TierGroup::AgyGeminiWeekly, &[agy::TIER_AGY_GEMINI_WEEKLY]),
+        (
+            TierGroup::AgyGeminiArgonWeekly,
+            &[agy::TIER_AGY_GEMINI_ARGON_WEEKLY],
+        ),
+        (
+            TierGroup::AgyThirdPartyFiveHour,
+            &[agy::TIER_AGY_THIRD_PARTY_FIVE_HOUR],
+        ),
+        (
+            TierGroup::AgyThirdPartyWeekly,
+            &[agy::TIER_AGY_THIRD_PARTY_WEEKLY],
+        ),
     ]
 };
 
@@ -757,6 +828,11 @@ fn tier_label(texts: &TrayTexts, group: TierGroup, tier_name: &str) -> &'static 
         TierGroup::GeminiFlash => texts.tier_gemini_flash,
         TierGroup::GeminiFlashLite => texts.tier_gemini_flash_lite,
         TierGroup::Premium => texts.tier_premium,
+        TierGroup::AgyGeminiFiveHour => texts.tier_agy_gemini_five_hour,
+        TierGroup::AgyGeminiWeekly => texts.tier_agy_gemini_weekly,
+        TierGroup::AgyGeminiArgonWeekly => texts.tier_agy_gemini_argon_weekly,
+        TierGroup::AgyThirdPartyFiveHour => texts.tier_agy_third_party_five_hour,
+        TierGroup::AgyThirdPartyWeekly => texts.tier_agy_third_party_weekly,
     }
 }
 
@@ -1121,6 +1197,17 @@ fn tray_usage_source(app_type: &AppType, provider: &Provider) -> Option<TrayUsag
                 .unwrap_or(true);
             return enabled.then_some(TrayUsageSource::ManagedCodex(account_id));
         }
+    }
+    // Antigravity 绑了账号的卡：额度属于绑定的那个号，而托盘只查 agy 当前登录的号，
+    // 两个号可能不同，宁可不显示也不显示别人的额度。
+    if *app_type == AppType::Agy
+        && provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.managed_account_id_for("agy_oauth"))
+            .is_some()
+    {
+        return None;
     }
     if let Some(account_id) = claude_bound_account_id(app_type, provider) {
         // 同卡片：绑了账号的 Claude 官方卡没保存过开关时默认查额度，用户关掉才不查。
@@ -3209,6 +3296,17 @@ pub fn handle_provider_tray_event(app: &tauri::AppHandle, event_id: &str) -> boo
         log::warn!("未知应用的供应商托盘事件: {event_id}");
         return true;
     };
+    // Antigravity 的卡没有「启用」（`ProviderService::switch` 会报错），只能在应用页「打开终端」。
+    if app_type == AppType::Agy {
+        navigate(
+            app,
+            TrayNavigation {
+                app: Some(app_type.as_str().to_string()),
+                ..Default::default()
+            },
+        );
+        return true;
+    }
     log::info!("托盘切换 {} 到 {provider_id}", app_display_name(&app_type));
     let app_handle = app.clone();
     let provider_id = provider_id.to_string();
@@ -3760,7 +3858,8 @@ mod tests {
                 "Claude Desktop",
                 "Codex",
                 "Gemini CLI",
-                "Grok Build"
+                "Grok Build",
+                "Antigravity"
             ]
         );
         for app in TRAY_APPS {
@@ -4147,6 +4246,36 @@ mod tests {
     }
 
     #[test]
+    fn agy_quota_keeps_gemini_and_claude_gpt_limits_apart() {
+        use crate::services::subscription_agy::*;
+        let quota = make_quota(
+            "agy",
+            true,
+            vec![
+                tier(TIER_AGY_GEMINI_FIVE_HOUR, 15.0),
+                tier(TIER_AGY_GEMINI_WEEKLY, 18.0),
+                tier(TIER_AGY_GEMINI_ARGON_WEEKLY, 39.0),
+                tier(TIER_AGY_THIRD_PARTY_FIVE_HOUR, 0.0),
+                tier(TIER_AGY_THIRD_PARTY_WEEKLY, 100.0),
+            ],
+        );
+        let Some(QuotaView::Lines(lines)) = format_subscription_quota(&en(), &quota) else {
+            panic!("expected lines");
+        };
+        let texts: Vec<&str> = lines.iter().map(|line| line.text.as_str()).collect();
+        assert_eq!(
+            texts,
+            [
+                "Gemini 5-hour 85% left",
+                "Gemini weekly 82% left",
+                "Argon weekly 61% left",
+                "Claude/GPT 5-hour 100% left",
+                "Claude/GPT weekly used up",
+            ]
+        );
+    }
+
+    #[test]
     fn monthly_and_thirty_day_windows_keep_their_own_words() {
         let codex_free = make_quota("codex", true, vec![tier(TIER_THIRTY_DAY, 85.0)]);
         assert_eq!(
@@ -4441,6 +4570,42 @@ mod tests {
         assert_eq!(
             provider_hint(&AppType::Claude, &missing, &accounts).as_deref(),
             Some("www.anthropic.com")
+        );
+    }
+
+    fn agy_provider(account_id: Option<&str>) -> Provider {
+        serde_json::from_value(serde_json::json!({
+            "id": "default",
+            "name": "default",
+            "settingsConfig": {"env": {}},
+            "meta": {
+                "authBinding": account_id.map(|id| serde_json::json!({
+                    "source": "managed_account",
+                    "authProvider": "agy_oauth",
+                    "accountId": id
+                })),
+                "usage_script": {
+                    "enabled": true,
+                    "language": "javascript",
+                    "code": "",
+                    "templateType": "official_subscription"
+                }
+            }
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn agy_tray_usage_reads_the_agy_login_but_skips_bound_cards() {
+        // 没绑账号：和卡片一样读 agy 当前登录的应用级订阅缓存
+        assert_eq!(
+            tray_usage_source(&AppType::Agy, &agy_provider(None)),
+            Some(TrayUsageSource::Subscription)
+        );
+        // 绑了账号：托盘只查 agy 当前登录，可能是另一个号，不显示
+        assert_eq!(
+            tray_usage_source(&AppType::Agy, &agy_provider(Some("1234"))),
+            None
         );
     }
 
