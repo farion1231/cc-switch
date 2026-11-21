@@ -148,6 +148,13 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
     badgeClass:
       "bg-blue-500/10 text-blue-700 dark:text-blue-300 border-0 gap-1.5",
   },
+  trae: {
+    label: "TRAE CLI",
+    icon: <ProviderIcon icon="trae" name="TRAE CLI" size={14} />,
+    activeClass: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+    badgeClass:
+      "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-0 gap-1.5",
+  },
   mcode: {
     label: "MiniMax Code",
     icon: <ProviderIcon icon="minimax" name="MiniMax Code" size={14} />,

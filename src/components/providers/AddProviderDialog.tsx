@@ -73,6 +73,7 @@ export function AddProviderDialog({
     appId !== "mcode" &&
     appId !== "dsh" &&
     appId !== "kimi" &&
+    appId !== "trae" &&
     appId !== "copilot" &&
     appId !== "workbuddy" &&
     appId !== "grokbuild" &&

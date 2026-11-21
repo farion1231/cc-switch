@@ -55,6 +55,7 @@ mod sync_utils;
 #[cfg(test)]
 mod test_support;
 
+mod trae_config;
 mod tray;
 #[cfg(target_os = "windows")]
 mod tray_compat;

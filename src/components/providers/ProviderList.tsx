@@ -199,6 +199,7 @@ export function ProviderList({
     (provider: Provider): boolean => {
       switch (appId) {
         case "kimi":
+        case "trae":
         case "dsh":
         case "mcode":
         case "copilot":
@@ -559,6 +560,7 @@ export function ProviderList({
             appHas(appId, "piFamily") ||
             appId === "mcode" ||
             appId === "kimi" ||
+            appId === "trae" ||
             appId === "dsh" ||
             appId === "workbuddy"
               ? undefined

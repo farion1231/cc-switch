@@ -66,6 +66,7 @@ vi.mock("@/components/providers/ProviderList", () => ({
     onCreate,
     onDelete,
     onRemoveFromConfig,
+    onSetAsDefault,
   }: any) => (
     <div>
       <div data-testid="provider-list">{JSON.stringify(providers)}</div>
@@ -90,6 +91,19 @@ vi.mock("@/components/providers/ProviderList", () => ({
         remove
       </button>
       <button onClick={() => onCreate?.()}>create</button>
+      {onSetAsDefault && (
+        <button
+          onClick={() =>
+            onSetAsDefault(
+              Object.values(providers).find(
+                (provider: any) => provider.id !== currentProviderId,
+              ),
+            )
+          }
+        >
+          set-default
+        </button>
+      )}
     </div>
   ),
 }));
@@ -902,6 +916,54 @@ describe("App integration with MSW", () => {
     );
     expect(currentRequests).toBeGreaterThan(requestsBeforeRemoval);
   });
+
+  it("switches TRAE CLI's default from a card's set-as-default action", async () => {
+    localStorage.setItem("cc-switch-last-app", "trae");
+    const providerFor = (id: string) => ({
+      id,
+      name: id,
+      settingsConfig: {
+        provider: {
+          base_url: "https://example.com/v1",
+          wire_api: "responses",
+          experimental_bearer_token: "sk-test",
+        },
+        model: "gpt-5",
+      },
+      category: "custom" as const,
+      sortIndex: 0,
+      createdAt: Date.now(),
+    });
+    setProviders("trae", { a: providerFor("a"), b: providerFor("b") });
+    setCurrentProviderId("trae", "a");
+    const switched: unknown[] = [];
+    server.use(
+      http.post("http://tauri.local/switch_provider", async ({ request }) => {
+        const body = (await request.json()) as { app: string; id: string };
+        if (body.app !== "trae") return;
+        switched.push(body);
+        setCurrentProviderId("trae", body.id);
+        return HttpResponse.json(true);
+      }),
+    );
+
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("current-provider")).toHaveTextContent("a"),
+    );
+    fireEvent.click(screen.getByText("set-default"));
+
+    await waitFor(() =>
+      expect(switched).toEqual([
+        expect.objectContaining({ app: "trae", id: "b" }),
+      ]),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("current-provider")).toHaveTextContent("b"),
+    );
+  }, 15_000);
 
   it("warns without blocking when removing Pi's global default provider", async () => {
     localStorage.setItem("cc-switch-last-app", "pi");

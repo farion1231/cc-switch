@@ -101,6 +101,7 @@ impl Database {
             enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
             enabled_agy BOOLEAN NOT NULL DEFAULT 0,
             enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
+            enabled_trae BOOLEAN NOT NULL DEFAULT 0,
             enabled_dsh BOOLEAN NOT NULL DEFAULT 0,
             enabled_copilot BOOLEAN NOT NULL DEFAULT 0,
             enabled_workbuddy BOOLEAN NOT NULL DEFAULT 0,
@@ -138,6 +139,7 @@ impl Database {
             enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
             enabled_agy BOOLEAN NOT NULL DEFAULT 0,
             enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
+            enabled_trae BOOLEAN NOT NULL DEFAULT 0,
             enabled_dsh BOOLEAN NOT NULL DEFAULT 0,
             enabled_copilot BOOLEAN NOT NULL DEFAULT 0,
             enabled_workbuddy BOOLEAN NOT NULL DEFAULT 0,
@@ -732,18 +734,28 @@ impl Database {
                         // 技能仓库支持 GitLab：仓库和已安装的技能各记一个主机。
                         // 老行不用回填——skill_repos.host 靠列默认值就是 github.com，
                         // skills.repo_host 为 NULL 也按 github.com 读。
-                        if Self::table_exists(conn, "skill_repos")? {
-                            Self::add_column_if_missing(
-                                conn,
-                                "skill_repos",
-                                "host",
-                                "TEXT NOT NULL DEFAULT 'github.com'",
-                            )?;
-                        }
-                        if Self::table_exists(conn, "skills")? {
-                            Self::add_column_if_missing(conn, "skills", "repo_host", "TEXT")?;
-                        }
+                        Self::add_skill_repo_host_columns(conn)?;
                         Self::set_user_version(conn, 27)?;
+                    }
+                    27 => {
+                        // TRAE：MCP 与 Skills 都记启用开关。
+                        // 早期开发版把 enabled_trae 记作 v26 或 v27，这样的库会跳过上游的
+                        // v25→v26（WorkBuddy）或 v26→v27（GitLab 技能仓库），这里一并按
+                        // "缺失才加"补齐，保证幂等。
+                        for table in ["mcp_servers", "skills"] {
+                            if Self::table_exists(conn, table)? {
+                                for column in ["enabled_workbuddy", "enabled_trae"] {
+                                    Self::add_column_if_missing(
+                                        conn,
+                                        table,
+                                        column,
+                                        "BOOLEAN NOT NULL DEFAULT 0",
+                                    )?;
+                                }
+                            }
+                        }
+                        Self::add_skill_repo_host_columns(conn)?;
+                        Self::set_user_version(conn, 28)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -768,6 +780,22 @@ impl Database {
                 Err(e)
             }
         }
+    }
+
+    /// v26→v27：技能仓库支持 GitLab（`skill_repos.host`、`skills.repo_host`），缺失才加
+    fn add_skill_repo_host_columns(conn: &Connection) -> Result<(), AppError> {
+        if Self::table_exists(conn, "skill_repos")? {
+            Self::add_column_if_missing(
+                conn,
+                "skill_repos",
+                "host",
+                "TEXT NOT NULL DEFAULT 'github.com'",
+            )?;
+        }
+        if Self::table_exists(conn, "skills")? {
+            Self::add_column_if_missing(conn, "skills", "repo_host", "TEXT")?;
+        }
+        Ok(())
     }
 
     /// v0 -> v1 迁移：补齐所有缺失列
@@ -4203,6 +4231,102 @@ mod tests {
         )?;
         assert_eq!(codex_values, (1, 9));
 
+        Ok(())
+    }
+
+    #[test]
+    fn trae_migration_preserves_existing_flags_and_defaults_to_disabled() -> Result<(), AppError> {
+        // v22..v26 → v28：v23 补 enabled_omp，v24 补 enabled_dsh，
+        // v25 补 enabled_copilot（GitHub Copilot CLI），v26 补 enabled_workbuddy，
+        // v28 补 enabled_trae；已有开关保持不变，新开关默认关闭。
+        for start in [22, 23, 24, 25, 26] {
+            let conn = Connection::open_in_memory()?;
+            let mut mcp_extra = String::new();
+            let mut skill_extra = String::new();
+            if start >= 23 {
+                mcp_extra.push_str(", enabled_omp BOOLEAN NOT NULL DEFAULT 0");
+            }
+            if start >= 24 {
+                mcp_extra.push_str(", enabled_dsh BOOLEAN NOT NULL DEFAULT 0");
+                skill_extra.push_str(", enabled_dsh BOOLEAN NOT NULL DEFAULT 0");
+            }
+            let copilot_default = i64::from(start >= 25);
+            if start >= 25 {
+                // 已在 v25 的库里 Copilot 开关可能已被打开，迁移到 v26 不能动它
+                mcp_extra.push_str(", enabled_copilot BOOLEAN NOT NULL DEFAULT 1");
+                skill_extra.push_str(", enabled_copilot BOOLEAN NOT NULL DEFAULT 1");
+            }
+            let workbuddy_default = i64::from(start >= 26);
+            if start >= 26 {
+                // 已在 v26 的库里 WorkBuddy 开关可能已被打开，迁移到 v28 不能动它
+                mcp_extra.push_str(", enabled_workbuddy BOOLEAN NOT NULL DEFAULT 1");
+                skill_extra.push_str(", enabled_workbuddy BOOLEAN NOT NULL DEFAULT 1");
+            }
+            conn.execute_batch(&format!("CREATE TABLE mcp_servers(id TEXT PRIMARY KEY, enabled_kimi BOOLEAN{mcp_extra}); CREATE TABLE skills(id TEXT PRIMARY KEY, enabled_kimi BOOLEAN{skill_extra}); INSERT INTO mcp_servers (id, enabled_kimi) VALUES ('m',1); INSERT INTO skills (id, enabled_kimi) VALUES ('s',1);"))?;
+            Database::set_user_version(&conn, start)?;
+            Database::apply_schema_migrations_on_conn(&conn)?;
+            assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+            assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+            for table in ["mcp_servers", "skills"] {
+                let flags = conn.query_row(
+                    &format!(
+                        "SELECT enabled_kimi, enabled_dsh, enabled_copilot, enabled_workbuddy, enabled_trae FROM {table}"
+                    ),
+                    [],
+                    |row| {
+                        Ok((
+                            row.get::<_, i64>(0)?,
+                            row.get::<_, i64>(1)?,
+                            row.get::<_, i64>(2)?,
+                            row.get::<_, i64>(3)?,
+                            row.get::<_, i64>(4)?,
+                        ))
+                    },
+                )?;
+                assert_eq!(
+                    flags,
+                    (1, 0, copilot_default, workbuddy_default, 0),
+                    "start={start} table={table}"
+                );
+            }
+            assert!(Database::has_column(&conn, "mcp_servers", "enabled_omp")?);
+            Database::apply_schema_migrations_on_conn(&conn)?;
+            assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        }
+
+        // 全新安装：建表直接包含双方新增的列，无需迁移
+        let conn = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&conn)?;
+        for table in ["mcp_servers", "skills"] {
+            assert!(Database::has_column(&conn, table, "enabled_dsh")?);
+            assert!(Database::has_column(&conn, table, "enabled_copilot")?);
+            assert!(Database::has_column(&conn, table, "enabled_trae")?);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn trae_clean_database_persists_mcp_and_skill_flags_independently() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let server = serde_json::from_value(serde_json::json!({"id":"m", "name":"m", "server":{"command":"echo"}, "apps":{"trae":true,"kimi":true}})).unwrap();
+        db.save_mcp_server(&server)?;
+        db.update_mcp_server_app_enabled("m", &crate::app_config::AppType::Trae, false)?;
+        let saved = db.get_all_mcp_servers()?;
+        assert!(!saved["m"].apps.trae);
+        assert!(saved["m"].apps.kimi);
+        let skill = serde_json::from_value(serde_json::json!({"id":"s", "name":"s", "description":"", "directory":"s", "apps":{"trae":true,"kimi":true}, "installedAt":0})).unwrap();
+        db.save_skill(&skill)?;
+        let saved = db.get_installed_skill("s")?.unwrap();
+        assert!(saved.apps.trae && saved.apps.kimi);
+        db.update_skill_apps(
+            "s",
+            &crate::app_config::SkillApps {
+                claude: true,
+                ..Default::default()
+            },
+        )?;
+        let saved = db.get_installed_skill("s")?.unwrap();
+        assert!(!saved.apps.trae && saved.apps.claude);
         Ok(())
     }
 

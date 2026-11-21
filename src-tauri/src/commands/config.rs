@@ -97,6 +97,13 @@ pub async fn get_config_status(
                 path: file.to_string_lossy().to_string(),
             })
         }
+        AppType::Trae => {
+            let file = crate::trae_config::config_path();
+            Ok(ConfigStatus {
+                exists: file.exists(),
+                path: file.to_string_lossy().to_string(),
+            })
+        }
         AppType::Mcode => {
             let file = crate::mcode_config::config_path();
             Ok(ConfigStatus {
@@ -166,6 +173,7 @@ fn app_config_dir(app: &str) -> Result<std::path::PathBuf, String> {
         AppType::Pi => crate::pi_config::get_pi_agent_dir()?,
         AppType::Dsh => crate::dsh_config::data_dir(),
         AppType::Kimi => crate::kimi_config::data_dir(),
+        AppType::Trae => crate::trae_config::data_dir(),
         AppType::Omp => crate::omp_config::get_omp_agent_dir()?,
         AppType::Mcode => crate::mcode_config::config_path()
             .parent()

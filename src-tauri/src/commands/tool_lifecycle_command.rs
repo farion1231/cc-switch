@@ -119,6 +119,13 @@ const KIMI_INSTALL_UNIX: &str =
 #[cfg(target_os = "windows")]
 const KIMI_INSTALL_WINDOWS_SCRIPT: &str = "irm https://code.kimi.com/kimi-code/install.ps1 | iex";
 
+/// TRAE CLI 2.0 official installer: a standalone binary in `~/.local/bin`
+/// (`TRAECLI_INSTALL_DIR` overrides). It has no npm distribution.
+const TRAE_INSTALL_UNIX: &str =
+    "bash -c 'tmp=$(mktemp) && curl -fsSL https://trae.cn/trae-cli/install_v2.sh -o $tmp && sh $tmp; status=$?; rm -f $tmp; exit $status'";
+#[cfg(target_os = "windows")]
+const TRAE_INSTALL_WINDOWS_SCRIPT: &str = "irm https://trae.cn/trae-cli/install_v2.ps1 | iex";
+
 // Oh My Pi 的 npm 包只能由 bun 运行（入口是 `#!/usr/bin/env bun` 的 TypeScript）。官方
 // installer 有匹配架构的 bun 时走 bun，否则下载并校验预编译二进制到 `~/.local/bin`，
 // 所以新装不要求本机先有 bun。
@@ -186,6 +193,14 @@ fn mcode_install_windows_command() -> String {
     format!(
         "powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand {}",
         powershell_encoded_command(MCODE_INSTALL_WINDOWS_SCRIPT)
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn trae_install_windows_command() -> String {
+    format!(
+        "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand {}",
+        powershell_encoded_command(TRAE_INSTALL_WINDOWS_SCRIPT)
     )
 }
 
@@ -375,12 +390,17 @@ fn tool_action_shell_command_for_shell(
     action: ToolLifecycleAction,
     shell: LifecycleCommandShell,
 ) -> Option<String> {
-    if matches!(tool, "kimi" | "omp") {
+    if matches!(tool, "kimi" | "omp" | "traecli") {
         let install = match shell {
             LifecycleCommandShell::Posix if tool == "kimi" => KIMI_INSTALL_UNIX.to_string(),
+            LifecycleCommandShell::Posix if tool == "traecli" => TRAE_INSTALL_UNIX.to_string(),
             LifecycleCommandShell::Posix => OMP_INSTALL_UNIX.to_string(),
             #[cfg(target_os = "windows")]
             LifecycleCommandShell::WindowsBatch if tool == "kimi" => kimi_install_windows_command(),
+            #[cfg(target_os = "windows")]
+            LifecycleCommandShell::WindowsBatch if tool == "traecli" => {
+                trae_install_windows_command()
+            }
             #[cfg(target_os = "windows")]
             LifecycleCommandShell::WindowsBatch => omp_install_windows_command(),
             #[cfg(not(target_os = "windows"))]
@@ -1042,7 +1062,10 @@ fn grok_native_update_command(update: String) -> String {
 fn prefers_official_update(tool: &str, shell: LifecycleCommandShell) -> bool {
     match shell {
         LifecycleCommandShell::Posix => {
-            matches!(tool, "claude" | "opencode" | "openclaw" | "kimi" | "omp")
+            matches!(
+                tool,
+                "claude" | "opencode" | "openclaw" | "kimi" | "traecli" | "omp"
+            )
         }
         LifecycleCommandShell::WindowsBatch => {
             matches!(
@@ -1051,7 +1074,7 @@ fn prefers_official_update(tool: &str, shell: LifecycleCommandShell) -> bool {
                 // 安装方式探测失败弹交互 prompt（spawn npm.cmd 没传 shell:true）；静默
                 // lifecycle 没有 stdin 会挂死，Windows 先锚到包管理器路径，等上游修了
                 // 再把 opencode 加回这里。
-                "claude" | "openclaw" | "kimi" | "omp"
+                "claude" | "openclaw" | "kimi" | "traecli" | "omp"
             )
         }
     }
@@ -1539,6 +1562,7 @@ fn posix_install_command_for(tool: &str) -> String {
         "mcode" => installer_with_npm_fallback(MCODE_INSTALL_UNIX, tool),
         "hermes" => HERMES_INSTALL_UNIX.to_string(),
         "kimi" => KIMI_INSTALL_UNIX.to_string(),
+        "traecli" => TRAE_INSTALL_UNIX.to_string(),
         "omp" => OMP_INSTALL_UNIX.to_string(),
         "agy" => AGY_INSTALL_UNIX.to_string(),
         _ => static_fallback_command_for(tool, ToolLifecycleAction::Install),
@@ -1793,6 +1817,28 @@ mod tests {
                 Some(format!("omp update || {OMP_INSTALL_UNIX}").as_str())
             );
         }
+    }
+
+    #[test]
+    fn trae_install_uses_official_standalone_installer() {
+        let posix = tool_action_shell_command_for_shell(
+            "traecli",
+            ToolLifecycleAction::Install,
+            LifecycleCommandShell::Posix,
+        )
+        .unwrap();
+        assert_eq!(posix, TRAE_INSTALL_UNIX);
+        assert_eq!(posix_install_command_for("traecli"), posix);
+        assert!(!posix.contains("npm"));
+        let update = tool_action_shell_command_for_shell(
+            "traecli",
+            ToolLifecycleAction::Update,
+            LifecycleCommandShell::Posix,
+        )
+        .unwrap();
+        assert_eq!(update, format!("traecli update || {posix}"));
+        assert_eq!(tool_spec("traecli").display_name, "TRAE CLI");
+        assert_eq!(tool_spec("traecli").npm_package, None);
     }
 
     #[test]

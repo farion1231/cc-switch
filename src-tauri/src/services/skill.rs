@@ -755,6 +755,7 @@ impl SkillService {
             | AppType::Mcode
             | AppType::Kimi
             | AppType::Dsh
+            | AppType::Trae
             | AppType::Copilot
             | AppType::WorkBuddy => {}
             AppType::Pi => {
@@ -780,6 +781,7 @@ impl SkillService {
             AppType::Mcode => crate::mcode_config::data_dir().join("skills"),
             AppType::Dsh => crate::dsh_config::data_dir().join("skills"),
             AppType::Kimi => crate::kimi_config::data_dir().join("skills"),
+            AppType::Trae => crate::trae_config::data_dir().join("skills"),
             AppType::Copilot => crate::copilot_config::skills_dir(),
             AppType::WorkBuddy => crate::workbuddy_config::data_dir().join("skills"),
             AppType::Claude => home.join(".claude").join("skills"),
@@ -1145,6 +1147,7 @@ impl SkillService {
                         AppType::Agy,
                         AppType::Kimi,
                         AppType::Dsh,
+                        AppType::Trae,
                         AppType::Copilot,
                         AppType::WorkBuddy,
                     ] {
@@ -1238,6 +1241,7 @@ impl SkillService {
                                 | AppType::Agy
                                 | AppType::Kimi
                                 | AppType::Dsh
+                                | AppType::Trae
                                 | AppType::Omp
                                 | AppType::Copilot
                         ) {
@@ -1754,6 +1758,7 @@ impl SkillService {
             AppType::Agy,
             AppType::Kimi,
             AppType::Dsh,
+            AppType::Trae,
             AppType::Omp,
             AppType::Copilot,
             AppType::WorkBuddy,
@@ -1778,6 +1783,7 @@ impl SkillService {
             || skill.apps.agy
             || skill.apps.kimi
             || skill.apps.dsh
+            || skill.apps.trae
             || skill.apps.copilot
             || skill.apps.workbuddy)
         {
@@ -1789,6 +1795,7 @@ impl SkillService {
             || skill.apps.agy
             || skill.apps.kimi
             || skill.apps.dsh
+            || skill.apps.trae
             || skill.apps.copilot
             || skill.apps.workbuddy
         {
@@ -1835,6 +1842,7 @@ impl SkillService {
             || skill.apps.agy
             || skill.apps.kimi
             || skill.apps.dsh
+            || skill.apps.trae
             || skill.apps.copilot
             || skill.apps.workbuddy
         {
@@ -1848,6 +1856,7 @@ impl SkillService {
                     AppType::Agy,
                     AppType::Kimi,
                     AppType::Dsh,
+                    AppType::Trae,
                     AppType::Copilot,
                     AppType::WorkBuddy,
                 ]
@@ -1885,6 +1894,7 @@ impl SkillService {
                     | AppType::Agy
                     | AppType::Kimi
                     | AppType::Dsh
+                    | AppType::Trae
                     | AppType::Omp
                     | AppType::Copilot
                     | AppType::WorkBuddy
@@ -2243,6 +2253,7 @@ impl SkillService {
                 AppType::Agy,
                 AppType::Kimi,
                 AppType::Dsh,
+                AppType::Trae,
                 AppType::Copilot,
                 AppType::WorkBuddy,
             ] {
@@ -2482,7 +2493,12 @@ impl SkillService {
 
         if matches!(
             app,
-            AppType::Agy | AppType::Kimi | AppType::Dsh | AppType::Copilot | AppType::WorkBuddy
+            AppType::Agy
+                | AppType::Kimi
+                | AppType::Dsh
+                | AppType::Trae
+                | AppType::Copilot
+                | AppType::WorkBuddy
         ) {
             if !enabled && !skill.apps.is_enabled_for(app) {
                 return Ok(());
@@ -2701,6 +2717,7 @@ impl SkillService {
                 AppType::Agy,
                 AppType::Kimi,
                 AppType::Dsh,
+                AppType::Trae,
                 AppType::Copilot,
                 AppType::WorkBuddy,
             ] {
@@ -2752,6 +2769,7 @@ impl SkillService {
                         | AppType::Agy
                         | AppType::Kimi
                         | AppType::Dsh
+                        | AppType::Trae
                         | AppType::Omp
                         | AppType::Copilot
                         | AppType::WorkBuddy
@@ -2872,6 +2890,7 @@ impl SkillService {
                 | AppType::Agy
                 | AppType::Kimi
                 | AppType::Dsh
+                | AppType::Trae
                 | AppType::Omp
                 | AppType::Copilot
                 | AppType::WorkBuddy
@@ -3060,6 +3079,7 @@ impl SkillService {
                 | AppType::Agy
                 | AppType::Kimi
                 | AppType::Dsh
+                | AppType::Trae
                 | AppType::Omp
                 | AppType::Copilot
                 | AppType::WorkBuddy
@@ -3264,6 +3284,7 @@ impl SkillService {
                     | AppType::Agy
                     | AppType::Kimi
                     | AppType::Dsh
+                    | AppType::Trae
                     | AppType::Omp
                     | AppType::Copilot
                     | AppType::WorkBuddy
@@ -3345,6 +3366,7 @@ impl SkillService {
                     | AppType::Agy
                     | AppType::Kimi
                     | AppType::Dsh
+                    | AppType::Trae
                     | AppType::Copilot
                     | AppType::WorkBuddy
             )
@@ -4914,6 +4936,7 @@ impl SkillService {
                     | AppType::Agy
                     | AppType::Kimi
                     | AppType::Dsh
+                    | AppType::Trae
                     | AppType::Copilot
                     | AppType::WorkBuddy
             ) && !skill.apps.is_enabled_for(&app)
@@ -7666,6 +7689,7 @@ mod tests {
                 apps: SkillApps {
                     mcode: true,
                     kimi: false,
+                    trae: false,
                     dsh: false,
                     ..Default::default()
                 },
@@ -7696,6 +7720,7 @@ mod tests {
                 apps: SkillApps {
                     mcode: true,
                     kimi: false,
+                    trae: false,
                     dsh: false,
                     ..Default::default()
                 },
@@ -7733,6 +7758,7 @@ mod tests {
                     apps: SkillApps {
                         mcode: true,
                         kimi: false,
+                        trae: false,
                         dsh: false,
                         ..Default::default()
                     },
@@ -7782,6 +7808,7 @@ mod tests {
                 apps: SkillApps {
                     mcode: true,
                     kimi: false,
+                    trae: false,
                     dsh: false,
                     ..Default::default()
                 },

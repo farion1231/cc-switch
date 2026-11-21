@@ -189,7 +189,12 @@ fn lock_native_provider_operations(
 ) -> Option<tokio::sync::OwnedMutexGuard<()>> {
     matches!(
         app_type,
-        AppType::Mcode | AppType::Kimi | AppType::Dsh | AppType::Copilot | AppType::WorkBuddy
+        AppType::Mcode
+            | AppType::Kimi
+            | AppType::Dsh
+            | AppType::Trae
+            | AppType::Copilot
+            | AppType::WorkBuddy
     )
     .then(|| {
         futures::executor::block_on(state.proxy_service.lock_switch_for_app(app_type.as_str()))
@@ -401,6 +406,42 @@ mod tests {
                 .unwrap()
                 .is_empty());
             assert!(stored_row(state, "opencode", "good").is_some());
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn listing_trae_never_overwrites_an_unreadable_row_with_its_native_table() {
+        with_test_home(|state, home| {
+            let config = json!({
+                "provider": {"name": "Relay", "base_url": "https://relay.example/v1"},
+                "model": "m"
+            });
+            state
+                .db
+                .save_provider(
+                    &AppType::Trae,
+                    &Provider::with_id("relay".into(), "Relay".into(), config, None),
+                )
+                .unwrap();
+            let stored = break_stored_settings(state, "trae", "relay");
+            // traecli.toml 里有同 id 的表：合并时会把它当成「库里没有」补存。
+            std::fs::create_dir_all(home.join(".trae")).unwrap();
+            std::fs::write(
+                home.join(".trae").join("traecli.toml"),
+                "[model_providers.relay]\nname = \"Relay\"\nbase_url = \"https://relay.example/v1\"\n",
+            )
+            .unwrap();
+
+            let listed = ProviderService::list(state, AppType::Trae).expect("list still loads");
+            assert!(!listed.contains_key("relay"), "{:?}", listed.keys());
+            assert_eq!(stored_row(state, "trae", "relay"), Some(stored));
+            assert_eq!(
+                ProviderService::list_unreadable(state, AppType::Trae)
+                    .unwrap()
+                    .len(),
+                1
+            );
         });
     }
 
@@ -5790,6 +5831,9 @@ impl ProviderService {
         if app_type == AppType::Pi {
             return pi::list(state);
         }
+        if app_type == AppType::Trae {
+            return Self::list_trae(state);
+        }
         if app_type == AppType::Omp {
             return omp::list(state);
         }
@@ -5927,6 +5971,9 @@ impl ProviderService {
         if app_type == AppType::Kimi {
             return crate::kimi_config::current_provider();
         }
+        if app_type == AppType::Trae {
+            return crate::trae_config::current_provider();
+        }
         if app_type == AppType::Copilot {
             // 读不了 Copilot 的设置或供应商文件时不影响列表显示，只是没有「默认」。
             return Ok(
@@ -5949,6 +5996,44 @@ impl ProviderService {
         .map(|opt| opt.unwrap_or_default())
     }
 
+    /// traecli.toml owns provider tables; the database keeps display fields and
+    /// the model of providers that are not currently selected.
+    fn list_trae(state: &AppState) -> Result<IndexMap<String, Provider>, AppError> {
+        let native = crate::trae_config::get_providers()?;
+        let mut saved = match state.db.get_all_providers(&AppType::Trae) {
+            Ok(saved) => saved,
+            // 同上：有读不出来的行时不合并 traecli.toml，免得补存时盖掉那一行。
+            Err(error) => {
+                log::warn!("Not merging traecli.toml providers: {error}");
+                return Ok(state.db.get_provider_rows(&AppType::Trae)?.readable);
+            }
+        };
+        for (id, config) in &native {
+            if !saved.contains_key(id) {
+                let name = config
+                    .pointer("/provider/name")
+                    .and_then(Value::as_str)
+                    .filter(|name| !name.trim().is_empty())
+                    .unwrap_or(id);
+                saved.insert(
+                    id.clone(),
+                    Provider::with_id(id.clone(), name.into(), config.clone(), None),
+                );
+            }
+        }
+        for (id, provider) in &mut saved {
+            let official = id == crate::trae_config::OFFICIAL_PROVIDER_ID;
+            if let Some(config) = native.get(id) {
+                provider.settings_config =
+                    crate::trae_config::merge_saved(&provider.settings_config, config);
+            }
+            // The TRAE login is built into traecli and always available.
+            Self::set_provider_live_config_managed(provider, official || native.contains_key(id));
+            state.db.save_provider(&AppType::Trae, provider)?;
+        }
+        Ok(saved)
+    }
+
     fn save_native_provider(
         state: &AppState,
         app_type: &AppType,
@@ -5956,6 +6041,22 @@ impl ProviderService {
         write_live: bool,
         create: bool,
     ) -> Result<bool, AppError> {
+        if app_type == &AppType::Trae {
+            return if write_live {
+                crate::trae_config::save_and_commit(
+                    &provider.id,
+                    Some(provider.settings_config.clone()),
+                    create,
+                    || {
+                        state.db.save_provider(&AppType::Trae, provider)?;
+                        Ok(true)
+                    },
+                )
+            } else {
+                state.db.save_provider(&AppType::Trae, provider)?;
+                Ok(true)
+            };
+        }
         if matches!(app_type, AppType::Dsh) {
             return if write_live {
                 crate::dsh_config::save_and_commit(
@@ -6095,7 +6196,7 @@ impl ProviderService {
 
         if matches!(
             app_type,
-            AppType::Mcode | AppType::Kimi | AppType::Dsh | AppType::Copilot
+            AppType::Mcode | AppType::Kimi | AppType::Dsh | AppType::Trae | AppType::Copilot
         ) {
             // The key is user-chosen, and saving would overwrite an existing row or live node.
             // The per-app lock also serializes native list refreshes and other mutations;
@@ -6108,6 +6209,8 @@ impl ProviderService {
                     crate::dsh_config::provider_key_exists(&provider.id)?
                 } else if app_type == AppType::Kimi {
                     crate::kimi_config::provider_key_exists(&provider.id)?
+                } else if app_type == AppType::Trae {
+                    crate::trae_config::provider_key_exists(&provider.id)?
                 } else if app_type == AppType::Copilot {
                     crate::copilot_config::provider_key_exists(&provider.id)?
                 } else {
@@ -6850,7 +6953,7 @@ impl ProviderService {
 
             if matches!(
                 app_type,
-                AppType::Mcode | AppType::Kimi | AppType::Dsh | AppType::Copilot
+                AppType::Mcode | AppType::Kimi | AppType::Dsh | AppType::Trae | AppType::Copilot
             ) {
                 return Self::save_native_provider(
                     state,
@@ -7044,6 +7147,11 @@ impl ProviderService {
             }
             return Ok(());
         }
+        if app_type == AppType::Trae {
+            return crate::trae_config::save_and_commit(id, None, false, || {
+                state.db.delete_provider(&AppType::Trae, id)
+            });
+        }
 
         if app_type == AppType::Omp {
             return omp::delete(state, id);
@@ -7095,6 +7203,7 @@ impl ProviderService {
                     AppType::Hermes => remove_hermes_provider_from_live(id)?,
                     AppType::Mcode => crate::mcode_config::remove_provider(id)?,
                     AppType::Kimi => crate::kimi_config::remove_provider(id)?,
+                    AppType::Trae => crate::trae_config::remove_provider(id)?,
                     AppType::Dsh => crate::dsh_config::remove_provider(id)?,
                     AppType::WorkBuddy => crate::workbuddy_config::remove_provider(id)?,
                     _ => {}
@@ -7142,7 +7251,7 @@ impl ProviderService {
     }
 
     /// Kimi「添加」：把卡片写进 config.toml，但不改 default_model（「切换」才改）。
-    /// Copilot「添加」：把自带模型卡写进 providers.json（不改 Copilot 的默认模型）。
+    /// Kimi / TRAE CLI / Copilot「添加」：只写进原生配置（不改当前选中或默认模型）。
     /// 其他累加式应用的添加就是 `switch`，不走这里。
     pub fn add_to_live_config(
         state: &AppState,
@@ -7150,6 +7259,20 @@ impl ProviderService {
         id: &str,
     ) -> Result<(), AppError> {
         let _native_guard = lock_native_provider_operations(state, &app_type);
+        if app_type == AppType::Trae {
+            // 只写进 [model_providers.<id>]，不改 model_provider：选中由「设为默认」完成
+            let mut provider = state
+                .db
+                .get_provider_by_id(id, &AppType::Trae)?
+                .ok_or_else(|| AppError::Message(format!("供应商 {id} 不存在")))?;
+            Self::set_provider_live_config_managed(&mut provider, true);
+            return crate::trae_config::save_and_commit(
+                id,
+                Some(provider.settings_config.clone()),
+                false,
+                || state.db.save_provider(&AppType::Trae, &provider),
+            );
+        }
         if app_type == AppType::Copilot {
             return Self::add_copilot_to_live(state, id);
         }
@@ -7237,6 +7360,21 @@ impl ProviderService {
                 Ok(())
             });
         }
+        if app_type == AppType::Trae {
+            if id == crate::trae_config::OFFICIAL_PROVIDER_ID {
+                return Err(AppError::InvalidInput(
+                    "The TRAE login is built into TRAE CLI and cannot be removed from its config"
+                        .into(),
+                ));
+            }
+            return crate::trae_config::save_and_commit(id, None, false, || {
+                if let Some(mut provider) = state.db.get_provider_by_id(id, &AppType::Trae)? {
+                    Self::set_provider_live_config_managed(&mut provider, false);
+                    state.db.save_provider(&AppType::Trae, &provider)?;
+                }
+                Ok(())
+            });
+        }
 
         if app_type == AppType::Omp {
             return omp::remove(state, id);
@@ -7289,6 +7427,7 @@ impl ProviderService {
             }
             AppType::Mcode => crate::mcode_config::remove_provider(id)?,
             AppType::Kimi => crate::kimi_config::remove_provider(id)?,
+            AppType::Trae => crate::trae_config::remove_provider(id)?,
             AppType::Dsh => crate::dsh_config::remove_provider(id)?,
             AppType::WorkBuddy => crate::workbuddy_config::remove_provider(id)?,
             _ => {
@@ -7438,6 +7577,19 @@ impl ProviderService {
                 |config| {
                     provider.settings_config = config;
                     state.db.save_provider(&AppType::Kimi, &provider)
+                },
+            )?;
+            return Ok(SwitchResult::default());
+        }
+        if app_type == AppType::Trae {
+            let mut provider = _provider.clone();
+            Self::set_provider_live_config_managed(&mut provider, true);
+            crate::trae_config::switch_and_commit(
+                id,
+                provider.settings_config.clone(),
+                |config| {
+                    provider.settings_config = config;
+                    state.db.save_provider(&AppType::Trae, &provider)
                 },
             )?;
             return Ok(SwitchResult::default());
@@ -7612,6 +7764,7 @@ impl ProviderService {
                     AppType::Hermes => remove_hermes_provider_from_live(&provider.id),
                     AppType::Mcode => crate::mcode_config::remove_provider(&provider.id),
                     AppType::Kimi => crate::kimi_config::remove_provider(&provider.id),
+                    AppType::Trae => crate::trae_config::remove_provider(&provider.id),
                     AppType::Dsh => crate::dsh_config::remove_provider(&provider.id),
                     AppType::WorkBuddy => crate::workbuddy_config::remove_provider(&provider.id),
                     _ => Ok(()),
@@ -7878,6 +8031,7 @@ impl ProviderService {
             AppType::Pi
             | AppType::Mcode
             | AppType::Kimi
+            | AppType::Trae
             | AppType::Dsh
             | AppType::Agy
             | AppType::Omp
@@ -7903,6 +8057,7 @@ impl ProviderService {
             AppType::Pi
             | AppType::Mcode
             | AppType::Kimi
+            | AppType::Trae
             | AppType::Dsh
             | AppType::Agy
             | AppType::Omp
@@ -8672,6 +8827,9 @@ impl ProviderService {
             }
             AppType::Kimi => {
                 crate::kimi_config::validate_provider(&provider.id, &provider.settings_config)?
+            }
+            AppType::Trae => {
+                crate::trae_config::validate_provider(&provider.id, &provider.settings_config)?
             }
             AppType::Mcode => {
                 crate::mcode_config::validate_provider(&provider.id, &provider.settings_config)?

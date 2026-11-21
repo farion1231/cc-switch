@@ -23,4 +23,5 @@ mod provider_commands;
 mod provider_service;
 mod proxy_commands;
 mod skill_sync;
+mod trae_commands;
 mod workbuddy_commands;

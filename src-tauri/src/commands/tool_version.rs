@@ -84,6 +84,7 @@ pub(super) async fn get_single_tool_version_impl(
     let latest_version = match (tool, tool_spec(tool).npm_package) {
         ("hermes", _) => fetch_hermes_latest_version(&client, local).await,
         ("agy", _) => fetch_agy_latest_version(&client).await,
+        ("traecli", _) => fetch_trae_latest_version(&client).await,
         ("opencode", Some(package)) => {
             match fetch_npm_latest_for_tool(&client, package, tool, local).await {
                 Some(version) => Some(version),
@@ -283,6 +284,27 @@ pub(super) const LATEST_PROBE_TIMEOUT: std::time::Duration = std::time::Duration
 
 /// Helper function to fetch latest version from GitHub releases
 /// Antigravity CLI 的 installer 和自升级共用的发布清单：`manifests/<平台>.json` 的 `version`。
+const TRAE_LATEST_MANIFEST_URL: &str =
+    "https://lf-cdn.trae.com.cn/obj/trae-com-cn/trae-cli/v2/public/stable/latest.json";
+
+async fn fetch_trae_latest_version(client: &reqwest::Client) -> Option<String> {
+    let json = client
+        .get(TRAE_LATEST_MANIFEST_URL)
+        .timeout(LATEST_PROBE_TIMEOUT)
+        .send()
+        .await
+        .ok()?
+        .error_for_status()
+        .ok()?
+        .json::<serde_json::Value>()
+        .await
+        .ok()?;
+    json.get("binary_version")
+        .or_else(|| json.get("version"))
+        .and_then(|v| v.as_str())
+        .and_then(release_display_version)
+}
+
 async fn fetch_agy_latest_version(client: &reqwest::Client) -> Option<String> {
     let os = match std::env::consts::OS {
         "macos" => "darwin",
