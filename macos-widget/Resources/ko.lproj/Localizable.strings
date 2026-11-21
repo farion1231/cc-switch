@@ -1,0 +1,19 @@
+/* 小组件自己的文案：「用量」的时间范围名（和 CC Switch 用量页同名）和图表样式配置项（UsageIntent.swift）、翻页意图名（Pager.swift）。 */
+"usage.range.today" = "오늘";
+"usage.range.1d" = "지난 24시간";
+"usage.range.7d" = "지난 7일";
+"usage.range.14d" = "지난 14일";
+"usage.range.30d" = "지난 30일";
+"usage.range.all" = "모두";
+"pager.intent.title" = "페이지 넘기기";
+"usage.range.short.today" = "오늘";
+"usage.range.short.1d" = "24시간";
+"usage.range.short.7d" = "7일";
+"usage.range.short.14d" = "14일";
+"usage.range.short.30d" = "30일";
+"usage.range.short.all" = "모두";
+"usage.chart" = "차트 스타일";
+"usage.chart.bars" = "막대 차트";
+"usage.chart.line" = "꺾은선 차트";
+"usage.intent.title" = "사용량";
+"usage.intent.description" = "차트 스타일을 선택하세요. 기간은 위젯의 기간 버튼을 눌러 바꿉니다.";

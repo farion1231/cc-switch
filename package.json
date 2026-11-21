@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "pnpm tauri dev",
     "build": "pnpm tauri build",
+    "build:macos-widget": "bash macos-widget/build.sh --bundle",
     "tauri": "tauri",
     "dev:renderer": "vite",
     "build:renderer": "vite build",
