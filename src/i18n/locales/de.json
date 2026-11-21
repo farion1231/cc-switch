@@ -202,6 +202,8 @@
       "extraArgsPlaceholder": "z. B. --debug --append-system-prompt \"Be brief\"",
       "extraArgsHint": "Wird nur für dieses Terminal hinter den Startbefehl gesetzt. Mit Leerzeichen trennen; Werte mit Leerzeichen in Anführungszeichen setzen.",
       "agySwitchTitle": "Dadurch wird die Anmeldung von agy gewechselt",
+      "agyBindingMissing": "Das mit dieser Karte verknüpfte Antigravity-Konto fehlt auf diesem Computer. Füge es unter „Konten“ hinzu oder verwende für diesen Start die aktuelle agy-Anmeldung.",
+      "agyUseCurrentLogin": "Aktuelle agy-Anmeldung für diesen Start verwenden",
       "agySwitchBody": "Vor dem Öffnen wechselt die Anmeldung von agy zu {{account}}; danach gestartete agy-Sitzungen verwenden dieses Konto.",
       "agySwitchRunning": "agy läuft: Geöffnete agy-Sitzungen behalten das vorherige Konto und schreiben es möglicherweise zurück. Beenden Sie sie nach Möglichkeit zuerst.",
       "isolationBodyCopilot": "copilot startet in diesem Terminal mit --model auf das erste Modell von „{{name}}“, nur für diese Sitzung. Endpunkt und Schlüssel stammen aus der providers.json von Copilot, daher können andere Terminals es ebenfalls mit /model auswählen."
@@ -3510,6 +3512,7 @@
       "skillNotFound": "Skill nicht gefunden: {{directory}}",
       "missingRepoInfo": "Repository-Angaben fehlen (Eigentümer oder Name)",
       "downloadTimeout": "Zeitüberschreitung beim Herunterladen des Repositorys {{owner}}/{{name}} ({{timeout}} s)",
+      "downloadStalled": "Download des Repositorys {{owner}}/{{name}} abgebrochen: {{timeout}} s lang keine Daten empfangen",
       "skillDirNotFound": "Skill-Verzeichnis nicht gefunden: {{path}}",
       "directoryConflict": "Das Skill-Verzeichnis „{{directory}}“ ist bereits von {{existing_repo}} belegt und kann nicht aus {{new_repo}} installiert werden",
       "emptyArchive": "Das heruntergeladene Archiv ist leer",
@@ -4323,6 +4326,7 @@
     "refresh": "Aktualisieren"
   },
   "nav": {
+    "skills": "Skills",
     "mainLabel": "Hauptnavigation",
     "skipToContent": "Zum Hauptinhalt springen",
     "expandSidebar": "Seitenleiste ausklappen",

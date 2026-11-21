@@ -5,6 +5,41 @@ All notable changes to CC Switch will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.37] - 2026-11-20
+
+This is a maintenance release. Providers and MCP servers whose stored data can't be read (for example, written by a newer version and synced over WebDAV/S3) are no longer reset to defaults and overwritten; they are listed apart with a Delete button. Pi gets a Mistral AI preset on Pi's native Mistral protocol, and Korean translations are improved. Fixes cover the local route not binding to IPv6 addresses, a broken `~/.claude/config.json` being wiped by "Apply to Claude Code plugin", large skill repositories failing to download on slow links, the Codex model catalog probe not finding Node when CC Switch is opened from Finder, tool-call arguments losing `_`-prefixed keys on the way upstream, a provider re-added to the failover queue still being skipped, Plugins page retries that looked like nothing happened, and several plugin, memory and resource issues.
+
+**Stats**: 19 commits | 155 files changed | +5061 insertions | -1329 deletions
+
+### Added
+
+- **Mistral AI Preset for Pi** (#9344, fixes #9343): Pi gets a Mistral AI preset on Pi's own `mistral-conversations` API (base `https://api.mistral.ai`, provider key `cc-switch-mistral` so it doesn't shadow Pi's built-in `mistral`), with Large 4 (low/medium/high) and Small 4 (none/high) thinking levels following Pi's catalog. The Pi form lists `mistral-conversations` as a protocol; the preset and the protocol are kept out of Oh My Pi and Kimi Code, which don't accept it.
+
+### Changed
+
+- **Unreadable Providers and MCP Servers Are Kept As Is** (#9767): A provider or MCP row whose stored JSON can't be parsed (corrupt, or written by a newer version) used to come back with empty settings / default meta, and the next save wrote those defaults over it. Such rows now fail by name instead of defaulting: the provider and MCP pages list them separately with the parse error and a Delete button (deleting removes only the DB row and touches no live config), read-only lists, the tray and failover skip them with a log, and writes that could overwrite the row are refused (including syncing all of an additive app's providers to its live file while such a row exists). An MCP app toggle whose read-back fails is rolled back. DeepSeek Harness profile seeding ignores unreadable rows of other apps and defers, without writing its receipt, only when a DSH row is unreadable (52497306c).
+- **Claude Code 1M Marker Written as `[1m]`** (5909b0502, refs #9757): Routing tier aliases, Stack model ids, the provider form's 1M checkbox and the presets now write the documented lowercase `[1m]` instead of `[1M]`. Readers stay case-insensitive, so existing `[1M]` values keep working.
+- **Korean Translations** (#9395, #9349): Many Korean strings were reworded; the Korean identifier check in the locale tests is relaxed accordingly.
+- **Auth Center Row Layout** (#9369): "N providers in use" moves to its own line, the quota label column fits the longest tier name, and the percentage stays readable in longer translations, so plan, domain and sign-in date no longer collapse into an ellipsis in narrow windows.
+
+### Fixed
+
+- **Local Route Did Not Start on IPv6 Listen Addresses** (527527105, refs #9743): A bare IPv6 address such as `::1` was formatted as `::1:15721` and rejected. The host is now parsed as an IP address (brackets optional, legacy `localhost` maps to `127.0.0.1`).
+- **Broken `~/.claude/config.json` Wiped by "Apply to Claude Code plugin"** (8d1c5d832, refs #9744): Invalid JSON or a non-object root was treated as empty and rewritten with only `primaryApiKey`. It is now reported as an error naming the path and left untouched; writes and clears use an atomic write.
+- **Large Skill Repositories Failed to Download on Slow Links** (6313363ed): Install, update, update check and discovery wrapped the whole archive download in a fixed 60-second total. They now abort only after 60 seconds without progress (connect, headers, or between two chunks; new "download stalled" message in eight locales), with a 600-second ceiling for the whole download.
+- **Codex Model Catalog Probe Couldn't Find Node When Opened from Finder** (048466e97, refs #9764): The probe ran `codex debug models --bundled` with launchd's narrow PATH, so an npm-installed `codex` exited with `env: node: No such file or directory` and the older CLI bundled with the desktop app was used instead, dropping official metadata (such as the search tool) from aggregated GPT rows. Candidates now run with the login-shell PATH in front plus their own directory; the login-shell PATH is cached once per process and shared with the MCP connectivity check.
+- **Tool-Call Arguments Lost `_`-Prefixed Keys Upstream** (#9753): The private-field filter removed every `_` key recursively, including `_id`, `_meta` and `__typename` inside tool-call arguments, so the model saw a different call than the one that ran. Tool-call inputs (`tool_use` / `server_tool_use` / `mcp_tool_use` `input`, `functionCall.args`, object-form `function_call.arguments`) are now left alone.
+- **Re-Added Provider Still Skipped by Failover** (#9750): Removing a provider from the failover queue, or leaving routing for one app while another kept the server up, cleared the health shown on the card but not the running router's circuit breakers. Both are cleared now. A failed removal of the other OMO variant's config is reported as its own switch warning instead of being dropped.
+- **Plugins Page Retry Looked Like It Did Nothing** (140128cf2, refs #9758): With a cached or previously loaded list, retrying after a CLI timeout left the error panel unchanged until the retry finished. The installed, catalog and marketplace panels now show loading while retrying.
+- **Plugins Page Follow-Ups** (#9742): In-progress spinners and disabled controls survive switching apps; a Codex plugin re-enabled while an update was running is no longer disabled again by the update; search also matches the display name (Pi git / local packages); a pinned Pi npm package reinstalled without a version leaves Discover; on Windows, plugin manifests installed inside WSL are read through the `\\wsl$` / `\\wsl.localhost` path so version, name and description show up.
+- **Memory and Resource Leaks** (#9773): Window resize listeners are removed on unmount; session image object URLs are revoked when leaving the reader, including ones still loading; proxied request bodies are capped at 200 MiB (413 above that), including after decompression; the no-redirect and https-only HTTP clients are reused instead of rebuilt per request; downloaded installer bytes are released when auto-update is turned off.
+- **Tool Install/Upgrade Occasionally Reported "In Progress"** (#9775): A tool's own lock is now released before the shared execution lock, so a follow-up action right after another one finishes no longer hits the stale lock.
+
+### Internal
+
+- Unused re-exports, 17 locale keys in all eight locales and dead TS exports removed; `knip` now runs in frontend CI (#9751).
+- Modelflare promoted to a full sponsor in all eight READMEs; preset blocks reordered to match (ae5694df0).
+
 ## [4.0.36] - 2026-11-19
 
 This release adds a Plugins page that manages plugins and marketplaces for Claude Code, Codex, Grok Build, MiniMax Code, OpenClaw and Pi through each app's own CLI, lets the skill repository manager read private repositories with per-host access tokens, adds an opt-in billing multiplier for routed providers, and shows Claude Code desktop chapters in the session reader. Fixes cover Codex quota protection blocking the free auto-review model, new official models showing up late in Codex aggregation, OpenCode 1.x usage lost after a 2.x migration, the usage date input turning typed years into 1905, and several Antigravity models shown as unpriced. Usage statistics now merge equally priced reasoning tiers into their base model.

@@ -59,6 +59,27 @@ fn row_to_mcp_server(row: &Row<'_>) -> rusqlite::Result<(String, McpServer)> {
     ))
 }
 
+/// 应用对应的 `enabled_*` 列；Claude Desktop、OpenClaw 在库里没有 MCP 标志。
+fn mcp_flag_column(app: &AppType) -> Option<&'static str> {
+    match app {
+        AppType::Claude => Some("enabled_claude"),
+        AppType::Codex => Some("enabled_codex"),
+        AppType::Gemini => Some("enabled_gemini"),
+        AppType::GrokBuild => Some("enabled_grokbuild"),
+        AppType::OpenCode => Some("enabled_opencode"),
+        AppType::Hermes => Some("enabled_hermes"),
+        AppType::Mcode => Some("enabled_mcode"),
+        AppType::Kimi => Some("enabled_kimi"),
+        AppType::Dsh => Some("enabled_dsh"),
+        AppType::Copilot => Some("enabled_copilot"),
+        AppType::WorkBuddy => Some("enabled_workbuddy"),
+        AppType::Pi => Some("enabled_pi"),
+        AppType::Omp => Some("enabled_omp"),
+        AppType::Agy => Some("enabled_agy"),
+        AppType::ClaudeDesktop | AppType::OpenClaw => None,
+    }
+}
+
 impl Database {
     /// 获取所有 MCP 服务器。一行读不出来就整体报错（见 [`super::Rows::into_strict`]）；
     /// 只展示、不写的地方用 [`Self::get_mcp_server_rows`]。
@@ -106,6 +127,24 @@ impl Database {
         Ok(result.and_then(Result::err))
     }
 
+    /// 给某个应用开着的 MCP 服务器 id。只读布尔列、不解码 JSON，所以存坏的行也能判断归属。
+    pub fn mcp_server_ids_enabled_for(&self, app: &AppType) -> Result<Vec<String>, AppError> {
+        let Some(column) = mcp_flag_column(app) else {
+            return Ok(Vec::new());
+        };
+        let conn = lock_conn!(self.conn);
+        // `column` comes exclusively from the fixed allow-list in `mcp_flag_column`.
+        let mut stmt = conn
+            .prepare(&format!("SELECT id FROM mcp_servers WHERE {column} <> 0"))
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let ids = stmt
+            .query_map([], |row| row.get(0))
+            .map_err(|e| AppError::Database(e.to_string()))?
+            .collect::<Result<_, _>>()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(ids)
+    }
+
     /// Atomically update one application's flag and return the authoritative row.
     ///
     /// The update and read share the same connection lock, so concurrent toggles
@@ -121,26 +160,7 @@ impl Database {
         let conn = conn
             .transaction()
             .map_err(|e| AppError::Database(e.to_string()))?;
-        let column = match app {
-            AppType::Claude => Some("enabled_claude"),
-            AppType::Codex => Some("enabled_codex"),
-            AppType::Gemini => Some("enabled_gemini"),
-            AppType::GrokBuild => Some("enabled_grokbuild"),
-            AppType::OpenCode => Some("enabled_opencode"),
-            AppType::Hermes => Some("enabled_hermes"),
-            // These applications intentionally have no MCP flag in the SSOT.
-            AppType::Mcode => Some("enabled_mcode"),
-            AppType::Kimi => Some("enabled_kimi"),
-            AppType::Dsh => Some("enabled_dsh"),
-            AppType::Copilot => Some("enabled_copilot"),
-            AppType::WorkBuddy => Some("enabled_workbuddy"),
-            AppType::Pi => Some("enabled_pi"),
-            AppType::Omp => Some("enabled_omp"),
-            AppType::ClaudeDesktop | AppType::OpenClaw => None,
-            AppType::Agy => Some("enabled_agy"),
-        };
-
-        if let Some(column) = column {
+        if let Some(column) = mcp_flag_column(app) {
             // `column` comes exclusively from the fixed allow-list above.
             let sql = format!("UPDATE mcp_servers SET {column} = ?1 WHERE id = ?2");
             let affected = conn

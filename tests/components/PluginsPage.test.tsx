@@ -534,6 +534,30 @@ describe("PluginsPage", () => {
     expect(screen.queryByText("common.retry")).not.toBeInTheDocument();
   });
 
+  it("shows loading again while retrying a failed read", async () => {
+    // 有上次的结果时，重试中查询仍是 error 状态（没有结果才回到 pending）
+    localStorage.setItem(
+      "cc-switch-cache:plugins:claude:installed",
+      JSON.stringify([plugin({ name: "cached-plugin", id: "cached@m" })]),
+    );
+    m.listInstalled.mockRejectedValueOnce("Command timed out after 90s");
+    renderPage();
+    expect(
+      await screen.findByText("Command timed out after 90s"),
+    ).toBeInTheDocument();
+
+    const retry = deferred<PluginEntry[]>();
+    m.listInstalled.mockReturnValue(retry.promise);
+    await userEvent.click(screen.getByRole("button", { name: "common.retry" }));
+    expect(await screen.findByText("pluginsPage.loading")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Command timed out after 90s"),
+    ).not.toBeInTheDocument();
+
+    await act(async () => retry.resolve([plugin()]));
+    expect(await screen.findByText("frontend-design")).toBeInTheDocument();
+  });
+
   it("prefetches the other app and switches to it", async () => {
     renderPage({ apps: ["claude", "codex"] });
     await screen.findByText("frontend-design");

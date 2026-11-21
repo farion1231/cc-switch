@@ -1089,6 +1089,19 @@ pub(crate) fn login_shell_path(deadline: Option<CommandDeadline>) -> Option<Stri
     Some(path_line_from_env_output(&raw)?.to_string())
 }
 
+/// [`login_shell_path`] 的进程级缓存：GUI 启动后 PATH 不会再变，解析一次、全进程共用
+/// （MCP 连通性检测、Codex 模型目录探测）。限时 10 秒，免得卡住的 shell 配置让每次调用都等；
+/// 第一次调用会阻塞，异步代码里放进 `spawn_blocking`。
+#[cfg(not(target_os = "windows"))]
+pub(crate) fn cached_login_shell_path() -> Option<String> {
+    static LOGIN_SHELL_PATH: std::sync::LazyLock<Option<String>> = std::sync::LazyLock::new(|| {
+        login_shell_path(CommandDeadline::from_timeout(Some(
+            std::time::Duration::from_secs(10),
+        )))
+    });
+    LOGIN_SHELL_PATH.clone()
+}
+
 /// 用与 `try_get_version` 相同的登录 shell 解析 PATH 默认命中的可执行文件路径，
 /// canonicalize 后作为"命令行默认 / 升级目标"的锚点（与升级会作用的那处对齐）。
 #[cfg(not(target_os = "windows"))]

@@ -6,6 +6,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { useEffect } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -16,6 +17,7 @@ const apiMocks = vi.hoisted(() => ({
   getEditorView: vi.fn(),
   getLiveProviderSettings: vi.fn(),
   getOpenClawLiveProvider: vi.fn(),
+  removeCredentialProtection: vi.fn(),
 }));
 let mockFormReady = true;
 let mockCodexManagedAccountSelected = false;
@@ -25,6 +27,7 @@ vi.mock("@/lib/api", () => ({
   providersApi: {
     getCurrent: apiMocks.getCurrent,
     getEditorView: apiMocks.getEditorView,
+    removeCredentialProtection: apiMocks.removeCredentialProtection,
   },
   vscodeApi: {
     getLiveProviderSettings: apiMocks.getLiveProviderSettings,
@@ -146,6 +149,9 @@ vi.mock("@/components/providers/AuthSettingsPanel", () => ({
 
 import { EditProviderDialog } from "@/components/providers/EditProviderDialog";
 
+const liveConflict = (key: string) =>
+  new Error(JSON.stringify({ code: "LIVE_EDIT_CONFLICT", keys: [key] }));
+
 describe("EditProviderDialog", () => {
   beforeEach(() => {
     mockFormReady = true;
@@ -161,6 +167,169 @@ describe("EditProviderDialog", () => {
     );
     apiMocks.getLiveProviderSettings.mockReset();
     apiMocks.getOpenClawLiveProvider.mockReset();
+    apiMocks.removeCredentialProtection.mockReset();
+  });
+
+  it.each(["claude", "codex", "gemini", "grokbuild"] as const)(
+    "ignores an old %s save conflict without replacing the current conflict",
+    async (appId) => {
+      let rejectPrevious!: (error: Error) => void;
+      const props = {
+        appId,
+        provider: { id: "previous", name: "Previous", settingsConfig: {} },
+        onOpenChange: vi.fn(),
+        onSubmit: vi
+          .fn()
+          .mockImplementationOnce(
+            () =>
+              new Promise<void>((_, reject) => {
+                rejectPrevious = reject;
+              }),
+          )
+          .mockRejectedValueOnce(liveConflict("current-setting"))
+          .mockResolvedValue(undefined),
+      };
+      const { rerender } = render(<EditProviderDialog open {...props} />);
+      fireEvent.click(
+        await screen.findByRole("button", { name: "common.save" }),
+      );
+      await waitFor(() => expect(props.onSubmit).toHaveBeenCalledTimes(1));
+      rerender(<EditProviderDialog open={false} {...props} />);
+      rerender(
+        <EditProviderDialog
+          open
+          {...props}
+          provider={{ ...props.provider, id: "current", name: "Current" }}
+        />,
+      );
+      fireEvent.click(
+        await screen.findByRole("button", { name: "common.save" }),
+      );
+      await screen.findByText("• current-setting");
+
+      await act(async () => rejectPrevious(liveConflict("previous-setting")));
+      expect(screen.queryByText("• previous-setting")).not.toBeInTheDocument();
+      expect(screen.getByText("• current-setting")).toBeInTheDocument();
+      expect(props.onOpenChange).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole("button", { name: "用我的修改覆盖" }));
+      await waitFor(() => expect(props.onSubmit).toHaveBeenCalledTimes(3));
+      expect(props.onSubmit.mock.calls[2][0]).toMatchObject({
+        provider: { id: "current" },
+        editorSave: { onConflict: "keepMine" },
+      });
+      await waitFor(() =>
+        expect(props.onOpenChange).toHaveBeenCalledWith(false),
+      );
+    },
+  );
+
+  it("does not restore a previous conflict when reopening the same provider", async () => {
+    const props = {
+      appId: "claude" as const,
+      provider: { id: "example", name: "Example", settingsConfig: {} },
+      onOpenChange: vi.fn(),
+      onSubmit: vi.fn().mockRejectedValue(liveConflict("previous-setting")),
+    };
+    const { rerender } = render(<EditProviderDialog open {...props} />);
+    fireEvent.click(await screen.findByRole("button", { name: "common.save" }));
+    await screen.findByText("• previous-setting");
+    rerender(<EditProviderDialog open={false} {...props} />);
+    rerender(<EditProviderDialog open {...props} />);
+    await screen.findByRole("button", { name: "common.save" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(props.onSubmit).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a reopened editor usable when a previous protection removal finishes", async () => {
+    let finishRemoval!: () => void;
+    apiMocks.removeCredentialProtection.mockReturnValue(
+      new Promise<void>((resolve) => {
+        finishRemoval = resolve;
+      }),
+    );
+    const props = {
+      appId: "claude" as const,
+      provider: {
+        id: "protected",
+        name: "Protected",
+        settingsConfig: {},
+        meta: { credentialEditProtected: true },
+      },
+      onOpenChange: vi.fn(),
+      onSubmit: vi.fn(),
+    };
+    const { rerender } = renderWithQueryClient(
+      <EditProviderDialog open {...props} />,
+    );
+    const saveButton = await screen.findByRole("button", {
+      name: "common.save",
+    });
+    const removeButton = { name: "credentialProtection.remove" };
+    fireEvent.click(screen.getByRole("button", removeButton));
+    const confirmation = await screen.findByRole("dialog");
+    fireEvent.click(within(confirmation).getByRole("button", removeButton));
+    expect(saveButton).toBeDisabled();
+
+    rerender(<EditProviderDialog open={false} {...props} />);
+    rerender(<EditProviderDialog open {...props} />);
+    const reopenedSave = await screen.findByRole("button", {
+      name: "common.save",
+    });
+    await act(async () => finishRemoval());
+    expect(props.onOpenChange).not.toHaveBeenCalled();
+    expect(reopenedSave).toBeEnabled();
+  });
+
+  it("keeps the current conflict usable when a previous conflict retry finishes", async () => {
+    let finishPreviousRetry!: () => void;
+    const props = {
+      appId: "claude" as const,
+      provider: { id: "previous", name: "Previous", settingsConfig: {} },
+      onOpenChange: vi.fn(),
+      onSubmit: vi
+        .fn()
+        .mockRejectedValueOnce(liveConflict("previous-setting"))
+        .mockImplementationOnce(
+          () =>
+            new Promise<void>((resolve) => {
+              finishPreviousRetry = resolve;
+            }),
+        )
+        .mockRejectedValueOnce(liveConflict("current-setting"))
+        .mockResolvedValue(undefined),
+    };
+    const { rerender } = render(<EditProviderDialog open {...props} />);
+    fireEvent.click(await screen.findByRole("button", { name: "common.save" }));
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "用我的修改覆盖",
+      }),
+    );
+    await waitFor(() => expect(props.onSubmit).toHaveBeenCalledTimes(2));
+    rerender(<EditProviderDialog open={false} {...props} />);
+    rerender(
+      <EditProviderDialog
+        open
+        {...props}
+        provider={{ ...props.provider, id: "current", name: "Current" }}
+      />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "common.save" }));
+    await screen.findByText("• current-setting");
+    const keepTheirs = screen.getByRole("button", {
+      name: "保留外部修改",
+    });
+    expect(keepTheirs).toBeEnabled();
+    await act(async () => finishPreviousRetry());
+    expect(screen.getByText("• current-setting")).toBeInTheDocument();
+    expect(props.onOpenChange).not.toHaveBeenCalled();
+    fireEvent.click(keepTheirs);
+    await waitFor(() => expect(props.onSubmit).toHaveBeenCalledTimes(4));
+    expect(props.onSubmit.mock.calls[3][0]).toMatchObject({
+      provider: { id: "current" },
+      editorSave: { onConflict: "keepTheirs" },
+    });
+    await waitFor(() => expect(props.onOpenChange).toHaveBeenCalledWith(false));
   });
 
   it("keeps the list visible until the initial editor projection is ready", async () => {
