@@ -1,28 +1,30 @@
 //! 会话正文搜索索引（issue #7420）。
 //!
-//! 会话页的元数据搜索（标题、目录、首末消息）在前端用 FlexSearch 做；消息正文太大，
+//! 会话页的元数据搜索（标题、目录、首末消息）在前端完成；消息正文太大，
 //! 放不进前端内存，这里在 Rust 侧维护一份 SQLite FTS5 索引：
 //!
 //! - 独立文件 `~/.cc-switch/session-index.db`，不进主库，不参与备份与云同步。它只是
 //!   缓存，删掉后下次打开会话页会重建；关掉「搜索消息正文」时整个文件一起删除
 //! - 每条消息一行，只收用户与 Agent 的正文（Text 块）；思考、工具参数与输出、
 //!   注入内容（AGENTS.md、system-reminder…）不收
-//! - trigram 分词：中文、代码标识符都能按子串命中；不足 3 个字符的查询 trigram
-//!   用不上，对规范化正文做精确子串扫描
+//! - trigram 支持长词子串匹配；无正文、无位置信息的短词索引收录一字/两字，避免正文扫描
 //! - 增量：文件使用 `(mtime, len)`，SQLite 使用会话原始行 revision；没变的会话不再解析
 //!
 //! FTS 行的 rowid 由「源 id × 2^24 + 消息序号」组成，重建一个会话时按 rowid 区间删除，
 //! 不必扫全表。
 
 use crate::sync_utils::MutexExt;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex, RwLock};
 use std::time::UNIX_EPOCH;
 
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{
+    params, params_from_iter, Connection, InterruptHandle, OpenFlags, OptionalExtension,
+};
 use serde::Serialize;
 
 use super::cache::{self, Fingerprint};
@@ -31,7 +33,7 @@ use super::model::{SessionBlock, SessionMessage};
 
 const INDEX_FILE: &str = "session-index.db";
 /// 索引格式版本；表结构或收录规则变了就加一，旧索引整体重建
-const INDEX_VERSION: i64 = 3;
+const INDEX_VERSION: i64 = 4;
 /// rowid 里留给消息序号的位数（单个会话最多 1600 万条消息，超出部分不收）
 const ROW_SHIFT: u32 = 24;
 const MAX_MESSAGES_PER_SOURCE: usize = 1 << ROW_SHIFT;
@@ -160,39 +162,139 @@ fn truncate_chars(text: &str, max: usize) -> String {
 /// 取命中词附近的一段原文，并保留完整正文匹配产生的 UTF-16 高亮范围。
 /// 裁剪上下文或压缩空白后重新查找会改变结果（例如词尾 Σ 的大小写规则）。
 fn make_highlighted_snippet(text: &str, query: &str) -> (String, Vec<ContentHighlight>) {
-    let hay: Vec<char> = text.chars().collect();
+    if text.is_ascii() && query.is_ascii() {
+        // No lowercase copy or whole-message character/maps on the ASCII path.
+        let find = |from: usize, end: usize| {
+            if query.is_empty() || from + query.len() > end {
+                return None;
+            }
+            text.as_bytes()[from..end]
+                .windows(query.len())
+                .position(|window| window.eq_ignore_ascii_case(query.as_bytes()))
+                .map(|at| from + at)
+        };
+        let first = find(0, text.len());
+        let (start, end) = first.map_or(
+            (0, (SNIPPET_BEFORE + SNIPPET_AFTER).min(text.len())),
+            |at| {
+                (
+                    at.saturating_sub(SNIPPET_BEFORE),
+                    (at + query.len() + SNIPPET_AFTER).min(text.len()),
+                )
+            },
+        );
+        let search_end = (end + query.len()).min(text.len());
+        let mut cursor = start;
+        let mut matches = std::iter::from_fn(|| {
+            let at = find(cursor, search_end)?;
+            cursor = at + query.len();
+            Some((at, cursor))
+        })
+        .peekable();
+        return render_snippet(
+            text,
+            start,
+            end,
+            text[start..end].bytes().enumerate().map(|(i, c)| {
+                let at = start + i;
+                while matches.peek().is_some_and(|&(_, b)| b <= at) {
+                    matches.next();
+                }
+                (
+                    char::from(c),
+                    matches.peek().is_some_and(|&(a, b)| a <= at && at < b),
+                )
+            }),
+        );
+    }
+
+    // Keep full-text lowercase for contextual Final_Sigma, but map only the
+    // selected window. Locating the first match needs no per-character arrays.
     let normalized = text.to_lowercase();
     let needle = query.to_lowercase();
-    // 小写展开（如 İ → i + combining dot）会改变下标。按展开字符数映射回原文；
-    // 默认 Unicode 小写唯一的上下文规则 Final_Sigma 不改变字符数。
-    let original_positions: Vec<usize> = hay
-        .iter()
-        .enumerate()
-        .flat_map(|(index, c)| std::iter::repeat_n(index, c.to_lowercase().count()))
-        .collect();
-    let mut matched = vec![false; hay.len()];
-    let mut first = None;
-    if !needle.is_empty() {
-        let needle_chars = needle.chars().count();
-        let mut previous_byte = 0;
-        let mut normalized_at = 0;
-        for (byte, _) in normalized.match_indices(&needle) {
-            normalized_at += normalized[previous_byte..byte].chars().count();
-            previous_byte = byte;
-            let start = original_positions[normalized_at];
-            let end = original_positions[normalized_at + needle_chars - 1] + 1;
-            first.get_or_insert((start, end));
-            matched[start..end].fill(true);
+    let first = (!needle.is_empty())
+        .then(|| normalized.find(&needle))
+        .flatten();
+    let mut normalized_at = 0;
+    let mut original_first = None;
+    let mut original_end = 0;
+    if let Some(first) = first {
+        for (at, c) in text.char_indices() {
+            let next = normalized_at + c.to_lowercase().map(char::len_utf8).sum::<usize>();
+            if next > first {
+                original_first.get_or_insert((at, normalized_at));
+            }
+            if next >= first + needle.len() {
+                original_end = at + c.len_utf8();
+                break;
+            }
+            normalized_at = next;
         }
     }
-    let (start, end) = match first {
-        Some((start, end)) => (
-            start.saturating_sub(SNIPPET_BEFORE),
-            (end + SNIPPET_AFTER).min(hay.len()),
-        ),
-        None => (0, (SNIPPET_BEFORE + SNIPPET_AFTER).min(hay.len())),
+    let (start, end, normalized_start) = if let Some((first, normalized_first)) = original_first {
+        let start = text[..first]
+            .char_indices()
+            .rev()
+            .nth(SNIPPET_BEFORE - 1)
+            .map_or(0, |(at, _)| at);
+        let end = text[original_end..]
+            .char_indices()
+            .nth(SNIPPET_AFTER)
+            .map_or(text.len(), |(at, _)| original_end + at);
+        let before_bytes: usize = text[start..first]
+            .chars()
+            .flat_map(char::to_lowercase)
+            .map(char::len_utf8)
+            .sum();
+        (start, end, normalized_first - before_bytes)
+    } else {
+        (
+            0,
+            text.char_indices()
+                .nth(SNIPPET_BEFORE + SNIPPET_AFTER)
+                .map_or(text.len(), |(at, _)| at),
+            0,
+        )
     };
+    let normalized_end = normalized_start
+        + text[start..end]
+            .chars()
+            .flat_map(char::to_lowercase)
+            .map(char::len_utf8)
+            .sum::<usize>();
+    // Include enough trailing bytes to recognize a match crossing the window.
+    let mut search_end = (normalized_end + needle.len()).min(normalized.len());
+    while !normalized.is_char_boundary(search_end) {
+        search_end -= 1;
+    }
+    let mut matches = normalized[normalized_start..search_end]
+        .match_indices(&needle)
+        .filter(|_| !needle.is_empty())
+        .map(|(at, _)| (normalized_start + at, normalized_start + at + needle.len()))
+        .peekable();
+    let mut at = normalized_start;
+    render_snippet(
+        text,
+        start,
+        end,
+        text[start..end].chars().map(|c| {
+            let next = at + c.to_lowercase().map(char::len_utf8).sum::<usize>();
+            while matches.peek().is_some_and(|&(_, b)| b <= at) {
+                matches.next();
+            }
+            let highlighted = matches.peek().is_some_and(|&(a, b)| a < next && b > at);
+            at = next;
+            (c, highlighted)
+        }),
+    )
+}
 
+fn render_snippet(
+    text: &str,
+    start: usize,
+    end: usize,
+    chars: impl Iterator<Item = (char, bool)>,
+) -> (String, Vec<ContentHighlight>) {
     let mut snippet = String::new();
     let mut highlights: Vec<ContentHighlight> = Vec::new();
     let mut utf16_at = 0;
@@ -214,16 +316,13 @@ fn make_highlighted_snippet(text: &str, query: &str) -> (String, Vec<ContentHigh
     if start > 0 {
         append('…', false);
     }
-    // 连续空白压成一个空格；开头的空白直接丢掉。范围跟随实际输出，
-    // 一个压缩空格只要包含命中的原始空白，就保留高亮。
     let mut pending_space = false;
     let mut pending_highlight = false;
     let mut started = false;
-    for index in start..end {
-        let c = hay[index];
+    for (c, highlighted) in chars {
         if c.is_whitespace() {
             pending_space = started;
-            pending_highlight |= matched[index];
+            pending_highlight |= highlighted;
             continue;
         }
         if pending_space {
@@ -231,10 +330,10 @@ fn make_highlighted_snippet(text: &str, query: &str) -> (String, Vec<ContentHigh
         }
         pending_space = false;
         pending_highlight = false;
-        append(c, matched[index]);
+        append(c, highlighted);
         started = true;
     }
-    if end < hay.len() {
+    if end < text.len() {
         append('…', false);
     }
     (snippet, highlights)
@@ -250,6 +349,41 @@ fn match_expression(query: &str) -> String {
     format!("\"{}\"", query.replace('"', "\"\""))
 }
 
+// Encode code points into ASCII terms so whitespace, punctuation and emoji
+// retain literal substring semantics. Deduplicate postings within each message.
+fn short_grams(normalized: &str) -> String {
+    let mut terms = HashSet::new();
+    let mut previous = None;
+    for c in normalized.chars() {
+        terms.insert((c, None));
+        if let Some(p) = previous {
+            terms.insert((p, Some(c)));
+        }
+        previous = Some(c);
+    }
+    let mut encoded = String::new();
+    for (a, b) in terms {
+        match b {
+            Some(b) => {
+                write!(encoded, "b{:x}z{:x} ", a as u32, b as u32).unwrap();
+            }
+            None => {
+                write!(encoded, "u{:x} ", a as u32).unwrap();
+            }
+        }
+    }
+    encoded
+}
+
+fn short_query(query: &str) -> String {
+    let mut chars = query.chars();
+    let a = chars.next().expect("nonempty query") as u32;
+    match chars.next() {
+        Some(b) => format!("b{a:x}z{:x}", b as u32),
+        None => format!("u{a:x}"),
+    }
+}
+
 pub struct SessionIndex {
     conn: Connection,
 }
@@ -262,6 +396,15 @@ impl SessionIndex {
         Self::init(conn)
     }
 
+    fn open_reader(path: &Path) -> rusqlite::Result<Self> {
+        let conn = Connection::open_with_flags(
+            path,
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        conn.busy_timeout(std::time::Duration::from_millis(100))?;
+        Ok(Self { conn })
+    }
+
     #[cfg(test)]
     pub fn open_in_memory() -> rusqlite::Result<Self> {
         Self::init(Connection::open_in_memory()?)
@@ -271,7 +414,8 @@ impl SessionIndex {
         let version: i64 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
         if version != INDEX_VERSION {
             conn.execute_batch(
-                "DROP TABLE IF EXISTS message_text;
+                "DROP TABLE IF EXISTS message_short;
+                 DROP TABLE IF EXISTS message_text;
                  DROP TABLE IF EXISTS indexed_sources;",
             )?;
         }
@@ -285,7 +429,9 @@ impl SessionIndex {
                  UNIQUE (provider_id, source_path)
              );
              CREATE VIRTUAL TABLE IF NOT EXISTS message_text
-                 USING fts5(text UNINDEXED, normalized, tokenize = 'trigram case_sensitive 1');",
+                 USING fts5(text UNINDEXED, normalized, tokenize = 'trigram case_sensitive 1');
+             CREATE VIRTUAL TABLE IF NOT EXISTS message_short USING fts5(
+                 grams, content='', contentless_delete=1, detail=none, tokenize='ascii');",
         )?;
         conn.pragma_update(None, "user_version", INDEX_VERSION)?;
         Ok(Self { conn })
@@ -354,12 +500,13 @@ impl SessionIndex {
             let mut insert = tx.prepare(
                 "INSERT INTO message_text (rowid, text, normalized) VALUES (?1, ?2, ?3)",
             )?;
+            let mut short_insert =
+                tx.prepare("INSERT INTO message_short (rowid, grams) VALUES (?1, ?2)")?;
             for (index, text) in rows {
-                insert.execute(params![
-                    (id << ROW_SHIFT) + *index as i64,
-                    text,
-                    text.to_lowercase()
-                ])?;
+                let rowid = (id << ROW_SHIFT) + *index as i64;
+                let normalized = text.to_lowercase();
+                insert.execute(params![rowid, text, normalized])?;
+                short_insert.execute(params![rowid, short_grams(&normalized)])?;
             }
         }
         tx.commit()
@@ -369,6 +516,10 @@ impl SessionIndex {
     pub fn compact(&self) -> rusqlite::Result<()> {
         self.conn.execute(
             "INSERT INTO message_text (message_text) VALUES ('optimize')",
+            [],
+        )?;
+        self.conn.execute(
+            "INSERT INTO message_short (message_short) VALUES ('optimize')",
             [],
         )?;
         self.conn.execute_batch("VACUUM;")?;
@@ -430,53 +581,49 @@ impl SessionIndex {
             return Ok(Vec::new());
         }
 
-        let sources: HashMap<i64, (String, String)> = {
-            let mut stmt = self
-                .conn
-                .prepare("SELECT id, provider_id, source_path FROM indexed_sources")?;
-            let rows = stmt.query_map([], |row| Ok((row.get(0)?, (row.get(1)?, row.get(2)?))))?;
-            rows.collect::<rusqlite::Result<_>>()?
-        };
-        // 应用过滤要在截断（MAX_HIT_ROWS）之前生效，否则其他应用的大量命中会把选中应用挤掉
-        let allowed: Option<Vec<i64>> = providers.map(|set| {
-            sources
-                .iter()
-                .filter(|(_, (provider_id, _))| set.contains(provider_id))
-                .map(|(id, _)| *id)
-                .collect()
-        });
-        if allowed.as_ref().is_some_and(Vec::is_empty) {
+        if providers.is_some_and(HashSet::is_empty) {
             return Ok(Vec::new());
         }
-        // 传给 SQL 的源 id 列表（JSON 数组）；None 表示不过滤
-        let allowed_json = allowed
-            .as_ref()
-            .map(|ids| serde_json::to_string(ids).unwrap_or_else(|_| "[]".into()));
-        let source_filter =
-            format!("(?3 IS NULL OR (rowid >> {ROW_SHIFT}) IN (SELECT value FROM json_each(?3)))");
-
+        // A read transaction keeps row IDs, source metadata and snippets on the
+        // same WAL snapshot while replace_source commits on the writer.
+        let snapshot = self.conn.unchecked_transaction()?;
         let normalized = query.to_lowercase();
-        let rowids: Vec<i64> = if normalized.chars().count() >= MIN_MATCH_CHARS {
-            let mut stmt = self.conn.prepare(&format!(
-                "SELECT rowid FROM message_text WHERE message_text MATCH ?1 AND {source_filter}
-                 ORDER BY rank LIMIT ?2"
-            ))?;
-            let rows = stmt.query_map(
-                params![match_expression(&normalized), MAX_HIT_ROWS, allowed_json],
-                |row| row.get(0),
-            )?;
-            rows.collect::<rusqlite::Result<_>>()?
+        let short = normalized.chars().count() < MIN_MATCH_CHARS;
+        let table = if short {
+            "message_short"
         } else {
-            // 短词在已规范化的正文上精确匹配；不经过 LIKE 的 ASCII 折叠或通配符。
-            // 在 LIMIT 前完成匹配与应用过滤，错误候选不会消耗命中预算。
-            let mut stmt = self.conn.prepare(&format!(
-                "SELECT rowid FROM message_text WHERE instr(normalized, ?1) > 0 AND {source_filter}
-                 ORDER BY rowid DESC LIMIT ?2"
-            ))?;
-            let rows = stmt.query_map(params![normalized, MAX_HIT_ROWS, allowed_json], |row| {
-                row.get(0)
+            "message_text"
+        };
+        let expression = if short {
+            short_query(&normalized)
+        } else {
+            match_expression(&normalized)
+        };
+        let mut arguments: Vec<rusqlite::types::Value> =
+            vec![expression.into(), MAX_HIT_ROWS.into()];
+        let filter = if let Some(providers) = providers {
+            arguments.extend(providers.iter().cloned().map(Into::into));
+            format!(
+                "AND s.provider_id IN ({})",
+                (3..3 + providers.len())
+                    .map(|i| format!("?{i}"))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )
+        } else {
+            String::new()
+        };
+        let ordering = if short { "m.rowid DESC" } else { "m.rank" };
+        let sql = format!(
+            "SELECT m.rowid FROM {table} m JOIN indexed_sources s ON s.id = (m.rowid >> {ROW_SHIFT})
+             WHERE {table} MATCH ?1 {filter} ORDER BY {ordering} LIMIT ?2"
+        );
+        let rowids = {
+            let mut stmt = snapshot.prepare(&sql)?;
+            let rows = stmt.query_map(params_from_iter(arguments.iter()), |row| {
+                row.get::<_, i64>(0)
             })?;
-            rows.collect::<rusqlite::Result<_>>()?
+            rows.collect::<rusqlite::Result<Vec<_>>>()?
         };
         if rowids.is_empty() {
             return Ok(Vec::new());
@@ -487,9 +634,6 @@ impl SessionIndex {
         let mut best: HashMap<i64, (Vec<i64>, usize)> = HashMap::new();
         for rowid in rowids {
             let source_id = rowid >> ROW_SHIFT;
-            if !sources.contains_key(&source_id) {
-                continue;
-            }
             let (top, count) = best.entry(source_id).or_insert_with(|| {
                 order.push(source_id);
                 (Vec::new(), 0)
@@ -500,25 +644,57 @@ impl SessionIndex {
             }
         }
 
-        let mut text_stmt = self
-            .conn
-            .prepare("SELECT text FROM message_text WHERE rowid = ?1")?;
+        order.truncate(limit);
+        let selected: Vec<i64> = order
+            .iter()
+            .flat_map(|id| best[id].0.iter().copied())
+            .collect();
+        let mut snippets_by_row = HashMap::with_capacity(selected.len());
+        let mut sources = HashMap::with_capacity(order.len());
+        // DEFAULT_LIMIT needs <=600 parameters. Chunk larger internal callers
+        // too, so this also works with SQLite's conservative variable limit.
+        for chunk in selected.chunks(900) {
+            let sql = format!(
+                "SELECT m.rowid, m.text, s.id, s.provider_id, s.source_path
+                 FROM message_text m JOIN indexed_sources s ON s.id = (m.rowid >> {ROW_SHIFT})
+                 WHERE m.rowid IN ({})",
+                vec!["?"; chunk.len()].join(",")
+            );
+            let mut stmt = snapshot.prepare(&sql)?;
+            let mut rows = stmt.query(params_from_iter(chunk))?;
+            while let Some(row) = rows.next()? {
+                let rowid: i64 = row.get(0)?;
+                // Build the small snippet before advancing the batch cursor;
+                // do not retain up to 600 complete 20,000-character messages.
+                let raw: String = row.get(1)?;
+                let (text, highlights) = make_highlighted_snippet(&raw, query);
+                snippets_by_row.insert(
+                    rowid,
+                    ContentSnippet {
+                        message_index: (rowid & ((1 << ROW_SHIFT) - 1)) as usize,
+                        text,
+                        highlights,
+                    },
+                );
+                if let std::collections::hash_map::Entry::Vacant(entry) =
+                    sources.entry(row.get::<_, i64>(2)?)
+                {
+                    entry.insert((row.get::<_, String>(3)?, row.get::<_, String>(4)?));
+                }
+            }
+        }
         let mut hits = Vec::new();
-        for source_id in order.into_iter().take(limit) {
+        for source_id in order {
             let (top, match_count) = &best[&source_id];
             let (provider_id, source_path) = &sources[&source_id];
             let snippets = top
                 .iter()
-                .map(|&rowid| {
-                    let text: String = text_stmt.query_row(params![rowid], |row| row.get(0))?;
-                    let (text, highlights) = make_highlighted_snippet(&text, query);
-                    Ok(ContentSnippet {
-                        message_index: (rowid & ((1 << ROW_SHIFT) - 1)) as usize,
-                        text,
-                        highlights,
-                    })
+                .map(|rowid| {
+                    snippets_by_row
+                        .remove(rowid)
+                        .expect("selected row in the same snapshot")
                 })
-                .collect::<rusqlite::Result<_>>()?;
+                .collect();
             hits.push(ContentHit {
                 provider_id: provider_id.clone(),
                 source_path: source_path.clone(),
@@ -532,6 +708,10 @@ impl SessionIndex {
 
 fn delete_rows(conn: &Connection, source_id: i64) -> rusqlite::Result<()> {
     conn.execute(
+        "DELETE FROM message_short WHERE rowid >= ?1 AND rowid < ?2",
+        params![source_id << ROW_SHIFT, (source_id + 1) << ROW_SHIFT],
+    )?;
+    conn.execute(
         "DELETE FROM message_text WHERE rowid >= ?1 AND rowid < ?2",
         params![source_id << ROW_SHIFT, (source_id + 1) << ROW_SHIFT],
     )?;
@@ -539,6 +719,81 @@ fn delete_rows(conn: &Connection, source_id: i64) -> rusqlite::Result<()> {
 }
 
 // ── 全局索引与后台同步 ───────────────────────────────────────────────
+
+// Ordinary readers/writers share this guard. Only deletion takes it exclusively,
+// so Windows can close readers before unlinking the cache and its WAL files.
+static INDEX_LIFETIME: RwLock<()> = RwLock::new(());
+
+#[derive(Default)]
+struct SearchTask {
+    cancelled: Arc<AtomicBool>,
+    interrupt: Mutex<Option<InterruptHandle>>,
+}
+
+impl SearchTask {
+    fn cancel(&self) {
+        self.cancelled.store(true, Ordering::SeqCst);
+        if let Some(handle) = self.interrupt.lock_recover().as_ref() {
+            handle.interrupt();
+        }
+    }
+
+    fn attach(&self, conn: &Connection) {
+        *self.interrupt.lock_recover() = Some(conn.get_interrupt_handle());
+        let cancelled = Arc::clone(&self.cancelled);
+        // Also catch cancellation between statements, when sqlite3_interrupt
+        // has no running statement to interrupt.
+        conn.progress_handler(1000, Some(move || cancelled.load(Ordering::SeqCst)));
+    }
+}
+
+#[derive(Default)]
+struct SearchRequests {
+    active: HashMap<String, Arc<SearchTask>>,
+    // IPC cancellation can overtake the async search command's first poll.
+    // Keep a small bounded set of those early cancellations.
+    cancelled: VecDeque<String>,
+}
+static SEARCH_REQUESTS: LazyLock<Mutex<SearchRequests>> =
+    LazyLock::new(|| Mutex::new(SearchRequests::default()));
+
+pub struct SearchRequest {
+    id: String,
+    task: Arc<SearchTask>,
+}
+
+impl Drop for SearchRequest {
+    fn drop(&mut self) {
+        SEARCH_REQUESTS.lock_recover().active.remove(&self.id);
+    }
+}
+
+pub fn begin_search(id: String) -> SearchRequest {
+    let mut requests = SEARCH_REQUESTS.lock_recover();
+    let task = Arc::new(SearchTask::default());
+    if let Some(at) = requests
+        .cancelled
+        .iter()
+        .position(|cancelled| cancelled == &id)
+    {
+        requests.cancelled.remove(at);
+        task.cancel();
+    }
+    requests.active.insert(id.clone(), Arc::clone(&task));
+    SearchRequest { id, task }
+}
+
+pub fn cancel_search(id: &str) {
+    let mut requests = SEARCH_REQUESTS.lock_recover();
+    if let Some(task) = requests.active.get(id) {
+        task.cancel();
+    } else {
+        if requests.cancelled.len() == 128 {
+            requests.cancelled.pop_front();
+        }
+        requests.cancelled.push_back(id.to_string());
+    }
+}
 
 static INDEX: LazyLock<Mutex<Option<SessionIndex>>> = LazyLock::new(|| Mutex::new(None));
 static STATUS: LazyLock<Mutex<IndexStatus>> = LazyLock::new(|| Mutex::new(IndexStatus::default()));
@@ -559,6 +814,18 @@ pub fn status() -> IndexStatus {
 
 /// 打开（必要时创建）索引后执行 `f`；功能关闭时不碰磁盘
 fn with_index<T>(f: impl FnOnce(&mut SessionIndex) -> rusqlite::Result<T>) -> Result<T, String> {
+    let lifetime = INDEX_LIFETIME
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if INDEX.lock_recover().is_some() {
+        return with_index_in(&INDEX, &index_path(), enabled, f);
+    }
+    drop(lifetime);
+    // Initial schema setup and corruption recovery may replace the file.
+    // Subsequent writes/compaction share the lifetime guard with readers.
+    let _lifetime = INDEX_LIFETIME
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     with_index_in(&INDEX, &index_path(), enabled, f)
 }
 
@@ -621,6 +888,12 @@ fn remove_index_files_with(
 
 /// 删除整个索引文件（关闭功能时调用）
 pub fn clear() -> Result<(), String> {
+    for task in SEARCH_REQUESTS.lock_recover().active.values() {
+        task.cancel();
+    }
+    let _lifetime = INDEX_LIFETIME
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     clear_in(&INDEX, &STATUS, &index_path())
 }
 
@@ -646,20 +919,45 @@ pub fn forget_source(provider_id: &str, source_path: &str) {
     }
 }
 
-pub fn search(query: &str, providers: Option<Vec<String>>, limit: usize) -> ContentSearchResult {
+pub fn search(
+    query: &str,
+    providers: Option<Vec<String>>,
+    limit: usize,
+    request: SearchRequest,
+) -> ContentSearchResult {
+    let _lifetime = INDEX_LIFETIME
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let status = status();
-    if !enabled() || query.trim().is_empty() {
-        return ContentSearchResult {
-            hits: Vec::new(),
-            status,
-        };
+    let empty = || ContentSearchResult {
+        hits: Vec::new(),
+        status,
+    };
+    if !enabled()
+        || !index_path().exists()
+        || query.trim().is_empty()
+        || request.task.cancelled.load(Ordering::SeqCst)
+    {
+        return empty();
     }
     let providers: Option<HashSet<String>> = providers.map(|list| list.into_iter().collect());
-    let hits =
-        with_index(|index| index.search(query, providers.as_ref(), limit)).unwrap_or_else(|e| {
-            log::warn!("会话正文搜索失败: {e}");
-            Vec::new()
-        });
+    let result = SessionIndex::open_reader(&index_path()).and_then(|index| {
+        request.task.attach(&index.conn);
+        let version: i64 = index
+            .conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))?;
+        if version != INDEX_VERSION || request.task.cancelled.load(Ordering::SeqCst) {
+            return Ok(Vec::new());
+        }
+        index.search(query, providers.as_ref(), limit.min(DEFAULT_LIMIT))
+    });
+    if request.task.cancelled.load(Ordering::SeqCst) {
+        return empty();
+    }
+    let hits = result.unwrap_or_else(|e| {
+        log::warn!("会话正文搜索失败: {e}");
+        Vec::new()
+    });
     ContentSearchResult { hits, status }
 }
 
@@ -1354,7 +1652,7 @@ mod tests {
         assert_eq!(hits[0].snippets[0].message_index, 1);
         assert!(hits[0].snippets[0].text.contains("跑马灯"));
 
-        // 两个字：trigram 用不上，走规范化子串扫描
+        // 两个字：走无正文的短词索引
         let hits = index.search("正交", None, 10).unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].source_path, "/b.jsonl");
@@ -1402,7 +1700,7 @@ mod tests {
         assert_eq!(index.search("éclair", None, 10).unwrap().len(), 1);
         assert_eq!(index.search("ÉCLAIR", None, 10).unwrap().len(), 1);
         assert_eq!(index.search("ПРИВЕТ", None, 10).unwrap().len(), 1);
-        // 不足 3 个字符：在规范化正文上逐行比较
+        // 不足 3 个字符：在规范化短词索引上匹配
         let hits = index.search("éc", None, 10).unwrap();
         assert_eq!(hits.len(), 1);
         assert!(hits[0].snippets[0].text.contains("Éclair"));
@@ -1458,7 +1756,7 @@ mod tests {
     #[test]
     fn provider_filter_applies_before_the_hit_row_cap() {
         let mut index = SessionIndex::open_in_memory().unwrap();
-        // 先插入选中应用的唯一命中，再让其他应用占满候选上限（LIKE 路径按 rowid 倒序）
+        // 先插入选中应用的唯一命中，再让其他应用占满候选上限（短词路径按 rowid 倒序）
         index
             .replace_source(
                 "codex",
@@ -1672,5 +1970,259 @@ mod tests {
 
         assert_eq!(make_snippet("Hello World", "world"), "Hello World");
         assert_eq!(make_snippet("short", "missing"), "short");
+    }
+
+    #[test]
+    fn snippet_windows_match_full_mapping_reference() {
+        for prefix in ["a", "中", "İ", "😀", "Σ"] {
+            for body in [
+                "Hello WORLD world",
+                "İİİ",
+                "😀ΟΣ",
+                "Σ\u{301} hello",
+                "İ\n\t X",
+                "a\r\nb c",
+            ] {
+                for padding in [0, 29, 140, 10_000] {
+                    let text = format!("{}{}{}", prefix.repeat(padding), body, " tail".repeat(40));
+                    for query in [
+                        "world",
+                        "i",
+                        "\u{307}i",
+                        "ος",
+                        "σ",
+                        "ς",
+                        "i\u{307}\n\t x",
+                        "a\r\nb",
+                        "missing",
+                        "",
+                    ] {
+                        assert_eq!(
+                            make_highlighted_snippet(&text, query),
+                            reference_snippet(&text, query),
+                            "prefix={prefix}, body={body:?}, padding={padding}, query={query:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn short_postings_are_literal_and_follow_replacement_and_deletion() {
+        let mut index = SessionIndex::open_in_memory().unwrap();
+        index
+            .replace_source(
+                "codex",
+                "/short",
+                fp(1),
+                &rows(&["代理 报错 路由 😀x 0% _ İ ΟΣ"]),
+            )
+            .unwrap();
+        for query in [
+            "代", "代理", "报错", "路由", "😀", "😀x", "0%", "_", "i", "ς",
+        ] {
+            assert_eq!(index.search(query, None, 10).unwrap().len(), 1, "{query}");
+        }
+        for query in ["理代", "%_", "x😀", "δ"] {
+            assert!(index.search(query, None, 10).unwrap().is_empty());
+        }
+        index
+            .replace_source("codex", "/short", fp(2), &rows(&["新词"]))
+            .unwrap();
+        assert!(index.search("代理", None, 10).unwrap().is_empty());
+        assert_eq!(index.search("新词", None, 10).unwrap().len(), 1);
+        index.remove_source("codex", "/short").unwrap();
+        assert!(index.search("新词", None, 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn wal_reader_searches_while_writer_holds_uncommitted_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(INDEX_FILE);
+        let mut writer = SessionIndex::open(&path).unwrap();
+        writer
+            .replace_source("codex", "/a", fp(1), &rows(&["代理 needle"]))
+            .unwrap();
+        let tx = writer.conn.transaction().unwrap();
+        tx.execute("UPDATE indexed_sources SET source_path='/uncommitted'", [])
+            .unwrap();
+        let (send, recv) = std::sync::mpsc::channel();
+        let reader = std::thread::spawn(move || {
+            let index = SessionIndex::open_reader(&path).unwrap();
+            let hits = index.search("代理", None, 10).unwrap();
+            assert_eq!(hits[0].source_path, "/a");
+            send.send(()).unwrap();
+        });
+        let completed = recv.recv_timeout(std::time::Duration::from_secs(2));
+        tx.rollback().unwrap();
+        reader.join().unwrap();
+        completed.expect("reader must finish before writer releases its transaction");
+    }
+
+    #[test]
+    fn cancellation_interrupts_sql_and_handles_early_ipc_cancellation() {
+        let task = Arc::new(SearchTask::default());
+        let worker_task = Arc::clone(&task);
+        let (send, recv) = std::sync::mpsc::channel();
+        let reader = std::thread::spawn(move || {
+            let conn = Connection::open_in_memory().unwrap();
+            worker_task.attach(&conn);
+            send.send(()).unwrap();
+            let err = conn.query_row("WITH RECURSIVE n(x) AS (VALUES(0) UNION ALL SELECT x+1 FROM n WHERE x<1000000000) SELECT sum(x) FROM n", [], |row| row.get::<_, i64>(0)).unwrap_err();
+            assert_eq!(
+                err.sqlite_error_code(),
+                Some(rusqlite::ErrorCode::OperationInterrupted)
+            );
+        });
+        recv.recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap();
+        task.cancel();
+        reader.join().unwrap();
+        let id = uuid::Uuid::new_v4().to_string();
+        cancel_search(&id);
+        let request = begin_search(id);
+        assert!(request.task.cancelled.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    #[ignore = "manual synthetic search benchmark"]
+    fn benchmark_short_search() {
+        use std::time::Instant;
+        let mut index = SessionIndex::open_in_memory().unwrap();
+        let rows: Vec<_> = (0..5000)
+            .map(|i| {
+                (
+                    i,
+                    format!(
+                        "{} {}",
+                        "普通对话 metadata and code ".repeat(100),
+                        if i % 1000 == 0 { "代理" } else { "结束" }
+                    ),
+                )
+            })
+            .collect();
+        index
+            .replace_source("codex", "/bench", fp(1), &rows)
+            .unwrap();
+        let start = Instant::now();
+        for _ in 0..20 {
+            assert_eq!(index.search("代理", None, 10).unwrap()[0].match_count, 5);
+        }
+        let indexed = start.elapsed() / 20;
+        let start = Instant::now();
+        for _ in 0..20 {
+            let count: i64 = index
+                .conn
+                .query_row(
+                    "SELECT count(*) FROM message_text WHERE instr(normalized, '代理') > 0",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(count, 5);
+        }
+        eprintln!(
+            "5000 messages: indexed search+snippets {indexed:?}; original instr scan {:?}",
+            start.elapsed() / 20
+        );
+        index.compact().unwrap();
+        let pages = || {
+            index
+                .conn
+                .query_row("PRAGMA page_count", [], |row| row.get::<_, u64>(0))
+                .unwrap()
+        };
+        let with_short = pages();
+        index
+            .conn
+            .execute_batch("DROP TABLE message_short; VACUUM;")
+            .unwrap();
+        eprintln!(
+            "compacted pages (4096 bytes): with short index {with_short}, trigram only {}",
+            pages()
+        );
+    }
+
+    fn reference_snippet(text: &str, query: &str) -> (String, Vec<ContentHighlight>) {
+        let hay: Vec<char> = text.chars().collect();
+        let normalized = text.to_lowercase();
+        let needle = query.to_lowercase();
+        // 小写展开（如 İ → i + combining dot）会改变下标。按展开字符数映射回原文；
+        // 默认 Unicode 小写唯一的上下文规则 Final_Sigma 不改变字符数。
+        let original_positions: Vec<usize> = hay
+            .iter()
+            .enumerate()
+            .flat_map(|(index, c)| std::iter::repeat_n(index, c.to_lowercase().count()))
+            .collect();
+        let mut matched = vec![false; hay.len()];
+        let mut first = None;
+        if !needle.is_empty() {
+            let needle_chars = needle.chars().count();
+            let mut previous_byte = 0;
+            let mut normalized_at = 0;
+            for (byte, _) in normalized.match_indices(&needle) {
+                normalized_at += normalized[previous_byte..byte].chars().count();
+                previous_byte = byte;
+                let start = original_positions[normalized_at];
+                let end = original_positions[normalized_at + needle_chars - 1] + 1;
+                first.get_or_insert((start, end));
+                matched[start..end].fill(true);
+            }
+        }
+        let (start, end) = match first {
+            Some((start, end)) => (
+                start.saturating_sub(SNIPPET_BEFORE),
+                (end + SNIPPET_AFTER).min(hay.len()),
+            ),
+            None => (0, (SNIPPET_BEFORE + SNIPPET_AFTER).min(hay.len())),
+        };
+
+        let mut snippet = String::new();
+        let mut highlights: Vec<ContentHighlight> = Vec::new();
+        let mut utf16_at = 0;
+        let mut append = |c: char, highlighted: bool| {
+            let end = utf16_at + c.len_utf16();
+            snippet.push(c);
+            if highlighted {
+                if let Some(previous) = highlights.last_mut().filter(|range| range.end == utf16_at)
+                {
+                    previous.end = end;
+                } else {
+                    highlights.push(ContentHighlight {
+                        start: utf16_at,
+                        end,
+                    });
+                }
+            }
+            utf16_at = end;
+        };
+        if start > 0 {
+            append('…', false);
+        }
+        // 连续空白压成一个空格；开头的空白直接丢掉。范围跟随实际输出，
+        // 一个压缩空格只要包含命中的原始空白，就保留高亮。
+        let mut pending_space = false;
+        let mut pending_highlight = false;
+        let mut started = false;
+        for index in start..end {
+            let c = hay[index];
+            if c.is_whitespace() {
+                pending_space = started;
+                pending_highlight |= matched[index];
+                continue;
+            }
+            if pending_space {
+                append(' ', pending_highlight);
+            }
+            pending_space = false;
+            pending_highlight = false;
+            append(c, matched[index]);
+            started = true;
+        }
+        if end < hay.len() {
+            append('…', false);
+        }
+        (snippet, highlights)
     }
 }
