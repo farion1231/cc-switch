@@ -4770,6 +4770,7 @@
       "sameName": "For servers already in the list, only the matching app switches were turned on; the config in CC Switch still wins.",
       "failedTitle": "Some apps couldn't be read",
       "filesTitle": "Which files were read",
+      "extraSourceLabel": "Other sources",
       "claudeNote": " (top-level mcpServers)",
       "dshNote": " (written to every initialized profile: web, desktop, headless, acp. The home-level ~/.dsh/cordis.patch.yml is neither read nor written; manage the MCP servers in it there)",
       "ok": "Got it"
