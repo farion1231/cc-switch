@@ -412,7 +412,16 @@ const MAX_ARCHIVE_DOWNLOAD_BYTES: u64 = MAX_ARCHIVE_TOTAL_BYTES;
 /// 技能归档下载请求的 User-Agent。
 const SKILL_DOWNLOAD_USER_AGENT: &str = concat!("CC-Switch/", env!("CARGO_PKG_VERSION"));
 
-/// 平台探测的超时：它排在下载前面，占的是调用方那 60 秒的下载预算
+/// 下载停滞判定：连接、等响应头、相邻两块数据之间，任一处等这么久都没动静即放弃。
+/// 下载的是整个仓库归档，大仓库（emqx/MQTTX 这类整套客户端源码）在慢的跨境链路上
+/// 要好几分钟，按总时长掐断会把一直在传的下载判成超时；按停滞判定，只要数据还在来
+/// 就让它下完，链路真断了照样很快报错。
+const DOWNLOAD_STALL_TIMEOUT: Duration = Duration::from_secs(60);
+/// 一次仓库下载（平台探测 + 分支回落 + 下载 + 解压）的总上限，只兜底不该无限挂着的
+/// 情况，日常靠上面的停滞判定。与共享 HTTP 客户端单个请求的 600 秒上限对齐。
+const DOWNLOAD_TOTAL_TIMEOUT: Duration = Duration::from_secs(600);
+
+/// 平台探测的超时：它排在下载前面，占的是调用方那份下载总时长
 const PLATFORM_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 /// 平台探测最多读这么多响应体。Gitea 的回答只有几十个字节
 const PLATFORM_PROBE_MAX_BODY_BYTES: usize = 4 * 1024;
@@ -980,22 +989,7 @@ impl SkillService {
             };
 
             // 下载仓库
-            let (temp_guard, used_branch) = timeout(
-                std::time::Duration::from_secs(60),
-                self.download_repo(&repo),
-            )
-            .await
-            .map_err(|_| {
-                anyhow!(format_skill_error(
-                    "DOWNLOAD_TIMEOUT",
-                    &[
-                        ("owner", &repo.owner),
-                        ("name", &repo.name),
-                        ("timeout", "60")
-                    ],
-                    Some("checkNetwork"),
-                ))
-            })??;
+            let (temp_guard, used_branch) = self.download_repo_bounded(&repo).await?;
             let temp_dir = temp_guard.path();
             repo_branch = used_branch;
 
@@ -1518,24 +1512,11 @@ impl SkillService {
             };
 
             // 下载仓库 ZIP
-            let (temp_guard, _used_branch) = match timeout(
-                std::time::Duration::from_secs(60),
-                self.download_repo(&repo),
-            )
-            .await
-            {
-                Ok(Ok(result)) => result,
-                Ok(Err(e)) => {
+            let (temp_guard, _used_branch) = match self.download_repo_bounded(&repo).await {
+                Ok(result) => result,
+                Err(e) => {
                     log::warn!("检查更新时下载 {}/{} 失败: {e}", owner, name);
                     failures.push(Self::repo_failure(&repo, e.to_string()));
-                    continue;
-                }
-                Err(_) => {
-                    log::warn!("检查更新时下载 {}/{} 超时", owner, name);
-                    failures.push(Self::repo_failure(
-                        &repo,
-                        Self::download_timeout_error(&repo),
-                    ));
                     continue;
                 }
             };
@@ -1623,15 +1604,24 @@ impl SkillService {
     }
 
     fn download_timeout_error(repo: &SkillRepo) -> String {
+        let seconds = DOWNLOAD_TOTAL_TIMEOUT.as_secs().to_string();
         format_skill_error(
             "DOWNLOAD_TIMEOUT",
             &[
                 ("owner", &repo.owner),
                 ("name", &repo.name),
-                ("timeout", "60"),
+                ("timeout", &seconds),
             ],
             Some("checkNetwork"),
         )
+    }
+
+    /// 下载仓库并套上总时长上限。停滞判定在 `download_and_extract` 里逐块做，
+    /// 这里只兜底「一直有零星数据却始终下不完」这种不该无限挂着的情况。
+    async fn download_repo_bounded(&self, repo: &SkillRepo) -> Result<(tempfile::TempDir, String)> {
+        timeout(DOWNLOAD_TOTAL_TIMEOUT, self.download_repo(repo))
+            .await
+            .map_err(|_| anyhow!(Self::download_timeout_error(repo)))?
     }
 
     /// 持久化更新后的 Skill 元数据，并重新读取数据库中的权威应用启用状态。
@@ -1694,18 +1684,7 @@ impl SkillService {
         }
 
         // 下载仓库
-        let (temp_guard, used_branch) = timeout(
-            std::time::Duration::from_secs(60),
-            self.download_repo(&repo),
-        )
-        .await
-        .map_err(|_| {
-            anyhow!(format_skill_error(
-                "DOWNLOAD_TIMEOUT",
-                &[("owner", &owner), ("name", &name), ("timeout", "60")],
-                Some("checkNetwork"),
-            ))
-        })??;
+        let (temp_guard, used_branch) = self.download_repo_bounded(&repo).await?;
         let temp_dir = temp_guard.path();
 
         // 在解压的仓库中查找 Skill 源目录
@@ -2327,8 +2306,14 @@ impl SkillService {
         }
 
         // 4. 刷新所有应用目录的 symlink（指向新 SSOT）
+        // 旧目录已经搬走：哪个应用没重链成功，它的 Skill 就指向不存在的路径，必须报出来。
         for app in AppType::all() {
-            let _ = Self::sync_to_app_unlocked(db, &app);
+            match Self::sync_to_app_unlocked(db, &app) {
+                Ok(failed) => result.errors.extend(failed.into_iter().map(|failure| {
+                    format!("{}/{}: {}", app.as_str(), failure.directory, failure.error)
+                })),
+                Err(err) => result.errors.push(format!("{}: {err}", app.as_str())),
+            }
         }
         for (directory, deployment) in pi_deployments {
             let source = new_dir.join(&directory);
@@ -3521,10 +3506,7 @@ impl SkillService {
 
     /// 从仓库获取技能列表
     async fn fetch_repo_skills(&self, repo: &SkillRepo) -> Result<Vec<DiscoverableSkill>> {
-        let (temp_guard, resolved_branch) =
-            timeout(std::time::Duration::from_secs(60), self.download_repo(repo))
-                .await
-                .map_err(|_| anyhow!(Self::download_timeout_error(repo)))??;
+        let (temp_guard, resolved_branch) = self.download_repo_bounded(repo).await?;
 
         let mut skills = Vec::new();
         let scan_dir = temp_guard.path();
@@ -4594,7 +4576,9 @@ impl SkillService {
         if let Some(token) = token {
             request = Self::with_bearer(request, token)?;
         }
-        let response = request.send().await?;
+        let response = timeout(DOWNLOAD_STALL_TIMEOUT, request.send())
+            .await
+            .map_err(|_| Self::download_stalled_error())??;
         if !response.status().is_success() {
             let status = response.status().as_u16();
             let github = url::Url::parse(url)
@@ -4618,7 +4602,10 @@ impl SkillService {
         let mut response = response;
         let mut body = std::io::BufWriter::new(tempfile::tempfile()?);
         let mut received: u64 = 0;
-        while let Some(chunk) = response.chunk().await? {
+        while let Some(chunk) = timeout(DOWNLOAD_STALL_TIMEOUT, response.chunk())
+            .await
+            .map_err(|_| Self::download_stalled_error())??
+        {
             received = received.saturating_add(chunk.len() as u64);
             if received > MAX_ARCHIVE_DOWNLOAD_BYTES {
                 let limit_mb = (MAX_ARCHIVE_DOWNLOAD_BYTES / 1024 / 1024).to_string();
@@ -4634,6 +4621,16 @@ impl SkillService {
         let file = body.into_inner().map_err(|e| e.into_error())?;
         let archive = zip::ZipArchive::new(file)?;
         Self::extract_repo_archive(archive, dest)
+    }
+
+    /// 下载停滞的结构化错误。owner / name 由分支回落那一层的 `with_repo_context` 补上。
+    fn download_stalled_error() -> anyhow::Error {
+        let seconds = DOWNLOAD_STALL_TIMEOUT.as_secs().to_string();
+        anyhow!(format_skill_error(
+            "DOWNLOAD_STALLED",
+            &[("timeout", &seconds)],
+            Some("checkNetwork"),
+        ))
     }
 
     /// 归档下载失败时给前端的提示键。带没带令牌要分开说：私有仓库不带令牌时 GitHub、
@@ -6131,6 +6128,37 @@ mod tests {
         .await;
         assert_eq!(attempted, ["main"]);
         assert_eq!(result.unwrap_err().to_string(), "operation timed out");
+    }
+
+    #[tokio::test]
+    async fn stalled_download_stops_branch_fallback_and_carries_repo_coordinates() {
+        // 下载停滞换个分支也不会好：不去试 master，停滞原因原样报出并补上坐标
+        let (result, attempted) =
+            run_branch_fallback(&branch_fallback_repo("main"), |branch| match branch {
+                "main" => Err(SkillService::download_stalled_error()),
+                _ => Err(http404_error()),
+            })
+            .await;
+        assert_eq!(attempted, ["main"]);
+        let err = error_json(&result.unwrap_err());
+        assert_eq!(err["code"], "DOWNLOAD_STALLED");
+        assert_eq!(err["context"]["owner"], "acme");
+        assert_eq!(err["context"]["name"], "skills");
+        assert_eq!(err["context"]["timeout"], "60");
+        assert_eq!(err["suggestion"], "checkNetwork");
+    }
+
+    #[test]
+    fn total_download_timeout_reports_the_real_ceiling() {
+        let err: serde_json::Value = serde_json::from_str(&SkillService::download_timeout_error(
+            &branch_fallback_repo("main"),
+        ))
+        .expect("structured skill error");
+        assert_eq!(err["code"], "DOWNLOAD_TIMEOUT");
+        assert_eq!(
+            err["context"]["timeout"],
+            DOWNLOAD_TOTAL_TIMEOUT.as_secs().to_string()
+        );
     }
 
     #[tokio::test]
@@ -9056,6 +9084,77 @@ mod tests {
         assert_eq!(
             pi_skill.canonicalize().expect("resolve Pi symlink"),
             new_source.canonicalize().expect("resolve new source")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[serial_test::serial]
+    fn migrate_storage_reports_skills_an_app_could_not_relink() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempdir().expect("tempdir");
+        let _home = TestHomeGuard::set(temp.path());
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
+
+        let db = std::sync::Arc::new(Database::memory().expect("memory db"));
+        let mut skill = poisoned_skill("owner/repo:skill", "test-skill");
+        skill.apps.set_enabled_for(&AppType::Claude, true);
+        db.save_skill(&skill).expect("save skill");
+        write_skill(
+            &SkillService::get_ssot_dir().unwrap().join("test-skill"),
+            "managed",
+        );
+        SkillService::sync_to_app_dir("test-skill", &AppType::Claude).expect("enable skill");
+
+        // Claude 的 skills 目录只读：旧链接摘不掉，也建不了新链接。
+        let claude_dir = SkillService::get_app_skills_dir(&AppType::Claude).unwrap();
+        fs::set_permissions(&claude_dir, fs::Permissions::from_mode(0o555)).unwrap();
+        let result = SkillService::migrate_storage(&db, SkillStorageLocation::Unified);
+        fs::set_permissions(&claude_dir, fs::Permissions::from_mode(0o755)).unwrap();
+        let result = result.expect("migration itself completes");
+
+        assert_eq!(result.migrated_count, 1);
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|error| error.starts_with("claude/test-skill: ")),
+            "{:?}",
+            result.errors
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn migrate_storage_reports_an_app_whose_skills_dir_cannot_be_read() {
+        let temp = tempdir().expect("tempdir");
+        let _home = TestHomeGuard::set(temp.path());
+        let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
+
+        let db = std::sync::Arc::new(Database::memory().expect("memory db"));
+        let skill = poisoned_skill("owner/repo:skill", "test-skill");
+        db.save_skill(&skill).expect("save skill");
+        write_skill(
+            &SkillService::get_ssot_dir().unwrap().join("test-skill"),
+            "managed",
+        );
+        // Codex 的 skills 路径被一个普通文件占了，整应用的重链都做不了。
+        let codex_dir = SkillService::get_app_skills_dir(&AppType::Codex).unwrap();
+        fs::create_dir_all(codex_dir.parent().unwrap()).unwrap();
+        fs::write(&codex_dir, "not a directory").unwrap();
+
+        let result = SkillService::migrate_storage(&db, SkillStorageLocation::Unified)
+            .expect("migration itself completes");
+
+        assert_eq!(result.migrated_count, 1);
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|error| error.starts_with("codex: ")),
+            "{:?}",
+            result.errors
         );
     }
 

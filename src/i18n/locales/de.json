@@ -202,6 +202,8 @@
       "extraArgsPlaceholder": "z. B. --debug --append-system-prompt \"Be brief\"",
       "extraArgsHint": "Wird nur für dieses Terminal hinter den Startbefehl gesetzt. Mit Leerzeichen trennen; Werte mit Leerzeichen in Anführungszeichen setzen.",
       "agySwitchTitle": "Dadurch wird die Anmeldung von agy gewechselt",
+      "agyBindingMissing": "Das mit dieser Karte verknüpfte Antigravity-Konto fehlt auf diesem Computer. Füge es unter „Konten“ hinzu oder verwende für diesen Start die aktuelle agy-Anmeldung.",
+      "agyUseCurrentLogin": "Aktuelle agy-Anmeldung für diesen Start verwenden",
       "agySwitchBody": "Vor dem Öffnen wechselt die Anmeldung von agy zu {{account}}; danach gestartete agy-Sitzungen verwenden dieses Konto.",
       "agySwitchRunning": "agy läuft: Geöffnete agy-Sitzungen behalten das vorherige Konto und schreiben es möglicherweise zurück. Beenden Sie sie nach Möglichkeit zuerst.",
       "isolationBodyCopilot": "copilot startet in diesem Terminal mit --model auf das erste Modell von „{{name}}“, nur für diese Sitzung. Endpunkt und Schlüssel stammen aus der providers.json von Copilot, daher können andere Terminals es ebenfalls mit /model auswählen."
@@ -378,6 +380,7 @@
     "openclawModelNotFound": "Das ausgewählte Modell existiert nicht mehr. Aktualisieren Sie die Ansicht und versuchen Sie es erneut.",
     "backfillWarning": "Wechsel erfolgreich, aber die Änderungen konnten nicht im vorherigen Anbieter gespeichert werden",
     "codexAuthCleanupFailed": "Wechsel erfolgreich, aber auth.json konnte nicht entfernt werden – die Zugangsdaten der offiziellen Anmeldung liegen weiterhin auf der Festplatte; löschen Sie auth.json im Codex-Konfigurationsordner, um sie zu entfernen",
+    "omoVariantCleanupFailed": "Erfolgreich gewechselt, aber die Konfigurationsdatei der anderen OMO-Variante (OMO / OMO Slim) konnte nicht entfernt werden, daher lädt OpenCode möglicherweise beide; lösche sie im OpenCode-Konfigurationsverzeichnis",
     "windowControlFailed": "Fenstersteuerung fehlgeschlagen: {{error}}",
     "officialBlockedByProxy": "Bei aktivem lokalem Routing ist kein Wechsel zu einem offiziellen Anbieter möglich. Die Nutzung von Routing mit offiziellen APIs kann zur Sperrung des Kontos führen.",
     "proxyOfficialWarning": "Der aktuelle Anbieter {{name}} ist offiziell. Erwägen Sie den Wechsel zu einem Drittanbieter, bevor Sie das lokale Routing verwenden.",
@@ -3511,6 +3514,7 @@
       "skillNotFound": "Skill nicht gefunden: {{directory}}",
       "missingRepoInfo": "Repository-Angaben fehlen (Eigentümer oder Name)",
       "downloadTimeout": "Zeitüberschreitung beim Herunterladen des Repositorys {{owner}}/{{name}} ({{timeout}} s)",
+      "downloadStalled": "Download des Repositorys {{owner}}/{{name}} abgebrochen: {{timeout}} s lang keine Daten empfangen",
       "skillDirNotFound": "Skill-Verzeichnis nicht gefunden: {{path}}",
       "directoryConflict": "Das Skill-Verzeichnis „{{directory}}“ ist bereits von {{existing_repo}} belegt und kann nicht aus {{new_repo}} installiert werden",
       "emptyArchive": "Das heruntergeladene Archiv ist leer",
@@ -4324,6 +4328,7 @@
     "refresh": "Aktualisieren"
   },
   "nav": {
+    "skills": "Skills",
     "mainLabel": "Hauptnavigation",
     "skipToContent": "Zum Hauptinhalt springen",
     "expandSidebar": "Seitenleiste ausklappen",
