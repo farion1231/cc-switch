@@ -963,7 +963,9 @@ describe("PluginsPage", () => {
     );
     const installDialog = await screen.findByRole("dialog");
     await userEvent.click(
-      within(installDialog).getByRole("button", { name: "pluginsPage.install" }),
+      within(installDialog).getByRole("button", {
+        name: "pluginsPage.install",
+      }),
     );
     await waitFor(() =>
       expect(m.install).toHaveBeenCalledWith("pi", "npm:pi-pinned"),

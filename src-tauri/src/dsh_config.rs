@@ -742,8 +742,16 @@ fn get_providers_from(
                     }
                 }
                 model["limit"] = Value::Object(limits);
-                if let Some(efforts) = model.get("reasoningEfforts") {
-                    model["reasoning"] = json!(efforts.is_object());
+                if let Some(efforts) = model.get("reasoningEfforts").cloned() {
+                    match normalize_reasoning_efforts(&efforts) {
+                        Some(normalized) => {
+                            model["reasoning"] = json!(normalized.is_object());
+                            model["reasoningEfforts"] = normalized;
+                        }
+                        None => {
+                            model.as_object_mut().unwrap().remove("reasoningEfforts");
+                        }
+                    }
                 }
                 if let Some(input) = model.get("input").cloned() {
                     model["modalities"] = json!({"input":input,"output":["text"]});
@@ -1254,6 +1262,40 @@ fn diverged_mcp_error(id: &str, other: Option<&PathBuf>, source: Option<&PathBuf
     )
 }
 
+/// Keys accepted by DSH's `llm-pi-ai` schema for a model's `reasoningEfforts` map.
+const DSH_REASONING_EFFORT_LEVELS: [&str; 7] =
+    ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+
+/// Normalize `reasoningEfforts` to what `llm-pi-ai` accepts (`false` or a non-empty map keyed by
+/// [`DSH_REASONING_EFFORT_LEVELS`] with `string | null` values).
+///
+/// YAML 1.1 parsers turn unquoted `off: null` into boolean `false: null`, which `serde_json::to_value`
+/// then surfaces as the `"false"` key; map `"false"` back to `"off"` when `"off"` is absent, and
+/// drop unknown keys or invalid value types so one bad entry cannot fail the whole `llm-pi-ai` block
+/// (#9785).
+fn normalize_reasoning_efforts(value: &Value) -> Option<Value> {
+    match value {
+        Value::Bool(false) => Some(Value::Bool(false)),
+        Value::Object(map) => {
+            let mut normalized = serde_json::Map::new();
+            for (key, entry) in map {
+                if !(entry.is_string() || entry.is_null()) {
+                    continue;
+                }
+                if DSH_REASONING_EFFORT_LEVELS.contains(&key.as_str()) {
+                    normalized.insert(key.clone(), entry.clone());
+                } else if key == "false" {
+                    normalized
+                        .entry("off".to_string())
+                        .or_insert_with(|| entry.clone());
+                }
+            }
+            (!normalized.is_empty()).then_some(Value::Object(normalized))
+        }
+        _ => None,
+    }
+}
+
 /// The native `llm-pi-ai` provider node for an editor config, and the credentials text with a new
 /// key stored under CC Switch's reference (unchanged when the key is unchanged).
 fn native_provider(
@@ -1312,13 +1354,25 @@ fn native_provider(
             object.remove("modalities");
             if object.get("reasoning") == Some(&Value::Bool(false)) {
                 object.insert("reasoningEfforts".into(), Value::Bool(false));
-            } else if object.get("reasoning") == Some(&Value::Bool(true))
-                && !object.contains_key("reasoningEfforts")
-            {
-                object.insert(
-                    "reasoningEfforts".into(),
-                    json!({"off":null,"low":"low","medium":"medium","high":"high"}),
-                );
+            } else {
+                if let Some(efforts) = object.get("reasoningEfforts").cloned() {
+                    match normalize_reasoning_efforts(&efforts) {
+                        Some(normalized) => {
+                            object.insert("reasoningEfforts".into(), normalized);
+                        }
+                        None => {
+                            object.remove("reasoningEfforts");
+                        }
+                    }
+                }
+                if object.get("reasoning") == Some(&Value::Bool(true))
+                    && !object.contains_key("reasoningEfforts")
+                {
+                    object.insert(
+                        "reasoningEfforts".into(),
+                        json!({"off":null,"low":"low","medium":"medium","high":"high"}),
+                    );
+                }
             }
             object.remove("reasoning");
             models.push(model);
@@ -1734,6 +1788,89 @@ mod tests {
         assert_eq!(model("test-model")["input"], json!(["text", "image"]));
         assert!(model("pdf-only").get("input").is_none());
         assert!(model("pdf-only").get("modalities").is_none());
+    }
+
+    #[test]
+    fn provider_reasoning_efforts_normalizes_false_key_and_filters_unknown_entries() {
+        let mut config = editor_config();
+        config["models"]["false-alias"] = json!({
+            "name": "False Alias",
+            "reasoning": true,
+            "reasoningEfforts": {
+                "false": null,
+                "low": "low",
+                "medium": "medium",
+                "max": "max",
+                "turbo": "turbo",
+                "high": 123
+            }
+        });
+        config["models"]["explicit-off-wins"] = json!({
+            "name": "Explicit Off",
+            "reasoning": true,
+            "reasoningEfforts": {
+                "false": null,
+                "off": "none",
+                "low": "low"
+            }
+        });
+        config["models"]["only-invalid-reasoning-on"] = json!({
+            "name": "Only Invalid On",
+            "reasoning": true,
+            "reasoningEfforts": { "bogus": "x" }
+        });
+        config["models"]["only-invalid-no-flag"] = json!({
+            "name": "Only Invalid",
+            "reasoningEfforts": { "bogus": "x" }
+        });
+        config["models"]["disabled-efforts"] = json!({
+            "name": "Disabled",
+            "reasoningEfforts": false
+        });
+
+        let (_, native) = native_provider("gateway", &config, "").unwrap();
+        let models = native["models"].as_array().unwrap();
+        let model = |id: &str| models.iter().find(|model| model["id"] == id).unwrap();
+
+        assert_eq!(
+            model("false-alias")["reasoningEfforts"],
+            json!({"off": null, "low": "low", "medium": "medium", "max": "max"})
+        );
+        assert_eq!(
+            model("explicit-off-wins")["reasoningEfforts"],
+            json!({"off": "none", "low": "low"})
+        );
+        assert_eq!(
+            model("only-invalid-reasoning-on")["reasoningEfforts"],
+            json!({"off": null, "low": "low", "medium": "medium", "high": "high"})
+        );
+        assert!(model("only-invalid-no-flag")
+            .get("reasoningEfforts")
+            .is_none());
+        assert_eq!(model("disabled-efforts")["reasoningEfforts"], json!(false));
+    }
+
+    #[test]
+    fn get_providers_normalizes_yaml_boolean_false_reasoning_effort_key() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("cordis.patch.yml");
+        let credentials = temp.path().join(".credentials.yaml");
+        fs::write(
+            &path,
+            "- id: llm-pi-ai\n  config:\n    providers:\n      volcengine:\n        api: openai-completions\n        baseURL: https://ark.example/v1\n        models:\n          - id: m1\n            name: Model 1\n            reasoningEfforts:\n              false: null\n              low: low\n              max: max\n              bogus: nope\n          - id: m2\n            name: Model 2\n            reasoningEfforts: false\n",
+        )
+        .unwrap();
+
+        let providers = get_providers_from(&path, &credentials).unwrap();
+        let m1 = &providers["volcengine"]["models"]["m1"];
+        assert_eq!(m1["reasoning"], json!(true));
+        assert_eq!(
+            m1["reasoningEfforts"],
+            json!({"off": null, "low": "low", "max": "max"})
+        );
+        let m2 = &providers["volcengine"]["models"]["m2"];
+        assert_eq!(m2["reasoning"], json!(false));
+        assert_eq!(m2["reasoningEfforts"], json!(false));
     }
 
     #[test]
