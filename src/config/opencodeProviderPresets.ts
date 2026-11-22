@@ -3436,7 +3436,19 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         "glm-5.3": { name: "GLM 5.3", reasoning: true },
         "glm-5.3-flash": { name: "GLM 5.3 Flash", reasoning: true },
         "kimi-k3.1-pro": { name: "Kimi K3.1 Pro", reasoning: true },
-        "deepseek-v4.1-flash": { name: "DeepSeek V4.1 Flash", reasoning: true },
+        // OpenCode Go 的 DeepSeek V4.1 Flash 只收 low / high / max（models.dev
+        // opencode-go 的 reasoning_options）；OpenCode 给 openai-compatible 默认生成
+        // low / medium / high，故禁用 medium、补上 max
+        "deepseek-v4.1-flash": {
+          name: "DeepSeek V4.1 Flash",
+          reasoning: true,
+          variants: {
+            low: { reasoningEffort: "low" },
+            medium: { disabled: true },
+            high: { reasoningEffort: "high" },
+            max: { reasoningEffort: "max" },
+          },
+        },
         "mimo-v2.6-pro": { name: "MiMo V2.6 Pro", reasoning: true },
       },
     },
