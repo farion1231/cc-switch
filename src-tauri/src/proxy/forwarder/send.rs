@@ -26,30 +26,32 @@ impl RequestForwarder {
         } else {
             self.non_streaming_timeout
         };
-        let timeout = deadline
-            .map(|at| at.saturating_duration_since(tokio::time::Instant::now()))
-            .unwrap_or(timeout);
-        if timeout.is_zero() {
+        let started = tokio::time::Instant::now();
+        if deadline.is_some_and(|at| at <= started) {
             return Err(ProxyError::Timeout(
                 "Copilot Auto request deadline elapsed".into(),
             ));
         }
-        let started = tokio::time::Instant::now();
+        // 两条传输路径都使用首包超时等待响应头，并受 Copilot Auto 总截止时间约束。
         let effective_deadline = if request_is_streaming {
             let configured = if self.streaming_first_byte_timeout.is_zero() {
                 timeout
             } else {
-                timeout.min(self.streaming_first_byte_timeout)
+                self.streaming_first_byte_timeout
             };
-            let first_chunk_deadline = started + configured;
+            let header_deadline = started + configured;
             Some(
                 deadline
-                    .map(|at| at.min(first_chunk_deadline))
-                    .unwrap_or(first_chunk_deadline),
+                    .map(|at| at.min(header_deadline))
+                    .unwrap_or(header_deadline),
             )
         } else {
             deadline
         };
+
+        let send_timeout = effective_deadline
+            .map(|at| at.saturating_duration_since(started))
+            .unwrap_or(timeout);
 
         // 获取全局代理 URL（上游是本机地址时直连，不送进代理）
         let upstream_proxy_url: Option<String> = crate::proxy::http_client::proxy_url_for(url);
@@ -77,7 +79,7 @@ impl RequestForwarder {
                 // timeout would truncate otherwise healthy long completions.
                 request = request.timeout(std::time::Duration::from_secs(24 * 60 * 60));
             } else if deadline.is_some() || !self.non_streaming_timeout.is_zero() {
-                request = request.timeout(timeout);
+                request = request.timeout(send_timeout);
             }
             for (key, value) in &headers {
                 request = request.header(key, value);
@@ -91,7 +93,7 @@ impl RequestForwarder {
                     .map_err(|_| {
                         ProxyError::Timeout(format!(
                             "流式响应首包超时: {}s（上游未返回响应头）",
-                            header_deadline.saturating_duration_since(started).as_secs()
+                            send_timeout.as_secs()
                         ))
                     })?
             } else {
@@ -112,7 +114,7 @@ impl RequestForwarder {
                 headers,
                 extensions.clone(),
                 body_bytes,
-                timeout,
+                send_timeout,
                 upstream_proxy_url.as_deref(),
             );
             if let Some(deadline) = effective_deadline {
