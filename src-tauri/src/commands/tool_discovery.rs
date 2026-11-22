@@ -1476,10 +1476,21 @@ pub(super) fn locate_default_tool(
 
     match candidates.as_slice() {
         [(only, _)] => Ok(only.clone()),
-        [] => Err(format!("{tool} is not installed")),
+        [] => desktop_bundled_tool(tool).ok_or_else(|| format!("{tool} is not installed")),
         _ => Err(format!(
             "{tool} is installed but its default installation is ambiguous"
         )),
+    }
+}
+
+/// 只装了 Codex 桌面版的人没有独立 CLI：运行时命令（插件页、守护进程重启）退到桌面版自带的
+/// 那个（#9850），与模型目录探测用的是同一份候选。只在这里兜底、不进安装枚举：应用页的检测、
+/// 升级、卸载仍只管独立安装的 CLI（#8468）。
+fn desktop_bundled_tool(tool: &str) -> Option<std::path::PathBuf> {
+    if tool == "codex" {
+        crate::codex_config::codex_desktop_cli()
+    } else {
+        None
     }
 }
 
