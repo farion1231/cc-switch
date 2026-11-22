@@ -2715,7 +2715,9 @@ fn test_codex_oauth_gpt62_moves_search_cap_into_developer_message() {
     // 搜索上限只出现一次（不在 instructions 里残留第二份）
     let serialized = result.to_string();
     assert_eq!(
-        serialized.matches("no more than 5 web search calls").count(),
+        serialized
+            .matches("no more than 5 web search calls")
+            .count(),
         1,
         "search cap must appear exactly once"
     );
