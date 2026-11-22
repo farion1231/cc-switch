@@ -4497,69 +4497,46 @@ mod codex_stack {
     }
 
     /// 缓冲阶段只有一个截止时间：上游在输出前一直发心跳，也不能无限期压着流不交给客户端。
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn sub_agent_hold_has_one_deadline_despite_heartbeats() {
         const HEARTBEATS: u32 = 40;
+        const HOLD_WINDOW: Duration = Duration::from_millis(100);
         let created = "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"r1\"}}\n\n";
         let completed = "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"r1\",\"status\":\"completed\",\"output\":[]}}\n\n";
-        let app = axum::Router::new().fallback(move || async move {
-            let stream = futures::stream::unfold(0u32, move |n| async move {
-                if n > HEARTBEATS {
-                    return None;
-                }
-                if n > 0 {
-                    tokio::time::sleep(Duration::from_millis(20)).await;
-                }
-                let chunk = match n {
-                    0 => created,
-                    HEARTBEATS => completed,
-                    _ => ": keepalive\n\n",
-                };
-                Some((
-                    Ok::<_, std::io::Error>(Bytes::from_static(chunk.as_bytes())),
-                    n + 1,
-                ))
-            });
-            (
-                [(http::header::CONTENT_TYPE, "text/event-stream")],
-                axum::body::Body::from_stream(stream),
-            )
+        let stream = futures::stream::unfold(0, move |n| async move {
+            if n > HEARTBEATS {
+                return None;
+            }
+            if n > 0 {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            let chunk = match n {
+                0 => created,
+                HEARTBEATS => completed,
+                _ => ": keepalive\n\n",
+            };
+            Some((Ok(Bytes::from_static(chunk.as_bytes())), n + 1))
         });
-        let upstream = Upstream {
-            base_url: serve_upstream(app).await,
-            seen: Arc::new(Mutex::new(Vec::new())),
-        };
-        let _ = rustls::crypto::ring::default_provider().install_default();
-        let forwarder =
-            test_forwarder(Duration::from_secs(5), Duration::from_millis(100)).stack_request(true);
+        let response = ProxyResponse::streamed(StatusCode::OK, HeaderMap::new(), stream);
+        let forwarder = test_forwarder(Duration::from_secs(5), HOLD_WINDOW);
 
-        let started = std::time::Instant::now();
-        let result = forwarder
-            .forward_with_retry(
-                &AppType::Codex,
-                http::Method::POST,
-                "/responses",
-                &sub_agent_request(Vec::new()),
-                chatgpt_headers(),
-                Extensions::new(),
-                &[provider(&upstream, "openai_responses")],
-            )
+        let started = tokio::time::Instant::now();
+        let response = forwarder
+            .hold_opaque_state_stream(response, &sub_agent_request(Vec::new()))
             .await
-            .map_err(|error| error.error)
             .expect("committed");
         let handed_over = started.elapsed();
-        // 心跳要发 800ms；截止时间 100ms，交出流不该等到心跳发完。
+        // 截止时间一到就交出流，允许计时器向上取整到下一毫秒。
         assert!(
-            handed_over < Duration::from_millis(500),
+            (HOLD_WINDOW..=HOLD_WINDOW + Duration::from_millis(1)).contains(&handed_over),
             "held for {handed_over:?}"
         );
-        let text = body_text(result).await;
-        assert!(text.starts_with(created), "{text}");
-        assert!(text.ends_with(completed), "{text}");
-        assert_eq!(
-            text.matches(": keepalive").count(),
-            (HEARTBEATS - 1) as usize
+        let expected = format!(
+            "{created}{}{completed}",
+            ": keepalive\n\n".repeat((HEARTBEATS - 1) as usize)
         );
+        let bytes = response.bytes_with_limit(expected.len()).await.unwrap();
+        assert_eq!(bytes.as_ref(), expected.as_bytes());
     }
 
     /// 上游解得开（同一家）或者是别的失败：客户端收到的流和上游发的逐字节一样。

@@ -1589,9 +1589,9 @@ fn proxy_catalog_profiles_keep_apply_patch_and_disable_original_image_detail() {
 }
 
 #[test]
-fn catalog_web_search_policy_keeps_copilot_and_anthropic_disabled_without_models() {
+fn catalog_web_search_policy_with_and_without_explicit_models() {
     let config = "model = \"MiniMax-M3\"\n";
-    for (settings, has_catalog) in [
+    for (settings, has_explicit_catalog) in [
         (json!({}), false),
         (
             json!({"modelCatalog": {"models": [{"model": "MiniMax-M3"}]}}),
@@ -1602,18 +1602,26 @@ fn catalog_web_search_policy_keeps_copilot_and_anthropic_disabled_without_models
             (CodexCatalogToolProfile::Copilot, true),
             (CodexCatalogToolProfile::Anthropic, true),
             (CodexCatalogToolProfile::ProxyChat, false),
-            (CodexCatalogToolProfile::NativeResponses, has_catalog),
+            (
+                CodexCatalogToolProfile::NativeResponses,
+                has_explicit_catalog,
+            ),
         ] {
             assert_eq!(
                 codex_disables_web_search(&settings, config, profile),
                 disabled,
-                "{profile:?}, catalog={has_catalog}"
+                "{profile:?}, explicit catalog={has_explicit_catalog}"
             );
-            if !has_catalog {
-                assert!(plan_codex_model_catalog(&settings, config, profile)
-                    .unwrap()
-                    .catalog
-                    .is_none());
+            let catalog = plan_codex_model_catalog(&settings, config, profile)
+                .unwrap()
+                .catalog;
+            if has_explicit_catalog || matches!(profile, CodexCatalogToolProfile::Copilot) {
+                let catalog = catalog.expect("catalog for the configured model");
+                let models = catalog["models"].as_array().unwrap();
+                assert_eq!(models.len(), 1, "{profile:?}");
+                assert_eq!(models[0]["slug"], "MiniMax-M3", "{profile:?}");
+            } else {
+                assert!(catalog.is_none(), "{profile:?}");
             }
         }
     }
