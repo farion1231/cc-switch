@@ -1,5 +1,3 @@
-#![allow(non_snake_case)]
-
 use crate::error::AppError;
 use indexmap::IndexMap;
 use std::str::FromStr;
@@ -48,6 +46,14 @@ pub async fn get_mcp_servers(
     state: State<'_, AppState>,
 ) -> Result<IndexMap<String, McpServer>, AppError> {
     McpService::get_all_servers(&state)
+}
+
+/// 库里读不出来的 MCP 服务器（只给界面展示、删除）。
+#[tauri::command]
+pub async fn get_unreadable_mcp_servers(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::database::UnreadableEntry>, AppError> {
+    McpService::list_unreadable(&state)
 }
 
 #[tauri::command]

@@ -170,6 +170,17 @@ impl Database {
         conn.execute(&aggregation_sql, [cutoff])
             .map_err(|e| AppError::Database(format!("Rollup aggregation failed: {e}")))?;
 
+        // Ensure legacy session rows created before durable dedup tombstones
+        // cannot be re-imported if an archived session file is touched later.
+        conn.execute(
+            "INSERT OR IGNORE INTO session_usage_dedup (data_source, request_id, semantic_id, has_entry_id)
+             SELECT 'gemini_session', request_id, request_id, 1
+             FROM proxy_request_logs
+             WHERE created_at < ?1 AND data_source = 'gemini_session'",
+            [cutoff],
+        )
+        .map_err(|e| AppError::Database(format!("Recording session dedup tombstones failed: {e}")))?;
+
         // INSERT uses the effective-log filter to exclude duplicate session rows.
         // DELETE intentionally prunes all old details so those duplicates are discarded.
         let deleted = conn

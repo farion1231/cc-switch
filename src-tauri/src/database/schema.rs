@@ -2005,6 +2005,13 @@ impl Database {
             // effort 档 low/medium/high/xhigh 由查价剥后缀回落到本行；max 不在剥离列表
             //（会与 *-max 真 id 撞名），不另加后缀行。
             ("gpt-6-astra", "GPT-6 Astra", "10", "50", "1", "12.5"),
+            // GPT-6.2 Sol / Astra（2026-11-17 发布）：2026-11-17 核对官方模型页 + 价页 + models.dev，
+            // 取 Standard ≤272K 短上下文价，cache write 取 30 分钟档（12 小时档为 2 倍）。
+            // 长上下文档、Batch/Fast/Ultrafast 与 astra-law 配置本表无法表达，同 GPT-6 一样忽略。
+            // https://developers.openai.com/api/docs/models/gpt-6.2-sol
+            // https://developers.openai.com/api/docs/models/gpt-6.2-astra
+            ("gpt-6.2-sol", "GPT-6.2 Sol", "2", "10", "0.10", "2.50"),
+            ("gpt-6.2-astra", "GPT-6.2 Astra", "8", "40", "0.40", "10"),
             // GPT-6.1 Sol: Standard short-context pricing; cached input is 0.05× input.
             // https://developers.openai.com/api/docs/models/gpt-6.1-sol
             ("gpt-6.1-sol", "GPT-6.1 Sol", "2", "10", "0.10", "2.50"),
@@ -2246,6 +2253,17 @@ impl Database {
             ("gpt-4o", "GPT-4o", "2.50", "10", "1.25", "0"),
             ("gpt-4o-mini", "GPT-4o Mini", "0.15", "0.60", "0.075", "0"),
             // Gemini 4 系列
+            // 来源：https://ai.google.dev/gemini-api/docs/pricing#gemini-4-neon
+            // 标准档（Global）：输入 3.00 / 输出 15.00（含思考）/ 缓存读 0.15（仅隐式缓存，写入记 0），
+            // 与 models.dev google/gemini-4-neon 一致。
+            (
+                "gemini-4-neon",
+                "Gemini 4 Neon",
+                "3.00",
+                "15.00",
+                "0.15",
+                "0",
+            ),
             // 来源：https://ai.google.dev/gemini-api/docs/pricing#gemini-4-argon
             // 录的是标准档介绍价（2026-10-15 抓取）：输入 2.00 / 输出 10.00 / 上下文缓存读 0.10
             // （缓存仅支持隐式，不支持显式写入，cache_creation 记 0，与其他 Gemini 条目口径一致）。
@@ -3915,6 +3933,11 @@ impl Database {
     }
 
     pub(crate) fn ensure_model_pricing_seeded_on_conn(conn: &Connection) -> Result<(), AppError> {
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_model_pricing_nocase ON model_pricing(model_id COLLATE NOCASE)",
+            [],
+        ).map_err(|e| AppError::Database(e.to_string()))?;
+
         // 每次启动都执行 INSERT OR IGNORE，增量追加新模型；仅修复仍等于旧内置值的定价。
         Self::in_savepoint(conn, "seed_model_pricing", || {
             Self::seed_model_pricing(conn)?;

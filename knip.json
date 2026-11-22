@@ -1,0 +1,6 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "ignoreExportsUsedInFile": true,
+  "ignore": ["src/components/ui/**"],
+  "ignoreDependencies": ["@vitest/coverage-v8"]
+}

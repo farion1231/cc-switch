@@ -5,17 +5,14 @@ use cc_switch_lib::{update_settings, AppSettings, AppState, Database, MultiAppCo
 
 /// 为测试设置隔离的 HOME 目录，避免污染真实用户数据。
 ///
-/// cargo test 下全部集成测试在同一个进程里，共用一个固定目录，靠 `test_mutex` 串行。
-/// nextest 每个测试一个进程、多个进程并发，各自启动时都会清空目录，所以按槽位分开：
-/// 槽位号在同时运行的测试之间唯一、测试结束后复用，目录数不超过并发数。
+/// 每个测试进程独占一个槽位目录：cargo test 下全部集成测试在同一个进程里（靠 `test_mutex`
+/// 串行），nextest 每个测试一个进程。槽位靠目录旁 `.lock` 文件上的独占锁认领，锁跟着进程走，
+/// 进程退出（含崩溃）由系统释放。所以同时跑的进程（两次 cargo test、多个 nextest 进程、
+/// 多个 worktree）不会清掉彼此的目录，目录数也不超过同时运行的进程数。
 pub fn ensure_test_home() -> &'static Path {
     static HOME: OnceLock<PathBuf> = OnceLock::new();
     HOME.get_or_init(|| {
-        let dir_name = match std::env::var("NEXTEST_TEST_GLOBAL_SLOT") {
-            Ok(slot) => format!("cc-switch-test-home-nextest-{slot}"),
-            Err(_) => "cc-switch-test-home".to_string(),
-        };
-        let base = std::env::temp_dir().join(dir_name);
+        let base = claim_test_home_slot();
         if base.exists() {
             let _ = std::fs::remove_dir_all(&base);
         }
@@ -38,6 +35,31 @@ pub fn ensure_test_home() -> &'static Path {
     .as_path()
 }
 
+// `rust-version` 落后于 rust-toolchain.toml 固定的工具链，后者有 `File::try_lock`。
+#[allow(clippy::incompatible_msrv)]
+fn claim_test_home_slot() -> PathBuf {
+    static SLOT_LOCK: OnceLock<std::fs::File> = OnceLock::new();
+    let temp = std::env::temp_dir();
+    for slot in 0.. {
+        let lock_path = temp.join(format!("cc-switch-test-home-{slot}.lock"));
+        let lock = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&lock_path)
+            .expect("open test home lock");
+        match lock.try_lock() {
+            Ok(()) => {
+                SLOT_LOCK.set(lock).expect("test home slot claimed once");
+                return temp.join(format!("cc-switch-test-home-{slot}"));
+            }
+            Err(std::fs::TryLockError::WouldBlock) => continue,
+            Err(std::fs::TryLockError::Error(e)) => panic!("lock {}: {e}", lock_path.display()),
+        }
+    }
+    unreachable!("slot numbers are unbounded")
+}
+
 /// 清理测试目录中生成的配置文件与缓存。
 pub fn reset_test_fs() {
     let home = ensure_test_home();
@@ -48,6 +70,8 @@ pub fn reset_test_fs() {
         ".gemini",
         ".grok",
         ".config",
+        ".minimax",
+        ".omp",
         ".openclaw",
         ".pi",
         ".workbuddy",

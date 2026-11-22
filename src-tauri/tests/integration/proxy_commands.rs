@@ -1,5 +1,5 @@
 use cc_switch_lib::{
-    get_pricing_model_source_test_hook, set_pricing_model_source_test_hook, AppError,
+    get_pricing_model_source_test_hook, set_pricing_model_source_test_hook, AppError, AppType,
 };
 
 use crate::support::{create_test_state, ensure_test_home, reset_test_fs, test_mutex};
@@ -14,20 +14,20 @@ async fn pricing_model_source_commands_round_trip() {
 
     let state = create_test_state().expect("create test state");
 
-    let default = get_pricing_model_source_test_hook(&state, "claude")
+    let default = get_pricing_model_source_test_hook(&state, &AppType::Claude)
         .await
         .expect("read default pricing model source");
     assert_eq!(default, "response");
 
-    set_pricing_model_source_test_hook(&state, "claude", "request")
+    set_pricing_model_source_test_hook(&state, &AppType::Claude, "request")
         .await
         .expect("set pricing model source");
-    let updated = get_pricing_model_source_test_hook(&state, "claude")
+    let updated = get_pricing_model_source_test_hook(&state, &AppType::Claude)
         .await
         .expect("read updated pricing model source");
     assert_eq!(updated, "request");
 
-    let err = set_pricing_model_source_test_hook(&state, "claude", "invalid")
+    let err = set_pricing_model_source_test_hook(&state, &AppType::Claude, "invalid")
         .await
         .expect_err("invalid pricing model source should error");
     // 错误已改为 Localized 类型（支持 i18n）

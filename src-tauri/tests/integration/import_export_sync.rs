@@ -678,7 +678,7 @@ fn import_sql_accepts_cc_switch_exported_backup() {
 
     let providers = state
         .db
-        .get_all_providers(AppType::Claude.as_str())
+        .get_all_providers(&AppType::Claude)
         .expect("load providers");
     assert!(
         providers.contains_key("test-provider"),

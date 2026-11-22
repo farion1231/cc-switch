@@ -205,7 +205,7 @@ fn test_parse_mcp_deeplink_accepts_dsh() {
 /// 供应商链接对 Oh My Pi 明确拒绝，而不是落到「Invalid provider app type」。
 #[test]
 fn test_parse_provider_deeplink_accepts_the_pi_family_apps_with_a_model() {
-    for app in ["mcode", "kimi", "dsh", "omp"] {
+    for app in ["mcode", "kimi", "dsh", "omp", "workbuddy"] {
         let request = parse_deeplink_url(&provider_link(app, None))
             .unwrap_or_else(|err| panic!("{app} link should parse: {err}"));
         assert_eq!(request.app.as_deref(), Some(app));
@@ -995,7 +995,7 @@ fn test_import_prompt_allows_space_in_base64_content() {
 
     let prompt_id = import_prompt_from_deeplink(&state, request.clone()).expect("import prompt");
 
-    let prompts = state.db.get_prompts("codex").expect("get prompts");
+    let prompts = state.db.get_prompts(&AppType::Codex).expect("get prompts");
     let prompt = prompts.get(&prompt_id).expect("prompt saved");
 
     assert_eq!(prompt.content, ">>>");
@@ -1707,6 +1707,8 @@ fn test_api_format_rejects_unknown_values_and_unsupported_apps() {
         ("hermes", "gemini_native"),
         ("mcode", "gemini_native"),
         ("dsh", "gemini_native"),
+        ("workbuddy", "anthropic"),
+        ("workbuddy", "openai_responses"),
     ] {
         let err = parse_deeplink_url(&provider_link(app, Some(format)))
             .expect_err("unsupported apiFormat must be rejected while parsing");
@@ -1754,7 +1756,11 @@ fn test_pi_link_with_the_toggle_off_is_saved_without_touching_models_json() {
 
     let (state, id) = import_pi_link(Some(false));
 
-    assert!(state.db.get_provider_by_id(&id, "pi").unwrap().is_some());
+    assert!(state
+        .db
+        .get_provider_by_id(&id, &AppType::Pi)
+        .unwrap()
+        .is_some());
     assert!(!crate::pi_config::pi_provider_exists(&id).unwrap());
 }
 
@@ -1825,6 +1831,12 @@ fn test_links_that_smuggle_commands_env_vars_or_files_into_additive_apps_are_rej
             "endpoint",
             "https://attacker.example/${GITHUB_TOKEN}",
         ),
+        (
+            "workbuddy",
+            "endpoint",
+            "https://attacker.example/${OPENAI_API_KEY}",
+        ),
+        ("workbuddy", "apiKey", "${OPENAI_API_KEY}"),
     ] {
         let err = parse_deeplink_url(&link_with(app, param, value))
             .expect_err("dynamic syntax must be rejected while parsing");
@@ -1901,7 +1913,7 @@ fn test_first_switch_mode_provider_stays_inactive_when_the_toggle_is_off() {
 
         assert!(state
             .db
-            .get_provider_by_id(&id, "claude")
+            .get_provider_by_id(&id, &AppType::Claude)
             .unwrap()
             .is_some());
         let current = crate::mode::current::provider_for(
@@ -1974,7 +1986,11 @@ fn test_import_stores_a_valid_custom_icon_and_rejects_a_broken_one() {
     let db = Arc::new(Database::memory().expect("create memory db"));
     let state = AppState::new(db);
     let id = super::import_provider_from_deeplink(&state, request).expect("import provider");
-    let stored = state.db.get_provider_by_id(&id, "claude").unwrap().unwrap();
+    let stored = state
+        .db
+        .get_provider_by_id(&id, &AppType::Claude)
+        .unwrap()
+        .unwrap();
     assert_eq!(stored.icon.as_deref(), Some(icon.as_str()));
 
     // 截断的 PNG：保存校验拒绝
@@ -2171,7 +2187,7 @@ fn agy_deeplink_prompt_import_respects_activation() {
         let request = parse_deeplink_url(&format!("ccswitch://v1/import?resource=prompt&app=agy&name=Test-{enabled}&content={content}&enabled={enabled}")).unwrap();
         let id = import_prompt_from_deeplink(&state, request).unwrap();
         assert_eq!(
-            state.db.get_prompts("agy").unwrap()[&id].content,
+            state.db.get_prompts(&AppType::Agy).unwrap()[&id].content,
             "Agy instructions"
         );
         assert_eq!(path.exists(), enabled);
@@ -2202,7 +2218,11 @@ fn agy_deeplink_enabled_key_provider_stays_out_of_live_files() {
     // to agy started from "Open Terminal" with its private profile.
     assert!(!crate::agy_config::settings_path().exists());
     assert!(!crate::config::get_home_dir().join(".gemini/.env").exists());
-    let row = state.db.get_provider_by_id(&id, "agy").unwrap().unwrap();
+    let row = state
+        .db
+        .get_provider_by_id(&id, &AppType::Agy)
+        .unwrap()
+        .unwrap();
     let launch = crate::services::provider::agy_direct::terminal_launch(&row).unwrap();
     assert_eq!(
         launch.env[0],
@@ -2430,7 +2450,11 @@ fn test_mcode_link_is_added_to_config_yaml() {
     let (state, id) = import_pi_family_link("mcode", None);
 
     assert_slug_id(&id);
-    assert!(state.db.get_provider_by_id(&id, "mcode").unwrap().is_some());
+    assert!(state
+        .db
+        .get_provider_by_id(&id, &AppType::Mcode)
+        .unwrap()
+        .is_some());
     let node = &crate::mcode_config::get_providers().unwrap()[&id];
     assert_eq!(node["options"]["baseURL"], "https://api.example.com/v1");
     assert_eq!(node["models"]["example-model"]["name"], "example-model");
@@ -2472,7 +2496,11 @@ fn test_kimi_link_namespaces_its_model_and_sets_a_context_size() {
     let (state, id) = import_pi_family_link("kimi", None);
 
     assert_slug_id(&id);
-    let stored = state.db.get_provider_by_id(&id, "kimi").unwrap().unwrap();
+    let stored = state
+        .db
+        .get_provider_by_id(&id, &AppType::Kimi)
+        .unwrap()
+        .unwrap();
     let key = format!("{id}/example-model");
     assert!(
         stored.settings_config["models"].get(&key).is_some(),
@@ -2514,6 +2542,10 @@ fn test_pi_family_inline_config_fills_each_apps_native_connection_fields() {
             "kimi",
             r#"{"provider":{"base_url":"https://cfg.example.com/v1","api_key":"sk-from-config"}}"#,
         ),
+        (
+            "workbuddy",
+            r#"{"url":"https://cfg.example.com/v1","apiKey":"sk-from-config"}"#,
+        ),
     ] {
         let encoded = BASE64_STANDARD.encode(config);
         let url = format!(
@@ -2527,6 +2559,123 @@ fn test_pi_family_inline_config_fills_each_apps_native_connection_fields() {
             "{app}"
         );
     }
+}
+
+// =============================================================================
+// WorkBuddy：卡片形状同 WorkBuddy 页面的编辑器，写入走页面「添加」同一条路径
+// =============================================================================
+
+#[test]
+fn test_workbuddy_link_builds_the_same_card_as_the_editor() {
+    // 自定义模型只走 Chat Completions：不写 apiFormat 与写 openai_chat 等价，卡片不带协议字段。
+    // 地址照链接原样写，和其他应用一致
+    for format in [None, Some("openai_chat")] {
+        let provider = build_from_link("workbuddy", format);
+        assert_eq!(
+            provider.settings_config,
+            serde_json::json!({
+                "vendor": "Example",
+                "url": "https://api.example.com/v1",
+                "apiKey": "sk-test",
+                "models": [{ "id": "example-model", "supportsToolCall": true }],
+            }),
+            "{format:?}"
+        );
+        // 链接造不出官方登录卡
+        assert!(provider.category.is_none(), "{format:?}");
+    }
+
+    // 编辑器保存时会去掉 Key 首尾的空白
+    let request = parse_deeplink_url(&link_with("workbuddy", "apiKey", " sk-test ")).unwrap();
+    let provider =
+        super::provider::build_provider_from_request(&AppType::WorkBuddy, &request).unwrap();
+    assert_eq!(provider.settings_config["apiKey"], "sk-test");
+}
+
+fn import_workbuddy_link(
+    state: &AppState,
+    enabled: Option<bool>,
+) -> Result<String, crate::error::AppError> {
+    let mut request = parse_deeplink_url(&provider_link("workbuddy", None)).expect("parse link");
+    request.enabled = enabled;
+    super::import_provider_from_deeplink(state, request)
+}
+
+fn read_workbuddy_models_json() -> serde_json::Value {
+    let text = std::fs::read_to_string(crate::workbuddy_config::config_path()).unwrap();
+    serde_json::from_str(&text).unwrap()
+}
+
+#[test]
+#[serial_test::serial]
+fn test_workbuddy_link_is_added_to_models_json() {
+    let home = TempUserHome::new();
+    let _data = EnvVars::new().set("WORKBUDDY_CONFIG_DIR", home.path().join("workbuddy"));
+    let state = AppState::new(Arc::new(Database::memory().expect("create memory db")));
+
+    let id = import_workbuddy_link(&state, None).expect("import WorkBuddy provider");
+
+    assert!(state
+        .db
+        .get_provider_by_id(&id, &AppType::WorkBuddy)
+        .unwrap()
+        .is_some());
+    assert_eq!(
+        read_workbuddy_models_json()["models"],
+        serde_json::json!([{
+            "id": "example-model",
+            "name": "Example",
+            "vendor": "Example",
+            "url": "https://api.example.com/v1",
+            "apiKey": "sk-test",
+            "supportsToolCall": true,
+            "ccSwitchProviderId": id,
+        }])
+    );
+}
+
+#[test]
+#[serial_test::serial]
+fn test_workbuddy_link_with_the_toggle_off_is_saved_without_touching_models_json() {
+    let home = TempUserHome::new();
+    let _data = EnvVars::new().set("WORKBUDDY_CONFIG_DIR", home.path().join("workbuddy"));
+    let state = AppState::new(Arc::new(Database::memory().expect("create memory db")));
+
+    let id = import_workbuddy_link(&state, Some(false)).expect("import WorkBuddy provider");
+
+    assert!(state
+        .db
+        .get_provider_by_id(&id, &AppType::WorkBuddy)
+        .unwrap()
+        .is_some());
+    assert!(!crate::workbuddy_config::config_path().exists());
+}
+
+/// 同一个模型 id 只能属于一张卡：另一张卡的链接带了同一个模型要报错，且不留下卡片、不改 models.json
+#[test]
+#[serial_test::serial]
+fn test_workbuddy_link_refuses_a_model_another_card_owns() {
+    let home = TempUserHome::new();
+    let _data = EnvVars::new().set("WORKBUDDY_CONFIG_DIR", home.path().join("workbuddy"));
+    let state = AppState::new(Arc::new(Database::memory().expect("create memory db")));
+    import_workbuddy_link(&state, None).expect("first import");
+    let before = read_workbuddy_models_json();
+
+    let other_card = provider_link("workbuddy", None).replace("name=Example", "name=Other");
+    let request = parse_deeplink_url(&other_card).expect("parse link");
+    let err =
+        super::import_provider_from_deeplink(&state, request).expect_err("model id already taken");
+
+    assert!(err.to_string().contains("example-model"), "{err}");
+    assert_eq!(read_workbuddy_models_json(), before);
+    assert_eq!(
+        state
+            .db
+            .get_all_providers(&AppType::WorkBuddy)
+            .unwrap()
+            .len(),
+        1
+    );
 }
 
 #[test]
