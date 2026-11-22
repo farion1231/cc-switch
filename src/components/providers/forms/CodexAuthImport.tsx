@@ -45,7 +45,9 @@ export function CodexAuthImport({
 
   async function importFile(file: File) {
     if (file.size > 1024 * 1024) {
-      toast.error(t("codexOauth.importTooLarge"));
+      const message = t("codexOauth.importTooLarge");
+      setError(message);
+      toast.error(message);
       return;
     }
     await importContent(() => file.text());
@@ -148,7 +150,7 @@ export function CodexAuthImport({
                 <p
                   id={`${contentId}-error`}
                   role="alert"
-                  className="text-sm text-red-500"
+                  className="text-sm text-danger-text"
                 >
                   {error}
                 </p>

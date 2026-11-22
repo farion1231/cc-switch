@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CodexAuthImport } from "@/components/providers/forms/CodexAuthImport";
@@ -60,8 +60,17 @@ describe("CodexAuthImport", () => {
     );
     const value = file();
     Object.defineProperty(value, "size", { value: 1024 * 1024 + 1 });
-    await userEvent.upload(container.querySelector("input")!, value);
-    expect(mocks.error).toHaveBeenCalled();
+    await userEvent.click(
+      screen.getByRole("button", { name: "codexOauth.importAuthJson" }),
+    );
+    // The native file picker updates the hidden input outside the modal.
+    fireEvent.change(container.querySelector("input")!, {
+      target: { files: [value] },
+    });
+    expect(mocks.error).toHaveBeenCalledWith("codexOauth.importTooLarge");
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "codexOauth.importTooLarge",
+    );
     expect(value.text).not.toHaveBeenCalled();
     expect(mocks.importJson).not.toHaveBeenCalled();
   });

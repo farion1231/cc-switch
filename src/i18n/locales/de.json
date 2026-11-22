@@ -2062,6 +2062,16 @@
     "terminalNeedsAdd": "Fügen Sie diesen Anbieter zuerst zu Copilot hinzu, damit das Terminal sein Modell auswählen kann."
   },
   "codexOauth": {
+    "pasteDescription": "Fügen Sie den vollständigen JSON-Inhalt aus auth.json ein oder wählen Sie eine lokale Datei aus.",
+    "pasteLabel": "Inhalt von auth.json",
+    "pastePlaceholder": "Vollständigen JSON-Inhalt hier einfügen…",
+    "chooseAuthFile": "Datei auswählen",
+    "importPasted": "Konto importieren",
+    "importAuthJson": "auth.json importieren",
+    "importHint": "Importieren Sie ein Konto und wählen Sie es anschließend bei einem offiziellen Codex-Anbieter aus.",
+    "importSuccess": "{{login}} wurde importiert. Wählen Sie dieses Konto bei einem offiziellen Codex-Anbieter aus, aktivieren Sie den Anbieter und starten Sie Codex neu.",
+    "importTooLarge": "auth.json muss kleiner als 1 MB sein",
+    "importFailed": "Import fehlgeschlagen: {{error}}",
     "authStatus": "Anmeldestatus",
     "notAuthenticated": "Nicht angemeldet",
     "loginRequired": "Bitte zuerst bei ChatGPT anmelden",

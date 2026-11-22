@@ -63,7 +63,10 @@ fn parse(content: &str) -> Result<ImportedLogin, CodexOAuthError> {
     if !auth.is_object() {
         return Err(invalid("auth.json 必须是 JSON 对象"));
     }
-    if auth.get("auth_mode").is_some_and(|v| v != "chatgpt")
+    if auth
+        .get("auth_mode")
+        .filter(|v| !v.is_null())
+        .is_some_and(|v| v != "chatgpt")
         || auth
             .get("OPENAI_API_KEY")
             .is_some_and(|v| !v.is_null() && v != "")
@@ -128,10 +131,11 @@ fn parse(content: &str) -> Result<ImportedLogin, CodexOAuthError> {
     }
     Ok(ImportedLogin {
         workspace: account.to_string(),
-        email: id
-            .get("email")
-            .or_else(|| access.get("email"))
-            .and_then(Value::as_str)
+        email: [&id, &access]
+            .into_iter()
+            .filter_map(|value| value.get("email").and_then(Value::as_str))
+            .map(str::trim)
+            .find(|email| !email.is_empty())
             .map(str::to_owned),
         refresh,
         id_token,
@@ -176,6 +180,56 @@ mod tests {
             "tokens": {"id_token":jwt(json!({"sub":subject,"email":"test@example.com","https://api.openai.com/auth":{"chatgpt_account_id":"team"}})),
                 "access_token":jwt(json!({"sub":subject,"exp":now+3600,"iat":now-60,"https://api.openai.com/auth":{"chatgpt_account_id":"team"}})),
                 "refresh_token":"test-refresh", "account_id":"team"}})
+    }
+    #[test]
+    fn accepts_missing_or_null_auth_mode_but_rejects_other_modes() {
+        let mut value = fixture("alice");
+        value.as_object_mut().unwrap().remove("auth_mode");
+        assert!(parse(&value.to_string()).is_ok());
+        value["auth_mode"] = Value::Null;
+        assert!(parse(&value.to_string()).is_ok());
+        for mode in [json!("apikey"), json!(""), json!(false)] {
+            value["auth_mode"] = mode;
+            assert!(parse(&value.to_string()).is_err());
+        }
+    }
+    #[test]
+    fn uses_first_nonblank_email_from_id_or_access_token() {
+        for (id_email, access_email, expected) in [
+            (
+                json!(" alice@example.com "),
+                json!("other@example.com"),
+                Some("alice@example.com"),
+            ),
+            (
+                Value::Null,
+                json!(" fallback@example.com "),
+                Some("fallback@example.com"),
+            ),
+            (
+                json!(""),
+                json!("fallback@example.com"),
+                Some("fallback@example.com"),
+            ),
+            (
+                json!(" \t"),
+                json!("fallback@example.com"),
+                Some("fallback@example.com"),
+            ),
+            (json!(" \t"), Value::Null, None),
+            (Value::Null, json!(" \t"), None),
+        ] {
+            let mut value = fixture("alice");
+            for (key, email) in [("id_token", id_email), ("access_token", access_email)] {
+                let mut payload = claims(value["tokens"][key].as_str().unwrap()).unwrap();
+                payload["email"] = email;
+                value["tokens"][key] = json!(jwt(payload));
+            }
+            assert_eq!(
+                parse(&value.to_string()).unwrap().email.as_deref(),
+                expected
+            );
+        }
     }
     #[test]
     fn rejects_invalid_or_mixed_credentials_without_echoing_secrets() {
