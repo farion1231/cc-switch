@@ -448,9 +448,10 @@ fn default_route(_doc: &DocumentMut, _input: &RowInput<'_>) -> Result<Route, App
 /// 写进 `config.toml` 的路由。
 #[derive(Debug, Clone)]
 pub enum RouteWrite {
-    /// 官方直连：不写选路。live 里已有 custom 表时改写成休眠形态（本地代理地址加占位
-    /// Key）：Codex 按 provider id 给会话分桶，表一删，第三方的旧会话就 resume 不了。
-    Official { dormant_base_url: String },
+    /// 官方直连：不写选路。live 里已有 custom 表时改写成休眠形态（官方地址、走官方登录）：
+    /// Codex 按 provider id 给会话分桶，表一删，第三方的旧会话就 resume 不了；但直连模式下
+    /// 本地代理不跑（退回直连会停掉它），表里再写代理地址只会让旧会话一直重连。
+    Official,
     /// 官方直连且开了「统一会话历史」：选路写 custom，表是官方镜像（认证走官方登录）。
     OfficialMirror,
     /// 第三方（直连或代理契约）：选路写 custom。
@@ -820,9 +821,12 @@ impl CodexConfigPatch {
         }
 
         match &self.route {
-            RouteWrite::Official { dormant_base_url } => {
+            RouteWrite::Official => {
                 if providers.contains_key(ROUTE_ID) {
-                    let dormant = proxy_route_table(ROUTE_ID, dormant_base_url, false);
+                    // 休眠表不指向本地代理：退回直连时代理已经停了，旧会话打到没人监听的
+                    // 端口会一直重连。指向官方后，官方模型的旧会话照常可用，第三方模型拿到
+                    // 的是上游明确的报错。
+                    let dormant = official_mirror_table(None, false);
                     put_table(providers, ROUTE_ID, dormant, container_inline);
                 }
             }
@@ -1366,12 +1370,7 @@ mod tests {
     #[test]
     fn leaving_the_official_proxy_route_drops_the_reroute() {
         let proxied = apply(official_proxy(false), "model = \"gpt-5.5\"\n").to_string();
-        let direct = apply(
-            RouteWrite::Official {
-                dormant_base_url: PROXY.to_string(),
-            },
-            &proxied,
-        );
+        let direct = apply(RouteWrite::Official, &proxied);
         assert!(direct.get("openai_base_url").is_none(), "{direct}");
         assert!(direct.get("model_provider").is_none(), "{direct}");
 
@@ -1384,6 +1383,28 @@ mod tests {
             "{third_party}"
         );
         assert_eq!(third_party["model_provider"].as_str(), Some(ROUTE_ID));
+    }
+
+    #[test]
+    fn going_direct_sleeps_the_route_table_on_the_official_endpoint() {
+        // 退回直连时本地代理会停掉：休眠表再指向 127.0.0.1:15721，路由期间建的会话就会在
+        // Codex 里一直重连。改成官方地址 + 官方登录，旧会话还有机会照常跑。
+        let live = "model_provider = \"custom\"\nmodel = \"gpt-5.5\"\n\n[model_providers.custom]\nname = \"relay\"\nbase_url = \"https://relay.example/v1\"\nexperimental_bearer_token = \"sk-relay\"\n";
+        let active = apply(RouteWrite::Official, live);
+        assert!(active.get("model_provider").is_none(), "{active}");
+        let providers = active["model_providers"].as_table().unwrap();
+        let dormant = providers[ROUTE_ID].as_table().unwrap();
+        assert!(dormant.get("base_url").is_none(), "{active}");
+        assert_eq!(
+            dormant.get("requires_openai_auth").and_then(Item::as_bool),
+            Some(true),
+            "{active}"
+        );
+        assert!(
+            dormant.get("experimental_bearer_token").is_none(),
+            "{active}"
+        );
+        assert!(!active.to_string().contains("sk-relay"), "{active}");
     }
 
     #[test]
