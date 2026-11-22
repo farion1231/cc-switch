@@ -1,14 +1,20 @@
 import { useState } from "react";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CodexOAuthSection } from "@/components/providers/forms/CodexOAuthSection";
 import { AuthCenterPanel } from "@/components/settings/AuthCenterPanel";
+import { createTestQueryClient } from "../utils/testQueryClient";
 
 const mocks = vi.hoisted(() => ({
   useCodexOauth: vi.fn(),
   renderAccountQuota: vi.fn(),
   accountUsers: vi.fn(),
+}));
+
+vi.mock("@/lib/query/accountPlans", () => ({
+  useAccountQuotaPlans: () => ({}),
 }));
 
 vi.mock("@/components/providers/forms/hooks/useManagedAccountUsers", () => ({
@@ -38,8 +44,20 @@ vi.mock("@/components/providers/forms/XaiOAuthSection", () => ({
   XaiOAuthSection: () => <div />,
 }));
 
+vi.mock("@/components/providers/forms/AgyOAuthSection", () => ({
+  AgyOAuthSection: () => <div />,
+}));
+
 vi.mock("@/components/providers/KimiAccountLogin", () => ({
   KimiAccountLogin: () => <div />,
+}));
+
+vi.mock("@/components/settings/auth/WorkBuddyAccountSection", () => ({
+  WorkBuddyAccountSection: () => <div />,
+}));
+
+vi.mock("@/components/providers/DshAccount", () => ({
+  DshAccountLogin: () => <div />,
 }));
 
 describe("CodexOAuthSection", () => {
@@ -123,7 +141,11 @@ describe("CodexOAuthSection", () => {
   });
 
   it("renders account quota in Auth Center", () => {
-    render(<AuthCenterPanel />);
+    render(
+      <QueryClientProvider client={createTestQueryClient()}>
+        <AuthCenterPanel />
+      </QueryClientProvider>,
+    );
 
     expect(mocks.renderAccountQuota).toHaveBeenCalledWith("account-1");
     expect(mocks.renderAccountQuota).toHaveBeenCalledWith("account-2");

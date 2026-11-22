@@ -18,6 +18,15 @@ export interface PiModelCatalogEntry {
  * Reviewed model values used only to build Pi provider presets.
  */
 export const piModelCatalog = {
+  "deepseek/deepseek-v4.1-flash-1017": {
+    capabilities: {
+      name: "DeepSeek V4.1 Flash 1017",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 1048576,
+      maxTokens: 131072,
+    },
+  },
   "amazon/nova-pro": {
     capabilities: {
       name: "Amazon Nova Pro",
@@ -273,6 +282,26 @@ export const piModelCatalog = {
       maxTokens: 128_000,
     },
   },
+  // 2026-11-08 按 Pi 1.5.0 内置 mistral 目录（@earendil-works/pi-ai
+  // providers/data/mistral.json）核对窗口与最大输出
+  "mistral/mistral-large-4": {
+    capabilities: {
+      name: "Mistral Large 4",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 1048576,
+      maxTokens: 262144,
+    },
+  },
+  "mistral/mistral-small-2603": {
+    capabilities: {
+      name: "Mistral Small 4",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 262144,
+      maxTokens: 256000,
+    },
+  },
   "moonshotai/kimi-k2.5": {
     capabilities: {
       name: "Kimi K2.5",
@@ -321,6 +350,15 @@ export const piModelCatalog = {
   "moonshotai/kimi-k3.1-pro": {
     capabilities: {
       name: "Kimi K3.1 Pro",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 1_048_576,
+      maxTokens: 131_072,
+    },
+  },
+  "moonshotai/kimi-k3.1-pro-highspeed": {
+    capabilities: {
+      name: "Kimi K3.1 Pro HighSpeed",
       reasoning: true,
       input: ["text", "image"],
       contextWindow: 1_048_576,

@@ -21,15 +21,26 @@ pub async fn claude_account_submit_paste(
 }
 
 /// 绑了账号的 Claude 官方卡的额度：按那个账号自己的登录查，带上它的套餐。
+/// 结果按账号写进托盘缓存（同 Codex 托管账号）：卡片和托盘悬停查到的是同一份。
 #[tauri::command(rename_all = "camelCase")]
 pub async fn get_claude_account_quota(
+    app: tauri::AppHandle,
+    app_state: tauri::State<'_, crate::store::AppState>,
     account_id: String,
 ) -> Result<crate::services::subscription::ClaudeAccountQuota, String> {
-    crate::services::subscription::get_claude_account_quota(
+    let account_id = account_id.trim().to_string();
+    let result = crate::services::subscription::get_claude_account_quota(
         crate::config::get_app_config_dir(),
-        account_id,
+        account_id.clone(),
     )
-    .await
+    .await;
+    if let Ok(quota) = &result {
+        app_state
+            .usage_cache
+            .put_claude_account(account_id, quota.quota.clone());
+        crate::tray::schedule_tray_refresh(&app);
+    }
+    result
 }
 
 /// Claude Code 默认登录的套餐（没绑账号的官方卡显示）；没登录或凭据里没写时为 `None`。
@@ -47,7 +58,8 @@ pub async fn get_claude_default_plan(
 pub struct ClaudeLoginSwitchStatus {
     /// 切到绑号卡时会切换登录（没被挡住）
     pub active: bool,
-    /// 不切换登录的原因：`"overrideDir"`（设了 Claude 配置目录覆盖）
+    /// 不切换登录的原因：`"wsl"`（Claude 配置目录在 WSL 里，账号功能不可用）或
+    /// `"overrideDir"`（设了别的 Claude 配置目录覆盖）
     pub blocked: Option<String>,
     /// Claude Code 现在登录的账号 key（按 `~/.claude.json` 的资料）
     pub live: Option<String>,

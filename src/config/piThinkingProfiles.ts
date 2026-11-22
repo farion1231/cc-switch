@@ -93,6 +93,19 @@ export const piThinkingProfiles = {
       max: null,
     },
   },
+  // Mistral Small 4 只收 reasoning_effort 的 none 和 high（Pi 1.5.0 内置
+  // mistral 目录同此映射）
+  noneOrHigh: {
+    map: {
+      off: "none",
+      minimal: null,
+      low: null,
+      medium: null,
+      high: "high",
+      xhigh: null,
+      max: null,
+    },
+  },
   openaiResponsesGpt5: {
     map: {
       off: null,
@@ -149,6 +162,19 @@ export const piThinkingProfiles = {
     },
   },
   openaiResponsesGpt6Astra: {
+    map: {
+      off: null,
+      minimal: null,
+      low: "low",
+      medium: "medium",
+      high: "high",
+      xhigh: "xhigh",
+      max: "max",
+    },
+  },
+  // MiniMax-M3.1-Flash always thinks (reasoning_effort "none" is rejected) and
+  // takes low/medium/high/xhigh/max.
+  minimaxM31: {
     map: {
       off: null,
       minimal: null,

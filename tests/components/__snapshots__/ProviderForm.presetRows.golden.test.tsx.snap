@@ -200,7 +200,6 @@ exports[`ProviderForm 预设新增行金标 > codex > E-FlowCode 1`] = `
       "config": "model_provider = "custom"
 model = "gpt-6.1-sol"
 model_reasoning_effort = "high"
-disable_response_storage = true
 
 [model_providers.custom]
 name = "E-FlowCode"
@@ -238,7 +237,6 @@ exports[`ProviderForm 预设新增行金标 > codex > Nvidia 1`] = `
       "config": "model_provider = "custom"
 model = "moonshotai/kimi-k2.6"
 model_reasoning_effort = "high"
-disable_response_storage = true
 
 [model_providers.custom]
 name = "nvidia"
@@ -307,9 +305,8 @@ exports[`ProviderForm 预设新增行金标 > codex > xAI (Grok) 1`] = `
         "OPENAI_API_KEY": "sk-golden-test",
       },
       "config": "model_provider = "custom"
-model = "grok-4.5"
+model = "grok-4.7"
 model_reasoning_effort = "high"
-disable_response_storage = true
 
 [model_providers.custom]
 name = "xai"
@@ -320,6 +317,7 @@ requires_openai_auth = true",
         "models": [
           {
             "contextWindow": 500000,
+            "defaultReasoningLevel": "high",
             "displayName": "Grok 4.7",
             "inputModalities": [
               "text",

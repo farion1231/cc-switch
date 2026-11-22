@@ -44,10 +44,66 @@ struct ResponseModelId {
     model_id: String,
 }
 
-pub(super) fn models_for_transcript(
-    transcript: &Path,
-    steps: &[u64],
-) -> Result<HashMap<u64, String>, String> {
+// Field 11 is the wait for the first token and field 12 the rest of the stream; both match the
+// step's own created / first-output / done timestamps to the millisecond. Decoded on their own
+// so an unexpected wire type there can never hide the model name.
+#[derive(Clone, PartialEq, Message)]
+struct GenerationTiming {
+    #[prost(message, optional, tag = "1")]
+    response: Option<ResponseTiming>,
+}
+
+#[derive(Clone, PartialEq, Message)]
+struct ResponseTiming {
+    #[prost(message, optional, tag = "11")]
+    first_token: Option<DurationValue>,
+    #[prost(message, optional, tag = "12")]
+    streaming: Option<DurationValue>,
+}
+
+/// `google.protobuf.Duration`.
+#[derive(Clone, PartialEq, Message)]
+struct DurationValue {
+    #[prost(int64, tag = "1")]
+    seconds: i64,
+    #[prost(int32, tag = "2")]
+    nanos: i32,
+}
+
+impl DurationValue {
+    fn millis(&self) -> Option<i64> {
+        let ms = self
+            .seconds
+            .checked_mul(1000)?
+            .checked_add(i64::from(self.nanos) / 1_000_000)?;
+        (ms >= 0).then_some(ms)
+    }
+}
+
+/// Exact timing recorded by agy for one generation.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct Timing {
+    pub latency_ms: i64,
+    pub first_token_ms: i64,
+}
+
+#[derive(Default)]
+pub(super) struct Generation {
+    pub model: Option<String>,
+    pub timing: Option<Timing>,
+}
+
+fn timing_of(bytes: &[u8]) -> Option<Timing> {
+    let response = GenerationTiming::decode(bytes).ok()?.response?;
+    let first_token_ms = response.first_token?.millis()?;
+    let latency_ms = first_token_ms.checked_add(response.streaming?.millis()?)?;
+    (latency_ms > 0).then_some(Timing {
+        latency_ms,
+        first_token_ms,
+    })
+}
+
+fn native_database_path(transcript: &Path) -> Result<Option<std::path::PathBuf>, String> {
     // brain/<id>/.system_generated/logs/transcript_full.jsonl and conversations/<id>.db
     // share the same CLI/IDE/private-profile root.
     let session = transcript
@@ -63,17 +119,51 @@ pub(super) fn models_for_transcript(
     let id = session.file_name().ok_or("Missing session id")?;
     let path = root.join("conversations").join(id).with_extension("db");
     if !path.is_file() {
-        return Ok(HashMap::new());
+        return Ok(None);
     }
     let root = root.canonicalize().map_err(|error| error.to_string())?;
     let path = path.canonicalize().map_err(|error| error.to_string())?;
     if !path.starts_with(root) {
         return Err("Conversation database is outside the Antigravity root".into());
     }
-    read_models(&path, steps).map_err(|error| error.to_string())
+    Ok(Some(path))
 }
 
-fn read_models(path: &Path, steps: &[u64]) -> rusqlite::Result<HashMap<u64, String>> {
+/// Fingerprint of the companion `conversations/<id>.db` (and its WAL file when present) so
+/// `session_log_sync` cursors stay valid across steady-state syncs while still re-importing
+/// when the native database is created or updated after the transcript.
+pub(super) fn native_state_fingerprint(transcript: &Path) -> String {
+    let Ok(Some(path)) = native_database_path(transcript) else {
+        return "none".to_string();
+    };
+    let file_sig = |target: &Path| -> (i64, u64) {
+        std::fs::metadata(target)
+            .map(|meta| {
+                (
+                    crate::services::session_usage::metadata_modified_nanos(&meta),
+                    meta.len(),
+                )
+            })
+            .unwrap_or((0, 0))
+    };
+    let (db_mtime, db_len) = file_sig(&path);
+    let mut wal_os = path.as_os_str().to_os_string();
+    wal_os.push("-wal");
+    let (wal_mtime, wal_len) = file_sig(Path::new(&wal_os));
+    format!("{db_mtime}:{db_len}:{wal_mtime}:{wal_len}")
+}
+
+pub(super) fn generations_for_transcript(
+    transcript: &Path,
+    steps: &[u64],
+) -> Result<HashMap<u64, Generation>, String> {
+    let Some(path) = native_database_path(transcript)? else {
+        return Ok(HashMap::new());
+    };
+    read_generations(&path, steps).map_err(|error| error.to_string())
+}
+
+fn read_generations(path: &Path, steps: &[u64]) -> rusqlite::Result<HashMap<u64, Generation>> {
     let mut conn = Connection::open_with_flags(
         path,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
@@ -84,7 +174,7 @@ fn read_models(path: &Path, steps: &[u64]) -> rusqlite::Result<HashMap<u64, Stri
     let tx = conn.transaction()?;
     let mut step_query = tx.prepare("SELECT metadata FROM steps WHERE idx=?1 AND step_type=15")?;
     let mut generation_query = tx.prepare("SELECT data FROM gen_metadata WHERE idx=?1")?;
-    let mut models = HashMap::new();
+    let mut generations = HashMap::new();
     for &step in steps {
         let Ok(index) = i64::try_from(step) else {
             continue;
@@ -116,16 +206,45 @@ fn read_models(path: &Path, steps: &[u64]) -> rusqlite::Result<HashMap<u64, Stri
             .ok()
             .and_then(|metadata| metadata.response)
             .map(|response| response.model);
-        if let Some(model) = [tiered, base]
+        // Orchestrator's display field names the mode (or just "Gemini Flash"),
+        // while field 19 identifies the planner/worker that produced this step.
+        // Only these exact AGY aliases are mapped; unknown IDs keep their configured pricing.
+        // https://antigravity.google/docs/models#orchestrator
+        let orchestrator_model = match base.as_deref() {
+            Some("gemini-pro-orchestrator") => Some("gemini-4-carbon"),
+            Some("gemini-pro-orchestrator-argon" | "gemini-pro-orchestrator-g1-pro") => {
+                Some("gemini-4-argon")
+            }
+            Some("gemini-pro-orchestrator-neon") => Some("gemini-4-neon"),
+            Some("gemini-flash-worker-agy") => Some("gemini-4-hydrogen"),
+            _ => None,
+        };
+        let tiered = tiered.filter(|model| {
+            let id = super::model_id_of(model);
+            // Keep a concrete field-21 model/tier if a newer AGY build supplies one.
+            !(orchestrator_model.is_some()
+                && (super::is_orchestrator(&id)
+                    || matches!(id.as_str(), "gemini-flash" | "gemini-flash-worker-agy")))
+        });
+        let model = [tiered, orchestrator_model.map(str::to_string), base]
             .into_iter()
             .flatten()
             .map(|model| model.trim().to_string())
-            .find(|model| !model.is_empty() && !model.eq_ignore_ascii_case("unknown"))
-        {
-            models.insert(step, model);
+            .find(|model| !model.is_empty() && !model.eq_ignore_ascii_case("unknown"));
+        let timing = timing_of(&bytes);
+        if model.is_some() || timing.is_some() {
+            generations.insert(step, Generation { model, timing });
         }
     }
-    Ok(models)
+    Ok(generations)
+}
+
+#[cfg(test)]
+fn read_models(path: &Path, steps: &[u64]) -> rusqlite::Result<HashMap<u64, String>> {
+    Ok(read_generations(path, steps)?
+        .into_iter()
+        .filter_map(|(step, generation)| Some((step, generation.model?)))
+        .collect())
 }
 
 #[cfg(test)]
@@ -181,12 +300,93 @@ pub(super) fn test_model_id(id: &str) -> Vec<u8> {
     field
 }
 
+/// Fields 11 and 12 as durations of the given milliseconds.
+#[cfg(test)]
+pub(super) fn test_timing(first_token_ms: i64, streaming_ms: i64) -> Vec<u8> {
+    let duration = |ms: i64| DurationValue {
+        seconds: ms / 1000,
+        nanos: i32::try_from(ms % 1000 * 1_000_000).unwrap(),
+    };
+    let mut fields = Vec::new();
+    prost::encoding::message::encode(11, &duration(first_token_ms), &mut fields);
+    prost::encoding::message::encode(12, &duration(streaming_ms), &mut fields);
+    fields
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
+    fn orchestrator_native_aliases_use_generation_role_instead_of_generic_display() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session.db");
+        let conn = write_test_database(
+            &path,
+            &[
+                (1, 0, "gemini-pro-orchestrator"),
+                (3, 7, "gemini-flash-worker-agy"),
+                (5, 2, "gemini-pro-orchestrator-argon"),
+                (7, 3, "future-worker"),
+                (9, 4, "gemini-flash-worker-agy"),
+                (11, 5, "gemini-pro-orchestrator-neon"),
+                (13, 6, "gemini-pro-orchestrator-g1-pro"),
+            ],
+        );
+        set_test_generation(
+            &conn,
+            0,
+            "gemini-pro-orchestrator",
+            &test_model_id("Orchestrator (Carbon)"),
+        );
+        set_test_generation(
+            &conn,
+            7,
+            "gemini-flash-worker-agy",
+            &test_model_id("Gemini Flash"),
+        );
+        set_test_generation(
+            &conn,
+            2,
+            "gemini-pro-orchestrator-argon",
+            &test_model_id("Orchestrator (Argon)"),
+        );
+        set_test_generation(
+            &conn,
+            4,
+            "gemini-flash-worker-agy",
+            &test_model_id("gemini-4-hydrogen-high"),
+        );
+        set_test_generation(
+            &conn,
+            5,
+            "gemini-pro-orchestrator-neon",
+            &test_model_id("Orchestrator (Neon)"),
+        );
+        set_test_generation(
+            &conn,
+            6,
+            "gemini-pro-orchestrator-g1-pro",
+            &test_model_id("Orchestrator (Argon)"),
+        );
+        let models = read_models(&path, &[1, 3, 5, 7, 9, 11, 13]).unwrap();
+        assert_eq!(models[&1], "gemini-4-carbon");
+        assert_eq!(models[&3], "gemini-4-hydrogen");
+        assert_eq!(models[&5], "gemini-4-argon");
+        assert_eq!(models[&7], "future-worker");
+        assert_eq!(models[&9], "gemini-4-hydrogen-high");
+        assert_eq!(models[&11], "gemini-4-neon");
+        assert_eq!(models[&13], "gemini-4-argon");
+    }
+
+    #[test]
     fn uses_step_references_including_zero_instead_of_generation_order() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("session.db");
         let conn = write_test_database(
@@ -215,6 +415,9 @@ mod tests {
 
     #[test]
     fn skips_missing_references_and_malformed_metadata() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("session.db");
         let conn = write_test_database(&path, &[(1, 0, "gemini-4-argon")]);
@@ -235,6 +438,9 @@ mod tests {
 
     #[test]
     fn prefers_tiered_model_id_and_falls_back_to_the_base_name() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("session.db");
         let conn = write_test_database(
@@ -268,6 +474,9 @@ mod tests {
 
     #[test]
     fn reads_committed_wal_and_returns_promptly_for_an_exclusive_writer() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("session.db");
         let conn = write_test_database(&path, &[(1, 0, "gemini-4-argon")]);
@@ -303,8 +512,55 @@ mod tests {
         let transcript = dir
             .path()
             .join("brain/session/.system_generated/logs/transcript_full.jsonl");
-        assert!(models_for_transcript(&transcript, &[1]).unwrap().is_empty());
+        assert!(generations_for_transcript(&transcript, &[1])
+            .unwrap()
+            .is_empty());
         assert!(!dir.path().join("conversations").exists());
+    }
+
+    #[test]
+    fn reads_first_token_and_streaming_durations_without_hiding_the_model() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session.db");
+        let conn = write_test_database(
+            &path,
+            &[
+                (1, 0, "gemini-4-argon"),
+                (2, 1, "gemini-4-argon"),
+                (3, 2, "gemini-4-argon"),
+                (4, 3, "gemini-4-argon"),
+            ],
+        );
+        // Values taken from a real claude-opus generation: 2.799 s wait, 1.722 s stream.
+        set_test_generation(&conn, 0, "gemini-4-argon", &test_timing(2799, 1722));
+        // Only the wait recorded: no total to compare against, so no timing.
+        let mut wait_only = Vec::new();
+        prost::encoding::message::encode(
+            11,
+            &DurationValue {
+                seconds: 3,
+                nanos: 0,
+            },
+            &mut wait_only,
+        );
+        set_test_generation(&conn, 1, "gemini-4-argon", &wait_only);
+        // Field 11 as a varint (wrong wire type) must not hide the model.
+        set_test_generation(&conn, 2, "gemini-4-argon", b"\x58\x07");
+        let got = read_generations(&path, &[1, 2, 3, 4]).unwrap();
+        assert_eq!(
+            got[&1].timing,
+            Some(Timing {
+                latency_ms: 4521,
+                first_token_ms: 2799,
+            })
+        );
+        for step in [2, 3, 4] {
+            assert_eq!(got[&step].model.as_deref(), Some("gemini-4-argon"));
+            assert_eq!(got[&step].timing, None, "step {step}");
+        }
     }
 
     #[test]
@@ -319,6 +575,6 @@ mod tests {
         let transcript = dir
             .path()
             .join("brain/session/.system_generated/logs/transcript_full.jsonl");
-        assert!(models_for_transcript(&transcript, &[1]).is_err());
+        assert!(generations_for_transcript(&transcript, &[1]).is_err());
     }
 }

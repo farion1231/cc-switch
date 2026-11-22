@@ -4,11 +4,15 @@ import type { TFunction } from "i18next";
 import { AlertTriangle, BookOpen, Check } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { settingsApi } from "@/lib/api";
-import * as PopoverPrimitive from "@radix-ui/react-popover";
 import type { AppId } from "@/lib/api/types";
 import { Button } from "@/components/ui/button";
 import { HelpTip } from "@/components/ui/help-tip";
 import { HoverTip } from "@/components/ui/hover-tip";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { AppGlyph, APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import { SearchField } from "@/components/ui/search-field";
 import { cn } from "@/lib/utils";
@@ -37,7 +41,7 @@ export function resolveBulkScope<T>(
   return { rows: visibleRows, kind: narrowedBy };
 }
 
-// ─── 列高亮（悬停 / 键盘焦点落在某一列时，列头跟着亮并显示应用名） ─────────────
+// ─── 列高亮（悬停 / 键盘焦点落在某一列时，列头跟着亮） ─────────────────────
 /**
  * 只有列头订阅当前列；单元格只拿稳定的 setter，悬停时整张表不会重渲染。
  */
@@ -228,6 +232,7 @@ export function MatrixColumnHeader({
 }: MatrixColumnHeaderProps) {
   const { t } = useTranslation();
   const [open, setOpen] = React.useState(false);
+  const [headerHovered, setHeaderHovered] = React.useState(false);
   const countId = React.useId();
   const name = APP_DISPLAY_NAME[app];
   const rest = scopeTotal - scopeEnabled;
@@ -236,9 +241,9 @@ export function MatrixColumnHeader({
 
   const tracking = useColumnTracking(app);
   const activeColumn = React.useContext(MatrixActiveColumnContext);
-  // 悬停 / 键盘聚焦在这一列（列头或任一单元格）时亮起；弹层开着时名字已在弹层标题里
+  // 悬停 / 键盘聚焦在这一列时亮起；应用名只跟随列头悬停，弹层开着时隐藏。
   const highlighted = activeColumn === app || open;
-  const showName = activeColumn === app && !open;
+  const showName = !open && headerHovered;
 
   const run = (action: () => void) => {
     setOpen(false);
@@ -246,17 +251,19 @@ export function MatrixColumnHeader({
   };
 
   return (
-    <PopoverPrimitive.Root open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={setOpen}>
       <span
         className="relative flex w-9 shrink-0 justify-center"
         data-column={app}
         {...tracking}
       >
         <HoverTip content={title} side="top">
-          <PopoverPrimitive.Trigger asChild>
+          <PopoverTrigger asChild>
             <button
               type="button"
               disabled={disabled}
+              onMouseEnter={() => setHeaderHovered(true)}
+              onMouseLeave={() => setHeaderHovered(false)}
               aria-label={t("appMatrix.columnAria", {
                 app: name,
                 on: enabledCount,
@@ -283,7 +290,7 @@ export function MatrixColumnHeader({
                 {enabledCount}
               </span>
             </button>
-          </PopoverPrimitive.Trigger>
+          </PopoverTrigger>
         </HoverTip>
         {showName && (
           // 名字已在列头的无障碍名称里，这里只给眼睛看
@@ -296,97 +303,93 @@ export function MatrixColumnHeader({
           </span>
         )}
       </span>
-      <PopoverPrimitive.Portal>
-        <PopoverPrimitive.Content
-          align="end"
-          sideOffset={4}
-          collisionPadding={8}
-          className="z-[110] flex w-[260px] flex-col gap-2.5 rounded-panel border border-border bg-surface px-3.5 pb-3.5 pt-3 text-fg-1 shadow-v7-md outline-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2"
-        >
-          <div className="flex items-center gap-2">
-            <AppGlyph app={app} size={16} badgeClassName="bg-surface" />
-            <span className="text-body font-semibold">{name}</span>
-            {help && <HelpTip title={help.title}>{help.body}</HelpTip>}
-          </div>
-          <div className="flex flex-col">
-            <span id={countId} className="text-caption text-fg-2">
-              {t("appMatrix.pop.count", {
-                on: scopeEnabled,
-                total: scopeTotal,
-                noun,
-              })}
-            </span>
-            {scopeFailed > 0 && (
-              <span className="text-caption text-warning-text">
-                {t("appMatrix.pop.failCount", { count: scopeFailed })}
-              </span>
-            )}
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              type="button"
-              variant="neutral"
-              size="compact"
-              aria-disabled={allOn || scopeTotal === 0}
-              aria-describedby={allOn ? countId : undefined}
-              className="aria-disabled:cursor-not-allowed aria-disabled:opacity-45"
-              onClick={() => {
-                if (allOn || scopeTotal === 0) return;
-                run(onEnableRest);
-              }}
-            >
-              {allOn
-                ? t("appMatrix.pop.enableAll")
-                : t("appMatrix.pop.enableRest", { count: rest })}
-            </Button>
-            <Button
-              type="button"
-              variant="neutral"
-              size="compact"
-              aria-disabled={noneOn}
-              aria-describedby={noneOn ? countId : undefined}
-              className="aria-disabled:cursor-not-allowed aria-disabled:opacity-45"
-              onClick={() => {
-                if (noneOn) return;
-                run(onDisableAll);
-              }}
-            >
-              {t("appMatrix.pop.disableAll")}
-            </Button>
-          </div>
-          {extraAction && (
-            <button
-              type="button"
-              onClick={() => run(extraAction.onClick)}
-              className="self-start text-body font-medium text-fg-1 underline underline-offset-[3px] hover:text-fg-2"
-            >
-              {extraAction.label}
-            </button>
-          )}
-          {docsLink && (
-            <button
-              type="button"
-              onClick={() =>
-                void settingsApi
-                  .openExternal(docsLink.url)
-                  .catch(() => undefined)
-              }
-              className="inline-flex items-start gap-1 self-start text-left text-caption text-fg-2 underline-offset-2 hover:text-fg-1 hover:underline"
-            >
-              <BookOpen className="mt-0.5 h-3 w-3 shrink-0" />
-              {docsLink.label}
-            </button>
-          )}
-          <span className="text-caption text-fg-3">
-            {scopeKind === "search"
-              ? t("appMatrix.pop.scopeSearch", { count: scopeTotal })
-              : scopeKind === "filter"
-                ? t("appMatrix.pop.scopeFilter", { count: scopeTotal })
-                : t("appMatrix.pop.scopeAll", { count: scopeTotal })}
+      <PopoverContent
+        align="end"
+        sideOffset={4}
+        collisionPadding={8}
+        className="z-[110] flex w-[260px] flex-col gap-2.5 rounded-panel border border-border bg-surface px-3.5 pb-3.5 pt-3 text-fg-1 shadow-v7-md outline-none"
+      >
+        <div className="flex items-center gap-2">
+          <AppGlyph app={app} size={16} badgeClassName="bg-surface" />
+          <span className="text-body font-semibold">{name}</span>
+          {help && <HelpTip title={help.title}>{help.body}</HelpTip>}
+        </div>
+        <div className="flex flex-col">
+          <span id={countId} className="text-caption text-fg-2">
+            {t("appMatrix.pop.count", {
+              on: scopeEnabled,
+              total: scopeTotal,
+              noun,
+            })}
           </span>
-        </PopoverPrimitive.Content>
-      </PopoverPrimitive.Portal>
-    </PopoverPrimitive.Root>
+          {scopeFailed > 0 && (
+            <span className="text-caption text-warning-text">
+              {t("appMatrix.pop.failCount", { count: scopeFailed })}
+            </span>
+          )}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            variant="neutral"
+            size="compact"
+            aria-disabled={allOn || scopeTotal === 0}
+            aria-describedby={allOn ? countId : undefined}
+            className="aria-disabled:cursor-not-allowed aria-disabled:opacity-45"
+            onClick={() => {
+              if (allOn || scopeTotal === 0) return;
+              run(onEnableRest);
+            }}
+          >
+            {allOn
+              ? t("appMatrix.pop.enableAll")
+              : t("appMatrix.pop.enableRest", { count: rest })}
+          </Button>
+          <Button
+            type="button"
+            variant="neutral"
+            size="compact"
+            aria-disabled={noneOn}
+            aria-describedby={noneOn ? countId : undefined}
+            className="aria-disabled:cursor-not-allowed aria-disabled:opacity-45"
+            onClick={() => {
+              if (noneOn) return;
+              run(onDisableAll);
+            }}
+          >
+            {t("appMatrix.pop.disableAll")}
+          </Button>
+        </div>
+        {extraAction && (
+          <button
+            type="button"
+            onClick={() => run(extraAction.onClick)}
+            className="self-start text-body font-medium text-fg-1 underline underline-offset-[3px] hover:text-fg-2"
+          >
+            {extraAction.label}
+          </button>
+        )}
+        {docsLink && (
+          <button
+            type="button"
+            onClick={() =>
+              void settingsApi.openExternal(docsLink.url).catch(() => undefined)
+            }
+            className="inline-flex items-start gap-1 self-start text-left text-caption text-fg-2 underline-offset-2 hover:text-fg-1 hover:underline"
+          >
+            <BookOpen className="mt-0.5 h-3 w-3 shrink-0" />
+            {docsLink.label}
+          </button>
+        )}
+        <span className="text-caption text-fg-3">
+          {scopeKind === "search"
+            ? t("appMatrix.pop.scopeSearch", { count: scopeTotal })
+            : scopeKind === "filter"
+              ? t("appMatrix.pop.scopeFilter", { count: scopeTotal })
+              : t("appMatrix.pop.scopeAll", { count: scopeTotal })}
+        </span>
+      </PopoverContent>
+    </Popover>
   );
 }
 

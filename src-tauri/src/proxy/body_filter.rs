@@ -8,6 +8,8 @@
 //! - 支持嵌套对象和数组的深度过滤
 //! - JSON Schema 的 properties / patternProperties / definitions / $defs 名称
 //!   是用户定义的字段名，不按私有参数过滤
+//! - 工具调用的参数（`tool_use.input` / `functionCall.args` /
+//!   `function_call.arguments`）是用户数据，里面的 `_id`、`_meta` 等原样透传
 //!
 //! ## 使用场景
 //! - `_internal_id`: 内部追踪 ID
@@ -65,55 +67,94 @@ pub fn filter_private_params(body: Value) -> Value {
 /// let output = filter_private_params_with_whitelist(input, &["_metadata"]);
 /// // output 包含 _metadata，不包含 _internal_id
 /// ```
-pub fn filter_private_params_with_whitelist(body: Value, whitelist: &[String]) -> Value {
+pub fn filter_private_params_with_whitelist(mut body: Value, whitelist: &[String]) -> Value {
     let whitelist_set: HashSet<&str> = whitelist.iter().map(|s| s.as_str()).collect();
-    filter_recursive_with_whitelist(body, &mut Vec::new(), &mut Vec::new(), &whitelist_set)
+    let mut removed_keys = Vec::new();
+    filter_recursive_with_whitelist(
+        &mut body,
+        FilterScope::Normal,
+        &mut removed_keys,
+        &whitelist_set,
+    );
+    if !removed_keys.is_empty() {
+        log::debug!("[BodyFilter] 过滤私有参数: {removed_keys:?}");
+    }
+    body
+}
+
+/// 当前递归位置属于哪一类名字空间。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FilterScope {
+    /// 普通对象：`_` 前缀视为网关私有字段。
+    Normal,
+    /// JSON Schema 的字段名表：名字由用户定义，不按私有字段过滤。
+    SchemaNameMap,
+    /// 工具调用的参数：是用户数据（`_id`、`_meta`、`__typename`……），原样透传。
+    UserData,
 }
 
 /// 递归过滤实现（支持白名单）
 fn filter_recursive_with_whitelist(
-    value: Value,
-    path: &mut Vec<String>,
+    value: &mut Value,
+    scope: FilterScope,
     removed_keys: &mut Vec<String>,
     whitelist: &HashSet<&str>,
-) -> Value {
+) {
+    // 工具入参是用户数据，内部的 `_` 前缀键不是网关私有字段。
+    if scope == FilterScope::UserData {
+        return;
+    }
     match value {
         Value::Object(map) => {
-            let is_schema_name_map = path.last().is_some_and(|key| matches_schema_name_map(key));
-            let filtered: serde_json::Map<String, Value> = map
-                .into_iter()
-                .filter_map(|(key, val)| {
-                    // 以 _ 开头且不在白名单中的字段被过滤
-                    if key.starts_with('_')
-                        && !whitelist.contains(key.as_str())
-                        && !is_schema_name_map
-                    {
-                        removed_keys.push(key);
-                        None
-                    } else {
-                        path.push(key.clone());
-                        let filtered_value =
-                            filter_recursive_with_whitelist(val, path, removed_keys, whitelist);
-                        path.pop();
-                        Some((key, filtered_value))
+            // `retain` 里拿不到父对象，先把判断工具调用所需的信息取出来。
+            // Anthropic 除了 `tool_use`，还有 `server_tool_use`（web search 等）
+            // 和 `mcp_tool_use`，它们的 `input` 同样是用户参数。
+            let is_tool_use = map
+                .get("type")
+                .and_then(Value::as_str)
+                .is_some_and(|kind| kind.ends_with("tool_use"));
+            let has_name = map.contains_key("name");
+            map.retain(|key, val| {
+                if key.starts_with('_')
+                    && !whitelist.contains(key.as_str())
+                    && scope != FilterScope::SchemaNameMap
+                {
+                    if log::log_enabled!(log::Level::Debug) {
+                        removed_keys.push(key.clone());
                     }
-                })
-                .collect();
-
-            // 仅在有过滤时记录日志（避免每次请求都打印）
-            if !removed_keys.is_empty() {
-                log::debug!("[BodyFilter] 过滤私有参数: {removed_keys:?}");
-                removed_keys.clear();
-            }
-
-            Value::Object(filtered)
+                    false
+                } else {
+                    let child_scope = if matches_schema_name_map(key) {
+                        FilterScope::SchemaNameMap
+                    } else if is_tool_argument_key(key, is_tool_use, has_name) {
+                        FilterScope::UserData
+                    } else {
+                        FilterScope::Normal
+                    };
+                    filter_recursive_with_whitelist(val, child_scope, removed_keys, whitelist);
+                    true
+                }
+            });
         }
-        Value::Array(arr) => Value::Array(
-            arr.into_iter()
-                .map(|v| filter_recursive_with_whitelist(v, path, removed_keys, whitelist))
-                .collect(),
-        ),
-        other => other,
+        Value::Array(arr) => {
+            for value in arr {
+                filter_recursive_with_whitelist(value, scope, removed_keys, whitelist);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// 这个键的值是不是工具调用参数。
+///
+/// - Anthropic `tool_use.input`（以及 `server_tool_use` / `mcp_tool_use`）
+/// - OpenAI legacy `function_call.arguments`（对象形态）
+/// - Gemini `functionCall.args`
+fn is_tool_argument_key(key: &str, is_tool_use: bool, has_name: bool) -> bool {
+    match key {
+        "input" => is_tool_use,
+        "args" | "arguments" => has_name,
+        _ => false,
     }
 }
 
@@ -322,6 +363,61 @@ mod tests {
         assert!(schema["properties"].get("_meta").is_some());
         assert!(schema["properties"]["_id"].get("_internal_note").is_none());
         assert!(schema.get("_private_schema_note").is_none());
+    }
+
+    /// 工具调用的参数是用户数据：`_id`、`_meta`、`__typename` 这些以 `_` 开头的键
+    /// 在 MCP / 数据库 / GraphQL 工具入参里很常见。过滤私有参数不应改写历史工具调用
+    /// 的参数，否则模型看到的上下文和实际执行的不一致，严格的上游还会直接拒绝。
+    #[test]
+    fn test_tool_call_arguments_keep_underscore_keys() {
+        let input = json!({
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "t1",
+                            "name": "mcp__db__find",
+                            "input": {"_id": "abc", "__typename": "User", "limit": 10}
+                        },
+                        {
+                            "type": "server_tool_use",
+                            "id": "s1",
+                            "name": "web_search",
+                            "input": {"_query_id": "q1", "query": "x"}
+                        },
+                        {"type": "text", "text": "hi", "_internal_note": "remove"}
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "tool_result", "tool_use_id": "t1", "content": "ok"}
+                    ]
+                }
+            ],
+            "contents": [{"parts": [{"functionCall": {"name": "f", "args": {"_id": "g"}}}]}]
+        });
+
+        let output = filter_private_params(input);
+        let tool = &output["messages"][0]["content"][0];
+        assert_eq!(tool["input"]["_id"], "abc");
+        assert_eq!(tool["input"]["__typename"], "User");
+        assert_eq!(tool["input"]["limit"], 10);
+        // server_tool_use 的 input 同样是用户参数
+        let server_tool = &output["messages"][0]["content"][1];
+        assert_eq!(server_tool["input"]["_query_id"], "q1");
+        assert_eq!(server_tool["input"]["query"], "x");
+        // 普通内容块里的 `_` 字段仍然按私有参数过滤
+        assert!(output["messages"][0]["content"][2]
+            .get("_internal_note")
+            .is_none());
+        // Gemini 的 functionCall.args 同样是用户参数
+        assert_eq!(
+            output["contents"][0]["parts"][0]["functionCall"]["args"]["_id"],
+            "g"
+        );
     }
 
     #[test]

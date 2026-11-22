@@ -59,6 +59,7 @@ const piApiUpdateProviderUsageScriptMock = vi.fn();
 const settingsApiGetMock = vi.fn();
 const settingsApiApplyMock = vi.fn();
 const openclawApiGetModelCatalogMock = vi.fn();
+const openclawApiSetModelCatalogMock = vi.fn();
 const openclawApiGetDefaultModelMock = vi.fn();
 const openclawApiSetDefaultModelMock = vi.fn();
 
@@ -80,6 +81,8 @@ vi.mock("@/lib/api", () => ({
   openclawApi: {
     getModelCatalog: (...args: unknown[]) =>
       openclawApiGetModelCatalogMock(...args),
+    setModelCatalog: (...args: unknown[]) =>
+      openclawApiSetModelCatalogMock(...args),
     getDefaultModel: (...args: unknown[]) =>
       openclawApiGetDefaultModelMock(...args),
     setDefaultModel: (...args: unknown[]) =>
@@ -122,6 +125,7 @@ beforeEach(() => {
   settingsApiGetMock.mockReset();
   settingsApiApplyMock.mockReset();
   openclawApiGetModelCatalogMock.mockReset();
+  openclawApiSetModelCatalogMock.mockReset();
   openclawApiGetDefaultModelMock.mockReset();
   openclawApiSetDefaultModelMock.mockReset();
   toastSuccessMock.mockReset();
@@ -285,6 +289,43 @@ describe("useProviderActions", () => {
       "路由已切换至 Test Provider，后续新请求将使用该供应商。",
       { closeButton: true },
     );
+  });
+
+  it("names a failed OMO variant cleanup instead of blaming a backfill", async () => {
+    switchProviderMutateAsync.mockResolvedValueOnce({
+      warnings: ["omo_variant_cleanup_failed:omo-a"],
+    });
+    const { wrapper } = createWrapper();
+    const { result } = renderHook(() => useProviderActions("opencode"), {
+      wrapper,
+    });
+    await act(async () => {
+      await result.current.switchProvider(
+        createProvider({ id: "omo-a", category: "omo" }),
+      );
+    });
+    expect(toastWarningMock.mock.calls.map(([message]) => message)).toEqual([
+      "切换成功，但未能删除另一个 OMO 变体（OMO / OMO Slim）的配置文件，OpenCode 可能同时加载两者；请在 OpenCode 配置目录中手动删除它",
+    ]);
+  });
+
+  it("still reports an uncoded warning as a failed backfill", async () => {
+    switchProviderMutateAsync.mockResolvedValueOnce({
+      warnings: ["omo_variant_cleanup_failed:omo-a", "backfill: boom"],
+    });
+    const { wrapper } = createWrapper();
+    const { result } = renderHook(() => useProviderActions("opencode"), {
+      wrapper,
+    });
+    await act(async () => {
+      await result.current.switchProvider(
+        createProvider({ id: "omo-a", category: "omo" }),
+      );
+    });
+    expect(toastWarningMock.mock.calls.map(([message]) => message)).toEqual([
+      "切换成功，但未能删除另一个 OMO 变体（OMO / OMO Slim）的配置文件，OpenCode 可能同时加载两者；请在 OpenCode 配置目录中手动删除它",
+      "切换成功，但旧供应商配置回填失败，您手动修改的配置可能未保存",
+    ]);
   });
 
   it("does not infer a hot switch solely from the UI takeover flag", async () => {
@@ -889,6 +930,36 @@ describe("useProviderActions", () => {
     });
 
     expect(result.current.isLoading).toBe(true);
+  });
+
+  it("keeps existing OpenClaw catalog entries when registering a new provider's models", async () => {
+    openclawApiGetModelCatalogMock.mockResolvedValueOnce({
+      "my-or/kept": { alias: "Mine" },
+      "my-or/preset": { alias: "Old" },
+    });
+    const { wrapper } = createWrapper();
+    const { result } = renderHook(() => useProviderActions("openclaw"), {
+      wrapper,
+    });
+
+    await act(async () => {
+      await result.current.addProvider({
+        ...createProvider(),
+        suggestedDefaults: {
+          modelCatalog: {
+            "my-or/kept": {},
+            "my-or/preset": { alias: "Opus" },
+            "my-or/new": {},
+          },
+        },
+      });
+    });
+
+    expect(openclawApiSetModelCatalogMock).toHaveBeenCalledWith({
+      "my-or/kept": { alias: "Mine" },
+      "my-or/preset": { alias: "Opus" },
+      "my-or/new": {},
+    });
   });
 
   it("sets the first OpenClaw model without inventing a fallback chain", async () => {

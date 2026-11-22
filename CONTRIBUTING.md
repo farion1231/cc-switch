@@ -12,7 +12,7 @@ There are many ways to contribute:
 - **Suggest features** — Have an idea? [Submit a feature request](https://github.com/farion1231/cc-switch/issues/new?template=feature_request.yml).
 - **Improve docs** — Spot a typo or missing info? [Report a doc issue](https://github.com/farion1231/cc-switch/issues/new?template=doc_issue.yml).
 - **Contribute code** — Fix bugs or implement features via pull requests.
-- **Translate** — Help us improve translations for Simplified Chinese, Traditional Chinese, English, and Japanese.
+- **Translate** — Help us improve translations for Simplified Chinese, Traditional Chinese, English, German, Japanese, Korean, Turkish, and Russian.
 
 > **Security vulnerabilities**: Please do NOT use public issues. See our [Security Policy](./SECURITY.md) instead.
 
@@ -52,8 +52,8 @@ pnpm dev
 | `pnpm build` | Production build and packaging |
 | `pnpm build:renderer` | Build the frontend only, output to `dist/` |
 | `pnpm typecheck` | TypeScript type checking (strict; unused imports or parameters are errors) |
-| `pnpm format` | Format `src/` with Prettier |
-| `pnpm format:check` | Check code formatting in `src/` |
+| `pnpm format` | Format `src/` and `tests/` with Prettier |
+| `pnpm format:check` | Check code formatting in `src/` and `tests/` |
 | `pnpm test:unit` | Run frontend unit tests |
 | `pnpm test:unit:watch` | Run frontend unit tests in watch mode |
 
@@ -62,7 +62,7 @@ Rust backend commands (run inside `src-tauri/`):
 ```bash
 cd src-tauri
 cargo fmt                     # Format Rust code
-cargo clippy -- -D warnings   # Clippy check (same as CI, warnings are errors)
+cargo clippy --all-targets -- -D warnings   # Clippy check (same as CI, warnings are errors)
 cargo test                    # Run all backend tests
 cargo test some_test_name     # Run tests matching a name
 ```
@@ -83,7 +83,7 @@ For a debug build, append `--debug` to the command above. This single-quote form
 
 **Frontend**: vitest runs `*.test.ts(x)` under `tests/` and `src/`; Tauri calls are mocked with MSW (see `tests/msw/`); component tests use @testing-library/react.
 
-**Backend**: unit tests live next to the source (`#[cfg(test)]`), and integration tests live in `src-tauri/tests/`. CI runs `cargo test` on Linux, macOS, and Windows.
+**Backend**: unit tests live next to the source (`#[cfg(test)]`), and integration tests are modules of the single test binary in `src-tauri/tests/integration/` (register new ones in its `main.rs`; every top-level file under `tests/` would link the whole app again). CI runs `cargo test` on Linux, macOS, and Windows.
 
 > **Isolate your real config**: some backend tests read and write directories such as `~/.cc-switch` and `~/.codex`. When running them locally, point `CC_SWITCH_TEST_HOME` at a temporary directory:
 >
@@ -113,7 +113,7 @@ Backend (Tauri 2 + Rust)
 
 - **SSOT** (single source of truth): providers, MCP, prompts, Skills, projects, usage, and other data are all stored in `~/.cc-switch/cc-switch.db` (SQLite)
 - **Device-level settings**: settings that belong to this machine only, such as directory overrides and backup policy, are stored in `~/.cc-switch/settings.json` and are not cloud-synced
-- **Two write modes**: for switch-mode tools (Claude Code, Claude Desktop, Codex, Gemini CLI, Grok Build), switching first backfills the current live config into the current provider (except for Claude Desktop), then writes the new provider; for coexist-mode tools (OpenCode, OpenClaw, Hermes, Pi, MiniMax Code), all providers coexist in a single live file and nothing is backfilled
+- **Two write modes**: for switch-mode tools (such as Claude Code and Codex), direct switching updates provider-owned fields in the live config while preserving unrelated settings, without backfilling the previous live config into the previous provider; for coexist-mode tools (such as OpenCode and Hermes), all providers coexist in a single live file and nothing is backfilled. Each tool's mode is the `additive` flag of its `AppSpec` in `src-tauri/src/app_config.rs`. The flag does not cover launch-only cards, which write no config file and only open a terminal with the card's settings: Antigravity CLI (`additive` is false, yet it is not switch-mode) and GitHub Copilot CLI's official sign-in card (Copilot is `additive`, but only its bring-your-own-model cards coexist)
 - **Atomic writes**: all live configs are written via "temp file + rename" to avoid corruption
 - **Concurrency safety**: the database connection is protected by a Mutex to avoid race conditions
 - **Layered architecture**: Commands (parameter validation and forwarding) → Services (business logic) → DAO → Database; the Commands layer stays thin
@@ -121,7 +121,7 @@ Backend (Tauri 2 + Rust)
 
 ### Core Components
 
-- **ProviderService**: provider CRUD, switching, backfill, and sorting
+- **ProviderService**: provider CRUD, switching, live config writes, and sorting
 - **McpService**: MCP server management, importing from each tool, and syncing to live files
 - **SkillService / PromptService**: installing and syncing Skills, and each tool's prompt files
 - **ProfileService**: saving and switching project snapshots
@@ -147,7 +147,7 @@ Backend (Tauri 2 + Rust)
 │   ├── config/               # Provider presets per tool (*ProviderPresets.ts), MCP presets
 │   ├── hooks/                # Custom hooks (business logic)
 │   ├── lib/api/              # Tauri invoke wrappers (lib/query/ holds the TanStack Query config)
-│   ├── i18n/locales/         # UI strings (zh / zh-TW / en / ja; community: tr)
+│   ├── i18n/locales/         # UI strings (zh / zh-TW / en / de / ja / ko / tr / ru)
 │   ├── icons/                # Provider icons (index is maintained by hand)
 │   └── types/ utils/ contexts/
 ├── src-tauri/                # Backend (Rust)
@@ -171,14 +171,15 @@ Backend (Tauri 2 + Rust)
 ## Code Style
 
 - **Frontend**: Prettier for formatting (`src/` only, default config), strict TypeScript (`pnpm typecheck`); the project does not use ESLint
-- **Backend**: `cargo fmt` for formatting, `cargo clippy -- -D warnings` for linting
+- **Backend**: `cargo fmt` for formatting, `cargo clippy --all-targets -- -D warnings` for linting
 - **Tauri 2 commands**: the command name is the Rust function name and stays snake_case; when calling `invoke` from the frontend, write argument names in camelCase (e.g., Rust `provider_id` becomes `providerId` on the frontend). Register new commands in `generate_handler!` in `src-tauri/src/lib.rs`, and put the frontend wrappers in `src/lib/api/`
+- **Rules the frontend mirrors from the backend** (constants, URL detection, app capabilities, languages): don't rely on a "keep in sync" comment. A Rust test writes the backend values to a JSON fixture in `tests/config/` and a vitest test compares the frontend copy with it, so changing one side alone fails a test. See `src-tauri/src/frontend_parity_tests.rs` and `tests/config/backendConstants.test.ts`; after an intended backend change, regenerate with `CC_SWITCH_UPDATE_GOLDEN=1 cargo test <test name>` and review the fixture diff
 
 Run the same checks as CI before submitting:
 
 ```bash
 pnpm typecheck && pnpm format:check && pnpm test:unit && pnpm build:renderer
-cd src-tauri && cargo fmt --check && cargo clippy -- -D warnings && cargo test
+cd src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
 ```
 
 ## Pull Request Guidelines
@@ -187,14 +188,15 @@ cd src-tauri && cargo fmt --check && cargo clippy -- -D warnings && cargo test
 2. **Fork and branch** — Create a feature branch from `main` (e.g., `feat/my-feature` or `fix/issue-123`).
 3. **Keep PRs focused** — One feature or fix per PR. Avoid unrelated changes.
 4. **Follow the PR template** — Fill in the summary, related issue, and checklist.
+5. **Leave the database version to maintainers** — Don't change `SCHEMA_VERSION`; such PRs from non-collaborators are closed automatically. If your change truly needs a schema change, mention any one maintainer (`@farion1231`, `@funkpopo`, `@YUZHEthefool`, `@Owlbay` or `@SaladDay`) in the PR to explain why.
 
 ### PR Checklist
 
 - [ ] `pnpm typecheck` passes
 - [ ] `pnpm format:check` passes
 - [ ] `pnpm test:unit` passes
-- [ ] If Rust code changed: `cargo fmt --check`, `cargo clippy -- -D warnings`, and `cargo test` pass
-- [ ] If user-facing text changed: all four locale files are updated
+- [ ] If Rust code changed: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, and `cargo test` pass
+- [ ] If user-facing text changed: all eight locale files are updated
 
 ### Commit Convention
 
@@ -219,6 +221,7 @@ By submitting a PR, you agree to the following:
 3. **PRs must be small and focused.** One issue, one PR. Large, sprawling, multi-topic PRs will be closed.
 4. **Open an issue first.** Drive-by PRs with no prior discussion — especially AI-generated ones — may be closed without review.
 5. **Maintainers may close without explanation.** PRs that appear to be unreviewed AI output — hallucinated fixes, unnecessary refactors, bulk changes with no context — may be closed at the maintainer's discretion.
+6. **Write the Human Note yourself.** The "Human Note / 本人说明" section of the PR template must say, in your own words, what you want to do. It must not be AI-generated. PRs that leave it empty or fill it with obviously AI-written text may be closed without review.
 
 **In short**: AI is a tool, not a substitute for understanding. Use it to help you contribute better, not to shift work onto maintainers.
 
@@ -234,19 +237,16 @@ PRs that add a relay or aggregator preset outside the sponsorship program will b
 
 ## Internationalization (i18n)
 
-The CC Switch UI supports four languages: Simplified Chinese, Traditional Chinese, English, and Japanese. When modifying user-facing text:
+The CC Switch UI supports Simplified Chinese, Traditional Chinese, English, German, Japanese, Korean, Turkish, and Russian. When modifying user-facing text:
 
-1. Update **all four** locale files:
-   - `src/i18n/locales/zh.json`
-   - `src/i18n/locales/zh-TW.json`
-   - `src/i18n/locales/en.json`
-   - `src/i18n/locales/ja.json`
-2. Use the `t()` function from i18next for all UI text.
-3. Never hardcode user-facing strings.
+1. Update **all eight** locale files in `src/i18n/locales/`: `zh.json`, `zh-TW.json`, `en.json`, `de.json`, `ja.json`, `ko.json`, `tr.json`, `ru.json`. CI fails when a key is missing from any of them (`tests/config/localeParity.test.ts`). If you cannot write one of the languages, a careful machine translation is fine; say so in the PR description.
+2. Keep `{{variables}}`, `<1>` tags, file names, commands, and other technical literals unchanged in every language.
+3. Use the `t()` function from i18next for all UI text.
+4. Never hardcode user-facing strings.
 
-Turkish (`tr.json`) is a community translation and is optional: you do not need to add Turkish strings, and missing ones fall back to English. If you do edit `tr.json`, keep `{{variables}}`, file names, commands, and other technical literals unchanged. The tray's Turkish texts in `src-tauri/src/tray.rs` start from English in the same way.
+Tray texts are not in the JSON files: the native tray menu (`src-tauri/src/tray.rs`) and the tray panel (`src-tauri/src/tray_panel.rs`) have one block per language, and every block must set every field.
 
-> Forgetting to update a locale file does not fail the build: the missing strings fall back to English, and if the English file lacks them too, the UI shows the raw key.
+> At runtime, a missing string falls back to English, and if the English file lacks it too, the UI shows the raw key. That is why the parity test above fails CI instead.
 
 ## Questions?
 
@@ -269,7 +269,7 @@ Turkish (`tr.json`) is a community translation and is optional: you do not need 
 - **建议功能** — 有想法？[提交功能请求](https://github.com/farion1231/cc-switch/issues/new?template=feature_request.yml)。
 - **改进文档** — 发现错误或缺失？[报告文档问题](https://github.com/farion1231/cc-switch/issues/new?template=doc_issue.yml)。
 - **贡献代码** — 通过 Pull Request 修复 Bug 或实现新功能。
-- **翻译** — 帮助改进简体中文、繁体中文、英文和日文的翻译。
+- **翻译** — 帮助改进简体中文、繁体中文、英文、德文、日文、韩语、土耳其语和俄语的翻译。
 
 > **安全漏洞**：请不要使用公开 Issue 报告。请参阅我们的[安全策略](./SECURITY.md)。
 
@@ -309,8 +309,8 @@ pnpm dev
 | `pnpm build` | 构建生产版本并打包 |
 | `pnpm build:renderer` | 只构建前端，输出到 `dist/` |
 | `pnpm typecheck` | TypeScript 类型检查（strict，未使用的 import 或参数会报错） |
-| `pnpm format` | 用 Prettier 格式化 `src/` |
-| `pnpm format:check` | 检查 `src/` 的代码格式 |
+| `pnpm format` | 用 Prettier 格式化 `src/` 和 `tests/` |
+| `pnpm format:check` | 检查 `src/` 和 `tests/` 的代码格式 |
 | `pnpm test:unit` | 运行前端单元测试 |
 | `pnpm test:unit:watch` | 以监听模式运行前端单元测试 |
 
@@ -319,7 +319,7 @@ Rust 后端命令（在 `src-tauri/` 目录下执行）：
 ```bash
 cd src-tauri
 cargo fmt                     # 格式化 Rust 代码
-cargo clippy -- -D warnings   # Clippy 检查（与 CI 一致，警告视为错误）
+cargo clippy --all-targets -- -D warnings   # Clippy 检查（与 CI 一致，警告视为错误）
 cargo test                    # 运行所有后端测试
 cargo test some_test_name     # 按名称运行部分测试
 ```
@@ -340,7 +340,7 @@ pnpm tauri build -c '{"bundle":{"createUpdaterArtifacts":false}}'
 
 **前端**：使用 vitest 运行 `tests/` 和 `src/` 下的 `*.test.ts(x)`；Tauri 调用由 MSW 模拟（见 `tests/msw/`）；组件测试使用 @testing-library/react。
 
-**后端**：单元测试写在源码旁边（`#[cfg(test)]`），集成测试放在 `src-tauri/tests/`。CI 会在 Linux、macOS 和 Windows 上运行 `cargo test`。
+**后端**：单元测试写在源码旁边（`#[cfg(test)]`），集成测试是 `src-tauri/tests/integration/` 这一个测试二进制里的模块（新文件在它的 `main.rs` 里登记；`tests/` 顶层每多一个文件就要把整个应用再链接一遍）。CI 会在 Linux、macOS 和 Windows 上运行 `cargo test`。
 
 > **隔离真实配置**：部分后端测试会读写 `~/.cc-switch`、`~/.codex` 等目录。本地运行时，建议把 `CC_SWITCH_TEST_HOME` 指向一个临时目录：
 >
@@ -370,7 +370,7 @@ Backend (Tauri 2 + Rust)
 
 - **SSOT**（单一事实源）：供应商、MCP、提示词、Skills、项目和用量等数据都存储在 `~/.cc-switch/cc-switch.db`（SQLite）
 - **设备级设置**：目录覆盖、备份策略等只属于本机的设置存放在 `~/.cc-switch/settings.json`，不参与云同步
-- **两种写入模式**：切换式工具（Claude Code、Claude Desktop、Codex、Gemini CLI、Grok Build）切换时，先把当前 live 配置回填到当前供应商（Claude Desktop 除外），再写入新供应商；共存式工具（OpenCode、OpenClaw、Hermes、Pi、MiniMax Code）的所有供应商共存于同一个 live 文件，不做回填
+- **两种写入模式**：切换式工具（如 Claude Code、Codex）在直连模式下切换时，只更新 live 配置中归供应商所有的字段，保留其他设置，不再把原 live 配置回填到原供应商；共存式工具（如 OpenCode、Hermes）的所有供应商共存于同一个 live 文件，不做回填。每个工具属于哪种，以 `src-tauri/src/app_config.rs` 里它的 `AppSpec` 的 `additive` 字段为准。这个字段不涵盖启动式卡片（不写配置文件，只带着卡片参数打开终端）：Antigravity CLI（`additive` 为 false，但不是切换式），以及 GitHub Copilot CLI 的官方登录卡（Copilot 的 `additive` 为 true，但只有自带模型卡是共存式）
 - **原子写入**：所有 live 配置都通过“临时文件 + 重命名”写入，避免配置损坏
 - **并发安全**：数据库连接由 Mutex 保护，避免竞态条件
 - **分层架构**：Commands（参数校验与转发）→ Services（业务逻辑）→ DAO → Database，Commands 层保持精简
@@ -378,7 +378,7 @@ Backend (Tauri 2 + Rust)
 
 ### 核心组件
 
-- **ProviderService**：供应商增删改查、切换、回填、排序
+- **ProviderService**：供应商增删改查、切换、写入 live 配置、排序
 - **McpService**：MCP 服务器管理、从各工具导入、同步到 live 文件
 - **SkillService / PromptService**：Skills 的安装与同步、各工具的提示词文件
 - **ProfileService**：项目快照的保存与切换
@@ -404,7 +404,7 @@ Backend (Tauri 2 + Rust)
 │   ├── config/               # 各工具的供应商预设（*ProviderPresets.ts）、MCP 预设
 │   ├── hooks/                # 自定义 hooks（业务逻辑）
 │   ├── lib/api/              # Tauri invoke 封装（lib/query/ 为 TanStack Query 配置）
-│   ├── i18n/locales/         # 界面文案（zh / zh-TW / en / ja；社区翻译：tr）
+│   ├── i18n/locales/         # 界面文案（zh / zh-TW / en / de / ja / ko / tr / ru）
 │   ├── icons/                # 供应商图标（索引需手工维护）
 │   └── types/ utils/ contexts/
 ├── src-tauri/                # 后端（Rust）
@@ -428,14 +428,15 @@ Backend (Tauri 2 + Rust)
 ## 代码规范
 
 - **前端**：Prettier 格式化（仅 `src/`，使用默认配置）、严格 TypeScript（`pnpm typecheck`）；项目没有使用 ESLint
-- **后端**：`cargo fmt` 格式化，`cargo clippy -- -D warnings` 检查
+- **后端**：`cargo fmt` 格式化，`cargo clippy --all-targets -- -D warnings` 检查
 - **Tauri 2 命令**：命令名就是 Rust 函数名，保持 snake_case；前端 `invoke` 传参时，参数名要写成 camelCase（例如 Rust 的 `provider_id` 在前端写成 `providerId`）。新命令需要在 `src-tauri/src/lib.rs` 的 `generate_handler!` 中注册，前端封装放在 `src/lib/api/`
+- **前端照抄后端的规则**（常量、URL 识别、应用能力、语言列表）：不要只靠“改一边要改另一边”的注释。由 Rust 测试把后端的值写进 `tests/config/` 下的 JSON fixture，再由 vitest 测试把前端那份和它比对，只改一边测试就会失败。参考 `src-tauri/src/frontend_parity_tests.rs` 和 `tests/config/backendConstants.test.ts`；后端有意改动后，用 `CC_SWITCH_UPDATE_GOLDEN=1 cargo test <测试名>` 重新生成，再审 fixture 的 diff
 
 提交前运行与 CI 相同的检查：
 
 ```bash
 pnpm typecheck && pnpm format:check && pnpm test:unit && pnpm build:renderer
-cd src-tauri && cargo fmt --check && cargo clippy -- -D warnings && cargo test
+cd src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
 ```
 
 ## Pull Request 指南
@@ -444,14 +445,15 @@ cd src-tauri && cargo fmt --check && cargo clippy -- -D warnings && cargo test
 2. **Fork 并创建分支** — 从 `main` 创建功能分支（如 `feat/my-feature` 或 `fix/issue-123`）。
 3. **保持 PR 专注** — 每个 PR 只做一件事，避免无关改动。
 4. **遵循 PR 模板** — 填写概述、关联 Issue 和检查清单。
+5. **数据库版本交给维护者** — 请勿修改 `SCHEMA_VERSION`，非协作者的此类 PR 会被自动关闭。如确需改动数据库结构，请在 PR 中 @ 任意一位维护者（`@farion1231`、`@funkpopo`、`@YUZHEthefool`、`@Owlbay`、`@SaladDay`）说明原因。
 
 ### PR 检查清单
 
 - [ ] `pnpm typecheck` 通过
 - [ ] `pnpm format:check` 通过
 - [ ] `pnpm test:unit` 通过
-- [ ] 如修改了 Rust 代码：`cargo fmt --check`、`cargo clippy -- -D warnings`、`cargo test` 通过
-- [ ] 如修改了用户可见文本，已同步更新四个语言文件
+- [ ] 如修改了 Rust 代码：`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test` 通过
+- [ ] 如修改了用户可见文本，已同步更新八个语言文件
 
 ### 提交信息规范
 
@@ -476,6 +478,7 @@ chore(deps): update dependencies
 3. **PR 必须小而聚焦。** 一个 Issue 对应一个 PR。大而散、跨多个主题的 PR 会被直接关闭。
 4. **先开 Issue 讨论。** 没有事先讨论的"路过式 PR"——尤其是 AI 生成的——可能会被直接关闭。
 5. **维护者可以直接关闭。** 看起来是未经审阅的 AI 产出的 PR——虚构的修复、不必要的重构、缺乏上下文的批量改动——维护者可自行决定关闭。
+6. **本人说明须亲自写。** PR 模板里的「Human Note / 本人说明」必须用你自己的话说清楚你想做什么，不允许 AI 生成。留空或明显由 AI 代写的 PR，可能会被直接关闭。
 
 **一句话总结**：AI 是工具，不是理解力的替代品。用它来帮助你更好地贡献，而不是把工作转移给维护者。
 
@@ -491,19 +494,16 @@ chore(deps): update dependencies
 
 ## 国际化（i18n）
 
-CC Switch 的界面支持简体中文、繁体中文、英文和日文四种语言。修改用户可见文本时：
+CC Switch 的界面支持简体中文、繁体中文、英文、德文、日文、韩语、土耳其语和俄语。修改用户可见文本时：
 
-1. **同时更新四个**语言文件：
-   - `src/i18n/locales/zh.json`
-   - `src/i18n/locales/zh-TW.json`
-   - `src/i18n/locales/en.json`
-   - `src/i18n/locales/ja.json`
-2. 所有 UI 文本使用 i18next 的 `t()` 函数。
-3. 不要硬编码用户可见的字符串。
+1. **八个**语言文件都要改，都在 `src/i18n/locales/`：`zh.json`、`zh-TW.json`、`en.json`、`de.json`、`ja.json`、`ko.json`、`tr.json`、`ru.json`。任何一个缺 key，CI 都会失败（`tests/config/localeParity.test.ts`）。不会写的语言可以用认真校对过的机器翻译，在 PR 说明里注明即可。
+2. 每种语言都要原样保留 `{{变量}}`、`<1>` 标签、文件名、命令等技术字面量。
+3. 所有界面文本使用 i18next 的 `t()` 函数。
+4. 不要硬编码用户可见文本。
 
-土耳其语（`tr.json`）是社区翻译，可以不改：新增文案不必补土耳其语，缺少的会回退显示英文。如果改了 `tr.json`，请保留 `{{变量}}`、文件名、命令等技术字面量不翻译。`src-tauri/src/tray.rs` 里托盘的土耳其语文案同样从英文起步。
+托盘文案不在 JSON 里：原生托盘菜单（`src-tauri/src/tray.rs`）和托盘快捷面板（`src-tauri/src/tray_panel.rs`）每种语言一整块，每块都要写全所有字段。
 
-> 漏掉某个语言文件不会导致构建失败：缺少的文案会回退显示英文，英文文件也缺时，界面上会直接显示 key 的字面量。
+> 运行时缺少的文案会回退显示英文，英文文件也缺时，界面上会直接显示 key 的字面量，所以由上面的一致性测试在 CI 里拦下。
 
 ## 有疑问？
 

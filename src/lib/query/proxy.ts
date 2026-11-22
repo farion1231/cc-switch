@@ -67,18 +67,6 @@ export function useAppMode(appType: string, enabled = true) {
 }
 
 /**
- * 直连供应商（路由模式下退出路由时写回的那家）。
- * 放在 ["providers", appId] 前缀下：切换、编辑供应商时随供应商列表一起失效。
- */
-export function useDirectProviderId(appType: string, enabled: boolean) {
-  return useQuery({
-    queryKey: ["providers", appType, "direct"] as const,
-    queryFn: () => proxyApi.getDirectProvider(appType),
-    enabled,
-  });
-}
-
-/**
  * Stack 模型名单。放在 ["providers", appId] 前缀下：编辑、删除供应商时随列表一起失效。
  */
 export function useProxyStack(appType: string, enabled: boolean) {
@@ -236,32 +224,6 @@ export function useAcknowledgeCodexStaleClients() {
 }
 
 // ========== 代理服务器控制 Hooks ==========
-
-/**
- * 设置应用接管状态
- */
-export function useSetProxyTakeoverForApp() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: ({
-      appType,
-      enabled,
-      stack = false,
-    }: {
-      appType: string;
-      enabled: boolean;
-      stack?: boolean;
-    }) => proxyApi.setProxyTakeoverForApp(appType, enabled, stack),
-    onSuccess: (_data, variables) => {
-      queryClient.invalidateQueries({ queryKey: proxyKeys.takeoverStatus });
-      // 进出路由模式会改「当前」显示的供应商（路由模式下是路由到的那家）。
-      queryClient.invalidateQueries({
-        queryKey: ["providers", variables.appType],
-      });
-    },
-  });
-}
 
 // ========== v3+ 全局/应用级配置 Hooks ==========
 

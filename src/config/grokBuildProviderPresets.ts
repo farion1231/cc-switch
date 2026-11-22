@@ -12,9 +12,12 @@
  * - 不含国产模型官方直连（cn_official）与纯开源模型托管站
  *   （SiliconFlow / ModelScope / Novita / Nvidia / AtlasCloud）：
  *   这些上游没有 Grok 模型，无法在 Grok CLI 中使用。
- * - OpenCode Go 上游自 2026-08 起已提供 grok-4.5，但暂仍不收录：
- *   订阅制网关是否纳入 Grok 预设属产品决策，收录前需单独评估。
- * - 只收聚合站与第三方中转站，默认模型统一为 grok-4.5；
+ * - OpenCode Go 上游自 2026-08 起已提供 grok 系模型（2026-11 时已含
+ *   grok-4.7），但暂仍不收录：订阅制网关是否纳入 Grok 预设属产品决策，
+ *   收录前需单独评估。
+ * - 只收聚合站与第三方中转站，默认模型统一为 grok-4.7（xAI 2026-11 起
+ *   的旗舰，context 最高 500k；Grok CLI 自身默认按 256k 处理，模板经
+ *   GROK_BUILD_DEFAULT_CONTEXT_WINDOW 显式钉 500k）；
  *   OpenRouter 系命名空间的路由站用 "x-ai/grok-4.7"。
  *
  * config 字段沿用 Codex 风格 TOML 作为载体：Grok 表单只从中提取
@@ -141,6 +144,24 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     icon: "pateway",
   },
   {
+    name: "Modelflare",
+    websiteUrl: "https://modelflare.dev",
+    apiKeyUrl:
+      "https://modelflare.dev/sign-up?utm_medium=referral&utm_source=ccswitch",
+    auth: grokAuth(),
+    // 官方 Grok Build 文档（docs.modelflare.dev/guides/clients/grok-build，
+    // 2026-10-15 核对）：Responses + /v1、grok-4.5
+    config: grokPresetConfig("Modelflare", "https://modelflare.dev/v1"),
+    endpointCandidates: [
+      "https://modelflare.dev/v1",
+      "https://origin.modelflare.dev/v1",
+    ],
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "modelflare",
+    icon: "modelflare",
+  },
+  {
     name: "hao.ai",
     websiteUrl: "https://hao.ai",
     apiKeyUrl: "https://hao.ai/invite/DTBZS3OR",
@@ -206,17 +227,6 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "grooroute",
     icon: "grooroute",
-  },
-  {
-    name: "DIT.ai",
-    websiteUrl: "https://dit.ai",
-    apiKeyUrl: "https://dit.ai?utm_source=ccswitch",
-    auth: grokAuth(),
-    config: grokPresetConfig("DIT.ai", "https://api.dit.ai/v1", "grok-4.7"),
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "dit",
-    icon: "dit",
   },
   {
     name: "BuyToken",
@@ -350,8 +360,8 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
   },
   {
     name: "9527CODE",
-    websiteUrl: "https://9527.codes",
-    apiKeyUrl: "https://9527.codes/register?aff=e5zI",
+    websiteUrl: "https://9527.codes/register?channel=ccs",
+    apiKeyUrl: "https://9527.codes/register?channel=ccs",
     auth: grokAuth(),
     config: grokPresetConfig("9527CODE", "https://9527.codes/v1"),
     endpointCandidates: [
@@ -376,15 +386,12 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
   },
   {
     name: "TeamoRouter",
-    websiteUrl: "https://teamorouter.cn",
+    websiteUrl: "https://teamorouter.com",
     apiKeyUrl:
-      "https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
+      "https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
     auth: grokAuth(),
-    config: grokPresetConfig("TeamoRouter", "https://api.teamorouter.cn/v1"),
-    endpointCandidates: [
-      "https://api.teamorouter.cn/v1",
-      "https://api.teamorouter.com/v1",
-    ],
+    config: grokPresetConfig("TeamoRouter", "https://api.teamorouter.com/v1"),
+    endpointCandidates: ["https://api.teamorouter.com/v1"],
     category: "aggregator",
     isPartner: true,
     partnerPromotionKey: "teamorouter",
@@ -403,11 +410,11 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
   },
   {
     name: "A6API",
-    websiteUrl: "https://www.a6api.com",
-    apiKeyUrl: "https://a6api.com/register?aff=AqNr",
+    websiteUrl: "https://www.a6api.vip",
+    apiKeyUrl: "https://a6api.vip/register?aff=AqNr",
     auth: grokAuth(),
-    config: grokPresetConfig("A6API", "https://api.a6api.com/v1"),
-    endpointCandidates: ["https://api.a6api.com/v1"],
+    config: grokPresetConfig("A6API", "https://api.a6api.vip/v1"),
+    endpointCandidates: ["https://api.a6api.vip/v1"],
     category: "aggregator",
     isPartner: true,
     partnerPromotionKey: "a6api",
@@ -459,7 +466,6 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     endpointCandidates: ["https://www.ccsub.net/v1"],
     category: "aggregator",
     isPartner: true,
-    partnerPromotionKey: "ccsub",
     icon: "ccsub",
   },
   {
@@ -590,24 +596,6 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     category: "third_party",
     isPartner: true,
     icon: "sudocode-us",
-  },
-  {
-    name: "Modelflare",
-    websiteUrl: "https://modelflare.dev",
-    apiKeyUrl:
-      "https://modelflare.dev/sign-up?utm_medium=referral&utm_source=ccswitch",
-    auth: grokAuth(),
-    // 官方 Grok Build 文档（docs.modelflare.dev/guides/clients/grok-build，
-    // 2026-10-15 核对）：Responses + /v1、grok-4.5
-    config: grokPresetConfig("Modelflare", "https://modelflare.dev/v1"),
-    endpointCandidates: [
-      "https://modelflare.dev/v1",
-      "https://origin.modelflare.dev/v1",
-    ],
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "modelflare",
-    icon: "modelflare",
   },
   {
     name: "AllTokens",
@@ -834,11 +822,15 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
   },
   {
     name: "TokenFlux",
-    websiteUrl: "https://tokenflux.dev",
-    apiKeyUrl: "https://tokenflux.dev/keys",
+    websiteUrl: "https://tokenflux.com",
+    apiKeyUrl: "https://tokenflux.com/keys",
     auth: grokAuth(),
-    config: grokPresetConfig("TokenFlux", "https://tokenflux.dev/v1"),
+    config: grokPresetConfig("TokenFlux", "https://tokenflux.com/v1"),
     category: "aggregator",
+    endpointCandidates: [
+      "https://tokenflux.com/v1",
+      "https://tokenflux.dev/v1",
+    ],
     icon: "tokenflux",
   },
   {

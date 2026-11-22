@@ -8,6 +8,9 @@ pub(crate) struct RequestInfo {
     pub model: Option<String>,
     pub latency_ms: i64,
     pub first_token_ms: Option<i64>,
+    /// When the final `llm.request` attempt for this step started. Committed messages carry
+    /// the batch-commit time instead, so imports date requests from this.
+    pub request_ms: Option<i64>,
 }
 
 #[derive(Default)]
@@ -143,6 +146,7 @@ impl RequestIndex {
                         // A fork can repeat a step without the original request events.
                         let info = self.messages.entry(id.into()).or_default();
                         info.model = step.model.or_else(|| info.model.take());
+                        info.request_ms = step.request_ms.or(info.request_ms);
                         if latency_ms > 0 {
                             info.latency_ms = latency_ms;
                             info.first_token_ms = first_token_ms

@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -7,6 +7,7 @@ import {
   ClaudeBoundAccountLine,
   ClaudeOfficialSection,
 } from "@/components/providers/forms/ClaudeOfficialSection";
+import { createTestQueryClient } from "../utils/testQueryClient";
 
 const mocks = vi.hoisted(() => ({
   useManagedAuth: vi.fn(),
@@ -84,11 +85,7 @@ const loginSwitch = (overrides: Record<string, unknown> = {}) => {
 // 组件读 React Query（切换状态、账号列表），每个用例一个新的 client
 const withQuery = (node: React.ReactNode) =>
   render(
-    <QueryClientProvider
-      client={
-        new QueryClient({ defaultOptions: { queries: { retry: false } } })
-      }
-    >
+    <QueryClientProvider client={createTestQueryClient()}>
       {node}
     </QueryClientProvider>,
   );
@@ -126,6 +123,35 @@ describe("ClaudeOfficialSection", () => {
     expect(
       screen.queryByRole("menuitem", { name: "重新登录" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("says the link was copied when the browser is not to be opened", () => {
+    window.localStorage.setItem("cc-switch.authCenter.openBrowser", "0");
+    const auth = baseAuth();
+    Object.assign(auth, {
+      isPolling: true,
+      isAddingAccount: true,
+      pollingState: "polling",
+      deviceCode: {
+        device_code: "flow-1",
+        user_code: "",
+        verification_uri: "https://claude.com/cai/oauth/authorize?state=s",
+      },
+    });
+    mocks.useManagedAuth.mockReturnValue(auth);
+    renderSection();
+    expect(
+      screen.getByText(
+        "登录链接已复制。在你要用的浏览器里打开，登录并同意授权后这里会自动更新。",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "复制登录链接" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "重新打开登录页" }),
+    ).not.toBeInTheDocument();
+    window.localStorage.removeItem("cc-switch.authCenter.openBrowser");
   });
 
   it("offers re-login once the login has expired", async () => {
@@ -258,8 +284,47 @@ describe("ClaudeOfficialSection", () => {
     mocks.useManagedAuth.mockReturnValue(baseAuth());
     renderSelect();
     expect(
-      await screen.findByText(/Claude Code 的登录会换成选中的账号/),
+      await screen.findByText(/Claude Code 的登录会实时换成选中的账号/),
     ).toBeInTheDocument();
+  });
+
+  it("lays out the sign-in choices like the Codex card", async () => {
+    // jsdom 没有 scrollIntoView，下拉打开时会调
+    Element.prototype.scrollIntoView = vi.fn();
+    const user = userEvent.setup();
+    mocks.useManagedAuth.mockReturnValue(baseAuth());
+    mocks.getStatus.mockResolvedValue({
+      accounts: [account("work:org", "work@example.com")],
+    });
+    const onChange = vi.fn();
+    const onManageAccounts = vi.fn();
+    withQuery(
+      <ClaudeAccountSelect
+        value={null}
+        onChange={onChange}
+        onManageAccounts={onManageAccounts}
+      />,
+    );
+
+    const select = screen.getByRole("combobox", { name: "登录方式" });
+    expect(select).toHaveTextContent("跟随 Claude Code 登录");
+    await user.click(select);
+    expect(
+      (await screen.findAllByRole("option")).map((el) => el.textContent),
+    ).toEqual([
+      "work@example.com",
+      "添加或管理 Claude 账号",
+      "跟随 Claude Code 登录账号会随 Claude Code 当前登录变化",
+    ]);
+    await user.click(screen.getByRole("option", { name: /添加或管理/ }));
+    expect(onManageAccounts).toHaveBeenCalled();
+    expect(onChange).not.toHaveBeenCalled();
+
+    await user.click(select);
+    await user.click(
+      await screen.findByRole("option", { name: "work@example.com" }),
+    );
+    expect(onChange).toHaveBeenCalledWith("work:org");
   });
 
   it("points to Open Terminal when a config dir override blocks switching", async () => {
@@ -270,6 +335,41 @@ describe("ClaudeOfficialSection", () => {
     renderSelect();
     expect(
       await screen.findByText(/请从卡片「打开终端」使用选中的账号/),
+    ).toBeInTheDocument();
+  });
+
+  it("greys out sign-in when the Claude config dir is in WSL", async () => {
+    mocks.getLoginSwitch.mockResolvedValue(loginSwitch({ blocked: "wsl" }));
+    const auth = baseAuth();
+    auth.accounts = [
+      {
+        ...account("old:org", "old@example.com"),
+        requires_reauth: true,
+      },
+    ];
+    mocks.useManagedAuth.mockReturnValue(auth);
+    renderSection();
+
+    expect(
+      await screen.findByText(
+        "Claude 配置目录在 WSL 里，暂不支持添加和切换 Claude 账号。",
+      ),
+    ).toBeInTheDocument();
+    const add = screen.getByRole("button", { name: "添加账号" });
+    expect(add).toHaveAttribute("aria-disabled", "true");
+    await userEvent.click(add);
+    const reauth = screen.getByRole("button", { name: "重新登录" });
+    expect(reauth).toHaveAttribute("aria-disabled", "true");
+    await userEvent.click(reauth);
+    expect(auth.addAccount).not.toHaveBeenCalled();
+  });
+
+  it("says WSL isn't supported on the card form", async () => {
+    mocks.getLoginSwitch.mockResolvedValue(loginSwitch({ blocked: "wsl" }));
+    mocks.useManagedAuth.mockReturnValue(baseAuth());
+    renderSelect();
+    expect(
+      await screen.findByText(/Claude 配置目录在 WSL 里，暂不支持 Claude 账号/),
     ).toBeInTheDocument();
   });
 

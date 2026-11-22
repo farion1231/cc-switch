@@ -35,7 +35,7 @@ pub(crate) fn get_omp_agent_dir() -> Result<PathBuf, AppError> {
         return Ok(path);
     }
 
-    if let Some(dir) = crate::settings::get_omp_override_dir() {
+    if let Some(dir) = crate::settings::get_override_dir(&crate::app_config::AppType::Omp) {
         return Ok(dir);
     }
 
@@ -242,16 +242,20 @@ pub(crate) fn write_and_commit<T>(
         return Err(AppError::Conflict("omp.errors.externalChange".into()));
     }
     atomic_write_private(path, after)?;
-    match commit() {
+    let rollback = || {
+        if read_bytes(path)?.as_deref() != Some(after) {
+            return Err(AppError::Conflict("omp.errors.rollbackConflict".into()));
+        }
+        match before {
+            Some(bytes) => atomic_write_private(path, bytes),
+            None => fs::remove_file(path).map_err(|e| AppError::io(path, e)),
+        }
+    };
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(commit));
+    match crate::sync_utils::resume_after_rollback(outcome, rollback) {
         Ok(result) => Ok(result),
         Err(error) => {
-            if read_bytes(path)?.as_deref() != Some(after) {
-                return Err(AppError::Conflict("omp.errors.rollbackConflict".into()));
-            }
-            match before {
-                Some(bytes) => atomic_write_private(path, bytes)?,
-                None => fs::remove_file(path).map_err(|e| AppError::io(path, e))?,
-            }
+            rollback()?;
             Err(error)
         }
     }
@@ -290,7 +294,7 @@ fn providers(document: &serde_yaml::Value) -> Result<IndexMap<String, Value>, Ap
 // ============================================================================
 
 pub(crate) fn get_providers() -> Result<IndexMap<String, Value>, AppError> {
-    let _guard = MODELS_LOCK.lock()?;
+    let _guard = crate::sync_utils::lock_file_operation(&MODELS_LOCK);
     providers(&parse(&read_text(&get_omp_models_path()?)?.1)?)
 }
 
@@ -741,11 +745,28 @@ fn mapping_key(line: &str) -> Result<String, AppError> {
 /// Anchors, aliases, tags and merge keys can't be edited as text without breaking a
 /// reference elsewhere; refuse them before writing.
 fn reject_yaml_tokens(line: &str) -> Result<(), AppError> {
+    if has_yaml_reference_tokens(line) {
+        return Err(manual_edit());
+    }
+    Ok(())
+}
+
+/// Whether a YAML line has an anchor, alias, tag or merge key outside quotes and comments.
+/// `&`, `*` and `!` are only YAML indicators where a node starts: inside a plain scalar
+/// (`name: Search & Fetch`, which serde_yaml and Bun both write unquoted) they are
+/// ordinary text.
+pub(crate) fn has_yaml_reference_tokens(line: &str) -> bool {
     let mut quote = None;
     let mut escaped = false;
-    let mut boundary = true;
+    // A node may start here: line start, after `:`, a flow opener or `,`, and after a
+    // `- `/`? ` entry marker that itself sits where a node starts. Whitespace keeps the
+    // state; any other character is node content.
+    let mut node_start = true;
+    // `#` starts a comment only at line start or after whitespace.
+    let mut after_space = true;
     let mut previous = [' '; 2];
-    for c in line.chars() {
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
         if escaped {
             escaped = false;
             continue;
@@ -754,27 +775,39 @@ fn reject_yaml_tokens(line: &str) -> Result<(), AppError> {
             escaped = true;
             continue;
         }
+        if quote == Some('\'') && c == '\'' && chars.peek() == Some(&'\'') {
+            // `''` is an escaped quote inside a single-quoted scalar.
+            chars.next();
+            continue;
+        }
         if quote == Some(c) {
             quote = None;
-            boundary = false;
+            node_start = false;
+            after_space = false;
             continue;
         }
         if quote.is_some() {
             continue;
         }
         if c == ':' && previous == ['<', '<'] {
-            return Err(manual_edit());
+            return true;
         }
         match c {
-            '"' | '\'' if boundary => quote = Some(c),
-            '#' if boundary => break,
-            '&' | '*' | '!' if boundary => return Err(manual_edit()),
+            '#' if after_space => break,
+            '"' | '\'' if node_start => quote = Some(c),
+            '&' | '*' | '!' if node_start => return true,
             _ => {}
         }
         previous = [previous[1], c];
-        boundary = c.is_whitespace() || matches!(c, ':' | '[' | '{' | ',');
+        after_space = c.is_whitespace();
+        if !c.is_whitespace() {
+            let entry_marker = node_start
+                && matches!(c, '-' | '?')
+                && chars.peek().is_none_or(|next| next.is_whitespace());
+            node_start = entry_marker || matches!(c, ':' | '[' | '{' | ',');
+        }
     }
-    Ok(())
+    false
 }
 
 #[derive(Clone, Copy)]
@@ -792,7 +825,7 @@ pub(crate) fn change_and_commit<T>(
     change: Change,
     commit: impl FnOnce(Option<Value>) -> Result<T, AppError>,
 ) -> Result<T, AppError> {
-    let _guard = MODELS_LOCK.lock()?;
+    let _guard = crate::sync_utils::lock_file_operation(&MODELS_LOCK);
     let path = get_omp_models_path()?;
     let (before, text) = read_text(&path)?;
     let native = providers(&parse(&text).map_err(|_| manual_edit())?)?;
@@ -939,7 +972,7 @@ pub(crate) fn read_default_provider_id() -> Result<Option<String>, AppError> {
 pub(crate) fn update_omp_mcp_document(
     update: impl FnOnce(&mut Value) -> Result<bool, AppError>,
 ) -> Result<(), AppError> {
-    let _guard = MCP_LOCK.lock()?;
+    let _guard = crate::sync_utils::lock_file_operation(&MCP_LOCK);
     let path = get_omp_mcp_path()?;
     let before = read_bytes(&path)?;
     let mut document: Value = match &before {
@@ -961,7 +994,7 @@ pub(crate) fn update_omp_mcp_document(
 
 #[cfg(test)]
 pub(crate) mod test_support {
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
 
     pub(crate) struct TestAgentDir {
         _dir: Option<tempfile::TempDir>,
@@ -974,11 +1007,6 @@ pub(crate) mod test_support {
             let agent_dir = dir.path().join("agent");
             std::fs::create_dir_all(&agent_dir).expect("create Oh My Pi agent directory");
             Self::set(agent_dir, Some(dir))
-        }
-
-        #[allow(dead_code)] // used only by tests; compiled-in outside cfg(test) via shared test_support
-        pub(crate) fn at(agent_dir: &Path) -> Self {
-            Self::set(agent_dir.to_path_buf(), None)
         }
 
         fn set(agent_dir: PathBuf, dir: Option<tempfile::TempDir>) -> Self {
@@ -1133,6 +1161,35 @@ mod tests {
     }
 
     #[test]
+    fn edits_plain_scalars_that_contain_indicator_characters() {
+        // Bun's YAML.stringify (omp's models.json migration) and serde_yaml both leave
+        // these unquoted; they are text, not anchors, aliases or tags.
+        let text = "providers:\n  other:\n    baseUrl: https://x.example/v1?a=1&b=2\n    models:\n      - id: m\n        name: Search & Fetch * x\n        note: Claude! a-b 'n # c *d\n        tip: 'it''s \"quoted: * text\"'\n        why: What?! a-!b\n        flag: -!important\n  p:\n    apiKey: old\n";
+        let after = edit_provider(text, "p", Some(&provider())).unwrap();
+        assert_eq!(providers(&parse(&after).unwrap()).unwrap()["p"], provider());
+
+        let mut named = provider();
+        named["models"][0]["name"] = json!("Search & Fetch * x ! What?! a-!b");
+        let once = edit_provider("", "p", Some(&named)).unwrap();
+        let twice = edit_provider(&once, "p", Some(&provider())).unwrap();
+        assert_eq!(providers(&parse(&twice).unwrap()).unwrap()["p"], provider());
+
+        for text in [
+            "providers:\n  p:\n    apiKey: a\n    headers: [*anchor]\n",
+            "providers:\n  p:\n    models:\n      - &m {id: a}\n",
+            "providers:\n  p:\n    apiKey: key\n    compat: {a: !!str b}\n",
+            "providers:\n  p:\n    apiKey: key\n    headers: {'a'' \"x:\"': &a hello}\n",
+            "providers:\n  p:\n    apiKey: key\n    headers: {X: -'abc, Y: &a b}\n",
+            "providers:\n  p:\n    models:\n      - - *anchor\n",
+        ] {
+            assert!(
+                edit_provider(text, "p", Some(&provider())).is_err(),
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
     fn handles_empty_null_and_last_removal_without_invalid_native_null() {
         for text in [
             "",
@@ -1247,6 +1304,32 @@ mod tests {
         }
         fs::write(&path, vec![b' '; MAX_FILE_BYTES as usize + 1]).unwrap();
         assert!(read_bytes(&path).is_err());
+    }
+
+    #[test]
+    fn panicking_commit_restores_ours_but_preserves_external_edits() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("models.yml");
+        for before in [None, Some(b"original".as_slice())] {
+            if let Some(bytes) = before {
+                fs::write(&path, bytes).unwrap();
+            }
+            assert!(std::panic::catch_unwind(|| {
+                let _: Result<(), AppError> =
+                    write_and_commit(&path, before, b"ours", || panic!("commit interrupted"));
+            })
+            .is_err());
+            assert_eq!(read_bytes(&path).unwrap().as_deref(), before);
+        }
+        assert!(std::panic::catch_unwind(|| {
+            let _: Result<(), AppError> =
+                write_and_commit(&path, Some(b"original"), b"ours", || {
+                    fs::write(&path, b"external edit").unwrap();
+                    panic!("commit interrupted");
+                });
+        })
+        .is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"external edit");
     }
 
     #[test]

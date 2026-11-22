@@ -47,7 +47,7 @@ pub(crate) fn official_provider_name(id: &str, nickname: Option<&str>) -> String
 /// Names CC Switch generated earlier follow the account's current nickname.
 pub(crate) fn normalize_provider_identity(provider: &mut Provider, nickname: Option<&str>) {
     if !is_official_provider(&provider.settings_config) {
-        if provider.category.as_deref() == Some("official") {
+        if provider.has_official_category() {
             provider.category = None;
         }
         return;
@@ -450,19 +450,13 @@ pub(crate) fn save_and_commit<T>(
     create: bool,
     commit: impl FnOnce() -> Result<T, AppError>,
 ) -> Result<T, AppError> {
-    let _guard = WRITE_LOCK
-        .lock()
-        .map_err(|e| AppError::Message(e.to_string()))?;
+    let _guard = crate::sync_utils::lock_file_operation(&WRITE_LOCK);
     let path = config_path();
     crate::mcode_config::write_and_commit(&path, || update(&path, id, config, create), commit)
 }
 
 pub(crate) fn set_provider(id: &str, config: Value) -> Result<(), AppError> {
     save_and_commit(id, Some(config), false, || Ok(()))
-}
-
-pub(crate) fn remove_provider(id: &str) -> Result<(), AppError> {
-    save_and_commit(id, None, false, || Ok(()))
 }
 
 /// Resolve the selected native alias through models, not by splitting its name:
@@ -516,9 +510,7 @@ pub(crate) fn switch_and_commit<T>(
     archived_config: Value,
     commit: impl FnOnce(Value) -> Result<T, AppError>,
 ) -> Result<T, AppError> {
-    let _guard = WRITE_LOCK
-        .lock()
-        .map_err(|e| AppError::Message(e.to_string()))?;
+    let _guard = crate::sync_utils::lock_file_operation(&WRITE_LOCK);
     let path = config_path();
     switch_at(&path, id, archived_config, commit)
 }
@@ -561,9 +553,7 @@ pub(crate) fn add_and_commit<T>(
     archived_config: Value,
     commit: impl FnOnce() -> Result<T, AppError>,
 ) -> Result<T, AppError> {
-    let _guard = WRITE_LOCK
-        .lock()
-        .map_err(|e| AppError::Message(e.to_string()))?;
+    let _guard = crate::sync_utils::lock_file_operation(&WRITE_LOCK);
     let path = config_path();
     add_at(&path, id, archived_config, commit)
 }
@@ -600,9 +590,7 @@ fn add_at<T>(
 /// Selecting the account is explicit: signing in alone preserves the current
 /// model, while "Use this account" selects one of its official model aliases.
 pub(crate) fn use_oauth_account(home: &Path, id: &str) -> Result<(), AppError> {
-    let _guard = WRITE_LOCK
-        .lock()
-        .map_err(|e| AppError::Message(e.to_string()))?;
+    let _guard = crate::sync_utils::lock_file_operation(&WRITE_LOCK);
     let path = home.join("config.toml");
     let before = read(&path)?;
     if before["providers"][id]
@@ -628,9 +616,7 @@ pub(crate) fn remove_oauth_account<T>(
     id: &str,
     commit: impl FnOnce() -> Result<T, AppError>,
 ) -> Result<T, AppError> {
-    let _guard = WRITE_LOCK
-        .lock()
-        .map_err(|e| AppError::Message(e.to_string()))?;
+    let _guard = crate::sync_utils::lock_file_operation(&WRITE_LOCK);
     let path = home.join("config.toml");
     let before = read(&path)?;
     if current_provider_in(&before) == Some(id) {
@@ -679,9 +665,7 @@ pub(crate) fn save_oauth_login(
     oauth: Value,
     models: serde_json::Map<String, Value>,
 ) -> Result<(), AppError> {
-    let _guard = WRITE_LOCK
-        .lock()
-        .map_err(|e| AppError::Message(e.to_string()))?;
+    let _guard = crate::sync_utils::lock_file_operation(&WRITE_LOCK);
     let path = home.join("config.toml");
     let before = read(&path)?;
     let mut after = before.clone();

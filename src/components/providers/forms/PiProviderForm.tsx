@@ -51,12 +51,19 @@ import {
   EndpointField,
   GptContextWindowHint,
   ModelDropdown,
+  NativeConfigEditor,
 } from "./shared";
 import {
   findRequestHeaderValue,
   normalizeRequestHeaders,
 } from "./helpers/requestHeaders";
 import {
+  yamlNodeFromText,
+  yamlNodeToText,
+  type YamlNodeError,
+} from "./helpers/yamlNode";
+import {
+  OMP_API_FORMATS,
   ompProviderPresets,
   type OmpProviderPreset,
 } from "@/config/ompProviderPresets";
@@ -98,6 +105,7 @@ const PI_API_FORMATS = [
   { value: "anthropic-messages", label: "Anthropic Messages" },
   { value: "google-generative-ai", label: "Google Generative AI" },
   { value: "bedrock-converse-stream", label: "Amazon Bedrock" },
+  { value: "mistral-conversations", label: "Mistral" },
 ] as const satisfies ReadonlyArray<{ value: PiApiFormat; label: string }>;
 
 const ROOT_CONTROLLED_KEYS = new Set([
@@ -153,6 +161,8 @@ interface PiModelDraft {
   hasThinkingLevelMap: boolean;
   passthrough: Record<string, unknown>;
 }
+
+const OMP_SECTION = "providers";
 
 class PiFormValidationError extends Error {
   constructor(
@@ -899,6 +909,45 @@ export function PiProviderForm({
     onSubmitReadyChange?.(isSubmitReady);
   }, [isSubmitReady, onSubmitReadyChange]);
 
+  // omp 的供应商在 models.yml 的 `providers.<标识>` 下：编辑框按这个位置显示 YAML，
+  // 表单内部仍以 JSON 的 settingsConfig 为准，改动经 handleSettingsConfigChange 同步。
+  const ompKey = providerKey.trim() || "custom";
+  const [ompText, setOmpText] = useState("");
+  const [ompError, setOmpError] = useState<YamlNodeError | null>(null);
+  const ompEmittedRef = useRef<{ json: string; key: string } | null>(null);
+  useEffect(() => {
+    if (!isOmp) return;
+    const emitted = ompEmittedRef.current;
+    if (emitted?.json === settingsConfigText && emitted.key === ompKey) return;
+    const config = parseJsonObject(settingsConfigText);
+    if (!config) return;
+    ompEmittedRef.current = { json: settingsConfigText, key: ompKey };
+    setOmpText(yamlNodeToText(OMP_SECTION, ompKey, config));
+    setOmpError(null);
+  }, [isOmp, ompKey, settingsConfigText]);
+  const ompErrorMessage = !ompError
+    ? null
+    : ompError.kind === "syntax"
+      ? t("providerForm.nativeConfig.invalid", {
+          format: "YAML",
+          error: ompError.detail,
+        })
+      : t("providerForm.nativeConfig.scope", {
+          section: `${OMP_SECTION}.${ompKey}`,
+        });
+  const handleOmpTextChange = (text: string) => {
+    setOmpText(text);
+    const parsed = yamlNodeFromText(text, OMP_SECTION, ompKey);
+    if (!parsed.ok) {
+      setOmpError(parsed.error);
+      return;
+    }
+    setOmpError(null);
+    const json = JSON.stringify(parsed.value, null, 2);
+    ompEmittedRef.current = { json, key: ompKey };
+    handleSettingsConfigChange(json);
+  };
+
   const presetEntries = useMemo(
     () =>
       presets.map((preset, index) => ({
@@ -1321,6 +1370,10 @@ export function PiProviderForm({
           "#pi-settings-config",
         );
       }
+      // 编辑框里没读通的 YAML 不能按上一次读通的内容悄悄保存
+      if (isOmp && ompErrorMessage) {
+        throw new PiFormValidationError(ompErrorMessage, "#pi-settings-config");
+      }
       const trimmedName = identity.name.trim();
       const trimmedKey = providerKey.trim();
       if (!trimmedName) {
@@ -1553,9 +1606,10 @@ export function PiProviderForm({
     }),
     [t],
   );
-  const isKnownApiFormat = PI_API_FORMATS.some(
-    (format) => format.value === api,
-  );
+  const apiFormats = isOmp
+    ? PI_API_FORMATS.filter((format) => OMP_API_FORMATS.includes(format.value))
+    : PI_API_FORMATS;
+  const isKnownApiFormat = apiFormats.some((format) => format.value === api);
 
   return (
     <Form {...form}>
@@ -1599,7 +1653,7 @@ export function PiProviderForm({
 
         {hasConfigurationSelection && (
           <fieldset
-            disabled={!isSettingsConfigValid}
+            disabled={!isSettingsConfigValid || Boolean(ompError)}
             className="min-w-0 space-y-6 border-0 p-0 disabled:opacity-50"
           >
             <BasicFormFields
@@ -1653,7 +1707,7 @@ export function PiProviderForm({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {PI_API_FORMATS.map((format) => (
+                  {apiFormats.map((format) => (
                     <SelectItem key={format.value} value={format.value}>
                       {format.label}
                     </SelectItem>
@@ -2248,7 +2302,17 @@ export function PiProviderForm({
           </fieldset>
         )}
 
-        {hasConfigurationSelection && (
+        {hasConfigurationSelection && isOmp && (
+          <NativeConfigEditor
+            appId="omp"
+            file="models.yml"
+            id="pi-settings-config"
+            value={ompText}
+            onChange={handleOmpTextChange}
+            error={ompErrorMessage}
+          />
+        )}
+        {hasConfigurationSelection && !isOmp && (
           <FormField
             control={form.control}
             name="settingsConfig"

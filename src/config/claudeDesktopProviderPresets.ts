@@ -149,8 +149,42 @@ const brandedRoutes = (
 
 export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   {
+    name: "TokenPlus",
+    websiteUrl: "https://www.tokenplus.cn/",
+    apiKeyUrl: "https://www.tokenplus.cn/workspace",
+    category: "aggregator",
+    partnerPromotionKey: "tokenplus",
+    icon: "tokenplus",
+    baseUrl: "https://api.tokenplus.cn",
+    apiKeyField: "ANTHROPIC_API_KEY",
+    mode: "proxy",
+    apiFormat: "anthropic",
+    modelRoutes: [
+      {
+        routeId: "claude-sonnet-5",
+        upstreamModel: "deepseek/deepseek-v4.1-flash-1017",
+        supports1m: false,
+      },
+      {
+        routeId: "claude-haiku-4-5",
+        upstreamModel: "z-ai/glm-5.3-flash",
+        supports1m: false,
+      },
+      {
+        routeId: "claude-opus-5",
+        upstreamModel: "moonshot-ai/kimi-k3.1-pro",
+        supports1m: false,
+      },
+      {
+        routeId: "claude-fable-5",
+        upstreamModel: "minimax/m3.1-flash",
+        supports1m: false,
+      },
+    ],
+  },
+  {
     name: "Claude Desktop Official",
-    websiteUrl: "https://claude.ai/download",
+    websiteUrl: "https://claude.com/download",
     category: "official",
     baseUrl: "",
     mode: "direct",
@@ -176,10 +210,12 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://api.moonshot.cn/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
+    // 2026-11-03 盘点：K2 系列 2026-10-31 起对新用户停售、2026-12 月底
+    // 退役；默认改 K 系旗舰 kimi-k3.1-pro（1M 上下文）
     modelRoutes: brandedRoutes(
-      "kimi-k2.7-code",
-      "kimi-k2.7-code",
-      "kimi-k2.7-code",
+      "kimi-k3.1-pro",
+      "kimi-k3.1-pro",
+      "kimi-k3.1-pro",
     ),
     partnerPromotionKey: "kimi",
     icon: "kimi",
@@ -197,10 +233,12 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     baseUrl: "https://api.moonshot.ai/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
+    // 2026-11-03 盘点：K2 系列 2026-10-31 起对新用户停售、2026-12 月底
+    // 退役；默认改 K 系旗舰 kimi-k3.1-pro（1M 上下文）
     modelRoutes: brandedRoutes(
-      "kimi-k2.7-code",
-      "kimi-k2.7-code",
-      "kimi-k2.7-code",
+      "kimi-k3.1-pro",
+      "kimi-k3.1-pro",
+      "kimi-k3.1-pro",
     ),
     partnerPromotionKey: "kimi",
     icon: "kimi",
@@ -298,6 +336,26 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     icon: "pateway",
   },
   {
+    name: "Modelflare",
+    websiteUrl: "https://modelflare.dev",
+    apiKeyUrl:
+      "https://modelflare.dev/sign-up?utm_medium=referral&utm_source=ccswitch",
+    category: "aggregator",
+    baseUrl: "https://modelflare.dev",
+    // 网关直接提供 claude-sonnet-5 / claude-opus-5 / claude-haiku-4-5 三个
+    // 路由 ID（modelflare.dev/api/pricing，2026-10-15），直连透传即可
+    mode: "direct",
+    apiFormat: "anthropic",
+    modelRoutes: passthroughRoutes(true),
+    endpointCandidates: [
+      "https://modelflare.dev",
+      "https://origin.modelflare.dev",
+    ],
+    isPartner: true,
+    partnerPromotionKey: "modelflare",
+    icon: "modelflare",
+  },
+  {
     name: "hao.ai",
     websiteUrl: "https://hao.ai",
     apiKeyUrl: "https://hao.ai/invite/DTBZS3OR",
@@ -380,26 +438,6 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "grooroute",
     icon: "grooroute",
-  },
-  {
-    name: "DIT.ai",
-    websiteUrl: "https://dit.ai",
-    apiKeyUrl: "https://dit.ai?utm_source=ccswitch",
-    category: "aggregator",
-    baseUrl: "https://api.dit.ai",
-    mode: "direct",
-    apiFormat: "anthropic",
-    // 网关没有不带日期的 claude-haiku-4-5（dit.ai/models，2026-10-21），透传会让
-    // Haiku 档 404，所以映射到带日期的 ID
-    modelRoutes: mappedRoutes(
-      "claude-sonnet-5-5",
-      "claude-opus-5-5",
-      "claude-haiku-4-5-20251001",
-      true,
-    ),
-    isPartner: true,
-    partnerPromotionKey: "dit",
-    icon: "dit",
   },
   {
     name: "BuyToken",
@@ -563,6 +601,26 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     icon: "subrouter",
   },
   {
+    name: "OspreyAI",
+    websiteUrl: "https://open.ospreyai.cn",
+    apiKeyUrl: "https://open.ospreyai.cn",
+    category: "aggregator",
+    baseUrl: "https://open.ospreyai.cn",
+    mode: "direct",
+    apiFormat: "anthropic",
+    // open.ospreyai.cn/api/pricing（2026-10-30）：Claude 走 /v1/messages，Haiku 只有
+    // 不带日期的 claude-haiku-4-5（没有 haiku-5-5）
+    modelRoutes: mappedRoutes(
+      "claude-sonnet-5-5",
+      "claude-opus-5-5",
+      "claude-haiku-4-5",
+      true,
+    ),
+    isPartner: true,
+    partnerPromotionKey: "ospreyai",
+    icon: "ospreyai",
+  },
+  {
     name: "Shengsuanyun",
     nameKey: "providerForm.presets.shengsuanyun",
     websiteUrl: "https://www.shengsuanyun.com/?from=CH_4HHXMRYF",
@@ -620,8 +678,8 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   },
   {
     name: "9527CODE",
-    websiteUrl: "https://9527.codes",
-    apiKeyUrl: "https://9527.codes/register?aff=e5zI",
+    websiteUrl: "https://9527.codes/register?channel=ccs",
+    apiKeyUrl: "https://9527.codes/register?channel=ccs",
     category: "aggregator",
     baseUrl: "https://9527.codes",
     mode: "direct",
@@ -660,20 +718,17 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   },
   {
     name: "TeamoRouter",
-    websiteUrl: "https://teamorouter.cn",
+    websiteUrl: "https://teamorouter.com",
     apiKeyUrl:
-      "https://teamorouter.cn/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
+      "https://teamorouter.com/?utm_source=cc_switch&utm_medium=referral&utm_campaign=ai_directory",
     category: "aggregator",
-    baseUrl: "https://api.teamorouter.cn",
+    baseUrl: "https://api.teamorouter.com",
     mode: "direct",
     apiFormat: "anthropic",
     modelRoutes: passthroughRoutes(true),
     isPartner: true,
     partnerPromotionKey: "teamorouter",
-    endpointCandidates: [
-      "https://api.teamorouter.cn",
-      "https://api.teamorouter.com",
-    ],
+    endpointCandidates: ["https://api.teamorouter.com"],
     icon: "teamorouter",
   },
   {
@@ -841,10 +896,10 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   },
   {
     name: "A6API",
-    websiteUrl: "https://www.a6api.com",
-    apiKeyUrl: "https://a6api.com/register?aff=AqNr",
+    websiteUrl: "https://www.a6api.vip",
+    apiKeyUrl: "https://a6api.vip/register?aff=AqNr",
     category: "aggregator",
-    baseUrl: "https://api.a6api.com",
+    baseUrl: "https://api.a6api.vip",
     mode: "direct",
     apiFormat: "anthropic",
     modelRoutes: passthroughRoutes(true),
@@ -900,7 +955,6 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     apiFormat: "anthropic",
     modelRoutes: passthroughRoutes(true),
     isPartner: true,
-    partnerPromotionKey: "ccsub",
     icon: "ccsub",
   },
   {
@@ -1069,26 +1123,6 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     icon: "xycai",
   },
   {
-    name: "Modelflare",
-    websiteUrl: "https://modelflare.dev",
-    apiKeyUrl:
-      "https://modelflare.dev/sign-up?utm_medium=referral&utm_source=ccswitch",
-    category: "aggregator",
-    baseUrl: "https://modelflare.dev",
-    // 网关直接提供 claude-sonnet-5 / claude-opus-5 / claude-haiku-4-5 三个
-    // 路由 ID（modelflare.dev/api/pricing，2026-10-15），直连透传即可
-    mode: "direct",
-    apiFormat: "anthropic",
-    modelRoutes: passthroughRoutes(true),
-    endpointCandidates: [
-      "https://modelflare.dev",
-      "https://origin.modelflare.dev",
-    ],
-    isPartner: true,
-    partnerPromotionKey: "modelflare",
-    icon: "modelflare",
-  },
-  {
     name: "AllTokens",
     websiteUrl: "https://alltokens.cc",
     apiKeyUrl: "https://alltokens.cc/register",
@@ -1253,6 +1287,20 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     iconColor: "#000000",
   },
   {
+    // 同 Claude Code 预设：OpenAI 平台 API Key，经路由转 Responses
+    name: "OpenAI API",
+    websiteUrl: "https://platform.openai.com",
+    apiKeyUrl: "https://platform.openai.com/api-keys",
+    category: "cn_official",
+    baseUrl: "https://api.openai.com",
+    mode: "proxy",
+    apiFormat: "openai_responses",
+    modelRoutes: brandedRoutes("gpt-6.1-sol", "gpt-6.1-sol", "gpt-6-luna"),
+    endpointCandidates: ["https://api.openai.com"],
+    icon: "openai",
+    iconColor: "#00A67E",
+  },
+  {
     name: "DeepSeek",
     websiteUrl: "https://platform.deepseek.com",
     category: "cn_official",
@@ -1277,7 +1325,11 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     apiKeyUrl: "https://opencode.ai/go",
     partnerPromotionKey: "opencode_go",
     category: "third_party",
-    baseUrl: "https://opencode.ai/zen/go",
+    // 官方文档（https://opencode.ai/v2/docs/console/go）只列
+    // /inference/go/anthropic 这一 Anthropic 端基址。未文档化的旧入口
+    // /zen/go 只认 x-api-key，收到 Bearer 会报 "Go requires a credential"；
+    // 新入口两种头都认。
+    baseUrl: "https://opencode.ai/inference/go/anthropic",
     mode: "proxy",
     // Go 网关 /messages 收除 grok-4.5 外全部模型（Chat 组靠服务端转换），
     // anthropic 透传即可；上游只认 x-api-key，apiKey 直填默认即该头。
@@ -1291,7 +1343,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
       "deepseek-v4.1-flash",
       true,
     ),
-    endpointCandidates: ["https://opencode.ai/zen/go"],
+    endpointCandidates: ["https://opencode.ai/inference/go/anthropic"],
     icon: "opencode",
     iconColor: "#211E1E",
   },
@@ -1513,7 +1565,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     apiKeyUrl:
       "https://platform.qianwenai.com/home/api-keys?utm_content=g_20000002972",
     category: "cn_official",
-    baseUrl: "https://dashscope.aliyuncs.com/apps/anthropic",
+    baseUrl: "https://maas.qianwenaiapi.com/apps/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
     modelRoutes: brandedRoutes(
@@ -1522,6 +1574,10 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
       "qwen3.8-flash",
       true,
     ),
+    endpointCandidates: [
+      "https://maas.qianwenaiapi.com/apps/anthropic",
+      "https://dashscope.aliyuncs.com/apps/anthropic",
+    ],
     icon: "qianwenai",
     iconColor: "#624AFF",
   },
@@ -1547,7 +1603,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     apiKeyUrl:
       "https://platform.qianwenai.com/home/api-keys?utm_content=g_20000002978",
     category: "cn_official",
-    baseUrl: "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
+    baseUrl: "https://token-plan.maas.qianwenaiapi.com/apps/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
     modelRoutes: brandedRoutes(
@@ -1556,6 +1612,10 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
       "qwen3.8-flash",
       true,
     ),
+    endpointCandidates: [
+      "https://token-plan.maas.qianwenaiapi.com/apps/anthropic",
+      "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
+    ],
     icon: "qianwenai",
     iconColor: "#624AFF",
   },
@@ -1570,7 +1630,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     websiteUrl: "https://home.qwencloud.com/?utm_content=g_20000002974",
     apiKeyUrl: "https://home.qwencloud.com/api-keys?utm_content=g_20000002975",
     category: "cn_official",
-    baseUrl: "https://dashscope-intl.aliyuncs.com/apps/anthropic",
+    baseUrl: "https://ap-southeast-1.maas.qwencloudapi.com/apps/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
     // 不挂 [1m]：qwen3.8 系官方窗口是 983616，不足 1M，
@@ -1581,6 +1641,10 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
       "qwen3.8-flash",
       true,
     ),
+    endpointCandidates: [
+      "https://ap-southeast-1.maas.qwencloudapi.com/apps/anthropic",
+      "https://dashscope-intl.aliyuncs.com/apps/anthropic",
+    ],
     icon: "qwencloud",
     iconColor: "#6336E7",
   },
@@ -1612,8 +1676,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
       "https://www.qwencloud.com/pricing/token-plan?utm_content=g_20000002980",
     apiKeyUrl: "https://home.qwencloud.com/api-keys?utm_content=g_20000002981",
     category: "cn_official",
-    baseUrl:
-      "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic",
+    baseUrl: "https://token-plan.maas.qwencloudapi.com/apps/anthropic",
     mode: "proxy",
     apiFormat: "anthropic",
     // 不挂 [1m]：qwen3.8 系官方窗口是 983616，不足 1M，
@@ -1624,6 +1687,10 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
       "qwen3.8-flash",
       true,
     ),
+    endpointCandidates: [
+      "https://token-plan.maas.qwencloudapi.com/apps/anthropic",
+      "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic",
+    ],
     icon: "qwencloud",
     iconColor: "#6336E7",
   },
@@ -2091,6 +2158,25 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     endpointCandidates: ["https://api.tokenfactory.nebius.com"],
   },
   {
+    name: "ClinePass",
+    websiteUrl: "https://docs.cline.bot/getting-started/clinepass",
+    apiKeyUrl: "https://app.cline.bot",
+    category: "third_party",
+    icon: "cline",
+    // 同 Claude Code 预设：官方只有 OpenAI Chat 端点，走 openai_chat 路由；
+    // Kimi K3.1 Pro 与 GLM-5.3 Flash 窗口均为 1M（models.dev，2026-10-26）
+    baseUrl: "https://api.cline.bot/api/v1",
+    mode: "proxy",
+    apiFormat: "openai_chat",
+    modelRoutes: brandedRoutes(
+      "cline-pass/kimi-k3.1-pro",
+      "cline-pass/kimi-k3.1-pro",
+      "cline-pass/glm-5.3-flash",
+      true,
+    ),
+    endpointCandidates: ["https://api.cline.bot/api/v1"],
+  },
+  {
     name: "Groq",
     websiteUrl: "https://groq.com",
     apiKeyUrl: "https://console.groq.com/keys",
@@ -2237,24 +2323,25 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   {
     name: "Mistral AI",
     websiteUrl: "https://mistral.ai",
-    apiKeyUrl: "https://console.mistral.ai/api-keys",
+    // Vibe 订阅额度与 API 共用，Key 在 Code > Vibe CLI 页创建（同 Claude 预设）
+    apiKeyUrl: "https://chat.mistral.ai/code/extensions",
     category: "cn_official",
     // 同 Claude Code 预设：官方只文档化 OpenAI Chat 端点（docs.mistral.ai/
     // openapi.yaml，2026-10-14 核对），走 openai_chat 路由，base 不带 /v1。
-    // Medium 3.5 / Small 4 窗口均为 256k（docs.mistral.ai/models.md 同日），
-    // 不标 1M
+    // 主力 Large 4（窗口 1M）、haiku 档 Small 4（256k）（docs.mistral.ai/
+    // models.md，2026-11-06 核对；Medium 3.5 已弃用）。haiku 档不到 1M，
+    // 不整体标 1M。转换层风险同 Claude 预设，未经真 Key 冒烟，2026-11-06 起
+    // 照常展示（不再隐藏）
     baseUrl: "https://api.mistral.ai",
     mode: "proxy",
     apiFormat: "openai_chat",
     modelRoutes: brandedRoutes(
-      "mistral-medium-3-5",
-      "mistral-medium-3-5",
+      "mistral-large-4",
+      "mistral-large-4",
       "mistral-small-2603",
     ),
     endpointCandidates: ["https://api.mistral.ai"],
     icon: "mistral",
-    // 先隐藏：同 Claude 预设，转换层风险真 Key 冒烟通过前不展示
-    hidden: true,
   },
   {
     name: "Cloudflare AI Gateway",
@@ -2476,10 +2563,10 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   },
   {
     name: "TokenFlux",
-    websiteUrl: "https://tokenflux.dev",
-    apiKeyUrl: "https://tokenflux.dev/keys",
+    websiteUrl: "https://tokenflux.com",
+    apiKeyUrl: "https://tokenflux.com/keys",
     category: "aggregator",
-    baseUrl: "https://tokenflux.dev",
+    baseUrl: "https://tokenflux.com",
     mode: "direct",
     apiFormat: "anthropic",
     modelRoutes: mappedRoutes(
@@ -2488,6 +2575,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
       "claude-haiku-5-5",
       true,
     ),
+    endpointCandidates: ["https://tokenflux.com", "https://tokenflux.dev"],
     icon: "tokenflux",
   },
   {

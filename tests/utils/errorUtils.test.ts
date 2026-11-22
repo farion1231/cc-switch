@@ -1,12 +1,16 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import i18n from "@/i18n";
+import de from "@/i18n/locales/de.json";
 import en from "@/i18n/locales/en.json";
 import ja from "@/i18n/locales/ja.json";
+import ko from "@/i18n/locales/ko.json";
+import ru from "@/i18n/locales/ru.json";
 import tr from "@/i18n/locales/tr.json";
 import zh from "@/i18n/locales/zh.json";
 import zhTW from "@/i18n/locales/zh-TW.json";
 import {
   extractErrorMessage,
+  translateMcpBackendError,
   translateKimiProviderMutationError,
   translatePiProviderMutationError,
 } from "@/utils/errorUtils";
@@ -38,6 +42,32 @@ describe("error utilities", () => {
     ).toBe("pi.form.providerKeyDuplicate");
   });
 
+  it("maps the MCP servers Pi refuses to localized messages", () => {
+    const t = vi.fn(
+      (key: string, opts?: Record<string, unknown>) =>
+        `${key}${opts ? JSON.stringify(opts) : ""}`,
+    );
+
+    expect(
+      translateMcpBackendError(
+        "MCP 校验失败: Pi 不支持 SSE 连接方式的 MCP 服务器，请改用 HTTP（streamable HTTP）",
+        t,
+      ),
+    ).toBe("mcp.error.piSseUnsupported");
+    expect(
+      translateMcpBackendError(
+        "MCP 校验失败: Pi 的 MCP 服务器名只能包含字母、数字、_ 和 -：bad name",
+        t,
+      ),
+    ).toBe('mcp.error.piInvalidName{"id":"bad name"}');
+    expect(
+      translateMcpBackendError(
+        "MCP 校验失败: Pi 把只差 - 和 _ 的服务器名视为同一个：dev_tools 与已有的 dev-tools 冲突",
+        t,
+      ),
+    ).toBe('mcp.error.piNameConflict{"id":"dev_tools","other":"dev-tools"}');
+  });
+
   it("explains Kimi removals refused because Kimi Code still uses the model", () => {
     const t = vi.fn((key: string) => key);
 
@@ -64,8 +94,11 @@ describe("custom Codex catalog errors", () => {
 
   beforeAll(() => {
     for (const [language, resource] of Object.entries({
+      de,
       en,
       ja,
+      ko,
+      ru,
       tr,
       zh,
       "zh-TW": zhTW,
@@ -82,7 +115,13 @@ describe("custom Codex catalog errors", () => {
     ["zh", "无法读取 Codex 自定义模型目录"],
     ["zh-TW", "無法讀取 Codex 自訂模型目錄"],
     ["en", "Cannot read the custom Codex model catalog"],
+    [
+      "de",
+      "Der benutzerdefinierte Codex-Modellkatalog kann nicht gelesen werden",
+    ],
     ["ja", "Codex のカスタムモデルカタログを読み取れません"],
+    ["ko", "사용자 지정 Codex 모델 카탈로그를 읽을 수 없습니다"],
+    ["ru", "Не удалось прочитать пользовательский каталог моделей Codex"],
     ["tr", "Özel Codex model kataloğu okunamadı"],
   ])(
     "uses the current %s language for wrapped Tauri errors",

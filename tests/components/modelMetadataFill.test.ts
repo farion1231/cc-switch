@@ -6,6 +6,7 @@ import {
   fillKimiModel,
   fillOpenClawModel,
   fillOpenCodeModel,
+  fillWorkBuddyModel,
   piPresetThinkingFor,
   piSendsReasoningEffort,
   piThinkingLevelMapFromEfforts,
@@ -115,9 +116,9 @@ describe("fillHermesModel", () => {
   });
 
   it("only fills supports_vision towards true and keeps an explicit false", () => {
-    expect(
-      fillHermesModel({ id: "m" }, { inputModalities: ["text"] }),
-    ).toEqual({ id: "m" });
+    expect(fillHermesModel({ id: "m" }, { inputModalities: ["text"] })).toEqual(
+      { id: "m" },
+    );
     expect(
       fillHermesModel({ id: "m", supports_vision: false }, metadata),
     ).toEqual({ id: "m", context_length: 262144, supports_vision: false });
@@ -236,6 +237,16 @@ describe("piSendsReasoningEffort", () => {
     expect(piSendsReasoningEffort(base)).toBe(true);
   });
 
+  it("accepts Pi's native Mistral protocol", () => {
+    expect(
+      piSendsReasoningEffort({
+        ...base,
+        api: "mistral-conversations",
+        baseUrl: "https://api.mistral.ai",
+      }),
+    ).toBe(true);
+  });
+
   it("rejects protocols and endpoints with their own thinking format", () => {
     expect(piSendsReasoningEffort({ ...base, api: "anthropic-messages" })).toBe(
       false,
@@ -331,5 +342,69 @@ describe("piPresetThinkingFor", () => {
         compat: { supportsReasoningEffort: false },
       }),
     ).toBeNull();
+  });
+});
+
+describe("fillWorkBuddyModel", () => {
+  const url = "https://api.example.test/v1";
+  const efforts = {
+    reasoning: {
+      supportedEfforts: ["low", "high", "max"],
+      defaultEffort: "high",
+      canDisableThinking: false,
+    },
+    thinkingLevelMap: {
+      off: null,
+      minimal: null,
+      low: "low",
+      medium: null,
+      high: "high",
+      xhigh: null,
+      max: "max",
+    },
+  };
+
+  it("fills blank limits and only turns capabilities on", () => {
+    expect(
+      fillWorkBuddyModel(
+        { id: "m", supportsToolCall: true, supportsImages: false },
+        metadata,
+        url,
+      ),
+    ).toEqual({
+      id: "m",
+      supportsToolCall: true,
+      supportsImages: true,
+      supportsReasoning: true,
+      maxInputTokens: 262144,
+      maxOutputTokens: 32768,
+      ...efforts,
+    });
+    expect(
+      fillWorkBuddyModel(
+        { id: "m", maxInputTokens: 1000, supportsReasoning: true },
+        { reasoning: false, contextWindow: 2000 },
+        url,
+      ),
+    ).toEqual({ id: "m", maxInputTokens: 1000, supportsReasoning: true });
+  });
+
+  it("derives effort levels only where they reach the upstream", () => {
+    // Moonshot 不认 reasoning_effort（Pi 的探测规则），不列强度
+    expect(
+      fillWorkBuddyModel({ id: "m" }, metadata, "https://api.moonshot.cn/v1"),
+    ).not.toHaveProperty("reasoning");
+    // 已有的强度或映射不动
+    const kept = {
+      id: "m",
+      supportsReasoning: true,
+      thinkingLevelMap: { max: "max" },
+    };
+    expect(fillWorkBuddyModel(kept, metadata, url)).toEqual({
+      ...kept,
+      supportsImages: true,
+      maxInputTokens: 262144,
+      maxOutputTokens: 32768,
+    });
   });
 });
