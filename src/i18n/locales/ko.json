@@ -5150,6 +5150,15 @@
     "confirm": "확인"
   },
   "authCenter": {
+    "loginProxy": {
+      "label": "ChatGPT 계정 요청에 프록시 사용",
+      "url": "ChatGPT 계정 프록시 URL",
+      "hint": "저장하면 ChatGPT 로그인, 토큰 갱신, 사용량 한도 및 계정 모델 목록 조회에 이 프록시를 사용합니다. 끄면 이 요청은 전역 또는 시스템 프록시 설정을 따릅니다. 인증 페이지는 브라우저의 프록시 설정을 따릅니다.",
+      "required": "ChatGPT 계정의 프록시 URL을 입력하세요.",
+      "save": "프록시 설정 저장",
+      "saved": "ChatGPT 프록시 설정이 저장되었습니다",
+      "loadFailed": "프록시 설정을 불러오지 못했습니다. 다시 시도하거나 새 설정을 저장하세요."
+    },
     "helpTitle": "인증 센터란?",
     "group": {
       "helpTitle": "{{service}} 계정의 사용 방식",

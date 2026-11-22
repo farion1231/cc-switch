@@ -201,11 +201,14 @@ impl CodexOAuthManager {
         let expires_at = chrono::Utc::now().timestamp_millis() + lifetime.as_millis() as i64;
         self.register_pending_device_code(
             flow_id.clone(),
-            String::new(),
-            expires_at,
             epoch,
-            target,
-            generation,
+            PendingDeviceCode {
+                user_code: String::new(),
+                client: self.account_client(),
+                expires_at_ms: expires_at,
+                target_account_id: target,
+                target_generation: generation,
+            },
         )
         .await?;
         let pending = Arc::downgrade(&self.pending_device_codes);
@@ -309,7 +312,7 @@ impl CodexOAuthManager {
         flow.stop().await;
         let result = async {
             let tokens = self
-                .exchange_code_for_tokens(&code, &flow.verifier, REDIRECT_URI)
+                .exchange_code_for_tokens(&entry.client, &code, &flow.verifier, REDIRECT_URI)
                 .await?;
             let _commit_guard = before_commit().await;
             self.commit_login_tokens(tokens, flow_id, &entry)

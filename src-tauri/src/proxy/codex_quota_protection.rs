@@ -306,6 +306,7 @@ pub(crate) async fn admit(
     token: &str,
     request_headers: &HeaderMap,
     request_model: Option<&str>,
+    account_client: Option<reqwest::Client>,
 ) -> Result<(), ProxyError> {
     // Free for ChatGPT sign-ins, so it is exempt even while official requests are paused.
     if is_auto_review_model(request_model) {
@@ -316,9 +317,22 @@ pub(crate) async fn admit(
         .get("chatgpt-account-id")
         .and_then(|value| value.to_str().ok());
     cache()
-        .admit_with(account_key(token, account_id), &config, now_unix(), || {
-            query_codex_usage(token, account_id, "codex", "ChatGPT login needs refreshing")
-        })
+        .admit_with(
+            account_key(token, account_id),
+            &config,
+            now_unix(),
+            || async {
+                let client = account_client.unwrap_or_else(super::http_client::get);
+                query_codex_usage(
+                    &client,
+                    token,
+                    account_id,
+                    "codex",
+                    "ChatGPT login needs refreshing",
+                )
+                .await
+            },
+        )
         .await
 }
 

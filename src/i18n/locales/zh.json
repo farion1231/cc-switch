@@ -5151,6 +5151,15 @@
   },
   "authCenter": {
     "helpTitle": "授权中心是什么",
+    "loginProxy": {
+      "label": "ChatGPT 账号请求使用代理",
+      "url": "ChatGPT 账号代理地址",
+      "hint": "保存后，ChatGPT 登录、令牌刷新、额度及账号模型列表查询均使用此代理。关闭后，这些请求沿用全局或系统代理设置。授权页面使用浏览器的代理设置。",
+      "required": "请填写 ChatGPT 账号代理地址。",
+      "save": "保存代理设置",
+      "saved": "ChatGPT 代理设置已保存",
+      "loadFailed": "无法读取代理设置。请重试，或保存新的配置。"
+    },
     "group": {
       "helpTitle": "{{service}} 账号怎么用",
       "copilotHelp": "用于 Claude Code、Claude Desktop 的 GitHub Copilot 预设。没指定账号的供应商用「默认」账号。",

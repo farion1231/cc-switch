@@ -5150,6 +5150,15 @@
     "confirm": "知道了"
   },
   "authCenter": {
+    "loginProxy": {
+      "label": "ChatGPT 帳號請求使用代理伺服器",
+      "url": "ChatGPT 帳號代理伺服器網址",
+      "hint": "儲存後，ChatGPT 登入、權杖更新、用量及帳號模型清單查詢皆使用此代理伺服器。關閉後，這些請求沿用全域或系統代理設定。授權頁面使用瀏覽器的代理設定。",
+      "required": "請輸入 ChatGPT 帳號代理伺服器網址。",
+      "save": "儲存代理設定",
+      "saved": "已儲存 ChatGPT 代理設定",
+      "loadFailed": "無法讀取代理設定。請重試，或儲存新的設定。"
+    },
     "helpTitle": "授權中心是什麼",
     "group": {
       "helpTitle": "{{service}} 帳號怎麼用",

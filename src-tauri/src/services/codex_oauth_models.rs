@@ -17,9 +17,9 @@ const ERROR_BODY_MAX_CHARS: usize = 512;
 pub async fn fetch_models_with_token(
     token: &str,
     account_id: &str,
+    client: &reqwest::Client,
 ) -> Result<Vec<FetchedModel>, String> {
-    let client = crate::proxy::http_client::get();
-    let response = build_models_request(&client, token, account_id)
+    let response = build_models_request(client, token, account_id)
         .send()
         .await
         .map_err(|e| format!("Request failed: {e}"))?;

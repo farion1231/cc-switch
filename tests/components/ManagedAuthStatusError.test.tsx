@@ -1,7 +1,8 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CodexOAuthSection } from "@/components/providers/forms/CodexOAuthSection";
 import { CopilotAuthSection } from "@/components/providers/forms/CopilotAuthSection";
+import { renderWithQueryClient as render } from "../utils/testQueryClient";
 
 const authMocks = vi.hoisted(() => ({
   refetchCodex: vi.fn(),

@@ -1,9 +1,16 @@
 import { useState } from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import i18n from "i18next";
+import { http, HttpResponse } from "msw";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CodexOAuthSection } from "@/components/providers/forms/CodexOAuthSection";
 import { AuthCenterPanel } from "@/components/settings/AuthCenterPanel";
+import { getChatgptProxyConfig } from "@/lib/api/auth";
+import { server } from "../msw/server";
+import { renderWithQueryClient as render } from "../utils/testQueryClient";
+
+const GET_PROXY_CONFIG = "http://tauri.local/get_chatgpt_proxy_config";
 
 const mocks = vi.hoisted(() => ({
   useCodexOauth: vi.fn(),
@@ -146,6 +153,71 @@ describe("CodexOAuthSection", () => {
     expect(
       screen.getAllByTestId("account-quota").map((quota) => quota.textContent),
     ).toEqual(["account-1", "account-2"]);
+  });
+
+  it("keeps login available when loading proxy settings fails and allows retrying the read", async () => {
+    const user = userEvent.setup();
+    const { addAccount } = mocks.useCodexOauth();
+    const proxyUrl = "socks5://127.0.0.1:1080";
+    server.use(
+      http.post(
+        GET_PROXY_CONFIG,
+        () =>
+          HttpResponse.json("Unable to read proxy settings", { status: 500 }),
+        { once: true },
+      ),
+      http.post(GET_PROXY_CONFIG, () =>
+        HttpResponse.json({ enabled: true, url: proxyUrl }),
+      ),
+    );
+    render(<CodexOAuthSection />);
+
+    const retry = await screen.findByRole("button", {
+      name: i18n.t("common.retry"),
+    });
+    await user.click(screen.getByRole("button", { name: "添加账号" }));
+    expect(addAccount).toHaveBeenCalledOnce();
+
+    await user.click(retry);
+    expect(await screen.findByDisplayValue(proxyUrl)).toBeInTheDocument();
+  });
+
+  it("can replace proxy settings after the initial read fails", async () => {
+    const user = userEvent.setup();
+    const proxyUrl = "http://127.0.0.1:7890";
+    server.use(
+      http.post(
+        GET_PROXY_CONFIG,
+        () =>
+          HttpResponse.json("Invalid stored configuration", { status: 500 }),
+        { once: true },
+      ),
+    );
+    render(<CodexOAuthSection />);
+
+    await screen.findByRole("button", { name: i18n.t("common.retry") });
+    await user.click(
+      screen.getByRole("switch", {
+        name: i18n.t("authCenter.loginProxy.label"),
+      }),
+    );
+    await user.type(
+      screen.getByRole("textbox", {
+        name: i18n.t("authCenter.loginProxy.url"),
+      }),
+      ` ${proxyUrl} `,
+    );
+    const save = screen.getByRole("button", {
+      name: i18n.t("authCenter.loginProxy.save"),
+    });
+    await user.click(save);
+
+    await waitFor(async () => {
+      expect(await getChatgptProxyConfig()).toEqual({
+        enabled: true,
+        url: proxyUrl,
+      });
+    });
   });
 
   it("shows how many providers use each account", () => {

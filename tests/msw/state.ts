@@ -1,4 +1,5 @@
 import type { AppId } from "@/lib/api/types";
+import type { ChatgptProxyConfig } from "@/lib/api/auth";
 import type {
   Provider,
   SessionContentHit,
@@ -121,6 +122,7 @@ let settingsState: Settings = {
   language: "zh",
 };
 let appConfigDirOverride: string | null = null;
+let chatgptProxyConfig: ChatgptProxyConfig = { enabled: false, url: "" };
 const sessionMessageKey = (providerId: string, sourcePath: string) =>
   `${providerId}:${sourcePath}`;
 
@@ -266,6 +268,13 @@ export const resetProviderState = () => {
     language: "zh",
   };
   appConfigDirOverride = null;
+  chatgptProxyConfig = { enabled: false, url: "" };
+};
+
+export const getChatgptProxyConfig = () => chatgptProxyConfig;
+
+export const setChatgptProxyConfig = (config: ChatgptProxyConfig) => {
+  chatgptProxyConfig = config;
 };
 
 export const getProviders = (appType: AppId) =>

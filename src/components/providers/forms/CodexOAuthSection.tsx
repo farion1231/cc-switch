@@ -14,6 +14,7 @@ import {
 import { Loader2, Plus, AlertTriangle, RefreshCw } from "lucide-react";
 import { useCodexOauth } from "./hooks/useCodexOauth";
 import type { CodexLoginMethod } from "@/lib/api/auth";
+import { ChatgptAccountProxySettings } from "./ChatgptAccountProxySettings";
 import {
   ManagedAccountRemoveDialog,
   type ManagedAccountRemoveTarget,
@@ -471,6 +472,7 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
         defaultValue: "无法加载 ChatGPT 账号状态，请重试。",
       })}
       onRetryStatus={() => void refetchStatus()}
+      notice={<ChatgptAccountProxySettings loginPending={isAddingAccount} />}
       emptyText={t("authCenter.empty", {
         defaultValue: "还没有登录 {{service}} 账号。",
         service: "ChatGPT",
