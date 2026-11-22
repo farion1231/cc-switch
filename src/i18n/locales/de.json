@@ -2107,6 +2107,7 @@
     "selectAccount": "Konto auswählen",
     "selectAccountPlaceholder": "xAI-Konto auswählen",
     "useDefaultAccount": "Standardkonto verwenden",
+    "account": "xAI-Konto",
     "accounts": "xAI-Konten",
     "defaultAccount": "Standard",
     "expired": "Anmeldedaten abgelaufen",

@@ -2107,6 +2107,7 @@
     "selectAccount": "选择账号",
     "selectAccountPlaceholder": "选择 xAI 账号",
     "useDefaultAccount": "使用默认账号",
+    "account": "xAI 账号",
     "accounts": "xAI 账号",
     "defaultAccount": "默认",
     "expired": "凭据已失效",

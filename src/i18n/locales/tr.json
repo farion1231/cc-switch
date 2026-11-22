@@ -2038,6 +2038,7 @@
     "selectAccount": "Hesap seçin",
     "selectAccountPlaceholder": "Bir xAI hesabı seçin",
     "useDefaultAccount": "Varsayılan hesabı kullan",
+    "account": "xAI hesabı",
     "accounts": "xAI hesapları",
     "defaultAccount": "Varsayılan",
     "expired": "Kimlik bilgilerinin süresi doldu",

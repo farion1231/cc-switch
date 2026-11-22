@@ -2107,6 +2107,7 @@
     "selectAccount": "Выберите аккаунт",
     "selectAccountPlaceholder": "Выберите аккаунт xAI",
     "useDefaultAccount": "Использовать аккаунт по умолчанию",
+    "account": "Аккаунт xAI",
     "accounts": "Аккаунты xAI",
     "defaultAccount": "По умолчанию",
     "expired": "Срок действия учётных данных истёк",
