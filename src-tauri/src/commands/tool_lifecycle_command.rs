@@ -963,6 +963,14 @@ fn npm_scripts_env_prefix(pkg: &str) -> String {
     format!("npm_config_allow_scripts={pkg} npm_config_ignore_scripts=false npm_config_include=optional ")
 }
 
+/// Windows 批处理版 npm 12 脚本放行前缀（含义同 `npm_scripts_env_prefix`）。
+#[cfg(target_os = "windows")]
+fn windows_npm_scripts_env_prefix(pkg: &str) -> String {
+    format!(
+        "set \"npm_config_allow_scripts={pkg}\" && set \"npm_config_ignore_scripts=false\" && set \"npm_config_include=optional\""
+    )
+}
+
 #[cfg(not(target_os = "windows"))]
 fn anchored_official_update_command(tool: &str, bin_path: &str) -> Option<String> {
     tool_spec(tool)
@@ -1394,19 +1402,34 @@ pub(super) fn installs_anchored_command(
     {
         // V2 owns its package/installer selection and Windows binary replacement.
         // Never fall back to installing V1 when its updater fails.
+        let real_lower = real.to_ascii_lowercase().replace('\\', "/");
+        let is_npm_v2 =
+            real_lower.contains("/node_modules/@opencode/cli/") && !real_lower.contains("/.bun/");
         #[cfg(not(target_os = "windows"))]
         {
             if is_brew_managed_path(&real) {
                 return anchored_command_from_paths(tool, &inst.path, &real);
             }
+            let mut update = anchored_official_update_command(tool, &inst.path)?;
+            if is_npm_v2 {
+                update = format!("{}{update}", npm_scripts_env_prefix("@opencode/cli"));
+            }
             return Some(format!(
-                "PATH={}:\"$PATH\" {}",
+                "PATH={}:\"$PATH\" {update}",
                 shell_single_quote(&parent_dir(&inst.path)),
-                anchored_official_update_command(tool, &inst.path)?
             ));
         }
         #[cfg(target_os = "windows")]
-        return anchored_official_update_command(tool, &inst.path);
+        {
+            let update = anchored_official_update_command(tool, &inst.path)?;
+            if is_npm_v2 {
+                return Some(format!(
+                    "{} && call {update}",
+                    windows_npm_scripts_env_prefix("@opencode/cli")
+                ));
+            }
+            return Some(update);
+        }
     }
     // Codex 平台分发包损坏自愈：主包在但平台二进制缺失时 codex 跑不起来
     // （runnable=false），此时正常锚定的 `npm i -g @latest` 是 no-op 修不好——改用
@@ -2916,6 +2939,58 @@ mod tests {
             assert!(command.contains("upgrade"), "{command}");
             assert!(!command.contains("opencode-ai"), "{command}");
             assert!(!command.contains("||"), "{command}");
+        }
+
+        #[test]
+        fn v2_npm_update_allows_postinstall_scripts() {
+            let mut npm_install = install("/tools/bin/opencode", Some("2.2.5"), true);
+            npm_install.real =
+                PathBuf::from("/tools/lib/node_modules/@opencode/cli/bin/opencode.exe");
+            let UpdateCommand::Anchored(command) =
+                resolve_update_command("opencode", &[npm_install])
+            else {
+                panic!("V2 npm install must be anchored");
+            };
+            #[cfg(not(target_os = "windows"))]
+            {
+                assert!(
+                    command.contains(
+                        "npm_config_allow_scripts=@opencode/cli npm_config_ignore_scripts=false npm_config_include=optional "
+                    ),
+                    "{command}"
+                );
+            }
+            #[cfg(target_os = "windows")]
+            {
+                assert!(
+                    command.starts_with(
+                        "set \"npm_config_allow_scripts=@opencode/cli\" && set \"npm_config_ignore_scripts=false\" && set \"npm_config_include=optional\" && call "
+                    ),
+                    "{command}"
+                );
+            }
+
+            let standalone = install("/tools/bin/opencode", Some("2.2.5"), true);
+            let UpdateCommand::Anchored(standalone_cmd) =
+                resolve_update_command("opencode", &[standalone])
+            else {
+                panic!("V2 standalone install must be anchored");
+            };
+            assert!(
+                !standalone_cmd.contains("npm_config_allow_scripts"),
+                "{standalone_cmd}"
+            );
+
+            let mut bun_install = install("/home/me/.bun/bin/opencode", Some("2.2.5"), true);
+            bun_install.real = PathBuf::from(
+                "/home/me/.bun/install/global/node_modules/@opencode/cli/bin/opencode",
+            );
+            let UpdateCommand::Anchored(bun_cmd) =
+                resolve_update_command("opencode", &[bun_install])
+            else {
+                panic!("V2 bun install must be anchored");
+            };
+            assert!(!bun_cmd.contains("npm_config_allow_scripts"), "{bun_cmd}");
         }
 
         #[test]
