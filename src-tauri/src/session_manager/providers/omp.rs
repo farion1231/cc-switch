@@ -397,7 +397,9 @@ mod tests {
     }
 
     /// resume_command 读取进程环境（profile、XDG、会话目录），断言完整命令前先清干净。
+    #[cfg(windows)]
     struct SavedEnv(Vec<(&'static str, Option<std::ffi::OsString>)>);
+    #[cfg(windows)]
     impl SavedEnv {
         fn cleared(names: &[&'static str]) -> Self {
             let saved = names
@@ -410,6 +412,7 @@ mod tests {
             Self(saved)
         }
     }
+    #[cfg(windows)]
     impl Drop for SavedEnv {
         fn drop(&mut self) {
             for (name, previous) in &self.0 {
