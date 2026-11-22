@@ -5,7 +5,12 @@ import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
 import { Provider, UsageScript, UsageData, createUsageScript } from "@/types";
 import { usageApi, settingsApi, type AppId } from "@/lib/api";
-import { copilotGetUsage, copilotGetUsageForAccount } from "@/lib/api/copilot";
+import {
+  copilotCliSignedInAccount,
+  copilotGetUsage,
+  copilotGetUsageForAccount,
+} from "@/lib/api/copilot";
+import { isCopilotByok } from "@/config/copilotConfig";
 import { useSettingsQuery } from "@/lib/query";
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import { resolveCodexOfficialIdentity } from "@/utils/providerCapabilities";
@@ -14,7 +19,7 @@ import { useDarkMode } from "@/hooks/useDarkMode";
 import {
   extractCodexBaseUrl,
   extractCodexExperimentalBearerToken,
-} from "@/utils/providerConfigUtils";
+} from "@/utils/codexConfigUtils";
 import { parseGrokBuildConfig } from "@/utils/grokBuildConfig";
 import JsonEditor from "./JsonEditor";
 import * as prettier from "prettier/standalone";
@@ -36,7 +41,9 @@ import {
   CODING_PLAN_PROVIDERS,
   detectCodingPlanProvider,
 } from "@/config/codingPlanProviders";
+import { detectBalanceProvider } from "@/config/balanceProviders";
 import { formatUsageDataSummary } from "@/utils/usageDisplay";
+import { appHas } from "@/config/appSpecs";
 
 /**
  * 火山引擎账号级 AccessKey 的密钥管理页（IAM）。
@@ -180,28 +187,8 @@ const TEMPLATE_NAME_KEYS: Record<string, string> = {
     "usageScript.templateOfficialSubscription",
 };
 
-/** 官方余额查询供应商检测 */
-const BALANCE_PROVIDERS = [
-  { id: "deepseek", label: "DeepSeek", pattern: /api\.deepseek\.com/i },
-  { id: "stepfun", label: "StepFun", pattern: /api\.stepfun\.(ai|com)/i },
-  {
-    id: "siliconflow",
-    label: "SiliconFlow",
-    pattern: /api\.siliconflow\.(cn|com)/i,
-  },
-  { id: "openrouter", label: "OpenRouter", pattern: /openrouter\.ai/i },
-  { id: "novita", label: "Novita AI", pattern: /api\.novita\.ai/i },
-] as const;
-
-/** 根据 Base URL 自动检测余额查询供应商 */
-function detectBalanceProvider(baseUrl: string | undefined): boolean {
-  if (!baseUrl) return false;
-  return BALANCE_PROVIDERS.some((bp) => bp.pattern.test(baseUrl));
-}
-
 function isOfficialSubscriptionProvider(provider: Provider, appId: AppId) {
-  if (!["claude", "codex", "gemini", "grokbuild", "agy"].includes(appId))
-    return false;
+  if (!appHas(appId, "officialSubscription")) return false;
   if (provider.category === "official") return true;
 
   const config = provider.settingsConfig as Record<string, any>;
@@ -332,7 +319,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
             apiKey: kimiProvider.api_key,
             baseUrl: kimiProvider.base_url,
           };
-        } else if (appId === "pi" || appId === "omp") {
+        } else if (appHas(appId, "piFamily")) {
           // Pi / Oh My Pi: provider values are camelCase; a model may override baseUrl.
           const root = config as any;
           const firstModel = Array.isArray(root.models)
@@ -341,6 +328,20 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           return {
             apiKey: root.apiKey,
             baseUrl: firstModel?.baseUrl || root.baseUrl,
+          };
+        } else if (appId === "workbuddy") {
+          // WorkBuddy models.json: shared url / apiKey, or the first model's overrides.
+          // url is the full chat/completions endpoint, same trim as the backend resolver.
+          const root = config as any;
+          const firstModel = Array.isArray(root.models)
+            ? root.models[0]
+            : undefined;
+          const url: string | undefined = root.url || firstModel?.url;
+          return {
+            apiKey: root.apiKey || firstModel?.apiKey,
+            baseUrl: url
+              ?.replace(/\/+$/, "")
+              .replace(/\/chat\/completions$/, ""),
           };
         } else if (appId === "openclaw") {
           // OpenClaw: settingsConfig 顶层扁平（camelCase，对应 openclaw.json）
@@ -373,11 +374,20 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   };
 
   const providerCredentials = getProviderCredentials();
+  const balanceProvider = detectBalanceProvider(providerCredentials.baseUrl);
   const isBoundCodexOfficial =
     resolveCodexOfficialIdentity(appId, provider) === "managed_account";
   const isOfficialSubscription = isOfficialSubscriptionProvider(
     provider,
     appId,
+  );
+  // Copilot CLI 官方卡：只有 Copilot Premium 额度一种查询；没设置过时，绑了授权中心账号的卡
+  // 默认打开（和卡片上的显示一致）。
+  const isCopilotCliOfficial =
+    appId === "copilot" && !isCopilotByok(provider.settingsConfig);
+  const copilotBoundAccountId = resolveManagedAccountId(
+    provider.meta,
+    PROVIDER_TYPES.GITHUB_COPILOT,
   );
   // 绑了授权中心账号的 Claude 官方卡：额度按这个号查（同 ProviderCard 的 claudeBoundAccountId）
   const claudeBoundAccountId =
@@ -391,6 +401,13 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
 
   const [script, setScript] = useState<UsageScript>(() => {
     const savedScript = provider.meta?.usage_script;
+    if (isCopilotCliOfficial) {
+      return createUsageScript({
+        ...(savedScript ? createUsageScript(savedScript) : {}),
+        templateType: TEMPLATE_TYPES.GITHUB_COPILOT,
+        enabled: savedScript?.enabled ?? Boolean(copilotBoundAccountId),
+      });
+    }
     if (savedScript) {
       const normalizedScript = createUsageScript(savedScript);
       if (
@@ -494,7 +511,10 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
     () => {
       const existingScript = provider.meta?.usage_script;
       // Copilot 供应商默认使用 Copilot 模板
-      if (provider.meta?.providerType === PROVIDER_TYPES.GITHUB_COPILOT) {
+      if (
+        isCopilotCliOfficial ||
+        provider.meta?.providerType === PROVIDER_TYPES.GITHUB_COPILOT
+      ) {
         return TEMPLATE_TYPES.GITHUB_COPILOT;
       }
       // 优先使用保存的 templateType
@@ -703,10 +723,23 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
 
       // Copilot 模板使用专用 API
       if (selectedTemplate === TEMPLATE_TYPES.GITHUB_COPILOT) {
-        const accountId = resolveManagedAccountId(
-          provider.meta,
-          PROVIDER_TYPES.GITHUB_COPILOT,
-        );
+        let accountId = copilotBoundAccountId;
+        if (isCopilotCliOfficial && !accountId) {
+          // 没绑账号的 Copilot CLI 官方卡跟着 CLI 当前登录的账号查，和卡片一致。
+          const signedIn = await copilotCliSignedInAccount();
+          if (!signedIn?.accountId) {
+            toast.error(
+              signedIn
+                ? t("copilot.quota.accountNotInAuthCenter", {
+                    login: signedIn.login,
+                  })
+                : t("copilot.quota.notSignedIn"),
+              { duration: 5000 },
+            );
+            return;
+          }
+          accountId = signedIn.accountId;
+        }
         const usage = accountId
           ? await copilotGetUsageForAccount(accountId)
           : await copilotGetUsage();
@@ -978,6 +1011,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
               {Object.keys(PRESET_TEMPLATES)
                 .filter((name) => {
                   const isCopilotProvider =
+                    isCopilotCliOfficial ||
                     provider.meta?.providerType === "github_copilot";
                   // Copilot 供应商只显示 copilot 模板
                   if (isCopilotProvider) {
@@ -1097,16 +1131,11 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                   {t("usageScript.balanceHint")}
                 </p>
                 <div className="flex gap-2 flex-wrap">
-                  {BALANCE_PROVIDERS.filter((bp) =>
-                    bp.pattern.test(providerCredentials.baseUrl || ""),
-                  ).map((bp) => (
-                    <span
-                      key={bp.id}
-                      className="inline-flex items-center px-2.5 py-1 rounded-md bg-primary/10 text-primary text-xs font-medium"
-                    >
-                      {bp.label}
+                  {balanceProvider && (
+                    <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-primary/10 text-primary text-xs font-medium">
+                      {balanceProvider.label}
                     </span>
-                  ))}
+                  )}
                 </div>
               </div>
             )}
@@ -1334,7 +1363,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                             onChange={(e) =>
                               setScript({ ...script, baseUrl: e.target.value })
                             }
-                            placeholder="https://api.zenmux.com/v1/..."
+                            placeholder="https://zenmux.ai/api/v1/..."
                             autoComplete="off"
                             className="border-white/10"
                           />

@@ -605,6 +605,55 @@ describe("ClaudeDesktopProviderForm", () => {
     );
   });
 
+  it("编辑映射卡只改实际请求模型时，自动填出的菜单显示名跟着更新（#9203）", async () => {
+    const onSubmit = vi.fn();
+    renderForm(
+      {
+        name: "Proxy Provider",
+        settingsConfig: {
+          env: {
+            ANTHROPIC_BASE_URL: "https://api.example.com",
+            ANTHROPIC_AUTH_TOKEN: "sk-test",
+          },
+        },
+        meta: {
+          claudeDesktopMode: "proxy",
+          claudeDesktopModelRoutes: {
+            "claude-sonnet-5": {
+              model: "old-model",
+              labelOverride: "old-model",
+            },
+            "claude-opus-5": {
+              model: "old-model",
+              labelOverride: "My Opus",
+            },
+          },
+        },
+      },
+      onSubmit,
+    );
+
+    // 前三档（Sonnet / Opus / Fable）的实际请求模型占位都是 deepseek-v4-pro。
+    const [sonnetModel, opusModel] =
+      screen.getAllByPlaceholderText("deepseek-v4-pro");
+    fireEvent.change(sonnetModel, { target: { value: "new-model" } });
+    fireEvent.change(opusModel, { target: { value: "new-opus" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    const routes = onSubmit.mock.calls[0][0].meta.claudeDesktopModelRoutes;
+    // 显示名原本就是自动回落出来的模型名：跟着换成新模型。
+    expect(routes["claude-sonnet-5"]).toMatchObject({
+      model: "new-model",
+      labelOverride: "new-model",
+    });
+    // 用户自己起的显示名保持不动。
+    expect(routes["claude-opus-5"]).toMatchObject({
+      model: "new-opus",
+      labelOverride: "My Opus",
+    });
+  });
+
   it("回填空档时继承 Sonnet 的 1M 声明", async () => {
     const onSubmit = vi.fn();
     renderForm(

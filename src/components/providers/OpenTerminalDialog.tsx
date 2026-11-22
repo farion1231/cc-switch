@@ -15,14 +15,18 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Notice } from "@/components/ui/notice";
 import { authApi, providersApi, settingsApi } from "@/lib/api";
-import { resolveManagedAccountId } from "@/lib/authBinding";
-import { isMac } from "@/lib/platform";
+import {
+  canSwitchAgyAccount,
+  resolveManagedAccountId,
+} from "@/lib/authBinding";
 import type { AppId } from "@/lib/api/types";
+import { isLinux } from "@/lib/platform";
 import type { Provider } from "@/types";
 import { toast } from "@/lib/toast";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { cn } from "@/lib/utils";
 import { providerNeedsRouting } from "@/utils/providerCapabilities";
+import { isCopilotOfficialCard } from "@/config/copilotConfig";
 
 const STORAGE_KEY = "cc-switch:terminal:recent-dirs";
 const MAX_RECENT = 5;
@@ -113,13 +117,16 @@ const TERMINAL_APP_NAMES: Partial<Record<AppId, string>> = {
   claude: "Claude Code",
   codex: "Codex",
   agy: "Antigravity CLI",
+  grokbuild: "Grok Build",
+  copilot: "GitHub Copilot CLI",
 };
 
-/** 跳过权限确认的参数：Claude Code 和 agy 同名，Codex 同时关掉沙箱 */
+/** 跳过权限确认的参数：Claude Code 和 agy 同名，Codex 同时关掉沙箱，Grok Build 用自己的，Copilot CLI 用 `--allow-all` */
 function skipPermissionsFlag(appId: AppId): string {
-  return appId === "codex"
-    ? "--dangerously-bypass-approvals-and-sandbox"
-    : "--dangerously-skip-permissions";
+  if (appId === "codex") return "--dangerously-bypass-approvals-and-sandbox";
+  if (appId === "grokbuild") return "--always-approve";
+  if (appId === "copilot") return "--allow-all";
+  return "--dangerously-skip-permissions";
 }
 
 /** Codex 卡自己带路由表（第三方地址），终端能只对这一次用 `-c` 换成它 */
@@ -133,16 +140,33 @@ function codexHasOwnRoute(provider: Provider): boolean {
 
 /**
  * 卡片上显示不显示「打开终端」。Codex 的官方卡、没有路由的卡跟着 Codex 自己的登录走，
- * 只有是当前供应商时才能打开（直接跑 `codex`）；要经本地路由的卡终端直连不了。
+ * 只有是当前供应商时才能打开（直接跑 `codex`）。
+ * Grok Build 没有只对一个进程换配置的办法（没有 `-c`，换 `GROK_HOME` 会连会话和登录一起换掉），
+ * 只有当前供应商能打开，直接跑 `grok` 读 live 的 config.toml。
+ * 要经本地路由的卡照样显示，但置灰（见 [`terminalNeedsRoute`]）。
  */
 export function terminalAvailable(
   provider: Provider,
   appId: AppId,
   isCurrent: boolean,
 ): boolean {
+  if (appId === "grokbuild") return isCurrent;
   if (appId !== "codex") return true;
-  if (providerNeedsRouting("codex", provider)) return false;
+  if (terminalNeedsRoute(provider, appId)) return true;
   return isCurrent || codexHasOwnRoute(provider);
+}
+
+/**
+ * 这张卡只能经本地路由用，卡片终端打不通，按钮置灰并说明原因。终端直连卡上的地址：托管账号卡
+ * （Copilot、Codex OAuth、xAI OAuth）没有 Key，凭据只能由路由注入；非原生格式的卡要路由做
+ * 格式转换。Claude Code 的临时 settings 还会把卡上没有的凭据键置空，Claude Code 便退回
+ * claude.ai 登录、提示 /login。与当前模式无关，直连、路由、聚合下一样置灰。
+ */
+export function terminalNeedsRoute(provider: Provider, appId: AppId): boolean {
+  return (
+    (appId === "claude" || appId === "codex") &&
+    providerNeedsRouting(appId, provider)
+  );
 }
 
 /**
@@ -156,12 +180,23 @@ export function terminalAvailable(
  *
  * Antigravity：带 Key 的卡用自己的私有 `--gemini_dir` 启动，Key 只给这个 agy 进程；官方
  * 登录卡直接跑原生 agy，跟着全局设置和登录走。
+ *
+ * Grok Build：只能打开当前供应商，跑的就是 live 配置，谈不上隔离。
+ *
+ * Copilot CLI：自带模型卡写在 providers.json 里，终端以 `--model=<卡片 id>/<模型>` 选中它，
+ * 只对这次会话生效；官方卡跟着 Copilot 自己的 GitHub 登录走。
  */
 export function terminalIsIsolated(
   provider: Provider,
   appId: AppId = "claude",
 ): boolean {
+  if (appId === "grokbuild") return false;
   if (appId === "codex") return codexHasOwnRoute(provider);
+  // Copilot CLI：自带模型卡以 --model=<卡片 id>/<模型> 启动，清掉进程环境里的 BYOK 变量，
+  // 只对这个 copilot 会话生效
+  if (appId === "copilot") {
+    return !isCopilotOfficialCard(provider);
+  }
   const env = (provider.settingsConfig as { env?: unknown } | undefined)?.env;
   if (!env || typeof env !== "object") return false;
   const filled = (key: string) => {
@@ -204,11 +239,15 @@ export function OpenTerminalDialog({
   const [opening, setOpening] = useState(false);
   const [skipPermissions, setSkipPermissions] = useState(false);
   const [extraArgs, setExtraArgs] = useState("");
+  const [agyUseCurrentLogin, setAgyUseCurrentLogin] = useState(false);
   const queryClient = useQueryClient();
 
   // Antigravity 官方卡绑了账号：打开前会把 agy 的全局登录切过去，先说清楚
   const boundAgyAccount =
-    appId === "agy" && provider && provider.category === "official" && isMac()
+    appId === "agy" &&
+    provider &&
+    provider.category === "official" &&
+    canSwitchAgyAccount()
       ? resolveManagedAccountId(provider.meta, "agy_oauth")
       : null;
   const { data: agyStatus } = useQuery({
@@ -216,9 +255,18 @@ export function OpenTerminalDialog({
     queryFn: () => authApi.authGetStatus("agy_oauth"),
     enabled: boundAgyAccount !== null,
   });
+  const canUseCurrentAgyLogin = boundAgyAccount !== null && isLinux();
+  const useCurrentAgyLogin = canUseCurrentAgyLogin && agyUseCurrentLogin;
+  const agyTargetAccount = agyStatus?.accounts.find(
+    (account) => account.id === boundAgyAccount,
+  );
+  const agyBindingMissing =
+    canUseCurrentAgyLogin && agyStatus !== undefined && !agyTargetAccount;
   const agyWillSwitch =
     boundAgyAccount !== null &&
     agyStatus !== undefined &&
+    !useCurrentAgyLogin &&
+    !agyBindingMissing &&
     agyStatus.default_account_id !== boundAgyAccount;
   const { data: agyRunning } = useQuery({
     queryKey: ["agy-running", provider?.id],
@@ -226,10 +274,6 @@ export function OpenTerminalDialog({
     enabled: agyWillSwitch,
     staleTime: 0,
   });
-  const agyTargetLogin = agyStatus?.accounts.find(
-    (account) => account.id === boundAgyAccount,
-  )?.login;
-
   useEffect(() => {
     if (!provider) return;
     const stored = readRecent();
@@ -237,6 +281,7 @@ export function OpenTerminalDialog({
     setDir(stored[0] ?? null);
     setSkipPermissions(readSkipPermissions(appId));
     setExtraArgs(readExtraArgs(appId));
+    setAgyUseCurrentLogin(false);
     setOpening(false);
   }, [provider, appId]);
 
@@ -267,6 +312,7 @@ export function OpenTerminalDialog({
         cwd: dir,
         skipPermissions,
         ...(args ? { extraArgs: args } : {}),
+        ...(useCurrentAgyLogin ? { agyUseCurrentLogin: true } : {}),
       });
       writeRecent(
         [dir, ...recent.filter((item) => item !== dir)].slice(0, MAX_RECENT),
@@ -310,14 +356,17 @@ export function OpenTerminalDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4 px-6 py-3">
+        {/* 正文单独滚动，确认按钮固定在底部：窗口矮、提示多、最近目录多时也点得到（#9478） */}
+        <div className="min-h-0 flex-auto space-y-4 overflow-y-auto px-6 py-3">
           {provider && terminalIsIsolated(provider, appId) && (
             <Notice title={t("provider.openTerminalDialog.isolationTitle")}>
               {/* Antigravity 没有「切换」，Claude Code 那句「之后切换不会影响它」对它不成立 */}
               {t(
                 appId === "agy"
                   ? "provider.openTerminalDialog.isolationBodyAgy"
-                  : "provider.openTerminalDialog.isolationBody",
+                  : appId === "copilot"
+                    ? "provider.openTerminalDialog.isolationBodyCopilot"
+                    : "provider.openTerminalDialog.isolationBody",
                 { name: provider.name },
               )}
             </Notice>
@@ -334,7 +383,7 @@ export function OpenTerminalDialog({
                 defaultValue:
                   "打开前把 agy 的登录切换到 {{account}}，之后新开的 agy 都用这个号。",
                 account:
-                  agyTargetLogin ??
+                  agyTargetAccount?.login ??
                   t("provider.form.agy.accountMissing", {
                     defaultValue: "不在这台电脑上的账号",
                   }),
@@ -346,6 +395,29 @@ export function OpenTerminalDialog({
                       "检测到 agy 正在运行：已打开的 agy 仍用原账号，还可能把原账号写回去，最好先退出它们。",
                   })}
             </Notice>
+          )}
+
+          {agyBindingMissing && !useCurrentAgyLogin && (
+            <Notice
+              tone="warning"
+              title={t("provider.openTerminalDialog.agyBindingMissing")}
+            />
+          )}
+
+          {canUseCurrentAgyLogin && (
+            <label className="flex cursor-pointer select-none items-start gap-2">
+              <Checkbox
+                checked={useCurrentAgyLogin}
+                disabled={opening}
+                onCheckedChange={(value) =>
+                  setAgyUseCurrentLogin(value === true)
+                }
+                className="mt-0.5"
+              />
+              <span className="min-w-0 text-body text-fg-1">
+                {t("provider.openTerminalDialog.agyUseCurrentLogin")}
+              </span>
+            </label>
           )}
 
           <div className="flex items-center gap-2">
@@ -439,6 +511,17 @@ export function OpenTerminalDialog({
               value={extraArgs}
               disabled={opening}
               onChange={(event) => setExtraArgs(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter") return;
+                // WebKit 输入法回车确认候选词时 isComposing 已是 false，只剩 keyCode 229 可辨认
+                if (
+                  event.nativeEvent.isComposing ||
+                  event.nativeEvent.keyCode === 229
+                )
+                  return;
+                event.preventDefault();
+                void handleOpen();
+              }}
               placeholder={t(
                 "provider.openTerminalDialog.extraArgsPlaceholder",
               )}

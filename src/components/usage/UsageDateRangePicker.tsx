@@ -16,6 +16,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
+import { useUsageFirstDate } from "@/lib/query/usage";
 import { getUsageRangePresetLabel, resolveUsageRange } from "@/lib/usageRange";
 import { getLocaleFromLanguage } from "./format";
 import type { UsageRangePreset, UsageRangeSelection } from "@/types/usage";
@@ -62,12 +63,23 @@ function fmtTime(ts: number): string {
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
-function parseDateInput(ts: number, value: string): number {
-  const [y, m, d] = value.split("-").map(Number);
-  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d))
-    return ts;
+/**
+ * 日期框的 `YYYY-MM-DD` 换成时间戳，保留原来的时分；不是完整日期时返回 null。
+ * 逐位键入年份时浏览器会先给出 `0002-11-18` 这样没打完的值，而 `new Date`
+ * 把 0–99 年当成 1900 年代，提交它会把年份改成 1902 / 1905 并打断输入（#9699），
+ * 所以四位数以下的年份一律当作还没打完。
+ */
+function parseDateInput(ts: number, value: string): number | null {
+  const match = /^(\d{4,})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return null;
+  const y = Number(match[1]);
+  const m = Number(match[2]);
+  const d = Number(match[3]);
+  if (y < 1000) return null;
   const base = fromTs(ts);
-  return toTs(new Date(y, m - 1, d, base.getHours(), base.getMinutes()));
+  const date = new Date(y, m - 1, d, base.getHours(), base.getMinutes());
+  if (date.getMonth() !== m - 1 || date.getDate() !== d) return null;
+  return toTs(date);
 }
 
 function parseTimeInput(ts: number, value: string): number {
@@ -89,6 +101,23 @@ function setDateKeepTime(ts: number, day: Date): number {
       base.getHours(),
       base.getMinutes(),
     ),
+  );
+}
+
+/** 本地日期 `YYYY-MM-DD` 当天 0 点的时间戳；认不出时为 null */
+function parseLocalDayStart(value: string | null | undefined): number | null {
+  const match = value ? /^(\d{4})-(\d{2})-(\d{2})$/.exec(value) : null;
+  if (!match) return null;
+  return toTs(
+    new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3])),
+  );
+}
+
+/** 今天最后一分钟：结束时间不能选到未来的日子 */
+function endOfTodayTs(): number {
+  const now = new Date();
+  return toTs(
+    new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59),
   );
 }
 
@@ -140,6 +169,25 @@ export function UsageDateRangePicker({
       ),
   );
   const [error, setError] = useState<string | null>(null);
+  // 日期框正在输入时的原始文本：没打完的值不提交，但要原样留在框里，
+  // 受控 value 一被改写浏览器就会重置正在编辑的年份段。失焦后回到格式化的值
+  const [dateText, setDateText] = useState<Record<DraftField, string | null>>({
+    start: null,
+    end: null,
+  });
+  // 可选范围：最早到有用量记录的那天，最晚到今天。趋势图按天出柱，
+  // 选到 1905 年这种起点会一次画四万多根柱子把界面卡死（#9691）。
+  // 最早日期没查到之前不知道下界，先不让确认；查到 null（没有记录）时页面是空状态、不画图，不设下界。
+  // 查询失败时不能让确认一直点不了：放开下界，只保留「不晚于今天」
+  const firstUsageDateQuery = useUsageFirstDate(undefined, {
+    refetchInterval: false,
+  });
+  const boundsReady =
+    firstUsageDateQuery.isSuccess || firstUsageDateQuery.isError;
+  const minTs = parseLocalDayStart(firstUsageDateQuery.data);
+  const maxTs = endOfTodayTs();
+  const clampTs = (ts: number) =>
+    Math.min(Math.max(ts, minTs ?? Number.NEGATIVE_INFINITY), maxTs);
 
   const language = i18n.resolvedLanguage || i18n.language || "en";
   const locale = getLocaleFromLanguage(language);
@@ -162,6 +210,7 @@ export function UsageDateRangePicker({
     );
     setActiveField("start");
     setError(null);
+    setDateText({ start: null, end: null });
   }, [open, selection]);
 
   // Keep draftEnd ticking when live mode is active and popover is open
@@ -195,17 +244,17 @@ export function UsageDateRangePicker({
   /* Pick a date from the calendar */
   const handleDatePick = (day: Date) => {
     setError(null);
+    setDateText({ start: null, end: null });
 
     // When live end time is active, calendar only controls start date
     if (draftLiveEnd) {
-      const nextTs = setDateKeepTime(draftStart, day);
+      const nextTs = clampTs(setDateKeepTime(draftStart, day));
       setDraftStart(nextTs);
       return;
     }
 
-    const nextTs = setDateKeepTime(
-      activeField === "start" ? draftStart : draftEnd,
-      day,
+    const nextTs = clampTs(
+      setDateKeepTime(activeField === "start" ? draftStart : draftEnd, day),
     );
 
     if (activeField === "start") {
@@ -237,14 +286,18 @@ export function UsageDateRangePicker({
 
   const handleApply = () => {
     setError(null);
-    if (draftStart > draftEnd) {
+    if (!boundsReady) return;
+    // 手输的日期不在输入时改写（会打断逐位输入年份），确认时再收进可选范围
+    const start = clampTs(draftStart);
+    const end = draftLiveEnd ? draftEnd : clampTs(draftEnd);
+    if (start > end) {
       setError(t("usage.invalidTimeRangeOrder", "开始时间不能晚于结束时间"));
       return;
     }
     onApply({
       preset: "custom",
-      customStartDate: draftStart,
-      customEndDate: draftEnd,
+      customStartDate: start,
+      customEndDate: end,
       liveEndTime: draftLiveEnd,
     });
     setOpen(false);
@@ -289,10 +342,19 @@ export function UsageDateRangePicker({
               "h-7 flex-1 border-0 bg-transparent p-0 text-body shadow-none focus:ring-0 focus-visible:ring-0",
               isEndLive && "pointer-events-none",
             )}
-            value={fmtDate(ts)}
+            value={dateText[field] ?? fmtDate(ts)}
+            min={minTs != null ? fmtDate(minTs) : undefined}
+            max={fmtDate(maxTs)}
             onChange={(e) => {
               if (isEndLive) return;
-              const next = parseDateInput(ts, e.target.value);
+              const raw = e.target.value;
+              const next = parseDateInput(ts, raw);
+              // 完整日期格式化后与原文相同，直接交给 state，草稿只留没打完的值
+              setDateText((prev) => ({
+                ...prev,
+                [field]: next == null ? raw : null,
+              }));
+              if (next == null) return;
               setTs(next);
               const d = fromTs(next);
               setDisplayMonth(new Date(d.getFullYear(), d.getMonth(), 1));
@@ -301,6 +363,7 @@ export function UsageDateRangePicker({
             onFocus={() => {
               if (!isEndLive) setActiveField(field);
             }}
+            onBlur={() => setDateText((prev) => ({ ...prev, [field]: null }))}
             readOnly={isEndLive}
           />
           <Input
@@ -415,6 +478,7 @@ export function UsageDateRangePicker({
                 variant="solid"
                 size="compact"
                 className="flex-1"
+                disabled={!boundsReady}
                 onClick={handleApply}
               >
                 {t("common.confirm")}
@@ -503,6 +567,9 @@ export function UsageDateRangePicker({
                   dayStart >= startOfDay(startDay) &&
                   dayStart <= startOfDay(endDay);
                 const isEndpoint = isStart || isEnd;
+                const isOutOfBounds =
+                  (minTs != null && dayStart < startOfDay(fromTs(minTs))) ||
+                  dayStart > fromTs(maxTs);
 
                 return (
                   <button
@@ -511,10 +578,16 @@ export function UsageDateRangePicker({
                     aria-label={day.toLocaleDateString(locale)}
                     aria-current={isToday ? "date" : undefined}
                     aria-pressed={isEndpoint}
+                    disabled={isOutOfBounds}
                     className={cn(
                       "relative h-7 rounded text-caption transition-colors",
                       !isCurrentMonth && "text-fg-3",
-                      isCurrentMonth && !inRange && "hover:bg-subtle",
+                      isOutOfBounds &&
+                        "cursor-not-allowed text-fg-3 opacity-40",
+                      isCurrentMonth &&
+                        !inRange &&
+                        !isOutOfBounds &&
+                        "hover:bg-subtle",
                       inRange && !isEndpoint && "bg-selected text-fg-1",
                       isEndpoint && "bg-action text-action-fg font-medium",
                       isToday && !isEndpoint && "ring-1 ring-border-strong",

@@ -13,7 +13,7 @@ import {
   extractCodexBaseUrl,
   extractCodexModelName,
   extractCodexWireApi,
-} from "@/utils/providerConfigUtils";
+} from "@/utils/codexConfigUtils";
 
 // 腾讯云 Token Plan（产品线 1300/1823 订阅套餐）国内 + 国际两站预设。
 // 与 TokenHub 按量 API 市场（1823 线，Hunyuan 预设的 /v1 端点）是两条

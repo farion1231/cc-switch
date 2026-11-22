@@ -98,6 +98,7 @@ import {
   type FetchedModelSelection,
 } from "./FetchedModelPicker";
 import { LocalProxyRequestOverridesField } from "./LocalProxyRequestOverridesField";
+import { BillingMultiplierField } from "./BillingMultiplierField";
 import { cn } from "@/lib/utils";
 import { useCommittableRef } from "@/hooks/useLatestRef";
 import { useModelMetadataFill } from "@/hooks/useModelMetadataFill";
@@ -241,6 +242,10 @@ interface CodexFormFieldsProps {
   // the catalog rows. Codex only; the Stack layout omits it (aggregation settings apply).
   autoReviewModel?: string;
   onAutoReviewModelChange?: (model: string) => void;
+  // Keep the official Fast speed tier on GPT rows mirrored from Codex's bundled
+  // entries: `modelCatalog.officialSpeedTiers`. Native Responses only.
+  officialSpeedTiers?: boolean;
+  onOfficialSpeedTiersChange?: (keep: boolean) => void;
 
   // Speed Test Endpoints
   speedTestEndpoints: EndpointCandidate[];
@@ -248,6 +253,9 @@ interface CodexFormFieldsProps {
   // Local proxy User-Agent override
   customUserAgent: string;
   onCustomUserAgentChange: (value: string) => void;
+  /** 供应商费用倍率；不传 onBillingMultiplierChange 时不显示（官方卡等）。 */
+  billingMultiplier?: string;
+  onBillingMultiplierChange?: (value: string) => void;
   localProxyHeadersOverride: string;
   onLocalProxyHeadersOverrideChange: (value: string) => void;
   localProxyBodyOverride: string;
@@ -697,10 +705,14 @@ export function CodexFormFields({
   catalogModels = [],
   autoReviewModel = "",
   onAutoReviewModelChange,
+  officialSpeedTiers = false,
+  onOfficialSpeedTiersChange,
   onCatalogModelsChange,
   speedTestEndpoints,
   customUserAgent,
   onCustomUserAgentChange,
+  billingMultiplier = "",
+  onBillingMultiplierChange,
   localProxyHeadersOverride,
   onLocalProxyHeadersOverrideChange,
   localProxyBodyOverride,
@@ -765,6 +777,7 @@ export function CodexFormFields({
   const hasAnyAdvancedValue =
     isCopilotPreset ||
     !!customUserAgent ||
+    !!billingMultiplier ||
     hasRequestOverrides ||
     isAnthropicFormat ||
     supportsThinking ||
@@ -790,7 +803,10 @@ export function CodexFormFields({
   // Stack 布局的高级区（思考能力、Anthropic 专有项、User-Agent、请求覆盖）：填了 UA 或请求
   // 覆盖才展开，其余多是预设自带的。
   const [stackAdvancedExpanded, setStackAdvancedExpanded] = useState(
-    isFullUrl || !!customUserAgent || hasRequestOverrides,
+    isFullUrl ||
+      !!customUserAgent ||
+      !!billingMultiplier ||
+      hasRequestOverrides,
   );
 
   // 显示用的顺序。挪动默认那一行不算修改：没动过列表时保存仍是原来的顺序。
@@ -883,6 +899,7 @@ export function CodexFormFields({
       fetchModels: () => Promise<T>,
       receiveModels: (models: T) => number,
       errorLogMessage: string,
+      getEmptyMessage?: (models: T) => string,
     ) => {
       const seq = ++fetchModelsSeqRef.current;
       setIsFetchingModels(true);
@@ -891,7 +908,9 @@ export function CodexFormFields({
           if (seq !== fetchModelsSeqRef.current) return;
           const count = receiveModels(models);
           if (count === 0) {
-            toast.info(t("providerForm.fetchModelsEmpty"));
+            toast.info(
+              getEmptyMessage?.(models) ?? t("providerForm.fetchModelsEmpty"),
+            );
           } else if (!canEditCatalog) {
             // 有模型列表时拉取成功会直接打开选择弹窗，不再提示成功。
             toast.success(t("providerForm.fetchModelsSuccess", { count }));
@@ -949,9 +968,13 @@ export function CodexFormFields({
                   model.supports_parallel_tool_calls ??
                   existing.get(model.id)?.supportsParallelToolCalls ??
                   false,
-                inputModalities: existing.get(model.id)?.inputModalities ?? [
-                  "text",
-                ],
+                ...(model.supports_vision !== undefined
+                  ? {
+                      inputModalities: model.supports_vision
+                        ? ["text", "image"]
+                        : ["text"],
+                    }
+                  : {}),
                 ...(model.reasoning_effort !== undefined
                   ? { reasoningLevels: model.reasoning_effort }
                   : {}),
@@ -972,6 +995,12 @@ export function CodexFormFields({
           return usableModels.length;
         },
         "[Copilot] Failed to fetch models:",
+        // 后端返回 0 个＝账号本身无可选模型（Copilot Free 通常如此）；
+        // 否则是有模型但都不支持当前上游格式
+        (models) =>
+          models.length === 0
+            ? t("copilot.noPickerModels")
+            : t("copilot.noModelsForApiFormat"),
       );
       return;
     }
@@ -1398,6 +1427,34 @@ export function CodexFormFields({
     </div>
   );
 
+  // 保留官方 Fast 档：镜像官方的 GPT 行默认清空速度档，后面接官方账号的中转（如 CPA）才认
+  // service_tier=priority。Chat、Anthropic 转换会把它转给不认的上游，Copilot 走自己的目录，
+  // 都只给原生 Responses；聚合布局不显示（合并目录不看卡上的设置）。
+  const officialSpeedTiersToggle = onOfficialSpeedTiersChange &&
+    !isCopilotPreset &&
+    effectiveApiFormat === "openai_responses" && (
+      <div className="flex items-center justify-between gap-4">
+        {labelWithHelp(
+          t("codexConfig.officialSpeedTiersLabel", {
+            defaultValue: "保留官方 Fast 档",
+          }),
+          t("codexConfig.officialSpeedTiersHint", {
+            defaultValue:
+              "让模型列表里的 GPT 模型保留官方的 Fast 速度档，Codex 选了 Fast 后请求会带 service_tier=priority。只有转发官方 ChatGPT 账号的中转（如 CPA）才认，会更快消耗额度；其他上游可能报错或按更高价计费。打开后，之前在官方卡下选过的 Fast 会立刻在这家生效。聚合模式下不生效。改完需要重启 Codex。",
+          }),
+          "codexOfficialSpeedTiers",
+        )}
+        <Switch
+          id="codexOfficialSpeedTiers"
+          checked={officialSpeedTiers}
+          onCheckedChange={onOfficialSpeedTiersChange}
+          aria-label={t("codexConfig.officialSpeedTiersLabel", {
+            defaultValue: "保留官方 Fast 档",
+          })}
+        />
+      </div>
+    );
+
   const upstreamFormatSelect = (
     <div className="space-y-1.5">
       {labelWithHelp(
@@ -1538,11 +1595,11 @@ export function CodexFormFields({
         isGrokBuild
           ? t("grokBuild.maxOutputTokensHint", {
               defaultValue:
-                "默认上限 8192，长回答或深度思考容易被截断。这里的值会作为 Anthropic 的 max_tokens 发出。",
+                "默认上限 32000，思考也算在内。网关的输出上限更低时会报 400，在这里填它支持的值。这里的值会作为 Anthropic 的 max_tokens 发出。",
             })
           : t("codexConfig.maxOutputTokensHint", {
               defaultValue:
-                "Codex 不带输出上限，默认 8192，长回答或深度思考容易被截断。这里的值会作为 Anthropic 的 max_tokens 发出。",
+                "Codex 不带输出上限，默认按 32000 发出，思考也算在内。网关的输出上限更低时会报 400，在这里填它支持的值。这里的值会作为 Anthropic 的 max_tokens 发出。",
             }),
         "codex-anthropic-max-output-tokens",
       )}
@@ -1556,7 +1613,7 @@ export function CodexFormFields({
           onMaxOutputTokensChange(event.target.value.replace(/[^\d]/g, ""))
         }
         placeholder={t("codexConfig.maxOutputTokensPlaceholder", {
-          defaultValue: "留空则使用默认 8192",
+          defaultValue: "留空则使用默认 32000",
         })}
       />
       <p className="text-xs leading-relaxed text-fg-2">
@@ -1659,19 +1716,26 @@ export function CodexFormFields({
     </>
   );
 
-  // 两项都只在路由模式下生效：在分组开头说一次，各自的作用收进字段名后的「?」。
+  // 这一组都只在路由模式下生效：在分组开头说一次，各自的作用收进字段名后的「?」。
   // Copilot 的请求由转发层按 Copilot 客户端的样子发，UA 和请求覆盖都会被跳过，不显示。
   const userAgentAndOverrides = isCopilotPreset ? null : (
     <>
       <p className="text-xs leading-relaxed text-fg-2">
         {isGrokBuild
           ? t("grokBuild.routeOnlySettingsHint", {
-              defaultValue: "以下两项只在路由模式下生效。",
+              defaultValue: "以下设置只在路由模式下生效。",
             })
           : t("codexConfig.routeOnlySettingsHint", {
-              defaultValue: "以下两项只在路由、聚合模式下生效。",
+              defaultValue: "以下设置只在路由、聚合模式下生效。",
             })}
       </p>
+      {onBillingMultiplierChange && (
+        <BillingMultiplierField
+          id="codex-billing-multiplier"
+          value={billingMultiplier}
+          onChange={onBillingMultiplierChange}
+        />
+      )}
       <CustomUserAgentField
         id="codex-custom-user-agent"
         value={customUserAgent}
@@ -2047,7 +2111,7 @@ export function CodexFormFields({
             placeholder={
               isGrokBuild
                 ? t("grokBuild.defaultModelPlaceholder", {
-                    defaultValue: "例如: grok-4.5",
+                    defaultValue: "例如: grok-4.7",
                   })
                 : t("codexConfig.defaultModelPlaceholder", {
                     defaultValue: "例如: gpt-5.6",
@@ -2346,7 +2410,7 @@ export function CodexFormFields({
             }),
             t("codexConfig.agentMaxThreadsHint", {
               defaultValue:
-                "一个 Codex 会话里最多同时开多少个子代理（不含主代理）。这是 Codex 的全局设置，写进 config.toml 的 [agents] max_threads，切换供应商时保持不变。留空用 Codex 默认值：经典子 agent 工具 6 个，新版工具 3 个。Codex 不支持不限，最小为 1；开得越多，同时消耗的额度越多。重新打开 Codex 后生效。",
+                "一个 Codex 会话里最多同时开多少个子代理（不含主代理），切换供应商时保持不变。留空用 Codex 默认值（经典子 agent 工具 6 个，新版工具 3 个），最小为 1，不支持不限。新对话生效。",
             }),
             "codexAgentMaxThreads",
           )}
@@ -2461,6 +2525,7 @@ export function CodexFormFields({
             {(shouldShowSpeedTest || isCopilotPreset) && !isXaiOauthPreset && (
               <div className="space-y-3">
                 {upstreamFormatSelect}
+                {officialSpeedTiersToggle}
                 {isAnthropicFormat && anthropicAuthFieldSelect}
                 {isAnthropicFormat && impersonateClaudeCodeToggle}
                 {isAnthropicFormat && maxOutputTokensField}

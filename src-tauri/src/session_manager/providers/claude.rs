@@ -27,7 +27,7 @@ use super::blocks::{
 };
 use super::utils::{
     extract_text, parse_timestamp_to_ms, path_basename, read_head_tail_lines, truncate_summary,
-    FileParseCache, JsonlSpan, LineSpans, TITLE_MAX_CHARS,
+    FileParseCache, JsonlSpan, LineSpans, ScanStatus, TITLE_MAX_CHARS,
 };
 
 const PROVIDER_ID: &str = "claude";
@@ -36,11 +36,19 @@ const PROVIDER_ID: &str = "claude";
 static PARSE_CACHE: LazyLock<FileParseCache> = LazyLock::new(FileParseCache::new);
 
 pub fn scan_sessions() -> Vec<SessionMeta> {
-    let root = get_claude_config_dir().join("projects");
-    let mut files = Vec::new();
-    collect_jsonl_files(&root, &mut files);
+    scan_sessions_with_status(&mut ScanStatus::default())
+}
 
-    PARSE_CACHE.scan(files, scan_session_file)
+pub(crate) fn scan_sessions_with_status(status: &mut ScanStatus) -> Vec<SessionMeta> {
+    let root = get_claude_config_dir().join("projects");
+    scan_sessions_in_root(&root, status)
+}
+
+pub(crate) fn scan_sessions_in_root(root: &Path, status: &mut ScanStatus) -> Vec<SessionMeta> {
+    let mut files = Vec::new();
+    collect_jsonl_files_with_status(root, &mut files, status);
+
+    PARSE_CACHE.scan_with_status(files, scan_session_file, status)
 }
 
 pub fn delete_session(_root: &Path, path: &Path, session_id: &str) -> Result<bool, String> {
@@ -289,20 +297,11 @@ fn infer_session_id_from_filename(path: &Path) -> Option<String> {
         .map(|stem| stem.to_string())
 }
 
-fn collect_jsonl_files(root: &Path, files: &mut Vec<PathBuf>) {
-    if !root.exists() {
-        return;
-    }
-
-    let entries = match std::fs::read_dir(root) {
-        Ok(entries) => entries,
-        Err(_) => return,
-    };
-
-    for entry in entries.flatten() {
+fn collect_jsonl_files_with_status(root: &Path, files: &mut Vec<PathBuf>, status: &mut ScanStatus) {
+    for entry in status.entries(root) {
         let path = entry.path();
-        if path.is_dir() {
-            collect_jsonl_files(&path, files);
+        if status.is_dir(&path) {
+            collect_jsonl_files_with_status(&path, files, status);
         } else if path.extension().and_then(|ext| ext.to_str()) == Some("jsonl") {
             files.push(path);
         }
@@ -1050,6 +1049,10 @@ fn tool_call_block(item: RawItem<'_>, index: usize, line: JsonlSpan) -> SessionB
     }
 }
 
+/// Claude Code desktop 标记章节的 MCP 工具名（完整名形如 `mcp__ccd_session__mark_chapter`）。
+/// 前端 `turns.ts` 的 `MARK_CHAPTER_TOOL` 与此一致。
+const MARK_CHAPTER_TOOL: &str = "mark_chapter";
+
 /// 按 §3.3 提炼 Claude 工具的 kind（Bash 细化为 search）、标题与次要信息。
 fn claude_tool_title(
     raw_name: &str,
@@ -1067,6 +1070,17 @@ fn claude_tool_title(
     if kind == ToolKind::Mcp {
         let (server, tool) = split_mcp_name(raw_name)
             .unwrap_or((normalized.server.as_deref().unwrap_or_default(), raw_name));
+        // Claude Code desktop 的章节标记：标题就是章节名，阅读页据此渲染成章节而不是普通步骤。
+        // 只认工具名，不认 server（`ccd_session` 是桌面端内部名，可能改）
+        if tool == MARK_CHAPTER_TOOL {
+            if let Some(title) = s("title") {
+                return (
+                    kind,
+                    one_line_title(title),
+                    s("summary").map(one_line_title),
+                );
+            }
+        }
         return (kind, title_mcp(server, tool), first_string_field(input));
     }
 
@@ -2570,6 +2584,49 @@ mod transcript_tests {
             &msgs[8].blocks[0],
             SessionBlock::ToolCall { by_user: true, .. }
         ));
+    }
+
+    #[test]
+    fn mark_chapter_call_uses_chapter_title() {
+        let (_t, _p, msgs, _) = parse_lines(&[assistant(
+            "a1",
+            "m1",
+            json!([
+                { "type": "tool_use", "id": "t1", "name": "mcp__ccd_session__mark_chapter", "input": { "title": "接入支付回调", "summary": "验签与幂等\n第二行" } },
+                { "type": "tool_use", "id": "t2", "name": "mcp__other__mark_chapter", "input": { "title": "No summary" } },
+                { "type": "tool_use", "id": "t3", "name": "mcp__ccd_session__mark_chapter", "input": { "title": "  ", "summary": "only summary" } },
+                { "type": "tool_use", "id": "t4", "name": "mcp__ccd_session__mark_chapter", "input": "broken" }
+            ]),
+        )]);
+        let calls: Vec<(String, Option<String>)> = msgs[0]
+            .blocks
+            .iter()
+            .map(|block| match block {
+                SessionBlock::ToolCall {
+                    kind,
+                    title,
+                    detail,
+                    ..
+                } => {
+                    assert_eq!(*kind, ToolKind::Mcp);
+                    (title.clone(), detail.clone())
+                }
+                other => panic!("unexpected {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            calls,
+            [
+                ("接入支付回调".to_string(), Some("验签与幂等…".to_string())),
+                ("No summary".to_string(), None),
+                // 没有可用标题：按普通 MCP 调用处理
+                (
+                    "ccd_session.mark_chapter".to_string(),
+                    Some("only summary".to_string())
+                ),
+                ("ccd_session.mark_chapter".to_string(), None),
+            ]
+        );
     }
 
     #[test]

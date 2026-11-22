@@ -53,17 +53,6 @@ jobs:
           corepack install
           pnpm --version
 
-      - name: Get pnpm store directory
-        id: pnpm-store
-        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-
-      - name: Setup pnpm cache
-        uses: actions/cache@v5
-        with:
-          path: ${{ steps.pnpm-store.outputs.path }}
-          key: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-
-
       - name: Install frontend deps
         run: pnpm install --frozen-lockfile
 
@@ -154,20 +143,6 @@ jobs:
           node --version
           pnpm --version
 
-      - name: Get pnpm store directory
-        if: runner.os != 'Windows' || matrix.arch != 'arm64'
-        id: pnpm-store
-        shell: bash
-        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-
-      - name: Setup pnpm cache
-        if: runner.os != 'Windows' || matrix.arch != 'arm64'
-        uses: actions/cache@v5
-        with:
-          path: ${{ steps.pnpm-store.outputs.path }}
-          key: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-
-
       - name: Setup LLVM for Windows ARM64
         if: runner.os == 'Windows' && matrix.arch == 'arm64'
         shell: pwsh
@@ -207,6 +182,8 @@ jobs:
 
       - name: Build Tauri App (Linux)
         if: runner.os == 'Linux'
+        env:
+          LINUXDEPLOY_EXCLUDED_LIBRARIES: "libwayland-client.so*"
         run: pnpm tauri build --bundles appimage,deb,rpm
 
       - name: Prepare Windows Assets
@@ -418,18 +395,6 @@ jobs:
           node --version
           pnpm --version
 
-      - name: Get pnpm store directory
-        id: pnpm-store
-        shell: bash
-        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-
-      - name: Setup pnpm cache
-        uses: actions/cache@v5
-        with:
-          path: ${{ steps.pnpm-store.outputs.path }}
-          key: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-
-
       - name: Install frontend deps
         run: pnpm install --frozen-lockfile
 
@@ -485,18 +450,6 @@ jobs:
           corepack install
           node --version
           pnpm --version
-
-      - name: Get pnpm store directory
-        id: pnpm-store
-        shell: bash
-        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-
-      - name: Setup pnpm cache
-        uses: actions/cache@v5
-        with:
-          path: ${{ steps.pnpm-store.outputs.path }}
-          key: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-
 
       - name: Install frontend deps
         run: pnpm install --frozen-lockfile

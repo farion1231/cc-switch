@@ -156,6 +156,49 @@ describe("PiProviderForm", () => {
     ).toBeInTheDocument();
   });
 
+  it("offers the Mistral API format in Pi but not in omp", async () => {
+    const user = userEvent.setup();
+    for (const appId of ["pi", "omp"] as const) {
+      const { unmount } = render(
+        <PiProviderForm
+          appId={appId}
+          submitLabel="Save"
+          onSubmit={() => {}}
+          onCancel={() => {}}
+          initialData={{
+            name: "gateway",
+            settingsConfig: { api: "openai-completions" },
+          }}
+        />,
+      );
+      await user.click(document.querySelector("#pi-provider-api-select")!);
+      await screen.findByRole("option", { name: "Anthropic Messages" });
+      const mistral = screen.queryByRole("option", { name: "Mistral" });
+      if (appId === "pi") expect(mistral).toBeInTheDocument();
+      else expect(mistral).not.toBeInTheDocument();
+      await user.keyboard("{Escape}");
+      unmount();
+    }
+  });
+
+  it("keeps showing an existing omp API value the format list no longer offers", () => {
+    render(
+      <PiProviderForm
+        appId="omp"
+        submitLabel="Save"
+        onSubmit={() => {}}
+        onCancel={() => {}}
+        initialData={{
+          name: "legacy",
+          settingsConfig: { api: "mistral-conversations" },
+        }}
+      />,
+    );
+    expect(document.querySelector("#pi-provider-api-select")).toHaveTextContent(
+      "mistral-conversations",
+    );
+  });
+
   it("starts in the same editable custom state as OpenCode", async () => {
     const onSubmitReadyChange = vi.fn();
     const { container } = render(
@@ -1078,10 +1121,10 @@ describe("PiProviderForm", () => {
     const submitted = onSubmit.mock.calls[0][0];
     const config = JSON.parse(submitted.settingsConfig);
     expect(config.models.map((model: { id: string }) => model.id)).toEqual([
-      "kimi-k2.7-code",
-      "kimi-k3",
       "kimi-k3.1-pro",
       "kimi-k3.1-pro-highspeed",
+      "kimi-k3",
+      "kimi-k2.7-code",
       "kimi-k2.7-code-highspeed",
       "kimi-k2.6",
     ]);
@@ -1091,10 +1134,10 @@ describe("PiProviderForm", () => {
         name: model.name,
       })),
     ).toEqual([
-      { id: "kimi-k2.7-code", name: "Kimi K2.7 Code" },
-      { id: "kimi-k3", name: "Kimi K3" },
       { id: "kimi-k3.1-pro", name: "Kimi K3.1 Pro" },
       { id: "kimi-k3.1-pro-highspeed", name: "Kimi K3.1 Pro HighSpeed" },
+      { id: "kimi-k3", name: "Kimi K3" },
+      { id: "kimi-k2.7-code", name: "Kimi K2.7 Code" },
       { id: "kimi-k2.7-code-highspeed", name: "Kimi K2.7 Code HighSpeed" },
       { id: "kimi-k2.6", name: "Kimi K2.6" },
     ]);
@@ -1747,6 +1790,12 @@ describe("PiProviderForm", () => {
     ) as HTMLTextAreaElement;
     expect(JSON.parse(configEditor.value).models[0].thinkingLevelMap).toEqual({
       off: null,
+      minimal: null,
+      low: "low",
+      medium: null,
+      high: "high",
+      xhigh: null,
+      max: "max",
     });
 
     await user.click(document.querySelector("#pi-provider-api-select")!);
@@ -1755,6 +1804,12 @@ describe("PiProviderForm", () => {
     );
     expect(JSON.parse(configEditor.value).models[0].thinkingLevelMap).toEqual({
       off: null,
+      minimal: null,
+      low: "low",
+      medium: null,
+      high: "high",
+      xhigh: null,
+      max: "max",
     });
 
     await user.click(document.querySelector("#pi-provider-api-select")!);
@@ -1765,6 +1820,12 @@ describe("PiProviderForm", () => {
     );
     expect(JSON.parse(configEditor.value).models[0].thinkingLevelMap).toEqual({
       off: null,
+      minimal: null,
+      low: "low",
+      medium: null,
+      high: "high",
+      xhigh: null,
+      max: "max",
     });
   });
 

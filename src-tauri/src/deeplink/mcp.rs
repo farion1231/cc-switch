@@ -88,8 +88,9 @@ pub fn import_mcp_from_deeplink(
         ));
     }
 
-    // Get existing servers to check for duplicates
-    let existing_servers = state.db.get_all_mcp_servers()?;
+    // Get existing servers to check for duplicates. An id whose stored row is unreadable is
+    // refused by `upsert_server` and lands in `failed`; the other ids still import.
+    let existing_servers = state.db.get_mcp_server_rows()?.readable;
 
     // Import each MCP server
     let mut imported_ids = Vec::new();
@@ -162,7 +163,9 @@ pub(crate) fn parse_mcp_apps(apps_str: &str) -> Result<McpApps, AppError> {
         hermes: false,
         mcode: false,
         kimi: false,
+        copilot: false,
         dsh: false,
+        workbuddy: false,
         pi: false,
         omp: false,
     };
@@ -182,7 +185,9 @@ pub(crate) fn parse_mcp_apps(apps_str: &str) -> Result<McpApps, AppError> {
             "hermes" => apps.hermes = true,
             "mcode" => apps.mcode = true,
             "kimi" => apps.kimi = true,
+            "copilot" => apps.copilot = true,
             "dsh" => apps.dsh = true,
+            "workbuddy" | "work-buddy" => apps.workbuddy = true,
             "pi" => apps.pi = true,
             "omp" => apps.omp = true,
             other => {

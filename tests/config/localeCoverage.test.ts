@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import ko from "@/i18n/locales/ko.json";
+import ru from "@/i18n/locales/ru.json";
 import tr from "@/i18n/locales/tr.json";
 import en from "@/i18n/locales/en.json";
 import ja from "@/i18n/locales/ja.json";
@@ -22,28 +24,7 @@ function flattenStrings(
   return result;
 }
 
-function interpolationVariables(value: string): string[] {
-  return Array.from(
-    value.matchAll(/\{\{\s*([^}]+?)\s*\}\}/g),
-    ([, name]) => name,
-  ).sort();
-}
-
 const reference = flattenStrings(en);
-const piKeysOutsideNamespace = new Set([
-  "apps.pi",
-  "deeplink.api",
-  "sessionManager.piDiscoveryUnavailable",
-  "sessionManager.piRelativeSessionDir",
-  "settings.browsePlaceholderPi",
-  "settings.piConfigDir",
-  "settings.piConfigDirDescription",
-]);
-const piReference = new Map(
-  [...reference].filter(
-    ([key]) => key.startsWith("pi.") || piKeysOutsideNamespace.has(key),
-  ),
-);
 const piProductReferences = new Map(
   [...reference].filter(([, value]) => /\bPi\b/.test(value)),
 );
@@ -54,32 +35,6 @@ const locales = [
 ] as const;
 
 describe("locale coverage", () => {
-  it.each(locales)("covers every Pi translation key in %s", (_name, tree) => {
-    const translations = flattenStrings(tree as TranslationTree);
-    const missing = [...piReference.keys()].filter(
-      (key) => !translations.has(key),
-    );
-
-    expect(missing).toEqual([]);
-  });
-
-  it.each(locales)(
-    "preserves every Pi interpolation variable in %s",
-    (_name, tree) => {
-      const translations = flattenStrings(tree as TranslationTree);
-      const mismatched = [...piReference].flatMap(([key, expected]) => {
-        const actual = translations.get(key);
-        return actual !== undefined &&
-          interpolationVariables(actual).join("\0") !==
-            interpolationVariables(expected).join("\0")
-          ? [key]
-          : [];
-      });
-
-      expect(mismatched).toEqual([]);
-    },
-  );
-
   it.each(locales)(
     "preserves explicit Pi product mentions in %s",
     (_name, tree) => {
@@ -94,33 +49,9 @@ describe("locale coverage", () => {
   );
 });
 
-// Turkish is a community translation: keys it does not have yet fall back to
-// English, so new English strings must never fail CI here. These checks only
-// look at strings that already exist in tr.json.
+// Key coverage and interpolation for every locale live in localeParity.test.ts;
+// these blocks pin literals that must survive translation verbatim.
 describe("Turkish locale", () => {
-  it("keeps every existing translation non-empty", () => {
-    expect(
-      [...flattenStrings(tr)].filter(
-        ([key, value]) => reference.get(key)?.trim() && !value.trim(),
-      ),
-    ).toEqual([]);
-  });
-
-  it("preserves interpolation variables in existing translations", () => {
-    expect(
-      [...flattenStrings(tr)]
-        .filter(([key, value]) => {
-          const expected = reference.get(key);
-          return (
-            expected !== undefined &&
-            interpolationVariables(value).join("\0") !==
-              interpolationVariables(expected).join("\0")
-          );
-        })
-        .map(([key]) => key),
-    ).toEqual([]);
-  });
-
   it("preserves protocol fields, configuration literals, and commands", () => {
     const translations = flattenStrings(tr);
     const exactLiterals = [
@@ -135,7 +66,6 @@ describe("Turkish locale", () => {
       "codexConfig.configToml",
       "providerPreset.plan.aksk",
       "mcp.envPlaceholder",
-      "mcp.wizard.envPlaceholder",
       "skills.searchSource.skillssh",
     ];
 
@@ -165,5 +95,103 @@ describe("Turkish locale", () => {
     expect(translations.get("prompts.contentPlaceholderHermes")).toMatch(
       /^# SOUL\.md\n/,
     );
+  });
+});
+
+describe("Korean locale", () => {
+  it("preserves protocol fields, configuration literals, and commands", () => {
+    const translations = flattenStrings(ko);
+    const exactLiterals = [
+      "codexConfig.authJsonPlaceholder",
+      "mcp.presets.fetch.name",
+      "mcp.presets.time.name",
+      "mcp.presets.memory.name",
+      "mcp.presets.sequential-thinking.name",
+      "hermes.form.modelIdPlaceholder",
+      "openclaw.modelIdPlaceholder",
+      "opencode.headerNamePlaceholder",
+      "skills.repo.branchPlaceholder",
+      "omo.schemaUrl",
+      "opencode.extraOptionKeyPlaceholder",
+      "opencode.modelExtraFieldKeyPlaceholder",
+      "opencode.modelOptionKeyPlaceholder",
+      "opencode.modelOptionValuePlaceholder",
+      "opencode.providerKeyPlaceholder",
+      "openclaw.providerKeyPlaceholder",
+      "hermes.form.providerKeyPlaceholder",
+      "grokBuild.rawConfig",
+      "codexConfig.configToml",
+      "providerPreset.plan.aksk",
+      "mcp.envPlaceholder",
+      "skills.searchSource.skillssh",
+    ];
+
+    for (const key of exactLiterals) {
+      expect(translations.get(key), key).toBe(reference.get(key));
+    }
+
+    expect(translations.get("usageScript.fieldRemaining")).toContain(
+      "• remaining:",
+    );
+    expect(translations.get("usageScript.fieldUnit")).toContain("• unit:");
+    expect(translations.get("usageScript.fieldTotal")).toContain("• total:");
+    expect(translations.get("usageScript.fieldUsed")).toContain("• used:");
+    expect(translations.get("usageScript.fieldExtra")).toContain("• extra:");
+    expect(translations.get("settings.s3Sync.presets.r2Hint")).toContain(
+      "'auto'",
+    );
+    expect(translations.get("settings.s3Sync.presets.cosHint")).toContain(
+      "ap-beijing",
+    );
+    expect(translations.get("hermes.webui.launchConfirmMessage")).toContain(
+      "pip install hermes-agent[web]",
+    );
+    expect(
+      translations.get("settings.manualUninstallBunLauncherHint"),
+    ).toContain("OpenClaw Bun launcher");
+    expect(translations.get("prompts.contentPlaceholderHermes")).toMatch(
+      /^# SOUL\.md\n/,
+    );
+  });
+});
+
+describe("Russian locale", () => {
+  const translations = flattenStrings(ru);
+
+  it("preserves protocol fields, configuration literals, and commands", () => {
+    const exactLiterals = [
+      "opencode.extraOptionKeyPlaceholder",
+      "opencode.modelExtraFieldKeyPlaceholder",
+      "opencode.modelOptionKeyPlaceholder",
+      "opencode.modelOptionValuePlaceholder",
+      "opencode.providerKeyPlaceholder",
+      "openclaw.providerKeyPlaceholder",
+      "hermes.form.providerKeyPlaceholder",
+      "grokBuild.rawConfig",
+      "codexConfig.configToml",
+      "providerPreset.plan.aksk",
+      "mcp.envPlaceholder",
+      "skills.searchSource.skillssh",
+    ];
+    for (const key of exactLiterals.filter((key) => translations.has(key))) {
+      expect(translations.get(key), key).toBe(reference.get(key));
+    }
+
+    const embeddedLiterals: [string, string][] = [
+      ["usageScript.fieldRemaining", "• remaining:"],
+      ["usageScript.fieldUnit", "• unit:"],
+      ["usageScript.fieldTotal", "• total:"],
+      ["usageScript.fieldUsed", "• used:"],
+      ["usageScript.fieldExtra", "• extra:"],
+      ["settings.s3Sync.presets.r2Hint", "'auto'"],
+      ["settings.s3Sync.presets.cosHint", "ap-beijing"],
+      ["hermes.webui.launchConfirmMessage", "pip install hermes-agent[web]"],
+      ["settings.manualUninstallBunLauncherHint", "OpenClaw Bun launcher"],
+    ];
+    for (const [key, literal] of embeddedLiterals.filter(([key]) =>
+      translations.has(key),
+    )) {
+      expect(translations.get(key), key).toContain(literal);
+    }
   });
 });

@@ -19,6 +19,7 @@ import UsageFooter from "@/components/UsageFooter";
 import { ProviderCard } from "@/components/providers/ProviderCard";
 import { usageApi, type AppId } from "@/lib/api";
 import type { Provider } from "@/types";
+import { createTestQueryClient } from "../utils/testQueryClient";
 
 vi.mock("@/components/ProviderIcon", () => ({ ProviderIcon: () => null }));
 vi.mock("@/components/quota/useQuotaDisplay", () => ({
@@ -38,9 +39,7 @@ describe.each(["footer", "collapsed card"] as const)(
 
     beforeEach(() => {
       vi.useFakeTimers();
-      client = new QueryClient({
-        defaultOptions: { queries: { retry: false } },
-      });
+      client = createTestQueryClient();
       query = vi.spyOn(usageApi, "query").mockResolvedValue({
         success: true,
         data: [

@@ -1,11 +1,13 @@
 //! Token Plan / 编程套餐额度查询服务
 //!
-//! 支持 Kimi For Coding、智谱 GLM、MiniMax、ZenMux、火山方舟、OpenCode Go、Command Code
-//! 的套餐额度查询。复用 subscription 模块的 SubscriptionQuota / QuotaTier 类型。
+//! 支持 Kimi For Coding、智谱 GLM、MiniMax、ZenMux、火山方舟、OpenCode Go、Command Code、
+//! Ollama Cloud 的套餐额度查询。复用 subscription 模块的 SubscriptionQuota / QuotaTier 类型。
 
 use super::subscription::{
     CredentialStatus, QuotaTier, SubscriptionQuota, TIER_FIVE_HOUR, TIER_MONTHLY, TIER_WEEKLY_LIMIT,
 };
+use super::usage_http::{parse_f64, send_for_json, JsonReply};
+use crate::codex_config::codex_url_host_matches_any;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 // ── 供应商检测 ──────────────────────────────────────────────
@@ -27,41 +29,56 @@ enum CodingPlanProvider {
     OpencodeGo,
     /// Command Code（Claude 使用 `/provider`，Codex 使用 `/provider/v1`）。
     CommandCode,
+    /// Ollama Cloud（Claude 端 `https://ollama.com`，OpenAI 端 `https://ollama.com/v1`）。
+    /// 本地 Ollama（localhost:11434）没有额度，不命中。
+    OllamaCloud,
 }
 
 fn detect_provider(base_url: &str) -> Option<CodingPlanProvider> {
-    let url = base_url.to_lowercase();
-    if url.contains("api.kimi.com/coding") {
+    let host_is = |hosts: &[&str]| codex_url_host_matches_any(base_url, hosts);
+    let path = url_path(base_url);
+    let path_starts = |prefixes: &[&str]| prefixes.iter().any(|p| path.starts_with(p));
+    if host_is(&["api.kimi.com"]) && path_starts(&["/coding"]) {
         Some(CodingPlanProvider::Kimi)
-    } else if url.contains("open.bigmodel.cn") || url.contains("bigmodel.cn") {
+    } else if host_is(&["bigmodel.cn"]) {
         Some(CodingPlanProvider::ZhipuCn)
-    } else if url.contains("api.z.ai") {
+    } else if host_is(&["api.z.ai"]) {
         Some(CodingPlanProvider::ZhipuEn)
-    } else if crate::codex_config::codex_url_host_matches_any(
-        base_url,
-        &["api.minimaxi.com", "api.minimax.cn"],
-    ) {
+    } else if host_is(&["api.minimaxi.com", "api.minimax.cn"]) {
         Some(CodingPlanProvider::MiniMaxCn)
-    } else if crate::codex_config::codex_url_host_matches_any(base_url, &["api.minimax.io"]) {
+    } else if host_is(&["api.minimax.io"]) {
         Some(CodingPlanProvider::MiniMaxEn)
-    } else if url.contains("zenmux") {
+    } else if host_is(&["zenmux.ai"]) {
         Some(CodingPlanProvider::ZenMux)
-    } else if url.contains("opencode.ai/zen/go") || url.contains("opencode.ai/inference/go") {
+    } else if host_is(&["opencode.ai"]) && path_starts(&["/zen/go", "/inference/go"]) {
         // 覆盖 /zen/go、/zen/go/v1 与 /inference/go、/inference/go/v1、
         // /inference/go/anthropic；Zen 按量版（/zen/v1 或 /inference/v1）
         // 没有任何用量/余额 API（实测 404），刻意不命中。
         Some(CodingPlanProvider::OpencodeGo)
-    } else if url.contains("api.commandcode.ai/provider") {
+    } else if host_is(&["api.commandcode.ai"])
+        && (path == "/provider" || path.starts_with("/provider/"))
+    {
+        // 只有 /provider（Claude）与 /provider/v1（Codex）两个入口，不认 /providers。
         Some(CodingPlanProvider::CommandCode)
-    } else if url.contains("volces.com/api/plan") || url.contains("volces.com/api/coding") {
+    } else if host_is(&["volces.com"]) && path_starts(&["/api/plan", "/api/coding"]) {
         // 仅匹配 Agent Plan（/api/plan[/v3]）与 Coding Plan（/api/coding[/v3]）
         // 入口；DouBaoSeed 按量付费走 /api/v3 与 /api/compatible，没有套餐
         // 额度，不在此命中。用量探测本身是双 plan 自动探测（GetAFPUsage →
         // GetCodingPlanUsage），无需在此区分两种订阅。
         Some(CodingPlanProvider::Volcengine)
+    } else if host_is(&["ollama.com"]) {
+        Some(CodingPlanProvider::OllamaCloud)
     } else {
         None
     }
+}
+
+/// `base_url` 的路径部分（小写，不含查询串和片段），没有 scheme 也能取。
+fn url_path(base_url: &str) -> String {
+    let url = base_url.trim().to_ascii_lowercase();
+    let rest = crate::codex_config::url_after_scheme(&url);
+    let path = rest.find(['/', '?', '#']).map_or("", |i| &rest[i..]);
+    path.split(['?', '#']).next().unwrap_or("").to_string()
 }
 
 /// 按地址认出的套餐 id，取值与前端 `CodingPlanProviderEntry.id` 一致
@@ -76,6 +93,7 @@ pub(crate) fn detect_provider_id(base_url: &str) -> Option<&'static str> {
         CodingPlanProvider::Volcengine => "volcengine",
         CodingPlanProvider::OpencodeGo => "opencode_go",
         CodingPlanProvider::CommandCode => "command_code",
+        CodingPlanProvider::OllamaCloud => "ollama_cloud",
     })
 }
 
@@ -111,13 +129,6 @@ fn extract_reset_time(value: &serde_json::Value) -> Option<String> {
     None
 }
 
-/// 解析 JSON 值为 f64，兼容数字和字符串格式（如 `100` 和 `"100"`）
-fn parse_f64(value: &serde_json::Value) -> Option<f64> {
-    value
-        .as_f64()
-        .or_else(|| value.as_str().and_then(|s| s.parse().ok()))
-}
-
 fn make_error(msg: String) -> SubscriptionQuota {
     SubscriptionQuota {
         tool: "coding_plan".to_string(),
@@ -128,7 +139,29 @@ fn make_error(msg: String) -> SubscriptionQuota {
         extra_usage: None,
         reset_credits: None,
         credits_balance: None,
+        plan_name: None,
         error: Some(msg),
+        queried_at: Some(now_millis()),
+    }
+}
+
+/// 凭据被拒（401/403）：标记为过期，错误文案带上状态码。
+fn auth_error(status: reqwest::StatusCode) -> SubscriptionQuota {
+    expired_key_error(format!("Authentication failed (HTTP {status})"))
+}
+
+fn expired_key_error(error: String) -> SubscriptionQuota {
+    SubscriptionQuota {
+        tool: "coding_plan".to_string(),
+        credential_status: CredentialStatus::Expired,
+        credential_message: Some("Invalid API key".to_string()),
+        success: false,
+        tiers: vec![],
+        extra_usage: None,
+        reset_credits: None,
+        credits_balance: None,
+        plan_name: None,
+        error: Some(error),
         queried_at: Some(now_millis()),
     }
 }
@@ -164,49 +197,15 @@ pub(crate) async fn query_kimi_at(
     let client = crate::proxy::http_client::get();
     let api_key = token;
 
-    let resp = client
+    let request = client
         .get(format!("{}/usages", base_url.trim_end_matches('/')))
         .header("Authorization", format!("Bearer {api_key}"))
         .header("Accept", "application/json")
-        .timeout(std::time::Duration::from_secs(15))
-        .send()
-        .await;
-
-    let resp = match resp {
-        Ok(r) => r,
-        Err(e) => return Err(format!("Network error: {e}")),
-    };
-
-    let status = resp.status();
-    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        return Ok(SubscriptionQuota {
-            tool: "coding_plan".to_string(),
-            credential_status: CredentialStatus::Expired,
-            credential_message: Some("Invalid API key".to_string()),
-            success: false,
-            tiers: vec![],
-            extra_usage: None,
-            reset_credits: None,
-            credits_balance: None,
-            error: Some(format!("Authentication failed (HTTP {status})")),
-            queried_at: Some(now_millis()),
-        });
-    }
-
-    if !status.is_success() {
-        let body = resp.text().await.unwrap_or_default();
-        return Ok(make_error(format!("API error (HTTP {status}): {body}")));
-    }
-
-    // 先 bytes() 再解析：读体失败（超时/连接中断）是瞬时 → Err；拿到完整响应体
-    // 后解析失败才是确定性。reqwest 的 json() 把读体错误也包成 decode，无法区分。
-    let raw = match resp.bytes().await {
-        Ok(b) => b,
-        Err(e) => return Err(format!("Failed to read response: {e}")),
-    };
-    let body: serde_json::Value = match serde_json::from_slice(&raw) {
-        Ok(v) => v,
-        Err(e) => return Ok(make_error(format!("Failed to parse response: {e}"))),
+        .timeout(std::time::Duration::from_secs(15));
+    let body = match send_for_json(request).await? {
+        JsonReply::Body(body) => body,
+        JsonReply::Denied(status) => return Ok(auth_error(status)),
+        JsonReply::Failed(message) => return Ok(make_error(message)),
     };
 
     let mut tiers = Vec::new();
@@ -266,6 +265,7 @@ pub(crate) async fn query_kimi_at(
         extra_usage: None,
         reset_credits: None,
         credits_balance: None,
+        plan_name: None,
         error: None,
         queried_at: Some(now_millis()),
     })
@@ -374,7 +374,7 @@ fn parse_zhipu_token_tiers(data: &serde_json::Value) -> Vec<QuotaTier> {
 /// (they're already using this host to run coding) determine success — no
 /// cross-host fallback, no auth-error heuristics.
 fn zhipu_quota_base(base_url: &str) -> &'static str {
-    if base_url.to_lowercase().contains("bigmodel.cn") {
+    if codex_url_host_matches_any(base_url, &["bigmodel.cn"]) {
         "https://open.bigmodel.cn"
     } else {
         "https://api.z.ai"
@@ -392,63 +392,19 @@ async fn query_zhipu(base_url: &str, api_key: &str) -> Result<CodingPlanOutcome,
 /// 拆出 url 参数便于用本地 server 测试鉴权失败 / 没有套餐两条路径。
 async fn query_zhipu_at(url: &str, api_key: &str) -> Result<CodingPlanOutcome, String> {
     let client = crate::proxy::http_client::get();
-    let resp = client
+    let request = client
         .get(url)
         .header("Authorization", api_key) // 注意：智谱不加 Bearer 前缀
         .header("Content-Type", "application/json")
         .header("Accept-Language", "en-US,en")
-        .timeout(std::time::Duration::from_secs(15))
-        .send()
-        .await;
-
-    let resp = match resp {
-        Ok(r) => r,
-        Err(e) => return Err(format!("Network error: {e}")),
-    };
-
-    let status = resp.status();
-    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        return Ok(CodingPlanOutcome::Quota(zhipu_auth_error(status)));
-    }
-
-    if !status.is_success() {
-        let body = resp.text().await.unwrap_or_default();
-        return Ok(CodingPlanOutcome::Quota(make_error(format!(
-            "API error (HTTP {status}): {body}"
-        ))));
-    }
-
-    // 先 bytes() 再解析：读体失败（超时/连接中断）是瞬时 → Err；拿到完整响应体
-    // 后解析失败才是确定性。reqwest 的 json() 把读体错误也包成 decode，无法区分。
-    let raw = match resp.bytes().await {
-        Ok(b) => b,
-        Err(e) => return Err(format!("Failed to read response: {e}")),
-    };
-    let body: serde_json::Value = match serde_json::from_slice(&raw) {
-        Ok(v) => v,
-        Err(e) => {
-            return Ok(CodingPlanOutcome::Quota(make_error(format!(
-                "Failed to parse response: {e}"
-            ))))
-        }
+        .timeout(std::time::Duration::from_secs(15));
+    let body = match send_for_json(request).await? {
+        JsonReply::Body(body) => body,
+        JsonReply::Denied(status) => return Ok(CodingPlanOutcome::Quota(auth_error(status))),
+        JsonReply::Failed(message) => return Ok(CodingPlanOutcome::Quota(make_error(message))),
     };
 
     Ok(zhipu_outcome_from_body(&body))
-}
-
-fn zhipu_auth_error(status: reqwest::StatusCode) -> SubscriptionQuota {
-    SubscriptionQuota {
-        tool: "coding_plan".to_string(),
-        credential_status: CredentialStatus::Expired,
-        credential_message: Some("Invalid API key".to_string()),
-        success: false,
-        tiers: vec![],
-        extra_usage: None,
-        reset_credits: None,
-        credits_balance: None,
-        error: Some(format!("Authentication failed (HTTP {status})")),
-        queried_at: Some(now_millis()),
-    }
 }
 
 /// 智谱个人版：账户没有 Coding Plan（按量付费）单独认出来，交给调用方改查余额。
@@ -529,6 +485,7 @@ fn zhipu_quota_from_body(body: &serde_json::Value) -> SubscriptionQuota {
         extra_usage: None,
         reset_credits: None,
         credits_balance: None,
+        plan_name: None,
         error: None,
         queried_at: Some(now_millis()),
     }
@@ -548,49 +505,15 @@ async fn query_minimax(api_key: &str, is_cn: bool) -> Result<SubscriptionQuota, 
     };
     let url = format!("https://{api_domain}/v1/api/openplatform/coding_plan/remains");
 
-    let resp = client
+    let request = client
         .get(&url)
         .header("Authorization", format!("Bearer {api_key}"))
         .header("Content-Type", "application/json")
-        .timeout(std::time::Duration::from_secs(15))
-        .send()
-        .await;
-
-    let resp = match resp {
-        Ok(r) => r,
-        Err(e) => return Err(format!("Network error: {e}")),
-    };
-
-    let status = resp.status();
-    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        return Ok(SubscriptionQuota {
-            tool: "coding_plan".to_string(),
-            credential_status: CredentialStatus::Expired,
-            credential_message: Some("Invalid API key".to_string()),
-            success: false,
-            tiers: vec![],
-            extra_usage: None,
-            reset_credits: None,
-            credits_balance: None,
-            error: Some(format!("Authentication failed (HTTP {status})")),
-            queried_at: Some(now_millis()),
-        });
-    }
-
-    if !status.is_success() {
-        let body = resp.text().await.unwrap_or_default();
-        return Ok(make_error(format!("API error (HTTP {status}): {body}")));
-    }
-
-    // 先 bytes() 再解析：读体失败（超时/连接中断）是瞬时 → Err；拿到完整响应体
-    // 后解析失败才是确定性。reqwest 的 json() 把读体错误也包成 decode，无法区分。
-    let raw = match resp.bytes().await {
-        Ok(b) => b,
-        Err(e) => return Err(format!("Failed to read response: {e}")),
-    };
-    let body: serde_json::Value = match serde_json::from_slice(&raw) {
-        Ok(v) => v,
-        Err(e) => return Ok(make_error(format!("Failed to parse response: {e}"))),
+        .timeout(std::time::Duration::from_secs(15));
+    let body = match send_for_json(request).await? {
+        JsonReply::Body(body) => body,
+        JsonReply::Denied(status) => return Ok(auth_error(status)),
+        JsonReply::Failed(message) => return Ok(make_error(message)),
     };
 
     // 检查业务级别错误
@@ -620,6 +543,7 @@ async fn query_minimax(api_key: &str, is_cn: bool) -> Result<SubscriptionQuota, 
         extra_usage: None,
         reset_credits: None,
         credits_balance: None,
+        plan_name: None,
         error: None,
         queried_at: Some(now_millis()),
     })
@@ -630,49 +554,15 @@ async fn query_minimax(api_key: &str, is_cn: bool) -> Result<SubscriptionQuota, 
 async fn query_zenmux(base_url: &str, api_key: &str) -> Result<SubscriptionQuota, String> {
     let client = crate::proxy::http_client::get();
 
-    let resp = client
+    let request = client
         .get(base_url)
         .header("Authorization", format!("Bearer {api_key}"))
         .header("Accept", "application/json")
-        .timeout(std::time::Duration::from_secs(15))
-        .send()
-        .await;
-
-    let resp = match resp {
-        Ok(r) => r,
-        Err(e) => return Err(format!("Network error: {e}")),
-    };
-
-    let status = resp.status();
-    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        return Ok(SubscriptionQuota {
-            tool: "coding_plan".to_string(),
-            credential_status: CredentialStatus::Expired,
-            credential_message: Some("Invalid API key".to_string()),
-            success: false,
-            tiers: vec![],
-            extra_usage: None,
-            reset_credits: None,
-            credits_balance: None,
-            error: Some(format!("Authentication failed (HTTP {status})")),
-            queried_at: Some(now_millis()),
-        });
-    }
-
-    if !status.is_success() {
-        let body = resp.text().await.unwrap_or_default();
-        return Ok(make_error(format!("API error (HTTP {status}): {body}")));
-    }
-
-    // 先 bytes() 再解析：读体失败（超时/连接中断）是瞬时 → Err；拿到完整响应体
-    // 后解析失败才是确定性。reqwest 的 json() 把读体错误也包成 decode，无法区分。
-    let raw = match resp.bytes().await {
-        Ok(b) => b,
-        Err(e) => return Err(format!("Failed to read response: {e}")),
-    };
-    let body: serde_json::Value = match serde_json::from_slice(&raw) {
-        Ok(v) => v,
-        Err(e) => return Ok(make_error(format!("Failed to parse response: {e}"))),
+        .timeout(std::time::Duration::from_secs(15));
+    let body = match send_for_json(request).await? {
+        JsonReply::Body(body) => body,
+        JsonReply::Denied(status) => return Ok(auth_error(status)),
+        JsonReply::Failed(message) => return Ok(make_error(message)),
     };
 
     // 检查业务级别错误
@@ -762,6 +652,7 @@ async fn query_zenmux(base_url: &str, api_key: &str) -> Result<SubscriptionQuota
         extra_usage: None,
         reset_credits: None,
         credits_balance: None,
+        plan_name: None,
         error: None,
         queried_at: Some(now_millis()),
     })
@@ -891,53 +782,20 @@ async fn query_opencode_go(api_key: &str) -> Result<SubscriptionQuota, String> {
 
     // 用量端点只认 `Authorization: Bearer`——与推理侧 /messages 只认
     // x-api-key 正好相反，不能互换。
-    let resp = client
+    let request = client
         .get("https://opencode.ai/zen/go/v1/usage")
         .header("Authorization", format!("Bearer {api_key}"))
         .header("Accept", "application/json")
-        .timeout(std::time::Duration::from_secs(15))
-        .send()
-        .await;
-
-    let resp = match resp {
-        Ok(r) => r,
-        Err(e) => return Err(format!("Network error: {e}")),
-    };
-
-    let status = resp.status();
-    // 403 EntitlementError：key 本身有效（Zen 与 Go 共用同一把 workspace
-    // API key），但该 workspace 没有 Go 订阅——与 401 认证失败分开提示。
-    if status == reqwest::StatusCode::FORBIDDEN {
-        return Ok(make_error(
-            "API key is valid but has no OpenCode Go subscription (HTTP 403)".to_string(),
-        ));
-    }
-    if status == reqwest::StatusCode::UNAUTHORIZED {
-        return Ok(SubscriptionQuota {
-            tool: "coding_plan".to_string(),
-            credential_status: CredentialStatus::Expired,
-            credential_message: Some("Invalid API key".to_string()),
-            success: false,
-            tiers: vec![],
-            extra_usage: None,
-            reset_credits: None,
-            credits_balance: None,
-            error: Some(format!("Authentication failed (HTTP {status})")),
-            queried_at: Some(now_millis()),
-        });
-    }
-    if !status.is_success() {
-        let body = resp.text().await.unwrap_or_default();
-        return Ok(make_error(format!("API error (HTTP {status}): {body}")));
-    }
-
-    let raw = match resp.bytes().await {
-        Ok(b) => b,
-        Err(e) => return Err(format!("Failed to read response: {e}")),
-    };
-    let body: serde_json::Value = match serde_json::from_slice(&raw) {
-        Ok(v) => v,
-        Err(e) => return Ok(make_error(format!("Failed to parse response: {e}"))),
+        .timeout(std::time::Duration::from_secs(15));
+    let body = match send_for_json(request).await? {
+        JsonReply::Body(body) => body,
+        JsonReply::Denied(reqwest::StatusCode::FORBIDDEN) => {
+            return Ok(make_error(
+                "API key is valid but has no OpenCode Go subscription (HTTP 403)".to_string(),
+            ))
+        }
+        JsonReply::Denied(status) => return Ok(auth_error(status)),
+        JsonReply::Failed(message) => return Ok(make_error(message)),
     };
 
     let tiers = parse_opencode_go_tiers(&body);
@@ -956,6 +814,104 @@ async fn query_opencode_go(api_key: &str) -> Result<SubscriptionQuota, String> {
         extra_usage: None,
         reset_credits: None,
         credits_balance: None,
+        plan_name: None,
+        error: None,
+        queried_at: Some(now_millis()),
+    })
+}
+
+// ── Ollama Cloud ─────────────────────────────────────────────
+
+/// 解析 `GET https://ollama.com/api/balance`（docs.ollama.com/api/balance）。
+///
+/// 现行套餐：`included.balance_usd`（本期剩余）/ `included.allowance_usd`（本期总额），
+/// 本期截止 `included.period.until`，折成一档月度百分比。旧套餐 `included` 下是
+/// `session` / `weekly` 两档，各带 `remaining_percent`（0–100）与 `resets_at`。
+/// `purchased.balance_usd`（另购余额）不进额度档：卡片的余额行只认 Codex Credits。
+fn parse_ollama_cloud_tiers(body: &serde_json::Value) -> Vec<QuotaTier> {
+    let Some(included) = body.get("included") else {
+        return Vec::new();
+    };
+    let balance = included.get("balance_usd").and_then(parse_f64);
+    let allowance = included.get("allowance_usd").and_then(parse_f64);
+    if let (Some(balance), Some(allowance)) = (balance, allowance) {
+        if allowance > 0.0 {
+            let used = (allowance - balance).clamp(0.0, allowance);
+            return vec![QuotaTier {
+                name: TIER_MONTHLY.to_string(),
+                utilization: used / allowance * 100.0,
+                resets_at: included
+                    .get("period")
+                    .and_then(|period| period.get("until"))
+                    .and_then(extract_reset_time),
+                used_value_usd: None,
+                max_value_usd: None,
+            }];
+        }
+    }
+
+    let mut tiers = Vec::new();
+    for (key, tier_name) in [("session", TIER_FIVE_HOUR), ("weekly", TIER_WEEKLY_LIMIT)] {
+        let Some(window) = included.get(key) else {
+            continue;
+        };
+        let Some(remaining) = window.get("remaining_percent").and_then(parse_f64) else {
+            continue;
+        };
+        tiers.push(QuotaTier {
+            name: tier_name.to_string(),
+            utilization: (100.0 - remaining).clamp(0.0, 100.0),
+            resets_at: window.get("resets_at").and_then(extract_reset_time),
+            used_value_usd: None,
+            max_value_usd: None,
+        });
+    }
+    tiers
+}
+
+async fn query_ollama_cloud(api_key: &str) -> Result<SubscriptionQuota, String> {
+    let client = crate::proxy::http_client::get();
+    let request = client
+        .get("https://ollama.com/api/balance")
+        .header("Authorization", format!("Bearer {api_key}"))
+        .header("Accept", "application/json")
+        .timeout(std::time::Duration::from_secs(15));
+    let body = match send_for_json(request).await? {
+        JsonReply::Body(body) => body,
+        JsonReply::Denied(reqwest::StatusCode::FORBIDDEN) => {
+            return Ok(make_error(
+                "Ollama account is suspended (HTTP 403)".to_string(),
+            ))
+        }
+        JsonReply::Denied(status) => return Ok(auth_error(status)),
+        JsonReply::Failed(message) => return Ok(make_error(message)),
+    };
+
+    let tiers = parse_ollama_cloud_tiers(&body);
+    if tiers.is_empty() {
+        // 按量付费账户 allowance_usd 为 0，没有套餐额度可显示
+        let no_plan = body
+            .get("included")
+            .and_then(|included| included.get("allowance_usd"))
+            .and_then(parse_f64)
+            .is_some_and(|allowance| allowance <= 0.0);
+        return Ok(make_error(if no_plan {
+            "No included Ollama Cloud credits on this account (pay-as-you-go)".to_string()
+        } else {
+            "Unexpected balance response shape".to_string()
+        }));
+    }
+
+    Ok(SubscriptionQuota {
+        tool: "coding_plan".to_string(),
+        credential_status: CredentialStatus::Valid,
+        credential_message: None,
+        success: true,
+        tiers,
+        extra_usage: None,
+        reset_credits: None,
+        credits_balance: None,
+        plan_name: None,
         error: None,
         queried_at: Some(now_millis()),
     })
@@ -1024,21 +980,6 @@ async fn fetch_command_code_json(
         Err(e) => Ok(CommandCodeFetch::Error(format!(
             "Failed to parse response: {e}"
         ))),
-    }
-}
-
-fn command_code_auth_error() -> SubscriptionQuota {
-    SubscriptionQuota {
-        tool: "coding_plan".to_string(),
-        credential_status: CredentialStatus::Expired,
-        credential_message: Some("Invalid API key".to_string()),
-        success: false,
-        tiers: vec![],
-        extra_usage: None,
-        reset_credits: None,
-        credits_balance: None,
-        error: Some("Authentication failed (HTTP 401 Unauthorized)".to_string()),
-        queried_at: Some(now_millis()),
     }
 }
 
@@ -1149,6 +1090,7 @@ fn parse_command_code_quota(
         extra_usage: None,
         reset_credits: None,
         credits_balance: None,
+        plan_name: None,
         error: None,
         queried_at: Some(now_millis()),
     }
@@ -1167,7 +1109,7 @@ async fn query_command_code_at(base_url: &str, api_key: &str) -> Result<Subscrip
     .await?
     {
         CommandCodeFetch::Body(body) => body,
-        CommandCodeFetch::AuthExpired => return Ok(command_code_auth_error()),
+        CommandCodeFetch::AuthExpired => return Ok(auth_error(reqwest::StatusCode::UNAUTHORIZED)),
         CommandCodeFetch::Error(error) => return Ok(make_error(error)),
     };
 
@@ -1191,7 +1133,7 @@ async fn query_command_code_at(base_url: &str, api_key: &str) -> Result<Subscrip
     .await?
     {
         CommandCodeFetch::Body(body) => body,
-        CommandCodeFetch::AuthExpired => return Ok(command_code_auth_error()),
+        CommandCodeFetch::AuthExpired => return Ok(auth_error(reqwest::StatusCode::UNAUTHORIZED)),
         CommandCodeFetch::Error(error) => return Ok(make_error(error)),
     };
 
@@ -1205,7 +1147,7 @@ async fn query_command_code_at(base_url: &str, api_key: &str) -> Result<Subscrip
     .await?
     {
         CommandCodeFetch::Body(body) => Some(body),
-        CommandCodeFetch::AuthExpired => return Ok(command_code_auth_error()),
+        CommandCodeFetch::AuthExpired => return Ok(auth_error(reqwest::StatusCode::UNAUTHORIZED)),
         CommandCodeFetch::Error(error) => return Ok(make_error(error)),
     };
 
@@ -1232,7 +1174,7 @@ async fn query_command_code_at(base_url: &str, api_key: &str) -> Result<Subscrip
     .await?
     {
         CommandCodeFetch::Body(body) => body,
-        CommandCodeFetch::AuthExpired => return Ok(command_code_auth_error()),
+        CommandCodeFetch::AuthExpired => return Ok(auth_error(reqwest::StatusCode::UNAUTHORIZED)),
         CommandCodeFetch::Error(error) => return Ok(make_error(error)),
     };
 
@@ -1285,14 +1227,8 @@ enum VolcCall {
 /// `ark.cn-beijing.volces.com` → `cn-beijing`）；无法识别时回落 cn-beijing。
 /// 控制面 Host 是固定网关（`VOLCENGINE_OPENAPI_HOST`），不随 base_url 变化。
 fn volcengine_region(base_url: &str) -> String {
-    let host = base_url
-        .split_once("://")
-        .map(|(_, rest)| rest)
-        .unwrap_or(base_url)
-        .split('/')
-        .next()
-        .unwrap_or("");
-    host.split('.')
+    crate::codex_config::codex_url_host(base_url)
+        .split('.')
         .find(|p| p.starts_with("cn-") || p.starts_with("ap-"))
         .map(|p| p.to_string())
         .unwrap_or_else(|| VOLCENGINE_DEFAULT_REGION.to_string())
@@ -1631,22 +1567,8 @@ fn volcengine_success(tiers: Vec<QuotaTier>, plan: Option<String>) -> Subscripti
         extra_usage: None,
         reset_credits: None,
         credits_balance: None,
+        plan_name: None,
         error: None,
-        queried_at: Some(now_millis()),
-    }
-}
-
-fn volcengine_auth_error(detail: String) -> SubscriptionQuota {
-    SubscriptionQuota {
-        tool: "coding_plan".to_string(),
-        credential_status: CredentialStatus::Expired,
-        credential_message: Some("Invalid API key".to_string()),
-        success: false,
-        tiers: vec![],
-        extra_usage: None,
-        reset_credits: None,
-        credits_balance: None,
-        error: Some(detail),
         queried_at: Some(now_millis()),
     }
 }
@@ -1668,7 +1590,7 @@ async fn query_volcengine(
 
     // 1) Agent Plan：GetAFPUsage
     match volcengine_openapi_call(&region, access_key_id, secret_access_key, "GetAFPUsage").await {
-        VolcCall::Auth(detail) => return Ok(volcengine_auth_error(detail)),
+        VolcCall::Auth(detail) => return Ok(expired_key_error(detail)),
         VolcCall::Transient(detail) => return Err(format!("GetAFPUsage: {detail}")),
         VolcCall::Soft(detail) => soft_errors.push(format!("GetAFPUsage: {detail}")),
         VolcCall::Body(body) => {
@@ -1696,7 +1618,7 @@ async fn query_volcengine(
     )
     .await
     {
-        VolcCall::Auth(detail) => return Ok(volcengine_auth_error(detail)),
+        VolcCall::Auth(detail) => return Ok(expired_key_error(detail)),
         VolcCall::Transient(detail) => return Err(format!("GetCodingPlanUsage: {detail}")),
         VolcCall::Soft(detail) => soft_errors.push(format!("GetCodingPlanUsage: {detail}")),
         VolcCall::Body(body) => {
@@ -1739,6 +1661,7 @@ fn coding_plan_not_found(error: &str) -> SubscriptionQuota {
         extra_usage: None,
         reset_credits: None,
         credits_balance: None,
+        plan_name: None,
         error: Some(error.to_string()),
         queried_at: None,
     }
@@ -1772,41 +1695,18 @@ async fn query_zhipu_team_at(
     let client = crate::proxy::http_client::get();
     let url = format!("{quota_url_base}?type=2");
 
-    let resp = client
+    let request = client
         .get(&url)
         .header("Authorization", api_key) // 与个人版一致：智谱不加 Bearer 前缀
         .header("bigmodel-organization", organization_id)
         .header("bigmodel-project", project_id)
         .header("Content-Type", "application/json")
         .header("Accept-Language", "en-US,en")
-        .timeout(std::time::Duration::from_secs(15))
-        .send()
-        .await;
-
-    let resp = match resp {
-        Ok(r) => r,
-        Err(e) => return Err(format!("Network error: {e}")),
-    };
-
-    let status = resp.status();
-    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        return Ok(zhipu_auth_error(status));
-    }
-
-    if !status.is_success() {
-        let body = resp.text().await.unwrap_or_default();
-        return Ok(make_error(format!("API error (HTTP {status}): {body}")));
-    }
-
-    // 先 bytes() 再解析：读体失败（超时/连接中断）是瞬时 → Err；拿到完整响应体
-    // 后解析失败才是确定性。reqwest 的 json() 把读体错误也包成 decode，无法区分。
-    let raw = match resp.bytes().await {
-        Ok(b) => b,
-        Err(e) => return Err(format!("Failed to read response: {e}")),
-    };
-    let body: serde_json::Value = match serde_json::from_slice(&raw) {
-        Ok(v) => v,
-        Err(e) => return Ok(make_error(format!("Failed to parse response: {e}"))),
+        .timeout(std::time::Duration::from_secs(15));
+    let body = match send_for_json(request).await? {
+        JsonReply::Body(body) => body,
+        JsonReply::Denied(status) => return Ok(auth_error(status)),
+        JsonReply::Failed(message) => return Ok(make_error(message)),
     };
 
     // 团队版没有套餐不回落余额：用户是显式选的团队版，余额接口也不认组织 / 项目头，
@@ -1909,6 +1809,7 @@ pub(crate) async fn query_coding_plan(
         CodingPlanProvider::ZenMux => query_zenmux(base_url, api_key).await,
         CodingPlanProvider::OpencodeGo => query_opencode_go(api_key).await,
         CodingPlanProvider::CommandCode => query_command_code(api_key).await,
+        CodingPlanProvider::OllamaCloud => query_ollama_cloud(api_key).await,
         // 火山已在上面的 AK/SK 分支提前返回，此处不可达。
         CodingPlanProvider::Volcengine => {
             unreachable!("volcengine handled via AK/SK branch above")
@@ -1920,12 +1821,13 @@ pub(crate) async fn query_coding_plan(
 #[cfg(test)]
 mod tests {
     use super::{
-        detect_provider, parse_afp_tiers, parse_coding_plan_tiers, parse_command_code_quota,
-        parse_minimax_tiers, parse_opencode_go_tiers, parse_zhipu_token_tiers,
-        query_command_code_at, query_zhipu_at, query_zhipu_team_at, volcengine_canonical_query,
-        volcengine_is_auth_error_code, volcengine_region, volcengine_response_error,
-        volcengine_sign, zhipu_outcome_from_body, zhipu_quota_base, CodingPlanOutcome,
-        CodingPlanProvider, CredentialStatus, TIER_FIVE_HOUR, TIER_MONTHLY, TIER_WEEKLY_LIMIT,
+        detect_provider, detect_provider_id, parse_afp_tiers, parse_coding_plan_tiers,
+        parse_command_code_quota, parse_minimax_tiers, parse_ollama_cloud_tiers,
+        parse_opencode_go_tiers, parse_zhipu_token_tiers, query_command_code_at, query_zhipu_at,
+        query_zhipu_team_at, volcengine_canonical_query, volcengine_is_auth_error_code,
+        volcengine_region, volcengine_response_error, volcengine_sign, zhipu_outcome_from_body,
+        zhipu_quota_base, CodingPlanOutcome, CodingPlanProvider, CredentialStatus, TIER_FIVE_HOUR,
+        TIER_MONTHLY, TIER_WEEKLY_LIMIT,
     };
     use serde_json::json;
 
@@ -1959,7 +1861,13 @@ mod tests {
             detect_provider("https://api.commandcode.ai/provider/v1"),
             Some(CodingPlanProvider::CommandCode)
         ));
+        assert!(matches!(
+            detect_provider("https://API.CommandCode.ai/provider?x=1"),
+            Some(CodingPlanProvider::CommandCode)
+        ));
         assert!(detect_provider("https://commandcode.ai/provider").is_none());
+        assert!(detect_provider("https://api.commandcode.ai/providers").is_none());
+        assert!(detect_provider("https://api.commandcode.ai/provider-v2").is_none());
     }
 
     #[test]
@@ -2372,6 +2280,61 @@ mod tests {
         ));
         assert!(detect_provider("https://opencode.ai/zen/v1").is_none());
         assert!(detect_provider("https://opencode.ai/inference/v1").is_none());
+    }
+
+    #[test]
+    fn ollama_cloud_detects_cloud_host_only() {
+        for base_url in [
+            "https://ollama.com",
+            "https://ollama.com/v1",
+            "https://OLLAMA.com/",
+        ] {
+            assert!(matches!(
+                detect_provider(base_url),
+                Some(CodingPlanProvider::OllamaCloud)
+            ));
+        }
+        assert!(detect_provider("http://localhost:11434").is_none());
+        assert!(detect_provider("http://127.0.0.1:11434/v1").is_none());
+        assert!(detect_provider("https://ollama.com.example.com/v1").is_none());
+    }
+
+    #[test]
+    fn ollama_cloud_current_plan_maps_included_credit_to_monthly() {
+        let body = json!({
+            "included": {
+                "balance_usd": 72.5,
+                "allowance_usd": 100,
+                "period": {
+                    "from": "2026-11-01T00:00:00Z",
+                    "until": "2026-12-01T00:00:00Z"
+                }
+            },
+            "purchased": { "balance_usd": 25 }
+        });
+        let tiers = parse_ollama_cloud_tiers(&body);
+        assert_eq!(tiers.len(), 1);
+        assert_eq!(tiers[0].name, TIER_MONTHLY);
+        assert!((tiers[0].utilization - 27.5).abs() < 1e-9);
+        assert_eq!(tiers[0].resets_at.as_deref(), Some("2026-12-01T00:00:00Z"));
+    }
+
+    #[test]
+    fn ollama_cloud_legacy_plan_maps_session_and_weekly() {
+        let body = json!({
+            "included": {
+                "session": { "remaining_percent": 80, "resets_at": "2026-11-10T13:00:00Z" },
+                "weekly": { "remaining_percent": 35.5, "resets_at": "2026-11-14T00:00:00Z" }
+            }
+        });
+        let tiers = parse_ollama_cloud_tiers(&body);
+        assert_eq!(tiers.len(), 2);
+        assert_eq!(tiers[0].name, TIER_FIVE_HOUR);
+        assert!((tiers[0].utilization - 20.0).abs() < 1e-9);
+        assert_eq!(tiers[1].name, TIER_WEEKLY_LIMIT);
+        assert!((tiers[1].utilization - 64.5).abs() < 1e-9);
+        assert_eq!(tiers[1].resets_at.as_deref(), Some("2026-11-14T00:00:00Z"));
+        assert!(parse_ollama_cloud_tiers(&json!({})).is_empty());
     }
 
     #[test]
@@ -3051,12 +3014,12 @@ mod tests {
 
     // ── 传输层错误通道语义：瞬时 → Err（前端 reject/retry），确定性 → Ok(success:false) ──
     //
-    // 借 ZenMux 分支可指向任意 base_url 的特性，用本地 listener 驱动真实 HTTP
+    // ZenMux 直接请求 base_url，用本地 listener 驱动它的真实 HTTP
     // 路径，锁定 send 失败 / 读体中断 / 4xx / 非法 JSON 各自落在哪条通道。
     // balance / subscription 服务与本文件共用同一折叠模式，这里的用例同时充当
     // 三个服务的语义回归锚。
 
-    use super::get_coding_plan_quota;
+    use super::{get_coding_plan_quota, query_zenmux};
     use std::io::{Read, Write};
 
     /// 测试进程内可能有其他用例临时 set_var HTTP_PROXY（http_client 的
@@ -3070,7 +3033,7 @@ mod tests {
     }
 
     /// 起一个只服务一次连接的本地 HTTP server。`response=None` 表示读完请求
-    /// 直接断开（模拟响应前连接中断）。返回可命中 ZenMux 分支的 base_url。
+    /// 直接断开（模拟响应前连接中断）。返回它的 base_url。
     fn spawn_once_server(response: Option<String>) -> (String, std::thread::JoinHandle<()>) {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind local listener");
         let port = listener.local_addr().expect("local addr").port();
@@ -3084,7 +3047,7 @@ mod tests {
                 }
             }
         });
-        (format!("http://127.0.0.1:{port}/zenmux"), handle)
+        (format!("http://127.0.0.1:{port}"), handle)
     }
 
     fn http_response(status_line: &str, body: &str) -> String {
@@ -3137,16 +3100,7 @@ mod tests {
         let port = listener.local_addr().expect("local addr").port();
         drop(listener);
 
-        let result = get_coding_plan_quota(
-            &format!("http://127.0.0.1:{port}/zenmux"),
-            "k",
-            None,
-            None,
-            None,
-            None,
-            None,
-        )
-        .await;
+        let result = query_zenmux(&format!("http://127.0.0.1:{port}"), "k").await;
         let err = result.expect_err("send 失败必须走 Err 通道（瞬时，前端 reject 后重试）");
         assert!(err.contains("Network error"), "err={err}");
     }
@@ -3156,7 +3110,7 @@ mod tests {
         ensure_no_proxy_for_loopback();
         let (base_url, handle) = spawn_once_server(None);
 
-        let result = get_coding_plan_quota(&base_url, "k", None, None, None, None, None).await;
+        let result = query_zenmux(&base_url, "k").await;
         let err = result.expect_err("响应前连接中断必须走 Err 通道（瞬时）");
         assert!(err.contains("Network error"), "err={err}");
         handle.join().expect("server thread");
@@ -3173,7 +3127,7 @@ mod tests {
                 .to_string(),
         ));
 
-        let result = get_coding_plan_quota(&base_url, "k", None, None, None, None, None).await;
+        let result = query_zenmux(&base_url, "k").await;
         let err = result.expect_err("读体中断必须走 Err 通道（瞬时，前端 reject 后重试）");
         assert!(err.contains("Failed to read response"), "err={err}");
         handle.join().expect("server thread");
@@ -3184,7 +3138,7 @@ mod tests {
         ensure_no_proxy_for_loopback();
         let (base_url, handle) = spawn_once_server(Some(http_response("401 Unauthorized", "{}")));
 
-        let quota = get_coding_plan_quota(&base_url, "k", None, None, None, None, None)
+        let quota = query_zenmux(&base_url, "k")
             .await
             .expect("鉴权失败是确定性失败，必须保持 Ok(success:false) 展示文案");
         assert!(!quota.success);
@@ -3200,7 +3154,7 @@ mod tests {
         let (base_url, handle) =
             spawn_once_server(Some(http_response("429 Too Many Requests", "slow down")));
 
-        let quota = get_coding_plan_quota(&base_url, "k", None, None, None, None, None)
+        let quota = query_zenmux(&base_url, "k")
             .await
             .expect("非 2xx 保持 Ok(success:false)，状态码留在文案里交前端分类");
         assert!(!quota.success);
@@ -3217,7 +3171,7 @@ mod tests {
         // 完整读到响应体但不是 JSON → is_decode → 确定性解析失败
         let (base_url, handle) = spawn_once_server(Some(http_response("200 OK", "not-json")));
 
-        let quota = get_coding_plan_quota(&base_url, "k", None, None, None, None, None)
+        let quota = query_zenmux(&base_url, "k")
             .await
             .expect("完整但非法的响应体是确定性失败，必须保持 Ok(success:false)");
         assert!(!quota.success);
@@ -3455,5 +3409,50 @@ mod tests {
         assert!(!quota.success);
         assert!(matches!(quota.credential_status, CredentialStatus::Expired));
         assert!(quota.error.unwrap().contains("Authentication failed"));
+    }
+
+    /// 套餐地址按 host 认（含子域、端口、末尾的点），有路径要求的再看紧跟的路径；
+    /// 中转站路径或查询串里出现的套餐域名不算。
+    #[test]
+    fn coding_plan_is_detected_by_host_and_path() {
+        for (url, expected) in [
+            ("https://api.kimi.com/coding/v1", Some("kimi")),
+            ("https://api.kimi.com:443/coding/v1", Some("kimi")),
+            ("https://api.kimi.com./coding/v1", Some("kimi")),
+            ("https://api.kimi.com/v1", None),
+            ("https://relay.example.com/api.kimi.com/coding/v1", None),
+            ("https://www.bigmodel.cn/api/anthropic", Some("zhipu")),
+            (
+                "https://relay.example.com/v1?upstream=https://open.bigmodel.cn",
+                None,
+            ),
+            ("https://api.z.ai.relay.example.com/api/anthropic", None),
+            ("https://zenmux.ai/api/anthropic", Some("zenmux")),
+            ("https://zenmux.example.com/api", None),
+            ("https://opencode.ai:8443/zen/go/v1", Some("opencode_go")),
+            ("https://relay.example.com/opencode.ai/zen/go/v1", None),
+            (
+                "https://api.commandcode.ai/provider?x=1",
+                Some("command_code"),
+            ),
+            (
+                "https://relay.example.com/api.commandcode.ai/provider",
+                None,
+            ),
+            (
+                "https://ark.cn-beijing.volces.com./api/plan/v3",
+                Some("volcengine"),
+            ),
+            (
+                "https://relay.example.com/ark.cn-beijing.volces.com/api/coding",
+                None,
+            ),
+        ] {
+            assert_eq!(detect_provider_id(url), expected, "{url}");
+        }
+        assert_eq!(
+            zhipu_quota_base("https://relay.example.com/open.bigmodel.cn/api"),
+            "https://api.z.ai"
+        );
     }
 }
