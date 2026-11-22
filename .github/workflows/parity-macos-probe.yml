@@ -217,24 +217,29 @@ jobs:
           else
             mode=check; list=(); for i in $(seq 10); do list+=("${cases[@]}"); done
           fi
-          ( node parity/kit/internal/cli/main.ts "$mode" "${common[@]}" "${list[@]}" 2>&1 | tee "$RUNNER_TEMP/out-cases.log" ) &
+          # The run writes only to a file and the log is printed at the end, so nothing here waits on
+          # the runner reading this step's output while egress is denied.
+          node parity/kit/internal/cli/main.ts "$mode" "${common[@]}" "${list[@]}" > "$RUNNER_TEMP/out-cases.log" 2>&1 &
           run=$!
           # A hung run stops here with the stacks of what it waited on, instead of keeping pf up until
           # the runner loses its connection and the logs with it. A full check run takes about 9 minutes.
           for _ in $(seq 1200); do kill -0 "$run" 2>/dev/null || break; sleep 1; done
           if kill -0 "$run" 2>/dev/null; then
-            echo "::error::the cases were still running after 20 minutes; sampling the app and the helper"
             hang="$RUNNER_TEMP/out/cases/hang"; mkdir -p "$hang"
-            ps -axo pid,ppid,stat,etime,command | grep -E "node|CC Switch|parity-helper" | grep -v grep > "$hang/ps.txt" || true
-            cat "$hang/ps.txt"
+            bash parity/ci/macos-egress.sh stop > "$hang/egress.txt" 2>&1 || true
+            ps -axo pid,ppid,stat,pcpu,rss,etime,command | grep -E "node|CC Switch|parity-helper|WebKit" | grep -v grep > "$hang/ps.txt" || true
             for p in $(pgrep -f "CC Switch.app/Contents/MacOS/|parity-helper" || true); do
               sample "$p" 5 -file "$hang/sample-$p.txt" >/dev/null 2>&1 || sudo -n sample "$p" 5 -file "$hang/sample-$p.txt" >/dev/null 2>&1 || true
             done
-            pkill -f "kit/internal/cli/main.ts" || true
+            kill "$run" 2>/dev/null || true
             pkill -f "CC Switch.app/Contents/MacOS/" || true
+            cat "$RUNNER_TEMP/out-cases.log" "$hang/ps.txt" "$hang/egress.txt"
+            echo "::error::the cases were still running after 20 minutes; see out/cases/hang"
             exit 1
           fi
-          wait "$run"
+          status=0; wait "$run" || status=$?
+          cat "$RUNNER_TEMP/out-cases.log"
+          exit "$status"
 
       - name: Restore networking
         if: always()

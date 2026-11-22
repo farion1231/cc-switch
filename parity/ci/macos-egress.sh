@@ -11,9 +11,13 @@
 # does not hold. The app never talks to those hosts, so for the app nothing can leave. Loopback is
 # not filtered.
 #
+# The learner also restores networking by itself after PARITY_EGRESS_MAX_SECONDS (22 minutes by
+# default), so a job that hangs while egress is denied still reconnects and reports. It records
+# what pf refused and, every half minute, the load and the busiest processes.
+#
 #   macos-egress.sh start   load the rules and start the learner (needs sudo)
 #   macos-egress.sh check   fail unless a public host is refused and a runner host is reachable
-#   macos-egress.sh stop    stop the learner and restore the system rules
+#   macos-egress.sh stop    stop the learner, restore the system rules and print the records
 set -euo pipefail
 
 STATE="${RUNNER_TEMP:-/tmp}/parity-egress"
@@ -56,12 +60,35 @@ pin() {
   sudo killall -HUP mDNSResponder 2>/dev/null || true
 }
 
+restore() {
+  if [ -f "$STATE/etc-hosts.orig" ]; then
+    sudo cp "$STATE/etc-hosts.orig" /etc/hosts
+  else
+    sudo sed -i '' "/$MARK\$/d" /etc/hosts
+  fi
+  sudo dscacheutil -flushcache 2>/dev/null || true
+  sudo killall -HUP mDNSResponder 2>/dev/null || true
+  sudo pfctl -d 2>&1 | tail -1 || true
+  sudo pfctl -f /etc/pf.conf 2>&1 | grep -vE 'ALTQ|flushing of rules' || true
+}
+
+snapshot() {
+  echo "== $(date -u +%T) load $(sysctl -n vm.loadavg) $(memory_pressure 2>/dev/null | grep -m1 'free percentage' || true)"
+  ps -axro pid,pcpu,rss,etime,comm | head -6
+}
+
 learn() {
-  local known="$STATE/hosts"
+  local known="$STATE/hosts" deadline=${PARITY_EGRESS_MAX_SECONDS:-1320} next=0
   while true; do
+    if [ "$SECONDS" -ge "$deadline" ]; then
+      echo "$(date -u +%T) egress denied for ${deadline}s; restoring networking"
+      restore
+      return
+    fi
     runner_hosts > "$STATE/hosts.now"
-    while read -r h; do pin "$h"; done < <(comm -13 "$known" "$STATE/hosts.now")
+    while read -r h; do echo "$(date -u +%T) pin $h"; pin "$h"; done < <(comm -13 "$known" "$STATE/hosts.now")
     sort -u "$STATE/hosts.now" "$known" -o "$known"
+    if [ "$SECONDS" -ge "$next" ]; then snapshot >> "$STATE/monitor.log" 2>&1; next=$((SECONDS + 30)); fi
     sleep 2
   done
 }
@@ -89,13 +116,16 @@ case "${1:-}" in
       echo "table <runner> persist { $seed }"
       echo 'pass out quick proto tcp to <runner> no state'
       echo 'pass out quick proto { tcp udp } to <dns> port 53 no state'
-      echo 'block return out quick proto tcp all flags S/SA'
-      echo 'block return out quick proto udp all'
+      echo 'block return out log quick proto tcp all flags S/SA'
+      echo 'block return out log quick proto udp all'
       echo 'pass all no state'
     } > "$STATE/pf.conf"
     sudo pfctl -f "$STATE/pf.conf" -E 2>&1 | grep -vE 'ALTQ|flushing of rules|pf.conf' || true
     nohup bash "$0" learn > "$STATE/learner.log" 2>&1 &
     echo $! > "$STATE/learner.pid"
+    # What pf refuses, for telling the app's attempts from the runner's.
+    sudo ifconfig pflog0 create 2>/dev/null || true
+    sudo nohup tcpdump -n -l -tttt -i pflog0 > "$STATE/blocked.log" 2>&1 &
     echo "dns: $dns"
     echo "runner hosts: $(tr '\n' ' ' < "$STATE/hosts")"
     echo "pinned: $(wc -l < "$STATE/pins" | tr -d ' ') addresses"
@@ -112,16 +142,14 @@ case "${1:-}" in
     ;;
   stop)
     [ -f "$STATE/learner.pid" ] && kill "$(cat "$STATE/learner.pid")" 2>/dev/null || true
+    sudo pkill -f "tcpdump -n -l -tttt -i pflog0" 2>/dev/null || true
     echo "runner table: $(sudo pfctl -t runner -T show 2>/dev/null | wc -l | tr -d ' ') addresses"
-    if [ -f "$STATE/etc-hosts.orig" ]; then
-      sudo cp "$STATE/etc-hosts.orig" /etc/hosts
-    else
-      sudo sed -i '' "/$MARK\$/d" /etc/hosts
-    fi
-    sudo dscacheutil -flushcache 2>/dev/null || true
-    sudo killall -HUP mDNSResponder 2>/dev/null || true
-    sudo pfctl -d 2>&1 | tail -1 || true
-    sudo pfctl -f /etc/pf.conf 2>&1 | grep -vE 'ALTQ|flushing of rules' || true
+    restore
+    echo "== learner"; cat "$STATE/learner.log" 2>/dev/null || true
+    echo "== refused destinations (count, first and last time)"
+    awk '{for (i = 3; i < NF; i++) if ($i == ">") {d = $(i + 1); sub(/:$/, "", d); n[d]++; if (!(d in f)) f[d] = $2; l[d] = $2; break}}
+      END {for (d in n) print n[d], d, f[d], l[d]}' "$STATE/blocked.log" 2>/dev/null | sort -rn | head -25 || true
+    echo "== monitor"; cat "$STATE/monitor.log" 2>/dev/null || true
     ;;
   *)
     echo "usage: $0 start|check|stop" >&2; exit 2
