@@ -15,7 +15,7 @@ import {
   removeCodexTopLevelField,
   setCodexRemoteCompaction,
   setCodexTopLevelInt,
-} from "@/utils/providerConfigUtils";
+} from "@/utils/codexConfigUtils";
 import { fieldClass } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 

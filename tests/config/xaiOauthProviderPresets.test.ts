@@ -6,7 +6,7 @@ import {
   extractCodexBaseUrl,
   extractCodexModelName,
   extractCodexWireApi,
-} from "@/utils/providerConfigUtils";
+} from "@/utils/codexConfigUtils";
 
 describe("xAI OAuth provider presets", () => {
   it("pins the Claude Code preset to managed Responses auth", () => {
