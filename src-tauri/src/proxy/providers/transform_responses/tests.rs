@@ -2444,6 +2444,19 @@ fn test_responses_non_reasoning_model_no_reasoning() {
     assert!(result.get("reasoning").is_none());
 }
 
+#[test]
+fn test_responses_reasoning_model_without_thinking_sends_no_reasoning() {
+    // 客户端没要推理（没有 thinking、没有 output_config）：推理模型也不该被塞一个 effort。
+    let input = json!({
+        "model": "gpt-5.4",
+        "max_tokens": 1024,
+        "messages": [{"role": "user", "content": "Hello"}]
+    });
+
+    let result = anthropic_to_responses(input, None, false, false).unwrap();
+    assert!(result.get("reasoning").is_none(), "{result}");
+}
+
 // ==================== Codex OAuth (ChatGPT 反代) 协议约束 ====================
 
 #[test]
