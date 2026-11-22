@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { sessionsApi } from "@/lib/api/sessions";
+import { extractErrorMessage } from "@/utils/errorUtils";
 import type { SessionContentHit, SessionIndexStatus } from "@/types";
 
 /** 输入停顿多久后才查正文（毫秒） */
@@ -42,6 +43,13 @@ interface UseSessionContentSearchResult {
   /** 索引进度；还没拿到时为 null */
   status: SessionIndexStatus | null;
   isSearching: boolean;
+  /**
+   * 正文查询失败的原因。有值时「没有命中」不代表正文里没有这个词：
+   * 索引打不开或查询失败都会走到这里（见 `session_manager/search.rs`）。
+   */
+  error: string | null;
+  /** 重新查一次（失败提示里的重试） */
+  retry: () => void;
 }
 
 /**
@@ -125,6 +133,8 @@ export function useSessionContentSearch({
     queryFn: () => sessionsApi.searchContent(debounced, providerKey),
     enabled: enabled && debounced !== "" && providerKey.length > 0,
     staleTime: 0,
+    // 索引读不出来是确定性失败，自动重试只会让提示晚一拍；重试交给界面上的按钮
+    retry: false,
   });
 
   const hits = useMemo(() => {
@@ -136,9 +146,33 @@ export function useSessionContentSearch({
     return map;
   }, [enabled, debounced, query, search.data]);
 
+  // 只在当前查询词已经有结果时才算失败：正在防抖 / 输入还没生效不算。
+  // 失败后重新查询成功时 react-query 会把 error 清掉，提示随之消失。
+  // 用 isError 而不是拿 error 的真值判断：原因本身可能是空串。
+  const settled = enabled && debounced !== "" && debounced === query.trim();
+  const error =
+    settled && search.isError
+      ? // 提不出原因时也要给一段非空文本：界面按真值判断失败，
+        // 空串会静默退回「没有会话包含该词」
+        extractErrorMessage(search.error) || "Unknown search error"
+      : null;
+
   return {
     hits,
     status: enabled ? (status ?? search.data?.status ?? null) : null,
     isSearching: enabled && query.trim() !== "" && search.isFetching,
+    error,
+    // 索引读不出来时重试只重新查询是不够的：后端会删掉坏索引重建出一个**空**索引，
+    // 查询随之成功返回零命中，界面又变回「没有会话包含该词」。重新收录挂在这里是
+    // 列表刷新后的同步，而列表有 staleTime，停在页面上点重试不会触发它。
+    // 顺手再同步一次：后端按变化处理，已经在跑时只排一次重跑，重复调用无害；
+    // 进度事件会让查询重新执行。
+    retry: () => {
+      void search.refetch();
+      sessionsApi
+        .syncContentIndex()
+        .then(setStatus)
+        .catch((error) => console.warn("同步会话正文索引失败", error));
+    },
   };
 }

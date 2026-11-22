@@ -64,9 +64,9 @@ describe("isTransientUsageError", () => {
     expect(
       isTransientUsageError(fail("API error (HTTP 429): rate limited")),
     ).toBe(true);
-    expect(
-      isTransientUsageError(fail("HTTP 429 Too Many Requests : x")),
-    ).toBe(true);
+    expect(isTransientUsageError(fail("HTTP 429 Too Many Requests : x"))).toBe(
+      true,
+    );
     expect(
       isTransientUsageError(fail("Authentication failed (HTTP 403)")),
     ).toBe(false);

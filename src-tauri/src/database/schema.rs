@@ -3933,6 +3933,11 @@ impl Database {
     }
 
     pub(crate) fn ensure_model_pricing_seeded_on_conn(conn: &Connection) -> Result<(), AppError> {
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_model_pricing_nocase ON model_pricing(model_id COLLATE NOCASE)",
+            [],
+        ).map_err(|e| AppError::Database(e.to_string()))?;
+
         // 每次启动都执行 INSERT OR IGNORE，增量追加新模型；仅修复仍等于旧内置值的定价。
         Self::in_savepoint(conn, "seed_model_pricing", || {
             Self::seed_model_pricing(conn)?;

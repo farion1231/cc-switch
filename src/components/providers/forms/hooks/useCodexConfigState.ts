@@ -11,7 +11,7 @@ import {
   setCodexAgentsString,
   setCodexModelName as setCodexModelNameInConfig,
   updateCodexExperimentalBearerToken,
-} from "@/utils/providerConfigUtils";
+} from "@/utils/codexConfigUtils";
 import { normalizeTomlText } from "@/utils/textNormalization";
 import type { CodexCatalogModel } from "@/types";
 
