@@ -3623,3 +3623,24 @@ fn omp_edit_save_keeps_every_byte_outside_the_edited_entry() {
     assert!(after.contains("name: Duolalab"), "{after}");
     assert!(after.ends_with(sibling), "{after}");
 }
+
+#[test]
+fn provider_service_switch_missing_provider_returns_error() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let state = create_test_state().expect("create test state");
+
+    let err = ProviderService::switch(&state, AppType::Claude, "missing")
+        .expect_err("switching missing provider should fail");
+    match err {
+        AppError::Message(msg) => {
+            assert!(
+                msg.contains("不存在") || msg.contains("not found"),
+                "expected provider not found message, got {msg}"
+            );
+        }
+        other => panic!("expected Message error for provider not found, got {other:?}"),
+    }
+}

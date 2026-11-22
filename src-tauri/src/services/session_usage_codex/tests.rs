@@ -3943,6 +3943,124 @@ fn test_cached_clamped_to_input() {
     assert_eq!(clamped, 10);
 }
 
+/// 真实语料回放验收 harness（仅手动运行，勿在 CI 跑）。
+///
+/// 把真实 `~/.codex/sessions` 和 `archived_sessions` 在内存库上全量重导，输出计时与
+/// 结果快照。用于性能改动的行为等价验证：改动前后各跑一次，两侧
+/// `CODEX_REPLAY_OUT` 文件必须逐字节相同。
+/// `CODEX_REPLAY_ROOT` 可指定包含这两个目录的固定语料快照。
+///
+/// ```bash
+/// CODEX_REPLAY_OUT=/tmp/replay.tsv \
+///   cargo test --release replay_real_codex_corpus -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore]
+fn replay_real_codex_corpus() -> Result<(), AppError> {
+    let Some(real_home) = dirs::home_dir() else {
+        eprintln!("[REPLAY] no home dir, skipping");
+        return Ok(());
+    };
+    let real_codex = std::env::var_os("CODEX_REPLAY_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| real_home.join(".codex"));
+    let real_sessions = real_codex.join("sessions");
+    if !real_sessions.is_dir() {
+        eprintln!("[REPLAY] {} not found, skipping", real_sessions.display());
+        return Ok(());
+    }
+
+    // 临时 HOME 里只放一个指向真实语料的只读 symlink，避免测试
+    // 触碰真实 ~/.cc-switch / ~/.codex 下的任何其他内容。
+    let temp = tempfile::tempdir().expect("create temp home");
+    fs::create_dir_all(temp.path().join(".codex")).expect("mkdir .codex");
+    #[cfg(unix)]
+    for directory in ["sessions", "archived_sessions"] {
+        let source = real_codex.join(directory);
+        if source.is_dir() {
+            std::os::unix::fs::symlink(&source, temp.path().join(".codex").join(directory))
+                .expect("symlink rollout directory");
+        }
+    }
+    let env = crate::test_support::EnvVars::new().set("CC_SWITCH_TEST_HOME", temp.path());
+
+    clear_codex_replay_caches();
+    // CODEX_REPLAY_DISK=1 时用临时 HOME 下的磁盘库：逐行 autocommit 的
+    // 主要成本是磁盘 journal fsync，内存库测不出真实写库开销。
+    let db = if std::env::var("CODEX_REPLAY_DISK").is_ok() {
+        Database::init()?
+    } else {
+        Database::memory()?
+    };
+    let start = std::time::Instant::now();
+    let result = sync_codex_usage(&db)?;
+    let full_elapsed = start.elapsed();
+    eprintln!(
+        "[REPLAY] full reimport: imported={} skipped={} suspected_dup={} deferred={} files={} errors={} elapsed={:.2?}",
+        result.imported,
+        result.skipped,
+        result.suspected_duplicates,
+        result.deferred_files,
+        result.files_scanned,
+        result.errors.len(),
+        full_elapsed
+    );
+
+    let start = std::time::Instant::now();
+    let steady = sync_codex_usage(&db)?;
+    eprintln!(
+        "[REPLAY] steady pass: imported={} deferred={} elapsed={:.2?}",
+        steady.imported,
+        steady.deferred_files,
+        start.elapsed()
+    );
+
+    if let Ok(out_path) = std::env::var("CODEX_REPLAY_OUT") {
+        use std::io::Write;
+        let conn = lock_conn!(db.conn);
+        let mut stmt = conn
+            .prepare(
+                "SELECT request_id, model, request_model, input_tokens, output_tokens,
+                            cache_read_tokens, cache_creation_tokens,
+                            input_cost_usd, output_cost_usd, cache_read_cost_usd,
+                            cache_creation_cost_usd, total_cost_usd,
+                            session_id, provider_id, provider_type, status_code,
+                            is_streaming, cost_multiplier, created_at, data_source
+                     FROM proxy_request_logs
+                     WHERE data_source = 'codex_session'
+                     ORDER BY request_id",
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let rows = stmt
+            .query_map([], |row| {
+                let mut fields = Vec::with_capacity(20);
+                for idx in 0..20 {
+                    fields.push(match row.get_ref(idx)? {
+                        rusqlite::types::ValueRef::Null => "NULL".to_string(),
+                        rusqlite::types::ValueRef::Integer(v) => v.to_string(),
+                        rusqlite::types::ValueRef::Real(v) => v.to_string(),
+                        rusqlite::types::ValueRef::Text(v) => {
+                            String::from_utf8_lossy(v).into_owned()
+                        }
+                        rusqlite::types::ValueRef::Blob(v) => format!("blob:{}", v.len()),
+                    });
+                }
+                Ok(fields.join("\t"))
+            })
+            .map_err(|e| AppError::Database(e.to_string()))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let mut out = fs::File::create(&out_path).expect("create replay out file");
+        for line in &rows {
+            writeln!(out, "{line}").expect("write replay row");
+        }
+        eprintln!("[REPLAY] wrote {} rows to {out_path}", rows.len());
+    }
+
+    drop(env);
+    Ok(())
+}
+
 /// 按 Codex 实际写出的键顺序（timestamp、type、payload）拼一行；`json!` 会把键
 /// 按字母排序，行头判断种类靠的是真实顺序
 fn raw_line(timestamp: &str, kind: &str, payload: &str) -> String {
