@@ -2795,28 +2795,27 @@ mod tests {
     }
 
     #[test]
-    fn zhipu_quota_base_routes_bigmodel_url_to_cn_endpoint() {
-        assert_eq!(
-            zhipu_quota_base("https://open.bigmodel.cn/api/paas/v4"),
-            "https://open.bigmodel.cn"
-        );
-    }
-
-    #[test]
-    fn zhipu_quota_base_routes_z_ai_url_to_en_endpoint() {
-        assert_eq!(
-            zhipu_quota_base("https://api.z.ai/api/paas/v4"),
-            "https://api.z.ai"
-        );
-    }
-
-    #[test]
-    fn zhipu_quota_base_defaults_to_en_for_unknown_url() {
-        // 没有明显 Zhipu 域名特征时,默认走国际站(更通用的入口)
-        assert_eq!(
-            zhipu_quota_base("https://example.com/zhipu"),
-            "https://api.z.ai"
-        );
+    fn zhipu_quota_base_picks_endpoint_by_url() {
+        for (case, base_url, expected) in [
+            (
+                "zhipu_quota_base_routes_bigmodel_url_to_cn_endpoint",
+                "https://open.bigmodel.cn/api/paas/v4",
+                "https://open.bigmodel.cn",
+            ),
+            (
+                "zhipu_quota_base_routes_z_ai_url_to_en_endpoint",
+                "https://api.z.ai/api/paas/v4",
+                "https://api.z.ai",
+            ),
+            // 没有明显 Zhipu 域名特征时,默认走国际站(更通用的入口)
+            (
+                "zhipu_quota_base_defaults_to_en_for_unknown_url",
+                "https://example.com/zhipu",
+                "https://api.z.ai",
+            ),
+        ] {
+            assert_eq!(zhipu_quota_base(base_url), expected, "{case}");
+        }
     }
 
     #[test]

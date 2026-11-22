@@ -365,46 +365,52 @@ mod tests {
     use super::extract_gemini_model_from_path;
 
     #[test]
-    fn extract_model_with_action() {
-        assert_eq!(
-            extract_gemini_model_from_path("/v1beta/models/gemini-pro:generateContent").as_deref(),
-            Some("gemini-pro"),
-        );
-    }
-
-    #[test]
-    fn extract_model_with_dotted_version() {
-        assert_eq!(
-            extract_gemini_model_from_path("/v1beta/models/gemini-1.5-flash:streamGenerateContent")
-                .as_deref(),
-            Some("gemini-1.5-flash"),
-        );
-    }
-
-    #[test]
-    fn extract_model_without_action() {
-        assert_eq!(
-            extract_gemini_model_from_path("/v1/models/gemini-1.5-pro").as_deref(),
-            Some("gemini-1.5-pro"),
-        );
-    }
-
-    #[test]
-    fn extract_model_with_proxy_prefix() {
-        assert_eq!(
-            extract_gemini_model_from_path("/gemini/v1beta/models/gemini-2.0-flash:countTokens")
-                .as_deref(),
-            Some("gemini-2.0-flash"),
-        );
-    }
-
-    #[test]
-    fn extract_model_with_query_string() {
-        assert_eq!(
-            extract_gemini_model_from_path("/v1beta/models/gemini-pro:generateContent?key=abc")
-                .as_deref(),
-            Some("gemini-pro"),
-        );
+    fn extract_model_from_gemini_paths() {
+        for (case, path, model) in [
+            (
+                "extract_model_with_action",
+                "/v1beta/models/gemini-pro:generateContent",
+                "gemini-pro",
+            ),
+            (
+                "extract_model_with_dotted_version",
+                "/v1beta/models/gemini-1.5-flash:streamGenerateContent",
+                "gemini-1.5-flash",
+            ),
+            (
+                "extract_model_without_action",
+                "/v1/models/gemini-1.5-pro",
+                "gemini-1.5-pro",
+            ),
+            (
+                "extract_model_with_proxy_prefix",
+                "/gemini/v1beta/models/gemini-2.0-flash:countTokens",
+                "gemini-2.0-flash",
+            ),
+            (
+                "extract_model_with_query_string",
+                "/v1beta/models/gemini-pro:generateContent?key=abc",
+                "gemini-pro",
+            ),
+            // GET /v1beta/models/<id>?key=... 无 action verb，仅靠 ':' 拆分会把 query 带进 model 名。
+            // 修复后应该把 query 剥掉。
+            (
+                "extract_model_get_with_query_only",
+                "/v1beta/models/gemini-pro?key=abc",
+                "gemini-pro",
+            ),
+            (
+                "extract_model_get_with_proxy_prefix_and_query",
+                "/gemini/v1beta/models/gemini-2.0-flash?key=abc",
+                "gemini-2.0-flash",
+            ),
+        ] {
+            assert_eq!(
+                extract_gemini_model_from_path(path).as_deref(),
+                Some(model),
+                "{case}"
+            );
+        }
     }
 
     #[test]
@@ -416,24 +422,5 @@ mod tests {
     fn extract_model_trailing_models_segment() {
         // `/v1beta/models` (list endpoint) has no following segment → None.
         assert_eq!(extract_gemini_model_from_path("/v1beta/models"), None);
-    }
-
-    #[test]
-    fn extract_model_get_with_query_only() {
-        // GET /v1beta/models/<id>?key=... 无 action verb，仅靠 ':' 拆分会把 query 带进 model 名。
-        // 修复后应该把 query 剥掉。
-        assert_eq!(
-            extract_gemini_model_from_path("/v1beta/models/gemini-pro?key=abc").as_deref(),
-            Some("gemini-pro"),
-        );
-    }
-
-    #[test]
-    fn extract_model_get_with_proxy_prefix_and_query() {
-        assert_eq!(
-            extract_gemini_model_from_path("/gemini/v1beta/models/gemini-2.0-flash?key=abc")
-                .as_deref(),
-            Some("gemini-2.0-flash"),
-        );
     }
 }
