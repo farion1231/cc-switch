@@ -152,25 +152,12 @@ pub const SPEED_MIN_OUTPUT_TOKENS: i64 = 100;
 /// 或短回复整段落在同一个网络包里，算出来的是传输突发而不是生成速度。
 pub const SPEED_MIN_GENERATION_MS: i64 = 100;
 
-/// 数据源本身提供毫秒级精确 `first_token_ms` 与 `latency_ms`（而非按日志写盘时间戳反推）：
-/// 路由服务（`proxy`）以及从原生 `conversations/<id>.db` 读取 `first_token + streaming`
-/// 的 Antigravity（`agy_session`）。其余会话日志仍走含首字等待的估算口径。
-fn exact_timing_source_sql(alias: &str) -> String {
-    let data_source = data_source_expr(alias);
-    format!("{data_source} IN ('proxy', 'agy_session')")
-}
-
-fn estimated_timing_source_sql(alias: &str) -> String {
-    let data_source = data_source_expr(alias);
-    format!("{data_source} NOT IN ('proxy', 'agy_session')")
-}
-
-/// 明细行能不能计速度的 SQL 条件（和前端 `isSpeedEligible` 同口径）。带原生精确计时的
-/// `agy_session` 与路由服务 `proxy` 同口径扣除首字；其余按时间戳反推的会话日志仍走估算。
+/// 明细行能不能计速度的 SQL 条件（和前端 `isSpeedEligible` 同口径）。会话日志导入的行
+/// 也可能有首字（按时间戳推出来的），所以先按来源分开，不能只看有没有首字。
 fn speed_eligible_sql(alias: &str) -> String {
-    let exact_source = exact_timing_source_sql(alias);
+    let data_source = data_source_expr(alias);
     format!(
-        "{exact_source} AND {alias}.first_token_ms IS NOT NULL \
+        "{data_source} = 'proxy' AND {alias}.first_token_ms IS NOT NULL \
          AND {alias}.output_tokens >= {SPEED_MIN_OUTPUT_TOKENS} \
          AND {alias}.latency_ms - {alias}.first_token_ms >= {SPEED_MIN_GENERATION_MS}"
     )
@@ -185,32 +172,32 @@ pub const SPEED_ESTIMATE_MIN_OUTPUT_TOKENS: i64 = 200;
 pub const SPEED_ESTIMATE_MIN_DURATION_MS: i64 = 1000;
 
 /// 明细行能不能估速度的 SQL 条件（和前端 `isSpeedEstimateEligible` 同口径）：
-/// 按时间戳估算耗时的会话日志导入行。估算速度仍按整段耗时算（含首字等待），
-/// 不减推出来的首字：只有部分请求推得出首字，减了会让同一行里两种算法混在一起。
+/// 会话日志导入的行，耗时是导入时按日志时间戳估的。估算速度仍按整段耗时算（含首字
+/// 等待），不减推出来的首字：只有部分请求推得出首字，减了会让同一行里两种算法混在一起。
 fn speed_estimate_eligible_sql(alias: &str) -> String {
-    let estimated_source = estimated_timing_source_sql(alias);
+    let data_source = data_source_expr(alias);
     format!(
-        "{estimated_source} \
+        "{data_source} <> 'proxy' \
          AND {alias}.output_tokens >= {SPEED_ESTIMATE_MIN_OUTPUT_TOKENS} \
          AND {alias}.latency_ms >= {SPEED_ESTIMATE_MIN_DURATION_MS}"
     )
 }
 
-/// 明细行能不能计首字时间的 SQL 条件：经路由服务或 Antigravity 原生计时、成功、有首字计时。
+/// 明细行能不能计首字时间的 SQL 条件：经路由服务、成功、有首字计时（流式请求）。
 fn first_token_eligible_sql(alias: &str) -> String {
-    let exact_source = exact_timing_source_sql(alias);
+    let data_source = data_source_expr(alias);
     format!(
-        "{exact_source} AND {alias}.first_token_ms IS NOT NULL \
+        "{data_source} = 'proxy' AND {alias}.first_token_ms IS NOT NULL \
          AND {alias}.status_code >= 200 AND {alias}.status_code < 300"
     )
 }
 
-/// 估算首字的 SQL 条件：按时间戳推首字的会话日志行。
-/// 和精确首字分开取中位数：估算的起点是上一条日志写盘的时刻，含客户端
+/// 估算首字的 SQL 条件：会话日志导入、导入时按时间戳推出了首字的行。
+/// 和路由的精确首字分开取中位数：估算的起点是上一条日志写盘的时刻，含客户端
 /// 组装请求的时间，系统性偏高。
 fn est_first_token_eligible_sql(alias: &str) -> String {
-    let estimated_source = estimated_timing_source_sql(alias);
-    format!("{estimated_source} AND {alias}.first_token_ms IS NOT NULL")
+    let data_source = data_source_expr(alias);
+    format!("{data_source} <> 'proxy' AND {alias}.first_token_ms IS NOT NULL")
 }
 
 /// Read exact and estimated samples together, then select each median in O(n).
