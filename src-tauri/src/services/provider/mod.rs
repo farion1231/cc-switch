@@ -64,11 +64,7 @@ pub(crate) use live::{
     sync_additive_app_to_live, write_live_for_state, LiveSyncOutcome,
 };
 
-// Internal re-exports
-use live::{
-    remove_hermes_provider_from_live, remove_openclaw_provider_from_live,
-    remove_opencode_provider_from_live,
-};
+use live::remove_provider_from_live;
 use usage::validate_usage_script;
 
 /// Codex official providers are safe to select during takeover: Codex keeps
@@ -7089,16 +7085,7 @@ impl ProviderService {
                     .as_ref()
                     .is_some_and(crate::workbuddy_config::is_official_provider);
             if !workbuddy_official && Self::check_live_config_exists(&app_type, id, live_managed)? {
-                match app_type {
-                    AppType::OpenCode => remove_opencode_provider_from_live(id)?,
-                    AppType::OpenClaw => remove_openclaw_provider_from_live(id)?,
-                    AppType::Hermes => remove_hermes_provider_from_live(id)?,
-                    AppType::Mcode => crate::mcode_config::remove_provider(id)?,
-                    AppType::Kimi => crate::kimi_config::remove_provider(id)?,
-                    AppType::Dsh => crate::dsh_config::remove_provider(id)?,
-                    AppType::WorkBuddy => crate::workbuddy_config::remove_provider(id)?,
-                    _ => {}
-                }
+                remove_provider_from_live(&app_type, id)?;
             }
             state.db.delete_provider(&app_type, id)?;
             return Ok(());
@@ -7252,51 +7239,34 @@ impl ProviderService {
             }
         }
 
-        match app_type {
-            AppType::OpenCode => {
-                let provider_category = state
-                    .db
-                    .get_provider_by_id(id, &app_type)?
-                    .and_then(|p| p.category);
-
-                let omo_variant = match provider_category.as_deref() {
-                    Some("omo") => Some(&crate::services::omo::STANDARD),
-                    Some("omo-slim") => Some(&crate::services::omo::SLIM),
-                    _ => None,
-                };
-                if let Some(variant) = omo_variant {
-                    state
-                        .db
-                        .clear_omo_provider_current(&app_type, id, variant.category)?;
-                    let still_has_current = state
-                        .db
-                        .get_current_omo_provider(&AppType::OpenCode, variant.category)?
-                        .is_some();
-                    if still_has_current {
-                        crate::services::OmoService::write_config_to_file(state, variant)?;
-                    } else {
-                        crate::services::OmoService::delete_config_file(variant)?;
-                    }
-                } else {
-                    remove_opencode_provider_from_live(id)?;
-                }
+        let omo_variant = if app_type == AppType::OpenCode {
+            let provider_category = state
+                .db
+                .get_provider_by_id(id, &app_type)?
+                .and_then(|p| p.category);
+            match provider_category.as_deref() {
+                Some("omo") => Some(&crate::services::omo::STANDARD),
+                Some("omo-slim") => Some(&crate::services::omo::SLIM),
+                _ => None,
             }
-            AppType::OpenClaw => {
-                remove_openclaw_provider_from_live(id)?;
+        } else {
+            None
+        };
+        if let Some(variant) = omo_variant {
+            state
+                .db
+                .clear_omo_provider_current(&app_type, id, variant.category)?;
+            let still_has_current = state
+                .db
+                .get_current_omo_provider(&AppType::OpenCode, variant.category)?
+                .is_some();
+            if still_has_current {
+                crate::services::OmoService::write_config_to_file(state, variant)?;
+            } else {
+                crate::services::OmoService::delete_config_file(variant)?;
             }
-            AppType::Hermes => {
-                remove_hermes_provider_from_live(id)?;
-            }
-            AppType::Mcode => crate::mcode_config::remove_provider(id)?,
-            AppType::Kimi => crate::kimi_config::remove_provider(id)?,
-            AppType::Dsh => crate::dsh_config::remove_provider(id)?,
-            AppType::WorkBuddy => crate::workbuddy_config::remove_provider(id)?,
-            _ => {
-                return Err(AppError::Message(format!(
-                    "App {} does not support remove from live config",
-                    app_type.as_str()
-                )));
-            }
+        } else {
+            remove_provider_from_live(&app_type, id)?;
         }
 
         if let Some(mut provider) = state.db.get_provider_by_id(id, &app_type)? {
@@ -7606,18 +7576,7 @@ impl ProviderService {
             let mut updated = provider.clone();
             Self::set_provider_live_config_managed(&mut updated, true);
             if let Err(e) = state.db.save_provider(&app_type, &updated) {
-                let rollback_result = match app_type {
-                    AppType::OpenCode => remove_opencode_provider_from_live(&provider.id),
-                    AppType::OpenClaw => remove_openclaw_provider_from_live(&provider.id),
-                    AppType::Hermes => remove_hermes_provider_from_live(&provider.id),
-                    AppType::Mcode => crate::mcode_config::remove_provider(&provider.id),
-                    AppType::Kimi => crate::kimi_config::remove_provider(&provider.id),
-                    AppType::Dsh => crate::dsh_config::remove_provider(&provider.id),
-                    AppType::WorkBuddy => crate::workbuddy_config::remove_provider(&provider.id),
-                    _ => Ok(()),
-                };
-
-                match rollback_result {
+                match remove_provider_from_live(&app_type, &provider.id) {
                     Ok(()) => {
                         return Err(AppError::Message(format!(
                             "Failed to persist live_config_managed for '{}' after writing live config; live changes were rolled back: {e}",
