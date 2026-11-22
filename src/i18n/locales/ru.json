@@ -1954,7 +1954,8 @@
     "modelMetadataFilledMany": "Заполнены окно контекста и другие параметры для моделей: {{count}} (источник: {{source}}). Проверьте их.",
     "gptContextWindowHint": "GPT у ретрансляторов обычно берётся из подписок ChatGPT, окно которых всего 272K. Более крупное окно откладывает сжатие до тех пор, пока upstream не отклонит запрос и ход не завершится ошибкой; используйте его, только если этот провайдер его поддерживает.",
     "modelMetadataSourcePreset": "пресет",
-    "modelMetadataSourceBoth": "пресет и models.dev",
+    "modelMetadataSourceGateway": "шлюз",
+    "modelMetadataSourceModelsDev": "models.dev",
     "modelPicker": {
       "title": "Выбор моделей",
       "lead": "Отмеченные модели добавляются в список; снятие отметки удаляет модель из списка.",

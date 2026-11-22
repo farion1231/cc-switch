@@ -96,7 +96,11 @@ fn parse_agy_models(output: &str) -> Vec<FetchedModel> {
     // falls back to the runtime's default model in account-login mode.
     names
         .into_values()
-        .map(|id| FetchedModel { id, owned_by: None })
+        .map(|id| FetchedModel {
+            id,
+            owned_by: None,
+            metadata: None,
+        })
         .collect()
 }
 

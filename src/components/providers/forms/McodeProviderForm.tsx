@@ -345,7 +345,7 @@ export function McodeProviderForm({
             }
           />
           <OpenCodeFormFields
-            modelDialect={appId === "dsh" ? "dsh" : "opencode"}
+            modelDialect={appId === "dsh" ? "dsh" : "mcode"}
             apiFormats={API_FORMATS}
             presetModelSources={mcodePresetModelSources}
             npm={config.api ?? "anthropic-messages"}

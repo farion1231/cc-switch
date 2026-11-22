@@ -235,6 +235,7 @@ export function KimiProviderForm({
   };
 
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
+  const [fetchedModelsFrom, setFetchedModelsFrom] = useState("");
   const [isFetchingModels, setIsFetchingModels] = useState(false);
   // 官方账号拉到的完整目录：选中时直接用官方给的窗口、能力和思考档位
   const officialCatalog = useRef<KimiProviderConfig["models"]>({});
@@ -244,6 +245,7 @@ export function KimiProviderForm({
   const headersKey = JSON.stringify(config.provider.custom_headers ?? {});
   useEffect(() => {
     setFetchedModels((prev) => (prev.length === 0 ? prev : []));
+    setFetchedModelsFrom((prev) => (prev === "" ? prev : ""));
     setIsFetchingModels(false);
     return () => {
       // 地址、Key、协议或请求头变了，旧请求的结果不再适用。
@@ -255,6 +257,7 @@ export function KimiProviderForm({
     if (isOfficial && providerId) {
       const generation = ++modelFetchGeneration.current;
       setFetchedModels([]);
+      setFetchedModelsFrom("");
       setIsFetchingModels(true);
       kimiOAuthApi
         .models(providerId)
@@ -295,6 +298,7 @@ export function KimiProviderForm({
     }
     const generation = ++modelFetchGeneration.current;
     setFetchedModels([]);
+    setFetchedModelsFrom("");
     setIsFetchingModels(true);
     fetchModelsForConfig(
       endpoint,
@@ -310,6 +314,7 @@ export function KimiProviderForm({
           ...new Map(result.map((model) => [model.id, model])).values(),
         ];
         setFetchedModels(models);
+        setFetchedModelsFrom(endpoint);
         // 拉到模型时直接打开选择弹窗，不再提示成功。
         if (models.length === 0) toast.info(t("providerForm.fetchModelsEmpty"));
       })
@@ -329,6 +334,8 @@ export function KimiProviderForm({
     baseUrl,
     presets: kimiPresetModelSources,
     prefetch: fetchedModels.length > 0,
+    fetchedModels,
+    fetchedFrom: fetchedModelsFrom,
   });
   // 补全可能晚到：读最新的配置，确认这一行仍是这个模型再补。
   const fillModelMetadataFor = (key: string, id: string, silent?: boolean) =>
@@ -338,11 +345,12 @@ export function KimiProviderForm({
         const current = configRef.current;
         const model = current.models[key];
         if (model?.model !== id) return false;
-        const filled = fillKimiModel(model, metadata, {
-          replaceContext: placeholderContextKeys.current.has(key),
-        });
+        const replaceContext = placeholderContextKeys.current.has(key);
+        const filled = fillKimiModel(model, metadata, { replaceContext });
         if (!metadataFilledAnything(model, filled)) return false;
-        placeholderContextKeys.current.delete(key);
+        if (replaceContext && metadata.contextWindow) {
+          placeholderContextKeys.current.delete(key);
+        }
         update({ ...current, models: { ...current.models, [key]: filled } });
         return true;
       },

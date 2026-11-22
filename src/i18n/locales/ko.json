@@ -1954,7 +1954,8 @@
     "modelMetadataFilledMany": "모델 {{count}}개의 컨텍스트 창 및 기타 매개변수를 채웠습니다(출처: {{source}}). 확인해 주세요.",
     "gptContextWindowHint": "중계 서비스의 GPT는 대부분 ChatGPT 구독을 통해 제공되어 컨텍스트 창이 272K에 불과합니다. 창 크기를 실제보다 크게 입력하면 미리 압축되지 않아 업스트림이 요청을 거부할 때 해당 응답이 실패합니다. 이 공급자가 더 큰 컨텍스트 창을 지원하는지 확인한 후 입력하세요.",
     "modelMetadataSourcePreset": "프리셋",
-    "modelMetadataSourceBoth": "프리셋 및 models.dev",
+    "modelMetadataSourceGateway": "게이트웨이",
+    "modelMetadataSourceModelsDev": "models.dev",
     "modelPicker": {
       "title": "모델 선택",
       "lead": "선택한 모델이 목록에 추가됩니다. 모델을 선택 취소하면 목록에서 해당 모델이 제거됩니다.",
