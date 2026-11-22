@@ -1,4 +1,4 @@
-00 launch | tree 271b3561a813 | home 00fb8104dc54 | announcements 0
-01 ui.click button "Got it" in dialog "Welcome to CC Switch" | tree db6bed2225d7 | home 288070bd5962 | announcements 0
-02 ui.click button "Usage" in navigation "Main navigation" | tree e30be87f4fbc | home 288070bd5962 | announcements 1
-03 clock +1d | tree e30be87f4fbc | home 288070bd5962 | announcements 1
+00 launch | home 00fb8104dc54
+01 ui.click button "Got it" in dialog "Welcome to CC Switch" | home 288070bd5962
+02 ui.click button "Usage" in navigation "Main navigation" | home 288070bd5962
+03 clock +1d | home 288070bd5962

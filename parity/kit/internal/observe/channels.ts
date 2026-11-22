@@ -6,8 +6,6 @@ import { lstatSync, readdirSync, readFileSync, readlinkSync } from "node:fs";
 import { join } from "node:path";
 import { OPAQUE } from "../../../volatile.ts";
 import type { AppSession } from "../driver/app.ts";
-import type { TreeResult } from "../driver/probe.ts";
-import { settleUi } from "../driver/verbs.ts";
 import { globMatch, type Binder } from "./normalise.ts";
 
 export interface CaptureContext {
@@ -137,24 +135,9 @@ function renderFiles(entries: readonly Entry[], binder: Binder): string {
     .join("\n");
 }
 
-// --- ui: the accessibility tree of the main window, focus, and announcements -----------------
+// The UI is not a channel. Cases drive the app through it, and the runner reads it to tell when
+// the app has settled and whether a step did anything, but what it shows is not compared; the
+// agentic end-to-end tests judge it. State the app keeps only in its database reaches a recording
+// when a case makes the app write it out, by switching to it or by exporting it.
 
-export const ui: Channel = {
-  name: "ui",
-  order: 5,
-  async capture({ app, binder }) {
-    const tree: TreeResult = await settleUi(app);
-    const announcements = await app.probe<string[]>({ cmd: "announcements" });
-    const lines = [
-      `window main ${JSON.stringify(tree.title)} scheme=${tree.scheme}`,
-      `focused: ${tree.focused ?? "(none)"}`,
-      "tree:",
-      ...tree.text.split("\n").filter(Boolean).map((l) => `  ${l}`),
-      "announcements since the previous checkpoint:",
-      ...announcements.map((a) => `  ${JSON.stringify(a)}`),
-    ];
-    return binder.text(lines.join("\n"));
-  },
-};
-
-export const CHANNELS: readonly Channel[] = [files, ui];
+export const CHANNELS: readonly Channel[] = [files];

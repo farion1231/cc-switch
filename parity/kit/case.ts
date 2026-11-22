@@ -6,6 +6,10 @@
  * checkpoints that observe every channel at once and compare them with the v4 recording, and
  * state its intent in a few hand-written expectations. A case says nothing about the OS, the
  * clock or the route.
+ *
+ * A checkpoint observes what the app writes and sends, not what its window shows; the agentic
+ * end-to-end tests judge the UI. State the app keeps only in its own database reaches a recording
+ * when the case makes the app write it out, for example by switching to it or by exporting it.
  */
 import type { Target, Ui } from "./ui.ts";
 

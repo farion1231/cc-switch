@@ -138,7 +138,8 @@ export async function runCase(spec: CaseSpec, host: HostOptions): Promise<CaseRu
     const a = app;
     // A print of everything observable: the normalised tree and focus, the normalised HOME, and how
     // many announcements have appeared. An acting step whose print equals the previous one did
-    // nothing a user or the agent could see, which fails as an inert step unless it says why.
+    // nothing a user or the agent could see, which fails as an inert step unless it says why. Only
+    // the HOME part is recorded; the UI is read to judge the step, not compared.
     //
     // A step's print is taken late: when the next step's target is actionable, at the next
     // checkpoint or clock move, or when the journey ends, and after the UI settles again. By then
@@ -156,7 +157,7 @@ export async function runCase(spec: CaseSpec, host: HostOptions): Promise<CaseRu
       };
     };
     const line = (n: number, step: string, p: Print, target?: string, inert?: string) =>
-      `${String(n).padStart(2, "0")} ${step}${target ? ` ${target}` : ""} | tree ${p.tree} | home ${p.home} | announcements ${p.announcements}${inert ? ` | inert: ${inert}` : ""}`;
+      `${String(n).padStart(2, "0")} ${step}${target ? ` ${target}` : ""} | home ${p.home}${inert ? ` | inert: ${inert}` : ""}`;
     let prev = await printNow();
     run.prints.push(line(0, "launch", prev));
     let pending: { verb: string; target?: string; inert?: string } | null = null;

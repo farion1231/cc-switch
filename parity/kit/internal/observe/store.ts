@@ -35,7 +35,8 @@ export const PRIMARY_OS: Os = "linux";
 /**
  * Writes a case's recording. The primary OS writes the shared files and drops checkpoints that
  * no longer exist. Any other OS writes `<channel>.<os>.snap` only where it differs from the
- * shared file, and deletes its own file where it no longer differs.
+ * shared file, and deletes its own file where it no longer differs. Files of channels that no
+ * longer exist are deleted.
  */
 export function writeRecording(root: string, caseId: string, observations: readonly CheckpointObservation[], steps: string, os: Os): void {
   const dir = join(root, caseId);
@@ -49,6 +50,11 @@ export function writeRecording(root: string, caseId: string, observations: reado
     const d = join(dir, dirs[i]);
     mkdirSync(d, { recursive: true });
     for (const [channel, text] of Object.entries(o.channels)) writeVariant(d, channel, text, os);
+    // Every OS records the same channels, so a file of a channel that no longer exists is stale.
+    for (const f of readdirSync(d)) {
+      const channel = /^(.+?)(?:\.(?:linux|macos|windows))?\.snap$/.exec(f)?.[1];
+      if (channel && !(channel in o.channels)) rmSync(join(d, f), { force: true });
+    }
   });
 }
 
