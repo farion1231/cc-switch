@@ -5389,7 +5389,7 @@ async fn codex_custom_catalog_member_preserves_fields_and_routes_prefixed_models
     assert_eq!(target.provider.id, "custom");
     assert_eq!(target.upstream_model, "shared-model");
     // 同一家改成默认后去掉前缀；切回原默认再恢复聚合 ID。
-    switch_route(&state, &AppType::Codex, "custom")
+    set_route(&state, &AppType::Codex, "custom")
         .await
         .expect("custom default");
     let default_catalog = codex_catalog();
@@ -5398,7 +5398,7 @@ async fn codex_custom_catalog_member_preserves_fields_and_routes_prefixed_models
         default_catalog["models"][0]["auto_review_model_override"],
         "review-model"
     );
-    switch_route(&state, &AppType::Codex, "a")
+    set_route(&state, &AppType::Codex, "a")
         .await
         .expect("restore default");
     assert!(codex_catalog()["models"]
@@ -5585,7 +5585,7 @@ async fn codex_custom_catalog_member_failure_does_not_break_writes_or_startup() 
         .unwrap();
     ProviderService::update(&state, AppType::Codex, None, route)
         .expect("save with a missing member catalog");
-    switch_route(&state, &AppType::Codex, "deepseek")
+    set_route(&state, &AppType::Codex, "deepseek")
         .await
         .expect("switch with a missing member catalog");
     assert_eq!(catalog_slugs(), vec!["deepseek-v4-pro", "ccs-a/gpt-a"]);
@@ -5630,7 +5630,7 @@ async fn codex_custom_catalog_route_failure_only_skips_its_models() {
     assert!(mode(&AppType::Codex).is_proxy());
     assert!(mode(&AppType::Codex).attached);
     assert_eq!(catalog_slugs(), vec!["ccs-deepseek/deepseek-v4-pro"]);
-    switch_route(&state, &AppType::Codex, "deepseek")
+    set_route(&state, &AppType::Codex, "deepseek")
         .await
         .expect("switch away from missing route catalog");
     assert_eq!(catalog_slugs(), vec!["deepseek-v4-pro"]);
