@@ -4219,7 +4219,10 @@ async fn update_skill_reports_failed_apps_and_sanitized_warnings_until_resync_co
         ));
         assert_eq!(
             sanitized_sample,
-            format!("failed writing {} permission denied", relative_path.display())
+            format!(
+                "failed writing {} permission denied",
+                relative_path.display()
+            )
         );
     }
 
