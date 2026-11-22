@@ -1,6 +1,6 @@
 {
   "name": "cc-switch",
-  "version": "4.0.37",
+  "version": "4.0.38",
   "description": "All-in-One Assistant for Claude Code, Codex & Gemini CLI",
   "type": "module",
   "scripts": {
@@ -10,8 +10,8 @@
     "dev:renderer": "vite",
     "build:renderer": "vite build",
     "typecheck": "tsc --noEmit",
-    "format": "prettier --write \"src/**/*.{js,jsx,ts,tsx,css,json}\"",
-    "format:check": "prettier --check \"src/**/*.{js,jsx,ts,tsx,css,json}\"",
+    "format": "prettier --write \"src/**/*.{js,jsx,ts,tsx,css,json}\" \"tests/**/*.{ts,tsx}\"",
+    "format:check": "prettier --check \"src/**/*.{js,jsx,ts,tsx,css,json}\" \"tests/**/*.{ts,tsx}\"",
     "knip": "knip",
     "test:unit": "vitest run",
     "test:unit:watch": "vitest watch"
@@ -75,7 +75,6 @@
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "codemirror": "^6.0.2",
-    "flexsearch": "^0.8.212",
     "framer-motion": "^12.23.25",
     "i18next": "^25.5.2",
     "lucide-react": "^0.542.0",
