@@ -1,5 +1,5 @@
 import { QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ProviderCard } from "@/components/providers/ProviderCard";
 import type { ManagedAuthStatus } from "@/lib/api";
@@ -166,6 +166,55 @@ describe("ProviderCard xAI OAuth account subtitle", () => {
     expect(screen.getByText("· SuperGrok")).toBeInTheDocument();
     expect(screen.queryByText("grok@x.ai")).not.toBeInTheDocument();
   });
+
+  it.each([
+    ["unbound", null],
+    ["bound", "xai-1"],
+  ] as const)(
+    "refreshes a %s card when the backend expires the default account",
+    async (_, accountId) => {
+      authGetStatus.mockResolvedValue(
+        status(
+          [account("xai-1", "grok@x.ai"), account("xai-2", "work@x.ai")],
+          "xai-1",
+        ),
+      );
+      vi.useFakeTimers();
+      const view = renderCard(xaiProvider(accountId));
+      try {
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(1);
+        });
+        expect(screen.getByText("grok@x.ai")).toBeInTheDocument();
+
+        authGetStatus.mockResolvedValue(
+          status(
+            [
+              account("xai-1", "grok@x.ai", true),
+              account("xai-2", "work@x.ai"),
+            ],
+            "xai-2",
+          ),
+        );
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(15_000);
+        });
+        if (accountId) {
+          expect(screen.getByText("grok@x.ai")).toBeInTheDocument();
+          expect(
+            screen.getByText("xaiOauth.reauthRequired"),
+          ).toBeInTheDocument();
+          expect(screen.queryByText("work@x.ai")).not.toBeInTheDocument();
+        } else {
+          expect(screen.getByText("work@x.ai")).toBeInTheDocument();
+          expect(screen.queryByText("grok@x.ai")).not.toBeInTheDocument();
+        }
+      } finally {
+        view.unmount();
+        vi.useRealTimers();
+      }
+    },
+  );
 
   it("avoids repeating the login when the card name already contains it", async () => {
     authGetStatus.mockResolvedValue(

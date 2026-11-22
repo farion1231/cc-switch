@@ -1875,7 +1875,7 @@ fn feedback_text(texts: &TrayTexts, feedback: &TrayFeedback) -> String {
     )
 }
 
-/// 菜单上会自己过时的那部分：问题区、反馈行、「退出」写不写后果。
+/// 菜单上会自己过时的那部分：问题区、反馈行、账号副标题、「退出」写不写后果。
 #[derive(Debug, Clone, Default, PartialEq)]
 struct MenuStatus {
     problems: Vec<TrayProblem>,
@@ -1883,6 +1883,8 @@ struct MenuStatus {
     routing_in_use: bool,
     /// 自动更新已下好、待安装的版本。
     update_ready: Option<String>,
+    /// 授权中心切号或代理令牌失效也会改变副标题，不能只比较路由状态。
+    provider_hints: Vec<(AppType, String, Option<String>)>,
 }
 
 // ─── 菜单模型（纯数据）────────────────────────────────────────────────────────
@@ -2345,6 +2347,18 @@ fn collect_status(
         feedback: current_feedback(),
         routing_in_use: routing_in_use(app_state),
         update_ready: crate::app_update::ready().map(|ready| ready.version),
+        provider_hints: snapshots
+            .iter()
+            .flat_map(|snapshot| {
+                snapshot.providers.iter().map(|provider| {
+                    (
+                        snapshot.app.clone(),
+                        provider.id.clone(),
+                        provider.hint.clone(),
+                    )
+                })
+            })
+            .collect(),
     };
     Ok((snapshots, status))
 }
@@ -3041,8 +3055,8 @@ pub fn native_menu_on_left_click(native: bool) -> bool {
     native && cfg!(not(target_os = "windows"))
 }
 
-/// 悬停到托盘图标时：问题区该出现 / 该消失了（路由服务停了、又起来了）、反馈行显示过了或到点了，
-/// 就重建菜单。只在变了时重建，菜单还没打开，不会被关掉。
+/// 悬停到托盘图标时：账号副标题、问题区或反馈行变了就重建菜单。
+/// 只在变了时重建，菜单还没打开，不会被关掉。
 pub fn refresh_tray_if_problems_changed(app: &tauri::AppHandle) {
     static LAST_CHECK: Mutex<Option<std::time::Instant>> = Mutex::new(None);
     {
@@ -3055,7 +3069,7 @@ pub fn refresh_tray_if_problems_changed(app: &tauri::AppHandle) {
     schedule_tray_status_check(app);
 }
 
-/// 路由服务启动 / 停止之后：圆点、问题区、「退出」的后果可能要跟着变。在后台线程比对，
+/// 账号或路由状态变化之后：副标题、圆点、问题区、「退出」的后果可能要跟着变。在后台线程比对，
 /// 变了才重建（调用方可能在异步任务里，也可能正等着主线程）。
 pub fn schedule_tray_status_check(app: &tauri::AppHandle) {
     let app = app.clone();

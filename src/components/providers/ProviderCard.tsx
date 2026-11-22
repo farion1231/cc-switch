@@ -384,6 +384,9 @@ export function ProviderCard({
     queryFn: () => authApi.authGetStatus("xai_oauth"),
     enabled: isXaiOauth,
     staleTime: 30_000,
+    // The proxy can expire an account and replace the default without an Auth
+    // Center mutation. Keep the subtitle and reauth badge in sync while open.
+    refetchInterval: 15_000,
   });
   const xaiAccount = xaiAuthStatus?.accounts.find(
     (account) =>

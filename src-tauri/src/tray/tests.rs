@@ -1148,6 +1148,102 @@ fn claude_bound_card_tray_usage_defaults_on_and_reads_its_account() {
 }
 
 #[test]
+#[serial_test::serial]
+fn managed_account_changes_invalidate_native_menu_status() {
+    let _home = crate::test_support::TestHome::new();
+    let state = AppState::new(std::sync::Arc::new(
+        crate::database::Database::memory().unwrap(),
+    ));
+    let data_dir = crate::config::get_app_config_dir();
+    std::fs::create_dir_all(&data_dir).unwrap();
+    let path = data_dir.join("copilot_auth.json");
+    let mut store = serde_json::json!({
+        "version": 3,
+        "default_account_id": "1",
+        "accounts": {
+            "1": {
+                "github_token": "test-token-1",
+                "user": { "login": "personal", "id": 1 },
+                "authenticated_at": 100
+            },
+            "2": {
+                "github_token": "test-token-2",
+                "user": { "login": "work", "id": 2 },
+                "authenticated_at": 200
+            }
+        }
+    });
+    for (id, account_id) in [("default", None), ("bound", Some("2"))] {
+        let provider: Provider = serde_json::from_value(serde_json::json!({
+            "id": id,
+            "name": "GitHub Copilot",
+            "websiteUrl": "https://github.com/features/copilot",
+            "settingsConfig": { "env": {} },
+            "meta": {
+                "providerType": "github_copilot",
+                "authBinding": account_id.map(|account_id| serde_json::json!({
+                    "source": "managed_account",
+                    "authProvider": "github_copilot",
+                    "accountId": account_id
+                }))
+            }
+        }))
+        .unwrap();
+        state.db.save_provider(&AppType::Claude, &provider).unwrap();
+    }
+    let read_status = |store: &serde_json::Value| {
+        std::fs::write(&path, store.to_string()).unwrap();
+        let (snapshots, mut status) = collect_status(&state, &en()).unwrap();
+        // Other tray tests exercise transient feedback concurrently.
+        status.feedback = None;
+        let claude = snapshots
+            .into_iter()
+            .find(|snapshot| snapshot.app == AppType::Claude)
+            .unwrap();
+        let hints: HashMap<_, _> = claude
+            .providers
+            .into_iter()
+            .map(|provider| (provider.id, provider.hint))
+            .collect();
+        (status, hints)
+    };
+
+    let (initial, hints) = read_status(&store);
+    assert_eq!(hints["default"].as_deref(), Some("personal"));
+    assert_eq!(hints["bound"].as_deref(), Some("work"));
+    assert_eq!(
+        initial,
+        read_status(&store).0,
+        "unchanged labels stay stable"
+    );
+
+    store["default_account_id"] = serde_json::json!("2");
+    let (switched, hints) = read_status(&store);
+    assert_eq!(hints["default"].as_deref(), Some("work"));
+    assert_ne!(
+        initial, switched,
+        "changing the default must rebuild the menu"
+    );
+
+    store["accounts"].as_object_mut().unwrap().remove("2");
+    let (removed, hints) = read_status(&store);
+    assert_eq!(hints["default"].as_deref(), Some("personal"));
+    assert_eq!(hints["bound"].as_deref(), Some("github.com"));
+    assert_ne!(
+        switched, removed,
+        "removing a bound account must rebuild the menu"
+    );
+
+    store["accounts"] = serde_json::json!({});
+    let (logged_out, hints) = read_status(&store);
+    assert_eq!(hints["default"].as_deref(), Some("github.com"));
+    assert_ne!(
+        removed, logged_out,
+        "logging out must remove account labels"
+    );
+}
+
+#[test]
 fn managed_codex_tray_uses_bound_account_after_switch_or_rebind() {
     let cache = UsageCache::new();
     let texts = en();
@@ -1893,6 +1989,7 @@ fn feedback_row_is_a_grey_line_after_the_problems() {
         }),
         routing_in_use: false,
         update_ready: None,
+        ..Default::default()
     };
     let menu = build_menu_model(&zh(), &status, &[], false, now());
     assert_eq!(
