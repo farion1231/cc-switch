@@ -2112,6 +2112,7 @@
     "selectAccount": "アカウントを選択",
     "selectAccountPlaceholder": "xAI アカウントを選択",
     "useDefaultAccount": "デフォルトアカウントを使用",
+    "account": "xAI アカウント",
     "accounts": "xAI アカウント",
     "defaultAccount": "デフォルト",
     "expired": "認証情報が失効しました",

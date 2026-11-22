@@ -2112,6 +2112,7 @@
     "selectAccount": "選擇帳號",
     "selectAccountPlaceholder": "選擇 xAI 帳號",
     "useDefaultAccount": "使用預設帳號",
+    "account": "xAI 帳號",
     "accounts": "xAI 帳號",
     "defaultAccount": "預設",
     "expired": "憑證已失效",
