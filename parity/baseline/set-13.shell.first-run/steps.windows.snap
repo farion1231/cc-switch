@@ -1,2 +1,2 @@
-00 launch | tree 271b3561a813 | home 2430929c0b0a | announcements 0
-01 ui.click button "Got it" in dialog "Welcome to CC Switch" | tree 7aeafff6fe2b | home 2bcdcd8e88eb | announcements 0
+00 launch | home 2430929c0b0a
+01 ui.click button "Got it" in dialog "Welcome to CC Switch" | home 2bcdcd8e88eb
