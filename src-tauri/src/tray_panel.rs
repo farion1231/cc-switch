@@ -670,16 +670,16 @@ struct Frame {
 mod platform {
     use std::cell::RefCell;
 
-    use objc2_06::rc::Retained;
-    use objc2_06::runtime::{AnyClass, AnyObject, NSObjectProtocol};
-    use objc2_06::{msg_send, sel, MainThreadMarker};
-    use objc2_app_kit_03::{
+    use objc2::rc::Retained;
+    use objc2::runtime::{AnyClass, AnyObject, NSObjectProtocol};
+    use objc2::{msg_send, sel, MainThreadMarker};
+    use objc2_app_kit::{
         NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua, NSAppearanceNameDarkAqua,
         NSGlassEffectView, NSGlassEffectViewStyle, NSScreen, NSView, NSVisualEffectBlendingMode,
         NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWindow,
         NSWindowCollectionBehavior, NSWindowOrderingMode,
     };
-    use objc2_foundation_03::{NSPoint, NSRect, NSSize};
+    use objc2_foundation::{NSPoint, NSRect, NSSize};
     use tauri::WebviewWindow;
 
     use super::{style, CardRect, Frame};
