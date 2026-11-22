@@ -246,7 +246,7 @@ fn is_default_claude_dir(dir: &Path) -> bool {
     )
 }
 
-/// CLI 的环境变量和工作目录。
+/// CLI 的环境变量和应用的配置目录（不建目录，见 [`prepare_working_dir`]）。
 fn cli_context(app: PluginApp) -> (Vec<(&'static str, String)>, PathBuf) {
     let (dir, mut env) = match app {
         PluginApp::Claude => {
@@ -300,12 +300,25 @@ fn cli_context(app: PluginApp) -> (Vec<(&'static str, String)>, PathBuf) {
     // anyhow 先认 RUST_LIB_BACKTRACE，两个一起设。
     env.push(("RUST_BACKTRACE", "0".to_string()));
     env.push(("RUST_LIB_BACKTRACE", "0".to_string()));
-    let working_dir = if std::fs::create_dir_all(&dir).is_ok() {
+    (env, dir)
+}
+
+/// CLI 的工作目录：就是应用的配置目录。目录还不存在时先确认 CLI 装了再建（Codex 要求
+/// `CODEX_HOME` 已存在），没装的应用不能因为插件页在后台预读而在家目录里多出
+/// `.codex`、`.grok` 这类空目录（#9852）。建不了就退回家目录。
+fn prepare_working_dir(
+    dir: PathBuf,
+    ensure_installed: impl FnOnce() -> Result<(), String>,
+) -> Result<PathBuf, String> {
+    if dir.is_dir() {
+        return Ok(dir);
+    }
+    ensure_installed()?;
+    Ok(if std::fs::create_dir_all(&dir).is_ok() {
         dir
     } else {
         crate::config::get_home_dir()
-    };
-    (env, working_dir)
+    })
 }
 
 struct CliOutput {
@@ -316,21 +329,27 @@ struct CliOutput {
 
 fn run_cli(app: PluginApp, args: &[&str], timeout: Duration) -> Result<CliOutput, String> {
     let tool = app.tool();
-    let (env, working_dir) = cli_context(app);
-    let output = crate::commands::run_detected_tool_command_with_timeout(
-        tool,
-        args,
-        Some(timeout),
-        &env,
-        &working_dir,
-    )
-    .map_err(|e| {
+    let not_installed = |e: String| {
         if e == format!("{tool} is not installed") {
             CLI_NOT_INSTALLED.to_string()
         } else {
             e
         }
+    };
+    let (env, dir) = cli_context(app);
+    // 预检和真正运行共用一份超时
+    let started = std::time::Instant::now();
+    let working_dir = prepare_working_dir(dir, || {
+        crate::commands::locate_detected_tool(tool, timeout).map_err(not_installed)
     })?;
+    let output = crate::commands::run_detected_tool_command_with_timeout(
+        tool,
+        args,
+        Some(timeout.saturating_sub(started.elapsed())),
+        &env,
+        &working_dir,
+    )
+    .map_err(not_installed)?;
     // WSL 里 `command -v` 找不到工具时外层脚本 exit 127。
     if output.status.code() == Some(127) {
         return Err(CLI_NOT_INSTALLED.to_string());
@@ -1841,6 +1860,50 @@ enabled = false
                 );
             }
         }
+    }
+
+    /// 配置目录不存在时：CLI 没装就不建目录（#9852）；装了才建，已存在的直接用、不再探测。
+    #[test]
+    fn working_dir_is_created_only_when_cli_is_installed() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join(".grok");
+
+        let err =
+            prepare_working_dir(dir.clone(), || Err(CLI_NOT_INSTALLED.to_string())).unwrap_err();
+        assert_eq!(err, CLI_NOT_INSTALLED);
+        assert!(
+            !dir.exists(),
+            "must not create the home of an app that is not installed"
+        );
+
+        assert_eq!(prepare_working_dir(dir.clone(), || Ok(())).unwrap(), dir);
+        assert!(dir.is_dir());
+
+        let probed = std::cell::Cell::new(false);
+        let got = prepare_working_dir(dir.clone(), || {
+            probed.set(true);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(got, dir);
+        assert!(!probed.get(), "existing dir needs no install probe");
+    }
+
+    /// `cli_context` 只算路径，不在家目录里建任何东西。
+    #[test]
+    #[serial_test::serial]
+    fn cli_context_does_not_create_app_dirs() {
+        let home = HomeGuard::new();
+        for app in [
+            PluginApp::Codex,
+            PluginApp::Grok,
+            PluginApp::Openclaw,
+            PluginApp::Pi,
+        ] {
+            let (_, dir) = cli_context(app);
+            assert!(!dir.exists(), "{app:?} dir {dir:?} must not be created");
+        }
+        assert_eq!(std::fs::read_dir(home.0.path()).unwrap().count(), 0);
     }
 
     /// Codex 的启停开关经写入引擎写 `config.toml`：只改这一个键、按 0600 写、拿 Codex 的写锁。
