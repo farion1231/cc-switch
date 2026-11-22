@@ -1813,10 +1813,11 @@ fn build_tool_search_paths_includes_standalone_installer_dirs() {
 }
 
 #[test]
+#[serial_test::serial]
 fn omp_search_paths_include_the_bun_global_bin() {
     // A GUI process does not inherit `~/.bun/bin`: without it a Bun global
     // omp is reported as not installed and updates lose their anchor.
-    let home = dirs::home_dir().expect("home should resolve");
+    let home = crate::config::get_home_dir();
     let bun_bin = home.join(".bun").join("bin");
     assert!(build_tool_search_paths("omp").contains(&bun_bin));
     // Other Bun-installable tools keep their previous search set.
