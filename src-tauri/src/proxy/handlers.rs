@@ -354,11 +354,7 @@ async fn handle_count_tokens_for_app(
     let (parts, body) = request.into_parts();
     let headers = parts.headers;
     let extensions = parts.extensions;
-    let body_bytes = body
-        .collect()
-        .await
-        .map_err(|e| ProxyError::InvalidRequest(format!("Failed to read request body: {e}")))?
-        .to_bytes();
+    let body_bytes = read_request_body_limited(body, MAX_REQUEST_BODY_BYTES).await?;
     let body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::InvalidRequest(format!("Invalid JSON body: {e}")))?;
     drop(body_bytes);
@@ -388,7 +384,7 @@ async fn handle_count_tokens_for_app(
     // 候选供应商按顺序尝试：指定供应商 → 聚合/当前供应商。同一家只试一次。
     let mut candidates: Vec<(crate::provider::Provider, String)> = Vec::new();
     if let Some(configured_id) = count_tokens_provider_setting(&app_type) {
-        match state.db.get_provider_by_id(&configured_id, app_type_str) {
+        match state.db.get_provider_by_id(&configured_id, &app_type) {
             Ok(Some(provider)) => {
                 let model = count_model_for_provider(&provider, requested);
                 candidates.push((provider, model));
