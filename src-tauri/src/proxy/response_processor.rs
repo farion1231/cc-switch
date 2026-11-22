@@ -355,7 +355,7 @@ pub async fn process_response(
 
 const MAX_HEAD_USAGE_EVENTS: usize = 32;
 const MAX_TAIL_USAGE_EVENTS: usize = 256;
-const MAX_PENDING_SSE_BYTES: usize = 4 * 1024 * 1024;
+const MAX_PENDING_SSE_BYTES: usize = 64 * 1024 * 1024;
 
 type UsageCallbackWithTiming = Arc<dyn Fn(Vec<Value>, Option<u64>) + Send + Sync + 'static>;
 
@@ -783,9 +783,27 @@ pub fn create_logged_passthrough_stream(
     timeout_config: StreamingTimeoutConfig,
     connection_guard: Option<ActiveConnectionGuard>,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
+    create_logged_passthrough_stream_with_max_pending_bytes(
+        stream,
+        tag,
+        usage_collector,
+        timeout_config,
+        connection_guard,
+        MAX_PENDING_SSE_BYTES,
+    )
+}
+
+fn create_logged_passthrough_stream_with_max_pending_bytes(
+    stream: impl Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static,
+    tag: &'static str,
+    usage_collector: Option<SseUsageCollector>,
+    timeout_config: StreamingTimeoutConfig,
+    connection_guard: Option<ActiveConnectionGuard>,
+    max_pending_sse_bytes: usize,
+) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
         let _conn_guard = connection_guard;
-        let mut sse = SseBuffer::with_max_pending_bytes(MAX_PENDING_SSE_BYTES);
+        let mut sse = SseBuffer::with_max_pending_bytes(max_pending_sse_bytes);
         let mut collector = usage_collector;
         let mut finish_guard = collector.clone().map(SseUsageFinishGuard::new);
         let inspect_sse_events =
@@ -841,48 +859,46 @@ pub fn create_logged_passthrough_stream(
                         );
                     }
                     is_first_chunk = false;
-                    if inspect_sse_events && !sse.is_overflowed() {
+                    if inspect_sse_events {
                         sse.push_bytes(&bytes);
-                        if sse.is_overflowed() {
-                            if !sse_overflow_warned {
-                                sse_overflow_warned = true;
-                                log::warn!(
-                                    "[{tag}] SSE inspection buffer exceeded {MAX_PENDING_SSE_BYTES} bytes; stopping SSE log/usage parsing for remainder of stream"
-                                );
-                            }
-                        } else {
-                            // 尝试解析并记录完整的 SSE 事件
-                            while let Some(event_text) = sse.next_block() {
-                                if !event_text.trim().is_empty() {
-                                    let event_name = event_text
-                                        .lines()
-                                        .find_map(|line| strip_sse_field(line, "event"));
-                                    // 提取 data 部分；只有 usage collector 存在时才解析 JSON。
-                                    for line in event_text.lines() {
-                                        if let Some(data) = strip_sse_field(line, "data") {
-                                            if let Some(c) = &collector {
-                                                c.observe_data(event_name, data);
-                                            }
-                                            if data.trim() != "[DONE]" {
-                                                let collected = match &collector {
-                                                    Some(c) if c.should_collect(data) => {
-                                                        match serde_json::from_str::<Value>(data) {
-                                                            Ok(json_value) => {
-                                                                c.push(json_value).await;
-                                                                true
-                                                            }
-                                                            Err(_) => false,
+                        if sse.dropped_oversized_events() > 0 && !sse_overflow_warned {
+                            sse_overflow_warned = true;
+                            log::warn!(
+                                "[{tag}] SSE inspection buffer exceeded {max_pending_sse_bytes} bytes; skipping oversized event(s) and resuming at next delimiter"
+                            );
+                        }
+
+                        // 尝试解析并记录完整的 SSE 事件
+                        while let Some(event_text) = sse.next_block() {
+                            if !event_text.trim().is_empty() {
+                                let event_name = event_text
+                                    .lines()
+                                    .find_map(|line| strip_sse_field(line, "event"));
+                                // 提取 data 部分；只有 usage collector 存在时才解析 JSON。
+                                for line in event_text.lines() {
+                                    if let Some(data) = strip_sse_field(line, "data") {
+                                        if let Some(c) = &collector {
+                                            c.observe_data(event_name, data);
+                                        }
+                                        if data.trim() != "[DONE]" {
+                                            let collected = match &collector {
+                                                Some(c) if c.should_collect(data) => {
+                                                    match serde_json::from_str::<Value>(data) {
+                                                        Ok(json_value) => {
+                                                            c.push(json_value).await;
+                                                            true
                                                         }
+                                                        Err(_) => false,
                                                     }
-                                                    _ => false,
-                                                };
-                                                log::trace!(
-                                                    "[{tag}] <<< SSE data: bytes={}, usage_collected={collected} (content omitted)",
-                                                    data.len()
-                                                );
-                                            } else {
-                                                log::debug!("[{tag}] <<< SSE: [DONE]");
-                                            }
+                                                }
+                                                _ => false,
+                                            };
+                                            log::trace!(
+                                                "[{tag}] <<< SSE data: bytes={}, usage_collected={collected} (content omitted)",
+                                                data.len()
+                                            );
+                                        } else {
+                                            log::debug!("[{tag}] <<< SSE: [DONE]");
                                         }
                                     }
                                 }
@@ -1706,11 +1722,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn logged_passthrough_stream_keeps_client_bytes_when_sse_buffer_overflows() {
+    async fn logged_passthrough_stream_keeps_client_bytes_and_resumes_after_overflow() {
         let head = Bytes::from("data: {\"type\":\"message_start\"}\n\n");
-        let giant_unterminated = Bytes::from(vec![b'a'; MAX_PENDING_SSE_BYTES + 1024]);
-        let tail = Bytes::from("data: [DONE]\n\n");
-        let expected_len = head.len() + giant_unterminated.len() + tail.len();
+        let blob = "a".repeat(2048);
+        let giant_event = Bytes::from(format!("data: {{\"blob\":\"{blob}\"}}\n\n"));
+        let tail = Bytes::from("data: {\"type\":\"message_delta\"}\n\n");
+        let done = Bytes::from("data: [DONE]\n\n");
+        let expected_len = head.len() + giant_event.len() + tail.len() + done.len();
 
         let collected = Arc::new(std::sync::Mutex::new(Vec::new()));
         let collector = SseUsageCollector::new(std::time::Instant::now(), None, {
@@ -1722,11 +1740,65 @@ mod tests {
 
         let upstream = futures::stream::iter(vec![
             Ok::<_, std::io::Error>(head),
-            Ok(giant_unterminated),
+            Ok(giant_event),
             Ok(tail),
+            Ok(done),
         ]);
-        let passthrough = create_logged_passthrough_stream(
+        let passthrough = create_logged_passthrough_stream_with_max_pending_bytes(
             upstream,
+            "test",
+            Some(collector),
+            StreamingTimeoutConfig {
+                first_byte_timeout: 0,
+                idle_timeout: 0,
+            },
+            None,
+            1024,
+        );
+        futures::pin_mut!(passthrough);
+        let mut client_bytes = 0usize;
+        while let Some(chunk) = passthrough.next().await {
+            client_bytes += chunk.expect("client passthrough chunk").len();
+        }
+
+        assert_eq!(client_bytes, expected_len);
+        let events = collected.lock().unwrap().clone();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0]["type"], "message_start");
+        assert_eq!(events[1]["type"], "message_delta");
+    }
+
+    #[tokio::test]
+    async fn logged_passthrough_stream_collects_large_image_generation_completed_usage() {
+        use crate::proxy::handler_config::codex_stream_usage_event_filter;
+
+        let b64_image = "A".repeat(5 * 1024 * 1024);
+        let mut payload = String::with_capacity(5 * 1024 * 1024 + 256);
+        payload.push_str("event: image_generation.completed\n");
+        payload.push_str("data: {\"type\":\"image_generation.completed\",\"b64_json\":\"");
+        payload.push_str(&b64_image);
+        payload.push_str("\",\"usage\":{\"input_tokens\":120,\"output_tokens\":450}}\n\n");
+        let expected_len = payload.len();
+        let chunks: Vec<Result<Bytes, std::io::Error>> = payload
+            .as_bytes()
+            .chunks(64 * 1024)
+            .map(|chunk| Ok(Bytes::copy_from_slice(chunk)))
+            .collect();
+
+        let collected = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let collector = SseUsageCollector::new(
+            std::time::Instant::now(),
+            Some(codex_stream_usage_event_filter),
+            {
+                let collected = collected.clone();
+                move |events, _| {
+                    *collected.lock().unwrap() = events;
+                }
+            },
+        );
+
+        let passthrough = create_logged_passthrough_stream(
+            futures::stream::iter(chunks),
             "test",
             Some(collector),
             StreamingTimeoutConfig {
@@ -1742,6 +1814,10 @@ mod tests {
         }
 
         assert_eq!(client_bytes, expected_len);
-        assert_eq!(collected.lock().unwrap().len(), 1);
+        let events = collected.lock().unwrap().clone();
+        assert_eq!(events.len(), 1);
+        let usage = TokenUsage::from_codex_stream_events_auto(&events).expect("usage parsed");
+        assert_eq!(usage.input_tokens, 120);
+        assert_eq!(usage.output_tokens, 450);
     }
 }
