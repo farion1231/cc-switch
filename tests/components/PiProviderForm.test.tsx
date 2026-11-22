@@ -9,6 +9,7 @@ import { server } from "../msw/server";
 import { renderWithQueryClient as render } from "../utils/testQueryClient";
 import { piThinkingProfiles } from "@/config/piThinkingProfiles";
 import { piProviderPresets } from "@/config/piProviderPresets";
+import { waitForOverlayTransition } from "../utils/overlayTransition";
 
 const TAURI_ENDPOINT = "http://tauri.local";
 
@@ -154,6 +155,49 @@ describe("PiProviderForm", () => {
     expect(
       await screen.findByText("pi.form.providerKeyDuplicate"),
     ).toBeInTheDocument();
+  });
+
+  it("offers the Mistral API format in Pi but not in omp", async () => {
+    const user = userEvent.setup();
+    for (const appId of ["pi", "omp"] as const) {
+      const { unmount } = render(
+        <PiProviderForm
+          appId={appId}
+          submitLabel="Save"
+          onSubmit={() => {}}
+          onCancel={() => {}}
+          initialData={{
+            name: "gateway",
+            settingsConfig: { api: "openai-completions" },
+          }}
+        />,
+      );
+      await user.click(document.querySelector("#pi-provider-api-select")!);
+      await screen.findByRole("option", { name: "Anthropic Messages" });
+      const mistral = screen.queryByRole("option", { name: "Mistral" });
+      if (appId === "pi") expect(mistral).toBeInTheDocument();
+      else expect(mistral).not.toBeInTheDocument();
+      await user.keyboard("{Escape}");
+      unmount();
+    }
+  });
+
+  it("keeps showing an existing omp API value the format list no longer offers", () => {
+    render(
+      <PiProviderForm
+        appId="omp"
+        submitLabel="Save"
+        onSubmit={() => {}}
+        onCancel={() => {}}
+        initialData={{
+          name: "legacy",
+          settingsConfig: { api: "mistral-conversations" },
+        }}
+      />,
+    );
+    expect(document.querySelector("#pi-provider-api-select")).toHaveTextContent(
+      "mistral-conversations",
+    );
   });
 
   it("starts in the same editable custom state as OpenCode", async () => {
@@ -1354,6 +1398,7 @@ describe("PiProviderForm", () => {
       await screen.findByRole("option", { name: "current-model" }),
     );
     expect(modelIdInput).toHaveValue("current-model");
+    await waitForOverlayTransition();
 
     releaseSlowRequest?.();
     await waitFor(() => expect(modelIdInput).toHaveValue("current-model"));

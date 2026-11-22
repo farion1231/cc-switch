@@ -47,7 +47,7 @@ pub(crate) fn official_provider_name(id: &str, nickname: Option<&str>) -> String
 /// Names CC Switch generated earlier follow the account's current nickname.
 pub(crate) fn normalize_provider_identity(provider: &mut Provider, nickname: Option<&str>) {
     if !is_official_provider(&provider.settings_config) {
-        if provider.category.as_deref() == Some("official") {
+        if provider.has_official_category() {
             provider.category = None;
         }
         return;
@@ -457,10 +457,6 @@ pub(crate) fn save_and_commit<T>(
 
 pub(crate) fn set_provider(id: &str, config: Value) -> Result<(), AppError> {
     save_and_commit(id, Some(config), false, || Ok(()))
-}
-
-pub(crate) fn remove_provider(id: &str) -> Result<(), AppError> {
-    save_and_commit(id, None, false, || Ok(()))
 }
 
 /// Resolve the selected native alias through models, not by splitting its name:

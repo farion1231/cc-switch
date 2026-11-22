@@ -510,6 +510,7 @@ pub(crate) fn create_usage_collector(
 
     let state = state.clone();
     let provider_id = ctx.provider.id.clone();
+    let multiplier = crate::provider::billing_multiplier(&ctx.provider);
     let request_model = ctx.request_model.clone();
     // 流式事件缺失模型名时的归因兜底：映射后的出站模型（路由接管真值）优先，
     // 其次才是客户端请求别名
@@ -545,6 +546,7 @@ pub(crate) fn create_usage_collector(
                     log_usage_internal(
                         &state,
                         &provider_id,
+                        multiplier,
                         app_type_str,
                         &model,
                         &request_model,
@@ -571,6 +573,7 @@ pub(crate) fn create_usage_collector(
                     log_usage_internal(
                         &state,
                         &provider_id,
+                        multiplier,
                         app_type_str,
                         &model,
                         &request_model,
@@ -609,6 +612,7 @@ fn spawn_log_usage(
 
     let state = state.clone();
     let provider_id = ctx.provider.id.clone();
+    let multiplier = crate::provider::billing_multiplier(&ctx.provider);
     let app_type_str = ctx.app_type_str.to_string();
     let model = model.to_string();
     let request_model = request_model.to_string();
@@ -624,6 +628,7 @@ fn spawn_log_usage(
         log_usage_internal(
             &state,
             &provider_id,
+            multiplier,
             &app_type_str,
             &model,
             &request_model,
@@ -657,6 +662,7 @@ pub(crate) fn usage_logging_enabled(state: &ProxyState) -> bool {
 async fn log_usage_internal(
     state: &ProxyState,
     provider_id: &str,
+    multiplier: rust_decimal::Decimal,
     app_type: &str,
     model: &str,
     request_model: &str,
@@ -705,6 +711,7 @@ async fn log_usage_internal(
         logger.log_with_calculation(
             request_id,
             provider_id,
+            multiplier,
             app_type,
             model,
             request_model,
@@ -908,12 +915,70 @@ fn format_headers(headers: &HeaderMap) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app_config::AppType;
     use crate::database::Database;
     use crate::error::AppError;
     use crate::provider::ProviderMeta;
     use rust_decimal::Decimal;
     use std::str::FromStr;
     use std::sync::Arc;
+
+    #[tokio::test]
+    async fn billing_multiplier_request_snapshot_survives_provider_change_and_delete(
+    ) -> Result<(), AppError> {
+        let db = Arc::new(Database::memory()?);
+        seed_pricing(&db)?;
+        insert_provider(
+            &db,
+            "snapshot",
+            "claude",
+            ProviderMeta {
+                billing_multiplier: Some("0.5".into()),
+                ..Default::default()
+            },
+        )?;
+        let selected = db
+            .get_provider_by_id("snapshot", &crate::app_config::AppType::Claude)?
+            .unwrap();
+        let multiplier = crate::provider::billing_multiplier(&selected);
+        let state = build_state(db.clone());
+        for (index, mutation) in [
+            "UPDATE providers SET meta='{}' WHERE id='snapshot'",
+            "DELETE FROM providers WHERE id='snapshot'",
+        ]
+        .iter()
+        .enumerate()
+        {
+            {
+                let conn = crate::database::lock_conn!(db.conn);
+                conn.execute(mutation, [])?;
+            }
+            log_usage_internal(
+                &state,
+                "snapshot",
+                multiplier,
+                "claude",
+                "resp-model",
+                "resp-model",
+                "resp-model",
+                TokenUsage {
+                    input_tokens: 1000000,
+                    message_id: Some(format!("snapshot-{index}")),
+                    ..Default::default()
+                },
+                1,
+                None,
+                index == 1,
+                200,
+                None,
+            )
+            .await;
+        }
+        let conn = crate::database::lock_conn!(db.conn);
+        let rows: i64 = conn.query_row("SELECT COUNT(*) FROM proxy_request_logs WHERE provider_id='snapshot' AND cost_multiplier='0.5' AND CAST(total_cost_usd AS REAL)=0.5", [], |r| r.get(0))?;
+        assert_eq!(rows, 2);
+        Ok(())
+    }
 
     #[test]
     fn sse_data_starts_output_skips_metadata_events() {
@@ -1233,7 +1298,8 @@ mod tests {
         let db = Arc::new(Database::memory()?);
         let app_type = "claude";
 
-        db.set_pricing_model_source(app_type, "response").await?;
+        db.set_pricing_model_source(&AppType::Claude, "response")
+            .await?;
         seed_pricing(&db)?;
         {
             // 旧版写下的全局倍率仍留在列里，新版不再读取
@@ -1267,6 +1333,7 @@ mod tests {
         log_usage_internal(
             &state,
             "provider-1",
+            rust_decimal::Decimal::ONE,
             app_type,
             "resp-model",
             "req-model",
@@ -1304,7 +1371,8 @@ mod tests {
         let db = Arc::new(Database::memory()?);
         let app_type = "claude";
 
-        db.set_pricing_model_source(app_type, "request").await?;
+        db.set_pricing_model_source(&AppType::Claude, "request")
+            .await?;
         seed_pricing(&db)?;
         {
             let conn = crate::database::lock_conn!(db.conn);
@@ -1334,6 +1402,7 @@ mod tests {
         log_usage_internal(
             &state,
             "provider-3",
+            rust_decimal::Decimal::ONE,
             app_type,
             "resp-model",
             "req-model",
@@ -1376,7 +1445,8 @@ mod tests {
 
         // proxy_config 没有 claude-desktop 行；它的计费模式必须继承 claude，
         // 而不是静默落回工厂默认（response）
-        db.set_pricing_model_source("claude", "request").await?;
+        db.set_pricing_model_source(&AppType::Claude, "request")
+            .await?;
 
         let logger = UsageLogger::new(&db);
         let source = logger.resolve_pricing_model_source("claude-desktop").await;
@@ -1399,7 +1469,8 @@ mod tests {
         let db = Arc::new(Database::memory()?);
         let app_type = "claude";
 
-        db.set_pricing_model_source(app_type, "response").await?;
+        db.set_pricing_model_source(&AppType::Claude, "response")
+            .await?;
         seed_pricing(&db)?;
         insert_provider(&db, "provider-busy", app_type, ProviderMeta::default())?;
 
@@ -1428,6 +1499,7 @@ mod tests {
             log_usage_internal(
                 &state,
                 "provider-busy",
+                rust_decimal::Decimal::ONE,
                 app_type,
                 "resp-model",
                 "req-model",

@@ -6,6 +6,7 @@ import type {
   RemoteSnapshotInfo,
 } from "@/types";
 import type { AppId } from "./types";
+import type { AutoUpdateStatus, ReadyUpdate } from "@/lib/updater";
 
 export interface ConfigTransferResult {
   success: boolean;
@@ -77,6 +78,15 @@ export const settingsApi = {
     return await invoke("install_update_and_restart");
   },
 
+  async getAutoUpdateStatus(): Promise<AutoUpdateStatus> {
+    return await invoke("get_auto_update_status");
+  },
+
+  /** 立刻在后台检查并下载最新版本（打开自动更新开关时调用） */
+  async downloadAppUpdate(): Promise<ReadyUpdate | null> {
+    return await invoke("download_app_update");
+  },
+
   async checkUpdates(): Promise<void> {
     await invoke("check_for_updates");
   },
@@ -109,14 +119,6 @@ export const settingsApi = {
 
   async selectConfigDirectory(defaultPath?: string): Promise<string | null> {
     return await invoke("pick_directory", { defaultPath });
-  },
-
-  async getClaudeCodeConfigPath(): Promise<string> {
-    return await invoke("get_claude_code_config_path");
-  },
-
-  async getAppConfigPath(): Promise<string> {
-    return await invoke("get_app_config_path");
   },
 
   async openAppConfigFolder(): Promise<void> {
@@ -236,6 +238,10 @@ export const settingsApi = {
     });
   },
 
+  async s3SyncClearSettings(): Promise<{ success: boolean }> {
+    return await invoke("s3_sync_clear_settings");
+  },
+
   async s3SyncFetchRemoteInfo(): Promise<RemoteSnapshotInfo | { empty: true }> {
     return await invoke("s3_sync_fetch_remote_info");
   },
@@ -265,10 +271,6 @@ export const settingsApi = {
 
   async setAutoLaunch(enabled: boolean): Promise<boolean> {
     return await invoke("set_auto_launch", { enabled });
-  },
-
-  async getAutoLaunchStatus(): Promise<boolean> {
-    return await invoke("get_auto_launch_status");
   },
 
   async getToolVersions(

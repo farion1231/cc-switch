@@ -1,3 +1,9 @@
+import {
+  isTraditionalChineseTag,
+  LANGUAGES,
+  languageFromLocale,
+  normalizeLanguageTag,
+} from "@/i18n/languages";
 import type { UsageDisplaySettings } from "@/types";
 export function parseFiniteNumber(value: unknown): number | null {
   if (typeof value === "number") {
@@ -263,13 +269,14 @@ interface OutputTokensPerSecondInput {
 
 /**
  * 一条请求的生成时间（毫秒）= 耗时 − 首字。缺耗时或首字、或差值不大于 0 时返回 null。
- * 只算路由服务记的请求：会话日志的耗时和首字都是按时间戳估的，不算精确速度
- * （会话日志另有估算，见 [getEstimatedTokensPerSecond]）；非流式请求没有首字。
+ * 只算具备精确毫秒计时的请求（路由服务，或从原生库读取 `first_token + streaming`
+ * 的 Antigravity 会话日志）；其余会话日志按时间戳估算，见 [getEstimatedTokensPerSecond]。
+ * 非流式请求没有首字。
  */
 export function getGenerationMs(
   log: OutputTokensPerSecondInput,
 ): number | null {
-  if (isSessionLogRequest(log)) return null;
+  if (!hasExactTimingSource(log)) return null;
   const latencyMs = parseFiniteNumber(log.latencyMs);
   const firstTokenMs = parseFiniteNumber(log.firstTokenMs);
   if (latencyMs == null || firstTokenMs == null) return null;
@@ -323,8 +330,17 @@ export function isSessionLogRequest(log: { dataSource?: unknown }): boolean {
 }
 
 /**
- * 这条请求能不能估速度（和后端 `speed_estimate_eligible_sql` 同口径）：会话日志导入、
- * 输出不少于 200 token、估算耗时不短于 1 秒。推出了首字的也照样按整段耗时算。
+ * 这条请求是否具备精确毫秒级首字与流式计时（路由服务，或从原生库读取
+ * `first_token + streaming` 的 Antigravity 会话日志）。
+ * 和后端 `exact_timing_source_sql` 同口径。
+ */
+export function hasExactTimingSource(log: { dataSource?: unknown }): boolean {
+  return !isSessionLogRequest(log) || log.dataSource === "agy_session";
+}
+
+/**
+ * 这条请求能不能估速度（和后端 `speed_estimate_eligible_sql` 同口径）：按时间戳估算的
+ * 会话日志导入、输出不少于 200 token、估算耗时不短于 1 秒。推出了首字的也照样按整段耗时算。
  */
 export function isSpeedEstimateEligible(
   log: OutputTokensPerSecondInput,
@@ -332,7 +348,7 @@ export function isSpeedEstimateEligible(
   const outputTokens = parseFiniteNumber(log.outputTokens);
   const latencyMs = parseFiniteNumber(log.latencyMs);
   return (
-    isSessionLogRequest(log) &&
+    !hasExactTimingSource(log) &&
     outputTokens != null &&
     outputTokens >= SPEED_ESTIMATE_MIN_OUTPUT_TOKENS &&
     latencyMs != null &&
@@ -437,37 +453,11 @@ export function formatTokensCompact(value: unknown, locale?: string): string {
   return String(num);
 }
 
-function normalizeLanguageTag(language: string): string {
-  return language.toLowerCase().replace(/_/g, "-");
-}
-
-function isTraditionalChineseLanguage(normalizedLanguage: string): boolean {
-  return (
-    normalizedLanguage === "zh-tw" ||
-    normalizedLanguage.startsWith("zh-tw-") ||
-    normalizedLanguage === "zh-hant" ||
-    normalizedLanguage.startsWith("zh-hant-") ||
-    normalizedLanguage === "zh-hk" ||
-    normalizedLanguage.startsWith("zh-hk-") ||
-    normalizedLanguage === "zh-mo" ||
-    normalizedLanguage.startsWith("zh-mo-")
-  );
-}
-
+/** 语言码或系统区域对应的日期数字 locale；空值用 en-US。 */
 export function getLocaleFromLanguage(language: string): string {
   if (!language) return "en-US";
-  const normalized = normalizeLanguageTag(language);
-  if (normalized === "zh") return "zh-CN";
-  if (isTraditionalChineseLanguage(normalized)) {
-    return "zh-TW";
-  }
-  if (normalized === "zh" || normalized.startsWith("zh-")) return "zh-CN";
-  if (normalized === "de" || normalized.startsWith("de-")) return "de-DE";
-  if (normalized === "ja" || normalized.startsWith("ja-")) return "ja-JP";
-  if (normalized === "ko" || normalized.startsWith("ko-")) return "ko-KR";
-  if (normalized === "tr" || normalized.startsWith("tr-")) return "tr-TR";
-  if (normalized === "ru" || normalized.startsWith("ru-")) return "ru-RU";
-  return "en-US";
+  const id = languageFromLocale(normalizeLanguageTag(language));
+  return LANGUAGES.find((entry) => entry.id === id)!.locale;
 }
 
 interface I18nLike {
@@ -514,7 +504,7 @@ export function formatTokensShort(
   if (!Number.isFinite(value) || value <= 0) return "0";
   const decimals = compactDecimals;
   const normalizedLang = normalizeLanguageTag(lang);
-  if (isTraditionalChineseLanguage(normalizedLang)) {
+  if (isTraditionalChineseTag(normalizedLang)) {
     if (value >= 1e8) return `${(value / 1e8).toFixed(2)} 億`;
     if (value >= 1e4) return `${(value / 1e4).toFixed(decimals)} 萬`;
     return value.toLocaleString("zh-TW");

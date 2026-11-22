@@ -461,8 +461,8 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
   },
   {
     name: "9527CODE",
-    websiteUrl: "https://9527.codes",
-    apiKeyUrl: "https://9527.codes/register?aff=e5zI",
+    websiteUrl: "https://9527.codes/register?channel=ccs",
+    apiKeyUrl: "https://9527.codes/register?channel=ccs",
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://9527.codes",
@@ -1090,20 +1090,3 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     icon: "aicoming",
   },
 ];
-
-export function getGeminiPresetByName(
-  name: string,
-): GeminiProviderPreset | undefined {
-  return geminiProviderPresets.find((preset) => preset.name === name);
-}
-
-export function getGeminiPresetByUrl(
-  url: string,
-): GeminiProviderPreset | undefined {
-  if (!url) return undefined;
-  return geminiProviderPresets.find(
-    (preset) =>
-      preset.baseURL &&
-      url.toLowerCase().includes(preset.baseURL.toLowerCase()),
-  );
-}

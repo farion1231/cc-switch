@@ -32,13 +32,14 @@ import {
 } from "@/utils/deeplinkRisk";
 import { decodeBase64Utf8 } from "@/lib/utils/base64";
 import { Switch } from "@/components/ui/switch";
-import { getAppLabel, isAdditiveAppId } from "@/config/appConfig";
+import { getAppLabel } from "@/config/appConfig";
 import { normalizeIconDataUri } from "@/utils/customIcon";
 import {
   CODING_PLAN_PROVIDERS,
   codingPlanEnabledByDefault,
   detectCodingPlanProvider,
 } from "@/config/codingPlanProviders";
+import { appHas } from "@/config/appSpecs";
 
 const API_FORMAT_LABELS: Record<
   NonNullable<DeepLinkImportRequest["apiFormat"]>,
@@ -76,7 +77,7 @@ function initialActivation(request: DeepLinkImportRequest): boolean {
   if (
     request.resource === "provider" &&
     request.app &&
-    isAdditiveAppId(request.app)
+    appHas(request.app, "additive")
   ) {
     return request.enabled ?? true;
   }
@@ -114,24 +115,6 @@ export function DeepLinkImportDialog() {
       stale = true;
     };
   }, [request]);
-
-  // 容错判断：MCP 导入结果可能缺少 type 字段
-  const isMcpImportResult = (
-    value: unknown,
-  ): value is {
-    importedCount: number;
-    importedIds: string[];
-    failed: Array<{ id: string; error: string }>;
-    type?: "mcp";
-  } => {
-    if (!value || typeof value !== "object") return false;
-    const v = value as Record<string, unknown>;
-    return (
-      typeof v.importedCount === "number" &&
-      Array.isArray(v.importedIds) &&
-      Array.isArray(v.failed)
-    );
-  };
 
   // effect 只随挂载/卸载运行，不能依赖 t：启动时校正语言会换掉 t，effect 一重建，
   // 正在处理的链接就被丢下。翻译函数从 ref 读最新值。
@@ -262,11 +245,40 @@ export function DeepLinkImportDialog() {
         };
       }
       const result = await deeplinkApi.importFromDeeplink(payload);
-      const refreshMcp = async (summary: {
-        importedCount: number;
-        importedIds: string[];
-        failed: Array<{ id: string; error: string }>;
-      }) => {
+      // Handle different result types
+      if (result.type === "provider") {
+        await queryClient.invalidateQueries({
+          queryKey: ["providers", request.app],
+        });
+        if (request.app === "opencode") {
+          await queryClient.invalidateQueries({
+            queryKey: ["opencodeLiveProviderIds"],
+          });
+          await queryClient.invalidateQueries({
+            queryKey: ["opencode", "runtime-models"],
+          });
+        }
+        await refreshTrayMenu();
+        toast.success(t("deeplink.importSuccess"), {
+          description: t("deeplink.importSuccessDescription", {
+            name: request.name,
+          }),
+          closeButton: true,
+        });
+      } else if (result.type === "prompt") {
+        // Prompts don't use React Query, trigger a custom event for refresh
+        window.dispatchEvent(
+          new CustomEvent("prompt-imported", {
+            detail: { app: request.app },
+          }),
+        );
+        toast.success(t("deeplink.promptImportSuccess"), {
+          description: t("deeplink.promptImportSuccessDescription", {
+            name: request.name,
+          }),
+          closeButton: true,
+        });
+      } else if (result.type === "mcp") {
         // 强制刷新 MCP 相关缓存，确保管理页重新从数据库加载
         await queryClient.invalidateQueries({
           queryKey: ["mcp", "all"],
@@ -277,88 +289,34 @@ export function DeepLinkImportDialog() {
           type: "all",
         });
 
-        if (summary.failed.length > 0) {
+        if (result.failed.length > 0) {
           toast.warning(t("deeplink.mcpPartialSuccess"), {
             description: t("deeplink.mcpPartialSuccessDescription", {
-              success: summary.importedCount,
-              failed: summary.failed.length,
+              success: result.importedCount,
+              failed: result.failed.length,
             }),
           });
         } else {
           toast.success(t("deeplink.mcpImportSuccess"), {
             description: t("deeplink.mcpImportSuccessDescription", {
-              count: summary.importedCount,
+              count: result.importedCount,
             }),
             closeButton: true,
           });
         }
-      };
-
-      // Handle different result types
-      if ("type" in result) {
-        if (result.type === "provider") {
-          await queryClient.invalidateQueries({
-            queryKey: ["providers", request.app],
-          });
-          if (request.app === "opencode") {
-            await queryClient.invalidateQueries({
-              queryKey: ["opencodeLiveProviderIds"],
-            });
-            await queryClient.invalidateQueries({
-              queryKey: ["opencode", "runtime-models"],
-            });
-          }
-          await refreshTrayMenu();
-          toast.success(t("deeplink.importSuccess"), {
-            description: t("deeplink.importSuccessDescription", {
-              name: request.name,
-            }),
-            closeButton: true,
-          });
-        } else if (result.type === "prompt") {
-          // Prompts don't use React Query, trigger a custom event for refresh
-          window.dispatchEvent(
-            new CustomEvent("prompt-imported", {
-              detail: { app: request.app },
-            }),
-          );
-          toast.success(t("deeplink.promptImportSuccess"), {
-            description: t("deeplink.promptImportSuccessDescription", {
-              name: request.name,
-            }),
-            closeButton: true,
-          });
-        } else if (result.type === "mcp") {
-          await refreshMcp(result);
-        } else if (result.type === "skill") {
-          // Refresh Skills with aggressive strategy
-          queryClient.invalidateQueries({
-            queryKey: ["skills"],
-            refetchType: "all",
-          });
-          await queryClient.refetchQueries({
-            queryKey: ["skills"],
-            type: "all",
-          });
-          toast.success(t("deeplink.skillImportSuccess"), {
-            description: t("deeplink.skillImportSuccessDescription", {
-              repo: request.repo,
-            }),
-            closeButton: true,
-          });
-        }
-      } else if (isMcpImportResult(result)) {
-        // 兜底处理：旧版本后端可能未返回 type 字段
-        await refreshMcp(result);
-      } else {
-        // Legacy return type (string ID) - assume provider
-        await queryClient.invalidateQueries({
-          queryKey: ["providers", request.app],
+      } else if (result.type === "skill") {
+        // Refresh Skills with aggressive strategy
+        queryClient.invalidateQueries({
+          queryKey: ["skills"],
+          refetchType: "all",
         });
-        await refreshTrayMenu();
-        toast.success(t("deeplink.importSuccess"), {
-          description: t("deeplink.importSuccessDescription", {
-            name: request.name,
+        await queryClient.refetchQueries({
+          queryKey: ["skills"],
+          type: "all",
+        });
+        toast.success(t("deeplink.skillImportSuccess"), {
+          description: t("deeplink.skillImportSuccessDescription", {
+            repo: request.repo,
           }),
           closeButton: true,
         });
@@ -987,7 +945,7 @@ export function DeepLinkImportDialog() {
                           htmlFor="deeplink-activate-after-import"
                           className="text-sm font-medium"
                         >
-                          {request.app && isAdditiveAppId(request.app)
+                          {request.app && appHas(request.app, "additive")
                             ? request.app === "pi"
                               ? t("deeplink.enableInPiAfterImport")
                               : t("deeplink.addToAppAfterImport", {
@@ -1002,7 +960,7 @@ export function DeepLinkImportDialog() {
                         />
                       </div>
                       {activateAfterImport &&
-                        !(request.app && isAdditiveAppId(request.app)) && (
+                        !(request.app && appHas(request.app, "additive")) && (
                           <div className="text-warning-text text-sm flex items-start gap-2">
                             <span aria-hidden="true">⚠️</span>
                             <span>{t("deeplink.providerEnabledWarning")}</span>

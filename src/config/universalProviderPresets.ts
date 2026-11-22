@@ -114,19 +114,3 @@ export function createUniversalProviderFromPreset(
     createdAt: Date.now(),
   };
 }
-
-/**
- * 获取预设的显示名称（用于 UI）
- */
-export function getPresetDisplayName(preset: UniversalProviderPreset): string {
-  return preset.name;
-}
-
-/**
- * 根据类型查找预设
- */
-export function findPresetByType(
-  providerType: string,
-): UniversalProviderPreset | undefined {
-  return universalProviderPresets.find((p) => p.providerType === providerType);
-}

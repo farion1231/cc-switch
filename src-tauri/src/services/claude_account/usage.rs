@@ -4,6 +4,7 @@
 //! 目录 `.claude.json` 的 `cachedUsageUtilization`（和 `/api/oauth/usage` 的返回同一个结构），
 //! CC Switch 读这份缓存。CC Switch 自己从不刷新令牌。
 
+use crate::sync_utils::MutexExt;
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::Stdio;
@@ -61,7 +62,7 @@ pub fn refresh_via_cli(account: &str, config_dir: Option<&Path>) -> bool {
     if ran_recently(account, false) {
         return false;
     }
-    let _running = RUNNING.lock().unwrap_or_else(|e| e.into_inner());
+    let _running = RUNNING.lock_recover();
     // 排队时同一个号可能刚被别的请求跑完
     if ran_recently(account, true) {
         return false;
@@ -74,7 +75,7 @@ pub fn refresh_via_cli(account: &str, config_dir: Option<&Path>) -> bool {
 
 /// `account` 在 [`RUN_INTERVAL`] 内跑过没有；`claim` 时没跑过就记成现在跑（失败也算）。
 fn ran_recently(account: &str, claim: bool) -> bool {
-    let mut last = LAST_RUN.lock().unwrap_or_else(|e| e.into_inner());
+    let mut last = LAST_RUN.lock_recover();
     let last = last.get_or_insert_with(HashMap::new);
     if last
         .get(account)

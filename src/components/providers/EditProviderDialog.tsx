@@ -26,7 +26,7 @@ import type {
 } from "@/lib/api/providers";
 import { useLiveEditConflict } from "@/components/providers/LiveEditConflictDialog";
 import { toastEditorViewFailed } from "@/components/providers/forms/hooks/useDraftEditorProjection";
-import { isPiFamilyApp, usesEditorView } from "@/config/appConfig";
+import { appHas } from "@/config/appSpecs";
 
 interface EditProviderDialogProps {
   open: boolean;
@@ -75,7 +75,6 @@ export function EditProviderDialog({
   modeView,
 }: EditProviderDialogProps) {
   const { t } = useTranslation();
-  const [isFormSubmitting, setIsFormSubmitting] = useState(false);
   // 表单用了聚合的简化布局：页头应用名后标「聚合模式」
   const [stackLayout, setStackLayout] = useState(false);
   const [authSettingsTarget, setAuthSettingsTarget] =
@@ -85,27 +84,45 @@ export function EditProviderDialog({
     setAuthSettingsTarget(null);
   }, [appId, open, provider?.id]);
 
-  const formReadyToken = useMemo(
-    () => Symbol("provider-form-ready"),
+  const formSessionSequence = useRef(0);
+  const formSessionToken = useMemo(
+    () => ++formSessionSequence.current,
     [appId, open, provider?.id],
   );
-  const currentFormReadyToken = useRef(formReadyToken);
-  currentFormReadyToken.current = formReadyToken;
-  const [formReadyState, setFormReadyState] = useState({
-    token: formReadyToken,
-    ready: !isPiFamilyApp(appId),
+  const currentFormSessionToken = useRef(formSessionToken);
+  currentFormSessionToken.current = formSessionToken;
+  // The host stays mounted between edits. A pending save from a closed form
+  // must neither disable the next editor nor clear its own pending submission.
+  const [formSubmittingState, setFormSubmittingState] = useState({
+    token: formSessionToken,
+    submitting: false,
   });
-  const isFormReady =
-    formReadyState.token === formReadyToken
-      ? formReadyState.ready
-      : !isPiFamilyApp(appId);
-  const handleSubmitReadyChange = useCallback(
-    (ready: boolean) => {
-      if (currentFormReadyToken.current === formReadyToken) {
-        setFormReadyState({ token: formReadyToken, ready });
+  const isFormSubmitting =
+    formSubmittingState.token === formSessionToken &&
+    formSubmittingState.submitting;
+  const handleSubmittingChange = useCallback(
+    (submitting: boolean) => {
+      if (currentFormSessionToken.current === formSessionToken) {
+        setFormSubmittingState({ token: formSessionToken, submitting });
       }
     },
-    [formReadyToken],
+    [formSessionToken],
+  );
+  const [formReadyState, setFormReadyState] = useState({
+    token: formSessionToken,
+    ready: !appHas(appId, "piFamily"),
+  });
+  const isFormReady =
+    formReadyState.token === formSessionToken
+      ? formReadyState.ready
+      : !appHas(appId, "piFamily");
+  const handleSubmitReadyChange = useCallback(
+    (ready: boolean) => {
+      if (currentFormSessionToken.current === formSessionToken) {
+        setFormReadyState({ token: formSessionToken, ready });
+      }
+    },
+    [formSessionToken],
   );
 
   // 默认使用传入的 provider.settingsConfig，若当前编辑对象是"当前生效供应商"，则尝试读取实时配置替换初始值
@@ -119,7 +136,8 @@ export function EditProviderDialog({
 
   // Claude：底部 JSON 显示「切到这个供应商之后 settings.json 的样子」，保存时拿它做三方比较。
   const [editorView, setEditorView] = useState<ProviderEditorView | null>(null);
-  const { submitWithConflictRetry, conflictDialog } = useLiveEditConflict();
+  const { submitWithConflictRetry, conflictDialog } =
+    useLiveEditConflict(formSessionToken);
 
   const closeDialog = useCallback(() => {
     setAuthSettingsTarget(null);
@@ -151,7 +169,7 @@ export function EditProviderDialog({
 
       // 切换式应用：编辑任何供应商都显示切换投影（关键字段、独有字段来自这一行，其余
       // 来自 live），代理模式下也一样，关键字段显示的是这个供应商自己的值。
-      if (usesEditorView(appId)) {
+      if (appHas(appId, "editorView")) {
         try {
           const view = await providersApi.getEditorView(
             appId,
@@ -326,7 +344,7 @@ export function EditProviderDialog({
             ? { editorSave: { base: editorView.settings, onConflict } }
             : {}),
         });
-        closeDialog();
+        if (currentFormSessionToken.current === formSessionToken) closeDialog();
       };
       await submitWithConflictRetry(submit);
     },
@@ -337,6 +355,7 @@ export function EditProviderDialog({
       provider,
       editorView,
       submitWithConflictRetry,
+      formSessionToken,
     ],
   );
 
@@ -344,7 +363,7 @@ export function EditProviderDialog({
     return null;
   }
 
-  const waitingForEditorView = usesEditorView(appId) && !hasLoadedLive;
+  const waitingForEditorView = appHas(appId, "editorView") && !hasLoadedLive;
 
   const liveFile = !isProxyTakeover ? LIVE_FILE[appId] : undefined;
   const currentNotice =
@@ -413,13 +432,14 @@ export function EditProviderDialog({
         </div>
       ) : (
         <ProviderForm
+          key={formSessionToken}
           appId={appId}
           providerId={provider.id}
           submitLabel={t("common.save")}
           onSubmit={handleSubmit}
           onCancel={closeDialog}
           onManageAuthAccounts={setAuthSettingsTarget}
-          onSubmittingChange={setIsFormSubmitting}
+          onSubmittingChange={handleSubmittingChange}
           onSubmitReadyChange={handleSubmitReadyChange}
           initialData={initialData}
           showButtons={false}

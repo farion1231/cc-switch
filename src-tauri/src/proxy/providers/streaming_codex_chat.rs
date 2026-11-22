@@ -7,7 +7,7 @@ use super::{
     inline_think::InlineThinkSplitter,
     transform_codex_chat::{
         chat_error_to_response_error, chat_usage_to_responses_usage,
-        custom_tool_input_from_chat_arguments, response_id_from_chat_id,
+        custom_tool_input_from_chat_arguments, response_id_from_chat_id, response_message_item_id,
         response_status_from_finish_reason, response_tool_call_item_from_chat_name,
         response_tool_call_item_id_from_chat_name, CodexToolContext,
     },
@@ -234,7 +234,7 @@ impl ChatToResponsesState {
 
         if !self.text.added {
             let output_index = self.next_output_index();
-            let item_id = format!("{}_msg", self.response_id);
+            let item_id = response_message_item_id(&self.response_id);
             self.text.output_index = Some(output_index);
             self.text.item_id = item_id.clone();
             self.text.added = true;
@@ -751,14 +751,6 @@ fn chat_delta_reasoning_text(delta: &Value) -> Option<String> {
     extract_reasoning_field_text(delta)
 }
 
-/// Create a stream that converts Chat Completions SSE chunks into Responses SSE events.
-#[allow(dead_code)]
-pub fn create_responses_sse_stream_from_chat<E: std::error::Error + Send + 'static>(
-    stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
-) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
-    create_responses_sse_stream_from_chat_with_context(stream, CodexToolContext::default())
-}
-
 /// Create a stream that converts Chat Completions SSE chunks into Responses SSE
 /// events while restoring Codex tool namespace/custom/tool_search metadata.
 pub fn create_responses_sse_stream_from_chat_with_context<E: std::error::Error + Send + 'static>(
@@ -912,6 +904,25 @@ mod tests {
             2
         );
         assert_eq!(completed["response"]["usage"]["cache_read_input_tokens"], 2);
+    }
+
+    #[tokio::test]
+    async fn streamed_message_item_id_uses_msg_prefix() {
+        // Regression test for #9054 (streaming path): the message item ID
+        // must begin with `msg_`, not `resp_..._msg`.
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_1\",\"created\":123,\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"content\":\"Hi\"},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+        let events = parse_sse_events(&output);
+        let done = events
+            .iter()
+            .find(|event| {
+                event["type"] == "response.output_item.done" && event["item"]["type"] == "message"
+            })
+            .unwrap();
+        assert_eq!(done["item"]["id"], "msg_chatcmpl_1");
     }
 
     #[tokio::test]
@@ -1458,7 +1469,10 @@ mod tests {
         let upstream = stream::iter(vec![Err::<Bytes, std::io::Error>(std::io::Error::other(
             "boom",
         ))]);
-        let converted = create_responses_sse_stream_from_chat(upstream);
+        let converted = create_responses_sse_stream_from_chat_with_context(
+            upstream,
+            CodexToolContext::default(),
+        );
         let bytes: Vec<Bytes> = converted.map(|item| item.unwrap()).collect().await;
         let output = String::from_utf8(bytes.concat()).unwrap();
 
@@ -1663,11 +1677,14 @@ mod tests {
             Some(data) => chunks.push(Ok(Bytes::from(data.to_owned()))),
             None => {}
         }
-        create_responses_sse_stream_from_chat(futures::stream::iter(chunks))
-            .map(|chunk| String::from_utf8(chunk.unwrap().to_vec()).unwrap())
-            .collect::<Vec<_>>()
-            .await
-            .concat()
+        create_responses_sse_stream_from_chat_with_context(
+            futures::stream::iter(chunks),
+            CodexToolContext::default(),
+        )
+        .map(|chunk| String::from_utf8(chunk.unwrap().to_vec()).unwrap())
+        .collect::<Vec<_>>()
+        .await
+        .concat()
     }
 
     #[tokio::test]
@@ -1714,7 +1731,11 @@ mod tests {
         .chain(futures::stream::pending());
         tokio::time::timeout(
             std::time::Duration::from_secs(1),
-            create_responses_sse_stream_from_chat(upstream).collect::<Vec<_>>(),
+            create_responses_sse_stream_from_chat_with_context(
+                upstream,
+                CodexToolContext::default(),
+            )
+            .collect::<Vec<_>>(),
         )
         .await
         .expect("a terminal response must not await another upstream chunk");
