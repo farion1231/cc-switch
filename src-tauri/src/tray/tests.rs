@@ -49,6 +49,7 @@ fn an_unreadable_provider_is_left_out_of_the_tray_instead_of_breaking_it() {
         &AppType::Codex,
         None,
         &[],
+        &TrayAccountLabels::default(),
     )
     .expect("the tray still builds");
     let ids: Vec<&str> = snapshot.providers.iter().map(|p| p.id.as_str()).collect();
@@ -92,6 +93,7 @@ fn the_tray_still_builds_when_the_provider_in_use_is_unreadable() {
             &AppType::Codex,
             None,
             &[],
+            &TrayAccountLabels::default(),
         )
         .expect("the tray still builds")
     };
@@ -795,7 +797,10 @@ fn claude_bound_provider(account_id: Option<&str>, enabled: Option<bool>) -> Pro
 
 #[test]
 fn claude_bound_card_hint_shows_account_unless_noted() {
-    let accounts = HashMap::from([("acct-1".to_string(), "me@example.com".to_string())]);
+    let accounts = TrayAccountLabels {
+        claude: HashMap::from([("acct-1".to_string(), "me@example.com".to_string())]),
+        ..Default::default()
+    };
     let mut provider = claude_bound_provider(Some("acct-1"), None);
     provider.website_url = Some("https://www.anthropic.com".to_string());
     assert_eq!(
@@ -816,6 +821,275 @@ fn claude_bound_card_hint_shows_account_unless_noted() {
         provider_hint(&AppType::Claude, &missing, &accounts).as_deref(),
         Some("www.anthropic.com")
     );
+}
+
+#[test]
+fn managed_oauth_card_hints_show_account_instead_of_website() {
+    let accounts = TrayAccountLabels {
+        codex: ManagedAccountLabels::from_parts((
+            HashMap::from([
+                (
+                    "codex-default".to_string(),
+                    "default@openai.test".to_string(),
+                ),
+                ("codex-work".to_string(), "work@openai.test".to_string()),
+            ]),
+            Some("codex-default".to_string()),
+        )),
+        copilot: ManagedAccountLabels::from_parts((
+            HashMap::from([
+                ("gh-1".to_string(), "octocat".to_string()),
+                ("gh-2".to_string(), "hubot".to_string()),
+            ]),
+            Some("gh-1".to_string()),
+        )),
+        xai: ManagedAccountLabels::from_parts((
+            HashMap::from([
+                ("xai-1".to_string(), "grok@x.ai".to_string()),
+                ("xai-2".to_string(), "work@x.ai".to_string()),
+            ]),
+            Some("xai-1".to_string()),
+        )),
+        ..Default::default()
+    };
+
+    // Codex 官方卡：绑了托管账号就显示账号，缺失不回落默认账号，手动备注优先
+    let mut codex_bound = codex_provider(Some("codex-work"), None);
+    codex_bound.website_url = Some("https://chatgpt.com/codex".to_string());
+    assert_eq!(
+        provider_hint(&AppType::Codex, &codex_bound, &accounts).as_deref(),
+        Some("work@openai.test")
+    );
+    codex_bound.notes = Some("Personal".to_string());
+    assert_eq!(
+        provider_hint(&AppType::Codex, &codex_bound, &accounts).as_deref(),
+        Some("Personal")
+    );
+
+    let mut codex_missing = codex_provider(Some("deleted"), None);
+    codex_missing.website_url = Some("https://chatgpt.com/codex".to_string());
+    assert_eq!(
+        provider_hint(&AppType::Codex, &codex_missing, &accounts).as_deref(),
+        Some("chatgpt.com")
+    );
+
+    // Codex 官方卡未绑账号（CLI 原生登录），即便 preset 带 providerType=codex_oauth 也不回落默认托管账号
+    let mut codex_native = codex_provider(None, None);
+    codex_native.website_url = Some("https://chatgpt.com/codex".to_string());
+    codex_native.meta.as_mut().unwrap().provider_type = Some("codex_oauth".to_string());
+    assert_eq!(
+        provider_hint(&AppType::Codex, &codex_native, &accounts).as_deref(),
+        Some("chatgpt.com")
+    );
+
+    // Claude / Claude Desktop 里的 Codex OAuth 反代卡：绑定用绑定账号，未绑定回落默认账号，缺失不回落
+    let codex_proxy = |account_id: Option<&str>| -> Provider {
+        serde_json::from_value(serde_json::json!({
+            "id": "claude-codex",
+            "name": "Codex",
+            "websiteUrl": "https://openai.com/chatgpt/pricing",
+            "settingsConfig": {
+                "env": { "ANTHROPIC_BASE_URL": "https://chatgpt.com/backend-api/codex" }
+            },
+            "meta": {
+                "providerType": "codex_oauth",
+                "authBinding": account_id.map(|id| serde_json::json!({
+                    "source": "managed_account",
+                    "authProvider": "codex_oauth",
+                    "accountId": id
+                }))
+            }
+        }))
+        .unwrap()
+    };
+    assert_eq!(
+        provider_hint(&AppType::Claude, &codex_proxy(None), &accounts).as_deref(),
+        Some("default@openai.test")
+    );
+    assert_eq!(
+        provider_hint(
+            &AppType::ClaudeDesktop,
+            &codex_proxy(Some("codex-work")),
+            &accounts
+        )
+        .as_deref(),
+        Some("work@openai.test")
+    );
+    assert_eq!(
+        provider_hint(&AppType::Claude, &codex_proxy(Some("deleted")), &accounts).as_deref(),
+        Some("openai.com")
+    );
+
+    // GitHub Copilot 反代卡：支持未绑定默认、authBinding、旧 githubAccountId 与旧 templateType
+    let copilot_proxy = |meta: serde_json::Value| -> Provider {
+        serde_json::from_value(serde_json::json!({
+            "id": "claude-copilot",
+            "name": "GitHub Copilot",
+            "websiteUrl": "https://github.com/features/copilot",
+            "settingsConfig": { "env": {} },
+            "meta": meta
+        }))
+        .unwrap()
+    };
+    assert_eq!(
+        provider_hint(
+            &AppType::Claude,
+            &copilot_proxy(serde_json::json!({ "providerType": "github_copilot" })),
+            &accounts
+        )
+        .as_deref(),
+        Some("octocat")
+    );
+    assert_eq!(
+        provider_hint(
+            &AppType::Codex,
+            &copilot_proxy(serde_json::json!({
+                "providerType": "github_copilot",
+                "authBinding": {
+                    "source": "managed_account",
+                    "authProvider": "github_copilot",
+                    "accountId": "gh-2"
+                }
+            })),
+            &accounts
+        )
+        .as_deref(),
+        Some("hubot")
+    );
+    assert_eq!(
+        provider_hint(
+            &AppType::Claude,
+            &copilot_proxy(serde_json::json!({
+                "usage_script": {
+                    "enabled": true,
+                    "language": "javascript",
+                    "code": "",
+                    "templateType": "github_copilot"
+                },
+                "githubAccountId": "gh-2"
+            })),
+            &accounts
+        )
+        .as_deref(),
+        Some("hubot")
+    );
+    assert_eq!(
+        provider_hint(
+            &AppType::Claude,
+            &copilot_proxy(serde_json::json!({
+                "providerType": "github_copilot",
+                "authBinding": {
+                    "source": "managed_account",
+                    "authProvider": "github_copilot",
+                    "accountId": "deleted"
+                }
+            })),
+            &accounts
+        )
+        .as_deref(),
+        Some("github.com")
+    );
+
+    // xAI OAuth 反代卡
+    let xai_proxy = |account_id: Option<&str>| -> Provider {
+        serde_json::from_value(serde_json::json!({
+            "id": "claude-xai",
+            "name": "xAI (Grok)",
+            "websiteUrl": "https://x.ai/grok",
+            "settingsConfig": { "env": {} },
+            "meta": {
+                "providerType": "xai_oauth",
+                "authBinding": account_id.map(|id| serde_json::json!({
+                    "source": "managed_account",
+                    "authProvider": "xai_oauth",
+                    "accountId": id
+                }))
+            }
+        }))
+        .unwrap()
+    };
+    assert_eq!(
+        provider_hint(&AppType::Claude, &xai_proxy(None), &accounts).as_deref(),
+        Some("grok@x.ai")
+    );
+    assert_eq!(
+        provider_hint(&AppType::GrokBuild, &xai_proxy(Some("xai-2")), &accounts).as_deref(),
+        Some("work@x.ai")
+    );
+    assert_eq!(
+        provider_hint(&AppType::Claude, &xai_proxy(Some("deleted")), &accounts).as_deref(),
+        Some("x.ai")
+    );
+}
+
+#[test]
+fn tray_account_labels_load_from_disk_reads_all_managed_stores() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("codex_oauth_auth.json"),
+        serde_json::json!({
+            "version": 2,
+            "default_account_id": "cx-1",
+            "accounts": {
+                "cx-1": {
+                    "account_id": "cx-1",
+                    "email": "alice@openai.test",
+                    "refresh_token": "rt",
+                    "authenticated_at": 100
+                },
+                "cx-2": {
+                    "account_id": "cx-2",
+                    "chatgpt_account_id": "ws-2",
+                    "refresh_token": "rt2",
+                    "authenticated_at": 200
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("copilot_auth.json"),
+        serde_json::json!({
+            "version": 3,
+            "default_account_id": "42",
+            "accounts": {
+                "42": {
+                    "github_token": "ghu_x",
+                    "user": { "login": "octocat", "id": 42 },
+                    "authenticated_at": 100,
+                    "github_domain": "github.com"
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("xai_oauth_auth.json"),
+        serde_json::json!({
+            "version": 1,
+            "accounts": {
+                "x1": {
+                    "account_id": "x1",
+                    "login": "grok@x.ai",
+                    "refresh_token": "rt",
+                    "authenticated_at": 100
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let loaded = TrayAccountLabels::load_from_disk(dir.path());
+    assert_eq!(loaded.codex.resolve(None, true), Some("alice@openai.test"));
+    assert_eq!(
+        loaded.codex.resolve(Some("cx-2"), false),
+        Some("ChatGPT (ws-2)")
+    );
+    assert_eq!(loaded.copilot.resolve(None, true), Some("octocat"));
+    assert_eq!(loaded.xai.resolve(None, true), Some("grok@x.ai"));
 }
 
 #[test]
