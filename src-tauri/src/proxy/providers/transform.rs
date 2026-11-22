@@ -750,26 +750,49 @@ pub fn openai_to_anthropic(body: Value) -> Result<Value, ProxyError> {
                 push_text(&mut content, text);
             }
         } else if let Some(parts) = msg_content.as_array() {
+            // Mistral 把思考拆成多个 `{type:"thinking"}` 分块；相邻合并成一个 thinking 块。
+            let mut pending_thinking = String::new();
+            let flush_thinking = |pending: &mut String, content: &mut Vec<Value>| {
+                if !pending.is_empty() {
+                    content.push(json!({"type": "thinking", "thinking": std::mem::take(pending)}));
+                }
+            };
             for part in parts {
                 let part_type = part.get("type").and_then(|t| t.as_str()).unwrap_or("");
-                match part_type {
-                    "text" | "output_text" => {
-                        if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
-                            if !text.is_empty() {
-                                push_text(&mut content, text);
+                if part_type == "thinking" {
+                    if let Some(parts) = part.get("thinking").and_then(|t| t.as_array()) {
+                        for inner in parts {
+                            if let Some(text) = inner.get("text").and_then(|t| t.as_str()) {
+                                pending_thinking.push_str(text);
                             }
                         }
                     }
-                    "refusal" => {
-                        if let Some(refusal) = part.get("refusal").and_then(|r| r.as_str()) {
-                            if !refusal.is_empty() {
-                                content.push(json!({"type": "text", "text": refusal}));
-                            }
-                        }
-                    }
-                    _ => {}
+                    continue;
+                }
+                // 只有会下发内容的分块才结束思考块；空文本/未知/图片直接跳过。
+                // 流式路径同样如此，两边块数必须一致。
+                let payload = match part_type {
+                    "text" | "output_text" => part
+                        .get("text")
+                        .and_then(|t| t.as_str())
+                        .filter(|text| !text.is_empty()),
+                    "refusal" => part
+                        .get("refusal")
+                        .and_then(|r| r.as_str())
+                        .filter(|refusal| !refusal.is_empty()),
+                    _ => None,
+                };
+                let Some(payload) = payload else {
+                    continue;
+                };
+                flush_thinking(&mut pending_thinking, &mut content);
+                if part_type == "refusal" {
+                    content.push(json!({"type": "text", "text": payload}));
+                } else {
+                    push_text(&mut content, payload);
                 }
             }
+            flush_thinking(&mut pending_thinking, &mut content);
         }
     }
     // Some providers put refusal at message-level.
@@ -1757,6 +1780,104 @@ mod tests {
                 {"type": "text", "text": "answer"},
                 {"type": "text", "text": "<think>kept</think>"}
             ])
+        );
+    }
+
+    #[test]
+    fn test_openai_to_anthropic_merges_mistral_thinking_chunks() {
+        // Mistral 开推理后 content 是 thinking / text 分块数组：相邻思考分块合并成
+        // 一个 thinking 块，正文保持原顺序。
+        let result = openai_to_anthropic(chat_response_with_content(json!([
+            {"type": "thinking", "thinking": [{"type": "text", "text": "17*23 = "}]},
+            {"type": "thinking", "thinking": [{"type": "text", "text": "391"}], "closed": true},
+            {"type": "text", "text": "391"}
+        ])))
+        .unwrap();
+        assert_eq!(
+            result["content"],
+            json!([
+                {"type": "thinking", "thinking": "17*23 = 391"},
+                {"type": "text", "text": "391"}
+            ])
+        );
+    }
+
+    #[test]
+    fn test_openai_to_anthropic_skips_empty_mistral_thinking_chunk() {
+        let result = openai_to_anthropic(chat_response_with_content(json!([
+            {"type": "thinking", "thinking": []},
+            {"type": "text", "text": "ok"}
+        ])))
+        .unwrap();
+        assert_eq!(result["content"], json!([{"type": "text", "text": "ok"}]));
+    }
+
+    #[test]
+    fn test_openai_to_anthropic_keeps_interleaved_order() {
+        // 思考与正文交替：保持数组顺序。
+        let result = openai_to_anthropic(chat_response_with_content(json!([
+            {"type": "thinking", "thinking": [{"type": "text", "text": "first"}]},
+            {"type": "text", "text": "one"},
+            {"type": "thinking", "thinking": [{"type": "text", "text": "second"}]},
+            {"type": "text", "text": "two"}
+        ])))
+        .unwrap();
+        assert_eq!(
+            result["content"],
+            json!([
+                {"type": "thinking", "thinking": "first"},
+                {"type": "text", "text": "one"},
+                {"type": "thinking", "thinking": "second"},
+                {"type": "text", "text": "two"}
+            ])
+        );
+    }
+
+    #[test]
+    fn test_openai_to_anthropic_flushes_thinking_before_refusal() {
+        let result = openai_to_anthropic(chat_response_with_content(json!([
+            {"type": "thinking", "thinking": [{"type": "text", "text": "deciding"}]},
+            {"type": "refusal", "refusal": "won't answer"}
+        ])))
+        .unwrap();
+        assert_eq!(
+            result["content"],
+            json!([
+                {"type": "thinking", "thinking": "deciding"},
+                {"type": "text", "text": "won't answer"}
+            ])
+        );
+    }
+
+    #[test]
+    fn test_openai_to_anthropic_merges_thinking_across_non_content_parts() {
+        // 空文本/未知/图片分块不打断思考合并（与流式一致）。
+        let result = openai_to_anthropic(chat_response_with_content(json!([
+            {"type": "thinking", "thinking": [{"type": "text", "text": "first"}]},
+            {"type": "text", "text": ""},
+            {"type": "image", "text": "ignored"},
+            {"type": "thinking", "thinking": [{"type": "text", "text": "-second"}]},
+            {"type": "text", "text": "answer"}
+        ])))
+        .unwrap();
+        assert_eq!(
+            result["content"],
+            json!([
+                {"type": "thinking", "thinking": "first-second"},
+                {"type": "text", "text": "answer"}
+            ])
+        );
+    }
+
+    #[test]
+    fn test_openai_to_anthropic_keeps_thinking_without_text() {
+        let result = openai_to_anthropic(chat_response_with_content(json!([
+            {"type": "thinking", "thinking": [{"type": "text", "text": "hmm"}]}
+        ])))
+        .unwrap();
+        assert_eq!(
+            result["content"],
+            json!([{"type": "thinking", "thinking": "hmm"}])
         );
     }
 

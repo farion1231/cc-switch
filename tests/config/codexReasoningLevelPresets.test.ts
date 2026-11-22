@@ -367,9 +367,9 @@ describe("Codex preset pre-filled reasoning levels", () => {
       ["Baidu Qianfan Token Plan", "kimi-k2.6"],
       // DeepInfra GLM-5.2 曾在此列（平台未声明、各处口径不一）；2026-10-24
       // 已从 DeepInfra 目录移除，不再断言
-      // Mistral AI：开推理后流式 content 为分块数组、转换层暂不解析，且
-      // 现有 effortValueMode 发不出 Small 4 的 "none"，第一版不下发推理参数、
-      // 不填档位
+      // Mistral AI：开推理后流式 content 为分块数组，Codex 转换层暂不解析（Claude
+      // 路由已支持），且现有 effortValueMode 发不出 Small 4 的 "none"，第一版不下发
+      // 推理参数、不填档位
       ["Mistral AI", "mistral-large-4"],
       ["Mistral AI", "mistral-small-2603"],
     ];

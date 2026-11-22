@@ -33,12 +33,65 @@ struct StreamChoice {
 #[derive(Debug, Deserialize)]
 struct Delta {
     #[serde(default)]
-    content: Option<String>,
+    content: Option<DeltaContent>,
     // OpenRouter/Kimi/其它 使用 reasoning，DeepSeek 使用 reasoning_content
     #[serde(default, alias = "reasoning_content")]
     reasoning: Option<String>,
     #[serde(default)]
     tool_calls: Option<Vec<DeltaToolCall>>,
+}
+
+/// OpenAI Chat 的 `content`：多数上游发字符串，Mistral 开推理后发
+/// `[{type:"thinking",…},{type:"text",…}]`。只能按字符串解析时，整个 chunk 会被丢弃。
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum DeltaContent {
+    Text(String),
+    Chunks(Vec<ContentChunk>),
+}
+
+/// `content` 数组的一项。`closed` 是逐块标记（实测恒为 true），不表示思考结束。
+#[derive(Debug, Deserialize)]
+struct ContentChunk {
+    #[serde(rename = "type", default)]
+    kind: String,
+    #[serde(default)]
+    text: Option<String>,
+    /// `{type:"thinking"}` 的载荷：`[{type:"text",text:"…"}]`
+    #[serde(default)]
+    thinking: Option<Vec<ThinkingText>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ThinkingText {
+    #[serde(default)]
+    text: Option<String>,
+}
+
+impl ContentChunk {
+    /// 分块自带的思考文本；空分块返回 `None`。
+    fn thinking_text(&self) -> Option<String> {
+        let joined = self
+            .thinking
+            .as_ref()?
+            .iter()
+            .filter_map(|part| part.text.as_deref())
+            .collect::<String>();
+        (!joined.is_empty()).then_some(joined)
+    }
+
+    /// 该分块是否会下发内容。空分块不参与块状态切换。
+    fn emits_content(&self) -> bool {
+        match self.kind.as_str() {
+            "thinking" => self.thinking.as_ref().is_some_and(|parts| {
+                parts
+                    .iter()
+                    .any(|part| part.text.as_deref().is_some_and(|text| !text.is_empty()))
+            }),
+            "text" => self.text.as_deref().is_some_and(|text| !text.is_empty()),
+            _ => false,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -328,7 +381,15 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                     return;
                                 }
 
-                                if let Ok(chunk) = serde_json::from_str::<OpenAIStreamChunk>(data) {
+                                // 保留跳过，但留日志：schema 变动会让整条回答静默变空。
+                                let parsed_chunk = serde_json::from_str::<OpenAIStreamChunk>(data);
+                                if let Err(error) = &parsed_chunk {
+                                    log::debug!(
+                                        "[Claude/OpenRouter] 跳过无法解析的 SSE chunk: len={}, error={error}",
+                                        data.len()
+                                    );
+                                }
+                                if let Ok(chunk) = parsed_chunk {
                                     log::debug!("[Claude/OpenRouter] <<< SSE chunk received");
 
                                     if message_id.is_none() && !chunk.id.is_empty() {
@@ -411,11 +472,12 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                             }
                                         }
 
-                                        // 处理文本内容。content 里流首内联的 <think>/<thinking>
-                                        // 块（DeepSeek 系、MiniMax M3 等 Chat 兼容上游）先剥离为
-                                        // thinking，剩余正文按原逻辑下发。
-                                        if let Some(content) = &choice.delta.content {
-                                            if !content.is_empty() {
+                                        // 字符串 content 里流首的 thinking/<thinking> 先剥成
+                                        // thinking 块，其余按正文下发；分块数组自带类型，按序出块。
+                                        match &choice.delta.content {
+                                            Some(DeltaContent::Text(content))
+                                                if !content.is_empty() =>
+                                            {
                                                 let (thinking, text) = inline_think.push(content);
                                                 for (block_type, delta) in
                                                     [("thinking", thinking), ("text", text)]
@@ -433,6 +495,61 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                                     }
                                                 }
                                             }
+                                            // 空/未知分块不进入本分支：不下发内容，也不该切换
+                                            // 内联标签状态。
+                                            Some(DeltaContent::Chunks(chunks))
+                                                if chunks.iter().any(ContentChunk::emits_content) =>
+                                            {
+                                                // 字符串与数组会在同一条流里交替（实测：空串 →
+                                                // 思考分块 → 字符串正文）。进入分块前冲掉标签缓冲。
+                                                let (thinking, text) = inline_think.flush();
+                                                for (block_type, delta) in
+                                                    [("thinking", thinking), ("text", text)]
+                                                {
+                                                    if let Some(delta) = &delta {
+                                                        for sse_data in non_tool_block_events(
+                                                            block_type,
+                                                            delta,
+                                                            &mut next_content_index,
+                                                            &mut current_non_tool_block_type,
+                                                            &mut current_non_tool_block_index,
+                                                        ) {
+                                                            yield Ok(Bytes::from(sse_data));
+                                                        }
+                                                    }
+                                                }
+                                                for content_chunk in chunks {
+                                                    let emitted = match content_chunk.kind.as_str() {
+                                                        "thinking" => content_chunk
+                                                            .thinking_text()
+                                                            .map(|text| ("thinking", text)),
+                                                        "text" => content_chunk
+                                                            .text
+                                                            .clone()
+                                                            .filter(|text| !text.is_empty())
+                                                            .map(|text| ("text", text)),
+                                                        other => {
+                                                            log::debug!(
+                                                                "[Claude] 跳过未识别的 content 分块类型: {other}"
+                                                            );
+                                                            None
+                                                        }
+                                                    };
+                                                    let Some((block_type, delta)) = emitted else {
+                                                        continue;
+                                                    };
+                                                    for sse_data in non_tool_block_events(
+                                                        block_type,
+                                                        &delta,
+                                                        &mut next_content_index,
+                                                        &mut current_non_tool_block_type,
+                                                        &mut current_non_tool_block_index,
+                                                    ) {
+                                                        yield Ok(Bytes::from(sse_data));
+                                                    }
+                                                }
+                                            }
+                                            _ => {}
                                         }
 
                                         // 处理工具调用
@@ -2147,5 +2264,215 @@ mod tests {
         )
         .await
         .expect("a terminal response must not await another upstream chunk");
+    }
+
+    /// 真实捕获的流：2 个空串、5 个 thinking 分块、正文与 `finish_reason` 同 chunk。
+    #[tokio::test]
+    async fn test_mistral_captured_stream_yields_thinking_then_answer() {
+        let input = concat!(
+            "data: {\"id\":\"bb30db0f\",\"object\":\"chat.completion.chunk\",\"created\":1795362325,\"model\":\"deepseek-v4-1-flash-1017\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"\"},\"finish_reason\":null}]}\n\n",
+            "data: {\"id\":\"bb30db0f\",\"object\":\"chat.completion.chunk\",\"created\":1795362325,\"model\":\"deepseek-v4-1-flash-1017\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"index\":0,\"content\":\"\"},\"finish_reason\":null}]}\n\n",
+            "data: {\"id\":\"bb30db0f\",\"object\":\"chat.completion.chunk\",\"created\":1795362325,\"model\":\"deepseek-v4-1-flash-1017\",\"choices\":[{\"index\":0,\"delta\":{\"index\":0,\"content\":[{\"type\":\"thinking\",\"thinking\":[{\"type\":\"text\",\"text\":\"We\"}],\"closed\":true}]},\"finish_reason\":null}]}\n\n",
+            "data: {\"id\":\"bb30db0f\",\"object\":\"chat.completion.chunk\",\"created\":1795362325,\"model\":\"deepseek-v4-1-flash-1017\",\"choices\":[{\"index\":0,\"delta\":{\"index\":0,\"content\":[{\"type\":\"thinking\",\"thinking\":[{\"type\":\"text\",\"text\":\" need answer only number\"}],\"closed\":true}]},\"finish_reason\":null}]}\n\n",
+            "data: {\"id\":\"bb30db0f\",\"object\":\"chat.completion.chunk\",\"created\":1795362325,\"model\":\"deepseek-v4-1-flash-1017\",\"choices\":[{\"index\":0,\"delta\":{\"index\":0,\"content\":[{\"type\":\"thinking\",\"thinking\":[{\"type\":\"text\",\"text\":\". 17*23\"}],\"closed\":true}]},\"finish_reason\":null}]}\n\n",
+            "data: {\"id\":\"bb30db0f\",\"object\":\"chat.completion.chunk\",\"created\":1795362325,\"model\":\"deepseek-v4-1-flash-1017\",\"choices\":[{\"index\":0,\"delta\":{\"index\":0,\"content\":[{\"type\":\"thinking\",\"thinking\":[{\"type\":\"text\",\"text\":\" = 391. Need final\"}],\"closed\":true}]},\"finish_reason\":null}]}\n\n",
+            "data: {\"id\":\"bb30db0f\",\"object\":\"chat.completion.chunk\",\"created\":1795362325,\"model\":\"deepseek-v4-1-flash-1017\",\"choices\":[{\"index\":0,\"delta\":{\"index\":0,\"content\":[{\"type\":\"thinking\",\"thinking\":[{\"type\":\"text\",\"text\":\" only.\"}],\"closed\":true}]},\"finish_reason\":null}]}\n\n",
+            "data: {\"id\":\"bb30db0f\",\"object\":\"chat.completion.chunk\",\"created\":1795362325,\"model\":\"deepseek-v4-1-flash-1017\",\"choices\":[{\"index\":0,\"delta\":{\"index\":0,\"content\":\"391\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":43,\"total_tokens\":64,\"completion_tokens\":21,\"prompt_tokens_details\":{\"cached_tokens\":0},\"completion_tokens_details\":{\"reasoning_tokens\":18}}}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let events = collect_anthropic_events(input).await;
+        assert_eq!(
+            block_boundaries(&events),
+            vec![
+                "start:0:thinking".to_string(),
+                "stop:0".to_string(),
+                "start:1:text".to_string(),
+                "stop:1".to_string()
+            ]
+        );
+        assert_eq!(
+            collect_delta_text(&events, "thinking_delta", "/delta/thinking"),
+            "We need answer only number. 17*23 = 391. Need final only."
+        );
+        // 思考里也有 391；重复下发会变成 391391。
+        assert_eq!(
+            collect_delta_text(&events, "text_delta", "/delta/text"),
+            "391"
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event_type(event) == Some("message_delta"))
+                .filter_map(|event| event.pointer("/usage").cloned())
+                .collect::<Vec<_>>(),
+            vec![json!({"input_tokens": 43, "output_tokens": 21})]
+        );
+        let message_starts = events
+            .iter()
+            .filter(|event| event_type(event) == Some("message_start"))
+            .count();
+        assert_eq!(message_starts, 1);
+        let message_start_at = events
+            .iter()
+            .position(|event| event_type(event) == Some("message_start"))
+            .expect("message_start must be emitted");
+        let first_block_at = events
+            .iter()
+            .position(|event| event_type(event) == Some("content_block_start"))
+            .expect("a content block must be emitted");
+        assert!(message_start_at < first_block_at);
+        assert_eq!(
+            events.last().and_then(event_type),
+            Some("message_stop"),
+            "message_stop must be the last event"
+        );
+    }
+
+    /// 思考分块与工具调用同 delta：先关思考块，再开工具块。
+    #[tokio::test]
+    async fn test_mistral_thinking_and_tool_call_in_one_delta() {
+        let input = concat!(
+            "data: {\"id\":\"cmpl_mix\",\"model\":\"deepseek-v4-1-flash-1017\",\"choices\":[{\"delta\":{\"content\":[{\"type\":\"thinking\",\"thinking\":[{\"type\":\"text\",\"text\":\"plan\"}],\"closed\":true}],\"tool_calls\":[{\"index\":0,\"id\":\"call_0\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{}\"}}]}}]}\n\n",
+            "data: {\"id\":\"cmpl_mix\",\"model\":\"deepseek-v4-1-flash-1017\",\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let events = collect_anthropic_events(input).await;
+        assert_eq!(
+            block_boundaries(&events),
+            vec![
+                "start:0:thinking".to_string(),
+                "stop:0".to_string(),
+                "start:1:tool_use".to_string(),
+                "stop:1".to_string()
+            ]
+        );
+        assert_eq!(
+            collect_delta_text(&events, "thinking_delta", "/delta/thinking"),
+            "plan"
+        );
+    }
+
+    /// 空/未知分块不切换内联标签状态，后续字符串里的内联思考仍能剥离。
+    #[tokio::test]
+    async fn test_mistral_empty_or_unknown_chunks_leave_inline_state_untouched() {
+        let input = concat!(
+            "data: {\"id\":\"cmpl_e\",\"model\":\"deepseek-v4-1-flash-1017\",\"choices\":[{\"delta\":{\"content\":[{\"type\":\"text\",\"text\":\"\"}]}}]}\n\n",
+            "data: {\"id\":\"cmpl_e\",\"model\":\"deepseek-v4-1-flash-1017\",\"choices\":[{\"delta\":{\"content\":[]}}]}\n\n",
+            "data: {\"id\":\"cmpl_e\",\"model\":\"deepseek-v4-1-flash-1017\",\"choices\":[{\"delta\":{\"content\":[{\"type\":\"thinking\",\"thinking\":[]}]}}]}\n\n",
+            "data: {\"id\":\"cmpl_e\",\"model\":\"deepseek-v4-1-flash-1017\",\"choices\":[{\"delta\":{\"content\":\"<thinking>plan</thinking>answer\"}}]}\n\n",
+            "data: {\"id\":\"cmpl_e\",\"model\":\"deepseek-v4-1-flash-1017\",\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let events = collect_anthropic_events(input).await;
+        assert_eq!(
+            collect_delta_text(&events, "thinking_delta", "/delta/thinking"),
+            "plan"
+        );
+        assert_eq!(
+            collect_delta_text(&events, "text_delta", "/delta/text"),
+            "answer"
+        );
+    }
+
+    /// 仅正文分块：一个 text 块，空文本不产生 delta。
+    #[tokio::test]
+    async fn test_mistral_chunked_content_text_only_skips_empty() {
+        let input = concat!(
+            "data: {\"id\":\"cmpl_t\",\"model\":\"deepseek-v4-1-flash-1017\",\"choices\":[{\"delta\":{\"content\":[{\"type\":\"text\",\"text\":\"hello\"}]}}]}\n\n",
+            "data: {\"id\":\"cmpl_t\",\"model\":\"deepseek-v4-1-flash-1017\",\"choices\":[{\"delta\":{\"content\":[{\"type\":\"text\",\"text\":\"\"}]}}]}\n\n",
+            "data: {\"id\":\"cmpl_t\",\"model\":\"deepseek-v4-1-flash-1017\",\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let events = collect_anthropic_events(input).await;
+        assert_eq!(
+            block_boundaries(&events),
+            vec!["start:0:text".to_string(), "stop:0".to_string()]
+        );
+        let text_deltas = events
+            .iter()
+            .filter(|event| {
+                event_type(event) == Some("content_block_delta")
+                    && event.pointer("/delta/type").and_then(Value::as_str) == Some("text_delta")
+            })
+            .count();
+        assert_eq!(text_deltas, 1, "空文本分块不得产生额外的 text_delta");
+        assert_eq!(
+            collect_delta_text(&events, "text_delta", "/delta/text"),
+            "hello"
+        );
+        assert!(collect_delta_text(&events, "thinking_delta", "/delta/thinking").is_empty());
+    }
+
+    /// 未知分块夹在中间：跳过，前后内容不断块。
+    #[tokio::test]
+    async fn test_mistral_unknown_chunk_type_is_skipped_in_place() {
+        let input = concat!(
+            "data: {\"id\":\"cmpl_u\",\"model\":\"deepseek-v4-1-flash-1017\",\"choices\":[{\"delta\":{\"content\":[{\"type\":\"text\",\"text\":\"alpha\"}]}}]}\n\n",
+            "data: {\"id\":\"cmpl_u\",\"model\":\"deepseek-v4-1-flash-1017\",\"choices\":[{\"delta\":{\"content\":[{\"type\":\"image\",\"text\":\"ignored\"}]}}]}\n\n",
+            "data: {\"id\":\"cmpl_u\",\"model\":\"deepseek-v4-1-flash-1017\",\"choices\":[{\"delta\":{\"content\":[{\"type\":\"text\",\"text\":\"beta\"}]}}]}\n\n",
+            "data: {\"id\":\"cmpl_u\",\"model\":\"deepseek-v4-1-flash-1017\",\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let events = collect_anthropic_events(input).await;
+        assert_eq!(
+            block_boundaries(&events),
+            vec!["start:0:text".to_string(), "stop:0".to_string()]
+        );
+        assert_eq!(
+            collect_delta_text(&events, "text_delta", "/delta/text"),
+            "alphabeta"
+        );
+    }
+
+    /// 只有思考、没有正文：块仍需成对关闭。
+    #[tokio::test]
+    async fn test_mistral_thinking_without_answer_closes_block() {
+        let input = concat!(
+            "data: {\"id\":\"cmpl_n\",\"model\":\"deepseek-v4-1-flash-1017\",\"choices\":[{\"delta\":{\"content\":[{\"type\":\"thinking\",\"thinking\":[{\"type\":\"text\",\"text\":\"hmm\"}],\"closed\":true}]}}]}\n\n",
+            "data: {\"id\":\"cmpl_n\",\"model\":\"deepseek-v4-1-flash-1017\",\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let events = collect_anthropic_events(input).await;
+        assert_eq!(
+            block_boundaries(&events),
+            vec!["start:0:thinking".to_string(), "stop:0".to_string()]
+        );
+        assert_eq!(
+            collect_delta_text(&events, "thinking_delta", "/delta/thinking"),
+            "hmm"
+        );
+        assert!(collect_delta_text(&events, "text_delta", "/delta/text").is_empty());
+    }
+
+    /// 思考后紧跟工具调用：先关思考块，再开工具块。
+    #[tokio::test]
+    async fn test_mistral_chunked_thinking_closes_before_tool_call() {
+        let input = concat!(
+            "data: {\"id\":\"cmpl_x\",\"model\":\"deepseek-v4-1-flash-1017\",\"choices\":[{\"delta\":{\"content\":[{\"type\":\"thinking\",\"thinking\":[{\"type\":\"text\",\"text\":\"need tool\"}],\"closed\":true}]}}]}\n\n",
+            "data: {\"id\":\"cmpl_x\",\"model\":\"deepseek-v4-1-flash-1017\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_0\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{}\"}}]}}]}\n\n",
+            "data: {\"id\":\"cmpl_x\",\"model\":\"deepseek-v4-1-flash-1017\",\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let events = collect_anthropic_events(input).await;
+        assert_eq!(
+            block_boundaries(&events),
+            vec![
+                "start:0:thinking".to_string(),
+                "stop:0".to_string(),
+                "start:1:tool_use".to_string(),
+                "stop:1".to_string()
+            ]
+        );
+        assert_eq!(
+            collect_delta_text(&events, "thinking_delta", "/delta/thinking"),
+            "need tool"
+        );
     }
 }

@@ -2685,8 +2685,9 @@ export const providerPresets: ProviderPreset[] = [
     // ChatCompletionRequest 不收额外字段且没有 stream_options，转换层给流式请求
     // 加的 stream_options.include_usage 会不会被 422 拒，未经真 Key 实测。
     // Large 4 不收 reasoning_effort=none（最低 low），不发档位时是否仍推理官方
-    // 未写；推理时流式 delta.content 先是 thinking/text 分块数组，转换层只认
-    // 字符串，正文可能丢。/v1/models 无 Key 401，默认探测即可，不写 modelsUrl。
+    // 未写；推理时流式 delta.content 是 thinking/text 分块数组，Claude 路由已按
+    // 分块解析（Codex 路由仍只认字符串）。/v1/models 无 Key 401，默认探测即可，
+    // 不写 modelsUrl。
     // 以上风险未经真 Key 冒烟，2026-11-06 起照常展示（不再隐藏）
     settingsConfig: {
       env: {
