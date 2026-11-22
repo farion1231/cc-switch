@@ -1,0 +1,3 @@
+00 launch | home 1ad59f71dbec
+01 ui.click button "Codex" in group "Apps" in navigation "Main navigation" | home 1ad59f71dbec
+02 ui.click button "Switch" in group "Beta Relay" in main "" | home fabd51d23567

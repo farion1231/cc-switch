@@ -1,0 +1,57 @@
+{
+  "recipe": "352802aeb3d213b80627d09b21e8676a31b82e711aaf0722135d503ad827226f",
+  "entries": {
+    ".cc-switch": {
+      "kind": "dir",
+      "mode": "-"
+    },
+    ".cc-switch/backups": {
+      "kind": "dir",
+      "mode": "-"
+    },
+    ".cc-switch/backups/live-first-write": {
+      "kind": "dir",
+      "mode": "-"
+    },
+    ".cc-switch/backups/live-first-write/685cd469451f-settings.json.source": {
+      "kind": "file",
+      "mode": "-"
+    },
+    ".cc-switch/backups/live-first-write/954406d4a4af-.env.source": {
+      "kind": "file",
+      "mode": "-"
+    },
+    ".cc-switch/cc-switch.db": {
+      "kind": "file",
+      "mode": "-"
+    },
+    ".cc-switch/codex-catalog-history.json": {
+      "kind": "file",
+      "mode": "-"
+    },
+    ".cc-switch/live-state.json": {
+      "kind": "file",
+      "mode": "-"
+    },
+    ".cc-switch/model-pricing.json": {
+      "kind": "file",
+      "mode": "-"
+    },
+    ".cc-switch/settings.json": {
+      "kind": "file",
+      "mode": "-"
+    },
+    ".gemini": {
+      "kind": "dir",
+      "mode": "-"
+    },
+    ".gemini/.env": {
+      "kind": "file",
+      "mode": "-"
+    },
+    ".gemini/settings.json": {
+      "kind": "file",
+      "mode": "-"
+    }
+  }
+}

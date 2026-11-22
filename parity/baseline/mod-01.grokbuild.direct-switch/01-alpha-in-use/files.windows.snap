@@ -1,0 +1,126 @@
+dir .cc-switch -
+dir .cc-switch/backups -
+opaque .cc-switch/backups/db_backup_20310314_090000.db -
+dir .cc-switch/backups/live-first-write -
+file .cc-switch/backups/live-first-write/1b083f516584-config.toml.source - lf no-final-newline
+  | <HOME>\.grok\config.toml
+opaque .cc-switch/cc-switch.db -
+file .cc-switch/codex-catalog-history.json - lf no-final-newline
+  | [
+  |   {
+  |     "fingerprint": "none",
+  |     "sinceMs": 1931158800000
+  |   }
+  | ]
+file .cc-switch/live-state.json - lf no-final-newline
+  | {
+  |   "version": 1,
+  |   "apps": {
+  |     "claude": {
+  |       "mode": "direct"
+  |     },
+  |     "claude-desktop": {
+  |       "mode": "direct"
+  |     },
+  |     "codex": {
+  |       "mode": "direct"
+  |     },
+  |     "gemini": {
+  |       "mode": "direct"
+  |     },
+  |     "grokbuild": {
+  |       "mode": "direct",
+  |       "written": {
+  |         "tables": [
+  |           "grok-4.7"
+  |         ]
+  |       }
+  |     }
+  |   }
+  | }
+dir .cc-switch/logs -
+opaque .cc-switch/logs/cc-switch.log -
+file .cc-switch/model-pricing.json - lf
+  | {
+  |   "version": 1,
+  |   "modelsDevSync": {
+  |     "autoSyncEnabled": true,
+  |     "includeCommonModels": true,
+  |     "selectedModelKeys": [],
+  |     "excludedCommonModelKeys": [],
+  |     "lastSyncAt": null,
+  |     "lastSyncError": "Request to models.dev failed: error sending request: client error (Connect): tcp connect error: An attempt was made to access a socket in a way forbidden by its access permissions. (os error 10013)"
+  |   },
+  |   "models": [],
+  |   "deletedModelIds": []
+  | }
+file .cc-switch/settings.json - lf no-final-newline
+  | {
+  |   "showInTray": true,
+  |   "minimizeToTrayOnClose": true,
+  |   "useAppWindowControls": false,
+  |   "enableClaudePluginIntegration": false,
+  |   "skipClaudeOnboarding": false,
+  |   "launchOnStartup": false,
+  |   "silentStartup": false,
+  |   "lightweightMode": false,
+  |   "enableLocalProxy": false,
+  |   "enableStackMode": false,
+  |   "sessionAutoSyncEnabled": true,
+  |   "sessionContentSearchEnabled": false,
+  |   "enableFailoverToggle": false,
+  |   "showProfileSwitcher": false,
+  |   "showProviderSearch": true,
+  |   "checkToolUpdatesOnStartup": false,
+  |   "autoUpdateEnabled": false,
+  |   "nativeTrayMenu": false,
+  |   "preserveCodexOfficialAuthOnSwitch": false,
+  |   "codexQuotaProtection": {
+  |     "enabled": true,
+  |     "fiveHourThreshold": 95,
+  |     "weeklyThreshold": 98
+  |   },
+  |   "codexProxyWithoutOfficialLogin": false,
+  |   "unifyCodexSessionHistory": false,
+  |   "codexStackClassicTools": true,
+  |   "firstRunNoticeConfirmed": true,
+  |   "newLayoutNoticeConfirmed": true,
+  |   "whatsNewSeenVersion": "4.0.37",
+  |   "currentProviderGrokbuild": "<uuid:1>",
+  |   "skillSyncMethod": "auto",
+  |   "skillStorageLocation": "cc_switch",
+  |   "localMigrations": {
+  |     "codexThirdPartyHistoryProviderBucketV1": {
+  |       "completedAt": "2031-03-13T09:00:00+00:00",
+  |       "targetProviderId": "custom",
+  |       "migratedJsonlFiles": 0,
+  |       "migratedStateRows": 0,
+  |       "scannedHistoryFiles": true
+  |     },
+  |     "codexProviderTemplateV1": {
+  |       "completedAt": "2031-03-13T09:00:00+00:00"
+  |     },
+  |     "codexLegacyOfficialHistoryBucketV1": {
+  |       "completedAt": "2031-03-13T09:00:00+00:00",
+  |       "targetProviderId": "openai",
+  |       "migratedJsonlFiles": 0,
+  |       "migratedStateRows": 0,
+  |       "codexConfigDir": "<HOME>\\.codex"
+  |     },
+  |     "codexQuotaProtectionDefaultOnV1": true
+  |   }
+  | }
+dir .grok -
+file .grok/config.toml - lf
+  | [models]
+  | default = "grok-4.7"
+  | session_summary = "grok-4.7"
+  | 
+  | [model."grok-4.7"]
+  | model = "grok-4.7"
+  | base_url = "https://alpha.relay.example/v1"
+  | name = "Alpha Relay"
+  | api_backend = "responses"
+  | context_window = 500000
+  | api_key = "sk-parity-alpha"
+opaque-dir AppData/Local/com.ccswitch.desktop -

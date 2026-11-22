@@ -1,0 +1,81 @@
+{
+  "recipe": "d602430ae19e51b9bf616c8449e3df1a21c6cbcdb95ca44a90e0b273d5f86ced",
+  "entries": {
+    ".cc-switch": {
+      "kind": "dir",
+      "mode": "-"
+    },
+    ".cc-switch/backups": {
+      "kind": "dir",
+      "mode": "-"
+    },
+    ".cc-switch/backups/live-first-write": {
+      "kind": "dir",
+      "mode": "-"
+    },
+    ".cc-switch/backups/live-first-write/54b1fd748735-00000000-0000-4000-8000-000000157210.json.source": {
+      "kind": "file",
+      "mode": "-"
+    },
+    ".cc-switch/backups/live-first-write/6a152e762fef-_meta.json.source": {
+      "kind": "file",
+      "mode": "-"
+    },
+    ".cc-switch/backups/live-first-write/afcd57c0103d-claude_desktop_config.json.source": {
+      "kind": "file",
+      "mode": "-"
+    },
+    ".cc-switch/backups/live-first-write/e126b34e9eab-claude_desktop_config.json.source": {
+      "kind": "file",
+      "mode": "-"
+    },
+    ".cc-switch/cc-switch.db": {
+      "kind": "file",
+      "mode": "-"
+    },
+    ".cc-switch/codex-catalog-history.json": {
+      "kind": "file",
+      "mode": "-"
+    },
+    ".cc-switch/live-state.json": {
+      "kind": "file",
+      "mode": "-"
+    },
+    ".cc-switch/model-pricing.json": {
+      "kind": "file",
+      "mode": "-"
+    },
+    ".cc-switch/settings.json": {
+      "kind": "file",
+      "mode": "-"
+    },
+    "AppData/Local/Claude": {
+      "kind": "dir",
+      "mode": "-"
+    },
+    "AppData/Local/Claude/claude_desktop_config.json": {
+      "kind": "file",
+      "mode": "-"
+    },
+    "AppData/Local/Claude-3p": {
+      "kind": "dir",
+      "mode": "-"
+    },
+    "AppData/Local/Claude-3p/claude_desktop_config.json": {
+      "kind": "file",
+      "mode": "-"
+    },
+    "AppData/Local/Claude-3p/configLibrary": {
+      "kind": "dir",
+      "mode": "-"
+    },
+    "AppData/Local/Claude-3p/configLibrary/00000000-0000-4000-8000-000000157210.json": {
+      "kind": "file",
+      "mode": "-"
+    },
+    "AppData/Local/Claude-3p/configLibrary/_meta.json": {
+      "kind": "file",
+      "mode": "-"
+    }
+  }
+}

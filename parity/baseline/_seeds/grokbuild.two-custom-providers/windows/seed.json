@@ -1,0 +1,49 @@
+{
+  "recipe": "3b80de72671d5511f5c1d1cfb8a5d1638f5875c5f6b635dea41d7efafe9fbe7c",
+  "entries": {
+    ".cc-switch": {
+      "kind": "dir",
+      "mode": "-"
+    },
+    ".cc-switch/backups": {
+      "kind": "dir",
+      "mode": "-"
+    },
+    ".cc-switch/backups/live-first-write": {
+      "kind": "dir",
+      "mode": "-"
+    },
+    ".cc-switch/backups/live-first-write/1b083f516584-config.toml.source": {
+      "kind": "file",
+      "mode": "-"
+    },
+    ".cc-switch/cc-switch.db": {
+      "kind": "file",
+      "mode": "-"
+    },
+    ".cc-switch/codex-catalog-history.json": {
+      "kind": "file",
+      "mode": "-"
+    },
+    ".cc-switch/live-state.json": {
+      "kind": "file",
+      "mode": "-"
+    },
+    ".cc-switch/model-pricing.json": {
+      "kind": "file",
+      "mode": "-"
+    },
+    ".cc-switch/settings.json": {
+      "kind": "file",
+      "mode": "-"
+    },
+    ".grok": {
+      "kind": "dir",
+      "mode": "-"
+    },
+    ".grok/config.toml": {
+      "kind": "file",
+      "mode": "-"
+    }
+  }
+}

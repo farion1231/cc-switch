@@ -1,0 +1,49 @@
+{
+  "recipe": "43633706e665b21aa1559faec55816ee9bcf2d8814531fd969ed127c159754ea",
+  "entries": {
+    ".cc-switch": {
+      "kind": "dir",
+      "mode": "-"
+    },
+    ".cc-switch/backups": {
+      "kind": "dir",
+      "mode": "-"
+    },
+    ".cc-switch/backups/live-first-write": {
+      "kind": "dir",
+      "mode": "-"
+    },
+    ".cc-switch/backups/live-first-write/23911ae47cc1-settings.json.source": {
+      "kind": "file",
+      "mode": "-"
+    },
+    ".cc-switch/cc-switch.db": {
+      "kind": "file",
+      "mode": "-"
+    },
+    ".cc-switch/codex-catalog-history.json": {
+      "kind": "file",
+      "mode": "-"
+    },
+    ".cc-switch/live-state.json": {
+      "kind": "file",
+      "mode": "-"
+    },
+    ".cc-switch/model-pricing.json": {
+      "kind": "file",
+      "mode": "-"
+    },
+    ".cc-switch/settings.json": {
+      "kind": "file",
+      "mode": "-"
+    },
+    ".claude": {
+      "kind": "dir",
+      "mode": "-"
+    },
+    ".claude/settings.json": {
+      "kind": "file",
+      "mode": "-"
+    }
+  }
+}
