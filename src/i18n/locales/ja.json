@@ -3517,6 +3517,7 @@
       "skillDirNotFound": "スキルディレクトリが見つかりません: {{path}}",
       "directoryConflict": "スキルディレクトリ '{{directory}}' は既に {{existing_repo}} で使用されています。{{new_repo}} からインストールできません",
       "emptyArchive": "ダウンロードしたアーカイブが空です",
+      "archiveInvalid": "ダウンロードしたものは ZIP アーカイブではありません。このサイトは GitHub / GitLab / Gitea のリポジトリではない可能性があり、現在はサポートされていません",
       "invalidRepoRef": "リポジトリの指定が不正です：{{owner}}/{{name}}",
       "archiveTooLarge": "アーカイブが展開上限 {{limit_mb}} MB を超えたため中止しました",
       "archiveDownloadTooLarge": "リポジトリのアーカイブがダウンロード上限 {{limit_mb}} MB を超えたため中止しました",

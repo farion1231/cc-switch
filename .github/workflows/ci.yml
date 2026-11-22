@@ -197,7 +197,7 @@ jobs:
         run: mkdir -p dist
 
       - name: Clippy
-        run: cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 
       # 每个测试一个进程，单测超时见 src-tauri/.config/nextest.toml。doctest 目前只有两个
       # ignored，nextest 不跑 doctest 也不漏。

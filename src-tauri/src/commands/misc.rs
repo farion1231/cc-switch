@@ -1,5 +1,3 @@
-#![allow(non_snake_case)]
-
 use crate::init_status::{InitErrorPayload, SkillsMigrationPayload};
 use indexmap::IndexSet;
 use regex::Regex;

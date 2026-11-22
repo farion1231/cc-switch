@@ -3517,6 +3517,7 @@
       "skillDirNotFound": "Skill directory not found: {{path}}",
       "directoryConflict": "Skill directory '{{directory}}' is already occupied by {{existing_repo}}, cannot install from {{new_repo}}",
       "emptyArchive": "Downloaded archive is empty",
+      "archiveInvalid": "The download isn't a ZIP archive: this site may not be a GitHub / GitLab / Gitea repository, which isn't supported yet",
       "invalidRepoRef": "Invalid repository reference: {{owner}}/{{name}}",
       "archiveTooLarge": "Archive exceeds the {{limit_mb}} MB extraction limit; aborted",
       "archiveDownloadTooLarge": "Repository archive download exceeds the {{limit_mb}} MB limit; aborted",
