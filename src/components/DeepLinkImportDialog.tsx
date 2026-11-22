@@ -150,10 +150,12 @@ export function DeepLinkImportDialog() {
         try {
           next = await deeplinkApi.mergeDeeplinkConfig(incoming);
         } catch (error) {
+          if (disposed) return false;
           console.error("Failed to merge config:", error);
           toast.error(tRef.current("deeplink.configMergeError"), {
             description: error instanceof Error ? error.message : String(error),
           });
+          return true;
         }
       }
       if (disposed) return false;

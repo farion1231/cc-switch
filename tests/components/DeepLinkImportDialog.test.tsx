@@ -15,6 +15,7 @@ import { server } from "../msw/server";
 import { peekPendingDeepLink, setPendingDeepLink } from "../msw/state";
 import { pngDataUri } from "../fixtures/customIcon";
 import { toast } from "@/lib/toast";
+import { deeplinkApi } from "@/lib/api/deeplink";
 
 // jsdom 没有 canvas，重新编码这一步换成可控的假实现
 const { normalizeIconDataUri } = vi.hoisted(() => ({
@@ -921,6 +922,47 @@ describe("DeepLinkImportDialog", () => {
       await waitFor(() => expect(dialog).toHaveAttribute("data-open", "false"));
       expect(imported).toEqual(["First Provider", "Second Provider"]);
     });
+  });
+
+  it("skips confirmation dialog when config merge fails", async () => {
+    const failure = vi.spyOn(toast, "error");
+    const ackSpy = vi.spyOn(deeplinkApi, "ackPendingDeeplink");
+    server.use(
+      http.post("http://tauri.local/merge_deeplink_config", () =>
+        HttpResponse.json({ message: "Merge failed" }, { status: 500 }),
+      ),
+    );
+
+    try {
+      render(<DeepLinkImportDialog />, { wrapper: Wrapper });
+
+      act(() => {
+        deliverDeepLink({
+          version: "v1",
+          resource: "provider",
+          app: "claude",
+          name: "Bad Merge",
+          endpoint: "https://api.example.com",
+          apiKey: "sk-provider-key",
+          config: btoa('{"env":{}}'),
+        });
+      });
+
+      await waitFor(() => expect(failure).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(ackSpy).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(peekPendingDeepLink()).toBeNull());
+
+      expect(failure).toHaveBeenCalledWith("deeplink.configMergeError", {
+        description: expect.stringContaining("Merge failed"),
+      });
+      const dialog = screen.getByTestId("deeplink-dialog");
+      expect(dialog).toHaveAttribute("data-open", "false");
+      expect(screen.queryByRole("heading")).not.toBeInTheDocument();
+      expect(screen.queryByText("Bad Merge")).not.toBeInTheDocument();
+    } finally {
+      failure.mockRestore();
+      ackSpy.mockRestore();
+    }
   });
 });
 
