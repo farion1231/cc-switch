@@ -3844,6 +3844,8 @@ fn desktop_card(id: &str, mapping: bool) -> Provider {
                 model: upstream.to_string(),
                 label_override: None,
                 supports_1m: None,
+                max_effort: None,
+                enabled: None,
             },
         )]
         .into_iter()
@@ -3984,19 +3986,11 @@ async fn claude_desktop_native_direct_card_can_enter_routing_before_becoming_a_m
     assert!(profile["inferenceGatewayBaseUrl"]
         .as_str()
         .is_some_and(|url| url.ends_with("/claude-desktop")));
-    let models = profile["inferenceModels"]
-        .as_array()
-        .expect("default native model routes");
-    assert_eq!(
-        profile["inferenceModels"],
-        json!([
-            "claude-sonnet-5",
-            "claude-opus-5",
-            "claude-fable-5",
-            "claude-haiku-4-5"
-        ])
+    // 没存模型映射：不写模型列表，Desktop 里那份归用户；请求按原样直通。
+    assert!(
+        profile.get("inferenceModels").is_none(),
+        "a card without a saved mapping must not get a written model list: {profile}"
     );
-    assert!(models.iter().all(Value::is_string), "no synthetic 1M claim");
 
     let stored_native = state
         .db
@@ -4026,6 +4020,8 @@ async fn claude_desktop_native_direct_card_can_enter_routing_before_becoming_a_m
             model: "edited-native-model".to_string(),
             label_override: None,
             supports_1m: None,
+            max_effort: None,
+            enabled: None,
         },
     )]
     .into_iter()
