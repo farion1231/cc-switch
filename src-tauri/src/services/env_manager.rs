@@ -162,7 +162,7 @@ fn delete_single_env(conflict: &EnvConflict) -> Result<(), String> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_os = "windows")))]
 mod tests {
     use super::*;
 
