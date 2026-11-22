@@ -204,6 +204,10 @@ module.exports = {
           { lineHeight: "var(--lh-page)", fontWeight: "600" },
         ],
         metric: ["24px", { lineHeight: "32px", fontWeight: "600" }],
+        // 名称下面的补充说明（设置项的说明、应用页的安装路径 / 新版本号等）：不随密度变，
+        // 舒适密度下比名称（14px）小 2px，配 text-fg-3。
+        // 和名称只靠字重区分不行：微软雅黑没有 500 字重，Windows 上名称和说明会一样粗
+        hint: ["12px", { lineHeight: "18px" }],
         // 还没迁到字体角色的 text-xs 跟着辅助字放大，免得舒适密度下它比正文小两档
         xs: ["var(--fs-xs)", { lineHeight: "var(--lh-xs)" }],
       },

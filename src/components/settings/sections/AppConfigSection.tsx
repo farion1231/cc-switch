@@ -111,12 +111,7 @@ export function AppConfigSection({
               <>
                 <SettingsSwitchRow
                   label={t("settings.enableClaudePluginIntegration")}
-                  help={{
-                    title: t("settings.enableClaudePluginIntegration"),
-                    body: t(
-                      "settings.enableClaudePluginIntegrationDescription",
-                    ),
-                  }}
+                  summary={t("settings.enableClaudePluginIntegrationSummary")}
                   checked={!!settings.enableClaudePluginIntegration}
                   onCheckedChange={(value) =>
                     void onAutoSave({ enableClaudePluginIntegration: value })
@@ -124,6 +119,7 @@ export function AppConfigSection({
                 />
                 <SettingsSwitchRow
                   label={t("settings.skipClaudeOnboarding")}
+                  summary={t("settings.skipClaudeOnboardingSummary")}
                   help={{
                     title: t("settings.skipClaudeOnboarding"),
                     body: t("settings.skipClaudeOnboardingDescription"),
