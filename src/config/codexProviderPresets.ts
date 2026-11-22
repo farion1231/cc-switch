@@ -584,6 +584,29 @@ requires_openai_auth = true`,
     icon: "pateway",
   },
   {
+    name: "Modelflare",
+    websiteUrl: "https://modelflare.dev",
+    apiKeyUrl:
+      "https://modelflare.dev/sign-up?utm_medium=referral&utm_source=ccswitch",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    // 官方 Codex 文档（docs.modelflare.dev/guides/clients/codex，2026-10-15
+    // 核对）：base 为 /v1、wire_api = "responses"、默认 gpt-5.6-sol；
+    // 目录（modelflare.dev/api/pricing，2026-10-24）已有 gpt-6.1-sol，默认随之上调
+    config: generateThirdPartyConfig(
+      "modelflare",
+      "https://modelflare.dev/v1",
+      "gpt-6.1-sol",
+    ),
+    endpointCandidates: [
+      "https://modelflare.dev/v1",
+      "https://origin.modelflare.dev/v1",
+    ],
+    isPartner: true,
+    partnerPromotionKey: "modelflare",
+    icon: "modelflare",
+  },
+  {
     name: "hao.ai",
     websiteUrl: "https://hao.ai",
     apiKeyUrl: "https://hao.ai/invite/DTBZS3OR",
@@ -1593,29 +1616,6 @@ requires_openai_auth = true`,
     isPartner: true,
     partnerPromotionKey: "xycai",
     icon: "xycai",
-  },
-  {
-    name: "Modelflare",
-    websiteUrl: "https://modelflare.dev",
-    apiKeyUrl:
-      "https://modelflare.dev/sign-up?utm_medium=referral&utm_source=ccswitch",
-    category: "aggregator",
-    auth: generateThirdPartyAuth(""),
-    // 官方 Codex 文档（docs.modelflare.dev/guides/clients/codex，2026-10-15
-    // 核对）：base 为 /v1、wire_api = "responses"、默认 gpt-5.6-sol；
-    // 目录（modelflare.dev/api/pricing，2026-10-24）已有 gpt-6.1-sol，默认随之上调
-    config: generateThirdPartyConfig(
-      "modelflare",
-      "https://modelflare.dev/v1",
-      "gpt-6.1-sol",
-    ),
-    endpointCandidates: [
-      "https://modelflare.dev/v1",
-      "https://origin.modelflare.dev/v1",
-    ],
-    isPartner: true,
-    partnerPromotionKey: "modelflare",
-    icon: "modelflare",
   },
   {
     name: "AllTokens",

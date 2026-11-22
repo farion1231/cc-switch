@@ -204,7 +204,7 @@ const fullCommand = (call: ToolCallBlock) => {
   if (call.inputPreview.length < call.inputTotalLen) return null;
   try {
     const input = JSON.parse(call.inputPreview) as Record<string, unknown>;
-    for (const key of ["command", "cmd", "script"]) {
+    for (const key of ["command", "cmd", "script", "CommandLine"]) {
       const value = input[key];
       if (typeof value === "string") return value;
       if (Array.isArray(value) && value.every((v) => typeof v === "string")) {
@@ -297,11 +297,12 @@ const DiffSection = ({ call }: { call: ToolCallBlock }) => {
     () => (diff?.full ? null : buildInputDiff(call)),
     [call, diff?.full],
   );
-  if (!diff && !inputDiff) return null;
+  const hasFileList = Boolean(diff && diff.files.length > 1);
+  if (!hasFileList && !diff?.full && !inputDiff) return null;
 
   return (
     <Section label={rt("diff")}>
-      {diff && diff.files.length > 1 && (
+      {hasFileList && diff && (
         <ul className="m-0 mb-1.5 list-none space-y-0.5 p-0 font-mono text-caption text-fg-2">
           {diff.files.map((file) => (
             <li key={file.path} className="flex items-center gap-1.5">
@@ -360,15 +361,17 @@ export const SessionStepDetails = memo(function SessionStepDetails({
   const failure = isFailureStatus(status);
 
   const command = call?.kind === "shell" ? fullCommand(call) : null;
-  const showCommand = Boolean(command && command.trim() !== call?.title.trim());
-  // shell 一般直接显示完整命令；但参数超过预览上限时取不到全文，
-  // 这时也给出「参数」区，按需加载完整参数（否则只剩最多 200 字的标题）
+  const hasCommand = Boolean(command && command.trim() !== "");
+  const showCommand = Boolean(
+    hasCommand && command!.trim() !== call?.title.trim(),
+  );
+  // shell 一般直接显示完整命令；参数超过预览上限或不含命令字段（如 manage_task）时给出「参数」区
   const shellTruncated =
     call?.kind === "shell" && call.inputPreview.length < call.inputTotalLen;
   const hasParams =
     Boolean(call) &&
     call!.inputPreview.trim() !== "" &&
-    (call!.kind !== "shell" || shellTruncated);
+    (call!.kind !== "shell" || !hasCommand || shellTruncated);
 
   const output = result && (result.preview || result.totalLen > 0) && (
     <BlockText

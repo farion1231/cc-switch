@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extractProviderBaseUrl } from "@/utils/providerConfigUtils";
+import { extractProviderBaseUrl } from "@/utils/codexConfigUtils";
 
 describe("extractProviderBaseUrl", () => {
   it.each([

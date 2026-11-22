@@ -202,6 +202,8 @@
       "extraArgsPlaceholder": "z. B. --debug --append-system-prompt \"Be brief\"",
       "extraArgsHint": "Wird nur für dieses Terminal hinter den Startbefehl gesetzt. Mit Leerzeichen trennen; Werte mit Leerzeichen in Anführungszeichen setzen.",
       "agySwitchTitle": "Dadurch wird die Anmeldung von agy gewechselt",
+      "agyBindingMissing": "Das mit dieser Karte verknüpfte Antigravity-Konto fehlt auf diesem Computer. Füge es unter „Konten“ hinzu oder verwende für diesen Start die aktuelle agy-Anmeldung.",
+      "agyUseCurrentLogin": "Aktuelle agy-Anmeldung für diesen Start verwenden",
       "agySwitchBody": "Vor dem Öffnen wechselt die Anmeldung von agy zu {{account}}; danach gestartete agy-Sitzungen verwenden dieses Konto.",
       "agySwitchRunning": "agy läuft: Geöffnete agy-Sitzungen behalten das vorherige Konto und schreiben es möglicherweise zurück. Beenden Sie sie nach Möglichkeit zuerst.",
       "isolationBodyCopilot": "copilot startet in diesem Terminal mit --model auf das erste Modell von „{{name}}“, nur für diese Sitzung. Endpunkt und Schlüssel stammen aus der providers.json von Copilot, daher können andere Terminals es ebenfalls mit /model auswählen."
@@ -378,6 +380,7 @@
     "openclawModelNotFound": "Das ausgewählte Modell existiert nicht mehr. Aktualisieren Sie die Ansicht und versuchen Sie es erneut.",
     "backfillWarning": "Wechsel erfolgreich, aber die Änderungen konnten nicht im vorherigen Anbieter gespeichert werden",
     "codexAuthCleanupFailed": "Wechsel erfolgreich, aber auth.json konnte nicht entfernt werden – die Zugangsdaten der offiziellen Anmeldung liegen weiterhin auf der Festplatte; löschen Sie auth.json im Codex-Konfigurationsordner, um sie zu entfernen",
+    "omoVariantCleanupFailed": "Erfolgreich gewechselt, aber die Konfigurationsdatei der anderen OMO-Variante (OMO / OMO Slim) konnte nicht entfernt werden, daher lädt OpenCode möglicherweise beide; lösche sie im OpenCode-Konfigurationsverzeichnis",
     "windowControlFailed": "Fenstersteuerung fehlgeschlagen: {{error}}",
     "officialBlockedByProxy": "Bei aktivem lokalem Routing ist kein Wechsel zu einem offiziellen Anbieter möglich. Die Nutzung von Routing mit offiziellen APIs kann zur Sperrung des Kontos führen.",
     "proxyOfficialWarning": "Der aktuelle Anbieter {{name}} ist offiziell. Erwägen Sie den Wechsel zu einem Drittanbieter, bevor Sie das lokale Routing verwenden.",
@@ -463,8 +466,7 @@
     "tabProxy": "Routing",
     "authCenter": {
       "description": "Nutzen Sie GitHub-Copilot-, ChatGPT- und xAI-Abonnements als Anbieter. Der Routing-Dienst fügt deren Zugangsdaten ein, daher laufen diese Anbieter im Routing-Modus (außer bei der Bindung an die offizielle Codex-Anmeldung). Antigravity-Konten wechseln die offizielle Anmeldung von agy.",
-      "beta": "Beta",
-      "xaiOauthDescription": "xAI-/Grok-Konten verwalten"
+      "beta": "Beta"
     },
     "advanced": {
       "configDir": {
@@ -1121,7 +1123,6 @@
       "pricingModelSourceLabel": "Quelle des Preismodells",
       "pricingModelSourceRequest": "Anfragemodell",
       "pricingModelSourceResponse": "Antwortmodell",
-      "pricingSave": "Preis-Standardwerte speichern",
       "pricingSaved": "Preis-Standardwerte gespeichert",
       "pricingSaveFailed": "Preis-Standardwerte konnten nicht gespeichert werden: {{error}}",
       "pricingLoadFailed": "Preis-Standardwerte konnten nicht geladen werden: {{error}}"
@@ -1452,6 +1453,7 @@
     "contentSearchToggle": "Nachrichtentext durchsuchen",
     "contentSearchToggleFailed": "Die Einstellung für die Nachrichtentextsuche konnte nicht geändert werden: {{error}}",
     "contentIndexing": "Nachrichtentext wird indiziert ({{processed}}/{{total}}). Texttreffer sind möglicherweise unvollständig",
+    "contentSearchFailed": "Textsuche fehlgeschlagen; derzeit kann nur in Titeln, Ordnern und der ersten/letzten Nachricht gesucht werden",
     "contentHitPrefix": "Text: ",
     "contentHitMore": " ({{count}} Nachrichten passen)",
     "moreContentHits": "Weitere Texttreffer",
@@ -2534,8 +2536,8 @@
     "input": "Eingabe",
     "output": "Ausgabe",
     "cacheWrite": "Erstellung",
-    "cacheWriteNotReported": "Das OpenAI-Protokoll unterscheidet die Cache-Erstellung nicht; nur Cache-Treffer werden gemeldet",
-    "cacheWritePartial": "Einige Protokolle (z. B. OpenAI) melden die Cache-Erstellung nicht; der Wert kann unvollständig sein",
+    "cacheWriteNotReported": "Gemini und Grok Build melden die Cache-Erstellung nicht; nur Cache-Treffer werden gemeldet",
+    "cacheWritePartial": "Einige Protokolle (z. B. Gemini) melden die Cache-Erstellung nicht; der Wert kann unvollständig sein",
     "cacheRead": "Treffer",
     "baseCost": "Basis",
     "costMultiplier": "Kostenmultiplikator",
@@ -2676,7 +2678,7 @@
       "label": "Kennzahlen",
       "more": "Weitere Kennzahlen",
       "realTotalHelpTitle": "Wie die Token-Gesamtzahl berechnet wird",
-      "realTotalHelp": "Neue Eingabe + Ausgabe + Cache-Schreibvorgänge + Cache-Treffer. Die neue Eingabe schließt den Cache aus; einige Protokolle (etwa OpenAI) melden keine Cache-Schreibvorgänge, daher kann dieser Anteil zu niedrig ausfallen.",
+      "realTotalHelp": "Neue Eingabe + Ausgabe + Cache-Schreibvorgänge + Cache-Treffer. Die neue Eingabe schließt den Cache aus; einige Protokolle (etwa Gemini) melden keine Cache-Schreibvorgänge, daher kann dieser Anteil zu niedrig ausfallen.",
       "hitRateHelpTitle": "Wie die Cache-Trefferquote berechnet wird",
       "hitRateHelp": "Cache-Treffer ÷ (neue Eingabe + Cache-Schreibvorgänge + Cache-Treffer)."
     },
@@ -2711,14 +2713,14 @@
     "speedValue": "{{value}} Token/s",
     "speedEstimatedValue": "≈ {{value}} Token/s",
     "speedHelpTitle": "Wie die Geschwindigkeit berechnet wird",
-    "speedHelp": "Ausgabe-Token pro Sekunde, vom ersten Token bis zum Ende. Es zählen nur Anfragen über den Routing-Dienst mit mindestens 100 Ausgabe-Token; bei Modellen, die ihr Reasoning verbergen, ist es ein Näherungswert. Ein Wert mit ≈ wird bei ausgeschaltetem Routing aus den Zeitstempeln der Sitzungsprotokolle geschätzt: Die Wartezeit auf das erste Token ist enthalten, daher fällt die Zahl niedrig aus. Geschätzt werden nur Anfragen mit mindestens 200 Ausgabe-Token.",
+    "speedHelp": "Ausgabe-Token pro Sekunde, vom ersten Token bis zum Ende. Es zählen Anfragen über den Routing-Dienst oder mit nativer Antigravity-Zeitmessung und mindestens 100 Ausgabe-Token; bei Modellen, die ihr Reasoning verbergen, ist es ein Näherungswert. Ein Wert mit ≈ wird aus anderen Sitzungsprotokoll-Zeitstempeln geschätzt: Die Wartezeit auf das erste Token ist enthalten, daher fällt die Zahl niedrig aus. Geschätzt werden nur Anfragen mit mindestens 200 Ausgabe-Token.",
     "speedSumHelpTitle": "Wie die Gesamtgeschwindigkeit berechnet wird",
-    "speedSumHelp": "Ausgabe-Token insgesamt geteilt durch die gesamte Generierungszeit, nicht der Durchschnitt der Einzelgeschwindigkeiten, damit kurze Anfragen das Ergebnis nicht verzerren. Es zählen nur Anfragen über den Routing-Dienst mit mindestens 100 Ausgabe-Token. Ein Wert mit ≈ wird aus Sitzungsprotokollen geschätzt (er enthält die Wartezeit auf das erste Token, und es zählen nur Anfragen mit mindestens 200 Ausgabe-Token) und nur angezeigt, wenn die Zeile keine gerouteten Daten hat.",
+    "speedSumHelp": "Ausgabe-Token insgesamt geteilt durch die gesamte Generierungszeit, nicht der Durchschnitt der Einzelgeschwindigkeiten, damit kurze Anfragen das Ergebnis nicht verzerren. Es zählen Anfragen über den Routing-Dienst oder mit nativer Antigravity-Zeitmessung und mindestens 100 Ausgabe-Token. Ein Wert mit ≈ wird aus anderen Sitzungsprotokollen geschätzt (er enthält die Wartezeit auf das erste Token, und es zählen nur Anfragen mit mindestens 200 Ausgabe-Token) und nur angezeigt, wenn die Zeile keine exakten Zeitdaten hat.",
     "firstToken": "Erstes Token",
     "firstTokenHelpTitle": "Zeit bis zum ersten Token",
-    "firstTokenHelp": "Zeit vom Eingang der Anfrage beim Routing-Dienst, bis der Upstream mit der Ausgabe beginnt. Ein Wert mit ≈ wird bei ausgeschaltetem Routing aus den Zeitstempeln der Sitzungsprotokolle abgeleitet: Er beginnt mit dem Schreiben der vorherigen Protokollzeile, enthält also die Anfragevorbereitung des Clients selbst und fällt hoch aus. Claude Code liefert einen nur, wenn die Antwort mit Denken beginnt; Codex nur mit neueren Protokollen und nicht, wenn die Antwort mit einem Tool-Aufruf beginnt.",
+    "firstTokenHelp": "Zeit vom Senden der Anfrage bis zum Beginn der Upstream-Ausgabe, gemessen vom Routing-Dienst oder der nativen Antigravity-Datenbank. Ein Wert mit ≈ wird aus anderen Sitzungsprotokoll-Zeitstempeln abgeleitet: Er beginnt mit dem Schreiben der vorherigen Protokollzeile, enthält also die Anfragevorbereitung des Clients selbst und fällt hoch aus. Claude Code liefert einen nur, wenn die Antwort mit Denken beginnt; Codex nur mit neueren Protokollen und nicht, wenn die Antwort mit einem Tool-Aufruf beginnt.",
     "firstTokenSumHelpTitle": "Wie die Zeit bis zum ersten Token berechnet wird",
-    "firstTokenSumHelp": "Zeit vom Eingang einer Anfrage beim Routing-Dienst, bis der Upstream mit der Ausgabe beginnt. Die Zeile zeigt den Median ihrer Anfragen, damit gelegentlich langsame Anfragen (Warteschlange, Kaltstart) ihn nicht in die Höhe ziehen. Es zählen nur erfolgreiche Streaming-Anfragen über den Routing-Dienst; Anfragen, die älter als 30 Tage und bereits in Tagesaggregate eingerechnet sind, zählen nicht. Ein Wert mit ≈ wird aus Sitzungsprotokollen abgeleitet (er fällt hoch aus, und nur einige Anfragen liefern einen) und nur angezeigt, wenn die Zeile keine gerouteten Daten hat.",
+    "firstTokenSumHelp": "Zeit vom Senden der Anfrage bis zum Beginn der Upstream-Ausgabe, gemessen vom Routing-Dienst oder der nativen Antigravity-Datenbank. Die Zeile zeigt den Median ihrer Anfragen, damit gelegentlich langsame Anfragen (Warteschlange, Kaltstart) ihn nicht in die Höhe ziehen. Es zählen nur erfolgreiche Anfragen mit exakter Zeitmessung; Anfragen, die älter als 30 Tage und bereits in Tagesaggregate eingerechnet sind, zählen nicht. Ein Wert mit ≈ wird aus anderen Sitzungsprotokollen abgeleitet (er fällt hoch aus, und nur einige Anfragen liefern einen) und nur angezeigt, wenn die Zeile keine exakten Zeitdaten hat.",
     "timingTip": "Dauer {{duration}} s · erstes Token {{ttft}} s",
     "estimatedTimingTip": "Etwa {{duration}} s (aus Zeitstempeln der Sitzungsprotokolle geschätzt, einschließlich der Wartezeit auf das erste Token)",
     "estimatedTimingTipWithFirstToken": "Etwa {{duration}} s · erstes Token etwa {{ttft}} s (aus Zeitstempeln der Sitzungsprotokolle geschätzt)",
@@ -2937,7 +2939,6 @@
     "geminiTitle": "Gemini MCP-Verwaltung",
     "unifiedPanel": {
       "title": "MCP-Server-Verwaltung",
-      "deleteServer": "Server löschen",
       "deleteConfirm": "Möchten Sie den Server „{{id}}“ wirklich löschen? Diese Aktion kann nicht rückgängig gemacht werden.",
       "enabledApps": "Aktivierte Apps",
       "importSuccess": "{{count}} MCP-Server erfolgreich importiert",
@@ -2984,28 +2985,20 @@
       "tagsPlaceholder": "stdio, time, utility",
       "homepage": "Startseite",
       "docs": "Doku",
-      "jsonPlaceholder": "{\n  \"type\": \"stdio\",\n  \"command\": \"uvx\",\n  \"args\": [\"mcp-server-fetch\"]\n}",
-      "tomlConfig": "Vollständige TOML-Konfiguration",
-      "tomlPlaceholder": "type = \"stdio\"\ncommand = \"uvx\"\nargs = [\"mcp-server-fetch\"]",
-      "syncOtherSide": "Nach {{target}} spiegeln"
+      "tomlConfig": "Vollständige TOML-Konfiguration"
     },
     "wizard": {
       "title": "MCP-Konfigurationsassistent",
       "hint": "MCP-Server schnell konfigurieren und die JSON-Konfiguration automatisch erzeugen",
       "type": "Typ",
-      "typeStdio": "stdio",
-      "typeSse": "sse",
       "command": "Befehl",
       "commandPlaceholder": "npx oder uvx",
       "args": "Argumente",
-      "argsPlaceholder": "arg1\narg2",
       "env": "Umgebungsvariablen",
-      "envPlaceholder": "KEY1=value1\nKEY2=value2",
       "url": "URL",
       "urlPlaceholder": "https://api.example.com/mcp",
       "urlRequired": "Bitte URL eingeben",
       "headers": "Header (optional)",
-      "headersPlaceholder": "Authorization: Bearer your_token_here\nContent-Type: application/json",
       "preview": "Konfigurationsvorschau",
       "apply": "Konfiguration anwenden"
     },
@@ -3520,15 +3513,16 @@
       "skillNotFound": "Skill nicht gefunden: {{directory}}",
       "missingRepoInfo": "Repository-Angaben fehlen (Eigentümer oder Name)",
       "downloadTimeout": "Zeitüberschreitung beim Herunterladen des Repositorys {{owner}}/{{name}} ({{timeout}} s)",
+      "downloadStalled": "Download des Repositorys {{owner}}/{{name}} abgebrochen: {{timeout}} s lang keine Daten empfangen",
       "skillDirNotFound": "Skill-Verzeichnis nicht gefunden: {{path}}",
       "directoryConflict": "Das Skill-Verzeichnis „{{directory}}“ ist bereits von {{existing_repo}} belegt und kann nicht aus {{new_repo}} installiert werden",
       "emptyArchive": "Das heruntergeladene Archiv ist leer",
+      "archiveInvalid": "Der Download ist kein ZIP-Archiv: Diese Seite ist möglicherweise kein GitHub-/GitLab-/Gitea-Repository und wird noch nicht unterstützt",
       "invalidRepoRef": "Ungültiger Repository-Verweis: {{owner}}/{{name}}",
       "archiveTooLarge": "Das Archiv überschreitet das Entpacklimit von {{limit_mb}} MB; abgebrochen",
       "archiveDownloadTooLarge": "Der Download des Repository-Archivs überschreitet das Limit von {{limit_mb}} MB; abgebrochen",
       "archiveTooManyEntries": "Das Archiv hat zu viele Einträge ({{count}}); das Limit beträgt {{limit}}",
       "downloadFailed": "Download fehlgeschlagen: HTTP {{status}}",
-      "httpError": "HTTP-Fehler {{status}}",
       "http403": "GitHub-Zugriff eingeschränkt, möglicherweise durch Ratenbegrenzung",
       "http404": "Repository oder Branch nicht gefunden, bitte URL prüfen. Private Repositories benötigen zuerst ein Zugriffstoken unter „Skill-Repositories verwalten“",
       "http429": "Zu viele Anfragen, bitte warten und erneut versuchen",
@@ -3541,7 +3535,6 @@
       "repoTokenStorageFailed": "Das Zugriffstoken für {{host}} konnte nicht gelesen oder geschrieben werden. Prüfen Sie, ob der Anmeldedatenspeicher des Systems verfügbar ist",
       "getHomeDirFailed": "Benutzerverzeichnis konnte nicht ermittelt werden",
       "noSkillsInZip": "Keine Skills in der ZIP-Datei gefunden (erfordert eine SKILL.md-Datei)",
-      "networkError": "Netzwerkfehler",
       "unknownError": "Unbekannter Fehler",
       "suggestion": {
         "checkNetwork": "Bitte Netzwerkverbindung prüfen",
@@ -3769,7 +3762,6 @@
       "repo": "GitHub-Repository",
       "directory": "Zielverzeichnis",
       "branch": "Branch",
-      "skillsPath": "Skills-Pfad",
       "hint": "Dadurch wird das Skill-Repository zur Liste hinzugefügt.",
       "hintDetail": "Nach dem Hinzufügen können Sie bestimmte Skills auf der Skills-Verwaltungsseite installieren."
     },
@@ -3866,7 +3858,6 @@
   },
   "proxy": {
     "panel": {
-      "currentProvider": "Aktueller Anbieter:",
       "openSettings": "Routing-Dienst konfigurieren",
       "stats": {
         "activeConnections": "Aktive Verbindungen",
@@ -3927,10 +3918,6 @@
           "label": "Nicht-Streaming-Timeout (Sek.)",
           "description": "Gesamt-Timeout für Nicht-Streaming-Anfragen"
         }
-      },
-      "validation": {
-        "retryMin": "Die Anzahl der Wiederholungen darf nicht negativ sein",
-        "retryMax": "Die Anzahl der Wiederholungen darf 10 nicht überschreiten"
       },
       "actions": {
         "save": "Konfiguration speichern"
@@ -4341,6 +4328,7 @@
     "refresh": "Aktualisieren"
   },
   "nav": {
+    "skills": "Skills",
     "mainLabel": "Hauptnavigation",
     "skipToContent": "Zum Hauptinhalt springen",
     "expandSidebar": "Seitenleiste ausklappen",
@@ -5425,5 +5413,11 @@
     "installFailed": "Update-Installation fehlgeschlagen",
     "downloadingInline": "Neue Version wird im Hintergrund heruntergeladen…",
     "downloadedInline": "Heruntergeladen"
+  },
+  "unreadableEntry": {
+    "title": "„{{name}}“ kann nicht gelesen werden",
+    "hint": "Möglicherweise von einer neueren CC-Switch-Version gespeichert. Die Daten bleiben unverändert erhalten und können nicht bearbeitet oder aktiviert werden; ein Update stellt sie wieder her, oder du löschst den Eintrag.",
+    "confirmTitle": "Unlesbaren Eintrag löschen",
+    "confirmMessage": "„{{name}}“ löschen? Nur dieser CC-Switch-Eintrag wird entfernt; die Konfigurationsdateien der Apps bleiben unverändert."
   }
 }

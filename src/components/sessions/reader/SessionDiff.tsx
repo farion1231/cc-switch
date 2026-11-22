@@ -122,6 +122,33 @@ const pickString = (input: Record<string, unknown>, keys: string[]) => {
 const splitLines = (text: string) =>
   text === "" ? [] : text.replace(/\r\n/g, "\n").replace(/\n$/, "").split("\n");
 
+const OLD_KEYS = [
+  "old_string",
+  "oldString",
+  "oldText",
+  "old_str",
+  "TargetContent",
+  "Target",
+];
+
+const NEW_KEYS = [
+  "new_string",
+  "newString",
+  "newText",
+  "new_str",
+  "ReplacementContent",
+  "Replacement",
+];
+
+const CONTENT_KEYS = [
+  "content",
+  "contents",
+  "file_text",
+  "text",
+  "Content",
+  "CodeContent",
+];
+
 /**
  * 没有 unified diff 全文时，从调用参数还原改动：Edit 类的 old/new 字符串、Write 类的 content。
  * 参数预览被截断（JSON 不完整）时返回 null。
@@ -138,31 +165,34 @@ export const buildInputDiff = (call: ToolCallBlock): string | null => {
   if (!input || typeof input !== "object") return null;
   const record = input as Record<string, unknown>;
   const pairs: { old: string; next: string }[] = [];
-  const edits = Array.isArray(record.edits) ? record.edits : [record];
-  edits.forEach((edit) => {
-    if (!edit || typeof edit !== "object") return;
-    const item = edit as Record<string, unknown>;
-    const oldText = pickString(item, [
-      "old_string",
-      "oldString",
-      "oldText",
-      "old_str",
-    ]);
-    const newText = pickString(item, [
-      "new_string",
-      "newString",
-      "newText",
-      "new_str",
-    ]);
-    if (oldText !== undefined || newText !== undefined) {
-      pairs.push({ old: oldText ?? "", next: newText ?? "" });
+  if (Array.isArray(record.ReplacementChunks)) {
+    for (const chunk of record.ReplacementChunks) {
+      if (!chunk || typeof chunk !== "object") return null;
+      const item = chunk as Record<string, unknown>;
+      const oldText = pickString(item, OLD_KEYS);
+      const newText = pickString(item, NEW_KEYS);
+      if (oldText === undefined || newText === undefined) return null;
+      pairs.push({ old: oldText, next: newText });
     }
-  });
+    if (pairs.length === 0) return null;
+  } else {
+    const edits = Array.isArray(record.edits) ? record.edits : [record];
+    edits.forEach((edit) => {
+      if (!edit || typeof edit !== "object") return;
+      const item = edit as Record<string, unknown>;
+      const oldText = pickString(item, OLD_KEYS);
+      const newText = pickString(item, NEW_KEYS);
+      if (oldText !== undefined || newText !== undefined) {
+        pairs.push({ old: oldText ?? "", next: newText ?? "" });
+      }
+    });
+  }
   if (pairs.length === 0) {
-    const content = pickString(record, ["content", "file_text", "text"]);
+    const content = pickString(record, CONTENT_KEYS);
     if (content === undefined) return null;
     pairs.push({ old: "", next: content });
   }
+  if (pairs.every(({ old, next }) => old === "" && next === "")) return null;
   return pairs
     .map(
       ({ old, next }) =>

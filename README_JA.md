@@ -68,6 +68,13 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 </tr>
 
 <tr>
+<td width="180"><a href="https://modelflare.dev/sign-up?utm_source=github&utm_campaign=ccswitch"><img src="assets/partners/logos/modelflare-banner.png" alt="Modelflare" width="150"></a></td>
+<td>本プロジェクトのスポンサーである Modelflare に感謝いたします！Modelflare は、性能をフルに発揮し、安定していて水増しなし。世界の SOTA モデルを低コストで利用できます。米国の LLC である Havenbyte LLC が運営し、GPT、Claude、Gemini、Grok などの主要モデルと一般的な互換プロトコルに対応するほか、40 種類以上の画像・動画モデルにも対応しています。中国本土での正式なビジネス提携にも対応しています。
+<b>キャッシュ補償が大きな特長です：</b>OpenAI の一部の価格優先・安定・プレミアムグループでは、1 日あたりのキャッシュヒット率をそれぞれ 65%、75%、85% で保証しています。条件を満たすリクエストが目標に届かなかった場合は差額が補償され、精算後に使用量ダッシュボードで確認できます。
+<b>特別キャンペーン：</b>1 回で US$20 をチャージすると価格倍率 0.015 倍の GPT 特価グループが、1 回で US$50 をチャージすると価格倍率 0.03 倍の Claude 特価グループが利用可能になります。<a href="https://modelflare.dev/sign-up?utm_source=github&utm_campaign=ccswitch">専用リンクから登録</a>すると参加できます。</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://hao.ai/invite/DTBZS3OR"><img src="assets/partners/logos/haoai-banner.png" alt="hao.ai" width="150"></a></td>
 <td>本プロジェクトのスポンサーである hao.ai に感謝いたします！hao.ai は、開発者とチーム向けの高速で安定した LLM 統合 API ゲートウェイです。1 つの API キーと統一インターフェースで GPT、Claude、xAI Grok などの主要モデルにアクセスでき、OpenAI や Anthropic などの一般的なプロトコルと SDK に対応しています。モデルルーティング、フェイルオーバー、チーム管理、完全な呼び出しログを備え、モデル価格は公式参考価格の最大 85% オフ。AI アプリケーションをよりシンプルに、より安定して、より低コストで構築できます。hao.ai は CC Switch ユーザー向けに特別特典を用意しています：<a href="https://hao.ai/invite/DTBZS3OR">このリンク</a>から登録すると、初回注文で 5% のボーナスクレジットを受け取れます！</td>
 </tr>

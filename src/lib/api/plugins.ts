@@ -1,25 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { AppIdWith } from "@/config/appSpecs";
 
-/** 支持插件的应用（值和 `AppId` 一致）。 */
-export type PluginApp =
-  | "claude"
-  | "codex"
-  | "grokbuild"
-  | "mcode"
-  | "openclaw"
-  | "pi";
-
-export const PLUGIN_APPS: PluginApp[] = [
-  "claude",
-  "codex",
-  "grokbuild",
-  "mcode",
-  "openclaw",
-  "pi",
-];
-
-export const isPluginApp = (app: string): app is PluginApp =>
-  (PLUGIN_APPS as string[]).includes(app);
+/** 支持插件的应用（由 `APP_SPECS` 的 `plugins` 派生）。 */
+export type PluginApp = AppIdWith<"plugins">;
 
 /** 各应用的 CLI 支持哪些操作；不支持的入口不显示。 */
 export interface PluginAppFeatures {
@@ -118,8 +101,10 @@ export interface PluginEntry {
   removable?: boolean;
   /** 市场是否允许安装 */
   installable: boolean;
-  /** 目录条目装好后在已安装列表里的 id（和 id 不同时才有：OpenClaw 的包名、Pi 已按别的写法装过的来源） */
+  /** 目录条目装好后在已安装列表里的 id（和 id 不同时才有：OpenClaw 的包名） */
   installedId?: string | null;
+  /** 已安装条目在目录里对应的 id（和 id 不同时才有：Pi 固定版本的 npm 包 `npm:x@1.2.3` → `npm:x`） */
+  catalogId?: string | null;
   installPath?: string | null;
   updatedAt?: string | null;
 }
