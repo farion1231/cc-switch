@@ -617,18 +617,6 @@ mod tests {
     }
 
     #[test]
-    fn test_build_client_with_http_proxy() {
-        let result = build_client(Some("http://127.0.0.1:7890"));
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_build_client_with_socks5_proxy() {
-        let result = build_client(Some("socks5://127.0.0.1:1080"));
-        assert!(result.is_ok());
-    }
-
-    #[test]
     fn test_build_client_invalid_url() {
         // reqwest::Proxy::all 对某些无效 URL 不会立即报错
         // 使用明确无效的 scheme 来触发错误

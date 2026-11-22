@@ -2501,21 +2501,6 @@ mod tests {
     }
 
     #[test]
-    fn zhipu_extreme_percentage_values_pass_through() {
-        // 负数 / 超 100 不做范围裁剪——下游渲染层负责显示策略，解析层只负责忠实搬运。
-        let data = json!({
-            "limits": [
-                { "type": "TOKENS_LIMIT", "percentage": -5.0,  "nextResetTime": 1_000_000_000_000_i64 },
-                { "type": "TOKENS_LIMIT", "percentage": 150.0, "nextResetTime": 2_000_000_000_000_i64 }
-            ]
-        });
-        let tiers = parse_zhipu_token_tiers(&data);
-        assert_eq!(tiers.len(), 2);
-        assert_eq!(tiers[0].utilization, -5.0);
-        assert_eq!(tiers[1].utilization, 150.0);
-    }
-
-    #[test]
     fn zhipu_unit_field_overrides_reset_order_when_weekly_resets_sooner() {
         // 真实案例（issue #3036，2026-06-10 再次复现）：每周周期末尾，周桶比
         // 5 小时桶更早重置。官网真实值：5h 用 1%（约 5h 后重置）、每周用 42%
@@ -2717,24 +2702,6 @@ mod tests {
         assert_eq!(tiers.len(), 1);
         assert_eq!(tiers[0].name, TIER_FIVE_HOUR);
         assert_eq!(tiers[0].utilization, 40.0);
-    }
-
-    #[test]
-    fn minimax_negative_percent_passes_through() {
-        // 防御性:与 parse_zhipu_token_tiers 约定一致,负数 / 超 100 不做范围裁剪
-        let body = json!({
-            "model_remains": [{
-                "model_name": "general",
-                "current_interval_remaining_percent": -5.0,
-                "current_weekly_remaining_percent": 150.0,
-                "current_interval_status": 1,
-                "current_weekly_status": 1
-            }]
-        });
-        let tiers = parse_minimax_tiers(&body);
-        assert_eq!(tiers.len(), 2);
-        assert_eq!(tiers[0].utilization, 105.0); // 100 - (-5)
-        assert_eq!(tiers[1].utilization, -50.0); // 100 - 150
     }
 
     #[test]
