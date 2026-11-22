@@ -10,6 +10,9 @@ use std::collections::{HashMap, HashSet};
 
 use crate::config;
 
+mod codex_membership;
+pub use codex_membership::CodexMembership;
+
 // ── 数据类型 ──────────────────────────────────────────────
 
 /// 凭据状态
@@ -75,6 +78,9 @@ pub struct SubscriptionQuota {
     /// 只有 ChatGPT 订阅（codex / codex_oauth）有；没查到时为 None，不影响额度本身
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reset_credits: Option<ResetCredits>,
+    /// ChatGPT 套餐及明确的会员有效期；补查失败不影响额度。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub membership: Option<CodexMembership>,
     /// ChatGPT 订阅买的 Codex Credits 余额（额度用完后才扣）；没有、不限量或为 0 时为 None
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credits_balance: Option<f64>,
@@ -96,6 +102,7 @@ impl SubscriptionQuota {
             tiers: vec![],
             extra_usage: None,
             reset_credits: None,
+            membership: None,
             credits_balance: None,
             plan_name: None,
             error: None,
@@ -112,6 +119,7 @@ impl SubscriptionQuota {
             tiers: vec![],
             extra_usage: None,
             reset_credits: None,
+            membership: None,
             credits_balance: None,
             plan_name: None,
             error: Some(message),
@@ -620,6 +628,7 @@ fn parse_claude_quota(body: &serde_json::Value) -> SubscriptionQuota {
         tiers,
         extra_usage,
         reset_credits: None,
+        membership: None,
         credits_balance: None,
         plan_name: None,
         error: None,
@@ -887,8 +896,8 @@ struct CodexUsageResponse {
     rate_limit: Option<CodexRateLimit>,
     /// 原样收下再挑字段：形状不对时只是不显示余额，不能让整份额度解析失败
     credits: Option<serde_json::Value>,
-    #[serde(default)]
-    plan_type: Option<String>,
+    // 套餐字段也允许缺失或形状异常，额度窗口仍可解析。
+    plan_type: Option<serde_json::Value>,
 }
 
 /// `wham/usage` 的 `plan_type` → 套餐名，照 Codex 自己 `/status` 的叫法
@@ -1053,13 +1062,25 @@ pub(crate) async fn query_codex_quota(
     tool_label: &str,
     expired_message: &str,
 ) -> Result<SubscriptionQuota, String> {
-    let (quota, reset_credits) = tokio::join!(
+    let (quota, reset_credits, membership) = tokio::join!(
         query_codex_usage(access_token, account_id, tool_label, expired_message),
         query_codex_reset_credits(access_token, account_id),
+        codex_membership::query(access_token, account_id),
     );
     let mut quota = quota?;
     if quota.success {
         quota.reset_credits = reset_credits;
+        quota.membership = membership
+            .map(|mut membership| {
+                // The live usage response is newer than a token's plan snapshot.
+                membership.plan_type = quota
+                    .membership
+                    .as_ref()
+                    .and_then(|m| m.plan_type.clone())
+                    .or(membership.plan_type);
+                membership
+            })
+            .or_else(|| quota.membership.take());
     }
     Ok(quota)
 }
@@ -1150,6 +1171,7 @@ pub(crate) async fn query_codex_usage(
         }
     }
 
+    let plan_type = body.plan_type.as_ref().and_then(serde_json::Value::as_str);
     Ok(SubscriptionQuota {
         tool: tool_label.to_string(),
         credential_status: CredentialStatus::Valid,
@@ -1158,8 +1180,12 @@ pub(crate) async fn query_codex_usage(
         tiers,
         extra_usage: None,
         reset_credits: None,
+        membership: plan_type.map(|plan_type| CodexMembership {
+            plan_type: Some(plan_type.to_owned()),
+            active_until: None,
+        }),
         credits_balance: body.credits.as_ref().and_then(parse_codex_credits_balance),
-        plan_name: body.plan_type.as_deref().and_then(codex_plan_label),
+        plan_name: plan_type.and_then(codex_plan_label),
         error: None,
         queried_at: Some(now_millis()),
     })
@@ -1624,6 +1650,7 @@ async fn query_gemini_quota(access_token: &str) -> Result<SubscriptionQuota, Str
         tiers,
         extra_usage: None,
         reset_credits: None,
+        membership: None,
         credits_balance: None,
         plan_name: crate::services::agy_account::quota::code_assist_plan(&load_raw),
         error: None,
@@ -2145,6 +2172,7 @@ mod tests {
         )
         .unwrap();
         assert!(quota.reset_credits.is_none());
+        assert!(quota.membership.is_none());
         assert!(quota.credits_balance.is_none());
     }
 
@@ -2152,7 +2180,10 @@ mod tests {
     fn codex_plan_label_follows_codex_status_names() {
         let label = |raw: &str| {
             let body: CodexUsageResponse = serde_json::from_str(raw).unwrap();
-            body.plan_type.as_deref().and_then(codex_plan_label)
+            body.plan_type
+                .as_ref()
+                .and_then(serde_json::Value::as_str)
+                .and_then(codex_plan_label)
         };
         assert_eq!(label(r#"{"plan_type":"pro"}"#).as_deref(), Some("Pro 200"));
         assert_eq!(
@@ -2176,6 +2207,7 @@ mod tests {
             Some("Free Workspace")
         );
         assert_eq!(label(r#"{"plan_type":"unknown"}"#), None);
+        assert_eq!(label(r#"{"plan_type":{"name":"plus"}}"#), None);
         assert_eq!(label(r#"{"rate_limit":null}"#), None);
     }
 

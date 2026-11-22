@@ -4274,6 +4274,12 @@
     "suggestedDefaultsHint": "이 프리셋의 권장 기본 모델 설정을 사용하세요."
   },
   "subscription": {
+    "membership": {
+      "validUntil": "{{plan}} · 구독 유효 기간: {{date}}까지",
+      "expired": "{{plan}} · {{date}}에 구독 만료됨",
+      "unavailable": "{{plan}} · 구독 만료일을 확인할 수 없음",
+      "hint": "구독 만료일은 할당량 초기화 시각 및 로그인 토큰 만료 시각과 다릅니다. 자동 갱신 상태는 ChatGPT의 구독 관리에서 확인하세요."
+    },
     "title": "구독 할당량",
     "short": {
       "fiveHour": "5시간",
