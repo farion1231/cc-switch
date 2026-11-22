@@ -6,6 +6,9 @@ import { dirname } from "node:path";
 /** Every case starts here, on every OS and every day. */
 export const CLOCK_ORIGIN_MS = Date.UTC(2031, 2, 14, 9, 0, 0);
 
+/** Seeds are made the day before, so what they create is older than anything a case does. */
+export const SEED_ORIGIN_MS = CLOCK_ORIGIN_MS - 86_400_000;
+
 export const CLOCK_ENV = "CC_SWITCH_PARITY_CLOCK";
 
 export class PinnedClock {

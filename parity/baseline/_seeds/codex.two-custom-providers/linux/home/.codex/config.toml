@@ -1,0 +1,10 @@
+model_provider = "custom"
+model = "gpt-5.6-sol"
+model_reasoning_effort = "high"
+
+[model_providers.custom]
+name = "custom"
+wire_api = "responses"
+requires_openai_auth = false
+base_url = "https://alpha.relay.example/v1"
+experimental_bearer_token = "sk-parity-alpha"

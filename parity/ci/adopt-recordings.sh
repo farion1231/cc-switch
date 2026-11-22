@@ -4,20 +4,29 @@
 #   parity/ci/adopt-recordings.sh <os> <baseline dir from VM 1> [<baseline dir from VM 2> ...]
 #
 # Every VM must have recorded the same thing, or nothing is adopted. The primary OS (linux) owns
-# the shared, unsuffixed files; any other OS owns only its <name>.<os>.snap files.
+# the shared, unsuffixed files; any other OS owns only its <name>.<os>.snap files. Each OS owns its
+# seeds, _seeds/<seed>/<os>/. A database's bytes can differ between VMs that did the same thing,
+# so the comparison leaves them out and the first VM's seed is kept.
 set -euo pipefail
 os=$1; shift
 first=$1
 for other in "${@:2}"; do
-  diff -r "$first" "$other" >/dev/null || { echo "VMs recorded different things; nothing adopted" >&2; diff -r "$first" "$other" | head -40 >&2; exit 1; }
+  diff -r -x 'cc-switch.db*' "$first" "$other" >/dev/null || { echo "VMs recorded different things; nothing adopted" >&2; diff -r -x 'cc-switch.db*' "$first" "$other" | head -40 >&2; exit 1; }
 done
 if [ "$os" = linux ]; then
-  rsync -a --delete --exclude='*.windows.snap' --exclude='*.macos.snap' "$first/" parity/baseline/
+  rsync -a --delete --exclude='*.windows.snap' --exclude='*.macos.snap' --exclude='_seeds/*/windows/' --exclude='_seeds/*/macos/' "$first/" parity/baseline/
 else
   find parity/baseline -name "*.$os.snap" -delete
   (cd "$first" && find . -name "*.$os.snap") | while read -r f; do
     mkdir -p "parity/baseline/$(dirname "$f")"
     cp "$first/$f" "parity/baseline/$f"
+  done
+  for d in "$first"/_seeds/*/"$os"; do
+    [ -d "$d" ] || continue
+    name=$(basename "$(dirname "$d")")
+    rm -rf "parity/baseline/_seeds/$name/$os"
+    mkdir -p "parity/baseline/_seeds/$name"
+    cp -R "$d" "parity/baseline/_seeds/$name/$os"
   done
 fi
 git add -A parity/baseline

@@ -3,8 +3,11 @@
 //
 // record  runs each case --runs times on fresh state. The recording is written only when every
 //         run completed, every intent line held, and all runs observed exactly the same thing.
+//         A seed the cases name is built first when it is not recorded for this OS, when its
+//         recipe changed, or with --rebuild-seeds; otherwise the recorded seed is used.
 // check   runs each case once and compares every checkpoint and channel with the recording.
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+//         Seeds are only restored, never built.
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -12,7 +15,8 @@ import type { CaseSpec } from "../../case.ts";
 import { MACOS_PROFILE_NOISE, WINDOWS_PROFILE_NOISE } from "../../../volatile.ts";
 import { launchLinux, launchMacos, launchWindows } from "../driver/app.ts";
 import { scanHome, signatures } from "../observe/channels.ts";
-import { runCase, type CaseRun, type HostOptions } from "../host/run.ts";
+import { buildSeed, runCase, type CaseRun, type HostOptions } from "../host/run.ts";
+import { loadSeed, readManifest, recipeHash, seedDir, writeSeed } from "../host/seeds.ts";
 import { firstDifference } from "../observe/compare.ts";
 import { checkpointDir, readRecording, readSteps, recordedCheckpoints, writeRecording, type Os } from "../observe/store.ts";
 
@@ -164,7 +168,7 @@ async function main() {
   const { flags, rest } = parseArgs(process.argv.slice(2));
   const mode = rest.shift();
   if ((mode !== "record" && mode !== "check") || rest.length === 0) {
-    console.error("usage: main.ts record|check [--os linux|windows|macos] [--app <binary>] [--egress-url url] [--runs n] [--baseline dir] [--out dir] <case file>...");
+    console.error("usage: main.ts record|check [--os linux|windows|macos] [--app <binary>] [--egress-url url] [--runs n] [--rebuild-seeds true] [--baseline dir] [--out dir] <case file>...");
     process.exit(2);
   }
   const os = (flags.os ?? "linux") as Os;
@@ -176,13 +180,51 @@ async function main() {
   let failed = 0;
   const report: unknown[] = [];
 
+  // Each seed once per invocation: its directory, or why the cases that name it cannot run.
+  const seeds = new Map<string, { dir?: string; problem?: string }>();
+  const seedFor = async (name: string): Promise<{ dir?: string; problem?: string }> => {
+    const known = seeds.get(name);
+    if (known) return known;
+    const file = join(PARITY, "seeds", `${name}.seed.ts`);
+    const dir = seedDir(baseline, name, os);
+    let result: { dir?: string; problem?: string };
+    if (!existsSync(file)) result = { problem: `seed ${name} has no recipe at seeds/${name}.seed.ts` };
+    else {
+      const hash = recipeHash(file);
+      const manifest = readManifest(dir);
+      if (mode === "record" && (manifest?.recipe !== hash || flags["rebuild-seeds"] === "true")) {
+        const { run, pristine } = await buildSeed(await loadSeed(file), host);
+        saveRun(out, run, "build");
+        const problems = [...run.errors, ...run.intentFailures.map((e) => `intent: ${e}`)];
+        if (problems.length) result = { problem: `seed ${name} could not be built:\n${problems.join("\n")}` };
+        else {
+          const n = writeSeed(dir, host.home, host.exclude, pristine, hash);
+          console.log(`seed ${name}: recorded ${n} entries (${summary(run)})`);
+          result = { dir };
+        }
+        if (run.tree) console.log(`UI tree at the failure:\n${run.tree}`);
+      } else if (!manifest) result = { problem: `seed ${name} is not recorded for ${os}` };
+      else if (manifest.recipe !== hash) result = { problem: `seed ${name} is stale: its recipe changed after it was recorded for ${os}; record it again` };
+      else result = { dir };
+    }
+    seeds.set(name, result);
+    return result;
+  };
+
   for (const file of rest) {
     const spec = await loadCase(file);
+    const seed = spec.seed === "fresh" ? {} : await seedFor(spec.seed.seed);
+    if (seed.problem) {
+      failed++;
+      console.log(`${spec.id}: ${mode === "record" ? "recording REFUSED" : "FAIL"}\n${seed.problem}`);
+      report.push({ case: spec.id, mode, problems: [seed.problem], ms: [] });
+      continue;
+    }
     if (mode === "record") {
       const runs: CaseRun[] = [];
       const n = Number(flags.runs ?? 3);
       for (let i = 0; i < n; i++) {
-        const r = await runCase(spec, host);
+        const r = await runCase(spec, host, seed.dir);
         saveRun(out, r, `record-${i + 1}`);
         console.log(`${spec.id} record run ${i + 1}/${n}: ${summary(r)}${r.errors.length ? ` ERROR ${r.errors.join("; ")}` : ""}`);
         runs.push(r);
@@ -203,7 +245,7 @@ async function main() {
       }
       report.push({ case: spec.id, mode, problems, ms: runs.map((r) => r.ms) });
     } else {
-      const r = await runCase(spec, host);
+      const r = await runCase(spec, host, seed.dir);
       saveRun(out, r, "check");
       const problems = [...r.errors, ...r.intentFailures.map((e) => `intent: ${e}`)];
       const recorded = recordedCheckpoints(baseline, spec.id);

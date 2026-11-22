@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "apps": {
+    "claude": {
+      "mode": "direct"
+    },
+    "claude-desktop": {
+      "mode": "direct"
+    },
+    "codex": {
+      "mode": "direct"
+    },
+    "gemini": {
+      "mode": "direct"
+    },
+    "grokbuild": {
+      "mode": "direct"
+    }
+  }
+}

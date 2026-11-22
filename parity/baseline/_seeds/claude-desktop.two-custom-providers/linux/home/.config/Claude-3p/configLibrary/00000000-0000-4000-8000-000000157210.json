@@ -1,0 +1,10 @@
+{
+  "inferenceGatewayApiKey": "sk-parity-alpha",
+  "inferenceGatewayAuthScheme": "bearer",
+  "inferenceGatewayBaseUrl": "https://alpha.relay.example",
+  "inferenceProvider": "gateway",
+  "coworkEgressAllowedHosts": [
+    "*"
+  ],
+  "disableDeploymentModeChooser": true
+}

@@ -1,0 +1,105 @@
+{
+  "recipe": "d602430ae19e51b9bf616c8449e3df1a21c6cbcdb95ca44a90e0b273d5f86ced",
+  "entries": {
+    ".cache": {
+      "kind": "dir",
+      "mode": "755"
+    },
+    ".cc-switch": {
+      "kind": "dir",
+      "mode": "755"
+    },
+    ".cc-switch/backups": {
+      "kind": "dir",
+      "mode": "755"
+    },
+    ".cc-switch/backups/live-first-write": {
+      "kind": "dir",
+      "mode": "755"
+    },
+    ".cc-switch/backups/live-first-write/32a2c79c7d27-claude_desktop_config.json.source": {
+      "kind": "file",
+      "mode": "600"
+    },
+    ".cc-switch/backups/live-first-write/b2c149d931e7-00000000-0000-4000-8000-000000157210.json.source": {
+      "kind": "file",
+      "mode": "600"
+    },
+    ".cc-switch/backups/live-first-write/b95870f5b59f-_meta.json.source": {
+      "kind": "file",
+      "mode": "600"
+    },
+    ".cc-switch/backups/live-first-write/ddd0d2ee6142-claude_desktop_config.json.source": {
+      "kind": "file",
+      "mode": "600"
+    },
+    ".cc-switch/cc-switch.db": {
+      "kind": "file",
+      "mode": "644"
+    },
+    ".cc-switch/codex-catalog-history.json": {
+      "kind": "file",
+      "mode": "644"
+    },
+    ".cc-switch/live-state.json": {
+      "kind": "file",
+      "mode": "600"
+    },
+    ".cc-switch/model-pricing.json": {
+      "kind": "file",
+      "mode": "644"
+    },
+    ".cc-switch/settings.json": {
+      "kind": "file",
+      "mode": "600"
+    },
+    ".config": {
+      "kind": "dir",
+      "mode": "755"
+    },
+    ".config/Claude": {
+      "kind": "dir",
+      "mode": "755"
+    },
+    ".config/Claude/claude_desktop_config.json": {
+      "kind": "file",
+      "mode": "644"
+    },
+    ".config/Claude-3p": {
+      "kind": "dir",
+      "mode": "755"
+    },
+    ".config/Claude-3p/claude_desktop_config.json": {
+      "kind": "file",
+      "mode": "644"
+    },
+    ".config/Claude-3p/configLibrary": {
+      "kind": "dir",
+      "mode": "755"
+    },
+    ".config/Claude-3p/configLibrary/00000000-0000-4000-8000-000000157210.json": {
+      "kind": "file",
+      "mode": "600"
+    },
+    ".config/Claude-3p/configLibrary/_meta.json": {
+      "kind": "file",
+      "mode": "644"
+    },
+    ".local": {
+      "kind": "dir",
+      "mode": "755"
+    },
+    ".local/share": {
+      "kind": "dir",
+      "mode": "755"
+    },
+    ".local/share/applications": {
+      "kind": "dir",
+      "mode": "755"
+    },
+    ".local/share/applications/cc-switch-handler.desktop": {
+      "kind": "file",
+      "mode": "644"
+    }
+  }
+}

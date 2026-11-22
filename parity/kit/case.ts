@@ -20,7 +20,10 @@ export type AppId =
 /** One cell of the coverage matrix: a feature id from the feature list, an app (or "shell"), and an optional aspect. */
 export type Cell = readonly [feature: string, app: AppId | "shell", aspect?: string];
 
-/** Starting user data. "fresh" is an empty HOME, which is the first-run journey. */
+/**
+ * Starting user data. "fresh" is an empty HOME, which is the first-run journey. A named seed is
+ * the HOME a seed recipe (`parity/seeds/<name>.seed.ts`) left behind on v4.
+ */
 export type SeedRef = "fresh" | { readonly seed: string };
 
 export type HomePath = `~/${string}`;
@@ -71,7 +74,34 @@ export interface Expect {
   visible(target: Target): Promise<void>;
 }
 
+/** What a seed recipe can do: act on the UI, move the clock and state what it expects. */
+export interface SeedJourney {
+  readonly ui: Ui;
+  advanceClock(by: Duration): Promise<void>;
+  readonly expect: Expect;
+}
+
+/**
+ * User data a case starts from, made through the UI. The recipe runs on v4 when the seed is
+ * recorded, starting from an empty HOME one day before the cases' start, and what it leaves under
+ * HOME is committed with the recordings. A case that names the seed starts from that data, so on
+ * v5 it also proves that v5 takes over what v4 wrote. Changing the recipe means recording the seed
+ * and every case that uses it again.
+ */
+export interface SeedSpec {
+  /** `<app>.<slug>`, lower case. Must equal the file name. */
+  readonly name: string;
+  build(j: SeedJourney): Promise<void>;
+}
+
 const ID = /^[a-z0-9-]+\.[a-z0-9-]+\.[a-z0-9-]+$/;
+const SEED = /^[a-z0-9-]+\.[a-z0-9-]+$/;
+
+/** The only way to declare a seed. Default-export the result. */
+export function paritySeed(spec: SeedSpec): SeedSpec {
+  if (!SEED.test(spec.name)) throw new Error(`seed name "${spec.name}" must be <app>.<slug> in lower case`);
+  return Object.freeze(spec);
+}
 
 /** The only way to declare a case. Default-export the result. */
 export function parityCase(spec: CaseSpec): CaseSpec {

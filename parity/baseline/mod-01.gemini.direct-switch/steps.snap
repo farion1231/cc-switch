@@ -1,0 +1,3 @@
+00 launch | home 8fd7ade21eff
+01 ui.click button "Gemini CLI" in group "Apps" in navigation "Main navigation" | home 8fd7ade21eff
+02 ui.click button "Switch" in group "Beta Relay" in main "" | home 4e37f1250ec1

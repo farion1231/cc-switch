@@ -13,7 +13,7 @@ export default parityCase({
     await ui.click(S.providers.add.customConfig);
     await ui.fill(S.providers.add.name, "Beta Relay");
     await ui.fill(S.providers.add.apiKey, "sk-parity-beta");
-    await ui.fill(S.providers.add.endpoint, "https://beta.relay.example/v1");
+    await ui.fill(S.providers.add.requestUrl, "https://beta.relay.example/v1");
     await checkpoint("form-filled");
 
     await ui.click(S.providers.add.submit);

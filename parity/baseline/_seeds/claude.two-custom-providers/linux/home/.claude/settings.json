@@ -1,0 +1,7 @@
+{
+  "env": {
+    "ANTHROPIC_AUTH_TOKEN": "sk-parity-alpha",
+    "ANTHROPIC_BASE_URL": "https://alpha.relay.example",
+    "CLAUDE_CODE_AUTO_MODE_SERVER": "0"
+  }
+}

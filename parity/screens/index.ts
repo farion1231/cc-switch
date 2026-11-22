@@ -20,13 +20,20 @@ export const S = {
   },
   providers: {
     addButton: by.role("button", "Add Provider", { within: main }),
-    /** A provider card's title. Cards have no named container yet, so actions inside a card need seam S4. */
+    /** A provider card's title. */
     cardTitle: (name: string) => by.role("heading", name, { within: main }),
+    /** A provider card: a group named after its provider. */
+    card: (name: string) => by.role("group", name, { within: main }),
+    /** A button on one provider card, by the label it shows or its accessible name. */
+    cardButton: (provider: string, label: string) => by.role("button", label, { within: by.role("group", provider, { within: main }) }),
     add: {
       customConfig: by.role("button", "Custom Configuration", { within: main }),
       name: by.field("Name", { within: main }),
       apiKey: by.field("API Key", { within: main }),
-      endpoint: by.field("API Request URL", { within: main }),
+      /** The endpoint field of Codex-style forms (Codex, Grok Build). */
+      requestUrl: by.field("API Request URL", { within: main }),
+      /** The endpoint field of Claude-style forms (Claude Code, Claude Desktop, Gemini CLI). */
+      apiEndpoint: by.field("API Endpoint", { within: main }),
       submit: by.role("button", "Add", { within: main }),
     },
   },

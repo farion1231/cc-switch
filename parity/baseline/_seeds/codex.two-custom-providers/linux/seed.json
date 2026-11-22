@@ -1,0 +1,77 @@
+{
+  "recipe": "f7b6e17cd3b65d9f32c52e02af89d605e2f9142f39b2994a471f0f9fdf2e954e",
+  "entries": {
+    ".cache": {
+      "kind": "dir",
+      "mode": "755"
+    },
+    ".cc-switch": {
+      "kind": "dir",
+      "mode": "755"
+    },
+    ".cc-switch/backups": {
+      "kind": "dir",
+      "mode": "755"
+    },
+    ".cc-switch/backups/live-first-write": {
+      "kind": "dir",
+      "mode": "755"
+    },
+    ".cc-switch/backups/live-first-write/b1c770365983-config.toml.source": {
+      "kind": "file",
+      "mode": "600"
+    },
+    ".cc-switch/backups/live-first-write/d73fb636ef85-codex-login-stash.json.source": {
+      "kind": "file",
+      "mode": "600"
+    },
+    ".cc-switch/cc-switch.db": {
+      "kind": "file",
+      "mode": "644"
+    },
+    ".cc-switch/codex-catalog-history.json": {
+      "kind": "file",
+      "mode": "644"
+    },
+    ".cc-switch/codex-login-stash.json": {
+      "kind": "file",
+      "mode": "600"
+    },
+    ".cc-switch/live-state.json": {
+      "kind": "file",
+      "mode": "600"
+    },
+    ".cc-switch/model-pricing.json": {
+      "kind": "file",
+      "mode": "644"
+    },
+    ".cc-switch/settings.json": {
+      "kind": "file",
+      "mode": "600"
+    },
+    ".codex": {
+      "kind": "dir",
+      "mode": "755"
+    },
+    ".codex/config.toml": {
+      "kind": "file",
+      "mode": "600"
+    },
+    ".local": {
+      "kind": "dir",
+      "mode": "755"
+    },
+    ".local/share": {
+      "kind": "dir",
+      "mode": "755"
+    },
+    ".local/share/applications": {
+      "kind": "dir",
+      "mode": "755"
+    },
+    ".local/share/applications/cc-switch-handler.desktop": {
+      "kind": "file",
+      "mode": "644"
+    }
+  }
+}

@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // parity lint: the rules that keep cases black-box and version-independent.
 //
-// - A case imports only #kit and #screens.
+// - A case imports only #kit and #screens. A seed recipe imports only #kit, #screens and the
+//   shared recipe steps next to it (seeds/_*.ts).
 // - The screen map imports only the target builders (and #kit for types).
 // - Nothing outside kit/ reaches into kit/internal.
 // - A case has no timers, eval, DOM access, process access or Node modules, so it can only act
@@ -36,13 +37,15 @@ const FORBIDDEN_IN_CASES: readonly [RegExp, string][] = [
 const problems: string[] = [];
 const rel = (p: string) => relative(PARITY, p);
 
-for (const f of files(join(PARITY, "cases"))) {
-  const src = readFileSync(f, "utf8");
-  for (const spec of imports(src)) {
-    if (spec !== "#kit" && spec !== "#screens") problems.push(`${rel(f)}: imports "${spec}"; a case may import only #kit and #screens`);
+for (const [dir, allowed] of [["cases", /^#(kit|screens)$/], ["seeds", /^(#kit|#screens|\.\/_[a-z0-9-]+\.ts)$/]] as const) {
+  for (const f of files(join(PARITY, dir))) {
+    const src = readFileSync(f, "utf8");
+    for (const spec of imports(src)) {
+      if (!allowed.test(spec)) problems.push(`${rel(f)}: imports "${spec}"; ${dir === "cases" ? "a case may import only #kit and #screens" : "a seed may import only #kit, #screens and ./_*.ts"}`);
+    }
+    const code = src.replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
+    for (const [re, what] of FORBIDDEN_IN_CASES) if (re.test(code)) problems.push(`${rel(f)}: ${what}`);
   }
-  const code = src.replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
-  for (const [re, what] of FORBIDDEN_IN_CASES) if (re.test(code)) problems.push(`${rel(f)}: ${what}`);
 }
 
 for (const f of files(join(PARITY, "screens"))) {
@@ -51,7 +54,7 @@ for (const f of files(join(PARITY, "screens"))) {
   }
 }
 
-for (const dir of ["cases", "screens"]) {
+for (const dir of ["cases", "seeds", "screens"]) {
   for (const f of files(join(PARITY, dir))) {
     for (const spec of imports(readFileSync(f, "utf8"))) {
       if (spec.includes("internal")) problems.push(`${rel(f)}: reaches into kit/internal via "${spec}"`);

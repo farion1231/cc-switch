@@ -1,0 +1,3 @@
+00 launch | home aa78adba70bd
+01 ui.click button "Claude Desktop" in group "Apps" in navigation "Main navigation" | home aa78adba70bd
+02 ui.click button "Switch" in group "Beta Relay" in main "" | home 3bddcd41d768

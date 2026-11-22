@@ -1,0 +1,69 @@
+{
+  "recipe": "3b80de72671d5511f5c1d1cfb8a5d1638f5875c5f6b635dea41d7efafe9fbe7c",
+  "entries": {
+    ".cache": {
+      "kind": "dir",
+      "mode": "755"
+    },
+    ".cc-switch": {
+      "kind": "dir",
+      "mode": "755"
+    },
+    ".cc-switch/backups": {
+      "kind": "dir",
+      "mode": "755"
+    },
+    ".cc-switch/backups/live-first-write": {
+      "kind": "dir",
+      "mode": "755"
+    },
+    ".cc-switch/backups/live-first-write/1a20e75de018-config.toml.source": {
+      "kind": "file",
+      "mode": "600"
+    },
+    ".cc-switch/cc-switch.db": {
+      "kind": "file",
+      "mode": "644"
+    },
+    ".cc-switch/codex-catalog-history.json": {
+      "kind": "file",
+      "mode": "644"
+    },
+    ".cc-switch/live-state.json": {
+      "kind": "file",
+      "mode": "600"
+    },
+    ".cc-switch/model-pricing.json": {
+      "kind": "file",
+      "mode": "644"
+    },
+    ".cc-switch/settings.json": {
+      "kind": "file",
+      "mode": "600"
+    },
+    ".grok": {
+      "kind": "dir",
+      "mode": "755"
+    },
+    ".grok/config.toml": {
+      "kind": "file",
+      "mode": "600"
+    },
+    ".local": {
+      "kind": "dir",
+      "mode": "755"
+    },
+    ".local/share": {
+      "kind": "dir",
+      "mode": "755"
+    },
+    ".local/share/applications": {
+      "kind": "dir",
+      "mode": "755"
+    },
+    ".local/share/applications/cc-switch-handler.desktop": {
+      "kind": "file",
+      "mode": "644"
+    }
+  }
+}

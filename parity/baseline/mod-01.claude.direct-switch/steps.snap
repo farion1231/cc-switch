@@ -1,0 +1,3 @@
+00 launch | home 518bae2331cb
+01 ui.click button "Claude Code" in group "Apps" in navigation "Main navigation" | home 518bae2331cb
+02 ui.click button "Switch" in group "Beta Relay" in main "" | home 1421468e081f

@@ -1,0 +1,139 @@
+dir .cache 755
+opaque-dir .cache/com.ccswitch.desktop 755
+dir .cc-switch 755
+dir .cc-switch/backups 755
+opaque .cc-switch/backups/db_backup_20310314_090000.db 600
+dir .cc-switch/backups/live-first-write 755
+file .cc-switch/backups/live-first-write/1a20e75de018-config.toml.source 600 lf no-final-newline
+  | <HOME>/.grok/config.toml
+opaque .cc-switch/cc-switch.db 644
+file .cc-switch/codex-catalog-history.json 644 lf no-final-newline
+  | [
+  |   {
+  |     "fingerprint": "none",
+  |     "sinceMs": 1931158800000
+  |   }
+  | ]
+file .cc-switch/live-state.json 600 lf no-final-newline
+  | {
+  |   "version": 1,
+  |   "apps": {
+  |     "claude": {
+  |       "mode": "direct"
+  |     },
+  |     "claude-desktop": {
+  |       "mode": "direct"
+  |     },
+  |     "codex": {
+  |       "mode": "direct"
+  |     },
+  |     "gemini": {
+  |       "mode": "direct"
+  |     },
+  |     "grokbuild": {
+  |       "mode": "direct",
+  |       "written": {
+  |         "tables": [
+  |           "grok-4.7"
+  |         ]
+  |       }
+  |     }
+  |   }
+  | }
+dir .cc-switch/logs 755
+opaque .cc-switch/logs/cc-switch.log 644
+file .cc-switch/model-pricing.json 644 lf
+  | {
+  |   "version": 1,
+  |   "modelsDevSync": {
+  |     "autoSyncEnabled": true,
+  |     "includeCommonModels": true,
+  |     "selectedModelKeys": [],
+  |     "excludedCommonModelKeys": [],
+  |     "lastSyncAt": null,
+  |     "lastSyncError": "Request to models.dev failed: error sending request: client error (Connect): dns error: failed to lookup address information: Temporary failure in name resolution"
+  |   },
+  |   "models": [],
+  |   "deletedModelIds": []
+  | }
+file .cc-switch/settings.json 600 lf no-final-newline
+  | {
+  |   "showInTray": true,
+  |   "minimizeToTrayOnClose": true,
+  |   "useAppWindowControls": false,
+  |   "enableClaudePluginIntegration": false,
+  |   "skipClaudeOnboarding": false,
+  |   "launchOnStartup": false,
+  |   "silentStartup": false,
+  |   "lightweightMode": false,
+  |   "enableLocalProxy": false,
+  |   "enableStackMode": false,
+  |   "sessionAutoSyncEnabled": true,
+  |   "sessionContentSearchEnabled": false,
+  |   "enableFailoverToggle": false,
+  |   "showProfileSwitcher": false,
+  |   "showProviderSearch": true,
+  |   "checkToolUpdatesOnStartup": false,
+  |   "autoUpdateEnabled": false,
+  |   "nativeTrayMenu": false,
+  |   "preserveCodexOfficialAuthOnSwitch": false,
+  |   "codexQuotaProtection": {
+  |     "enabled": true,
+  |     "fiveHourThreshold": 95,
+  |     "weeklyThreshold": 98
+  |   },
+  |   "codexProxyWithoutOfficialLogin": false,
+  |   "unifyCodexSessionHistory": false,
+  |   "codexStackClassicTools": true,
+  |   "firstRunNoticeConfirmed": true,
+  |   "newLayoutNoticeConfirmed": true,
+  |   "whatsNewSeenVersion": "4.0.37",
+  |   "currentProviderGrokbuild": "<uuid:1>",
+  |   "skillSyncMethod": "auto",
+  |   "skillStorageLocation": "cc_switch",
+  |   "localMigrations": {
+  |     "codexThirdPartyHistoryProviderBucketV1": {
+  |       "completedAt": "2031-03-13T09:00:00+00:00",
+  |       "targetProviderId": "custom",
+  |       "migratedJsonlFiles": 0,
+  |       "migratedStateRows": 0,
+  |       "scannedHistoryFiles": true
+  |     },
+  |     "codexProviderTemplateV1": {
+  |       "completedAt": "2031-03-13T09:00:00+00:00"
+  |     },
+  |     "codexLegacyOfficialHistoryBucketV1": {
+  |       "completedAt": "2031-03-13T09:00:00+00:00",
+  |       "targetProviderId": "openai",
+  |       "migratedJsonlFiles": 0,
+  |       "migratedStateRows": 0,
+  |       "codexConfigDir": "<HOME>/.codex"
+  |     },
+  |     "codexQuotaProtectionDefaultOnV1": true
+  |   }
+  | }
+dir .grok 755
+file .grok/config.toml 600 lf
+  | [models]
+  | default = "grok-4.7"
+  | session_summary = "grok-4.7"
+  | 
+  | [model."grok-4.7"]
+  | model = "grok-4.7"
+  | base_url = "https://alpha.relay.example/v1"
+  | name = "Alpha Relay"
+  | api_backend = "responses"
+  | context_window = 500000
+  | api_key = "sk-parity-alpha"
+dir .local 755
+dir .local/share 755
+dir .local/share/applications 755
+file .local/share/applications/cc-switch-handler.desktop 644 lf
+  | [Desktop Entry]
+  | Type=Application
+  | Name=CC Switch
+  | Exec="/app/cc-switch" %u
+  | Terminal=false
+  | MimeType=x-scheme-handler/ccswitch
+  | NoDisplay=true
+opaque-dir .local/share/com.ccswitch.desktop 755

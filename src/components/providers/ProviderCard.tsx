@@ -462,6 +462,8 @@ export function ProviderCard({
   };
   return (
     <div
+      role="group"
+      aria-label={provider.name}
       className={cn(
         "group relative rounded-panel border transition-[border-color,box-shadow,background-color] duration-150",
         presentation.tone

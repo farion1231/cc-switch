@@ -1,0 +1,11 @@
+[models]
+default = "grok-4.7"
+session_summary = "grok-4.7"
+
+[model."grok-4.7"]
+model = "grok-4.7"
+base_url = "https://alpha.relay.example/v1"
+name = "Alpha Relay"
+api_backend = "responses"
+context_window = 500000
+api_key = "sk-parity-alpha"

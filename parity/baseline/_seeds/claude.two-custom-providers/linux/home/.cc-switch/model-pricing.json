@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "modelsDevSync": {
+    "autoSyncEnabled": true,
+    "includeCommonModels": true,
+    "selectedModelKeys": [],
+    "excludedCommonModelKeys": [],
+    "lastSyncAt": null,
+    "lastSyncError": "Request to models.dev failed: error sending request: client error (Connect): dns error: failed to lookup address information: Temporary failure in name resolution"
+  },
+  "models": [],
+  "deletedModelIds": []
+}

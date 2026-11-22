@@ -38,3 +38,5 @@
 *.dll binary
 # Parity recordings are compared byte for byte on every OS; never convert line endings.
 parity/baseline/** text eol=lf
+# Seeds are user data the app wrote, restored byte for byte, databases included.
+parity/baseline/_seeds/** binary !eol

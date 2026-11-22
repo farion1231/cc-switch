@@ -2,14 +2,15 @@
 // Every step is idempotent and reset comes first, so a crashed case cannot poison the next one.
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import type { CaseSpec, Duration, Expect, HomePath, Journey } from "../../case.ts";
+import type { CaseSpec, Duration, Expect, HomePath, Journey, SeedSpec } from "../../case.ts";
 import type { AppSession } from "../driver/app.ts";
 import { createHash } from "node:crypto";
 import { TREE_CMD, type TreeResult } from "../driver/probe.ts";
 import { isVisible, makeUi, settleUi, StepError, type StepHooks, type StepLog } from "../driver/verbs.ts";
 import { CHANNELS, files, scanHome, signatures } from "../observe/channels.ts";
 import { Binder } from "../observe/normalise.ts";
-import { CLOCK_ENV, PinnedClock } from "./clock.ts";
+import { CLOCK_ENV, PinnedClock, SEED_ORIGIN_MS } from "./clock.ts";
+import { restoreSeed } from "./seeds.ts";
 import type { CheckpointObservation } from "../observe/store.ts";
 
 export interface HostOptions {
@@ -119,13 +120,40 @@ function makeExpect(home: string, app: AppSession, failures: string[]): Expect {
   };
 }
 
-export async function runCase(spec: CaseSpec, host: HostOptions): Promise<CaseRun> {
-  if (spec.seed !== "fresh") throw new Error(`case ${spec.id}: seeds other than "fresh" are not implemented yet`);
-  const run: CaseRun = { caseId: spec.id, checkpoints: [], prints: [], intentFailures: [], errors: [], steps: [], ms: 0 };
+const newRun = (caseId: string): CaseRun => ({ caseId, checkpoints: [], prints: [], intentFailures: [], errors: [], steps: [], ms: 0 });
+
+/**
+ * Runs one case once. `seed` is the directory of the case's recorded seed, restored after reset;
+ * HOME's state before the restore is what the files channel compares with, so the seed's files
+ * are part of every checkpoint.
+ */
+export async function runCase(spec: CaseSpec, host: HostOptions, seed?: string): Promise<CaseRun> {
+  if (spec.seed !== "fresh" && !seed) throw new Error(`case ${spec.id}: seed ${spec.seed.seed} is not recorded for this OS`);
+  const run = newRun(spec.id);
   host.reset();
+  const pristine = signatures(scanHome(host.home, host.exclude));
+  if (seed) restoreSeed(seed, host.home);
   const clock = new PinnedClock(host.clockFile);
   clock.reset();
+  await session(host, clock, pristine, run, (j) => spec.journey(j));
+  return run;
+}
+
+/**
+ * Runs a seed's recipe from an empty HOME, one day before the cases' start, and leaves its result
+ * in HOME for the caller to record. Step prints and the inert-step check apply as in a case.
+ */
+export async function buildSeed(spec: SeedSpec, host: HostOptions): Promise<{ run: CaseRun; pristine: Map<string, string> }> {
+  const run = newRun(`_seed.${spec.name}`);
+  host.reset();
   const pristine = signatures(scanHome(host.home, host.exclude));
+  const clock = new PinnedClock(host.clockFile);
+  clock.set(SEED_ORIGIN_MS);
+  await session(host, clock, pristine, run, (j) => spec.build({ ui: j.ui, expect: j.expect, advanceClock: (by) => j.advanceClock(by) }));
+  return { run, pristine };
+}
+
+async function session(host: HostOptions, clock: PinnedClock, pristine: ReadonlyMap<string, string>, run: CaseRun, body: (j: Journey) => Promise<void>): Promise<void> {
   const before = host.sentinels.map(listing);
   const startMs = Date.now();
   let app: AppSession | null = null;
@@ -206,7 +234,7 @@ export async function runCase(spec: CaseSpec, host: HostOptions): Promise<CaseRu
         run.prints.push(line(run.prints.length, "clock", prev, `+${durationText(by)}`));
       },
     };
-    await spec.journey(journey);
+    await body(journey);
     await flush();
   } catch (e) {
     run.errors.push(e instanceof Error ? e.message : String(e));
@@ -221,5 +249,4 @@ export async function runCase(spec: CaseSpec, host: HostOptions): Promise<CaseRu
     if (added.length || removed.length) run.errors.push(`outside-sandbox write in ${s}: +${JSON.stringify(added)} -${JSON.stringify(removed)}`);
   });
   (run as { ms: number }).ms = Date.now() - startMs;
-  return run;
 }

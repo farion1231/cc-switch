@@ -13,6 +13,7 @@ on:
       - "parity/screens/**"
       - "parity/cases/**"
       - "parity/baseline/**"
+      - "parity/seeds/**"
       - "parity/volatile.ts"
       - "parity/ci/**"
       - ".github/workflows/parity-windows-probe.yml"

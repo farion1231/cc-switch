@@ -1,0 +1,3 @@
+00 launch | home 84698a269119
+01 ui.click button "Grok Build" in group "Apps" in navigation "Main navigation" | home 84698a269119
+02 ui.click button "Switch" in group "Beta Relay" in main "" | home 14a934ba4af8
