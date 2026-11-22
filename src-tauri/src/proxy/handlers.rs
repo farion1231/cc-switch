@@ -400,8 +400,7 @@ async fn handle_messages_for_app(
         .and_then(|s| s.as_bool())
         .unwrap_or(false);
 
-    // Response bridges need tool schemas/names, not the full conversation history.
-    let response_body = serde_json::json!({ "tools": body.get("tools") });
+    let response_context = ClaudeResponseContext::from_request(&body);
 
     // 转发请求
     let forwarder = ctx.create_forwarder(&state);
@@ -457,7 +456,7 @@ async fn handle_messages_for_app(
             response,
             &ctx,
             &state,
-            &response_body,
+            response_context,
             is_stream,
             &api_format,
             connection_guard,
@@ -644,11 +643,32 @@ fn spawn_claude_usage_log(
     });
 }
 
+/// Keep only the metadata needed to translate the response. In particular, resolve
+/// hosted search selection while `tool_choice` is still available, without cloning
+/// the conversation or complete tool schemas on the passthrough path.
+struct ClaudeResponseContext {
+    tool_schema_hints: Option<transform_gemini::AnthropicToolSchemaHints>,
+    hosted_web_search_name: Option<String>,
+    hosted_web_search_max_uses: Option<u64>,
+}
+
+impl ClaudeResponseContext {
+    fn from_request(body: &Value) -> Self {
+        let hints = transform_gemini::extract_anthropic_tool_schema_hints(body);
+        Self {
+            tool_schema_hints: (!hints.is_empty()).then_some(hints),
+            hosted_web_search_name: transform_responses::anthropic_web_search_tool_name(body)
+                .map(ToString::to_string),
+            hosted_web_search_max_uses: transform_responses::anthropic_web_search_max_uses(body),
+        }
+    }
+}
+
 async fn handle_claude_transform(
     response: super::hyper_client::ProxyResponse,
     ctx: &RequestContext,
     state: &ProxyState,
-    original_body: &Value,
+    response_context: ClaudeResponseContext,
     is_stream: bool,
     api_format: &str,
     connection_guard: Option<ActiveConnectionGuard>,
@@ -662,12 +682,11 @@ async fn handle_claude_transform(
         !is_stream && api_format == "openai_responses" && (is_codex_oauth || response.is_sse());
     let use_streaming =
         should_use_claude_transform_streaming(is_stream, response.is_sse(), api_format);
-    let tool_schema_hints = transform_gemini::extract_anthropic_tool_schema_hints(original_body);
-    let tool_schema_hints = (!tool_schema_hints.is_empty()).then_some(tool_schema_hints);
-    let hosted_web_search_name =
-        transform_responses::anthropic_web_search_tool_name(original_body).map(ToString::to_string);
-    let hosted_web_search_max_uses =
-        transform_responses::anthropic_web_search_max_uses(original_body);
+    let ClaudeResponseContext {
+        tool_schema_hints,
+        hosted_web_search_name,
+        hosted_web_search_max_uses,
+    } = response_context;
 
     if use_streaming {
         // 根据 api_format 选择流式转换器
@@ -4199,7 +4218,13 @@ data: [DONE]\n\n";
                     Bytes::from_static(sse.as_bytes()),
                 );
                 let response = super::handle_claude_transform(
-                    upstream, &ctx, &state, &request, false, api_format, None,
+                    upstream,
+                    &ctx,
+                    &state,
+                    super::ClaudeResponseContext::from_request(&request),
+                    false,
+                    api_format,
+                    None,
                 )
                 .await
                 .unwrap();
@@ -4235,6 +4260,141 @@ data: [DONE]\n\n";
             true,
             "openai_responses",
         ));
+    }
+
+    #[tokio::test]
+    async fn forced_web_search_selection_survives_response_context_extraction() {
+        use crate::app_config::AppType;
+        use crate::mode::stack::StackTarget;
+        use crate::provider::Provider;
+        use crate::proxy::{
+            handler_context::RequestContext, hyper_client::ProxyResponse, server::ProxyState,
+        };
+        use serde_json::{json, Value};
+
+        let state = ProxyState::for_test(Arc::new(Database::memory().unwrap()));
+        state.config.write().await.enable_logging = false;
+        let request = json!({
+            "model": "test-model", "messages": [{"role": "user", "content": "Search twice"}],
+            "tools": [
+                {"type": "web_search_20250305", "name": "first_search", "max_uses": 1},
+                {"type": "web_search_20250305", "name": "chosen_search", "max_uses": 3},
+                {"name": "lookup", "input_schema": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}
+            ],
+            "tool_choice": {"type": "tool", "name": "chosen_search"}
+        });
+        let ctx = RequestContext::new(
+            &state,
+            &request,
+            &HeaderMap::new(),
+            AppType::Claude,
+            "Claude",
+            "claude",
+            Some(StackTarget {
+                provider: Provider::with_id("search-test".into(), "Test".into(), json!({}), None),
+                upstream_model: "test-model".into(),
+                original_model: "test-model".into(),
+            }),
+        )
+        .await
+        .unwrap();
+        let output: Vec<Value> = (0..2)
+            .map(|index| {
+                json!({
+                    "id": format!("ws_{index}"), "type": "web_search_call", "status": "completed",
+                    "action": {"type": "search", "query": format!("query {index}")}
+                })
+            })
+            .collect();
+        let upstream_body = json!({"id": "resp_search", "model": "test-model", "status": "completed",
+            "output": output, "usage": {"input_tokens": 5, "output_tokens": 2}});
+        let mut events = vec![
+            json!({"type": "response.created", "response": {"id": "resp_search", "model": "test-model"}}),
+        ];
+        for (index, item) in output.iter().enumerate() {
+            let mut pending = item.clone();
+            pending["status"] = json!("in_progress");
+            events.push(json!({"type": "response.output_item.added", "output_index": index, "item": pending}));
+            events.push(
+                json!({"type": "response.output_item.done", "output_index": index, "item": item}),
+            );
+        }
+        events.push(json!({"type": "response.completed", "response": upstream_body}));
+        let sse = events
+            .iter()
+            .map(|event| format!("data: {event}\n\n"))
+            .collect::<String>();
+
+        for (stream, upstream_sse) in [(false, false), (false, true), (true, true)] {
+            let context = super::ClaudeResponseContext::from_request(&request);
+            assert_eq!(
+                context.hosted_web_search_name.as_deref(),
+                Some("chosen_search")
+            );
+            assert_eq!(context.hosted_web_search_max_uses, Some(3));
+            assert!(context
+                .tool_schema_hints
+                .as_ref()
+                .unwrap()
+                .contains_key("lookup"));
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                "content-type",
+                HeaderValue::from_static(if upstream_sse {
+                    "text/event-stream"
+                } else {
+                    "application/json"
+                }),
+            );
+            let upstream = ProxyResponse::buffered(
+                StatusCode::OK,
+                headers,
+                Bytes::from(if upstream_sse {
+                    sse.clone()
+                } else {
+                    upstream_body.to_string()
+                }),
+            );
+            let response = super::handle_claude_transform(
+                upstream,
+                &ctx,
+                &state,
+                context,
+                stream,
+                "openai_responses",
+                None,
+            )
+            .await
+            .unwrap();
+            let bytes = response.into_body().collect().await.unwrap().to_bytes();
+            let blocks = if stream {
+                std::str::from_utf8(&bytes)
+                    .unwrap()
+                    .lines()
+                    .filter_map(|line| line.strip_prefix("data: "))
+                    .filter_map(|data| serde_json::from_str::<Value>(data).ok())
+                    .filter_map(|event| event.get("content_block").cloned())
+                    .collect::<Vec<_>>()
+            } else {
+                serde_json::from_slice::<Value>(&bytes).unwrap()["content"]
+                    .as_array()
+                    .unwrap()
+                    .clone()
+            };
+            let names = blocks
+                .iter()
+                .filter(|block| block["type"] == "server_tool_use")
+                .map(|block| block["name"].as_str().unwrap())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                names,
+                vec!["chosen_search", "chosen_search"],
+                "stream={stream}, upstream_sse={upstream_sse}"
+            );
+            assert!(!std::str::from_utf8(&bytes)
+                .unwrap()
+                .contains("max_uses_exceeded"));
+        }
     }
 
     #[tokio::test]

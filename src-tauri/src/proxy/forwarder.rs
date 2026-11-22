@@ -240,19 +240,20 @@ impl RequestForwarder {
     ///
     /// 受 `enabled && request_media_fallback` 管辖；不涉及 `request_media_heuristic`——
     /// 这里是上游"实测"错误后的纯恢复，不是预测，故启发式开关与它无关。
+    /// `provider_body = None` 只检查错误和开关，让调用方按需重建正文。
     fn media_retry_should_trigger(
         &self,
         adapter_name: &str,
         already_retried: bool,
-        provider_body: &Value,
+        provider_body: Option<&Value>,
         error: &ProxyError,
     ) -> bool {
         matches!(adapter_name, "Claude" | "Codex")
             && self.rectifier_config.enabled
             && self.rectifier_config.request_media_fallback
             && !already_retried
-            && super::media_sanitizer::contains_image_blocks(provider_body)
             && super::media_sanitizer::is_unsupported_image_error(error)
+            && provider_body.is_none_or(super::media_sanitizer::contains_image_blocks)
     }
 
     /// 反应式密文重试判定：原样转发的 Responses 上游拒绝了请求里别家签发的密文时，
@@ -263,13 +264,14 @@ impl RequestForwarder {
     /// Claude / Claude Desktop 转 Responses 时，上游的推理条目藏在 thinking 签名里回放
     /// （#9424），请求体是 Anthropic Messages，整流用 [`rectify_claude_responses_replay`]。
     /// 这条路径不看上游格式：只有 Responses 上游会签发推理信封，也只有它会用这些措辞拒绝。
+    /// `request = None` 做预判；命中后必须带实际正文再次确认。
     fn opaque_state_retry_rejection(
         &self,
         app_type: &AppType,
         provider: &Provider,
         codex_upstream_format: Option<CodexUpstreamFormat>,
         already_retried: bool,
-        request: &Value,
+        request: Option<&Value>,
         error: &ProxyError,
     ) -> Option<OpaqueStateRejection> {
         if already_retried {
@@ -297,14 +299,27 @@ impl RequestForwarder {
         request: &Value,
         error: &ProxyError,
     ) -> Option<Value> {
-        if !matches!(app_type, AppType::Codex)
-            || codex_upstream_format != Some(CodexUpstreamFormat::NativeResponses)
-            || super::providers::is_codex_official_provider(provider)
-            || !matches!(error, ProxyError::UpstreamError { status: 400, .. })
-        {
+        if !Self::compaction_tool_choice_retry_applicable(
+            app_type,
+            provider,
+            codex_upstream_format,
+            error,
+        ) {
             return None;
         }
         super::providers::codex_compaction::compaction_retry_without_tool_choice(request)
+    }
+
+    fn compaction_tool_choice_retry_applicable(
+        app_type: &AppType,
+        provider: &Provider,
+        codex_upstream_format: Option<CodexUpstreamFormat>,
+        error: &ProxyError,
+    ) -> bool {
+        matches!(app_type, AppType::Codex)
+            && codex_upstream_format == Some(CodexUpstreamFormat::NativeResponses)
+            && !super::providers::is_codex_official_provider(provider)
+            && matches!(error, ProxyError::UpstreamError { status: 400, .. })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -881,14 +896,14 @@ impl RequestForwarder {
                         .await);
                 }
                 Err(mut e) => {
-                    // The successful path never duplicates the parsed conversation. Only
-                    // rectification/failover needs another copy of the original request.
-                    let mut provider_body = body.replay().map_err(|error| ForwardError {
+                    // Reconstruct at most once, and only after an error-only rectifier
+                    // check matches. Ordinary failures replay on the next provider only.
+                    let mut provider_body = RetryBody::new(self, &body, provider);
+                    let replay_error = |error| ForwardError {
                         error,
                         provider: Some(provider.clone()),
                         outbound_model: None,
-                    })?;
-                    self.prepare_provider_body(&mut provider_body, provider);
+                    };
 
                     // 检测是否需要触发整流器（上游为 Anthropic Messages 的供应商）
                     let is_anthropic_provider = uses_anthropic_rectifiers(
@@ -900,10 +915,12 @@ impl RequestForwarder {
                     if self.media_retry_should_trigger(
                         adapter.name(),
                         media_rectifier_retried,
-                        &provider_body,
+                        None,
                         &e,
+                    ) && super::media_sanitizer::contains_image_blocks(
+                        provider_body.get().map_err(replay_error)?,
                     ) {
-                        let mut media_body = provider_body.clone();
+                        let mut media_body = provider_body.get().map_err(replay_error)?.clone();
                         let replaced_images =
                             super::media_sanitizer::replace_image_blocks_with_marker(
                                 &mut media_body,
@@ -970,13 +987,23 @@ impl RequestForwarder {
 
                     // 压缩回合被原生 Responses 第三方拒绝：有的上游不收 `tool_choice: "none"`
                     // （见 `compaction_retry_without_tool_choice`），去掉它对同一家重试一次。
-                    if let Some(retry_body) = self.compaction_tool_choice_retry_body(
+                    let compaction_body = if Self::compaction_tool_choice_retry_applicable(
                         app_type,
                         provider,
                         attempted_codex_upstream_format,
-                        &provider_body,
                         &e,
                     ) {
+                        self.compaction_tool_choice_retry_body(
+                            app_type,
+                            provider,
+                            attempted_codex_upstream_format,
+                            provider_body.get().map_err(replay_error)?,
+                            &e,
+                        )
+                    } else {
+                        None
+                    };
+                    if let Some(retry_body) = compaction_body {
                         log::info!(
                             "[{app_type_str}] [RECT-030] provider={} 拒绝了压缩请求，去掉 tool_choice 后重试一次",
                             provider.id
@@ -1008,18 +1035,35 @@ impl RequestForwarder {
                         }
                     }
 
-                    if let Some(rejection) = self.opaque_state_retry_rejection(
-                        app_type,
-                        provider,
-                        attempted_codex_upstream_format,
-                        opaque_rectifier_retried,
-                        &provider_body,
-                        &e,
-                    ) {
+                    let opaque_rejection = if self
+                        .opaque_state_retry_rejection(
+                            app_type,
+                            provider,
+                            attempted_codex_upstream_format,
+                            opaque_rectifier_retried,
+                            None,
+                            &e,
+                        )
+                        .is_some()
+                    {
+                        self.opaque_state_retry_rejection(
+                            app_type,
+                            provider,
+                            attempted_codex_upstream_format,
+                            opaque_rectifier_retried,
+                            Some(provider_body.get().map_err(replay_error)?),
+                            &e,
+                        )
+                    } else {
+                        None
+                    };
+                    if let Some(rejection) = opaque_rejection {
                         // 这一轮是派给子 agent 的加密任务：整流不动它（见
                         // `opaque_state_rectifier`），去掉别家的状态后仍被拒，就是任务本身解不开。
-                        let agent_task = carries_encrypted_agent_task(&provider_body);
-                        let mut opaque_body = provider_body.clone();
+                        let agent_task = carries_encrypted_agent_task(
+                            provider_body.get().map_err(replay_error)?,
+                        );
+                        let mut opaque_body = provider_body.get().map_err(replay_error)?.clone();
                         let rectified =
                             if matches!(app_type, AppType::Claude | AppType::ClaudeDesktop) {
                                 rectify_claude_responses_replay(&mut opaque_body, rejection)
@@ -1081,7 +1125,7 @@ impl RequestForwarder {
                                                 provider,
                                                 opaque_retry_codex_upstream_format,
                                                 false,
-                                                &opaque_body,
+                                                Some(&opaque_body),
                                                 &retry_err,
                                             )
                                             .is_some()
@@ -1119,7 +1163,9 @@ impl RequestForwarder {
                             }
 
                             // 首次触发：整流请求体
-                            let rectified = rectify_anthropic_request(&mut provider_body);
+                            let rectified = rectify_anthropic_request(
+                                provider_body.get().map_err(replay_error)?,
+                            );
 
                             // 整流未生效：继续尝试 budget 整流路径，避免误判后短路
                             if !rectified.applied {
@@ -1144,7 +1190,7 @@ impl RequestForwarder {
                                 match self
                                     .forward(
                                         &attempt,
-                                        provider_body,
+                                        std::mem::take(provider_body.get().map_err(replay_error)?),
                                         &mut signature_retry_codex_upstream_format,
                                     )
                                     .await
@@ -1208,9 +1254,11 @@ impl RequestForwarder {
                             }
 
                             let budget_rectified = if budget_hit {
-                                rectify_thinking_budget(&mut provider_body)
+                                rectify_thinking_budget(provider_body.get().map_err(replay_error)?)
                             } else {
-                                rectify_thinking_disabled(&mut provider_body)
+                                rectify_thinking_disabled(
+                                    provider_body.get().map_err(replay_error)?,
+                                )
                             };
                             if !budget_rectified.applied {
                                 log::warn!(
@@ -1234,7 +1282,7 @@ impl RequestForwarder {
                             match self
                                 .forward(
                                     &attempt,
-                                    provider_body,
+                                    std::mem::take(provider_body.get().map_err(replay_error)?),
                                     &mut budget_retry_codex_upstream_format,
                                 )
                                 .await

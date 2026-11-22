@@ -10,6 +10,8 @@ pub struct ForwardBody {
     first: Option<Value>,
     bytes: Bytes,
     model: Option<Value>,
+    #[cfg(test)]
+    pub(super) replay_count: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl ForwardBody {
@@ -19,6 +21,8 @@ impl ForwardBody {
             first: Some(body),
             bytes,
             model,
+            #[cfg(test)]
+            replay_count: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         }
     }
 
@@ -27,6 +31,9 @@ impl ForwardBody {
     }
 
     pub(super) fn replay(&self) -> Result<Value, ProxyError> {
+        #[cfg(test)]
+        self.replay_count
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let mut body: Value = if self.bytes.is_empty() {
             Value::Null
         } else {
@@ -41,6 +48,42 @@ impl ForwardBody {
 
     pub(super) fn next(&mut self) -> Result<Value, ProxyError> {
         self.first.take().map(Ok).unwrap_or_else(|| self.replay())
+    }
+}
+
+/// All rectifiers for one provider share a single, lazily prepared replay.
+pub(super) struct RetryBody<'a> {
+    forwarder: &'a RequestForwarder,
+    original: &'a ForwardBody,
+    provider: &'a Provider,
+    prepared: Option<Value>,
+}
+
+impl<'a> RetryBody<'a> {
+    pub(super) fn new(
+        forwarder: &'a RequestForwarder,
+        original: &'a ForwardBody,
+        provider: &'a Provider,
+    ) -> Self {
+        Self {
+            forwarder,
+            original,
+            provider,
+            prepared: None,
+        }
+    }
+
+    pub(super) fn get(&mut self) -> Result<&mut Value, ProxyError> {
+        if self.prepared.is_none() {
+            let mut body = self.original.replay()?;
+            self.forwarder
+                .prepare_provider_body(&mut body, self.provider);
+            self.prepared = Some(body);
+        }
+        Ok(self
+            .prepared
+            .as_mut()
+            .expect("retry body has been prepared"))
     }
 }
 

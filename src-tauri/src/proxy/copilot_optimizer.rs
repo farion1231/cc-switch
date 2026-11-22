@@ -270,37 +270,31 @@ pub(crate) fn merge_tool_results_with_changes(mut body: Value) -> (Value, bool) 
     }
 
     // Phase 2: 跨消息合并 — 连续的 tool_result-only 用户消息合并
-    let messages = match body.get("messages").and_then(|m| m.as_array()) {
-        Some(messages) => messages.clone(),
-        None => return (body, changed),
-    };
-    if messages.len() <= 1 {
+    if !messages
+        .windows(2)
+        .any(|pair| is_tool_result_only_message(&pair[0]) && is_tool_result_only_message(&pair[1]))
+    {
         return (body, changed);
     }
 
     let mut merged_msgs: Vec<Value> = Vec::with_capacity(messages.len());
-    let mut i = 0;
-
-    while i < messages.len() {
-        if is_tool_result_only_message(&messages[i]) {
+    let mut messages = std::mem::take(messages).into_iter().peekable();
+    while let Some(mut message) = messages.next() {
+        if is_tool_result_only_message(&message)
+            && messages.peek().is_some_and(is_tool_result_only_message)
+        {
+            let mut combined_content = std::mem::take(message["content"].as_array_mut().unwrap());
+            while messages.peek().is_some_and(is_tool_result_only_message) {
+                let mut next = messages.next().unwrap();
+                combined_content.append(next["content"].as_array_mut().unwrap());
+            }
+            message = serde_json::json!({
+                "role": "user",
+                "content": combined_content
+            });
             changed = true;
-            let mut combined_content: Vec<Value> = Vec::new();
-            while i < messages.len() && is_tool_result_only_message(&messages[i]) {
-                if let Some(content) = messages[i].get("content").and_then(|c| c.as_array()) {
-                    combined_content.extend(content.iter().cloned());
-                }
-                i += 1;
-            }
-            if !combined_content.is_empty() {
-                merged_msgs.push(serde_json::json!({
-                    "role": "user",
-                    "content": combined_content
-                }));
-            }
-        } else {
-            merged_msgs.push(messages[i].clone());
-            i += 1;
         }
+        merged_msgs.push(message);
     }
 
     body["messages"] = Value::Array(merged_msgs);
@@ -1047,6 +1041,62 @@ mod tests {
         assert_eq!(messages.len(), 3);
         let merged_content = messages[2]["content"].as_array().unwrap();
         assert_eq!(merged_content.len(), 2);
+    }
+
+    #[test]
+    fn isolated_tool_results_keep_metadata_and_history_allocations() {
+        let body = serde_json::json!({"messages": [
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "x".repeat(1024 * 1024)},
+            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "one", "content": "result"}], "metadata": {"keep": true}},
+            {"role": "assistant", "content": "next"},
+            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "two", "content": "result"}]}
+        ]});
+        let expected = body.clone();
+        let history = body["messages"][1]["content"].as_str().unwrap().as_ptr();
+
+        let (result, changed) = merge_tool_results_with_changes(body);
+
+        assert!(!changed);
+        assert_eq!(result, expected);
+        assert_eq!(
+            result["messages"][1]["content"].as_str().unwrap().as_ptr(),
+            history
+        );
+    }
+
+    #[test]
+    fn only_actual_tool_result_merges_mark_the_body_changed() {
+        let single = serde_json::json!({"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "one", "content": "result"}
+        ], "metadata": {"keep": true}});
+        let body = serde_json::json!({"messages": [
+            single,
+            {"role": "assistant", "content": "next"},
+            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "two", "content": "second"}]},
+            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "three", "content": "third"}]}
+        ]});
+        let (result, changed) = merge_tool_results_with_changes(body);
+        assert!(changed);
+        assert_eq!(result["messages"].as_array().unwrap().len(), 3);
+        assert_eq!(result["messages"][0], single);
+        assert_eq!(result["messages"][2]["content"][0]["tool_use_id"], "two");
+        assert_eq!(result["messages"][2]["content"][1]["tool_use_id"], "three");
+
+        let (result, changed) = merge_tool_results_with_changes(serde_json::json!({"messages": [{
+            "role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "one", "content": "result"},
+                {"type": "text", "text": "hook reminder"}
+            ]
+        }]}));
+        assert!(
+            changed,
+            "an in-message merge still requires privacy filtering"
+        );
+        assert_eq!(
+            result["messages"][0]["content"].as_array().unwrap().len(),
+            1
+        );
     }
 
     #[test]
