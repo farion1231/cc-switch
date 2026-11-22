@@ -825,6 +825,12 @@ pub fn create_responses_sse_stream_from_chat_with_context<E: std::error::Error +
                         Some("stream_error".to_string()),
                     ));
                     stream_failed = true;
+                    // 错误事件已下发，只通知外层记账，不再追加传输错误。
+                    yield Err(std::io::Error::other(
+                        crate::proxy::response_processor::SurfacedStreamError(format!(
+                            "Stream error: {e}"
+                        )),
+                    ));
                     break;
                 }
             }
@@ -1473,7 +1479,10 @@ mod tests {
             upstream,
             CodexToolContext::default(),
         );
-        let bytes: Vec<Bytes> = converted.map(|item| item.unwrap()).collect().await;
+        let items: Vec<_> = converted.collect().await;
+        // 内部标记错误只用于外层记账，不发给客户端。
+        assert!(items.iter().any(Result::is_err));
+        let bytes: Vec<Bytes> = items.into_iter().filter_map(Result::ok).collect();
         let output = String::from_utf8(bytes.concat()).unwrap();
 
         assert!(output.contains("event: response.failed"));
@@ -1677,14 +1686,18 @@ mod tests {
             Some(data) => chunks.push(Ok(Bytes::from(data.to_owned()))),
             None => {}
         }
-        create_responses_sse_stream_from_chat_with_context(
+        let items: Vec<_> = create_responses_sse_stream_from_chat_with_context(
             futures::stream::iter(chunks),
             CodexToolContext::default(),
         )
-        .map(|chunk| String::from_utf8(chunk.unwrap().to_vec()).unwrap())
-        .collect::<Vec<_>>()
-        .await
-        .concat()
+        .collect()
+        .await;
+        items
+            .into_iter()
+            .filter_map(Result::ok)
+            .map(|chunk| String::from_utf8(chunk.to_vec()).unwrap())
+            .collect::<Vec<_>>()
+            .concat()
     }
 
     #[tokio::test]

@@ -772,6 +772,13 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                     let sse_data = format!("event: error\ndata: {}\n\n",
                         serde_json::to_string(&error_event).unwrap_or_default());
                     yield Ok(Bytes::from(sse_data));
+                    // 错误事件已经发给客户端；用标记错误通知外层记账，但不再追加
+                    // 传输错误（否则部分客户端会按网络错误整请求重试）。
+                    yield Err(std::io::Error::other(
+                        crate::proxy::response_processor::SurfacedStreamError(format!(
+                            "Stream error: {e}"
+                        )),
+                    ));
                     break;
                 }
             }
@@ -1478,10 +1485,16 @@ mod tests {
         ))]);
         let converted = create_anthropic_sse_stream(upstream);
         let chunks: Vec<_> = converted.collect().await;
+        // 传输错误事件之后还会跟一个内部标记错误，供外层记账（不会发给客户端）。
+        assert!(
+            chunks.iter().any(Result::is_err),
+            "a transport break must reach the outer stream for accounting"
+        );
 
         let merged = chunks
             .into_iter()
-            .map(|chunk| String::from_utf8_lossy(chunk.unwrap().as_ref()).to_string())
+            .filter_map(Result::ok)
+            .map(|chunk| String::from_utf8_lossy(chunk.as_ref()).to_string())
             .collect::<String>();
 
         let events: Vec<Value> = merged
@@ -1886,7 +1899,8 @@ mod tests {
         let chunks: Vec<_> = converted.collect().await;
         let events: Vec<Value> = chunks
             .into_iter()
-            .map(|chunk| parse_event(&chunk.unwrap()))
+            .filter_map(Result::ok)
+            .map(|chunk| parse_event(&chunk))
             .collect();
 
         assert_eq!(
@@ -2110,10 +2124,14 @@ mod tests {
             Some(data) => chunks.push(Ok(Bytes::from(data.to_owned()))),
             None => {}
         }
-        create_anthropic_sse_stream(futures::stream::iter(chunks))
-            .map(|chunk| String::from_utf8(chunk.unwrap().to_vec()).unwrap())
+        let items: Vec<_> = create_anthropic_sse_stream(futures::stream::iter(chunks))
+            .collect()
+            .await;
+        items
+            .into_iter()
+            .filter_map(Result::ok)
+            .map(|chunk| String::from_utf8(chunk.to_vec()).unwrap())
             .collect::<Vec<_>>()
-            .await
             .concat()
     }
 
