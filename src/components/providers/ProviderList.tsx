@@ -39,6 +39,7 @@ import {
 import { useStreamCheck } from "@/hooks/useStreamCheck";
 import { ProviderCard } from "@/components/providers/ProviderCard";
 import { ProviderEmptyState } from "@/components/providers/ProviderEmptyState";
+import { UnreadableEntriesNotice } from "@/components/common/UnreadableEntriesNotice";
 import {
   useCurrentOmoProviderId,
   useCurrentOmoSlimProviderId,
@@ -49,7 +50,7 @@ import { HelpTip } from "@/components/ui/help-tip";
 import { Notice } from "@/components/ui/notice";
 import { cn } from "@/lib/utils";
 import { isTextEditableTarget } from "@/utils/domUtils";
-import { extractProviderBaseUrl } from "@/utils/providerConfigUtils";
+import { extractProviderBaseUrl } from "@/utils/codexConfigUtils";
 import { usePiCurrentState } from "@/lib/query/pi";
 import { isOfficialAccount } from "@/utils/providerCapabilities";
 import { isHermesReadOnlyProvider } from "@/config/hermesProviderPresets";
@@ -522,6 +523,16 @@ export function ProviderList({
     </Notice>
   ) : null;
 
+  // 库里读不出来的供应商不在 providers 里（不能编辑、切换），单独列出、只能删除
+  const unreadableNotice = (
+    <UnreadableEntriesNotice
+      queryKey={["providers", appId, "unreadable"]}
+      load={() => providersApi.getUnreadable(appId)}
+      remove={(id) => providersApi.delete(id, appId)}
+      invalidate={[["providers", appId]]}
+    />
+  );
+
   if (isLoading || (isLiveMembershipPending && sortedProviders.length > 0)) {
     return (
       <div className="space-y-2">
@@ -540,6 +551,7 @@ export function ProviderList({
       <div className="space-y-4">
         {piStateErrorNotice}
         {liveConfigErrorNotice}
+        {unreadableNotice}
         <ProviderEmptyState
           appId={appId}
           onCreate={appHas(appId, "piFamily") ? undefined : onCreate}
@@ -680,6 +692,7 @@ export function ProviderList({
     <div className="space-y-4">
       {piStateErrorNotice}
       {liveConfigErrorNotice}
+      {unreadableNotice}
       {searchSlot && createPortal(searchField, searchSlot)}
       {showListHeader && (
         <div

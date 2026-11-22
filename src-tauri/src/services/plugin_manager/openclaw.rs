@@ -79,6 +79,7 @@ pub(super) fn parse_installed(value: &Value) -> Vec<PluginEntry> {
                         removable: origin.as_deref() == Some("global"),
                         installable: true,
                         installed_id: None,
+                        catalog_id: None,
                         install_path: str_field(item, "rootDir"),
                         updated_at: None,
                         id,
