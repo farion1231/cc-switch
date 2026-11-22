@@ -111,7 +111,7 @@ pub struct AgyAccountStatus {
     pub accounts: Vec<AgyAccount>,
     /// agy 当前登录的是哪个已收录的号；没登录、或读不到钥匙串时为 `None`
     pub current_account_id: Option<String>,
-    /// 这个平台能不能切号（目前是 macOS 和 Windows）
+    /// 这个平台能不能切号（macOS、Windows 和 Linux）。
     pub supported: bool,
 }
 
@@ -286,7 +286,7 @@ impl AgyAccountManager {
         let mut store = self.store.lock().await;
         let mut current = None;
         if keychain::supported() {
-            match self.read_live(&store).await {
+            match self.read_live(&store, false).await {
                 Ok(live) => {
                     let (id, changed) = absorb(&mut store, live, false);
                     current = id;
@@ -323,7 +323,7 @@ impl AgyAccountManager {
             ));
         }
 
-        let live = self.read_live(&store).await?;
+        let live = self.read_live(&store, true).await?;
         if let LiveLogin::Unrecognized(raw) = &live {
             self.stash_unrecognized(raw)?;
         }
@@ -342,7 +342,7 @@ impl AgyAccountManager {
         run_blocking(move || login.write(&encoded)).await?;
 
         // 写完读回来核对，钥匙串偶尔会静默失败
-        let written = match self.read_live(&store).await? {
+        let written = match self.read_live(&store, false).await? {
             LiveLogin::Known { credential, .. } => {
                 refresh_token_of(&credential).map(str::to_string)
             }
@@ -424,7 +424,7 @@ impl AgyAccountManager {
             return None;
         }
         let mut store = self.store.lock().await;
-        let live = match self.read_live(&store).await {
+        let live = match self.read_live(&store, false).await {
             Ok(live) => live,
             Err(error) => {
                 log::warn!("[AgyAccount] 读取 agy 当前登录失败: {error}");
@@ -445,7 +445,7 @@ impl AgyAccountManager {
         {
             let mut store = self.store.lock().await;
             if keychain::supported() {
-                if let Ok(live) = self.read_live(&store).await {
+                if let Ok(live) = self.read_live(&store, false).await {
                     if absorb(&mut store, live, false).1 {
                         if let Err(error) = self.persist(&store) {
                             log::warn!("[AgyAccount] 保存账号文件失败: {error}");
@@ -511,9 +511,20 @@ impl AgyAccountManager {
     /// id_token，只有 `id_token_email`（可能带 `writer_id`），先按 refresh token、再按邮箱对已收录的号；
     /// 都对不上（agy 里新登录的号）时用 access token 问 Google（若 access token 已过期则先拿
     /// refresh token 续期）。
-    async fn read_live(&self, store: &StoreFile) -> Result<LiveLogin, AppError> {
+    async fn read_live(
+        &self,
+        store: &StoreFile,
+        allow_unlock: bool,
+    ) -> Result<LiveLogin, AppError> {
         let login = Arc::clone(&self.login);
-        let raw = run_blocking(move || login.read()).await?;
+        let raw = run_blocking(move || {
+            if allow_unlock {
+                login.read_for_switch()
+            } else {
+                login.read()
+            }
+        })
+        .await?;
         let Some(raw) = raw else {
             return Ok(LiveLogin::None);
         };

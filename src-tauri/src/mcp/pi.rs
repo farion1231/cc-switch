@@ -193,7 +193,7 @@ pub(crate) fn sync_and_commit<T>(
 ) -> Result<T, AppError> {
     let _guard = crate::sync_utils::lock_file_operation(&WRITE_LOCK);
     if let PiChange::Enable(_) = change {
-        check_enabled_name_collision(id, &db.get_all_mcp_servers()?)?;
+        check_enabled_name_collision(id, &db.get_mcp_server_rows()?.into_readable("Pi 重名检查"))?;
     }
     let Some(path) = installed_config_path()? else {
         validate_change(id, change)?;
@@ -252,7 +252,10 @@ pub fn import(state: &AppState) -> Result<usize, AppError> {
     // 和勾选共用写锁：重名检查读到的数据库在导入写完前不会被并发勾选改掉
     let _guard = crate::sync_utils::lock_file_operation(&WRITE_LOCK);
     let document = read(&config_path()?)?;
-    let mut existing = state.db.get_all_mcp_servers()?;
+    let (mut existing, unreadable) = state
+        .db
+        .get_mcp_server_rows()?
+        .into_readable_and_unreadable_ids();
     let before = existing.clone();
     let mut count = 0;
     let mut skipped = Vec::new();
@@ -261,6 +264,10 @@ pub fn import(state: &AppState) -> Result<usize, AppError> {
         .cloned()
         .unwrap_or_default();
     for (id, native) in &natives {
+        if unreadable.contains(id) {
+            skipped.push(format!("'{id}': stored server is unreadable"));
+            continue;
+        }
         let mut spec = unified_spec(native);
         // 按 Pi 的规则校验：导入后会勾上 Pi，不合规的条目之后每次同步都会报错
         if validate_entry(id, &spec).is_err() {

@@ -31,6 +31,7 @@ const log = (overrides: Partial<RequestLog>): RequestLog => ({
   model: "claude-opus-5-5",
   costMultiplier: "1",
   inputTokens: 3_066,
+  freshInputTokens: 3_066,
   outputTokens: 1_512,
   cacheReadTokens: 71_300,
   cacheCreationTokens: 2_048,
@@ -172,6 +173,69 @@ describe("RequestDetailPanel", () => {
     expect(screen.getByText("6.0s")).toBeInTheDocument();
   });
 
+  it("shows exact speed, first token and duration for agy_session without proxy metadata", () => {
+    renderWith(
+      log({
+        appType: "agy",
+        providerId: "_agy_session",
+        providerName: "Antigravity (Session)",
+        dataSource: "agy_session",
+        model: "gemini-4-neon",
+        outputTokens: 2_900,
+        latencyMs: 69_000,
+        firstTokenMs: 43_000,
+      }),
+    );
+
+    expect(screen.getByText("usage.speedValue:112")).toBeInTheDocument();
+    expect(screen.getByText("usage.detail.firstToken")).toBeInTheDocument();
+    expect(screen.getByText("43.0s")).toBeInTheDocument();
+    expect(screen.getByText("usage.detail.duration")).toBeInTheDocument();
+    expect(screen.getByText("69.0s")).toBeInTheDocument();
+    expect(
+      screen.queryByText("usage.detail.firstTokenEstimated"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("usage.detail.durationEstimated"),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("usage.detail.source")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("usage.detail.providerId"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("explains short or untimed agy_session rows using exact labels", () => {
+    renderWith(
+      log({
+        appType: "agy",
+        providerId: "_agy_session",
+        providerName: "Antigravity (Session)",
+        dataSource: "agy_session",
+        outputTokens: 64,
+        latencyMs: 6_000,
+        firstTokenMs: 5_000,
+      }),
+    );
+    expect(screen.getByText("usage.detail.speedTooFew")).toBeInTheDocument();
+    expect(screen.getByText("usage.detail.firstToken")).toBeInTheDocument();
+    expect(screen.getByText("usage.detail.duration")).toBeInTheDocument();
+
+    renderWith(
+      log({
+        appType: "agy",
+        providerId: "_agy_session",
+        providerName: "Antigravity (Session)",
+        dataSource: "agy_session",
+        outputTokens: 900,
+        latencyMs: 0,
+        firstTokenMs: undefined,
+      }),
+    );
+    expect(
+      screen.getByText("usage.detail.noTimingSession"),
+    ).toBeInTheDocument();
+  });
+
   it("says session logs have no timing data", () => {
     renderWith(
       log({
@@ -189,6 +253,23 @@ describe("RequestDetailPanel", () => {
     expect(
       screen.queryByText("usage.detail.providerId"),
     ).not.toBeInTheDocument();
+  });
+
+  it("shows fresh input net of both cache reads and cache writes", () => {
+    renderWith(
+      log({
+        appType: "codex",
+        model: "gpt-6-sol",
+        inputTokens: 1_000,
+        freshInputTokens: 100,
+        cacheReadTokens: 300,
+        cacheCreationTokens: 600,
+      }),
+    );
+
+    expect(
+      screen.getByText("100 (usage.rawInputLabel: 1,000)"),
+    ).toBeInTheDocument();
   });
 
   it("shows the error and a retry button when loading fails", () => {
