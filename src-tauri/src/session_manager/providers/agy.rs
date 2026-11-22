@@ -3610,7 +3610,7 @@ mod tests {
             .join(".t3/userdata/providers/antigravity/inst-hash-1/antigravity-acp");
         let brain = acp_app.join("brain");
         let convs = acp_app.join("conversations");
-        let project = home.path().join("workspace/demo");
+        let project = home.path().join("workspace").join("demo");
         fs::create_dir_all(&convs).unwrap();
         fs::create_dir_all(&project).unwrap();
         let workspace_uris =
@@ -3699,8 +3699,8 @@ mod tests {
         assert_eq!(sessions[0].summary, None);
         assert_eq!(sessions[0].resume_command, None);
         assert_eq!(
-            sessions[0].project_dir.as_deref(),
-            Some(project.to_string_lossy().as_ref())
+            sessions[0].project_dir.as_deref().map(Path::new),
+            Some(project.as_path())
         );
 
         assert_eq!(sessions[1].session_id, "t3-untitled");
