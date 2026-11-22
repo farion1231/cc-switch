@@ -3,7 +3,9 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ApiKeySection } from "@/components/providers/forms/shared/ApiKeySection";
 
-const { copyText } = vi.hoisted(() => ({ copyText: vi.fn(() => Promise.resolve()) }));
+const { copyText } = vi.hoisted(() => ({
+  copyText: vi.fn(() => Promise.resolve()),
+}));
 vi.mock("@/lib/clipboard", () => ({ copyText }));
 
 const { toast } = vi.hoisted(() => ({
