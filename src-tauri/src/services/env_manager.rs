@@ -66,7 +66,7 @@ fn create_backup(conflicts: &[EnvConflict]) -> Result<BackupInfo, String> {
 }
 
 /// Get backup directory path
-fn backup_dir() -> PathBuf {
+pub(crate) fn backup_dir() -> PathBuf {
     crate::config::get_home_dir()
         .join(".cc-switch")
         .join("backups")
