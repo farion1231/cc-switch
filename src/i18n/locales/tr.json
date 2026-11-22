@@ -60,7 +60,9 @@
   "apiKeyInput": {
     "placeholder": "API Anahtarını Girin",
     "show": "API Anahtarını Göster",
-    "hide": "API Anahtarını Gizle"
+    "hide": "API Anahtarını Gizle",
+    "copied": "API anahtarı kopyalandı",
+    "copyFailed": "API anahtarı kopyalanamadı"
   },
   "jsonEditor": {
     "mustBeObject": "Yapılandırma bir dizi veya başka türde değil, JSON nesnesi olmalıdır",
@@ -597,6 +599,9 @@
       "safetyBackupId": "Güvenlik Yedekleme Kimliği",
       "intervalLabel": "Otomatik Yedekleme Aralığı",
       "retainLabel": "Yedekleme Saklama",
+      "maxTotalLabel": "Yedekleme Boyut Sınırı",
+      "maxTotalUnlimited": "Sınırsız",
+      "maxTotalHint": "Varsayılan olarak kapalıdır. Ayarlandığında, yedekleme klasörü bu boyutu aştığında en eski yedeklerden başlanarak silinir. En yeni yedek ve geri yüklemenin kullandığı yedek her zaman korunur; bu yüzden tek bir yedek sınırdan büyükse klasör sınırın üzerinde kalabilir. Bir sonraki yedeklemede veya günlük bakımda uygulanır.",
       "intervalDisabled": "Devre dışı",
       "intervalHours": "{{hours}} saat",
       "intervalDays": "{{days}} gün",

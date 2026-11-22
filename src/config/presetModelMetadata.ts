@@ -7,7 +7,7 @@ import {
   type KnownModelMetadata,
   type PresetModelSource,
 } from "@/lib/modelMetadata";
-import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
+import { extractCodexBaseUrl } from "@/utils/codexConfigUtils";
 import type { OpenCodeModel } from "@/types";
 import { codebuddyProviderPresets } from "./codebuddyProviderPresets";
 import { codexProviderPresets } from "./codexProviderPresets";

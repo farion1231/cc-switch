@@ -60,7 +60,9 @@
   "apiKeyInput": {
     "placeholder": "Enter API Key",
     "show": "Show API Key",
-    "hide": "Hide API Key"
+    "hide": "Hide API Key",
+    "copied": "API Key copied",
+    "copyFailed": "Failed to copy API Key"
   },
   "jsonEditor": {
     "mustBeObject": "Configuration must be a JSON object, not an array or other type",
@@ -597,6 +599,9 @@
       "safetyBackupId": "Safety Backup ID",
       "intervalLabel": "Auto-backup Interval",
       "retainLabel": "Backup Retention",
+      "maxTotalLabel": "Backup Size Limit",
+      "maxTotalUnlimited": "No limit",
+      "maxTotalHint": "Off by default. When set, the oldest backups are deleted once the backups folder grows past this size. The newest backup and any backup used by a restore are always kept, so the folder can stay above the limit when a single backup is larger. Applies at the next backup or the daily maintenance run.",
       "intervalDisabled": "Disabled",
       "intervalHours": "{{hours}} hours",
       "intervalDays": "{{days}} days",

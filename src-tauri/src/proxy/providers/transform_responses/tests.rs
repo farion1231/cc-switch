@@ -2561,6 +2561,197 @@ fn test_anthropic_to_responses_non_codex_keeps_max_output_tokens() {
     assert_eq!(result["max_output_tokens"], json!(1024));
 }
 
+// ==================== GPT-6.2 Codex OAuth developer-instructions 缓存形态 ====================
+
+#[test]
+fn test_codex_oauth_gpt62_moves_instructions_to_leading_developer_message() {
+    // GPT-6.2 Sol / Astra 的 ChatGPT 反代后端不缓存顶层 instructions，
+    // 系统提示必须作为 input 首条 developer 消息才能命中前缀缓存。
+    for model in ["gpt-6.2-sol", "gpt-6.2-astra"] {
+        let input = json!({
+            "model": model,
+            "max_tokens": 1024,
+            "system": "You are Claude Code.",
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let result = anthropic_to_responses(input, None, true, false).unwrap();
+
+        // 必填字段兜底把 instructions 重新填为 ""，请求形态不变
+        assert_eq!(result["instructions"], json!(""), "model={model}");
+        let input_items = result["input"].as_array().unwrap();
+        assert_eq!(input_items.len(), 2, "model={model}");
+        assert_eq!(
+            input_items[0],
+            json!({
+                "type": "message",
+                "role": "developer",
+                "content": "You are Claude Code."
+            }),
+            "model={model}"
+        );
+        // 原有用户消息仍按原顺序跟在后面
+        assert_eq!(input_items[1]["role"], json!("user"), "model={model}");
+        // OAuth 协议约束不受影响
+        assert_eq!(result["store"], json!(false), "model={model}");
+        assert_eq!(
+            result["include"],
+            json!(["reasoning.encrypted_content"]),
+            "model={model}"
+        );
+    }
+}
+
+#[test]
+fn test_codex_oauth_gpt61_keeps_top_level_instructions() {
+    // 对照组：GPT-6.1 两种形态都能命中缓存，维持 instructions 不动
+    let input = json!({
+        "model": "gpt-6.1-sol",
+        "max_tokens": 1024,
+        "system": "You are Claude Code.",
+        "messages": [{"role": "user", "content": "Hello"}]
+    });
+
+    let result = anthropic_to_responses(input, None, true, false).unwrap();
+
+    assert_eq!(result["instructions"], json!("You are Claude Code."));
+    let input_items = result["input"].as_array().unwrap();
+    assert_eq!(input_items.len(), 1);
+    assert_eq!(input_items[0]["role"], json!("user"));
+}
+
+#[test]
+fn test_non_oauth_gpt62_keeps_top_level_instructions() {
+    // 回归护栏：第三方 Responses 端点即使部署了同名 gpt-6.2 模型，
+    // 非 OAuth 路径行为必须与今日字节级一致
+    let input = json!({
+        "model": "gpt-6.2-sol",
+        "max_tokens": 1024,
+        "system": "You are Claude Code.",
+        "messages": [{"role": "user", "content": "Hello"}]
+    });
+
+    let result = anthropic_to_responses(input, None, false, false).unwrap();
+
+    assert_eq!(result["instructions"], json!("You are Claude Code."));
+    let input_items = result["input"].as_array().unwrap();
+    assert_eq!(input_items.len(), 1);
+    assert_eq!(input_items[0]["role"], json!("user"));
+}
+
+#[test]
+fn test_codex_oauth_gpt62_without_system_keeps_empty_instructions_fallback() {
+    // 空提示：无可移动文本时不注入 developer 消息，instructions 兜底为 ""
+    let input = json!({
+        "model": "gpt-6.2-sol",
+        "max_tokens": 1024,
+        "messages": [{"role": "user", "content": "Hello"}]
+    });
+
+    let result = anthropic_to_responses(input, None, true, false).unwrap();
+
+    assert_eq!(result["instructions"], json!(""));
+    let input_items = result["input"].as_array().unwrap();
+    assert_eq!(input_items.len(), 1);
+    assert_eq!(input_items[0]["role"], json!("user"));
+}
+
+#[test]
+fn test_codex_oauth_gpt62_moves_array_system_with_billing_header() {
+    // 数组系统提示继续走现有清理流程（计费头剥离 + 非空过滤 + 拼接），
+    // 结果整体移入 developer 消息且全文只出现一次
+    let input = json!({
+        "model": "gpt-6.2-sol",
+        "max_tokens": 1024,
+        "system": [
+            {"type": "text", "text": "x-anthropic-billing-header: cc_version=2.1.119.47e; cc_entrypoint=sdk-cli; cch=a7754;\n\nYou are Claude Code."},
+            {"type": "text", "text": ""},
+            {"type": "text", "text": "Follow the tool contract."}
+        ],
+        "messages": [{"role": "user", "content": "Hello"}]
+    });
+
+    let result = anthropic_to_responses(input, None, true, false).unwrap();
+
+    assert_eq!(result["instructions"], json!(""));
+    let developer_content = result["input"][0]["content"].as_str().unwrap();
+    assert_eq!(
+        developer_content,
+        "You are Claude Code.\n\nFollow the tool contract."
+    );
+    assert!(!developer_content.contains("x-anthropic-billing-header"));
+    // 系统正文只出现一次（不在 instructions 里残留第二份）
+    let serialized = result.to_string();
+    assert_eq!(
+        serialized.matches("You are Claude Code.").count(),
+        1,
+        "system body must appear exactly once"
+    );
+}
+
+#[test]
+fn test_codex_oauth_gpt62_moves_search_cap_into_developer_message() {
+    // OAuth 的搜索次数上限在移动前已拼接进 instructions，必须随系统正文
+    // 一起进入 developer 消息（上限稳定时前缀缓存仍可命中）
+    let input = json!({
+        "model": "gpt-6.2-astra",
+        "max_tokens": 1024,
+        "system": "You are Claude Code.",
+        "messages": [{"role": "user", "content": "Search"}],
+        "tools": [{
+            "type": "web_search_20250305",
+            "name": "web_search",
+            "max_uses": 5
+        }]
+    });
+
+    let result = anthropic_to_responses(input, None, true, false).unwrap();
+
+    assert_eq!(result["instructions"], json!(""));
+    assert!(result.get("max_tool_calls").is_none());
+    let developer_content = result["input"][0]["content"].as_str().unwrap();
+    assert!(developer_content.starts_with("You are Claude Code.\n\n"));
+    assert!(developer_content.contains("no more than 5 web search calls"));
+    // 搜索上限只出现一次（不在 instructions 里残留第二份）
+    let serialized = result.to_string();
+    assert_eq!(
+        serialized
+            .matches("no more than 5 web search calls")
+            .count(),
+        1,
+        "search cap must appear exactly once"
+    );
+}
+
+#[test]
+fn test_codex_oauth_gpt62_preserves_cache_key_and_history_order() {
+    // prompt_cache_key 与历史顺序不受移动影响
+    let input = json!({
+        "model": "gpt-6.2-sol",
+        "max_tokens": 1024,
+        "system": "You are Claude Code.",
+        "messages": [
+            {"role": "user", "content": "First question"},
+            {"role": "assistant", "content": "First answer"},
+            {"role": "user", "content": "Second question"}
+        ]
+    });
+
+    let result = anthropic_to_responses(input, Some("stable-session-key"), true, false).unwrap();
+
+    assert_eq!(result["prompt_cache_key"], json!("stable-session-key"));
+    let input_items = result["input"].as_array().unwrap();
+    assert_eq!(input_items.len(), 4);
+    assert_eq!(input_items[0]["role"], json!("developer"));
+    assert_eq!(input_items[1]["role"], json!("user"));
+    assert_eq!(
+        input_items[1]["content"],
+        json!([{"type": "input_text", "text": "First question"}])
+    );
+    assert_eq!(input_items[2]["role"], json!("assistant"));
+    assert_eq!(input_items[3]["role"], json!("user"));
+}
+
 #[test]
 fn test_anthropic_to_responses_clamps_sub_floor_max_tokens() {
     // Responses API 拒绝 max_output_tokens < 16（"The number must be >= 16"）。
