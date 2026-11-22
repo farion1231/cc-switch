@@ -16,14 +16,15 @@ use crate::app_config::AppType;
 use crate::config::get_claude_settings_path;
 use crate::database::Database;
 use crate::error::AppError;
-use crate::live::engine::{AppWriteGuard, DeviceStore, LiveFile};
+use crate::live::engine::{sha256_hex, AppWriteGuard, DeviceStore, LiveFile};
 use crate::live::patch::json::JsonPatch;
 use crate::live::patch::KeyPath;
 use crate::live::project::claude::{
     direct_patch, tombstone_keys, tombstone_sweep, with_tombstones, ClaudeProjection,
+    MODEL_PICKER_KEY,
 };
 use crate::mode::operation::{AppWrite, FileChange, OperationReport};
-use crate::mode::state::{op, PendingTarget};
+use crate::mode::state::{self, op, PendingTarget, Written};
 use crate::provider::Provider;
 
 fn app() -> &'static str {
@@ -37,7 +38,7 @@ pub(crate) fn settings_file() -> LiveFile {
 
 /// 现在的 `settings.json`。不存在、读不了、解析不了都当空对象（读不了、解析不了的
 /// 写入本身也会失败）。
-fn read_settings() -> Value {
+pub(crate) fn read_settings() -> Value {
     let path = get_claude_settings_path();
     std::fs::read(&path)
         .ok()
@@ -101,11 +102,13 @@ pub(crate) fn run(
     db: &Database,
     op: &str,
     patch: Option<&JsonPatch>,
-    target: PendingTarget,
+    mut target: PendingTarget,
 ) -> Result<OperationReport, AppError> {
-    let patch = patch.map(|patch| for_live(op, patch));
     // 补丁是按调用方读到的指针算的（要删上一家的独有字段）：先补完上一次的操作。
     let write = AppWrite::begin(db, app())?;
+    let patch = patch
+        .map(|patch| prepare_live_patch(&write.store, op, patch, &mut target))
+        .transpose()?;
     let tombstones = note_tombstones(&write.store, patch.as_ref());
     let changes: Vec<FileChange<'_>> = patch
         .iter()
@@ -418,6 +421,83 @@ fn sweep_tombstones(sweep: &Sweep) -> Result<(), AppError> {
     }
     remove_marker(&sweep.store);
     Ok(())
+}
+
+fn picker_digest(picker: &Value) -> String {
+    sha256_hex(&serde_json::to_vec(picker).expect("modelPicker serializes"))
+}
+
+fn picker_path() -> KeyPath {
+    KeyPath::root().child(MODEL_PICKER_KEY)
+}
+
+/// 把这次要写进去的 `modelPicker`（补丁里没有就是空串）记进写入记录，和文件在同一个操作
+/// 里落定。所有写关键字段的入口（切换、进出代理、编辑器保存当前供应商）都要记，否则
+/// 下次会把 CC Switch 自己写的菜单当成用户的留下。
+pub(crate) fn record_picker(
+    store: &DeviceStore,
+    patch: &JsonPatch,
+    target: &mut PendingTarget,
+) -> Result<(), AppError> {
+    let path = picker_path();
+    let record = patch
+        .set
+        .iter()
+        .find(|(key, _)| *key == path)
+        .map(|(_, picker)| picker_digest(picker))
+        .unwrap_or_default();
+    let base = match target.written.take() {
+        Some(written) => written,
+        None => state::written(store, app())?.unwrap_or_default(),
+    };
+    target.written = Some(Written {
+        model_picker: Some(record),
+        ..base
+    });
+    Ok(())
+}
+
+/// 准备写入 live 的关键字段补丁：
+/// 1. 删掉的连接 / 独有字段先写成空值墓碑（[`for_live`]）；
+/// 2. 记下这次补丁自身带的 `modelPicker`（没有就是空串，[`record_picker`]）；
+/// 3. 补丁没带菜单、而 live 里是用户手写的时原样保留（[`with_users_picker`]）。
+pub(crate) fn prepare_live_patch(
+    store: &DeviceStore,
+    op: &str,
+    patch: &JsonPatch,
+    target: &mut PendingTarget,
+) -> Result<JsonPatch, AppError> {
+    let patch = for_live(op, patch);
+    let recorded = state::written(store, app())?.and_then(|written| written.model_picker);
+    record_picker(store, &patch, target)?;
+    let live_picker = read_settings().get(MODEL_PICKER_KEY).cloned();
+    Ok(with_users_picker(&patch, live_picker, recorded.as_deref()))
+}
+
+/// `modelPicker` 是关键字段，补丁默认清掉 live 里的再写目标的。这里只把 CC Switch 自己写的
+/// 当成关键字段：live 里的和上次的写入记录（`recorded`）对不上，就是用户自己写的，目标
+/// 没有菜单时原样留下。目标带着菜单（聚合模式、行里配了菜单）时照旧以目标为准。没有记录
+/// （升级前）按旧规矩当成 CC Switch 的。
+///
+/// 比 `model` 宽松：`model` 进入路由时只留契约下能用的值，用户的菜单不看里面的模型 id，
+/// 整份原样留下（其中直连那家专属的 id 到了路由那家可能用不了）。菜单是用户手写的整体
+/// 配置，挑着删会改坏它；选了用不了的行，报错也直接显示在 Claude Code 里。
+pub(crate) fn with_users_picker(
+    patch: &JsonPatch,
+    live_picker: Option<Value>,
+    recorded: Option<&str>,
+) -> JsonPatch {
+    let path = picker_path();
+    let mut patch = patch.clone();
+    if patch.set.iter().any(|(key, _)| *key == path) {
+        return patch;
+    }
+    if let (Some(live), Some(recorded)) = (live_picker, recorded) {
+        if picker_digest(&live) != recorded {
+            patch.set.push((path, live));
+        }
+    }
+    patch
 }
 
 #[cfg(test)]

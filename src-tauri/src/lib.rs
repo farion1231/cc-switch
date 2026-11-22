@@ -2041,18 +2041,19 @@ pub fn run() {
 
 /// 应用退出前的清理工作
 ///
-/// 把接上代理的客户端都指回直连（模式和代理路由保留，下次启动再接上），再停止代理。
-/// 客户端不能一直指着代理：开机自启默认关闭，CC Switch 一关客户端就连不上了。
+/// 默认把接上代理的客户端都指回直连（模式和代理路由保留，下次启动再接上），再停止代理。
+/// 客户端不能默认一直指着代理：开机自启默认关闭，CC Switch 一关客户端就连不上了。用户
+/// 关掉「退出时恢复客户端」后只停代理（见 `detach_on_exit`）。
 pub async fn cleanup_before_exit(app_handle: &tauri::AppHandle) {
     if let Some(state) = app_handle.try_state::<store::AppState>() {
-        crate::mode::controller::detach_all(state.inner()).await;
+        crate::mode::controller::detach_on_exit(state.inner()).await;
         // 切换后几秒内退出：给开着的 Claude Code 会话写的空值墓碑现在删掉（刚写的最多等 3 秒），
         // 不留到下次启动
         let _ = tokio::task::spawn_blocking(
             crate::services::provider::claude_direct::finish_tombstones_before_exit,
         )
         .await;
-        log::info!("退出清理完成：客户端已指回直连，代理已停止");
+        log::info!("退出清理完成");
     }
 }
 
