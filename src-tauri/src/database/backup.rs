@@ -30,6 +30,15 @@ fn lock_backup_file_operations() -> BackupFileOperationGuard {
     crate::sync_utils::lock_file_operation(&BACKUP_FILE_OPERATION_LOCK)
 }
 
+/// Backups are built under this prefix with a `.tmp` suffix, then published
+/// as `*.db`. Only a crashed backup leaves such a file behind.
+const BACKUP_TEMP_PREFIX: &str = ".cc-switch-backup-";
+/// A backup temp file is written continuously while its backup runs, so one
+/// that has not changed for this long belongs to no running backup.
+const ORPHAN_BACKUP_TEMP_MIN_AGE: std::time::Duration = std::time::Duration::from_secs(24 * 3600);
+/// SQLite files that belong to a database file of the same name.
+const SQLITE_SIDECAR_SUFFIXES: &[&str] = &["-journal", "-wal", "-shm"];
+
 /// `dump_sql` 会写出的 PRAGMA。其余 PRAGMA 一律拒绝——`temp_store_directory`
 /// 能把临时文件重定向到任意目录，`writable_schema` 能绕过 schema 完整性检查。
 const IMPORT_ALLOWED_PRAGMAS: &[&str] = &["foreign_keys", "user_version"];
@@ -451,6 +460,12 @@ impl Database {
     /// fails, so a broken backup destination cannot prevent log retention.
     pub(crate) fn periodic_backup_if_needed(&self) -> Result<(), AppError> {
         let backup_result = self.backup_if_needed();
+        // Retention otherwise only runs when a new backup is published. Run it
+        // here too, so a size limit the user just picked and temp files left
+        // by a crashed backup don't wait for the next backup.
+        if let Err(e) = Self::tidy_backup_dir() {
+            log::warn!("Periodic backup retention failed: {e}");
+        }
         if let Err(e) = self.cleanup_old_stream_check_logs(7) {
             log::warn!("Periodic stream_check_logs cleanup failed: {e}");
         }
@@ -498,7 +513,7 @@ impl Database {
     }
 
     fn backup_database_file_from_conn_with_hook<F>(
-        _backup_file_guard: &BackupFileOperationGuard,
+        backup_file_guard: &BackupFileOperationGuard,
         source_conn: &Connection,
         protected_paths: &[&Path],
         before_publish: F,
@@ -527,7 +542,7 @@ impl Database {
         // discovery and retention only see the final path after the complete
         // SQLite image has been atomically published.
         let mut temp_path = Builder::new()
-            .prefix(".cc-switch-backup-")
+            .prefix(BACKUP_TEMP_PREFIX)
             .suffix(".tmp")
             .tempfile_in(&backup_dir)
             .map_err(|e| AppError::io(&backup_dir, e))?
@@ -564,7 +579,7 @@ impl Database {
         let mut cleanup_protected = Vec::with_capacity(protected_paths.len() + 1);
         cleanup_protected.push(backup_path.as_path());
         cleanup_protected.extend_from_slice(protected_paths);
-        Self::cleanup_db_backups(&backup_dir, &cleanup_protected)?;
+        Self::cleanup_db_backups(backup_file_guard, &backup_dir, &cleanup_protected)?;
         Ok(Some(backup_path))
     }
 
@@ -594,10 +609,19 @@ impl Database {
         }
     }
 
-    /// 清理旧的数据库备份，保留最新的 N 个
-    fn cleanup_db_backups(dir: &Path, protected_paths: &[&Path]) -> Result<(), AppError> {
+    /// 清理旧的数据库备份：保留最新的 N 个；用户设置了总大小上限时，再从最旧的
+    /// 开始删除，直到备份目录不超过上限。
+    ///
+    /// 最新的一份备份和 `protected_paths`（刚创建的安全备份、本次恢复源）永远
+    /// 不删：宁可暂时超出数量或大小上限，也要留下可用的恢复点。
+    fn cleanup_db_backups(
+        backup_file_guard: &BackupFileOperationGuard,
+        dir: &Path,
+        protected_paths: &[&Path],
+    ) -> Result<(), AppError> {
         let retain = crate::settings::effective_backup_retain_count();
-        let entries = match fs::read_dir(dir) {
+        let max_total_bytes = crate::settings::effective_backup_max_total_bytes();
+        let mut backups = match fs::read_dir(dir) {
             Ok(iter) => iter
                 .filter_map(|entry| entry.ok())
                 .filter(|entry| {
@@ -607,38 +631,119 @@ impl Database {
                         .map(|ext| ext == "db")
                         .unwrap_or(false)
                 })
+                .map(|entry| {
+                    let metadata = entry.metadata().ok();
+                    let modified = metadata.as_ref().and_then(|m| m.modified().ok());
+                    let len = metadata.map(|m| m.len()).unwrap_or(0);
+                    (entry.path(), modified, len)
+                })
                 .collect::<Vec<_>>(),
             Err(_) => return Ok(()),
         };
 
-        if entries.len() <= retain {
-            return Ok(());
-        }
+        // 最旧的排在前面
+        backups.sort_by_key(|(_, modified, _)| *modified);
+        let newest = backups.last().map(|(path, _, _)| path.clone());
+        let mut kept_count = backups.len();
+        let mut kept_bytes: u64 = backups.iter().map(|(_, _, len)| len).sum();
 
-        let remove_count = entries.len().saturating_sub(retain);
-        let mut sorted = entries;
-        sorted.sort_by_key(|entry| entry.metadata().and_then(|m| m.modified()).ok());
-
-        let mut removed = 0;
-        for entry in sorted {
-            if removed >= remove_count {
+        for (path, _, len) in &backups {
+            let over_count = kept_count > retain;
+            let over_size = max_total_bytes.is_some_and(|max| kept_bytes > max);
+            if !over_count && !over_size {
                 break;
             }
-            let path = entry.path();
-            if protected_paths
-                .iter()
-                .any(|protected| Self::same_existing_backup_path(&path, protected))
+            if newest.as_ref() == Some(path)
+                || protected_paths
+                    .iter()
+                    .any(|protected| Self::same_existing_backup_path(path, protected))
             {
                 continue;
             }
 
-            if let Err(err) = fs::remove_file(&path) {
-                log::warn!("删除旧数据库备份失败 {}: {}", path.display(), err);
-            } else {
-                removed += 1;
+            match Self::remove_backup_file(backup_file_guard, path) {
+                Ok(()) => {
+                    kept_count -= 1;
+                    kept_bytes = kept_bytes.saturating_sub(*len);
+                }
+                Err(err) => log::warn!("删除旧数据库备份失败 {}: {}", path.display(), err),
             }
         }
         Ok(())
+    }
+
+    /// 删除一份备份，以及 SQLite 留在它旁边的 `-journal`/`-wal`/`-shm` 文件。
+    /// 这些文件只属于同名的 `.db`；调用方持有备份文件操作锁，没有进行中的备份
+    /// 或恢复会用到它们。`.db` 本身删除失败时（例如正被其他程序打开），旁路
+    /// 文件原样保留。
+    fn remove_backup_file(
+        _backup_file_guard: &BackupFileOperationGuard,
+        path: &Path,
+    ) -> std::io::Result<()> {
+        fs::remove_file(path)?;
+        for suffix in SQLITE_SIDECAR_SUFFIXES {
+            let mut sidecar = path.as_os_str().to_owned();
+            sidecar.push(suffix);
+            let sidecar = PathBuf::from(sidecar);
+            match fs::remove_file(&sidecar) {
+                Ok(()) => {}
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => {
+                    log::warn!("删除数据库备份旁路文件失败 {}: {}", sidecar.display(), err)
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// 不创建新备份时的备份目录整理：清掉崩溃遗留的临时文件；用户设置了总大小
+    /// 上限时再执行一次保留策略。未设置上限时不按数量清理，保持升级前的行为。
+    fn tidy_backup_dir() -> Result<(), AppError> {
+        let backup_file_guard = lock_backup_file_operations();
+        let backup_dir = get_app_config_dir().join("backups");
+        if !backup_dir.exists() {
+            return Ok(());
+        }
+        Self::remove_orphan_backup_temp_files(&backup_file_guard, &backup_dir);
+        if crate::settings::effective_backup_max_total_bytes().is_some() {
+            Self::cleanup_db_backups(&backup_file_guard, &backup_dir, &[])?;
+        }
+        Ok(())
+    }
+
+    /// 删除崩溃遗留的备份临时文件（`.cc-switch-backup-*.tmp` 及其旁路文件）。
+    /// 进行中的备份持有备份文件操作锁并持续写入临时文件，所以持锁时只有超过
+    /// `ORPHAN_BACKUP_TEMP_MIN_AGE` 未修改的临时文件才会被删除。
+    fn remove_orphan_backup_temp_files(_backup_file_guard: &BackupFileOperationGuard, dir: &Path) {
+        let Ok(entries) = fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.filter_map(|entry| entry.ok()) {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            let is_backup_temp = name.starts_with(BACKUP_TEMP_PREFIX)
+                && (name.ends_with(".tmp")
+                    || SQLITE_SIDECAR_SUFFIXES
+                        .iter()
+                        .any(|suffix| name.ends_with(&format!(".tmp{suffix}"))));
+            if !is_backup_temp {
+                continue;
+            }
+            let stale = entry
+                .metadata()
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|modified| modified.elapsed().ok())
+                .is_some_and(|age| age >= ORPHAN_BACKUP_TEMP_MIN_AGE);
+            if !stale {
+                continue;
+            }
+            let path = entry.path();
+            match fs::remove_file(&path) {
+                Ok(()) => log::info!("Removed orphaned backup temp file: {}", path.display()),
+                Err(err) => log::warn!("删除遗留的备份临时文件失败 {}: {}", path.display(), err),
+            }
+        }
     }
 
     fn validate_sqlite_integrity(conn: &Connection) -> Result<(), AppError> {
@@ -1160,7 +1265,7 @@ impl Database {
             ));
         }
 
-        let _backup_file_guard = lock_backup_file_operations();
+        let backup_file_guard = lock_backup_file_operations();
         let backup_path = get_app_config_dir().join("backups").join(filename);
         if !backup_path.exists() {
             return Err(AppError::InvalidInput(format!(
@@ -1168,7 +1273,8 @@ impl Database {
             )));
         }
 
-        fs::remove_file(&backup_path).map_err(|e| AppError::io(&backup_path, e))?;
+        Self::remove_backup_file(&backup_file_guard, &backup_path)
+            .map_err(|e| AppError::io(&backup_path, e))?;
         log::info!("Deleted backup: {filename}");
         Ok(())
     }

@@ -75,10 +75,15 @@ struct SettingsGuard {
 
 impl SettingsGuard {
     fn with_backup_retain_count(retain: u32) -> Self {
+        Self::with_backup_limits(retain, None)
+    }
+
+    fn with_backup_limits(retain: u32, max_total_mb: Option<u32>) -> Self {
         let previous = get_settings();
         let mut next = previous.clone();
         next.backup_retain_count = Some(retain);
-        update_settings(next).expect("set backup retention for test");
+        next.backup_max_total_mb = max_total_mb;
+        update_settings(next).expect("set backup limits for test");
         Self { previous }
     }
 }
@@ -87,6 +92,32 @@ impl Drop for SettingsGuard {
     fn drop(&mut self) {
         let _ = update_settings(self.previous.clone());
     }
+}
+
+const MIB: usize = 1024 * 1024;
+
+fn backups_dir() -> Result<std::path::PathBuf, AppError> {
+    let dir = crate::config::get_app_config_dir().join("backups");
+    std::fs::create_dir_all(&dir).map_err(|e| AppError::io(&dir, e))?;
+    Ok(dir)
+}
+
+/// Write a file of `len` bytes whose mtime is `age_secs` in the past.
+fn write_aged_file(
+    dir: &std::path::Path,
+    name: &str,
+    len: usize,
+    age_secs: u64,
+) -> Result<std::path::PathBuf, AppError> {
+    let path = dir.join(name);
+    std::fs::write(&path, vec![0u8; len]).map_err(|e| AppError::io(&path, e))?;
+    let modified = std::time::SystemTime::now() - std::time::Duration::from_secs(age_secs);
+    std::fs::File::options()
+        .write(true)
+        .open(&path)
+        .and_then(|file| file.set_modified(modified))
+        .map_err(|e| AppError::io(&path, e))?;
+    Ok(path)
 }
 
 #[test]
@@ -1673,6 +1704,200 @@ fn restore_with_retain_one_keeps_source_and_exact_safety_snapshot() -> Result<()
         safety_provider, "live-before-restore",
         "safety backup must exactly represent the live state being replaced"
     );
+    Ok(())
+}
+
+#[test]
+#[serial]
+fn size_limit_is_off_unless_the_user_sets_one() -> Result<(), AppError> {
+    let _test_home = TestHomeGuard::new();
+    let dir = backups_dir()?;
+    let backups = [
+        write_aged_file(&dir, "a.db", MIB, 3 * 3600)?,
+        write_aged_file(&dir, "b.db", MIB, 2 * 3600)?,
+        write_aged_file(&dir, "c.db", MIB, 3600)?,
+    ];
+
+    // Unset (the default after an upgrade) and an explicit 0 both mean
+    // unlimited: no restore point may disappear because of the new setting.
+    for max_total_mb in [None, Some(0)] {
+        let _settings = SettingsGuard::with_backup_limits(10, max_total_mb);
+        assert_eq!(crate::settings::effective_backup_max_total_bytes(), None);
+        Database::tidy_backup_dir()?;
+        let guard = lock_backup_file_operations();
+        Database::cleanup_db_backups(&guard, &dir, &[])?;
+        drop(guard);
+        for backup in &backups {
+            assert!(backup.exists(), "{} must be kept", backup.display());
+        }
+    }
+    Ok(())
+}
+
+#[test]
+#[serial]
+fn size_limit_trims_oldest_backups_until_the_folder_fits() -> Result<(), AppError> {
+    let _test_home = TestHomeGuard::new();
+    let _settings = SettingsGuard::with_backup_limits(10, Some(2));
+    let dir = backups_dir()?;
+    let oldest = write_aged_file(&dir, "a.db", MIB, 3 * 3600)?;
+    let middle = write_aged_file(&dir, "b.db", MIB, 2 * 3600)?;
+    let newest = write_aged_file(&dir, "c.db", MIB, 3600)?;
+
+    Database::tidy_backup_dir()?;
+
+    assert!(!oldest.exists(), "3 MiB > 2 MiB: the oldest backup goes");
+    assert!(middle.exists(), "2 MiB fits the limit: trimming stops");
+    assert!(newest.exists());
+    Ok(())
+}
+
+#[test]
+#[serial]
+fn size_limit_keeps_the_newest_backup_even_when_it_alone_is_too_big() -> Result<(), AppError> {
+    let _test_home = TestHomeGuard::new();
+    let _settings = SettingsGuard::with_backup_limits(10, Some(1));
+    let dir = backups_dir()?;
+    let older = write_aged_file(&dir, "a.db", MIB, 2 * 3600)?;
+    let newest = write_aged_file(&dir, "b.db", 2 * MIB, 3600)?;
+
+    Database::tidy_backup_dir()?;
+
+    assert!(!older.exists());
+    assert!(
+        newest.exists(),
+        "the newest restore point is kept even above the limit"
+    );
+    Ok(())
+}
+
+#[test]
+#[serial]
+fn size_limit_never_deletes_a_protected_restore_source() -> Result<(), AppError> {
+    let _test_home = TestHomeGuard::new();
+    let _settings = SettingsGuard::with_backup_limits(10, Some(1));
+    let dir = backups_dir()?;
+    let source = write_aged_file(&dir, "source.db", MIB, 3 * 3600)?;
+    let middle = write_aged_file(&dir, "b.db", MIB, 2 * 3600)?;
+    let newest = write_aged_file(&dir, "c.db", MIB, 3600)?;
+
+    let guard = lock_backup_file_operations();
+    Database::cleanup_db_backups(&guard, &dir, &[source.as_path()])?;
+    drop(guard);
+
+    assert!(source.exists(), "the restore source is protected");
+    assert!(!middle.exists());
+    assert!(
+        newest.exists(),
+        "the folder may stay above the limit to keep both"
+    );
+    Ok(())
+}
+
+#[test]
+#[serial]
+fn periodic_run_applies_the_size_limit_without_a_new_backup() -> Result<(), AppError> {
+    let _test_home = TestHomeGuard::new();
+    let _settings = SettingsGuard::with_backup_limits(10, Some(2));
+    // Pin the interval: other tests can leave a shorter one in the shared
+    // settings, which would make a backup due below.
+    update_settings(AppSettings {
+        backup_interval_hours: Some(24),
+        ..get_settings()
+    })?;
+    let db = Database::init()?;
+    let dir = backups_dir()?;
+    // Init rebuilds the sentinel DB for incremental auto-vacuum and backs it
+    // up first; drop that backup so the folder holds exactly the files below.
+    for entry in std::fs::read_dir(&dir).map_err(|e| AppError::io(&dir, e))? {
+        let path = entry.map_err(|e| AppError::io(&dir, e))?.path();
+        std::fs::remove_file(&path).map_err(|e| AppError::io(&path, e))?;
+    }
+    let oldest = write_aged_file(&dir, "a.db", MIB, 3 * 3600)?;
+    let middle = write_aged_file(&dir, "b.db", MIB, 2 * 3600)?;
+    // Newer than the 24h interval, so no backup is due.
+    let newest = write_aged_file(&dir, "c.db", MIB, 3600)?;
+
+    db.periodic_backup_if_needed()?;
+
+    let backup_count = std::fs::read_dir(&dir)
+        .map_err(|e| AppError::io(&dir, e))?
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "db"))
+        .count();
+    assert_eq!(backup_count, 2, "no new backup was due");
+    assert!(!oldest.exists());
+    assert!(middle.exists());
+    assert!(newest.exists());
+    Ok(())
+}
+
+#[test]
+#[serial]
+fn removing_a_backup_also_removes_its_sqlite_sidecars() -> Result<(), AppError> {
+    let _test_home = TestHomeGuard::new();
+    let _settings = SettingsGuard::with_backup_retain_count(1);
+    let dir = backups_dir()?;
+    let old = write_aged_file(&dir, "old.db", 16, 2 * 3600)?;
+    let mut old_sidecars = Vec::new();
+    for name in ["old.db-journal", "old.db-wal", "old.db-shm"] {
+        old_sidecars.push(write_aged_file(&dir, name, 16, 2 * 3600)?);
+    }
+    let kept = write_aged_file(&dir, "kept.db", 16, 3600)?;
+    let kept_wal = write_aged_file(&dir, "kept.db-wal", 16, 3600)?;
+
+    let guard = lock_backup_file_operations();
+    Database::cleanup_db_backups(&guard, &dir, &[])?;
+    drop(guard);
+
+    assert!(!old.exists());
+    for sidecar in &old_sidecars {
+        assert!(
+            !sidecar.exists(),
+            "{} must go with old.db",
+            sidecar.display()
+        );
+    }
+    assert!(kept.exists());
+    assert!(
+        kept_wal.exists(),
+        "sidecars of a kept backup are left alone"
+    );
+
+    // Deleting from the backup list takes the sidecars along as well.
+    Database::delete_backup("kept.db")?;
+    assert!(!kept.exists());
+    assert!(!kept_wal.exists());
+    Ok(())
+}
+
+#[test]
+#[serial]
+fn tidy_removes_only_stale_backup_temp_files() -> Result<(), AppError> {
+    let _test_home = TestHomeGuard::new();
+    let _settings = SettingsGuard::with_backup_limits(1, None);
+    let dir = backups_dir()?;
+    let day = 24 * 3600;
+    let stale_temp = write_aged_file(&dir, ".cc-switch-backup-crash.tmp", 16, 2 * day)?;
+    let stale_journal = write_aged_file(&dir, ".cc-switch-backup-crash.tmp-journal", 16, 2 * day)?;
+    let fresh_temp = write_aged_file(&dir, ".cc-switch-backup-running.tmp", 16, 60)?;
+    let unrelated = write_aged_file(&dir, "notes.tmp", 16, 2 * day)?;
+    let older_backup = write_aged_file(&dir, "a.db", 16, 2 * day)?;
+    let backup = write_aged_file(&dir, "b.db", 16, day)?;
+
+    // No size limit is set: the temp sweep still runs, but count retention
+    // waits for the next backup as before, even though retain is 1.
+    Database::tidy_backup_dir()?;
+
+    assert!(!stale_temp.exists());
+    assert!(!stale_journal.exists());
+    assert!(
+        fresh_temp.exists(),
+        "a temp file still being written may belong to a running backup"
+    );
+    assert!(unrelated.exists());
+    assert!(older_backup.exists());
+    assert!(backup.exists());
     Ok(())
 }
 
