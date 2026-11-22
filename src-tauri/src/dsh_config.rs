@@ -2658,6 +2658,7 @@ mod tests {
                     id: id.into(),
                     name: id.into(),
                     server: json!({"command":"node","args":["fetch.js"]}),
+                    app_overrides: Default::default(),
                     apps: McpApps {
                         dsh,
                         claude: true,
