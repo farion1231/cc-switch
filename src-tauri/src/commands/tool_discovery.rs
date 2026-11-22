@@ -1202,6 +1202,27 @@ pub(super) fn resolve_path_default(
 /// 都会卡住整个"全部升级"预检——到点整组击杀，该条按探测失败降级，预检继续。
 pub(super) const INSTALL_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
+/// 安装枚举 `--version` 探测的基础 PATH（候选目录再前置在它前面）：登录 shell 的 PATH 在前、
+/// 继承的 PATH 垫底。Finder 启动时继承的是 launchd 的窄 PATH，`#!/usr/bin/env node` 的 npm
+/// 启动器只要所在目录里没有 node 就 exit 127，健康的安装被标成「无法运行」（#9810）；运行时
+/// 命令（#8653）、Codex 模型目录探测（#9764）早已这样补。解析不到登录 shell 时沿用继承的 PATH。
+/// 拼接用 `OsString`，继承 PATH 里的非 UTF-8 段原样保留。
+#[cfg(not(target_os = "windows"))]
+fn install_probe_base_path(
+    login_path: Option<&str>,
+    inherited: &std::ffi::OsStr,
+) -> std::ffi::OsString {
+    let Some(login_path) = login_path.filter(|path| !path.is_empty()) else {
+        return inherited.to_os_string();
+    };
+    let mut path = std::ffi::OsString::from(login_path);
+    if !inherited.is_empty() {
+        path.push(":");
+        path.push(inherited);
+    }
+    path
+}
+
 /// 带超时的 `--version` 探测（非 Windows）。与 `scan_cli_version` 的裸 `output()`
 /// 不同：stdin 显式置 null、经 `isolate_child_process_group` 进独立会话，超时可整组击杀。
 /// `new_path` 取 `&OsStr` 而非 `&str`：与 `prepend_search_dir_to_path` 同一约定，
@@ -1257,7 +1278,10 @@ pub(super) fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> 
     #[cfg(target_os = "windows")]
     let current_path = effective_path_string();
     #[cfg(not(target_os = "windows"))]
-    let current_path = effective_path_os().unwrap_or_default();
+    let current_path = install_probe_base_path(
+        cached_login_shell_path().as_deref(),
+        &effective_path_os().unwrap_or_default(),
+    );
     // 必须带超时：deadline 传 None 时 wait_child_output 无限等，登录 shell 一挂
     // 整个预检就永久卡死（且前端此阶段无任何反馈）。定位失败仅丢失 is_path_default
     // 标记，非致命。
@@ -3183,6 +3207,68 @@ mod tests {
         assert_eq!(
             combined.as_os_str().as_bytes(),
             b"/candidate/bin:/usr/bin:/tmp/\xff/bin"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn install_probe_base_path_puts_login_path_before_inherited() {
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+        let inherited = std::ffi::OsString::from_vec(b"/usr/bin:/tmp/\xff/bin".to_vec());
+        assert_eq!(
+            install_probe_base_path(Some("/opt/homebrew/bin:/usr/bin"), &inherited)
+                .as_os_str()
+                .as_bytes(),
+            b"/opt/homebrew/bin:/usr/bin:/usr/bin:/tmp/\xff/bin"
+        );
+        // 解析不到登录 shell：沿用继承的 PATH。
+        assert_eq!(install_probe_base_path(None, &inherited), inherited);
+        assert_eq!(install_probe_base_path(Some(""), &inherited), inherited);
+        assert_eq!(
+            install_probe_base_path(Some("/login/bin"), std::ffi::OsStr::new("")),
+            std::ffi::OsString::from("/login/bin")
+        );
+    }
+
+    /// `#!/usr/bin/env node` 的启动器所在目录里没有 node、继承的 PATH 里也没有：只有补上登录
+    /// shell 的 PATH，`--version` 探测才跑得起来（#9810）。
+    #[cfg(unix)]
+    #[test]
+    fn install_probe_finds_interpreter_through_login_path() {
+        use std::os::unix::fs::PermissionsExt;
+        let write_exec = |path: &Path, body: &str| {
+            std::fs::create_dir_all(path.parent().expect("parent")).expect("create dir");
+            std::fs::write(path, body).expect("write script");
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        };
+        let interpreter = "cc-switch-test-fake-node-9810";
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let node_bin = dir.path().join("node/bin");
+        write_exec(
+            &node_bin.join(interpreter),
+            "#!/bin/sh\necho 'codex-cli 0.170.0'\n",
+        );
+        let npm_bin = dir.path().join("npm/bin");
+        let launcher = npm_bin.join("codex");
+        write_exec(&launcher, &format!("#!/usr/bin/env {interpreter}\n"));
+
+        let inherited = std::ffi::OsStr::new("/usr/bin:/bin:/usr/sbin:/sbin");
+        let without_login =
+            prepend_search_dir_to_path(&npm_bin, &install_probe_base_path(None, inherited));
+        let out = run_probe_version_command(&launcher, &without_login).expect("spawn");
+        assert!(!out.status.success());
+
+        let login_path = node_bin.to_string_lossy().into_owned();
+        let with_login = prepend_search_dir_to_path(
+            &npm_bin,
+            &install_probe_base_path(Some(&login_path), inherited),
+        );
+        let out = run_probe_version_command(&launcher, &with_login).expect("spawn");
+        assert!(out.status.success());
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim(),
+            "codex-cli 0.170.0"
         );
     }
 

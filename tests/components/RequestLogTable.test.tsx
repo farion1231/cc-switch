@@ -202,6 +202,7 @@ describe("RequestLogTable", () => {
       model: "deepseek-v4-pro",
       costMultiplier: "1",
       inputTokens: 1_000,
+      freshInputTokens: 1_000,
       cacheReadTokens: 0,
       cacheCreationTokens: 0,
       inputCostUsd: "0",
@@ -266,8 +267,32 @@ describe("RequestLogTable", () => {
             latencyMs: 10_000,
             dataSource: "pi_session",
           },
+          // Antigravity 原生库自带毫秒级首字与流式生成计时：扣首字算精确速度，不加 ≈
+          // 2900 / (69 - 43) ≈ 112 tok/s
+          {
+            ...base,
+            appType: "agy",
+            providerId: "_agy_session",
+            providerName: "Antigravity (Session)",
+            requestId: "agy-native-exact",
+            outputTokens: 2_900,
+            latencyMs: 69_000,
+            firstTokenMs: 43_000,
+            dataSource: "agy_session",
+          },
+          // Antigravity 原生计时未读到时，不回退到估算
+          {
+            ...base,
+            appType: "agy",
+            providerId: "_agy_session",
+            providerName: "Antigravity (Session)",
+            requestId: "agy-untimed",
+            outputTokens: 900,
+            latencyMs: 0,
+            dataSource: "agy_session",
+          },
         ],
-        total: 6,
+        total: 8,
         page: 0,
         pageSize: 20,
       },
@@ -284,7 +309,7 @@ describe("RequestLogTable", () => {
     );
 
     const rows = screen.getAllByRole("row").slice(1);
-    expect(rows).toHaveLength(6);
+    expect(rows).toHaveLength(8);
     // 最后两列：速度、首字
     const speedCell = (row: HTMLElement) =>
       row.children[row.children.length - 2];
@@ -315,6 +340,13 @@ describe("RequestLogTable", () => {
       "usage.estimatedTimingTip",
     );
     expect(firstTokenCell(rows[5])).toHaveTextContent("—");
+    expect(speedCell(rows[6])).toHaveTextContent("112tok/s");
+    expect(speedCell(rows[6])).not.toHaveTextContent("≈");
+    expect(speedCell(rows[6])).toHaveAttribute("title", "usage.timingTip");
+    expect(firstTokenCell(rows[6])).toHaveTextContent("43.0s");
+    expect(firstTokenCell(rows[6])).not.toHaveTextContent("≈");
+    expect(speedCell(rows[7])).toHaveTextContent("—");
+    expect(firstTokenCell(rows[7])).toHaveTextContent("—");
     expect(
       screen.getByRole("columnheader", { name: /usage.firstToken/ }),
     ).toBeInTheDocument();
@@ -338,6 +370,7 @@ describe("RequestLogTable", () => {
             model: "kimi-k2.6",
             costMultiplier: "1",
             inputTokens: 10,
+            freshInputTokens: 10,
             outputTokens: 10,
             cacheReadTokens: 0,
             cacheCreationTokens: 0,
@@ -372,6 +405,57 @@ describe("RequestLogTable", () => {
     expect(appShortName("claude-desktop")).toBe("Desktop");
     expect(appShortName("unknown-app")).toBe("unknown-app");
   });
+
+  it("shows fresh input net of both cache reads and cache writes", () => {
+    useRequestLogsMock.mockReturnValue({
+      data: {
+        data: [
+          {
+            requestId: "codex-cache-write",
+            providerId: "p1",
+            providerName: "OpenAI",
+            appType: "codex",
+            model: "gpt-6-sol",
+            costMultiplier: "1",
+            inputTokens: 1_000,
+            freshInputTokens: 100,
+            outputTokens: 50,
+            cacheReadTokens: 300,
+            cacheCreationTokens: 600,
+            inputCostUsd: "0",
+            outputCostUsd: "0",
+            cacheReadCostUsd: "0",
+            cacheCreationCostUsd: "0",
+            totalCostUsd: "0.01",
+            isStreaming: true,
+            statusCode: 200,
+            latencyMs: 0,
+            createdAt: Math.floor(Date.now() / 1000),
+          },
+        ],
+        total: 1,
+        page: 0,
+        pageSize: 20,
+      },
+      isLoading: false,
+    });
+
+    render(
+      <RequestLogTable range={{ preset: "today" }} refreshIntervalMs={0} />,
+    );
+
+    const freshInputColumn = screen
+      .getAllByRole("columnheader")
+      .findIndex((th) => th.textContent?.startsWith("usage.freshInput"));
+    const freshInputCell = screen.getAllByRole("row")[1].querySelectorAll("td")[
+      freshInputColumn
+    ];
+    expect(freshInputCell).toHaveTextContent("100");
+    expect(freshInputCell).toHaveAttribute(
+      "title",
+      "100 (usage.rawInputLabel: 1,000)",
+    );
+  });
 });
 
 describe("RequestLogTable optional columns", () => {
@@ -380,7 +464,11 @@ describe("RequestLogTable optional columns", () => {
     providerName: "DeepSeek",
     model: "m",
     costMultiplier: "1",
+    inputTokens: 0,
+    freshInputTokens: 0,
     outputTokens: 10,
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0,
     inputCostUsd: "0",
     outputCostUsd: "0",
     cacheReadCostUsd: "0",
@@ -435,19 +523,34 @@ describe("RequestLogTable optional columns", () => {
             requestId: "claude",
             appType: "claude",
             inputTokens: 200,
+            freshInputTokens: 200,
             cacheCreationTokens: 800,
             cacheReadTokens: 9_000,
             latencyMs: 12_340,
             statusCode: 200,
           },
-          // Codex：输入含命中；不报缓存写入
+          // Gemini：不上报缓存写入。命中率用后端给的新增输入：1 + 0 + 999
+          {
+            ...base,
+            requestId: "gemini",
+            appType: "gemini",
+            inputTokens: 1_000,
+            freshInputTokens: 1,
+            cacheCreationTokens: 0,
+            cacheReadTokens: 999,
+            latencyMs: 4_000,
+            dataSource: "gemini_session",
+            statusCode: 200,
+          },
+          // Codex：上报缓存写入，数字要显示出来
           {
             ...base,
             requestId: "codex",
             appType: "codex",
             inputTokens: 1_000,
-            cacheCreationTokens: 0,
-            cacheReadTokens: 999,
+            freshInputTokens: 100,
+            cacheCreationTokens: 600,
+            cacheReadTokens: 300,
             latencyMs: 4_000,
             dataSource: "codex_session",
             statusCode: 200,
@@ -457,15 +560,12 @@ describe("RequestLogTable optional columns", () => {
             ...base,
             requestId: "failed",
             appType: "claude",
-            inputTokens: 0,
-            cacheCreationTokens: 0,
-            cacheReadTokens: 0,
             latencyMs: 0,
             statusCode: 429,
             errorMessage: "rate limited",
           },
         ].map((log) => ({ ...log, model: log.requestId })),
-        total: 3,
+        total: 4,
         page: 0,
         pageSize: 20,
       },
@@ -480,7 +580,7 @@ describe("RequestLogTable optional columns", () => {
       />,
     );
     // 给每行打个标记，按列头找单元格
-    for (const id of ["claude", "codex", "failed"]) {
+    for (const id of ["claude", "gemini", "codex", "failed"]) {
       screen.getByTitle(id).setAttribute("data-request", id);
     }
 
@@ -490,15 +590,23 @@ describe("RequestLogTable optional columns", () => {
     expect(claude("usage.logColumns.duration")).toHaveTextContent("12.3s");
     expect(claude("usage.statusCode")).toHaveTextContent("200");
 
-    const codex = cellsOf("codex");
-    expect(codex("usage.logColumns.cacheWrite")).toHaveTextContent("—");
-    expect(codex("usage.logColumns.cacheWrite")).toHaveAttribute(
+    const gemini = cellsOf("gemini");
+    expect(gemini("usage.logColumns.cacheWrite")).toHaveTextContent("—");
+    expect(gemini("usage.logColumns.cacheWrite")).toHaveAttribute(
       "title",
       "usage.cacheWriteNotReported",
     );
     // 999 / 1000 不进成 100%
-    expect(codex("usage.logColumns.hitRate")).toHaveTextContent("99.9%");
-    expect(codex("usage.logColumns.duration")).toHaveTextContent("≈4.0s");
+    expect(gemini("usage.logColumns.hitRate")).toHaveTextContent("99.9%");
+    expect(gemini("usage.logColumns.duration")).toHaveTextContent("≈4.0s");
+
+    const codex = cellsOf("codex");
+    expect(codex("usage.logColumns.cacheWrite")).toHaveTextContent("600");
+    expect(codex("usage.logColumns.cacheWrite")).toHaveAttribute(
+      "title",
+      "600",
+    );
+    expect(codex("usage.logColumns.hitRate")).toHaveTextContent("30.0%");
 
     const failed = cellsOf("failed");
     expect(failed("usage.logColumns.hitRate")).toHaveTextContent("—");
