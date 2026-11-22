@@ -7538,13 +7538,8 @@ impl ProviderService {
 
         let mut result = SwitchResult::default();
 
-        // Additive mode apps skip setting is_current (no such concept).
-        if !app_type.spec().additive {
-            crate::settings::set_current_provider(&app_type, Some(id))?;
-            state.db.set_current_provider(&app_type, id)?;
-        }
-
-        // 写 live（Claude Desktop、累加式应用；切换式应用在上面各自的分支里写完了）。
+        // 走到这里的只有累加式应用（切换式应用都在上面各自的分支里返回了），它们没有
+        // “当前供应商”指针，只写 live。
         write_live_for_state(state, &app_type, provider)?;
 
         // Hermes is additive, so "switching" doesn't overwrite a live config file
