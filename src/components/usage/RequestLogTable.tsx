@@ -14,9 +14,8 @@ import { HelpTip } from "@/components/ui/help-tip";
 import { AppGlyph, APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 import type { AppId } from "@/lib/api";
 import {
-  CACHE_INCLUSIVE_APP_TYPES,
-  getFreshInputTokens,
   isUnpricedUsage,
+  omitsCacheWrites,
   type LogFilters,
   type RequestLog,
   type UsageRangeSelection,
@@ -29,7 +28,7 @@ import {
   formatOutputTokensPerSecond,
   formatTokensCompact,
   getLocaleFromLanguage,
-  isSessionLogRequest,
+  hasExactTimingSource,
   parseFiniteNumber,
 } from "./format";
 import {
@@ -146,7 +145,7 @@ export function getRequestCacheHitRate(
   log: RequestLog,
 ): { rate: number; cacheable: number } | null {
   const cacheable =
-    getFreshInputTokens(log) + log.cacheCreationTokens + log.cacheReadTokens;
+    log.freshInputTokens + log.cacheCreationTokens + log.cacheReadTokens;
   if (cacheable <= 0) return null;
   return { rate: log.cacheReadTokens / cacheable, cacheable };
 }
@@ -371,7 +370,7 @@ export function RequestLogTable({
 
   const renderRow = (log: RequestLog) => {
     const unpriced = isUnpricedUsage(log);
-    const freshInput = getFreshInputTokens(log);
+    const freshInput = log.freshInputTokens;
     const isCacheInclusive = log.inputTokens !== freshInput;
     const time = formatLogTime(log.createdAt, now);
     const fullTime = formatLogFullTime(log.createdAt);
@@ -385,8 +384,8 @@ export function RequestLogTable({
     const latency = parseFiniteNumber(log.latencyMs);
     const firstToken = parseFiniteNumber(log.firstTokenMs);
     const firstTokenText = formatFirstTokenSeconds(firstToken);
-    // 会话日志的耗时和首字都是按时间戳估的，带 ≈
-    const isSession = isSessionLogRequest(log);
+    // 其余会话日志的耗时和首字按时间戳估算，带 ≈；路由请求和 Antigravity 原生计时是精确值
+    const hasExactTiming = hasExactTimingSource(log);
     const timing =
       latency != null && latency > 0
         ? {
@@ -397,7 +396,7 @@ export function RequestLogTable({
     const timingTip =
       timing == null
         ? undefined
-        : !isSession
+        : hasExactTiming
           ? timing.ttft != null
             ? t("usage.timingTip", timing)
             : undefined
@@ -412,8 +411,8 @@ export function RequestLogTable({
         ? `${log.requestModel} → ${log.model}`
         : log.model;
     const hasCache = log.cacheReadTokens > 0;
-    // OpenAI 协议不单报缓存写入，这几个应用的 0 是「不知道」，不是「没写」
-    const cacheWriteUnknown = CACHE_INCLUSIVE_APP_TYPES.has(log.appType);
+    // Gemini 和 Grok Build 不单报缓存写入，它们的 0 是「不知道」，不是「没写」
+    const cacheWriteUnknown = omitsCacheWrites(log.appType);
     const hitRate = getRequestCacheHitRate(log);
     const success = isSuccessStatus(log.statusCode);
 
@@ -585,7 +584,7 @@ export function RequestLogTable({
           )}
           title={timingTip}
         >
-          {isSession && firstTokenText != null && "≈"}
+          {!hasExactTiming && firstTokenText != null && "≈"}
           {firstTokenText ?? "—"}
         </td>
       ),
@@ -595,10 +594,12 @@ export function RequestLogTable({
           title={
             timing == null
               ? undefined
-              : `${isSession ? "≈" : ""}${fmtInt(latency, locale)} ms`
+              : `${!hasExactTiming ? "≈" : ""}${fmtInt(latency, locale)} ms`
           }
         >
-          {timing == null ? "—" : `${isSession ? "≈" : ""}${timing.duration}s`}
+          {timing == null
+            ? "—"
+            : `${!hasExactTiming ? "≈" : ""}${timing.duration}s`}
         </td>
       ),
       statusCode: (
