@@ -205,7 +205,10 @@ async function main() {
         if (run.tree) console.log(`UI tree at the failure:\n${run.tree}`);
       } else if (!manifest) result = { problem: `seed ${name} is not recorded for ${os}` };
       else if (manifest.recipe !== hash) result = { problem: `seed ${name} is stale: its recipe changed after it was recorded for ${os}; record it again` };
-      else result = { dir };
+      else {
+        const missing = Object.entries(manifest.entries).filter(([p, e]) => e.kind === "file" && !existsSync(join(dir, "home", p))).map(([p]) => p);
+        result = missing.length ? { problem: `seed ${name} for ${os} lists files it does not have (were they committed?): ${missing.join(", ")}` } : { dir };
+      }
     }
     seeds.set(name, result);
     return result;

@@ -31,3 +31,5 @@ CODEBUDDY.md
 mainWindow.js
 parity/.out/
 parity/cases/_scratch/
+# Seeds are user data the app wrote; a seed can hold any file name, including the ones above.
+!parity/baseline/_seeds/**
