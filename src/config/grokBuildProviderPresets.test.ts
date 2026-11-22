@@ -6,7 +6,7 @@ import {
 import {
   extractCodexBaseUrl,
   extractCodexModelName,
-} from "../utils/providerConfigUtils";
+} from "../utils/codexConfigUtils";
 
 describe("grokBuildProviderPresets", () => {
   it("has unique preset names", () => {
