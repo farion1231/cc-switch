@@ -999,6 +999,18 @@ pub fn active_provider_str<'a>(doc: &'a toml::Value, key: &str) -> Option<&'a st
         .or_else(|| doc.get(key)?.as_str())
 }
 
+fn codex_provider_supports_standalone_web_search(config_text: &str) -> bool {
+    let Ok(doc) = config_text.parse::<toml::Value>() else {
+        return false;
+    };
+    doc.get("model_provider")
+        .and_then(toml::Value::as_str)
+        .and_then(|active| doc.get("model_providers")?.get(active))
+        .and_then(|provider| provider.get("supports_standalone_web_search"))
+        .and_then(toml::Value::as_bool)
+        .unwrap_or(false)
+}
+
 /// `wire_api` values that mean OpenAI Chat Completions, matched trimmed and
 /// case-insensitively. The frontend copy is checked against
 /// `tests/config/backendConstants.json`.
@@ -2826,6 +2838,8 @@ pub(crate) fn plan_codex_stack_catalog(
         }
     };
     for member in stack {
+        let standalone_search = member.row.profile == CodexCatalogToolProfile::NativeResponses
+            && codex_provider_supports_standalone_web_search(member.row.config_text);
         for mut entry in codex_stack_third_party_rows(&member.row)? {
             let Some(obj) = entry.as_object_mut() else {
                 continue;
@@ -2848,6 +2862,10 @@ pub(crate) fn plan_codex_stack_catalog(
                     false,
                 )),
             );
+            // Codex offers standalone web search for Lite models without a global feature flag.
+            if standalone_search {
+                obj.insert("use_responses_lite".to_string(), Value::Bool(true));
+            }
             obj.insert(
                 "display_name".to_string(),
                 json!(crate::mode::stack::display_name(

@@ -1436,9 +1436,14 @@ data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\
 
     #[tokio::test]
     async fn alpha_search_routes_forward_to_canonical_upstream() {
+        if !crate::sync_utils::in_isolated_process(
+            "proxy::server::tests::alpha_search_routes_forward_to_canonical_upstream",
+        ) {
+            return;
+        }
         let captured = Arc::new(Mutex::new(Vec::<CapturedRequest>::new()));
         let mock_app = Router::new().route(
-            "/v1/alpha/search",
+            "/*path",
             post({
                 let captured = captured.clone();
                 move |request: axum::extract::Request| {
@@ -1461,6 +1466,14 @@ data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\
                                 .map(ToString::to_string),
                             body: serde_json::from_slice(&body).expect("parse mock request body"),
                         });
+
+                        if parts.uri.path() == "/other/v1/alpha/search" {
+                            return (
+                                StatusCode::NOT_FOUND,
+                                HeaderMap::new(),
+                                r#"{"error":{"message":"Search endpoint unavailable"}}"#,
+                            );
+                        }
 
                         let mut headers = HeaderMap::new();
                         headers.insert(
@@ -1596,11 +1609,89 @@ data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\
             r#"{"encrypted_output":"ciphertext"}"#
         );
 
+        use crate::live::engine::DeviceStore;
+        use crate::mode::state::{self, Mode};
+
+        for (id, base_path, secret) in [
+            ("agentbridge", "/v1", "bridge-secret"),
+            ("other", "/other/v1", "other-secret"),
+        ] {
+            let provider = Provider::with_id(
+                id.to_string(),
+                id.to_string(),
+                json!({
+                    "base_url": format!("http://{mock_addr}{base_path}"),
+                    "auth": {"OPENAI_API_KEY": secret}
+                }),
+                None,
+            );
+            db.save_provider(&AppType::Codex, &provider)
+                .expect("save Stack provider");
+        }
+        state::update(&DeviceStore::for_device(), |live| {
+            let codex = live.apps.entry("codex".to_string()).or_default();
+            codex.mode = Some(Mode::Proxy);
+            codex.proxy_route = Some(provider.id.clone());
+            codex.stack.enabled = true;
+            for id in ["agentbridge", "other"] {
+                codex.stack.members.push(id.to_string());
+                codex.stack.keys.insert(id.to_string(), id.to_string());
+            }
+        })
+        .expect("enable test Stack");
+
+        let stack_cases = [
+            (
+                "ccs-agentbridge/gpt-6.2-sol",
+                "gpt-6.2-sol",
+                "/v1/alpha/search",
+                "bridge-secret",
+                StatusCode::ACCEPTED,
+            ),
+            (
+                "ccs-other/other-model",
+                "other-model",
+                "/other/v1/alpha/search",
+                "other-secret",
+                StatusCode::NOT_FOUND,
+            ),
+            (
+                "gpt-5.6-sol",
+                "gpt-5.6-sol",
+                "/v1/alpha/search",
+                "upstream-secret",
+                StatusCode::ACCEPTED,
+            ),
+        ];
+        for (model, _, _, _, expected_status) in stack_cases {
+            let response = client
+                .post(format!(
+                    "http://127.0.0.1:{}/v1/alpha/search",
+                    proxy_info.port
+                ))
+                .header(header::AUTHORIZATION, "Bearer client-secret")
+                .json(&json!({"model": model, "commands": {"search_query": [{"q": "test"}]}}))
+                .send()
+                .await
+                .expect("send Stack alpha search request");
+            assert_eq!(response.status(), expected_status, "model {model}");
+        }
+
         proxy.stop().await.expect("stop test proxy");
         mock_handle.abort();
 
         let captured = captured.lock().await;
-        assert_eq!(captured.len(), aliases.len() + 1);
+        assert_eq!(captured.len(), aliases.len() + 1 + stack_cases.len());
+        for (request, (_, model, path, secret, _)) in
+            captured[aliases.len() + 1..].iter().zip(stack_cases)
+        {
+            assert_eq!(request.path_and_query, path);
+            assert_eq!(
+                request.authorization.as_deref(),
+                Some(format!("Bearer {secret}").as_str())
+            );
+            assert_eq!(request.body["model"], model);
+        }
         for (index, request) in captured.iter().take(aliases.len()).enumerate() {
             assert_eq!(
                 request.path_and_query,
@@ -1615,7 +1706,7 @@ data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\
             assert_eq!(request.body["commands"]["search_query"][0]["q"], "test");
         }
 
-        let full_url_request = captured.last().expect("full URL request captured");
+        let full_url_request = &captured[aliases.len()];
         assert_eq!(
             full_url_request.path_and_query,
             "/v1/alpha/search?api-version=test&client_version=0.144.6"
