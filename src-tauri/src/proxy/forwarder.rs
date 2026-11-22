@@ -515,7 +515,6 @@ impl RequestForwarder {
     /// 调用方应 `continue` 让下一家 provider 继续故障转移；
     /// `Some(ForwardError)` 表示是客户端错误，没有 provider 能修复，
     /// 调用方应直接 `return` 把错误返回给客户端。
-    #[allow(clippy::too_many_arguments)]
     async fn handle_rectifier_retry_failure(
         &self,
         retry_err: ProxyError,

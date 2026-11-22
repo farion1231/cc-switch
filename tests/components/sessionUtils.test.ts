@@ -257,7 +257,10 @@ describe("session utils", () => {
   it("wraps the resume command with Set-Location for PowerShell on Windows", () => {
     stubUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
     expect(
-      buildCdResumeCommand("C:\\work\\it's", "$env:OMP_PROFILE='default'; omp --resume 's'"),
+      buildCdResumeCommand(
+        "C:\\work\\it's",
+        "$env:OMP_PROFILE='default'; omp --resume 's'",
+      ),
     ).toBe(
       "Set-Location 'C:\\work\\it''s'; $env:OMP_PROFILE='default'; omp --resume 's'",
     );

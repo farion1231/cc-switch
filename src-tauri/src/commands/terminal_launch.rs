@@ -162,7 +162,7 @@ fn wsl_hermes_dashboard_line(distro: &str) -> Result<String, String> {
 ///
 /// 根据提供商配置的环境变量启动一个带有该提供商特定设置的终端
 /// 无需检查是否为当前激活的提供商，任何提供商都可以打开终端
-#[allow(non_snake_case, clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn open_provider_terminal(
     state: State<'_, crate::store::AppState>,
