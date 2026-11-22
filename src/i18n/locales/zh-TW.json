@@ -1,7 +1,6 @@
 {
   "qoderCnDesktop": {
     "title": "Qoder CN 桌面版",
-    "add": "新增供應商",
     "gateway": "本機閘道",
     "running": "執行中",
     "stopped": "已停止",
@@ -10,17 +9,12 @@
     "setup": "在 Qoder CN 新增 OpenAI Compatible 模型，選擇 Responses API 後填入這三項。",
     "copy": "複製 {{label}}",
     "copied": "已複製",
-    "name": "供應商名稱",
     "format": "上游協定",
     "upstreamModel": "上游模型 ID",
     "replaceKey": "新 API Key（選填）",
     "xApiKey": "Anthropic 使用 x-api-key",
-    "providers": "供應商",
     "source": "選擇 Claude Code 供應商",
     "import": "複製供應商",
-    "empty": "新增 API Key 供應商，或複製現有的 Claude Code 供應商。",
-    "active": "使用中",
-    "select": "切換到此",
     "errors": {
       "selectProvider": "請先選擇 Qoder CN 供應商。",
       "invalidUrl": "請輸入有效的供應商 Base URL。",
@@ -31,8 +25,7 @@
       "providerMissing": "這個 Qoder CN 供應商已不存在。",
       "sourceMissing": "來源供應商已不存在。",
       "sourceUnsupported": "來源供應商沒有可重複使用的 API Key 設定。",
-      "providerIncomplete": "這個 Qoder CN 供應商的設定不完整。",
-      "activeProvider": "請先切換至其他供應商，再刪除目前的供應商。"
+      "providerIncomplete": "這個 Qoder CN 供應商的設定不完整。"
     }
   },
   "app": {

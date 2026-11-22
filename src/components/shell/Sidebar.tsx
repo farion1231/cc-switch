@@ -16,7 +16,6 @@ import {
   KeyRound,
   Layers,
   LayoutGrid,
-  Monitor,
   Puzzle,
   Route,
   Server,
@@ -322,13 +321,6 @@ function MainDirectory({
               onSelect={() => onSelectApp(app)}
             />
           ))}
-          <NavItem
-            collapsed={collapsed}
-            selected={view === "qoderCnDesktop"}
-            icon={Monitor}
-            label={t("qoderCnDesktop.title")}
-            onClick={() => onSelectPage("qoderCnDesktop")}
-          />
         </div>
       </div>
 

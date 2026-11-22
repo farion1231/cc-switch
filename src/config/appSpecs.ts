@@ -272,6 +272,20 @@ export const APP_SPECS = {
     editorView: false,
     officialSubscription: false,
   },
+  "qoder-cn-desktop": {
+    localProxy: false,
+    routeMode: false,
+    stack: false,
+    additive: false,
+    skills: false,
+    mcp: false,
+    prompts: false,
+    plugins: false,
+    managedAccount: false,
+    piFamily: false,
+    editorView: false,
+    officialSubscription: false,
+  },
 } as const satisfies Record<AppId, AppCaps>;
 
 /** `APP_SPECS` 里 `cap` 为 true 的应用 ID */

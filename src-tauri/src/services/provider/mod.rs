@@ -6125,6 +6125,11 @@ impl ProviderService {
 
         // 还没有当前供应商时这一家会被写进 live：和进入代理、切换互斥（同 `update`）。
         let _switch_guard = crate::mode::controller::lock_settled_blocking(state, &app_type)?;
+        if app_type == AppType::QoderCnDesktop
+            && state.db.provider_exists(&provider.id, &app_type)?
+        {
+            return Ok(false);
+        }
 
         // WorkBuddy 官方登录卡只存绑定，不进 models.json
         if app_type == AppType::WorkBuddy
@@ -6708,6 +6713,12 @@ impl ProviderService {
         // 字段会盖掉刚写的代理契约）。Codex 还要在锁里读旧行，看它是不是托管账号的行。
         let _switch_guard = crate::mode::controller::lock_settled_blocking(state, &app_type)?;
         let existing_provider = state.db.get_provider_by_id(&original_id, &app_type)?;
+        if app_type == AppType::QoderCnDesktop {
+            let previous = existing_provider
+                .as_ref()
+                .ok_or_else(|| AppError::Message("qoderCnDesktop.errors.providerMissing".into()))?;
+            crate::commands::preserve_qoder_cn_desktop_key(&mut provider, previous)?;
+        }
         // Normalize Claude model keys
         Self::normalize_provider_if_claude(&app_type, &mut provider);
         Self::validate_provider_settings(&app_type, &provider)?;
@@ -7003,6 +7014,11 @@ impl ProviderService {
     /// 对于累加模式应用（OpenCode, OpenClaw），可以随时删除任意供应商，同时从 live 配置中移除。
     pub fn delete(state: &AppState, app_type: AppType, id: &str) -> Result<(), AppError> {
         let _native_guard = lock_native_provider_operations(state, &app_type);
+        let _qoder_switch_guard = if app_type == AppType::QoderCnDesktop {
+            crate::mode::controller::lock_settled_blocking(state, &app_type)?
+        } else {
+            None
+        };
         if state.db.get_unreadable_provider(&app_type, id)?.is_some() {
             return Self::delete_unreadable(state, &app_type, id);
         }
@@ -7377,6 +7393,16 @@ impl ProviderService {
         id: &str,
     ) -> Result<SwitchResult, AppError> {
         let _native_guard = lock_native_provider_operations(state, &app_type);
+        if app_type == AppType::QoderCnDesktop {
+            let _switch_guard = crate::mode::controller::lock_settled_blocking(state, &app_type)?;
+            let provider = state
+                .db
+                .get_provider_by_id(id, &app_type)?
+                .ok_or_else(|| AppError::Message("qoderCnDesktop.errors.providerMissing".into()))?;
+            crate::commands::validate_qoder_cn_desktop_provider(&provider)?;
+            state.db.set_current_provider(&app_type, id)?;
+            return Ok(SwitchResult::default());
+        }
         if app_type == AppType::Pi {
             return pi::enable(state, id);
         }
@@ -8678,12 +8704,10 @@ impl ProviderService {
             AppType::Mcode => {
                 crate::mcode_config::validate_provider(&provider.id, &provider.settings_config)?
             }
-            // 官方登录卡只存账号绑定，没有模型配置
             AppType::QoderCnDesktop => {
-                return Err(AppError::InvalidInput(
-                    "Use the Qoder CN Desktop provider page.".into(),
-                ))
+                crate::commands::validate_qoder_cn_desktop_provider(provider)?
             }
+            // 官方登录卡只存账号绑定，没有模型配置
             AppType::WorkBuddy if crate::workbuddy_config::is_official_provider(provider) => {
                 if !provider.settings_config.is_object() {
                     return Err(AppError::InvalidInput(

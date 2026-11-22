@@ -79,7 +79,7 @@ import { useSkillInstallTargets } from "./useSkillInstallTargets";
 import { describeRepoFailures } from "./repoFailures";
 import { repoWebUrl } from "./repoUrl";
 import type { ZipSkippedSkill } from "@/lib/api/skills";
-import { APP_IDS_WITH } from "@/config/appSpecs";
+import { APP_IDS_WITH, type AppIdWith } from "@/config/appSpecs";
 
 const BACKUP_DIR = "~/.cc-switch/skill-backups";
 
@@ -90,7 +90,8 @@ const matrixMinWidth = (appCount: number) =>
   8 + 24 + 8 + NAME_MIN_WIDTH + appCount * APP_COLUMN_WIDTH + 40 + 8;
 
 type SkillsView = "installed" | "discover";
-type StatusFilter = "all" | "updates" | "none" | `app:${AppId}`;
+type SkillAppId = AppIdWith<"skills">;
+type StatusFilter = "all" | "updates" | "none" | `app:${SkillAppId}`;
 
 interface WriteFailure {
   desired: boolean;
@@ -330,7 +331,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
       if (statusFilter === "updates" && !updatesMap[skill.id]) return false;
       if (statusFilter === "none" && enabledCount(skill) > 0) return false;
       if (statusFilter.startsWith("app:")) {
-        const app = statusFilter.slice(4) as AppId;
+        const app = statusFilter.slice(4) as SkillAppId;
         if (!skill.apps[app]) return false;
       }
       if (sourceFilter !== "all" && sourceKey(skill) !== sourceFilter) {
@@ -509,7 +510,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     }
   };
 
-  const handleColumnBulk = (app: AppId, enabled: boolean) => {
+  const handleColumnBulk = (app: SkillAppId, enabled: boolean) => {
     const ids = scope.rows
       .filter((skill) => Boolean(skill.apps[app]) !== enabled)
       .map((skill) => skill.id);
@@ -520,7 +521,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     });
   };
 
-  const handleSelectionToggle = (app: AppId, enabled: boolean) => {
+  const handleSelectionToggle = (app: SkillAppId, enabled: boolean) => {
     const chosen = installedSkills.filter((skill) => selected.has(skill.id));
     const ids = chosen
       .filter((skill) => Boolean(skill.apps[app]) !== enabled)
@@ -1788,7 +1789,7 @@ UnifiedSkillsPanel.displayName = "UnifiedSkillsPanel";
 interface InstalledRowProps {
   skill: InstalledSkill;
   first: boolean;
-  appIds: AppId[];
+  appIds: SkillAppId[];
   checked: boolean;
   hasUpdate: boolean;
   isUpdating: boolean;
@@ -1799,7 +1800,7 @@ interface InstalledRowProps {
   disabled: boolean;
   sourceText: string;
   onPick: (checked: boolean) => void;
-  onCell: (app: AppId) => void;
+  onCell: (app: SkillAppId) => void;
   onOpenSource: () => void;
   onFixSync: () => void;
   onUpdate: () => void;
@@ -2092,9 +2093,9 @@ function AppMenuButton({
 }: {
   label: string;
   ariaLabel: string;
-  apps: AppId[];
+  apps: SkillAppId[];
   disabled: boolean;
-  onPick: (app: AppId) => void;
+  onPick: (app: SkillAppId) => void;
 }) {
   return (
     <DropdownMenu>

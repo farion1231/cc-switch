@@ -1,7 +1,6 @@
 {
   "qoderCnDesktop": {
     "title": "Qoder CN Desktop",
-    "add": "Anbieter hinzufügen",
     "gateway": "Lokales Gateway",
     "running": "Aktiv",
     "stopped": "Gestoppt",
@@ -10,17 +9,12 @@
     "setup": "Füge in Qoder CN ein OpenAI-kompatibles Modell hinzu, wähle die Responses API und trage diese drei Werte ein.",
     "copy": "{{label}} kopieren",
     "copied": "Kopiert",
-    "name": "Anbietername",
     "format": "Upstream-Protokoll",
     "upstreamModel": "Upstream-Modell-ID",
     "replaceKey": "Neuer API-Schlüssel (optional)",
     "xApiKey": "x-api-key für Anthropic verwenden",
-    "providers": "Anbieter",
     "source": "Claude-Code-Anbieter auswählen",
     "import": "Anbieter kopieren",
-    "empty": "Füge einen Anbieter mit API-Schlüssel hinzu oder kopiere einen vorhandenen Claude-Code-Anbieter.",
-    "active": "Aktiv",
-    "select": "Zu diesem Anbieter wechseln",
     "errors": {
       "selectProvider": "Wähle zuerst einen Qoder-CN-Anbieter aus.",
       "invalidUrl": "Gib eine gültige Basis-URL für den Anbieter ein.",
@@ -31,8 +25,7 @@
       "providerMissing": "Der Qoder-CN-Anbieter ist nicht mehr vorhanden.",
       "sourceMissing": "Der Quellanbieter ist nicht mehr vorhanden.",
       "sourceUnsupported": "Dieser Quellanbieter hat keine wiederverwendbaren API-Schlüssel-Einstellungen.",
-      "providerIncomplete": "Der Qoder-CN-Anbieter ist unvollständig.",
-      "activeProvider": "Wähle einen anderen Anbieter aus, bevor du den aktiven entfernst."
+      "providerIncomplete": "Der Qoder-CN-Anbieter ist unvollständig."
     }
   },
   "app": {

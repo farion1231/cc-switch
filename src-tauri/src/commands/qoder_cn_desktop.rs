@@ -7,6 +7,7 @@ use crate::database::Database;
 use crate::error::AppError;
 use crate::mode::current::{provider_for, Purpose};
 use crate::provider::{Provider, ProviderMeta};
+use crate::services::ProviderService;
 use crate::store::AppState;
 
 const APP: AppType = AppType::QoderCnDesktop;
@@ -96,18 +97,6 @@ struct ProviderSummary {
     anthropic_api_key: bool,
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ProviderInput {
-    id: Option<String>,
-    name: String,
-    base_url: String,
-    model: String,
-    format: Format,
-    anthropic_api_key: bool,
-    api_key: String,
-}
-
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct QoderCnDesktopStatus {
@@ -116,8 +105,6 @@ pub struct QoderCnDesktopStatus {
     base_url: String,
     model: &'static str,
     gateway_token: String,
-    current_provider_id: Option<String>,
-    providers: Vec<ProviderSummary>,
     importable_providers: Vec<ProviderSummary>,
 }
 
@@ -127,18 +114,6 @@ fn configured_string<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
         .as_str()
         .map(str::trim)
         .filter(|v| !v.is_empty())
-}
-
-fn summarize(provider: &Provider) -> Option<ProviderSummary> {
-    Some(ProviderSummary {
-        id: provider.id.clone(),
-        name: provider.name.clone(),
-        base_url: configured_string(&provider.settings_config, "base_url")?.into(),
-        model: configured_string(&provider.settings_config, "model")?.into(),
-        format: Format::from_str(provider.meta.as_ref()?.api_format.as_deref()?)?,
-        anthropic_api_key: provider.meta.as_ref()?.api_key_field.as_deref()
-            == Some("ANTHROPIC_API_KEY"),
-    })
 }
 
 fn importable(provider: &Provider) -> Option<(ProviderSummary, &str)> {
@@ -200,14 +175,6 @@ pub async fn qoder_cn_desktop_status(
         base_url: format!("{origin}/qoder-cn/v1"),
         model: MODEL_ALIAS,
         gateway_token: gateway.token,
-        current_provider_id: provider_for(&state.db, &APP, Purpose::InUse)?,
-        providers: state
-            .db
-            .get_provider_rows(&APP)?
-            .readable
-            .values()
-            .filter_map(summarize)
-            .collect(),
         importable_providers: sources
             .readable
             .values()
@@ -244,15 +211,11 @@ fn message(key: &str) -> AppError {
     AppError::Message(format!("qoderCnDesktop.errors.{key}"))
 }
 
-fn save_provider(
-    db: &Database,
-    input: ProviderInput,
-    existing: Option<Provider>,
-) -> Result<(), AppError> {
-    let name = input.name.trim();
-    let model = input.model.trim();
-    let base_url = input.base_url.trim().trim_end_matches('/');
-    let url = url::Url::parse(base_url).map_err(|_| message("invalidUrl"))?;
+fn provider_url(settings: &Value) -> Result<url::Url, AppError> {
+    let url = url::Url::parse(
+        configured_string(settings, "base_url").ok_or_else(|| message("invalidUrl"))?,
+    )
+    .map_err(|_| message("invalidUrl"))?;
     if !(url.scheme() == "https"
         || (url.scheme() == "http"
             && matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "[::1]"))))
@@ -264,58 +227,45 @@ fn save_provider(
     {
         return Err(message("unsupportedUrl"));
     }
-    let api_key = match input.api_key.trim() {
-        "" => existing.as_ref().and_then(|provider| {
-            let old =
-                url::Url::parse(configured_string(&provider.settings_config, "base_url")?).ok()?;
-            if old.origin() != url.origin() {
-                return None;
-            }
-            configured_string(&provider.settings_config, "apiKey")
-        }),
-        key => Some(key),
-    };
-    let api_key = api_key.ok_or_else(|| message("keyRequired"))?;
-    if name.is_empty() || model.is_empty() {
-        return Err(message("nameAndModelRequired"));
-    }
-    if axum::http::HeaderValue::from_str(api_key).is_err() {
-        return Err(message("invalidKey"));
-    }
-    let settings = json!({ "base_url": base_url, "model": model, "apiKey": api_key });
-    let mut provider = existing.unwrap_or_else(|| {
-        Provider::with_id(
-            input.id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
-            name.into(),
-            Value::Null,
-            None,
-        )
-    });
-    provider.name = name.into();
-    provider.settings_config = settings;
-    let meta = provider.meta.get_or_insert_with(ProviderMeta::default);
-    meta.api_format = Some(input.format.as_str().into());
-    meta.api_key_field = (input.format == Format::Anthropic && input.anthropic_api_key)
-        .then(|| "ANTHROPIC_API_KEY".into());
-    db.save_provider(&APP, &provider)
+    Ok(url)
 }
 
-#[tauri::command]
-pub async fn qoder_cn_desktop_save_provider(
-    state: State<'_, AppState>,
-    input: ProviderInput,
+pub(crate) fn validate_qoder_cn_desktop_provider(provider: &Provider) -> Result<(), AppError> {
+    let settings = &provider.settings_config;
+    provider_url(settings)?;
+    if provider.name.trim().is_empty() || configured_string(settings, "model").is_none() {
+        return Err(message("nameAndModelRequired"));
+    }
+    if provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.api_format.as_deref())
+        .and_then(Format::from_str)
+        .is_none()
+    {
+        return Err(message("providerIncomplete"));
+    }
+    let key = configured_string(settings, "apiKey").ok_or_else(|| message("keyRequired"))?;
+    axum::http::HeaderValue::from_str(key).map_err(|_| message("invalidKey"))?;
+    Ok(())
+}
+
+pub(crate) fn preserve_qoder_cn_desktop_key(
+    provider: &mut Provider,
+    previous: &Provider,
 ) -> Result<(), AppError> {
-    let _lock = state.proxy_service.lock_switch_for_app(APP.as_str()).await;
-    let existing = match input.id.as_ref() {
-        Some(id) => Some(
-            state
-                .db
-                .get_provider_by_id(id, &APP)?
-                .ok_or_else(|| message("providerMissing"))?,
-        ),
-        None => None,
-    };
-    save_provider(&state.db, input, existing)
+    if configured_string(&provider.settings_config, "apiKey").is_some() {
+        return Ok(());
+    }
+    let url = provider_url(&provider.settings_config)?;
+    let old = provider_url(&previous.settings_config)?;
+    if old.origin() != url.origin() {
+        return Err(message("keyRequired"));
+    }
+    let key = configured_string(&previous.settings_config, "apiKey")
+        .ok_or_else(|| message("keyRequired"))?;
+    provider.settings_config["apiKey"] = json!(key);
+    Ok(())
 }
 
 #[tauri::command]
@@ -323,59 +273,39 @@ pub async fn qoder_cn_desktop_import_provider(
     state: State<'_, AppState>,
     source_id: String,
 ) -> Result<(), AppError> {
-    let _lock = state.proxy_service.lock_switch_for_app(APP.as_str()).await;
-    let source = state
-        .db
-        .get_provider_by_id(&source_id, &AppType::Claude)?
-        .ok_or_else(|| message("sourceMissing"))?;
-    let (summary, api_key) = importable(&source).ok_or_else(|| message("sourceUnsupported"))?;
-    let id = format!("claude:{source_id}");
-    if state.db.provider_exists(&id, &APP)? {
-        return Ok(());
-    }
-    save_provider(
-        &state.db,
-        ProviderInput {
-            id: Some(id),
-            name: summary.name,
-            base_url: summary.base_url,
-            model: summary.model,
-            format: summary.format,
-            anthropic_api_key: summary.anthropic_api_key,
-            api_key: api_key.into(),
-        },
-        None,
-    )
-}
-
-#[tauri::command]
-pub async fn qoder_cn_desktop_select_provider(
-    state: State<'_, AppState>,
-    id: String,
-) -> Result<(), AppError> {
-    let _lock = state.proxy_service.lock_switch_for_app(APP.as_str()).await;
-    let provider = state
-        .db
-        .get_provider_by_id(&id, &APP)?
-        .ok_or_else(|| message("providerMissing"))?;
-    if summarize(&provider).is_none() {
-        return Err(message("providerIncomplete"));
-    }
-    state.db.set_current_provider(&APP, &id)
-}
-
-#[tauri::command]
-pub async fn qoder_cn_desktop_delete_provider(
-    state: State<'_, AppState>,
-    id: String,
-) -> Result<(), AppError> {
-    let _lock = state.proxy_service.lock_switch_for_app(APP.as_str()).await;
-    if read_gateway(&state.db)?.enabled
-        && provider_for(&state.db, &APP, Purpose::InUse)?.as_deref() == Some(&id)
-    {
-        return Err(message("activeProvider"));
-    }
-    state.db.delete_provider(&APP, &id)
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let source = state
+            .db
+            .get_provider_by_id(&source_id, &AppType::Claude)?
+            .ok_or_else(|| message("sourceMissing"))?;
+        let (summary, key) = importable(&source).ok_or_else(|| message("sourceUnsupported"))?;
+        let id = format!("claude:{source_id}");
+        if state.db.provider_exists(&id, &APP)? {
+            return Ok(());
+        }
+        let mut provider = Provider::with_id(
+            id,
+            summary.name,
+            json!({
+                "base_url": summary.base_url,
+                "model": summary.model,
+                "apiKey": key,
+            }),
+            source.website_url.clone(),
+        );
+        provider.icon = source.icon.clone();
+        provider.icon_color = source.icon_color.clone();
+        provider.meta = Some(ProviderMeta {
+            api_format: Some(summary.format.as_str().into()),
+            api_key_field: (summary.format == Format::Anthropic && summary.anthropic_api_key)
+                .then(|| "ANTHROPIC_API_KEY".into()),
+            ..ProviderMeta::default()
+        });
+        ProviderService::add(&state, APP, provider, false).map(|_| ())
+    })
+    .await
+    .map_err(|error| AppError::Message(error.to_string()))?
 }
 
 #[cfg(test)]
@@ -421,23 +351,40 @@ mod tests {
             },
         )
         .unwrap();
-        for (id, format) in [("a", Format::OpenaiResponses), ("b", Format::OpenaiChat)] {
-            save_provider(
-                &db,
-                ProviderInput {
-                    id: Some(id.into()),
-                    name: id.into(),
-                    base_url: format!("http://127.0.0.1:{port}/{id}/v1"),
-                    model: format!("model-{id}"),
-                    format,
-                    anthropic_api_key: false,
-                    api_key: format!("upstream-{id}"),
-                },
-                None,
-            )
-            .unwrap();
-        }
-        db.set_current_provider(&APP, "a").unwrap();
+        let state = AppState::new(db.clone());
+        let fixture_state = state.clone();
+        tokio::task::spawn_blocking(move || {
+            for (id, format) in [("a", Format::OpenaiResponses), ("b", Format::OpenaiChat)] {
+                let mut provider = Provider::with_id(
+                    id.into(),
+                    id.into(),
+                    json!({
+                        "base_url": format!("http://127.0.0.1:{port}/{id}/v1"),
+                        "model": format!("model-{id}"),
+                        "apiKey": format!("upstream-{id}"),
+                    }),
+                    None,
+                );
+                provider.meta = Some(ProviderMeta {
+                    api_format: Some(format.as_str().into()),
+                    ..ProviderMeta::default()
+                });
+                ProviderService::add(&fixture_state, APP, provider, false).unwrap();
+            }
+            assert_eq!(ProviderService::current(&fixture_state, APP).unwrap(), "a");
+            let mut edited = fixture_state
+                .db
+                .get_provider_by_id("a", &APP)
+                .unwrap()
+                .unwrap();
+            edited.settings_config["apiKey"] = json!("");
+            edited.name = "Renamed provider".into();
+            ProviderService::update(&fixture_state, APP, Some("a"), edited.clone()).unwrap();
+            edited.settings_config["base_url"] = json!("https://example.com/v1");
+            assert!(ProviderService::update(&fixture_state, APP, Some("a"), edited).is_err());
+        })
+        .await
+        .unwrap();
         let proxy = ProxyServer::new(
             ProxyConfig {
                 listen_port: 0,
@@ -472,7 +419,12 @@ mod tests {
             .unwrap();
         assert_eq!(first["output"][0]["content"][0]["text"], "Remembered.");
 
-        db.set_current_provider(&APP, "b").unwrap();
+        tokio::task::spawn_blocking(move || {
+            ProviderService::switch(&state, APP, "b").unwrap();
+            assert_eq!(ProviderService::current(&state, APP).unwrap(), "b");
+        })
+        .await
+        .unwrap();
         let second_body = json!({"model":MODEL_ALIAS,"input":[first_input,
             {"role":"assistant", "content":"Remembered."},
             {"role":"user", "content":"Which word did I tell you?"} ]});

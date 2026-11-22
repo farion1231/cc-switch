@@ -481,8 +481,8 @@ impl AppType {
         self.spec().id
     }
 
-    /// 通用应用管理入口。Qoder CN 桌面版使用独立的网关页面，不接管客户端文件。
-    pub const ALL: [AppType; 16] = [
+    /// 所有应用，按默认顺序。
+    pub const ALL: [AppType; 17] = [
         AppType::Claude,
         AppType::ClaudeDesktop,
         AppType::Codex,
@@ -499,6 +499,7 @@ impl AppType {
         AppType::Omp,
         AppType::Copilot,
         AppType::WorkBuddy,
+        AppType::QoderCnDesktop,
     ];
 
     pub fn all() -> impl Iterator<Item = AppType> {

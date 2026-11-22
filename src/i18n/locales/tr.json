@@ -1,7 +1,6 @@
 {
   "qoderCnDesktop": {
     "title": "Qoder CN Masaüstü",
-    "add": "Sağlayıcı ekle",
     "gateway": "Yerel ağ geçidi",
     "running": "Çalışıyor",
     "stopped": "Durduruldu",
@@ -10,17 +9,12 @@
     "setup": "Qoder CN’de OpenAI Compatible model ekleyin, Responses API’yi seçin ve bu üç değeri girin.",
     "copy": "{{label}} kopyala",
     "copied": "Kopyalandı",
-    "name": "Sağlayıcı adı",
     "format": "Üst hizmet protokolü",
     "upstreamModel": "Üst hizmet model kimliği",
     "replaceKey": "Yeni API anahtarı (isteğe bağlı)",
     "xApiKey": "Anthropic için x-api-key kullan",
-    "providers": "Sağlayıcılar",
     "source": "Claude Code sağlayıcısı seçin",
     "import": "Sağlayıcıyı kopyala",
-    "empty": "API anahtarı kullanan bir sağlayıcı ekleyin veya mevcut bir Claude Code sağlayıcısını kopyalayın.",
-    "active": "Etkin",
-    "select": "Bu sağlayıcıya geç",
     "errors": {
       "selectProvider": "Önce bir Qoder CN sağlayıcısı seçin.",
       "invalidUrl": "Geçerli bir sağlayıcı temel URL’si girin.",
@@ -31,8 +25,7 @@
       "providerMissing": "Qoder CN sağlayıcısı artık mevcut değil.",
       "sourceMissing": "Kaynak sağlayıcı artık mevcut değil.",
       "sourceUnsupported": "Kaynak sağlayıcının yeniden kullanılabilir API anahtarı ayarları yok.",
-      "providerIncomplete": "Qoder CN sağlayıcısının ayarları eksik.",
-      "activeProvider": "Etkin sağlayıcıyı kaldırmadan önce başka bir sağlayıcı seçin."
+      "providerIncomplete": "Qoder CN sağlayıcısının ayarları eksik."
     }
   },
   "app": {

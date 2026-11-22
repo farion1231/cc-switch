@@ -65,6 +65,8 @@ pub struct VisibleApps {
     pub copilot: bool,
     #[serde(default = "default_true")]
     pub workbuddy: bool,
+    #[serde(rename = "qoder-cn-desktop", default = "default_true")]
+    pub qoder_cn_desktop: bool,
 }
 
 impl Default for VisibleApps {
@@ -86,6 +88,7 @@ impl Default for VisibleApps {
             omp: true,
             copilot: true,
             workbuddy: true,
+            qoder_cn_desktop: true,
         }
     }
 }
@@ -110,7 +113,7 @@ impl VisibleApps {
             AppType::Omp => self.omp,
             AppType::Copilot => self.copilot,
             AppType::WorkBuddy => self.workbuddy,
-            AppType::QoderCnDesktop => true,
+            AppType::QoderCnDesktop => self.qoder_cn_desktop,
         }
     }
 }

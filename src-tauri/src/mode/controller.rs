@@ -703,11 +703,16 @@ pub(crate) async fn lock_settled(
     Ok(guard)
 }
 
-/// 同步代码里用的 [`lock_settled`]。没有路由模式的应用没有模式可以被并发改掉，不拿锁。
+/// 同步代码里用的 [`lock_settled`]。Qoder CN 桌面版只跟网关启停串行，不写客户端配置。
 pub(crate) fn lock_settled_blocking(
     state: &AppState,
     app: &AppType,
 ) -> Result<Option<OwnedMutexGuard<()>>, AppError> {
+    if *app == AppType::QoderCnDesktop {
+        return Ok(Some(futures::executor::block_on(
+            state.proxy_service.lock_switch_for_app(app.as_str()),
+        )));
+    }
     if !app.spec().route_mode {
         return Ok(None);
     }

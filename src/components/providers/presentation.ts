@@ -162,6 +162,51 @@ export interface SwitchModeInput {
   };
 }
 
+function selectionPresentation(
+  t: TFunction,
+  selected: boolean,
+  onSwitch: () => void,
+  chips: CardChip[] = [],
+): CardPresentation {
+  return selected
+    ? {
+        tone: "direct",
+        status: { label: t("providerCard.status.inUse"), dot: "direct" },
+        deleteDisabledReason: t("providerCard.reason.inUseCannotDelete"),
+        chips,
+        buttons: [],
+      }
+    : {
+        chips,
+        buttons: [
+          {
+            key: "switch",
+            label: t("providerCard.action.switch"),
+            onClick: onSwitch,
+          },
+        ],
+      };
+}
+
+export function buildProviderSelectionSections(
+  t: TFunction,
+  providers: Provider[],
+  currentId: string,
+  onSwitch: (provider: Provider) => void,
+): ProviderSection[] {
+  return [
+    {
+      key: "all",
+      items: providers.map((provider) => ({
+        provider,
+        presentation: selectionPresentation(t, provider.id === currentId, () =>
+          onSwitch(provider),
+        ),
+      })),
+    },
+  ];
+}
+
 export function buildSwitchSections(input: SwitchModeInput): ProviderSection[] {
   const { t, active, directId, routeId } = input;
   // 后端 is_referenced：直连指针指着的、路由 / 聚合模式下正在路由的，都删不掉。
@@ -261,35 +306,17 @@ function buildSwitchSectionsByView(input: SwitchModeInput): ProviderSection[] {
         items: providers.map((p) => {
           const chips = base(p);
           if (active === "direct") {
-            if (p.id === directId) {
-              return {
-                provider: p,
-                presentation: {
-                  tone: "direct",
-                  status: {
-                    label: t("providerCard.status.inUse"),
-                    dot: "direct",
-                  },
-                  chips,
-                  buttons: [],
-                },
-              };
-            }
             return {
               provider: p,
-              presentation: {
+              presentation: selectionPresentation(
+                t,
+                p.id === directId,
+                () =>
+                  providerNeedsRouting(app, p)
+                    ? actions.needsRouteDialog(p)
+                    : actions.switchDirect(p),
                 chips,
-                buttons: [
-                  {
-                    key: "switch",
-                    label: t("providerCard.action.switch"),
-                    onClick: () =>
-                      providerNeedsRouting(app, p)
-                        ? actions.needsRouteDialog(p)
-                        : actions.switchDirect(p),
-                  },
-                ],
-              },
+              ),
             };
           }
           // 实际在路由 / 聚合，正在查看直连

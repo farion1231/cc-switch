@@ -1,7 +1,6 @@
 {
   "qoderCnDesktop": {
     "title": "Qoder CN デスクトップ",
-    "add": "プロバイダーを追加",
     "gateway": "ローカルゲートウェイ",
     "running": "実行中",
     "stopped": "停止中",
@@ -10,17 +9,12 @@
     "setup": "Qoder CN で OpenAI Compatible のモデルを追加し、Responses API を選んでこの 3 項目を入力します。",
     "copy": "{{label}}をコピー",
     "copied": "コピーしました",
-    "name": "プロバイダー名",
     "format": "上流プロトコル",
     "upstreamModel": "上流モデル ID",
     "replaceKey": "新しい API キー（任意）",
     "xApiKey": "Anthropic で x-api-key を使用",
-    "providers": "プロバイダー",
     "source": "Claude Code のプロバイダーを選択",
     "import": "プロバイダーをコピー",
-    "empty": "API キーを使うプロバイダーを追加するか、既存の Claude Code プロバイダーをコピーします。",
-    "active": "使用中",
-    "select": "このプロバイダーに切り替える",
     "errors": {
       "selectProvider": "先に Qoder CN のプロバイダーを選択してください。",
       "invalidUrl": "有効なプロバイダーの Base URL を入力してください。",
@@ -31,8 +25,7 @@
       "providerMissing": "Qoder CN のプロバイダーが見つかりません。",
       "sourceMissing": "コピー元のプロバイダーが見つかりません。",
       "sourceUnsupported": "コピー元には再利用できる API キー設定がありません。",
-      "providerIncomplete": "Qoder CN のプロバイダー設定が不完全です。",
-      "activeProvider": "使用中のプロバイダーを削除する前に、別のプロバイダーを選択してください。"
+      "providerIncomplete": "Qoder CN のプロバイダー設定が不完全です。"
     }
   },
   "app": {

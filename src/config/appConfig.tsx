@@ -1,4 +1,5 @@
 import React from "react";
+import { Monitor } from "lucide-react";
 import type { AppId } from "@/lib/api/types";
 import type { VisibleApps } from "@/types";
 import { APP_IDS } from "./appSpecs";
@@ -49,6 +50,13 @@ export function usesGeminiStyleForm(appId: string): boolean {
 }
 
 export const APP_ICON_MAP: Record<AppId, AppConfig> = {
+  "qoder-cn-desktop": {
+    label: "Qoder CN Desktop",
+    icon: <Monitor size={14} strokeWidth={1.5} />,
+    activeClass: "bg-slate-500/10 text-slate-700 dark:text-slate-300",
+    badgeClass:
+      "bg-slate-500/10 text-slate-700 dark:text-slate-300 border-0 gap-1.5",
+  },
   claude: {
     label: "Claude",
     icon: <ClaudeIcon size={14} />,

@@ -58,6 +58,12 @@ vi.mock("@/lib/api/providers", () => ({
     getClaudeDesktopStatus: async () => mocks.desktopStatus,
   },
 }));
+vi.mock("@/lib/api/qoderCnDesktop", () => ({
+  qoderCnGatewayQueryKey: ["qoderCnDesktop", "gateway"],
+  qoderCnDesktopApi: {
+    status: async () => ({ gatewayToken: "test-gateway-token", running: true }),
+  },
+}));
 vi.mock("@/hooks/useSettings", () => ({
   useSettings: () => ({
     settings: mocks.settings,

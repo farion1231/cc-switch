@@ -218,6 +218,7 @@ export function EditProviderDialog({
         appId === "dsh" ||
         appId === "omp" ||
         appId === "copilot" ||
+        appId === "qoder-cn-desktop" ||
         appId === "workbuddy"
       ) {
         if (!cancelled) {

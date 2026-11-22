@@ -1,7 +1,6 @@
 {
   "qoderCnDesktop": {
     "title": "Qoder CN 데스크톱",
-    "add": "공급자 추가",
     "gateway": "로컬 게이트웨이",
     "running": "실행 중",
     "stopped": "중지됨",
@@ -10,17 +9,12 @@
     "setup": "Qoder CN에서 OpenAI Compatible 모델을 추가하고 Responses API를 선택한 뒤 이 세 값을 입력하세요.",
     "copy": "{{label}} 복사",
     "copied": "복사됨",
-    "name": "공급자 이름",
     "format": "업스트림 프로토콜",
     "upstreamModel": "업스트림 모델 ID",
     "replaceKey": "새 API 키 (선택 사항)",
     "xApiKey": "Anthropic에 x-api-key 사용",
-    "providers": "공급자",
     "source": "Claude Code 공급자 선택",
     "import": "공급자 복사",
-    "empty": "API 키를 사용하는 공급자를 추가하거나 기존 Claude Code 공급자를 복사하세요.",
-    "active": "사용 중",
-    "select": "이 공급자로 전환",
     "errors": {
       "selectProvider": "먼저 Qoder CN 공급자를 선택하세요.",
       "invalidUrl": "유효한 공급자 Base URL을 입력하세요.",
@@ -31,8 +25,7 @@
       "providerMissing": "Qoder CN 공급자를 찾을 수 없습니다.",
       "sourceMissing": "원본 공급자를 찾을 수 없습니다.",
       "sourceUnsupported": "이 원본 공급자에는 재사용할 수 있는 API 키 설정이 없습니다.",
-      "providerIncomplete": "Qoder CN 공급자 설정이 불완전합니다.",
-      "activeProvider": "사용 중인 공급자를 삭제하기 전에 다른 공급자를 선택하세요."
+      "providerIncomplete": "Qoder CN 공급자 설정이 불완전합니다."
     }
   },
   "app": {

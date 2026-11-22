@@ -64,6 +64,7 @@ import {
 import {
   buildAdditiveSections,
   buildLaunchSections,
+  buildProviderSelectionSections,
   buildSwitchSections,
   type CardPresentation,
   type ProviderSection,
@@ -386,6 +387,14 @@ export function ProviderList({
         openTerminal: (provider) => onOpenTerminal?.(provider),
       });
     }
+    if (appId === "qoder-cn-desktop") {
+      return buildProviderSelectionSections(
+        t,
+        filteredProviders,
+        currentProviderId,
+        onSwitch,
+      );
+    }
     const defaultPrimary =
       (appId === "openclaw"
         ? openclawDefaultModel?.primary
@@ -560,6 +569,7 @@ export function ProviderList({
             appId === "mcode" ||
             appId === "kimi" ||
             appId === "dsh" ||
+            appId === "qoder-cn-desktop" ||
             appId === "workbuddy"
               ? undefined
               : () => importMutation.mutate()

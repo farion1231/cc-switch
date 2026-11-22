@@ -1,7 +1,6 @@
 {
   "qoderCnDesktop": {
     "title": "Qoder CN Desktop",
-    "add": "Add provider",
     "gateway": "Local gateway",
     "running": "Running",
     "stopped": "Stopped",
@@ -10,17 +9,12 @@
     "setup": "In Qoder CN, add an OpenAI Compatible model using Responses API and enter these three values.",
     "copy": "Copy {{label}}",
     "copied": "Copied",
-    "name": "Provider name",
     "format": "Upstream protocol",
     "upstreamModel": "Upstream model ID",
     "replaceKey": "New API key (optional)",
     "xApiKey": "Use x-api-key for Anthropic",
-    "providers": "Providers",
     "source": "Choose a Claude Code provider",
     "import": "Copy provider",
-    "empty": "Add an API-key provider or copy an existing Claude Code provider.",
-    "active": "Active",
-    "select": "Switch to this provider",
     "errors": {
       "selectProvider": "Select a Qoder CN provider first.",
       "invalidUrl": "Enter a valid provider Base URL.",
@@ -31,8 +25,7 @@
       "providerMissing": "The Qoder CN provider no longer exists.",
       "sourceMissing": "The source provider no longer exists.",
       "sourceUnsupported": "This source provider does not have reusable API-key settings.",
-      "providerIncomplete": "The Qoder CN provider is incomplete.",
-      "activeProvider": "Select another provider before removing the active one."
+      "providerIncomplete": "The Qoder CN provider is incomplete."
     }
   },
   "app": {

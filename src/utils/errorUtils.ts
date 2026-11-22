@@ -37,6 +37,14 @@ export const extractErrorMessage = (error: unknown): string => {
   return "";
 };
 
+export const translateQoderProviderMutationError = (
+  message: string,
+  t: (key: string) => string,
+): string => {
+  const key = message.match(/qoderCnDesktop\.errors\.[A-Za-z]+/)?.[0];
+  return key ? t(key) : "";
+};
+
 export const translatePiProviderMutationError = (
   message: string,
   t: (key: string, options?: Record<string, unknown>) => string,

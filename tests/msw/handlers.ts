@@ -59,6 +59,16 @@ export const handlers = [
 
   http.post(`${TAURI_ENDPOINT}/get_unreadable_providers`, () => success([])),
   http.post(`${TAURI_ENDPOINT}/get_unreadable_mcp_servers`, () => success([])),
+  http.post(`${TAURI_ENDPOINT}/qoder_cn_desktop_status`, () =>
+    success({
+      enabled: true,
+      running: true,
+      baseUrl: "http://127.0.0.1:15721/qoder-cn/v1",
+      model: "cc-switch-qoder",
+      gatewayToken: "test-gateway-token",
+      importableProviders: [],
+    }),
+  ),
 
   http.post(`${TAURI_ENDPOINT}/workbuddy_model_owners`, () =>
     success(getWorkBuddyModelOwners()),
