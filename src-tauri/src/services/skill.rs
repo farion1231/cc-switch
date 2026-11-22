@@ -3513,6 +3513,7 @@ impl SkillService {
         let mut resolved_repo = repo.clone();
         resolved_repo.branch = resolved_branch;
         self.scan_dir_recursive(scan_dir, scan_dir, &resolved_repo, &mut skills)?;
+        Self::deduplicate_discoverable_skills(&mut skills);
 
         Ok(skills)
     }
@@ -3538,19 +3539,22 @@ impl SkillService {
                     .replace('\\', "/")
             };
 
-            let doc_path = skill_md
-                .strip_prefix(base_dir)
-                .unwrap_or(skill_md.as_path())
-                .to_string_lossy()
-                .replace('\\', "/");
+            let install_name = Self::discoverable_install_name(&directory);
+            if Self::sanitize_install_name(install_name).is_some() {
+                let doc_path = skill_md
+                    .strip_prefix(base_dir)
+                    .unwrap_or(skill_md.as_path())
+                    .to_string_lossy()
+                    .replace('\\', "/");
 
-            if let Ok(skill) =
-                self.build_skill_from_metadata(&skill_md, &directory, &doc_path, repo)
-            {
-                skills.push(skill);
+                if let Ok(skill) =
+                    self.build_skill_from_metadata(&skill_md, &directory, &doc_path, repo)
+                {
+                    skills.push(skill);
+                }
+
+                return Ok(());
             }
-
-            return Ok(());
         }
 
         for entry in fs::read_dir(current_dir)? {
@@ -3558,6 +3562,9 @@ impl SkillService {
             let path = entry.path();
 
             if path.is_dir() {
+                if entry.file_name().to_string_lossy() == ".git" {
+                    continue;
+                }
                 self.scan_dir_recursive(&path, base_dir, repo, skills)?;
             }
         }
@@ -4264,14 +4271,13 @@ impl SkillService {
                 })
             })
             .or_else(|| {
-                remote_skills.iter().find(|skill| {
-                    skill
-                        .directory
-                        .rsplit('/')
-                        .next()
-                        .unwrap_or(&skill.directory)
-                        .eq_ignore_ascii_case(install_name)
-                })
+                remote_skills
+                    .iter()
+                    .filter(|skill| {
+                        Self::discoverable_install_name(&skill.directory)
+                            .eq_ignore_ascii_case(install_name)
+                    })
+                    .min_by_key(|skill| Self::discoverable_path_priority(&skill.directory))
             })
             .or_else(|| {
                 let mut matches = remote_skills
@@ -4386,20 +4392,88 @@ impl SkillService {
         format!("{}/SKILL.md", directory.trim_end_matches('/'))
     }
 
-    /// 去重技能列表（基于完整 key，不同仓库的同名 skill 分开显示）
+    /// 提取可发现技能的安装目录名（directory 的最后一段）
+    fn discoverable_install_name(directory: &str) -> &str {
+        let trimmed = directory.trim_end_matches(['/', '\\']);
+        trimmed.rsplit(['/', '\\']).next().unwrap_or(trimmed)
+    }
+
+    /// 计算同一仓库内技能的去重标识：(repo_host, repo_owner, repo_name, install_name)
+    ///
+    /// 安装时会剥去前置路径、只取 `directory` 最后一段落盘到 SSOT，因此同一仓库下
+    /// 末段相同的多个路径（例如 `skills/ponytail` 与 `.openclaw/skills/ponytail`）
+    /// 对应同一个可安装技能，不能在发现列表里重复出现。
+    fn discoverable_dedup_key(skill: &DiscoverableSkill) -> (String, String, String, String) {
+        let host = if skill.repo_host.is_empty() {
+            GITHUB_HOST.to_string()
+        } else {
+            skill.repo_host.to_lowercase()
+        };
+        let install_name = Self::discoverable_install_name(&skill.directory);
+        let unique_name = if install_name.is_empty() {
+            skill.key.to_lowercase()
+        } else {
+            install_name.to_lowercase()
+        };
+        (
+            host,
+            skill.repo_owner.to_lowercase(),
+            skill.repo_name.to_lowercase(),
+            unique_name,
+        )
+    }
+
+    /// 同名多路径并存时的优先级（元组越小越优先）：
+    /// 1. 不经过点开头隐藏目录（如 `skills/foo` 优先于 `.openclaw/skills/foo`）
+    /// 2. 路径更浅
+    /// 3. 位于标准 `skills/` 目录下
+    /// 4. 字典序兜底，保证结果与文件系统遍历顺序无关
+    fn discoverable_path_priority(directory: &str) -> (bool, usize, bool, String) {
+        let normalized = directory.trim_matches(['/', '\\']).replace('\\', "/");
+        let segments: Vec<&str> = normalized
+            .split('/')
+            .filter(|segment| !segment.is_empty())
+            .collect();
+        let has_hidden_segment = segments.iter().any(|segment| segment.starts_with('.'));
+        let depth = segments.len();
+        let not_under_skills_dir = segments
+            .first()
+            .is_none_or(|segment| !segment.eq_ignore_ascii_case("skills"));
+        (
+            has_hidden_segment,
+            depth,
+            not_under_skills_dir,
+            normalized.to_lowercase(),
+        )
+    }
+
+    /// 去重技能列表：同一仓库内按安装目录名去重并择优保留，不同仓库的同名 skill 分开显示
     fn deduplicate_discoverable_skills(skills: &mut Vec<DiscoverableSkill>) {
-        let mut seen = HashMap::new();
-        skills.retain(|skill| {
-            // 使用完整 key（owner/repo:directory）作为唯一标识
-            // 这样不同仓库的同名 skill 会分开显示
-            let unique_key = skill.key.to_lowercase();
-            if let std::collections::hash_map::Entry::Vacant(e) = seen.entry(unique_key) {
-                e.insert(true);
-                true
-            } else {
-                false
+        let mut best_index_by_key: HashMap<(String, String, String, String), usize> =
+            HashMap::new();
+        let mut keep = vec![false; skills.len()];
+
+        for (idx, skill) in skills.iter().enumerate() {
+            let unique_key = Self::discoverable_dedup_key(skill);
+            match best_index_by_key.get(&unique_key).copied() {
+                None => {
+                    best_index_by_key.insert(unique_key, idx);
+                    keep[idx] = true;
+                }
+                Some(prev_idx) => {
+                    if Self::discoverable_path_priority(&skill.directory)
+                        < Self::discoverable_path_priority(&skills[prev_idx].directory)
+                    {
+                        keep[prev_idx] = false;
+                        keep[idx] = true;
+                        best_index_by_key.insert(unique_key, idx);
+                    }
+                }
             }
-        });
+        }
+
+        let mut keep_iter = keep.into_iter();
+        skills.retain(|_| keep_iter.next().unwrap_or(false));
     }
 
     /// 下载仓库
@@ -9988,5 +10062,189 @@ mod tests {
         // 切换供应商走的同一条同步也不能碰它
         SkillService::sync_to_app(&db, &AppType::OpenClaw).expect("no-op sync");
         assert!(own_skill.exists());
+    }
+
+    fn write_skill_with_desc(dir: &Path, name: &str, description: &str) {
+        fs::create_dir_all(dir).expect("create skill dir");
+        fs::write(
+            dir.join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: {description}\n---\n"),
+        )
+        .expect("write SKILL.md");
+    }
+
+    /// #9597: 同一仓库同时包含 `skills/<name>` 与 `.openclaw/skills/<name>` 时，
+    /// 发现列表里每个 skill 只应出现一次，且优先保留非隐藏的 `skills/<name>` 副本。
+    #[tokio::test]
+    async fn discover_deduplicates_same_repo_skills_and_prefers_non_hidden_path() {
+        let remote = tempdir().expect("remote repo");
+        write_skill_with_desc(
+            &remote
+                .path()
+                .join(".openclaw")
+                .join("skills")
+                .join("ponytail"),
+            "ponytail",
+            "OpenClaw description",
+        );
+        write_skill_with_desc(
+            &remote.path().join("skills").join("ponytail"),
+            "ponytail",
+            "Primary description",
+        );
+        write_skill_with_desc(
+            &remote
+                .path()
+                .join(".openclaw")
+                .join("skills")
+                .join("ponytail-audit"),
+            "ponytail-audit",
+            "OpenClaw audit",
+        );
+        write_skill_with_desc(
+            &remote.path().join("skills").join("ponytail-audit"),
+            "ponytail-audit",
+            "Primary audit",
+        );
+        // 仅存在于隐藏目录下的技能仍应被发现
+        write_skill_with_desc(
+            &remote
+                .path()
+                .join(".claude")
+                .join("skills")
+                .join("only-hidden"),
+            "only-hidden",
+            "Hidden only",
+        );
+        // 自身目录名以 `.` 开头（无法落盘为合法安装名）不应出现在发现列表
+        write_skill_with_desc(&remote.path().join(".github"), ".github", "Invalid leaf");
+        // `.git` 目录应被直接忽略
+        write_skill_with_desc(
+            &remote.path().join(".git").join("skills").join("ignored"),
+            "ignored",
+            "Git internal",
+        );
+
+        let service = SkillService {
+            repo_fixture: Some(remote.path().to_path_buf()),
+            ..SkillService::new()
+        };
+        let target_repo = repo("DietrichGebert", "ponytail", true);
+
+        let single = service.discover_repo(&target_repo).await;
+        assert!(single.failures.is_empty());
+        assert_eq!(
+            single
+                .skills
+                .iter()
+                .map(|s| (s.directory.as_str(), s.description.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                (".claude/skills/only-hidden", "Hidden only"),
+                ("skills/ponytail", "Primary description"),
+                ("skills/ponytail-audit", "Primary audit"),
+            ]
+        );
+
+        let report = service
+            .discover_available_report(vec![target_repo], true)
+            .await
+            .expect("discover report");
+        assert_eq!(report.skills.len(), 3);
+    }
+
+    /// 不同仓库的同名技能必须各自保留，不能被跨仓库去重吞掉。
+    #[test]
+    fn deduplicate_discoverable_skills_preserves_same_name_across_repos() {
+        let make = |owner: &str, repo_name: &str, directory: &str| DiscoverableSkill {
+            key: format!("{owner}/{repo_name}:{directory}"),
+            name: "pdf".to_string(),
+            description: format!("from {owner}/{repo_name} ({directory})"),
+            directory: directory.to_string(),
+            readme_url: None,
+            repo_host: default_repo_host(),
+            repo_owner: owner.to_string(),
+            repo_name: repo_name.to_string(),
+            repo_branch: "main".to_string(),
+        };
+
+        let mut skills = vec![
+            make("owner-a", "repo-a", ".openclaw/skills/pdf"),
+            make("owner-a", "repo-a", "skills/pdf"),
+            make("owner-b", "repo-b", "skills/pdf"),
+        ];
+
+        SkillService::deduplicate_discoverable_skills(&mut skills);
+
+        assert_eq!(
+            skills
+                .iter()
+                .map(|s| (s.repo_owner.as_str(), s.directory.as_str()))
+                .collect::<Vec<_>>(),
+            vec![("owner-a", "skills/pdf"), ("owner-b", "skills/pdf")]
+        );
+    }
+
+    #[test]
+    fn scan_dir_recursive_continues_into_subdirs_when_invalid_dir_has_skill_md() {
+        let temp = tempdir().expect("tempdir");
+        write_skill_with_desc(&temp.path().join(".github"), ".github", "Invalid leaf");
+        write_skill_with_desc(
+            &temp
+                .path()
+                .join(".github")
+                .join("skills")
+                .join("valid-skill"),
+            "valid-skill",
+            "Nested under invalid dir",
+        );
+
+        let target_repo = repo("owner", "repo", true);
+        let mut remote_skills = Vec::new();
+        SkillService::new()
+            .scan_dir_recursive(temp.path(), temp.path(), &target_repo, &mut remote_skills)
+            .expect("scan skills");
+
+        assert_eq!(
+            remote_skills
+                .iter()
+                .map(|s| s.directory.as_str())
+                .collect::<Vec<_>>(),
+            vec![".github/skills/valid-skill"]
+        );
+    }
+
+    #[test]
+    fn find_remote_skill_for_install_prefers_canonical_path_when_readme_url_is_missing() {
+        let temp = tempdir().expect("tempdir");
+        write_skill(
+            &temp
+                .path()
+                .join(".openclaw")
+                .join("skills")
+                .join("ponytail"),
+            "ponytail",
+        );
+        write_skill(&temp.path().join("skills").join("ponytail"), "ponytail");
+        let target_repo = repo("DietrichGebert", "ponytail", true);
+        let mut remote_skills = Vec::new();
+        SkillService::new()
+            .scan_dir_recursive(temp.path(), temp.path(), &target_repo, &mut remote_skills)
+            .expect("scan skills");
+
+        assert_eq!(
+            SkillService::find_remote_skill_for_install(&remote_skills, "ponytail", None)
+                .map(|s| s.directory.as_str()),
+            Some("skills/ponytail")
+        );
+        assert_eq!(
+            SkillService::find_remote_skill_for_install(
+                &remote_skills,
+                "ponytail",
+                Some("https://github.com/DietrichGebert/ponytail/blob/main/.openclaw/skills/ponytail/SKILL.md"),
+            )
+            .map(|s| s.directory.as_str()),
+            Some(".openclaw/skills/ponytail")
+        );
     }
 }

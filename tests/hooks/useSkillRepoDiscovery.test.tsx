@@ -1,14 +1,18 @@
 import type { PropsWithChildren } from "react";
 import { act, renderHook } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { replaceRepoDiscovery } from "@/hooks/useSkills.helpers";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  deduplicateDiscoverableSkills,
+  replaceRepoDiscovery,
+} from "@/hooks/useSkills.helpers";
 import {
   useAddSkillRepo,
   useDiscoverableSkills,
   useRefreshDiscoverableSkills,
   useRemoveSkillRepo,
 } from "@/hooks/useSkills";
+import { writeLocalCache } from "@/lib/localCache";
 import type {
   DiscoverableSkill,
   SkillDiscoveryResult,
@@ -87,6 +91,114 @@ describe("replaceRepoDiscovery", () => {
     expect(
       replaceRepoDiscovery(undefined, repoA, { skills: [], failures: [] }),
     ).toBeUndefined();
+  });
+
+  it("deduplicates same-repo skills across nested paths while keeping different repos", () => {
+    const hiddenCopy: DiscoverableSkill = {
+      key: "DietrichGebert/ponytail:.openclaw/skills/ponytail",
+      name: "ponytail",
+      description: "OpenClaw copy",
+      directory: ".openclaw/skills/ponytail",
+      repoOwner: "DietrichGebert",
+      repoName: "ponytail",
+      repoBranch: "main",
+    };
+    const primaryCopy: DiscoverableSkill = {
+      key: "DietrichGebert/ponytail:skills/ponytail",
+      name: "ponytail",
+      description: "Primary copy",
+      directory: "skills/ponytail",
+      repoOwner: "DietrichGebert",
+      repoName: "ponytail",
+      repoBranch: "main",
+    };
+    const otherRepoCopy: DiscoverableSkill = {
+      key: "other/repo:skills/ponytail",
+      name: "ponytail",
+      description: "Other repo copy",
+      directory: "skills/ponytail",
+      repoOwner: "other",
+      repoName: "repo",
+      repoBranch: "main",
+    };
+
+    expect(
+      deduplicateDiscoverableSkills([hiddenCopy, primaryCopy, otherRepoCopy]),
+    ).toEqual([primaryCopy, otherRepoCopy]);
+  });
+
+  it("prefers shallower paths, then skills/ prefix, then lexicographical order", () => {
+    const at = (directory: string): DiscoverableSkill => ({
+      key: `owner/repo:${directory}`,
+      name: "ponytail",
+      description: directory,
+      directory,
+      repoOwner: "owner",
+      repoName: "repo",
+      repoBranch: "main",
+    });
+
+    // 1. 深度更浅优先（即使非 skills/ 前缀）
+    expect(
+      deduplicateDiscoverableSkills([
+        at("nested/skills/ponytail"),
+        at("alt/ponytail"),
+      ]),
+    ).toEqual([at("alt/ponytail")]);
+
+    // 2. 同深度且非隐藏时，skills/ 前缀优先于字典序更靠前的目录
+    expect(
+      deduplicateDiscoverableSkills([
+        at("aaa/ponytail"),
+        at("skills/ponytail"),
+      ]),
+    ).toEqual([at("skills/ponytail")]);
+
+    // 3. 前三项规则相同时按字典序兜底，与输入顺序无关
+    expect(
+      deduplicateDiscoverableSkills([at("zzz/ponytail"), at("aaa/ponytail")]),
+    ).toEqual([at("aaa/ponytail")]);
+  });
+});
+
+describe("useDiscoverableSkills initialData self-healing", () => {
+  afterEach(() => {
+    localStorage.clear();
+  });
+
+  it("deduplicates dirty cached skills loaded from localStorage", () => {
+    localStorage.clear();
+    apiMocks.discoverAvailable.mockReturnValue(new Promise(() => {}));
+
+    const hiddenCopy: DiscoverableSkill = {
+      key: "DietrichGebert/ponytail:.openclaw/skills/ponytail",
+      name: "ponytail",
+      description: "OpenClaw copy",
+      directory: ".openclaw/skills/ponytail",
+      repoOwner: "DietrichGebert",
+      repoName: "ponytail",
+      repoBranch: "main",
+    };
+    const primaryCopy: DiscoverableSkill = {
+      key: "DietrichGebert/ponytail:skills/ponytail",
+      name: "ponytail",
+      description: "Primary copy",
+      directory: "skills/ponytail",
+      repoOwner: "DietrichGebert",
+      repoName: "ponytail",
+      repoBranch: "main",
+    };
+
+    writeLocalCache("skills.discoverable.v1", {
+      skills: [hiddenCopy, primaryCopy],
+      failures: [],
+    });
+
+    const { queryClient, wrapper } = setup();
+    const { result } = renderHook(() => useDiscoverableSkills(), { wrapper });
+
+    expect(result.current.data).toEqual([primaryCopy]);
+    queryClient.clear();
   });
 });
 
