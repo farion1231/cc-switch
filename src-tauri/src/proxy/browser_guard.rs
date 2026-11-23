@@ -7,7 +7,8 @@
 //! skip preflight) and to every WebSocket handshake, so rejecting it stops a page from
 //! calling the proxy cross-site. A DNS-rebinding page is same-origin and can read
 //! GET responses, but it has to reach us under its own domain name, so on a loopback
-//! listener only hosts no public DNS can point at are accepted.
+//! listener — or for any loopback / same-host peer reaching a wildcard listener —
+//! only hosts no public DNS can point at are accepted.
 //!
 //! Only headers are read: the request itself passes through untouched.
 
@@ -107,8 +108,9 @@ fn is_same_host_peer(addrs: Option<ConnectionAddrs>) -> bool {
         .is_some_and(|local| remote_ip == local.ip().to_canonical())
 }
 
-/// A listener on a LAN address is reached under whatever names that network uses,
-/// so the Host rule only applies when the proxy listens on this machine alone.
+/// A listener on a LAN address is reached by remote peers under whatever names that
+/// network uses, so the Host rule is relaxed for remote peers while still enforced
+/// for loopback listeners and same-host peers via `is_same_host_peer`.
 fn is_loopback_listener(listen_address: &str) -> bool {
     let address = listen_address.trim().trim_matches(['[', ']']);
     address.eq_ignore_ascii_case("localhost")
@@ -284,11 +286,47 @@ mod tests {
                 remote: "192.168.1.5:54321".parse().unwrap(),
                 local: Some("192.168.1.5:15721".parse().unwrap()),
             },
+            ConnectionAddrs {
+                remote: "[::ffff:192.168.1.5]:54321".parse().unwrap(),
+                local: Some("[::ffff:192.168.1.5]:15721".parse().unwrap()),
+            },
         ] {
             assert!(
                 check_request("/status", &rebind, "0.0.0.0", Some(same_host), None).is_err(),
                 "0.0.0.0 listener must reject rebinding Host from same-host peer {same_host:?}"
             );
+            assert!(
+                check_request("/status", &rebind, "::", Some(same_host), None).is_err(),
+                ":: listener must reject rebinding Host from same-host peer {same_host:?}"
+            );
         }
+
+        let mapped_remote_lan = Some(ConnectionAddrs {
+            remote: "[::ffff:192.168.1.42]:54321".parse().unwrap(),
+            local: Some("[::ffff:192.168.1.5]:15721".parse().unwrap()),
+        });
+        assert_eq!(
+            check_request("/v1/messages", &h, "::", mapped_remote_lan, None),
+            Ok(())
+        );
+
+        let same_host_lan = Some(ConnectionAddrs {
+            remote: "192.168.1.5:54321".parse().unwrap(),
+            local: Some("192.168.1.5:15721".parse().unwrap()),
+        });
+        assert!(
+            check_request("/v1/messages", &h, "0.0.0.0", same_host_lan, None).is_err(),
+            "same-host peer using custom hostname on 0.0.0.0 requires proxy_client_host"
+        );
+        assert_eq!(
+            check_request(
+                "/v1/messages",
+                &h,
+                "0.0.0.0",
+                same_host_lan,
+                Some("devbox.corp.example"),
+            ),
+            Ok(())
+        );
     }
 }

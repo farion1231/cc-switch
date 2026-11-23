@@ -700,6 +700,20 @@ mod tests {
             .unwrap();
         assert_eq!(local_cli.status(), StatusCode::OK);
 
+        // Reuse the pooled keep-alive connection from the same reqwest::Client to verify
+        // ConnectionAddrs remains attached across subsequent requests on the same TCP stream.
+        let keep_alive_rebinding = client
+            .get(format!("http://127.0.0.1:{}/status", info.port))
+            .header(header::HOST, format!("rebind.evil.example:{}", info.port))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            keep_alive_rebinding.status(),
+            StatusCode::FORBIDDEN,
+            "keep-alive connection reuse on 0.0.0.0 listener must still reject DNS rebinding Host headers"
+        );
+
         proxy.stop().await.expect("stop wildcard proxy");
     }
 
