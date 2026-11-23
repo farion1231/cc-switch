@@ -1138,13 +1138,31 @@ fn test_parse_single_endpoint_backward_compatible() {
 }
 
 #[test]
-fn test_parse_endpoints_with_spaces_trimmed() {
+#[serial_test::serial]
+fn test_import_trims_spaces_around_comma_separated_endpoints() {
+    let _home = TempUserHome::new();
     let url = "ccswitch://v1/import?resource=provider&app=claude&name=Test&endpoint=https%3A%2F%2Fapi1.example.com%20,%20https%3A%2F%2Fapi2.example.com&apiKey=sk-test";
 
-    let request = parse_deeplink_url(url).unwrap();
+    let request = parse_deeplink_url(url).expect("spaces around commas are accepted");
+    let state = AppState::new(Arc::new(Database::memory().expect("create memory db")));
+    let id = super::import_provider_from_deeplink(&state, request).expect("import provider");
 
-    // Validation should pass (spaces are trimmed during validation)
-    assert!(request.endpoint.is_some());
+    let stored = state
+        .db
+        .get_provider_by_id(&id, &AppType::Claude)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        stored.settings_config["env"]["ANTHROPIC_BASE_URL"],
+        "https://api1.example.com"
+    );
+    let extra: Vec<String> =
+        crate::services::ProviderService::get_custom_endpoints(&state, AppType::Claude, &id)
+            .unwrap()
+            .into_iter()
+            .map(|endpoint| endpoint.url)
+            .collect();
+    assert_eq!(extra, vec!["https://api2.example.com"]);
 }
 
 #[test]
