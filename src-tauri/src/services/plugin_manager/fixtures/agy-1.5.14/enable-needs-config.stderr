@@ -1,0 +1,1 @@
+Error: plugin "arize-skills" cannot be enabled here: its MCP servers need configuring first; open /plugin in the interactive CLI and turn it on there to fill them in
