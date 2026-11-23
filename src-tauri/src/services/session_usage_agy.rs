@@ -28,7 +28,7 @@ struct AgySyncCursorUpdate<'a> {
     native_state: &'a str,
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 pub(crate) fn sync_agy_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
     sync_agy_usage_with_cursors(db, &crate::services::session_usage::load_sync_cursors(db)?)
 }
