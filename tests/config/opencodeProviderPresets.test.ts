@@ -88,11 +88,11 @@ describe("AWS Bedrock OpenCode Provider Presets", () => {
 
     for (const preset of presets) {
       expect(preset).toBeDefined();
-      expect(preset!.settingsConfig.models["mimo-v2.5-pro"]).toMatchObject({
+      expect(preset!.settingsConfig.models["mimo-v2.6-pro"]).toMatchObject({
         limit: { context: 1048576, output: 131072 },
-        modalities: { input: ["text"], output: ["text"] },
+        modalities: { input: ["text", "image"], output: ["text"] },
       });
-      expect(preset!.settingsConfig.models["mimo-v2.5"]).toMatchObject({
+      expect(preset!.settingsConfig.models["mimo-v2.6-flash"]).toMatchObject({
         limit: { context: 1048576, output: 131072 },
         modalities: { input: ["text", "image"], output: ["text"] },
       });
@@ -165,6 +165,18 @@ describe("OpenCode preset reasoning flags", () => {
         expect(model.reasoning, `${preset} / ${id}`).not.toBe(true);
       }
     }
+  });
+
+  it("offers only OpenCode Go DeepSeek V4.1 Flash's low / high / max efforts", () => {
+    const goFlash = opencodeProviderPresets.find(
+      (p) => p.name === "OpenCode Go",
+    )?.settingsConfig.models?.["deepseek-v4.1-flash"];
+    expect(goFlash?.variants).toEqual({
+      low: { reasoningEffort: "low" },
+      medium: { disabled: true },
+      high: { reasoningEffort: "high" },
+      max: { reasoningEffort: "max" },
+    });
   });
 });
 

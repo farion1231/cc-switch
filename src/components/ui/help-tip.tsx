@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
  *   只认键盘聚焦（:focus-visible）：弹层打开时 Radix 会把焦点自动放到里面第一个可聚焦元素，
  *   「?」常常就是那个，鼠标点开弹层不该顺带弹出说明卡。
  * - 点一下固定，Escape 或点别处关闭。
+ * - 「?」右侧展示，空间不足时自动避让；长文本换行，超高内容在卡片内滚动。
  * - 不抢焦点（modal=false），卡片里不放按钮、表单、链接。
  * - 只放规则和术语解释；会丢东西、要重启这类后果写在按钮、确认框或 toast 里，不进这里。
  *
@@ -87,7 +88,7 @@ interface HelpCardProps {
   id: string;
   title?: React.ReactNode;
   children: React.ReactNode;
-  side?: "top" | "bottom";
+  side?: "top" | "bottom" | "left" | "right";
   align?: "start" | "end";
   onPointerEnter: () => void;
   onPointerLeave: () => void;
@@ -110,13 +111,13 @@ function HelpCard({
         side={side}
         align={align}
         sideOffset={6}
-        alignOffset={-8}
+        alignOffset={side === "left" || side === "right" ? 0 : -8}
         collisionPadding={8}
         onOpenAutoFocus={(event) => event.preventDefault()}
         onCloseAutoFocus={(event) => event.preventDefault()}
         onPointerEnter={onPointerEnter}
         onPointerLeave={onPointerLeave}
-        className="z-[120] w-max max-w-[300px] rounded-[8px] border border-border bg-surface px-3 pb-2.5 pt-[9px] text-caption text-fg-1 shadow-v7-md outline-none data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=closed]:animate-out data-[state=closed]:fade-out-0"
+        className="z-[120] max-h-[var(--radix-popover-content-available-height)] w-max max-w-[min(300px,var(--radix-popover-content-available-width))] overflow-y-auto whitespace-normal rounded-[8px] border border-border bg-surface px-3 pb-2.5 pt-[9px] text-caption text-fg-1 shadow-v7-md outline-none [overflow-wrap:anywhere] data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=closed]:animate-out data-[state=closed]:fade-out-0"
       >
         {title ? (
           <span className="mb-0.5 block font-semibold">{title}</span>
@@ -132,7 +133,7 @@ export interface HelpTipProps {
   title: string;
   /** 正文，一句话，≤ 80 字。 */
   children: React.ReactNode;
-  side?: "top" | "bottom";
+  side?: "top" | "bottom" | "left" | "right";
   align?: "start" | "end";
   className?: string;
 }
@@ -141,7 +142,7 @@ export interface HelpTipProps {
 export function HelpTip({
   title,
   children,
-  side,
+  side = "right",
   align,
   className,
 }: HelpTipProps) {

@@ -5,7 +5,7 @@
 //! 大部分认证命令通过通用 `auth_*` 命令（参见 `commands::auth`）暴露给前端，
 //! 此处定义 State wrapper 以及 Codex OAuth 专属的订阅额度和模型列表查询命令。
 
-use crate::proxy::providers::codex_oauth_auth::CodexOAuthManager;
+use crate::proxy::providers::codex_oauth_auth::{CodexOAuthError, CodexOAuthManager};
 use crate::services::model_fetch::FetchedModel;
 use crate::services::subscription::{query_codex_quota, CredentialStatus, SubscriptionQuota};
 use std::sync::Arc;
@@ -60,6 +60,11 @@ async fn query_codex_oauth_quota_for(
     // 获取（必要时自动刷新）access_token
     let token = match manager.get_valid_token_for_account(id).await {
         Ok(t) => t,
+        // 网络 / 刷新端点暂时失败不代表登录失效：以 Err 传播，前端 retry 并保留
+        // 上次成功值，托盘缓存也不被覆盖；只有确定的凭据问题才标成过期。
+        Err(e) if is_transient_token_error(&e) => {
+            return Err(format!("Codex OAuth token unavailable: {e}"));
+        }
         Err(e) => {
             return Ok(SubscriptionQuota::error(
                 "codex_oauth",
@@ -81,6 +86,15 @@ async fn query_codex_oauth_quota_for(
         "Codex OAuth access token expired or rejected. Please re-login via cc-switch.",
     )
     .await
+}
+
+fn is_transient_token_error(error: &CodexOAuthError) -> bool {
+    matches!(
+        error,
+        CodexOAuthError::NetworkError(_)
+            | CodexOAuthError::TokenFetchFailed(_)
+            | CodexOAuthError::IoError(_)
+    )
 }
 
 /// 获取 Codex OAuth (ChatGPT Plus/Pro) 可用模型列表

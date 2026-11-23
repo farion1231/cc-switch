@@ -2,9 +2,10 @@ import type { ReactNode } from "react";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import UsageScriptModal from "@/components/UsageScriptModal";
 import type { Provider, UsageScript } from "@/types";
+import { createTestQueryClient } from "../utils/testQueryClient";
 
 vi.mock("@/components/common/FullScreenPanel", () => ({
   FullScreenPanel: ({
@@ -52,9 +53,7 @@ function renderModal(
   onSave: (script: UsageScript) => void,
   usageScript?: UsageScript,
 ) {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
+  const client = createTestQueryClient();
   render(
     <QueryClientProvider client={client}>
       <UsageScriptModal
@@ -119,9 +118,7 @@ describe("UsageScriptModal Sub2API template", () => {
 describe("UsageScriptModal official subscription hint", () => {
   // agy 的额度靠它自己的 /usage 命令查，不读登录凭据
   it("explains Antigravity's quota check instead of reading OAuth credentials", () => {
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
+    const client = createTestQueryClient();
     render(
       <QueryClientProvider client={client}>
         <UsageScriptModal
@@ -155,6 +152,142 @@ describe("UsageScriptModal official subscription hint", () => {
   });
 });
 
+describe("UsageScriptModal Claude official card bound to an account", () => {
+  // 卡片和托盘在没保存开关时默认查这个号的额度，配置页也要显示为已开
+  it("shows usage enabled by default when nothing was saved", async () => {
+    const onSave = vi.fn();
+    const client = createTestQueryClient();
+    render(
+      <QueryClientProvider client={client}>
+        <UsageScriptModal
+          provider={{
+            id: "claude-bound",
+            name: "Claude Official",
+            category: "official",
+            settingsConfig: { env: {} },
+            meta: {
+              authBinding: {
+                source: "managed_account",
+                authProvider: "claude_official",
+                accountId: "acct-1",
+              },
+            },
+          }}
+          appId="claude"
+          isOpen
+          onClose={() => {}}
+          onSave={onSave}
+        />
+      </QueryClientProvider>,
+    );
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "usageScript.saveConfig" }),
+    );
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        enabled: true,
+        templateType: "official_subscription",
+      }),
+    );
+  });
+});
+
+describe("UsageScriptModal Grok official card bound to an xAI account", () => {
+  const grokProvider: Provider = {
+    id: "grok-bound",
+    name: "Grok Official",
+    category: "official",
+    settingsConfig: {},
+    meta: {
+      authBinding: {
+        source: "managed_account",
+        authProvider: "xai_oauth",
+        accountId: "xai-acct-1",
+      },
+    },
+  };
+
+  // 卡片和托盘在没保存开关时默认查这个号的额度，配置页也要显示为已开
+  it("shows usage enabled by default when nothing was saved", async () => {
+    const onSave = vi.fn();
+    const client = createTestQueryClient();
+    render(
+      <QueryClientProvider client={client}>
+        <UsageScriptModal
+          provider={grokProvider}
+          appId="grokbuild"
+          isOpen
+          onClose={() => {}}
+          onSave={onSave}
+        />
+      </QueryClientProvider>,
+    );
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "usageScript.saveConfig" }),
+    );
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        enabled: true,
+        templateType: "official_subscription",
+      }),
+    );
+  });
+
+  // 测试要查绑定的 xAI 账号，不能去读 ~/.grok/auth.json 当前登录的号
+  it("tests the bound xAI account's quota and caches it under that account", async () => {
+    const { subscriptionApi } = await import("@/lib/api/subscription");
+    const quota = {
+      tool: "grokbuild",
+      credentialStatus: "valid",
+      credentialMessage: null,
+      success: true,
+      tiers: [{ name: "weekly", utilization: 42, resetsAt: null }],
+      extraUsage: null,
+      error: null,
+      queriedAt: 1,
+    } as unknown as Awaited<ReturnType<typeof subscriptionApi.getQuota>>;
+    const getXaiOauthQuota = vi
+      .spyOn(subscriptionApi, "getXaiOauthQuota")
+      .mockResolvedValue(quota);
+    const getQuota = vi
+      .spyOn(subscriptionApi, "getQuota")
+      .mockResolvedValue(quota);
+
+    try {
+      const client = createTestQueryClient();
+      render(
+        <QueryClientProvider client={client}>
+          <UsageScriptModal
+            provider={grokProvider}
+            appId="grokbuild"
+            isOpen
+            onClose={() => {}}
+            onSave={() => {}}
+          />
+        </QueryClientProvider>,
+      );
+
+      await userEvent.click(
+        screen.getByRole("button", { name: "usageScript.testScript" }),
+      );
+
+      expect(getXaiOauthQuota).toHaveBeenCalledWith("xai-acct-1");
+      expect(getQuota).not.toHaveBeenCalled();
+      expect(client.getQueryData(["xai_oauth", "quota", "xai-acct-1"])).toBe(
+        quota,
+      );
+      expect(
+        client.getQueryData(["subscription", "quota", "grokbuild"]),
+      ).toBeUndefined();
+    } finally {
+      getXaiOauthQuota.mockRestore();
+      getQuota.mockRestore();
+    }
+  });
+});
+
 /**
  * Oh My Pi has its own `AppId` ("omp"), so it never matched the `pi` branch
  * and both built-in tests reported "API key is empty" on an omp card. The
@@ -167,9 +300,7 @@ describe("UsageScriptModal Oh My Pi credentials", () => {
       subscriptionApi: { getBalance },
     }));
     const { default: Modal } = await import("@/components/UsageScriptModal");
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
+    const client = createTestQueryClient();
     render(
       <QueryClientProvider client={client}>
         <Modal
@@ -207,3 +338,246 @@ describe("UsageScriptModal Oh My Pi credentials", () => {
     );
   });
 });
+
+describe("UsageScriptModal DeepSeek Harness credentials", () => {
+  const dshProvider: Provider = {
+    id: "deepseek-dsh",
+    name: "DeepSeek",
+    settingsConfig: {
+      api: "openai-completions",
+      options: {
+        baseURL: "https://api.deepseek.com/v1/",
+        apiKey: "sk-test-dsh",
+      },
+      models: {},
+    },
+    meta: {
+      usage_script: {
+        enabled: true,
+        language: "javascript",
+        code: "",
+      },
+    },
+  };
+
+  function renderDshModal() {
+    const client = createTestQueryClient();
+    render(
+      <QueryClientProvider client={client}>
+        <UsageScriptModal
+          provider={dshProvider}
+          appId="dsh"
+          isOpen
+          onClose={() => {}}
+          onSave={() => {}}
+        />
+      </QueryClientProvider>,
+    );
+  }
+
+  it("detects the official balance template from the DSH provider endpoint", () => {
+    renderDshModal();
+
+    expect(screen.getByText("usageScript.balanceHint")).toBeInTheDocument();
+    expect(screen.queryByTestId("usage-script-code")).not.toBeInTheDocument();
+  });
+
+  it("passes the saved DSH key and normalized endpoint to the balance test", async () => {
+    const { subscriptionApi } = await import("@/lib/api/subscription");
+    const getBalance = vi
+      .spyOn(subscriptionApi, "getBalance")
+      .mockResolvedValue({
+        success: true,
+        data: [{ isValid: true, remaining: 1, unit: "CNY" }],
+      });
+
+    try {
+      renderDshModal();
+      await userEvent.click(
+        screen.getByRole("button", { name: "usageScript.templateBalance" }),
+      );
+      await userEvent.click(
+        screen.getByRole("button", { name: "usageScript.testScript" }),
+      );
+
+      expect(getBalance).toHaveBeenCalledWith(
+        "https://api.deepseek.com/v1",
+        "sk-test-dsh",
+      );
+    } finally {
+      getBalance.mockRestore();
+    }
+  });
+
+  it("shows inherited DSH credentials in the custom template variables", async () => {
+    renderDshModal();
+    await userEvent.click(
+      screen.getByRole("button", { name: "usageScript.templateCustom" }),
+    );
+
+    expect(screen.getByText("https://api.deepseek.com/v1")).toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("button", { name: "apiKeyInput.show" }),
+    );
+    expect(screen.getByText("sk-test-dsh")).toBeInTheDocument();
+  });
+});
+
+describe("UsageScriptModal WorkBuddy credentials", () => {
+  const workbuddyProvider: Provider = {
+    id: "workbuddy-deepseek",
+    name: "DeepSeek",
+    settingsConfig: {
+      models: [
+        {
+          id: "deepseek-chat",
+          url: "https://api.deepseek.com/v1/chat/completions",
+          apiKey: "sk-test-workbuddy",
+        },
+      ],
+    },
+    meta: {
+      usage_script: {
+        enabled: true,
+        language: "javascript",
+        code: "",
+      },
+    },
+  };
+
+  it("passes the model's key and endpoint without /chat/completions to the balance test", async () => {
+    const { subscriptionApi } = await import("@/lib/api/subscription");
+    const getBalance = vi
+      .spyOn(subscriptionApi, "getBalance")
+      .mockResolvedValue({
+        success: true,
+        data: [{ isValid: true, remaining: 1, unit: "CNY" }],
+      });
+
+    try {
+      const client = createTestQueryClient();
+      render(
+        <QueryClientProvider client={client}>
+          <UsageScriptModal
+            provider={workbuddyProvider}
+            appId="workbuddy"
+            isOpen
+            onClose={() => {}}
+            onSave={() => {}}
+          />
+        </QueryClientProvider>,
+      );
+      expect(screen.getByText("usageScript.balanceHint")).toBeInTheDocument();
+      await userEvent.click(
+        screen.getByRole("button", { name: "usageScript.templateBalance" }),
+      );
+      await userEvent.click(
+        screen.getByRole("button", { name: "usageScript.testScript" }),
+      );
+
+      expect(getBalance).toHaveBeenCalledWith(
+        "https://api.deepseek.com/v1",
+        "sk-test-workbuddy",
+      );
+    } finally {
+      getBalance.mockRestore();
+    }
+  });
+});
+
+describe.each([
+  {
+    appId: "mcode" as const,
+    settingsConfig: {
+      kind: "custom",
+      api: "openai-completions",
+      options: {
+        baseURL: "https://api.deepseek.com/v1/",
+        apiKey: "sk-test-mcode",
+      },
+      models: {},
+    },
+    apiKey: "sk-test-mcode",
+  },
+  {
+    appId: "kimi" as const,
+    settingsConfig: {
+      provider: {
+        type: "openai",
+        base_url: "https://api.deepseek.com/v1/",
+        api_key: "sk-test-kimi",
+      },
+    },
+    apiKey: "sk-test-kimi",
+  },
+])(
+  "UsageScriptModal $appId credentials",
+  ({ appId, settingsConfig, apiKey }) => {
+    function renderAppModal() {
+      const client = createTestQueryClient();
+      render(
+        <QueryClientProvider client={client}>
+          <UsageScriptModal
+            provider={{
+              id: `deepseek-${appId}`,
+              name: "DeepSeek",
+              settingsConfig,
+              meta: {
+                usage_script: {
+                  enabled: true,
+                  language: "javascript",
+                  code: "",
+                },
+              },
+            }}
+            appId={appId}
+            isOpen
+            onClose={() => {}}
+            onSave={() => {}}
+          />
+        </QueryClientProvider>,
+      );
+    }
+
+    it("passes the saved key and normalized endpoint to the balance test", async () => {
+      const { subscriptionApi } = await import("@/lib/api/subscription");
+      const getBalance = vi
+        .spyOn(subscriptionApi, "getBalance")
+        .mockResolvedValue({
+          success: true,
+          data: [{ isValid: true, remaining: 1, unit: "CNY" }],
+        });
+
+      try {
+        renderAppModal();
+        // The DeepSeek endpoint auto-selects the official balance template.
+        expect(screen.getByText("usageScript.balanceHint")).toBeInTheDocument();
+        await userEvent.click(
+          screen.getByRole("button", { name: "usageScript.testScript" }),
+        );
+
+        expect(getBalance).toHaveBeenCalledWith(
+          "https://api.deepseek.com/v1",
+          apiKey,
+        );
+      } finally {
+        getBalance.mockRestore();
+      }
+    });
+
+    it("shows inherited credentials in the custom template variables", async () => {
+      renderAppModal();
+      await userEvent.click(
+        screen.getByRole("button", { name: "usageScript.templateCustom" }),
+      );
+
+      expect(
+        screen.getByText("https://api.deepseek.com/v1"),
+      ).toBeInTheDocument();
+      await userEvent.click(
+        screen.getByRole("button", { name: "apiKeyInput.show" }),
+      );
+      expect(screen.getByText(apiKey)).toBeInTheDocument();
+    });
+  },
+);

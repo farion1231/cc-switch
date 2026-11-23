@@ -3,6 +3,8 @@ import {
   classifyCommand,
   classifyEndpoint,
   classifyEnvKey,
+  classifyMcpField,
+  containsEnvVarReference,
   decodeDeeplinkPayload,
   maskValue,
 } from "./deeplinkRisk";
@@ -51,7 +53,7 @@ describe("classifyEndpoint", () => {
     expect(classifyEndpoint(null)).toBeNull();
   });
 
-  it("sees through IPv4-mapped IPv6 hosts", () => {
+  it("sees through IPv4-mapped, IPv4-compatible, SIIT, and NAT64 IPv6 hosts", () => {
     // `new URL()` 把 `[::ffff:127.0.0.1]` 归一成十六进制 `[::ffff:7f00:1]`，
     // 点分形式在这一步就没了——只按 \d+\.\d+\.\d+\.\d+ 匹配会整类漏掉。
     expect(classifyEndpoint("http://[::ffff:127.0.0.1]/")).toBe(
@@ -68,6 +70,35 @@ describe("classifyEndpoint", () => {
     );
     // 映射的公网地址不该误报：8.8.8.8 → ::ffff:808:808
     expect(classifyEndpoint("http://[::ffff:8.8.8.8]/")).toBeNull();
+
+    // IPv4-compatible IPv6 (RFC 4291)
+    expect(classifyEndpoint("http://[::127.0.0.1]/")).toBe("privateEndpoint");
+    expect(classifyEndpoint("http://[::169.254.169.254]/")).toBe(
+      "privateEndpoint",
+    );
+    expect(classifyEndpoint("http://[::10.0.0.1]/")).toBe("privateEndpoint");
+    expect(classifyEndpoint("http://[::8.8.8.8]/")).toBeNull();
+
+    // SIIT IPv4-translated (RFC 6052 / RFC 7915)
+    expect(classifyEndpoint("http://[::ffff:0:127.0.0.1]/")).toBe(
+      "privateEndpoint",
+    );
+    expect(classifyEndpoint("http://[::ffff:0:169.254.169.254]/")).toBe(
+      "privateEndpoint",
+    );
+    expect(classifyEndpoint("http://[::ffff:0:8.8.8.8]/")).toBeNull();
+
+    // NAT64 well-known prefix & local prefix (RFC 6052 / RFC 8215)
+    expect(classifyEndpoint("http://[64:ff9b::127.0.0.1]/")).toBe(
+      "privateEndpoint",
+    );
+    expect(classifyEndpoint("http://[64:ff9b::169.254.169.254]/")).toBe(
+      "privateEndpoint",
+    );
+    expect(classifyEndpoint("http://[64:ff9b:1::192.168.1.1]/")).toBe(
+      "privateEndpoint",
+    );
+    expect(classifyEndpoint("http://[64:ff9b::8.8.8.8]/")).toBeNull();
   });
 });
 
@@ -208,5 +239,68 @@ describe("maskValue", () => {
     expect(maskValue("auth", "short")).toBe("****");
     expect(maskValue("bearer", "short")).toBe("****");
     expect(maskValue("API_KEY", "")).toBe("");
+  });
+});
+
+describe("classifyMcpField", () => {
+  it("flags host credential exfiltration, helper execution, and working directory fields", () => {
+    for (const key of [
+      "bearer_token_env_var",
+      "env_http_headers",
+      "http_headers_helper",
+      "headersHelper",
+      "headers_helper",
+      "env_vars",
+      "authProviderType",
+      "auth_provider_type",
+      "cwd",
+      "working_dir",
+      "server",
+      "BEARER_TOKEN_ENV_VAR",
+    ]) {
+      expect(classifyMcpField(key), key).toBe("mcpDangerousField");
+    }
+  });
+
+  it("leaves standard or benign MCP fields alone", () => {
+    for (const key of [
+      "url",
+      "command",
+      "args",
+      "headers",
+      "timeout",
+      42,
+      null,
+    ]) {
+      expect(classifyMcpField(key), String(key)).toBeNull();
+    }
+  });
+});
+
+describe("containsEnvVarReference", () => {
+  it("detects braced, bare dollar, and Windows percent env-var references", () => {
+    for (const value of [
+      "Bearer ${ANTHROPIC_API_KEY}",
+      "Bearer ${ANTHROPIC_API_KEY:-fallback}",
+      "Bearer $OPENAI_API_KEY",
+      "Bearer %OPENAI_API_KEY%",
+      "%E4%OPENAI_API_KEY%",
+      "https://evil.example/mcp?k=${TOKEN}",
+    ]) {
+      expect(containsEnvVarReference(value), value).toBe(true);
+    }
+  });
+
+  it("ignores static tokens, prices, and percent-encoded UTF-8 URLs", () => {
+    for (const value of [
+      "Bearer super-secret-token-value",
+      "https://docs.example.com/mcp?q=%E4%B8%AD",
+      "cost=$100 100%",
+      "unclosed ${TOKEN",
+      42,
+      null,
+    ]) {
+      expect(containsEnvVarReference(value), String(value)).toBe(false);
+    }
   });
 });

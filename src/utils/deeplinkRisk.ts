@@ -5,7 +5,11 @@
 // Ollama / LM Studio 的常规用法），拦下来会打断合法场景。真正的缺口是用户在
 // 点「导入」时看不到自己在同意什么——所以补的是可见性，不是黑名单。
 
-export type RiskKind = "envHijack" | "privateEndpoint" | "shellCommand";
+export type RiskKind =
+  | "envHijack"
+  | "privateEndpoint"
+  | "shellCommand"
+  | "mcpDangerousField";
 
 const SENSITIVE_CONFIG_KEY_MARKERS = [
   "TOKEN",
@@ -109,29 +113,38 @@ function isInlineCommandFlag(arg: string): boolean {
  * "这个地址看着像内网，你确认吗"的提示，字面量匹配已经够用。
  */
 /**
- * 取出主机的 IPv4 四元组，兼容 IPv4-mapped IPv6。
+ * 取出主机的 IPv4 四元组，兼容 IPv4-mapped, IPv4-compatible, SIIT 与 NAT64 等 IPv6 嵌入形式。
  *
- * `new URL("http://[::ffff:127.0.0.1]/")` 会把主机**归一成十六进制**
- * `[::ffff:7f00:1]`，点分形式在这一步就消失了，只按 `\d+\.\d+\.\d+\.\d+`
- * 匹配会整类漏掉——`[::ffff:169.254.169.254]` 同理会绕过内网判定。
+ * `new URL()` 会把 `[::ffff:127.0.0.1]` 归一成 `[::ffff:7f00:1]`，
+ * 把 `[::127.0.0.1]` 归一成 `[::7f00:1]`，
+ * 把 `[64:ff9b::127.0.0.1]` 归一成 `[64:ff9b::7f00:1]`，
+ * 点分形式在这一步消失。若仅匹配标准点分与 `::ffff:`，
+ * `[::169.254.169.254]`、`[::ffff:0:169.254.169.254]` 与 NAT64 前缀均会绕过内网判定。
  */
 function extractIpv4Octets(bare: string): [number, number] | null {
   const dotted = bare.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
   if (dotted) return [Number(dotted[1]), Number(dotted[2])];
 
-  // ::ffff:7f00:1 → 0x7f00 0x0001 → 127.0.0.1
-  const mapped = bare.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
-  if (mapped) {
-    const high = parseInt(mapped[1], 16);
+  // IPv6 嵌入 IPv4 形式（十六进制归一化）：
+  // - IPv4-mapped: ::ffff:7f00:1
+  // - SIIT IPv4-translated (RFC 6052 / RFC 7915): ::ffff:0:7f00:1
+  // - NAT64 well-known / local prefix (RFC 6052 / RFC 8215): 64:ff9b::7f00:1, 64:ff9b:1::7f00:1
+  // - IPv4-compatible (RFC 4291): ::7f00:1
+  const hexMapped = bare.match(
+    /^(?:(?:64:ff9b(?::1)?|)::|::ffff:(?:0:)?)([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i,
+  );
+  if (hexMapped) {
+    const high = parseInt(hexMapped[1], 16);
     return [(high >> 8) & 0xff, high & 0xff];
   }
 
-  // 少数实现保留点分尾巴：::ffff:127.0.0.1
-  const mappedDotted = bare.match(
-    /^::ffff:(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/,
+  // 少数实现或原始形式保留点分尾巴：
+  // ::ffff:127.0.0.1, ::ffff:0:127.0.0.1, 64:ff9b::127.0.0.1, ::127.0.0.1
+  const dottedMapped = bare.match(
+    /^(?:(?:64:ff9b(?::1)?|)::|::ffff:(?:0:)?)(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/i,
   );
-  if (mappedDotted) {
-    return [Number(mappedDotted[1]), Number(mappedDotted[2])];
+  if (dottedMapped) {
+    return [Number(dottedMapped[1]), Number(dottedMapped[2])];
   }
 
   return null;
@@ -191,6 +204,59 @@ export function classifyEnvKey(key: unknown): RiskKind | null {
   return ENV_HIJACK_PATTERNS.some((pattern) => pattern.test(key))
     ? "envHijack"
     : null;
+}
+
+/**
+ * MCP 服务器配置中能读取宿主机环境变量、借壳执行辅助命令或劫持工作目录的扩展字段。
+ *
+ * 确认弹窗必须把这些字段原样展示（绝不能因为字段名含 `token` 就脱敏掉被窃取的
+ * 宿主机环境变量名），并用醒目的风险警告提示用户。
+ */
+const MCP_DANGEROUS_FIELDS = new Set([
+  "bearer_token_env_var",
+  "env_http_headers",
+  "http_headers_helper",
+  "headershelper",
+  "headers_helper",
+  "env_vars",
+  "authprovidertype",
+  "auth_provider_type",
+  "cwd",
+  "working_dir",
+  "server",
+]);
+
+export function classifyMcpField(key: unknown): RiskKind | null {
+  if (typeof key !== "string") return null;
+  return MCP_DANGEROUS_FIELDS.has(key.toLowerCase())
+    ? "mcpDangerousField"
+    : null;
+}
+
+/**
+ * 检测字符串是否包含客户端会展开的宿主机环境变量引用：
+ * - `${VAR}` / `${VAR:-default}`（Claude Code / Gemini CLI）
+ * - `$VAR`（Gemini CLI）
+ * - `%VAR%`（Gemini CLI / Windows，排除 `%E4%B8%AD` 类双十六进制 URL 编码）
+ */
+export function containsEnvVarReference(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  if (
+    /\$\{[A-Za-z_][A-Za-z0-9_]*[^}]*\}|\$[A-Za-z_][A-Za-z0-9_]*/.test(value)
+  ) {
+    return true;
+  }
+  const winEnvRegex = /%([A-Za-z_][A-Za-z0-9_]*)%/g;
+  let match: RegExpExecArray | null;
+  while ((match = winEnvRegex.exec(value)) !== null) {
+    const inner = match[1];
+    if (inner.length >= 2 && !/^[0-9A-Fa-f]{2}$/.test(inner)) {
+      return true;
+    }
+    // 回退到结尾 `%` 继续扫描，防止 `%E4%OPENAI_API_KEY%` 借前导编码绕过
+    winEnvRegex.lastIndex = match.index + inner.length + 1;
+  }
+  return false;
 }
 
 /**

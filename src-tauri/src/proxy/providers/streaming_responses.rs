@@ -16,11 +16,12 @@ use super::transform_responses::{
     web_search_max_uses_exceeded_error, web_search_results_from_action,
     web_search_results_from_output_item, web_search_tool_result_error,
 };
-use crate::proxy::sse::{strip_sse_field, take_sse_block};
+use crate::proxy::sse::{strip_sse_field, SseBuffer};
 use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::ops::ControlFlow;
 
 #[inline]
 fn response_object_from_event(data: &Value) -> &Value {
@@ -2396,6 +2397,2203 @@ pub(crate) fn create_anthropic_sse_stream_from_responses_with_web_search_options
     order_anthropic_web_search_result_stream(raw_stream, hosted_web_search_name)
 }
 
+/// The closing `message_delta` + `message_stop` of a completed response. The
+/// stream loop renders each frame right before yielding it, so the usage
+/// summary and its logs happen only once the client has read everything
+/// before them.
+struct MessageEnd {
+    stop_reason: Option<&'static str>,
+    usage: Value,
+    web_search_count: u64,
+}
+
+impl MessageEnd {
+    fn message_delta(&self) -> Bytes {
+        // Defensive: Always build usage_json, even if usage field missing
+        // Some() wrapper with fallback to {} ensures build_anthropic_usage_from_responses
+        // always receives valid input, preventing null pointer errors in VSCode Extension
+        let mut usage_json = build_anthropic_usage_from_responses(Some(&self.usage));
+        if self.web_search_count > 0 {
+            usage_json["server_tool_use"] = json!({
+                "web_search_requests": self.web_search_count
+            });
+        }
+
+        // Emit message_delta (with usage + stop_reason)
+        let delta_event = json!({
+            "type": "message_delta",
+            "delta": {
+                "stop_reason": self.stop_reason,
+                "stop_sequence": null
+            },
+            "usage": usage_json
+        });
+        let sse = format!(
+            "event: message_delta\ndata: {}\n\n",
+            serde_json::to_string(&delta_event).unwrap_or_default()
+        );
+        log::debug!("[Claude/Responses] >>> Anthropic SSE: message_delta");
+        Bytes::from(sse)
+    }
+
+    fn message_stop() -> Bytes {
+        // Emit message_stop
+        let stop_event = json!({"type": "message_stop"});
+        let stop_sse = format!(
+            "event: message_stop\ndata: {}\n\n",
+            serde_json::to_string(&stop_event).unwrap_or_default()
+        );
+        log::debug!("[Claude/Responses] >>> Anthropic SSE: message_stop");
+        Bytes::from(stop_sse)
+    }
+}
+
+/// Mutable state of one Responses → Anthropic SSE conversion. Each upstream
+/// event goes through [`Self::handle_event`], which appends the Anthropic SSE
+/// frames it produces to `out`; the stream loop yields them in order.
+struct ResponsesToAnthropicState {
+    hosted_web_search_name: String,
+    max_web_search_uses: Option<u64>,
+    can_preserve_web_search_citations: bool,
+    message_id: Option<String>,
+    current_model: Option<String>,
+    has_sent_message_start: bool,
+    has_tool_use: bool,
+    next_content_index: u32,
+    index_by_key: HashMap<String, u32>,
+    open_indices: HashSet<u32>,
+    fallback_open_index: Option<u32>,
+    current_text_index: Option<u32>,
+    streamed_text: StreamedTextState,
+    buffered_citation_text: BufferedCitationTextState,
+    preserve_web_search_citations: bool,
+    tool_index_by_item_id: HashMap<String, u32>,
+    tool_name_by_index: HashMap<u32, String>,
+    tool_args_by_index: HashMap<u32, String>,
+    tool_had_delta: HashSet<u32>,
+    last_tool_index: Option<u32>,
+    web_search_index_by_item_id: HashMap<String, u32>,
+    web_search_id_by_index: HashMap<u32, String>,
+    web_search_result_index_by_id: HashMap<String, u32>,
+    web_search_ids_seen: HashSet<String>,
+    web_search_ids_completed: HashSet<String>,
+    web_search_limit_exceeded_id: Option<String>,
+    web_search_id_order: Vec<String>,
+    web_search_results_by_id: HashMap<String, Vec<Value>>,
+    web_search_errors_by_id: HashMap<String, Value>,
+    pending_web_search_results: Vec<Value>,
+    seen_web_search_result_urls: HashSet<String>,
+    web_search_count: u64,
+    reasoning_index_by_item_id: HashMap<String, u32>,
+    reasoning_item_by_index: HashMap<u32, Value>,
+    reasoning_text_by_index: HashMap<u32, String>,
+    legacy_reasoning_index: Option<u32>,
+    has_substantive_output: bool,
+    terminated: bool,
+    /// Set by a completed response; the stream loop yields it after the event.
+    message_end: Option<MessageEnd>,
+}
+
+impl ResponsesToAnthropicState {
+    fn new(
+        hosted_web_search_name: String,
+        max_web_search_uses: Option<u64>,
+        can_preserve_web_search_citations: bool,
+    ) -> Self {
+        Self {
+            hosted_web_search_name,
+            max_web_search_uses,
+            can_preserve_web_search_citations,
+            message_id: None,
+            current_model: None,
+            has_sent_message_start: false,
+            has_tool_use: false,
+            next_content_index: 0,
+            index_by_key: HashMap::new(),
+            open_indices: HashSet::new(),
+            fallback_open_index: None,
+            current_text_index: None,
+            streamed_text: StreamedTextState::default(),
+            buffered_citation_text: BufferedCitationTextState::default(),
+            preserve_web_search_citations: false,
+            tool_index_by_item_id: HashMap::new(),
+            tool_name_by_index: HashMap::new(),
+            tool_args_by_index: HashMap::new(),
+            tool_had_delta: HashSet::new(),
+            last_tool_index: None,
+            web_search_index_by_item_id: HashMap::new(),
+            web_search_id_by_index: HashMap::new(),
+            web_search_result_index_by_id: HashMap::new(),
+            web_search_ids_seen: HashSet::new(),
+            web_search_ids_completed: HashSet::new(),
+            web_search_limit_exceeded_id: None,
+            web_search_id_order: Vec::new(),
+            web_search_results_by_id: HashMap::new(),
+            web_search_errors_by_id: HashMap::new(),
+            pending_web_search_results: Vec::new(),
+            seen_web_search_result_urls: HashSet::new(),
+            web_search_count: 0_u64,
+            reasoning_index_by_item_id: HashMap::new(),
+            reasoning_item_by_index: HashMap::new(),
+            reasoning_text_by_index: HashMap::new(),
+            legacy_reasoning_index: None,
+            has_substantive_output: false,
+            terminated: false,
+            message_end: None,
+        }
+    }
+
+    /// Emits the placeholder `message_start` once, for streams whose first
+    /// frame is not `response.created`.
+    fn ensure_message_start(&mut self, out: &mut Vec<Bytes>) {
+        if self.has_sent_message_start {
+            return;
+        }
+        out.push(anthropic_sse(
+            "message_start",
+            &json!({
+                "type":"message_start",
+                "message":{
+                    "id":self.message_id.clone().unwrap_or_default(),
+                    "type":"message",
+                    "role":"assistant",
+                    "model":self.current_model.clone().unwrap_or_default(),
+                    "usage":{"input_tokens":0,"output_tokens":0}
+                }
+            }),
+        ));
+        self.has_sent_message_start = true;
+    }
+
+    /// Converts one parsed upstream event. `Break` ends the stream loop.
+    fn handle_event(
+        &mut self,
+        event_name: &str,
+        data: &Value,
+        out: &mut Vec<Bytes>,
+    ) -> ControlFlow<()> {
+        let delta_requires_message_start = matches!(
+            event_name,
+            "response.output_text.delta"
+                | "response.refusal.delta"
+                | "response.function_call_arguments.delta"
+                | "response.reasoning_summary_text.delta"
+                | "response.reasoning_text.delta"
+                | "response.reasoning.delta"
+        );
+        if delta_requires_message_start {
+            self.has_substantive_output = true;
+        }
+        if delta_requires_message_start {
+            self.ensure_message_start(out);
+        }
+
+        match event_name {
+            // ================================================
+            // response.created → message_start
+            // ================================================
+            "response.created" => self.on_response_created(data, out),
+
+            // ================================================
+            // response.content_part.added → content_block_start (text)
+            // ================================================
+            "response.content_part.added" => self.on_content_part_added(data, out),
+
+            // ================================================
+            // response.output_text.delta → content_block_delta (text_delta)
+            // ================================================
+            "response.output_text.delta" => self.on_output_text_delta(data, out),
+
+            "response.output_text.annotation.added" if self.preserve_web_search_citations => {
+                if let Some(annotation) = data.get("annotation") {
+                    self.buffered_citation_text
+                        .record_annotation(data, annotation);
+                }
+            }
+            "response.output_text.annotation.added" => {}
+
+            // ================================================
+            // response.refusal.delta → content_block_delta (text_delta)
+            // ================================================
+            "response.refusal.delta" => self.on_refusal_delta(data, out),
+
+            // ================================================
+            // response.content_part.done → content_block_stop
+            // ================================================
+            "response.content_part.done" if self.preserve_web_search_citations => {
+                self.on_buffered_content_part_done(data)
+            }
+            "response.content_part.done" => {
+                self.streamed_text.finish_part(data);
+            }
+
+            // ================================================
+            // response.output_item.added (function_call) → content_block_start (tool_use)
+            // ================================================
+            "response.output_item.added" => return self.on_output_item_added(data, out),
+
+            // ================================================
+            // response.function_call_arguments.delta → content_block_delta (input_json_delta)
+            // ================================================
+            "response.function_call_arguments.delta" => {
+                self.on_function_call_arguments_delta(data, out)
+            }
+
+            // ================================================
+            // response.function_call_arguments.done → content_block_stop
+            // ================================================
+            "response.function_call_arguments.done" => {
+                self.on_function_call_arguments_done(data, out)
+            }
+
+            // ================================================
+            // response.refusal.done → content_block_stop
+            // ================================================
+            "response.refusal.done" => self.on_refusal_done(data, out),
+
+            // ================================================
+            // Official reasoning text events → thinking_delta.
+            // response.reasoning.delta is kept as a compatibility alias.
+            // ================================================
+            "response.reasoning_summary_text.delta"
+            | "response.reasoning_text.delta"
+            | "response.reasoning.delta" => self.on_reasoning_delta(data, out),
+
+            // ================================================
+            // Official done events carry the complete visible text. If a
+            // gateway omitted deltas, emit the text here. The block stays
+            // open until output_item.done supplies encrypted_content.
+            // ================================================
+            "response.reasoning_summary_text.done" | "response.reasoning_text.done" => {
+                self.on_reasoning_text_done(data, out)
+            }
+
+            // Legacy gateways do not emit output_item.done, so retain the
+            // old close behavior for their non-standard done event.
+            "response.reasoning.done" => self.on_legacy_reasoning_done(data, out),
+
+            // ================================================
+            // response.completed / response.incomplete → message_delta + message_stop
+            // ================================================
+            "response.completed" | "response.incomplete" => {
+                self.on_response_completed(event_name, data, out)
+            }
+
+            // ================================================
+            // Semantic failures can be carried inside an HTTP 2xx SSE.
+            // Preserve the upstream details instead of silently ending.
+            // ================================================
+            "response.failed" | "error" => self.on_response_failed(event_name, data, out),
+
+            // Lifecycle events that don't need Anthropic counterparts.
+            // Listed explicitly so new events trigger a match-completeness review.
+            "response.output_text.done" => self.on_output_text_done(data, out),
+            "response.output_item.done" => return self.on_output_item_done(data, out),
+            "response.reasoning_summary_part.added"
+            | "response.reasoning_summary_part.done"
+            | "response.in_progress" => {}
+
+            // Any other unknown/future events — silently skip.
+            _ => {}
+        }
+        ControlFlow::Continue(())
+    }
+
+    fn on_response_created(&mut self, data: &Value, out: &mut Vec<Bytes>) {
+        let response_obj = response_object_from_event(data);
+        if let Some(id) = response_obj.get("id").and_then(|i| i.as_str()) {
+            self.message_id = Some(id.to_string());
+        }
+        if let Some(model) = response_obj.get("model").and_then(|m| m.as_str()) {
+            self.current_model = Some(model.to_string());
+        }
+
+        self.has_sent_message_start = true;
+        // Build usage with defensive null handling
+        // Some() wrapper ensures build function always receives valid input
+        // Fallback to empty object {} if usage field missing, ensuring message_start
+        // event always has valid usage structure for VSCode Extension compatibility
+        let start_usage = build_anthropic_usage_from_responses(Some(
+            response_obj.get("usage").unwrap_or(&json!({})),
+        ));
+
+        let event = json!({
+            "type": "message_start",
+            "message": {
+                "id": self.message_id.clone().unwrap_or_default(),
+                "type": "message",
+                "role": "assistant",
+                "model": self.current_model.clone().unwrap_or_default(),
+                "usage": start_usage
+            }
+        });
+        let sse = format!(
+            "event: message_start\ndata: {}\n\n",
+            serde_json::to_string(&event).unwrap_or_default()
+        );
+        log::debug!("[Claude/Responses] >>> Anthropic SSE: message_start");
+        out.push(Bytes::from(sse));
+    }
+
+    fn on_content_part_added(&mut self, data: &Value, out: &mut Vec<Bytes>) {
+        // 确保 message_start 已发送
+        self.ensure_message_start(out);
+
+        if let Some(part) = data.get("part") {
+            let part_type = part.get("type").and_then(|t| t.as_str());
+            if matches!(part_type, Some("output_text") | Some("refusal")) {
+                if self.preserve_web_search_citations && part_type == Some("output_text") {
+                    self.buffered_citation_text.record_part(data, part, false);
+                    if self.current_text_index.is_none()
+                        && part
+                            .get("text")
+                            .and_then(Value::as_str)
+                            .is_some_and(|text| !text.is_empty())
+                    {
+                        self.current_text_index = Some(resolve_content_index(
+                            data,
+                            &mut self.next_content_index,
+                            &mut self.index_by_key,
+                            &mut self.fallback_open_index,
+                        ));
+                    }
+                    return;
+                }
+
+                let index = if let Some(index) = self.current_text_index {
+                    index
+                } else {
+                    let index = resolve_content_index(
+                        data,
+                        &mut self.next_content_index,
+                        &mut self.index_by_key,
+                        &mut self.fallback_open_index,
+                    );
+                    self.current_text_index = Some(index);
+                    index
+                };
+
+                if self.open_indices.contains(&index) {
+                    return;
+                }
+
+                let event = json!({
+                    "type": "content_block_start",
+                    "index": index,
+                    "content_block": {
+                        "type": "text",
+                        "text": ""
+                    }
+                });
+                let sse = format!(
+                    "event: content_block_start\ndata: {}\n\n",
+                    serde_json::to_string(&event).unwrap_or_default()
+                );
+                out.push(Bytes::from(sse));
+                self.open_indices.insert(index);
+            }
+        }
+    }
+
+    fn on_output_text_delta(&mut self, data: &Value, out: &mut Vec<Bytes>) {
+        if let Some(delta) = data.get("delta").and_then(|d| d.as_str()) {
+            if self.preserve_web_search_citations {
+                self.buffered_citation_text.record_delta(data, delta);
+                if self.current_text_index.is_none() {
+                    self.current_text_index = Some(resolve_content_index(
+                        data,
+                        &mut self.next_content_index,
+                        &mut self.index_by_key,
+                        &mut self.fallback_open_index,
+                    ));
+                }
+                out.push(anthropic_ping_sse());
+                return;
+            }
+            self.streamed_text.record_delta(data, delta);
+            let index = if let Some(index) = self.current_text_index {
+                index
+            } else {
+                let index = resolve_content_index(
+                    data,
+                    &mut self.next_content_index,
+                    &mut self.index_by_key,
+                    &mut self.fallback_open_index,
+                );
+                self.current_text_index = Some(index);
+                index
+            };
+
+            if !self.open_indices.contains(&index) {
+                let start_event = json!({
+                    "type": "content_block_start",
+                    "index": index,
+                    "content_block": {
+                        "type": "text",
+                        "text": ""
+                    }
+                });
+                let start_sse = format!(
+                    "event: content_block_start\ndata: {}\n\n",
+                    serde_json::to_string(&start_event).unwrap_or_default()
+                );
+                out.push(Bytes::from(start_sse));
+                self.open_indices.insert(index);
+            }
+            let event = json!({
+                "type": "content_block_delta",
+                "index": index,
+                "delta": {
+                    "type": "text_delta",
+                    "text": delta
+                }
+            });
+            let sse = format!(
+                "event: content_block_delta\ndata: {}\n\n",
+                serde_json::to_string(&event).unwrap_or_default()
+            );
+            out.push(Bytes::from(sse));
+        }
+    }
+
+    fn on_refusal_delta(&mut self, data: &Value, out: &mut Vec<Bytes>) {
+        if let Some(delta) = data.get("delta").and_then(|d| d.as_str()) {
+            self.streamed_text.record_delta(data, delta);
+            let index = if let Some(index) = self.current_text_index {
+                index
+            } else {
+                let index = resolve_content_index(
+                    data,
+                    &mut self.next_content_index,
+                    &mut self.index_by_key,
+                    &mut self.fallback_open_index,
+                );
+                self.current_text_index = Some(index);
+                index
+            };
+
+            if !self.open_indices.contains(&index) {
+                let start_event = json!({
+                    "type": "content_block_start",
+                    "index": index,
+                    "content_block": {
+                        "type": "text",
+                        "text": ""
+                    }
+                });
+                let start_sse = format!(
+                    "event: content_block_start\ndata: {}\n\n",
+                    serde_json::to_string(&start_event).unwrap_or_default()
+                );
+                out.push(Bytes::from(start_sse));
+                self.open_indices.insert(index);
+            }
+
+            let event = json!({
+                "type": "content_block_delta",
+                "index": index,
+                "delta": {
+                    "type": "text_delta",
+                    "text": delta
+                }
+            });
+            let sse = format!(
+                "event: content_block_delta\ndata: {}\n\n",
+                serde_json::to_string(&event).unwrap_or_default()
+            );
+            out.push(Bytes::from(sse));
+        }
+    }
+
+    fn on_buffered_content_part_done(&mut self, data: &Value) {
+        let accepted = if let Some(part) = data
+            .get("part")
+            .filter(|part| part.get("type").and_then(Value::as_str) == Some("output_text"))
+        {
+            self.buffered_citation_text.record_part(data, part, true)
+        } else {
+            true
+        };
+        if accepted {
+            self.buffered_citation_text.finish_event_part(data);
+        }
+    }
+
+    fn on_output_item_added(&mut self, data: &Value, out: &mut Vec<Bytes>) -> ControlFlow<()> {
+        if let Some(item) = data.get("item") {
+            let item_type = item.get("type").and_then(|t| t.as_str()).unwrap_or("");
+            if self.can_preserve_web_search_citations && item_type == "web_search_call" {
+                self.preserve_web_search_citations = true;
+            }
+            if self.preserve_web_search_citations && item_type != "message" {
+                let pending_text = self.buffered_citation_text.render_pending_parts();
+                let mut reusable_text_index = None;
+                if !pending_text.is_empty() {
+                    if let Some(index) = self.current_text_index.take() {
+                        let was_open = self.open_indices.remove(&index);
+                        if was_open {
+                            out.push(anthropic_sse(
+                                "content_block_stop",
+                                &json!({"type":"content_block_stop","index":index}),
+                            ));
+                        } else {
+                            reusable_text_index = Some(index);
+                        }
+                        if self.fallback_open_index == Some(index) {
+                            self.fallback_open_index = None;
+                        }
+                    }
+                }
+                for text in pending_text {
+                    let index = reusable_text_index.take().unwrap_or_else(|| {
+                        let index = self.next_content_index;
+                        self.next_content_index += 1;
+                        index
+                    });
+                    out.extend(text_block_events(index, &text));
+                }
+            }
+            match item_type {
+                "function_call" => self.on_function_call_item_added(data, item, out),
+                "web_search_call" => return self.on_web_search_call_item_added(data, item, out),
+                "reasoning" => self.on_reasoning_item_added(data, item, out),
+                // message type output_item.added is handled via content_part.added
+                _ => {}
+            }
+        }
+        ControlFlow::Continue(())
+    }
+
+    fn on_function_call_item_added(&mut self, data: &Value, item: &Value, out: &mut Vec<Bytes>) {
+        self.has_tool_use = true;
+        self.has_substantive_output = true;
+        if let Some(index) = self.current_text_index.take() {
+            if self.open_indices.remove(&index) {
+                let stop_event = json!({
+                    "type": "content_block_stop",
+                    "index": index
+                });
+                let stop_sse = format!(
+                    "event: content_block_stop\ndata: {}\n\n",
+                    serde_json::to_string(&stop_event).unwrap_or_default()
+                );
+                out.push(Bytes::from(stop_sse));
+            }
+            if self.fallback_open_index == Some(index) {
+                self.fallback_open_index = None;
+            }
+        }
+        // 确保 message_start 已发送
+        self.ensure_message_start(out);
+
+        let call_id = item.get("call_id").and_then(|i| i.as_str()).unwrap_or("");
+        let name = item.get("name").and_then(|n| n.as_str()).unwrap_or("");
+        let index = if let Some(k) = tool_item_key_from_added(data, item) {
+            if let Some(existing) = self.index_by_key.get(&k).copied() {
+                existing
+            } else {
+                let assigned = self.next_content_index;
+                self.next_content_index += 1;
+                self.index_by_key.insert(k, assigned);
+                assigned
+            }
+        } else {
+            let assigned = self.next_content_index;
+            self.next_content_index += 1;
+            assigned
+        };
+        if let Some(item_id) = item
+            .get("id")
+            .and_then(|v| v.as_str())
+            .or_else(|| data.get("item_id").and_then(|v| v.as_str()))
+        {
+            self.tool_index_by_item_id
+                .insert(item_id.to_string(), index);
+        }
+        self.tool_name_by_index.insert(index, name.to_string());
+        self.last_tool_index = Some(index);
+
+        if self.open_indices.contains(&index) {
+            return;
+        }
+
+        self.tool_args_by_index.insert(index, String::new());
+
+        let event = json!({
+            "type": "content_block_start",
+            "index": index,
+            "content_block": {
+                "type": "tool_use",
+                "id": call_id,
+                "name": name
+            }
+        });
+        let sse = format!(
+            "event: content_block_start\ndata: {}\n\n",
+            serde_json::to_string(&event).unwrap_or_default()
+        );
+        out.push(Bytes::from(sse));
+        self.open_indices.insert(index);
+    }
+
+    fn on_web_search_call_item_added(
+        &mut self,
+        data: &Value,
+        item: &Value,
+        out: &mut Vec<Bytes>,
+    ) -> ControlFlow<()> {
+        self.has_substantive_output = true;
+        if let Some(index) = self.current_text_index.take() {
+            if self.open_indices.remove(&index) {
+                out.push(anthropic_sse(
+                    "content_block_stop",
+                    &json!({"type":"content_block_stop","index":index}),
+                ));
+            }
+            if self.fallback_open_index == Some(index) {
+                self.fallback_open_index = None;
+            }
+        }
+        self.ensure_message_start(out);
+
+        let item_keys = web_search_item_keys(data, Some(item));
+        let index = if let Some(existing) = item_keys
+            .iter()
+            .find_map(|key| self.index_by_key.get(key).copied())
+        {
+            existing
+        } else {
+            let assigned = self.next_content_index;
+            self.next_content_index += 1;
+            assigned
+        };
+        for key in item_keys {
+            self.index_by_key.insert(key, index);
+        }
+        let search_id = self
+            .web_search_id_by_index
+            .get(&index)
+            .cloned()
+            .or_else(|| {
+                item.get("id")
+                    .and_then(Value::as_str)
+                    .or_else(|| data.get("item_id").and_then(Value::as_str))
+                    .filter(|id| !id.is_empty())
+                    .map(ToString::to_string)
+            })
+            .unwrap_or_else(|| format!("ws_stream_{index}"));
+        let disposition = record_web_search_call(
+            &search_id,
+            item,
+            &mut WebSearchRecordState {
+                ids_seen: &mut self.web_search_ids_seen,
+                id_order: &mut self.web_search_id_order,
+                results_by_id: &mut self.web_search_results_by_id,
+                errors_by_id: &mut self.web_search_errors_by_id,
+                request_count: &mut self.web_search_count,
+                max_uses: self.max_web_search_uses,
+                limit_exceeded_id: &mut self.web_search_limit_exceeded_id,
+            },
+        );
+        if disposition == WebSearchCallDisposition::Ignored {
+            return ControlFlow::Continue(());
+        }
+        self.web_search_index_by_item_id
+            .insert(search_id.clone(), index);
+        self.web_search_id_by_index.insert(index, search_id.clone());
+        reserve_web_search_result_index(
+            &search_id,
+            &mut self.web_search_result_index_by_id,
+            &mut self.next_content_index,
+        );
+
+        if !self.open_indices.contains(&index) {
+            out.push(anthropic_sse(
+                "content_block_start",
+                &json!({
+                    "type":"content_block_start",
+                    "index":index,
+                    "content_block":{
+                        "type":"server_tool_use",
+                        "id":search_id,
+                        "name":self.hosted_web_search_name.as_str(),
+                        "input":{},
+                        "caller":{"type":"direct"}
+                    }
+                }),
+            ));
+            self.open_indices.insert(index);
+        }
+        if disposition == WebSearchCallDisposition::LimitExceeded {
+            out.push(anthropic_sse(
+                "content_block_delta",
+                &json!({
+                    "type":"content_block_delta",
+                    "index":index,
+                    "delta":{
+                        "type":"input_json_delta",
+                        "partial_json":"{}"
+                    }
+                }),
+            ));
+            if self.open_indices.remove(&index) {
+                out.push(anthropic_sse(
+                    "content_block_stop",
+                    &json!({"type":"content_block_stop","index":index}),
+                ));
+            }
+            self.web_search_ids_completed.insert(search_id);
+            out.extend(take_open_web_search_block_stop_events(
+                &mut self.open_indices,
+                &self.web_search_id_by_index,
+            ));
+            out.extend(take_web_search_result_events(
+                &self.web_search_id_order,
+                &mut self.web_search_results_by_id,
+                &mut self.web_search_errors_by_id,
+                &mut self.web_search_result_index_by_id,
+                &mut self.next_content_index,
+            ));
+            if self.open_indices.is_empty() {
+                for event in web_search_limit_stop_events(self.web_search_count, self.has_tool_use)
+                {
+                    out.push(event);
+                }
+            } else {
+                out.push(anthropic_error_sse(
+                    "Responses upstream started a web search beyond max_uses while another content block was incomplete",
+                    "stream_truncated",
+                ));
+            }
+            self.terminated = true;
+            return ControlFlow::Break(());
+        }
+        ControlFlow::Continue(())
+    }
+
+    fn on_reasoning_item_added(&mut self, data: &Value, item: &Value, out: &mut Vec<Bytes>) {
+        self.ensure_message_start(out);
+
+        let index = if let Some(key) = reasoning_item_key(data, Some(item)) {
+            if let Some(existing) = self.index_by_key.get(&key).copied() {
+                existing
+            } else {
+                let assigned = self.next_content_index;
+                self.next_content_index += 1;
+                self.index_by_key.insert(key, assigned);
+                assigned
+            }
+        } else {
+            let assigned = self.next_content_index;
+            self.next_content_index += 1;
+            assigned
+        };
+        if let Some(item_id) = item
+            .get("id")
+            .and_then(Value::as_str)
+            .or_else(|| data.get("item_id").and_then(Value::as_str))
+        {
+            self.reasoning_index_by_item_id
+                .insert(item_id.to_string(), index);
+        }
+        self.reasoning_item_by_index.insert(index, item.clone());
+        self.reasoning_text_by_index.entry(index).or_default();
+    }
+
+    fn on_function_call_arguments_delta(&mut self, data: &Value, out: &mut Vec<Bytes>) {
+        if let Some(delta) = data.get("delta").and_then(|d| d.as_str()) {
+            self.has_tool_use = true;
+            let item_id = data.get("item_id").and_then(|v| v.as_str());
+            let index = if let Some(id) = item_id {
+                self.tool_index_by_item_id.get(id).copied()
+            } else {
+                None
+            }
+            .or_else(|| {
+                tool_item_key_from_event(data).and_then(|k| self.index_by_key.get(&k).copied())
+            })
+            .or(self.last_tool_index)
+            .unwrap_or_else(|| {
+                let assigned = self.next_content_index;
+                self.next_content_index += 1;
+                assigned
+            });
+
+            if let Some(id) = item_id {
+                self.tool_index_by_item_id.insert(id.to_string(), index);
+            }
+            if let Some(name) = data.get("name").and_then(Value::as_str) {
+                self.tool_name_by_index.insert(index, name.to_string());
+            } else {
+                self.tool_name_by_index.entry(index).or_default();
+            }
+            self.last_tool_index = Some(index);
+
+            if !self.open_indices.contains(&index) {
+                let start_event = json!({
+                    "type": "content_block_start",
+                    "index": index,
+                    "content_block": {
+                        "type": "tool_use",
+                        "id": data
+                            .get("call_id")
+                            .and_then(|v| v.as_str())
+                            .or(item_id)
+                            .unwrap_or(""),
+                        "name": data
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                    }
+                });
+                let start_sse = format!(
+                    "event: content_block_start\ndata: {}\n\n",
+                    serde_json::to_string(&start_event).unwrap_or_default()
+                );
+                out.push(Bytes::from(start_sse));
+                self.open_indices.insert(index);
+            }
+
+            self.tool_args_by_index
+                .entry(index)
+                .or_default()
+                .push_str(delta);
+            self.tool_had_delta.insert(index);
+
+            if self.tool_name_by_index.get(&index).map(String::as_str) == Some("Read") {
+                return;
+            }
+
+            let event = json!({
+                "type": "content_block_delta",
+                "index": index,
+                "delta": {
+                    "type": "input_json_delta",
+                    "partial_json": delta
+                }
+            });
+            let sse = format!(
+                "event: content_block_delta\ndata: {}\n\n",
+                serde_json::to_string(&event).unwrap_or_default()
+            );
+            out.push(Bytes::from(sse));
+        }
+    }
+
+    fn on_function_call_arguments_done(&mut self, data: &Value, out: &mut Vec<Bytes>) {
+        self.has_tool_use = true;
+        let item_id = data.get("item_id").and_then(|v| v.as_str());
+        let index = if let Some(id) = item_id {
+            self.tool_index_by_item_id.get(id).copied()
+        } else {
+            None
+        }
+        .or_else(|| tool_item_key_from_event(data).and_then(|k| self.index_by_key.get(&k).copied()))
+        .or(self.last_tool_index);
+        if let Some(index) = index {
+            if !self.open_indices.remove(&index) {
+                return;
+            }
+            if self.tool_name_by_index.get(&index).map(String::as_str) == Some("Read") {
+                let raw = data
+                    .get("arguments")
+                    .or_else(|| data.pointer("/item/arguments"))
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+                    .unwrap_or_else(|| {
+                        self.tool_args_by_index
+                            .get(&index)
+                            .cloned()
+                            .unwrap_or_default()
+                    });
+                let sanitized = sanitize_anthropic_tool_use_input_json("Read", &raw);
+                if !sanitized.is_empty() {
+                    let event = json!({
+                        "type": "content_block_delta",
+                        "index": index,
+                        "delta": {
+                            "type": "input_json_delta",
+                            "partial_json": sanitized
+                        }
+                    });
+                    let sse = format!(
+                        "event: content_block_delta\ndata: {}\n\n",
+                        serde_json::to_string(&event).unwrap_or_default()
+                    );
+                    out.push(Bytes::from(sse));
+                }
+            } else if !self.tool_had_delta.contains(&index) {
+                // Some compatible gateways skip delta events and only
+                // provide the complete arguments on the done event.
+                if let Some(arguments) = data
+                    .get("arguments")
+                    .or_else(|| data.pointer("/item/arguments"))
+                    .and_then(Value::as_str)
+                    .filter(|value| !value.is_empty())
+                {
+                    let event = json!({
+                        "type": "content_block_delta",
+                        "index": index,
+                        "delta": {
+                            "type": "input_json_delta",
+                            "partial_json": arguments
+                        }
+                    });
+                    let sse = format!(
+                        "event: content_block_delta\ndata: {}\n\n",
+                        serde_json::to_string(&event).unwrap_or_default()
+                    );
+                    out.push(Bytes::from(sse));
+                }
+            }
+            let event = json!({
+                "type": "content_block_stop",
+                "index": index
+            });
+            let sse = format!(
+                "event: content_block_stop\ndata: {}\n\n",
+                serde_json::to_string(&event).unwrap_or_default()
+            );
+            out.push(Bytes::from(sse));
+            if let Some(item_id) = item_id {
+                self.tool_index_by_item_id.remove(item_id);
+            }
+            self.tool_name_by_index.remove(&index);
+            self.tool_args_by_index.remove(&index);
+            self.tool_had_delta.remove(&index);
+        }
+    }
+
+    fn on_refusal_done(&mut self, data: &Value, out: &mut Vec<Bytes>) {
+        self.streamed_text.finish_part(data);
+        let index = self.current_text_index.take().or_else(|| {
+            let key = content_part_key(data);
+            if let Some(k) = key {
+                self.index_by_key.get(&k).copied()
+            } else {
+                self.fallback_open_index
+            }
+        });
+        if let Some(index) = index {
+            if !self.open_indices.remove(&index) {
+                return;
+            }
+            let event = json!({
+                "type": "content_block_stop",
+                "index": index
+            });
+            let sse = format!(
+                "event: content_block_stop\ndata: {}\n\n",
+                serde_json::to_string(&event).unwrap_or_default()
+            );
+            out.push(Bytes::from(sse));
+            if self.fallback_open_index == Some(index) {
+                self.fallback_open_index = None;
+            }
+        }
+    }
+
+    fn on_reasoning_delta(&mut self, data: &Value, out: &mut Vec<Bytes>) {
+        if let Some(delta) = data
+            .get("delta")
+            .or_else(|| data.get("text"))
+            .and_then(|d| d.as_str())
+        {
+            if let Some(index) = self.current_text_index.take() {
+                if self.open_indices.remove(&index) {
+                    let stop_event = json!({
+                        "type": "content_block_stop",
+                        "index": index
+                    });
+                    let stop_sse = format!(
+                        "event: content_block_stop\ndata: {}\n\n",
+                        serde_json::to_string(&stop_event).unwrap_or_default()
+                    );
+                    out.push(Bytes::from(stop_sse));
+                }
+                if self.fallback_open_index == Some(index) {
+                    self.fallback_open_index = None;
+                }
+            }
+            let item_id = data.get("item_id").and_then(Value::as_str);
+            let item_key = reasoning_item_key(data, None);
+            let is_keyless = item_id.is_none() && item_key.is_none();
+            let index = item_id
+                .and_then(|id| self.reasoning_index_by_item_id.get(id).copied())
+                .or_else(|| {
+                    item_key
+                        .as_ref()
+                        .and_then(|key| self.index_by_key.get(key).copied())
+                })
+                .or_else(|| is_keyless.then_some(self.legacy_reasoning_index).flatten())
+                .unwrap_or_else(|| {
+                    let assigned = self.next_content_index;
+                    self.next_content_index += 1;
+                    if let Some(key) = item_key {
+                        self.index_by_key.insert(key, assigned);
+                    }
+                    if let Some(id) = item_id {
+                        self.reasoning_index_by_item_id
+                            .insert(id.to_string(), assigned);
+                    } else if is_keyless {
+                        self.legacy_reasoning_index = Some(assigned);
+                    }
+                    assigned
+                });
+
+            if !self.open_indices.contains(&index) {
+                let start_event = json!({
+                    "type": "content_block_start",
+                    "index": index,
+                    "content_block": {
+                        "type": "thinking",
+                        "thinking": ""
+                    }
+                });
+                let start_sse = format!(
+                    "event: content_block_start\ndata: {}\n\n",
+                    serde_json::to_string(&start_event).unwrap_or_default()
+                );
+                out.push(Bytes::from(start_sse));
+                self.open_indices.insert(index);
+            }
+
+            self.reasoning_text_by_index
+                .entry(index)
+                .or_default()
+                .push_str(delta);
+
+            let event = json!({
+                "type": "content_block_delta",
+                "index": index,
+                "delta": {
+                    "type": "thinking_delta",
+                    "thinking": delta
+                }
+            });
+            let sse = format!(
+                "event: content_block_delta\ndata: {}\n\n",
+                serde_json::to_string(&event).unwrap_or_default()
+            );
+            out.push(Bytes::from(sse));
+        }
+    }
+
+    fn on_reasoning_text_done(&mut self, data: &Value, out: &mut Vec<Bytes>) {
+        let item_id = data.get("item_id").and_then(Value::as_str);
+        let item_key = reasoning_item_key(data, None);
+        let index = item_id
+            .and_then(|id| self.reasoning_index_by_item_id.get(id).copied())
+            .or_else(|| {
+                item_key
+                    .as_ref()
+                    .and_then(|key| self.index_by_key.get(key).copied())
+            })
+            .or_else(|| {
+                (item_id.is_none() && item_key.is_none())
+                    .then_some(self.legacy_reasoning_index)
+                    .flatten()
+            });
+        if let Some(index) = index {
+            let already_emitted = self
+                .reasoning_text_by_index
+                .get(&index)
+                .is_some_and(|value| !value.is_empty());
+            if !already_emitted {
+                if let Some(text) = data
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .filter(|value| !value.is_empty())
+                {
+                    if !self.open_indices.contains(&index) {
+                        let start_event = json!({
+                            "type": "content_block_start",
+                            "index": index,
+                            "content_block": {"type": "thinking", "thinking": ""}
+                        });
+                        let start_sse = format!(
+                            "event: content_block_start\ndata: {}\n\n",
+                            serde_json::to_string(&start_event).unwrap_or_default()
+                        );
+                        out.push(Bytes::from(start_sse));
+                        self.open_indices.insert(index);
+                    }
+                    self.reasoning_text_by_index
+                        .entry(index)
+                        .or_default()
+                        .push_str(text);
+                    let event = json!({
+                        "type": "content_block_delta",
+                        "index": index,
+                        "delta": {"type": "thinking_delta", "thinking": text}
+                    });
+                    let sse = format!(
+                        "event: content_block_delta\ndata: {}\n\n",
+                        serde_json::to_string(&event).unwrap_or_default()
+                    );
+                    out.push(Bytes::from(sse));
+                }
+            }
+        }
+    }
+
+    fn on_legacy_reasoning_done(&mut self, data: &Value, out: &mut Vec<Bytes>) {
+        let item_id = data.get("item_id").and_then(Value::as_str);
+        let item_key = reasoning_item_key(data, None);
+        let index = item_id
+            .and_then(|id| self.reasoning_index_by_item_id.get(id).copied())
+            .or_else(|| {
+                item_key
+                    .as_ref()
+                    .and_then(|key| self.index_by_key.get(key).copied())
+            })
+            .or_else(|| {
+                (item_id.is_none() && item_key.is_none())
+                    .then_some(self.legacy_reasoning_index)
+                    .flatten()
+            });
+        if let Some(index) = index {
+            if self.open_indices.remove(&index) {
+                let event = json!({"type": "content_block_stop", "index": index});
+                let sse = format!(
+                    "event: content_block_stop\ndata: {}\n\n",
+                    serde_json::to_string(&event).unwrap_or_default()
+                );
+                out.push(Bytes::from(sse));
+            }
+            if self.legacy_reasoning_index == Some(index) {
+                self.legacy_reasoning_index = None;
+            }
+        }
+    }
+
+    fn on_response_completed(&mut self, event_name: &str, data: &Value, out: &mut Vec<Bytes>) {
+        let response_obj = response_object_from_event(data);
+        if matches!(
+            response_obj.get("status").and_then(Value::as_str),
+            Some("failed" | "cancelled")
+        ) || response_obj
+            .get("error")
+            .is_some_and(|error| !error.is_null())
+        {
+            let (message, error_type) = responses_error_details(
+                data,
+                "Responses upstream returned a failed terminal response",
+            );
+            out.push(anthropic_error_sse(&message, &error_type));
+            self.terminated = true;
+            return;
+        }
+        if self.next_content_index == 0
+            && !self.has_substantive_output
+            && response_obj
+                .get("output")
+                .and_then(Value::as_array)
+                .is_some()
+        {
+            let mut terminal_body = response_obj.clone();
+            if terminal_body
+                .get("status")
+                .and_then(Value::as_str)
+                .is_none()
+            {
+                terminal_body["status"] = json!(if event_name == "response.incomplete" {
+                    "incomplete"
+                } else {
+                    "completed"
+                });
+            }
+            for event in responses_json_to_anthropic_sse(
+                terminal_body,
+                Some(self.hosted_web_search_name.as_str()),
+                self.max_web_search_uses,
+            ) {
+                if self.has_sent_message_start && event.starts_with(b"event: message_start\n") {
+                    continue;
+                }
+                out.push(event);
+            }
+            self.terminated = true;
+            return;
+        }
+        if !self.has_sent_message_start {
+            if let Some(id) = response_obj.get("id").and_then(Value::as_str) {
+                self.message_id = Some(id.to_string());
+            }
+            if let Some(model) = response_obj.get("model").and_then(Value::as_str) {
+                self.current_model = Some(model.to_string());
+            }
+            out.push(anthropic_sse(
+                "message_start",
+                &json!({
+                    "type":"message_start",
+                    "message":{
+                        "id":self.message_id.clone().unwrap_or_default(),
+                        "type":"message",
+                        "role":"assistant",
+                        "model":self.current_model.clone().unwrap_or_default(),
+                        "usage":{"input_tokens":0,"output_tokens":0}
+                    }
+                }),
+            ));
+            self.has_sent_message_start = true;
+        }
+
+        let mut terminal_web_search_results = std::mem::take(&mut self.pending_web_search_results);
+        let mut terminal_message_items = Vec::new();
+        let mut terminal_web_search_limit_exceeded = false;
+        let mut terminal_reusable_text_index = None;
+        if let Some(output) = response_obj.get("output").and_then(Value::as_array) {
+            let has_web_search_output = output
+                .iter()
+                .any(|item| item.get("type").and_then(Value::as_str) == Some("web_search_call"));
+            if has_web_search_output {
+                if self.can_preserve_web_search_citations {
+                    self.preserve_web_search_citations = true;
+                }
+                if let Some(text_index) = self.current_text_index.take() {
+                    let was_open = self.open_indices.remove(&text_index);
+                    if was_open {
+                        out.push(anthropic_sse(
+                            "content_block_stop",
+                            &json!({"type":"content_block_stop","index":text_index}),
+                        ));
+                    } else if self.preserve_web_search_citations {
+                        terminal_reusable_text_index = Some(text_index);
+                    }
+                    if self.fallback_open_index == Some(text_index) {
+                        self.fallback_open_index = None;
+                    }
+                }
+            }
+
+            for (output_index, item) in output.iter().enumerate() {
+                if item.get("type").and_then(Value::as_str) == Some("message") {
+                    terminal_message_items.push((output_index as u64, item.clone()));
+                }
+                if item.get("type").and_then(Value::as_str) == Some("web_search_call") {
+                    self.has_substantive_output = true;
+                    let provisional_index = self
+                        .index_by_key
+                        .get(&format!("web-search:out:{output_index}"))
+                        .copied();
+                    let search_id = provisional_index
+                        .and_then(|index| self.web_search_id_by_index.get(&index).cloned())
+                        .or_else(|| {
+                            item.get("id")
+                                .and_then(Value::as_str)
+                                .filter(|id| !id.is_empty())
+                                .map(ToString::to_string)
+                        })
+                        .or_else(|| provisional_index.map(|index| format!("ws_stream_{index}")))
+                        .unwrap_or_else(|| format!("ws_terminal_{output_index}"));
+                    let disposition = record_web_search_call(
+                        &search_id,
+                        item,
+                        &mut WebSearchRecordState {
+                            ids_seen: &mut self.web_search_ids_seen,
+                            id_order: &mut self.web_search_id_order,
+                            results_by_id: &mut self.web_search_results_by_id,
+                            errors_by_id: &mut self.web_search_errors_by_id,
+                            request_count: &mut self.web_search_count,
+                            max_uses: self.max_web_search_uses,
+                            limit_exceeded_id: &mut self.web_search_limit_exceeded_id,
+                        },
+                    );
+                    if disposition == WebSearchCallDisposition::Ignored {
+                        continue;
+                    }
+
+                    if !self.web_search_ids_completed.contains(&search_id) {
+                        let index = self
+                            .web_search_index_by_item_id
+                            .get(&search_id)
+                            .copied()
+                            .or(provisional_index)
+                            .unwrap_or_else(|| {
+                                let assigned = self.next_content_index;
+                                self.next_content_index += 1;
+                                assigned
+                            });
+                        self.web_search_index_by_item_id
+                            .insert(search_id.clone(), index);
+                        self.web_search_id_by_index.insert(index, search_id.clone());
+                        reserve_web_search_result_index(
+                            &search_id,
+                            &mut self.web_search_result_index_by_id,
+                            &mut self.next_content_index,
+                        );
+                        if !self.open_indices.contains(&index) {
+                            out.push(anthropic_sse(
+                                "content_block_start",
+                                &json!({
+                                    "type":"content_block_start",
+                                    "index":index,
+                                    "content_block":{
+                                        "type":"server_tool_use",
+                                        "id":search_id,
+                                        "name":self.hosted_web_search_name.as_str(),
+                                        "input":{},
+                                        "caller":{"type":"direct"}
+                                    }
+                                }),
+                            ));
+                            self.open_indices.insert(index);
+                        }
+                        let input = web_search_action_input(item);
+                        out.push(anthropic_sse(
+                            "content_block_delta",
+                            &json!({
+                                "type":"content_block_delta",
+                                "index":index,
+                                "delta":{
+                                    "type":"input_json_delta",
+                                    "partial_json":serde_json::to_string(&input)
+                                        .unwrap_or_else(|_| "{}".to_string())
+                                }
+                            }),
+                        ));
+                        if self.open_indices.remove(&index) {
+                            out.push(anthropic_sse(
+                                "content_block_stop",
+                                &json!({"type":"content_block_stop","index":index}),
+                            ));
+                        }
+                        self.web_search_ids_completed.insert(search_id);
+                    }
+                    if disposition == WebSearchCallDisposition::LimitExceeded {
+                        terminal_web_search_limit_exceeded = true;
+                        break;
+                    }
+                }
+
+                for result in web_search_results_from_output_item(item) {
+                    let Some(url) = result.get("url").and_then(Value::as_str) else {
+                        continue;
+                    };
+                    if self.seen_web_search_result_urls.insert(url.to_string()) {
+                        terminal_web_search_results.push(result);
+                    }
+                }
+            }
+        }
+        if terminal_web_search_limit_exceeded {
+            terminal_message_items.clear();
+            terminal_web_search_results.clear();
+        }
+
+        for (search_id, results) in &mut self.web_search_results_by_id {
+            if !self.web_search_errors_by_id.contains_key(search_id) {
+                merge_web_search_result_metadata(results, &terminal_web_search_results);
+            }
+        }
+        let attributed_web_search_urls: HashSet<String> = self
+            .web_search_results_by_id
+            .iter()
+            .filter(|(search_id, _)| !self.web_search_errors_by_id.contains_key(*search_id))
+            .flat_map(|(_, results)| results)
+            .filter_map(|result| {
+                result
+                    .get("url")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string)
+            })
+            .collect();
+        // Final-message citations have no search-call ID.
+        // Prefer action.sources recorded for each call,
+        // then put only otherwise-unassigned citations on
+        // the last call. Every earlier call still receives
+        // an empty successful result rather than remaining
+        // structurally unmatched.
+        if let Some(last_search_id) = self
+            .web_search_id_order
+            .iter()
+            .rev()
+            .find(|search_id| !self.web_search_errors_by_id.contains_key(*search_id))
+            .cloned()
+        {
+            terminal_web_search_results.retain(|result| {
+                result
+                    .get("url")
+                    .and_then(Value::as_str)
+                    .is_some_and(|url| !attributed_web_search_urls.contains(url))
+            });
+            append_unique_web_search_results(
+                self.web_search_results_by_id
+                    .entry(last_search_id)
+                    .or_default(),
+                terminal_web_search_results,
+            );
+        }
+
+        if !self.web_search_id_order.is_empty() {
+            if let Some(text_index) = self.current_text_index.take() {
+                let was_open = self.open_indices.remove(&text_index);
+                if was_open {
+                    out.push(anthropic_sse(
+                        "content_block_stop",
+                        &json!({"type":"content_block_stop","index":text_index}),
+                    ));
+                } else if self.preserve_web_search_citations
+                    && terminal_reusable_text_index.is_none()
+                {
+                    terminal_reusable_text_index = Some(text_index);
+                }
+                if self.fallback_open_index == Some(text_index) {
+                    self.fallback_open_index = None;
+                }
+            }
+            // An incomplete terminal response can arrive before
+            // output_item.done. Close any still-open server tool
+            // block before emitting its paired error result.
+            for search_id in self.web_search_id_order.clone() {
+                if self.web_search_ids_completed.contains(&search_id) {
+                    continue;
+                }
+                let Some(index) = self.web_search_index_by_item_id.get(&search_id).copied() else {
+                    continue;
+                };
+                if self.open_indices.contains(&index) {
+                    out.push(anthropic_sse(
+                        "content_block_delta",
+                        &json!({
+                            "type":"content_block_delta",
+                            "index":index,
+                            "delta":{
+                                "type":"input_json_delta",
+                                "partial_json":"{}"
+                            }
+                        }),
+                    ));
+                }
+                if self.open_indices.remove(&index) {
+                    out.push(anthropic_sse(
+                        "content_block_stop",
+                        &json!({"type":"content_block_stop","index":index}),
+                    ));
+                }
+                self.web_search_ids_completed.insert(search_id);
+            }
+            for search_id in self.web_search_id_order.clone() {
+                let index = self
+                    .web_search_result_index_by_id
+                    .remove(&search_id)
+                    .unwrap_or_else(|| {
+                        let index = self.next_content_index;
+                        self.next_content_index += 1;
+                        index
+                    });
+                let results = self
+                    .web_search_results_by_id
+                    .remove(&search_id)
+                    .unwrap_or_default();
+                let content = self
+                    .web_search_errors_by_id
+                    .remove(&search_id)
+                    .unwrap_or(Value::Array(results));
+                out.extend(web_search_result_events(index, &search_id, content));
+            }
+        }
+
+        for (output_index, item) in terminal_message_items {
+            let buffered_citations = self
+                .preserve_web_search_citations
+                .then_some(&mut self.buffered_citation_text);
+            let missing_text = missing_message_text_parts(
+                &item,
+                Some(output_index),
+                &mut self.streamed_text,
+                buffered_citations,
+            );
+            if missing_text.is_empty() {
+                continue;
+            }
+            self.has_substantive_output = true;
+            let mut reusable_text_index = terminal_reusable_text_index.take();
+            if let Some(text_index) = self.current_text_index.take() {
+                let was_open = self.open_indices.remove(&text_index);
+                if was_open {
+                    out.push(anthropic_sse(
+                        "content_block_stop",
+                        &json!({"type":"content_block_stop","index":text_index}),
+                    ));
+                } else if self.preserve_web_search_citations {
+                    reusable_text_index.get_or_insert(text_index);
+                }
+                if self.fallback_open_index == Some(text_index) {
+                    self.fallback_open_index = None;
+                }
+            }
+            for text in missing_text {
+                let index = reusable_text_index.take().unwrap_or_else(|| {
+                    let index = self.next_content_index;
+                    self.next_content_index += 1;
+                    index
+                });
+                out.extend(text_block_events(index, &text));
+            }
+        }
+        if self.preserve_web_search_citations {
+            let pending_text = self.buffered_citation_text.render_pending_parts();
+            let mut reusable_text_index = terminal_reusable_text_index.take();
+            if !pending_text.is_empty() {
+                self.has_substantive_output = true;
+                if let Some(text_index) = self.current_text_index.take() {
+                    let was_open = self.open_indices.remove(&text_index);
+                    if was_open {
+                        out.push(anthropic_sse(
+                            "content_block_stop",
+                            &json!({"type":"content_block_stop","index":text_index}),
+                        ));
+                    } else {
+                        reusable_text_index.get_or_insert(text_index);
+                    }
+                }
+            }
+            for text in pending_text {
+                let index = reusable_text_index.take().unwrap_or_else(|| {
+                    let index = self.next_content_index;
+                    self.next_content_index += 1;
+                    index
+                });
+                out.extend(text_block_events(index, &text));
+            }
+        }
+
+        let terminal_status =
+            response_obj
+                .get("status")
+                .and_then(Value::as_str)
+                .or(match event_name {
+                    "response.incomplete" => Some("incomplete"),
+                    "response.completed" => Some("completed"),
+                    _ => None,
+                });
+        let stop_reason = map_responses_stop_reason(
+            terminal_status,
+            self.has_tool_use,
+            response_obj
+                .pointer("/incomplete_details/reason")
+                .and_then(|r| r.as_str()),
+        );
+
+        // Zero-usage max_tokens stops are upstream request
+        // rejections, not truncation; report them as an
+        // error instead of a fabricated limit hit.
+        if stop_reason == Some("max_tokens")
+            && !self.has_substantive_output
+            && is_unprocessed_max_output_rejection(response_obj, terminal_status)
+        {
+            log::warn!(
+                "[Claude/Responses] terminal incomplete with zero usage \
+    and no content; emitting api_error for the unprocessed upstream rejection instead of max_tokens"
+            );
+            out.push(anthropic_error_sse(
+                UNPROCESSED_REJECTION_MESSAGE,
+                "api_error",
+            ));
+            self.terminated = true;
+            return;
+        }
+
+        // Best effort: close any dangling blocks before message_delta/message_stop.
+        if !self.open_indices.is_empty() {
+            let mut remaining: Vec<u32> = self.open_indices.iter().copied().collect();
+            remaining.sort_unstable();
+            for index in remaining {
+                let stop_event = json!({
+                    "type": "content_block_stop",
+                    "index": index
+                });
+                let stop_sse = format!(
+                    "event: content_block_stop\ndata: {}\n\n",
+                    serde_json::to_string(&stop_event).unwrap_or_default()
+                );
+                out.push(Bytes::from(stop_sse));
+                self.open_indices.remove(&index);
+            }
+        }
+        self.fallback_open_index = None;
+
+        // message_delta and message_stop are built as they are yielded, so a
+        // client that stops reading after the dangling block stops leaves the
+        // same trace as before (see `MessageEnd`).
+        self.message_end = Some(MessageEnd {
+            stop_reason,
+            usage: response_obj
+                .get("usage")
+                .cloned()
+                .unwrap_or_else(|| json!({})),
+            web_search_count: self.web_search_count,
+        });
+        self.terminated = true;
+    }
+
+    fn on_response_failed(&mut self, event_name: &str, data: &Value, out: &mut Vec<Bytes>) {
+        let (message, error_type) = responses_error_details(
+            data,
+            if event_name == "response.failed" {
+                "Responses upstream reported response.failed"
+            } else {
+                "Responses upstream emitted an error event"
+            },
+        );
+        out.push(anthropic_error_sse(&message, &error_type));
+        self.terminated = true;
+    }
+
+    fn on_output_text_done(&mut self, data: &Value, out: &mut Vec<Bytes>) {
+        if self.preserve_web_search_citations {
+            self.buffered_citation_text.record_done_event(data);
+            return;
+        }
+        self.streamed_text.finish_part(data);
+        if let Some(index) = self.current_text_index.take() {
+            if self.open_indices.remove(&index) {
+                let stop_event = json!({
+                    "type": "content_block_stop",
+                    "index": index
+                });
+                let stop_sse = format!(
+                    "event: content_block_stop\ndata: {}\n\n",
+                    serde_json::to_string(&stop_event).unwrap_or_default()
+                );
+                out.push(Bytes::from(stop_sse));
+            }
+            if self.fallback_open_index == Some(index) {
+                self.fallback_open_index = None;
+            }
+        }
+    }
+
+    fn on_output_item_done(&mut self, data: &Value, out: &mut Vec<Bytes>) -> ControlFlow<()> {
+        let Some(item) = data.get("item") else {
+            return ControlFlow::Continue(());
+        };
+        let item_type = item.get("type").and_then(Value::as_str);
+        if self.can_preserve_web_search_citations && item_type == Some("web_search_call") {
+            self.preserve_web_search_citations = true;
+        }
+        match item_type {
+            Some("function_call") => self.on_function_call_item_done(data, item, out),
+            Some("web_search_call") => return self.on_web_search_call_item_done(data, item, out),
+            Some("reasoning") => self.on_reasoning_item_done(data, item, out),
+            Some("message") => self.on_message_item_done(data, item, out),
+            _ => {}
+        }
+        ControlFlow::Continue(())
+    }
+
+    fn on_function_call_item_done(&mut self, data: &Value, item: &Value, out: &mut Vec<Bytes>) {
+        self.has_tool_use = true;
+        let item_id = item
+            .get("id")
+            .and_then(Value::as_str)
+            .or_else(|| data.get("item_id").and_then(Value::as_str));
+        let index = item_id
+            .and_then(|id| self.tool_index_by_item_id.get(id).copied())
+            .or_else(|| {
+                tool_item_key_from_event(data).and_then(|key| self.index_by_key.get(&key).copied())
+            })
+            .or(self.last_tool_index);
+        if let Some(index) = index.filter(|value| self.open_indices.contains(value)) {
+            let name = self
+                .tool_name_by_index
+                .get(&index)
+                .map(String::as_str)
+                .unwrap_or("");
+            if !self.tool_had_delta.contains(&index) || name == "Read" {
+                let raw = item
+                    .get("arguments")
+                    .and_then(Value::as_str)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+                    .unwrap_or_else(|| {
+                        self.tool_args_by_index
+                            .get(&index)
+                            .cloned()
+                            .unwrap_or_default()
+                    });
+                let arguments = if name == "Read" {
+                    sanitize_anthropic_tool_use_input_json(name, &raw)
+                } else {
+                    raw
+                };
+                if !arguments.is_empty() {
+                    let event = json!({
+                        "type": "content_block_delta",
+                        "index": index,
+                        "delta": {
+                            "type": "input_json_delta",
+                            "partial_json": arguments
+                        }
+                    });
+                    let sse = format!(
+                        "event: content_block_delta\ndata: {}\n\n",
+                        serde_json::to_string(&event).unwrap_or_default()
+                    );
+                    out.push(Bytes::from(sse));
+                }
+            }
+            self.open_indices.remove(&index);
+            let event = json!({"type": "content_block_stop", "index": index});
+            let sse = format!(
+                "event: content_block_stop\ndata: {}\n\n",
+                serde_json::to_string(&event).unwrap_or_default()
+            );
+            out.push(Bytes::from(sse));
+            if let Some(id) = item_id {
+                self.tool_index_by_item_id.remove(id);
+            }
+            self.tool_name_by_index.remove(&index);
+            self.tool_args_by_index.remove(&index);
+            self.tool_had_delta.remove(&index);
+        }
+    }
+
+    fn on_web_search_call_item_done(
+        &mut self,
+        data: &Value,
+        item: &Value,
+        out: &mut Vec<Bytes>,
+    ) -> ControlFlow<()> {
+        self.has_substantive_output = true;
+        if self.preserve_web_search_citations {
+            let pending_text = self.buffered_citation_text.render_pending_parts();
+            let mut reusable_text_index = None;
+            if !pending_text.is_empty() {
+                if let Some(text_index) = self.current_text_index.take() {
+                    let was_open = self.open_indices.remove(&text_index);
+                    if was_open {
+                        out.push(anthropic_sse(
+                            "content_block_stop",
+                            &json!({"type":"content_block_stop","index":text_index}),
+                        ));
+                    } else {
+                        reusable_text_index = Some(text_index);
+                    }
+                    if self.fallback_open_index == Some(text_index) {
+                        self.fallback_open_index = None;
+                    }
+                }
+            }
+            for text in pending_text {
+                let index = reusable_text_index.take().unwrap_or_else(|| {
+                    let index = self.next_content_index;
+                    self.next_content_index += 1;
+                    index
+                });
+                out.extend(text_block_events(index, &text));
+            }
+        }
+        self.ensure_message_start(out);
+
+        let item_keys = web_search_item_keys(data, Some(item));
+        let provisional_index = item_keys
+            .iter()
+            .find_map(|key| self.index_by_key.get(key).copied());
+        let search_id = provisional_index
+            .and_then(|index| self.web_search_id_by_index.get(&index).cloned())
+            .or_else(|| {
+                item.get("id")
+                    .and_then(Value::as_str)
+                    .or_else(|| data.get("item_id").and_then(Value::as_str))
+                    .filter(|id| !id.is_empty())
+                    .map(ToString::to_string)
+            })
+            .or_else(|| provisional_index.map(|index| format!("ws_stream_{index}")))
+            .unwrap_or_else(|| format!("ws_stream_{}", self.next_content_index));
+        let disposition = record_web_search_call(
+            &search_id,
+            item,
+            &mut WebSearchRecordState {
+                ids_seen: &mut self.web_search_ids_seen,
+                id_order: &mut self.web_search_id_order,
+                results_by_id: &mut self.web_search_results_by_id,
+                errors_by_id: &mut self.web_search_errors_by_id,
+                request_count: &mut self.web_search_count,
+                max_uses: self.max_web_search_uses,
+                limit_exceeded_id: &mut self.web_search_limit_exceeded_id,
+            },
+        );
+        if disposition == WebSearchCallDisposition::Ignored {
+            return ControlFlow::Continue(());
+        }
+        if self.web_search_ids_completed.contains(&search_id) {
+            return ControlFlow::Continue(());
+        }
+
+        let index = self
+            .web_search_index_by_item_id
+            .get(&search_id)
+            .copied()
+            .or(provisional_index)
+            .unwrap_or_else(|| {
+                let assigned = self.next_content_index;
+                self.next_content_index += 1;
+                assigned
+            });
+        for key in item_keys {
+            self.index_by_key.insert(key, index);
+        }
+        self.web_search_index_by_item_id
+            .insert(search_id.clone(), index);
+        self.web_search_id_by_index.insert(index, search_id.clone());
+        reserve_web_search_result_index(
+            &search_id,
+            &mut self.web_search_result_index_by_id,
+            &mut self.next_content_index,
+        );
+
+        if let Some(text_index) = self.current_text_index.take() {
+            if self.open_indices.remove(&text_index) {
+                out.push(anthropic_sse(
+                    "content_block_stop",
+                    &json!({"type":"content_block_stop","index":text_index}),
+                ));
+            }
+            if self.fallback_open_index == Some(text_index) {
+                self.fallback_open_index = None;
+            }
+        }
+
+        if !self.open_indices.contains(&index) {
+            out.push(anthropic_sse(
+                "content_block_start",
+                &json!({
+                    "type":"content_block_start",
+                    "index":index,
+                    "content_block":{
+                        "type":"server_tool_use",
+                        "id":search_id,
+                        "name":self.hosted_web_search_name.as_str(),
+                        "input":{},
+                        "caller":{"type":"direct"}
+                    }
+                }),
+            ));
+            self.open_indices.insert(index);
+        }
+
+        let input = web_search_action_input(item);
+        out.push(anthropic_sse(
+            "content_block_delta",
+            &json!({
+                "type":"content_block_delta",
+                "index":index,
+                "delta":{
+                    "type":"input_json_delta",
+                    "partial_json":serde_json::to_string(&input)
+                        .unwrap_or_else(|_| "{}".to_string())
+                }
+            }),
+        ));
+        if self.open_indices.remove(&index) {
+            out.push(anthropic_sse(
+                "content_block_stop",
+                &json!({"type":"content_block_stop","index":index}),
+            ));
+        }
+        self.web_search_ids_completed.insert(search_id);
+        if disposition == WebSearchCallDisposition::LimitExceeded {
+            out.extend(take_open_web_search_block_stop_events(
+                &mut self.open_indices,
+                &self.web_search_id_by_index,
+            ));
+            out.extend(take_web_search_result_events(
+                &self.web_search_id_order,
+                &mut self.web_search_results_by_id,
+                &mut self.web_search_errors_by_id,
+                &mut self.web_search_result_index_by_id,
+                &mut self.next_content_index,
+            ));
+            if self.open_indices.is_empty() {
+                for event in web_search_limit_stop_events(self.web_search_count, self.has_tool_use)
+                {
+                    out.push(event);
+                }
+            } else {
+                out.push(anthropic_error_sse(
+                    "Responses upstream started a web search beyond max_uses while another content block was incomplete",
+                    "stream_truncated",
+                ));
+            }
+            self.terminated = true;
+            return ControlFlow::Break(());
+        }
+        ControlFlow::Continue(())
+    }
+
+    fn on_reasoning_item_done(&mut self, data: &Value, item: &Value, out: &mut Vec<Bytes>) {
+        let item_id = item
+            .get("id")
+            .and_then(Value::as_str)
+            .or_else(|| data.get("item_id").and_then(Value::as_str));
+        let index = item_id
+            .and_then(|id| self.reasoning_index_by_item_id.get(id).copied())
+            .or_else(|| {
+                reasoning_item_key(data, Some(item))
+                    .and_then(|key| self.index_by_key.get(&key).copied())
+            })
+            .unwrap_or_else(|| {
+                let assigned = self.next_content_index;
+                self.next_content_index += 1;
+                assigned
+            });
+        self.reasoning_item_by_index.insert(index, item.clone());
+
+        let final_item = self
+            .reasoning_item_by_index
+            .get(&index)
+            .cloned()
+            .unwrap_or_else(|| item.clone());
+        let full_text = reasoning_summary_text(&final_item);
+        let emitted_text = self
+            .reasoning_text_by_index
+            .get(&index)
+            .cloned()
+            .unwrap_or_default();
+        if emitted_text.is_empty() && !full_text.is_empty() {
+            let start_event = json!({
+                "type": "content_block_start",
+                "index": index,
+                "content_block": {"type": "thinking", "thinking": ""}
+            });
+            let start_sse = format!(
+                "event: content_block_start\ndata: {}\n\n",
+                serde_json::to_string(&start_event).unwrap_or_default()
+            );
+            out.push(Bytes::from(start_sse));
+            self.open_indices.insert(index);
+            let delta_event = json!({
+                "type": "content_block_delta",
+                "index": index,
+                "delta": {"type": "thinking_delta", "thinking": full_text}
+            });
+            let delta_sse = format!(
+                "event: content_block_delta\ndata: {}\n\n",
+                serde_json::to_string(&delta_event).unwrap_or_default()
+            );
+            out.push(Bytes::from(delta_sse));
+        } else if self.open_indices.contains(&index) {
+            // Deltas may cover only the start of the summary
+            // (e.g. a later summary part arrived without
+            // deltas). Emit the missing tail; snapshots that
+            // do not extend the streamed text are ignored.
+            if let Some(suffix) = full_text
+                .strip_prefix(emitted_text.as_str())
+                .filter(|suffix| !suffix.is_empty())
+            {
+                let delta_event = json!({
+                    "type": "content_block_delta",
+                    "index": index,
+                    "delta": {"type": "thinking_delta", "thinking": suffix}
+                });
+                let delta_sse = format!(
+                    "event: content_block_delta\ndata: {}\n\n",
+                    serde_json::to_string(&delta_event).unwrap_or_default()
+                );
+                out.push(Bytes::from(delta_sse));
+            }
+        }
+
+        let encrypted = final_item
+            .get("encrypted_content")
+            .and_then(Value::as_str)
+            .is_some_and(|value| !value.is_empty());
+        if encrypted {
+            if let Some(envelope) = encode_openai_reasoning_item(&final_item) {
+                if self.open_indices.contains(&index) {
+                    let signature_event = json!({
+                        "type": "content_block_delta",
+                        "index": index,
+                        "delta": {
+                            "type": "signature_delta",
+                            "signature": envelope
+                        }
+                    });
+                    let signature_sse = format!(
+                        "event: content_block_delta\ndata: {}\n\n",
+                        serde_json::to_string(&signature_event).unwrap_or_default()
+                    );
+                    out.push(Bytes::from(signature_sse));
+                } else {
+                    // Encrypted-only item: an empty thinking block
+                    // carries the envelope (Claude Code's VS Code
+                    // extension cannot render redacted_thinking).
+                    let start_event = json!({
+                        "type": "content_block_start",
+                        "index": index,
+                        "content_block": {"type": "thinking", "thinking": ""}
+                    });
+                    let start_sse = format!(
+                        "event: content_block_start\ndata: {}\n\n",
+                        serde_json::to_string(&start_event).unwrap_or_default()
+                    );
+                    out.push(Bytes::from(start_sse));
+                    self.open_indices.insert(index);
+                    let signature_event = json!({
+                        "type": "content_block_delta",
+                        "index": index,
+                        "delta": {
+                            "type": "signature_delta",
+                            "signature": envelope
+                        }
+                    });
+                    let signature_sse = format!(
+                        "event: content_block_delta\ndata: {}\n\n",
+                        serde_json::to_string(&signature_event).unwrap_or_default()
+                    );
+                    out.push(Bytes::from(signature_sse));
+                }
+            }
+        }
+        if self.open_indices.remove(&index) {
+            let stop_event = json!({"type": "content_block_stop", "index": index});
+            let stop_sse = format!(
+                "event: content_block_stop\ndata: {}\n\n",
+                serde_json::to_string(&stop_event).unwrap_or_default()
+            );
+            out.push(Bytes::from(stop_sse));
+        }
+        if let Some(id) = item_id {
+            self.reasoning_index_by_item_id.remove(id);
+        }
+        self.reasoning_item_by_index.remove(&index);
+        self.reasoning_text_by_index.remove(&index);
+    }
+
+    fn on_message_item_done(&mut self, data: &Value, item: &Value, out: &mut Vec<Bytes>) {
+        let buffered_citations = self
+            .preserve_web_search_citations
+            .then_some(&mut self.buffered_citation_text);
+        let missing_text = missing_message_text_parts(
+            item,
+            data.get("output_index").and_then(Value::as_u64),
+            &mut self.streamed_text,
+            buffered_citations,
+        );
+        if !missing_text.is_empty() {
+            self.has_substantive_output = true;
+            self.ensure_message_start(out);
+            let mut reusable_text_index = None;
+            if let Some(index) = self.current_text_index.take() {
+                let was_open = self.open_indices.remove(&index);
+                if was_open {
+                    out.push(anthropic_sse(
+                        "content_block_stop",
+                        &json!({"type":"content_block_stop","index":index}),
+                    ));
+                } else if self.preserve_web_search_citations {
+                    reusable_text_index = Some(index);
+                }
+                if self.fallback_open_index == Some(index) {
+                    self.fallback_open_index = None;
+                }
+            }
+            for text in missing_text {
+                let index = reusable_text_index.take().unwrap_or_else(|| {
+                    let index = self.next_content_index;
+                    self.next_content_index += 1;
+                    index
+                });
+                out.extend(text_block_events(index, &text));
+            }
+        }
+
+        let mut new_results = Vec::new();
+        for result in web_search_results_from_output_item(item) {
+            let Some(url) = result.get("url").and_then(Value::as_str) else {
+                continue;
+            };
+            if self.seen_web_search_result_urls.insert(url.to_string()) {
+                new_results.push(result);
+            }
+        }
+        append_unique_web_search_results(&mut self.pending_web_search_results, new_results);
+    }
+
+    /// The upstream ended without a terminal event.
+    fn finish_unterminated(&mut self, out: &mut Vec<Bytes>) {
+        let has_open_tool = self.open_indices.iter().any(|index| {
+            self.tool_name_by_index.contains_key(index)
+                || self.tool_args_by_index.contains_key(index)
+        });
+        // Hosted-search results are intentionally deferred until the
+        // response terminal event so final citations can be paired. Any
+        // observed search at clean EOF is therefore still structurally
+        // unpaired, even if its server_tool_use block was already closed.
+        let has_unpaired_server_tool = !self.web_search_id_order.is_empty();
+        let has_open_reasoning = self.open_indices.iter().any(|index| {
+            self.reasoning_item_by_index.contains_key(index)
+                || self.reasoning_text_by_index.contains_key(index)
+                || self.legacy_reasoning_index == Some(*index)
+        });
+
+        if self.has_substantive_output
+            && !has_open_tool
+            && !has_unpaired_server_tool
+            && !has_open_reasoning
+        {
+            if self.preserve_web_search_citations {
+                let pending_text = self.buffered_citation_text.render_pending_parts();
+                let mut reusable_text_index = None;
+                if !pending_text.is_empty() {
+                    if let Some(index) = self.current_text_index.take() {
+                        let was_open = self.open_indices.remove(&index);
+                        if was_open {
+                            out.push(anthropic_sse(
+                                "content_block_stop",
+                                &json!({"type":"content_block_stop","index":index}),
+                            ));
+                        } else {
+                            reusable_text_index = Some(index);
+                        }
+                    }
+                }
+                for text in pending_text {
+                    let index = reusable_text_index.take().unwrap_or_else(|| {
+                        let index = self.next_content_index;
+                        self.next_content_index += 1;
+                        index
+                    });
+                    out.extend(text_block_events(index, &text));
+                }
+            }
+            // Text-only partial output is safe to expose as a max-token style
+            // incomplete turn. Close blocks before the terminal events.
+            let mut remaining: Vec<u32> = self.open_indices.iter().copied().collect();
+            remaining.sort_unstable();
+            for index in remaining {
+                out.push(anthropic_sse(
+                    "content_block_stop",
+                    &json!({"type":"content_block_stop","index":index}),
+                ));
+            }
+            self.ensure_message_start(out);
+            out.push(anthropic_sse(
+                "message_delta",
+                &json!({
+                    "type":"message_delta",
+                    "delta":{"stop_reason":"max_tokens","stop_sequence":null},
+                    "usage":{"input_tokens":0,"output_tokens":0}
+                }),
+            ));
+            out.push(anthropic_sse(
+                "message_stop",
+                &json!({"type":"message_stop"}),
+            ));
+        } else {
+            // A truncated tool/reasoning block cannot be safely finalized: tool
+            // JSON may be partial and thinking may be missing its signature.
+            out.push(anthropic_error_sse(
+                "Responses upstream stream ended before a terminal event",
+                "stream_truncated",
+            ));
+        }
+    }
+}
+
 fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 'static>(
     stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
     hosted_web_search_name: String,
@@ -2403,43 +4601,13 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
     can_preserve_web_search_citations: bool,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
-        let mut buffer = String::new();
-        let mut utf8_remainder: Vec<u8> = Vec::new();
-        let mut message_id: Option<String> = None;
-        let mut current_model: Option<String> = None;
-        let mut has_sent_message_start = false;
-        let mut has_tool_use = false;
-        let mut next_content_index: u32 = 0;
-        let mut index_by_key: HashMap<String, u32> = HashMap::new();
-        let mut open_indices: HashSet<u32> = HashSet::new();
-        let mut fallback_open_index: Option<u32> = None;
-        let mut current_text_index: Option<u32> = None;
-        let mut streamed_text = StreamedTextState::default();
-        let mut buffered_citation_text = BufferedCitationTextState::default();
-        let mut preserve_web_search_citations = false;
-        let mut tool_index_by_item_id: HashMap<String, u32> = HashMap::new();
-        let mut tool_name_by_index: HashMap<u32, String> = HashMap::new();
-        let mut tool_args_by_index: HashMap<u32, String> = HashMap::new();
-        let mut tool_had_delta: HashSet<u32> = HashSet::new();
-        let mut last_tool_index: Option<u32> = None;
-        let mut web_search_index_by_item_id: HashMap<String, u32> = HashMap::new();
-        let mut web_search_id_by_index: HashMap<u32, String> = HashMap::new();
-        let mut web_search_result_index_by_id: HashMap<String, u32> = HashMap::new();
-        let mut web_search_ids_seen: HashSet<String> = HashSet::new();
-        let mut web_search_ids_completed: HashSet<String> = HashSet::new();
-        let mut web_search_limit_exceeded_id: Option<String> = None;
-        let mut web_search_id_order: Vec<String> = Vec::new();
-        let mut web_search_results_by_id: HashMap<String, Vec<Value>> = HashMap::new();
-        let mut web_search_errors_by_id: HashMap<String, Value> = HashMap::new();
-        let mut pending_web_search_results: Vec<Value> = Vec::new();
-        let mut seen_web_search_result_urls: HashSet<String> = HashSet::new();
-        let mut web_search_count = 0_u64;
-        let mut reasoning_index_by_item_id: HashMap<String, u32> = HashMap::new();
-        let mut reasoning_item_by_index: HashMap<u32, Value> = HashMap::new();
-        let mut reasoning_text_by_index: HashMap<u32, String> = HashMap::new();
-        let mut legacy_reasoning_index: Option<u32> = None;
-        let mut has_substantive_output = false;
-        let mut terminated = false;
+        let mut sse = SseBuffer::new();
+        let mut state = ResponsesToAnthropicState::new(
+            hosted_web_search_name,
+            max_web_search_uses,
+            can_preserve_web_search_citations,
+        );
+        let mut out = Vec::new();
 
         // Append an EOF sentinel so the same parser handles a final SSE event that
         // omitted its trailing blank line. The boolean distinguishes the sentinel
@@ -2454,13 +4622,13 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
         'stream_loop: while let Some((chunk, is_eof)) = stream.next().await {
             match chunk {
                 Ok(bytes) => {
-                    crate::proxy::sse::append_utf8_safe(&mut buffer, &mut utf8_remainder, &bytes);
+                    sse.push_bytes(&bytes);
 
                     // A few compatible gateways ignore stream:true and return one
                     // JSON document. Hold it intact until EOF, including any pretty-
                     // printed blank lines that would otherwise look like SSE separators.
                     let looks_like_json = matches!(
-                        buffer
+                        sse.pending()
                             .trim_start_matches(|ch: char| ch.is_whitespace() || ch == '\u{feff}')
                             .as_bytes()
                             .first(),
@@ -2470,35 +4638,35 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                         continue;
                     }
                     if looks_like_json && is_eof {
-                        match serde_json::from_str::<Value>(buffer.trim()) {
+                        match serde_json::from_str::<Value>(sse.pending().trim()) {
                             Ok(body) => {
                                 for event in responses_json_to_anthropic_sse(
                                     body,
-                                    Some(hosted_web_search_name.as_str()),
-                                    max_web_search_uses,
+                                    Some(state.hosted_web_search_name.as_str()),
+                                    state.max_web_search_uses,
                                 ) {
                                     yield Ok(event);
                                 }
-                                terminated = true;
+                                state.terminated = true;
                             }
                             Err(error) => {
                                 yield Ok(anthropic_error_sse(
                                     &format!("Invalid JSON response from Responses upstream: {error}"),
                                     "response_parse_error",
                                 ));
-                                terminated = true;
+                                state.terminated = true;
                             }
                         }
-                        buffer.clear();
+                        sse.clear();
                         continue;
                     }
 
-                    if is_eof && !buffer.trim().is_empty() {
-                        buffer.push_str("\n\n");
+                    if is_eof && !sse.pending().trim().is_empty() {
+                        sse.push_str("\n\n");
                     }
 
                     // SSE 事件由 \n\n 分隔
-                    while let Some(block) = take_sse_block(&mut buffer) {
+                    while let Some(block) = sse.next_block() {
                         if block.trim().is_empty() {
                             continue;
                         }
@@ -2541,2061 +4709,27 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                         // Ignore every event after a terminal response. In particular,
                         // do not synthesize message_start if a broken gateway emits a
                         // late delta after response.failed/error.
-                        if terminated {
+                        if state.terminated {
                             continue;
                         }
 
-                        let delta_requires_message_start = matches!(
-                            event_name,
-                            "response.output_text.delta"
-                                | "response.refusal.delta"
-                                | "response.function_call_arguments.delta"
-                                | "response.reasoning_summary_text.delta"
-                                | "response.reasoning_text.delta"
-                                | "response.reasoning.delta"
-                        );
-                        if delta_requires_message_start {
-                            has_substantive_output = true;
+                        let flow = state.handle_event(event_name, &data, &mut out);
+                        for bytes in out.drain(..) {
+                            yield Ok(bytes);
                         }
-                        if delta_requires_message_start && !has_sent_message_start {
-                            yield Ok(anthropic_sse(
-                                "message_start",
-                                &json!({
-                                    "type":"message_start",
-                                    "message":{
-                                        "id":message_id.clone().unwrap_or_default(),
-                                        "type":"message",
-                                        "role":"assistant",
-                                        "model":current_model.clone().unwrap_or_default(),
-                                        "usage":{"input_tokens":0,"output_tokens":0}
-                                    }
-                                }),
-                            ));
-                            has_sent_message_start = true;
+                        if let Some(end) = state.message_end.take() {
+                            yield Ok(end.message_delta());
+                            yield Ok(MessageEnd::message_stop());
                         }
-
-                        match event_name {
-                            // ================================================
-                            // response.created → message_start
-                            // ================================================
-                            "response.created" => {
-                                let response_obj = response_object_from_event(&data);
-                                if let Some(id) = response_obj.get("id").and_then(|i| i.as_str()) {
-                                    message_id = Some(id.to_string());
-                                }
-                                if let Some(model) =
-                                    response_obj.get("model").and_then(|m| m.as_str())
-                                {
-                                    current_model = Some(model.to_string());
-                                }
-
-                                has_sent_message_start = true;
-                                // Build usage with defensive null handling
-                                // Some() wrapper ensures build function always receives valid input
-                                // Fallback to empty object {} if usage field missing, ensuring message_start
-                                // event always has valid usage structure for VSCode Extension compatibility
-                                let start_usage = build_anthropic_usage_from_responses(
-                                    Some(response_obj.get("usage").unwrap_or(&json!({}))),
-                                );
-
-                                let event = json!({
-                                    "type": "message_start",
-                                    "message": {
-                                        "id": message_id.clone().unwrap_or_default(),
-                                        "type": "message",
-                                        "role": "assistant",
-                                        "model": current_model.clone().unwrap_or_default(),
-                                        "usage": start_usage
-                                    }
-                                });
-                                let sse = format!("event: message_start\ndata: {}\n\n",
-                                    serde_json::to_string(&event).unwrap_or_default());
-                                log::debug!("[Claude/Responses] >>> Anthropic SSE: message_start");
-                                yield Ok(Bytes::from(sse));
-                            }
-
-                            // ================================================
-                            // response.content_part.added → content_block_start (text)
-                            // ================================================
-                            "response.content_part.added" => {
-                                // 确保 message_start 已发送
-                                if !has_sent_message_start {
-                                    let start_event = json!({
-                                        "type": "message_start",
-                                        "message": {
-                                            "id": message_id.clone().unwrap_or_default(),
-                                            "type": "message",
-                                            "role": "assistant",
-                                            "model": current_model.clone().unwrap_or_default(),
-                                            "usage": { "input_tokens": 0, "output_tokens": 0 }
-                                        }
-                                    });
-                                    let sse = format!("event: message_start\ndata: {}\n\n",
-                                        serde_json::to_string(&start_event).unwrap_or_default());
-                                    yield Ok(Bytes::from(sse));
-                                    has_sent_message_start = true;
-                                }
-
-                                if let Some(part) = data.get("part") {
-                                    let part_type = part.get("type").and_then(|t| t.as_str());
-                                    if matches!(part_type, Some("output_text") | Some("refusal")) {
-                                        if preserve_web_search_citations
-                                            && part_type == Some("output_text")
-                                        {
-                                            buffered_citation_text.record_part(&data, part, false);
-                                            if current_text_index.is_none()
-                                                && part
-                                                    .get("text")
-                                                    .and_then(Value::as_str)
-                                                    .is_some_and(|text| !text.is_empty())
-                                            {
-                                                current_text_index =
-                                                    Some(resolve_content_index(
-                                                        &data,
-                                                        &mut next_content_index,
-                                                        &mut index_by_key,
-                                                        &mut fallback_open_index,
-                                                    ));
-                                            }
-                                            continue;
-                                        }
-
-                                        let index = if let Some(index) = current_text_index {
-                                            index
-                                        } else {
-                                            let index = resolve_content_index(
-                                                &data,
-                                                &mut next_content_index,
-                                                &mut index_by_key,
-                                                &mut fallback_open_index,
-                                            );
-                                            current_text_index = Some(index);
-                                            index
-                                        };
-
-                                        if open_indices.contains(&index) {
-                                            continue;
-                                        }
-
-                                        let event = json!({
-                                            "type": "content_block_start",
-                                            "index": index,
-                                            "content_block": {
-                                                "type": "text",
-                                                "text": ""
-                                            }
-                                        });
-                                        let sse = format!("event: content_block_start\ndata: {}\n\n",
-                                            serde_json::to_string(&event).unwrap_or_default());
-                                        yield Ok(Bytes::from(sse));
-                                        open_indices.insert(index);
-                                    }
-                                }
-                            }
-
-                            // ================================================
-                            // response.output_text.delta → content_block_delta (text_delta)
-                            // ================================================
-                            "response.output_text.delta" => {
-                                if let Some(delta) = data.get("delta").and_then(|d| d.as_str()) {
-                                    if preserve_web_search_citations {
-                                        buffered_citation_text.record_delta(&data, delta);
-                                        if current_text_index.is_none() {
-                                            current_text_index = Some(resolve_content_index(
-                                                &data,
-                                                &mut next_content_index,
-                                                &mut index_by_key,
-                                                &mut fallback_open_index,
-                                            ));
-                                        }
-                                        yield Ok(anthropic_ping_sse());
-                                        continue;
-                                    }
-                                    streamed_text.record_delta(&data, delta);
-                                    let index = if let Some(index) = current_text_index {
-                                        index
-                                    } else {
-                                        let index = resolve_content_index(
-                                            &data,
-                                            &mut next_content_index,
-                                            &mut index_by_key,
-                                            &mut fallback_open_index,
-                                        );
-                                        current_text_index = Some(index);
-                                        index
-                                    };
-
-                                    if !open_indices.contains(&index) {
-                                        let start_event = json!({
-                                            "type": "content_block_start",
-                                            "index": index,
-                                            "content_block": {
-                                                "type": "text",
-                                                "text": ""
-                                            }
-                                        });
-                                        let start_sse = format!("event: content_block_start\ndata: {}\n\n",
-                                            serde_json::to_string(&start_event).unwrap_or_default());
-                                        yield Ok(Bytes::from(start_sse));
-                                        open_indices.insert(index);
-                                    }
-                                    let event = json!({
-                                        "type": "content_block_delta",
-                                        "index": index,
-                                        "delta": {
-                                            "type": "text_delta",
-                                            "text": delta
-                                        }
-                                    });
-                                    let sse = format!("event: content_block_delta\ndata: {}\n\n",
-                                        serde_json::to_string(&event).unwrap_or_default());
-                                    yield Ok(Bytes::from(sse));
-                                }
-                            }
-
-                            "response.output_text.annotation.added"
-                                if preserve_web_search_citations =>
-                            {
-                                if let Some(annotation) = data.get("annotation") {
-                                    buffered_citation_text.record_annotation(&data, annotation);
-                                }
-                            }
-                            "response.output_text.annotation.added" => {}
-
-                            // ================================================
-                            // response.refusal.delta → content_block_delta (text_delta)
-                            // ================================================
-                            "response.refusal.delta" => {
-                                if let Some(delta) = data.get("delta").and_then(|d| d.as_str()) {
-                                    streamed_text.record_delta(&data, delta);
-                                    let index = if let Some(index) = current_text_index {
-                                        index
-                                    } else {
-                                        let index = resolve_content_index(
-                                            &data,
-                                            &mut next_content_index,
-                                            &mut index_by_key,
-                                            &mut fallback_open_index,
-                                        );
-                                        current_text_index = Some(index);
-                                        index
-                                    };
-
-                                    if !open_indices.contains(&index) {
-                                        let start_event = json!({
-                                            "type": "content_block_start",
-                                            "index": index,
-                                            "content_block": {
-                                                "type": "text",
-                                                "text": ""
-                                            }
-                                        });
-                                        let start_sse = format!("event: content_block_start\ndata: {}\n\n",
-                                            serde_json::to_string(&start_event).unwrap_or_default());
-                                        yield Ok(Bytes::from(start_sse));
-                                        open_indices.insert(index);
-                                    }
-
-                                    let event = json!({
-                                        "type": "content_block_delta",
-                                        "index": index,
-                                        "delta": {
-                                            "type": "text_delta",
-                                            "text": delta
-                                        }
-                                    });
-                                    let sse = format!("event: content_block_delta\ndata: {}\n\n",
-                                        serde_json::to_string(&event).unwrap_or_default());
-                                    yield Ok(Bytes::from(sse));
-                                }
-                            }
-
-                            // ================================================
-                            // response.content_part.done → content_block_stop
-                            // ================================================
-                            "response.content_part.done" if preserve_web_search_citations => {
-                                let accepted = if let Some(part) = data
-                                    .get("part")
-                                    .filter(|part| {
-                                        part.get("type").and_then(Value::as_str)
-                                            == Some("output_text")
-                                    })
-                                {
-                                    buffered_citation_text.record_part(&data, part, true)
-                                } else {
-                                    true
-                                };
-                                if accepted {
-                                    buffered_citation_text.finish_event_part(&data);
-                                }
-                            }
-                            "response.content_part.done" => {
-                                streamed_text.finish_part(&data);
-                            }
-
-                            // ================================================
-                            // response.output_item.added (function_call) → content_block_start (tool_use)
-                            // ================================================
-                            "response.output_item.added" => {
-                                if let Some(item) = data.get("item") {
-                                    let item_type = item.get("type").and_then(|t| t.as_str()).unwrap_or("");
-                                    if can_preserve_web_search_citations
-                                        && item_type == "web_search_call"
-                                    {
-                                        preserve_web_search_citations = true;
-                                    }
-                                    if preserve_web_search_citations && item_type != "message" {
-                                        let pending_text =
-                                            buffered_citation_text.render_pending_parts();
-                                        let mut reusable_text_index = None;
-                                        if !pending_text.is_empty() {
-                                            if let Some(index) = current_text_index.take() {
-                                                let was_open = open_indices.remove(&index);
-                                                if was_open {
-                                                    yield Ok(anthropic_sse(
-                                                        "content_block_stop",
-                                                        &json!({"type":"content_block_stop","index":index}),
-                                                    ));
-                                                } else {
-                                                    reusable_text_index = Some(index);
-                                                }
-                                                if fallback_open_index == Some(index) {
-                                                    fallback_open_index = None;
-                                                }
-                                            }
-                                        }
-                                        for text in pending_text {
-                                            let index =
-                                                reusable_text_index.take().unwrap_or_else(|| {
-                                                    let index = next_content_index;
-                                                    next_content_index += 1;
-                                                    index
-                                                });
-                                            for event in text_block_events(index, &text) {
-                                                yield Ok(event);
-                                            }
-                                        }
-                                    }
-                                    if item_type == "function_call" {
-                                        has_tool_use = true;
-                                        has_substantive_output = true;
-                                        if let Some(index) = current_text_index.take() {
-                                            if open_indices.remove(&index) {
-                                                let stop_event = json!({
-                                                    "type": "content_block_stop",
-                                                    "index": index
-                                                });
-                                                let stop_sse = format!("event: content_block_stop\ndata: {}\n\n",
-                                                    serde_json::to_string(&stop_event).unwrap_or_default());
-                                                yield Ok(Bytes::from(stop_sse));
-                                            }
-                                            if fallback_open_index == Some(index) {
-                                                fallback_open_index = None;
-                                            }
-                                        }
-                                        // 确保 message_start 已发送
-                                        if !has_sent_message_start {
-                                            let start_event = json!({
-                                                "type": "message_start",
-                                                "message": {
-                                                    "id": message_id.clone().unwrap_or_default(),
-                                                    "type": "message",
-                                                    "role": "assistant",
-                                                    "model": current_model.clone().unwrap_or_default(),
-                                                    "usage": { "input_tokens": 0, "output_tokens": 0 }
-                                                }
-                                            });
-                                            let sse = format!("event: message_start\ndata: {}\n\n",
-                                                serde_json::to_string(&start_event).unwrap_or_default());
-                                            yield Ok(Bytes::from(sse));
-                                            has_sent_message_start = true;
-                                        }
-
-                                        let call_id = item.get("call_id").and_then(|i| i.as_str()).unwrap_or("");
-                                        let name = item.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                                        let index = if let Some(k) = tool_item_key_from_added(&data, item) {
-                                            if let Some(existing) = index_by_key.get(&k).copied() {
-                                                existing
-                                            } else {
-                                                let assigned = next_content_index;
-                                                next_content_index += 1;
-                                                index_by_key.insert(k, assigned);
-                                                assigned
-                                            }
-                                        } else {
-                                            let assigned = next_content_index;
-                                            next_content_index += 1;
-                                            assigned
-                                        };
-                                        if let Some(item_id) = item
-                                            .get("id")
-                                            .and_then(|v| v.as_str())
-                                            .or_else(|| data.get("item_id").and_then(|v| v.as_str()))
-                                        {
-                                            tool_index_by_item_id.insert(item_id.to_string(), index);
-                                        }
-                                        tool_name_by_index.insert(index, name.to_string());
-                                        last_tool_index = Some(index);
-
-                                        if open_indices.contains(&index) {
-                                            continue;
-                                        }
-
-                                        tool_args_by_index.insert(index, String::new());
-
-                                        let event = json!({
-                                            "type": "content_block_start",
-                                            "index": index,
-                                            "content_block": {
-                                                "type": "tool_use",
-                                                "id": call_id,
-                                                "name": name
-                                            }
-                                        });
-                                        let sse = format!("event: content_block_start\ndata: {}\n\n",
-                                            serde_json::to_string(&event).unwrap_or_default());
-                                        yield Ok(Bytes::from(sse));
-                                        open_indices.insert(index);
-                                    } else if item_type == "web_search_call" {
-                                        has_substantive_output = true;
-                                        if let Some(index) = current_text_index.take() {
-                                            if open_indices.remove(&index) {
-                                                yield Ok(anthropic_sse(
-                                                    "content_block_stop",
-                                                    &json!({"type":"content_block_stop","index":index}),
-                                                ));
-                                            }
-                                            if fallback_open_index == Some(index) {
-                                                fallback_open_index = None;
-                                            }
-                                        }
-                                        if !has_sent_message_start {
-                                            yield Ok(anthropic_sse(
-                                                "message_start",
-                                                &json!({
-                                                    "type":"message_start",
-                                                    "message":{
-                                                        "id":message_id.clone().unwrap_or_default(),
-                                                        "type":"message",
-                                                        "role":"assistant",
-                                                        "model":current_model.clone().unwrap_or_default(),
-                                                        "usage":{"input_tokens":0,"output_tokens":0}
-                                                    }
-                                                }),
-                                            ));
-                                            has_sent_message_start = true;
-                                        }
-
-                                        let item_keys = web_search_item_keys(&data, Some(item));
-                                        let index = if let Some(existing) = item_keys
-                                            .iter()
-                                            .find_map(|key| index_by_key.get(key).copied())
-                                        {
-                                            existing
-                                        } else {
-                                            let assigned = next_content_index;
-                                            next_content_index += 1;
-                                            assigned
-                                        };
-                                        for key in item_keys {
-                                            index_by_key.insert(key, index);
-                                        }
-                                        let search_id = web_search_id_by_index
-                                            .get(&index)
-                                            .cloned()
-                                            .or_else(|| {
-                                                item.get("id")
-                                                    .and_then(Value::as_str)
-                                                    .or_else(|| {
-                                                        data.get("item_id").and_then(Value::as_str)
-                                                    })
-                                                    .filter(|id| !id.is_empty())
-                                                    .map(ToString::to_string)
-                                            })
-                                            .unwrap_or_else(|| format!("ws_stream_{index}"));
-                                        let disposition = record_web_search_call(
-                                            &search_id,
-                                            item,
-                                            &mut WebSearchRecordState {
-                                                ids_seen: &mut web_search_ids_seen,
-                                                id_order: &mut web_search_id_order,
-                                                results_by_id: &mut web_search_results_by_id,
-                                                errors_by_id: &mut web_search_errors_by_id,
-                                                request_count: &mut web_search_count,
-                                                max_uses: max_web_search_uses,
-                                                limit_exceeded_id:
-                                                    &mut web_search_limit_exceeded_id,
-                                            },
-                                        );
-                                        if disposition == WebSearchCallDisposition::Ignored {
-                                            continue;
-                                        }
-                                        web_search_index_by_item_id
-                                            .insert(search_id.clone(), index);
-                                        web_search_id_by_index.insert(index, search_id.clone());
-                                        reserve_web_search_result_index(
-                                            &search_id,
-                                            &mut web_search_result_index_by_id,
-                                            &mut next_content_index,
-                                        );
-
-                                        if !open_indices.contains(&index) {
-                                            yield Ok(anthropic_sse(
-                                                "content_block_start",
-                                                &json!({
-                                                    "type":"content_block_start",
-                                                    "index":index,
-                                                    "content_block":{
-                                                        "type":"server_tool_use",
-                                                        "id":search_id,
-                                                        "name":hosted_web_search_name.as_str(),
-                                                        "input":{},
-                                                        "caller":{"type":"direct"}
-                                                    }
-                                                }),
-                                            ));
-                                            open_indices.insert(index);
-                                        }
-                                        if disposition
-                                            == WebSearchCallDisposition::LimitExceeded
-                                        {
-                                            yield Ok(anthropic_sse(
-                                                "content_block_delta",
-                                                &json!({
-                                                    "type":"content_block_delta",
-                                                    "index":index,
-                                                    "delta":{
-                                                        "type":"input_json_delta",
-                                                        "partial_json":"{}"
-                                                    }
-                                                }),
-                                            ));
-                                            if open_indices.remove(&index) {
-                                                yield Ok(anthropic_sse(
-                                                    "content_block_stop",
-                                                    &json!({"type":"content_block_stop","index":index}),
-                                                ));
-                                            }
-                                            web_search_ids_completed.insert(search_id);
-                                            for event in take_open_web_search_block_stop_events(
-                                                &mut open_indices,
-                                                &web_search_id_by_index,
-                                            ) {
-                                                yield Ok(event);
-                                            }
-                                            for event in take_web_search_result_events(
-                                                &web_search_id_order,
-                                                &mut web_search_results_by_id,
-                                                &mut web_search_errors_by_id,
-                                                &mut web_search_result_index_by_id,
-                                                &mut next_content_index,
-                                            ) {
-                                                yield Ok(event);
-                                            }
-                                            if open_indices.is_empty() {
-                                                for event in web_search_limit_stop_events(
-                                                    web_search_count,
-                                                    has_tool_use,
-                                                ) {
-                                                    yield Ok(event);
-                                                }
-                                            } else {
-                                                yield Ok(anthropic_error_sse(
-                                                    "Responses upstream started a web search beyond max_uses while another content block was incomplete",
-                                                    "stream_truncated",
-                                                ));
-                                            }
-                                            terminated = true;
-                                            break 'stream_loop;
-                                        }
-                                    } else if item_type == "reasoning" {
-                                        if !has_sent_message_start {
-                                            let start_event = json!({
-                                                "type": "message_start",
-                                                "message": {
-                                                    "id": message_id.clone().unwrap_or_default(),
-                                                    "type": "message",
-                                                    "role": "assistant",
-                                                    "model": current_model.clone().unwrap_or_default(),
-                                                    "usage": { "input_tokens": 0, "output_tokens": 0 }
-                                                }
-                                            });
-                                            let sse = format!("event: message_start\ndata: {}\n\n",
-                                                serde_json::to_string(&start_event).unwrap_or_default());
-                                            yield Ok(Bytes::from(sse));
-                                            has_sent_message_start = true;
-                                        }
-
-                                        let index = if let Some(key) = reasoning_item_key(&data, Some(item)) {
-                                            if let Some(existing) = index_by_key.get(&key).copied() {
-                                                existing
-                                            } else {
-                                                let assigned = next_content_index;
-                                                next_content_index += 1;
-                                                index_by_key.insert(key, assigned);
-                                                assigned
-                                            }
-                                        } else {
-                                            let assigned = next_content_index;
-                                            next_content_index += 1;
-                                            assigned
-                                        };
-                                        if let Some(item_id) = item
-                                            .get("id")
-                                            .and_then(Value::as_str)
-                                            .or_else(|| data.get("item_id").and_then(Value::as_str))
-                                        {
-                                            reasoning_index_by_item_id.insert(item_id.to_string(), index);
-                                        }
-                                        reasoning_item_by_index.insert(index, item.clone());
-                                        reasoning_text_by_index.entry(index).or_default();
-                                    }
-                                    // message type output_item.added is handled via content_part.added
-                                }
-                            }
-
-                            // ================================================
-                            // response.function_call_arguments.delta → content_block_delta (input_json_delta)
-                            // ================================================
-                            "response.function_call_arguments.delta" => {
-                                if let Some(delta) = data.get("delta").and_then(|d| d.as_str()) {
-                                    has_tool_use = true;
-                                    let item_id = data.get("item_id").and_then(|v| v.as_str());
-                                    let index = if let Some(id) = item_id {
-                                        tool_index_by_item_id.get(id).copied()
-                                    } else {
-                                        None
-                                    }
-                                    .or_else(|| {
-                                        tool_item_key_from_event(&data)
-                                            .and_then(|k| index_by_key.get(&k).copied())
-                                    })
-                                    .or(last_tool_index)
-                                    .unwrap_or_else(|| {
-                                        let assigned = next_content_index;
-                                        next_content_index += 1;
-                                        assigned
-                                    });
-
-                                    if let Some(id) = item_id {
-                                        tool_index_by_item_id.insert(id.to_string(), index);
-                                    }
-                                    if let Some(name) = data.get("name").and_then(Value::as_str) {
-                                        tool_name_by_index.insert(index, name.to_string());
-                                    } else {
-                                        tool_name_by_index.entry(index).or_default();
-                                    }
-                                    last_tool_index = Some(index);
-
-                                    if !open_indices.contains(&index) {
-                                        let start_event = json!({
-                                            "type": "content_block_start",
-                                            "index": index,
-                                            "content_block": {
-                                                "type": "tool_use",
-                                                "id": data
-                                                    .get("call_id")
-                                                    .and_then(|v| v.as_str())
-                                                    .or(item_id)
-                                                    .unwrap_or(""),
-                                                "name": data
-                                                    .get("name")
-                                                    .and_then(|v| v.as_str())
-                                                    .unwrap_or("")
-                                            }
-                                        });
-                                        let start_sse = format!("event: content_block_start\ndata: {}\n\n",
-                                            serde_json::to_string(&start_event).unwrap_or_default());
-                                        yield Ok(Bytes::from(start_sse));
-                                        open_indices.insert(index);
-                                    }
-
-                                    tool_args_by_index
-                                        .entry(index)
-                                        .or_default()
-                                        .push_str(delta);
-                                    tool_had_delta.insert(index);
-
-                                    if tool_name_by_index.get(&index).map(String::as_str) == Some("Read") {
-                                        continue;
-                                    }
-
-                                    let event = json!({
-                                        "type": "content_block_delta",
-                                        "index": index,
-                                        "delta": {
-                                            "type": "input_json_delta",
-                                            "partial_json": delta
-                                        }
-                                    });
-                                    let sse = format!("event: content_block_delta\ndata: {}\n\n",
-                                        serde_json::to_string(&event).unwrap_or_default());
-                                    yield Ok(Bytes::from(sse));
-                                }
-                            }
-
-                            // ================================================
-                            // response.function_call_arguments.done → content_block_stop
-                            // ================================================
-                            "response.function_call_arguments.done" => {
-                                has_tool_use = true;
-                                let item_id = data.get("item_id").and_then(|v| v.as_str());
-                                let index = if let Some(id) = item_id {
-                                    tool_index_by_item_id.get(id).copied()
-                                } else {
-                                    None
-                                }
-                                .or_else(|| {
-                                    tool_item_key_from_event(&data)
-                                        .and_then(|k| index_by_key.get(&k).copied())
-                                })
-                                .or(last_tool_index);
-                                if let Some(index) = index {
-                                    if !open_indices.remove(&index) {
-                                        continue;
-                                    }
-                                    if tool_name_by_index.get(&index).map(String::as_str) == Some("Read") {
-                                        let raw = data
-                                            .get("arguments")
-                                            .or_else(|| data.pointer("/item/arguments"))
-                                            .and_then(|v| v.as_str())
-                                            .map(str::to_string)
-                                            .unwrap_or_else(|| {
-                                                tool_args_by_index
-                                                    .get(&index)
-                                                    .cloned()
-                                                    .unwrap_or_default()
-                                            });
-                                        let sanitized = sanitize_anthropic_tool_use_input_json("Read", &raw);
-                                        if !sanitized.is_empty() {
-                                            let event = json!({
-                                                "type": "content_block_delta",
-                                                "index": index,
-                                                "delta": {
-                                                    "type": "input_json_delta",
-                                                    "partial_json": sanitized
-                                                }
-                                            });
-                                            let sse = format!("event: content_block_delta\ndata: {}\n\n",
-                                                serde_json::to_string(&event).unwrap_or_default());
-                                            yield Ok(Bytes::from(sse));
-                                        }
-                                    } else if !tool_had_delta.contains(&index) {
-                                        // Some compatible gateways skip delta events and only
-                                        // provide the complete arguments on the done event.
-                                        if let Some(arguments) = data
-                                            .get("arguments")
-                                            .or_else(|| data.pointer("/item/arguments"))
-                                            .and_then(Value::as_str)
-                                            .filter(|value| !value.is_empty())
-                                        {
-                                            let event = json!({
-                                                "type": "content_block_delta",
-                                                "index": index,
-                                                "delta": {
-                                                    "type": "input_json_delta",
-                                                    "partial_json": arguments
-                                                }
-                                            });
-                                            let sse = format!("event: content_block_delta\ndata: {}\n\n",
-                                                serde_json::to_string(&event).unwrap_or_default());
-                                            yield Ok(Bytes::from(sse));
-                                        }
-                                    }
-                                    let event = json!({
-                                        "type": "content_block_stop",
-                                        "index": index
-                                    });
-                                    let sse = format!("event: content_block_stop\ndata: {}\n\n",
-                                        serde_json::to_string(&event).unwrap_or_default());
-                                    yield Ok(Bytes::from(sse));
-                                    if let Some(item_id) = item_id {
-                                        tool_index_by_item_id.remove(item_id);
-                                    }
-                                    tool_name_by_index.remove(&index);
-                                    tool_args_by_index.remove(&index);
-                                    tool_had_delta.remove(&index);
-                                }
-                            }
-
-                            // ================================================
-                            // response.refusal.done → content_block_stop
-                            // ================================================
-                            "response.refusal.done" => {
-                                streamed_text.finish_part(&data);
-                                let index = current_text_index.take().or_else(|| {
-                                    let key = content_part_key(&data);
-                                    if let Some(k) = key {
-                                        index_by_key.get(&k).copied()
-                                    } else {
-                                        fallback_open_index
-                                    }
-                                });
-                                if let Some(index) = index {
-                                    if !open_indices.remove(&index) {
-                                        continue;
-                                    }
-                                    let event = json!({
-                                        "type": "content_block_stop",
-                                        "index": index
-                                    });
-                                    let sse = format!("event: content_block_stop\ndata: {}\n\n",
-                                        serde_json::to_string(&event).unwrap_or_default());
-                                    yield Ok(Bytes::from(sse));
-                                    if fallback_open_index == Some(index) {
-                                        fallback_open_index = None;
-                                    }
-                                }
-                            }
-
-                            // ================================================
-                            // Official reasoning text events → thinking_delta.
-                            // response.reasoning.delta is kept as a compatibility alias.
-                            // ================================================
-                            "response.reasoning_summary_text.delta"
-                            | "response.reasoning_text.delta"
-                            | "response.reasoning.delta" => {
-                                if let Some(delta) = data
-                                    .get("delta")
-                                    .or_else(|| data.get("text"))
-                                    .and_then(|d| d.as_str())
-                                {
-                                    if let Some(index) = current_text_index.take() {
-                                        if open_indices.remove(&index) {
-                                            let stop_event = json!({
-                                                "type": "content_block_stop",
-                                                "index": index
-                                            });
-                                            let stop_sse = format!("event: content_block_stop\ndata: {}\n\n",
-                                                serde_json::to_string(&stop_event).unwrap_or_default());
-                                            yield Ok(Bytes::from(stop_sse));
-                                        }
-                                        if fallback_open_index == Some(index) {
-                                            fallback_open_index = None;
-                                        }
-                                    }
-                                    let item_id = data.get("item_id").and_then(Value::as_str);
-                                    let item_key = reasoning_item_key(&data, None);
-                                    let is_keyless = item_id.is_none() && item_key.is_none();
-                                    let index = item_id
-                                        .and_then(|id| reasoning_index_by_item_id.get(id).copied())
-                                        .or_else(|| {
-                                            item_key
-                                                .as_ref()
-                                                .and_then(|key| index_by_key.get(key).copied())
-                                        })
-                                        .or_else(|| {
-                                            is_keyless
-                                                .then_some(legacy_reasoning_index)
-                                                .flatten()
-                                        })
-                                        .unwrap_or_else(|| {
-                                            let assigned = next_content_index;
-                                            next_content_index += 1;
-                                            if let Some(key) = item_key {
-                                                index_by_key.insert(key, assigned);
-                                            }
-                                            if let Some(id) = item_id {
-                                                reasoning_index_by_item_id
-                                                    .insert(id.to_string(), assigned);
-                                            } else if is_keyless {
-                                                legacy_reasoning_index = Some(assigned);
-                                            }
-                                            assigned
-                                        });
-
-                                    if !open_indices.contains(&index) {
-                                        let start_event = json!({
-                                            "type": "content_block_start",
-                                            "index": index,
-                                            "content_block": {
-                                                "type": "thinking",
-                                                "thinking": ""
-                                            }
-                                        });
-                                        let start_sse = format!("event: content_block_start\ndata: {}\n\n",
-                                            serde_json::to_string(&start_event).unwrap_or_default());
-                                        yield Ok(Bytes::from(start_sse));
-                                        open_indices.insert(index);
-                                    }
-
-                                    reasoning_text_by_index
-                                        .entry(index)
-                                        .or_default()
-                                        .push_str(delta);
-
-                                    let event = json!({
-                                        "type": "content_block_delta",
-                                        "index": index,
-                                        "delta": {
-                                            "type": "thinking_delta",
-                                            "thinking": delta
-                                        }
-                                    });
-                                    let sse = format!("event: content_block_delta\ndata: {}\n\n",
-                                        serde_json::to_string(&event).unwrap_or_default());
-                                    yield Ok(Bytes::from(sse));
-                                }
-                            }
-
-                            // ================================================
-                            // Official done events carry the complete visible text. If a
-                            // gateway omitted deltas, emit the text here. The block stays
-                            // open until output_item.done supplies encrypted_content.
-                            // ================================================
-                            "response.reasoning_summary_text.done"
-                            | "response.reasoning_text.done" => {
-                                let item_id = data.get("item_id").and_then(Value::as_str);
-                                let item_key = reasoning_item_key(&data, None);
-                                let index = item_id
-                                    .and_then(|id| reasoning_index_by_item_id.get(id).copied())
-                                    .or_else(|| {
-                                        item_key
-                                            .as_ref()
-                                            .and_then(|key| index_by_key.get(key).copied())
-                                    })
-                                    .or_else(|| {
-                                        (item_id.is_none() && item_key.is_none())
-                                            .then_some(legacy_reasoning_index)
-                                            .flatten()
-                                    });
-                                if let Some(index) = index {
-                                    let already_emitted = reasoning_text_by_index
-                                        .get(&index)
-                                        .is_some_and(|value| !value.is_empty());
-                                    if !already_emitted {
-                                        if let Some(text) = data
-                                            .get("text")
-                                            .and_then(Value::as_str)
-                                            .filter(|value| !value.is_empty())
-                                        {
-                                            if !open_indices.contains(&index) {
-                                                let start_event = json!({
-                                                    "type": "content_block_start",
-                                                    "index": index,
-                                                    "content_block": {"type": "thinking", "thinking": ""}
-                                                });
-                                                let start_sse = format!("event: content_block_start\ndata: {}\n\n",
-                                                    serde_json::to_string(&start_event).unwrap_or_default());
-                                                yield Ok(Bytes::from(start_sse));
-                                                open_indices.insert(index);
-                                            }
-                                            reasoning_text_by_index
-                                                .entry(index)
-                                                .or_default()
-                                                .push_str(text);
-                                            let event = json!({
-                                                "type": "content_block_delta",
-                                                "index": index,
-                                                "delta": {"type": "thinking_delta", "thinking": text}
-                                            });
-                                            let sse = format!("event: content_block_delta\ndata: {}\n\n",
-                                                serde_json::to_string(&event).unwrap_or_default());
-                                            yield Ok(Bytes::from(sse));
-                                        }
-                                    }
-                                }
-                            }
-
-                            // Legacy gateways do not emit output_item.done, so retain the
-                            // old close behavior for their non-standard done event.
-                            "response.reasoning.done" => {
-                                let item_id = data.get("item_id").and_then(Value::as_str);
-                                let item_key = reasoning_item_key(&data, None);
-                                let index = item_id
-                                    .and_then(|id| reasoning_index_by_item_id.get(id).copied())
-                                    .or_else(|| {
-                                        item_key
-                                            .as_ref()
-                                            .and_then(|key| index_by_key.get(key).copied())
-                                    })
-                                    .or_else(|| {
-                                        (item_id.is_none() && item_key.is_none())
-                                            .then_some(legacy_reasoning_index)
-                                            .flatten()
-                                    });
-                                if let Some(index) = index {
-                                    if open_indices.remove(&index) {
-                                        let event = json!({"type": "content_block_stop", "index": index});
-                                        let sse = format!("event: content_block_stop\ndata: {}\n\n",
-                                            serde_json::to_string(&event).unwrap_or_default());
-                                        yield Ok(Bytes::from(sse));
-                                    }
-                                    if legacy_reasoning_index == Some(index) {
-                                        legacy_reasoning_index = None;
-                                    }
-                                }
-                            }
-
-                            // ================================================
-                            // response.completed / response.incomplete → message_delta + message_stop
-                            // ================================================
-                            "response.completed" | "response.incomplete" => {
-                                let response_obj = response_object_from_event(&data);
-                                if matches!(
-                                    response_obj.get("status").and_then(Value::as_str),
-                                    Some("failed" | "cancelled")
-                                ) || response_obj
-                                    .get("error")
-                                    .is_some_and(|error| !error.is_null())
-                                {
-                                    let (message, error_type) = responses_error_details(
-                                        &data,
-                                        "Responses upstream returned a failed terminal response",
-                                    );
-                                    yield Ok(anthropic_error_sse(&message, &error_type));
-                                    terminated = true;
-                                    continue;
-                                }
-                                if next_content_index == 0
-                                    && !has_substantive_output
-                                    && response_obj.get("output").and_then(Value::as_array).is_some()
-                                {
-                                    let mut terminal_body = response_obj.clone();
-                                    if terminal_body.get("status").and_then(Value::as_str).is_none() {
-                                        terminal_body["status"] = json!(if event_name == "response.incomplete" {
-                                            "incomplete"
-                                        } else {
-                                            "completed"
-                                        });
-                                    }
-                                    for event in responses_json_to_anthropic_sse(
-                                        terminal_body,
-                                        Some(hosted_web_search_name.as_str()),
-                                        max_web_search_uses,
-                                    ) {
-                                        if has_sent_message_start
-                                            && event.starts_with(b"event: message_start\n")
-                                        {
-                                            continue;
-                                        }
-                                        yield Ok(event);
-                                    }
-                                    terminated = true;
-                                    continue;
-                                }
-                                if !has_sent_message_start {
-                                    if let Some(id) = response_obj.get("id").and_then(Value::as_str) {
-                                        message_id = Some(id.to_string());
-                                    }
-                                    if let Some(model) =
-                                        response_obj.get("model").and_then(Value::as_str)
-                                    {
-                                        current_model = Some(model.to_string());
-                                    }
-                                    yield Ok(anthropic_sse(
-                                        "message_start",
-                                        &json!({
-                                            "type":"message_start",
-                                            "message":{
-                                                "id":message_id.clone().unwrap_or_default(),
-                                                "type":"message",
-                                                "role":"assistant",
-                                                "model":current_model.clone().unwrap_or_default(),
-                                                "usage":{"input_tokens":0,"output_tokens":0}
-                                            }
-                                        }),
-                                    ));
-                                    has_sent_message_start = true;
-                                }
-
-                                let mut terminal_web_search_results =
-                                    std::mem::take(&mut pending_web_search_results);
-                                let mut terminal_message_items = Vec::new();
-                                let mut terminal_web_search_limit_exceeded = false;
-                                let mut terminal_reusable_text_index = None;
-                                if let Some(output) =
-                                    response_obj.get("output").and_then(Value::as_array)
-                                {
-                                    let has_web_search_output = output.iter().any(|item| {
-                                        item.get("type").and_then(Value::as_str)
-                                            == Some("web_search_call")
-                                    });
-                                    if has_web_search_output {
-                                        if can_preserve_web_search_citations {
-                                            preserve_web_search_citations = true;
-                                        }
-                                        if let Some(text_index) = current_text_index.take() {
-                                            let was_open = open_indices.remove(&text_index);
-                                            if was_open {
-                                                yield Ok(anthropic_sse(
-                                                    "content_block_stop",
-                                                    &json!({"type":"content_block_stop","index":text_index}),
-                                                ));
-                                            } else if preserve_web_search_citations {
-                                                terminal_reusable_text_index = Some(text_index);
-                                            }
-                                            if fallback_open_index == Some(text_index) {
-                                                fallback_open_index = None;
-                                            }
-                                        }
-                                    }
-
-                                    for (output_index, item) in output.iter().enumerate() {
-                                        if item.get("type").and_then(Value::as_str)
-                                            == Some("message")
-                                        {
-                                            terminal_message_items
-                                                .push((output_index as u64, item.clone()));
-                                        }
-                                        if item.get("type").and_then(Value::as_str)
-                                            == Some("web_search_call")
-                                        {
-                                            has_substantive_output = true;
-                                            let provisional_index = index_by_key
-                                                .get(&format!(
-                                                    "web-search:out:{output_index}"
-                                                ))
-                                                .copied();
-                                            let search_id = provisional_index
-                                                .and_then(|index| {
-                                                    web_search_id_by_index.get(&index).cloned()
-                                                })
-                                                .or_else(|| {
-                                                    item.get("id")
-                                                        .and_then(Value::as_str)
-                                                        .filter(|id| !id.is_empty())
-                                                        .map(ToString::to_string)
-                                                })
-                                                .or_else(|| {
-                                                    provisional_index.map(|index| {
-                                                        format!("ws_stream_{index}")
-                                                    })
-                                                })
-                                                .unwrap_or_else(|| {
-                                                    format!("ws_terminal_{output_index}")
-                                                });
-                                            let disposition = record_web_search_call(
-                                                &search_id,
-                                                item,
-                                                &mut WebSearchRecordState {
-                                                    ids_seen: &mut web_search_ids_seen,
-                                                    id_order: &mut web_search_id_order,
-                                                    results_by_id:
-                                                        &mut web_search_results_by_id,
-                                                    errors_by_id:
-                                                        &mut web_search_errors_by_id,
-                                                    request_count: &mut web_search_count,
-                                                    max_uses: max_web_search_uses,
-                                                    limit_exceeded_id:
-                                                        &mut web_search_limit_exceeded_id,
-                                                },
-                                            );
-                                            if disposition
-                                                == WebSearchCallDisposition::Ignored
-                                            {
-                                                continue;
-                                            }
-
-                                            if !web_search_ids_completed.contains(&search_id) {
-                                                let index = web_search_index_by_item_id
-                                                    .get(&search_id)
-                                                    .copied()
-                                                    .or(provisional_index)
-                                                    .unwrap_or_else(|| {
-                                                        let assigned = next_content_index;
-                                                        next_content_index += 1;
-                                                        assigned
-                                                    });
-                                                web_search_index_by_item_id
-                                                    .insert(search_id.clone(), index);
-                                                web_search_id_by_index
-                                                    .insert(index, search_id.clone());
-                                                reserve_web_search_result_index(
-                                                    &search_id,
-                                                    &mut web_search_result_index_by_id,
-                                                    &mut next_content_index,
-                                                );
-                                                if !open_indices.contains(&index) {
-                                                    yield Ok(anthropic_sse(
-                                                        "content_block_start",
-                                                        &json!({
-                                                            "type":"content_block_start",
-                                                            "index":index,
-                                                            "content_block":{
-                                                                "type":"server_tool_use",
-                                                                "id":search_id,
-                                                                "name":hosted_web_search_name.as_str(),
-                                                                "input":{},
-                                                                "caller":{"type":"direct"}
-                                                            }
-                                                        }),
-                                                    ));
-                                                    open_indices.insert(index);
-                                                }
-                                                let input = web_search_action_input(item);
-                                                yield Ok(anthropic_sse(
-                                                    "content_block_delta",
-                                                    &json!({
-                                                        "type":"content_block_delta",
-                                                        "index":index,
-                                                        "delta":{
-                                                            "type":"input_json_delta",
-                                                            "partial_json":serde_json::to_string(&input)
-                                                                .unwrap_or_else(|_| "{}".to_string())
-                                                        }
-                                                    }),
-                                                ));
-                                                if open_indices.remove(&index) {
-                                                    yield Ok(anthropic_sse(
-                                                        "content_block_stop",
-                                                        &json!({"type":"content_block_stop","index":index}),
-                                                    ));
-                                                }
-                                                web_search_ids_completed.insert(search_id);
-                                            }
-                                            if disposition
-                                                == WebSearchCallDisposition::LimitExceeded
-                                            {
-                                                terminal_web_search_limit_exceeded = true;
-                                                break;
-                                            }
-                                        }
-
-                                        for result in web_search_results_from_output_item(item) {
-                                            let Some(url) =
-                                                result.get("url").and_then(Value::as_str)
-                                            else {
-                                                continue;
-                                            };
-                                            if seen_web_search_result_urls
-                                                .insert(url.to_string())
-                                            {
-                                                terminal_web_search_results.push(result);
-                                            }
-                                        }
-                                    }
-                                }
-                                if terminal_web_search_limit_exceeded {
-                                    terminal_message_items.clear();
-                                    terminal_web_search_results.clear();
-                                }
-
-                                for (search_id, results) in &mut web_search_results_by_id {
-                                    if !web_search_errors_by_id.contains_key(search_id) {
-                                        merge_web_search_result_metadata(
-                                            results,
-                                            &terminal_web_search_results,
-                                        );
-                                    }
-                                }
-                                let attributed_web_search_urls: HashSet<String> =
-                                    web_search_results_by_id
-                                        .iter()
-                                        .filter(|(search_id, _)| {
-                                            !web_search_errors_by_id.contains_key(*search_id)
-                                        })
-                                        .flat_map(|(_, results)| results)
-                                        .filter_map(|result| {
-                                            result
-                                                .get("url")
-                                                .and_then(Value::as_str)
-                                                .map(ToString::to_string)
-                                        })
-                                        .collect();
-                                // Final-message citations have no search-call ID.
-                                // Prefer action.sources recorded for each call,
-                                // then put only otherwise-unassigned citations on
-                                // the last call. Every earlier call still receives
-                                // an empty successful result rather than remaining
-                                // structurally unmatched.
-                                if let Some(last_search_id) = web_search_id_order
-                                    .iter()
-                                    .rev()
-                                    .find(|search_id| {
-                                        !web_search_errors_by_id.contains_key(*search_id)
-                                    })
-                                    .cloned()
-                                {
-                                    terminal_web_search_results.retain(|result| {
-                                        result
-                                            .get("url")
-                                            .and_then(Value::as_str)
-                                            .is_some_and(|url| {
-                                                !attributed_web_search_urls.contains(url)
-                                            })
-                                    });
-                                    append_unique_web_search_results(
-                                        web_search_results_by_id
-                                            .entry(last_search_id)
-                                            .or_default(),
-                                        terminal_web_search_results,
-                                    );
-                                }
-
-                                if !web_search_id_order.is_empty() {
-                                    if let Some(text_index) = current_text_index.take() {
-                                        let was_open = open_indices.remove(&text_index);
-                                        if was_open {
-                                            yield Ok(anthropic_sse(
-                                                "content_block_stop",
-                                                &json!({"type":"content_block_stop","index":text_index}),
-                                            ));
-                                        } else if preserve_web_search_citations
-                                            && terminal_reusable_text_index.is_none()
-                                        {
-                                            terminal_reusable_text_index = Some(text_index);
-                                        }
-                                        if fallback_open_index == Some(text_index) {
-                                            fallback_open_index = None;
-                                        }
-                                    }
-                                    // An incomplete terminal response can arrive before
-                                    // output_item.done. Close any still-open server tool
-                                    // block before emitting its paired error result.
-                                    for search_id in web_search_id_order.clone() {
-                                        if web_search_ids_completed.contains(&search_id) {
-                                            continue;
-                                        }
-                                        let Some(index) = web_search_index_by_item_id
-                                            .get(&search_id)
-                                            .copied()
-                                        else {
-                                            continue;
-                                        };
-                                        if open_indices.contains(&index) {
-                                            yield Ok(anthropic_sse(
-                                                "content_block_delta",
-                                                &json!({
-                                                    "type":"content_block_delta",
-                                                    "index":index,
-                                                    "delta":{
-                                                        "type":"input_json_delta",
-                                                        "partial_json":"{}"
-                                                    }
-                                                }),
-                                            ));
-                                        }
-                                        if open_indices.remove(&index) {
-                                            yield Ok(anthropic_sse(
-                                                "content_block_stop",
-                                                &json!({"type":"content_block_stop","index":index}),
-                                            ));
-                                        }
-                                        web_search_ids_completed.insert(search_id);
-                                    }
-                                    for search_id in web_search_id_order.clone() {
-                                        let index = web_search_result_index_by_id
-                                            .remove(&search_id)
-                                            .unwrap_or_else(|| {
-                                                let index = next_content_index;
-                                                next_content_index += 1;
-                                                index
-                                            });
-                                        let results = web_search_results_by_id
-                                            .remove(&search_id)
-                                            .unwrap_or_default();
-                                        let content = web_search_errors_by_id
-                                            .remove(&search_id)
-                                            .unwrap_or(Value::Array(results));
-                                        for event in
-                                            web_search_result_events(index, &search_id, content)
-                                        {
-                                            yield Ok(event);
-                                        }
-                                    }
-                                }
-
-                                for (output_index, item) in terminal_message_items {
-                                    let buffered_citations =
-                                        preserve_web_search_citations
-                                            .then_some(&mut buffered_citation_text);
-                                    let missing_text = missing_message_text_parts(
-                                        &item,
-                                        Some(output_index),
-                                        &mut streamed_text,
-                                        buffered_citations,
-                                    );
-                                    if missing_text.is_empty() {
-                                        continue;
-                                    }
-                                    has_substantive_output = true;
-                                    let mut reusable_text_index =
-                                        terminal_reusable_text_index.take();
-                                    if let Some(text_index) = current_text_index.take() {
-                                        let was_open = open_indices.remove(&text_index);
-                                        if was_open {
-                                            yield Ok(anthropic_sse(
-                                                "content_block_stop",
-                                                &json!({"type":"content_block_stop","index":text_index}),
-                                            ));
-                                        } else if preserve_web_search_citations {
-                                            reusable_text_index.get_or_insert(text_index);
-                                        }
-                                        if fallback_open_index == Some(text_index) {
-                                            fallback_open_index = None;
-                                        }
-                                    }
-                                    for text in missing_text {
-                                        let index =
-                                            reusable_text_index.take().unwrap_or_else(|| {
-                                                let index = next_content_index;
-                                                next_content_index += 1;
-                                                index
-                                            });
-                                        for event in text_block_events(index, &text) {
-                                            yield Ok(event);
-                                        }
-                                    }
-                                }
-                                if preserve_web_search_citations {
-                                    let pending_text =
-                                        buffered_citation_text.render_pending_parts();
-                                    let mut reusable_text_index =
-                                        terminal_reusable_text_index.take();
-                                    if !pending_text.is_empty() {
-                                        has_substantive_output = true;
-                                        if let Some(text_index) = current_text_index.take() {
-                                            let was_open = open_indices.remove(&text_index);
-                                            if was_open {
-                                                yield Ok(anthropic_sse(
-                                                    "content_block_stop",
-                                                    &json!({"type":"content_block_stop","index":text_index}),
-                                                ));
-                                            } else {
-                                                reusable_text_index.get_or_insert(text_index);
-                                            }
-                                        }
-                                    }
-                                    for text in pending_text {
-                                        let index =
-                                            reusable_text_index.take().unwrap_or_else(|| {
-                                                let index = next_content_index;
-                                                next_content_index += 1;
-                                                index
-                                            });
-                                        for event in text_block_events(index, &text) {
-                                            yield Ok(event);
-                                        }
-                                    }
-                                }
-
-                                let terminal_status = response_obj
-                                    .get("status")
-                                    .and_then(Value::as_str)
-                                    .or(match event_name {
-                                        "response.incomplete" => Some("incomplete"),
-                                        "response.completed" => Some("completed"),
-                                        _ => None,
-                                    });
-                                let stop_reason = map_responses_stop_reason(
-                                    terminal_status,
-                                    has_tool_use,
-                                    response_obj
-                                        .pointer("/incomplete_details/reason")
-                                        .and_then(|r| r.as_str()),
-                                );
-
-                                // Zero-usage max_tokens stops are upstream request
-                                // rejections, not truncation; report them as an
-                                // error instead of a fabricated limit hit.
-                                if stop_reason == Some("max_tokens")
-                                    && !has_substantive_output
-                                    && is_unprocessed_max_output_rejection(
-                                        response_obj,
-                                        terminal_status,
-                                    )
-                                {
-                                    log::warn!(
-                                        "[Claude/Responses] terminal incomplete with zero usage \
-    and no content; emitting api_error for the unprocessed upstream rejection instead of max_tokens"
-                                    );
-                                    yield Ok(anthropic_error_sse(
-                                        UNPROCESSED_REJECTION_MESSAGE,
-                                        "api_error",
-                                    ));
-                                    terminated = true;
-                                    continue;
-                                }
-
-                                // Best effort: close any dangling blocks before message_delta/message_stop.
-                                if !open_indices.is_empty() {
-                                    let mut remaining: Vec<u32> = open_indices.iter().copied().collect();
-                                    remaining.sort_unstable();
-                                    for index in remaining {
-                                        let stop_event = json!({
-                                            "type": "content_block_stop",
-                                            "index": index
-                                        });
-                                        let stop_sse = format!("event: content_block_stop\ndata: {}\n\n",
-                                            serde_json::to_string(&stop_event).unwrap_or_default());
-                                        yield Ok(Bytes::from(stop_sse));
-                                        open_indices.remove(&index);
-                                    }
-                                }
-                                fallback_open_index = None;
-
-                                // Defensive: Always build usage_json, even if usage field missing
-                                // Some() wrapper with fallback to {} ensures build_anthropic_usage_from_responses
-                                // always receives valid input, preventing null pointer errors in VSCode Extension
-                                let mut usage_json = build_anthropic_usage_from_responses(
-                                    Some(response_obj.get("usage").unwrap_or(&json!({})))
-                                );
-                                if web_search_count > 0 {
-                                    usage_json["server_tool_use"] = json!({
-                                        "web_search_requests": web_search_count
-                                    });
-                                }
-
-                                // Emit message_delta (with usage + stop_reason)
-                                let delta_event = json!({
-                                    "type": "message_delta",
-                                    "delta": {
-                                        "stop_reason": stop_reason,
-                                        "stop_sequence": null
-                                    },
-                                    "usage": usage_json
-                                });
-                                let sse = format!("event: message_delta\ndata: {}\n\n",
-                                    serde_json::to_string(&delta_event).unwrap_or_default());
-                                log::debug!("[Claude/Responses] >>> Anthropic SSE: message_delta");
-                                yield Ok(Bytes::from(sse));
-
-                                // Emit message_stop
-                                let stop_event = json!({"type": "message_stop"});
-                                let stop_sse = format!("event: message_stop\ndata: {}\n\n",
-                                    serde_json::to_string(&stop_event).unwrap_or_default());
-                                log::debug!("[Claude/Responses] >>> Anthropic SSE: message_stop");
-                                yield Ok(Bytes::from(stop_sse));
-                                terminated = true;
-                            }
-
-                            // ================================================
-                            // Semantic failures can be carried inside an HTTP 2xx SSE.
-                            // Preserve the upstream details instead of silently ending.
-                            // ================================================
-                            "response.failed" | "error" => {
-                                let (message, error_type) = responses_error_details(
-                                    &data,
-                                    if event_name == "response.failed" {
-                                        "Responses upstream reported response.failed"
-                                    } else {
-                                        "Responses upstream emitted an error event"
-                                    },
-                                );
-                                yield Ok(anthropic_error_sse(&message, &error_type));
-                                terminated = true;
-                            }
-
-                            // Lifecycle events that don't need Anthropic counterparts.
-                            // Listed explicitly so new events trigger a match-completeness review.
-                            "response.output_text.done" => {
-                                if preserve_web_search_citations {
-                                    buffered_citation_text.record_done_event(&data);
-                                    continue;
-                                }
-                                streamed_text.finish_part(&data);
-                                if let Some(index) = current_text_index.take() {
-                                    if open_indices.remove(&index) {
-                                        let stop_event = json!({
-                                            "type": "content_block_stop",
-                                            "index": index
-                                        });
-                                        let stop_sse = format!("event: content_block_stop\ndata: {}\n\n",
-                                            serde_json::to_string(&stop_event).unwrap_or_default());
-                                        yield Ok(Bytes::from(stop_sse));
-                                    }
-                                    if fallback_open_index == Some(index) {
-                                        fallback_open_index = None;
-                                    }
-                                }
-                            }
-                            "response.output_item.done" => {
-                                let Some(item) = data.get("item") else {
-                                    continue;
-                                };
-                                let item_type = item.get("type").and_then(Value::as_str);
-                                if can_preserve_web_search_citations
-                                    && item_type == Some("web_search_call")
-                                {
-                                    preserve_web_search_citations = true;
-                                }
-                                match item_type {
-                                    Some("function_call") => {
-                                        has_tool_use = true;
-                                        let item_id = item
-                                            .get("id")
-                                            .and_then(Value::as_str)
-                                            .or_else(|| data.get("item_id").and_then(Value::as_str));
-                                        let index = item_id
-                                            .and_then(|id| tool_index_by_item_id.get(id).copied())
-                                            .or_else(|| {
-                                                tool_item_key_from_event(&data)
-                                                    .and_then(|key| index_by_key.get(&key).copied())
-                                            })
-                                            .or(last_tool_index);
-                                        if let Some(index) = index.filter(|value| open_indices.contains(value)) {
-                                            let name = tool_name_by_index
-                                                .get(&index)
-                                                .map(String::as_str)
-                                                .unwrap_or("");
-                                            if !tool_had_delta.contains(&index) || name == "Read" {
-                                                let raw = item
-                                                    .get("arguments")
-                                                    .and_then(Value::as_str)
-                                                    .filter(|value| !value.is_empty())
-                                                    .map(str::to_string)
-                                                    .unwrap_or_else(|| {
-                                                        tool_args_by_index
-                                                            .get(&index)
-                                                            .cloned()
-                                                            .unwrap_or_default()
-                                                    });
-                                                let arguments = if name == "Read" {
-                                                    sanitize_anthropic_tool_use_input_json(name, &raw)
-                                                } else {
-                                                    raw
-                                                };
-                                                if !arguments.is_empty() {
-                                                    let event = json!({
-                                                        "type": "content_block_delta",
-                                                        "index": index,
-                                                        "delta": {
-                                                            "type": "input_json_delta",
-                                                            "partial_json": arguments
-                                                        }
-                                                    });
-                                                    let sse = format!("event: content_block_delta\ndata: {}\n\n",
-                                                        serde_json::to_string(&event).unwrap_or_default());
-                                                    yield Ok(Bytes::from(sse));
-                                                }
-                                            }
-                                            open_indices.remove(&index);
-                                            let event = json!({"type": "content_block_stop", "index": index});
-                                            let sse = format!("event: content_block_stop\ndata: {}\n\n",
-                                                serde_json::to_string(&event).unwrap_or_default());
-                                            yield Ok(Bytes::from(sse));
-                                            if let Some(id) = item_id {
-                                                tool_index_by_item_id.remove(id);
-                                            }
-                                            tool_name_by_index.remove(&index);
-                                            tool_args_by_index.remove(&index);
-                                            tool_had_delta.remove(&index);
-                                        }
-                                    }
-                                    Some("web_search_call") => {
-                                        has_substantive_output = true;
-                                        if preserve_web_search_citations {
-                                            let pending_text =
-                                                buffered_citation_text.render_pending_parts();
-                                            let mut reusable_text_index = None;
-                                            if !pending_text.is_empty() {
-                                                if let Some(text_index) =
-                                                    current_text_index.take()
-                                                {
-                                                    let was_open =
-                                                        open_indices.remove(&text_index);
-                                                    if was_open {
-                                                        yield Ok(anthropic_sse(
-                                                            "content_block_stop",
-                                                            &json!({"type":"content_block_stop","index":text_index}),
-                                                        ));
-                                                    } else {
-                                                        reusable_text_index =
-                                                            Some(text_index);
-                                                    }
-                                                    if fallback_open_index
-                                                        == Some(text_index)
-                                                    {
-                                                        fallback_open_index = None;
-                                                    }
-                                                }
-                                            }
-                                            for text in pending_text {
-                                                let index = reusable_text_index
-                                                    .take()
-                                                    .unwrap_or_else(|| {
-                                                        let index = next_content_index;
-                                                        next_content_index += 1;
-                                                        index
-                                                    });
-                                                for event in text_block_events(index, &text) {
-                                                    yield Ok(event);
-                                                }
-                                            }
-                                        }
-                                        if !has_sent_message_start {
-                                            yield Ok(anthropic_sse(
-                                                "message_start",
-                                                &json!({
-                                                    "type":"message_start",
-                                                    "message":{
-                                                        "id":message_id.clone().unwrap_or_default(),
-                                                        "type":"message",
-                                                        "role":"assistant",
-                                                        "model":current_model.clone().unwrap_or_default(),
-                                                        "usage":{"input_tokens":0,"output_tokens":0}
-                                                    }
-                                                }),
-                                            ));
-                                            has_sent_message_start = true;
-                                        }
-
-                                        let item_keys = web_search_item_keys(&data, Some(item));
-                                        let provisional_index = item_keys
-                                            .iter()
-                                            .find_map(|key| index_by_key.get(key).copied());
-                                        let search_id = provisional_index
-                                            .and_then(|index| {
-                                                web_search_id_by_index.get(&index).cloned()
-                                            })
-                                            .or_else(|| {
-                                                item.get("id")
-                                                    .and_then(Value::as_str)
-                                                    .or_else(|| {
-                                                        data.get("item_id").and_then(Value::as_str)
-                                                    })
-                                                    .filter(|id| !id.is_empty())
-                                                    .map(ToString::to_string)
-                                            })
-                                            .or_else(|| {
-                                                provisional_index.map(|index| {
-                                                    format!("ws_stream_{index}")
-                                                })
-                                            })
-                                            .unwrap_or_else(|| {
-                                                format!("ws_stream_{next_content_index}")
-                                            });
-                                        let disposition = record_web_search_call(
-                                            &search_id,
-                                            item,
-                                            &mut WebSearchRecordState {
-                                                ids_seen: &mut web_search_ids_seen,
-                                                id_order: &mut web_search_id_order,
-                                                results_by_id: &mut web_search_results_by_id,
-                                                errors_by_id: &mut web_search_errors_by_id,
-                                                request_count: &mut web_search_count,
-                                                max_uses: max_web_search_uses,
-                                                limit_exceeded_id:
-                                                    &mut web_search_limit_exceeded_id,
-                                            },
-                                        );
-                                        if disposition == WebSearchCallDisposition::Ignored {
-                                            continue;
-                                        }
-                                        if web_search_ids_completed.contains(&search_id) {
-                                            continue;
-                                        }
-
-                                        let index = web_search_index_by_item_id
-                                            .get(&search_id)
-                                            .copied()
-                                            .or(provisional_index)
-                                            .unwrap_or_else(|| {
-                                                let assigned = next_content_index;
-                                                next_content_index += 1;
-                                                assigned
-                                            });
-                                        for key in item_keys {
-                                            index_by_key.insert(key, index);
-                                        }
-                                        web_search_index_by_item_id
-                                            .insert(search_id.clone(), index);
-                                        web_search_id_by_index.insert(index, search_id.clone());
-                                        reserve_web_search_result_index(
-                                            &search_id,
-                                            &mut web_search_result_index_by_id,
-                                            &mut next_content_index,
-                                        );
-
-                                        if let Some(text_index) = current_text_index.take() {
-                                            if open_indices.remove(&text_index) {
-                                                yield Ok(anthropic_sse(
-                                                    "content_block_stop",
-                                                    &json!({"type":"content_block_stop","index":text_index}),
-                                                ));
-                                            }
-                                            if fallback_open_index == Some(text_index) {
-                                                fallback_open_index = None;
-                                            }
-                                        }
-
-                                        if !open_indices.contains(&index) {
-                                            yield Ok(anthropic_sse(
-                                                "content_block_start",
-                                                &json!({
-                                                    "type":"content_block_start",
-                                                    "index":index,
-                                                    "content_block":{
-                                                        "type":"server_tool_use",
-                                                        "id":search_id,
-                                                        "name":hosted_web_search_name.as_str(),
-                                                        "input":{},
-                                                        "caller":{"type":"direct"}
-                                                    }
-                                                }),
-                                            ));
-                                            open_indices.insert(index);
-                                        }
-
-                                        let input = web_search_action_input(item);
-                                        yield Ok(anthropic_sse(
-                                            "content_block_delta",
-                                            &json!({
-                                                "type":"content_block_delta",
-                                                "index":index,
-                                                "delta":{
-                                                    "type":"input_json_delta",
-                                                    "partial_json":serde_json::to_string(&input)
-                                                        .unwrap_or_else(|_| "{}".to_string())
-                                                }
-                                            }),
-                                        ));
-                                        if open_indices.remove(&index) {
-                                            yield Ok(anthropic_sse(
-                                                "content_block_stop",
-                                                &json!({"type":"content_block_stop","index":index}),
-                                            ));
-                                        }
-                                        web_search_ids_completed.insert(search_id);
-                                        if disposition
-                                            == WebSearchCallDisposition::LimitExceeded
-                                        {
-                                            for event in take_open_web_search_block_stop_events(
-                                                &mut open_indices,
-                                                &web_search_id_by_index,
-                                            ) {
-                                                yield Ok(event);
-                                            }
-                                            for event in take_web_search_result_events(
-                                                &web_search_id_order,
-                                                &mut web_search_results_by_id,
-                                                &mut web_search_errors_by_id,
-                                                &mut web_search_result_index_by_id,
-                                                &mut next_content_index,
-                                            ) {
-                                                yield Ok(event);
-                                            }
-                                            if open_indices.is_empty() {
-                                                for event in web_search_limit_stop_events(
-                                                    web_search_count,
-                                                    has_tool_use,
-                                                ) {
-                                                    yield Ok(event);
-                                                }
-                                            } else {
-                                                yield Ok(anthropic_error_sse(
-                                                    "Responses upstream started a web search beyond max_uses while another content block was incomplete",
-                                                    "stream_truncated",
-                                                ));
-                                            }
-                                            terminated = true;
-                                            break 'stream_loop;
-                                        }
-                                    }
-                                    Some("reasoning") => {
-                                        let item_id = item
-                                            .get("id")
-                                            .and_then(Value::as_str)
-                                            .or_else(|| data.get("item_id").and_then(Value::as_str));
-                                        let index = item_id
-                                            .and_then(|id| reasoning_index_by_item_id.get(id).copied())
-                                            .or_else(|| {
-                                                reasoning_item_key(&data, Some(item))
-                                                    .and_then(|key| index_by_key.get(&key).copied())
-                                            })
-                                            .unwrap_or_else(|| {
-                                                let assigned = next_content_index;
-                                                next_content_index += 1;
-                                                assigned
-                                            });
-                                        reasoning_item_by_index.insert(index, item.clone());
-
-                                        let final_item = reasoning_item_by_index
-                                            .get(&index)
-                                            .cloned()
-                                            .unwrap_or_else(|| item.clone());
-                                        let full_text = reasoning_summary_text(&final_item);
-                                        let emitted_text = reasoning_text_by_index
-                                            .get(&index)
-                                            .cloned()
-                                            .unwrap_or_default();
-                                        if emitted_text.is_empty() && !full_text.is_empty() {
-                                            let start_event = json!({
-                                                "type": "content_block_start",
-                                                "index": index,
-                                                "content_block": {"type": "thinking", "thinking": ""}
-                                            });
-                                            let start_sse = format!("event: content_block_start\ndata: {}\n\n",
-                                                serde_json::to_string(&start_event).unwrap_or_default());
-                                            yield Ok(Bytes::from(start_sse));
-                                            open_indices.insert(index);
-                                            let delta_event = json!({
-                                                "type": "content_block_delta",
-                                                "index": index,
-                                                "delta": {"type": "thinking_delta", "thinking": full_text}
-                                            });
-                                            let delta_sse = format!("event: content_block_delta\ndata: {}\n\n",
-                                                serde_json::to_string(&delta_event).unwrap_or_default());
-                                            yield Ok(Bytes::from(delta_sse));
-                                        } else if open_indices.contains(&index) {
-                                            // Deltas may cover only the start of the summary
-                                            // (e.g. a later summary part arrived without
-                                            // deltas). Emit the missing tail; snapshots that
-                                            // do not extend the streamed text are ignored.
-                                            if let Some(suffix) = full_text
-                                                .strip_prefix(emitted_text.as_str())
-                                                .filter(|suffix| !suffix.is_empty())
-                                            {
-                                                let delta_event = json!({
-                                                    "type": "content_block_delta",
-                                                    "index": index,
-                                                    "delta": {"type": "thinking_delta", "thinking": suffix}
-                                                });
-                                                let delta_sse = format!("event: content_block_delta\ndata: {}\n\n",
-                                                    serde_json::to_string(&delta_event).unwrap_or_default());
-                                                yield Ok(Bytes::from(delta_sse));
-                                            }
-                                        }
-
-                                        let encrypted = final_item
-                                            .get("encrypted_content")
-                                            .and_then(Value::as_str)
-                                            .is_some_and(|value| !value.is_empty());
-                                        if encrypted {
-                                            if let Some(envelope) = encode_openai_reasoning_item(&final_item) {
-                                                if open_indices.contains(&index) {
-                                                    let signature_event = json!({
-                                                        "type": "content_block_delta",
-                                                        "index": index,
-                                                        "delta": {
-                                                            "type": "signature_delta",
-                                                            "signature": envelope
-                                                        }
-                                                    });
-                                                    let signature_sse = format!("event: content_block_delta\ndata: {}\n\n",
-                                                        serde_json::to_string(&signature_event).unwrap_or_default());
-                                                    yield Ok(Bytes::from(signature_sse));
-                                                } else {
-                                                    // Encrypted-only item: an empty thinking block
-                                                    // carries the envelope (Claude Code's VS Code
-                                                    // extension cannot render redacted_thinking).
-                                                    let start_event = json!({
-                                                        "type": "content_block_start",
-                                                        "index": index,
-                                                        "content_block": {"type": "thinking", "thinking": ""}
-                                                    });
-                                                    let start_sse = format!("event: content_block_start\ndata: {}\n\n",
-                                                        serde_json::to_string(&start_event).unwrap_or_default());
-                                                    yield Ok(Bytes::from(start_sse));
-                                                    open_indices.insert(index);
-                                                    let signature_event = json!({
-                                                        "type": "content_block_delta",
-                                                        "index": index,
-                                                        "delta": {
-                                                            "type": "signature_delta",
-                                                            "signature": envelope
-                                                        }
-                                                    });
-                                                    let signature_sse = format!("event: content_block_delta\ndata: {}\n\n",
-                                                        serde_json::to_string(&signature_event).unwrap_or_default());
-                                                    yield Ok(Bytes::from(signature_sse));
-                                                }
-                                            }
-                                        }
-                                        if open_indices.remove(&index) {
-                                            let stop_event = json!({"type": "content_block_stop", "index": index});
-                                            let stop_sse = format!("event: content_block_stop\ndata: {}\n\n",
-                                                serde_json::to_string(&stop_event).unwrap_or_default());
-                                            yield Ok(Bytes::from(stop_sse));
-                                        }
-                                        if let Some(id) = item_id {
-                                            reasoning_index_by_item_id.remove(id);
-                                        }
-                                        reasoning_item_by_index.remove(&index);
-                                        reasoning_text_by_index.remove(&index);
-                                    }
-                                    Some("message") => {
-                                        let buffered_citations =
-                                            preserve_web_search_citations
-                                                .then_some(&mut buffered_citation_text);
-                                        let missing_text = missing_message_text_parts(
-                                            item,
-                                            data.get("output_index").and_then(Value::as_u64),
-                                            &mut streamed_text,
-                                            buffered_citations,
-                                        );
-                                        if !missing_text.is_empty() {
-                                            has_substantive_output = true;
-                                            if !has_sent_message_start {
-                                                yield Ok(anthropic_sse(
-                                                    "message_start",
-                                                    &json!({
-                                                        "type":"message_start",
-                                                        "message":{
-                                                            "id":message_id.clone().unwrap_or_default(),
-                                                            "type":"message",
-                                                            "role":"assistant",
-                                                            "model":current_model.clone().unwrap_or_default(),
-                                                            "usage":{"input_tokens":0,"output_tokens":0}
-                                                        }
-                                                    }),
-                                            ));
-                                            has_sent_message_start = true;
-                                        }
-                                        let mut reusable_text_index = None;
-                                        if let Some(index) = current_text_index.take() {
-                                            let was_open = open_indices.remove(&index);
-                                            if was_open {
-                                                yield Ok(anthropic_sse(
-                                                    "content_block_stop",
-                                                    &json!({"type":"content_block_stop","index":index}),
-                                                ));
-                                            } else if preserve_web_search_citations {
-                                                reusable_text_index = Some(index);
-                                            }
-                                            if fallback_open_index == Some(index) {
-                                                fallback_open_index = None;
-                                            }
-                                        }
-                                        for text in missing_text {
-                                            let index =
-                                                reusable_text_index.take().unwrap_or_else(|| {
-                                                    let index = next_content_index;
-                                                    next_content_index += 1;
-                                                    index
-                                                });
-                                            for event in text_block_events(index, &text) {
-                                                yield Ok(event);
-                                            }
-                                        }
-                                        }
-
-                                        let mut new_results = Vec::new();
-                                        for result in web_search_results_from_output_item(item) {
-                                            let Some(url) = result
-                                                .get("url")
-                                                .and_then(Value::as_str)
-                                            else {
-                                                continue;
-                                            };
-                                            if seen_web_search_result_urls
-                                                .insert(url.to_string())
-                                            {
-                                                new_results.push(result);
-                                            }
-                                        }
-                                        append_unique_web_search_results(
-                                            &mut pending_web_search_results,
-                                            new_results,
-                                        );
-                                    }
-                                    _ => {}
-                                }
-                            }
-                            "response.reasoning_summary_part.added"
-                            | "response.reasoning_summary_part.done"
-                            | "response.in_progress" => {}
-
-                            // Any other unknown/future events — silently skip.
-                            _ => {}
+                        if flow.is_break() {
+                            break 'stream_loop;
                         }
                     }
                 }
                 Err(e) => {
                     // A late transport failure cannot invalidate an already emitted
                     // terminal response or append a second terminal event.
-                    if terminated {
+                    if state.terminated {
                         break;
                     }
                     log::error!("Responses stream error: {e}");
@@ -4609,2922 +4743,20 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                     let sse = format!("event: error\ndata: {}\n\n",
                         serde_json::to_string(&error_event).unwrap_or_default());
                     yield Ok(Bytes::from(sse));
-                    terminated = true;
+                    state.terminated = true;
                     break;
                 }
             }
         }
 
-        if !terminated {
-            let has_open_tool = open_indices.iter().any(|index| {
-                tool_name_by_index.contains_key(index) || tool_args_by_index.contains_key(index)
-            });
-            // Hosted-search results are intentionally deferred until the
-            // response terminal event so final citations can be paired. Any
-            // observed search at clean EOF is therefore still structurally
-            // unpaired, even if its server_tool_use block was already closed.
-            let has_unpaired_server_tool = !web_search_id_order.is_empty();
-            let has_open_reasoning = open_indices.iter().any(|index| {
-                reasoning_item_by_index.contains_key(index)
-                    || reasoning_text_by_index.contains_key(index)
-                    || legacy_reasoning_index == Some(*index)
-            });
-
-            if has_substantive_output
-                && !has_open_tool
-                && !has_unpaired_server_tool
-                && !has_open_reasoning
-            {
-                if preserve_web_search_citations {
-                    let pending_text = buffered_citation_text.render_pending_parts();
-                    let mut reusable_text_index = None;
-                    if !pending_text.is_empty() {
-                        if let Some(index) = current_text_index.take() {
-                            let was_open = open_indices.remove(&index);
-                            if was_open {
-                                yield Ok(anthropic_sse(
-                                    "content_block_stop",
-                                    &json!({"type":"content_block_stop","index":index}),
-                                ));
-                            } else {
-                                reusable_text_index = Some(index);
-                            }
-                        }
-                    }
-                    for text in pending_text {
-                        let index = reusable_text_index.take().unwrap_or_else(|| {
-                            let index = next_content_index;
-                            next_content_index += 1;
-                            index
-                        });
-                        for event in text_block_events(index, &text) {
-                            yield Ok(event);
-                        }
-                    }
-                }
-                // Text-only partial output is safe to expose as a max-token style
-                // incomplete turn. Close blocks before the terminal events.
-                let mut remaining: Vec<u32> = open_indices.iter().copied().collect();
-                remaining.sort_unstable();
-                for index in remaining {
-                    yield Ok(anthropic_sse(
-                        "content_block_stop",
-                        &json!({"type":"content_block_stop","index":index}),
-                    ));
-                }
-                if !has_sent_message_start {
-                    yield Ok(anthropic_sse(
-                        "message_start",
-                        &json!({
-                            "type":"message_start",
-                            "message":{
-                                "id":message_id.clone().unwrap_or_default(),
-                                "type":"message",
-                                "role":"assistant",
-                                "model":current_model.clone().unwrap_or_default(),
-                                "usage":{"input_tokens":0,"output_tokens":0}
-                            }
-                        }),
-                    ));
-                }
-                yield Ok(anthropic_sse(
-                    "message_delta",
-                    &json!({
-                        "type":"message_delta",
-                        "delta":{"stop_reason":"max_tokens","stop_sequence":null},
-                        "usage":{"input_tokens":0,"output_tokens":0}
-                    }),
-                ));
-                yield Ok(anthropic_sse("message_stop", &json!({"type":"message_stop"})));
-            } else {
-                // A truncated tool/reasoning block cannot be safely finalized: tool
-                // JSON may be partial and thinking may be missing its signature.
-                yield Ok(anthropic_error_sse(
-                    "Responses upstream stream ended before a terminal event",
-                    "stream_truncated",
-                ));
+        if !state.terminated {
+            state.finish_unterminated(&mut out);
+            for bytes in out.drain(..) {
+                yield Ok(bytes);
             }
         }
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use futures::stream;
-    use futures::StreamExt;
-    use std::collections::HashMap;
-
-    async fn convert_stream_text(input: impl Into<Bytes>) -> String {
-        let upstream = stream::iter(vec![Ok::<_, std::io::Error>(input.into())]);
-        create_anthropic_sse_stream_from_responses(upstream)
-            .collect::<Vec<_>>()
-            .await
-            .into_iter()
-            .map(|chunk| String::from_utf8_lossy(chunk.unwrap().as_ref()).to_string())
-            .collect()
-    }
-
-    async fn convert_stream_text_with_web_search_name(
-        input: impl Into<Bytes>,
-        hosted_web_search_name: &str,
-    ) -> String {
-        let upstream = stream::iter(vec![Ok::<_, std::io::Error>(input.into())]);
-        create_anthropic_sse_stream_from_responses_with_web_search_options(
-            upstream,
-            Some(hosted_web_search_name.to_string()),
-            None,
-        )
-        .collect::<Vec<_>>()
-        .await
-        .into_iter()
-        .map(|chunk| String::from_utf8_lossy(chunk.unwrap().as_ref()).to_string())
-        .collect()
-    }
-
-    async fn convert_stream_text_with_web_search_limit(
-        input: impl Into<Bytes>,
-        hosted_web_search_name: &str,
-        max_web_search_uses: u64,
-    ) -> String {
-        let upstream = stream::iter(vec![Ok::<_, std::io::Error>(input.into())]);
-        create_anthropic_sse_stream_from_responses_with_web_search_options(
-            upstream,
-            Some(hosted_web_search_name.to_string()),
-            Some(max_web_search_uses),
-        )
-        .collect::<Vec<_>>()
-        .await
-        .into_iter()
-        .map(|chunk| String::from_utf8_lossy(chunk.unwrap().as_ref()).to_string())
-        .collect()
-    }
-
-    fn sse_data_values(output: &str) -> Vec<Value> {
-        output
-            .lines()
-            .filter_map(|line| line.strip_prefix("data: "))
-            .filter_map(|data| serde_json::from_str(data).ok())
-            .collect()
-    }
-
-    async fn convert_raw_stream_text_with_web_search(input: impl Into<Bytes>) -> String {
-        let upstream = stream::iter(vec![Ok::<_, std::io::Error>(input.into())]);
-        create_anthropic_sse_stream_from_responses_raw(
-            upstream,
-            "web_search".to_string(),
-            None,
-            true,
-        )
-        .collect::<Vec<_>>()
-        .await
-        .into_iter()
-        .map(|chunk| String::from_utf8_lossy(chunk.unwrap().as_ref()).to_string())
-        .collect()
-    }
-
-    #[test]
-    fn test_streamed_text_state_returns_only_the_missing_terminal_suffix() {
-        let mut state = StreamedTextState::default();
-        let delta = json!({
-            "item_id": "msg_partial",
-            "output_index": 0,
-            "content_index": 0
-        });
-        state.record_delta(&delta, "Already ");
-        state.record_delta(&delta, "streamed");
-
-        assert_eq!(
-            state.missing_suffix(
-                "Already streamed and completed.",
-                Some(0),
-                Some("msg_partial"),
-                0
-            ),
-            " and completed."
-        );
-        assert_eq!(
-            state.missing_suffix(
-                "Already streamed and completed.",
-                Some(0),
-                Some("msg_partial"),
-                0
-            ),
-            ""
-        );
-    }
-
-    #[test]
-    fn test_unkeyed_streamed_text_reconciles_with_later_terminal_keys() {
-        let mut streamed = StreamedTextState::default();
-        streamed.record_delta(&json!({}), "Before search.");
-        assert!(streamed.has_part_matching_terminal(
-            "Before search.",
-            Some(0),
-            Some("msg_before"),
-            0
-        ));
-
-        let item = json!({
-            "id": "msg_before",
-            "type": "message",
-            "content": [{
-                "type": "output_text",
-                "text": "Before search.",
-                "annotations": []
-            }]
-        });
-        let mut buffered = BufferedCitationTextState::default();
-        assert!(
-            missing_message_text_parts(&item, Some(0), &mut streamed, Some(&mut buffered))
-                .is_empty()
-        );
-    }
-
-    #[test]
-    fn test_streamed_text_preserves_keyed_then_unkeyed_delta_order() {
-        let mut state = StreamedTextState::default();
-        let keyed = json!({
-            "item_id": "msg_transition",
-            "output_index": 0,
-            "content_index": 0
-        });
-        state.record_delta(&keyed, "Hello ");
-        state.record_delta(&json!({}), "world");
-
-        assert_eq!(
-            state.missing_suffix("Hello world!", Some(0), Some("msg_transition"), 0),
-            "!"
-        );
-    }
-
-    #[test]
-    fn test_streamed_text_scopes_unkeyed_order_after_prior_part_finishes() {
-        let mut state = StreamedTextState::default();
-        let old = json!({
-            "item_id": "msg_old",
-            "output_index": 0,
-            "content_index": 0
-        });
-        state.record_delta(&old, "Old.");
-        state.finish_part(&old);
-
-        state.record_delta(&json!({}), "Hello ");
-        let current = json!({
-            "item_id": "msg_current",
-            "output_index": 1,
-            "content_index": 0
-        });
-        state.record_delta(&current, "world");
-
-        assert_eq!(
-            state.missing_suffix("Hello world!", Some(1), Some("msg_current"), 0),
-            "!"
-        );
-    }
-
-    #[test]
-    fn test_streamed_text_binds_output_and_item_aliases_to_one_aggregate() {
-        let mut state = StreamedTextState::default();
-        state.record_delta(
-            &json!({"item_id": "msg_alias", "content_index": 0}),
-            "Item ",
-        );
-        state.record_delta(&json!({"output_index": 3, "content_index": 0}), "output ");
-        state.record_delta(
-            &json!({
-                "item_id": "msg_alias",
-                "output_index": 3,
-                "content_index": 0
-            }),
-            "joined",
-        );
-
-        assert_eq!(
-            state.missing_suffix("Item output joined!", Some(3), Some("msg_alias"), 0),
-            "!"
-        );
-        assert_eq!(
-            state.missing_suffix("Item output joined!", None, Some("msg_alias"), 0),
-            ""
-        );
-    }
-
-    #[test]
-    fn test_streamed_text_preserves_repeated_deltas_when_aliases_merge() {
-        let mut state = StreamedTextState::default();
-        state.record_delta(&json!({"output_index": 3, "content_index": 0}), "abc");
-        state.record_delta(&json!({"item_id": "msg_repeat", "content_index": 0}), "abc");
-        state.record_delta(
-            &json!({
-                "item_id": "msg_repeat",
-                "output_index": 3,
-                "content_index": 0
-            }),
-            "!",
-        );
-
-        assert_eq!(
-            state.missing_suffix("abcabc! tail", Some(3), Some("msg_repeat"), 0),
-            " tail"
-        );
-    }
-
-    #[test]
-    fn test_streamed_text_rejects_crossed_established_aliases() {
-        let mut state = StreamedTextState::default();
-        let first = json!({
-            "item_id": "msg_first",
-            "output_index": 0,
-            "content_index": 0
-        });
-        let second = json!({
-            "item_id": "msg_second",
-            "output_index": 1,
-            "content_index": 0
-        });
-        state.record_delta(&first, "First");
-        state.record_delta(&second, "Second");
-        state.record_delta(
-            &json!({
-                "item_id": "msg_second",
-                "output_index": 0,
-                "content_index": 0
-            }),
-            " crossed",
-        );
-
-        assert_eq!(
-            state.missing_suffix("First!", Some(0), Some("msg_first"), 0),
-            "!"
-        );
-    }
-
-    #[test]
-    fn test_streamed_text_keeps_distinct_unkeyed_tail_after_keyed_terminal_part() {
-        let mut state = StreamedTextState::default();
-        state.record_delta(
-            &json!({
-                "item_id": "msg_first",
-                "output_index": 0,
-                "content_index": 0
-            }),
-            "First.",
-        );
-        state.record_delta(&json!({}), "Second.");
-
-        assert_eq!(
-            state.missing_suffix("First.", Some(0), Some("msg_first"), 0),
-            ""
-        );
-        assert_eq!(
-            state.missing_suffix("Second.", Some(1), Some("msg_second"), 0),
-            ""
-        );
-    }
-
-    #[test]
-    fn test_buffered_citations_reject_stale_done_before_next_unkeyed_delta() {
-        let mut state = BufferedCitationTextState::default();
-        let unkeyed = json!({});
-
-        state.record_part(&unkeyed, &json!({"type": "output_text", "text": ""}), false);
-        state.record_delta(&unkeyed, "First.");
-        state.record_done_event(&json!({"text": "First."}));
-        state.record_part(
-            &unkeyed,
-            &json!({"type": "output_text", "text": "First.", "annotations": []}),
-            true,
-        );
-
-        state.record_part(&unkeyed, &json!({"type": "output_text", "text": ""}), false);
-        assert!(!state.record_part(
-            &unkeyed,
-            &json!({"type": "output_text", "text": "First.", "annotations": []}),
-            true,
-        ));
-        state.record_delta(&unkeyed, "Second.");
-        state.record_done_event(&json!({"text": "Second."}));
-
-        assert_eq!(state.render_pending_parts(), vec!["First.", "Second."]);
-    }
-
-    #[test]
-    fn test_buffered_citations_preserve_new_unkeyed_substring_after_part_boundary() {
-        let mut state = BufferedCitationTextState::default();
-        let unkeyed = json!({});
-
-        state.record_delta(&unkeyed, "foobar");
-        state.record_done_event(&json!({"text": "foobar"}));
-        assert_eq!(state.render_pending_parts(), vec!["foobar"]);
-
-        state.record_part(&unkeyed, &json!({"type": "output_text", "text": ""}), false);
-        assert!(state.record_part(
-            &unkeyed,
-            &json!({
-                "type": "output_text",
-                "text": "bar",
-                "annotations": [{
-                    "type": "url_citation",
-                    "start_index": 0,
-                    "end_index": 3,
-                    "url": "https://example.com/bar",
-                    "title": "Bar"
-                }]
-            }),
-            true,
-        ));
-
-        assert_eq!(
-            state.render_pending_parts(),
-            vec!["[bar](https://example.com/bar)"]
-        );
-    }
-
-    #[test]
-    fn test_buffered_citations_merge_unkeyed_prefix_when_keys_appear() {
-        let mut state = BufferedCitationTextState::default();
-        state.record_delta(&json!({}), "Prefix ");
-        state.record_delta(&json!({"output_index": 2, "content_index": 0}), "suffix.");
-
-        assert_eq!(state.render_pending_parts(), vec!["Prefix suffix."]);
-    }
-
-    #[test]
-    fn test_buffered_citations_preserve_unkeyed_then_keyed_part_order() {
-        let mut state = BufferedCitationTextState::default();
-        let unkeyed = json!({});
-        state.record_delta(&unkeyed, "First.");
-        state.record_done_event(&json!({"text": "First."}));
-        state.record_delta(&json!({"output_index": 2, "content_index": 0}), "Second.");
-
-        assert_eq!(state.render_pending_parts(), vec!["First.", "Second."]);
-    }
-
-    #[test]
-    fn test_buffered_citations_do_not_alias_empty_keyed_part_to_prior_unkeyed_part() {
-        let mut state = BufferedCitationTextState::default();
-        let unkeyed = json!({});
-        state.record_delta(&unkeyed, "First.");
-        state.record_done_event(&json!({"text": "First."}));
-
-        let keyed = json!({"output_index": 2, "content_index": 0});
-        state.record_part(&keyed, &json!({"type": "output_text", "text": ""}), false);
-        state.record_delta(&keyed, "Second.");
-
-        assert_eq!(state.render_pending_parts(), vec!["First.", "Second."]);
-    }
-
-    #[test]
-    fn test_buffered_citations_merge_item_only_part_when_output_key_appears() {
-        let mut state = BufferedCitationTextState::default();
-        state.record_delta(
-            &json!({"item_id": "msg_transition", "content_index": 0}),
-            "Full ",
-        );
-        state.record_delta(
-            &json!({
-                "item_id": "msg_transition",
-                "output_index": 3,
-                "content_index": 0
-            }),
-            "text.",
-        );
-
-        assert_eq!(state.render_pending_parts(), vec!["Full text."]);
-    }
-
-    #[test]
-    fn test_buffered_citations_keep_item_only_parts_in_arrival_order() {
-        let mut state = BufferedCitationTextState::default();
-        state.record_delta(&json!({"item_id": "z_item", "content_index": 0}), "First.");
-        state
-            .record_done_event(&json!({"item_id": "z_item", "content_index": 0, "text": "First."}));
-        state.record_delta(&json!({"item_id": "a_item", "content_index": 0}), "Second.");
-
-        assert_eq!(state.render_pending_parts(), vec!["First.", "Second."]);
-    }
-
-    #[test]
-    fn test_buffered_citations_render_fuller_aggregate_than_stale_terminal_snapshot() {
-        let mut state = BufferedCitationTextState::default();
-        let keyed = json!({
-            "item_id": "msg_fuller",
-            "output_index": 0,
-            "content_index": 0
-        });
-        state.record_delta(&keyed, "Full text.");
-
-        let terminal = json!({"text": "Full", "annotations": []});
-        assert_eq!(
-            state.render_message_part(&terminal, Some(0), Some("msg_fuller"), 0),
-            Some("Full text.".to_string())
-        );
-        assert!(state.render_pending_parts().is_empty());
-    }
-
-    #[test]
-    fn test_buffered_citations_preserve_keyed_delta_after_part_was_flushed() {
-        let mut state = BufferedCitationTextState::default();
-        let keyed = json!({
-            "item_id": "msg_delayed",
-            "output_index": 0,
-            "content_index": 0
-        });
-        state.record_delta(&keyed, "Before");
-        assert_eq!(state.render_pending_parts(), vec!["Before"]);
-
-        state.record_delta(&keyed, " after");
-        state.record_done_event(&json!({
-            "item_id": "msg_delayed",
-            "output_index": 0,
-            "content_index": 0,
-            "text": "Before after"
-        }));
-        let terminal = json!({"text": "Before", "annotations": []});
-        assert_eq!(
-            state.render_message_part(&terminal, Some(0), Some("msg_delayed"), 0),
-            Some(" after".to_string())
-        );
-        assert!(state.render_pending_parts().is_empty());
-    }
-
-    #[test]
-    fn test_buffered_citations_merge_emitted_and_pending_aliases_without_dropping_tail() {
-        let mut state = BufferedCitationTextState::default();
-        let output_only = json!({"output_index": 0, "content_index": 0});
-        state.record_delta(&output_only, "Before");
-        assert_eq!(state.render_pending_parts(), vec!["Before"]);
-
-        let item_only = json!({"item_id": "msg_alias", "content_index": 0});
-        state.record_delta(&item_only, " after");
-        state.record_delta(
-            &json!({
-                "item_id": "msg_alias",
-                "output_index": 0,
-                "content_index": 0
-            }),
-            "!",
-        );
-
-        assert_eq!(state.render_pending_parts(), vec![" after!"]);
-    }
-
-    #[test]
-    fn test_buffered_citations_keep_post_flush_delta_across_stale_done_snapshot() {
-        let mut state = BufferedCitationTextState::default();
-        let keyed = json!({
-            "item_id": "msg_stale",
-            "output_index": 0,
-            "content_index": 0
-        });
-        state.record_delta(&keyed, "Before");
-        assert_eq!(state.render_pending_parts(), vec!["Before"]);
-        state.record_delta(&keyed, " after");
-        state.record_done_event(&json!({
-            "item_id": "msg_stale",
-            "output_index": 0,
-            "content_index": 0,
-            "text": "Before"
-        }));
-
-        assert_eq!(state.render_pending_parts(), vec![" after"]);
-    }
-
-    #[test]
-    fn test_buffered_citations_reject_stale_unkeyed_done_after_flush() {
-        let mut state = BufferedCitationTextState::default();
-        let unkeyed = json!({});
-        state.record_delta(&unkeyed, "Before");
-        assert_eq!(state.render_pending_parts(), vec!["Before"]);
-
-        state.record_delta(&unkeyed, " after");
-        state.record_done_event(&json!({"text": "Before"}));
-
-        assert_eq!(state.render_pending_parts(), vec![" after"]);
-    }
-
-    #[test]
-    fn test_buffered_citations_reconcile_cumulative_unkeyed_done_after_flush() {
-        let mut state = BufferedCitationTextState::default();
-        let unkeyed = json!({});
-        state.record_delta(&unkeyed, "Before");
-        assert_eq!(state.render_pending_parts(), vec!["Before"]);
-
-        state.record_delta(&unkeyed, " after");
-        state.record_done_event(&json!({"text": "Before after"}));
-
-        assert_eq!(state.render_pending_parts(), vec![" after"]);
-    }
-
-    #[test]
-    fn test_buffered_citations_ignore_partial_stale_unkeyed_done_after_flush() {
-        let mut state = BufferedCitationTextState::default();
-        let unkeyed = json!({});
-        state.record_delta(&unkeyed, "Before");
-        assert_eq!(state.render_pending_parts(), vec!["Before"]);
-
-        state.record_delta(&unkeyed, " after");
-        state.record_done_event(&json!({"text": "Bef"}));
-
-        assert_eq!(state.render_pending_parts(), vec![" after"]);
-    }
-
-    #[test]
-    fn test_buffered_citations_reject_incompatible_cumulative_unkeyed_done() {
-        let mut state = BufferedCitationTextState::default();
-        state.record_delta(&json!({}), "Before");
-        assert_eq!(state.render_pending_parts(), vec!["Before"]);
-
-        state.record_delta(&json!({}), " after");
-        state.record_done_event(&json!({"text": "Before stale"}));
-
-        assert_eq!(state.render_pending_parts(), vec![" after"]);
-    }
-
-    #[test]
-    fn test_buffered_citations_merge_fuller_duplicate_unkeyed_done() {
-        let mut state = BufferedCitationTextState::default();
-        state.record_delta(&json!({}), "Before");
-        state.record_done_event(&json!({"text": "Before"}));
-        state.record_done_event(&json!({"text": "Before after"}));
-
-        assert_eq!(state.render_pending_parts(), vec!["Before after"]);
-    }
-
-    #[test]
-    fn test_buffered_citations_metadata_only_done_closes_keyed_part() {
-        let mut state = BufferedCitationTextState::default();
-        let keyed = json!({
-            "item_id": "msg_first",
-            "output_index": 0,
-            "content_index": 0
-        });
-        state.record_delta(&keyed, "First.");
-        state.record_done_event(&keyed);
-        state.record_delta(&json!({}), "Second.");
-
-        assert_eq!(state.render_pending_parts(), vec!["First.", "Second."]);
-    }
-
-    #[test]
-    fn test_buffered_citations_do_not_adopt_open_part_with_conflicting_keys() {
-        let mut state = BufferedCitationTextState::default();
-        state.record_delta(
-            &json!({
-                "item_id": "msg_first",
-                "output_index": 0,
-                "content_index": 0
-            }),
-            "First.",
-        );
-        state.record_delta(
-            &json!({
-                "item_id": "msg_second",
-                "output_index": 1,
-                "content_index": 0
-            }),
-            "Second.",
-        );
-
-        assert_eq!(state.render_pending_parts(), vec!["First.", "Second."]);
-    }
-
-    #[test]
-    fn test_buffered_citations_preserve_repeated_post_flush_delta() {
-        let mut state = BufferedCitationTextState::default();
-        let keyed = json!({"output_index": 0, "content_index": 0});
-        state.record_delta(&keyed, "abc");
-        assert_eq!(state.render_pending_parts(), vec!["abc"]);
-
-        state.record_delta(&keyed, "abc");
-        assert_eq!(state.render_pending_parts(), vec!["abc"]);
-    }
-
-    #[test]
-    fn test_buffered_citations_preserve_repeated_alias_deltas() {
-        let mut state = BufferedCitationTextState::default();
-        let output_only = json!({"output_index": 0, "content_index": 0});
-        state.record_delta(&output_only, "abc");
-        assert_eq!(state.render_pending_parts(), vec!["abc"]);
-
-        state.record_delta(&json!({"item_id": "msg_repeat", "content_index": 0}), "abc");
-        state.record_delta(
-            &json!({
-                "item_id": "msg_repeat",
-                "output_index": 0,
-                "content_index": 0
-            }),
-            "!",
-        );
-
-        assert_eq!(state.render_pending_parts(), vec!["abc!"]);
-    }
-
-    #[test]
-    fn test_buffered_citations_empty_delta_does_not_make_snapshots_additive() {
-        let mut state = BufferedCitationTextState::default();
-        let output_only = json!({"output_index": 0, "content_index": 0});
-        assert!(state.record_text(&output_only, "abc"));
-        state.record_delta(&output_only, "");
-
-        let item_only = json!({"item_id": "msg_snapshot", "content_index": 0});
-        state.record_delta(&item_only, "abc");
-        let both = json!({
-            "item_id": "msg_snapshot",
-            "output_index": 0,
-            "content_index": 0
-        });
-        assert!(state.record_text(&both, "abc"));
-
-        assert_eq!(state.render_pending_parts(), vec!["abc"]);
-    }
-
-    #[test]
-    fn test_buffered_citations_do_not_reuse_last_unkeyed_part_for_conflicting_snapshot_key() {
-        let mut state = BufferedCitationTextState::default();
-        state.record_delta(&json!({}), "Same.");
-        assert!(state.record_text(
-            &json!({
-                "item_id": "msg_first",
-                "output_index": 0,
-                "content_index": 0
-            }),
-            "Same."
-        ));
-        assert!(state.record_text(
-            &json!({
-                "item_id": "msg_second",
-                "output_index": 1,
-                "content_index": 0
-            }),
-            "Same."
-        ));
-
-        assert_eq!(state.render_pending_parts(), vec!["Same.", "Same."]);
-    }
-
-    #[test]
-    fn test_buffered_citations_reject_crossed_established_aliases() {
-        let mut state = BufferedCitationTextState::default();
-        state.record_delta(
-            &json!({
-                "item_id": "msg_first",
-                "output_index": 0,
-                "content_index": 0
-            }),
-            "First.",
-        );
-        state.record_done_event(&json!({
-            "item_id": "msg_first",
-            "output_index": 0,
-            "content_index": 0,
-            "text": "First."
-        }));
-        state.record_delta(
-            &json!({
-                "item_id": "msg_second",
-                "output_index": 1,
-                "content_index": 0
-            }),
-            "Second.",
-        );
-        state.record_delta(
-            &json!({
-                "item_id": "msg_second",
-                "output_index": 0,
-                "content_index": 0
-            }),
-            "Crossed.",
-        );
-
-        assert_eq!(state.render_pending_parts(), vec!["First.", "Second."]);
-    }
-
-    #[test]
-    fn test_buffered_citations_reconcile_fuller_terminal_after_keyed_flush() {
-        let mut state = BufferedCitationTextState::default();
-        let keyed = json!({
-            "item_id": "msg_terminal",
-            "output_index": 0,
-            "content_index": 0
-        });
-        state.record_delta(&keyed, "Before");
-        assert_eq!(state.render_pending_parts(), vec!["Before"]);
-
-        let terminal = json!({
-            "text": "Before after",
-            "annotations": [{
-                "type": "url_citation",
-                "start_index": 7,
-                "end_index": 12,
-                "url": "https://example.com/after",
-                "title": "After"
-            }]
-        });
-        let rendered = state
-            .render_message_part(&terminal, Some(0), Some("msg_terminal"), 0)
-            .expect("fuller terminal suffix and citation should be emitted");
-        assert!(rendered.starts_with(" after"));
-        assert!(rendered.contains("https://example.com/after"));
-    }
-
-    #[test]
-    fn test_buffered_citations_consume_pending_unkeyed_suffix_after_emitted_history() {
-        let mut state = BufferedCitationTextState::default();
-        let unkeyed = json!({});
-        state.record_delta(&unkeyed, "First");
-        assert_eq!(state.render_pending_parts(), vec!["First"]);
-        state.record_delta(&unkeyed, "Second");
-
-        let terminal = json!({"text": "FirstSecond", "annotations": []});
-        assert_eq!(
-            state.render_message_part(&terminal, Some(0), Some("msg_combined"), 0),
-            Some("Second".to_string())
-        );
-        assert!(state.render_pending_parts().is_empty());
-    }
-
-    #[test]
-    fn test_buffered_citations_do_not_discard_keyed_tail_for_stale_unkeyed_snapshot() {
-        let mut state = BufferedCitationTextState::default();
-        state.record_delta(&json!({}), "Before");
-        assert_eq!(state.render_pending_parts(), vec!["Before"]);
-
-        let keyed = json!({
-            "item_id": "msg_tail",
-            "output_index": 0,
-            "content_index": 0
-        });
-        state.record_delta(&keyed, " after");
-        let stale = json!({"text": "Before", "annotations": []});
-        assert_eq!(
-            state.render_message_part(&stale, Some(0), Some("msg_tail"), 0),
-            Some(" after".to_string())
-        );
-
-        let complete = json!({"text": "Before after", "annotations": []});
-        assert_eq!(
-            state.render_message_part(&complete, Some(0), Some("msg_tail"), 0),
-            None
-        );
-    }
-
-    #[test]
-    fn test_buffered_citations_render_later_unkeyed_text_after_keyed_part() {
-        let mut state = BufferedCitationTextState::default();
-        let keyed = json!({"output_index": 0, "content_index": 0});
-        state.record_delta(&keyed, "Keyed.");
-        assert_eq!(state.render_pending_parts(), vec!["Keyed."]);
-
-        let unkeyed = json!({});
-        state.record_delta(&unkeyed, "Rust docs.");
-        state.record_annotation(
-            &unkeyed,
-            &json!({
-                "type": "url_citation",
-                "start_index": 0,
-                "end_index": 4,
-                "url": "https://www.rust-lang.org/",
-                "title": "Rust"
-            }),
-        );
-
-        assert_eq!(
-            state.render_pending_parts(),
-            vec!["[Rust](https://www.rust-lang.org/) docs."]
-        );
-    }
-
-    #[test]
-    fn test_buffered_citations_do_not_replay_emitted_unkeyed_history() {
-        let mut state = BufferedCitationTextState::default();
-        let unkeyed = json!({});
-        state.record_delta(&unkeyed, "First.");
-        assert_eq!(state.render_pending_parts(), vec!["First."]);
-
-        state.record_delta(&unkeyed, "Second.");
-        let first = json!({"text": "First.", "annotations": []});
-        assert_eq!(
-            state.render_message_part(&first, Some(0), Some("msg_first"), 0),
-            None
-        );
-        let second = json!({"text": "Second.", "annotations": []});
-        assert_eq!(
-            state.render_message_part(&second, Some(1), Some("msg_second"), 0),
-            Some("Second.".to_string())
-        );
-        assert!(state.render_pending_parts().is_empty());
-    }
-
-    #[test]
-    fn test_buffered_citations_filter_citations_emitted_with_unkeyed_history() {
-        let mut state = BufferedCitationTextState::default();
-        let already_emitted = json!({
-            "type": "url_citation",
-            "start_index": 0,
-            "end_index": 4,
-            "url": "https://www.rust-lang.org/",
-            "title": "Rust"
-        });
-        state.record_delta(&json!({}), "Rust");
-        state.record_annotation(&json!({}), &already_emitted);
-        assert_eq!(
-            state.render_pending_parts(),
-            vec!["[Rust](https://www.rust-lang.org/)"]
-        );
-
-        let terminal_only = json!({
-            "type": "url_citation",
-            "start_index": 0,
-            "end_index": 4,
-            "url": "https://doc.rust-lang.org/",
-            "title": "Rust docs"
-        });
-        let terminal = json!({
-            "text": "Rust",
-            "annotations": [already_emitted, terminal_only]
-        });
-        let rendered = state
-            .render_message_part(&terminal, Some(0), Some("msg_rust"), 0)
-            .expect("the terminal-only citation should still be emitted");
-        assert!(!rendered.contains("https://www.rust-lang.org/"));
-        assert!(rendered.contains("https://doc.rust-lang.org/"));
-    }
-
-    #[test]
-    fn test_buffered_citations_keep_same_citation_on_distinct_keyed_tail() {
-        let mut state = BufferedCitationTextState::default();
-        let citation = json!({
-            "type": "url_citation",
-            "start_index": 0,
-            "end_index": 4,
-            "url": "https://www.rust-lang.org/",
-            "title": "Rust"
-        });
-        state.record_delta(&json!({}), "Rust");
-        state.record_annotation(&json!({}), &citation);
-        assert_eq!(
-            state.render_pending_parts(),
-            vec!["[Rust](https://www.rust-lang.org/)"]
-        );
-
-        let keyed = json!({
-            "item_id": "msg_tail",
-            "output_index": 0,
-            "content_index": 0
-        });
-        state.record_delta(&keyed, "Rust");
-        let terminal = json!({"text": "Rust", "annotations": [citation]});
-        assert_eq!(
-            state.render_message_part(&terminal, Some(0), Some("msg_tail"), 0),
-            Some("[Rust](https://www.rust-lang.org/)".to_string())
-        );
-    }
-
-    #[test]
-    fn test_buffered_citations_collects_only_pending_keyed_annotations() {
-        let mut state = BufferedCitationTextState::default();
-        let keyed = json!({
-            "item_id": "msg_annotation",
-            "output_index": 0,
-            "content_index": 0
-        });
-        let citation = json!({
-            "type": "url_citation",
-            "start_index": 0,
-            "end_index": 4,
-            "url": "https://www.rust-lang.org/",
-            "title": "Rust"
-        });
-        state.record_annotation(&keyed, &citation);
-        assert_eq!(
-            state.render_pending_parts(),
-            vec!["Sources: [Rust](https://www.rust-lang.org/)"]
-        );
-
-        let terminal = json!({"text": "Rust", "annotations": [citation]});
-        assert!(state
-            .collect_annotations(
-                Some((0, 0)),
-                Some(&("msg_annotation".to_string(), 0)),
-                Some(&terminal)
-            )
-            .is_empty());
-    }
-
-    #[test]
-    fn test_buffered_citations_retain_terminal_only_part_for_late_enrichment() {
-        let mut state = BufferedCitationTextState::default();
-        let first = json!({"text": "Before", "annotations": []});
-        assert_eq!(
-            state.render_message_part(&first, Some(0), Some("msg_terminal_only"), 0),
-            Some("Before".to_string())
-        );
-
-        let enriched = json!({
-            "text": "Before after",
-            "annotations": [{
-                "type": "url_citation",
-                "start_index": 7,
-                "end_index": 12,
-                "url": "https://example.com/after",
-                "title": "After"
-            }]
-        });
-        let rendered = state
-            .render_message_part(&enriched, Some(0), Some("msg_terminal_only"), 0)
-            .expect("late suffix and citation should be emitted");
-        assert!(rendered.starts_with(" after"));
-        assert!(rendered.contains("https://example.com/after"));
-    }
-
-    #[test]
-    fn test_buffered_citations_win_over_unrelated_pre_search_unkeyed_text() {
-        let mut streamed = StreamedTextState::default();
-        streamed.record_delta(&json!({}), "Before search.");
-
-        let mut buffered = BufferedCitationTextState::default();
-        buffered.record_delta(
-            &json!({
-                "item_id": "msg_after",
-                "output_index": 2,
-                "content_index": 0
-            }),
-            "After search.",
-        );
-        let item = json!({
-            "id": "msg_after",
-            "type": "message",
-            "content": [{
-                "type": "output_text",
-                "text": "After search.",
-                "annotations": []
-            }]
-        });
-
-        assert_eq!(
-            missing_message_text_parts(&item, Some(2), &mut streamed, Some(&mut buffered)),
-            vec!["After search."]
-        );
-        assert_eq!(
-            streamed.missing_suffix("Before search.", Some(0), Some("msg_before"), 0),
-            ""
-        );
-    }
-
-    #[test]
-    fn test_map_responses_stop_reason_tool_use() {
-        assert_eq!(
-            map_responses_stop_reason(Some("completed"), true, None),
-            Some("tool_use")
-        );
-        assert_eq!(
-            map_responses_stop_reason(Some("completed"), false, None),
-            Some("end_turn")
-        );
-        assert_eq!(
-            map_responses_stop_reason(Some("incomplete"), false, Some("max_output_tokens")),
-            Some("max_tokens")
-        );
-        assert_eq!(
-            map_responses_stop_reason(Some("incomplete"), false, Some("content_filter")),
-            Some("end_turn")
-        );
-    }
-
-    #[test]
-    fn test_response_object_from_event_with_wrapper() {
-        let data = json!({
-            "type": "response.created",
-            "response": {
-                "id": "resp_1",
-                "model": "gpt-4o"
-            }
-        });
-        let obj = response_object_from_event(&data);
-        assert_eq!(obj["id"], "resp_1");
-        assert_eq!(obj["model"], "gpt-4o");
-    }
-
-    #[tokio::test]
-    async fn test_response_failed_event_becomes_anthropic_error() {
-        let input = concat!(
-            "event: response.created\n",
-            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"model\":\"gpt-5\"}}\n\n",
-            "event: response.failed\n",
-            "data: {\"type\":\"response.failed\",\"response\":{\"status\":\"failed\",\"error\":{\"type\":\"server_error\",\"message\":\"backend exploded\"}}}\n\n"
-        );
-
-        let merged = convert_stream_text(input).await;
-        assert!(merged.contains("event: error"));
-        assert!(merged.contains("backend exploded"));
-        assert!(!merged.contains("event: message_stop"));
-    }
-
-    #[tokio::test]
-    async fn test_late_delta_after_failure_does_not_emit_message_start() {
-        let input = concat!(
-            "event: response.failed\n",
-            "data: {\"type\":\"response.failed\",\"response\":{\"status\":\"failed\",\"error\":{\"message\":\"boom\"}}}\n\n",
-            "event: response.output_text.delta\n",
-            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"too late\"}\n\n"
-        );
-
-        let merged = convert_stream_text(input).await;
-        assert!(merged.contains("event: error"));
-        assert!(!merged.contains("event: message_start"));
-        assert!(!merged.contains("too late"));
-    }
-
-    #[tokio::test]
-    async fn test_completed_event_with_failed_status_is_error() {
-        let input = concat!(
-            "event: response.completed\n",
-            "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"failed\",\"error\":{\"type\":\"server_error\",\"message\":\"failed wrapper\"},\"output\":[]}}\n\n"
-        );
-
-        let merged = convert_stream_text(input).await;
-        assert!(merged.contains("event: error"));
-        assert!(merged.contains("failed wrapper"));
-        assert!(!merged.contains("event: message_stop"));
-    }
-
-    #[tokio::test]
-    async fn test_response_incomplete_event_terminates_with_max_tokens() {
-        let input = concat!(
-            "event: response.created\n",
-            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"model\":\"gpt-5\"}}\n\n",
-            "event: response.incomplete\n",
-            "data: {\"type\":\"response.incomplete\",\"response\":{\"status\":\"incomplete\",\"incomplete_details\":{\"reason\":\"max_output_tokens\"},\"usage\":{\"input_tokens\":10,\"output_tokens\":3}}}\n\n"
-        );
-
-        let merged = convert_stream_text(input).await;
-        assert!(merged.contains("\"stop_reason\":\"max_tokens\""));
-        assert!(merged.contains("event: message_stop"));
-        assert!(!merged.contains("event: error"));
-    }
-
-    #[tokio::test]
-    async fn test_response_incomplete_event_without_status_uses_event_fallback() {
-        let input = concat!(
-            "event: response.incomplete\n",
-            "data: {\"type\":\"response.incomplete\",\"response\":{\"usage\":{\"output_tokens\":3}}}\n\n"
-        );
-
-        let merged = convert_stream_text(input).await;
-        assert!(merged.contains("\"stop_reason\":\"max_tokens\""));
-        assert!(merged.contains("event: message_stop"));
-    }
-
-    #[tokio::test]
-    async fn test_response_incomplete_zero_usage_empty_output_is_upstream_error() {
-        // Shape returned by the ChatGPT Codex backend when it rejects the
-        // request before processing it (e.g. over a tool schema pattern):
-        // incomplete/max_output_tokens with zero usage and an empty output.
-        let input = concat!(
-            "event: response.created\n",
-            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"model\":\"gpt-5\"}}\n\n",
-            "event: response.incomplete\n",
-            "data: {\"type\":\"response.incomplete\",\"response\":{\"id\":\"resp_1\",\"status\":\"incomplete\",\"incomplete_details\":{\"reason\":\"max_output_tokens\"},\"usage\":{\"input_tokens\":0,\"output_tokens\":0},\"output\":[]}}\n\n"
-        );
-
-        let merged = convert_stream_text(input).await;
-        assert!(merged.contains("event: message_start"));
-        assert!(merged.contains("event: error"));
-        assert!(merged.contains("Upstream rejected the request before processing"));
-        assert!(!merged.contains("\"stop_reason\":\"max_tokens\""));
-        assert!(!merged.contains("event: message_stop"));
-    }
-
-    #[tokio::test]
-    async fn test_response_incomplete_zero_usage_without_output_array_is_upstream_error() {
-        // Same rejection without an `output` array, which skips the
-        // empty-output fast path and takes the regular terminal handling.
-        let input = concat!(
-            "event: response.created\n",
-            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"model\":\"gpt-5\"}}\n\n",
-            "event: response.incomplete\n",
-            "data: {\"type\":\"response.incomplete\",\"response\":{\"id\":\"resp_1\",\"status\":\"incomplete\",\"incomplete_details\":{\"reason\":\"max_output_tokens\"},\"usage\":{\"input_tokens\":0,\"output_tokens\":0}}}\n\n"
-        );
-
-        let merged = convert_stream_text(input).await;
-        assert!(merged.contains("event: error"));
-        assert!(merged.contains("Upstream rejected the request before processing"));
-        assert!(!merged.contains("\"stop_reason\":\"max_tokens\""));
-    }
-
-    #[tokio::test]
-    async fn test_response_incomplete_zero_input_nonzero_output_keeps_max_tokens() {
-        // Non-zero output usage means tokens were actually generated: keep
-        // reporting it as truncation.
-        let input = concat!(
-            "event: response.created\n",
-            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"model\":\"gpt-5\"}}\n\n",
-            "event: response.incomplete\n",
-            "data: {\"type\":\"response.incomplete\",\"response\":{\"id\":\"resp_1\",\"status\":\"incomplete\",\"incomplete_details\":{\"reason\":\"max_output_tokens\"},\"usage\":{\"input_tokens\":0,\"output_tokens\":7},\"output\":[]}}\n\n"
-        );
-
-        let merged = convert_stream_text(input).await;
-        assert!(merged.contains("\"stop_reason\":\"max_tokens\""));
-        assert!(merged.contains("event: message_stop"));
-        assert!(!merged.contains("event: error"));
-    }
-
-    #[test]
-    fn test_responses_json_to_anthropic_sse_zero_usage_incomplete_is_error() {
-        // Also covers the compatible-gateway path that feeds a full Responses
-        // JSON document straight into the converter.
-        let events = responses_json_to_anthropic_sse(
-            json!({
-                "id": "resp_1",
-                "status": "incomplete",
-                "incomplete_details": {"reason": "max_output_tokens"},
-                "usage": {"input_tokens": 0, "output_tokens": 0},
-                "output": []
-            }),
-            None,
-            None,
-        );
-        let merged = events
-            .iter()
-            .map(|event| String::from_utf8_lossy(event).to_string())
-            .collect::<String>();
-        assert!(merged.contains("event: message_start"));
-        assert!(merged.contains("event: error"));
-        assert!(merged.contains("Upstream rejected the request before processing"));
-        assert!(!merged.contains("\"stop_reason\":\"max_tokens\""));
-    }
-
-    #[tokio::test]
-    async fn test_streaming_hosted_web_search_emits_anthropic_server_tool_blocks() {
-        let input = concat!(
-            "event: response.created\n",
-            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_search\",\"model\":\"gpt-5.6\"}}\n\n",
-            "event: response.output_item.added\n",
-            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"ws_123\",\"type\":\"web_search_call\",\"status\":\"in_progress\"}}\n\n",
-            "event: response.output_item.done\n",
-            "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"ws_123\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"Rust official documentation\",\"sources\":[{\"type\":\"url\",\"url\":\"https://doc.rust-lang.org/\"}]}}}\n\n",
-            "event: response.content_part.added\n",
-            "data: {\"type\":\"response.content_part.added\",\"output_index\":1,\"content_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\n",
-            "event: response.output_text.delta\n",
-            "data: {\"type\":\"response.output_text.delta\",\"output_index\":1,\"content_index\":0,\"delta\":\"Rust docs are online.\"}\n\n",
-            "event: response.output_text.annotation.added\n",
-            "data: {\"type\":\"response.output_text.annotation.added\",\"output_index\":1,\"content_index\":0,\"annotation_index\":0,\"annotation\":{\"type\":\"url_citation\",\"start_index\":0,\"end_index\":9,\"url\":\"https://doc.rust-lang.org/\",\"title\":\"Rust Documentation\"}}\n\n",
-            "event: response.output_text.done\n",
-            "data: {\"type\":\"response.output_text.done\",\"output_index\":1,\"content_index\":0,\"text\":\"Rust docs are online.\"}\n\n",
-            "event: response.output_item.done\n",
-            "data: {\"type\":\"response.output_item.done\",\"output_index\":1,\"item\":{\"id\":\"msg_123\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Rust docs are online.\",\"annotations\":[{\"type\":\"url_citation\",\"start_index\":0,\"end_index\":9,\"url\":\"https://doc.rust-lang.org/\",\"title\":\"Rust Documentation\"}]}]}}\n\n",
-            "event: response.completed\n",
-            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_search\",\"status\":\"completed\",\"usage\":{\"input_tokens\":10,\"output_tokens\":12}}}\n\n"
-        );
-
-        let merged = convert_stream_text_with_web_search_name(input, "web_search_next").await;
-        let events = sse_data_values(&merged);
-        let content_block_types: Vec<&str> = events
-            .iter()
-            .filter_map(|event| event.get("content_block"))
-            .filter_map(|block| block.get("type").and_then(Value::as_str))
-            .collect();
-        assert_eq!(
-            content_block_types,
-            vec!["server_tool_use", "web_search_tool_result", "text"]
-        );
-        assert_eq!(merged.matches("\"type\":\"server_tool_use\"").count(), 1);
-        assert_eq!(
-            merged
-                .matches("\"type\":\"web_search_tool_result\"")
-                .count(),
-            1
-        );
-        assert!(merged.contains("\"id\":\"ws_123\""));
-        assert!(merged.contains("\"name\":\"web_search_next\""));
-        assert!(merged
-            .contains("\"partial_json\":\"{\\\"query\\\":\\\"Rust official documentation\\\"}\""));
-        assert!(merged.contains("https://doc.rust-lang.org/"));
-        assert!(merged.contains("\"title\":\"Rust Documentation\""));
-        let text_deltas: Vec<&str> = events
-            .iter()
-            .filter(|event| {
-                event.pointer("/delta/type").and_then(Value::as_str) == Some("text_delta")
-            })
-            .filter_map(|event| event.pointer("/delta/text").and_then(Value::as_str))
-            .collect();
-        assert_eq!(
-            text_deltas,
-            vec!["[Rust docs](https://doc.rust-lang.org/) are online."]
-        );
-        assert!(merged.contains("\"stop_reason\":\"end_turn\""));
-        assert!(!merged.contains("\"stop_reason\":\"tool_use\""));
-        assert!(merged.contains("\"web_search_requests\":1"));
-        assert!(merged.contains("event: message_stop"));
-    }
-
-    #[tokio::test]
-    async fn test_buffered_hosted_web_search_text_emits_keepalive_ping() {
-        let input = concat!(
-            "event: response.created\n",
-            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_keepalive\",\"model\":\"gpt-5.6\"}}\n\n",
-            "event: response.output_item.added\n",
-            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"ws_keepalive\",\"type\":\"web_search_call\",\"status\":\"in_progress\"}}\n\n",
-            "event: response.output_item.done\n",
-            "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"ws_keepalive\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"Rust docs\"}}}\n\n",
-            "event: response.content_part.added\n",
-            "data: {\"type\":\"response.content_part.added\",\"output_index\":1,\"content_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\n",
-            "event: response.output_text.delta\n",
-            "data: {\"type\":\"response.output_text.delta\",\"output_index\":1,\"content_index\":0,\"delta\":\"Still synthesizing the answer.\"}\n\n"
-        );
-
-        let merged = convert_raw_stream_text_with_web_search(input).await;
-
-        assert_eq!(merged.matches("event: ping").count(), 1);
-        assert!(!merged.contains("\"type\":\"text_delta\""));
-    }
-
-    #[tokio::test]
-    async fn test_terminal_search_recovery_reuses_reserved_text_index() {
-        let input = concat!(
-            "event: response.created\n",
-            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_recovery\",\"model\":\"gpt-5.6\"}}\n\n",
-            "event: response.output_item.added\n",
-            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"ws_recovery\",\"type\":\"web_search_call\",\"status\":\"in_progress\"}}\n\n",
-            "event: response.output_item.done\n",
-            "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"ws_recovery\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"Rust docs\",\"sources\":[{\"type\":\"url\",\"url\":\"https://doc.rust-lang.org/\",\"title\":\"Rust Documentation\"}]}}}\n\n",
-            "event: response.content_part.added\n",
-            "data: {\"type\":\"response.content_part.added\",\"item_id\":\"msg_recovery\",\"output_index\":1,\"content_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\n",
-            "event: response.output_text.delta\n",
-            "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_recovery\",\"output_index\":1,\"content_index\":0,\"delta\":\"Rust docs are online.\"}\n\n",
-            "event: response.output_text.annotation.added\n",
-            "data: {\"type\":\"response.output_text.annotation.added\",\"item_id\":\"msg_recovery\",\"output_index\":1,\"content_index\":0,\"annotation_index\":0,\"annotation\":{\"type\":\"url_citation\",\"start_index\":0,\"end_index\":9,\"url\":\"https://doc.rust-lang.org/\",\"title\":\"Rust Documentation\"}}\n\n",
-            "event: response.output_text.done\n",
-            "data: {\"type\":\"response.output_text.done\",\"item_id\":\"msg_recovery\",\"output_index\":1,\"content_index\":0,\"text\":\"Rust docs are online.\"}\n\n",
-            "event: response.completed\n",
-            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_recovery\",\"model\":\"gpt-5.6\",\"status\":\"completed\",\"output\":[{\"id\":\"ws_recovery\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"Rust docs\",\"sources\":[{\"type\":\"url\",\"url\":\"https://doc.rust-lang.org/\",\"title\":\"Rust Documentation\"}]}},{\"id\":\"msg_recovery\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Rust docs are online.\",\"annotations\":[{\"type\":\"url_citation\",\"start_index\":0,\"end_index\":9,\"url\":\"https://doc.rust-lang.org/\",\"title\":\"Rust Documentation\"}]}]}],\"usage\":{\"input_tokens\":8,\"output_tokens\":5}}}\n\n"
-        );
-
-        let merged = convert_stream_text_with_web_search_name(input, "web_search").await;
-        let events = sse_data_values(&merged);
-        let started_indices: Vec<u64> = events
-            .iter()
-            .filter(|event| {
-                event.get("type").and_then(Value::as_str) == Some("content_block_start")
-            })
-            .filter_map(|event| event.get("index").and_then(Value::as_u64))
-            .collect();
-        let text_deltas: Vec<&str> = events
-            .iter()
-            .filter(|event| {
-                event.pointer("/delta/type").and_then(Value::as_str) == Some("text_delta")
-            })
-            .filter_map(|event| event.pointer("/delta/text").and_then(Value::as_str))
-            .collect();
-
-        assert_eq!(started_indices, vec![0, 1, 2]);
-        assert_eq!(
-            text_deltas,
-            vec!["[Rust docs](https://doc.rust-lang.org/) are online."]
-        );
-        assert!(merged.contains("event: message_stop"));
-    }
-
-    #[tokio::test]
-    async fn test_terminal_search_reconciles_unkeyed_buffered_text() {
-        let input = concat!(
-            "event: response.created\n",
-            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_unkeyed\",\"model\":\"gpt-5.6\"}}\n\n",
-            "event: response.output_item.added\n",
-            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"ws_unkeyed\",\"type\":\"web_search_call\",\"status\":\"in_progress\"}}\n\n",
-            "event: response.output_item.done\n",
-            "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"ws_unkeyed\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"Rust docs\"}}}\n\n",
-            "event: response.output_text.delta\n",
-            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Rust docs are online.\"}\n\n",
-            "event: response.output_text.annotation.added\n",
-            "data: {\"type\":\"response.output_text.annotation.added\",\"annotation\":{\"type\":\"url_citation\",\"start_index\":0,\"end_index\":9,\"url\":\"https://doc.rust-lang.org/\",\"title\":\"Rust Documentation\"}}\n\n",
-            "event: response.completed\n",
-            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_unkeyed\",\"model\":\"gpt-5.6\",\"status\":\"completed\",\"output\":[{\"id\":\"ws_unkeyed\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"Rust docs\"}},{\"id\":\"msg_unkeyed\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Rust docs are online.\",\"annotations\":[]}]}],\"usage\":{\"input_tokens\":8,\"output_tokens\":5}}}\n\n"
-        );
-
-        let merged = convert_stream_text_with_web_search_name(input, "web_search").await;
-        let text_deltas: Vec<String> = sse_data_values(&merged)
-            .into_iter()
-            .filter(|event| {
-                event.pointer("/delta/type").and_then(Value::as_str) == Some("text_delta")
-            })
-            .filter_map(|event| {
-                event
-                    .pointer("/delta/text")
-                    .and_then(Value::as_str)
-                    .map(ToString::to_string)
-            })
-            .collect();
-
-        assert_eq!(
-            text_deltas,
-            vec!["[Rust docs](https://doc.rust-lang.org/) are online."]
-        );
-        assert!(merged.contains("event: message_stop"));
-    }
-
-    #[tokio::test]
-    async fn test_terminal_search_partitions_unkeyed_citations_across_text_parts() {
-        let input = concat!(
-            "event: response.created\n",
-            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_unkeyed_parts\",\"model\":\"gpt-5.6\"}}\n\n",
-            "event: response.output_item.added\n",
-            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"ws_unkeyed_parts\",\"type\":\"web_search_call\",\"status\":\"in_progress\"}}\n\n",
-            "event: response.output_item.done\n",
-            "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"ws_unkeyed_parts\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"Rust and Cargo docs\"}}}\n\n",
-            "event: response.content_part.added\n",
-            "data: {\"type\":\"response.content_part.added\",\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\n",
-            "event: response.output_text.delta\n",
-            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Rust docs.\"}\n\n",
-            "event: response.output_text.annotation.added\n",
-            "data: {\"type\":\"response.output_text.annotation.added\",\"annotation\":{\"type\":\"url_citation\",\"start_index\":0,\"end_index\":4,\"url\":\"https://www.rust-lang.org/\",\"title\":\"Rust\"}}\n\n",
-            "event: response.output_text.done\n",
-            "data: {\"type\":\"response.output_text.done\",\"text\":\"Rust docs.\",\"annotations\":[{\"type\":\"url_citation\",\"start_index\":0,\"end_index\":4,\"url\":\"https://www.rust-lang.org/\",\"title\":\"Rust\"}]}\n\n",
-            "event: response.content_part.done\n",
-            "data: {\"type\":\"response.content_part.done\",\"part\":{\"type\":\"output_text\",\"text\":\"Rust docs.\",\"annotations\":[{\"type\":\"url_citation\",\"start_index\":0,\"end_index\":4,\"url\":\"https://www.rust-lang.org/\",\"title\":\"Rust\"}]}}\n\n",
-            "event: response.content_part.added\n",
-            "data: {\"type\":\"response.content_part.added\",\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\n",
-            "event: response.output_text.delta\n",
-            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Cargo docs.\"}\n\n",
-            "event: response.content_part.done\n",
-            "data: {\"type\":\"response.content_part.done\",\"part\":{\"type\":\"output_text\",\"text\":\"Rust docs.\",\"annotations\":[{\"type\":\"url_citation\",\"start_index\":0,\"end_index\":4,\"url\":\"https://www.rust-lang.org/\",\"title\":\"Rust\"}]}}\n\n",
-            "event: response.output_text.annotation.added\n",
-            "data: {\"type\":\"response.output_text.annotation.added\",\"annotation\":{\"type\":\"url_citation\",\"start_index\":0,\"end_index\":5,\"url\":\"https://doc.rust-lang.org/cargo/\",\"title\":\"Cargo\"}}\n\n",
-            "event: response.output_text.done\n",
-            "data: {\"type\":\"response.output_text.done\",\"text\":\"Cargo docs.\",\"annotations\":[{\"type\":\"url_citation\",\"start_index\":0,\"end_index\":5,\"url\":\"https://doc.rust-lang.org/cargo/\",\"title\":\"Cargo\"}]}\n\n",
-            "event: response.content_part.done\n",
-            "data: {\"type\":\"response.content_part.done\",\"part\":{\"type\":\"output_text\",\"text\":\"Cargo docs.\",\"annotations\":[{\"type\":\"url_citation\",\"start_index\":0,\"end_index\":5,\"url\":\"https://doc.rust-lang.org/cargo/\",\"title\":\"Cargo\"}]}}\n\n",
-            "event: response.completed\n",
-            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_unkeyed_parts\",\"model\":\"gpt-5.6\",\"status\":\"completed\",\"output\":[{\"id\":\"ws_unkeyed_parts\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"Rust and Cargo docs\"}},{\"id\":\"msg_unkeyed_parts\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Rust docs.\",\"annotations\":[]},{\"type\":\"output_text\",\"text\":\"Cargo docs.\",\"annotations\":[]}]}],\"usage\":{\"input_tokens\":8,\"output_tokens\":5}}}\n\n"
-        );
-
-        let merged = convert_stream_text_with_web_search_name(input, "web_search").await;
-        let text_deltas: Vec<String> = sse_data_values(&merged)
-            .into_iter()
-            .filter(|event| {
-                event.pointer("/delta/type").and_then(Value::as_str) == Some("text_delta")
-            })
-            .filter_map(|event| {
-                event
-                    .pointer("/delta/text")
-                    .and_then(Value::as_str)
-                    .map(ToString::to_string)
-            })
-            .collect();
-
-        assert_eq!(
-            text_deltas,
-            vec![
-                "[Rust](https://www.rust-lang.org/) docs.",
-                "[Cargo](https://doc.rust-lang.org/cargo/) docs."
-            ]
-        );
-        assert!(merged.contains("event: message_stop"));
-    }
-
-    #[tokio::test]
-    async fn test_text_streamed_before_search_is_not_replayed_after_buffering_starts() {
-        let input = concat!(
-            "event: response.created\n",
-            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_transition\",\"model\":\"gpt-5.6\"}}\n\n",
-            "event: response.content_part.added\n",
-            "data: {\"type\":\"response.content_part.added\",\"item_id\":\"msg_before\",\"output_index\":0,\"content_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\n",
-            "event: response.output_text.delta\n",
-            "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_before\",\"output_index\":0,\"content_index\":0,\"delta\":\"Before search.\"}\n\n",
-            "event: response.output_text.done\n",
-            "data: {\"type\":\"response.output_text.done\",\"item_id\":\"msg_before\",\"output_index\":0,\"content_index\":0,\"text\":\"Before search.\"}\n\n",
-            "event: response.output_item.added\n",
-            "data: {\"type\":\"response.output_item.added\",\"output_index\":1,\"item\":{\"id\":\"ws_transition\",\"type\":\"web_search_call\",\"status\":\"in_progress\"}}\n\n",
-            "event: response.output_item.done\n",
-            "data: {\"type\":\"response.output_item.done\",\"output_index\":1,\"item\":{\"id\":\"ws_transition\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"Rust docs\",\"sources\":[{\"type\":\"url\",\"url\":\"https://doc.rust-lang.org/\",\"title\":\"Rust Documentation\"}]}}}\n\n",
-            "event: response.content_part.added\n",
-            "data: {\"type\":\"response.content_part.added\",\"item_id\":\"msg_after\",\"output_index\":2,\"content_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\n",
-            "event: response.output_text.delta\n",
-            "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_after\",\"output_index\":2,\"content_index\":0,\"delta\":\"Rust docs are online.\"}\n\n",
-            "event: response.output_text.annotation.added\n",
-            "data: {\"type\":\"response.output_text.annotation.added\",\"item_id\":\"msg_after\",\"output_index\":2,\"content_index\":0,\"annotation_index\":0,\"annotation\":{\"type\":\"url_citation\",\"start_index\":0,\"end_index\":9,\"url\":\"https://doc.rust-lang.org/\",\"title\":\"Rust Documentation\"}}\n\n",
-            "event: response.output_text.done\n",
-            "data: {\"type\":\"response.output_text.done\",\"item_id\":\"msg_after\",\"output_index\":2,\"content_index\":0,\"text\":\"Rust docs are online.\"}\n\n",
-            "event: response.output_item.done\n",
-            "data: {\"type\":\"response.output_item.done\",\"output_index\":2,\"item\":{\"id\":\"msg_after\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Rust docs are online.\",\"annotations\":[{\"type\":\"url_citation\",\"start_index\":0,\"end_index\":9,\"url\":\"https://doc.rust-lang.org/\",\"title\":\"Rust Documentation\"}]}]}}\n\n",
-            "event: response.completed\n",
-            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_transition\",\"model\":\"gpt-5.6\",\"status\":\"completed\",\"output\":[{\"id\":\"msg_before\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Before search.\",\"annotations\":[]}]},{\"id\":\"ws_transition\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"Rust docs\",\"sources\":[{\"type\":\"url\",\"url\":\"https://doc.rust-lang.org/\",\"title\":\"Rust Documentation\"}]}},{\"id\":\"msg_after\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Rust docs are online.\",\"annotations\":[{\"type\":\"url_citation\",\"start_index\":0,\"end_index\":9,\"url\":\"https://doc.rust-lang.org/\",\"title\":\"Rust Documentation\"}]}]}],\"usage\":{\"input_tokens\":8,\"output_tokens\":8}}}\n\n"
-        );
-
-        let merged = convert_stream_text_with_web_search_name(input, "web_search").await;
-        let text_deltas: Vec<String> = sse_data_values(&merged)
-            .into_iter()
-            .filter(|event| {
-                event.pointer("/delta/type").and_then(Value::as_str) == Some("text_delta")
-            })
-            .filter_map(|event| {
-                event
-                    .pointer("/delta/text")
-                    .and_then(Value::as_str)
-                    .map(ToString::to_string)
-            })
-            .collect();
-
-        assert_eq!(
-            text_deltas,
-            vec![
-                "Before search.",
-                "[Rust docs](https://doc.rust-lang.org/) are online."
-            ]
-        );
-    }
-
-    #[tokio::test]
-    async fn test_streaming_hosted_web_search_preserves_failed_result() {
-        let input = concat!(
-            "event: response.created\n",
-            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_failed_search\",\"model\":\"gpt-5.6\"}}\n\n",
-            "event: response.output_item.added\n",
-            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"ws_failed\",\"type\":\"web_search_call\",\"status\":\"in_progress\"}}\n\n",
-            "event: response.output_item.done\n",
-            "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"ws_failed\",\"type\":\"web_search_call\",\"status\":\"failed\",\"action\":{\"type\":\"search\",\"query\":\"latest docs\"},\"error\":{\"code\":\"invalid_search_query\"}}}\n\n",
-            "event: response.completed\n",
-            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_failed_search\",\"status\":\"completed\",\"usage\":{\"input_tokens\":4,\"output_tokens\":1}}}\n\n"
-        );
-
-        let merged = convert_stream_text_with_web_search_name(input, "web_search_future").await;
-        let events = sse_data_values(&merged);
-        let result = events
-            .iter()
-            .filter_map(|event| event.get("content_block"))
-            .find(|block| {
-                block.get("type").and_then(Value::as_str) == Some("web_search_tool_result")
-            })
-            .unwrap();
-
-        assert_eq!(result["tool_use_id"], "ws_failed");
-        assert_eq!(
-            result["content"],
-            json!({
-                "type": "web_search_tool_result_error",
-                "error_code": "invalid_tool_input"
-            })
-        );
-        assert!(merged.contains("\"web_search_requests\":1"));
-        assert!(merged.contains("event: message_stop"));
-    }
-
-    #[tokio::test]
-    async fn test_streaming_incomplete_hosted_web_search_emits_error_result() {
-        let input = concat!(
-            "event: response.created\n",
-            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_unfinished_search\",\"model\":\"gpt-5.6\"}}\n\n",
-            "event: response.output_item.added\n",
-            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"ws_unfinished\",\"type\":\"web_search_call\",\"status\":\"in_progress\"}}\n\n",
-            "event: response.incomplete\n",
-            "data: {\"type\":\"response.incomplete\",\"response\":{\"id\":\"resp_unfinished_search\",\"status\":\"incomplete\",\"incomplete_details\":{\"reason\":\"max_output_tokens\"},\"usage\":{\"input_tokens\":4,\"output_tokens\":1}}}\n\n"
-        );
-
-        let merged = convert_stream_text_with_web_search_name(input, "web_search_future").await;
-        let events = sse_data_values(&merged);
-        let result = events
-            .iter()
-            .filter_map(|event| event.get("content_block"))
-            .find(|block| {
-                block.get("type").and_then(Value::as_str) == Some("web_search_tool_result")
-            })
-            .unwrap();
-
-        assert_eq!(result["tool_use_id"], "ws_unfinished");
-        assert_eq!(
-            result["content"],
-            json!({
-                "type": "web_search_tool_result_error",
-                "error_code": "unavailable"
-            })
-        );
-        assert!(merged.contains("\"stop_reason\":\"max_tokens\""));
-        assert!(merged.contains("event: message_stop"));
-    }
-
-    #[tokio::test]
-    async fn test_streaming_hosted_web_search_enforces_max_uses() {
-        let input = concat!(
-            "event: response.created\n",
-            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_search_limit\",\"model\":\"gpt-5.6\"}}\n\n",
-            "event: response.output_item.added\n",
-            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"ws_allowed\",\"type\":\"web_search_call\",\"status\":\"in_progress\"}}\n\n",
-            "event: response.output_item.done\n",
-            "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"ws_allowed\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"allowed query\",\"sources\":[{\"type\":\"url\",\"url\":\"https://example.com/allowed\",\"title\":\"Allowed\"}]}}}\n\n",
-            "event: response.output_item.added\n",
-            "data: {\"type\":\"response.output_item.added\",\"output_index\":1,\"item\":{\"id\":\"ws_over_limit\",\"type\":\"web_search_call\",\"status\":\"in_progress\"}}\n\n",
-            "event: response.output_text.delta\n",
-            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"must not leak\"}\n\n",
-            "event: response.completed\n",
-            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_search_limit\",\"status\":\"completed\",\"usage\":{\"input_tokens\":4,\"output_tokens\":3}}}\n\n"
-        );
-
-        let merged = convert_stream_text_with_web_search_limit(input, "web_search_future", 1).await;
-        let events = sse_data_values(&merged);
-        let result_blocks: Vec<&Value> = events
-            .iter()
-            .filter_map(|event| event.get("content_block"))
-            .filter(|block| {
-                block.get("type").and_then(Value::as_str) == Some("web_search_tool_result")
-            })
-            .collect();
-
-        assert_eq!(merged.matches("\"type\":\"server_tool_use\"").count(), 2);
-        assert_eq!(result_blocks.len(), 2);
-        assert_eq!(result_blocks[0]["tool_use_id"], "ws_allowed");
-        assert_eq!(result_blocks[0]["content"][0]["title"], "Allowed");
-        assert_eq!(result_blocks[1]["tool_use_id"], "ws_over_limit");
-        assert_eq!(
-            result_blocks[1]["content"],
-            json!({
-                "type": "web_search_tool_result_error",
-                "error_code": "max_uses_exceeded"
-            })
-        );
-        assert!(!merged.contains("must not leak"));
-        assert!(merged.contains("\"web_search_requests\":1"));
-        assert!(merged.contains("event: message_stop"));
-    }
-
-    #[tokio::test]
-    async fn test_post_search_activity_preserves_mixed_block_order_and_emits_ping() {
-        let input = concat!(
-            "event: response.created\n",
-            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_mixed_order\",\"model\":\"gpt-5.6\"}}\n\n",
-            "event: response.output_item.added\n",
-            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"ws_order\",\"type\":\"web_search_call\",\"status\":\"in_progress\"}}\n\n",
-            "event: response.output_item.done\n",
-            "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"ws_order\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"Rust docs\",\"sources\":[{\"type\":\"url\",\"url\":\"https://doc.rust-lang.org/\",\"title\":\"Rust Documentation\"}]}}}\n\n",
-            "event: response.content_part.added\n",
-            "data: {\"type\":\"response.content_part.added\",\"output_index\":1,\"content_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\n",
-            "event: response.output_text.delta\n",
-            "data: {\"type\":\"response.output_text.delta\",\"output_index\":1,\"content_index\":0,\"delta\":\"Search answer before function.\"}\n\n",
-            "event: response.output_item.added\n",
-            "data: {\"type\":\"response.output_item.added\",\"output_index\":2,\"item\":{\"id\":\"fc_after_search\",\"type\":\"function_call\",\"call_id\":\"call_after_search\",\"name\":\"lookup\",\"arguments\":\"\"}}\n\n",
-            "event: response.function_call_arguments.done\n",
-            "data: {\"type\":\"response.function_call_arguments.done\",\"item_id\":\"fc_after_search\",\"output_index\":2,\"arguments\":\"{\\\"query\\\":\\\"rust\\\"}\"}\n\n",
-            "event: response.completed\n",
-            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_mixed_order\",\"status\":\"completed\",\"usage\":{\"input_tokens\":8,\"output_tokens\":5}}}\n\n"
-        );
-
-        let merged = convert_stream_text_with_web_search_name(input, "web_search_future").await;
-        let events = sse_data_values(&merged);
-        let starts: Vec<(&str, u64)> = events
-            .iter()
-            .filter(|event| {
-                event.get("type").and_then(Value::as_str) == Some("content_block_start")
-            })
-            .filter_map(|event| {
-                Some((
-                    event.pointer("/content_block/type")?.as_str()?,
-                    event.get("index")?.as_u64()?,
-                ))
-            })
-            .collect();
-
-        assert_eq!(
-            starts,
-            vec![
-                ("server_tool_use", 0),
-                ("web_search_tool_result", 1),
-                ("text", 2),
-                ("tool_use", 3),
-            ]
-        );
-        assert!(events
-            .iter()
-            .any(|event| event.get("type").and_then(Value::as_str) == Some("ping")));
-        assert!(events.iter().any(|event| {
-            event.get("type").and_then(Value::as_str) == Some("message_delta")
-                && event.pointer("/delta/stop_reason").and_then(Value::as_str) == Some("tool_use")
-        }));
-    }
-
-    #[tokio::test]
-    async fn test_streaming_web_search_done_with_late_id_reuses_output_index_identity() {
-        let input = concat!(
-            "event: response.created\n",
-            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_late_id\",\"model\":\"gpt-5.6\"}}\n\n",
-            "event: response.output_item.added\n",
-            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"web_search_call\",\"status\":\"in_progress\"}}\n\n",
-            "event: response.output_item.done\n",
-            "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"ws_late_id\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"Rust docs\",\"sources\":[{\"type\":\"url\",\"url\":\"https://doc.rust-lang.org/\",\"title\":\"Rust Documentation\"}]}}}\n\n",
-            "event: response.completed\n",
-            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_late_id\",\"status\":\"completed\",\"usage\":{\"input_tokens\":4,\"output_tokens\":1}}}\n\n"
-        );
-
-        let merged = convert_stream_text_with_web_search_limit(input, "web_search_future", 1).await;
-        let events = sse_data_values(&merged);
-        let result_blocks: Vec<&Value> = events
-            .iter()
-            .filter_map(|event| event.get("content_block"))
-            .filter(|block| {
-                block.get("type").and_then(Value::as_str) == Some("web_search_tool_result")
-            })
-            .collect();
-
-        assert_eq!(merged.matches("\"type\":\"server_tool_use\"").count(), 1);
-        assert_eq!(result_blocks.len(), 1);
-        assert_eq!(result_blocks[0]["tool_use_id"], "ws_stream_0");
-        assert_eq!(
-            result_blocks[0]["content"][0]["url"],
-            "https://doc.rust-lang.org/"
-        );
-        assert!(!merged.contains("max_uses_exceeded"));
-        assert!(merged.contains("\"web_search_requests\":1"));
-        assert!(merged.contains("event: message_stop"));
-    }
-
-    #[tokio::test]
-    async fn test_streaming_web_search_limit_closes_parallel_in_flight_blocks() {
-        let input = concat!(
-            "event: response.created\n",
-            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_parallel_limit\",\"model\":\"gpt-5.6\"}}\n\n",
-            "event: response.output_item.added\n",
-            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"ws_in_flight\",\"type\":\"web_search_call\",\"status\":\"in_progress\"}}\n\n",
-            "event: response.output_item.added\n",
-            "data: {\"type\":\"response.output_item.added\",\"output_index\":1,\"item\":{\"id\":\"ws_over_limit\",\"type\":\"web_search_call\",\"status\":\"in_progress\"}}\n\n"
-        );
-
-        let merged = convert_stream_text_with_web_search_limit(input, "web_search_future", 1).await;
-        let events = sse_data_values(&merged);
-        let mut started_indices: Vec<u64> = events
-            .iter()
-            .filter(|event| {
-                event.get("type").and_then(Value::as_str) == Some("content_block_start")
-            })
-            .filter_map(|event| event.get("index").and_then(Value::as_u64))
-            .collect();
-        let mut stopped_indices: Vec<u64> = events
-            .iter()
-            .filter(|event| event.get("type").and_then(Value::as_str) == Some("content_block_stop"))
-            .filter_map(|event| event.get("index").and_then(Value::as_u64))
-            .collect();
-        started_indices.sort_unstable();
-        stopped_indices.sort_unstable();
-
-        assert_eq!(started_indices, stopped_indices);
-        assert_eq!(merged.matches("\"type\":\"server_tool_use\"").count(), 2);
-        assert!(merged.contains("\"error_code\":\"unavailable\""));
-        assert!(merged.contains("\"error_code\":\"max_uses_exceeded\""));
-        assert!(merged.contains("\"web_search_requests\":1"));
-        assert!(merged.contains("event: message_stop"));
-    }
-
-    #[tokio::test]
-    async fn test_streaming_web_search_limit_does_not_finalize_parallel_function() {
-        let input = concat!(
-            "event: response.created\n",
-            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_parallel_function_limit\",\"model\":\"gpt-5.6\"}}\n\n",
-            "event: response.output_item.added\n",
-            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"fc_open\",\"type\":\"function_call\",\"call_id\":\"call_open\",\"name\":\"lookup\",\"arguments\":\"\"}}\n\n",
-            "event: response.function_call_arguments.delta\n",
-            "data: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_open\",\"output_index\":0,\"delta\":\"{\\\"query\\\":\"}\n\n",
-            "event: response.output_item.added\n",
-            "data: {\"type\":\"response.output_item.added\",\"output_index\":1,\"item\":{\"id\":\"ws_allowed\",\"type\":\"web_search_call\",\"status\":\"in_progress\"}}\n\n",
-            "event: response.output_item.done\n",
-            "data: {\"type\":\"response.output_item.done\",\"output_index\":1,\"item\":{\"id\":\"ws_allowed\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"allowed\"}}}\n\n",
-            "event: response.output_item.added\n",
-            "data: {\"type\":\"response.output_item.added\",\"output_index\":2,\"item\":{\"id\":\"ws_over_limit\",\"type\":\"web_search_call\",\"status\":\"in_progress\"}}\n\n"
-        );
-
-        let merged = convert_stream_text_with_web_search_limit(input, "web_search_future", 1).await;
-        let events = sse_data_values(&merged);
-        let function_index = events
-            .iter()
-            .find(|event| {
-                event.pointer("/content_block/type").and_then(Value::as_str) == Some("tool_use")
-            })
-            .and_then(|event| event.get("index"))
-            .and_then(Value::as_u64)
-            .unwrap();
-
-        assert!(!events.iter().any(|event| {
-            event.get("type").and_then(Value::as_str) == Some("content_block_stop")
-                && event.get("index").and_then(Value::as_u64) == Some(function_index)
-        }));
-        assert!(events.iter().any(|event| {
-            event.get("type").and_then(Value::as_str) == Some("error")
-                && event.pointer("/error/type").and_then(Value::as_str) == Some("stream_truncated")
-        }));
-        assert!(!merged.contains("event: message_stop"));
-    }
-
-    #[tokio::test]
-    async fn test_streaming_web_search_limit_preserves_completed_function_stop_reason() {
-        let input = concat!(
-            "event: response.created\n",
-            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_completed_function_limit\",\"model\":\"gpt-5.6\"}}\n\n",
-            "event: response.output_item.added\n",
-            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"fc_done\",\"type\":\"function_call\",\"call_id\":\"call_done\",\"name\":\"lookup\",\"arguments\":\"\"}}\n\n",
-            "event: response.function_call_arguments.done\n",
-            "data: {\"type\":\"response.function_call_arguments.done\",\"item_id\":\"fc_done\",\"output_index\":0,\"arguments\":\"{\\\"query\\\":\\\"rust\\\"}\"}\n\n",
-            "event: response.output_item.added\n",
-            "data: {\"type\":\"response.output_item.added\",\"output_index\":1,\"item\":{\"id\":\"ws_allowed\",\"type\":\"web_search_call\",\"status\":\"in_progress\"}}\n\n",
-            "event: response.output_item.done\n",
-            "data: {\"type\":\"response.output_item.done\",\"output_index\":1,\"item\":{\"id\":\"ws_allowed\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"allowed\"}}}\n\n",
-            "event: response.output_item.added\n",
-            "data: {\"type\":\"response.output_item.added\",\"output_index\":2,\"item\":{\"id\":\"ws_over_limit\",\"type\":\"web_search_call\",\"status\":\"in_progress\"}}\n\n"
-        );
-
-        let merged = convert_stream_text_with_web_search_limit(input, "web_search_future", 1).await;
-        let events = sse_data_values(&merged);
-
-        assert!(events.iter().any(|event| {
-            event.get("type").and_then(Value::as_str) == Some("message_delta")
-                && event.pointer("/delta/stop_reason").and_then(Value::as_str) == Some("tool_use")
-        }));
-        assert!(!events.iter().any(|event| {
-            event.get("type").and_then(Value::as_str) == Some("message_delta")
-                && event.pointer("/delta/stop_reason").and_then(Value::as_str) == Some("end_turn")
-        }));
-        assert!(merged.contains("event: message_stop"));
-        assert!(!merged.contains("stream_truncated"));
-    }
-
-    #[tokio::test]
-    async fn test_streaming_done_only_search_limit_does_not_finalize_parallel_reasoning() {
-        let input = concat!(
-            "event: response.created\n",
-            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_parallel_reasoning_limit\",\"model\":\"gpt-5.6\"}}\n\n",
-            "event: response.output_item.added\n",
-            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"rs_open\",\"type\":\"reasoning\",\"summary\":[]}}\n\n",
-            "event: response.reasoning_summary_part.added\n",
-            "data: {\"type\":\"response.reasoning_summary_part.added\",\"item_id\":\"rs_open\",\"output_index\":0,\"summary_index\":0,\"part\":{\"type\":\"summary_text\",\"text\":\"\"}}\n\n",
-            "event: response.reasoning_summary_text.delta\n",
-            "data: {\"type\":\"response.reasoning_summary_text.delta\",\"item_id\":\"rs_open\",\"output_index\":0,\"summary_index\":0,\"delta\":\"Still reasoning\"}\n\n",
-            "event: response.output_item.done\n",
-            "data: {\"type\":\"response.output_item.done\",\"output_index\":1,\"item\":{\"id\":\"ws_allowed\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"allowed\"}}}\n\n",
-            "event: response.output_item.done\n",
-            "data: {\"type\":\"response.output_item.done\",\"output_index\":2,\"item\":{\"id\":\"ws_over_limit\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"over limit\"}}}\n\n"
-        );
-
-        let merged = convert_stream_text_with_web_search_limit(input, "web_search_future", 1).await;
-        let events = sse_data_values(&merged);
-        let reasoning_index = events
-            .iter()
-            .find(|event| {
-                event.pointer("/content_block/type").and_then(Value::as_str) == Some("thinking")
-            })
-            .and_then(|event| event.get("index"))
-            .and_then(Value::as_u64)
-            .unwrap();
-
-        assert!(!events.iter().any(|event| {
-            event.get("type").and_then(Value::as_str) == Some("content_block_stop")
-                && event.get("index").and_then(Value::as_u64) == Some(reasoning_index)
-        }));
-        assert!(events.iter().any(|event| {
-            event.get("type").and_then(Value::as_str) == Some("error")
-                && event.pointer("/error/type").and_then(Value::as_str) == Some("stream_truncated")
-        }));
-        assert!(!merged.contains("event: message_stop"));
-    }
-
-    #[tokio::test]
-    async fn test_failed_search_sources_do_not_consume_successful_search_citations() {
-        let input = concat!(
-            "event: response.completed\n",
-            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_shared_source\",\"model\":\"gpt-5.6\",\"status\":\"completed\",\"output\":[{\"id\":\"ws_failed\",\"type\":\"web_search_call\",\"status\":\"failed\",\"action\":{\"type\":\"search\",\"query\":\"failed query\",\"sources\":[{\"type\":\"url\",\"url\":\"https://example.com/shared\",\"title\":\"Failed source\"}]},\"error\":{\"code\":\"invalid_search_query\"}},{\"id\":\"ws_success\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"successful query\"}},{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Successful answer.\",\"annotations\":[{\"type\":\"url_citation\",\"url\":\"https://example.com/shared\",\"title\":\"Successful citation\"}]}]}],\"usage\":{\"input_tokens\":8,\"output_tokens\":5}}}\n\n"
-        );
-
-        let merged = convert_stream_text_with_web_search_name(input, "web_search_future").await;
-        let events = sse_data_values(&merged);
-        let result_blocks: Vec<&Value> = events
-            .iter()
-            .filter_map(|event| event.get("content_block"))
-            .filter(|block| {
-                block.get("type").and_then(Value::as_str) == Some("web_search_tool_result")
-            })
-            .collect();
-
-        assert_eq!(result_blocks.len(), 2);
-        assert_eq!(result_blocks[0]["tool_use_id"], "ws_failed");
-        assert_eq!(
-            result_blocks[0]["content"]["type"],
-            "web_search_tool_result_error"
-        );
-        assert_eq!(result_blocks[1]["tool_use_id"], "ws_success");
-        assert_eq!(
-            result_blocks[1]["content"][0]["url"],
-            "https://example.com/shared"
-        );
-        assert!(merged.contains("\"web_search_requests\":2"));
-        assert!(merged.contains("event: message_stop"));
-    }
-
-    #[tokio::test]
-    async fn test_terminal_web_search_reuses_stream_synthesized_id() {
-        let input = concat!(
-            "event: response.created\n",
-            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_no_search_id\",\"model\":\"gpt-5.6\"}}\n\n",
-            "event: response.output_item.added\n",
-            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"web_search_call\",\"status\":\"in_progress\"}}\n\n",
-            "event: response.output_item.done\n",
-            "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"Rust docs\"}}}\n\n",
-            "event: response.completed\n",
-            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_no_search_id\",\"status\":\"completed\",\"output\":[{\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"Rust docs\"}}],\"usage\":{\"input_tokens\":4,\"output_tokens\":1}}}\n\n"
-        );
-
-        let merged = convert_stream_text(input).await;
-        let events = sse_data_values(&merged);
-        let result_blocks: Vec<&Value> = events
-            .iter()
-            .filter_map(|event| event.get("content_block"))
-            .filter(|block| {
-                block.get("type").and_then(Value::as_str) == Some("web_search_tool_result")
-            })
-            .collect();
-
-        assert_eq!(merged.matches("\"type\":\"server_tool_use\"").count(), 1);
-        assert_eq!(result_blocks.len(), 1);
-        assert_eq!(result_blocks[0]["tool_use_id"], "ws_stream_0");
-        assert!(merged.contains("\"web_search_requests\":1"));
-    }
-
-    #[tokio::test]
-    async fn test_clean_eof_after_completed_web_search_is_truncated() {
-        let input = concat!(
-            "event: response.created\n",
-            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_truncated_search\",\"model\":\"gpt-5.6\"}}\n\n",
-            "event: response.output_item.added\n",
-            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"ws_truncated\",\"type\":\"web_search_call\",\"status\":\"in_progress\"}}\n\n",
-            "event: response.output_item.done\n",
-            "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"ws_truncated\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"Rust docs\"}}}\n\n"
-        );
-
-        let merged = convert_stream_text(input).await;
-        assert!(merged.contains("event: error"));
-        assert!(merged.contains("stream_truncated"));
-        assert!(!merged.contains("event: message_stop"));
-    }
-
-    #[tokio::test]
-    async fn test_streaming_hosted_web_search_pairs_every_call_with_its_sources() {
-        let input = concat!(
-            "event: response.created\n",
-            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_multi_search\",\"model\":\"gpt-5.6\"}}\n\n",
-            "event: response.output_item.added\n",
-            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"ws_rust\",\"type\":\"web_search_call\",\"status\":\"in_progress\"}}\n\n",
-            "event: response.output_item.done\n",
-            "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"ws_rust\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"Rust language\",\"sources\":[{\"type\":\"url\",\"url\":\"https://www.rust-lang.org/\",\"title\":\"Rust\"}]}}}\n\n",
-            "event: response.output_item.added\n",
-            "data: {\"type\":\"response.output_item.added\",\"output_index\":1,\"item\":{\"id\":\"ws_cargo\",\"type\":\"web_search_call\",\"status\":\"in_progress\"}}\n\n",
-            "event: response.output_item.done\n",
-            "data: {\"type\":\"response.output_item.done\",\"output_index\":1,\"item\":{\"id\":\"ws_cargo\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"Cargo documentation\",\"sources\":[{\"type\":\"url\",\"url\":\"https://doc.rust-lang.org/cargo/\",\"title\":\"Cargo\"}]}}}\n\n",
-            "event: response.content_part.added\n",
-            "data: {\"type\":\"response.content_part.added\",\"output_index\":2,\"content_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\n",
-            "event: response.output_text.delta\n",
-            "data: {\"type\":\"response.output_text.delta\",\"output_index\":2,\"content_index\":0,\"delta\":\"Rust and Cargo have official documentation.\"}\n\n",
-            "event: response.output_item.done\n",
-            "data: {\"type\":\"response.output_item.done\",\"output_index\":2,\"item\":{\"id\":\"msg_multi\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Rust and Cargo have official documentation.\",\"annotations\":[{\"type\":\"url_citation\",\"url\":\"https://www.rust-lang.org/\",\"title\":\"Rust\"},{\"type\":\"url_citation\",\"url\":\"https://doc.rust-lang.org/cargo/\",\"title\":\"Cargo\"}]}]}}\n\n",
-            "event: response.completed\n",
-            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_multi_search\",\"status\":\"completed\",\"usage\":{\"input_tokens\":12,\"output_tokens\":14}}}\n\n"
-        );
-
-        let merged = convert_stream_text_with_web_search_name(input, "web_search_next").await;
-        let events = sse_data_values(&merged);
-        let result_blocks: Vec<&Value> = events
-            .iter()
-            .filter_map(|event| event.get("content_block"))
-            .filter(|block| {
-                block.get("type").and_then(Value::as_str) == Some("web_search_tool_result")
-            })
-            .collect();
-
-        assert_eq!(merged.matches("\"type\":\"server_tool_use\"").count(), 2);
-        assert_eq!(result_blocks.len(), 2);
-        assert_eq!(result_blocks[0]["tool_use_id"], "ws_rust");
-        assert_eq!(
-            result_blocks[0]["content"][0]["url"],
-            "https://www.rust-lang.org/"
-        );
-        assert_eq!(result_blocks[1]["tool_use_id"], "ws_cargo");
-        assert_eq!(
-            result_blocks[1]["content"][0]["url"],
-            "https://doc.rust-lang.org/cargo/"
-        );
-        assert!(merged.contains("\"web_search_requests\":2"));
-        assert!(merged.contains("event: message_stop"));
-    }
-
-    #[tokio::test]
-    async fn test_streaming_hosted_web_search_pairs_calls_without_sources() {
-        let input = concat!(
-            "event: response.completed\n",
-            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_multi_fallback\",\"model\":\"gpt-5.6\",\"status\":\"completed\",\"output\":[{\"id\":\"ws_first\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"first query\"}},{\"id\":\"ws_second\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"second query\"}},{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Combined answer.\",\"annotations\":[{\"type\":\"url_citation\",\"start_index\":9,\"end_index\":15,\"url\":\"https://example.com/result\",\"title\":\"Combined result\"}]}]}],\"usage\":{\"input_tokens\":8,\"output_tokens\":5}}}\n\n"
-        );
-
-        let merged = convert_stream_text_with_web_search_name(input, "web_search_next").await;
-        let events = sse_data_values(&merged);
-        let result_blocks: Vec<&Value> = events
-            .iter()
-            .filter_map(|event| event.get("content_block"))
-            .filter(|block| {
-                block.get("type").and_then(Value::as_str) == Some("web_search_tool_result")
-            })
-            .collect();
-
-        assert_eq!(merged.matches("\"type\":\"server_tool_use\"").count(), 2);
-        assert_eq!(result_blocks.len(), 2);
-        assert_eq!(result_blocks[0]["tool_use_id"], "ws_first");
-        assert_eq!(result_blocks[0]["content"], json!([]));
-        assert_eq!(result_blocks[1]["tool_use_id"], "ws_second");
-        assert_eq!(
-            result_blocks[1]["content"][0]["url"],
-            "https://example.com/result"
-        );
-        let text_deltas: Vec<&str> = events
-            .iter()
-            .filter(|event| {
-                event.pointer("/delta/type").and_then(Value::as_str) == Some("text_delta")
-            })
-            .filter_map(|event| event.pointer("/delta/text").and_then(Value::as_str))
-            .collect();
-        assert_eq!(
-            text_deltas,
-            vec!["Combined [answer](https://example.com/result)."]
-        );
-        assert!(merged.contains("\"web_search_requests\":2"));
-        assert!(merged.contains("event: message_stop"));
-    }
-
-    #[tokio::test]
-    async fn test_terminal_only_web_search_preserves_output_order() {
-        let input = concat!(
-            "event: response.created\n",
-            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_order\",\"model\":\"gpt-5.6\"}}\n\n",
-            "event: response.completed\n",
-            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_order\",\"model\":\"gpt-5.6\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Before\",\"annotations\":[]}]},{\"id\":\"ws_order\",\"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"Rust\"}},{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"After\",\"annotations\":[]}]}],\"usage\":{\"input_tokens\":8,\"output_tokens\":4}}}\n\n"
-        );
-
-        let completed_only = &input[input.find("event: response.completed").unwrap()..];
-        let incomplete = input
-            .replace("response.completed", "response.incomplete")
-            .replace("\"status\":\"completed\",\"output\"", "\"output\"");
-        for (stream, stop_reason) in [
-            (input, "end_turn"),
-            (completed_only, "end_turn"),
-            (incomplete.as_str(), "max_tokens"),
-        ] {
-            let merged =
-                convert_stream_text_with_web_search_name(stream.to_owned(), "web_search").await;
-            let events = sse_data_values(&merged);
-            let block_types: Vec<&str> = events
-                .iter()
-                .filter(|event| {
-                    event.get("type").and_then(Value::as_str) == Some("content_block_start")
-                })
-                .filter_map(|event| event.pointer("/content_block/type").and_then(Value::as_str))
-                .collect();
-            let text_deltas: Vec<&str> = events
-                .iter()
-                .filter(|event| {
-                    event.pointer("/delta/type").and_then(Value::as_str) == Some("text_delta")
-                })
-                .filter_map(|event| event.pointer("/delta/text").and_then(Value::as_str))
-                .collect();
-
-            assert_eq!(
-                block_types,
-                vec!["text", "server_tool_use", "web_search_tool_result", "text"]
-            );
-            assert_eq!(text_deltas, vec!["Before", "After"]);
-            assert_eq!(merged.matches("event: message_start").count(), 1);
-            assert!(merged.contains(&format!("\"stop_reason\":\"{stop_reason}\"")));
-            assert!(merged.contains("event: message_stop"));
-        }
-    }
-
-    #[tokio::test]
-    async fn test_terminal_only_completed_without_status_keeps_stop_reason() {
-        for (output, stop_reason) in [
-            (
-                json!({"type":"message","role":"assistant","content":[{"type":"output_text","text":"Done"}]}),
-                "end_turn",
-            ),
-            (
-                json!({"type":"function_call","call_id":"call_1","name":"run","arguments":"{}"}),
-                "tool_use",
-            ),
-        ] {
-            let input = format!(
-                "event: response.completed\ndata: {}\n\n",
-                json!({"type":"response.completed","response":{"id":"resp_statusless","model":"gpt-5.6","output":[output]}})
-            );
-            let merged = convert_stream_text(input).await;
-            assert!(merged.contains(&format!("\"stop_reason\":\"{stop_reason}\"")));
-            if stop_reason == "tool_use" {
-                assert!(merged.contains("\"type\":\"tool_use\""));
-            }
-            assert!(merged.contains("event: message_stop"));
-        }
-    }
-
-    #[tokio::test]
-    async fn test_terminal_output_does_not_duplicate_done_reasoning() {
-        let input = concat!(
-            "event: response.output_item.done\n",
-            "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"rs_done\",\"type\":\"reasoning\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"Need a tool.\"}]}}\n\n",
-            "event: response.completed\n",
-            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_reasoning\",\"model\":\"gpt-5.6\",\"status\":\"completed\",\"output\":[{\"id\":\"rs_done\",\"type\":\"reasoning\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"Need a tool.\"}]}]}}\n\n"
-        );
-
-        let merged = convert_stream_text(input).await;
-
-        assert_eq!(merged.matches("\"type\":\"thinking_delta\"").count(), 1);
-        assert!(merged.contains("event: message_stop"));
-    }
-
-    #[tokio::test]
-    async fn test_terminal_output_does_not_duplicate_streamed_text() {
-        let input = concat!(
-            "event: response.created\n",
-            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_text\",\"model\":\"gpt-5.6\"}}\n\n",
-            "event: response.content_part.added\n",
-            "data: {\"type\":\"response.content_part.added\",\"item_id\":\"msg_text\",\"output_index\":0,\"content_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\n",
-            "event: response.output_text.delta\n",
-            "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_text\",\"output_index\":0,\"content_index\":0,\"delta\":\"Already streamed.\"}\n\n",
-            "event: response.output_text.done\n",
-            "data: {\"type\":\"response.output_text.done\",\"item_id\":\"msg_text\",\"output_index\":0,\"content_index\":0,\"text\":\"Already streamed.\"}\n\n",
-            "event: response.output_item.done\n",
-            "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"msg_text\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Already streamed.\",\"annotations\":[]}]}}\n\n",
-            "event: response.completed\n",
-            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_text\",\"model\":\"gpt-5.6\",\"status\":\"completed\",\"output\":[{\"id\":\"msg_text\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Already streamed.\",\"annotations\":[]}]}]}}\n\n"
-        );
-
-        let merged = convert_stream_text(input).await;
-        let text_deltas: Vec<String> = sse_data_values(&merged)
-            .into_iter()
-            .filter(|event| {
-                event.pointer("/delta/type").and_then(Value::as_str) == Some("text_delta")
-            })
-            .filter_map(|event| {
-                event
-                    .pointer("/delta/text")
-                    .and_then(Value::as_str)
-                    .map(ToString::to_string)
-            })
-            .collect();
-
-        assert_eq!(text_deltas, vec!["Already streamed."]);
-        assert!(merged.contains("event: message_stop"));
-    }
-
-    #[tokio::test]
-    async fn test_output_item_done_emits_text_when_deltas_are_missing() {
-        let input = concat!(
-            "event: response.created\n",
-            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_done_text\",\"model\":\"gpt-5.6\"}}\n\n",
-            "event: response.output_item.done\n",
-            "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"msg_done_text\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Recovered from the completed item.\",\"annotations\":[]}]}}\n\n",
-            "event: response.completed\n",
-            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_done_text\",\"model\":\"gpt-5.6\",\"status\":\"completed\"}}\n\n"
-        );
-
-        let merged = convert_stream_text(input).await;
-        let text_deltas: Vec<String> = sse_data_values(&merged)
-            .into_iter()
-            .filter(|event| {
-                event.pointer("/delta/type").and_then(Value::as_str) == Some("text_delta")
-            })
-            .filter_map(|event| {
-                event
-                    .pointer("/delta/text")
-                    .and_then(Value::as_str)
-                    .map(ToString::to_string)
-            })
-            .collect();
-
-        assert_eq!(text_deltas, vec!["Recovered from the completed item."]);
-        assert!(merged.contains("event: message_stop"));
-    }
-
-    #[tokio::test]
-    async fn test_final_event_without_blank_line_is_processed() {
-        let input = concat!(
-            "event: response.created\n",
-            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"model\":\"gpt-5\"}}\n\n",
-            "event: response.completed\n",
-            "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n"
-        );
-
-        let merged = convert_stream_text(input).await;
-        assert!(merged.contains("\"stop_reason\":\"end_turn\""));
-        assert_eq!(merged.matches("event: message_stop").count(), 1);
-        assert!(!merged.contains("stream_truncated"));
-    }
-
-    #[tokio::test]
-    async fn test_clean_eof_after_partial_text_is_explicitly_incomplete() {
-        let input = concat!(
-            "event: response.created\n",
-            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"model\":\"gpt-5\"}}\n\n",
-            "event: response.output_text.delta\n",
-            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n"
-        );
-
-        let merged = convert_stream_text(input).await;
-        assert!(merged.contains("\"stop_reason\":\"max_tokens\""));
-        assert!(merged.contains("event: content_block_stop"));
-        assert!(merged.contains("event: message_stop"));
-    }
-
-    #[tokio::test]
-    async fn test_hosted_web_search_option_does_not_buffer_without_search() {
-        let input = concat!(
-            "event: response.created\n",
-            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"model\":\"gpt-5.6\"}}\n\n",
-            "event: response.content_part.added\n",
-            "data: {\"type\":\"response.content_part.added\",\"output_index\":0,\"content_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\n",
-            "event: response.output_text.delta\n",
-            "data: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"content_index\":0,\"delta\":\"partial\"}\n\n"
-        );
-
-        let merged = convert_stream_text_with_web_search_name(input, "web_search").await;
-        let text_deltas: Vec<String> = sse_data_values(&merged)
-            .into_iter()
-            .filter(|event| {
-                event.pointer("/delta/type").and_then(Value::as_str) == Some("text_delta")
-            })
-            .filter_map(|event| {
-                event
-                    .pointer("/delta/text")
-                    .and_then(Value::as_str)
-                    .map(ToString::to_string)
-            })
-            .collect();
-
-        assert_eq!(text_deltas, vec!["partial"]);
-        assert!(!merged.contains("event: ping"));
-        assert!(merged.contains("\"stop_reason\":\"max_tokens\""));
-        assert!(merged.contains("event: message_stop"));
-    }
-
-    #[tokio::test]
-    async fn test_clean_eof_during_tool_arguments_is_error() {
-        let input = concat!(
-            "event: response.created\n",
-            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"model\":\"gpt-5\"}}\n\n",
-            "event: response.function_call_arguments.delta\n",
-            "data: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_1\",\"call_id\":\"call_1\",\"name\":\"exec\",\"delta\":\"{\\\"cmd\\\":\"}\n\n"
-        );
-
-        let merged = convert_stream_text(input).await;
-        assert!(merged.contains("event: error"));
-        assert!(merged.contains("stream_truncated"));
-        assert!(!merged.contains("event: message_stop"));
-    }
-
-    #[tokio::test]
-    async fn test_stream_request_with_complete_json_response_is_converted() {
-        let input = r#"{
-            "id":"resp_json",
-            "status":"completed",
-            "model":"gpt-5",
-            "output":[{"type":"message","content":[{"type":"output_text","text":"hello"}]}],
-            "usage":{"input_tokens":4,"output_tokens":1}
-        }"#;
-
-        let merged = convert_stream_text(input).await;
-        assert!(merged.contains("event: message_start"));
-        assert!(merged.contains("\"text\":\"hello\""));
-        assert!(merged.contains("event: message_stop"));
-    }
-
-    #[tokio::test]
-    async fn test_stream_request_with_failed_json_response_is_error() {
-        let input = r#"{
-            "id":"resp_json",
-            "status":"failed",
-            "error":{"type":"server_error","message":"json backend failed"},
-            "output":[]
-        }"#;
-
-        let merged = convert_stream_text(input).await;
-        assert!(merged.contains("event: error"));
-        assert!(merged.contains("json backend failed"));
-        assert!(!merged.contains("event: message_stop"));
-    }
-
-    #[tokio::test]
-    async fn test_streaming_conversion_with_wrapped_response_events() {
-        let input = concat!(
-            "event: response.created\n",
-            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"model\":\"gpt-4o\",\"usage\":{\"input_tokens\":12,\"output_tokens\":0}}}\n\n",
-            "event: response.output_item.added\n",
-            "data: {\"type\":\"response.output_item.added\",\"item\":{\"type\":\"function_call\",\"call_id\":\"call_1\",\"name\":\"get_weather\"}}\n\n",
-            "event: response.function_call_arguments.delta\n",
-            "data: {\"type\":\"response.function_call_arguments.delta\",\"delta\":\"{\\\"city\\\":\\\"Tokyo\\\"}\"}\n\n",
-            "event: response.function_call_arguments.done\n",
-            "data: {\"type\":\"response.function_call_arguments.done\"}\n\n",
-            "event: response.completed\n",
-            "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":12,\"output_tokens\":3}}}\n\n"
-        );
-
-        let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
-            input.as_bytes().to_vec(),
-        ))]);
-        let converted = create_anthropic_sse_stream_from_responses(upstream);
-        let chunks: Vec<_> = converted.collect().await;
-
-        let merged = chunks
-            .into_iter()
-            .map(|c| String::from_utf8_lossy(c.unwrap().as_ref()).to_string())
-            .collect::<String>();
-
-        assert!(merged.contains("\"type\":\"message_start\""));
-        assert!(merged.contains("\"id\":\"resp_1\""));
-        assert!(merged.contains("\"model\":\"gpt-4o\""));
-        assert!(merged.contains("\"type\":\"tool_use\""));
-        assert!(merged.contains("\"name\":\"get_weather\""));
-        assert!(merged.contains("\"type\":\"input_json_delta\""));
-        assert!(merged.contains("\"stop_reason\":\"tool_use\""));
-        assert!(merged.contains("\"input_tokens\":12"));
-        assert!(merged.contains("\"output_tokens\":3"));
-        assert!(merged.contains("\"type\":\"message_stop\""));
-    }
-
-    #[tokio::test]
-    async fn test_streaming_read_tool_drops_empty_pages() {
-        let input = concat!(
-            "event: response.created\n",
-            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_read\",\"model\":\"gpt-5.5\"}}\n\n",
-            "event: response.output_item.added\n",
-            "data: {\"type\":\"response.output_item.added\",\"item\":{\"id\":\"fc_read\",\"type\":\"function_call\",\"call_id\":\"call_read\",\"name\":\"Read\"}}\n\n",
-            "event: response.function_call_arguments.delta\n",
-            "data: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_read\",\"delta\":\"{\\\"file_path\\\":\\\"/tmp/demo.py\\\",\\\"limit\\\":2000,\\\"offset\\\":0,\\\"pages\\\":\\\"\\\"}\"}\n\n",
-            "event: response.function_call_arguments.done\n",
-            "data: {\"type\":\"response.function_call_arguments.done\",\"item_id\":\"fc_read\",\"arguments\":\"{\\\"file_path\\\":\\\"/tmp/demo.py\\\",\\\"limit\\\":2000,\\\"offset\\\":0,\\\"pages\\\":\\\"\\\"}\"}\n\n",
-            "event: response.completed\n",
-            "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n"
-        );
-
-        let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
-            input.as_bytes().to_vec(),
-        ))]);
-        let converted = create_anthropic_sse_stream_from_responses(upstream);
-        let chunks: Vec<_> = converted.collect().await;
-
-        let merged = chunks
-            .into_iter()
-            .map(|c| String::from_utf8_lossy(c.unwrap().as_ref()).to_string())
-            .collect::<String>();
-
-        assert!(merged.contains("\"name\":\"Read\""));
-        assert!(merged.contains("\"partial_json\":\"{\\\"file_path\\\":\\\"/tmp/demo.py\\\",\\\"limit\\\":2000,\\\"offset\\\":0}"));
-        assert!(!merged.contains("\\\"pages\\\":\\\"\\\""));
-    }
-
-    #[tokio::test]
-    async fn test_streaming_read_tool_duplicate_start_preserves_buffered_args() {
-        let input = concat!(
-            "event: response.created\n",
-            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_read\",\"model\":\"gpt-5.5\"}}\n\n",
-            "event: response.output_item.added\n",
-            "data: {\"type\":\"response.output_item.added\",\"item\":{\"id\":\"fc_read\",\"type\":\"function_call\",\"call_id\":\"call_read\",\"name\":\"Read\"}}\n\n",
-            "event: response.function_call_arguments.delta\n",
-            "data: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_read\",\"delta\":\"{\\\"file_path\\\":\\\"/tmp/demo.py\\\",\\\"limit\\\":2000,\\\"offset\\\":0,\\\"pages\\\":\\\"\\\"}\"}\n\n",
-            "event: response.output_item.added\n",
-            "data: {\"type\":\"response.output_item.added\",\"item\":{\"id\":\"fc_read\",\"type\":\"function_call\",\"call_id\":\"call_read\",\"name\":\"Read\"}}\n\n",
-            "event: response.function_call_arguments.done\n",
-            "data: {\"type\":\"response.function_call_arguments.done\",\"item_id\":\"fc_read\"}\n\n",
-            "event: response.completed\n",
-            "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n"
-        );
-
-        let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
-            input.as_bytes().to_vec(),
-        ))]);
-        let converted = create_anthropic_sse_stream_from_responses(upstream);
-        let chunks: Vec<_> = converted.collect().await;
-
-        let merged = chunks
-            .into_iter()
-            .map(|c| String::from_utf8_lossy(c.unwrap().as_ref()).to_string())
-            .collect::<String>();
-
-        assert_eq!(merged.matches("event: content_block_start").count(), 1);
-        assert_eq!(merged.matches("event: content_block_stop").count(), 1);
-        assert!(merged.contains("\"partial_json\":\"{\\\"file_path\\\":\\\"/tmp/demo.py\\\",\\\"limit\\\":2000,\\\"offset\\\":0}"));
-        assert!(!merged.contains("\\\"pages\\\":\\\"\\\""));
-    }
-
-    #[tokio::test]
-    async fn test_streaming_conversion_interleaved_tool_deltas_by_item_id() {
-        let input = concat!(
-            "event: response.created\n",
-            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_2\",\"model\":\"gpt-4o\"}}\n\n",
-            "event: response.output_item.added\n",
-            "data: {\"type\":\"response.output_item.added\",\"item\":{\"id\":\"fc_1\",\"type\":\"function_call\",\"call_id\":\"call_1\",\"name\":\"first_tool\"}}\n\n",
-            "event: response.output_item.added\n",
-            "data: {\"type\":\"response.output_item.added\",\"item\":{\"id\":\"fc_2\",\"type\":\"function_call\",\"call_id\":\"call_2\",\"name\":\"second_tool\"}}\n\n",
-            "event: response.function_call_arguments.delta\n",
-            "data: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_2\",\"delta\":\"{\\\"b\\\":2}\"}\n\n",
-            "event: response.function_call_arguments.delta\n",
-            "data: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_1\",\"delta\":\"{\\\"a\\\":1}\"}\n\n",
-            "event: response.function_call_arguments.done\n",
-            "data: {\"type\":\"response.function_call_arguments.done\",\"item_id\":\"fc_1\"}\n\n",
-            "event: response.function_call_arguments.done\n",
-            "data: {\"type\":\"response.function_call_arguments.done\",\"item_id\":\"fc_2\"}\n\n",
-            "event: response.completed\n",
-            "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":8,\"output_tokens\":4}}}\n\n"
-        );
-
-        let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
-            input.as_bytes().to_vec(),
-        ))]);
-        let converted = create_anthropic_sse_stream_from_responses(upstream);
-        let chunks: Vec<_> = converted.collect().await;
-        let merged = chunks
-            .into_iter()
-            .map(|c| String::from_utf8_lossy(c.unwrap().as_ref()).to_string())
-            .collect::<String>();
-
-        let events: Vec<Value> = merged
-            .split("\n\n")
-            .filter_map(|block| {
-                let data = block
-                    .lines()
-                    .find_map(|line| strip_sse_field(line, "data"))?;
-                serde_json::from_str::<Value>(data).ok()
-            })
-            .collect();
-
-        let mut tool_index_by_call: HashMap<String, u64> = HashMap::new();
-        for event in &events {
-            if event.get("type").and_then(|v| v.as_str()) == Some("content_block_start") {
-                let cb = event.get("content_block");
-                if cb.and_then(|v| v.get("type")).and_then(|v| v.as_str()) == Some("tool_use") {
-                    if let (Some(call_id), Some(index)) = (
-                        cb.and_then(|v| v.get("id")).and_then(|v| v.as_str()),
-                        event.get("index").and_then(|v| v.as_u64()),
-                    ) {
-                        tool_index_by_call.insert(call_id.to_string(), index);
-                    }
-                }
-            }
-        }
-
-        let delta_indices: Vec<u64> = events
-            .iter()
-            .filter(|event| {
-                event.get("type").and_then(|v| v.as_str()) == Some("content_block_delta")
-                    && event.pointer("/delta/type").and_then(|v| v.as_str())
-                        == Some("input_json_delta")
-            })
-            .filter_map(|event| event.get("index").and_then(|v| v.as_u64()))
-            .collect();
-
-        assert_eq!(delta_indices.len(), 2);
-        assert_eq!(delta_indices[0], *tool_index_by_call.get("call_2").unwrap());
-        assert_eq!(delta_indices[1], *tool_index_by_call.get("call_1").unwrap());
-        assert_ne!(
-            tool_index_by_call.get("call_1"),
-            tool_index_by_call.get("call_2")
-        );
-    }
-
-    #[tokio::test]
-    async fn test_streaming_tool_done_arguments_fallback_without_deltas() {
-        let input = concat!(
-            "event: response.created\n",
-            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_done\",\"model\":\"gpt-5.6\"}}\n\n",
-            "event: response.output_item.added\n",
-            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"fc_done\",\"type\":\"function_call\",\"call_id\":\"call_done\",\"name\":\"lookup\",\"arguments\":\"\"}}\n\n",
-            "event: response.function_call_arguments.done\n",
-            "data: {\"type\":\"response.function_call_arguments.done\",\"item_id\":\"fc_done\",\"output_index\":0,\"item\":{\"id\":\"fc_done\",\"type\":\"function_call\",\"arguments\":\"{\\\"q\\\":\\\"rust\\\"}\"}}\n\n",
-            "event: response.completed\n",
-            "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n"
-        );
-        let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(input))]);
-        let merged = create_anthropic_sse_stream_from_responses(upstream)
-            .collect::<Vec<_>>()
-            .await
-            .into_iter()
-            .map(|chunk| String::from_utf8_lossy(chunk.unwrap().as_ref()).to_string())
-            .collect::<String>();
-
-        assert!(merged.contains("\"partial_json\":\"{\\\"q\\\":\\\"rust\\\"}\""));
-        assert_eq!(merged.matches("event: content_block_stop").count(), 1);
-    }
-
-    #[tokio::test]
-    async fn test_official_reasoning_events_emit_signature_before_stop() {
-        let input = concat!(
-            "event: response.created\n",
-            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_reason\",\"model\":\"gpt-5.6\"}}\n\n",
-            "event: response.output_item.added\n",
-            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"rs_1\",\"type\":\"reasoning\",\"summary\":[]}}\n\n",
-            "event: response.reasoning_summary_part.added\n",
-            "data: {\"type\":\"response.reasoning_summary_part.added\",\"item_id\":\"rs_1\",\"output_index\":0,\"summary_index\":0,\"part\":{\"type\":\"summary_text\",\"text\":\"\"}}\n\n",
-            "event: response.reasoning_summary_text.delta\n",
-            "data: {\"type\":\"response.reasoning_summary_text.delta\",\"item_id\":\"rs_1\",\"output_index\":0,\"summary_index\":0,\"delta\":\"Need a tool.\"}\n\n",
-            "event: response.reasoning_summary_text.done\n",
-            "data: {\"type\":\"response.reasoning_summary_text.done\",\"item_id\":\"rs_1\",\"output_index\":0,\"summary_index\":0,\"text\":\"Need a tool.\"}\n\n",
-            "event: response.output_item.done\n",
-            "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"rs_1\",\"type\":\"reasoning\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"Need a tool.\"}],\"encrypted_content\":\"opaque\"}}\n\n",
-            "event: response.completed\n",
-            "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n"
-        );
-        let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(input))]);
-        let merged = create_anthropic_sse_stream_from_responses(upstream)
-            .collect::<Vec<_>>()
-            .await
-            .into_iter()
-            .map(|chunk| String::from_utf8_lossy(chunk.unwrap().as_ref()).to_string())
-            .collect::<String>();
-
-        assert!(merged.contains("\"type\":\"thinking_delta\""));
-        assert!(merged.contains("\"type\":\"signature_delta\""));
-        let signature_position = merged.find("signature_delta").unwrap();
-        let stop_position = merged.find("event: content_block_stop").unwrap();
-        assert!(signature_position < stop_position);
-        assert!(!merged[stop_position..].contains("content_block_delta"));
-    }
-
-    #[tokio::test]
-    async fn test_encrypted_only_reasoning_streams_as_empty_thinking_with_signature() {
-        let input = concat!(
-            "event: response.created\n",
-            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_enc\",\"model\":\"gpt-5.6\"}}\n\n",
-            "event: response.output_item.added\n",
-            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"rs_1\",\"type\":\"reasoning\",\"summary\":[]}}\n\n",
-            "event: response.output_item.done\n",
-            "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"rs_1\",\"type\":\"reasoning\",\"summary\":[],\"encrypted_content\":\"opaque\"}}\n\n",
-            "event: response.completed\n",
-            "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n"
-        );
-        let merged = convert_stream_text(input).await;
-        let events = sse_data_values(&merged);
-
-        assert!(!merged.contains("redacted_thinking"));
-        let start = events
-            .iter()
-            .find(|event| event["type"] == "content_block_start")
-            .unwrap();
-        assert_eq!(
-            start["content_block"],
-            json!({"type": "thinking", "thinking": ""})
-        );
-        let signature = events
-            .iter()
-            .find(|event| event["delta"]["type"] == "signature_delta")
-            .unwrap();
-        let block = json!({
-            "type": "thinking",
-            "thinking": "",
-            "signature": signature["delta"]["signature"]
-        });
-        assert_eq!(
-            super::super::reasoning_bridge::openai_reasoning_item_from_anthropic_block(&block),
-            Some(json!({
-                "id": "rs_1",
-                "type": "reasoning",
-                "summary": [],
-                "encrypted_content": "opaque"
-            }))
-        );
-    }
-
-    #[tokio::test]
-    async fn test_reasoning_summary_tail_missing_from_deltas_is_recovered_on_item_done() {
-        let input = concat!(
-            "event: response.created\n",
-            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_tail\",\"model\":\"gpt-5.6\"}}\n\n",
-            "event: response.output_item.added\n",
-            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"rs_1\",\"type\":\"reasoning\",\"summary\":[]}}\n\n",
-            "event: response.reasoning_summary_text.delta\n",
-            "data: {\"type\":\"response.reasoning_summary_text.delta\",\"item_id\":\"rs_1\",\"output_index\":0,\"summary_index\":0,\"delta\":\"First. \"}\n\n",
-            "event: response.reasoning_summary_text.done\n",
-            "data: {\"type\":\"response.reasoning_summary_text.done\",\"item_id\":\"rs_1\",\"output_index\":0,\"summary_index\":1,\"text\":\"Second.\"}\n\n",
-            "event: response.output_item.done\n",
-            "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"rs_1\",\"type\":\"reasoning\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"First. \"},{\"type\":\"summary_text\",\"text\":\"Second.\"}],\"encrypted_content\":\"opaque\"}}\n\n",
-            "event: response.completed\n",
-            "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n"
-        );
-        let events = sse_data_values(&convert_stream_text(input).await);
-        let thinking = events
-            .iter()
-            .filter(|event| event["delta"]["type"] == "thinking_delta")
-            .filter_map(|event| event["delta"]["thinking"].as_str())
-            .collect::<String>();
-        assert_eq!(thinking, "First. Second.");
-        assert_eq!(
-            events
-                .iter()
-                .filter(|event| event["delta"]["type"] == "signature_delta")
-                .count(),
-            1
-        );
-    }
-
-    #[tokio::test]
-    async fn test_reasoning_item_done_does_not_replay_drifted_summary() {
-        let input = concat!(
-            "event: response.created\n",
-            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_drift\",\"model\":\"gpt-5.6\"}}\n\n",
-            "event: response.reasoning_summary_text.delta\n",
-            "data: {\"type\":\"response.reasoning_summary_text.delta\",\"item_id\":\"rs_1\",\"output_index\":0,\"summary_index\":0,\"delta\":\"Hello world\"}\n\n",
-            "event: response.output_item.done\n",
-            "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"rs_1\",\"type\":\"reasoning\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"Hello  world\"}],\"encrypted_content\":\"opaque\"}}\n\n",
-            "event: response.completed\n",
-            "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n"
-        );
-        let events = sse_data_values(&convert_stream_text(input).await);
-        let thinking = events
-            .iter()
-            .filter(|event| event["delta"]["type"] == "thinking_delta")
-            .filter_map(|event| event["delta"]["thinking"].as_str())
-            .collect::<String>();
-        assert_eq!(thinking, "Hello world");
-    }
-
-    #[tokio::test]
-    async fn test_streaming_reasoning_delta_emits_thinking_blocks() {
-        let input = concat!(
-            "event: response.created\n",
-            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_r\",\"model\":\"o3\",\"usage\":{\"input_tokens\":5,\"output_tokens\":0}}}\n\n",
-            "event: response.reasoning.delta\n",
-            "data: {\"type\":\"response.reasoning.delta\",\"delta\":\"Let me \"}\n\n",
-            "event: response.reasoning.delta\n",
-            "data: {\"type\":\"response.reasoning.delta\",\"delta\":\"think...\"}\n\n",
-            "event: response.reasoning.done\n",
-            "data: {\"type\":\"response.reasoning.done\"}\n\n",
-            "event: response.content_part.added\n",
-            "data: {\"type\":\"response.content_part.added\",\"part\":{\"type\":\"output_text\",\"text\":\"\"},\"output_index\":0,\"content_index\":0}\n\n",
-            "event: response.output_text.delta\n",
-            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"42\",\"output_index\":0,\"content_index\":0}\n\n",
-            "event: response.content_part.done\n",
-            "data: {\"type\":\"response.content_part.done\",\"output_index\":0,\"content_index\":0}\n\n",
-            "event: response.completed\n",
-            "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":5,\"output_tokens\":10}}}\n\n"
-        );
-
-        let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
-            input.as_bytes().to_vec(),
-        ))]);
-        let converted = create_anthropic_sse_stream_from_responses(upstream);
-        let chunks: Vec<_> = converted.collect().await;
-        let merged = chunks
-            .into_iter()
-            .map(|c| String::from_utf8_lossy(c.unwrap().as_ref()).to_string())
-            .collect::<String>();
-
-        // Should contain thinking block start, thinking delta, and text content
-        assert!(
-            merged.contains("\"type\":\"thinking\""),
-            "should emit thinking content_block_start"
-        );
-        assert!(
-            merged.contains("\"type\":\"thinking_delta\""),
-            "should emit thinking_delta"
-        );
-        assert!(
-            merged.contains("\"thinking\":\"Let me \"")
-                && merged.contains("\"thinking\":\"think...\""),
-            "should contain both thinking deltas"
-        );
-        assert!(
-            merged.contains("\"type\":\"text_delta\""),
-            "should also emit text content"
-        );
-        assert!(
-            merged.contains("\"text\":\"42\""),
-            "should contain text delta"
-        );
-        assert!(merged.contains("\"stop_reason\":\"end_turn\""));
-
-        let events: Vec<Value> = merged
-            .split("\n\n")
-            .filter_map(|block| {
-                block
-                    .lines()
-                    .find_map(|line| line.strip_prefix("data: "))
-                    .and_then(|data| serde_json::from_str(data).ok())
-            })
-            .collect();
-        let thinking_starts: Vec<&Value> = events
-            .iter()
-            .filter(|event| {
-                event.get("type").and_then(Value::as_str) == Some("content_block_start")
-                    && event.pointer("/content_block/type").and_then(Value::as_str)
-                        == Some("thinking")
-            })
-            .collect();
-        assert_eq!(
-            thinking_starts.len(),
-            1,
-            "keyless deltas must share one block"
-        );
-        let thinking_index = thinking_starts[0]
-            .get("index")
-            .and_then(Value::as_u64)
-            .unwrap();
-        let thinking_delta_indices: Vec<u64> = events
-            .iter()
-            .filter(|event| {
-                event.pointer("/delta/type").and_then(Value::as_str) == Some("thinking_delta")
-            })
-            .filter_map(|event| event.get("index").and_then(Value::as_u64))
-            .collect();
-        assert_eq!(thinking_delta_indices, vec![thinking_index, thinking_index]);
-
-        let stop_position = events
-            .iter()
-            .position(|event| {
-                event.get("type").and_then(Value::as_str) == Some("content_block_stop")
-                    && event.get("index").and_then(Value::as_u64) == Some(thinking_index)
-            })
-            .expect("legacy reasoning done must close the thinking block");
-        let text_start_position = events
-            .iter()
-            .position(|event| {
-                event.get("type").and_then(Value::as_str) == Some("content_block_start")
-                    && event.pointer("/content_block/type").and_then(Value::as_str) == Some("text")
-            })
-            .expect("text block must start");
-        assert!(stop_position < text_start_position);
-    }
-
-    #[tokio::test]
-    async fn test_streaming_text_parts_are_merged_into_one_text_block() {
-        let input = concat!(
-            "event: response.created\n",
-            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_merge\",\"model\":\"gpt-5.4\",\"usage\":{\"input_tokens\":5,\"output_tokens\":0}}}\n\n",
-            "event: response.content_part.added\n",
-            "data: {\"type\":\"response.content_part.added\",\"part\":{\"type\":\"output_text\",\"text\":\"\"},\"output_index\":0,\"content_index\":0}\n\n",
-            "event: response.output_text.delta\n",
-            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"你\",\"output_index\":0,\"content_index\":0}\n\n",
-            "event: response.content_part.done\n",
-            "data: {\"type\":\"response.content_part.done\",\"output_index\":0,\"content_index\":0}\n\n",
-            "event: response.content_part.added\n",
-            "data: {\"type\":\"response.content_part.added\",\"part\":{\"type\":\"output_text\",\"text\":\"\"},\"output_index\":0,\"content_index\":1}\n\n",
-            "event: response.output_text.delta\n",
-            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"好\",\"output_index\":0,\"content_index\":1}\n\n",
-            "event: response.content_part.done\n",
-            "data: {\"type\":\"response.content_part.done\",\"output_index\":0,\"content_index\":1}\n\n",
-            "event: response.output_text.done\n",
-            "data: {\"type\":\"response.output_text.done\",\"output_index\":0,\"content_index\":1}\n\n",
-            "event: response.completed\n",
-            "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":5,\"output_tokens\":2}}}\n\n"
-        );
-
-        let upstream = stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(
-            input.as_bytes().to_vec(),
-        ))]);
-        let converted = create_anthropic_sse_stream_from_responses(upstream);
-        let chunks: Vec<_> = converted.collect().await;
-        let events: Vec<Value> = chunks
-            .into_iter()
-            .flat_map(|chunk| {
-                let bytes = chunk.unwrap();
-                let text = String::from_utf8_lossy(bytes.as_ref()).to_string();
-                text.split("\n\n")
-                    .filter_map(|block| {
-                        block.lines().find_map(|line| {
-                            strip_sse_field(line, "data")
-                                .and_then(|payload| serde_json::from_str::<Value>(payload).ok())
-                        })
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .collect();
-
-        let text_starts = events
-            .iter()
-            .filter(|event| {
-                event.get("type").and_then(|v| v.as_str()) == Some("content_block_start")
-                    && event
-                        .pointer("/content_block/type")
-                        .and_then(|v| v.as_str())
-                        == Some("text")
-            })
-            .count();
-        let text_stops = events
-            .iter()
-            .filter(|event| {
-                event.get("type").and_then(|v| v.as_str()) == Some("content_block_stop")
-            })
-            .count();
-        let text_deltas: Vec<String> = events
-            .iter()
-            .filter(|event| {
-                event.get("type").and_then(|v| v.as_str()) == Some("content_block_delta")
-                    && event.pointer("/delta/type").and_then(|v| v.as_str()) == Some("text_delta")
-            })
-            .filter_map(|event| {
-                event
-                    .pointer("/delta/text")
-                    .and_then(|v| v.as_str())
-                    .map(ToString::to_string)
-            })
-            .collect();
-
-        assert_eq!(text_starts, 1);
-        assert_eq!(text_stops, 1);
-        assert_eq!(text_deltas, vec!["你".to_string(), "好".to_string()]);
-    }
-
-    #[tokio::test]
-    async fn test_streaming_responses_chinese_split_across_chunks_no_replacement_chars() {
-        // Chinese text delta split across two TCP chunks.
-        let full = concat!(
-            "event: response.created\n",
-            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_cn\",\"model\":\"gpt-4o\",\"usage\":{\"input_tokens\":5,\"output_tokens\":0}}}\n\n",
-            "event: response.output_text.delta\n",
-            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"你好世界\"}\n\n",
-            "event: response.completed\n",
-            "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":5,\"output_tokens\":4}}}\n\n"
-        );
-        let bytes = full.as_bytes();
-
-        // Find "你" and split inside it
-        let ni_start = bytes.windows(3).position(|w| w == "你".as_bytes()).unwrap();
-        let split_point = ni_start + 2; // split after second byte of "你"
-
-        let chunk1 = Bytes::from(bytes[..split_point].to_vec());
-        let chunk2 = Bytes::from(bytes[split_point..].to_vec());
-
-        let upstream = stream::iter(vec![
-            Ok::<_, std::io::Error>(chunk1),
-            Ok::<_, std::io::Error>(chunk2),
-        ]);
-        let converted = create_anthropic_sse_stream_from_responses(upstream);
-        let chunks: Vec<_> = converted.collect().await;
-        let merged = chunks
-            .into_iter()
-            .map(|c| String::from_utf8_lossy(c.unwrap().as_ref()).to_string())
-            .collect::<String>();
-
-        assert!(
-            merged.contains("你好世界"),
-            "expected '你好世界' in output, got replacement chars (U+FFFD)"
-        );
-        assert!(
-            !merged.contains('\u{FFFD}'),
-            "output must not contain U+FFFD replacement characters"
-        );
-    }
-    async fn assert_diagnostic_late_error_preserves_terminal(
-        event: &str,
-        response: Value,
-        stops: usize,
-        errors: usize,
-    ) {
-        let prefix = format!(
-            "event: response.created\ndata: {{\"type\":\"response.created\",\"response\":{{\"id\":\"resp_1\",\"model\":\"gpt-5\"}}}}\n\nevent: response.output_text.delta\ndata: {{\"type\":\"response.output_text.delta\",\"delta\":\"visible\"}}\n\nevent: {event}\ndata: {}\n\n",
-            json!({"type":event,"response":response})
-        );
-        let expected = convert_stream_text(prefix.clone()).await;
-        assert_eq!(expected.matches("event: message_stop\n").count(), stops);
-        assert_eq!(expected.matches("event: error\n").count(), errors);
-        let upstream = stream::iter(vec![
-            Ok(Bytes::from(prefix)),
-            Err(std::io::Error::new(
-                std::io::ErrorKind::ConnectionReset,
-                "late error",
-            )),
-        ]);
-        let chunks = create_anthropic_sse_stream_from_responses(upstream)
-            .collect::<Vec<_>>()
-            .await;
-        let actual: String = chunks
-            .into_iter()
-            .map(|chunk| String::from_utf8(chunk.unwrap().to_vec()).unwrap())
-            .collect();
-        assert_eq!(
-            actual, expected,
-            "a terminal response must not gain a second terminal event"
-        );
-    }
-
-    #[tokio::test]
-    async fn diagnostic_late_error_after_completed_is_ignored() {
-        assert_diagnostic_late_error_preserves_terminal(
-            "response.completed",
-            json!({"status":"completed","usage":{"input_tokens":1,"output_tokens":1}}),
-            1,
-            0,
-        )
-        .await;
-    }
-
-    #[tokio::test]
-    async fn diagnostic_late_error_after_incomplete_is_ignored() {
-        assert_diagnostic_late_error_preserves_terminal("response.incomplete", json!({"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"usage":{"input_tokens":1,"output_tokens":1}}), 1, 0).await;
-    }
-
-    #[tokio::test]
-    async fn diagnostic_late_error_after_failed_is_ignored() {
-        assert_diagnostic_late_error_preserves_terminal(
-            "response.failed",
-            json!({"status":"failed","error":{"type":"server_error","message":"semantic failure"}}),
-            0,
-            1,
-        )
-        .await;
-    }
-}
+mod tests;

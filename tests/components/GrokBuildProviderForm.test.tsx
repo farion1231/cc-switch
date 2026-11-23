@@ -101,9 +101,9 @@ describe("GrokBuildProviderForm", () => {
     const settings = JSON.parse(submitted.settingsConfig);
     const config = parseToml(settings.config) as any;
 
-    expect(config.models.default).toBe("grok-4.5");
-    expect(config.model["grok-4.5"]).toEqual({
-      model: "grok-4.5",
+    expect(config.models.default).toBe("grok-4.7");
+    expect(config.model["grok-4.7"]).toEqual({
+      model: "grok-4.7",
       base_url: "https://relay.example.com/v1",
       name: "Example Relay",
       api_key: "secret-key",
@@ -242,6 +242,72 @@ context_window = 250000
     expect(onSubmit.mock.calls[0][0].meta.custom_endpoints).toBeUndefined();
   });
 
+  it("keeps the xAI account bound to an official card when saving", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    render(
+      <GrokBuildProviderForm
+        providerId="grok-official-2"
+        submitLabel="Save"
+        onSubmit={onSubmit}
+        onCancel={() => {}}
+        initialData={{
+          name: "Grok Official (a@example.com)",
+          category: "official",
+          settingsConfig: { config: "" },
+          meta: {
+            authBinding: {
+              source: "managed_account",
+              authProvider: "xai_oauth",
+              accountId: "user-a",
+            },
+          },
+        }}
+      />,
+    );
+
+    // 官方卡显示登录方式选择，不显示 API Key / 模型等字段
+    expect(screen.getByRole("combobox", { name: "登录方式" })).toBeTruthy();
+    expect(document.querySelector("#codexBaseUrl")).toBeNull();
+    // 这台电脑的授权中心里没有这个号：照样显示出来，不悄悄改成跟随 Grok CLI 登录
+    expect(await screen.findByText("不在这台电脑上的账号")).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    const submitted = onSubmit.mock.calls[0][0];
+    expect(submitted.presetCategory).toBe("official");
+    expect(submitted.meta.authBinding).toEqual({
+      source: "managed_account",
+      authProvider: "xai_oauth",
+      accountId: "user-a",
+    });
+  });
+
+  it("leaves an unbound official card following the Grok CLI sign-in", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    render(
+      <GrokBuildProviderForm
+        providerId="grokbuild-official"
+        submitLabel="Save"
+        onSubmit={onSubmit}
+        onCancel={() => {}}
+        initialData={{
+          name: "Grok Official",
+          category: "official",
+          settingsConfig: { config: "" },
+        }}
+      />,
+    );
+
+    expect(screen.getByText("跟随 Grok CLI 登录")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(onSubmit.mock.calls[0][0].meta?.authBinding).toBeUndefined();
+  });
+
   // #6427 复用 Codex 表单时把 Codex 专属文案原样带进了 Grok Build 表单。
   // 按 appId 分流后，Grok 表单不得再出现 Codex 字样或不适用条款（模型映射）。
   it("uses Grok-specific copy for the model field and collapsed advanced section", async () => {
@@ -274,7 +340,7 @@ context_window = 500000
 
     const modelInput =
       container.querySelector<HTMLInputElement>("#codexDefaultModel");
-    expect(modelInput?.placeholder).toBe("例如: grok-4.5");
+    expect(modelInput?.placeholder).toBe("例如: grok-4.7");
     expect(screen.getByText(/Grok Build 默认请求的模型/)).toBeInTheDocument();
     expect(screen.queryByText(/Codex 默认请求的模型/)).toBeNull();
     // Grok 没有模型映射目录，不应出现"映射第一行"条款
@@ -318,7 +384,9 @@ context_window = 500000
     );
 
     // 说明在「?」里（读屏副本一直在页面上），页面上只留超限会 400 的提醒。
-    expect(screen.getByText(/^默认上限 8192，长回答/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/^默认上限 32000，思考也算在内/),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/^Codex 不带输出上限/)).toBeNull();
     expect(
       screen.getByText("不要超过模型或网关的真实输出上限，否则会返回 400。"),

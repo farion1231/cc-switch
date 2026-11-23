@@ -23,7 +23,7 @@ pub enum Purpose {
 
 /// 这个应用的模式状态；没有路由模式的应用恒为直连。
 pub fn mode_state(app: &AppType) -> ModeState {
-    if !app.has_route_mode() {
+    if !app.spec().route_mode {
         return ModeState::default();
     }
     state::mode_state(&DeviceStore::for_device(), app.as_str()).unwrap_or_else(|err| {
@@ -37,10 +37,15 @@ pub fn is_proxy(app: &AppType) -> bool {
 }
 
 /// 同 [`is_proxy`]，一次看几个应用，状态文件只读一次（状态面板每 2 秒轮询一次）。
+/// 有没有应用在路由模式（含 Claude Desktop），状态文件只读一次。
+pub fn any_proxy() -> bool {
+    proxy_flags(AppType::ALL).contains(&true)
+}
+
 pub fn proxy_flags<const N: usize>(apps: [AppType; N]) -> [bool; N] {
     let names = apps.each_ref().map(AppType::as_str);
     match state::mode_states(&DeviceStore::for_device(), names) {
-        Ok(states) => std::array::from_fn(|i| apps[i].has_route_mode() && states[i].is_proxy()),
+        Ok(states) => std::array::from_fn(|i| apps[i].spec().route_mode && states[i].is_proxy()),
         Err(err) => {
             log::warn!("读取模式状态失败，按直连处理: {err}");
             [false; N]
@@ -54,8 +59,8 @@ pub fn provider_for(
     purpose: Purpose,
 ) -> Result<Option<String>, AppError> {
     if purpose == Purpose::InUse {
-        if let Some(route) = proxy_route_row(db, app)? {
-            return Ok(Some(route.id));
+        if let Some(route) = proxy_route_id(db, app)? {
+            return Ok(Some(route));
         }
     }
     crate::settings::get_effective_current_provider(db, app)
@@ -63,15 +68,15 @@ pub fn provider_for(
 
 /// 正在用的那一行（见 [`Purpose::InUse`]）。
 pub fn provider_in_use(db: &Database, app: &AppType) -> Result<Option<Provider>, AppError> {
-    match proxy_route_row(db, app)? {
-        Some(route) => Ok(Some(route)),
+    match proxy_route_id(db, app)? {
+        Some(route) => db.get_provider_by_id(&route, app),
         None => direct_provider(db, app),
     }
 }
 
-/// 代理模式下代理路由那一行；不在代理模式、或者路由那家在库里不存在（按直连处理）时
-/// 为 `None`。
-fn proxy_route_row(db: &Database, app: &AppType) -> Result<Option<Provider>, AppError> {
+/// 代理模式下代理路由那一家的 id；不在代理模式、或者路由那家在库里不存在（按直连处理）
+/// 时为 `None`。只看在不在、不解析那一行：它读不出来时指针照样指着它。
+fn proxy_route_id(db: &Database, app: &AppType) -> Result<Option<String>, AppError> {
     let mode = mode_state(app);
     if !mode.is_proxy() {
         return Ok(None);
@@ -79,20 +84,20 @@ fn proxy_route_row(db: &Database, app: &AppType) -> Result<Option<Provider>, App
     let Some(route) = mode.proxy_route else {
         return Ok(None);
     };
-    let row = db.get_provider_by_id(&route, app.as_str())?;
-    if row.is_none() {
-        log::warn!(
-            "{} 的代理路由 {route} 在数据库中不存在，按直连指针处理",
-            app.as_str()
-        );
+    if db.provider_exists(&route, app)? {
+        return Ok(Some(route));
     }
-    Ok(row)
+    log::warn!(
+        "{} 的代理路由 {route} 在数据库中不存在，按直连指针处理",
+        app.as_str()
+    );
+    Ok(None)
 }
 
 /// 直连指针指向的那一行。
 pub fn direct_provider(db: &Database, app: &AppType) -> Result<Option<Provider>, AppError> {
     match provider_for(db, app, Purpose::Direct)? {
-        Some(id) => db.get_provider_by_id(&id, app.as_str()),
+        Some(id) => db.get_provider_by_id(&id, app),
         None => Ok(None),
     }
 }

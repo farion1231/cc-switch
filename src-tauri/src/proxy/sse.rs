@@ -1,28 +1,275 @@
 #[inline]
 pub(crate) fn strip_sse_field<'a>(line: &'a str, field: &str) -> Option<&'a str> {
-    line.strip_prefix(&format!("{field}: "))
-        .or_else(|| line.strip_prefix(&format!("{field}:")))
+    let value = line.strip_prefix(field)?.strip_prefix(':')?;
+    Some(value.strip_prefix(' ').unwrap_or(value))
 }
 
+/// Locate the first complete SSE event whose delimiter starts at or after
+/// `from` (a char boundary). Returns `(block_end, next_block_start)`.
 #[inline]
-pub(crate) fn take_sse_block(buffer: &mut String) -> Option<String> {
-    let mut best: Option<(usize, usize)> = None;
+fn find_sse_block_from(buffer: &str, from: usize) -> Option<(usize, usize)> {
+    let bytes = buffer.as_bytes();
+    let mut offset = from;
+    while let Some(pos) = buffer[offset..].find('\n') {
+        let newline = offset + pos;
+        let after = &bytes[newline + 1..];
+        let end = if after.starts_with(b"\n") {
+            newline + 2
+        } else if after.starts_with(b"\r\n") {
+            newline + 3
+        } else {
+            offset = newline + 1;
+            continue;
+        };
+        // Both lines may use LF or CRLF, independently.
+        let start = if newline > 0 && bytes[newline - 1] == b'\r' {
+            newline - 1
+        } else {
+            newline
+        };
+        return Some((start, end));
+    }
+    None
+}
 
-    // The data line and the following blank line can use different line endings.
-    // Include both mixed forms and prefer the earliest match so no trailing CR
-    // becomes part of the returned block.
-    for delimiter in ["\r\n\r\n", "\r\n\n", "\n\r\n", "\n\n"] {
-        if let Some(pos) = buffer.find(delimiter) {
-            if best.is_none_or(|(best_pos, _)| pos < best_pos) {
-                best = Some((pos, delimiter.len()));
+/// Earliest position a later scan has to revisit: a newline in the last two
+/// bytes may still turn into a delimiter once more data arrives.
+#[inline]
+fn sse_resume_point(pending: &str) -> usize {
+    let mut at = pending.len().saturating_sub(2);
+    while !pending.is_char_boundary(at) {
+        at -= 1;
+    }
+    at
+}
+
+/// SSE events of a body that is already complete, borrowed in place.
+///
+/// [`Self::remainder`] is the trailing text after the last delimiter, which
+/// callers treat as a final event when the upstream omitted the blank line.
+pub(crate) struct SseBlocks<'a> {
+    text: &'a str,
+    pos: usize,
+}
+
+impl<'a> SseBlocks<'a> {
+    pub(crate) fn new(text: &'a str) -> Self {
+        Self { text, pos: 0 }
+    }
+
+    pub(crate) fn remainder(&self) -> &'a str {
+        &self.text[self.pos..]
+    }
+}
+
+impl<'a> Iterator for SseBlocks<'a> {
+    type Item = &'a str;
+
+    fn next(&mut self) -> Option<&'a str> {
+        let rest = &self.text[self.pos..];
+        let (end, next) = find_sse_block_from(rest, 0)?;
+        self.pos += next;
+        Some(&rest[..end])
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SkipDelimiterState {
+    Normal,
+    AfterLf,
+    AfterLfCr,
+}
+
+impl SkipDelimiterState {
+    fn from_pending(text: &str, utf8_remainder: &[u8]) -> Self {
+        if !utf8_remainder.is_empty() {
+            return Self::Normal;
+        }
+        let bytes = text.as_bytes();
+        if bytes.ends_with(b"\n") {
+            Self::AfterLf
+        } else if bytes.ends_with(b"\n\r") {
+            Self::AfterLfCr
+        } else {
+            Self::Normal
+        }
+    }
+
+    fn advance_until_delimiter(&mut self, bytes: &[u8]) -> Option<usize> {
+        for (idx, &byte) in bytes.iter().enumerate() {
+            match (*self, byte) {
+                (Self::AfterLf | Self::AfterLfCr, b'\n') => return Some(idx + 1),
+                (Self::AfterLf, b'\r') => *self = Self::AfterLfCr,
+                (_, b'\n') => *self = Self::AfterLf,
+                _ => *self = Self::Normal,
+            }
+        }
+        None
+    }
+}
+
+/// Incremental SSE framer for a streamed body.
+///
+/// Events are handed out as slices of the internal buffer; consumed text is
+/// dropped once per incoming chunk instead of once per event, and a scan that
+/// found no delimiter resumes near the end instead of rescanning a long
+/// partial event.
+#[derive(Debug, Default)]
+pub(crate) struct SseBuffer {
+    text: String,
+    utf8_remainder: Vec<u8>,
+    /// Start of the text not yet returned by [`Self::next_block`].
+    consumed: usize,
+    /// Where the next delimiter scan starts; always `>= consumed`.
+    scan_from: usize,
+    max_pending_bytes: Option<usize>,
+    skip_delimiter_state: Option<SkipDelimiterState>,
+    dropped_oversized_events: usize,
+}
+
+impl SseBuffer {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    pub(crate) fn with_max_pending_bytes(max_pending_bytes: usize) -> Self {
+        Self {
+            max_pending_bytes: Some(max_pending_bytes),
+            ..Self::default()
+        }
+    }
+
+    pub(crate) fn dropped_oversized_events(&self) -> usize {
+        self.dropped_oversized_events
+    }
+
+    /// Append raw bytes; multi-byte characters split across chunks are held
+    /// back until complete (see [`append_utf8_safe`]).
+    pub(crate) fn push_bytes(&mut self, mut bytes: &[u8]) {
+        while !bytes.is_empty() {
+            if let Some(mut state) = self.skip_delimiter_state {
+                match state.advance_until_delimiter(bytes) {
+                    Some(next_offset) => {
+                        self.skip_delimiter_state = None;
+                        bytes = &bytes[next_offset..];
+                        continue;
+                    }
+                    None => {
+                        self.skip_delimiter_state = Some(state);
+                        return;
+                    }
+                }
+            }
+
+            self.compact();
+            if self.would_overflow(bytes.len()) {
+                self.begin_skip_oversized_event();
+                continue;
+            }
+
+            append_utf8_safe(&mut self.text, &mut self.utf8_remainder, bytes);
+            return;
+        }
+    }
+
+    pub(crate) fn push_str(&mut self, mut text: &str) {
+        while !text.is_empty() {
+            if let Some(mut state) = self.skip_delimiter_state {
+                match state.advance_until_delimiter(text.as_bytes()) {
+                    Some(next_offset) => {
+                        self.skip_delimiter_state = None;
+                        text = &text[next_offset..];
+                        continue;
+                    }
+                    None => {
+                        self.skip_delimiter_state = Some(state);
+                        return;
+                    }
+                }
+            }
+
+            self.compact();
+            if self.would_overflow(text.len()) {
+                self.begin_skip_oversized_event();
+                continue;
+            }
+
+            self.text.push_str(text);
+            return;
+        }
+    }
+
+    /// Next complete event (without its delimiter), or `None` until more data
+    /// arrives.
+    pub(crate) fn next_block(&mut self) -> Option<&str> {
+        let pending = &self.text[self.consumed..];
+        match find_sse_block_from(pending, self.scan_from - self.consumed) {
+            Some((end, next)) => {
+                let start = self.consumed;
+                self.consumed += next;
+                self.scan_from = self.consumed;
+                Some(&self.text[start..start + end])
+            }
+            None => {
+                self.scan_from = self.consumed + sse_resume_point(pending);
+                None
             }
         }
     }
 
-    let (pos, len) = best?;
-    let block = buffer[..pos].to_string();
-    buffer.drain(..pos + len);
-    Some(block)
+    /// Text received but not yet returned as an event.
+    pub(crate) fn pending(&self) -> &str {
+        &self.text[self.consumed..]
+    }
+
+    /// Discard the pending text (an incomplete UTF-8 tail is kept).
+    pub(crate) fn clear(&mut self) {
+        self.text.clear();
+        self.consumed = 0;
+        self.scan_from = 0;
+    }
+
+    /// End of stream: the pending text plus any incomplete UTF-8 tail,
+    /// decoded lossily.
+    pub(crate) fn take_tail(&mut self) -> String {
+        self.compact();
+        if !self.utf8_remainder.is_empty() {
+            let remainder = std::mem::take(&mut self.utf8_remainder);
+            self.text.push_str(&String::from_utf8_lossy(&remainder));
+        }
+        self.scan_from = 0;
+        std::mem::take(&mut self.text)
+    }
+
+    fn would_overflow(&self, incoming_len: usize) -> bool {
+        let Some(max_pending_bytes) = self.max_pending_bytes else {
+            return false;
+        };
+        self.text
+            .len()
+            .saturating_add(self.utf8_remainder.len())
+            .saturating_add(incoming_len)
+            > max_pending_bytes
+    }
+
+    fn begin_skip_oversized_event(&mut self) {
+        self.dropped_oversized_events += 1;
+        let skip_state = SkipDelimiterState::from_pending(&self.text, &self.utf8_remainder);
+        self.skip_delimiter_state = Some(skip_state);
+        self.text.clear();
+        self.text.shrink_to_fit();
+        self.utf8_remainder.clear();
+        self.consumed = 0;
+        self.scan_from = 0;
+    }
+
+    fn compact(&mut self) {
+        if self.consumed > 0 {
+            self.text.drain(..self.consumed);
+            self.scan_from -= self.consumed;
+            self.consumed = 0;
+        }
+    }
 }
 
 /// Append raw bytes to a UTF-8 `String` buffer, correctly handling multi-byte
@@ -90,7 +337,7 @@ pub(crate) fn append_utf8_safe(buffer: &mut String, remainder: &mut Vec<u8>, new
 
 #[cfg(test)]
 mod tests {
-    use super::{append_utf8_safe, strip_sse_field, take_sse_block};
+    use super::{append_utf8_safe, strip_sse_field, SseBlocks, SseBuffer};
 
     #[test]
     fn strip_sse_field_accepts_optional_space() {
@@ -113,57 +360,105 @@ mod tests {
         assert_eq!(strip_sse_field("id:1", "data"), None);
     }
 
-    #[test]
-    fn take_sse_block_supports_lf_delimiters() {
-        let mut buffer = "data: {\"ok\":true}\n\nrest".to_string();
-
-        assert_eq!(
-            take_sse_block(&mut buffer),
-            Some("data: {\"ok\":true}".to_string())
-        );
-        assert_eq!(buffer, "rest");
+    fn drain_blocks(sse: &mut SseBuffer) -> Vec<String> {
+        let mut blocks = Vec::new();
+        while let Some(block) = sse.next_block() {
+            blocks.push(block.to_string());
+        }
+        blocks
     }
 
     #[test]
-    fn take_sse_block_supports_crlf_delimiters() {
-        let mut buffer = "data: {\"ok\":true}\r\n\r\nrest".to_string();
+    fn sse_buffer_supports_lf_and_crlf_delimiters() {
+        for input in [
+            "data: {\"ok\":true}\n\nrest",
+            "data: {\"ok\":true}\r\n\r\nrest",
+        ] {
+            let mut sse = SseBuffer::new();
+            sse.push_str(input);
 
-        assert_eq!(
-            take_sse_block(&mut buffer),
-            Some("data: {\"ok\":true}".to_string())
-        );
-        assert_eq!(buffer, "rest");
+            assert_eq!(drain_blocks(&mut sse), ["data: {\"ok\":true}"]);
+            assert_eq!(sse.pending(), "rest");
+        }
     }
 
     #[test]
-    fn take_sse_block_handles_mixed_line_endings_across_chunks() {
+    fn sse_framing_handles_mixed_line_endings_across_chunks() {
         for delimiter in ["\n\n", "\r\n\r\n", "\n\r\n", "\r\n\n"] {
             let first = "event: message\r\ndata: first";
             let input = format!("{first}{delimiter}data: second\n\npartial");
 
             // Exercise every possible transport split, including inside CRLF.
             for split in 0..=input.len() {
-                let mut buffer = String::new();
+                let mut sse = SseBuffer::new();
                 let mut blocks = Vec::new();
                 for chunk in [&input[..split], &input[split..]] {
-                    buffer.push_str(chunk);
-                    while let Some(block) = take_sse_block(&mut buffer) {
-                        blocks.push(block);
-                    }
+                    sse.push_bytes(chunk.as_bytes());
+                    blocks.extend(drain_blocks(&mut sse));
                 }
                 assert_eq!(
                     blocks,
                     [first, "data: second"],
                     "{delimiter:?}, split {split}"
                 );
-                assert_eq!(buffer, "partial");
+                assert_eq!(sse.pending(), "partial");
             }
 
             // A complete mixed delimiter must dispatch without another event.
-            let mut buffer = format!("{first}{delimiter}");
-            assert_eq!(take_sse_block(&mut buffer).as_deref(), Some(first));
-            assert!(buffer.is_empty());
+            let mut sse = SseBuffer::new();
+            sse.push_str(&format!("{first}{delimiter}"));
+            assert_eq!(drain_blocks(&mut sse), [first]);
+            assert!(sse.pending().is_empty());
+
+            let mut blocks = SseBlocks::new(&input);
+            assert_eq!(blocks.by_ref().collect::<Vec<_>>(), [first, "data: second"]);
+            assert_eq!(blocks.remainder(), "partial");
         }
+    }
+
+    #[test]
+    fn sse_buffer_matches_whole_body_framing_when_fed_byte_by_byte() {
+        // A long event, CRLF and mixed delimiters, an empty event and multi-byte
+        // text: feeding one byte at a time exercises every scan resume point.
+        let long = format!("data: {}", "中文\\n".repeat(200));
+        let input = format!("{long}\r\n\r\nevent: a\r\ndata: 1\n\r\n\n\ndata: 😀\r\n\ndata: tail");
+        let mut whole = SseBlocks::new(&input);
+        let expected = whole.by_ref().map(str::to_string).collect::<Vec<_>>();
+        assert_eq!(
+            expected,
+            [long.as_str(), "event: a\r\ndata: 1", "", "data: 😀"]
+        );
+        assert_eq!(whole.remainder(), "data: tail");
+
+        let mut sse = SseBuffer::new();
+        let mut blocks = Vec::new();
+        for byte in input.as_bytes() {
+            sse.push_bytes(std::slice::from_ref(byte));
+            blocks.extend(drain_blocks(&mut sse));
+        }
+        assert_eq!(blocks, expected);
+        assert_eq!(sse.pending(), "data: tail");
+    }
+
+    #[test]
+    fn sse_buffer_tail_and_clear() {
+        let mut sse = SseBuffer::new();
+        sse.push_bytes(b"data: a\n\ndata: b");
+        assert_eq!(drain_blocks(&mut sse), ["data: a"]);
+        // An incomplete multi-byte tail is held back until the stream ends.
+        sse.push_bytes(&"中".as_bytes()[..2]);
+        assert_eq!(sse.pending(), "data: b");
+        assert_eq!(sse.take_tail(), "data: b\u{FFFD}");
+        assert!(sse.pending().is_empty());
+
+        // `clear` drops pending text but keeps the incomplete character.
+        sse.push_bytes(b"{\"partial\"");
+        sse.push_bytes(&"中".as_bytes()[..1]);
+        sse.clear();
+        assert!(sse.pending().is_empty());
+        sse.push_bytes(&"中".as_bytes()[1..]);
+        sse.push_str("\n\n");
+        assert_eq!(drain_blocks(&mut sse), ["中"]);
     }
 
     // ------------------------------------------------------------------
@@ -375,5 +670,67 @@ mod tests {
             replacement_count, 4,
             "each invalid byte should produce one U+FFFD"
         );
+    }
+
+    #[test]
+    fn bounded_sse_buffer_skips_oversized_event_and_resumes_at_next_delimiter() {
+        let mut sse = SseBuffer::with_max_pending_bytes(64);
+        sse.push_bytes(b"data: ok\n\n");
+        assert_eq!(drain_blocks(&mut sse), ["data: ok"]);
+        assert_eq!(sse.dropped_oversized_events(), 0);
+
+        sse.push_bytes(&[b'x'; 40]);
+        assert_eq!(sse.dropped_oversized_events(), 0);
+        sse.push_bytes(&[b'y'; 40]);
+
+        assert_eq!(sse.dropped_oversized_events(), 1);
+        assert!(sse.pending().is_empty());
+        assert!(drain_blocks(&mut sse).is_empty());
+        assert!(sse.take_tail().is_empty());
+
+        sse.push_bytes(b"still oversized");
+        assert!(drain_blocks(&mut sse).is_empty());
+        assert_eq!(sse.dropped_oversized_events(), 1);
+
+        sse.push_bytes(b"\n\ndata: after\n\n");
+        assert_eq!(drain_blocks(&mut sse), ["data: after"]);
+
+        sse.push_str("data: more\n\n");
+        assert_eq!(drain_blocks(&mut sse), ["data: more"]);
+
+        sse.push_bytes(b"data: tail");
+        assert_eq!(sse.take_tail(), "data: tail");
+    }
+
+    #[test]
+    fn bounded_sse_buffer_resumes_across_split_delimiters_and_utf8() {
+        for delimiter in ["\n\n", "\r\n\r\n", "\n\r\n", "\r\n\n"] {
+            let oversized = format!("data: {}{delimiter}data: 你好\n\n", "x".repeat(80));
+            let bytes = oversized.as_bytes();
+            for split in 0..=bytes.len() {
+                let mut sse = SseBuffer::with_max_pending_bytes(64);
+                let mut blocks = Vec::new();
+                sse.push_bytes(&bytes[..split]);
+                blocks.extend(drain_blocks(&mut sse));
+                sse.push_bytes(&bytes[split..]);
+                blocks.extend(drain_blocks(&mut sse));
+                assert_eq!(blocks, ["data: 你好"], "{delimiter:?}, split {split}");
+                assert_eq!(sse.dropped_oversized_events(), 1);
+            }
+        }
+
+        // Delimiter started at the end of the pending buffer right before overflow.
+        for (first_tail, second_head) in [("\n", "\n"), ("\n", "\r\n"), ("\n\r", "\n")] {
+            let mut sse = SseBuffer::with_max_pending_bytes(64);
+            let mut first = "x".repeat(64 - first_tail.len());
+            first.push_str(first_tail);
+            sse.push_bytes(first.as_bytes());
+            assert_eq!(sse.dropped_oversized_events(), 0);
+
+            let second = format!("{second_head}data: recovered\n\n");
+            sse.push_bytes(second.as_bytes());
+            assert_eq!(sse.dropped_oversized_events(), 1);
+            assert_eq!(drain_blocks(&mut sse), ["data: recovered"]);
+        }
     }
 }

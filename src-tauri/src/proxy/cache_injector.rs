@@ -181,7 +181,7 @@ mod tests {
     }
 
     #[test]
-    fn test_empty_body_no_injection() {
+    fn test_single_user_text_block_gets_cache_control() {
         let mut body = json!({"model": "test", "messages": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}]});
         inject(&mut body, &default_config());
         assert!(body["messages"][0]["content"][0]

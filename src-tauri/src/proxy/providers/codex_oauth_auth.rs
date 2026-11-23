@@ -32,6 +32,8 @@ use uuid::Uuid;
 
 use super::copilot_auth::{GitHubAccount, GitHubDeviceCodeResponse};
 
+mod browser;
+
 /// OpenAI OAuth 客户端 ID（OpenCode 使用，与官方 Codex CLI 相同）
 const CODEX_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 
@@ -67,10 +69,10 @@ const POLLING_SAFETY_MARGIN_SECS: u64 = 3;
 const CODEX_USER_AGENT: &str = "cc-switch-codex-oauth";
 
 // Shared by model discovery and generation: ChatGPT gates models by this
-// client identity. GPT-6.1 Sol enters the ChatGPT-account catalog at 0.159.0.
+// client identity.
 // Bump together when a new model raises its minimal_client_version or catalog gate.
 pub(crate) const CODEX_OAUTH_ORIGINATOR: &str = "codex_cli_rs";
-pub(crate) const CODEX_OAUTH_CLIENT_VERSION: &str = "0.159.0";
+pub(crate) const CODEX_OAUTH_CLIENT_VERSION: &str = "0.169.0";
 
 /// Codex OAuth 错误
 #[derive(Debug, thiserror::Error)]
@@ -382,6 +384,8 @@ pub struct CodexOAuthManager {
     /// 进行中的 Device Code 流程：device_auth_id -> {user_code, expires_at_ms}
     /// 过期条目会在 start_device_flow 时被清理，防止放弃的登录流程导致无界增长
     pending_device_codes: Arc<RwLock<HashMap<String, PendingDeviceCode>>>,
+    browser_flows: Arc<RwLock<HashMap<String, Arc<browser::BrowserFlow>>>>,
+    browser_start_lock: Mutex<()>,
     /// 清除全部认证时递增，使已经在网络请求中的登录流程无法重新登记。
     login_epoch: AtomicU64,
     /// 每个目标账号最新一次定向重新认证的 generation。
@@ -405,6 +409,8 @@ impl CodexOAuthManager {
             refresh_locks: Arc::new(RwLock::new(HashMap::new())),
             lifecycle_lock: Arc::new(RwLock::new(())),
             pending_device_codes: Arc::new(RwLock::new(HashMap::new())),
+            browser_flows: Arc::new(RwLock::new(HashMap::new())),
+            browser_start_lock: Mutex::new(()),
             login_epoch: AtomicU64::new(0),
             target_login_generations: Arc::new(RwLock::new(HashMap::new())),
             next_target_login_generation: AtomicU64::new(0),
@@ -432,30 +438,8 @@ impl CodexOAuthManager {
         target_account_id: Option<&str>,
     ) -> Result<GitHubDeviceCodeResponse, CodexOAuthError> {
         log::info!("[CodexOAuth] 启动 Device Code 流程");
-        let login_epoch = self.login_epoch.load(Ordering::Acquire);
-        let target_account_id = target_account_id
-            .map(str::trim)
-            .filter(|account_id| !account_id.is_empty())
-            .map(str::to_string);
-        let target_generation = if let Some(account_id) = target_account_id.as_deref() {
-            let accounts = self.accounts.read().await;
-            if !accounts.contains_key(account_id) {
-                return Err(CodexOAuthError::AccountNotFound(account_id.to_string()));
-            }
-            drop(accounts);
-            let generation = self
-                .next_target_login_generation
-                .fetch_add(1, Ordering::AcqRel)
-                .wrapping_add(1);
-            let mut generations = self.target_login_generations.write().await;
-            generations
-                .entry(account_id.to_string())
-                .and_modify(|current| *current = (*current).max(generation))
-                .or_insert(generation);
-            Some(generation)
-        } else {
-            None
-        };
+        let (login_epoch, target_account_id, target_generation) =
+            self.prepare_login_target(target_account_id).await?;
 
         let response = crate::proxy::http_client::get()
             .post(DEVICE_AUTH_USERCODE_URL)
@@ -507,6 +491,38 @@ impl CodexOAuthManager {
         })
     }
 
+    async fn prepare_login_target(
+        &self,
+        target_account_id: Option<&str>,
+    ) -> Result<(u64, Option<String>, Option<u64>), CodexOAuthError> {
+        let login_epoch = self.login_epoch.load(Ordering::Acquire);
+        let target_account_id = target_account_id
+            .map(str::trim)
+            .filter(|account_id| !account_id.is_empty())
+            .map(str::to_string);
+        let target_generation = if let Some(account_id) = target_account_id.as_deref() {
+            let accounts = self.accounts.read().await;
+            if !accounts.contains_key(account_id) {
+                return Err(CodexOAuthError::AccountNotFound(account_id.to_string()));
+            }
+            drop(accounts);
+            let generation = self
+                .next_target_login_generation
+                .fetch_add(1, Ordering::AcqRel)
+                .wrapping_add(1);
+            let mut generations = self.target_login_generations.write().await;
+            generations
+                .entry(account_id.to_string())
+                .and_modify(|current| *current = (*current).max(generation))
+                .or_insert(generation);
+            Some(generation)
+        } else {
+            None
+        };
+
+        Ok((login_epoch, target_account_id, target_generation))
+    }
+
     async fn register_pending_device_code(
         &self,
         device_auth_id: String,
@@ -536,11 +552,17 @@ impl CodexOAuthManager {
     }
 
     pub async fn cancel_device_flow(&self, device_code: &str) -> bool {
-        self.pending_device_codes
+        let cancelled = self
+            .pending_device_codes
             .write()
             .await
             .remove(device_code)
-            .is_some()
+            .is_some();
+        let browser = self.browser_flows.write().await.remove(device_code);
+        if let Some(browser) = browser {
+            browser.stop().await;
+        }
+        cancelled
     }
 
     /// 轮询 Device Code 状态
@@ -555,6 +577,9 @@ impl CodexOAuthManager {
         BeforeCommit: FnOnce() -> CommitFuture,
         CommitFuture: std::future::Future<Output = CommitGuard>,
     {
+        if device_code.starts_with("browser:") {
+            return self.poll_browser_flow(device_code, before_commit).await;
+        }
         let entry = {
             let pending = self.pending_device_codes.read().await;
             pending.get(device_code).cloned()
@@ -615,9 +640,25 @@ impl CodexOAuthManager {
 
         // 用 authorization_code + code_verifier 换 token
         let tokens = self
-            .exchange_code_for_tokens(&success.authorization_code, &success.code_verifier)
+            .exchange_code_for_tokens(
+                &success.authorization_code,
+                &success.code_verifier,
+                DEVICE_REDIRECT_URI,
+            )
             .await?;
 
+        let _commit_guard = before_commit().await;
+        self.commit_login_tokens(tokens, device_code, &entry)
+            .await
+            .map(Some)
+    }
+
+    async fn commit_login_tokens(
+        &self,
+        tokens: OAuthTokenResponse,
+        device_code: &str,
+        entry: &PendingDeviceCode,
+    ) -> Result<GitHubAccount, CodexOAuthError> {
         let refresh_token = tokens.refresh_token.clone().ok_or_else(|| {
             CodexOAuthError::TokenFetchFailed("响应缺少 refresh_token".to_string())
         })?;
@@ -643,10 +684,6 @@ impl CodexOAuthManager {
         }
 
         let obtained_at_ms = chrono::Utc::now().timestamp_millis();
-        // Provider switching and managed live-auth writes use the same guard.
-        // Acquire it only after the network exchange succeeds so ordinary
-        // authorization-pending polls never block provider operations.
-        let _commit_guard = before_commit().await;
         // 登录提交与该账号的 refresh/adopt 共用一把 generation 锁；账号和
         // access cache 一次写入，旧刷新响应因此不能覆盖新登录链。
         let account = self
@@ -668,7 +705,7 @@ impl CodexOAuthManager {
             )
             .await?;
 
-        Ok(Some(account))
+        Ok(account)
     }
 
     /// 用 authorization_code + code_verifier 换取 tokens
@@ -676,6 +713,7 @@ impl CodexOAuthManager {
         &self,
         code: &str,
         code_verifier: &str,
+        redirect_uri: &str,
     ) -> Result<OAuthTokenResponse, CodexOAuthError> {
         let response = crate::proxy::http_client::get()
             .post(OAUTH_TOKEN_URL)
@@ -685,7 +723,7 @@ impl CodexOAuthManager {
             .form(&[
                 ("grant_type", "authorization_code"),
                 ("code", code),
-                ("redirect_uri", DEVICE_REDIRECT_URI),
+                ("redirect_uri", redirect_uri),
                 ("client_id", CODEX_CLIENT_ID),
                 ("code_verifier", code_verifier),
             ])
@@ -729,17 +767,11 @@ impl CodexOAuthManager {
         if !status.is_success() {
             let text = response.text().await.unwrap_or_default();
             let refresh_error_code = extract_refresh_error_code(&text);
-            if status == reqwest::StatusCode::UNAUTHORIZED
-                || status == reqwest::StatusCode::FORBIDDEN
-                || matches!(
-                    refresh_error_code.as_deref(),
-                    Some(
-                        "refresh_token_expired"
-                            | "refresh_token_reused"
-                            | "refresh_token_invalidated"
-                    )
-                )
-            {
+            if refresh_rejection_is_permanent(status, refresh_error_code.as_deref()) {
+                log::warn!(
+                    "[CodexOAuth] refresh token rejected: HTTP {status}, code={}",
+                    refresh_error_code.as_deref().unwrap_or("none")
+                );
                 return Err(CodexOAuthError::RefreshTokenInvalid);
             }
             return Err(CodexOAuthError::TokenFetchFailed(format!(
@@ -1023,19 +1055,6 @@ impl CodexOAuthManager {
         }
 
         Ok(cached)
-    }
-
-    /// 获取指定账号的有效 access_token 与 id_token（必要时自动刷新）
-    ///
-    /// id_token 用于让托管写入的 Codex auth.json 与原生浏览器登录保持
-    /// 一致的 tokens 字段形状（仅托管绑定路径使用）。旧账号若无 id_token
-    /// 会返回 `None`，前端据此提示重新登录。
-    pub async fn get_valid_token_and_id_token_for_account(
-        &self,
-        account_id: &str,
-    ) -> Result<(String, Option<String>), CodexOAuthError> {
-        let bundle = self.get_valid_token_bundle_for_account(account_id).await?;
-        Ok((bundle.access_token, bundle.id_token))
     }
 
     /// 获取写入托管 Codex `auth.json` 所需的完整可刷新 token 束
@@ -1505,16 +1524,22 @@ impl CodexOAuthManager {
             pending.clear();
         }
 
+        let browsers: Vec<_> = self
+            .browser_flows
+            .write()
+            .await
+            .drain()
+            .map(|(_, flow)| flow)
+            .collect();
+        for browser in browsers {
+            browser.stop().await;
+        }
+
         if self.storage_path.exists() {
             std::fs::remove_file(&self.storage_path)?;
         }
 
         Ok(())
-    }
-
-    pub async fn is_authenticated(&self) -> bool {
-        let accounts = self.accounts.read().await;
-        !accounts.is_empty()
     }
 
     /// 获取认证状态摘要（与 Copilot 的格式保持一致，便于复用前端）
@@ -2060,6 +2085,26 @@ impl CodexOAuthManager {
     }
 }
 
+/// 按磁盘上的账号表给出 `(account_id -> 显示名, 默认账号 id)`（同 [`GitHubAccount::from`]）：托盘同步读状态用。
+pub fn labels_on_disk(data_dir: &std::path::Path) -> (HashMap<String, String>, Option<String>) {
+    let Ok(content) = fs::read_to_string(data_dir.join("codex_oauth_auth.json")) else {
+        return (HashMap::new(), None);
+    };
+    let Ok(store) = serde_json::from_str::<CodexOAuthStore>(&content) else {
+        return (HashMap::new(), None);
+    };
+    let default_id = store
+        .default_account_id
+        .filter(|id| store.accounts.contains_key(id))
+        .or_else(|| CodexOAuthManager::fallback_default_account_id(&store.accounts));
+    let labels = store
+        .accounts
+        .iter()
+        .map(|(id, data)| (id.clone(), GitHubAccount::from(data).login))
+        .collect();
+    (labels, default_id)
+}
+
 /// Codex OAuth 状态摘要
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CodexOAuthStatus {
@@ -2088,6 +2133,26 @@ fn compute_expires_at_ms(expires_in: Option<i64>) -> i64 {
     let now_ms = chrono::Utc::now().timestamp_millis();
     let secs = expires_in.unwrap_or(3600);
     now_ms + secs * 1000
+}
+
+/// Whether a failed refresh means the refresh token itself is dead.
+///
+/// Mirrors Codex CLI: HTTP 401, an explicit OpenAI refresh-token code, or the
+/// standard OAuth `invalid_grant` rejection (Codex CLI treats
+/// `400 invalid_grant` as permanent too) mean the token is dead. Anything
+/// else (a 403 from a CDN/WAF or proxy, 429, 5xx) is transient, so the same
+/// refresh token can succeed on a later attempt.
+fn refresh_rejection_is_permanent(status: reqwest::StatusCode, error_code: Option<&str>) -> bool {
+    status == reqwest::StatusCode::UNAUTHORIZED
+        || matches!(
+            error_code,
+            Some(
+                "invalid_grant"
+                    | "refresh_token_expired"
+                    | "refresh_token_reused"
+                    | "refresh_token_invalidated"
+            )
+        )
 }
 
 fn extract_refresh_error_code(body: &str) -> Option<String> {
@@ -2296,14 +2361,6 @@ mod tests {
         };
 
         assert_eq!(extract_account_metadata_from_tokens(&tokens), (None, None));
-    }
-
-    #[tokio::test]
-    async fn test_manager_initial_state() {
-        let temp = tempfile::tempdir().unwrap();
-        let manager = CodexOAuthManager::new(temp.path().to_path_buf());
-        assert!(!manager.is_authenticated().await);
-        assert!(manager.list_accounts().await.is_empty());
     }
 
     #[tokio::test]
@@ -3474,5 +3531,48 @@ mod tests {
             Some("refresh_token_invalidated")
         );
         assert_eq!(extract_refresh_error_code("not json"), None);
+    }
+
+    #[test]
+    fn refresh_rejection_is_permanent_only_for_401_or_explicit_codes() {
+        use reqwest::StatusCode;
+        assert!(refresh_rejection_is_permanent(
+            StatusCode::UNAUTHORIZED,
+            None
+        ));
+        assert!(refresh_rejection_is_permanent(
+            StatusCode::BAD_REQUEST,
+            Some("refresh_token_reused")
+        ));
+        assert!(refresh_rejection_is_permanent(
+            StatusCode::FORBIDDEN,
+            Some("refresh_token_invalidated")
+        ));
+        // A bare 403 (CDN/WAF challenge, proxy) must stay retryable.
+        assert!(!refresh_rejection_is_permanent(StatusCode::FORBIDDEN, None));
+        assert!(!refresh_rejection_is_permanent(
+            StatusCode::TOO_MANY_REQUESTS,
+            None
+        ));
+        assert!(!refresh_rejection_is_permanent(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Some("server_error")
+        ));
+        // 400 invalid_grant is the standard OAuth "refresh token is dead"
+        // signal (also classified permanent by Codex CLI); a transient
+        // classifier here keeps a genuinely expired login retrying forever.
+        assert!(refresh_rejection_is_permanent(
+            StatusCode::BAD_REQUEST,
+            Some("invalid_grant")
+        ));
+        // An error code without invalid_grant on 400 stays retryable.
+        assert!(!refresh_rejection_is_permanent(
+            StatusCode::BAD_REQUEST,
+            Some("temporarily_unavailable")
+        ));
+        assert!(!refresh_rejection_is_permanent(
+            StatusCode::BAD_REQUEST,
+            None
+        ));
     }
 }

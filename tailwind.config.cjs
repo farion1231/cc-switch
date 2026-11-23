@@ -178,16 +178,44 @@ module.exports = {
         panel: "10px",
         dialog: "14px",
       },
+      // 字号、控件高度随界面密度变（src/index.css 的 --fs-* / --h-*，<html data-density>）
       fontSize: {
         // v7 字体角色（AUTHORING.md「颜色与字体」）
-        badge: ["11px", { lineHeight: "16px", fontWeight: "500" }],
-        caption: ["12px", { lineHeight: "18px" }],
-        body: ["13px", { lineHeight: "20px" }],
-        strong: ["14px", { lineHeight: "20px", fontWeight: "500" }],
-        section: ["15px", { lineHeight: "22px", fontWeight: "600" }],
-        title: ["16px", { lineHeight: "24px", fontWeight: "600" }],
-        page: ["18px", { lineHeight: "26px", fontWeight: "600" }],
+        badge: [
+          "var(--fs-badge)",
+          { lineHeight: "var(--lh-badge)", fontWeight: "500" },
+        ],
+        caption: ["var(--fs-caption)", { lineHeight: "var(--lh-caption)" }],
+        body: ["var(--fs-body)", { lineHeight: "var(--lh-body)" }],
+        strong: [
+          "var(--fs-strong)",
+          { lineHeight: "var(--lh-strong)", fontWeight: "500" },
+        ],
+        section: [
+          "var(--fs-section)",
+          { lineHeight: "var(--lh-section)", fontWeight: "600" },
+        ],
+        title: [
+          "var(--fs-title)",
+          { lineHeight: "var(--lh-title)", fontWeight: "600" },
+        ],
+        page: [
+          "var(--fs-page)",
+          { lineHeight: "var(--lh-page)", fontWeight: "600" },
+        ],
         metric: ["24px", { lineHeight: "32px", fontWeight: "600" }],
+        // 还没迁到字体角色的 text-xs 跟着辅助字放大，免得舒适密度下它比正文小两档
+        xs: ["var(--fs-xs)", { lineHeight: "var(--lh-xs)" }],
+      },
+      spacing: {
+        // 按钮：control = regular，control-sm = compact
+        control: "var(--h-control)",
+        "control-sm": "var(--h-control-sm)",
+        "nav-row": "var(--h-nav-row)",
+        "card-y": "var(--card-py)",
+      },
+      minHeight: {
+        card: "var(--h-card)",
       },
       fontFamily: {
         // 使用与之前版本保持一致的系统字体栈
@@ -225,8 +253,22 @@ module.exports = {
         "pulse-slow": "pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite",
         "accordion-down": "accordion-down 0.2s ease-out",
         "accordion-up": "accordion-up 0.2s ease-out",
+        "row-flash": "rowFlash 4s ease-in-out forwards",
+        "row-fade": "rowFade 3s ease-out forwards",
       },
       keyframes: {
+        // 从「发现」跳到「已安装」后标出那一行：黄底闪两下，停一会再淡出
+        // 动 opacity 而不是 background-color：WebKit 里 keyframes 带 var() 的颜色会跳变成快闪
+        rowFlash: {
+          "0%": { opacity: "0" },
+          "15%, 50%, 75%": { opacity: "1" },
+          "32%": { opacity: "0.15" },
+          "100%": { opacity: "0" },
+        },
+        rowFade: {
+          "0%, 60%": { opacity: "1" },
+          "100%": { opacity: "0" },
+        },
         fadeIn: {
           "0%": {
             opacity: "0",
