@@ -17,10 +17,22 @@ pub(super) fn apply_native_responses_request_compat(
             provider.id
         );
     }
-    if !crate::proxy::providers::provider_needs_responses_namespace_flatten(
+    let needs_xai_compat = crate::proxy::providers::provider_needs_responses_namespace_flatten(
         provider,
         body.get("model").and_then(Value::as_str),
-    ) {
+    );
+    // Opt-in for function-only gateways (#9280). xAI keeps its own sanitizer.
+    if !needs_xai_compat
+        && provider.codex_custom_tools_as_functions_enabled()
+        && !crate::proxy::providers::is_codex_official_provider(provider)
+        && crate::proxy::providers::transform_codex_responses_custom_tools::convert_custom_tools_to_functions(body)
+    {
+        log::debug!(
+            "[Codex] Sent custom tools as function tools for native Responses upstream (provider={})",
+            provider.id
+        );
+    }
+    if !needs_xai_compat {
         return Ok(());
     }
     if crate::proxy::providers::transform_codex_responses_namespace::flatten_request_namespaces(

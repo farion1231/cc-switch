@@ -161,6 +161,13 @@ impl Provider {
             .unwrap_or(false)
     }
 
+    pub fn codex_custom_tools_as_functions_enabled(&self) -> bool {
+        self.meta
+            .as_ref()
+            .map(|m| m.codex_custom_tools_as_functions_enabled())
+            .unwrap_or(false)
+    }
+
     pub fn has_usage_script_enabled(&self) -> bool {
         self.meta
             .as_ref()
@@ -632,6 +639,14 @@ pub struct ProviderMeta {
     /// Codex OAuth FAST mode: inject `service_tier = "priority"` for ChatGPT Codex requests.
     #[serde(rename = "codexFastMode", skip_serializing_if = "Option::is_none")]
     pub codex_fast_mode: Option<bool>,
+    /// Codex native Responses passthrough: send Codex's freeform `custom` tools
+    /// (`apply_patch`, code-mode `exec`) as JSON `function` tools and restore the
+    /// calls on the way back. For gateways that only accept function tools.
+    #[serde(
+        rename = "codexCustomToolsAsFunctions",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub codex_custom_tools_as_functions: Option<bool>,
     /// Codex Responses -> Chat Completions reasoning capability metadata.
     #[serde(rename = "codexChatReasoning", skip_serializing_if = "Option::is_none")]
     pub codex_chat_reasoning: Option<CodexChatReasoningConfig>,
@@ -744,6 +759,12 @@ impl ProviderMeta {
     /// 会按更高速率消耗 ChatGPT 订阅配额，用户需显式开启以换取更低延迟。
     pub fn codex_fast_mode_enabled(&self) -> bool {
         self.codex_fast_mode.unwrap_or(false)
+    }
+
+    /// Off by default: some relays accept custom tools, and converting them there
+    /// would drop the grammar-constrained input Codex relies on.
+    pub fn codex_custom_tools_as_functions_enabled(&self) -> bool {
+        self.codex_custom_tools_as_functions.unwrap_or(false)
     }
 
     /// 经校验的 Provider 级自定义 User-Agent。见 [`parse_custom_user_agent`]。

@@ -495,6 +495,9 @@ function ProviderFormFull({
     );
     setHasValidCodexOfficialSelection(true);
     setCodexFastMode(initialData?.meta?.codexFastMode ?? false);
+    setCodexCustomToolsAsFunctions(
+      initialData?.meta?.codexCustomToolsAsFunctions ?? false,
+    );
     setCodexChatReasoning(initialData?.meta?.codexChatReasoning ?? {});
     setClaudeReasoningEffort(
       toClaudeReasoningEffortChoice(initialData?.meta?.claudeReasoningEffort),
@@ -744,6 +747,10 @@ function ProviderFormFull({
   const [codexFastMode, setCodexFastMode] = useState<boolean>(
     () => initialData?.meta?.codexFastMode ?? false,
   );
+  const [codexCustomToolsAsFunctions, setCodexCustomToolsAsFunctions] =
+    useState<boolean>(
+      () => initialData?.meta?.codexCustomToolsAsFunctions ?? false,
+    );
   const [codexChatReasoning, setCodexChatReasoning] =
     useState<CodexChatReasoning>(
       () => initialData?.meta?.codexChatReasoning ?? {},
@@ -2121,6 +2128,14 @@ function ProviderFormFull({
           ? selectedGitHubAccountId
           : undefined,
       codexFastMode: isClaudeCodexOauthProvider ? codexFastMode : undefined,
+      codexCustomToolsAsFunctions:
+        appId === "codex" &&
+        category !== "official" &&
+        !isCopilotProviderForSubmit &&
+        localCodexApiFormat === "openai_responses" &&
+        codexCustomToolsAsFunctions
+          ? true
+          : undefined,
       codexChatReasoning:
         appId === "codex" && category !== "official" && isCodexChatFormat
           ? normalizeCodexChatReasoningForSave(codexChatReasoning)
@@ -2208,6 +2223,9 @@ function ProviderFormFull({
     }
     if (!isClaudeCodexOauthProvider && "codexFastMode" in nextMeta) {
       delete nextMeta.codexFastMode;
+    }
+    if (nextMeta.codexCustomToolsAsFunctions === undefined) {
+      delete nextMeta.codexCustomToolsAsFunctions;
     }
     if (!providerType && "providerType" in nextMeta) {
       delete nextMeta.providerType;
@@ -2963,6 +2981,8 @@ function ProviderFormFull({
               onAutoReviewModelChange={setCodexAutoReviewModel}
               officialSpeedTiers={codexOfficialSpeedTiers}
               onOfficialSpeedTiersChange={setCodexOfficialSpeedTiers}
+              customToolsAsFunctions={codexCustomToolsAsFunctions}
+              onCustomToolsAsFunctionsChange={setCodexCustomToolsAsFunctions}
               speedTestEndpoints={speedTestEndpoints}
               customUserAgent={customUserAgent}
               onCustomUserAgentChange={setCustomUserAgent}

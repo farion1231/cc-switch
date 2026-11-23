@@ -47,10 +47,10 @@ const EXTRA_CHAT_PASSTHROUGH_FIELDS: &[&str] = &[
 ];
 
 const TOOL_SEARCH_PROXY_NAME: &str = "tool_search";
-const CUSTOM_TOOL_INPUT_FIELD: &str = "input";
+pub(crate) const CUSTOM_TOOL_INPUT_FIELD: &str = "input";
 const ORPHAN_TOOL_OUTPUT_MARKER: &str = "[tool_result without a matching tool_call]";
 const CHAT_TOOL_NAME_MAX_LEN: usize = 64;
-const CUSTOM_TOOL_INPUT_DESCRIPTION: &str = "Raw string input for the original custom tool. Preserve formatting exactly and follow the original tool definition embedded in the description.";
+pub(crate) const CUSTOM_TOOL_INPUT_DESCRIPTION: &str = "Raw string input for the original custom tool. Preserve formatting exactly and follow the original tool definition embedded in the description.";
 const CUSTOM_TOOL_PRESERVED_METADATA_HEADING: &str = "Original tool definition:";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CodexToolKind {
@@ -2002,7 +2002,7 @@ pub(crate) fn flatten_namespace_tool_name(namespace: &str, name: &str) -> String
     format!("{prefix}{suffix}")
 }
 
-fn responses_tool_name(tool: &Value) -> Option<String> {
+pub(crate) fn responses_tool_name(tool: &Value) -> Option<String> {
     tool.get("function")
         .and_then(|function| function.get("name"))
         .or_else(|| tool.get("name"))
@@ -2012,7 +2012,7 @@ fn responses_tool_name(tool: &Value) -> Option<String> {
         .map(ToString::to_string)
 }
 
-fn responses_custom_tool_description(tool: &Value) -> String {
+pub(crate) fn responses_custom_tool_description(tool: &Value) -> String {
     let mut description = String::new();
     description.push_str(CUSTOM_TOOL_PRESERVED_METADATA_HEADING);
     description.push_str("\n```json\n");

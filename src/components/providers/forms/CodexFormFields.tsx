@@ -246,6 +246,9 @@ interface CodexFormFieldsProps {
   // entries: `modelCatalog.officialSpeedTiers`. Native Responses only.
   officialSpeedTiers?: boolean;
   onOfficialSpeedTiersChange?: (keep: boolean) => void;
+  // `meta.codexCustomToolsAsFunctions`. Native Responses only.
+  customToolsAsFunctions?: boolean;
+  onCustomToolsAsFunctionsChange?: (enabled: boolean) => void;
 
   // Speed Test Endpoints
   speedTestEndpoints: EndpointCandidate[];
@@ -707,6 +710,8 @@ export function CodexFormFields({
   onAutoReviewModelChange,
   officialSpeedTiers = false,
   onOfficialSpeedTiersChange,
+  customToolsAsFunctions = false,
+  onCustomToolsAsFunctionsChange,
   onCatalogModelsChange,
   speedTestEndpoints,
   customUserAgent,
@@ -1455,6 +1460,37 @@ export function CodexFormFields({
       </div>
     );
 
+  // Function-only Responses gateways drop Codex's freeform tools (apply_patch,
+  // code-mode exec). The local proxy can resend them as function tools. Shown
+  // wherever the proxy applies it (not official, Copilot or xAI), independent
+  // of speed-test visibility: cloud presets hide format fields but still need it.
+  const customToolsAsFunctionsToggle = onCustomToolsAsFunctionsChange &&
+    category !== "official" &&
+    !isCopilotPreset &&
+    !isXaiOauthPreset &&
+    effectiveApiFormat === "openai_responses" && (
+      <div className="flex items-center justify-between gap-4">
+        {labelWithHelp(
+          t("codexConfig.customToolsAsFunctionsLabel", {
+            defaultValue: "Send custom tools as function tools",
+          }),
+          t("codexConfig.customToolsAsFunctionsHint", {
+            defaultValue:
+              "For Responses gateways that only accept function tools. The local proxy sends Codex's freeform tools (apply_patch, code-mode exec) as function tools and turns the calls back for Codex. Needs the local proxy; leave it off if the provider already accepts custom tools.",
+          }),
+          "codexCustomToolsAsFunctions",
+        )}
+        <Switch
+          id="codexCustomToolsAsFunctions"
+          checked={customToolsAsFunctions}
+          onCheckedChange={onCustomToolsAsFunctionsChange}
+          aria-label={t("codexConfig.customToolsAsFunctionsLabel", {
+            defaultValue: "Send custom tools as function tools",
+          })}
+        />
+      </div>
+    );
+
   const upstreamFormatSelect = (
     <div className="space-y-1.5">
       {labelWithHelp(
@@ -2155,6 +2191,7 @@ export function CodexFormFields({
     // Copilot 不显示 UA 和请求覆盖，Responses 格式下高级区就空了。
     const hasStackAdvancedContent =
       showFullUrlToggle ||
+      Boolean(customToolsAsFunctionsToggle) ||
       (showFormatFields && isAnthropicFormat) ||
       showReasoning ||
       userAgentAndOverrides !== null;
@@ -2244,6 +2281,7 @@ export function CodexFormFields({
                   onCheckedChange={onFullUrlChange}
                 />
               )}
+              {customToolsAsFunctionsToggle}
               {showFormatFields &&
                 isAnthropicFormat &&
                 impersonateClaudeCodeToggle}
@@ -2532,6 +2570,7 @@ export function CodexFormFields({
                 {showFullUrlToggle && fullUrlToggle}
               </div>
             )}
+            {customToolsAsFunctionsToggle}
 
             {isChatFormat && canEditReasoning && (
               <div

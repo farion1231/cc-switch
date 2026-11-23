@@ -35,8 +35,8 @@ use super::{
             create_anthropic_sse_stream_from_responses_with_web_search_options,
         },
         transform, transform_codex_anthropic, transform_codex_chat,
-        transform_codex_responses_namespace, transform_codex_responses_xai_sanitize,
-        transform_gemini, transform_responses,
+        transform_codex_responses_custom_tools, transform_codex_responses_namespace,
+        transform_codex_responses_xai_sanitize, transform_gemini, transform_responses,
     },
     response_processor::{
         create_logged_passthrough_stream, create_usage_collector, process_response,
@@ -1215,6 +1215,9 @@ async fn handle_responses_for_app(
     // {namespace, name} map used to restore the native Responses upstream's
     // function-call names (see the namespace-restore dispatch below).
     let namespace_restore_map = transform_codex_responses_namespace::namespace_restore_map(&body);
+    // Custom tools the request declares, for restoring calls a function-only
+    // native Responses upstream returns as `function_call` (see dispatch below).
+    let custom_tool_names = transform_codex_responses_custom_tools::custom_tool_names(&body);
 
     let forwarder = ctx.create_forwarder(&state);
     let mut result = match forwarder
@@ -1295,6 +1298,21 @@ async fn handle_responses_for_app(
             &state,
             connection_guard,
             namespace_restore_map,
+        )
+        .await;
+    }
+
+    if !custom_tool_names.is_empty()
+        && ctx.provider.codex_custom_tools_as_functions_enabled()
+        && !super::providers::is_codex_official_provider(&ctx.provider)
+    {
+        return handle_codex_custom_tool_restore(
+            response,
+            &ctx,
+            &state,
+            is_stream,
+            connection_guard,
+            custom_tool_names,
         )
         .await;
     }
@@ -1642,6 +1660,24 @@ async fn handle_codex_xai_native_responses_rewrite(
 
     // Non-streaming: restore the flattened function-call names in the full body,
     // then account usage from the (restore-neutral) Responses payload.
+    rewrite_codex_json_response(response, ctx, state, connection_guard, move |value| {
+        transform_codex_responses_namespace::restore_response_namespaces(value, &restore_map);
+        transform_codex_responses_xai_sanitize::normalize_xai_function_call_integer_arguments(
+            value,
+        );
+    })
+    .await
+}
+
+/// Read a complete native Responses JSON body, apply `rewrite`, log usage from the
+/// rewritten payload and return it. Non-JSON bodies pass through unchanged.
+async fn rewrite_codex_json_response(
+    response: super::hyper_client::ProxyResponse,
+    ctx: &RequestContext,
+    state: &ProxyState,
+    connection_guard: Option<ActiveConnectionGuard>,
+    rewrite: impl FnOnce(&mut Value),
+) -> Result<axum::response::Response, ProxyError> {
     let _connection_guard = connection_guard;
     let body_timeout =
         if ctx.app_config.auto_failover_enabled && ctx.app_config.non_streaming_timeout > 0 {
@@ -1658,13 +1694,7 @@ async fn handle_codex_xai_native_responses_rewrite(
     // this only guards against a malformed upstream).
     let restored_bytes = match serde_json::from_slice::<Value>(&body_bytes) {
         Ok(mut value) => {
-            transform_codex_responses_namespace::restore_response_namespaces(
-                &mut value,
-                &restore_map,
-            );
-            transform_codex_responses_xai_sanitize::normalize_xai_function_call_integer_arguments(
-                &mut value,
-            );
+            rewrite(&mut value);
             if let Some(usage) =
                 TokenUsage::from_codex_response_auto(&value).filter(TokenUsage::has_billable_tokens)
             {
@@ -1735,6 +1765,72 @@ async fn handle_codex_xai_native_responses_rewrite(
             log::error!("[{}] 构建 namespace 还原响应失败: {e}", ctx.tag);
             ProxyError::Internal(format!("Failed to build response: {e}"))
         })
+}
+
+/// Native Responses passthrough with `codexCustomToolsAsFunctions`: turn
+/// `function_call` items for the request's custom tools back into
+/// `custom_tool_call`. Streams get late-argument repair first so the final item
+/// carries complete arguments. Error bodies pass through unchanged.
+async fn handle_codex_custom_tool_restore(
+    response: super::hyper_client::ProxyResponse,
+    ctx: &RequestContext,
+    state: &ProxyState,
+    is_stream: bool,
+    connection_guard: Option<ActiveConnectionGuard>,
+    names: std::collections::HashSet<transform_codex_responses_custom_tools::CustomToolId>,
+) -> Result<axum::response::Response, ProxyError> {
+    let status = response.status();
+    if !status.is_success() {
+        return process_response(
+            response,
+            ctx,
+            state,
+            &CODEX_PARSER_CONFIG,
+            is_stream,
+            connection_guard,
+        )
+        .await;
+    }
+
+    // Same detector as the generic path: a `stream: true` reply without
+    // Content-Type is still SSE and must go through the restore stream.
+    if super::response_processor::is_sse_response(&response, is_stream) {
+        let mut builder = rewritten_sse_response_builder(status, response.headers());
+        if response.content_type().is_none() {
+            builder = builder.header(axum::http::header::CONTENT_TYPE, "text/event-stream");
+        }
+        let repaired =
+            super::providers::responses_late_arguments::create_late_arguments_repair_stream(
+                codex_native_responses_stream(response, ctx),
+            );
+        let restore_stream =
+            transform_codex_responses_custom_tools::create_custom_tool_restore_sse_stream(
+                repaired, names,
+            );
+        let usage_collector =
+            create_usage_collector(ctx, state, status.as_u16(), &CODEX_PARSER_CONFIG);
+        let logged_stream = create_logged_passthrough_stream(
+            restore_stream,
+            ctx.tag,
+            usage_collector,
+            ctx.streaming_timeout_config(),
+            connection_guard,
+        );
+        return builder
+            .body(axum::body::Body::from_stream(logged_stream))
+            .map_err(|e| {
+                log::error!(
+                    "[{}] Failed to build custom tool restore stream: {e}",
+                    ctx.tag
+                );
+                ProxyError::Internal(format!("Failed to build streaming response: {e}"))
+            });
+    }
+
+    rewrite_codex_json_response(response, ctx, state, connection_guard, move |value| {
+        transform_codex_responses_custom_tools::restore_response_custom_tool_calls(value, &names);
+    })
+    .await
 }
 
 async fn handle_codex_chat_to_responses_transform(
@@ -5050,6 +5146,113 @@ mod copilot_native_responses_tests {
         assert_eq!(events.len(), 2);
         assert_eq!(events[1]["item"]["id"], "start");
         assert_eq!(events[1]["sequence_number"], 7);
+    }
+
+    fn custom_names(
+    ) -> std::collections::HashSet<transform_codex_responses_custom_tools::CustomToolId> {
+        [
+            (None, "exec".to_string()),
+            (None, "apply_patch".to_string()),
+        ]
+        .into()
+    }
+
+    #[tokio::test]
+    async fn custom_tool_calls_are_restored_after_late_arguments_are_repaired() {
+        let (state, ctx) = context(false).await;
+        let arguments = json!({ "input": "text('ok')" }).to_string();
+        let input: String = [
+            json!({ "type": "response.output_item.added", "output_index": 0,
+                "item": { "type": "function_call", "id": "fc_1", "call_id": "call_1",
+                    "name": "exec", "arguments": "" } }),
+            json!({ "type": "response.function_call_arguments.done", "output_index": 0,
+                "item_id": "fc_1", "arguments": "" }),
+            json!({ "type": "response.output_item.done", "output_index": 0,
+                "item": { "type": "function_call", "id": "fc_1", "call_id": "call_1",
+                    "name": "exec", "arguments": "" } }),
+            json!({ "type": "response.function_call_arguments.delta", "output_index": 0,
+                "item_id": "fc_1", "delta": arguments }),
+            json!({ "type": "response.completed", "response": { "id": "resp_1", "output": [] } }),
+        ]
+        .into_iter()
+        .map(|event| format!("data: {event}\n\n"))
+        .collect();
+        let response = handle_codex_custom_tool_restore(
+            upstream(&input),
+            &ctx,
+            &state,
+            true,
+            None,
+            custom_names(),
+        )
+        .await
+        .unwrap();
+        let (_, events) = body_and_events(response).await;
+
+        let types: Vec<&str> = events.iter().map(|e| e["type"].as_str().unwrap()).collect();
+        assert_eq!(
+            types,
+            [
+                "response.output_item.added",
+                "response.output_item.done",
+                "response.completed"
+            ]
+        );
+        assert_eq!(events[0]["item"]["type"], "custom_tool_call");
+        assert_eq!(events[1]["item"]["type"], "custom_tool_call");
+        assert_eq!(events[1]["item"]["call_id"], "call_1");
+        assert_eq!(events[1]["item"]["input"], "text('ok')");
+    }
+
+    #[tokio::test]
+    async fn custom_tool_calls_are_restored_in_non_stream_bodies() {
+        let (state, ctx) = context(false).await;
+        let body = json!({
+            "id": "resp_1",
+            "output": [{ "type": "function_call", "id": "fc_1", "call_id": "call_1",
+                "name": "apply_patch", "arguments": json!({ "input": "patch" }).to_string() }],
+            "usage": { "input_tokens": 3, "output_tokens": 1 }
+        })
+        .to_string();
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("content-type", "application/json".parse().unwrap());
+        let upstream = ProxyResponse::buffered(StatusCode::OK, headers, Bytes::from(body));
+        let response =
+            handle_codex_custom_tool_restore(upstream, &ctx, &state, false, None, custom_names())
+                .await
+                .unwrap();
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let value: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(value["output"][0]["type"], "custom_tool_call");
+        assert_eq!(value["output"][0]["input"], "patch");
+    }
+
+    #[tokio::test]
+    async fn custom_tool_restore_streams_sse_without_content_type() {
+        let (state, ctx) = context(false).await;
+        let item = json!({ "type": "function_call", "id": "fc_1", "call_id": "call_1",
+            "name": "apply_patch", "arguments": json!({ "input": "patch" }).to_string() });
+        let input = format!(
+            "data: {}\n\n",
+            json!({ "type": "response.output_item.done", "output_index": 0, "item": item })
+        );
+        // `stream: true` request, successful reply that omits Content-Type.
+        let upstream = ProxyResponse::buffered(
+            StatusCode::OK,
+            axum::http::HeaderMap::new(),
+            Bytes::from(input),
+        );
+        let response =
+            handle_codex_custom_tool_restore(upstream, &ctx, &state, true, None, custom_names())
+                .await
+                .unwrap();
+        assert_eq!(
+            response.headers().get("content-type").unwrap(),
+            "text/event-stream"
+        );
+        let (_, events) = body_and_events(response).await;
+        assert_eq!(events[0]["item"]["type"], "custom_tool_call");
+        assert_eq!(events[0]["item"]["input"], "patch");
     }
 }
 

@@ -2227,6 +2227,8 @@
     "autoReviewModelNoList": "이 카드에는 모델 목록이 없습니다. Codex는 공식 codex-auto-review로 승인 여부를 판단하며, ChatGPT 계정으로 전달하는 일부 중계 서비스만 이 모델을 지원합니다. 지원하지 않으면 404 오류가 발생합니다. 위 모델 목록에 모델을 추가하면 선택할 수 있습니다.",
     "officialSpeedTiersLabel": "공식 Fast 단계 유지",
     "officialSpeedTiersHint": "모델 목록의 GPT 모델에 공식 Fast 속도 단계를 유지하여 Codex에서 Fast를 선택하면 요청에 service_tier=priority가 포함되도록 합니다. 공식 ChatGPT 계정으로 요청을 전달하는 중계 서비스(예: CPA)만 이를 지원하며, 할당량이 더 빠르게 소모됩니다. 다른 업스트림에서는 오류가 발생하거나 더 높은 요금이 청구될 수 있습니다. 이 옵션을 켜면 이전에 공식 공급자 카드에서 선택한 Fast가 이 공급자에도 즉시 적용됩니다. 통합 모드에서는 적용되지 않습니다. 변경 후 Codex를 다시 시작하세요.",
+    "customToolsAsFunctionsLabel": "사용자 지정 도구를 함수 도구로 전송",
+    "customToolsAsFunctionsHint": "function 도구만 받는 Responses 게이트웨이용입니다. 로컬 프록시가 Codex의 자유 형식 도구(apply_patch, 코드 모드 exec)를 function 도구로 보내고 호출을 Codex용으로 되돌립니다. 로컬 프록시가 필요하며, 공급자가 사용자 지정 도구를 지원하면 끈 상태로 두세요.",
     "modelListHint": "변경 후 Codex를 다시 시작하세요.",
     "modelListDefaultHelp": "이 모델들은 Codex의 /model 메뉴에 표시됩니다. 첫 번째 모델이 기본 모델입니다. 공식 GPT 모델과 이름이 같으면 공식 모델 정보를 사용하므로 표시 이름, 컨텍스트 창 및 추론 수준 설정은 적용되지 않습니다.",
     "addCatalogModel": "수동으로 추가",
