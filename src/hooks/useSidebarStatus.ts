@@ -6,10 +6,10 @@ import type { ManagedAuthProvider } from "@/lib/api/auth";
 import { useProxyStatusQuery } from "@/lib/query/proxy";
 import { proxyApi } from "@/lib/api/proxy";
 import { useUsageSummary } from "@/lib/query/usage";
-import { MODE_APP_IDS, isModeAppId } from "@/config/appConfig";
 import { parseFiniteNumber } from "@/components/usage/format";
 import type { UsageRangeSelection } from "@/types/usage";
 import type { AppMode } from "@/types/proxy";
+import { ROUTE_MODE_APP_IDS, appHas } from "@/config/appSpecs";
 
 export interface AppNavStatus {
   mode: AppMode;
@@ -31,7 +31,7 @@ export function useSidebarStatus() {
   const { data: proxyStatus } = useProxyStatusQuery();
   // 和应用页的模式行同一份数据（["providers", app, "mode"]），进出模式时一起刷新
   const modeQueries = useQueries({
-    queries: MODE_APP_IDS.map((app) => ({
+    queries: ROUTE_MODE_APP_IDS.map((app) => ({
       queryKey: ["providers", app, "mode"],
       queryFn: () => proxyApi.getAppMode(app),
     })),
@@ -49,15 +49,17 @@ export function useSidebarStatus() {
   });
 
   const serviceRunning = proxyStatus?.running ?? false;
-  const modes = MODE_APP_IDS.map((_, index) => modeQueries[index]?.data?.mode);
+  const modes = ROUTE_MODE_APP_IDS.map(
+    (_, index) => modeQueries[index]?.data?.mode,
+  );
   const modeKey = modes.join(",");
 
   const appStatus = useMemo(() => {
     return (app: AppId): AppNavStatus => {
-      if (!isModeAppId(app)) {
+      if (!appHas(app, "routeMode")) {
         return { mode: "direct", alert: false };
       }
-      const mode = modes[MODE_APP_IDS.indexOf(app)] ?? "direct";
+      const mode = modes[ROUTE_MODE_APP_IDS.indexOf(app)] ?? "direct";
       return {
         mode,
         alert:

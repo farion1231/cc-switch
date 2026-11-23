@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { createElement } from "react";
 import type { AppId } from "@/lib/api";
+import { isWindows } from "@/lib/platform";
 import type { SessionMeta, SessionTextRange } from "@/types";
 
 export const UNKNOWN_PROJECT_DIR_KEY = "__unknown_project_dir__";
@@ -20,6 +21,8 @@ export const SESSION_APP_IDS = [
   "kimi",
   "dsh",
   "agy",
+  "copilot",
+  "workbuddy",
 ] as const satisfies readonly AppId[];
 
 export type SessionAppId = (typeof SESSION_APP_IDS)[number];
@@ -41,15 +44,43 @@ export const SESSION_SOURCE_PATHS: Record<SessionAppId, string[]> = {
   mcode: ["~/.minimax"],
   kimi: ["~/.kimi-code/sessions"],
   dsh: ["~/.dsh/sessions/<project>/<session>/session.v*.jsonl[.zstd]"],
+  workbuddy: ["~/.workbuddy/projects"],
   agy: [
     "~/.gemini/antigravity-cli/brain/<conversation>/.system_generated/logs",
+    "~/.gemini/antigravity/brain/<conversation>/.system_generated/logs",
+    "~/.gemini/antigravity-acp/brain/<conversation>/.system_generated/logs",
+    "~/.t3/userdata/providers/antigravity/<instance>/antigravity-acp/brain/<conversation>/.system_generated/logs",
   ],
+  copilot: ["~/.copilot/session-state"],
 };
 
-/** MiniMax Code 的会话只能在 MiniMax Code 里删（后端也会拒绝）。 */
+/** 这些应用的会话只能在原软件里删（后端也会拒绝）：只删文件会让它们自己的索引失效。 */
+const NATIVE_DELETE_HINT_KEYS: Record<string, string> = {
+  mcode: "sessionManager.mcodeDeleteHint",
+  dsh: "dsh.deleteSessionHint",
+  copilot: "sessionManager.copilotDeleteHint",
+  workbuddy: "workbuddy.deleteSessionHint",
+};
+
+/** Antigravity 只有 CLI 的会话能在这里删（后端连索引一起清）；IDE（`antigravity/brain`）
+ *  和 ACP 客户端（`antigravity-acp/brain`，如 T3 Code）的会话索引由原软件维护，
+ *  没有导出记录的会话也没有可删的来源。 */
+const agyDeleteBlocked = (session: SessionMeta) =>
+  !session.sourcePath ||
+  !/[\\/]antigravity-cli[\\/]brain[\\/]/.test(session.sourcePath);
+
+/** 不能在 CC Switch 里删除时，提示去哪里删的文案 key。 */
+export const nativeDeleteHintKey = (
+  session: SessionMeta,
+): string | undefined =>
+  session.providerId === "agy"
+    ? agyDeleteBlocked(session)
+      ? "sessionManager.agyDeleteHint"
+      : undefined
+    : NATIVE_DELETE_HINT_KEYS[session.providerId];
+
 export const canDeleteSession = (session: SessionMeta) =>
-  Boolean(session.sourcePath) &&
-  !["mcode", "agy", "dsh"].includes(session.providerId);
+  Boolean(session.sourcePath) && !nativeDeleteHintKey(session);
 
 export interface SessionProjectGroup {
   key: string;
@@ -181,28 +212,45 @@ const getProjectDirKey = (projectDir: string) => {
 };
 
 /**
+ * Codex 桌面版不带项目的聊天，工作目录建在 `<Documents>/Codex/<YYYY-MM-DD>/<slug>`，
+ * 一次一个目录；桌面端侧栏把它们统一放在「最近」里。捕获组是 `<Documents>/Codex`。
+ */
+const CODEX_CHAT_DIR_RE =
+  /^(.*[\\/]Documents[\\/]Codex)[\\/]\d{4}-\d{2}-\d{2}[\\/][^\\/]+[\\/]*$/i;
+
+const CODEX_CHATS_KEY_PREFIX = "__codex_chats__:";
+
+/**
  * 按项目目录分组（选了「全部应用」时跨应用合并）。组按组内最近一条排序，未知目录排最后；
- * 组内保持传入顺序。
+ * 组内保持传入顺序。Codex 桌面版不带项目的聊天合成一组（和桌面端一致），组目录显示
+ * `<Documents>/Codex`。
  */
 export const groupSessionsByProject = (
   sessions: SessionMeta[],
   unknownDirectoryLabel: string,
+  codexChatsLabel: string,
 ): SessionProjectGroup[] => {
   const groups = new Map<string, SessionProjectGroup>();
 
   sessions.forEach((session) => {
-    const projectDir = session.projectDir?.trim() || null;
-    const key = projectDir
-      ? getProjectDirKey(projectDir)
-      : UNKNOWN_PROJECT_DIR_KEY;
+    const rawDir = session.projectDir?.trim() || null;
+    const codexChatsRoot = rawDir?.match(CODEX_CHAT_DIR_RE)?.[1] ?? null;
+    const projectDir = codexChatsRoot ?? rawDir;
+    const key = codexChatsRoot
+      ? CODEX_CHATS_KEY_PREFIX + getProjectDirKey(codexChatsRoot)
+      : projectDir
+        ? getProjectDirKey(projectDir)
+        : UNKNOWN_PROJECT_DIR_KEY;
     let group = groups.get(key);
     if (!group) {
       group = {
         key,
         projectDir,
-        label: projectDir
-          ? getBaseName(projectDir) || projectDir
-          : unknownDirectoryLabel,
+        label: codexChatsRoot
+          ? codexChatsLabel
+          : projectDir
+            ? getBaseName(projectDir) || projectDir
+            : unknownDirectoryLabel,
         sessions: [],
         latest: 0,
       };
@@ -263,9 +311,13 @@ export const groupSessionsByTime = (
     .map((bucket) => ({ bucket, sessions: buckets.get(bucket)! }));
 };
 
-/** 恢复命令前面加上进入项目目录（POSIX shell）。 */
+/** 恢复命令前面加上进入项目目录：macOS/Linux 用 POSIX 的 `cd '...' && ...`；
+ *  Windows 的恢复命令是 PowerShell 语法（`&&` 在 Windows PowerShell 5.1 里是语法错误），
+ *  改用 `Set-Location '...'` 串接，路径里的单引号按 PowerShell 规则双写。 */
 export const buildCdResumeCommand = (projectDir: string, command: string) =>
-  `cd '${projectDir.replace(/'/g, `'\\''`)}' && ${command}`;
+  isWindows()
+    ? `Set-Location '${projectDir.replace(/'/g, "''")}'; ${command}`
+    : `cd '${projectDir.replace(/'/g, `'\\''`)}' && ${command}`;
 
 /** 非重叠的小写字符串匹配，位置映射回原文的 UTF-16 偏移。 */
 export function* findTextMatches(text: string, query: string) {

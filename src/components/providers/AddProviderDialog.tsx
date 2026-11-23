@@ -18,7 +18,6 @@ import type {
 } from "@/lib/api/providers";
 import { useLiveEditConflict } from "@/components/providers/LiveEditConflictDialog";
 import { toastEditorViewFailed } from "@/components/providers/forms/hooks/useDraftEditorProjection";
-import { isPiFamilyApp, usesEditorView } from "@/config/appConfig";
 import {
   ProviderForm,
   type ProviderFormValues,
@@ -30,13 +29,14 @@ import { providerPresets } from "@/config/claudeProviderPresets";
 import { codexProviderPresets } from "@/config/codexProviderPresets";
 import { geminiProviderPresets } from "@/config/geminiProviderPresets";
 import { claudeDesktopProviderPresets } from "@/config/claudeDesktopProviderPresets";
-import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
+import { extractCodexBaseUrl } from "@/utils/codexConfigUtils";
 import { extractGrokBuildBaseUrl } from "@/utils/grokBuildConfig";
 import { GROKBUILD_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
 import type { OpenClawSuggestedDefaults } from "@/config/openclawProviderPresets";
 import type { UniversalProviderPreset } from "@/config/universalProviderPresets";
 import type { AuthCenterTarget } from "@/lib/api";
 import type { AppMode } from "@/types/proxy";
+import { appHas } from "@/config/appSpecs";
 
 interface AddProviderDialogProps {
   open: boolean;
@@ -73,6 +73,8 @@ export function AddProviderDialog({
     appId !== "mcode" &&
     appId !== "dsh" &&
     appId !== "kimi" &&
+    appId !== "copilot" &&
+    appId !== "workbuddy" &&
     appId !== "grokbuild" &&
     appId !== "claude-desktop";
   // 两步：先选预设，再填写（每次打开都从第 1 步开始）
@@ -128,7 +130,7 @@ export function AddProviderDialog({
     [],
   );
   // 新增时表单自己把预设投影到配置文件上的应用（Claude Code 在对话框里取底，见上）。
-  const projectsDraft = appId !== "claude" && usesEditorView(appId);
+  const projectsDraft = appId !== "claude" && appHas(appId, "editorView");
   const { submitWithConflictRetry, conflictDialog } = useLiveEditConflict();
 
   useEffect(() => {
@@ -185,12 +187,12 @@ export function AddProviderDialog({
   currentFormReadyToken.current = formReadyToken;
   const [formReadyState, setFormReadyState] = useState({
     token: formReadyToken,
-    ready: !isPiFamilyApp(appId),
+    ready: !appHas(appId, "piFamily"),
   });
   const isFormReady =
     formReadyState.token === formReadyToken
       ? formReadyState.ready
-      : !isPiFamilyApp(appId);
+      : !appHas(appId, "piFamily");
   const handleSubmitReadyChange = useCallback(
     (ready: boolean) => {
       if (currentFormReadyToken.current === formReadyToken) {
@@ -282,24 +284,17 @@ export function AddProviderDialog({
       }
 
       if (appId === "grokbuild" && values.presetId) {
+        // 绑了 xAI 账号的官方卡是一张新卡（可以有多张）；不绑账号的就是那张固定的
+        // 「跟随 Grok CLI 登录」种子卡
         providerData.ensureGrokBuildOfficialSeed =
           values.presetCategory === "official" &&
-          values.presetId === GROKBUILD_OFFICIAL_PROVIDER_ID;
+          values.presetId === GROKBUILD_OFFICIAL_PROVIDER_ID &&
+          !values.meta?.authBinding?.accountId;
       }
 
       // Apps whose native catalog has a stable provider key use it as the
       // managed provider identity.
-      if (
-        (appId === "opencode" ||
-          appId === "openclaw" ||
-          appId === "hermes" ||
-          appId === "pi" ||
-          appId === "mcode" ||
-          appId === "kimi" ||
-          appId === "dsh" ||
-          appId === "omp") &&
-        values.providerKey
-      ) {
+      if (appHas(appId, "additive") && values.providerKey) {
         providerData.providerKey = values.providerKey;
       }
       const hasCustomEndpoints =
@@ -563,7 +558,7 @@ export function AddProviderDialog({
       contentClassName={
         step === "pick"
           ? "flex h-full flex-col space-y-0 p-0"
-          : isPiFamilyApp(appId)
+          : appHas(appId, "piFamily")
             ? "pb-0 pt-4"
             : "pt-4"
       }

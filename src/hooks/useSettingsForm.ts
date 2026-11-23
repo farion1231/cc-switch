@@ -1,70 +1,31 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useSettingsQuery } from "@/lib/query";
+import {
+  DEFAULT_LANGUAGE,
+  isLanguage,
+  isTraditionalChineseTag,
+  normalizeLanguageTag,
+  type Language,
+} from "@/i18n/languages";
 import type { Settings } from "@/types";
-
-type Language = "zh" | "zh-TW" | "en" | "ja" | "tr" | "ko" | "ru";
+import { sanitizeDirectoryFields } from "@/config/directoryApps";
 
 export type SettingsFormState = Omit<Settings, "language"> & {
   language: Language;
 };
 
 const normalizeLanguage = (lang?: string | null): Language => {
-  if (!lang) return "zh";
-  const normalized = lang.toLowerCase().replace(/_/g, "-");
-
-  if (normalized === "zh") {
-    return "zh";
-  }
-
-  if (
-    normalized === "zh-tw" ||
-    normalized.startsWith("zh-tw-") ||
-    normalized === "zh-hant" ||
-    normalized.startsWith("zh-hant-") ||
-    normalized === "zh-hk" ||
-    normalized.startsWith("zh-hk-") ||
-    normalized === "zh-mo" ||
-    normalized.startsWith("zh-mo-")
-  ) {
-    return "zh-TW";
-  }
-
-  if (
-    normalized === "en" ||
-    normalized === "ja" ||
-    normalized === "tr" ||
-    normalized === "ko" ||
-    normalized === "ru"
-  ) {
-    return normalized;
-  }
-
-  if (normalized === "zh" || normalized.startsWith("zh-")) {
-    return "zh";
-  }
-
-  return "zh";
+  if (!lang) return DEFAULT_LANGUAGE;
+  const normalized = normalizeLanguageTag(lang);
+  if (isTraditionalChineseTag(normalized)) return "zh-TW";
+  return isLanguage(normalized) ? normalized : DEFAULT_LANGUAGE;
 };
 
 const isSupportedLanguage = (lang?: string | null): boolean => {
   if (!lang) return false;
-  const normalized = lang.toLowerCase().replace(/_/g, "-");
-  return (
-    normalized === "en" ||
-    normalized === "ja" ||
-    normalized === "tr" ||
-    normalized === "ko" ||
-    normalized === "ru" ||
-    normalized === "zh" ||
-    normalized.startsWith("zh-")
-  );
-};
-
-const sanitizeDir = (value?: string | null): string | undefined => {
-  if (!value) return undefined;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
+  const normalized = normalizeLanguageTag(lang);
+  return isLanguage(normalized) || normalized.startsWith("zh-");
 };
 
 export interface UseSettingsFormResult {
@@ -136,13 +97,7 @@ export function useSettingsForm(): UseSettingsFormResult {
         data.preserveCodexOfficialAuthOnSwitch ?? false,
       unifyCodexSessionHistory: data.unifyCodexSessionHistory ?? false,
       codexStackClassicTools: data.codexStackClassicTools ?? true,
-      claudeConfigDir: sanitizeDir(data.claudeConfigDir),
-      codexConfigDir: sanitizeDir(data.codexConfigDir),
-      geminiConfigDir: sanitizeDir(data.geminiConfigDir),
-      grokConfigDir: sanitizeDir(data.grokConfigDir),
-      opencodeConfigDir: sanitizeDir(data.opencodeConfigDir),
-      openclawConfigDir: sanitizeDir(data.openclawConfigDir),
-      piConfigDir: sanitizeDir(data.piConfigDir),
+      ...sanitizeDirectoryFields(data),
       language: normalizedLanguage,
     };
 
@@ -206,13 +161,7 @@ export function useSettingsForm(): UseSettingsFormResult {
           serverData.preserveCodexOfficialAuthOnSwitch ?? false,
         unifyCodexSessionHistory: serverData.unifyCodexSessionHistory ?? false,
         codexStackClassicTools: serverData.codexStackClassicTools ?? true,
-        claudeConfigDir: sanitizeDir(serverData.claudeConfigDir),
-        codexConfigDir: sanitizeDir(serverData.codexConfigDir),
-        geminiConfigDir: sanitizeDir(serverData.geminiConfigDir),
-        grokConfigDir: sanitizeDir(serverData.grokConfigDir),
-        opencodeConfigDir: sanitizeDir(serverData.opencodeConfigDir),
-        openclawConfigDir: sanitizeDir(serverData.openclawConfigDir),
-        piConfigDir: sanitizeDir(serverData.piConfigDir),
+        ...sanitizeDirectoryFields(serverData),
         language: normalizedLanguage,
       };
 

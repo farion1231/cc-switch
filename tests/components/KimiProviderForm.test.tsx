@@ -123,14 +123,17 @@ describe("KimiProviderForm", () => {
         source === "import" ? native : config,
       );
       if (source === "toml") {
-        fireEvent.change(screen.getByLabelText("providerForm.nativeConfig.title"), {
-          target: {
-            value: kimiConfigToToml(
-              native as KimiProviderConfig,
-              "managed:kimi-code",
-            ),
+        fireEvent.change(
+          screen.getByLabelText("providerForm.nativeConfig.title"),
+          {
+            target: {
+              value: kimiConfigToToml(
+                native as KimiProviderConfig,
+                "managed:kimi-code",
+              ),
+            },
           },
-        });
+        );
       }
       expandModels();
       expect(
@@ -408,7 +411,9 @@ describe("KimiProviderForm", () => {
   it("shows this provider's tables in config.toml layout", () => {
     setup();
     const text = (
-      screen.getByLabelText("providerForm.nativeConfig.title") as HTMLTextAreaElement
+      screen.getByLabelText(
+        "providerForm.nativeConfig.title",
+      ) as HTMLTextAreaElement
     ).value;
     expect(text).toContain('[providers."managed:kimi-code"]');
     expect(text).toContain('[models."kimi-code/k3"]');
@@ -541,8 +546,11 @@ describe("KimiProviderForm", () => {
       expect(
         (
           parseToml(
-            (screen.getByLabelText("providerForm.nativeConfig.title") as HTMLTextAreaElement)
-              .value,
+            (
+              screen.getByLabelText(
+                "providerForm.nativeConfig.title",
+              ) as HTMLTextAreaElement
+            ).value,
           ) as { models: Record<string, { max_context_size: number }> }
         ).models["acme/model-x"].max_context_size,
       ).toBe(123456),

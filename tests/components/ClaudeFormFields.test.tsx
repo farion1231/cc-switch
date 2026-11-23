@@ -28,7 +28,10 @@ vi.mock("@/lib/api/copilot", () => ({
   copilotGetModelsForAccount: copilotApiMock.copilotGetModelsForAccount,
 }));
 
-vi.mock("@/lib/api/model-fetch", () => ({
+vi.mock("@/lib/api/model-fetch", async (importOriginal) => ({
+  claudeModelFetchApiFormat: (
+    await importOriginal<typeof import("@/lib/api/model-fetch")>()
+  ).claudeModelFetchApiFormat,
   fetchCodexOauthModels: modelFetchApiMock.fetchCodexOauthModels,
   fetchModelsForConfig: modelFetchApiMock.fetchModelsForConfig,
   modelFetchRequestHeaders: modelFetchApiMock.modelFetchRequestHeaders,
@@ -165,9 +168,7 @@ describe("ClaudeFormFields", () => {
         isCopilotPreset: false,
         apiFormat: "openai_chat",
       });
-      expect(
-        screen.getByRole("combobox", { name: "思考档位" }),
-      ).toBeVisible();
+      expect(screen.getByRole("combobox", { name: "思考档位" })).toBeVisible();
       unmount();
 
       renderCopilotForm({
@@ -268,6 +269,35 @@ describe("ClaudeFormFields", () => {
       "ANTHROPIC_DEFAULT_SONNET_MODEL",
       "chat-model-b",
     );
+  });
+
+  it("Gemini Native 拉取模型时用 Google 的 API Key 头", async () => {
+    modelFetchApiMock.fetchModelsForConfig.mockResolvedValueOnce([]);
+    renderCopilotForm({
+      isCopilotPreset: false,
+      usesOAuth: false,
+      category: "custom",
+      shouldShowApiKey: true,
+      apiKey: "AIza-test",
+      baseUrl: "https://generativelanguage.googleapis.com",
+      apiFormat: "gemini_native",
+    });
+
+    // 非 Anthropic 格式的高级选项默认展开，直接点获取模型
+    fireEvent.click(
+      screen.getByRole("button", { name: "providerForm.fetchModels" }),
+    );
+
+    await waitFor(() => {
+      expect(modelFetchApiMock.fetchModelsForConfig).toHaveBeenCalledWith(
+        "https://generativelanguage.googleapis.com",
+        "AIza-test",
+        false,
+        undefined,
+        "",
+        { apiFormat: "google-generative-ai", requestHeaders: undefined },
+      );
+    });
   });
 
   it("一键设置会同时写入 Subagent 模型", () => {
