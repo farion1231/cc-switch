@@ -94,6 +94,17 @@ fn split_probe_path(output: &str) -> (Option<String>, String) {
 const WSL_PROBE_EXIT_MARKER: &str = "__CCSWITCH_EC__";
 
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+const WSL_PROBE_ERR_MARKER: &str = "__CCSWITCH_ERR__";
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+const WSL_TOOL_PROBE_LAUNCHER: &str = concat!(
+    r#"export CC_PROBE="$1"; "#,
+    r#""${SHELL:-sh}" -lic 'sh -c "$CC_PROBE"' 2>/dev/null "#,
+    r#"|| "${SHELL:-sh}" -lc 'sh -c "$CC_PROBE"' 2>/dev/null "#,
+    r#"|| "${SHELL:-sh}" -c 'sh -c "$CC_PROBE"'"#,
+);
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 fn decode_wsl_command_output(bytes: &[u8]) -> String {
     if bytes.starts_with(&[0xFF, 0xFE]) || bytes.contains(&0) {
         crate::app_targets::wsl::decode_wsl_output(bytes)
@@ -102,13 +113,36 @@ fn decode_wsl_command_output(bytes: &[u8]) -> String {
     }
 }
 
-/// 生成供 `wsl_auto_shell_command` 执行的探测脚本（不含单引号，兼容 sh/bash/zsh/dash/fish）。
-/// 一旦进入内层 `sh -c` 并打印哨兵即退出 0，防止 `--version` 报错时 `-lic || -lc || -c` 覆盖报错与路径。
+/// 生成供 `--exec sh -c "$WSL_TOOL_PROBE_LAUNCHER" cc-switch <payload>` 执行的单行 POSIX 探测脚本。
+/// 一旦进入内层 `sh -c` 并打印哨兵即退出 0，防止 `--version` 报错时 `-lic || -lc || -c` 覆盖报错与路径，
+/// 并通过 fd 3 把 stdout、退出码与 stderr 分离打印，避免外层 `2>/dev/null` 丢弃错误详情。
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 fn wsl_tool_probe_payload(tool: &str) -> String {
     format!(
-        "sh -c \"echo {VERSION_PROBE_SENTINEL}; p=\\$(command -v {tool} 2>/dev/null); echo \\\"\\$p\\\"; case \\\"\\$p\\\" in \\\"\\\"|/mnt/*) ;; *) \\\"\\$p\\\" --version; echo; echo \\\"{WSL_PROBE_EXIT_MARKER}\\$?\\\";; esac\""
+        r#"printf '%s\n' '{VERSION_PROBE_SENTINEL}'; p=$(command -v {tool} 2>/dev/null); printf '%s\n' "$p"; case "$p" in ""|/[a-zA-Z]|/[a-zA-Z]/*|/mnt/[a-zA-Z]|/mnt/[a-zA-Z]/*|*.exe|*.EXE|*.cmd|*.CMD|*.bat|*.BAT) ;; *) {{ err=$({{ "$p" --version >&3; printf '\n{WSL_PROBE_EXIT_MARKER}%d\n' "$?" >&3; }} 2>&1); printf '\n{WSL_PROBE_ERR_MARKER}\n%s\n' "$err"; }} 3>&1;; esac; exit 0"#
     )
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn wsl_tool_probe_args(distro: &str, tool: &str) -> Vec<String> {
+    vec![
+        "-d".to_string(),
+        distro.to_string(),
+        "--exec".to_string(),
+        "sh".to_string(),
+        "-c".to_string(),
+        WSL_TOOL_PROBE_LAUNCHER.to_string(),
+        "cc-switch".to_string(),
+        wsl_tool_probe_payload(tool),
+    ]
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn split_wsl_probe_stderr(text: &str) -> (&str, Option<&str>) {
+    match text.split_once(WSL_PROBE_ERR_MARKER) {
+        Some((out, err)) => (out.trim(), Some(err.trim())),
+        None => (text, None),
+    }
 }
 
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
@@ -129,19 +163,11 @@ fn split_wsl_exit_code(text: &str) -> (String, Option<i32>) {
 }
 
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
-fn parse_wsl_probe_result(
-    tool: &str,
-    stdout: &str,
-    stderr: &str,
-    process_code: Option<i32>,
-) -> WslToolState {
+fn parse_wsl_probe_result(stdout: &str, stderr: &str, process_code: Option<i32>) -> WslToolState {
     let stdout = stdout.trim();
     let stderr = stderr.trim();
     if !stdout.contains(VERSION_PROBE_SENTINEL) {
         let err = if stderr.is_empty() { stdout } else { stderr };
-        if process_code == Some(127) || is_shell_command_missing(err, tool) {
-            return WslToolState::NotInstalled;
-        }
         let detail = if err.is_empty() {
             format!("probe exited with code {}", process_code.unwrap_or(-1))
         } else {
@@ -150,7 +176,9 @@ fn parse_wsl_probe_result(
         return WslToolState::Unknown(detail);
     }
 
-    let (body, exit_code) = split_wsl_exit_code(after_version_sentinel(stdout));
+    let (out_part, captured_stderr) = split_wsl_probe_stderr(after_version_sentinel(stdout));
+    let effective_stderr = captured_stderr.filter(|s| !s.is_empty()).unwrap_or(stderr);
+    let (body, exit_code) = split_wsl_exit_code(out_part);
     let (path, rest) = split_probe_path(&body);
     let Some(path_str) = path.as_deref() else {
         return WslToolState::NotInstalled;
@@ -162,7 +190,11 @@ fn parse_wsl_probe_result(
 
     let succeeded = exit_code.map_or_else(|| process_code == Some(0), |code| code == 0);
     if succeeded {
-        let raw = if rest.is_empty() { stderr } else { &rest };
+        let raw = if rest.is_empty() {
+            effective_stderr
+        } else {
+            &rest
+        };
         return WslToolState::Installed {
             version: if raw.is_empty() {
                 String::new()
@@ -173,10 +205,10 @@ fn parse_wsl_probe_result(
         };
     }
 
-    let err = if stderr.is_empty() {
+    let err = if effective_stderr.is_empty() {
         rest.as_str()
     } else {
-        stderr
+        effective_stderr
     };
     let detail = if err.trim().is_empty() {
         format!(
@@ -201,10 +233,9 @@ pub(crate) fn wsl_tool_state(tool: &str, distro: &str) -> WslToolState {
     if !is_valid_wsl_distro_name(distro) {
         return WslToolState::Unknown(format!("invalid distro name: {distro}"));
     }
-    let payload = wsl_tool_probe_payload(tool);
-    let cmd = wsl_auto_shell_command(&payload, None);
+    let args = wsl_tool_probe_args(distro, tool);
     let output = Command::new("wsl.exe")
-        .args(["-d", distro, "--", "sh", "-c", &cmd])
+        .args(&args)
         .env("WSL_UTF8", "1")
         .creation_flags(CREATE_NO_WINDOW)
         .stdin(Stdio::null())
@@ -224,7 +255,7 @@ pub(crate) fn wsl_tool_state(tool: &str, distro: &str) -> WslToolState {
     };
     let stdout = decode_wsl_command_output(&out.stdout);
     let stderr = decode_wsl_command_output(&out.stderr);
-    parse_wsl_probe_result(tool, &stdout, &stderr, out.status.code())
+    parse_wsl_probe_result(&stdout, &stderr, out.status.code())
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -1249,9 +1280,19 @@ mod tests {
 
     #[test]
     fn parse_wsl_probe_result_handles_installed_broken_missing_and_unknown() {
+        let args = wsl_tool_probe_args("Alpine", "claude");
+        assert_eq!(args[0], "-d");
+        assert_eq!(args[1], "Alpine");
+        assert_eq!(args[2], "--exec");
+        assert_eq!(args[3], "sh");
+        assert_eq!(args[4], "-c");
+        assert_eq!(args[5], WSL_TOOL_PROBE_LAUNCHER);
+        assert_eq!(args[6], "cc-switch");
+        assert_eq!(args[7], wsl_tool_probe_payload("claude"));
+        assert!(!args[7].contains('\n'));
+
         let installed = parse_wsl_probe_result(
-            "claude",
-            "Welcome to Ubuntu\n__CCSWITCH_VERSION__\n/home/me/.nvm/bin/claude\n2.1.50 (Claude Code)\n\n__CCSWITCH_EC__0\n",
+            "Welcome to Ubuntu\n__CCSWITCH_VERSION__\n/home/me/.nvm/bin/claude\n2.1.50 (Claude Code)\n\n__CCSWITCH_EC__0\n\n__CCSWITCH_ERR__\n\n",
             "",
             Some(0),
         );
@@ -1261,33 +1302,91 @@ mod tests {
             if version == "2.1.50" && path.as_deref() == Some("/home/me/.nvm/bin/claude")
         ));
 
-        let broken = parse_wsl_probe_result(
-            "claude",
-            "__CCSWITCH_VERSION__\n/home/me/.nvm/bin/claude\n\n__CCSWITCH_EC__1\n",
-            "Error: Node >= 20 required",
+        let stderr_version = parse_wsl_probe_result(
+            "__CCSWITCH_VERSION__\n/usr/local/bin/fake\n\n__CCSWITCH_EC__0\n\n__CCSWITCH_ERR__\nfake 3.4.5\n",
+            "",
             Some(0),
         );
         assert!(matches!(
-            broken,
+            stderr_version,
+            WslToolState::Installed { version, path }
+            if version == "3.4.5" && path.as_deref() == Some("/usr/local/bin/fake")
+        ));
+
+        let stdout_preferred_over_stderr_warning = parse_wsl_probe_result(
+            "__CCSWITCH_VERSION__\n/home/me/.nvm/bin/claude\n2.1.50 (Claude Code)\n\n__CCSWITCH_EC__0\n\n__CCSWITCH_ERR__\n(node:123) DeprecationWarning in v18.0.0\n",
+            "",
+            Some(0),
+        );
+        assert!(matches!(
+            stdout_preferred_over_stderr_warning,
+            WslToolState::Installed { version, path }
+            if version == "2.1.50" && path.as_deref() == Some("/home/me/.nvm/bin/claude")
+        ));
+
+        let broken_captured_stderr = parse_wsl_probe_result(
+            "__CCSWITCH_VERSION__\n/home/me/.nvm/bin/claude\n\n__CCSWITCH_EC__1\n\n__CCSWITCH_ERR__\nError: Node >= 20 required\n",
+            "",
+            Some(0),
+        );
+        assert!(matches!(
+            broken_captured_stderr,
             WslToolState::Broken { error, path }
             if error == "Error: Node >= 20 required"
                 && path.as_deref() == Some("/home/me/.nvm/bin/claude")
         ));
 
-        let win_mount = parse_wsl_probe_result(
-            "codex",
-            "__CCSWITCH_VERSION__\n/c/Users/me/AppData/Roaming/npm/codex\n0.1.0\n\n__CCSWITCH_EC__0\n",
+        let broken_stdout_error = parse_wsl_probe_result(
+            "__CCSWITCH_VERSION__\n/home/me/.nvm/bin/claude\nfatal: bad config\n\n__CCSWITCH_EC__2\n\n__CCSWITCH_ERR__\n\n",
             "",
             Some(0),
         );
-        assert!(matches!(win_mount, WslToolState::NotInstalled));
+        assert!(matches!(
+            broken_stdout_error,
+            WslToolState::Broken { error, path }
+            if error == "fatal: bad config"
+                && path.as_deref() == Some("/home/me/.nvm/bin/claude")
+        ));
 
-        let not_installed =
-            parse_wsl_probe_result("gemini", "__CCSWITCH_VERSION__\n\n", "", Some(0));
+        let broken_silent = parse_wsl_probe_result(
+            "__CCSWITCH_VERSION__\n/home/me/.nvm/bin/claude\n\n__CCSWITCH_EC__3\n\n__CCSWITCH_ERR__\n\n",
+            "",
+            Some(0),
+        );
+        assert!(matches!(
+            broken_silent,
+            WslToolState::Broken { error, path }
+            if error == "`--version` exited with code 3"
+                && path.as_deref() == Some("/home/me/.nvm/bin/claude")
+        ));
+
+        for win_path in [
+            "/mnt/c/Users/me/AppData/Roaming/npm/codex",
+            "/c/Users/me/AppData/Roaming/npm/codex",
+            "/usr/bin/codex.exe",
+        ] {
+            let win_mount = parse_wsl_probe_result(
+                &format!("__CCSWITCH_VERSION__\n{win_path}\n0.1.0\n\n__CCSWITCH_EC__0\n"),
+                "",
+                Some(0),
+            );
+            assert!(
+                matches!(win_mount, WslToolState::NotInstalled),
+                "{win_path}"
+            );
+        }
+
+        let not_installed = parse_wsl_probe_result("__CCSWITCH_VERSION__\n\n", "", Some(0));
         assert!(matches!(not_installed, WslToolState::NotInstalled));
 
+        let broken_shell_127 =
+            parse_wsl_probe_result("", "_: line 0: /nonexistent/shell: not found\n", Some(127));
+        assert!(matches!(
+            broken_shell_127,
+            WslToolState::Unknown(detail) if detail.contains("/nonexistent/shell: not found")
+        ));
+
         let missing_sentinel = parse_wsl_probe_result(
-            "claude",
             "",
             "The Windows Subsystem for Linux instance has terminated.",
             Some(1),
@@ -1297,7 +1396,17 @@ mod tests {
             WslToolState::Unknown(detail) if detail.contains("terminated")
         ));
 
-        assert!(!wsl_tool_probe_payload("claude").contains('\''));
+        let crlf_installed = parse_wsl_probe_result(
+            "__CCSWITCH_VERSION__\r\n/usr/local/bin/codex\r\ncodex-cli 0.168.0\r\n\r\n__CCSWITCH_EC__0\r\n\r\n__CCSWITCH_ERR__\r\n\r\n",
+            "",
+            Some(0),
+        );
+        assert!(matches!(
+            crlf_installed,
+            WslToolState::Installed { version, path }
+            if version == "0.168.0" && path.as_deref() == Some("/usr/local/bin/codex")
+        ));
+
         let utf16_err: Vec<u8> = "Error in WSL\r\n"
             .encode_utf16()
             .flat_map(|u| u.to_le_bytes())

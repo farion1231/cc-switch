@@ -594,7 +594,7 @@ pub(super) fn build_wsl_tool_action_line(
     if force_shell.is_none() && force_shell_flag.is_none() {
         let script = wsl_login_action_script(command);
         return Ok(format!(
-            "wsl.exe -d {distro} -- sh -c {}",
+            "wsl.exe -d {distro} --exec sh -c {}",
             windows_cmd_double_quote_arg(&script)
         ));
     }
@@ -2612,11 +2612,21 @@ mod tests {
         fn wsl_hermes_install_line_does_not_depend_on_outer_pipefail() {
             let line = build_wsl_tool_action_line("Ubuntu", HERMES_INSTALL_UNIX, None, None)
                 .expect("valid WSL command line");
-            assert!(line.starts_with("wsl.exe -d Ubuntu -- sh -c "));
+            assert!(line.starts_with("wsl.exe -d Ubuntu --exec sh -c "));
             assert!(
                 !line.contains("| bash") && line.contains(" -o $tmp && bash $tmp"),
                 "WSL 子 shell 内不能出现 curl 管道安装器: {line}"
             );
+        }
+
+        #[test]
+        fn wsl_login_action_line_uses_exec_and_is_batch_safe() {
+            let script = wsl_login_action_script("npm i -g @openai/codex@latest");
+            assert!(!script.contains('"') && !script.contains('%'));
+            let line =
+                build_wsl_tool_action_line("Alpine", "npm i -g @openai/codex@latest", None, None)
+                    .expect("valid WSL command line");
+            assert!(line.starts_with("wsl.exe -d Alpine --exec sh -c "));
         }
 
         #[test]

@@ -581,7 +581,7 @@ pub async fn run_wsl_tool_lifecycle_action(
                     }
                     progress.running();
                     let mut cmd = std::process::Command::new("wsl.exe");
-                    cmd.args(["-d", &distro, "--", "sh", "-c", &script])
+                    cmd.args(["-d", &distro, "--exec", "sh", "-c", &script])
                         .env("WSL_UTF8", "1")
                         .creation_flags(CREATE_NO_WINDOW);
                     let output = tool_lifecycle_progress::run_with_progress(cmd, &progress)
