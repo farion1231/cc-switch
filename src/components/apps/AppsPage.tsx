@@ -36,6 +36,7 @@ import {
   Copy,
   Download,
   GripVertical,
+  Info,
   LayoutGrid,
   Loader2,
   MoreHorizontal,
@@ -83,6 +84,7 @@ import { ToolUninstallConfirmDialog } from "./ToolUninstallConfirmDialog";
 import { ManualUninstallDialog } from "./ManualUninstallDialog";
 import {
   ENV_BADGE_CONFIG,
+  isDesktopManagedTool,
   ONE_CLICK_INSTALL_COMMANDS,
   TOOL_APP_IDS,
   TOOL_NAMES,
@@ -105,6 +107,7 @@ const SOURCE_LABEL: Record<string, string> = {
   pnpm: "pnpm",
   scoop: "Scoop",
   pip: "pip",
+  desktop: "OpenCode Desktop",
 };
 
 // WorkBuddy 是桌面应用、自己负责更新，这里和 Claude Desktop 一样只管侧栏显示
@@ -775,6 +778,8 @@ function ToolRow({
     (tools.isLoadingTools && !tools.toolVersionByName.has(tool));
   const isOutdated = isUpdateAvailable(info?.version, info?.latest_version);
   const nodeGap = isOutdated ? info?.update_blocked_by_node : null;
+  // OpenCode Desktop 自带的命令行随 Desktop 更新，这里不给升级，只说明一句
+  const desktopManaged = isDesktopManagedTool(tool, tools.installReports);
   const broken = Boolean(info?.installed_but_broken);
   const isBusy = tools.busyTools.has(tool);
   const busyAction = tools.busyTools.get(tool);
@@ -785,7 +790,7 @@ function ToolRow({
       ? null
       : !info?.version
         ? "install"
-        : isOutdated && !nodeGap
+        : isOutdated && !nodeGap && !desktopManaged
           ? "update"
           : null);
   const sourceLabel = defaultInstall
@@ -954,6 +959,14 @@ function ToolRow({
       </p>
     ) : null;
 
+  const desktopLine =
+    !isVersionLoading && isOutdated && desktopManaged ? (
+      <p className="flex items-start gap-1 text-caption text-fg-2">
+        <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+        {t("settings.toolUpgradeDesktopManagedDetail")}
+      </p>
+    ) : null;
+
   const conflictList =
     expanded && installs && installs.length > 1 ? (
       <div className="space-y-1.5 rounded-control bg-warning-soft p-2.5">
@@ -971,10 +984,11 @@ function ToolRow({
     ) : null;
 
   const footer =
-    wslControls || errorLine || nodeLine || conflictList ? (
+    wslControls || errorLine || nodeLine || desktopLine || conflictList ? (
       <div className="space-y-2">
         {errorLine}
         {nodeLine}
+        {desktopLine}
         {wslControls}
         {conflictList}
       </div>

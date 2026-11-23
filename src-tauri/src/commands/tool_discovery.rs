@@ -1007,6 +1007,38 @@ fn infer_install_source_for_install(launcher: &Path, real: &Path) -> &'static st
     }
 }
 
+/// OpenCode Desktop 自带的命令行（`opencode-cli.exe`，在 GUI 的 `opencode.exe` 同目录或其
+/// `resources/` 下）由 Desktop 应用自己更新；不和 GUI 在一起的 `opencode-cli.exe` 不算。
+fn is_opencode_desktop_sidecar(path: &Path) -> bool {
+    if !path.file_name().is_some_and(|name| {
+        name.to_string_lossy()
+            .eq_ignore_ascii_case("opencode-cli.exe")
+    }) {
+        return false;
+    }
+    let Some(parent) = path.parent() else {
+        return false;
+    };
+    if parent.join("opencode.exe").is_file() {
+        return true;
+    }
+    parent
+        .file_name()
+        .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("resources"))
+        && parent
+            .parent()
+            .is_some_and(|root| root.join("opencode.exe").is_file())
+}
+
+/// 安装来源，在 [`infer_install_source_for_install`] 之上认出 OpenCode Desktop 自带的命令行。
+fn infer_install_source_for_tool(tool: &str, launcher: &Path, real: &Path) -> &'static str {
+    if tool == "opencode" && is_opencode_desktop_sidecar(launcher) {
+        "desktop"
+    } else {
+        infer_install_source_for_install(launcher, real)
+    }
+}
+
 /// 从 shell 输出里挑出第一个绝对路径行（trim 后以 `/` 开头），跳过交互式登录 shell
 /// （`-lic`）里 .zshrc 打印的欢迎语/提示符等噪音。canonicalize 由调用方做（碰 FS）。
 #[cfg(not(target_os = "windows"))]
@@ -1332,7 +1364,7 @@ pub(super) fn locate_tool_installations(
             if !seen.insert(real.clone()) {
                 continue;
             }
-            let source = infer_install_source_for_install(&tool_path, &real);
+            let source = infer_install_source_for_tool(tool, &tool_path, &real);
             installs.push(LocatedInstall {
                 path: tool_path,
                 real,
@@ -1437,7 +1469,7 @@ pub(super) fn list_tool_install_locations(tool: &str) -> Vec<ToolInstallLocation
         .filter(|path| path.is_file() && !located.iter().any(|install| &install.real == path))
     {
         locations.push(ToolInstallLocation {
-            source: infer_install_source(&default),
+            source: infer_install_source_for_tool(tool, &default, &default),
             path: default.display().to_string(),
             is_path_default: true,
         });
