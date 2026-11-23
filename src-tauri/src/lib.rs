@@ -1818,6 +1818,7 @@ pub fn run() {
             commands::list_sessions,
             commands::sync_session_index,
             commands::search_session_content,
+            commands::cancel_session_content_search,
             commands::clear_session_index,
             commands::get_session_messages,
             commands::stream_session_messages,
