@@ -1,6 +1,6 @@
 [package]
 name = "cc-switch"
-version = "4.0.38"
+version = "4.0.39"
 description = "All-in-One Assistant for Claude Code, Codex & Gemini CLI"
 authors = ["Jason Young"]
 license = "MIT"
@@ -16,6 +16,12 @@ name = "cc_switch_lib"
 # 带着它们每次构建（含 cargo test）都要多链一个 dylib、多写约 1 GB 的 .a 再复制一份到 target/。
 crate-type = ["rlib"]
 doctest = false
+
+[[bin]]
+name = "cc-switch"
+path = "src/main.rs"
+# main.rs 仅负责启动入口（0 个单元测试）；关闭 test 目标避免 cargo test / nextest 多编多链一个测试二进制。
+test = false
 
 [features]
 default = []
@@ -132,6 +138,21 @@ objc2-app-kit = { version = "0.3", default-features = false, features = ["std", 
 # 还拖慢编译和链接。要用调试器看变量时临时设 `CARGO_PROFILE_DEV_DEBUG=full`。
 [profile.dev]
 debug = "line-tables-only"
+
+# 隐私过滤器会解析 97 KB 的 gitleaks.toml 并编译 222 条正则与 Aho-Corasick 自动机；
+# 在 dev/test 默认 opt-level = 0 下每次冷初始化耗时 ~12–30s，单独把这批外部解析/正则依赖
+# 提到 opt-level = 2 可大幅压缩耗时，同时保持主 crate（cc_switch_lib）在 opt-level = 0
+# 不影响增量编译。修改此列表后需同步升级 CI 中的 rust-cache `shared-key`（rust-cache 不按 Cargo.toml 分键）。
+[profile.dev.package]
+regex = { opt-level = 2 }
+regex-automata = { opt-level = 2 }
+regex-syntax = { opt-level = 2 }
+aho-corasick = { opt-level = 2 }
+memchr = { opt-level = 2 }
+toml = { opt-level = 2 }
+toml_edit = { opt-level = 2 }
+toml_parser = { opt-level = 2 }
+winnow = { opt-level = 2 }
 
 # Optimize release binary size to help reduce AppImage footprint
 [profile.release]

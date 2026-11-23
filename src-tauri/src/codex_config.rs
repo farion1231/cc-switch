@@ -1822,6 +1822,18 @@ fn codex_cli_candidates() -> Vec<PathBuf> {
     candidates
 }
 
+/// 桌面版自带的 Codex CLI 里先用的那个（macOS 新 bundle 优先，Windows 取最新的版本目录），
+/// 没装桌面版时为 `None`。给找不到独立 CLI 时的运行时命令兜底（#9850）。
+pub(crate) fn codex_desktop_cli() -> Option<PathBuf> {
+    codex_desktop_cli_in(&get_home_dir())
+}
+
+fn codex_desktop_cli_in(home: &Path) -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    push_desktop_codex_cli_candidates(&mut candidates, &mut HashSet::new(), home);
+    candidates.into_iter().next()
+}
+
 /// 桌面版自带的 CLI。排在最后：装了独立 CLI 的人照旧先用独立的那个。
 ///
 /// - macOS：`/Applications` 和 `~/Applications` 下的 ChatGPT.app、Codex.app，新 bundle

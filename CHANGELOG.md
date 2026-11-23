@@ -5,6 +5,38 @@ All notable changes to CC Switch will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.39] - 2026-11-22
+
+This is a maintenance release. The API key input gets a copy button, and the backups folder can be given a total size limit. GPT-6.2 Sol / Astra on Claude Code's Codex OAuth route cache the system prompt much better. Fixes cover a stalled streaming upstream delaying failover for up to 600 seconds on Claude native providers, unbounded memory use on long streams in the usage/log collectors, the deep link import dialog opening after its config merge failed, the Plugins page reporting Codex as not installed when only the desktop app is present, the Plugins page creating empty config folders for apps that aren't installed, OpenCode Go's DeepSeek V4.1 Flash missing its max effort, and popovers and menus flickering on rapid clicks.
+
+**Stats**: 27 commits | 132 files changed | +45667 insertions | -44149 deletions
+
+### Added
+
+- **Copy Button on the API Key Input** (#9232): The API key label row gets a copy action that copies the trimmed key in one click and reports the result as a toast. It is hidden while the field is empty or disabled. New strings in all eight locales.
+- **Backups Folder Size Limit** (#9011, refs #6706): A new "Backup Size Limit" setting (`backupMaxTotalMb`, off by default; empty or 0 means unlimited, so upgrading deletes nothing). With a limit set, retention deletes the oldest backups until the folder fits, but always keeps the newest backup and any backup in use by a running restore, so the folder can stay above the limit. Daily maintenance also applies retention when a limit is set, and removes `.cc-switch-backup-*.tmp` files left by a crashed backup once they are 24 hours old. Deleting a backup also deletes its `-journal` / `-wal` / `-shm` files.
+
+### Changed
+
+- **Better GPT-6.2 Prompt Caching on Claude's Codex OAuth Route** (#9848, fixes #9847): For `gpt-6.2-sol` / `gpt-6.2-astra` on the Codex OAuth route, the assembled system prompt moves from top-level `instructions` into a leading developer message, so the ChatGPT backend caches it as part of the input prefix. Other models and API-key routes are unchanged.
+- **Faster Privacy Filter** (#9826): Keyword prefilters scan ASCII keywords on the original text without a Unicode lowercase copy, context checks run once per candidate, entropy checks are pruned by distinct byte count, and PII regexes are skipped when a cheap precheck (`@`, digits, `.`) rules them out. Matching results are unchanged.
+
+### Fixed
+
+- **Stalled Streaming Upstream Delayed Failover up to 600 s** (#9754): Streaming requests that preserve exact header casing (Claude Code and Claude Desktop native providers) go through the hyper transport, which used the non-streaming timeout instead of the streaming first-byte timeout. Both transports now use the first-byte timeout for streaming requests.
+- **Unbounded Memory in SSE Usage/Log Collectors** (#9846, fixes #9843): Passthrough SSE collectors buffered pending data without a cap on long or unterminated streams. The pending buffer is capped at 64 MiB, and parsing resumes after an oversized event.
+- **Deep Link Import Dialog Opened After a Failed Config Merge** (#9844, fixes #9841): When merging a link's inline config fails, an error toast is shown and the confirmation dialog no longer opens.
+- **Plugins Page Said "Codex Not Installed" with Only the Desktop App** (4a1da640e, refs #9850): With no standalone `codex` (for example, only the Windows MSIX desktop app), runtime commands such as the Plugins page and daemon restart now fall back to the desktop app's bundled CLI (newest bundle on macOS, newest build directory on Windows). Install enumeration, upgrade and uninstall still manage only the standalone CLI.
+- **Plugins Page Created Empty Config Folders for Apps That Aren't Installed** (dcba4bb05, refs #9852): The background prefetch created `~/.codex`, `~/.grok`, `~/.openclaw`, `~/.pi` or `~/.minimax` before locating the CLI. The folder is now created only after the CLI is found; a missing CLI still reports "not installed".
+- **OpenCode Go DeepSeek V4.1 Flash Missing the Max Effort** (897232901, refs #9853): The preset now declares the model's variants (low, high, max; medium disabled), matching OpenCode Go's catalog, so OpenCode no longer falls back to generic low/medium/high tiers.
+- **Popovers and Menus Flickered on Rapid Clicks** (#9176, fixes #9175): Clicking a trigger during the open/close animation no longer toggles the overlay twice.
+
+### Internal
+
+- Remaining production `dirs::home_dir()` lookups go through `get_home_dir` so they respect `CC_SWITCH_TEST_HOME` (#9845, fixes #9842).
+- Tests of the Claude/Codex providers, streaming Responses, tool discovery, database backup, Codex config, tray, mode controller, skill, usage stats and Codex session usage moved into their own files (#9836, #9815, #9806, #9803, #9800, #9801); `SkillService` split into per-concern files (#9804); Codex TOML editing split out of providerConfigUtils (#9795); installed skills read through one query (#9797); one exhaustive remove-from-live for additive apps (#9749); dead deep link and update fallbacks removed (#9794, #9793).
+- CI runs clippy on test targets too (#9796); unused lint allows (#9798) and the unused objc2 0.5 / objc2-app-kit 0.2 pair (#9805) removed.
+
 ## [4.0.38] - 2026-11-21
 
 This is a maintenance release. Provider deep links can now import WorkBuddy providers, and Antigravity account switching works on Linux. The Antigravity session list drops empty and internal sessions, and its reader shows thinking, tool calls and results. Fixes cover every third-party provider vanishing from DeepSeek Harness after `cordis.patch.yml` passed through a YAML 1.1 tool, the Apps page calling healthy npm installs "cannot run" when CC Switch is opened from Finder, skill repositories on unsupported hosts reporting "0 skills found" instead of an error, Codex reasoning overrides ignored for model names that match an official entry, several Codex route conversion errors (colliding flattened tool names, `resp_…_msg` item IDs rejected by official Responses, `strict` rejected by Bedrock), double-counted usage (gateway model prefixes, Gemini sessions after rollup), Codex cache writes shown as N/A, session text search failures shown as "no matches", windows restored as a thin strip or under the macOS menu bar, and links doing nothing in the Linux AppImage.

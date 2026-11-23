@@ -340,7 +340,11 @@ describe("SwitchModePanel — Stack mode", () => {
               active: true,
               members: [
                 { providerId: "route", modelIds: [], route: true },
-                { providerId: "kimi", modelIds: [target.modelId], route: false },
+                {
+                  providerId: "kimi",
+                  modelIds: [target.modelId],
+                  route: false,
+                },
               ],
               roleBindings: savedBindings,
               roleCandidates: [{ ...target, displayName: "K3（Kimi）" }],
@@ -367,12 +371,14 @@ describe("SwitchModePanel — Stack mode", () => {
     fireEvent.click(await screen.findByRole("option", { name: "K3（Kimi）" }));
     fireEvent.click(screen.getByRole("button", { name: "common.save" }));
     await waitFor(() =>
-      expect(screen.queryByText("mode.roleBindingsTitle")).not.toBeInTheDocument(),
+      expect(
+        screen.queryByText("mode.roleBindingsTitle"),
+      ).not.toBeInTheDocument(),
     );
     fireEvent.click(screen.getByRole("button", { name: "mode.roleBindings" }));
-    expect(await screen.findByRole("combobox", { name: "Opus" })).toHaveTextContent(
-      "K3（Kimi）",
-    );
+    expect(
+      await screen.findByRole("combobox", { name: "Opus" }),
+    ).toHaveTextContent("K3（Kimi）");
     fireEvent.click(screen.getByRole("combobox", { name: "Sonnet" }));
     fireEvent.click(await screen.findByRole("option", { name: "K3（Kimi）" }));
     fireEvent.click(screen.getByRole("button", { name: "common.save" }));

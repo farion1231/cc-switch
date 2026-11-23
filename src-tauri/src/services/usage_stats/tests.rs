@@ -2323,6 +2323,21 @@ fn test_effective_usage_dedup_prefers_proxy_for_session_sources() -> Result<(), 
     assert!(provider_stats
         .iter()
         .any(|stat| stat.provider_id == "_codex_session" && stat.request_count == 1));
+    // 各供应商命中率的分子分母加起来等于指标卡：60 / 682
+    assert_eq!(
+        provider_stats
+            .iter()
+            .map(|stat| stat.cache_read_tokens)
+            .sum::<u64>(),
+        60
+    );
+    assert_eq!(
+        provider_stats
+            .iter()
+            .map(|stat| stat.cacheable_input_tokens)
+            .sum::<u64>(),
+        682
+    );
     assert!(!provider_stats
         .iter()
         .any(|stat| stat.provider_id == "_gemini_session"));
@@ -2337,6 +2352,21 @@ fn test_effective_usage_dedup_prefers_proxy_for_session_sources() -> Result<(), 
             .map(|stat| stat.request_count)
             .sum::<u64>(),
         4
+    );
+    // 各模型命中率的分子分母加起来等于指标卡：60 / 682
+    assert_eq!(
+        model_stats
+            .iter()
+            .map(|stat| stat.cache_read_tokens)
+            .sum::<u64>(),
+        60
+    );
+    assert_eq!(
+        model_stats
+            .iter()
+            .map(|stat| stat.cacheable_input_tokens)
+            .sum::<u64>(),
+        682
     );
 
     let logs = db.get_request_logs(&LogFilters::default(), 0, 10)?;
@@ -2962,7 +2992,7 @@ fn test_get_provider_stats_estimated_speed_sums_session_rows() -> Result<(), App
 }
 
 #[test]
-fn test_agy_session_uses_exact_speed_and_first_token_stats() -> Result<(), AppError> {
+fn test_agy_session_includes_first_token_in_speed_duration() -> Result<(), AppError> {
     let db = Database::memory()?;
 
     {
@@ -2986,46 +3016,26 @@ fn test_agy_session_uses_exact_speed_and_first_token_stats() -> Result<(), AppEr
                 ],
             )
         };
-        // Antigravity 原生计时：扣除首字，使用精确流式生成窗口（>=100 tok 且生成窗>=100ms）
+        // Antigravity 原生 output_tokens 包含隐藏思考 token，而 first_token_ms 包含整段思考时间；
+        // 速度必须按完整 latency_ms（含首字时间）计算，否则思考后仅极短流式窗口会让速度严重虚高。
         insert(
-            "agy-long",
+            "agy-thinking",
             "_agy_session",
             "agy",
             "gemini-4-neon",
-            2_900,
-            69_000,
-            Some(43_000),
+            12_000,
+            100_000,
+            Some(99_850),
             "agy_session",
         )?;
         insert(
-            "agy-mid",
+            "agy-short",
             "_agy_session",
             "agy",
             "gemini-4-neon",
             150,
             38_000,
             Some(36_500),
-            "agy_session",
-        )?;
-        // 不计入精确速度，也不得回落到估算速度：输出 < 100 / 生成窗 < 100ms / 无计时
-        insert(
-            "agy-short",
-            "_agy_session",
-            "agy",
-            "gemini-4-neon",
-            90,
-            6_000,
-            Some(6_000),
-            "agy_session",
-        )?;
-        insert(
-            "agy-burst",
-            "_agy_session",
-            "agy",
-            "gemini-4-neon",
-            300,
-            5_050,
-            Some(5_000),
             "agy_session",
         )?;
         insert(
@@ -3038,7 +3048,6 @@ fn test_agy_session_uses_exact_speed_and_first_token_stats() -> Result<(), AppEr
             None,
             "agy_session",
         )?;
-        // 其余会话日志仍走含首字等待的估算口径
         insert(
             "codex-est",
             "_codex_session",
@@ -3056,35 +3065,25 @@ fn test_agy_session_uses_exact_speed_and_first_token_stats() -> Result<(), AppEr
         .iter()
         .find(|s| s.provider_id == "_agy_session")
         .expect("_agy_session");
-    assert_eq!(agy_provider.speed_output_tokens, 3_050);
-    assert_eq!(agy_provider.speed_generation_ms, 27_500);
-    // 有首字的 4 条：[5_000, 6_000, 36_500, 43_000] -> 中位数 (6_000 + 36_500) / 2
-    assert_eq!(agy_provider.first_token_median_ms, Some(21_250));
-    assert_eq!(agy_provider.est_speed_output_tokens, 0);
-    assert_eq!(agy_provider.est_speed_duration_ms, 0);
-    assert_eq!(agy_provider.est_first_token_median_ms, None);
-
-    let codex_provider = providers
-        .iter()
-        .find(|s| s.provider_id == "_codex_session")
-        .expect("_codex_session");
-    assert_eq!(codex_provider.speed_output_tokens, 0);
-    assert_eq!(codex_provider.first_token_median_ms, None);
-    assert_eq!(codex_provider.est_speed_output_tokens, 500);
-    assert_eq!(codex_provider.est_speed_duration_ms, 10_000);
-    assert_eq!(codex_provider.est_first_token_median_ms, Some(3_300));
+    assert_eq!(agy_provider.speed_output_tokens, 0);
+    assert_eq!(agy_provider.speed_generation_ms, 0);
+    assert_eq!(agy_provider.first_token_median_ms, None);
+    // 只有 agy-thinking (>=200 output tokens 且 >=1000ms) 计入估算速度，分母为完整 latency_ms (100_000ms -> 120 tok/s，而非 80_000 tok/s)
+    assert_eq!(agy_provider.est_speed_output_tokens, 12_000);
+    assert_eq!(agy_provider.est_speed_duration_ms, 100_000);
+    assert_eq!(agy_provider.est_first_token_median_ms, Some(68_175));
 
     let models = db.get_model_stats(None, None, None, None, None)?;
     let neon = models
         .iter()
         .find(|s| s.model == "gemini-4-neon")
         .expect("gemini-4-neon");
-    assert_eq!(neon.speed_output_tokens, 3_050);
-    assert_eq!(neon.speed_generation_ms, 27_500);
-    assert_eq!(neon.first_token_median_ms, Some(21_250));
-    assert_eq!(neon.est_speed_output_tokens, 0);
-    assert_eq!(neon.est_speed_duration_ms, 0);
-    assert_eq!(neon.est_first_token_median_ms, None);
+    assert_eq!(neon.speed_output_tokens, 0);
+    assert_eq!(neon.speed_generation_ms, 0);
+    assert_eq!(neon.first_token_median_ms, None);
+    assert_eq!(neon.est_speed_output_tokens, 12_000);
+    assert_eq!(neon.est_speed_duration_ms, 100_000);
+    assert_eq!(neon.est_first_token_median_ms, Some(68_175));
 
     Ok(())
 }
@@ -3198,6 +3197,9 @@ fn test_get_provider_stats_excludes_partial_rollup_boundary_days() -> Result<(),
     assert_eq!(stats[0].provider_id, "p-rollup");
     assert_eq!(stats[0].request_count, 8);
     assert_eq!(stats[0].total_tokens, 1200);
+    // 日汇总也计入命中率分母：新增输入 800，无缓存
+    assert_eq!(stats[0].cacheable_input_tokens, 800);
+    assert_eq!(stats[0].cache_read_tokens, 0);
 
     Ok(())
 }
@@ -3479,6 +3481,9 @@ fn test_get_model_stats_excludes_partial_rollup_boundary_days() -> Result<(), Ap
     assert_eq!(stats[0].model, "claude-3-haiku");
     assert_eq!(stats[0].request_count, 9);
     assert_eq!(stats[0].total_tokens, 1350);
+    // 日汇总也计入命中率分母：新增输入 900，无缓存
+    assert_eq!(stats[0].cacheable_input_tokens, 900);
+    assert_eq!(stats[0].cache_read_tokens, 0);
 
     Ok(())
 }

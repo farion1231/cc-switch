@@ -410,6 +410,43 @@ async fn the_proxy_route_is_independent_of_the_direct_pointer() {
     exit(&state, &AppType::Claude).await.expect("exit");
 }
 
+/// 代理模式下不能切到官方供应商：经代理访问官方 API 可能导致账号被封。拒绝时路由和
+/// 客户端文件都保持原样。
+#[tokio::test]
+#[serial]
+async fn proxy_mode_refuses_an_official_provider_and_keeps_the_route() {
+    let _home = Home::new();
+    seed_settings(USER_SETTINGS);
+    let mut official = claude("official", "https://api.anthropic.com", json!({}));
+    official.category = Some("official".to_string());
+    let state = state_with(
+        AppType::Claude,
+        &[claude("a", "https://a.example", json!({})), official],
+        "a",
+    )
+    .await;
+    enter(&state, &AppType::Claude, false).await.expect("enter");
+    let before = settled_bytes();
+
+    let err = ProviderService::switch(&state, AppType::Claude, "official")
+        .expect_err("an official provider is refused in proxy mode");
+
+    assert!(
+        matches!(
+            err,
+            AppError::Localized {
+                key: "switch.official_blocked_by_proxy",
+                ..
+            }
+        ),
+        "{err:?}"
+    );
+    assert_eq!(mode(&AppType::Claude).proxy_route.as_deref(), Some("a"));
+    assert_eq!(in_use(&state, &AppType::Claude).as_deref(), Some("a"));
+    assert_eq!(settled_bytes(), before);
+    exit(&state, &AppType::Claude).await.expect("exit");
+}
+
 /// 保存当前供应商要等进入代理写完契约，之后按代理模式处理，不能拿进入前读到的直连
 /// 模式把关键字段写回 live。
 #[tokio::test(flavor = "multi_thread")]

@@ -29,6 +29,7 @@ use crate::services::usage_cache::UsageCache;
 use crate::store::AppState;
 
 const TEMPLATE_TYPE_OFFICIAL_SUBSCRIPTION: &str = "official_subscription";
+const TEMPLATE_TYPE_GITHUB_COPILOT: &str = "github_copilot";
 /// Copilot 用量结果的单位（`commands::provider` 的 `COPILOT_UNIT_PREMIUM`）：Credits（接口里仍叫 premium_interactions）。
 const COPILOT_UNIT_PREMIUM: &str = "requests";
 
@@ -1374,11 +1375,130 @@ fn sort_providers(providers: &indexmap::IndexMap<String, Provider>) -> Vec<(&Str
     sorted
 }
 
-/// 副标题：备注 > 绑定的 Claude 账号（同主界面卡片） > 官网域名。
+#[derive(Debug, Default)]
+struct ManagedAccountLabels {
+    labels: HashMap<String, String>,
+    default_id: Option<String>,
+}
+
+impl ManagedAccountLabels {
+    fn from_parts((labels, default_id): (HashMap<String, String>, Option<String>)) -> Self {
+        Self { labels, default_id }
+    }
+
+    /// 查显式绑定的账号；未显式绑定且允许回落时用默认账号。
+    /// 显式绑定的账号不存在时不回落默认账号，避免错标成别人的账号。
+    fn resolve(&self, bound_id: Option<&str>, allow_default: bool) -> Option<&str> {
+        let target = match bound_id {
+            Some(id) => Some(id),
+            None if allow_default => self.default_id.as_deref(),
+            None => None,
+        }?;
+        self.labels
+            .get(target)
+            .map(String::as_str)
+            .map(str::trim)
+            .filter(|label| !label.is_empty())
+    }
+}
+
+#[derive(Debug, Default)]
+struct TrayAccountLabels {
+    claude: HashMap<String, String>,
+    codex: ManagedAccountLabels,
+    copilot: ManagedAccountLabels,
+    xai: ManagedAccountLabels,
+}
+
+impl TrayAccountLabels {
+    fn load_from_disk(data_dir: &std::path::Path) -> Self {
+        Self {
+            claude: crate::services::claude_account::labels_on_disk(data_dir),
+            codex: ManagedAccountLabels::from_parts(
+                crate::proxy::providers::codex_oauth_auth::labels_on_disk(data_dir),
+            ),
+            copilot: ManagedAccountLabels::from_parts(
+                crate::proxy::providers::copilot_auth::labels_on_disk(data_dir),
+            ),
+            xai: ManagedAccountLabels::from_parts(
+                crate::proxy::providers::xai_oauth_auth::labels_on_disk(data_dir),
+            ),
+        }
+    }
+}
+
+fn trimmed_managed_account_id(provider: &Provider, auth_provider: &str) -> Option<String> {
+    provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.managed_account_id_for(auth_provider))
+        .map(|id| id.trim().to_string())
+        .filter(|id| !id.is_empty())
+}
+
+fn is_copilot_proxy(app: &AppType, provider: &Provider) -> bool {
+    if *app == AppType::Copilot {
+        return false;
+    }
+    provider.is_github_copilot()
+        || provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.usage_script.as_ref())
+            .and_then(|script| script.template_type.as_deref())
+            == Some(TEMPLATE_TYPE_GITHUB_COPILOT)
+}
+
+/// 绑定或默认使用的官方托管账号显示名（同主界面卡片副标题口径）。
+fn provider_account_label(
+    app: &AppType,
+    provider: &Provider,
+    accounts: &TrayAccountLabels,
+) -> Option<String> {
+    if let Some(id) = claude_bound_account_id(app, provider) {
+        return accounts
+            .claude
+            .get(&id)
+            .map(String::as_str)
+            .map(str::trim)
+            .filter(|label| !label.is_empty())
+            .map(str::to_string);
+    }
+    if *app == AppType::Codex {
+        // Codex 官方卡仅在显式绑定托管账号时显示该账号；未绑定的是 Codex CLI 原生登录，
+        // 不能回落到授权中心默认账号（预设里 providerType 同样带 codex_oauth）。
+        if let Some(id) = managed_codex_account_id(provider) {
+            return accounts.codex.resolve(Some(&id), false).map(str::to_string);
+        }
+    } else if provider.is_codex_oauth() {
+        let bound = trimmed_managed_account_id(provider, "codex_oauth");
+        return accounts
+            .codex
+            .resolve(bound.as_deref(), true)
+            .map(str::to_string);
+    }
+    if is_copilot_proxy(app, provider) {
+        let bound = trimmed_managed_account_id(provider, "github_copilot");
+        return accounts
+            .copilot
+            .resolve(bound.as_deref(), true)
+            .map(str::to_string);
+    }
+    if provider.is_xai_oauth() {
+        let bound = trimmed_managed_account_id(provider, "xai_oauth");
+        return accounts
+            .xai
+            .resolve(bound.as_deref(), true)
+            .map(str::to_string);
+    }
+    None
+}
+
+/// 副标题：备注 > 托管官方账号（同主界面卡片） > 官网域名。
 fn provider_hint(
     app: &AppType,
     provider: &Provider,
-    claude_accounts: &HashMap<String, String>,
+    accounts: &TrayAccountLabels,
 ) -> Option<String> {
     if let Some(notes) = provider
         .notes
@@ -1389,10 +1509,8 @@ fn provider_hint(
     {
         return Some(truncate_chars(notes, 24));
     }
-    if let Some(label) =
-        claude_bound_account_id(app, provider).and_then(|id| claude_accounts.get(&id))
-    {
-        return Some(label.clone());
+    if let Some(label) = provider_account_label(app, provider, accounts) {
+        return Some(label);
     }
     let url = provider.website_url.as_deref()?.trim();
     let host = url
@@ -1407,12 +1525,12 @@ fn provider_hint(
 fn provider_entry(
     app: &AppType,
     provider: &Provider,
-    claude_accounts: &HashMap<String, String>,
+    accounts: &TrayAccountLabels,
 ) -> ProviderEntry {
     ProviderEntry {
         id: provider.id.clone(),
         name: provider.name.clone(),
-        hint: provider_hint(app, provider, claude_accounts),
+        hint: provider_hint(app, provider, accounts),
         needs_routing: provider_needs_routing(app, provider),
         official: is_official_account(app, provider),
         blocked_from_routing: blocked_from_routing(app, provider),
@@ -1441,17 +1559,13 @@ fn collect_app_snapshot(
     app: &AppType,
     service_running: Option<bool>,
     profiles: &[crate::database::Profile],
+    accounts: &TrayAccountLabels,
 ) -> Result<AppSnapshot, AppError> {
     // 读不出来的行不进托盘（没有能切换的内容），也不拖垮整个菜单。
     let rows = app_state.db.get_provider_rows(app)?.readable;
-    let claude_accounts = if *app == AppType::Claude {
-        crate::services::claude_account::labels_on_disk(&crate::config::get_app_config_dir())
-    } else {
-        HashMap::new()
-    };
     let providers: Vec<ProviderEntry> = sort_providers(&rows)
         .into_iter()
-        .map(|(_, provider)| provider_entry(app, provider, &claude_accounts))
+        .map(|(_, provider)| provider_entry(app, provider, accounts))
         .collect();
     // 代理模式下是代理路由到的那家（含故障转移切过去的）。
     let current_id = crate::mode::current::provider_for(
@@ -1761,7 +1875,7 @@ fn feedback_text(texts: &TrayTexts, feedback: &TrayFeedback) -> String {
     )
 }
 
-/// 菜单上会自己过时的那部分：问题区、反馈行、「退出」写不写后果。
+/// 菜单上会自己过时的那部分：问题区、反馈行、账号副标题、「退出」写不写后果。
 #[derive(Debug, Clone, Default, PartialEq)]
 struct MenuStatus {
     problems: Vec<TrayProblem>,
@@ -1769,6 +1883,8 @@ struct MenuStatus {
     routing_in_use: bool,
     /// 自动更新已下好、待安装的版本。
     update_ready: Option<String>,
+    /// 授权中心切号或代理令牌失效也会改变副标题，不能只比较路由状态。
+    provider_hints: Vec<(AppType, String, Option<String>)>,
 }
 
 // ─── 菜单模型（纯数据）────────────────────────────────────────────────────────
@@ -2200,10 +2316,11 @@ fn collect_snapshots(
         Vec::new()
     };
 
+    let accounts = TrayAccountLabels::load_from_disk(&crate::config::get_app_config_dir());
     let mut snapshots = Vec::new();
     for app in TRAY_APPS.iter().filter(|app| visible_apps.is_visible(app)) {
         snapshots.push(collect_app_snapshot(
-            app_state, texts, &settings, app, running, &profiles,
+            app_state, texts, &settings, app, running, &profiles, &accounts,
         )?);
     }
 
@@ -2230,6 +2347,18 @@ fn collect_status(
         feedback: current_feedback(),
         routing_in_use: routing_in_use(app_state),
         update_ready: crate::app_update::ready().map(|ready| ready.version),
+        provider_hints: snapshots
+            .iter()
+            .flat_map(|snapshot| {
+                snapshot.providers.iter().map(|provider| {
+                    (
+                        snapshot.app.clone(),
+                        provider.id.clone(),
+                        provider.hint.clone(),
+                    )
+                })
+            })
+            .collect(),
     };
     Ok((snapshots, status))
 }
@@ -2926,8 +3055,8 @@ pub fn native_menu_on_left_click(native: bool) -> bool {
     native && cfg!(not(target_os = "windows"))
 }
 
-/// 悬停到托盘图标时：问题区该出现 / 该消失了（路由服务停了、又起来了）、反馈行显示过了或到点了，
-/// 就重建菜单。只在变了时重建，菜单还没打开，不会被关掉。
+/// 悬停到托盘图标时：账号副标题、问题区或反馈行变了就重建菜单。
+/// 只在变了时重建，菜单还没打开，不会被关掉。
 pub fn refresh_tray_if_problems_changed(app: &tauri::AppHandle) {
     static LAST_CHECK: Mutex<Option<std::time::Instant>> = Mutex::new(None);
     {
@@ -2940,7 +3069,7 @@ pub fn refresh_tray_if_problems_changed(app: &tauri::AppHandle) {
     schedule_tray_status_check(app);
 }
 
-/// 路由服务启动 / 停止之后：圆点、问题区、「退出」的后果可能要跟着变。在后台线程比对，
+/// 账号或路由状态变化之后：副标题、圆点、问题区、「退出」的后果可能要跟着变。在后台线程比对，
 /// 变了才重建（调用方可能在异步任务里，也可能正等着主线程）。
 pub fn schedule_tray_status_check(app: &tauri::AppHandle) {
     let app = app.clone();
