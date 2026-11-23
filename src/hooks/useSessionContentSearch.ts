@@ -5,9 +5,6 @@ import { sessionsApi } from "@/lib/api/sessions";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import type { SessionContentHit, SessionIndexStatus } from "@/types";
 
-/** 输入停顿多久后才查正文（毫秒） */
-const SEARCH_DEBOUNCE_MS = 250;
-
 export const sessionContentKeys = {
   all: ["sessionContentSearch"] as const,
   search: (query: string, providerIds: string[]) =>
@@ -21,7 +18,7 @@ export const getContentHitKey = (
 ) => `${providerId}:${sourcePath ?? ""}`;
 
 interface UseSessionContentSearchOptions {
-  /** 列表的搜索词（未 trim 也可以） */
+  /** 列表当前生效的搜索词；由页面统一防抖（未 trim 也可以） */
   query: string;
   /** 「搜索消息正文」开关 */
   enabled: boolean;
@@ -65,21 +62,7 @@ export function useSessionContentSearch({
 }: UseSessionContentSearchOptions): UseSessionContentSearchResult {
   const queryClient = useQueryClient();
   const [status, setStatus] = useState<SessionIndexStatus | null>(null);
-  const [debounced, setDebounced] = useState(() => query.trim());
-
-  useEffect(() => {
-    const next = query.trim();
-    // 清空是即时的，输入才防抖
-    if (!next) {
-      setDebounced("");
-      return;
-    }
-    const timer = window.setTimeout(
-      () => setDebounced(next),
-      SEARCH_DEBOUNCE_MS,
-    );
-    return () => window.clearTimeout(timer);
-  }, [query]);
+  const searchQuery = query.trim();
 
   // 进度事件：索引每前进一批就重查一次，边建边能搜到
   useEffect(() => {
@@ -129,9 +112,9 @@ export function useSessionContentSearch({
   const providerKey = useMemo(() => [...providerIds].sort(), [providerIds]);
 
   const search = useQuery({
-    queryKey: sessionContentKeys.search(debounced, providerKey),
-    queryFn: () => sessionsApi.searchContent(debounced, providerKey),
-    enabled: enabled && debounced !== "" && providerKey.length > 0,
+    queryKey: sessionContentKeys.search(searchQuery, providerKey),
+    queryFn: () => sessionsApi.searchContent(searchQuery, providerKey),
+    enabled: enabled && searchQuery !== "" && providerKey.length > 0,
     staleTime: 0,
     // 索引读不出来是确定性失败，自动重试只会让提示晚一拍；重试交给界面上的按钮
     retry: false,
@@ -139,17 +122,17 @@ export function useSessionContentSearch({
 
   const hits = useMemo(() => {
     const map = new Map<string, SessionContentHit>();
-    if (!enabled || !debounced || debounced !== query.trim()) return map;
+    if (!enabled || !searchQuery) return map;
     search.data?.hits.forEach((hit) =>
       map.set(getContentHitKey(hit.providerId, hit.sourcePath), hit),
     );
     return map;
-  }, [enabled, debounced, query, search.data]);
+  }, [enabled, searchQuery, search.data]);
 
-  // 只在当前查询词已经有结果时才算失败：正在防抖 / 输入还没生效不算。
+  // 失败提示与命中结果共用页面传入的生效关键词；等待新输入防抖时保留上一轮状态。
   // 失败后重新查询成功时 react-query 会把 error 清掉，提示随之消失。
   // 用 isError 而不是拿 error 的真值判断：原因本身可能是空串。
-  const settled = enabled && debounced !== "" && debounced === query.trim();
+  const settled = enabled && searchQuery !== "";
   const error =
     settled && search.isError
       ? // 提不出原因时也要给一段非空文本：界面按真值判断失败，
@@ -160,7 +143,7 @@ export function useSessionContentSearch({
   return {
     hits,
     status: enabled ? (status ?? search.data?.status ?? null) : null,
-    isSearching: enabled && query.trim() !== "" && search.isFetching,
+    isSearching: enabled && searchQuery !== "" && search.isFetching,
     error,
     // 索引读不出来时重试只重新查询是不够的：后端会删掉坏索引重建出一个**空**索引，
     // 查询随之成功返回零命中，界面又变回「没有会话包含该词」。重新收录挂在这里是
