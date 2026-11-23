@@ -232,6 +232,7 @@ fn installed(installs: &Installs, distro: &str, app: &str) -> Option<bool> {
 }
 
 /// 应用页装完 / 更新完之后，下次概览重新探测这个发行版。
+#[cfg(windows)]
 pub fn invalidate(distro: &str) {
     let _guard = lock().lock().unwrap_or_else(|e| e.into_inner());
     let mut cache = load_cache();

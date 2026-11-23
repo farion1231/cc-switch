@@ -117,7 +117,8 @@ where
 pub(crate) use misc::tool_discovery::{cached_login_shell_path, merge_path_segments};
 pub(crate) use misc::tool_process::{
     detected_tool_command, is_safe_tool_command_arg, locate_detected_tool,
-    run_detected_tool_command_with_timeout, terminate_child_tree, wait_child_output,
-    CommandDeadline,
+    run_detected_tool_command_with_timeout, terminate_child_tree,
 };
+#[cfg(target_os = "windows")]
+pub(crate) use misc::tool_process::{wait_child_output, CommandDeadline};
 pub(crate) use misc::tool_version::{local_tool_version, wsl_tool_state, WslToolState};

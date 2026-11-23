@@ -14,10 +14,13 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use super::model::{is_valid_distro_name, LinuxEnv};
+#[cfg(any(windows, test))]
+use super::model::is_valid_distro_name;
+use super::model::LinuxEnv;
 use crate::error::AppError;
 
 /// Docker Desktop、Rancher Desktop、Podman 等工具自带的系统发行版，不作为写入目标。
+#[cfg(any(windows, test))]
 const SYSTEM_DISTROS: &[&str] = &[
     "docker-desktop",
     "docker-desktop-data",
@@ -89,6 +92,7 @@ pub fn load_cache() -> BTreeMap<String, CachedEnv> {
         .unwrap_or_default()
 }
 
+#[cfg(windows)]
 pub fn store_cache(distro: &str, env: &LinuxEnv) {
     let _guard = cache_lock().lock().unwrap_or_else(|e| e.into_inner());
     let mut cache: BTreeMap<String, CachedEnv> = std::fs::read(cache_path())
@@ -138,6 +142,7 @@ pub fn decode_wsl_output(bytes: &[u8]) -> String {
 }
 
 /// `wsl.exe -l -q` 的发行版名单（去掉系统发行版和非法名称）。
+#[cfg(any(windows, test))]
 pub fn parse_distro_list(output: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for line in output.lines() {
@@ -157,16 +162,19 @@ pub fn parse_distro_list(output: &str) -> Vec<String> {
     out
 }
 
+#[cfg(any(windows, test))]
 const PROBE_MARKER: &str = "__CC_SWITCH_ENV__";
 
 /// 在发行版里打印环境变量的脚本：登录 shell 读 `~/.profile`，标记行之后才是结果，
 /// profile 打印的其他内容不影响解析。
+#[cfg(any(windows, test))]
 pub fn probe_script() -> String {
     format!(
         "printf '%s\\n' '{PROBE_MARKER}' \"$HOME\" \"${{CLAUDE_CONFIG_DIR:-}}\" \"${{CODEX_HOME:-}}\" \"${{XDG_CONFIG_HOME:-}}\" \"$(wslinfo --networking-mode 2>/dev/null)\" \"$(ip route show default 2>/dev/null | awk '{{print $3; exit}}')\""
     )
 }
 
+#[cfg(any(windows, test))]
 pub fn parse_probe_output(output: &str) -> Option<LinuxEnv> {
     let mut lines = output
         .lines()
@@ -244,11 +252,6 @@ pub fn is_running(distro: &str) -> bool {
     list(true).is_ok_and(|running| running.iter().any(|r| r.eq_ignore_ascii_case(distro)))
 }
 
-#[cfg(not(windows))]
-pub fn is_running(_distro: &str) -> bool {
-    false
-}
-
 /// 检查 WSL 发行版是否仍已注册；`wsl.exe -l -q` 成功时才返回 `Ok(bool)`，失败返回 `Err` 以免误判。
 pub fn is_registered(distro: &str) -> Result<bool, String> {
     #[cfg(windows)]
@@ -288,6 +291,7 @@ pub fn probe(_distro: &str) -> Result<LinuxEnv, String> {
 }
 
 /// 从发行版里访问一个 URL（路由连通性测试）。返回 HTTP 是否成功和输出摘要。
+#[cfg(any(windows, test))]
 pub fn connectivity_script(url: &str) -> String {
     // URL 只由 CC Switch 生成（主机已校验、端口是数字），仍按单引号转义一遍。
     let quoted = format!("'{}'", url.replace('\'', "'\\''"));
