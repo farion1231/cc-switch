@@ -46,6 +46,7 @@ export function useDesktopAppStatus(app: AppId) {
     onError: (error) => {
       const detail = extractErrorMessage(error) || t("common.unknown");
       toast.error(t("appPage.desktopApp.startFailed", { name, error: detail }));
+      void invalidate();
     },
   });
 
@@ -60,6 +61,7 @@ export function useDesktopAppStatus(app: AppId) {
       toast.error(
         t("appPage.desktopApp.restartFailed", { name, error: detail }),
       );
+      void invalidate();
     },
   });
 

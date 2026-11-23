@@ -1598,7 +1598,7 @@ function App() {
               <HermesMemorySaveButton />
             </Suspense>
           )}
-          <DesktopAppControls app={activeApp} />
+          <DesktopAppControls key={activeApp} app={activeApp} />
           {appMenu}
         </>
       }

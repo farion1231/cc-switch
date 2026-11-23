@@ -4431,7 +4431,18 @@
     "openclawConfig": "Конфигурация",
     "memory": "Память",
     "webUi": "Web UI",
-    "viewUsage": "Статистика использования этого приложения"
+    "viewUsage": "Статистика использования этого приложения",
+    "desktopApp": {
+      "startApp": "Запустить приложение",
+      "restartApp": "Перезапустить приложение",
+      "checking": "Поиск {{name}}",
+      "notInstalled": "Настольное приложение {{name}} не найдено",
+      "alreadyRunning": "{{name}} уже запущено",
+      "started": "{{name}} запущено",
+      "restarted": "{{name}} перезапущено",
+      "startFailed": "Не удалось запустить {{name}}: {{error}}",
+      "restartFailed": "Не удалось перезапустить {{name}}: {{error}}"
+    }
   },
   "mode": {
     "tabsLabel": "Режим подключения",

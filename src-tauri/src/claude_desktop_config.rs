@@ -1539,7 +1539,7 @@ fn detect_installed(paths: &ClaudeDesktopPaths, app_bundles: Option<&[PathBuf]>)
     }
 }
 
-fn macos_app_bundle_candidates() -> Option<Vec<PathBuf>> {
+pub(crate) fn macos_app_bundle_candidates() -> Option<Vec<PathBuf>> {
     cfg!(target_os = "macos").then(|| {
         vec![
             PathBuf::from("/Applications/Claude.app"),

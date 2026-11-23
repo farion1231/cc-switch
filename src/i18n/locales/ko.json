@@ -4433,7 +4433,18 @@
     "openclawConfig": "설정",
     "memory": "메모리",
     "webUi": "웹 UI",
-    "viewUsage": "이 앱의 사용량 보기"
+    "viewUsage": "이 앱의 사용량 보기",
+    "desktopApp": {
+      "startApp": "앱 시작",
+      "restartApp": "앱 다시 시작",
+      "checking": "{{name}} 확인 중",
+      "notInstalled": "{{name}} 데스크톱 앱을 찾을 수 없습니다",
+      "alreadyRunning": "{{name}}이(가) 이미 실행 중입니다",
+      "started": "{{name}}을(를) 시작했습니다",
+      "restarted": "{{name}}을(를) 다시 시작했습니다",
+      "startFailed": "{{name}}을(를) 시작하지 못했습니다: {{error}}",
+      "restartFailed": "{{name}}을(를) 다시 시작하지 못했습니다: {{error}}"
+    }
   },
   "mode": {
     "tabsLabel": "연결 모드",
