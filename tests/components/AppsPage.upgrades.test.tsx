@@ -1,6 +1,7 @@
 import {
   act,
   fireEvent,
+  renderHook,
   screen,
   waitFor,
   within,
@@ -75,7 +76,7 @@ vi.mock("sonner", () => ({ toast: mocks }));
 vi.mock("@/lib/clipboard", () => ({ copyText: mocks.copyText }));
 
 const state = createToolState();
-const { upgraded, missing } = state;
+const { upgraded, missing, outdated } = state;
 
 registerScrollIntoViewStub();
 
@@ -830,5 +831,97 @@ describe("AppsPage concurrent CLI upgrades", () => {
       "settings.toolUpgradeUnmanagedTitle",
       expect.anything(),
     );
+  });
+});
+
+describe("AppsPage OpenCode Desktop bundled CLI", () => {
+  beforeEach(() => {
+    resetAppsPageMocks(mocks, state);
+    outdated.add("opencode");
+  });
+
+  /** 安装概览：OpenCode 命令行默认用的是 Desktop 自带的那份，可选再带一份独立安装。 */
+  function listWithDesktopOpenCode(standaloneIsDefault = false) {
+    mocks.listToolInstallations.mockImplementation(async (tools: string[]) =>
+      tools.map((tool) => ({
+        tool,
+        installs:
+          tool === "opencode"
+            ? [
+                {
+                  path: "C:/Program Files/OpenCode/opencode-cli.exe",
+                  source: "desktop",
+                  is_path_default: !standaloneIsDefault,
+                },
+                ...(standaloneIsDefault
+                  ? [
+                      {
+                        path: "C:/npm/opencode.cmd",
+                        source: "system",
+                        is_path_default: true,
+                      },
+                    ]
+                  : []),
+              ]
+            : [
+                {
+                  path: `C:/npm/${tool}.cmd`,
+                  source: "system",
+                  is_path_default: true,
+                },
+              ],
+        is_wsl: false,
+      })),
+    );
+  }
+
+  it("does not offer a separate upgrade for the CLI bundled with OpenCode Desktop", async () => {
+    listWithDesktopOpenCode();
+    await renderApps();
+    await waitFor(() =>
+      expect(
+        card("OpenCode").getByText("settings.toolUpgradeDesktopManagedDetail"),
+      ).toBeInTheDocument(),
+    );
+    expect(
+      card("OpenCode").queryByRole("button", { name: /settings\.toolUpdate/ }),
+    ).toBeNull();
+    expect(card("OpenCode").getByText("OpenCode Desktop")).toBeInTheDocument();
+
+    // 「全部更新」只预检其余过期的工具
+    fireEvent.click(updateAllButton());
+    await waitFor(() =>
+      expect(mocks.probeToolInstallations).toHaveBeenCalledWith([
+        "claude",
+        "codex",
+        "gemini",
+      ]),
+    );
+  });
+
+  it("still upgrades a standalone OpenCode that the command line uses", async () => {
+    listWithDesktopOpenCode(true);
+    await renderApps();
+    await waitFor(() => expect(updateButton("OpenCode")).toBeEnabled());
+    expect(
+      card("OpenCode").queryByText("settings.toolUpgradeDesktopManagedDetail"),
+    ).toBeNull();
+  });
+
+  it("keeps the sidebar dot off for a Desktop-managed OpenCode after the background check", async () => {
+    listWithDesktopOpenCode();
+    outdated.clear();
+    outdated.add("opencode");
+    const { checkToolUpdatesInBackground, useToolUpdatesAvailable } =
+      await import("@/components/apps/useToolManagement");
+    const { result } = renderHook(() => useToolUpdatesAvailable());
+
+    await act(async () => {
+      await checkToolUpdatesInBackground();
+    });
+
+    // OpenCode 过期时后台检查顺带拿安装概览，认出是 Desktop 自带的就不亮圆点
+    expect(mocks.listToolInstallations).toHaveBeenCalledTimes(1);
+    expect(result.current).toBe(false);
   });
 });

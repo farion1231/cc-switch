@@ -243,17 +243,19 @@
         "oauthHint": "Google 公式は OAuth 個人認証を使用するため API Key は不要です。初回利用時にブラウザが開きます。",
         "apiKeyPlaceholder": "Gemini API Key を入力"
       },
-      "claudeAccount": {
+      "managedAccount": {
         "label": "ログイン方法",
+        "missing": "このコンピューターにないアカウント",
+        "reauthBadge": "再ログインが必要"
+      },
+      "claudeAccount": {
         "default": "Claude Code のログインに追従",
         "defaultDescription": "Claude Code で現在ログイン中のアカウントに追従します",
-        "missing": "このコンピューターにないアカウント",
         "manage": "Claude アカウントを追加または管理",
         "helpTerminal": "設定で Claude の設定フォルダーが上書きされているため、このカードに切り替えても Claude Code のログインは変わりません。選んだアカウントはカードの「ターミナルを開く」から使ってください。",
         "helpWsl": "Claude の設定フォルダーが WSL にあるため、Claude アカウントにはまだ対応していません。このカードに切り替えても Claude Code のログインは変わりません。",
         "help": "このカードに切り替えると、実行中のセッションも含めて Claude Code のログインがすぐに選んだアカウントに変わります。複数のアカウントを同時に使うには、カードの「ターミナルを開く」を使ってください。",
         "claudeAccount": "Claude アカウント",
-        "reauthBadge": "再ログインが必要",
         "terminalHint": "ターミナルを開いて使用",
         "wslHint": "WSL は未対応",
         "plan": {
@@ -265,6 +267,13 @@
           "teamPremium": "Team プレミアム",
           "enterprise": "Enterprise"
         }
+      },
+      "grokAccount": {
+        "default": "Grok CLI のログインに従う",
+        "defaultDescription": "Grok CLI で現在ログインしているアカウントを使います",
+        "manage": "xAI アカウントを追加・管理",
+        "help": "このカードに切り替えると、Grok CLI のログイン（~/.grok/auth.json）が選択したアカウントに替わります。それまでのアカウントは先に認証センターへ保存され、「Grok CLI のログインに従う」カードに戻すと元に戻ります。",
+        "xaiAccount": "xAI アカウント"
       }
     },
     "duplicateLiveIdsLoadFailed": "設定内のプロバイダー識別子を読み込めませんでした。設定を修正してから再度お試しください",
@@ -1091,6 +1100,7 @@
     "toolUpgradeUnanchoredHint": "コマンドラインが実際に使用する箇所を特定できません。既定のアップグレードコマンドを実行します（PATH 上の最初の npm にインストールされる場合があります）。",
     "toolUpgradeUnmanagedTitle": "次のツールのアップグレードをスキップしました",
     "toolUpgradeUnmanagedDetail": "{{tool}}（{{path}}）は npm または認識できるインストーラーでインストールされていないため、CC Switch ではアップグレード方法を判断できません。元のインストール方法でアップグレードしてください（例：winget、Scoop、公式インストールスクリプトの再実行）。",
+    "toolUpgradeDesktopManagedDetail": "この OpenCode CLI は OpenCode Desktop に同梱されており、Desktop アプリと一緒に更新されます。",
     "envBadge": {
       "wsl": "WSL",
       "windows": "Win",
@@ -1266,6 +1276,8 @@
       "credits": "クレジット",
       "leftOf": "残り {{remaining}} / {{total}}",
       "usedOf": "使用 {{used}} / {{total}}",
+      "unlimited": "無制限",
+      "unlimitedUsed": "無制限、使用 {{used}}",
       "usedUp": "使い切りました（全 {{total}}）",
       "detail": "クレジット残り {{remaining}} / 全 {{total}}、使用済み {{used}}",
       "staleNotRunning": "WorkBuddy が起動していないため、前回の結果を表示しています",
@@ -5060,7 +5072,7 @@
   "pluginsPage": {
     "title": "プラグイン",
     "helpTitle": "プラグイン",
-    "help": "Claude Code、Codex、Grok Build、MiniMax Code、OpenClaw、Pi、Antigravity のプラグインをインストール・有効化・削除します。CC Switch は各アプリ付属の CLI を実行するため、ターミナルでそのプラグインコマンドを使うのと同じ結果になります。Pi のプラグインは Pi パッケージで、カタログは npm から取得します。",
+    "help": "Claude Code、Codex、Grok Build、MiniMax Code、OpenClaw、Pi、Antigravity CLI のプラグインをインストール・有効化・削除します。CC Switch は各アプリ付属の CLI を実行するため、ターミナルでそのプラグインコマンドを使うのと同じ結果になります。Pi のプラグインは Pi パッケージで、カタログは npm から取得します。",
     "appAria": "アプリ",
     "viewAria": "プラグインの表示",
     "viewInstalled": "インストール済み",
@@ -5133,6 +5145,7 @@
       "updated": "{{name}} を更新しました",
       "upToDate": "{{name}} は最新です",
       "updateFailed": "{{name}} を更新できませんでした",
+      "updateNeedsReinstall": "このプラグインは旧バージョンの Antigravity が使うフォルダーにあるため、CC Switch では更新できません。アンインストールしてから「見つける」で再インストールすると、最新バージョンになります。",
       "refreshed": "マーケットプレイスを更新しました",
       "refreshFailed": "マーケットプレイスを更新できませんでした",
       "marketAdded": "マーケットプレイス {{source}} を追加しました",

@@ -17,9 +17,7 @@ use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use crate::proxy::usage::{calculator::CostCalculator, parser::TokenUsage};
 use crate::services::{
-    session_usage::{
-        load_sync_cursors, metadata_modified_nanos, update_sync_state_on_conn, SessionSyncResult,
-    },
+    session_usage::{metadata_modified_nanos, update_sync_state_on_conn, SessionSyncResult},
     sql_helpers::INPUT_TOKEN_SEMANTICS_FRESH,
     usage_stats::find_model_pricing,
 };
@@ -39,8 +37,15 @@ fn timestamp_ms(value: &Value) -> Option<i64> {
         .map(|time| time.timestamp_millis())
 }
 
-pub fn sync_qwen_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
-    sync_projects(db, &crate::qwen_config::runtime_dir().join("projects"))
+pub(crate) fn sync_qwen_usage(
+    db: &Database,
+    cursors: &crate::services::session_usage::SyncCursors,
+) -> Result<SessionSyncResult, AppError> {
+    sync_projects_with_cursors(
+        db,
+        &crate::qwen_config::runtime_dir().join("projects"),
+        cursors,
+    )
 }
 
 fn session_files(projects: &Path) -> Vec<PathBuf> {
@@ -66,9 +71,21 @@ fn session_files(projects: &Path) -> Vec<PathBuf> {
     files
 }
 
+#[cfg(test)]
 fn sync_projects(db: &Database, projects: &Path) -> Result<SessionSyncResult, AppError> {
+    sync_projects_with_cursors(
+        db,
+        projects,
+        &crate::services::session_usage::load_sync_cursors(db)?,
+    )
+}
+
+fn sync_projects_with_cursors(
+    db: &Database,
+    projects: &Path,
+    cursors: &crate::services::session_usage::SyncCursors,
+) -> Result<SessionSyncResult, AppError> {
     let mut result = SessionSyncResult::default();
-    let cursors = load_sync_cursors(db)?;
     for path in session_files(projects) {
         let Ok(meta) = fs::metadata(&path) else {
             continue;

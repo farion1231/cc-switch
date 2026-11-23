@@ -127,11 +127,18 @@ export function useSessionContentSearch({
   }, [enabled, listIsSuccess, listUpdatedAt]);
 
   const providerKey = useMemo(() => [...providerIds].sort(), [providerIds]);
+  const currentQuery = enabled ? query.trim() : "";
 
   const search = useQuery({
-    queryKey: sessionContentKeys.search(debounced, providerKey),
-    queryFn: () => sessionsApi.searchContent(debounced, providerKey),
-    enabled: enabled && debounced !== "" && providerKey.length > 0,
+    // Detach the old observer immediately, including during debounce and when
+    // disabled, so React Query aborts its in-flight IPC request.
+    queryKey: sessionContentKeys.search(currentQuery, providerKey),
+    queryFn: ({ signal }) =>
+      sessionsApi.searchContent(currentQuery, providerKey, signal),
+    enabled:
+      currentQuery !== "" &&
+      debounced === currentQuery &&
+      providerKey.length > 0,
     staleTime: 0,
     // 索引读不出来是确定性失败，自动重试只会让提示晚一拍；重试交给界面上的按钮
     retry: false,

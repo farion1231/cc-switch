@@ -555,7 +555,9 @@ pub async fn auth_remove_account(
             remove_codex_oauth_account_with_switch_lock(app_state.inner(), &account_id).await
         }
         AUTH_PROVIDER_XAI_OAUTH => {
-            let auth_manager = xai_state.0.write().await;
+            // 方法只要 `&self`（内部有 mutation_lock 等细粒度锁）：拿读锁，让出 Grok CLI 登录时
+            // 的联网刷新不挡住代理和额度查询
+            let auth_manager = xai_state.0.read().await;
             auth_manager
                 .remove_account(&account_id)
                 .await
@@ -692,7 +694,8 @@ pub async fn auth_logout(
         }
         AUTH_PROVIDER_CODEX_OAUTH => logout_codex_oauth_with_switch_lock(app_state.inner()).await,
         AUTH_PROVIDER_XAI_OAUTH => {
-            let auth_manager = xai_state.0.write().await;
+            // 同 auth_remove_account：只要读锁，联网刷新时不挡住代理和额度查询
+            let auth_manager = xai_state.0.read().await;
             auth_manager.clear_auth().await.map_err(|e| e.to_string())
         }
         AUTH_PROVIDER_AGY_OAUTH => agy_state

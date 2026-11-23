@@ -40,7 +40,7 @@ pub mod thinking_optimizer;
 pub mod thinking_rectifier;
 pub(crate) mod tool_media;
 pub(crate) mod types;
-mod upstream_guard;
+pub(crate) mod upstream_guard;
 pub mod usage;
 
 #[cfg(test)]

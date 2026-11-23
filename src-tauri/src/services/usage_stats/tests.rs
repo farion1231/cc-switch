@@ -2323,6 +2323,21 @@ fn test_effective_usage_dedup_prefers_proxy_for_session_sources() -> Result<(), 
     assert!(provider_stats
         .iter()
         .any(|stat| stat.provider_id == "_codex_session" && stat.request_count == 1));
+    // 各供应商命中率的分子分母加起来等于指标卡：60 / 682
+    assert_eq!(
+        provider_stats
+            .iter()
+            .map(|stat| stat.cache_read_tokens)
+            .sum::<u64>(),
+        60
+    );
+    assert_eq!(
+        provider_stats
+            .iter()
+            .map(|stat| stat.cacheable_input_tokens)
+            .sum::<u64>(),
+        682
+    );
     assert!(!provider_stats
         .iter()
         .any(|stat| stat.provider_id == "_gemini_session"));
@@ -2337,6 +2352,21 @@ fn test_effective_usage_dedup_prefers_proxy_for_session_sources() -> Result<(), 
             .map(|stat| stat.request_count)
             .sum::<u64>(),
         4
+    );
+    // 各模型命中率的分子分母加起来等于指标卡：60 / 682
+    assert_eq!(
+        model_stats
+            .iter()
+            .map(|stat| stat.cache_read_tokens)
+            .sum::<u64>(),
+        60
+    );
+    assert_eq!(
+        model_stats
+            .iter()
+            .map(|stat| stat.cacheable_input_tokens)
+            .sum::<u64>(),
+        682
     );
 
     let logs = db.get_request_logs(&LogFilters::default(), 0, 10)?;
@@ -3167,6 +3197,9 @@ fn test_get_provider_stats_excludes_partial_rollup_boundary_days() -> Result<(),
     assert_eq!(stats[0].provider_id, "p-rollup");
     assert_eq!(stats[0].request_count, 8);
     assert_eq!(stats[0].total_tokens, 1200);
+    // 日汇总也计入命中率分母：新增输入 800，无缓存
+    assert_eq!(stats[0].cacheable_input_tokens, 800);
+    assert_eq!(stats[0].cache_read_tokens, 0);
 
     Ok(())
 }
@@ -3448,6 +3481,9 @@ fn test_get_model_stats_excludes_partial_rollup_boundary_days() -> Result<(), Ap
     assert_eq!(stats[0].model, "claude-3-haiku");
     assert_eq!(stats[0].request_count, 9);
     assert_eq!(stats[0].total_tokens, 1350);
+    // 日汇总也计入命中率分母：新增输入 900，无缓存
+    assert_eq!(stats[0].cacheable_input_tokens, 900);
+    assert_eq!(stats[0].cache_read_tokens, 0);
 
     Ok(())
 }
