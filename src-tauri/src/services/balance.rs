@@ -1,6 +1,6 @@
 //! 供应商余额查询服务
 //!
-//! 支持 DeepSeek、StepFun、SiliconFlow、OpenRouter、Novita AI 的账户余额查询；
+//! 支持 DeepSeek、StepFun、SiliconFlow、OpenRouter、Novita AI、小米 MiMo 的账户余额查询；
 //! 智谱 GLM 的余额只作为套餐查询的回落（见 `query_zhipu_balance`），不参与自动检测。
 //! 返回 UsageResult 格式，与现有用量系统无缝对接。
 //!
@@ -11,6 +11,7 @@
 //!   立即透出错误文案。判定按 reqwest 错误种类在折叠点完成，不依赖错误文案匹配。
 
 use super::usage_http::{parse_f64, send_for_json, JsonReply};
+use crate::codex_config::codex_url_host_matches_any;
 use crate::provider::{UsageData, UsageResult};
 use std::time::Duration;
 
@@ -23,25 +24,43 @@ enum BalanceProvider {
     SiliconFlowEn,
     OpenRouter,
     NovitaAI,
+    /// 小米 MiMo 按量付费（`api.xiaomimimo.com`，`sk-` Key）。Token Plan 是另一套
+    /// 地址和 `tp-` Key，走套餐额度查询。
+    Mimo,
 }
 
 fn detect_provider(base_url: &str) -> Option<BalanceProvider> {
-    let url = base_url.to_lowercase();
-    if url.contains("api.deepseek.com") {
+    let host_is = |hosts: &[&str]| codex_url_host_matches_any(base_url, hosts);
+    if host_is(&["api.deepseek.com"]) {
         Some(BalanceProvider::DeepSeek)
-    } else if url.contains("api.stepfun.ai") || url.contains("api.stepfun.com") {
+    } else if host_is(&["api.stepfun.ai", "api.stepfun.com"]) {
         Some(BalanceProvider::StepFun)
-    } else if url.contains("api.siliconflow.cn") {
+    } else if host_is(&["api.siliconflow.cn"]) {
         Some(BalanceProvider::SiliconFlow)
-    } else if url.contains("api.siliconflow.com") {
+    } else if host_is(&["api.siliconflow.com"]) {
         Some(BalanceProvider::SiliconFlowEn)
-    } else if url.contains("openrouter.ai") {
+    } else if host_is(&["openrouter.ai"]) {
         Some(BalanceProvider::OpenRouter)
-    } else if url.contains("api.novita.ai") {
+    } else if host_is(&["api.novita.ai"]) {
         Some(BalanceProvider::NovitaAI)
+    } else if host_is(&["api.xiaomimimo.com"]) {
+        Some(BalanceProvider::Mimo)
     } else {
         None
     }
+}
+
+/// 按地址认出的余额供应商 id，取值与前端 `BALANCE_PROVIDERS` 的 `id` 一致（两站点的硅基流动同为 `siliconflow`）。
+#[cfg(test)]
+pub(crate) fn detect_provider_id(base_url: &str) -> Option<&'static str> {
+    Some(match detect_provider(base_url)? {
+        BalanceProvider::DeepSeek => "deepseek",
+        BalanceProvider::StepFun => "stepfun",
+        BalanceProvider::SiliconFlow | BalanceProvider::SiliconFlowEn => "siliconflow",
+        BalanceProvider::OpenRouter => "openrouter",
+        BalanceProvider::NovitaAI => "novita",
+        BalanceProvider::Mimo => "mimo",
+    })
 }
 
 fn make_error(msg: String) -> UsageResult {
@@ -338,7 +357,7 @@ pub(crate) async fn query_zhipu_balance(
     base_url: &str,
     api_key: &str,
 ) -> Result<UsageResult, String> {
-    let is_cn = base_url.to_lowercase().contains("bigmodel.cn");
+    let is_cn = codex_url_host_matches_any(base_url, &["bigmodel.cn"]);
     let host = if is_cn {
         "https://open.bigmodel.cn"
     } else {
@@ -397,6 +416,66 @@ fn parse_zhipu_balance(body: &serde_json::Value, is_cn: bool) -> UsageResult {
     }
 }
 
+// ── 小米 MiMo ───────────────────────────────────────────────
+// GET https://api.xiaomimimo.com/v1/platform/balance（mimo.mi.com/docs/zh-CN/api/asset/balance-get）
+// Response: { object, is_available, balance_infos: [{ currency, cash_balance, gift_balance,
+//   frozen_balance, credit_limit, credit_available, total_available }] }，金额都是两位小数的字符串
+
+async fn query_mimo(api_key: &str) -> Result<UsageResult, String> {
+    let client = crate::proxy::http_client::get();
+
+    let request = client
+        .get("https://api.xiaomimimo.com/v1/platform/balance")
+        .header("Authorization", format!("Bearer {api_key}"))
+        .header("Accept", "application/json")
+        .timeout(Duration::from_secs(15));
+    let body = match send_for_json(request).await? {
+        JsonReply::Body(body) => body,
+        JsonReply::Denied(status) => return Ok(make_auth_error(status)),
+        JsonReply::Failed(message) => return Ok(make_error(message)),
+    };
+
+    Ok(parse_mimo_balance(&body))
+}
+
+// 可用余额按文档里 `is_available` 的口径算：`total_available`（现金 + 赠金 + 可用授信，
+// 已加回冻结部分）减去 `frozen_balance`。和 DeepSeek 一样不拿 `is_available` 判 Key 失效。
+fn parse_mimo_balance(body: &serde_json::Value) -> UsageResult {
+    let data: Vec<UsageData> = body
+        .get("balance_infos")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|info| {
+            let total = parse_f64_field(info, "total_available")?;
+            let frozen = parse_f64_field(info, "frozen_balance").unwrap_or(0.0);
+            let currency = info
+                .get("currency")
+                .and_then(|v| v.as_str())
+                .unwrap_or("CNY");
+            Some(UsageData {
+                plan_name: Some("Xiaomi MiMo".to_string()),
+                remaining: Some(total - frozen),
+                total: None,
+                used: None,
+                unit: Some(currency.to_string()),
+                is_valid: Some(true),
+                invalid_message: None,
+                extra: None,
+            })
+        })
+        .collect();
+
+    if data.is_empty() {
+        return make_error("Unexpected balance response shape".to_string());
+    }
+    UsageResult {
+        success: true,
+        data: Some(data),
+        error: None,
+    }
+}
+
 // ── 工具函数 ────────────────────────────────────────────────
 
 /// 解析 JSON 字段为 f64，兼容数字和字符串格式
@@ -435,6 +514,7 @@ pub async fn get_balance(base_url: &str, api_key: &str) -> Result<UsageResult, S
         BalanceProvider::SiliconFlowEn => query_siliconflow(api_key, false).await,
         BalanceProvider::OpenRouter => query_openrouter(api_key).await,
         BalanceProvider::NovitaAI => query_novita(api_key).await,
+        BalanceProvider::Mimo => query_mimo(api_key).await,
     }
 }
 
@@ -634,5 +714,85 @@ mod tests {
         .error
         .unwrap();
         assert!(msg.contains("令牌已过期"), "{msg}");
+    }
+
+    /// 官方文档示例原文（mimo.mi.com/docs/zh-CN/api/asset/balance-get，2026-11-03）。
+    #[test]
+    fn mimo_balance_shows_total_available_minus_frozen() {
+        let result = parse_mimo_balance(&json!({
+            "object": "balance",
+            "is_available": true,
+            "balance_infos": [{
+                "currency": "CNY",
+                "cash_balance": "100.50",
+                "gift_balance": "20.00",
+                "frozen_balance": "0.00",
+                "credit_limit": "500.00",
+                "credit_available": "380.00",
+                "total_available": "500.50"
+            }]
+        }));
+        assert!(result.success);
+        let balance = result.data.unwrap().remove(0);
+        assert_eq!(balance.remaining, Some(500.5));
+        assert_eq!(balance.unit.as_deref(), Some("CNY"));
+        assert_eq!(balance.is_valid, Some(true));
+
+        let result = parse_mimo_balance(&json!({
+            "is_available": false,
+            "balance_infos": [{ "currency": "CNY", "frozen_balance": "12.00", "total_available": "12.00" }]
+        }));
+        let balance = result.data.unwrap().remove(0);
+        assert_eq!(balance.remaining, Some(0.0));
+        // 用完不算 Key 失效
+        assert_eq!(balance.is_valid, Some(true));
+
+        for body in [
+            json!({}),
+            json!({ "balance_infos": [] }),
+            json!({ "balance_infos": [{}] }),
+        ] {
+            let result = parse_mimo_balance(&body);
+            assert!(!result.success, "{body}");
+            assert!(result.error.is_some());
+        }
+    }
+
+    /// 余额接口只认供应商自己的域名（含子域、端口、大小写、末尾的点）；中转站地址里
+    /// 带着这些域名不算，否则会拿中转站的 Key 去查供应商余额。
+    #[test]
+    fn balance_provider_is_detected_by_host_not_substring() {
+        for url in [
+            "https://api.deepseek.com/anthropic",
+            "HTTPS://API.DEEPSEEK.COM",
+            "https://eu.api.deepseek.com:8443/v1",
+            "https://api.deepseek.com./v1",
+            "api.deepseek.com/v1",
+        ] {
+            assert!(
+                matches!(detect_provider(url), Some(BalanceProvider::DeepSeek)),
+                "{url}"
+            );
+        }
+        assert!(matches!(
+            detect_provider("https://openrouter.ai/api/v1"),
+            Some(BalanceProvider::OpenRouter)
+        ));
+        assert!(matches!(
+            detect_provider("https://api.xiaomimimo.com/anthropic"),
+            Some(BalanceProvider::Mimo)
+        ));
+        // Token Plan 地址是另一套 Key，不能拿去查按量余额
+        assert!(detect_provider("https://token-plan-cn.xiaomimimo.com/anthropic").is_none());
+        for url in [
+            "https://relay.example.com/api.deepseek.com/v1",
+            "https://relay.example.com/v1?upstream=https://api.deepseek.com",
+            "https://api.deepseek.com.relay.example.com/v1",
+            "https://xapi.deepseek.com/v1",
+            "https://relay.example.com/openrouter.ai/api/v1",
+            "https://openrouter.ai.cn/api",
+        ] {
+            assert!(detect_provider(url).is_none(), "{url}");
+        }
     }
 }

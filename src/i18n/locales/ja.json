@@ -60,7 +60,9 @@
   "apiKeyInput": {
     "placeholder": "API Key を入力",
     "show": "API Key を表示",
-    "hide": "API Key を隠す"
+    "hide": "API Key を隠す",
+    "copied": "API Key をコピーしました",
+    "copyFailed": "API Key のコピーに失敗しました"
   },
   "jsonEditor": {
     "mustBeObject": "設定はオブジェクト形式の JSON で入力してください（配列や他の型は不可）",
@@ -241,17 +243,19 @@
         "oauthHint": "Google 公式は OAuth 個人認証を使用するため API Key は不要です。初回利用時にブラウザが開きます。",
         "apiKeyPlaceholder": "Gemini API Key を入力"
       },
-      "claudeAccount": {
+      "managedAccount": {
         "label": "ログイン方法",
+        "missing": "このコンピューターにないアカウント",
+        "reauthBadge": "再ログインが必要"
+      },
+      "claudeAccount": {
         "default": "Claude Code のログインに追従",
         "defaultDescription": "Claude Code で現在ログイン中のアカウントに追従します",
-        "missing": "このコンピューターにないアカウント",
         "manage": "Claude アカウントを追加または管理",
         "helpTerminal": "設定で Claude の設定フォルダーが上書きされているため、このカードに切り替えても Claude Code のログインは変わりません。選んだアカウントはカードの「ターミナルを開く」から使ってください。",
         "helpWsl": "Claude の設定フォルダーが WSL にあるため、Claude アカウントにはまだ対応していません。このカードに切り替えても Claude Code のログインは変わりません。",
         "help": "このカードに切り替えると、実行中のセッションも含めて Claude Code のログインがすぐに選んだアカウントに変わります。複数のアカウントを同時に使うには、カードの「ターミナルを開く」を使ってください。",
         "claudeAccount": "Claude アカウント",
-        "reauthBadge": "再ログインが必要",
         "terminalHint": "ターミナルを開いて使用",
         "wslHint": "WSL は未対応",
         "plan": {
@@ -263,6 +267,13 @@
           "teamPremium": "Team プレミアム",
           "enterprise": "Enterprise"
         }
+      },
+      "grokAccount": {
+        "default": "Grok CLI のログインに従う",
+        "defaultDescription": "Grok CLI で現在ログインしているアカウントを使います",
+        "manage": "xAI アカウントを追加・管理",
+        "help": "このカードに切り替えると、Grok CLI のログイン（~/.grok/auth.json）が選択したアカウントに替わります。それまでのアカウントは先に認証センターへ保存され、「Grok CLI のログインに従う」カードに戻すと元に戻ります。",
+        "xaiAccount": "xAI アカウント"
       }
     },
     "duplicateLiveIdsLoadFailed": "設定内のプロバイダー識別子を読み込めませんでした。設定を修正してから再度お試しください",
@@ -597,6 +608,9 @@
       "safetyBackupId": "安全バックアップID",
       "intervalLabel": "自動バックアップ間隔",
       "retainLabel": "バックアップ保持数",
+      "maxTotalLabel": "バックアップ合計サイズ上限",
+      "maxTotalUnlimited": "無制限",
+      "maxTotalHint": "既定では無制限です。設定すると、バックアップフォルダーがこのサイズを超えたときに、古いバックアップから削除します。最新のバックアップと復元で使用中のバックアップは常に保持するため、1 つのバックアップが上限より大きい場合は、フォルダーが上限を超えたままになることがあります。次回のバックアップ時または毎日のメンテナンス時に適用されます。",
       "intervalDisabled": "無効",
       "intervalHours": "{{hours}} 時間",
       "intervalDays": "{{days}} 日",
@@ -1086,6 +1100,7 @@
     "toolUpgradeUnanchoredHint": "コマンドラインが実際に使用する箇所を特定できません。既定のアップグレードコマンドを実行します（PATH 上の最初の npm にインストールされる場合があります）。",
     "toolUpgradeUnmanagedTitle": "次のツールのアップグレードをスキップしました",
     "toolUpgradeUnmanagedDetail": "{{tool}}（{{path}}）は npm または認識できるインストーラーでインストールされていないため、CC Switch ではアップグレード方法を判断できません。元のインストール方法でアップグレードしてください（例：winget、Scoop、公式インストールスクリプトの再実行）。",
+    "toolUpgradeDesktopManagedDetail": "この OpenCode CLI は OpenCode Desktop に同梱されており、Desktop アプリと一緒に更新されます。",
     "envBadge": {
       "wsl": "WSL",
       "windows": "Win",
@@ -1261,6 +1276,8 @@
       "credits": "クレジット",
       "leftOf": "残り {{remaining}} / {{total}}",
       "usedOf": "使用 {{used}} / {{total}}",
+      "unlimited": "無制限",
+      "unlimitedUsed": "無制限、使用 {{used}}",
       "usedUp": "使い切りました（全 {{total}}）",
       "detail": "クレジット残り {{remaining}} / 全 {{total}}、使用済み {{used}}",
       "staleNotRunning": "WorkBuddy が起動していないため、前回の結果を表示しています",
@@ -1453,6 +1470,7 @@
     "contentSearchToggle": "メッセージ本文を検索",
     "contentSearchToggleFailed": "本文検索の設定を変更できません：{{error}}",
     "contentIndexing": "本文のインデックスを作成中（{{processed}}/{{total}}）。本文の結果はまだ不完全な場合があります",
+    "contentSearchFailed": "本文検索に失敗しました。今はタイトル・ディレクトリ・最初と最後のメッセージだけで検索しています",
     "contentHitPrefix": "本文：",
     "contentHitMore": "（{{count}} 件のメッセージが一致）",
     "moreContentHits": "その他の本文一致",
@@ -1815,6 +1833,7 @@
       "subrouter": "SubRouter は、1つのキーで複数のモデルとプロバイダーにアクセスできる AI 中継アグリゲーターです。",
       "qiniu": "Qiniu Cloud（七牛云）はマルチプロトコル対応の AI 中継プラットフォームです。1つのキーでネイティブの Claude・GPT・Gemini モデルを利用でき、Anthropic／OpenAI／Gemini の各 API に対応します。",
       "haoai": "hao.ai は開発者とチーム向けの高速で安定した LLM 統合 API ゲートウェイです。1 つのキーで GPT、Claude、Grok などの主要モデルを OpenAI・Anthropic 互換 API で利用でき、モデルルーティング、フェイルオーバー、完全な呼び出しログを備え、価格は公式参考価格の最大 85% オフです。CC Switch ユーザーがこのリンクから登録すると、初回注文で 5% のボーナスクレジットを受け取れます！",
+      "stringai": "StringAI（弦界）はコストパフォーマンスに優れ、高速で安定したモデル API プラットフォームで、AI コーディング、画像生成、音声合成、動画生成の 4 つの機能にワンストップでアクセスできます。CC Switch 利用者限定特典：このリンクから登録すると、初回チャージ $3.74 で $3.74 のボーナス額度がもらえます！",
       "fenno": "Fenno.ai は安定・高効率な API 中継サービスで、幅広い主要モデルを利用できます。CC Switch 利用者限定特典：このリンクから 1.99 ドルで 50 ドル相当の Trial プランを購入できます（有効期間 7 日間）！",
       "teamorouter": "TeamoRouter なら 1 つのキーで Claude Code から Opus 5.5・Sonnet 5.5・Fable 5.1 を利用でき、Opus 5.5 は公式価格の約 28%、従量課金、Anthropic ネイティブプロトコル対応です。このリンクから登録した CC Switch ユーザーは、$10 / $20 / $50 の初回チャージで 10% のクレジットが追加されます！",
       "ppio": "PPIO は中国有数の独立系 Agentic Cloud プロバイダーで、API キー 1 つで主要なオープンソースモデルをすべて利用できます。このリンクから登録し実名認証を完了すると、¥10 のクーポンがもらえます。",
@@ -2106,6 +2125,7 @@
     "selectAccount": "アカウントを選択",
     "selectAccountPlaceholder": "xAI アカウントを選択",
     "useDefaultAccount": "デフォルトアカウントを使用",
+    "account": "xAI アカウント",
     "accounts": "xAI アカウント",
     "defaultAccount": "デフォルト",
     "expired": "認証情報が失効しました",
@@ -2535,8 +2555,8 @@
     "input": "Input",
     "output": "Output",
     "cacheWrite": "作成",
-    "cacheWriteNotReported": "OpenAI プロトコルはキャッシュ作成を区別せず、キャッシュヒットのみ報告します",
-    "cacheWritePartial": "一部のプロトコル（OpenAIなど）はキャッシュ作成を報告しないため、値は不完全な可能性があります",
+    "cacheWriteNotReported": "Gemini と Grok Build はキャッシュ作成を報告せず、キャッシュヒットのみ報告します",
+    "cacheWritePartial": "一部のプロトコル（Geminiなど）はキャッシュ作成を報告しないため、値は不完全な可能性があります",
     "cacheRead": "ヒット",
     "baseCost": "基本",
     "costMultiplier": "コスト倍率",
@@ -2677,7 +2697,7 @@
       "label": "指標",
       "more": "その他の指標",
       "realTotalHelpTitle": "実消費 Tokens の計算方法",
-      "realTotalHelp": "新規入力 + 出力 + キャッシュ書き込み + キャッシュヒット。新規入力にキャッシュは含みません。一部のプロトコル（OpenAI など）はキャッシュ書き込みを報告しないため、その分が少なく出ることがあります。",
+      "realTotalHelp": "新規入力 + 出力 + キャッシュ書き込み + キャッシュヒット。新規入力にキャッシュは含みません。一部のプロトコル（Gemini など）はキャッシュ書き込みを報告しないため、その分が少なく出ることがあります。",
       "hitRateHelpTitle": "キャッシュヒット率の計算方法",
       "hitRateHelp": "キャッシュヒット ÷（新規入力 + キャッシュ書き込み + キャッシュヒット）。"
     },
@@ -3516,6 +3536,7 @@
       "skillDirNotFound": "スキルディレクトリが見つかりません: {{path}}",
       "directoryConflict": "スキルディレクトリ '{{directory}}' は既に {{existing_repo}} で使用されています。{{new_repo}} からインストールできません",
       "emptyArchive": "ダウンロードしたアーカイブが空です",
+      "archiveInvalid": "ダウンロードしたものは ZIP アーカイブではありません。このサイトは GitHub / GitLab / Gitea のリポジトリではない可能性があり、現在はサポートされていません",
       "invalidRepoRef": "リポジトリの指定が不正です：{{owner}}/{{name}}",
       "archiveTooLarge": "アーカイブが展開上限 {{limit_mb}} MB を超えたため中止しました",
       "archiveDownloadTooLarge": "リポジトリのアーカイブがダウンロード上限 {{limit_mb}} MB を超えたため中止しました",
@@ -3755,7 +3776,10 @@
       "command": "コマンド",
       "args": "引数",
       "env": "環境変数",
-      "url": "URL"
+      "url": "URL",
+      "type": "タイプ",
+      "cwd": "作業ディレクトリ",
+      "headers": "ヘッダー"
     },
     "prompt": {
       "title": "システムプロンプトをインポート",
@@ -3789,7 +3813,8 @@
     "risk": {
       "envHijack": "この設定には、プロセスの読み込み動作を変える環境変数（ライブラリの注入、CA 証明書の差し替えなど）が含まれています。信頼できる提供元か確認してください。",
       "privateEndpoint": "このアドレスはローカルホストまたは内部ネットワークを指しています。自分で立てたローカルサービス以外はインポートしないでください。",
-      "shellCommand": "この設定はシェル経由でコマンド全体を実行します。実際に動作する内容は引数にあります。1 行ずつ確認してください。"
+      "shellCommand": "この設定はシェル経由でコマンド全体を実行します。実際に動作する内容は引数にあります。1 行ずつ確認してください。",
+      "mcpDangerousField": "この MCP 設定には、ホストの環境変数の読み取り（bearer_token_env_var、env_http_headers、env_vars など）、ヘルパーコマンドの実行（http_headers_helper）、または作業ディレクトリの変更（cwd）を行える高リスク項目が含まれています。完全に信頼できる提供元の場合のみインポートしてください。"
     }
   },
   "iconPicker": {
@@ -5059,7 +5084,7 @@
   "pluginsPage": {
     "title": "プラグイン",
     "helpTitle": "プラグイン",
-    "help": "Claude Code、Codex、Grok Build、MiniMax Code、OpenClaw、Pi のプラグインをインストール・有効化・削除します。CC Switch は各アプリ付属の CLI を実行するため、ターミナルでそのプラグインコマンドを使うのと同じ結果になります。Pi のプラグインは Pi パッケージで、カタログは npm から取得します。",
+    "help": "Claude Code、Codex、Grok Build、MiniMax Code、OpenClaw、Pi、Antigravity CLI のプラグインをインストール・有効化・削除します。CC Switch は各アプリ付属の CLI を実行するため、ターミナルでそのプラグインコマンドを使うのと同じ結果になります。Pi のプラグインは Pi パッケージで、カタログは npm から取得します。",
     "appAria": "アプリ",
     "viewAria": "プラグインの表示",
     "viewInstalled": "インストール済み",
@@ -5119,9 +5144,11 @@
     "confirmRemoveMarketBody": "{{app}} はこのマーケットプレイスのプラグインを表示しなくなり、ここからインストールしたプラグインも削除されることがあります。後で再追加できます。",
     "toast": {
       "installed": "{{name}} をインストールしました",
+      "installedNeedsConfig": "無効状態でインストールされました。{{app}} で /plugin を実行し、MCP サーバーを設定してから有効化してください。",
       "installFailed": "{{name}} をインストールできませんでした",
       "installNeedsTerminal": "このプラグインはインストール時にマーケットプレイスが宣言したコマンドをこのマシンで実行します。CC Switch が代わりに承認することはありません。ターミナルで {{command}} を実行して確認してから、戻って更新してください。",
       "authRequired": "{{app}} を使うには先にサインインが必要です。ターミナルで {{command}} を実行してサインインしてから、もう一度お試しください。",
+      "pluginInUse": "このプラグインは別の {{app}} / {{cli}} プロセス（実行中のセッション、Hub、バックグラウンドサービスなど）で使用中です。実行中のセッションや関連プロセスを閉じてから再試行してください。",
       "uninstalled": "{{name}} をアンインストールしました",
       "uninstallFailed": "{{name}} をアンインストールできませんでした",
       "enabled": "{{name}} を有効にしました",
@@ -5130,6 +5157,7 @@
       "updated": "{{name}} を更新しました",
       "upToDate": "{{name}} は最新です",
       "updateFailed": "{{name}} を更新できませんでした",
+      "updateNeedsReinstall": "このプラグインは旧バージョンの Antigravity が使うフォルダーにあるため、CC Switch では更新できません。アンインストールしてから「見つける」で再インストールすると、最新バージョンになります。",
       "refreshed": "マーケットプレイスを更新しました",
       "refreshFailed": "マーケットプレイスを更新できませんでした",
       "marketAdded": "マーケットプレイス {{source}} を追加しました",

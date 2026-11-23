@@ -175,6 +175,7 @@ export const isRemovable = (entry: PluginEntry) =>
 export function installedFromCatalog(
   app: PluginApp,
   entry: PluginEntry,
+  enabled = true,
 ): PluginEntry {
   const id = installedIdOf(entry);
   return {
@@ -186,7 +187,7 @@ export function installedFromCatalog(
     installedId: null,
     catalogId: null,
     installed: true,
-    enabled: true,
+    enabled,
     manageable: true,
     removable: true,
     scope: app === "claude" ? "user" : null,
@@ -201,7 +202,7 @@ interface PluginWrite {
   /** 发出请求前就改界面；失败时用 revert 改回 */
   optimistic?: { apply: InstalledPatch; revert: InstalledPatch };
   /** 成功后立即改界面（不等对账） */
-  onSuccess?: InstalledPatch;
+  onSuccess?: (outcome: PluginActionOutcome) => InstalledPatch;
   /** 操作结束后要在后台重读的查询 */
   reconcile: ReconcileTarget[];
 }
@@ -271,7 +272,7 @@ export function usePluginWrites(app: PluginApp) {
         try {
           const outcome = await write.task();
           if (write.onSuccess)
-            patchInstalled(queryClient, app, write.onSuccess);
+            patchInstalled(queryClient, app, write.onSuccess(outcome));
           return { ok: true, outcome };
         } catch (error) {
           if (write.optimistic) {

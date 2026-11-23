@@ -569,6 +569,29 @@ struct CopilotAuthStore {
     authenticated_at: Option<i64>,
 }
 
+/// 按磁盘上的账号表给出 `(account_id -> GitHub 用户名, 默认账号 id)`（同 [`GitHubAccount::from`]）：托盘同步读状态用。
+pub fn labels_on_disk(data_dir: &std::path::Path) -> (HashMap<String, String>, Option<String>) {
+    let Ok(content) = fs::read_to_string(data_dir.join("copilot_auth.json")) else {
+        return (HashMap::new(), None);
+    };
+    let Ok(store) = serde_json::from_str::<CopilotAuthStore>(&content) else {
+        return (HashMap::new(), None);
+    };
+    if store.version < 2 {
+        return (HashMap::new(), None);
+    }
+    let default_id = store
+        .default_account_id
+        .filter(|id| store.accounts.contains_key(id))
+        .or_else(|| CopilotAuthManager::fallback_default_account_id(&store.accounts));
+    let labels = store
+        .accounts
+        .iter()
+        .map(|(id, data)| (id.clone(), GitHubAccount::from(data).login))
+        .collect();
+    (labels, default_id)
+}
+
 /// Copilot 认证管理器（支持多账号）
 pub struct CopilotAuthManager {
     /// 所有 GitHub 账号（key = GitHub user ID）

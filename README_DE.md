@@ -80,6 +80,11 @@ Die Plattform unterstützt außerdem Parallelität auf Unternehmensniveau, eine 
 </tr>
 
 <tr>
+<td width="180"><a href="https://www.string.ink/register?ref=661AE533A60AF110"><img src="assets/partners/logos/stringai-banner.png" alt="StringAI" width="150"></a></td>
+<td>Danke an StringAI für die Unterstützung dieses Projekts! StringAI ist eine preiswerte, schnelle und stabile Modell-API-Plattform, die vier Fähigkeiten aus einer Hand bietet: KI-Coding, Bildgenerierung, Sprachsynthese (TTS) und Videogenerierung. Sie bündelt viele bekannte Modelle aus aller Welt und bietet die Wahl zwischen selbst gehosteten Ressourcen, Cloud-Anbietern und offiziellen APIs – passend für Hochschulen, Unternehmen, einzelne Entwickler und Start-up-Teams. Ein professionelles Team unterstützt bei der Einrichtung und mit technischem Support. StringAI bietet CC-Switch-Nutzern ein besonderes Angebot: Registrieren Sie sich über <a href="https://www.string.ink/register?ref=661AE533A60AF110">diesen Link</a> und erhalten Sie bei Ihrer ersten Aufladung von 3,74 $ zusätzlich 3,74 $ Bonusguthaben!</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://api.fenno.ai/register?redirect=/purchase?tab=subscription%26group=16&aff=P9MR3D3PLCNL"><img src="assets/partners/logos/fenno-banner.png" alt="Fenno.ai" width="150"></a></td>
 <td>Danke an Fenno.ai für die Unterstützung dieses Projekts! Fenno.ai ist ein stabiler und effizienter API-Relay-Dienstleister, der sich derzeit hauptsächlich auf Codex-Relay konzentriert. Er ist mit den OpenAI- und Anthropic-Protokollen kompatibel und lässt sich flexibel mit Codex, Claude Code, OpenCode und anderen gängigen Coding-Tools nutzen. Er unterstützt zuverlässig Workloads auf Unternehmensniveau von Hunderten Milliarden Tokens pro Tag und bietet B2B-Abrechnung sowie Rechnungsstellung für Unternehmen im In- und Ausland. Fenno.ai bietet einen exklusiven Vorteil für CC-Switch-Nutzer: Abonnieren Sie über <a href="https://api.fenno.ai/register?redirect=/purchase?tab=subscription%26group=16&aff=P9MR3D3PLCNL">diesen Link</a> den $1,99-Trial-Plan im Wert von $50 Guthaben (7 Tage gültig) und erhalten Sie bis zu 20% Empfehlungsprämien — je mehr Einladungen, desto mehr Belohnung!</td>
 </tr>

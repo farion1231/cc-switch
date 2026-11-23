@@ -38,6 +38,7 @@ function getErrorI18nKey(code: string): string {
     SKILL_DIR_NOT_FOUND: "skills.error.skillDirNotFound",
     SKILL_DIRECTORY_CONFLICT: "skills.error.directoryConflict",
     EMPTY_ARCHIVE: "skills.error.emptyArchive",
+    ARCHIVE_INVALID: "skills.error.archiveInvalid",
     INVALID_REPO_REF: "skills.error.invalidRepoRef",
     ARCHIVE_TOO_LARGE: "skills.error.archiveTooLarge",
     ARCHIVE_DOWNLOAD_TOO_LARGE: "skills.error.archiveDownloadTooLarge",

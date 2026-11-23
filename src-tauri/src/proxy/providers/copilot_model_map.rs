@@ -332,15 +332,41 @@ mod tests {
     }
 
     #[test]
-    fn one_m_bracket_to_dash() {
-        assert_eq!(
-            normalize_to_copilot_id("claude-sonnet-4-6[1m]"),
-            Some("claude-sonnet-4.6-1m".to_string())
-        );
-        assert_eq!(
-            normalize_to_copilot_id("claude-opus-4-6[1m]"),
-            Some("claude-opus-4.6-1m".to_string())
-        );
+    fn normalizes_model_ids_to_copilot_form() {
+        for (case, input_a, expected_a, input_b, expected_b) in [
+            (
+                "one_m_bracket_to_dash",
+                "claude-sonnet-4-6[1m]",
+                "claude-sonnet-4.6-1m",
+                "claude-opus-4-6[1m]",
+                "claude-opus-4.6-1m",
+            ),
+            (
+                "date_suffix_stripped",
+                "claude-haiku-4-5-20251001",
+                "claude-haiku-4.5",
+                "claude-sonnet-4-5-20250929",
+                "claude-sonnet-4.5",
+            ),
+            (
+                "case_insensitive_on_prefix_and_suffix",
+                "Claude-Sonnet-4-6",
+                "Claude-Sonnet-4.6",
+                "claude-sonnet-4-6[1M]",
+                "claude-sonnet-4.6-1m",
+            ),
+        ] {
+            assert_eq!(
+                normalize_to_copilot_id(input_a),
+                Some(expected_a.to_string()),
+                "{case}"
+            );
+            assert_eq!(
+                normalize_to_copilot_id(input_b),
+                Some(expected_b.to_string()),
+                "{case}"
+            );
+        }
     }
 
     #[test]
@@ -350,18 +376,6 @@ mod tests {
         assert_eq!(
             normalize_to_copilot_id("claude-sonnet-4.6[1m]"),
             Some("claude-sonnet-4.6-1m".to_string())
-        );
-    }
-
-    #[test]
-    fn date_suffix_stripped() {
-        assert_eq!(
-            normalize_to_copilot_id("claude-haiku-4-5-20251001"),
-            Some("claude-haiku-4.5".to_string())
-        );
-        assert_eq!(
-            normalize_to_copilot_id("claude-sonnet-4-5-20250929"),
-            Some("claude-sonnet-4.5".to_string())
         );
     }
 
@@ -384,18 +398,6 @@ mod tests {
     fn legacy_three_part_versions_untouched() {
         assert_eq!(normalize_to_copilot_id("claude-3-5-sonnet"), None);
         assert_eq!(normalize_to_copilot_id("claude-3-5-sonnet-20241022"), None);
-    }
-
-    #[test]
-    fn case_insensitive_on_prefix_and_suffix() {
-        assert_eq!(
-            normalize_to_copilot_id("Claude-Sonnet-4-6"),
-            Some("Claude-Sonnet-4.6".to_string())
-        );
-        assert_eq!(
-            normalize_to_copilot_id("claude-sonnet-4-6[1M]"),
-            Some("claude-sonnet-4.6-1m".to_string())
-        );
     }
 
     #[test]
@@ -452,36 +454,47 @@ mod tests {
     }
 
     #[test]
-    fn resolve_exact_match_after_normalize() {
-        let models = vec![
-            model("claude-sonnet-4.6"),
-            model("claude-opus-4.6"),
-            model("claude-haiku-4.5"),
-        ];
-        assert_eq!(
-            resolve_against_models("claude-sonnet-4-6", &models),
-            Some("claude-sonnet-4.6".to_string())
-        );
+    fn resolves_against_available_models() {
+        for (case, available_a, available_b, available_c, requested, expected) in [
+            (
+                "resolve_exact_match_after_normalize",
+                "claude-sonnet-4.6",
+                "claude-opus-4.6",
+                "claude-haiku-4.5",
+                "claude-sonnet-4-6",
+                "claude-sonnet-4.6",
+            ),
+            // 用户请求 opus 4.8 但 Copilot 账号只有 opus 4.6
+            (
+                "resolve_falls_back_to_highest_family_version",
+                "claude-opus-4.5",
+                "claude-opus-4.6",
+                "claude-sonnet-4.6",
+                "claude-opus-4.8",
+                "claude-opus-4.6",
+            ),
+            (
+                "resolve_prefers_1m_when_requested",
+                "claude-sonnet-4.6",
+                "claude-sonnet-4.6-1m",
+                "claude-opus-4.6",
+                "claude-sonnet-4-6[1m]",
+                "claude-sonnet-4.6-1m",
+            ),
+        ] {
+            let models = vec![model(available_a), model(available_b), model(available_c)];
+            assert_eq!(
+                resolve_against_models(requested, &models),
+                Some(expected.to_string()),
+                "{case}"
+            );
+        }
     }
 
     #[test]
     fn resolve_returns_none_when_already_valid() {
         let models = vec![model("claude-sonnet-4.6")];
         assert_eq!(resolve_against_models("claude-sonnet-4.6", &models), None);
-    }
-
-    #[test]
-    fn resolve_falls_back_to_highest_family_version() {
-        // 用户请求 opus 4.8 但 Copilot 账号只有 opus 4.6
-        let models = vec![
-            model("claude-opus-4.5"),
-            model("claude-opus-4.6"),
-            model("claude-sonnet-4.6"),
-        ];
-        assert_eq!(
-            resolve_against_models("claude-opus-4.8", &models),
-            Some("claude-opus-4.6".to_string())
-        );
     }
 
     #[test]
@@ -733,19 +746,6 @@ mod tests {
                 );
             }
         }
-    }
-
-    #[test]
-    fn resolve_prefers_1m_when_requested() {
-        let models = vec![
-            model("claude-sonnet-4.6"),
-            model("claude-sonnet-4.6-1m"),
-            model("claude-opus-4.6"),
-        ];
-        assert_eq!(
-            resolve_against_models("claude-sonnet-4-6[1m]", &models),
-            Some("claude-sonnet-4.6-1m".to_string())
-        );
     }
 
     #[test]

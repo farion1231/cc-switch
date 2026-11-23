@@ -80,6 +80,11 @@ Claude Code / Codex / Gemini 官方通道分別低至原價的 38% / 2% / 9%，�
 </tr>
 
 <tr>
+<td width="180"><a href="https://www.string.ink/register?ref=661AE533A60AF110"><img src="assets/partners/logos/stringai-banner.png" alt="StringAI" width="150"></a></td>
+<td>感謝弦界 StringAI 贊助本專案！弦界 StringAI 是一個高性價比、高效穩定的模型 API 平台，一站式接入 AI 程式設計（Coding）、圖像生成（Image）、語音合成（TTS）和影片生成（Video）四大能力。匯聚全球多款知名模型，提供自部署、雲端服務商及官方 API 等多種資源選擇，滿足高校、企業、個人開發者和創業團隊的接入需求，並由專業團隊提供接入指導與技術支援。弦界為 CC Switch 使用者提供了專屬福利，透過<a href="https://www.string.ink/register?ref=661AE533A60AF110">此連結</a>註冊，首儲 3.74 美元送 3.74 美元，獲贈 3.74 美元額外獎勵額度！</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://api.fenno.ai/register?redirect=/purchase?tab=subscription%26group=16&aff=P9MR3D3PLCNL"><img src="assets/partners/logos/fenno-banner.png" alt="Fenno.ai" width="150"></a></td>
 <td>感謝 Fenno.ai 贊助本專案！Fenno.ai 是一家穩定、高效的 API 中轉服務商，目前專注於 Codex 中轉。它相容 OpenAI 與 Anthropic 協定，可靈活用於 Codex、Claude Code、OpenCode 等主流程式開發工具，穩定支撐每日數千億 Token 的企業級負載，並支援境內外主體的企業（B2B）結算與發票。Fenno.ai 為 CC Switch 用戶提供專屬福利：透過<a href="https://api.fenno.ai/register?redirect=/purchase?tab=subscription%26group=16&aff=P9MR3D3PLCNL">此連結</a>訂閱 $1.99 體驗方案，即可獲得價值 $50 的額度（有效期 7 天），並可賺取最高 20% 的推薦獎勵，邀請越多賺越多！</td>
 </tr>

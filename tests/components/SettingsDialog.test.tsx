@@ -101,15 +101,13 @@ const createImportExportMock = () => ({
 
 let settingsMock = createSettingsMock();
 let importExportMock = createImportExportMock();
-const useImportExportSpy = vi.fn();
 
 vi.mock("@/hooks/useSettings", () => ({
   useSettings: () => settingsMock,
 }));
 
 vi.mock("@/hooks/useImportExport", () => ({
-  useImportExport: (options?: Record<string, unknown>) =>
-    useImportExportSpy(options),
+  useImportExport: () => importExportMock,
 }));
 
 vi.mock("@/lib/query", () => ({
@@ -187,8 +185,6 @@ describe("SettingsPage", () => {
     tMock.mockImplementation((key: string) => key);
     settingsMock = createSettingsMock();
     importExportMock = createImportExportMock();
-    useImportExportSpy.mockReset();
-    useImportExportSpy.mockImplementation(() => importExportMock);
     toastSuccessMock.mockReset();
     toastErrorMock.mockReset();
     restartMock.mockClear();
@@ -292,16 +288,6 @@ describe("SettingsPage", () => {
     expect(screen.getByText("webdav-sync-section")).toBeInTheDocument();
     expect(screen.getByText("backup-list-section")).toBeInTheDocument();
     expect(screen.getByText("log-config-panel")).toBeInTheDocument();
-  });
-
-  it("passes onImportSuccess through to the import hook", () => {
-    const onImportSuccess = vi.fn();
-
-    renderSettingsPage({ onImportSuccess });
-
-    expect(useImportExportSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ onImportSuccess }),
-    );
   });
 
   it("drives per-app directories and saves only after a change", async () => {

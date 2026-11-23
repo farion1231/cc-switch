@@ -1,8 +1,10 @@
 import React, { useState } from "react";
-import { useCredentialEditProtection } from "@/contexts/CredentialEditProtectionContext";
-import { Eye, EyeOff } from "lucide-react";
+import { Copy, Eye, EyeOff } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { fieldClass } from "@/components/ui/input";
+import { useCredentialEditProtection } from "@/contexts/CredentialEditProtectionContext";
+import { copyText } from "@/lib/clipboard";
+import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 import { REQUIRED_LABEL } from "./BasicFormFields";
 
@@ -34,6 +36,17 @@ const ApiKeyInput: React.FC<ApiKeyInputProps> = ({
   const { t } = useTranslation();
   const [showKey, setShowKey] = useState(false);
   const protectedCredential = useCredentialEditProtection();
+  // 复制和显示条件都按 trim 后判断，与表单「是否已填」的校验保持一致
+  const trimmedValue = value.trim();
+
+  const handleCopy = async () => {
+    try {
+      await copyText(trimmedValue);
+      toast.success(t("apiKeyInput.copied"));
+    } catch {
+      toast.error(t("apiKeyInput.copyFailed"));
+    }
+  };
 
   return (
     <div className="space-y-2">
@@ -47,7 +60,20 @@ const ApiKeyInput: React.FC<ApiKeyInputProps> = ({
         >
           {label}
         </label>
-        {labelAside}
+        {/* 复制在前、获取链接在后：Key 为空时复制按钮消失，链接不跳位 */}
+        <div className="flex items-center gap-3">
+          {!disabled && trimmedValue && (
+            <button
+              type="button"
+              onClick={handleCopy}
+              className="flex items-center gap-1 text-caption text-fg-2 transition-colors hover:text-fg-1"
+            >
+              <Copy className="h-3.5 w-3.5" />
+              {t("common.copy")}
+            </button>
+          )}
+          {labelAside}
+        </div>
       </div>
       <div className="relative">
         <input

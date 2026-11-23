@@ -1,5 +1,3 @@
-#![allow(non_snake_case)]
-
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use tauri::State;
