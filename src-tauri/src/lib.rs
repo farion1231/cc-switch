@@ -1884,6 +1884,7 @@ pub fn run() {
             commands::diagnose_ip,
             // Window theme control
             commands::set_window_theme,
+            commands::get_system_theme,
             // Generic managed auth commands
             commands::auth_start_login,
             commands::auth_poll_for_account,
