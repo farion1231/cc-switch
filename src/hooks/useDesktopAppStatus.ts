@@ -19,8 +19,6 @@ export const desktopAppKeys = {
   status: (app: AppId) => ["desktop-app-status", app] as const,
 };
 
-const STATUS_REFETCH_INTERVAL = 5_000;
-
 export function useDesktopAppStatus(app: AppId) {
   const supported = isDesktopApp(app) && (isWindows() || isMac() || isLinux());
   const queryClient = useQueryClient();
@@ -31,8 +29,8 @@ export function useDesktopAppStatus(app: AppId) {
     queryKey: desktopAppKeys.status(app),
     queryFn: () => desktopAppApi.getStatus(app),
     enabled: supported,
-    staleTime: STATUS_REFETCH_INTERVAL,
-    refetchInterval: STATUS_REFETCH_INTERVAL,
+    // 仅在进入页面、窗口重新聚焦或操作结束后检测，避免周期性全盘/进程扫描。
+    staleTime: 0,
     retry: false,
   });
 

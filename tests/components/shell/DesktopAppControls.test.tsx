@@ -1,6 +1,6 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DesktopAppControls } from "@/components/shell/DesktopAppControls";
@@ -89,6 +89,20 @@ describe("DesktopAppControls", () => {
 
     expect(screen.getByRole("button", { name: START_LABEL })).toBeDisabled();
     expect(screen.getByRole("button", { name: RESTART_LABEL })).toBeDisabled();
+  });
+
+  it("仅按需检测，不启动 5 秒轮询", async () => {
+    vi.useFakeTimers();
+    try {
+      renderControls();
+
+      expect(mocks.getStatus).toHaveBeenCalledTimes(1);
+      await act(() => vi.advanceTimersByTimeAsync(10_000));
+
+      expect(mocks.getStatus).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("已安装未运行：启动和重启都可用，点启动会调用后端", async () => {
