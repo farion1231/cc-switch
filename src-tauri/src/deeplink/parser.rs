@@ -192,6 +192,12 @@ fn parse_provider_deeplink(
     let usage_script = params.get("usageScript").cloned();
     let usage_api_key = params.get("usageApiKey").cloned();
     let usage_base_url = params.get("usageBaseUrl").cloned();
+    if let Some(ref ubu) = usage_base_url {
+        let trimmed = ubu.trim();
+        if !trimmed.is_empty() {
+            validate_url(trimmed, "usageBaseUrl")?;
+        }
+    }
     let usage_access_token = params.get("usageAccessToken").cloned();
     let usage_user_id = params.get("usageUserId").cloned();
     let usage_auto_interval = params
@@ -466,4 +472,36 @@ fn parse_skill_deeplink(
         usage_user_id: None,
         usage_auto_interval: None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_provider_rejects_invalid_usage_base_url() {
+        for bad in ["javascript:alert(1)", "file:///etc/passwd", "not-a-url"] {
+            let link = Url::parse_with_params(
+                "ccswitch://v1/import",
+                &[
+                    ("resource", "provider"),
+                    ("app", "claude"),
+                    ("name", "Test"),
+                    ("endpoint", "https://api.example.com"),
+                    ("apiKey", "sk-1"),
+                    ("usageBaseUrl", bad),
+                ],
+            )
+            .unwrap()
+            .to_string();
+            let res = parse_deeplink_url(&link);
+            assert!(
+                res.is_err(),
+                "invalid usageBaseUrl '{bad}' must be rejected, got: {res:?}"
+            );
+        }
+
+        let valid = "ccswitch://v1/import?resource=provider&app=claude&name=Test&endpoint=https%3A%2F%2Fapi.example.com&apiKey=sk-1&usageBaseUrl=https%3A%2F%2Fusage.example.com";
+        assert!(parse_deeplink_url(valid).is_ok());
+    }
 }
