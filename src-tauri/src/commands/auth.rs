@@ -307,6 +307,7 @@ pub async fn auth_start_login(
 #[allow(clippy::too_many_arguments)]
 #[tauri::command(rename_all = "camelCase")]
 pub async fn auth_poll_for_account(
+    app: tauri::AppHandle,
     auth_provider: String,
     device_code: String,
     github_domain: Option<String>,
@@ -318,7 +319,7 @@ pub async fn auth_poll_for_account(
     claude_state: State<'_, ClaudeAccountState>,
 ) -> Result<Option<ManagedAuthAccount>, String> {
     let auth_provider = ensure_auth_provider(&auth_provider)?;
-    match auth_provider {
+    let result = match auth_provider {
         AUTH_PROVIDER_GITHUB_COPILOT => {
             let auth_manager = copilot_state.0.write().await;
             match auth_manager
@@ -394,7 +395,11 @@ pub async fn auth_poll_for_account(
             Ok(account.map(map_claude_account))
         }
         _ => unreachable!(),
+    };
+    if matches!(&result, Ok(Some(_))) {
+        crate::tray::schedule_tray_status_check(&app);
     }
+    result
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -527,6 +532,7 @@ pub async fn auth_get_status(
 #[allow(clippy::too_many_arguments)]
 #[tauri::command(rename_all = "camelCase")]
 pub async fn auth_remove_account(
+    app: tauri::AppHandle,
     auth_provider: String,
     account_id: String,
     app_state: State<'_, AppState>,
@@ -537,7 +543,7 @@ pub async fn auth_remove_account(
     claude_state: State<'_, ClaudeAccountState>,
 ) -> Result<(), String> {
     let auth_provider = ensure_auth_provider(&auth_provider)?;
-    match auth_provider {
+    let result = match auth_provider {
         AUTH_PROVIDER_GITHUB_COPILOT => {
             let auth_manager = copilot_state.0.write().await;
             auth_manager
@@ -578,7 +584,10 @@ pub async fn auth_remove_account(
             .await
         }
         _ => unreachable!(),
-    }
+    };
+    // 删除账号可能已成功、后续解绑失败，仍检查落盘后的账号标签。
+    crate::tray::schedule_tray_status_check(&app);
+    result
 }
 
 pub(crate) async fn remove_codex_oauth_account_with_switch_lock(
@@ -609,6 +618,7 @@ pub(crate) async fn remove_codex_oauth_account_with_switch_lock(
 #[allow(clippy::too_many_arguments)]
 #[tauri::command(rename_all = "camelCase")]
 pub async fn auth_set_default_account(
+    app: tauri::AppHandle,
     auth_provider: String,
     account_id: String,
     copilot_state: State<'_, CopilotAuthState>,
@@ -619,7 +629,7 @@ pub async fn auth_set_default_account(
     _claude_state: State<'_, ClaudeAccountState>,
 ) -> Result<(), String> {
     let auth_provider = ensure_auth_provider(&auth_provider)?;
-    match auth_provider {
+    let result = match auth_provider {
         AUTH_PROVIDER_GITHUB_COPILOT => {
             let auth_manager = copilot_state.0.write().await;
             auth_manager
@@ -659,11 +669,14 @@ pub async fn auth_set_default_account(
             Err("Claude accounts are used through the official provider card bound to them".into())
         }
         _ => unreachable!(),
-    }
+    };
+    crate::tray::schedule_tray_status_check(&app);
+    result
 }
 
 #[tauri::command(rename_all = "camelCase")]
 pub async fn auth_logout(
+    app: tauri::AppHandle,
     auth_provider: String,
     app_state: State<'_, AppState>,
     copilot_state: State<'_, CopilotAuthState>,
@@ -672,7 +685,7 @@ pub async fn auth_logout(
     claude_state: State<'_, ClaudeAccountState>,
 ) -> Result<(), String> {
     let auth_provider = ensure_auth_provider(&auth_provider)?;
-    match auth_provider {
+    let result = match auth_provider {
         AUTH_PROVIDER_GITHUB_COPILOT => {
             let auth_manager = copilot_state.0.write().await;
             auth_manager.clear_auth().await.map_err(|e| e.to_string())
@@ -699,7 +712,9 @@ pub async fn auth_logout(
             .await
         }
         _ => unreachable!(),
-    }
+    };
+    crate::tray::schedule_tray_status_check(&app);
+    result
 }
 
 pub(crate) async fn logout_codex_oauth_with_switch_lock(

@@ -1,5 +1,3 @@
-#![allow(non_snake_case)]
-
 use crate::error::AppError;
 
 /// Claude 插件：写入/清除固定配置

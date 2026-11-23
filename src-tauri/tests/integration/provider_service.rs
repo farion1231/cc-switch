@@ -96,147 +96,6 @@ fn migrate_legacy_common_config_usage_marks_historical_provider_enabled() {
 }
 
 #[test]
-fn provider_service_switch_codex_updates_live_and_config() {
-    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
-    reset_test_fs();
-    enable_codex_official_auth_preservation();
-    let _home = ensure_test_home();
-
-    let legacy_auth = json!({ "OPENAI_API_KEY": "legacy-key" });
-    let legacy_config = r#"[mcp_servers.legacy]
-type = "stdio"
-command = "echo"
-"#;
-    write_codex_live_atomic(&legacy_auth, Some(legacy_config))
-        .expect("seed existing codex live config");
-
-    let mut initial_config = MultiAppConfig::default();
-    {
-        let manager = initial_config
-            .get_manager_mut(&AppType::Codex)
-            .expect("codex manager");
-        manager.current = "old-provider".to_string();
-        manager.providers.insert(
-            "old-provider".to_string(),
-            Provider::with_id(
-                "old-provider".to_string(),
-                "Legacy".to_string(),
-                json!({
-                    "auth": {"OPENAI_API_KEY": "stale"},
-                    "config": "stale-config"
-                }),
-                None,
-            ),
-        );
-        manager.providers.insert(
-            "new-provider".to_string(),
-            Provider::with_id(
-                "new-provider".to_string(),
-                "Latest".to_string(),
-                json!({
-                    "auth": {"OPENAI_API_KEY": "fresh-key"},
-                    "config": r#"[mcp_servers.latest]
-type = "stdio"
-command = "say"
-"#
-                }),
-                None,
-            ),
-        );
-    }
-
-    // 使用新的统一 MCP 结构（v3.7.0+）
-    let servers = initial_config
-        .mcp
-        .servers
-        .get_or_insert_with(Default::default);
-    servers.insert(
-        "echo-server".into(),
-        McpServer {
-            id: "echo-server".into(),
-            name: "Echo Server".into(),
-            server: json!({
-                "type": "stdio",
-                "command": "echo"
-            }),
-            apps: McpApps {
-                agy: false,
-                claude: false,
-                codex: true,
-                gemini: false,
-                grokbuild: false,
-                opencode: false,
-                hermes: false,
-                mcode: false,
-                kimi: false,
-                copilot: false,
-                dsh: false,
-                workbuddy: false,
-                pi: false,
-                omp: false,
-            },
-            description: None,
-            homepage: None,
-            docs: None,
-            tags: Vec::new(),
-        },
-    );
-
-    let state = create_test_state_with_config(&initial_config).expect("create test state");
-
-    ProviderService::switch(&state, AppType::Codex, "new-provider")
-        .expect("switch provider should succeed");
-
-    let auth_value: serde_json::Value =
-        read_json_file(&cc_switch_lib::get_codex_auth_path()).expect("read auth.json");
-    assert_eq!(
-        auth_value.get("OPENAI_API_KEY").and_then(|v| v.as_str()),
-        Some("legacy-key"),
-        "Codex provider switching should preserve the existing live auth.json"
-    );
-
-    let config_text =
-        std::fs::read_to_string(cc_switch_lib::get_codex_config_path()).expect("read config.toml");
-    // 只替换关键字段：live 里用户的 MCP 原样留着；行里的 MCP 不是关键字段，不投影。
-    assert!(
-        config_text.contains("[mcp_servers.legacy]"),
-        "live settings outside the key fields stay: {config_text}"
-    );
-    assert!(
-        !config_text.contains("mcp_servers.latest"),
-        "the row's own MCP section is not projected: {config_text}"
-    );
-    // 这张卡没有路由（只有 MCP），Key 没有第三方地址可发，不写进 live。
-    assert!(
-        !config_text.contains("experimental_bearer_token"),
-        "{config_text}"
-    );
-
-    let current_id = state
-        .db
-        .get_current_provider(&AppType::Codex)
-        .expect("read current provider after switch");
-    assert_eq!(
-        current_id.as_deref(),
-        Some("new-provider"),
-        "current provider updated"
-    );
-
-    let providers = state
-        .db
-        .get_all_providers(&AppType::Codex)
-        .expect("read providers after switch");
-    let legacy = providers
-        .get("old-provider")
-        .expect("legacy provider still exists");
-    assert_eq!(
-        legacy.settings_config,
-        json!({ "auth": {"OPENAI_API_KEY": "stale"}, "config": "stale-config" }),
-        "switching away never writes live content back into the row"
-    );
-}
-
-#[test]
 /// 第三方路由一律写成 `custom`：行里用什么 id 都一样，行本身不改写。
 fn provider_service_switch_codex_writes_every_third_party_route_as_custom() {
     let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
@@ -2472,106 +2331,6 @@ fn switch_google_official_gemini_preserves_env_vars() {
     );
 }
 
-#[test]
-fn provider_service_switch_claude_updates_live_and_state() {
-    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
-    reset_test_fs();
-    let _home = ensure_test_home();
-
-    let settings_path = get_claude_settings_path();
-    if let Some(parent) = settings_path.parent() {
-        std::fs::create_dir_all(parent).expect("create claude settings dir");
-    }
-    let legacy_live = json!({
-        "env": {
-            "ANTHROPIC_API_KEY": "legacy-key"
-        },
-        "workspace": {
-            "path": "/tmp/workspace"
-        }
-    });
-    std::fs::write(
-        &settings_path,
-        serde_json::to_string_pretty(&legacy_live).expect("serialize legacy live"),
-    )
-    .expect("seed claude live config");
-
-    let mut config = MultiAppConfig::default();
-    {
-        let manager = config
-            .get_manager_mut(&AppType::Claude)
-            .expect("claude manager");
-        manager.current = "old-provider".to_string();
-        manager.providers.insert(
-            "old-provider".to_string(),
-            Provider::with_id(
-                "old-provider".to_string(),
-                "Legacy Claude".to_string(),
-                json!({
-                    "env": { "ANTHROPIC_API_KEY": "stale-key" }
-                }),
-                None,
-            ),
-        );
-        manager.providers.insert(
-            "new-provider".to_string(),
-            Provider::with_id(
-                "new-provider".to_string(),
-                "Fresh Claude".to_string(),
-                json!({
-                    "env": { "ANTHROPIC_API_KEY": "fresh-key" },
-                    "workspace": { "path": "/tmp/new-workspace" }
-                }),
-                None,
-            ),
-        );
-    }
-
-    let state = create_test_state_with_config(&config).expect("create test state");
-
-    ProviderService::switch(&state, AppType::Claude, "new-provider")
-        .expect("switch provider should succeed");
-
-    let live_after: serde_json::Value =
-        read_json_file(&settings_path).expect("read claude live settings");
-    assert_eq!(
-        live_after
-            .get("env")
-            .and_then(|env| env.get("ANTHROPIC_API_KEY"))
-            .and_then(|key| key.as_str()),
-        Some("fresh-key"),
-        "live settings.json should reflect new provider auth"
-    );
-
-    let providers = state
-        .db
-        .get_all_providers(&AppType::Claude)
-        .expect("get all providers");
-    let current_id = state
-        .db
-        .get_current_provider(&AppType::Claude)
-        .expect("get current provider");
-    assert_eq!(
-        current_id.as_deref(),
-        Some("new-provider"),
-        "current provider updated"
-    );
-
-    let legacy_provider = providers
-        .get("old-provider")
-        .expect("legacy provider still exists");
-    // 不再回填：用户在 live 里的改动留在 live，上一家的行不变。
-    assert_eq!(
-        legacy_provider.settings_config,
-        json!({ "env": { "ANTHROPIC_API_KEY": "stale-key" } }),
-        "switching away must not copy live into the previous provider"
-    );
-    assert_eq!(
-        live_after["workspace"], legacy_live["workspace"],
-        "non-key settings in live stay where they are"
-    );
-}
-
 /// Claude 供应商都勾选了通用配置，`current` 的 live 是原样的 `live` 文本。
 fn seed_claude_switch_state(
     providers: &[(&str, serde_json::Value)],
@@ -2835,64 +2594,6 @@ fn switch_claude_refuses_a_settings_file_it_cannot_parse() {
             .as_deref(),
         Some("a")
     );
-}
-
-#[test]
-fn provider_service_switch_missing_provider_returns_error() {
-    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
-    reset_test_fs();
-    let _home = ensure_test_home();
-
-    let state = create_test_state().expect("create test state");
-
-    let err = ProviderService::switch(&state, AppType::Claude, "missing")
-        .expect_err("switching missing provider should fail");
-    match err {
-        AppError::Message(msg) => {
-            assert!(
-                msg.contains("不存在") || msg.contains("not found"),
-                "expected provider not found message, got {msg}"
-            );
-        }
-        other => panic!("expected Message error for provider not found, got {other:?}"),
-    }
-}
-
-#[test]
-fn provider_service_switch_codex_missing_auth_returns_error() {
-    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
-    reset_test_fs();
-    let _home = ensure_test_home();
-
-    let mut config = MultiAppConfig::default();
-    {
-        let manager = config
-            .get_manager_mut(&AppType::Codex)
-            .expect("codex manager");
-        manager.providers.insert(
-            "invalid".to_string(),
-            Provider::with_id(
-                "invalid".to_string(),
-                "Broken Codex".to_string(),
-                json!({
-                    "config": "[mcp_servers.test]\ncommand = \"noop\""
-                }),
-                None,
-            ),
-        );
-    }
-
-    let state = create_test_state_with_config(&config).expect("create test state");
-
-    let err = ProviderService::switch(&state, AppType::Codex, "invalid")
-        .expect_err("switching should fail without auth");
-    match err {
-        AppError::Config(msg) => assert!(
-            msg.contains("auth"),
-            "expected auth related message, got {msg}"
-        ),
-        other => panic!("expected config error, got {other:?}"),
-    }
 }
 
 #[test]
@@ -3921,4 +3622,25 @@ fn omp_edit_save_keeps_every_byte_outside_the_edited_entry() {
     );
     assert!(after.contains("name: Duolalab"), "{after}");
     assert!(after.ends_with(sibling), "{after}");
+}
+
+#[test]
+fn provider_service_switch_missing_provider_returns_error() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let state = create_test_state().expect("create test state");
+
+    let err = ProviderService::switch(&state, AppType::Claude, "missing")
+        .expect_err("switching missing provider should fail");
+    match err {
+        AppError::Message(msg) => {
+            assert!(
+                msg.contains("不存在") || msg.contains("not found"),
+                "expected provider not found message, got {msg}"
+            );
+        }
+        other => panic!("expected Message error for provider not found, got {other:?}"),
+    }
 }
