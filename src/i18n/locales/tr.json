@@ -60,7 +60,9 @@
   "apiKeyInput": {
     "placeholder": "API Anahtarını Girin",
     "show": "API Anahtarını Göster",
-    "hide": "API Anahtarını Gizle"
+    "hide": "API Anahtarını Gizle",
+    "copied": "API anahtarı kopyalandı",
+    "copyFailed": "API anahtarı kopyalanamadı"
   },
   "jsonEditor": {
     "mustBeObject": "Yapılandırma bir dizi veya başka türde değil, JSON nesnesi olmalıdır",
@@ -599,6 +601,9 @@
       "safetyBackupId": "Güvenlik Yedekleme Kimliği",
       "intervalLabel": "Otomatik Yedekleme Aralığı",
       "retainLabel": "Yedekleme Saklama",
+      "maxTotalLabel": "Yedekleme Boyut Sınırı",
+      "maxTotalUnlimited": "Sınırsız",
+      "maxTotalHint": "Varsayılan olarak kapalıdır. Ayarlandığında, yedekleme klasörü bu boyutu aştığında en eski yedeklerden başlanarak silinir. En yeni yedek ve geri yüklemenin kullandığı yedek her zaman korunur; bu yüzden tek bir yedek sınırdan büyükse klasör sınırın üzerinde kalabilir. Bir sonraki yedeklemede veya günlük bakımda uygulanır.",
       "intervalDisabled": "Devre dışı",
       "intervalHours": "{{hours}} saat",
       "intervalDays": "{{days}} gün",
@@ -2040,6 +2045,7 @@
     "selectAccount": "Hesap seçin",
     "selectAccountPlaceholder": "Bir xAI hesabı seçin",
     "useDefaultAccount": "Varsayılan hesabı kullan",
+    "account": "xAI hesabı",
     "accounts": "xAI hesapları",
     "defaultAccount": "Varsayılan",
     "expired": "Kimlik bilgilerinin süresi doldu",
@@ -2646,14 +2652,14 @@
     "speedValue": "{{value}} tok/sn",
     "speedEstimatedValue": "≈ {{value}} tok/s",
     "speedHelpTitle": "Hız nasıl hesaplanır?",
-    "speedHelp": "İlk token’dan yanıtın sonuna kadar saniyede üretilen çıktı token’ı sayısı. Yönlendirme hizmetinden geçen veya Antigravity yerel zaman ölçümüne sahip ve en az 100 çıktı token’ı içeren istekler hesaba katılır; akıl yürütme verilerini gizleyen modellerde bu bir yaklaşımdır. ≈ işaretli değer, diğer oturum günlüğü zamanlarından tahmin edilir: ilk token’ı bekleme süresi de dahil olduğundan daha düşük görünür. Yalnızca en az 200 çıktı token’ı içeren istekler için tahmin yapılır.",
+    "speedHelp": "İlk token’dan yanıtın sonuna kadar saniyede üretilen çıktı token’ı sayısı. Yalnızca yönlendirme hizmetinden geçen ve en az 100 çıktı token’ı içeren istekler hesaba katılır; akıl yürütme verilerini gizleyen modellerde bu bir yaklaşımdır. ≈ işaretli değer, yönlendirme kapalıyken oturum günlüğü zamanlarından tahmin edilir: ilk token’ı bekleme süresi de dahil olduğundan daha düşük görünür. Yalnızca en az 200 çıktı token’ı içeren istekler için tahmin yapılır.",
     "speedSumHelpTitle": "Genel hız nasıl hesaplanır?",
-    "speedSumHelp": "Toplam çıktı tokenlarının istek başına ortalama hızlara değil, toplam üretim süresine bölünmesiyle kısa istekler çarpıklık yaratmaz. Yönlendirme hizmeti aracılığıyla yapılan veya Antigravity yerel zaman ölçümüne sahip ve en az 100 çıkış tokenu içeren istekler sayılır. ≈ içeren bir değer, diğer oturum günlüklerinden tahmin edilir (ilk token için beklemeyi içerir ve yalnızca en az 200 çıkış tokenu sayımına sahip istekler içerir) ve yalnızca satırda kesin zaman ölçümü verisi bulunmadığında gösterilir.",
+    "speedSumHelp": "Toplam çıktı tokenlarının istek başına ortalama hızlara değil, toplam üretim süresine bölünmesiyle kısa istekler çarpıklık yaratmaz. Yalnızca yönlendirme hizmeti aracılığıyla yapılan ve en az 100 çıkış tokenu içeren istekler sayılır. ≈ içeren bir değer, oturum günlüklerinden tahmin edilir (ilk token için beklemeyi içerir ve yalnızca en az 200 çıkış tokenu sayımına sahip istekler içerir) ve yalnızca satırda yönlendirilmiş veri bulunmadığında gösterilir.",
     "firstToken": "İlk token",
     "firstTokenHelpTitle": "İlk token süresi",
-    "firstTokenHelp": "İsteğin gönderildiği andan sağlayıcının çıktı üretmeye başladığı ana kadar geçen ve yönlendirme hizmeti ya da Antigravity yerel veritabanı tarafından ölçülen süre. ≈ işaretli değer, diğer oturum günlüğü zamanlarından hesaplanır: önceki günlük satırının yazıldığı andan başladığı için istemcinin isteği hazırlama süresini de içerir ve daha yüksek görünür. Claude Code’da yalnızca yanıt düşünme ile başladığında; Codex’te yalnızca yeni günlüklerde ve yanıt bir araç çağrısıyla başlamadığında hesaplanabilir.",
+    "firstTokenHelp": "Yönlendirme hizmetinin isteği aldığı andan sağlayıcının çıktı üretmeye başladığı ana kadar geçen süre. ≈ işaretli değer, yönlendirme kapalıyken oturum günlüğü zamanlarından hesaplanır: önceki günlük satırının yazıldığı andan başladığı için istemcinin isteği hazırlama süresini de içerir ve daha yüksek görünür. Claude Code’da yalnızca yanıt düşünme ile başladığında; Codex’te yalnızca yeni günlüklerde ve yanıt bir araç çağrısıyla başlamadığında hesaplanabilir.",
     "firstTokenSumHelpTitle": "İlk token süresi nasıl hesaplanır?",
-    "firstTokenSumHelp": "İsteğin gönderildiği andan sağlayıcının çıktı üretmeye başladığı ana kadar geçen ve yönlendirme hizmeti ya da Antigravity yerel veritabanı tarafından ölçülen süre. Satır, isteklerin medyanını gösterir; böylece ara sıra yavaşlayan bir istek (kuyruk, soğuk başlangıç) değeri yükseltmez. Yalnızca başarılı ve kesin zaman ölçümlü istekler hesaba katılır; 30 günden eski ve günlük toplamlara dahil edilmiş istekler sayılmaz. ≈ işaretli değer diğer oturum günlüklerinden türetilir (daha yüksek görünür ve yalnızca bazı isteklerde hesaplanabilir); yalnızca satırda kesin zaman ölçümü verisi yoksa gösterilir.",
+    "firstTokenSumHelp": "Yönlendirme hizmetinin isteği aldığı andan sağlayıcının çıktı üretmeye başladığı ana kadar geçen süre. Satır, isteklerin medyanını gösterir; böylece ara sıra yavaşlayan bir istek (kuyruk, soğuk başlangıç) değeri yükseltmez. Yalnızca yönlendirme hizmetinden geçen başarılı akış istekleri hesaba katılır; 30 günden eski ve günlük toplamlara dahil edilmiş istekler sayılmaz. ≈ işaretli değer oturum günlüklerinden türetilir (daha yüksek görünür ve yalnızca bazı isteklerde hesaplanabilir); yalnızca satırda yönlendirilmiş istek verisi yoksa gösterilir.",
     "timingTip": "Süre {{duration}} · ilk token {{ttft}}",
     "estimatedTimingTip": "{{duration}}'ler hakkında (ilk tokenun beklenmesi de dahil olmak üzere oturum günlüğü zaman damgalarından tahmin edilir)",
     "estimatedTimingTipWithFirstToken": "Yaklaşık {{duration}} sn · ilk token yaklaşık {{ttft}} sn (oturum günlüğü zamanlarından tahmin edildi)",
@@ -3679,7 +3685,10 @@
       "command": "Komut",
       "args": "Argümanlar",
       "env": "Zarf",
-      "url": "URL'si"
+      "url": "URL'si",
+      "type": "Tür",
+      "cwd": "Çalışma Dizini",
+      "headers": "Başlıklar"
     },
     "prompt": {
       "title": "Sistem İstemini İçe Aktar",
@@ -3713,7 +3722,8 @@
     "risk": {
       "envHijack": "Bu yapılandırma, yükleme kodunun işlenme biçimini değiştiren ortam değişkenlerini ayarlar (örneğin, kitaplıkları enjekte etme veya CA sertifikalarını değiştirme). Yalnızca güvendiğiniz bir kaynaktan içe aktarın.",
       "privateEndpoint": "Bu adres localhost'a veya özel bir ağa işaret eder. Kendi yerel hizmetiniz olmadığı sürece ithalat yapmayın.",
-      "shellCommand": "Bu yapılandırma, bir kabuk aracılığıyla tam bir komut satırı çalıştırır; gerçekte yürütülen şey argümanlardadır. Her satırı inceleyin."
+      "shellCommand": "Bu yapılandırma, bir kabuk aracılığıyla tam bir komut satırı çalıştırır; gerçekte yürütülen şey argümanlardadır. Her satırı inceleyin.",
+      "mcpDangerousField": "Bu MCP yapılandırması, ana makine ortam değişkenlerini okuyabilen (ör. bearer_token_env_var, env_http_headers, env_vars), yardımcı komutlar çalıştırabilen (http_headers_helper) veya çalışma dizinini değiştirebilen (cwd) yüksek riskli alanlar içeriyor. Yalnızca tamamen güvendiğiniz bir kaynaktan içe aktarın."
     }
   },
   "iconPicker": {
@@ -4983,7 +4993,7 @@
   "pluginsPage": {
     "title": "Eklentiler",
     "helpTitle": "Eklentiler",
-    "help": "Claude Code, Codex, Grok Build, MiniMax Code, OpenClaw ve Pi eklentilerini yükleyin, etkinleştirin ve kaldırın. CC Switch her uygulamanın kendi CLI'ını çalıştırır; sonuç terminalde eklenti komutunu kullanmakla aynıdır. Pi'de eklentiler Pi paketleridir ve katalog npm'den gelir.",
+    "help": "Claude Code, Codex, Grok Build, MiniMax Code, OpenClaw, Pi ve Antigravity eklentilerini yükleyin, etkinleştirin ve kaldırın. CC Switch her uygulamanın kendi CLI'ını çalıştırır; sonuç terminalde eklenti komutunu kullanmakla aynıdır. Pi'de eklentiler Pi paketleridir ve katalog npm'den gelir.",
     "appAria": "Uygulama",
     "viewAria": "Eklenti görünümleri",
     "viewInstalled": "Yüklü",
@@ -5043,9 +5053,11 @@
     "confirmRemoveMarketBody": "{{app}} bu pazar yerindeki eklentileri artık listelemez ve buradan yüklediğiniz eklentileri de kaldırabilir. Daha sonra yeniden ekleyebilirsiniz.",
     "toast": {
       "installed": "{{name}} yüklendi",
+      "installedNeedsConfig": "Devre dışı olarak yüklendi. MCP sunucularını yapılandırıp etkinleştirmek için {{app}} içinde /plugin komutunu çalıştırın.",
       "installFailed": "{{name}} yüklenemedi",
       "installNeedsTerminal": "Bu eklenti kurulum sırasında pazar yerinin bildirdiği bir komutu bilgisayarınızda çalıştırır ve CC Switch bunu sizin yerinize onaylamaz. Bir terminalde {{command}} komutunu çalıştırıp orada onaylayın, ardından geri dönüp yenileyin.",
       "authRequired": "{{app}} önce oturum açmanızı istiyor. Bir terminalde {{command}} komutunu çalıştırıp oturum açın, ardından geri dönüp tekrar deneyin.",
+      "pluginInUse": "Bu eklenti şu anda başka bir {{app}} / {{cli}} işlemi tarafından kullanılıyor (örneğin çalışan bir oturum, Hub veya arka plan hizmeti). İlgili işlemi kapatıp yeniden deneyin.",
       "uninstalled": "{{name}} kaldırıldı",
       "uninstallFailed": "{{name}} kaldırılamadı",
       "enabled": "{{name}} etkinleştirildi",

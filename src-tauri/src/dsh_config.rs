@@ -1414,9 +1414,6 @@ fn native_provider(
 pub(crate) fn set_provider(id: &str, config: Value) -> Result<(), AppError> {
     save_and_commit(id, Some(config), false, || Ok(()))
 }
-pub(crate) fn remove_provider(id: &str) -> Result<(), AppError> {
-    save_and_commit(id, None, false, || Ok(()))
-}
 /// A key is taken when any target profile already has it (CC Switch never overwrites a node).
 pub(crate) fn provider_key_exists(id: &str) -> Result<bool, AppError> {
     for path in target_paths() {
@@ -2355,7 +2352,7 @@ mod tests {
             "test-value"
         );
 
-        remove_provider("gateway").unwrap();
+        save_and_commit("gateway", None, false, || Ok(())).unwrap();
         for name in ["web", "desktop", "headless"] {
             assert!(!profile_text(root, name).unwrap().contains("gateway"));
         }
@@ -2407,7 +2404,7 @@ mod tests {
         assert!(!root.join("profiles/web/cordis.patch.yml.lock").exists());
 
         // Removal goes through the same path list.
-        remove_provider("gateway").unwrap();
+        save_and_commit("gateway", None, false, || Ok(())).unwrap();
         assert!(!get_providers().unwrap().contains_key("gateway"));
     }
 
@@ -2762,7 +2759,7 @@ mod tests {
         let error = set_provider("gateway", editor_config()).unwrap_err();
         assert!(error.to_string().contains("cordis.patch.yml"), "{error}");
         assert_eq!(profile_text(root, "web").unwrap(), written);
-        remove_provider("gateway").unwrap();
+        save_and_commit("gateway", None, false, || Ok(())).unwrap();
         assert!(get_providers().unwrap().is_empty());
     }
 
@@ -2870,7 +2867,7 @@ mod tests {
         assert!(!root.join("profiles/web/cordis.patch.yml.lock").exists());
 
         // 删除同理：不能把 diverged 的那份一起删掉
-        let error = remove_provider("gateway").unwrap_err();
+        let error = save_and_commit("gateway", None, false, || Ok(())).unwrap_err();
         assert!(error.to_string().contains("desktop"));
         assert_eq!(profile_text(root, "desktop").unwrap(), edited);
 

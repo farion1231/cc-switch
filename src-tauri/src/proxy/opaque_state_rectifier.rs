@@ -76,10 +76,12 @@ pub struct OpaqueStateRectifyResult {
 /// 上游是不是因为验不了请求里的密文而拒绝。受整流器总开关管辖。
 ///
 /// `codex_third_party`：Codex 原样转发给非官方的原生 Responses 上游。
+/// `request = None` performs an error-only preflight: request-dependent checks
+/// remain possible until the caller lazily reconstructs and supplies the body.
 pub fn detect_opaque_state_rejection(
     error: &ProxyError,
     config: &RectifierConfig,
-    request: &Value,
+    request: Option<&Value>,
     codex_third_party: bool,
 ) -> Option<OpaqueStateRejection> {
     if !config.enabled {
@@ -115,17 +117,19 @@ pub fn detect_opaque_state_rejection(
     // 非官方网关不认识官方的压缩条目时，报错措辞各家不同，也可能根本不是 JSON。请求里带着
     // 看不出来源的压缩条目才会走到这里（跨供应商切换并压缩过之后），每个请求最多多一次；
     // 只换压缩条目，推理条目照旧发，不白白丢掉这家自己的推理连续性。
-    let unrecognized_compaction = request
-        .get("input")
-        .and_then(Value::as_array)
-        .is_some_and(|items| items.iter().any(is_unrecognized_compaction_item));
-    (codex_third_party && matches!(*status, 400 | 422) && unrecognized_compaction).then_some(
-        OpaqueStateRejection {
-            reasoning: false,
-            compaction: true,
-            item_ids: false,
-        },
-    )
+    (codex_third_party
+        && matches!(*status, 400 | 422)
+        && request.is_none_or(|request| {
+            request
+                .get("input")
+                .and_then(Value::as_array)
+                .is_some_and(|items| items.iter().any(is_unrecognized_compaction_item))
+        }))
+    .then_some(OpaqueStateRejection {
+        reasoning: false,
+        compaction: true,
+        item_ids: false,
+    })
 }
 
 /// 上游的错误体是不是自证验不了请求里的密文（错误码或固定措辞）。
@@ -133,7 +137,7 @@ fn is_self_identified_rejection(
     body: &str,
     payload: Option<&Value>,
     messages: &[&str],
-    request: &Value,
+    request: Option<&Value>,
 ) -> bool {
     is_encrypted_function_output_rejection(body, messages)
         || payload.is_some_and(is_coded_rejection)
@@ -141,7 +145,7 @@ fn is_self_identified_rejection(
         || (messages
             .iter()
             .any(|message| is_content_array_rejection(message))
-            && carries_plaintext_reasoning(request))
+            && request.is_none_or(carries_plaintext_reasoning))
 }
 
 /// 流里还没有输出就到了的失败事件，它的 `error` 对象是不是自证验不了请求里的密文。是的话返回
@@ -151,7 +155,7 @@ pub fn in_stream_rejection(error: &Value, request: &Value) -> Option<ProxyError>
     let payload = json!({ "error": error });
     let body = payload.to_string();
     let messages = error_messages(&payload);
-    is_self_identified_rejection(&body, Some(&payload), &messages, request).then(|| {
+    is_self_identified_rejection(&body, Some(&payload), &messages, Some(request)).then(|| {
         ProxyError::UpstreamError {
             status: 400,
             body: Some(body.clone()),
@@ -497,7 +501,12 @@ mod tests {
     }
 
     fn detect(error: &ProxyError) -> Option<OpaqueStateRejection> {
-        detect_opaque_state_rejection(error, &RectifierConfig::default(), &json!({}), OFFICIAL)
+        detect_opaque_state_rejection(
+            error,
+            &RectifierConfig::default(),
+            Some(&json!({})),
+            OFFICIAL,
+        )
     }
 
     fn detect_with(
@@ -508,7 +517,7 @@ mod tests {
         detect_opaque_state_rejection(
             error,
             &RectifierConfig::default(),
-            request,
+            Some(request),
             codex_third_party,
         )
     }
@@ -652,7 +661,7 @@ mod tests {
             ..RectifierConfig::default()
         };
         assert_eq!(
-            detect_opaque_state_rejection(&coded, &disabled, &json!({}), THIRD_PARTY),
+            detect_opaque_state_rejection(&coded, &disabled, Some(&json!({})), THIRD_PARTY),
             None
         );
         assert_eq!(detect(&ProxyError::Timeout("slow".to_string())), None);

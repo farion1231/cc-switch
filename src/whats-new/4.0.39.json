@@ -1,0 +1,33 @@
+{
+  "version": "4.0.39",
+  "items": [
+    {
+      "type": "new",
+      "zh": "API Key 输入框可以一键复制",
+      "zh-TW": "API Key 輸入框可以一鍵複製",
+      "en": "Copy the API key with one click from its input",
+      "ja": "API キー入力欄にワンクリックのコピーボタンを追加"
+    },
+    {
+      "type": "new",
+      "zh": "备份可设置总大小上限，超出时从最旧的删起",
+      "zh-TW": "備份可設定總大小上限，超出時從最舊的刪起",
+      "en": "Set a total size limit for backups; the oldest are removed first",
+      "ja": "バックアップの合計サイズ上限を設定可能、超えたら古い順に削除"
+    },
+    {
+      "type": "improve",
+      "zh": "经 Codex OAuth 用 GPT-6.2 时缓存命中更高",
+      "zh-TW": "經 Codex OAuth 用 GPT-6.2 時快取命中更高",
+      "en": "Better prompt caching for GPT-6.2 through Codex OAuth",
+      "ja": "Codex OAuth 経由の GPT-6.2 でキャッシュヒット率が向上"
+    },
+    {
+      "type": "fix",
+      "zh": "修复上游卡住时故障转移要等很久，以及插件页误报未安装 Codex",
+      "zh-TW": "修正上游卡住時故障轉移要等很久，以及外掛頁誤報未安裝 Codex",
+      "en": "Faster failover on a stalled upstream, and Plugins now finds the Codex desktop app",
+      "ja": "上流停止時のフェイルオーバー遅延と、プラグイン画面の Codex 未検出を修正"
+    }
+  ]
+}

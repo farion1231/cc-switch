@@ -816,12 +816,9 @@ fn switch_provider_codex_missing_auth_returns_error_and_keeps_state() {
         .db
         .get_current_provider(&AppType::Codex)
         .expect("get current provider");
-    // 切换失败后，由于数据库操作是先设置再验证，current 可能已被设为 "invalid"
-    // 但由于 live 配置写入失败，状态应该回滚
-    // 注意：这个行为取决于 switch_provider 的具体实现
-    assert!(
-        current_id.is_none() || current_id.as_deref() == Some("invalid"),
-        "current provider should remain empty or be the attempted id on failure, got: {current_id:?}"
+    assert_eq!(
+        current_id, None,
+        "a failed switch must not point current at the provider it could not switch to"
     );
 }
 

@@ -60,7 +60,9 @@
   "apiKeyInput": {
     "placeholder": "API-Schlüssel eingeben",
     "show": "API-Schlüssel anzeigen",
-    "hide": "API-Schlüssel ausblenden"
+    "hide": "API-Schlüssel ausblenden",
+    "copied": "API-Schlüssel kopiert",
+    "copyFailed": "API-Schlüssel konnte nicht kopiert werden"
   },
   "jsonEditor": {
     "mustBeObject": "Die Konfiguration muss ein JSON-Objekt sein, kein Array oder anderer Typ",
@@ -599,6 +601,9 @@
       "safetyBackupId": "ID der Sicherheitskopie",
       "intervalLabel": "Intervall für automatische Sicherung",
       "retainLabel": "Aufbewahrung von Sicherungen",
+      "maxTotalLabel": "Größenlimit für Sicherungen",
+      "maxTotalUnlimited": "Kein Limit",
+      "maxTotalHint": "Standardmäßig deaktiviert. Wenn ein Limit gesetzt ist, werden die ältesten Sicherungen gelöscht, sobald der Sicherungsordner diese Größe überschreitet. Die neueste Sicherung und jede Sicherung, die eine Wiederherstellung verwendet, bleiben immer erhalten. Daher kann der Ordner über dem Limit bleiben, wenn eine einzelne Sicherung größer ist. Gilt ab der nächsten Sicherung oder der täglichen Wartung.",
       "intervalDisabled": "Deaktiviert",
       "intervalHours": "{{hours}} Stunden",
       "intervalDays": "{{days}} Tage",
@@ -2109,6 +2114,7 @@
     "selectAccount": "Konto auswählen",
     "selectAccountPlaceholder": "xAI-Konto auswählen",
     "useDefaultAccount": "Standardkonto verwenden",
+    "account": "xAI-Konto",
     "accounts": "xAI-Konten",
     "defaultAccount": "Standard",
     "expired": "Anmeldedaten abgelaufen",
@@ -2715,14 +2721,14 @@
     "speedValue": "{{value}} Token/s",
     "speedEstimatedValue": "≈ {{value}} Token/s",
     "speedHelpTitle": "Wie die Geschwindigkeit berechnet wird",
-    "speedHelp": "Ausgabe-Token pro Sekunde, vom ersten Token bis zum Ende. Es zählen Anfragen über den Routing-Dienst oder mit nativer Antigravity-Zeitmessung und mindestens 100 Ausgabe-Token; bei Modellen, die ihr Reasoning verbergen, ist es ein Näherungswert. Ein Wert mit ≈ wird aus anderen Sitzungsprotokoll-Zeitstempeln geschätzt: Die Wartezeit auf das erste Token ist enthalten, daher fällt die Zahl niedrig aus. Geschätzt werden nur Anfragen mit mindestens 200 Ausgabe-Token.",
+    "speedHelp": "Ausgabe-Token pro Sekunde, vom ersten Token bis zum Ende. Es zählen nur Anfragen über den Routing-Dienst mit mindestens 100 Ausgabe-Token; bei Modellen, die ihr Reasoning verbergen, ist es ein Näherungswert. Ein Wert mit ≈ wird bei ausgeschaltetem Routing aus den Zeitstempeln der Sitzungsprotokolle geschätzt: Die Wartezeit auf das erste Token ist enthalten, daher fällt die Zahl niedrig aus. Geschätzt werden nur Anfragen mit mindestens 200 Ausgabe-Token.",
     "speedSumHelpTitle": "Wie die Gesamtgeschwindigkeit berechnet wird",
-    "speedSumHelp": "Ausgabe-Token insgesamt geteilt durch die gesamte Generierungszeit, nicht der Durchschnitt der Einzelgeschwindigkeiten, damit kurze Anfragen das Ergebnis nicht verzerren. Es zählen Anfragen über den Routing-Dienst oder mit nativer Antigravity-Zeitmessung und mindestens 100 Ausgabe-Token. Ein Wert mit ≈ wird aus anderen Sitzungsprotokollen geschätzt (er enthält die Wartezeit auf das erste Token, und es zählen nur Anfragen mit mindestens 200 Ausgabe-Token) und nur angezeigt, wenn die Zeile keine exakten Zeitdaten hat.",
+    "speedSumHelp": "Ausgabe-Token insgesamt geteilt durch die gesamte Generierungszeit, nicht der Durchschnitt der Einzelgeschwindigkeiten, damit kurze Anfragen das Ergebnis nicht verzerren. Es zählen nur Anfragen über den Routing-Dienst mit mindestens 100 Ausgabe-Token. Ein Wert mit ≈ wird aus Sitzungsprotokollen geschätzt (er enthält die Wartezeit auf das erste Token, und es zählen nur Anfragen mit mindestens 200 Ausgabe-Token) und nur angezeigt, wenn die Zeile keine gerouteten Daten hat.",
     "firstToken": "Erstes Token",
     "firstTokenHelpTitle": "Zeit bis zum ersten Token",
-    "firstTokenHelp": "Zeit vom Senden der Anfrage bis zum Beginn der Upstream-Ausgabe, gemessen vom Routing-Dienst oder der nativen Antigravity-Datenbank. Ein Wert mit ≈ wird aus anderen Sitzungsprotokoll-Zeitstempeln abgeleitet: Er beginnt mit dem Schreiben der vorherigen Protokollzeile, enthält also die Anfragevorbereitung des Clients selbst und fällt hoch aus. Claude Code liefert einen nur, wenn die Antwort mit Denken beginnt; Codex nur mit neueren Protokollen und nicht, wenn die Antwort mit einem Tool-Aufruf beginnt.",
+    "firstTokenHelp": "Zeit vom Eingang der Anfrage beim Routing-Dienst, bis der Upstream mit der Ausgabe beginnt. Ein Wert mit ≈ wird bei ausgeschaltetem Routing aus den Zeitstempeln der Sitzungsprotokolle abgeleitet: Er beginnt mit dem Schreiben der vorherigen Protokollzeile, enthält also die Anfragevorbereitung des Clients selbst und fällt hoch aus. Claude Code liefert einen nur, wenn die Antwort mit Denken beginnt; Codex nur mit neueren Protokollen und nicht, wenn die Antwort mit einem Tool-Aufruf beginnt.",
     "firstTokenSumHelpTitle": "Wie die Zeit bis zum ersten Token berechnet wird",
-    "firstTokenSumHelp": "Zeit vom Senden der Anfrage bis zum Beginn der Upstream-Ausgabe, gemessen vom Routing-Dienst oder der nativen Antigravity-Datenbank. Die Zeile zeigt den Median ihrer Anfragen, damit gelegentlich langsame Anfragen (Warteschlange, Kaltstart) ihn nicht in die Höhe ziehen. Es zählen nur erfolgreiche Anfragen mit exakter Zeitmessung; Anfragen, die älter als 30 Tage und bereits in Tagesaggregate eingerechnet sind, zählen nicht. Ein Wert mit ≈ wird aus anderen Sitzungsprotokollen abgeleitet (er fällt hoch aus, und nur einige Anfragen liefern einen) und nur angezeigt, wenn die Zeile keine exakten Zeitdaten hat.",
+    "firstTokenSumHelp": "Zeit vom Eingang einer Anfrage beim Routing-Dienst, bis der Upstream mit der Ausgabe beginnt. Die Zeile zeigt den Median ihrer Anfragen, damit gelegentlich langsame Anfragen (Warteschlange, Kaltstart) ihn nicht in die Höhe ziehen. Es zählen nur erfolgreiche Streaming-Anfragen über den Routing-Dienst; Anfragen, die älter als 30 Tage und bereits in Tagesaggregate eingerechnet sind, zählen nicht. Ein Wert mit ≈ wird aus Sitzungsprotokollen abgeleitet (er fällt hoch aus, und nur einige Anfragen liefern einen) und nur angezeigt, wenn die Zeile keine gerouteten Daten hat.",
     "timingTip": "Dauer {{duration}} s · erstes Token {{ttft}} s",
     "estimatedTimingTip": "Etwa {{duration}} s (aus Zeitstempeln der Sitzungsprotokolle geschätzt, einschließlich der Wartezeit auf das erste Token)",
     "estimatedTimingTipWithFirstToken": "Etwa {{duration}} s · erstes Token etwa {{ttft}} s (aus Zeitstempeln der Sitzungsprotokolle geschätzt)",
@@ -3748,7 +3754,10 @@
       "command": "Befehl",
       "args": "Argumente",
       "env": "Umgebung",
-      "url": "URL"
+      "url": "URL",
+      "type": "Typ",
+      "cwd": "Arbeitsverzeichnis",
+      "headers": "Header"
     },
     "prompt": {
       "title": "System-Prompt importieren",
@@ -3782,7 +3791,8 @@
     "risk": {
       "envHijack": "Diese Konfiguration setzt Umgebungsvariablen, die verändern, wie Prozesse Code laden (z. B. Bibliotheken einschleusen oder CA-Zertifikate ersetzen). Importieren Sie nur aus einer Quelle, der Sie vertrauen.",
       "privateEndpoint": "Diese Adresse zeigt auf localhost oder ein privates Netzwerk. Nur importieren, wenn es Ihr eigener lokaler Dienst ist.",
-      "shellCommand": "Diese Konfiguration führt eine vollständige Befehlszeile über eine Shell aus – was tatsächlich läuft, steht in den Argumenten. Prüfen Sie jede Zeile."
+      "shellCommand": "Diese Konfiguration führt eine vollständige Befehlszeile über eine Shell aus – was tatsächlich läuft, steht in den Argumenten. Prüfen Sie jede Zeile.",
+      "mcpDangerousField": "Diese MCP-Konfiguration enthält risikoreiche Felder, die Host-Umgebungsvariablen auslesen (z. B. bearer_token_env_var, env_http_headers, env_vars), Hilfsbefehle ausführen (http_headers_helper) oder das Arbeitsverzeichnis ändern (cwd) können. Nur aus vollständig vertrauenswürdigen Quellen importieren."
     }
   },
   "iconPicker": {
@@ -5052,7 +5062,7 @@
   "pluginsPage": {
     "title": "Plugins",
     "helpTitle": "Plugins",
-    "help": "Plugins für Claude Code, Codex, Grok Build, MiniMax Code, OpenClaw und Pi installieren, aktivieren und entfernen. CC Switch führt die jeweilige CLI der App aus, das Ergebnis ist also dasselbe wie beim Plugin-Befehl im Terminal. Bei Pi sind Plugins Pi-Pakete, und der Katalog stammt von npm.",
+    "help": "Plugins für Claude Code, Codex, Grok Build, MiniMax Code, OpenClaw, Pi und Antigravity installieren, aktivieren und entfernen. CC Switch führt die jeweilige CLI der App aus, das Ergebnis ist also dasselbe wie beim Plugin-Befehl im Terminal. Bei Pi sind Plugins Pi-Pakete, und der Katalog stammt von npm.",
     "appAria": "App",
     "viewAria": "Plugin-Ansichten",
     "viewInstalled": "Installiert",
@@ -5112,9 +5122,11 @@
     "confirmRemoveMarketBody": "{{app}} listet keine Plugins aus diesem Marketplace mehr auf und deinstalliert möglicherweise die daraus installierten Plugins. Sie können ihn später erneut hinzufügen.",
     "toast": {
       "installed": "{{name}} installiert",
+      "installedNeedsConfig": "Deaktiviert installiert. Führen Sie in {{app}} /plugin aus, um die MCP-Server zu konfigurieren und es zu aktivieren.",
       "installFailed": "{{name}} konnte nicht installiert werden",
       "installNeedsTerminal": "Dieses Plugin führt bei der Installation einen vom Marketplace deklarierten Befehl auf Ihrem Rechner aus, und CC Switch bestätigt das nicht für Sie. Führen Sie {{command}} in einem Terminal aus, bestätigen Sie dort und aktualisieren Sie dann hier.",
       "authRequired": "{{app}} erfordert zuerst eine Anmeldung. Führen Sie {{command}} in einem Terminal aus und versuchen Sie es dann erneut.",
+      "pluginInUse": "Dieses Plugin wird derzeit von einem anderen {{app}}- / {{cli}}-Prozess verwendet (z. B. einer laufenden Sitzung, dem Hub oder einem Hintergrunddienst). Schließen Sie ihn und versuchen Sie es erneut.",
       "uninstalled": "{{name}} deinstalliert",
       "uninstallFailed": "{{name}} konnte nicht deinstalliert werden",
       "enabled": "{{name}} aktiviert",

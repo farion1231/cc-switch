@@ -7,7 +7,7 @@ import type { GeminiProviderPreset } from "@/config/geminiProviderPresets";
 import type { OpenCodeProviderPreset } from "@/config/opencodeProviderPresets";
 import type { ClaudeDesktopProviderPreset } from "@/config/claudeDesktopProviderPresets";
 import { extractBaseUrlForUsageDetection } from "@/config/codingPlanProviders";
-import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
+import { extractCodexBaseUrl } from "@/utils/codexConfigUtils";
 
 type PresetEntry = {
   id: string;
