@@ -3752,7 +3752,10 @@
       "command": "Befehl",
       "args": "Argumente",
       "env": "Umgebung",
-      "url": "URL"
+      "url": "URL",
+      "type": "Typ",
+      "cwd": "Arbeitsverzeichnis",
+      "headers": "Header"
     },
     "prompt": {
       "title": "System-Prompt importieren",
@@ -3786,7 +3789,8 @@
     "risk": {
       "envHijack": "Diese Konfiguration setzt Umgebungsvariablen, die verändern, wie Prozesse Code laden (z. B. Bibliotheken einschleusen oder CA-Zertifikate ersetzen). Importieren Sie nur aus einer Quelle, der Sie vertrauen.",
       "privateEndpoint": "Diese Adresse zeigt auf localhost oder ein privates Netzwerk. Nur importieren, wenn es Ihr eigener lokaler Dienst ist.",
-      "shellCommand": "Diese Konfiguration führt eine vollständige Befehlszeile über eine Shell aus – was tatsächlich läuft, steht in den Argumenten. Prüfen Sie jede Zeile."
+      "shellCommand": "Diese Konfiguration führt eine vollständige Befehlszeile über eine Shell aus – was tatsächlich läuft, steht in den Argumenten. Prüfen Sie jede Zeile.",
+      "mcpDangerousField": "Diese MCP-Konfiguration enthält risikoreiche Felder, die Host-Umgebungsvariablen auslesen (z. B. bearer_token_env_var, env_http_headers, env_vars), Hilfsbefehle ausführen (http_headers_helper) oder das Arbeitsverzeichnis ändern (cwd) können. Nur aus vollständig vertrauenswürdigen Quellen importieren."
     }
   },
   "iconPicker": {

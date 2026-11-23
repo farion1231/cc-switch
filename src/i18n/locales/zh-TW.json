@@ -3752,7 +3752,10 @@
       "command": "命令",
       "args": "參數",
       "env": "環境",
-      "url": "位址"
+      "url": "位址",
+      "type": "類型",
+      "cwd": "工作目錄",
+      "headers": "標頭"
     },
     "prompt": {
       "title": "匯入系統提示詞",
@@ -3786,7 +3789,8 @@
     "risk": {
       "envHijack": "該設定包含可改變處理程序載入行為的環境變數（例如注入動態程式庫、替換 CA 憑證），請確認來源可信。",
       "privateEndpoint": "該位址指向本機或內部網路。若非你自建的本機服務，請勿匯入。",
-      "shellCommand": "該設定透過 shell 執行整段命令，實際執行的內容在參數裡，請逐行核對。"
+      "shellCommand": "該設定透過 shell 執行整段命令，實際執行的內容在參數裡，請逐行核對。",
+      "mcpDangerousField": "該 MCP 設定包含高風險擴充欄位，可能會讀取主機環境變數並外傳（如 bearer_token_env_var、env_http_headers、env_vars）、執行輔助指令（http_headers_helper）或劫持工作目錄（cwd）。請務必確認來源完全可信。"
     }
   },
   "iconPicker": {

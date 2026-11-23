@@ -3752,7 +3752,10 @@
       "command": "명령",
       "args": "인수",
       "env": "환경",
-      "url": "URL"
+      "url": "URL",
+      "type": "유형",
+      "cwd": "작업 디렉터리",
+      "headers": "헤더"
     },
     "prompt": {
       "title": "시스템 프롬프트 가져오기",
@@ -3786,7 +3789,8 @@
     "risk": {
       "envHijack": "이 설정에는 프로세스의 로드 동작을 변경할 수 있는 환경 변수(예: 동적 라이브러리 주입, CA 인증서 교체)가 포함되어 있습니다. 출처를 신뢰할 수 있는지 확인하세요.",
       "privateEndpoint": "이 주소는 localhost 또는 사설 네트워크를 가리킵니다. 직접 관리하는 로컬 서비스가 아니라면 가져오지 마세요.",
-      "shellCommand": "이 설정은 셸을 통해 전체 명령줄을 실행합니다. 실제로 실행되는 것은 인수에 있습니다. 각 줄을 검토하세요."
+      "shellCommand": "이 설정은 셸을 통해 전체 명령줄을 실행합니다. 실제로 실행되는 것은 인수에 있습니다. 각 줄을 검토하세요.",
+      "mcpDangerousField": "이 MCP 설정에는 호스트 환경 변수를 읽거나(bearer_token_env_var, env_http_headers, env_vars 등), 보조 명령을 실행하거나(http_headers_helper), 작업 디렉터리를 변경할 수 있는(cwd) 고위험 필드가 포함되어 있습니다. 완전히 신뢰할 수 있는 출처인 경우에만 가져오세요."
     }
   },
   "iconPicker": {

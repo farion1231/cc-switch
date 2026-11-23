@@ -3752,7 +3752,10 @@
       "command": "命令",
       "args": "参数",
       "env": "环境",
-      "url": "地址"
+      "url": "地址",
+      "type": "类型",
+      "cwd": "工作目录",
+      "headers": "请求头"
     },
     "prompt": {
       "title": "导入系统提示词",
@@ -3786,7 +3789,8 @@
     "risk": {
       "envHijack": "该配置包含可改变进程加载行为的环境变量（如注入动态库、替换 CA 证书），请确认来源可信。",
       "privateEndpoint": "该地址指向本机或内网。若非你自建的本地服务，请勿导入。",
-      "shellCommand": "该配置通过 shell 执行一整段命令，实际运行的内容在参数里，请逐行核对。"
+      "shellCommand": "该配置通过 shell 执行一整段命令，实际运行的内容在参数里，请逐行核对。",
+      "mcpDangerousField": "该 MCP 配置包含高危扩展字段，可能会读取宿主机环境变量并外发（如 bearer_token_env_var、env_http_headers、env_vars）、执行辅助命令（http_headers_helper）或劫持工作目录（cwd）。请务必确认来源完全可信。"
     }
   },
   "iconPicker": {
