@@ -1266,6 +1266,8 @@
       "credits": "Credits",
       "leftOf": "{{remaining}} / {{total}} übrig",
       "usedOf": "{{used}} / {{total}} verbraucht",
+      "unlimited": "Unbegrenzt",
+      "unlimitedUsed": "Unbegrenzt, {{used}} verbraucht",
       "usedUp": "Aufgebraucht (von {{total}})",
       "detail": "{{remaining}} von {{total}} Credits übrig, {{used}} verbraucht",
       "staleNotRunning": "WorkBuddy läuft nicht; letztes Ergebnis wird angezeigt",
@@ -3752,7 +3754,10 @@
       "command": "Befehl",
       "args": "Argumente",
       "env": "Umgebung",
-      "url": "URL"
+      "url": "URL",
+      "type": "Typ",
+      "cwd": "Arbeitsverzeichnis",
+      "headers": "Header"
     },
     "prompt": {
       "title": "System-Prompt importieren",
@@ -3786,7 +3791,8 @@
     "risk": {
       "envHijack": "Diese Konfiguration setzt Umgebungsvariablen, die verändern, wie Prozesse Code laden (z. B. Bibliotheken einschleusen oder CA-Zertifikate ersetzen). Importieren Sie nur aus einer Quelle, der Sie vertrauen.",
       "privateEndpoint": "Diese Adresse zeigt auf localhost oder ein privates Netzwerk. Nur importieren, wenn es Ihr eigener lokaler Dienst ist.",
-      "shellCommand": "Diese Konfiguration führt eine vollständige Befehlszeile über eine Shell aus – was tatsächlich läuft, steht in den Argumenten. Prüfen Sie jede Zeile."
+      "shellCommand": "Diese Konfiguration führt eine vollständige Befehlszeile über eine Shell aus – was tatsächlich läuft, steht in den Argumenten. Prüfen Sie jede Zeile.",
+      "mcpDangerousField": "Diese MCP-Konfiguration enthält risikoreiche Felder, die Host-Umgebungsvariablen auslesen (z. B. bearer_token_env_var, env_http_headers, env_vars), Hilfsbefehle ausführen (http_headers_helper) oder das Arbeitsverzeichnis ändern (cwd) können. Nur aus vollständig vertrauenswürdigen Quellen importieren."
     }
   },
   "iconPicker": {
@@ -5056,7 +5062,7 @@
   "pluginsPage": {
     "title": "Plugins",
     "helpTitle": "Plugins",
-    "help": "Plugins für Claude Code, Codex, Grok Build, MiniMax Code, OpenClaw und Pi installieren, aktivieren und entfernen. CC Switch führt die jeweilige CLI der App aus, das Ergebnis ist also dasselbe wie beim Plugin-Befehl im Terminal. Bei Pi sind Plugins Pi-Pakete, und der Katalog stammt von npm.",
+    "help": "Plugins für Claude Code, Codex, Grok Build, MiniMax Code, OpenClaw, Pi und Antigravity CLI installieren, aktivieren und entfernen. CC Switch führt die jeweilige CLI der App aus, das Ergebnis ist also dasselbe wie beim Plugin-Befehl im Terminal. Bei Pi sind Plugins Pi-Pakete, und der Katalog stammt von npm.",
     "appAria": "App",
     "viewAria": "Plugin-Ansichten",
     "viewInstalled": "Installiert",
@@ -5116,9 +5122,11 @@
     "confirmRemoveMarketBody": "{{app}} listet keine Plugins aus diesem Marketplace mehr auf und deinstalliert möglicherweise die daraus installierten Plugins. Sie können ihn später erneut hinzufügen.",
     "toast": {
       "installed": "{{name}} installiert",
+      "installedNeedsConfig": "Deaktiviert installiert. Führen Sie in {{app}} /plugin aus, um die MCP-Server zu konfigurieren und es zu aktivieren.",
       "installFailed": "{{name}} konnte nicht installiert werden",
       "installNeedsTerminal": "Dieses Plugin führt bei der Installation einen vom Marketplace deklarierten Befehl auf Ihrem Rechner aus, und CC Switch bestätigt das nicht für Sie. Führen Sie {{command}} in einem Terminal aus, bestätigen Sie dort und aktualisieren Sie dann hier.",
       "authRequired": "{{app}} erfordert zuerst eine Anmeldung. Führen Sie {{command}} in einem Terminal aus und versuchen Sie es dann erneut.",
+      "pluginInUse": "Dieses Plugin wird derzeit von einem anderen {{app}}- / {{cli}}-Prozess verwendet (z. B. einer laufenden Sitzung, dem Hub oder einem Hintergrunddienst). Schließen Sie ihn und versuchen Sie es erneut.",
       "uninstalled": "{{name}} deinstalliert",
       "uninstallFailed": "{{name}} konnte nicht deinstalliert werden",
       "enabled": "{{name}} aktiviert",
@@ -5127,6 +5135,7 @@
       "updated": "{{name}} aktualisiert",
       "upToDate": "{{name}} ist bereits auf dem neuesten Stand",
       "updateFailed": "{{name}} konnte nicht aktualisiert werden",
+      "updateNeedsReinstall": "Dieses Plugin liegt in einem Ordner älterer Antigravity-Versionen, daher kann CC Switch es nicht aktualisieren. Deinstallieren Sie es und installieren Sie es unter „Entdecken“ erneut, um die neueste Version zu erhalten.",
       "refreshed": "Marketplaces aktualisiert",
       "refreshFailed": "Marketplaces konnten nicht aktualisiert werden",
       "marketAdded": "Marketplace {{source}} hinzugefügt",

@@ -8,7 +8,7 @@
 //! - Codex：`codex plugin list|add|remove` 和 `codex plugin marketplace list|add|remove|upgrade`。
 //!   Codex 没有启用 / 停用命令，开关就是 `config.toml` 的 `[plugins."<id>"] enabled`，
 //!   经写入引擎原位改这一个键。
-//! - Grok Build、MiniMax Code、OpenClaw、Pi：见各自的子模块。
+//! - Grok Build、MiniMax Code、OpenClaw、Pi、Antigravity：见各自的子模块。
 //!
 //! 写锁只在 CC Switch 自己写文件时拿（Codex 和 Pi 的启停、Pi 本地包的卸载）。CLI 改自己的配置和用户手改
 //! 文件是一回事：切换供应商写之前本来就会重读比对，所以 CLI 调用期间（安装、更新最长
@@ -17,6 +17,7 @@
 //! CLI 读的配置目录和 CC Switch 读的必须是同一份：设置里覆盖了目录时，用各应用的环境变量
 //! （`CLAUDE_CONFIG_DIR`、`CODEX_HOME`、`GROK_HOME`、`PI_CODING_AGENT_DIR`……）告诉 CLI。
 
+mod agy;
 #[cfg(test)]
 mod cli_fixtures;
 mod grok;
@@ -47,6 +48,14 @@ pub const CLI_NOT_INSTALLED: &str = "PLUGIN_CLI_NOT_INSTALLED";
 /// 时返回的错误码。CC Switch 不传 `-y` 代为同意，前端提示用户去终端里装。
 pub const NEEDS_TERMINAL_CONFIRM: &str = "PLUGIN_NEEDS_TERMINAL_CONFIRM";
 
+/// 插件目录正被同应用的其它进程占用（例如 Windows 下运行中的 Antigravity Hub / agy 会话），
+/// 无法替换或移除目录时返回的错误码，前端据此提示关闭相关进程后重试。
+pub const PLUGIN_IN_USE: &str = "PLUGIN_IN_USE";
+
+/// 插件装在 CC Switch 无法原地更新的位置（Antigravity 旧版的数字目录）时返回的错误码，
+/// 前端提示用户卸载后从「发现」重新安装。
+pub const UPDATE_NEEDS_REINSTALL: &str = "PLUGIN_UPDATE_NEEDS_REINSTALL";
+
 const LIST_TIMEOUT: Duration = Duration::from_secs(90);
 const TOGGLE_TIMEOUT: Duration = Duration::from_secs(60);
 /// 安装、更新、加市场都可能要 git clone。
@@ -65,6 +74,7 @@ pub enum PluginApp {
     Mcode,
     Openclaw,
     Pi,
+    Agy,
 }
 
 impl PluginApp {
@@ -76,6 +86,7 @@ impl PluginApp {
             PluginApp::Mcode => "mcode",
             PluginApp::Openclaw => "openclaw",
             PluginApp::Pi => "pi",
+            PluginApp::Agy => "agy",
         }
     }
 
@@ -88,6 +99,7 @@ impl PluginApp {
             PluginApp::Mcode => AppType::Mcode,
             PluginApp::Openclaw => AppType::OpenClaw,
             PluginApp::Pi => AppType::Pi,
+            PluginApp::Agy => AppType::Agy,
         }
     }
 }
@@ -145,12 +157,19 @@ pub struct PluginMarketplace {
     pub removable: bool,
 }
 
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginActionOutcome {
     /// 操作确实改了东西（更新时：已经是最新版为 false）。
     pub changed: bool,
     pub message: Option<String>,
+    /// 安装成功但插件仍处于停用状态（例如 Antigravity 插件需先在 `/plugin` 中配置 MCP 变量）。
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub needs_configuration: bool,
 }
 
 // ───────────────────────────── 参数校验 ─────────────────────────────
@@ -180,7 +199,7 @@ fn is_package_name(id: &str) -> bool {
     }
 }
 
-/// 按应用校验交给 CLI 的插件 id。
+/// 按应用校验交给 CLI 的插件 id（已安装条目的启停、卸载、更新）。
 fn validate_app_plugin_id(app: PluginApp, id: &str) -> Result<(), String> {
     let ok = match app {
         PluginApp::Claude | PluginApp::Codex | PluginApp::Mcode => {
@@ -189,11 +208,20 @@ fn validate_app_plugin_id(app: PluginApp, id: &str) -> Result<(), String> {
         PluginApp::Grok => is_name_segment(id),
         PluginApp::Openclaw => is_package_name(id),
         PluginApp::Pi => return pi::validate_source(id),
+        PluginApp::Agy => return agy::validate_installed_id(id),
     };
     if ok {
         Ok(())
     } else {
         Err(format!("Invalid plugin id: {id}"))
+    }
+}
+
+/// 按应用校验安装参数：Antigravity 目录条目是 `name@marketplace`，已安装条目是目录名。
+fn validate_install_plugin_id(app: PluginApp, id: &str) -> Result<(), String> {
+    match app {
+        PluginApp::Agy => agy::validate_install_id(id),
+        _ => validate_app_plugin_id(app, id),
     }
 }
 
@@ -294,6 +322,7 @@ fn cli_context(app: PluginApp) -> (Vec<(&'static str, String)>, PathBuf) {
             let env = vec![("PI_CODING_AGENT_DIR", dir.to_string_lossy().into_owned())];
             (dir, env)
         }
+        PluginApp::Agy => (crate::agy_config::agy_dir(), Vec::new()),
     };
     // CC Switch 启动时给自己设了 RUST_BACKTRACE=1（panic_hook），子进程会继承：Codex 这类
     // Rust 写的 CLI 一报错就把整段堆栈打进 stderr，进而塞满失败提示。这里显式关掉。
@@ -485,6 +514,7 @@ fn claude_update_outcome(value: &Value) -> PluginActionOutcome {
     PluginActionOutcome {
         changed: value.get("updateOutcome").and_then(Value::as_str) != Some("up_to_date"),
         message: str_field(value, "message"),
+        ..Default::default()
     }
 }
 
@@ -493,6 +523,7 @@ fn codex_marketplace_add_outcome(value: &Value) -> PluginActionOutcome {
     PluginActionOutcome {
         changed: value.get("alreadyAdded").and_then(Value::as_bool) != Some(true),
         message: str_field(value, "marketplaceName"),
+        ..Default::default()
     }
 }
 
@@ -883,8 +914,8 @@ fn run_list(app: PluginApp, with_catalog: bool) -> Result<PluginListing, String>
         PluginApp::Grok => {
             grok::parse_listing(&value, &grok::read_config_text(), wsl_root.as_deref())
         }
-        // OpenClaw、Pi 的列表命令不同，不走这里
-        PluginApp::Openclaw | PluginApp::Pi => {
+        // OpenClaw、Pi、Antigravity 的列表命令不同，不走这里
+        PluginApp::Openclaw | PluginApp::Pi | PluginApp::Agy => {
             return Err(unsupported(app, "plugin list --available"))
         }
     })
@@ -896,6 +927,7 @@ pub fn list_installed(app: PluginApp) -> Result<Vec<PluginEntry>, String> {
     match app {
         PluginApp::Openclaw => openclaw::list_installed(),
         PluginApp::Pi => pi::list_installed(),
+        PluginApp::Agy => agy::list_installed(),
         _ => run_list(app, false).map(|listing| listing.installed),
     }
 }
@@ -906,6 +938,7 @@ pub fn list_catalog(app: PluginApp) -> Result<Vec<PluginEntry>, String> {
     match app {
         PluginApp::Openclaw => openclaw::list_catalog(),
         PluginApp::Pi => pi::list_catalog(),
+        PluginApp::Agy => agy::list_catalog(),
         _ => run_list(app, true).map(catalog_from_listing),
     }
 }
@@ -937,8 +970,11 @@ fn catalog_from_listing(listing: PluginListing) -> Vec<PluginEntry> {
 }
 
 pub fn list_marketplaces(app: PluginApp) -> Result<Vec<PluginMarketplace>, String> {
-    // MiniMax Code 正式版禁用了市场管理；OpenClaw、Pi 没有可增删的市场。
-    if matches!(app, PluginApp::Mcode | PluginApp::Openclaw | PluginApp::Pi) {
+    // MiniMax Code 正式版禁用了市场管理；OpenClaw、Pi、Antigravity 没有可增删的市场。
+    if matches!(
+        app,
+        PluginApp::Mcode | PluginApp::Openclaw | PluginApp::Pi | PluginApp::Agy
+    ) {
         return Err(unsupported(app, "marketplace management"));
     }
     let out = run_cli(
@@ -957,7 +993,7 @@ pub fn list_marketplaces(app: PluginApp) -> Result<Vec<PluginMarketplace>, Strin
             parse_codex_marketplaces(&value, &config)
         }
         PluginApp::Grok => grok::parse_marketplaces(&value),
-        PluginApp::Mcode | PluginApp::Openclaw | PluginApp::Pi => Vec::new(),
+        PluginApp::Mcode | PluginApp::Openclaw | PluginApp::Pi | PluginApp::Agy => Vec::new(),
     })
 }
 
@@ -965,6 +1001,7 @@ fn ok_outcome(value: &Value) -> PluginActionOutcome {
     PluginActionOutcome {
         changed: true,
         message: str_field(value, "message"),
+        ..Default::default()
     }
 }
 
@@ -980,14 +1017,14 @@ fn run_action(
     }
     Ok(PluginActionOutcome {
         changed: true,
-        message: None,
+        ..Default::default()
     })
 }
 
 /// 安装。Grok Build 和 OpenClaw 的 CLI 要求显式确认信任（`--trust` / `--accept-capabilities`）
 /// 才肯装：前端对这两个应用先弹确认框，用户确认后才会调到这里。
 pub fn install_plugin(app: PluginApp, id: &str) -> Result<PluginActionOutcome, String> {
-    validate_app_plugin_id(app, id)?;
+    validate_install_plugin_id(app, id)?;
     match app {
         // 不传 -y：市场声明了安装命令的插件要用户在终端里亲自确认，CC Switch 不代为同意。
         // CLI 的 stdin 是 null，这种插件会立刻失败（`NEEDS_TERMINAL_CONFIRM`），不会等到超时。
@@ -1020,6 +1057,7 @@ pub fn install_plugin(app: PluginApp, id: &str) -> Result<PluginActionOutcome, S
             }
             run_action(app, &["install", id], NETWORK_TIMEOUT)
         }
+        PluginApp::Agy => agy::install_plugin(id),
     }
 }
 
@@ -1068,10 +1106,11 @@ pub fn uninstall_plugin(
         PluginApp::Pi if pi::is_local_source(id) => {
             pi::remove_local_entry(db, id).map(|changed| PluginActionOutcome {
                 changed,
-                message: None,
+                ..Default::default()
             })
         }
         PluginApp::Pi => Err(pi::terminal_hint("remove", id)),
+        PluginApp::Agy => agy::uninstall_plugin(id),
     }
 }
 
@@ -1094,7 +1133,7 @@ pub fn set_plugin_enabled(
         PluginApp::Codex => {
             write_codex_plugin_enabled(db, id, enabled).map(|changed| PluginActionOutcome {
                 changed,
-                message: None,
+                ..Default::default()
             })
         }
         PluginApp::Mcode => run_cli(app, &["plugin", verb, id, "--json"], TOGGLE_TIMEOUT)
@@ -1106,8 +1145,9 @@ pub fn set_plugin_enabled(
         // Pi 没有包级开关命令，改 settings.json 里的资源过滤
         PluginApp::Pi => pi::set_enabled(db, id, enabled).map(|changed| PluginActionOutcome {
             changed,
-            message: None,
+            ..Default::default()
         }),
+        PluginApp::Agy => run_action(app, &["plugin", verb, id], TOGGLE_TIMEOUT),
     }
 }
 
@@ -1250,7 +1290,7 @@ pub fn update_plugin(
             }
             Ok(PluginActionOutcome {
                 changed: grok::update_changed(&out.stdout),
-                message: None,
+                ..Default::default()
             })
         }
         PluginApp::Openclaw => {
@@ -1260,13 +1300,13 @@ pub fn update_plugin(
             }
             Ok(PluginActionOutcome {
                 changed: openclaw::update_changed(&out.stdout),
-                message: None,
+                ..Default::default()
             })
         }
         // 本地来源直接加载目录，没有可更新的
         PluginApp::Pi if pi::is_local_source(id) => Ok(PluginActionOutcome {
             changed: false,
-            message: None,
+            ..Default::default()
         }),
         PluginApp::Pi => {
             if !pi::can_pass_to_cli(id) {
@@ -1278,9 +1318,10 @@ pub fn update_plugin(
             }
             Ok(PluginActionOutcome {
                 changed: pi::update_changed(&out.stdout),
-                message: None,
+                ..Default::default()
             })
         }
+        PluginApp::Agy => agy::update_plugin(id),
         PluginApp::Mcode => Err(unsupported(app, "plugin update")),
     }
 }
@@ -1306,7 +1347,7 @@ pub fn add_marketplace(app: PluginApp, source: &str) -> Result<PluginActionOutco
             &["plugin", "marketplace", "add", &source],
             NETWORK_TIMEOUT,
         ),
-        PluginApp::Mcode | PluginApp::Openclaw | PluginApp::Pi => {
+        PluginApp::Mcode | PluginApp::Openclaw | PluginApp::Pi | PluginApp::Agy => {
             Err(unsupported(app, "marketplace management"))
         }
     }
@@ -1333,7 +1374,7 @@ pub fn remove_marketplace(app: PluginApp, name: &str) -> Result<PluginActionOutc
             &["plugin", "marketplace", "remove", name],
             TOGGLE_TIMEOUT,
         ),
-        PluginApp::Mcode | PluginApp::Openclaw | PluginApp::Pi => {
+        PluginApp::Mcode | PluginApp::Openclaw | PluginApp::Pi | PluginApp::Agy => {
             Err(unsupported(app, "marketplace management"))
         }
     }
@@ -1356,7 +1397,7 @@ fn refresh_each(
     if failures.is_empty() {
         Ok(PluginActionOutcome {
             changed: !markets.is_empty(),
-            message: None,
+            ..Default::default()
         })
     } else {
         Err(failures.join("\n"))
@@ -1399,10 +1440,10 @@ pub fn refresh_marketplaces(app: PluginApp) -> Result<PluginActionOutcome, Strin
             NETWORK_TIMEOUT,
         )
         .map(|v| ok_outcome(&v)),
-        // 目录是直接查 npm registry 的，没有本地缓存要刷新；前端随后重读目录
-        PluginApp::Pi => Ok(PluginActionOutcome {
+        // 目录是直接查远端接口（npm registry / gstatic）的，没有本地缓存要刷新；前端随后重读目录
+        PluginApp::Pi | PluginApp::Agy => Ok(PluginActionOutcome {
             changed: true,
-            message: None,
+            ..Default::default()
         }),
         PluginApp::Mcode => Err(unsupported(app, "marketplace refresh")),
     }
@@ -1440,6 +1481,7 @@ mod tests {
             (PluginApp::Mcode, "mcode"),
             (PluginApp::Openclaw, "openclaw"),
             (PluginApp::Pi, "pi"),
+            (PluginApp::Agy, "agy"),
         ] {
             assert_eq!(serde_json::to_value(app).unwrap(), json!(id));
             assert_eq!(serde_json::from_value::<PluginApp>(json!(id)).unwrap(), app);
@@ -1452,6 +1494,18 @@ mod tests {
         assert!(validate_app_plugin_id(PluginApp::Mcode, "computer-use").is_err());
         assert!(validate_app_plugin_id(PluginApp::Grok, "hello").is_ok());
         assert!(validate_app_plugin_id(PluginApp::Grok, "hello@mkt").is_err());
+        assert!(validate_install_plugin_id(
+            PluginApp::Agy,
+            "gcalendar@antigravity-plugins-official"
+        )
+        .is_ok());
+        assert!(validate_install_plugin_id(PluginApp::Agy, "gcalendar").is_err());
+        assert!(validate_app_plugin_id(PluginApp::Agy, "gcalendar").is_ok());
+        assert!(validate_app_plugin_id(PluginApp::Agy, "-1870732469773246571").is_ok());
+        assert!(
+            validate_app_plugin_id(PluginApp::Agy, "gcalendar@antigravity-plugins-official")
+                .is_err()
+        );
         for ok in ["memory-lancedb", "@openclaw/memory-lancedb", "a2a"] {
             assert!(
                 validate_app_plugin_id(PluginApp::Openclaw, ok).is_ok(),
@@ -1851,6 +1905,7 @@ enabled = false
             PluginApp::Mcode,
             PluginApp::Openclaw,
             PluginApp::Pi,
+            PluginApp::Agy,
         ] {
             let (env, _) = cli_context(app);
             for key in ["RUST_BACKTRACE", "RUST_LIB_BACKTRACE"] {
@@ -1899,6 +1954,7 @@ enabled = false
             PluginApp::Grok,
             PluginApp::Openclaw,
             PluginApp::Pi,
+            PluginApp::Agy,
         ] {
             let (_, dir) = cli_context(app);
             assert!(!dir.exists(), "{app:?} dir {dir:?} must not be created");

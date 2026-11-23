@@ -3683,7 +3683,10 @@
       "command": "Komut",
       "args": "Argümanlar",
       "env": "Zarf",
-      "url": "URL'si"
+      "url": "URL'si",
+      "type": "Tür",
+      "cwd": "Çalışma Dizini",
+      "headers": "Başlıklar"
     },
     "prompt": {
       "title": "Sistem İstemini İçe Aktar",
@@ -3717,7 +3720,8 @@
     "risk": {
       "envHijack": "Bu yapılandırma, yükleme kodunun işlenme biçimini değiştiren ortam değişkenlerini ayarlar (örneğin, kitaplıkları enjekte etme veya CA sertifikalarını değiştirme). Yalnızca güvendiğiniz bir kaynaktan içe aktarın.",
       "privateEndpoint": "Bu adres localhost'a veya özel bir ağa işaret eder. Kendi yerel hizmetiniz olmadığı sürece ithalat yapmayın.",
-      "shellCommand": "Bu yapılandırma, bir kabuk aracılığıyla tam bir komut satırı çalıştırır; gerçekte yürütülen şey argümanlardadır. Her satırı inceleyin."
+      "shellCommand": "Bu yapılandırma, bir kabuk aracılığıyla tam bir komut satırı çalıştırır; gerçekte yürütülen şey argümanlardadır. Her satırı inceleyin.",
+      "mcpDangerousField": "Bu MCP yapılandırması, ana makine ortam değişkenlerini okuyabilen (ör. bearer_token_env_var, env_http_headers, env_vars), yardımcı komutlar çalıştırabilen (http_headers_helper) veya çalışma dizinini değiştirebilen (cwd) yüksek riskli alanlar içeriyor. Yalnızca tamamen güvendiğiniz bir kaynaktan içe aktarın."
     }
   },
   "iconPicker": {
@@ -4987,7 +4991,7 @@
   "pluginsPage": {
     "title": "Eklentiler",
     "helpTitle": "Eklentiler",
-    "help": "Claude Code, Codex, Grok Build, MiniMax Code, OpenClaw ve Pi eklentilerini yükleyin, etkinleştirin ve kaldırın. CC Switch her uygulamanın kendi CLI'ını çalıştırır; sonuç terminalde eklenti komutunu kullanmakla aynıdır. Pi'de eklentiler Pi paketleridir ve katalog npm'den gelir.",
+    "help": "Claude Code, Codex, Grok Build, MiniMax Code, OpenClaw, Pi ve Antigravity CLI eklentilerini yükleyin, etkinleştirin ve kaldırın. CC Switch her uygulamanın kendi CLI'ını çalıştırır; sonuç terminalde eklenti komutunu kullanmakla aynıdır. Pi'de eklentiler Pi paketleridir ve katalog npm'den gelir.",
     "appAria": "Uygulama",
     "viewAria": "Eklenti görünümleri",
     "viewInstalled": "Yüklü",
@@ -5047,9 +5051,11 @@
     "confirmRemoveMarketBody": "{{app}} bu pazar yerindeki eklentileri artık listelemez ve buradan yüklediğiniz eklentileri de kaldırabilir. Daha sonra yeniden ekleyebilirsiniz.",
     "toast": {
       "installed": "{{name}} yüklendi",
+      "installedNeedsConfig": "Devre dışı olarak yüklendi. MCP sunucularını yapılandırıp etkinleştirmek için {{app}} içinde /plugin komutunu çalıştırın.",
       "installFailed": "{{name}} yüklenemedi",
       "installNeedsTerminal": "Bu eklenti kurulum sırasında pazar yerinin bildirdiği bir komutu bilgisayarınızda çalıştırır ve CC Switch bunu sizin yerinize onaylamaz. Bir terminalde {{command}} komutunu çalıştırıp orada onaylayın, ardından geri dönüp yenileyin.",
       "authRequired": "{{app}} önce oturum açmanızı istiyor. Bir terminalde {{command}} komutunu çalıştırıp oturum açın, ardından geri dönüp tekrar deneyin.",
+      "pluginInUse": "Bu eklenti şu anda başka bir {{app}} / {{cli}} işlemi tarafından kullanılıyor (örneğin çalışan bir oturum, Hub veya arka plan hizmeti). İlgili işlemi kapatıp yeniden deneyin.",
       "uninstalled": "{{name}} kaldırıldı",
       "uninstallFailed": "{{name}} kaldırılamadı",
       "enabled": "{{name}} etkinleştirildi",
@@ -5058,6 +5064,7 @@
       "updated": "{{name}} güncellendi",
       "upToDate": "{{name}} zaten güncel",
       "updateFailed": "{{name}} güncellenemedi",
+      "updateNeedsReinstall": "Bu eklenti Antigravity'nin eski sürümlerinin kullandığı bir klasörde olduğu için CC Switch onu güncelleyemez. En son sürümü almak için kaldırın, ardından Keşfet'ten yeniden yükleyin.",
       "refreshed": "Pazar yerleri yenilendi",
       "refreshFailed": "Pazar yerleri yenilenemedi",
       "marketAdded": "{{source}} pazar yeri eklendi",
@@ -5386,6 +5393,8 @@
       "credits": "Kredi",
       "leftOf": "{{remaining}} / {{total}} kaldı",
       "usedOf": "{{used}} / {{total}} kullanıldı",
+      "unlimited": "Sınırsız",
+      "unlimitedUsed": "Sınırsız, {{used}} kullanıldı",
       "usedUp": "Tükendi ({{total}} üzerinden)",
       "detail": "{{total}} kredinin {{remaining}} kadarı kaldı, {{used}} kullanıldı",
       "staleNotRunning": "WorkBuddy çalışmıyor; son sonuç gösteriliyor",

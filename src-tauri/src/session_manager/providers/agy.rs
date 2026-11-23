@@ -19,31 +19,152 @@ use std::{
 };
 
 /// Antigravity CLI keeps sessions in `~/.gemini/antigravity-cli/brain`, while the IDE writes the
-/// same layout to `~/.gemini/antigravity/brain`. API-key providers run agy with a private
-/// `--gemini_dir` (`~/.cc-switch/agy/<provider>/`), so their sessions live under that directory's
-/// `antigravity-cli/brain`. All of them are scanned.
+/// same layout to `~/.gemini/antigravity/brain`, and standalone ACP runs write to
+/// `~/.gemini/antigravity-acp/brain`. API-key providers run agy with a private `--gemini_dir`
+/// (`~/.cc-switch/agy/<provider>/`), so their sessions live under that directory's
+/// `antigravity-cli/brain`. T3 Code runs `antigravity-acp` with an isolated `GEMINI_HOME` per
+/// instance (`~/.t3/userdata/providers/antigravity/<instance>/antigravity-acp/brain`, or under
+/// `$T3CODE_HOME`). All of them are scanned.
 pub fn session_roots() -> Vec<PathBuf> {
     session_sources()
         .into_iter()
-        .map(|(root, _)| root)
+        .map(|source| source.root)
         .collect()
 }
 
-/// Each root, with the private `--gemini_dir` its sessions must be resumed with.
-fn session_sources() -> Vec<(PathBuf, Option<PathBuf>)> {
-    let cli = crate::agy_config::agy_dir();
-    let ide = cli.with_file_name("antigravity");
-    let mut sources = vec![(cli.join("brain"), None), (ide.join("brain"), None)];
-    let mut profiles: Vec<PathBuf> = fs::read_dir(crate::agy_config::key_profiles_root())
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ResumeMode {
+    /// Default CLI/IDE conversation resumed with `agy --conversation=<id>`.
+    Default,
+    /// CC Switch API-key private profile resumed with `agy --gemini_dir=<dir> --conversation=<id>`.
+    PrivateProfile(PathBuf),
+    /// External ACP-managed conversation (standalone `antigravity-acp` or T3 Code) that cannot
+    /// be resumed via `agy --conversation`.
+    Unsupported,
+}
+
+impl ResumeMode {
+    fn command(&self, conversation_id: &str) -> Option<String> {
+        match self {
+            Self::Default => Some(crate::agy_config::resume_command(None, conversation_id)),
+            Self::PrivateProfile(dir) => Some(crate::agy_config::resume_command(
+                Some(dir.as_path()),
+                conversation_id,
+            )),
+            Self::Unsupported => None,
+        }
+    }
+}
+
+/// One Antigravity `brain` root together with how its sessions can be resumed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SessionSource {
+    root: PathBuf,
+    resume: ResumeMode,
+}
+
+fn non_empty_env_path(key: &str) -> Option<PathBuf> {
+    let raw = std::env::var_os(key)?;
+    match raw.to_str() {
+        Some(text) => {
+            let trimmed = text.trim();
+            (!trimmed.is_empty()).then(|| PathBuf::from(trimmed))
+        }
+        None => (!raw.is_empty()).then(|| PathBuf::from(raw)),
+    }
+}
+
+fn t3_code_homes() -> Vec<PathBuf> {
+    // Avoid leaking an ambient T3CODE_HOME into tests that isolate home via CC_SWITCH_TEST_HOME.
+    let env_home = if non_empty_env_path("CC_SWITCH_TEST_HOME").is_some() {
+        None
+    } else {
+        non_empty_env_path("T3CODE_HOME")
+    };
+    collect_t3_code_homes(&crate::config::get_home_dir(), env_home)
+}
+
+fn collect_t3_code_homes(home_dir: &Path, env_home: Option<PathBuf>) -> Vec<PathBuf> {
+    let mut homes = Vec::new();
+    let mut seen_canonical = HashSet::new();
+    for candidate in env_home
+        .into_iter()
+        .chain(std::iter::once(home_dir.join(".t3")))
+    {
+        if homes.contains(&candidate) {
+            continue;
+        }
+        if let Ok(canonical) = candidate.canonicalize() {
+            if !seen_canonical.insert(canonical) {
+                continue;
+            }
+        }
+        homes.push(candidate);
+    }
+    homes
+}
+
+fn sorted_subdirs(dir: &Path) -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = fs::read_dir(dir)
         .into_iter()
         .flatten()
         .flatten()
         .filter(|entry| entry.file_type().is_ok_and(|t| t.is_dir()))
         .map(|entry| entry.path())
         .collect();
-    profiles.sort();
-    for dir in profiles {
-        sources.push((dir.join("antigravity-cli").join("brain"), Some(dir)));
+    dirs.sort();
+    dirs
+}
+
+/// Each scanned `brain` root with its resume mode.
+fn session_sources() -> Vec<SessionSource> {
+    session_sources_for(
+        crate::agy_config::agy_dir(),
+        &crate::agy_config::key_profiles_root(),
+        &t3_code_homes(),
+    )
+}
+
+fn session_sources_for(
+    cli: PathBuf,
+    key_profiles_root: &Path,
+    t3_homes: &[PathBuf],
+) -> Vec<SessionSource> {
+    let ide = cli.with_file_name("antigravity");
+    let acp = cli.with_file_name("antigravity-acp");
+    let mut sources = vec![
+        SessionSource {
+            root: cli.join("brain"),
+            resume: ResumeMode::Default,
+        },
+        SessionSource {
+            root: ide.join("brain"),
+            resume: ResumeMode::Default,
+        },
+        SessionSource {
+            root: acp.join("brain"),
+            resume: ResumeMode::Unsupported,
+        },
+    ];
+    for dir in sorted_subdirs(key_profiles_root) {
+        sources.push(SessionSource {
+            root: dir.join("antigravity-cli").join("brain"),
+            resume: ResumeMode::PrivateProfile(dir),
+        });
+    }
+    for t3_home in t3_homes {
+        for state_dir in ["userdata", "dev"] {
+            let instances_root = t3_home
+                .join(state_dir)
+                .join("providers")
+                .join("antigravity");
+            for instance_dir in sorted_subdirs(&instances_root) {
+                sources.push(SessionSource {
+                    root: instance_dir.join("antigravity-acp").join("brain"),
+                    resume: ResumeMode::Unsupported,
+                });
+            }
+        }
     }
     sources
 }
@@ -76,18 +197,17 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
     scan_roots(&session_sources())
 }
 
-/// Every readable `transcript_full.jsonl` across CLI, IDE, and API-key roots, including `/btw`
-/// side questions and `/boost` subagent runs that [`scan_sessions`] hides from the session list.
+/// Every readable `transcript_full.jsonl` across CLI, IDE, ACP, T3 Code, and API-key roots,
+/// including `/btw` side questions and `/boost` subagent runs that [`scan_sessions`] hides from
+/// the session list.
 pub(crate) fn transcript_files() -> Vec<(String, PathBuf)> {
-    transcript_files_in_roots(&session_sources())
+    transcript_files_in_roots(&session_roots())
 }
 
-pub(crate) fn transcript_files_in_roots(
-    sources: &[(PathBuf, Option<PathBuf>)],
-) -> Vec<(String, PathBuf)> {
+pub(crate) fn transcript_files_in_roots(roots: &[PathBuf]) -> Vec<(String, PathBuf)> {
     let mut seen = HashSet::new();
     let mut files = Vec::new();
-    for (root, _) in sources {
+    for root in roots {
         let canonical_root = root.canonicalize().ok();
         for (id, path) in transcript_files_in_root(root, canonical_root.as_deref()) {
             if seen.insert(id.clone()) {
@@ -131,11 +251,11 @@ fn valid_transcript(root: &Path, canonical_root: Option<&Path>, id: &str) -> Opt
 /// Missing roots are tolerated; a session id found in several roots is reported once. The first
 /// root wins, except that an index-only entry yields to a later root holding the transcript: the
 /// IDE can continue a conversation the CLI index also lists, and only the transcript has usage.
-fn scan_roots(sources: &[(PathBuf, Option<PathBuf>)]) -> Vec<SessionMeta> {
+fn scan_roots(sources: &[SessionSource]) -> Vec<SessionMeta> {
     let mut seen = HashMap::new();
     let mut sessions: Vec<SessionMeta> = Vec::new();
-    for (root, gemini_dir) in sources {
-        for meta in scan_root(root, gemini_dir.as_deref()) {
+    for source in sources {
+        for meta in scan_root(&source.root, &source.resume) {
             match seen.get(&meta.session_id) {
                 None => {
                     seen.insert(meta.session_id.clone(), sessions.len());
@@ -156,7 +276,7 @@ fn valid_session_id(id: &str) -> bool {
     !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
 }
 
-fn scan_root(root: &Path, gemini_dir: Option<&Path>) -> Vec<SessionMeta> {
+fn scan_root(root: &Path, resume: &ResumeMode) -> Vec<SessionMeta> {
     let base = root.parent().unwrap_or(root);
     let conv_dir = base.join("conversations");
     let canonical_root = root.canonicalize().ok();
@@ -167,7 +287,7 @@ fn scan_root(root: &Path, gemini_dir: Option<&Path>) -> Vec<SessionMeta> {
         base,
         canonical_root.as_deref(),
         canonical_base.as_deref(),
-        gemini_dir,
+        resume,
         &mut seen_dbs,
     );
     let mut sessions = Vec::new();
@@ -197,7 +317,7 @@ fn scan_root(root: &Path, gemini_dir: Option<&Path>) -> Vec<SessionMeta> {
             created_at: None,
             last_active_at: None,
             source_path: None,
-            resume_command: Some(crate::agy_config::resume_command(gemini_dir, &id)),
+            resume_command: resume.command(&id),
         });
         let mut has_user_input = false;
         // Avoid parsing every transcript on list refresh when agy's own index is complete.
@@ -483,7 +603,7 @@ fn read_summaries(
     base: &Path,
     canonical_root: Option<&Path>,
     canonical_base: Option<&Path>,
-    gemini_dir: Option<&Path>,
+    resume: &ResumeMode,
     seen_dbs: &mut HashSet<PathBuf>,
 ) -> SummaryIndex {
     let mut index = SummaryIndex::default();
@@ -569,7 +689,7 @@ fn read_summaries(
                 created_at: None,
                 last_active_at,
                 source_path: None,
-                resume_command: Some(crate::agy_config::resume_command(gemini_dir, &id)),
+                resume_command: resume.command(&id),
             },
         );
     }
@@ -580,13 +700,28 @@ fn read_summaries(
 }
 
 /// agy stores each prompt wrapped in `<USER_REQUEST>`, followed by context it adds itself
-/// (`<ADDITIONAL_METADATA>`, `<USER_SETTINGS_CHANGE>`, ...). Only the user's text is shown.
+/// (`<ADDITIONAL_METADATA>`, `<USER_SETTINGS_CHANGE>`, ...). T3 Code's ACP bridge may further
+/// wrap the first turn with `<t3_code_instructions>...</t3_code_instructions>` and
+/// `<user_request>...</user_request>`. Only the user's text is shown.
 fn user_request(content: &str) -> &str {
-    content
+    let extracted = content
         .split_once("<USER_REQUEST>")
         .and_then(|(_, rest)| rest.split_once("</USER_REQUEST>"))
-        .map(|(inner, _)| inner.trim())
-        .unwrap_or(content)
+        .map(|(inner, _)| inner.trim());
+    let candidate = extracted.unwrap_or_else(|| content.trim());
+    if candidate.starts_with("<t3_code_instructions>") {
+        if let Some((_, after_instructions)) = candidate.split_once("</t3_code_instructions>") {
+            if let Some((_, after_open)) = after_instructions.split_once("<user_request>") {
+                if let Some((prompt, _)) = after_open.split_once("</user_request>") {
+                    return prompt.trim();
+                }
+            }
+        }
+        if candidate == "<t3_code_instructions>" {
+            return "";
+        }
+    }
+    extracted.unwrap_or(content)
 }
 
 /// agy 把模型切换写进会话正文：`changed setting \`Model Selection\` from X to Y`。
@@ -1610,7 +1745,7 @@ mod tests {
             ],
         )
         .unwrap();
-        let sessions = scan_root(&dir.path().join("brain"), None);
+        let sessions = scan_root(&dir.path().join("brain"), &ResumeMode::Default);
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].title.as_deref(), Some("Test title"));
         assert_eq!(
@@ -1700,7 +1835,7 @@ mod tests {
         .unwrap();
         drop(db);
 
-        let mut sessions = scan_root(&root, None);
+        let mut sessions = scan_root(&root, &ResumeMode::Default);
         sessions.sort_by(|a, b| a.session_id.cmp(&b.session_id));
         assert_eq!(sessions.len(), 2);
         assert_eq!(
@@ -1732,13 +1867,13 @@ mod tests {
         assert!(sessions[1].last_active_at.is_some());
 
         fs::remove_file(dir.path().join("conversation_summaries.db")).unwrap();
-        let without_index: Vec<_> = scan_root(&root, None)
+        let without_index: Vec<_> = scan_root(&root, &ResumeMode::Default)
             .into_iter()
             .map(|s| s.session_id)
             .collect();
         assert_eq!(without_index, ["kept-transcript"]);
 
-        let mut files: Vec<_> = transcript_files_in_roots(&[(root, None)])
+        let mut files: Vec<_> = transcript_files_in_roots(&[root])
             .into_iter()
             .map(|(id, _)| id)
             .collect();
@@ -1776,9 +1911,18 @@ mod tests {
         write("antigravity", "ide-1");
         write("antigravity", "cli-1");
         let roots = vec![
-            (home.path().join("antigravity-cli/brain"), None),
-            (home.path().join("antigravity/brain"), None),
-            (home.path().join("missing/brain"), None),
+            SessionSource {
+                root: home.path().join("antigravity-cli/brain"),
+                resume: ResumeMode::Default,
+            },
+            SessionSource {
+                root: home.path().join("antigravity/brain"),
+                resume: ResumeMode::Default,
+            },
+            SessionSource {
+                root: home.path().join("missing/brain"),
+                resume: ResumeMode::Default,
+            },
         ];
         let mut ids: Vec<_> = scan_roots(&roots)
             .into_iter()
@@ -1813,8 +1957,14 @@ mod tests {
         )
         .unwrap();
         let roots = vec![
-            (cli.join("brain"), None),
-            (home.path().join("antigravity/brain"), None),
+            SessionSource {
+                root: cli.join("brain"),
+                resume: ResumeMode::Default,
+            },
+            SessionSource {
+                root: home.path().join("antigravity/brain"),
+                resume: ResumeMode::Default,
+            },
         ];
         let sessions = scan_roots(&roots);
         assert_eq!(sessions.len(), 1);
@@ -1857,7 +2007,7 @@ mod tests {
             )
             .unwrap();
         }
-        assert!(scan_root(&root, None).is_empty());
+        assert!(scan_root(&root, &ResumeMode::Default).is_empty());
     }
 
     #[test]
@@ -1872,7 +2022,9 @@ mod tests {
             "{\"step_index\":2,\"type\":\"USER_INPUT\",\"content\":\"plain prompt\"}\n",
         )).unwrap();
         assert_eq!(
-            scan_root(dir.path(), None)[0].title.as_deref(),
+            scan_root(dir.path(), &ResumeMode::Default)[0]
+                .title
+                .as_deref(),
             Some("fix the build")
         );
         let messages = load_messages(&file).unwrap();
@@ -1892,15 +2044,15 @@ mod tests {
             "{\"step_index\":1,\"type\":\"PLANNER_RESPONSE\",\"content\":\"draft\"}\n",
             "{\"step_index\":1,\"type\":\"PLANNER_RESPONSE\",\"content\":\"done\",\"input_tokens\":100,\"output_tokens\":12,\"cache_read_tokens\":20}\n{"
         )).unwrap();
-        let sessions = scan_root(dir.path(), None);
+        let sessions = scan_root(dir.path(), &ResumeMode::Default);
         assert_eq!(sessions.len(), 1);
         assert_eq!(
             sessions[0].resume_command.as_deref(),
             Some("agy --conversation=abc-123")
         );
-        let private = Path::new("/home/me/.cc-switch/agy/relay");
+        let private = PathBuf::from("/home/me/.cc-switch/agy/relay");
         assert_eq!(
-            scan_root(dir.path(), Some(private))[0]
+            scan_root(dir.path(), &ResumeMode::PrivateProfile(private))[0]
                 .resume_command
                 .as_deref(),
             Some("agy --gemini_dir=/home/me/.cc-switch/agy/relay --conversation=abc-123")
@@ -2442,7 +2594,7 @@ mod tests {
             })],
         );
 
-        let sessions = scan_root(&root.join("brain"), None);
+        let sessions = scan_root(&root.join("brain"), &ResumeMode::Default);
         let by_id: std::collections::HashMap<&str, &SessionMeta> = sessions
             .iter()
             .map(|s| (s.session_id.as_str(), s))
@@ -2490,7 +2642,7 @@ mod tests {
             })],
         );
 
-        let busy_sessions = scan_root(&busy_root.join("brain"), None);
+        let busy_sessions = scan_root(&busy_root.join("brain"), &ResumeMode::Default);
         assert_eq!(busy_sessions.len(), 1);
         assert_eq!(busy_sessions[0].session_id, main_id);
         assert_eq!(
@@ -2876,7 +3028,7 @@ mod tests {
         let (scan_brain, raw_symlink_key): (PathBuf, Option<(tempfile::TempDir, PathBuf)>) =
             (fixture.app.join("brain"), None);
 
-        let mut sessions = scan_root(&scan_brain, None);
+        let mut sessions = scan_root(&scan_brain, &ResumeMode::Default);
         sessions.sort_by(|a, b| a.session_id.cmp(&b.session_id));
         let ids: Vec<_> = sessions.iter().map(|s| s.session_id.as_str()).collect();
         assert_eq!(ids, ["aaa-1", "bbb-2"]);
@@ -2893,7 +3045,7 @@ mod tests {
         // Scanning an unrelated root must not evict this root's cached entries.
         let other = tempfile::tempdir().unwrap();
         fs::create_dir_all(other.path().join("brain")).unwrap();
-        assert!(scan_root(&other.path().join("brain"), None).is_empty());
+        assert!(scan_root(&other.path().join("brain"), &ResumeMode::Default).is_empty());
         assert!(TRAJECTORY_CACHE.lock_recover().contains_key(&key_a));
 
         // delete_session receives canonicalized paths (mod.rs resolve_under_roots) and must
@@ -2918,7 +3070,7 @@ mod tests {
         }
         fs::remove_file(fixture.app.join("conversations/bbb-2.db")).unwrap();
         fs::remove_dir_all(fixture.app.join("brain/bbb-2")).unwrap();
-        assert!(scan_root(&scan_brain, None).is_empty());
+        assert!(scan_root(&scan_brain, &ResumeMode::Default).is_empty());
         {
             let cache = TRAJECTORY_CACHE.lock_recover();
             assert!(!cache.contains_key(&key_b));
@@ -2949,13 +3101,13 @@ mod tests {
         );
         fs::remove_file(fixture.app.join("conversation_summaries.db")).unwrap();
         let key_d = fs_db.canonicalize().unwrap();
-        assert!(scan_root(&scan_brain, None).is_empty());
+        assert!(scan_root(&scan_brain, &ResumeMode::Default).is_empty());
         assert_eq!(
             TRAJECTORY_CACHE.lock_recover().get(&key_d).map(|&(_, v)| v),
             Some(true)
         );
         fs::remove_file(&fs_db).unwrap();
-        assert_eq!(scan_root(&scan_brain, None).len(), 1);
+        assert_eq!(scan_root(&scan_brain, &ResumeMode::Default).len(), 1);
         assert!(!TRAJECTORY_CACHE.lock_recover().contains_key(&key_d));
 
         // WAL-only writes update `-wal` without touching `.db`; cache stamp must notice.
@@ -3024,7 +3176,7 @@ mod tests {
         fs::remove_file(&wal_db).unwrap();
         let _ = fs::remove_file(wal_sibling_path(&wal_db));
         let _ = fs::remove_file(wal_db.with_extension("db-shm"));
-        let _ = scan_root(&scan_brain, None);
+        let _ = scan_root(&scan_brain, &ResumeMode::Default);
         {
             let cache = TRAJECTORY_CACHE.lock_recover();
             assert!(!cache.contains_key(&wal_key));
@@ -3050,7 +3202,7 @@ mod tests {
             ),
             expected_after_dir_removal
         );
-        let _ = scan_root(&scan_brain, None);
+        let _ = scan_root(&scan_brain, &ResumeMode::Default);
         assert!(!TRAJECTORY_CACHE
             .lock_recover()
             .contains_key(&empty_schema_key));
@@ -3195,7 +3347,7 @@ mod tests {
                     "expected SQLITE_CANTOPEN on WAL DB without -shm in read-only dir, got {probe_err:?}"
                 );
                 assert!(open_db(&crash_summaries).is_none());
-                let mut sessions = scan_root(&crash_dir.join("brain"), None);
+                let mut sessions = scan_root(&crash_dir.join("brain"), &ResumeMode::Default);
                 sessions.sort_by(|a, b| a.session_id.cmp(&b.session_id));
                 let ids: Vec<_> = sessions.iter().map(|s| s.session_id.as_str()).collect();
                 assert_eq!(ids, ["persisted-1", "wal-only-2"]);
@@ -3212,7 +3364,7 @@ mod tests {
                 fs::set_permissions(&crash_dir, fs::Permissions::from_mode(0o555)).unwrap();
 
                 assert!(open_db(&crash_summaries).is_some());
-                let sessions = scan_root(&crash_dir.join("brain"), None);
+                let sessions = scan_root(&crash_dir.join("brain"), &ResumeMode::Default);
                 assert_eq!(sessions.len(), 1);
                 assert_eq!(sessions[0].session_id, "persisted-1");
                 assert_eq!(sessions[0].title.as_deref(), Some("Persisted Title"));
@@ -3363,5 +3515,220 @@ mod tests {
         assert_eq!(messages[4].role, "tool");
         assert_eq!(result_tuple(&messages[4]).0, "sh-after");
         assert_eq!(result_tuple(&messages[4]).1, ToolStatus::Success);
+    }
+
+    #[test]
+    fn agy_discovers_t3_code_and_standalone_acp_roots_deduplicating_t3_home_and_skipping_symlinks()
+    {
+        let home = tempfile::tempdir().unwrap();
+        let default_t3 = home.path().join(".t3");
+        let custom_t3 = home.path().join("custom-t3");
+        let key_profiles = home.path().join(".cc-switch/agy");
+        let key_profile = key_profiles.join("relay");
+        let userdata_inst_b = default_t3.join("userdata/providers/antigravity/inst-b");
+        let userdata_inst_a = default_t3.join("userdata/providers/antigravity/inst-a");
+        let dev_inst = custom_t3.join("dev/providers/antigravity/dev-inst");
+        for dir in [&key_profile, &userdata_inst_b, &userdata_inst_a, &dev_inst] {
+            fs::create_dir_all(dir).unwrap();
+        }
+        // Non-directory entries and symlinked instance directories must be skipped.
+        fs::write(
+            default_t3.join("userdata/providers/antigravity/not-a-dir"),
+            b"",
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            let outside = tempfile::tempdir().unwrap();
+            std::os::unix::fs::symlink(
+                outside.path(),
+                default_t3.join("userdata/providers/antigravity/symlink-inst"),
+            )
+            .unwrap();
+            let t3_link = home.path().join("t3-link");
+            std::os::unix::fs::symlink(&default_t3, &t3_link).unwrap();
+            assert_eq!(
+                collect_t3_code_homes(home.path(), Some(t3_link)),
+                vec![home.path().join("t3-link")]
+            );
+        }
+
+        assert_eq!(
+            collect_t3_code_homes(home.path(), Some(default_t3.clone())),
+            vec![default_t3.clone()]
+        );
+        let t3_homes = collect_t3_code_homes(home.path(), Some(custom_t3.clone()));
+        assert_eq!(t3_homes, vec![custom_t3.clone(), default_t3.clone()]);
+
+        let cli = home.path().join(".gemini/antigravity-cli");
+        let sources = session_sources_for(cli.clone(), &key_profiles, &t3_homes);
+        assert_eq!(
+            sources,
+            vec![
+                SessionSource {
+                    root: cli.join("brain"),
+                    resume: ResumeMode::Default,
+                },
+                SessionSource {
+                    root: home.path().join(".gemini/antigravity/brain"),
+                    resume: ResumeMode::Default,
+                },
+                SessionSource {
+                    root: home.path().join(".gemini/antigravity-acp/brain"),
+                    resume: ResumeMode::Unsupported,
+                },
+                SessionSource {
+                    root: key_profile.join("antigravity-cli/brain"),
+                    resume: ResumeMode::PrivateProfile(key_profile),
+                },
+                SessionSource {
+                    root: dev_inst.join("antigravity-acp/brain"),
+                    resume: ResumeMode::Unsupported,
+                },
+                SessionSource {
+                    root: userdata_inst_a.join("antigravity-acp/brain"),
+                    resume: ResumeMode::Unsupported,
+                },
+                SessionSource {
+                    root: userdata_inst_b.join("antigravity-acp/brain"),
+                    resume: ResumeMode::Unsupported,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn agy_scans_t3_code_acp_sessions_without_resume_command_unwraps_t3_prompts_and_refuses_delete()
+    {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        let home = crate::test_support::TestHome::new();
+        let acp_app = home
+            .path()
+            .join(".t3/userdata/providers/antigravity/inst-hash-1/antigravity-acp");
+        let brain = acp_app.join("brain");
+        let convs = acp_app.join("conversations");
+        let project = home.path().join("workspace").join("demo");
+        fs::create_dir_all(&convs).unwrap();
+        fs::create_dir_all(&project).unwrap();
+        let workspace_uris =
+            serde_json::to_string(&[url::Url::from_file_path(&project).unwrap().to_string()])
+                .unwrap();
+
+        for id in ["t3-titled", "t3-untitled"] {
+            fs::write(convs.join(format!("{id}.db")), b"").unwrap();
+        }
+        let db = rusqlite::Connection::open(acp_app.join("conversation_summaries.db")).unwrap();
+        db.execute_batch(
+            "CREATE TABLE conversation_summaries(
+                conversation_id TEXT,
+                title TEXT,
+                workspace_uris TEXT,
+                preview TEXT,
+                last_modified_time TEXT,
+                step_count INTEGER,
+                nesting_depth INTEGER,
+                agent_name TEXT
+            );",
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO conversation_summaries VALUES ('t3-titled','Titled T3 Thread',?1,'<t3_code_instructions>','2026-11-21 10:00:00+00:00',4,0,'')",
+            [&workspace_uris],
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO conversation_summaries VALUES ('t3-untitled','',?1,'<t3_code_instructions>','2026-11-21 10:05:00+00:00',2,0,'')",
+            [&workspace_uris],
+        )
+        .unwrap();
+        drop(db);
+
+        let titled_file = brain.join("t3-titled/.system_generated/logs/transcript_full.jsonl");
+        write_jsonl(
+            &titled_file,
+            &[
+                json!({
+                    "step_index": 0,
+                    "type": "USER_INPUT",
+                    "created_at": "2026-11-21T10:00:00Z",
+                    "content": "<USER_REQUEST>\n<t3_code_instructions>\n## T3 Code rules\n</t3_code_instructions>\n\n<user_request>\nCheck Antigravity usage\n</user_request><runtime_info>info</runtime_info>\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\ntime\n</ADDITIONAL_METADATA>"
+                }),
+                json!({
+                    "step_index": 1,
+                    "type": "PLANNER_RESPONSE",
+                    "status": "DONE",
+                    "content": "Checking now.",
+                    "input_tokens": 100,
+                    "output_tokens": 20
+                }),
+                json!({
+                    "step_index": 2,
+                    "type": "USER_INPUT",
+                    "created_at": "2026-11-21T10:01:00Z",
+                    "content": "<USER_REQUEST>\nFollow up question\n</USER_REQUEST>"
+                }),
+            ],
+        );
+        write_jsonl(
+            &brain.join("t3-untitled/.system_generated/logs/transcript_full.jsonl"),
+            &[json!({
+                "step_index": 0,
+                "type": "USER_INPUT",
+                "created_at": "2026-11-21T10:05:00Z",
+                "content": "<USER_REQUEST>\n<t3_code_instructions>\nrules\n</t3_code_instructions>\n\n<user_request>\nUntitled prompt text\n</user_request>\n</USER_REQUEST>"
+            })],
+        );
+        write_jsonl(
+            &brain.join("t3-subagent/.system_generated/logs/transcript_full.jsonl"),
+            &[json!({
+                "step_index": 0,
+                "type": "SYSTEM_MESSAGE",
+                "content": "subagent task"
+            })],
+        );
+
+        let mut sessions = scan_sessions();
+        sessions.sort_by(|a, b| a.session_id.cmp(&b.session_id));
+        assert_eq!(sessions.len(), 2);
+
+        assert_eq!(sessions[0].session_id, "t3-titled");
+        assert_eq!(sessions[0].title.as_deref(), Some("Titled T3 Thread"));
+        assert_eq!(sessions[0].summary, None);
+        assert_eq!(sessions[0].resume_command, None);
+        assert_eq!(
+            sessions[0].project_dir.as_deref().map(Path::new),
+            Some(project.as_path())
+        );
+
+        assert_eq!(sessions[1].session_id, "t3-untitled");
+        assert_eq!(sessions[1].title.as_deref(), Some("Untitled prompt text"));
+        assert_eq!(sessions[1].summary.as_deref(), Some("Untitled prompt text"));
+        assert_eq!(sessions[1].resume_command, None);
+
+        // validate_source accepts the discovered T3 Code ACP transcript via session_roots().
+        let source_path = sessions[0].source_path.as_deref().unwrap();
+        assert!(crate::session_manager::content::validate_source("agy", source_path).is_ok());
+
+        let messages = load_messages(Path::new(source_path)).unwrap();
+        assert_eq!(messages[0].content, "Check Antigravity usage");
+        assert_eq!(messages[2].content, "Follow up question");
+
+        // Usage sync sees main and subagent transcripts alike.
+        let mut transcript_ids: Vec<_> = transcript_files().into_iter().map(|(id, _)| id).collect();
+        transcript_ids.sort();
+        assert_eq!(transcript_ids, ["t3-subagent", "t3-titled", "t3-untitled"]);
+
+        // ACP sessions remain read-only for deletion.
+        let delete_err = delete_session(
+            &brain.canonicalize().unwrap(),
+            &titled_file.canonicalize().unwrap(),
+            "t3-titled",
+        )
+        .unwrap_err();
+        assert!(delete_err.contains("Delete this session in Antigravity"));
+        assert!(titled_file.is_file());
     }
 }

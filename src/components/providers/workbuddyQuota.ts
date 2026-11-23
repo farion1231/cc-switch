@@ -99,6 +99,26 @@ export function workbuddyCreditsLine(
   const remaining = formatCredits(snapshot.remaining, locale);
   const used = formatCredits(snapshot.used, locale);
   const total = formatCredits(snapshot.total, locale);
+  const planName = snapshot.planName?.trim() || undefined;
+  if (snapshot.unlimited) {
+    // 不限额的企业号：没有比例可画，只写已用
+    const unlimited = t("workbuddy.quota.unlimited");
+    const text = t("workbuddy.quota.unlimitedUsed", { used });
+    return {
+      planName,
+      line: {
+        key: "workbuddy_credits",
+        left: Infinity,
+        tone: toneForLeft(Infinity),
+        text,
+        value: unlimited,
+        caption: unlimited,
+        detail: [planName, text, workbuddyStaleNote(t, quota)]
+          .filter(Boolean)
+          .join(" · "),
+      },
+    };
+  }
   const leftPct =
     snapshot.total > 0
       ? Math.max(0, Math.min(100, (snapshot.remaining / snapshot.total) * 100))
@@ -111,7 +131,6 @@ export function workbuddyCreditsLine(
     : showUsed
       ? t("workbuddy.quota.usedOf", { used, total })
       : t("workbuddy.quota.leftOf", { remaining, total });
-  const planName = snapshot.planName?.trim() || undefined;
   const detail = [
     planName,
     t("workbuddy.quota.detail", { remaining, total, used }),

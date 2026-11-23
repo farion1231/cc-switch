@@ -151,7 +151,7 @@ type DragHandle = {
 /** 可拖动的行把拖动把手交给里面的 `AppRow`（ToolRow 自己渲染 AppRow，不必逐层传参）。 */
 const DragHandleContext = createContext<DragHandle | null>(null);
 
-/** Whether the local checks found a CLI installation. */
+/** 本机有这个命令行应用：探到了版本、装了但跑不起来，或安装清单里有安装位置（和「卸载」出现的条件一致）。 */
 function isToolPresent(
   info: { version?: string | null; installed_but_broken?: boolean } | undefined,
   report: ToolInstallationOverview | undefined,
@@ -162,6 +162,7 @@ function isToolPresent(
       (report?.installs?.length ?? 0) > 0,
   );
 }
+
 // 表头和应用行共用列宽；操作列宽取各行按钮和表头量宽按钮的最大值，最后一列是行尾的「⋯」菜单。
 const APP_ROW_GRID =
   "grid grid-cols-[minmax(0,1fr)_168px_var(--apps-actions-width,0px)_56px_28px] items-center gap-x-4";
@@ -211,15 +212,16 @@ export function AppsPage() {
     }
     const info = tools.toolVersionByName.get(row.tool);
     const report = tools.installReports?.[row.tool];
-    // 安装清单（本机、快）先定分组：有安装路径 → 已安装；清单为空 → 先按未安装显示，
-    // 不等慢的版本探测（登录 shell 管理器装的命令没有文件路径，版本探到后再修正）。
-    if (report) {
-      if (report.installs.length > 0) return true;
-      return isToolPresent(info, report);
+    // 安装清单（本机定位、不跑命令，比版本探测快得多）先定分组：有安装 → 已安装；
+    // 清单为空 → 未安装（清单含登录 shell 解析到的默认入口，和版本探测看到的是同一处），
+    // 版本探到「装了但跑不起来」时再归回已安装。跑在 WSL 里的工具本机清单说明不了什么，
+    // 照旧等版本探测。
+    if (report && !report.is_wsl) {
+      return report.installs.length > 0 || isToolPresent(info, report);
     }
-    // 清单未回：版本已探到按版本定，否则先不分组——避免一拍之后被清单打脸的「未安装」。
-    if (info) return isToolPresent(info, report);
-    return null;
+    // 清单未回（或 WSL）：首次探测还没出结果时先不分组
+    if (!info && tools.isLoadingTools) return null;
+    return isToolPresent(info, report);
   };
   // 两组共用一份顺序（拖动后写进设置，侧栏也按它排），每组只是按装没装过滤
   const appOrder = orderAppIds(settings?.appOrder);
