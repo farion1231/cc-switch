@@ -5062,7 +5062,7 @@
   "pluginsPage": {
     "title": "外掛",
     "helpTitle": "外掛",
-    "help": "安裝、啟用、移除 Claude Code、Codex、Grok Build、MiniMax Code、OpenClaw、Pi 和 Antigravity 的外掛。CC Switch 呼叫各應用程式自帶的命令列，效果和在終端機執行它的外掛指令相同。Pi 的外掛就是 Pi 套件，目錄取自 npm。",
+    "help": "安裝、啟用、移除 Claude Code、Codex、Grok Build、MiniMax Code、OpenClaw、Pi 和 Antigravity CLI 的外掛。CC Switch 呼叫各應用程式自帶的命令列，效果和在終端機執行它的外掛指令相同。Pi 的外掛就是 Pi 套件，目錄取自 npm。",
     "appAria": "應用程式",
     "viewAria": "外掛檢視",
     "viewInstalled": "已安裝",
@@ -5135,6 +5135,7 @@
       "updated": "已更新 {{name}}",
       "upToDate": "{{name}} 已是最新版本",
       "updateFailed": "更新 {{name}} 失敗",
+      "updateNeedsReinstall": "這個外掛裝在舊版 Antigravity 使用的目錄裡，CC Switch 無法替它更新。解除安裝後在「探索」裡重新安裝，就能裝上最新版本。",
       "refreshed": "外掛市集已重新整理",
       "refreshFailed": "重新整理外掛市集失敗",
       "marketAdded": "已加入市集 {{source}}",

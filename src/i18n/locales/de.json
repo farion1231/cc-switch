@@ -5062,7 +5062,7 @@
   "pluginsPage": {
     "title": "Plugins",
     "helpTitle": "Plugins",
-    "help": "Plugins für Claude Code, Codex, Grok Build, MiniMax Code, OpenClaw, Pi und Antigravity installieren, aktivieren und entfernen. CC Switch führt die jeweilige CLI der App aus, das Ergebnis ist also dasselbe wie beim Plugin-Befehl im Terminal. Bei Pi sind Plugins Pi-Pakete, und der Katalog stammt von npm.",
+    "help": "Plugins für Claude Code, Codex, Grok Build, MiniMax Code, OpenClaw, Pi und Antigravity CLI installieren, aktivieren und entfernen. CC Switch führt die jeweilige CLI der App aus, das Ergebnis ist also dasselbe wie beim Plugin-Befehl im Terminal. Bei Pi sind Plugins Pi-Pakete, und der Katalog stammt von npm.",
     "appAria": "App",
     "viewAria": "Plugin-Ansichten",
     "viewInstalled": "Installiert",
@@ -5135,6 +5135,7 @@
       "updated": "{{name}} aktualisiert",
       "upToDate": "{{name}} ist bereits auf dem neuesten Stand",
       "updateFailed": "{{name}} konnte nicht aktualisiert werden",
+      "updateNeedsReinstall": "Dieses Plugin liegt in einem Ordner älterer Antigravity-Versionen, daher kann CC Switch es nicht aktualisieren. Deinstallieren Sie es und installieren Sie es unter „Entdecken“ erneut, um die neueste Version zu erhalten.",
       "refreshed": "Marketplaces aktualisiert",
       "refreshFailed": "Marketplaces konnten nicht aktualisiert werden",
       "marketAdded": "Marketplace {{source}} hinzugefügt",

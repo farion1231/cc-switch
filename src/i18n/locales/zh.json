@@ -5062,7 +5062,7 @@
   "pluginsPage": {
     "title": "插件",
     "helpTitle": "插件",
-    "help": "安装、启用、移除 Claude Code、Codex、Grok Build、MiniMax Code、OpenClaw、Pi 和 Antigravity 的插件。CC Switch 调用各应用自带的命令行，效果和在终端里执行它的插件命令一样。Pi 的插件就是 Pi 包，目录取自 npm。",
+    "help": "安装、启用、移除 Claude Code、Codex、Grok Build、MiniMax Code、OpenClaw、Pi 和 Antigravity CLI 的插件。CC Switch 调用各应用自带的命令行，效果和在终端里执行它的插件命令一样。Pi 的插件就是 Pi 包，目录取自 npm。",
     "appAria": "应用",
     "viewAria": "插件视图",
     "viewInstalled": "已安装",
@@ -5135,6 +5135,7 @@
       "updated": "已更新 {{name}}",
       "upToDate": "{{name}} 已是最新版本",
       "updateFailed": "更新 {{name}} 失败",
+      "updateNeedsReinstall": "这个插件装在旧版 Antigravity 用的目录里，CC Switch 无法替它更新。卸载后在「发现」里重新安装，就能装上最新版本。",
       "refreshed": "插件市场已刷新",
       "refreshFailed": "刷新插件市场失败",
       "marketAdded": "已添加市场 {{source}}",

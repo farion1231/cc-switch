@@ -73,6 +73,7 @@ import {
   PLUGIN_IN_USE,
   PLUGIN_LOGIN_COMMAND,
   PLUGIN_NEEDS_TERMINAL_CONFIRM,
+  PLUGIN_UPDATE_NEEDS_REINSTALL,
   pluginsApi,
   type PluginActionOutcome,
   type PluginApp,
@@ -380,6 +381,10 @@ export function PluginsPage({ apps, initialApp }: PluginsPageProps) {
         failure: t("pluginsPage.toast.updateFailed", {
           name: pluginLabel(entry),
         }),
+        describeError: (error) =>
+          error === PLUGIN_UPDATE_NEEDS_REINSTALL
+            ? t("pluginsPage.toast.updateNeedsReinstall")
+            : undefined,
       },
     );
 

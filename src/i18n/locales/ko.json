@@ -5062,7 +5062,7 @@
   "pluginsPage": {
     "title": "플러그인",
     "helpTitle": "플러그인",
-    "help": "Claude Code, Codex, Grok Build, MiniMax Code, OpenClaw, Pi, Antigravity의 플러그인을 설치, 활성화, 제거합니다. CC Switch는 각 앱의 자체 CLI를 실행하므로 터미널에서 플러그인 명령을 사용하는 것과 결과가 같습니다. Pi의 경우 플러그인은 Pi 패키지이며 카탈로그는 npm에서 가져옵니다.",
+    "help": "Claude Code, Codex, Grok Build, MiniMax Code, OpenClaw, Pi, Antigravity CLI의 플러그인을 설치, 활성화, 제거합니다. CC Switch는 각 앱의 자체 CLI를 실행하므로 터미널에서 플러그인 명령을 사용하는 것과 결과가 같습니다. Pi의 경우 플러그인은 Pi 패키지이며 카탈로그는 npm에서 가져옵니다.",
     "appAria": "앱",
     "viewAria": "플러그인 보기",
     "viewInstalled": "설치됨",
@@ -5135,6 +5135,7 @@
       "updated": "{{name}}을(를) 업데이트했습니다",
       "upToDate": "{{name}}은(는) 이미 최신 버전입니다",
       "updateFailed": "{{name}}을(를) 업데이트할 수 없습니다",
+      "updateNeedsReinstall": "이 플러그인은 이전 버전의 Antigravity가 사용하던 폴더에 있어 CC Switch가 업데이트할 수 없습니다. 제거한 뒤 탐색에서 다시 설치하면 최신 버전을 받을 수 있습니다.",
       "refreshed": "마켓플레이스를 새로 고쳤습니다",
       "refreshFailed": "마켓플레이스를 새로 고칠 수 없습니다",
       "marketAdded": "마켓플레이스 {{source}}을(를) 추가했습니다",

@@ -5062,7 +5062,7 @@
   "pluginsPage": {
     "title": "プラグイン",
     "helpTitle": "プラグイン",
-    "help": "Claude Code、Codex、Grok Build、MiniMax Code、OpenClaw、Pi、Antigravity のプラグインをインストール・有効化・削除します。CC Switch は各アプリ付属の CLI を実行するため、ターミナルでそのプラグインコマンドを使うのと同じ結果になります。Pi のプラグインは Pi パッケージで、カタログは npm から取得します。",
+    "help": "Claude Code、Codex、Grok Build、MiniMax Code、OpenClaw、Pi、Antigravity CLI のプラグインをインストール・有効化・削除します。CC Switch は各アプリ付属の CLI を実行するため、ターミナルでそのプラグインコマンドを使うのと同じ結果になります。Pi のプラグインは Pi パッケージで、カタログは npm から取得します。",
     "appAria": "アプリ",
     "viewAria": "プラグインの表示",
     "viewInstalled": "インストール済み",
@@ -5135,6 +5135,7 @@
       "updated": "{{name}} を更新しました",
       "upToDate": "{{name}} は最新です",
       "updateFailed": "{{name}} を更新できませんでした",
+      "updateNeedsReinstall": "このプラグインは旧バージョンの Antigravity が使うフォルダーにあるため、CC Switch では更新できません。アンインストールしてから「見つける」で再インストールすると、最新バージョンになります。",
       "refreshed": "マーケットプレイスを更新しました",
       "refreshFailed": "マーケットプレイスを更新できませんでした",
       "marketAdded": "マーケットプレイス {{source}} を追加しました",

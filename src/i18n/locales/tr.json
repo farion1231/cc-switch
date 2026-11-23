@@ -4991,7 +4991,7 @@
   "pluginsPage": {
     "title": "Eklentiler",
     "helpTitle": "Eklentiler",
-    "help": "Claude Code, Codex, Grok Build, MiniMax Code, OpenClaw, Pi ve Antigravity eklentilerini yükleyin, etkinleştirin ve kaldırın. CC Switch her uygulamanın kendi CLI'ını çalıştırır; sonuç terminalde eklenti komutunu kullanmakla aynıdır. Pi'de eklentiler Pi paketleridir ve katalog npm'den gelir.",
+    "help": "Claude Code, Codex, Grok Build, MiniMax Code, OpenClaw, Pi ve Antigravity CLI eklentilerini yükleyin, etkinleştirin ve kaldırın. CC Switch her uygulamanın kendi CLI'ını çalıştırır; sonuç terminalde eklenti komutunu kullanmakla aynıdır. Pi'de eklentiler Pi paketleridir ve katalog npm'den gelir.",
     "appAria": "Uygulama",
     "viewAria": "Eklenti görünümleri",
     "viewInstalled": "Yüklü",
@@ -5064,6 +5064,7 @@
       "updated": "{{name}} güncellendi",
       "upToDate": "{{name}} zaten güncel",
       "updateFailed": "{{name}} güncellenemedi",
+      "updateNeedsReinstall": "Bu eklenti Antigravity'nin eski sürümlerinin kullandığı bir klasörde olduğu için CC Switch onu güncelleyemez. En son sürümü almak için kaldırın, ardından Keşfet'ten yeniden yükleyin.",
       "refreshed": "Pazar yerleri yenilendi",
       "refreshFailed": "Pazar yerleri yenilenemedi",
       "marketAdded": "{{source}} pazar yeri eklendi",
