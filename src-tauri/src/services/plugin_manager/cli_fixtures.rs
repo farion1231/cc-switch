@@ -42,7 +42,7 @@ fn ids(entries: &[PluginEntry]) -> Vec<&str> {
 
 #[test]
 fn claude_installed_list() {
-    let listing = parse_claude_listing(&json(fixture!("claude-2.1.318/plugin-list.json")));
+    let listing = parse_claude_listing(&json(fixture!("claude-2.1.318/plugin-list.json")), None);
     assert_eq!(ids(&listing.installed), ["hello@ccs-test"]);
     let hello = &listing.installed[0];
     assert_eq!(hello.name, "hello");
@@ -56,8 +56,10 @@ fn claude_installed_list() {
 
 #[test]
 fn claude_catalog_list() {
-    let listing =
-        parse_claude_listing(&json(fixture!("claude-2.1.318/plugin-list-available.json")));
+    let listing = parse_claude_listing(
+        &json(fixture!("claude-2.1.318/plugin-list-available.json")),
+        None,
+    );
     assert_eq!(ids(&listing.installed), ["hello@ccs-test"]);
     assert!(!listing.installed[0].enabled);
     assert_eq!(
@@ -133,7 +135,7 @@ fn claude_install_that_needs_confirmation_fails_fast() {
 
 #[test]
 fn codex_installed_list() {
-    let listing = parse_codex_listing(&json(fixture!("codex-0.167.0/plugin-list.json")));
+    let listing = parse_codex_listing(&json(fixture!("codex-0.167.0/plugin-list.json")), None);
     assert_eq!(ids(&listing.installed), ["hello@ccs-test"]);
     let hello = &listing.installed[0];
     assert_eq!(hello.name, "hello");
@@ -152,7 +154,10 @@ fn codex_installed_list() {
 
 #[test]
 fn codex_catalog_list() {
-    let listing = parse_codex_listing(&json(fixture!("codex-0.167.0/plugin-list-available.json")));
+    let listing = parse_codex_listing(
+        &json(fixture!("codex-0.167.0/plugin-list-available.json")),
+        None,
+    );
     assert_eq!(ids(&listing.installed), ["hello@ccs-test"]);
     assert_eq!(ids(&listing.available), ["locked@ccs-test"]);
     assert!(
@@ -212,7 +217,7 @@ fn grok_lists_read_status_and_config_toggle() {
         fixture!("grok-1.0.70/plugin-list.json"),
         fixture!("grok-1.0.70/plugin-list-available.json"),
     ] {
-        let listing = grok::parse_listing(&json(text), config);
+        let listing = grok::parse_listing(&json(text), config, None);
         assert_eq!(ids(&listing.installed), ["hello"]);
         let hello = &listing.installed[0];
         assert_eq!(hello.marketplace, "gmkt");
@@ -325,4 +330,84 @@ fn openclaw_update_output() {
     assert!(!openclaw::update_changed(fixture!(
         "openclaw-2026.11.1/update-up-to-date.txt"
     )));
+}
+
+// ───────────────────────────── Antigravity 1.5.14 ─────────────────────────────
+
+#[test]
+fn agy_installed_list() {
+    let installed = agy::parse_installed(&json(fixture!("agy-1.5.14/plugin-list.json")), None);
+    assert_eq!(ids(&installed), ["arize-skills", "gcalendar", "hello"]);
+    let [arize, gcalendar, hello] = installed.as_slice() else {
+        unreachable!()
+    };
+    assert_eq!(arize.marketplace, "antigravity-plugins-partners");
+    assert_eq!(arize.version.as_deref(), Some("1.4.0"));
+    assert!(arize.installed && !arize.enabled && arize.manageable && arize.removable);
+    assert!(arize.install_path.is_some());
+
+    assert_eq!(gcalendar.marketplace, "antigravity-plugins-official");
+    assert_eq!(gcalendar.version.as_deref(), Some("0.0.8"));
+    assert!(gcalendar.installed && gcalendar.enabled && gcalendar.removable);
+
+    assert_eq!(hello.marketplace, "", "local source is not a marketplace");
+    assert!(hello.installed && hello.enabled && hello.removable);
+}
+
+#[test]
+fn agy_catalog_documents() {
+    let official = agy::parse_catalog_document(
+        &json(fixture!("agy-1.5.14/marketplace-official.json")),
+        "antigravity-plugins-official",
+    );
+    assert_eq!(
+        ids(&official),
+        [
+            "gcalendar@antigravity-plugins-official",
+            "firebase@antigravity-plugins-official",
+        ]
+    );
+    assert_eq!(official[0].display_name.as_deref(), Some("Google Calendar"));
+    assert_eq!(official[0].installed_id.as_deref(), Some("gcalendar"));
+    assert_eq!(official[0].marketplace, "antigravity-plugins-official");
+    assert_eq!(official[0].version.as_deref(), Some("0.0.8"));
+    assert!(official[0].description.is_some());
+
+    let partners = agy::parse_catalog_document(
+        &json(fixture!("agy-1.5.14/marketplace-partners.json")),
+        "antigravity-plugins-partners",
+    );
+    assert_eq!(
+        ids(&partners),
+        [
+            "arize-skills@antigravity-plugins-partners",
+            "canva@antigravity-plugins-partners",
+        ]
+    );
+    assert_eq!(partners[0].display_name.as_deref(), Some("Arize AX"));
+    assert_eq!(partners[0].installed_id.as_deref(), Some("arize-skills"));
+    assert_eq!(partners[0].category.as_deref(), Some("Developer Tools"));
+    assert!(partners.iter().all(|e| !e.installed && e.installable));
+}
+
+#[test]
+fn agy_failures() {
+    assert!(agy::install_needs_configuration(fixture!(
+        "agy-1.5.14/install-needs-config.stdout"
+    )));
+    assert_eq!(
+        failure_detail(&failed(
+            "",
+            fixture!("agy-1.5.14/enable-needs-config.stderr")
+        )),
+        "plugin \"arize-skills\" cannot be enabled here: its MCP servers need configuring first; open /plugin in the interactive CLI and turn it on there to fill them in"
+    );
+    assert_eq!(
+        failure_detail(&failed("", fixture!("agy-1.5.14/install-not-found.stderr"))),
+        "plugin \"nope\" not found in marketplace \"antigravity-plugins-official\""
+    );
+    assert_eq!(
+        agy::map_cli_error(&failed("", fixture!("agy-1.5.14/install-in-use.stderr"))),
+        PLUGIN_IN_USE
+    );
 }

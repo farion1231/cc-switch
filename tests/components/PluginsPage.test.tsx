@@ -107,7 +107,7 @@ const enableSwitch = () =>
   screen.findByRole("switch", { name: "pluginsPage.enableAria" });
 
 describe("plugin list helpers", () => {
-  it("filters by id, display name, description and marketplace", () => {
+  it("filters by id, name, display name, description and marketplace", () => {
     const entries = [
       plugin(),
       plugin({
@@ -122,8 +122,14 @@ describe("plugin list helpers", () => {
         displayName: "Game Studio",
         description: null,
       }),
+      plugin({
+        id: "git:github.com/org/repo",
+        name: "@scope/handy-tools",
+        marketplace: "",
+        description: null,
+      }),
     ];
-    expect(filterPlugins(entries, "  ")).toHaveLength(3);
+    expect(filterPlugins(entries, "  ")).toHaveLength(4);
     expect(filterPlugins(entries, "FRONTEND").map((e) => e.id)).toEqual([
       "frontend-design@official",
     ]);
@@ -131,6 +137,9 @@ describe("plugin list helpers", () => {
       "x@other",
     ]);
     expect(filterPlugins(entries, "studio").map((e) => e.id)).toEqual(["y@m"]);
+    expect(filterPlugins(entries, "handy-tools").map((e) => e.id)).toEqual([
+      "git:github.com/org/repo",
+    ]);
   });
 
   it("derives Discover from the catalog and fills missing details", () => {
@@ -178,6 +187,37 @@ describe("plugin list helpers", () => {
     ]);
     expect(withCatalogDetails(installed, catalog)[0].description).toBe(
       "LanceDB memory",
+    );
+  });
+
+  it("matches pinned Pi packages via catalogId", () => {
+    const installed = [
+      plugin({
+        id: "npm:pi-pinned@1.0.0",
+        name: "pi-pinned",
+        catalogId: "npm:pi-pinned",
+        marketplace: "",
+        description: null,
+      }),
+    ];
+    const catalog = [
+      catalogItem({
+        id: "npm:pi-pinned",
+        name: "pi-pinned",
+        marketplace: "",
+        description: "Pinned package",
+      }),
+      catalogItem({
+        id: "npm:pi-other",
+        name: "pi-other",
+        marketplace: "",
+      }),
+    ];
+    expect(availableFromCatalog(catalog, installed).map((e) => e.id)).toEqual([
+      "npm:pi-other",
+    ]);
+    expect(withCatalogDetails(installed, catalog)[0].description).toBe(
+      "Pinned package",
     );
   });
 });
@@ -492,6 +532,30 @@ describe("PluginsPage", () => {
       await screen.findByText("pluginsPage.cliMissingTitle"),
     ).toBeInTheDocument();
     expect(screen.queryByText("common.retry")).not.toBeInTheDocument();
+  });
+
+  it("shows loading again while retrying a failed read", async () => {
+    // 有上次的结果时，重试中查询仍是 error 状态（没有结果才回到 pending）
+    localStorage.setItem(
+      "cc-switch-cache:plugins:claude:installed",
+      JSON.stringify([plugin({ name: "cached-plugin", id: "cached@m" })]),
+    );
+    m.listInstalled.mockRejectedValueOnce("Command timed out after 90s");
+    renderPage();
+    expect(
+      await screen.findByText("Command timed out after 90s"),
+    ).toBeInTheDocument();
+
+    const retry = deferred<PluginEntry[]>();
+    m.listInstalled.mockReturnValue(retry.promise);
+    await userEvent.click(screen.getByRole("button", { name: "common.retry" }));
+    expect(await screen.findByText("pluginsPage.loading")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Command timed out after 90s"),
+    ).not.toBeInTheDocument();
+
+    await act(async () => retry.resolve([plugin()]));
+    expect(await screen.findByText("frontend-design")).toBeInTheDocument();
   });
 
   it("prefetches the other app and switches to it", async () => {
@@ -839,6 +903,122 @@ describe("PluginsPage", () => {
     );
   });
 
+  it("removes a previously pinned Pi package from Discover after uninstall and reinstall", async () => {
+    const pinnedInstalled = plugin({
+      id: "npm:pi-pinned@1.0.0",
+      name: "pi-pinned",
+      catalogId: "npm:pi-pinned",
+      marketplace: "",
+      scope: null,
+    });
+    const catalogEntry = catalogItem({
+      id: "npm:pi-pinned",
+      name: "pi-pinned",
+      marketplace: "",
+      description: "Pinned package",
+    });
+    m.listInstalled.mockResolvedValue([pinnedInstalled]);
+    m.listCatalog.mockResolvedValue([catalogEntry]);
+    m.uninstall.mockResolvedValue({ changed: true });
+    m.install.mockResolvedValue({ changed: true });
+
+    renderPage({ apps: ["pi"] });
+    await screen.findByText("pi-pinned");
+
+    // 卸载固定版本的包，对账返回空列表
+    m.listInstalled.mockResolvedValue([]);
+    await userEvent.click(
+      screen.getByRole("button", { name: "pluginsPage.moreActions" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: "pluginsPage.uninstall" }),
+    );
+    const uninstallDialog = await screen.findByRole("dialog");
+    await userEvent.click(
+      within(uninstallDialog).getByRole("button", {
+        name: "pluginsPage.uninstall",
+      }),
+    );
+    await waitFor(() =>
+      expect(m.uninstall).toHaveBeenCalledWith("pi", "npm:pi-pinned@1.0.0"),
+    );
+
+    // 切到「发现」能看到它；重新安装后立刻消失，且对账返回不带版本的 npm:pi-pinned 后仍留在已安装
+    await userEvent.click(
+      screen.getByRole("tab", { name: "pluginsPage.viewDiscoverCount" }),
+    );
+    expect(await screen.findByText("pi-pinned")).toBeInTheDocument();
+
+    m.listInstalled.mockResolvedValue([
+      plugin({
+        id: "npm:pi-pinned",
+        name: "pi-pinned",
+        catalogId: null,
+        marketplace: "",
+        scope: null,
+      }),
+    ]);
+    await userEvent.click(
+      screen.getByRole("button", { name: "pluginsPage.install" }),
+    );
+    const installDialog = await screen.findByRole("dialog");
+    await userEvent.click(
+      within(installDialog).getByRole("button", {
+        name: "pluginsPage.install",
+      }),
+    );
+    await waitFor(() =>
+      expect(m.install).toHaveBeenCalledWith("pi", "npm:pi-pinned"),
+    );
+    await waitFor(() =>
+      expect(screen.queryByText("pi-pinned")).not.toBeInTheDocument(),
+    );
+    // 目录没有因为装卸被重读
+    expect(m.listCatalog).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the in-flight spinner and disabled controls when switching apps and back", async () => {
+    const updating = deferred<{ changed: boolean }>();
+    m.update.mockReturnValue(updating.promise);
+    m.listInstalled.mockImplementation(async (app) =>
+      app === "codex"
+        ? [plugin({ id: "studio@mkt", name: "studio", enabled: false })]
+        : [plugin()],
+    );
+    renderPage({ apps: ["codex", "claude"] });
+    await screen.findByText("studio");
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "pluginsPage.moreActions" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: "pluginsPage.update" }),
+    );
+    expect(screen.getByLabelText("pluginsPage.working")).toBeInTheDocument();
+    expect(await enableSwitch()).toBeDisabled();
+
+    // 切到 Claude Code：不会把 Codex 的转圈带过去
+    await userEvent.click(screen.getByRole("button", { name: /Claude Code/ }));
+    await screen.findByText("frontend-design");
+    expect(
+      screen.queryByLabelText("pluginsPage.working"),
+    ).not.toBeInTheDocument();
+
+    // 切回 Codex：转圈仍在，开关仍禁用，不能在中途重新启用
+    await userEvent.click(screen.getByRole("button", { name: /Codex/ }));
+    await screen.findByText("studio");
+    expect(screen.getByLabelText("pluginsPage.working")).toBeInTheDocument();
+    expect(await enableSwitch()).toBeDisabled();
+
+    await act(async () => updating.resolve({ changed: true }));
+    await waitFor(() =>
+      expect(
+        screen.queryByLabelText("pluginsPage.working"),
+      ).not.toBeInTheDocument(),
+    );
+    expect(await enableSwitch()).toBeEnabled();
+  });
+
   it("offers no update for apps without an update command", async () => {
     m.listInstalled.mockResolvedValue([
       plugin({
@@ -927,5 +1107,247 @@ describe("PluginsPage", () => {
       }),
     ).toBeInTheDocument();
     expect(m.listMarketplaces).not.toHaveBeenCalledWith("mcode");
+  });
+
+  it("manages Antigravity plugins via catalog ids on install and dir names afterwards", async () => {
+    m.listInstalled.mockResolvedValue([
+      plugin({
+        id: "arize-skills",
+        name: "arize-skills",
+        displayName: "Arize AX",
+        marketplace: "antigravity-plugins-partners",
+        enabled: false,
+        scope: null,
+      }),
+    ]);
+    m.listCatalog.mockResolvedValue([
+      catalogItem({
+        id: "arize-skills@antigravity-plugins-partners",
+        name: "arize-skills",
+        displayName: "Arize AX",
+        marketplace: "antigravity-plugins-partners",
+        installedId: "arize-skills",
+      }),
+      catalogItem({
+        id: "gcalendar@antigravity-plugins-official",
+        name: "gcalendar",
+        displayName: "Google Calendar",
+        marketplace: "antigravity-plugins-official",
+        installedId: "gcalendar",
+        description: "Check availability, schedule events, and RSVP.",
+      }),
+    ]);
+    renderPage({ apps: ["agy"] });
+
+    expect(await screen.findByText("Arize AX")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("tab", { name: "pluginsPage.viewMarketplaces" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "pluginsPage.addMarketplace" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "pluginsPage.refreshCatalog" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getAllByText("pluginsPage.restartNote").length,
+    ).toBeGreaterThan(0);
+
+    // 需要配置 MCP 变量的插件启用失败时，开关弹回并展示 CLI 报错
+    m.setEnabled.mockRejectedValueOnce(
+      'plugin "arize-skills" cannot be enabled here: its MCP servers need configuring first',
+    );
+    const arizeToggle = await enableSwitch();
+    await userEvent.click(arizeToggle);
+    await waitFor(() =>
+      expect(m.setEnabled).toHaveBeenCalledWith("agy", "arize-skills", true),
+    );
+    expect(arizeToggle).toHaveAttribute("data-state", "unchecked");
+    expect(m.toastError).toHaveBeenCalledWith(
+      "pluginsPage.toast.toggleFailed",
+      expect.objectContaining({
+        description:
+          'plugin "arize-skills" cannot be enabled here: its MCP servers need configuring first',
+      }),
+    );
+
+    // 发现页过滤掉已装的 arize-skills；安装 gcalendar 不弹确认框，按 name@marketplace 传给 CLI
+    await userEvent.click(
+      screen.getByRole("tab", { name: "pluginsPage.viewDiscoverCount" }),
+    );
+    expect(await screen.findByText("Google Calendar")).toBeInTheDocument();
+    expect(screen.queryByText("Arize AX")).not.toBeInTheDocument();
+
+    const reconcile = deferred<PluginEntry[]>();
+    m.listInstalled.mockReturnValue(reconcile.promise);
+    await userEvent.click(
+      screen.getByRole("button", { name: "pluginsPage.install" }),
+    );
+    await waitFor(() =>
+      expect(m.install).toHaveBeenCalledWith(
+        "agy",
+        "gcalendar@antigravity-plugins-official",
+      ),
+    );
+    await waitFor(() =>
+      expect(screen.queryByText("Google Calendar")).not.toBeInTheDocument(),
+    );
+
+    // 装好立即进已安装并保留市场名，启停、更新、卸载都传目录名 gcalendar
+    await userEvent.click(
+      screen.getByRole("tab", { name: "pluginsPage.viewInstalledCount" }),
+    );
+    expect(screen.getByText("Google Calendar")).toBeInTheDocument();
+    expect(
+      screen.getByText("@antigravity-plugins-official"),
+    ).toBeInTheDocument();
+    await act(async () =>
+      reconcile.resolve([
+        plugin({
+          id: "arize-skills",
+          name: "arize-skills",
+          displayName: "Arize AX",
+          marketplace: "antigravity-plugins-partners",
+          enabled: false,
+          scope: null,
+        }),
+        plugin({
+          id: "gcalendar",
+          name: "gcalendar",
+          displayName: "Google Calendar",
+          marketplace: "antigravity-plugins-official",
+          enabled: true,
+          scope: null,
+        }),
+      ]),
+    );
+    const menus = screen.getAllByRole("button", {
+      name: "pluginsPage.moreActions",
+    });
+    await userEvent.click(menus[1]);
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: "pluginsPage.update" }),
+    );
+    await waitFor(() =>
+      expect(m.update).toHaveBeenCalledWith("agy", "gcalendar"),
+    );
+  });
+
+  it("asks to reinstall when an Antigravity plugin sits in a legacy numeric folder", async () => {
+    m.listInstalled.mockResolvedValue([
+      plugin({
+        id: "-1870732469773246571",
+        name: "-1870732469773246571",
+        displayName: "Firebase",
+        marketplace: "antigravity-plugins-official",
+        scope: null,
+      }),
+    ]);
+    m.update.mockRejectedValue("PLUGIN_UPDATE_NEEDS_REINSTALL");
+    renderPage({ apps: ["agy"] });
+
+    await screen.findByText("Firebase");
+    await userEvent.click(
+      screen.getByRole("button", { name: "pluginsPage.moreActions" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: "pluginsPage.update" }),
+    );
+    await waitFor(() =>
+      expect(m.toastError).toHaveBeenCalledWith(
+        "pluginsPage.toast.updateFailed",
+        expect.objectContaining({
+          description: "pluginsPage.toast.updateNeedsReinstall",
+        }),
+      ),
+    );
+  });
+
+  it("keeps newly installed Antigravity plugins disabled and prompts /plugin when MCP configuration is required", async () => {
+    m.listInstalled.mockResolvedValue([]);
+    m.listCatalog.mockResolvedValue([
+      catalogItem({
+        id: "arize-skills@antigravity-plugins-partners",
+        name: "arize-skills",
+        displayName: "Arize AX",
+        marketplace: "antigravity-plugins-partners",
+        installedId: "arize-skills",
+      }),
+    ]);
+    m.install.mockResolvedValue({
+      changed: true,
+      needsConfiguration: true,
+    });
+    renderPage({ apps: ["agy"] });
+
+    await userEvent.click(
+      await screen.findByRole("tab", { name: "pluginsPage.viewDiscoverCount" }),
+    );
+    const reconcile = deferred<PluginEntry[]>();
+    m.listInstalled.mockReturnValue(reconcile.promise);
+    await userEvent.click(
+      await screen.findByRole("button", { name: "pluginsPage.install" }),
+    );
+
+    await waitFor(() =>
+      expect(m.toastSuccess).toHaveBeenCalledWith(
+        "pluginsPage.toast.installed",
+        expect.objectContaining({
+          description: "pluginsPage.toast.installedNeedsConfig",
+        }),
+      ),
+    );
+    // 对账尚未完成时，已安装列表里也直接是停用状态，不会先亮后灭
+    await userEvent.click(
+      screen.getByRole("tab", { name: "pluginsPage.viewInstalledCount" }),
+    );
+    expect(await screen.findByText("Arize AX")).toBeInTheDocument();
+    expect(await enableSwitch()).toHaveAttribute("data-state", "unchecked");
+
+    await act(async () =>
+      reconcile.resolve([
+        plugin({
+          id: "arize-skills",
+          name: "arize-skills",
+          displayName: "Arize AX",
+          marketplace: "antigravity-plugins-partners",
+          enabled: false,
+          scope: null,
+        }),
+      ]),
+    );
+    expect(await enableSwitch()).toHaveAttribute("data-state", "unchecked");
+  });
+
+  it("guides the user to close running Antigravity sessions when an update fails because the plugin is in use", async () => {
+    m.listInstalled.mockResolvedValue([
+      plugin({
+        id: "gmail",
+        name: "gmail",
+        displayName: "Gmail",
+        marketplace: "antigravity-plugins-official",
+        enabled: true,
+        scope: null,
+      }),
+    ]);
+    m.listCatalog.mockResolvedValue([]);
+    m.update.mockRejectedValue("PLUGIN_IN_USE");
+    renderPage({ apps: ["agy"] });
+
+    expect(await screen.findByText("Gmail")).toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("button", { name: "pluginsPage.moreActions" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: "pluginsPage.update" }),
+    );
+    await waitFor(() =>
+      expect(m.toastError).toHaveBeenCalledWith(
+        "pluginsPage.toast.updateFailed",
+        expect.objectContaining({
+          description: "pluginsPage.toast.pluginInUse",
+        }),
+      ),
+    );
   });
 });

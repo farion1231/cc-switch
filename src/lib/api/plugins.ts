@@ -1,25 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { AppIdWith } from "@/config/appSpecs";
 
-/** 支持插件的应用（值和 `AppId` 一致）。 */
-export type PluginApp =
-  | "claude"
-  | "codex"
-  | "grokbuild"
-  | "mcode"
-  | "openclaw"
-  | "pi";
-
-export const PLUGIN_APPS: PluginApp[] = [
-  "claude",
-  "codex",
-  "grokbuild",
-  "mcode",
-  "openclaw",
-  "pi",
-];
-
-export const isPluginApp = (app: string): app is PluginApp =>
-  (PLUGIN_APPS as string[]).includes(app);
+/** 支持插件的应用（由 `APP_SPECS` 的 `plugins` 派生）。 */
+export type PluginApp = AppIdWith<"plugins">;
 
 /** 各应用的 CLI 支持哪些操作；不支持的入口不显示。 */
 export interface PluginAppFeatures {
@@ -82,6 +65,14 @@ export const PLUGIN_APP_FEATURES: Record<PluginApp, PluginAppFeatures> = {
     confirmInstall: true,
     restartNote: "session",
   },
+  // 官方与合作伙伴目录由 gstatic 托管，没有自定义市场；安装和更新走 `agy plugin install`
+  agy: {
+    marketplaces: false,
+    refresh: true,
+    update: true,
+    confirmInstall: false,
+    restartNote: "session",
+  },
 };
 
 /** 工具没装时后端返回的错误码。 */
@@ -90,8 +81,25 @@ export const PLUGIN_CLI_NOT_INSTALLED = "PLUGIN_CLI_NOT_INSTALLED";
 /** Claude Code 要用户在终端里亲自确认市场声明的命令时后端返回的错误码（CC Switch 不代为同意）。 */
 export const PLUGIN_NEEDS_TERMINAL_CONFIRM = "PLUGIN_NEEDS_TERMINAL_CONFIRM";
 
+/** 插件装在 CC Switch 无法原地更新的位置（Antigravity 旧版的数字目录）时后端返回的错误码。 */
+export const PLUGIN_UPDATE_NEEDS_REINSTALL = "PLUGIN_UPDATE_NEEDS_REINSTALL";
+
 /** CLI 要求先登录账号（MiniMax Code 未登录时安装插件）；原样来自 CLI 的 stderr。 */
 export const PLUGIN_AUTH_REQUIRED = "PLUGIN_AUTH_REQUIRED";
+
+/** 插件目录正被同应用的其它进程占用（例如 Windows 下运行中的 Antigravity / agy 会话），无法替换或移除目录。 */
+export const PLUGIN_IN_USE = "PLUGIN_IN_USE";
+
+/** 各应用对应的 CLI 命令名，用于错误提示文案。 */
+export const PLUGIN_CLI_NAME: Record<PluginApp, string> = {
+  claude: "claude",
+  codex: "codex",
+  grokbuild: "grok",
+  mcode: "mcode",
+  openclaw: "openclaw",
+  pi: "pi",
+  agy: "agy",
+};
 
 /** 各 CLI 的登录命令，提示用户去终端登录时用。 */
 export const PLUGIN_LOGIN_COMMAND: Partial<Record<PluginApp, string>> = {
@@ -118,8 +126,10 @@ export interface PluginEntry {
   removable?: boolean;
   /** 市场是否允许安装 */
   installable: boolean;
-  /** 目录条目装好后在已安装列表里的 id（和 id 不同时才有：OpenClaw 的包名、Pi 已按别的写法装过的来源） */
+  /** 目录条目装好后在已安装列表里的 id（和 id 不同时才有：OpenClaw 的包名） */
   installedId?: string | null;
+  /** 已安装条目在目录里对应的 id（和 id 不同时才有：Pi 固定版本的 npm 包 `npm:x@1.2.3` → `npm:x`） */
+  catalogId?: string | null;
   installPath?: string | null;
   updatedAt?: string | null;
 }
@@ -134,6 +144,8 @@ export interface PluginMarketplace {
 export interface PluginActionOutcome {
   changed: boolean;
   message?: string | null;
+  /** 安装后默认处于停用状态，需先在应用交互界面完成配置（如 Antigravity 的 `/plugin`） */
+  needsConfiguration?: boolean;
 }
 
 export const pluginsApi = {

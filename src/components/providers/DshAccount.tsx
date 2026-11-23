@@ -70,11 +70,10 @@ function DshBalance({
   const { t } = useTranslation();
   const wallets = status.wallets.map(formatWallet).join(" · ");
   const bonus = status.bonusWallets.map(formatWallet).join(" · ");
-  // 右边让出倒计时格（52）和间距（8），和别的账号「剩余 xx%」那一格右对齐
-  const cell = "me-[60px] self-end text-caption tabular-nums";
+  const cell = "max-w-[220px] truncate text-caption tabular-nums";
   return (
     <>
-      <div className="auth-quota-col flex shrink-0 flex-col justify-center gap-0.5">
+      <div className="flex min-w-0 shrink-0 flex-col items-end justify-center gap-0.5 text-end">
         {status.error ? (
           <span className={`${cell} text-fg-3`}>
             {t("dsh.account.balanceFailed")}

@@ -1637,87 +1637,69 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_streaming_inline_think_block_single_chunk() {
-        // <think> 变体（MiniMax M3 等）在单个 content 增量内完整出现时同样剥离。
-        let input = concat!(
-            "data: {\"id\":\"chatcmpl_ith1\",\"model\":\"minimax-m3\",\"choices\":[{\"delta\":{\"content\":\"<think>the ball costs 0.05</think>The ball is $0.05\"}}]}\n\n",
-            "data: {\"id\":\"chatcmpl_ith1\",\"model\":\"minimax-m3\",\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
-            "data: [DONE]\n\n"
-        );
+    async fn test_streaming_inline_think_splitting() {
+        for (case, input, thinking, text) in [
+            // <think> 变体（MiniMax M3 等）在单个 content 增量内完整出现时同样剥离。
+            (
+                "test_streaming_inline_think_block_single_chunk",
+                concat!(
+                    "data: {\"id\":\"chatcmpl_ith1\",\"model\":\"minimax-m3\",\"choices\":[{\"delta\":{\"content\":\"<think>the ball costs 0.05</think>The ball is $0.05\"}}]}\n\n",
+                    "data: {\"id\":\"chatcmpl_ith1\",\"model\":\"minimax-m3\",\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+                    "data: [DONE]\n\n",
+                ),
+                "the ball costs 0.05",
+                "The ball is $0.05",
+            ),
+            // 流结束时 <thinking> 未闭合：缓冲内容按思考内容下发，不再泄漏标签本体。
+            (
+                "test_streaming_unclosed_thinking_flushed_as_thinking",
+                concat!(
+                    "data: {\"id\":\"chatcmpl_ithu\",\"model\":\"deepseek-v4.1-flash\",\"choices\":[{\"delta\":{\"content\":\"<thinking>partial reasoning\"}}]}\n\n",
+                    "data: {\"id\":\"chatcmpl_ithu\",\"model\":\"deepseek-v4.1-flash\",\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+                    "data: [DONE]\n\n",
+                ),
+                "partial reasoning",
+                "",
+            ),
+            // 流首不是 <thinking> 的正文里出现 "<thinking>" 字样，保持原样不剥离
+            // （只识别流首块，与 Codex Chat 路径语义一致）。
+            (
+                "test_streaming_prose_containing_thinking_tag_not_stripped",
+                concat!(
+                    "data: {\"id\":\"chatcmpl_ithp\",\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"content\":\"a <thinking> looks like \"}}]}\n\n",
+                    "data: {\"id\":\"chatcmpl_ithp\",\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"content\":\"a tag in prose\"}}]}\n\n",
+                    "data: {\"id\":\"chatcmpl_ithp\",\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+                    "data: [DONE]\n\n",
+                ),
+                "",
+                "a <thinking> looks like a tag in prose",
+            ),
+            // 上游偶尔用不配对的标签收尾（<think> 开、</thinking> 闭）。
+            // 只认配对闭合会让整段连正文一起被当推理吞掉；取最早出现的任一闭合标签。
+            (
+                "test_streaming_mismatched_think_tag_pairs_still_split",
+                concat!(
+                    "data: {\"id\":\"chatcmpl_ithm\",\"model\":\"deepseek-v4.1-flash\",\"choices\":[{\"delta\":{\"content\":\"<think>checking</thinking>Done\"}}]}\n\n",
+                    "data: {\"id\":\"chatcmpl_ithm\",\"model\":\"deepseek-v4.1-flash\",\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+                    "data: [DONE]\n\n",
+                ),
+                "checking",
+                "Done",
+            ),
+        ] {
+            let events = collect_anthropic_events(input).await;
 
-        let events = collect_anthropic_events(input).await;
-
-        assert_eq!(
-            collect_delta_text(&events, "thinking_delta", "/delta/thinking"),
-            "the ball costs 0.05"
-        );
-        assert_eq!(
-            collect_delta_text(&events, "text_delta", "/delta/text"),
-            "The ball is $0.05"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_streaming_unclosed_thinking_flushed_as_thinking() {
-        // 流结束时 <thinking> 未闭合：缓冲内容按思考内容下发，不再泄漏标签本体。
-        let input = concat!(
-            "data: {\"id\":\"chatcmpl_ithu\",\"model\":\"deepseek-v4.1-flash\",\"choices\":[{\"delta\":{\"content\":\"<thinking>partial reasoning\"}}]}\n\n",
-            "data: {\"id\":\"chatcmpl_ithu\",\"model\":\"deepseek-v4.1-flash\",\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
-            "data: [DONE]\n\n"
-        );
-
-        let events = collect_anthropic_events(input).await;
-
-        assert_eq!(
-            collect_delta_text(&events, "thinking_delta", "/delta/thinking"),
-            "partial reasoning"
-        );
-        assert_eq!(collect_delta_text(&events, "text_delta", "/delta/text"), "");
-    }
-
-    #[tokio::test]
-    async fn test_streaming_prose_containing_thinking_tag_not_stripped() {
-        // 流首不是 <thinking> 的正文里出现 "<thinking>" 字样，保持原样不剥离
-        //（只识别流首块，与 Codex Chat 路径语义一致）。
-        let input = concat!(
-            "data: {\"id\":\"chatcmpl_ithp\",\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"content\":\"a <thinking> looks like \"}}]}\n\n",
-            "data: {\"id\":\"chatcmpl_ithp\",\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"content\":\"a tag in prose\"}}]}\n\n",
-            "data: {\"id\":\"chatcmpl_ithp\",\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
-            "data: [DONE]\n\n"
-        );
-
-        let events = collect_anthropic_events(input).await;
-
-        assert_eq!(
-            collect_delta_text(&events, "text_delta", "/delta/text"),
-            "a <thinking> looks like a tag in prose"
-        );
-        assert_eq!(
-            collect_delta_text(&events, "thinking_delta", "/delta/thinking"),
-            ""
-        );
-    }
-
-    #[tokio::test]
-    async fn test_streaming_mismatched_think_tag_pairs_still_split() {
-        // 上游偶尔用不配对的标签收尾（<think> 开、</thinking> 闭）。
-        // 只认配对闭合会让整段连正文一起被当推理吞掉；取最早出现的任一闭合标签。
-        let input = concat!(
-            "data: {\"id\":\"chatcmpl_ithm\",\"model\":\"deepseek-v4.1-flash\",\"choices\":[{\"delta\":{\"content\":\"<think>checking</thinking>Done\"}}]}\n\n",
-            "data: {\"id\":\"chatcmpl_ithm\",\"model\":\"deepseek-v4.1-flash\",\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
-            "data: [DONE]\n\n"
-        );
-
-        let events = collect_anthropic_events(input).await;
-
-        assert_eq!(
-            collect_delta_text(&events, "thinking_delta", "/delta/thinking"),
-            "checking"
-        );
-        assert_eq!(
-            collect_delta_text(&events, "text_delta", "/delta/text"),
-            "Done"
-        );
+            assert_eq!(
+                collect_delta_text(&events, "thinking_delta", "/delta/thinking"),
+                thinking,
+                "{case}"
+            );
+            assert_eq!(
+                collect_delta_text(&events, "text_delta", "/delta/text"),
+                text,
+                "{case}"
+            );
+        }
     }
 
     fn content_chunk(id: &str, content: &str) -> String {

@@ -60,7 +60,9 @@
   "apiKeyInput": {
     "placeholder": "API Key を入力",
     "show": "API Key を表示",
-    "hide": "API Key を隠す"
+    "hide": "API Key を隠す",
+    "copied": "API Key をコピーしました",
+    "copyFailed": "API Key のコピーに失敗しました"
   },
   "jsonEditor": {
     "mustBeObject": "設定はオブジェクト形式の JSON で入力してください（配列や他の型は不可）",
@@ -202,6 +204,8 @@
       "extraArgsPlaceholder": "例: --debug --append-system-prompt \"簡潔に答えて\"",
       "extraArgsHint": "起動コマンドの後ろに付け、今回開くターミナルだけで使います。スペースで区切り、スペースを含む値は引用符で囲んでください。",
       "agySwitchTitle": "agy のログインを切り替えます",
+      "agyBindingMissing": "このカードに紐付けられた Antigravity アカウントがこの端末にありません。「アカウント」で追加するか、今回の起動には agy の現在のログインを使用してください。",
+      "agyUseCurrentLogin": "今回の起動には agy の現在のログインを使用する",
       "agySwitchBody": "開く前に agy のログインを {{account}} に切り替えます。以降に起動する agy はこのアカウントを使います。",
       "agySwitchRunning": "agy が実行中です。開いている agy は元のアカウントのままで、元のアカウントを書き戻す可能性があります。できれば先に終了してください。",
       "isolationBodyCopilot": "このターミナルの copilot は --model で「{{name}}」の先頭モデルを選んで起動し、このセッションにのみ有効です。エンドポイントとキーは Copilot の providers.json から読むので、ほかのターミナルでも /model で選べます。"
@@ -378,6 +382,7 @@
     "openclawModelNotFound": "選択したモデルは存在しません。更新してからもう一度お試しください。",
     "backfillWarning": "切り替え成功しましたが、前のプロバイダーへの設定保存に失敗しました",
     "codexAuthCleanupFailed": "切り替えは成功しましたが、auth.json を削除できませんでした。公式ログイン資格情報がディスクに残っています。完全に削除するには Codex 設定ディレクトリの auth.json を手動で削除してください",
+    "omoVariantCleanupFailed": "切り替えに成功しましたが、もう一方の OMO バリアント（OMO / OMO Slim）の設定ファイルを削除できませんでした。OpenCode が両方を読み込む可能性があります。OpenCode の設定ディレクトリから手動で削除してください",
     "windowControlFailed": "ウィンドウ操作に失敗しました: {{error}}",
     "officialBlockedByProxy": "ローカルルーティングモード中は公式プロバイダーに切り替えできません。ルーティング経由で公式 API にアクセスするとアカウントが停止される可能性があります。",
     "proxyOfficialWarning": "現在のプロバイダー {{name}} は公式です。ローカルルーティングを使用する前にサードパーティプロバイダーに切り替えてください。",
@@ -463,8 +468,7 @@
     "tabProxy": "ルーティング",
     "authCenter": {
       "description": "GitHub Copilot、ChatGPT、xAI のサブスクリプションをプロバイダーとして使えます。認証情報はルーティングサービスが注入するため、これらのプロバイダーはルーティングモードで使います（Codex の公式ログインのバインドを除く）。Antigravity アカウントは agy の公式ログインの切り替えに使います。",
-      "beta": "Beta",
-      "xaiOauthDescription": "xAI / Grok アカウントを管理します"
+      "beta": "Beta"
     },
     "advanced": {
       "configDir": {
@@ -595,6 +599,9 @@
       "safetyBackupId": "安全バックアップID",
       "intervalLabel": "自動バックアップ間隔",
       "retainLabel": "バックアップ保持数",
+      "maxTotalLabel": "バックアップ合計サイズ上限",
+      "maxTotalUnlimited": "無制限",
+      "maxTotalHint": "既定では無制限です。設定すると、バックアップフォルダーがこのサイズを超えたときに、古いバックアップから削除します。最新のバックアップと復元で使用中のバックアップは常に保持するため、1 つのバックアップが上限より大きい場合は、フォルダーが上限を超えたままになることがあります。次回のバックアップ時または毎日のメンテナンス時に適用されます。",
       "intervalDisabled": "無効",
       "intervalHours": "{{hours}} 時間",
       "intervalDays": "{{days}} 日",
@@ -1121,7 +1128,6 @@
       "pricingModelSourceLabel": "課金モード",
       "pricingModelSourceRequest": "リクエストモデル",
       "pricingModelSourceResponse": "レスポンスモデル",
-      "pricingSave": "課金設定を保存",
       "pricingSaved": "課金設定を保存しました",
       "pricingSaveFailed": "課金設定の保存に失敗しました: {{error}}",
       "pricingLoadFailed": "課金設定の読み込みに失敗しました: {{error}}"
@@ -1260,6 +1266,8 @@
       "credits": "クレジット",
       "leftOf": "残り {{remaining}} / {{total}}",
       "usedOf": "使用 {{used}} / {{total}}",
+      "unlimited": "無制限",
+      "unlimitedUsed": "無制限、使用 {{used}}",
       "usedUp": "使い切りました（全 {{total}}）",
       "detail": "クレジット残り {{remaining}} / 全 {{total}}、使用済み {{used}}",
       "staleNotRunning": "WorkBuddy が起動していないため、前回の結果を表示しています",
@@ -1452,6 +1460,7 @@
     "contentSearchToggle": "メッセージ本文を検索",
     "contentSearchToggleFailed": "本文検索の設定を変更できません：{{error}}",
     "contentIndexing": "本文のインデックスを作成中（{{processed}}/{{total}}）。本文の結果はまだ不完全な場合があります",
+    "contentSearchFailed": "本文検索に失敗しました。今はタイトル・ディレクトリ・最初と最後のメッセージだけで検索しています",
     "contentHitPrefix": "本文：",
     "contentHitMore": "（{{count}} 件のメッセージが一致）",
     "moreContentHits": "その他の本文一致",
@@ -2105,6 +2114,7 @@
     "selectAccount": "アカウントを選択",
     "selectAccountPlaceholder": "xAI アカウントを選択",
     "useDefaultAccount": "デフォルトアカウントを使用",
+    "account": "xAI アカウント",
     "accounts": "xAI アカウント",
     "defaultAccount": "デフォルト",
     "expired": "認証情報が失効しました",
@@ -2534,8 +2544,8 @@
     "input": "Input",
     "output": "Output",
     "cacheWrite": "作成",
-    "cacheWriteNotReported": "OpenAI プロトコルはキャッシュ作成を区別せず、キャッシュヒットのみ報告します",
-    "cacheWritePartial": "一部のプロトコル（OpenAIなど）はキャッシュ作成を報告しないため、値は不完全な可能性があります",
+    "cacheWriteNotReported": "Gemini と Grok Build はキャッシュ作成を報告せず、キャッシュヒットのみ報告します",
+    "cacheWritePartial": "一部のプロトコル（Geminiなど）はキャッシュ作成を報告しないため、値は不完全な可能性があります",
     "cacheRead": "ヒット",
     "baseCost": "基本",
     "costMultiplier": "コスト倍率",
@@ -2676,7 +2686,7 @@
       "label": "指標",
       "more": "その他の指標",
       "realTotalHelpTitle": "実消費 Tokens の計算方法",
-      "realTotalHelp": "新規入力 + 出力 + キャッシュ書き込み + キャッシュヒット。新規入力にキャッシュは含みません。一部のプロトコル（OpenAI など）はキャッシュ書き込みを報告しないため、その分が少なく出ることがあります。",
+      "realTotalHelp": "新規入力 + 出力 + キャッシュ書き込み + キャッシュヒット。新規入力にキャッシュは含みません。一部のプロトコル（Gemini など）はキャッシュ書き込みを報告しないため、その分が少なく出ることがあります。",
       "hitRateHelpTitle": "キャッシュヒット率の計算方法",
       "hitRateHelp": "キャッシュヒット ÷（新規入力 + キャッシュ書き込み + キャッシュヒット）。"
     },
@@ -2937,7 +2947,6 @@
     "geminiTitle": "Gemini MCP 管理",
     "unifiedPanel": {
       "title": "MCP サーバー管理",
-      "deleteServer": "サーバーを削除",
       "deleteConfirm": "サーバー「{{id}}」を削除しますか？この操作は元に戻せません。",
       "enabledApps": "有効なアプリ",
       "importSuccess": "{{count}} 個の MCP サーバーをインポートしました",
@@ -2984,28 +2993,20 @@
       "tagsPlaceholder": "stdio, time, utility",
       "homepage": "ホームページ",
       "docs": "ドキュメント",
-      "jsonPlaceholder": "{\n  \"type\": \"stdio\",\n  \"command\": \"uvx\",\n  \"args\": [\"mcp-server-fetch\"]\n}",
-      "tomlConfig": "TOML 全設定",
-      "tomlPlaceholder": "type = \"stdio\"\ncommand = \"uvx\"\nargs = [\"mcp-server-fetch\"]",
-      "syncOtherSide": "{{target}} にも反映"
+      "tomlConfig": "TOML 全設定"
     },
     "wizard": {
       "title": "MCP 設定ウィザード",
       "hint": "MCP サーバーを素早く設定し JSON を自動生成します",
       "type": "タイプ",
-      "typeStdio": "stdio",
-      "typeSse": "sse",
       "command": "コマンド",
       "commandPlaceholder": "npx または uvx",
       "args": "引数",
-      "argsPlaceholder": "arg1\narg2",
       "env": "環境変数",
-      "envPlaceholder": "KEY1=value1\nKEY2=value2",
       "url": "URL",
       "urlPlaceholder": "https://api.example.com/mcp",
       "urlRequired": "URL を入力してください",
       "headers": "ヘッダー（任意）",
-      "headersPlaceholder": "Authorization: Bearer your_token_here\nContent-Type: application/json",
       "preview": "設定プレビュー",
       "apply": "設定を反映"
     },
@@ -3520,15 +3521,16 @@
       "skillNotFound": "スキルが見つかりません: {{directory}}",
       "missingRepoInfo": "リポジトリ情報（owner または name）が不足しています",
       "downloadTimeout": "リポジトリ {{owner}}/{{name}} のダウンロードがタイムアウトしました（{{timeout}} 秒）",
+      "downloadStalled": "リポジトリ {{owner}}/{{name}} のダウンロードが止まりました（{{timeout}} 秒間データを受信していません）",
       "skillDirNotFound": "スキルディレクトリが見つかりません: {{path}}",
       "directoryConflict": "スキルディレクトリ '{{directory}}' は既に {{existing_repo}} で使用されています。{{new_repo}} からインストールできません",
       "emptyArchive": "ダウンロードしたアーカイブが空です",
+      "archiveInvalid": "ダウンロードしたものは ZIP アーカイブではありません。このサイトは GitHub / GitLab / Gitea のリポジトリではない可能性があり、現在はサポートされていません",
       "invalidRepoRef": "リポジトリの指定が不正です：{{owner}}/{{name}}",
       "archiveTooLarge": "アーカイブが展開上限 {{limit_mb}} MB を超えたため中止しました",
       "archiveDownloadTooLarge": "リポジトリのアーカイブがダウンロード上限 {{limit_mb}} MB を超えたため中止しました",
       "archiveTooManyEntries": "アーカイブのエントリ数が多すぎます（{{count}}）。上限は {{limit}} です",
       "downloadFailed": "ダウンロードに失敗しました: HTTP {{status}}",
-      "httpError": "HTTP エラー {{status}}",
       "http403": "GitHub へのアクセスが制限されています（レート制限の可能性）",
       "http404": "リポジトリまたはブランチが見つかりません。URL を確認してください。プライベートリポジトリは先に「スキルリポジトリを管理」でアクセストークンを設定してください",
       "http429": "リクエストが多すぎます。時間をおいて再試行してください",
@@ -3541,7 +3543,6 @@
       "repoTokenStorageFailed": "{{host}} のアクセストークンを読み書きできませんでした。システムの資格情報ストアが使えるか確認してください",
       "getHomeDirFailed": "ユーザーのホームディレクトリを取得できません",
       "noSkillsInZip": "ZIP ファイルにスキルが見つかりません（SKILL.md ファイルが必要です）",
-      "networkError": "ネットワークエラー",
       "unknownError": "不明なエラー",
       "suggestion": {
         "checkNetwork": "ネットワーク接続を確認してください",
@@ -3753,7 +3754,10 @@
       "command": "コマンド",
       "args": "引数",
       "env": "環境変数",
-      "url": "URL"
+      "url": "URL",
+      "type": "タイプ",
+      "cwd": "作業ディレクトリ",
+      "headers": "ヘッダー"
     },
     "prompt": {
       "title": "システムプロンプトをインポート",
@@ -3769,7 +3773,6 @@
       "repo": "GitHub リポジトリ",
       "directory": "対象ディレクトリ",
       "branch": "ブランチ",
-      "skillsPath": "スキルパス",
       "hint": "この操作でスキルリポジトリが一覧に追加されます。",
       "hintDetail": "追加後、スキル管理ページから個別のスキルをインストールできます。"
     },
@@ -3788,7 +3791,8 @@
     "risk": {
       "envHijack": "この設定には、プロセスの読み込み動作を変える環境変数（ライブラリの注入、CA 証明書の差し替えなど）が含まれています。信頼できる提供元か確認してください。",
       "privateEndpoint": "このアドレスはローカルホストまたは内部ネットワークを指しています。自分で立てたローカルサービス以外はインポートしないでください。",
-      "shellCommand": "この設定はシェル経由でコマンド全体を実行します。実際に動作する内容は引数にあります。1 行ずつ確認してください。"
+      "shellCommand": "この設定はシェル経由でコマンド全体を実行します。実際に動作する内容は引数にあります。1 行ずつ確認してください。",
+      "mcpDangerousField": "この MCP 設定には、ホストの環境変数の読み取り（bearer_token_env_var、env_http_headers、env_vars など）、ヘルパーコマンドの実行（http_headers_helper）、または作業ディレクトリの変更（cwd）を行える高リスク項目が含まれています。完全に信頼できる提供元の場合のみインポートしてください。"
     }
   },
   "iconPicker": {
@@ -3866,7 +3870,6 @@
   },
   "proxy": {
     "panel": {
-      "currentProvider": "現在のプロバイダー:",
       "openSettings": "ルーティングサービスを設定",
       "stats": {
         "activeConnections": "アクティブ接続",
@@ -3927,10 +3930,6 @@
           "label": "非ストリーミングタイムアウト（秒）",
           "description": "非ストリーミングリクエストの総タイムアウト"
         }
-      },
-      "validation": {
-        "retryMin": "リトライ回数は負の値にできません",
-        "retryMax": "リトライ回数は10を超えることはできません"
       },
       "actions": {
         "save": "設定を保存"
@@ -4352,6 +4351,7 @@
     "usage": "使用量",
     "auth": "アカウント",
     "authNeedsReauth": "再ログインが必要なアカウントがあります",
+    "skills": "Skills",
     "prompts": "プロンプト",
     "sessions": "セッション",
     "apps": "アプリ",
@@ -5062,7 +5062,7 @@
   "pluginsPage": {
     "title": "プラグイン",
     "helpTitle": "プラグイン",
-    "help": "Claude Code、Codex、Grok Build、MiniMax Code、OpenClaw、Pi のプラグインをインストール・有効化・削除します。CC Switch は各アプリ付属の CLI を実行するため、ターミナルでそのプラグインコマンドを使うのと同じ結果になります。Pi のプラグインは Pi パッケージで、カタログは npm から取得します。",
+    "help": "Claude Code、Codex、Grok Build、MiniMax Code、OpenClaw、Pi、Antigravity CLI のプラグインをインストール・有効化・削除します。CC Switch は各アプリ付属の CLI を実行するため、ターミナルでそのプラグインコマンドを使うのと同じ結果になります。Pi のプラグインは Pi パッケージで、カタログは npm から取得します。",
     "appAria": "アプリ",
     "viewAria": "プラグインの表示",
     "viewInstalled": "インストール済み",
@@ -5122,9 +5122,11 @@
     "confirmRemoveMarketBody": "{{app}} はこのマーケットプレイスのプラグインを表示しなくなり、ここからインストールしたプラグインも削除されることがあります。後で再追加できます。",
     "toast": {
       "installed": "{{name}} をインストールしました",
+      "installedNeedsConfig": "無効状態でインストールされました。{{app}} で /plugin を実行し、MCP サーバーを設定してから有効化してください。",
       "installFailed": "{{name}} をインストールできませんでした",
       "installNeedsTerminal": "このプラグインはインストール時にマーケットプレイスが宣言したコマンドをこのマシンで実行します。CC Switch が代わりに承認することはありません。ターミナルで {{command}} を実行して確認してから、戻って更新してください。",
       "authRequired": "{{app}} を使うには先にサインインが必要です。ターミナルで {{command}} を実行してサインインしてから、もう一度お試しください。",
+      "pluginInUse": "このプラグインは別の {{app}} / {{cli}} プロセス（実行中のセッション、Hub、バックグラウンドサービスなど）で使用中です。実行中のセッションや関連プロセスを閉じてから再試行してください。",
       "uninstalled": "{{name}} をアンインストールしました",
       "uninstallFailed": "{{name}} をアンインストールできませんでした",
       "enabled": "{{name}} を有効にしました",
@@ -5133,6 +5135,7 @@
       "updated": "{{name}} を更新しました",
       "upToDate": "{{name}} は最新です",
       "updateFailed": "{{name}} を更新できませんでした",
+      "updateNeedsReinstall": "このプラグインは旧バージョンの Antigravity が使うフォルダーにあるため、CC Switch では更新できません。アンインストールしてから「見つける」で再インストールすると、最新バージョンになります。",
       "refreshed": "マーケットプレイスを更新しました",
       "refreshFailed": "マーケットプレイスを更新できませんでした",
       "marketAdded": "マーケットプレイス {{source}} を追加しました",
@@ -5422,5 +5425,11 @@
     "installFailed": "アップデートのインストールに失敗しました",
     "downloadingInline": "新しいバージョンをバックグラウンドでダウンロード中…",
     "downloadedInline": "ダウンロード完了"
+  },
+  "unreadableEntry": {
+    "title": "「{{name}}」のデータを読み取れません",
+    "hint": "新しいバージョンの CC Switch で保存された可能性があります。データはそのまま保持され、編集や有効化はできません。アップグレードすると復元されます。削除することもできます。",
+    "confirmTitle": "読み取れない項目を削除",
+    "confirmMessage": "「{{name}}」を削除しますか？CC Switch のこの記録だけを削除し、各アプリの設定ファイルは変更しません。"
   }
 }

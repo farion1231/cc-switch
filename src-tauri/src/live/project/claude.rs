@@ -339,8 +339,9 @@ const PROXY_HAIKU_ALIAS: &str = "claude-haiku-5-5";
 const PROXY_SONNET_ALIAS: &str = "claude-sonnet-5";
 const PROXY_OPUS_ALIAS: &str = "claude-opus-5";
 const PROXY_FABLE_ALIAS: &str = "claude-fable-5";
-// 写给 Claude Code 时沿用文档示例的大写形式；解析侧大小写不敏感。
-pub(crate) const ONE_M_MARKER_FOR_CLIENT: &str = "[1M]";
+// 写给 Claude Code 时用官方文档的小写形式（`opus[1m]`）；读取侧照旧大小写不敏感，旧配置里的
+// `[1M]` 仍然认（#9757）。
+pub(crate) const ONE_M_MARKER_FOR_CLIENT: &str = "[1m]";
 
 /// 代理契约里怎么写凭据。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -364,7 +365,7 @@ pub enum ProxyAuth {
 /// （`mode::stack::claude_route_default`）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StackRoleModel<'a> {
-    /// 发布给客户端的 Stack id，1M 模型带 `[1M]`。
+    /// 发布给客户端的 Stack id，1M 模型带 `[1m]`。
     pub id: &'a str,
     /// 模型自己的显示名（不带供应商名）。
     pub name: &'a str,
@@ -674,7 +675,7 @@ pub(crate) fn client_model_for_subagent(upstream: &str) -> String {
     client_model
 }
 
-/// Stack 模式的四档：都写同一个 Stack id（1M 模型带 `[1M]` 标记），显示名也一样。haiku 档
+/// Stack 模式的四档：都写同一个 Stack id（1M 模型带 `[1m]` 标记），显示名也一样。haiku 档
 /// 也带标记：Stack id 不是 `claude-` 开头，不带标记 Claude Code 会按 200K 算这一档的窗口
 /// （路由契约的 haiku 别名是 `claude-haiku-5-5`，Claude Code 本身就按 1M 算，所以那边不用）。
 /// 不写 `CLAUDE_CODE_SUBAGENT_MODEL`：子代理跟随主模型，也就是用户在 `/model` 里选的。
@@ -1032,7 +1033,7 @@ mod tests {
             "http://127.0.0.1:15721",
             ProxyAuth::AuthToken,
             Some(StackRoleModel {
-                id: "ccs-claude-z--glm-5.2[1M]",
+                id: "ccs-claude-z--glm-5.2[1m]",
                 name: "GLM 5.2",
             }),
         );
@@ -1041,7 +1042,7 @@ mod tests {
         for role in ["HAIKU", "SONNET", "OPUS", "FABLE"] {
             assert_eq!(
                 env(&format!("ANTHROPIC_DEFAULT_{role}_MODEL")),
-                Some("ccs-claude-z--glm-5.2[1M]")
+                Some("ccs-claude-z--glm-5.2[1m]")
             );
         }
         for role in ["HAIKU", "SONNET", "OPUS", "FABLE"] {
@@ -1063,7 +1064,7 @@ mod tests {
         );
         assert_eq!(
             routed.env["ANTHROPIC_DEFAULT_SONNET_MODEL"],
-            "claude-sonnet-5[1M]"
+            "claude-sonnet-5[1m]"
         );
         assert_eq!(routed.env["CLAUDE_CODE_SUBAGENT_MODEL"], "glm-4.7-air");
         // `/model` 的说明：哪家的哪个模型，上游标了 1M 才写窗口；fable 没配不写；不写菜单。
@@ -1173,19 +1174,19 @@ mod tests {
         );
         assert_eq!(
             env("ANTHROPIC_DEFAULT_SONNET_MODEL"),
-            Some("claude-sonnet-5-5[1M]")
+            Some("claude-sonnet-5-5[1m]")
         );
         assert_eq!(
             env("ANTHROPIC_DEFAULT_OPUS_MODEL"),
-            Some("claude-opus-5-5[1M]")
+            Some("claude-opus-5-5[1m]")
         );
         assert_eq!(
             env("ANTHROPIC_DEFAULT_FABLE_MODEL"),
-            Some("claude-fable-5[1M]")
+            Some("claude-fable-5[1m]")
         );
         assert_eq!(
             env("CLAUDE_CODE_SUBAGENT_MODEL"),
-            Some("claude-opus-5-5[1M]")
+            Some("claude-opus-5-5[1m]")
         );
     }
 
@@ -1209,7 +1210,7 @@ mod tests {
                 .env
                 .get("ANTHROPIC_DEFAULT_FABLE_MODEL")
                 .and_then(Value::as_str),
-            Some("claude-fable-5-2[1M]")
+            Some("claude-fable-5-2[1m]")
         );
     }
 
@@ -1277,7 +1278,7 @@ mod tests {
         );
         assert_eq!(
             client_model_for_subagent("claude-fable-5.2[1M]"),
-            "claude-fable-5-2[1M]"
+            "claude-fable-5-2[1m]"
         );
     }
 

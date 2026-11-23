@@ -9,7 +9,7 @@ import {
   setCodexBaseUrl,
   setCodexModelName,
   setCodexRemoteCompaction,
-} from "./providerConfigUtils";
+} from "./codexConfigUtils";
 
 describe("Codex wire API helpers", () => {
   it("recognizes Anthropic Messages aliases", () => {

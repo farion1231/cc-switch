@@ -38,7 +38,7 @@ import { PROVIDER_TYPES, TEMPLATE_TYPES } from "@/config/constants";
 import {
   extractCodexExperimentalBearerToken,
   extractProviderBaseUrl,
-} from "@/utils/providerConfigUtils";
+} from "@/utils/codexConfigUtils";
 import {
   copilotByokConfigOf,
   copilotEnvOf,
@@ -371,9 +371,31 @@ export function ProviderCard({
   const providerNameIncludesCopilotLogin = Boolean(
     copilotAccount?.login && provider.name.includes(copilotAccount.login),
   );
-  // xAI OAuth (SuperGrok 反代)：额度经自管 OAuth token 自动显示，与 codex_oauth 同构
+  // xAI OAuth (SuperGrok 反代)：额度经自管 OAuth token 自动显示，副标题同 Copilot / Codex OAuth 写账号
   const isXaiOauth = provider.meta?.providerType === PROVIDER_TYPES.XAI_OAUTH;
-  // Antigravity 官方卡绑了授权中心的账号：额度查绑定的号（只有 macOS、Windows 能切号，其他平台忽略绑定）
+  const xaiAccountId = isXaiOauth
+    ? resolveManagedAccountId(
+        provider.meta,
+        PROVIDER_TYPES.XAI_OAUTH,
+      )?.trim() || undefined
+    : undefined;
+  const { data: xaiAuthStatus, isSuccess: isXaiAuthStatusSuccess } = useQuery({
+    queryKey: ["managed-auth-status", "xai_oauth"],
+    queryFn: () => authApi.authGetStatus("xai_oauth"),
+    enabled: isXaiOauth,
+    staleTime: 30_000,
+    // The proxy can expire an account and replace the default without an Auth
+    // Center mutation. Keep the subtitle and reauth badge in sync while open.
+    refetchInterval: 15_000,
+  });
+  const xaiAccount = xaiAuthStatus?.accounts.find(
+    (account) =>
+      account.id === (xaiAccountId ?? xaiAuthStatus?.default_account_id),
+  );
+  const providerNameIncludesXaiLogin = Boolean(
+    xaiAccount?.login && provider.name.includes(xaiAccount.login),
+  );
+  // 支持 agy 切号的平台上，Antigravity 官方卡查询所绑定账号的额度。
   const agyBoundAccountId =
     appId === "agy" && isOfficial && canSwitchAgyAccount()
       ? resolveManagedAccountId(provider.meta, "agy_oauth")?.trim() || null
@@ -631,6 +653,32 @@ export function ProviderCard({
                 {t("copilot.statusUnavailable", {
                   defaultValue: "状态不可用",
                 })}
+              </span>
+            </div>
+          ) : isXaiOauth && xaiAccount ? (
+            <div className="mt-0.5 flex min-w-0 items-center gap-2 text-caption text-fg-2">
+              <span
+                className="min-w-0 truncate"
+                title={manualNote ?? xaiAccount.login}
+              >
+                {manualNote ??
+                  (providerNameIncludesXaiLogin
+                    ? t("xaiOauth.account")
+                    : xaiAccount.login)}
+              </span>
+              {planSuffix()}
+              {xaiAccount.requires_reauth && (
+                <span className="inline-flex shrink-0 items-center gap-1 text-warning-text">
+                  <AlertTriangle className="h-3.5 w-3.5" />
+                  {t("xaiOauth.reauthRequired")}
+                </span>
+              )}
+            </div>
+          ) : isXaiOauth && xaiAccountId && isXaiAuthStatusSuccess ? (
+            <div className="mt-0.5 flex min-w-0 items-center gap-1 text-caption text-warning-text">
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+              <span className="min-w-0 truncate">
+                {t("copilot.statusUnavailable")}
               </span>
             </div>
           ) : displayUrl && subtitlePlan ? (

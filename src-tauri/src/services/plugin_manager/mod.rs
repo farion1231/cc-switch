@@ -8,7 +8,7 @@
 //! - Codex：`codex plugin list|add|remove` 和 `codex plugin marketplace list|add|remove|upgrade`。
 //!   Codex 没有启用 / 停用命令，开关就是 `config.toml` 的 `[plugins."<id>"] enabled`，
 //!   经写入引擎原位改这一个键。
-//! - Grok Build、MiniMax Code、OpenClaw、Pi：见各自的子模块。
+//! - Grok Build、MiniMax Code、OpenClaw、Pi、Antigravity：见各自的子模块。
 //!
 //! 写锁只在 CC Switch 自己写文件时拿（Codex 和 Pi 的启停、Pi 本地包的卸载）。CLI 改自己的配置和用户手改
 //! 文件是一回事：切换供应商写之前本来就会重读比对，所以 CLI 调用期间（安装、更新最长
@@ -17,6 +17,7 @@
 //! CLI 读的配置目录和 CC Switch 读的必须是同一份：设置里覆盖了目录时，用各应用的环境变量
 //! （`CLAUDE_CONFIG_DIR`、`CODEX_HOME`、`GROK_HOME`、`PI_CODING_AGENT_DIR`……）告诉 CLI。
 
+mod agy;
 #[cfg(test)]
 mod cli_fixtures;
 mod grok;
@@ -24,7 +25,9 @@ mod mcode;
 mod openclaw;
 mod pi;
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -45,6 +48,14 @@ pub const CLI_NOT_INSTALLED: &str = "PLUGIN_CLI_NOT_INSTALLED";
 /// 时返回的错误码。CC Switch 不传 `-y` 代为同意，前端提示用户去终端里装。
 pub const NEEDS_TERMINAL_CONFIRM: &str = "PLUGIN_NEEDS_TERMINAL_CONFIRM";
 
+/// 插件目录正被同应用的其它进程占用（例如 Windows 下运行中的 Antigravity Hub / agy 会话），
+/// 无法替换或移除目录时返回的错误码，前端据此提示关闭相关进程后重试。
+pub const PLUGIN_IN_USE: &str = "PLUGIN_IN_USE";
+
+/// 插件装在 CC Switch 无法原地更新的位置（Antigravity 旧版的数字目录）时返回的错误码，
+/// 前端提示用户卸载后从「发现」重新安装。
+pub const UPDATE_NEEDS_REINSTALL: &str = "PLUGIN_UPDATE_NEEDS_REINSTALL";
+
 const LIST_TIMEOUT: Duration = Duration::from_secs(90);
 const TOGGLE_TIMEOUT: Duration = Duration::from_secs(60);
 /// 安装、更新、加市场都可能要 git clone。
@@ -63,6 +74,7 @@ pub enum PluginApp {
     Mcode,
     Openclaw,
     Pi,
+    Agy,
 }
 
 impl PluginApp {
@@ -74,6 +86,20 @@ impl PluginApp {
             PluginApp::Mcode => "mcode",
             PluginApp::Openclaw => "openclaw",
             PluginApp::Pi => "pi",
+            PluginApp::Agy => "agy",
+        }
+    }
+
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+    fn app_type(self) -> AppType {
+        match self {
+            PluginApp::Claude => AppType::Claude,
+            PluginApp::Codex => AppType::Codex,
+            PluginApp::Grok => AppType::GrokBuild,
+            PluginApp::Mcode => AppType::Mcode,
+            PluginApp::Openclaw => AppType::OpenClaw,
+            PluginApp::Pi => AppType::Pi,
+            PluginApp::Agy => AppType::Agy,
         }
     }
 }
@@ -105,6 +131,9 @@ pub struct PluginEntry {
     /// 目录条目装好后在已安装列表里的 id，和 `id` 不同时才有：OpenClaw 目录给的是 ClawHub
     /// 包名（`@openclaw/memory-lancedb`），装好后的插件 id 是 `memory-lancedb`。
     pub installed_id: Option<String>,
+    /// 已安装条目在目录里对应的 id，和 `id` 不同时才有：Pi 钉了版本的 npm 包
+    /// （`npm:foo@1.0.0`）对应目录里的 `npm:foo`。
+    pub catalog_id: Option<String>,
     pub install_path: Option<String>,
     pub updated_at: Option<String>,
 }
@@ -128,12 +157,19 @@ pub struct PluginMarketplace {
     pub removable: bool,
 }
 
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginActionOutcome {
     /// 操作确实改了东西（更新时：已经是最新版为 false）。
     pub changed: bool,
     pub message: Option<String>,
+    /// 安装成功但插件仍处于停用状态（例如 Antigravity 插件需先在 `/plugin` 中配置 MCP 变量）。
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub needs_configuration: bool,
 }
 
 // ───────────────────────────── 参数校验 ─────────────────────────────
@@ -163,7 +199,7 @@ fn is_package_name(id: &str) -> bool {
     }
 }
 
-/// 按应用校验交给 CLI 的插件 id。
+/// 按应用校验交给 CLI 的插件 id（已安装条目的启停、卸载、更新）。
 fn validate_app_plugin_id(app: PluginApp, id: &str) -> Result<(), String> {
     let ok = match app {
         PluginApp::Claude | PluginApp::Codex | PluginApp::Mcode => {
@@ -172,11 +208,20 @@ fn validate_app_plugin_id(app: PluginApp, id: &str) -> Result<(), String> {
         PluginApp::Grok => is_name_segment(id),
         PluginApp::Openclaw => is_package_name(id),
         PluginApp::Pi => return pi::validate_source(id),
+        PluginApp::Agy => return agy::validate_installed_id(id),
     };
     if ok {
         Ok(())
     } else {
         Err(format!("Invalid plugin id: {id}"))
+    }
+}
+
+/// 按应用校验安装参数：Antigravity 目录条目是 `name@marketplace`，已安装条目是目录名。
+fn validate_install_plugin_id(app: PluginApp, id: &str) -> Result<(), String> {
+    match app {
+        PluginApp::Agy => agy::validate_install_id(id),
+        _ => validate_app_plugin_id(app, id),
     }
 }
 
@@ -229,7 +274,7 @@ fn is_default_claude_dir(dir: &Path) -> bool {
     )
 }
 
-/// CLI 的环境变量和工作目录。
+/// CLI 的环境变量和应用的配置目录（不建目录，见 [`prepare_working_dir`]）。
 fn cli_context(app: PluginApp) -> (Vec<(&'static str, String)>, PathBuf) {
     let (dir, mut env) = match app {
         PluginApp::Claude => {
@@ -277,18 +322,32 @@ fn cli_context(app: PluginApp) -> (Vec<(&'static str, String)>, PathBuf) {
             let env = vec![("PI_CODING_AGENT_DIR", dir.to_string_lossy().into_owned())];
             (dir, env)
         }
+        PluginApp::Agy => (crate::agy_config::agy_dir(), Vec::new()),
     };
     // CC Switch 启动时给自己设了 RUST_BACKTRACE=1（panic_hook），子进程会继承：Codex 这类
     // Rust 写的 CLI 一报错就把整段堆栈打进 stderr，进而塞满失败提示。这里显式关掉。
     // anyhow 先认 RUST_LIB_BACKTRACE，两个一起设。
     env.push(("RUST_BACKTRACE", "0".to_string()));
     env.push(("RUST_LIB_BACKTRACE", "0".to_string()));
-    let working_dir = if std::fs::create_dir_all(&dir).is_ok() {
+    (env, dir)
+}
+
+/// CLI 的工作目录：就是应用的配置目录。目录还不存在时先确认 CLI 装了再建（Codex 要求
+/// `CODEX_HOME` 已存在），没装的应用不能因为插件页在后台预读而在家目录里多出
+/// `.codex`、`.grok` 这类空目录（#9852）。建不了就退回家目录。
+fn prepare_working_dir(
+    dir: PathBuf,
+    ensure_installed: impl FnOnce() -> Result<(), String>,
+) -> Result<PathBuf, String> {
+    if dir.is_dir() {
+        return Ok(dir);
+    }
+    ensure_installed()?;
+    Ok(if std::fs::create_dir_all(&dir).is_ok() {
         dir
     } else {
         crate::config::get_home_dir()
-    };
-    (env, working_dir)
+    })
 }
 
 struct CliOutput {
@@ -299,21 +358,27 @@ struct CliOutput {
 
 fn run_cli(app: PluginApp, args: &[&str], timeout: Duration) -> Result<CliOutput, String> {
     let tool = app.tool();
-    let (env, working_dir) = cli_context(app);
-    let output = crate::commands::run_detected_tool_command_with_timeout(
-        tool,
-        args,
-        Some(timeout),
-        &env,
-        &working_dir,
-    )
-    .map_err(|e| {
+    let not_installed = |e: String| {
         if e == format!("{tool} is not installed") {
             CLI_NOT_INSTALLED.to_string()
         } else {
             e
         }
+    };
+    let (env, dir) = cli_context(app);
+    // 预检和真正运行共用一份超时
+    let started = std::time::Instant::now();
+    let working_dir = prepare_working_dir(dir, || {
+        crate::commands::locate_detected_tool(tool, timeout).map_err(not_installed)
     })?;
+    let output = crate::commands::run_detected_tool_command_with_timeout(
+        tool,
+        args,
+        Some(timeout.saturating_sub(started.elapsed())),
+        &env,
+        &working_dir,
+    )
+    .map_err(not_installed)?;
     // WSL 里 `command -v` 找不到工具时外层脚本 exit 127。
     if output.status.code() == Some(127) {
         return Err(CLI_NOT_INSTALLED.to_string());
@@ -449,6 +514,7 @@ fn claude_update_outcome(value: &Value) -> PluginActionOutcome {
     PluginActionOutcome {
         changed: value.get("updateOutcome").and_then(Value::as_str) != Some("up_to_date"),
         message: str_field(value, "message"),
+        ..Default::default()
     }
 }
 
@@ -457,6 +523,7 @@ fn codex_marketplace_add_outcome(value: &Value) -> PluginActionOutcome {
     PluginActionOutcome {
         changed: value.get("alreadyAdded").and_then(Value::as_bool) != Some(true),
         message: str_field(value, "marketplaceName"),
+        ..Default::default()
     }
 }
 
@@ -484,6 +551,75 @@ fn split_id(id: &str) -> (String, String) {
 }
 
 // ───────────────────────────── 插件清单（plugin.json） ─────────────────────────────
+
+/// 从 WSL UNC 路径取出发行版根（`\\wsl$\Ubuntu` 或 `\\wsl.localhost\Ubuntu`）。
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn wsl_unc_root(dir: &Path) -> Option<PathBuf> {
+    let text = dir.to_string_lossy();
+    let normalized = text.replace('/', "\\");
+    let rest = if normalized
+        .get(..8)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(r"\\?\UNC\"))
+    {
+        &normalized[8..]
+    } else {
+        normalized.strip_prefix(r"\\")?
+    };
+    let mut parts = rest.split('\\');
+    let host = parts.next()?;
+    if !(host.eq_ignore_ascii_case("wsl$") || host.eq_ignore_ascii_case("wsl.localhost")) {
+        return None;
+    }
+    let distro = parts.next()?;
+    if distro.is_empty() || distro.starts_with('-') || distro == "." || distro == ".." {
+        return None;
+    }
+    Some(PathBuf::from(format!(r"\\{host}\{distro}")))
+}
+
+/// 当前应用在 WSL 里跑时返回对应发行版的 Windows UNC 根；本机或非 Windows 返回 `None`。
+pub(super) fn wsl_root_for_app(app: PluginApp) -> Option<PathBuf> {
+    #[cfg(target_os = "windows")]
+    {
+        let override_dir = crate::settings::get_override_dir(&app.app_type())?;
+        wsl_unc_root(&override_dir)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = app;
+        None
+    }
+}
+
+/// 把 CLI 返回的目录路径转成本机文件 API 可直接读的路径。
+///
+/// Windows 调 WSL 里的 CLI 时，输出里的安装目录是 Linux 路径（`/home/me/…`），
+/// 直接交给 `std::fs` 会失败；拼到对应发行版的 UNC 根（`\\wsl.localhost\<distro>`）下即可读到清单。
+pub(super) fn resolve_cli_path(raw: &str, wsl_root: Option<&Path>) -> Option<PathBuf> {
+    let Some(root) = wsl_root else {
+        return Some(PathBuf::from(raw));
+    };
+    if !raw.starts_with('/') || raw.starts_with("//") {
+        return Some(PathBuf::from(raw));
+    }
+    let mut segments: Vec<&str> = Vec::new();
+    for part in raw.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                segments.pop();
+            }
+            // 含 Windows 盘符冒号或反斜杠的段不能直接 push 到 PathBuf，避免跳出 UNC 根
+            other if other.contains('\\') || other.contains(':') => return None,
+            other => segments.push(other),
+        }
+    }
+    let mut path = root.to_path_buf();
+    for segment in segments {
+        path.push(segment);
+    }
+    Some(path)
+}
 
 #[derive(Default)]
 struct ManifestInfo {
@@ -518,7 +654,7 @@ fn read_manifest_file(path: &Path) -> Option<ManifestInfo> {
 
 // ───────────────────────────── Claude Code ─────────────────────────────
 
-fn parse_claude_listing(value: &Value) -> PluginListing {
+fn parse_claude_listing(value: &Value, wsl_root: Option<&Path>) -> PluginListing {
     // 不带 --available 时是数组；带了是 {installed, available}
     let (installed_raw, available_raw) = match value {
         Value::Array(items) => (items.clone(), Vec::new()),
@@ -562,7 +698,8 @@ fn parse_claude_listing(value: &Value) -> PluginListing {
             let install_path = str_field(item, "installPath");
             let manifest = install_path
                 .as_deref()
-                .map(|p| read_manifest(Path::new(p), ".claude-plugin"))
+                .and_then(|p| resolve_cli_path(p, wsl_root))
+                .map(|p| read_manifest(&p, ".claude-plugin"))
                 .unwrap_or_default();
             let catalog_description = available
                 .iter()
@@ -584,6 +721,7 @@ fn parse_claude_listing(value: &Value) -> PluginListing {
                 removable: scope.as_deref().is_none_or(|s| s == "user"),
                 installable: true,
                 installed_id: None,
+                catalog_id: None,
                 scope,
                 install_path,
                 updated_at: str_field(item, "lastUpdated")
@@ -626,7 +764,7 @@ fn parse_claude_marketplaces(value: &Value) -> Vec<PluginMarketplace> {
 
 // ───────────────────────────── Codex ─────────────────────────────
 
-fn parse_codex_entry(item: &Value) -> Option<PluginEntry> {
+fn parse_codex_entry(item: &Value, wsl_root: Option<&Path>) -> Option<PluginEntry> {
     let id = str_field(item, "pluginId")?;
     let (name, market) = split_id(&id);
     let source_path = item
@@ -635,7 +773,8 @@ fn parse_codex_entry(item: &Value) -> Option<PluginEntry> {
         .and_then(|s| str_field(s, "path"));
     let manifest = source_path
         .as_deref()
-        .map(|p| read_manifest(Path::new(p), ".codex-plugin"))
+        .and_then(|p| resolve_cli_path(p, wsl_root))
+        .map(|p| read_manifest(&p, ".codex-plugin"))
         .unwrap_or_default();
     Some(PluginEntry {
         name: str_field(item, "name").unwrap_or(name),
@@ -656,6 +795,7 @@ fn parse_codex_entry(item: &Value) -> Option<PluginEntry> {
         removable: true,
         installable: str_field(item, "installPolicy").as_deref() != Some("NOT_AVAILABLE"),
         installed_id: None,
+        catalog_id: None,
         install_path: None,
         updated_at: None,
         scope: None,
@@ -663,12 +803,17 @@ fn parse_codex_entry(item: &Value) -> Option<PluginEntry> {
     })
 }
 
-fn parse_codex_listing(value: &Value) -> PluginListing {
+fn parse_codex_listing(value: &Value, wsl_root: Option<&Path>) -> PluginListing {
     let collect = |key: &str| -> Vec<PluginEntry> {
         value
             .get(key)
             .and_then(Value::as_array)
-            .map(|items| items.iter().filter_map(parse_codex_entry).collect())
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| parse_codex_entry(item, wsl_root))
+                    .collect()
+            })
             .unwrap_or_default()
     };
     let installed = collect("installed");
@@ -761,13 +906,16 @@ fn run_list(app: PluginApp, with_catalog: bool) -> Result<PluginListing, String>
         &["plugin", "list", "--json"]
     };
     let value = run_json(app, args, LIST_TIMEOUT)?;
+    let wsl_root = wsl_root_for_app(app);
     Ok(match app {
-        PluginApp::Claude => parse_claude_listing(&value),
-        PluginApp::Codex => parse_codex_listing(&value),
+        PluginApp::Claude => parse_claude_listing(&value, wsl_root.as_deref()),
+        PluginApp::Codex => parse_codex_listing(&value, wsl_root.as_deref()),
         PluginApp::Mcode => mcode::parse_listing(&value),
-        PluginApp::Grok => grok::parse_listing(&value, &grok::read_config_text()),
-        // OpenClaw、Pi 的列表命令不同，不走这里
-        PluginApp::Openclaw | PluginApp::Pi => {
+        PluginApp::Grok => {
+            grok::parse_listing(&value, &grok::read_config_text(), wsl_root.as_deref())
+        }
+        // OpenClaw、Pi、Antigravity 的列表命令不同，不走这里
+        PluginApp::Openclaw | PluginApp::Pi | PluginApp::Agy => {
             return Err(unsupported(app, "plugin list --available"))
         }
     })
@@ -779,6 +927,7 @@ pub fn list_installed(app: PluginApp) -> Result<Vec<PluginEntry>, String> {
     match app {
         PluginApp::Openclaw => openclaw::list_installed(),
         PluginApp::Pi => pi::list_installed(),
+        PluginApp::Agy => agy::list_installed(),
         _ => run_list(app, false).map(|listing| listing.installed),
     }
 }
@@ -789,6 +938,7 @@ pub fn list_catalog(app: PluginApp) -> Result<Vec<PluginEntry>, String> {
     match app {
         PluginApp::Openclaw => openclaw::list_catalog(),
         PluginApp::Pi => pi::list_catalog(),
+        PluginApp::Agy => agy::list_catalog(),
         _ => run_list(app, true).map(catalog_from_listing),
     }
 }
@@ -809,6 +959,7 @@ fn catalog_from_listing(listing: PluginListing) -> Vec<PluginEntry> {
                 scope: None,
                 manageable: true,
                 removable: true,
+                catalog_id: None,
                 install_path: None,
                 updated_at: None,
                 ..entry
@@ -819,8 +970,11 @@ fn catalog_from_listing(listing: PluginListing) -> Vec<PluginEntry> {
 }
 
 pub fn list_marketplaces(app: PluginApp) -> Result<Vec<PluginMarketplace>, String> {
-    // MiniMax Code 正式版禁用了市场管理；OpenClaw、Pi 没有可增删的市场。
-    if matches!(app, PluginApp::Mcode | PluginApp::Openclaw | PluginApp::Pi) {
+    // MiniMax Code 正式版禁用了市场管理；OpenClaw、Pi、Antigravity 没有可增删的市场。
+    if matches!(
+        app,
+        PluginApp::Mcode | PluginApp::Openclaw | PluginApp::Pi | PluginApp::Agy
+    ) {
         return Err(unsupported(app, "marketplace management"));
     }
     let out = run_cli(
@@ -839,7 +993,7 @@ pub fn list_marketplaces(app: PluginApp) -> Result<Vec<PluginMarketplace>, Strin
             parse_codex_marketplaces(&value, &config)
         }
         PluginApp::Grok => grok::parse_marketplaces(&value),
-        PluginApp::Mcode | PluginApp::Openclaw | PluginApp::Pi => Vec::new(),
+        PluginApp::Mcode | PluginApp::Openclaw | PluginApp::Pi | PluginApp::Agy => Vec::new(),
     })
 }
 
@@ -847,6 +1001,7 @@ fn ok_outcome(value: &Value) -> PluginActionOutcome {
     PluginActionOutcome {
         changed: true,
         message: str_field(value, "message"),
+        ..Default::default()
     }
 }
 
@@ -862,14 +1017,14 @@ fn run_action(
     }
     Ok(PluginActionOutcome {
         changed: true,
-        message: None,
+        ..Default::default()
     })
 }
 
 /// 安装。Grok Build 和 OpenClaw 的 CLI 要求显式确认信任（`--trust` / `--accept-capabilities`）
 /// 才肯装：前端对这两个应用先弹确认框，用户确认后才会调到这里。
 pub fn install_plugin(app: PluginApp, id: &str) -> Result<PluginActionOutcome, String> {
-    validate_app_plugin_id(app, id)?;
+    validate_install_plugin_id(app, id)?;
     match app {
         // 不传 -y：市场声明了安装命令的插件要用户在终端里亲自确认，CC Switch 不代为同意。
         // CLI 的 stdin 是 null，这种插件会立刻失败（`NEEDS_TERMINAL_CONFIRM`），不会等到超时。
@@ -902,6 +1057,7 @@ pub fn install_plugin(app: PluginApp, id: &str) -> Result<PluginActionOutcome, S
             }
             run_action(app, &["install", id], NETWORK_TIMEOUT)
         }
+        PluginApp::Agy => agy::install_plugin(id),
     }
 }
 
@@ -950,10 +1106,11 @@ pub fn uninstall_plugin(
         PluginApp::Pi if pi::is_local_source(id) => {
             pi::remove_local_entry(db, id).map(|changed| PluginActionOutcome {
                 changed,
-                message: None,
+                ..Default::default()
             })
         }
         PluginApp::Pi => Err(pi::terminal_hint("remove", id)),
+        PluginApp::Agy => agy::uninstall_plugin(id),
     }
 }
 
@@ -976,7 +1133,7 @@ pub fn set_plugin_enabled(
         PluginApp::Codex => {
             write_codex_plugin_enabled(db, id, enabled).map(|changed| PluginActionOutcome {
                 changed,
-                message: None,
+                ..Default::default()
             })
         }
         PluginApp::Mcode => run_cli(app, &["plugin", verb, id, "--json"], TOGGLE_TIMEOUT)
@@ -988,8 +1145,45 @@ pub fn set_plugin_enabled(
         // Pi 没有包级开关命令，改 settings.json 里的资源过滤
         PluginApp::Pi => pi::set_enabled(db, id, enabled).map(|changed| PluginActionOutcome {
             changed,
-            message: None,
+            ..Default::default()
         }),
+        PluginApp::Agy => run_action(app, &["plugin", verb, id], TOGGLE_TIMEOUT),
+    }
+}
+
+/// 记录每个 Codex 插件最近一次经 CC Switch 切换开关的序号和目标值。
+/// 更新停用的 Codex 插件期间如果中途改过开关，装完按最新的意愿收尾，不再误把它停用回去。
+static CODEX_TOGGLE_STATE: OnceLock<Mutex<HashMap<String, (u64, bool)>>> = OnceLock::new();
+
+fn codex_toggle_state() -> &'static Mutex<HashMap<String, (u64, bool)>> {
+    CODEX_TOGGLE_STATE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn codex_toggle_epoch(id: &str) -> u64 {
+    codex_toggle_state()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(id)
+        .map_or(0, |&(epoch, _)| epoch)
+}
+
+fn record_codex_toggle(id: &str, enabled: bool) {
+    let mut map = codex_toggle_state()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let next = map.get(id).map_or(1, |&(epoch, _)| epoch + 1);
+    map.insert(id.to_string(), (next, enabled));
+}
+
+/// 按更新前后的开关记录决定 `codex plugin add` 结束后是否需要写回 `enabled = false`。
+fn should_restore_codex_disabled(
+    was_disabled: bool,
+    epoch_before: u64,
+    current_toggle: Option<(u64, bool)>,
+) -> bool {
+    match current_toggle {
+        Some((epoch, enabled)) if epoch != epoch_before => !enabled,
+        _ => was_disabled,
     }
 }
 
@@ -1010,7 +1204,40 @@ fn write_codex_plugin_enabled(db: &Database, id: &str, enabled: bool) -> Result<
             PendingTarget::default(),
         )
         .map_err(|e| e.to_string())?;
+    record_codex_toggle(id, enabled);
     Ok(!report.changed.is_empty())
+}
+
+/// `codex plugin add` 结束后按需写回 `enabled = false`；在 Codex 写锁内复查期间是否被切换过。
+fn restore_codex_plugin_disabled_if_needed(
+    db: &Database,
+    id: &str,
+    was_disabled: bool,
+    epoch_before: u64,
+) -> Result<(), String> {
+    if !was_disabled && codex_toggle_epoch(id) == epoch_before {
+        return Ok(());
+    }
+    let write = AppWrite::begin(db, AppType::Codex.as_str()).map_err(|e| e.to_string())?;
+    let current = codex_toggle_state()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(id)
+        .copied();
+    if !should_restore_codex_disabled(was_disabled, epoch_before, current) {
+        return Ok(());
+    }
+    write
+        .run(
+            op::APPLY,
+            &[FileChange {
+                file: LiveFile::private(crate::codex_config::get_codex_config_path()),
+                patch: &codex_plugin_enabled_patch(id, false),
+            }],
+            PendingTarget::default(),
+        )
+        .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 /// 更新到市场里的最新版。Claude Code、Grok Build、OpenClaw、Pi 有这个命令；Codex 先刷新市场再
@@ -1032,7 +1259,8 @@ pub fn update_plugin(
         }
         PluginApp::Codex => {
             let (_, market) = split_id(id);
-            let config =
+            let mut epoch_before = codex_toggle_epoch(id);
+            let mut config =
                 crate::codex_config::read_codex_config_text().map_err(|e| e.to_string())?;
             // upgrade 只适用于配置的 Git 市场；本地和内置/托管市场直接交给 add。
             if codex_marketplace_needs_upgrade(&config, &market)? {
@@ -1042,15 +1270,17 @@ pub fn update_plugin(
                     NETWORK_TIMEOUT,
                 )?;
                 codex_action_result(&out)?;
+                // 市场升级期间开关可能改过，以 `plugin add` 前的最新状态为准。
+                epoch_before = codex_toggle_epoch(id);
+                config =
+                    crate::codex_config::read_codex_config_text().map_err(|e| e.to_string())?;
             }
-            // `plugin add` 会把开关写回 enabled = true；用户停用过的，装完再停用回去。
+            // `plugin add` 会把开关写回 enabled = true；停用过且期间没被重新启用的，装完再停用回去。
             let was_disabled = codex_plugin_enabled_in_text(&config, id) == Some(false);
             let outcome = run_cli(app, &["plugin", "add", id, "--json"], NETWORK_TIMEOUT)
                 .and_then(|out| codex_action_result(&out))
                 .map(|v| ok_outcome(&v))?;
-            if was_disabled {
-                write_codex_plugin_enabled(db, id, false)?;
-            }
+            restore_codex_plugin_disabled_if_needed(db, id, was_disabled, epoch_before)?;
             Ok(outcome)
         }
         PluginApp::Grok => {
@@ -1060,7 +1290,7 @@ pub fn update_plugin(
             }
             Ok(PluginActionOutcome {
                 changed: grok::update_changed(&out.stdout),
-                message: None,
+                ..Default::default()
             })
         }
         PluginApp::Openclaw => {
@@ -1070,13 +1300,13 @@ pub fn update_plugin(
             }
             Ok(PluginActionOutcome {
                 changed: openclaw::update_changed(&out.stdout),
-                message: None,
+                ..Default::default()
             })
         }
         // 本地来源直接加载目录，没有可更新的
         PluginApp::Pi if pi::is_local_source(id) => Ok(PluginActionOutcome {
             changed: false,
-            message: None,
+            ..Default::default()
         }),
         PluginApp::Pi => {
             if !pi::can_pass_to_cli(id) {
@@ -1088,9 +1318,10 @@ pub fn update_plugin(
             }
             Ok(PluginActionOutcome {
                 changed: pi::update_changed(&out.stdout),
-                message: None,
+                ..Default::default()
             })
         }
+        PluginApp::Agy => agy::update_plugin(id),
         PluginApp::Mcode => Err(unsupported(app, "plugin update")),
     }
 }
@@ -1116,7 +1347,7 @@ pub fn add_marketplace(app: PluginApp, source: &str) -> Result<PluginActionOutco
             &["plugin", "marketplace", "add", &source],
             NETWORK_TIMEOUT,
         ),
-        PluginApp::Mcode | PluginApp::Openclaw | PluginApp::Pi => {
+        PluginApp::Mcode | PluginApp::Openclaw | PluginApp::Pi | PluginApp::Agy => {
             Err(unsupported(app, "marketplace management"))
         }
     }
@@ -1143,7 +1374,7 @@ pub fn remove_marketplace(app: PluginApp, name: &str) -> Result<PluginActionOutc
             &["plugin", "marketplace", "remove", name],
             TOGGLE_TIMEOUT,
         ),
-        PluginApp::Mcode | PluginApp::Openclaw | PluginApp::Pi => {
+        PluginApp::Mcode | PluginApp::Openclaw | PluginApp::Pi | PluginApp::Agy => {
             Err(unsupported(app, "marketplace management"))
         }
     }
@@ -1166,7 +1397,7 @@ fn refresh_each(
     if failures.is_empty() {
         Ok(PluginActionOutcome {
             changed: !markets.is_empty(),
-            message: None,
+            ..Default::default()
         })
     } else {
         Err(failures.join("\n"))
@@ -1209,10 +1440,10 @@ pub fn refresh_marketplaces(app: PluginApp) -> Result<PluginActionOutcome, Strin
             NETWORK_TIMEOUT,
         )
         .map(|v| ok_outcome(&v)),
-        // 目录是直接查 npm registry 的，没有本地缓存要刷新；前端随后重读目录
-        PluginApp::Pi => Ok(PluginActionOutcome {
+        // 目录是直接查远端接口（npm registry / gstatic）的，没有本地缓存要刷新；前端随后重读目录
+        PluginApp::Pi | PluginApp::Agy => Ok(PluginActionOutcome {
             changed: true,
-            message: None,
+            ..Default::default()
         }),
         PluginApp::Mcode => Err(unsupported(app, "marketplace refresh")),
     }
@@ -1250,6 +1481,7 @@ mod tests {
             (PluginApp::Mcode, "mcode"),
             (PluginApp::Openclaw, "openclaw"),
             (PluginApp::Pi, "pi"),
+            (PluginApp::Agy, "agy"),
         ] {
             assert_eq!(serde_json::to_value(app).unwrap(), json!(id));
             assert_eq!(serde_json::from_value::<PluginApp>(json!(id)).unwrap(), app);
@@ -1262,6 +1494,18 @@ mod tests {
         assert!(validate_app_plugin_id(PluginApp::Mcode, "computer-use").is_err());
         assert!(validate_app_plugin_id(PluginApp::Grok, "hello").is_ok());
         assert!(validate_app_plugin_id(PluginApp::Grok, "hello@mkt").is_err());
+        assert!(validate_install_plugin_id(
+            PluginApp::Agy,
+            "gcalendar@antigravity-plugins-official"
+        )
+        .is_ok());
+        assert!(validate_install_plugin_id(PluginApp::Agy, "gcalendar").is_err());
+        assert!(validate_app_plugin_id(PluginApp::Agy, "gcalendar").is_ok());
+        assert!(validate_app_plugin_id(PluginApp::Agy, "-1870732469773246571").is_ok());
+        assert!(
+            validate_app_plugin_id(PluginApp::Agy, "gcalendar@antigravity-plugins-official")
+                .is_err()
+        );
         for ok in ["memory-lancedb", "@openclaw/memory-lancedb", "a2a"] {
             assert!(
                 validate_app_plugin_id(PluginApp::Openclaw, ok).is_ok(),
@@ -1347,7 +1591,7 @@ mod tests {
                 }
             ]
         });
-        let listing = parse_claude_listing(&value);
+        let listing = parse_claude_listing(&value, None);
         assert_eq!(listing.installed.len(), 2);
         let fd = &listing.installed[0];
         assert_eq!(fd.name, "frontend-design");
@@ -1398,7 +1642,7 @@ mod tests {
 
     #[test]
     fn claude_listing_accepts_plain_array() {
-        let listing = parse_claude_listing(&json!([{ "id": "a@b", "enabled": true }]));
+        let listing = parse_claude_listing(&json!([{ "id": "a@b", "enabled": true }]), None);
         assert_eq!(listing.installed.len(), 1);
         assert!(listing.installed[0].enabled);
         assert!(listing.available.is_empty());
@@ -1439,7 +1683,7 @@ mod tests {
                 }
             ]
         });
-        let listing = parse_codex_listing(&value);
+        let listing = parse_codex_listing(&value, None);
         assert_eq!(listing.installed.len(), 1);
         let gs = &listing.installed[0];
         assert_eq!(gs.display_name.as_deref(), Some("Game Studio"));
@@ -1661,6 +1905,7 @@ enabled = false
             PluginApp::Mcode,
             PluginApp::Openclaw,
             PluginApp::Pi,
+            PluginApp::Agy,
         ] {
             let (env, _) = cli_context(app);
             for key in ["RUST_BACKTRACE", "RUST_LIB_BACKTRACE"] {
@@ -1670,6 +1915,51 @@ enabled = false
                 );
             }
         }
+    }
+
+    /// 配置目录不存在时：CLI 没装就不建目录（#9852）；装了才建，已存在的直接用、不再探测。
+    #[test]
+    fn working_dir_is_created_only_when_cli_is_installed() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join(".grok");
+
+        let err =
+            prepare_working_dir(dir.clone(), || Err(CLI_NOT_INSTALLED.to_string())).unwrap_err();
+        assert_eq!(err, CLI_NOT_INSTALLED);
+        assert!(
+            !dir.exists(),
+            "must not create the home of an app that is not installed"
+        );
+
+        assert_eq!(prepare_working_dir(dir.clone(), || Ok(())).unwrap(), dir);
+        assert!(dir.is_dir());
+
+        let probed = std::cell::Cell::new(false);
+        let got = prepare_working_dir(dir.clone(), || {
+            probed.set(true);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(got, dir);
+        assert!(!probed.get(), "existing dir needs no install probe");
+    }
+
+    /// `cli_context` 只算路径，不在家目录里建任何东西。
+    #[test]
+    #[serial_test::serial]
+    fn cli_context_does_not_create_app_dirs() {
+        let home = HomeGuard::new();
+        for app in [
+            PluginApp::Codex,
+            PluginApp::Grok,
+            PluginApp::Openclaw,
+            PluginApp::Pi,
+            PluginApp::Agy,
+        ] {
+            let (_, dir) = cli_context(app);
+            assert!(!dir.exists(), "{app:?} dir {dir:?} must not be created");
+        }
+        assert_eq!(std::fs::read_dir(home.0.path()).unwrap().count(), 0);
     }
 
     /// Codex 的启停开关经写入引擎写 `config.toml`：只改这一个键、按 0600 写、拿 Codex 的写锁。
@@ -1720,5 +2010,124 @@ enabled = false
 
         let again = set_plugin_enabled(&db, PluginApp::Codex, "a@m", false).unwrap();
         assert!(!again.changed);
+    }
+
+    #[test]
+    fn wsl_paths_resolve_to_unc_root_for_manifest_reads() {
+        assert_eq!(
+            wsl_unc_root(Path::new(r"\\wsl$\Ubuntu\home\jane\.claude")),
+            Some(PathBuf::from(r"\\wsl$\Ubuntu"))
+        );
+        assert_eq!(
+            wsl_unc_root(Path::new(
+                r"\\wsl.localhost\Ubuntu-22.04\home\jane\.pi\agent"
+            )),
+            Some(PathBuf::from(r"\\wsl.localhost\Ubuntu-22.04"))
+        );
+        assert_eq!(
+            wsl_unc_root(Path::new(r"\\?\UNC\wsl.localhost\Ubuntu\home\jane\.codex")),
+            Some(PathBuf::from(r"\\wsl.localhost\Ubuntu"))
+        );
+        for non_wsl in [
+            r"C:\Users\jane\.claude",
+            r"C:\用户\.codex",
+            "/home/jane/.claude",
+            r"\\server\share\claude",
+            r"\\wsl$\",
+            r"\\wsl$\-bad\home\jane",
+        ] {
+            assert_eq!(wsl_unc_root(Path::new(non_wsl)), None, "{non_wsl}");
+        }
+
+        let fake_wsl = tempfile::tempdir().unwrap();
+        let claude_dir = fake_wsl.path().join("home/jane/.claude/plugins/hello");
+        std::fs::create_dir_all(claude_dir.join(".claude-plugin")).unwrap();
+        std::fs::write(
+            claude_dir.join(".claude-plugin/plugin.json"),
+            r#"{"name":"hello","description":"From WSL Claude"}"#,
+        )
+        .unwrap();
+        let claude_listing = parse_claude_listing(
+            &json!([{
+                "id": "hello@mkt",
+                "version": "1.0.0",
+                "scope": "user",
+                "enabled": true,
+                "installPath": "/home/jane/.claude/plugins/hello"
+            }]),
+            Some(fake_wsl.path()),
+        );
+        assert_eq!(
+            claude_listing.installed[0].description.as_deref(),
+            Some("From WSL Claude")
+        );
+
+        let codex_dir = fake_wsl.path().join("home/jane/.codex/plugins/studio");
+        std::fs::create_dir_all(codex_dir.join(".codex-plugin")).unwrap();
+        std::fs::write(
+            codex_dir.join(".codex-plugin/plugin.json"),
+            r#"{"interface":{"displayName":"WSL Studio","shortDescription":"From WSL Codex"}}"#,
+        )
+        .unwrap();
+        let codex_listing = parse_codex_listing(
+            &json!({
+                "installed": [{
+                    "pluginId": "studio@mkt",
+                    "name": "studio",
+                    "installed": true,
+                    "enabled": true,
+                    "source": { "source": "local", "path": "/home/jane/.codex/plugins/studio" }
+                }]
+            }),
+            Some(fake_wsl.path()),
+        );
+        assert_eq!(
+            codex_listing.installed[0].display_name.as_deref(),
+            Some("WSL Studio")
+        );
+        assert_eq!(
+            codex_listing.installed[0].description.as_deref(),
+            Some("From WSL Codex")
+        );
+
+        assert_eq!(
+            resolve_cli_path("/home/jane/a/../b", Some(fake_wsl.path())),
+            Some(fake_wsl.path().join("home").join("jane").join("b"))
+        );
+        assert_eq!(
+            resolve_cli_path("/home/C:/evil", Some(fake_wsl.path())),
+            None
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn codex_update_does_not_re_disable_plugin_re_enabled_mid_update() {
+        let home = HomeGuard::new();
+        let config = home.0.path().join(".codex").join("config.toml");
+        std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+        std::fs::write(&config, "[plugins.\"a@m\"]\nenabled = false\n").unwrap();
+        let db = Database::memory().unwrap();
+
+        assert!(should_restore_codex_disabled(true, 1, None));
+        assert!(should_restore_codex_disabled(true, 1, Some((1, false))));
+        assert!(!should_restore_codex_disabled(true, 1, Some((2, true))));
+        assert!(should_restore_codex_disabled(false, 1, Some((2, false))));
+        assert!(!should_restore_codex_disabled(false, 1, Some((1, true))));
+
+        // 1) 停用中的插件更新期间被重新启用：更新收尾不再写回 false
+        let epoch_before = codex_toggle_epoch("a@m");
+        set_plugin_enabled(&db, PluginApp::Codex, "a@m", true).unwrap();
+        restore_codex_plugin_disabled_if_needed(&db, "a@m", true, epoch_before).unwrap();
+        let text = std::fs::read_to_string(&config).unwrap();
+        assert_eq!(codex_plugin_enabled_in_text(&text, "a@m"), Some(true));
+
+        // 2) 停用中的插件更新期间没人改开关：模拟 `plugin add` 写成 true 后，收尾写回 false
+        set_plugin_enabled(&db, PluginApp::Codex, "a@m", false).unwrap();
+        let epoch_before = codex_toggle_epoch("a@m");
+        std::fs::write(&config, "[plugins.\"a@m\"]\nenabled = true\n").unwrap();
+        restore_codex_plugin_disabled_if_needed(&db, "a@m", true, epoch_before).unwrap();
+        let text = std::fs::read_to_string(&config).unwrap();
+        assert_eq!(codex_plugin_enabled_in_text(&text, "a@m"), Some(false));
     }
 }
