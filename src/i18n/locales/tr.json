@@ -5170,7 +5170,6 @@
       "reauthed": "{{login}} olarak tekrar oturum açıldı."
     },
     "quota": {
-      "updating": "Güncelleniyor…",
       "loading": "Kota kontrol ediliyor…",
       "refresh": "Kotayı yenile",
       "refreshAria": "{{login}} için kotayı yenileyin",

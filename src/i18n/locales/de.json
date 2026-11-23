@@ -5241,7 +5241,6 @@
       "reauthed": "Erneut als {{login}} angemeldet."
     },
     "quota": {
-      "updating": "Wird aktualisiert …",
       "loading": "Kontingent wird geprüft …",
       "refresh": "Kontingent aktualisieren",
       "refreshAria": "Kontingent für {{login}} aktualisieren",

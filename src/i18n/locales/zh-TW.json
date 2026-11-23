@@ -5241,7 +5241,6 @@
       "reauthed": "{{login}} 已重新登入。"
     },
     "quota": {
-      "updating": "更新中…",
       "loading": "正在查詢額度…",
       "refresh": "重新整理額度",
       "refreshAria": "重新整理 {{login}} 的額度",

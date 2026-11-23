@@ -5241,7 +5241,6 @@
       "reauthed": "{{login}}(으)로 다시 로그인했습니다."
     },
     "quota": {
-      "updating": "업데이트 중…",
       "loading": "할당량 확인 중…",
       "refresh": "할당량 새로 고침",
       "refreshAria": "{{login}}의 할당량 새로 고침",

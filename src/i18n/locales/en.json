@@ -5241,7 +5241,6 @@
       "reauthed": "Signed in again as {{login}}."
     },
     "quota": {
-      "updating": "Updating…",
       "loading": "Checking quota…",
       "refresh": "Refresh quota",
       "refreshAria": "Refresh quota for {{login}}",

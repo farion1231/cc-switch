@@ -5241,7 +5241,6 @@
       "reauthed": "{{login}} に再ログインしました。"
     },
     "quota": {
-      "updating": "更新中…",
       "loading": "残量を確認中…",
       "refresh": "残量を更新",
       "refreshAria": "{{login}} の残量を更新",
