@@ -148,7 +148,6 @@ const NODE_UNISOLATED_INCLUDE = [
 const NODE_ISOLATED_INCLUDE = [
   "src/lib/api/model-fetch.test.ts",
   "tests/components/sessionUtils.test.ts",
-  "tests/lib/clipboard.test.ts",
   "tests/lib/modelsDevAutoSync.test.ts",
   "tests/lib/sessionsApi.test.ts",
   "tests/lib/toast.test.ts",
