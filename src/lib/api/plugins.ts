@@ -84,6 +84,20 @@ export const PLUGIN_NEEDS_TERMINAL_CONFIRM = "PLUGIN_NEEDS_TERMINAL_CONFIRM";
 /** CLI 要求先登录账号（MiniMax Code 未登录时安装插件）；原样来自 CLI 的 stderr。 */
 export const PLUGIN_AUTH_REQUIRED = "PLUGIN_AUTH_REQUIRED";
 
+/** 插件目录正被同应用的其它进程占用（例如 Windows 下运行中的 Antigravity / agy 会话），无法替换或移除目录。 */
+export const PLUGIN_IN_USE = "PLUGIN_IN_USE";
+
+/** 各应用对应的 CLI 命令名，用于错误提示文案。 */
+export const PLUGIN_CLI_NAME: Record<PluginApp, string> = {
+  claude: "claude",
+  codex: "codex",
+  grokbuild: "grok",
+  mcode: "mcode",
+  openclaw: "openclaw",
+  pi: "pi",
+  agy: "agy",
+};
+
 /** 各 CLI 的登录命令，提示用户去终端登录时用。 */
 export const PLUGIN_LOGIN_COMMAND: Partial<Record<PluginApp, string>> = {
   mcode: "mcode login",
