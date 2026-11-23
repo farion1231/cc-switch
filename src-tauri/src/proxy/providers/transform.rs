@@ -3,6 +3,7 @@
 //! 实现 Anthropic ↔ OpenAI 格式转换，用于 OpenRouter 支持
 //! 参考: anthropic-proxy-rs
 
+use super::codex_chat_common::chat_thinking_part_text;
 use super::inline_think::split_leading_think_block;
 use crate::proxy::{
     error::ProxyError,
@@ -758,6 +759,12 @@ pub fn openai_to_anthropic(body: Value) -> Result<Value, ProxyError> {
                             if !text.is_empty() {
                                 push_text(&mut content, text);
                             }
+                        }
+                    }
+                    // Mistral 开思考后的分段 content（#9902）
+                    "thinking" => {
+                        if let Some(thinking) = chat_thinking_part_text(part) {
+                            content.push(json!({"type": "thinking", "thinking": thinking}));
                         }
                     }
                     "refusal" => {
@@ -2189,6 +2196,34 @@ mod tests {
         assert_eq!(result["content"][0]["text"], "Hello");
         assert_eq!(result["content"][1]["type"], "text");
         assert_eq!(result["content"][1]["text"], "I can't do that");
+    }
+
+    #[test]
+    fn test_openai_to_anthropic_with_mistral_thinking_chunks() {
+        // #9902：Mistral 开思考后 content 是 thinking / text 分段数组
+        let input = json!({
+            "id": "chatcmpl-mistral",
+            "model": "mistral-large-4",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "thinking", "thinking": [{"type": "text", "text": "We "}, {"type": "text", "text": "add"}]},
+                        {"type": "text", "text": "391"}
+                    ]
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5}
+        });
+
+        let result = openai_to_anthropic(input).unwrap();
+        assert_eq!(result["content"][0]["type"], "thinking");
+        assert_eq!(result["content"][0]["thinking"], "We add");
+        assert_eq!(result["content"][1]["type"], "text");
+        assert_eq!(result["content"][1]["text"], "391");
+        assert_eq!(result["content"].as_array().unwrap().len(), 2);
     }
 
     #[test]
