@@ -3700,28 +3700,32 @@ data: {\"id\":\"c1\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_details\":
     }
 
     #[test]
-    fn responses_sse_to_response_value_handles_missing_trailing_blank_line() {
-        // 错标 SSE 兜底/非规范上游：最后的 response.completed 后没有空行分隔
-        let sse = "event: response.completed\n\
-data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_tail\",\"status\":\"completed\",\"model\":\"gpt-5.4\",\"output\":[],\"usage\":{\"input_tokens\":3,\"output_tokens\":1}}}\n";
-
-        let response = responses_sse_to_response_value(sse).unwrap();
-
-        assert_eq!(response["id"], "resp_tail");
-    }
-
-    #[test]
-    fn responses_sse_to_response_value_ignores_truncated_trailing_block() {
-        // 截断的残余尾块不能破坏已聚合好的完整响应（codex_oauth 路径复用本函数）
-        let sse = "event: response.completed\n\
+    fn responses_sse_to_response_value_edge_cases() {
+        for (case, stream, id) in [
+            // 错标 SSE 兜底/非规范上游：最后的 response.completed 后没有空行分隔
+            ("responses_sse_to_response_value_handles_missing_trailing_blank_line", "event: response.completed\n\
+data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_tail\",\"status\":\"completed\",\"model\":\"gpt-5.4\",\"output\":[],\"usage\":{\"input_tokens\":3,\"output_tokens\":1}}}\n", "resp_tail"),
+            // 截断的残余尾块不能破坏已聚合好的完整响应（codex_oauth 路径复用本函数）
+            ("responses_sse_to_response_value_ignores_truncated_trailing_block", "event: response.completed\n\
 data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_ok\",\"status\":\"completed\",\"model\":\"gpt-5.4\",\"output\":[],\"usage\":{\"input_tokens\":3,\"output_tokens\":1}}}\n\
 \n\
 event: response.extra\n\
-data: {\"type\":\"resp";
+data: {\"type\":\"resp", "resp_ok"),
+            // C8：已拿到 response.completed 后，残余里的完整 response.failed 不得翻车
+            // （codex_oauth 聚合路径复用本函数，此前该尾块被忽略=成功）
+            ("responses_sse_completed_then_trailing_failed_keeps_success", "event: response.completed\n\
+data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_ok\",\"status\":\"completed\",\"model\":\"gpt-5.4\",\"output\":[]}}\n\n\
+event: response.failed\n\
+data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"message\":\"boom\"}}}\n", "resp_ok"),
+        ] {
 
-        let response = responses_sse_to_response_value(sse).unwrap();
+            let sse = stream;
 
-        assert_eq!(response["id"], "resp_ok");
+            let response = responses_sse_to_response_value(sse).unwrap();
+
+            assert_eq!(response["id"], id, "{case}");
+
+        }
     }
 
     #[test]
@@ -4089,19 +4093,6 @@ data: {\"id\":\"chatcmpl-real\",\"model\":\"m\",\"created\":42,\"choices\":[{\"i
 
         let response = chat_sse_to_response_value(sse).unwrap();
         assert_eq!(response["choices"][0]["message"]["content"], "hi");
-    }
-
-    #[test]
-    fn responses_sse_completed_then_trailing_failed_keeps_success() {
-        // C8：已拿到 response.completed 后，残余里的完整 response.failed 不得翻车
-        // （codex_oauth 聚合路径复用本函数，此前该尾块被忽略=成功）
-        let sse = "event: response.completed\n\
-data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_ok\",\"status\":\"completed\",\"model\":\"gpt-5.4\",\"output\":[]}}\n\n\
-event: response.failed\n\
-data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"message\":\"boom\"}}}\n";
-
-        let response = responses_sse_to_response_value(sse).unwrap();
-        assert_eq!(response["id"], "resp_ok");
     }
 
     #[test]

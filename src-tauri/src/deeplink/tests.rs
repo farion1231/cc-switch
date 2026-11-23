@@ -134,37 +134,31 @@ fn test_parse_grokbuild_provider() {
 }
 
 #[test]
-fn test_parse_invalid_scheme() {
-    let url = "https://v1/import?resource=provider&app=claude&name=Test";
+fn parse_rejects_malformed_deeplinks() {
+    for (case, input, error) in [
+        (
+            "test_parse_invalid_scheme",
+            "https://v1/import?resource=provider&app=claude&name=Test",
+            "Invalid scheme",
+        ),
+        (
+            "test_parse_unsupported_version",
+            "ccswitch://v2/import?resource=provider&app=claude&name=Test",
+            "Unsupported protocol version",
+        ),
+        // Name is still required even in v3.8+ (only homepage/endpoint/apiKey are optional)
+        (
+            "test_parse_missing_required_field",
+            "ccswitch://v1/import?resource=provider&app=claude",
+            "Missing 'name' parameter",
+        ),
+    ] {
+        let url = input;
 
-    let result = parse_deeplink_url(url);
-    assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("Invalid scheme"));
-}
-
-#[test]
-fn test_parse_unsupported_version() {
-    let url = "ccswitch://v2/import?resource=provider&app=claude&name=Test";
-
-    let result = parse_deeplink_url(url);
-    assert!(result.is_err());
-    assert!(result
-        .unwrap_err()
-        .to_string()
-        .contains("Unsupported protocol version"));
-}
-
-#[test]
-fn test_parse_missing_required_field() {
-    // Name is still required even in v3.8+ (only homepage/endpoint/apiKey are optional)
-    let url = "ccswitch://v1/import?resource=provider&app=claude";
-
-    let result = parse_deeplink_url(url);
-    assert!(result.is_err());
-    assert!(result
-        .unwrap_err()
-        .to_string()
-        .contains("Missing 'name' parameter"));
+        let result = parse_deeplink_url(url);
+        assert!(result.is_err(), "{case}");
+        assert!(result.unwrap_err().to_string().contains(error), "{case}");
+    }
 }
 
 /// configUrl 没实现，必须在解析阶段就报错：放行的话，用户点了确认导入才失败

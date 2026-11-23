@@ -256,34 +256,44 @@ fn locale_matches_language_and_chinese_region_boundaries() {
 }
 
 #[test]
-fn locale_maps_korean_without_matching_other_language_subtags() {
-    for locale in ["ko", "ko-KR", "ko-KP", "KO-kr"] {
-        assert_eq!(map_locale_to_tray_language(locale), "ko");
-    }
-    for locale in ["kok", "kok-IN", "kos"] {
-        assert_eq!(map_locale_to_tray_language(locale), "en");
-    }
-}
-
-#[test]
-fn locale_maps_russian_without_matching_other_language_subtags() {
-    for locale in ["ru", "ru-RU", "ru-UA", "RU-ru"] {
-        assert_eq!(map_locale_to_tray_language(locale), "ru");
-    }
-    // 卢森尼亚语 rue、Rupuni 等以 ru 开头但不是俄语，按不支持的语言回落英文
-    for locale in ["rue", "rue-UA", "rup"] {
-        assert_eq!(map_locale_to_tray_language(locale), "en");
-    }
-}
-
-#[test]
-fn locale_maps_german_without_matching_other_language_subtags() {
-    for locale in ["de", "de-DE", "de-AT", "de-CH", "DE-de"] {
-        assert_eq!(map_locale_to_tray_language(locale), "de");
-    }
-    // 下索布语 dsb、Delaware 语 del 等不是德语，按不支持的语言回落英文
-    for locale in ["dsb", "del", "den-CA"] {
-        assert_eq!(map_locale_to_tray_language(locale), "en");
+fn locale_maps_without_matching_other_language_subtags() {
+    let cases: [(&str, &str, &[&str], &[&str]); 3] = [
+        (
+            "locale_maps_korean_without_matching_other_language_subtags",
+            "ko",
+            &["ko", "ko-KR", "ko-KP", "KO-kr"],
+            &["kok", "kok-IN", "kos"],
+        ),
+        // 卢森尼亚语 rue、Rupuni 等以 ru 开头但不是俄语，按不支持的语言回落英文
+        (
+            "locale_maps_russian_without_matching_other_language_subtags",
+            "ru",
+            &["ru", "ru-RU", "ru-UA", "RU-ru"],
+            &["rue", "rue-UA", "rup"],
+        ),
+        // 下索布语 dsb、Delaware 语 del 等不是德语，按不支持的语言回落英文
+        (
+            "locale_maps_german_without_matching_other_language_subtags",
+            "de",
+            &["de", "de-DE", "de-AT", "de-CH", "DE-de"],
+            &["dsb", "del", "den-CA"],
+        ),
+    ];
+    for (case, language, locales, unrelated) in cases {
+        for locale in locales {
+            assert_eq!(
+                map_locale_to_tray_language(locale),
+                language,
+                "{case}: {locale}"
+            );
+        }
+        for locale in unrelated {
+            assert_eq!(
+                map_locale_to_tray_language(locale),
+                "en",
+                "{case}: {locale}"
+            );
+        }
     }
 }
 
