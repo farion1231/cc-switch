@@ -805,6 +805,116 @@ fn claude_bound_provider(account_id: Option<&str>, enabled: Option<bool>) -> Pro
     .unwrap()
 }
 
+fn grok_official_provider(account_id: Option<&str>, enabled: Option<bool>) -> Provider {
+    serde_json::from_value(serde_json::json!({
+        "id": "grok-bound",
+        "name": "Grok Official",
+        "settingsConfig": {"config": ""},
+        "category": "official",
+        "meta": {
+            "authBinding": account_id.map(|id| serde_json::json!({
+                "source": "managed_account",
+                "authProvider": "xai_oauth",
+                "accountId": id
+            })),
+            "usage_script": enabled.map(|enabled| serde_json::json!({
+                "enabled": enabled,
+                "language": "javascript",
+                "code": "",
+                "templateType": "official_subscription"
+            }))
+        }
+    }))
+    .unwrap()
+}
+
+#[test]
+fn grok_bound_card_tray_usage_defaults_on_and_reads_its_account() {
+    for enabled in [Some(true), None] {
+        assert_eq!(
+            tray_usage_source(
+                &AppType::GrokBuild,
+                &grok_official_provider(Some(" user-1 "), enabled)
+            ),
+            Some(TrayUsageSource::XaiAccount("user-1".to_string()))
+        );
+    }
+    assert_eq!(
+        tray_usage_source(
+            &AppType::GrokBuild,
+            &grok_official_provider(Some("user-1"), Some(false))
+        ),
+        None
+    );
+    // 没绑账号的官方卡照旧读 Grok CLI 登录的订阅缓存
+    assert_eq!(
+        tray_usage_source(
+            &AppType::GrokBuild,
+            &grok_official_provider(None, Some(true))
+        ),
+        Some(TrayUsageSource::Subscription)
+    );
+}
+
+#[test]
+fn grok_bound_card_tray_quota_comes_from_the_account_cache_only() {
+    let cache = UsageCache::new();
+    let texts = TrayTexts::from_language("zh");
+    let source = TrayUsageSource::XaiAccount("user-1".to_string());
+    // 应用级订阅缓存里有别人的额度，也不能拿来显示
+    let mut other = crate::services::subscription::SubscriptionQuota::not_found("grokbuild");
+    other.success = true;
+    cache.put_subscription(AppType::GrokBuild, other);
+    assert!(cached_usage_view(
+        &cache,
+        &texts,
+        &AppType::GrokBuild,
+        "grok-bound",
+        Some(&source)
+    )
+    .is_none());
+}
+
+#[test]
+fn grok_official_card_hint_shows_only_its_bound_account() {
+    let accounts = TrayAccountLabels {
+        xai: ManagedAccountLabels::from_parts((
+            HashMap::from([
+                ("xai-default".to_string(), "default@x.ai".to_string()),
+                ("user-1".to_string(), "bound@x.ai".to_string()),
+            ]),
+            Some("xai-default".to_string()),
+        )),
+        ..Default::default()
+    };
+    let with_site = |mut provider: Provider| {
+        provider.website_url = Some("https://x.ai/grok".to_string());
+        provider
+    };
+
+    let mut bound = with_site(grok_official_provider(Some(" user-1 "), None));
+    assert_eq!(
+        provider_hint(&AppType::GrokBuild, &bound, &accounts).as_deref(),
+        Some("bound@x.ai")
+    );
+    bound.notes = Some("Personal".to_string());
+    assert_eq!(
+        provider_hint(&AppType::GrokBuild, &bound, &accounts).as_deref(),
+        Some("Personal")
+    );
+
+    // 绑定的账号已删除、或没绑账号（跟随 Grok CLI 登录）：不回落授权中心默认账号
+    for provider in [
+        grok_official_provider(Some("deleted"), None),
+        grok_official_provider(None, None),
+    ] {
+        assert_eq!(
+            provider_hint(&AppType::GrokBuild, &with_site(provider), &accounts).as_deref(),
+            Some("x.ai")
+        );
+    }
+}
+
 #[test]
 fn claude_bound_card_hint_shows_account_unless_noted() {
     let accounts = TrayAccountLabels {
