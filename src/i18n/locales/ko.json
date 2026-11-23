@@ -5056,7 +5056,7 @@
   "pluginsPage": {
     "title": "플러그인",
     "helpTitle": "플러그인",
-    "help": "Claude Code, Codex, Grok Build, MiniMax Code, OpenClaw, Pi의 플러그인을 설치, 활성화, 제거합니다. CC Switch는 각 앱의 자체 CLI를 실행하므로 터미널에서 플러그인 명령을 사용하는 것과 결과가 같습니다. Pi의 경우 플러그인은 Pi 패키지이며 카탈로그는 npm에서 가져옵니다.",
+    "help": "Claude Code, Codex, Grok Build, MiniMax Code, OpenClaw, Pi, Antigravity의 플러그인을 설치, 활성화, 제거합니다. CC Switch는 각 앱의 자체 CLI를 실행하므로 터미널에서 플러그인 명령을 사용하는 것과 결과가 같습니다. Pi의 경우 플러그인은 Pi 패키지이며 카탈로그는 npm에서 가져옵니다.",
     "appAria": "앱",
     "viewAria": "플러그인 보기",
     "viewInstalled": "설치됨",
@@ -5116,6 +5116,7 @@
     "confirmRemoveMarketBody": "{{app}}이(가) 이 마켓플레이스의 플러그인을 더 이상 표시하지 않으며, 여기에서 설치한 플러그인이 제거될 수 있습니다. 나중에 다시 추가할 수 있습니다.",
     "toast": {
       "installed": "{{name}}을(를) 설치했습니다",
+      "installedNeedsConfig": "비활성 상태로 설치되었습니다. {{app}}에서 /plugin을 실행해 MCP 서버를 설정한 뒤 활성화하세요.",
       "installFailed": "{{name}}을(를) 설치할 수 없습니다",
       "installNeedsTerminal": "이 플러그인은 설치 중 마켓플레이스에 선언된 명령을 사용자의 컴퓨터에서 실행하며, CC Switch는 이를 대신 승인하지 않습니다. 터미널에서 {{command}}을(를) 실행해 승인한 다음 돌아와서 새로 고치세요.",
       "authRequired": "{{app}}에 먼저 로그인해야 합니다. 터미널에서 {{command}}을(를) 실행한 다음 돌아와서 다시 시도하세요.",

@@ -5056,7 +5056,7 @@
   "pluginsPage": {
     "title": "Plugins",
     "helpTitle": "Plugins",
-    "help": "Plugins für Claude Code, Codex, Grok Build, MiniMax Code, OpenClaw und Pi installieren, aktivieren und entfernen. CC Switch führt die jeweilige CLI der App aus, das Ergebnis ist also dasselbe wie beim Plugin-Befehl im Terminal. Bei Pi sind Plugins Pi-Pakete, und der Katalog stammt von npm.",
+    "help": "Plugins für Claude Code, Codex, Grok Build, MiniMax Code, OpenClaw, Pi und Antigravity installieren, aktivieren und entfernen. CC Switch führt die jeweilige CLI der App aus, das Ergebnis ist also dasselbe wie beim Plugin-Befehl im Terminal. Bei Pi sind Plugins Pi-Pakete, und der Katalog stammt von npm.",
     "appAria": "App",
     "viewAria": "Plugin-Ansichten",
     "viewInstalled": "Installiert",
@@ -5116,6 +5116,7 @@
     "confirmRemoveMarketBody": "{{app}} listet keine Plugins aus diesem Marketplace mehr auf und deinstalliert möglicherweise die daraus installierten Plugins. Sie können ihn später erneut hinzufügen.",
     "toast": {
       "installed": "{{name}} installiert",
+      "installedNeedsConfig": "Deaktiviert installiert. Führen Sie in {{app}} /plugin aus, um die MCP-Server zu konfigurieren und es zu aktivieren.",
       "installFailed": "{{name}} konnte nicht installiert werden",
       "installNeedsTerminal": "Dieses Plugin führt bei der Installation einen vom Marketplace deklarierten Befehl auf Ihrem Rechner aus, und CC Switch bestätigt das nicht für Sie. Führen Sie {{command}} in einem Terminal aus, bestätigen Sie dort und aktualisieren Sie dann hier.",
       "authRequired": "{{app}} erfordert zuerst eine Anmeldung. Führen Sie {{command}} in einem Terminal aus und versuchen Sie es dann erneut.",

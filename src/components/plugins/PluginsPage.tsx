@@ -157,6 +157,7 @@ export interface PluginsPageProps {
 
 type WriteMessages = {
   success: (outcome: PluginActionOutcome) => string;
+  successDescription?: (outcome: PluginActionOutcome) => string;
   failure: string;
   /** 后端返回已知错误码时换成的说明；没给或不认识时显示原始报错。 */
   describeError?: (error: string) => string | undefined;
@@ -268,7 +269,8 @@ export function PluginsPage({ apps, initialApp }: PluginsPageProps) {
     const result = await runWrite(write);
     if (result.ok && result.outcome) {
       toast.success(messages.success(result.outcome), {
-        description: restartNote,
+        description:
+          messages.successDescription?.(result.outcome) ?? restartNote,
         closeButton: true,
       });
     } else {
@@ -301,12 +303,19 @@ export function PluginsPage({ apps, initialApp }: PluginsPageProps) {
         action: "install",
         task: () => pluginsApi.install(app, entry.id),
         // 安装要联网、可能失败，不先挪；装好立即放进已安装，版本等对账时补齐
-        onSuccess: pluginPatches.add(installedFromCatalog(app, entry)),
+        onSuccess: (outcome) =>
+          pluginPatches.add(
+            installedFromCatalog(app, entry, !outcome.needsConfiguration),
+          ),
         reconcile: ["installed"],
       },
       {
         success: () =>
           t("pluginsPage.toast.installed", { name: pluginLabel(entry) }),
+        successDescription: (outcome) =>
+          outcome.needsConfiguration
+            ? t("pluginsPage.toast.installedNeedsConfig", { app: appName })
+            : restartNote,
         failure: t("pluginsPage.toast.installFailed", {
           name: pluginLabel(entry),
         }),

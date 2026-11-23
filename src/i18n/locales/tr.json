@@ -4987,7 +4987,7 @@
   "pluginsPage": {
     "title": "Eklentiler",
     "helpTitle": "Eklentiler",
-    "help": "Claude Code, Codex, Grok Build, MiniMax Code, OpenClaw ve Pi eklentilerini yükleyin, etkinleştirin ve kaldırın. CC Switch her uygulamanın kendi CLI'ını çalıştırır; sonuç terminalde eklenti komutunu kullanmakla aynıdır. Pi'de eklentiler Pi paketleridir ve katalog npm'den gelir.",
+    "help": "Claude Code, Codex, Grok Build, MiniMax Code, OpenClaw, Pi ve Antigravity eklentilerini yükleyin, etkinleştirin ve kaldırın. CC Switch her uygulamanın kendi CLI'ını çalıştırır; sonuç terminalde eklenti komutunu kullanmakla aynıdır. Pi'de eklentiler Pi paketleridir ve katalog npm'den gelir.",
     "appAria": "Uygulama",
     "viewAria": "Eklenti görünümleri",
     "viewInstalled": "Yüklü",
@@ -5047,6 +5047,7 @@
     "confirmRemoveMarketBody": "{{app}} bu pazar yerindeki eklentileri artık listelemez ve buradan yüklediğiniz eklentileri de kaldırabilir. Daha sonra yeniden ekleyebilirsiniz.",
     "toast": {
       "installed": "{{name}} yüklendi",
+      "installedNeedsConfig": "Devre dışı olarak yüklendi. MCP sunucularını yapılandırıp etkinleştirmek için {{app}} içinde /plugin komutunu çalıştırın.",
       "installFailed": "{{name}} yüklenemedi",
       "installNeedsTerminal": "Bu eklenti kurulum sırasında pazar yerinin bildirdiği bir komutu bilgisayarınızda çalıştırır ve CC Switch bunu sizin yerinize onaylamaz. Bir terminalde {{command}} komutunu çalıştırıp orada onaylayın, ardından geri dönüp yenileyin.",
       "authRequired": "{{app}} önce oturum açmanızı istiyor. Bir terminalde {{command}} komutunu çalıştırıp oturum açın, ardından geri dönüp tekrar deneyin.",

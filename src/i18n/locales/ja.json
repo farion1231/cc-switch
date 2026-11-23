@@ -5056,7 +5056,7 @@
   "pluginsPage": {
     "title": "プラグイン",
     "helpTitle": "プラグイン",
-    "help": "Claude Code、Codex、Grok Build、MiniMax Code、OpenClaw、Pi のプラグインをインストール・有効化・削除します。CC Switch は各アプリ付属の CLI を実行するため、ターミナルでそのプラグインコマンドを使うのと同じ結果になります。Pi のプラグインは Pi パッケージで、カタログは npm から取得します。",
+    "help": "Claude Code、Codex、Grok Build、MiniMax Code、OpenClaw、Pi、Antigravity のプラグインをインストール・有効化・削除します。CC Switch は各アプリ付属の CLI を実行するため、ターミナルでそのプラグインコマンドを使うのと同じ結果になります。Pi のプラグインは Pi パッケージで、カタログは npm から取得します。",
     "appAria": "アプリ",
     "viewAria": "プラグインの表示",
     "viewInstalled": "インストール済み",
@@ -5116,6 +5116,7 @@
     "confirmRemoveMarketBody": "{{app}} はこのマーケットプレイスのプラグインを表示しなくなり、ここからインストールしたプラグインも削除されることがあります。後で再追加できます。",
     "toast": {
       "installed": "{{name}} をインストールしました",
+      "installedNeedsConfig": "無効状態でインストールされました。{{app}} で /plugin を実行し、MCP サーバーを設定してから有効化してください。",
       "installFailed": "{{name}} をインストールできませんでした",
       "installNeedsTerminal": "このプラグインはインストール時にマーケットプレイスが宣言したコマンドをこのマシンで実行します。CC Switch が代わりに承認することはありません。ターミナルで {{command}} を実行して確認してから、戻って更新してください。",
       "authRequired": "{{app}} を使うには先にサインインが必要です。ターミナルで {{command}} を実行してサインインしてから、もう一度お試しください。",
