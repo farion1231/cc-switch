@@ -17,7 +17,8 @@ export const APP_DISPLAY_NAME: Record<AppId, string> = {
   mcode: "MiniMax Code",
   kimi: "Kimi Code",
   dsh: "DeepSeek Harness",
-  agy: "Antigravity",
+  agy: "Antigravity CLI",
+  "agy-desktop": "Antigravity Desktop",
   omp: "Oh My Pi",
   copilot: "Copilot CLI",
   workbuddy: "WorkBuddy",
@@ -37,18 +38,19 @@ const APP_ICON_NAME: Record<AppId, string> = {
   kimi: "kimi",
   dsh: "deepseek",
   agy: "antigravity",
+  "agy-desktop": "antigravity",
   omp: "omp",
   copilot: "githubcopilot",
   workbuddy: "workbuddy",
 };
 
-// Claude Code 和 Claude Desktop 用同一个图标，靠右下角的小角标区分终端与桌面
+// 同品牌 CLI 与桌面版用同一个图标，靠右下角的小角标区分终端与桌面
 const APP_BADGE_ICON: Partial<Record<AppId, typeof Terminal>> = {
   claude: Terminal,
   "claude-desktop": Monitor,
+  agy: Terminal,
+  "agy-desktop": Monitor,
 };
-
-export type AppGlyphBadge = "terminal" | "desktop";
 
 interface AppGlyphProps {
   app: AppId;
@@ -56,8 +58,6 @@ interface AppGlyphProps {
   size?: number;
   /** 角标底色要和所在的行一致，否则看起来像缺了一块 */
   badgeClassName?: string;
-  /** 覆盖默认角标（「应用」页拆分展示同一应用的 CLI 与桌面版时使用） */
-  badge?: AppGlyphBadge;
   className?: string;
 }
 
@@ -66,15 +66,9 @@ export function AppGlyph({
   app,
   size = 16,
   badgeClassName,
-  badge,
   className,
 }: AppGlyphProps) {
-  const BadgeIcon =
-    badge === "terminal"
-      ? Terminal
-      : badge === "desktop"
-        ? Monitor
-        : APP_BADGE_ICON[app];
+  const BadgeIcon = APP_BADGE_ICON[app];
   return (
     <span
       aria-hidden="true"

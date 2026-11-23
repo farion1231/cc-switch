@@ -150,6 +150,9 @@ impl SkillService {
         }
 
         for app in AppType::all() {
+            if matches!(app, AppType::ClaudeDesktop | AppType::AgyDesktop) {
+                continue;
+            }
             if matches!(
                 app,
                 AppType::Mcode

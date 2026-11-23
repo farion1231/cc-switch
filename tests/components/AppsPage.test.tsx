@@ -775,12 +775,12 @@ describe("AppsPage concurrent CLI upgrades", () => {
       "hermes",
       "codex",
     ]);
-    // 只有已安装的能拖（含 Antigravity Desktop 拆分行，共 APP_IDS.length + 1 - 2 行）
+    // 只有已安装的能拖
     expect(
       within(
         screen.getByRole("region", { name: "appsPage.sectionInstalled" }),
       ).getAllByRole("button", { name: "appsPage.dragHandle" }),
-    ).toHaveLength(APP_IDS.length - 1);
+    ).toHaveLength(APP_IDS.length - 2);
     expect(
       within(
         screen.getByRole("region", { name: "appsPage.sectionNotInstalled" }),
@@ -2207,7 +2207,7 @@ describe("AppsPage visibility column", () => {
     ).toEqual([within(row).getByRole("button", { name: "WorkBuddy" })]);
   });
 
-  it("splits Antigravity Desktop from Antigravity CLI and shares visibleApps.agy", async () => {
+  it("keeps Antigravity Desktop visibility and order independent from Antigravity CLI", async () => {
     vi.resetModules();
     missing.clear();
     mocks.dragEndHandlers = [];
@@ -2220,7 +2220,9 @@ describe("AppsPage visibility column", () => {
       installPath: "/Applications/Antigravity.app",
       dataDirExists: true,
     };
-    mocks.settings = { visibleApps: { claude: true, agy: true } };
+    mocks.settings = {
+      visibleApps: { claude: true, agy: true, "agy-desktop": true },
+    };
 
     await renderApps();
 
@@ -2230,6 +2232,7 @@ describe("AppsPage visibility column", () => {
     expect(rowApps("appsPage.sectionNotInstalled")).toEqual(["agy"]);
 
     const desktopRow = card("Antigravity Desktop");
+    const cliRow = card("Antigravity CLI");
     expect(desktopRow.getByText("2.34.0")).toBeInTheDocument();
     expect(
       desktopRow.getByText("/Applications/Antigravity.app"),
@@ -2246,16 +2249,30 @@ describe("AppsPage visibility column", () => {
       desktopRow.getByRole("button", { name: "Antigravity Desktop" }),
     ]);
 
-    // 任一行的可见开关都控制 visibleApps.agy
+    // 关闭 Antigravity Desktop 开关时只更新 visibleApps["agy-desktop"]，不影响 visibleApps.agy
     const user = userEvent.setup();
     await user.click(desktopRow.getByRole("switch"));
     expect(mocks.updateSettings).toHaveBeenCalledWith(
       expect.objectContaining({
-        visibleApps: expect.objectContaining({ agy: false }),
+        visibleApps: expect.objectContaining({
+          agy: true,
+          "agy-desktop": false,
+        }),
       }),
     );
 
-    // 拖动 Antigravity Desktop 时按共享的 agy 槽位更新 appOrder
+    // 关闭 Antigravity CLI 开关时只更新 visibleApps.agy，不影响 visibleApps["agy-desktop"]
+    await user.click(cliRow.getByRole("switch"));
+    expect(mocks.updateSettings).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        visibleApps: expect.objectContaining({
+          agy: false,
+          "agy-desktop": true,
+        }),
+      }),
+    );
+
+    // 拖动 Antigravity Desktop 独立更新它在 appOrder 中的位置
     const onDragEnd = mocks.dragEndHandlers.at(-1);
     expect(onDragEnd).toBeDefined();
     act(() => {
@@ -2265,11 +2282,14 @@ describe("AppsPage visibility column", () => {
       } as unknown as DragEndEvent);
     });
     expect(mocks.updateSettings).toHaveBeenLastCalledWith({
-      appOrder: ["agy", ...APP_IDS.filter((app) => app !== "agy")],
+      appOrder: [
+        "agy-desktop",
+        ...APP_IDS.filter((app) => app !== "agy-desktop"),
+      ],
     });
   });
 
-  it("places Antigravity Desktop under not installed when absent and ignores dragging onto Antigravity CLI", async () => {
+  it("places Antigravity Desktop under not installed when absent and refreshes on check updates", async () => {
     vi.resetModules();
     missing.clear();
     mocks.settings = {};
@@ -2300,15 +2320,5 @@ describe("AppsPage visibility column", () => {
         callsBefore,
       ),
     );
-
-    // 若两行同在已安装区，互相拖动映射到同一 appId 应无操作
-    const onDragEnd = mocks.dragEndHandlers.at(-1);
-    act(() => {
-      onDragEnd?.({
-        active: { id: "agy-desktop" },
-        over: { id: "agy" },
-      } as unknown as DragEndEvent);
-    });
-    expect(mocks.updateSettings).not.toHaveBeenCalled();
   });
 });

@@ -75,11 +75,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { AppPageHeader } from "@/components/shell/AppPageHeader";
-import {
-  APP_DISPLAY_NAME,
-  AppGlyph,
-  type AppGlyphBadge,
-} from "@/components/shell/AppGlyph";
+import { APP_DISPLAY_NAME, AppGlyph } from "@/components/shell/AppGlyph";
 import { ToolUpgradeConfirmDialog } from "@/components/settings/ToolUpgradeConfirmDialog";
 import { ToolInstallRow } from "@/components/settings/ToolInstallRow";
 import { ToolErrorMessage } from "@/components/settings/ToolErrorMessage";
@@ -111,25 +107,23 @@ const SOURCE_LABEL: Record<string, string> = {
   pip: "pip",
 };
 
-// WorkBuddy 和 Antigravity 桌面版自己负责更新，这里和 Claude Desktop 一样只管安装检测与侧栏显示；
-// Antigravity 桌面版与 CLI 共用 visibleApps.agy 与同一个侧栏入口（参考 #8468）。
+// WorkBuddy 和 Antigravity Desktop 自己负责更新，这里和 Claude Desktop 一样只管安装检测与侧栏显示
 type Row =
   | { kind: "tool"; tool: ToolName }
   | { kind: "desktop" }
   | { kind: "workbuddy" }
   | { kind: "agy-desktop" };
 
-type RowId = AppId | "agy-desktop";
-
 const ROW_BY_APP = Object.fromEntries([
   ["claude-desktop", { kind: "desktop" }],
   ["workbuddy", { kind: "workbuddy" }],
+  ["agy-desktop", { kind: "agy-desktop" }],
   ...TOOL_NAMES.map((tool) => [TOOL_APP_IDS[tool], { kind: "tool", tool }]),
 ]) as Record<AppId, Row>;
 
 type RowSection = { key: string; title: string; rows: Row[] };
 
-const rowKey = (row: Row): RowId =>
+const rowKey = (row: Row): AppId =>
   row.kind === "desktop"
     ? "claude-desktop"
     : row.kind === "workbuddy"
@@ -137,8 +131,6 @@ const rowKey = (row: Row): RowId =>
       : row.kind === "agy-desktop"
         ? "agy-desktop"
         : TOOL_APP_IDS[row.tool];
-
-const rowAppId = (id: RowId): AppId => (id === "agy-desktop" ? "agy" : id);
 
 // 只上下拖，且停在本组的列表框里：列表框裁掉超出的部分，拖出去整行会看不见
 const verticalDragModifiers: Modifier[] = [
@@ -238,14 +230,9 @@ export function AppsPage() {
     if (!info && tools.isLoadingTools) return null;
     return isToolPresent(info, tools.installReports?.[row.tool]);
   };
-  // 两组共用一份顺序（拖动后写进设置，侧栏也按它排），每组只是按装没装过滤；
-  // Antigravity Desktop 紧跟 Antigravity CLI，与侧栏共用 `agy` 位置。
+  // 两组共用一份顺序（拖动后写进设置，侧栏也按它排），每组只是按装没装过滤
   const appOrder = orderAppIds(settings?.appOrder);
-  const orderedRows: Row[] = appOrder.flatMap((app) =>
-    app === "agy"
-      ? [ROW_BY_APP[app], { kind: "agy-desktop" }]
-      : [ROW_BY_APP[app]],
-  );
+  const orderedRows = appOrder.map((app) => ROW_BY_APP[app]);
   const rowStates = orderedRows.map((row) => ({
     row,
     installed: rowInstalled(row),
@@ -338,15 +325,13 @@ export function AppsPage() {
     );
   };
 
-  const visibilitySwitch = (app: AppId, displayName?: string) => (
+  const visibilitySwitch = (app: AppId) => (
     <Switch
       size="sm"
       checked={visibleApps[app]}
       disabled={!settings || (visibleApps[app] && visibleCount <= 1)}
       onCheckedChange={(checked) => setVisible(app, checked)}
-      aria-label={t("appsPage.showInSidebar", {
-        name: displayName ?? APP_DISPLAY_NAME[app],
-      })}
+      aria-label={t("appsPage.showInSidebar", { name: APP_DISPLAY_NAME[app] })}
     />
   );
 
@@ -376,11 +361,8 @@ export function AppsPage() {
   // 在整份顺序里移动：组内两行之间夹着的别组应用相对次序不变
   const handleDragEnd = ({ active, over }: DragEndEvent) => {
     if (!settings || !over || active.id === over.id) return;
-    const activeApp = rowAppId(active.id as RowId);
-    const overApp = rowAppId(over.id as RowId);
-    if (activeApp === overApp) return;
-    const oldIndex = appOrder.indexOf(activeApp);
-    const newIndex = appOrder.indexOf(overApp);
+    const oldIndex = appOrder.indexOf(active.id as AppId);
+    const newIndex = appOrder.indexOf(over.id as AppId);
     if (oldIndex === -1 || newIndex === -1) return;
     const next = arrayMove(appOrder, oldIndex, newIndex);
     const previous = settings.appOrder;
@@ -432,11 +414,10 @@ export function AppsPage() {
     ) : row.kind === "agy-desktop" ? (
       <AppRow
         key="agy-desktop"
-        rowId="agy-desktop"
-        app="agy"
-        glyphBadge="desktop"
-        dragLabel="Antigravity Desktop"
-        name={<span className="truncate">Antigravity Desktop</span>}
+        app="agy-desktop"
+        name={
+          <span className="truncate">{APP_DISPLAY_NAME["agy-desktop"]}</span>
+        }
         meta={
           agyDesktopStatus?.installPath ? (
             <span
@@ -462,12 +443,12 @@ export function AppsPage() {
             ) : (
               t("common.notInstalled")
             )}
-            <HelpTip title="Antigravity Desktop" align="end">
+            <HelpTip title={APP_DISPLAY_NAME["agy-desktop"]} align="end">
               {t("appsPage.agyDesktopHelp")}
             </HelpTip>
           </span>
         }
-        visibility={visibilitySwitch("agy", "Antigravity Desktop")}
+        visibility={visibilitySwitch("agy-desktop")}
       />
     ) : (
       <ToolRow
@@ -482,10 +463,7 @@ export function AppsPage() {
             [row.tool]: !prev[row.tool],
           }))
         }
-        visibility={visibilitySwitch(
-          TOOL_APP_IDS[row.tool],
-          row.tool === "agy" ? toolDisplayName("agy") : undefined,
-        )}
+        visibility={visibilitySwitch(TOOL_APP_IDS[row.tool])}
       />
     );
 
@@ -741,10 +719,7 @@ export function AppsPage() {
 }
 
 function AppRow({
-  rowId,
   app,
-  glyphBadge,
-  dragLabel,
   name,
   meta,
   version,
@@ -753,10 +728,7 @@ function AppRow({
   menu,
   footer,
 }: {
-  rowId?: RowId;
   app: AppId;
-  glyphBadge?: AppGlyphBadge;
-  dragLabel?: string;
   name: React.ReactNode;
   meta?: React.ReactNode;
   version?: React.ReactNode;
@@ -768,7 +740,7 @@ function AppRow({
   const { t } = useTranslation();
   const dragHandle = useContext(DragHandleContext);
   return (
-    <div data-tool-row={rowId ?? app} className="group relative px-4 py-3">
+    <div data-tool-row={app} className="group relative px-4 py-3">
       {dragHandle && (
         // 放在行首的内边距里，不占列宽，表头和各列照旧对齐
         <button
@@ -777,9 +749,7 @@ function AppRow({
             "absolute start-0 top-3 flex h-10 w-4 cursor-grab items-center justify-center text-fg-3 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 active:cursor-grabbing",
             dragHandle.isDragging && "cursor-grabbing opacity-100",
           )}
-          aria-label={t("appsPage.dragHandle", {
-            name: dragLabel ?? APP_DISPLAY_NAME[app],
-          })}
+          aria-label={t("appsPage.dragHandle", { name: APP_DISPLAY_NAME[app] })}
           {...dragHandle.attributes}
           {...dragHandle.listeners}
         >
@@ -788,12 +758,7 @@ function AppRow({
       )}
       <div className={cn(APP_ROW_GRID, "min-h-10")}>
         <div className="flex min-w-0 items-center gap-4">
-          <AppGlyph
-            app={app}
-            size={20}
-            badge={glyphBadge}
-            badgeClassName="bg-surface"
-          />
+          <AppGlyph app={app} size={20} badgeClassName="bg-surface" />
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 items-center gap-1.5 text-strong text-fg-1">
               {name}
@@ -1067,8 +1032,6 @@ function ToolRow({
   return (
     <AppRow
       app={TOOL_APP_IDS[tool]}
-      glyphBadge={tool === "agy" ? "terminal" : undefined}
-      dragLabel={tool === "agy" ? toolDisplayName(tool) : undefined}
       name={
         <>
           <span className="truncate">{toolDisplayName(tool)}</span>
@@ -1147,7 +1110,7 @@ function SortableAppRow({
   id,
   children,
 }: {
-  id: RowId;
+  id: AppId;
   children: React.ReactNode;
 }) {
   const {

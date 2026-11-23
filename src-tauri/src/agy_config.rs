@@ -54,16 +54,15 @@ pub fn settings_path() -> PathBuf {
     agy_dir().join("settings.json")
 }
 
-/// Antigravity 配置目录状态：已初始化 CLI 时保持指向 `~/.gemini/antigravity-cli`；
-/// 仅安装桌面版或已写入共享配置时指向 `~/.gemini/config`（或 `~/.gemini/antigravity`），
-/// 避免仅装桌面版的用户被误判未配置或打开空的 `antigravity-cli` 目录。
-pub fn config_status() -> ConfigStatus {
-    resolve_config_status_in(&agy_dir(), &desktop_dir(), &customizations_dir())
+/// Antigravity 桌面版配置目录状态：检测 `~/.gemini/antigravity` 与共享 `~/.gemini/config`，
+/// 优先指向已存在的 `~/.gemini/config`（MCP / Skills / 提示词目录），否则回退到 `~/.gemini/antigravity`。
+pub fn desktop_config_status() -> ConfigStatus {
+    resolve_desktop_config_status_in(&desktop_dir(), &customizations_dir())
 }
 
-/// 「打开配置文件夹」与 `get_config_dir("agy")` 使用的有效目录。
-pub fn effective_config_dir() -> PathBuf {
-    resolve_config_dir_in(&agy_dir(), &desktop_dir(), &customizations_dir())
+/// Antigravity 桌面版「打开配置文件夹」与 `get_config_dir("agy-desktop")` 使用的有效目录。
+pub fn desktop_effective_config_dir() -> PathBuf {
+    resolve_desktop_config_dir_in(&desktop_dir(), &customizations_dir())
 }
 
 fn has_shared_customizations(dir: &Path) -> bool {
@@ -78,10 +77,7 @@ fn has_shared_customizations(dir: &Path) -> bool {
             .any(|sub| dir.join(sub).is_dir())
 }
 
-fn resolve_config_dir_in(cli_dir: &Path, desktop_dir: &Path, customizations_dir: &Path) -> PathBuf {
-    if cli_dir.join("settings.json").is_file() {
-        return cli_dir.to_path_buf();
-    }
+fn resolve_desktop_config_dir_in(desktop_dir: &Path, customizations_dir: &Path) -> PathBuf {
     if desktop_dir.is_dir() {
         return if customizations_dir.is_dir() {
             customizations_dir.to_path_buf()
@@ -89,24 +85,12 @@ fn resolve_config_dir_in(cli_dir: &Path, desktop_dir: &Path, customizations_dir:
             desktop_dir.to_path_buf()
         };
     }
-    if has_shared_customizations(customizations_dir) {
-        return customizations_dir.to_path_buf();
-    }
-    if cli_dir.is_dir() {
-        return cli_dir.to_path_buf();
-    }
     customizations_dir.to_path_buf()
 }
 
-fn resolve_config_status_in(
-    cli_dir: &Path,
-    desktop_dir: &Path,
-    customizations_dir: &Path,
-) -> ConfigStatus {
-    let dir = resolve_config_dir_in(cli_dir, desktop_dir, customizations_dir);
-    let exists = cli_dir.join("settings.json").is_file()
-        || desktop_dir.is_dir()
-        || has_shared_customizations(customizations_dir);
+fn resolve_desktop_config_status_in(desktop_dir: &Path, customizations_dir: &Path) -> ConfigStatus {
+    let dir = resolve_desktop_config_dir_in(desktop_dir, customizations_dir);
+    let exists = desktop_dir.is_dir() || has_shared_customizations(customizations_dir);
     ConfigStatus {
         exists,
         path: dir.to_string_lossy().into_owned(),
@@ -1077,55 +1061,45 @@ mod tests {
     }
 
     #[test]
-    fn config_dir_and_status_fall_back_to_desktop_and_shared_customizations() {
+    fn desktop_config_dir_and_status_prefer_shared_customizations_when_present() {
         let tmp = tempfile::tempdir().unwrap();
-        let cli = tmp.path().join("antigravity-cli");
         let desktop = tmp.path().join("antigravity");
         let shared = tmp.path().join("config");
 
         // Nothing exists yet.
-        let empty = resolve_config_status_in(&cli, &desktop, &shared);
+        let empty = resolve_desktop_config_status_in(&desktop, &shared);
         assert!(!empty.exists);
         assert_eq!(PathBuf::from(&empty.path), shared);
-        assert_eq!(resolve_config_dir_in(&cli, &desktop, &shared), shared);
+        assert_eq!(resolve_desktop_config_dir_in(&desktop, &shared), shared);
 
         // Desktop-only install without ~/.gemini/config yet.
         fs::create_dir_all(&desktop).unwrap();
-        let desktop_only = resolve_config_status_in(&cli, &desktop, &shared);
+        let desktop_only = resolve_desktop_config_status_in(&desktop, &shared);
         assert!(desktop_only.exists);
         assert_eq!(PathBuf::from(&desktop_only.path), desktop);
-        assert_eq!(resolve_config_dir_in(&cli, &desktop, &shared), desktop);
+        assert_eq!(resolve_desktop_config_dir_in(&desktop, &shared), desktop);
 
         // Desktop + shared ~/.gemini/config (normal desktop install).
         fs::create_dir_all(&shared).unwrap();
-        let desktop_with_shared = resolve_config_status_in(&cli, &desktop, &shared);
+        let desktop_with_shared = resolve_desktop_config_status_in(&desktop, &shared);
         assert!(desktop_with_shared.exists);
         assert_eq!(PathBuf::from(&desktop_with_shared.path), shared);
-        assert_eq!(resolve_config_dir_in(&cli, &desktop, &shared), shared);
-
-        // Once CLI settings.json exists, keep existing CLI path semantics.
-        fs::create_dir_all(&cli).unwrap();
-        fs::write(cli.join("settings.json"), "{}").unwrap();
-        let cli_status = resolve_config_status_in(&cli, &desktop, &shared);
-        assert!(cli_status.exists);
-        assert_eq!(PathBuf::from(&cli_status.path), cli);
-        assert_eq!(resolve_config_dir_in(&cli, &desktop, &shared), cli);
+        assert_eq!(resolve_desktop_config_dir_in(&desktop, &shared), shared);
     }
 
     #[test]
-    fn config_status_recognizes_shared_customizations_without_desktop_or_cli_dir() {
+    fn desktop_config_status_recognizes_shared_customizations_without_desktop_dir() {
         let tmp = tempfile::tempdir().unwrap();
-        let cli = tmp.path().join("antigravity-cli");
         let desktop = tmp.path().join("antigravity");
         let shared = tmp.path().join("config");
 
         // Empty shared directory alone does not count as configured.
         fs::create_dir_all(&shared).unwrap();
-        assert!(!resolve_config_status_in(&cli, &desktop, &shared).exists);
+        assert!(!resolve_desktop_config_status_in(&desktop, &shared).exists);
 
         // A managed file inside ~/.gemini/config counts as configured.
         fs::write(shared.join("mcp_config.json"), "{}").unwrap();
-        let status = resolve_config_status_in(&cli, &desktop, &shared);
+        let status = resolve_desktop_config_status_in(&desktop, &shared);
         assert!(status.exists);
         assert_eq!(PathBuf::from(&status.path), shared);
     }

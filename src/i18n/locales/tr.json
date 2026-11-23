@@ -4297,6 +4297,17 @@
     "back": "Geri",
     "plugins": "Eklentiler"
   },
+  "agyDesktop": {
+    "statusTitle": "Kurulum durumu",
+    "overviewDescription": "Antigravity Desktop, CC Switch üzerinden sağlayıcı değiştirmek yerine oturum açma ve model seçimini kendi içinde yönetir. Burada yerel kurulum durumunu görebilir ve Antigravity CLI ile paylaştığı yapılandırma, oturum ve kullanım verilerini yönetebilirsiniz.",
+    "installPath": "Kurulum yolu",
+    "configDir": "Yapılandırma dizini",
+    "openConfigFolder": "Yapılandırma klasörünü aç",
+    "refreshStatus": "Yeniden algıla",
+    "sharedFeaturesTitle": "Bağlı özellikler",
+    "usageHint": "Antigravity istek günlüklerini ve token kullanımını görüntüleyin",
+    "authHint": "Yetkilendirme Merkezi'nde Antigravity abonelik hesaplarını ve kotasını yönetin"
+  },
   "appsPage": {
     "showInSidebar": "Kenar çubuğunda {{name}}'yi göster",
     "lastChecked": "Son kontrol: {{time}}",
@@ -4341,7 +4352,7 @@
       "copilot": "npm ile kurulur"
     },
     "workbuddyHelp": "WorkBuddy bir masaüstü uygulamasıdır; buradan kurulamaz veya yükseltilemez, kendini günceller. CC Switch ona yapılandırma dosyası (~/.workbuddy/models.json) üzerinden bağlanır.",
-    "agyDesktopHelp": "Antigravity Desktop kendini günceller; buradan kurulamaz veya kaldırılamaz. ~/.gemini/config altındaki MCP, Skills ve istem yapılandırmasını Antigravity CLI ile ve kenar çubuğundaki aynı Antigravity girişini paylaşır."
+    "agyDesktopHelp": "Antigravity Desktop kendini günceller; buradan kurulamaz veya kaldırılamaz. ~/.gemini/config altındaki MCP, Skills ve istem yapılandırmasını Antigravity CLI ile paylaşır."
   },
   "appPage": {
     "moreActions": "{{name}} için diğer işlemler",

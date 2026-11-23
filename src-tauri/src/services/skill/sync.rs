@@ -221,7 +221,7 @@ impl SkillService {
     /// - Symlink: 仅使用 symlink
     /// - Copy: 仅使用文件复制
     pub fn sync_to_app_dir(directory: &str, app: &AppType) -> Result<()> {
-        if matches!(app, AppType::ClaudeDesktop) {
+        if matches!(app, AppType::ClaudeDesktop | AppType::AgyDesktop) {
             return Ok(());
         }
 
@@ -425,7 +425,7 @@ impl SkillService {
         app: &AppType,
         preserved_paths: &[PathBuf],
     ) -> Result<()> {
-        if matches!(app, AppType::ClaudeDesktop) {
+        if matches!(app, AppType::ClaudeDesktop | AppType::AgyDesktop) {
             return Ok(());
         }
 
@@ -480,7 +480,11 @@ impl SkillService {
     pub(super) fn is_sync_managed_app(app: &AppType) -> bool {
         !matches!(
             app,
-            AppType::ClaudeDesktop | AppType::OpenClaw | AppType::Pi | AppType::Omp
+            AppType::ClaudeDesktop
+                | AppType::AgyDesktop
+                | AppType::OpenClaw
+                | AppType::Pi
+                | AppType::Omp
         )
     }
 

@@ -761,6 +761,7 @@ impl SkillService {
                 }
             }
             AppType::ClaudeDesktop
+            | AppType::AgyDesktop
             | AppType::Mcode
             | AppType::Kimi
             | AppType::Dsh
@@ -801,7 +802,9 @@ impl SkillService {
             AppType::Hermes => crate::hermes_config::get_hermes_dir().join("skills"),
             AppType::Pi => crate::pi_config::get_pi_agent_dir()?.join("skills"),
             AppType::Omp => crate::omp_config::get_omp_agent_dir()?.join("skills"),
-            AppType::Agy => home.join(".gemini").join("config").join("skills"),
+            AppType::Agy | AppType::AgyDesktop => {
+                home.join(".gemini").join("config").join("skills")
+            }
         })
     }
 
@@ -859,7 +862,7 @@ impl SkillService {
 
     fn validate_skill_storage_destination(ssot_dir: &Path) -> Result<()> {
         for app in AppType::all() {
-            if matches!(app, AppType::ClaudeDesktop) {
+            if matches!(app, AppType::ClaudeDesktop | AppType::AgyDesktop) {
                 continue;
             }
             let app_dir = Self::get_app_skills_dir(&app)?;
@@ -1568,6 +1571,9 @@ impl SkillService {
         // 收集所有待扫描的目录及其来源标签
         let mut scan_sources: Vec<(PathBuf, String)> = Vec::new();
         for app in AppType::all() {
+            if matches!(app, AppType::AgyDesktop) {
+                continue;
+            }
             if let Ok(d) = Self::get_app_skills_dir(&app) {
                 scan_sources.push((d, app.as_str().to_string()));
             }
@@ -1642,6 +1648,9 @@ impl SkillService {
         // 收集所有候选搜索目录
         let mut search_sources: Vec<(PathBuf, String)> = Vec::new();
         for app in AppType::all() {
+            if matches!(app, AppType::AgyDesktop) {
+                continue;
+            }
             if let Ok(d) = Self::get_app_skills_dir(&app) {
                 search_sources.push((d, app.as_str().to_string()));
             }
@@ -1972,6 +1981,9 @@ pub fn migrate_skills_to_ssot(db: &Arc<Database>) -> Result<usize> {
 
     // 扫描各应用目录
     for app in AppType::all() {
+        if matches!(app, AppType::AgyDesktop) {
+            continue;
+        }
         let app_dir = match SkillService::get_app_skills_dir(&app) {
             Ok(d) => d,
             Err(_) => continue,

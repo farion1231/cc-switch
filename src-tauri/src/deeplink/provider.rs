@@ -448,6 +448,13 @@ pub(crate) fn build_provider_from_request(
             }
             settings
         }
+        AppType::AgyDesktop => {
+            return Err(AppError::localized(
+                "agy_desktop.deeplink_unsupported",
+                "Antigravity Desktop 暂不支持通过深度链接导入供应商",
+                "Antigravity Desktop does not support importing providers via deep link",
+            ));
+        }
         AppType::Omp => build_omp_settings(request, api_format)?,
     };
 

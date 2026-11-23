@@ -19,7 +19,7 @@ pub(crate) fn validate_prompt_content(app: &AppType, content: &str) -> Result<()
 
 /// 返回指定应用所使用的提示词文件路径。
 pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
-    if matches!(app, AppType::ClaudeDesktop) {
+    if matches!(app, AppType::ClaudeDesktop | AppType::AgyDesktop) {
         return Err(AppError::localized(
             "app.prompts_unsupported",
             "当前应用暂不支持 Prompts",
@@ -50,7 +50,7 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         // 用户级说明是当前账号目录下的 MEMORY.md（MemoryCollector 以 <user_instructions> 注入，
         // 每次最多 4000 字）。目录随登录的账号变，没登录时是数据目录本身。
         AppType::WorkBuddy => crate::services::workbuddy_account::user_data_dir(),
-        AppType::ClaudeDesktop => unreachable!("handled above"),
+        AppType::ClaudeDesktop | AppType::AgyDesktop => unreachable!("handled above"),
     };
 
     let filename = match app {
@@ -67,7 +67,7 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         | AppType::Omp => "AGENTS.md",
         AppType::Copilot => "copilot-instructions.md",
         AppType::WorkBuddy => "MEMORY.md",
-        AppType::ClaudeDesktop => unreachable!("handled above"),
+        AppType::ClaudeDesktop | AppType::AgyDesktop => unreachable!("handled above"),
     };
 
     Ok(base_dir.join(filename))

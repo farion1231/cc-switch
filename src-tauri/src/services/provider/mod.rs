@@ -7946,6 +7946,7 @@ impl ProviderService {
             | AppType::Kimi
             | AppType::Dsh
             | AppType::Agy
+            | AppType::AgyDesktop
             | AppType::Omp
             | AppType::Copilot
             | AppType::WorkBuddy => Ok(String::new()),
@@ -7971,6 +7972,7 @@ impl ProviderService {
             | AppType::Kimi
             | AppType::Dsh
             | AppType::Agy
+            | AppType::AgyDesktop
             | AppType::Omp
             | AppType::Copilot
             | AppType::WorkBuddy => Ok(String::new()),
@@ -8659,6 +8661,13 @@ impl ProviderService {
             AppType::Agy => {
                 use crate::gemini_config::validate_gemini_settings;
                 validate_gemini_settings(&provider.settings_config)?
+            }
+            AppType::AgyDesktop => {
+                return Err(AppError::localized(
+                    "agy_desktop.providers_unsupported",
+                    "Antigravity Desktop 不支持供应商配置管理，请在 Antigravity 桌面应用中管理账号与模型",
+                    "Antigravity Desktop does not support provider configuration; manage accounts and models directly in the desktop app",
+                ));
             }
             AppType::Copilot => {
                 crate::copilot_config::validate_provider(&provider.id, &provider.settings_config)?

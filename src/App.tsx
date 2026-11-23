@@ -93,6 +93,7 @@ import { WindowControls } from "@/components/shell/WindowControls";
 import { APP_DISPLAY_NAME, AppGlyph } from "@/components/shell/AppGlyph";
 import { ProfileSwitcher } from "@/components/profiles/ProfileSwitcher";
 import { ProviderList } from "@/components/providers/ProviderList";
+import { AgyDesktopPanel } from "@/components/apps/AgyDesktopPanel";
 import {
   hasOpencodeDefinition,
   isNativeOpencodeConfig,
@@ -1545,6 +1546,7 @@ function App() {
             activeApp !== "dsh" &&
             activeApp !== "kimi" &&
             activeApp !== "workbuddy" &&
+            activeApp !== "agy-desktop" &&
             (settingsData?.showProfileSwitcher ?? false) && (
               <ProfileSwitcher activeApp={activeApp} />
             )}
@@ -1559,6 +1561,7 @@ function App() {
             </Button>
           )}
           {currentView === "providers" &&
+            activeApp !== "agy-desktop" &&
             (settingsData?.showProviderSearch ?? true) && (
               <HoverTip
                 content={t("provider.searchButtonTip", {
@@ -1577,7 +1580,7 @@ function App() {
                 </Button>
               </HoverTip>
             )}
-          {currentView === "providers" && (
+          {currentView === "providers" && activeApp !== "agy-desktop" && (
             <Button
               variant="solid"
               size="regular"
@@ -1659,6 +1662,18 @@ function App() {
   };
 
   const renderProviderList = () => {
+    if (activeApp === "agy-desktop") {
+      return (
+        <AgyDesktopPanel
+          onOpenPage={openPage}
+          onOpenUsage={() => {
+            setUsageAppFilter("agy");
+            openPage("usage");
+          }}
+        />
+      );
+    }
+
     if (modeAppId) {
       const startupFailure = startupFailures.find(
         (failure) => failure.appType === modeAppId,
@@ -1874,6 +1889,7 @@ function App() {
                 (app) =>
                   visibleApps[app] ||
                   (app === "claude" && visibleApps["claude-desktop"]) ||
+                  (app === "agy" && visibleApps["agy-desktop"]) ||
                   app === promptsApp,
               )}
               onAppChange={setPromptsApp}

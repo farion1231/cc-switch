@@ -23,6 +23,7 @@ const ENDPOINT_TIMEOUT_SECS: Record<AppId, number> = {
   kimi: 8,
   dsh: 8,
   agy: 8,
+  "agy-desktop": 8,
   omp: 8,
   copilot: 8,
   workbuddy: 8,

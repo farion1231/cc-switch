@@ -61,6 +61,13 @@ pub struct VisibleApps {
     pub dsh: bool,
     #[serde(default = "default_true")]
     pub agy: bool,
+    #[serde(
+        rename = "agy-desktop",
+        alias = "agyDesktop",
+        alias = "agy_desktop",
+        default = "default_true"
+    )]
+    pub agy_desktop: bool,
     #[serde(default = "default_true")]
     pub copilot: bool,
     #[serde(default = "default_true")]
@@ -83,6 +90,7 @@ impl Default for VisibleApps {
             kimi: true,
             dsh: true,
             agy: true,
+            agy_desktop: true,
             omp: true,
             copilot: true,
             workbuddy: true,
@@ -107,6 +115,7 @@ impl VisibleApps {
             AppType::Kimi => self.kimi,
             AppType::Dsh => self.dsh,
             AppType::Agy => self.agy,
+            AppType::AgyDesktop => self.agy_desktop,
             AppType::Omp => self.omp,
             AppType::Copilot => self.copilot,
             AppType::WorkBuddy => self.workbuddy,
@@ -1324,6 +1333,7 @@ pub fn get_override_dir(app: &AppType) -> Option<PathBuf> {
         | AppType::Mcode
         | AppType::Kimi
         | AppType::Agy
+        | AppType::AgyDesktop
         | AppType::Copilot
         | AppType::WorkBuddy => return None,
     };
@@ -1395,6 +1405,7 @@ pub fn get_current_provider(app_type: &AppType) -> Option<String> {
         | AppType::Mcode
         | AppType::Kimi
         | AppType::Dsh
+        | AppType::AgyDesktop
         | AppType::Omp
         | AppType::WorkBuddy => None,
     }
@@ -1421,6 +1432,7 @@ pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), 
         | AppType::Mcode
         | AppType::Kimi
         | AppType::Dsh
+        | AppType::AgyDesktop
         | AppType::Omp
         | AppType::WorkBuddy => {}
     })
@@ -1849,6 +1861,29 @@ mod tests {
         .expect("visible apps");
 
         assert!(!visible.is_visible(&AppType::ClaudeDesktop));
+    }
+
+    #[test]
+    fn visible_apps_agy_desktop_is_independent_and_defaults_visible() {
+        let old: VisibleApps = serde_json::from_value(serde_json::json!({
+            "claude": true,
+            "agy": false
+        }))
+        .expect("old visible apps");
+        assert!(!old.is_visible(&AppType::Agy));
+        assert!(old.is_visible(&AppType::AgyDesktop));
+
+        let alias: VisibleApps = serde_json::from_value(serde_json::json!({
+            "agy": true,
+            "agyDesktop": false
+        }))
+        .expect("alias visible apps");
+        assert!(alias.is_visible(&AppType::Agy));
+        assert!(!alias.is_visible(&AppType::AgyDesktop));
+
+        let serialized = serde_json::to_value(&alias).expect("serialize visible apps");
+        assert_eq!(serialized["agy"], serde_json::json!(true));
+        assert_eq!(serialized["agy-desktop"], serde_json::json!(false));
     }
 
     #[test]

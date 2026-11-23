@@ -16,6 +16,7 @@ export type AppType =
   | "kimi"
   | "dsh"
   | "agy"
+  | "agy-desktop"
   | "omp"
   | "copilot";
 
@@ -34,6 +35,7 @@ export interface SkillApps {
   kimi?: boolean;
   dsh?: boolean;
   agy?: boolean;
+  "agy-desktop"?: boolean;
   omp?: boolean;
   copilot?: boolean;
   workbuddy?: boolean;

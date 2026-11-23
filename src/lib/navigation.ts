@@ -115,7 +115,9 @@ export function storeView(view: View) {
   }
 }
 
-/** 提示词、会话页在 Claude Desktop 上看的是 Claude Code 的内容（两者共用）。 */
+/** 提示词、会话、用量页在 Claude Desktop / Antigravity Desktop 上看的是同品牌共用内容。 */
 export function sharedFeatureAppOf(app: AppId): AppId {
-  return app === "claude-desktop" ? "claude" : app;
+  if (app === "claude-desktop") return "claude";
+  if (app === "agy-desktop") return "agy";
+  return app;
 }

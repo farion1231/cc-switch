@@ -91,6 +91,13 @@
     "stack": false
   },
   {
+    "id": "agy-desktop",
+    "additive": false,
+    "localProxy": false,
+    "routeMode": false,
+    "stack": false
+  },
+  {
     "id": "omp",
     "additive": true,
     "localProxy": false,
