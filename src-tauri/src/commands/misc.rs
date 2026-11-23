@@ -348,15 +348,15 @@ pub async fn get_tool_versions(
         Some(tools) => normalize_requested_tools(tools),
         None => TOOLS.iter().map(|tool| tool.id).collect(),
     };
-    let mut results = Vec::new();
-
-    for tool in requested {
+    // 各工具互不依赖，并发探测：总耗时取最慢的那个，而不是逐个累加（启动后台检查一次
+    // 传入全部工具）。join_all 保持输入顺序。
+    let results = futures::future::join_all(requested.into_iter().map(|tool| {
         let pref = wsl_shell_by_tool.as_ref().and_then(|m| m.get(tool));
         let tool_wsl_shell = pref.and_then(|p| p.wsl_shell.as_deref());
         let tool_wsl_shell_flag = pref.and_then(|p| p.wsl_shell_flag.as_deref());
-
-        results.push(get_single_tool_version_impl(tool, tool_wsl_shell, tool_wsl_shell_flag).await);
-    }
+        get_single_tool_version_impl(tool, tool_wsl_shell, tool_wsl_shell_flag)
+    }))
+    .await;
 
     Ok(results)
 }
@@ -865,7 +865,7 @@ pub(super) fn effective_path_string() -> String {
         .unwrap_or_default();
     let fnm = fnm_default_alias_dir_candidates(
         std::env::var_os("FNM_DIR"),
-        &dirs::home_dir().unwrap_or_default(),
+        &crate::config::get_home_dir(),
         dirs::data_dir(),
     )
     .into_iter()
@@ -975,13 +975,36 @@ pub async fn probe_tool_installations(
     .map_err(|e| format!("probe task join error: {e}"))
 }
 
-/// 「应用」页显示每个工具的路径、安装来源和多处安装。和升级前的预检是同一份枚举，
-/// 单列一个命令只为把「打开页面时的展示」和「点升级时的预检」分开调用。
+/// 「应用」页的安装概览：每个工具装在哪几处、来源和命令行默认那处。只定位、不跑命令，
+/// 用来在版本探测回来之前先把工具分进「已安装 / 未安装」。
+#[derive(Debug, serde::Serialize)]
+pub struct ToolInstallationOverview {
+    tool: &'static str,
+    installs: Vec<ToolInstallLocation>,
+    /// 这个工具跑在 WSL 里：本机清单说明不了 WSL 里装没装，前端等版本探测再分组。
+    is_wsl: bool,
+}
+
+/// 「应用」页展示路径、来源和多处安装。和升级前的预检是同一份定位，但不对每处安装跑
+/// `--version`（那一步留给诊断和升级预检），打开页面不必等每个命令行工具启动一遍。
+/// 各工具的定位各要开一个登录 shell / `where`，互不依赖，并发进行。
 #[tauri::command]
 pub async fn list_tool_installations(
     tools: Vec<String>,
-) -> Result<Vec<ToolInstallationReport>, String> {
-    probe_tool_installations(tools).await
+) -> Result<Vec<ToolInstallationOverview>, String> {
+    let requested = normalize_requested_tools(&tools);
+    let tasks = requested.into_iter().map(|tool| {
+        tokio::task::spawn_blocking(move || ToolInstallationOverview {
+            tool,
+            installs: list_tool_install_locations(tool),
+            is_wsl: tool_runs_in_wsl(tool),
+        })
+    });
+    futures::future::join_all(tasks)
+        .await
+        .into_iter()
+        .map(|result| result.map_err(|e| format!("installation listing task join error: {e}")))
+        .collect()
 }
 
 /// 这个工具的配置目录是不是指向 WSL（只有 Windows 上会是）。

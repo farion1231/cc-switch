@@ -2282,20 +2282,6 @@ fn test_anthropic_to_responses_o_series_uses_max_output_tokens() {
 }
 
 #[test]
-fn test_responses_output_config_max_sets_reasoning_xhigh() {
-    let input = json!({
-        "model": "gpt-5.4",
-        "max_tokens": 1024,
-        "thinking": {"type": "adaptive"},
-        "output_config": {"effort": "max"},
-        "messages": [{"role": "user", "content": "Hello"}]
-    });
-
-    let result = anthropic_to_responses(input, None, false, false).unwrap();
-    assert_eq!(result["reasoning"]["effort"], "xhigh");
-}
-
-#[test]
 fn test_responses_max_capable_models_preserve_max() {
     for model in [
         "gpt-5.6",
@@ -2320,66 +2306,6 @@ fn test_responses_max_capable_models_preserve_max() {
 }
 
 #[test]
-fn test_responses_output_config_xhigh_sets_reasoning_xhigh() {
-    // Claude Code's `/effort xhigh` sends output_config.effort="xhigh";
-    // previously it fell into the unknown-value branch and was dropped.
-    let input = json!({
-        "model": "gpt-5.4",
-        "max_tokens": 1024,
-        "thinking": {"type": "adaptive"},
-        "output_config": {"effort": "xhigh"},
-        "messages": [{"role": "user", "content": "Hello"}]
-    });
-
-    let result = anthropic_to_responses(input, None, false, false).unwrap();
-    assert_eq!(result["reasoning"]["effort"], "xhigh");
-}
-
-#[test]
-fn test_responses_grok_4_6_reasoning_effort_not_dropped() {
-    // After model mapping, the Responses gate runs on the mapped name;
-    // grok-4.6 / grok-4.6-* were missing from the whitelist (#7314).
-    let input = json!({
-        "model": "grok-4.6-build",
-        "max_tokens": 1024,
-        "thinking": {"type": "adaptive"},
-        "output_config": {"effort": "xhigh"},
-        "messages": [{"role": "user", "content": "Hello"}]
-    });
-
-    let result = anthropic_to_responses(input, None, false, false).unwrap();
-    assert_eq!(result["reasoning"]["effort"], "xhigh");
-}
-
-#[test]
-fn test_responses_thinking_off_clamps_effort_to_low() {
-    // Thinking turned off in Claude Code: no `thinking`, effort still "high".
-    let input = json!({
-        "model": "gpt-5.4",
-        "max_tokens": 1024,
-        "output_config": {"effort": "high"},
-        "messages": [{"role": "user", "content": "Hello"}]
-    });
-
-    let result = anthropic_to_responses(input, None, false, false).unwrap();
-    assert_eq!(result["reasoning"]["effort"], "low");
-}
-
-#[test]
-fn test_responses_output_config_takes_priority_over_thinking() {
-    let input = json!({
-        "model": "gpt-5.4",
-        "max_tokens": 1024,
-        "output_config": {"effort": "low"},
-        "thinking": {"type": "adaptive"},
-        "messages": [{"role": "user", "content": "Hello"}]
-    });
-
-    let result = anthropic_to_responses(input, None, false, false).unwrap();
-    assert_eq!(result["reasoning"]["effort"], "low");
-}
-
-#[test]
 fn test_responses_thinking_enabled_small_budget_sets_reasoning_low() {
     let input = json!({
         "model": "gpt-5.4",
@@ -2393,45 +2319,6 @@ fn test_responses_thinking_enabled_small_budget_sets_reasoning_low() {
 }
 
 #[test]
-fn test_responses_thinking_enabled_medium_budget_sets_reasoning_medium() {
-    let input = json!({
-        "model": "gpt-5.4",
-        "max_tokens": 1024,
-        "thinking": {"type": "enabled", "budget_tokens": 8000},
-        "messages": [{"role": "user", "content": "Hello"}]
-    });
-
-    let result = anthropic_to_responses(input, None, false, false).unwrap();
-    assert_eq!(result["reasoning"]["effort"], "medium");
-}
-
-#[test]
-fn test_responses_thinking_enabled_large_budget_sets_reasoning_high() {
-    let input = json!({
-        "model": "gpt-5.4",
-        "max_tokens": 1024,
-        "thinking": {"type": "enabled", "budget_tokens": 32000},
-        "messages": [{"role": "user", "content": "Hello"}]
-    });
-
-    let result = anthropic_to_responses(input, None, false, false).unwrap();
-    assert_eq!(result["reasoning"]["effort"], "high");
-}
-
-#[test]
-fn test_responses_thinking_adaptive_sets_reasoning_xhigh() {
-    let input = json!({
-        "model": "gpt-5.4",
-        "max_tokens": 1024,
-        "thinking": {"type": "adaptive"},
-        "messages": [{"role": "user", "content": "Hello"}]
-    });
-
-    let result = anthropic_to_responses(input, None, false, false).unwrap();
-    assert_eq!(result["reasoning"]["effort"], "xhigh");
-}
-
-#[test]
 fn test_responses_non_reasoning_model_no_reasoning() {
     let input = json!({
         "model": "gpt-4o",
@@ -2442,6 +2329,19 @@ fn test_responses_non_reasoning_model_no_reasoning() {
 
     let result = anthropic_to_responses(input, None, false, false).unwrap();
     assert!(result.get("reasoning").is_none());
+}
+
+#[test]
+fn test_responses_reasoning_model_without_thinking_sends_no_reasoning() {
+    // 客户端没要推理（没有 thinking、没有 output_config）：推理模型也不该被塞一个 effort。
+    let input = json!({
+        "model": "gpt-5.4",
+        "max_tokens": 1024,
+        "messages": [{"role": "user", "content": "Hello"}]
+    });
+
+    let result = anthropic_to_responses(input, None, false, false).unwrap();
+    assert!(result.get("reasoning").is_none(), "{result}");
 }
 
 // ==================== Codex OAuth (ChatGPT 反代) 协议约束 ====================

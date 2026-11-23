@@ -150,10 +150,12 @@ export function DeepLinkImportDialog() {
         try {
           next = await deeplinkApi.mergeDeeplinkConfig(incoming);
         } catch (error) {
+          if (disposed) return false;
           console.error("Failed to merge config:", error);
           toast.error(tRef.current("deeplink.configMergeError"), {
             description: error instanceof Error ? error.message : String(error),
           });
+          return true;
         }
       }
       if (disposed) return false;
@@ -870,18 +872,40 @@ export function DeepLinkImportDialog() {
 
                       {/* Usage Base URL (if different from provider) */}
                       {request.usageBaseUrl &&
-                        request.usageBaseUrl !== request.endpoint && (
-                          <div className="grid grid-cols-3 items-center gap-4">
-                            <div className="font-medium text-sm text-fg-2">
-                              {t("deeplink.usageBaseUrl", {
-                                defaultValue: "用量查询地址",
-                              })}
+                        request.usageBaseUrl.trim() !==
+                          request.endpoint?.trim() &&
+                        (() => {
+                          const trimmedUsageBaseUrl =
+                            request.usageBaseUrl.trim();
+                          const usageBaseUrlRisk =
+                            classifyEndpoint(trimmedUsageBaseUrl);
+                          return (
+                            <div className="grid grid-cols-3 items-start gap-4">
+                              <div className="font-medium text-sm text-fg-2 pt-0.5">
+                                {t("deeplink.usageBaseUrl", {
+                                  defaultValue: "用量查询地址",
+                                })}
+                              </div>
+                              <div
+                                className={`col-span-2 text-sm break-all ${
+                                  usageBaseUrlRisk
+                                    ? "text-warning-text font-semibold"
+                                    : ""
+                                }`}
+                              >
+                                {usageBaseUrlRisk && (
+                                  <span aria-hidden="true">⚠ </span>
+                                )}
+                                {trimmedUsageBaseUrl}
+                                {usageBaseUrlRisk && (
+                                  <div className="text-xs font-normal mt-0.5">
+                                    {t(riskI18nKey(usageBaseUrlRisk))}
+                                  </div>
+                                )}
+                              </div>
                             </div>
-                            <div className="col-span-2 text-sm break-all">
-                              {request.usageBaseUrl}
-                            </div>
-                          </div>
-                        )}
+                          );
+                        })()}
 
                       {/* Usage Access Token (if present) */}
                       {request.usageAccessToken && (

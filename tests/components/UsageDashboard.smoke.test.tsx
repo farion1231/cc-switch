@@ -94,6 +94,8 @@ describe("UsageDashboard (smoke)", () => {
         totalCost: "6.1",
         successRate: 99.4,
         avgLatencyMs: 9000,
+        cacheReadTokens: 3_000_000,
+        cacheableInputTokens: 4_000_000,
         speedOutputTokens: 92_000,
         speedGenerationMs: 1_000_000,
       },
@@ -106,6 +108,8 @@ describe("UsageDashboard (smoke)", () => {
         totalCost: "11.2",
         avgCostPerRequest: "0.0114",
         successRate: 100,
+        cacheReadTokens: 4_000_000,
+        cacheableInputTokens: 5_000_000,
       },
     ]);
     usageApiMock.getRequestLogs.mockResolvedValue({

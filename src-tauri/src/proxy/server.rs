@@ -126,8 +126,12 @@ impl ProxyServer {
 
         log::info!("[{}] 代理服务器启动于 {local_addr}", log_srv::STARTED);
 
-        // 更新全局代理端口，用于系统代理检测
+        // 更新全局代理端口，用于系统代理检测；并登记活跃监听器以阻止内部请求回打自身代理
         crate::proxy::http_client::set_proxy_port(actual_port);
+        let active_listener_guard = crate::proxy::http_client::register_active_proxy_listener(
+            self.config.listen_address.clone(),
+            actual_port,
+        );
 
         // 保存关闭句柄
         *self.shutdown_tx.write().await = Some(shutdown_tx);
@@ -146,11 +150,12 @@ impl ProxyServer {
         // 开启 preserve_header_case 以捕获客户端请求头的原始大小写
         let state = self.state.clone();
         let handle = tokio::spawn(async move {
+            let _active_listener_guard = active_listener_guard;
             let mut shutdown_rx = shutdown_rx;
             loop {
                 tokio::select! {
                     result = listener.accept() => {
-                        let (stream, _remote_addr) = match result {
+                        let (stream, remote_addr) = match result {
                             Ok(v) => v,
                             Err(e) => {
                                 log::error!("[{SRV}] accept 失败: {e}", SRV = log_srv::ACCEPT_ERR);
@@ -161,6 +166,11 @@ impl ProxyServer {
 
                         let app = app.clone();
                         tokio::spawn(async move {
+                            let conn_addrs = browser_guard::ConnectionAddrs {
+                                remote: remote_addr,
+                                local: stream.local_addr().ok(),
+                            };
+
                             // Peek raw TCP bytes to capture original header casing
                             // before hyper parses (and lowercases) the header names.
                             let original_cases = {
@@ -191,6 +201,7 @@ impl ProxyServer {
 
                                     // Insert our own header case map alongside hyper's internal one
                                     parts.extensions.insert(cases);
+                                    parts.extensions.insert(conn_addrs);
 
                                     let body = axum::body::Body::new(body);
                                     let axum_req = http::Request::from_parts(parts, body);
@@ -652,6 +663,58 @@ mod tests {
         assert_eq!(desktop.status(), StatusCode::UNAUTHORIZED);
 
         proxy.stop().await.expect("stop test proxy");
+    }
+
+    /// 即使代理监听在 0.0.0.0，来自本机回环的 DNS 重绑定请求仍必须被 Host 规则拦截。
+    #[tokio::test]
+    async fn wildcard_listener_still_rejects_loopback_dns_rebinding() {
+        let db = Arc::new(Database::memory().expect("memory database"));
+        let proxy = ProxyServer::new(
+            ProxyConfig {
+                listen_address: "0.0.0.0".to_string(),
+                listen_port: 0,
+                ..ProxyConfig::default()
+            },
+            db,
+            None,
+        );
+        let info = proxy.start().await.expect("start wildcard proxy");
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+
+        let rebinding = client
+            .get(format!("http://127.0.0.1:{}/status", info.port))
+            .header(header::HOST, format!("rebind.evil.example:{}", info.port))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            rebinding.status(),
+            StatusCode::FORBIDDEN,
+            "0.0.0.0 listener must still reject DNS rebinding Host headers from loopback peers"
+        );
+
+        let local_cli = client
+            .get(format!("http://127.0.0.1:{}/health", info.port))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(local_cli.status(), StatusCode::OK);
+
+        // Reuse the pooled keep-alive connection from the same reqwest::Client to verify
+        // ConnectionAddrs remains attached across subsequent requests on the same TCP stream.
+        let keep_alive_rebinding = client
+            .get(format!("http://127.0.0.1:{}/status", info.port))
+            .header(header::HOST, format!("rebind.evil.example:{}", info.port))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            keep_alive_rebinding.status(),
+            StatusCode::FORBIDDEN,
+            "keep-alive connection reuse on 0.0.0.0 listener must still reject DNS rebinding Host headers"
+        );
+
+        proxy.stop().await.expect("stop wildcard proxy");
     }
 
     /// Regression for #3787: a provider accidentally pointing at the proxy must

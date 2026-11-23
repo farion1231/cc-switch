@@ -28,8 +28,8 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
     }
 
     let base_dir: PathBuf = match app {
-        AppType::Claude => get_base_dir_with_fallback(get_claude_settings_path(), ".claude")?,
-        AppType::Codex => get_base_dir_with_fallback(get_codex_auth_path(), ".codex")?,
+        AppType::Claude => get_base_dir_with_fallback(get_claude_settings_path(), ".claude"),
+        AppType::Codex => get_base_dir_with_fallback(get_codex_auth_path(), ".codex"),
         AppType::Gemini => get_gemini_dir(),
         AppType::GrokBuild => crate::grok_config::get_grok_config_dir(),
         AppType::OpenCode => get_opencode_dir(),
@@ -86,21 +86,11 @@ fn display_path_with_home(path: &Path, home: &Path) -> String {
     }
 }
 
-fn get_base_dir_with_fallback(
-    primary_path: PathBuf,
-    fallback_dir: &str,
-) -> Result<PathBuf, AppError> {
+fn get_base_dir_with_fallback(primary_path: PathBuf, fallback_dir: &str) -> PathBuf {
     primary_path
         .parent()
         .map(|p| p.to_path_buf())
-        .or_else(|| dirs::home_dir().map(|h| h.join(fallback_dir)))
-        .ok_or_else(|| {
-            AppError::localized(
-                "home_dir_not_found",
-                format!("无法确定 {fallback_dir} 配置目录：用户主目录不存在"),
-                format!("Cannot determine {fallback_dir} config directory: user home not found"),
-            )
-        })
+        .unwrap_or_else(|| crate::config::get_home_dir().join(fallback_dir))
 }
 
 #[cfg(test)]
@@ -152,6 +142,19 @@ mod tests {
         assert_eq!(
             path.file_name().and_then(|name| name.to_str()),
             Some("AGENTS.md")
+        );
+    }
+
+    #[test]
+    fn get_base_dir_with_fallback_uses_parent_or_home_fallback() {
+        let primary = Path::new("custom").join("settings.json");
+        assert_eq!(
+            get_base_dir_with_fallback(primary, ".claude"),
+            PathBuf::from("custom")
+        );
+        assert_eq!(
+            get_base_dir_with_fallback(PathBuf::new(), ".claude"),
+            crate::config::get_home_dir().join(".claude")
         );
     }
 }

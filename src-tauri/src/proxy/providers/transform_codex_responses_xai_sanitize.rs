@@ -676,7 +676,8 @@ pub(crate) fn apply_xai_native_responses_request_compat(
     provider_id: &str,
     upstream_model: Option<&str>,
     settings: &Value,
-) {
+) -> bool {
+    let mut changed = false;
     // Remap the model before sanitizing: grok-4.5-specific field stripping
     // keys off `body.model`, so an unknown subagent SKU must land on its final
     // name first or those fields survive the strip.
@@ -684,24 +685,29 @@ pub(crate) fn apply_xai_native_responses_request_compat(
         let allowed = collect_xai_catalog_model_ids(settings);
         if let Some((from, to)) = rewrite_xai_unknown_request_model(body, upstream_model, &allowed)
         {
+            changed = true;
             log::info!(
                 "[Codex] Rewrote xAI-unknown request model {from} -> {to} (provider={provider_id})"
             );
         }
     }
     if sanitize_xai_responses_request(body) {
+        changed = true;
         log::debug!("[Codex] Sanitized xAI-unsupported Responses fields (provider={provider_id})");
     }
     if rewrite_xai_agent_message_input_items(body) {
+        changed = true;
         log::info!(
             "[Codex] Rewrote xAI-unsupported agent_message input items (provider={provider_id})"
         );
     }
     if rewrite_xai_call_id_less_tool_outputs(body) {
+        changed = true;
         log::info!(
             "[Codex] Rewrote function_call_output items without call_id for xAI (provider={provider_id})"
         );
     }
+    changed
 }
 
 /// Same marker the Responses→Chat bridge uses, so the model reads one wording

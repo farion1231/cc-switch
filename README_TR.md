@@ -80,6 +80,11 @@ Platform ayrıca kurumsal düzeyde eşzamanlılığı, özel bir yönetim konsol
 </tr>
 
 <tr>
+<td width="180"><a href="https://www.string.ink/register?ref=661AE533A60AF110"><img src="assets/partners/logos/stringai-banner.png" alt="StringAI" width="150"></a></td>
+<td>Bu projeye sponsor olduğu için StringAI'ye teşekkürler! StringAI; yapay zekâ ile kodlama, görsel üretimi, metinden sese (TTS) ve video üretimi olmak üzere dört yeteneğe tek noktadan erişim sunan, uygun maliyetli, hızlı ve istikrarlı bir model API platformudur. Dünyanın önde gelen pek çok modelini bir araya getirir; kendi barındırdığı, bulut sağlayıcılarından ve resmi API'lerden gelen kaynaklar arasında seçim sunarak üniversitelerin, şirketlerin, bireysel geliştiricilerin ve girişim ekiplerinin ihtiyaçlarını karşılar. Uzman bir ekip kurulum rehberliği ve teknik destek sağlar. StringAI, CC Switch kullanıcılarına özel bir avantaj sunuyor: <a href="https://www.string.ink/register?ref=661AE533A60AF110">bu bağlantı</a> üzerinden kaydolun, ilk 3,74 $'lık yüklemenize ek olarak 3,74 $ bonus kredi kazanın!</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://api.fenno.ai/register?redirect=/purchase?tab=subscription%26group=16&aff=P9MR3D3PLCNL"><img src="assets/partners/logos/fenno-banner.png" alt="Fenno.ai" width="150"></a></td>
 <td>Bu projeye sponsor olduğu için Fenno.ai'ye teşekkürler! Fenno.ai, şu anda Codex aktarmasına odaklanan, kararlı ve verimli bir API aktarma hizmeti sağlayıcısıdır. OpenAI ve Anthropic protokolleriyle uyumludur ve Codex, Claude Code, OpenCode ve diğer ana akım kodlama araçlarından esnek biçimde kullanılabilir. Günde yüz milyarlarca token'lık kurumsal düzeydeki iş yüklerini güvenilir biçimde destekler; yurt içi ve yurt dışı tüzel kişiler için kurumsal (B2B) mutabakat ve fatura hizmeti sunar. Fenno.ai, CC Switch kullanıcılarına özel bir avantaj sunar: <a href="https://api.fenno.ai/register?redirect=/purchase?tab=subscription%26group=16&aff=P9MR3D3PLCNL">bu bağlantıdan</a> 50 $ kredi değerindeki 1,99 $'lık Deneme Planına (7 gün geçerli) abone olun ve %20'ye varan tavsiye ödülü kazanın — ne kadar çok davet ederseniz o kadar çok kazanırsınız!</td>
 </tr>

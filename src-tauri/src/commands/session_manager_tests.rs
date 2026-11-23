@@ -3,6 +3,20 @@ use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
 
 #[test]
+fn content_search_accepts_cancellation_before_its_first_poll() {
+    let request_id = uuid::Uuid::new_v4().to_string();
+    cancel_session_content_search(request_id.clone());
+    let error = tauri::async_runtime::block_on(search_session_content(
+        "的".into(),
+        None,
+        None,
+        Some(request_id),
+    ))
+    .unwrap_err();
+    assert_eq!(error, "Session content search cancelled");
+}
+
+#[test]
 #[serial_test::serial]
 fn borrowed_session_responses_preserve_the_json_and_channel_contract() {
     let _home = crate::commands::startup_tests::TestHome::new();
