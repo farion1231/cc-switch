@@ -14,6 +14,7 @@ import {
   createToolState,
   deferred,
   isReady,
+  mountApps,
   registerScrollIntoViewStub,
   renderApps,
   report,
@@ -392,6 +393,82 @@ describe("AppsPage layout, grouping and diagnostics", () => {
       expect.anything(),
     );
     expect(mocks.info).not.toHaveBeenCalled();
+  });
+
+  it("reuses an in-flight background tool check without duplicate probes and renders completed cards immediately", async () => {
+    const getVersions = mocks.getToolVersions.getMockImplementation()!;
+    const codexReady = deferred<void>();
+    mocks.getToolVersions.mockImplementation(async (tools: string[]) => {
+      if (tools.includes("codex")) await codexReady.promise;
+      return getVersions(tools);
+    });
+    const [{ TOOL_NAMES, checkToolUpdatesInBackground }, { AppsPage }] =
+      await Promise.all([
+        import("@/components/apps/useToolManagement"),
+        import("@/components/apps/AppsPage"),
+      ]);
+
+    const bgFirst = checkToolUpdatesInBackground();
+    const bgSecond = checkToolUpdatesInBackground();
+    expect(bgSecond).toBe(bgFirst);
+
+    const view = mountApps(AppsPage);
+    // 非阻塞工具各自返回后立刻渲染，不被慢工具（codex）拖住整页
+    expect(await card("Claude Code").findByText("1.0.0")).toBeInTheDocument();
+    expect(card("Codex").getByRole("status")).toBeInTheDocument();
+    expect(
+      within(view.container).getByText("appsPage.checking"),
+    ).toHaveAttribute("aria-hidden", "false");
+    expect(mocks.getToolVersions).toHaveBeenCalledTimes(TOOL_NAMES.length);
+
+    await act(async () => {
+      codexReady.resolve();
+      await bgFirst;
+    });
+
+    await waitFor(() =>
+      expect(
+        within(view.container).getByText("appsPage.checkUpdates"),
+      ).toHaveAttribute("aria-hidden", "false"),
+    );
+    expect(card("Codex").getByText("1.0.0")).toBeInTheDocument();
+    expect(mocks.getToolVersions).toHaveBeenCalledTimes(TOOL_NAMES.length);
+  });
+
+  it("falls back to a fresh page probe when the in-flight background check fails", async () => {
+    const getVersions = mocks.getToolVersions.getMockImplementation()!;
+    const bgGate = deferred<void>();
+    let failBackground = true;
+    mocks.getToolVersions.mockImplementation(async (tools: string[]) => {
+      if (failBackground) {
+        await bgGate.promise;
+        throw new Error("background ipc failed");
+      }
+      return getVersions(tools);
+    });
+    const [{ TOOL_NAMES, checkToolUpdatesInBackground }, { AppsPage }] =
+      await Promise.all([
+        import("@/components/apps/useToolManagement"),
+        import("@/components/apps/AppsPage"),
+      ]);
+
+    const bg = checkToolUpdatesInBackground();
+    const view = mountApps(AppsPage);
+    expect(mocks.getToolVersions).toHaveBeenCalledTimes(TOOL_NAMES.length);
+
+    await act(async () => {
+      failBackground = false;
+      bgGate.resolve();
+      await bg;
+    });
+
+    await waitFor(() =>
+      expect(
+        within(view.container).getByText("appsPage.checkUpdates"),
+      ).toHaveAttribute("aria-hidden", "false"),
+    );
+    expect(await card("Claude Code").findByText("1.0.0")).toBeInTheDocument();
+    expect(mocks.getToolVersions).toHaveBeenCalledTimes(TOOL_NAMES.length * 2);
   });
 });
 

@@ -1,10 +1,11 @@
 //! Token Plan / 编程套餐额度查询服务
 //!
 //! 支持 Kimi For Coding、智谱 GLM、MiniMax、ZenMux、火山方舟、OpenCode Go、Command Code、
-//! Ollama Cloud 的套餐额度查询。复用 subscription 模块的 SubscriptionQuota / QuotaTier 类型。
+//! Ollama Cloud、小米 MiMo Token Plan 的套餐额度查询。复用 subscription 模块的 SubscriptionQuota / QuotaTier 类型。
 
 use super::subscription::{
-    CredentialStatus, QuotaTier, SubscriptionQuota, TIER_FIVE_HOUR, TIER_MONTHLY, TIER_WEEKLY_LIMIT,
+    CredentialStatus, QuotaTier, SubscriptionQuota, TIER_CREDITS, TIER_FIVE_HOUR, TIER_MONTHLY,
+    TIER_WEEKLY_LIMIT,
 };
 use super::usage_http::{parse_f64, send_for_json, JsonReply};
 use crate::codex_config::codex_url_host_matches_any;
@@ -32,6 +33,9 @@ enum CodingPlanProvider {
     /// Ollama Cloud（Claude 端 `https://ollama.com`，OpenAI 端 `https://ollama.com/v1`）。
     /// 本地 Ollama（localhost:11434）没有额度，不命中。
     OllamaCloud,
+    /// 小米 MiMo Token Plan（`https://token-plan-cn.xiaomimimo.com/anthropic`、`/v1`）。
+    /// 按量付费的 `api.xiaomimimo.com` 是另一套 Key，走余额查询，不在此命中。
+    MimoTokenPlan,
 }
 
 fn detect_provider(base_url: &str) -> Option<CodingPlanProvider> {
@@ -68,6 +72,8 @@ fn detect_provider(base_url: &str) -> Option<CodingPlanProvider> {
         Some(CodingPlanProvider::Volcengine)
     } else if host_is(&["ollama.com"]) {
         Some(CodingPlanProvider::OllamaCloud)
+    } else if host_is(&["token-plan-cn.xiaomimimo.com"]) {
+        Some(CodingPlanProvider::MimoTokenPlan)
     } else {
         None
     }
@@ -94,6 +100,7 @@ pub(crate) fn detect_provider_id(base_url: &str) -> Option<&'static str> {
         CodingPlanProvider::OpencodeGo => "opencode_go",
         CodingPlanProvider::CommandCode => "command_code",
         CodingPlanProvider::OllamaCloud => "ollama_cloud",
+        CodingPlanProvider::MimoTokenPlan => "mimo",
     })
 }
 
@@ -900,6 +907,100 @@ async fn query_ollama_cloud(api_key: &str) -> Result<SubscriptionQuota, String> 
         } else {
             "Unexpected balance response shape".to_string()
         }));
+    }
+
+    Ok(SubscriptionQuota {
+        tool: "coding_plan".to_string(),
+        credential_status: CredentialStatus::Valid,
+        credential_message: None,
+        success: true,
+        tiers,
+        extra_usage: None,
+        reset_credits: None,
+        credits_balance: None,
+        plan_name: None,
+        error: None,
+        queried_at: Some(now_millis()),
+    })
+}
+
+// ── 小米 MiMo Token Plan ─────────────────────────────────────
+
+/// MiMo 的周期时间是「UTC，`YYYY-MM-DD HH:mm:ss`」（无 `T`、无时区），WebKit 的
+/// `Date` 不认这种写法，这里转成 RFC 3339；已经是别的格式时照原样交给通用解析。
+fn mimo_period_time(value: &serde_json::Value) -> Option<String> {
+    if let Some(text) = value.as_str() {
+        if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(text.trim(), "%Y-%m-%d %H:%M:%S") {
+            return Some(naive.and_utc().to_rfc3339());
+        }
+    }
+    extract_reset_time(value)
+}
+
+/// 解析 `GET /v1/platform/token_plan`（mimo.mi.com/docs/zh-CN/api/asset/credits-get）。
+///
+/// `quota.total_credits`（本期总额，含补偿积分）/ `used_credits` / `remaining_credits`
+/// 折成一档用量百分比，本期截止 `period.end_at` 作重置时间。套餐有月付也有年付，
+/// 周期长短不固定，所以用通用的「额度」档，不冒充「每月」。
+fn parse_mimo_token_plan_tiers(body: &serde_json::Value) -> Vec<QuotaTier> {
+    let Some(quota) = body.get("quota") else {
+        return Vec::new();
+    };
+    let Some(total) = quota.get("total_credits").and_then(parse_f64) else {
+        return Vec::new();
+    };
+    if !total.is_finite() || total <= 0.0 {
+        return Vec::new();
+    }
+    let used = match quota.get("used_credits").and_then(parse_f64) {
+        Some(used) => used,
+        None => match quota.get("remaining_credits").and_then(parse_f64) {
+            Some(remaining) => total - remaining,
+            None => return Vec::new(),
+        },
+    };
+    vec![QuotaTier {
+        name: TIER_CREDITS.to_string(),
+        utilization: (used / total * 100.0).clamp(0.0, 100.0),
+        resets_at: body
+            .get("period")
+            .and_then(|period| period.get("end_at"))
+            .and_then(mimo_period_time),
+        used_value_usd: None,
+        max_value_usd: None,
+    }]
+}
+
+async fn query_mimo_token_plan(api_key: &str) -> Result<SubscriptionQuota, String> {
+    let client = crate::proxy::http_client::get();
+    let request = client
+        .get("https://token-plan-cn.xiaomimimo.com/v1/platform/token_plan")
+        .header("Authorization", format!("Bearer {api_key}"))
+        .header("Accept", "application/json")
+        .timeout(std::time::Duration::from_secs(15));
+    let body = match send_for_json(request).await? {
+        JsonReply::Body(body) => body,
+        // 401：Key 无效，或把按量付费的 sk- Key 用在了 Token Plan 上
+        JsonReply::Denied(reqwest::StatusCode::UNAUTHORIZED) => {
+            return Ok(expired_key_error(
+                "Authentication failed (HTTP 401): use the Token Plan API key (tp-...)"
+                    .to_string(),
+            ))
+        }
+        // 403：地区不支持或 Key 被风控，官方建议换一个新 Key
+        JsonReply::Denied(status) => {
+            return Ok(expired_key_error(format!(
+                "MiMo rejected this API key: region not supported or blocked by risk control (HTTP {status})"
+            )))
+        }
+        JsonReply::Failed(message) => return Ok(make_error(message)),
+    };
+
+    let tiers = parse_mimo_token_plan_tiers(&body);
+    if tiers.is_empty() {
+        return Ok(make_error(
+            "No Token Plan credits on this account".to_string(),
+        ));
     }
 
     Ok(SubscriptionQuota {
@@ -1810,6 +1911,7 @@ pub(crate) async fn query_coding_plan(
         CodingPlanProvider::OpencodeGo => query_opencode_go(api_key).await,
         CodingPlanProvider::CommandCode => query_command_code(api_key).await,
         CodingPlanProvider::OllamaCloud => query_ollama_cloud(api_key).await,
+        CodingPlanProvider::MimoTokenPlan => query_mimo_token_plan(api_key).await,
         // 火山已在上面的 AK/SK 分支提前返回，此处不可达。
         CodingPlanProvider::Volcengine => {
             unreachable!("volcengine handled via AK/SK branch above")
@@ -1822,12 +1924,13 @@ pub(crate) async fn query_coding_plan(
 mod tests {
     use super::{
         detect_provider, detect_provider_id, parse_afp_tiers, parse_coding_plan_tiers,
-        parse_command_code_quota, parse_minimax_tiers, parse_ollama_cloud_tiers,
-        parse_opencode_go_tiers, parse_zhipu_token_tiers, query_command_code_at, query_zhipu_at,
-        query_zhipu_team_at, volcengine_canonical_query, volcengine_is_auth_error_code,
-        volcengine_region, volcengine_response_error, volcengine_sign, zhipu_outcome_from_body,
-        zhipu_quota_base, CodingPlanOutcome, CodingPlanProvider, CredentialStatus, TIER_FIVE_HOUR,
-        TIER_MONTHLY, TIER_WEEKLY_LIMIT,
+        parse_command_code_quota, parse_mimo_token_plan_tiers, parse_minimax_tiers,
+        parse_ollama_cloud_tiers, parse_opencode_go_tiers, parse_zhipu_token_tiers,
+        query_command_code_at, query_zhipu_at, query_zhipu_team_at, volcengine_canonical_query,
+        volcengine_is_auth_error_code, volcengine_region, volcengine_response_error,
+        volcengine_sign, zhipu_outcome_from_body, zhipu_quota_base, CodingPlanOutcome,
+        CodingPlanProvider, CredentialStatus, TIER_CREDITS, TIER_FIVE_HOUR, TIER_MONTHLY,
+        TIER_WEEKLY_LIMIT,
     };
     use serde_json::json;
 
@@ -2280,6 +2383,75 @@ mod tests {
         ));
         assert!(detect_provider("https://opencode.ai/zen/v1").is_none());
         assert!(detect_provider("https://opencode.ai/inference/v1").is_none());
+    }
+
+    #[test]
+    fn mimo_token_plan_detects_plan_host_only() {
+        for base_url in [
+            "https://token-plan-cn.xiaomimimo.com/anthropic",
+            "https://token-plan-cn.xiaomimimo.com/v1",
+            "HTTPS://TOKEN-PLAN-CN.XIAOMIMIMO.COM/",
+        ] {
+            assert!(matches!(
+                detect_provider(base_url),
+                Some(CodingPlanProvider::MimoTokenPlan)
+            ));
+            assert_eq!(detect_provider_id(base_url), Some("mimo"));
+        }
+        // 按量付费地址走余额查询；中转站路径里带着套餐域名也不算
+        assert!(detect_provider("https://api.xiaomimimo.com/anthropic").is_none());
+        assert!(
+            detect_provider("https://relay.example.com/token-plan-cn.xiaomimimo.com/v1").is_none()
+        );
+        assert!(detect_provider("https://token-plan-cn.xiaomimimo.com.example.com/v1").is_none());
+    }
+
+    /// 官方文档示例原文（mimo.mi.com/docs/zh-CN/api/asset/credits-get，2026-11-03）。
+    #[test]
+    fn mimo_token_plan_maps_credits_to_one_tier_with_utc_period_end() {
+        let body = json!({
+            "object": "token_plan",
+            "plan_code": "pro",
+            "period": { "start_at": "2026-09-21 23:59:59", "end_at": "2027-09-21 23:59:59" },
+            "quota": {
+                "total_credits": 10000000,
+                "used_credits": 1500000,
+                "remaining_credits": 8500000
+            },
+            "auto_renew": false,
+            "claw_enabled": false
+        });
+        let tiers = parse_mimo_token_plan_tiers(&body);
+        assert_eq!(tiers.len(), 1);
+        assert_eq!(tiers[0].name, TIER_CREDITS);
+        assert!((tiers[0].utilization - 15.0).abs() < 1e-9);
+        assert_eq!(
+            tiers[0].resets_at.as_deref(),
+            Some("2027-09-21T23:59:59+00:00")
+        );
+
+        // 只给剩余也能算；超用封顶 100%
+        let tiers = parse_mimo_token_plan_tiers(&json!({
+            "quota": { "total_credits": 200, "remaining_credits": 50 }
+        }));
+        assert!((tiers[0].utilization - 75.0).abs() < 1e-9);
+        assert!(tiers[0].resets_at.is_none());
+        let tiers = parse_mimo_token_plan_tiers(&json!({
+            "quota": { "total_credits": 100, "used_credits": 120 }
+        }));
+        assert!((tiers[0].utilization - 100.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn mimo_token_plan_without_credits_has_no_tier() {
+        for body in [
+            json!({}),
+            json!({ "quota": { "total_credits": 0, "used_credits": 0 } }),
+            json!({ "quota": { "total_credits": 100 } }),
+            json!({ "error": { "message": "Invalid API key" } }),
+        ] {
+            assert!(parse_mimo_token_plan_tiers(&body).is_empty(), "{body}");
+        }
     }
 
     #[test]

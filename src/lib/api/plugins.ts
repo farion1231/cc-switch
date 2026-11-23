@@ -81,6 +81,9 @@ export const PLUGIN_CLI_NOT_INSTALLED = "PLUGIN_CLI_NOT_INSTALLED";
 /** Claude Code 要用户在终端里亲自确认市场声明的命令时后端返回的错误码（CC Switch 不代为同意）。 */
 export const PLUGIN_NEEDS_TERMINAL_CONFIRM = "PLUGIN_NEEDS_TERMINAL_CONFIRM";
 
+/** 插件装在 CC Switch 无法原地更新的位置（Antigravity 旧版的数字目录）时后端返回的错误码。 */
+export const PLUGIN_UPDATE_NEEDS_REINSTALL = "PLUGIN_UPDATE_NEEDS_REINSTALL";
+
 /** CLI 要求先登录账号（MiniMax Code 未登录时安装插件）；原样来自 CLI 的 stderr。 */
 export const PLUGIN_AUTH_REQUIRED = "PLUGIN_AUTH_REQUIRED";
 
