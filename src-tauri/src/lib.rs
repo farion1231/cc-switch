@@ -49,6 +49,8 @@ mod pi_config;
 mod prompt;
 mod prompt_files;
 mod provider;
+#[doc(hidden)]
+pub mod provider_bundle;
 mod provider_kind;
 mod proxy;
 mod services;

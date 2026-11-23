@@ -178,6 +178,35 @@ fn register_db_change_hook(conn: &Connection, cache: Arc<read_cache::ProxyReadCa
 }
 
 impl Database {
+    /// Connect to an existing native database without migrations, seeding or
+    /// other startup writes. An export uses a read-only SQLite connection.
+    pub(crate) fn open_for_provider_bundle(writable: bool) -> Result<Self, AppError> {
+        let path = get_app_config_dir().join("cc-switch.db");
+        let flags = if writable {
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
+        } else {
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
+        };
+        let conn = Connection::open_with_flags(&path, flags).map_err(|_| {
+            AppError::Config("Open CC Switch normally before transferring providers".into())
+        })?;
+        if Self::get_user_version(&conn)? != SCHEMA_VERSION {
+            return Err(AppError::Config(
+                "The configured CC Switch database is not at this release's schema version".into(),
+            ));
+        }
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
+        if writable {
+            conn.execute("PRAGMA foreign_keys = ON;", [])?;
+        }
+        let read_cache = Arc::new(read_cache::ProxyReadCache::default());
+        Ok(Self {
+            conn: Arc::new(Mutex::new(conn)),
+            log_count_cache: Arc::new(Mutex::new(None)),
+            read_cache,
+        })
+    }
+
     fn configure_connection(conn: &Connection) -> Result<(), AppError> {
         conn.execute_batch(
             "PRAGMA busy_timeout = 5000;

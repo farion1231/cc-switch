@@ -374,7 +374,16 @@ impl Database {
         let tx = conn
             .transaction()
             .map_err(|e| AppError::Database(e.to_string()))?;
+        Self::save_provider_row(&tx, app_type, provider)?;
+        tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
 
+    fn save_provider_row(
+        tx: &rusqlite::Transaction<'_>,
+        app_type: &AppType,
+        provider: &Provider,
+    ) -> Result<(), AppError> {
         let mut meta_clone = provider.meta.clone().unwrap_or_default();
         let endpoints = std::mem::take(&mut meta_clone.custom_endpoints);
         let mut meta_json = serde_json::to_string(&meta_clone)
@@ -491,8 +500,33 @@ impl Database {
             }
         }
 
-        tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
         Ok(())
+    }
+
+    /// All inputs have passed the native ProviderService preparation. Leave
+    /// existing provider rows and current pointers alone, including unreadable rows.
+    pub(crate) fn import_provider_bundle(
+        &self,
+        entries: &[(AppType, Provider)],
+    ) -> Result<(usize, usize), AppError> {
+        let mut conn = lock_conn!(self.conn);
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let mut imported = 0;
+        for (app, provider) in entries {
+            let duplicate: bool = tx.query_row(
+                "SELECT EXISTS (
+                   SELECT 1 FROM providers WHERE app_type = ?1 AND (id = ?2 OR name = ?3 COLLATE NOCASE)
+                 )",
+                params![app, provider.id, provider.name],
+                |row| row.get(0),
+            )?;
+            if !duplicate {
+                Self::save_provider_row(&tx, app, provider)?;
+                imported += 1;
+            }
+        }
+        tx.commit()?;
+        Ok((imported, entries.len() - imported))
     }
 
     pub fn delete_provider(&self, app_type: &AppType, id: &str) -> Result<(), AppError> {

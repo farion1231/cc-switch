@@ -6134,7 +6134,10 @@ impl ProviderService {
     }
 
     /// 新增供应商之前的规范化和校验，`add` 和 `add_without_switching` 共用。
-    fn prepare_new_provider(app_type: &AppType, provider: &mut Provider) -> Result<(), AppError> {
+    pub(crate) fn prepare_new_provider(
+        app_type: &AppType,
+        provider: &mut Provider,
+    ) -> Result<(), AppError> {
         // Normalize Claude model keys
         Self::normalize_provider_if_claude(app_type, provider);
         Self::validate_provider_settings(app_type, provider)?;
