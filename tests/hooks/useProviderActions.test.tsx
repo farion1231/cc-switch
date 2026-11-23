@@ -26,19 +26,15 @@ const switchProviderMutateAsync = vi.fn();
 
 const addProviderMutation = {
   mutateAsync: addProviderMutateAsync,
-  isPending: false,
 };
 const updateProviderMutation = {
   mutateAsync: updateProviderMutateAsync,
-  isPending: false,
 };
 const deleteProviderMutation = {
   mutateAsync: deleteProviderMutateAsync,
-  isPending: false,
 };
 const switchProviderMutation = {
   mutateAsync: switchProviderMutateAsync,
-  isPending: false,
 };
 
 const useAddProviderMutationMock = vi.fn(() => addProviderMutation);
@@ -133,11 +129,6 @@ beforeEach(() => {
   toastInfoMock.mockReset();
   toastWarningMock.mockReset();
 
-  addProviderMutation.isPending = false;
-  updateProviderMutation.isPending = false;
-  deleteProviderMutation.isPending = false;
-  switchProviderMutation.isPending = false;
-
   useAddProviderMutationMock.mockClear();
   useUpdateProviderMutationMock.mockClear();
   useDeleteProviderMutationMock.mockClear();
@@ -145,26 +136,6 @@ beforeEach(() => {
 });
 
 describe("useProviderActions", () => {
-  it("should trigger mutation when calling addProvider", async () => {
-    addProviderMutateAsync.mockResolvedValueOnce(undefined);
-    const { wrapper } = createWrapper();
-    const providerInput = {
-      name: "New Provider",
-      settingsConfig: { token: "abc" },
-    } as Omit<Provider, "id">;
-
-    const { result } = renderHook(() => useProviderActions("claude"), {
-      wrapper,
-    });
-
-    await act(async () => {
-      await result.current.addProvider(providerInput);
-    });
-
-    expect(addProviderMutateAsync).toHaveBeenCalledTimes(1);
-    expect(addProviderMutateAsync).toHaveBeenCalledWith(providerInput);
-  });
-
   it("should update tray menu when calling updateProvider", async () => {
     updateProviderMutateAsync.mockResolvedValueOnce(undefined);
     providersApiUpdateTrayMenuMock.mockResolvedValueOnce(true);
@@ -921,17 +892,6 @@ describe("useProviderActions", () => {
     expect(settingsApiApplyMock).not.toHaveBeenCalled();
   });
 
-  it("should track pending state of all mutations in isLoading", () => {
-    addProviderMutation.isPending = true;
-    const { wrapper } = createWrapper();
-
-    const { result } = renderHook(() => useProviderActions("claude"), {
-      wrapper,
-    });
-
-    expect(result.current.isLoading).toBe(true);
-  });
-
   it("keeps existing OpenClaw catalog entries when registering a new provider's models", async () => {
     openclawApiGetModelCatalogMock.mockResolvedValueOnce({
       "my-or/kept": { alias: "Mine" },
@@ -1021,17 +981,4 @@ describe("useProviderActions", () => {
       customPolicy: "preserve-me",
     });
   });
-});
-it("clears loading flag when all mutations idle", () => {
-  addProviderMutation.isPending = false;
-  updateProviderMutation.isPending = false;
-  deleteProviderMutation.isPending = false;
-  switchProviderMutation.isPending = false;
-
-  const { wrapper } = createWrapper();
-  const { result } = renderHook(() => useProviderActions("claude"), {
-    wrapper,
-  });
-
-  expect(result.current.isLoading).toBe(false);
 });

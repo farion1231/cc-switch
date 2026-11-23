@@ -42,7 +42,44 @@ pub(crate) fn provider_exists_in_live_config(
         AppType::Copilot => crate::copilot_config::provider_key_exists(provider_id),
         AppType::WorkBuddy => crate::workbuddy_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
-        _ => Ok(false),
+        // 切换式应用的 live 只有当前那一家，没有按标识存的条目。
+        AppType::Claude
+        | AppType::ClaudeDesktop
+        | AppType::Codex
+        | AppType::Gemini
+        | AppType::GrokBuild
+        | AppType::Agy => Ok(false),
+    }
+}
+
+/// 只从累加式应用的 live 配置里删掉这家供应商的条目，不动 DB。
+///
+/// Pi、Omp、Kimi、DSH、Copilot 的条目和 DB 由各自的服务在同一个操作里提交，调用方在走到
+/// 这里之前就分流了；切换式应用没有按标识存的条目。这些应用都报错，不静默跳过。
+pub(crate) fn remove_provider_from_live(
+    app_type: &AppType,
+    provider_id: &str,
+) -> Result<(), AppError> {
+    match app_type {
+        AppType::OpenCode => remove_opencode_provider_from_live(provider_id),
+        AppType::OpenClaw => remove_openclaw_provider_from_live(provider_id),
+        AppType::Hermes => remove_hermes_provider_from_live(provider_id),
+        AppType::Mcode => crate::mcode_config::remove_provider(provider_id),
+        AppType::WorkBuddy => crate::workbuddy_config::remove_provider(provider_id),
+        AppType::Claude
+        | AppType::ClaudeDesktop
+        | AppType::Codex
+        | AppType::Gemini
+        | AppType::GrokBuild
+        | AppType::Pi
+        | AppType::Kimi
+        | AppType::Dsh
+        | AppType::Agy
+        | AppType::Omp
+        | AppType::Copilot => Err(AppError::Message(format!(
+            "App {} does not support remove from live config",
+            app_type.as_str()
+        ))),
     }
 }
 
@@ -1361,7 +1398,7 @@ pub fn should_import_default_config_on_startup(
 ///
 /// This is specific to OpenCode's additive mode - removing a provider
 /// from the opencode.json file.
-pub(crate) fn remove_opencode_provider_from_live(provider_id: &str) -> Result<(), AppError> {
+fn remove_opencode_provider_from_live(provider_id: &str) -> Result<(), AppError> {
     use crate::opencode_config;
 
     // Check if OpenCode config directory exists
@@ -1632,7 +1669,7 @@ pub fn import_hermes_providers_from_live(state: &AppState) -> Result<usize, AppE
 ///
 /// This removes a specific provider from ~/.hermes/config.yaml
 /// without affecting other providers in the file.
-pub fn remove_hermes_provider_from_live(provider_id: &str) -> Result<(), AppError> {
+fn remove_hermes_provider_from_live(provider_id: &str) -> Result<(), AppError> {
     use crate::hermes_config;
 
     // Check if Hermes config directory exists
@@ -1651,7 +1688,7 @@ pub fn remove_hermes_provider_from_live(provider_id: &str) -> Result<(), AppErro
 ///
 /// This removes a specific provider from ~/.openclaw/openclaw.json
 /// without affecting other providers in the file.
-pub fn remove_openclaw_provider_from_live(provider_id: &str) -> Result<(), AppError> {
+fn remove_openclaw_provider_from_live(provider_id: &str) -> Result<(), AppError> {
     use crate::openclaw_config;
 
     // Check if OpenClaw config directory exists

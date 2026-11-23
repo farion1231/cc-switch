@@ -267,32 +267,8 @@ describe("RequestLogTable", () => {
             latencyMs: 10_000,
             dataSource: "pi_session",
           },
-          // Antigravity 原生库自带毫秒级首字与流式生成计时：扣首字算精确速度，不加 ≈
-          // 2900 / (69 - 43) ≈ 112 tok/s
-          {
-            ...base,
-            appType: "agy",
-            providerId: "_agy_session",
-            providerName: "Antigravity (Session)",
-            requestId: "agy-native-exact",
-            outputTokens: 2_900,
-            latencyMs: 69_000,
-            firstTokenMs: 43_000,
-            dataSource: "agy_session",
-          },
-          // Antigravity 原生计时未读到时，不回退到估算
-          {
-            ...base,
-            appType: "agy",
-            providerId: "_agy_session",
-            providerName: "Antigravity (Session)",
-            requestId: "agy-untimed",
-            outputTokens: 900,
-            latencyMs: 0,
-            dataSource: "agy_session",
-          },
         ],
-        total: 8,
+        total: 6,
         page: 0,
         pageSize: 20,
       },
@@ -309,7 +285,7 @@ describe("RequestLogTable", () => {
     );
 
     const rows = screen.getAllByRole("row").slice(1);
-    expect(rows).toHaveLength(8);
+    expect(rows).toHaveLength(6);
     // 最后两列：速度、首字
     const speedCell = (row: HTMLElement) =>
       row.children[row.children.length - 2];
@@ -340,13 +316,6 @@ describe("RequestLogTable", () => {
       "usage.estimatedTimingTip",
     );
     expect(firstTokenCell(rows[5])).toHaveTextContent("—");
-    expect(speedCell(rows[6])).toHaveTextContent("112tok/s");
-    expect(speedCell(rows[6])).not.toHaveTextContent("≈");
-    expect(speedCell(rows[6])).toHaveAttribute("title", "usage.timingTip");
-    expect(firstTokenCell(rows[6])).toHaveTextContent("43.0s");
-    expect(firstTokenCell(rows[6])).not.toHaveTextContent("≈");
-    expect(speedCell(rows[7])).toHaveTextContent("—");
-    expect(firstTokenCell(rows[7])).toHaveTextContent("—");
     expect(
       screen.getByRole("columnheader", { name: /usage.firstToken/ }),
     ).toBeInTheDocument();

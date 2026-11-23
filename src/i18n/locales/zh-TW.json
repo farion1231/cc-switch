@@ -60,7 +60,9 @@
   "apiKeyInput": {
     "placeholder": "請輸入 API Key",
     "show": "顯示 API Key",
-    "hide": "隱藏 API Key"
+    "hide": "隱藏 API Key",
+    "copied": "API Key 已複製",
+    "copyFailed": "API Key 複製失敗"
   },
   "jsonEditor": {
     "mustBeObject": "設定必須是 JSON 物件，不能是陣列或其他類型",
@@ -606,6 +608,9 @@
       "safetyBackupId": "安全備份 ID",
       "intervalLabel": "自動備份間隔",
       "retainLabel": "備份保留數量",
+      "maxTotalLabel": "備份總大小上限",
+      "maxTotalUnlimited": "不限制",
+      "maxTotalHint": "預設不限制。設定後，備份資料夾超過此大小時，會從最舊的備份開始刪除。最新的一份備份和還原正在使用的備份一律保留，所以單份備份比上限還大時，資料夾仍可能超過上限。在下次備份或每日維護時生效。",
       "intervalDisabled": "停用",
       "intervalHours": "{{hours}} 小時",
       "intervalDays": "{{days}} 天",
@@ -2116,6 +2121,7 @@
     "selectAccount": "選擇帳號",
     "selectAccountPlaceholder": "選擇 xAI 帳號",
     "useDefaultAccount": "使用預設帳號",
+    "account": "xAI 帳號",
     "accounts": "xAI 帳號",
     "defaultAccount": "預設",
     "expired": "憑證已失效",
@@ -2722,14 +2728,14 @@
     "speedValue": "{{value}} tok/s",
     "speedEstimatedValue": "≈ {{value}} tok/s",
     "speedHelpTitle": "速度怎麼算",
-    "speedHelp": "每秒輸出多少 token，從首字算到結束。統計經路由服務或具 Antigravity 原生計時、輸出不少於 100 token 的請求；思考過程不外露的模型是近似值。帶 ≈ 的是按其他工作階段日誌的時間戳記估算的：等首字的時間也算在內，所以偏低；只估輸出不少於 200 token 的請求。",
+    "speedHelp": "每秒輸出多少 token，從首字算到結束。只算經路由服務、輸出不少於 100 token 的請求；思考過程不外露的模型是近似值。帶 ≈ 的是沒開路由時按工作階段日誌的時間戳記估算的：等首字的時間也算在內，所以偏低；只估輸出不少於 200 token 的請求。",
     "speedSumHelpTitle": "彙總速度怎麼算",
-    "speedSumHelp": "輸出 token 總數除以生成時間總和，不是逐筆平均，免得短請求把數字帶歪。統計經路由服務或具 Antigravity 原生計時、輸出不少於 100 token 的請求。帶 ≈ 的是按其他工作階段日誌估算的（含首字等待，只估輸出不少於 200 token 的請求），這一列沒有精確計時資料時才顯示。",
+    "speedSumHelp": "輸出 token 總數除以生成時間總和，不是逐筆平均，免得短請求把數字帶歪。只算經路由服務、輸出不少於 100 token 的請求。帶 ≈ 的是按工作階段日誌估算的（含首字等待，只估輸出不少於 200 token 的請求），這一列沒有路由資料時才顯示。",
     "firstToken": "首字",
     "firstTokenHelpTitle": "首字時間",
-    "firstTokenHelp": "從路由服務收到請求（或 Antigravity 原生記錄）到上游開始輸出的時間。帶 ≈ 的是按其他工作階段日誌的時間戳記推出來的：起點是上一筆日誌寫入的時刻，含用戶端組裝請求的時間，所以偏高；Claude Code 只有回覆以思考開頭時推得出，Codex 只有新版日誌、而且回覆不是一開頭就呼叫工具時推得出。",
+    "firstTokenHelp": "從路由服務收到請求，到上游開始輸出的時間。帶 ≈ 的是沒開路由時按工作階段日誌的時間戳記推出來的：起點是上一筆日誌寫入的時刻，含用戶端組裝請求的時間，所以偏高；Claude Code 只有回覆以思考開頭時推得出，Codex 只有新版日誌、而且回覆不是一開頭就呼叫工具時推得出。",
     "firstTokenSumHelpTitle": "首字時間怎麼算",
-    "firstTokenSumHelp": "從路由服務收到請求（或 Antigravity 原生記錄）到上游開始輸出的時間。取這一列所有請求的中位數，不會被個別排隊、冷啟動的慢請求拉高。只算經路由服務或 Antigravity 原生計時的成功請求；超過 30 天、已併入每日彙總的請求不計。帶 ≈ 的是按其他工作階段日誌推出來的（偏高，只有部分請求推得出），這一列沒有精確計時資料時才顯示。",
+    "firstTokenSumHelp": "從路由服務收到請求，到上游開始輸出的時間。取這一列所有請求的中位數，不會被個別排隊、冷啟動的慢請求拉高。只算經路由服務、成功的串流請求；超過 30 天、已併入每日彙總的請求不計。帶 ≈ 的是按工作階段日誌推出來的（偏高，只有部分請求推得出），這一列沒有路由資料時才顯示。",
     "timingTip": "耗時 {{duration}}s · 首字 {{ttft}}s",
     "estimatedTimingTip": "耗時約 {{duration}}s（按工作階段日誌的時間戳記估算，含首字等待）",
     "estimatedTimingTipWithFirstToken": "耗時約 {{duration}}s · 首字約 {{ttft}}s（按工作階段日誌的時間戳記估算）",
@@ -3755,7 +3761,10 @@
       "command": "命令",
       "args": "參數",
       "env": "環境",
-      "url": "位址"
+      "url": "位址",
+      "type": "類型",
+      "cwd": "工作目錄",
+      "headers": "標頭"
     },
     "prompt": {
       "title": "匯入系統提示詞",
@@ -3789,7 +3798,8 @@
     "risk": {
       "envHijack": "該設定包含可改變處理程序載入行為的環境變數（例如注入動態程式庫、替換 CA 憑證），請確認來源可信。",
       "privateEndpoint": "該位址指向本機或內部網路。若非你自建的本機服務，請勿匯入。",
-      "shellCommand": "該設定透過 shell 執行整段命令，實際執行的內容在參數裡，請逐行核對。"
+      "shellCommand": "該設定透過 shell 執行整段命令，實際執行的內容在參數裡，請逐行核對。",
+      "mcpDangerousField": "該 MCP 設定包含高風險擴充欄位，可能會讀取主機環境變數並外傳（如 bearer_token_env_var、env_http_headers、env_vars）、執行輔助指令（http_headers_helper）或劫持工作目錄（cwd）。請務必確認來源完全可信。"
     }
   },
   "iconPicker": {
@@ -5059,7 +5069,7 @@
   "pluginsPage": {
     "title": "外掛",
     "helpTitle": "外掛",
-    "help": "安裝、啟用、移除 Claude Code、Codex、Grok Build、MiniMax Code、OpenClaw 和 Pi 的外掛。CC Switch 呼叫各應用程式自帶的命令列，效果和在終端機執行它的外掛指令相同。Pi 的外掛就是 Pi 套件，目錄取自 npm。",
+    "help": "安裝、啟用、移除 Claude Code、Codex、Grok Build、MiniMax Code、OpenClaw、Pi 和 Antigravity 的外掛。CC Switch 呼叫各應用程式自帶的命令列，效果和在終端機執行它的外掛指令相同。Pi 的外掛就是 Pi 套件，目錄取自 npm。",
     "appAria": "應用程式",
     "viewAria": "外掛檢視",
     "viewInstalled": "已安裝",
@@ -5119,9 +5129,11 @@
     "confirmRemoveMarketBody": "{{app}} 將不再列出這個市集裡的外掛，從這個市集安裝的外掛也可能一併解除安裝。之後可以重新加入。",
     "toast": {
       "installed": "已安裝 {{name}}",
+      "installedNeedsConfig": "已安裝但預設停用。請在 {{app}} 中執行 /plugin 設定其 MCP 伺服器後再啟用。",
       "installFailed": "安裝 {{name}} 失敗",
       "installNeedsTerminal": "這個外掛安裝時要在本機執行市集宣告的命令，CC Switch 不會替你同意。請在終端機裡執行 {{command}}，確認後再回來重新整理。",
       "authRequired": "{{app}} 需要先登入帳號。請在終端機裡執行 {{command}} 登入，再回來重試。",
+      "pluginInUse": "該外掛正被其他 {{app}} / {{cli}} 行程佔用（如執行中的工作階段、Hub 或背景服務）。請關閉執行中的工作階段或相關行程後重試。",
       "uninstalled": "已解除安裝 {{name}}",
       "uninstallFailed": "解除安裝 {{name}} 失敗",
       "enabled": "已啟用 {{name}}",

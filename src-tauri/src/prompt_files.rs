@@ -90,17 +90,10 @@ fn get_base_dir_with_fallback(
     primary_path: PathBuf,
     fallback_dir: &str,
 ) -> Result<PathBuf, AppError> {
-    primary_path
+    Ok(primary_path
         .parent()
         .map(|p| p.to_path_buf())
-        .or_else(|| dirs::home_dir().map(|h| h.join(fallback_dir)))
-        .ok_or_else(|| {
-            AppError::localized(
-                "home_dir_not_found",
-                format!("无法确定 {fallback_dir} 配置目录：用户主目录不存在"),
-                format!("Cannot determine {fallback_dir} config directory: user home not found"),
-            )
-        })
+        .unwrap_or_else(|| crate::config::get_home_dir().join(fallback_dir)))
 }
 
 #[cfg(test)]

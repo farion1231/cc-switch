@@ -1,6 +1,6 @@
 # 插件 CLI 输出样例
 
-插件页靠五家 CLI 的 `--json`（和少量纯文本）输出工作。这里是各家 CLI 的真实输出，
+插件页靠各家 CLI 的 `--json`（和少量纯文本）输出工作。这里是各家 CLI 的真实输出，
 `../cli_fixtures.rs` 用它们跑解析：CLI 升级改了格式，测试先报出来。
 
 | 目录 | CLI 版本 | 抓取日期 |
@@ -10,6 +10,7 @@
 | `grok-1.0.70/` | grok 1.0.70 (f50904eaee6c) | 2026-11-06 |
 | `mcode-0.7.4/` | MiniMax Code 0.7.4 | 2026-11-06 |
 | `openclaw-2026.11.1/` | OpenClaw 2026.11.1 (4ffdd20) | 2026-11-06 |
+| `agy-1.5.14/` | agy 1.5.14 | 2026-11-23 |
 
 ## 怎么抓的
 
@@ -26,6 +27,7 @@
   和 `locked`（`NOT_AVAILABLE`）。
 - MiniMax Code：官方市场。安装要登录（`add-auth-required.stderr`），所以没有已安装的样例。
 - OpenClaw：从 ClawHub 装了 `@openclaw/airtable`（`origin: global`），其余是随程序自带的。
+- Antigravity：在临时 `HOME`/`USERPROFILE` 下装了官方市场 `gcalendar`、合作伙伴市场需要配置 MCP 变量的 `arize-skills`（默认停用）和本地插件 `hello`；目录样例取自 `gstatic.com` 的官方与合作伙伴 `marketplace.json`。
 
 ## 整理过的地方
 
