@@ -1,5 +1,5 @@
 use serde_json::Value;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{OnceLock, RwLock};
 use tauri_plugin_store::StoreExt;
 
@@ -7,6 +7,7 @@ use crate::error::AppError;
 
 /// Store 中的键名
 const STORE_KEY_APP_CONFIG_DIR: &str = "app_config_dir_override";
+const APP_PATHS_STORE: &str = "app_paths.json";
 
 /// 缓存当前的 app_config_dir 覆盖路径，避免存储 AppHandle
 static APP_CONFIG_DIR_OVERRIDE: OnceLock<RwLock<Option<PathBuf>>> = OnceLock::new();
@@ -27,7 +28,7 @@ pub fn get_app_config_dir_override() -> Option<PathBuf> {
 }
 
 fn read_override_from_store(app: &tauri::AppHandle) -> Option<PathBuf> {
-    let store = match app.store_builder("app_paths.json").build() {
+    let store = match app.store_builder(APP_PATHS_STORE).build() {
         Ok(store) => store,
         Err(e) => {
             log::warn!("无法创建 Store: {e}");
@@ -35,7 +36,11 @@ fn read_override_from_store(app: &tauri::AppHandle) -> Option<PathBuf> {
         }
     };
 
-    match store.get(STORE_KEY_APP_CONFIG_DIR) {
+    resolve_override(store.get(STORE_KEY_APP_CONFIG_DIR))
+}
+
+fn resolve_override(value: Option<Value>) -> Option<PathBuf> {
+    match value {
         Some(Value::String(path_str)) => {
             let path_str = path_str.trim();
             if path_str.is_empty() {
@@ -70,13 +75,39 @@ pub fn refresh_app_config_dir_override(app: &tauri::AppHandle) -> Option<PathBuf
     value
 }
 
+/// The store plugin resolves relative filenames under Tauri's AppData directory.
+/// Read the same JSON without creating a Tauri application for CLI commands.
+pub(crate) fn refresh_app_config_dir_override_headless() -> Result<(), AppError> {
+    let config: Value = serde_json::from_str(include_str!("../tauri.conf.json"))
+        .map_err(|error| AppError::json("tauri.conf.json", error))?;
+    let identifier = config["identifier"]
+        .as_str()
+        .ok_or_else(|| AppError::Config("Missing CC Switch application identifier".into()))?;
+    let directory = dirs::data_dir()
+        .ok_or_else(|| {
+            AppError::Config("Cannot resolve the CC Switch application data directory".into())
+        })?
+        .join(identifier);
+    refresh_app_config_dir_override_from_file(&directory.join(APP_PATHS_STORE))
+}
+
+fn refresh_app_config_dir_override_from_file(path: &Path) -> Result<(), AppError> {
+    let mut values: serde_json::Map<String, Value> = match std::fs::read(path) {
+        Ok(bytes) => serde_json::from_slice(&bytes).map_err(|error| AppError::json(path, error))?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Default::default(),
+        Err(error) => return Err(AppError::io(path, error)),
+    };
+    update_cached_override(resolve_override(values.remove(STORE_KEY_APP_CONFIG_DIR)));
+    Ok(())
+}
+
 /// 写入 app_config_dir 到 Tauri Store
 pub fn set_app_config_dir_to_store(
     app: &tauri::AppHandle,
     path: Option<&str>,
 ) -> Result<(), AppError> {
     let store = app
-        .store_builder("app_paths.json")
+        .store_builder(APP_PATHS_STORE)
         .build()
         .map_err(|e| AppError::Message(format!("创建 Store 失败: {e}")))?;
 
@@ -129,7 +160,13 @@ pub fn migrate_app_config_dir_from_settings(app: &tauri::AppHandle) -> Result<()
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_path;
+    use super::{
+        get_app_config_dir_override, refresh_app_config_dir_override_from_file, resolve_path,
+        update_cached_override, PathBuf, APP_PATHS_STORE,
+    };
+    use crate::app_config::AppType;
+    use crate::database::Database;
+    use crate::provider::Provider;
     use crate::test_support::EnvVars;
 
     #[test]
@@ -144,5 +181,40 @@ mod tests {
             resolve_path(r"~\custom\dir"),
             temp.path().join(r"custom\dir")
         );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn headless_store_override_selects_the_configured_database() {
+        struct RestoreOverride(Option<PathBuf>);
+        impl Drop for RestoreOverride {
+            fn drop(&mut self) {
+                update_cached_override(self.0.take());
+            }
+        }
+        let _restore = RestoreOverride(get_app_config_dir_override());
+        let home = tempfile::tempdir().unwrap();
+        let _env = EnvVars::new().set("CC_SWITCH_TEST_HOME", home.path());
+        let configured = home.path().join("configured");
+        std::fs::create_dir(&configured).unwrap();
+        let store = home.path().join(APP_PATHS_STORE);
+        std::fs::write(&store, r#"{"app_config_dir_override":" ~/configured "}"#).unwrap();
+        refresh_app_config_dir_override_from_file(&store).unwrap();
+        assert_eq!(crate::config::get_app_config_dir(), configured);
+
+        let db = Database::init().unwrap();
+        let provider = Provider::with_id(
+            "override-fixture".into(),
+            "Configured provider".into(),
+            serde_json::json!({}),
+            None,
+        );
+        db.save_provider(&AppType::Claude, &provider).unwrap();
+        let cli = Database::open_for_provider_bundle(false).unwrap();
+        assert!(cli
+            .get_provider_by_id("override-fixture", &AppType::Claude)
+            .unwrap()
+            .is_some());
+        assert!(!home.path().join(".cc-switch/cc-switch.db").exists());
     }
 }

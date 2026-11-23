@@ -13,7 +13,7 @@ use crate::error::AppError;
 use crate::live::{engine::DeviceStore, project::claude::ClaudeProjection};
 use crate::mode::state::{AppLiveState, LiveState};
 use crate::provider::{ClaudeDesktopMode, Provider, ProviderMeta};
-use crate::proxy::model_mapper::strip_one_m_suffix_for_upstream;
+use crate::proxy::providers::GeminiAdapter;
 use crate::services::ProviderService;
 
 const VERSION: u32 = 1;
@@ -300,7 +300,10 @@ fn portable_fields(
             (include_credentials
                 && !token.is_empty()
                 && !token.starts_with("PROXY_MANAGED")
-                && !token.chars().any(char::is_control))
+                && !token.chars().any(char::is_control)
+                && GeminiAdapter::new()
+                    .parse_oauth_credentials(token)
+                    .is_none())
             .then_some(Value::String(token.into()))
         } else {
             portable_model_field(&key, value)
@@ -324,52 +327,39 @@ fn portable_provider(
     }
     let include_credentials = include_credentials && !provider.uses_managed_account_auth();
     let source = &provider.settings_config;
-    let (top, env) = match app {
-        PortableApp::Claude => {
-            let projection = ClaudeProjection::of(source);
-            (
-                projection
-                    .top
-                    .into_iter()
-                    .filter(|(key, _)| {
-                        matches!(
-                            key.as_str(),
-                            "model"
-                                | "fallbackModel"
-                                | "modelOverrides"
-                                | "primaryModel"
-                                | "smallFastModel"
-                                | "advisorModel"
-                                | "apiBaseUrl"
-                        )
-                    })
-                    .collect::<Vec<_>>(),
-                projection
-                    .env
-                    .into_iter()
-                    .chain(projection.exclusive)
-                    .filter(|(key, _)| portable_env(key))
-                    .collect::<Vec<_>>(),
-            )
-        }
-        PortableApp::ClaudeDesktop => (
-            source
-                .as_object()
-                .unwrap()
-                .iter()
-                .filter(|(key, _)| DESKTOP_FIELDS.contains(&key.as_str()))
-                .map(|(key, value)| (key.clone(), value.clone()))
-                .collect(),
-            source
-                .get("env")
-                .and_then(Value::as_object)
-                .into_iter()
-                .flatten()
-                .filter(|(key, _)| portable_env(key))
-                .map(|(key, value)| (key.clone(), value.clone()))
-                .collect(),
-        ),
+    let top: Vec<_> = match app {
+        PortableApp::Claude => ClaudeProjection::of(source)
+            .top
+            .into_iter()
+            .filter(|(key, _)| {
+                matches!(
+                    key.as_str(),
+                    "model"
+                        | "fallbackModel"
+                        | "modelOverrides"
+                        | "primaryModel"
+                        | "smallFastModel"
+                        | "advisorModel"
+                        | "apiBaseUrl"
+                )
+            })
+            .collect(),
+        PortableApp::ClaudeDesktop => source
+            .as_object()
+            .unwrap()
+            .iter()
+            .filter(|(key, _)| DESKTOP_FIELDS.contains(&key.as_str()))
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect(),
     };
+    // The live projection excludes credential aliases used only by the proxy.
+    let env = source
+        .get("env")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flatten()
+        .filter(|(key, _)| portable_env(key))
+        .map(|(key, value)| (key.clone(), value.clone()));
     let mut settings = portable_fields(top, include_credentials)?;
     settings.insert(
         "env".into(),
@@ -515,11 +505,9 @@ fn make_profile(
         (PortableApp::Claude, Kind::Aggregation, Some(key), Some(model)) => {
             crate::mode::stack::claude_models(key, provider)
                 .into_iter()
-                .find(|entry| {
-                    entry.id == model && model_id(strip_one_m_suffix_for_upstream(&entry.upstream))
-                })
+                .find(|entry| entry.id == model && model_id(&entry.upstream))
                 .map(|entry| SelectedModel {
-                    upstream: strip_one_m_suffix_for_upstream(&entry.upstream).to_owned(),
+                    upstream: entry.upstream,
                     one_m: entry.one_m,
                 })
         }
@@ -620,10 +608,7 @@ fn validated_bundle(mut bundle: Bundle) -> Result<Bundle, AppError> {
                 && config.stack_key.as_ref().is_some_and(|key| {
                     crate::mode::stack::claude_models(key, original)
                         .into_iter()
-                        .any(|entry| {
-                            strip_one_m_suffix_for_upstream(&entry.upstream) == model.upstream
-                                && entry.one_m == model.one_m
-                        })
+                        .any(|entry| entry.upstream == model.upstream && entry.one_m == model.one_m)
                 });
             if !valid {
                 return Err(invalid(
@@ -724,7 +709,12 @@ fn import_bundle(db: &Database, bundle: &Bundle) -> Result<Value, AppError> {
 pub fn run_cli(args: &[String]) -> std::process::ExitCode {
     let command = args.first().map(String::as_str).unwrap_or("");
     let result = if args.len() == 1 {
-        run(command, io::stdin().lock())
+        (|| {
+            if matches!(command, "list" | "export" | "import") {
+                crate::app_store::refresh_app_config_dir_override_headless()?;
+            }
+            run(command, io::stdin().lock())
+        })()
     } else {
         Err(invalid(
             "Usage: cc-switch provider-bundle list|export|preview|import",
@@ -820,7 +810,7 @@ mod tests {
         assert!(profile.kind == Kind::Aggregation);
         assert_eq!(
             profile.config.selected_model.as_ref().unwrap().upstream,
-            "claude-opus-5-5"
+            "claude-opus-5-5[1m]"
         );
         assert!(profile.config.selected_model.as_ref().unwrap().one_m);
         assert_eq!(
@@ -844,6 +834,103 @@ mod tests {
         assert!(explicit.settings_config["env"]
             .get("CLAUDE_CODE_OAUTH_TOKEN")
             .is_none());
+    }
+
+    #[test]
+    fn proxy_credentials_round_trip_only_with_opt_in() {
+        let source = Database::memory().unwrap();
+        let destination = Database::memory().unwrap();
+        let state = LiveState::default();
+        for (key, format) in [
+            ("OPENROUTER_API_KEY", "openai_chat"),
+            ("OPENAI_API_KEY", "openai_responses"),
+            ("GEMINI_API_KEY", "gemini_native"),
+        ] {
+            let mut provider = provider(key, key);
+            let env = provider.settings_config["env"].as_object_mut().unwrap();
+            env.remove("ANTHROPIC_AUTH_TOKEN");
+            env.insert(key.into(), json!("synthetic-api-key"));
+            provider.meta.as_mut().unwrap().api_format = Some(format.into());
+            source.save_provider(&AppType::Claude, &provider).unwrap();
+
+            let request = |include_credentials| ExportRequest {
+                profiles: vec![Selection {
+                    app: PortableApp::Claude,
+                    id: key.into(),
+                }],
+                include_credentials,
+            };
+            let redacted = export_selected(&source, &state, request(false), None).unwrap();
+            assert!(!has_credential(&redacted.profiles[0]));
+            let exported = export_selected(&source, &state, request(true), None).unwrap();
+            let bundle = validated_bundle(exported).unwrap();
+            assert!(bundle.profiles[0].kind == Kind::Routing);
+            assert!(summary(&bundle.profiles[0]).importable);
+
+            let result = import_bundle(&destination, &bundle).unwrap();
+            assert_eq!(result["imported"], 1, "{key}");
+            let imported = destination
+                .get_provider_by_id(key, &AppType::Claude)
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                imported.settings_config["env"][key], "synthetic-api-key",
+                "{key}"
+            );
+        }
+    }
+
+    #[test]
+    fn gemini_oauth_credentials_are_removed_from_export_preview_and_import() {
+        for (key, credential) in [
+            ("ANTHROPIC_API_KEY", " ya29.synthetic-access-token "),
+            (
+                "GEMINI_API_KEY",
+                r#"{"refresh_token":"synthetic-refresh","client_secret":"synthetic-secret"}"#,
+            ),
+            (
+                "ANTHROPIC_AUTH_TOKEN",
+                r#"{"access_token":"synthetic-access","client_secret":"synthetic-secret"}"#,
+            ),
+        ] {
+            let mut provider = provider("gemini", "Gemini");
+            provider.meta.as_mut().unwrap().api_format = Some("gemini_native".into());
+            let env = provider.settings_config["env"].as_object_mut().unwrap();
+            env.remove("ANTHROPIC_AUTH_TOKEN");
+            env.insert(key.into(), json!(credential));
+
+            let pair = Selection {
+                app: PortableApp::Claude,
+                id: provider.id.clone(),
+            };
+            let mut exported =
+                make_profile(&pair, &provider, &LiveState::default(), true, None).unwrap();
+            assert!(exported.config.provider.settings_config["env"]
+                .get(key)
+                .is_none());
+            assert!(!has_credential(&exported));
+
+            // A manually produced bundle containing the same OAuth value must
+            // also remain non-importable when previewed or imported.
+            exported.config.provider = provider;
+            let bundle = Bundle {
+                version: VERSION,
+                source: SOURCE.into(),
+                profiles: vec![exported],
+            };
+            let input = serde_json::to_vec(&bundle).unwrap();
+            let preview = run("preview", input.as_slice()).unwrap();
+            assert_eq!(preview["profiles"][0]["hasCredential"], false);
+            assert_eq!(preview["profiles"][0]["reason"], "credential-required");
+            let db = Database::memory().unwrap();
+            let bundle = validated_bundle(bundle).unwrap();
+            let imported = import_bundle(&db, &bundle).unwrap();
+            assert_eq!(imported["imported"], 0);
+            assert_eq!(
+                imported["skippedProfiles"][0]["reason"],
+                "credential-required"
+            );
+        }
     }
 
     #[test]
