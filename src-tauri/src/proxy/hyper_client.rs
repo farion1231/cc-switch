@@ -3,7 +3,11 @@
 //! Uses raw TCP/TLS writes to preserve exact original header name casing.
 //! Supports HTTP CONNECT tunneling through upstream proxies.
 //! Falls back to hyper-util Client (title-case headers) when raw write is not feasible.
+//! Idle upstream connections are reused through `upstream_pool`.
 
+use super::upstream_pool::{
+    self, PoolKey, PooledIo, PooledStream, RawRequest, TrackedBody, UpstreamPool,
+};
 use super::ProxyError;
 use bytes::Bytes;
 use futures::{stream::Stream, StreamExt};
@@ -81,7 +85,7 @@ pub(crate) const MAX_RESPONSE_BODY_BYTES: usize = 128 * 1024 * 1024;
 /// The hyper variant is used for the main (direct) path with header-case preservation.
 /// The reqwest variant is the fallback when an upstream HTTP/SOCKS5 proxy is configured.
 pub enum ProxyResponse {
-    Hyper(hyper::Response<hyper::body::Incoming>),
+    Hyper(hyper::Response<TrackedBody>),
     Reqwest(reqwest::Response),
     Buffered {
         status: http::StatusCode,
@@ -331,7 +335,8 @@ pub async fn send_request(
             ))
         })?;
 
-    Ok(ProxyResponse::Hyper(resp))
+    // Not tied to the pool: this body ends with its own pooled hyper-util connection.
+    Ok(ProxyResponse::Hyper(resp.map(TrackedBody::untracked)))
 }
 
 /// TCP or TLS stream returned by `connect_via_proxy`.
@@ -339,7 +344,7 @@ pub async fn send_request(
 /// When the proxy URL uses `https://`, the connection to the proxy itself is
 /// TLS-wrapped before sending the CONNECT request.  The enum lets
 /// `send_raw_request` work with either variant generically.
-enum ProxyStream {
+pub(crate) enum ProxyStream {
     Tcp(tokio::net::TcpStream),
     Tls(Box<tokio_rustls::client::TlsStream<tokio::net::TcpStream>>),
 }
@@ -395,6 +400,10 @@ impl tokio::io::AsyncWrite for ProxyStream {
 /// When `proxy_url` is provided, establishes an HTTP CONNECT tunnel through
 /// the proxy first, then performs TLS + raw write through the tunnel.
 /// This preserves header casing even when an upstream proxy is configured.
+///
+/// The connection comes from the keep-alive pool (`upstream_pool`) when one is idle
+/// for this exact target, otherwise it is established here. TLS goes on before any
+/// request byte is written, so a pooled connection is always a complete TLS session.
 async fn send_raw_request(
     uri: &http::Uri,
     method: &http::Method,
@@ -403,8 +412,6 @@ async fn send_raw_request(
     body: &[u8],
     proxy_url: Option<&str>,
 ) -> Result<ProxyResponse, ProxyError> {
-    use tokio::io::AsyncWriteExt;
-
     let scheme = uri.scheme_str().unwrap_or("https");
     let host = uri
         .host()
@@ -417,47 +424,40 @@ async fn send_raw_request(
     // Build raw HTTP request bytes
     let raw = build_raw_request(method, path_and_query, headers, original_cases, body);
 
-    // Establish TCP connection — either direct or through HTTP CONNECT proxy
-    let stream = if let Some(proxy) = proxy_url {
-        connect_via_proxy(proxy, host, port).await?
-    } else {
-        ProxyStream::Tcp(connect_direct(host, port).await?)
-    };
+    // Write the bytes over an idle connection to the same target when the pool has a
+    // usable one, otherwise over a connection established here — direct, or through an
+    // HTTP CONNECT proxy.
+    let key = PoolKey::new(scheme, host, port, proxy_url);
+    let io = upstream_pool::write_raw_request(
+        &UpstreamPool::global(),
+        &key,
+        RawRequest {
+            bytes: &raw,
+            connection_close: upstream_pool::connection_forbids_reuse(headers),
+        },
+        async {
+            let stream = if let Some(proxy) = proxy_url {
+                connect_via_proxy(proxy, host, port).await?
+            } else {
+                ProxyStream::Tcp(connect_direct(host, port).await?)
+            };
+            if scheme == "https" {
+                let tls_connector = global_tls_connector();
+                let server_name = rustls::pki_types::ServerName::try_from(host.to_string())
+                    .map_err(|e| ProxyError::ForwardFailed(format!("Invalid server name: {e}")))?;
+                let tls_stream = tls_connector
+                    .connect(server_name, stream)
+                    .await
+                    .map_err(|e| ProxyError::ForwardFailed(format!("TLS handshake failed: {e}")))?;
+                Ok(PooledStream::Tls(Box::new(tls_stream)))
+            } else {
+                Ok(PooledStream::Plain(stream))
+            }
+        },
+    )
+    .await?;
 
-    if scheme == "https" {
-        let tls_connector = global_tls_connector();
-        let server_name = rustls::pki_types::ServerName::try_from(host.to_string())
-            .map_err(|e| ProxyError::ForwardFailed(format!("Invalid server name: {e}")))?;
-        let mut tls_stream = tls_connector
-            .connect(server_name, stream)
-            .await
-            .map_err(|e| ProxyError::ForwardFailed(format!("TLS handshake failed: {e}")))?;
-
-        tls_stream
-            .write_all(&raw)
-            .await
-            .map_err(|e| ProxyError::ForwardFailed(format!("Write failed: {e}")))?;
-        tls_stream
-            .flush()
-            .await
-            .map_err(|e| ProxyError::ForwardFailed(format!("Flush failed: {e}")))?;
-
-        let filtered = WriteFilter::new(tls_stream);
-        do_hyper_response(filtered, method.clone()).await
-    } else {
-        let mut stream = stream;
-        stream
-            .write_all(&raw)
-            .await
-            .map_err(|e| ProxyError::ForwardFailed(format!("Write failed: {e}")))?;
-        stream
-            .flush()
-            .await
-            .map_err(|e| ProxyError::ForwardFailed(format!("Flush failed: {e}")))?;
-
-        let filtered = WriteFilter::new(stream);
-        do_hyper_response(filtered, method.clone()).await
-    }
+    do_hyper_response(io, method.clone()).await
 }
 
 /// Open a direct TCP connection to `host:port` with Happy Eyeballs.
@@ -712,15 +712,15 @@ fn build_raw_request(
 /// Use hyper's low-level client to parse the response on a stream where we've
 /// already written the request.
 ///
-/// `WriteFilter` discards any writes from hyper (it would try to send its own
-/// request encoding), while passing reads through transparently.
-async fn do_hyper_response<S>(
-    stream: WriteFilter<S>,
+/// The stream is wrapped so that hyper's own writes go nowhere (it would try to send
+/// its own request encoding) while reads pass through, and so that the connection
+/// returns to the keep-alive pool once the response is over instead of being closed
+/// together with hyper's connection.
+async fn do_hyper_response(
+    stream: PooledIo,
     method: http::Method,
-) -> Result<ProxyResponse, ProxyError>
-where
-    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
-{
+) -> Result<ProxyResponse, ProxyError> {
+    let connection_state = stream.connection_state();
     let io = hyper_util::rt::TokioIo::new(stream);
 
     let (mut sender, conn) = hyper::client::conn::http1::Builder::new()
@@ -729,79 +729,28 @@ where
         .await
         .map_err(|e| ProxyError::ForwardFailed(format!("Handshake failed: {e}")))?;
 
-    // Spawn the connection driver (reads responses from the stream)
-    tokio::spawn(async move {
-        if let Err(e) = conn.await {
-            log::debug!("[HyperClient] raw conn driver error: {e}");
-        }
-    });
-
-    // Send a dummy request through hyper — hyper will encode this and try to write it,
-    // but WriteFilter discards all writes. Hyper will then read the response from the stream.
     let dummy_req = http::Request::builder()
-        .method(method)
+        .method(method.clone())
         .uri("/")
         .body(http_body_util::Full::new(Bytes::new()))
         .map_err(|e| ProxyError::ForwardFailed(format!("Build dummy request: {e}")))?;
 
-    let resp = sender
-        .send_request(dummy_req)
+    // Queue the dummy request before the driver starts. `send_request` enqueues it
+    // synchronously, so hyper's very first poll finds a request in flight, encodes it
+    // and thereby opens `PooledIo`'s read gate before any response byte is parsed. The
+    // encoded dummy bytes are discarded. See the gate in `PooledIo::poll_read` for the
+    // race this order closes.
+    let response = sender.send_request(dummy_req);
+    let connection = upstream_pool::spawn_connection_driver(conn, connection_state);
+    let resp = response
         .await
         .map_err(|e| ProxyError::ForwardFailed(format!("Response parse failed: {e}")))?;
 
-    Ok(ProxyResponse::Hyper(resp))
-}
-
-/// A stream wrapper that discards all writes but passes reads through.
-///
-/// This lets hyper's connection driver think it sent a request (its encoded bytes
-/// go to /dev/null), while correctly parsing the response that the upstream server
-/// sends in reply to our raw-written request.
-struct WriteFilter<S> {
-    inner: S,
-}
-
-impl<S> WriteFilter<S> {
-    fn new(inner: S) -> Self {
-        Self { inner }
-    }
-}
-
-impl<S: tokio::io::AsyncRead + Unpin> tokio::io::AsyncRead for WriteFilter<S> {
-    fn poll_read(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &mut tokio::io::ReadBuf<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        // Pass reads through to the underlying stream
-        let inner = std::pin::Pin::new(&mut self.get_mut().inner);
-        inner.poll_read(cx, buf)
-    }
-}
-
-impl<S: Unpin> tokio::io::AsyncWrite for WriteFilter<S> {
-    fn poll_write(
-        self: std::pin::Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
-        buf: &[u8],
-    ) -> std::task::Poll<std::io::Result<usize>> {
-        // Discard all writes — pretend they succeeded
-        std::task::Poll::Ready(Ok(buf.len()))
-    }
-
-    fn poll_flush(
-        self: std::pin::Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        std::task::Poll::Ready(Ok(()))
-    }
-
-    fn poll_shutdown(
-        self: std::pin::Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        std::task::Poll::Ready(Ok(()))
-    }
+    // `sender` is dropped here on purpose: with no way left to send another request,
+    // hyper shuts its connection down as soon as this response is over, which is one of
+    // the two signals the driver waits for. If this function is cancelled instead (the
+    // first-byte timeout), the handle's Drop tells the driver that no body will come.
+    Ok(connection.tracked_response(resp, &method))
 }
 
 #[cfg(test)]
@@ -948,7 +897,9 @@ mod tests {
         let response = sender.send_request(request).await.unwrap();
         assert_eq!(response.status(), http::StatusCode::OK);
 
-        let result = ProxyResponse::Hyper(response).bytes_with_limit(LIMIT).await;
+        let result = ProxyResponse::Hyper(response.map(TrackedBody::untracked))
+            .bytes_with_limit(LIMIT)
+            .await;
         assert!(matches!(result, Err(ProxyError::ResponseBodyTooLarge(_))));
 
         // 关键断言：若退回"先 collect 收满再比较"，服务器会把 16 MiB 全部写完
@@ -995,5 +946,843 @@ mod tests {
             .unwrap();
         let stream = connect_direct(uri.host().unwrap(), v6_port).await.unwrap();
         assert!(stream.peer_addr().unwrap().is_ipv6());
+    }
+
+    // ===== upstream keep-alive pool (`upstream_pool`) =====
+
+    use crate::proxy::upstream_pool::test_support::{AfterReply, Body, Reply, TestServer};
+    use crate::proxy::upstream_pool::{PoolConfig, PoolKey, UpstreamPool};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    /// A representative Anthropic-style request whose header casing must survive the
+    /// wire. `accept` is deliberately absent from `cases`, so it goes out like a
+    /// proxy-added header (lowercase), exercising both emission branches.
+    fn pool_test_request() -> (http::Method, http::HeaderMap, OriginalHeaderCases, Vec<u8>) {
+        let mut headers = http::HeaderMap::new();
+        headers.insert(
+            http::header::HOST,
+            http::HeaderValue::from_static("127.0.0.1"),
+        );
+        headers.insert(
+            http::header::CONTENT_TYPE,
+            http::HeaderValue::from_static("application/json"),
+        );
+        headers.insert(
+            http::header::AUTHORIZATION,
+            http::HeaderValue::from_static("Bearer test-key"),
+        );
+        headers.insert(http::header::ACCEPT, http::HeaderValue::from_static("*/*"));
+        headers.insert(
+            http::HeaderName::from_static("x-mixed-case"),
+            http::HeaderValue::from_static("keep-me"),
+        );
+        let cases = OriginalHeaderCases {
+            cases: vec![
+                ("host".to_string(), b"Host".to_vec()),
+                ("content-type".to_string(), b"content-type".to_vec()),
+                ("authorization".to_string(), b"AUTHORIZATION".to_vec()),
+                ("x-mixed-case".to_string(), b"X-MiXeD-CaSe".to_vec()),
+            ],
+        };
+        (
+            http::Method::POST,
+            headers,
+            cases,
+            br#"{"model":"claude-sonnet","stream":true}"#.to_vec(),
+        )
+    }
+
+    /// The request `send_raw_with` sends, so tests can compute the expected wire bytes.
+    fn pool_test_request_with(
+        extra: &[(&str, &str)],
+    ) -> (http::Method, http::HeaderMap, OriginalHeaderCases, Vec<u8>) {
+        let (method, mut headers, mut cases, body) = pool_test_request();
+        for (name, value) in extra {
+            let header_name =
+                http::HeaderName::from_bytes(name.as_bytes()).expect("test header name parses");
+            headers.insert(
+                header_name,
+                http::HeaderValue::from_str(value).expect("test header value parses"),
+            );
+            cases
+                .cases
+                .push((name.to_ascii_lowercase(), name.as_bytes().to_vec()));
+        }
+        (method, headers, cases, body)
+    }
+
+    /// One raw-path request through `send_request`, the way the forwarder calls it.
+    async fn send_raw_with(
+        url: &str,
+        proxy_url: Option<&str>,
+        extra: &[(&str, &str)],
+    ) -> Result<ProxyResponse, ProxyError> {
+        // A raw-path failure falls back to the hyper-util client, which builds a rustls
+        // config; without a process-level provider that panics on the ambiguous crate
+        // features instead of surfacing the real error.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let (method, headers, cases, body) = pool_test_request_with(extra);
+        let mut extensions = http::Extensions::new();
+        extensions.insert(cases.clone());
+        let uri: http::Uri = url.parse().expect("test url parses");
+        send_request(
+            uri,
+            "pool-test",
+            method,
+            headers,
+            extensions,
+            body,
+            Duration::from_secs(30),
+            proxy_url,
+        )
+        .await
+    }
+
+    async fn send_raw(url: &str, proxy_url: Option<&str>) -> Result<ProxyResponse, ProxyError> {
+        send_raw_with(url, proxy_url, &[]).await
+    }
+
+    /// Send one request and assert the upstream echoed the request bytes back.
+    async fn send_and_expect_echo(url: &str, proxy_url: Option<&str>) {
+        let response = send_raw(url, proxy_url).await.expect("request failed");
+        assert_eq!(response.status(), http::StatusCode::OK);
+        let body = response.bytes_with_limit(1 << 20).await.expect("body read");
+        let (method, headers, cases, request_body) = pool_test_request();
+        let expected = build_raw_request(&method, "/v1/messages", &headers, &cases, &request_body);
+        assert_eq!(
+            &body[..],
+            &expected[..],
+            "response must be the echoed request"
+        );
+    }
+
+    /// Send one request and assert the upstream answered with `expected`.
+    async fn send_and_expect_body(url: &str, proxy_url: Option<&str>, expected: &[u8]) {
+        let response = send_raw(url, proxy_url).await.expect("request failed");
+        assert_eq!(response.status(), http::StatusCode::OK);
+        let body = response.bytes_with_limit(1 << 20).await.expect("body read");
+        assert_eq!(&body[..], expected);
+    }
+
+    /// Poll `check` until it holds or 4 seconds elapse: the driver and the close task
+    /// run in the background, so pool and socket state settle a few ticks later.
+    async fn wait_for(what: &str, check: impl Fn() -> bool) {
+        for _ in 0..400 {
+            if check() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("timed out waiting for {what}");
+    }
+
+    fn pool_key_for(server: &TestServer) -> PoolKey {
+        PoolKey::new("http", "127.0.0.1", server.port(), None)
+    }
+
+    /// The wire bytes of the standard test request as only the raw path writes them:
+    /// the original header order and the odd casings (`content-type`, `AUTHORIZATION`,
+    /// `X-MiXeD-CaSe`). The hyper-util fallback would title-case the names and lose the
+    /// order (see `fallback_client_bytes_differ_from_raw_bytes`).
+    fn standard_raw_request_bytes() -> Vec<u8> {
+        let (method, headers, cases, body) = pool_test_request();
+        build_raw_request(&method, "/v1/messages", &headers, &cases, &body)
+    }
+
+    /// Assert that the upstream's `index`-th (0-based) request was served by the raw
+    /// path: the captured wire bytes are byte-identical to `build_raw_request`'s output.
+    async fn assert_served_by_raw_path(server: &TestServer, index: usize) {
+        let requests = server.wait_for_requests(index + 1).await;
+        assert_eq!(
+            requests[index],
+            standard_raw_request_bytes(),
+            "request {index} must reach the upstream through the raw path unchanged"
+        );
+    }
+
+    /// Assert the follow-up request left a connection in our pool: only the raw path
+    /// ever puts connections there (the hyper-util fallback has its own pool).
+    async fn assert_pooled_again(pool: &UpstreamPool, key: &PoolKey) {
+        wait_for("the follow-up request's connection to be pooled", || {
+            pool.idle_count(key) == 1
+        })
+        .await;
+    }
+
+    /// One raw-path exchange through a specific pool, built from the same functions
+    /// `send_raw_request` uses (`write_raw_request` + `do_hyper_response`). No timeout
+    /// wrapper and no fallback exist on this route, so it can only succeed through the
+    /// raw path. Returns the response body.
+    async fn raw_exchange(pool: &UpstreamPool, server: &TestServer) -> Bytes {
+        let (method, headers, cases, body) = pool_test_request();
+        let raw = build_raw_request(&method, "/v1/messages", &headers, &cases, &body);
+        let key = pool_key_for(server);
+        let port = server.port();
+        let io = upstream_pool::write_raw_request(
+            pool,
+            &key,
+            RawRequest {
+                bytes: &raw,
+                connection_close: false,
+            },
+            async {
+                Ok(PooledStream::Plain(ProxyStream::Tcp(
+                    connect_direct("127.0.0.1", port).await?,
+                )))
+            },
+        )
+        .await
+        .expect("raw write");
+        let response = do_hyper_response(io, method).await.expect("raw response");
+        response.bytes_with_limit(1 << 20).await.expect("body read")
+    }
+
+    /// A minimal HTTP CONNECT proxy: answers 200 and pipes both ways to the target.
+    async fn spawn_connect_proxy() -> (u16, Arc<AtomicUsize>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let accepted = Arc::new(AtomicUsize::new(0));
+        let accepted_task = accepted.clone();
+        tokio::spawn(async move {
+            while let Ok((mut client, _)) = listener.accept().await {
+                accepted_task.fetch_add(1, Ordering::SeqCst);
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 2048];
+                    let n = client.read(&mut buf).await.expect("read CONNECT");
+                    let head = String::from_utf8_lossy(&buf[..n]).to_string();
+                    assert!(
+                        head.starts_with("CONNECT "),
+                        "not a CONNECT request: {head:?}"
+                    );
+                    let target = head
+                        .split_whitespace()
+                        .nth(1)
+                        .expect("CONNECT target")
+                        .to_string();
+                    let mut upstream = tokio::net::TcpStream::connect(&target)
+                        .await
+                        .expect("tunnel target");
+                    client
+                        .write_all(b"HTTP/1.1 200 Connection established\r\n\r\n")
+                        .await
+                        .unwrap();
+                    let _ = tokio::io::copy_bidirectional(&mut client, &mut upstream).await;
+                });
+            }
+        });
+        (port, accepted)
+    }
+
+    /// R1 + R2: the wire bytes are exactly `build_raw_request`'s output, on fresh and
+    /// reused connections alike, and repeated requests to one target share a connection.
+    #[tokio::test]
+    async fn raw_request_bytes_are_unchanged_and_one_connection_serves_repeated_requests() {
+        let server = TestServer::start(|request| Reply::fixed(request.bytes.clone())).await;
+        let url = server.url();
+
+        for _ in 0..3 {
+            let response = send_raw(&url, None).await.expect("request failed");
+            assert_eq!(response.status(), http::StatusCode::OK);
+            let echoed = response.bytes_with_limit(1 << 20).await.expect("body read");
+            let (method, headers, cases, request_body) = pool_test_request();
+            let expected =
+                build_raw_request(&method, "/v1/messages", &headers, &cases, &request_body);
+            assert_eq!(
+                &echoed[..],
+                &expected[..],
+                "wire bytes must reach the upstream unchanged"
+            );
+        }
+
+        let requests = server.wait_for_requests(3).await;
+        let (_, headers, cases, body) = pool_test_request();
+        let expected =
+            build_raw_request(&http::Method::POST, "/v1/messages", &headers, &cases, &body);
+        for captured in requests {
+            assert_eq!(
+                captured, expected,
+                "every request must be byte-identical on the wire"
+            );
+        }
+        assert_eq!(
+            server.accepted(),
+            1,
+            "repeated requests to one target must reuse one connection"
+        );
+    }
+
+    /// R2: streaming (chunked, SSE-style) responses arrive intact over a reused
+    /// connection.
+    #[tokio::test]
+    async fn streaming_responses_are_intact_over_a_reused_connection() {
+        let server = TestServer::start(|request| {
+            let echo = request.bytes.clone();
+            let (first, second) = echo.split_at(echo.len() / 2);
+            Reply {
+                status_line: "HTTP/1.1 200 OK",
+                headers: vec!["Content-Type: text/event-stream".to_string()],
+                body: Body::Chunked(
+                    vec![first.to_vec(), second.to_vec()],
+                    Duration::from_millis(10),
+                ),
+                after: AfterReply::KeepOpen,
+            }
+        })
+        .await;
+        let url = server.url();
+        let (method, headers, cases, request_body) = pool_test_request();
+        let expected = build_raw_request(&method, "/v1/messages", &headers, &cases, &request_body);
+
+        for _ in 0..3 {
+            let response = send_raw(&url, None).await.expect("request failed");
+            let mut collected = Vec::new();
+            let mut stream = response.bytes_stream();
+            while let Some(chunk) = stream.next().await {
+                collected.extend_from_slice(&chunk.expect("chunk"));
+            }
+            assert_eq!(
+                &collected[..],
+                &expected[..],
+                "streamed body must be intact"
+            );
+        }
+
+        assert_eq!(
+            server.accepted(),
+            1,
+            "streaming requests must reuse one connection"
+        );
+    }
+
+    /// R3.a: a `Connection: close` response is not pooled, even though the socket stays
+    /// open: only the header rules the reuse out here.
+    #[tokio::test]
+    async fn response_with_connection_close_is_not_pooled() {
+        let server = TestServer::start(|request| Reply {
+            status_line: "HTTP/1.1 200 OK",
+            headers: match request.index {
+                1 => vec!["Connection: close".into(), "Connection: keep-alive".into()],
+                2 => vec!["Connection: keep-alive".into(), "Connection: close".into()],
+                _ => vec!["Connection: close".into()],
+            },
+            body: Body::Fixed(b"closed".to_vec()),
+            after: AfterReply::KeepOpen,
+        })
+        .await;
+        let url = server.url();
+        let key = pool_key_for(&server);
+        let pool = UpstreamPool::global();
+
+        for index in 0..3 {
+            send_and_expect_body(&url, None, b"closed").await;
+            assert_served_by_raw_path(&server, index).await;
+            wait_for("the close response to close the connection", || {
+                pool.idle_count(&key) == 0 && server.open_connections() == 0
+            })
+            .await;
+            assert_eq!(server.accepted(), index + 1);
+        }
+    }
+
+    /// R3.a: an HTTP/1.0 response without `Connection: keep-alive` is not pooled.
+    #[tokio::test]
+    async fn http10_response_without_keep_alive_is_not_pooled() {
+        let server = TestServer::start(|_| Reply {
+            status_line: "HTTP/1.0 200 OK",
+            headers: Vec::new(),
+            body: Body::Fixed(b"http10".to_vec()),
+            after: AfterReply::KeepOpen,
+        })
+        .await;
+        let url = server.url();
+        let key = pool_key_for(&server);
+        let pool = UpstreamPool::global();
+
+        let response = send_raw(&url, None).await.expect("request failed");
+        let body = response.bytes_with_limit(1 << 20).await.expect("body read");
+        assert_eq!(&body[..], b"http10");
+        wait_for("the HTTP/1.0 response to close the connection", || {
+            pool.idle_count(&key) == 0 && server.open_connections() == 0
+        })
+        .await;
+
+        send_and_expect_body(&url, None, b"http10").await;
+        assert_served_by_raw_path(&server, 1).await;
+        assert_eq!(
+            server.accepted(),
+            2,
+            "an HTTP/1.0 response must not be reused"
+        );
+    }
+
+    /// R3.a: an HTTP/1.0 response that does advertise keep-alive is pooled, mirroring
+    /// hyper's own keep-alive rules.
+    #[tokio::test]
+    async fn http10_response_with_keep_alive_is_pooled() {
+        let server = TestServer::start(|_| Reply {
+            status_line: "HTTP/1.0 200 OK",
+            headers: vec!["Connection: keep-alive".to_string()],
+            body: Body::Fixed(b"http10-ka".to_vec()),
+            after: AfterReply::KeepOpen,
+        })
+        .await;
+        let url = server.url();
+        let key = pool_key_for(&server);
+        let pool = UpstreamPool::global();
+
+        send_and_expect_body(&url, None, b"http10-ka").await;
+        assert_served_by_raw_path(&server, 0).await;
+        wait_for("the HTTP/1.0 keep-alive response to be pooled", || {
+            pool.idle_count(&key) == 1
+        })
+        .await;
+        send_and_expect_body(&url, None, b"http10-ka").await;
+        assert_served_by_raw_path(&server, 1).await;
+        assert_eq!(
+            server.accepted(),
+            1,
+            "an HTTP/1.0 keep-alive response must be reused"
+        );
+    }
+
+    /// R3.a: a response without Content-Length and without chunked encoding ends only
+    /// when the upstream closes, so it is never pooled.
+    #[tokio::test]
+    async fn close_delimited_response_is_not_pooled() {
+        let server = TestServer::start(|_| Reply {
+            status_line: "HTTP/1.1 200 OK",
+            headers: Vec::new(),
+            body: Body::UntilClose(b"until close".to_vec()),
+            after: AfterReply::Close,
+        })
+        .await;
+        let url = server.url();
+        let key = pool_key_for(&server);
+        let pool = UpstreamPool::global();
+
+        let response = send_raw(&url, None).await.expect("request failed");
+        let body = response.bytes_with_limit(1 << 20).await.expect("body read");
+        assert_eq!(&body[..], b"until close");
+        wait_for(
+            "the close-delimited response to close the connection",
+            || pool.idle_count(&key) == 0 && server.open_connections() == 0,
+        )
+        .await;
+
+        send_and_expect_body(&url, None, b"until close").await;
+        assert_served_by_raw_path(&server, 1).await;
+        assert_eq!(
+            server.accepted(),
+            2,
+            "a close-delimited body must not be reused"
+        );
+    }
+
+    /// R3.a: a request that itself carries `Connection: close` never pools its
+    /// connection, whatever the response says.
+    #[tokio::test]
+    async fn request_with_connection_close_is_not_pooled() {
+        let server = TestServer::start(|request| Reply::fixed(request.bytes.clone())).await;
+        let url = server.url();
+        let key = pool_key_for(&server);
+        let pool = UpstreamPool::global();
+
+        let response = send_raw_with(&url, None, &[("Connection", "close")])
+            .await
+            .expect("request failed");
+        let body = response.bytes_with_limit(1 << 20).await.expect("body read");
+        let (method, headers, cases, request_body) =
+            pool_test_request_with(&[("Connection", "close")]);
+        let expected = build_raw_request(&method, "/v1/messages", &headers, &cases, &request_body);
+        assert_eq!(&body[..], &expected[..]);
+        wait_for("the close request to close the connection", || {
+            pool.idle_count(&key) == 0 && server.open_connections() == 0
+        })
+        .await;
+
+        send_and_expect_echo(&url, None).await;
+        assert_served_by_raw_path(&server, 1).await;
+        assert_eq!(server.accepted(), 2, "a close request must not be reused");
+    }
+
+    /// R3.b: a consumer that stops reading after the first chunk leaves the connection
+    /// mid-body; it must be closed, not pooled.
+    #[tokio::test]
+    async fn body_dropped_mid_stream_is_not_pooled() {
+        let server = TestServer::start(|_| Reply {
+            status_line: "HTTP/1.1 200 OK",
+            headers: vec!["Content-Type: text/event-stream".to_string()],
+            body: Body::Chunked(
+                vec![b"chunk-one\n\n".to_vec(), b"chunk-two\n\n".to_vec()],
+                Duration::from_millis(150),
+            ),
+            after: AfterReply::KeepOpen,
+        })
+        .await;
+        let url = server.url();
+        let key = pool_key_for(&server);
+        let pool = UpstreamPool::global();
+
+        let response = send_raw(&url, None).await.expect("request failed");
+        let mut stream = response.bytes_stream();
+        let first = stream.next().await.expect("first chunk").expect("chunk ok");
+        assert_eq!(&first[..], b"chunk-one\n\n");
+        drop(stream);
+        wait_for("the dropped body to close the connection", || {
+            pool.idle_count(&key) == 0 && server.open_connections() == 0
+        })
+        .await;
+
+        let response = send_raw(&url, None).await.expect("second request failed");
+        let body = response.bytes_with_limit(1 << 20).await.expect("body read");
+        assert_eq!(&body[..], b"chunk-one\n\nchunk-two\n\n");
+        assert_served_by_raw_path(&server, 1).await;
+        assert_eq!(
+            server.accepted(),
+            2,
+            "a connection whose body was dropped must not be reused"
+        );
+    }
+
+    /// R3.b/R3.c: a body that errors mid-stream (upstream closes before the declared
+    /// Content-Length is reached) leaves the connection unusable.
+    #[tokio::test]
+    async fn body_error_mid_stream_is_not_pooled() {
+        let server = TestServer::start(|_| Reply {
+            status_line: "HTTP/1.1 200 OK",
+            headers: Vec::new(),
+            body: Body::Short(1000, b"only a part".to_vec()),
+            after: AfterReply::Close,
+        })
+        .await;
+        let url = server.url();
+        let key = pool_key_for(&server);
+        let pool = UpstreamPool::global();
+
+        let response = send_raw(&url, None).await.expect("request failed");
+        let result = response.bytes_with_limit(1 << 20).await;
+        assert!(
+            matches!(result, Err(ProxyError::ForwardFailed(_))),
+            "a truncated body must surface an error, got {result:?}"
+        );
+        wait_for("the errored body to close the connection", || {
+            pool.idle_count(&key) == 0 && server.open_connections() == 0
+        })
+        .await;
+
+        // The next request still gets through — on a fresh connection. Its body errors
+        // the same way, since this upstream always truncates; only the fresh connection
+        // matters here.
+        send_raw(&url, None).await.expect("second request failed");
+        wait_for("the second connection to be accepted", || {
+            server.accepted() == 2
+        })
+        .await;
+        assert_served_by_raw_path(&server, 1).await;
+    }
+
+    /// R3.d: the upstream closes the connection while it sits idle (without saying so
+    /// in the response). The next request still succeeds, and it is provably the raw
+    /// path serving it on a fresh connection: its wire bytes are byte-identical to
+    /// `build_raw_request`'s output, and its connection ends up in our pool afterwards.
+    /// A silent fallback to the hyper-util client would fail both checks.
+    #[tokio::test]
+    async fn upstream_closed_while_idle_is_replaced_by_a_fresh_connection() {
+        let server = TestServer::start(|_| Reply {
+            status_line: "HTTP/1.1 200 OK",
+            headers: Vec::new(),
+            body: Body::Fixed(b"bye".to_vec()),
+            // The reply itself stays keep-alive; the upstream only closes later, while
+            // the connection sits idle in the pool.
+            after: AfterReply::CloseAfter(Duration::from_millis(300)),
+        })
+        .await;
+        let url = server.url();
+        let key = pool_key_for(&server);
+        let pool = UpstreamPool::global();
+
+        send_and_expect_body(&url, None, b"bye").await;
+        wait_for("the response to be pooled", || pool.idle_count(&key) == 1).await;
+        // Wait past the upstream's delayed close, so its FIN has arrived while the
+        // connection sat idle in the pool.
+        tokio::time::sleep(Duration::from_millis(400)).await;
+
+        send_and_expect_body(&url, None, b"bye").await;
+        assert_served_by_raw_path(&server, 1).await;
+        assert_pooled_again(&pool, &key).await;
+        assert_eq!(
+            server.accepted(),
+            2,
+            "a connection the upstream closed must not be reused"
+        );
+    }
+
+    /// R3.d: unsolicited bytes while idle mean the connection is not at a message
+    /// boundary; the next request still succeeds, and it is provably the raw path
+    /// serving it on a fresh connection (wire bytes and pool state, as above).
+    #[tokio::test]
+    async fn unexpected_bytes_while_idle_are_discarded() {
+        let server = TestServer::start(|request| Reply {
+            status_line: "HTTP/1.1 200 OK",
+            headers: Vec::new(),
+            body: Body::Fixed(b"clean".to_vec()),
+            // Only the first response is followed by junk. The second connection is an
+            // ordinary keep-alive one, so it must end up pooled again.
+            after: if request.index == 1 {
+                AfterReply::Send(b"unsolicited".to_vec())
+            } else {
+                AfterReply::KeepOpen
+            },
+        })
+        .await;
+        let url = server.url();
+        let key = pool_key_for(&server);
+        let pool = UpstreamPool::global();
+
+        send_and_expect_body(&url, None, b"clean").await;
+        // Give hyper time to see the stray bytes or the pool to hold the connection;
+        // both outcomes must end in a fresh connection for the next request.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        send_and_expect_body(&url, None, b"clean").await;
+        assert_served_by_raw_path(&server, 1).await;
+        assert_pooled_again(&pool, &key).await;
+        assert_eq!(
+            server.accepted(),
+            2,
+            "a connection with unsolicited bytes must not be reused"
+        );
+    }
+
+    /// R3.e: different targets (here: different ports) never share connections.
+    #[tokio::test]
+    async fn different_targets_do_not_share_connections() {
+        let a = TestServer::start(|request| Reply::fixed(request.bytes.clone())).await;
+        let b = TestServer::start(|request| Reply::fixed(request.bytes.clone())).await;
+        let pool = UpstreamPool::global();
+        let key_a = pool_key_for(&a);
+        let key_b = pool_key_for(&b);
+
+        send_and_expect_echo(&a.url(), None).await;
+        send_and_expect_echo(&b.url(), None).await;
+        wait_for("both targets to be pooled", || {
+            pool.idle_count(&key_a) == 1 && pool.idle_count(&key_b) == 1
+        })
+        .await;
+        assert_eq!(a.accepted(), 1, "target a must see exactly one connection");
+        assert_eq!(b.accepted(), 1, "target b must see exactly one connection");
+    }
+
+    /// R5: the CONNECT tunnel path still works and is pooled per proxy URL — two
+    /// requests through one proxy share a tunnel, a different proxy opens its own.
+    #[tokio::test]
+    async fn connect_tunnel_is_pooled_per_proxy_url() {
+        let upstream = TestServer::start(|request| Reply::fixed(request.bytes.clone())).await;
+        let (proxy_a_port, proxy_a_accepted) = spawn_connect_proxy().await;
+        let (proxy_b_port, proxy_b_accepted) = spawn_connect_proxy().await;
+        let url = upstream.url();
+        let proxy_a = format!("http://127.0.0.1:{proxy_a_port}");
+        let proxy_b = format!("http://127.0.0.1:{proxy_b_port}");
+        let key_a = PoolKey::new("http", "127.0.0.1", upstream.port(), Some(&proxy_a));
+        let pool = UpstreamPool::global();
+
+        send_and_expect_echo(&url, Some(&proxy_a)).await;
+        wait_for("the tunnel to be pooled", || pool.idle_count(&key_a) == 1).await;
+        send_and_expect_echo(&url, Some(&proxy_a)).await;
+        assert_eq!(
+            proxy_a_accepted.load(Ordering::SeqCst),
+            1,
+            "both requests must share one CONNECT tunnel"
+        );
+        wait_for("the tunnel to be pooled", || pool.idle_count(&key_a) == 1).await;
+
+        send_and_expect_echo(&url, Some(&proxy_b)).await;
+        assert_eq!(
+            proxy_b_accepted.load(Ordering::SeqCst),
+            1,
+            "a different proxy URL must open its own tunnel"
+        );
+        assert_eq!(
+            upstream.accepted(),
+            2,
+            "the upstream must see one connection per tunnel"
+        );
+    }
+
+    /// R4: concurrent requests find no idle connection, so each opens its own; all
+    /// responses arrive intact, and afterwards only the per-key cap stays pooled.
+    #[tokio::test]
+    async fn concurrent_requests_open_one_connection_each_and_all_succeed() {
+        let server = TestServer::start(|request| Reply::fixed(request.bytes.clone())).await;
+        let url = server.url();
+        let key = pool_key_for(&server);
+        let pool = UpstreamPool::global();
+        const N: usize = 8;
+
+        let tasks = (0..N)
+            .map(|_| {
+                let url = url.clone();
+                tokio::spawn(async move { send_and_expect_echo(&url, None).await })
+            })
+            .collect::<Vec<_>>();
+        for task in tasks {
+            tokio::time::timeout(Duration::from_secs(15), task)
+                .await
+                .expect("concurrent request in time")
+                .expect("concurrent request task");
+        }
+
+        assert_eq!(
+            server.accepted(),
+            N,
+            "concurrent requests must each get their own connection"
+        );
+        wait_for("the pool to keep only the per-key cap", || {
+            pool.idle_count(&key) == UpstreamPool::per_key_cap()
+        })
+        .await;
+    }
+
+    /// R3.a: statuses without a body (204) pool fine even without length headers.
+    #[tokio::test]
+    async fn status_without_body_is_pooled() {
+        let server = TestServer::start(|_| Reply {
+            status_line: "HTTP/1.1 204 No Content",
+            headers: Vec::new(),
+            body: Body::Fixed(Vec::new()),
+            after: AfterReply::KeepOpen,
+        })
+        .await;
+        let url = server.url();
+        let key = pool_key_for(&server);
+        let pool = UpstreamPool::global();
+
+        let response = send_raw(&url, None).await.expect("request failed");
+        assert_eq!(response.status(), http::StatusCode::NO_CONTENT);
+        let body = response.bytes_with_limit(1 << 20).await.expect("body read");
+        assert!(body.is_empty());
+        wait_for("the 204 response to be pooled", || {
+            pool.idle_count(&key) == 1
+        })
+        .await;
+
+        let reused = send_raw(&url, None).await.expect("second request failed");
+        assert_eq!(reused.status(), http::StatusCode::NO_CONTENT);
+        let body = reused.bytes_with_limit(1 << 20).await.expect("body read");
+        assert!(body.is_empty());
+        assert_served_by_raw_path(&server, 0).await;
+        assert_served_by_raw_path(&server, 1).await;
+        assert_eq!(server.accepted(), 1, "a 204 response must be reused");
+    }
+
+    /// Control for the wire-bytes assertions above: the hyper-util fallback does not
+    /// reproduce the raw path's bytes (it title-cases the header names and emits them in
+    /// its own order), so a request that silently fell back would fail
+    /// `assert_served_by_raw_path` instead of passing by accident.
+    #[tokio::test]
+    async fn fallback_client_bytes_differ_from_raw_bytes() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let server = TestServer::start(|request| Reply::fixed(request.bytes.clone())).await;
+        let (method, headers, cases, body) = pool_test_request();
+        let mut extensions = http::Extensions::new();
+        extensions.insert(cases);
+
+        // Exactly what `send_request` builds for its fallback branch.
+        let mut req = http::Request::builder()
+            .method(method)
+            .uri(format!("http://127.0.0.1:{}/v1/messages", server.port()))
+            .body(http_body_util::Full::new(Bytes::from(body)))
+            .expect("fallback request builds");
+        *req.headers_mut() = headers;
+        *req.extensions_mut() = extensions;
+        let response = global_hyper_client()
+            .request(req)
+            .await
+            .expect("fallback request succeeds");
+        assert_eq!(response.status(), http::StatusCode::OK);
+
+        let requests = server.wait_for_requests(1).await;
+        assert_ne!(
+            requests[0],
+            standard_raw_request_bytes(),
+            "the hyper-util fallback must not be byte-identical to the raw path"
+        );
+    }
+
+    /// R3.d + R4: an idle connection that both expired (sat idle longer than the TTL)
+    /// and was closed by the upstream is discarded; the next request is served by the
+    /// raw path on a fresh connection. Driven through a pool with a tiny TTL, since the
+    /// global pool's TTL is a minute.
+    #[tokio::test]
+    async fn expired_and_closed_idle_connection_is_replaced_by_a_fresh_raw_connection() {
+        let pool = UpstreamPool::new(PoolConfig {
+            idle_ttl: Duration::from_millis(60),
+            ..PoolConfig::default()
+        });
+        let server = TestServer::start(|_| Reply {
+            status_line: "HTTP/1.1 200 OK",
+            headers: Vec::new(),
+            body: Body::Fixed(b"expired".to_vec()),
+            after: AfterReply::CloseAfter(Duration::from_millis(200)),
+        })
+        .await;
+        let key = pool_key_for(&server);
+
+        assert_eq!(&raw_exchange(&pool, &server).await[..], b"expired");
+        assert_served_by_raw_path(&server, 0).await;
+        wait_for("the response to be pooled", || pool.idle_count(&key) == 1).await;
+        // Past both the TTL and the upstream's delayed close.
+        tokio::time::sleep(Duration::from_millis(450)).await;
+
+        assert_eq!(&raw_exchange(&pool, &server).await[..], b"expired");
+        assert_served_by_raw_path(&server, 1).await;
+        assert_pooled_again(&pool, &key).await;
+        assert_eq!(
+            server.accepted(),
+            2,
+            "an expired, closed connection must not be reused"
+        );
+    }
+
+    /// A response without a body (204) whose body is dropped unread still pools the
+    /// connection: there was nothing left to read, so the connection is at a message
+    /// boundary all the same.
+    #[tokio::test]
+    async fn status_without_body_dropped_unread_is_pooled() {
+        let server = TestServer::start(|_| Reply {
+            status_line: "HTTP/1.1 204 No Content",
+            headers: Vec::new(),
+            body: Body::Fixed(Vec::new()),
+            after: AfterReply::KeepOpen,
+        })
+        .await;
+        let url = server.url();
+        let key = pool_key_for(&server);
+        let pool = UpstreamPool::global();
+
+        let response = send_raw(&url, None).await.expect("request failed");
+        assert_eq!(response.status(), http::StatusCode::NO_CONTENT);
+        drop(response);
+        wait_for("the bodyless response to be pooled", || {
+            pool.idle_count(&key) == 1
+        })
+        .await;
+
+        // The second response is dropped unread as well, and still ends up pooled.
+        let reused = send_raw(&url, None).await.expect("second request failed");
+        assert_eq!(reused.status(), http::StatusCode::NO_CONTENT);
+        drop(reused);
+        assert_served_by_raw_path(&server, 1).await;
+        assert_pooled_again(&pool, &key).await;
+        assert_eq!(
+            server.accepted(),
+            1,
+            "a bodyless response dropped unread must be reused"
+        );
     }
 }
