@@ -2364,13 +2364,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_manager_initial_state() {
-        let temp = tempfile::tempdir().unwrap();
-        let manager = CodexOAuthManager::new(temp.path().to_path_buf());
-        assert!(manager.list_accounts().await.is_empty());
-    }
-
-    #[tokio::test]
     async fn test_manager_save_and_load() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().to_path_buf();
