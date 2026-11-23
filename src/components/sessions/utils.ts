@@ -48,6 +48,7 @@ export const SESSION_SOURCE_PATHS: Record<SessionAppId, string[]> = {
   agy: [
     "~/.gemini/antigravity-cli/brain/<conversation>/.system_generated/logs",
     "~/.gemini/antigravity/brain/<conversation>/.system_generated/logs",
+    "~/.gemini/antigravity-ide/brain/<conversation>/.system_generated/logs",
   ],
   copilot: ["~/.copilot/session-state"],
 };
@@ -60,11 +61,12 @@ const NATIVE_DELETE_HINT_KEYS: Record<string, string> = {
   workbuddy: "workbuddy.deleteSessionHint",
 };
 
-/** Antigravity 只有 CLI 的会话能在这里删（后端连索引一起清）；IDE 的会话
- *  （`~/.gemini/antigravity/brain`）索引在别处，没有导出记录的会话也没有可删的来源。 */
+/** Antigravity 只有 CLI 的会话（`antigravity-cli/brain`）能在这里删（后端连索引一起清）；
+ *  桌面版（`~/.gemini/antigravity/brain`）、独立 IDE（`~/.gemini/antigravity-ide/brain`）
+ *  的索引在别处，没有导出记录的会话也没有可删的来源。 */
 const agyDeleteBlocked = (session: SessionMeta) =>
   !session.sourcePath ||
-  /[\\/]antigravity[\\/]brain[\\/]/.test(session.sourcePath);
+  !/[\\/]antigravity-cli[\\/]brain[\\/]/.test(session.sourcePath);
 
 /** 不能在 CC Switch 里删除时，提示去哪里删的文案 key。 */
 export const nativeDeleteHintKey = (

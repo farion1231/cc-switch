@@ -48,12 +48,16 @@ const APP_BADGE_ICON: Partial<Record<AppId, typeof Terminal>> = {
   "claude-desktop": Monitor,
 };
 
+export type AppGlyphBadge = "terminal" | "desktop";
+
 interface AppGlyphProps {
   app: AppId;
   /** 图标边长：侧栏 16，页头 20 */
   size?: number;
   /** 角标底色要和所在的行一致，否则看起来像缺了一块 */
   badgeClassName?: string;
+  /** 覆盖默认角标（「应用」页拆分展示同一应用的 CLI 与桌面版时使用） */
+  badge?: AppGlyphBadge;
   className?: string;
 }
 
@@ -62,9 +66,15 @@ export function AppGlyph({
   app,
   size = 16,
   badgeClassName,
+  badge,
   className,
 }: AppGlyphProps) {
-  const BadgeIcon = APP_BADGE_ICON[app];
+  const BadgeIcon =
+    badge === "terminal"
+      ? Terminal
+      : badge === "desktop"
+        ? Monitor
+        : APP_BADGE_ICON[app];
   return (
     <span
       aria-hidden="true"

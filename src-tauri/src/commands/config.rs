@@ -111,13 +111,7 @@ pub async fn get_config_status(
                 path,
             })
         }
-        AppType::Agy => {
-            let dir = crate::agy_config::agy_dir();
-            Ok(ConfigStatus {
-                exists: crate::agy_config::settings_path().exists(),
-                path: dir.to_string_lossy().into_owned(),
-            })
-        }
+        AppType::Agy => Ok(crate::agy_config::config_status()),
         AppType::Omp => {
             let config_path = crate::omp_config::get_omp_models_path()?;
             let path = crate::omp_config::get_omp_agent_dir()?
@@ -145,6 +139,13 @@ pub async fn get_config_status(
 }
 
 #[tauri::command]
+pub async fn get_agy_desktop_status() -> Result<crate::agy_config::AgyDesktopStatus, String> {
+    tokio::task::spawn_blocking(crate::agy_config::desktop_status)
+        .await
+        .map_err(|e| format!("检测 Antigravity 桌面应用失败: {e}"))
+}
+
+#[tauri::command]
 pub async fn get_config_dir(app: String) -> Result<String, String> {
     Ok(app_config_dir(&app)?.to_string_lossy().to_string())
 }
@@ -168,7 +169,7 @@ fn app_config_dir(app: &str) -> Result<std::path::PathBuf, String> {
             .parent()
             .unwrap()
             .to_path_buf(),
-        AppType::Agy => crate::agy_config::agy_dir(),
+        AppType::Agy => crate::agy_config::effective_config_dir(),
         AppType::Copilot => crate::copilot_config::copilot_dir(),
         AppType::WorkBuddy => crate::workbuddy_config::data_dir(),
     };

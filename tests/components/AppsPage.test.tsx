@@ -37,6 +37,7 @@ const mocks = vi.hoisted(() => ({
     exists: true,
     path: "/home/me/.workbuddy",
   })),
+  getAgyDesktopStatus: vi.fn(async () => mocks.agyDesktopStatus),
   probeToolInstallations: vi.fn(),
   listToolInstallations: vi.fn(),
   runToolLifecycleAction: vi.fn(),
@@ -46,11 +47,24 @@ const mocks = vi.hoisted(() => ({
   success: vi.fn(),
   warning: vi.fn(),
   error: vi.fn(),
-  settings: {} as { visibleApps?: undefined; appOrder?: string[] },
+  settings: {} as {
+    visibleApps?: Record<string, boolean>;
+    appOrder?: string[];
+  },
   updateSettings: vi.fn(),
   autoSaveSettings: vi.fn(async () => null),
   dragEndHandlers: [] as ((event: DragEndEvent) => void)[],
   desktopStatus: { supported: true, installed: true, configured: true },
+  agyDesktopStatus: {
+    supported: true,
+    installed: true,
+    version: "2.34.0" as string | null,
+    installPath:
+      "C:\\Users\\me\\AppData\\Local\\Programs\\antigravity\\Antigravity.exe" as
+        | string
+        | null,
+    dataDirExists: true,
+  },
 }));
 
 vi.mock("@/lib/api", () => ({ settingsApi: mocks }));
@@ -245,6 +259,17 @@ describe("AppsPage concurrent CLI upgrades", () => {
       installed: true,
       configured: true,
     };
+    mocks.agyDesktopStatus = {
+      supported: true,
+      installed: true,
+      version: "2.34.0",
+      installPath:
+        "C:\\Users\\me\\AppData\\Local\\Programs\\antigravity\\Antigravity.exe",
+      dataDirExists: true,
+    };
+    mocks.getAgyDesktopStatus
+      .mockReset()
+      .mockImplementation(async () => mocks.agyDesktopStatus);
     mocks.updateSettings.mockReset();
     mocks.autoSaveSettings.mockReset().mockResolvedValue(null);
     mocks.copyText.mockReset().mockResolvedValue(undefined);
@@ -750,12 +775,12 @@ describe("AppsPage concurrent CLI upgrades", () => {
       "hermes",
       "codex",
     ]);
-    // 只有已安装的能拖
+    // 只有已安装的能拖（含 Antigravity Desktop 拆分行，共 APP_IDS.length + 1 - 2 行）
     expect(
       within(
         screen.getByRole("region", { name: "appsPage.sectionInstalled" }),
       ).getAllByRole("button", { name: "appsPage.dragHandle" }),
-    ).toHaveLength(APP_IDS.length - 2);
+    ).toHaveLength(APP_IDS.length - 1);
     expect(
       within(
         screen.getByRole("region", { name: "appsPage.sectionNotInstalled" }),
@@ -2180,5 +2205,110 @@ describe("AppsPage visibility column", () => {
             button.getAttribute("aria-label") !== "appsPage.dragHandle",
         ),
     ).toEqual([within(row).getByRole("button", { name: "WorkBuddy" })]);
+  });
+
+  it("splits Antigravity Desktop from Antigravity CLI and shares visibleApps.agy", async () => {
+    vi.resetModules();
+    missing.clear();
+    mocks.dragEndHandlers = [];
+    mocks.updateSettings.mockReset();
+    missing.add("agy");
+    mocks.agyDesktopStatus = {
+      supported: true,
+      installed: true,
+      version: "2.34.0",
+      installPath: "/Applications/Antigravity.app",
+      dataDirExists: true,
+    };
+    mocks.settings = { visibleApps: { claude: true, agy: true } };
+
+    await renderApps();
+
+    // 仅安装桌面版时：Antigravity Desktop 在「已安装」，Antigravity CLI 在「未安装」
+    expect(rowApps("appsPage.sectionInstalled")).toContain("agy-desktop");
+    expect(rowApps("appsPage.sectionInstalled")).not.toContain("agy");
+    expect(rowApps("appsPage.sectionNotInstalled")).toEqual(["agy"]);
+
+    const desktopRow = card("Antigravity Desktop");
+    expect(desktopRow.getByText("2.34.0")).toBeInTheDocument();
+    expect(
+      desktopRow.getByText("/Applications/Antigravity.app"),
+    ).toBeInTheDocument();
+    // 桌面行没有安装 / 升级 / 卸载按钮，只有问号帮助按钮（和拖动把手）
+    expect(
+      desktopRow
+        .getAllByRole("button")
+        .filter(
+          (button) =>
+            button.getAttribute("aria-label") !== "appsPage.dragHandle",
+        ),
+    ).toEqual([
+      desktopRow.getByRole("button", { name: "Antigravity Desktop" }),
+    ]);
+
+    // 任一行的可见开关都控制 visibleApps.agy
+    const user = userEvent.setup();
+    await user.click(desktopRow.getByRole("switch"));
+    expect(mocks.updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        visibleApps: expect.objectContaining({ agy: false }),
+      }),
+    );
+
+    // 拖动 Antigravity Desktop 时按共享的 agy 槽位更新 appOrder
+    const onDragEnd = mocks.dragEndHandlers.at(-1);
+    expect(onDragEnd).toBeDefined();
+    act(() => {
+      onDragEnd?.({
+        active: { id: "agy-desktop" },
+        over: { id: "claude" },
+      } as unknown as DragEndEvent);
+    });
+    expect(mocks.updateSettings).toHaveBeenLastCalledWith({
+      appOrder: ["agy", ...APP_IDS.filter((app) => app !== "agy")],
+    });
+  });
+
+  it("places Antigravity Desktop under not installed when absent and ignores dragging onto Antigravity CLI", async () => {
+    vi.resetModules();
+    missing.clear();
+    mocks.settings = {};
+    mocks.dragEndHandlers = [];
+    mocks.updateSettings.mockReset();
+    mocks.agyDesktopStatus = {
+      supported: true,
+      installed: false,
+      version: null,
+      installPath: null,
+      dataDirExists: false,
+    };
+
+    await renderApps();
+
+    expect(rowApps("appsPage.sectionNotInstalled")).toEqual(["agy-desktop"]);
+    expect(
+      card("Antigravity Desktop").getByText("common.notInstalled"),
+    ).toBeInTheDocument();
+
+    // 点击「检查更新」也会重新读取本机 Antigravity 桌面版状态
+    const callsBefore = mocks.getAgyDesktopStatus.mock.calls.length;
+    await userEvent.click(
+      screen.getByRole("button", { name: /appsPage\.checkUpdates/ }),
+    );
+    await waitFor(() =>
+      expect(mocks.getAgyDesktopStatus.mock.calls.length).toBeGreaterThan(
+        callsBefore,
+      ),
+    );
+
+    // 若两行同在已安装区，互相拖动映射到同一 appId 应无操作
+    const onDragEnd = mocks.dragEndHandlers.at(-1);
+    act(() => {
+      onDragEnd?.({
+        active: { id: "agy-desktop" },
+        over: { id: "agy" },
+      } as unknown as DragEndEvent);
+    });
+    expect(mocks.updateSettings).not.toHaveBeenCalled();
   });
 });

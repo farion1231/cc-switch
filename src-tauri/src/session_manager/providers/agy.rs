@@ -18,9 +18,10 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-/// Antigravity CLI keeps sessions in `~/.gemini/antigravity-cli/brain`, while the IDE writes the
-/// same layout to `~/.gemini/antigravity/brain`. API-key providers run agy with a private
-/// `--gemini_dir` (`~/.cc-switch/agy/<provider>/`), so their sessions live under that directory's
+/// Antigravity CLI keeps sessions in `~/.gemini/antigravity-cli/brain`, while the desktop app
+/// writes the same layout to `~/.gemini/antigravity/brain` and the standalone IDE writes to
+/// `~/.gemini/antigravity-ide/brain`. API-key providers run agy with a private `--gemini_dir`
+/// (`~/.cc-switch/agy/<provider>/`), so their sessions live under that directory's
 /// `antigravity-cli/brain`. All of them are scanned.
 pub fn session_roots() -> Vec<PathBuf> {
     session_sources()
@@ -32,8 +33,13 @@ pub fn session_roots() -> Vec<PathBuf> {
 /// Each root, with the private `--gemini_dir` its sessions must be resumed with.
 fn session_sources() -> Vec<(PathBuf, Option<PathBuf>)> {
     let cli = crate::agy_config::agy_dir();
-    let ide = cli.with_file_name("antigravity");
-    let mut sources = vec![(cli.join("brain"), None), (ide.join("brain"), None)];
+    let desktop = crate::agy_config::desktop_dir();
+    let ide = crate::agy_config::ide_dir();
+    let mut sources = vec![
+        (cli.join("brain"), None),
+        (desktop.join("brain"), None),
+        (ide.join("brain"), None),
+    ];
     let mut profiles: Vec<PathBuf> = fs::read_dir(crate::agy_config::key_profiles_root())
         .into_iter()
         .flatten()
@@ -46,6 +52,22 @@ fn session_sources() -> Vec<(PathBuf, Option<PathBuf>)> {
         sources.push((dir.join("antigravity-cli").join("brain"), Some(dir)));
     }
     sources
+}
+
+/// 桌面版（`~/.gemini/antigravity/brain`）与独立 IDE（`~/.gemini/antigravity-ide/brain`）
+/// 各自使用独立的 `app_data_dir`，无法通过 `agy --conversation=...` 在终端恢复。
+fn is_desktop_or_ide_root(root: &Path) -> bool {
+    root.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case("brain"))
+        && root
+            .parent()
+            .and_then(Path::file_name)
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| {
+                name.eq_ignore_ascii_case("antigravity")
+                    || name.eq_ignore_ascii_case("antigravity-ide")
+            })
 }
 
 fn spanned_records(path: &Path) -> Result<Vec<(u64, JsonlSpan, Value)>, String> {
@@ -188,6 +210,7 @@ fn scan_root(root: &Path, gemini_dir: Option<&Path>) -> Vec<SessionMeta> {
             continue;
         }
         let has_summary = summary.is_some();
+        let cli_resumable = !is_desktop_or_ide_root(root);
         let mut meta = summary.unwrap_or_else(|| SessionMeta {
             provider_id: "agy".into(),
             session_id: id.clone(),
@@ -197,7 +220,8 @@ fn scan_root(root: &Path, gemini_dir: Option<&Path>) -> Vec<SessionMeta> {
             created_at: None,
             last_active_at: None,
             source_path: None,
-            resume_command: Some(crate::agy_config::resume_command(gemini_dir, &id)),
+            resume_command: cli_resumable
+                .then(|| crate::agy_config::resume_command(gemini_dir, &id)),
         });
         let mut has_user_input = false;
         // Avoid parsing every transcript on list refresh when agy's own index is complete.
@@ -558,6 +582,7 @@ fn read_summaries(
         let title = (!title.is_empty())
             .then(|| title.to_string())
             .or_else(|| (!preview_text.is_empty()).then(|| truncate_summary(preview_text, 80)));
+        let cli_resumable = !is_desktop_or_ide_root(root);
         index.sessions.insert(
             id.clone(),
             SessionMeta {
@@ -569,7 +594,8 @@ fn read_summaries(
                 created_at: None,
                 last_active_at,
                 source_path: None,
-                resume_command: Some(crate::agy_config::resume_command(gemini_dir, &id)),
+                resume_command: cli_resumable
+                    .then(|| crate::agy_config::resume_command(gemini_dir, &id)),
             },
         );
     }
@@ -1773,19 +1799,32 @@ mod tests {
             .unwrap();
         };
         write("antigravity-cli", "cli-1");
-        write("antigravity", "ide-1");
+        write("antigravity", "desktop-1");
         write("antigravity", "cli-1");
+        write("antigravity-ide", "ide-1");
+        write("antigravity-ide", "desktop-1");
         let roots = vec![
             (home.path().join("antigravity-cli/brain"), None),
             (home.path().join("antigravity/brain"), None),
+            (home.path().join("antigravity-ide/brain"), None),
             (home.path().join("missing/brain"), None),
         ];
-        let mut ids: Vec<_> = scan_roots(&roots)
+        let sessions = scan_roots(&roots);
+        let mut by_id: HashMap<String, SessionMeta> = sessions
             .into_iter()
-            .map(|s| s.session_id)
+            .map(|s| (s.session_id.clone(), s))
             .collect();
+        let mut ids: Vec<_> = by_id.keys().cloned().collect();
         ids.sort();
-        assert_eq!(ids, ["cli-1", "ide-1"]);
+        assert_eq!(ids, ["cli-1", "desktop-1", "ide-1"]);
+        // Only CLI sessions get an `agy --conversation=...` resume command; desktop and IDE
+        // conversations live in separate app_data_dirs and must not expose broken CLI commands.
+        assert_eq!(
+            by_id.remove("cli-1").unwrap().resume_command.as_deref(),
+            Some("agy --conversation=cli-1")
+        );
+        assert_eq!(by_id.remove("desktop-1").unwrap().resume_command, None);
+        assert_eq!(by_id.remove("ide-1").unwrap().resume_command, None);
     }
 
     #[test]
@@ -2805,7 +2844,11 @@ mod tests {
         assert_eq!(fixture.traces("aaa-1").len(), 4);
         assert_eq!(fixture.rows("conversation_summaries", "aaa-1"), 1);
 
-        let ide = AgyFixture::new("antigravity", &["aaa-1"]);
+        let desktop = AgyFixture::new("antigravity", &["aaa-1"]);
+        assert!(desktop.delete("aaa-1").is_err());
+        assert_eq!(desktop.traces("aaa-1").len(), 4);
+
+        let ide = AgyFixture::new("antigravity-ide", &["aaa-1"]);
         assert!(ide.delete("aaa-1").is_err());
         assert_eq!(ide.traces("aaa-1").len(), 4);
     }

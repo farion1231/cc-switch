@@ -31,6 +31,14 @@ export interface WebDavSyncResult {
   status: string;
 }
 
+export interface AgyDesktopStatus {
+  supported: boolean;
+  installed: boolean;
+  version: string | null;
+  installPath: string | null;
+  dataDirExists: boolean;
+}
+
 export const settingsApi = {
   async get(): Promise<Settings> {
     return await invoke("get_settings");
@@ -107,6 +115,10 @@ export const settingsApi = {
     appId: AppId,
   ): Promise<{ exists: boolean; path: string }> {
     return await invoke("get_config_status", { app: appId });
+  },
+
+  async getAgyDesktopStatus(): Promise<AgyDesktopStatus> {
+    return await invoke("get_agy_desktop_status");
   },
 
   async openConfigFolder(appId: AppId): Promise<void> {
