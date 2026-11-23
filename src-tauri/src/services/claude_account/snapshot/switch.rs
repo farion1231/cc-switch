@@ -1,5 +1,6 @@
 //! 切换：把一个账号的登录移进默认槽位（[`check_out`]），或移回它自己的目录（[`vacate`]）。
 
+use crate::sync_utils::MutexExt;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -52,9 +53,7 @@ pub fn replace_live(ctx: &Ctx<'_>, target: &str, target_dir: &Path) -> Result<bo
 }
 
 fn run(ctx: &Ctx<'_>, target: &str, target_dir: &Path, mode: Mode) -> Result<Outcome, AppError> {
-    let _serial = SWITCH
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _serial = SWITCH.lock_recover();
     recover_locked(ctx)?;
 
     let started = Instant::now();
@@ -292,9 +291,7 @@ pub(super) fn finish(
 /// 把 `target` 从默认槽位移回它自己的槽位，默认槽位回到没有登录：切换前默认槽位本来就是
 /// 空的、后面写卡片失败时用。默认槽位里已经不是 `target`（用户期间登了别的号）就不动。
 pub fn vacate(ctx: &Ctx<'_>, target: &str, target_dir: &Path) -> Result<(), AppError> {
-    let _serial = SWITCH
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _serial = SWITCH.lock_recover();
     recover_locked(ctx)?;
     let default = &ctx.default;
     // 目标槽位的锁由 park 拿（锁不可重入，这里先拿会自己等自己）

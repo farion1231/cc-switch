@@ -68,6 +68,13 @@ Claude Code / Codex / Gemini 官方通道分別低至原價的 38% / 2% / 9%，�
 </tr>
 
 <tr>
+<td width="180"><a href="https://modelflare.dev/sign-up?utm_source=github&utm_campaign=ccswitch"><img src="assets/partners/logos/modelflare-banner.png" alt="Modelflare" width="150"></a></td>
+<td>感謝 Modelflare 贊助本專案！Modelflare：滿血穩定不摻水，以低成本享受全球 SOTA 模型。網站由美國 LLC 主體 Havenbyte LLC 營運，支援 GPT、Claude、Gemini、Grok 等主流模型與常用相容協定，另支援 40 多種圖片與影片模型，並支援中國大陸正規商務合作。
+<b>快取補償是一大亮點：</b>部分 OpenAI 價格優先、穩定與高級分組提供每日 65%、75%、85% 的快取命中率保障，符合條件的請求未達目標時，平台補償差額，結算後可在用量看板查看。
+<b>特惠活動：</b>單筆儲值 US$20 即可解鎖 0.015 倍價格倍率的 GPT 特惠分組，單筆儲值 US$50 即可解鎖 0.03 倍價格倍率的 Claude 特惠分組。透過<a href="https://modelflare.dev/sign-up?utm_source=github&utm_campaign=ccswitch">專屬連結註冊</a>即可參加。</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://hao.ai/invite/DTBZS3OR"><img src="assets/partners/logos/haoai-banner.png" alt="hao.ai" width="150"></a></td>
 <td>感謝 hao.ai 贊助本專案！hao.ai 是為開發者與團隊打造的快速、穩定的統一 LLM API 閘道。只需一組 API Key 與統一介面，即可存取 GPT、Claude、xAI Grok 等頂尖模型，並相容 OpenAI、Anthropic 等常見協定與 SDK。平台提供模型路由、故障轉移、團隊管理與完整的請求日誌，模型價格最低可至官方參考價的 15%，讓建構 AI 應用更簡單、更穩定、更省錢。hao.ai 為 CC Switch 用戶提供專屬福利：透過<a href="https://hao.ai/invite/DTBZS3OR">此連結</a>註冊，首單即可額外獲得 5% 贈送額度！</td>
 </tr>
@@ -150,8 +157,8 @@ TeamoRouter 也提供集中計費、團隊管理、BYOK、智慧路由、用量�
 </tr>
 
 <tr>
-<td width="180"><a href="https://9527.codes/register?aff=e5zI"><img src="assets/partners/logos/9527-banner.png" alt="9527CODE" width="150"></a></td>
-<td>感謝 9527CODE 贊助本專案！9527 CODE 是專注於穩定性與服務品質的企業級全能力 AI 中轉平台，為 Claude Code、Codex 等主流 AI 模型提供快速、穩定、高品質的中轉服務。它更重視長期穩定、線路品質與持續可用性，為企業與重度 AI 用戶提供穩定高效的一站式模型接入方案。已連續營運一年，服務穩定性達 99.9%，並提供 7×24 小時真人技術支援。透過本專案的<a href="https://9527.codes/register?aff=e5zI">專屬連結</a>註冊，新用戶可聯繫客服領取體驗額度，邀請返現不設上限！</td>
+<td width="180"><a href="https://9527.codes/register?channel=ccs"><img src="assets/partners/logos/9527-banner.png" alt="9527CODE" width="150"></a></td>
+<td>感謝 9527CODE 贊助本專案！9527 CODE 是專注於穩定性與服務品質的企業級全能力 AI 中轉平台，為 Claude Code、Codex 等主流 AI 模型提供快速、穩定、高品質的中轉服務。它更重視長期穩定、線路品質與持續可用性，為企業與重度 AI 用戶提供穩定高效的一站式模型接入方案。已連續營運一年，服務穩定性達 99.9%，並提供 7×24 小時真人技術支援。透過本專案的<a href="https://9527.codes/register?channel=ccs">專屬連結</a>註冊，新用戶可聯繫客服領取體驗額度，邀請返現不設上限！</td>
 </tr>
 
 <tr>

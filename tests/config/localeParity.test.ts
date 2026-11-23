@@ -1,3 +1,6 @@
+import { readdirSync, readFileSync } from "node:fs";
+import path from "node:path";
+import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import de from "@/i18n/locales/de.json";
 import en from "@/i18n/locales/en.json";
@@ -73,6 +76,21 @@ describe("locale parity", () => {
     ).toEqual([]);
   });
 
+  // The check above uses English as the reference, so an emptied English
+  // string would slip through it. These placeholders are empty on purpose.
+  const intentionallyEmpty = new Set([
+    "providerForm.modelPlaceholder",
+    "providerForm.smallModelPlaceholder",
+    "providerForm.haikuModelPlaceholder",
+  ]);
+  it("keeps every English string non-empty", () => {
+    expect(
+      [...reference]
+        .filter(([key, value]) => !value.trim() && !intentionallyEmpty.has(key))
+        .map(([key]) => key),
+    ).toEqual([]);
+  });
+
   // A few locales use variables English does not (zh passes {{labelSp}}, zh/ja
   // split dates into {{day}}/{{month}}), so a variable is valid when any other
   // locale uses it too. A variable no other locale uses is a typo or a leftover
@@ -96,6 +114,43 @@ describe("locale parity", () => {
     expect(unknown).toEqual([]);
   });
 
+  // These phrasings take different variables than English, and the callers
+  // pass all of them. Every other key uses exactly English's variables.
+  const ownVariables: Record<string, string[]> = {
+    zh: [
+      "providerPreset.matchedVersions",
+      "prompts.updatedOn",
+      "quota.tierLeft",
+      "quota.tierUsed",
+      "quota.tierUsedUp",
+    ],
+    "zh-TW": [
+      "providerPreset.matchedVersions",
+      "prompts.updatedOn",
+      "quota.tierLeft",
+      "quota.tierUsed",
+      "quota.tierUsedUp",
+    ],
+    ja: ["prompts.updatedOn"],
+  };
+  it.each(locales)("uses English's interpolation variables in %s", (name) => {
+    const own = all.find(([n]) => n === name)![1];
+    const exempt = new Set(ownVariables[name] ?? []);
+    const key = (value: string) => variables(value).sort().join(" ");
+    expect(
+      [...own]
+        .filter(([k, value]) => {
+          const expected = reference.get(k);
+          return (
+            expected !== undefined &&
+            !exempt.has(k) &&
+            key(value) !== key(expected)
+          );
+        })
+        .map(([k]) => k),
+    ).toEqual([]);
+  });
+
   it.each(locales)("keeps rich-text tags in %s", (_name, tree) => {
     expect(
       [...flattenStrings(tree)]
@@ -105,5 +160,95 @@ describe("locale parity", () => {
         })
         .map(([key]) => key),
     ).toEqual([]);
+  });
+});
+
+// A key the code passes to t() but English lacks renders as the raw key in
+// every language. Parity cannot see it, because all locales lack it together.
+describe("translation keys used in code", () => {
+  const src = path.resolve(__dirname, "../../src");
+  const KEY = `["'\`]([\\w-]+(?:\\.[\\w-]+)+)["'\`]`;
+  const keyPatterns = [
+    // t("a.b"), i18n.t("a.b")
+    new RegExp(`(?<![\\w.])(?:i18n\\.)?t\\(\\s*${KEY}`, "g"),
+    // t(cond ? "a.b" : "a.c")
+    new RegExp(`(?<![\\w.])t\\([^()]*?\\?\\s*${KEY}\\s*:\\s*${KEY}`, "g"),
+    // <Trans i18nKey="a.b" />
+    new RegExp(`i18nKey=${KEY}`, "g"),
+  ];
+  // The session reader passes its scoped translator (keys under
+  // sessionManager.reader) to helpers as `t`.
+  const readerDir = path.join("components", "sessions", "reader");
+  const exists = (key: string) =>
+    reference.has(key) ||
+    reference.has(`${key}_one`) ||
+    reference.has(`${key}_other`);
+
+  it("defines every literal key passed to t() or i18nKey in English", () => {
+    const missing: string[] = [];
+    let checked = 0;
+    const files = readdirSync(src, { recursive: true, encoding: "utf8" });
+    for (const file of files.filter((f) => /\.tsx?$/.test(f))) {
+      const text = readFileSync(path.join(src, file), "utf8");
+      const keys = keyPatterns.flatMap((pattern) =>
+        [...text.matchAll(pattern)].flatMap((match) => match.slice(1)),
+      );
+      for (const key of keys.filter(Boolean)) {
+        checked += 1;
+        const scoped = file.startsWith(readerDir)
+          ? `sessionManager.reader.${key}`
+          : undefined;
+        if (!exists(key) && !(scoped && exists(scoped))) {
+          missing.push(`${file}: ${key}`);
+        }
+      }
+    }
+    expect(checked).toBeGreaterThan(1000);
+    expect(missing).toEqual([]);
+  });
+});
+
+// Chinese (or any CJK) text written straight into JSX shows untranslated in
+// every other language. UI text goes through t() and the locale files.
+describe("UI text in JSX", () => {
+  const src = path.resolve(__dirname, "../../src");
+  const cjk = /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/;
+
+  // <p>文本</p>, title="文本", {"文本"}
+  const jsxString = (node: ts.Node): string | undefined => {
+    if (ts.isJsxText(node)) return node.text;
+    if (ts.isJsxAttribute(node) && node.initializer) {
+      if (ts.isStringLiteral(node.initializer)) return node.initializer.text;
+    }
+    if (ts.isJsxExpression(node) && node.expression) {
+      if (ts.isStringLiteralLike(node.expression)) return node.expression.text;
+    }
+    return undefined;
+  };
+
+  it("has no CJK text in JSX", () => {
+    const found: string[] = [];
+    const files = readdirSync(src, { recursive: true, encoding: "utf8" });
+    for (const file of files.filter((f) => f.endsWith(".tsx"))) {
+      const source = ts.createSourceFile(
+        file,
+        readFileSync(path.join(src, file), "utf8"),
+        ts.ScriptTarget.Latest,
+        true,
+        ts.ScriptKind.TSX,
+      );
+      const visit = (node: ts.Node) => {
+        const text = jsxString(node);
+        if (text !== undefined && cjk.test(text)) {
+          const { line } = source.getLineAndCharacterOfPosition(
+            node.getStart(source),
+          );
+          found.push(`${file}:${line + 1}: ${text.trim()}`);
+        }
+        node.forEachChild(visit);
+      };
+      visit(source);
+    }
+    expect(found).toEqual([]);
   });
 });

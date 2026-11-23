@@ -7,9 +7,12 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { http, HttpResponse } from "msw";
 import UnifiedMcpPanel from "@/components/mcp/UnifiedMcpPanel";
 import { settingsApi } from "@/lib/api";
 import type { McpApps, McpServer, McpServerSpec } from "@/types";
+import { server } from "../msw/server";
+import { waitForOverlayTransition } from "../utils/overlayTransition";
 
 const mocks = vi.hoisted(() => ({
   serversMap: {} as Record<string, McpServer>,
@@ -205,6 +208,25 @@ describe("UnifiedMcpPanel", () => {
     await userEvent.clear(search);
     await userEvent.type(search, "hidden-value");
     expect(screen.getByText("mcpPage.noMatch")).toBeInTheDocument();
+  });
+
+  it("lists unreadable servers apart from the table", async () => {
+    server.use(
+      http.post("http://tauri.local/get_unreadable_mcp_servers", () =>
+        HttpResponse.json([
+          {
+            id: "broken",
+            name: "Broken",
+            error: "MCP 服务器 broken 的 server_config 无法解析",
+          },
+        ]),
+      ),
+    );
+    renderPanel();
+    expect(
+      await screen.findByText("「Broken」的数据无法读取"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("mcpPage.emptyTitle")).toBeInTheDocument();
   });
 
   it("shows the empty state, not a search miss, when there are no servers", () => {
@@ -646,6 +668,7 @@ describe("UnifiedMcpPanel", () => {
     );
 
     // 再来一次全部成功：通知条消失
+    await waitForOverlayTransition();
     await userEvent.click(
       screen.getByRole("button", { name: "mcpPage.moreActions" }),
     );

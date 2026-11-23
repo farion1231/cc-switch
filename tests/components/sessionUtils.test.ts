@@ -1,16 +1,61 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   buildCdResumeCommand,
+  canDeleteSession,
   getSessionLastText,
   getSessionTimeBucket,
   groupSessionsByProject,
   groupSessionsByTime,
   isArchivedSession,
   formatMessageTime,
+  nativeDeleteHintKey,
 } from "@/components/sessions/utils";
 import type { SessionMeta } from "@/types";
 
+// 直接替换 @/lib/platform 的 mock 在 utils.ts 的模块图里不生效（vite-node 对
+// 该文件的导入走了带版本号的实例），改而桩掉 navigator：platform.ts 的
+// isWindows() 在调用时读取 userAgent，任何宿主机上结果都确定。
+const stubUserAgent = (userAgent: string) =>
+  vi.stubGlobal("navigator", { userAgent });
+
 describe("session utils", () => {
+  it("lets Antigravity CLI sessions be deleted but keeps IDE, ACP, and index-only ones native", () => {
+    const agy = (sourcePath?: string): SessionMeta => ({
+      providerId: "agy",
+      sessionId: "aaa-1",
+      sourcePath,
+    });
+    const log = ".system_generated/logs/transcript_full.jsonl";
+    const cli = agy(`/home/u/.gemini/antigravity-cli/brain/aaa-1/${log}`);
+    const keyCard = agy(
+      `C:\\Users\\u\\.cc-switch\\agy\\p\\antigravity-cli\\brain\\aaa-1\\${log}`,
+    );
+    const ide = agy(`/home/u/.gemini/antigravity/brain/aaa-1/${log}`);
+    const acp = agy(`/home/u/.gemini/antigravity-acp/brain/aaa-1/${log}`);
+    const t3Acp = agy(
+      `/home/u/.t3/userdata/providers/antigravity/abc123/antigravity-acp/brain/aaa-1/${log}`,
+    );
+    const t3AcpWin = agy(
+      `C:\\Users\\u\\.t3\\userdata\\providers\\antigravity\\abc123\\antigravity-acp\\brain\\aaa-1\\${log}`,
+    );
+    const indexOnly = agy();
+
+    expect(canDeleteSession(cli)).toBe(true);
+    expect(canDeleteSession(keyCard)).toBe(true);
+    expect(nativeDeleteHintKey(cli)).toBeUndefined();
+    for (const session of [ide, acp, t3Acp, t3AcpWin, indexOnly]) {
+      expect(canDeleteSession(session)).toBe(false);
+      expect(nativeDeleteHintKey(session)).toBe("sessionManager.agyDeleteHint");
+    }
+    expect(
+      canDeleteSession({
+        providerId: "copilot",
+        sessionId: "s",
+        sourcePath: "/x",
+      }),
+    ).toBe(false);
+  });
+
   it("groups sessions by project directory, newest group first and unknown last", () => {
     const sessions: SessionMeta[] = [
       {
@@ -209,9 +254,24 @@ describe("session utils", () => {
   });
 
   it("quotes the project directory in the cd-and-resume command", () => {
+    stubUserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)");
     expect(buildCdResumeCommand("/tmp/it's", "claude --resume x")).toBe(
       "cd '/tmp/it'\\''s' && claude --resume x",
     );
+    vi.unstubAllGlobals();
+  });
+
+  it("wraps the resume command with Set-Location for PowerShell on Windows", () => {
+    stubUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
+    expect(
+      buildCdResumeCommand(
+        "C:\\work\\it's",
+        "$env:OMP_PROFILE='default'; omp --resume 's'",
+      ),
+    ).toBe(
+      "Set-Location 'C:\\work\\it''s'; $env:OMP_PROFILE='default'; omp --resume 's'",
+    );
+    vi.unstubAllGlobals();
   });
 
   it("formats message times with the date, adding the year only for past years", () => {

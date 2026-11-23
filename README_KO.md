@@ -68,6 +68,13 @@ Claude Code / Codex / Gemini 공식 채널을 정가의 38% / 2% / 9%에 제공�
 </tr>
 
 <tr>
+<td width="180"><a href="https://modelflare.dev/sign-up?utm_source=github&utm_campaign=ccswitch"><img src="assets/partners/logos/modelflare-banner.png" alt="Modelflare" width="150"></a></td>
+<td>이 프로젝트를 후원해 주신 Modelflare에 감사드립니다! Modelflare는 성능을 깎지 않은 안정적인 서비스로, 전 세계 SOTA 모델을 저렴하게 이용할 수 있습니다. 미국 LLC인 Havenbyte LLC가 운영하며, GPT, Claude, Gemini, Grok 등 주요 모델과 일반적인 호환 프로토콜을 지원하고, 40여 종의 이미지·동영상 모델도 지원합니다. 중국 본토의 정식 비즈니스 협력도 지원합니다.
+<b>캐시 보상이 큰 장점입니다:</b> 일부 OpenAI 가격 우선·안정·프리미엄 그룹은 일일 캐시 적중률을 각각 65%, 75%, 85%로 보장합니다. 조건을 충족하는 요청이 목표에 미치지 못하면 플랫폼이 차액을 보상하며, 정산 후 사용량 대시보드에서 확인할 수 있습니다.
+<b>특별 혜택:</b> 한 번에 US$20를 충전하면 가격 배율 0.015배의 GPT 특가 그룹이, 한 번에 US$50를 충전하면 가격 배율 0.03배의 Claude 특가 그룹이 열립니다. <a href="https://modelflare.dev/sign-up?utm_source=github&utm_campaign=ccswitch">전용 링크로 가입</a>하면 참여할 수 있습니다.</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://hao.ai/invite/DTBZS3OR"><img src="assets/partners/logos/haoai-banner.png" alt="hao.ai" width="150"></a></td>
 <td>이 프로젝트를 후원해 주신 hao.ai에 감사드립니다! hao.ai는 개발자와 팀을 위한 빠르고 안정적인 통합 LLM API 게이트웨이입니다. 하나의 API 키와 통합 인터페이스로 GPT, Claude, xAI Grok 등 주요 모델에 접근할 수 있으며, OpenAI, Anthropic 등 일반적인 프로토콜과 SDK와 호환됩니다. 모델 라우팅, 장애 조치, 팀 관리, 전체 요청 로그를 제공하고, 모델 가격은 공식 참고 가격의 15%까지 낮아져 AI 애플리케이션을 더 간단하고 안정적이며 저렴하게 만들 수 있습니다. hao.ai는 CC Switch 사용자에게 특별 혜택을 제공합니다. <a href="https://hao.ai/invite/DTBZS3OR">이 링크</a>로 가입하면 첫 주문 시 5% 보너스 크레딧을 받을 수 있습니다!</td>
 </tr>
@@ -150,8 +157,8 @@ TeamoRouter는 통합 청구, 팀 관리, BYOK, 스마트 라우팅, 사용량 �
 </tr>
 
 <tr>
-<td width="180"><a href="https://9527.codes/register?aff=e5zI"><img src="assets/partners/logos/9527-banner.png" alt="9527CODE" width="150"></a></td>
-<td>이 프로젝트를 후원해 주신 9527CODE에 감사드립니다! 9527 CODE는 안정성과 서비스 품질에 집중하는 엔터프라이즈급 풀 기능 AI 릴레이 플랫폼으로, Claude Code, Codex 등 주요 AI 모델에 빠르고 안정적이며 품질 높은 릴레이 서비스를 제공합니다. 장기적인 안정성, 경로 품질, 지속적인 가용성을 더욱 중시하며, 기업과 헤비 AI 사용자에게 안정적이고 효율적인 원스톱 모델 접속 솔루션을 제공합니다. 1년간의 무중단 운영, 99.9% 서비스 안정성, 연중무휴 7×24 전문 상담원 기술 지원을 갖추고 있습니다. 이 프로젝트의 <a href="https://9527.codes/register?aff=e5zI">전용 링크</a>로 가입하세요. 신규 사용자는 고객센터에 문의해 체험 크레딧을 받을 수 있으며, 추천 캐시백은 무제한입니다!</td>
+<td width="180"><a href="https://9527.codes/register?channel=ccs"><img src="assets/partners/logos/9527-banner.png" alt="9527CODE" width="150"></a></td>
+<td>이 프로젝트를 후원해 주신 9527CODE에 감사드립니다! 9527 CODE는 안정성과 서비스 품질에 집중하는 엔터프라이즈급 풀 기능 AI 릴레이 플랫폼으로, Claude Code, Codex 등 주요 AI 모델에 빠르고 안정적이며 품질 높은 릴레이 서비스를 제공합니다. 장기적인 안정성, 경로 품질, 지속적인 가용성을 더욱 중시하며, 기업과 헤비 AI 사용자에게 안정적이고 효율적인 원스톱 모델 접속 솔루션을 제공합니다. 1년간의 무중단 운영, 99.9% 서비스 안정성, 연중무휴 7×24 전문 상담원 기술 지원을 갖추고 있습니다. 이 프로젝트의 <a href="https://9527.codes/register?channel=ccs">전용 링크</a>로 가입하세요. 신규 사용자는 고객센터에 문의해 체험 크레딧을 받을 수 있으며, 추천 캐시백은 무제한입니다!</td>
 </tr>
 
 <tr>

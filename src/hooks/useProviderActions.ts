@@ -33,6 +33,7 @@ import { supportsOfficialProxyTakeover } from "@/utils/providerCapabilities";
 import { getRoutingReason } from "@/utils/routingReason";
 import { logFrontendInfo } from "@/lib/frontendLogger";
 import { codexHistorySplitToastExtras } from "@/utils/codexHistorySplitHint";
+import { appHas } from "@/config/appSpecs";
 
 /**
  * Hook for managing provider actions (add, update, delete, switch)
@@ -101,7 +102,13 @@ export function useProviderActions(
           // 1. Merge model catalog (allowlist)
           if (modelCatalog && Object.keys(modelCatalog).length > 0) {
             const existingCatalog = (await openclawApi.getModelCatalog()) || {};
-            const mergedCatalog = { ...existingCatalog, ...modelCatalog };
+            // 新补的空条目不覆盖已有条目（别名、手加的字段）；预设条目照旧覆盖
+            const mergedCatalog = { ...existingCatalog };
+            for (const [ref, entry] of Object.entries(modelCatalog)) {
+              if (Object.keys(entry).length > 0 || !(ref in mergedCatalog)) {
+                mergedCatalog[ref] = entry;
+              }
+            }
             await openclawApi.setModelCatalog(mergedCatalog);
             await queryClient.invalidateQueries({
               queryKey: openclawKeys.health,
@@ -223,21 +230,30 @@ export function useProviderActions(
         // message for an auth-cleanup warning would point the user at the
         // wrong problem entirely.
         if (result?.warnings?.length) {
-          const authCleanupFailed = result.warnings.some((warning) =>
-            warning.startsWith("codex_auth_cleanup_failed"),
-          );
-          const hasOtherWarnings = result.warnings.some(
-            (warning) => !warning.startsWith("codex_auth_cleanup_failed"),
-          );
-          if (authCleanupFailed) {
-            toast.warning(
-              t("notifications.codexAuthCleanupFailed", {
+          const coded = [
+            {
+              code: "codex_auth_cleanup_failed",
+              message: t("notifications.codexAuthCleanupFailed", {
                 defaultValue:
                   "切换成功，但未能删除 auth.json，官方登录凭据仍留在磁盘上；如需彻底移除请手动删除 Codex 配置目录中的 auth.json",
               }),
-              { duration: 6000 },
-            );
+            },
+            {
+              code: "omo_variant_cleanup_failed",
+              message: t("notifications.omoVariantCleanupFailed", {
+                defaultValue:
+                  "切换成功，但未能删除另一个 OMO 变体（OMO / OMO Slim）的配置文件，OpenCode 可能同时加载两者；请在 OpenCode 配置目录中手动删除它",
+              }),
+            },
+          ];
+          for (const { code, message } of coded) {
+            if (result.warnings.some((warning) => warning.startsWith(code))) {
+              toast.warning(message, { duration: 6000 });
+            }
           }
+          const hasOtherWarnings = result.warnings.some(
+            (warning) => !coded.some(({ code }) => warning.startsWith(code)),
+          );
           if (hasOtherWarnings) {
             toast.warning(
               t("notifications.backfillWarning", {
@@ -321,7 +337,7 @@ export function useProviderActions(
           },
         };
 
-        if (activeApp === "pi" || activeApp === "omp") {
+        if (appHas(activeApp, "piFamily")) {
           await piApi.updateProviderUsageScript(provider.id, script, activeApp);
         } else {
           await providersApi.update(updatedProvider, activeApp);
@@ -479,10 +495,5 @@ export function useProviderActions(
     deleteProvider,
     saveUsageScript,
     setAsDefaultModel,
-    isLoading:
-      addProviderMutation.isPending ||
-      updateProviderMutation.isPending ||
-      deleteProviderMutation.isPending ||
-      switchProviderMutation.isPending,
   };
 }

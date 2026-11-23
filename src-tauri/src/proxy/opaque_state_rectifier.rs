@@ -76,10 +76,12 @@ pub struct OpaqueStateRectifyResult {
 /// 上游是不是因为验不了请求里的密文而拒绝。受整流器总开关管辖。
 ///
 /// `codex_third_party`：Codex 原样转发给非官方的原生 Responses 上游。
+/// `request = None` performs an error-only preflight: request-dependent checks
+/// remain possible until the caller lazily reconstructs and supplies the body.
 pub fn detect_opaque_state_rejection(
     error: &ProxyError,
     config: &RectifierConfig,
-    request: &Value,
+    request: Option<&Value>,
     codex_third_party: bool,
 ) -> Option<OpaqueStateRejection> {
     if !config.enabled {
@@ -115,17 +117,19 @@ pub fn detect_opaque_state_rejection(
     // 非官方网关不认识官方的压缩条目时，报错措辞各家不同，也可能根本不是 JSON。请求里带着
     // 看不出来源的压缩条目才会走到这里（跨供应商切换并压缩过之后），每个请求最多多一次；
     // 只换压缩条目，推理条目照旧发，不白白丢掉这家自己的推理连续性。
-    let unrecognized_compaction = request
-        .get("input")
-        .and_then(Value::as_array)
-        .is_some_and(|items| items.iter().any(is_unrecognized_compaction_item));
-    (codex_third_party && matches!(*status, 400 | 422) && unrecognized_compaction).then_some(
-        OpaqueStateRejection {
-            reasoning: false,
-            compaction: true,
-            item_ids: false,
-        },
-    )
+    (codex_third_party
+        && matches!(*status, 400 | 422)
+        && request.is_none_or(|request| {
+            request
+                .get("input")
+                .and_then(Value::as_array)
+                .is_some_and(|items| items.iter().any(is_unrecognized_compaction_item))
+        }))
+    .then_some(OpaqueStateRejection {
+        reasoning: false,
+        compaction: true,
+        item_ids: false,
+    })
 }
 
 /// 上游的错误体是不是自证验不了请求里的密文（错误码或固定措辞）。
@@ -133,7 +137,7 @@ fn is_self_identified_rejection(
     body: &str,
     payload: Option<&Value>,
     messages: &[&str],
-    request: &Value,
+    request: Option<&Value>,
 ) -> bool {
     is_encrypted_function_output_rejection(body, messages)
         || payload.is_some_and(is_coded_rejection)
@@ -141,7 +145,7 @@ fn is_self_identified_rejection(
         || (messages
             .iter()
             .any(|message| is_content_array_rejection(message))
-            && carries_plaintext_reasoning(request))
+            && request.is_none_or(carries_plaintext_reasoning))
 }
 
 /// 流里还没有输出就到了的失败事件，它的 `error` 对象是不是自证验不了请求里的密文。是的话返回
@@ -151,7 +155,7 @@ pub fn in_stream_rejection(error: &Value, request: &Value) -> Option<ProxyError>
     let payload = json!({ "error": error });
     let body = payload.to_string();
     let messages = error_messages(&payload);
-    is_self_identified_rejection(&body, Some(&payload), &messages, request).then(|| {
+    is_self_identified_rejection(&body, Some(&payload), &messages, Some(request)).then(|| {
         ProxyError::UpstreamError {
             status: 400,
             body: Some(body.clone()),
@@ -186,6 +190,32 @@ pub fn carries_encrypted_agent_task(request: &Value) -> bool {
     })
 }
 
+/// 请求里有没有上游可能验不了的状态：推理条目（密文、思考原文或要回查的 id）、函数输出与
+/// agent_message 里的加密片段、压缩条目，也就是 [`rectify_opaque_state`] 能处理的那些。
+///
+/// 有这些状态时，原样转发的流要先压到第一个输出事件再交出去：上游可能先回 HTTP 200、
+/// 再在输出之前用 `response.failed` 说解不开（#9476），流交出去之后就回不到重试循环了。
+pub fn carries_opaque_state(request: &Value) -> bool {
+    let Some(items) = request.get("input").and_then(Value::as_array) else {
+        return false;
+    };
+    let has_encrypted_part = |parts: Option<&Value>| {
+        parts
+            .and_then(Value::as_array)
+            .is_some_and(|parts| parts.iter().any(is_encrypted_part))
+    };
+    items
+        .iter()
+        .any(|item| match item.get("type").and_then(Value::as_str) {
+            Some("reasoning") => true,
+            Some("function_call_output" | "custom_tool_call_output") => {
+                has_encrypted_part(item.get("output"))
+            }
+            Some("agent_message") => has_encrypted_part(item.get("content")),
+            _ => is_compaction_item(item),
+        })
+}
+
 /// 子 agent 读不到任务：上游解不开请求末尾那条任务的密文。HTTP 400，Codex 不会重试。
 pub fn unreadable_agent_task_error() -> ProxyError {
     ProxyError::UpstreamError {
@@ -218,9 +248,12 @@ fn error_messages(payload: &Value) -> Vec<&str> {
     .collect()
 }
 
+/// 中转转述时常在原话前加自己的前缀（如 "OpenAI Responses bad request: "），按整句包含认。
 fn is_encrypted_function_output_rejection(body: &str, messages: &[&str]) -> bool {
     body.trim() == ENCRYPTED_FUNCTION_OUTPUT_REJECTION
-        || messages.contains(&ENCRYPTED_FUNCTION_OUTPUT_REJECTION)
+        || messages
+            .iter()
+            .any(|message| message.contains(ENCRYPTED_FUNCTION_OUTPUT_REJECTION))
 }
 
 fn is_coded_rejection(payload: &Value) -> bool {
@@ -468,7 +501,12 @@ mod tests {
     }
 
     fn detect(error: &ProxyError) -> Option<OpaqueStateRejection> {
-        detect_opaque_state_rejection(error, &RectifierConfig::default(), &json!({}), OFFICIAL)
+        detect_opaque_state_rejection(
+            error,
+            &RectifierConfig::default(),
+            Some(&json!({})),
+            OFFICIAL,
+        )
     }
 
     fn detect_with(
@@ -479,7 +517,7 @@ mod tests {
         detect_opaque_state_rejection(
             error,
             &RectifierConfig::default(),
-            request,
+            Some(request),
             codex_third_party,
         )
     }
@@ -623,7 +661,7 @@ mod tests {
             ..RectifierConfig::default()
         };
         assert_eq!(
-            detect_opaque_state_rejection(&coded, &disabled, &json!({}), THIRD_PARTY),
+            detect_opaque_state_rejection(&coded, &disabled, Some(&json!({})), THIRD_PARTY),
             None
         );
         assert_eq!(detect(&ProxyError::Timeout("slow".to_string())), None);
@@ -984,6 +1022,31 @@ mod tests {
         let before = plain.clone();
         assert!(!rectify_claude_responses_replay(&mut plain, ALL_STATE).applied);
         assert_eq!(plain, before);
+    }
+
+    #[test]
+    fn carries_opaque_state_covers_what_rectify_can_strip() {
+        let with = |item: Value| json!({ "input": [item] });
+        assert!(carries_opaque_state(&mixed_history()));
+        assert!(carries_opaque_state(&with(
+            json!({ "type": "reasoning", "id": "rs_1", "summary": [] })
+        )));
+        assert!(carries_opaque_state(&with(json!({
+            "type": "function_call_output", "call_id": "c",
+            "output": [{ "type": "encrypted_content", "encrypted_content": "enc" }]
+        }))));
+        assert!(carries_opaque_state(&with(
+            json!({ "type": "compaction", "encrypted_content": "gAAAA" })
+        )));
+
+        assert!(!carries_opaque_state(&json!({ "input": "hi" })));
+        assert!(!carries_opaque_state(&with(json!({
+            "type": "message", "role": "user",
+            "content": [{ "type": "input_text", "text": "hi" }]
+        }))));
+        assert!(!carries_opaque_state(&with(json!({
+            "type": "function_call_output", "call_id": "c", "output": "plain"
+        }))));
     }
 
     #[test]

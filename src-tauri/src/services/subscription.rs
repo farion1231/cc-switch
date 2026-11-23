@@ -78,7 +78,7 @@ pub struct SubscriptionQuota {
     /// ChatGPT 订阅买的 Codex Credits 余额（额度用完后才扣）；没有、不限量或为 0 时为 None
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credits_balance: Option<f64>,
-    /// 套餐显示名（「Pro 200」「Google AI Pro」「SuperGrok Heavy」…），授权中心的账号行显示；
+    /// 套餐显示名（「Pro 200」「AI Pro」「SuperGrok Heavy」…），授权中心的账号行显示；
     /// 只有能顺带查到套餐的服务填，认不出或查不到时为 None
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plan_name: Option<String>,
@@ -1743,7 +1743,9 @@ async fn get_local_claude_quota() -> Result<SubscriptionQuota, String> {
 
     let direct = claude_quota_from(read_claude_credentials()).await?;
     // 改了配置目录时登录不一定在 ~/.claude，在那里跑会拿到别的号的额度
-    if !needs_cli_usage(&direct) || crate::settings::get_claude_override_dir().is_some() {
+    if !needs_cli_usage(&direct)
+        || crate::settings::get_override_dir(&crate::app_config::AppType::Claude).is_some()
+    {
         return Ok(direct);
     }
     let cached = tokio::task::spawn_blocking(|| {

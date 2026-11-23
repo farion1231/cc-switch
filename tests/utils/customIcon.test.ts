@@ -111,7 +111,10 @@ describe("normalizeIconDataUri", () => {
   };
 
   it("only takes the image types the backend download allows", async () => {
-    await expectCode("data:image/gif;base64,R0lGODlhAQABAAAAACw=", "unsupported");
+    await expectCode(
+      "data:image/gif;base64,R0lGODlhAQABAAAAACw=",
+      "unsupported",
+    );
     await expectCode("data:text/html;base64,PHN2Zy8+", "unsupported");
     await expectCode("https://example.com/logo.png", "unsupported");
     // 前缀里少了 ;base64

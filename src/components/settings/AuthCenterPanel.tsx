@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef } from "react";
+import { useEffect, useId, useMemo, useRef, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { CopilotAuthSection } from "@/components/providers/forms/CopilotAuthSection";
 import { CodexOAuthSection } from "@/components/providers/forms/CodexOAuthSection";
@@ -8,10 +8,13 @@ import { ClaudeOfficialSection } from "@/components/providers/forms/ClaudeOffici
 import { KimiAccountLogin } from "@/components/providers/KimiAccountLogin";
 import { DshAccountLogin } from "@/components/providers/DshAccount";
 import { WorkBuddyAccountSection } from "@/components/settings/auth/WorkBuddyAccountSection";
-import { isMac } from "@/lib/platform";
+import { canSwitchAgyAccount } from "@/lib/authBinding";
 import { Switch } from "@/components/ui/switch";
 import { useAuthOpenBrowser, writeAuthOpenBrowser } from "@/lib/authLoginLink";
 import type { AuthCenterTarget } from "@/lib/api";
+import type { AppId } from "@/lib/api/types";
+import { DEFAULT_VISIBLE_APPS, orderAppIds } from "@/config/appConfig";
+import { useSettingsQuery } from "@/lib/query";
 
 interface AuthCenterPanelProps {
   authScrollTarget?: AuthCenterTarget | null;
@@ -72,10 +75,98 @@ function findScrollContainer(element: HTMLElement): HTMLElement | null {
   return null;
 }
 
+interface AuthCard {
+  target: AuthCenterTarget;
+  /**
+   * 用到这个账号的应用。卡片排在其中侧栏最靠前的那个的位置；全部隐藏了才隐藏卡片
+   * （Copilot、ChatGPT、xAI 也能在 Claude Code 等应用里当供应商用，只看一个应用会把还在用的卡藏掉）。
+   */
+  apps: readonly AppId[];
+  render: () => ReactNode;
+  available?: () => boolean;
+}
+
+/** 没拖过侧栏顺序时按这张表的顺序排；排在同一位置的卡片之间也按它排 */
+const AUTH_CARDS: readonly AuthCard[] = [
+  {
+    target: "claude_official",
+    apps: ["claude"],
+    render: () => <ClaudeOfficialSection helpSide="bottom" />,
+  },
+  {
+    target: "github_copilot",
+    apps: ["copilot", "claude", "claude-desktop", "codex"],
+    render: () => <CopilotAuthSection />,
+  },
+  {
+    target: "codex_oauth",
+    apps: ["codex", "claude", "claude-desktop"],
+    render: () => <CodexOAuthSection showAccountQuota />,
+  },
+  {
+    target: "xai_oauth",
+    apps: ["claude", "claude-desktop", "codex"],
+    render: () => <XaiOAuthSection mode="manage" helpSide="bottom" />,
+  },
+  {
+    target: "kimi_oauth",
+    apps: ["kimi"],
+    render: () => <KimiAccountLogin helpSide="bottom" />,
+  },
+  {
+    target: "dsh_account",
+    apps: ["dsh"],
+    render: () => <DshAccountLogin helpSide="bottom" />,
+  },
+  {
+    target: "agy_oauth",
+    apps: ["agy"],
+    render: () => <AgyOAuthSection helpSide="bottom" />,
+    available: canSwitchAgyAccount,
+  },
+  {
+    target: "workbuddy_account",
+    apps: ["workbuddy"],
+    render: () => <WorkBuddyAccountSection helpSide="top" />,
+  },
+];
+
+/**
+ * 跟侧栏走：按「应用」页拖出来的顺序排，对应的应用全部隐藏的卡片不显示。
+ * 要定位的那张（供应商表单里点「管理账号」进来）总是显示，免得跳过去扑空。
+ */
+function useOrderedAuthCards(
+  pinned: AuthCenterTarget | null | undefined,
+): AuthCard[] {
+  const { data: settings } = useSettingsQuery();
+  const appOrder = settings?.appOrder;
+  const visibleApps = settings?.visibleApps;
+  return useMemo(() => {
+    const visible = { ...DEFAULT_VISIBLE_APPS, ...visibleApps };
+    const rank = new Map(orderAppIds(appOrder).map((app, i) => [app, i]));
+    const position = (apps: readonly AppId[]) =>
+      Math.min(...apps.map((app) => rank.get(app) ?? Infinity));
+    return AUTH_CARDS.flatMap((card) => {
+      if (card.available && !card.available()) return [];
+      const shownApps = card.apps.filter((app) => visible[app]);
+      if (shownApps.length === 0 && card.target !== pinned) return [];
+      return [
+        {
+          card,
+          position: position(shownApps.length ? shownApps : card.apps),
+        },
+      ];
+    })
+      .sort((a, b) => a.position - b.position)
+      .map(({ card }) => card);
+  }, [appOrder, visibleApps, pinned]);
+}
+
 /**
  * 授权中心：Claude 官方账号、GitHub Copilot、ChatGPT、xAI、Kimi Code、DeepSeek Harness、WorkBuddy，一组一张卡片；
- * macOS 上另有 Antigravity 一组（切 agy 的官方登录，目前只实现了 macOS 钥匙串）。
+ * macOS、Windows 上另有 Antigravity 一组（切 agy 的官方登录：macOS 钥匙串、Windows 凭据管理器）。
  * WorkBuddy 收录桌面端登录的快照再切换（macOS 已确认路径，Windows / Linux 按推断路径）。
+ * 卡片的顺序和显示跟侧栏的应用设置走（见 `useOrderedAuthCards`）。
  * 侧栏的「授权中心」页和供应商表单里「管理账号」打开的全屏页共用。
  */
 export function AuthCenterPanel({
@@ -84,39 +175,15 @@ export function AuthCenterPanel({
 }: AuthCenterPanelProps) {
   const { t } = useTranslation();
   const rootRef = useRef<HTMLDivElement | null>(null);
-  const claudeOfficialSectionRef = useRef<HTMLDivElement | null>(null);
-  const copilotSectionRef = useRef<HTMLDivElement | null>(null);
-  const codexOauthSectionRef = useRef<HTMLDivElement | null>(null);
-  const xaiOauthSectionRef = useRef<HTMLDivElement | null>(null);
-  const agyOauthSectionRef = useRef<HTMLDivElement | null>(null);
-  const kimiOauthSectionRef = useRef<HTMLDivElement | null>(null);
-  const workbuddySectionRef = useRef<HTMLDivElement | null>(null);
-  const dshAccountSectionRef = useRef<HTMLDivElement | null>(null);
-  const showAgy = isMac();
+  const sectionRefs = useRef(new Map<AuthCenterTarget, HTMLDivElement>());
+  const cards = useOrderedAuthCards(authScrollTarget);
 
   useEffect(() => {
     if (!authScrollTarget) return;
     const root = rootRef.current;
     if (!root) return;
 
-    const sectionRef =
-      authScrollTarget === "kimi_oauth"
-        ? kimiOauthSectionRef
-        : authScrollTarget === "dsh_account"
-          ? dshAccountSectionRef
-          : authScrollTarget === "claude_official"
-            ? claudeOfficialSectionRef
-            : authScrollTarget === "github_copilot"
-              ? copilotSectionRef
-              : authScrollTarget === "codex_oauth"
-                ? codexOauthSectionRef
-                : authScrollTarget === "agy_oauth"
-                  ? agyOauthSectionRef
-                  : authScrollTarget === "workbuddy_account"
-                    ? workbuddySectionRef
-                    : xaiOauthSectionRef;
-
-    const target = sectionRef.current;
+    const target = sectionRefs.current.get(authScrollTarget);
     const container = findScrollContainer(root);
     if (!target || !container) return;
 
@@ -195,32 +262,17 @@ export function AuthCenterPanel({
         </p>
       )}
       <OpenBrowserToggle />
-      <div ref={claudeOfficialSectionRef}>
-        <ClaudeOfficialSection helpSide="bottom" />
-      </div>
-      <div ref={copilotSectionRef}>
-        <CopilotAuthSection />
-      </div>
-      <div ref={codexOauthSectionRef}>
-        <CodexOAuthSection showAccountQuota />
-      </div>
-      <div ref={xaiOauthSectionRef}>
-        <XaiOAuthSection mode="manage" helpSide="bottom" />
-      </div>
-      <div ref={kimiOauthSectionRef}>
-        <KimiAccountLogin helpSide="bottom" />
-      </div>
-      <div ref={dshAccountSectionRef}>
-        <DshAccountLogin helpSide="bottom" />
-      </div>
-      {showAgy && (
-        <div ref={agyOauthSectionRef}>
-          <AgyOAuthSection helpSide="bottom" />
+      {cards.map((card) => (
+        <div
+          key={card.target}
+          ref={(element) => {
+            if (element) sectionRefs.current.set(card.target, element);
+            else sectionRefs.current.delete(card.target);
+          }}
+        >
+          {card.render()}
         </div>
-      )}
-      <div ref={workbuddySectionRef}>
-        <WorkBuddyAccountSection helpSide="top" />
-      </div>
+      ))}
     </div>
   );
 }

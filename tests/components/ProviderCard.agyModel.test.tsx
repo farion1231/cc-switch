@@ -23,10 +23,12 @@ vi.mock("@/components/AgyAccountQuotaFooter", () => ({
     <span data-testid="agy-account-quota">{accountId}</span>
   ),
 }));
-const platform = vi.hoisted(() => ({ mac: true }));
+const platform = vi.hoisted(() => ({ mac: false, linux: false }));
 vi.mock("@/lib/platform", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/platform")>()),
   isMac: () => platform.mac,
+  isLinux: () => platform.linux,
+  isWindows: () => false,
 }));
 vi.mock("@/lib/query/failover", () => ({
   useProviderHealth: () => ({ data: undefined }),
@@ -131,18 +133,26 @@ describe("ProviderCard Antigravity official quota", () => {
     },
   };
 
-  it("shows the bound account's quota, not agy's current sign-in", () => {
-    platform.mac = true;
-    renderCard(bound);
-    expect(screen.getByTestId("agy-account-quota")).toHaveTextContent("sub-b");
-    expect(screen.queryByTestId("subscription-quota")).not.toBeInTheDocument();
-  });
+  it.each(["mac", "linux"] as const)(
+    "shows the bound account's quota on %s",
+    (os) => {
+      platform.mac = os === "mac";
+      platform.linux = os === "linux";
+      renderCard(bound);
+      expect(screen.getByTestId("agy-account-quota")).toHaveTextContent(
+        "sub-b",
+      );
+      expect(
+        screen.queryByTestId("subscription-quota"),
+      ).not.toBeInTheDocument();
+    },
+  );
 
   it("ignores the binding where accounts cannot be switched", () => {
     platform.mac = false;
+    platform.linux = false;
     renderCard(bound);
     expect(screen.getByTestId("subscription-quota")).toHaveTextContent("agy");
     expect(screen.queryByTestId("agy-account-quota")).not.toBeInTheDocument();
-    platform.mac = true;
   });
 });

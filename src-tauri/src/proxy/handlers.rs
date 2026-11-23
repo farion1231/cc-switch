@@ -8,7 +8,10 @@
 //! - Claude 的格式转换逻辑保留在此文件（用于 OpenRouter 旧接口回退）
 
 use super::{
-    content_encoding::{decompress_body, get_content_encoding, is_supported_content_encoding},
+    content_encoding::{
+        decompress_body_with_limit, get_content_encoding, is_supported_content_encoding,
+        DecompressError,
+    },
     error_mapper::{get_error_message, map_proxy_error_to_status},
     forwarder::{ActiveConnectionGuard, CodexUpstreamFormat},
     handler_config::{
@@ -48,12 +51,35 @@ use super::{
 };
 use crate::app_config::AppType;
 use crate::database::PRICING_SOURCE_REQUEST;
+use crate::provider_kind::ProviderKind;
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 use bytes::Bytes;
 use futures::StreamExt;
+#[cfg(test)]
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use subtle::ConstantTimeEq;
+
+/// 单次代理请求体上限（200 MiB），与路由层 `DefaultBodyLimit` 保持一致。
+/// 主 handler 接收原始 `axum::extract::Request` 时 Axum 不会自动检查 `DefaultBodyLimit`，
+/// 因此读体和解压都必须显式执行同一上限。
+pub(crate) const MAX_REQUEST_BODY_BYTES: usize = 200 * 1024 * 1024;
+
+async fn read_request_body_limited(
+    body: axum::body::Body,
+    limit: usize,
+) -> Result<Bytes, ProxyError> {
+    axum::body::to_bytes(body, limit).await.map_err(|e| {
+        let mut source = std::error::Error::source(&e);
+        while let Some(err) = source {
+            if err.is::<http_body_util::LengthLimitError>() {
+                return ProxyError::RequestBodyTooLarge(limit);
+            }
+            source = err.source();
+        }
+        ProxyError::Internal(format!("Failed to read request body: {e}"))
+    })
+}
 
 // ============================================================================
 // 健康检查和状态查询（简单端点）
@@ -291,7 +317,7 @@ pub async fn handle_claude_desktop_models(
     validate_claude_desktop_gateway_auth(&state, &headers)?;
     let providers = state
         .provider_router
-        .select_providers("claude-desktop")
+        .select_providers(&AppType::ClaudeDesktop)
         .await
         .map_err(|e| ProxyError::DatabaseError(e.to_string()))?;
     let provider = providers.first().ok_or(ProxyError::NoAvailableProvider)?;
@@ -342,14 +368,9 @@ async fn handle_messages_for_app(
     let uri = parts.uri;
     let headers = parts.headers;
     let extensions = parts.extensions;
-    let body_bytes = body
-        .collect()
-        .await
-        .map_err(|e| ProxyError::Internal(format!("Failed to read request body: {e}")))?
-        .to_bytes();
+    let body_bytes = read_request_body_limited(body, MAX_REQUEST_BODY_BYTES).await?;
     let mut body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
-    drop(body_bytes);
     let stack = match resolve_stack_target(&state, &app_type, &mut body) {
         Ok(stack) => stack,
         Err(rejected) => return Ok(*rejected),
@@ -379,6 +400,8 @@ async fn handle_messages_for_app(
         .and_then(|s| s.as_bool())
         .unwrap_or(false);
 
+    let response_context = ClaudeResponseContext::from_request(&body);
+
     // 转发请求
     let forwarder = ctx.create_forwarder(&state);
     let mut result = match forwarder
@@ -386,7 +409,7 @@ async fn handle_messages_for_app(
             &app_type,
             method,
             endpoint,
-            &body,
+            super::forwarder::ForwardBody::from_parsed(body, body_bytes),
             headers,
             extensions,
             ctx.get_providers(),
@@ -433,15 +456,13 @@ async fn handle_messages_for_app(
             response,
             &ctx,
             &state,
-            &body,
+            response_context,
             is_stream,
             &api_format,
             connection_guard,
         )
         .await;
     }
-
-    drop(body);
 
     // 通用响应处理（透传模式）
     process_response(
@@ -536,6 +557,7 @@ fn extract_gateway_token(headers: &axum::http::HeaderMap) -> Option<String> {
 ///
 /// 支持 OpenAI Chat Completions 和 Responses API 两种格式的转换
 struct ClaudeUsageLog {
+    multiplier: rust_decimal::Decimal,
     model: String,
     request_model: String,
     outbound_model: String,
@@ -574,6 +596,7 @@ fn prepare_claude_usage_log(
             .unwrap_or_else(|| ctx.request_model.clone()),
         app_type: ctx.app_type_str,
         provider_id: ctx.provider.id.clone(),
+        multiplier: crate::provider::billing_multiplier(&ctx.provider),
         session_id: ctx.session_id.clone(),
         usage,
         latency_ms: ctx.latency_ms(),
@@ -586,6 +609,7 @@ async fn write_claude_usage_log(state: &ProxyState, log: ClaudeUsageLog) {
     log_usage(
         state,
         &log.provider_id,
+        log.multiplier,
         log.app_type,
         &log.model,
         &log.request_model,
@@ -619,22 +643,38 @@ fn spawn_claude_usage_log(
     });
 }
 
+/// Keep only the metadata needed to translate the response. In particular, resolve
+/// hosted search selection while `tool_choice` is still available, without cloning
+/// the conversation or complete tool schemas on the passthrough path.
+struct ClaudeResponseContext {
+    tool_schema_hints: Option<transform_gemini::AnthropicToolSchemaHints>,
+    hosted_web_search_name: Option<String>,
+    hosted_web_search_max_uses: Option<u64>,
+}
+
+impl ClaudeResponseContext {
+    fn from_request(body: &Value) -> Self {
+        let hints = transform_gemini::extract_anthropic_tool_schema_hints(body);
+        Self {
+            tool_schema_hints: (!hints.is_empty()).then_some(hints),
+            hosted_web_search_name: transform_responses::anthropic_web_search_tool_name(body)
+                .map(ToString::to_string),
+            hosted_web_search_max_uses: transform_responses::anthropic_web_search_max_uses(body),
+        }
+    }
+}
+
 async fn handle_claude_transform(
     response: super::hyper_client::ProxyResponse,
     ctx: &RequestContext,
     state: &ProxyState,
-    original_body: &Value,
+    response_context: ClaudeResponseContext,
     is_stream: bool,
     api_format: &str,
     connection_guard: Option<ActiveConnectionGuard>,
 ) -> Result<axum::response::Response, ProxyError> {
     let status = response.status();
-    let is_codex_oauth = ctx
-        .provider
-        .meta
-        .as_ref()
-        .and_then(|meta| meta.provider_type.as_deref())
-        == Some("codex_oauth");
+    let is_codex_oauth = ProviderKind::declared(&ctx.provider) == Some(ProviderKind::CodexOAuth);
     // Claude 的模型验证要求非流式 JSON，并直接读取 usage.input_tokens。
     // Chat/Responses 上游即使强制返回 SSE，也必须聚合后再交给非流客户端。
     // Codex OAuth 强制 SSE，但可能不标 Content-Type，保留这个额外识别条件。
@@ -642,12 +682,11 @@ async fn handle_claude_transform(
         !is_stream && api_format == "openai_responses" && (is_codex_oauth || response.is_sse());
     let use_streaming =
         should_use_claude_transform_streaming(is_stream, response.is_sse(), api_format);
-    let tool_schema_hints = transform_gemini::extract_anthropic_tool_schema_hints(original_body);
-    let tool_schema_hints = (!tool_schema_hints.is_empty()).then_some(tool_schema_hints);
-    let hosted_web_search_name =
-        transform_responses::anthropic_web_search_tool_name(original_body).map(ToString::to_string);
-    let hosted_web_search_max_uses =
-        transform_responses::anthropic_web_search_max_uses(original_body);
+    let ClaudeResponseContext {
+        tool_schema_hints,
+        hosted_web_search_name,
+        hosted_web_search_max_uses,
+    } = response_context;
 
     if use_streaming {
         // 根据 api_format 选择流式转换器
@@ -682,6 +721,7 @@ async fn handle_claude_transform(
         let usage_collector = if usage_logging_enabled(state) {
             let state = state.clone();
             let provider_id = ctx.provider.id.clone();
+            let multiplier = crate::provider::billing_multiplier(&ctx.provider);
             let request_model = ctx.request_model.clone();
             // 上游/转换层未回显模型时，优先用映射后的出站模型兜底（路由接管真值），
             // 其次才是客户端请求别名。空字符串视为缺失（转换器对无回显上游会合成 ""）。
@@ -724,6 +764,7 @@ async fn handle_claude_transform(
                             log_usage(
                                 &state,
                                 &provider_id,
+                                multiplier,
                                 app_type_str,
                                 &model,
                                 &request_model,
@@ -953,6 +994,14 @@ fn decode_codex_request_body(
     headers: &mut axum::http::HeaderMap,
     body_bytes: Bytes,
 ) -> Result<Bytes, ProxyError> {
+    decode_codex_request_body_with_limit(headers, body_bytes, MAX_REQUEST_BODY_BYTES)
+}
+
+fn decode_codex_request_body_with_limit(
+    headers: &mut axum::http::HeaderMap,
+    body_bytes: Bytes,
+    max_decompressed_bytes: usize,
+) -> Result<Bytes, ProxyError> {
     let Some(encoding) = get_content_encoding(headers) else {
         return Ok(body_bytes);
     };
@@ -964,22 +1013,27 @@ fn decode_codex_request_body(
     }
 
     log::debug!("[Codex] 解压请求体: content-encoding={encoding}");
-    let decompressed = match decompress_body(&encoding, &body_bytes) {
-        Ok(Some(decompressed)) => decompressed,
-        // is_supported_content_encoding 已确保编码受支持，正常不会返回 None；
-        // 防御性兜底：宁可报错，也不能把压缩字节当 JSON 透传下去。
-        Ok(None) => {
-            return Err(ProxyError::InvalidRequest(format!(
-                "Unsupported request content-encoding: {encoding}"
-            )));
-        }
-        Err(e) => {
-            log::warn!("[Codex] 请求体解压失败 ({encoding}): {e}");
-            return Err(ProxyError::InvalidRequest(format!(
-                "Failed to decompress request body ({encoding}): {e}"
-            )));
-        }
-    };
+    let decompressed =
+        match decompress_body_with_limit(&encoding, &body_bytes, max_decompressed_bytes) {
+            Ok(Some(decompressed)) => decompressed,
+            // is_supported_content_encoding 已确保编码受支持，正常不会返回 None；
+            // 防御性兜底：宁可报错，也不能把压缩字节当 JSON 透传下去。
+            Ok(None) => {
+                return Err(ProxyError::InvalidRequest(format!(
+                    "Unsupported request content-encoding: {encoding}"
+                )));
+            }
+            Err(DecompressError::TooLarge { limit }) => {
+                log::warn!("[Codex] 请求体解压后超过大小上限 ({encoding}, limit={limit})");
+                return Err(ProxyError::RequestBodyTooLarge(limit));
+            }
+            Err(e) => {
+                log::warn!("[Codex] 请求体解压失败 ({encoding}): {e}");
+                return Err(ProxyError::InvalidRequest(format!(
+                    "Failed to decompress request body ({encoding}): {e}"
+                )));
+            }
+        };
 
     headers.remove(axum::http::header::CONTENT_ENCODING);
     headers.remove(axum::http::header::CONTENT_LENGTH);
@@ -1002,15 +1056,10 @@ pub async fn handle_chat_completions(
     let uri = parts.uri;
     let mut headers = parts.headers;
     let extensions = parts.extensions;
-    let body_bytes = req_body
-        .collect()
-        .await
-        .map_err(|e| ProxyError::Internal(format!("Failed to read request body: {e}")))?
-        .to_bytes();
+    let body_bytes = read_request_body_limited(req_body, MAX_REQUEST_BODY_BYTES).await?;
     let body_bytes = decode_codex_request_body(&mut headers, body_bytes)?;
     let mut body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
-    drop(body_bytes);
     let stack = match resolve_stack_target(&state, &AppType::Codex, &mut body) {
         Ok(stack) => stack,
         Err(rejected) => return Ok(*rejected),
@@ -1039,7 +1088,7 @@ pub async fn handle_chat_completions(
             &AppType::Codex,
             method,
             &endpoint,
-            &body,
+            super::forwarder::ForwardBody::from_parsed(body, body_bytes),
             headers,
             extensions,
             ctx.get_providers(),
@@ -1056,7 +1105,6 @@ pub async fn handle_chat_completions(
             return build_codex_proxy_error_response(&ctx, &endpoint, &err.error, is_stream);
         }
     };
-    drop(body);
 
     let connection_guard = result.connection_guard.take();
     ctx.outbound_model = result.outbound_model.take();
@@ -1095,7 +1143,15 @@ pub async fn handle_responses(
     State(state): State<ProxyState>,
     request: axum::extract::Request,
 ) -> Result<axum::response::Response, ProxyError> {
-    handle_responses_for_app(state, request, AppType::Codex, "Codex", "codex").await
+    handle_responses_for_app(
+        state,
+        request,
+        AppType::Codex,
+        "Codex",
+        "codex",
+        ResponsesEndpoint::Responses,
+    )
+    .await
 }
 
 pub async fn handle_grokbuild_responses(
@@ -1108,8 +1164,25 @@ pub async fn handle_grokbuild_responses(
         AppType::GrokBuild,
         "Grok Build",
         "grokbuild",
+        ResponsesEndpoint::Responses,
     )
     .await
+}
+
+/// Responses 的两个入口：普通回合 `/responses`，和远程压缩接口 `/responses/compact`。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ResponsesEndpoint {
+    Responses,
+    Compact,
+}
+
+impl ResponsesEndpoint {
+    fn path(self) -> &'static str {
+        match self {
+            Self::Responses => "/responses",
+            Self::Compact => "/responses/compact",
+        }
+    }
 }
 
 async fn handle_responses_for_app(
@@ -1118,21 +1191,17 @@ async fn handle_responses_for_app(
     app_type: AppType,
     tag: &'static str,
     app_type_str: &'static str,
+    responses_endpoint: ResponsesEndpoint,
 ) -> Result<axum::response::Response, ProxyError> {
     let (parts, req_body) = request.into_parts();
     let method = parts.method.clone();
     let uri = parts.uri;
     let mut headers = parts.headers;
     let extensions = parts.extensions;
-    let body_bytes = req_body
-        .collect()
-        .await
-        .map_err(|e| ProxyError::Internal(format!("Failed to read request body: {e}")))?
-        .to_bytes();
+    let body_bytes = read_request_body_limited(req_body, MAX_REQUEST_BODY_BYTES).await?;
     let body_bytes = decode_codex_request_body(&mut headers, body_bytes)?;
     let mut body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
-    drop(body_bytes);
     let stack = match resolve_stack_target(&state, &app_type, &mut body) {
         Ok(stack) => stack,
         Err(rejected) => return Ok(*rejected),
@@ -1148,14 +1217,16 @@ async fn handle_responses_for_app(
         stack,
     )
     .await?;
-    let endpoint = endpoint_with_query(&uri, "/responses");
+    let endpoint = endpoint_with_query(&uri, responses_endpoint.path());
 
     let is_stream = body
         .get("stream")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
     let codex_tool_context = transform_codex_chat::build_codex_tool_context_from_request(&body);
-    let compaction_request = codex_tool_context.is_compaction_request();
+    // V2 压缩回合走的是普通 `/responses`；`/responses/compact` 原样透传。
+    let compaction_request = responses_endpoint == ResponsesEndpoint::Responses
+        && codex_tool_context.is_compaction_request();
     // Captured before forwarding: the flat-name →
     // {namespace, name} map used to restore the native Responses upstream's
     // function-call names (see the namespace-restore dispatch below).
@@ -1167,7 +1238,7 @@ async fn handle_responses_for_app(
             &app_type,
             method,
             &endpoint,
-            &body,
+            super::forwarder::ForwardBody::from_parsed(body, body_bytes),
             headers,
             extensions,
             ctx.get_providers(),
@@ -1184,7 +1255,6 @@ async fn handle_responses_for_app(
             return build_codex_proxy_error_response(&ctx, &endpoint, &err.error, is_stream);
         }
     };
-    drop(body);
 
     let connection_guard = result.connection_guard.take();
     let codex_upstream_format = result.codex_upstream_format;
@@ -1289,12 +1359,7 @@ fn codex_native_responses_stream(
 ) -> std::pin::Pin<Box<dyn futures::Stream<Item = Result<Bytes, std::io::Error>> + Send>> {
     let stream = response.bytes_stream();
     if matches!(ctx.app_type, AppType::Codex)
-        && ctx
-            .provider
-            .meta
-            .as_ref()
-            .and_then(|meta| meta.provider_type.as_deref())
-            == Some("github_copilot")
+        && ProviderKind::declared(&ctx.provider) == Some(ProviderKind::GitHubCopilot)
     {
         Box::pin(super::providers::copilot_responses::create_stable_item_id_stream(stream))
     } else {
@@ -1349,7 +1414,15 @@ pub async fn handle_responses_compact(
     State(state): State<ProxyState>,
     request: axum::extract::Request,
 ) -> Result<axum::response::Response, ProxyError> {
-    handle_responses_compact_for_app(state, request, AppType::Codex, "Codex", "codex").await
+    handle_responses_for_app(
+        state,
+        request,
+        AppType::Codex,
+        "Codex",
+        "codex",
+        ResponsesEndpoint::Compact,
+    )
+    .await
 }
 
 /// Handle Codex's standalone Alpha Search protocol as a semantic passthrough.
@@ -1396,15 +1469,10 @@ async fn handle_codex_standalone_passthrough(
     let uri = parts.uri;
     let mut headers = parts.headers;
     let extensions = parts.extensions;
-    let body_bytes = req_body
-        .collect()
-        .await
-        .map_err(|e| ProxyError::Internal(format!("Failed to read request body: {e}")))?
-        .to_bytes();
+    let body_bytes = read_request_body_limited(req_body, MAX_REQUEST_BODY_BYTES).await?;
     let body_bytes = decode_codex_request_body(&mut headers, body_bytes)?;
     let body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::InvalidRequest(format!("Failed to parse request body: {e}")))?;
-    drop(body_bytes);
 
     let mut ctx = RequestContext::new(
         &state,
@@ -1424,7 +1492,7 @@ async fn handle_codex_standalone_passthrough(
             &AppType::Codex,
             method,
             &endpoint,
-            &body,
+            super::forwarder::ForwardBody::from_parsed(body, body_bytes),
             headers,
             extensions,
             ctx.get_providers(),
@@ -1441,7 +1509,6 @@ async fn handle_codex_standalone_passthrough(
             return build_codex_proxy_error_response(&ctx, &endpoint, &err.error, false);
         }
     };
-    drop(body);
 
     let connection_guard = result.connection_guard.take();
     ctx.outbound_model = result.outbound_model.take();
@@ -1462,149 +1529,13 @@ pub async fn handle_grokbuild_responses_compact(
     State(state): State<ProxyState>,
     request: axum::extract::Request,
 ) -> Result<axum::response::Response, ProxyError> {
-    handle_responses_compact_for_app(
+    handle_responses_for_app(
         state,
         request,
         AppType::GrokBuild,
         "Grok Build",
         "grokbuild",
-    )
-    .await
-}
-
-async fn handle_responses_compact_for_app(
-    state: ProxyState,
-    request: axum::extract::Request,
-    app_type: AppType,
-    tag: &'static str,
-    app_type_str: &'static str,
-) -> Result<axum::response::Response, ProxyError> {
-    let (parts, req_body) = request.into_parts();
-    let method = parts.method.clone();
-    let uri = parts.uri;
-    let mut headers = parts.headers;
-    let extensions = parts.extensions;
-    let body_bytes = req_body
-        .collect()
-        .await
-        .map_err(|e| ProxyError::Internal(format!("Failed to read request body: {e}")))?
-        .to_bytes();
-    let body_bytes = decode_codex_request_body(&mut headers, body_bytes)?;
-    let mut body: Value = serde_json::from_slice(&body_bytes)
-        .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
-    drop(body_bytes);
-    // 压缩请求也带着客户端选中的模型：不解码的话，会带着前缀落到默认路由。
-    let stack = match resolve_stack_target(&state, &app_type, &mut body) {
-        Ok(stack) => stack,
-        Err(rejected) => return Ok(*rejected),
-    };
-
-    let mut ctx = RequestContext::new(
-        &state,
-        &body,
-        &headers,
-        app_type.clone(),
-        tag,
-        app_type_str,
-        stack,
-    )
-    .await?;
-    let endpoint = endpoint_with_query(&uri, "/responses/compact");
-
-    let is_stream = body
-        .get("stream")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    let codex_tool_context = transform_codex_chat::build_codex_tool_context_from_request(&body);
-    let namespace_restore_map = transform_codex_responses_namespace::namespace_restore_map(&body);
-
-    let forwarder = ctx.create_forwarder(&state);
-    let mut result = match forwarder
-        .forward_with_retry(
-            &app_type,
-            method,
-            &endpoint,
-            &body,
-            headers,
-            extensions,
-            ctx.get_providers(),
-        )
-        .await
-    {
-        Ok(result) => result,
-        Err(mut err) => {
-            if let Some(provider) = err.provider.take() {
-                ctx.provider = provider;
-            }
-            ctx.outbound_model = err.outbound_model.take();
-            log_forward_error(&state, &ctx, is_stream, &err.error).await;
-            return build_codex_proxy_error_response(&ctx, &endpoint, &err.error, is_stream);
-        }
-    };
-    drop(body);
-
-    let connection_guard = result.connection_guard.take();
-    let codex_upstream_format = result.codex_upstream_format;
-    ctx.outbound_model = result.outbound_model.take();
-    ctx.provider = result.provider;
-    let response = result.response;
-
-    if codex_upstream_format == Some(CodexUpstreamFormat::Anthropic) {
-        return handle_codex_anthropic_to_responses_transform(
-            response,
-            &ctx,
-            &state,
-            is_stream,
-            connection_guard,
-            codex_tool_context,
-        )
-        .await;
-    }
-
-    if codex_upstream_format == Some(CodexUpstreamFormat::ChatCompletions) {
-        return handle_codex_chat_to_responses_transform(
-            response,
-            &ctx,
-            &state,
-            is_stream,
-            connection_guard,
-            codex_tool_context,
-        )
-        .await;
-    }
-
-    if super::providers::provider_needs_responses_namespace_flatten(
-        &ctx.provider,
-        ctx.outbound_model.as_deref(),
-    ) {
-        return handle_codex_xai_native_responses_rewrite(
-            response,
-            &ctx,
-            &state,
-            connection_guard,
-            namespace_restore_map,
-        )
-        .await;
-    }
-
-    if super::providers::provider_needs_responses_late_arguments_repair(&ctx.provider) {
-        return handle_codex_late_arguments_repair(
-            response,
-            &ctx,
-            &state,
-            is_stream,
-            connection_guard,
-        )
-        .await;
-    }
-
-    process_response(
-        response,
-        &ctx,
-        &state,
-        &CODEX_PARSER_CONFIG,
-        is_stream,
-        connection_guard,
+        ResponsesEndpoint::Compact,
     )
     .await
 }
@@ -1766,12 +1697,14 @@ async fn handle_codex_xai_native_responses_rewrite(
                 tokio::spawn({
                     let state = state.clone();
                     let provider_id = ctx.provider.id.clone();
+                    let multiplier = crate::provider::billing_multiplier(&ctx.provider);
                     let session_id = ctx.session_id.clone();
                     let latency_ms = ctx.latency_ms();
                     async move {
                         log_usage(
                             &state,
                             &provider_id,
+                            multiplier,
                             app_type_str,
                             &model,
                             &request_model,
@@ -1847,6 +1780,7 @@ async fn handle_codex_chat_to_responses_transform(
         let usage_collector = if usage_logging_enabled(state) {
             let state = state.clone();
             let provider_id = ctx.provider.id.clone();
+            let multiplier = crate::provider::billing_multiplier(&ctx.provider);
             let request_model = ctx.request_model.clone();
             // 接管/模型覆写场景的归因兜底：出站真值优先于客户端请求别名
             let fallback_model = ctx
@@ -1889,6 +1823,7 @@ async fn handle_codex_chat_to_responses_transform(
                         log_usage(
                             &state,
                             &provider_id,
+                            multiplier,
                             app_type_str,
                             &model,
                             &request_model,
@@ -2008,12 +1943,14 @@ async fn handle_codex_chat_to_responses_transform(
         tokio::spawn({
             let state = state.clone();
             let provider_id = ctx.provider.id.clone();
+            let multiplier = crate::provider::billing_multiplier(&ctx.provider);
             let session_id = ctx.session_id.clone();
             let latency_ms = ctx.latency_ms();
             async move {
                 log_usage(
                     &state,
                     &provider_id,
+                    multiplier,
                     app_type_str,
                     &model,
                     &request_model,
@@ -2173,12 +2110,14 @@ async fn handle_codex_anthropic_to_responses_transform(
         tokio::spawn({
             let state = state.clone();
             let provider_id = ctx.provider.id.clone();
+            let multiplier = crate::provider::billing_multiplier(&ctx.provider);
             let session_id = ctx.session_id.clone();
             let latency_ms = ctx.latency_ms();
             async move {
                 log_usage(
                     &state,
                     &provider_id,
+                    multiplier,
                     app_type_str,
                     &model,
                     &request_model,
@@ -2231,6 +2170,7 @@ fn build_codex_anthropic_sse_response(
     let usage_collector = if usage_logging_enabled(state) {
         let state = state.clone();
         let provider_id = ctx.provider.id.clone();
+        let multiplier = crate::provider::billing_multiplier(&ctx.provider);
         let request_model = ctx.request_model.clone();
         let fallback_model = ctx
             .outbound_model
@@ -2266,6 +2206,7 @@ fn build_codex_anthropic_sse_response(
                     log_usage(
                         &state,
                         &provider_id,
+                        multiplier,
                         app_type_str,
                         &model,
                         &request_model,
@@ -2592,12 +2533,11 @@ fn codex_proxy_error_code(error: &ProxyError) -> &'static str {
         ProxyError::CodexQuotaProtection(_) => "cc_switch_codex_quota_protection",
         ProxyError::CodexOfficialLoginPaused => "cc_switch_codex_official_login_paused",
         ProxyError::ForwardFailed(_) => "cc_switch_forward_failed",
-        ProxyError::Timeout(_) | ProxyError::StreamIdleTimeout(_) => "cc_switch_timeout",
+        ProxyError::Timeout(_) => "cc_switch_timeout",
         ProxyError::NoAvailableProvider => "cc_switch_no_available_provider",
         ProxyError::AllProvidersCircuitOpen => "cc_switch_all_providers_circuit_open",
         ProxyError::NoProvidersConfigured => "cc_switch_no_providers_configured",
         ProxyError::MaxRetriesExceeded => "cc_switch_max_retries_exceeded",
-        ProxyError::ProviderUnhealthy(_) => "cc_switch_provider_unhealthy",
         ProxyError::ConfigError(_) => "cc_switch_config_error",
         ProxyError::TransformError(_) => "cc_switch_transform_error",
         ProxyError::InvalidRequest(_) => "cc_switch_invalid_request",
@@ -2610,6 +2550,7 @@ fn codex_proxy_error_code(error: &ProxyError) -> &'static str {
         | ProxyError::BindFailed(_)
         | ProxyError::StopTimeout
         | ProxyError::StopFailed(_)
+        | ProxyError::RequestBodyTooLarge(_)
         | ProxyError::ResponseBodyTooLarge(_) => "cc_switch_proxy_error",
     }
 }
@@ -2643,11 +2584,7 @@ pub async fn handle_gemini(
     let method = parts.method.clone();
     let headers = parts.headers;
     let extensions = parts.extensions;
-    let body_bytes = req_body
-        .collect()
-        .await
-        .map_err(|e| ProxyError::Internal(format!("Failed to read request body: {e}")))?
-        .to_bytes();
+    let body_bytes = read_request_body_limited(req_body, MAX_REQUEST_BODY_BYTES).await?;
     // GET 类只读端点（/v1beta/models、/v1beta/models/<model> 等）没有请求体，
     // 不能强制 parse 为 JSON —— 否则空 body 会被拒绝。
     let body: Value = if body_bytes.is_empty() {
@@ -2656,8 +2593,6 @@ pub async fn handle_gemini(
         serde_json::from_slice(&body_bytes)
             .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?
     };
-
-    drop(body_bytes);
 
     // Gemini 的模型名称在 URI 中
     let mut ctx = RequestContext::new(
@@ -2689,7 +2624,7 @@ pub async fn handle_gemini(
             &AppType::Gemini,
             method,
             endpoint,
-            &body,
+            super::forwarder::ForwardBody::from_parsed(body, body_bytes),
             headers,
             extensions,
             ctx.get_providers(),
@@ -2706,7 +2641,6 @@ pub async fn handle_gemini(
             return Err(err.error);
         }
     };
-    drop(body);
 
     let connection_guard = result.connection_guard.take();
     ctx.outbound_model = result.outbound_model.take();
@@ -3406,6 +3340,7 @@ async fn log_forward_error(
 async fn log_usage(
     state: &ProxyState,
     provider_id: &str,
+    multiplier: rust_decimal::Decimal,
     app_type: &str,
     model: &str,
     request_model: &str,
@@ -3437,10 +3372,7 @@ async fn log_usage(
     let outbound_model = outbound_model.to_string();
     let write = tokio::task::spawn_blocking(move || {
         let logger = UsageLogger::new(&db);
-        // 计费模式读取的 DAO 是伪 async（无真实挂起点、直接取阻塞锁），
-        // 在阻塞线程上 block_on 不会停转运行时
-        let pricing_model_source = tokio::runtime::Handle::current()
-            .block_on(logger.resolve_pricing_model_source(&app_type));
+        let pricing_model_source = logger.resolve_pricing_model_source(&app_type);
         let pricing_model = if pricing_model_source == PRICING_SOURCE_REQUEST {
             outbound_model
         } else {
@@ -3449,6 +3381,7 @@ async fn log_usage(
         logger.log_with_calculation(
             request_id,
             provider_id,
+            multiplier,
             app_type,
             model,
             request_model,
@@ -3774,28 +3707,32 @@ data: {\"id\":\"c1\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_details\":
     }
 
     #[test]
-    fn responses_sse_to_response_value_handles_missing_trailing_blank_line() {
-        // 错标 SSE 兜底/非规范上游：最后的 response.completed 后没有空行分隔
-        let sse = "event: response.completed\n\
-data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_tail\",\"status\":\"completed\",\"model\":\"gpt-5.4\",\"output\":[],\"usage\":{\"input_tokens\":3,\"output_tokens\":1}}}\n";
-
-        let response = responses_sse_to_response_value(sse).unwrap();
-
-        assert_eq!(response["id"], "resp_tail");
-    }
-
-    #[test]
-    fn responses_sse_to_response_value_ignores_truncated_trailing_block() {
-        // 截断的残余尾块不能破坏已聚合好的完整响应（codex_oauth 路径复用本函数）
-        let sse = "event: response.completed\n\
+    fn responses_sse_to_response_value_edge_cases() {
+        for (case, stream, id) in [
+            // 错标 SSE 兜底/非规范上游：最后的 response.completed 后没有空行分隔
+            ("responses_sse_to_response_value_handles_missing_trailing_blank_line", "event: response.completed\n\
+data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_tail\",\"status\":\"completed\",\"model\":\"gpt-5.4\",\"output\":[],\"usage\":{\"input_tokens\":3,\"output_tokens\":1}}}\n", "resp_tail"),
+            // 截断的残余尾块不能破坏已聚合好的完整响应（codex_oauth 路径复用本函数）
+            ("responses_sse_to_response_value_ignores_truncated_trailing_block", "event: response.completed\n\
 data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_ok\",\"status\":\"completed\",\"model\":\"gpt-5.4\",\"output\":[],\"usage\":{\"input_tokens\":3,\"output_tokens\":1}}}\n\
 \n\
 event: response.extra\n\
-data: {\"type\":\"resp";
+data: {\"type\":\"resp", "resp_ok"),
+            // C8：已拿到 response.completed 后，残余里的完整 response.failed 不得翻车
+            // （codex_oauth 聚合路径复用本函数，此前该尾块被忽略=成功）
+            ("responses_sse_completed_then_trailing_failed_keeps_success", "event: response.completed\n\
+data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_ok\",\"status\":\"completed\",\"model\":\"gpt-5.4\",\"output\":[]}}\n\n\
+event: response.failed\n\
+data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"message\":\"boom\"}}}\n", "resp_ok"),
+        ] {
 
-        let response = responses_sse_to_response_value(sse).unwrap();
+            let sse = stream;
 
-        assert_eq!(response["id"], "resp_ok");
+            let response = responses_sse_to_response_value(sse).unwrap();
+
+            assert_eq!(response["id"], id, "{case}");
+
+        }
     }
 
     #[test]
@@ -4166,19 +4103,6 @@ data: {\"id\":\"chatcmpl-real\",\"model\":\"m\",\"created\":42,\"choices\":[{\"i
     }
 
     #[test]
-    fn responses_sse_completed_then_trailing_failed_keeps_success() {
-        // C8：已拿到 response.completed 后，残余里的完整 response.failed 不得翻车
-        // （codex_oauth 聚合路径复用本函数，此前该尾块被忽略=成功）
-        let sse = "event: response.completed\n\
-data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_ok\",\"status\":\"completed\",\"model\":\"gpt-5.4\",\"output\":[]}}\n\n\
-event: response.failed\n\
-data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"message\":\"boom\"}}}\n";
-
-        let response = responses_sse_to_response_value(sse).unwrap();
-        assert_eq!(response["id"], "resp_ok");
-    }
-
-    #[test]
     fn aggregated_chat_sse_round_trips_through_openai_to_anthropic() {
         // 全链路：错标 Content-Type 的 SSE 体 → 聚合 → 既有非流转换器 → Anthropic JSON
         let sse = "data: {\"id\":\"chatcmpl-9\",\"created\":1,\"model\":\"gpt-5.4\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Hi\"},\"finish_reason\":null}]}\n\n\
@@ -4282,7 +4206,13 @@ data: [DONE]\n\n";
                     Bytes::from_static(sse.as_bytes()),
                 );
                 let response = super::handle_claude_transform(
-                    upstream, &ctx, &state, &request, false, api_format, None,
+                    upstream,
+                    &ctx,
+                    &state,
+                    super::ClaudeResponseContext::from_request(&request),
+                    false,
+                    api_format,
+                    None,
                 )
                 .await
                 .unwrap();
@@ -4318,6 +4248,141 @@ data: [DONE]\n\n";
             true,
             "openai_responses",
         ));
+    }
+
+    #[tokio::test]
+    async fn forced_web_search_selection_survives_response_context_extraction() {
+        use crate::app_config::AppType;
+        use crate::mode::stack::StackTarget;
+        use crate::provider::Provider;
+        use crate::proxy::{
+            handler_context::RequestContext, hyper_client::ProxyResponse, server::ProxyState,
+        };
+        use serde_json::{json, Value};
+
+        let state = ProxyState::for_test(Arc::new(Database::memory().unwrap()));
+        state.config.write().await.enable_logging = false;
+        let request = json!({
+            "model": "test-model", "messages": [{"role": "user", "content": "Search twice"}],
+            "tools": [
+                {"type": "web_search_20250305", "name": "first_search", "max_uses": 1},
+                {"type": "web_search_20250305", "name": "chosen_search", "max_uses": 3},
+                {"name": "lookup", "input_schema": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}
+            ],
+            "tool_choice": {"type": "tool", "name": "chosen_search"}
+        });
+        let ctx = RequestContext::new(
+            &state,
+            &request,
+            &HeaderMap::new(),
+            AppType::Claude,
+            "Claude",
+            "claude",
+            Some(StackTarget {
+                provider: Provider::with_id("search-test".into(), "Test".into(), json!({}), None),
+                upstream_model: "test-model".into(),
+                original_model: "test-model".into(),
+            }),
+        )
+        .await
+        .unwrap();
+        let output: Vec<Value> = (0..2)
+            .map(|index| {
+                json!({
+                    "id": format!("ws_{index}"), "type": "web_search_call", "status": "completed",
+                    "action": {"type": "search", "query": format!("query {index}")}
+                })
+            })
+            .collect();
+        let upstream_body = json!({"id": "resp_search", "model": "test-model", "status": "completed",
+            "output": output, "usage": {"input_tokens": 5, "output_tokens": 2}});
+        let mut events = vec![
+            json!({"type": "response.created", "response": {"id": "resp_search", "model": "test-model"}}),
+        ];
+        for (index, item) in output.iter().enumerate() {
+            let mut pending = item.clone();
+            pending["status"] = json!("in_progress");
+            events.push(json!({"type": "response.output_item.added", "output_index": index, "item": pending}));
+            events.push(
+                json!({"type": "response.output_item.done", "output_index": index, "item": item}),
+            );
+        }
+        events.push(json!({"type": "response.completed", "response": upstream_body}));
+        let sse = events
+            .iter()
+            .map(|event| format!("data: {event}\n\n"))
+            .collect::<String>();
+
+        for (stream, upstream_sse) in [(false, false), (false, true), (true, true)] {
+            let context = super::ClaudeResponseContext::from_request(&request);
+            assert_eq!(
+                context.hosted_web_search_name.as_deref(),
+                Some("chosen_search")
+            );
+            assert_eq!(context.hosted_web_search_max_uses, Some(3));
+            assert!(context
+                .tool_schema_hints
+                .as_ref()
+                .unwrap()
+                .contains_key("lookup"));
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                "content-type",
+                HeaderValue::from_static(if upstream_sse {
+                    "text/event-stream"
+                } else {
+                    "application/json"
+                }),
+            );
+            let upstream = ProxyResponse::buffered(
+                StatusCode::OK,
+                headers,
+                Bytes::from(if upstream_sse {
+                    sse.clone()
+                } else {
+                    upstream_body.to_string()
+                }),
+            );
+            let response = super::handle_claude_transform(
+                upstream,
+                &ctx,
+                &state,
+                context,
+                stream,
+                "openai_responses",
+                None,
+            )
+            .await
+            .unwrap();
+            let bytes = response.into_body().collect().await.unwrap().to_bytes();
+            let blocks = if stream {
+                std::str::from_utf8(&bytes)
+                    .unwrap()
+                    .lines()
+                    .filter_map(|line| line.strip_prefix("data: "))
+                    .filter_map(|data| serde_json::from_str::<Value>(data).ok())
+                    .filter_map(|event| event.get("content_block").cloned())
+                    .collect::<Vec<_>>()
+            } else {
+                serde_json::from_slice::<Value>(&bytes).unwrap()["content"]
+                    .as_array()
+                    .unwrap()
+                    .clone()
+            };
+            let names = blocks
+                .iter()
+                .filter(|block| block["type"] == "server_tool_use")
+                .map(|block| block["name"].as_str().unwrap())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                names,
+                vec!["chosen_search", "chosen_search"],
+                "stream={stream}, upstream_sse={upstream_sse}"
+            );
+            assert!(!std::str::from_utf8(&bytes)
+                .unwrap()
+                .contains("max_uses_exceeded"));
+        }
     }
 
     #[tokio::test]
@@ -5559,7 +5624,11 @@ mod stack_tests {
     async fn stacked_requests_go_to_one_provider_without_failover_timeouts() {
         let state = proxy_state();
         // 应用开了故障转移、配了很短的超时，队列里还有别家。
-        let mut config = state.db.get_proxy_config_for_app("claude").await.unwrap();
+        let mut config = state
+            .db
+            .get_proxy_config_for_app(&AppType::Claude)
+            .await
+            .unwrap();
         config.auto_failover_enabled = true;
         config.max_retries = 3;
         config.non_streaming_timeout = 1;
@@ -5644,5 +5713,41 @@ mod stack_tests {
         .expect("models");
         let (_, body) = json_of(response).await;
         assert_eq!(body, json!({ "data": [], "has_more": false }));
+    }
+
+    #[tokio::test]
+    async fn read_request_body_limited_rejects_oversized_body_with_413() {
+        let ok = read_request_body_limited(axum::body::Body::from(vec![b'a'; 1024]), 1024)
+            .await
+            .expect("body within limit succeeds");
+        assert_eq!(ok.len(), 1024);
+
+        let err = read_request_body_limited(axum::body::Body::from(vec![b'a'; 1025]), 1024)
+            .await
+            .expect_err("body exceeding limit must be rejected");
+        assert!(matches!(err, ProxyError::RequestBodyTooLarge(1024)));
+        assert_eq!(err.into_response().status(), StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    #[test]
+    fn decode_codex_request_body_rejects_decompression_bomb_with_413() {
+        use std::io::Write;
+
+        let mut enc = zstd::stream::Encoder::new(Vec::new(), 3).unwrap();
+        enc.write_all(&vec![b'0'; 2 * 1024 * 1024]).unwrap();
+        let compressed = enc.finish().unwrap();
+        assert!(compressed.len() < 4096, "bomb payload should stay tiny");
+
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(
+            axum::http::header::CONTENT_ENCODING,
+            axum::http::HeaderValue::from_static("zstd"),
+        );
+
+        let err =
+            decode_codex_request_body_with_limit(&mut headers, Bytes::from(compressed), 64 * 1024)
+                .expect_err("decompression bomb must be rejected");
+        assert!(matches!(err, ProxyError::RequestBodyTooLarge(65536)));
+        assert_eq!(err.into_response().status(), StatusCode::PAYLOAD_TOO_LARGE);
     }
 }

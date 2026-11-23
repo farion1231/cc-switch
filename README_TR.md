@@ -68,6 +68,13 @@ Platform ayrıca kurumsal düzeyde eşzamanlılığı, özel bir yönetim konsol
 </tr>
 
 <tr>
+<td width="180"><a href="https://modelflare.dev/sign-up?utm_source=github&utm_campaign=ccswitch"><img src="assets/partners/logos/modelflare-banner.png" alt="Modelflare" width="150"></a></td>
+<td>Bu projeye sponsor olduğu için Modelflare'e teşekkürler! Modelflare: tam güçte, kararlı ve sulandırılmamış; dünyanın SOTA modellerine düşük maliyetle erişin. Site, ABD merkezli Havenbyte LLC tarafından işletilir; GPT, Claude, Gemini, Grok ve diğer önde gelen modelleri yaygın uyumlu protokollerle destekler, ayrıca 40'tan fazla görsel ve video modeli sunar. Çin anakarasında resmi ticari iş birliklerini de destekler.
+<b>Önbellek telafisi öne çıkan bir özelliktir:</b> OpenAI'nin bazı fiyat öncelikli, kararlı ve premium grupları günlük önbellek isabet oranını sırasıyla %65, %75 ve %85 olarak garanti eder. Koşulları karşılayan istekler hedefin altında kalırsa platform farkı telafi eder; bunu hesaplaşmadan sonra kullanım panosunda görebilirsiniz.
+<b>Özel kampanya:</b> Tek seferde 20 US$ yükleme, 0,015 kat fiyat çarpanlı GPT indirim grubunun; tek seferde 50 US$ yükleme ise 0,03 kat fiyat çarpanlı Claude indirim grubunun kilidini açar. Katılmak için <a href="https://modelflare.dev/sign-up?utm_source=github&utm_campaign=ccswitch">özel bağlantıyla kaydolun</a>.</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://hao.ai/invite/DTBZS3OR"><img src="assets/partners/logos/haoai-banner.png" alt="hao.ai" width="150"></a></td>
 <td>Bu projeye sponsor olduğu için hao.ai'ye teşekkürler! hao.ai, geliştiriciler ve ekipler için hızlı ve kararlı, birleşik bir LLM API ağ geçididir. Tek bir API anahtarı ve birleşik bir arayüzle GPT, Claude, xAI Grok ve diğer önde gelen modellere erişebilirsiniz; OpenAI ve Anthropic gibi yaygın protokoller ve SDK'larla uyumludur. Platform; model yönlendirme, yük devretme, ekip yönetimi ve eksiksiz istek günlükleri sunar; model fiyatları resmi referans fiyatların %15'i kadar düşük olabilir ve yapay zeka uygulamaları geliştirmeyi daha basit, kararlı ve ucuz hale getirir. hao.ai, CC Switch kullanıcılarına özel bir avantaj sunar: <a href="https://hao.ai/invite/DTBZS3OR">bu bağlantıdan</a> kayıt olarak ilk siparişinizde %5 bonus kredi kazanın!</td>
 </tr>
@@ -150,8 +157,8 @@ TeamoRouter ayrıca merkezi faturalandırma, ekip yönetimi, BYOK, akıllı yön
 </tr>
 
 <tr>
-<td width="180"><a href="https://9527.codes/register?aff=e5zI"><img src="assets/partners/logos/9527-banner.png" alt="9527CODE" width="150"></a></td>
-<td>Bu projeye sponsor olduğu için 9527CODE'a teşekkürler! 9527 CODE, kararlılığa ve hizmet kalitesine odaklanan, kurumsal düzeyde, tam kapasiteli bir yapay zeka aktarma platformudur; Claude Code, Codex ve diğer ana akım yapay zeka modelleri için hızlı, kararlı ve yüksek kaliteli aktarma hizmetleri sunar. Uzun vadeli kararlılığa, rota kalitesine ve sürekli kullanılabilirliğe daha fazla önem vererek işletmelere ve yoğun yapay zeka kullanıcılarına kararlı ve verimli, tek durak bir model erişim çözümü sunar. Bir yıllık kesintisiz işletim, %99,9 hizmet kararlılığı ve 7×24 insan teknik desteğiyle. Bu projeye özel <a href="https://9527.codes/register?aff=e5zI">bağlantıdan</a> kayıt olun; yeni kullanıcılar deneme kredisi almak için müşteri hizmetleriyle iletişime geçebilir ve tavsiye geri ödemesi sınırsızdır!</td>
+<td width="180"><a href="https://9527.codes/register?channel=ccs"><img src="assets/partners/logos/9527-banner.png" alt="9527CODE" width="150"></a></td>
+<td>Bu projeye sponsor olduğu için 9527CODE'a teşekkürler! 9527 CODE, kararlılığa ve hizmet kalitesine odaklanan, kurumsal düzeyde, tam kapasiteli bir yapay zeka aktarma platformudur; Claude Code, Codex ve diğer ana akım yapay zeka modelleri için hızlı, kararlı ve yüksek kaliteli aktarma hizmetleri sunar. Uzun vadeli kararlılığa, rota kalitesine ve sürekli kullanılabilirliğe daha fazla önem vererek işletmelere ve yoğun yapay zeka kullanıcılarına kararlı ve verimli, tek durak bir model erişim çözümü sunar. Bir yıllık kesintisiz işletim, %99,9 hizmet kararlılığı ve 7×24 insan teknik desteğiyle. Bu projeye özel <a href="https://9527.codes/register?channel=ccs">bağlantıdan</a> kayıt olun; yeni kullanıcılar deneme kredisi almak için müşteri hizmetleriyle iletişime geçebilir ve tavsiye geri ödemesi sınırsızdır!</td>
 </tr>
 
 <tr>
