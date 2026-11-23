@@ -5,9 +5,7 @@ use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use crate::proxy::usage::{calculator::CostCalculator, parser::TokenUsage};
 use crate::services::{
-    session_usage::{
-        load_sync_cursors, metadata_modified_nanos, update_sync_state_on_conn, SessionSyncResult,
-    },
+    session_usage::{metadata_modified_nanos, update_sync_state_on_conn, SessionSyncResult},
     sql_helpers::INPUT_TOKEN_SEMANTICS_FRESH,
     usage_stats::find_model_pricing,
 };
@@ -20,10 +18,14 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub fn sync_trae_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
-    sync_root(
+pub(crate) fn sync_trae_usage(
+    db: &Database,
+    cursors: &crate::services::session_usage::SyncCursors,
+) -> Result<SessionSyncResult, AppError> {
+    sync_root_with_cursors(
         db,
         &crate::trae_config::data_dir().join("cli").join("sessions"),
+        cursors,
     )
 }
 
@@ -44,9 +46,21 @@ fn rollouts(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
     }
 }
 
+#[cfg(test)]
 fn sync_root(db: &Database, root: &Path) -> Result<SessionSyncResult, AppError> {
+    sync_root_with_cursors(
+        db,
+        root,
+        &crate::services::session_usage::load_sync_cursors(db)?,
+    )
+}
+
+fn sync_root_with_cursors(
+    db: &Database,
+    root: &Path,
+    cursors: &crate::services::session_usage::SyncCursors,
+) -> Result<SessionSyncResult, AppError> {
     let mut result = SessionSyncResult::default();
-    let cursors = load_sync_cursors(db)?;
     let mut files = Vec::new();
     rollouts(root, 0, &mut files);
     for path in files {
