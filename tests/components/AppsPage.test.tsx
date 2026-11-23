@@ -14,6 +14,7 @@ import {
   createToolState,
   deferred,
   isReady,
+  mountApps,
   registerScrollIntoViewStub,
   renderApps,
   report,
