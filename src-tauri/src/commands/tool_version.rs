@@ -42,6 +42,196 @@ fn probe_local_version(
     }
 }
 
+/// 某个 WSL 发行版里一个工具的安装情况（多环境写入用，见 `app_targets::installs`）。
+/// `path` 是 `command -v` 找到的可执行文件路径（和应用页 Windows 行显示的安装路径对应）。
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+pub(crate) enum WslToolState {
+    Installed {
+        version: String,
+        path: Option<String>,
+    },
+    /// 找到了但 `--version` 跑不起来。
+    Broken {
+        error: String,
+        path: Option<String>,
+    },
+    NotInstalled,
+    /// 探测本身失败（超时、shell 不可用等），不能当成「未安装」。
+    Unknown(String),
+}
+
+/// WSL 里指向 Windows 盘符挂载点的路径（默认 `/mnt/<盘符>/…`，也认 automount 根改成
+/// `/` 时的 `/<盘符>/…`）。
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn is_windows_mount_path(path: &str) -> bool {
+    let rest = path
+        .strip_prefix("/mnt/")
+        .unwrap_or(path.trim_start_matches('/'));
+    let mut parts = rest.splitn(2, '/');
+    let drive = parts.next().unwrap_or_default();
+    let looks_like_drive = drive.len() == 1 && drive.chars().all(|c| c.is_ascii_alphabetic());
+    let lower = path.to_ascii_lowercase();
+    (looks_like_drive && parts.next().is_some())
+        || lower.ends_with(".exe")
+        || lower.ends_with(".cmd")
+        || lower.ends_with(".bat")
+}
+
+/// 哨兵之后的输出拆成（`command -v` 的路径, 其余输出）。
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn split_probe_path(output: &str) -> (Option<String>, String) {
+    let mut lines = output.lines();
+    match lines.next().map(str::trim) {
+        Some(first) if first.starts_with('/') => (
+            Some(first.to_string()),
+            lines.collect::<Vec<_>>().join("\n").trim().to_string(),
+        ),
+        _ => (None, output.trim().to_string()),
+    }
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+const WSL_PROBE_EXIT_MARKER: &str = "__CCSWITCH_EC__";
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn decode_wsl_command_output(bytes: &[u8]) -> String {
+    if bytes.starts_with(&[0xFF, 0xFE]) || bytes.contains(&0) {
+        crate::app_targets::wsl::decode_wsl_output(bytes)
+    } else {
+        decode_command_output(bytes)
+    }
+}
+
+/// 生成供 `wsl_auto_shell_command` 执行的探测脚本（不含单引号，兼容 sh/bash/zsh/dash/fish）。
+/// 一旦进入内层 `sh -c` 并打印哨兵即退出 0，防止 `--version` 报错时 `-lic || -lc || -c` 覆盖报错与路径。
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn wsl_tool_probe_payload(tool: &str) -> String {
+    format!(
+        "sh -c \"echo {VERSION_PROBE_SENTINEL}; p=\\$(command -v {tool} 2>/dev/null); echo \\\"\\$p\\\"; case \\\"\\$p\\\" in \\\"\\\"|/mnt/*) ;; *) \\\"\\$p\\\" --version; echo; echo \\\"{WSL_PROBE_EXIT_MARKER}\\$?\\\";; esac\""
+    )
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn split_wsl_exit_code(text: &str) -> (String, Option<i32>) {
+    let mut exit_code = None;
+    let mut kept = Vec::new();
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix(WSL_PROBE_EXIT_MARKER) {
+            if let Ok(code) = rest.trim().parse::<i32>() {
+                exit_code = Some(code);
+                continue;
+            }
+        }
+        kept.push(line);
+    }
+    (kept.join("\n").trim().to_string(), exit_code)
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn parse_wsl_probe_result(
+    tool: &str,
+    stdout: &str,
+    stderr: &str,
+    process_code: Option<i32>,
+) -> WslToolState {
+    let stdout = stdout.trim();
+    let stderr = stderr.trim();
+    if !stdout.contains(VERSION_PROBE_SENTINEL) {
+        let err = if stderr.is_empty() { stdout } else { stderr };
+        if process_code == Some(127) || is_shell_command_missing(err, tool) {
+            return WslToolState::NotInstalled;
+        }
+        let detail = if err.is_empty() {
+            format!("probe exited with code {}", process_code.unwrap_or(-1))
+        } else {
+            last_lines(err, 4)
+        };
+        return WslToolState::Unknown(detail);
+    }
+
+    let (body, exit_code) = split_wsl_exit_code(after_version_sentinel(stdout));
+    let (path, rest) = split_probe_path(&body);
+    let Some(path_str) = path.as_deref() else {
+        return WslToolState::NotInstalled;
+    };
+    // WSL 默认把 Windows 的 PATH 接在后面，也认 automount 根改成 `/` 的情形。
+    if is_windows_mount_path(path_str) {
+        return WslToolState::NotInstalled;
+    }
+
+    let succeeded = exit_code.map_or_else(|| process_code == Some(0), |code| code == 0);
+    if succeeded {
+        let raw = if rest.is_empty() { stderr } else { &rest };
+        return WslToolState::Installed {
+            version: if raw.is_empty() {
+                String::new()
+            } else {
+                extract_version(raw)
+            },
+            path,
+        };
+    }
+
+    let err = if stderr.is_empty() {
+        rest.as_str()
+    } else {
+        stderr
+    };
+    let detail = if err.trim().is_empty() {
+        format!(
+            "`--version` exited with code {}",
+            exit_code.or(process_code).unwrap_or(-1)
+        )
+    } else {
+        last_lines(err.trim(), 4)
+    };
+    WslToolState::Broken {
+        error: detail,
+        path,
+    }
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn wsl_tool_state(tool: &str, distro: &str) -> WslToolState {
+    use std::process::{Command, Stdio};
+    if known_tool(tool).is_none() {
+        return WslToolState::Unknown(format!("unsupported tool {tool}"));
+    }
+    if !is_valid_wsl_distro_name(distro) {
+        return WslToolState::Unknown(format!("invalid distro name: {distro}"));
+    }
+    let payload = wsl_tool_probe_payload(tool);
+    let cmd = wsl_auto_shell_command(&payload, None);
+    let output = Command::new("wsl.exe")
+        .args(["-d", distro, "--", "sh", "-c", &cmd])
+        .env("WSL_UTF8", "1")
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("exec failed: {error}"))
+        .and_then(|child| {
+            wait_child_output(
+                child,
+                CommandDeadline::from_timeout(Some(INSTALL_PROBE_TIMEOUT)),
+            )
+        });
+    let out = match output {
+        Ok(out) => out,
+        Err(error) => return WslToolState::Unknown(error),
+    };
+    let stdout = decode_wsl_command_output(&out.stdout);
+    let stderr = decode_wsl_command_output(&out.stderr);
+    parse_wsl_probe_result(tool, &stdout, &stderr, out.status.code())
+}
+
+#[cfg(not(target_os = "windows"))]
+pub(crate) fn wsl_tool_state(_tool: &str, _distro: &str) -> WslToolState {
+    WslToolState::Unknown("WSL check not supported on this platform".to_string())
+}
+
 /// 本机实际安装的工具版本（和「关于」页探测的是同一个）；拿不到为 `None`。
 pub(crate) fn local_tool_version(tool: &str) -> Option<String> {
     let (_, wsl_distro) = tool_env_type_and_wsl_distro(tool);
@@ -628,13 +818,14 @@ fn try_get_version_wsl(
 
     let output = Command::new("wsl.exe")
         .args(["-d", distro, "--", &shell, flag, &cmd])
+        .env("WSL_UTF8", "1")
         .creation_flags(CREATE_NO_WINDOW)
         .output();
 
     match output {
         Ok(out) => {
-            let stdout = decode_command_output(&out.stdout).trim().to_string();
-            let stderr = decode_command_output(&out.stderr).trim().to_string();
+            let stdout = decode_wsl_command_output(&out.stdout).trim().to_string();
+            let stderr = decode_wsl_command_output(&out.stderr).trim().to_string();
             // 启动文件的输出都在哨兵之前，只看它之后（#7347）
             let payload_out = after_version_sentinel(&stdout).to_string();
             if out.status.success() {
@@ -1023,5 +1214,94 @@ mod tests {
             scan_cli_version_in("kimi", &[empty, same_name_dir]),
             ShellProbe::NotFound(_)
         ));
+    }
+
+    #[test]
+    fn windows_installs_seen_through_wsl_interop_do_not_count() {
+        use super::is_windows_mount_path;
+        assert!(is_windows_mount_path(
+            "/mnt/c/Users/76760/AppData/Roaming/npm/codex"
+        ));
+        assert!(is_windows_mount_path("/mnt/d/nodejs/node_global/codex"));
+        assert!(is_windows_mount_path(
+            "/c/Users/me/AppData/Roaming/npm/codex"
+        ));
+        assert!(is_windows_mount_path("/usr/bin/codex.exe"));
+        assert!(!is_windows_mount_path("/usr/local/bin/codex"));
+        assert!(!is_windows_mount_path("/root/.npm-global/bin/codex"));
+        assert!(!is_windows_mount_path("/mnt/wsl/shared/codex"));
+    }
+
+    #[test]
+    fn probe_output_carries_the_install_path() {
+        assert_eq!(
+            split_probe_path("/usr/local/bin/codex\ncodex-cli 0.167.2"),
+            (
+                Some("/usr/local/bin/codex".to_string()),
+                "codex-cli 0.167.2".to_string()
+            )
+        );
+        assert_eq!(
+            split_probe_path("codex: not found"),
+            (None, "codex: not found".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_wsl_probe_result_handles_installed_broken_missing_and_unknown() {
+        let installed = parse_wsl_probe_result(
+            "claude",
+            "Welcome to Ubuntu\n__CCSWITCH_VERSION__\n/home/me/.nvm/bin/claude\n2.1.50 (Claude Code)\n\n__CCSWITCH_EC__0\n",
+            "",
+            Some(0),
+        );
+        assert!(matches!(
+            installed,
+            WslToolState::Installed { version, path }
+            if version == "2.1.50" && path.as_deref() == Some("/home/me/.nvm/bin/claude")
+        ));
+
+        let broken = parse_wsl_probe_result(
+            "claude",
+            "__CCSWITCH_VERSION__\n/home/me/.nvm/bin/claude\n\n__CCSWITCH_EC__1\n",
+            "Error: Node >= 20 required",
+            Some(0),
+        );
+        assert!(matches!(
+            broken,
+            WslToolState::Broken { error, path }
+            if error == "Error: Node >= 20 required"
+                && path.as_deref() == Some("/home/me/.nvm/bin/claude")
+        ));
+
+        let win_mount = parse_wsl_probe_result(
+            "codex",
+            "__CCSWITCH_VERSION__\n/c/Users/me/AppData/Roaming/npm/codex\n0.1.0\n\n__CCSWITCH_EC__0\n",
+            "",
+            Some(0),
+        );
+        assert!(matches!(win_mount, WslToolState::NotInstalled));
+
+        let not_installed =
+            parse_wsl_probe_result("gemini", "__CCSWITCH_VERSION__\n\n", "", Some(0));
+        assert!(matches!(not_installed, WslToolState::NotInstalled));
+
+        let missing_sentinel = parse_wsl_probe_result(
+            "claude",
+            "",
+            "The Windows Subsystem for Linux instance has terminated.",
+            Some(1),
+        );
+        assert!(matches!(
+            missing_sentinel,
+            WslToolState::Unknown(detail) if detail.contains("terminated")
+        ));
+
+        assert!(!wsl_tool_probe_payload("claude").contains('\''));
+        let utf16_err: Vec<u8> = "Error in WSL\r\n"
+            .encode_utf16()
+            .flat_map(|u| u.to_le_bytes())
+            .collect();
+        assert_eq!(decode_wsl_command_output(&utf16_err).trim(), "Error in WSL");
     }
 }

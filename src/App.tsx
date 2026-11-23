@@ -90,6 +90,7 @@ import {
   AppPageHeader,
   WindowControlsContext,
 } from "@/components/shell/AppPageHeader";
+import { AppTargetsIndicator } from "@/components/providers/AppTargetsIndicator";
 import { WindowControls } from "@/components/shell/WindowControls";
 import { APP_DISPLAY_NAME, AppGlyph } from "@/components/shell/AppGlyph";
 import { ProfileSwitcher } from "@/components/profiles/ProfileSwitcher";
@@ -1562,6 +1563,15 @@ function App() {
               {t("appPage.webUi")}
               <ExternalLink className="h-3.5 w-3.5" />
             </Button>
+          )}
+          {currentView === "providers" && (
+            <AppTargetsIndicator
+              app={activeApp}
+              providers={providers}
+              currentProviderId={currentProviderId}
+              onOpenConfig={() => openSettings("appConfig", activeApp)}
+              onOpenRouting={() => openSettings("routing")}
+            />
           )}
           {currentView === "providers" &&
             (settingsData?.showProviderSearch ?? true) && (

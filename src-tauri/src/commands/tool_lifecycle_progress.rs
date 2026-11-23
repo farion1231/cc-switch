@@ -34,6 +34,8 @@ pub(super) enum ToolLifecycleStage {
 #[serde(rename_all = "camelCase")]
 pub(super) struct ToolLifecycleProgressPayload {
     pub tools: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub distro: Option<String>,
     pub stage: ToolLifecycleStage,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub line: Option<String>,
@@ -45,37 +47,58 @@ type Sink = Arc<dyn Fn(ToolLifecycleProgressPayload) + Send + Sync>;
 #[derive(Clone)]
 pub(super) struct ToolLifecycleProgress {
     tools: Vec<String>,
+    distro: Option<String>,
     sink: Sink,
 }
 
 impl ToolLifecycleProgress {
-    pub fn from_app<R: tauri::Runtime>(app: tauri::AppHandle<R>, tools: &[&str]) -> Self {
+    fn app_sink<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Sink {
         use tauri::Emitter;
-        Self::with_sink(
-            tools,
-            Arc::new(move |payload| {
-                match payload.stage {
-                    ToolLifecycleStage::Queued => {
-                        log::info!(
-                            "[tool-lifecycle] {:?} 排队等待前一个写入结束",
-                            payload.tools
-                        )
-                    }
-                    ToolLifecycleStage::Running => {
-                        log::info!("[tool-lifecycle] {:?} 开始执行", payload.tools)
-                    }
-                    ToolLifecycleStage::Output => {}
+        Arc::new(move |payload| {
+            match payload.stage {
+                ToolLifecycleStage::Queued => {
+                    log::info!(
+                        "[tool-lifecycle] {:?} (distro={:?}) 排队等待前一个写入结束",
+                        payload.tools,
+                        payload.distro
+                    )
                 }
-                if let Err(e) = app.emit(TOOL_LIFECYCLE_PROGRESS_EVENT, payload) {
-                    log::debug!("推送工具安装进度失败: {e}");
+                ToolLifecycleStage::Running => {
+                    log::info!(
+                        "[tool-lifecycle] {:?} (distro={:?}) 开始执行",
+                        payload.tools,
+                        payload.distro
+                    )
                 }
-            }),
-        )
+                ToolLifecycleStage::Output => {}
+            }
+            if let Err(e) = app.emit(TOOL_LIFECYCLE_PROGRESS_EVENT, payload) {
+                log::debug!("推送工具安装进度失败: {e}");
+            }
+        })
+    }
+
+    pub fn from_app<R: tauri::Runtime>(app: tauri::AppHandle<R>, tools: &[&str]) -> Self {
+        Self::with_sink(tools, Self::app_sink(app))
+    }
+
+    #[cfg(target_os = "windows")]
+    pub fn from_app_for_wsl<R: tauri::Runtime>(
+        app: tauri::AppHandle<R>,
+        tools: &[&str],
+        distro: impl Into<String>,
+    ) -> Self {
+        Self {
+            tools: tools.iter().map(|tool| tool.to_string()).collect(),
+            distro: Some(distro.into()),
+            sink: Self::app_sink(app),
+        }
     }
 
     pub fn with_sink(tools: &[&str], sink: Sink) -> Self {
         Self {
             tools: tools.iter().map(|tool| tool.to_string()).collect(),
+            distro: None,
             sink,
         }
     }
@@ -89,6 +112,7 @@ impl ToolLifecycleProgress {
     fn send(&self, stage: ToolLifecycleStage, line: Option<String>) {
         (self.sink)(ToolLifecycleProgressPayload {
             tools: self.tools.clone(),
+            distro: self.distro.clone(),
             stage,
             line,
         });
@@ -351,6 +375,7 @@ mod tests {
     fn progress_payload_serializes_for_frontend() {
         let payload = ToolLifecycleProgressPayload {
             tools: vec!["mcode".into()],
+            distro: None,
             stage: ToolLifecycleStage::Queued,
             line: None,
         };

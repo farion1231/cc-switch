@@ -18,7 +18,7 @@ mod tool_lifecycle_progress;
 #[path = "tool_node_requirement.rs"]
 mod tool_node_requirement;
 #[path = "tool_process.rs"]
-pub(super) mod tool_process;
+pub(crate) mod tool_process;
 #[path = "tool_uninstall.rs"]
 mod tool_uninstall;
 #[path = "tool_version.rs"]
@@ -544,6 +544,63 @@ pub async fn run_tool_lifecycle_action(
         .await
 }
 
+/// 在指定的 WSL 发行版里安装 / 更新一个工具（应用页的 WSL 安装条目）。卸载要先预览计划，
+/// 这里不提供。
+#[tauri::command]
+pub async fn run_wsl_tool_lifecycle_action(
+    app: AppHandle,
+    tool: String,
+    distro: String,
+    action: String,
+) -> Result<(), String> {
+    let requested = normalize_requested_tools(std::slice::from_ref(&tool));
+    if requested.len() != 1 {
+        return Err(format!("Unsupported tool: {tool}"));
+    }
+    if !crate::app_targets::model::is_valid_distro_name(&distro) {
+        return Err(format!("Invalid WSL distro name: {distro}"));
+    }
+    let action = ToolLifecycleAction::from_str(&action)?;
+    #[cfg(target_os = "windows")]
+    {
+        let command = wsl_tool_action_shell_command(requested[0], action)
+            .ok_or_else(|| format!("Unsupported tool action target: {tool}"))?;
+        let script = wsl_login_action_script(&command);
+        let progress = ToolLifecycleProgress::from_app_for_wsl(app, &requested, &distro);
+        let queued = progress.clone();
+        TOOL_LIFECYCLE
+            .run_with_queue_notice(
+                requested,
+                move || queued.queued(),
+                move |_| {
+                    // 没在运行的发行版里执行会卡在启动上（界面上也不给按钮），排队后在执行线程里再核对一次。
+                    if !crate::app_targets::wsl::is_running(&distro) {
+                        return Err(format!(
+                            "WSL · {distro} 没有在运行，请先在终端里启动它 (WSL · {distro} is not running; start it in a terminal first)"
+                        ));
+                    }
+                    progress.running();
+                    let mut cmd = std::process::Command::new("wsl.exe");
+                    cmd.args(["-d", &distro, "--", "sh", "-c", &script])
+                        .env("WSL_UTF8", "1")
+                        .creation_flags(CREATE_NO_WINDOW);
+                    let output = tool_lifecycle_progress::run_with_progress(cmd, &progress)
+                        .map_err(|e| format!("启动安装进程失败: {e}"))?;
+                    let result = finish_lifecycle_output(&output);
+                    // 下次多环境概览重新探测这个发行版的安装情况。
+                    crate::app_targets::installs::invalidate(&distro);
+                    result
+                },
+            )
+            .await
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (app, requested, action);
+        Err("WSL is only available on Windows".to_string())
+    }
+}
+
 /// 静默执行工具安装/更新脚本：直接捕获子进程输出并阻塞到命令真正结束，
 /// 不再弹出可见终端窗口（与 `launch_terminal_running` 的"开窗即返回"形成对比，
 /// 后者仍保留给 provider 切换等需要交互式终端的场景）。
@@ -794,11 +851,7 @@ pub(super) fn wsl_auto_shell_command(payload: &str, flag: Option<&str>) -> Strin
 /// WSL 发行版名称只允许字母、数字、连字符、下划线和点（如 `Ubuntu-22.04`）
 #[cfg(target_os = "windows")]
 pub(super) fn is_valid_wsl_distro_name(name: &str) -> bool {
-    !name.is_empty()
-        && name.len() <= 64
-        && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+    crate::app_targets::model::is_valid_distro_name(name)
 }
 
 /// Validate that the given shell name is one of the allowed shells.

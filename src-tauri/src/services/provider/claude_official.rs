@@ -67,6 +67,9 @@ pub fn with_login_switch<R>(
     target: Option<&Provider>,
     write: impl FnOnce() -> Result<R, AppError>,
 ) -> Result<R, AppError> {
+    if crate::app_targets::scope::active() {
+        return write();
+    }
     let previous = match target {
         Some(target) => switch_login(target)?,
         None => None,

@@ -21,6 +21,8 @@ import { invalidatePiProviderCaches } from "@/lib/query/pi";
 import { invalidateGrokCliLoginCaches } from "@/lib/query/subscription";
 import { GROKBUILD_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
 import { appHas } from "@/config/appSpecs";
+import { APP_TARGETS_QUERY_KEY } from "@/hooks/useAppTargets";
+import { isAppTargetApp } from "@/lib/api/appTargets";
 
 export const useAddProviderMutation = (appId: AppId) => {
   const queryClient = useQueryClient();
@@ -102,6 +104,11 @@ export const useAddProviderMutation = (appId: AppId) => {
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
+      if (isAppTargetApp(appId)) {
+        await queryClient.invalidateQueries({
+          queryKey: APP_TARGETS_QUERY_KEY,
+        });
+      }
 
       if (appId === "opencode") {
         await queryClient.invalidateQueries({
@@ -191,6 +198,11 @@ export const useUpdateProviderMutation = (appId: AppId) => {
     },
     onSuccess: async (provider, variables) => {
       await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
+      if (isAppTargetApp(appId)) {
+        await queryClient.invalidateQueries({
+          queryKey: APP_TARGETS_QUERY_KEY,
+        });
+      }
       await queryClient.invalidateQueries({
         queryKey: usageKeys.script(provider.id, appId),
       });
@@ -261,6 +273,11 @@ export const useDeleteProviderMutation = (appId: AppId) => {
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
+      if (isAppTargetApp(appId)) {
+        await queryClient.invalidateQueries({
+          queryKey: APP_TARGETS_QUERY_KEY,
+        });
+      }
 
       if (appId === "opencode") {
         await queryClient.invalidateQueries({
@@ -344,6 +361,11 @@ export const useSwitchProviderMutation = (appId: AppId) => {
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
+      if (isAppTargetApp(appId)) {
+        await queryClient.invalidateQueries({
+          queryKey: APP_TARGETS_QUERY_KEY,
+        });
+      }
       if (appId === "claude") {
         // 切到绑了账号的官方卡时，后端可能把原来的默认登录收成了新账号：授权中心要重读
         await queryClient.invalidateQueries({

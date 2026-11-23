@@ -130,7 +130,9 @@ pub(crate) fn run(
 /// 退出 CC Switch 时的分离不加：进程马上退出，开着的会话这时指着的是马上要停的代理，
 /// 照旧删键，下次启动接管时再写。
 pub(crate) fn for_live(op: &str, patch: &JsonPatch) -> JsonPatch {
-    if op == op::DETACH {
+    // 跟随环境（如 WSL）直接删键，不写墓碑：不跨 9P 起 10 秒后台清扫，
+    // 也不会在退出/启动时唤醒已停止的发行版。
+    if op == op::DETACH || crate::app_targets::scope::active() {
         return patch.clone();
     }
     with_tombstones(patch.clone())
@@ -193,6 +195,9 @@ pub(crate) fn note_tombstones(
     store: &DeviceStore,
     patch: Option<&JsonPatch>,
 ) -> Option<Vec<String>> {
+    if crate::app_targets::scope::active() {
+        return None;
+    }
     let patch = patch?;
     let fresh = if patch.tombstone.is_empty() {
         Vec::new()
@@ -247,6 +252,9 @@ pub(crate) fn after_live_write(
     report: Option<&OperationReport>,
     tombstones: Option<Vec<String>>,
 ) {
+    if crate::app_targets::scope::active() {
+        return;
+    }
     if report.is_some_and(|report| report.changed.is_empty() || patch.is_none()) {
         return;
     }

@@ -79,11 +79,17 @@ pub async fn install_skill_unified(
 ) -> Result<InstalledSkill, String> {
     let app_type = parse_app_type(&current_app)?;
 
-    service
+    let installed = service
         .0
         .install(&app_state.db, &skill, &app_type)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    crate::app_targets::sync::spawn_after_change(
+        &app_state,
+        crate::app_targets::sync::all_supported(),
+        crate::app_targets::sync::SyncKind::Skills,
+    );
+    Ok(installed)
 }
 
 /// 卸载 Skill（新版统一卸载）
@@ -92,10 +98,30 @@ pub async fn uninstall_skill_unified(
     id: String,
     app_state: State<'_, AppState>,
 ) -> Result<SkillUninstallResult, String> {
-    run_db_task(&app_state, move |state| {
+    let directory = app_state
+        .db
+        .get_installed_skill(&id)
+        .ok()
+        .flatten()
+        .map(|s| s.directory);
+    let result = run_db_task(&app_state, move |state| {
         SkillService::uninstall(&state.db, &id).map_err(|e| e.to_string())
     })
-    .await
+    .await?;
+    if let Some(directory) = directory {
+        crate::app_targets::sync::spawn_remove_skill(
+            &app_state,
+            directory,
+            crate::app_targets::sync::all_supported(),
+        );
+    } else {
+        crate::app_targets::sync::spawn_after_change(
+            &app_state,
+            crate::app_targets::sync::all_supported(),
+            crate::app_targets::sync::SyncKind::Skills,
+        );
+    }
+    Ok(result)
 }
 
 #[tauri::command]
@@ -105,11 +131,18 @@ pub async fn restore_skill_backup(
     app_state: State<'_, AppState>,
 ) -> Result<InstalledSkill, String> {
     let app_type = parse_app_type(&current_app)?;
-    run_db_task(&app_state, move |state| {
+    let sync_app = app_type.clone();
+    let restored = run_db_task(&app_state, move |state| {
         SkillService::restore_from_backup(&state.db, &backup_id, &app_type)
             .map_err(|e| e.to_string())
     })
-    .await
+    .await?;
+    crate::app_targets::sync::spawn_after_change(
+        &app_state,
+        vec![sync_app],
+        crate::app_targets::sync::SyncKind::Skills,
+    );
+    Ok(restored)
 }
 
 #[tauri::command]
@@ -120,11 +153,30 @@ pub async fn toggle_skill_app(
     app_state: State<'_, AppState>,
 ) -> Result<bool, String> {
     let app_type = parse_app_type(&app)?;
+    let sync_app = app_type.clone();
+    let skill_id = id.clone();
     run_db_task(&app_state, move |state| {
-        SkillService::toggle_app(&state.db, &id, &app_type, enabled).map_err(|e| e.to_string())?;
+        SkillService::toggle_app(&state.db, &skill_id, &app_type, enabled)
+            .map_err(|e| e.to_string())?;
         Ok::<_, String>(true)
     })
-    .await
+    .await?;
+    if enabled {
+        crate::app_targets::sync::spawn_after_change(
+            &app_state,
+            vec![sync_app],
+            crate::app_targets::sync::SyncKind::Skills,
+        );
+    } else if let Some(directory) = app_state
+        .db
+        .get_installed_skill(&id)
+        .ok()
+        .flatten()
+        .map(|s| s.directory)
+    {
+        crate::app_targets::sync::spawn_remove_skill(&app_state, directory, vec![sync_app]);
+    }
+    Ok(true)
 }
 
 #[tauri::command]
@@ -143,10 +195,16 @@ pub async fn import_skills_from_apps(
     imports: Vec<ImportSkillSelection>,
     app_state: State<'_, AppState>,
 ) -> Result<Vec<InstalledSkill>, String> {
-    run_db_task(&app_state, move |state| {
+    let imported = run_db_task(&app_state, move |state| {
         SkillService::import_from_apps(&state.db, imports).map_err(|e| e.to_string())
     })
-    .await
+    .await?;
+    crate::app_targets::sync::spawn_after_change(
+        &app_state,
+        crate::app_targets::sync::all_supported(),
+        crate::app_targets::sync::SyncKind::Skills,
+    );
+    Ok(imported)
 }
 
 // ========== 发现功能命令 ==========
@@ -207,9 +265,15 @@ pub async fn resync_skills_to_apps(
     app_state: State<'_, AppState>,
 ) -> Result<Vec<SkillAppSyncOutcome>, String> {
     let db = app_state.db.clone();
-    tauri::async_runtime::spawn_blocking(move || SkillService::resync_all_apps(&db))
+    let outcomes = tauri::async_runtime::spawn_blocking(move || SkillService::resync_all_apps(&db))
         .await
-        .map_err(|e| format!("重新同步 Skill 失败: {e}"))
+        .map_err(|e| format!("重新同步 Skill 失败: {e}"))?;
+    crate::app_targets::sync::spawn_after_change(
+        &app_state,
+        crate::app_targets::sync::all_supported(),
+        crate::app_targets::sync::SyncKind::Skills,
+    );
+    Ok(outcomes)
 }
 
 #[tauri::command]
@@ -218,11 +282,17 @@ pub async fn update_skill(
     service: State<'_, SkillServiceState>,
     app_state: State<'_, AppState>,
 ) -> Result<InstalledSkill, String> {
-    service
+    let updated = service
         .0
         .update_skill(&app_state.db, &id)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    crate::app_targets::sync::spawn_after_change(
+        &app_state,
+        crate::app_targets::sync::all_supported(),
+        crate::app_targets::sync::SyncKind::Skills,
+    );
+    Ok(updated)
 }
 
 /// 迁移 Skill 存储位置

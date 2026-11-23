@@ -559,6 +559,10 @@ impl Database {
     /// （settings.json）就用它，否则是监听地址（交给 `proxy_origin` 处理 `0.0.0.0`）。
     /// 写进客户端文件的代理地址都按这个生成，不需要代理在运行。
     pub fn get_proxy_client_endpoint_sync(&self) -> (String, u16) {
+        self.get_proxy_client_endpoint_for_app_sync(None)
+    }
+
+    pub fn get_proxy_client_endpoint_for_app_sync(&self, app: Option<&AppType>) -> (String, u16) {
         let fallback = || {
             let defaults = crate::proxy::types::ProxyConfig::default();
             (defaults.listen_address, defaults.listen_port)
@@ -573,7 +577,7 @@ impl Database {
                 .unwrap_or_else(|_| fallback()),
             Err(_) => fallback(),
         };
-        let host = crate::settings::get_proxy_client_host().unwrap_or(listen_address);
+        let host = crate::settings::get_proxy_client_host_for_app(app).unwrap_or(listen_address);
         (host, port)
     }
 

@@ -310,7 +310,7 @@ impl SkillService {
     }
 
     /// 删除路径（支持 symlink 和真实目录）
-    pub(super) fn remove_path(path: &Path) -> Result<()> {
+    pub(crate) fn remove_path(path: &Path) -> Result<()> {
         if Self::is_symlink(path) {
             // 符号链接：仅删除链接本身，不影响源文件
             #[cfg(unix)]

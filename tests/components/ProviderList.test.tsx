@@ -1,4 +1,10 @@
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import {
+  act,
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+} from "@testing-library/react";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { useState, type ReactElement } from "react";
@@ -11,6 +17,8 @@ import {
 import { hermesKeys } from "@/hooks/useHermes";
 import { server } from "../msw/server";
 import { createTestQueryClient } from "../utils/testQueryClient";
+import { APP_TARGETS_QUERY_KEY } from "@/hooks/useAppTargets";
+import type { AppTargetsOverview } from "@/lib/api/appTargets";
 
 vi.mock("sonner", () => ({
   toast: {
@@ -132,8 +140,12 @@ function createProvider(overrides: Partial<Provider> = {}): Provider {
   };
 }
 
-function renderWithQueryClient(ui: ReactElement) {
+function renderWithQueryClient(
+  ui: ReactElement,
+  overview?: AppTargetsOverview,
+) {
   const queryClient = createTestQueryClient();
+  if (overview) queryClient.setQueryData(APP_TARGETS_QUERY_KEY, overview);
 
   return {
     ...render(
@@ -222,6 +234,191 @@ describe("ProviderList Component", () => {
       ...overrides,
     };
   }
+
+  function wslOverview(
+    running: boolean,
+    hostWindows = true,
+  ): AppTargetsOverview {
+    return {
+      inventory: {
+        hostWindows,
+        wslAvailable: hostWindows,
+        distros: running
+          ? [
+              {
+                distro: "Alpine",
+                available: true,
+                running: true,
+                cached: false,
+              },
+            ]
+          : [],
+      },
+      installs: {},
+      multiEnv: running && hostWindows,
+      apps: [
+        {
+          app: "codex",
+          source: "saved",
+          config: {
+            primary: "windows",
+            windows: { enabled: true },
+            wsl: [{ distro: "Alpine", enabled: true }],
+          },
+          records: {
+            "wsl:Alpine": { providerId: "legacy", status: "ok", at: 1 },
+          },
+          resolvedDirs: {},
+        },
+      ],
+    };
+  }
+
+  const wslProviders = {
+    native: createProvider({ id: "native", name: "Windows provider" }),
+    legacy: createProvider({
+      id: "legacy",
+      name: "WSL · Alpine · aiplatform.example.com",
+    }),
+    renamed: createProvider({
+      id: "renamed",
+      name: "Renamed WSL import",
+      meta: { importedFromTarget: "wsl:Alpine" },
+    }),
+  };
+
+  it("hides WSL imports on shutdown and restores them after startup while keeping Windows cards", async () => {
+    useDragSortMock.mockReturnValue({
+      sortedProviders: Object.values(wslProviders),
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    const { queryClient } = renderWithQueryClient(
+      <ProviderList
+        {...baseProps}
+        appId="codex"
+        providers={wslProviders}
+        currentProviderId="native"
+        switchMode={switchMode({ directId: "native" })}
+        searchOpen
+      />,
+      wslOverview(true),
+    );
+    expect(screen.getByTestId("provider-card-legacy")).toBeInTheDocument();
+    expect(screen.getByTestId("provider-card-renamed")).toBeInTheDocument();
+
+    act(() =>
+      queryClient.setQueryData(APP_TARGETS_QUERY_KEY, wslOverview(false)),
+    );
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId("provider-card-legacy"),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByTestId("provider-card-renamed"),
+      ).not.toBeInTheDocument();
+    });
+    expect(screen.getByTestId("provider-card-native")).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "WSL" } });
+    expect(
+      screen.getByText("No providers match your search."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("provider-card-legacy"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("provider-card-renamed"),
+    ).not.toBeInTheDocument();
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "" } });
+
+    act(() =>
+      queryClient.setQueryData(APP_TARGETS_QUERY_KEY, wslOverview(true)),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-card-legacy")).toBeInTheDocument(),
+    );
+    expect(screen.getByTestId("provider-card-renamed")).toBeInTheDocument();
+    expect(Object.keys(wslProviders)).toHaveLength(3);
+  });
+
+  it("shows the empty state when every saved card belongs to a stopped WSL environment", () => {
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [wslProviders.legacy, wslProviders.renamed],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    renderWithQueryClient(
+      <ProviderList
+        {...baseProps}
+        appId="codex"
+        providers={{
+          legacy: wslProviders.legacy,
+          renamed: wslProviders.renamed,
+        }}
+        switchMode={switchMode()}
+      />,
+      wslOverview(false),
+    );
+    expect(
+      screen.getByRole("heading", { name: "provider.noProviders" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("provider-card-legacy"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("provider-card-renamed"),
+    ).not.toBeInTheDocument();
+  });
+
+  it.each(["direct", "route", "failover", "stack"] as const)(
+    "keeps an offline WSL import used by the host %s configuration",
+    (usage) => {
+      useDragSortMock.mockReturnValue({
+        sortedProviders: Object.values(wslProviders),
+        sensors: [],
+        handleDragEnd: vi.fn(),
+      });
+      renderWithQueryClient(
+        <ProviderList
+          {...baseProps}
+          appId="codex"
+          providers={wslProviders}
+          currentProviderId={usage === "direct" ? "renamed" : "native"}
+          switchMode={switchMode({
+            directId: usage === "direct" ? "renamed" : "native",
+            routeId: usage === "route" ? "renamed" : null,
+            queue: usage === "failover" ? ["renamed"] : [],
+            stackMembers:
+              usage === "stack" ? new Map([["renamed", 1]]) : new Map(),
+          })}
+        />,
+        wslOverview(false),
+      );
+      expect(screen.getByTestId("provider-card-renamed")).toBeInTheDocument();
+      expect(
+        screen.queryByTestId("provider-card-legacy"),
+      ).not.toBeInTheDocument();
+    },
+  );
+
+  it.each(["macOS", "Linux"])("preserves the supplier list on %s", () => {
+    useDragSortMock.mockReturnValue({
+      sortedProviders: Object.values(wslProviders),
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    renderWithQueryClient(
+      <ProviderList
+        {...baseProps}
+        appId="codex"
+        providers={wslProviders}
+        switchMode={switchMode({ directId: "native" })}
+      />,
+      wslOverview(false, false),
+    );
+    expect(screen.getByTestId("provider-card-legacy")).toBeInTheDocument();
+    expect(screen.getByTestId("provider-card-renamed")).toBeInTheDocument();
+  });
 
   it("should render skeleton placeholders when loading", () => {
     const { container } = renderWithQueryClient(
@@ -1590,5 +1787,74 @@ describe("ProviderList Component", () => {
       await screen.findByRole("button", { name: "provider.addProvider" }),
     ).toBeInTheDocument();
     expect(screen.queryByTestId("dsh-account-card")).not.toBeInTheDocument();
+  });
+
+  it("marks a provider non-deletable when a follower environment still uses it", async () => {
+    const overview: AppTargetsOverview = {
+      inventory: {
+        hostWindows: true,
+        wslAvailable: true,
+        distros: [
+          {
+            distro: "Ubuntu",
+            available: true,
+            running: true,
+            cached: false,
+          },
+        ],
+      },
+      installs: {},
+      multiEnv: true,
+      apps: [
+        {
+          app: "claude",
+          source: "saved",
+          config: {
+            primary: "windows",
+            windows: { enabled: true },
+            wsl: [{ distro: "Ubuntu", enabled: true }],
+          },
+          resolvedDirs: {},
+          records: {
+            "wsl:Ubuntu": {
+              status: "ok",
+              providerId: "p2",
+              at: 1,
+            },
+          },
+        },
+      ],
+    };
+
+    const providers = {
+      p1: createProvider({ id: "p1", name: "Primary", sortIndex: 0 }),
+      p2: createProvider({ id: "p2", name: "Follower", sortIndex: 1 }),
+    };
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [providers.p1, providers.p2],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+
+    renderWithQueryClient(
+      <ProviderList
+        providers={providers}
+        currentProviderId="p1"
+        appId="claude"
+        switchMode={switchMode({ directId: "p1" })}
+        onSwitch={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onOpenWebsite={vi.fn()}
+      />,
+      overview,
+    );
+
+    await waitFor(() => {
+      expect(lastProps("p2")?.presentation.deleteDisabledReason).toContain(
+        "appTargets.switch.inUseCannotDelete",
+      );
+    });
   });
 });

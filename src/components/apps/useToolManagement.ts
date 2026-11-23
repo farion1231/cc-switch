@@ -293,6 +293,7 @@ export type ToolProgress =
 
 interface ToolLifecycleProgressEvent {
   tools: string[];
+  distro?: string;
   stage: "queued" | "running" | "output";
   line?: string;
 }
@@ -332,6 +333,8 @@ function updateToolManagementState(update: Partial<ToolManagementState>) {
 
 // 进度只记给仍在忙的工具：任务结束后迟到的输出不会让卡片重新出现进度。
 function applyToolProgressEvent(event: ToolLifecycleProgressEvent) {
+  // WSL 子行自己按 distro 接收进度，不要串进 Windows 主卡片进度。
+  if (event.distro) return;
   const next = new Map(toolManagementState.toolProgress);
   let changed = false;
   for (const name of event.tools) {

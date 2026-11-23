@@ -6,6 +6,7 @@ import type { AppId } from "@/lib/api";
 import { providersApi } from "@/lib/api/providers";
 import { proxyApi } from "@/lib/api/proxy";
 import { proxyKeys } from "@/lib/query/proxy";
+import { APP_TARGETS_QUERY_KEY } from "@/hooks/useAppTargets";
 import type { AppMode } from "@/types/proxy";
 import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 
@@ -32,6 +33,7 @@ export function useModeActions(app: AppId) {
       queryClient.invalidateQueries({ queryKey: proxyKeys.status }),
       queryClient.invalidateQueries({ queryKey: proxyKeys.takeoverStatus }),
       queryClient.invalidateQueries({ queryKey: ["providers", app] }),
+      queryClient.invalidateQueries({ queryKey: APP_TARGETS_QUERY_KEY }),
     ]);
     providersApi.updateTrayMenu().catch(() => undefined);
   }, [app, queryClient]);

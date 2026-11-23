@@ -34,6 +34,10 @@ pub struct DeviceStore {
 
 impl DeviceStore {
     pub fn for_device() -> Self {
+        // 跟随环境的写入作用域里，状态、备份和登录暂存按目标隔离。
+        if let Some(root) = crate::app_targets::scope::store_root() {
+            return Self::at(root);
+        }
         Self::at(crate::config::get_home_dir().join(".cc-switch"))
     }
 
@@ -189,6 +193,8 @@ pub fn ensure_first_write_backup(
 #[derive(Debug)]
 pub struct AppWriteGuard {
     app: String,
+    /// 锁表里的键：跟随环境的写入用 `<app>@<目标>`，和主环境互不等待。
+    key: String,
 }
 
 impl AppWriteGuard {
@@ -203,21 +209,23 @@ fn lock_table() -> &'static (Mutex<HashSet<String>>, Condvar) {
 }
 
 pub fn lock_app(app: &str) -> AppWriteGuard {
+    let key = crate::app_targets::scope::lock_key(app);
     let (held, released) = lock_table();
     let mut held = held.lock_recover();
-    while held.contains(app) {
+    while held.contains(&key) {
         held = released.wait(held).unwrap_or_else(|e| e.into_inner());
     }
-    held.insert(app.to_string());
+    held.insert(key.clone());
     AppWriteGuard {
         app: app.to_string(),
+        key,
     }
 }
 
 impl Drop for AppWriteGuard {
     fn drop(&mut self) {
         let (held, released) = lock_table();
-        held.lock_recover().remove(&self.app);
+        held.lock_recover().remove(&self.key);
         released.notify_all();
     }
 }
