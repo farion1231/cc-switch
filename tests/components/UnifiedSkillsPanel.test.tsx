@@ -12,6 +12,7 @@ import type {
   SkillRepoFailure,
   SkillUpdateInfo,
 } from "@/lib/api/skills";
+import { waitForOverlayTransition } from "../utils/overlayTransition";
 
 const m = vi.hoisted(() => ({
   scanUnmanaged: vi.fn(),
@@ -169,6 +170,7 @@ const columns = () =>
   screen.getAllByRole("button", { name: /appMatrix.columnAria/ });
 
 async function openMenu(trigger: string, item: string) {
+  await waitForOverlayTransition();
   await userEvent.click(screen.getByRole("button", { name: trigger }));
   await userEvent.click(await screen.findByRole("menuitem", { name: item }));
 }

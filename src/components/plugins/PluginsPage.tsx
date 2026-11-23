@@ -68,7 +68,9 @@ import {
 import {
   PLUGIN_APP_FEATURES,
   PLUGIN_AUTH_REQUIRED,
+  PLUGIN_CLI_NAME,
   PLUGIN_CLI_NOT_INSTALLED,
+  PLUGIN_IN_USE,
   PLUGIN_LOGIN_COMMAND,
   PLUGIN_NEEDS_TERMINAL_CONFIRM,
   pluginsApi,
@@ -157,6 +159,7 @@ export interface PluginsPageProps {
 
 type WriteMessages = {
   success: (outcome: PluginActionOutcome) => string;
+  successDescription?: (outcome: PluginActionOutcome) => string;
   failure: string;
   /** 后端返回已知错误码时换成的说明；没给或不认识时显示原始报错。 */
   describeError?: (error: string) => string | undefined;
@@ -268,7 +271,8 @@ export function PluginsPage({ apps, initialApp }: PluginsPageProps) {
     const result = await runWrite(write);
     if (result.ok && result.outcome) {
       toast.success(messages.success(result.outcome), {
-        description: restartNote,
+        description:
+          messages.successDescription?.(result.outcome) ?? restartNote,
         closeButton: true,
       });
     } else {
@@ -281,7 +285,12 @@ export function PluginsPage({ apps, initialApp }: PluginsPageProps) {
                 app: appName,
                 command: PLUGIN_LOGIN_COMMAND[app] ?? `${app} login`,
               })
-            : error),
+            : error === PLUGIN_IN_USE
+              ? t("pluginsPage.toast.pluginInUse", {
+                  app: appName,
+                  cli: PLUGIN_CLI_NAME[app],
+                })
+              : error),
         closeButton: true,
       });
     }
@@ -301,12 +310,19 @@ export function PluginsPage({ apps, initialApp }: PluginsPageProps) {
         action: "install",
         task: () => pluginsApi.install(app, entry.id),
         // 安装要联网、可能失败，不先挪；装好立即放进已安装，版本等对账时补齐
-        onSuccess: pluginPatches.add(installedFromCatalog(app, entry)),
+        onSuccess: (outcome) =>
+          pluginPatches.add(
+            installedFromCatalog(app, entry, !outcome.needsConfiguration),
+          ),
         reconcile: ["installed"],
       },
       {
         success: () =>
           t("pluginsPage.toast.installed", { name: pluginLabel(entry) }),
+        successDescription: (outcome) =>
+          outcome.needsConfiguration
+            ? t("pluginsPage.toast.installedNeedsConfig", { app: appName })
+            : restartNote,
         failure: t("pluginsPage.toast.installFailed", {
           name: pluginLabel(entry),
         }),

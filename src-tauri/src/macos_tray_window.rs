@@ -4,15 +4,15 @@
 use std::{cell::RefCell, ptr::NonNull};
 
 use block2::RcBlock;
-use objc2_06::{
+use objc2::{
     rc::Retained,
     runtime::{NSObjectProtocol, ProtocolObject},
     MainThreadMarker,
 };
-use objc2_app_kit_03::{
+use objc2_app_kit::{
     NSWindow, NSWindowDidExitFullScreenNotification, NSWindowWillCloseNotification,
 };
-use objc2_foundation_03::{NSNotification, NSNotificationCenter, NSOperationQueue};
+use objc2_foundation::{NSNotification, NSNotificationCenter, NSOperationQueue};
 use tauri::{Manager, WebviewWindow, Window};
 
 #[derive(Clone, Copy, PartialEq, Eq)]

@@ -11,7 +11,7 @@
  */
 import { createUsageScript } from "@/types";
 import { TEMPLATE_TYPES } from "@/config/constants";
-import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
+import { extractCodexBaseUrl } from "@/utils/codexConfigUtils";
 import { extractGrokBuildBaseUrl } from "@/utils/grokBuildConfig";
 import { urlHostPattern } from "@/utils/urlHostPattern";
 

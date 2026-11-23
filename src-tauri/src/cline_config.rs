@@ -662,10 +662,6 @@ pub(crate) fn set_provider(id: &str, config: Value) -> Result<(), AppError> {
     save_and_commit(id, Some(config), false, || Ok(()))
 }
 
-pub(crate) fn remove_provider(id: &str) -> Result<(), AppError> {
-    save_and_commit(id, None, false, || Ok(()))
-}
-
 pub(crate) fn current_provider() -> Result<String, AppError> {
     let documents = read_documents(&providers_path(), &models_path())?;
     Ok(current_provider_in(&documents).unwrap_or_default().into())
