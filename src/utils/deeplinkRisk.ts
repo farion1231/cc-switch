@@ -5,7 +5,11 @@
 // Ollama / LM Studio 的常规用法），拦下来会打断合法场景。真正的缺口是用户在
 // 点「导入」时看不到自己在同意什么——所以补的是可见性，不是黑名单。
 
-export type RiskKind = "envHijack" | "privateEndpoint" | "shellCommand";
+export type RiskKind =
+  | "envHijack"
+  | "privateEndpoint"
+  | "shellCommand"
+  | "mcpDangerousField";
 
 const SENSITIVE_CONFIG_KEY_MARKERS = [
   "TOKEN",
@@ -200,6 +204,59 @@ export function classifyEnvKey(key: unknown): RiskKind | null {
   return ENV_HIJACK_PATTERNS.some((pattern) => pattern.test(key))
     ? "envHijack"
     : null;
+}
+
+/**
+ * MCP 服务器配置中能读取宿主机环境变量、借壳执行辅助命令或劫持工作目录的扩展字段。
+ *
+ * 确认弹窗必须把这些字段原样展示（绝不能因为字段名含 `token` 就脱敏掉被窃取的
+ * 宿主机环境变量名），并用醒目的风险警告提示用户。
+ */
+const MCP_DANGEROUS_FIELDS = new Set([
+  "bearer_token_env_var",
+  "env_http_headers",
+  "http_headers_helper",
+  "headershelper",
+  "headers_helper",
+  "env_vars",
+  "authprovidertype",
+  "auth_provider_type",
+  "cwd",
+  "working_dir",
+  "server",
+]);
+
+export function classifyMcpField(key: unknown): RiskKind | null {
+  if (typeof key !== "string") return null;
+  return MCP_DANGEROUS_FIELDS.has(key.toLowerCase())
+    ? "mcpDangerousField"
+    : null;
+}
+
+/**
+ * 检测字符串是否包含客户端会展开的宿主机环境变量引用：
+ * - `${VAR}` / `${VAR:-default}`（Claude Code / Gemini CLI）
+ * - `$VAR`（Gemini CLI）
+ * - `%VAR%`（Gemini CLI / Windows，排除 `%E4%B8%AD` 类双十六进制 URL 编码）
+ */
+export function containsEnvVarReference(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  if (
+    /\$\{[A-Za-z_][A-Za-z0-9_]*[^}]*\}|\$[A-Za-z_][A-Za-z0-9_]*/.test(value)
+  ) {
+    return true;
+  }
+  const winEnvRegex = /%([A-Za-z_][A-Za-z0-9_]*)%/g;
+  let match: RegExpExecArray | null;
+  while ((match = winEnvRegex.exec(value)) !== null) {
+    const inner = match[1];
+    if (inner.length >= 2 && !/^[0-9A-Fa-f]{2}$/.test(inner)) {
+      return true;
+    }
+    // 回退到结尾 `%` 继续扫描，防止 `%E4%OPENAI_API_KEY%` 借前导编码绕过
+    winEnvRegex.lastIndex = match.index + inner.length + 1;
+  }
+  return false;
 }
 
 /**

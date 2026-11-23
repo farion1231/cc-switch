@@ -1,5 +1,3 @@
-#![allow(non_snake_case)]
-
 use crate::init_status::{InitErrorPayload, SkillsMigrationPayload};
 use indexmap::IndexSet;
 use regex::Regex;
@@ -867,7 +865,7 @@ pub(super) fn effective_path_string() -> String {
         .unwrap_or_default();
     let fnm = fnm_default_alias_dir_candidates(
         std::env::var_os("FNM_DIR"),
-        &dirs::home_dir().unwrap_or_default(),
+        &crate::config::get_home_dir(),
         dirs::data_dir(),
     )
     .into_iter()

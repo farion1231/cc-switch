@@ -1,5 +1,3 @@
-#![allow(non_snake_case)]
-
 use tauri::{AppHandle, State};
 use tauri_plugin_dialog::DialogExt;
 

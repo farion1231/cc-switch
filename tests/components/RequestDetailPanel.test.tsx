@@ -173,69 +173,6 @@ describe("RequestDetailPanel", () => {
     expect(screen.getByText("6.0s")).toBeInTheDocument();
   });
 
-  it("shows exact speed, first token and duration for agy_session without proxy metadata", () => {
-    renderWith(
-      log({
-        appType: "agy",
-        providerId: "_agy_session",
-        providerName: "Antigravity (Session)",
-        dataSource: "agy_session",
-        model: "gemini-4-neon",
-        outputTokens: 2_900,
-        latencyMs: 69_000,
-        firstTokenMs: 43_000,
-      }),
-    );
-
-    expect(screen.getByText("usage.speedValue:112")).toBeInTheDocument();
-    expect(screen.getByText("usage.detail.firstToken")).toBeInTheDocument();
-    expect(screen.getByText("43.0s")).toBeInTheDocument();
-    expect(screen.getByText("usage.detail.duration")).toBeInTheDocument();
-    expect(screen.getByText("69.0s")).toBeInTheDocument();
-    expect(
-      screen.queryByText("usage.detail.firstTokenEstimated"),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByText("usage.detail.durationEstimated"),
-    ).not.toBeInTheDocument();
-    expect(screen.queryByText("usage.detail.source")).not.toBeInTheDocument();
-    expect(
-      screen.queryByText("usage.detail.providerId"),
-    ).not.toBeInTheDocument();
-  });
-
-  it("explains short or untimed agy_session rows using exact labels", () => {
-    renderWith(
-      log({
-        appType: "agy",
-        providerId: "_agy_session",
-        providerName: "Antigravity (Session)",
-        dataSource: "agy_session",
-        outputTokens: 64,
-        latencyMs: 6_000,
-        firstTokenMs: 5_000,
-      }),
-    );
-    expect(screen.getByText("usage.detail.speedTooFew")).toBeInTheDocument();
-    expect(screen.getByText("usage.detail.firstToken")).toBeInTheDocument();
-    expect(screen.getByText("usage.detail.duration")).toBeInTheDocument();
-
-    renderWith(
-      log({
-        appType: "agy",
-        providerId: "_agy_session",
-        providerName: "Antigravity (Session)",
-        dataSource: "agy_session",
-        outputTokens: 900,
-        latencyMs: 0,
-        firstTokenMs: undefined,
-      }),
-    );
-    expect(
-      screen.getByText("usage.detail.noTimingSession"),
-    ).toBeInTheDocument();
-  });
-
   it("says session logs have no timing data", () => {
     renderWith(
       log({

@@ -1,0 +1,48 @@
+{
+  "name": "antigravity-plugins-partners",
+  "description": "Antigravity partner plugins marketplace catalog.",
+  "plugins": [
+    {
+      "name": "arize-skills",
+      "displayName": "Arize AX",
+      "version": "1.4.0",
+      "description": "Query Arize AX projects, traces, datasets, and experiments from Antigravity, with skills for tracing, evals, and prompt optimization.",
+      "logo": "https://www.gstatic.com/antigravity/plugins-partners/arize-skills/assets/logo.svg?v=940580891fd2",
+      "category": "Developer Tools",
+      "author": {
+        "name": "Arize AI",
+        "email": "support@arize.com",
+        "url": "https://arize.com"
+      },
+      "homepage": "https://arize.com/docs/api-clients/mcp/overview",
+      "repository": "https://github.com/Arize-ai/arize-skills",
+      "license": "MIT",
+      "skills": [
+        "./skills"
+      ],
+      "mcpServers": "./mcp_config.json",
+      "source": {
+        "type": "archive",
+        "url": "https://www.gstatic.com/antigravity/plugins-partners/arize-skills/arize-skills.zip?v=9252b4eb8c96",
+        "sha256": "9252b4eb8c96ee8718a0c473211706a629e9e14a3cd0fd7c3356e3f4d5976050"
+      }
+    },
+    {
+      "name": "canva",
+      "displayName": "Canva",
+      "version": "1.0.0-agy.b0e08437",
+      "logo": "https://www.gstatic.com/antigravity/plugins-partners/canva/assets/logo-canva.svg?v=73bec43682b8",
+      "description": "Create, edit, review, resize, and brand-check Canva designs with the Canva MCP server.",
+      "author": {
+        "name": "Canva"
+      },
+      "homepage": "https://www.canva.com/developers/",
+      "repository": "https://github.com/canva-sdks/canva-skills",
+      "source": {
+        "type": "archive",
+        "url": "https://www.gstatic.com/antigravity/plugins-partners/canva/canva.zip?v=d5184bd0c780",
+        "sha256": "d5184bd0c78078e3de3130ab9563ab9a2798f5aef9bed38b096b1fd451f159c2"
+      }
+    }
+  ]
+}

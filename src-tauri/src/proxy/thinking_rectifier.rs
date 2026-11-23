@@ -659,16 +659,43 @@ mod tests {
     }
 
     #[test]
-    fn test_normalize_thinking_type_enabled_unchanged() {
-        let body = json!({
-            "model": "claude-test",
-            "thinking": { "type": "enabled", "budget_tokens": 2048 }
-        });
+    fn test_normalize_thinking_type_leaves_non_adaptive_alone() {
+        for (case, thinking_type, budget, expected_type, expected_budget) in [
+            (
+                "test_normalize_thinking_type_enabled_unchanged",
+                "enabled",
+                2048,
+                "enabled",
+                2048,
+            ),
+            (
+                "test_normalize_thinking_type_preserves_budget",
+                "adaptive",
+                5000,
+                "adaptive",
+                5000,
+            ),
+            (
+                "test_normalize_thinking_type_unknown_unchanged",
+                "unexpected",
+                100,
+                "unexpected",
+                100,
+            ),
+        ] {
+            let body = json!({
+                "model": "claude-test",
+                "thinking": { "type": thinking_type, "budget_tokens": budget }
+            });
 
-        let result = normalize_thinking_type(body);
+            let result = normalize_thinking_type(body);
 
-        assert_eq!(result["thinking"]["type"], "enabled");
-        assert_eq!(result["thinking"]["budget_tokens"], 2048);
+            assert_eq!(result["thinking"]["type"], expected_type, "{case}");
+            assert_eq!(
+                result["thinking"]["budget_tokens"], expected_budget,
+                "{case}"
+            );
+        }
     }
 
     #[test]
@@ -684,19 +711,6 @@ mod tests {
     }
 
     #[test]
-    fn test_normalize_thinking_type_preserves_budget() {
-        let body = json!({
-            "model": "claude-test",
-            "thinking": { "type": "adaptive", "budget_tokens": 5000 }
-        });
-
-        let result = normalize_thinking_type(body);
-
-        assert_eq!(result["thinking"]["type"], "adaptive");
-        assert_eq!(result["thinking"]["budget_tokens"], 5000);
-    }
-
-    #[test]
     fn test_normalize_thinking_type_no_thinking() {
         let body = json!({
             "model": "claude-test"
@@ -705,18 +719,5 @@ mod tests {
         let result = normalize_thinking_type(body);
 
         assert!(result.get("thinking").is_none());
-    }
-
-    #[test]
-    fn test_normalize_thinking_type_unknown_unchanged() {
-        let body = json!({
-            "model": "claude-test",
-            "thinking": { "type": "unexpected", "budget_tokens": 100 }
-        });
-
-        let result = normalize_thinking_type(body);
-
-        assert_eq!(result["thinking"]["type"], "unexpected");
-        assert_eq!(result["thinking"]["budget_tokens"], 100);
     }
 }
