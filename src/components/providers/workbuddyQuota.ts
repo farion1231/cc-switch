@@ -1,7 +1,9 @@
 import { useRef } from "react";
 import type { TFunction } from "i18next";
 import { useQuery } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { authApi } from "@/lib/api";
+import { toast } from "@/lib/toast";
 import type { WorkBuddyQuota } from "@/lib/api/auth";
 import {
   countdownStr,
@@ -21,12 +23,14 @@ const REFETCH_INTERVAL = 5 * 60 * 1000;
 
 /**
  * WorkBuddy 账号的套餐与积分。卡片、表单和授权中心共用一份缓存；后端 5 分钟内走缓存，
- * `refresh()` 跳过缓存重查（↻ 用）。只有 WorkBuddy 正在运行时当前账号才查得到新的。
+ * `refresh()` 跳过缓存重查（↻ 用）。只有 WorkBuddy 正在运行时当前账号才查得到新的；
+ * 查不到新的（没运行、不是当前号…）时后端立刻回上次结果，界面看着像没反应，所以弹一句原因。
  */
 export function useWorkBuddyAccountQuota(
   accountId: string | null,
   options: { autoRefresh?: boolean } = {},
 ) {
+  const { t } = useTranslation();
   const force = useRef(false);
   const query = useQuery({
     queryKey: [...WORKBUDDY_QUOTA_KEY, accountId],
@@ -41,9 +45,13 @@ export function useWorkBuddyAccountQuota(
     refetchOnWindowFocus: false,
     retry: false,
   });
-  const refresh = () => {
+  const refresh = async () => {
     force.current = true;
-    return query.refetch();
+    const result = await query.refetch();
+    const quota = result.data;
+    const note = quota?.snapshot ? workbuddyStaleNote(t, quota) : undefined;
+    if (note) toast.info(note);
+    return result;
   };
   return { ...query, refresh };
 }
