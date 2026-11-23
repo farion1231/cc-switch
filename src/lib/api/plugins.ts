@@ -65,6 +65,14 @@ export const PLUGIN_APP_FEATURES: Record<PluginApp, PluginAppFeatures> = {
     confirmInstall: true,
     restartNote: "session",
   },
+  // 官方与合作伙伴目录由 gstatic 托管，没有自定义市场；安装和更新走 `agy plugin install`
+  agy: {
+    marketplaces: false,
+    refresh: true,
+    update: true,
+    confirmInstall: false,
+    restartNote: "session",
+  },
 };
 
 /** 工具没装时后端返回的错误码。 */
@@ -119,6 +127,8 @@ export interface PluginMarketplace {
 export interface PluginActionOutcome {
   changed: boolean;
   message?: string | null;
+  /** 安装后默认处于停用状态，需先在应用交互界面完成配置（如 Antigravity 的 `/plugin`） */
+  needsConfiguration?: boolean;
 }
 
 export const pluginsApi = {

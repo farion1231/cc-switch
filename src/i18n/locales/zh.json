@@ -5060,7 +5060,7 @@
   "pluginsPage": {
     "title": "插件",
     "helpTitle": "插件",
-    "help": "安装、启用、移除 Claude Code、Codex、Grok Build、MiniMax Code、OpenClaw 和 Pi 的插件。CC Switch 调用各应用自带的命令行，效果和在终端里执行它的插件命令一样。Pi 的插件就是 Pi 包，目录取自 npm。",
+    "help": "安装、启用、移除 Claude Code、Codex、Grok Build、MiniMax Code、OpenClaw、Pi 和 Antigravity 的插件。CC Switch 调用各应用自带的命令行，效果和在终端里执行它的插件命令一样。Pi 的插件就是 Pi 包，目录取自 npm。",
     "appAria": "应用",
     "viewAria": "插件视图",
     "viewInstalled": "已安装",
@@ -5120,6 +5120,7 @@
     "confirmRemoveMarketBody": "{{app}} 将不再列出这个市场里的插件，从这个市场装的插件也可能被一并卸载。之后可以重新添加。",
     "toast": {
       "installed": "已安装 {{name}}",
+      "installedNeedsConfig": "已安装但默认停用。请在 {{app}} 中运行 /plugin 配置其 MCP 服务器后再启用。",
       "installFailed": "安装 {{name}} 失败",
       "installNeedsTerminal": "这个插件安装时要在本机运行市场声明的命令，CC Switch 不会替你同意。请在终端里运行 {{command}}，确认后再回来刷新。",
       "authRequired": "{{app}} 需要先登录账号。请在终端里运行 {{command}} 登录，再回来重试。",
