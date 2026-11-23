@@ -129,14 +129,15 @@ fn parse(content: &str) -> Result<ImportedLogin, CodexOAuthError> {
     if obtained_at_ms < 0 || obtained_at_ms > now + 300_000 {
         return Err(invalid("令牌刷新时间不合理，请检查文件或系统时间"));
     }
+    let email = [&id, &access]
+        .into_iter()
+        .filter_map(|value| value.get("email").and_then(Value::as_str))
+        .map(str::trim)
+        .find(|email| !email.is_empty())
+        .map(str::to_owned);
     Ok(ImportedLogin {
         workspace: account.to_string(),
-        email: [&id, &access]
-            .into_iter()
-            .filter_map(|value| value.get("email").and_then(Value::as_str))
-            .map(str::trim)
-            .find(|email| !email.is_empty())
-            .map(str::to_owned),
+        email,
         refresh,
         id_token,
         access: CachedAccessToken {
