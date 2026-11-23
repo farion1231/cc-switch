@@ -49,6 +49,7 @@ fn an_unreadable_provider_is_left_out_of_the_tray_instead_of_breaking_it() {
         &AppType::Codex,
         None,
         &[],
+        &TrayAccountLabels::default(),
     )
     .expect("the tray still builds");
     let ids: Vec<&str> = snapshot.providers.iter().map(|p| p.id.as_str()).collect();
@@ -92,6 +93,7 @@ fn the_tray_still_builds_when_the_provider_in_use_is_unreadable() {
             &AppType::Codex,
             None,
             &[],
+            &TrayAccountLabels::default(),
         )
         .expect("the tray still builds")
     };
@@ -254,34 +256,44 @@ fn locale_matches_language_and_chinese_region_boundaries() {
 }
 
 #[test]
-fn locale_maps_korean_without_matching_other_language_subtags() {
-    for locale in ["ko", "ko-KR", "ko-KP", "KO-kr"] {
-        assert_eq!(map_locale_to_tray_language(locale), "ko");
-    }
-    for locale in ["kok", "kok-IN", "kos"] {
-        assert_eq!(map_locale_to_tray_language(locale), "en");
-    }
-}
-
-#[test]
-fn locale_maps_russian_without_matching_other_language_subtags() {
-    for locale in ["ru", "ru-RU", "ru-UA", "RU-ru"] {
-        assert_eq!(map_locale_to_tray_language(locale), "ru");
-    }
-    // 卢森尼亚语 rue、Rupuni 等以 ru 开头但不是俄语，按不支持的语言回落英文
-    for locale in ["rue", "rue-UA", "rup"] {
-        assert_eq!(map_locale_to_tray_language(locale), "en");
-    }
-}
-
-#[test]
-fn locale_maps_german_without_matching_other_language_subtags() {
-    for locale in ["de", "de-DE", "de-AT", "de-CH", "DE-de"] {
-        assert_eq!(map_locale_to_tray_language(locale), "de");
-    }
-    // 下索布语 dsb、Delaware 语 del 等不是德语，按不支持的语言回落英文
-    for locale in ["dsb", "del", "den-CA"] {
-        assert_eq!(map_locale_to_tray_language(locale), "en");
+fn locale_maps_without_matching_other_language_subtags() {
+    let cases: [(&str, &str, &[&str], &[&str]); 3] = [
+        (
+            "locale_maps_korean_without_matching_other_language_subtags",
+            "ko",
+            &["ko", "ko-KR", "ko-KP", "KO-kr"],
+            &["kok", "kok-IN", "kos"],
+        ),
+        // 卢森尼亚语 rue、Rupuni 等以 ru 开头但不是俄语，按不支持的语言回落英文
+        (
+            "locale_maps_russian_without_matching_other_language_subtags",
+            "ru",
+            &["ru", "ru-RU", "ru-UA", "RU-ru"],
+            &["rue", "rue-UA", "rup"],
+        ),
+        // 下索布语 dsb、Delaware 语 del 等不是德语，按不支持的语言回落英文
+        (
+            "locale_maps_german_without_matching_other_language_subtags",
+            "de",
+            &["de", "de-DE", "de-AT", "de-CH", "DE-de"],
+            &["dsb", "del", "den-CA"],
+        ),
+    ];
+    for (case, language, locales, unrelated) in cases {
+        for locale in locales {
+            assert_eq!(
+                map_locale_to_tray_language(locale),
+                language,
+                "{case}: {locale}"
+            );
+        }
+        for locale in unrelated {
+            assert_eq!(
+                map_locale_to_tray_language(locale),
+                "en",
+                "{case}: {locale}"
+            );
+        }
     }
 }
 
@@ -793,9 +805,177 @@ fn claude_bound_provider(account_id: Option<&str>, enabled: Option<bool>) -> Pro
     .unwrap()
 }
 
+fn grok_official_provider(account_id: Option<&str>, enabled: Option<bool>) -> Provider {
+    serde_json::from_value(serde_json::json!({
+        "id": "grok-bound",
+        "name": "Grok Official",
+        "settingsConfig": {"config": ""},
+        "category": "official",
+        "meta": {
+            "authBinding": account_id.map(|id| serde_json::json!({
+                "source": "managed_account",
+                "authProvider": "xai_oauth",
+                "accountId": id
+            })),
+            "usage_script": enabled.map(|enabled| serde_json::json!({
+                "enabled": enabled,
+                "language": "javascript",
+                "code": "",
+                "templateType": "official_subscription"
+            }))
+        }
+    }))
+    .unwrap()
+}
+
+#[test]
+fn grok_bound_card_tray_usage_defaults_on_and_reads_its_account() {
+    for enabled in [Some(true), None] {
+        assert_eq!(
+            tray_usage_source(
+                &AppType::GrokBuild,
+                &grok_official_provider(Some(" user-1 "), enabled)
+            ),
+            Some(TrayUsageSource::XaiAccount("user-1".to_string()))
+        );
+    }
+    assert_eq!(
+        tray_usage_source(
+            &AppType::GrokBuild,
+            &grok_official_provider(Some("user-1"), Some(false))
+        ),
+        None
+    );
+    // 没绑账号的官方卡照旧读 Grok CLI 登录的订阅缓存
+    assert_eq!(
+        tray_usage_source(
+            &AppType::GrokBuild,
+            &grok_official_provider(None, Some(true))
+        ),
+        Some(TrayUsageSource::Subscription)
+    );
+}
+
+#[test]
+fn grok_bound_card_tray_quota_comes_from_the_account_cache_only() {
+    let cache = UsageCache::new();
+    let texts = TrayTexts::from_language("zh");
+    let source = TrayUsageSource::XaiAccount("user-1".to_string());
+    // 应用级订阅缓存里有别人的额度，也不能拿来显示
+    let mut other = crate::services::subscription::SubscriptionQuota::not_found("grokbuild");
+    other.success = true;
+    cache.put_subscription(AppType::GrokBuild, other);
+    assert!(cached_usage_view(
+        &cache,
+        &texts,
+        &AppType::GrokBuild,
+        "grok-bound",
+        Some(&source)
+    )
+    .is_none());
+}
+
+fn xai_oauth_provider(account_id: Option<&str>, enabled: Option<bool>) -> Provider {
+    serde_json::from_value(serde_json::json!({
+        "id": "codex-xai",
+        "name": "xAI (Grok) OAuth",
+        "settingsConfig": {"auth": {}, "config": ""},
+        "category": "third_party",
+        "meta": {
+            "providerType": "xai_oauth",
+            "authBinding": account_id.map(|id| serde_json::json!({
+                "source": "managed_account",
+                "authProvider": "xai_oauth",
+                "accountId": id
+            })),
+            "usage_script": enabled.map(|enabled| serde_json::json!({
+                "enabled": enabled,
+                "language": "javascript",
+                "code": "",
+                "templateType": "official_subscription"
+            }))
+        }
+    }))
+    .unwrap()
+}
+
+/// #9899：Codex（含聚合成员）里的 xAI OAuth 卡，托盘按它的 xAI 账号读卡片查到的额度，
+/// 不再要求另开用量脚本。
+#[test]
+fn xai_oauth_card_tray_quota_reads_its_account_cache() {
+    for app in [AppType::Codex, AppType::Claude] {
+        for enabled in [None, Some(true)] {
+            assert_eq!(
+                tray_usage_source(&app, &xai_oauth_provider(Some(" xai-1 "), enabled)),
+                Some(TrayUsageSource::XaiAccount("xai-1".to_string()))
+            );
+        }
+        assert_eq!(
+            tray_usage_source(&app, &xai_oauth_provider(Some("xai-1"), Some(false))),
+            None
+        );
+    }
+
+    let cache = UsageCache::new();
+    let source = tray_usage_source(&AppType::Codex, &xai_oauth_provider(Some("xai-1"), None));
+    let view = || cached_usage_view(&cache, &en(), &AppType::Codex, "codex-xai", source.as_ref());
+    assert_eq!(view(), None);
+    cache.put_xai_account(
+        "xai-1".to_string(),
+        make_quota("xai_oauth", true, vec![tier(TIER_FIVE_HOUR, 25.0)]),
+    );
+    assert_eq!(
+        title(view()).map(|(text, _)| text).as_deref(),
+        Some("5-hour 75% left")
+    );
+}
+
+#[test]
+fn grok_official_card_hint_shows_only_its_bound_account() {
+    let accounts = TrayAccountLabels {
+        xai: ManagedAccountLabels::from_parts((
+            HashMap::from([
+                ("xai-default".to_string(), "default@x.ai".to_string()),
+                ("user-1".to_string(), "bound@x.ai".to_string()),
+            ]),
+            Some("xai-default".to_string()),
+        )),
+        ..Default::default()
+    };
+    let with_site = |mut provider: Provider| {
+        provider.website_url = Some("https://x.ai/grok".to_string());
+        provider
+    };
+
+    let mut bound = with_site(grok_official_provider(Some(" user-1 "), None));
+    assert_eq!(
+        provider_hint(&AppType::GrokBuild, &bound, &accounts).as_deref(),
+        Some("bound@x.ai")
+    );
+    bound.notes = Some("Personal".to_string());
+    assert_eq!(
+        provider_hint(&AppType::GrokBuild, &bound, &accounts).as_deref(),
+        Some("Personal")
+    );
+
+    // 绑定的账号已删除、或没绑账号（跟随 Grok CLI 登录）：不回落授权中心默认账号
+    for provider in [
+        grok_official_provider(Some("deleted"), None),
+        grok_official_provider(None, None),
+    ] {
+        assert_eq!(
+            provider_hint(&AppType::GrokBuild, &with_site(provider), &accounts).as_deref(),
+            Some("x.ai")
+        );
+    }
+}
+
 #[test]
 fn claude_bound_card_hint_shows_account_unless_noted() {
-    let accounts = HashMap::from([("acct-1".to_string(), "me@example.com".to_string())]);
+    let accounts = TrayAccountLabels {
+        claude: HashMap::from([("acct-1".to_string(), "me@example.com".to_string())]),
+        ..Default::default()
+    };
     let mut provider = claude_bound_provider(Some("acct-1"), None);
     provider.website_url = Some("https://www.anthropic.com".to_string());
     assert_eq!(
@@ -816,6 +996,275 @@ fn claude_bound_card_hint_shows_account_unless_noted() {
         provider_hint(&AppType::Claude, &missing, &accounts).as_deref(),
         Some("www.anthropic.com")
     );
+}
+
+#[test]
+fn managed_oauth_card_hints_show_account_instead_of_website() {
+    let accounts = TrayAccountLabels {
+        codex: ManagedAccountLabels::from_parts((
+            HashMap::from([
+                (
+                    "codex-default".to_string(),
+                    "default@openai.test".to_string(),
+                ),
+                ("codex-work".to_string(), "work@openai.test".to_string()),
+            ]),
+            Some("codex-default".to_string()),
+        )),
+        copilot: ManagedAccountLabels::from_parts((
+            HashMap::from([
+                ("gh-1".to_string(), "octocat".to_string()),
+                ("gh-2".to_string(), "hubot".to_string()),
+            ]),
+            Some("gh-1".to_string()),
+        )),
+        xai: ManagedAccountLabels::from_parts((
+            HashMap::from([
+                ("xai-1".to_string(), "grok@x.ai".to_string()),
+                ("xai-2".to_string(), "work@x.ai".to_string()),
+            ]),
+            Some("xai-1".to_string()),
+        )),
+        ..Default::default()
+    };
+
+    // Codex 官方卡：绑了托管账号就显示账号，缺失不回落默认账号，手动备注优先
+    let mut codex_bound = codex_provider(Some("codex-work"), None);
+    codex_bound.website_url = Some("https://chatgpt.com/codex".to_string());
+    assert_eq!(
+        provider_hint(&AppType::Codex, &codex_bound, &accounts).as_deref(),
+        Some("work@openai.test")
+    );
+    codex_bound.notes = Some("Personal".to_string());
+    assert_eq!(
+        provider_hint(&AppType::Codex, &codex_bound, &accounts).as_deref(),
+        Some("Personal")
+    );
+
+    let mut codex_missing = codex_provider(Some("deleted"), None);
+    codex_missing.website_url = Some("https://chatgpt.com/codex".to_string());
+    assert_eq!(
+        provider_hint(&AppType::Codex, &codex_missing, &accounts).as_deref(),
+        Some("chatgpt.com")
+    );
+
+    // Codex 官方卡未绑账号（CLI 原生登录），即便 preset 带 providerType=codex_oauth 也不回落默认托管账号
+    let mut codex_native = codex_provider(None, None);
+    codex_native.website_url = Some("https://chatgpt.com/codex".to_string());
+    codex_native.meta.as_mut().unwrap().provider_type = Some("codex_oauth".to_string());
+    assert_eq!(
+        provider_hint(&AppType::Codex, &codex_native, &accounts).as_deref(),
+        Some("chatgpt.com")
+    );
+
+    // Claude / Claude Desktop 里的 Codex OAuth 反代卡：绑定用绑定账号，未绑定回落默认账号，缺失不回落
+    let codex_proxy = |account_id: Option<&str>| -> Provider {
+        serde_json::from_value(serde_json::json!({
+            "id": "claude-codex",
+            "name": "Codex",
+            "websiteUrl": "https://openai.com/chatgpt/pricing",
+            "settingsConfig": {
+                "env": { "ANTHROPIC_BASE_URL": "https://chatgpt.com/backend-api/codex" }
+            },
+            "meta": {
+                "providerType": "codex_oauth",
+                "authBinding": account_id.map(|id| serde_json::json!({
+                    "source": "managed_account",
+                    "authProvider": "codex_oauth",
+                    "accountId": id
+                }))
+            }
+        }))
+        .unwrap()
+    };
+    assert_eq!(
+        provider_hint(&AppType::Claude, &codex_proxy(None), &accounts).as_deref(),
+        Some("default@openai.test")
+    );
+    assert_eq!(
+        provider_hint(
+            &AppType::ClaudeDesktop,
+            &codex_proxy(Some("codex-work")),
+            &accounts
+        )
+        .as_deref(),
+        Some("work@openai.test")
+    );
+    assert_eq!(
+        provider_hint(&AppType::Claude, &codex_proxy(Some("deleted")), &accounts).as_deref(),
+        Some("openai.com")
+    );
+
+    // GitHub Copilot 反代卡：支持未绑定默认、authBinding、旧 githubAccountId 与旧 templateType
+    let copilot_proxy = |meta: serde_json::Value| -> Provider {
+        serde_json::from_value(serde_json::json!({
+            "id": "claude-copilot",
+            "name": "GitHub Copilot",
+            "websiteUrl": "https://github.com/features/copilot",
+            "settingsConfig": { "env": {} },
+            "meta": meta
+        }))
+        .unwrap()
+    };
+    assert_eq!(
+        provider_hint(
+            &AppType::Claude,
+            &copilot_proxy(serde_json::json!({ "providerType": "github_copilot" })),
+            &accounts
+        )
+        .as_deref(),
+        Some("octocat")
+    );
+    assert_eq!(
+        provider_hint(
+            &AppType::Codex,
+            &copilot_proxy(serde_json::json!({
+                "providerType": "github_copilot",
+                "authBinding": {
+                    "source": "managed_account",
+                    "authProvider": "github_copilot",
+                    "accountId": "gh-2"
+                }
+            })),
+            &accounts
+        )
+        .as_deref(),
+        Some("hubot")
+    );
+    assert_eq!(
+        provider_hint(
+            &AppType::Claude,
+            &copilot_proxy(serde_json::json!({
+                "usage_script": {
+                    "enabled": true,
+                    "language": "javascript",
+                    "code": "",
+                    "templateType": "github_copilot"
+                },
+                "githubAccountId": "gh-2"
+            })),
+            &accounts
+        )
+        .as_deref(),
+        Some("hubot")
+    );
+    assert_eq!(
+        provider_hint(
+            &AppType::Claude,
+            &copilot_proxy(serde_json::json!({
+                "providerType": "github_copilot",
+                "authBinding": {
+                    "source": "managed_account",
+                    "authProvider": "github_copilot",
+                    "accountId": "deleted"
+                }
+            })),
+            &accounts
+        )
+        .as_deref(),
+        Some("github.com")
+    );
+
+    // xAI OAuth 反代卡
+    let xai_proxy = |account_id: Option<&str>| -> Provider {
+        serde_json::from_value(serde_json::json!({
+            "id": "claude-xai",
+            "name": "xAI (Grok)",
+            "websiteUrl": "https://x.ai/grok",
+            "settingsConfig": { "env": {} },
+            "meta": {
+                "providerType": "xai_oauth",
+                "authBinding": account_id.map(|id| serde_json::json!({
+                    "source": "managed_account",
+                    "authProvider": "xai_oauth",
+                    "accountId": id
+                }))
+            }
+        }))
+        .unwrap()
+    };
+    assert_eq!(
+        provider_hint(&AppType::Claude, &xai_proxy(None), &accounts).as_deref(),
+        Some("grok@x.ai")
+    );
+    assert_eq!(
+        provider_hint(&AppType::GrokBuild, &xai_proxy(Some("xai-2")), &accounts).as_deref(),
+        Some("work@x.ai")
+    );
+    assert_eq!(
+        provider_hint(&AppType::Claude, &xai_proxy(Some("deleted")), &accounts).as_deref(),
+        Some("x.ai")
+    );
+}
+
+#[test]
+fn tray_account_labels_load_from_disk_reads_all_managed_stores() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("codex_oauth_auth.json"),
+        serde_json::json!({
+            "version": 2,
+            "default_account_id": "cx-1",
+            "accounts": {
+                "cx-1": {
+                    "account_id": "cx-1",
+                    "email": "alice@openai.test",
+                    "refresh_token": "rt",
+                    "authenticated_at": 100
+                },
+                "cx-2": {
+                    "account_id": "cx-2",
+                    "chatgpt_account_id": "ws-2",
+                    "refresh_token": "rt2",
+                    "authenticated_at": 200
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("copilot_auth.json"),
+        serde_json::json!({
+            "version": 3,
+            "default_account_id": "42",
+            "accounts": {
+                "42": {
+                    "github_token": "ghu_x",
+                    "user": { "login": "octocat", "id": 42 },
+                    "authenticated_at": 100,
+                    "github_domain": "github.com"
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("xai_oauth_auth.json"),
+        serde_json::json!({
+            "version": 1,
+            "accounts": {
+                "x1": {
+                    "account_id": "x1",
+                    "login": "grok@x.ai",
+                    "refresh_token": "rt",
+                    "authenticated_at": 100
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let loaded = TrayAccountLabels::load_from_disk(dir.path());
+    assert_eq!(loaded.codex.resolve(None, true), Some("alice@openai.test"));
+    assert_eq!(
+        loaded.codex.resolve(Some("cx-2"), false),
+        Some("ChatGPT (ws-2)")
+    );
+    assert_eq!(loaded.copilot.resolve(None, true), Some("octocat"));
+    assert_eq!(loaded.xai.resolve(None, true), Some("grok@x.ai"));
 }
 
 #[test]
@@ -871,6 +1320,102 @@ fn claude_bound_card_tray_usage_defaults_on_and_reads_its_account() {
         make_quota("claude", true, vec![tier(TIER_FIVE_HOUR, 25.0)]),
     );
     assert_eq!(label().as_deref(), Some("5-hour 75% left"));
+}
+
+#[test]
+#[serial_test::serial]
+fn managed_account_changes_invalidate_native_menu_status() {
+    let _home = crate::test_support::TestHome::new();
+    let state = AppState::new(std::sync::Arc::new(
+        crate::database::Database::memory().unwrap(),
+    ));
+    let data_dir = crate::config::get_app_config_dir();
+    std::fs::create_dir_all(&data_dir).unwrap();
+    let path = data_dir.join("copilot_auth.json");
+    let mut store = serde_json::json!({
+        "version": 3,
+        "default_account_id": "1",
+        "accounts": {
+            "1": {
+                "github_token": "test-token-1",
+                "user": { "login": "personal", "id": 1 },
+                "authenticated_at": 100
+            },
+            "2": {
+                "github_token": "test-token-2",
+                "user": { "login": "work", "id": 2 },
+                "authenticated_at": 200
+            }
+        }
+    });
+    for (id, account_id) in [("default", None), ("bound", Some("2"))] {
+        let provider: Provider = serde_json::from_value(serde_json::json!({
+            "id": id,
+            "name": "GitHub Copilot",
+            "websiteUrl": "https://github.com/features/copilot",
+            "settingsConfig": { "env": {} },
+            "meta": {
+                "providerType": "github_copilot",
+                "authBinding": account_id.map(|account_id| serde_json::json!({
+                    "source": "managed_account",
+                    "authProvider": "github_copilot",
+                    "accountId": account_id
+                }))
+            }
+        }))
+        .unwrap();
+        state.db.save_provider(&AppType::Claude, &provider).unwrap();
+    }
+    let read_status = |store: &serde_json::Value| {
+        std::fs::write(&path, store.to_string()).unwrap();
+        let (snapshots, mut status) = collect_status(&state, &en()).unwrap();
+        // Other tray tests exercise transient feedback concurrently.
+        status.feedback = None;
+        let claude = snapshots
+            .into_iter()
+            .find(|snapshot| snapshot.app == AppType::Claude)
+            .unwrap();
+        let hints: HashMap<_, _> = claude
+            .providers
+            .into_iter()
+            .map(|provider| (provider.id, provider.hint))
+            .collect();
+        (status, hints)
+    };
+
+    let (initial, hints) = read_status(&store);
+    assert_eq!(hints["default"].as_deref(), Some("personal"));
+    assert_eq!(hints["bound"].as_deref(), Some("work"));
+    assert_eq!(
+        initial,
+        read_status(&store).0,
+        "unchanged labels stay stable"
+    );
+
+    store["default_account_id"] = serde_json::json!("2");
+    let (switched, hints) = read_status(&store);
+    assert_eq!(hints["default"].as_deref(), Some("work"));
+    assert_ne!(
+        initial, switched,
+        "changing the default must rebuild the menu"
+    );
+
+    store["accounts"].as_object_mut().unwrap().remove("2");
+    let (removed, hints) = read_status(&store);
+    assert_eq!(hints["default"].as_deref(), Some("personal"));
+    assert_eq!(hints["bound"].as_deref(), Some("github.com"));
+    assert_ne!(
+        switched, removed,
+        "removing a bound account must rebuild the menu"
+    );
+
+    store["accounts"] = serde_json::json!({});
+    let (logged_out, hints) = read_status(&store);
+    assert_eq!(hints["default"].as_deref(), Some("github.com"));
+    assert_ne!(
+        removed, logged_out,
+        "logging out must remove account labels"
+    );
 }
 
 #[test]
@@ -1007,12 +1552,13 @@ fn cli_subscription_tray_reads_the_cache_the_card_writes() {
         Some("5-hour 75% left")
     );
 
-    // xAI OAuth 的额度属于绑定的 SuperGrok 账号：仍走脚本路径，也不沿用应用级订阅缓存。
+    // xAI OAuth 的额度属于 SuperGrok 账号：不沿用应用级订阅缓存（没绑账号时按授权中心的
+    // 默认账号取，一个账号都没有时退回脚本路径，取决于本机，这里不断言是哪一种）。
     let mut xai = codex_provider(None, Some(true));
     xai.meta.as_mut().unwrap().provider_type = Some("xai_oauth".to_string());
-    assert_eq!(
+    assert_ne!(
         tray_usage_source(&AppType::Claude, &xai),
-        Some(TrayUsageSource::Script)
+        Some(TrayUsageSource::Subscription)
     );
     assert_eq!(
         title(usage_view(&cache, &en(), &AppType::Claude, &xai, "xai")),
@@ -1619,6 +2165,7 @@ fn feedback_row_is_a_grey_line_after_the_problems() {
         }),
         routing_in_use: false,
         update_ready: None,
+        ..Default::default()
     };
     let menu = build_menu_model(&zh(), &status, &[], false, now());
     assert_eq!(

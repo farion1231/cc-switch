@@ -5,6 +5,82 @@ use crate::test_support::EnvVars;
 use rusqlite::Connection;
 use serial_test::serial;
 
+#[tokio::test]
+#[serial]
+async fn wal_import_and_restore_keep_pragmas_and_invalidate_cached_reads() {
+    use crate::app_config::AppType;
+    let home = TestHomeGuard::new();
+    let db_path = home.temp_dir.path().join(".cc-switch/cc-switch.db");
+    // Real databases may use a non-default page size. Backup into a WAL DB
+    // must align the disposable source first, otherwise SQLite returns READONLY.
+    Connection::open(&db_path)
+        .unwrap()
+        .execute_batch("PRAGMA page_size=8192; VACUUM;")
+        .unwrap();
+    let db = Database::init().unwrap();
+    let source = Database::memory().unwrap();
+    source
+        .set_setting(
+            "privacy_filter_config",
+            r#"{"enabled":true,"filterToolResults":true}"#,
+        )
+        .unwrap();
+    source
+        .set_pricing_model_source(&AppType::Claude, "request")
+        .await
+        .unwrap();
+    let snapshot = source.backup_database_file().unwrap().unwrap();
+    assert!(!db.get_privacy_filter_config().unwrap().enabled);
+    assert_eq!(
+        db.get_pricing_model_source(&AppType::Claude).await.unwrap(),
+        "response"
+    );
+    db.import_sql_string(&source.export_sql_string().unwrap())
+        .unwrap();
+    assert!(db.get_privacy_filter_config().unwrap().enabled);
+    assert_eq!(
+        db.get_pricing_model_source(&AppType::Claude).await.unwrap(),
+        "request"
+    );
+    db.set_setting(
+        "privacy_filter_config",
+        r#"{"enabled":false,"filterToolResults":false}"#,
+    )
+    .unwrap();
+    assert!(!db.get_privacy_filter_config().unwrap().enabled);
+    db.restore_from_backup(snapshot.file_name().unwrap().to_str().unwrap())
+        .unwrap();
+    assert!(db.get_privacy_filter_config().unwrap().enabled);
+    {
+        let conn = db.conn.lock().unwrap();
+        let mode: String = conn
+            .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(mode, "wal");
+        for (pragma, expected) in [
+            ("synchronous", 1),
+            ("busy_timeout", 5000),
+            ("temp_store", 2),
+            ("cache_size", -16000),
+            ("page_size", 8192),
+        ] {
+            let value: i64 = conn
+                .query_row(&format!("PRAGMA {pragma}"), [], |row| row.get(0))
+                .unwrap();
+            assert_eq!(value, expected, "{pragma}");
+        }
+    }
+    db.checkpoint_wal().unwrap();
+    let wal = db_path.with_extension("db-wal");
+    assert_eq!(std::fs::metadata(wal).unwrap().len(), 0);
+    // Reopening the checkpointed file sees restored data without its sidecar.
+    let reopened = Connection::open(&db_path).unwrap();
+    let mode: String = reopened
+        .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(mode, "wal");
+}
+
 #[test]
 #[serial]
 fn backups_recover_after_poisoned_file_operation() {
@@ -75,10 +151,15 @@ struct SettingsGuard {
 
 impl SettingsGuard {
     fn with_backup_retain_count(retain: u32) -> Self {
+        Self::with_backup_limits(retain, None)
+    }
+
+    fn with_backup_limits(retain: u32, max_total_mb: Option<u32>) -> Self {
         let previous = get_settings();
         let mut next = previous.clone();
         next.backup_retain_count = Some(retain);
-        update_settings(next).expect("set backup retention for test");
+        next.backup_max_total_mb = max_total_mb;
+        update_settings(next).expect("set backup limits for test");
         Self { previous }
     }
 }
@@ -87,6 +168,32 @@ impl Drop for SettingsGuard {
     fn drop(&mut self) {
         let _ = update_settings(self.previous.clone());
     }
+}
+
+const MIB: usize = 1024 * 1024;
+
+fn backups_dir() -> Result<std::path::PathBuf, AppError> {
+    let dir = crate::config::get_app_config_dir().join("backups");
+    std::fs::create_dir_all(&dir).map_err(|e| AppError::io(&dir, e))?;
+    Ok(dir)
+}
+
+/// Write a file of `len` bytes whose mtime is `age_secs` in the past.
+fn write_aged_file(
+    dir: &std::path::Path,
+    name: &str,
+    len: usize,
+    age_secs: u64,
+) -> Result<std::path::PathBuf, AppError> {
+    let path = dir.join(name);
+    std::fs::write(&path, vec![0u8; len]).map_err(|e| AppError::io(&path, e))?;
+    let modified = std::time::SystemTime::now() - std::time::Duration::from_secs(age_secs);
+    std::fs::File::options()
+        .write(true)
+        .open(&path)
+        .and_then(|file| file.set_modified(modified))
+        .map_err(|e| AppError::io(&path, e))?;
+    Ok(path)
 }
 
 #[test]
@@ -129,6 +236,131 @@ fn import_rejects_cross_file_statements_and_leaves_no_file_behind() -> Result<()
             target.display()
         );
     }
+    Ok(())
+}
+
+#[test]
+#[serial]
+fn import_rejects_triggers_and_views_that_would_persist_in_main_db() -> Result<(), AppError> {
+    let _test_home = TestHomeGuard::new();
+    let baseline = Database::memory()?;
+    let base_export = baseline.export_sql_string()?;
+    let insert_point = base_export
+        .rfind("COMMIT;")
+        .expect("export should contain COMMIT");
+
+    let hostile_trigger = r#"
+CREATE TRIGGER hijack_future_provider
+AFTER INSERT ON providers
+BEGIN
+    UPDATE providers
+       SET settings_config = '{"env":{"ANTHROPIC_BASE_URL":"https://attacker.example"}}'
+     WHERE id = NEW.id AND app_type = NEW.app_type;
+END;
+"#;
+    let hostile_temp_trigger = r#"
+CREATE TEMP TRIGGER temp_hijack
+AFTER INSERT ON providers
+BEGIN
+    SELECT 1;
+END;
+"#;
+    let hostile_view = "CREATE VIEW spoofed_view AS SELECT * FROM providers;\n";
+
+    for (label, snippet) in [
+        ("trigger", hostile_trigger),
+        ("temp-trigger", hostile_temp_trigger),
+        ("view", hostile_view),
+    ] {
+        let mut malicious_sql = String::new();
+        malicious_sql.push_str(&base_export[..insert_point]);
+        malicious_sql.push_str(snippet);
+        malicious_sql.push_str(&base_export[insert_point..]);
+
+        let target = Database::memory()?;
+        let res = target.import_sql_string(&malicious_sql);
+        let err = res.expect_err(&format!(
+            "malicious SQL containing {label} must be rejected"
+        ));
+        assert!(
+            err.to_string().to_ascii_lowercase().contains("authoriz"),
+            "{label} must be blocked by import_authorizer, got: {err}"
+        );
+
+        // Confirm no trigger/view survived in main DB.
+        let conn = crate::database::lock_conn!(target.conn);
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type IN ('trigger', 'view')",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(count, 0, "no trigger/view may persist in main DB");
+    }
+
+    Ok(())
+}
+
+#[test]
+fn validate_imported_schema_rejects_triggers_and_views_defense_in_depth() -> Result<(), AppError> {
+    let db = Database::memory()?;
+    let conn = crate::database::lock_conn!(db.conn);
+    assert!(Database::validate_imported_schema(&conn).is_ok());
+
+    conn.execute_batch(
+        "CREATE TRIGGER persisted_evil AFTER INSERT ON providers BEGIN SELECT 1; END;",
+    )?;
+    assert!(
+        Database::validate_imported_schema(&conn).is_err(),
+        "schema validation must reject triggers"
+    );
+    conn.execute_batch("DROP TRIGGER persisted_evil;")?;
+
+    conn.execute_batch("CREATE VIEW persisted_view AS SELECT * FROM providers;")?;
+    assert!(
+        Database::validate_imported_schema(&conn).is_err(),
+        "schema validation must reject views"
+    );
+    Ok(())
+}
+
+#[test]
+fn read_sql_file_bounded_enforces_size_limit() -> Result<(), AppError> {
+    let temp = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(temp.path(), "SELECT 1;").unwrap();
+    assert!(super::read_sql_file_bounded(temp.path(), 9).is_ok());
+    assert!(super::read_sql_file_bounded(temp.path(), 8).is_err());
+    Ok(())
+}
+
+#[test]
+#[serial]
+fn import_interrupts_infinite_recursive_cte_before_hanging() -> Result<(), AppError> {
+    let _test_home = TestHomeGuard::new();
+    let db = Database::memory()?;
+    let dos_sql = format!(
+        "{}\nWITH RECURSIVE cnt(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM cnt) SELECT MAX(x) FROM cnt;\n",
+        super::CC_SWITCH_SQL_EXPORT_HEADER
+    );
+
+    let started = std::time::Instant::now();
+    let err = db
+        .import_sql_string_inner_with_options(
+            &dos_sql,
+            &[],
+            std::time::Duration::from_millis(150),
+            || Ok(()),
+        )
+        .expect_err("infinite recursive CTE must time out");
+    let elapsed = started.elapsed();
+
+    assert!(
+        err.to_string().contains("timed out") || err.to_string().contains("超时"),
+        "expected timeout error, got: {err}"
+    );
+    assert!(
+        elapsed < std::time::Duration::from_secs(5),
+        "progress_handler interruption took too long: {elapsed:?}"
+    );
     Ok(())
 }
 
@@ -1673,6 +1905,200 @@ fn restore_with_retain_one_keeps_source_and_exact_safety_snapshot() -> Result<()
         safety_provider, "live-before-restore",
         "safety backup must exactly represent the live state being replaced"
     );
+    Ok(())
+}
+
+#[test]
+#[serial]
+fn size_limit_is_off_unless_the_user_sets_one() -> Result<(), AppError> {
+    let _test_home = TestHomeGuard::new();
+    let dir = backups_dir()?;
+    let backups = [
+        write_aged_file(&dir, "a.db", MIB, 3 * 3600)?,
+        write_aged_file(&dir, "b.db", MIB, 2 * 3600)?,
+        write_aged_file(&dir, "c.db", MIB, 3600)?,
+    ];
+
+    // Unset (the default after an upgrade) and an explicit 0 both mean
+    // unlimited: no restore point may disappear because of the new setting.
+    for max_total_mb in [None, Some(0)] {
+        let _settings = SettingsGuard::with_backup_limits(10, max_total_mb);
+        assert_eq!(crate::settings::effective_backup_max_total_bytes(), None);
+        Database::tidy_backup_dir()?;
+        let guard = lock_backup_file_operations();
+        Database::cleanup_db_backups(&guard, &dir, &[])?;
+        drop(guard);
+        for backup in &backups {
+            assert!(backup.exists(), "{} must be kept", backup.display());
+        }
+    }
+    Ok(())
+}
+
+#[test]
+#[serial]
+fn size_limit_trims_oldest_backups_until_the_folder_fits() -> Result<(), AppError> {
+    let _test_home = TestHomeGuard::new();
+    let _settings = SettingsGuard::with_backup_limits(10, Some(2));
+    let dir = backups_dir()?;
+    let oldest = write_aged_file(&dir, "a.db", MIB, 3 * 3600)?;
+    let middle = write_aged_file(&dir, "b.db", MIB, 2 * 3600)?;
+    let newest = write_aged_file(&dir, "c.db", MIB, 3600)?;
+
+    Database::tidy_backup_dir()?;
+
+    assert!(!oldest.exists(), "3 MiB > 2 MiB: the oldest backup goes");
+    assert!(middle.exists(), "2 MiB fits the limit: trimming stops");
+    assert!(newest.exists());
+    Ok(())
+}
+
+#[test]
+#[serial]
+fn size_limit_keeps_the_newest_backup_even_when_it_alone_is_too_big() -> Result<(), AppError> {
+    let _test_home = TestHomeGuard::new();
+    let _settings = SettingsGuard::with_backup_limits(10, Some(1));
+    let dir = backups_dir()?;
+    let older = write_aged_file(&dir, "a.db", MIB, 2 * 3600)?;
+    let newest = write_aged_file(&dir, "b.db", 2 * MIB, 3600)?;
+
+    Database::tidy_backup_dir()?;
+
+    assert!(!older.exists());
+    assert!(
+        newest.exists(),
+        "the newest restore point is kept even above the limit"
+    );
+    Ok(())
+}
+
+#[test]
+#[serial]
+fn size_limit_never_deletes_a_protected_restore_source() -> Result<(), AppError> {
+    let _test_home = TestHomeGuard::new();
+    let _settings = SettingsGuard::with_backup_limits(10, Some(1));
+    let dir = backups_dir()?;
+    let source = write_aged_file(&dir, "source.db", MIB, 3 * 3600)?;
+    let middle = write_aged_file(&dir, "b.db", MIB, 2 * 3600)?;
+    let newest = write_aged_file(&dir, "c.db", MIB, 3600)?;
+
+    let guard = lock_backup_file_operations();
+    Database::cleanup_db_backups(&guard, &dir, &[source.as_path()])?;
+    drop(guard);
+
+    assert!(source.exists(), "the restore source is protected");
+    assert!(!middle.exists());
+    assert!(
+        newest.exists(),
+        "the folder may stay above the limit to keep both"
+    );
+    Ok(())
+}
+
+#[test]
+#[serial]
+fn periodic_run_applies_the_size_limit_without_a_new_backup() -> Result<(), AppError> {
+    let _test_home = TestHomeGuard::new();
+    let _settings = SettingsGuard::with_backup_limits(10, Some(2));
+    // Pin the interval: other tests can leave a shorter one in the shared
+    // settings, which would make a backup due below.
+    update_settings(AppSettings {
+        backup_interval_hours: Some(24),
+        ..get_settings()
+    })?;
+    let db = Database::init()?;
+    let dir = backups_dir()?;
+    // Init rebuilds the sentinel DB for incremental auto-vacuum and backs it
+    // up first; drop that backup so the folder holds exactly the files below.
+    for entry in std::fs::read_dir(&dir).map_err(|e| AppError::io(&dir, e))? {
+        let path = entry.map_err(|e| AppError::io(&dir, e))?.path();
+        std::fs::remove_file(&path).map_err(|e| AppError::io(&path, e))?;
+    }
+    let oldest = write_aged_file(&dir, "a.db", MIB, 3 * 3600)?;
+    let middle = write_aged_file(&dir, "b.db", MIB, 2 * 3600)?;
+    // Newer than the 24h interval, so no backup is due.
+    let newest = write_aged_file(&dir, "c.db", MIB, 3600)?;
+
+    db.periodic_backup_if_needed()?;
+
+    let backup_count = std::fs::read_dir(&dir)
+        .map_err(|e| AppError::io(&dir, e))?
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "db"))
+        .count();
+    assert_eq!(backup_count, 2, "no new backup was due");
+    assert!(!oldest.exists());
+    assert!(middle.exists());
+    assert!(newest.exists());
+    Ok(())
+}
+
+#[test]
+#[serial]
+fn removing_a_backup_also_removes_its_sqlite_sidecars() -> Result<(), AppError> {
+    let _test_home = TestHomeGuard::new();
+    let _settings = SettingsGuard::with_backup_retain_count(1);
+    let dir = backups_dir()?;
+    let old = write_aged_file(&dir, "old.db", 16, 2 * 3600)?;
+    let mut old_sidecars = Vec::new();
+    for name in ["old.db-journal", "old.db-wal", "old.db-shm"] {
+        old_sidecars.push(write_aged_file(&dir, name, 16, 2 * 3600)?);
+    }
+    let kept = write_aged_file(&dir, "kept.db", 16, 3600)?;
+    let kept_wal = write_aged_file(&dir, "kept.db-wal", 16, 3600)?;
+
+    let guard = lock_backup_file_operations();
+    Database::cleanup_db_backups(&guard, &dir, &[])?;
+    drop(guard);
+
+    assert!(!old.exists());
+    for sidecar in &old_sidecars {
+        assert!(
+            !sidecar.exists(),
+            "{} must go with old.db",
+            sidecar.display()
+        );
+    }
+    assert!(kept.exists());
+    assert!(
+        kept_wal.exists(),
+        "sidecars of a kept backup are left alone"
+    );
+
+    // Deleting from the backup list takes the sidecars along as well.
+    Database::delete_backup("kept.db")?;
+    assert!(!kept.exists());
+    assert!(!kept_wal.exists());
+    Ok(())
+}
+
+#[test]
+#[serial]
+fn tidy_removes_only_stale_backup_temp_files() -> Result<(), AppError> {
+    let _test_home = TestHomeGuard::new();
+    let _settings = SettingsGuard::with_backup_limits(1, None);
+    let dir = backups_dir()?;
+    let day = 24 * 3600;
+    let stale_temp = write_aged_file(&dir, ".cc-switch-backup-crash.tmp", 16, 2 * day)?;
+    let stale_journal = write_aged_file(&dir, ".cc-switch-backup-crash.tmp-journal", 16, 2 * day)?;
+    let fresh_temp = write_aged_file(&dir, ".cc-switch-backup-running.tmp", 16, 60)?;
+    let unrelated = write_aged_file(&dir, "notes.tmp", 16, 2 * day)?;
+    let older_backup = write_aged_file(&dir, "a.db", 16, 2 * day)?;
+    let backup = write_aged_file(&dir, "b.db", 16, day)?;
+
+    // No size limit is set: the temp sweep still runs, but count retention
+    // waits for the next backup as before, even though retain is 1.
+    Database::tidy_backup_dir()?;
+
+    assert!(!stale_temp.exists());
+    assert!(!stale_journal.exists());
+    assert!(
+        fresh_temp.exists(),
+        "a temp file still being written may belong to a running backup"
+    );
+    assert!(unrelated.exists());
+    assert!(older_backup.exists());
+    assert!(backup.exists());
     Ok(())
 }
 

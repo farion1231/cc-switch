@@ -6,7 +6,7 @@ use crate::app_config::AppType;
 use crate::database::{Database, PRICING_SOURCE_REQUEST, PRICING_SOURCE_RESPONSE};
 use crate::error::AppError;
 use crate::services::sql_helpers::{INPUT_TOKEN_SEMANTICS_FRESH, INPUT_TOKEN_SEMANTICS_TOTAL};
-use crate::services::usage_stats::{find_model_pricing_row, is_placeholder_pricing_model};
+use crate::services::usage_stats::is_placeholder_pricing_model;
 use rusqlite::OptionalExtension;
 use rust_decimal::Decimal;
 use sha2::{Digest, Sha256};
@@ -311,26 +311,17 @@ impl<'a> UsageLogger<'a> {
 
     /// 获取模型定价
     pub fn get_model_pricing(&self, model_id: &str) -> Result<Option<ModelPricing>, AppError> {
-        let conn = crate::database::lock_conn!(self.db.conn);
-        let row = find_model_pricing_row(&conn, model_id)?;
-        match row {
-            Some((input, output, cache_read, cache_creation)) => {
-                ModelPricing::from_strings(&input, &output, &cache_read, &cache_creation)
-                    .map(Some)
-                    .map_err(|e| AppError::Database(format!("解析定价数据失败: {e}")))
-            }
-            None => Ok(None),
-        }
+        self.db.cached_model_pricing(model_id)
     }
 
     /// 获取计费模式来源（按请求模型 / 按返回模型），只读应用级全局配置
-    pub async fn resolve_pricing_model_source(&self, app_type: &str) -> String {
+    pub fn resolve_pricing_model_source(&self, app_type: &str) -> String {
         let app = match app_type.parse::<AppType>() {
             Ok(app) => app,
             // 不认识的应用没有 proxy_config 行，和查不到行一样按返回模型计费。
             Err(_) => return PRICING_SOURCE_RESPONSE.to_string(),
         };
-        match self.db.get_pricing_model_source(&app).await {
+        match self.db.get_pricing_model_source_sync(&app) {
             Ok(value) if value == PRICING_SOURCE_RESPONSE || value == PRICING_SOURCE_REQUEST => {
                 value
             }

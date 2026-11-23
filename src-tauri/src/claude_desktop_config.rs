@@ -908,17 +908,19 @@ pub(crate) fn published_model_list() -> Result<Option<Value>, AppError> {
 }
 
 pub fn map_proxy_request_model(mut body: Value, provider: &Provider) -> Result<Value, AppError> {
-    let upstream_model = proxy_request_upstream_model(&body, provider)?;
+    let upstream_model =
+        proxy_request_upstream_model(body.get("model").and_then(Value::as_str), provider)?;
     body["model"] = json!(upstream_model);
     Ok(normalize_upstream_request(body, provider))
 }
 
 /// 这家能不能接这个请求的模型：只查映射，不改请求体。故障转移换家前先问一遍，查不到的那家
 /// 跳过（Desktop 发来的是进入路由时那家的模型名，别家的映射表不一定有）。
-pub fn proxy_request_upstream_model(body: &Value, provider: &Provider) -> Result<String, AppError> {
-    let requested_raw = body
-        .get("model")
-        .and_then(Value::as_str)
+pub fn proxy_request_upstream_model(
+    requested: Option<&str>,
+    provider: &Provider,
+) -> Result<String, AppError> {
+    let requested_raw = requested
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| {

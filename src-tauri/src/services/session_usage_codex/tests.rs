@@ -3883,21 +3883,32 @@ fn test_normalize_codex_model_strip_prefix() {
 }
 
 #[test]
-fn test_normalize_codex_model_strip_iso_date() {
-    assert_eq!(normalize_codex_model("gpt-5.4-2026-03-05"), "gpt-5.4");
-    assert_eq!(
-        normalize_codex_model("gpt-5.4-pro-2026-03-05"),
-        "gpt-5.4-pro"
-    );
-}
-
-#[test]
-fn test_normalize_codex_model_strip_compact_date() {
-    assert_eq!(normalize_codex_model("gpt-5.4-20260305"), "gpt-5.4");
-    assert_eq!(
-        normalize_codex_model("claude-opus-4-6-20260206"),
-        "claude-opus-4-6"
-    );
+fn test_normalize_codex_model_strips_date_suffixes() {
+    for (case, dated, dated_pro, expected_pro) in [
+        (
+            "test_normalize_codex_model_strip_iso_date",
+            "gpt-5.4-2026-03-05",
+            "gpt-5.4-pro-2026-03-05",
+            "gpt-5.4-pro",
+        ),
+        (
+            "test_normalize_codex_model_strip_compact_date",
+            "gpt-5.4-20260305",
+            "claude-opus-4-6-20260206",
+            "claude-opus-4-6",
+        ),
+        // prefix + uppercase + ISO date
+        // prefix + compact date
+        (
+            "test_normalize_codex_model_combined",
+            "openai/GPT-5.4-2026-03-05",
+            "openai/gpt-5.4-20260305",
+            "gpt-5.4",
+        ),
+    ] {
+        assert_eq!(normalize_codex_model(dated), "gpt-5.4", "{case}");
+        assert_eq!(normalize_codex_model(dated_pro), expected_pro, "{case}");
+    }
 }
 
 #[test]
@@ -3908,39 +3919,46 @@ fn test_normalize_codex_model_no_change() {
     assert_eq!(normalize_codex_model("deepseek-chat"), "deepseek-chat");
 }
 
+/// 缓存读取是 input 的一部分：上游报出的 cached 比本次 input 还大时（异常数据），
+/// 入库的 cache_read 也不超过这次的 input。逐条增量和压缩用量记录都一样。
 #[test]
-fn test_normalize_codex_model_combined() {
-    // prefix + uppercase + ISO date
-    assert_eq!(
-        normalize_codex_model("openai/GPT-5.4-2026-03-05"),
-        "gpt-5.4"
-    );
-    // prefix + compact date
-    assert_eq!(normalize_codex_model("openai/gpt-5.4-20260305"), "gpt-5.4");
-}
+fn cached_tokens_never_exceed_the_input_they_belong_to() -> Result<(), AppError> {
+    fn rows(lines: &[serde_json::Value]) -> Result<Vec<(i64, i64)>, AppError> {
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let path = rollout_path(temp.path(), PARENT_ID);
+        let mut all = vec![session_meta(PARENT_ID), turn_context()];
+        all.extend_from_slice(lines);
+        write_jsonl(&path, &all);
+        sync_test_file(&db, &path, &[&path])?;
+        let conn = lock_conn!(db.conn);
+        let mut stmt = conn
+            .prepare(
+                "SELECT input_tokens, cache_read_tokens FROM proxy_request_logs
+                 WHERE data_source = 'codex_session' ORDER BY request_id",
+            )
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        let rows = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .map_err(|error| AppError::Database(error.to_string()))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        Ok(rows)
+    }
 
-#[test]
-fn test_cached_clamped_to_input() {
-    // cached > input 的异常场景应被 min() 钳制
-    let prev = Some(CumulativeTokens {
-        input: 100,
-        cached_input: 0,
-        cache_write_input: 0,
-        output: 50,
-    });
-    let current = CumulativeTokens {
-        input: 110,       // delta = 10
-        cached_input: 80, // delta = 80（异常：大于 input delta）
-        cache_write_input: 0,
-        output: 60,
-    };
-    let delta = compute_delta(&prev, &current);
-    // 钳制前：cached_input = 80, input = 10
-    assert_eq!(delta.cached_input, 80);
-    assert_eq!(delta.input, 10);
-    // 实际钳制在调用侧：delta.cached_input.min(delta.input)
-    let clamped = delta.cached_input.min(delta.input);
-    assert_eq!(clamped, 10);
+    // 累计 input 100 → 110（这次 10），累计 cached 0 → 80（这次 80）。
+    let increments = rows(&[
+        token_count_at(100, 0, 50, "2026-07-10T03:00:02Z"),
+        token_count_at(110, 80, 60, "2026-07-10T03:00:03Z"),
+    ])?;
+    assert_eq!(increments, vec![(100, 0), (10, 10)]);
+
+    let compaction = rows(&[
+        token_usage_record_at("resp_compact", 100, 150, 20, "2026-07-10T03:00:02Z"),
+        token_count_with_last_at(0, 0, 0, 0, 0, 0, "default", "2026-07-10T03:00:02Z"),
+    ])?;
+    assert_eq!(compaction, vec![(100, 100)]);
+    Ok(())
 }
 
 /// 真实语料回放验收 harness（仅手动运行，勿在 CI 跑）。

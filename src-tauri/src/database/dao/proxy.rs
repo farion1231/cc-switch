@@ -28,8 +28,8 @@ fn validate_pricing_source(value: &str) -> Result<&str, AppError> {
 /// 重建表、升数据库版本，所以这一份整体存成 `settings` 表里的一条 JSON；读写都走下面几个
 /// 函数，调用方按应用名取，不用管存在哪。
 const DESKTOP_APP_TYPE: &str = "claude-desktop";
-const DESKTOP_PROXY_CONFIG_KEY: &str = "claude_desktop_proxy_config";
-const DESKTOP_PRICING_SOURCE_KEY: &str = "claude_desktop_pricing_model_source";
+pub(crate) const DESKTOP_PROXY_CONFIG_KEY: &str = "claude_desktop_proxy_config";
+pub(crate) const DESKTOP_PRICING_SOURCE_KEY: &str = "claude_desktop_pricing_model_source";
 
 /// 还没存过时的默认值：重试、超时、熔断参数和 Claude Code 那一行的 seed 一致。
 fn desktop_default_proxy_config() -> AppProxyConfig {
@@ -67,23 +67,30 @@ fn decode_desktop_proxy_config(raw: &str) -> serde_json::Result<AppProxyConfig> 
     serde_json::from_value(Value::Object(saved))
 }
 
+/// settings 表里存的那条 JSON 换成配置；没存过、解析不了都按默认值。
+fn desktop_proxy_config_from(raw: Option<String>) -> AppProxyConfig {
+    let Some(raw) = raw else {
+        return desktop_default_proxy_config();
+    };
+    match decode_desktop_proxy_config(&raw) {
+        Ok(mut config) => {
+            config.app_type = DESKTOP_APP_TYPE.to_string();
+            config
+        }
+        Err(error) => {
+            log::warn!("Claude Desktop 的路由配置解析不了，按默认值处理: {error}");
+            desktop_default_proxy_config()
+        }
+    }
+}
+
 impl Database {
     // ==================== Claude Desktop（存在 settings 表） ====================
 
     fn desktop_proxy_config(&self) -> Result<AppProxyConfig, AppError> {
-        let Some(raw) = self.get_setting(DESKTOP_PROXY_CONFIG_KEY)? else {
-            return Ok(desktop_default_proxy_config());
-        };
-        match decode_desktop_proxy_config(&raw) {
-            Ok(mut config) => {
-                config.app_type = DESKTOP_APP_TYPE.to_string();
-                Ok(config)
-            }
-            Err(error) => {
-                log::warn!("Claude Desktop 的路由配置解析不了，按默认值处理: {error}");
-                Ok(desktop_default_proxy_config())
-            }
-        }
+        Ok(desktop_proxy_config_from(
+            self.get_setting(DESKTOP_PROXY_CONFIG_KEY)?,
+        ))
     }
 
     fn save_desktop_proxy_config(&self, config: &AppProxyConfig) -> Result<(), AppError> {
@@ -98,6 +105,11 @@ impl Database {
     ///
     /// 从 claude 行读取（三行镜像一致）
     pub async fn get_global_proxy_config(&self) -> Result<GlobalProxyConfig, AppError> {
+        self.run_blocking(move |db| db.get_global_proxy_config_sync())
+            .await
+    }
+
+    fn get_global_proxy_config_sync(&self) -> Result<GlobalProxyConfig, AppError> {
         // 使用 block 限制 conn 的作用域，避免跨 await 持有锁
         let result = {
             let conn = lock_conn!(self.conn);
@@ -121,7 +133,7 @@ impl Database {
             Ok(config) => Ok(config),
             Err(rusqlite::Error::QueryReturnedNoRows) => {
                 // 如果不存在，创建默认配置
-                self.init_proxy_config_rows().await?;
+                self.init_proxy_config_rows()?;
                 Ok(GlobalProxyConfig {
                     proxy_enabled: false,
                     listen_address: "127.0.0.1".to_string(),
@@ -138,6 +150,11 @@ impl Database {
         &self,
         config: GlobalProxyConfig,
     ) -> Result<(), AppError> {
+        self.run_blocking(move |db| db.update_global_proxy_config_sync(config))
+            .await
+    }
+
+    fn update_global_proxy_config_sync(&self, config: GlobalProxyConfig) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
 
         conn.execute(
@@ -161,18 +178,38 @@ impl Database {
 
     /// 获取计费模式来源
     pub async fn get_pricing_model_source(&self, app_type: &AppType) -> Result<String, AppError> {
-        let app_type = if *app_type == AppType::ClaudeDesktop {
-            // Desktop 现在有独立设置（存在 settings 表）。键不存在时回退到 Claude 的设置，
-            // 避免升级后用户之前的「按请求模型」配置对 Desktop 悄悄失效。
+        if let Some(value) = self.read_cache.pricing_source.get(app_type.as_str()) {
+            return Ok(value);
+        }
+        let app_type = app_type.clone();
+        self.run_blocking(move |db| db.get_pricing_model_source_sync(&app_type))
+            .await
+    }
+
+    /// Already-blocking usage workers use this directly, avoiding nested worker waits.
+    pub(crate) fn get_pricing_model_source_sync(
+        &self,
+        app_type: &AppType,
+    ) -> Result<String, AppError> {
+        if *app_type == AppType::ClaudeDesktop {
+            // Desktop 的设置存在 settings 表，不进 proxy_config 的缓存（那份缓存只在
+            // proxy_config 表写入时失效）。键不存在时回退到 Claude 的设置，避免升级后用户之前
+            // 的「按请求模型」配置对 Desktop 悄悄失效。
             if let Some(value) = self.get_setting(DESKTOP_PRICING_SOURCE_KEY)? {
                 if let Ok(trimmed) = validate_pricing_source(&value) {
                     return Ok(trimmed.to_string());
                 }
             }
-            &AppType::Claude
-        } else {
-            app_type
-        };
+            return self.get_pricing_model_source_sync(&AppType::Claude);
+        }
+        self.read_cache
+            .pricing_source
+            .get_or_load(app_type.as_str(), || {
+                self.load_pricing_model_source(app_type)
+            })
+    }
+
+    fn load_pricing_model_source(&self, app_type: &AppType) -> Result<String, AppError> {
         let result = {
             let conn = lock_conn!(self.conn);
             conn.query_row(
@@ -185,7 +222,7 @@ impl Database {
         match result {
             Ok(value) => Ok(value),
             Err(rusqlite::Error::QueryReturnedNoRows) => {
-                self.init_proxy_config_rows().await?;
+                self.init_proxy_config_rows()?;
                 Ok(PRICING_SOURCE_RESPONSE.to_string())
             }
             Err(e) => Err(AppError::Database(e.to_string())),
@@ -194,6 +231,17 @@ impl Database {
 
     /// 设置计费模式来源
     pub async fn set_pricing_model_source(
+        &self,
+        app_type: &AppType,
+        value: &str,
+    ) -> Result<(), AppError> {
+        let app_type = app_type.clone();
+        let value = value.to_owned();
+        self.run_blocking(move |db| db.set_pricing_model_source_sync(&app_type, &value))
+            .await
+    }
+
+    fn set_pricing_model_source_sync(
         &self,
         app_type: &AppType,
         value: &str,
@@ -221,6 +269,29 @@ impl Database {
 
     /// 获取应用级代理配置
     pub async fn get_proxy_config_for_app(
+        &self,
+        app_type: &AppType,
+    ) -> Result<AppProxyConfig, AppError> {
+        if *app_type == AppType::ClaudeDesktop {
+            // 走 settings 表的缓存（settings 写入时失效），热路径上不等数据库锁。
+            if let Some(raw) = self.read_cache.settings.get(DESKTOP_PROXY_CONFIG_KEY) {
+                return Ok(desktop_proxy_config_from(raw));
+            }
+            return self.run_blocking(|db| db.desktop_proxy_config()).await;
+        }
+        if let Some(value) = self.read_cache.proxy.get(app_type.as_str()) {
+            return Ok(value);
+        }
+        let app_type = app_type.clone();
+        self.run_blocking(move |db| {
+            db.read_cache.proxy.get_or_load(app_type.as_str(), || {
+                db.get_proxy_config_for_app_sync(&app_type)
+            })
+        })
+        .await
+    }
+
+    fn get_proxy_config_for_app_sync(
         &self,
         app_type: &AppType,
     ) -> Result<AppProxyConfig, AppError> {
@@ -260,7 +331,7 @@ impl Database {
             Ok(config) => Ok(config),
             Err(rusqlite::Error::QueryReturnedNoRows) => {
                 // 如果不存在，创建默认配置
-                self.init_proxy_config_rows().await?;
+                self.init_proxy_config_rows()?;
                 Ok(AppProxyConfig {
                     app_type: app_type.to_string(),
                     enabled: false,
@@ -285,6 +356,11 @@ impl Database {
         &self,
         config: AppProxyConfig,
     ) -> Result<(), AppError> {
+        self.run_blocking(move |db| db.update_proxy_config_for_app_sync(config))
+            .await
+    }
+
+    fn update_proxy_config_for_app_sync(&self, config: AppProxyConfig) -> Result<(), AppError> {
         if config.app_type == DESKTOP_APP_TYPE {
             return self.save_desktop_proxy_config(&config);
         }
@@ -368,7 +444,7 @@ impl Database {
     /// 初始化 proxy_config 表的三行数据
     ///
     /// 使用与 schema.rs seed 相同的 per-app 默认值
-    async fn init_proxy_config_rows(&self) -> Result<(), AppError> {
+    fn init_proxy_config_rows(&self) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
 
         // 使用与 schema.rs seed 相同的 per-app 默认值
@@ -441,6 +517,17 @@ impl Database {
         provider_id: &str,
         app_type: &AppType,
     ) -> Result<ProviderHealth, AppError> {
+        let provider_id = provider_id.to_owned();
+        let app_type = app_type.clone();
+        self.run_blocking(move |db| db.get_provider_health_sync(&provider_id, &app_type))
+            .await
+    }
+
+    fn get_provider_health_sync(
+        &self,
+        provider_id: &str,
+        app_type: &AppType,
+    ) -> Result<ProviderHealth, AppError> {
         let result = {
             let conn = lock_conn!(self.conn);
 
@@ -487,6 +574,28 @@ impl Database {
     /// # Arguments
     /// * `failure_threshold` - 连续失败多少次后标记为不健康
     pub async fn update_provider_health_with_threshold(
+        &self,
+        provider_id: &str,
+        app_type: &AppType,
+        success: bool,
+        error_msg: Option<String>,
+        failure_threshold: u32,
+    ) -> Result<(), AppError> {
+        let provider_id = provider_id.to_owned();
+        let app_type = app_type.clone();
+        self.run_blocking(move |db| {
+            db.update_provider_health_with_threshold_sync(
+                &provider_id,
+                &app_type,
+                success,
+                error_msg,
+                failure_threshold,
+            )
+        })
+        .await
+    }
+
+    fn update_provider_health_with_threshold_sync(
         &self,
         provider_id: &str,
         app_type: &AppType,
@@ -552,6 +661,12 @@ impl Database {
 
     /// 清空指定应用的健康状态（关闭单个代理时使用）
     pub async fn clear_provider_health_for_app(&self, app_type: &AppType) -> Result<(), AppError> {
+        let app_type = app_type.clone();
+        self.run_blocking(move |db| db.clear_provider_health_for_app_sync(&app_type))
+            .await
+    }
+
+    fn clear_provider_health_for_app_sync(&self, app_type: &AppType) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
 
         conn.execute(
@@ -566,6 +681,11 @@ impl Database {
 
     /// 清空所有Provider健康状态（代理停止时调用）
     pub async fn clear_all_provider_health(&self) -> Result<(), AppError> {
+        self.run_blocking(move |db| db.clear_all_provider_health_sync())
+            .await
+    }
+
+    fn clear_all_provider_health_sync(&self) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
 
         conn.execute("DELETE FROM provider_health", [])
@@ -583,6 +703,13 @@ impl Database {
         app_type: &AppType,
         config_json: &str,
     ) -> Result<(), AppError> {
+        let app_type = app_type.clone();
+        let config_json = config_json.to_owned();
+        self.run_blocking(move |db| db.save_live_backup_sync(&app_type, &config_json))
+            .await
+    }
+
+    fn save_live_backup_sync(&self, app_type: &AppType, config_json: &str) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
         let now = chrono::Utc::now().to_rfc3339();
 
@@ -602,6 +729,12 @@ impl Database {
         &self,
         app_type: &AppType,
     ) -> Result<Option<LiveBackup>, AppError> {
+        let app_type = app_type.clone();
+        self.run_blocking(move |db| db.get_live_backup_sync(&app_type))
+            .await
+    }
+
+    fn get_live_backup_sync(&self, app_type: &AppType) -> Result<Option<LiveBackup>, AppError> {
         let conn = lock_conn!(self.conn);
 
         let result = conn.query_row(
@@ -625,6 +758,12 @@ impl Database {
 
     /// 删除 Live 配置备份
     pub async fn delete_live_backup(&self, app_type: &AppType) -> Result<(), AppError> {
+        let app_type = app_type.clone();
+        self.run_blocking(move |db| db.delete_live_backup_sync(&app_type))
+            .await
+    }
+
+    fn delete_live_backup_sync(&self, app_type: &AppType) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
 
         conn.execute(
@@ -865,6 +1004,61 @@ mod tests {
             db.get_pricing_model_source(&AppType::ClaudeDesktop).await,
             Err(AppError::Database(_))
         ));
+        Ok(())
+    }
+
+    /// Desktop 的配置存在 settings 表，不走 proxy_config 的缓存：读过一次之后，热路径上的
+    /// 读取不等数据库锁；改了之后马上读到新值（settings 表写入让缓存失效）。
+    #[tokio::test]
+    async fn claude_desktop_reads_are_cached_and_see_their_own_writes() -> Result<(), AppError> {
+        use std::sync::{mpsc, Arc};
+        use std::time::Duration;
+
+        let db = Arc::new(Database::memory()?);
+        let desktop = AppType::ClaudeDesktop;
+        let mut config = db.get_proxy_config_for_app(&desktop).await?;
+        config.max_retries = 1;
+        db.update_proxy_config_for_app(config).await?;
+        db.set_pricing_model_source(&desktop, "request").await?;
+        // 写入后立刻读到新值，同时把缓存热起来
+        assert_eq!(db.get_proxy_config_for_app(&desktop).await?.max_retries, 1);
+        assert_eq!(db.get_pricing_model_source_sync(&desktop)?, "request");
+
+        let guard = db.conn.lock().unwrap();
+        let worker_db = db.clone();
+        let (tx, rx) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(async {
+                    let config = worker_db
+                        .get_proxy_config_for_app(&AppType::ClaudeDesktop)
+                        .await
+                        .unwrap();
+                    assert_eq!(config.max_retries, 1);
+                });
+            assert_eq!(
+                worker_db
+                    .get_pricing_model_source_sync(&AppType::ClaudeDesktop)
+                    .unwrap(),
+                "request"
+            );
+            let _ = tx.send(());
+        });
+        let completed = rx.recv_timeout(Duration::from_secs(2));
+        drop(guard);
+        worker.join().unwrap();
+        completed.expect("warm Claude Desktop reads acquired the SQLite mutex");
+
+        // 再改一次，缓存不会留着旧值
+        let mut config = db.get_proxy_config_for_app(&desktop).await?;
+        config.max_retries = 4;
+        db.update_proxy_config_for_app(config).await?;
+        db.set_pricing_model_source(&desktop, "response").await?;
+        assert_eq!(db.get_proxy_config_for_app(&desktop).await?.max_retries, 4);
+        assert_eq!(db.get_pricing_model_source_sync(&desktop)?, "response");
         Ok(())
     }
 }

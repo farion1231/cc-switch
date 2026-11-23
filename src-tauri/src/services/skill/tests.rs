@@ -3619,6 +3619,35 @@ fn update_lookup_uses_unique_metadata_name_without_overriding_directory_match() 
 }
 
 #[test]
+fn discovery_lists_one_copy_per_install_name_like_waza_layout() {
+    // tw93/Waza 把每个技能放两份：skills/<名> 和 plugins/waza/skills/<名>。
+    let temp = tempdir().expect("tempdir");
+    for name in ["check", "hunt"] {
+        write_skill(&temp.path().join("plugins/waza/skills").join(name), name);
+        write_skill(&temp.path().join("skills").join(name), name);
+    }
+    write_skill(&temp.path().join("b/Utils"), "utils-b");
+    write_skill(&temp.path().join("a/utils"), "utils-a");
+    let repo = SkillRepo {
+        host: default_repo_host(),
+        owner: "tw93".to_string(),
+        name: "Waza".to_string(),
+        branch: "main".to_string(),
+        enabled: true,
+    };
+    let mut skills = Vec::new();
+    SkillService::new()
+        .scan_dir_recursive(temp.path(), temp.path(), &repo, &mut skills)
+        .expect("scan skills");
+    assert_eq!(skills.len(), 6, "检查更新要看到每一份，扫描本身不去重");
+
+    SkillService::keep_one_per_install_name(&mut skills);
+    let mut directories: Vec<_> = skills.iter().map(|s| s.directory.as_str()).collect();
+    directories.sort_unstable();
+    assert_eq!(directories, ["a/utils", "skills/check", "skills/hunt"]);
+}
+
+#[test]
 fn update_lookup_prefers_persisted_source_path_after_metadata_rename() {
     let temp = tempdir().expect("tempdir");
     write_skill(&temp.path().join("skills"), "renamed-skill");

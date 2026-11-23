@@ -1813,10 +1813,11 @@ fn build_tool_search_paths_includes_standalone_installer_dirs() {
 }
 
 #[test]
+#[serial_test::serial]
 fn omp_search_paths_include_the_bun_global_bin() {
     // A GUI process does not inherit `~/.bun/bin`: without it a Bun global
     // omp is reported as not installed and updates lose their anchor.
-    let home = dirs::home_dir().expect("home should resolve");
+    let home = crate::config::get_home_dir();
     let bun_bin = home.join(".bun").join("bin");
     assert!(build_tool_search_paths("omp").contains(&bun_bin));
     // Other Bun-installable tools keep their previous search set.
@@ -2232,5 +2233,32 @@ fn run_windows_tool_version_command_accepts_canonicalized_cmd_path() {
     assert_eq!(
         decode_command_output(&output.stdout).trim(),
         "codex-cli 0.144.3"
+    );
+}
+
+#[test]
+fn opencode_desktop_sidecar_needs_the_gui_layout() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("opencode.exe"), b"").unwrap();
+    for relative in ["opencode-cli.exe", "resources/opencode-cli.exe"] {
+        let sidecar = dir.path().join(relative);
+        std::fs::create_dir_all(sidecar.parent().unwrap()).unwrap();
+        std::fs::write(&sidecar, b"").unwrap();
+        assert_eq!(
+            infer_install_source_for_tool("opencode", &sidecar, &sidecar),
+            "desktop"
+        );
+        assert_ne!(
+            infer_install_source_for_tool("codex", &sidecar, &sidecar),
+            "desktop"
+        );
+    }
+    // 不和 GUI 在一起的 opencode-cli.exe 不算 Desktop 自带
+    let unrelated = dir.path().join("standalone/opencode-cli.exe");
+    std::fs::create_dir_all(unrelated.parent().unwrap()).unwrap();
+    std::fs::write(&unrelated, b"").unwrap();
+    assert_eq!(
+        infer_install_source_for_tool("opencode", &unrelated, &unrelated),
+        "system"
     );
 }

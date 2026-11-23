@@ -660,45 +660,37 @@ mod tests {
     // ------------------------------------------------------------------
 
     #[test]
-    fn normalize_model_id_strips_models_prefix() {
-        assert_eq!(
-            normalize_gemini_model_id("models/gemini-2.5-pro"),
-            "gemini-2.5-pro"
-        );
-    }
-
-    #[test]
-    fn normalize_model_id_leaves_bare_id_unchanged() {
-        assert_eq!(
-            normalize_gemini_model_id("gemini-2.5-pro"),
-            "gemini-2.5-pro"
-        );
-    }
-
-    #[test]
-    fn normalize_model_id_preserves_nested_slashes_after_prefix() {
-        // e.g. tuned model resource like `models/gemini-2.5-pro/tunedModels/xxx`
-        // — the caller asked for a specific tuned model resource, keep its
-        // identity intact after stripping only the single leading prefix.
-        assert_eq!(
-            normalize_gemini_model_id("models/tunedModels/my-tuned"),
-            "tunedModels/my-tuned"
-        );
-    }
-
-    #[test]
-    fn normalize_model_id_tolerates_leading_slash() {
-        assert_eq!(
-            normalize_gemini_model_id("/models/gemini-2.5-flash"),
-            "gemini-2.5-flash"
-        );
-    }
-
-    #[test]
-    fn normalize_model_id_preserves_empty_input() {
-        // Edge: caller has no model at all. Pass through so the URL error
-        // surfaces at the request layer rather than producing a misleading
-        // empty segment here.
-        assert_eq!(normalize_gemini_model_id(""), "");
+    fn normalize_model_id_cases() {
+        for (case, input, expected) in [
+            (
+                "normalize_model_id_strips_models_prefix",
+                "models/gemini-2.5-pro",
+                "gemini-2.5-pro",
+            ),
+            (
+                "normalize_model_id_leaves_bare_id_unchanged",
+                "gemini-2.5-pro",
+                "gemini-2.5-pro",
+            ),
+            // e.g. tuned model resource like `models/gemini-2.5-pro/tunedModels/xxx`
+            // — the caller asked for a specific tuned model resource, keep its
+            // identity intact after stripping only the single leading prefix.
+            (
+                "normalize_model_id_preserves_nested_slashes_after_prefix",
+                "models/tunedModels/my-tuned",
+                "tunedModels/my-tuned",
+            ),
+            (
+                "normalize_model_id_tolerates_leading_slash",
+                "/models/gemini-2.5-flash",
+                "gemini-2.5-flash",
+            ),
+            // Edge: caller has no model at all. Pass through so the URL error
+            // surfaces at the request layer rather than producing a misleading
+            // empty segment here.
+            ("normalize_model_id_preserves_empty_input", "", ""),
+        ] {
+            assert_eq!(normalize_gemini_model_id(input), expected, "{case}");
+        }
     }
 }

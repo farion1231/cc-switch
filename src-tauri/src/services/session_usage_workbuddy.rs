@@ -15,8 +15,7 @@ use crate::error::AppError;
 use crate::proxy::usage::parser::TokenUsage;
 use crate::services::{
     session_usage::{
-        cost_columns, load_sync_cursors, metadata_modified_nanos, update_sync_state_on_conn,
-        SessionSyncResult,
+        cost_columns, metadata_modified_nanos, update_sync_state_on_conn, SessionSyncResult,
     },
     sql_helpers::INPUT_TOKEN_SEMANTICS_FRESH,
     usage_stats::find_model_pricing,
@@ -35,17 +34,32 @@ const DATA_SOURCE: &str = "workbuddy_session";
 /// 已入库的请求由 `session_usage_dedup` 回执挡住，只补新认出的。
 const CURSOR_PREFIX: &str = "workbuddy:v2:";
 
-pub fn sync_workbuddy_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
-    sync_projects(db, &workbuddy::projects_dir())
+pub(crate) fn sync_workbuddy_usage(
+    db: &Database,
+    cursors: &crate::services::session_usage::SyncCursors,
+) -> Result<SessionSyncResult, AppError> {
+    sync_projects_with_cursors(db, &workbuddy::projects_dir(), cursors)
 }
 
+#[cfg(test)]
 fn sync_projects(db: &Database, projects: &Path) -> Result<SessionSyncResult, AppError> {
+    sync_projects_with_cursors(
+        db,
+        projects,
+        &crate::services::session_usage::load_sync_cursors(db)?,
+    )
+}
+
+fn sync_projects_with_cursors(
+    db: &Database,
+    projects: &Path,
+    cursors: &crate::services::session_usage::SyncCursors,
+) -> Result<SessionSyncResult, AppError> {
     let mut result = SessionSyncResult::default();
     let files = workbuddy::usage_files(projects);
     if files.is_empty() {
         return Ok(result);
     }
-    let cursors = load_sync_cursors(db)?;
     for (path, parent_session) in files {
         let Ok(meta) = fs::metadata(&path) else {
             continue;

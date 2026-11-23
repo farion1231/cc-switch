@@ -5,8 +5,8 @@
 //! OpenAI-compatible Chat Completions endpoint.
 
 use super::codex_chat_common::{
-    append_reasoning_content, copy_tool_call_extra_content, extract_reasoning_field_text,
-    extract_reasoning_summary_text, response_function_call_item,
+    append_reasoning_content, chat_thinking_part_text, copy_tool_call_extra_content,
+    extract_reasoning_field_text, extract_reasoning_summary_text, response_function_call_item,
     response_function_call_item_with_namespace,
 };
 use super::codex_compaction;
@@ -2366,6 +2366,18 @@ fn chat_reasoning_to_response_output_item(
 fn chat_reasoning_text(message: &Value) -> Option<String> {
     if let Some(reasoning) = extract_reasoning_field_text(message) {
         return Some(reasoning);
+    }
+
+    // Mistral 开思考后把思考放在分段 content 的 thinking 段里（#9902）
+    if let Some(parts) = message.get("content").and_then(|v| v.as_array()) {
+        let reasoning = parts
+            .iter()
+            .filter(|part| part.get("type").and_then(|v| v.as_str()) == Some("thinking"))
+            .filter_map(chat_thinking_part_text)
+            .collect::<String>();
+        if !reasoning.is_empty() {
+            return Some(reasoning);
+        }
     }
 
     if let Some(content) = message.get("content").and_then(|v| v.as_str()) {

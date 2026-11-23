@@ -26,6 +26,19 @@ impl RequestForwarder {
             self.non_streaming_timeout
         };
 
+        // 流式请求只约束「等响应头」这一段，用首包超时；body 交给 response_processor
+        // 的静默期超时。两条传输路径必须用同一个值，否则 Claude（hyper）会按非流式
+        // 超时等 10 分钟，故障转移迟迟不触发。
+        let header_timeout = if request_is_streaming {
+            if self.streaming_first_byte_timeout.is_zero() {
+                timeout
+            } else {
+                self.streaming_first_byte_timeout
+            }
+        } else {
+            timeout
+        };
+
         // 获取全局代理 URL（上游是本机地址时直连，不送进代理）
         let upstream_proxy_url: Option<String> = crate::proxy::http_client::proxy_url_for(url);
 
@@ -56,11 +69,6 @@ impl RequestForwarder {
             }
             let send = request.body(body_bytes).send();
             let send_result = if request_is_streaming {
-                let header_timeout = if self.streaming_first_byte_timeout.is_zero() {
-                    timeout
-                } else {
-                    self.streaming_first_byte_timeout
-                };
                 tokio::time::timeout(header_timeout, send)
                     .await
                     .map_err(|_| {
@@ -87,7 +95,7 @@ impl RequestForwarder {
                 headers,
                 extensions.clone(),
                 body_bytes,
-                timeout,
+                header_timeout,
                 upstream_proxy_url.as_deref(),
             )
             .await?

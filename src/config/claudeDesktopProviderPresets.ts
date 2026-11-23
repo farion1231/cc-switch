@@ -375,6 +375,19 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     icon: "haoai",
   },
   {
+    name: "StringAI",
+    websiteUrl: "https://www.string.ink",
+    apiKeyUrl: "https://www.string.ink/register?ref=661AE533A60AF110",
+    category: "aggregator",
+    baseUrl: "https://www.string.ink",
+    mode: "direct",
+    apiFormat: "anthropic",
+    modelRoutes: passthroughRoutes(),
+    isPartner: true,
+    partnerPromotionKey: "stringai",
+    icon: "stringai",
+  },
+  {
     name: "FennoAI",
     websiteUrl: "https://api.fenno.ai",
     apiKeyUrl:
