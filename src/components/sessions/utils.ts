@@ -49,6 +49,8 @@ export const SESSION_SOURCE_PATHS: Record<SessionAppId, string[]> = {
     "~/.gemini/antigravity-cli/brain/<conversation>/.system_generated/logs",
     "~/.gemini/antigravity/brain/<conversation>/.system_generated/logs",
     "~/.gemini/antigravity-ide/brain/<conversation>/.system_generated/logs",
+    "~/.gemini/antigravity-acp/brain/<conversation>/.system_generated/logs",
+    "~/.t3/userdata/providers/antigravity/<instance>/antigravity-acp/brain/<conversation>/.system_generated/logs",
   ],
   copilot: ["~/.copilot/session-state"],
 };
@@ -62,8 +64,9 @@ const NATIVE_DELETE_HINT_KEYS: Record<string, string> = {
 };
 
 /** Antigravity 只有 CLI 的会话（`antigravity-cli/brain`）能在这里删（后端连索引一起清）；
- *  桌面版（`~/.gemini/antigravity/brain`）、独立 IDE（`~/.gemini/antigravity-ide/brain`）
- *  的索引在别处，没有导出记录的会话也没有可删的来源。 */
+ *  桌面版（`antigravity/brain`）、独立 IDE（`antigravity-ide/brain`）和 ACP 客户端
+ *  （`antigravity-acp/brain`，如 T3 Code）的会话索引由原软件维护，
+ *  没有导出记录的会话也没有可删的来源。 */
 const agyDeleteBlocked = (session: SessionMeta) =>
   !session.sourcePath ||
   !/[\\/]antigravity-cli[\\/]brain[\\/]/.test(session.sourcePath);

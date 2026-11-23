@@ -40,11 +40,6 @@ pub fn desktop_dir() -> PathBuf {
     get_home_dir().join(".gemini").join("antigravity")
 }
 
-/// `~/.gemini/antigravity-ide`：Antigravity IDE 独立拆分后的数据目录。
-pub fn ide_dir() -> PathBuf {
-    get_home_dir().join(".gemini").join("antigravity-ide")
-}
-
 /// `~/.gemini/config`：CLI、桌面版和 IDE 共用的 MCP / Skills / 提示词 / 插件配置目录。
 pub fn customizations_dir() -> PathBuf {
     get_home_dir().join(".gemini").join("config")

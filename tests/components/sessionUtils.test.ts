@@ -19,7 +19,7 @@ const stubUserAgent = (userAgent: string) =>
   vi.stubGlobal("navigator", { userAgent });
 
 describe("session utils", () => {
-  it("lets Antigravity CLI sessions be deleted but keeps IDE and index-only ones native", () => {
+  it("lets Antigravity CLI sessions be deleted but keeps IDE, ACP, and index-only ones native", () => {
     const agy = (sourcePath?: string): SessionMeta => ({
       providerId: "agy",
       sessionId: "aaa-1",
@@ -32,12 +32,19 @@ describe("session utils", () => {
     );
     const desktop = agy(`/home/u/.gemini/antigravity/brain/aaa-1/${log}`);
     const ide = agy(`/home/u/.gemini/antigravity-ide/brain/aaa-1/${log}`);
+    const acp = agy(`/home/u/.gemini/antigravity-acp/brain/aaa-1/${log}`);
+    const t3Acp = agy(
+      `/home/u/.t3/userdata/providers/antigravity/abc123/antigravity-acp/brain/aaa-1/${log}`,
+    );
+    const t3AcpWin = agy(
+      `C:\\Users\\u\\.t3\\userdata\\providers\\antigravity\\abc123\\antigravity-acp\\brain\\aaa-1\\${log}`,
+    );
     const indexOnly = agy();
 
     expect(canDeleteSession(cli)).toBe(true);
     expect(canDeleteSession(keyCard)).toBe(true);
     expect(nativeDeleteHintKey(cli)).toBeUndefined();
-    for (const session of [desktop, ide, indexOnly]) {
+    for (const session of [desktop, ide, acp, t3Acp, t3AcpWin, indexOnly]) {
       expect(canDeleteSession(session)).toBe(false);
       expect(nativeDeleteHintKey(session)).toBe("sessionManager.agyDeleteHint");
     }

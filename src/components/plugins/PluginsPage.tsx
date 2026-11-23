@@ -68,9 +68,12 @@ import {
 import {
   PLUGIN_APP_FEATURES,
   PLUGIN_AUTH_REQUIRED,
+  PLUGIN_CLI_NAME,
   PLUGIN_CLI_NOT_INSTALLED,
+  PLUGIN_IN_USE,
   PLUGIN_LOGIN_COMMAND,
   PLUGIN_NEEDS_TERMINAL_CONFIRM,
+  PLUGIN_UPDATE_NEEDS_REINSTALL,
   pluginsApi,
   type PluginActionOutcome,
   type PluginApp,
@@ -283,7 +286,12 @@ export function PluginsPage({ apps, initialApp }: PluginsPageProps) {
                 app: appName,
                 command: PLUGIN_LOGIN_COMMAND[app] ?? `${app} login`,
               })
-            : error),
+            : error === PLUGIN_IN_USE
+              ? t("pluginsPage.toast.pluginInUse", {
+                  app: appName,
+                  cli: PLUGIN_CLI_NAME[app],
+                })
+              : error),
         closeButton: true,
       });
     }
@@ -373,6 +381,10 @@ export function PluginsPage({ apps, initialApp }: PluginsPageProps) {
         failure: t("pluginsPage.toast.updateFailed", {
           name: pluginLabel(entry),
         }),
+        describeError: (error) =>
+          error === PLUGIN_UPDATE_NEEDS_REINSTALL
+            ? t("pluginsPage.toast.updateNeedsReinstall")
+            : undefined,
       },
     );
 

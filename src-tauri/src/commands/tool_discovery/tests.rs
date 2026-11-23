@@ -2235,3 +2235,30 @@ fn run_windows_tool_version_command_accepts_canonicalized_cmd_path() {
         "codex-cli 0.144.3"
     );
 }
+
+#[test]
+fn opencode_desktop_sidecar_needs_the_gui_layout() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("opencode.exe"), b"").unwrap();
+    for relative in ["opencode-cli.exe", "resources/opencode-cli.exe"] {
+        let sidecar = dir.path().join(relative);
+        std::fs::create_dir_all(sidecar.parent().unwrap()).unwrap();
+        std::fs::write(&sidecar, b"").unwrap();
+        assert_eq!(
+            infer_install_source_for_tool("opencode", &sidecar, &sidecar),
+            "desktop"
+        );
+        assert_ne!(
+            infer_install_source_for_tool("codex", &sidecar, &sidecar),
+            "desktop"
+        );
+    }
+    // 不和 GUI 在一起的 opencode-cli.exe 不算 Desktop 自带
+    let unrelated = dir.path().join("standalone/opencode-cli.exe");
+    std::fs::create_dir_all(unrelated.parent().unwrap()).unwrap();
+    std::fs::write(&unrelated, b"").unwrap();
+    assert_eq!(
+        infer_install_source_for_tool("opencode", &unrelated, &unrelated),
+        "system"
+    );
+}

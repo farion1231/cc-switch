@@ -48,6 +48,14 @@ pub const CLI_NOT_INSTALLED: &str = "PLUGIN_CLI_NOT_INSTALLED";
 /// 时返回的错误码。CC Switch 不传 `-y` 代为同意，前端提示用户去终端里装。
 pub const NEEDS_TERMINAL_CONFIRM: &str = "PLUGIN_NEEDS_TERMINAL_CONFIRM";
 
+/// 插件目录正被同应用的其它进程占用（例如 Windows 下运行中的 Antigravity Hub / agy 会话），
+/// 无法替换或移除目录时返回的错误码，前端据此提示关闭相关进程后重试。
+pub const PLUGIN_IN_USE: &str = "PLUGIN_IN_USE";
+
+/// 插件装在 CC Switch 无法原地更新的位置（Antigravity 旧版的数字目录）时返回的错误码，
+/// 前端提示用户卸载后从「发现」重新安装。
+pub const UPDATE_NEEDS_REINSTALL: &str = "PLUGIN_UPDATE_NEEDS_REINSTALL";
+
 const LIST_TIMEOUT: Duration = Duration::from_secs(90);
 const TOGGLE_TIMEOUT: Duration = Duration::from_secs(60);
 /// 安装、更新、加市场都可能要 git clone。
@@ -1102,7 +1110,7 @@ pub fn uninstall_plugin(
             })
         }
         PluginApp::Pi => Err(pi::terminal_hint("remove", id)),
-        PluginApp::Agy => run_action(app, &["plugin", "uninstall", id], TOGGLE_TIMEOUT),
+        PluginApp::Agy => agy::uninstall_plugin(id),
     }
 }
 

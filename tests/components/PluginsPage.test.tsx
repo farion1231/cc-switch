@@ -1233,6 +1233,36 @@ describe("PluginsPage", () => {
     );
   });
 
+  it("asks to reinstall when an Antigravity plugin sits in a legacy numeric folder", async () => {
+    m.listInstalled.mockResolvedValue([
+      plugin({
+        id: "-1870732469773246571",
+        name: "-1870732469773246571",
+        displayName: "Firebase",
+        marketplace: "antigravity-plugins-official",
+        scope: null,
+      }),
+    ]);
+    m.update.mockRejectedValue("PLUGIN_UPDATE_NEEDS_REINSTALL");
+    renderPage({ apps: ["agy"] });
+
+    await screen.findByText("Firebase");
+    await userEvent.click(
+      screen.getByRole("button", { name: "pluginsPage.moreActions" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: "pluginsPage.update" }),
+    );
+    await waitFor(() =>
+      expect(m.toastError).toHaveBeenCalledWith(
+        "pluginsPage.toast.updateFailed",
+        expect.objectContaining({
+          description: "pluginsPage.toast.updateNeedsReinstall",
+        }),
+      ),
+    );
+  });
+
   it("keeps newly installed Antigravity plugins disabled and prompts /plugin when MCP configuration is required", async () => {
     m.listInstalled.mockResolvedValue([]);
     m.listCatalog.mockResolvedValue([
@@ -1287,5 +1317,37 @@ describe("PluginsPage", () => {
       ]),
     );
     expect(await enableSwitch()).toHaveAttribute("data-state", "unchecked");
+  });
+
+  it("guides the user to close running Antigravity sessions when an update fails because the plugin is in use", async () => {
+    m.listInstalled.mockResolvedValue([
+      plugin({
+        id: "gmail",
+        name: "gmail",
+        displayName: "Gmail",
+        marketplace: "antigravity-plugins-official",
+        enabled: true,
+        scope: null,
+      }),
+    ]);
+    m.listCatalog.mockResolvedValue([]);
+    m.update.mockRejectedValue("PLUGIN_IN_USE");
+    renderPage({ apps: ["agy"] });
+
+    expect(await screen.findByText("Gmail")).toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("button", { name: "pluginsPage.moreActions" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: "pluginsPage.update" }),
+    );
+    await waitFor(() =>
+      expect(m.toastError).toHaveBeenCalledWith(
+        "pluginsPage.toast.updateFailed",
+        expect.objectContaining({
+          description: "pluginsPage.toast.pluginInUse",
+        }),
+      ),
+    );
   });
 });

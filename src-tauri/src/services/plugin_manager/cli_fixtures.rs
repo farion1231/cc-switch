@@ -406,4 +406,8 @@ fn agy_failures() {
         failure_detail(&failed("", fixture!("agy-1.5.14/install-not-found.stderr"))),
         "plugin \"nope\" not found in marketplace \"antigravity-plugins-official\""
     );
+    assert_eq!(
+        agy::map_cli_error(&failed("", fixture!("agy-1.5.14/install-in-use.stderr"))),
+        PLUGIN_IN_USE
+    );
 }

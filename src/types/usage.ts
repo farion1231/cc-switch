@@ -110,6 +110,10 @@ export interface ProviderStats {
   totalCost: string;
   successRate: number;
   avgLatencyMs: number;
+  /** 缓存命中 Tokens：命中率的分子 */
+  cacheReadTokens: number;
+  /** 可缓存输入（新增输入 + 缓存写入 + 缓存命中）：命中率的分母，与指标卡同口径 */
+  cacheableInputTokens: number;
   /** 速度分子：有首字、输出 ≥ 100 token 的明细请求的输出之和（日汇总不计） */
   speedOutputTokens?: number;
   /** 速度分母：同一批请求的（耗时 − 首字）之和，毫秒 */
@@ -132,6 +136,10 @@ export interface ModelStats {
   totalCost: string;
   avgCostPerRequest: string;
   successRate: number;
+  /** 缓存命中 Tokens：命中率的分子 */
+  cacheReadTokens: number;
+  /** 可缓存输入（新增输入 + 缓存写入 + 缓存命中）：命中率的分母，与指标卡同口径 */
+  cacheableInputTokens: number;
   /** 速度分子分母，口径同 ProviderStats 的四个速度字段 */
   speedOutputTokens?: number;
   speedGenerationMs?: number;

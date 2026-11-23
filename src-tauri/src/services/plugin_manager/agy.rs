@@ -9,9 +9,10 @@
 //!   和合作伙伴（`antigravity-plugins-partners`）两个目录托管在 `www.gstatic.com`，
 //!   「发现」直接拉取这两份 `marketplace.json`（走 CC Switch 的全局代理），安装时传
 //!   `<name>@<marketplace>`，并把 `installed_id` 设为 `<name>` 与已安装列表对齐。
-//! - CLI 没有独立的 `plugin update` 命令，但对市场来源重新执行 `agy plugin install <name>@<marketplace>`
-//!   会校验远端目录并原地更新，同时保留 `config.json` 里的停用状态和其它键；本地/导入的插件
-//!   没有远端市场，直接视为无需更新。
+//! - CLI 没有独立的 `plugin update` 命令，对市场来源先比对远端目录版本号，已是最新则直接返回，
+//!   避免无意义的覆盖安装触发 Windows 目录占用报错；有新版本（或无法确认远端版本）时再执行
+//!   `agy plugin install <name>@<marketplace>` 原地更新，同时保留 `config.json` 里的停用状态和其它键；
+//!   本地/导入的插件没有远端市场，直接视为无需更新。
 //! - `plugin list --json` 不带 `displayName` / `description` / `category`，从安装目录的
 //!   `plugin.json`（支持 JSONC 注释与尾随逗号）补读。
 
@@ -22,9 +23,9 @@ use std::time::Duration;
 use serde_json::Value;
 
 use super::{
-    failure_detail, is_name_segment, resolve_cli_path, run_action, run_cli, run_json, str_field,
-    validate_plugin_id, wsl_root_for_app, PluginActionOutcome, PluginApp, PluginEntry,
-    LIST_TIMEOUT, NETWORK_TIMEOUT,
+    failure_detail, is_name_segment, resolve_cli_path, run_cli, run_json, str_field,
+    validate_plugin_id, wsl_root_for_app, CliOutput, PluginActionOutcome, PluginApp, PluginEntry,
+    LIST_TIMEOUT, NETWORK_TIMEOUT, PLUGIN_IN_USE, TOGGLE_TIMEOUT, UPDATE_NEEDS_REINSTALL,
 };
 
 const OFFICIAL_MARKETPLACE: &str = "antigravity-plugins-official";
@@ -294,6 +295,23 @@ pub(super) fn list_catalog() -> Result<Vec<PluginEntry>, String> {
 
 // ───────────────────────────── 安装与更新 ─────────────────────────────
 
+/// `agy` 在 Windows 上替换或移除插件目录时，若目录正被其它 Antigravity 进程（`agy` 会话、
+/// Antigravity Hub、remote-control 守护进程）占用，会输出 `plugin is in use by another process`。
+pub(super) fn is_plugin_in_use_error(detail: &str) -> bool {
+    detail
+        .to_ascii_lowercase()
+        .contains("plugin is in use by another process")
+}
+
+pub(super) fn map_cli_error(out: &CliOutput) -> String {
+    let detail = failure_detail(out);
+    if is_plugin_in_use_error(&detail) {
+        PLUGIN_IN_USE.to_string()
+    } else {
+        detail
+    }
+}
+
 /// 声明了必填 MCP 变量的插件（如 `arize-skills`）安装后会保持停用，CLI 在首行打印
 /// `"It is disabled until its MCP servers are configured: open /plugin …"`。
 pub(super) fn install_needs_configuration(stdout: &str) -> bool {
@@ -306,7 +324,7 @@ pub(super) fn install_needs_configuration(stdout: &str) -> bool {
 pub(super) fn install_plugin(id: &str) -> Result<PluginActionOutcome, String> {
     let out = run_cli(PluginApp::Agy, &["plugin", "install", id], NETWORK_TIMEOUT)?;
     if !out.success {
-        return Err(failure_detail(&out));
+        return Err(map_cli_error(&out));
     }
     Ok(PluginActionOutcome {
         changed: true,
@@ -315,7 +333,18 @@ pub(super) fn install_plugin(id: &str) -> Result<PluginActionOutcome, String> {
     })
 }
 
-/// 市场来源的插件用 `<name>@<marketplace>` 重装即更新；本地 / 导入或数字目录没有对应的市场参数。
+pub(super) fn uninstall_plugin(id: &str) -> Result<PluginActionOutcome, String> {
+    let out = run_cli(PluginApp::Agy, &["plugin", "uninstall", id], TOGGLE_TIMEOUT)?;
+    if !out.success {
+        return Err(map_cli_error(&out));
+    }
+    Ok(PluginActionOutcome {
+        changed: true,
+        ..Default::default()
+    })
+}
+
+/// 市场来源的插件用 `<name>@<marketplace>` 重装即更新；本地 / 导入插件和旧版数字目录不走这条路。
 fn update_target(entry: &PluginEntry) -> Option<String> {
     if !is_name_segment(&entry.id)
         || entry.marketplace.is_empty()
@@ -326,6 +355,40 @@ fn update_target(entry: &PluginEntry) -> Option<String> {
     Some(format!("{}@{}", entry.id, entry.marketplace))
 }
 
+fn catalog_url_for_marketplace(marketplace: &str) -> Option<&'static str> {
+    match marketplace {
+        OFFICIAL_MARKETPLACE => Some(OFFICIAL_CATALOG_URL),
+        PARTNERS_MARKETPLACE => Some(PARTNERS_CATALOG_URL),
+        _ => None,
+    }
+}
+
+fn fetch_remote_version(marketplace: &str, name: &str) -> Option<String> {
+    let url = catalog_url_for_marketplace(marketplace)?;
+    match tauri::async_runtime::block_on(fetch_marketplace(url, marketplace)) {
+        Ok(entries) => entries
+            .into_iter()
+            .find(|entry| entry.name == name)
+            .and_then(|entry| entry.version),
+        Err(err) => {
+            log::warn!(
+                "Failed to check remote Antigravity plugin version for {name}@{marketplace}: {err}"
+            );
+            None
+        }
+    }
+}
+
+fn is_up_to_date(local: Option<&str>, remote: Option<&str>) -> bool {
+    matches!((local, remote), (Some(a), Some(b)) if a == b)
+}
+
+/// 旧版 Antigravity App 从市场装进数字目录的插件：重装时 `agy` 按清单名建目录，
+/// 不一定原地覆盖这个数字目录，可能另装一份，所以不代为更新，让用户卸载后重装。
+fn needs_reinstall_to_update(entry: &PluginEntry) -> bool {
+    is_legacy_numeric_dir(&entry.id) && !entry.marketplace.is_empty()
+}
+
 fn version_changed(before: Option<&str>, after: Option<&str>) -> bool {
     match (before, after) {
         (Some(a), Some(b)) => a != b,
@@ -333,12 +396,20 @@ fn version_changed(before: Option<&str>, after: Option<&str>) -> bool {
     }
 }
 
-pub(super) fn update_plugin(id: &str) -> Result<PluginActionOutcome, String> {
+fn update_plugin_with(
+    id: &str,
+    list_installed: impl Fn() -> Result<Vec<PluginEntry>, String>,
+    remote_version: impl FnOnce(&str, &str) -> Option<String>,
+    run_install: impl FnOnce(&str) -> Result<(), String>,
+) -> Result<PluginActionOutcome, String> {
     let installed = list_installed()?;
     let entry = installed
         .into_iter()
         .find(|entry| entry.id == id)
         .ok_or_else(|| format!("Plugin not found: {id}"))?;
+    if needs_reinstall_to_update(&entry) {
+        return Err(UPDATE_NEEDS_REINSTALL.to_string());
+    }
     let Some(target) = update_target(&entry) else {
         // 本地 / 导入插件没有远端市场来源，无需更新。
         return Ok(PluginActionOutcome {
@@ -347,11 +418,16 @@ pub(super) fn update_plugin(id: &str) -> Result<PluginActionOutcome, String> {
         });
     };
     let before_version = entry.version;
-    run_action(
-        PluginApp::Agy,
-        &["plugin", "install", &target],
-        NETWORK_TIMEOUT,
-    )?;
+    if let Some(local) = before_version.as_deref() {
+        let remote = remote_version(&entry.marketplace, &entry.id);
+        if is_up_to_date(Some(local), remote.as_deref()) {
+            return Ok(PluginActionOutcome {
+                changed: false,
+                ..Default::default()
+            });
+        }
+    }
+    run_install(&target)?;
     let after_version = list_installed()
         .ok()
         .and_then(|entries| entries.into_iter().find(|e| e.id == id))
@@ -359,6 +435,20 @@ pub(super) fn update_plugin(id: &str) -> Result<PluginActionOutcome, String> {
     Ok(PluginActionOutcome {
         changed: version_changed(before_version.as_deref(), after_version.as_deref()),
         ..Default::default()
+    })
+}
+
+pub(super) fn update_plugin(id: &str) -> Result<PluginActionOutcome, String> {
+    update_plugin_with(id, list_installed, fetch_remote_version, |target| {
+        let out = run_cli(
+            PluginApp::Agy,
+            &["plugin", "install", target],
+            NETWORK_TIMEOUT,
+        )?;
+        if !out.success {
+            return Err(map_cli_error(&out));
+        }
+        Ok(())
     })
 }
 
@@ -555,6 +645,15 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(update_target(&legacy), None);
+        assert!(needs_reinstall_to_update(&legacy));
+        assert!(!needs_reinstall_to_update(&mkt));
+        assert!(!needs_reinstall_to_update(&local));
+        let legacy_local = PluginEntry {
+            id: "-42".into(),
+            marketplace: String::new(),
+            ..Default::default()
+        };
+        assert!(!needs_reinstall_to_update(&legacy_local));
 
         assert!(!version_changed(Some("0.0.8"), Some("0.0.8")));
         assert!(version_changed(Some("0.0.7"), Some("0.0.8")));
@@ -621,5 +720,114 @@ mod tests {
         )
         .unwrap_err();
         assert!(both_err.contains("official timeout") && both_err.contains("partners timeout"));
+    }
+
+    #[test]
+    fn update_skips_reinstall_when_remote_version_matches_local() {
+        let installed = vec![PluginEntry {
+            id: "gmail".into(),
+            name: "gmail".into(),
+            marketplace: OFFICIAL_MARKETPLACE.into(),
+            version: Some("0.0.7".into()),
+            installed: true,
+            enabled: true,
+            ..Default::default()
+        }];
+        let mut install_called = false;
+        let outcome = update_plugin_with(
+            "gmail",
+            || Ok(installed.clone()),
+            |marketplace, name| {
+                assert_eq!(marketplace, OFFICIAL_MARKETPLACE);
+                assert_eq!(name, "gmail");
+                Some("0.0.7".into())
+            },
+            |_| {
+                install_called = true;
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert!(
+            !install_called,
+            "should skip install when already up to date"
+        );
+        assert!(!outcome.changed);
+    }
+
+    #[test]
+    fn update_reinstalls_when_newer_or_remote_unknown_and_surfaces_in_use_error() {
+        let before = vec![PluginEntry {
+            id: "gmail".into(),
+            name: "gmail".into(),
+            marketplace: OFFICIAL_MARKETPLACE.into(),
+            version: Some("0.0.7".into()),
+            installed: true,
+            enabled: true,
+            ..Default::default()
+        }];
+        let after = vec![PluginEntry {
+            version: Some("0.0.8".into()),
+            ..before[0].clone()
+        }];
+
+        // 有新版本时执行重装并返回 changed = true
+        let calls = std::cell::Cell::new(0);
+        let mut target_seen = String::new();
+        let outcome = update_plugin_with(
+            "gmail",
+            || {
+                let n = calls.get();
+                calls.set(n + 1);
+                Ok(if n == 0 {
+                    before.clone()
+                } else {
+                    after.clone()
+                })
+            },
+            |_, _| Some("0.0.8".into()),
+            |target| {
+                target_seen = target.to_string();
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(target_seen, "gmail@antigravity-plugins-official");
+        assert!(outcome.changed);
+
+        // 远端版本拉取失败（None）时退回执行 agy plugin install，遇到占用报错返回 PLUGIN_IN_USE
+        let err = update_plugin_with(
+            "gmail",
+            || Ok(before.clone()),
+            |_, _| None,
+            |_| {
+                let out = CliOutput {
+                    success: false,
+                    stdout: String::new(),
+                    stderr: "Error: plugin is in use by another process: another Antigravity process is running it; close it and retry: Access is denied.".into(),
+                };
+                Err(map_cli_error(&out))
+            },
+        )
+        .unwrap_err();
+        assert_eq!(err, PLUGIN_IN_USE);
+
+        // 其它 CLI 错误保持原样透传
+        let other_err = map_cli_error(&CliOutput {
+            success: false,
+            stdout: String::new(),
+            stderr: "Error: network unreachable".into(),
+        });
+        assert_eq!(other_err, "network unreachable");
+
+        assert_eq!(
+            catalog_url_for_marketplace(OFFICIAL_MARKETPLACE),
+            Some(OFFICIAL_CATALOG_URL)
+        );
+        assert_eq!(
+            catalog_url_for_marketplace(PARTNERS_MARKETPLACE),
+            Some(PARTNERS_CATALOG_URL)
+        );
+        assert_eq!(catalog_url_for_marketplace("custom"), None);
     }
 }
