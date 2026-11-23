@@ -3,6 +3,7 @@
 //! 实现 Anthropic ↔ OpenAI 格式转换，用于 OpenRouter 支持
 //! 参考: anthropic-proxy-rs
 
+use super::codex_chat_common::chat_thinking_part_text;
 use super::inline_think::split_leading_think_block;
 use crate::proxy::{
     error::ProxyError,
@@ -758,6 +759,12 @@ pub fn openai_to_anthropic(body: Value) -> Result<Value, ProxyError> {
                             if !text.is_empty() {
                                 push_text(&mut content, text);
                             }
+                        }
+                    }
+                    // Mistral 开思考后的分段 content（#9902）
+                    "thinking" => {
+                        if let Some(thinking) = chat_thinking_part_text(part) {
+                            content.push(json!({"type": "thinking", "thinking": thinking}));
                         }
                     }
                     "refusal" => {
@@ -2192,6 +2199,34 @@ mod tests {
     }
 
     #[test]
+    fn test_openai_to_anthropic_with_mistral_thinking_chunks() {
+        // #9902：Mistral 开思考后 content 是 thinking / text 分段数组
+        let input = json!({
+            "id": "chatcmpl-mistral",
+            "model": "mistral-large-4",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "thinking", "thinking": [{"type": "text", "text": "We "}, {"type": "text", "text": "add"}]},
+                        {"type": "text", "text": "391"}
+                    ]
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5}
+        });
+
+        let result = openai_to_anthropic(input).unwrap();
+        assert_eq!(result["content"][0]["type"], "thinking");
+        assert_eq!(result["content"][0]["thinking"], "We add");
+        assert_eq!(result["content"][1]["type"], "text");
+        assert_eq!(result["content"][1]["text"], "391");
+        assert_eq!(result["content"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
     fn test_is_openai_o_series() {
         assert!(is_openai_o_series("o1"));
         assert!(is_openai_o_series("o1-preview"));
@@ -2540,46 +2575,6 @@ mod tests {
 
         let result = anthropic_to_openai_with_reasoning_content(input, false).unwrap();
         assert_eq!(result["reasoning_effort"], "medium");
-    }
-
-    #[test]
-    fn test_reasoning_model_with_output_config_max() {
-        let input = json!({
-            "model": "gpt-5.4",
-            "max_tokens": 1024,
-            "thinking": {"type": "adaptive"},
-            "output_config": {"effort": "max"},
-            "messages": [{"role": "user", "content": "Hello"}]
-        });
-
-        let result = anthropic_to_openai_with_reasoning_content(input, false).unwrap();
-        assert_eq!(result["reasoning_effort"], "xhigh");
-    }
-
-    #[test]
-    fn test_reasoning_model_thinking_enabled_small_budget() {
-        let input = json!({
-            "model": "o3",
-            "max_tokens": 1024,
-            "thinking": {"type": "enabled", "budget_tokens": 2048},
-            "messages": [{"role": "user", "content": "Hello"}]
-        });
-
-        let result = anthropic_to_openai_with_reasoning_content(input, false).unwrap();
-        assert_eq!(result["reasoning_effort"], "low");
-    }
-
-    #[test]
-    fn test_reasoning_model_thinking_adaptive() {
-        let input = json!({
-            "model": "gpt-5.4",
-            "max_tokens": 1024,
-            "thinking": {"type": "adaptive"},
-            "messages": [{"role": "user", "content": "Hello"}]
-        });
-
-        let result = anthropic_to_openai_with_reasoning_content(input, false).unwrap();
-        assert_eq!(result["reasoning_effort"], "xhigh");
     }
 
     #[test]

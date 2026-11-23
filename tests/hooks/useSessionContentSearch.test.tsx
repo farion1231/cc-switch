@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useSessionContentSearch } from "@/hooks/useSessionContentSearch";
 import { useSessionsQuery } from "@/lib/query/queries";
 import { sessionsApi } from "@/lib/api/sessions";
-import type { SessionMeta } from "@/types";
+import type { SessionContentSearchResult, SessionMeta } from "@/types";
 import { createTestQueryClient } from "../utils/testQueryClient";
 
 vi.mock("@/lib/api/sessions", () => ({
@@ -225,9 +225,14 @@ describe("useSessionContentSearch failure reporting", () => {
   it("re-syncs the index on retry so a rebuilt-but-empty index gets refilled", async () => {
     // 重试时后端会删掉坏索引重建：建出来是空的，只重新查询会「成功返回零命中」，
     // 界面又回到「没有会话包含该词」。所以重试必须同时触发一次重新收录。
-    vi.mocked(sessionsApi.searchContent).mockRejectedValueOnce(
-      "Session index error: database disk image is malformed",
-    );
+    vi.mocked(sessionsApi.searchContent)
+      .mockResolvedValue({
+        hits: [],
+        status: { running: false, processed: 0, total: 0 },
+      })
+      .mockRejectedValueOnce(
+        "Session index error: database disk image is malformed",
+      );
     const { result } = renderSearch(true, { query: "needle" });
     await waitFor(() =>
       expect(result.current.content.error).toContain("malformed"),
@@ -252,5 +257,101 @@ describe("useSessionContentSearch failure reporting", () => {
     // 空原因会让界面退回「没有匹配」，所以至少要给出非空文本
     await waitFor(() => expect(result.current.content.error).not.toBeNull());
     expect(result.current.content.error).not.toBe("");
+  });
+});
+
+describe("useSessionContentSearch cancellation", () => {
+  const emptyResult: SessionContentSearchResult = {
+    hits: [],
+    status: { running: false, processed: 0, total: 0 },
+  };
+
+  function renderCancellableSearch() {
+    const requests: {
+      query: string;
+      signal: AbortSignal;
+      resolve: (result: SessionContentSearchResult) => void;
+      reject: (error: unknown) => void;
+    }[] = [];
+    vi.mocked(sessionsApi.searchContent)
+      .mockReset()
+      .mockImplementation(
+        (query, _providers, signal) =>
+          new Promise((resolve, reject) => {
+            requests.push({ query, signal: signal!, resolve, reject });
+          }),
+      );
+    const client = createTestQueryClient();
+    const hook = renderHook(
+      (props: { query: string; enabled: boolean; providerIds: string[] }) =>
+        useSessionContentSearch({
+          ...props,
+          listIsSuccess: false,
+          listUpdatedAt: 0,
+        }),
+      {
+        initialProps: { query: "的", enabled: true, providerIds: ["codex"] },
+        wrapper: ({ children }: { children: ReactNode }) => (
+          <QueryClientProvider client={client}>{children}</QueryClientProvider>
+        ),
+      },
+    );
+    return { ...hook, requests };
+  }
+
+  it("aborts on input changes before debounce and ignores an obsolete failure", async () => {
+    const { requests, rerender, result, unmount } = renderCancellableSearch();
+    expect(requests).toHaveLength(1);
+    rerender({ query: "的会", enabled: true, providerIds: ["codex"] });
+    expect(requests[0].signal.aborted).toBe(true);
+    expect(requests).toHaveLength(1);
+    rerender({ query: "的会话", enabled: true, providerIds: ["codex"] });
+    await act(async () =>
+      requests[0].reject("Session content search cancelled"),
+    );
+    expect(result.current.error).toBeNull();
+    await waitFor(() => expect(requests).toHaveLength(2));
+    expect(requests[1].query).toBe("的会话");
+    expect(requests[1].signal.aborted).toBe(false);
+    unmount();
+    expect(requests[1].signal.aborted).toBe(true);
+  });
+
+  it("aborts when disabled and starts a fresh request when re-enabled", async () => {
+    const { requests, rerender, result, unmount } = renderCancellableSearch();
+    rerender({ query: "的", enabled: false, providerIds: ["codex"] });
+    expect(requests[0].signal.aborted).toBe(true);
+    expect(result.current.error).toBeNull();
+    rerender({ query: "的", enabled: true, providerIds: ["codex"] });
+    await waitFor(() => expect(requests).toHaveLength(2));
+    expect(requests[1].signal.aborted).toBe(false);
+    unmount();
+    expect(requests[1].signal.aborted).toBe(true);
+  });
+
+  it("aborts when filters change or the input is cleared without showing stale hits", async () => {
+    const { requests, rerender, result } = renderCancellableSearch();
+    rerender({ query: "的", enabled: true, providerIds: ["claude"] });
+    expect(requests[0].signal.aborted).toBe(true);
+    await waitFor(() => expect(requests).toHaveLength(2));
+    rerender({ query: "", enabled: true, providerIds: ["claude"] });
+    expect(requests[1].signal.aborted).toBe(true);
+    await act(async () => {
+      requests[0].resolve({
+        ...emptyResult,
+        hits: [
+          {
+            providerId: "codex",
+            sourcePath: "/stale",
+            snippets: [],
+            matchCount: 1,
+          },
+        ],
+      });
+      requests[1].resolve(emptyResult);
+    });
+    expect(requests).toHaveLength(2);
+    expect(result.current.hits.size).toBe(0);
+    expect(result.current.error).toBeNull();
   });
 });

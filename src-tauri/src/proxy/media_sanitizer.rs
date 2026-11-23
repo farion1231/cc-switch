@@ -1003,31 +1003,62 @@ mod tests {
     }
 
     #[test]
-    fn is_unsupported_image_error_recognizes_glm_content_type_rejection() {
-        // #6151: GLM-5.2 returns a field-validation error that never mentions
-        // image/modality; the reactive fallback must still recognize it.
-        let error = ProxyError::UpstreamError {
-            status: 400,
-            body: Some(
-                r#"{"error":{"code":"1214","message":"messages.content.type 参数非法，取值范围 ['text']"}}"#
-                    .to_string(),
+    fn classifies_image_and_text_only_errors() {
+        for (case, status, body, unsupported) in [
+            // #6151: GLM-5.2 returns a field-validation error that never mentions
+            // image/modality; the reactive fallback must still recognize it.
+            (
+                "is_unsupported_image_error_recognizes_glm_content_type_rejection",
+                400,
+                r#"{"error":{"code":"1214","message":"messages.content.type 参数非法，取值范围 ['text']"}}"#,
+                true,
             ),
-        };
-
-        assert!(is_unsupported_image_error(&error));
-    }
-
-    #[test]
-    fn content_type_error_with_image_allowed_is_not_text_only() {
-        let error = ProxyError::UpstreamError {
-            status: 400,
-            body: Some(
-                r#"{"error":{"message":"messages.content.type 参数非法，取值范围 ['text','image_url']"}}"#
-                    .to_string(),
+            (
+                "content_type_error_with_image_allowed_is_not_text_only",
+                400,
+                r#"{"error":{"message":"messages.content.type 参数非法，取值范围 ['text','image_url']"}}"#,
+                false,
             ),
-        };
+            (
+                "detects_unsupported_image_errors",
+                400,
+                r#"{"error":{"message":"This model does not support image input"}}"#,
+                true,
+            ),
+            (
+                "detects_openrouter_no_image_endpoint_404",
+                404,
+                r#"{"error":{"message":"No endpoints found that support image input"}}"#,
+                true,
+            ),
+            // 火山方舟真实报错（issue #5025）：不含 image/media 等字样，且英文缺
+            // 三单 s——旧逻辑的 mentions_image 门与 "only supports text" 提示都拦不住。
+            (
+                "detects_text_only_errors_without_image_mention",
+                400,
+                r#"{"error":{"message":"Model only support text input Request id: 021783"}}"#,
+                true,
+            ),
+            (
+                "ignores_non_image_errors",
+                400,
+                r#"{"error":{"message":"Invalid API key"}}"#,
+                false,
+            ),
+            (
+                "detects_chat_content_unknown_variant_image_url_errors",
+                400,
+                r#"{"error":{"message":"Failed to deserialize the JSON body into the target type: messages[11]: unknown variant image_url, expected text"}}"#,
+                true,
+            ),
+        ] {
+            let error = ProxyError::UpstreamError {
+                status,
+                body: Some(body.to_string()),
+            };
 
-        assert!(!is_unsupported_image_error(&error));
+            assert_eq!(is_unsupported_image_error(&error), unsupported, "{case}");
+        }
     }
 
     #[test]
@@ -1636,31 +1667,6 @@ mod tests {
     }
 
     #[test]
-    fn detects_unsupported_image_errors() {
-        let error = ProxyError::UpstreamError {
-            status: 400,
-            body: Some(
-                r#"{"error":{"message":"This model does not support image input"}}"#.to_string(),
-            ),
-        };
-
-        assert!(is_unsupported_image_error(&error));
-    }
-
-    #[test]
-    fn detects_openrouter_no_image_endpoint_404() {
-        let error = ProxyError::UpstreamError {
-            status: 404,
-            body: Some(
-                r#"{"error":{"message":"No endpoints found that support image input"}}"#
-                    .to_string(),
-            ),
-        };
-
-        assert!(is_unsupported_image_error(&error));
-    }
-
-    #[test]
     fn ignores_unrelated_404_errors() {
         for message in [
             "Route not found",
@@ -1676,21 +1682,6 @@ mod tests {
     }
 
     #[test]
-    fn detects_text_only_errors_without_image_mention() {
-        // 火山方舟真实报错（issue #5025）：不含 image/media 等字样，且英文缺
-        // 三单 s——旧逻辑的 mentions_image 门与 "only supports text" 提示都拦不住。
-        let error = ProxyError::UpstreamError {
-            status: 400,
-            body: Some(
-                r#"{"error":{"message":"Model only support text input Request id: 021783"}}"#
-                    .to_string(),
-            ),
-        };
-
-        assert!(is_unsupported_image_error(&error));
-    }
-
-    #[test]
     fn glm_52_is_classified_text_only() {
         // issue #5025：火山 Coding Plan 的 GLM 5.2 是纯文本端点，
         // 映射链 glm-5.2[1M] 归一化后尾部为 glm-5.2。
@@ -1699,16 +1690,6 @@ mod tests {
         assert!(confirmed_text_only_model("zai-org/GLM-5.2"));
         // 未来视觉版（智谱 4v/5v 命名惯例）不能被误判为纯文本。
         assert!(!confirmed_text_only_model("glm-5.2v"));
-    }
-
-    #[test]
-    fn ignores_non_image_errors() {
-        let error = ProxyError::UpstreamError {
-            status: 400,
-            body: Some(r#"{"error":{"message":"Invalid API key"}}"#.to_string()),
-        };
-
-        assert!(!is_unsupported_image_error(&error));
     }
 
     #[test]
@@ -1751,19 +1732,6 @@ mod tests {
             body: Some(r#"{"message":"attachments are not supported by this model"}"#.to_string()),
         };
         assert!(is_unsupported_image_error(&attachment_error));
-    }
-
-    #[test]
-    fn detects_chat_content_unknown_variant_image_url_errors() {
-        let error = ProxyError::UpstreamError {
-            status: 400,
-            body: Some(
-                r#"{"error":{"message":"Failed to deserialize the JSON body into the target type: messages[11]: unknown variant image_url, expected text"}}"#
-                    .to_string(),
-            ),
-        };
-
-        assert!(is_unsupported_image_error(&error));
     }
 
     #[test]

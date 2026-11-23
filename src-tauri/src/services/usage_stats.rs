@@ -127,6 +127,10 @@ pub struct ProviderStats {
     pub total_cost: String,
     pub success_rate: f32,
     pub avg_latency_ms: u64,
+    /// 缓存命中 Tokens：命中率的分子。
+    pub cache_read_tokens: u64,
+    /// 可缓存输入（新增输入 + 缓存写入 + 缓存命中）：命中率的分母，与指标卡同口径。
+    pub cacheable_input_tokens: u64,
     /// 速度的分子：满足条件（有首字、输出 >= 100 token、耗时 > 首字）的明细请求的输出 token 之和。
     /// 汇总速度 = speed_output_tokens / (speed_generation_ms / 1000)，不是逐条平均。
     /// 日汇总（rollup）没有逐条计时，不计入。
@@ -152,25 +156,12 @@ pub const SPEED_MIN_OUTPUT_TOKENS: i64 = 100;
 /// 或短回复整段落在同一个网络包里，算出来的是传输突发而不是生成速度。
 pub const SPEED_MIN_GENERATION_MS: i64 = 100;
 
-/// 数据源本身提供毫秒级精确 `first_token_ms` 与 `latency_ms`（而非按日志写盘时间戳反推）：
-/// 路由服务（`proxy`）以及从原生 `conversations/<id>.db` 读取 `first_token + streaming`
-/// 的 Antigravity（`agy_session`）。其余会话日志仍走含首字等待的估算口径。
-fn exact_timing_source_sql(alias: &str) -> String {
-    let data_source = data_source_expr(alias);
-    format!("{data_source} IN ('proxy', 'agy_session')")
-}
-
-fn estimated_timing_source_sql(alias: &str) -> String {
-    let data_source = data_source_expr(alias);
-    format!("{data_source} NOT IN ('proxy', 'agy_session')")
-}
-
-/// 明细行能不能计速度的 SQL 条件（和前端 `isSpeedEligible` 同口径）。带原生精确计时的
-/// `agy_session` 与路由服务 `proxy` 同口径扣除首字；其余按时间戳反推的会话日志仍走估算。
+/// 明细行能不能计速度的 SQL 条件（和前端 `isSpeedEligible` 同口径）。会话日志导入的行
+/// 也可能有首字（按时间戳推出来的），所以先按来源分开，不能只看有没有首字。
 fn speed_eligible_sql(alias: &str) -> String {
-    let exact_source = exact_timing_source_sql(alias);
+    let data_source = data_source_expr(alias);
     format!(
-        "{exact_source} AND {alias}.first_token_ms IS NOT NULL \
+        "{data_source} = 'proxy' AND {alias}.first_token_ms IS NOT NULL \
          AND {alias}.output_tokens >= {SPEED_MIN_OUTPUT_TOKENS} \
          AND {alias}.latency_ms - {alias}.first_token_ms >= {SPEED_MIN_GENERATION_MS}"
     )
@@ -185,32 +176,32 @@ pub const SPEED_ESTIMATE_MIN_OUTPUT_TOKENS: i64 = 200;
 pub const SPEED_ESTIMATE_MIN_DURATION_MS: i64 = 1000;
 
 /// 明细行能不能估速度的 SQL 条件（和前端 `isSpeedEstimateEligible` 同口径）：
-/// 按时间戳估算耗时的会话日志导入行。估算速度仍按整段耗时算（含首字等待），
-/// 不减推出来的首字：只有部分请求推得出首字，减了会让同一行里两种算法混在一起。
+/// 会话日志导入的行，耗时是导入时按日志时间戳估的。估算速度仍按整段耗时算（含首字
+/// 等待），不减推出来的首字：只有部分请求推得出首字，减了会让同一行里两种算法混在一起。
 fn speed_estimate_eligible_sql(alias: &str) -> String {
-    let estimated_source = estimated_timing_source_sql(alias);
+    let data_source = data_source_expr(alias);
     format!(
-        "{estimated_source} \
+        "{data_source} <> 'proxy' \
          AND {alias}.output_tokens >= {SPEED_ESTIMATE_MIN_OUTPUT_TOKENS} \
          AND {alias}.latency_ms >= {SPEED_ESTIMATE_MIN_DURATION_MS}"
     )
 }
 
-/// 明细行能不能计首字时间的 SQL 条件：经路由服务或 Antigravity 原生计时、成功、有首字计时。
+/// 明细行能不能计首字时间的 SQL 条件：经路由服务、成功、有首字计时（流式请求）。
 fn first_token_eligible_sql(alias: &str) -> String {
-    let exact_source = exact_timing_source_sql(alias);
+    let data_source = data_source_expr(alias);
     format!(
-        "{exact_source} AND {alias}.first_token_ms IS NOT NULL \
+        "{data_source} = 'proxy' AND {alias}.first_token_ms IS NOT NULL \
          AND {alias}.status_code >= 200 AND {alias}.status_code < 300"
     )
 }
 
-/// 估算首字的 SQL 条件：按时间戳推首字的会话日志行。
-/// 和精确首字分开取中位数：估算的起点是上一条日志写盘的时刻，含客户端
+/// 估算首字的 SQL 条件：会话日志导入、导入时按时间戳推出了首字的行。
+/// 和路由的精确首字分开取中位数：估算的起点是上一条日志写盘的时刻，含客户端
 /// 组装请求的时间，系统性偏高。
 fn est_first_token_eligible_sql(alias: &str) -> String {
-    let estimated_source = estimated_timing_source_sql(alias);
-    format!("{estimated_source} AND {alias}.first_token_ms IS NOT NULL")
+    let data_source = data_source_expr(alias);
+    format!("{data_source} <> 'proxy' AND {alias}.first_token_ms IS NOT NULL")
 }
 
 /// Read exact and estimated samples together, then select each median in O(n).
@@ -285,6 +276,10 @@ pub struct ModelStats {
     pub total_cost: String,
     pub avg_cost_per_request: String,
     pub success_rate: f32,
+    /// 缓存命中 Tokens：命中率的分子。
+    pub cache_read_tokens: u64,
+    /// 可缓存输入（新增输入 + 缓存写入 + 缓存命中）：命中率的分母，与指标卡同口径。
+    pub cacheable_input_tokens: u64,
     /// 速度的分子分母，口径同 [`ProviderStats::speed_output_tokens`] 那四个字段。
     pub speed_output_tokens: u64,
     pub speed_generation_ms: u64,
@@ -1802,6 +1797,8 @@ impl Database {
         let real_total_rollup = real_total_tokens_sql("r");
         let speed_ok = speed_eligible_sql("l");
         let est_ok = speed_estimate_eligible_sql("l");
+        let fresh_input_detail = fresh_input_sql("l");
+        let fresh_input_rollup = fresh_input_sql("r");
         let sql = format!(
             "SELECT
                 provider_id, app_type, provider_name,
@@ -1815,7 +1812,9 @@ impl Database {
                 SUM(speed_output) as speed_output,
                 SUM(speed_gen_ms) as speed_gen_ms,
                 SUM(est_output) as est_output,
-                SUM(est_ms) as est_ms
+                SUM(est_ms) as est_ms,
+                SUM(cache_read) as cache_read,
+                SUM(cacheable) as cacheable
             FROM (
                 SELECT l.provider_id, l.app_type,
                     {detail_pname} as provider_name,
@@ -1827,7 +1826,9 @@ impl Database {
                     COALESCE(SUM(CASE WHEN {speed_ok} THEN l.output_tokens ELSE 0 END), 0) as speed_output,
                     COALESCE(SUM(CASE WHEN {speed_ok} THEN l.latency_ms - l.first_token_ms ELSE 0 END), 0) as speed_gen_ms,
                     COALESCE(SUM(CASE WHEN {est_ok} THEN l.output_tokens ELSE 0 END), 0) as est_output,
-                    COALESCE(SUM(CASE WHEN {est_ok} THEN l.latency_ms ELSE 0 END), 0) as est_ms
+                    COALESCE(SUM(CASE WHEN {est_ok} THEN l.latency_ms ELSE 0 END), 0) as est_ms,
+                    COALESCE(SUM(l.cache_read_tokens), 0) as cache_read,
+                    COALESCE(SUM(({fresh_input_detail}) + l.cache_creation_tokens + l.cache_read_tokens), 0) as cacheable
                 FROM proxy_request_logs l
                 LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
                 {detail_where}
@@ -1843,7 +1844,9 @@ impl Database {
                     0,
                     0,
                     0,
-                    0
+                    0,
+                    COALESCE(SUM(r.cache_read_tokens), 0),
+                    COALESCE(SUM(({fresh_input_rollup}) + r.cache_creation_tokens + r.cache_read_tokens), 0)
                 FROM usage_daily_rollups r
                 LEFT JOIN providers p2 ON r.provider_id = p2.id AND r.app_type = p2.app_type
                 {rollup_where}
@@ -1894,6 +1897,8 @@ impl Database {
                 total_cost: format!("{:.6}", row.get::<_, f64>(5)?),
                 success_rate,
                 avg_latency_ms: row.get::<_, f64>(7)? as u64,
+                cache_read_tokens: row.get::<_, i64>(12)?.max(0) as u64,
+                cacheable_input_tokens: row.get::<_, i64>(13)?.max(0) as u64,
                 speed_output_tokens: row.get::<_, i64>(8)?.max(0) as u64,
                 speed_generation_ms: row.get::<_, i64>(9)?.max(0) as u64,
                 est_speed_output_tokens: row.get::<_, i64>(10)?.max(0) as u64,
@@ -1952,6 +1957,8 @@ impl Database {
         let rollup_model = effective_model_sql("r");
         let speed_ok = speed_eligible_sql("l");
         let est_ok = speed_estimate_eligible_sql("l");
+        let fresh_input_detail = fresh_input_sql("l");
+        let fresh_input_rollup = fresh_input_sql("r");
         let sql = format!(
             "SELECT
                 model,
@@ -1962,7 +1969,9 @@ impl Database {
                 SUM(speed_output) as speed_output,
                 SUM(speed_gen_ms) as speed_gen_ms,
                 SUM(est_output) as est_output,
-                SUM(est_ms) as est_ms
+                SUM(est_ms) as est_ms,
+                SUM(cache_read) as cache_read,
+                SUM(cacheable) as cacheable
             FROM (
                 SELECT {detail_model} as model,
                     COUNT(*) as request_count,
@@ -1972,7 +1981,9 @@ impl Database {
                     COALESCE(SUM(CASE WHEN {speed_ok} THEN l.output_tokens ELSE 0 END), 0) as speed_output,
                     COALESCE(SUM(CASE WHEN {speed_ok} THEN l.latency_ms - l.first_token_ms ELSE 0 END), 0) as speed_gen_ms,
                     COALESCE(SUM(CASE WHEN {est_ok} THEN l.output_tokens ELSE 0 END), 0) as est_output,
-                    COALESCE(SUM(CASE WHEN {est_ok} THEN l.latency_ms ELSE 0 END), 0) as est_ms
+                    COALESCE(SUM(CASE WHEN {est_ok} THEN l.latency_ms ELSE 0 END), 0) as est_ms,
+                    COALESCE(SUM(l.cache_read_tokens), 0) as cache_read,
+                    COALESCE(SUM(({fresh_input_detail}) + l.cache_creation_tokens + l.cache_read_tokens), 0) as cacheable
                 FROM proxy_request_logs l
                 {detail_join}
                 {detail_where}
@@ -1986,7 +1997,9 @@ impl Database {
                     0,
                     0,
                     0,
-                    0
+                    0,
+                    COALESCE(SUM(r.cache_read_tokens), 0),
+                    COALESCE(SUM(({fresh_input_rollup}) + r.cache_creation_tokens + r.cache_read_tokens), 0)
                 FROM usage_daily_rollups r
                 {rollup_join}
                 {rollup_where}
@@ -2011,12 +2024,26 @@ impl Database {
                 row.get::<_, i64>(6)?.max(0) as u64,
                 row.get::<_, i64>(7)?.max(0) as u64,
                 row.get::<_, i64>(8)?.max(0) as u64,
+                row.get::<_, i64>(9)?.max(0) as u64,
+                row.get::<_, i64>(10)?.max(0) as u64,
             ))
         })?;
         let mut grouped: HashMap<String, (ModelStats, f64, u64)> = HashMap::new();
         let mut model_cases = Vec::new();
         for row in rows {
-            let (raw, count, tokens, cost, successes, output, ms, est_output, est_ms) = row?;
+            let (
+                raw,
+                count,
+                tokens,
+                cost,
+                successes,
+                output,
+                ms,
+                est_output,
+                est_ms,
+                cache_read,
+                cacheable,
+            ) = row?;
             let model = statistics_model_with(filter.pricing(&conn)?, &raw)?;
             if model != raw {
                 // 来自数据库的模型名作为 SQL 字符串字面量使用。
@@ -2036,6 +2063,8 @@ impl Database {
                             total_cost: String::new(),
                             avg_cost_per_request: String::new(),
                             success_rate: 0.0,
+                            cache_read_tokens: 0,
+                            cacheable_input_tokens: 0,
                             speed_output_tokens: 0,
                             speed_generation_ms: 0,
                             est_speed_output_tokens: 0,
@@ -2049,6 +2078,8 @@ impl Database {
                 });
             stats.request_count += count;
             stats.total_tokens += tokens;
+            stats.cache_read_tokens += cache_read;
+            stats.cacheable_input_tokens += cacheable;
             stats.speed_output_tokens += output;
             stats.speed_generation_ms += ms;
             stats.est_speed_output_tokens += est_output;

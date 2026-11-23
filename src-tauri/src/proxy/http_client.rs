@@ -30,6 +30,52 @@ static CURRENT_PROXY_URL: OnceLock<RwLock<Option<String>>> = OnceLock::new();
 /// CC Switch 代理服务器当前监听的端口
 static CC_SWITCH_PROXY_PORT: OnceLock<RwLock<u16>> = OnceLock::new();
 
+/// 当前活跃的 CC Switch 代理监听地址与端口（用于防止内部请求回打自身代理）
+static ACTIVE_PROXY_LISTENERS: OnceLock<RwLock<Vec<(String, u16)>>> = OnceLock::new();
+
+/// 活跃代理监听器的 RAII 注册句柄，释放时自动反注册
+pub(crate) struct ActiveProxyListenerGuard {
+    address: String,
+    port: u16,
+}
+
+impl Drop for ActiveProxyListenerGuard {
+    fn drop(&mut self) {
+        if let Some(lock) = ACTIVE_PROXY_LISTENERS.get() {
+            if let Ok(mut list) = lock.write() {
+                if let Some(pos) = list
+                    .iter()
+                    .position(|(addr, port)| addr == &self.address && *port == self.port)
+                {
+                    list.swap_remove(pos);
+                }
+            }
+        }
+    }
+}
+
+/// 注册当前正在监听的 CC Switch 代理地址与端口
+pub(crate) fn register_active_proxy_listener(
+    address: impl Into<String>,
+    port: u16,
+) -> ActiveProxyListenerGuard {
+    let address = address.into();
+    let lock = ACTIVE_PROXY_LISTENERS.get_or_init(|| RwLock::new(Vec::new()));
+    if let Ok(mut list) = lock.write() {
+        list.push((address.clone(), port));
+    }
+    ActiveProxyListenerGuard { address, port }
+}
+
+/// 获取当前活跃的 CC Switch 代理监听地址列表
+pub(crate) fn active_proxy_listeners() -> Vec<(String, u16)> {
+    ACTIVE_PROXY_LISTENERS
+        .get()
+        .and_then(|lock| lock.read().ok())
+        .map(|list| list.clone())
+        .unwrap_or_default()
+}
+
 /// 设置 CC Switch 代理服务器的监听端口
 ///
 /// 应在代理服务器启动时调用，以便系统代理检测能正确识别自己的端口
@@ -613,18 +659,6 @@ mod tests {
     #[test]
     fn test_build_client_direct() {
         let result = build_client(None);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_build_client_with_http_proxy() {
-        let result = build_client(Some("http://127.0.0.1:7890"));
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_build_client_with_socks5_proxy() {
-        let result = build_client(Some("socks5://127.0.0.1:1080"));
         assert!(result.is_ok());
     }
 

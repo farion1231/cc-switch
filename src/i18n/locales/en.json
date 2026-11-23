@@ -60,7 +60,9 @@
   "apiKeyInput": {
     "placeholder": "Enter API Key",
     "show": "Show API Key",
-    "hide": "Hide API Key"
+    "hide": "Hide API Key",
+    "copied": "API Key copied",
+    "copyFailed": "Failed to copy API Key"
   },
   "jsonEditor": {
     "mustBeObject": "Configuration must be a JSON object, not an array or other type",
@@ -241,17 +243,19 @@
         "oauthHint": "Google official uses OAuth personal authentication, no need to fill in API Key. The browser will automatically open for login on first use.",
         "apiKeyPlaceholder": "Enter Gemini API Key"
       },
-      "claudeAccount": {
+      "managedAccount": {
         "label": "Sign-in method",
+        "missing": "Account not on this computer",
+        "reauthBadge": "Re-login required"
+      },
+      "claudeAccount": {
         "default": "Follow Claude Code login",
         "defaultDescription": "The account changes with the current Claude Code login",
-        "missing": "Account not on this computer",
         "manage": "Add or manage Claude accounts",
         "helpTerminal": "The Claude config folder is overridden in Settings, so switching to this card doesn't change Claude Code's sign-in. Use Open Terminal on the card to use the selected account.",
         "helpWsl": "The Claude config folder is in WSL, where Claude accounts aren't supported yet. Switching to this card doesn't change Claude Code's sign-in.",
         "help": "Switching to this card changes Claude Code's sign-in to the selected account right away, including sessions already running. To use several accounts at once, use Open Terminal on the card.",
         "claudeAccount": "Claude account",
-        "reauthBadge": "Re-login required",
         "terminalHint": "Use via Open Terminal",
         "wslHint": "Not supported in WSL",
         "plan": {
@@ -263,6 +267,13 @@
           "teamPremium": "Team Premium",
           "enterprise": "Enterprise"
         }
+      },
+      "grokAccount": {
+        "default": "Follow Grok CLI sign-in",
+        "defaultDescription": "Uses whichever account Grok CLI is signed in to",
+        "manage": "Add or manage xAI accounts",
+        "help": "When you switch to this card, Grok CLI's sign-in (~/.grok/auth.json) changes to the selected account. The account signed in before is saved to the auth center first and comes back when you switch to the \"Follow Grok CLI sign-in\" card.",
+        "xaiAccount": "xAI account"
       }
     },
     "duplicateLiveIdsLoadFailed": "Failed to read provider identifiers from config, please fix the config and try again",
@@ -597,6 +608,9 @@
       "safetyBackupId": "Safety Backup ID",
       "intervalLabel": "Auto-backup Interval",
       "retainLabel": "Backup Retention",
+      "maxTotalLabel": "Backup Size Limit",
+      "maxTotalUnlimited": "No limit",
+      "maxTotalHint": "Off by default. When set, the oldest backups are deleted once the backups folder grows past this size. The newest backup and any backup used by a restore are always kept, so the folder can stay above the limit when a single backup is larger. Applies at the next backup or the daily maintenance run.",
       "intervalDisabled": "Disabled",
       "intervalHours": "{{hours}} hours",
       "intervalDays": "{{days}} days",
@@ -1086,6 +1100,7 @@
     "toolUpgradeUnanchoredHint": "Can't determine which install your command line uses; will run the default upgrade command (may install to the first npm on PATH).",
     "toolUpgradeUnmanagedTitle": "Skipped upgrading these tools",
     "toolUpgradeUnmanagedDetail": "{{tool}} ({{path}}) wasn't installed by npm or a recognized installer, so CC Switch can't tell how to upgrade it. Upgrade it the way you installed it (e.g. winget, Scoop, or re-running the official install script).",
+    "toolUpgradeDesktopManagedDetail": "This OpenCode CLI is bundled with OpenCode Desktop and is updated with the Desktop app.",
     "envBadge": {
       "wsl": "WSL",
       "windows": "Win",
@@ -1261,6 +1276,8 @@
       "credits": "Credits",
       "leftOf": "{{remaining}} / {{total}} left",
       "usedOf": "{{used}} / {{total}} used",
+      "unlimited": "Unlimited",
+      "unlimitedUsed": "Unlimited, {{used}} used",
       "usedUp": "Used up (of {{total}})",
       "detail": "{{remaining}} of {{total}} credits left, {{used}} used",
       "staleNotRunning": "WorkBuddy isn't running; showing the last result",
@@ -1816,6 +1833,7 @@
       "subrouter": "SubRouter is an AI relay aggregator that lets one key access multiple models and providers.",
       "qiniu": "Qiniu Cloud is a multi-protocol AI relay: one key for native Claude, GPT, and Gemini models, with the Anthropic, OpenAI, and Gemini APIs all supported.",
       "haoai": "hao.ai is a fast, stable unified LLM API gateway for developers and teams: one key reaches GPT, Claude, Grok, and other leading models over OpenAI- and Anthropic-compatible APIs, with model routing, failover, and full request logs, at prices as low as 15% of official reference rates. CC Switch users who register via this link get 5% bonus credit on their first order!",
+      "stringai": "StringAI is a cost-effective, fast, and stable model API platform with one-stop access to AI coding, image generation, text-to-speech, and video generation. Exclusive CC Switch offer: register via this link and your first top-up of $3.74 earns an extra $3.74 in bonus credit!",
       "fenno": "Fenno.ai is a stable, efficient API relay giving you access to a wide range of mainstream models. Exclusive CC Switch offer: subscribe via this link to the $1.99 Trial Plan worth $50 in credits, valid for 7 days!",
       "teamorouter": "TeamoRouter gives Claude Code one key for Opus 5.5, Sonnet 5.5 and Fable 5.1, with Opus 5.5 at about 28% of the official price, pay as you go, on the native Anthropic protocol. CC Switch users who sign up through this link get an extra 10% credit on a first top-up of $10, $20 or $50!",
       "ppio": "PPIO is a leading independent Agentic Cloud provider in China, serving every flagship open-source model through a single API key. Register via this link and complete identity verification to receive a ¥10 credit voucher.",
@@ -2108,6 +2126,7 @@
     "selectAccount": "Select account",
     "selectAccountPlaceholder": "Select an xAI account",
     "useDefaultAccount": "Use default account",
+    "account": "xAI account",
     "accounts": "xAI accounts",
     "defaultAccount": "Default",
     "expired": "Credentials expired",
@@ -2714,14 +2733,14 @@
     "speedValue": "{{value}} tok/s",
     "speedEstimatedValue": "≈ {{value}} tok/s",
     "speedHelpTitle": "How speed is calculated",
-    "speedHelp": "Output tokens per second, from the first token to the end. Counts requests through the routing service or Antigravity native timing with at least 100 output tokens; for models that hide their reasoning it's an approximation. A value with ≈ is estimated from other session-log timestamps: the wait for the first token is included, so the number reads low. Only requests with at least 200 output tokens are estimated.",
+    "speedHelp": "Output tokens per second, from the first token to the end. Only requests through the routing service with at least 100 output tokens count; for models that hide their reasoning it's an approximation. A value with ≈ is estimated from session-log timestamps when routing is off: the wait for the first token is included, so the number reads low. Only requests with at least 200 output tokens are estimated.",
     "speedSumHelpTitle": "How overall speed is calculated",
-    "speedSumHelp": "Total output tokens divided by total generation time, not an average of per-request speeds, so short requests don't skew it. Counts requests through the routing service or Antigravity native timing with at least 100 output tokens. A value with ≈ is estimated from other session logs (it includes the wait for the first token, and only requests with at least 200 output tokens count) and is shown only when the row has no exact timing data.",
+    "speedSumHelp": "Total output tokens divided by total generation time, not an average of per-request speeds, so short requests don't skew it. Only requests through the routing service with at least 100 output tokens count. A value with ≈ is estimated from session logs (it includes the wait for the first token, and only requests with at least 200 output tokens count) and is shown only when the row has no routed data.",
     "firstToken": "First token",
     "firstTokenHelpTitle": "First-token time",
-    "firstTokenHelp": "Time from sending the request to the upstream starting its output, measured by the routing service or Antigravity's native database. A value with ≈ is derived from other session-log timestamps: it starts from when the previous log line was written, so it includes the client's own request preparation and reads high. Claude Code only yields one when the reply starts with thinking; Codex only with newer logs, and not when the reply opens with a tool call.",
+    "firstTokenHelp": "Time from the routing service receiving the request to the upstream starting its output. A value with ≈ is derived from session-log timestamps when routing is off: it starts from when the previous log line was written, so it includes the client's own request preparation and reads high. Claude Code only yields one when the reply starts with thinking; Codex only with newer logs, and not when the reply opens with a tool call.",
     "firstTokenSumHelpTitle": "How first-token time is calculated",
-    "firstTokenSumHelp": "Time from sending the request to the upstream starting its output, measured by the routing service or Antigravity's native database. The row shows the median across its requests, so an occasional slow request (queueing, cold start) doesn't pull it up. Only successful timed requests count; requests older than 30 days, already folded into daily rollups, don't. A value with ≈ is derived from other session logs (it reads high, and only some requests yield one) and is shown only when the row has no exact timing data.",
+    "firstTokenSumHelp": "Time from the routing service receiving a request to the upstream starting its output. The row shows the median across its requests, so an occasional slow request (queueing, cold start) doesn't pull it up. Only successful streaming requests through the routing service count; requests older than 30 days, already folded into daily rollups, don't. A value with ≈ is derived from session logs (it reads high, and only some requests yield one) and is shown only when the row has no routed data.",
     "timingTip": "Duration {{duration}}s · first token {{ttft}}s",
     "estimatedTimingTip": "About {{duration}}s (estimated from session-log timestamps, including the wait for the first token)",
     "estimatedTimingTipWithFirstToken": "About {{duration}}s · first token about {{ttft}}s (estimated from session-log timestamps)",
@@ -3747,7 +3766,10 @@
       "command": "Command",
       "args": "Args",
       "env": "Env",
-      "url": "URL"
+      "url": "URL",
+      "type": "Type",
+      "cwd": "CWD",
+      "headers": "Headers"
     },
     "prompt": {
       "title": "Import System Prompt",
@@ -3781,7 +3803,8 @@
     "risk": {
       "envHijack": "This config sets environment variables that change how processes load code (e.g. injecting libraries or replacing CA certificates). Import only from a source you trust.",
       "privateEndpoint": "This address points at localhost or a private network. Do not import unless it is your own local service.",
-      "shellCommand": "This config runs a full command line through a shell — what actually executes is in the arguments. Review each line."
+      "shellCommand": "This config runs a full command line through a shell — what actually executes is in the arguments. Review each line.",
+      "mcpDangerousField": "This MCP config contains high-risk fields that can read host environment variables (e.g. bearer_token_env_var, env_http_headers, env_vars), execute helper commands (http_headers_helper), or override the working directory (cwd). Import only if you fully trust the source."
     }
   },
   "iconPicker": {
@@ -5051,7 +5074,7 @@
   "pluginsPage": {
     "title": "Plugins",
     "helpTitle": "Plugins",
-    "help": "Install, enable and remove plugins for Claude Code, Codex, Grok Build, MiniMax Code, OpenClaw and Pi. CC Switch runs each app's own CLI, so the result is the same as using its plugin command in a terminal. For Pi, plugins are Pi packages and the catalog comes from npm.",
+    "help": "Install, enable and remove plugins for Claude Code, Codex, Grok Build, MiniMax Code, OpenClaw, Pi and Antigravity CLI. CC Switch runs each app's own CLI, so the result is the same as using its plugin command in a terminal. For Pi, plugins are Pi packages and the catalog comes from npm.",
     "appAria": "App",
     "viewAria": "Plugin views",
     "viewInstalled": "Installed",
@@ -5111,9 +5134,11 @@
     "confirmRemoveMarketBody": "{{app}} will stop listing plugins from this marketplace and may uninstall the plugins you installed from it. You can add it again later.",
     "toast": {
       "installed": "Installed {{name}}",
+      "installedNeedsConfig": "Installed disabled. Run /plugin in {{app}} to configure its MCP servers and enable it.",
       "installFailed": "Couldn't install {{name}}",
       "installNeedsTerminal": "This plugin runs a marketplace-declared command on your machine during install, and CC Switch won't accept it for you. Run {{command}} in a terminal, confirm there, then come back and refresh.",
       "authRequired": "{{app}} needs you to sign in first. Run {{command}} in a terminal, then come back and try again.",
+      "pluginInUse": "This plugin is currently in use by another {{app}} process (such as an active {{cli}} session, Hub, or background daemon). Close it and try again.",
       "uninstalled": "Uninstalled {{name}}",
       "uninstallFailed": "Couldn't uninstall {{name}}",
       "enabled": "Enabled {{name}}",
@@ -5122,6 +5147,7 @@
       "updated": "Updated {{name}}",
       "upToDate": "{{name}} is already up to date",
       "updateFailed": "Couldn't update {{name}}",
+      "updateNeedsReinstall": "This plugin is in a folder used by older versions of Antigravity, so CC Switch can't update it. Uninstall it, then install it again from Discover to get the latest version.",
       "refreshed": "Marketplaces refreshed",
       "refreshFailed": "Couldn't refresh marketplaces",
       "marketAdded": "Added marketplace {{source}}",

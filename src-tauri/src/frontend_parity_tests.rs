@@ -36,6 +36,10 @@ const CODING_PLAN_URLS: &[&str] = &[
     "http://localhost:11434",
     "https://ollama.com.example.com/v1",
     "https://proxy.example.com/ollama.com/v1",
+    "https://token-plan-cn.xiaomimimo.com/anthropic",
+    "https://token-plan-cn.xiaomimimo.com/v1",
+    // MiMo pay-as-you-go uses a different key and is a balance provider, not a plan.
+    "https://api.xiaomimimo.com/anthropic",
     "https://api.openai.com/v1",
     // Hosts are matched on label boundaries (port and trailing dot allowed);
     // a plan host inside a relay's path or query, or a look-alike suffix, is not.
@@ -62,6 +66,10 @@ const BALANCE_URLS: &[&str] = &[
     "https://api.siliconflow.com/v1",
     "https://openrouter.ai/api/v1",
     "https://api.novita.ai/openai",
+    "https://api.xiaomimimo.com/anthropic",
+    "https://api.xiaomimimo.com/v1",
+    // The MiMo Token Plan host takes a tp- key that cannot read the account balance.
+    "https://token-plan-cn.xiaomimimo.com/v1",
     "HTTPS://API.DEEPSEEK.COM:443/v1",
     "https://api.deepseek.com./v1",
     // A balance host inside a relay's path or query, or a look-alike suffix, is the relay.
