@@ -3333,6 +3333,7 @@
       "descriptionHint": "Claude는 이 설명을 보고 위임 여부를 결정하므로 언제 사용해야 하는지 설명하세요. \"use proactively\"를 넣으면 호출될 가능성이 높아집니다.",
       "descRequired": "설명을 입력하세요",
       "model": "모델",
+      "effort": "추론 수준",
       "tools": "도구",
       "color": "색상",
       "colorNone": "색상 없음",
@@ -3348,6 +3349,12 @@
         "yaml": "YAML 구문 오류: {{detail}}",
         "not_map": "frontmatter는 key: value 쌍이어야 합니다"
       }
+    },
+    "effort": {
+      "unset": "설정 안 함",
+      "customOption": "{{value}} (사용자 지정)",
+      "hint": "세션의 effort 설정을 덮어쓰지만 CLAUDE_CODE_EFFORT_LEVEL 환경 변수는 덮어쓰지 않습니다. 내장 서브에이전트에는 적용되지 않으며 이 사용자 지정 에이전트에만 적용됩니다.",
+      "badgeTitle": "추론 수준: {{value}}"
     },
     "model": {
       "inherit": "메인 모델 상속",

@@ -3333,6 +3333,7 @@
       "descriptionHint": "Claude 根据描述决定何时委派，写清触发场景；写上 “use proactively” 会更主动地调用。",
       "descRequired": "请填写描述",
       "model": "模型",
+      "effort": "思考强度",
       "tools": "工具",
       "color": "颜色",
       "colorNone": "无颜色",
@@ -3348,6 +3349,12 @@
         "yaml": "YAML 语法错误：{{detail}}",
         "not_map": "frontmatter 必须是「键: 值」的形式"
       }
+    },
+    "effort": {
+      "unset": "不设置",
+      "customOption": "{{value}}（自定义）",
+      "hint": "会覆盖会话的 effort 设置，但不会覆盖 CLAUDE_CODE_EFFORT_LEVEL 环境变量；仅对这里的自定义子代理生效，对内置子代理无效。",
+      "badgeTitle": "思考强度：{{value}}"
     },
     "model": {
       "inherit": "继承主模型",

@@ -57,6 +57,24 @@ export function ModelBadge({ model }: { model: string | undefined }) {
   );
 }
 
+/** 思考强度徽标：写了 effort 才显示，没写不占位置 */
+function EffortBadge({ effort }: { effort: string | undefined }) {
+  const { t } = useTranslation();
+  const value = effort?.trim();
+  if (!value) return null;
+  return (
+    <span
+      title={t("subagents.effort.badgeTitle", { value })}
+      className={cn(
+        subagentBadgeClass,
+        "max-w-[140px] bg-subtle font-mono text-fg-2",
+      )}
+    >
+      <span className="truncate">{`effort: ${value}`}</span>
+    </span>
+  );
+}
+
 /** 工具摘要：没写 tools 是「全部工具」，否则前 3 个 + 剩余个数 */
 export function toolsSummary(
   t: (key: string, options?: Record<string, unknown>) => string,
@@ -157,6 +175,7 @@ export function SubagentListItem({
         ) : null}
         <div className="mt-0.5 flex min-w-0 items-center gap-2">
           <ModelBadge model={fields.model} />
+          <EffortBadge effort={fields.effort} />
           <span
             title={fields.tools?.join(", ")}
             className="min-w-0 truncate font-mono text-caption text-fg-3"

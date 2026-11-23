@@ -3333,6 +3333,7 @@
       "descriptionHint": "Claude decides when to delegate based on this description, so describe when it should be used. Adding \"use proactively\" makes it more likely to be invoked.",
       "descRequired": "Enter a description",
       "model": "Model",
+      "effort": "Effort",
       "tools": "Tools",
       "color": "Color",
       "colorNone": "No color",
@@ -3348,6 +3349,12 @@
         "yaml": "YAML syntax error: {{detail}}",
         "not_map": "The frontmatter must be key: value pairs"
       }
+    },
+    "effort": {
+      "unset": "Not set",
+      "customOption": "{{value}} (custom)",
+      "hint": "Overrides the session effort level, but not the CLAUDE_CODE_EFFORT_LEVEL environment variable. Applies only to this custom subagent, not built-in subagents.",
+      "badgeTitle": "Effort: {{value}}"
     },
     "model": {
       "inherit": "Inherit main model",

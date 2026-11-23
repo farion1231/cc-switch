@@ -108,10 +108,11 @@ where
     ProjectFut: Future<Output = Result<U, AppError>>,
 {
     run_with_sync_lock(async {
-        let result = {
-            let _auto_sync_suppression = B::suppress_auto_sync();
-            download.await?
-        };
+        // Keep auto-sync suppressed through post-download projection too:
+        // reconciling device-local state (e.g. `subagents.written_hash`) writes
+        // to synced tables and must not trigger a reverse auto-upload.
+        let _auto_sync_suppression = B::suppress_auto_sync();
+        let result = download.await?;
         project(result).await
     })
     .await
@@ -385,7 +386,7 @@ mod tests {
             },
             |_| async {
                 projection_entered.store(true, Ordering::SeqCst);
-                assert!(!is_suppressed());
+                assert!(is_suppressed());
                 Ok::<(), AppError>(())
             },
         );

@@ -1,7 +1,15 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Sheet, SheetPageContent } from "@/components/ui/sheet";
 import {
   discardUnsavedChanges,
@@ -160,5 +168,51 @@ describe("unsaved changes tracker", () => {
     fireEvent.input(screen.getByRole("textbox", { name: "prompt" }));
     view.rerender(<Outer showInner={false} />);
     expect(hasUnsavedChanges()).toBe(true);
+  });
+
+  it("tracks Radix Select picks in a nested sheet without dirtying the outer editor", async () => {
+    Element.prototype.scrollIntoView ??= vi.fn();
+    const user = userEvent.setup();
+
+    function Outer({ showInner }: { showInner: boolean }) {
+      return (
+        <div {...useUnsavedChangesTracker()}>
+          <input aria-label="provider" />
+          <div data-unsaved-ignore>
+            {showInner ? (
+              <Sheet open modal={false}>
+                <SheetPageContent title="Edit agent" closeLabel="back">
+                  <Select defaultValue="low">
+                    <SelectTrigger aria-label="effort">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="low">low</SelectItem>
+                      <SelectItem value="high">high</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </SheetPageContent>
+              </Sheet>
+            ) : null}
+          </div>
+        </div>
+      );
+    }
+
+    const view = render(<Outer showInner />);
+    const trigger = screen.getByRole("combobox", { name: "effort" });
+
+    // Re-picking the currently selected option does not mark dirty
+    await user.click(trigger);
+    await user.click(screen.getByRole("option", { name: "low" }));
+    expect(hasUnsavedChanges()).toBe(false);
+
+    // Picking a different option marks only the inner sheet dirty
+    await user.click(trigger);
+    await user.click(screen.getByRole("option", { name: "high" }));
+    expect(hasUnsavedChanges()).toBe(true);
+
+    view.rerender(<Outer showInner={false} />);
+    expect(hasUnsavedChanges()).toBe(false);
   });
 });

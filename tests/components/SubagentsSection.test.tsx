@@ -233,9 +233,7 @@ describe("SubagentsSection", () => {
         name: /subagents.unmanaged.importSelected/,
       }),
     );
-    await waitFor(() =>
-      expect(mocks.import).toHaveBeenCalledWith(["helper"]),
-    );
+    await waitFor(() => expect(mocks.import).toHaveBeenCalledWith(["helper"]));
   });
   it("reads model and tools from /agents files that strict YAML rejects", async () => {
     // Claude Code /agents 生成的 description 没加引号、带 `Context:`
@@ -316,5 +314,36 @@ describe("SubagentsSection", () => {
     await user.click(screen.getByRole("button", { name: /subagents\.new/ }));
 
     expect(onProviderSubmit).not.toHaveBeenCalled();
+  });
+
+  it("shows effort badge only when effort is set, including /agents loose files", async () => {
+    const withEffort: Subagent = {
+      ...tester,
+      id: "a5",
+      name: "deep-reviewer",
+      fileName: "deep-reviewer",
+      content:
+        "---\nname: deep-reviewer\ndescription: Deep review\neffort: high\n---\n",
+    };
+    const looseWithEffort: Subagent = {
+      ...tester,
+      id: "a6",
+      name: "api-designer",
+      fileName: "api-designer",
+      content:
+        "---\nname: api-designer\ndescription: Use when designing APIs. Examples: <example>Context: adding route</example>\neffort: xhigh\n---\n",
+    };
+    mocks.list.mockResolvedValue([tester, withEffort, looseWithEffort]);
+
+    await renderSection();
+
+    const unsetRow = await screen.findByTestId("subagent-row-a2");
+    expect(within(unsetRow).queryByText(/^effort:/)).not.toBeInTheDocument();
+
+    const setRow = screen.getByTestId("subagent-row-a5");
+    expect(within(setRow).getByText("effort: high")).toBeInTheDocument();
+
+    const looseRow = screen.getByTestId("subagent-row-a6");
+    expect(within(looseRow).getByText("effort: xhigh")).toBeInTheDocument();
   });
 });

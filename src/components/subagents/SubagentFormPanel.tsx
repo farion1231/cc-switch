@@ -12,6 +12,13 @@ import {
 } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
 import { fieldClass } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { FieldError } from "@/components/prompts/PromptFormPanel";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import type {
@@ -22,6 +29,7 @@ import type {
 import { cn } from "@/lib/utils";
 import {
   SUBAGENT_COLORS,
+  SUBAGENT_EFFORTS,
   SUBAGENT_NAME_RE,
   getSubagentBody,
   parseSubagentMarkdownLoose,
@@ -41,6 +49,10 @@ export type SubagentSaveResult =
   | { status: "failed"; code?: SubagentErrorCode; message: string };
 
 type EditorView = "form" | "source";
+
+// Radix Select 不收空值：这两个哨兵代表「不设置 effort」和「保留原自定义值」。
+const EFFORT_UNSET = "__unset__";
+const EFFORT_CUSTOM = "__custom__";
 
 /** 表单模式能不能用：严格解析通过，或后端也认的宽松写法（字段只读、正文可改） */
 const formUsable = (content: string) =>
@@ -112,6 +124,16 @@ export default function SubagentFormPanel({
   const name = fields.name ?? "";
   const description = fields.description ?? "";
   const tools = fields.tools;
+  const effort = fields.effort;
+  const isKnownEffort =
+    effort !== undefined &&
+    (SUBAGENT_EFFORTS as readonly string[]).includes(effort);
+  const hasCustomEffort = Boolean(effort?.trim()) && !isKnownEffort;
+  const effortSelectValue = isKnownEffort
+    ? effort
+    : hasCustomEffort
+      ? EFFORT_CUSTOM
+      : EFFORT_UNSET;
   const body = parsed.ok ? parsed.value.body : getSubagentBody(content);
 
   const patch = (next: SubagentFieldsPatch) => {
@@ -231,6 +253,8 @@ export default function SubagentFormPanel({
   const descId = `${baseId}-desc`;
   const descHintId = `${baseId}-desc-hint`;
   const modelId = `${baseId}-model`;
+  const effortId = `${baseId}-effort`;
+  const effortHintId = `${baseId}-effort-hint`;
   const toolsHintId = `${baseId}-tools-hint`;
   const labelClass = "text-body font-medium text-fg-1";
   const requiredMark = (
@@ -319,6 +343,57 @@ export default function SubagentFormPanel({
           disabled={saving || fieldsLocked}
           onChange={(value) => patch({ model: value || null })}
         />
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <label htmlFor={effortId} className={labelClass}>
+          {t("subagents.form.effort")}
+        </label>
+        <Select
+          value={effortSelectValue}
+          disabled={saving || fieldsLocked}
+          onValueChange={(next) => {
+            // Radix Select 在受控更新时可能回报空串，忽略以免误删原有值；选回自定义原值也不改写
+            if (!next || next === EFFORT_CUSTOM) return;
+            patch({ effort: next === EFFORT_UNSET ? null : next });
+          }}
+        >
+          <SelectTrigger
+            id={effortId}
+            aria-describedby={effortHintId}
+            className={cn(
+              "w-full",
+              (isKnownEffort || hasCustomEffort) && "font-mono text-caption",
+            )}
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent className="z-[200]">
+            {hasCustomEffort ? (
+              <SelectItem
+                value={EFFORT_CUSTOM}
+                className="font-mono text-caption"
+              >
+                {t("subagents.effort.customOption", { value: effort })}
+              </SelectItem>
+            ) : null}
+            <SelectItem value={EFFORT_UNSET}>
+              {t("subagents.effort.unset")}
+            </SelectItem>
+            {SUBAGENT_EFFORTS.map((level) => (
+              <SelectItem
+                key={level}
+                value={level}
+                className="font-mono text-caption"
+              >
+                {level}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <span id={effortHintId} className="text-caption text-fg-2">
+          {t("subagents.effort.hint")}
+        </span>
       </div>
 
       <div className="flex flex-col gap-1.5">

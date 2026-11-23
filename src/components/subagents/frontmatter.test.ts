@@ -316,3 +316,68 @@ describe("parseSubagentMarkdownLoose", () => {
     );
   });
 });
+
+describe("effort field", () => {
+  it("parses standard and custom effort values", () => {
+    expect(
+      parseSubagentMarkdown("---\nname: a\neffort: high\n---\n").fields.effort,
+    ).toBe("high");
+    expect(
+      parseSubagentMarkdown("---\nname: a\neffort: custom-tier\n---\n").fields
+        .effort,
+    ).toBe("custom-tier");
+  });
+
+  it("writes, preserves, and deletes effort in canonical key order", () => {
+    const added = updateSubagentFrontmatter(SAMPLE, { effort: "xhigh" });
+    const keys = added
+      .split("\n")
+      .filter((line) => /^[a-zA-Z]+:/.test(line))
+      .map((line) => line.split(":")[0]);
+    expect(keys).toEqual([
+      "name",
+      "description",
+      "tools",
+      "permissionMode",
+      "hooks",
+      "model",
+      "color",
+      "effort",
+    ]);
+
+    const fresh = buildSubagentMarkdown(
+      {
+        name: "tester",
+        description: "Runs tests",
+        tools: ["Read"],
+        model: "sonnet",
+        effort: "medium",
+        color: "green",
+      },
+      "Body\n",
+    );
+    expect(fresh).toBe(
+      "---\nname: tester\ndescription: Runs tests\ntools: Read\nmodel: sonnet\neffort: medium\ncolor: green\n---\n\nBody\n",
+    );
+
+    const withComment =
+      "---\nname: a\ndescription: d\neffort: custom-tier # keep\n---\n";
+    expect(updateSubagentFrontmatter(withComment, { description: "d2" })).toBe(
+      "---\nname: a\ndescription: d2\neffort: custom-tier # keep\n---\n",
+    );
+    expect(updateSubagentFrontmatter(withComment, { effort: "low" })).toBe(
+      "---\nname: a\ndescription: d\neffort: low # keep\n---\n",
+    );
+    expect(updateSubagentFrontmatter(withComment, { effort: null })).toBe(
+      "---\nname: a\ndescription: d\n---\n",
+    );
+  });
+
+  it("reads effort from /agents loose frontmatter", () => {
+    const withEffort = AGENTS_GENERATED.replace(
+      "model: sonnet\n",
+      "model: sonnet\neffort: max\n",
+    );
+    expect(parseSubagentMarkdownLoose(withEffort)?.fields.effort).toBe("max");
+  });
+});

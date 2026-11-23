@@ -3262,6 +3262,7 @@
       "descriptionHint": "Claude ne zaman devredeceğine bu açıklamaya göre karar verir; hangi durumlarda kullanılacağını açıkça yazın. \"use proactively\" eklemek daha sık çağrılmasını sağlar.",
       "descRequired": "Bir açıklama girin",
       "model": "Model",
+      "effort": "Akıl yürütme çabası",
       "tools": "Araçlar",
       "color": "Renk",
       "colorNone": "Renk yok",
@@ -3277,6 +3278,12 @@
         "yaml": "YAML söz dizimi hatası: {{detail}}",
         "not_map": "Frontmatter anahtar: değer çiftlerinden oluşmalı"
       }
+    },
+    "effort": {
+      "unset": "Ayarlanmadı",
+      "customOption": "{{value}} (özel)",
+      "hint": "Oturumun effort ayarını geçersiz kılar, ancak CLAUDE_CODE_EFFORT_LEVEL ortam değişkenini geçersiz kılmaz. Yerleşik alt aracılara değil, yalnızca buradaki özel alt araca uygulanır.",
+      "badgeTitle": "Akıl yürütme çabası: {{value}}"
     },
     "model": {
       "inherit": "Ana modeli devral",

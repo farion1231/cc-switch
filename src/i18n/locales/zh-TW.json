@@ -3333,6 +3333,7 @@
       "descriptionHint": "Claude 依據描述決定何時委派，請寫清楚觸發情境；加上 “use proactively” 會更主動地呼叫。",
       "descRequired": "請填寫描述",
       "model": "模型",
+      "effort": "思考強度",
       "tools": "工具",
       "color": "顏色",
       "colorNone": "無顏色",
@@ -3348,6 +3349,12 @@
         "yaml": "YAML 語法錯誤：{{detail}}",
         "not_map": "frontmatter 必須是「鍵: 值」的形式"
       }
+    },
+    "effort": {
+      "unset": "不設定",
+      "customOption": "{{value}}（自訂）",
+      "hint": "會覆蓋工作階段的 effort 設定，但不會覆蓋 CLAUDE_CODE_EFFORT_LEVEL 環境變數；僅對這裡的自訂子代理生效，對內建子代理無效。",
+      "badgeTitle": "思考強度：{{value}}"
     },
     "model": {
       "inherit": "繼承主模型",

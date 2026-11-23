@@ -24,11 +24,20 @@ export const SUBAGENT_COLORS = [
 ] as const;
 export type SubagentColor = (typeof SUBAGENT_COLORS)[number];
 
+export const SUBAGENT_EFFORTS = [
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+] as const;
+
 /** 表单认识的键；undefined = 文件里没有这个键 */
 export interface SubagentFields {
   name?: string;
   description?: string;
   model?: string;
+  effort?: string;
   color?: string;
   /** undefined = 没写 tools（继承全部工具） */
   tools?: string[];
@@ -68,8 +77,21 @@ export type SubagentFieldsPatch = {
   toolsFormat?: ToolsFormat;
 };
 
-const STRING_KEYS = ["name", "description", "model", "color"] as const;
-const FIELD_ORDER = ["name", "description", "tools", "model", "color"] as const;
+const STRING_KEYS = [
+  "name",
+  "description",
+  "model",
+  "effort",
+  "color",
+] as const;
+const FIELD_ORDER = [
+  "name",
+  "description",
+  "tools",
+  "model",
+  "effort",
+  "color",
+] as const;
 
 // 只认 Claude Code 的写法：第一行就是 ---，到下一行单独的 --- 为止
 const OPEN_RE = /^\uFEFF?---[ \t]*\r?\n/;
@@ -359,6 +381,7 @@ export function buildSubagentMarkdown(
   if (fields.description !== undefined) patch.description = fields.description;
   if (fields.tools !== undefined) patch.tools = fields.tools;
   if (fields.model !== undefined) patch.model = fields.model;
+  if (fields.effort !== undefined) patch.effort = fields.effort;
   if (fields.color !== undefined) patch.color = fields.color;
   return updateSubagentFrontmatter(`---\n---\n\n${body}`, patch);
 }

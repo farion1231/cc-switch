@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from "react";
-import type { SyntheticEvent } from "react";
+import type { KeyboardEvent, PointerEvent, SyntheticEvent } from "react";
 
 /**
  * 整页编辑器的「未保存改动」登记。
@@ -64,6 +64,14 @@ function claimEvent(event: SyntheticEvent, token: object): boolean {
   return true;
 }
 
+function isSelectableOption(target: Element | null): boolean {
+  const option = target?.closest?.('[role="option"]');
+  if (!option) return false;
+  if (option.matches('[aria-disabled="true"], [data-disabled]')) return false;
+  if (option.getAttribute("data-state") === "checked") return false;
+  return !target?.closest?.("[data-unsaved-ignore]");
+}
+
 /**
  * 挂到编辑器内容区：文字输入、原生选择变化、以及点到上面那些控件时登记为有未保存改动。
  * React 的合成事件沿组件树冒泡，渲染到 body 的下拉选项也能收到。
@@ -107,9 +115,47 @@ export function useUnsavedChangesTracker(enabled = true) {
     [enabled, markDirty, token],
   );
 
+  // Radix Select 鼠标点选在 pointerup 就关闭弹层，不会派发 click；
+  // 放在非 <form> 编辑器（如 SheetPageContent）里也没有隐藏 <select> 的 change 事件
+  const onPointerUpCapture = useCallback(
+    (event: PointerEvent) => {
+      if (
+        !enabled ||
+        event.pointerType !== "mouse" ||
+        event.button !== 0 ||
+        !claimEvent(event, token)
+      ) {
+        return;
+      }
+      if (isSelectableOption(event.target as Element | null)) {
+        markDirty();
+      }
+    },
+    [enabled, markDirty, token],
+  );
+
+  // 键盘在下拉选项上按 Enter / 空格选中时同样不会派发 click
+  const onKeyDownCapture = useCallback(
+    (event: KeyboardEvent) => {
+      if (
+        !enabled ||
+        (event.key !== "Enter" && event.key !== " ") ||
+        !claimEvent(event, token)
+      ) {
+        return;
+      }
+      if (isSelectableOption(event.target as Element | null)) {
+        markDirty();
+      }
+    },
+    [enabled, markDirty, token],
+  );
+
   return {
     onInputCapture: onInputOrChangeCapture,
     onChangeCapture: onInputOrChangeCapture,
     onClickCapture,
+    onPointerUpCapture,
+    onKeyDownCapture,
   };
 }

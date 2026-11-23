@@ -5571,6 +5571,7 @@
       "descriptionHint": "Claude entscheidet anhand dieser Beschreibung, wann delegiert wird – beschreiben Sie also den Einsatzzweck. Der Zusatz „use proactively“ erhöht die Auslösewahrscheinlichkeit.",
       "descRequired": "Beschreibung eingeben",
       "model": "Modell",
+      "effort": "Reasoning-Aufwand",
       "tools": "Tools",
       "color": "Farbe",
       "colorNone": "Keine Farbe",
@@ -5586,6 +5587,12 @@
         "yaml": "YAML-Syntaxfehler: {{detail}}",
         "not_map": "Das Frontmatter muss aus Schlüssel-Wert-Paaren bestehen"
       }
+    },
+    "effort": {
+      "unset": "Nicht festgelegt",
+      "customOption": "{{value}} (benutzerdefiniert)",
+      "hint": "Überschreibt die Effort-Stufe der Sitzung, aber nicht die Umgebungsvariable CLAUDE_CODE_EFFORT_LEVEL. Gilt nur für diesen benutzerdefinierten Subagenten, nicht für integrierte Subagenten.",
+      "badgeTitle": "Reasoning-Aufwand: {{value}}"
     },
     "model": {
       "inherit": "Hauptmodell erben",

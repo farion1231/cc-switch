@@ -3333,6 +3333,7 @@
       "descriptionHint": "Claude はこの説明をもとに委任するタイミングを判断します。どんな場面で使うかを明確に書いてください。“use proactively” と書くとより積極的に呼び出されます。",
       "descRequired": "説明を入力してください",
       "model": "モデル",
+      "effort": "推論強度",
       "tools": "ツール",
       "color": "色",
       "colorNone": "色なし",
@@ -3348,6 +3349,12 @@
         "yaml": "YAML の構文エラー：{{detail}}",
         "not_map": "frontmatter は「キー: 値」の形式である必要があります"
       }
+    },
+    "effort": {
+      "unset": "未設定",
+      "customOption": "{{value}}（カスタム）",
+      "hint": "セッションの effort 設定を上書きしますが、CLAUDE_CODE_EFFORT_LEVEL 環境変数は上書きしません。組み込みサブエージェントには適用されず、このカスタムエージェントのみに有効です。",
+      "badgeTitle": "推論強度: {{value}}"
     },
     "model": {
       "inherit": "メインのモデルを継承",
