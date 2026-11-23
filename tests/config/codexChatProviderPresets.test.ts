@@ -4,7 +4,7 @@ import {
   extractCodexBaseUrl,
   extractCodexModelName,
   extractCodexWireApi,
-} from "@/utils/providerConfigUtils";
+} from "@/utils/codexConfigUtils";
 
 const expectedChatPresets = new Map<
   string,

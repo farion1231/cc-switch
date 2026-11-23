@@ -762,10 +762,6 @@ pub(crate) fn set_provider(id: &str, config: Value) -> Result<(), AppError> {
     save_and_commit(id, Some(config), false, || Ok(()))
 }
 
-pub(crate) fn remove_provider(id: &str) -> Result<(), AppError> {
-    save_and_commit(id, None, false, || Ok(()))
-}
-
 /// "Add" writes a saved provider into settings.json without selecting it, so its
 /// models show up in Qwen Code's /model list. Entries already there belong to
 /// Qwen and are kept as is (same rule as switching).

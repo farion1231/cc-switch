@@ -60,7 +60,9 @@
   "apiKeyInput": {
     "placeholder": "请输入API Key",
     "show": "显示API Key",
-    "hide": "隐藏API Key"
+    "hide": "隐藏API Key",
+    "copied": "API Key 已复制",
+    "copyFailed": "API Key 复制失败"
   },
   "jsonEditor": {
     "mustBeObject": "配置必须是JSON对象，不能是数组或其他类型",
@@ -597,6 +599,9 @@
       "safetyBackupId": "安全备份ID",
       "intervalLabel": "自动备份间隔",
       "retainLabel": "备份保留数量",
+      "maxTotalLabel": "备份总大小上限",
+      "maxTotalUnlimited": "不限制",
+      "maxTotalHint": "默认不限制。设置后，备份文件夹超过此大小时，会从最旧的备份开始删除。最新的一份备份和恢复正在使用的备份始终保留，所以单份备份比上限还大时，文件夹仍可能超过上限。在下次备份或每日维护时生效。",
       "intervalDisabled": "禁用",
       "intervalHours": "{{hours}} 小时",
       "intervalDays": "{{days}} 天",
@@ -2107,6 +2112,7 @@
     "selectAccount": "选择账号",
     "selectAccountPlaceholder": "选择 xAI 账号",
     "useDefaultAccount": "使用默认账号",
+    "account": "xAI 账号",
     "accounts": "xAI 账号",
     "defaultAccount": "默认",
     "expired": "凭据已失效",
@@ -2713,14 +2719,14 @@
     "speedValue": "{{value}} tok/s",
     "speedEstimatedValue": "≈ {{value}} tok/s",
     "speedHelpTitle": "速度怎么算",
-    "speedHelp": "每秒输出多少 token，从首字算到结束。统计经路由服务或带 Antigravity 原生计时、输出不少于 100 token 的请求；思考过程不外露的模型是近似值。带 ≈ 的是按其他会话日志的时间戳估算的：等首字的时间也算在内，所以偏低；只估输出不少于 200 token 的请求。",
+    "speedHelp": "每秒输出多少 token，从首字算到结束。只算经路由服务、输出不少于 100 token 的请求；思考过程不外露的模型是近似值。带 ≈ 的是没开路由时按会话日志的时间戳估算的：等首字的时间也算在内，所以偏低；只估输出不少于 200 token 的请求。",
     "speedSumHelpTitle": "汇总速度怎么算",
-    "speedSumHelp": "输出 token 总数除以生成时间总和，不是逐条平均，免得短请求把数字带歪。统计经路由服务或带 Antigravity 原生计时、输出不少于 100 token 的请求。带 ≈ 的是按其他会话日志估算的（含首字等待，只估输出不少于 200 token 的请求），这一行没有精确计时数据时才显示。",
+    "speedSumHelp": "输出 token 总数除以生成时间总和，不是逐条平均，免得短请求把数字带歪。只算经路由服务、输出不少于 100 token 的请求。带 ≈ 的是按会话日志估算的（含首字等待，只估输出不少于 200 token 的请求），这一行没有路由数据时才显示。",
     "firstToken": "首字",
     "firstTokenHelpTitle": "首字时间",
-    "firstTokenHelp": "从路由服务收到请求（或 Antigravity 原生记录）到上游开始输出的时间。带 ≈ 的是按其他会话日志的时间戳推出来的：起点是上一条日志写盘的时刻，含客户端组装请求的时间，所以偏高；Claude Code 只有回复以思考开头时推得出，Codex 只有新版日志、而且回复不是一开头就调工具时推得出。",
+    "firstTokenHelp": "从路由服务收到请求，到上游开始输出的时间。带 ≈ 的是没开路由时按会话日志的时间戳推出来的：起点是上一条日志写盘的时刻，含客户端组装请求的时间，所以偏高；Claude Code 只有回复以思考开头时推得出，Codex 只有新版日志、而且回复不是一开头就调工具时推得出。",
     "firstTokenSumHelpTitle": "首字时间怎么算",
-    "firstTokenSumHelp": "从路由服务收到请求（或 Antigravity 原生记录）到上游开始输出的时间。取这一行所有请求的中位数，不会被个别排队、冷启动的慢请求拉高。只算经路由服务或 Antigravity 原生计时的成功请求；超过 30 天、已并入日汇总的请求不计。带 ≈ 的是按其他会话日志推出来的（偏高，只有部分请求推得出），这一行没有精确计时数据时才显示。",
+    "firstTokenSumHelp": "从路由服务收到请求，到上游开始输出的时间。取这一行所有请求的中位数，不会被个别排队、冷启动的慢请求拉高。只算经路由服务、成功的流式请求；超过 30 天、已并入日汇总的请求不计。带 ≈ 的是按会话日志推出来的（偏高，只有部分请求推得出），这一行没有路由数据时才显示。",
     "timingTip": "耗时 {{duration}}s · 首字 {{ttft}}s",
     "estimatedTimingTip": "耗时约 {{duration}}s（按会话日志的时间戳估算，含首字等待）",
     "estimatedTimingTipWithFirstToken": "耗时约 {{duration}}s · 首字约 {{ttft}}s（按会话日志的时间戳估算）",
@@ -3746,7 +3752,10 @@
       "command": "命令",
       "args": "参数",
       "env": "环境",
-      "url": "地址"
+      "url": "地址",
+      "type": "类型",
+      "cwd": "工作目录",
+      "headers": "请求头"
     },
     "prompt": {
       "title": "导入系统提示词",
@@ -3780,7 +3789,8 @@
     "risk": {
       "envHijack": "该配置包含可改变进程加载行为的环境变量（如注入动态库、替换 CA 证书），请确认来源可信。",
       "privateEndpoint": "该地址指向本机或内网。若非你自建的本地服务，请勿导入。",
-      "shellCommand": "该配置通过 shell 执行一整段命令，实际运行的内容在参数里，请逐行核对。"
+      "shellCommand": "该配置通过 shell 执行一整段命令，实际运行的内容在参数里，请逐行核对。",
+      "mcpDangerousField": "该 MCP 配置包含高危扩展字段，可能会读取宿主机环境变量并外发（如 bearer_token_env_var、env_http_headers、env_vars）、执行辅助命令（http_headers_helper）或劫持工作目录（cwd）。请务必确认来源完全可信。"
     }
   },
   "iconPicker": {
@@ -5050,7 +5060,7 @@
   "pluginsPage": {
     "title": "插件",
     "helpTitle": "插件",
-    "help": "安装、启用、移除 Claude Code、Codex、Grok Build、MiniMax Code、OpenClaw 和 Pi 的插件。CC Switch 调用各应用自带的命令行，效果和在终端里执行它的插件命令一样。Pi 的插件就是 Pi 包，目录取自 npm。",
+    "help": "安装、启用、移除 Claude Code、Codex、Grok Build、MiniMax Code、OpenClaw、Pi 和 Antigravity 的插件。CC Switch 调用各应用自带的命令行，效果和在终端里执行它的插件命令一样。Pi 的插件就是 Pi 包，目录取自 npm。",
     "appAria": "应用",
     "viewAria": "插件视图",
     "viewInstalled": "已安装",
@@ -5110,9 +5120,11 @@
     "confirmRemoveMarketBody": "{{app}} 将不再列出这个市场里的插件，从这个市场装的插件也可能被一并卸载。之后可以重新添加。",
     "toast": {
       "installed": "已安装 {{name}}",
+      "installedNeedsConfig": "已安装但默认停用。请在 {{app}} 中运行 /plugin 配置其 MCP 服务器后再启用。",
       "installFailed": "安装 {{name}} 失败",
       "installNeedsTerminal": "这个插件安装时要在本机运行市场声明的命令，CC Switch 不会替你同意。请在终端里运行 {{command}}，确认后再回来刷新。",
       "authRequired": "{{app}} 需要先登录账号。请在终端里运行 {{command}} 登录，再回来重试。",
+      "pluginInUse": "该插件正被其他 {{app}} / {{cli}} 进程占用（如运行中的会话、Hub 或后台服务）。请关闭正在运行的会话或相关进程后重试。",
       "uninstalled": "已卸载 {{name}}",
       "uninstallFailed": "卸载 {{name}} 失败",
       "enabled": "已启用 {{name}}",

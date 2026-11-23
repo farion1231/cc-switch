@@ -138,6 +138,7 @@ describe("Kimi official account login", () => {
     fireEvent.click(menuItem("切换 Kimi 到这个账号"));
     await flush();
     expect(kimiOAuthApi.useAccount).toHaveBeenCalledWith(second.id);
+    await act(() => vi.advanceTimersByTimeAsync(220));
     await openMenu(second.name);
     fireEvent.click(menuItem("重新登录"));
     await flush();

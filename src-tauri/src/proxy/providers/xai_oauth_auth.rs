@@ -179,6 +179,26 @@ struct XaiOAuthStore {
     default_account_id: Option<String>,
 }
 
+/// 按磁盘上的账号表给出 `(account_id -> 显示名, 默认账号 id)`（同 [`XaiOAuthAccount::from`]）：托盘同步读状态用。
+pub fn labels_on_disk(data_dir: &std::path::Path) -> (HashMap<String, String>, Option<String>) {
+    let Ok(content) = fs::read_to_string(data_dir.join("xai_oauth_auth.json")) else {
+        return (HashMap::new(), None);
+    };
+    let Ok(store) = serde_json::from_str::<XaiOAuthStore>(&content) else {
+        return (HashMap::new(), None);
+    };
+    let default_id = store
+        .default_account_id
+        .filter(|id| XaiOAuthManager::is_usable_account(&store.accounts, id))
+        .or_else(|| XaiOAuthManager::fallback_default_account_id(&store.accounts));
+    let labels = store
+        .accounts
+        .iter()
+        .map(|(id, data)| (id.clone(), XaiOAuthAccount::from(data).login))
+        .collect();
+    (labels, default_id)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct XaiOAuthStatus {
     pub accounts: Vec<XaiOAuthAccount>,

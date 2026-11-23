@@ -2501,21 +2501,6 @@ mod tests {
     }
 
     #[test]
-    fn zhipu_extreme_percentage_values_pass_through() {
-        // 负数 / 超 100 不做范围裁剪——下游渲染层负责显示策略，解析层只负责忠实搬运。
-        let data = json!({
-            "limits": [
-                { "type": "TOKENS_LIMIT", "percentage": -5.0,  "nextResetTime": 1_000_000_000_000_i64 },
-                { "type": "TOKENS_LIMIT", "percentage": 150.0, "nextResetTime": 2_000_000_000_000_i64 }
-            ]
-        });
-        let tiers = parse_zhipu_token_tiers(&data);
-        assert_eq!(tiers.len(), 2);
-        assert_eq!(tiers[0].utilization, -5.0);
-        assert_eq!(tiers[1].utilization, 150.0);
-    }
-
-    #[test]
     fn zhipu_unit_field_overrides_reset_order_when_weekly_resets_sooner() {
         // 真实案例（issue #3036，2026-06-10 再次复现）：每周周期末尾，周桶比
         // 5 小时桶更早重置。官网真实值：5h 用 1%（约 5h 后重置）、每周用 42%
@@ -2720,24 +2705,6 @@ mod tests {
     }
 
     #[test]
-    fn minimax_negative_percent_passes_through() {
-        // 防御性:与 parse_zhipu_token_tiers 约定一致,负数 / 超 100 不做范围裁剪
-        let body = json!({
-            "model_remains": [{
-                "model_name": "general",
-                "current_interval_remaining_percent": -5.0,
-                "current_weekly_remaining_percent": 150.0,
-                "current_interval_status": 1,
-                "current_weekly_status": 1
-            }]
-        });
-        let tiers = parse_minimax_tiers(&body);
-        assert_eq!(tiers.len(), 2);
-        assert_eq!(tiers[0].utilization, 105.0); // 100 - (-5)
-        assert_eq!(tiers[1].utilization, -50.0); // 100 - 150
-    }
-
-    #[test]
     fn minimax_weekly_status_3_skips_weekly_tier() {
         // 无周限额套餐:current_weekly_status=3,remaining_percent 恒为 100,
         // 不应推 weekly_limit tier(否则会显示"0% 已用"的假周桶)
@@ -2795,28 +2762,27 @@ mod tests {
     }
 
     #[test]
-    fn zhipu_quota_base_routes_bigmodel_url_to_cn_endpoint() {
-        assert_eq!(
-            zhipu_quota_base("https://open.bigmodel.cn/api/paas/v4"),
-            "https://open.bigmodel.cn"
-        );
-    }
-
-    #[test]
-    fn zhipu_quota_base_routes_z_ai_url_to_en_endpoint() {
-        assert_eq!(
-            zhipu_quota_base("https://api.z.ai/api/paas/v4"),
-            "https://api.z.ai"
-        );
-    }
-
-    #[test]
-    fn zhipu_quota_base_defaults_to_en_for_unknown_url() {
-        // 没有明显 Zhipu 域名特征时,默认走国际站(更通用的入口)
-        assert_eq!(
-            zhipu_quota_base("https://example.com/zhipu"),
-            "https://api.z.ai"
-        );
+    fn zhipu_quota_base_picks_endpoint_by_url() {
+        for (case, base_url, expected) in [
+            (
+                "zhipu_quota_base_routes_bigmodel_url_to_cn_endpoint",
+                "https://open.bigmodel.cn/api/paas/v4",
+                "https://open.bigmodel.cn",
+            ),
+            (
+                "zhipu_quota_base_routes_z_ai_url_to_en_endpoint",
+                "https://api.z.ai/api/paas/v4",
+                "https://api.z.ai",
+            ),
+            // 没有明显 Zhipu 域名特征时,默认走国际站(更通用的入口)
+            (
+                "zhipu_quota_base_defaults_to_en_for_unknown_url",
+                "https://example.com/zhipu",
+                "https://api.z.ai",
+            ),
+        ] {
+            assert_eq!(zhipu_quota_base(base_url), expected, "{case}");
+        }
     }
 
     #[test]

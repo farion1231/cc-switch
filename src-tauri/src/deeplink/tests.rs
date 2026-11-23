@@ -134,37 +134,31 @@ fn test_parse_grokbuild_provider() {
 }
 
 #[test]
-fn test_parse_invalid_scheme() {
-    let url = "https://v1/import?resource=provider&app=claude&name=Test";
+fn parse_rejects_malformed_deeplinks() {
+    for (case, input, error) in [
+        (
+            "test_parse_invalid_scheme",
+            "https://v1/import?resource=provider&app=claude&name=Test",
+            "Invalid scheme",
+        ),
+        (
+            "test_parse_unsupported_version",
+            "ccswitch://v2/import?resource=provider&app=claude&name=Test",
+            "Unsupported protocol version",
+        ),
+        // Name is still required even in v3.8+ (only homepage/endpoint/apiKey are optional)
+        (
+            "test_parse_missing_required_field",
+            "ccswitch://v1/import?resource=provider&app=claude",
+            "Missing 'name' parameter",
+        ),
+    ] {
+        let url = input;
 
-    let result = parse_deeplink_url(url);
-    assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("Invalid scheme"));
-}
-
-#[test]
-fn test_parse_unsupported_version() {
-    let url = "ccswitch://v2/import?resource=provider&app=claude&name=Test";
-
-    let result = parse_deeplink_url(url);
-    assert!(result.is_err());
-    assert!(result
-        .unwrap_err()
-        .to_string()
-        .contains("Unsupported protocol version"));
-}
-
-#[test]
-fn test_parse_missing_required_field() {
-    // Name is still required even in v3.8+ (only homepage/endpoint/apiKey are optional)
-    let url = "ccswitch://v1/import?resource=provider&app=claude";
-
-    let result = parse_deeplink_url(url);
-    assert!(result.is_err());
-    assert!(result
-        .unwrap_err()
-        .to_string()
-        .contains("Missing 'name' parameter"));
+        let result = parse_deeplink_url(url);
+        assert!(result.is_err(), "{case}");
+        assert!(result.unwrap_err().to_string().contains(error), "{case}");
+    }
 }
 
 /// configUrl 没实现，必须在解析阶段就报错：放行的话，用户点了确认导入才失败
@@ -1144,13 +1138,31 @@ fn test_parse_single_endpoint_backward_compatible() {
 }
 
 #[test]
-fn test_parse_endpoints_with_spaces_trimmed() {
+#[serial_test::serial]
+fn test_import_trims_spaces_around_comma_separated_endpoints() {
+    let _home = TempUserHome::new();
     let url = "ccswitch://v1/import?resource=provider&app=claude&name=Test&endpoint=https%3A%2F%2Fapi1.example.com%20,%20https%3A%2F%2Fapi2.example.com&apiKey=sk-test";
 
-    let request = parse_deeplink_url(url).unwrap();
+    let request = parse_deeplink_url(url).expect("spaces around commas are accepted");
+    let state = AppState::new(Arc::new(Database::memory().expect("create memory db")));
+    let id = super::import_provider_from_deeplink(&state, request).expect("import provider");
 
-    // Validation should pass (spaces are trimmed during validation)
-    assert!(request.endpoint.is_some());
+    let stored = state
+        .db
+        .get_provider_by_id(&id, &AppType::Claude)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        stored.settings_config["env"]["ANTHROPIC_BASE_URL"],
+        "https://api1.example.com"
+    );
+    let extra: Vec<String> =
+        crate::services::ProviderService::get_custom_endpoints(&state, AppType::Claude, &id)
+            .unwrap()
+            .into_iter()
+            .map(|endpoint| endpoint.url)
+            .collect();
+    assert_eq!(extra, vec!["https://api2.example.com"]);
 }
 
 #[test]
