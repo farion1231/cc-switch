@@ -208,6 +208,8 @@ export interface WorkBuddyQuotaSnapshot {
   total: number;
   remaining: number;
   used: number;
+  /** 企业号限额为「不限」：这时 total / remaining 没有意义，只看 used */
+  unlimited?: boolean;
   /** 查询时刻（毫秒） */
   queriedAt: number;
   /** 还有剩余的各个资源包各自什么时候到期，按到期先后排；缺省表示这次没查到明细 */

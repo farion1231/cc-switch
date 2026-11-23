@@ -134,37 +134,31 @@ fn test_parse_grokbuild_provider() {
 }
 
 #[test]
-fn test_parse_invalid_scheme() {
-    let url = "https://v1/import?resource=provider&app=claude&name=Test";
+fn parse_rejects_malformed_deeplinks() {
+    for (case, input, error) in [
+        (
+            "test_parse_invalid_scheme",
+            "https://v1/import?resource=provider&app=claude&name=Test",
+            "Invalid scheme",
+        ),
+        (
+            "test_parse_unsupported_version",
+            "ccswitch://v2/import?resource=provider&app=claude&name=Test",
+            "Unsupported protocol version",
+        ),
+        // Name is still required even in v3.8+ (only homepage/endpoint/apiKey are optional)
+        (
+            "test_parse_missing_required_field",
+            "ccswitch://v1/import?resource=provider&app=claude",
+            "Missing 'name' parameter",
+        ),
+    ] {
+        let url = input;
 
-    let result = parse_deeplink_url(url);
-    assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("Invalid scheme"));
-}
-
-#[test]
-fn test_parse_unsupported_version() {
-    let url = "ccswitch://v2/import?resource=provider&app=claude&name=Test";
-
-    let result = parse_deeplink_url(url);
-    assert!(result.is_err());
-    assert!(result
-        .unwrap_err()
-        .to_string()
-        .contains("Unsupported protocol version"));
-}
-
-#[test]
-fn test_parse_missing_required_field() {
-    // Name is still required even in v3.8+ (only homepage/endpoint/apiKey are optional)
-    let url = "ccswitch://v1/import?resource=provider&app=claude";
-
-    let result = parse_deeplink_url(url);
-    assert!(result.is_err());
-    assert!(result
-        .unwrap_err()
-        .to_string()
-        .contains("Missing 'name' parameter"));
+        let result = parse_deeplink_url(url);
+        assert!(result.is_err(), "{case}");
+        assert!(result.unwrap_err().to_string().contains(error), "{case}");
+    }
 }
 
 /// configUrl 没实现，必须在解析阶段就报错：放行的话，用户点了确认导入才失败
@@ -205,7 +199,7 @@ fn test_parse_mcp_deeplink_accepts_dsh() {
 /// 供应商链接对 Oh My Pi 明确拒绝，而不是落到「Invalid provider app type」。
 #[test]
 fn test_parse_provider_deeplink_accepts_the_pi_family_apps_with_a_model() {
-    for app in ["mcode", "kimi", "dsh", "omp"] {
+    for app in ["mcode", "kimi", "dsh", "omp", "workbuddy"] {
         let request = parse_deeplink_url(&provider_link(app, None))
             .unwrap_or_else(|err| panic!("{app} link should parse: {err}"));
         assert_eq!(request.app.as_deref(), Some(app));
@@ -1144,13 +1138,31 @@ fn test_parse_single_endpoint_backward_compatible() {
 }
 
 #[test]
-fn test_parse_endpoints_with_spaces_trimmed() {
+#[serial_test::serial]
+fn test_import_trims_spaces_around_comma_separated_endpoints() {
+    let _home = TempUserHome::new();
     let url = "ccswitch://v1/import?resource=provider&app=claude&name=Test&endpoint=https%3A%2F%2Fapi1.example.com%20,%20https%3A%2F%2Fapi2.example.com&apiKey=sk-test";
 
-    let request = parse_deeplink_url(url).unwrap();
+    let request = parse_deeplink_url(url).expect("spaces around commas are accepted");
+    let state = AppState::new(Arc::new(Database::memory().expect("create memory db")));
+    let id = super::import_provider_from_deeplink(&state, request).expect("import provider");
 
-    // Validation should pass (spaces are trimmed during validation)
-    assert!(request.endpoint.is_some());
+    let stored = state
+        .db
+        .get_provider_by_id(&id, &AppType::Claude)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        stored.settings_config["env"]["ANTHROPIC_BASE_URL"],
+        "https://api1.example.com"
+    );
+    let extra: Vec<String> =
+        crate::services::ProviderService::get_custom_endpoints(&state, AppType::Claude, &id)
+            .unwrap()
+            .into_iter()
+            .map(|endpoint| endpoint.url)
+            .collect();
+    assert_eq!(extra, vec!["https://api2.example.com"]);
 }
 
 #[test]
@@ -1707,6 +1719,8 @@ fn test_api_format_rejects_unknown_values_and_unsupported_apps() {
         ("hermes", "gemini_native"),
         ("mcode", "gemini_native"),
         ("dsh", "gemini_native"),
+        ("workbuddy", "anthropic"),
+        ("workbuddy", "openai_responses"),
     ] {
         let err = parse_deeplink_url(&provider_link(app, Some(format)))
             .expect_err("unsupported apiFormat must be rejected while parsing");
@@ -1829,6 +1843,12 @@ fn test_links_that_smuggle_commands_env_vars_or_files_into_additive_apps_are_rej
             "endpoint",
             "https://attacker.example/${GITHUB_TOKEN}",
         ),
+        (
+            "workbuddy",
+            "endpoint",
+            "https://attacker.example/${OPENAI_API_KEY}",
+        ),
+        ("workbuddy", "apiKey", "${OPENAI_API_KEY}"),
     ] {
         let err = parse_deeplink_url(&link_with(app, param, value))
             .expect_err("dynamic syntax must be rejected while parsing");
@@ -2534,6 +2554,10 @@ fn test_pi_family_inline_config_fills_each_apps_native_connection_fields() {
             "kimi",
             r#"{"provider":{"base_url":"https://cfg.example.com/v1","api_key":"sk-from-config"}}"#,
         ),
+        (
+            "workbuddy",
+            r#"{"url":"https://cfg.example.com/v1","apiKey":"sk-from-config"}"#,
+        ),
     ] {
         let encoded = BASE64_STANDARD.encode(config);
         let url = format!(
@@ -2547,6 +2571,123 @@ fn test_pi_family_inline_config_fills_each_apps_native_connection_fields() {
             "{app}"
         );
     }
+}
+
+// =============================================================================
+// WorkBuddy：卡片形状同 WorkBuddy 页面的编辑器，写入走页面「添加」同一条路径
+// =============================================================================
+
+#[test]
+fn test_workbuddy_link_builds_the_same_card_as_the_editor() {
+    // 自定义模型只走 Chat Completions：不写 apiFormat 与写 openai_chat 等价，卡片不带协议字段。
+    // 地址照链接原样写，和其他应用一致
+    for format in [None, Some("openai_chat")] {
+        let provider = build_from_link("workbuddy", format);
+        assert_eq!(
+            provider.settings_config,
+            serde_json::json!({
+                "vendor": "Example",
+                "url": "https://api.example.com/v1",
+                "apiKey": "sk-test",
+                "models": [{ "id": "example-model", "supportsToolCall": true }],
+            }),
+            "{format:?}"
+        );
+        // 链接造不出官方登录卡
+        assert!(provider.category.is_none(), "{format:?}");
+    }
+
+    // 编辑器保存时会去掉 Key 首尾的空白
+    let request = parse_deeplink_url(&link_with("workbuddy", "apiKey", " sk-test ")).unwrap();
+    let provider =
+        super::provider::build_provider_from_request(&AppType::WorkBuddy, &request).unwrap();
+    assert_eq!(provider.settings_config["apiKey"], "sk-test");
+}
+
+fn import_workbuddy_link(
+    state: &AppState,
+    enabled: Option<bool>,
+) -> Result<String, crate::error::AppError> {
+    let mut request = parse_deeplink_url(&provider_link("workbuddy", None)).expect("parse link");
+    request.enabled = enabled;
+    super::import_provider_from_deeplink(state, request)
+}
+
+fn read_workbuddy_models_json() -> serde_json::Value {
+    let text = std::fs::read_to_string(crate::workbuddy_config::config_path()).unwrap();
+    serde_json::from_str(&text).unwrap()
+}
+
+#[test]
+#[serial_test::serial]
+fn test_workbuddy_link_is_added_to_models_json() {
+    let home = TempUserHome::new();
+    let _data = EnvVars::new().set("WORKBUDDY_CONFIG_DIR", home.path().join("workbuddy"));
+    let state = AppState::new(Arc::new(Database::memory().expect("create memory db")));
+
+    let id = import_workbuddy_link(&state, None).expect("import WorkBuddy provider");
+
+    assert!(state
+        .db
+        .get_provider_by_id(&id, &AppType::WorkBuddy)
+        .unwrap()
+        .is_some());
+    assert_eq!(
+        read_workbuddy_models_json()["models"],
+        serde_json::json!([{
+            "id": "example-model",
+            "name": "Example",
+            "vendor": "Example",
+            "url": "https://api.example.com/v1",
+            "apiKey": "sk-test",
+            "supportsToolCall": true,
+            "ccSwitchProviderId": id,
+        }])
+    );
+}
+
+#[test]
+#[serial_test::serial]
+fn test_workbuddy_link_with_the_toggle_off_is_saved_without_touching_models_json() {
+    let home = TempUserHome::new();
+    let _data = EnvVars::new().set("WORKBUDDY_CONFIG_DIR", home.path().join("workbuddy"));
+    let state = AppState::new(Arc::new(Database::memory().expect("create memory db")));
+
+    let id = import_workbuddy_link(&state, Some(false)).expect("import WorkBuddy provider");
+
+    assert!(state
+        .db
+        .get_provider_by_id(&id, &AppType::WorkBuddy)
+        .unwrap()
+        .is_some());
+    assert!(!crate::workbuddy_config::config_path().exists());
+}
+
+/// 同一个模型 id 只能属于一张卡：另一张卡的链接带了同一个模型要报错，且不留下卡片、不改 models.json
+#[test]
+#[serial_test::serial]
+fn test_workbuddy_link_refuses_a_model_another_card_owns() {
+    let home = TempUserHome::new();
+    let _data = EnvVars::new().set("WORKBUDDY_CONFIG_DIR", home.path().join("workbuddy"));
+    let state = AppState::new(Arc::new(Database::memory().expect("create memory db")));
+    import_workbuddy_link(&state, None).expect("first import");
+    let before = read_workbuddy_models_json();
+
+    let other_card = provider_link("workbuddy", None).replace("name=Example", "name=Other");
+    let request = parse_deeplink_url(&other_card).expect("parse link");
+    let err =
+        super::import_provider_from_deeplink(&state, request).expect_err("model id already taken");
+
+    assert!(err.to_string().contains("example-model"), "{err}");
+    assert_eq!(read_workbuddy_models_json(), before);
+    assert_eq!(
+        state
+            .db
+            .get_all_providers(&AppType::WorkBuddy)
+            .unwrap()
+            .len(),
+        1
+    );
 }
 
 #[test]

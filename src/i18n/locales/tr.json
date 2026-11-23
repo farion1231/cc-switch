@@ -60,7 +60,9 @@
   "apiKeyInput": {
     "placeholder": "API Anahtarını Girin",
     "show": "API Anahtarını Göster",
-    "hide": "API Anahtarını Gizle"
+    "hide": "API Anahtarını Gizle",
+    "copied": "API anahtarı kopyalandı",
+    "copyFailed": "API anahtarı kopyalanamadı"
   },
   "jsonEditor": {
     "mustBeObject": "Yapılandırma bir dizi veya başka türde değil, JSON nesnesi olmalıdır",
@@ -202,6 +204,8 @@
       "extraArgsPlaceholder": "örn. --debug --append-system-prompt \"Kısa yanıt ver\"",
       "extraArgsHint": "Başlatma komutunun sonuna eklenir ve yalnızca bu terminal için geçerlidir. Boşlukla ayırın; boşluk içeren değerleri tırnak içine alın.",
       "agySwitchTitle": "Bu işlem agy'nin oturum açma hesabını değiştirir",
+      "agyBindingMissing": "Bu karta bağlı Antigravity hesabı bu bilgisayarda yok. Hesabı Hesaplar bölümünden ekleyin veya bu başlatma için agy'nin mevcut oturumunu kullanın.",
+      "agyUseCurrentLogin": "Bu başlatma için agy'nin mevcut oturumunu kullan",
       "agySwitchBody": "Terminal açılmadan önce agy'nin oturumu {{account}} hesabına geçirilir; bundan sonra başlatılan agy oturumları bu hesabı kullanır.",
       "agySwitchRunning": "agy çalışıyor: açık agy oturumları önceki hesabı kullanmaya devam eder ve hesabı yeniden kaydedebilir. Mümkünse önce agy oturumlarını kapatın.",
       "isolationBodyCopilot": "Bu terminaldeki copilot, yalnızca bu oturum için --model ile \"{{name}}\" sağlayıcısının ilk modeliyle başlar. Uç nokta ve anahtar Copilot'un providers.json dosyasından okunur; diğer terminaller de /model ile seçebilir."
@@ -595,6 +599,9 @@
       "safetyBackupId": "Güvenlik Yedekleme Kimliği",
       "intervalLabel": "Otomatik Yedekleme Aralığı",
       "retainLabel": "Yedekleme Saklama",
+      "maxTotalLabel": "Yedekleme Boyut Sınırı",
+      "maxTotalUnlimited": "Sınırsız",
+      "maxTotalHint": "Varsayılan olarak kapalıdır. Ayarlandığında, yedekleme klasörü bu boyutu aştığında en eski yedeklerden başlanarak silinir. En yeni yedek ve geri yüklemenin kullandığı yedek her zaman korunur; bu yüzden tek bir yedek sınırdan büyükse klasör sınırın üzerinde kalabilir. Bir sonraki yedeklemede veya günlük bakımda uygulanır.",
       "intervalDisabled": "Devre dışı",
       "intervalHours": "{{hours}} saat",
       "intervalDays": "{{days}} gün",
@@ -1383,6 +1390,7 @@
     "contentSearchToggle": "Mesaj metninde ara",
     "contentSearchToggleFailed": "Mesaj metni arama ayarı değiştirilemedi: {{error}}",
     "contentIndexing": "Mesaj metni dizinleniyor ({{processed}}/{{total}}). Metin eşleşmeleri eksik olabilir",
+    "contentSearchFailed": "Metin araması başarısız oldu; şu anda yalnızca başlık, klasör ve ilk/son mesajlarda arama yapılabiliyor",
     "contentHitPrefix": "Metin: ",
     "contentHitMore": " ({{count}} mesaj eşleşiyor)",
     "moreContentHits": "Daha fazla metin eşleşmesi",
@@ -2036,6 +2044,7 @@
     "selectAccount": "Hesap seçin",
     "selectAccountPlaceholder": "Bir xAI hesabı seçin",
     "useDefaultAccount": "Varsayılan hesabı kullan",
+    "account": "xAI hesabı",
     "accounts": "xAI hesapları",
     "defaultAccount": "Varsayılan",
     "expired": "Kimlik bilgilerinin süresi doldu",
@@ -2465,8 +2474,8 @@
     "input": "Girdi",
     "output": "Çıktı",
     "cacheWrite": "Yaratılış",
-    "cacheWriteNotReported": "OpenAI protokolü önbellek oluşturmayı ayırt etmez; yalnızca önbellek isabetleri raporlanır",
-    "cacheWritePartial": "Bazı protokoller (örneğin OpenAI) önbellek oluşturulmasını bildirmez; değer eksik olabilir",
+    "cacheWriteNotReported": "Gemini ve Grok Build önbellek oluşturmayı raporlamaz; yalnızca önbellek isabetleri raporlanır",
+    "cacheWritePartial": "Bazı protokoller (örneğin Gemini) önbellek oluşturulmasını bildirmez; değer eksik olabilir",
     "cacheRead": "Vur",
     "baseCost": "Baz",
     "costMultiplier": "Maliyet Çarpanı",
@@ -2607,7 +2616,7 @@
       "label": "Metrikler",
       "more": "Daha fazla metrik",
       "realTotalHelpTitle": "Toplam tokenlar nasıl sayılır?",
-      "realTotalHelp": "Yeni giriş + çıkış + önbellek yazma + önbellek isabetleri. Yeni giriş önbelleği hariç tutar; bazı protokoller (OpenAI gibi) önbellek yazma işlemlerini raporlamaz, dolayısıyla bu kısım düşük olabilir.",
+      "realTotalHelp": "Yeni giriş + çıkış + önbellek yazma + önbellek isabetleri. Yeni giriş önbelleği hariç tutar; bazı protokoller (Gemini gibi) önbellek yazma işlemlerini raporlamaz, dolayısıyla bu kısım düşük olabilir.",
       "hitRateHelpTitle": "Önbellek isabet oranı nasıl hesaplanır?",
       "hitRateHelp": "Önbellek isabetleri ÷ (yeni girdi + önbellek yazmaları + önbellek isabetleri)."
     },
@@ -3446,6 +3455,7 @@
       "skillDirNotFound": "Beceri dizini bulunamadı: {{path}}",
       "directoryConflict": "'{{directory}}' beceri dizini zaten {{existing_repo}} tarafından kullanılıyor, {{new_repo}}'den yüklenemiyor",
       "emptyArchive": "İndirilen arşiv boş",
+      "archiveInvalid": "İndirilen dosya bir ZIP arşivi değil: bu site bir GitHub / GitLab / Gitea deposu olmayabilir ve henüz desteklenmiyor",
       "invalidRepoRef": "Geçersiz depo referansı: {{owner}}/{{name}}",
       "archiveTooLarge": "Arşiv, {{limit_mb}} MB çıkarma sınırını aşıyor; iptal edildi",
       "archiveDownloadTooLarge": "Depo arşivi {{limit_mb}} MB sınırını aşıyor; indirme durduruldu.",
@@ -3674,7 +3684,10 @@
       "command": "Komut",
       "args": "Argümanlar",
       "env": "Zarf",
-      "url": "URL'si"
+      "url": "URL'si",
+      "type": "Tür",
+      "cwd": "Çalışma Dizini",
+      "headers": "Başlıklar"
     },
     "prompt": {
       "title": "Sistem İstemini İçe Aktar",
@@ -3708,7 +3721,8 @@
     "risk": {
       "envHijack": "Bu yapılandırma, yükleme kodunun işlenme biçimini değiştiren ortam değişkenlerini ayarlar (örneğin, kitaplıkları enjekte etme veya CA sertifikalarını değiştirme). Yalnızca güvendiğiniz bir kaynaktan içe aktarın.",
       "privateEndpoint": "Bu adres localhost'a veya özel bir ağa işaret eder. Kendi yerel hizmetiniz olmadığı sürece ithalat yapmayın.",
-      "shellCommand": "Bu yapılandırma, bir kabuk aracılığıyla tam bir komut satırı çalıştırır; gerçekte yürütülen şey argümanlardadır. Her satırı inceleyin."
+      "shellCommand": "Bu yapılandırma, bir kabuk aracılığıyla tam bir komut satırı çalıştırır; gerçekte yürütülen şey argümanlardadır. Her satırı inceleyin.",
+      "mcpDangerousField": "Bu MCP yapılandırması, ana makine ortam değişkenlerini okuyabilen (ör. bearer_token_env_var, env_http_headers, env_vars), yardımcı komutlar çalıştırabilen (http_headers_helper) veya çalışma dizinini değiştirebilen (cwd) yüksek riskli alanlar içeriyor. Yalnızca tamamen güvendiğiniz bir kaynaktan içe aktarın."
     }
   },
   "iconPicker": {
@@ -4978,7 +4992,7 @@
   "pluginsPage": {
     "title": "Eklentiler",
     "helpTitle": "Eklentiler",
-    "help": "Claude Code, Codex, Grok Build, MiniMax Code, OpenClaw ve Pi eklentilerini yükleyin, etkinleştirin ve kaldırın. CC Switch her uygulamanın kendi CLI'ını çalıştırır; sonuç terminalde eklenti komutunu kullanmakla aynıdır. Pi'de eklentiler Pi paketleridir ve katalog npm'den gelir.",
+    "help": "Claude Code, Codex, Grok Build, MiniMax Code, OpenClaw, Pi ve Antigravity CLI eklentilerini yükleyin, etkinleştirin ve kaldırın. CC Switch her uygulamanın kendi CLI'ını çalıştırır; sonuç terminalde eklenti komutunu kullanmakla aynıdır. Pi'de eklentiler Pi paketleridir ve katalog npm'den gelir.",
     "appAria": "Uygulama",
     "viewAria": "Eklenti görünümleri",
     "viewInstalled": "Yüklü",
@@ -5038,9 +5052,11 @@
     "confirmRemoveMarketBody": "{{app}} bu pazar yerindeki eklentileri artık listelemez ve buradan yüklediğiniz eklentileri de kaldırabilir. Daha sonra yeniden ekleyebilirsiniz.",
     "toast": {
       "installed": "{{name}} yüklendi",
+      "installedNeedsConfig": "Devre dışı olarak yüklendi. MCP sunucularını yapılandırıp etkinleştirmek için {{app}} içinde /plugin komutunu çalıştırın.",
       "installFailed": "{{name}} yüklenemedi",
       "installNeedsTerminal": "Bu eklenti kurulum sırasında pazar yerinin bildirdiği bir komutu bilgisayarınızda çalıştırır ve CC Switch bunu sizin yerinize onaylamaz. Bir terminalde {{command}} komutunu çalıştırıp orada onaylayın, ardından geri dönüp yenileyin.",
       "authRequired": "{{app}} önce oturum açmanızı istiyor. Bir terminalde {{command}} komutunu çalıştırıp oturum açın, ardından geri dönüp tekrar deneyin.",
+      "pluginInUse": "Bu eklenti şu anda başka bir {{app}} / {{cli}} işlemi tarafından kullanılıyor (örneğin çalışan bir oturum, Hub veya arka plan hizmeti). İlgili işlemi kapatıp yeniden deneyin.",
       "uninstalled": "{{name}} kaldırıldı",
       "uninstallFailed": "{{name}} kaldırılamadı",
       "enabled": "{{name}} etkinleştirildi",
@@ -5049,6 +5065,7 @@
       "updated": "{{name}} güncellendi",
       "upToDate": "{{name}} zaten güncel",
       "updateFailed": "{{name}} güncellenemedi",
+      "updateNeedsReinstall": "Bu eklenti Antigravity'nin eski sürümlerinin kullandığı bir klasörde olduğu için CC Switch onu güncelleyemez. En son sürümü almak için kaldırın, ardından Keşfet'ten yeniden yükleyin.",
       "refreshed": "Pazar yerleri yenilendi",
       "refreshFailed": "Pazar yerleri yenilenemedi",
       "marketAdded": "{{source}} pazar yeri eklendi",
@@ -5377,6 +5394,8 @@
       "credits": "Kredi",
       "leftOf": "{{remaining}} / {{total}} kaldı",
       "usedOf": "{{used}} / {{total}} kullanıldı",
+      "unlimited": "Sınırsız",
+      "unlimitedUsed": "Sınırsız, {{used}} kullanıldı",
       "usedUp": "Tükendi ({{total}} üzerinden)",
       "detail": "{{total}} kredinin {{remaining}} kadarı kaldı, {{used}} kullanıldı",
       "staleNotRunning": "WorkBuddy çalışmıyor; son sonuç gösteriliyor",

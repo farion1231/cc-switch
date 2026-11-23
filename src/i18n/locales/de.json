@@ -60,7 +60,9 @@
   "apiKeyInput": {
     "placeholder": "API-Schlüssel eingeben",
     "show": "API-Schlüssel anzeigen",
-    "hide": "API-Schlüssel ausblenden"
+    "hide": "API-Schlüssel ausblenden",
+    "copied": "API-Schlüssel kopiert",
+    "copyFailed": "API-Schlüssel konnte nicht kopiert werden"
   },
   "jsonEditor": {
     "mustBeObject": "Die Konfiguration muss ein JSON-Objekt sein, kein Array oder anderer Typ",
@@ -202,6 +204,8 @@
       "extraArgsPlaceholder": "z. B. --debug --append-system-prompt \"Be brief\"",
       "extraArgsHint": "Wird nur für dieses Terminal hinter den Startbefehl gesetzt. Mit Leerzeichen trennen; Werte mit Leerzeichen in Anführungszeichen setzen.",
       "agySwitchTitle": "Dadurch wird die Anmeldung von agy gewechselt",
+      "agyBindingMissing": "Das mit dieser Karte verknüpfte Antigravity-Konto fehlt auf diesem Computer. Füge es unter „Konten“ hinzu oder verwende für diesen Start die aktuelle agy-Anmeldung.",
+      "agyUseCurrentLogin": "Aktuelle agy-Anmeldung für diesen Start verwenden",
       "agySwitchBody": "Vor dem Öffnen wechselt die Anmeldung von agy zu {{account}}; danach gestartete agy-Sitzungen verwenden dieses Konto.",
       "agySwitchRunning": "agy läuft: Geöffnete agy-Sitzungen behalten das vorherige Konto und schreiben es möglicherweise zurück. Beenden Sie sie nach Möglichkeit zuerst.",
       "isolationBodyCopilot": "copilot startet in diesem Terminal mit --model auf das erste Modell von „{{name}}“, nur für diese Sitzung. Endpunkt und Schlüssel stammen aus der providers.json von Copilot, daher können andere Terminals es ebenfalls mit /model auswählen."
@@ -595,6 +599,9 @@
       "safetyBackupId": "ID der Sicherheitskopie",
       "intervalLabel": "Intervall für automatische Sicherung",
       "retainLabel": "Aufbewahrung von Sicherungen",
+      "maxTotalLabel": "Größenlimit für Sicherungen",
+      "maxTotalUnlimited": "Kein Limit",
+      "maxTotalHint": "Standardmäßig deaktiviert. Wenn ein Limit gesetzt ist, werden die ältesten Sicherungen gelöscht, sobald der Sicherungsordner diese Größe überschreitet. Die neueste Sicherung und jede Sicherung, die eine Wiederherstellung verwendet, bleiben immer erhalten. Daher kann der Ordner über dem Limit bleiben, wenn eine einzelne Sicherung größer ist. Gilt ab der nächsten Sicherung oder der täglichen Wartung.",
       "intervalDisabled": "Deaktiviert",
       "intervalHours": "{{hours}} Stunden",
       "intervalDays": "{{days}} Tage",
@@ -1260,6 +1267,8 @@
       "credits": "Credits",
       "leftOf": "{{remaining}} / {{total}} übrig",
       "usedOf": "{{used}} / {{total}} verbraucht",
+      "unlimited": "Unbegrenzt",
+      "unlimitedUsed": "Unbegrenzt, {{used}} verbraucht",
       "usedUp": "Aufgebraucht (von {{total}})",
       "detail": "{{remaining}} von {{total}} Credits übrig, {{used}} verbraucht",
       "staleNotRunning": "WorkBuddy läuft nicht; letztes Ergebnis wird angezeigt",
@@ -1452,6 +1461,7 @@
     "contentSearchToggle": "Nachrichtentext durchsuchen",
     "contentSearchToggleFailed": "Die Einstellung für die Nachrichtentextsuche konnte nicht geändert werden: {{error}}",
     "contentIndexing": "Nachrichtentext wird indiziert ({{processed}}/{{total}}). Texttreffer sind möglicherweise unvollständig",
+    "contentSearchFailed": "Textsuche fehlgeschlagen; derzeit kann nur in Titeln, Ordnern und der ersten/letzten Nachricht gesucht werden",
     "contentHitPrefix": "Text: ",
     "contentHitMore": " ({{count}} Nachrichten passen)",
     "moreContentHits": "Weitere Texttreffer",
@@ -2105,6 +2115,7 @@
     "selectAccount": "Konto auswählen",
     "selectAccountPlaceholder": "xAI-Konto auswählen",
     "useDefaultAccount": "Standardkonto verwenden",
+    "account": "xAI-Konto",
     "accounts": "xAI-Konten",
     "defaultAccount": "Standard",
     "expired": "Anmeldedaten abgelaufen",
@@ -2534,8 +2545,8 @@
     "input": "Eingabe",
     "output": "Ausgabe",
     "cacheWrite": "Erstellung",
-    "cacheWriteNotReported": "Das OpenAI-Protokoll unterscheidet die Cache-Erstellung nicht; nur Cache-Treffer werden gemeldet",
-    "cacheWritePartial": "Einige Protokolle (z. B. OpenAI) melden die Cache-Erstellung nicht; der Wert kann unvollständig sein",
+    "cacheWriteNotReported": "Gemini und Grok Build melden die Cache-Erstellung nicht; nur Cache-Treffer werden gemeldet",
+    "cacheWritePartial": "Einige Protokolle (z. B. Gemini) melden die Cache-Erstellung nicht; der Wert kann unvollständig sein",
     "cacheRead": "Treffer",
     "baseCost": "Basis",
     "costMultiplier": "Kostenmultiplikator",
@@ -2676,7 +2687,7 @@
       "label": "Kennzahlen",
       "more": "Weitere Kennzahlen",
       "realTotalHelpTitle": "Wie die Token-Gesamtzahl berechnet wird",
-      "realTotalHelp": "Neue Eingabe + Ausgabe + Cache-Schreibvorgänge + Cache-Treffer. Die neue Eingabe schließt den Cache aus; einige Protokolle (etwa OpenAI) melden keine Cache-Schreibvorgänge, daher kann dieser Anteil zu niedrig ausfallen.",
+      "realTotalHelp": "Neue Eingabe + Ausgabe + Cache-Schreibvorgänge + Cache-Treffer. Die neue Eingabe schließt den Cache aus; einige Protokolle (etwa Gemini) melden keine Cache-Schreibvorgänge, daher kann dieser Anteil zu niedrig ausfallen.",
       "hitRateHelpTitle": "Wie die Cache-Trefferquote berechnet wird",
       "hitRateHelp": "Cache-Treffer ÷ (neue Eingabe + Cache-Schreibvorgänge + Cache-Treffer)."
     },
@@ -3515,6 +3526,7 @@
       "skillDirNotFound": "Skill-Verzeichnis nicht gefunden: {{path}}",
       "directoryConflict": "Das Skill-Verzeichnis „{{directory}}“ ist bereits von {{existing_repo}} belegt und kann nicht aus {{new_repo}} installiert werden",
       "emptyArchive": "Das heruntergeladene Archiv ist leer",
+      "archiveInvalid": "Der Download ist kein ZIP-Archiv: Diese Seite ist möglicherweise kein GitHub-/GitLab-/Gitea-Repository und wird noch nicht unterstützt",
       "invalidRepoRef": "Ungültiger Repository-Verweis: {{owner}}/{{name}}",
       "archiveTooLarge": "Das Archiv überschreitet das Entpacklimit von {{limit_mb}} MB; abgebrochen",
       "archiveDownloadTooLarge": "Der Download des Repository-Archivs überschreitet das Limit von {{limit_mb}} MB; abgebrochen",
@@ -3743,7 +3755,10 @@
       "command": "Befehl",
       "args": "Argumente",
       "env": "Umgebung",
-      "url": "URL"
+      "url": "URL",
+      "type": "Typ",
+      "cwd": "Arbeitsverzeichnis",
+      "headers": "Header"
     },
     "prompt": {
       "title": "System-Prompt importieren",
@@ -3777,7 +3792,8 @@
     "risk": {
       "envHijack": "Diese Konfiguration setzt Umgebungsvariablen, die verändern, wie Prozesse Code laden (z. B. Bibliotheken einschleusen oder CA-Zertifikate ersetzen). Importieren Sie nur aus einer Quelle, der Sie vertrauen.",
       "privateEndpoint": "Diese Adresse zeigt auf localhost oder ein privates Netzwerk. Nur importieren, wenn es Ihr eigener lokaler Dienst ist.",
-      "shellCommand": "Diese Konfiguration führt eine vollständige Befehlszeile über eine Shell aus – was tatsächlich läuft, steht in den Argumenten. Prüfen Sie jede Zeile."
+      "shellCommand": "Diese Konfiguration führt eine vollständige Befehlszeile über eine Shell aus – was tatsächlich läuft, steht in den Argumenten. Prüfen Sie jede Zeile.",
+      "mcpDangerousField": "Diese MCP-Konfiguration enthält risikoreiche Felder, die Host-Umgebungsvariablen auslesen (z. B. bearer_token_env_var, env_http_headers, env_vars), Hilfsbefehle ausführen (http_headers_helper) oder das Arbeitsverzeichnis ändern (cwd) können. Nur aus vollständig vertrauenswürdigen Quellen importieren."
     }
   },
   "iconPicker": {
@@ -5047,7 +5063,7 @@
   "pluginsPage": {
     "title": "Plugins",
     "helpTitle": "Plugins",
-    "help": "Plugins für Claude Code, Codex, Grok Build, MiniMax Code, OpenClaw und Pi installieren, aktivieren und entfernen. CC Switch führt die jeweilige CLI der App aus, das Ergebnis ist also dasselbe wie beim Plugin-Befehl im Terminal. Bei Pi sind Plugins Pi-Pakete, und der Katalog stammt von npm.",
+    "help": "Plugins für Claude Code, Codex, Grok Build, MiniMax Code, OpenClaw, Pi und Antigravity CLI installieren, aktivieren und entfernen. CC Switch führt die jeweilige CLI der App aus, das Ergebnis ist also dasselbe wie beim Plugin-Befehl im Terminal. Bei Pi sind Plugins Pi-Pakete, und der Katalog stammt von npm.",
     "appAria": "App",
     "viewAria": "Plugin-Ansichten",
     "viewInstalled": "Installiert",
@@ -5107,9 +5123,11 @@
     "confirmRemoveMarketBody": "{{app}} listet keine Plugins aus diesem Marketplace mehr auf und deinstalliert möglicherweise die daraus installierten Plugins. Sie können ihn später erneut hinzufügen.",
     "toast": {
       "installed": "{{name}} installiert",
+      "installedNeedsConfig": "Deaktiviert installiert. Führen Sie in {{app}} /plugin aus, um die MCP-Server zu konfigurieren und es zu aktivieren.",
       "installFailed": "{{name}} konnte nicht installiert werden",
       "installNeedsTerminal": "Dieses Plugin führt bei der Installation einen vom Marketplace deklarierten Befehl auf Ihrem Rechner aus, und CC Switch bestätigt das nicht für Sie. Führen Sie {{command}} in einem Terminal aus, bestätigen Sie dort und aktualisieren Sie dann hier.",
       "authRequired": "{{app}} erfordert zuerst eine Anmeldung. Führen Sie {{command}} in einem Terminal aus und versuchen Sie es dann erneut.",
+      "pluginInUse": "Dieses Plugin wird derzeit von einem anderen {{app}}- / {{cli}}-Prozess verwendet (z. B. einer laufenden Sitzung, dem Hub oder einem Hintergrunddienst). Schließen Sie ihn und versuchen Sie es erneut.",
       "uninstalled": "{{name}} deinstalliert",
       "uninstallFailed": "{{name}} konnte nicht deinstalliert werden",
       "enabled": "{{name}} aktiviert",
@@ -5118,6 +5136,7 @@
       "updated": "{{name}} aktualisiert",
       "upToDate": "{{name}} ist bereits auf dem neuesten Stand",
       "updateFailed": "{{name}} konnte nicht aktualisiert werden",
+      "updateNeedsReinstall": "Dieses Plugin liegt in einem Ordner älterer Antigravity-Versionen, daher kann CC Switch es nicht aktualisieren. Deinstallieren Sie es und installieren Sie es unter „Entdecken“ erneut, um die neueste Version zu erhalten.",
       "refreshed": "Marketplaces aktualisiert",
       "refreshFailed": "Marketplaces konnten nicht aktualisiert werden",
       "marketAdded": "Marketplace {{source}} hinzugefügt",

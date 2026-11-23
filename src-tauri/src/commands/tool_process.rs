@@ -261,6 +261,19 @@ pub(crate) fn run_detected_tool_command_with_timeout(
     }
 }
 
+/// 只确认能找到工具的默认入口（规则同 [`run_detected_tool_command_with_timeout`]），不运行它。
+/// 配置在 WSL 里的工具这里不探测、直接放行，运行时由 WSL 里的 `command -v` 判断。
+pub(crate) fn locate_detected_tool(tool: &str, timeout: std::time::Duration) -> Result<(), String> {
+    if known_tool(tool).is_none() {
+        return Err(format!("Unsupported tool: {tool}"));
+    }
+    #[cfg(target_os = "windows")]
+    if wsl_distro_for_tool(tool).is_some() {
+        return Ok(());
+    }
+    locate_default_tool(tool, CommandDeadline::from_timeout(Some(timeout))).map(|_| ())
+}
+
 /// 构造运行本机工具默认入口的命令（定位规则和 PATH 补全同 [`run_detected_tool_command_with_timeout`]），
 /// 不设 stdio、不等待：给要自己管子进程的调用方用（比如长时间运行、要往 stdin 写东西的登录）。
 /// `timeout` 只约束定位工具这一步。工具配置在 WSL 里时报错。

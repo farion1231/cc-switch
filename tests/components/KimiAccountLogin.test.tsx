@@ -138,6 +138,7 @@ describe("Kimi official account login", () => {
     fireEvent.click(menuItem("切换 Kimi 到这个账号"));
     await flush();
     expect(kimiOAuthApi.useAccount).toHaveBeenCalledWith(second.id);
+    await act(() => vi.advanceTimersByTimeAsync(220));
     await openMenu(second.name);
     fireEvent.click(menuItem("重新登录"));
     await flush();
@@ -244,9 +245,7 @@ describe("Kimi official account login", () => {
       resolvePoll({ authenticated: true, interval: 0, ended: null });
     });
     expect(screen.queryByText(device.userCode)).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "添加账号" }),
-    ).toBeEnabled();
+    expect(screen.getByRole("button", { name: "添加账号" })).toBeEnabled();
   });
 
   it("cancels a device flow received after the card is unmounted", async () => {

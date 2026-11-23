@@ -1445,7 +1445,7 @@ pub(super) enum UpdateCommand {
 }
 
 pub(super) fn resolve_update_command(tool: &str, installs: &[ToolInstallation]) -> UpdateCommand {
-    // The Desktop app updates its bundled CLI; npm would install a different copy.
+    // OpenCode Desktop 自己更新它带的命令行；npm 升级只会另装一份。
     if tool == "opencode" && default_install(installs).is_some_and(|inst| inst.source == "desktop")
     {
         return UpdateCommand::Unmanaged;
@@ -1603,19 +1603,22 @@ pub(super) fn is_conflicting(installs: &[ToolInstallation]) -> bool {
 mod tests {
     use super::*;
 
-    #[test]
-    fn opencode_desktop_cli_is_not_updated_separately() {
-        let path = Path::new("desktop/opencode-cli.exe");
-        let desktop = ToolInstallation {
-            path: path.display().to_string(),
+    fn opencode_install(path: &str, source: &str, is_path_default: bool) -> ToolInstallation {
+        ToolInstallation {
+            path: path.to_string(),
             version: Some("1.0.0".to_string()),
             runnable: true,
             error: None,
             exited_with_error: false,
-            source: "desktop".to_string(),
-            is_path_default: true,
-            real: path.to_path_buf(),
-        };
+            source: source.to_string(),
+            is_path_default,
+            real: Path::new(path).to_path_buf(),
+        }
+    }
+
+    #[test]
+    fn opencode_desktop_cli_is_not_updated_separately() {
+        let desktop = opencode_install("desktop/opencode-cli.exe", "desktop", true);
         assert_eq!(
             resolve_update_command("opencode", &[desktop]),
             UpdateCommand::Unmanaged
@@ -1624,18 +1627,9 @@ mod tests {
 
     #[test]
     fn standalone_default_still_upgrades_when_desktop_is_also_installed() {
-        let installation = |path: &str, source: &str, default: bool| ToolInstallation {
-            path: path.to_string(),
-            version: Some("1.0.0".to_string()),
-            runnable: true,
-            error: None,
-            exited_with_error: false,
-            source: source.to_string(),
-            is_path_default: default,
-            real: Path::new(path).to_path_buf(),
-        };
-        let desktop = installation("desktop/opencode-cli.exe", "desktop", false);
-        let standalone = installation("/tmp/node_modules/opencode-ai/bin/opencode", "system", true);
+        let desktop = opencode_install("desktop/opencode-cli.exe", "desktop", false);
+        let standalone =
+            opencode_install("/tmp/node_modules/opencode-ai/bin/opencode", "system", true);
         assert_ne!(
             resolve_update_command("opencode", &[desktop, standalone]),
             UpdateCommand::Unmanaged

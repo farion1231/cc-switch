@@ -6,6 +6,7 @@
 //! `{token{access_token,token_type,refresh_token,expiry,expires_in},auth_method,id_token}`。
 //! Windows 上 go-keyring 存在「凭据管理器」里：普通凭据，目标名 `gemini:antigravity`，
 //! 用户名 `antigravity`，值是裸 JSON 的 UTF-8 字节，最长 2560 字节（系统上限，go-keyring 也这么拦）。
+//! Linux 用 D-Bus Secret Service，条目按 `service` 和 `username` 匹配，值是裸 JSON。
 //! agy 1.5 起自己写入时不再带 `id_token`，改成 `id_token_email`（可能带 `writer_id`，1.5.2 有、1.5.3 已去掉），
 //! 认账号的办法见 `AgyAccountManager::read_live`。旧格式 agy 1.5 照样能读（切过去的号 agy
 //! 续期后会改写成新格式），这里不转换，原样读写。
@@ -18,12 +19,19 @@ use serde_json::Value;
 
 use crate::error::AppError;
 
+#[cfg(target_os = "linux")]
+mod linux;
+
 const GO_KEYRING_PREFIX: &str = "go-keyring-base64:";
 
 /// 钥匙串里那一条的读写。测试换成内存实现，别碰真实钥匙串。
 pub trait AgyLoginStore: Send + Sync {
     /// 当前登录的原始值；没登录（条目不存在）时为 `None`。
     fn read(&self) -> Result<Option<String>, AppError>;
+    /// 用户主动切号时，允许系统提示解锁钥匙串。
+    fn read_for_switch(&self) -> Result<Option<String>, AppError> {
+        self.read()
+    }
     /// 整条覆盖写入（条目不存在时新建）。
     fn write(&self, value: &str) -> Result<(), AppError>;
 }
@@ -53,7 +61,9 @@ pub fn decode(raw: &str) -> Result<Value, AppError> {
 
 /// 编码成本平台上 go-keyring 写入的格式。
 pub fn encode(credential: &Value) -> Result<String, AppError> {
-    if cfg!(windows) {
+    if cfg!(target_os = "linux") {
+        serde_json::to_string(credential).map_err(|source| AppError::JsonSerialize { source })
+    } else if cfg!(windows) {
         encode_bare(credential)
     } else {
         encode_base64(credential)
@@ -103,8 +113,11 @@ fn encode_bare(credential: &Value) -> Result<String, AppError> {
     ))
 }
 
-/// 本机钥匙串：macOS 的钥匙串、Windows 的凭据管理器；其他平台读写都报不支持。
-#[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
+/// 本机钥匙串：macOS Keychain、Windows Credential Manager 或 Linux Secret Service。
+#[cfg_attr(
+    not(any(target_os = "macos", windows, target_os = "linux")),
+    allow(dead_code)
+)]
 pub struct SystemKeychain {
     service: &'static str,
     account: &'static str,
@@ -120,14 +133,14 @@ impl SystemKeychain {
     }
 
     /// 真机测试用的另一条，别动 agy 那条。
-    #[cfg(test)]
+    #[cfg(all(test, any(target_os = "macos", windows)))]
     pub fn named(service: &'static str, account: &'static str) -> Self {
         Self { service, account }
     }
 }
 
 pub fn supported() -> bool {
-    cfg!(any(target_os = "macos", windows))
+    cfg!(any(target_os = "macos", windows, target_os = "linux"))
 }
 
 #[cfg(target_os = "macos")]
@@ -327,10 +340,19 @@ impl AgyLoginStore for SystemKeychain {
         {
             wincred::read(self.service, self.account)
         }
-        #[cfg(not(any(target_os = "macos", windows)))]
+        #[cfg(target_os = "linux")]
+        {
+            linux::read(self.service, self.account, false)
+        }
+        #[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
         {
             Err(unsupported_error())
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn read_for_switch(&self) -> Result<Option<String>, AppError> {
+        linux::read(self.service, self.account, true)
     }
 
     fn write(&self, value: &str) -> Result<(), AppError> {
@@ -342,7 +364,11 @@ impl AgyLoginStore for SystemKeychain {
         {
             wincred::write(self.service, self.account, value)
         }
-        #[cfg(not(any(target_os = "macos", windows)))]
+        #[cfg(target_os = "linux")]
+        {
+            linux::write(self.service, self.account, value)
+        }
+        #[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
         {
             let _ = value;
             Err(unsupported_error())
@@ -353,8 +379,8 @@ impl AgyLoginStore for SystemKeychain {
 pub fn unsupported_error() -> AppError {
     AppError::localized(
         "agy.account.unsupported_platform",
-        "切换 Antigravity 账号目前只支持 macOS 和 Windows",
-        "Switching Antigravity accounts is only supported on macOS and Windows for now",
+        "切换 Antigravity 账号目前只支持 macOS、Windows 和 Linux",
+        "Switching Antigravity accounts is only supported on macOS, Windows, and Linux",
     )
 }
 
@@ -403,5 +429,13 @@ mod tests {
         assert!(decode("go-keyring-base64:!!!").is_err());
         assert!(decode("[1,2]").is_err());
         assert!(decode("not json").is_err());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_writes_bare_json_without_the_windows_size_limit() {
+        let credential = json!({"token": {"refresh_token": "x".repeat(3000)}});
+        let encoded = encode(&credential).unwrap();
+        assert_eq!(serde_json::from_str::<Value>(&encoded).unwrap(), credential);
     }
 }
