@@ -1833,6 +1833,7 @@
       "subrouter": "SubRouter는 API 키 하나로 여러 모델과 공급자를 이용할 수 있는 통합 AI 중계 플랫폼입니다.",
       "qiniu": "Qiniu Cloud는 다중 프로토콜 AI 릴레이입니다. API 키 하나로 네이티브 Claude, GPT 및 Gemini 모델을 사용할 수 있으며, Anthropic, OpenAI 및 Gemini API를 모두 지원합니다.",
       "haoai": "hao.ai는 개발자와 팀을 위한 빠르고 안정적인 통합 LLM API 게이트웨이입니다. API 키 하나로 OpenAI 및 Anthropic 호환 API를 통해 GPT, Claude, Grok 등 주요 모델을 사용할 수 있으며, 모델 라우팅, 장애 조치 및 전체 요청 로그를 지원합니다. 요금은 공식 기준 요금의 최저 15% 수준입니다. 이 링크로 가입한 CC Switch 사용자는 첫 주문 시 5% 보너스 크레딧을 받습니다!",
+      "stringai": "StringAI는 가성비 좋고 빠르며 안정적인 모델 API 플랫폼으로, AI 코딩, 이미지 생성, 음성 합성, 동영상 생성을 한곳에서 이용할 수 있습니다. CC Switch 사용자 전용 혜택: 이 링크로 가입하면 첫 충전 $3.74에 보너스 크레딧 $3.74를 추가로 드립니다!",
       "fenno": "Fenno.ai는 다양한 주류 모델에 대한 액세스를 제공하는 안정적이고 효율적인 API 릴레이입니다. CC Switch 사용자 전용 혜택: 이 링크를 통해 7일 동안 유효한 $50 크레딧 상당의 $1.99 평가판 플랜을 구독하세요!",
       "teamorouter": "TeamoRouter를 이용하면 Claude Code에서 API 키 하나로 Opus 5.5, Sonnet 5.5, Fable 5.1을 바로 사용할 수 있습니다. Opus 5.5 요금은 공식 가격의 약 28%이며, 사용한 만큼 요금이 부과되고 네이티브 Anthropic 프로토콜을 지원합니다. 이 링크로 가입한 CC Switch 사용자는 첫 충전 금액으로 $10, $20 또는 $50를 선택하면 충전 금액의 10%를 추가 크레딧으로 받습니다!",
       "ppio": "PPIO는 중국의 선도적인 독립 Agentic Cloud 공급자로, API 키 하나로 모든 대표 오픈 소스 모델을 호출할 수 있습니다. 이 링크로 가입하고 실명 인증을 완료하면 10위안 이용권을 받을 수 있습니다.",
