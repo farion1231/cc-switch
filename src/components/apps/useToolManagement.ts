@@ -394,30 +394,72 @@ function mergeToolVersions(
   return merged;
 }
 
+function commitToolVersionResults(
+  results: ToolVersion[],
+  requestId: number,
+): ToolVersion[] {
+  const current = results.filter(
+    (tool) => latestToolVersionRequests.get(tool.name) === requestId,
+  );
+  if (current.length === 0) return [];
+  // 同步进模块缓存，供切 Tab 重挂时复用。时间戳沿用上次「全量加载」的（单工具
+  // 刷新与进行中的并发探测不算全量完成、不重置 TTL）；缓存为空时以 at=0 起步——
+  // 0 是「尚未完成全量加载」的过期哨兵，确保探测中途切走/切回时，残缺缓存被判
+  // 过期而触发重查，而非把半套数据当成完整结果复用。真实时间戳只由全量结束时盖上。
+  const cache = toolManagementState.toolVersionsCache;
+  updateToolManagementState({
+    toolVersionsCache: {
+      data: mergeToolVersions(cache?.data ?? [], current),
+      at: cache?.at ?? 0,
+    },
+  });
+  return current;
+}
+
+// 进行中的后台检查：此时打开「应用」页直接等它，不再重复起一轮全量探测。
+let backgroundToolCheck: Promise<void> | null = null;
+
 /**
  * 设置里打开了「启动时检查应用更新」时，启动后在后台查一次（结果进同一个模块缓存）。
  * 不弹任何提示，只让侧栏「应用」上出现圆点。
  */
-export async function checkToolUpdatesInBackground(): Promise<void> {
+export function checkToolUpdatesInBackground(): Promise<void> {
+  backgroundToolCheck ??= runBackgroundToolCheck().finally(() => {
+    backgroundToolCheck = null;
+  });
+  return backgroundToolCheck;
+}
+
+async function runBackgroundToolCheck(): Promise<void> {
   const cache = toolManagementState.toolVersionsCache;
   if (cache && Date.now() - cache.at < TOOL_VERSIONS_CACHE_TTL_MS) return;
   const requestId = ++toolVersionRequestSequence;
   TOOL_NAMES.forEach((name) => latestToolVersionRequests.set(name, requestId));
-  try {
-    const results = await settingsApi.getToolVersions([...TOOL_NAMES]);
-    const current = results.filter(
-      (tool) => latestToolVersionRequests.get(tool.name) === requestId,
-    );
-    if (current.length === 0) return;
+  let anyCommitted = false;
+  // 与 loadAllToolVersions 一致按工具并发探测：先完成的卡片立即写入缓存并呈现，
+  // 不因单个远端源超时（如 Cloud Run / GitHub+PyPI）阻塞其余工具与侧栏更新红点。
+  await Promise.all(
+    TOOL_NAMES.map(async (toolName) => {
+      try {
+        const updated = await settingsApi.getToolVersions([toolName]);
+        if (commitToolVersionResults(updated, requestId).length > 0) {
+          anyCommitted = true;
+        }
+      } catch (error) {
+        console.error(
+          `[useToolManagement] Background update check failed for ${toolName}`,
+          error,
+        );
+      }
+    }),
+  );
+  if (anyCommitted) {
     const latest = toolManagementState.toolVersionsCache;
-    updateToolManagementState({
-      toolVersionsCache: {
-        data: mergeToolVersions(latest?.data ?? [], current),
-        at: Date.now(),
-      },
-    });
-  } catch (error) {
-    console.error("[useToolManagement] Background update check failed", error);
+    if (latest) {
+      updateToolManagementState({
+        toolVersionsCache: { ...latest, at: Date.now() },
+      });
+    }
   }
 }
 
@@ -519,25 +561,8 @@ export function useToolManagement() {
           toolNames,
           wslOverrides,
         );
-        const current = updated.filter(
-          (tool) => latestToolVersionRequests.get(tool.name) === requestId,
-        );
-        if (current.length === 0) return [];
-
-        // 同步进模块缓存，供切 Tab 重挂时复用。时间戳沿用上次「全量加载」的（单工具
-        // 刷新不算全量、不重置 TTL）；缓存为空时以 at=0 起步——0 是「尚未完成全量加载」
-        // 的过期哨兵，确保探测中途切走/切回时，残缺缓存被判过期而触发重查，而非把半套
-        // 数据当成完整结果复用。真实时间戳只由 loadAllToolVersions 的 finally 盖上。
-        const cache = toolManagementState.toolVersionsCache;
-        updateToolManagementState({
-          toolVersionsCache: {
-            data: mergeToolVersions(cache?.data ?? [], current),
-            at: cache?.at ?? 0,
-          },
-        });
-
         // 返回刷新结果，调用方可据此判断版本是否真的探到（避免读 state 撞 stale closure）。
-        return current;
+        return commitToolVersionResults(updated, requestId);
       } catch (error) {
         console.error("[useToolManagement] Failed to refresh tools", error);
         return [];
@@ -559,6 +584,10 @@ export function useToolManagement() {
   const loadAllToolVersions = useCallback(
     async (options?: { force?: boolean }) => {
       const force = options?.force ?? false;
+      if (!force && backgroundToolCheck) {
+        setIsLoadingTools(true);
+        await backgroundToolCheck;
+      }
       const cache = toolManagementState.toolVersionsCache;
       // 命中新鲜缓存：切回「关于」Tab 触发的重挂直接复用上次结果，跳过 6 个 `--version`
       // 子进程 + 6 个 latest 版本网络请求。手动「刷新」传 force 绕过缓存强制重查。

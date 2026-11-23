@@ -30,10 +30,13 @@ const stat = (overrides: Partial<ProviderStats>): ProviderStats => ({
   totalCost: "1",
   successRate: 100,
   avgLatencyMs: 1_000,
+  cacheReadTokens: 0,
+  cacheableInputTokens: 0,
   ...overrides,
 });
 
-// 列顺序：…成功率、速度、首字
+// 列顺序：…Tokens、命中率、成功率、速度、首字
+const hitRateCell = (row: HTMLElement) => row.children[row.children.length - 4];
 const speedCell = (row: HTMLElement) => row.children[row.children.length - 2];
 const firstTokenCell = (row: HTMLElement) => row.lastElementChild;
 
@@ -124,6 +127,36 @@ describe("ProviderStatsTable", () => {
     expect(speedCell(rows[0])).toHaveTextContent("92tok/s");
     expect(rows[1]).toHaveTextContent("Kimi For Coding");
     expect(speedCell(rows[1])).toHaveTextContent("—");
+  });
+
+  it("shows the cache hit rate from summed counts, or — without cacheable input", () => {
+    useProviderStatsMock.mockReturnValue({
+      isLoading: false,
+      data: [
+        stat({
+          providerId: "a",
+          requestCount: 5,
+          cacheReadTokens: 873,
+          cacheableInputTokens: 1_000,
+        }),
+        stat({ providerId: "b", requestCount: 3 }),
+      ],
+    });
+
+    render(
+      <ProviderStatsTable range={{ preset: "7d" }} refreshIntervalMs={0} />,
+    );
+
+    expect(
+      screen.getByRole("columnheader", { name: /usage.logColumns.hitRate/ }),
+    ).toBeInTheDocument();
+    const rows = screen.getAllByRole("row").slice(1);
+    expect(hitRateCell(rows[0])).toHaveTextContent("87.3%");
+    expect(hitRateCell(rows[0])).toHaveAttribute(
+      "title",
+      "usage.logColumns.hitRateTip",
+    );
+    expect(hitRateCell(rows[1])).toHaveTextContent("—");
   });
 
   it("shows the first-token median in seconds, or — without routed streams", () => {
