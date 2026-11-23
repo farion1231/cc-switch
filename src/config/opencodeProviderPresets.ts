@@ -369,6 +369,11 @@ const aiCodeMirrorModels = (): OpenCodeProviderConfig["models"] => ({
   "claude-opus-5-5": { name: "Claude Opus 5.5", reasoning: true },
 });
 
+const stringAiModels = (): OpenCodeProviderConfig["models"] => ({
+  "gpt-6-astra": { name: "GPT-6 Astra", reasoning: true },
+  "gpt-6.1-sol": { name: "GPT-6.1 Sol", reasoning: true },
+});
+
 const fennoAiModels = (): OpenCodeProviderConfig["models"] => ({
   "gpt-6.1-sol": { name: "GPT-6.1 Sol", reasoning: true },
 });
@@ -935,6 +940,32 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "haoai",
     icon: "haoai",
+  },
+  {
+    name: "StringAI",
+    websiteUrl: "https://www.string.ink",
+    apiKeyUrl: "https://www.string.ink/register?ref=661AE533A60AF110",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "StringAI",
+      options: {
+        baseURL: "https://www.string.ink/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: stringAiModels(),
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "stringai",
+    icon: "stringai",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
   },
   {
     name: "FennoAI",
@@ -3436,7 +3467,19 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         "glm-5.3": { name: "GLM 5.3", reasoning: true },
         "glm-5.3-flash": { name: "GLM 5.3 Flash", reasoning: true },
         "kimi-k3.1-pro": { name: "Kimi K3.1 Pro", reasoning: true },
-        "deepseek-v4.1-flash": { name: "DeepSeek V4.1 Flash", reasoning: true },
+        // OpenCode Go 的 DeepSeek V4.1 Flash 只收 low / high / max（models.dev
+        // opencode-go 的 reasoning_options）；OpenCode 给 openai-compatible 默认生成
+        // low / medium / high，故禁用 medium、补上 max
+        "deepseek-v4.1-flash": {
+          name: "DeepSeek V4.1 Flash",
+          reasoning: true,
+          variants: {
+            low: { reasoningEffort: "low" },
+            medium: { disabled: true },
+            high: { reasoningEffort: "high" },
+            max: { reasoningEffort: "max" },
+          },
+        },
         "mimo-v2.6-pro": { name: "MiMo V2.6 Pro", reasoning: true },
       },
     },

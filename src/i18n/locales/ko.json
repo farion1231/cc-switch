@@ -60,7 +60,9 @@
   "apiKeyInput": {
     "placeholder": "API 키를 입력하세요",
     "show": "API 키 표시",
-    "hide": "API 키 숨기기"
+    "hide": "API 키 숨기기",
+    "copied": "API 키가 복사되었습니다",
+    "copyFailed": "API 키 복사에 실패했습니다"
   },
   "jsonEditor": {
     "mustBeObject": "설정은 배열이나 다른 유형이 아닌 JSON 객체여야 합니다.",
@@ -239,17 +241,19 @@
         "oauthHint": "Google 공식은 OAuth 개인 인증을 사용하므로 API 키를 입력할 필요가 없습니다. 처음 사용할 때 로그인을 위해 브라우저가 자동으로 열립니다.",
         "apiKeyPlaceholder": "Gemini API 키를 입력하세요"
       },
-      "claudeAccount": {
+      "managedAccount": {
         "label": "로그인 방식",
+        "missing": "이 컴퓨터에 없는 계정",
+        "reauthBadge": "다시 로그인 필요"
+      },
+      "claudeAccount": {
         "default": "Claude Code에 로그인된 계정 사용",
         "defaultDescription": "Claude Code에 로그인된 계정이 바뀌면 사용하는 계정도 함께 바뀝니다",
-        "missing": "이 컴퓨터에 없는 계정",
         "manage": "Claude 계정 추가 또는 관리",
         "helpTerminal": "설정에서 Claude 설정 디렉터리를 별도로 지정했으므로 이 카드로 전환해도 Claude Code의 로그인 계정은 바뀌지 않습니다. 선택한 계정을 사용하려면 카드의 ‘터미널 열기’를 이용하세요.",
         "helpWsl": "Claude 설정 디렉터리가 WSL에 있으면 아직 Claude 계정 기능을 사용할 수 없습니다. 이 카드로 전환해도 Claude Code의 로그인 계정은 바뀌지 않습니다.",
         "help": "이 카드로 전환하면 Claude Code의 로그인 계정이 즉시 선택한 계정으로 바뀝니다. 실행 중인 세션에도 적용됩니다. 여러 계정을 동시에 사용하려면 각 카드의 ‘터미널 열기’를 이용하세요.",
         "claudeAccount": "Claude 계정",
-        "reauthBadge": "다시 로그인 필요",
         "terminalHint": "카드의 ‘터미널 열기’로 사용",
         "wslHint": "WSL에서는 아직 지원되지 않음",
         "plan": {
@@ -261,6 +265,13 @@
           "teamPremium": "Team 프리미엄 시트",
           "enterprise": "Enterprise"
         }
+      },
+      "grokAccount": {
+        "default": "Grok CLI 로그인 따르기",
+        "defaultDescription": "Grok CLI에 로그인된 계정을 사용합니다",
+        "manage": "xAI 계정 추가 또는 관리",
+        "help": "이 카드로 전환하면 Grok CLI의 로그인(~/.grok/auth.json)이 선택한 계정으로 바뀝니다. 이전에 로그인된 계정은 먼저 인증 센터에 저장되며, \"Grok CLI 로그인 따르기\" 카드로 다시 전환하면 복원됩니다.",
+        "xaiAccount": "xAI 계정"
       }
     },
     "duplicateLiveIdsLoadFailed": "설정에서 공급자 식별자를 읽지 못했습니다. 설정을 수정하고 다시 시도해 주세요.",
@@ -597,6 +608,9 @@
       "safetyBackupId": "안전 백업 ID",
       "intervalLabel": "자동 백업 간격",
       "retainLabel": "보존할 백업 수",
+      "maxTotalLabel": "백업 크기 제한",
+      "maxTotalUnlimited": "제한 없음",
+      "maxTotalHint": "기본값은 꺼짐입니다. 설정하면 백업 폴더가 이 크기를 넘을 때 가장 오래된 백업부터 삭제됩니다. 가장 최근 백업과 복원에 사용된 백업은 항상 보존되므로, 백업 하나가 더 크면 폴더가 제한을 넘은 상태로 남을 수 있습니다. 다음 백업 또는 일일 유지 관리 실행 시 적용됩니다.",
       "intervalDisabled": "비활성화됨",
       "intervalHours": "{{hours}}시간",
       "intervalDays": "{{days}}일",
@@ -1086,6 +1100,7 @@
     "toolUpgradeUnanchoredHint": "명령줄에서 어떤 설치를 사용하는지 확인할 수 없어 기본 업그레이드 명령을 실행합니다. PATH에서 가장 먼저 찾은 npm을 통해 설치될 수 있습니다.",
     "toolUpgradeUnmanagedTitle": "이 도구 업그레이드를 건너뛰었습니다.",
     "toolUpgradeUnmanagedDetail": "{{tool}} ({{path}}) 항목은 npm이나 인식 가능한 설치 프로그램으로 설치되지 않아 CC Switch에서 업그레이드 방법을 판단할 수 없습니다. 처음 설치할 때 사용한 방식으로 업그레이드하세요(예: winget, Scoop 또는 공식 설치 스크립트 다시 실행).",
+    "toolUpgradeDesktopManagedDetail": "이 OpenCode CLI는 OpenCode Desktop에 포함되어 있으며 Desktop 앱과 함께 업데이트됩니다.",
     "envBadge": {
       "wsl": "WSL",
       "windows": "Win",
@@ -1261,6 +1276,8 @@
       "credits": "크레딧",
       "leftOf": "{{remaining}} / {{total}} 남음",
       "usedOf": "{{used}} / {{total}} 사용",
+      "unlimited": "무제한",
+      "unlimitedUsed": "무제한, {{used}} 사용",
       "usedUp": "모두 사용함 (총 {{total}})",
       "detail": "크레딧 {{total}} 중 {{remaining}} 남음, {{used}} 사용",
       "staleNotRunning": "WorkBuddy가 실행 중이 아니므로 이전에 조회한 결과를 표시합니다",
@@ -1453,6 +1470,7 @@
     "contentSearchToggle": "메시지 본문 검색",
     "contentSearchToggleFailed": "메시지 본문 검색 설정을 변경하지 못했습니다: {{error}}",
     "contentIndexing": "메시지 본문 색인을 생성하는 중입니다({{processed}}/{{total}}). 본문 검색 결과가 아직 완전하지 않을 수 있습니다",
+    "contentSearchFailed": "본문 검색에 실패했습니다. 지금은 제목, 디렉터리, 처음과 마지막 메시지로만 검색합니다",
     "contentHitPrefix": "본문: ",
     "contentHitMore": " (메시지 {{count}}개 일치)",
     "moreContentHits": "본문 검색 결과 더 보기",
@@ -1815,6 +1833,7 @@
       "subrouter": "SubRouter는 API 키 하나로 여러 모델과 공급자를 이용할 수 있는 통합 AI 중계 플랫폼입니다.",
       "qiniu": "Qiniu Cloud는 다중 프로토콜 AI 릴레이입니다. API 키 하나로 네이티브 Claude, GPT 및 Gemini 모델을 사용할 수 있으며, Anthropic, OpenAI 및 Gemini API를 모두 지원합니다.",
       "haoai": "hao.ai는 개발자와 팀을 위한 빠르고 안정적인 통합 LLM API 게이트웨이입니다. API 키 하나로 OpenAI 및 Anthropic 호환 API를 통해 GPT, Claude, Grok 등 주요 모델을 사용할 수 있으며, 모델 라우팅, 장애 조치 및 전체 요청 로그를 지원합니다. 요금은 공식 기준 요금의 최저 15% 수준입니다. 이 링크로 가입한 CC Switch 사용자는 첫 주문 시 5% 보너스 크레딧을 받습니다!",
+      "stringai": "StringAI는 가성비 좋고 빠르며 안정적인 모델 API 플랫폼으로, AI 코딩, 이미지 생성, 음성 합성, 동영상 생성을 한곳에서 이용할 수 있습니다. CC Switch 사용자 전용 혜택: 이 링크로 가입하면 첫 충전 $3.74에 보너스 크레딧 $3.74를 추가로 드립니다!",
       "fenno": "Fenno.ai는 다양한 주류 모델에 대한 액세스를 제공하는 안정적이고 효율적인 API 릴레이입니다. CC Switch 사용자 전용 혜택: 이 링크를 통해 7일 동안 유효한 $50 크레딧 상당의 $1.99 평가판 플랜을 구독하세요!",
       "teamorouter": "TeamoRouter를 이용하면 Claude Code에서 API 키 하나로 Opus 5.5, Sonnet 5.5, Fable 5.1을 바로 사용할 수 있습니다. Opus 5.5 요금은 공식 가격의 약 28%이며, 사용한 만큼 요금이 부과되고 네이티브 Anthropic 프로토콜을 지원합니다. 이 링크로 가입한 CC Switch 사용자는 첫 충전 금액으로 $10, $20 또는 $50를 선택하면 충전 금액의 10%를 추가 크레딧으로 받습니다!",
       "ppio": "PPIO는 중국의 선도적인 독립 Agentic Cloud 공급자로, API 키 하나로 모든 대표 오픈 소스 모델을 호출할 수 있습니다. 이 링크로 가입하고 실명 인증을 완료하면 10위안 이용권을 받을 수 있습니다.",
@@ -2106,6 +2125,7 @@
     "selectAccount": "계정 선택",
     "selectAccountPlaceholder": "xAI 계정을 선택하세요",
     "useDefaultAccount": "기본 계정 사용",
+    "account": "xAI 계정",
     "accounts": "xAI 계정",
     "defaultAccount": "기본값",
     "expired": "자격 증명이 만료되었습니다.",
@@ -2530,8 +2550,8 @@
     "input": "입력",
     "output": "출력",
     "cacheWrite": "생성",
-    "cacheWriteNotReported": "OpenAI 프로토콜은 캐시 생성을 구별하지 않습니다. 캐시 적중만 보고됩니다.",
-    "cacheWritePartial": "일부 프로토콜(예: OpenAI)은 캐시 생성을 보고하지 않아 값이 실제보다 낮을 수 있습니다.",
+    "cacheWriteNotReported": "Gemini와 Grok Build는 캐시 생성을 보고하지 않습니다. 캐시 적중만 보고됩니다.",
+    "cacheWritePartial": "일부 프로토콜(예: Gemini)은 캐시 생성을 보고하지 않아 값이 실제보다 낮을 수 있습니다.",
     "cacheRead": "적중",
     "baseCost": "기본",
     "costMultiplier": "비용 배율",
@@ -2672,7 +2692,7 @@
       "label": "측정항목",
       "more": "더 많은 지표",
       "realTotalHelpTitle": "총 토큰 계산 방법",
-      "realTotalHelp": "새로운 입력 + 출력 + 캐시 쓰기 + 캐시 적중. 새로운 입력에는 캐시가 제외됩니다. 일부 프로토콜(예: OpenAI)은 캐시 쓰기를 보고하지 않으므로 해당 부분이 낮을 수 있습니다.",
+      "realTotalHelp": "새로운 입력 + 출력 + 캐시 쓰기 + 캐시 적중. 새로운 입력에는 캐시가 제외됩니다. 일부 프로토콜(예: Gemini)은 캐시 쓰기를 보고하지 않으므로 해당 부분이 낮을 수 있습니다.",
       "hitRateHelpTitle": "캐시 적중률 계산 방법",
       "hitRateHelp": "캐시 적중 ÷ (신규 입력 + 캐시 쓰기 + 캐시 적중)."
     },
@@ -3516,6 +3536,7 @@
       "skillDirNotFound": "스킬 디렉터리를 찾을 수 없습니다: {{path}}",
       "directoryConflict": "스킬 디렉터리 '{{directory}}' 항목을 {{existing_repo}}에서 이미 사용 중이므로 {{new_repo}}에서 설치할 수 없습니다.",
       "emptyArchive": "다운로드한 아카이브가 비어 있습니다.",
+      "archiveInvalid": "다운로드한 파일이 ZIP 아카이브가 아닙니다. 이 사이트는 GitHub / GitLab / Gitea 저장소가 아닐 수 있으며 아직 지원되지 않습니다.",
       "invalidRepoRef": "잘못된 저장소 참조: {{owner}}/{{name}}",
       "archiveTooLarge": "아카이브가 {{limit_mb}} MB 추출 제한을 초과합니다. 중단됨",
       "archiveDownloadTooLarge": "저장소 아카이브 다운로드가 {{limit_mb}} MB 제한을 초과했습니다. 중단됨",
@@ -3746,7 +3767,10 @@
       "command": "명령",
       "args": "인수",
       "env": "환경",
-      "url": "URL"
+      "url": "URL",
+      "type": "유형",
+      "cwd": "작업 디렉터리",
+      "headers": "헤더"
     },
     "prompt": {
       "title": "시스템 프롬프트 가져오기",
@@ -3780,7 +3804,8 @@
     "risk": {
       "envHijack": "이 설정에는 프로세스의 로드 동작을 변경할 수 있는 환경 변수(예: 동적 라이브러리 주입, CA 인증서 교체)가 포함되어 있습니다. 출처를 신뢰할 수 있는지 확인하세요.",
       "privateEndpoint": "이 주소는 localhost 또는 사설 네트워크를 가리킵니다. 직접 관리하는 로컬 서비스가 아니라면 가져오지 마세요.",
-      "shellCommand": "이 설정은 셸을 통해 전체 명령줄을 실행합니다. 실제로 실행되는 것은 인수에 있습니다. 각 줄을 검토하세요."
+      "shellCommand": "이 설정은 셸을 통해 전체 명령줄을 실행합니다. 실제로 실행되는 것은 인수에 있습니다. 각 줄을 검토하세요.",
+      "mcpDangerousField": "이 MCP 설정에는 호스트 환경 변수를 읽거나(bearer_token_env_var, env_http_headers, env_vars 등), 보조 명령을 실행하거나(http_headers_helper), 작업 디렉터리를 변경할 수 있는(cwd) 고위험 필드가 포함되어 있습니다. 완전히 신뢰할 수 있는 출처인 경우에만 가져오세요."
     }
   },
   "iconPicker": {
@@ -5050,7 +5075,7 @@
   "pluginsPage": {
     "title": "플러그인",
     "helpTitle": "플러그인",
-    "help": "Claude Code, Codex, Grok Build, MiniMax Code, OpenClaw, Pi의 플러그인을 설치, 활성화, 제거합니다. CC Switch는 각 앱의 자체 CLI를 실행하므로 터미널에서 플러그인 명령을 사용하는 것과 결과가 같습니다. Pi의 경우 플러그인은 Pi 패키지이며 카탈로그는 npm에서 가져옵니다.",
+    "help": "Claude Code, Codex, Grok Build, MiniMax Code, OpenClaw, Pi, Antigravity CLI의 플러그인을 설치, 활성화, 제거합니다. CC Switch는 각 앱의 자체 CLI를 실행하므로 터미널에서 플러그인 명령을 사용하는 것과 결과가 같습니다. Pi의 경우 플러그인은 Pi 패키지이며 카탈로그는 npm에서 가져옵니다.",
     "appAria": "앱",
     "viewAria": "플러그인 보기",
     "viewInstalled": "설치됨",
@@ -5110,9 +5135,11 @@
     "confirmRemoveMarketBody": "{{app}}이(가) 이 마켓플레이스의 플러그인을 더 이상 표시하지 않으며, 여기에서 설치한 플러그인이 제거될 수 있습니다. 나중에 다시 추가할 수 있습니다.",
     "toast": {
       "installed": "{{name}}을(를) 설치했습니다",
+      "installedNeedsConfig": "비활성 상태로 설치되었습니다. {{app}}에서 /plugin을 실행해 MCP 서버를 설정한 뒤 활성화하세요.",
       "installFailed": "{{name}}을(를) 설치할 수 없습니다",
       "installNeedsTerminal": "이 플러그인은 설치 중 마켓플레이스에 선언된 명령을 사용자의 컴퓨터에서 실행하며, CC Switch는 이를 대신 승인하지 않습니다. 터미널에서 {{command}}을(를) 실행해 승인한 다음 돌아와서 새로 고치세요.",
       "authRequired": "{{app}}에 먼저 로그인해야 합니다. 터미널에서 {{command}}을(를) 실행한 다음 돌아와서 다시 시도하세요.",
+      "pluginInUse": "이 플러그인은 다른 {{app}} / {{cli}} 프로세스(실행 중인 세션, Hub 또는 백그라운드 서비스 등)에서 사용 중입니다. 실행 중인 세션이나 관련 프로세스를 닫고 다시 시도하세요.",
       "uninstalled": "{{name}}을(를) 제거했습니다",
       "uninstallFailed": "{{name}}을(를) 제거할 수 없습니다",
       "enabled": "{{name}}을(를) 활성화했습니다",
@@ -5121,6 +5148,7 @@
       "updated": "{{name}}을(를) 업데이트했습니다",
       "upToDate": "{{name}}은(는) 이미 최신 버전입니다",
       "updateFailed": "{{name}}을(를) 업데이트할 수 없습니다",
+      "updateNeedsReinstall": "이 플러그인은 이전 버전의 Antigravity가 사용하던 폴더에 있어 CC Switch가 업데이트할 수 없습니다. 제거한 뒤 탐색에서 다시 설치하면 최신 버전을 받을 수 있습니다.",
       "refreshed": "마켓플레이스를 새로 고쳤습니다",
       "refreshFailed": "마켓플레이스를 새로 고칠 수 없습니다",
       "marketAdded": "마켓플레이스 {{source}}을(를) 추가했습니다",

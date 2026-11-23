@@ -14,11 +14,7 @@ import {
 import { useRequestDetail } from "@/lib/query/usage";
 import { copyText } from "@/lib/clipboard";
 import { toast } from "@/lib/toast";
-import {
-  getFreshInputTokens,
-  isUnpricedUsage,
-  type RequestLog,
-} from "@/types/usage";
+import { isUnpricedUsage, type RequestLog } from "@/types/usage";
 import { cn } from "@/lib/utils";
 import { useMoneyFormat } from "@/hooks/useMoneyFormat";
 import { extractErrorMessage } from "@/utils/errorUtils";
@@ -121,7 +117,7 @@ function useDetailSections(request: RequestLog) {
   const { money, moneyTitle } = useMoneyFormat();
   const usd = (value: string) => money(value, 4);
   const locale = getLocaleFromLanguage(getResolvedLang(i18n));
-  const freshInput = getFreshInputTokens(request);
+  const freshInput = request.freshInputTokens;
   const isCacheInclusive = request.inputTokens !== freshInput;
   const unpriced = isUnpricedUsage(request);
   const multiplier = parseFiniteNumber(request.costMultiplier);

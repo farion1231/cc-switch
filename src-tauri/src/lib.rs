@@ -23,8 +23,10 @@ mod error;
 mod frontend_parity_tests;
 mod gemini_config;
 mod gemini_mcp;
+mod grok_auth;
 mod grok_config;
 pub mod hermes_config;
+mod host_open;
 mod init_status;
 mod jsonc_document;
 mod kimi_config;
@@ -72,19 +74,13 @@ pub use codex_config::{
     extract_codex_experimental_bearer_token, get_codex_auth_path, get_codex_config_path,
     read_codex_live_settings, write_codex_live_atomic,
 };
-pub use commands::open_provider_terminal;
 pub use commands::*;
 pub use config::{get_claude_mcp_path, get_claude_settings_path, read_json_file};
 pub use database::{Database, Profile};
-pub use deeplink::{import_provider_from_deeplink, parse_deeplink_url, DeepLinkImportRequest};
+pub use deeplink::{import_provider_from_deeplink, parse_deeplink_url};
 pub use error::AppError;
 pub use grok_config::get_grok_config_path;
-pub use mcp::{
-    import_from_claude, import_from_codex, import_from_gemini, import_from_grokbuild,
-    remove_server_from_claude, remove_server_from_codex, remove_server_from_gemini,
-    remove_server_from_grokbuild, sync_single_server_to_claude, sync_single_server_to_codex,
-    sync_single_server_to_gemini, sync_single_server_to_grokbuild,
-};
+pub use mcp::{import_from_claude, import_from_codex, sync_single_server_to_codex};
 pub use prompt::Prompt;
 pub use provider::{Provider, ProviderMeta};
 #[doc(hidden)]
@@ -93,11 +89,9 @@ pub use services::{
     profile::{ProfilePayload, ProfileScope, ProfileService, NO_ACTIVE_PROMPT},
     provider::{
         reapply_current_codex_official_live, reapply_current_codex_third_party_live, EditorSave,
-        EditorView,
     },
     skill::{migrate_skills_to_ssot, ImportSkillSelection},
-    ConfigService, EndpointLatency, McpService, PromptService, ProviderService, ProxyService,
-    SkillService, SpeedtestService,
+    ConfigService, McpService, PromptService, ProviderService, SkillService,
 };
 pub use settings::{update_settings, AppSettings};
 pub use store::AppState;
@@ -524,6 +518,9 @@ pub fn run() {
                 && !crate::settings::get_settings().silent_startup
             {
                 let window = webview.window();
+                if let Some(main) = webview.app_handle().get_webview_window("main") {
+                    window_fit::fit_to_work_area(&main);
+                }
                 if window.show().is_ok() {
                     let _ = window.emit("main-window-visibility-changed", ());
                 }
@@ -719,6 +716,7 @@ pub fn run() {
                         {
                             let _ = window.set_skip_taskbar(false);
                         }
+                        window_fit::fit_to_work_area(&window);
                         let _ = window.show();
                         let _ = window.set_focus();
                     }
@@ -1315,13 +1313,10 @@ pub fn run() {
 
             // 初始化 xAI OAuthManager (Grok API 反代)
             {
-                use crate::proxy::providers::xai_oauth_auth::XaiOAuthManager;
                 use commands::XaiOAuthState;
-                use tokio::sync::RwLock;
 
-                let app_config_dir = crate::config::get_app_config_dir();
-                let xai_oauth_manager = XaiOAuthManager::new(app_config_dir);
-                app.manage(XaiOAuthState(Arc::new(RwLock::new(xai_oauth_manager))));
+                let xai_oauth_manager = app.state::<AppState>().xai_oauth_manager.clone();
+                app.manage(XaiOAuthState(xai_oauth_manager));
                 log::info!("✓ XaiOAuthManager initialized");
             }
 
@@ -1823,6 +1818,7 @@ pub fn run() {
             commands::list_sessions,
             commands::sync_session_index,
             commands::search_session_content,
+            commands::cancel_session_content_search,
             commands::clear_session_index,
             commands::get_session_messages,
             commands::stream_session_messages,
@@ -2017,6 +2013,8 @@ pub fn run() {
         if matches!(event, RunEvent::Exit) {
             if !RESTART_REQUESTED.load(Ordering::SeqCst) {
                 cleanup_before_system_exit(app_handle);
+            } else {
+                checkpoint_before_restart(app_handle);
             }
             return;
         }
@@ -2055,6 +2053,9 @@ pub async fn cleanup_before_exit(app_handle: &tauri::AppHandle) {
             crate::services::provider::claude_direct::finish_tombstones_before_exit,
         )
         .await;
+        if let Err(error) = state.db.run_blocking(|db| db.checkpoint_wal()).await {
+            log::warn!("退出时 WAL checkpoint 失败: {error}");
+        }
         log::info!("退出清理完成：客户端已指回直连，代理已停止");
     }
 }
@@ -2386,6 +2387,14 @@ pub fn destroy_single_instance_lock(app_handle: &tauri::AppHandle) {
     tauri_plugin_single_instance::destroy(app_handle);
 }
 
+fn checkpoint_before_restart(app_handle: &tauri::AppHandle) {
+    if let Some(state) = app_handle.try_state::<store::AppState>() {
+        if let Err(error) = state.db.checkpoint_wal() {
+            log::warn!("重启时 WAL checkpoint 失败: {error}");
+        }
+    }
+}
+
 /// 清理托盘图标、释放 single-instance 锁后重启当前应用。
 ///
 /// 直接 spawn 新进程 + `exit(0)`（macOS 经 `open -n`，见 `relaunch_macos_bundle`），不经过事件
@@ -2397,6 +2406,7 @@ pub fn destroy_single_instance_lock(app_handle: &tauri::AppHandle) {
 /// 图标，而 macOS 的 NSStatusItem 操作要求主线程；`set_visible(false)` 走
 /// `run_item_main_thread` 代理，跨线程安全（见 `remove_tray_icon_before_exit`）。
 pub fn restart_process(app_handle: &tauri::AppHandle) -> ! {
+    checkpoint_before_restart(app_handle);
     remove_tray_icon_before_exit(app_handle);
     destroy_single_instance_lock(app_handle);
     let env = app_handle.env();

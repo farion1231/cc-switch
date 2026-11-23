@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
+import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import de from "@/i18n/locales/de.json";
 import en from "@/i18n/locales/en.json";
@@ -204,5 +205,50 @@ describe("translation keys used in code", () => {
     }
     expect(checked).toBeGreaterThan(1000);
     expect(missing).toEqual([]);
+  });
+});
+
+// Chinese (or any CJK) text written straight into JSX shows untranslated in
+// every other language. UI text goes through t() and the locale files.
+describe("UI text in JSX", () => {
+  const src = path.resolve(__dirname, "../../src");
+  const cjk = /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/;
+
+  // <p>文本</p>, title="文本", {"文本"}
+  const jsxString = (node: ts.Node): string | undefined => {
+    if (ts.isJsxText(node)) return node.text;
+    if (ts.isJsxAttribute(node) && node.initializer) {
+      if (ts.isStringLiteral(node.initializer)) return node.initializer.text;
+    }
+    if (ts.isJsxExpression(node) && node.expression) {
+      if (ts.isStringLiteralLike(node.expression)) return node.expression.text;
+    }
+    return undefined;
+  };
+
+  it("has no CJK text in JSX", () => {
+    const found: string[] = [];
+    const files = readdirSync(src, { recursive: true, encoding: "utf8" });
+    for (const file of files.filter((f) => f.endsWith(".tsx"))) {
+      const source = ts.createSourceFile(
+        file,
+        readFileSync(path.join(src, file), "utf8"),
+        ts.ScriptTarget.Latest,
+        true,
+        ts.ScriptKind.TSX,
+      );
+      const visit = (node: ts.Node) => {
+        const text = jsxString(node);
+        if (text !== undefined && cjk.test(text)) {
+          const { line } = source.getLineAndCharacterOfPosition(
+            node.getStart(source),
+          );
+          found.push(`${file}:${line + 1}: ${text.trim()}`);
+        }
+        node.forEachChild(visit);
+      };
+      visit(source);
+    }
+    expect(found).toEqual([]);
   });
 });

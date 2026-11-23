@@ -2,16 +2,18 @@
  * Coding Plan 供应商的 base_url 路由表。
  *
  * 与后端 `src-tauri/src/services/coding_plan.rs::detect_provider` 保持一致：
- * 后端靠 `url.contains(...)` 做子串判断（MiniMax 例外，按 host 标签匹配），
- * 前端这里用 RegExp 做同效匹配。两边对同一组地址的识别结果由
+ * 都按 host 标签边界匹配（同后端 `codex_url_host_matches_any`），有的再要求路径前缀；
+ * 出现在中转站路径或查询串里的域名、`api.z.ai.example.com` 这类伪造后缀都不认。
+ * 前端这里用 RegExp 做同效匹配（见 `urlHostPattern`）。两边对同一组地址的识别结果由
  * tests/config/backendConstants.test.ts 校验。
  * 新增供应商时改这一处即可（UsageScriptModal 下拉 + useProviderActions
  * 新建自动注入 + 托盘识别全部复用）。
  */
 import { createUsageScript } from "@/types";
 import { TEMPLATE_TYPES } from "@/config/constants";
-import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
+import { extractCodexBaseUrl } from "@/utils/codexConfigUtils";
 import { extractGrokBuildBaseUrl } from "@/utils/grokBuildConfig";
+import { urlHostPattern } from "@/utils/urlHostPattern";
 
 export interface CodingPlanProviderEntry {
   /** 与后端 QuotaTier 的 `codingPlanProvider` 取值对齐 */
@@ -24,7 +26,8 @@ export interface CodingPlanProviderEntry {
     | "volcengine"
     | "opencode_go"
     | "command_code"
-    | "ollama_cloud";
+    | "ollama_cloud"
+    | "mimo";
   /** UsageScriptModal 下拉显示用 */
   label: string;
   /** base_url 匹配规则；null 表示不参与自动检测，只能由用户手动选择 */
@@ -32,11 +35,15 @@ export interface CodingPlanProviderEntry {
 }
 
 export const CODING_PLAN_PROVIDERS: readonly CodingPlanProviderEntry[] = [
-  { id: "kimi", label: "Kimi For Coding", pattern: /api\.kimi\.com\/coding/i },
+  {
+    id: "kimi",
+    label: "Kimi For Coding",
+    pattern: urlHostPattern(String.raw`api\.kimi\.com`, "/coding"),
+  },
   {
     id: "zhipu",
     label: "Zhipu GLM (智谱)",
-    pattern: /bigmodel\.cn|api\.z\.ai/i,
+    pattern: urlHostPattern(String.raw`(?:bigmodel\.cn|api\.z\.ai)`),
   },
   {
     // 智谱团队套餐（Team Plan）。base_url 与个人版智谱（open.bigmodel.cn）相同，
@@ -47,26 +54,24 @@ export const CODING_PLAN_PROVIDERS: readonly CodingPlanProviderEntry[] = [
     pattern: null,
   },
   {
-    // 按 host 标签边界匹配（同后端 codex_url_host_matches_any），不认
-    // api.minimax.cn.example.com 这类伪造后缀或出现在路径里的域名
     id: "minimax",
     label: "MiniMax",
-    pattern:
-      /^(?:https?:\/\/)?(?:[^/?#@]*@)?(?:[\w-]+\.)*api\.(?:minimaxi\.com|minimax\.(?:io|cn))(?=[:/?#]|$)/i,
+    pattern: urlHostPattern(
+      String.raw`api\.(?:minimaxi\.com|minimax\.(?:io|cn))`,
+    ),
   },
   {
     id: "zenmux",
     label: "ZenMux",
-    pattern: /zenmux\./i,
+    pattern: urlHostPattern(String.raw`zenmux\.ai`),
   },
   {
     // 火山方舟 Agent Plan / Coding Plan。base_url 形如
     // ark.cn-beijing.volces.com/api/plan[/v3]（Agent Plan）或
-    // /api/coding[/v3]（Coding Plan）；与后端 detect_provider 的
-    // `volces.com/api/plan` / `volces.com/api/coding` 子串判断同效。
+    // /api/coding[/v3]（Coding Plan）。
     id: "volcengine",
     label: "火山方舟 (Volcengine)",
-    pattern: /volces\.com\/api\/(plan|coding)/i,
+    pattern: urlHostPattern(String.raw`volces\.com`, "/api/(?:plan|coding)"),
   },
   {
     // OpenCode Go（$10/月订阅，三时间窗口美元额度）。用量端点
@@ -78,22 +83,31 @@ export const CODING_PLAN_PROVIDERS: readonly CodingPlanProviderEntry[] = [
     // Zen 按量版（/zen/v1）没有用量 API，刻意不命中。
     id: "opencode_go",
     label: "OpenCode Go",
-    pattern: /opencode\.ai\/(?:zen|inference)\/go/i,
+    pattern: urlHostPattern(String.raw`opencode\.ai`, "/(?:zen|inference)/go"),
   },
   {
     // Command Code 的余额与窗口接口由官方 CLI 使用，当前未公开文档化。
     // Claude 使用 /provider，Codex 使用 /provider/v1。
     id: "command_code",
     label: "Command Code",
-    pattern: /api\.commandcode\.ai\/provider(?:[/?#]|$)/i,
+    pattern: urlHostPattern(
+      String.raw`api\.commandcode\.ai`,
+      "/provider(?:[/?#]|\\s*$)",
+    ),
   },
   {
-    // Ollama Cloud（GET https://ollama.com/api/balance，Bearer Key）。按 host
-    // 标签匹配（同后端 codex_url_host_matches_any），本地 localhost:11434 不命中。
+    // Ollama Cloud（GET https://ollama.com/api/balance，Bearer Key）。
+    // 本地 localhost:11434 不命中。
     id: "ollama_cloud",
     label: "Ollama Cloud",
-    pattern:
-      /^(?:https?:\/\/)?(?:[^/?#@]*@)?(?:[\w-]+\.)*ollama\.com(?=[:/?#]|$)/i,
+    pattern: urlHostPattern(String.raw`ollama\.com`),
+  },
+  {
+    // 小米 MiMo Token Plan（GET /v1/platform/token_plan，tp- 专属 Key）。
+    // 按量付费的 api.xiaomimimo.com 走余额查询，不在此命中。
+    id: "mimo",
+    label: "Xiaomi MiMo Token Plan",
+    pattern: urlHostPattern(String.raw`token-plan-cn\.xiaomimimo\.com`),
   },
 ] as const;
 

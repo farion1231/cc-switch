@@ -175,6 +175,14 @@ impl Database {
     /// 库里有没有这一行，不解析它存的 JSON：只问「在不在」的地方（指针校验、种子、
     /// 起名查重）不该因为这一行读不出来就失败。
     pub fn provider_exists(&self, id: &str, app_type: &AppType) -> Result<bool, AppError> {
+        self.read_cache
+            .provider_exists
+            .get_or_load(&format!("{app_type}:{id}"), || {
+                self.provider_exists_uncached(id, app_type)
+            })
+    }
+
+    fn provider_exists_uncached(&self, id: &str, app_type: &AppType) -> Result<bool, AppError> {
         let conn = lock_conn!(self.conn);
         conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM providers WHERE id = ?1 AND app_type = ?2)",
@@ -280,6 +288,17 @@ impl Database {
     }
 
     pub fn get_current_provider(&self, app_type: &AppType) -> Result<Option<String>, AppError> {
+        self.read_cache
+            .current_provider
+            .get_or_load(app_type.as_str(), || {
+                self.get_current_provider_uncached(app_type)
+            })
+    }
+
+    fn get_current_provider_uncached(
+        &self,
+        app_type: &AppType,
+    ) -> Result<Option<String>, AppError> {
         let conn = lock_conn!(self.conn);
         let mut stmt = conn
             .prepare("SELECT id FROM providers WHERE app_type = ?1 AND is_current = 1 LIMIT 1")
@@ -299,6 +318,18 @@ impl Database {
     }
 
     pub fn get_provider_by_id(
+        &self,
+        id: &str,
+        app_type: &AppType,
+    ) -> Result<Option<Provider>, AppError> {
+        self.read_cache
+            .providers
+            .get_or_load(&format!("{app_type}:{id}"), || {
+                self.get_provider_by_id_uncached(id, app_type)
+            })
+    }
+
+    fn get_provider_by_id_uncached(
         &self,
         id: &str,
         app_type: &AppType,

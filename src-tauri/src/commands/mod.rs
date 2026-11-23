@@ -1,5 +1,3 @@
-#![allow(non_snake_case)]
-
 mod agy_account;
 mod auth;
 mod balance;
@@ -116,7 +114,7 @@ where
 #[cfg(not(target_os = "windows"))]
 pub(crate) use misc::tool_discovery::{cached_login_shell_path, merge_path_segments};
 pub(crate) use misc::tool_process::{
-    detected_tool_command, is_safe_tool_command_arg, run_detected_tool_command_with_timeout,
-    terminate_child_tree,
+    detected_tool_command, is_safe_tool_command_arg, locate_detected_tool,
+    run_detected_tool_command_with_timeout, terminate_child_tree,
 };
 pub(crate) use misc::tool_version::local_tool_version;

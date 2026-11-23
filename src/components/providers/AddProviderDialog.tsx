@@ -29,7 +29,7 @@ import { providerPresets } from "@/config/claudeProviderPresets";
 import { codexProviderPresets } from "@/config/codexProviderPresets";
 import { geminiProviderPresets } from "@/config/geminiProviderPresets";
 import { claudeDesktopProviderPresets } from "@/config/claudeDesktopProviderPresets";
-import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
+import { extractCodexBaseUrl } from "@/utils/codexConfigUtils";
 import { extractGrokBuildBaseUrl } from "@/utils/grokBuildConfig";
 import { GROKBUILD_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
 import type { OpenClawSuggestedDefaults } from "@/config/openclawProviderPresets";
@@ -284,9 +284,12 @@ export function AddProviderDialog({
       }
 
       if (appId === "grokbuild" && values.presetId) {
+        // 绑了 xAI 账号的官方卡是一张新卡（可以有多张）；不绑账号的就是那张固定的
+        // 「跟随 Grok CLI 登录」种子卡
         providerData.ensureGrokBuildOfficialSeed =
           values.presetCategory === "official" &&
-          values.presetId === GROKBUILD_OFFICIAL_PROVIDER_ID;
+          values.presetId === GROKBUILD_OFFICIAL_PROVIDER_ID &&
+          !values.meta?.authBinding?.accountId;
       }
 
       // Apps whose native catalog has a stable provider key use it as the
