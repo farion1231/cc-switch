@@ -32,18 +32,28 @@ pub async fn sync_session_index<R: tauri::Runtime>(
     }))
 }
 
+#[tauri::command]
+pub fn cancel_session_content_search(requestId: String) {
+    session_manager::search::cancel_search(&requestId);
+}
+
 /// 在消息正文里搜索，按会话聚合；`providerIds` 为空时不按应用过滤
 #[tauri::command]
 pub async fn search_session_content(
     query: String,
     providerIds: Option<Vec<String>>,
     limit: Option<usize>,
+    requestId: Option<String>,
 ) -> Result<session_manager::search::ContentSearchResult, String> {
+    let request = session_manager::search::begin_search(
+        requestId.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+    );
     tauri::async_runtime::spawn_blocking(move || {
         session_manager::search::search(
             &query,
             providerIds,
             limit.unwrap_or(session_manager::search::DEFAULT_LIMIT),
+            request,
         )
     })
     .await

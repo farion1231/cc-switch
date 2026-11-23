@@ -32,8 +32,8 @@ use crate::error::AppError;
 use crate::proxy::usage::parser::TokenUsage;
 use crate::services::{
     session_usage::{
-        cost_columns, estimated_first_token_ms, estimated_latency_ms, load_sync_cursors,
-        metadata_modified_nanos, SessionSyncResult, SyncCursor,
+        cost_columns, estimated_first_token_ms, estimated_latency_ms, metadata_modified_nanos,
+        SessionSyncResult, SyncCursor,
     },
     sql_helpers::INPUT_TOKEN_SEMANTICS_FRESH,
     usage_stats::find_model_pricing,
@@ -85,8 +85,11 @@ struct PendingRequest {
 }
 
 /// 扫描并导入 DSH 会话用量（后台定时任务与手动同步共用）。
-pub fn sync_dsh_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
-    sync_dsh_usage_from(db, &dsh_sessions_root())
+pub(crate) fn sync_dsh_usage(
+    db: &Database,
+    cursors: &crate::services::session_usage::SyncCursors,
+) -> Result<SessionSyncResult, AppError> {
+    sync_dsh_usage_from_with_cursors(db, &dsh_sessions_root(), cursors)
 }
 
 /// DSH 的会话根目录：`$DSH_HOME/sessions`，未设置环境变量时用 `~/.dsh/sessions`。
@@ -98,12 +101,24 @@ pub(crate) fn dsh_sessions_root() -> PathBuf {
 }
 
 /// [`sync_dsh_usage`] 的可注入根目录版本，测试用临时目录。
+#[cfg(test)]
 pub(crate) fn sync_dsh_usage_from(
     db: &Database,
     root: &Path,
 ) -> Result<SessionSyncResult, AppError> {
+    sync_dsh_usage_from_with_cursors(
+        db,
+        root,
+        &crate::services::session_usage::load_sync_cursors(db)?,
+    )
+}
+
+fn sync_dsh_usage_from_with_cursors(
+    db: &Database,
+    root: &Path,
+    cursors: &crate::services::session_usage::SyncCursors,
+) -> Result<SessionSyncResult, AppError> {
     let mut result = SessionSyncResult::default();
-    let cursors = load_sync_cursors(db)?;
     // 目录层级：sessions/<项目>/<会话>/session.v4.jsonl(.zstd)
     let Ok(projects) = fs::read_dir(root) else {
         return Ok(result);
@@ -129,7 +144,7 @@ pub(crate) fn sync_dsh_usage_from(
                     continue;
                 }
                 let key = format!("dsh:{}", path.to_string_lossy());
-                match sync_file(db, &path, &session_id, &key, &cursors) {
+                match sync_file(db, &path, &session_id, &key, cursors) {
                     Ok(part) => result.merge(part),
                     Err(error) => result
                         .errors
@@ -1173,8 +1188,11 @@ mod tests {
         use std::io::Write;
         let open_db = |path: &Path| {
             let db = Database {
-                conn: std::sync::Mutex::new(rusqlite::Connection::open(path).unwrap()),
-                log_count_cache: std::sync::Mutex::new(None),
+                conn: std::sync::Arc::new(std::sync::Mutex::new(
+                    rusqlite::Connection::open(path).unwrap(),
+                )),
+                read_cache: Default::default(),
+                log_count_cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
             };
             db.create_tables().unwrap();
             db

@@ -242,6 +242,55 @@ describe("DeepLinkImportDialog", () => {
     expect(screen.queryByText("脚本代码")).not.toBeInTheDocument();
   });
 
+  it.each([
+    {
+      usageBaseUrl: "http://127.0.0.1:15721",
+      expectedRisk: "deeplink.risk.privateEndpoint",
+    },
+    {
+      usageBaseUrl: "http://192.168.1.10:8080",
+      expectedRisk: "deeplink.risk.privateEndpoint",
+    },
+    {
+      usageBaseUrl: "http://169.254.169.254/latest/meta-data",
+      expectedRisk: "deeplink.risk.privateEndpoint",
+    },
+    {
+      usageBaseUrl: "https://usage.example.com",
+      expectedRisk: null,
+    },
+  ])(
+    "classifies usageBaseUrl=$usageBaseUrl risk as $expectedRisk",
+    async ({ usageBaseUrl, expectedRisk }) => {
+      render(<DeepLinkImportDialog />, { wrapper: Wrapper });
+
+      act(() => {
+        deliverDeepLink({
+          version: "v1",
+          resource: "provider",
+          app: "claude",
+          name: "Usage Endpoint Risk Provider",
+          homepage: "https://example.com",
+          endpoint: "https://api.example.com",
+          apiKey: "sk-provider-key",
+          usageScript: btoa("({ request: { url: '{{baseUrl}}/v1' } })"),
+          usageBaseUrl,
+        });
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText(usageBaseUrl)).toBeInTheDocument();
+      });
+      if (expectedRisk) {
+        expect(screen.getByText(expectedRisk)).toBeInTheDocument();
+      } else {
+        expect(
+          screen.queryByText("deeplink.risk.privateEndpoint"),
+        ).not.toBeInTheDocument();
+      }
+    },
+  );
+
   // 徽章要和后端 `usage_enabled.unwrap_or(!code.is_empty())` 一致：
   // 链接写了 usageEnabled 就照办，没写时带脚本即启用
   it.each([
