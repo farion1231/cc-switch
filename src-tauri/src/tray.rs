@@ -1067,6 +1067,27 @@ fn managed_codex_account_id(provider: &Provider) -> Option<String> {
     None
 }
 
+/// xAI OAuth 卡（Claude Code、Codex 等经路由用授权中心 xAI 账号的卡）的额度属于哪个账号：
+/// 绑定的账号，没绑时同卡片（`XaiOauthQuotaFooter`）用授权中心的默认账号。卡片查到的额度由
+/// `get_xai_oauth_quota` 按解析出的账号写进托盘缓存。
+fn xai_oauth_account_id(provider: &Provider) -> Option<String> {
+    if !provider.is_xai_oauth() {
+        return None;
+    }
+    provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.managed_account_id_for("xai_oauth"))
+        .map(|id| id.trim().to_string())
+        .filter(|id| !id.is_empty())
+        .or_else(|| {
+            crate::proxy::providers::xai_oauth_auth::labels_on_disk(
+                &crate::config::get_app_config_dir(),
+            )
+            .1
+        })
+}
+
 /// Claude 官方卡绑了授权中心的账号（同前端 ProviderCard 的 `claudeBoundAccountId`）。
 fn claude_bound_account_id(app_type: &AppType, provider: &Provider) -> Option<String> {
     if *app_type != AppType::Claude || !is_official_account(app_type, provider) {
@@ -1103,7 +1124,7 @@ enum TrayUsageSource {
     ManagedCodex(String),
     /// 绑了账号的 Claude 官方卡：按绑定的账号取，不读客户端默认登录的应用级缓存。
     ClaudeAccount(String),
-    /// 绑了授权中心 xAI 账号的 Grok 官方卡：按绑定的账号取，不读 Grok CLI 登录的应用级缓存。
+    /// 授权中心的 xAI 账号（绑了账号的 Grok 官方卡、xAI OAuth 卡）：按账号取，不读应用级订阅缓存。
     XaiAccount(String),
     /// 客户端自己登录的官方订阅：和供应商卡片读写同一份应用级订阅缓存。
     Subscription,
@@ -1112,8 +1133,12 @@ enum TrayUsageSource {
 
 /// Keep the tray's refresh and display paths on the same credentials and toggle.
 fn tray_usage_source(app_type: &AppType, provider: &Provider) -> Option<TrayUsageSource> {
-    // 绑了托管账号的卡（Codex、Claude 官方、Grok 官方）按账号取额度
+    // 绑了托管账号的卡（Codex、Claude 官方、Grok 官方、xAI OAuth）按账号取额度
     let bound = match app_type {
+        // xAI OAuth 卡在哪个应用下都按 xAI 账号取（同卡片），聚合成员也一样（#9899）
+        _ if provider.is_xai_oauth() => {
+            xai_oauth_account_id(provider).map(TrayUsageSource::XaiAccount)
+        }
         AppType::Codex => managed_codex_account_id(provider).map(TrayUsageSource::ManagedCodex),
         // Grok 官方卡绑了授权中心的 xAI 账号（同前端 ProviderCard 的 `grokBoundAccountId`）
         AppType::GrokBuild => crate::services::provider::grok_direct::bound_account(provider)
@@ -1131,7 +1156,8 @@ fn tray_usage_source(app_type: &AppType, provider: &Provider) -> Option<TrayUsag
             .unwrap_or(true);
         return enabled.then_some(source);
     }
-    // xAI OAuth 的额度属于绑定的 SuperGrok 账号，不是所在应用的客户端登录，仍走脚本路径。
+    // xAI OAuth 的额度属于 SuperGrok 账号，不是所在应用的客户端登录：授权中心里一个账号都
+    // 没有时退回脚本路径，不读应用级订阅缓存。
     if provider_uses_official_subscription(provider) && !provider.is_xai_oauth() {
         return Some(TrayUsageSource::Subscription);
     }
