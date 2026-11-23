@@ -793,6 +793,39 @@ fn run_windows_tool_version_command(
     run_windows_tool_command(tool_path, &["--version"], new_path)
 }
 
+#[derive(serde::Serialize)]
+pub(super) struct ToolInstallLocation {
+    path: String,
+    source: &'static str,
+    is_path_default: bool,
+}
+
+pub(super) fn list_tool_install_locations(tool: &str) -> Vec<ToolInstallLocation> {
+    let mut dirs = IndexSet::new();
+    extend_from_cli_path_env(&mut dirs, effective_path_os());
+    let path_dir_count = dirs.len();
+    dirs.extend(build_tool_search_paths(tool));
+    let mut seen = std::collections::HashSet::new();
+    let mut locations = Vec::new();
+    for (index, dir) in dirs.into_iter().enumerate() {
+        for path in tool_executable_candidates(tool, &dir) {
+            if !path.is_file() {
+                continue;
+            }
+            let real = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+            let source = infer_install_source_for_install(&path, &real);
+            if seen.insert(real) {
+                locations.push(ToolInstallLocation {
+                    source,
+                    path: path.to_string_lossy().into_owned(),
+                    is_path_default: locations.is_empty() && index < path_dir_count,
+                });
+            }
+        }
+    }
+    locations
+}
+
 /// Probe the version of the PATH-default entry on Windows. Uses
 /// `resolve_path_default` (which merges the registry PATH and filters out
 /// App Execution Aliases) to get the executable the user actually runs, then

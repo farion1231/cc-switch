@@ -1454,22 +1454,22 @@ describe("AppsPage concurrent CLI upgrades", () => {
   it("ignores a late probe from the old page after the remounted page upgrades a tool", async () => {
     const stale = deferred<ToolVersions>();
     const getVersions = mocks.getToolVersions.getMockImplementation()!;
-    let firstClaudeProbe = true;
+    let holdNextClaudeProbe = false;
     let oldResult: ToolVersions = [];
     mocks.getToolVersions.mockImplementation(async (tools: string[]) => {
-      if (tools.includes("claude") && firstClaudeProbe) {
-        firstClaudeProbe = false;
+      if (tools.includes("claude") && holdNextClaudeProbe) {
+        holdNextClaudeProbe = false;
         oldResult = await getVersions(tools);
         return stale.promise;
       }
       return getVersions(tools);
     });
-    const { AppsPage } = await import("@/components/apps/AppsPage");
-    const { TOOL_NAMES } = await import("@/components/apps/useToolManagement");
-    const view = mountApps(AppsPage);
-    await waitFor(() =>
-      expect(mocks.getToolVersions).toHaveBeenCalledTimes(TOOL_NAMES.length),
+    const view = await renderApps();
+    holdNextClaudeProbe = true;
+    fireEvent.click(
+      screen.getByRole("button", { name: "appsPage.checkUpdates" }),
     );
+    await waitFor(() => expect(oldResult).toHaveLength(1));
     view.unmount();
     const remounted = await renderApps();
     fireEvent.click(updateButton("Claude Code"));
@@ -2141,6 +2141,112 @@ describe("AppsPage concurrent CLI upgrades", () => {
       expect.anything(),
     );
     expect(mocks.info).not.toHaveBeenCalled();
+  });
+
+  it("groups rows from the local inventory before version probes finish", async () => {
+    const pending = deferred<void>();
+    const getVersions = mocks.getToolVersions.getMockImplementation()!;
+    mocks.getToolVersions.mockImplementation(async (tools: string[]) => {
+      await pending.promise;
+      return getVersions(tools);
+    });
+    mocks.listToolInstallations.mockImplementation(async (tools: string[]) =>
+      tools.map((tool) =>
+        tool === "gemini"
+          ? {
+              tool,
+              installs: [
+                {
+                  path: "C:/tools/gemini.exe",
+                  source: "system",
+                  is_path_default: true,
+                },
+              ],
+              is_wsl: true,
+            }
+          : { tool, installs: [] },
+      ),
+    );
+    const { AppsPage } = await import("@/components/apps/AppsPage");
+    mountApps(AppsPage);
+    // 版本探测还挂着：清单已把 gemini 判为已安装，空清单的 codex 先判未安装，
+    // 版本列保持加载而不是冒出「未安装」
+    await waitFor(() => {
+      expect(rowApps("appsPage.sectionInstalled")).toContain("gemini");
+      expect(rowApps("appsPage.sectionNotInstalled")).toContain("codex");
+    });
+    expect(card("Codex").queryByText("common.notInstalled")).toBeNull();
+    // WSL 语义只等本地结果：清单的 is_wsl 直接给出 shell 选择，不等 env_type
+    expect(
+      card("Gemini CLI").getByText("appsPage.wslFlag"),
+    ).toBeInTheDocument();
+    await act(async () => {
+      pending.resolve();
+    });
+    // 版本探到后修正分组：codex 1.0.0 移回已安装并可升级
+    await waitFor(() => expect(updateButton("Codex")).toBeEnabled());
+    expect(rowApps("appsPage.sectionInstalled")).toContain("codex");
+  });
+
+  it("shares one probe round between the startup check, the page and quick remounts", async () => {
+    const gate = deferred<void>();
+    const getVersions = mocks.getToolVersions.getMockImplementation()!;
+    mocks.getToolVersions.mockImplementation(async (tools: string[]) => {
+      await gate.promise;
+      return getVersions(tools);
+    });
+    // resetModules 每个用例重建模块级 store：动态导入才能拿到与本用例 AppsPage
+    // 同一份实例，静态导入会绑到第一个实例。
+    const { checkToolUpdatesInBackground, TOOL_NAMES } = await import(
+      "@/components/apps/useToolManagement"
+    );
+    const starting = checkToolUpdatesInBackground();
+    const { AppsPage } = await import("@/components/apps/AppsPage");
+    const first = mountApps(AppsPage);
+    first.unmount();
+    mountApps(AppsPage);
+    await act(async () => {
+      gate.resolve();
+      await starting;
+    });
+    // 启动检查 + 两次挂载只探测一轮：每个工具恰好一次，且逐工具并发而非串行整批
+    const calls = mocks.getToolVersions.mock.calls.map(
+      ([tools]) => tools as string[],
+    );
+    expect(calls).toHaveLength(TOOL_NAMES.length);
+    expect(calls.every((tools) => tools.length === 1)).toBe(true);
+    expect(new Set(calls.flat())).toEqual(new Set(TOOL_NAMES));
+    // 安装清单在快速重挂间同样共享一次
+    expect(mocks.listToolInstallations).toHaveBeenCalledTimes(1);
+    // 重挂页面的 loading 标志随共享探测一起收尾，不卡在加载
+    await waitFor(() => expect(updateButton("Codex")).toBeEnabled());
+  });
+
+  it("re-probes on explicit refresh and after an upgrade instead of reusing results", async () => {
+    // 同上：动态导入拿本用例的模块实例（resetModules 重建过 store）。
+    const { TOOL_NAMES } = await import("@/components/apps/useToolManagement");
+    await renderApps();
+    expect(mocks.getToolVersions.mock.calls).toHaveLength(TOOL_NAMES.length);
+    fireEvent.click(
+      screen.getByRole("button", { name: "appsPage.checkUpdates" }),
+    );
+    await waitFor(() =>
+      expect(mocks.getToolVersions.mock.calls).toHaveLength(
+        TOOL_NAMES.length * 2,
+      ),
+    );
+    await waitFor(() => expect(updateButton("Codex")).toBeEnabled());
+    fireEvent.click(updateButton("Codex"));
+    await waitFor(() => expect(isReady("Codex")).toBe(true));
+    // 升级后的刷新是又一次新调用，拿到的是升级后的版本而不是探测前的旧值
+    expect(mocks.getToolVersions.mock.calls).toHaveLength(
+      TOOL_NAMES.length * 2 + 1,
+    );
+    expect(mocks.runToolLifecycleAction).toHaveBeenCalledWith(
+      ["codex"],
+      "update",
+      expect.anything(),
+    );
   });
 });
 

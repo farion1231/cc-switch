@@ -5,6 +5,12 @@ All notable changes to CC Switch will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Slow Apps Page Scan**: Show local installation status before version and update checks finish, and share version probes between startup and the Apps page.
+
 ## [4.0.39] - 2026-11-22
 
 This is a maintenance release. The API key input gets a copy button, and the backups folder can be given a total size limit. GPT-6.2 Sol / Astra on Claude Code's Codex OAuth route cache the system prompt much better. Fixes cover a stalled streaming upstream delaying failover for up to 600 seconds on Claude native providers, unbounded memory use on long streams in the usage/log collectors, the deep link import dialog opening after its config merge failed, the Plugins page reporting Codex as not installed when only the desktop app is present, the Plugins page creating empty config folders for apps that aren't installed, OpenCode Go's DeepSeek V4.1 Flash missing its max effort, and popovers and menus flickering on rapid clicks.

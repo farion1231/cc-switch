@@ -44,7 +44,7 @@ import {
 } from "lucide-react";
 import { settingsApi, type AppId } from "@/lib/api";
 import { providersApi } from "@/lib/api/providers";
-import type { ToolInstallationReport } from "@/lib/api/settings";
+import type { ToolInstallationOverview } from "@/lib/api/settings";
 import type { VisibleApps } from "@/types";
 import { DEFAULT_VISIBLE_APPS, orderAppIds } from "@/config/appConfig";
 import { useSettings } from "@/hooks/useSettings";
@@ -151,16 +151,17 @@ type DragHandle = {
 /** 可拖动的行把拖动把手交给里面的 `AppRow`（ToolRow 自己渲染 AppRow，不必逐层传参）。 */
 const DragHandleContext = createContext<DragHandle | null>(null);
 
-/** 本机有这个命令行应用：探到了版本、装了但跑不起来，或探测报告里有安装位置（和「卸载」出现的条件一致）。 */
+/** Whether the local checks found a CLI installation. */
 function isToolPresent(
   info: { version?: string | null; installed_but_broken?: boolean } | undefined,
-  report: ToolInstallationReport | undefined,
+  report: ToolInstallationOverview | undefined,
 ): boolean {
   return Boolean(
-    info?.version || info?.installed_but_broken || report?.installs.length,
+    info?.version ||
+      info?.installed_but_broken ||
+      (report?.installs?.length ?? 0) > 0,
   );
 }
-
 // 表头和应用行共用列宽；操作列宽取各行按钮和表头量宽按钮的最大值，最后一列是行尾的「⋯」菜单。
 const APP_ROW_GRID =
   "grid grid-cols-[minmax(0,1fr)_168px_var(--apps-actions-width,0px)_56px_28px] items-center gap-x-4";
@@ -209,8 +210,16 @@ export function AppsPage() {
       return isWorkbuddyStatusPending ? null : Boolean(workbuddyStatus?.exists);
     }
     const info = tools.toolVersionByName.get(row.tool);
-    if (!info && tools.isLoadingTools) return null;
-    return isToolPresent(info, tools.installReports?.[row.tool]);
+    const report = tools.installReports?.[row.tool];
+    // 安装清单（本机、快）先定分组：有安装路径 → 已安装；清单为空 → 先按未安装显示，
+    // 不等慢的版本探测（登录 shell 管理器装的命令没有文件路径，版本探到后再修正）。
+    if (report) {
+      if (report.installs.length > 0) return true;
+      return isToolPresent(info, report);
+    }
+    // 清单未回：版本已探到按版本定，否则先不分组——避免一拍之后被清单打脸的「未安装」。
+    if (info) return isToolPresent(info, report);
+    return null;
   };
   // 两组共用一份顺序（拖动后写进设置，侧栏也按它排），每组只是按装没装过滤
   const appOrder = orderAppIds(settings?.appOrder);
@@ -750,7 +759,7 @@ function ToolRow({
 }) {
   const { t } = useTranslation();
   const info = tools.toolVersionByName.get(tool);
-  const report: ToolInstallationReport | undefined =
+  const report: ToolInstallationOverview | undefined =
     tools.installReports?.[tool];
   const defaultInstall =
     report?.installs.find((install) => install.is_path_default) ??
@@ -881,7 +890,7 @@ function ToolRow({
   ) : null;
 
   const wslControls =
-    info?.env_type === "wsl" ? (
+    info?.env_type === "wsl" || report?.is_wsl === true ? (
       <div className="flex items-center gap-2 text-caption text-fg-2">
         <span>Shell</span>
         <Select

@@ -52,23 +52,37 @@ pub(crate) fn local_tool_version(tool: &str) -> Option<String> {
 }
 
 pub(super) async fn get_single_tool_version_impl(
-    tool: &str,
-    wsl_shell: Option<&str>,
-    wsl_shell_flag: Option<&str>,
+    tool: &'static str,
+    wsl_preferences: Option<WslShellPreferenceInput>,
 ) -> ToolVersion {
     debug_assert!(
         known_tool(tool).is_some(),
         "unexpected tool name in get_single_tool_version_impl: {tool}"
     );
 
-    // 判断该工具的运行环境 & WSL distro（如有）
-    let (env_type, wsl_distro) = tool_env_type_and_wsl_distro(tool);
+    let (env_type, wsl_distro, probe) = tokio::task::spawn_blocking(move || {
+        let (env_type, distro) = tool_env_type_and_wsl_distro(tool);
+        let pref = wsl_preferences.as_ref();
+        let probe = probe_local_version(
+            tool,
+            distro.as_deref(),
+            pref.and_then(|p| p.wsl_shell.as_deref()),
+            pref.and_then(|p| p.wsl_shell_flag.as_deref()),
+        );
+        (env_type, distro, probe)
+    })
+    .await
+    .unwrap_or_else(|error| {
+        (
+            "unknown".into(),
+            None,
+            ShellProbe::NotFound(error.to_string()),
+        )
+    });
 
     // 使用全局 HTTP 客户端（已包含代理配置）
     let client = crate::proxy::http_client::get();
 
-    // 1. 获取本地版本
-    let probe = probe_local_version(tool, wsl_distro.as_deref(), wsl_shell, wsl_shell_flag);
     let (local_version, local_error, installed_but_broken) = match probe {
         ShellProbe::Found(v) => (Some(v), None, false),
         ShellProbe::FoundButFailed(e) => (None, Some(e), true),
@@ -81,17 +95,28 @@ pub(super) async fn get_single_tool_version_impl(
     // 2. 获取远程最新版本（npm 工具在本地领先 latest 时会按预发布通道补查，见
     //    fetch_npm_latest_for_tool / npm_prerelease_tags）
     let local = local_version.as_deref();
-    let latest_version = match (tool, tool_spec(tool).npm_package) {
-        ("hermes", _) => fetch_hermes_latest_version(&client, local).await,
-        ("agy", _) => fetch_agy_latest_version(&client).await,
-        ("opencode", Some(package)) => {
-            match fetch_npm_latest_for_tool(&client, package, tool, local).await {
-                Some(version) => Some(version),
-                None => fetch_github_latest_version(&client, "anomalyco/opencode").await,
+    let latest_version = if local.is_some() {
+        tokio::time::timeout(LATEST_PROBE_TIMEOUT, async {
+            match (tool, tool_spec(tool).npm_package) {
+                ("hermes", _) => fetch_hermes_latest_version(&client, local).await,
+                ("agy", _) => fetch_agy_latest_version(&client).await,
+                ("opencode", Some(package)) => {
+                    match fetch_npm_latest_for_tool(&client, package, tool, local).await {
+                        Some(version) => Some(version),
+                        None => fetch_github_latest_version(&client, "anomalyco/opencode").await,
+                    }
+                }
+                (_, Some(package)) => {
+                    fetch_npm_latest_for_tool(&client, package, tool, local).await
+                }
+                (_, None) => None,
             }
-        }
-        (_, Some(package)) => fetch_npm_latest_for_tool(&client, package, tool, local).await,
-        (_, None) => None,
+        })
+        .await
+        .ok()
+        .flatten()
+    } else {
+        None
     };
 
     // 3. 有新版本时，看新版本要求的 Node 与这处安装用的对不对得上

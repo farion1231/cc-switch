@@ -348,17 +348,11 @@ pub async fn get_tool_versions(
         Some(tools) => normalize_requested_tools(tools),
         None => TOOLS.iter().map(|tool| tool.id).collect(),
     };
-    let mut results = Vec::new();
-
-    for tool in requested {
+    let probes = requested.into_iter().map(|tool| {
         let pref = wsl_shell_by_tool.as_ref().and_then(|m| m.get(tool));
-        let tool_wsl_shell = pref.and_then(|p| p.wsl_shell.as_deref());
-        let tool_wsl_shell_flag = pref.and_then(|p| p.wsl_shell_flag.as_deref());
-
-        results.push(get_single_tool_version_impl(tool, tool_wsl_shell, tool_wsl_shell_flag).await);
-    }
-
-    Ok(results)
+        get_single_tool_version_impl(tool, pref.cloned())
+    });
+    Ok(futures::future::join_all(probes).await)
 }
 
 // 不同工具仍可能共用 pnpm/npm 的全局目录。先保守地串行化所有安装写入，
@@ -975,13 +969,32 @@ pub async fn probe_tool_installations(
     .map_err(|e| format!("probe task join error: {e}"))
 }
 
-/// 「应用」页显示每个工具的路径、安装来源和多处安装。和升级前的预检是同一份枚举，
-/// 单列一个命令只为把「打开页面时的展示」和「点升级时的预检」分开调用。
+#[derive(serde::Serialize)]
+pub struct ToolInstallationOverview {
+    tool: &'static str,
+    installs: Vec<ToolInstallLocation>,
+    is_wsl: bool,
+}
+
+/// Opening Apps only needs paths and sources. Do not launch every copy of
+/// every CLI; reserve those version checks for explicit conflict diagnostics.
 #[tauri::command]
 pub async fn list_tool_installations(
     tools: Vec<String>,
-) -> Result<Vec<ToolInstallationReport>, String> {
-    probe_tool_installations(tools).await
+) -> Result<Vec<ToolInstallationOverview>, String> {
+    let requested = normalize_requested_tools(&tools);
+    tokio::task::spawn_blocking(move || {
+        requested
+            .into_iter()
+            .map(|tool| ToolInstallationOverview {
+                tool,
+                installs: list_tool_install_locations(tool),
+                is_wsl: tool_runs_in_wsl(tool),
+            })
+            .collect()
+    })
+    .await
+    .map_err(|e| format!("installation listing task join error: {e}"))
 }
 
 /// 这个工具的配置目录是不是指向 WSL（只有 Windows 上会是）。

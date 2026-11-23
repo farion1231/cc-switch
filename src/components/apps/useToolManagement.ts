@@ -12,6 +12,7 @@ import { settingsApi } from "@/lib/api";
 import type {
   NodeRequirementGap,
   ToolInstallation,
+  ToolInstallationOverview,
   ToolInstallationReport,
   ToolUninstallPlan,
 } from "@/lib/api/settings";
@@ -278,6 +279,19 @@ const EMPTY_TOOL_VERSIONS: ToolVersion[] = [];
 let toolVersionRequestSequence = 0;
 const latestToolVersionRequests = new Map<string, number>();
 
+// —— 相同版本探测的合并 ——
+// 「启动时检查」、「应用」页挂载和快速重挂会发出完全相同的探测（同一工具、同一份
+// WSL 偏好）。按工具记录在途请求（签名 = 该工具的 WSL 偏好），相同签名的后来者直接
+// 复用同一次后端调用，不再重复 `--version` 子进程与网络请求。强制刷新、切换 WSL 偏好
+// 与生命周期动作后的刷新不复用：它们发起全新请求，requestId 递增让在途旧请求的迟到
+// 结果作废，也避免拿到动作前的旧数据。
+interface InflightToolVersionRequest {
+  requestId: number;
+  wslKey: string;
+  promise: Promise<ToolVersion[]>;
+}
+const inflightToolVersions = new Map<string, InflightToolVersionRequest>();
+
 /**
  * 安装 / 升级 / 卸载的进度（后端 `tool-lifecycle-progress` 事件）。所有写入在后端
  * 串行执行，前面有别的工具在跑时先是 queued；轮到它后 running，并带命令最新一行输出。
@@ -298,8 +312,9 @@ interface ToolManagementState {
   toolProgress: ReadonlyMap<ToolName, ToolProgress>;
   pendingUpgrades: readonly PendingUpgrade[];
   batchAction: ToolLifecycleAction | null;
-  /** 每个工具的安装分布（路径、来源、多处安装），页面打开时探测一次 */
-  installReports: Partial<Record<ToolName, ToolInstallationReport>> | null;
+  /** 每个工具的安装分布概览（路径、来源、多处安装），页面打开时探测一次；
+   *  诊断 / 升级预检的详细报告（ToolInstallationReport）结构兼容，可覆盖同槽位。 */
+  installReports: Partial<Record<ToolName, ToolInstallationOverview>> | null;
 }
 
 // 安装/升级不会随设置页卸载而结束。将任务、确认队列与版本结果一起保留在会话中，
@@ -380,30 +395,117 @@ function mergeToolVersions(
 }
 
 /**
+ * 发起（或按签名复用）单个工具的版本探测。结果按 requestId 过滤后写进模块缓存：
+ * 更新的请求（强制刷新 / 换 WSL 偏好 / 升级后的刷新）一旦发起，本次的迟到结果作废，
+ * 不会覆盖新数据。失败按空结果处理，不拖累其余工具。
+ */
+function requestToolVersion(
+  toolName: ToolName,
+  wslOverrides?: Record<string, WslShellPreference>,
+  options?: { join?: boolean },
+): InflightToolVersionRequest {
+  const wslKey = wslOverrides?.[toolName]
+    ? JSON.stringify(wslOverrides[toolName])
+    : "";
+  const inflight = inflightToolVersions.get(toolName);
+  if (options?.join && inflight?.wslKey === wslKey) return inflight;
+
+  const requestId = ++toolVersionRequestSequence;
+  latestToolVersionRequests.set(toolName, requestId);
+  const promise = settingsApi
+    .getToolVersions(
+      [toolName],
+      wslOverrides?.[toolName]
+        ? { [toolName]: wslOverrides[toolName] }
+        : undefined,
+    )
+    .then((updated) => {
+      const current = updated.filter(
+        (tool) => latestToolVersionRequests.get(tool.name) === requestId,
+      );
+      if (current.length === 0) return [];
+      // 同步进模块缓存，供切 Tab 重挂时复用。时间戳沿用上次「全量加载」的（单工具
+      // 刷新不算全量、不重置 TTL）；缓存为空时以 at=0 起步——0 是「尚未完成全量加载」
+      // 的过期哨兵，确保探测中途切走/切回时，残缺缓存被判过期而触发重查，而非把半套
+      // 数据当成完整结果复用。真实时间戳只由全量探测的收尾盖上。
+      const cache = toolManagementState.toolVersionsCache;
+      updateToolManagementState({
+        toolVersionsCache: {
+          data: mergeToolVersions(cache?.data ?? [], current),
+          at: cache?.at ?? 0,
+        },
+      });
+      return current;
+    })
+    .catch((error) => {
+      console.error("[useToolManagement] Failed to refresh tools", error);
+      return [];
+    })
+    .finally(() => {
+      if (inflightToolVersions.get(toolName)?.requestId === requestId) {
+        inflightToolVersions.delete(toolName);
+      }
+    });
+  const entry = { requestId, wslKey, promise };
+  inflightToolVersions.set(toolName, entry);
+  return entry;
+}
+
+// 一次「全量探测」：逐工具并发发起（后端单次多工具是串行 await，总时延等于各工具之和），
+// 跳过忙碌工具，全部收尾才把缓存时间戳盖成现在。相同 WSL 偏好在途的全量探测直接复用：
+// 启动检查、页面挂载与快速重挂共享同一次探测，不重复发起。
+let inflightToolVersionScan: { wslKey: string; promise: Promise<void> } | null =
+  null;
+// 安装清单（list_tool_installations）的在途请求与最新加载序号：快速重挂共享，
+// 「刷新」另起请求且只有最新一次的结果可写入。
+let inflightInstallations: Promise<void> | null = null;
+let installationLoadSequence = 0;
+
+function scanToolVersions(
+  wslShellByTool: Record<string, WslShellPreference>,
+): Promise<void> {
+  const wslKey = JSON.stringify(wslShellByTool);
+  if (inflightToolVersionScan?.wslKey === wslKey) {
+    return inflightToolVersionScan.promise;
+  }
+  const scan: { wslKey: string; promise: Promise<void> } = {
+    wslKey,
+    promise: Promise.resolve(),
+  };
+  scan.promise = (async () => {
+    try {
+      await Promise.all(
+        TOOL_NAMES.filter(
+          (toolName) => !toolManagementState.busyTools.has(toolName),
+        ).map(
+          (toolName) =>
+            requestToolVersion(toolName, wslShellByTool, { join: true })
+              .promise,
+        ),
+      );
+    } finally {
+      if (inflightToolVersionScan === scan) inflightToolVersionScan = null;
+      const cache = toolManagementState.toolVersionsCache;
+      if (cache) {
+        updateToolManagementState({
+          toolVersionsCache: { ...cache, at: Date.now() },
+        });
+      }
+    }
+  })();
+  inflightToolVersionScan = scan;
+  return scan.promise;
+}
+
+/**
  * 设置里打开了「启动时检查应用更新」时，启动后在后台查一次（结果进同一个模块缓存）。
- * 不弹任何提示，只让侧栏「应用」上出现圆点。
+ * 不弹任何提示，只让侧栏「应用」上出现圆点。与「应用」页挂载共享同一次逐工具并发探测
+ * （而非一整批串行请求）；页面的显式刷新仍会强制重查。
  */
 export async function checkToolUpdatesInBackground(): Promise<void> {
   const cache = toolManagementState.toolVersionsCache;
   if (cache && Date.now() - cache.at < TOOL_VERSIONS_CACHE_TTL_MS) return;
-  const requestId = ++toolVersionRequestSequence;
-  TOOL_NAMES.forEach((name) => latestToolVersionRequests.set(name, requestId));
-  try {
-    const results = await settingsApi.getToolVersions([...TOOL_NAMES]);
-    const current = results.filter(
-      (tool) => latestToolVersionRequests.get(tool.name) === requestId,
-    );
-    if (current.length === 0) return;
-    const latest = toolManagementState.toolVersionsCache;
-    updateToolManagementState({
-      toolVersionsCache: {
-        data: mergeToolVersions(latest?.data ?? [], current),
-        at: Date.now(),
-      },
-    });
-  } catch (error) {
-    console.error("[useToolManagement] Background update check failed", error);
-  }
+  await scanToolVersions({});
 }
 
 /** 已检查过的命令行应用里有没有可升级的（不触发检查，只读缓存）。 */
@@ -432,10 +534,11 @@ export function useToolManagement() {
   useEffect(ensureToolProgressListener, []);
   const toolVersions = toolVersionsCache?.data ?? EMPTY_TOOL_VERSIONS;
   const pendingUpgrade = pendingUpgrades[0] ?? null;
-  // 有缓存（哪怕已超期）就先展示旧值、初始不 loading；超期时由挂载副作用触发后台
-  // 重查（stale-while-revalidate）。无缓存（首次）才从 loading 起步。
+  // 有完整缓存（哪怕已超期）就先展示旧值、初始不 loading；超期由挂载副作用触发后台
+  // 重查（stale-while-revalidate）。at=0 表示还没完整查过一次（首次探测进行中）：
+  // 此时快速重挂必须从 loading 起步，否则首屏会把还没探到的行先判成「未安装」。
   const [isLoadingTools, setIsLoadingTools] = useState(
-    () => toolVersionsCache === null,
+    () => toolVersionsCache === null || toolVersionsCache.at === 0,
   );
 
   const [wslShellByTool, setWslShellByTool] = useState<
@@ -486,10 +589,11 @@ export function useToolManagement() {
     ): Promise<ToolVersion[]> => {
       if (toolNames.length === 0) return [];
 
-      // 请求顺序跨组件挂载保留，旧页面的迟到响应不能覆盖后续刷新或升级结果。
-      const requestId = ++toolVersionRequestSequence;
-      toolNames.forEach((name) =>
-        latestToolVersionRequests.set(name, requestId),
+      // 发起全新请求（不复用在途探测）：显式刷新、切换 WSL 偏好与生命周期动作后的
+      // 刷新都必须拿到最新结果，新的 requestId 让在途旧请求的迟到结果作废。请求顺序
+      // 跨组件挂载保留，旧页面的迟到响应不能覆盖后续刷新或升级结果。
+      const requests = toolNames.map((name) =>
+        requestToolVersion(name, wslOverrides),
       );
 
       // 单工具刷新使用统一后端入口（get_tool_versions）并带工具过滤。
@@ -500,40 +604,24 @@ export function useToolManagement() {
       });
 
       try {
-        const updated = await settingsApi.getToolVersions(
-          toolNames,
-          wslOverrides,
+        // requestToolVersion 内建 requestId 过滤、按 name 合并进缓存与失败兜底
+        // （单工具失败返回 [] 不拖累其余），Promise.all 永不 reject。
+        const updated = await Promise.all(
+          requests.map((request) => request.promise),
         );
-        const current = updated.filter(
-          (tool) => latestToolVersionRequests.get(tool.name) === requestId,
-        );
-        if (current.length === 0) return [];
-
-        // 同步进模块缓存，供切 Tab 重挂时复用。时间戳沿用上次「全量加载」的（单工具
-        // 刷新不算全量、不重置 TTL）；缓存为空时以 at=0 起步——0 是「尚未完成全量加载」
-        // 的过期哨兵，确保探测中途切走/切回时，残缺缓存被判过期而触发重查，而非把半套
-        // 数据当成完整结果复用。真实时间戳只由 loadAllToolVersions 的 finally 盖上。
-        const cache = toolManagementState.toolVersionsCache;
-        updateToolManagementState({
-          toolVersionsCache: {
-            data: mergeToolVersions(cache?.data ?? [], current),
-            at: cache?.at ?? 0,
-          },
-        });
-
         // 返回刷新结果，调用方可据此判断版本是否真的探到（避免读 state 撞 stale closure）。
-        return current;
-      } catch (error) {
-        console.error("[useToolManagement] Failed to refresh tools", error);
-        return [];
+        return updated.flat();
       } finally {
+        // 只有仍是最新的请求才清 loading：旧请求迟到时标志归新请求所有，等它收尾。
         setLoadingTools((prev) => {
           const next = { ...prev };
-          for (const name of toolNames) {
-            if (latestToolVersionRequests.get(name) === requestId) {
+          toolNames.forEach((name, index) => {
+            if (
+              latestToolVersionRequests.get(name) === requests[index].requestId
+            ) {
               next[name] = false;
             }
-          }
+          });
           return next;
         });
       }
@@ -557,17 +645,21 @@ export function useToolManagement() {
       }
       setIsLoadingTools(true);
       try {
-        // 逐工具并发探测：每个工具一完成就合并进 toolVersions（并写模块缓存）、清掉自己
-        // 的 loadingTools 标志，对应卡片随即独立刷新——而非等全部探测完才一次性显示（后端
-        // 原本对 6 个工具串行 await，总耗时累加；并发后压成「最慢的那一个」）。refreshTool-
-        // Versions 已内建按 name 合并 + per-tool loading + try/catch 兜底（单工具失败返回 []
-        // 不拖累其余），故 Promise.all 永不 reject。Respect current shell/flag overrides.
-        // 切页后即使缓存已过期，也跳过忙碌工具，由原任务在执行结束后刷新版本。
-        await Promise.all(
-          TOOL_NAMES.filter(
-            (toolName) => !toolManagementState.busyTools.has(toolName),
-          ).map((toolName) => refreshToolVersions([toolName], wslShellByTool)),
-        );
+        if (force) {
+          // 手动「刷新」：不复用在途探测、逐工具强制重查（新 requestId 让在途旧响应
+          // 作废），并保留 per-tool loading，各卡片独立刷新。
+          await Promise.all(
+            TOOL_NAMES.filter(
+              (toolName) => !toolManagementState.busyTools.has(toolName),
+            ).map((toolName) =>
+              refreshToolVersions([toolName], wslShellByTool),
+            ),
+          );
+        } else {
+          // 挂载 / 启动检查 / 快速重挂：相同 WSL 偏好在途的全量探测直接共享，
+          // 同一批工具只探测一次；忙碌工具跳过，由原任务在执行结束后刷新版本。
+          await scanToolVersions(wslShellByTool);
+        }
       } finally {
         // 全量探测结束：把缓存时间戳刷新为现在，标记「刚完成一次全量加载」、重置 TTL。
         const latestCache = toolManagementState.toolVersionsCache;
@@ -606,24 +698,37 @@ export function useToolManagement() {
   };
 
   // 安装分布：路径、来源（npm / 原生 / Homebrew…）、有没有多处安装。只在本机探测，不联网。
+  // 快速重挂共享在途请求；「刷新」强制重查，且只有最新一次加载的结果可写入，
+  // 避免慢的旧响应盖掉强制刷新刚写入的新数据。
   const loadInstallations = useCallback(
     async (options?: { force?: boolean }) => {
       if (!options?.force && toolManagementState.installReports) return;
-      try {
-        const reports = await settingsApi.listToolInstallations([
-          ...TOOL_NAMES,
-        ]);
-        const next: Partial<Record<ToolName, ToolInstallationReport>> = {};
-        for (const report of reports) {
-          next[report.tool as ToolName] = report;
+      if (!options?.force && inflightInstallations)
+        return inflightInstallations;
+      const requestId = ++installationLoadSequence;
+      const load = (async () => {
+        try {
+          const reports = await settingsApi.listToolInstallations([
+            ...TOOL_NAMES,
+          ]);
+          if (requestId !== installationLoadSequence) return;
+          const next: Partial<Record<ToolName, ToolInstallationOverview>> = {};
+          for (const report of reports) {
+            next[report.tool as ToolName] = report;
+          }
+          updateToolManagementState({ installReports: next });
+        } catch (error) {
+          console.error(
+            "[useToolManagement] listToolInstallations failed",
+            error,
+          );
         }
-        updateToolManagementState({ installReports: next });
-      } catch (error) {
-        console.error(
-          "[useToolManagement] probeToolInstallations failed",
-          error,
-        );
-      }
+      })().finally(() => {
+        if (requestId === installationLoadSequence)
+          inflightInstallations = null;
+      });
+      inflightInstallations = load;
+      return load;
     },
     [],
   );
