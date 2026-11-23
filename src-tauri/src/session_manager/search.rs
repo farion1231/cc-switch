@@ -14,7 +14,7 @@
 //! 不必扫全表。
 
 use crate::sync_utils::MutexExt;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -478,12 +478,24 @@ impl SessionIndex {
     }
 
     /// 按会话聚合的正文命中。`providers` 为 None 时不按应用过滤。
+    #[cfg(test)]
     pub fn search(
         &self,
         query: &str,
         providers: Option<&HashSet<String>>,
         limit: usize,
     ) -> rusqlite::Result<Vec<ContentHit>> {
+        self.search_cancellable(query, providers, limit, &SearchTask::default())
+    }
+
+    fn search_cancellable(
+        &self,
+        query: &str,
+        providers: Option<&HashSet<String>>,
+        limit: usize,
+        task: &SearchTask,
+    ) -> rusqlite::Result<Vec<ContentHit>> {
+        task.check()?;
         let query = query.trim();
         if query.is_empty() || limit == 0 {
             return Ok(Vec::new());
@@ -541,6 +553,7 @@ impl SessionIndex {
         let mut order: Vec<i64> = Vec::new();
         let mut best: HashMap<i64, (Vec<i64>, usize)> = HashMap::new();
         for rowid in rowids {
+            task.check()?;
             let source_id = rowid >> ROW_SHIFT;
             let (top, count) = best.entry(source_id).or_insert_with(|| {
                 order.push(source_id);
@@ -562,6 +575,7 @@ impl SessionIndex {
         // DEFAULT_LIMIT needs <=600 parameters. Chunk larger internal callers
         // too, so this also works with SQLite's conservative variable limit.
         for chunk in selected.chunks(900) {
+            task.check()?;
             let sql = format!(
                 "SELECT m.rowid, m.text, s.id, s.provider_id, s.source_path
                  FROM message_text m JOIN indexed_sources s ON s.id = (m.rowid >> {ROW_SHIFT})
@@ -570,11 +584,14 @@ impl SessionIndex {
             );
             let mut stmt = snapshot.prepare(&sql)?;
             let mut rows = stmt.query(params_from_iter(chunk))?;
-            while let Some(row) = rows.next()? {
+            loop {
+                task.check()?;
+                let Some(row) = rows.next()? else { break };
                 let rowid: i64 = row.get(0)?;
                 // Build the small snippet before advancing the batch cursor;
                 // do not retain up to 600 complete 20,000-character messages.
                 let raw: String = row.get(1)?;
+                task.check()?;
                 let (text, highlights) = make_highlighted_snippet(&raw, query);
                 snippets_by_row.insert(
                     rowid,
@@ -633,6 +650,136 @@ fn delete_rows(conn: &Connection, source_id: i64) -> rusqlite::Result<()> {
 // Ordinary readers/writers share this guard. Initialization and deletion take
 // it exclusively, so Windows can close readers before unlinking the cache and its WAL files.
 static INDEX_LIFETIME: RwLock<()> = RwLock::new(());
+
+const SEARCH_CANCELLED: &str = "Session content search cancelled";
+const SEARCH_PROGRESS_OPS: i32 = 1_000;
+const MAX_EARLY_CANCELLATIONS: usize = 128;
+
+#[derive(Default)]
+struct SearchTask {
+    cancelled: Arc<AtomicBool>,
+}
+
+impl SearchTask {
+    fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Relaxed);
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Relaxed)
+    }
+
+    fn check(&self) -> rusqlite::Result<()> {
+        if self.is_cancelled() {
+            return Err(rusqlite::Error::SqliteFailure(
+                rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_INTERRUPT),
+                None,
+            ));
+        }
+        Ok(())
+    }
+
+    fn run<T>(
+        &self,
+        conn: &Connection,
+        f: impl FnOnce() -> rusqlite::Result<T>,
+    ) -> rusqlite::Result<Option<T>> {
+        let cancelled = Arc::clone(&self.cancelled);
+        conn.progress_handler(
+            SEARCH_PROGRESS_OPS,
+            Some(move || cancelled.load(Ordering::Relaxed)),
+        );
+        // Keep the callback scoped to this search on every exit, including
+        // errors and unwinding, before the reader connection is released.
+        let _progress = SearchProgress(conn);
+        let result = self.check().and_then(|()| f()).and_then(|value| {
+            self.check()?;
+            Ok(value)
+        });
+        match result {
+            Err(error)
+                if self.is_cancelled()
+                    && error.sqlite_error_code()
+                        == Some(rusqlite::ErrorCode::OperationInterrupted) =>
+            {
+                Ok(None)
+            }
+            // A concurrent cancellation must never hide an open/SQL error (#9512).
+            other => other.map(Some),
+        }
+    }
+}
+
+struct SearchProgress<'a>(&'a Connection);
+
+impl Drop for SearchProgress<'_> {
+    fn drop(&mut self) {
+        self.0.progress_handler(0, None::<fn() -> bool>);
+    }
+}
+
+#[derive(Default)]
+struct SearchRequests {
+    active: HashMap<String, Arc<SearchTask>>,
+    // Cancellation can overtake the async search command's first poll.
+    // Late cancellations use the same bounded queue; request IDs are unique.
+    cancelled: VecDeque<String>,
+}
+
+impl SearchRequests {
+    fn begin(&mut self, id: &str) -> Arc<SearchTask> {
+        let task = Arc::new(SearchTask::default());
+        if let Some(at) = self.cancelled.iter().position(|pending| pending == id) {
+            self.cancelled.remove(at);
+            task.cancel();
+        }
+        if let Some(previous) = self.active.insert(id.to_string(), Arc::clone(&task)) {
+            previous.cancel();
+        }
+        task
+    }
+
+    fn cancel(&mut self, id: &str) {
+        if let Some(task) = self.active.get(id) {
+            task.cancel();
+        } else if !self.cancelled.iter().any(|pending| pending == id) {
+            if self.cancelled.len() == MAX_EARLY_CANCELLATIONS {
+                self.cancelled.pop_front();
+            }
+            self.cancelled.push_back(id.to_string());
+        }
+    }
+}
+
+static SEARCH_REQUESTS: LazyLock<Mutex<SearchRequests>> =
+    LazyLock::new(|| Mutex::new(SearchRequests::default()));
+
+pub struct SearchRequest {
+    id: String,
+    task: Arc<SearchTask>,
+}
+
+impl Drop for SearchRequest {
+    fn drop(&mut self) {
+        let mut requests = SEARCH_REQUESTS.lock_recover();
+        if requests
+            .active
+            .get(&self.id)
+            .is_some_and(|task| Arc::ptr_eq(task, &self.task))
+        {
+            requests.active.remove(&self.id);
+        }
+    }
+}
+
+pub fn begin_search(id: String) -> SearchRequest {
+    let task = SEARCH_REQUESTS.lock_recover().begin(&id);
+    SearchRequest { id, task }
+}
+
+pub fn cancel_search(id: &str) {
+    SEARCH_REQUESTS.lock_recover().cancel(id);
+}
 
 static INDEX: LazyLock<Mutex<Option<SessionIndex>>> = LazyLock::new(|| Mutex::new(None));
 static STATUS: LazyLock<Mutex<IndexStatus>> = LazyLock::new(|| Mutex::new(IndexStatus::default()));
@@ -775,6 +922,9 @@ fn remove_index_files_with(
 
 /// 删除整个索引文件（关闭功能时调用）
 pub fn clear() -> Result<(), String> {
+    for task in SEARCH_REQUESTS.lock_recover().active.values() {
+        task.cancel();
+    }
     let _lifetime = INDEX_LIFETIME
         .write()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -809,11 +959,21 @@ pub fn search(
     query: &str,
     providers: Option<Vec<String>>,
     limit: usize,
+    request: SearchRequest,
 ) -> Result<ContentSearchResult, String> {
-    search_in(&INDEX, &index_path(), enabled, query, providers, limit)
+    search_in_with_task(
+        &INDEX,
+        &index_path(),
+        enabled,
+        query,
+        providers,
+        limit,
+        &request.task,
+    )
 }
 
 /// [`search`] 的实现，索引槽、路径、开关可替换（测试用）。
+#[cfg(test)]
 fn search_in(
     slot: &Mutex<Option<SessionIndex>>,
     path: &Path,
@@ -822,6 +982,29 @@ fn search_in(
     providers: Option<Vec<String>>,
     limit: usize,
 ) -> Result<ContentSearchResult, String> {
+    search_in_with_task(
+        slot,
+        path,
+        is_enabled,
+        query,
+        providers,
+        limit,
+        &SearchTask::default(),
+    )
+}
+
+fn search_in_with_task(
+    slot: &Mutex<Option<SessionIndex>>,
+    path: &Path,
+    is_enabled: impl Fn() -> bool,
+    query: &str,
+    providers: Option<Vec<String>>,
+    limit: usize,
+    task: &SearchTask,
+) -> Result<ContentSearchResult, String> {
+    if task.is_cancelled() {
+        return Err(SEARCH_CANCELLED.to_string());
+    }
     let mut lifetime = INDEX_LIFETIME
         .read()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -856,9 +1039,15 @@ fn search_in(
             return Ok(empty());
         }
     }
+    if task.is_cancelled() {
+        return Err(SEARCH_CANCELLED.to_string());
+    }
     let providers: Option<HashSet<String>> = providers.map(|list| list.into_iter().collect());
-    let result = SessionIndex::open_reader(path)
-        .and_then(|index| index.search(query, providers.as_ref(), limit.min(DEFAULT_LIMIT)));
+    let result = SessionIndex::open_reader(path).and_then(|index| {
+        task.run(&index.conn, || {
+            index.search_cancellable(query, providers.as_ref(), limit.min(DEFAULT_LIMIT), task)
+        })
+    });
     if result.as_ref().err().is_some_and(is_corruption) {
         let generation = slot
             .lock_recover()
@@ -867,11 +1056,13 @@ fn search_in(
         drop(lifetime);
         discard_corrupt_index(slot, path, generation);
     }
-    let hits = result.map_err(|error| {
-        let error = format!("Session index error: {error}");
-        log::warn!("会话正文搜索失败: {error}");
-        error
-    })?;
+    let hits = result
+        .map_err(|error| {
+            let error = format!("Session index error: {error}");
+            log::warn!("会话正文搜索失败: {error}");
+            error
+        })?
+        .ok_or_else(|| SEARCH_CANCELLED.to_string())?;
     Ok(ContentSearchResult { hits, status })
 }
 
@@ -1033,6 +1224,8 @@ fn index_changed_source(
 mod tests {
     use super::*;
     use crate::session_manager::model::EventKind;
+
+    mod cancellation;
 
     fn fp(len: i64) -> StoredFingerprint {
         StoredFingerprint {
