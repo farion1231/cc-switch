@@ -5425,7 +5425,7 @@
     "deleteSessionHint": "Delete this session in DeepSeek Harness to keep its history consistent."
   },
   "appTargets": {
-    "help": "Providers are enabled per environment on the providers page, so Windows and each WSL distro can use different configs; MCP, prompts and Skills are written to every checked environment. Sessions and usage are read from Windows (or the first WSL environment when Windows is unchecked). Unchecking never deletes files in that environment.",
+    "help": "Windows is the configuration source. WSL follows its provider, MCP, prompts and Skills, and shares its routing and aggregation service. Unchecking a target stops syncing without deleting files.",
     "summaryOne": "Writes to {{target}} only",
     "summaryMany": "Writes to {{targets}}",
     "detect": "Detect again",
@@ -5452,7 +5452,7 @@
       "willStart": "will be started when writing",
       "probeFailed": "detection failed this time"
     },
-    "legacyWsl": "Your existing WSL directory is kept. Check Windows and save, then each side can enable its own provider.",
+    "legacyWsl": "The existing WSL path is preserved. Saving uses Windows as the source for one-way sync to WSL.",
     "legacyUnresolved": "The WSL distro of the existing directory could not be recognised, so the single-directory behaviour is kept. Enter the directory on the matching distro row and save.",
     "errors": {
       "noTarget": "Keep at least one write target.",
@@ -5466,7 +5466,8 @@
       "windowsNotAbsolute": "Enter an absolute Windows directory.",
       "windowsInvalidChar": "The Windows directory contains invalid characters.",
       "wslDistroMismatch": "Enter a full WSL UNC directory inside {{distro}}.",
-      "duplicateDestination": "Another checked environment writes to the same directory."
+      "duplicateDestination": "Another checked environment writes to the same directory.",
+      "windowsPrimaryRequired": "Windows must remain enabled as the configuration source"
     },
     "blocked": {
       "managed_login_requires_windows_primary": "A managed official sign-in is in use, and it only works on Windows. Switch Windows to an API key provider before unchecking Windows. Your draft is kept."
@@ -5477,8 +5478,8 @@
       "unknownWithHost": "an unrecognised config ({{host}})",
       "unknown": "an unrecognised config",
       "progress": "Conflict {{index}} of {{total}}",
-      "defer": "Keep its config; don't pick a provider yet",
-      "deferHint": "Leave this environment's provider settings alone; enable any provider for it later on the providers page.",
+      "defer": "Keep existing configuration for now",
+      "deferHint": "Keep the files this time. The next Windows provider switch or manual sync applies the current Windows selection.",
       "overwrite": "Back up, then use the current provider",
       "overwriteHint": "Back up this environment's files, then write the current provider's managed fields; other settings stay.",
       "import": "Import as a provider card and keep using it here",
@@ -5489,7 +5490,7 @@
     "toast": {
       "primaryFailed": "Directories saved, but writing the primary environment failed; nothing was synced.",
       "partial": "Directories saved; {{targets}} not synced.",
-      "deferred": "Directories saved. Enable a provider for the environments that kept their config on the providers page.",
+      "deferred": "Directories saved. Deferred targets update on the next Windows provider switch or manual sync.",
       "savedAndSynced": "Directories saved and synced to {{targets}}.",
       "saved": "Directories saved.",
       "mcpSkipped": "Windows-only MCP servers were skipped for WSL: {{servers}}",
@@ -5510,7 +5511,7 @@
       "partial": "Partially synced"
     },
     "reason": {
-      "user_deferred": "Own config kept; no provider picked yet",
+      "user_deferred": "Write deferred for now",
       "managed_login": "Managed official sign-in supports the Windows primary only for now",
       "write_failed": "Write failed; original config untouched",
       "timeout": "Timed out; result unknown (may still finish in background)",
@@ -5534,7 +5535,7 @@
       "provider": "In use: {{name}}",
       "syncAll": "Sync all now",
       "retry": "Retry pending ({{count}})",
-      "subtitle": "Each environment enables its own provider; switch with the environment toggles on the cards",
+      "subtitle": "WSL follows Windows; these are the latest sync results.",
       "noProvider": "No provider picked yet",
       "configure": "Configure targets",
       "openRouting": "Open routing settings"
@@ -5544,7 +5545,7 @@
       "enable": "Enable on {{target}}",
       "done": "{{target}} switched to {{provider}}",
       "failed": "{{target}} could not switch to {{provider}}; it keeps its previous provider",
-      "managedLogin": "Official cards bound to a managed account only work on Windows; in WSL use an unbound official card (its own sign-in) or an API key provider",
+      "managedLogin": "Managed sign-in stays on Windows. WSL can share Windows routing without copying the managed credentials.",
       "addTitle": "Enable on {{target}}",
       "addMessage": "{{target}} has this client installed but is not a write target yet. Confirming adds it as a write target, backs up its current config, then enables {{provider}} there.",
       "addConfirm": "Add and enable",
@@ -5556,7 +5557,8 @@
       "releaseConfirm": "Stop using",
       "released": "{{target}} no longer uses {{provider}}",
       "releaseFailed": "Could not stop using the provider on {{target}}; it keeps the previous provider",
-      "inUseCannotDelete": "In use on {{targets}}; switch to another provider there first"
+      "inUseCannotDelete": "{{targets}} still retain this provider; retry sync or disable those write targets first",
+      "followsWindows": "Follow Windows"
     },
     "route": {
       "join": "Join routing / aggregation",

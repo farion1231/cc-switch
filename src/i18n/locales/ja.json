@@ -5425,7 +5425,7 @@
     "deleteSessionHint": "履歴の整合性を保つため、DeepSeek Harness でこのセッションを削除してください。"
   },
   "appTargets": {
-    "help": "プロバイダーはプロバイダーページで環境ごとに有効にするため、Windows と各 WSL で別々の設定を使えます。MCP、プロンプト、Skills はチェックしたすべての環境に書き込まれます。セッションと使用量は Windows から読み取ります（Windows を外した場合は最初の WSL 環境）。チェックを外してもその環境のファイルは削除されません。",
+    "help": "Windows を設定元として、プロバイダー、MCP、プロンプト、Skills を WSL に同期し、ルーティングと集約サービスを共有します。選択を解除すると同期のみ停止し、ファイルは削除されません。",
     "summaryOne": "{{target}} のみに書き込み",
     "summaryMany": "{{targets}} に書き込み",
     "detect": "再検出",
@@ -5452,7 +5452,7 @@
       "willStart": "書き込み時に起動します",
       "probeFailed": "今回の検出に失敗しました"
     },
-    "legacyWsl": "既存の WSL ディレクトリはそのまま保持されています。Windows をチェックして保存すると、それぞれで別のプロバイダーを有効にできます。",
+    "legacyWsl": "既存の WSL パスは保持されます。保存後は Windows から WSL への一方向同期になります。",
     "legacyUnresolved": "既存ディレクトリの WSL ディストリビューションを特定できないため、単一ディレクトリの動作を維持しています。対応するディストリビューションの行にディレクトリを入力して保存してください。",
     "errors": {
       "noTarget": "書き込み先を少なくとも 1 つ残してください。",
@@ -5466,7 +5466,8 @@
       "windowsNotAbsolute": "Windows の絶対パスを入力してください。",
       "windowsInvalidChar": "Windows のディレクトリに無効な文字が含まれています。",
       "wslDistroMismatch": "{{distro}} 内の完全な WSL UNC ディレクトリを入力してください。",
-      "duplicateDestination": "チェックされた別の環境と同じディレクトリに書き込みます。"
+      "duplicateDestination": "チェックされた別の環境と同じディレクトリに書き込みます。",
+      "windowsPrimaryRequired": "Windows を有効な設定元として維持してください"
     },
     "blocked": {
       "managed_login_requires_windows_primary": "管理された公式ログインを使用中で、これは Windows でのみ使えます。Windows のチェックを外す前に、Windows で API キーのプロバイダーに切り替えてください。下書きは保持されています。"
@@ -5477,8 +5478,8 @@
       "unknownWithHost": "不明な設定（{{host}}）",
       "unknown": "不明な設定",
       "progress": "競合 {{index}} / {{total}}",
-      "defer": "元の設定を残し、プロバイダーはまだ選ばない",
-      "deferHint": "この環境のプロバイダー設定は変更しません。後でプロバイダーページから任意のプロバイダーを有効にできます。",
+      "defer": "今回は既存の設定を保持",
+      "deferHint": "今回はファイルを保持します。次回 Windows のプロバイダー切り替え時、または手動同期時に Windows の選択を適用します。",
       "overwrite": "バックアップしてから現在のプロバイダーを使う",
       "overwriteHint": "この環境のファイルをバックアップしてから、現在のプロバイダーの管理対象フィールドを書き込みます。その他の設定は残ります。",
       "import": "プロバイダーカードとしてインポートし、この環境で使い続ける",
@@ -5489,7 +5490,7 @@
     "toast": {
       "primaryFailed": "ディレクトリは保存しましたが、プライマリ環境への書き込みに失敗したため同期していません。",
       "partial": "ディレクトリを保存しました。{{targets}} は未同期です。",
-      "deferred": "ディレクトリを保存しました。元の設定を残した環境は、プロバイダーページでプロバイダーを有効にできます。",
+      "deferred": "ディレクトリを保存しました。保留した対象は次回の Windows プロバイダー切り替え時または手動同期時に更新します。",
       "savedAndSynced": "ディレクトリを保存し、{{targets}} に同期しました。",
       "saved": "ディレクトリを保存しました。",
       "mcpSkipped": "WSL では Windows 専用の MCP をスキップしました：{{servers}}",
@@ -5510,7 +5511,7 @@
       "partial": "一部の同期に失敗"
     },
     "reason": {
-      "user_deferred": "元の設定を保持。プロバイダーは未選択",
+      "user_deferred": "今回の書き込みを保留",
       "managed_login": "管理された公式ログインは現在 Windows のプライマリのみ対応しています",
       "write_failed": "書き込みに失敗しました。元の設定は変更されていません",
       "timeout": "タイムアウト。結果は不明です（バックグラウンドで完了する可能性があります）",
@@ -5534,7 +5535,7 @@
       "provider": "使用中：{{name}}",
       "syncAll": "すべて今すぐ同期",
       "retry": "未同期を再試行 ({{count}})",
-      "subtitle": "環境ごとにプロバイダーを有効にします。カードの環境スイッチで切り替えます",
+      "subtitle": "WSL は Windows に従います。ここには直近の同期結果を表示します。",
       "noProvider": "プロバイダーは未選択",
       "configure": "ターゲットを設定",
       "openRouting": "ルーティング設定を開く"
@@ -5544,7 +5545,7 @@
       "enable": "{{target}} で有効にする",
       "done": "{{target}} を {{provider}} に切り替えました",
       "failed": "{{target}} を {{provider}} に切り替えられませんでした。以前のプロバイダーのままです",
-      "managedLogin": "管理アカウントに紐づく公式カードは Windows でのみ使えます。WSL では紐づけのない公式カード（その環境のログイン）か API キーのプロバイダーを使ってください",
+      "managedLogin": "管理されたログインは Windows のみに保持します。WSL は認証情報をコピーせずに Windows のルーティングを共有できます。",
       "addTitle": "{{target}} で有効にする",
       "addMessage": "{{target}} にはこのクライアントがインストールされていますが、まだ書き込み先ではありません。確認すると書き込み先に追加し、現在の設定をバックアップしてから {{provider}} を有効にします。",
       "addConfirm": "追加して有効にする",
@@ -5556,7 +5557,8 @@
       "releaseConfirm": "使用をやめる",
       "released": "{{target}} は {{provider}} を使わなくなりました",
       "releaseFailed": "{{target}} で使用をやめられませんでした。以前のプロバイダーのままです",
-      "inUseCannotDelete": "{{targets}} で使用中です。先にそちらで別のプロバイダーに切り替えてください"
+      "inUseCannotDelete": "{{targets}} にこのプロバイダーの設定が残っています。同期を再試行するか、書き込み対象を無効にしてください",
+      "followsWindows": "Windows に追従"
     },
     "route": {
       "join": "ルーティング / 集約に参加",

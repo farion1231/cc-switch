@@ -119,14 +119,14 @@ describe("AppTargetsEditor", () => {
     Object.values(toastMock).forEach((fn) => fn.mockReset());
   });
 
-  it("only lists WSL distros where the client is installed", () => {
+  it("lists running WSL distros without probing client executables", () => {
     installs = {
       Ubuntu: {
         claude: { status: "notInstalled", detectedAt: 1, cached: false },
       },
     };
     renderEditor();
-    expect(screen.getAllByRole("checkbox")).toHaveLength(1);
+    expect(screen.getAllByRole("checkbox")).toHaveLength(2);
   });
 
   it("lists detected distros unchecked and keeps the last target", () => {
@@ -139,17 +139,17 @@ describe("AppTargetsEditor", () => {
     // 取消最后一个：保持选择并提示
     fireEvent.click(boxes[0]);
     expect(boxes[0]).toBeChecked();
-    expect(screen.getByText("appTargets.keepOne")).toBeInTheDocument();
+    expect(boxes[0]).toBeDisabled();
     // 未改动时保存 / 撤销都不可用
     expect(screen.getByText("common.save").closest("button")).toBeDisabled();
   });
 
-  it("has no primary picker and derives the primary environment", async () => {
+  it("keeps Windows as the source when a WSL target is enabled", async () => {
     inspectMock.mockResolvedValue({
       errors: [],
       resolvedDirs: {},
       conflicts: [],
-      primaryTarget: "wsl:Ubuntu",
+      primaryTarget: "windows",
     });
     saveMock.mockResolvedValue({
       saved: true,
@@ -157,7 +157,7 @@ describe("AppTargetsEditor", () => {
       errors: [],
       resolvedDirs: {},
       conflicts: [],
-      primaryTarget: "wsl:Ubuntu",
+      primaryTarget: "windows",
       imported: [],
       targets: [],
     });
@@ -171,7 +171,7 @@ describe("AppTargetsEditor", () => {
       fireEvent.click(screen.getByText("common.save"));
     });
     await waitFor(() => expect(saveMock).toHaveBeenCalled());
-    expect(saveMock.mock.calls[0][1].primary).toBe("wsl:Ubuntu");
+    expect(saveMock.mock.calls[0][1].primary).toBe("windows");
   });
 
   it("offers import or overwrite (no defer) for the new primary", async () => {
@@ -420,7 +420,7 @@ describe("AppTargetsEditor", () => {
       resolvedDirs: {},
       conflicts: [
         {
-          target: "wsl:Ubuntu",
+          target: "windows",
           dir: "\\\\wsl.localhost\\Ubuntu\\home\\me\\.claude",
           existingHost: "api.example",
           incomingProviderName: "Main",

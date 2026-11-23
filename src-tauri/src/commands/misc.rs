@@ -316,12 +316,8 @@ pub struct WslShellPreferenceInput {
 
 // Keep platform-specific env detection in one place to avoid repeating cfg blocks.
 #[cfg(target_os = "windows")]
-fn tool_env_type_and_wsl_distro(tool: &str) -> (String, Option<String>) {
-    if let Some(distro) = wsl_distro_for_tool(tool) {
-        ("wsl".to_string(), Some(distro))
-    } else {
-        ("windows".to_string(), None)
-    }
+fn tool_env_type_and_wsl_distro(_tool: &str) -> (String, Option<String>) {
+    ("windows".to_string(), None)
 }
 
 #[cfg(target_os = "macos")]
@@ -542,63 +538,6 @@ pub async fn run_tool_lifecycle_action(
             },
         )
         .await
-}
-
-/// 在指定的 WSL 发行版里安装 / 更新一个工具（应用页的 WSL 安装条目）。卸载要先预览计划，
-/// 这里不提供。
-#[tauri::command]
-pub async fn run_wsl_tool_lifecycle_action(
-    app: AppHandle,
-    tool: String,
-    distro: String,
-    action: String,
-) -> Result<(), String> {
-    let requested = normalize_requested_tools(std::slice::from_ref(&tool));
-    if requested.len() != 1 {
-        return Err(format!("Unsupported tool: {tool}"));
-    }
-    if !crate::app_targets::model::is_valid_distro_name(&distro) {
-        return Err(format!("Invalid WSL distro name: {distro}"));
-    }
-    let action = ToolLifecycleAction::from_str(&action)?;
-    #[cfg(target_os = "windows")]
-    {
-        let command = wsl_tool_action_shell_command(requested[0], action)
-            .ok_or_else(|| format!("Unsupported tool action target: {tool}"))?;
-        let script = wsl_login_action_script(&command);
-        let progress = ToolLifecycleProgress::from_app_for_wsl(app, &requested, &distro);
-        let queued = progress.clone();
-        TOOL_LIFECYCLE
-            .run_with_queue_notice(
-                requested,
-                move || queued.queued(),
-                move |_| {
-                    // 没在运行的发行版里执行会卡在启动上（界面上也不给按钮），排队后在执行线程里再核对一次。
-                    if !crate::app_targets::wsl::is_running(&distro) {
-                        return Err(format!(
-                            "WSL · {distro} 没有在运行，请先在终端里启动它 (WSL · {distro} is not running; start it in a terminal first)"
-                        ));
-                    }
-                    progress.running();
-                    let mut cmd = std::process::Command::new("wsl.exe");
-                    cmd.args(["-d", &distro, "--exec", "sh", "-c", &script])
-                        .env("WSL_UTF8", "1")
-                        .creation_flags(CREATE_NO_WINDOW);
-                    let output = tool_lifecycle_progress::run_with_progress(cmd, &progress)
-                        .map_err(|e| format!("启动安装进程失败: {e}"))?;
-                    let result = finish_lifecycle_output(&output);
-                    // 下次多环境概览重新探测这个发行版的安装情况。
-                    crate::app_targets::installs::invalidate(&distro);
-                    result
-                },
-            )
-            .await
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        let _ = (app, requested, action);
-        Err("WSL is only available on Windows".to_string())
-    }
 }
 
 /// 静默执行工具安装/更新脚本：直接捕获子进程输出并阻塞到命令真正结束，
@@ -1060,53 +999,16 @@ pub async fn list_tool_installations(
         .collect()
 }
 
-/// 这个工具的配置目录是不是指向 WSL（只有 Windows 上会是）。
-pub(crate) fn tool_runs_in_wsl(tool: &str) -> bool {
-    #[cfg(target_os = "windows")]
-    {
-        wsl_distro_for_tool(tool).is_some()
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        let _ = tool;
-        false
-    }
+/// 应用管理固定使用宿主客户端，不从配置同步目标推断执行环境。
+pub(crate) fn tool_runs_in_wsl(_tool: &str) -> bool {
+    // 应用页仅管理宿主客户端；WSL 只接收配置，不执行管理命令。
+    false
 }
 
 #[cfg(target_os = "windows")]
-pub(super) fn wsl_distro_for_tool(tool: &str) -> Option<String> {
-    let app = known_tool(tool)?
-        .id
-        .parse::<crate::app_config::AppType>()
-        .ok()?;
-    let override_dir = crate::settings::get_override_dir(&app)?;
-
-    wsl_distro_from_path(&override_dir)
-}
-
-/// 从 UNC 路径中提取 WSL 发行版名称
-/// 支持 `\\wsl$\Ubuntu\...` 和 `\\wsl.localhost\Ubuntu\...` 两种格式
-#[cfg(target_os = "windows")]
-fn wsl_distro_from_path(path: &Path) -> Option<String> {
-    use std::path::{Component, Prefix};
-    let Some(Component::Prefix(prefix)) = path.components().next() else {
-        return None;
-    };
-    match prefix.kind() {
-        Prefix::UNC(server, share) | Prefix::VerbatimUNC(server, share) => {
-            let server_name = server.to_string_lossy();
-            if server_name.eq_ignore_ascii_case("wsl$")
-                || server_name.eq_ignore_ascii_case("wsl.localhost")
-            {
-                let distro = share.to_string_lossy().to_string();
-                if !distro.is_empty() {
-                    return Some(distro);
-                }
-            }
-            None
-        }
-        _ => None,
-    }
+pub(super) fn wsl_distro_for_tool(_tool: &str) -> Option<String> {
+    // 本 PR 的应用管理只作用于宿主。配置同步目标不能改变命令的执行环境。
+    None
 }
 
 #[cfg_attr(windows, allow(dead_code))]
@@ -1665,6 +1567,30 @@ mod tests {
     #[cfg(target_os = "windows")]
     mod wsl_helpers {
         use super::super::*;
+
+        #[test]
+        #[serial_test::serial]
+        fn unc_sync_targets_do_not_redirect_tool_management_into_wsl() {
+            let original = crate::settings::get_settings();
+            let mut configured = original.clone();
+            configured.claude_config_dir = Some(r"\\wsl.localhost\Ubuntu\home\me\.claude".into());
+            configured.codex_config_dir = Some(r"\\wsl$\Ubuntu\home\me\.codex".into());
+            crate::settings::update_settings(configured).unwrap();
+            let command = build_tool_lifecycle_command(
+                &["claude", "codex"],
+                ToolLifecycleAction::Install,
+                None,
+            )
+            .unwrap();
+            let env = tool_env_type_and_wsl_distro("claude");
+            let distro = wsl_distro_for_tool("codex");
+            let runs_in_wsl = tool_runs_in_wsl("claude");
+            crate::settings::update_settings(original).unwrap();
+            assert_eq!(env, ("windows".into(), None));
+            assert_eq!(distro, None);
+            assert!(!runs_in_wsl);
+            assert!(!command.contains("wsl.exe"), "{command}");
+        }
 
         #[test]
         fn test_is_valid_shell() {

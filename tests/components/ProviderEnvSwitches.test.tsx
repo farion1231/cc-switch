@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
@@ -83,131 +83,24 @@ function renderSwitches(id: string, mainActive: boolean, onMain = vi.fn()) {
 describe("ProviderEnvSwitches", () => {
   beforeEach(() => {
     activateMock.mockReset();
-    Object.values(toastMock).forEach((fn) => fn.mockReset());
+    deactivateMock.mockReset();
   });
-
-  it("shows one toggle per enabled environment with its own active state", () => {
-    renderSwitches("b", false);
-    const toggles = screen.getAllByRole("button");
-    expect(toggles.map((b) => b.textContent)).toEqual(["Windows", "Alpine"]);
-    expect(toggles[0]).toHaveAttribute("aria-pressed", "false");
-    expect(toggles[1]).toHaveAttribute("aria-pressed", "true");
-  });
-
-  it("uses the existing switch for Windows and the per-environment call for WSL", async () => {
-    activateMock.mockResolvedValue({
-      target: "wsl:Alpine",
-      status: "ok",
-      at: 1,
-    });
+  it("only switches Windows and shows WSL as a read-only follower", () => {
     const onMain = renderSwitches("a", false);
     const [windows, alpine] = screen.getAllByRole("button");
+    expect(windows).toBeEnabled();
+    expect(alpine).toBeDisabled();
     fireEvent.click(windows);
+    fireEvent.click(alpine);
     expect(onMain).toHaveBeenCalledTimes(1);
     expect(activateMock).not.toHaveBeenCalled();
-
-    await act(async () => {
-      fireEvent.click(alpine);
-    });
-    expect(activateMock).toHaveBeenCalledWith("claude", "wsl:Alpine", "a");
-    expect(toastMock.success).toHaveBeenCalled();
   });
-
-  it("reports a failed switch and keeps the previous provider", async () => {
-    activateMock.mockResolvedValue({
-      target: "wsl:Alpine",
-      status: "error",
-      reason: "write_failed",
-      at: 1,
-    });
+  it("uses the Windows selection instead of the last WSL sync result", () => {
     renderSwitches("a", true);
     const [windows, alpine] = screen.getAllByRole("button");
-    fireEvent.click(windows);
-    await act(async () => {
-      fireEvent.click(alpine);
-    });
-    expect(toastMock.warning).toHaveBeenCalled();
-  });
-
-  it("offers installed but not yet added distros behind a confirmation", async () => {
-    activateMock.mockResolvedValue({
-      target: "wsl:Ubuntu",
-      status: "ok",
-      at: 1,
-    });
-    const client = new QueryClient();
-    render(
-      <QueryClientProvider client={client}>
-        <ProviderEnvSwitches
-          app="claude"
-          provider={provider("a")}
-          view={view}
-          inventory={inventory}
-          mainActive={false}
-          mainAction={{ key: "switch", label: "switch", onClick: vi.fn() }}
-          candidates={["Ubuntu"]}
-        />
-      </QueryClientProvider>,
-    );
-    const ubuntu = screen.getByRole("button", { name: /Ubuntu/ });
-    expect(ubuntu.className).toContain("border-dashed");
-    fireEvent.click(ubuntu);
-    expect(activateMock).not.toHaveBeenCalled();
-    await act(async () => {
-      fireEvent.click(screen.getByText("appTargets.switch.addConfirm"));
-    });
-    expect(activateMock).toHaveBeenCalledWith("claude", "wsl:Ubuntu", "a");
-  });
-
-  it("disables WSL toggles for cards bound to a managed account", () => {
-    const client = new QueryClient();
-    const bound = {
-      ...provider("official"),
-      category: "official",
-      meta: {
-        authBinding: {
-          source: "managed_account",
-          authProvider: "claude_official",
-          accountId: "acct",
-        },
-      },
-    } as Provider;
-    render(
-      <QueryClientProvider client={client}>
-        <ProviderEnvSwitches
-          app="claude"
-          provider={bound}
-          view={view}
-          inventory={inventory}
-          mainActive={false}
-          mainAction={{ key: "switch", label: "switch", onClick: vi.fn() }}
-        />
-      </QueryClientProvider>,
-    );
-    const [windows, alpine] = screen.getAllByRole("button");
-    expect(windows).not.toBeDisabled();
-    expect(alpine).toBeDisabled();
-  });
-
-  it("lets an active WSL toggle be unchecked after confirming, but not Windows", async () => {
-    deactivateMock.mockResolvedValue({
-      target: "wsl:Alpine",
-      status: "skipped",
-      reason: "no_provider",
-      at: 2,
-    });
-    const onMain = renderSwitches("b", true);
-    const [windows, alpine] = screen.getAllByRole("button");
-    fireEvent.click(windows);
-    expect(onMain).not.toHaveBeenCalled();
-    expect(deactivateMock).not.toHaveBeenCalled();
-
+    expect(windows).toHaveAttribute("aria-pressed", "true");
+    expect(alpine).toHaveAttribute("aria-pressed", "true");
     fireEvent.click(alpine);
     expect(deactivateMock).not.toHaveBeenCalled();
-    await act(async () => {
-      fireEvent.click(screen.getByText("appTargets.switch.releaseConfirm"));
-    });
-    expect(deactivateMock).toHaveBeenCalledWith("claude", "wsl:Alpine");
-    expect(toastMock.success).toHaveBeenCalled();
   });
 });

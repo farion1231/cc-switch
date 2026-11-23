@@ -3,7 +3,7 @@
 //! 主环境的「当前供应商」仍由现有指针负责；这里只记跟随环境写到了哪家、什么时候、
 //! 托管字段的指纹（用来发现外部修改）以及失败原因。
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -116,6 +116,42 @@ type AppRecords = BTreeMap<String, TargetRecord>;
 struct StateFile {
     #[serde(default)]
     apps: BTreeMap<String, AppRecords>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pending_prompt_clears: BTreeMap<String, BTreeSet<String>>,
+}
+
+pub fn prompt_clear_pending(app: &str, target: &str) -> bool {
+    let _guard = lock().lock().unwrap_or_else(|e| e.into_inner());
+    read()
+        .pending_prompt_clears
+        .get(app)
+        .is_some_and(|targets| targets.contains(&canonical_key(target)))
+}
+
+pub fn set_prompt_clear_pending(app: &str, target: &str, pending: bool) {
+    let _guard = lock().lock().unwrap_or_else(|e| e.into_inner());
+    let mut state = read();
+    if state
+        .pending_prompt_clears
+        .get(app)
+        .is_some_and(|targets| targets.contains(&canonical_key(target)))
+        == pending
+    {
+        return;
+    }
+    if pending {
+        state
+            .pending_prompt_clears
+            .entry(app.to_string())
+            .or_default()
+            .insert(canonical_key(target));
+    } else if let Some(targets) = state.pending_prompt_clears.get_mut(app) {
+        targets.remove(&canonical_key(target));
+        if targets.is_empty() {
+            state.pending_prompt_clears.remove(app);
+        }
+    }
+    write(&state);
 }
 
 fn canonical_key(target: &str) -> String {
@@ -207,16 +243,6 @@ pub fn set(app: &str, target: &str, mut record: TargetRecord) {
             record.fingerprint = previous.fingerprint;
         }
     }
-    entry.insert(target.to_string(), record);
-    write(&state);
-}
-
-/// 整条替换，不沿用旧记录的供应商（取消一个环境的供应商时用）。
-pub fn replace(app: &str, target: &str, record: TargetRecord) {
-    let _guard = lock().lock().unwrap_or_else(|e| e.into_inner());
-    let mut state = read();
-    let entry = state.apps.entry(app.to_string()).or_default();
-    let _ = take_key(entry, target);
     entry.insert(target.to_string(), record);
     write(&state);
 }

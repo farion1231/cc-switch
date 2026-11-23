@@ -178,9 +178,12 @@ export function AppConfigSection({
             ? targets.data?.apps.find((item) => item.app === app)
             : undefined;
         const view =
-          found && wslCandidates(found.config, targets.data, app).length > 0
-            ? found
-            : undefined;
+          // 已保存目标配置由专用接口管理；WSL 停止只隐藏行，不切回旧保存入口。
+          configured?.source === "saved"
+            ? configured
+            : found && wslCandidates(found.config, targets.data, app).length > 0
+              ? found
+              : undefined;
         if (view && targets.data && isAppTargetApp(app)) {
           return (
             <AppTargetsEditor

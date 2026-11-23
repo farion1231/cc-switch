@@ -65,7 +65,7 @@ pub struct WslTarget {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppTargetsConfig {
-    /// 主环境：`windows` 或 `wsl:<发行版>`。导入、回填、外部修改检测和会话读取以它为准。
+    /// 新配置固定为 `windows`；保留 `wsl:<发行版>` 的读取以兼容旧单目录设置。
     pub primary: String,
     #[serde(default)]
     pub windows: WindowsTarget,
@@ -194,7 +194,9 @@ impl AppTargetsConfig {
         let primary = self.primary_id();
         self.enabled_targets()
             .into_iter()
-            .filter(|t| primary.as_ref().is_none_or(|p| !p.same(&t.id)))
+            .filter(|t| {
+                matches!(t.id, TargetId::Wsl(_)) && primary.as_ref().is_none_or(|p| !p.same(&t.id))
+            })
             .collect()
     }
 
@@ -511,6 +513,9 @@ fn is_windows_absolute(path: &str) -> bool {
 pub fn validate(config: &AppTargetsConfig, resolved: &BTreeMap<String, String>) -> Vec<FieldError> {
     let mut errors = Vec::new();
     let enabled = config.enabled_targets();
+    if !config.windows.enabled || config.primary != WINDOWS {
+        errors.push(FieldError::whole("windowsPrimaryRequired"));
+    }
     if enabled.is_empty() {
         errors.push(FieldError::whole("noTarget"));
     }
@@ -814,7 +819,10 @@ mod tests {
             &config,
             &resolved(&[("wsl:Ubuntu", r"\\wsl.localhost\Ubuntu\home\me\.claude")]),
         );
-        assert_eq!(codes(&errors), vec!["primaryNotEnabled"]);
+        assert_eq!(
+            codes(&errors),
+            vec!["windowsPrimaryRequired", "primaryNotEnabled"]
+        );
     }
 
     #[test]

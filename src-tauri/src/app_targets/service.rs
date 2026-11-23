@@ -102,15 +102,14 @@ fn view(app: &AppType, inventory: &WslInventory) -> AppTargetsView {
     }
 }
 
-/// 设置页概览。`probe_stopped` 为真时（用户点「重新检测」）连停止的发行版也启动探测。
-pub fn overview(probe_stopped: bool, refresh_installs: bool) -> AppTargetsOverview {
+/// 设置页概览。重新检测只刷新运行中发行版的文件信息，绝不启动发行版或执行 shell。
+pub fn overview(probe_stopped: bool, _refresh_installs: bool) -> AppTargetsOverview {
     let mut inventory = wsl::inventory(probe_stopped);
     // 缓存只供恢复配置使用；概览不能把已经关闭的发行版当成当前环境。
     if inventory.host_windows {
         inventory.distros.retain(|env| env.available && env.running);
     }
-    let installs =
-        super::installs::detect(&inventory, refresh_installs || probe_stopped, probe_stopped);
+    let installs = Default::default();
     let apps: Vec<AppTargetsView> = model::supported_apps()
         .iter()
         .map(|app| view(app, &inventory))
@@ -121,11 +120,8 @@ pub fn overview(probe_stopped: bool, refresh_installs: bool) -> AppTargetsOvervi
             .iter()
             .any(|target| is_running(&inventory, &target.distro))
     });
-    let any_installed = installs
-        .values()
-        .any(|tools| tools.values().any(|t| t.present()));
     AppTargetsOverview {
-        multi_env: inventory.host_windows && (any_installed || has_wsl_targets),
+        multi_env: inventory.host_windows && (has_wsl_targets || !inventory.distros.is_empty()),
         installs,
         inventory,
         apps,
@@ -187,7 +183,7 @@ struct Checked {
 fn check(state: &AppState, app: &AppType, draft: AppTargetsConfig) -> Result<Checked, AppError> {
     let mut config = draft.normalized();
     let (previous, _) = sync::app_config(app);
-    // 「接入路由」只经 set_route 改，表单带来的值可能是旧的：沿用已保存的。
+    // 保留旧版本 route 字段供兼容；本阶段运行时始终跟随 Windows 路由。
     config.windows.route = previous.windows.route;
     for target in &mut config.wsl {
         target.route = previous
@@ -317,9 +313,7 @@ fn write_primary(state: &AppState, app: &AppType, key: &str) -> TargetReport {
             if let Err(err) = crate::services::PromptService::sync_to_live(state, app.clone()) {
                 warnings.push(format!("prompt_failed:{err}"));
             }
-            if let Err(err) = crate::services::SkillService::sync_to_app(&state.db, app) {
-                warnings.push(format!("skills_failed:{err}"));
-            }
+            warnings.extend(sync::sync_skills(state, app));
             TargetReport {
                 target: key.to_string(),
                 record: TargetRecord::new(TargetStatus::Ok).with_sync_warnings(warnings),
@@ -348,6 +342,12 @@ pub fn save(
     resolutions: BTreeMap<String, Resolution>,
 ) -> Result<SaveResult, AppError> {
     let app = parse_app(app)?;
+    if resolutions.iter().any(|(target, resolution)| {
+        matches!(TargetId::parse(target), Some(TargetId::Wsl(_)))
+            && matches!(resolution, Resolution::Import)
+    }) {
+        return Err(follows_windows_error());
+    }
     let _guard = save_lock().lock().unwrap_or_else(|e| e.into_inner());
     let checked = check(state, &app, draft)?;
     let Checked {
@@ -601,7 +601,8 @@ pub fn save(
         });
     } else if let Some(imported_id) = imported_for.get(&new_primary.key()) {
         out.primary = Some(
-            match crate::services::ProviderService::switch(state, app.clone(), imported_id) {
+            match crate::services::ProviderService::switch_primary(state, app.clone(), imported_id)
+            {
                 Ok(_) => {
                     let mut report = if app.spec().route_mode
                         && crate::mode::current::mode_state(&app).is_proxy()
@@ -636,39 +637,8 @@ pub fn save(
         out.primary = Some(write_primary(state, &app, &new_primary.key()));
     }
 
-    // 跟随环境各用各的：导入的卡用导入的那张；已经在用某家的继续用它；新环境默认用主环境
-    // 当前这家（托管登录除外，那样就先不选，只同步 MCP 等共享内容）。
+    // Windows 是本阶段唯一配置源。先接入共享路由，再同步其他配置。
     if !follower_writes.is_empty() {
-        let main_current = crate::mode::current::provider_for(
-            &state.db,
-            &app,
-            crate::mode::current::Purpose::Direct,
-        )
-        .ok()
-        .flatten()
-        .filter(|id| {
-            state
-                .db
-                .get_all_providers(&app)
-                .ok()
-                .and_then(|all| all.get(id).cloned())
-                .is_some_and(|p| !sync::is_managed_login(&app, &p))
-        });
-        let mut activate = BTreeMap::new();
-        for id in &follower_writes {
-            let key = id.key();
-            if let Some(imported_id) = imported_for.get(&key) {
-                activate.insert(key, imported_id.clone());
-                continue;
-            }
-            let active = status::get(app.as_str(), &key).and_then(|r| r.provider_id);
-            if active.is_none() {
-                if let Some(main) = &main_current {
-                    activate.insert(key, main.clone());
-                }
-            }
-        }
-        // 已勾选「接入路由」但新加入或换目录的跟随环境，在代理模式下要先接上路由，再同步其余共享配置。
         let mut ready_writes = follower_writes.clone();
         if app.spec().route_mode && crate::mode::current::mode_state(&app).is_proxy() {
             let routes = sync::sync_follower_routes_for(state, &app, false, Some(&follower_writes));
@@ -685,162 +655,19 @@ pub fn save(
             ready_writes.retain(|id| !failed_routes.iter().any(|failed| failed.same(id)));
         }
         if !ready_writes.is_empty() {
-            out.targets.extend(sync::sync_followers_with(
+            out.targets.extend(sync::sync_followers(
                 state,
                 &app,
                 Some(&ready_writes),
                 SyncKind::Full,
-                &activate,
             ));
         }
     }
     Ok(out)
 }
 
-/// 在一个环境里改用 `provider_id`（供应商页的环境开关）。主环境走现有切换；跟随环境
-/// 只写那个环境，成功后才算换过去，失败时保持原来那家。装了客户端、还没加入写入环境的
-/// WSL 发行版会先加入（写入前备份它原有的配置）。
-pub fn activate(
-    state: &AppState,
-    app: &str,
-    target: &str,
-    provider_id: &str,
-) -> Result<TargetReport, AppError> {
-    let app = parse_app(app)?;
-    let id = TargetId::parse(target)
-        .ok_or_else(|| AppError::InvalidInput(format!("unknown target {target}")))?;
-    let (config, _) = sync::app_config(&app);
-    if config.primary_id().is_some_and(|p| p.same(&id)) {
-        crate::services::ProviderService::switch(state, app.clone(), provider_id)?;
-        return Ok(TargetReport {
-            target: id.key(),
-            record: TargetRecord {
-                provider_id: Some(provider_id.to_string()),
-                ..TargetRecord::new(TargetStatus::Ok)
-            },
-        });
-    }
-    let provider = state
-        .db
-        .get_all_providers(&app)?
-        .get(provider_id)
-        .cloned()
-        .ok_or_else(|| AppError::Message(format!("供应商 {provider_id} 不存在")))?;
-    if sync::is_managed_login(&app, &provider) {
-        return Err(AppError::localized(
-            "app_targets.managed_login_windows_only",
-            "绑定了托管账号的官方卡目前只能在 Windows 使用；WSL 可以用没绑账号的官方卡（用它自己的登录）或 API Key 供应商",
-            "Official cards bound to a managed account only work on Windows for now; in WSL use an unbound official card (its own sign-in) or an API key provider",
-        ));
-    }
-    let spec = match config.target(&id).filter(|t| t.enabled) {
-        Some(spec) => spec,
-        None => enable_wsl_target(&app, &id)?,
-    };
-    let activate = BTreeMap::from([(spec.id.key(), provider_id.to_string())]);
-    let report = sync::sync_followers_with(
-        state,
-        &app,
-        Some(std::slice::from_ref(&spec.id)),
-        SyncKind::Provider,
-        &activate,
-    )
-    .into_iter()
-    .next()
-    .ok_or_else(|| AppError::Message("没有可写入的目标".to_string()))?;
-    Ok(report)
-}
-
-/// 取消一个环境正在用的供应商（供应商页取消环境开关）。主环境总要有一家供应商（切到别的
-/// 即可），不能取消；跟随环境清掉 CC Switch 写进去的关键字段，回到它自己的配置。
-pub fn deactivate(state: &AppState, app: &str, target: &str) -> Result<TargetReport, AppError> {
-    let app = parse_app(app)?;
-    let id = TargetId::parse(target)
-        .ok_or_else(|| AppError::InvalidInput(format!("unknown target {target}")))?;
-    let (config, _) = sync::app_config(&app);
-    if config.primary_id().is_some_and(|p| p.same(&id)) {
-        return Err(AppError::localized(
-            "app_targets.primary_needs_provider",
-            format!(
-                "{} 总要使用一家供应商，切换到其他供应商即可",
-                sync::env_label(&id)
-            ),
-            format!(
-                "{} always uses a provider; switch to another one instead",
-                sync::env_label(&id)
-            ),
-        ));
-    }
-    let spec = config.target(&id).filter(|t| t.enabled).ok_or_else(|| {
-        AppError::localized(
-            "app_targets.target_disabled",
-            format!("{} 没有勾选为写入环境", sync::env_label(&id)),
-            format!("{} is not a write target", sync::env_label(&id)),
-        )
-    })?;
-    sync::deactivate_follower(state, &app, &spec)
-}
-
-/// 把一个 WSL 发行版加入这个应用的写入环境（目录用它已保存的自定义目录或自动目录），并在
-/// 写入前备份它原有的托管文件。不写客户端配置，由调用方接着写。
-fn enable_wsl_target(app: &AppType, id: &TargetId) -> Result<TargetSpec, AppError> {
-    let TargetId::Wsl(distro) = id else {
-        return Err(AppError::localized(
-            "app_targets.target_disabled",
-            format!("{} 没有勾选为写入环境", sync::env_label(id)),
-            format!("{} is not a write target", sync::env_label(id)),
-        ));
-    };
-    let _guard = save_lock().lock().unwrap_or_else(|e| e.into_inner());
-    let (config, _) = sync::app_config(app);
-    if let Some(existing) = config.target(id).filter(|t| t.enabled) {
-        return Ok(existing);
-    }
-    let mut next = config;
-    match next
-        .wsl
-        .iter_mut()
-        .find(|t| t.distro.eq_ignore_ascii_case(distro))
-    {
-        Some(target) => target.enabled = true,
-        None => next.wsl.push(model::WslTarget {
-            distro: distro.clone(),
-            enabled: true,
-            route: false,
-            dir: None,
-        }),
-    }
-    let next = next.normalized();
-    let resolved = sync::resolved_dirs(app, &next, &|spec| spec.enabled);
-    if let Some(error) = model::validate(&next, &resolved).first() {
-        return Err(AppError::localized(
-            "app_targets.enable_failed",
-            format!(
-                "没能把 {} 加入写入环境（{}）",
-                sync::env_label(id),
-                error.code
-            ),
-            format!(
-                "Could not add {} as a write target ({})",
-                sync::env_label(id),
-                error.code
-            ),
-        ));
-    }
-    let spec = next
-        .target(id)
-        .ok_or_else(|| AppError::Message("target missing after enabling".to_string()))?;
-    let dir = sync::resolve_dir(app, &spec, true)?;
-    let backup = sync::backup_target(app, &spec, dir)?;
-    log::info!(
-        "[app-targets] {} 加入 {} 的写入环境，原配置已备份到 {}",
-        sync::env_label(id),
-        app.as_str(),
-        backup.display()
-    );
-    let legacy = model::legacy_projection(&next, &resolved);
-    crate::settings::set_app_targets(app, next, legacy)?;
-    Ok(spec)
+fn follows_windows_error() -> AppError {
+    AppError::localized("app_targets.follows_windows", "本阶段 WSL 统一跟随 Windows 的供应商和路由配置；如需停止同步，请取消该写入目标", "WSL currently follows Windows providers and routing; disable the write target to stop syncing")
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -911,65 +738,6 @@ pub fn sync_now(
         SyncKind::Full,
     ));
     Ok(out)
-}
-
-/// 某个跟随环境是否接入共用的路由。保存偏好后立刻按应用当前的模式同步：应用在路由 /
-/// 聚合模式时接上或退回直连；在直连模式时只记下，下次进入路由时生效。
-pub fn set_route(
-    state: &AppState,
-    app: &str,
-    target: &str,
-    join: bool,
-) -> Result<TargetReport, AppError> {
-    let app = parse_app(app)?;
-    if !app.spec().route_mode {
-        return Err(AppError::localized(
-            "app_targets.route_unsupported",
-            format!("{} 不支持本地路由", app.as_str()),
-            format!("{} does not support local routing", app.as_str()),
-        ));
-    }
-    let id = TargetId::parse(target)
-        .ok_or_else(|| AppError::InvalidInput(format!("unknown target {target}")))?;
-    let _guard = save_lock().lock().unwrap_or_else(|e| e.into_inner());
-    let (mut config, source) = sync::app_config(&app);
-    if source != ConfigSource::Saved || config.primary_id().is_some_and(|p| p.same(&id)) {
-        return Err(AppError::localized(
-            "app_targets.route_primary",
-            "主环境总是跟随应用的路由模式，不需要单独接入",
-            "The primary environment always follows the app's routing mode",
-        ));
-    }
-    match &id {
-        TargetId::Windows => config.windows.route = join,
-        TargetId::Wsl(distro) => {
-            let entry = config
-                .wsl
-                .iter_mut()
-                .find(|t| t.distro.eq_ignore_ascii_case(distro))
-                .ok_or_else(|| AppError::InvalidInput(format!("unknown target {target}")))?;
-            entry.route = join;
-        }
-    }
-    let legacy = match &app {
-        AppType::Claude => crate::settings::get_settings().claude_config_dir,
-        AppType::Codex => crate::settings::get_settings().codex_config_dir,
-        AppType::Gemini => crate::settings::get_settings().gemini_config_dir,
-        _ => None,
-    };
-    crate::settings::set_app_targets(&app, config, legacy)?;
-    let reports = sync::sync_follower_routes(state, &app, false);
-    Ok(reports
-        .into_iter()
-        .find(|r| TargetId::parse(&r.target).is_some_and(|t| t.same(&id)))
-        .unwrap_or_else(|| TargetReport {
-            target: id.key(),
-            record: TargetRecord::new(TargetStatus::Ok).reason(if join {
-                "route_when_proxy"
-            } else {
-                "direct"
-            }),
-        }))
 }
 
 /// 客户端主机：IP 或主机名，不带协议、端口、路径；不能是 0.0.0.0 / ::。
@@ -1092,41 +860,4 @@ pub fn set_wsl_client_host(state: &AppState, distro: &str, host: &str) -> Result
         }
     }
     Ok(())
-}
-
-#[derive(Debug, Clone, Default, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RouteTestResult {
-    pub ok: bool,
-    pub url: String,
-    pub detail: String,
-}
-
-/// 从发行版里访问路由服务的 /health，验证这个发行版真的连得上（自动检测只给候选地址）。
-pub fn test_wsl_route(
-    state: &AppState,
-    distro: &str,
-    host: Option<String>,
-) -> Result<RouteTestResult, AppError> {
-    let host = match host.map(|h| h.trim().to_string()).filter(|h| !h.is_empty()) {
-        Some(custom) => validate_client_host(&custom)?,
-        None => sync::client_host_for_fresh(&TargetId::Wsl(distro.to_string()), true)?
-            .unwrap_or_else(|| "127.0.0.1".to_string()),
-    };
-    let probe_scope = super::scope::TargetScope {
-        app: AppType::Claude,
-        key: format!("route-test:{distro}"),
-        dir: None,
-        store_root: crate::config::get_home_dir().join(".cc-switch"),
-        wsl: true,
-        direct: None,
-        client_host: Some(host),
-    };
-    let (urls, _) = super::scope::run(probe_scope, || {
-        futures::executor::block_on(state.proxy_service.build_proxy_urls())
-    });
-    let (origin, _) = urls.map_err(AppError::Message)?;
-    let url = format!("{}/health", origin.trim_end_matches('/'));
-    let (ok, detail) = wsl::fetch_from(distro, &url).map_err(AppError::Message)?;
-    Ok(RouteTestResult { ok, url, detail })
 }

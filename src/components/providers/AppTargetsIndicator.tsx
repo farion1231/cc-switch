@@ -17,7 +17,6 @@ import {
   isAppTargetApp,
   isWindowsOnly,
   recordFor,
-  routeFlag,
   sameTarget,
   type TargetKey,
 } from "@/lib/api/appTargets";
@@ -121,46 +120,6 @@ export function AppTargetsIndicator({
 
   // 路由 / 聚合按应用共用一套；Claude Code、Codex、Gemini 的其他环境可以选择接入。
   const routeCapable = app !== "opencode";
-
-  const toggleRoute = async (key: TargetKey, join: boolean) => {
-    setBusy(true);
-    try {
-      const report = await appTargetsApi.setRoute(app, key, join);
-      if (report.status === "error") {
-        toast.warning(
-          t("appTargets.route.failed", { target: targetLabel(key) }),
-          {
-            description: [reasonLabel(t, report.reason), report.detail]
-              .filter(Boolean)
-              .join(" · "),
-            duration: 8000,
-          },
-        );
-      } else if (report.status === "partial") {
-        toast.warning(
-          t("appTargets.toast.partial", { targets: targetLabel(key) }),
-          {
-            description: syncFailureWarnings(report.warnings)
-              .map((w) => syncWarningLabel(t, w))
-              .join(" · "),
-          },
-        );
-      } else {
-        toast.success(
-          report.routed
-            ? t("appTargets.route.joined", { target: targetLabel(key) })
-            : join
-              ? t("appTargets.route.joinLater", { target: targetLabel(key) })
-              : t("appTargets.route.left", { target: targetLabel(key) }),
-        );
-      }
-    } catch (error) {
-      toast.error(String(error));
-    } finally {
-      setBusy(false);
-      await invalidate();
-    }
-  };
 
   const providerName = (id?: string) =>
     id ? (providers?.[id]?.name ?? id) : undefined;
@@ -267,12 +226,11 @@ export function AppTargetsIndicator({
                 {!primary && routeCapable && (
                   <label className="flex items-center gap-2 pt-1 text-caption text-fg-2">
                     <Switch
-                      checked={routeFlag(view.config, key)}
-                      disabled={busy}
+                      checked
+                      disabled
                       aria-label={t("appTargets.route.joinFor", {
                         target: targetLabel(key),
                       })}
-                      onCheckedChange={(value) => void toggleRoute(key, value)}
                     />
                     {t("appTargets.route.join")}
                   </label>

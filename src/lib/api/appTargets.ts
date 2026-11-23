@@ -26,7 +26,7 @@ export const sameTarget = (a: TargetKey, b: TargetKey) =>
 
 export interface AppTargetsConfig {
   primary: TargetKey;
-  /** `route`：应用在路由 / 聚合模式时这个环境接入共用的路由（主环境总是跟随） */
+  /** `route` 保留供旧配置兼容；本 PR 的 WSL 始终跟随 Windows 路由。 */
   windows: { enabled: boolean; dir?: string | null; route?: boolean };
   wsl: {
     distro: string;
@@ -158,12 +158,6 @@ export interface WslRouteInfo {
   listenUnreachable: boolean;
 }
 
-export interface RouteTestResult {
-  ok: boolean;
-  url: string;
-  detail: string;
-}
-
 export interface SyncResult {
   primary?: TargetReport;
   targets: TargetReport[];
@@ -196,63 +190,12 @@ export const appTargetsApi = {
     return await invoke("save_app_targets", { app, config, resolutions });
   },
 
-  /** 在某个环境里启用供应商（供应商页的环境开关）。 */
-  async activate(
-    app: AppTargetAppId,
-    target: TargetKey,
-    providerId: string,
-  ): Promise<TargetReport> {
-    return await invoke("activate_app_target_provider", {
-      app,
-      target,
-      providerId,
-    });
-  },
-
-  /** 取消某个环境正在用的供应商（清掉 CC Switch 写进去的关键字段） */
-  async deactivate(
-    app: AppTargetAppId,
-    target: TargetKey,
-  ): Promise<TargetReport> {
-    return await invoke("deactivate_app_target_provider", { app, target });
-  },
-
-  /** 某个环境是否接入共用的路由 / 聚合 */
-  async setRoute(
-    app: AppTargetAppId,
-    target: TargetKey,
-    join: boolean,
-  ): Promise<TargetReport> {
-    return await invoke("set_app_target_route", { app, target, join });
-  },
-
   async wslRouteInfo(probe = false): Promise<WslRouteInfo[]> {
     return await invoke("get_wsl_route_info", { probe });
   },
 
   async setWslClientHost(distro: string, host: string): Promise<void> {
     return await invoke("set_wsl_client_host", { distro, host });
-  },
-
-  async testWslRoute(distro: string, host?: string): Promise<RouteTestResult> {
-    const trimmed = host?.trim();
-    return await invoke("test_wsl_route", {
-      distro,
-      host: trimmed ? trimmed : undefined,
-    });
-  },
-
-  /** 在某个 WSL 发行版里安装 / 更新客户端（应用页的 WSL 安装条目） */
-  async wslToolAction(
-    tool: AppTargetAppId,
-    distro: string,
-    action: "install" | "update",
-  ): Promise<void> {
-    return await invoke("run_wsl_tool_lifecycle_action", {
-      tool,
-      distro,
-      action,
-    });
   },
 
   async sync(app: AppTargetAppId, targets?: TargetKey[]): Promise<SyncResult> {
@@ -335,46 +278,13 @@ export function isTargetProviderVisible(
   );
 }
 
-/** 跟随环境的「接入路由」偏好 */
-export const routeFlag = (config: AppTargetsConfig, key: TargetKey) => {
-  const distro = distroOf(key);
-  if (!distro) return Boolean(config.windows.route);
-  return Boolean(
-    config.wsl.find((t) => t.distro.toLowerCase() === distro.toLowerCase())
-      ?.route,
-  );
-};
-
-/** 某个发行版里装没装这个应用：`undefined` 表示还没检测出来。 */
-export function installedIn(
-  installs: AppTargetsOverview["installs"] | undefined,
-  distro: string,
-  app: string,
-): boolean | undefined {
-  const entry = Object.entries(installs ?? {}).find(
-    ([name]) => name.toLowerCase() === distro.toLowerCase(),
-  )?.[1]?.[app];
-  if (!entry || entry.status === "unknown") return undefined;
-  return entry.status !== "notInstalled";
-}
-
-export function installOf(
-  installs: AppTargetsOverview["installs"] | undefined,
-  distro: string,
-  app: string,
-): ToolInstall | undefined {
-  return Object.entries(installs ?? {}).find(
-    ([name]) => name.toLowerCase() === distro.toLowerCase(),
-  )?.[1]?.[app];
-}
-
 /**
- * 只列运行中的发行版：已保存的目标，加上检测到装了这个客户端的。
+ * 列出运行中的发行版，不执行客户端安装探测。
  */
 export function wslCandidates(
   config: AppTargetsConfig,
   overview: Pick<AppTargetsOverview, "installs" | "inventory"> | undefined,
-  app: string,
+  _app: string,
 ): string[] {
   const saved = config.wsl
     .filter((target) =>
@@ -384,9 +294,7 @@ export function wslCandidates(
   const detected = runningWslDistros(overview?.inventory)
     .map((env) => env.distro)
     .filter(
-      (distro) =>
-        installedIn(overview?.installs, distro, app) === true &&
-        !saved.some((s) => s.toLowerCase() === distro.toLowerCase()),
+      (distro) => !saved.some((s) => s.toLowerCase() === distro.toLowerCase()),
     );
   return [...saved, ...detected];
 }

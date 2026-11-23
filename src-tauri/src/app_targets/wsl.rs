@@ -2,8 +2,8 @@
 //!
 //! - 枚举只用 `wsl.exe -l -q`（全部）和 `wsl.exe -l -q --running`（运行中），输出不随
 //!   系统语言变化，也不会启动任何发行版；
-//! - HOME 等环境变量要进发行版里读：默认只探测运行中的发行版，停止的用上次结果并标
-//!   「上次检测」，只有写入或用户点「重新检测」时才允许启动；
+//! - 只读运行中发行版的 UNC 文件和历史缓存，不执行 WSL shell，不启动停止的发行版；
+//!   无法确定 HOME 或自定义环境目录时，由用户填写目标目录；
 //! - 结果缓存在设备状态目录（`wsl-environments.json`），不同步。
 
 use std::collections::BTreeMap;
@@ -27,9 +27,6 @@ const SYSTEM_DISTROS: &[&str] = &[
     "rancher-desktop",
     "rancher-desktop-data",
 ];
-
-#[cfg(windows)]
-const PROBE_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// HOME 等环境信息多久重新探测一次（运行中的发行版）。
 const ENV_MAX_AGE_SECS: i64 = 6 * 60 * 60;
@@ -125,6 +122,7 @@ pub fn cached_env(distro: &str) -> Option<CachedEnv> {
 }
 
 /// `wsl.exe` 默认输出 UTF-16LE（设了 `WSL_UTF8=1` 时是 UTF-8），两种都认。
+#[cfg(any(windows, test))]
 pub fn decode_wsl_output(bytes: &[u8]) -> String {
     let looks_utf16 = bytes.len() >= 2 && bytes.iter().skip(1).step_by(2).take(16).all(|b| *b == 0)
         || bytes.starts_with(&[0xFF, 0xFE]);
@@ -160,44 +158,6 @@ pub fn parse_distro_list(output: &str) -> Vec<String> {
         out.push(name.to_string());
     }
     out
-}
-
-#[cfg(any(windows, test))]
-const PROBE_MARKER: &str = "__CC_SWITCH_ENV__";
-
-/// 在发行版里打印环境变量的脚本：登录 shell 读 `~/.profile`，标记行之后才是结果，
-/// profile 打印的其他内容不影响解析。
-#[cfg(any(windows, test))]
-pub fn probe_script() -> String {
-    format!(
-        "printf '%s\\n' '{PROBE_MARKER}' \"$HOME\" \"${{CLAUDE_CONFIG_DIR:-}}\" \"${{CODEX_HOME:-}}\" \"${{XDG_CONFIG_HOME:-}}\" \"$(wslinfo --networking-mode 2>/dev/null)\" \"$(ip route show default 2>/dev/null | awk '{{print $3; exit}}')\""
-    )
-}
-
-#[cfg(any(windows, test))]
-pub fn parse_probe_output(output: &str) -> Option<LinuxEnv> {
-    let mut lines = output
-        .lines()
-        .skip_while(|line| line.trim() != PROBE_MARKER);
-    lines.next()?;
-    let mut field = || {
-        lines
-            .next()
-            .map(|v| v.trim().to_string())
-            .filter(|v| !v.is_empty())
-    };
-    let env = LinuxEnv {
-        home: field(),
-        claude_config_dir: field(),
-        codex_home: field(),
-        xdg_config_home: field(),
-        networking_mode: field().map(|mode| mode.to_ascii_lowercase()),
-        gateway: field().filter(|ip| ip.parse::<std::net::IpAddr>().is_ok()),
-    };
-    env.home
-        .as_deref()
-        .filter(|home| home.starts_with('/'))
-        .map(|_| env.clone())
 }
 
 #[cfg(windows)]
@@ -265,24 +225,82 @@ pub fn is_registered(distro: &str) -> Result<bool, String> {
     }
 }
 
-/// 进发行版里读 HOME 等环境变量。发行版没在运行时会被启动。
+/// 只读运行中发行版的 UNC 文件，不执行 shell、不启动或重启发行版。
 #[cfg(windows)]
 pub fn probe(distro: &str) -> Result<LinuxEnv, String> {
-    if !is_valid_distro_name(distro) {
-        return Err(format!("invalid distro name: {distro}"));
+    if !is_valid_distro_name(distro) || !is_running(distro) {
+        return Err(format!("WSL · {distro} is not running; start it manually"));
     }
-    let script = probe_script();
-    let output = run_with_timeout(
-        wsl_command(&["-d", distro, "--exec", "sh", "-lc", &script]),
-        PROBE_TIMEOUT,
-    )?;
-    let text = decode_wsl_output(&output.stdout);
-    let env = parse_probe_output(&text).ok_or_else(|| {
-        let err = decode_wsl_output(&output.stderr);
-        format!("no HOME reported: {}", err.trim())
-    })?;
+    let root = PathBuf::from(format!(r"\\wsl.localhost\{distro}"));
+    let passwd = std::fs::read_to_string(root.join("etc/passwd")).unwrap_or_default();
+    let wsl_config = std::fs::read_to_string(root.join("etc/wsl.conf")).unwrap_or_default();
+    let mut env = cached_env(distro)
+        .map(|entry| entry.env)
+        .unwrap_or_default();
+    env.home = home_from_files(&passwd, &wsl_config).or(env.home);
+    let network = std::fs::read_to_string(crate::config::get_home_dir().join(".wslconfig"))
+        .unwrap_or_default();
+    // 每次刷新重新解析，不能把上次 mirrored 缓存带到已改回 NAT 的配置中。
+    env.networking_mode = Some(network_mode_from_config(&network));
+    if let Ok(routes) = std::fs::read_to_string(root.join("proc/net/route")) {
+        env.gateway = routes
+            .lines()
+            .find_map(|line| {
+                let fields: Vec<_> = line.split_whitespace().collect();
+                if fields.get(1).copied() != Some("00000000") {
+                    return None;
+                }
+                let gateway = u32::from_str_radix(fields.get(2)?, 16).ok()?;
+                (gateway != 0).then(|| std::net::Ipv4Addr::from(gateway.to_le_bytes()).to_string())
+            })
+            .or(env.gateway);
+    }
     store_cache(distro, &env);
     Ok(env)
+}
+
+#[cfg(any(windows, test))]
+fn network_mode_from_config(config: &str) -> String {
+    let mut wsl2 = false;
+    config
+        .lines()
+        .find_map(|line| {
+            let line = line.split(['#', ';']).next().unwrap_or_default().trim();
+            if line.starts_with('[') {
+                wsl2 = line.eq_ignore_ascii_case("[wsl2]");
+                return None;
+            }
+            let (key, value) = line.split_once('=')?;
+            (wsl2 && key.trim().eq_ignore_ascii_case("networkingMode"))
+                .then(|| value.trim().to_ascii_lowercase())
+        })
+        .unwrap_or_else(|| "nat".into())
+}
+
+#[cfg(any(windows, test))]
+fn home_from_files(passwd: &str, wsl_config: &str) -> Option<String> {
+    let mut user_section = false;
+    let default_user = wsl_config.lines().find_map(|line| {
+        let line = line.split('#').next().unwrap_or_default().trim();
+        if line.starts_with('[') {
+            user_section = line.eq_ignore_ascii_case("[user]");
+            return None;
+        }
+        let (key, value) = line.split_once('=')?;
+        (user_section && key.trim().eq_ignore_ascii_case("default")).then(|| value.trim())
+    });
+    let candidates: Vec<_> = passwd
+        .lines()
+        .filter_map(|line| {
+            let fields: Vec<_> = line.split(':').collect();
+            let name = *fields.first()?;
+            let uid: u32 = fields.get(2)?.parse().ok()?;
+            let home = *fields.get(5)?;
+            let selected = default_user.map_or((1000..65534).contains(&uid), |user| user == name);
+            (selected && home.starts_with('/')).then(|| home.to_string())
+        })
+        .collect();
+    (candidates.len() == 1).then(|| candidates[0].clone())
 }
 
 #[cfg(not(windows))]
@@ -290,43 +308,7 @@ pub fn probe(_distro: &str) -> Result<LinuxEnv, String> {
     Err("WSL is only available on Windows".to_string())
 }
 
-/// 从发行版里访问一个 URL（路由连通性测试）。返回 HTTP 是否成功和输出摘要。
-#[cfg(any(windows, test))]
-pub fn connectivity_script(url: &str) -> String {
-    // URL 只由 CC Switch 生成（主机已校验、端口是数字），仍按单引号转义一遍。
-    let quoted = format!("'{}'", url.replace('\'', "'\\''"));
-    format!(
-        "if command -v curl >/dev/null 2>&1; then curl -fsS -m 5 {quoted}; \
-         elif command -v wget >/dev/null 2>&1; then wget -q -T 5 -O - {quoted}; \
-         else echo 'no curl or wget' >&2; exit 127; fi"
-    )
-}
-
-#[cfg(windows)]
-pub fn fetch_from(distro: &str, url: &str) -> Result<(bool, String), String> {
-    if !is_valid_distro_name(distro) {
-        return Err(format!("invalid distro name: {distro}"));
-    }
-    let script = connectivity_script(url);
-    let output = run_with_timeout(
-        wsl_command(&["-d", distro, "--exec", "sh", "-c", &script]),
-        Duration::from_secs(15),
-    )?;
-    let out = decode_wsl_output(&output.stdout);
-    let err = decode_wsl_output(&output.stderr);
-    let text = if out.trim().is_empty() { err } else { out };
-    Ok((
-        output.status.success(),
-        text.trim().chars().take(300).collect(),
-    ))
-}
-
-#[cfg(not(windows))]
-pub fn fetch_from(_distro: &str, _url: &str) -> Result<(bool, String), String> {
-    Err("WSL is only available on Windows".to_string())
-}
-
-/// 枚举发行版。`probe_stopped` 为真时连停止的发行版也启动探测（用户点「重新检测」）。
+/// 只枚举并读取运行中发行版的文件；停止的发行版仅使用缓存。
 pub fn inventory(probe_stopped: bool) -> WslInventory {
     #[cfg(windows)]
     {
@@ -357,7 +339,7 @@ pub fn inventory(probe_stopped: bool) -> WslInventory {
                     c.env.home.is_some()
                         && chrono::Utc::now().timestamp() - c.detected_at < ENV_MAX_AGE_SECS
                 });
-                if probe_stopped || (is_running && !fresh) {
+                if is_running && (probe_stopped || !fresh) {
                     match probe(&distro) {
                         Ok(env) => WslEnvironment {
                             distro,
@@ -410,7 +392,7 @@ pub fn inventory(probe_stopped: bool) -> WslInventory {
     }
 }
 
-/// 解析一个发行版的环境：优先缓存；没有缓存且 `allow_start` 时进发行版探测（会启动它）。
+/// 优先缓存；允许刷新时只读运行中发行版的 UNC 文件，绝不启动发行版。
 pub fn resolve_env(distro: &str, allow_start: bool) -> Result<LinuxEnv, AppError> {
     if let Some(cached) = cached_env(distro).filter(|c| c.env.home.is_some()) {
         return Ok(cached.env);
@@ -477,30 +459,43 @@ mod tests {
     }
 
     #[test]
-    fn probe_output_ignores_profile_noise() {
-        let out = format!(
-            "Welcome!\n{PROBE_MARKER}\n/home/me\n\n/srv/codex\n/home/me/.cfg\nNAT\n172.24.0.1\n"
+    fn filesystem_home_requires_an_unambiguous_or_explicit_user() {
+        let passwd = "root:x:0:0::/root:/bin/sh\nme:x:1000:1000::/home/me:/bin/bash\n";
+        assert_eq!(home_from_files(passwd, ""), Some("/home/me".into()));
+        assert_eq!(
+            home_from_files(passwd, "[user]\ndefault = root"),
+            Some("/root".into())
         );
-        let env = parse_probe_output(&out).expect("parsed");
-        assert_eq!(env.home.as_deref(), Some("/home/me"));
-        assert_eq!(env.claude_config_dir, None);
-        assert_eq!(env.codex_home.as_deref(), Some("/srv/codex"));
-        assert_eq!(env.xdg_config_home.as_deref(), Some("/home/me/.cfg"));
-        assert_eq!(env.networking_mode.as_deref(), Some("nat"));
-        assert_eq!(env.gateway.as_deref(), Some("172.24.0.1"));
-        assert_eq!(parse_probe_output("no marker"), None);
-        assert_eq!(parse_probe_output(&format!("{PROBE_MARKER}\n\n")), None);
+        let multiple = format!("{passwd}other:x:1001:1001::/srv/other:/bin/sh\n");
+        assert_eq!(home_from_files(&multiple, ""), None);
+        assert_eq!(
+            home_from_files(&multiple, "[user]\ndefault = other # chosen"),
+            Some("/srv/other".into())
+        );
+        assert_eq!(
+            home_from_files(&multiple, "[user]\ndefault = missing"),
+            None
+        );
+        assert_eq!(
+            home_from_files("me:x:1000:1000::relative:/bin/sh", ""),
+            None
+        );
     }
 
     #[test]
-    fn connectivity_script_quotes_the_url() {
-        let script = connectivity_script("http://172.24.0.1:15721/health");
-        assert!(script.contains("curl -fsS -m 5 'http://172.24.0.1:15721/health'"));
-        assert!(connectivity_script("http://x/'a").contains("'http://x/'\\''a'"));
-    }
-
-    #[test]
-    fn probe_script_prints_the_marker_first() {
-        assert!(probe_script().starts_with("printf '%s\\n' '__CC_SWITCH_ENV__'"));
+    fn network_config_accepts_spacing_and_clears_stale_mirrored_mode() {
+        assert_eq!(
+            network_mode_from_config("[wsl2]\nnetworkingMode = Mirrored # LAN"),
+            "mirrored"
+        );
+        assert_eq!(
+            network_mode_from_config("[wsl2]\nnetworkingMode=nat"),
+            "nat"
+        );
+        assert_eq!(network_mode_from_config(""), "nat");
+        assert_eq!(
+            network_mode_from_config("[other]\nnetworkingMode=mirrored"),
+            "nat"
+        );
     }
 }

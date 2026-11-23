@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, RefreshCw } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { HoverTip } from "@/components/ui/hover-tip";
@@ -24,8 +24,7 @@ import {
 
 /**
  * 设置 → 本地路由 → WSL 客户端地址：接入路由的 WSL 环境写给客户端的代理主机，按发行版
- * 保存。自动检测只给候选地址（mirrored 用 127.0.0.1，NAT 用默认网关），「测试连接」才是
- * 从发行版里真的连一次。只在 Windows 上、检测到发行版时出现。
+ * 保存。只读缓存和 UNC 文件，不运行 WSL shell；也可手动填写 Windows 主机地址。
  */
 export function WslRouteHosts() {
   const { t } = useTranslation();
@@ -45,10 +44,6 @@ export function WslRouteHosts() {
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [detecting, setDetecting] = useState(false);
-  const [results, setResults] = useState<
-    Record<string, { ok: boolean; text: string }>
-  >({});
-
   const rows =
     info.data?.filter((row) => distros.includes(row.distro.toLowerCase())) ??
     [];
@@ -78,45 +73,12 @@ export function WslRouteHosts() {
         delete next[row.distro];
         return next;
       });
-      setResults((r) => {
-        const next = { ...r };
-        delete next[row.distro];
-        return next;
-      });
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: WSL_ROUTE_INFO_QUERY_KEY }),
         queryClient.invalidateQueries({ queryKey: APP_TARGETS_QUERY_KEY }),
       ]);
     } catch (error) {
       toast.error(String(error));
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const test = async (row: WslRouteInfo) => {
-    setBusy(row.distro);
-    try {
-      const draftHost =
-        drafts[row.distro] !== undefined ? drafts[row.distro] : row.savedHost;
-      const result = await appTargetsApi.testWslRoute(row.distro, draftHost);
-      setResults((r) => ({
-        ...r,
-        [row.distro]: {
-          ok: result.ok,
-          text: result.ok
-            ? t("appTargets.routeHosts.testOk", { url: result.url })
-            : t("appTargets.routeHosts.testFailed", {
-                url: result.url,
-                detail: result.detail || "—",
-              }),
-        },
-      }));
-    } catch (error) {
-      setResults((r) => ({
-        ...r,
-        [row.distro]: { ok: false, text: String(error) },
-      }));
     } finally {
       setBusy(null);
     }
@@ -147,7 +109,6 @@ export function WslRouteHosts() {
         {rows.map((row) => {
           const value = drafts[row.distro] ?? row.savedHost ?? "";
           const dirty = value.trim() !== (row.savedHost ?? "");
-          const result = results[row.distro];
           return (
             <SettingsRow
               key={row.distro}
@@ -164,17 +125,6 @@ export function WslRouteHosts() {
                       {t("appTargets.routeHosts.listenLoopback", {
                         listen: row.listenAddress,
                       })}
-                    </span>
-                  )}
-                  {result && (
-                    <span
-                      className={
-                        result.ok
-                          ? "block text-success-text"
-                          : "block text-danger-text"
-                      }
-                    >
-                      {result.text}
                     </span>
                   )}
                 </>
@@ -200,12 +150,6 @@ export function WslRouteHosts() {
                           ...d,
                           [row.distro]: value,
                         }));
-                        setResults((r) => {
-                          if (!(row.distro in r)) return r;
-                          const next = { ...r };
-                          delete next[row.distro];
-                          return next;
-                        });
                       }}
                     />
                   </HoverTip>
@@ -216,17 +160,6 @@ export function WslRouteHosts() {
                     onClick={() => void save(row)}
                   >
                     {t("common.save")}
-                  </Button>
-                  <Button
-                    variant="neutral"
-                    size="compact"
-                    disabled={busy !== null}
-                    onClick={() => void test(row)}
-                  >
-                    {busy === row.distro && (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    )}
-                    {t("appTargets.routeHosts.test")}
                   </Button>
                 </div>
               }

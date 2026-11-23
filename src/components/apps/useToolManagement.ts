@@ -86,10 +86,6 @@ export type WslShellPreference = {
   wslShellFlag?: string | null;
 };
 
-export const WSL_SHELL_OPTIONS = ["sh", "bash", "zsh", "fish", "dash"] as const;
-// UI-friendly order: login shell first.
-export const WSL_SHELL_FLAG_OPTIONS = ["-lic", "-lc", "-c"] as const;
-
 export const ENV_BADGE_CONFIG: Record<
   string,
   { labelKey: string; className: string }

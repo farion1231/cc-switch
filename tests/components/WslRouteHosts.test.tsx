@@ -76,23 +76,19 @@ describe("WslRouteHosts", () => {
     setWslClientHostMock.mockReset().mockResolvedValue(undefined);
   });
 
-  it("tests the unsaved draft host and clears previous test status when edited", async () => {
+  it("saves the Windows host without running a connectivity command in WSL", async () => {
     render(<WslRouteHosts />, { wrapper });
     const input = await screen.findByLabelText("appTargets.routeHosts.hostFor");
-
     fireEvent.change(input, { target: { value: "172.25.0.1" } });
     await act(async () => {
-      fireEvent.click(screen.getByText("appTargets.routeHosts.test"));
+      fireEvent.click(screen.getByText("common.save"));
     });
-
     await waitFor(() =>
-      expect(testWslRouteMock).toHaveBeenCalledWith("Ubuntu", "172.25.0.1"),
+      expect(setWslClientHostMock).toHaveBeenCalledWith("Ubuntu", "172.25.0.1"),
     );
     expect(
-      await screen.findByText("appTargets.routeHosts.testOk"),
-    ).toBeInTheDocument();
-
-    fireEvent.change(input, { target: { value: "172.26.0.1" } });
-    expect(screen.queryByText("appTargets.routeHosts.testOk")).toBeNull();
+      screen.queryByText("appTargets.routeHosts.test"),
+    ).not.toBeInTheDocument();
+    expect(testWslRouteMock).not.toHaveBeenCalled();
   });
 });

@@ -20,7 +20,6 @@ import { settingsApi } from "@/lib/api/settings";
 import {
   appTargetsApi,
   dirFor,
-  enabledTargetKeys,
   isTargetRunning,
   recordFor,
   visibleTargetKeys,
@@ -68,17 +67,12 @@ function withDetectedDistros(
 
 const clean = (dir?: string | null) => (dir && dir.trim() ? dir.trim() : null);
 
-/** 主环境不再由用户选（与后端 derived_primary 一致）：勾选了 Windows 就是 Windows，
- * 否则保留原来的 WSL 主环境，它也取消了就用第一个勾选的环境。 */
-export function derivePrimary(config: AppTargetsConfig): TargetKey {
-  if (config.windows.enabled) return WINDOWS_TARGET;
-  const enabled = enabledTargetKeys(config);
-  return (
-    enabled.find((key) => sameTarget(key, config.primary)) ??
-    enabled[0] ??
-    config.primary
-  );
-}
+// 本 PR 固定 Windows 为配置来源；WSL 的独立选择留给后续功能。
+const windowsPrimary = (config: AppTargetsConfig): AppTargetsConfig => ({
+  ...config,
+  primary: WINDOWS_TARGET,
+  windows: { ...config.windows, enabled: true },
+});
 
 const comparable = (config: AppTargetsConfig) =>
   JSON.stringify({
@@ -100,8 +94,9 @@ function forSave(
 ): AppTargetsConfig {
   return {
     ...draft,
+    primary: WINDOWS_TARGET,
     windows: {
-      enabled: draft.windows.enabled,
+      enabled: true,
       dir: clean(draft.windows.dir),
       route: draft.windows.route,
     },
@@ -170,7 +165,9 @@ export function AppTargetsEditor({
     () => withDetectedDistros(view.config, inventory, installs, app),
     [view.config, inventory, installs, app],
   );
-  const [draft, setDraft] = useState<AppTargetsConfig>(base);
+  const [draft, setDraft] = useState<AppTargetsConfig>(() =>
+    windowsPrimary(base),
+  );
   const [errors, setErrors] = useState<FieldError[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -182,7 +179,7 @@ export function AppTargetsEditor({
   useEffect(() => {
     if (lastBase.current === baseKey) return;
     setDraft((current) => {
-      if (comparable(current) === lastBase.current) return base;
+      if (comparable(current) === lastBase.current) return windowsPrimary(base);
       const added = base.wsl.filter(
         (candidate) =>
           !current.wsl.some(
@@ -198,13 +195,12 @@ export function AppTargetsEditor({
   }, [base, baseKey]);
 
   const dirty = comparable(draft) !== baseKey;
-  const enabled = enabledTargetKeys(draft);
   const visibleEnabled = visibleTargetKeys(draft, inventory);
 
   const rows: { key: TargetKey; enabled: boolean; dir: string | null }[] = [
     {
       key: WINDOWS_TARGET,
-      enabled: draft.windows.enabled,
+      enabled: true,
       dir: draft.windows.dir ?? null,
     },
     ...draft.wsl
@@ -242,10 +238,7 @@ export function AppTargetsEditor({
   };
 
   const toggle = (key: TargetKey, checked: boolean) => {
-    if (!checked && enabled.length === 1 && sameTarget(enabled[0], key)) {
-      setNotice(t("appTargets.keepOne"));
-      return;
-    }
+    if (key === WINDOWS_TARGET) return;
     setNotice(null);
     let next = {
       ...draft,
@@ -259,7 +252,7 @@ export function AppTargetsEditor({
       );
       if (target) target.enabled = checked;
     }
-    next = { ...next, primary: derivePrimary(next) };
+    next = windowsPrimary(next);
     setErrors([]);
     setDraft(next);
   };
@@ -417,7 +410,7 @@ export function AppTargetsEditor({
   };
 
   const undo = () => {
-    setDraft(base);
+    setDraft(windowsPrimary(base));
     setErrors([]);
     setNotice(null);
   };
@@ -429,7 +422,7 @@ export function AppTargetsEditor({
   const envFor = (key: TargetKey) =>
     inventory.distros.find((d) => sameTarget(wslTargetKey(d.distro), key));
 
-  const detection = (key: TargetKey, rowEnabled: boolean) => {
+  const detection = (key: TargetKey, _rowEnabled: boolean) => {
     if (key === WINDOWS_TARGET) return null;
     const env = envFor(key);
     if (!env) {
@@ -444,7 +437,6 @@ export function AppTargetsEditor({
     if (!env.home && !dirFor(view.resolvedDirs, key))
       parts.push(t("appTargets.env.noHome"));
     else if (env.cached) parts.push(t("appTargets.env.cached"));
-    if (rowEnabled && !env.running) parts.push(t("appTargets.env.willStart"));
     if (env.error) parts.push(t("appTargets.env.probeFailed"));
     return { tone: env.running ? "ok" : "off", text: parts.join(" · ") };
   };
@@ -531,7 +523,7 @@ export function AppTargetsEditor({
               <div className="flex items-center gap-2">
                 <Checkbox
                   checked={row.enabled}
-                  disabled={busy}
+                  disabled={busy || row.key === WINDOWS_TARGET}
                   aria-label={t("appTargets.writeTo", {
                     app: appName,
                     target: targetLabel(row.key),
@@ -699,7 +691,7 @@ export function AppTargetsEditor({
               </p>
               {(sameTarget(conflict.target, prompt.primary)
                 ? (["import", "overwrite"] as Resolution[])
-                : (["defer", "overwrite", "import"] as Resolution[])
+                : (["defer", "overwrite"] as Resolution[])
               ).map((option) => (
                 <label
                   key={option}

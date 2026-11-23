@@ -5425,7 +5425,7 @@
     }
   },
   "appTargets": {
-    "help": "Sağlayıcılar sağlayıcılar sayfasında ortam başına etkinleştirilir; Windows ve her WSL dağıtımı farklı yapılandırma kullanabilir. MCP, istemler ve Skills işaretli tüm ortamlara yazılır. Oturumlar ve kullanım Windows'tan okunur (Windows işaretli değilse ilk WSL ortamından). İşareti kaldırmak o ortamdaki dosyaları silmez.",
+    "help": "Yapılandırma kaynağı Windows’tur. WSL sağlayıcı, MCP, istem ve Skills ayarlarını izler ve aynı yönlendirme ve toplama hizmetini kullanır. Seçimi kaldırmak dosyaları silmeden eşitlemeyi durdurur.",
     "summaryOne": "Yalnızca {{target}} ortamına yazar",
     "summaryMany": "{{targets}} ortamlarına yazar",
     "detect": "Yeniden algıla",
@@ -5452,7 +5452,7 @@
       "willStart": "yazarken başlatılacak",
       "probeFailed": "bu kez algılama başarısız"
     },
-    "legacyWsl": "Mevcut WSL dizininiz korunuyor. Windows'u işaretleyip kaydedin; ardından her iki taraf kendi sağlayıcısını etkinleştirebilir.",
+    "legacyWsl": "Mevcut WSL yolu korunur. Kaydettikten sonra Windows’tan WSL’ye tek yönlü eşitleme yapılır.",
     "legacyUnresolved": "Mevcut dizinin WSL dağıtımı tanınamadı, tek dizin davranışı korunuyor. Dizini ilgili dağıtım satırına girip kaydedin.",
     "errors": {
       "noTarget": "En az bir yazma hedefi bırakın.",
@@ -5466,7 +5466,8 @@
       "windowsNotAbsolute": "Mutlak bir Windows dizini girin.",
       "windowsInvalidChar": "Windows dizini geçersiz karakterler içeriyor.",
       "wslDistroMismatch": "{{distro}} içinde tam bir WSL UNC dizini girin.",
-      "duplicateDestination": "İşaretli başka bir ortam aynı dizine yazıyor."
+      "duplicateDestination": "İşaretli başka bir ortam aynı dizine yazıyor.",
+      "windowsPrimaryRequired": "Windows yapılandırma kaynağı olarak etkin kalmalıdır"
     },
     "blocked": {
       "managed_login_requires_windows_primary": "Yönetilen resmi oturum kullanılıyor ve yalnızca Windows'ta çalışır. Windows işaretini kaldırmadan önce Windows'u API anahtarlı bir sağlayıcıya geçirin. Taslağınız korunuyor."
@@ -5477,8 +5478,8 @@
       "unknownWithHost": "tanınmayan bir yapılandırma ({{host}})",
       "unknown": "tanınmayan bir yapılandırma",
       "progress": "Çakışma {{index}} / {{total}}",
-      "defer": "Yapılandırmasını koru; henüz sağlayıcı seçme",
-      "deferHint": "Bu ortamın sağlayıcı ayarlarına dokunulmaz; daha sonra sağlayıcılar sayfasından istediğiniz sağlayıcıyı etkinleştirin.",
+      "defer": "Mevcut yapılandırmayı şimdilik koru",
+      "deferHint": "Bu kez dosyalar korunur. Sonraki Windows sağlayıcı değişiminde veya elle eşitlemede Windows seçimi uygulanır.",
       "overwrite": "Yedekle, sonra geçerli sağlayıcıyı kullan",
       "overwriteHint": "Bu ortamın dosyalarını yedekler, sonra geçerli sağlayıcının yönetilen alanlarını yazar; diğer ayarlar kalır.",
       "import": "Sağlayıcı kartı olarak içe aktar ve burada kullanmaya devam et",
@@ -5489,7 +5490,7 @@
     "toast": {
       "primaryFailed": "Dizinler kaydedildi ancak birincil ortama yazılamadı; hiçbir şey eşitlenmedi.",
       "partial": "Dizinler kaydedildi; {{targets}} eşitlenmedi.",
-      "deferred": "Dizinler kaydedildi. Yapılandırmasını koruyan ortamlar için sağlayıcılar sayfasından bir sağlayıcı etkinleştirin.",
+      "deferred": "Dizinler kaydedildi. Ertelenen hedefler sonraki Windows sağlayıcı değişiminde veya elle eşitlemede güncellenir.",
       "savedAndSynced": "Dizinler kaydedildi ve {{targets}} ile eşitlendi.",
       "saved": "Dizinler kaydedildi.",
       "mcpSkipped": "WSL için yalnızca Windows'a özgü MCP sunucuları atlandı: {{servers}}",
@@ -5510,7 +5511,7 @@
       "partial": "Kısmen eşitlendi"
     },
     "reason": {
-      "user_deferred": "Kendi yapılandırması korundu; henüz sağlayıcı seçilmedi",
+      "user_deferred": "Yazma şimdilik ertelendi",
       "managed_login": "Yönetilen resmi oturum şimdilik yalnızca Windows birincil ortamını destekler",
       "write_failed": "Yazma başarısız; özgün yapılandırma değişmedi",
       "timeout": "Zaman aşımı; sonuç bilinmiyor (arka planda tamamlanabilir)",
@@ -5534,7 +5535,7 @@
       "provider": "Kullanımda: {{name}}",
       "syncAll": "Tümünü şimdi eşitle",
       "retry": "Bekleyenleri yeniden dene ({{count}})",
-      "subtitle": "Her ortam kendi sağlayıcısını etkinleştirir; kartlardaki ortam anahtarlarıyla değiştirin",
+      "subtitle": "WSL, Windows seçimini izler; burada son eşitleme sonuçları gösterilir.",
       "noProvider": "Henüz sağlayıcı seçilmedi",
       "configure": "Hedefleri yapılandır",
       "openRouting": "Yönlendirme ayarlarını aç"
@@ -5544,7 +5545,7 @@
       "enable": "{{target}} üzerinde etkinleştir",
       "done": "{{target}}, {{provider}} sağlayıcısına geçti",
       "failed": "{{target}}, {{provider}} sağlayıcısına geçemedi; önceki sağlayıcıyı kullanmaya devam ediyor",
-      "managedLogin": "Yönetilen hesaba bağlı resmi kartlar yalnızca Windows'ta çalışır; WSL'de bağlı olmayan resmi kart (kendi oturumu) veya API anahtarlı sağlayıcı kullanın",
+      "managedLogin": "Yönetilen oturum bilgileri Windows’ta kalır. WSL, kimlik bilgilerini kopyalamadan Windows yönlendirmesini paylaşabilir.",
       "addTitle": "{{target}} üzerinde etkinleştir",
       "addMessage": "{{target}} üzerinde bu istemci kurulu ama henüz yazma hedefi değil. Onaylarsanız yazma hedefi olarak eklenir, mevcut yapılandırması yedeklenir ve ardından orada {{provider}} etkinleştirilir.",
       "addConfirm": "Ekle ve etkinleştir",
@@ -5556,7 +5557,8 @@
       "releaseConfirm": "Kullanmayı bırak",
       "released": "{{target}} artık {{provider}} kullanmıyor",
       "releaseFailed": "{{target}} üzerinde bırakılamadı; önceki sağlayıcı kullanılmaya devam ediyor",
-      "inUseCannotDelete": "{{targets}} üzerinde kullanımda; önce orada başka bir sağlayıcıya geçin"
+      "inUseCannotDelete": "{{targets}} hâlâ bu yapılandırmayı içeriyor; önce eşitlemeyi yeniden deneyin veya bu yazma hedeflerini devre dışı bırakın",
+      "followsWindows": "Windows’u izle"
     },
     "route": {
       "join": "Yönlendirmeye / birleştirmeye katıl",

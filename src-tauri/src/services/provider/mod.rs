@@ -81,54 +81,6 @@ pub(crate) fn apply_to_follower(
     Ok(())
 }
 
-/// 跟随环境不再用 CC Switch 的供应商（供应商页取消那个环境的开关）：在目标作用域里清掉
-/// `prev` 写进去的关键字段和独有字段，其余设置不动，客户端回到它自己的登录或配置。
-pub(crate) fn clear_follower(
-    state: &AppState,
-    app: &AppType,
-    prev: Option<&Provider>,
-) -> Result<(), AppError> {
-    use crate::mode::state::{op, PendingTarget};
-    match app {
-        AppType::Claude => {
-            let prev = prev
-                .map(|p| crate::live::project::claude::ClaudeProjection::of(&p.settings_config));
-            let mut patch = crate::live::project::claude::direct_patch(
-                prev.as_ref(),
-                &crate::live::project::claude::ClaudeProjection::default(),
-            );
-            claude_official::strip_from_patch(&mut patch);
-            claude_direct::run(
-                state.db.as_ref(),
-                op::APPLY,
-                Some(&patch),
-                PendingTarget::default(),
-            )?;
-        }
-        AppType::Codex => {
-            let owner = prev.map_or(codex_direct::Owner::None, codex_direct::Owner::Provider);
-            codex_direct::write_direct(
-                state.db.as_ref(),
-                &state.codex_oauth_manager,
-                op::APPLY,
-                owner,
-                None,
-                PendingTarget::default(),
-            )?;
-        }
-        AppType::Gemini => {
-            gemini_direct::run(
-                state.db.as_ref(),
-                op::APPLY,
-                Some(&crate::live::project::gemini::GeminiProjection::empty()),
-                PendingTarget::default(),
-            )?;
-        }
-        _ => {}
-    }
-    Ok(())
-}
-
 pub fn import_pi_providers_from_live(state: &AppState) -> Result<usize, AppError> {
     pi::import_from_live(state)
 }
@@ -7512,6 +7464,24 @@ impl ProviderService {
     /// - 直连模式：切换式应用只替换客户端文件里的关键字段（不回填），文件和指针在同一个
     ///   操作里提交；累加式应用按各自的规则写入。
     pub fn switch(state: &AppState, app_type: AppType, id: &str) -> Result<SwitchResult, AppError> {
+        let mut result = Self::switch_primary(state, app_type.clone(), id)?;
+        // 主环境操作已提交并释放写锁，再把 Windows 的最新配置同步给 WSL。
+        // 单目标失败留在 targets 中，不回滚 Windows 或其他成功目标。
+        if crate::app_targets::sync::has_followers(&app_type) {
+            match crate::app_targets::service::sync_now(state, app_type.as_str(), None) {
+                Ok(sync) => result.targets = sync.targets,
+                Err(error) => result.warnings.push(error.to_string()),
+            }
+        }
+        Ok(result)
+    }
+
+    // 保存目标时已有冲突 / 暂缓决策，由调用方在保存完成后同步指定目标。
+    pub(crate) fn switch_primary(
+        state: &AppState,
+        app_type: AppType,
+        id: &str,
+    ) -> Result<SwitchResult, AppError> {
         let app = app_type.as_str().to_string();
         let result = Self::switch_inner(state, app_type, id);
         match &result {
@@ -7574,6 +7544,7 @@ impl ProviderService {
         let _provider = rows
             .get(id)?
             .ok_or_else(|| AppError::Message(format!("供应商 {id} 不存在")))?;
+        crate::app_targets::sync::ensure_provider_allowed(&app_type, _provider)?;
         let providers = &rows.readable;
         // WorkBuddy 官方登录卡不写 models.json，卡片的「添加」走账号切换（还原绑定账号的登录文件）
         if app_type == AppType::WorkBuddy

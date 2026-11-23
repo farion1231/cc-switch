@@ -66,9 +66,7 @@ import {
   isWindowsOnly,
   recordFor,
   sameTarget,
-  wslCandidates,
   visibleTargetKeys,
-  type TargetKey,
 } from "@/lib/api/appTargets";
 import {
   DshAccountCard,
@@ -147,36 +145,20 @@ export function ProviderList({
 }: ProviderListProps) {
   const { t } = useTranslation();
   const targetsOverview = useAppTargetsOverview(isAppTargetApp(appId));
-  const [busyTarget, setBusyTarget] = useState<TargetKey | null>(null);
   const targetView = targetsOverview.data?.apps.find(
     (item) => item.app === appId,
   );
-  // 装了这个客户端、还没加入写入环境的 WSL：卡片上也给开关，点了确认后加入并启用。
-  const envCandidates =
-    targetView && targetsOverview.data?.inventory.hostWindows
-      ? wslCandidates(targetView.config, targetsOverview.data, appId).filter(
-          (distro) =>
-            !targetView.config.wsl.some(
-              (t) => t.distro.toLowerCase() === distro.toLowerCase(),
-            ),
-        )
-      : [];
-  // 多环境（Windows + WSL）时，直连页的每张卡用环境开关代替单个「切换」：各环境独立选。
-  // OpenCode 是累加式（所有环境同一组供应商），不用开关。
+  // 本 PR 只显示已启用目标的跟随状态，Windows 负责选择供应商。
+  // 独立 WSL 选择留给后续 PR；OpenCode 始终同步同一组供应商。
   const envSwitchView =
     isAppTargetApp(appId) &&
     appId !== "opencode" &&
     switchMode?.view === "direct" &&
-    targetView &&
-    ((targetView.source === "saved" &&
-      (targetsOverview.data?.inventory.hostWindows
-        ? !targetView.config.windows.enabled ||
-          visibleTargetKeys(
-            targetView.config,
-            targetsOverview.data?.inventory,
-          ).some((key) => key !== "windows")
-        : !isWindowsOnly(targetView.config))) ||
-      envCandidates.length > 0)
+    targetView?.source === "saved" &&
+    !isWindowsOnly(targetView.config) &&
+    visibleTargetKeys(targetView.config, targetsOverview.data?.inventory).some(
+      (key) => key !== "windows",
+    )
       ? targetView
       : undefined;
   const { checkProvider, isChecking } = useStreamCheck(appId);
@@ -696,9 +678,6 @@ export function ProviderList({
               inventory={targetsOverview.data?.inventory}
               mainActive={provider.id === switchMode?.directId}
               mainAction={presentation.buttons[0]}
-              candidates={envCandidates}
-              busyTarget={busyTarget}
-              onBusyTargetChange={setBusyTarget}
             />
           ) : undefined
         }

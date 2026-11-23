@@ -5425,7 +5425,7 @@
     }
   },
   "appTargets": {
-    "help": "공급자는 공급자 페이지에서 환경별로 활성화하므로 Windows와 각 WSL이 서로 다른 설정을 쓸 수 있습니다. MCP, 프롬프트, Skills는 체크한 모든 환경에 기록됩니다. 세션과 사용량은 Windows에서 읽습니다(Windows를 해제하면 첫 번째 WSL 환경). 체크를 해제해도 해당 환경의 파일은 삭제되지 않습니다.",
+    "help": "Windows를 원본으로 공급자, MCP, 프롬프트와 Skills를 WSL에 동기화하고 라우팅 및 집계 서비스를 공유합니다. 선택 해제 시 파일을 삭제하지 않고 동기화만 중지합니다.",
     "summaryOne": "{{target}}에만 기록",
     "summaryMany": "{{targets}}에 기록",
     "detect": "다시 감지",
@@ -5452,7 +5452,7 @@
       "willStart": "기록할 때 시작됨",
       "probeFailed": "이번 감지에 실패함"
     },
-    "legacyWsl": "기존 WSL 디렉터리는 그대로 유지됩니다. Windows를 체크하고 저장하면 양쪽에서 각각 다른 공급자를 활성화할 수 있습니다.",
+    "legacyWsl": "기존 WSL 경로는 유지됩니다. 저장 후 Windows에서 WSL로만 동기화합니다.",
     "legacyUnresolved": "기존 디렉터리의 WSL 배포판을 알 수 없어 단일 디렉터리 동작을 유지합니다. 해당 배포판 행에 디렉터리를 입력하고 저장하세요.",
     "errors": {
       "noTarget": "기록 대상을 하나 이상 유지하세요.",
@@ -5466,7 +5466,8 @@
       "windowsNotAbsolute": "Windows 절대 경로를 입력하세요.",
       "windowsInvalidChar": "Windows 디렉터리에 잘못된 문자가 있습니다.",
       "wslDistroMismatch": "{{distro}} 안의 전체 WSL UNC 디렉터리를 입력하세요.",
-      "duplicateDestination": "체크된 다른 환경과 같은 디렉터리에 기록합니다."
+      "duplicateDestination": "체크된 다른 환경과 같은 디렉터리에 기록합니다.",
+      "windowsPrimaryRequired": "Windows를 활성화된 설정 원본으로 유지해야 합니다"
     },
     "blocked": {
       "managed_login_requires_windows_primary": "관리되는 공식 로그인을 사용 중이며 이는 Windows에서만 동작합니다. Windows 체크를 해제하기 전에 Windows를 API 키 공급자로 전환하세요. 초안은 유지됩니다."
@@ -5477,8 +5478,8 @@
       "unknownWithHost": "알 수 없는 설정({{host}})",
       "unknown": "알 수 없는 설정",
       "progress": "충돌 {{index}} / {{total}}",
-      "defer": "기존 설정 유지, 공급자는 아직 선택 안 함",
-      "deferHint": "이 환경의 공급자 설정을 건드리지 않습니다. 나중에 공급자 페이지에서 원하는 공급자를 활성화하세요.",
+      "defer": "이번에는 기존 설정 유지",
+      "deferHint": "이번에는 파일을 유지합니다. 다음 Windows 공급자 전환 또는 수동 동기화 시 Windows의 현재 선택을 적용합니다.",
       "overwrite": "백업 후 현재 공급자 사용",
       "overwriteHint": "이 환경의 파일을 백업한 뒤 현재 공급자의 관리 필드를 기록합니다. 다른 설정은 유지됩니다.",
       "import": "공급자 카드로 가져와 이 환경에서 계속 사용",
@@ -5489,7 +5490,7 @@
     "toast": {
       "primaryFailed": "디렉터리는 저장했지만 기본 환경 기록에 실패하여 동기화하지 않았습니다.",
       "partial": "디렉터리를 저장했습니다. {{targets}}은(는) 동기화되지 않았습니다.",
-      "deferred": "디렉터리를 저장했습니다. 기존 설정을 유지한 환경은 공급자 페이지에서 공급자를 활성화하세요.",
+      "deferred": "디렉터리를 저장했습니다. 보류된 대상은 다음 Windows 공급자 전환 또는 수동 동기화 시 업데이트됩니다.",
       "savedAndSynced": "디렉터리를 저장하고 {{targets}}에 동기화했습니다.",
       "saved": "디렉터리를 저장했습니다.",
       "mcpSkipped": "WSL에서는 Windows 전용 MCP를 건너뛰었습니다: {{servers}}",
@@ -5510,7 +5511,7 @@
       "partial": "일부 동기화 실패"
     },
     "reason": {
-      "user_deferred": "기존 설정 유지, 공급자 미선택",
+      "user_deferred": "이번 쓰기 보류",
       "managed_login": "관리되는 공식 로그인은 현재 Windows 기본 환경만 지원",
       "write_failed": "기록 실패, 원래 설정은 변경되지 않음",
       "timeout": "시간 초과, 결과 알 수 없음(백그라운드에서 완료될 수 있음)",
@@ -5534,7 +5535,7 @@
       "provider": "사용 중: {{name}}",
       "syncAll": "모두 지금 동기화",
       "retry": "미동기화 재시도 ({{count}})",
-      "subtitle": "환경마다 공급자를 따로 활성화합니다. 카드의 환경 스위치로 전환하세요",
+      "subtitle": "WSL은 Windows를 따릅니다. 최근 동기화 결과를 표시합니다.",
       "noProvider": "공급자 미선택",
       "configure": "대상 설정",
       "openRouting": "라우팅 설정 열기"
@@ -5544,7 +5545,7 @@
       "enable": "{{target}}에서 활성화",
       "done": "{{target}}을(를) {{provider}}(으)로 전환했습니다",
       "failed": "{{target}}을(를) {{provider}}(으)로 전환하지 못해 이전 공급자를 유지합니다",
-      "managedLogin": "관리 계정에 연결된 공식 카드는 Windows에서만 쓸 수 있습니다. WSL에서는 연결되지 않은 공식 카드(자체 로그인)나 API 키 공급자를 쓰세요",
+      "managedLogin": "관리되는 로그인은 Windows에 유지됩니다. WSL은 인증 정보를 복사하지 않고 Windows 라우팅을 공유할 수 있습니다.",
       "addTitle": "{{target}}에서 활성화",
       "addMessage": "{{target}}에 이 클라이언트가 설치되어 있지만 아직 기록 대상이 아닙니다. 확인하면 기록 대상에 추가하고 현재 설정을 백업한 뒤 {{provider}}을(를) 활성화합니다.",
       "addConfirm": "추가하고 활성화",
@@ -5556,7 +5557,8 @@
       "releaseConfirm": "사용 해제",
       "released": "{{target}}이(가) 더 이상 {{provider}}을(를) 사용하지 않습니다",
       "releaseFailed": "{{target}}에서 사용 해제하지 못해 이전 공급자를 유지합니다",
-      "inUseCannotDelete": "{{targets}}에서 사용 중입니다. 먼저 해당 환경에서 다른 제공자로 전환하세요"
+      "inUseCannotDelete": "{{targets}}에 이 공급자 설정이 남아 있습니다. 동기화를 재시도하거나 해당 쓰기 대상을 해제하세요",
+      "followsWindows": "Windows 따르기"
     },
     "route": {
       "join": "라우팅 / 집계 참여",

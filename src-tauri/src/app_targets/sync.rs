@@ -121,7 +121,10 @@ pub fn has_followers(app: &AppType) -> bool {
         return false;
     }
     let (config, source) = app_config(app);
-    source == ConfigSource::Saved && !config.followers().is_empty()
+    source == ConfigSource::Saved
+        && config.primary == model::WINDOWS
+        && config.windows.enabled
+        && !config.followers().is_empty()
 }
 
 pub fn store_root(app: &AppType, id: &TargetId) -> PathBuf {
@@ -156,7 +159,7 @@ fn home_unresolved(distro: &str) -> AppError {
 
 /// 目标目录。Windows 没有自定义目录时为 `None`（用应用现有的默认解析，包括它认的环境
 /// 变量）；WSL 用自定义目录或按发行版 HOME 推导的自动目录，推导不出来时报错，不回落到
-/// Windows HOME。`allow_start` 为假时不为了读 HOME 启动发行版。
+/// Windows HOME。`allow_start` 只允许刷新运行中发行版的文件信息，不执行命令或启动发行版。
 pub fn resolve_dir(
     app: &AppType,
     spec: &TargetSpec,
@@ -168,6 +171,12 @@ pub fn resolve_dir(
             .as_deref()
             .map(crate::settings::resolve_override_path)),
         TargetId::Wsl(distro) => {
+            #[cfg(windows)]
+            if allow_start && !wsl::is_running(distro) {
+                return Err(AppError::Message(format!(
+                    "WSL · {distro} is not running; start it manually"
+                )));
+            }
             if let Some(dir) = &spec.dir {
                 return Ok(Some(PathBuf::from(dir)));
             }
@@ -403,6 +412,26 @@ pub fn is_managed_login(app: &AppType, provider: &Provider) -> bool {
         }
         _ => false,
     }
+}
+
+/// 主环境没有 TargetScope，仍需按保存的目标（含旧 UNC 设置）隔离宿主登录。
+pub(crate) fn is_wsl_target(app: &AppType) -> bool {
+    if scope::active() {
+        scope::is_wsl()
+    } else {
+        matches!(app_config(app).0.primary_id(), Some(TargetId::Wsl(_)))
+    }
+}
+
+pub(crate) fn ensure_provider_allowed(app: &AppType, provider: &Provider) -> Result<(), AppError> {
+    if is_managed_login(app, provider) && is_wsl_target(app) {
+        return Err(AppError::localized(
+            "app_targets.managed_login_windows_only",
+            "绑定了托管账号的官方卡目前只能在 Windows 使用；WSL 可以用没绑账号的官方卡（用它自己的登录）或 API Key 供应商",
+            "Official cards bound to a managed account only work on Windows for now; in WSL use an unbound official card (its own sign-in) or an API key provider",
+        ));
+    }
+    Ok(())
 }
 
 // ===== 冲突、导入、备份 =====
@@ -694,6 +723,7 @@ fn write_in_scope(
     current: Option<&Provider>,
     prev: Option<&Provider>,
     routed: bool,
+    clear_prompt: bool,
 ) -> Result<(Option<String>, Vec<String>), AppError> {
     let mut warnings = Vec::new();
     // 接在路由上的环境，客户端文件是代理契约：直连供应商等退出路由时再写。
@@ -709,11 +739,20 @@ fn write_in_scope(
         }
     }
     if kind.writes_prompt() {
-        let prompt_result = if kind == SyncKind::PromptClear {
-            crate::services::PromptService::clear_live_in_scope(app)
-        } else {
-            crate::services::PromptService::sync_to_live(state, app.clone())
-        };
+        // 重试保留清空意图；若期间启用了新提示词，则投影最新内容。
+        let prompt_result = (|| {
+            if clear_prompt
+                && !state
+                    .db
+                    .get_prompts(app)?
+                    .values()
+                    .any(|prompt| prompt.enabled)
+            {
+                crate::services::PromptService::clear_live_in_scope(app)
+            } else {
+                crate::services::PromptService::sync_to_live(state, app.clone())
+            }
+        })();
         if let Err(err) = prompt_result {
             if matches!(kind, SyncKind::Prompt | SyncKind::PromptClear) {
                 return Err(err);
@@ -722,18 +761,22 @@ fn write_in_scope(
         }
     }
     if kind.writes_skills() {
-        if let Err(err) = crate::services::skill::SkillService::sync_to_app(&state.db, app) {
-            let err = AppError::Message(err.to_string());
-            if kind == SyncKind::Skills {
-                return Err(err);
-            }
-            warnings.push(format!("skills_failed:{}", error_detail(&err)));
-        }
+        warnings.extend(sync_skills(state, app));
     }
     Ok((fingerprint_in_scope(app), warnings))
 }
 
-/// 把每个跟随环境自己正在用的供应商（及共享的 MCP / 提示词 / Skills）重新写进去。
+pub(super) fn sync_skills(state: &AppState, app: &AppType) -> Vec<String> {
+    match crate::services::SkillService::sync_to_app_with_failures(&state.db, app) {
+        Ok(failed) => failed
+            .into_iter()
+            .map(|failure| format!("skills_failed:{}: {}", failure.directory, failure.error))
+            .collect(),
+        Err(err) => vec![format!("skills_failed:{err:#}")],
+    }
+}
+
+/// 把 Windows 当前的供应商及共享的 MCP / 提示词 / Skills 写入 WSL。
 /// `only` 限定目标（重试、新目标），`None` 为全部跟随目标。主环境不在这里写。
 pub fn sync_followers(
     state: &AppState,
@@ -741,19 +784,7 @@ pub fn sync_followers(
     only: Option<&[TargetId]>,
     kind: SyncKind,
 ) -> Vec<TargetReport> {
-    sync_followers_with(state, app, only, kind, &BTreeMap::new())
-}
-
-/// 同上；`activate` 给出要在某些目标上改用的供应商（目标键 → 供应商 ID）。写入成功后
-/// 它才成为那个目标正在用的供应商；失败时目标保持原来那家。
-pub fn sync_followers_with(
-    state: &AppState,
-    app: &AppType,
-    only: Option<&[TargetId]>,
-    kind: SyncKind,
-    activate: &BTreeMap<String, String>,
-) -> Vec<TargetReport> {
-    sync_followers_internal(state, app, only, kind, activate, None)
+    sync_followers_internal(state, app, only, kind, None)
 }
 
 fn sync_followers_internal(
@@ -761,7 +792,6 @@ fn sync_followers_internal(
     app: &AppType,
     only: Option<&[TargetId]>,
     kind: SyncKind,
-    activate: &BTreeMap<String, String>,
     prev_override: Option<&Provider>,
 ) -> Vec<TargetReport> {
     if !model::supports(app) || scope::active() {
@@ -772,7 +802,8 @@ fn sync_followers_internal(
         .as_ref()
         .map(|lock| lock.lock().unwrap_or_else(|e| e.into_inner()));
     let (config, source) = app_config(app);
-    if source != ConfigSource::Saved {
+    if source != ConfigSource::Saved || config.primary != model::WINDOWS || !config.windows.enabled
+    {
         return Vec::new();
     }
     let followers: Vec<TargetSpec> = config
@@ -791,13 +822,23 @@ fn sync_followers_internal(
     let mut jobs = Vec::new();
     for spec in followers {
         let key = spec.id.key();
+        let tokens = bump_channels(app, &key, kind.channels());
+        let (primary_channel, primary_generation) = tokens[0];
+        if kind == SyncKind::PromptClear {
+            // 解析目录和启动写入前落盘；离线、超时或失败后仍能重试清空。
+            status::set_prompt_clear_pending(app.as_str(), &key, true);
+        }
         let previous = status::get(app.as_str(), &key);
         let active_id = previous.as_ref().and_then(|r| r.provider_id.clone());
-        let wanted_id = activate
-            .iter()
-            .find(|(k, _)| TargetId::parse(k).is_some_and(|id| id.same(&spec.id)))
-            .map(|(_, id)| id.clone())
-            .or_else(|| active_id.clone());
+        // 本 PR 只做 Windows → WSL。后续独立供应商选择应新增显式配置，
+        // 不要把 TargetRecord.provider_id（最近成功同步结果）当成目标的选择。
+        let wanted_id = crate::mode::current::provider_for(
+            &state.db,
+            app,
+            crate::mode::current::Purpose::Direct,
+        )
+        .ok()
+        .flatten();
         let current = match wanted_id.as_deref() {
             Some(id) if !additive => match providers.get(id) {
                 Some(provider) => Some(provider.clone()),
@@ -814,7 +855,10 @@ fn sync_followers_internal(
             },
             _ => None,
         };
-        if kind.writes_provider() && current.as_ref().is_some_and(|p| is_managed_login(app, p)) {
+        if kind.writes_provider()
+            && !follower_routed(app, &spec.id)
+            && current.as_ref().is_some_and(|p| is_managed_login(app, p))
+        {
             reports.push(record(
                 app,
                 &key,
@@ -822,8 +866,6 @@ fn sync_followers_internal(
             ));
             continue;
         }
-        let tokens = bump_channels(app, &key, kind.channels());
-        let (primary_channel, primary_generation) = tokens[0];
         let dir = match resolve_dir(app, &spec, true) {
             Ok(dir) => dir,
             Err(err) => {
@@ -842,6 +884,7 @@ fn sync_followers_internal(
             .map(|d| d.to_string_lossy().into_owned())
             .or_else(|| display_dir(app, &spec, false));
         let prev = prev_override
+            .filter(|provider| active_id.as_deref() == Some(provider.id.as_str()))
             .cloned()
             .or_else(|| active_id.as_ref().and_then(|id| providers.get(id)).cloned());
         let routed = follower_routed(app, &spec.id);
@@ -870,6 +913,7 @@ fn sync_followers_internal(
                     worker_current.as_ref(),
                     prev.as_ref(),
                     routed,
+                    status::prompt_clear_pending(worker_app.as_str(), &worker_key),
                 )
             });
             let previous = status::get(worker_app.as_str(), &worker_key);
@@ -885,6 +929,16 @@ fn sync_followers_internal(
                 primary_channel,
                 primary_generation,
             );
+            if kind.writes_prompt()
+                && channel_is_latest(SyncChannel::Prompt)
+                && result.as_ref().is_ok_and(|(_, warnings)| {
+                    !warnings
+                        .iter()
+                        .any(|warning| warning.starts_with("prompt_failed:"))
+                })
+            {
+                status::set_prompt_clear_pending(worker_app.as_str(), &worker_key, false);
+            }
             let retained_warnings: Vec<String> = previous
                 .as_ref()
                 .map(|r| {
@@ -915,7 +969,7 @@ fn sync_followers_internal(
                         !owned_by_stale
                     });
                     if kind.writes_provider() && routed {
-                        // 接在路由上：只记下选了哪家，退出路由时写回。
+                        // 接在共享路由上：记录跟随的 Windows 直连选择，退出路由时恢复。
                         TargetRecord {
                             provider_id: worker_current.as_ref().map(|p| p.id.clone()),
                             fingerprint,
@@ -925,7 +979,7 @@ fn sync_followers_internal(
                             ..TargetRecord::new(TargetStatus::Ok).reason("routed")
                         }
                     } else if kind.writes_provider() && worker_current.is_none() && !additive {
-                        // 这个环境还没选供应商（暂不写入）：只同步了共享的 MCP 等。
+                        // Windows 尚未选择供应商：只同步共享的 MCP 等。
                         TargetRecord {
                             dir: worker_dir,
                             warnings,
@@ -1177,16 +1231,12 @@ pub fn after_provider_edit_with_prev(
     let Some(provider_id) = provider_id else {
         return;
     };
-    let using = followers_using(app, provider_id);
-    if !using.is_empty() {
-        sync_followers_internal(
-            state,
-            app,
-            Some(&using),
-            SyncKind::Provider,
-            &BTreeMap::new(),
-            prev_override,
-        );
+    let current =
+        crate::mode::current::provider_for(&state.db, app, crate::mode::current::Purpose::Direct)
+            .ok()
+            .flatten();
+    if current.as_deref() == Some(provider_id) {
+        sync_followers_internal(state, app, None, SyncKind::Provider, prev_override);
     }
 }
 
@@ -1195,7 +1245,8 @@ where
     F: Fn(&TargetSpec) -> Result<(), AppError> + Send + Sync,
 {
     let (config, source) = app_config(app);
-    if source != ConfigSource::Saved {
+    if source != ConfigSource::Saved || config.primary != model::WINDOWS || !config.windows.enabled
+    {
         return;
     }
     for spec in config.followers() {
@@ -1302,7 +1353,8 @@ pub fn spawn_remove_skill(_state: &AppState, directory: String, apps: Vec<AppTyp
 /// 正在用 `provider_id` 的已启用跟随环境。
 pub fn followers_using(app: &AppType, provider_id: &str) -> Vec<TargetId> {
     let (config, source) = app_config(app);
-    if source != ConfigSource::Saved {
+    if source != ConfigSource::Saved || config.primary != model::WINDOWS || !config.windows.enabled
+    {
         return Vec::new();
     }
     config
@@ -1394,9 +1446,8 @@ pub fn detected_client_host(env: &model::LinuxEnv) -> Option<String> {
     env.gateway.clone()
 }
 
-/// 让每个跟随环境的客户端和应用的路由状态一致：应用在路由 / 聚合模式、且这个环境勾了
-/// 「接入路由」时写共用的代理契约（地址用这个环境的客户端主机）；否则把接着路由的环境
-/// 写回它自己的直连供应商。`detach` 为真时（退出 CC Switch）一律写回直连，模式偏好不变。
+/// WSL 与 Windows 共用路由 / 聚合服务，仅客户端主机地址因网络而异。
+/// 退出路由（或 `detach`）时恢复 Windows 当前直连供应商，不保存独立 WSL 选择。
 pub fn sync_follower_routes(state: &AppState, app: &AppType, detach: bool) -> Vec<TargetReport> {
     sync_follower_routes_for(state, app, detach, None)
 }
@@ -1414,7 +1465,8 @@ pub fn sync_follower_routes_for(
     let lock = route_sync_lock(app);
     let _serial = lock.lock().unwrap_or_else(|e| e.into_inner());
     let (config, source) = app_config(app);
-    if source != ConfigSource::Saved {
+    if source != ConfigSource::Saved || config.primary != model::WINDOWS || !config.windows.enabled
+    {
         return Vec::new();
     }
     let targets = config
@@ -1446,7 +1498,7 @@ pub(super) fn sync_routes_locked(
     let mut jobs: Vec<Job> = Vec::new();
     for spec in targets {
         let key = spec.id.key();
-        let join = attach && spec.route;
+        let join = attach; // WSL 使用 Windows 上同一个路由 / 聚合服务。
         let routed = follower_routed(app, &spec.id);
         if !join && !routed {
             continue;
@@ -1491,7 +1543,13 @@ pub(super) fn sync_routes_locked(
         } else {
             None
         };
-        let active = previous.as_ref().and_then(|r| r.provider_id.clone());
+        let active = crate::mode::current::provider_for(
+            &state.db,
+            app,
+            crate::mode::current::Purpose::Direct,
+        )
+        .ok()
+        .flatten();
         let previous_fingerprint = previous.as_ref().and_then(|r| r.fingerprint.clone());
         let previous_warnings = previous.map(|r| r.warnings).unwrap_or_default();
         let shown_dir = dir
@@ -1499,7 +1557,16 @@ pub(super) fn sync_routes_locked(
             .map(|d| d.to_string_lossy().into_owned())
             .or_else(|| display_dir(app, &spec, false));
         let mut scope = scope_for(app, &spec.id, dir);
-        scope.direct = active.clone();
+        // 托管登录不能从 Windows 复制到 WSL。离开共享路由时清除代理契约，
+        // 回到 WSL 自己保留的原生登录，而不是尝试把 Windows 账号写进去。
+        scope.direct = active.clone().filter(|id| {
+            !state
+                .db
+                .get_provider_by_id(id, app)
+                .ok()
+                .flatten()
+                .is_some_and(|provider| is_managed_login(app, &provider))
+        });
         scope.client_host = client_host.clone();
         let (tx, rx) = mpsc::channel();
         let done = Arc::new(Mutex::new(false));
@@ -1690,109 +1757,6 @@ pub(super) fn route_sync_lock(app: &AppType) -> Arc<Mutex<()>> {
         .entry(app.as_str().to_string())
         .or_default()
         .clone()
-}
-
-/// 一个跟随环境不再用 CC Switch 的供应商：清掉上次写进去的关键字段（接在路由上时只记下，
-/// 退出路由时写回空的直连），记为「保持原配置 · 未选择供应商」。
-pub fn deactivate_follower(
-    state: &AppState,
-    app: &AppType,
-    spec: &TargetSpec,
-) -> Result<TargetReport, AppError> {
-    let route_lock = route_sync_lock(app);
-    let _route_guard = route_lock.lock().unwrap_or_else(|e| e.into_inner());
-    let key = spec.id.key();
-    let previous = status::get(app.as_str(), &key);
-    let previous_warnings = previous
-        .as_ref()
-        .map(|r| r.warnings.clone())
-        .unwrap_or_default();
-    let providers = state.db.get_all_providers(app)?;
-    let prev = previous
-        .as_ref()
-        .and_then(|r| r.provider_id.as_deref())
-        .and_then(|id| providers.get(id).cloned());
-    let routed = follower_routed(app, &spec.id);
-    let generation = bump_generation(app, &key);
-    let dir = resolve_dir(app, spec, true)?;
-    let shown_dir = dir
-        .as_ref()
-        .map(|d| d.to_string_lossy().into_owned())
-        .or_else(|| display_dir(app, spec, false));
-    let mut scope = scope_for(app, &spec.id, dir);
-    scope.direct = None;
-    let worker_state = state.clone();
-    let worker_app = app.clone();
-    let worker_key = key.clone();
-    let worker_dir = shown_dir.clone();
-    let done = Arc::new(Mutex::new(false));
-    let worker_done = done.clone();
-    let (tx, rx) = mpsc::channel();
-    std::thread::spawn(move || {
-        let (result, _) = scope::run(scope, || {
-            if !routed {
-                crate::services::provider::clear_follower(
-                    &worker_state,
-                    &worker_app,
-                    prev.as_ref(),
-                )?;
-            }
-            Ok::<_, AppError>(fingerprint_in_scope(&worker_app))
-        });
-        let mut finished = worker_done.lock().unwrap_or_else(|e| e.into_inner());
-        let outcome = result.map(|fingerprint| {
-            let record = TargetRecord {
-                fingerprint,
-                dir: worker_dir,
-                routed,
-                ..TargetRecord::new(TargetStatus::Skipped).reason("no_provider")
-            };
-            if is_latest(&worker_app, &worker_key, generation) {
-                status::replace(worker_app.as_str(), &worker_key, record.clone());
-            }
-            TargetReport {
-                target: worker_key,
-                record,
-            }
-        });
-        *finished = true;
-        drop(finished);
-        let _ = tx.send(outcome);
-    });
-    let timeout = if matches!(spec.id, TargetId::Wsl(_)) {
-        WSL_TIMEOUT
-    } else {
-        WINDOWS_TIMEOUT
-    };
-    match rx.recv_timeout(timeout) {
-        Ok(result) => result,
-        Err(_) => {
-            let finished = done.lock().unwrap_or_else(|e| e.into_inner());
-            if *finished {
-                drop(finished);
-                if let Ok(result) = rx.recv() {
-                    return result;
-                }
-            }
-            if is_latest(app, &key, generation) {
-                Ok(record(
-                    app,
-                    &key,
-                    TargetRecord {
-                        dir: shown_dir,
-                        warnings: previous_warnings,
-                        routed,
-                        ..TargetRecord::new(TargetStatus::Error).reason("timeout")
-                    },
-                ))
-            } else {
-                Ok(TargetReport {
-                    target: key,
-                    record: TargetRecord::new(TargetStatus::Deferred).reason("superseded"),
-                })
-            }
-        }
-    }
 }
 
 /// 外部修改检查限频：概览每 30 秒刷新一次，每次都读 WSL 里的文件会一直重置发行版的空闲

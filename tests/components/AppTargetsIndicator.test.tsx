@@ -92,13 +92,7 @@ describe("AppTargetsIndicator routing toggle", () => {
     Object.values(toastMock).forEach((fn) => fn.mockReset());
   });
 
-  it("lets a WSL environment join the shared route", async () => {
-    setRouteMock.mockResolvedValue({
-      target: "wsl:Alpine",
-      status: "ok",
-      routed: true,
-      at: 2,
-    });
+  it("shows that WSL always shares the Windows route without an independent toggle", async () => {
     render(<AppTargetsIndicator app="claude" currentProviderId="a" />);
     fireEvent.click(
       screen.getByRole("button", { name: "appTargets.indicator.title" }),
@@ -106,14 +100,10 @@ describe("AppTargetsIndicator routing toggle", () => {
     const toggle = await screen.findByRole("switch", {
       name: "appTargets.route.joinFor:WSL · Alpine",
     });
-    expect(screen.queryAllByRole("switch")).toHaveLength(1);
-    await act(async () => {
-      fireEvent.click(toggle);
-    });
-    expect(setRouteMock).toHaveBeenCalledWith("claude", "wsl:Alpine", true);
-    expect(toastMock.success).toHaveBeenCalledWith(
-      "appTargets.route.joined:WSL · Alpine",
-    );
+    expect(toggle).toBeChecked();
+    expect(toggle).toBeDisabled();
+    fireEvent.click(toggle);
+    expect(setRouteMock).not.toHaveBeenCalled();
   });
 
   it("has no routing toggle for OpenCode", async () => {

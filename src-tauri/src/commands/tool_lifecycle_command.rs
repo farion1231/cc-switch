@@ -476,10 +476,7 @@ fn tool_action_shell_command(tool: &str, action: ToolLifecycleAction) -> Option<
 /// Windows PowerShell installer,但跨 `wsl.exe` 边界后跑的是 Linux。这个 wrapper
 /// 强制生成 POSIX 版命令。
 #[cfg(target_os = "windows")]
-pub(super) fn wsl_tool_action_shell_command(
-    tool: &str,
-    action: ToolLifecycleAction,
-) -> Option<String> {
+fn wsl_tool_action_shell_command(tool: &str, action: ToolLifecycleAction) -> Option<String> {
     match action {
         ToolLifecycleAction::Install => {
             let command = posix_install_command_for(tool);
@@ -570,18 +567,8 @@ fn build_tool_action_line(
     }
 }
 
-/// 在 WSL 内先通过用户交互式/登录 shell 取真实 `PATH`（nvm/fnm/npm-global 等），
-/// 剔除 Windows 盘符挂载路径（`/mnt/<drive>/...` 与自定义 `/<drive>/...`）后执行 `command`。
-/// 不含双引号与 `%`，可安全经 `windows_cmd_double_quote_arg` 传入 `.bat`。
-#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
-pub(super) fn wsl_login_action_script(command: &str) -> String {
-    format!(
-        "_p=; for _f in -lic -lc -c; do _p=$(${{SHELL:-sh}} $_f env 2>/dev/null | sed -n 's/^PATH=//p' | tail -n 1); case $_p in ?*) break;; esac; done; case $_p in '') _p=$PATH;; esac; _c=; _o=$IFS; IFS=:; set -f; for _d in $_p; do case $_d in ''|/[a-zA-Z]|/[a-zA-Z]/*|/mnt/[a-zA-Z]|/mnt/[a-zA-Z]/*) ;; *) _c=${{_c:+$_c:}}$_d;; esac; done; set +f; IFS=$_o; PATH=$_c; export PATH; {command}"
-    )
-}
-
 #[cfg(target_os = "windows")]
-pub(super) fn build_wsl_tool_action_line(
+fn build_wsl_tool_action_line(
     distro: &str,
     command: &str,
     force_shell: Option<&str>,
@@ -589,14 +576,6 @@ pub(super) fn build_wsl_tool_action_line(
 ) -> Result<String, String> {
     if !is_valid_wsl_distro_name(distro) {
         return Err(format!("Invalid WSL distro name: {distro}"));
-    }
-
-    if force_shell.is_none() && force_shell_flag.is_none() {
-        let script = wsl_login_action_script(command);
-        return Ok(format!(
-            "wsl.exe -d {distro} --exec sh -c {}",
-            windows_cmd_double_quote_arg(&script)
-        ));
     }
 
     let shell = force_shell
@@ -2612,21 +2591,11 @@ mod tests {
         fn wsl_hermes_install_line_does_not_depend_on_outer_pipefail() {
             let line = build_wsl_tool_action_line("Ubuntu", HERMES_INSTALL_UNIX, None, None)
                 .expect("valid WSL command line");
-            assert!(line.starts_with("wsl.exe -d Ubuntu --exec sh -c "));
+            assert!(line.starts_with("wsl.exe -d Ubuntu -- sh -c "));
             assert!(
                 !line.contains("| bash") && line.contains(" -o $tmp && bash $tmp"),
                 "WSL 子 shell 内不能出现 curl 管道安装器: {line}"
             );
-        }
-
-        #[test]
-        fn wsl_login_action_line_uses_exec_and_is_batch_safe() {
-            let script = wsl_login_action_script("npm i -g @openai/codex@latest");
-            assert!(!script.contains('"') && !script.contains('%'));
-            let line =
-                build_wsl_tool_action_line("Alpine", "npm i -g @openai/codex@latest", None, None)
-                    .expect("valid WSL command line");
-            assert!(line.starts_with("wsl.exe -d Alpine --exec sh -c "));
         }
 
         #[test]
