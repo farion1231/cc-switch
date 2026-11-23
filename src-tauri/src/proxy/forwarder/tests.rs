@@ -1955,7 +1955,7 @@ async fn codex_copilot_validates_client_model_before_runtime_lookup() {
                     extensions: &Extensions::new(),
                     adapter: adapter.as_ref(),
                 },
-                &body,
+                body.clone(),
                 &mut codex_upstream_format,
             )
             .await
@@ -2049,7 +2049,7 @@ async fn codex_copilot_capability_failure_tries_healthy_later_provider() {
             &AppType::Codex,
             http::Method::POST,
             "/v1/responses",
-            &body,
+            wire_body(body.clone()),
             HeaderMap::new(),
             Extensions::new(),
             &[copilot, healthy],
@@ -2656,7 +2656,12 @@ fn prevention_heuristic_off_skips_list_but_keeps_explicit_text_only() {
 fn reactive_triggers_when_all_switches_on() {
     let fwd = forwarder_with_rectifier(RectifierConfig::default());
     let body = body_with_image("any-model");
-    assert!(fwd.media_retry_should_trigger("Claude", false, &body, &image_unsupported_error()));
+    assert!(fwd.media_retry_should_trigger(
+        "Claude",
+        false,
+        Some(&body),
+        &image_unsupported_error()
+    ));
 }
 
 #[test]
@@ -2671,7 +2676,7 @@ fn reactive_triggers_for_codex_image_url_deserialize_errors() {
         ),
     };
 
-    assert!(fwd.media_retry_should_trigger("Codex", false, &body, &error));
+    assert!(fwd.media_retry_should_trigger("Codex", false, Some(&body), &error));
 }
 
 #[test]
@@ -2685,7 +2690,7 @@ fn reactive_triggers_for_openrouter_no_image_endpoint_404() {
         ),
     };
 
-    assert!(fwd.media_retry_should_trigger("Codex", false, &body, &error));
+    assert!(fwd.media_retry_should_trigger("Codex", false, Some(&body), &error));
 }
 
 #[test]
@@ -2695,7 +2700,7 @@ fn reactive_triggers_for_structured_and_stringified_codex_tool_images() {
     for stringified in [false, true] {
         let body = body_with_codex_tool_output_image(stringified);
         assert!(
-            fwd.media_retry_should_trigger("Codex", false, &body, &image_unsupported_error()),
+            fwd.media_retry_should_trigger("Codex", false, Some(&body), &image_unsupported_error()),
             "tool-output image should trigger retry (stringified={stringified})"
         );
     }
@@ -2708,13 +2713,13 @@ fn reactive_triggers_for_chat_tool_and_gemini_images() {
     assert!(fwd.media_retry_should_trigger(
         "Claude",
         false,
-        &body_with_stringified_chat_tool_image(),
+        Some(&body_with_stringified_chat_tool_image()),
         &image_unsupported_error()
     ));
     assert!(fwd.media_retry_should_trigger(
         "Claude",
         false,
-        &body_with_gemini_image(),
+        Some(&body_with_gemini_image()),
         &image_unsupported_error()
     ));
 }
@@ -2728,7 +2733,7 @@ fn reactive_does_not_treat_context_limit_as_image_rejection() {
         body: Some(r#"{"error":{"message":"maximum context length exceeded"}}"#.to_string()),
     };
 
-    assert!(!fwd.media_retry_should_trigger("Codex", false, &body, &context_error));
+    assert!(!fwd.media_retry_should_trigger("Codex", false, Some(&body), &context_error));
 }
 
 #[test]
@@ -2739,7 +2744,12 @@ fn reactive_skipped_when_media_fallback_off() {
         ..RectifierConfig::default()
     });
     let body = body_with_image("any-model");
-    assert!(!fwd.media_retry_should_trigger("Claude", false, &body, &image_unsupported_error()));
+    assert!(!fwd.media_retry_should_trigger(
+        "Claude",
+        false,
+        Some(&body),
+        &image_unsupported_error()
+    ));
 }
 
 #[test]
@@ -2749,7 +2759,12 @@ fn reactive_skipped_when_master_switch_off() {
         ..RectifierConfig::default()
     });
     let body = body_with_image("any-model");
-    assert!(!fwd.media_retry_should_trigger("Claude", false, &body, &image_unsupported_error()));
+    assert!(!fwd.media_retry_should_trigger(
+        "Claude",
+        false,
+        Some(&body),
+        &image_unsupported_error()
+    ));
 }
 
 #[test]
@@ -2760,7 +2775,12 @@ fn reactive_unaffected_by_heuristic_switch() {
         ..RectifierConfig::default()
     });
     let body = body_with_image("any-model");
-    assert!(fwd.media_retry_should_trigger("Claude", false, &body, &image_unsupported_error()));
+    assert!(fwd.media_retry_should_trigger(
+        "Claude",
+        false,
+        Some(&body),
+        &image_unsupported_error()
+    ));
 }
 
 /// Codex Stack 请求的转发改写：身份头、模型名、托管 web_search。
@@ -2884,7 +2904,7 @@ mod codex_stack {
                 &AppType::Codex,
                 http::Method::POST,
                 endpoint,
-                &body,
+                wire_body(body.clone()),
                 chatgpt_headers(),
                 Extensions::new(),
                 &[provider],
@@ -3299,11 +3319,11 @@ mod codex_stack {
                 &AppType::Claude,
                 http::Method::POST,
                 "/v1/messages",
-                &json!({
+                wire_body(json!({
                     "model": "stacked-model",
                     "max_tokens": 16,
                     "messages": [{ "role": "user", "content": "hi" }]
-                }),
+                })),
                 headers,
                 Extensions::new(),
                 &[provider],
@@ -3653,7 +3673,7 @@ mod codex_stack {
                 &AppType::Codex,
                 http::Method::POST,
                 "/responses",
-                &history_with_foreign_reasoning(),
+                wire_body(history_with_foreign_reasoning()),
                 chatgpt_headers(),
                 Extensions::new(),
                 &[provider],
@@ -3716,7 +3736,7 @@ mod codex_stack {
                 &AppType::Codex,
                 http::Method::POST,
                 "/responses",
-                &request,
+                wire_body(request.clone()),
                 chatgpt_headers(),
                 Extensions::new(),
                 &[provider(&upstream, "openai_responses")],
@@ -3757,7 +3777,7 @@ mod codex_stack {
                 &AppType::Codex,
                 http::Method::POST,
                 "/responses",
-                &request,
+                wire_body(request.clone()),
                 chatgpt_headers(),
                 Extensions::new(),
                 &[provider(&upstream, "openai_responses")],
@@ -3884,7 +3904,7 @@ mod codex_stack {
                 provider,
                 Some(CodexUpstreamFormat::NativeResponses),
                 false,
-                &request,
+                Some(&request),
                 &unsupported,
             )
         };
@@ -3930,7 +3950,7 @@ mod codex_stack {
                 &provider,
                 Some(CodexUpstreamFormat::NativeResponses),
                 false,
-                &request,
+                Some(&request),
                 &unsupported,
             ),
             Some(OpaqueStateRejection {
@@ -3945,7 +3965,7 @@ mod codex_stack {
                 &provider,
                 Some(CodexUpstreamFormat::ChatCompletions),
                 false,
-                &request,
+                Some(&request),
                 &unsupported,
             ),
             None
@@ -4002,7 +4022,7 @@ mod codex_stack {
                         &AppType::Claude,
                         http::Method::POST,
                         "/v1/messages",
-                        &request,
+                        wire_body(request.clone()),
                         HeaderMap::new(),
                         Extensions::new(),
                         &[provider],
@@ -4174,7 +4194,7 @@ mod codex_stack {
                 &AppType::Codex,
                 http::Method::POST,
                 "/responses",
-                &request,
+                wire_body(request.clone()),
                 chatgpt_headers(),
                 Extensions::new(),
                 &[provider(upstream, "openai_responses")],
@@ -4373,7 +4393,7 @@ mod codex_stack {
                 &AppType::Codex,
                 http::Method::POST,
                 "/responses",
-                &sub_agent_request(Vec::new()),
+                wire_body(sub_agent_request(Vec::new())),
                 chatgpt_headers(),
                 Extensions::new(),
                 &[provider(&upstream, "openai_responses")],
@@ -4503,7 +4523,7 @@ mod bookkeeping {
                 app_type,
                 http::Method::POST,
                 "/v1/messages",
-                &body,
+                wire_body(body.clone()),
                 headers,
                 Extensions::new(),
                 &providers,
@@ -4652,6 +4672,132 @@ mod bookkeeping {
             }
         );
         assert_eq!(breaker(&fwd, "p1").await, Some((1, 0)));
+    }
+
+    #[tokio::test]
+    async fn ordinary_errors_replay_only_when_trying_another_provider() {
+        for app_type in [AppType::Claude, AppType::Codex] {
+            for status in [401, 429, 500, 502, 503] {
+                for failover in [false, true] {
+                    let failed = upstream(vec![error(status, "ordinary upstream failure")]).await;
+                    let healthy = upstream(vec![ok()]).await;
+                    let fwd = forwarder(2, "p1");
+                    let mut providers = vec![provider("p1", &failed)];
+                    if failover {
+                        providers.push(provider("p2", &healthy));
+                    }
+                    let endpoint = if matches!(app_type, AppType::Codex) {
+                        for (provider, up) in providers.iter_mut().zip([&failed, &healthy]) {
+                            provider.settings_config = json!({
+                                "auth": {"OPENAI_API_KEY": "sk-test"},
+                                "config": format!("model_provider = \"custom\"\n[model_providers.custom]\nbase_url = \"{}\"\nwire_api = \"responses\"\n", up.base_url)
+                            });
+                        }
+                        "/responses"
+                    } else {
+                        "/v1/messages"
+                    };
+                    let mut request = plain_body();
+                    request["messages"][0]["content"] = json!("x".repeat(1024 * 1024));
+                    let body = wire_body(request);
+                    let replay_count = body.replay_count.clone();
+                    let result = fwd
+                        .forward_with_retry(
+                            &app_type,
+                            http::Method::POST,
+                            endpoint,
+                            body,
+                            HeaderMap::new(),
+                            Extensions::new(),
+                            &providers,
+                        )
+                        .await;
+
+                    assert_eq!(result.is_ok(), failover, "{app_type:?}: {status}");
+                    assert_eq!(
+                        replay_count.load(std::sync::atomic::Ordering::Relaxed),
+                        usize::from(failover),
+                        "{app_type:?}: {status}, failover={failover}"
+                    );
+                    assert_eq!(failed.requests.lock().await.len(), 1);
+                    assert_eq!(healthy.requests.lock().await.len(), usize::from(failover));
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn overlapping_rectifier_checks_share_one_replay() {
+        // Signature matching sees "invalid request" but cannot modify this body;
+        // budget rectification then uses the same prepared replay and succeeds.
+        let up = upstream(vec![
+            error(400, &format!("Invalid request: {BUDGET_ERROR}")),
+            ok(),
+        ])
+        .await;
+        let fwd = forwarder(1, "p1");
+        let body = wire_body(plain_body());
+        let replay_count = body.replay_count.clone();
+        let result = fwd
+            .forward_with_retry(
+                &AppType::Claude,
+                http::Method::POST,
+                "/v1/messages",
+                body,
+                HeaderMap::new(),
+                Extensions::new(),
+                &[provider("p1", &up)],
+            )
+            .await;
+        assert!(result.is_ok());
+        assert_eq!(replay_count.load(std::sync::atomic::Ordering::Relaxed), 1);
+        let requests = up.requests.lock().await;
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[1]["thinking"]["budget_tokens"], 32000);
+    }
+
+    #[tokio::test]
+    async fn timeout_replays_only_for_failover() {
+        let slow_url = serve_upstream(axum::Router::new().fallback(|| async {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            StatusCode::OK
+        }))
+        .await;
+        let slow = Upstream {
+            base_url: slow_url,
+            requests: Arc::new(Mutex::new(Vec::new())),
+        };
+        for failover in [false, true] {
+            let healthy = upstream(vec![ok()]).await;
+            let mut fwd = forwarder(2, "p1");
+            fwd.non_streaming_timeout = Duration::from_millis(250);
+            let mut providers = vec![provider("p1", &slow)];
+            if failover {
+                providers.push(provider("p2", &healthy));
+            }
+            let body = wire_body(plain_body());
+            let replay_count = body.replay_count.clone();
+            let result = fwd
+                .forward_with_retry(
+                    &AppType::Claude,
+                    http::Method::POST,
+                    "/v1/messages",
+                    body,
+                    HeaderMap::new(),
+                    Extensions::new(),
+                    &providers,
+                )
+                .await;
+            if failover {
+                assert!(result.is_ok());
+            } else {
+                assert!(matches!(expect_err(result).error, ProxyError::Timeout(_)));
+            }
+            assert_eq!(
+                replay_count.load(std::sync::atomic::Ordering::Relaxed),
+                usize::from(failover)
+            );
+        }
     }
 
     #[tokio::test]
@@ -5304,7 +5450,7 @@ mod bookkeeping {
                     &AppType::ClaudeDesktop,
                     http::Method::POST,
                     "/v1/messages",
-                    &body,
+                    wire_body(body.clone()),
                     HeaderMap::new(),
                     Extensions::new(),
                     &[kimi],
@@ -5347,5 +5493,60 @@ mod bookkeeping {
         assert!(!requests[1].to_string().contains("\"signature\""));
         assert_eq!(books(&fwd).await, untouched());
         assert!(breaker_untouched(&fwd, "kimi").await);
+    }
+}
+
+fn wire_body(body: Value) -> ForwardBody {
+    let bytes = Bytes::from(serde_json::to_vec(&body).unwrap());
+    ForwardBody::from_parsed(body, bytes)
+}
+
+#[test]
+fn owned_attempt_moves_history_and_replay_restores_the_resolved_model() {
+    let original = json!({"model": "stack-alias", "messages": [{"role":"user", "content": "x".repeat(1024 * 1024)}]});
+    let bytes = Bytes::from(serde_json::to_vec(&original).unwrap());
+    let mut resolved = original.clone();
+    resolved["model"] = json!("upstream-model");
+    let pointer = resolved["messages"][0]["content"]
+        .as_str()
+        .unwrap()
+        .as_ptr();
+    let mut replay = ForwardBody::from_parsed(resolved, bytes);
+    let mut first = replay.next().unwrap();
+    assert_eq!(
+        first["messages"][0]["content"].as_str().unwrap().as_ptr(),
+        pointer,
+        "the first attempt must take the original allocation"
+    );
+    first["messages"][0]["content"] = json!("rewritten for the first provider");
+    first["model"] = json!("provider-specific-model");
+    let retried = replay.next().unwrap();
+    assert_eq!(retried["model"], "upstream-model");
+    assert_eq!(retried["messages"], original["messages"]);
+    let mut empty = ForwardBody::from_parsed(Value::Null, Bytes::new());
+    assert_eq!(empty.next().unwrap(), Value::Null);
+    assert_eq!(empty.next().unwrap(), Value::Null);
+}
+
+#[test]
+fn no_op_copilot_rewrites_do_not_require_another_privacy_scan() {
+    use super::super::copilot_optimizer::{
+        merge_tool_results_with_changes, sanitize_orphan_tool_results_with_changes,
+    };
+    for body in [
+        json!({"messages": [{"role":"user", "content":"hello"}, {"role":"assistant", "content":"hi"}]}),
+        json!({"messages": [
+            {"role": "user", "content": "Run two tools"},
+            {"role": "assistant", "content": [{"type": "tool_use", "id": "one", "name": "read", "input": {}}]},
+            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "one", "content": "first result"}]},
+            {"role": "assistant", "content": [{"type": "tool_use", "id": "two", "name": "read", "input": {}}]},
+            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "two", "content": "second result"}]}
+        ]}),
+    ] {
+        let (sanitized, changed) = sanitize_orphan_tool_results_with_changes(body.clone());
+        assert!(!changed);
+        let (merged, changed) = merge_tool_results_with_changes(sanitized);
+        assert!(!changed);
+        assert_eq!(merged, body);
     }
 }
