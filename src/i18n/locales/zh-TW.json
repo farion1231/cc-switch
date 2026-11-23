@@ -2826,6 +2826,25 @@
       "title": "用量設定",
       "pricingSummary": "依模型設定每百萬 Tokens 的價格，可從 models.dev 同步",
       "managePricing": "管理定價…"
+    },
+    "tray": {
+      "allApps": "全部",
+      "filterBy": "篩選",
+      "clearFilters": "清除篩選",
+      "allProviders": "全部供應商",
+      "allModels": "全部模型",
+      "viewDetails": "查看詳情",
+      "backToOverview": "返回概覽",
+      "byApp": "按應用",
+      "byProvider": "按供應商",
+      "byModel": "按模型",
+      "successRate": "成功率",
+      "avgPerReq": "均次",
+      "peak": "峰值",
+      "selectedBucket": "已選時段",
+      "cacheShare": "快取佔比",
+      "hitRateShort": "命中率",
+      "noBreakdown": "暫無細分資料"
     }
   },
   "usageScript": {

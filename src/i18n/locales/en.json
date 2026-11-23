@@ -2826,6 +2826,25 @@
       "title": "Usage settings",
       "pricingSummary": "Set per-model prices per million tokens, or sync them from models.dev",
       "managePricing": "Manage pricing…"
+    },
+    "tray": {
+      "allApps": "All",
+      "filterBy": "Filter",
+      "clearFilters": "Clear filters",
+      "allProviders": "All providers",
+      "allModels": "All models",
+      "viewDetails": "View details",
+      "backToOverview": "Back to overview",
+      "byApp": "By app",
+      "byProvider": "By provider",
+      "byModel": "By model",
+      "successRate": "Success",
+      "avgPerReq": "Avg/req",
+      "peak": "Peak",
+      "selectedBucket": "Selected",
+      "cacheShare": "Cache share",
+      "hitRateShort": "Hit %",
+      "noBreakdown": "No breakdown data"
     }
   },
   "usageScript": {
