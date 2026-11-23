@@ -130,8 +130,11 @@ async fn execute_usage_script_with_max_bytes(
             )
         })?;
         validate_request_url(&request.url, &base_url, is_custom_template)?;
-        let response_data =
-            executor.block_on(send_http_request(&request, timeout_secs, max_response_bytes))?;
+        let response_data = executor.block_on(send_http_request(
+            &request,
+            timeout_secs,
+            max_response_bytes,
+        ))?;
 
         // Network latency does not consume the extractor's CPU time budget.
         reset_script_deadline(&runtime)?;
