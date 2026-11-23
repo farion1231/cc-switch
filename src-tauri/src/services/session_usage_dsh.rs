@@ -1188,8 +1188,11 @@ mod tests {
         use std::io::Write;
         let open_db = |path: &Path| {
             let db = Database {
-                conn: std::sync::Mutex::new(rusqlite::Connection::open(path).unwrap()),
-                log_count_cache: std::sync::Mutex::new(None),
+                conn: std::sync::Arc::new(std::sync::Mutex::new(
+                    rusqlite::Connection::open(path).unwrap(),
+                )),
+                read_cache: Default::default(),
+                log_count_cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
             };
             db.create_tables().unwrap();
             db
