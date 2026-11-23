@@ -11,8 +11,8 @@
 //!
 //! The replay stays semantically identical: while a batch of
 //! `function_call`-style items still has unanswered `call_id`s, non-tool items
-//! are held back and flushed right after the batch completes. Already
-//! contiguous input is passed through untouched.
+//! are held back until the batch completes or the next user turn begins.
+//! Already contiguous input is passed through untouched.
 
 use serde_json::Value;
 use std::collections::HashSet;
@@ -39,17 +39,23 @@ pub fn normalize_tool_output_grouping(body: &mut Value) -> bool {
                 if let Some(call_id) = call_id_of(&item) {
                     pending.insert(call_id.to_string());
                 }
+                changed |= !deferred.is_empty();
                 result.push(item);
             }
             "function_call_output" | "custom_tool_call_output" | "local_shell_call_output" => {
                 if let Some(call_id) = call_id_of(&item) {
                     pending.remove(call_id);
                 }
+                changed |= !deferred.is_empty();
                 result.push(item);
-                if pending.is_empty() && !deferred.is_empty() {
-                    changed = true;
+                if pending.is_empty() {
                     result.append(&mut deferred);
                 }
+            }
+            "message" if item.get("role").and_then(Value::as_str) == Some("user") => {
+                result.append(&mut deferred);
+                pending.clear();
+                result.push(item);
             }
             _ => {
                 if pending.is_empty() {
@@ -60,12 +66,7 @@ pub fn normalize_tool_output_grouping(body: &mut Value) -> bool {
             }
         }
     }
-    if !deferred.is_empty() {
-        // Batch never completed (already-malformed history): keep every item,
-        // just append what is left.
-        changed = true;
-        result.append(&mut deferred);
-    }
+    result.append(&mut deferred);
     *input = result;
     changed
 }
@@ -137,6 +138,25 @@ mod tests {
             call(1), output(1),
             user("continue"),
         ]});
+        let before = body.clone();
+        assert!(!normalize_tool_output_grouping(&mut body));
+        assert_eq!(body, before);
+    }
+
+    #[test]
+    fn incomplete_batch_does_not_reorder_later_turns() {
+        let mut body = json!({"input": [
+            call(0), notice(0), user("stop"),
+            call(1), output(1), user("next"),
+        ]});
+        let before = body.clone();
+        assert!(!normalize_tool_output_grouping(&mut body));
+        assert_eq!(body, before);
+    }
+
+    #[test]
+    fn incomplete_batch_at_end_reports_no_change_without_reordering() {
+        let mut body = json!({"input": [call(0), notice(0)]});
         let before = body.clone();
         assert!(!normalize_tool_output_grouping(&mut body));
         assert_eq!(body, before);
