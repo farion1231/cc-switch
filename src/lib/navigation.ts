@@ -23,7 +23,8 @@ export type GlobalPage =
   | "plugins"
   | "prompts"
   | "sessions"
-  | "apps";
+  | "apps"
+  | "customApps";
 
 export type View = AppPage | GlobalPage | "settings";
 
@@ -61,6 +62,7 @@ const GLOBAL_PAGES: GlobalPage[] = [
   "prompts",
   "sessions",
   "apps",
+  "customApps",
 ];
 
 export const VIEW_STORAGE_KEY = "cc-switch-last-view";
@@ -101,7 +103,8 @@ export function appPageBelongsTo(page: AppPage, app: AppId): boolean {
 
 export function readStoredView(): View {
   try {
-    return parseView(localStorage.getItem(VIEW_STORAGE_KEY)) ?? "providers";
+    const view = parseView(localStorage.getItem(VIEW_STORAGE_KEY));
+    return view === "customApps" ? "apps" : (view ?? "providers");
   } catch {
     return "providers";
   }
@@ -109,7 +112,10 @@ export function readStoredView(): View {
 
 export function storeView(view: View) {
   try {
-    localStorage.setItem(VIEW_STORAGE_KEY, view);
+    localStorage.setItem(
+      VIEW_STORAGE_KEY,
+      view === "customApps" ? "apps" : view,
+    );
   } catch {
     // 存不了就算了：下次启动回到供应商页
   }

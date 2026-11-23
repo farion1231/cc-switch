@@ -5432,5 +5432,32 @@
     "hint": "It may have been saved by a newer version of CC Switch. The stored data is kept as is and can't be edited or enabled; upgrading restores it, or you can delete it.",
     "confirmTitle": "Delete unreadable entry",
     "confirmMessage": "Delete “{{name}}”? Only this CC Switch record is removed; the apps' own config files are not changed."
+  },
+  "customApps": {
+    "title": "Custom apps",
+    "addApp": "Add custom app",
+    "appName": "App name",
+    "endpoint": "Local API base URL",
+    "token": "Client token (copy now)",
+    "replaceToken": "Generate new token",
+    "confirmReplaceToken": "Generating a new token will invalidate the current one. Continue?",
+    "startProxy": "Start local routing",
+    "loopbackRequired": "Custom apps need a loopback listener. Change the address in Local routing settings.",
+    "providerName": "Provider name",
+    "baseUrl": "Provider API base URL",
+    "model": "Model ID",
+    "apiKey": "API key (optional)",
+    "addProvider": "Add provider",
+    "inUse": "In use",
+    "switch": "Switch",
+    "renameApp": "Rename app",
+    "deleteApp": "Delete app",
+    "confirmDeleteApp": "Delete this app and all its providers? Clients will lose access.",
+    "editProvider": "Edit provider",
+    "deleteProvider": "Delete provider",
+    "confirmDeleteProvider": "Delete this provider? If active, select another provider to resume requests.",
+    "saveProvider": "Save provider",
+    "keepKey": "Leave the API key blank to keep the saved key.",
+    "clearKey": "Remove saved API key"
   }
 }

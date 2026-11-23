@@ -31,6 +31,8 @@ mod schema;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use dao::custom_apps::namespace as custom_app_namespace;
+
 // DAO 类型导出供外部使用
 pub use dao::custom_icons::{CustomIconEntry, CUSTOM_ICONS_KEY};
 pub(crate) use dao::providers_seed::{

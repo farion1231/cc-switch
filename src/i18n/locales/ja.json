@@ -5432,5 +5432,32 @@
     "hint": "新しいバージョンの CC Switch で保存された可能性があります。データはそのまま保持され、編集や有効化はできません。アップグレードすると復元されます。削除することもできます。",
     "confirmTitle": "読み取れない項目を削除",
     "confirmMessage": "「{{name}}」を削除しますか？CC Switch のこの記録だけを削除し、各アプリの設定ファイルは変更しません。"
+  },
+  "customApps": {
+    "title": "カスタムアプリ",
+    "addApp": "カスタムアプリを追加",
+    "appName": "アプリ名",
+    "endpoint": "ローカル API のベース URL",
+    "token": "クライアントトークン（今すぐコピー）",
+    "replaceToken": "新しいトークンを生成",
+    "confirmReplaceToken": "新しいトークンを生成すると、現在のトークンは無効になります。続行しますか？",
+    "startProxy": "ローカルルーティングを開始",
+    "loopbackRequired": "カスタムアプリにはループバックアドレスが必要です。ローカルルーティングの設定でアドレスを変更してください。",
+    "providerName": "プロバイダー名",
+    "baseUrl": "プロバイダー API のベース URL",
+    "model": "モデル ID",
+    "apiKey": "API キー（任意）",
+    "addProvider": "プロバイダーを追加",
+    "inUse": "使用中",
+    "switch": "切り替え",
+    "renameApp": "アプリ名を変更",
+    "deleteApp": "アプリを削除",
+    "confirmDeleteApp": "このアプリとすべてのプロバイダーを削除しますか？クライアントはアクセスできなくなります。",
+    "editProvider": "プロバイダーを編集",
+    "deleteProvider": "プロバイダーを削除",
+    "confirmDeleteProvider": "このプロバイダーを削除しますか？使用中の場合は別のプロバイダーを選択してリクエストを再開してください。",
+    "saveProvider": "プロバイダーを保存",
+    "keepKey": "API キーを空欄にすると保存済みのキーを保持します。",
+    "clearKey": "保存済み API キーを削除"
   }
 }

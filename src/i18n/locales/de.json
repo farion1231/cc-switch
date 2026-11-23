@@ -5432,5 +5432,32 @@
     "hint": "Möglicherweise von einer neueren CC-Switch-Version gespeichert. Die Daten bleiben unverändert erhalten und können nicht bearbeitet oder aktiviert werden; ein Update stellt sie wieder her, oder du löschst den Eintrag.",
     "confirmTitle": "Unlesbaren Eintrag löschen",
     "confirmMessage": "„{{name}}“ löschen? Nur dieser CC-Switch-Eintrag wird entfernt; die Konfigurationsdateien der Apps bleiben unverändert."
+  },
+  "customApps": {
+    "title": "Benutzerdefinierte Apps",
+    "addApp": "Eigene App hinzufügen",
+    "appName": "App-Name",
+    "endpoint": "Lokale API-Basis-URL",
+    "token": "Client-Token (jetzt kopieren)",
+    "replaceToken": "Neues Token erzeugen",
+    "confirmReplaceToken": "Ein neues Token macht das aktuelle ungültig. Fortfahren?",
+    "startProxy": "Lokales Routing starten",
+    "loopbackRequired": "Eigene Apps benötigen eine Loopback-Adresse. Ändern Sie die Adresse in den Einstellungen für lokales Routing.",
+    "providerName": "Anbietername",
+    "baseUrl": "API-Basis-URL des Anbieters",
+    "model": "Modell-ID",
+    "apiKey": "API-Schlüssel (optional)",
+    "addProvider": "Anbieter hinzufügen",
+    "inUse": "Aktiv",
+    "switch": "Wechseln",
+    "renameApp": "App umbenennen",
+    "deleteApp": "App löschen",
+    "confirmDeleteApp": "Diese App und alle ihre Anbieter löschen? Clients verlieren den Zugriff.",
+    "editProvider": "Anbieter bearbeiten",
+    "deleteProvider": "Anbieter löschen",
+    "confirmDeleteProvider": "Diesen Anbieter löschen? Falls aktiv, wählen Sie einen anderen Anbieter, um Anfragen fortzusetzen.",
+    "saveProvider": "Anbieter speichern",
+    "keepKey": "API-Schlüssel leer lassen, um den gespeicherten Schlüssel zu behalten.",
+    "clearKey": "Gespeicherten API-Schlüssel entfernen"
   }
 }

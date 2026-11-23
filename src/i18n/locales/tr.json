@@ -5432,5 +5432,32 @@
     "hint": "CC Switch'in daha yeni bir sürümüyle kaydedilmiş olabilir. Veriler olduğu gibi korunur, düzenlenemez veya etkinleştirilemez; güncelleme verileri geri getirir ya da kaydı silebilirsiniz.",
     "confirmTitle": "Okunamayan kaydı sil",
     "confirmMessage": "“{{name}}” silinsin mi? Yalnızca bu CC Switch kaydı silinir; uygulamaların kendi yapılandırma dosyaları değişmez."
+  },
+  "customApps": {
+    "title": "Özel uygulamalar",
+    "addApp": "Özel uygulama ekle",
+    "appName": "Uygulama adı",
+    "endpoint": "Yerel API temel URL’si",
+    "token": "İstemci belirteci (şimdi kopyalayın)",
+    "replaceToken": "Yeni belirteç oluştur",
+    "confirmReplaceToken": "Yeni belirteç mevcut belirteci geçersiz kılacak. Devam edilsin mi?",
+    "startProxy": "Yerel yönlendirmeyi başlat",
+    "loopbackRequired": "Özel uygulamalar bir geri döngü adresi gerektirir. Adresi yerel yönlendirme ayarlarından değiştirin.",
+    "providerName": "Sağlayıcı adı",
+    "baseUrl": "Sağlayıcı API temel URL’si",
+    "model": "Model kimliği",
+    "apiKey": "API anahtarı (isteğe bağlı)",
+    "addProvider": "Sağlayıcı ekle",
+    "inUse": "Kullanımda",
+    "switch": "Geçiş yap",
+    "renameApp": "Uygulamayı yeniden adlandır",
+    "deleteApp": "Uygulamayı sil",
+    "confirmDeleteApp": "Bu uygulama ve tüm sağlayıcıları silinsin mi? İstemciler erişimi kaybeder.",
+    "editProvider": "Sağlayıcıyı düzenle",
+    "deleteProvider": "Sağlayıcıyı sil",
+    "confirmDeleteProvider": "Bu sağlayıcı silinsin mi? Etkinse isteklere devam etmek için başka bir sağlayıcı seçin.",
+    "saveProvider": "Sağlayıcıyı kaydet",
+    "keepKey": "Kayıtlı anahtarı korumak için API anahtarını boş bırakın.",
+    "clearKey": "Kayıtlı API anahtarını kaldır"
   }
 }

@@ -22,11 +22,11 @@ type OmoProviderRow = (
     String,
 );
 
-const PROVIDER_SELECT: &str = "SELECT id, name, settings_config, website_url, category, created_at, sort_index, notes, icon, icon_color, meta, in_failover_queue FROM providers";
+pub(super) const PROVIDER_SELECT: &str = "SELECT id, name, settings_config, website_url, category, created_at, sort_index, notes, icon, icon_color, meta, in_failover_queue FROM providers";
 
 /// 按 [`PROVIDER_SELECT`] 的列序（`id, name, settings_config, website_url, category, created_at, sort_index, notes, icon,
 /// icon_color, meta, in_failover_queue`）读一行供应商。
-fn row_to_provider(row: &rusqlite::Row<'_>) -> rusqlite::Result<Provider> {
+pub(super) fn row_to_provider(row: &rusqlite::Row<'_>) -> rusqlite::Result<Provider> {
     let id: String = row.get(0)?;
     let entry = format!("供应商 {id}");
     Ok(Provider {
