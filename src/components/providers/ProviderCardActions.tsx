@@ -67,7 +67,7 @@ const BUTTON_ICON: Record<string, LucideIcon> = {
 interface ProviderCardActionsProps {
   providerName: string;
   presentation: CardPresentation;
-  onEdit: () => void;
+  onEdit?: () => void;
   onDelete: () => void;
   onDuplicate?: () => void;
   onTest?: () => void;
@@ -178,19 +178,21 @@ export function ProviderCardActions({
         </IconAction>
       )}
 
-      <IconAction
-        tip={t("common.edit")}
-        disabledReason={presentation.editDisabledReason}
-      >
-        <Button
-          variant="quiet"
-          size="icon-compact"
-          aria-label={t("providerCard.action.edit", { name: providerName })}
-          onClick={onEdit}
+      {onEdit && (
+        <IconAction
+          tip={t("common.edit")}
+          disabledReason={presentation.editDisabledReason}
         >
-          <Pencil className="h-4 w-4" strokeWidth={1.5} />
-        </Button>
-      </IconAction>
+          <Button
+            variant="quiet"
+            size="icon-compact"
+            aria-label={t("providerCard.action.edit", { name: providerName })}
+            onClick={onEdit}
+          >
+            <Pencil className="h-4 w-4" strokeWidth={1.5} />
+          </Button>
+        </IconAction>
+      )}
 
       <DropdownMenu>
         <HoverTip content={t("common.more")}>

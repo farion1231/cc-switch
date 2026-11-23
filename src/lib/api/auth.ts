@@ -101,9 +101,11 @@ export async function authCancelLogin(
 
 export async function authGetStatus(
   authProvider: ManagedAuthProvider,
+  desktop?: boolean,
 ): Promise<ManagedAuthStatus> {
   return invoke<ManagedAuthStatus>("auth_get_status", {
     authProvider,
+    ...(desktop ? { desktop } : {}),
   });
 }
 
@@ -120,10 +122,12 @@ export async function authRemoveAccount(
 export async function authSetDefaultAccount(
   authProvider: ManagedAuthProvider,
   accountId: string,
+  desktop?: boolean,
 ): Promise<void> {
   return invoke("auth_set_default_account", {
     authProvider,
     accountId,
+    ...(desktop ? { desktop } : {}),
   });
 }
 

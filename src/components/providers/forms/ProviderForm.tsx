@@ -385,7 +385,7 @@ export function ProviderForm(props: ProviderFormProps) {
 }
 
 function ProviderFormFull({
-  appId,
+  appId: targetAppId,
   providerId,
   submitLabel,
   onSubmit,
@@ -403,6 +403,8 @@ function ProviderFormFull({
   modeView,
   onStackLayoutChange,
 }: ProviderFormProps) {
+  const isAgyDesktop = targetAppId === "agy-desktop";
+  const appId = isAgyDesktop ? "agy" : targetAppId;
   if (appId === "claude-desktop") {
     throw new Error("ProviderFormFull should not receive claude-desktop");
   }
@@ -1014,10 +1016,22 @@ function ProviderFormFull({
         }))
         .filter((entry) => !(entry.preset as CodexProviderPreset).hidden);
     } else if (usesGeminiStyleForm(appId)) {
-      return geminiProviderPresets.map<PresetEntry>((preset, index) => ({
-        id: `gemini-${index}`,
-        preset,
-      }));
+      return geminiProviderPresets
+        .map<PresetEntry>((preset, index) => ({
+          id: `gemini-${index}`,
+          preset:
+            isAgyDesktop && preset.category === "official"
+              ? {
+                  ...preset,
+                  name: "Antigravity OAuth",
+                  icon: "antigravity",
+                  iconColor: undefined,
+                }
+              : preset,
+        }))
+        .filter(
+          ({ preset }) => !isAgyDesktop || preset.category === "official",
+        );
     } else if (appId === "opencode") {
       return opencodeProviderPresets.map<PresetEntry>((preset, index) => ({
         id: `opencode-${index}`,
@@ -1040,7 +1054,7 @@ function ProviderFormFull({
         preset,
       }))
       .filter((entry) => !(entry.preset as ProviderPreset).hidden);
-  }, [appId]);
+  }, [appId, isAgyDesktop]);
 
   const selectedPresetEntry = useMemo(
     () =>
@@ -1388,6 +1402,10 @@ function ProviderFormFull({
     (appId === "claude" || appId === "codex") && category !== "official";
 
   const handleSubmit = async (values: ProviderFormData) => {
+    if (isAgyDesktop && (category !== "official" || !selectedAgyAccountId)) {
+      toast.error(t("codex.chooseAccount"));
+      return;
+    }
     if (
       supportsBillingMultiplier &&
       !isValidBillingMultiplier(billingMultiplier)
@@ -1927,7 +1945,7 @@ function ProviderFormFull({
       ...values,
       name: values.name.trim(),
       websiteUrl: values.websiteUrl?.trim() ?? "",
-      settingsConfig,
+      settingsConfig: isAgyDesktop ? "{}" : settingsConfig,
     };
 
     if (isCodexOfficialProvider) {
@@ -2979,7 +2997,7 @@ function ProviderFormFull({
             />
           )}
 
-          {usesGeminiStyleForm(appId) && (
+          {usesGeminiStyleForm(appId) && !isAgyDesktop && (
             <GeminiFormFields
               appId={appId as "gemini" | "agy"}
               providerId={providerId}
@@ -3025,6 +3043,12 @@ function ProviderFormFull({
               <AgyAccountSelect
                 value={selectedAgyAccountId}
                 onChange={setSelectedAgyAccountId}
+                desktop={isAgyDesktop}
+                onManage={
+                  isAgyDesktop && onManageAuthAccounts
+                    ? () => onManageAuthAccounts("agy_oauth")
+                    : undefined
+                }
               />
             )}
 
@@ -3118,7 +3142,7 @@ function ProviderFormFull({
           )}
 
           {/* 配置编辑器：Codex、Claude、Gemini 分别使用不同的编辑器 */}
-          {useStackLayout ? (
+          {useStackLayout || isAgyDesktop ? (
             settingsConfigErrorField
           ) : appId === "codex" ? (
             <>

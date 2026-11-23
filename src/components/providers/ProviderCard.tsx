@@ -84,9 +84,9 @@ interface ProviderCardProps {
   presentation: CardPresentation;
   /** 用来决定官方订阅 / OAuth 额度是否自动查询 */
   isCurrent: boolean;
-  onEdit: (provider: Provider) => void;
+  onEdit?: (provider: Provider) => void;
   onDelete: (provider: Provider) => void;
-  onConfigureUsage: (provider: Provider) => void;
+  onConfigureUsage?: (provider: Provider) => void;
   onOpenWebsite: (url: string) => void;
   onDuplicate?: (provider: Provider) => void;
   onTest?: (provider: Provider) => void;
@@ -320,15 +320,18 @@ export function ProviderCard({
       : null;
   // 绑了账号的官方卡（Codex / Claude / Grok）默认查额度，和 Kimi、agy 的账号卡一样（同托盘）
   const usageEnabled =
-    provider.meta?.usage_script?.enabled ??
-    (isBoundCodexOfficial ||
-      Boolean(claudeBoundAccountId) ||
-      Boolean(grokBoundAccountId));
+    appId === "agy-desktop" ||
+    (provider.meta?.usage_script?.enabled ??
+      (isBoundCodexOfficial ||
+        Boolean(claudeBoundAccountId) ||
+        Boolean(grokBoundAccountId)));
   const supportsOfficialSubscription =
-    isOfficial && appHas(appId, "officialSubscription");
+    isOfficial &&
+    (appHas(appId, "officialSubscription") || appId === "agy-desktop");
   const isOfficialSubscriptionUsage =
+    appId === "agy-desktop" ||
     provider.meta?.usage_script?.templateType ===
-    TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION;
+      TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION;
   const officialSubscriptionEnabled =
     supportsOfficialSubscription && usageEnabled && isOfficialSubscriptionUsage;
   // 没绑账号的 Claude 官方卡用 Claude Code 的默认登录：开了额度查询时，地址后面跟默认登录的套餐
@@ -411,7 +414,9 @@ export function ProviderCard({
   );
   // 支持 agy 切号的平台上，Antigravity 官方卡查询所绑定账号的额度。
   const agyBoundAccountId =
-    appId === "agy" && isOfficial && canSwitchAgyAccount()
+    (appId === "agy" || appId === "agy-desktop") &&
+    isOfficial &&
+    canSwitchAgyAccount()
       ? resolveManagedAccountId(provider.meta, "agy_oauth")?.trim() || null
       : null;
   // 副标题末尾的套餐：读右边额度那个查询的缓存（键和各额度 footer 一致），额度查到才有。
@@ -559,7 +564,7 @@ export function ProviderCard({
             )}
           </div>
 
-          {appId === "workbuddy" && isWorkBuddyOfficial(provider) ? (
+          {appId === "workbuddy" && isWorkBuddyOfficial(provider) && onEdit ? (
             <WorkBuddyOfficialAccountLine provider={provider} onEdit={onEdit} />
           ) : codexOfficialIdentity === "native_login" || isCodexOauth ? (
             <div className="mt-0.5 flex min-w-0 items-center gap-2 text-caption text-fg-2">
@@ -613,15 +618,17 @@ export function ProviderCard({
                       })}
                     </span>
                   </span>
-                  <button
-                    type="button"
-                    className="shrink-0 text-body font-medium text-action-text hover:underline"
-                    onClick={() => onEdit(provider)}
-                  >
-                    {t("codex.chooseAccount", {
-                      defaultValue: "选择账号",
-                    })}
-                  </button>
+                  {onEdit && (
+                    <button
+                      type="button"
+                      className="shrink-0 text-body font-medium text-action-text hover:underline"
+                      onClick={() => onEdit(provider)}
+                    >
+                      {t("codex.chooseAccount", {
+                        defaultValue: "选择账号",
+                      })}
+                    </button>
+                  )}
                 </>
               ) : (
                 <span className="min-w-0 truncate">
@@ -857,7 +864,7 @@ export function ProviderCard({
           <ProviderCardActions
             providerName={provider.name}
             presentation={presentation}
-            onEdit={() => onEdit(provider)}
+            onEdit={onEdit && (() => onEdit(provider))}
             onDelete={() => onDelete(provider)}
             onDuplicate={
               onDuplicate && !(appId === "kimi" && isOfficial)
@@ -878,7 +885,7 @@ export function ProviderCard({
               (isCodexOauth && !isBoundCodexOfficial) ||
               isXaiOauth
                 ? undefined
-                : () => onConfigureUsage(provider)
+                : onConfigureUsage && (() => onConfigureUsage(provider))
             }
             onOpenTerminal={
               onOpenTerminal && terminalAvailable(provider, appId, isCurrent)

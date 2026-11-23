@@ -13,13 +13,18 @@ const CONTENT_TYPE: &str = "text/plain; charset=utf-8";
 fn login_collection<'a>(
     secrets: &'a SecretService<'a>,
     allow_unlock: bool,
+    default_only: bool,
 ) -> Result<Collection<'a>, Error> {
     // Match go-keyring: prefer the collection at the login path, then the default alias.
-    let collection = secrets
-        .get_all_collections()?
-        .into_iter()
-        .find(|collection| collection.collection_path.as_str() == LOGIN_COLLECTION)
-        .map_or_else(|| secrets.get_default_collection(), Ok)?;
+    let collection = if default_only {
+        secrets.get_default_collection()?
+    } else {
+        secrets
+            .get_all_collections()?
+            .into_iter()
+            .find(|collection| collection.collection_path.as_str() == LOGIN_COLLECTION)
+            .map_or_else(|| secrets.get_default_collection(), Ok)?
+    };
     if collection.is_locked()? {
         if !allow_unlock {
             return Err(Error::Locked);
@@ -47,10 +52,11 @@ pub(super) fn read(
     service: &str,
     account: &str,
     allow_unlock: bool,
+    default_only: bool,
 ) -> Result<Option<String>, AppError> {
     let read_secret = || {
         let secrets = SecretService::connect(EncryptionType::Dh)?;
-        let collection = login_collection(&secrets, allow_unlock)?;
+        let collection = login_collection(&secrets, allow_unlock, default_only)?;
         let Some(item) = collection
             .search_items(attributes(service, account))?
             .into_iter()
@@ -70,10 +76,15 @@ pub(super) fn read(
         .transpose()
 }
 
-pub(super) fn write(service: &str, account: &str, value: &str) -> Result<(), AppError> {
+pub(super) fn write(
+    service: &str,
+    account: &str,
+    value: &str,
+    default_only: bool,
+) -> Result<(), AppError> {
     let write_secret = || {
         let secrets = SecretService::connect(EncryptionType::Dh)?;
-        let collection = login_collection(&secrets, true)?;
+        let collection = login_collection(&secrets, true, default_only)?;
         let attributes = attributes(service, account);
         if let Some(item) = collection.search_items(attributes.clone())?.first() {
             ensure_unlocked(item, true)?;
@@ -104,16 +115,16 @@ mod tests {
         let first = r#"{"test":"one"}"#;
         let second = r#"{"test":"two"}"#;
         let result = (|| {
-            let missing = read(&service, account, false)?;
-            write(&service, account, first)?;
-            let created = read(&service, account, false)?;
-            write(&service, account, second)?;
-            let updated = read(&service, account, true)?;
+            let missing = read(&service, account, false, false)?;
+            write(&service, account, first, false)?;
+            let created = read(&service, account, false, false)?;
+            write(&service, account, second, false)?;
+            let updated = read(&service, account, true, false)?;
             Ok::<_, AppError>((missing, created, updated))
         })();
 
         let secrets = SecretService::connect(EncryptionType::Dh).unwrap();
-        let collection = login_collection(&secrets, true).unwrap();
+        let collection = login_collection(&secrets, true, false).unwrap();
         for item in collection
             .search_items(attributes(&service, account))
             .unwrap()

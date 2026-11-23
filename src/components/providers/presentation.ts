@@ -650,6 +650,12 @@ export interface LaunchInput {
   t: TFunction;
   providers: Provider[];
   openTerminal: (provider: Provider) => void;
+  desktop?: {
+    currentProviderId: string;
+    onSwitch: (provider: Provider) => void;
+    switching: boolean;
+    requiresReauth: ReadonlySet<string>;
+  };
 }
 
 /**
@@ -657,31 +663,51 @@ export interface LaunchInput {
  * `agy`，所以没有「启用 / 使用中」，每张卡的主操作就是「打开终端」，哪张都能删。
  */
 export function buildLaunchSections(input: LaunchInput): ProviderSection[] {
-  const { app, t, providers, openTerminal } = input;
+  const { app, t, providers, openTerminal, desktop } = input;
   return [
     {
       key: "all",
-      items: providers.map((p) => ({
-        provider: p,
-        presentation: {
-          chips: isOfficialAccount(app, p)
-            ? [
-                {
-                  key: "official",
-                  label: t("providerCard.chip.official"),
-                  tone: "outline",
-                },
-              ]
-            : [],
-          buttons: [
-            {
-              key: "openTerminal",
-              label: t("provider.openTerminalWithProvider"),
-              onClick: () => openTerminal(p),
-            },
-          ],
-        },
-      })),
+      items: providers.map((p) => {
+        const current = desktop?.currentProviderId === p.id;
+        return {
+          provider: p,
+          presentation: {
+            tone: current ? "direct" : undefined,
+            status: current
+              ? { label: t("providerCard.status.inUse"), dot: "direct" }
+              : undefined,
+            chips: isOfficialAccount(app, p)
+              ? [
+                  {
+                    key: "official",
+                    label: t("providerCard.chip.official"),
+                    tone: "outline",
+                  },
+                ]
+              : [],
+            buttons: current
+              ? []
+              : [
+                  desktop
+                    ? {
+                        key: "switch",
+                        label: t("providerCard.action.switch"),
+                        onClick: () => desktop.onSwitch(p),
+                        disabledReason: desktop.requiresReauth.has(p.id)
+                          ? t("authCenter.agy.reauthNote")
+                          : desktop.switching
+                            ? t("common.loading")
+                            : undefined,
+                      }
+                    : {
+                        key: "openTerminal",
+                        label: t("provider.openTerminalWithProvider"),
+                        onClick: () => openTerminal(p),
+                      },
+                ],
+          },
+        };
+      }),
     },
   ];
 }

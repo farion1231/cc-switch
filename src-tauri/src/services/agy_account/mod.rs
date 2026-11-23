@@ -32,6 +32,8 @@ use oauth::{AgyOAuthError, TokenResponse};
 
 const STORE_FILENAME: &str = "agy_accounts.json";
 const STASH_FILENAME: &str = "agy-login-stash.json";
+const DESKTOP_STASH_FILENAME: &str = "agy-desktop-login-stash.json";
+const DESKTOP_TOKEN_FILENAME: &str = "jetski-standalone-oauth-token";
 /// 浏览器登录最多等这么久，过了就当放弃。
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 /// access token 剩不到这么久就先续期再查额度。
@@ -149,6 +151,7 @@ enum LiveLogin {
 pub struct AgyAccountManager {
     data_dir: PathBuf,
     login: Arc<dyn AgyLoginStore>,
+    desktop_login: Arc<dyn AgyLoginStore>,
     /// 账号表；同时充当所有改动（含写钥匙串）的互斥锁
     store: Mutex<StoreFile>,
     pending: Mutex<HashMap<String, PendingLogin>>,
@@ -156,10 +159,26 @@ pub struct AgyAccountManager {
 
 impl AgyAccountManager {
     pub fn new(data_dir: PathBuf) -> Self {
-        Self::with_login_store(data_dir, Arc::new(keychain::SystemKeychain::agy()))
+        let desktop_file = crate::config::get_home_dir()
+            .join(".gemini")
+            .join(DESKTOP_TOKEN_FILENAME);
+        Self::with_login_stores(
+            data_dir,
+            Arc::new(keychain::SystemKeychain::agy()),
+            Arc::new(keychain::DesktopLogin::new(desktop_file)),
+        )
     }
 
+    #[cfg(test)]
     pub fn with_login_store(data_dir: PathBuf, login: Arc<dyn AgyLoginStore>) -> Self {
+        Self::with_login_stores(data_dir, Arc::clone(&login), login)
+    }
+
+    fn with_login_stores(
+        data_dir: PathBuf,
+        login: Arc<dyn AgyLoginStore>,
+        desktop_login: Arc<dyn AgyLoginStore>,
+    ) -> Self {
         let path = data_dir.join(STORE_FILENAME);
         let store = match std::fs::read(&path) {
             Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_else(|error| {
@@ -175,6 +194,7 @@ impl AgyAccountManager {
         Self {
             data_dir,
             login,
+            desktop_login,
             store: Mutex::new(store),
             pending: Mutex::new(HashMap::new()),
         }
@@ -283,10 +303,14 @@ impl AgyAccountManager {
 
     /// 列出账号，并顺手把钥匙串里的最新登录收回来（agy 续期后的 access token、还没收录的号）。
     pub async fn status(&self) -> Result<AgyAccountStatus, AppError> {
+        self.status_for(false).await
+    }
+
+    pub async fn status_for(&self, desktop: bool) -> Result<AgyAccountStatus, AppError> {
         let mut store = self.store.lock().await;
         let mut current = None;
         if keychain::supported() {
-            match self.read_live(&store, false).await {
+            match self.read_live(&store, desktop).await {
                 Ok(live) => {
                     let (id, changed) = absorb(&mut store, live, false);
                     current = id;
@@ -294,6 +318,7 @@ impl AgyAccountManager {
                         self.persist(&store)?;
                     }
                 }
+                Err(error) if desktop => return Err(error),
                 Err(error) => log::warn!("[AgyAccount] 读取 agy 当前登录失败: {error}"),
             }
         }
@@ -306,6 +331,10 @@ impl AgyAccountManager {
 
     /// 把 agy 的全局登录换成这个账号。已经是它时什么都不写。
     pub async fn switch_to(&self, account_id: &str) -> Result<(), AppError> {
+        self.switch_to_for(account_id, false).await
+    }
+
+    pub async fn switch_to_for(&self, account_id: &str, desktop: bool) -> Result<(), AppError> {
         if !keychain::supported() {
             return Err(keychain::unsupported_error());
         }
@@ -323,9 +352,12 @@ impl AgyAccountManager {
             ));
         }
 
-        let live = self.read_live(&store, true).await?;
+        let login = self.login_for(desktop);
+        let read = Arc::clone(&login);
+        let snapshot = run_blocking(move || read.snapshot_for_switch()).await?;
+        let live = Self::recognize_live(&store, snapshot.raw()).await?;
         if let LiveLogin::Unrecognized(raw) = &live {
-            self.stash_unrecognized(raw)?;
+            self.stash_unrecognized(raw, desktop)?;
         }
         let (current, changed) = absorb(&mut store, live, true);
         if changed {
@@ -337,12 +369,10 @@ impl AgyAccountManager {
 
         let credential = target.credential;
         let expected = refresh_token_of(&credential).map(str::to_string);
-        let encoded = keychain::encode(&credential)?;
-        let login = Arc::clone(&self.login);
-        run_blocking(move || login.write(&encoded)).await?;
+        run_blocking(move || login.write_if_unchanged(&snapshot, &credential)).await?;
 
-        // 写完读回来核对，钥匙串偶尔会静默失败
-        let written = match self.read_live(&store, false).await? {
+        // 写完从客户端实际读取的来源回读核对。
+        let written = match self.read_live(&store, desktop).await? {
             LiveLogin::Known { credential, .. } => {
                 refresh_token_of(&credential).map(str::to_string)
             }
@@ -351,8 +381,8 @@ impl AgyAccountManager {
         if written.is_none() || written != expected {
             return Err(AppError::localized(
                 "agy.account.write_verify_failed",
-                "写入后核对不一致，agy 的登录可能没有切换成功",
-                "The written sign-in did not verify; agy may not have switched accounts.",
+                "写入后核对不一致，Antigravity 的登录可能没有切换成功",
+                "The written sign-in did not verify; Antigravity may not have switched accounts.",
             ));
         }
         log::info!("[AgyAccount] 已切换 agy 登录");
@@ -507,24 +537,25 @@ impl AgyAccountManager {
 
     // ---------- 内部 ----------
 
+    fn login_for(&self, desktop: bool) -> Arc<dyn AgyLoginStore> {
+        Arc::clone(if desktop {
+            &self.desktop_login
+        } else {
+            &self.login
+        })
+    }
+
     /// 读钥匙串里 agy 当前的登录并认出是谁。`store` 用来认 agy 1.5 起的新格式：那份 JSON 不再带
     /// id_token，只有 `id_token_email`（可能带 `writer_id`），先按 refresh token、再按邮箱对已收录的号；
     /// 都对不上（agy 里新登录的号）时用 access token 问 Google（若 access token 已过期则先拿
     /// refresh token 续期）。
-    async fn read_live(
-        &self,
-        store: &StoreFile,
-        allow_unlock: bool,
-    ) -> Result<LiveLogin, AppError> {
-        let login = Arc::clone(&self.login);
-        let raw = run_blocking(move || {
-            if allow_unlock {
-                login.read_for_switch()
-            } else {
-                login.read()
-            }
-        })
-        .await?;
+    async fn read_live(&self, store: &StoreFile, desktop: bool) -> Result<LiveLogin, AppError> {
+        let login = self.login_for(desktop);
+        let raw = run_blocking(move || login.read()).await?;
+        Self::recognize_live(store, raw).await
+    }
+
+    async fn recognize_live(store: &StoreFile, raw: Option<String>) -> Result<LiveLogin, AppError> {
         let Some(raw) = raw else {
             return Ok(LiveLogin::None);
         };
@@ -567,13 +598,18 @@ impl AgyAccountManager {
         Ok(LiveLogin::Unrecognized(raw))
     }
 
-    fn stash_unrecognized(&self, raw: &str) -> Result<(), AppError> {
+    fn stash_unrecognized(&self, raw: &str, desktop: bool) -> Result<(), AppError> {
         let content = serde_json::to_vec_pretty(&serde_json::json!({
             "raw": raw,
             "saved_at": chrono::Utc::now().timestamp_millis(),
         }))
         .map_err(|source| AppError::JsonSerialize { source })?;
-        crate::config::atomic_write_private(&self.data_dir.join(STASH_FILENAME), &content)
+        let filename = if desktop {
+            DESKTOP_STASH_FILENAME
+        } else {
+            STASH_FILENAME
+        };
+        crate::config::atomic_write_private(&self.data_dir.join(filename), &content)
     }
 
     fn persist(&self, store: &StoreFile) -> Result<(), AppError> {

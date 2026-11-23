@@ -21,6 +21,7 @@ import { invalidatePiProviderCaches } from "@/lib/query/pi";
 import { invalidateGrokCliLoginCaches } from "@/lib/query/subscription";
 import { GROKBUILD_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
 import { appHas } from "@/config/appSpecs";
+import { resolveManagedAccountId } from "@/lib/authBinding";
 
 export const useAddProviderMutation = (appId: AppId) => {
   const queryClient = useQueryClient();
@@ -68,7 +69,18 @@ export const useAddProviderMutation = (appId: AppId) => {
       let id: string;
       let liveTarget = addToLive;
 
-      if (appId === "copilot") {
+      if (appId === "agy-desktop") {
+        const accountId = resolveManagedAccountId(
+          providerInput.meta,
+          "agy_oauth",
+        );
+        if (!accountId) {
+          throw new Error(
+            "Antigravity Desktop requires a Google OAuth account",
+          );
+        }
+        id = accountId;
+      } else if (appId === "copilot") {
         // Copilot CLI：自带模型卡的 id 就是 providers.json 里的供应商名（表单填的）；官方卡
         // 没有 provider 节点，用随机 id，也从不写进 providers.json
         id = providerInput.providerKey || generateUUID();

@@ -6172,6 +6172,9 @@ impl ProviderService {
         provider: Provider,
         add_to_live: bool,
     ) -> Result<bool, AppError> {
+        if app_type == AppType::AgyDesktop {
+            return Self::add_without_switching(state, app_type, provider);
+        }
         let _native_guard = lock_native_provider_operations(state, &app_type);
         if app_type == AppType::Kimi
             && crate::kimi_config::is_official_provider(&provider.settings_config)
@@ -8664,11 +8667,22 @@ impl ProviderService {
                 validate_gemini_settings(&provider.settings_config)?
             }
             AppType::AgyDesktop => {
-                return Err(AppError::localized(
-                    "agy_desktop.providers_unsupported",
-                    "Antigravity Desktop 不支持供应商配置管理，请在 Antigravity 桌面应用中管理账号与模型",
-                    "Antigravity Desktop does not support provider configuration; manage accounts and models directly in the desktop app",
-                ));
+                let account_id = provider
+                    .meta
+                    .as_ref()
+                    .and_then(|meta| meta.managed_account_id_for("agy_oauth"));
+                if !provider.has_official_category()
+                    || !provider
+                        .settings_config
+                        .as_object()
+                        .is_some_and(serde_json::Map::is_empty)
+                    || account_id.as_deref() != Some(provider.id.as_str())
+                    || provider.id.trim().is_empty()
+                {
+                    return Err(AppError::InvalidInput(
+                        "Antigravity Desktop providers must bind a Google OAuth account".into(),
+                    ));
+                }
             }
             AppType::Copilot => {
                 crate::copilot_config::validate_provider(&provider.id, &provider.settings_config)?

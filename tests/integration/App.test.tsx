@@ -97,7 +97,7 @@ vi.mock("@/components/providers/ProviderList", () => ({
 vi.mock("@/components/providers/AddProviderDialog", () => ({
   AddProviderDialog: ({ open, onOpenChange, onSubmit, appId }: any) =>
     open ? (
-      <div data-testid="add-provider-dialog">
+      <div data-testid="add-provider-dialog" data-app-id={appId}>
         <button
           onClick={() =>
             onSubmit({
@@ -248,6 +248,65 @@ describe("App integration with MSW", () => {
     windowMocks.onScaleChanged.mockImplementation(listen);
     localStorage.removeItem("cc-switch-last-view");
     localStorage.removeItem("cc-switch-last-app");
+  });
+
+  it("opens the add-provider page from the Antigravity Desktop header", async () => {
+    windowMocks.isLinux.mockReturnValue(true);
+    localStorage.setItem("cc-switch-last-app", "agy-desktop");
+
+    const { default: App } = await import("@/App");
+    const { container } = renderApp(App);
+    await screen.findByRole("heading", { name: "Antigravity Desktop" });
+    fireEvent.click(
+      within(container.querySelector("header")!).getByRole("button", {
+        name: "provider.addProvider",
+      }),
+    );
+    expect(await screen.findByTestId("add-provider-dialog")).toHaveAttribute(
+      "data-app-id",
+      "agy-desktop",
+    );
+  });
+
+  it("deletes the Desktop provider record while retaining its shared OAuth account", async () => {
+    windowMocks.isLinux.mockReturnValue(true);
+    localStorage.setItem("cc-switch-last-app", "agy-desktop");
+    setProviders("agy-desktop", {
+      "google-account": {
+        id: "google-account",
+        name: "Desktop Work",
+        settingsConfig: {},
+      },
+    });
+    server.use(
+      http.post("http://tauri.local/auth_get_status", async () =>
+        HttpResponse.json({
+          provider: "agy_oauth",
+          authenticated: true,
+          default_account_id: "google-account",
+          accounts: [
+            {
+              id: "google-account",
+              login: "work@example.com",
+              requires_reauth: false,
+            },
+          ],
+        }),
+      ),
+    );
+
+    const { default: App } = await import("@/App");
+    renderApp(App);
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-list")).toHaveTextContent(
+        "Desktop Work",
+      ),
+    );
+    fireEvent.click(screen.getByText("delete"));
+    fireEvent.click(await screen.findByText("confirm-delete"));
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-list")).toHaveTextContent("{}"),
+    );
   });
 
   it("covers basic provider flows via real hooks", async () => {

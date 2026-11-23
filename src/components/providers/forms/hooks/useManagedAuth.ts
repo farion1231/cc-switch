@@ -25,6 +25,11 @@ export function useManagedAuth(
   authProvider: ManagedAuthProvider,
   githubDomain?: string,
   loginMethod?: CodexLoginMethod,
+  {
+    agyDesktop = false,
+  }: {
+    agyDesktop?: boolean;
+  } = {},
 ) {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
@@ -51,8 +56,11 @@ export function useManagedAuth(
     isError: isStatusError,
     refetch: refetchStatus,
   } = useQuery<ManagedAuthStatus>({
-    queryKey,
-    queryFn: () => authApi.authGetStatus(authProvider),
+    queryKey: agyDesktop ? [...queryKey, "desktop"] : queryKey,
+    queryFn: () =>
+      agyDesktop
+        ? authApi.authGetStatus(authProvider, true)
+        : authApi.authGetStatus(authProvider),
     staleTime: 30000,
     // A rejected xAI refresh token is persisted as `requires_reauth` by the
     // proxy hot path. Periodically refresh local status so an already-open Auth
@@ -317,7 +325,9 @@ export function useManagedAuth(
     },
     onError: async (e) => {
       console.error("[ManagedAuth] Failed to remove account:", e);
-      setError(e instanceof Error ? e.message : String(e));
+      const message = e instanceof Error ? e.message : String(e);
+      setError(message);
+      if (agyDesktop) toast.error(message);
       // Account removal can succeed before provider unbinding fails.
       if (authProvider === "codex_oauth") await refetchStatus();
     },
@@ -339,10 +349,18 @@ export function useManagedAuth(
 
   const setDefaultAccountMutation = useMutation({
     mutationFn: (accountId: string) =>
-      authApi.authSetDefaultAccount(authProvider, accountId),
+      agyDesktop
+        ? authApi.authSetDefaultAccount(authProvider, accountId, true)
+        : authApi.authSetDefaultAccount(authProvider, accountId),
     onSuccess: async () => {
-      // Antigravity 的「默认」就是 agy 的全局登录：切完提醒已经开着的 agy 还用原来的号
-      if (authProvider === "agy_oauth") {
+      if (agyDesktop) {
+        toast.success(
+          t("provider.stackSaved", {
+            defaultValue: "已保存，重启 {{client}} 后生效",
+            client: "Antigravity Desktop",
+          }),
+        );
+      } else if (authProvider === "agy_oauth") {
         const running = await authApi.agyAccountIsRunning().catch(() => false);
         if (running) {
           toast.warning(
@@ -370,7 +388,9 @@ export function useManagedAuth(
     },
     onError: (e) => {
       console.error("[ManagedAuth] Failed to set default account:", e);
-      setError(e instanceof Error ? e.message : String(e));
+      const message = e instanceof Error ? e.message : String(e);
+      setError(message);
+      if (authProvider === "agy_oauth") toast.error(message);
     },
   });
 

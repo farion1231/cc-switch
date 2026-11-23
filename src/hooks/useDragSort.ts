@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   KeyboardSensor,
   PointerSensor,
@@ -14,14 +14,30 @@ import type { Provider } from "@/types";
 import { providersApi, type AppId } from "@/lib/api";
 import { appHas } from "@/config/appSpecs";
 import { getLocaleFromLanguage } from "@/components/usage/format";
+import { readLocalCache, writeLocalCache } from "@/lib/localCache";
+
+const DESKTOP_ACCOUNT_ORDER = "agy-desktop-account-order";
 
 export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
   const queryClient = useQueryClient();
   const { t, i18n } = useTranslation();
+  const [desktopOrder, setDesktopOrder] = useState<string[]>(() => {
+    const cached =
+      appId === "agy-desktop"
+        ? readLocalCache<string[]>(DESKTOP_ACCOUNT_ORDER)
+        : undefined;
+    return Array.isArray(cached) ? cached : [];
+  });
 
   const sortedProviders = useMemo(() => {
     const locale = getLocaleFromLanguage(i18n.language ?? "");
+    const positions = new Map(desktopOrder.map((id, index) => [id, index]));
     return Object.values(providers).sort((a, b) => {
+      if (appId === "agy-desktop") {
+        const positionA = positions.get(a.id) ?? Infinity;
+        const positionB = positions.get(b.id) ?? Infinity;
+        if (positionA !== positionB) return positionA - positionB;
+      }
       if (a.sortIndex !== undefined && b.sortIndex !== undefined) {
         return a.sortIndex - b.sortIndex;
       }
@@ -36,7 +52,7 @@ export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
 
       return a.name.localeCompare(b.name, locale);
     });
-  }, [providers, i18n.language]);
+  }, [providers, i18n.language, appId, desktopOrder]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -66,6 +82,13 @@ export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
       }
 
       const reordered = arrayMove(sortedProviders, oldIndex, newIndex);
+      // Desktop cards come from managed OAuth accounts, outside the provider database.
+      if (appId === "agy-desktop") {
+        const ids = reordered.map(({ id }) => id);
+        writeLocalCache(DESKTOP_ACCOUNT_ORDER, ids);
+        setDesktopOrder(ids);
+        return;
+      }
       const updates = reordered.map((provider, index) => ({
         id: provider.id,
         sortIndex: index,

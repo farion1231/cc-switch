@@ -63,6 +63,7 @@ export function AddProviderDialog({
   modeView,
 }: AddProviderDialogProps) {
   const { t } = useTranslation();
+  const isAgyDesktop = appId === "agy-desktop";
   // OpenCode and OpenClaw don't support universal providers
   const showUniversalTab =
     appId !== "opencode" &&
@@ -76,6 +77,7 @@ export function AddProviderDialog({
     appId !== "copilot" &&
     appId !== "workbuddy" &&
     appId !== "grokbuild" &&
+    !isAgyDesktop &&
     appId !== "claude-desktop";
   // 两步：先选预设，再填写（每次打开都从第 1 步开始）
   const [step, setStep] = useState<"pick" | "form">("pick");

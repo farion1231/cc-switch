@@ -84,12 +84,12 @@ interface ProviderListProps {
   appId: AppId;
   /** 直连切换 / 共存式的添加 / Pi 的启用 / Claude Desktop 的切换 */
   onSwitch: (provider: Provider) => void;
-  onEdit: (provider: Provider) => void;
+  onEdit?: (provider: Provider) => void;
   onDelete: (provider: Provider) => void;
   onRemoveFromConfig?: (provider: Provider) => void;
   onDisableOmo?: () => void;
   onDisableOmoSlim?: () => void;
-  onDuplicate: (provider: Provider) => void;
+  onDuplicate?: (provider: Provider) => void;
   onConfigureUsage?: (provider: Provider) => void;
   onOpenWebsite: (url: string) => void;
   onOpenTerminal?: (provider: Provider) => void;
@@ -107,6 +107,10 @@ interface ProviderListProps {
    * 与第一个分组标题同行
    */
   searchSlot?: HTMLElement | null;
+  agyDesktopAccounts?: {
+    switching: boolean;
+    requiresReauth: ReadonlySet<string>;
+  };
 }
 
 export function ProviderList({
@@ -130,6 +134,7 @@ export function ProviderList({
   searchOpen,
   onSearchOpenChange,
   searchSlot,
+  agyDesktopAccounts,
 }: ProviderListProps) {
   const { t } = useTranslation();
   const { checkProvider, isChecking } = useStreamCheck(appId);
@@ -378,12 +383,18 @@ export function ProviderList({
         queue: switchMode.queue.filter((id) => known.has(id)),
       });
     }
-    if (appId === "agy") {
+    if (appId === "agy" || agyDesktopAccounts) {
       return buildLaunchSections({
         app: appId,
         t,
         providers: filteredProviders,
         openTerminal: (provider) => onOpenTerminal?.(provider),
+        desktop: agyDesktopAccounts && {
+          currentProviderId,
+          onSwitch,
+          switching: agyDesktopAccounts.switching,
+          requiresReauth: agyDesktopAccounts.requiresReauth,
+        },
       });
     }
     const defaultPrimary =
@@ -449,6 +460,7 @@ export function ProviderList({
       },
     });
   }, [
+    agyDesktopAccounts,
     switchMode,
     appId,
     t,
@@ -524,7 +536,7 @@ export function ProviderList({
   ) : null;
 
   // 库里读不出来的供应商不在 providers 里（不能编辑、切换），单独列出、只能删除
-  const unreadableNotice = (
+  const unreadableNotice = appId !== "agy-desktop" && (
     <UnreadableEntriesNotice
       queryKey={["providers", appId, "unreadable"]}
       load={() => providersApi.getUnreadable(appId)}
@@ -560,6 +572,7 @@ export function ProviderList({
             appId === "mcode" ||
             appId === "kimi" ||
             appId === "dsh" ||
+            appId === "agy-desktop" ||
             appId === "workbuddy"
               ? undefined
               : () => importMutation.mutate()
@@ -591,9 +604,7 @@ export function ProviderList({
       onEdit={onEdit}
       onDelete={onDelete}
       onDuplicate={onDuplicate}
-      onConfigureUsage={
-        onConfigureUsage ? (item) => onConfigureUsage(item) : () => undefined
-      }
+      onConfigureUsage={onConfigureUsage}
       onOpenWebsite={onOpenWebsite}
       // Antigravity 和 Copilot CLI 官方卡的「打开终端」已经是主按钮，「更多」菜单里不再重复
       onOpenTerminal={
@@ -760,10 +771,10 @@ interface SortableProviderCardProps {
   appId: AppId;
   presentation: CardPresentation;
   isCurrent: boolean;
-  onEdit: (provider: Provider) => void;
+  onEdit?: (provider: Provider) => void;
   onDelete: (provider: Provider) => void;
-  onDuplicate: (provider: Provider) => void;
-  onConfigureUsage: (provider: Provider) => void;
+  onDuplicate?: (provider: Provider) => void;
+  onConfigureUsage?: (provider: Provider) => void;
   onOpenWebsite: (url: string) => void;
   onOpenTerminal?: (provider: Provider) => void;
   onTest?: (provider: Provider) => void;

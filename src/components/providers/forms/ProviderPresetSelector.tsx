@@ -556,6 +556,7 @@ function PresetPicker({
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<PickerCategory>("all");
+  const allowCustom = appId !== "agy-desktop";
   const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -620,7 +621,7 @@ function PresetPicker({
   ];
   const searching = query.trim().length > 0;
 
-  const customRow = (
+  const customRow = allowCustom && (
     <PresetRow
       icon={<PresetIconBox />}
       name={t("providerPreset.custom")}
@@ -725,7 +726,9 @@ function PresetPicker({
         <div className="min-w-0 flex-1 overflow-y-auto">
           {category !== "all" && (
             <p className="mb-2 text-caption text-fg-2">
-              {t(`providerPreset.groupHint.${category}`)}
+              {appId === "agy-desktop"
+                ? t("providerPreset.loginWith.google")
+                : t(`providerPreset.groupHint.${category}`)}
             </p>
           )}
 
@@ -734,18 +737,22 @@ function PresetPicker({
               <p className="text-body text-fg-1">
                 {t("providerPreset.noResults", { query: query.trim() })}
               </p>
-              <p className="text-caption text-fg-2">
-                {t("providerPreset.noResultsHint")}
-              </p>
-              <Button
-                type="button"
-                variant="neutral"
-                size="compact"
-                className="mt-1"
-                onClick={() => onPick("custom")}
-              >
-                {t("providerPreset.useCustom")}
-              </Button>
+              {allowCustom && (
+                <>
+                  <p className="text-caption text-fg-2">
+                    {t("providerPreset.noResultsHint")}
+                  </p>
+                  <Button
+                    type="button"
+                    variant="neutral"
+                    size="compact"
+                    className="mt-1"
+                    onClick={() => onPick("custom")}
+                  >
+                    {t("providerPreset.useCustom")}
+                  </Button>
+                </>
+              )}
             </div>
           ) : category === "universal" ? (
             <div className="grid grid-cols-2 gap-2">
@@ -778,7 +785,9 @@ function PresetPicker({
           ) : category === "all" ? (
             // 「全部」按左侧分类分段，段内按名称；自定义配置固定在最上面
             <div className="flex flex-col gap-4">
-              <div className="grid grid-cols-2 gap-2">{customRow}</div>
+              {allowCustom && (
+                <div className="grid grid-cols-2 gap-2">{customRow}</div>
+              )}
               {sectionPresetRows(shown).map((section) => (
                 <section
                   key={section.group}

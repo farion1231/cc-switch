@@ -419,9 +419,11 @@ pub async fn auth_cancel_login(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 #[tauri::command(rename_all = "camelCase")]
 pub async fn auth_get_status(
     auth_provider: String,
+    desktop: Option<bool>,
     copilot_state: State<'_, CopilotAuthState>,
     codex_state: State<'_, CodexOAuthState>,
     xai_state: State<'_, XaiOAuthState>,
@@ -485,7 +487,11 @@ pub async fn auth_get_status(
         }
         // 「默认账号」在这里是 agy 当前登录的那个号
         AUTH_PROVIDER_AGY_OAUTH => {
-            let status = agy_state.0.status().await?;
+            let status = if desktop.unwrap_or_default() {
+                agy_state.0.status_for(true).await?
+            } else {
+                agy_state.0.status().await?
+            };
             let current = status.current_account_id;
             Ok(ManagedAuthStatus {
                 provider: auth_provider.to_string(),
@@ -623,6 +629,7 @@ pub async fn auth_set_default_account(
     app: tauri::AppHandle,
     auth_provider: String,
     account_id: String,
+    desktop: Option<bool>,
     copilot_state: State<'_, CopilotAuthState>,
     codex_state: State<'_, CodexOAuthState>,
     xai_state: State<'_, XaiOAuthState>,
@@ -653,10 +660,10 @@ pub async fn auth_set_default_account(
                 .await
                 .map_err(|e| e.to_string())
         }
-        // 切 agy 的全局登录（写钥匙串）
+        // CLI 只写钥匙串，Desktop 还支持原生的凭据文件回退。
         AUTH_PROVIDER_AGY_OAUTH => agy_state
             .0
-            .switch_to(&account_id)
+            .switch_to_for(&account_id, desktop.unwrap_or_default())
             .await
             .map_err(|e| e.to_string()),
         // 还原这个账号的那组凭据文件（要求 WorkBuddy 已退出）
