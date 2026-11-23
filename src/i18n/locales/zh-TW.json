@@ -243,17 +243,19 @@
         "oauthHint": "Google 官方使用 OAuth 個人驗證，無需填寫 API Key。首次使用時會自動開啟瀏覽器進行登入。",
         "apiKeyPlaceholder": "請輸入 Gemini API Key"
       },
-      "claudeAccount": {
+      "managedAccount": {
         "label": "登入方式",
+        "missing": "不在這台電腦上的帳號",
+        "reauthBadge": "需要重新登入"
+      },
+      "claudeAccount": {
         "default": "跟隨 Claude Code 登入",
         "defaultDescription": "帳號會隨 Claude Code 目前登入而變更",
-        "missing": "不在這台電腦上的帳號",
         "manage": "新增或管理 Claude 帳號",
         "helpTerminal": "設定裡覆寫了 Claude 設定目錄，切到這張卡不會切換 Claude Code 的登入，請從卡片「開啟終端機」使用選取的帳號。",
         "helpWsl": "Claude 設定目錄在 WSL 裡，暫不支援 Claude 帳號，切到這張卡不會切換 Claude Code 的登入。",
         "help": "切到這張卡後，Claude Code 的登入會即時換成選取的帳號，正在執行的工作階段也一樣。想同時用幾個帳號，從卡片「開啟終端機」。",
         "claudeAccount": "Claude 帳號",
-        "reauthBadge": "需要重新登入",
         "terminalHint": "從卡片開啟終端機使用",
         "wslHint": "WSL 暫不支援",
         "plan": {
@@ -265,6 +267,13 @@
           "teamPremium": "Team 進階席位",
           "enterprise": "Enterprise"
         }
+      },
+      "grokAccount": {
+        "default": "跟隨 Grok CLI 登入",
+        "defaultDescription": "帳號會隨 Grok CLI 目前的登入變化",
+        "manage": "新增或管理 xAI 帳號",
+        "help": "切到這張卡後，Grok CLI 的登入（~/.grok/auth.json）會換成選取的帳號；原本登入的帳號會先收進授權中心，切回「跟隨 Grok CLI 登入」的卡時還原。",
+        "xaiAccount": "xAI 帳號"
       }
     },
     "duplicateLiveIdsLoadFailed": "讀取設定中的供應商識別碼失敗，請先修復設定後再試",
@@ -1091,6 +1100,7 @@
     "toolUpgradeUnanchoredHint": "無法判定命令列實際使用的安裝位置；將執行預設更新指令（可能安裝至 PATH 中第一個 npm）。",
     "toolUpgradeUnmanagedTitle": "以下工具已略過更新",
     "toolUpgradeUnmanagedDetail": "{{tool}}（{{path}}）不是透過 npm 或可辨識的安裝程式安裝的，CC Switch 無法判斷如何更新它。請使用你原本的安裝方式更新（例如 winget、Scoop 或重新執行官方安裝指令碼）。",
+    "toolUpgradeDesktopManagedDetail": "這個 OpenCode CLI 由 OpenCode Desktop 隨附，並會隨 Desktop 應用程式一起更新。",
     "envBadge": {
       "wsl": "WSL",
       "windows": "Win",
@@ -1267,6 +1277,8 @@
       "credits": "積分",
       "leftOf": "剩餘 {{remaining}} / {{total}}",
       "usedOf": "已用 {{used}} / {{total}}",
+      "unlimited": "不限量",
+      "unlimitedUsed": "不限量，已用 {{used}}",
       "usedUp": "已用完（共 {{total}}）",
       "detail": "積分剩餘 {{remaining}} / 共 {{total}}，已用 {{used}}",
       "staleNotRunning": "WorkBuddy 沒在執行，顯示的是上次查到的結果",
@@ -5063,7 +5075,7 @@
   "pluginsPage": {
     "title": "外掛",
     "helpTitle": "外掛",
-    "help": "安裝、啟用、移除 Claude Code、Codex、Grok Build、MiniMax Code、OpenClaw、Pi 和 Antigravity 的外掛。CC Switch 呼叫各應用程式自帶的命令列，效果和在終端機執行它的外掛指令相同。Pi 的外掛就是 Pi 套件，目錄取自 npm。",
+    "help": "安裝、啟用、移除 Claude Code、Codex、Grok Build、MiniMax Code、OpenClaw、Pi 和 Antigravity CLI 的外掛。CC Switch 呼叫各應用程式自帶的命令列，效果和在終端機執行它的外掛指令相同。Pi 的外掛就是 Pi 套件，目錄取自 npm。",
     "appAria": "應用程式",
     "viewAria": "外掛檢視",
     "viewInstalled": "已安裝",
@@ -5136,6 +5148,7 @@
       "updated": "已更新 {{name}}",
       "upToDate": "{{name}} 已是最新版本",
       "updateFailed": "更新 {{name}} 失敗",
+      "updateNeedsReinstall": "這個外掛裝在舊版 Antigravity 使用的目錄裡，CC Switch 無法替它更新。解除安裝後在「探索」裡重新安裝，就能裝上最新版本。",
       "refreshed": "外掛市集已重新整理",
       "refreshFailed": "重新整理外掛市集失敗",
       "marketAdded": "已加入市集 {{source}}",

@@ -84,13 +84,29 @@ fn sqlite_table_exists(conn: &rusqlite::Connection, table: &str) -> Result<bool,
 }
 
 /// 同步 OpenCode 使用数据
-pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
-    sync_opencode_usage_from_path(db, &get_opencode_db_path())
+pub(crate) fn sync_opencode_usage(
+    db: &Database,
+    cursors: &crate::services::session_usage::SyncCursors,
+) -> Result<SessionSyncResult, AppError> {
+    sync_opencode_usage_from_path_with_cursors(db, &get_opencode_db_path(), cursors)
 }
 
+#[cfg(test)]
 fn sync_opencode_usage_from_path(
     db: &Database,
     db_path: &std::path::Path,
+) -> Result<SessionSyncResult, AppError> {
+    sync_opencode_usage_from_path_with_cursors(
+        db,
+        db_path,
+        &crate::services::session_usage::load_sync_cursors(db)?,
+    )
+}
+
+fn sync_opencode_usage_from_path_with_cursors(
+    db: &Database,
+    db_path: &std::path::Path,
+    cursors: &crate::services::session_usage::SyncCursors,
 ) -> Result<SessionSyncResult, AppError> {
     if !db_path.exists() {
         return Ok(SessionSyncResult {
@@ -123,7 +139,6 @@ fn sync_opencode_usage_from_path(
         rusqlite::Connection::open_with_flags(db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
             .map_err(|e| AppError::Database(format!("无法打开 opencode.db: {e}")))?;
     let schema = detect_schema(&opencode_conn)?;
-    let cursors = crate::services::session_usage::load_sync_cursors(db)?;
 
     // 混合布局只统计起点之后更新的消息（毫秒，与 time_updated 同单位）：
     // 不回填旧版本漏算的历史，也避免明细已汇总删除的旧消息被重新导入而重复计数。

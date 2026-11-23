@@ -243,17 +243,19 @@
         "oauthHint": "Google’ın resmî hizmeti kişisel OAuth kimlik doğrulaması kullanır; API anahtarı girmeniz gerekmez. İlk kullanımda oturum açmanız için tarayıcı otomatik açılır.",
         "apiKeyPlaceholder": "Gemini API Anahtarını girin"
       },
+      "managedAccount": {
+        "label": "Oturum açma yöntemi",
+        "missing": "Bu bilgisayarda bulunmayan hesap",
+        "reauthBadge": "Yeniden oturum açılması gerekiyor"
+      },
       "claudeAccount": {
-        "label": "Sign-in method",
         "default": "Follow Claude Code login",
         "defaultDescription": "The account changes with the current Claude Code login",
-        "missing": "Account not on this computer",
         "manage": "Add or manage Claude accounts",
         "helpTerminal": "The Claude config folder is overridden in Settings, so switching to this card doesn't change Claude Code's sign-in. Use Open Terminal on the card to use the selected account.",
         "helpWsl": "The Claude config folder is in WSL, where Claude accounts aren't supported yet. Switching to this card doesn't change Claude Code's sign-in.",
         "help": "Switching to this card changes Claude Code's sign-in to the selected account right away, including sessions already running. To use several accounts at once, use Open Terminal on the card.",
         "claudeAccount": "Claude account",
-        "reauthBadge": "Re-login required",
         "terminalHint": "Use via Open Terminal",
         "wslHint": "Not supported in WSL",
         "plan": {
@@ -265,6 +267,13 @@
           "teamPremium": "Team Premium",
           "enterprise": "Enterprise"
         }
+      },
+      "grokAccount": {
+        "default": "Grok CLI oturumunu kullan",
+        "defaultDescription": "Grok CLI'nin oturum açtığı hesap kullanılır",
+        "manage": "xAI hesaplarını ekle veya yönet",
+        "help": "Bu karta geçtiğinizde Grok CLI'nin oturumu (~/.grok/auth.json) seçilen hesaba geçer. Önceden oturum açılmış hesap önce Kimlik Doğrulama Merkezi'ne kaydedilir ve \"Grok CLI oturumunu kullan\" kartına geri döndüğünüzde geri yüklenir.",
+        "xaiAccount": "xAI hesabı"
       }
     },
     "duplicateLiveIdsLoadFailed": "Sağlayıcı tanımlayıcıları yapılandırmadan okunamadı. Lütfen yapılandırmayı düzeltip tekrar deneyin.",
@@ -1091,6 +1100,7 @@
     "toolUpgradeUnanchoredHint": "Komut satırınızın hangi yüklemeyi kullandığı belirlenemiyor; varsayılan yükseltme komutunu çalıştıracaktır (PATH'deki ilk npm'ye yüklenebilir).",
     "toolUpgradeUnmanagedTitle": "Bu araçların yükseltilmesi atlandı",
     "toolUpgradeUnmanagedDetail": "{{tool}} ({{path}}), npm veya tanınan bir yükleyici tarafından kurulmadığından CC Switch, onu nasıl yükselteceğini söyleyemez. Kurulum şeklinizi yükseltin (örn. Winget, Scoop veya resmi kurulum betiğini yeniden çalıştırın).",
+    "toolUpgradeDesktopManagedDetail": "Bu OpenCode CLI, OpenCode Desktop ile birlikte gelir ve Desktop uygulamasıyla güncellenir.",
     "envBadge": {
       "wsl": "WSL",
       "windows": "Windows",
@@ -4994,7 +5004,7 @@
   "pluginsPage": {
     "title": "Eklentiler",
     "helpTitle": "Eklentiler",
-    "help": "Claude Code, Codex, Grok Build, MiniMax Code, OpenClaw, Pi ve Antigravity eklentilerini yükleyin, etkinleştirin ve kaldırın. CC Switch her uygulamanın kendi CLI'ını çalıştırır; sonuç terminalde eklenti komutunu kullanmakla aynıdır. Pi'de eklentiler Pi paketleridir ve katalog npm'den gelir.",
+    "help": "Claude Code, Codex, Grok Build, MiniMax Code, OpenClaw, Pi ve Antigravity CLI eklentilerini yükleyin, etkinleştirin ve kaldırın. CC Switch her uygulamanın kendi CLI'ını çalıştırır; sonuç terminalde eklenti komutunu kullanmakla aynıdır. Pi'de eklentiler Pi paketleridir ve katalog npm'den gelir.",
     "appAria": "Uygulama",
     "viewAria": "Eklenti görünümleri",
     "viewInstalled": "Yüklü",
@@ -5067,6 +5077,7 @@
       "updated": "{{name}} güncellendi",
       "upToDate": "{{name}} zaten güncel",
       "updateFailed": "{{name}} güncellenemedi",
+      "updateNeedsReinstall": "Bu eklenti Antigravity'nin eski sürümlerinin kullandığı bir klasörde olduğu için CC Switch onu güncelleyemez. En son sürümü almak için kaldırın, ardından Keşfet'ten yeniden yükleyin.",
       "refreshed": "Pazar yerleri yenilendi",
       "refreshFailed": "Pazar yerleri yenilenemedi",
       "marketAdded": "{{source}} pazar yeri eklendi",
@@ -5434,6 +5445,8 @@
       "credits": "Kredi",
       "leftOf": "{{remaining}} / {{total}} kaldı",
       "usedOf": "{{used}} / {{total}} kullanıldı",
+      "unlimited": "Sınırsız",
+      "unlimitedUsed": "Sınırsız, {{used}} kullanıldı",
       "usedUp": "Tükendi ({{total}} üzerinden)",
       "detail": "{{total}} kredinin {{remaining}} kadarı kaldı, {{used}} kullanıldı",
       "staleNotRunning": "WorkBuddy çalışmıyor; son sonuç gösteriliyor",

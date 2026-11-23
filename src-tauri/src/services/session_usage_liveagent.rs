@@ -30,10 +30,7 @@ use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use crate::proxy::usage::{calculator::CostCalculator, parser::TokenUsage};
 use crate::services::{
-    session_usage::{
-        estimated_latency_ms, load_sync_cursors, metadata_modified_nanos, SessionSyncResult,
-        SyncCursor,
-    },
+    session_usage::{estimated_latency_ms, metadata_modified_nanos, SessionSyncResult, SyncCursor},
     sql_helpers::INPUT_TOKEN_SEMANTICS_FRESH,
     usage_stats::find_model_pricing,
 };
@@ -108,9 +105,12 @@ struct PendingRequest {
 }
 
 /// 扫描并导入 LiveAgent 会话用量（后台定时任务与手动同步共用）。
-pub fn sync_liveagent_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
+pub(crate) fn sync_liveagent_usage(
+    db: &Database,
+    cursors: &crate::services::session_usage::SyncCursors,
+) -> Result<SessionSyncResult, AppError> {
     match liveagent_sessions_root() {
-        Some(root) => sync_liveagent_usage_from(db, &root),
+        Some(root) => sync_liveagent_usage_with_cursors(db, &root, cursors),
         None => Ok(SessionSyncResult::default()),
     }
 }
@@ -154,15 +154,24 @@ pub(crate) fn session_logs(root: &Path) -> Vec<(String, PathBuf)> {
 }
 
 /// [`sync_liveagent_usage`] 的可注入根目录版本，测试用临时目录。
-pub(crate) fn sync_liveagent_usage_from(
+#[cfg(test)]
+fn sync_liveagent_usage_from(db: &Database, root: &Path) -> Result<SessionSyncResult, AppError> {
+    sync_liveagent_usage_with_cursors(
+        db,
+        root,
+        &crate::services::session_usage::load_sync_cursors(db)?,
+    )
+}
+
+fn sync_liveagent_usage_with_cursors(
     db: &Database,
     root: &Path,
+    cursors: &crate::services::session_usage::SyncCursors,
 ) -> Result<SessionSyncResult, AppError> {
     let mut result = SessionSyncResult::default();
-    let cursors = load_sync_cursors(db)?;
     for (session_id, path) in session_logs(root) {
         let key = format!("liveagent:{}", path.to_string_lossy());
-        match sync_file(db, &path, &session_id, &key, &cursors) {
+        match sync_file(db, &path, &session_id, &key, cursors) {
             Ok(part) => result.merge(part),
             Err(error) => result
                 .errors

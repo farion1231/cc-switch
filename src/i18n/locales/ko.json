@@ -241,17 +241,19 @@
         "oauthHint": "Google 공식은 OAuth 개인 인증을 사용하므로 API 키를 입력할 필요가 없습니다. 처음 사용할 때 로그인을 위해 브라우저가 자동으로 열립니다.",
         "apiKeyPlaceholder": "Gemini API 키를 입력하세요"
       },
-      "claudeAccount": {
+      "managedAccount": {
         "label": "로그인 방식",
+        "missing": "이 컴퓨터에 없는 계정",
+        "reauthBadge": "다시 로그인 필요"
+      },
+      "claudeAccount": {
         "default": "Claude Code에 로그인된 계정 사용",
         "defaultDescription": "Claude Code에 로그인된 계정이 바뀌면 사용하는 계정도 함께 바뀝니다",
-        "missing": "이 컴퓨터에 없는 계정",
         "manage": "Claude 계정 추가 또는 관리",
         "helpTerminal": "설정에서 Claude 설정 디렉터리를 별도로 지정했으므로 이 카드로 전환해도 Claude Code의 로그인 계정은 바뀌지 않습니다. 선택한 계정을 사용하려면 카드의 ‘터미널 열기’를 이용하세요.",
         "helpWsl": "Claude 설정 디렉터리가 WSL에 있으면 아직 Claude 계정 기능을 사용할 수 없습니다. 이 카드로 전환해도 Claude Code의 로그인 계정은 바뀌지 않습니다.",
         "help": "이 카드로 전환하면 Claude Code의 로그인 계정이 즉시 선택한 계정으로 바뀝니다. 실행 중인 세션에도 적용됩니다. 여러 계정을 동시에 사용하려면 각 카드의 ‘터미널 열기’를 이용하세요.",
         "claudeAccount": "Claude 계정",
-        "reauthBadge": "다시 로그인 필요",
         "terminalHint": "카드의 ‘터미널 열기’로 사용",
         "wslHint": "WSL에서는 아직 지원되지 않음",
         "plan": {
@@ -263,6 +265,13 @@
           "teamPremium": "Team 프리미엄 시트",
           "enterprise": "Enterprise"
         }
+      },
+      "grokAccount": {
+        "default": "Grok CLI 로그인 따르기",
+        "defaultDescription": "Grok CLI에 로그인된 계정을 사용합니다",
+        "manage": "xAI 계정 추가 또는 관리",
+        "help": "이 카드로 전환하면 Grok CLI의 로그인(~/.grok/auth.json)이 선택한 계정으로 바뀝니다. 이전에 로그인된 계정은 먼저 인증 센터에 저장되며, \"Grok CLI 로그인 따르기\" 카드로 다시 전환하면 복원됩니다.",
+        "xaiAccount": "xAI 계정"
       }
     },
     "duplicateLiveIdsLoadFailed": "설정에서 공급자 식별자를 읽지 못했습니다. 설정을 수정하고 다시 시도해 주세요.",
@@ -1091,6 +1100,7 @@
     "toolUpgradeUnanchoredHint": "명령줄에서 어떤 설치를 사용하는지 확인할 수 없어 기본 업그레이드 명령을 실행합니다. PATH에서 가장 먼저 찾은 npm을 통해 설치될 수 있습니다.",
     "toolUpgradeUnmanagedTitle": "이 도구 업그레이드를 건너뛰었습니다.",
     "toolUpgradeUnmanagedDetail": "{{tool}} ({{path}}) 항목은 npm이나 인식 가능한 설치 프로그램으로 설치되지 않아 CC Switch에서 업그레이드 방법을 판단할 수 없습니다. 처음 설치할 때 사용한 방식으로 업그레이드하세요(예: winget, Scoop 또는 공식 설치 스크립트 다시 실행).",
+    "toolUpgradeDesktopManagedDetail": "이 OpenCode CLI는 OpenCode Desktop에 포함되어 있으며 Desktop 앱과 함께 업데이트됩니다.",
     "envBadge": {
       "wsl": "WSL",
       "windows": "Win",
@@ -1267,6 +1277,8 @@
       "credits": "크레딧",
       "leftOf": "{{remaining}} / {{total}} 남음",
       "usedOf": "{{used}} / {{total}} 사용",
+      "unlimited": "무제한",
+      "unlimitedUsed": "무제한, {{used}} 사용",
       "usedUp": "모두 사용함 (총 {{total}})",
       "detail": "크레딧 {{total}} 중 {{remaining}} 남음, {{used}} 사용",
       "staleNotRunning": "WorkBuddy가 실행 중이 아니므로 이전에 조회한 결과를 표시합니다",
@@ -5063,7 +5075,7 @@
   "pluginsPage": {
     "title": "플러그인",
     "helpTitle": "플러그인",
-    "help": "Claude Code, Codex, Grok Build, MiniMax Code, OpenClaw, Pi, Antigravity의 플러그인을 설치, 활성화, 제거합니다. CC Switch는 각 앱의 자체 CLI를 실행하므로 터미널에서 플러그인 명령을 사용하는 것과 결과가 같습니다. Pi의 경우 플러그인은 Pi 패키지이며 카탈로그는 npm에서 가져옵니다.",
+    "help": "Claude Code, Codex, Grok Build, MiniMax Code, OpenClaw, Pi, Antigravity CLI의 플러그인을 설치, 활성화, 제거합니다. CC Switch는 각 앱의 자체 CLI를 실행하므로 터미널에서 플러그인 명령을 사용하는 것과 결과가 같습니다. Pi의 경우 플러그인은 Pi 패키지이며 카탈로그는 npm에서 가져옵니다.",
     "appAria": "앱",
     "viewAria": "플러그인 보기",
     "viewInstalled": "설치됨",
@@ -5136,6 +5148,7 @@
       "updated": "{{name}}을(를) 업데이트했습니다",
       "upToDate": "{{name}}은(는) 이미 최신 버전입니다",
       "updateFailed": "{{name}}을(를) 업데이트할 수 없습니다",
+      "updateNeedsReinstall": "이 플러그인은 이전 버전의 Antigravity가 사용하던 폴더에 있어 CC Switch가 업데이트할 수 없습니다. 제거한 뒤 탐색에서 다시 설치하면 최신 버전을 받을 수 있습니다.",
       "refreshed": "마켓플레이스를 새로 고쳤습니다",
       "refreshFailed": "마켓플레이스를 새로 고칠 수 없습니다",
       "marketAdded": "마켓플레이스 {{source}}을(를) 추가했습니다",

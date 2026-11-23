@@ -25,6 +25,7 @@ import CodexOauthQuotaFooter from "@/components/CodexOauthQuotaFooter";
 import XaiOauthQuotaFooter from "@/components/XaiOauthQuotaFooter";
 import AgyAccountQuotaFooter from "@/components/AgyAccountQuotaFooter";
 import { ClaudeBoundAccountLine } from "@/components/providers/forms/ClaudeOfficialSection";
+import { GrokBoundAccountLine } from "@/components/providers/forms/GrokOfficialAccount";
 import ClaudeAccountQuotaFooter from "@/components/ClaudeAccountQuotaFooter";
 import { claudePlanLabel } from "@/lib/claudePlan";
 import {
@@ -309,10 +310,20 @@ export function ProviderCard({
       ? resolveManagedAccountId(provider.meta, "claude_official")?.trim() ||
         null
       : null;
-  // 绑了账号的官方卡（Codex / Claude）默认查额度，和 Kimi、agy 的账号卡一样
+  // Grok 官方卡绑了授权中心的 xAI 账号：额度按这个号查，和 xai_oauth 卡同一份缓存
+  const grokBoundAccountId =
+    appId === "grokbuild" && isOfficial
+      ? resolveManagedAccountId(
+          provider.meta,
+          PROVIDER_TYPES.XAI_OAUTH,
+        )?.trim() || null
+      : null;
+  // 绑了账号的官方卡（Codex / Claude / Grok）默认查额度，和 Kimi、agy 的账号卡一样（同托盘）
   const usageEnabled =
     provider.meta?.usage_script?.enabled ??
-    (isBoundCodexOfficial || Boolean(claudeBoundAccountId));
+    (isBoundCodexOfficial ||
+      Boolean(claudeBoundAccountId) ||
+      Boolean(grokBoundAccountId));
   const supportsOfficialSubscription =
     isOfficial && appHas(appId, "officialSubscription");
   const isOfficialSubscriptionUsage =
@@ -372,8 +383,11 @@ export function ProviderCard({
     copilotAccount?.login && provider.name.includes(copilotAccount.login),
   );
   // xAI OAuth (SuperGrok 反代)：额度经自管 OAuth token 自动显示，副标题同 Copilot / Codex OAuth 写账号
-  const isXaiOauth = provider.meta?.providerType === PROVIDER_TYPES.XAI_OAUTH;
-  const xaiAccountId = isXaiOauth
+  const isXaiOauthProvider =
+    provider.meta?.providerType === PROVIDER_TYPES.XAI_OAUTH;
+  // 绑了 xAI 账号的 Grok 官方卡额度也走 xai_oauth；副标题另由 GrokBoundAccountLine 显示
+  const isXaiOauth = isXaiOauthProvider || Boolean(grokBoundAccountId);
+  const xaiAccountId = isXaiOauthProvider
     ? resolveManagedAccountId(
         provider.meta,
         PROVIDER_TYPES.XAI_OAUTH,
@@ -382,7 +396,7 @@ export function ProviderCard({
   const { data: xaiAuthStatus, isSuccess: isXaiAuthStatusSuccess } = useQuery({
     queryKey: ["managed-auth-status", "xai_oauth"],
     queryFn: () => authApi.authGetStatus("xai_oauth"),
-    enabled: isXaiOauth,
+    enabled: isXaiOauthProvider,
     staleTime: 30_000,
     // The proxy can expire an account and replace the default without an Auth
     // Center mutation. Keep the subtitle and reauth badge in sync while open.
@@ -617,6 +631,12 @@ export function ProviderCard({
                 </span>
               )}
             </div>
+          ) : grokBoundAccountId ? (
+            <GrokBoundAccountLine
+              accountId={grokBoundAccountId}
+              providerName={provider.name}
+              note={manualNote}
+            />
           ) : claudeBoundAccountId ? (
             <ClaudeBoundAccountLine
               accountId={claudeBoundAccountId}
@@ -746,11 +766,13 @@ export function ProviderCard({
                   />
                 ) : null
               ) : isXaiOauth ? (
-                <XaiOauthQuotaFooter
-                  meta={provider.meta}
-                  inline={true}
-                  isCurrent={isCurrent}
-                />
+                !grokBoundAccountId || usageEnabled ? (
+                  <XaiOauthQuotaFooter
+                    meta={provider.meta}
+                    inline={true}
+                    isCurrent={isCurrent}
+                  />
+                ) : null
               ) : appId === "workbuddy" && isWorkBuddyOfficial(provider) ? (
                 // 官方登录卡的额度按卡上绑定的账号查（只有 WorkBuddy 运行时当前账号能刷新）
                 <WorkBuddyQuotaFooter provider={provider} />

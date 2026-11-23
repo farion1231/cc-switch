@@ -80,8 +80,11 @@ fn unchanged_provider_save_does_not_emit_a_database_change() {
     }
     let updates = Arc::new(AtomicUsize::new(0));
     let count = Arc::clone(&updates);
+    let cache = db.read_cache.clone();
     db.conn.lock().unwrap().update_hook(Some(
         move |action: rusqlite::hooks::Action, _: &str, table: &str, _: i64| {
+            // Installing the counter replaces the production update hook.
+            cache.invalidate_table(table);
             if action == rusqlite::hooks::Action::SQLITE_UPDATE && table == "providers" {
                 count.fetch_add(1, Ordering::Relaxed);
             }
@@ -178,8 +181,11 @@ fn unchanged_metadata_maps_do_not_emit_database_changes_after_reload() {
     }
     let updates = Arc::new(AtomicUsize::new(0));
     let count = Arc::clone(&updates);
+    let cache = db.read_cache.clone();
     db.conn.lock().unwrap().update_hook(Some(
         move |action: rusqlite::hooks::Action, _: &str, table: &str, _: i64| {
+            // Installing the counter replaces the production update hook.
+            cache.invalidate_table(table);
             if action == rusqlite::hooks::Action::SQLITE_UPDATE && table == "providers" {
                 count.fetch_add(1, Ordering::Relaxed);
             }

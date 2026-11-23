@@ -28,6 +28,21 @@ export const subscriptionKeys = {
 };
 
 /**
+ * Grok 的 CLI 登录（~/.grok/auth.json）可能被后端改写之后要重读的缓存：
+ * 切到/保存绑了 xAI 账号的 Grok 官方卡会把原登录收进授权中心再换号，
+ * 移除/登出 xAI 账号也可能把 CLI 登录换掉。授权中心的 xAI 列表和
+ * 没绑号的 Grok 官方卡（查 CLI 当前登录的号）都要重读。
+ */
+export async function invalidateGrokCliLoginCaches(queryClient: QueryClient) {
+  await queryClient.invalidateQueries({
+    queryKey: ["managed-auth-status", "xai_oauth"],
+  });
+  await queryClient.invalidateQueries({
+    queryKey: subscriptionKeys.quota("grokbuild"),
+  });
+}
+
+/**
  * reject 且无可展示值时的失败占位：首次查询就失败（data 为 undefined），或
  * react-query 保留的旧成功已超出 keep-last-good 窗口——合成一个失败结果，让
  * 订阅视图仍渲染「查询失败」+ 刷新按钮，而不是 footer 整体消失、无从手动重查。

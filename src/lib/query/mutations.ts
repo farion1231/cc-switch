@@ -18,6 +18,7 @@ import { proxyKeys } from "@/lib/query/proxy";
 import { usageKeys } from "@/lib/query/usage";
 import { sessionKeys } from "@/lib/query/sessions";
 import { invalidatePiProviderCaches } from "@/lib/query/pi";
+import { invalidateGrokCliLoginCaches } from "@/lib/query/subscription";
 import { GROKBUILD_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
 import { appHas } from "@/config/appSpecs";
 
@@ -241,6 +242,10 @@ export const useUpdateProviderMutation = (appId: AppId) => {
         await queryClient.invalidateQueries({
           queryKey: ["providers", "kimi"],
         });
+      } else if (appId === "grokbuild") {
+        // 保存当前绑号的 Grok 官方卡会把原 CLI 登录收进授权中心再写入绑定的号；
+        // 写入失败前也可能已经收过：成功失败都重读
+        await invalidateGrokCliLoginCaches(queryClient);
       }
     },
   });
@@ -413,6 +418,11 @@ export const useSwitchProviderMutation = (appId: AppId) => {
     onSettled: async () => {
       if (appHas(appId, "piFamily")) {
         await invalidatePiProviderCaches(queryClient, appId);
+      }
+      if (appId === "grokbuild") {
+        // 切到绑号的 Grok 官方卡时，后端可能把原 CLI 登录收成了新账号；
+        // 切换失败前也可能已经收过，所以成功失败都重读授权中心和 CLI 额度
+        await invalidateGrokCliLoginCaches(queryClient);
       }
     },
   });
