@@ -125,7 +125,7 @@ export function AgyDesktopPanel({
       id="main-content"
       className="min-h-0 flex-1 overflow-y-auto scroll-stable px-6 pb-12 pt-4"
     >
-      <div className="max-w-3xl space-y-6">
+      <div className="mx-auto w-full max-w-3xl space-y-6">
         <section className="rounded-panel border border-border bg-surface p-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2.5">

@@ -30,10 +30,16 @@ describe("AgyDesktopPanel", () => {
     const onOpenUsage = vi.fn();
     const client = createTestQueryClient();
 
-    render(
+    const { container } = render(
       <QueryClientProvider client={client}>
         <AgyDesktopPanel onOpenPage={onOpenPage} onOpenUsage={onOpenUsage} />
       </QueryClientProvider>,
+    );
+
+    expect(container.querySelector("#main-content > div")).toHaveClass(
+      "mx-auto",
+      "w-full",
+      "max-w-3xl",
     );
 
     expect(await screen.findByText("v2.34.0")).toBeInTheDocument();
