@@ -468,42 +468,31 @@ fn test_buffered_citations_keep_post_flush_delta_across_stale_done_snapshot() {
 }
 
 #[test]
-fn test_buffered_citations_reject_stale_unkeyed_done_after_flush() {
-    let mut state = BufferedCitationTextState::default();
-    let unkeyed = json!({});
-    state.record_delta(&unkeyed, "Before");
-    assert_eq!(state.render_pending_parts(), vec!["Before"]);
+fn test_buffered_citations_unkeyed_done_after_flush() {
+    for (case, done_text) in [
+        (
+            "test_buffered_citations_reject_stale_unkeyed_done_after_flush",
+            "Before",
+        ),
+        (
+            "test_buffered_citations_reconcile_cumulative_unkeyed_done_after_flush",
+            "Before after",
+        ),
+        (
+            "test_buffered_citations_ignore_partial_stale_unkeyed_done_after_flush",
+            "Bef",
+        ),
+    ] {
+        let mut state = BufferedCitationTextState::default();
+        let unkeyed = json!({});
+        state.record_delta(&unkeyed, "Before");
+        assert_eq!(state.render_pending_parts(), vec!["Before"], "{case}");
 
-    state.record_delta(&unkeyed, " after");
-    state.record_done_event(&json!({"text": "Before"}));
+        state.record_delta(&unkeyed, " after");
+        state.record_done_event(&json!({"text": done_text}));
 
-    assert_eq!(state.render_pending_parts(), vec![" after"]);
-}
-
-#[test]
-fn test_buffered_citations_reconcile_cumulative_unkeyed_done_after_flush() {
-    let mut state = BufferedCitationTextState::default();
-    let unkeyed = json!({});
-    state.record_delta(&unkeyed, "Before");
-    assert_eq!(state.render_pending_parts(), vec!["Before"]);
-
-    state.record_delta(&unkeyed, " after");
-    state.record_done_event(&json!({"text": "Before after"}));
-
-    assert_eq!(state.render_pending_parts(), vec![" after"]);
-}
-
-#[test]
-fn test_buffered_citations_ignore_partial_stale_unkeyed_done_after_flush() {
-    let mut state = BufferedCitationTextState::default();
-    let unkeyed = json!({});
-    state.record_delta(&unkeyed, "Before");
-    assert_eq!(state.render_pending_parts(), vec!["Before"]);
-
-    state.record_delta(&unkeyed, " after");
-    state.record_done_event(&json!({"text": "Bef"}));
-
-    assert_eq!(state.render_pending_parts(), vec![" after"]);
+        assert_eq!(state.render_pending_parts(), vec![" after"], "{case}");
+    }
 }
 
 #[test]

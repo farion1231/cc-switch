@@ -463,10 +463,38 @@ fn test_extract_auth_from_env() {
 }
 
 #[test]
-fn test_build_url() {
-    let adapter = CodexAdapter::new();
-    let url = adapter.build_url("https://api.openai.com/v1", "/responses");
-    assert_eq!(url, "https://api.openai.com/v1/responses");
+fn test_build_url_cases() {
+    for (case, base_url, endpoint, expected) in [
+        (
+            "test_build_url",
+            "https://api.openai.com/v1",
+            "/responses",
+            "https://api.openai.com/v1/responses",
+        ),
+        (
+            "test_build_url_origin_adds_v1",
+            "https://api.openai.com",
+            "/responses",
+            "https://api.openai.com/v1/responses",
+        ),
+        (
+            "test_build_url_custom_prefix_no_v1",
+            "https://example.com/openai",
+            "/responses",
+            "https://example.com/openai/responses",
+        ),
+        // base_url 已包含 /v1，endpoint 也包含 /v1
+        (
+            "test_build_url_dedup_v1",
+            "https://www.packyapi.com/v1",
+            "/v1/responses",
+            "https://www.packyapi.com/v1/responses",
+        ),
+    ] {
+        let adapter = CodexAdapter::new();
+        let url = adapter.build_url(base_url, endpoint);
+        assert_eq!(url, expected, "{case}");
+    }
 }
 
 // ==================== anthropic upstream detection ====================
@@ -796,28 +824,6 @@ fn test_anthropic_auth_x_api_key_when_selected() {
         .map(|(name, _)| name.as_str().to_string())
         .collect();
     assert_eq!(names, vec!["x-api-key".to_string()]);
-}
-
-#[test]
-fn test_build_url_origin_adds_v1() {
-    let adapter = CodexAdapter::new();
-    let url = adapter.build_url("https://api.openai.com", "/responses");
-    assert_eq!(url, "https://api.openai.com/v1/responses");
-}
-
-#[test]
-fn test_build_url_custom_prefix_no_v1() {
-    let adapter = CodexAdapter::new();
-    let url = adapter.build_url("https://example.com/openai", "/responses");
-    assert_eq!(url, "https://example.com/openai/responses");
-}
-
-#[test]
-fn test_build_url_dedup_v1() {
-    let adapter = CodexAdapter::new();
-    // base_url 已包含 /v1，endpoint 也包含 /v1
-    let url = adapter.build_url("https://www.packyapi.com/v1", "/v1/responses");
-    assert_eq!(url, "https://www.packyapi.com/v1/responses");
 }
 
 #[test]
@@ -1486,13 +1492,38 @@ fn copilot_namespace_compat_uses_only_the_outbound_grok_model() {
 }
 
 #[test]
-fn strip_private_include_markers_keeps_other_markers() {
-    let mut body = json!({
-        "include": ["reasoning.encrypted_content", "output.encrypted_content"]
-    });
+fn strip_private_include_markers_leaves_everything_else() {
+    for (case, include, stripped, expected) in [
+        (
+            "strip_private_include_markers_keeps_other_markers",
+            json!(["reasoning.encrypted_content", "output.encrypted_content"]),
+            true,
+            json!(["reasoning.encrypted_content"]),
+        ),
+        (
+            "strip_private_include_markers_leaves_unrelated_markers_alone",
+            json!(["web_search_call.action.sources"]),
+            false,
+            json!(["web_search_call.action.sources"]),
+        ),
+        // `include` should only ever hold strings; if something else shows up, the
+        // private marker still goes but the unknown entry is left where it was.
+        (
+            "strip_private_include_markers_keeps_non_string_entries",
+            json!(["output.encrypted_content", 42]),
+            true,
+            json!([42]),
+        ),
+    ] {
+        let mut body = json!({ "include": include });
 
-    assert!(strip_codex_private_include_markers(&mut body));
-    assert_eq!(body["include"], json!(["reasoning.encrypted_content"]));
+        assert_eq!(
+            strip_codex_private_include_markers(&mut body),
+            stripped,
+            "{case}"
+        );
+        assert_eq!(body["include"], expected, "{case}");
+    }
 }
 
 #[test]
@@ -1501,14 +1532,6 @@ fn strip_private_include_markers_removes_empty_include() {
 
     assert!(strip_codex_private_include_markers(&mut body));
     assert!(body.get("include").is_none());
-}
-
-#[test]
-fn strip_private_include_markers_leaves_unrelated_markers_alone() {
-    let mut body = json!({ "include": ["web_search_call.action.sources"] });
-
-    assert!(!strip_codex_private_include_markers(&mut body));
-    assert_eq!(body["include"], json!(["web_search_call.action.sources"]));
 }
 
 #[test]
@@ -1525,16 +1548,6 @@ fn strip_private_include_markers_ignores_shapes_it_does_not_own() {
     // Non-object body.
     let mut body = json!(["output.encrypted_content"]);
     assert!(!strip_codex_private_include_markers(&mut body));
-}
-
-#[test]
-fn strip_private_include_markers_keeps_non_string_entries() {
-    // `include` should only ever hold strings; if something else shows up, the
-    // private marker still goes but the unknown entry is left where it was.
-    let mut body = json!({ "include": ["output.encrypted_content", 42] });
-
-    assert!(strip_codex_private_include_markers(&mut body));
-    assert_eq!(body["include"], json!([42]));
 }
 
 #[test]

@@ -3299,6 +3299,23 @@ fn desktop_cli_versions_come_from_the_bundled_package_and_version_dirs() {
 }
 
 #[test]
+fn desktop_cli_is_the_first_existing_bundled_candidate() {
+    let temp_home = tempfile::tempdir().expect("create temp home");
+    let applications = temp_home.path().join("Applications");
+    let legacy = desktop_cli(&applications, "Codex.app", CODEX_DESKTOP_CLI_IN_BUNDLE[1]);
+    create_cli_candidate(&legacy);
+
+    let mut candidates = Vec::new();
+    push_desktop_codex_cli_candidates(&mut candidates, &mut HashSet::new(), temp_home.path());
+    // 本机 /Applications 里真装着的桌面版会排在临时 home 前面，只比对取的是不是第一个。
+    assert!(candidates.contains(&legacy));
+    assert_eq!(
+        codex_desktop_cli_in(temp_home.path()),
+        candidates.first().cloned()
+    );
+}
+
+#[test]
 #[serial]
 fn codex_cli_candidates_try_the_desktop_app_cli_after_standalone_installs() {
     let test_home = TestHome::new();

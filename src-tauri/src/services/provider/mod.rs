@@ -2832,6 +2832,118 @@ requires_openai_auth = true
 
     #[test]
     #[serial]
+    fn switching_an_omo_provider_makes_it_the_current_one_of_its_variant() {
+        with_test_home(|state, _| {
+            for id in ["omo-a", "omo-b"] {
+                ProviderService::add(
+                    state,
+                    AppType::OpenCode,
+                    opencode_omo_provider(id, "omo"),
+                    false,
+                )
+                .unwrap();
+            }
+            let is_current = |id: &str| {
+                state
+                    .db
+                    .is_omo_provider_current(&AppType::OpenCode, id, "omo")
+                    .unwrap()
+            };
+
+            ProviderService::switch(state, AppType::OpenCode, "omo-a").unwrap();
+            assert!(is_current("omo-a"));
+
+            ProviderService::switch(state, AppType::OpenCode, "omo-b").unwrap();
+            assert!(is_current("omo-b"));
+            assert!(!is_current("omo-a"));
+        });
+    }
+
+    /// Claude Desktop 直连模式写不进要经本地路由的卡（模型映射 / 托管账号）：切换被拒绝，
+    /// 当前供应商不变。
+    #[test]
+    #[serial]
+    fn desktop_direct_switch_refuses_a_card_that_needs_routing() {
+        with_test_home(|state, _| {
+            let direct = Provider::with_id(
+                "direct".into(),
+                "Direct".into(),
+                json!({"env": {
+                    "ANTHROPIC_AUTH_TOKEN": "token-direct",
+                    "ANTHROPIC_BASE_URL": "https://direct.example"
+                }}),
+                None,
+            );
+            let mut mapping = Provider::with_id(
+                "mapping".into(),
+                "Mapping".into(),
+                json!({"env": {
+                    "ANTHROPIC_AUTH_TOKEN": "token-mapping",
+                    "ANTHROPIC_BASE_URL": "https://mapping.example"
+                }}),
+                None,
+            );
+            mapping.meta = Some(ProviderMeta {
+                claude_desktop_mode: Some(ClaudeDesktopMode::Proxy),
+                ..Default::default()
+            });
+            for row in [&direct, &mapping] {
+                state
+                    .db
+                    .save_provider(&AppType::ClaudeDesktop, row)
+                    .unwrap();
+            }
+            state
+                .db
+                .set_current_provider(&AppType::ClaudeDesktop, "direct")
+                .unwrap();
+
+            let err = ProviderService::switch(state, AppType::ClaudeDesktop, "mapping")
+                .expect_err("a card that needs routing cannot be written directly");
+
+            assert!(
+                matches!(
+                    err,
+                    AppError::Localized {
+                        key: "switch.desktop_needs_routing",
+                        ..
+                    }
+                ),
+                "{err:?}"
+            );
+            assert_eq!(
+                state
+                    .db
+                    .get_current_provider(&AppType::ClaudeDesktop)
+                    .unwrap()
+                    .as_deref(),
+                Some("direct")
+            );
+        });
+    }
+
+    /// Hermes 是累加式应用：切换不覆盖 live，而是把顶层 `model:` 指向这家和它声明的第一个
+    /// 模型，否则 Hermes 仍按原来的 `model.provider` 发请求。
+    #[test]
+    #[serial]
+    fn switching_hermes_points_the_model_section_at_the_new_provider() {
+        with_test_home(|state, _| {
+            let mut provider = hermes_provider("hermes-b");
+            provider.settings_config["models"] = json!([{ "id": "model-b" }]);
+            ProviderService::add(state, AppType::Hermes, provider, true).unwrap();
+
+            ProviderService::switch(state, AppType::Hermes, "hermes-b").unwrap();
+
+            let model = crate::hermes_config::get_model_config()
+                .unwrap()
+                .expect("model section written");
+            assert_eq!(model.provider.as_deref(), Some("hermes-b"));
+            assert_eq!(model.default.as_deref(), Some("model-b"));
+        });
+    }
+
+    #[test]
+    #[serial]
     fn sync_current_provider_for_app_preserves_legacy_live_opencode_provider() {
         with_test_home(|state, _| {
             let provider = opencode_provider("legacy-opencode");
@@ -7576,13 +7688,8 @@ impl ProviderService {
 
         let mut result = SwitchResult::default();
 
-        // Additive mode apps skip setting is_current (no such concept).
-        if !app_type.spec().additive {
-            crate::settings::set_current_provider(&app_type, Some(id))?;
-            state.db.set_current_provider(&app_type, id)?;
-        }
-
-        // 写 live（Claude Desktop、累加式应用；切换式应用在上面各自的分支里写完了）。
+        // 走到这里的只有累加式应用（切换式应用都在上面各自的分支里返回了），它们没有
+        // “当前供应商”指针，只写 live。
         write_live_for_state(state, &app_type, provider)?;
 
         // Hermes is additive, so "switching" doesn't overwrite a live config file
