@@ -61,14 +61,41 @@ pub(super) async fn get_single_tool_version_impl(
         "unexpected tool name in get_single_tool_version_impl: {tool}"
     );
 
-    // 判断该工具的运行环境 & WSL distro（如有）
-    let (env_type, wsl_distro) = tool_env_type_and_wsl_distro(tool);
-
     // 使用全局 HTTP 客户端（已包含代理配置）
     let client = crate::proxy::http_client::get();
 
-    // 1. 获取本地版本
-    let probe = probe_local_version(tool, wsl_distro.as_deref(), wsl_shell, wsl_shell_flag);
+    // 1. 本地版本（`where` + `--version` 子进程，阻塞）放进 blocking 线程池，
+    //    与 latest 的网络请求并发：总耗时取两者较慢者，而不是相加；也不再占住
+    //    async worker 线程，拖慢同时进行的其它工具的探测与 IPC。
+    let local_probe = {
+        let tool_owned = tool.to_string();
+        let wsl_shell = wsl_shell.map(str::to_string);
+        let wsl_shell_flag = wsl_shell_flag.map(str::to_string);
+        tokio::task::spawn_blocking(move || {
+            // 判断该工具的运行环境 & WSL distro（如有）
+            let (env_type, wsl_distro) = tool_env_type_and_wsl_distro(&tool_owned);
+            let probe = probe_local_version(
+                &tool_owned,
+                wsl_distro.as_deref(),
+                wsl_shell.as_deref(),
+                wsl_shell_flag.as_deref(),
+            );
+            (env_type, wsl_distro, probe)
+        })
+    };
+    let (local_probe, prefetched) = tokio::join!(local_probe, prefetch_latest(&client, tool));
+    let (env_type, wsl_distro, probe) = match local_probe {
+        Ok(result) => result,
+        Err(e) => {
+            let (env_type, wsl_distro) = tool_env_type_and_wsl_distro(tool);
+            (
+                env_type,
+                wsl_distro,
+                ShellProbe::NotFound(format!("version probe task failed: {e}")),
+            )
+        }
+    };
+
     let (local_version, local_error, installed_but_broken) = match probe {
         ShellProbe::Found(v) => (Some(v), None, false),
         ShellProbe::FoundButFailed(e) => (None, Some(e), true),
@@ -78,21 +105,10 @@ pub(super) async fn get_single_tool_version_impl(
         ShellProbe::NotFound(e) => (None, Some(e), false),
     };
 
-    // 2. 获取远程最新版本（npm 工具在本地领先 latest 时会按预发布通道补查，见
-    //    fetch_npm_latest_for_tool / npm_prerelease_tags）
+    // 2. 远程最新版本：网络部分已与本地探测并发拉回，这里只按本地版本做挑选 / 兜底
+    //    （npm 工具在本地领先 latest 时按预发布通道补选，见 ToolSpec::npm_prerelease_tags）
     let local = local_version.as_deref();
-    let latest_version = match (tool, tool_spec(tool).npm_package) {
-        ("hermes", _) => fetch_hermes_latest_version(&client, local).await,
-        ("agy", _) => fetch_agy_latest_version(&client).await,
-        ("opencode", Some(package)) => {
-            match fetch_npm_latest_for_tool(&client, package, tool, local).await {
-                Some(version) => Some(version),
-                None => fetch_github_latest_version(&client, "anomalyco/opencode").await,
-            }
-        }
-        (_, Some(package)) => fetch_npm_latest_for_tool(&client, package, tool, local).await,
-        (_, None) => None,
-    };
+    let latest_version = resolve_latest(&client, tool, prefetched, local).await;
 
     // 3. 有新版本时，看新版本要求的 Node 与这处安装用的对不对得上
     let update_blocked_by_node = match (local, latest_version.as_deref()) {
@@ -260,20 +276,60 @@ pub(super) async fn fetch_npm_dist_tags(
         .ok()
 }
 
-/// 查询某 npm 工具要展示的"最新版本":取 `latest`,并在本地版本领先时按工具的
-/// 预发布通道(见 `npm_prerelease_tags`)补查 —— 复用同一次 registry 响应,无额外请求。
-async fn fetch_npm_latest_for_tool(
+/// latest 查询中不依赖本地版本的网络部分，可与本地 `--version` 探测并发进行。
+enum PrefetchedLatest {
+    /// npm dist-tags：选哪个 tag 要看本地版本，等本地探测结束后由 `resolve_latest` 定。
+    Npm(Option<serde_json::Map<String, serde_json::Value>>),
+    /// Hermes 的 GitHub Release；取不到时再按本地版本走 PyPI 兜底。
+    Hermes(Option<String>),
+    Resolved(Option<String>),
+}
+
+async fn prefetch_latest(client: &reqwest::Client, tool: &str) -> PrefetchedLatest {
+    match (tool, tool_spec(tool).npm_package) {
+        ("hermes", _) => PrefetchedLatest::Hermes(
+            fetch_github_latest_version(client, "NousResearch/hermes-agent").await,
+        ),
+        ("agy", _) => PrefetchedLatest::Resolved(fetch_agy_latest_version(client).await),
+        (_, Some(package)) => PrefetchedLatest::Npm(fetch_npm_dist_tags(client, package).await),
+        (_, None) => PrefetchedLatest::Resolved(None),
+    }
+}
+
+/// 结合本地版本得出要展示的"最新版本"。
+///
+/// npm 工具取 `latest`,本地版本领先时按工具的预发布通道(见 `ToolSpec::npm_prerelease_tags`)
+/// 补选 —— 复用同一次 registry 响应,无额外请求;OpenCode 取不到时退到 GitHub。
+/// Hermes 以 GitHub Releases 为主、PyPI 兜底:
+/// cc-switch 安装/升级 Hermes 走的是官方 install.sh（`git clone` main 分支）与
+/// `hermes update`（`git pull`），整条链路与 PyPI 无关；而 PyPI 的 `hermes-agent`
+/// 自 0.19.0（2026-07-20）起停更，上游只在 GitHub Releases 发版
+/// （#6475 / #6618 / #7033：「最新版本」长期停在 0.19.0、比当前还旧、升级按钮不出现）。
+/// 仅当 GitHub 不可达或被限流时才退到 PyPI，且该值已被本地超过时不展示，宁可显示未知。
+async fn resolve_latest(
     client: &reqwest::Client,
-    package: &str,
     tool: &str,
+    prefetched: PrefetchedLatest,
     local_version: Option<&str>,
 ) -> Option<String> {
-    let dist_tags = fetch_npm_dist_tags(client, package).await?;
-    pick_latest_version(
-        &dist_tags,
-        tool_spec(tool).npm_prerelease_tags,
-        local_version,
-    )
+    match prefetched {
+        PrefetchedLatest::Npm(dist_tags) => {
+            let picked = dist_tags.and_then(|tags| {
+                pick_latest_version(&tags, tool_spec(tool).npm_prerelease_tags, local_version)
+            });
+            if picked.is_none() && tool == "opencode" {
+                fetch_github_latest_version(client, "anomalyco/opencode").await
+            } else {
+                picked
+            }
+        }
+        PrefetchedLatest::Hermes(Some(version)) => Some(version),
+        PrefetchedLatest::Hermes(None) => drop_latest_behind_local(
+            fetch_pypi_latest_version(client, "hermes-agent").await,
+            local_version,
+        ),
+        PrefetchedLatest::Resolved(version) => version,
+    }
 }
 
 /// 版本探测请求的请求级超时。全局客户端是给代理转发用的（总超时 600s / 连接 30s），
@@ -363,24 +419,6 @@ fn drop_latest_behind_local(latest: Option<String>, local_version: Option<&str>)
         .and_then(|local| compare_semver(local, &latest))
         .is_some_and(|ord| ord == std::cmp::Ordering::Greater);
     (!local_leads).then_some(latest)
-}
-
-/// Hermes 的「最新版本」：GitHub Releases 为主，PyPI 兜底。
-///
-/// cc-switch 安装/升级 Hermes 走的是官方 install.sh（`git clone` main 分支）与
-/// `hermes update`（`git pull`），整条链路与 PyPI 无关；而 PyPI 的 `hermes-agent`
-/// 自 0.19.0（2026-07-20）起停更，上游只在 GitHub Releases 发版
-/// （#6475 / #6618 / #7033：「最新版本」长期停在 0.19.0、比当前还旧、升级按钮不出现）。
-/// 仅当 GitHub 不可达或被限流时才退到 PyPI，且该值已被本地超过时不展示，宁可显示未知。
-async fn fetch_hermes_latest_version(
-    client: &reqwest::Client,
-    local_version: Option<&str>,
-) -> Option<String> {
-    if let Some(version) = fetch_github_latest_version(client, "NousResearch/hermes-agent").await {
-        return Some(version);
-    }
-    let pypi = fetch_pypi_latest_version(client, "hermes-agent").await;
-    drop_latest_behind_local(pypi, local_version)
 }
 
 /// Helper function to fetch latest version from PyPI
