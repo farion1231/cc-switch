@@ -1288,4 +1288,36 @@ describe("PluginsPage", () => {
     );
     expect(await enableSwitch()).toHaveAttribute("data-state", "unchecked");
   });
+
+  it("guides the user to close running Antigravity sessions when an update fails because the plugin is in use", async () => {
+    m.listInstalled.mockResolvedValue([
+      plugin({
+        id: "gmail",
+        name: "gmail",
+        displayName: "Gmail",
+        marketplace: "antigravity-plugins-official",
+        enabled: true,
+        scope: null,
+      }),
+    ]);
+    m.listCatalog.mockResolvedValue([]);
+    m.update.mockRejectedValue("PLUGIN_IN_USE");
+    renderPage({ apps: ["agy"] });
+
+    expect(await screen.findByText("Gmail")).toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("button", { name: "pluginsPage.moreActions" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: "pluginsPage.update" }),
+    );
+    await waitFor(() =>
+      expect(m.toastError).toHaveBeenCalledWith(
+        "pluginsPage.toast.updateFailed",
+        expect.objectContaining({
+          description: "pluginsPage.toast.pluginInUse",
+        }),
+      ),
+    );
+  });
 });

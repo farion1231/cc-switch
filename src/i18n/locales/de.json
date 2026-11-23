@@ -5124,6 +5124,7 @@
       "installFailed": "{{name}} konnte nicht installiert werden",
       "installNeedsTerminal": "Dieses Plugin führt bei der Installation einen vom Marketplace deklarierten Befehl auf Ihrem Rechner aus, und CC Switch bestätigt das nicht für Sie. Führen Sie {{command}} in einem Terminal aus, bestätigen Sie dort und aktualisieren Sie dann hier.",
       "authRequired": "{{app}} erfordert zuerst eine Anmeldung. Führen Sie {{command}} in einem Terminal aus und versuchen Sie es dann erneut.",
+      "pluginInUse": "Dieses Plugin wird derzeit von einem anderen {{app}}- / {{cli}}-Prozess verwendet (z. B. einer laufenden Sitzung, dem Hub oder einem Hintergrunddienst). Schließen Sie ihn und versuchen Sie es erneut.",
       "uninstalled": "{{name}} deinstalliert",
       "uninstallFailed": "{{name}} konnte nicht deinstalliert werden",
       "enabled": "{{name}} aktiviert",

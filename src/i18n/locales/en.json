@@ -5124,6 +5124,7 @@
       "installFailed": "Couldn't install {{name}}",
       "installNeedsTerminal": "This plugin runs a marketplace-declared command on your machine during install, and CC Switch won't accept it for you. Run {{command}} in a terminal, confirm there, then come back and refresh.",
       "authRequired": "{{app}} needs you to sign in first. Run {{command}} in a terminal, then come back and try again.",
+      "pluginInUse": "This plugin is currently in use by another {{app}} process (such as an active {{cli}} session, Hub, or background daemon). Close it and try again.",
       "uninstalled": "Uninstalled {{name}}",
       "uninstallFailed": "Couldn't uninstall {{name}}",
       "enabled": "Enabled {{name}}",
