@@ -5,7 +5,7 @@ import { codexProviderPresets } from "./codexProviderPresets";
 import {
   extractCodexBaseUrl,
   extractCodexModelName,
-} from "@/utils/providerConfigUtils";
+} from "@/utils/codexConfigUtils";
 import { TRAE_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
 
 /** One `[model_providers.<key>]` table in `~/.trae/traecli.toml`. */

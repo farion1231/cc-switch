@@ -50,7 +50,7 @@ import { HelpTip } from "@/components/ui/help-tip";
 import { Notice } from "@/components/ui/notice";
 import { cn } from "@/lib/utils";
 import { isTextEditableTarget } from "@/utils/domUtils";
-import { extractProviderBaseUrl } from "@/utils/providerConfigUtils";
+import { extractProviderBaseUrl } from "@/utils/codexConfigUtils";
 import { usePiCurrentState } from "@/lib/query/pi";
 import { isOfficialAccount } from "@/utils/providerCapabilities";
 import { isHermesReadOnlyProvider } from "@/config/hermesProviderPresets";

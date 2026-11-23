@@ -2033,6 +2033,46 @@ pub fn anthropic_to_responses(
         }
         result["include"] = json!(includes);
 
+        // GPT-6.2 Sol / Astra 在 ChatGPT 反代后端只缓存 `input` 前缀，不缓存顶层
+        // `instructions`：同样的系统提示放在 instructions 里时 cached_tokens 恒为
+        // 0，放进首条 developer 消息后第二轮即可命中（OpenCode PR #64542 的 A/B：
+        // 9,672 tok 全价 → 9,663 tok 中 9,472 cached；GPT-6.1 Sol 两种形态都能
+        // 命中，Codex #62312 / #62109 跟踪该差异）。因此对这两个模型把已组装完
+        // 成（含上方搜索次数上限）的 instructions 移入 input 首条 developer 消息；
+        // 下方的必填字段兜底会把 instructions 重新填为 ""，沿用现有请求形态。
+        // 按转换后请求的精确模型 ID 判断：本地路由在格式转换前已完成模型映射与
+        // `[1m]` 后缀剥离，无需按 Claude 侧别名或 `gpt-6.2*` 前缀猜测。
+        let use_developer_instructions = matches!(
+            result.get("model").and_then(Value::as_str),
+            Some("gpt-6.2-sol" | "gpt-6.2-astra")
+        );
+
+        if use_developer_instructions {
+            if let Some(instructions) = result
+                .get("instructions")
+                .and_then(Value::as_str)
+                .filter(|text| !text.is_empty())
+                .map(str::to_owned)
+            {
+                let developer_message = json!({
+                    "type": "message",
+                    "role": "developer",
+                    "content": instructions,
+                });
+
+                if let Some(input) = result.get_mut("input").and_then(Value::as_array_mut) {
+                    input.insert(0, developer_message);
+                } else {
+                    result["input"] = json!([developer_message]);
+                }
+
+                // The existing OAuth defaults below reinsert instructions as "".
+                if let Some(obj) = result.as_object_mut() {
+                    obj.remove("instructions");
+                }
+            }
+        }
+
         if let Some(obj) = result.as_object_mut() {
             // —— 删除 ChatGPT 反代不接受的字段 ——
             obj.remove("max_output_tokens");

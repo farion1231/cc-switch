@@ -8,7 +8,7 @@ import {
   TRAE_RESERVED_PROVIDER_KEYS,
 } from "./traeProviderPresets";
 import { TRAE_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
-import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
+import { extractCodexBaseUrl } from "@/utils/codexConfigUtils";
 
 describe("traeProviderPresets", () => {
   it("starts with the TRAE account login", () => {

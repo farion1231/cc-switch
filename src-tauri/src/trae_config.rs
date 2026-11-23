@@ -505,10 +505,6 @@ pub(crate) fn set_provider(id: &str, config: Value) -> Result<(), AppError> {
     save_and_commit(id, Some(config), false, || Ok(()))
 }
 
-pub(crate) fn remove_provider(id: &str) -> Result<(), AppError> {
-    save_and_commit(id, None, false, || Ok(()))
-}
-
 pub(crate) fn current_provider() -> Result<String, AppError> {
     Ok(current_provider_in(&read(&config_path())?))
 }

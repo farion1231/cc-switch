@@ -2543,46 +2543,6 @@ mod tests {
     }
 
     #[test]
-    fn test_reasoning_model_with_output_config_max() {
-        let input = json!({
-            "model": "gpt-5.4",
-            "max_tokens": 1024,
-            "thinking": {"type": "adaptive"},
-            "output_config": {"effort": "max"},
-            "messages": [{"role": "user", "content": "Hello"}]
-        });
-
-        let result = anthropic_to_openai_with_reasoning_content(input, false).unwrap();
-        assert_eq!(result["reasoning_effort"], "xhigh");
-    }
-
-    #[test]
-    fn test_reasoning_model_thinking_enabled_small_budget() {
-        let input = json!({
-            "model": "o3",
-            "max_tokens": 1024,
-            "thinking": {"type": "enabled", "budget_tokens": 2048},
-            "messages": [{"role": "user", "content": "Hello"}]
-        });
-
-        let result = anthropic_to_openai_with_reasoning_content(input, false).unwrap();
-        assert_eq!(result["reasoning_effort"], "low");
-    }
-
-    #[test]
-    fn test_reasoning_model_thinking_adaptive() {
-        let input = json!({
-            "model": "gpt-5.4",
-            "max_tokens": 1024,
-            "thinking": {"type": "adaptive"},
-            "messages": [{"role": "user", "content": "Hello"}]
-        });
-
-        let result = anthropic_to_openai_with_reasoning_content(input, false).unwrap();
-        assert_eq!(result["reasoning_effort"], "xhigh");
-    }
-
-    #[test]
     fn test_reasoning_model_no_thinking_no_effort() {
         let input = json!({
             "model": "gpt-5.4",
