@@ -335,6 +335,77 @@ fn opencode_jsonc_provider_and_mcp_workflows_preserve_comments() {
 
 #[test]
 #[serial]
+fn opencode_v2_mcp_import_sync_and_remove_preserve_native_settings() {
+    let fixture = Fixture::new();
+    let path = fixture.config_path.with_extension("jsonc");
+    let source = r#"{
+  // Keep the user's layout and settings.
+  "mcp": {
+    "shared": {"type": "local", "command": ["legacy"]},
+    "legacy": {"type": "local", "command": ["keep"]},
+    "servers": {
+      "shared": {"type": "local", "command": ["native"], "cwd": "/workspace", "environment": {"OLD": "value"}},
+      "paused": {"type": "local", "command": ["paused"], "disabled": true}
+    }
+  }
+}"#;
+    fs::write(&path, source).unwrap();
+    let mut config = crate::app_config::MultiAppConfig::default();
+    assert_eq!(crate::mcp::import_from_opencode(&mut config).unwrap(), 2);
+    let imported = config.mcp.servers.unwrap();
+    assert_eq!(imported["shared"].server["command"], "native");
+    assert_eq!(imported["legacy"].server["command"], "keep");
+    assert_eq!(fs::read_to_string(&path).unwrap(), source);
+
+    crate::mcp::sync_single_server_to_opencode("shared", &json!({"command": "updated"})).unwrap();
+    crate::mcp::sync_single_server_to_opencode(
+        "new",
+        &json!({"type": "http", "url": "https://example.com/mcp"}),
+    )
+    .unwrap();
+    let live = opencode_config::read_opencode_config().unwrap();
+    assert_eq!(
+        live["mcp"]["servers"]["shared"],
+        json!({"type": "local", "command": ["updated"], "cwd": "/workspace"})
+    );
+    assert_eq!(
+        live["mcp"]["servers"]["new"],
+        json!({"type": "remote", "url": "https://example.com/mcp"})
+    );
+    assert_eq!(live["mcp"]["servers"]["paused"]["disabled"], true);
+    assert_eq!(live["mcp"]["legacy"]["command"], json!(["keep"]));
+
+    crate::mcp::remove_server_from_opencode("shared").unwrap();
+    assert!(!opencode_config::get_mcp_servers()
+        .unwrap()
+        .contains_key("shared"));
+    assert!(fs::read_to_string(&path)
+        .unwrap()
+        .contains("// Keep the user's layout and settings."));
+}
+
+#[test]
+#[serial]
+fn opencode_v2_mcp_sync_detects_cli_config_with_legacy_mcp_entries() {
+    let fixture = Fixture::new();
+    fs::write(fixture.config_path.with_file_name("cli.json"), "{}").unwrap();
+    fs::write(
+        &fixture.config_path,
+        r#"{"mcp":{"legacy":{"type":"local","command":["keep"]}}}"#,
+    )
+    .unwrap();
+
+    crate::mcp::sync_single_server_to_opencode("new", &json!({"command": "echo"})).unwrap();
+    let live = opencode_config::read_opencode_config().unwrap();
+    assert_eq!(
+        live["mcp"]["servers"]["new"],
+        json!({"type": "local", "command": ["echo"]})
+    );
+    assert_eq!(live["mcp"]["legacy"]["command"], json!(["keep"]));
+}
+
+#[test]
+#[serial]
 fn opencode_jsonc_omo_registration_removal_and_failure_rollback() {
     use crate::services::omo::{OmoService, STANDARD};
     let fixture = Fixture::new();

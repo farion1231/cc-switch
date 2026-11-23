@@ -219,6 +219,9 @@ pub fn import_from_opencode(config: &mut MultiAppConfig) -> Result<usize, AppErr
     let mut errors = Vec::new();
 
     for (id, spec) in mcp_map {
+        if spec.get("disabled").and_then(Value::as_bool) == Some(true) {
+            continue;
+        }
         // Convert from OpenCode format to unified format
         let unified_spec = match convert_from_opencode_format(&spec) {
             Ok(s) => s,
