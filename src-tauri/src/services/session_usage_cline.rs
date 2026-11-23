@@ -9,8 +9,7 @@ use crate::error::AppError;
 use crate::proxy::usage::{calculator::CostCalculator, parser::TokenUsage};
 use crate::services::{
     session_usage::{
-        estimated_latency_ms, load_sync_cursors, metadata_modified_nanos,
-        update_sync_state_on_conn, SessionSyncResult,
+        estimated_latency_ms, metadata_modified_nanos, update_sync_state_on_conn, SessionSyncResult,
     },
     sql_helpers::INPUT_TOKEN_SEMANTICS_FRESH,
     usage_stats::find_model_pricing,
@@ -20,13 +19,28 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::{fs, path::Path};
 
-pub fn sync_cline_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
-    sync_sessions(db, &cline_session::sessions())
+pub(crate) fn sync_cline_usage(
+    db: &Database,
+    cursors: &crate::services::session_usage::SyncCursors,
+) -> Result<SessionSyncResult, AppError> {
+    sync_sessions_with_cursors(db, &cline_session::sessions(), cursors)
 }
 
+#[cfg(test)]
 fn sync_sessions(db: &Database, sessions: &[ClineSession]) -> Result<SessionSyncResult, AppError> {
+    sync_sessions_with_cursors(
+        db,
+        sessions,
+        &crate::services::session_usage::load_sync_cursors(db)?,
+    )
+}
+
+fn sync_sessions_with_cursors(
+    db: &Database,
+    sessions: &[ClineSession],
+    cursors: &crate::services::session_usage::SyncCursors,
+) -> Result<SessionSyncResult, AppError> {
     let mut result = SessionSyncResult::default();
-    let cursors = load_sync_cursors(db)?;
     // Subagent sessions are hidden from the list but their requests are billed too.
     for session in sessions {
         let path = &session.messages_path;
@@ -431,6 +445,7 @@ mod tests {
         .contains("cline history delete"));
 
         let db = Database::memory().unwrap();
-        assert_eq!(sync_cline_usage(&db).unwrap().imported, 3);
+        let cursors = crate::services::session_usage::load_sync_cursors(&db).unwrap();
+        assert_eq!(sync_cline_usage(&db, &cursors).unwrap().imported, 3);
     }
 }

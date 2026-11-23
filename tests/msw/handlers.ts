@@ -197,6 +197,9 @@ export const handlers = [
     });
   }),
 
+  http.post(`${TAURI_ENDPOINT}/cancel_session_content_search`, () =>
+    success(null),
+  ),
   http.post(`${TAURI_ENDPOINT}/clear_session_index`, () => success(true)),
 
   http.post(`${TAURI_ENDPOINT}/get_session_messages`, async ({ request }) => {

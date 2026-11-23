@@ -66,4 +66,39 @@ describe("provider switch result transport", () => {
       client.clear();
     },
   );
+
+  // 切到绑号的 Grok 官方卡会把原 CLI 登录收进授权中心再换号；切换失败前也可能已经收过
+  it.each([
+    ["grokbuild", true, false],
+    ["grokbuild", true, true],
+    ["claude", false, false],
+  ] as const)(
+    "invalidates the xAI account list and Grok CLI quota after a %s switch: %s (failed=%s)",
+    async (appId, invalidated, fails) => {
+      server.use(
+        http.post("http://tauri.local/switch_provider", () =>
+          fails
+            ? HttpResponse.json("切换失败", { status: 500 })
+            : HttpResponse.json({ warnings: [] }),
+        ),
+      );
+      const client = createTestQueryClient();
+      const statusKey = ["managed-auth-status", "xai_oauth"];
+      const quotaKey = ["subscription", "quota", "grokbuild"];
+      client.setQueryData(statusKey, { accounts: [] });
+      client.setQueryData(quotaKey, { success: true, tiers: [] });
+      const wrapper = ({ children }: { children: ReactNode }) => (
+        <QueryClientProvider client={client}>{children}</QueryClientProvider>
+      );
+      const { result } = renderHook(() => useSwitchProviderMutation(appId), {
+        wrapper,
+      });
+      await act(async () => {
+        await result.current.mutateAsync("provider-b").catch(() => undefined);
+      });
+      expect(client.getQueryState(statusKey)?.isInvalidated).toBe(invalidated);
+      expect(client.getQueryState(quotaKey)?.isInvalidated).toBe(invalidated);
+      client.clear();
+    },
+  );
 });

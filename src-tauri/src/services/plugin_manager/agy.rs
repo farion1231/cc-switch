@@ -25,7 +25,7 @@ use serde_json::Value;
 use super::{
     failure_detail, is_name_segment, resolve_cli_path, run_cli, run_json, str_field,
     validate_plugin_id, wsl_root_for_app, CliOutput, PluginActionOutcome, PluginApp, PluginEntry,
-    LIST_TIMEOUT, NETWORK_TIMEOUT, PLUGIN_IN_USE, TOGGLE_TIMEOUT,
+    LIST_TIMEOUT, NETWORK_TIMEOUT, PLUGIN_IN_USE, TOGGLE_TIMEOUT, UPDATE_NEEDS_REINSTALL,
 };
 
 const OFFICIAL_MARKETPLACE: &str = "antigravity-plugins-official";
@@ -344,7 +344,7 @@ pub(super) fn uninstall_plugin(id: &str) -> Result<PluginActionOutcome, String> 
     })
 }
 
-/// 市场来源的插件用 `<name>@<marketplace>` 重装即更新；本地 / 导入或数字目录没有对应的市场参数。
+/// 市场来源的插件用 `<name>@<marketplace>` 重装即更新；本地 / 导入插件和旧版数字目录不走这条路。
 fn update_target(entry: &PluginEntry) -> Option<String> {
     if !is_name_segment(&entry.id)
         || entry.marketplace.is_empty()
@@ -383,6 +383,12 @@ fn is_up_to_date(local: Option<&str>, remote: Option<&str>) -> bool {
     matches!((local, remote), (Some(a), Some(b)) if a == b)
 }
 
+/// 旧版 Antigravity App 从市场装进数字目录的插件：重装时 `agy` 按清单名建目录，
+/// 不一定原地覆盖这个数字目录，可能另装一份，所以不代为更新，让用户卸载后重装。
+fn needs_reinstall_to_update(entry: &PluginEntry) -> bool {
+    is_legacy_numeric_dir(&entry.id) && !entry.marketplace.is_empty()
+}
+
 fn version_changed(before: Option<&str>, after: Option<&str>) -> bool {
     match (before, after) {
         (Some(a), Some(b)) => a != b,
@@ -401,6 +407,9 @@ fn update_plugin_with(
         .into_iter()
         .find(|entry| entry.id == id)
         .ok_or_else(|| format!("Plugin not found: {id}"))?;
+    if needs_reinstall_to_update(&entry) {
+        return Err(UPDATE_NEEDS_REINSTALL.to_string());
+    }
     let Some(target) = update_target(&entry) else {
         // 本地 / 导入插件没有远端市场来源，无需更新。
         return Ok(PluginActionOutcome {
@@ -636,6 +645,15 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(update_target(&legacy), None);
+        assert!(needs_reinstall_to_update(&legacy));
+        assert!(!needs_reinstall_to_update(&mkt));
+        assert!(!needs_reinstall_to_update(&local));
+        let legacy_local = PluginEntry {
+            id: "-42".into(),
+            marketplace: String::new(),
+            ..Default::default()
+        };
+        assert!(!needs_reinstall_to_update(&legacy_local));
 
         assert!(!version_changed(Some("0.0.8"), Some("0.0.8")));
         assert!(version_changed(Some("0.0.7"), Some("0.0.8")));

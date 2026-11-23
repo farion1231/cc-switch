@@ -2071,6 +2071,16 @@ impl RequestForwarder {
                     provider.id
                 );
             }
+            if !codex_official_auth_passthrough
+                && super::providers::transform_codex_responses_reorder::normalize_tool_output_grouping(
+                    &mut request_body,
+                )
+            {
+                log::debug!(
+                    "[Codex] Regrouped tool outputs with their call batch for a native Responses upstream (provider={})",
+                    provider.id
+                );
+            }
 
             // 原生 Responses 直连：历史里的 `function_call.arguments` 是模型产出的原始字符串。
             // 模型偶尔会在一个参数对象里重复写同一个键（实测 `_web_run` 的 `time` 两次），

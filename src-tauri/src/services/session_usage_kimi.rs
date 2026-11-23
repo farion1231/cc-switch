@@ -5,8 +5,7 @@ use crate::kimi_session::{timestamp_ms, RequestIndex, RequestInfo};
 use crate::proxy::usage::parser::TokenUsage;
 use crate::services::{
     session_usage::{
-        cost_columns, load_sync_cursors, metadata_modified_nanos, update_sync_state_on_conn,
-        SessionSyncResult,
+        cost_columns, metadata_modified_nanos, update_sync_state_on_conn, SessionSyncResult,
     },
     sql_helpers::INPUT_TOKEN_SEMANTICS_FRESH,
     usage_stats::find_model_pricing,
@@ -21,13 +20,32 @@ use std::{
     path::Path,
 };
 
-pub fn sync_kimi_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
-    sync_sessions(db, &crate::kimi_config::data_dir().join("sessions"))
+pub(crate) fn sync_kimi_usage(
+    db: &Database,
+    cursors: &crate::services::session_usage::SyncCursors,
+) -> Result<SessionSyncResult, AppError> {
+    sync_sessions_with_cursors(
+        db,
+        &crate::kimi_config::data_dir().join("sessions"),
+        cursors,
+    )
 }
 
+#[cfg(test)]
 fn sync_sessions(db: &Database, root: &Path) -> Result<SessionSyncResult, AppError> {
+    sync_sessions_with_cursors(
+        db,
+        root,
+        &crate::services::session_usage::load_sync_cursors(db)?,
+    )
+}
+
+fn sync_sessions_with_cursors(
+    db: &Database,
+    root: &Path,
+    cursors: &crate::services::session_usage::SyncCursors,
+) -> Result<SessionSyncResult, AppError> {
     let mut result = SessionSyncResult::default();
-    let cursors = load_sync_cursors(db)?;
     let Ok(workspaces) = fs::read_dir(root) else {
         return Ok(result);
     };

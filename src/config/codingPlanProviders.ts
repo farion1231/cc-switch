@@ -26,7 +26,8 @@ export interface CodingPlanProviderEntry {
     | "volcengine"
     | "opencode_go"
     | "command_code"
-    | "ollama_cloud";
+    | "ollama_cloud"
+    | "mimo";
   /** UsageScriptModal 下拉显示用 */
   label: string;
   /** base_url 匹配规则；null 表示不参与自动检测，只能由用户手动选择 */
@@ -100,6 +101,13 @@ export const CODING_PLAN_PROVIDERS: readonly CodingPlanProviderEntry[] = [
     id: "ollama_cloud",
     label: "Ollama Cloud",
     pattern: urlHostPattern(String.raw`ollama\.com`),
+  },
+  {
+    // 小米 MiMo Token Plan（GET /v1/platform/token_plan，tp- 专属 Key）。
+    // 按量付费的 api.xiaomimimo.com 走余额查询，不在此命中。
+    id: "mimo",
+    label: "Xiaomi MiMo Token Plan",
+    pattern: urlHostPattern(String.raw`token-plan-cn\.xiaomimimo\.com`),
   },
 ] as const;
 

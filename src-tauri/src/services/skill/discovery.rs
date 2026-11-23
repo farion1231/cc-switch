@@ -127,8 +127,36 @@ impl SkillService {
         let mut resolved_repo = repo.clone();
         resolved_repo.branch = resolved_branch;
         self.scan_dir_recursive(scan_dir, scan_dir, &resolved_repo, &mut skills)?;
+        Self::keep_one_per_install_name(&mut skills);
 
         Ok(skills)
+    }
+
+    /// 同一仓库里安装目录名（路径最后一段）相同的技能只留一条。
+    ///
+    /// 安装只取最后一段当目录名，同仓库同名的第二条装下去只会复用第一条，
+    /// 列出来只是一模一样的重复行。同时给多个客户端发技能的仓库常见这种布局，
+    /// 如 tw93/Waza 的 `skills/check` 和 `plugins/waza/skills/check`。
+    /// 留离仓库根最近的那条，层级相同按路径字典序，结果与扫描顺序无关。
+    ///
+    /// 只用于发现列表：检查更新直接调 `scan_dir_recursive`，要看到每一份。
+    pub(super) fn keep_one_per_install_name(skills: &mut Vec<DiscoverableSkill>) {
+        let install_name = |skill: &DiscoverableSkill| {
+            skill
+                .directory
+                .rsplit('/')
+                .next()
+                .unwrap_or_default()
+                .to_lowercase()
+        };
+        skills.sort_by(|a, b| {
+            let depth = |skill: &DiscoverableSkill| skill.directory.matches('/').count();
+            depth(a)
+                .cmp(&depth(b))
+                .then_with(|| a.directory.cmp(&b.directory))
+        });
+        let mut seen = HashSet::new();
+        skills.retain(|skill| seen.insert(install_name(skill)));
     }
 
     /// 递归扫描目录查找 SKILL.md

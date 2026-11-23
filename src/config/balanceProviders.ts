@@ -31,6 +31,11 @@ export const BALANCE_PROVIDERS = [
     label: "Novita AI",
     pattern: urlHostPattern(String.raw`api\.novita\.ai`),
   },
+  {
+    id: "mimo",
+    label: "Xiaomi MiMo",
+    pattern: urlHostPattern(String.raw`api\.xiaomimimo\.com`),
+  },
 ] as const;
 
 export type BalanceProviderEntry = (typeof BALANCE_PROVIDERS)[number];

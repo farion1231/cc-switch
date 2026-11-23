@@ -235,8 +235,16 @@ for line in sys.stdin:
     }
 
     // Usage is imported once.
-    let first = crate::services::session_usage_cline::sync_cline_usage(&db).unwrap();
+    let first = crate::services::session_usage_cline::sync_cline_usage(
+        &db,
+        &crate::services::session_usage::load_sync_cursors(&db).unwrap(),
+    )
+    .unwrap();
     assert!(first.imported >= 6, "{first:?}");
-    let second = crate::services::session_usage_cline::sync_cline_usage(&db).unwrap();
+    let second = crate::services::session_usage_cline::sync_cline_usage(
+        &db,
+        &crate::services::session_usage::load_sync_cursors(&db).unwrap(),
+    )
+    .unwrap();
     assert_eq!(second.imported, 0, "{second:?}");
 }
