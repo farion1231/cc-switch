@@ -6323,7 +6323,7 @@ impl ProviderService {
                 // Antigravity 的卡只用来打开终端，添加不写任何文件。
                 AppType::Agy => return Ok(true),
                 AppType::GrokBuild => {
-                    grok_direct::switch_to(state.db.as_ref(), None, &provider)?;
+                    grok_direct::switch_to(state, None, &provider)?;
                     return Ok(true);
                 }
                 AppType::ClaudeDesktop => {
@@ -6661,6 +6661,7 @@ impl ProviderService {
             ),
             Edits::Grok(edits) => grok_editor::write_live(
                 state.db.as_ref(),
+                &state.xai_oauth_manager,
                 edits,
                 key_fields.then_some((existing.as_ref(), &provider)),
                 set_pointer,
@@ -7856,7 +7857,7 @@ impl ProviderService {
         let live_owner = current_id
             .as_deref()
             .and_then(|current_id| providers.get(current_id));
-        grok_direct::switch_to(state.db.as_ref(), live_owner, provider)?;
+        grok_direct::switch_to(state, live_owner, provider)?;
         Ok(SwitchResult::default())
     }
 

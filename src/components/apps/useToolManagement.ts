@@ -12,6 +12,7 @@ import { settingsApi } from "@/lib/api";
 import type {
   NodeRequirementGap,
   ToolInstallation,
+  ToolInstallationOverview,
   ToolInstallationReport,
   ToolUninstallPlan,
 } from "@/lib/api/settings";
@@ -283,6 +284,10 @@ export const TOOL_APP_IDS: Record<ToolName, AppId> = {
 const TOOL_VERSIONS_CACHE_TTL_MS = 10 * 60 * 1000; // 10 分钟
 const EMPTY_TOOL_VERSIONS: ToolVersion[] = [];
 let toolVersionRequestSequence = 0;
+// 安装清单（list_tool_installations）的在途请求与最新一次加载的序号：快速重挂共用一次，
+// 强制重查另起一次，只有最新的那次可以写入。
+let inflightInstallations: Promise<void> | null = null;
+let installationLoadSequence = 0;
 const latestToolVersionRequests = new Map<string, number>();
 
 /**
@@ -306,7 +311,7 @@ interface ToolManagementState {
   pendingUpgrades: readonly PendingUpgrade[];
   batchAction: ToolLifecycleAction | null;
   /** 每个工具的安装分布（路径、来源、多处安装），页面打开时探测一次 */
-  installReports: Partial<Record<ToolName, ToolInstallationReport>> | null;
+  installReports: Partial<Record<ToolName, ToolInstallationOverview>> | null;
 }
 
 // 安装/升级不会随设置页卸载而结束。将任务、确认队列与版本结果一起保留在会话中，
@@ -408,6 +413,51 @@ function commitToolVersionResults(
   return current;
 }
 
+// 安装分布：路径、来源（npm / 原生 / Homebrew…）、有没有多处安装。只在本机定位，不跑命令、
+// 不联网。快速重挂、启动时的后台检查和页面共用在途请求；「检查更新」强制重查，且只有
+// 最新一次的结果可写入，免得慢的旧响应盖掉刚写入的新数据。
+function loadInstallReports(options?: { force?: boolean }): Promise<void> {
+  if (!options?.force && toolManagementState.installReports) {
+    return Promise.resolve();
+  }
+  if (!options?.force && inflightInstallations) return inflightInstallations;
+  const requestId = ++installationLoadSequence;
+  const load = (async () => {
+    try {
+      const reports = await settingsApi.listToolInstallations([...TOOL_NAMES]);
+      if (requestId !== installationLoadSequence) return;
+      const next: Partial<Record<ToolName, ToolInstallationOverview>> = {};
+      for (const report of reports) {
+        next[report.tool as ToolName] = report;
+      }
+      updateToolManagementState({ installReports: next });
+    } catch (error) {
+      console.error("[useToolManagement] listToolInstallations failed", error);
+    } finally {
+      if (requestId === installationLoadSequence) {
+        inflightInstallations = null;
+      }
+    }
+  })();
+  inflightInstallations = load;
+  return load;
+}
+
+/**
+ * OpenCode 命令行实际用的那处是 OpenCode Desktop 自带的：它随 Desktop 应用更新，
+ * CC Switch 不给它升级（npm 升级只会另装一份），也不算进「全部更新」和侧栏圆点。
+ */
+export function isDesktopManagedTool(
+  toolName: string,
+  reports: Partial<Record<ToolName, ToolInstallationOverview>> | null,
+): boolean {
+  if (toolName !== "opencode") return false;
+  const installs = reports?.opencode?.installs ?? [];
+  const defaultInstall =
+    installs.find((install) => install.is_path_default) ?? installs[0];
+  return defaultInstall?.source === "desktop";
+}
+
 // 进行中的后台检查：此时打开「应用」页直接等它，不再重复起一轮全量探测。
 let backgroundToolCheck: Promise<void> | null = null;
 
@@ -434,8 +484,18 @@ async function runBackgroundToolCheck(): Promise<void> {
     TOOL_NAMES.map(async (toolName) => {
       try {
         const updated = await settingsApi.getToolVersions([toolName]);
-        if (commitToolVersionResults(updated, requestId).length > 0) {
-          anyCommitted = true;
+        const committed = commitToolVersionResults(updated, requestId);
+        if (committed.length > 0) anyCommitted = true;
+        // OpenCode 有新版时先弄清它是不是 Desktop 自带的，免得侧栏为一个这里升不了的
+        // 版本亮圆点。只定位、不跑命令，结果页面打开时直接复用。
+        if (
+          committed.some(
+            (tool) =>
+              tool.name === "opencode" &&
+              isUpdateAvailable(tool.version, tool.latest_version),
+          )
+        ) {
+          await loadInstallReports();
         }
       } catch (error) {
         console.error(
@@ -457,13 +517,15 @@ async function runBackgroundToolCheck(): Promise<void> {
 
 /** 已检查过的命令行应用里有没有可升级的（不触发检查，只读缓存）。 */
 export function useToolUpdatesAvailable(): boolean {
-  const { toolVersionsCache } = useSyncExternalStore(
+  const { toolVersionsCache, installReports } = useSyncExternalStore(
     subscribeToolManagement,
     getToolManagementState,
   );
   return (
-    toolVersionsCache?.data.some((tool) =>
-      isUpdateAvailable(tool.version, tool.latest_version),
+    toolVersionsCache?.data.some(
+      (tool) =>
+        !isDesktopManagedTool(tool.name, installReports) &&
+        isUpdateAvailable(tool.version, tool.latest_version),
     ) ?? false
   );
 }
@@ -522,10 +584,11 @@ export function useToolManagement() {
           !busyTools.has(toolName) &&
           !loadingTools[toolName] &&
           !tool?.update_blocked_by_node &&
+          !isDesktopManagedTool(toolName, installReports) &&
           isUpdateAvailable(tool?.version, tool?.latest_version)
         );
       }),
-    [toolVersionByName, busyTools, loadingTools],
+    [toolVersionByName, busyTools, loadingTools, installReports],
   );
 
   const refreshToolVersions = useCallback(
@@ -641,26 +704,8 @@ export function useToolManagement() {
     await refreshToolVersions([toolName], { [toolName]: nextPref });
   };
 
-  // 安装分布：路径、来源（npm / 原生 / Homebrew…）、有没有多处安装。只在本机探测，不联网。
   const loadInstallations = useCallback(
-    async (options?: { force?: boolean }) => {
-      if (!options?.force && toolManagementState.installReports) return;
-      try {
-        const reports = await settingsApi.listToolInstallations([
-          ...TOOL_NAMES,
-        ]);
-        const next: Partial<Record<ToolName, ToolInstallationReport>> = {};
-        for (const report of reports) {
-          next[report.tool as ToolName] = report;
-        }
-        updateToolManagementState({ installReports: next });
-      } catch (error) {
-        console.error(
-          "[useToolManagement] probeToolInstallations failed",
-          error,
-        );
-      }
-    },
+    (options?: { force?: boolean }) => loadInstallReports(options),
     [],
   );
 
@@ -1077,14 +1122,16 @@ export function useToolManagement() {
         if (unmanaged.length > 0) {
           toast.warning(t("settings.toolUpgradeUnmanagedTitle"), {
             description: unmanaged
-              .map((r) =>
-                t("settings.toolUpgradeUnmanagedDetail", {
-                  tool: toolDisplayName(r.tool),
-                  path:
-                    (r.installs.find((i) => i.is_path_default) ?? r.installs[0])
-                      ?.path ?? "",
-                }),
-              )
+              .map((r) => {
+                const defaultInstall =
+                  r.installs.find((i) => i.is_path_default) ?? r.installs[0];
+                return defaultInstall?.source === "desktop"
+                  ? t("settings.toolUpgradeDesktopManagedDetail")
+                  : t("settings.toolUpgradeUnmanagedDetail", {
+                      tool: toolDisplayName(r.tool),
+                      path: defaultInstall?.path ?? "",
+                    });
+              })
               .join("\n"),
             closeButton: true,
           });

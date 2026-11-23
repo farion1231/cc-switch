@@ -402,6 +402,20 @@ describe("AppsPage layout, grouping and diagnostics", () => {
       if (tools.includes("codex")) await codexReady.promise;
       return getVersions(tools);
     });
+    // 安装清单与版本结果一致（都装在 PATH 默认处），版本先到的卡片不会换组重挂
+    mocks.listToolInstallations.mockImplementation(async (tools: string[]) =>
+      tools.map((tool) => ({
+        tool,
+        installs: [
+          {
+            path: `/usr/local/bin/${tool}`,
+            source: "system",
+            is_path_default: true,
+          },
+        ],
+        is_wsl: false,
+      })),
+    );
     const [{ TOOL_NAMES, checkToolUpdatesInBackground }, { AppsPage }] =
       await Promise.all([
         import("@/components/apps/useToolManagement"),
@@ -413,8 +427,11 @@ describe("AppsPage layout, grouping and diagnostics", () => {
     expect(bgSecond).toBe(bgFirst);
 
     const view = mountApps(AppsPage);
-    // 非阻塞工具各自返回后立刻渲染，不被慢工具（codex）拖住整页
-    expect(await card("Claude Code").findByText("1.0.0")).toBeInTheDocument();
+    // 非阻塞工具各自返回后立刻渲染，不被慢工具（codex）拖住整页。
+    // 安装清单到达后各行分组、重新挂载，所以每次重新查卡片
+    await waitFor(() =>
+      expect(card("Claude Code").getByText("1.0.0")).toBeInTheDocument(),
+    );
     expect(card("Codex").getByRole("status")).toBeInTheDocument();
     expect(
       within(view.container).getByText("appsPage.checking"),
@@ -469,6 +486,91 @@ describe("AppsPage layout, grouping and diagnostics", () => {
     );
     expect(await card("Claude Code").findByText("1.0.0")).toBeInTheDocument();
     expect(mocks.getToolVersions).toHaveBeenCalledTimes(TOOL_NAMES.length * 2);
+  });
+
+  it("groups rows from the local install list before version probes finish", async () => {
+    const pending = deferred<void>();
+    const getVersions = mocks.getToolVersions.getMockImplementation()!;
+    mocks.getToolVersions.mockImplementation(async (tools: string[]) => {
+      await pending.promise;
+      return getVersions(tools);
+    });
+    mocks.listToolInstallations.mockImplementation(async (tools: string[]) =>
+      tools.map((tool) =>
+        tool === "claude"
+          ? {
+              tool,
+              installs: [
+                {
+                  path: "/usr/local/bin/claude",
+                  source: "system",
+                  is_path_default: true,
+                },
+              ],
+              is_wsl: false,
+            }
+          : { tool, installs: [], is_wsl: false },
+      ),
+    );
+    const { AppsPage } = await import("@/components/apps/AppsPage");
+    mountApps(AppsPage);
+    // 版本探测还挂着：清单里有安装的先进「已安装」，空清单的先进「未安装」，
+    // 版本列仍在加载，不冒出「未安装」字样
+    await waitFor(() => {
+      expect(rowApps("appsPage.sectionInstalled")).toContain("claude");
+      expect(rowApps("appsPage.sectionNotInstalled")).toContain("codex");
+    });
+    expect(card("Codex").queryByText("common.notInstalled")).toBeNull();
+    await act(async () => {
+      pending.resolve();
+    });
+    // 版本探到后按结果修正：codex 1.0.0 归回已安装并可升级
+    await waitFor(() => expect(updateButton("Codex")).toBeEnabled());
+    expect(rowApps("appsPage.sectionInstalled")).toContain("codex");
+  });
+
+  it("waits for the version probe before grouping a tool that runs in WSL", async () => {
+    const pending = deferred<void>();
+    const getVersions = mocks.getToolVersions.getMockImplementation()!;
+    mocks.getToolVersions.mockImplementation(async (tools: string[]) => {
+      await pending.promise;
+      return getVersions(tools);
+    });
+    mocks.listToolInstallations.mockImplementation(async (tools: string[]) =>
+      tools.map((tool) => ({ tool, installs: [], is_wsl: tool === "gemini" })),
+    );
+    const { AppsPage } = await import("@/components/apps/AppsPage");
+    mountApps(AppsPage);
+    // 本机清单说明不了 WSL 里装没装：不把 gemini 归进「未安装」，但 shell 选择先出来
+    expect(
+      await card("Gemini CLI").findByText("appsPage.wslFlag"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("region", { name: "appsPage.sectionNotInstalled" }),
+    ).toBeNull();
+    await act(async () => {
+      pending.resolve();
+    });
+    await waitFor(() =>
+      expect(rowApps("appsPage.sectionInstalled")).toContain("gemini"),
+    );
+  });
+
+  it("shares one install listing between quick remounts", async () => {
+    const gate = deferred<void>();
+    const list = mocks.listToolInstallations.getMockImplementation()!;
+    mocks.listToolInstallations.mockImplementation(async (tools: string[]) => {
+      await gate.promise;
+      return list(tools);
+    });
+    const { AppsPage } = await import("@/components/apps/AppsPage");
+    const first = mountApps(AppsPage);
+    first.unmount();
+    mountApps(AppsPage);
+    await act(async () => {
+      gate.resolve();
+    });
+    expect(mocks.listToolInstallations).toHaveBeenCalledTimes(1);
   });
 });
 

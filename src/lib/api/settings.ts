@@ -330,10 +330,11 @@ export const settingsApi = {
     return await invoke("probe_tool_installations", { tools });
   },
 
-  /** 「应用」页展示路径、来源和多处安装（和升级前的预检分开调用）。 */
+  /** 「应用」页展示路径、来源和多处安装的本地概览：不执行命令、不做诊断，
+   *  不联网（详细的执行 / 冲突判定走 probeToolInstallations）。 */
   async listToolInstallations(
     tools: string[],
-  ): Promise<ToolInstallationReport[]> {
+  ): Promise<ToolInstallationOverview[]> {
     return await invoke("list_tool_installations", { tools });
   },
 
@@ -387,6 +388,21 @@ export interface ToolInstallation {
   error: string | null;
   source: string;
   is_path_default: boolean;
+}
+
+/** 安装概览（list_tool_installations）里的一处安装：只有本机路径与来源，
+ *  不执行命令、不带 runnable / version 等探测结果。 */
+export interface ToolInstallationPath {
+  path: string;
+  source: string;
+  is_path_default: boolean;
+}
+
+/** 本机安装概览；执行探测和冲突判定仍由 probe_tool_installations 提供。 */
+export interface ToolInstallationOverview {
+  tool: string;
+  installs: ToolInstallationPath[];
+  is_wsl?: boolean;
 }
 
 /** 卸载对话框里的一处安装：能自动卸载就带 plan，否则给出原因。对应后端 ToolUninstallCandidate。 */
