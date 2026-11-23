@@ -3883,21 +3883,32 @@ fn test_normalize_codex_model_strip_prefix() {
 }
 
 #[test]
-fn test_normalize_codex_model_strip_iso_date() {
-    assert_eq!(normalize_codex_model("gpt-5.4-2026-03-05"), "gpt-5.4");
-    assert_eq!(
-        normalize_codex_model("gpt-5.4-pro-2026-03-05"),
-        "gpt-5.4-pro"
-    );
-}
-
-#[test]
-fn test_normalize_codex_model_strip_compact_date() {
-    assert_eq!(normalize_codex_model("gpt-5.4-20260305"), "gpt-5.4");
-    assert_eq!(
-        normalize_codex_model("claude-opus-4-6-20260206"),
-        "claude-opus-4-6"
-    );
+fn test_normalize_codex_model_strips_date_suffixes() {
+    for (case, dated, dated_pro, expected_pro) in [
+        (
+            "test_normalize_codex_model_strip_iso_date",
+            "gpt-5.4-2026-03-05",
+            "gpt-5.4-pro-2026-03-05",
+            "gpt-5.4-pro",
+        ),
+        (
+            "test_normalize_codex_model_strip_compact_date",
+            "gpt-5.4-20260305",
+            "claude-opus-4-6-20260206",
+            "claude-opus-4-6",
+        ),
+        // prefix + uppercase + ISO date
+        // prefix + compact date
+        (
+            "test_normalize_codex_model_combined",
+            "openai/GPT-5.4-2026-03-05",
+            "openai/gpt-5.4-20260305",
+            "gpt-5.4",
+        ),
+    ] {
+        assert_eq!(normalize_codex_model(dated), "gpt-5.4", "{case}");
+        assert_eq!(normalize_codex_model(dated_pro), expected_pro, "{case}");
+    }
 }
 
 #[test]
@@ -3906,17 +3917,6 @@ fn test_normalize_codex_model_no_change() {
     assert_eq!(normalize_codex_model("gpt-5.2-codex"), "gpt-5.2-codex");
     assert_eq!(normalize_codex_model("o3"), "o3");
     assert_eq!(normalize_codex_model("deepseek-chat"), "deepseek-chat");
-}
-
-#[test]
-fn test_normalize_codex_model_combined() {
-    // prefix + uppercase + ISO date
-    assert_eq!(
-        normalize_codex_model("openai/GPT-5.4-2026-03-05"),
-        "gpt-5.4"
-    );
-    // prefix + compact date
-    assert_eq!(normalize_codex_model("openai/gpt-5.4-20260305"), "gpt-5.4");
 }
 
 /// 缓存读取是 input 的一部分：上游报出的 cached 比本次 input 还大时（异常数据），

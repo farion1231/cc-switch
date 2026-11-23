@@ -495,10 +495,5 @@ export function useProviderActions(
     deleteProvider,
     saveUsageScript,
     setAsDefaultModel,
-    isLoading:
-      addProviderMutation.isPending ||
-      updateProviderMutation.isPending ||
-      deleteProviderMutation.isPending ||
-      switchProviderMutation.isPending,
   };
 }

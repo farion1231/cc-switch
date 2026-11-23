@@ -502,10 +502,49 @@ fn test_provider_type_detection() {
 }
 
 #[test]
-fn test_build_url_anthropic() {
-    let adapter = ClaudeAdapter::new();
-    let url = adapter.build_url("https://api.anthropic.com", "/v1/messages");
-    assert_eq!(url, "https://api.anthropic.com/v1/messages");
+fn test_build_url_cases() {
+    for (case, base_url, endpoint, expected) in [
+        (
+            "test_build_url_anthropic",
+            "https://api.anthropic.com",
+            "/v1/messages",
+            "https://api.anthropic.com/v1/messages",
+        ),
+        (
+            "test_build_url_openrouter",
+            "https://openrouter.ai/api",
+            "/v1/messages",
+            "https://openrouter.ai/api/v1/messages",
+        ),
+        (
+            "test_build_url_no_beta_for_other_endpoints",
+            "https://api.anthropic.com",
+            "/v1/complete",
+            "https://api.anthropic.com/v1/complete",
+        ),
+        (
+            "test_build_url_preserve_existing_query",
+            "https://api.anthropic.com",
+            "/v1/messages?foo=bar",
+            "https://api.anthropic.com/v1/messages?foo=bar",
+        ),
+        (
+            "test_build_url_no_beta_for_github_copilot",
+            "https://api.githubcopilot.com",
+            "/v1/messages",
+            "https://api.githubcopilot.com/v1/messages",
+        ),
+        (
+            "test_build_url_no_beta_for_openai_chat_completions",
+            "https://integrate.api.nvidia.com",
+            "/v1/chat/completions",
+            "https://integrate.api.nvidia.com/v1/chat/completions",
+        ),
+    ] {
+        let adapter = ClaudeAdapter::new();
+        let url = adapter.build_url(base_url, endpoint);
+        assert_eq!(url, expected, "{case}");
+    }
 }
 
 #[test]
@@ -639,41 +678,6 @@ fn openai_responses_keeps_hosted_web_search_selector() {
     .unwrap();
 
     assert_eq!(transformed["tool_choice"], json!({"type": "web_search"}));
-}
-
-#[test]
-fn test_build_url_openrouter() {
-    let adapter = ClaudeAdapter::new();
-    let url = adapter.build_url("https://openrouter.ai/api", "/v1/messages");
-    assert_eq!(url, "https://openrouter.ai/api/v1/messages");
-}
-
-#[test]
-fn test_build_url_no_beta_for_other_endpoints() {
-    let adapter = ClaudeAdapter::new();
-    let url = adapter.build_url("https://api.anthropic.com", "/v1/complete");
-    assert_eq!(url, "https://api.anthropic.com/v1/complete");
-}
-
-#[test]
-fn test_build_url_preserve_existing_query() {
-    let adapter = ClaudeAdapter::new();
-    let url = adapter.build_url("https://api.anthropic.com", "/v1/messages?foo=bar");
-    assert_eq!(url, "https://api.anthropic.com/v1/messages?foo=bar");
-}
-
-#[test]
-fn test_build_url_no_beta_for_github_copilot() {
-    let adapter = ClaudeAdapter::new();
-    let url = adapter.build_url("https://api.githubcopilot.com", "/v1/messages");
-    assert_eq!(url, "https://api.githubcopilot.com/v1/messages");
-}
-
-#[test]
-fn test_build_url_no_beta_for_openai_chat_completions() {
-    let adapter = ClaudeAdapter::new();
-    let url = adapter.build_url("https://integrate.api.nvidia.com", "/v1/chat/completions");
-    assert_eq!(url, "https://integrate.api.nvidia.com/v1/chat/completions");
 }
 
 #[test]
