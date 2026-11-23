@@ -41,7 +41,7 @@ export function ModelInputWithFetch({
           autoComplete="off"
           className="flex-1"
         />
-        <ModelDropdown models={fetchedModels} onSelect={onChange} />
+        <ModelDropdown models={fetchedModels} onSelect={(id) => onChange(id)} />
       </div>
     );
   }
