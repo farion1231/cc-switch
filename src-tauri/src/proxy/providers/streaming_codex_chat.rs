@@ -2,12 +2,15 @@
 
 use super::codex_responses_sse as sse;
 use super::{
-    codex_chat_common::{extract_reasoning_field_text, tool_call_extra_content},
+    codex_chat_common::{
+        chat_content_segments, extract_reasoning_field_text, tool_call_extra_content,
+        ChatContentSegment,
+    },
     codex_compaction,
     inline_think::InlineThinkSplitter,
     transform_codex_chat::{
         chat_error_to_response_error, chat_usage_to_responses_usage,
-        custom_tool_input_from_chat_arguments, response_id_from_chat_id,
+        custom_tool_input_from_chat_arguments, response_id_from_chat_id, response_message_item_id,
         response_status_from_finish_reason, response_tool_call_item_from_chat_name,
         response_tool_call_item_id_from_chat_name, CodexToolContext,
     },
@@ -138,9 +141,20 @@ impl ChatToResponsesState {
                 self.append_reasoning_to_active_tools(&reasoning);
             }
 
-            if let Some(content) = delta.get("content").and_then(|v| v.as_str()) {
-                if !content.is_empty() {
-                    events.extend(self.push_content_delta(content));
+            // content 可能是分段数组（Mistral 的 thinking / text 段，#9902），按顺序处理。
+            for segment in delta
+                .get("content")
+                .map(chat_content_segments)
+                .unwrap_or_default()
+            {
+                match segment {
+                    ChatContentSegment::Thinking(thinking) => {
+                        events.extend(self.push_reasoning_delta(&thinking));
+                        self.append_reasoning_to_active_tools(&thinking);
+                    }
+                    ChatContentSegment::Text(content) => {
+                        events.extend(self.push_content_delta(&content));
+                    }
                 }
             }
 
@@ -234,7 +248,7 @@ impl ChatToResponsesState {
 
         if !self.text.added {
             let output_index = self.next_output_index();
-            let item_id = format!("{}_msg", self.response_id);
+            let item_id = response_message_item_id(&self.response_id);
             self.text.output_index = Some(output_index);
             self.text.item_id = item_id.clone();
             self.text.added = true;
@@ -751,14 +765,6 @@ fn chat_delta_reasoning_text(delta: &Value) -> Option<String> {
     extract_reasoning_field_text(delta)
 }
 
-/// Create a stream that converts Chat Completions SSE chunks into Responses SSE events.
-#[allow(dead_code)]
-pub fn create_responses_sse_stream_from_chat<E: std::error::Error + Send + 'static>(
-    stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
-) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
-    create_responses_sse_stream_from_chat_with_context(stream, CodexToolContext::default())
-}
-
 /// Create a stream that converts Chat Completions SSE chunks into Responses SSE
 /// events while restoring Codex tool namespace/custom/tool_search metadata.
 pub fn create_responses_sse_stream_from_chat_with_context<E: std::error::Error + Send + 'static>(
@@ -915,6 +921,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn streamed_message_item_id_uses_msg_prefix() {
+        // Regression test for #9054 (streaming path): the message item ID
+        // must begin with `msg_`, not `resp_..._msg`.
+        let output = collect(vec![
+            "data: {\"id\":\"chatcmpl_1\",\"created\":123,\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"content\":\"Hi\"},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+        let events = parse_sse_events(&output);
+        let done = events
+            .iter()
+            .find(|event| {
+                event["type"] == "response.output_item.done" && event["item"]["type"] == "message"
+            })
+            .unwrap();
+        assert_eq!(done["item"]["id"], "msg_chatcmpl_1");
+    }
+
+    #[tokio::test]
+    async fn converts_mistral_chunked_content_to_reasoning_and_text() {
+        // #9902：Mistral 开思考后 delta.content 在分段数组和字符串之间切换，
+        // 修复前只按字符串读，数组段全部丢失，流式回复为空。
+        let output = collect(vec![
+            "data: {\"id\":\"c1\",\"created\":1,\"model\":\"mistral-large-4\",\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"\"}}]}\n\n",
+            "data: {\"id\":\"c1\",\"created\":1,\"model\":\"mistral-large-4\",\"choices\":[{\"delta\":{\"content\":[{\"type\":\"thinking\",\"thinking\":[{\"type\":\"text\",\"text\":\"We \"}]}]}}]}\n\n",
+            "data: {\"id\":\"c1\",\"created\":1,\"model\":\"mistral-large-4\",\"choices\":[{\"delta\":{\"content\":[{\"type\":\"thinking\",\"thinking\":[{\"type\":\"text\",\"text\":\"add\"}],\"closed\":true},{\"type\":\"text\",\"text\":\"39\"}]}}]}\n\n",
+            "data: {\"id\":\"c1\",\"created\":1,\"model\":\"mistral-large-4\",\"choices\":[{\"delta\":{\"content\":\"1\"},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+        let events = parse_sse_events(&output);
+        let completed = events
+            .iter()
+            .find(|event| event["type"] == "response.completed")
+            .unwrap();
+        let items = completed["response"]["output"].as_array().unwrap();
+
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["type"], "reasoning");
+        assert_eq!(items[0]["summary"][0]["text"], "We add");
+        assert_eq!(items[1]["type"], "message");
+        assert_eq!(items[1]["content"][0]["text"], "391");
+    }
+
+    #[tokio::test]
     async fn converts_reasoning_content_chat_sse_to_responses_reasoning_events() {
         let output = collect(vec![
             "data: {\"id\":\"chatcmpl_reason\",\"created\":123,\"model\":\"deepseek-reasoner\",\"choices\":[{\"delta\":{\"reasoning_content\":\"Need context. \"}}]}\n\n",
@@ -1023,18 +1074,67 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn converts_tool_call_chat_sse_to_responses_sse() {
-        let output = collect(vec![
-            "data: {\"id\":\"chatcmpl_2\",\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"get_weather\"}}]}}]}\n\n",
-            "data: {\"id\":\"chatcmpl_2\",\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"city\\\":\\\"Tokyo\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
-            "data: [DONE]\n\n",
-        ])
-        .await;
+    async fn chat_sse_terminal_events() {
+        for (case, chunks, present, absent) in [
+            (
+                "converts_tool_call_chat_sse_to_responses_sse",
+                vec![
+                    "data: {\"id\":\"chatcmpl_2\",\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"get_weather\"}}]}}]}\n\n",
+                    "data: {\"id\":\"chatcmpl_2\",\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"city\\\":\\\"Tokyo\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+                    "data: [DONE]\n\n",
+                ],
+                vec!["event: response.function_call_arguments.delta", "event: response.function_call_arguments.done", "\"type\":\"function_call\"", "\"call_id\":\"call_1\""],
+                vec![],
+            ),
+            // #4341：上游只给出畸形工具调用时，丢弃后本回合一个工具调用都不剩，
+            // Codex 会把它当成正常完成而静默收尾。此时必须如实报错。
+            // 已经推给客户端的文本增量不受影响，用户仍能看到模型说了什么。
+            (
+                "dropped_only_tool_call_emits_failed_without_completed",
+                vec![
+                    "data: {\"id\":\"chatcmpl_drop\",\"model\":\"kimi-k3\",\"choices\":[{\"delta\":{\"content\":\"让我继续处理这个文件\"}}]}\n\n",
+                    "data: {\"id\":\"chatcmpl_drop\",\"model\":\"kimi-k3\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_bad\",\"type\":\"function\",\"function\":{\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+                    "data: [DONE]\n\n",
+                ],
+                vec!["event: response.failed", "upstream_tool_call_dropped", "让我继续处理这个文件"],
+                vec!["event: response.completed"],
+            ),
+            (
+                "stream_end_with_output_without_finish_reason_emits_incomplete_without_failed",
+                vec![
+                    "data: {\"id\":\"chatcmpl_truncated\",\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n",
+                ],
+                vec!["event: response.completed", "\"status\":\"incomplete\"", "\"incomplete_details\":{\"reason\":\"max_output_tokens\"}"],
+                vec!["event: response.failed"],
+            ),
+            (
+                "chat_sse_error_event_emits_failed_without_completed",
+                vec![
+                    "event: error\ndata: {\"error\":{\"message\":\"bad request\",\"type\":\"invalid_request_error\"}}\n\n",
+                    "data: [DONE]\n\n",
+                ],
+                vec!["event: response.failed", "bad request", "invalid_request_error"],
+                vec!["event: response.completed"],
+            ),
+            (
+                "chat_sse_data_only_error_emits_failed_without_completed",
+                vec![
+                    "data: {\"error\":{\"message\":\"quota exceeded\",\"code\":\"rate_limit_exceeded\"}}\n\n",
+                    "data: [DONE]\n\n",
+                ],
+                vec!["event: response.failed", "quota exceeded", "rate_limit_exceeded"],
+                vec!["event: response.completed"],
+            ),
+        ] {
+            let output = collect(chunks).await;
 
-        assert!(output.contains("event: response.function_call_arguments.delta"));
-        assert!(output.contains("event: response.function_call_arguments.done"));
-        assert!(output.contains("\"type\":\"function_call\""));
-        assert!(output.contains("\"call_id\":\"call_1\""));
+            for text in present {
+                assert!(output.contains(text), "{case}: missing {text}");
+            }
+            for text in absent {
+                assert!(!output.contains(text), "{case}: unexpected {text}");
+            }
+        }
     }
 
     #[tokio::test]
@@ -1134,75 +1234,148 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn finalization_keeps_valid_call_after_unnamed_earlier_call() {
-        let output = collect(vec![
-            "data: {\"id\":\"chatcmpl_parallel_missing\",\"model\":\"deepseek-v4-pro\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_missing\",\"type\":\"function\",\"function\":{\"arguments\":\"{}\"}}]}}]}\n\n",
-            "data: {\"id\":\"chatcmpl_parallel_missing\",\"model\":\"deepseek-v4-pro\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":1,\"id\":\"call_valid\",\"type\":\"function\",\"function\":{\"name\":\"exec_command\",\"arguments\":\"{\\\"cmd\\\":\\\"date\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
-            "data: [DONE]\n\n",
-        ])
-        .await;
-        let events = parse_sse_events(&output);
-        let completed = events
-            .iter()
-            .find(|event| event["type"] == "response.completed")
-            .unwrap();
-        let items = completed["response"]["output"].as_array().unwrap();
+    async fn tool_call_fragments_are_grouped_by_call() {
+        for (case, chunks, name, call_id, arguments, absent) in [
+            (
+                "finalization_keeps_valid_call_after_unnamed_earlier_call",
+                vec![
+                    "data: {\"id\":\"chatcmpl_parallel_missing\",\"model\":\"deepseek-v4-pro\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_missing\",\"type\":\"function\",\"function\":{\"arguments\":\"{}\"}}]}}]}\n\n",
+                    "data: {\"id\":\"chatcmpl_parallel_missing\",\"model\":\"deepseek-v4-pro\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":1,\"id\":\"call_valid\",\"type\":\"function\",\"function\":{\"name\":\"exec_command\",\"arguments\":\"{\\\"cmd\\\":\\\"date\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+                    "data: [DONE]\n\n",
+                ],
+                Some("exec_command"),
+                "call_valid",
+                r#"{"cmd":"date"}"#,
+                vec!["call_missing"],
+            ),
+            // 上游省略 `index` 时，不带 id 的 arguments 续帧必须归入同一个调用，
+            // 不能被当成新调用炸成多个 item。
+            (
+                "missing_index_argument_fragments_stay_in_one_call",
+                vec![
+                    "data: {\"id\":\"chatcmpl_frag\",\"model\":\"deepseek-v4-pro\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"id\":\"call_a\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\"}}]}}]}\n\n",
+                    "data: {\"id\":\"chatcmpl_frag\",\"model\":\"deepseek-v4-pro\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"type\":\"function\",\"function\":{\"arguments\":\"\\\"a.txt\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+                    "data: [DONE]\n\n",
+                ],
+                None,
+                "call_a",
+                r#"{"path":"a.txt"}"#,
+                vec![],
+            ),
+            // 上游省略 `index` 且重复下发同一个 id（部分网关每帧重复整个头部）时，
+            // 不得被判成新调用。
+            (
+                "missing_index_repeated_same_id_stays_in_one_call",
+                vec![
+                    "data: {\"id\":\"chatcmpl_rep\",\"model\":\"deepseek-v4-pro\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"id\":\"call_a\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\"}}]}}]}\n\n",
+                    "data: {\"id\":\"chatcmpl_rep\",\"model\":\"deepseek-v4-pro\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"id\":\"call_a\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"\\\"a.txt\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+                    "data: [DONE]\n\n",
+                ],
+                None,
+                "call_a",
+                r#"{"path":"a.txt"}"#,
+                vec![],
+            ),
+            (
+                "finalization_keeps_non_contiguous_tool_index",
+                vec![
+                    "data: {\"id\":\"chatcmpl_sparse\",\"model\":\"deepseek-v4-pro\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":2,\"id\":\"call_sparse\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\\\"README.md\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+                    "data: [DONE]\n\n",
+                ],
+                Some("read_file"),
+                "call_sparse",
+                r#"{"path":"README.md"}"#,
+                vec![],
+            ),
+        ] {
+            let output = collect(chunks).await;
+            let events = parse_sse_events(&output);
+            let completed = events
+                .iter()
+                .find(|event| event["type"] == "response.completed")
+                .unwrap();
+            let items = completed["response"]["output"].as_array().unwrap();
 
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0]["name"], "exec_command");
-        assert_eq!(items[0]["call_id"], "call_valid");
-        assert_eq!(items[0]["arguments"], r#"{"cmd":"date"}"#);
-        assert!(!output.contains("call_missing"));
+            assert_eq!(items.len(), 1, "{case}");
+            if let Some(name) = name {
+                assert_eq!(items[0]["name"], name, "{case}");
+            }
+            assert_eq!(items[0]["call_id"], call_id, "{case}");
+            assert_eq!(items[0]["arguments"], arguments, "{case}");
+            for text in absent {
+                assert!(!output.contains(text), "{case}: unexpected {text}");
+            }
+        }
     }
 
-    /// #4341：上游只给出畸形工具调用时，丢弃后本回合一个工具调用都不剩，
-    /// Codex 会把它当成正常完成而静默收尾。此时必须如实报错。
     #[tokio::test]
-    async fn dropped_only_tool_call_emits_failed_without_completed() {
-        let output = collect(vec![
-            "data: {\"id\":\"chatcmpl_drop\",\"model\":\"kimi-k3\",\"choices\":[{\"delta\":{\"content\":\"让我继续处理这个文件\"}}]}\n\n",
-            "data: {\"id\":\"chatcmpl_drop\",\"model\":\"kimi-k3\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_bad\",\"type\":\"function\",\"function\":{\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
-            "data: [DONE]\n\n",
-        ])
-        .await;
+    async fn streamed_turn_edge_cases() {
+        for (case, chunks, present, absent) in [
+            // `finish_reason=length`（token 截断）时工具调用往往只到一半就没了 name。
+            // 这不是"上游发了畸形数据"，而是截断——归因必须是 incomplete，不能报成
+            // tool_call_dropped，否则诊断信息本身就是错的。
+            (
+                "truncated_turn_stays_incomplete_instead_of_failed",
+                vec![
+                    "data: {\"id\":\"chatcmpl_trunc\",\"model\":\"kimi-k3\",\"choices\":[{\"delta\":{\"content\":\"我来看看\"}}]}\n\n",
+                    "data: {\"id\":\"chatcmpl_trunc\",\"model\":\"kimi-k3\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_cut\",\"type\":\"function\",\"function\":{\"arguments\":\"{\\\"pa\"}}]},\"finish_reason\":\"length\"}]}\n\n",
+                    "data: [DONE]\n\n",
+                ],
+                vec!["event: response.completed", "\"status\":\"incomplete\""],
+                vec!["event: response.failed"],
+            ),
+            // 纯空白函数名对应不到任何已发布工具，必须与空名同等对待，
+            // 否则它会伪装成"本回合还有工具调用"而绕过判据。
+            (
+                "whitespace_only_tool_name_is_dropped",
+                vec![
+                    "data: {\"id\":\"chatcmpl_ws\",\"model\":\"kimi-k3\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_ws\",\"type\":\"function\",\"function\":{\"name\":\"   \",\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+                    "data: [DONE]\n\n",
+                ],
+                vec!["event: response.failed", "upstream_tool_call_dropped"],
+                vec!["event: response.completed"],
+            ),
+            (
+                "preserves_reasoning_content_on_streamed_tool_call_items",
+                vec![
+                    "data: {\"id\":\"chatcmpl_tool_reasoning\",\"model\":\"deepseek-v4-flash\",\"choices\":[{\"delta\":{\"reasoning_content\":\"Need file.\"}}]}\n\n",
+                    "data: {\"id\":\"chatcmpl_tool_reasoning\",\"model\":\"deepseek-v4-flash\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"read_file\"}}]}}]}\n\n",
+                    "data: {\"id\":\"chatcmpl_tool_reasoning\",\"model\":\"deepseek-v4-flash\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"path\\\":\\\"README.md\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+                    "data: [DONE]\n\n",
+                ],
+                vec!["event: response.output_item.done", "\"type\":\"function_call\"", "\"reasoning_content\":\"Need file.\""],
+                vec![],
+            ),
+            (
+                "preserves_late_reasoning_content_on_streamed_tool_call_items",
+                vec![
+                    "data: {\"id\":\"chatcmpl_tool_late_reasoning\",\"model\":\"deepseek-v4-flash\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"read_file\"}}]}}]}\n\n",
+                    "data: {\"id\":\"chatcmpl_tool_late_reasoning\",\"model\":\"deepseek-v4-flash\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"path\\\":\\\"README.md\\\"}\"}}]}}]}\n\n",
+                    "data: {\"id\":\"chatcmpl_tool_late_reasoning\",\"model\":\"deepseek-v4-flash\",\"choices\":[{\"delta\":{\"reasoning_content\":\"Need file.\"}}]}\n\n",
+                    "data: {\"id\":\"chatcmpl_tool_late_reasoning\",\"model\":\"deepseek-v4-flash\",\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
+                    "data: [DONE]\n\n",
+                ],
+                vec!["event: response.output_item.done", "\"type\":\"function_call\"", "\"reasoning_content\":\"Need file.\""],
+                vec![],
+            ),
+            (
+                "stream_end_without_output_or_finish_reason_emits_failed_without_completed",
+                vec![
+                    "data: {\"id\":\"chatcmpl_truncated\",\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{}}]}\n\n",
+                ],
+                vec!["event: response.failed", "stream_truncated"],
+                vec!["event: response.completed"],
+            ),
+        ] {
+            let output = collect(chunks).await;
 
-        assert!(output.contains("event: response.failed"));
-        assert!(output.contains("upstream_tool_call_dropped"));
-        assert!(!output.contains("event: response.completed"));
-        // 已经推给客户端的文本增量不受影响，用户仍能看到模型说了什么。
-        assert!(output.contains("让我继续处理这个文件"));
-    }
-
-    /// `finish_reason=length`（token 截断）时工具调用往往只到一半就没了 name。
-    /// 这不是"上游发了畸形数据"，而是截断——归因必须是 incomplete，不能报成
-    /// tool_call_dropped，否则诊断信息本身就是错的。
-    #[tokio::test]
-    async fn truncated_turn_stays_incomplete_instead_of_failed() {
-        let output = collect(vec![
-            "data: {\"id\":\"chatcmpl_trunc\",\"model\":\"kimi-k3\",\"choices\":[{\"delta\":{\"content\":\"我来看看\"}}]}\n\n",
-            "data: {\"id\":\"chatcmpl_trunc\",\"model\":\"kimi-k3\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_cut\",\"type\":\"function\",\"function\":{\"arguments\":\"{\\\"pa\"}}]},\"finish_reason\":\"length\"}]}\n\n",
-            "data: [DONE]\n\n",
-        ])
-        .await;
-
-        assert!(output.contains("event: response.completed"));
-        assert!(output.contains("\"status\":\"incomplete\""));
-        assert!(!output.contains("event: response.failed"));
-    }
-
-    /// 纯空白函数名对应不到任何已发布工具，必须与空名同等对待，
-    /// 否则它会伪装成"本回合还有工具调用"而绕过判据。
-    #[tokio::test]
-    async fn whitespace_only_tool_name_is_dropped() {
-        let output = collect(vec![
-            "data: {\"id\":\"chatcmpl_ws\",\"model\":\"kimi-k3\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_ws\",\"type\":\"function\",\"function\":{\"name\":\"   \",\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
-            "data: [DONE]\n\n",
-        ])
-        .await;
-
-        assert!(output.contains("event: response.failed"));
-        assert!(output.contains("upstream_tool_call_dropped"));
-        assert!(!output.contains("event: response.completed"));
+            for text in present {
+                assert!(output.contains(text), "{case}: missing {text}");
+            }
+            for text in absent {
+                assert!(!output.contains(text), "{case}: unexpected {text}");
+            }
+        }
     }
 
     /// 纯文本回合（从未出现过工具调用增量）不受判据影响。
@@ -1254,70 +1427,6 @@ mod tests {
         assert_eq!(items[1]["arguments"], r#"{"cmd":"ls"}"#);
     }
 
-    /// 上游省略 `index` 时，不带 id 的 arguments 续帧必须归入同一个调用，
-    /// 不能被当成新调用炸成多个 item。
-    #[tokio::test]
-    async fn missing_index_argument_fragments_stay_in_one_call() {
-        let output = collect(vec![
-            "data: {\"id\":\"chatcmpl_frag\",\"model\":\"deepseek-v4-pro\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"id\":\"call_a\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\"}}]}}]}\n\n",
-            "data: {\"id\":\"chatcmpl_frag\",\"model\":\"deepseek-v4-pro\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"type\":\"function\",\"function\":{\"arguments\":\"\\\"a.txt\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
-            "data: [DONE]\n\n",
-        ])
-        .await;
-        let events = parse_sse_events(&output);
-        let completed = events
-            .iter()
-            .find(|event| event["type"] == "response.completed")
-            .unwrap();
-        let items = completed["response"]["output"].as_array().unwrap();
-
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0]["call_id"], "call_a");
-        assert_eq!(items[0]["arguments"], r#"{"path":"a.txt"}"#);
-    }
-
-    /// 上游省略 `index` 且重复下发同一个 id（部分网关每帧重复整个头部）时，
-    /// 不得被判成新调用。
-    #[tokio::test]
-    async fn missing_index_repeated_same_id_stays_in_one_call() {
-        let output = collect(vec![
-            "data: {\"id\":\"chatcmpl_rep\",\"model\":\"deepseek-v4-pro\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"id\":\"call_a\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\"}}]}}]}\n\n",
-            "data: {\"id\":\"chatcmpl_rep\",\"model\":\"deepseek-v4-pro\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"id\":\"call_a\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"\\\"a.txt\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
-            "data: [DONE]\n\n",
-        ])
-        .await;
-        let events = parse_sse_events(&output);
-        let completed = events
-            .iter()
-            .find(|event| event["type"] == "response.completed")
-            .unwrap();
-        let items = completed["response"]["output"].as_array().unwrap();
-
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0]["call_id"], "call_a");
-        assert_eq!(items[0]["arguments"], r#"{"path":"a.txt"}"#);
-    }
-
-    #[tokio::test]
-    async fn finalization_keeps_non_contiguous_tool_index() {
-        let output = collect(vec![
-            "data: {\"id\":\"chatcmpl_sparse\",\"model\":\"deepseek-v4-pro\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":2,\"id\":\"call_sparse\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\\\"README.md\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
-            "data: [DONE]\n\n",
-        ])
-        .await;
-        let events = parse_sse_events(&output);
-        let completed = events
-            .iter()
-            .find(|event| event["type"] == "response.completed")
-            .unwrap();
-        let items = completed["response"]["output"].as_array().unwrap();
-
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0]["name"], "read_file");
-        assert_eq!(items[0]["call_id"], "call_sparse");
-        assert_eq!(items[0]["arguments"], r#"{"path":"README.md"}"#);
-    }
-
     #[tokio::test]
     async fn restores_custom_tool_input_stream_events() {
         let request = json!({
@@ -1358,37 +1467,6 @@ mod tests {
         .await;
 
         assert!(output.contains(r#""arguments":"{\"a\":1,\"b\":2}""#));
-    }
-
-    #[tokio::test]
-    async fn preserves_reasoning_content_on_streamed_tool_call_items() {
-        let output = collect(vec![
-            "data: {\"id\":\"chatcmpl_tool_reasoning\",\"model\":\"deepseek-v4-flash\",\"choices\":[{\"delta\":{\"reasoning_content\":\"Need file.\"}}]}\n\n",
-            "data: {\"id\":\"chatcmpl_tool_reasoning\",\"model\":\"deepseek-v4-flash\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"read_file\"}}]}}]}\n\n",
-            "data: {\"id\":\"chatcmpl_tool_reasoning\",\"model\":\"deepseek-v4-flash\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"path\\\":\\\"README.md\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
-            "data: [DONE]\n\n",
-        ])
-        .await;
-
-        assert!(output.contains("event: response.output_item.done"));
-        assert!(output.contains("\"type\":\"function_call\""));
-        assert!(output.contains("\"reasoning_content\":\"Need file.\""));
-    }
-
-    #[tokio::test]
-    async fn preserves_late_reasoning_content_on_streamed_tool_call_items() {
-        let output = collect(vec![
-            "data: {\"id\":\"chatcmpl_tool_late_reasoning\",\"model\":\"deepseek-v4-flash\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"read_file\"}}]}}]}\n\n",
-            "data: {\"id\":\"chatcmpl_tool_late_reasoning\",\"model\":\"deepseek-v4-flash\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"path\\\":\\\"README.md\\\"}\"}}]}}]}\n\n",
-            "data: {\"id\":\"chatcmpl_tool_late_reasoning\",\"model\":\"deepseek-v4-flash\",\"choices\":[{\"delta\":{\"reasoning_content\":\"Need file.\"}}]}\n\n",
-            "data: {\"id\":\"chatcmpl_tool_late_reasoning\",\"model\":\"deepseek-v4-flash\",\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
-            "data: [DONE]\n\n",
-        ])
-        .await;
-
-        assert!(output.contains("event: response.output_item.done"));
-        assert!(output.contains("\"type\":\"function_call\""));
-        assert!(output.contains("\"reasoning_content\":\"Need file.\""));
     }
 
     #[tokio::test]
@@ -1458,64 +1536,14 @@ mod tests {
         let upstream = stream::iter(vec![Err::<Bytes, std::io::Error>(std::io::Error::other(
             "boom",
         ))]);
-        let converted = create_responses_sse_stream_from_chat(upstream);
+        let converted = create_responses_sse_stream_from_chat_with_context(
+            upstream,
+            CodexToolContext::default(),
+        );
         let bytes: Vec<Bytes> = converted.map(|item| item.unwrap()).collect().await;
         let output = String::from_utf8(bytes.concat()).unwrap();
 
         assert!(output.contains("event: response.failed"));
-        assert!(!output.contains("event: response.completed"));
-    }
-
-    #[tokio::test]
-    async fn stream_end_with_output_without_finish_reason_emits_incomplete_without_failed() {
-        let output = collect(vec![
-            "data: {\"id\":\"chatcmpl_truncated\",\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n",
-        ])
-        .await;
-
-        assert!(output.contains("event: response.completed"));
-        assert!(output.contains("\"status\":\"incomplete\""));
-        assert!(output.contains("\"incomplete_details\":{\"reason\":\"max_output_tokens\"}"));
-        assert!(!output.contains("event: response.failed"));
-    }
-
-    #[tokio::test]
-    async fn stream_end_without_output_or_finish_reason_emits_failed_without_completed() {
-        let output = collect(vec![
-            "data: {\"id\":\"chatcmpl_truncated\",\"model\":\"gpt-5.4\",\"choices\":[{\"delta\":{}}]}\n\n",
-        ])
-        .await;
-
-        assert!(output.contains("event: response.failed"));
-        assert!(output.contains("stream_truncated"));
-        assert!(!output.contains("event: response.completed"));
-    }
-
-    #[tokio::test]
-    async fn chat_sse_error_event_emits_failed_without_completed() {
-        let output = collect(vec![
-            "event: error\ndata: {\"error\":{\"message\":\"bad request\",\"type\":\"invalid_request_error\"}}\n\n",
-            "data: [DONE]\n\n",
-        ])
-        .await;
-
-        assert!(output.contains("event: response.failed"));
-        assert!(output.contains("bad request"));
-        assert!(output.contains("invalid_request_error"));
-        assert!(!output.contains("event: response.completed"));
-    }
-
-    #[tokio::test]
-    async fn chat_sse_data_only_error_emits_failed_without_completed() {
-        let output = collect(vec![
-            "data: {\"error\":{\"message\":\"quota exceeded\",\"code\":\"rate_limit_exceeded\"}}\n\n",
-            "data: [DONE]\n\n",
-        ])
-        .await;
-
-        assert!(output.contains("event: response.failed"));
-        assert!(output.contains("quota exceeded"));
-        assert!(output.contains("rate_limit_exceeded"));
         assert!(!output.contains("event: response.completed"));
     }
 
@@ -1663,11 +1691,14 @@ mod tests {
             Some(data) => chunks.push(Ok(Bytes::from(data.to_owned()))),
             None => {}
         }
-        create_responses_sse_stream_from_chat(futures::stream::iter(chunks))
-            .map(|chunk| String::from_utf8(chunk.unwrap().to_vec()).unwrap())
-            .collect::<Vec<_>>()
-            .await
-            .concat()
+        create_responses_sse_stream_from_chat_with_context(
+            futures::stream::iter(chunks),
+            CodexToolContext::default(),
+        )
+        .map(|chunk| String::from_utf8(chunk.unwrap().to_vec()).unwrap())
+        .collect::<Vec<_>>()
+        .await
+        .concat()
     }
 
     #[tokio::test]
@@ -1714,7 +1745,11 @@ mod tests {
         .chain(futures::stream::pending());
         tokio::time::timeout(
             std::time::Duration::from_secs(1),
-            create_responses_sse_stream_from_chat(upstream).collect::<Vec<_>>(),
+            create_responses_sse_stream_from_chat_with_context(
+                upstream,
+                CodexToolContext::default(),
+            )
+            .collect::<Vec<_>>(),
         )
         .await
         .expect("a terminal response must not await another upstream chunk");

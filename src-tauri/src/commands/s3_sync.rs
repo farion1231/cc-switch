@@ -1,5 +1,3 @@
-#![allow(non_snake_case)]
-
 use serde_json::Value;
 use tauri::State;
 
@@ -86,6 +84,11 @@ pub async fn s3_sync_save_settings(
     #[allow(non_snake_case)] passwordTouched: Option<bool>,
 ) -> Result<Value, String> {
     sync_support::sync_save_settings::<S3Backend>(settings, passwordTouched).await
+}
+
+#[tauri::command]
+pub async fn s3_sync_clear_settings() -> Result<Value, String> {
+    sync_support::sync_clear_settings::<S3Backend>().await
 }
 
 #[tauri::command]

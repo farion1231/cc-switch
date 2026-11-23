@@ -68,8 +68,20 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 </tr>
 
 <tr>
+<td width="180"><a href="https://modelflare.dev/sign-up?utm_source=github&utm_campaign=ccswitch"><img src="assets/partners/logos/modelflare-banner.png" alt="Modelflare" width="150"></a></td>
+<td>本プロジェクトのスポンサーである Modelflare に感謝いたします！Modelflare は、性能をフルに発揮し、安定していて水増しなし。世界の SOTA モデルを低コストで利用できます。米国の LLC である Havenbyte LLC が運営し、GPT、Claude、Gemini、Grok などの主要モデルと一般的な互換プロトコルに対応するほか、40 種類以上の画像・動画モデルにも対応しています。中国本土での正式なビジネス提携にも対応しています。
+<b>キャッシュ補償が大きな特長です：</b>OpenAI の一部の価格優先・安定・プレミアムグループでは、1 日あたりのキャッシュヒット率をそれぞれ 65%、75%、85% で保証しています。条件を満たすリクエストが目標に届かなかった場合は差額が補償され、精算後に使用量ダッシュボードで確認できます。
+<b>特別キャンペーン：</b>1 回で US$20 をチャージすると価格倍率 0.015 倍の GPT 特価グループが、1 回で US$50 をチャージすると価格倍率 0.03 倍の Claude 特価グループが利用可能になります。<a href="https://modelflare.dev/sign-up?utm_source=github&utm_campaign=ccswitch">専用リンクから登録</a>すると参加できます。</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://hao.ai/invite/DTBZS3OR"><img src="assets/partners/logos/haoai-banner.png" alt="hao.ai" width="150"></a></td>
 <td>本プロジェクトのスポンサーである hao.ai に感謝いたします！hao.ai は、開発者とチーム向けの高速で安定した LLM 統合 API ゲートウェイです。1 つの API キーと統一インターフェースで GPT、Claude、xAI Grok などの主要モデルにアクセスでき、OpenAI や Anthropic などの一般的なプロトコルと SDK に対応しています。モデルルーティング、フェイルオーバー、チーム管理、完全な呼び出しログを備え、モデル価格は公式参考価格の最大 85% オフ。AI アプリケーションをよりシンプルに、より安定して、より低コストで構築できます。hao.ai は CC Switch ユーザー向けに特別特典を用意しています：<a href="https://hao.ai/invite/DTBZS3OR">このリンク</a>から登録すると、初回注文で 5% のボーナスクレジットを受け取れます！</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://www.string.ink/register?ref=661AE533A60AF110"><img src="assets/partners/logos/stringai-banner.png" alt="StringAI" width="150"></a></td>
+<td>StringAI（弦界）のご支援に感謝します！StringAI はコストパフォーマンスに優れ、高速で安定したモデル API プラットフォームで、AI コーディング、画像生成、音声合成（TTS）、動画生成の 4 つの機能にワンストップでアクセスできます。世界の主要なモデルを幅広く集約し、セルフホスト、クラウドプロバイダー、公式 API など複数のリソースから選べるため、大学、企業、個人開発者、スタートアップのニーズに応えます。専門チームが導入支援と技術サポートを提供します。StringAI は CC Switch ユーザー向けに特別特典を用意しています：<a href="https://www.string.ink/register?ref=661AE533A60AF110">このリンク</a>から登録すると、初回チャージ $3.74 で $3.74 のボーナス額度がもらえます！</td>
 </tr>
 
 <tr>

@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { createElement } from "react";
 import type { AppId } from "@/lib/api";
+import { isWindows } from "@/lib/platform";
 import type { SessionMeta, SessionTextRange } from "@/types";
 
 export const UNKNOWN_PROJECT_DIR_KEY = "__unknown_project_dir__";
@@ -46,6 +47,9 @@ export const SESSION_SOURCE_PATHS: Record<SessionAppId, string[]> = {
   workbuddy: ["~/.workbuddy/projects"],
   agy: [
     "~/.gemini/antigravity-cli/brain/<conversation>/.system_generated/logs",
+    "~/.gemini/antigravity/brain/<conversation>/.system_generated/logs",
+    "~/.gemini/antigravity-acp/brain/<conversation>/.system_generated/logs",
+    "~/.t3/userdata/providers/antigravity/<instance>/antigravity-acp/brain/<conversation>/.system_generated/logs",
   ],
   copilot: ["~/.copilot/session-state"],
 };
@@ -53,19 +57,30 @@ export const SESSION_SOURCE_PATHS: Record<SessionAppId, string[]> = {
 /** 这些应用的会话只能在原软件里删（后端也会拒绝）：只删文件会让它们自己的索引失效。 */
 const NATIVE_DELETE_HINT_KEYS: Record<string, string> = {
   mcode: "sessionManager.mcodeDeleteHint",
-  agy: "sessionManager.agyDeleteHint",
   dsh: "dsh.deleteSessionHint",
   copilot: "sessionManager.copilotDeleteHint",
   workbuddy: "workbuddy.deleteSessionHint",
 };
 
-export const canDeleteSession = (session: SessionMeta) =>
-  Boolean(session.sourcePath) &&
-  !(session.providerId in NATIVE_DELETE_HINT_KEYS);
+/** Antigravity 只有 CLI 的会话能在这里删（后端连索引一起清）；IDE（`antigravity/brain`）
+ *  和 ACP 客户端（`antigravity-acp/brain`，如 T3 Code）的会话索引由原软件维护，
+ *  没有导出记录的会话也没有可删的来源。 */
+const agyDeleteBlocked = (session: SessionMeta) =>
+  !session.sourcePath ||
+  !/[\\/]antigravity-cli[\\/]brain[\\/]/.test(session.sourcePath);
 
 /** 不能在 CC Switch 里删除时，提示去哪里删的文案 key。 */
-export const nativeDeleteHintKey = (providerId: string): string | undefined =>
-  NATIVE_DELETE_HINT_KEYS[providerId];
+export const nativeDeleteHintKey = (
+  session: SessionMeta,
+): string | undefined =>
+  session.providerId === "agy"
+    ? agyDeleteBlocked(session)
+      ? "sessionManager.agyDeleteHint"
+      : undefined
+    : NATIVE_DELETE_HINT_KEYS[session.providerId];
+
+export const canDeleteSession = (session: SessionMeta) =>
+  Boolean(session.sourcePath) && !nativeDeleteHintKey(session);
 
 export interface SessionProjectGroup {
   key: string;
@@ -296,9 +311,13 @@ export const groupSessionsByTime = (
     .map((bucket) => ({ bucket, sessions: buckets.get(bucket)! }));
 };
 
-/** 恢复命令前面加上进入项目目录（POSIX shell）。 */
+/** 恢复命令前面加上进入项目目录：macOS/Linux 用 POSIX 的 `cd '...' && ...`；
+ *  Windows 的恢复命令是 PowerShell 语法（`&&` 在 Windows PowerShell 5.1 里是语法错误），
+ *  改用 `Set-Location '...'` 串接，路径里的单引号按 PowerShell 规则双写。 */
 export const buildCdResumeCommand = (projectDir: string, command: string) =>
-  `cd '${projectDir.replace(/'/g, `'\\''`)}' && ${command}`;
+  isWindows()
+    ? `Set-Location '${projectDir.replace(/'/g, "''")}'; ${command}`
+    : `cd '${projectDir.replace(/'/g, `'\\''`)}' && ${command}`;
 
 /** 非重叠的小写字符串匹配，位置映射回原文的 UTF-16 偏移。 */
 export function* findTextMatches(text: string, query: string) {

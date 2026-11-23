@@ -24,6 +24,7 @@ import type { Provider, VisibleApps } from "@/types";
 import { KNOWN_APP_TYPES, type AppTypeFilter } from "@/types/usage";
 import type { EnvConflict } from "@/types/env";
 import type { SubscriptionQuota } from "@/types/subscription";
+import { invalidateGrokCliLoginCaches } from "@/lib/query/subscription";
 import {
   providersQueryOptions,
   proxyKeys,
@@ -178,6 +179,11 @@ const UnifiedMcpPanel = lazy(() => import("@/components/mcp/UnifiedMcpPanel"));
 const PromptPanel = lazy(() => import("@/components/prompts/PromptPanel"));
 const UnifiedSkillsPanel = lazy(
   () => import("@/components/skills/UnifiedSkillsPanel"),
+);
+const PluginsPage = lazy(() =>
+  import("@/components/plugins/PluginsPage").then((m) => ({
+    default: m.PluginsPage,
+  })),
 );
 const WorkspaceFilesPanel = lazy(
   () => import("@/components/workspace/WorkspaceFilesPanel"),
@@ -531,6 +537,10 @@ function App() {
               await queryClient.invalidateQueries({
                 queryKey: ["managed-auth-status", "claude_official"],
               });
+            }
+            if (event.appType === "grokbuild") {
+              // 托盘切卡同样可能把 Grok CLI 原登录收成新账号、换成绑定的号
+              await invalidateGrokCliLoginCaches(queryClient);
             }
             // 切换会顺带刷新托管 ChatGPT 账号的令牌（托盘切换也一样）：
             // 重查停在失败上的账号额度，免得主界面一直显示旧的「登录过期」
@@ -1104,7 +1114,6 @@ function App() {
     editorSave?: ProviderEditorSave;
   }) => {
     await updateProvider(provider, originalId, editorSave);
-    editProviderStore.close();
   };
 
   // 累加式应用的「已添加」和「默认」都现读客户端文件，移除前后重读一遍
@@ -1852,6 +1861,13 @@ function App() {
               currentView === "skillsDiscovery" ? "discover" : "installed"
             }
             onNavigationBlockedChange={setSkillsNavigationBusy}
+          />
+        );
+      case "plugins":
+        return (
+          <PluginsPage
+            apps={APP_IDS_WITH.plugins.filter((app) => visibleApps[app])}
+            initialApp={appHas(activeApp, "plugins") ? activeApp : "claude"}
           />
         );
       case "prompts":

@@ -9,6 +9,14 @@ export type ProviderCategory =
   | "omo" // Oh My OpenCode
   | "omo-slim"; // Oh My OpenCode Slim
 
+/** 库里有、但存的数据读不出来的一条记录：只能删除，原始数据保持不动。 */
+export interface UnreadableEntry {
+  id: string;
+  name: string;
+  /** 后端的解析错误，点名是哪一列 */
+  error: string;
+}
+
 export interface Provider {
   id: string;
   name: string;
@@ -29,11 +37,6 @@ export interface Provider {
   iconColor?: string; // 图标颜色（Hex 格式，如 "#00A67E"）
   // 是否加入故障转移队列
   inFailoverQueue?: boolean;
-}
-
-export interface AppConfig {
-  providers: Record<string, Provider>;
-  current: string;
 }
 
 // 自定义端点配置
@@ -176,6 +179,8 @@ export interface LocalProxyRequestOverrides {
 
 // 供应商元数据（字段名与后端一致，保持 snake_case）
 export interface ProviderMeta {
+  /** Explicit multiplier for future local-proxy reference costs; absent means 1. */
+  billingMultiplier?: string;
   // 自定义端点：以 URL 为键，值为端点信息
   custom_endpoints?: Record<string, CustomEndpoint>;
   // 是否在切换/同步到 live 时应用通用配置片段
@@ -346,6 +351,8 @@ export interface S3SyncSettings {
   endpoint?: string;
   remoteRoot?: string;
   profile?: string;
+  /** Selected S3 provider preset id; presentational, persisted so it survives reopening. */
+  preset?: string;
   status?: WebDavSyncStatus;
 }
 
@@ -535,6 +542,8 @@ export interface Settings {
   backupIntervalHours?: number;
   // Maximum backup files to retain (default 10)
   backupRetainCount?: number;
+  // Total size limit for the backups folder in MB (unset or 0 = unlimited, default)
+  backupMaxTotalMb?: number;
 
   // ===== 终端设置 =====
   // 首选终端应用（可选，默认使用系统默认终端）
@@ -637,6 +646,7 @@ export type EventKind =
   | "info"
   | "error"
   | "sub_agent"
+  | "goal"
   | "other";
 
 /** 大内容的「按需取」引用：前端不解析，原样回传给后端 */
@@ -865,19 +875,6 @@ export interface McpServer {
 // MCP 服务器映射（id -> McpServer）
 export type McpServersMap = Record<string, McpServer>;
 
-// MCP 配置状态
-export interface McpStatus {
-  userConfigPath: string;
-  userConfigExists: boolean;
-  serverCount: number;
-}
-
-// 新：来自 config.json 的 MCP 列表响应
-export interface McpConfigResponse {
-  configPath: string;
-  servers: Record<string, McpServer>;
-}
-
 // ============================================================================
 // 统一供应商（Universal Provider）- 跨应用共享配置
 // ============================================================================
@@ -967,19 +964,6 @@ export interface OpenCodeProviderConfig {
   name?: string; // 供应商显示名称
   options: OpenCodeProviderOptions;
   models: Record<string, OpenCodeModel>;
-}
-
-// OpenCode MCP 服务器配置（与统一格式不同）
-export interface OpenCodeMcpServerSpec {
-  type: "local" | "remote";
-  // local 类型字段
-  command?: string[]; // 与统一格式不同：命令和参数合并为数组
-  environment?: Record<string, string>; // 与统一格式不同：使用 environment 而非 env
-  // remote 类型字段
-  url?: string;
-  headers?: Record<string, string>;
-  // 通用字段
-  enabled?: boolean;
 }
 
 // ============================================================================

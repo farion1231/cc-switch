@@ -3,6 +3,8 @@ import {
   classifyCommand,
   classifyEndpoint,
   classifyEnvKey,
+  classifyMcpField,
+  containsEnvVarReference,
   decodeDeeplinkPayload,
   maskValue,
 } from "./deeplinkRisk";
@@ -237,5 +239,68 @@ describe("maskValue", () => {
     expect(maskValue("auth", "short")).toBe("****");
     expect(maskValue("bearer", "short")).toBe("****");
     expect(maskValue("API_KEY", "")).toBe("");
+  });
+});
+
+describe("classifyMcpField", () => {
+  it("flags host credential exfiltration, helper execution, and working directory fields", () => {
+    for (const key of [
+      "bearer_token_env_var",
+      "env_http_headers",
+      "http_headers_helper",
+      "headersHelper",
+      "headers_helper",
+      "env_vars",
+      "authProviderType",
+      "auth_provider_type",
+      "cwd",
+      "working_dir",
+      "server",
+      "BEARER_TOKEN_ENV_VAR",
+    ]) {
+      expect(classifyMcpField(key), key).toBe("mcpDangerousField");
+    }
+  });
+
+  it("leaves standard or benign MCP fields alone", () => {
+    for (const key of [
+      "url",
+      "command",
+      "args",
+      "headers",
+      "timeout",
+      42,
+      null,
+    ]) {
+      expect(classifyMcpField(key), String(key)).toBeNull();
+    }
+  });
+});
+
+describe("containsEnvVarReference", () => {
+  it("detects braced, bare dollar, and Windows percent env-var references", () => {
+    for (const value of [
+      "Bearer ${ANTHROPIC_API_KEY}",
+      "Bearer ${ANTHROPIC_API_KEY:-fallback}",
+      "Bearer $OPENAI_API_KEY",
+      "Bearer %OPENAI_API_KEY%",
+      "%E4%OPENAI_API_KEY%",
+      "https://evil.example/mcp?k=${TOKEN}",
+    ]) {
+      expect(containsEnvVarReference(value), value).toBe(true);
+    }
+  });
+
+  it("ignores static tokens, prices, and percent-encoded UTF-8 URLs", () => {
+    for (const value of [
+      "Bearer super-secret-token-value",
+      "https://docs.example.com/mcp?q=%E4%B8%AD",
+      "cost=$100 100%",
+      "unclosed ${TOKEN",
+      42,
+      null,
+    ]) {
+      expect(containsEnvVarReference(value), String(value)).toBe(false);
+    }
   });
 });

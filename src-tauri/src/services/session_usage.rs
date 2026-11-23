@@ -13,9 +13,7 @@ use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use crate::proxy::usage::calculator::{CostCalculator, ModelPricing};
 use crate::proxy::usage::parser::{claude_cache_creation_1h_tokens, TokenUsage};
-use crate::services::usage_stats::{
-    effective_usage_log_filter, find_model_pricing, has_matching_proxy_usage_log, DedupKey,
-};
+use crate::services::usage_stats::{find_model_pricing, has_matching_proxy_usage_log, DedupKey};
 use rusqlite::OptionalExtension;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -75,7 +73,7 @@ pub fn last_sync_completed_at() -> Option<i64> {
 
 /// session_log_sync 表一行的内存快照。
 ///
-/// 各解析器在一轮扫描开头用 [`load_sync_cursors`] 一次性预取全表，替代
+/// 完整扫描在顶层用 [`load_sync_cursors`] 预取一次，各解析器借用同一快照，替代
 /// 逐文件的单行查询（文件数随历史只增不减，逐文件查询意味着每轮上千次
 /// 取锁）。`last_synced_at` 对 Pi 路径是编码后的 revision，其余路径是
 /// 真实同步时间戳。
@@ -87,10 +85,13 @@ pub(crate) struct SyncCursor {
     /// 游标边界前尾部字节的指纹（仅 Claude 路径写入），用于识别文件被
     /// 外部重写；NULL 表示无指纹可校验。
     pub last_tail_fingerprint: Option<i64>,
-    /// Parser context at the byte offset (DSH's unfinished steps). Committed with the cursor.
+    /// Parser context or generation at the byte offset (DSH's unfinished steps, Kimi's
+    /// usage-parser generation). Committed with the cursor.
     pub parser_state: Option<String>,
     pub last_synced_at: i64,
 }
+
+pub(crate) type SyncCursors = HashMap<String, SyncCursor>;
 
 /// 一次性预取 session_log_sync 全表游标。
 ///
@@ -98,7 +99,7 @@ pub(crate) struct SyncCursor {
 /// 30 天前的明细汇总后删除，request_id 去重只查明细表，对已剪条目失明——
 /// 空表回退意味着全量重导，被剪的旧条目会在下次 rollup 时再次累加进汇总，
 /// 永久放大统计。
-pub(crate) fn load_sync_cursors(db: &Database) -> Result<HashMap<String, SyncCursor>, AppError> {
+pub(crate) fn load_sync_cursors(db: &Database) -> Result<SyncCursors, AppError> {
     let conn = lock_conn!(db.conn);
     let mut stmt = conn
         .prepare(
@@ -135,90 +136,116 @@ fn merge_sync_step(
     }
 }
 
+type SyncStep = (
+    &'static str,
+    fn(&Database, &SyncCursors) -> Result<SessionSyncResult, AppError>,
+);
+
 /// 调用方必须持有 [`session_sync_mutex`]。此函数是同步内核，供后台任务、
 /// 手动同步和 Codex 重建共享，避免 tokio Mutex 重入。
 pub fn sync_all_unlocked(db: &Database) -> SessionSyncResult {
-    let mut result = SessionSyncResult::default();
-    merge_sync_step(&mut result, "Claude", sync_claude_session_logs(db));
-    merge_sync_step(
-        &mut result,
-        "Codex",
-        crate::services::session_usage_codex::sync_codex_usage(db),
-    );
-    merge_sync_step(
-        &mut result,
-        "Gemini",
-        crate::services::session_usage_gemini::sync_gemini_usage(db),
-    );
-    merge_sync_step(
-        &mut result,
-        "OpenCode",
-        crate::services::session_usage_opencode::sync_opencode_usage(db),
-    );
-    merge_sync_step(
-        &mut result,
-        "Grok Build",
-        crate::services::session_usage_grokbuild::sync_grokbuild_usage(db),
-    );
-    merge_sync_step(
-        &mut result,
-        "Pi",
-        crate::services::session_usage_pi::sync_pi_usage(db),
-    );
-    merge_sync_step(
-        &mut result,
-        "Oh My Pi",
-        crate::services::session_usage_omp::sync_omp_usage(db),
-    );
-    merge_sync_step(
-        &mut result,
-        "MCode",
-        crate::services::session_usage_mcode::sync_mcode_usage(db),
-    );
-    merge_sync_step(
-        &mut result,
-        "Antigravity",
-        crate::services::session_usage_agy::sync_agy_usage(db),
-    );
-    merge_sync_step(
-        &mut result,
-        "Kimi Code",
-        crate::services::session_usage_kimi::sync_kimi_usage(db),
-    );
-    merge_sync_step(
-        &mut result,
-        "GitHub Copilot CLI",
-        crate::services::session_usage_copilot::sync_copilot_usage(db),
-    );
-    merge_sync_step(
-        &mut result,
-        "WorkBuddy",
-        crate::services::session_usage_workbuddy::sync_workbuddy_usage(db),
-    );
-    // Web 与 Desktop 共用 `$DSH_HOME/sessions`，一次扫描覆盖两端
-    merge_sync_step(
-        &mut result,
-        "DeepSeek Harness",
-        crate::services::session_usage_dsh::sync_dsh_usage(db),
+    let result = run_sync_steps(
+        db,
+        &[
+            ("Claude", sync_claude_session_logs),
+            (
+                "Codex",
+                crate::services::session_usage_codex::sync_codex_usage_with_cursors,
+            ),
+            (
+                "Gemini",
+                crate::services::session_usage_gemini::sync_gemini_usage,
+            ),
+            (
+                "OpenCode",
+                crate::services::session_usage_opencode::sync_opencode_usage,
+            ),
+            (
+                "Grok Build",
+                crate::services::session_usage_grokbuild::sync_grokbuild_usage,
+            ),
+            (
+                "Pi",
+                crate::services::session_usage_pi::sync_pi_usage_with_cursors,
+            ),
+            (
+                "Oh My Pi",
+                crate::services::session_usage_omp::sync_omp_usage,
+            ),
+            ("MCode", |db, _cursors| {
+                crate::services::session_usage_mcode::sync_mcode_usage(db)
+            }),
+            (
+                "Antigravity",
+                crate::services::session_usage_agy::sync_agy_usage_with_cursors,
+            ),
+            (
+                "Kimi Code",
+                crate::services::session_usage_kimi::sync_kimi_usage,
+            ),
+            (
+                "GitHub Copilot CLI",
+                crate::services::session_usage_copilot::sync_copilot_usage,
+            ),
+            (
+                "WorkBuddy",
+                crate::services::session_usage_workbuddy::sync_workbuddy_usage,
+            ),
+            (
+                "DeepSeek Harness",
+                crate::services::session_usage_dsh::sync_dsh_usage,
+            ),
+        ],
     );
     notify_sync_result(&result);
     record_sync_completed(chrono::Utc::now().timestamp_millis());
     result
 }
 
+fn run_sync_steps(db: &Database, steps: &[SyncStep]) -> SessionSyncResult {
+    // Never substitute an empty snapshot: pruned records would be billed again.
+    let cursors = match load_sync_cursors(db) {
+        Ok(cursors) => cursors,
+        Err(error) => {
+            return SessionSyncResult {
+                errors: vec![format!("预取同步游标失败: {error}")],
+                ..Default::default()
+            }
+        }
+    };
+    std::thread::scope(|scope| {
+        // Borrow one snapshot rather than allocating a full table per source. File IO
+        // and parsing overlap; each importer still atomically commits records + cursor.
+        let workers: Vec<_> = steps
+            .iter()
+            .map(|&(name, sync)| {
+                let cursors = &cursors;
+                (
+                    name,
+                    std::thread::Builder::new()
+                        .name(format!("usage-{name}"))
+                        .spawn_scoped(scope, move || sync(db, cursors)),
+                )
+            })
+            .collect();
+        let mut result = SessionSyncResult::default();
+        for (name, worker) in workers {
+            let step = match worker {
+                Ok(worker) => worker
+                    .join()
+                    .unwrap_or_else(|_| Err(AppError::Message("同步线程异常退出".into()))),
+                Err(error) => Err(AppError::Message(format!("无法启动同步线程: {error}"))),
+            };
+            merge_sync_step(&mut result, name, step);
+        }
+        result
+    })
+}
+
 pub(crate) fn notify_sync_result(result: &SessionSyncResult) {
     if result.imported > 0 {
         crate::usage_events::notify_log_recorded();
     }
-}
-
-/// 数据来源分布
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DataSourceSummary {
-    pub data_source: String,
-    pub request_count: u32,
-    pub total_cost_usd: String,
 }
 
 /// 从 JSONL 中解析出的 assistant 消息使用数据
@@ -429,7 +456,10 @@ fn resolve_request_start_ms(chain: &ChainNodes, first_parent: Option<uuid::Uuid>
 }
 
 /// 同步 Claude Code 会话日志到使用统计数据库
-pub fn sync_claude_session_logs(db: &Database) -> Result<SessionSyncResult, AppError> {
+pub(crate) fn sync_claude_session_logs(
+    db: &Database,
+    cursors: &crate::services::session_usage::SyncCursors,
+) -> Result<SessionSyncResult, AppError> {
     let projects_dir = get_claude_config_dir().join("projects");
     if !projects_dir.exists() {
         return Ok(SessionSyncResult {
@@ -453,7 +483,6 @@ pub fn sync_claude_session_logs(db: &Database) -> Result<SessionSyncResult, AppE
 
     // 收集所有 .jsonl 文件
     let jsonl_files = collect_jsonl_files(&projects_dir);
-    let cursors = load_sync_cursors(db)?;
 
     for file_path in &jsonl_files {
         result.files_scanned += 1;
@@ -1191,19 +1220,34 @@ fn session_costs(
         model: Some(msg.model.clone()),
         message_id: None,
     };
-    match pricing_cache.get(conn, &msg.model) {
-        Some(pricing) => {
-            let cost = CostCalculator::calculate(&usage, pricing, Decimal::from(1));
-            [
-                cost.input_cost.to_string(),
-                cost.output_cost.to_string(),
-                cost.cache_read_cost.to_string(),
-                cost.cache_creation_cost.to_string(),
-                cost.total_cost.to_string(),
-            ]
-        }
-        None => std::array::from_fn(|_| "0".to_string()),
-    }
+    cost_columns(
+        "claude",
+        &usage,
+        pricing_cache.get(conn, &msg.model),
+        Decimal::ONE,
+    )
+}
+
+/// 五个金额列（输入、输出、缓存读、缓存写、合计）。查不到价格的全记 "0"，
+/// 表示没有定价，不代表免费。
+pub(crate) fn cost_columns(
+    app_type: &str,
+    usage: &TokenUsage,
+    pricing: Option<&ModelPricing>,
+    multiplier: Decimal,
+) -> [String; 5] {
+    let Some(pricing) = pricing else {
+        return std::array::from_fn(|_| "0".to_string());
+    };
+    let cost = CostCalculator::calculate_for_app(app_type, usage, pricing, multiplier);
+    [
+        cost.input_cost,
+        cost.output_cost,
+        cost.cache_read_cost,
+        cost.cache_creation_cost,
+        cost.total_cost,
+    ]
+    .map(|value| value.to_string())
 }
 
 /// 补全一条已经入库的回复。
@@ -1396,38 +1440,6 @@ fn find_model_pricing_for_session(
     find_model_pricing(conn, model_id)
 }
 
-/// 查询数据来源分布统计
-pub fn get_data_source_breakdown(db: &Database) -> Result<Vec<DataSourceSummary>, AppError> {
-    let conn = lock_conn!(db.conn);
-
-    let effective_filter = effective_usage_log_filter("l");
-    let sql = format!(
-        "SELECT COALESCE(l.data_source, 'proxy') as ds, COUNT(*) as cnt,
-                COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0) as cost
-         FROM proxy_request_logs l
-         WHERE {effective_filter}
-         GROUP BY ds
-         ORDER BY cnt DESC"
-    );
-
-    let mut stmt = conn.prepare(&sql)?;
-
-    let rows = stmt.query_map([], |row| {
-        Ok(DataSourceSummary {
-            data_source: row.get(0)?,
-            request_count: row.get::<_, i64>(1)? as u32,
-            total_cost_usd: format!("{:.6}", row.get::<_, f64>(2)?),
-        })
-    })?;
-
-    let mut summaries = Vec::new();
-    for row in rows {
-        summaries.push(row.map_err(|e| AppError::Database(e.to_string()))?);
-    }
-
-    Ok(summaries)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1476,6 +1488,66 @@ mod tests {
         ];
         let actual: [Decimal; 5] = std::array::from_fn(|index| costs[index].parse().unwrap());
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn parallel_sync_steps_share_one_snapshot_and_merge_failures() {
+        use std::sync::{Condvar, Mutex};
+        static GATE: (Mutex<usize>, Condvar) = (Mutex::new(0), Condvar::new());
+        fn scanner(db: &Database, cursors: &SyncCursors) -> Result<SessionSyncResult, AppError> {
+            assert_eq!(cursors.len(), 1);
+            assert!(cursors.contains_key("seed"));
+            // If the second worker reloads cursors instead of sharing the first
+            // snapshot it will see this new key.
+            update_sync_state(db, "written-during-pass", 1, 1)?;
+            let (lock, wake) = &GATE;
+            let mut ready = lock.lock().unwrap();
+            *ready += 1;
+            wake.notify_all();
+            let (ready, timeout) = wake
+                .wait_timeout_while(ready, std::time::Duration::from_secs(5), |n| *n < 2)
+                .unwrap();
+            assert!(!timeout.timed_out(), "session scanners ran serially");
+            assert_eq!(*ready, 2);
+            Ok(SessionSyncResult {
+                imported: 2,
+                files_scanned: 1,
+                ..Default::default()
+            })
+        }
+        let db = Database::memory().unwrap();
+        update_sync_state(&db, "seed", 1, 1).unwrap();
+        let result = run_sync_steps(
+            &db,
+            &[
+                ("a", scanner),
+                ("b", scanner),
+                ("broken", |_, _| {
+                    Err(AppError::Message("fixture failure".into()))
+                }),
+            ],
+        );
+        assert_eq!(result.imported, 4);
+        assert_eq!(result.files_scanned, 2);
+        assert_eq!(result.errors.len(), 1);
+        assert!(result.errors[0].contains("broken"));
+    }
+
+    #[test]
+    fn unreadable_cursor_table_aborts_before_starting_any_scanner() {
+        let db = Database::memory().unwrap();
+        db.conn
+            .lock()
+            .unwrap()
+            .execute("DROP TABLE session_log_sync", [])
+            .unwrap();
+        let result = run_sync_steps(
+            &db,
+            &[("must not run", |_, _| panic!("cursor load failed"))],
+        );
+        assert_eq!(result.imported, 0);
+        assert_eq!(result.errors.len(), 1);
+        assert!(result.errors[0].contains("预取同步游标失败"));
     }
 
     #[test]

@@ -99,14 +99,6 @@ export async function authCancelLogin(
   });
 }
 
-export async function authListAccounts(
-  authProvider: ManagedAuthProvider,
-): Promise<ManagedAuthAccount[]> {
-  return invoke<ManagedAuthAccount[]>("auth_list_accounts", {
-    authProvider,
-  });
-}
-
 export async function authGetStatus(
   authProvider: ManagedAuthProvider,
 ): Promise<ManagedAuthStatus> {
@@ -216,6 +208,8 @@ export interface WorkBuddyQuotaSnapshot {
   total: number;
   remaining: number;
   used: number;
+  /** 企业号限额为「不限」：这时 total / remaining 没有意义，只看 used */
+  unlimited?: boolean;
   /** 查询时刻（毫秒） */
   queriedAt: number;
   /** 还有剩余的各个资源包各自什么时候到期，按到期先后排；缺省表示这次没查到明细 */
@@ -280,22 +274,3 @@ export interface ClaudeLoginSwitchStatus {
 export async function getClaudeLoginSwitch(): Promise<ClaudeLoginSwitchStatus> {
   return invoke<ClaudeLoginSwitchStatus>("get_claude_login_switch");
 }
-
-export const authApi = {
-  authStartLogin,
-  authPollForAccount,
-  authCancelLogin,
-  authListAccounts,
-  authGetStatus,
-  authRemoveAccount,
-  authSetDefaultAccount,
-  authLogout,
-  agyAccountIsRunning,
-  workbuddyAccountLiveState,
-  workbuddyAccountImportCurrent,
-  workbuddyAccountPrepareNewLogin,
-  workbuddyAccountOpenApp,
-  workbuddyAccountQuota,
-  claudeAccountSubmitPaste,
-  getClaudeLoginSwitch,
-};

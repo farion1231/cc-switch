@@ -68,8 +68,20 @@ Claude Code / Codex / Gemini 官方渠道低至 3.8 / 0.2 / 0.9 折，充值更�
 </tr>
 
 <tr>
+<td width="180"><a href="https://modelflare.dev/sign-up?utm_source=github&utm_campaign=ccswitch"><img src="assets/partners/logos/modelflare-banner.png" alt="Modelflare" width="150"></a></td>
+<td>感谢 Modelflare 赞助本项目！Modelflare：满血稳定不掺水，低成本享受全球 SOTA 模型。站点由美国 LLC 主体 Havenbyte LLC 运营，支持 GPT、Claude、Gemini、Grok 等主流模型和常用兼容协议，还支持 40 多种图片和视频模型，支持大陆正规商务合作。
+<b>缓存补偿是一大亮点：</b>部分 OpenAI 价格优先、稳定和高级分组提供每日 65%、75%、85% 的缓存命中率保障，符合条件的请求没达到目标的，平台补偿差额，结算后可在用量看板查看。
+<b>特惠活动：</b>单笔充值 US$20 即可解锁 0.015 倍价格倍率的 GPT 特惠分组，单笔充值 US$50 即可解锁 0.03 倍价格倍率的 Claude 特惠分组。通过<a href="https://modelflare.dev/sign-up?utm_source=github&utm_campaign=ccswitch">专属链接注册</a>即可参与。</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://hao.ai/invite/DTBZS3OR"><img src="assets/partners/logos/haoai-banner.png" alt="hao.ai" width="150"></a></td>
 <td>感谢 hao.ai 赞助了本项目！hao.ai 是面向开发者与团队的高速、稳定大模型统一 API 网关。通过一个 API Key 和统一接口，即可接入 GPT、Claude、xAI Grok 等主流模型，兼容 OpenAI、Anthropic 等常用协议与 SDK。平台提供模型路由、故障回退、团队管理及完整调用日志，模型价格低至官方参考价的 1.5 折，帮助用户更简单、更稳定、更低成本地构建 AI 应用。hao.ai 为 CC Switch 用户提供了特别福利，通过<a href="https://hao.ai/invite/DTBZS3OR">此链接</a>注册的用户，首单可享受 5% 赠送额度！</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://www.string.ink/register?ref=661AE533A60AF110"><img src="assets/partners/logos/stringai-banner.png" alt="StringAI" width="150"></a></td>
+<td>感谢弦界 StringAI 赞助了本项目！弦界 StringAI 是一个高性价比、高效稳定的模型 API 平台，一站式接入 AI 编程（Coding）、图像生成（Image）、语音合成（TTS）和视频生成（Video）四大能力。汇聚全球多款知名模型，提供自部署、云服务商及官方 API 等多种资源选择，满足高校、企业、个人开发者和创业团队的接入需求，并由专业团队提供接入指导与技术支持。弦界为 CC Switch 用户提供了专属福利，通过<a href="https://www.string.ink/register?ref=661AE533A60AF110">此链接</a>注册，首充 25 元送 25 元，获赠 25 元额外奖励额度！</td>
 </tr>
 
 <tr>

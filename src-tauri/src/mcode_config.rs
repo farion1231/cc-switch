@@ -588,7 +588,11 @@ mod tests {
         let lock_path = config_path().with_extension("yaml.lock");
         fs::create_dir(&lock_path).unwrap();
         assert!(ProviderService::add(&state, AppType::Mcode, provider.clone(), true).is_err());
-        assert!(state.db.get_all_providers("mcode").unwrap().is_empty());
+        assert!(state
+            .db
+            .get_all_providers(&AppType::Mcode)
+            .unwrap()
+            .is_empty());
         fs::remove_dir(lock_path).unwrap();
         ProviderService::add(&state, AppType::Mcode, provider.clone(), false)
             .expect("Save catalog entry");
@@ -610,7 +614,7 @@ mod tests {
         fs::write(config_path(), serde_yaml::to_string(&document).unwrap()).unwrap();
         let previous = state
             .db
-            .get_provider_by_id(&provider.id, "mcode")
+            .get_provider_by_id(&provider.id, &AppType::Mcode)
             .unwrap()
             .unwrap();
         let mut rejected = provider.clone();
@@ -618,7 +622,7 @@ mod tests {
         assert!(ProviderService::update(&state, AppType::Mcode, None, rejected).is_err());
         let restored = state
             .db
-            .get_provider_by_id(&provider.id, "mcode")
+            .get_provider_by_id(&provider.id, &AppType::Mcode)
             .unwrap()
             .unwrap();
         assert!(restored.settings_config == previous.settings_config);
@@ -746,19 +750,19 @@ mod capability_tests {
             oversized.clone()
         )
         .is_err());
-        assert_eq!(db.get_prompts("mcode").unwrap().len(), 1);
+        assert_eq!(db.get_prompts(&AppType::Mcode).unwrap().len(), 1);
         oversized.enabled = false;
-        db.save_prompt("mcode", &oversized).unwrap();
+        db.save_prompt(&AppType::Mcode, &oversized).unwrap();
         assert!(PromptService::enable_prompt(&state, AppType::Mcode, "oversized").is_err());
-        assert!(db.get_prompts("mcode").unwrap()[id].enabled);
-        assert!(!db.get_prompts("mcode").unwrap()["oversized"].enabled);
-        db.delete_prompt("mcode", id).unwrap();
+        assert!(db.get_prompts(&AppType::Mcode).unwrap()[id].enabled);
+        assert!(!db.get_prompts(&AppType::Mcode).unwrap()["oversized"].enabled);
+        db.delete_prompt(&AppType::Mcode, id).unwrap();
         oversized.enabled = true;
-        db.save_prompt("mcode", &oversized).unwrap();
+        db.save_prompt(&AppType::Mcode, &oversized).unwrap();
         assert!(PromptService::sync_to_live(&state, AppType::Mcode).is_err());
         assert_eq!(fs::read_to_string(&path).unwrap(), prompt.content);
-        db.delete_prompt("mcode", "oversized").unwrap();
-        db.save_prompt("mcode", prompt).unwrap();
+        db.delete_prompt(&AppType::Mcode, "oversized").unwrap();
+        db.save_prompt(&AppType::Mcode, prompt).unwrap();
         let mut disabled = prompt.clone();
         disabled.enabled = false;
         PromptService::upsert_prompt(&state, AppType::Mcode, id, disabled).unwrap();

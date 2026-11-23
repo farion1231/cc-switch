@@ -28,9 +28,11 @@ export interface AppCaps {
   mcp: boolean;
   /** 支持提示词。Claude Desktop 用 Claude Code 的；OpenClaw 在自己的「工作区」里管理 */
   prompts: boolean;
+  /** 在「插件」页管理插件（由各应用官方 CLI 提供） */
+  plugins: boolean;
   /**
-   * 能用授权中心里的托管账号。Antigravity 官方卡只算明确绑了号的（没绑的跟着 agy 自己的
-   * 登录）；WorkBuddy 官方登录卡一定绑了号。
+   * 能用授权中心里的托管账号。Antigravity、Grok 官方卡只算明确绑了号的（没绑的跟着
+   * 客户端自己的登录）；WorkBuddy 官方登录卡一定绑了号。
    */
   managedAccount: boolean;
   /** Pi 一族：Oh My Pi 是 Pi 的分支，供应商表单、启用状态和用量脚本命令与 Pi 共用 */
@@ -40,6 +42,8 @@ export interface AppCaps {
    * `ProviderService::editor_view` 投影。
    */
   editorView: boolean;
+  /** 官方卡能查订阅额度（后端 `get_subscription_quota`） */
+  officialSubscription: boolean;
 }
 
 /** 键的顺序就是应用的默认顺序（侧栏、应用页）。 */
@@ -52,9 +56,11 @@ export const APP_SPECS = {
     skills: true,
     mcp: true,
     prompts: true,
+    plugins: true,
     managedAccount: true,
     piFamily: false,
     editorView: true,
+    officialSubscription: true,
   },
   "claude-desktop": {
     localProxy: false,
@@ -64,9 +70,11 @@ export const APP_SPECS = {
     skills: false,
     mcp: false,
     prompts: false,
+    plugins: false,
     managedAccount: true,
     piFamily: false,
     editorView: false,
+    officialSubscription: false,
   },
   codex: {
     localProxy: true,
@@ -76,9 +84,11 @@ export const APP_SPECS = {
     skills: true,
     mcp: true,
     prompts: true,
+    plugins: true,
     managedAccount: true,
     piFamily: false,
     editorView: true,
+    officialSubscription: true,
   },
   gemini: {
     localProxy: true,
@@ -88,9 +98,11 @@ export const APP_SPECS = {
     skills: true,
     mcp: true,
     prompts: true,
+    plugins: false,
     managedAccount: false,
     piFamily: false,
     editorView: true,
+    officialSubscription: true,
   },
   grokbuild: {
     localProxy: true,
@@ -100,9 +112,11 @@ export const APP_SPECS = {
     skills: true,
     mcp: true,
     prompts: true,
-    managedAccount: false,
+    plugins: true,
+    managedAccount: true,
     piFamily: false,
     editorView: true,
+    officialSubscription: true,
   },
   opencode: {
     localProxy: false,
@@ -112,9 +126,11 @@ export const APP_SPECS = {
     skills: true,
     mcp: true,
     prompts: true,
+    plugins: false,
     managedAccount: false,
     piFamily: false,
     editorView: false,
+    officialSubscription: false,
   },
   openclaw: {
     localProxy: false,
@@ -124,9 +140,11 @@ export const APP_SPECS = {
     skills: false,
     mcp: false,
     prompts: false,
+    plugins: true,
     managedAccount: false,
     piFamily: false,
     editorView: false,
+    officialSubscription: false,
   },
   hermes: {
     localProxy: false,
@@ -136,9 +154,11 @@ export const APP_SPECS = {
     skills: true,
     mcp: true,
     prompts: true,
+    plugins: false,
     managedAccount: false,
     piFamily: false,
     editorView: false,
+    officialSubscription: false,
   },
   pi: {
     localProxy: false,
@@ -148,9 +168,11 @@ export const APP_SPECS = {
     skills: true,
     mcp: true,
     prompts: true,
+    plugins: true,
     managedAccount: false,
     piFamily: true,
     editorView: false,
+    officialSubscription: false,
   },
   mcode: {
     localProxy: false,
@@ -160,9 +182,11 @@ export const APP_SPECS = {
     skills: true,
     mcp: true,
     prompts: true,
+    plugins: true,
     managedAccount: false,
     piFamily: false,
     editorView: false,
+    officialSubscription: false,
   },
   kimi: {
     localProxy: false,
@@ -172,9 +196,11 @@ export const APP_SPECS = {
     skills: true,
     mcp: true,
     prompts: true,
+    plugins: false,
     managedAccount: false,
     piFamily: false,
     editorView: false,
+    officialSubscription: false,
   },
   dsh: {
     localProxy: false,
@@ -184,9 +210,11 @@ export const APP_SPECS = {
     skills: true,
     mcp: true,
     prompts: true,
+    plugins: false,
     managedAccount: false,
     piFamily: false,
     editorView: false,
+    officialSubscription: false,
   },
   agy: {
     localProxy: false,
@@ -196,9 +224,11 @@ export const APP_SPECS = {
     skills: true,
     mcp: true,
     prompts: true,
+    plugins: true,
     managedAccount: true,
     piFamily: false,
     editorView: false,
+    officialSubscription: true,
   },
   omp: {
     localProxy: false,
@@ -208,9 +238,11 @@ export const APP_SPECS = {
     skills: true,
     mcp: true,
     prompts: true,
+    plugins: false,
     managedAccount: false,
     piFamily: true,
     editorView: false,
+    officialSubscription: false,
   },
   copilot: {
     localProxy: false,
@@ -220,9 +252,11 @@ export const APP_SPECS = {
     skills: true,
     mcp: true,
     prompts: true,
+    plugins: false,
     managedAccount: true,
     piFamily: false,
     editorView: false,
+    officialSubscription: false,
   },
   workbuddy: {
     localProxy: false,
@@ -232,9 +266,11 @@ export const APP_SPECS = {
     skills: true,
     mcp: true,
     prompts: true,
+    plugins: false,
     managedAccount: true,
     piFamily: false,
     editorView: false,
+    officialSubscription: false,
   },
 } as const satisfies Record<AppId, AppCaps>;
 

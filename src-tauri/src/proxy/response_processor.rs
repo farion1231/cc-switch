@@ -20,6 +20,7 @@ use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
 use serde_json::Value;
 use std::{
+    collections::VecDeque,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, OnceLock,
@@ -352,7 +353,38 @@ pub async fn process_response(
 // SSE 使用量收集器
 // ============================================================================
 
+const MAX_HEAD_USAGE_EVENTS: usize = 32;
+const MAX_TAIL_USAGE_EVENTS: usize = 256;
+const MAX_PENDING_SSE_BYTES: usize = 64 * 1024 * 1024;
+
 type UsageCallbackWithTiming = Arc<dyn Fn(Vec<Value>, Option<u64>) + Send + Sync + 'static>;
+
+#[derive(Default)]
+struct CollectedSseEvents {
+    head: Vec<Value>,
+    tail: VecDeque<Value>,
+    dropped: usize,
+}
+
+impl CollectedSseEvents {
+    fn push(&mut self, event: Value) {
+        if self.head.len() < MAX_HEAD_USAGE_EVENTS {
+            self.head.push(event);
+            return;
+        }
+        if self.tail.len() == MAX_TAIL_USAGE_EVENTS {
+            self.tail.pop_front();
+            self.dropped += 1;
+        }
+        self.tail.push_back(event);
+    }
+
+    fn into_vec(self) -> Vec<Value> {
+        let mut events = self.head;
+        events.extend(self.tail);
+        events
+    }
+}
 
 /// SSE 使用量收集器
 #[derive(Clone)]
@@ -361,7 +393,7 @@ pub struct SseUsageCollector {
 }
 
 struct SseUsageCollectorInner {
-    events: Mutex<Vec<Value>>,
+    events: Mutex<CollectedSseEvents>,
     first_output_time: OnceLock<std::time::Instant>,
     start_time: std::time::Instant,
     on_complete: UsageCallbackWithTiming,
@@ -379,7 +411,7 @@ impl SseUsageCollector {
         let on_complete: UsageCallbackWithTiming = Arc::new(callback);
         Self {
             inner: Arc::new(SseUsageCollectorInner {
-                events: Mutex::new(Vec::new()),
+                events: Mutex::new(CollectedSseEvents::default()),
                 first_output_time: OnceLock::new(),
                 start_time,
                 on_complete,
@@ -422,10 +454,19 @@ impl SseUsageCollector {
             return;
         }
 
-        let events = {
+        let collected = {
             let mut guard = self.inner.events.lock().await;
             std::mem::take(&mut *guard)
         };
+        if collected.dropped > 0 {
+            log::debug!(
+                "SSE usage collector retained {} head + {} tail events (dropped {} middle events)",
+                collected.head.len(),
+                collected.tail.len(),
+                collected.dropped
+            );
+        }
+        let events = collected.into_vec();
 
         let first_token_ms = self
             .inner
@@ -510,6 +551,7 @@ pub(crate) fn create_usage_collector(
 
     let state = state.clone();
     let provider_id = ctx.provider.id.clone();
+    let multiplier = crate::provider::billing_multiplier(&ctx.provider);
     let request_model = ctx.request_model.clone();
     // 流式事件缺失模型名时的归因兜底：映射后的出站模型（路由接管真值）优先，
     // 其次才是客户端请求别名
@@ -545,6 +587,7 @@ pub(crate) fn create_usage_collector(
                     log_usage_internal(
                         &state,
                         &provider_id,
+                        multiplier,
                         app_type_str,
                         &model,
                         &request_model,
@@ -571,6 +614,7 @@ pub(crate) fn create_usage_collector(
                     log_usage_internal(
                         &state,
                         &provider_id,
+                        multiplier,
                         app_type_str,
                         &model,
                         &request_model,
@@ -609,6 +653,7 @@ fn spawn_log_usage(
 
     let state = state.clone();
     let provider_id = ctx.provider.id.clone();
+    let multiplier = crate::provider::billing_multiplier(&ctx.provider);
     let app_type_str = ctx.app_type_str.to_string();
     let model = model.to_string();
     let request_model = request_model.to_string();
@@ -624,6 +669,7 @@ fn spawn_log_usage(
         log_usage_internal(
             &state,
             &provider_id,
+            multiplier,
             &app_type_str,
             &model,
             &request_model,
@@ -657,6 +703,7 @@ pub(crate) fn usage_logging_enabled(state: &ProxyState) -> bool {
 async fn log_usage_internal(
     state: &ProxyState,
     provider_id: &str,
+    multiplier: rust_decimal::Decimal,
     app_type: &str,
     model: &str,
     request_model: &str,
@@ -693,10 +740,7 @@ async fn log_usage_internal(
     let outbound_model = outbound_model.to_string();
     let write = tokio::task::spawn_blocking(move || {
         let logger = UsageLogger::new(&db);
-        // 计费模式读取的 DAO 是伪 async（无真实挂起点、直接取阻塞锁），
-        // 在阻塞线程上 block_on 不会停转运行时
-        let pricing_model_source = tokio::runtime::Handle::current()
-            .block_on(logger.resolve_pricing_model_source(&app_type));
+        let pricing_model_source = logger.resolve_pricing_model_source(&app_type);
         let pricing_model = if pricing_model_source == PRICING_SOURCE_REQUEST {
             outbound_model
         } else {
@@ -705,6 +749,7 @@ async fn log_usage_internal(
         logger.log_with_calculation(
             request_id,
             provider_id,
+            multiplier,
             app_type,
             model,
             request_model,
@@ -735,13 +780,32 @@ pub fn create_logged_passthrough_stream(
     timeout_config: StreamingTimeoutConfig,
     connection_guard: Option<ActiveConnectionGuard>,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
+    create_logged_passthrough_stream_with_max_pending_bytes(
+        stream,
+        tag,
+        usage_collector,
+        timeout_config,
+        connection_guard,
+        MAX_PENDING_SSE_BYTES,
+    )
+}
+
+fn create_logged_passthrough_stream_with_max_pending_bytes(
+    stream: impl Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static,
+    tag: &'static str,
+    usage_collector: Option<SseUsageCollector>,
+    timeout_config: StreamingTimeoutConfig,
+    connection_guard: Option<ActiveConnectionGuard>,
+    max_pending_sse_bytes: usize,
+) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
         let _conn_guard = connection_guard;
-        let mut sse = SseBuffer::new();
+        let mut sse = SseBuffer::with_max_pending_bytes(max_pending_sse_bytes);
         let mut collector = usage_collector;
         let mut finish_guard = collector.clone().map(SseUsageFinishGuard::new);
         let inspect_sse_events =
             collector.is_some() || log::log_enabled!(log::Level::Debug);
+        let mut sse_overflow_warned = false;
         let mut is_first_chunk = true;
 
         // 超时配置
@@ -794,6 +858,12 @@ pub fn create_logged_passthrough_stream(
                     is_first_chunk = false;
                     if inspect_sse_events {
                         sse.push_bytes(&bytes);
+                        if sse.dropped_oversized_events() > 0 && !sse_overflow_warned {
+                            sse_overflow_warned = true;
+                            log::warn!(
+                                "[{tag}] SSE inspection buffer exceeded {max_pending_sse_bytes} bytes; skipping oversized event(s) and resuming at next delimiter"
+                            );
+                        }
 
                         // 尝试解析并记录完整的 SSE 事件
                         while let Some(event_text) = sse.next_block() {
@@ -908,12 +978,70 @@ fn format_headers(headers: &HeaderMap) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app_config::AppType;
     use crate::database::Database;
     use crate::error::AppError;
     use crate::provider::ProviderMeta;
     use rust_decimal::Decimal;
     use std::str::FromStr;
     use std::sync::Arc;
+
+    #[tokio::test]
+    async fn billing_multiplier_request_snapshot_survives_provider_change_and_delete(
+    ) -> Result<(), AppError> {
+        let db = Arc::new(Database::memory()?);
+        seed_pricing(&db)?;
+        insert_provider(
+            &db,
+            "snapshot",
+            "claude",
+            ProviderMeta {
+                billing_multiplier: Some("0.5".into()),
+                ..Default::default()
+            },
+        )?;
+        let selected = db
+            .get_provider_by_id("snapshot", &crate::app_config::AppType::Claude)?
+            .unwrap();
+        let multiplier = crate::provider::billing_multiplier(&selected);
+        let state = build_state(db.clone());
+        for (index, mutation) in [
+            "UPDATE providers SET meta='{}' WHERE id='snapshot'",
+            "DELETE FROM providers WHERE id='snapshot'",
+        ]
+        .iter()
+        .enumerate()
+        {
+            {
+                let conn = crate::database::lock_conn!(db.conn);
+                conn.execute(mutation, [])?;
+            }
+            log_usage_internal(
+                &state,
+                "snapshot",
+                multiplier,
+                "claude",
+                "resp-model",
+                "resp-model",
+                "resp-model",
+                TokenUsage {
+                    input_tokens: 1000000,
+                    message_id: Some(format!("snapshot-{index}")),
+                    ..Default::default()
+                },
+                1,
+                None,
+                index == 1,
+                200,
+                None,
+            )
+            .await;
+        }
+        let conn = crate::database::lock_conn!(db.conn);
+        let rows: i64 = conn.query_row("SELECT COUNT(*) FROM proxy_request_logs WHERE provider_id='snapshot' AND cost_multiplier='0.5' AND CAST(total_cost_usd AS REAL)=0.5", [], |r| r.get(0))?;
+        assert_eq!(rows, 2);
+        Ok(())
+    }
 
     #[test]
     fn sse_data_starts_output_skips_metadata_events() {
@@ -1233,7 +1361,8 @@ mod tests {
         let db = Arc::new(Database::memory()?);
         let app_type = "claude";
 
-        db.set_pricing_model_source(app_type, "response").await?;
+        db.set_pricing_model_source(&AppType::Claude, "response")
+            .await?;
         seed_pricing(&db)?;
         {
             // 旧版写下的全局倍率仍留在列里，新版不再读取
@@ -1267,6 +1396,7 @@ mod tests {
         log_usage_internal(
             &state,
             "provider-1",
+            rust_decimal::Decimal::ONE,
             app_type,
             "resp-model",
             "req-model",
@@ -1304,7 +1434,8 @@ mod tests {
         let db = Arc::new(Database::memory()?);
         let app_type = "claude";
 
-        db.set_pricing_model_source(app_type, "request").await?;
+        db.set_pricing_model_source(&AppType::Claude, "request")
+            .await?;
         seed_pricing(&db)?;
         {
             let conn = crate::database::lock_conn!(db.conn);
@@ -1334,6 +1465,7 @@ mod tests {
         log_usage_internal(
             &state,
             "provider-3",
+            rust_decimal::Decimal::ONE,
             app_type,
             "resp-model",
             "req-model",
@@ -1376,10 +1508,11 @@ mod tests {
 
         // proxy_config 没有 claude-desktop 行；它的计费模式必须继承 claude，
         // 而不是静默落回工厂默认（response）
-        db.set_pricing_model_source("claude", "request").await?;
+        db.set_pricing_model_source(&AppType::Claude, "request")
+            .await?;
 
         let logger = UsageLogger::new(&db);
-        let source = logger.resolve_pricing_model_source("claude-desktop").await;
+        let source = logger.resolve_pricing_model_source("claude-desktop");
 
         assert_eq!(source, "request");
         Ok(())
@@ -1399,7 +1532,8 @@ mod tests {
         let db = Arc::new(Database::memory()?);
         let app_type = "claude";
 
-        db.set_pricing_model_source(app_type, "response").await?;
+        db.set_pricing_model_source(&AppType::Claude, "response")
+            .await?;
         seed_pricing(&db)?;
         insert_provider(&db, "provider-busy", app_type, ProviderMeta::default())?;
 
@@ -1428,6 +1562,7 @@ mod tests {
             log_usage_internal(
                 &state,
                 "provider-busy",
+                rust_decimal::Decimal::ONE,
                 app_type,
                 "resp-model",
                 "req-model",
@@ -1523,5 +1658,163 @@ mod tests {
         assert_eq!(usage.cache_read_tokens, 160);
         assert_eq!(usage.model.as_deref(), Some("gemini-3.8-flash"));
         assert_eq!(usage.message_id.as_deref(), Some("resp_1"));
+    }
+
+    #[tokio::test]
+    async fn sse_usage_collector_bounds_events_and_preserves_head_and_tail() {
+        let collected = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let collector = SseUsageCollector::new(std::time::Instant::now(), None, {
+            let collected = collected.clone();
+            move |events, _| {
+                *collected.lock().unwrap() = events;
+            }
+        });
+
+        let total = 1200usize;
+        collector
+            .push(serde_json::json!({
+                "type": "message_start",
+                "index": 0,
+                "message": {
+                    "id": "msg_1",
+                    "model": "claude-sonnet-4-5",
+                    "usage": { "input_tokens": 123 }
+                }
+            }))
+            .await;
+        for i in 1..(total - 1) {
+            collector
+                .push(serde_json::json!({
+                    "type": "content_block_delta",
+                    "index": i
+                }))
+                .await;
+        }
+        collector
+            .push(serde_json::json!({
+                "type": "message_delta",
+                "index": total - 1,
+                "usage": { "output_tokens": 45 }
+            }))
+            .await;
+
+        collector.finish().await;
+
+        let events = collected.lock().unwrap().clone();
+        assert_eq!(events.len(), MAX_HEAD_USAGE_EVENTS + MAX_TAIL_USAGE_EVENTS);
+        let retained_indices: Vec<usize> = events
+            .iter()
+            .map(|e| e["index"].as_u64().unwrap() as usize)
+            .collect();
+        let expected_head: Vec<usize> = (0..MAX_HEAD_USAGE_EVENTS).collect();
+        let expected_tail: Vec<usize> = ((total - MAX_TAIL_USAGE_EVENTS)..total).collect();
+        assert_eq!(&retained_indices[..MAX_HEAD_USAGE_EVENTS], expected_head);
+        assert_eq!(&retained_indices[MAX_HEAD_USAGE_EVENTS..], expected_tail);
+
+        let usage = TokenUsage::from_claude_stream_events(&events).expect("usage parsed");
+        assert_eq!(usage.input_tokens, 123);
+        assert_eq!(usage.output_tokens, 45);
+        assert_eq!(usage.model.as_deref(), Some("claude-sonnet-4-5"));
+        assert_eq!(usage.message_id.as_deref(), Some("msg_1"));
+    }
+
+    #[tokio::test]
+    async fn logged_passthrough_stream_keeps_client_bytes_and_resumes_after_overflow() {
+        let head = Bytes::from("data: {\"type\":\"message_start\"}\n\n");
+        let blob = "a".repeat(2048);
+        let giant_event = Bytes::from(format!("data: {{\"blob\":\"{blob}\"}}\n\n"));
+        let tail = Bytes::from("data: {\"type\":\"message_delta\"}\n\n");
+        let done = Bytes::from("data: [DONE]\n\n");
+        let expected_len = head.len() + giant_event.len() + tail.len() + done.len();
+
+        let collected = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let collector = SseUsageCollector::new(std::time::Instant::now(), None, {
+            let collected = collected.clone();
+            move |events, _| {
+                *collected.lock().unwrap() = events;
+            }
+        });
+
+        let upstream = futures::stream::iter(vec![
+            Ok::<_, std::io::Error>(head),
+            Ok(giant_event),
+            Ok(tail),
+            Ok(done),
+        ]);
+        let passthrough = create_logged_passthrough_stream_with_max_pending_bytes(
+            upstream,
+            "test",
+            Some(collector),
+            StreamingTimeoutConfig {
+                first_byte_timeout: 0,
+                idle_timeout: 0,
+            },
+            None,
+            1024,
+        );
+        futures::pin_mut!(passthrough);
+        let mut client_bytes = 0usize;
+        while let Some(chunk) = passthrough.next().await {
+            client_bytes += chunk.expect("client passthrough chunk").len();
+        }
+
+        assert_eq!(client_bytes, expected_len);
+        let events = collected.lock().unwrap().clone();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0]["type"], "message_start");
+        assert_eq!(events[1]["type"], "message_delta");
+    }
+
+    #[tokio::test]
+    async fn logged_passthrough_stream_collects_large_image_generation_completed_usage() {
+        use crate::proxy::handler_config::codex_stream_usage_event_filter;
+
+        let b64_image = "A".repeat(5 * 1024 * 1024);
+        let mut payload = String::with_capacity(5 * 1024 * 1024 + 256);
+        payload.push_str("event: image_generation.completed\n");
+        payload.push_str("data: {\"type\":\"image_generation.completed\",\"b64_json\":\"");
+        payload.push_str(&b64_image);
+        payload.push_str("\",\"usage\":{\"input_tokens\":120,\"output_tokens\":450}}\n\n");
+        let expected_len = payload.len();
+        let chunks: Vec<Result<Bytes, std::io::Error>> = payload
+            .as_bytes()
+            .chunks(64 * 1024)
+            .map(|chunk| Ok(Bytes::copy_from_slice(chunk)))
+            .collect();
+
+        let collected = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let collector = SseUsageCollector::new(
+            std::time::Instant::now(),
+            Some(codex_stream_usage_event_filter),
+            {
+                let collected = collected.clone();
+                move |events, _| {
+                    *collected.lock().unwrap() = events;
+                }
+            },
+        );
+
+        let passthrough = create_logged_passthrough_stream(
+            futures::stream::iter(chunks),
+            "test",
+            Some(collector),
+            StreamingTimeoutConfig {
+                first_byte_timeout: 0,
+                idle_timeout: 0,
+            },
+            None,
+        );
+        futures::pin_mut!(passthrough);
+        let mut client_bytes = 0usize;
+        while let Some(chunk) = passthrough.next().await {
+            client_bytes += chunk.expect("client passthrough chunk").len();
+        }
+
+        assert_eq!(client_bytes, expected_len);
+        let events = collected.lock().unwrap().clone();
+        assert_eq!(events.len(), 1);
+        let usage = TokenUsage::from_codex_stream_events_auto(&events).expect("usage parsed");
+        assert_eq!(usage.input_tokens, 120);
+        assert_eq!(usage.output_tokens, 450);
     }
 }

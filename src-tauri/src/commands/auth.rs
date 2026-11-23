@@ -272,7 +272,7 @@ pub async fn auth_start_login(
             if target_account_id.is_some() {
                 return Err("Targeted re-authentication is only supported for Codex OAuth".into());
             }
-            let start = agy_state.0.start_login().await.map_err(|e| e.to_string())?;
+            let start = agy_state.0.start_login().await?;
             Ok(ManagedAuthDeviceCodeResponse {
                 provider: auth_provider.to_string(),
                 device_code: start.flow_id,
@@ -288,11 +288,7 @@ pub async fn auth_start_login(
             if target_account_id.is_some() {
                 return Err("Targeted re-authentication is only supported for Codex OAuth".into());
             }
-            let start = claude_state
-                .0
-                .start_login(!copy_link)
-                .await
-                .map_err(|e| e.to_string())?;
+            let start = claude_state.0.start_login(!copy_link).await?;
             Ok(ManagedAuthDeviceCodeResponse {
                 provider: auth_provider.to_string(),
                 device_code: start.flow_id,
@@ -311,6 +307,7 @@ pub async fn auth_start_login(
 #[allow(clippy::too_many_arguments)]
 #[tauri::command(rename_all = "camelCase")]
 pub async fn auth_poll_for_account(
+    app: tauri::AppHandle,
     auth_provider: String,
     device_code: String,
     github_domain: Option<String>,
@@ -322,7 +319,7 @@ pub async fn auth_poll_for_account(
     claude_state: State<'_, ClaudeAccountState>,
 ) -> Result<Option<ManagedAuthAccount>, String> {
     let auth_provider = ensure_auth_provider(&auth_provider)?;
-    match auth_provider {
+    let result = match auth_provider {
         AUTH_PROVIDER_GITHUB_COPILOT => {
             let auth_manager = copilot_state.0.write().await;
             match auth_manager
@@ -373,12 +370,7 @@ pub async fn auth_poll_for_account(
             }
         }
         AUTH_PROVIDER_AGY_OAUTH => {
-            let Some(account) = agy_state
-                .0
-                .poll_login(&device_code)
-                .await
-                .map_err(|e| e.to_string())?
-            else {
+            let Some(account) = agy_state.0.poll_login(&device_code).await? else {
                 return Ok(None);
             };
             let current = agy_state
@@ -391,11 +383,7 @@ pub async fn auth_poll_for_account(
         }
         AUTH_PROVIDER_WORKBUDDY_ACCOUNT => Err(workbuddy_login_unsupported()),
         AUTH_PROVIDER_CLAUDE_OFFICIAL => {
-            let account = claude_state
-                .0
-                .poll_login(&device_code)
-                .await
-                .map_err(|e| e.to_string())?;
+            let account = claude_state.0.poll_login(&device_code).await?;
             if account.is_some() {
                 // 同一账号重新登录会换掉目录：正在用它的官方卡要把新目录写进 live
                 crate::services::provider::claude_official::refresh_live_after_account_change(
@@ -407,7 +395,11 @@ pub async fn auth_poll_for_account(
             Ok(account.map(map_claude_account))
         }
         _ => unreachable!(),
+    };
+    if matches!(&result, Ok(Some(_))) {
+        crate::tray::schedule_tray_status_check(&app);
     }
+    result
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -424,77 +416,6 @@ pub async fn auth_cancel_login(
         AUTH_PROVIDER_AGY_OAUTH => Ok(agy_state.0.cancel_login(&device_code).await),
         AUTH_PROVIDER_CLAUDE_OFFICIAL => Ok(claude_state.0.cancel_login(&device_code).await),
         _ => Err("Login cancellation is only supported for Codex OAuth".to_string()),
-    }
-}
-
-#[tauri::command(rename_all = "camelCase")]
-pub async fn auth_list_accounts(
-    auth_provider: String,
-    copilot_state: State<'_, CopilotAuthState>,
-    codex_state: State<'_, CodexOAuthState>,
-    xai_state: State<'_, XaiOAuthState>,
-    agy_state: State<'_, AgyAccountState>,
-    workbuddy_state: State<'_, WorkBuddyAccountState>,
-    claude_state: State<'_, ClaudeAccountState>,
-) -> Result<Vec<ManagedAuthAccount>, String> {
-    let auth_provider = ensure_auth_provider(&auth_provider)?;
-    match auth_provider {
-        AUTH_PROVIDER_GITHUB_COPILOT => {
-            let auth_manager = copilot_state.0.read().await;
-            let status = auth_manager.get_status().await;
-            let default_account_id = status.default_account_id.clone();
-            Ok(status
-                .accounts
-                .into_iter()
-                .map(|account| map_account(auth_provider, account, default_account_id.as_deref()))
-                .collect())
-        }
-        AUTH_PROVIDER_CODEX_OAUTH => {
-            let auth_manager = &codex_state.0;
-            let status = auth_manager.get_status().await;
-            let default_account_id = status.default_account_id.clone();
-            Ok(status
-                .accounts
-                .into_iter()
-                .map(|account| map_account(auth_provider, account, default_account_id.as_deref()))
-                .collect())
-        }
-        AUTH_PROVIDER_XAI_OAUTH => {
-            let auth_manager = xai_state.0.read().await;
-            let status = auth_manager.get_status().await;
-            let default_account_id = status.default_account_id.clone();
-            Ok(status
-                .accounts
-                .into_iter()
-                .map(|account| map_xai_account(account, default_account_id.as_deref()))
-                .collect())
-        }
-        AUTH_PROVIDER_AGY_OAUTH => {
-            let status = agy_state.0.status().await.map_err(|e| e.to_string())?;
-            let current = status.current_account_id;
-            Ok(status
-                .accounts
-                .into_iter()
-                .map(|account| map_agy_account(account, current.as_deref()))
-                .collect())
-        }
-        AUTH_PROVIDER_WORKBUDDY_ACCOUNT => {
-            let status = run_workbuddy(&workbuddy_state.0, |manager| manager.status()).await?;
-            let current = status.current_account_id;
-            Ok(status
-                .accounts
-                .into_iter()
-                .map(|account| map_workbuddy_account(account, current.as_deref()))
-                .collect())
-        }
-        AUTH_PROVIDER_CLAUDE_OFFICIAL => Ok(claude_state
-            .0
-            .list()
-            .await
-            .into_iter()
-            .map(map_claude_account)
-            .collect()),
-        _ => unreachable!(),
     }
 }
 
@@ -564,7 +485,7 @@ pub async fn auth_get_status(
         }
         // 「默认账号」在这里是 agy 当前登录的那个号
         AUTH_PROVIDER_AGY_OAUTH => {
-            let status = agy_state.0.status().await.map_err(|e| e.to_string())?;
+            let status = agy_state.0.status().await?;
             let current = status.current_account_id;
             Ok(ManagedAuthStatus {
                 provider: auth_provider.to_string(),
@@ -611,6 +532,7 @@ pub async fn auth_get_status(
 #[allow(clippy::too_many_arguments)]
 #[tauri::command(rename_all = "camelCase")]
 pub async fn auth_remove_account(
+    app: tauri::AppHandle,
     auth_provider: String,
     account_id: String,
     app_state: State<'_, AppState>,
@@ -621,7 +543,7 @@ pub async fn auth_remove_account(
     claude_state: State<'_, ClaudeAccountState>,
 ) -> Result<(), String> {
     let auth_provider = ensure_auth_provider(&auth_provider)?;
-    match auth_provider {
+    let result = match auth_provider {
         AUTH_PROVIDER_GITHUB_COPILOT => {
             let auth_manager = copilot_state.0.write().await;
             auth_manager
@@ -633,7 +555,9 @@ pub async fn auth_remove_account(
             remove_codex_oauth_account_with_switch_lock(app_state.inner(), &account_id).await
         }
         AUTH_PROVIDER_XAI_OAUTH => {
-            let auth_manager = xai_state.0.write().await;
+            // 方法只要 `&self`（内部有 mutation_lock 等细粒度锁）：拿读锁，让出 Grok CLI 登录时
+            // 的联网刷新不挡住代理和额度查询
+            let auth_manager = xai_state.0.read().await;
             auth_manager
                 .remove_account(&account_id)
                 .await
@@ -654,11 +578,7 @@ pub async fn auth_remove_account(
         }
         // 删目录和钥匙串条目（不吊销、不登出）；正在用它的官方卡退回默认登录
         AUTH_PROVIDER_CLAUDE_OFFICIAL => {
-            claude_state
-                .0
-                .remove(&account_id)
-                .await
-                .map_err(|e| e.to_string())?;
+            claude_state.0.remove(&account_id).await?;
             crate::services::provider::claude_official::refresh_live_after_account_change(
                 app_state.inner(),
                 &claude_state.0,
@@ -666,7 +586,10 @@ pub async fn auth_remove_account(
             .await
         }
         _ => unreachable!(),
-    }
+    };
+    // 删除账号可能已成功、后续解绑失败，仍检查落盘后的账号标签。
+    crate::tray::schedule_tray_status_check(&app);
+    result
 }
 
 pub(crate) async fn remove_codex_oauth_account_with_switch_lock(
@@ -697,6 +620,7 @@ pub(crate) async fn remove_codex_oauth_account_with_switch_lock(
 #[allow(clippy::too_many_arguments)]
 #[tauri::command(rename_all = "camelCase")]
 pub async fn auth_set_default_account(
+    app: tauri::AppHandle,
     auth_provider: String,
     account_id: String,
     copilot_state: State<'_, CopilotAuthState>,
@@ -707,7 +631,7 @@ pub async fn auth_set_default_account(
     _claude_state: State<'_, ClaudeAccountState>,
 ) -> Result<(), String> {
     let auth_provider = ensure_auth_provider(&auth_provider)?;
-    match auth_provider {
+    let result = match auth_provider {
         AUTH_PROVIDER_GITHUB_COPILOT => {
             let auth_manager = copilot_state.0.write().await;
             auth_manager
@@ -747,11 +671,14 @@ pub async fn auth_set_default_account(
             Err("Claude accounts are used through the official provider card bound to them".into())
         }
         _ => unreachable!(),
-    }
+    };
+    crate::tray::schedule_tray_status_check(&app);
+    result
 }
 
 #[tauri::command(rename_all = "camelCase")]
 pub async fn auth_logout(
+    app: tauri::AppHandle,
     auth_provider: String,
     app_state: State<'_, AppState>,
     copilot_state: State<'_, CopilotAuthState>,
@@ -760,14 +687,15 @@ pub async fn auth_logout(
     claude_state: State<'_, ClaudeAccountState>,
 ) -> Result<(), String> {
     let auth_provider = ensure_auth_provider(&auth_provider)?;
-    match auth_provider {
+    let result = match auth_provider {
         AUTH_PROVIDER_GITHUB_COPILOT => {
             let auth_manager = copilot_state.0.write().await;
             auth_manager.clear_auth().await.map_err(|e| e.to_string())
         }
         AUTH_PROVIDER_CODEX_OAUTH => logout_codex_oauth_with_switch_lock(app_state.inner()).await,
         AUTH_PROVIDER_XAI_OAUTH => {
-            let auth_manager = xai_state.0.write().await;
+            // 同 auth_remove_account：只要读锁，联网刷新时不挡住代理和额度查询
+            let auth_manager = xai_state.0.read().await;
             auth_manager.clear_auth().await.map_err(|e| e.to_string())
         }
         AUTH_PROVIDER_AGY_OAUTH => agy_state
@@ -779,11 +707,7 @@ pub async fn auth_logout(
         // WorkBuddy 账号只能逐个删除，没有「删除全部」
         AUTH_PROVIDER_WORKBUDDY_ACCOUNT => Err("WorkBuddy 账号请逐个删除".to_string()),
         AUTH_PROVIDER_CLAUDE_OFFICIAL => {
-            claude_state
-                .0
-                .remove_all()
-                .await
-                .map_err(|e| e.to_string())?;
+            claude_state.0.remove_all().await?;
             crate::services::provider::claude_official::refresh_live_after_account_change(
                 app_state.inner(),
                 &claude_state.0,
@@ -791,7 +715,9 @@ pub async fn auth_logout(
             .await
         }
         _ => unreachable!(),
-    }
+    };
+    crate::tray::schedule_tray_status_check(&app);
+    result
 }
 
 pub(crate) async fn logout_codex_oauth_with_switch_lock(

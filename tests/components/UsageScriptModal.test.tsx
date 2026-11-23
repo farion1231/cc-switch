@@ -2,9 +2,10 @@ import type { ReactNode } from "react";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import UsageScriptModal from "@/components/UsageScriptModal";
 import type { Provider, UsageScript } from "@/types";
+import { createTestQueryClient } from "../utils/testQueryClient";
 
 vi.mock("@/components/common/FullScreenPanel", () => ({
   FullScreenPanel: ({
@@ -52,9 +53,7 @@ function renderModal(
   onSave: (script: UsageScript) => void,
   usageScript?: UsageScript,
 ) {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
+  const client = createTestQueryClient();
   render(
     <QueryClientProvider client={client}>
       <UsageScriptModal
@@ -119,9 +118,7 @@ describe("UsageScriptModal Sub2API template", () => {
 describe("UsageScriptModal official subscription hint", () => {
   // agy 的额度靠它自己的 /usage 命令查，不读登录凭据
   it("explains Antigravity's quota check instead of reading OAuth credentials", () => {
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
+    const client = createTestQueryClient();
     render(
       <QueryClientProvider client={client}>
         <UsageScriptModal
@@ -159,9 +156,7 @@ describe("UsageScriptModal Claude official card bound to an account", () => {
   // 卡片和托盘在没保存开关时默认查这个号的额度，配置页也要显示为已开
   it("shows usage enabled by default when nothing was saved", async () => {
     const onSave = vi.fn();
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
+    const client = createTestQueryClient();
     render(
       <QueryClientProvider client={client}>
         <UsageScriptModal
@@ -198,6 +193,101 @@ describe("UsageScriptModal Claude official card bound to an account", () => {
   });
 });
 
+describe("UsageScriptModal Grok official card bound to an xAI account", () => {
+  const grokProvider: Provider = {
+    id: "grok-bound",
+    name: "Grok Official",
+    category: "official",
+    settingsConfig: {},
+    meta: {
+      authBinding: {
+        source: "managed_account",
+        authProvider: "xai_oauth",
+        accountId: "xai-acct-1",
+      },
+    },
+  };
+
+  // 卡片和托盘在没保存开关时默认查这个号的额度，配置页也要显示为已开
+  it("shows usage enabled by default when nothing was saved", async () => {
+    const onSave = vi.fn();
+    const client = createTestQueryClient();
+    render(
+      <QueryClientProvider client={client}>
+        <UsageScriptModal
+          provider={grokProvider}
+          appId="grokbuild"
+          isOpen
+          onClose={() => {}}
+          onSave={onSave}
+        />
+      </QueryClientProvider>,
+    );
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "usageScript.saveConfig" }),
+    );
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        enabled: true,
+        templateType: "official_subscription",
+      }),
+    );
+  });
+
+  // 测试要查绑定的 xAI 账号，不能去读 ~/.grok/auth.json 当前登录的号
+  it("tests the bound xAI account's quota and caches it under that account", async () => {
+    const { subscriptionApi } = await import("@/lib/api/subscription");
+    const quota = {
+      tool: "grokbuild",
+      credentialStatus: "valid",
+      credentialMessage: null,
+      success: true,
+      tiers: [{ name: "weekly", utilization: 42, resetsAt: null }],
+      extraUsage: null,
+      error: null,
+      queriedAt: 1,
+    } as unknown as Awaited<ReturnType<typeof subscriptionApi.getQuota>>;
+    const getXaiOauthQuota = vi
+      .spyOn(subscriptionApi, "getXaiOauthQuota")
+      .mockResolvedValue(quota);
+    const getQuota = vi
+      .spyOn(subscriptionApi, "getQuota")
+      .mockResolvedValue(quota);
+
+    try {
+      const client = createTestQueryClient();
+      render(
+        <QueryClientProvider client={client}>
+          <UsageScriptModal
+            provider={grokProvider}
+            appId="grokbuild"
+            isOpen
+            onClose={() => {}}
+            onSave={() => {}}
+          />
+        </QueryClientProvider>,
+      );
+
+      await userEvent.click(
+        screen.getByRole("button", { name: "usageScript.testScript" }),
+      );
+
+      expect(getXaiOauthQuota).toHaveBeenCalledWith("xai-acct-1");
+      expect(getQuota).not.toHaveBeenCalled();
+      expect(client.getQueryData(["xai_oauth", "quota", "xai-acct-1"])).toBe(
+        quota,
+      );
+      expect(
+        client.getQueryData(["subscription", "quota", "grokbuild"]),
+      ).toBeUndefined();
+    } finally {
+      getXaiOauthQuota.mockRestore();
+      getQuota.mockRestore();
+    }
+  });
+});
+
 /**
  * Oh My Pi has its own `AppId` ("omp"), so it never matched the `pi` branch
  * and both built-in tests reported "API key is empty" on an omp card. The
@@ -210,9 +300,7 @@ describe("UsageScriptModal Oh My Pi credentials", () => {
       subscriptionApi: { getBalance },
     }));
     const { default: Modal } = await import("@/components/UsageScriptModal");
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
+    const client = createTestQueryClient();
     render(
       <QueryClientProvider client={client}>
         <Modal
@@ -273,9 +361,7 @@ describe("UsageScriptModal DeepSeek Harness credentials", () => {
   };
 
   function renderDshModal() {
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
+    const client = createTestQueryClient();
     render(
       <QueryClientProvider client={client}>
         <UsageScriptModal
@@ -369,9 +455,7 @@ describe("UsageScriptModal WorkBuddy credentials", () => {
       });
 
     try {
-      const client = new QueryClient({
-        defaultOptions: { queries: { retry: false } },
-      });
+      const client = createTestQueryClient();
       render(
         <QueryClientProvider client={client}>
           <UsageScriptModal
@@ -430,9 +514,7 @@ describe.each([
   "UsageScriptModal $appId credentials",
   ({ appId, settingsConfig, apiKey }) => {
     function renderAppModal() {
-      const client = new QueryClient({
-        defaultOptions: { queries: { retry: false } },
-      });
+      const client = createTestQueryClient();
       render(
         <QueryClientProvider client={client}>
           <UsageScriptModal

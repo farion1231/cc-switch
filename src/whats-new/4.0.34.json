@@ -1,0 +1,33 @@
+{
+  "version": "4.0.34",
+  "items": [
+    {
+      "type": "new",
+      "zh": "技能仓库支持 GitLab、Gitea 和 Forgejo",
+      "zh-TW": "技能倉庫支援 GitLab、Gitea 和 Forgejo",
+      "en": "Skill repositories can now live on GitLab, Gitea and Forgejo",
+      "ja": "スキルリポジトリが GitLab・Gitea・Forgejo に対応"
+    },
+    {
+      "type": "new",
+      "zh": "会话管理里可以删除 Antigravity CLI 会话",
+      "zh-TW": "對話管理裡可以刪除 Antigravity CLI 對話",
+      "en": "Antigravity CLI sessions can be deleted in the session manager",
+      "ja": "セッション管理で Antigravity CLI のセッションを削除可能に"
+    },
+    {
+      "type": "new",
+      "zh": "开启自动下载后，发现新版本立刻开始下载",
+      "zh-TW": "開啟自動下載後，發現新版本立刻開始下載",
+      "en": "Auto download starts as soon as a new version is found",
+      "ja": "自動ダウンロードは新バージョンを見つけるとすぐ開始"
+    },
+    {
+      "type": "fix",
+      "zh": "修复 Gemini CLI 供应商获取模型列表失败",
+      "zh-TW": "修正 Gemini CLI 供應商取得模型列表失敗",
+      "en": "Gemini CLI providers can now fetch their model list",
+      "ja": "Gemini CLI プロバイダーでモデル一覧の取得に失敗する問題を修正"
+    }
+  ]
+}
