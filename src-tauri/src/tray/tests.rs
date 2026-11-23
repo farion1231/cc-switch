@@ -876,6 +876,46 @@ fn grok_bound_card_tray_quota_comes_from_the_account_cache_only() {
 }
 
 #[test]
+fn grok_official_card_hint_shows_only_its_bound_account() {
+    let accounts = TrayAccountLabels {
+        xai: ManagedAccountLabels::from_parts((
+            HashMap::from([
+                ("xai-default".to_string(), "default@x.ai".to_string()),
+                ("user-1".to_string(), "bound@x.ai".to_string()),
+            ]),
+            Some("xai-default".to_string()),
+        )),
+        ..Default::default()
+    };
+    let with_site = |mut provider: Provider| {
+        provider.website_url = Some("https://x.ai/grok".to_string());
+        provider
+    };
+
+    let mut bound = with_site(grok_official_provider(Some(" user-1 "), None));
+    assert_eq!(
+        provider_hint(&AppType::GrokBuild, &bound, &accounts).as_deref(),
+        Some("bound@x.ai")
+    );
+    bound.notes = Some("Personal".to_string());
+    assert_eq!(
+        provider_hint(&AppType::GrokBuild, &bound, &accounts).as_deref(),
+        Some("Personal")
+    );
+
+    // 绑定的账号已删除、或没绑账号（跟随 Grok CLI 登录）：不回落授权中心默认账号
+    for provider in [
+        grok_official_provider(Some("deleted"), None),
+        grok_official_provider(None, None),
+    ] {
+        assert_eq!(
+            provider_hint(&AppType::GrokBuild, &with_site(provider), &accounts).as_deref(),
+            Some("x.ai")
+        );
+    }
+}
+
+#[test]
 fn claude_bound_card_hint_shows_account_unless_noted() {
     let accounts = TrayAccountLabels {
         claude: HashMap::from([("acct-1".to_string(), "me@example.com".to_string())]),

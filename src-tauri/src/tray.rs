@@ -1481,6 +1481,13 @@ fn provider_account_label(
             .resolve(bound.as_deref(), true)
             .map(str::to_string);
     }
+    if *app == AppType::GrokBuild {
+        // Grok 官方卡只在绑了授权中心 xAI 账号时显示该账号；未绑定的跟随 Grok CLI 自己的登录，
+        // 不回落授权中心默认账号（同前端 GrokBoundAccountLine）。
+        if let Some(id) = crate::services::provider::grok_direct::bound_account(provider) {
+            return accounts.xai.resolve(Some(&id), false).map(str::to_string);
+        }
+    }
     if is_copilot_proxy(app, provider) {
         let bound = trimmed_managed_account_id(provider, "github_copilot");
         return accounts
