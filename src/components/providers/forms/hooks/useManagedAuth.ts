@@ -290,6 +290,13 @@ export function useManagedAuth(
           queryKey: ["providers", "codex"],
         });
       }
+      // 移除/登出的 xAI 账号若正是 Grok CLI 当前登录的号，后端会把 CLI 登录让出来：
+      // 没绑号的 Grok 官方卡查的就是 CLI 当前登录，要重查
+      if (authProvider === "xai_oauth") {
+        await queryClient.invalidateQueries({
+          queryKey: subscriptionKeys.quota("grokbuild"),
+        });
+      }
     },
   });
 
@@ -318,6 +325,13 @@ export function useManagedAuth(
       if (authProvider === "codex_oauth") {
         await queryClient.invalidateQueries({
           queryKey: ["providers", "codex"],
+        });
+      }
+      // 移除/登出的 xAI 账号若正是 Grok CLI 当前登录的号，后端会把 CLI 登录让出来：
+      // 没绑号的 Grok 官方卡查的就是 CLI 当前登录，要重查
+      if (authProvider === "xai_oauth") {
+        await queryClient.invalidateQueries({
+          queryKey: subscriptionKeys.quota("grokbuild"),
         });
       }
     },

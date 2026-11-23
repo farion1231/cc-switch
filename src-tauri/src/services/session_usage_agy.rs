@@ -1,7 +1,7 @@
 //! Exact counters exported by agy; absent models remain unknown (never use today's provider).
 //! Amounts are the matching Gemini API prices, like every other session-log import.
 use super::{
-    session_usage::{cost_columns, load_sync_cursors, metadata_modified_nanos, SessionSyncResult},
+    session_usage::{cost_columns, metadata_modified_nanos, SessionSyncResult},
     sql_helpers::INPUT_TOKEN_SEMANTICS_FRESH,
 };
 use crate::proxy::usage::calculator::ModelPricing;
@@ -28,19 +28,39 @@ struct AgySyncCursorUpdate<'a> {
     native_state: &'a str,
 }
 
-pub fn sync_agy_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
-    sync_agy_usage_from_files(db, agy::transcript_files())
+#[cfg(test)]
+pub(crate) fn sync_agy_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
+    sync_agy_usage_with_cursors(db, &crate::services::session_usage::load_sync_cursors(db)?)
 }
 
+pub(crate) fn sync_agy_usage_with_cursors(
+    db: &Database,
+    cursors: &crate::services::session_usage::SyncCursors,
+) -> Result<SessionSyncResult, AppError> {
+    sync_agy_usage_from_files_with_cursors(db, agy::transcript_files(), cursors)
+}
+
+#[cfg(test)]
 fn sync_agy_usage_from_files(
     db: &Database,
     files: Vec<(String, PathBuf)>,
+) -> Result<SessionSyncResult, AppError> {
+    sync_agy_usage_from_files_with_cursors(
+        db,
+        files,
+        &crate::services::session_usage::load_sync_cursors(db)?,
+    )
+}
+
+fn sync_agy_usage_from_files_with_cursors(
+    db: &Database,
+    files: Vec<(String, PathBuf)>,
+    cursors: &crate::services::session_usage::SyncCursors,
 ) -> Result<SessionSyncResult, AppError> {
     let mut result = SessionSyncResult::default();
     if files.is_empty() {
         return Ok(result);
     }
-    let cursors = load_sync_cursors(db)?;
     for (session_id, path) in files {
         result.files_scanned += 1;
         let cursor_key = format!("agy:{}", path.to_string_lossy());

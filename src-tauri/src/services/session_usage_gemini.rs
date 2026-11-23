@@ -41,7 +41,10 @@ struct GeminiTokens {
 }
 
 /// 同步 Gemini 使用数据（从 JSON 会话日志）
-pub fn sync_gemini_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
+pub(crate) fn sync_gemini_usage(
+    db: &Database,
+    cursors: &crate::services::session_usage::SyncCursors,
+) -> Result<SessionSyncResult, AppError> {
     let gemini_dir = get_gemini_dir();
 
     let files = collect_gemini_session_files(&gemini_dir);
@@ -58,8 +61,6 @@ pub fn sync_gemini_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
     if files.is_empty() {
         return Ok(result);
     }
-
-    let cursors = crate::services::session_usage::load_sync_cursors(db)?;
 
     for file_path in &files {
         let last_modified = cursors
