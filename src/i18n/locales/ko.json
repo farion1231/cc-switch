@@ -1266,6 +1266,8 @@
       "credits": "크레딧",
       "leftOf": "{{remaining}} / {{total}} 남음",
       "usedOf": "{{used}} / {{total}} 사용",
+      "unlimited": "무제한",
+      "unlimitedUsed": "무제한, {{used}} 사용",
       "usedUp": "모두 사용함 (총 {{total}})",
       "detail": "크레딧 {{total}} 중 {{remaining}} 남음, {{used}} 사용",
       "staleNotRunning": "WorkBuddy가 실행 중이 아니므로 이전에 조회한 결과를 표시합니다",

@@ -1266,6 +1266,8 @@
       "credits": "Credits",
       "leftOf": "{{remaining}} / {{total}} übrig",
       "usedOf": "{{used}} / {{total}} verbraucht",
+      "unlimited": "Unbegrenzt",
+      "unlimitedUsed": "Unbegrenzt, {{used}} verbraucht",
       "usedUp": "Aufgebraucht (von {{total}})",
       "detail": "{{remaining}} von {{total}} Credits übrig, {{used}} verbraucht",
       "staleNotRunning": "WorkBuddy läuft nicht; letztes Ergebnis wird angezeigt",

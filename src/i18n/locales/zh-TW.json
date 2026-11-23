@@ -1266,6 +1266,8 @@
       "credits": "積分",
       "leftOf": "剩餘 {{remaining}} / {{total}}",
       "usedOf": "已用 {{used}} / {{total}}",
+      "unlimited": "不限量",
+      "unlimitedUsed": "不限量，已用 {{used}}",
       "usedUp": "已用完（共 {{total}}）",
       "detail": "積分剩餘 {{remaining}} / 共 {{total}}，已用 {{used}}",
       "staleNotRunning": "WorkBuddy 沒在執行，顯示的是上次查到的結果",

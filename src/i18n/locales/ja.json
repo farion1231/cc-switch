@@ -1266,6 +1266,8 @@
       "credits": "クレジット",
       "leftOf": "残り {{remaining}} / {{total}}",
       "usedOf": "使用 {{used}} / {{total}}",
+      "unlimited": "無制限",
+      "unlimitedUsed": "無制限、使用 {{used}}",
       "usedUp": "使い切りました（全 {{total}}）",
       "detail": "クレジット残り {{remaining}} / 全 {{total}}、使用済み {{used}}",
       "staleNotRunning": "WorkBuddy が起動していないため、前回の結果を表示しています",

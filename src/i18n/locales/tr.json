@@ -5392,6 +5392,8 @@
       "credits": "Kredi",
       "leftOf": "{{remaining}} / {{total}} kaldı",
       "usedOf": "{{used}} / {{total}} kullanıldı",
+      "unlimited": "Sınırsız",
+      "unlimitedUsed": "Sınırsız, {{used}} kullanıldı",
       "usedUp": "Tükendi ({{total}} üzerinden)",
       "detail": "{{total}} kredinin {{remaining}} kadarı kaldı, {{used}} kullanıldı",
       "staleNotRunning": "WorkBuddy çalışmıyor; son sonuç gösteriliyor",

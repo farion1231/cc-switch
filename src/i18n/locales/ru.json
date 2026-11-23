@@ -1266,6 +1266,8 @@
       "credits": "Кредиты",
       "leftOf": "Осталось {{remaining}} / {{total}}",
       "usedOf": "Использовано {{used}} / {{total}}",
+      "unlimited": "Без ограничений",
+      "unlimitedUsed": "Без ограничений, использовано {{used}}",
       "usedUp": "Исчерпано (из {{total}})",
       "detail": "Осталось {{remaining}} из {{total}} кредитов, использовано {{used}}",
       "staleNotRunning": "WorkBuddy не запущен; показан последний результат",
