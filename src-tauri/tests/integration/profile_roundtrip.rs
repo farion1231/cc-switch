@@ -7,11 +7,21 @@ use std::fs;
 use serde_json::json;
 
 use cc_switch_lib::{
-    AppType, InstalledSkill, McpServer, McpService, ProfilePayload, ProfileScope, ProfileService,
-    Prompt, PromptService, Provider, ProviderService, SkillApps, SkillService, NO_ACTIVE_PROMPT,
+    update_settings, AppSettings, AppType, InstalledSkill, McpServer, McpService, ProfilePayload,
+    ProfileScope, ProfileService, Prompt, PromptService, Provider, ProviderService, SkillApps,
+    SkillService, NO_ACTIVE_PROMPT,
 };
 
 use crate::support::{create_test_state, ensure_test_home, reset_test_fs, test_mutex};
+
+fn enable_mcp_and_skills_management() {
+    update_settings(AppSettings {
+        manage_mcp: true,
+        manage_skills: true,
+        ..Default::default()
+    })
+    .expect("enable MCP and Skills management for profile test");
+}
 
 fn claude_provider(id: &str, token: &str) -> Provider {
     Provider::with_id(
@@ -102,6 +112,7 @@ fn profile_snapshot_apply_roundtrip_restores_configuration() {
     let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
+    enable_mcp_and_skills_management();
 
     let state = create_test_state().expect("create test state");
 
@@ -273,6 +284,7 @@ fn shared_profile_sides_are_isolated_and_mergeable() {
     let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
+    enable_mcp_and_skills_management();
 
     let state = create_test_state().expect("create test state");
 
@@ -387,6 +399,7 @@ fn profile_apply_reports_dangling_references_and_continues() {
     let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let _home = ensure_test_home();
+    enable_mcp_and_skills_management();
 
     let state = create_test_state().expect("create test state");
 
@@ -482,6 +495,7 @@ fn switching_profile_autosaves_previous_profile_state() {
     let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     reset_test_fs();
     let home = ensure_test_home();
+    enable_mcp_and_skills_management();
 
     let state = create_test_state().expect("create test state");
 
@@ -888,4 +902,84 @@ fn claude_desktop_profile_scope_is_independent() {
         Some(project.id.as_str()),
         "desktop scope marker set"
     );
+}
+
+#[test]
+fn profile_skips_unmanaged_mcp_and_skills_and_preserves_saved_slots() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let home = ensure_test_home();
+    enable_mcp_and_skills_management();
+
+    let state = create_test_state().expect("create test state");
+    state
+        .db
+        .save_provider(&AppType::Claude, &claude_provider("p1", "tk-1"))
+        .unwrap();
+    state
+        .db
+        .save_provider(&AppType::Claude, &claude_provider("p2", "tk-2"))
+        .unwrap();
+    state
+        .db
+        .set_current_provider(&AppType::Claude, "p1")
+        .unwrap();
+
+    fs::write(home.join(".claude.json"), "{}").unwrap();
+    McpService::upsert_server(&state, mcp_server("m1", true)).unwrap();
+    write_ssot_skill("s1");
+    state
+        .db
+        .save_skill(&installed_skill("local:s1", "s1", true))
+        .unwrap();
+    SkillService::sync_to_app_dir("s1", &AppType::Claude).unwrap();
+
+    let p1_profile = ProfileService::create(&state, "Alpha", ProfileScope::Claude).unwrap();
+    state
+        .db
+        .set_current_profile_id(ProfileScope::Claude.as_str(), Some(&p1_profile.id))
+        .unwrap();
+
+    ProviderService::switch(&state, AppType::Claude, "p2").unwrap();
+    McpService::toggle_app(&state, "m1", AppType::Claude, false).unwrap();
+    SkillService::toggle_app(&state.db, "local:s1", &AppType::Claude, false).unwrap();
+    let p2_profile = ProfileService::create(&state, "Beta", ProfileScope::Claude).unwrap();
+
+    // Turn off MCP and Skills management, then simulate external edits.
+    update_settings(AppSettings {
+        manage_mcp: false,
+        manage_skills: false,
+        ..Default::default()
+    })
+    .unwrap();
+    fs::write(
+        home.join(".claude.json"),
+        json!({ "mcpServers": { "external": { "command": "ext" } } }).to_string(),
+    )
+    .unwrap();
+
+    let warnings = ProfileService::apply(&state, &p1_profile.id, ProfileScope::Claude).unwrap();
+    assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
+
+    // Switching profile while management is off must switch providers without touching MCP/Skills.
+    let live_mcp: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(home.join(".claude.json")).unwrap()).unwrap();
+    assert!(
+        live_mcp["mcpServers"].get("external").is_some(),
+        "external MCP entry should remain intact"
+    );
+    assert!(
+        live_mcp["mcpServers"].get("m1").is_none(),
+        "managed MCP must not be re-enabled when manage_mcp=false"
+    );
+    assert!(
+        !home.join(".claude/skills/s1").exists(),
+        "managed skill must not be re-synced when manage_skills=false"
+    );
+
+    // Autosaving the previous profile must preserve its previously captured MCP/Skills slots.
+    let saved_p2 = state.db.get_profile(&p2_profile.id).unwrap().unwrap();
+    let saved_payload: ProfilePayload = serde_json::from_str(&saved_p2.payload).unwrap();
+    assert_eq!(saved_payload.mcp.claude, Some(vec![]));
+    assert_eq!(saved_payload.skills.claude, Some(vec![]));
 }

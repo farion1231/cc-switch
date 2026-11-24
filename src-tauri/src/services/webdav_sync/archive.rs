@@ -29,13 +29,6 @@ pub(crate) struct SkillsBackup {
 }
 
 pub(crate) fn zip_skills_ssot(dest_path: &Path) -> Result<(), AppError> {
-    let source = SkillService::get_ssot_dir().map_err(|e| {
-        localized(
-            "webdav.sync.skills_ssot_dir_failed",
-            format!("获取 Skills SSOT 目录失败: {e}"),
-            format!("Failed to resolve Skills SSOT directory: {e}"),
-        )
-    })?;
     if let Some(parent) = dest_path.parent() {
         fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
     }
@@ -46,17 +39,23 @@ pub(crate) fn zip_skills_ssot(dest_path: &Path) -> Result<(), AppError> {
         .compression_method(zip::CompressionMethod::Deflated)
         .last_modified_time(DateTime::default());
 
-    if source.exists() {
-        let canonical_root = fs::canonicalize(&source).unwrap_or_else(|_| source.clone());
-        let mut visited = HashSet::new();
-        mark_visited_dir(&canonical_root, &mut visited)?;
-        zip_dir_recursive(
-            &canonical_root,
-            &canonical_root,
-            &mut writer,
-            options,
-            &mut visited,
-        )?;
+    // shortcut: uploading from a machine with manage_skills=false packs an empty skills.zip
+    // without touching/creating local skill dirs; upgrade to partial-artifact sync protocol if
+    // mixed-machine (one machine enabled, another disabled) upload preservation is needed.
+    if crate::settings::is_skills_management_enabled() {
+        let source = SkillService::ssot_dir_path();
+        if source.exists() {
+            let canonical_root = fs::canonicalize(&source).unwrap_or_else(|_| source.clone());
+            let mut visited = HashSet::new();
+            mark_visited_dir(&canonical_root, &mut visited)?;
+            zip_dir_recursive(
+                &canonical_root,
+                &canonical_root,
+                &mut writer,
+                options,
+                &mut visited,
+            )?;
+        }
     }
 
     writer.finish().map_err(|e| {

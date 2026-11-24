@@ -3733,7 +3733,9 @@
       "privateEndpoint": "Bu adres localhost'a veya özel bir ağa işaret eder. Kendi yerel hizmetiniz olmadığı sürece ithalat yapmayın.",
       "shellCommand": "Bu yapılandırma, bir kabuk aracılığıyla tam bir komut satırı çalıştırır; gerçekte yürütülen şey argümanlardadır. Her satırı inceleyin.",
       "mcpDangerousField": "Bu MCP yapılandırması, ana makine ortam değişkenlerini okuyabilen (ör. bearer_token_env_var, env_http_headers, env_vars), yardımcı komutlar çalıştırabilen (http_headers_helper) veya çalışma dizinini değiştirebilen (cwd) yüksek riskli alanlar içeriyor. Yalnızca tamamen güvendiğiniz bir kaynaktan içe aktarın."
-    }
+    },
+    "mcpManagementDisabled": "MCP yönetimi kapalı. İçe aktarmadan önce MCP sayfasından etkinleştirin.",
+    "skillsManagementDisabled": "Skills yönetimi kapalı. İçe aktarmadan önce Skills sayfasından etkinleştirin."
   },
   "iconPicker": {
     "search": "Arama Simgeleri",
@@ -4305,7 +4307,8 @@
     },
     "needsAttention": "Dikkat edilmesi gerekiyor",
     "back": "Geri",
-    "plugins": "Eklentiler"
+    "plugins": "Eklentiler",
+    "off": "Kapalı"
   },
   "appsPage": {
     "showInSidebar": "Kenar çubuğunda {{name}}'yi göster",
@@ -5442,5 +5445,26 @@
     "hint": "CC Switch'in daha yeni bir sürümüyle kaydedilmiş olabilir. Veriler olduğu gibi korunur, düzenlenemez veya etkinleştirilemez; güncelleme verileri geri getirir ya da kaydı silebilirsiniz.",
     "confirmTitle": "Okunamayan kaydı sil",
     "confirmMessage": "“{{name}}” silinsin mi? Yalnızca bu CC Switch kaydı silinir; uygulamaların kendi yapılandırma dosyaları değişmez."
+  },
+  "moduleManagement": {
+    "offBadge": "Kapalı",
+    "mcp": {
+      "offTitle": "MCP yönetimi kapalı",
+      "offDescription": "Kapalıyken CC Switch hiçbir uygulamanın MCP yapılandırmasını okumaz veya değiştirmez. Ayarlarınızı elle ya da başka araçlarla yönetebilirsiniz.",
+      "enableButton": "MCP yönetimini aç",
+      "headerSwitchAria": "MCP yönetimini kapat",
+      "headerSwitchTip": "MCP yönetimini kapat (mevcut ayarlar ve kayıtlar korunur)",
+      "toastEnabled": "MCP yönetimi açıldı",
+      "toastDisabled": "MCP yönetimi kapatıldı — CC Switch artık MCP ayarlarınıza dokunmayacak"
+    },
+    "skills": {
+      "offTitle": "Skills yönetimi kapalı",
+      "offDescription": "Kapalıyken CC Switch hiçbir uygulamanın Skills klasörünü taramaz veya değiştirmez. Becerilerinizi elle ya da başka araçlarla yönetebilirsiniz.",
+      "enableButton": "Skills yönetimini aç",
+      "headerSwitchAria": "Skills yönetimini kapat",
+      "headerSwitchTip": "Skills yönetimini kapat (mevcut dosyalar ve kayıtlar korunur)",
+      "toastEnabled": "Skills yönetimi açıldı",
+      "toastDisabled": "Skills yönetimi kapatıldı — CC Switch artık yerel Skills klasörünüze dokunmayacak"
+    }
   }
 }

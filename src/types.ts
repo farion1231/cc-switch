@@ -525,6 +525,12 @@ export interface Settings {
   // 当前 Gemini 供应商 ID（优先于数据库 is_current）
   currentProviderGemini?: string;
 
+  // ===== 选择性管理开关（设备级，默认关闭）=====
+  // 是否由 CC Switch 管理各应用的 MCP 配置
+  manageMcp?: boolean;
+  // 是否由 CC Switch 管理各应用的 Skills 目录
+  manageSkills?: boolean;
+
   // ===== Skill 同步设置 =====
   // Skill 同步方式：auto（默认，优先 symlink）、symlink、copy
   skillSyncMethod?: SkillSyncMethod;

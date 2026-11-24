@@ -150,10 +150,15 @@ impl ProfilePayload {
                 *dst = src.clone();
             }
             if let (Some(dst), Some(src)) = (self.mcp.get_mut(app), other.mcp.get(app)) {
-                *dst = src.clone();
+                // 未开启 MCP 管理时新快照为 None，保留项目里原先存过的 MCP 槽位。
+                if src.is_some() {
+                    *dst = src.clone();
+                }
             }
             if let (Some(dst), Some(src)) = (self.skills.get_mut(app), other.skills.get(app)) {
-                *dst = src.clone();
+                if src.is_some() {
+                    *dst = src.clone();
+                }
             }
             if let (Some(dst), Some(src)) = (self.prompts.get_mut(app), other.prompts.get(app)) {
                 *dst = src.clone();
@@ -206,11 +211,23 @@ impl ProfileService {
         scope: ProfileScope,
     ) -> Result<ProfilePayload, AppError> {
         let mut payload = ProfilePayload::default();
-        let mcp_servers = state
-            .db
-            .get_mcp_server_rows()?
-            .into_readable("抓取配置快照");
-        let skills = state.db.get_all_installed_skills()?;
+        let manage_mcp = crate::settings::is_mcp_management_enabled();
+        let manage_skills = crate::settings::is_skills_management_enabled();
+        let mcp_servers = if manage_mcp {
+            Some(
+                state
+                    .db
+                    .get_mcp_server_rows()?
+                    .into_readable("抓取配置快照"),
+            )
+        } else {
+            None
+        };
+        let skills = if manage_skills {
+            Some(state.db.get_all_installed_skills()?)
+        } else {
+            None
+        };
 
         for app in scope.apps().iter() {
             if let Some(slot) = payload.providers.get_mut(app) {
@@ -221,23 +238,27 @@ impl ProfileService {
                     crate::mode::current::Purpose::InUse,
                 )?;
             }
-            if let Some(slot) = payload.mcp.get_mut(app) {
-                *slot = Some(
-                    mcp_servers
-                        .values()
-                        .filter(|s| s.apps.is_enabled_for(app))
-                        .map(|s| s.id.clone())
-                        .collect(),
-                );
+            if let Some(ref mcp_servers) = mcp_servers {
+                if let Some(slot) = payload.mcp.get_mut(app) {
+                    *slot = Some(
+                        mcp_servers
+                            .values()
+                            .filter(|s| s.apps.is_enabled_for(app))
+                            .map(|s| s.id.clone())
+                            .collect(),
+                    );
+                }
             }
-            if let Some(slot) = payload.skills.get_mut(app) {
-                *slot = Some(
-                    skills
-                        .values()
-                        .filter(|s| s.apps.is_enabled_for(app))
-                        .map(|s| s.id.clone())
-                        .collect(),
-                );
+            if let Some(ref skills) = skills {
+                if let Some(slot) = payload.skills.get_mut(app) {
+                    *slot = Some(
+                        skills
+                            .values()
+                            .filter(|s| s.apps.is_enabled_for(app))
+                            .map(|s| s.id.clone())
+                            .collect(),
+                    );
+                }
             }
             if let Some(slot) = payload.prompts.get_mut(app) {
                 *slot = Some(
@@ -401,44 +422,48 @@ impl ProfileService {
                 }
             }
 
-            // 2. MCP diff（最小 toggle：仅动目标态≠当前态的条目；None = 该侧未拍过，不动）
-            if let Some(Some(target_ids)) = payload.mcp.get(app) {
-                let servers = state.db.get_mcp_server_rows()?.into_readable("切换配置");
-                let current: Vec<(String, bool)> = servers
-                    .values()
-                    .map(|s| (s.id.clone(), s.apps.is_enabled_for(app)))
-                    .collect();
-                let (toggles, dangling) = plan_toggles(&current, target_ids);
-                for id in dangling {
-                    warnings.push(format!("[{app_str}] MCP '{id}' no longer exists, skipped"));
-                }
-                for (id, enabled) in toggles {
-                    if let Err(e) = McpService::toggle_app(state, &id, app.clone(), enabled) {
-                        warnings.push(format!(
-                            "[{app_str}] toggle MCP '{id}' -> {enabled} failed: {e}"
-                        ));
+            // 2. MCP diff（最小 toggle：仅动目标态≠当前态的条目；未开启 MCP 管理或 None 时不动）
+            if crate::settings::is_mcp_management_enabled() {
+                if let Some(Some(target_ids)) = payload.mcp.get(app) {
+                    let servers = state.db.get_mcp_server_rows()?.into_readable("切换配置");
+                    let current: Vec<(String, bool)> = servers
+                        .values()
+                        .map(|s| (s.id.clone(), s.apps.is_enabled_for(app)))
+                        .collect();
+                    let (toggles, dangling) = plan_toggles(&current, target_ids);
+                    for id in dangling {
+                        warnings.push(format!("[{app_str}] MCP '{id}' no longer exists, skipped"));
+                    }
+                    for (id, enabled) in toggles {
+                        if let Err(e) = McpService::toggle_app(state, &id, app.clone(), enabled) {
+                            warnings.push(format!(
+                                "[{app_str}] toggle MCP '{id}' -> {enabled} failed: {e}"
+                            ));
+                        }
                     }
                 }
             }
 
-            // 3. Skills diff（SkillService 返回 anyhow::Result，收进 warning）
-            if let Some(Some(target_ids)) = payload.skills.get(app) {
-                let skills = state.db.get_all_installed_skills()?;
-                let current: Vec<(String, bool)> = skills
-                    .values()
-                    .map(|s| (s.id.clone(), s.apps.is_enabled_for(app)))
-                    .collect();
-                let (toggles, dangling) = plan_toggles(&current, target_ids);
-                for id in dangling {
-                    warnings.push(format!(
-                        "[{app_str}] skill '{id}' no longer exists, skipped"
-                    ));
-                }
-                for (id, enabled) in toggles {
-                    if let Err(e) = SkillService::toggle_app(&state.db, &id, app, enabled) {
+            // 3. Skills diff（未开启 Skills 管理或 None 时不动）
+            if crate::settings::is_skills_management_enabled() {
+                if let Some(Some(target_ids)) = payload.skills.get(app) {
+                    let skills = state.db.get_all_installed_skills()?;
+                    let current: Vec<(String, bool)> = skills
+                        .values()
+                        .map(|s| (s.id.clone(), s.apps.is_enabled_for(app)))
+                        .collect();
+                    let (toggles, dangling) = plan_toggles(&current, target_ids);
+                    for id in dangling {
                         warnings.push(format!(
-                            "[{app_str}] toggle skill '{id}' -> {enabled} failed: {e}"
+                            "[{app_str}] skill '{id}' no longer exists, skipped"
                         ));
+                    }
+                    for (id, enabled) in toggles {
+                        if let Err(e) = SkillService::toggle_app(&state.db, &id, app, enabled) {
+                            warnings.push(format!(
+                                "[{app_str}] toggle skill '{id}' -> {enabled} failed: {e}"
+                            ));
+                        }
                     }
                 }
             }
@@ -689,5 +714,25 @@ mod tests {
         let (toggles, dangling) = plan_toggles(&current, &[]);
         assert_eq!(toggles, vec![("a".to_string(), false)]);
         assert!(dangling.is_empty());
+    }
+
+    #[test]
+    fn test_merge_scope_from_preserves_existing_mcp_and_skills_when_incoming_is_none() {
+        let mut target = ProfilePayload::default();
+        target.providers.claude = Some("old-provider".to_string());
+        target.mcp.claude = Some(ids(&["saved-mcp"]));
+        target.skills.claude = Some(ids(&["saved-skill"]));
+
+        let mut incoming = ProfilePayload::default();
+        incoming.providers.claude = Some("new-provider".to_string());
+        // MCP / Skills management disabled -> incoming snapshot leaves both None.
+        incoming.mcp.claude = None;
+        incoming.skills.claude = None;
+
+        target.merge_scope_from(&incoming, ProfileScope::Claude);
+
+        assert_eq!(target.providers.claude.as_deref(), Some("new-provider"));
+        assert_eq!(target.mcp.claude, Some(ids(&["saved-mcp"])));
+        assert_eq!(target.skills.claude, Some(ids(&["saved-skill"])));
     }
 }

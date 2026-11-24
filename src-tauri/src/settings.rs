@@ -687,6 +687,14 @@ pub struct AppSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proxy_client_host: Option<String>,
 
+    // ===== 选择性管理开关（默认不管理，需显式开启）=====
+    /// 是否由 CC Switch 管理各应用的 MCP 配置（默认 false）
+    #[serde(default)]
+    pub manage_mcp: bool,
+    /// 是否由 CC Switch 管理各应用的 Skills 目录（默认 false）
+    #[serde(default)]
+    pub manage_skills: bool,
+
     // ===== Skill 同步设置 =====
     /// Skill 同步方式：auto（默认，优先 symlink）、symlink、copy
     #[serde(default)]
@@ -811,6 +819,8 @@ impl Default for AppSettings {
             current_provider_agy: None,
             current_provider_copilot: None,
             proxy_client_host: None,
+            manage_mcp: false,
+            manage_skills: false,
             skill_sync_method: SyncMethod::default(),
             skill_storage_location: SkillStorageLocation::default(),
             webdav_sync: None,
@@ -1126,6 +1136,38 @@ pub(crate) fn resolve_override_path(raw: &str) -> PathBuf {
 
 pub fn get_settings() -> AppSettings {
     read_settings().clone()
+}
+
+pub fn is_mcp_management_enabled() -> bool {
+    read_settings().manage_mcp
+}
+
+pub fn is_skills_management_enabled() -> bool {
+    read_settings().manage_skills
+}
+
+pub fn require_mcp_management_enabled() -> Result<(), AppError> {
+    if is_mcp_management_enabled() {
+        Ok(())
+    } else {
+        Err(AppError::localized(
+            "mcp.management_disabled",
+            "MCP 管理未开启，请先在 MCP 页面开启后再操作",
+            "MCP management is turned off. Enable it on the MCP page first.",
+        ))
+    }
+}
+
+pub fn require_skills_management_enabled() -> Result<(), AppError> {
+    if is_skills_management_enabled() {
+        Ok(())
+    } else {
+        Err(AppError::localized(
+            "skills.management_disabled",
+            "Skills 管理未开启，请先在 Skills 页面开启后再操作",
+            "Skills management is turned off. Enable it on the Skills page first.",
+        ))
+    }
 }
 
 pub fn get_settings_for_frontend() -> AppSettings {
@@ -2061,5 +2103,25 @@ mod tests {
         );
         let entries = fs::read_dir(dir.path()).expect("read dir").count();
         assert_eq!(entries, 1, "no temp or backup files left behind");
+    }
+
+    #[test]
+    fn selective_management_defaults_off_and_round_trips() {
+        let legacy: AppSettings = serde_json::from_str("{}").expect("parse empty settings");
+        assert!(!legacy.manage_mcp);
+        assert!(!legacy.manage_skills);
+
+        let enabled = AppSettings {
+            manage_mcp: true,
+            manage_skills: true,
+            ..AppSettings::default()
+        };
+        let json = serde_json::to_value(&enabled).expect("serialize");
+        assert_eq!(json["manageMcp"], serde_json::Value::Bool(true));
+        assert_eq!(json["manageSkills"], serde_json::Value::Bool(true));
+
+        let restored: AppSettings = serde_json::from_value(json).expect("deserialize");
+        assert!(restored.manage_mcp);
+        assert!(restored.manage_skills);
     }
 }

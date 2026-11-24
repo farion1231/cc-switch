@@ -7029,7 +7029,8 @@ impl ProviderService {
                 &provider,
                 existing_provider.as_ref(),
             )?;
-            if outcome == LiveSyncOutcome::WroteLive {
+            if outcome == LiveSyncOutcome::WroteLive && crate::settings::is_mcp_management_enabled()
+            {
                 // MCP is stored in the database and projected after a successful
                 // live write. Keep the failure best-effort so the provider save
                 // itself is not reported as failed when MCP projection can retry.
@@ -7708,8 +7709,10 @@ impl ProviderService {
         // 走到这里 DB is_current 与 live 都已落盘，切换事实上已成功；
         // 投影失败上抛会让前端报"切换失败"制造分裂假象，故降级为警告
         // （MCP 投影可自愈：下次切换 / 任一 MCP 启停都会重新投影）。
-        if let Err(err) = McpService::sync_enabled_for_app(state, &app_type) {
-            log::warn!("切换供应商后重投影 {app_type:?} MCP 失败（将在下次同步时自愈）: {err}");
+        if crate::settings::is_mcp_management_enabled() {
+            if let Err(err) = McpService::sync_enabled_for_app(state, &app_type) {
+                log::warn!("切换供应商后重投影 {app_type:?} MCP 失败（将在下次同步时自愈）: {err}");
+            }
         }
 
         Ok(result)
@@ -7754,8 +7757,10 @@ impl ProviderService {
 
         // MCP 在 ~/.claude.json，和 settings.json 无关；重投影是幂等维护，失败只记警告
         // （切换已经提交，下次同步会自愈）。
-        if let Err(err) = McpService::sync_enabled_for_app(state, &AppType::Claude) {
-            log::warn!("切换供应商后重投影 claude MCP 失败（将在下次同步时自愈）: {err}");
+        if crate::settings::is_mcp_management_enabled() {
+            if let Err(err) = McpService::sync_enabled_for_app(state, &AppType::Claude) {
+                log::warn!("切换供应商后重投影 claude MCP 失败（将在下次同步时自愈）: {err}");
+            }
         }
         Ok(SwitchResult::default())
     }
@@ -7837,7 +7842,9 @@ impl ProviderService {
         }
         // 没有正在用的那家、或者在代理模式（客户端文件没按直连重写）时不重投影 MCP。
         let outcome = live::sync_current_provider_for_app_respecting_mode(state, &app_type)?;
-        if outcome != Some(LiveSyncOutcome::WroteLive) {
+        if outcome != Some(LiveSyncOutcome::WroteLive)
+            || !crate::settings::is_mcp_management_enabled()
+        {
             return Ok(());
         }
         McpService::sync_enabled_for_app(state, &app_type)

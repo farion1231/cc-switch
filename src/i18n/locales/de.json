@@ -3804,7 +3804,9 @@
       "privateEndpoint": "Diese Adresse zeigt auf localhost oder ein privates Netzwerk. Nur importieren, wenn es Ihr eigener lokaler Dienst ist.",
       "shellCommand": "Diese Konfiguration führt eine vollständige Befehlszeile über eine Shell aus – was tatsächlich läuft, steht in den Argumenten. Prüfen Sie jede Zeile.",
       "mcpDangerousField": "Diese MCP-Konfiguration enthält risikoreiche Felder, die Host-Umgebungsvariablen auslesen (z. B. bearer_token_env_var, env_http_headers, env_vars), Hilfsbefehle ausführen (http_headers_helper) oder das Arbeitsverzeichnis ändern (cwd) können. Nur aus vollständig vertrauenswürdigen Quellen importieren."
-    }
+    },
+    "mcpManagementDisabled": "Die MCP-Verwaltung ist deaktiviert. Aktivieren Sie sie zuerst auf der MCP-Seite.",
+    "skillsManagementDisabled": "Die Skills-Verwaltung ist deaktiviert. Aktivieren Sie sie zuerst auf der Skills-Seite."
   },
   "iconPicker": {
     "search": "Symbole suchen",
@@ -4376,7 +4378,8 @@
     },
     "needsAttention": "Erfordert Aufmerksamkeit",
     "back": "Zurück",
-    "plugins": "Plugins"
+    "plugins": "Plugins",
+    "off": "Aus"
   },
   "appsPage": {
     "showInSidebar": "{{name}} in der Seitenleiste anzeigen",
@@ -5442,5 +5445,26 @@
     "hint": "Möglicherweise von einer neueren CC-Switch-Version gespeichert. Die Daten bleiben unverändert erhalten und können nicht bearbeitet oder aktiviert werden; ein Update stellt sie wieder her, oder du löschst den Eintrag.",
     "confirmTitle": "Unlesbaren Eintrag löschen",
     "confirmMessage": "„{{name}}“ löschen? Nur dieser CC-Switch-Eintrag wird entfernt; die Konfigurationsdateien der Apps bleiben unverändert."
+  },
+  "moduleManagement": {
+    "offBadge": "Aus",
+    "mcp": {
+      "offTitle": "MCP-Verwaltung ist aus",
+      "offDescription": "Im deaktivierten Zustand liest oder ändert CC Switch keine MCP-Konfigurationen Ihrer Apps. Sie können sie selbst bearbeiten oder mit anderen Tools verwalten.",
+      "enableButton": "MCP-Verwaltung aktivieren",
+      "headerSwitchAria": "MCP-Verwaltung ausschalten",
+      "headerSwitchTip": "MCP-Verwaltung ausschalten (vorhandene Konfigurationen bleiben erhalten)",
+      "toastEnabled": "MCP-Verwaltung aktiviert",
+      "toastDisabled": "MCP-Verwaltung deaktiviert – CC Switch ändert Ihre MCP-Konfigurationen nicht mehr"
+    },
+    "skills": {
+      "offTitle": "Skills-Verwaltung ist aus",
+      "offDescription": "Im deaktivierten Zustand scannt oder ändert CC Switch keine Skills-Verzeichnisse Ihrer Apps. Sie können sie selbst bearbeiten oder mit anderen Tools verwalten.",
+      "enableButton": "Skills-Verwaltung aktivieren",
+      "headerSwitchAria": "Skills-Verwaltung ausschalten",
+      "headerSwitchTip": "Skills-Verwaltung ausschalten (vorhandene Dateien bleiben erhalten)",
+      "toastEnabled": "Skills-Verwaltung aktiviert",
+      "toastDisabled": "Skills-Verwaltung deaktiviert – CC Switch ändert Ihre lokalen Skills nicht mehr"
+    }
   }
 }

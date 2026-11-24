@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button";
 import { toast } from "@/lib/toast";
 import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
+import { useSettingsQuery } from "@/lib/query";
 import { PromptConfirmation } from "./deeplink/PromptConfirmation";
 import { McpConfirmation } from "./deeplink/McpConfirmation";
 import { SkillConfirmation } from "./deeplink/SkillConfirmation";
@@ -87,6 +88,7 @@ function initialActivation(request: DeepLinkImportRequest): boolean {
 export function DeepLinkImportDialog() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const { data: settings } = useSettingsQuery();
   const [request, setRequest] = useState<DeepLinkImportRequest | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
@@ -227,8 +229,15 @@ export function DeepLinkImportDialog() {
     }
   };
 
+  const disabledModule =
+    request?.resource === "mcp" && !settings?.manageMcp
+      ? "mcp"
+      : request?.resource === "skill" && !settings?.manageSkills
+        ? "skills"
+        : null;
+
   const handleImport = async () => {
-    if (!request) return;
+    if (!request || disabledModule) return;
 
     setIsImporting(true);
 
@@ -999,6 +1008,11 @@ export function DeepLinkImportDialog() {
                   </div>
                 </>
               )}
+              {disabledModule && (
+                <div className="rounded-lg bg-warning-soft p-3 text-sm text-warning-text">
+                  {t(`deeplink.${disabledModule}ManagementDisabled`)}
+                </div>
+              )}
             </div>
 
             <DialogFooter>
@@ -1009,7 +1023,10 @@ export function DeepLinkImportDialog() {
               >
                 {t("common.cancel")}
               </Button>
-              <Button onClick={handleImport} disabled={isImporting}>
+              <Button
+                onClick={handleImport}
+                disabled={isImporting || Boolean(disabledModule)}
+              >
                 {isImporting ? t("deeplink.importing") : t("deeplink.import")}
               </Button>
             </DialogFooter>

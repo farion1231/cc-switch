@@ -12,7 +12,11 @@ import { http, HttpResponse } from "msw";
 import i18n from "i18next";
 import { emitTauriEvent } from "../msw/tauriMocks";
 import { server } from "../msw/server";
-import { peekPendingDeepLink, setPendingDeepLink } from "../msw/state";
+import {
+  peekPendingDeepLink,
+  setPendingDeepLink,
+  setSettings,
+} from "../msw/state";
 import { pngDataUri } from "../fixtures/customIcon";
 import { toast } from "@/lib/toast";
 import { deeplinkApi } from "@/lib/api/deeplink";
@@ -1049,4 +1053,65 @@ it("previews agy model and masks its key before confirmation", async () => {
   );
   expect(screen.queryByText("secret-agy-key")).not.toBeInTheDocument();
   expect(screen.getAllByText("secr************").length).toBeGreaterThan(0);
+});
+
+it("blocks MCP and Skill deep link imports when module management is turned off", async () => {
+  setSettings({ manageMcp: false, manageSkills: false });
+  server.use(
+    http.post(
+      "http://tauri.local/merge_deeplink_config",
+      async ({ request }) => {
+        const body = (await request.json()) as {
+          request: Record<string, unknown>;
+        };
+        return HttpResponse.json(body.request);
+      },
+    ),
+  );
+  const importSpy = vi.spyOn(deeplinkApi, "importFromDeeplink");
+
+  try {
+    render(<DeepLinkImportDialog />, { wrapper: Wrapper });
+
+    act(() => {
+      deliverDeepLink({
+        version: "v1",
+        resource: "mcp",
+        apps: "claude",
+        config: btoa(
+          JSON.stringify({
+            mcpServers: {
+              context7: { command: "npx", args: ["-y", "context7"] },
+            },
+          }),
+        ),
+      });
+    });
+
+    expect(
+      await screen.findByText("deeplink.mcpManagementDisabled"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "deeplink.import" }),
+    ).toBeDisabled();
+    expect(importSpy).not.toHaveBeenCalled();
+
+    act(() => {
+      deliverDeepLink({
+        version: "v1",
+        resource: "skill",
+        repo: "owner/repo",
+      });
+    });
+
+    expect(
+      await screen.findByText("deeplink.skillsManagementDisabled"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "deeplink.import" }),
+    ).toBeDisabled();
+    expect(importSpy).not.toHaveBeenCalled();
+  } finally {
+    importSpy.mockRestore();
+  }
 });

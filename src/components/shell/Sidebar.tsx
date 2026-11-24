@@ -266,16 +266,33 @@ function MainDirectory({
       : undefined;
   const todayTrailing = todayValues.length > 1 ? todayValues : todayText;
 
+  const manageMcp = Boolean(settings?.manageMcp);
+  const manageSkills = Boolean(settings?.manageSkills);
+  const offLabel = t("nav.off");
+
   const globals: {
     page: GlobalPage;
     label: string;
     icon: IconComponent;
     trailing?: string | string[];
     trailingLabel?: string;
+    muted?: boolean;
     alert?: string;
   }[] = [
-    { page: "mcp", label: "MCP", icon: Server },
-    { page: "skills", label: t("nav.skills"), icon: SkillsIcon },
+    {
+      page: "mcp",
+      label: "MCP",
+      icon: Server,
+      trailing: manageMcp ? undefined : offLabel,
+      muted: !manageMcp,
+    },
+    {
+      page: "skills",
+      label: t("nav.skills"),
+      icon: SkillsIcon,
+      trailing: manageSkills ? undefined : offLabel,
+      muted: !manageSkills,
+    },
     { page: "plugins", label: t("nav.plugins"), icon: Puzzle },
     { page: "prompts", label: t("nav.prompts"), icon: BookOpen },
     { page: "sessions", label: t("nav.sessions"), icon: History },
@@ -341,6 +358,7 @@ function MainDirectory({
             label={item.label}
             trailing={item.trailing}
             trailingLabel={item.trailingLabel}
+            muted={item.muted}
             alert={item.alert}
             onClick={() => onSelectPage(item.page)}
           />
@@ -539,6 +557,7 @@ function NavItem({
   title,
   trailing,
   trailingLabel,
+  muted = false,
   alert,
   dot = false,
   dotTone = "neutral",
@@ -556,6 +575,8 @@ function NavItem({
   trailing?: string | string[];
   /** 行尾小字的完整说法（读屏和悬停用），行尾只写了数时给 */
   trailingLabel?: string;
+  /** 未开启的模块弱化显示，悬停或选中时恢复 */
+  muted?: boolean;
   /** 红点：需要处理，内容是给读屏的说明 */
   alert?: string;
   /** 圆点：有更新 */
@@ -616,6 +637,7 @@ function NavItem({
           aria-current={selected ? "page" : undefined}
           className={cn(
             "mx-auto flex h-8 w-12 shrink-0 items-center justify-center rounded-control transition-colors hover:bg-subtle",
+            muted && !selected && "opacity-65 hover:opacity-100",
             selected && "bg-selected hover:bg-selected",
           )}
         >
@@ -648,6 +670,7 @@ function NavItem({
           "flex h-nav-row shrink-0 items-center gap-2 rounded-control px-2 text-start transition-colors hover:bg-subtle",
           // 底栏两项按各自文字分宽度：「Apps」这类短词不必占满一半，长词（Optionen、Настройки）才放得下
           compact ? "min-w-0 flex-auto shrink" : "mx-2 w-[184px]",
+          muted && !selected && "opacity-65 hover:opacity-100",
           selected && "bg-selected font-medium hover:bg-selected",
         )}
       >

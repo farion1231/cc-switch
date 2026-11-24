@@ -3804,7 +3804,9 @@
       "privateEndpoint": "이 주소는 localhost 또는 사설 네트워크를 가리킵니다. 직접 관리하는 로컬 서비스가 아니라면 가져오지 마세요.",
       "shellCommand": "이 설정은 셸을 통해 전체 명령줄을 실행합니다. 실제로 실행되는 것은 인수에 있습니다. 각 줄을 검토하세요.",
       "mcpDangerousField": "이 MCP 설정에는 호스트 환경 변수를 읽거나(bearer_token_env_var, env_http_headers, env_vars 등), 보조 명령을 실행하거나(http_headers_helper), 작업 디렉터리를 변경할 수 있는(cwd) 고위험 필드가 포함되어 있습니다. 완전히 신뢰할 수 있는 출처인 경우에만 가져오세요."
-    }
+    },
+    "mcpManagementDisabled": "MCP 관리가 꺼져 있습니다. 먼저 MCP 페이지에서 켠 뒤 다시 가져오세요.",
+    "skillsManagementDisabled": "Skills 관리가 꺼져 있습니다. 먼저 Skills 페이지에서 켠 뒤 다시 가져오세요."
   },
   "iconPicker": {
     "search": "아이콘 검색",
@@ -4376,7 +4378,8 @@
     },
     "needsAttention": "주의가 필요함",
     "back": "뒤로",
-    "plugins": "플러그인"
+    "plugins": "플러그인",
+    "off": "꺼짐"
   },
   "appsPage": {
     "showInSidebar": "사이드바에 {{name}} 표시",
@@ -5442,5 +5445,26 @@
     "hint": "최신 버전의 CC Switch에서 저장되었을 수 있습니다. 데이터는 그대로 보존되며 편집하거나 활성화할 수 없습니다. 업그레이드하면 복원되며, 삭제할 수도 있습니다.",
     "confirmTitle": "읽을 수 없는 항목 삭제",
     "confirmMessage": "“{{name}}”을(를) 삭제할까요? CC Switch의 이 기록만 삭제되며 각 앱의 설정 파일은 변경되지 않습니다."
+  },
+  "moduleManagement": {
+    "offBadge": "꺼짐",
+    "mcp": {
+      "offTitle": "MCP 관리가 꺼져 있습니다",
+      "offDescription": "꺼져 있는 동안 CC Switch는 앱의 MCP 설정을 읽거나 수정하지 않습니다. 직접 편집하거나 다른 도구로 자유롭게 관리할 수 있습니다.",
+      "enableButton": "MCP 관리 켜기",
+      "headerSwitchAria": "MCP 관리 끄기",
+      "headerSwitchTip": "MCP 관리 끄기 (기존 설정과 기록은 유지됩니다)",
+      "toastEnabled": "MCP 관리가 켜졌습니다",
+      "toastDisabled": "MCP 관리가 꺼졌습니다. CC Switch가 더 이상 MCP 설정을 수정하지 않습니다"
+    },
+    "skills": {
+      "offTitle": "Skills 관리가 꺼져 있습니다",
+      "offDescription": "꺼져 있는 동안 CC Switch는 앱의 Skills 디렉터리를 스캔하거나 수정하지 않습니다. 직접 편집하거나 다른 도구로 자유롭게 관리할 수 있습니다.",
+      "enableButton": "Skills 관리 켜기",
+      "headerSwitchAria": "Skills 관리 끄기",
+      "headerSwitchTip": "Skills 관리 끄기 (기존 파일과 기록은 유지됩니다)",
+      "toastEnabled": "Skills 관리가 켜졌습니다",
+      "toastDisabled": "Skills 관리가 꺼졌습니다. CC Switch가 더 이상 로컬 Skills를 수정하지 않습니다"
+    }
   }
 }

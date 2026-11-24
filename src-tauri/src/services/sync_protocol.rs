@@ -413,6 +413,12 @@ pub(crate) fn apply_snapshot(
     // Exclude installs, uninstalls, updates, and local projection while Skills
     // are backed up/replaced and the corresponding database snapshot is applied.
     let _skill_state_guard = skill_state_write_guard();
+    if !crate::settings::is_skills_management_enabled() {
+        // Skills 管理未开启时跳过解压 skills.zip，避免覆盖外部工具或 Git 管理的目录（#1876 / #9118）。
+        db.import_sql_string_for_sync(sql_str)?;
+        return Ok(());
+    }
+
     let skills_backup = backup_current_skills()?;
 
     // Replace skills first, then import database; roll back skills on DB failure.
@@ -822,5 +828,31 @@ mod tests {
             size: data.len() as u64,
         };
         assert!(verify_artifact(data, "test.bin", &meta).is_ok());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn apply_snapshot_skips_skills_zip_when_skills_management_disabled() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _env = crate::test_support::EnvVars::new().set("CC_SWITCH_TEST_HOME", temp.path());
+        crate::settings::update_settings(crate::settings::AppSettings {
+            manage_skills: false,
+            ..Default::default()
+        })
+        .expect("disable skills management");
+
+        let db = crate::database::Database::memory().expect("memory db");
+        let db_sql = db.export_sql_string_for_sync().expect("export sql");
+        let ssot_dir = temp.path().join(".cc-switch").join("skills");
+        assert!(!ssot_dir.exists());
+
+        // Passing invalid ZIP bytes proves restore_skills_zip is completely bypassed
+        // when manage_skills is false, and the SSOT directory is never created.
+        apply_snapshot(&db, db_sql.as_bytes(), b"not-a-valid-zip")
+            .expect("apply_snapshot should skip skills.zip when manage_skills=false");
+        assert!(
+            !ssot_dir.exists(),
+            "skills SSOT dir must not be created when skills management is off"
+        );
     }
 }

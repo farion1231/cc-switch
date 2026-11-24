@@ -2064,3 +2064,130 @@ fn concurrent_toggles_keep_every_server_in_live_config() {
     let missing: Vec<&String> = ids.iter().filter(|id| !written.contains_key(*id)).collect();
     assert!(missing.is_empty(), "lost concurrent toggles: {missing:?}");
 }
+
+#[test]
+fn disabled_mcp_and_skills_management_skip_provider_switch_and_live_sync() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let home = ensure_test_home();
+
+    update_settings(AppSettings {
+        manage_mcp: false,
+        manage_skills: false,
+        ..Default::default()
+    })
+    .expect("disable mcp and skills management");
+
+    let state = create_test_state().expect("create test state");
+    let p1 = cc_switch_lib::Provider::with_id(
+        "claude-a".to_string(),
+        "Claude A".to_string(),
+        json!({
+            "env": {
+                "ANTHROPIC_AUTH_TOKEN": "tk-a",
+                "ANTHROPIC_BASE_URL": "https://a.example"
+            }
+        }),
+        None,
+    );
+    let p2 = cc_switch_lib::Provider::with_id(
+        "claude-b".to_string(),
+        "Claude B".to_string(),
+        json!({
+            "env": {
+                "ANTHROPIC_AUTH_TOKEN": "tk-b",
+                "ANTHROPIC_BASE_URL": "https://b.example"
+            }
+        }),
+        None,
+    );
+    state.db.save_provider(&AppType::Claude, &p1).unwrap();
+    state.db.save_provider(&AppType::Claude, &p2).unwrap();
+    state
+        .db
+        .set_current_provider(&AppType::Claude, "claude-a")
+        .unwrap();
+
+    // Seed a stale DB MCP server and a different live ~/.claude.json managed by another tool (#9925).
+    let stale_db_mcp: McpServer = serde_json::from_value(json!({
+        "id": "shared-mcp",
+        "name": "shared-mcp",
+        "server": { "type": "stdio", "command": "old-cmd" },
+        "apps": { "claude": true }
+    }))
+    .unwrap();
+    state.db.save_mcp_server(&stale_db_mcp).unwrap();
+
+    let live_mcp_path = get_claude_mcp_path();
+    fs::write(
+        &live_mcp_path,
+        json!({
+            "mcpServers": {
+                "shared-mcp": { "type": "stdio", "command": "external-tool-cmd" }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    // Seed a DB skill + SSOT dir and verify it is not projected when manage_skills=false.
+    let ssot_skill_dir = home.join(".cc-switch/skills/demo-skill");
+    fs::create_dir_all(&ssot_skill_dir).unwrap();
+    fs::write(ssot_skill_dir.join("SKILL.md"), "# Demo\n").unwrap();
+    let db_skill = cc_switch_lib::InstalledSkill {
+        id: "local:demo-skill".to_string(),
+        name: "demo-skill".to_string(),
+        description: None,
+        directory: "demo-skill".to_string(),
+        repo_host: None,
+        repo_owner: None,
+        repo_name: None,
+        repo_branch: None,
+        readme_url: None,
+        apps: cc_switch_lib::SkillApps {
+            claude: true,
+            ..Default::default()
+        },
+        installed_at: 1,
+        content_hash: None,
+        updated_at: 1,
+    };
+    state.db.save_skill(&db_skill).unwrap();
+
+    // Switching Claude provider and running full live sync must leave external MCP & Skills untouched.
+    ProviderService::switch(&state, AppType::Claude, "claude-b").unwrap();
+    ProviderService::sync_current_to_live(&state).unwrap();
+
+    let after_disabled: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&live_mcp_path).unwrap()).unwrap();
+    assert_eq!(
+        after_disabled["mcpServers"]["shared-mcp"]["command"],
+        json!("external-tool-cmd"),
+        "provider switch and live sync must not overwrite MCP when manage_mcp=false"
+    );
+    assert!(
+        !home.join(".claude/skills/demo-skill").exists(),
+        "live sync must not project skills when manage_skills=false"
+    );
+
+    // Turning manage_mcp on resumes projection during sync_current_to_live while manage_skills stays off.
+    update_settings(AppSettings {
+        manage_mcp: true,
+        manage_skills: false,
+        ..Default::default()
+    })
+    .unwrap();
+    ProviderService::sync_current_to_live(&state).unwrap();
+
+    let after_enabled: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&live_mcp_path).unwrap()).unwrap();
+    assert_eq!(
+        after_enabled["mcpServers"]["shared-mcp"]["command"],
+        json!("old-cmd"),
+        "live sync should project MCP once manage_mcp=true"
+    );
+    assert!(
+        !home.join(".claude/skills/demo-skill").exists(),
+        "skills must remain untouched while manage_skills=false"
+    );
+}

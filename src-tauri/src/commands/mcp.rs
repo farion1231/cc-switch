@@ -16,6 +16,7 @@ pub async fn start_mcp_connectivity_checks(
     server_ids: Vec<String>,
     on_result: tauri::ipc::Channel<crate::services::mcp_connectivity::ConnectivityResult>,
 ) -> Result<String, String> {
+    crate::settings::require_mcp_management_enabled()?;
     let servers = run_db_task(&state, McpService::get_all_servers).await?;
     Ok(crate::services::mcp_connectivity::start_checks(
         // Use the page's enabled selection: app toggles update it optimistically,
@@ -45,6 +46,7 @@ use crate::app_config::McpServer;
 pub async fn get_mcp_servers(
     state: State<'_, AppState>,
 ) -> Result<IndexMap<String, McpServer>, AppError> {
+    crate::settings::require_mcp_management_enabled()?;
     McpService::get_all_servers(&state)
 }
 
@@ -53,6 +55,7 @@ pub async fn get_mcp_servers(
 pub async fn get_unreadable_mcp_servers(
     state: State<'_, AppState>,
 ) -> Result<Vec<crate::database::UnreadableEntry>, AppError> {
+    crate::settings::require_mcp_management_enabled()?;
     McpService::list_unreadable(&state)
 }
 
@@ -61,11 +64,13 @@ pub async fn upsert_mcp_server(
     state: State<'_, AppState>,
     server: McpServer,
 ) -> Result<(), AppError> {
+    crate::settings::require_mcp_management_enabled()?;
     McpService::upsert_server(&state, server)
 }
 
 #[tauri::command]
 pub async fn delete_mcp_server(state: State<'_, AppState>, id: String) -> Result<bool, AppError> {
+    crate::settings::require_mcp_management_enabled()?;
     McpService::delete_server(&state, &id)
 }
 
@@ -77,6 +82,7 @@ pub async fn toggle_mcp_app(
     app: String,
     enabled: bool,
 ) -> Result<(), AppError> {
+    crate::settings::require_mcp_management_enabled()?;
     let app_ty = AppType::from_str(&app)?;
     McpService::toggle_app_locked(&state, &server_id, app_ty, enabled).await
 }
@@ -84,6 +90,7 @@ pub async fn toggle_mcp_app(
 /// 从所有应用导入 MCP 服务器（复用已有的导入逻辑）
 #[tauri::command]
 pub async fn import_mcp_from_apps(state: State<'_, AppState>) -> Result<usize, AppError> {
+    crate::settings::require_mcp_management_enabled()?;
     McpService::import_from_all_apps(&state)
 }
 
@@ -96,6 +103,7 @@ pub async fn resync_mcp_to_apps(
     state: State<'_, AppState>,
     apps: Option<Vec<String>>,
 ) -> Result<Vec<crate::services::mcp::McpAppSyncOutcome>, String> {
+    crate::settings::require_mcp_management_enabled()?;
     let targets = McpService::resync_targets(apps.as_deref())?;
     let mut outcomes = Vec::with_capacity(targets.len());
     for app in targets {

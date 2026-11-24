@@ -853,7 +853,11 @@ pub(crate) fn sync_additive_app_to_live(
     // 全量 sync_all_enabled 会把无关应用的 live 损坏牵连进来。投影失败
     // 上抛（不降级）：这里没有已变更的 DB 状态需要保护，调用方重试即可。
     // 某家供应商写失败也照常重投影 MCP，两边的失败一起上抛。
-    let mcp = McpService::sync_enabled_for_app(state, app_type);
+    let mcp = if crate::settings::is_mcp_management_enabled() {
+        McpService::sync_enabled_for_app(state, app_type)
+    } else {
+        Ok(())
+    };
 
     match (providers, mcp) {
         (Ok(()), Ok(())) => Ok(()),
@@ -938,12 +942,19 @@ pub(crate) fn sync_current_provider_for_app_respecting_mode(
 /// is actually waiting, so it can't break every later sync.
 pub(crate) fn initialize_dsh_profiles(state: &AppState) -> Result<(), AppError> {
     let provider_rows = state.db.get_provider_rows(&AppType::Dsh)?;
-    let server_rows = state.db.get_mcp_server_rows()?;
-    let dsh_server_ids = state.db.mcp_server_ids_enabled_for(&AppType::Dsh)?;
+    let manage_mcp = crate::settings::is_mcp_management_enabled();
+    let (server_rows, dsh_server_ids) = if manage_mcp {
+        (
+            Some(state.db.get_mcp_server_rows()?),
+            state.db.mcp_server_ids_enabled_for(&AppType::Dsh)?,
+        )
+    } else {
+        (None, Default::default())
+    };
     let blocking = provider_rows.unreadable.iter().chain(
         server_rows
-            .unreadable
             .iter()
+            .flat_map(|rows| rows.unreadable.iter())
             .filter(|entry| dsh_server_ids.contains(&entry.id)),
     );
     if let Some(entry) = blocking.into_iter().next() {
@@ -966,11 +977,14 @@ pub(crate) fn initialize_dsh_profiles(state: &AppState) -> Result<(), AppError> 
         .map(|(id, provider)| (id, provider.settings_config))
         .collect();
     let servers = server_rows
-        .readable
-        .into_iter()
-        .filter(|(_, server)| server.apps.dsh)
-        .map(|(id, server)| (id, server.server))
-        .collect();
+        .map(|rows| {
+            rows.readable
+                .into_iter()
+                .filter(|(_, server)| server.apps.dsh)
+                .map(|(id, server)| (id, server.server))
+                .collect()
+        })
+        .unwrap_or_default();
     crate::dsh_config::initialize_profiles(&providers, &servers)
 }
 
@@ -1018,15 +1032,20 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
 
     // MCP sync is already best-effort per application. Preserve its aggregate
     // error while continuing with Skills.
-    if let Err(error) = McpService::sync_all_enabled(state) {
-        failures.push(format!("mcp: {error}"));
+    if crate::settings::is_mcp_management_enabled() {
+        if let Err(error) = McpService::sync_all_enabled(state) {
+            failures.push(format!("mcp: {error}"));
+        }
     }
 
     // Skill sync
-    for app_type in AppType::all() {
-        if let Err(e) = crate::services::skill::SkillService::sync_to_app(&state.db, &app_type) {
-            log::warn!("同步 Skill 到 {app_type:?} 失败: {e}");
-            failures.push(format!("skill/{}: {e}", app_type.as_str()));
+    if crate::settings::is_skills_management_enabled() {
+        for app_type in AppType::all() {
+            if let Err(e) = crate::services::skill::SkillService::sync_to_app(&state.db, &app_type)
+            {
+                log::warn!("同步 Skill 到 {app_type:?} 失败: {e}");
+                failures.push(format!("skill/{}: {e}", app_type.as_str()));
+            }
         }
     }
 

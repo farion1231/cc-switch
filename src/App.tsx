@@ -18,7 +18,13 @@ import {
   MoreHorizontal,
   Plus,
   Search,
+  Server,
 } from "lucide-react";
+import { SkillsIcon } from "@/components/BrandIcons";
+import {
+  ModuleManagementOffPage,
+  useModuleManagement,
+} from "@/components/common/ModuleManagementGate";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Provider, VisibleApps } from "@/types";
 import { KNOWN_APP_TYPES, type AppTypeFilter } from "@/types/usage";
@@ -281,6 +287,8 @@ function App() {
   const [mcpManagementBusy, setMcpManagementBusy] = useState(false);
   const [skillsNavigationBusy, setSkillsNavigationBusy] = useState(false);
   const [promptNavigationBusy, setPromptNavigationBusy] = useState(false);
+  const mcpManagement = useModuleManagement("mcp");
+  const skillsManagement = useModuleManagement("skills");
 
   useEffect(() => {
     storeView(currentView);
@@ -1849,11 +1857,37 @@ function App() {
           </>
         );
       case "mcp":
+        if (!mcpManagement.enabled) {
+          return (
+            <ModuleManagementOffPage
+              module="mcp"
+              icon={<Server className="h-5 w-5" strokeWidth={1.5} />}
+              title="MCP"
+              pending={mcpManagement.isPending}
+              onEnable={() => void mcpManagement.setEnabled(true)}
+            />
+          );
+        }
         return (
-          <UnifiedMcpPanel onInteractionBlockedChange={setMcpManagementBusy} />
+          <UnifiedMcpPanel
+            onInteractionBlockedChange={setMcpManagementBusy}
+            onDisableManagement={() => void mcpManagement.setEnabled(false)}
+            managementPending={mcpManagement.isPending}
+          />
         );
       case "skills":
       case "skillsDiscovery":
+        if (!skillsManagement.enabled) {
+          return (
+            <ModuleManagementOffPage
+              module="skills"
+              icon={<SkillsIcon size={20} />}
+              title={t("nav.skills")}
+              pending={skillsManagement.isPending}
+              onEnable={() => void skillsManagement.setEnabled(true)}
+            />
+          );
+        }
         // 「已安装 / 发现」合成一页；旧的 skillsDiscovery 视图直接打开「发现」段
         return (
           <UnifiedSkillsPanel
@@ -1861,6 +1895,8 @@ function App() {
               currentView === "skillsDiscovery" ? "discover" : "installed"
             }
             onNavigationBlockedChange={setSkillsNavigationBusy}
+            onDisableManagement={() => void skillsManagement.setEnabled(false)}
+            managementPending={skillsManagement.isPending}
           />
         );
       case "plugins":
