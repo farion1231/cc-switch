@@ -968,6 +968,56 @@ fn same_dir_cmd_is_shadowed_by_pathext_sibling() {
 }
 
 #[test]
+fn pathext_shadowing_sibling_names_the_launcher_that_runs_issue_9931() {
+    let dir = tempfile::tempdir().expect("temp dir should be created");
+    let cmd = dir.path().join("hermes.cmd");
+    let exe = dir.path().join("hermes.exe");
+    std::fs::write(&cmd, "").expect("cmd launcher should be created");
+    std::fs::write(&exe, "").expect("exe launcher should be created");
+
+    // `where` lists hermes.cmd before hermes.exe, but the command line runs the
+    // PATHEXT winner, so the PATH default must move to the .exe.
+    let default_pathext = Some(".COM;.EXE;.BAT;.CMD;.VBS;.JS");
+    assert_eq!(
+        pathext_shadowing_sibling(&cmd, default_pathext),
+        Some(exe.clone())
+    );
+    assert_eq!(pathext_shadowing_sibling(&exe, default_pathext), None);
+    assert_eq!(pathext_shadowing_sibling(&cmd, None), Some(exe.clone()));
+
+    let cmd_first = Some(".COM;.CMD;.EXE");
+    assert_eq!(pathext_shadowing_sibling(&cmd, cmd_first), None);
+    assert_eq!(
+        pathext_shadowing_sibling(&exe, cmd_first),
+        Some(cmd.clone())
+    );
+
+    // Without a sibling on disk nothing is shadowed.
+    std::fs::remove_file(&exe).expect("exe launcher should be removed");
+    assert_eq!(pathext_shadowing_sibling(&cmd, default_pathext), None);
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn windows_path_default_prefers_pathext_winner_over_where_order_issue_9931() {
+    let dir = tempfile::tempdir().expect("temp dir should be created");
+    let cmd = dir.path().join("hermes.cmd");
+    let exe = dir.path().join("hermes.exe");
+    std::fs::write(&cmd, "").expect("cmd launcher should be created");
+    std::fs::write(&exe, "").expect("exe launcher should be created");
+
+    let raw = format!("{}\r\n{}\r\n", cmd.display(), exe.display());
+    assert_eq!(
+        windows_preferred_path_default("hermes", &raw, Some(".COM;.EXE;.BAT;.CMD")),
+        Some(exe)
+    );
+    assert_eq!(
+        windows_preferred_path_default("hermes", &raw, Some(".COM;.CMD;.EXE")),
+        Some(cmd)
+    );
+}
+
+#[test]
 fn foreign_shims_are_rejected() {
     assert!(is_foreign_pip_launcher(
         "pi",
@@ -1136,7 +1186,7 @@ fn windows_opencode_desktop_sidecar_resolution() {
     );
     let raw = format!("{}\r\n{}\r\n", desktop.display(), standalone.display());
     assert_eq!(
-        windows_preferred_path_default("opencode", &raw),
+        windows_preferred_path_default("opencode", &raw, None),
         Some(standalone)
     );
 }
@@ -1158,9 +1208,12 @@ fn windows_executable_candidates_filter_foreign_and_shadowed_shims() {
     let npm_pi = npm.join("pi.cmd");
     std::fs::write(&npm_pi, "").unwrap();
     let raw = format!("{}\r\n{}\r\n", pip_pi.display(), npm_pi.display());
-    assert_eq!(windows_preferred_path_default("pi", &raw), Some(npm_pi));
     assert_eq!(
-        windows_preferred_path_default("pi", &format!("{}\r\n", pip_pi.display())),
+        windows_preferred_path_default("pi", &raw, None),
+        Some(npm_pi)
+    );
+    assert_eq!(
+        windows_preferred_path_default("pi", &format!("{}\r\n", pip_pi.display()), None),
         None
     );
 

@@ -230,22 +230,26 @@ fn pathext_prefers_cmd_over_exe(pathext: Option<&str>) -> bool {
 }
 
 /// 同一目录里 `<tool>.cmd` 和 `<tool>.exe` 并存时，命令行敲 `<tool>` 只会按 PATHEXT
-/// 顺序命中其中一个，另一个被遮住。调用方只对已知是同一处安装多出来的入口用它
-/// （Hermes 换成 `.exe` 启动器后留下的旧 `hermes.cmd`，#8839）。
+/// 顺序命中其中一个，另一个被遮住。返回遮住 `path` 的那个同目录兄弟（没有则 `None`）。
 #[cfg(any(target_os = "windows", test))]
-fn shadowed_by_pathext_sibling(path: &Path, pathext: Option<&str>) -> bool {
-    let Some(ext) = path.extension().and_then(|ext| ext.to_str()) else {
-        return false;
-    };
+fn pathext_shadowing_sibling(path: &Path, pathext: Option<&str>) -> Option<std::path::PathBuf> {
+    let ext = path.extension().and_then(|ext| ext.to_str())?;
     let cmd_first = pathext_prefers_cmd_over_exe(pathext);
     let shadowing_ext = if ext.eq_ignore_ascii_case("cmd") && !cmd_first {
         "exe"
     } else if ext.eq_ignore_ascii_case("exe") && cmd_first {
         "cmd"
     } else {
-        return false;
+        return None;
     };
-    path.with_extension(shadowing_ext).is_file()
+    Some(path.with_extension(shadowing_ext)).filter(|sibling| sibling.is_file())
+}
+
+/// `path` 是否被同目录的 PATHEXT 兄弟遮住。调用方只对已知是同一处安装多出来的入口用它
+/// （Hermes 的 bin 目录里 `hermes.cmd` 与 `hermes.exe` 并存，#8839 / #9931）。
+#[cfg(any(target_os = "windows", test))]
+fn shadowed_by_pathext_sibling(path: &Path, pathext: Option<&str>) -> bool {
+    pathext_shadowing_sibling(path, pathext).is_some()
 }
 
 pub(super) fn tool_executable_candidates(tool: &str, dir: &Path) -> Vec<std::path::PathBuf> {
@@ -773,15 +777,27 @@ fn windows_preferred_tool_executable(tool: &str, path: &Path) -> Option<std::pat
     )
 }
 
+/// `where` 在同一目录里按文件名顺序列出（`hermes.cmd` 排在 `hermes.exe` 前），不按
+/// PATHEXT；命令行实际执行的是 PATHEXT 靠前的那个，所以先换成遮住它的同目录兄弟，
+/// 兄弟不可探测时再退回 `where` 给的这一行（#9931）。
 #[cfg(target_os = "windows")]
-fn windows_preferred_path_default(tool: &str, raw: &str) -> Option<std::path::PathBuf> {
+fn windows_preferred_path_default(
+    tool: &str,
+    raw: &str,
+    pathext: Option<&str>,
+) -> Option<std::path::PathBuf> {
     raw.lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
         .filter(|line| {
             !is_windows_app_execution_alias_dir(Path::new(line).parent().unwrap_or(Path::new("")))
         })
-        .find_map(|line| windows_preferred_tool_executable(tool, Path::new(line)))
+        .find_map(|line| {
+            let path = Path::new(line);
+            pathext_shadowing_sibling(path, pathext)
+                .and_then(|sibling| windows_preferred_tool_executable(tool, &sibling))
+                .or_else(|| windows_preferred_tool_executable(tool, path))
+        })
 }
 
 #[cfg(target_os = "windows")]
@@ -1313,7 +1329,8 @@ pub(super) fn resolve_path_default_entry(
     // `where` lists every match on PATH in order. Skip entries that cannot be
     // safely probed (App Execution Aliases and Desktop GUI executables) and keep
     // looking so a later real CLI can still be the PATH default.
-    let Some(preferred) = windows_preferred_path_default(tool, &raw) else {
+    let pathext = std::env::var("PATHEXT").ok();
+    let Some(preferred) = windows_preferred_path_default(tool, &raw, pathext.as_deref()) else {
         return Ok(None);
     };
     let Some(real) = std::fs::canonicalize(&preferred).ok() else {
@@ -1572,9 +1589,14 @@ pub(super) fn list_tool_install_locations(tool: &str) -> Vec<ToolInstallLocation
     if let Some(default) = path_default
         .filter(|path| path.is_file() && !located.iter().any(|install| &install.real == path))
     {
+        // 默认入口是 canonicalize 过的真身，Windows 上带 `\\?\` 前缀，展示时去掉。
+        #[cfg(target_os = "windows")]
+        let shown = windows_shell_compatible_path(&default);
+        #[cfg(not(target_os = "windows"))]
+        let shown = default.clone();
         locations.push(ToolInstallLocation {
             source: infer_install_source_for_tool(tool, &default, &default),
-            path: default.display().to_string(),
+            path: shown.display().to_string(),
             is_path_default: true,
         });
     }
