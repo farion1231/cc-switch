@@ -29,6 +29,13 @@ const mocks = vi.hoisted(() => ({
     exists: true,
     path: "/home/me/.workbuddy",
   })),
+  getAgyDesktopStatus: vi.fn(async () => ({
+    supported: true,
+    installed: false,
+    version: null as string | null,
+    installPath: null as string | null,
+    dataDirExists: false,
+  })),
   probeToolInstallations: vi.fn(),
   listToolInstallations: vi.fn(),
   runToolLifecycleAction: vi.fn(),
@@ -38,11 +45,21 @@ const mocks = vi.hoisted(() => ({
   success: vi.fn(),
   warning: vi.fn(),
   error: vi.fn(),
-  settings: {} as { visibleApps?: undefined; appOrder?: string[] },
+  settings: {} as {
+    visibleApps?: Record<string, boolean>;
+    appOrder?: string[];
+  },
   updateSettings: vi.fn(),
   autoSaveSettings: vi.fn(async () => null),
   dragEndHandlers: [] as ((event: DragEndEvent) => void)[],
   desktopStatus: { supported: true, installed: true, configured: true },
+  agyDesktopStatus: {
+    supported: true,
+    installed: false,
+    version: null as string | null,
+    installPath: null as string | null,
+    dataDirExists: false,
+  },
 }));
 
 vi.mock("@/lib/api", () => ({ settingsApi: mocks }));
@@ -565,5 +582,97 @@ describe("AppsPage visibility column", () => {
             button.getAttribute("aria-label") !== "appsPage.dragHandle",
         ),
     ).toEqual([within(row).getByRole("button", { name: "WorkBuddy" })]);
+  });
+
+  it("attaches Antigravity Desktop detection under Antigravity CLI and shares the single sidebar switch", async () => {
+    vi.resetModules();
+    missing.clear();
+    missing.add("agy");
+    mocks.agyDesktopStatus = {
+      supported: true,
+      installed: true,
+      version: "2.34.0",
+      installPath: "/Applications/Antigravity.app",
+      dataDirExists: true,
+    };
+    mocks.settings = { visibleApps: { claude: true, agy: true } };
+
+    await renderApps();
+
+    // 仅安装桌面版时：Antigravity 共用行归入「已安装」，不拆成独立行
+    expect(rowApps("appsPage.sectionInstalled")).toContain("agy");
+    expect(
+      screen.queryByRole("region", { name: "appsPage.sectionNotInstalled" }),
+    ).toBeNull();
+
+    const agyRow = card("Antigravity CLI");
+    // 整行只有一个侧栏显示开关，控制 visibleApps.agy
+    const switches = agyRow.getAllByRole("switch");
+    expect(switches).toHaveLength(1);
+    // CLI 未安装仍保留安装入口，下方挂载 Antigravity Desktop 本机探测结果
+    expect(
+      agyRow.getByRole("button", { name: "settings.toolInstall" }),
+    ).toBeInTheDocument();
+    const subRow = document.querySelector(
+      '[data-tool-row="agy"] [data-agy-desktop-subrow]',
+    ) as HTMLElement;
+    expect(subRow).not.toBeNull();
+    const glyphs = Array.from(
+      document.querySelectorAll('[data-tool-row="agy"] [data-app-glyph="agy"]'),
+    );
+    expect(glyphs).toHaveLength(2);
+    expect(glyphs[0]).toHaveAttribute("data-app-glyph-badge", "terminal");
+    const desktopGlyph = subRow.querySelector('[data-app-glyph="agy"]');
+    expect(desktopGlyph).toBe(glyphs[1]);
+    expect(desktopGlyph).toHaveAttribute("data-app-glyph-badge", "desktop");
+    expect(subRow.firstElementChild?.className).not.toContain("ps-9");
+    expect(within(subRow).getByText("Antigravity Desktop")).toBeInTheDocument();
+    expect(within(subRow).getByText("2.34.0")).toBeInTheDocument();
+    expect(
+      within(subRow).getByText("/Applications/Antigravity.app"),
+    ).toBeInTheDocument();
+    expect(
+      within(subRow).getByRole("button", { name: "Antigravity Desktop" }),
+    ).toBeInTheDocument();
+
+    const user = userEvent.setup();
+    await user.click(switches[0]);
+    expect(mocks.updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        visibleApps: expect.objectContaining({ agy: false }),
+      }),
+    );
+  });
+
+  it("groups Antigravity under not-installed when neither CLI nor Desktop is present and refreshes Desktop status on check", async () => {
+    vi.resetModules();
+    missing.clear();
+    missing.add("agy");
+    mocks.agyDesktopStatus = {
+      supported: true,
+      installed: false,
+      version: null,
+      installPath: null,
+      dataDirExists: false,
+    };
+
+    await renderApps();
+
+    expect(rowApps("appsPage.sectionNotInstalled")).toEqual(["agy"]);
+    const subRow = document.querySelector(
+      '[data-tool-row="agy"] [data-agy-desktop-subrow]',
+    ) as HTMLElement;
+    expect(subRow).not.toBeNull();
+    expect(within(subRow).getByText("common.notInstalled")).toBeInTheDocument();
+
+    const callsBefore = mocks.getAgyDesktopStatus.mock.calls.length;
+    await userEvent.click(
+      screen.getByRole("button", { name: /appsPage\.checkUpdates/ }),
+    );
+    await waitFor(() =>
+      expect(mocks.getAgyDesktopStatus.mock.calls.length).toBeGreaterThan(
+        callsBefore,
+      ),
+    );
   });
 });

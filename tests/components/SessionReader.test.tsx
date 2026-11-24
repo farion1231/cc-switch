@@ -66,12 +66,13 @@ const onCopy = vi.fn();
 const renderReader = (
   providerId: string,
   messages: SessionMessage[],
+  sessionOverrides: Partial<SessionMeta> = {},
 ): ReturnType<typeof render> => {
   const client = createTestQueryClient();
   const ui: ReactElement = (
     <QueryClientProvider client={client}>
       <SessionReader
-        session={meta(providerId)}
+        session={{ ...meta(providerId), ...sessionOverrides }}
         appName={providerId === "claude" ? "Claude Code" : providerId}
         transcript={transcriptOf(messages)}
         listQuery=""
@@ -931,6 +932,31 @@ describe("SessionReader", () => {
     fireEvent.click(paramsBtn);
     expect(
       within(taskRegion).getByText(/"TaskId": "conv-1\/task-8"/),
+    ).toBeInTheDocument();
+  });
+
+  it("Antigravity 桌面版会话禁用终端恢复并在更多菜单显示原生删除提示", async () => {
+    const user = userEvent.setup();
+    renderReader("agy", [msg("user", [text("桌面版测试")], { turnId: "t1" })], {
+      sourcePath:
+        "/Users/me/.gemini/antigravity/brain/desktop-1/.system_generated/logs/transcript_full.jsonl",
+      resumeCommand: undefined,
+    });
+
+    // 桌面版会话不提供有效的终端恢复命令，按钮标为不可用并挂载桌面继续提示
+    const resumeBtn = screen.getByRole("button", { name: /无法恢复|恢复/ });
+    expect(resumeBtn).toHaveAttribute("aria-disabled", "true");
+    expect(document.getElementById("session-resume-note")).toHaveTextContent(
+      "请在 Antigravity 桌面应用中继续此会话",
+    );
+
+    // 更多菜单里「删除…」禁用并展示 Antigravity 原生删除提示
+    await user.click(screen.getByRole("button", { name: /更多操作/ }));
+    expect(
+      await screen.findByRole("menuitem", { name: "删除…" }),
+    ).toHaveAttribute("aria-disabled", "true");
+    expect(
+      await screen.findByText("sessionManager.agyDeleteHint"),
     ).toBeInTheDocument();
   });
 });

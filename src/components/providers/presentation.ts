@@ -645,43 +645,80 @@ function buildSwitchSectionsByView(input: SwitchModeInput): ProviderSection[] {
 
 // ─── 启动器式应用（Antigravity）──────────────────────────────────────────────
 
+export interface LaunchAccountsInput {
+  currentProviderIds: ReadonlySet<string>;
+  /** 哪些卡支持切换账号（不传表示全部；CLI 只含绑定了 OAuth 账号的官方卡） */
+  switchableProviderIds?: ReadonlySet<string>;
+  onSwitch: (provider: Provider) => void;
+  switching: boolean;
+  requiresReauth: ReadonlySet<string>;
+}
+
 export interface LaunchInput {
   app: AppId;
   t: TFunction;
   providers: Provider[];
   openTerminal: (provider: Provider) => void;
+  accounts?: LaunchAccountsInput;
 }
 
 /**
  * Antigravity：第三方 Key 只能经环境变量交给 CC Switch 打开的那个 agy，管不到用户自己敲的
- * `agy`，所以没有「启用 / 使用中」，每张卡的主操作就是「打开终端」，哪张都能删。
+ * `agy`，所以没有「启用 / 使用中」，主操作是「打开终端」；绑定了官方 OAuth 账号的卡可显示
+ * 当前登录状态并切换全局登录（仍保留卡片右侧的「打开终端」图标按钮）。
  */
 export function buildLaunchSections(input: LaunchInput): ProviderSection[] {
-  const { app, t, providers, openTerminal } = input;
+  const { app, t, providers, openTerminal, accounts } = input;
   return [
     {
       key: "all",
-      items: providers.map((p) => ({
-        provider: p,
-        presentation: {
-          chips: isOfficialAccount(app, p)
-            ? [
-                {
-                  key: "official",
-                  label: t("providerCard.chip.official"),
-                  tone: "outline",
-                },
-              ]
-            : [],
-          buttons: [
-            {
-              key: "openTerminal",
-              label: t("provider.openTerminalWithProvider"),
-              onClick: () => openTerminal(p),
-            },
-          ],
-        },
-      })),
+      items: providers.map((p) => {
+        const switchable = accounts
+          ? accounts.switchableProviderIds
+            ? accounts.switchableProviderIds.has(p.id)
+            : true
+          : false;
+        const current =
+          switchable && Boolean(accounts?.currentProviderIds.has(p.id));
+        return {
+          provider: p,
+          presentation: {
+            tone: current ? "direct" : undefined,
+            status: current
+              ? { label: t("providerCard.status.inUse"), dot: "direct" }
+              : undefined,
+            chips: isOfficialAccount(app, p)
+              ? [
+                  {
+                    key: "official",
+                    label: t("providerCard.chip.official"),
+                    tone: "outline",
+                  },
+                ]
+              : [],
+            buttons: current
+              ? []
+              : [
+                  switchable && accounts
+                    ? {
+                        key: "switch",
+                        label: t("providerCard.action.switch"),
+                        onClick: () => accounts.onSwitch(p),
+                        disabledReason: accounts.requiresReauth.has(p.id)
+                          ? t("authCenter.agy.reauthNote")
+                          : accounts.switching
+                            ? t("common.loading")
+                            : undefined,
+                      }
+                    : {
+                        key: "openTerminal",
+                        label: t("provider.openTerminalWithProvider"),
+                        onClick: () => openTerminal(p),
+                      },
+                ],
+          },
+        };
+      }),
     },
   ];
 }

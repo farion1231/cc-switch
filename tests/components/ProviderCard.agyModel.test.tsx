@@ -37,9 +37,13 @@ vi.mock("@/lib/query/queries", () => ({
   useUsageQuery: () => ({ data: undefined }),
 }));
 
-function renderCard(provider: Provider, appId: "agy" | "gemini" = "agy") {
+function renderCard(
+  provider: Provider,
+  appId: "agy" | "gemini" = "agy",
+  client = createTestQueryClient(),
+) {
   return render(
-    <QueryClientProvider client={createTestQueryClient()}>
+    <QueryClientProvider client={client}>
       <ProviderCard
         provider={provider}
         appId={appId}
@@ -147,6 +151,50 @@ describe("ProviderCard Antigravity official quota", () => {
       ).not.toBeInTheDocument();
     },
   );
+
+  it("shows the bound account's quota and plan by default without usage_script", () => {
+    platform.mac = true;
+    platform.linux = false;
+    const client = createTestQueryClient();
+    client.setQueryData(["agy_oauth", "quota", "sub-b"], {
+      success: true,
+      planName: "AI Ultra 20x",
+      tiers: [],
+    });
+    renderCard(
+      {
+        id: "bound-default",
+        name: "Antigravity OAuth",
+        category: "official",
+        websiteUrl: "https://ai.google.dev/",
+        settingsConfig: { env: {}, config: {} },
+        meta: {
+          authBinding: {
+            source: "managed_account",
+            authProvider: "agy_oauth",
+            accountId: "sub-b",
+          },
+        },
+      },
+      "agy",
+      client,
+    );
+    expect(screen.getByTestId("agy-account-quota")).toHaveTextContent("sub-b");
+    expect(screen.getByText("· AI Ultra 20x")).toBeInTheDocument();
+  });
+
+  it("hides the bound account's quota when explicitly disabled", () => {
+    platform.mac = true;
+    platform.linux = false;
+    renderCard({
+      ...bound,
+      meta: {
+        ...bound.meta,
+        usage_script: { ...official.meta!.usage_script!, enabled: false },
+      },
+    });
+    expect(screen.queryByTestId("agy-account-quota")).not.toBeInTheDocument();
+  });
 
   it("ignores the binding where accounts cannot be switched", () => {
     platform.mac = false;

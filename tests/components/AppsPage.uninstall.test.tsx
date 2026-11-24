@@ -29,6 +29,13 @@ const mocks = vi.hoisted(() => ({
     exists: true,
     path: "/home/me/.workbuddy",
   })),
+  getAgyDesktopStatus: vi.fn(async () => ({
+    supported: true,
+    installed: false,
+    version: null as string | null,
+    installPath: null as string | null,
+    dataDirExists: false,
+  })),
   probeToolInstallations: vi.fn(),
   listToolInstallations: vi.fn(),
   runToolLifecycleAction: vi.fn(),
@@ -38,11 +45,21 @@ const mocks = vi.hoisted(() => ({
   success: vi.fn(),
   warning: vi.fn(),
   error: vi.fn(),
-  settings: {} as { visibleApps?: undefined; appOrder?: string[] },
+  settings: {} as {
+    visibleApps?: Record<string, boolean>;
+    appOrder?: string[];
+  },
   updateSettings: vi.fn(),
   autoSaveSettings: vi.fn(async () => null),
   dragEndHandlers: [] as ((event: DragEndEvent) => void)[],
   desktopStatus: { supported: true, installed: true, configured: true },
+  agyDesktopStatus: {
+    supported: true,
+    installed: false,
+    version: null as string | null,
+    installPath: null as string | null,
+    dataDirExists: false,
+  },
 }));
 
 vi.mock("@/lib/api", () => ({ settingsApi: mocks }));

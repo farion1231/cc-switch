@@ -1511,6 +1511,7 @@
     "codexResumeNote": "Sağlayıcı değiştirildikten sonra eski oturumlar sürdürülemeyebilir: Codex, geçmişi sağlayıcı başına ayrı olarak tutar.",
     "noResumeOpenclaw": "OpenClaw oturumları ağ geçidi tarafından yönetilir ve bir terminalde sürdürülemez",
     "noResumeHermes": "Hermes oturumlarının komut satırından sürdürülmesi henüz desteklenmiyor",
+    "noResumeAgyDesktop": "Bu oturuma Antigravity masaüstü uygulamasında devam edin",
     "launchedIn": "{{terminal}}'de devam komutunu çalıştırdı",
     "launchFailed": "{{terminal}} açılamadı: {{error}}. Devam komutu kopyalandı; herhangi bir terminale yapıştırın.",
     "onlyChat": "Yalnızca sohbet",
@@ -4350,7 +4351,8 @@
       "omp": "Resmi komut dosyasıyla yüklenir",
       "copilot": "npm ile kurulur"
     },
-    "workbuddyHelp": "WorkBuddy bir masaüstü uygulamasıdır; buradan kurulamaz veya yükseltilemez, kendini günceller. CC Switch ona yapılandırma dosyası (~/.workbuddy/models.json) üzerinden bağlanır."
+    "workbuddyHelp": "WorkBuddy bir masaüstü uygulamasıdır; buradan kurulamaz veya yükseltilemez, kendini günceller. CC Switch ona yapılandırma dosyası (~/.workbuddy/models.json) üzerinden bağlanır.",
+    "agyDesktopHelp": "Antigravity Desktop kendini günceller; buradan kurulamaz veya kaldırılamaz. ~/.gemini/config altındaki MCP, Skills ve istem yapılandırmasını Antigravity CLI ile ve kenar çubuğundaki aynı Antigravity girişini paylaşır."
   },
   "appPage": {
     "moreActions": "{{name}} için diğer işlemler",

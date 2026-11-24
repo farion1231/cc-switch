@@ -30,7 +30,8 @@ describe("session utils", () => {
     const keyCard = agy(
       `C:\\Users\\u\\.cc-switch\\agy\\p\\antigravity-cli\\brain\\aaa-1\\${log}`,
     );
-    const ide = agy(`/home/u/.gemini/antigravity/brain/aaa-1/${log}`);
+    const desktop = agy(`/home/u/.gemini/antigravity/brain/aaa-1/${log}`);
+    const ide = agy(`/home/u/.gemini/antigravity-ide/brain/aaa-1/${log}`);
     const acp = agy(`/home/u/.gemini/antigravity-acp/brain/aaa-1/${log}`);
     const t3Acp = agy(
       `/home/u/.t3/userdata/providers/antigravity/abc123/antigravity-acp/brain/aaa-1/${log}`,
@@ -43,7 +44,7 @@ describe("session utils", () => {
     expect(canDeleteSession(cli)).toBe(true);
     expect(canDeleteSession(keyCard)).toBe(true);
     expect(nativeDeleteHintKey(cli)).toBeUndefined();
-    for (const session of [ide, acp, t3Acp, t3AcpWin, indexOnly]) {
+    for (const session of [desktop, ide, acp, t3Acp, t3AcpWin, indexOnly]) {
       expect(canDeleteSession(session)).toBe(false);
       expect(nativeDeleteHintKey(session)).toBe("sessionManager.agyDeleteHint");
     }

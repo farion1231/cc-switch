@@ -18,8 +18,9 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-/// Antigravity CLI keeps sessions in `~/.gemini/antigravity-cli/brain`, while the IDE writes the
-/// same layout to `~/.gemini/antigravity/brain`, and standalone ACP runs write to
+/// Antigravity CLI keeps sessions in `~/.gemini/antigravity-cli/brain`, while the desktop app
+/// writes the same layout to `~/.gemini/antigravity/brain`, the standalone IDE writes to
+/// `~/.gemini/antigravity-ide/brain`, and standalone ACP runs write to
 /// `~/.gemini/antigravity-acp/brain`. API-key providers run agy with a private `--gemini_dir`
 /// (`~/.cc-switch/agy/<provider>/`), so their sessions live under that directory's
 /// `antigravity-cli/brain`. T3 Code runs `antigravity-acp` with an isolated `GEMINI_HOME` per
@@ -34,12 +35,13 @@ pub fn session_roots() -> Vec<PathBuf> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum ResumeMode {
-    /// Default CLI/IDE conversation resumed with `agy --conversation=<id>`.
+    /// Default CLI conversation resumed with `agy --conversation=<id>`.
     Default,
     /// CC Switch API-key private profile resumed with `agy --gemini_dir=<dir> --conversation=<id>`.
     PrivateProfile(PathBuf),
-    /// External ACP-managed conversation (standalone `antigravity-acp` or T3 Code) that cannot
-    /// be resumed via `agy --conversation`.
+    /// Desktop app (`antigravity`), standalone IDE (`antigravity-ide`), or external ACP-managed
+    /// conversation (standalone `antigravity-acp` or T3 Code) that cannot be resumed via
+    /// `agy --conversation`.
     Unsupported,
 }
 
@@ -130,7 +132,8 @@ fn session_sources_for(
     key_profiles_root: &Path,
     t3_homes: &[PathBuf],
 ) -> Vec<SessionSource> {
-    let ide = cli.with_file_name("antigravity");
+    let desktop = cli.with_file_name("antigravity");
+    let ide = cli.with_file_name("antigravity-ide");
     let acp = cli.with_file_name("antigravity-acp");
     let mut sources = vec![
         SessionSource {
@@ -138,8 +141,12 @@ fn session_sources_for(
             resume: ResumeMode::Default,
         },
         SessionSource {
+            root: desktop.join("brain"),
+            resume: ResumeMode::Unsupported,
+        },
+        SessionSource {
             root: ide.join("brain"),
-            resume: ResumeMode::Default,
+            resume: ResumeMode::Unsupported,
         },
         SessionSource {
             root: acp.join("brain"),
@@ -1908,8 +1915,10 @@ mod tests {
             .unwrap();
         };
         write("antigravity-cli", "cli-1");
-        write("antigravity", "ide-1");
+        write("antigravity", "desktop-1");
         write("antigravity", "cli-1");
+        write("antigravity-ide", "ide-1");
+        write("antigravity-ide", "desktop-1");
         let roots = vec![
             SessionSource {
                 root: home.path().join("antigravity-cli/brain"),
@@ -1917,19 +1926,33 @@ mod tests {
             },
             SessionSource {
                 root: home.path().join("antigravity/brain"),
-                resume: ResumeMode::Default,
+                resume: ResumeMode::Unsupported,
+            },
+            SessionSource {
+                root: home.path().join("antigravity-ide/brain"),
+                resume: ResumeMode::Unsupported,
             },
             SessionSource {
                 root: home.path().join("missing/brain"),
                 resume: ResumeMode::Default,
             },
         ];
-        let mut ids: Vec<_> = scan_roots(&roots)
+        let sessions = scan_roots(&roots);
+        let mut by_id: HashMap<String, SessionMeta> = sessions
             .into_iter()
-            .map(|s| s.session_id)
+            .map(|s| (s.session_id.clone(), s))
             .collect();
+        let mut ids: Vec<_> = by_id.keys().cloned().collect();
         ids.sort();
-        assert_eq!(ids, ["cli-1", "ide-1"]);
+        assert_eq!(ids, ["cli-1", "desktop-1", "ide-1"]);
+        // Only CLI sessions get an `agy --conversation=...` resume command; desktop and IDE
+        // conversations live in separate app_data_dirs and must not expose broken CLI commands.
+        assert_eq!(
+            by_id.remove("cli-1").unwrap().resume_command.as_deref(),
+            Some("agy --conversation=cli-1")
+        );
+        assert_eq!(by_id.remove("desktop-1").unwrap().resume_command, None);
+        assert_eq!(by_id.remove("ide-1").unwrap().resume_command, None);
     }
 
     #[test]
@@ -2957,7 +2980,11 @@ mod tests {
         assert_eq!(fixture.traces("aaa-1").len(), 4);
         assert_eq!(fixture.rows("conversation_summaries", "aaa-1"), 1);
 
-        let ide = AgyFixture::new("antigravity", &["aaa-1"]);
+        let desktop = AgyFixture::new("antigravity", &["aaa-1"]);
+        assert!(desktop.delete("aaa-1").is_err());
+        assert_eq!(desktop.traces("aaa-1").len(), 4);
+
+        let ide = AgyFixture::new("antigravity-ide", &["aaa-1"]);
         assert!(ide.delete("aaa-1").is_err());
         assert_eq!(ide.traces("aaa-1").len(), 4);
     }
@@ -3571,7 +3598,11 @@ mod tests {
                 },
                 SessionSource {
                     root: home.path().join(".gemini/antigravity/brain"),
-                    resume: ResumeMode::Default,
+                    resume: ResumeMode::Unsupported,
+                },
+                SessionSource {
+                    root: home.path().join(".gemini/antigravity-ide/brain"),
+                    resume: ResumeMode::Unsupported,
                 },
                 SessionSource {
                     root: home.path().join(".gemini/antigravity-acp/brain"),

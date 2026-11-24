@@ -76,7 +76,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { AppPageHeader } from "@/components/shell/AppPageHeader";
-import { APP_DISPLAY_NAME, AppGlyph } from "@/components/shell/AppGlyph";
+import {
+  APP_DISPLAY_NAME,
+  AppGlyph,
+  type AppGlyphBadge,
+} from "@/components/shell/AppGlyph";
 import { ToolUpgradeConfirmDialog } from "@/components/settings/ToolUpgradeConfirmDialog";
 import { ToolInstallRow } from "@/components/settings/ToolInstallRow";
 import { ToolErrorMessage } from "@/components/settings/ToolErrorMessage";
@@ -202,6 +206,15 @@ export function AppsPage() {
       queryFn: () => settingsApi.getConfigStatus("workbuddy"),
       staleTime: 30_000,
     });
+  const {
+    data: agyDesktopStatus,
+    isPending: isAgyDesktopStatusPending,
+    refetch: refetchAgyDesktopStatus,
+  } = useQuery({
+    queryKey: ["agy-desktop-status"],
+    queryFn: () => settingsApi.getAgyDesktopStatus(),
+    staleTime: 30_000,
+  });
 
   // 按「已安装 / 未安装」分两组。Claude Desktop 没有命令可探，用后端按数据目录 / 应用包推断的结果。
   // 首次探测还没出结果时不分组，免得各行探完一个跳一个；之后重新检查时沿用上次结果，位置不动。
@@ -219,12 +232,22 @@ export function AppsPage() {
     // 清单为空 → 未安装（清单含登录 shell 解析到的默认入口，和版本探测看到的是同一处），
     // 版本探到「装了但跑不起来」时再归回已安装。跑在 WSL 里的工具本机清单说明不了什么，
     // 照旧等版本探测。
+    let cliInstalled: boolean | null;
     if (report && !report.is_wsl) {
-      return report.installs.length > 0 || isToolPresent(info, report);
+      cliInstalled = report.installs.length > 0 || isToolPresent(info, report);
+    } else if (!info && tools.isLoadingTools) {
+      // 清单未回（或 WSL）：首次探测还没出结果时先不分组
+      cliInstalled = null;
+    } else {
+      cliInstalled = isToolPresent(info, report);
     }
-    // 清单未回（或 WSL）：首次探测还没出结果时先不分组
-    if (!info && tools.isLoadingTools) return null;
-    return isToolPresent(info, report);
+    // Antigravity Desktop 挂在 Antigravity CLI 下方共用一行：只要任一端已安装就归入「已安装」
+    if (row.tool === "agy") {
+      if (cliInstalled === true) return true;
+      if (isAgyDesktopStatusPending || cliInstalled === null) return null;
+      return Boolean(agyDesktopStatus?.installed);
+    }
+    return cliInstalled;
   };
   // 两组共用一份顺序（拖动后写进设置，侧栏也按它排），每组只是按装没装过滤
   const appOrder = orderAppIds(settings?.appOrder);
@@ -368,6 +391,65 @@ export function AppsPage() {
     );
   };
 
+  const agyDesktopSubRow = (
+    <div
+      data-agy-desktop-subrow
+      className={cn(
+        APP_ROW_GRID,
+        "mt-2.5 min-h-10 border-t border-border/60 pt-2.5",
+      )}
+    >
+      <div className="flex min-w-0 items-center gap-4">
+        <AppGlyph
+          app="agy"
+          size={20}
+          badge="desktop"
+          badgeClassName="bg-surface"
+        />
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-center gap-1.5 text-strong text-fg-1">
+            <span className="truncate">Antigravity Desktop</span>
+          </div>
+          {agyDesktopStatus?.installPath && (
+            <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-caption text-fg-2">
+              <span
+                className="min-w-0 truncate font-mono"
+                title={agyDesktopStatus.installPath}
+              >
+                {agyDesktopStatus.installPath}
+              </span>
+            </div>
+          )}
+        </div>
+      </div>
+      <div className="text-end">
+        <span className="inline-flex items-center gap-1 text-caption text-fg-2">
+          {isAgyDesktopStatusPending ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-fg-3" />
+          ) : agyDesktopStatus?.supported === false ? (
+            t("appsPage.desktopUnsupported")
+          ) : agyDesktopStatus?.installed ? (
+            agyDesktopStatus.version ? (
+              <span className="font-mono text-body font-medium tabular-nums text-fg-1">
+                {agyDesktopStatus.version}
+              </span>
+            ) : (
+              t("appsPage.desktopConnected")
+            )
+          ) : (
+            t("common.notInstalled")
+          )}
+          <HelpTip title="Antigravity Desktop" align="end">
+            {t("appsPage.agyDesktopHelp")}
+          </HelpTip>
+        </span>
+      </div>
+      <div />
+      <div />
+      <div />
+    </div>
+  );
+
   const renderRow = (row: Row) =>
     row.kind === "workbuddy" ? (
       <AppRow
@@ -421,6 +503,7 @@ export function AppsPage() {
           }))
         }
         visibility={visibilitySwitch(TOOL_APP_IDS[row.tool])}
+        subRow={row.tool === "agy" ? agyDesktopSubRow : undefined}
       />
     );
 
@@ -465,7 +548,10 @@ export function AppsPage() {
               variant="neutral"
               size="regular"
               disabled={tools.isLoadingTools || tools.isAnyBusy}
-              onClick={() => void tools.checkForUpdates()}
+              onClick={() => {
+                void tools.checkForUpdates();
+                void refetchAgyDesktopStatus();
+              }}
             >
               <RefreshCw
                 className={cn(
@@ -674,6 +760,7 @@ export function AppsPage() {
 
 function AppRow({
   app,
+  badge,
   name,
   meta,
   version,
@@ -681,8 +768,10 @@ function AppRow({
   visibility,
   menu,
   footer,
+  subRow,
 }: {
   app: AppId;
+  badge?: AppGlyphBadge;
   name: React.ReactNode;
   meta?: React.ReactNode;
   version?: React.ReactNode;
@@ -690,6 +779,7 @@ function AppRow({
   visibility: React.ReactNode;
   menu?: React.ReactNode;
   footer?: React.ReactNode;
+  subRow?: React.ReactNode;
 }) {
   const { t } = useTranslation();
   const dragHandle = useContext(DragHandleContext);
@@ -712,7 +802,12 @@ function AppRow({
       )}
       <div className={cn(APP_ROW_GRID, "min-h-10")}>
         <div className="flex min-w-0 items-center gap-4">
-          <AppGlyph app={app} size={20} badgeClassName="bg-surface" />
+          <AppGlyph
+            app={app}
+            size={20}
+            badge={badge}
+            badgeClassName="bg-surface"
+          />
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 items-center gap-1.5 text-strong text-fg-1">
               {name}
@@ -735,6 +830,7 @@ function AppRow({
         <div className="flex justify-end">{menu}</div>
       </div>
       {footer && <div className="ms-9 mt-2">{footer}</div>}
+      {subRow}
     </div>
   );
 }
@@ -754,6 +850,7 @@ function ToolRow({
   expanded,
   onToggleExpanded,
   visibility,
+  subRow,
 }: {
   tool: ToolName;
   tools: ReturnType<typeof useToolManagement>;
@@ -761,6 +858,7 @@ function ToolRow({
   expanded: boolean;
   onToggleExpanded: () => void;
   visibility: React.ReactNode;
+  subRow?: React.ReactNode;
 }) {
   const { t } = useTranslation();
   const info = tools.toolVersionByName.get(tool);
@@ -997,6 +1095,7 @@ function ToolRow({
   return (
     <AppRow
       app={TOOL_APP_IDS[tool]}
+      badge={tool === "agy" ? "terminal" : undefined}
       name={
         <>
           <span className="truncate">{toolDisplayName(tool)}</span>
@@ -1043,6 +1142,7 @@ function ToolRow({
         )
       }
       footer={footer}
+      subRow={subRow}
     />
   );
 }

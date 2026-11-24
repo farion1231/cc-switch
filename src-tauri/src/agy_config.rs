@@ -20,9 +20,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use serde::Serialize;
 use serde_json::{json, Value};
 
-use crate::config::{atomic_write_private, get_app_config_dir, get_home_dir, write_text_file};
+use crate::config::{
+    atomic_write_private, get_app_config_dir, get_home_dir, write_text_file, ConfigStatus,
+};
 use crate::error::AppError;
 use crate::live::patch::json::JsonPatch;
 use crate::live::patch::{KeyPath, LivePatch};
@@ -32,13 +35,491 @@ pub fn agy_dir() -> PathBuf {
     get_home_dir().join(".gemini").join("antigravity-cli")
 }
 
-/// `~/.gemini/config`：CLI、桌面版和 IDE 共用的 MCP / Skills / 提示词目录。
+/// `~/.gemini/antigravity`：Antigravity 桌面应用的数据目录（会话、状态、内置插件）。
+pub fn desktop_dir() -> PathBuf {
+    get_home_dir().join(".gemini").join("antigravity")
+}
+
+/// `~/.gemini/config`：CLI、桌面版和 IDE 共用的 MCP / Skills / 提示词 / 插件配置目录。
 pub fn customizations_dir() -> PathBuf {
     get_home_dir().join(".gemini").join("config")
 }
 
 pub fn settings_path() -> PathBuf {
     agy_dir().join("settings.json")
+}
+
+/// Antigravity 配置目录状态：已初始化 CLI 时保持指向 `~/.gemini/antigravity-cli`；
+/// 仅安装桌面版或已写入共享配置时指向 `~/.gemini/config`（或 `~/.gemini/antigravity`），
+/// 避免仅装桌面版的用户被误判未配置或打开空的 `antigravity-cli` 目录。
+pub fn config_status() -> ConfigStatus {
+    resolve_config_status_in(&agy_dir(), &desktop_dir(), &customizations_dir())
+}
+
+/// 「打开配置文件夹」与 `get_config_dir("agy")` 使用的有效目录。
+pub fn effective_config_dir() -> PathBuf {
+    resolve_config_dir_in(&agy_dir(), &desktop_dir(), &customizations_dir())
+}
+
+fn has_shared_customizations(dir: &Path) -> bool {
+    if !dir.is_dir() {
+        return false;
+    }
+    ["config.json", "mcp_config.json", "AGENTS.md"]
+        .iter()
+        .any(|file| dir.join(file).is_file())
+        || ["skills", "plugins"]
+            .iter()
+            .any(|sub| dir.join(sub).is_dir())
+}
+
+fn resolve_config_dir_in(cli_dir: &Path, desktop_dir: &Path, customizations_dir: &Path) -> PathBuf {
+    if cli_dir.join("settings.json").is_file() {
+        return cli_dir.to_path_buf();
+    }
+    if desktop_dir.is_dir() {
+        return if customizations_dir.is_dir() {
+            customizations_dir.to_path_buf()
+        } else {
+            desktop_dir.to_path_buf()
+        };
+    }
+    if has_shared_customizations(customizations_dir) {
+        return customizations_dir.to_path_buf();
+    }
+    if cli_dir.is_dir() {
+        return cli_dir.to_path_buf();
+    }
+    customizations_dir.to_path_buf()
+}
+
+fn resolve_config_status_in(
+    cli_dir: &Path,
+    desktop_dir: &Path,
+    customizations_dir: &Path,
+) -> ConfigStatus {
+    let dir = resolve_config_dir_in(cli_dir, desktop_dir, customizations_dir);
+    let exists = cli_dir.join("settings.json").is_file()
+        || desktop_dir.is_dir()
+        || has_shared_customizations(customizations_dir);
+    ConfigStatus {
+        exists,
+        path: dir.to_string_lossy().into_owned(),
+    }
+}
+
+/// Antigravity 桌面应用的本机安装状态（仅本机检测，不联网）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgyDesktopStatus {
+    pub supported: bool,
+    pub installed: bool,
+    pub version: Option<String>,
+    pub install_path: Option<String>,
+    pub data_dir_exists: bool,
+}
+
+pub fn desktop_status() -> AgyDesktopStatus {
+    let data_dir_exists = desktop_dir().is_dir();
+    if !cfg!(any(target_os = "macos", windows, target_os = "linux")) {
+        return AgyDesktopStatus {
+            supported: false,
+            installed: false,
+            version: None,
+            install_path: None,
+            data_dir_exists,
+        };
+    }
+    let detected = detect_current_platform_desktop();
+    let (installed, install_path, version) = match detected {
+        Some((path, version)) => (true, Some(path.to_string_lossy().into_owned()), version),
+        None => (false, None, None),
+    };
+    AgyDesktopStatus {
+        supported: true,
+        installed,
+        version,
+        install_path,
+        data_dir_exists,
+    }
+}
+
+fn sanitize_desktop_version(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    let version = trimmed
+        .strip_prefix('v')
+        .or_else(|| trimmed.strip_prefix('V'))
+        .unwrap_or(trimmed);
+    if version.is_empty()
+        || version.len() > 64
+        || version.chars().any(char::is_control)
+        || !version.starts_with(|c: char| c.is_ascii_digit())
+    {
+        return None;
+    }
+    Some(version.to_string())
+}
+
+/// Windows 卸载注册表里的 DisplayName 是否属于 Antigravity 桌面应用（排除 Antigravity IDE / CLI）。
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+fn is_agy_desktop_display_name(name: &str) -> bool {
+    let trimmed = name.trim();
+    if trimmed.eq_ignore_ascii_case("antigravity") {
+        return true;
+    }
+    let Some(rest) = trimmed
+        .get(..12)
+        .filter(|prefix| prefix.eq_ignore_ascii_case("antigravity "))
+        .map(|_| trimmed[12..].trim())
+    else {
+        return false;
+    };
+    if rest.is_empty() {
+        return false;
+    }
+    if rest.eq_ignore_ascii_case("desktop") {
+        return true;
+    }
+    let version_part = rest
+        .strip_prefix('v')
+        .or_else(|| rest.strip_prefix('V'))
+        .unwrap_or(rest);
+    version_part.starts_with(|c: char| c.is_ascii_digit())
+}
+
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+fn strip_wrapping_quotes(raw: &str) -> &str {
+    raw.trim().trim_matches('"').trim()
+}
+
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+fn parse_display_icon_exe(raw: &str) -> Option<PathBuf> {
+    let trimmed = strip_wrapping_quotes(raw);
+    let path_str = match trimmed.rsplit_once(',') {
+        Some((head, idx))
+            if !idx.is_empty()
+                && idx
+                    .trim()
+                    .trim_start_matches('-')
+                    .chars()
+                    .all(|c| c.is_ascii_digit()) =>
+        {
+            strip_wrapping_quotes(head)
+        }
+        _ => trimmed,
+    };
+    if path_str.is_empty() {
+        return None;
+    }
+    let path = PathBuf::from(path_str);
+    let is_agy_exe = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.eq_ignore_ascii_case("antigravity.exe"));
+    is_agy_exe.then_some(path)
+}
+
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+fn parse_uninstall_dir(raw: &str) -> Option<PathBuf> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let exe_str = if let Some(rest) = trimmed.strip_prefix('"') {
+        rest.split_once('"')?.0
+    } else {
+        trimmed.split_whitespace().next()?
+    };
+    Path::new(exe_str).parent().map(Path::to_path_buf)
+}
+
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+fn windows_exe_candidates_from_registry(
+    display_icon: Option<&str>,
+    install_location: Option<&str>,
+    uninstall_string: Option<&str>,
+) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(path) = display_icon.and_then(parse_display_icon_exe) {
+        candidates.push(path);
+    }
+    if let Some(dir) = install_location
+        .map(strip_wrapping_quotes)
+        .filter(|s| !s.is_empty())
+    {
+        candidates.push(PathBuf::from(dir).join("Antigravity.exe"));
+    }
+    if let Some(dir) = uninstall_string.and_then(parse_uninstall_dir) {
+        candidates.push(dir.join("Antigravity.exe"));
+    }
+    candidates
+}
+
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+#[derive(Debug, Clone)]
+struct WindowsUninstallEntry {
+    display_name: String,
+    display_version: Option<String>,
+    display_icon: Option<String>,
+    install_location: Option<String>,
+    uninstall_string: Option<String>,
+}
+
+/// VS Code 系 Antigravity IDE 安装目录包含 `resources/app/product.json`，
+/// 用于与 Antigravity 2.0 桌面应用（Electron `app.asar`）区分，避免误识别。
+#[cfg_attr(not(any(windows, target_os = "linux", test)), allow(dead_code))]
+fn is_vscode_ide_dir(dir: &Path) -> bool {
+    dir.join("resources")
+        .join("app")
+        .join("product.json")
+        .is_file()
+}
+
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+fn is_valid_windows_desktop_exe(exe: &Path) -> bool {
+    exe.is_file() && exe.parent().is_some_and(|dir| !is_vscode_ide_dir(dir))
+}
+
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+fn version_from_display_name(name: &str) -> Option<String> {
+    let trimmed = name.trim();
+    let rest = trimmed
+        .get(..12)
+        .filter(|prefix| prefix.eq_ignore_ascii_case("antigravity "))
+        .map(|_| trimmed[12..].trim())?;
+    sanitize_desktop_version(rest)
+}
+
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+fn detect_windows_desktop(
+    registry_entries: &[WindowsUninstallEntry],
+    standard_exes: &[PathBuf],
+) -> Option<(PathBuf, Option<String>)> {
+    let mut fallback_version: Option<String> = None;
+    for entry in registry_entries {
+        if !is_agy_desktop_display_name(&entry.display_name) {
+            continue;
+        }
+        let version = entry
+            .display_version
+            .as_deref()
+            .and_then(sanitize_desktop_version)
+            .or_else(|| version_from_display_name(&entry.display_name));
+        let candidates = windows_exe_candidates_from_registry(
+            entry.display_icon.as_deref(),
+            entry.install_location.as_deref(),
+            entry.uninstall_string.as_deref(),
+        );
+        for candidate in &candidates {
+            if is_valid_windows_desktop_exe(candidate) {
+                return Some((candidate.clone(), version));
+            }
+        }
+        // 只在注册表项未记录明确路径时，才把版本号留给默认路径兜底；
+        // 明确指向旧路径但文件已不存在的残留项不能污染新安装的版本号。
+        if candidates.is_empty() && fallback_version.is_none() {
+            fallback_version = version;
+        }
+    }
+    for exe in standard_exes {
+        if is_valid_windows_desktop_exe(exe) {
+            return Some((exe.clone(), fallback_version));
+        }
+    }
+    None
+}
+
+/// 从 macOS `Info.plist` XML 提取 `CFBundleShortVersionString`。二进制 plist 返回 `None`。
+#[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
+fn parse_info_plist_version(content: &str) -> Option<String> {
+    if content.starts_with("bplist") {
+        return None;
+    }
+    let key_tag = "<key>CFBundleShortVersionString</key>";
+    let after_key = content.split_once(key_tag)?.1;
+    let after_open = after_key.split_once("<string>")?.1;
+    let value = after_open.split_once("</string>")?.0;
+    sanitize_desktop_version(value)
+}
+
+#[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
+fn detect_macos_desktop(bundles: &[PathBuf]) -> Option<(PathBuf, Option<String>)> {
+    for bundle in bundles {
+        let plist_path = bundle.join("Contents").join("Info.plist");
+        let is_ide_bundle = bundle
+            .join("Contents")
+            .join("Resources")
+            .join("app")
+            .join("product.json")
+            .is_file();
+        if bundle.is_dir() && plist_path.is_file() && !is_ide_bundle {
+            let version = fs::read_to_string(&plist_path)
+                .ok()
+                .and_then(|xml| parse_info_plist_version(&xml));
+            return Some((bundle.clone(), version));
+        }
+    }
+    None
+}
+
+#[cfg_attr(not(any(target_os = "linux", test)), allow(dead_code))]
+fn is_electron_desktop_dir(dir: &Path) -> bool {
+    if is_vscode_ide_dir(dir) {
+        return false;
+    }
+    let resources = dir.join("resources");
+    resources.join("app.asar").is_file() || resources.join("app-update.yml").is_file()
+}
+
+#[cfg_attr(not(any(target_os = "linux", test)), allow(dead_code))]
+fn read_package_json_version(exe: &Path) -> Option<String> {
+    let pkg = exe
+        .parent()?
+        .join("resources")
+        .join("app")
+        .join("package.json");
+    let raw = fs::read_to_string(&pkg).ok()?;
+    let json: Value = serde_json::from_str(&raw).ok()?;
+    json.get("version")
+        .and_then(Value::as_str)
+        .and_then(sanitize_desktop_version)
+}
+
+#[cfg_attr(not(any(target_os = "linux", test)), allow(dead_code))]
+fn detect_linux_desktop(
+    bin_candidates: &[PathBuf],
+    user_data_dirs: &[PathBuf],
+) -> Option<(PathBuf, Option<String>)> {
+    for bin in bin_candidates {
+        if !bin.is_file() {
+            continue;
+        }
+        let resolved = fs::canonicalize(bin).unwrap_or_else(|_| bin.clone());
+        let Some(install_dir) = resolved.parent() else {
+            continue;
+        };
+        if !is_electron_desktop_dir(install_dir) {
+            continue;
+        }
+        let version = read_package_json_version(&resolved);
+        return Some((bin.clone(), version));
+    }
+    for dir in user_data_dirs {
+        // 仅认 Antigravity 2.0 桌面版独有的 app_storage.json，并排除 VS Code IDE（User/settings.json）。
+        let is_vscode_user_data = dir.join("User").join("settings.json").is_file();
+        if dir.join("app_storage.json").is_file() && !is_vscode_user_data {
+            return Some((dir.clone(), None));
+        }
+    }
+    None
+}
+
+#[cfg(windows)]
+fn read_windows_uninstall_entries() -> Vec<WindowsUninstallEntry> {
+    use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+    use winreg::RegKey;
+
+    let roots = [
+        (
+            HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\Uninstall",
+        ),
+        (
+            HKEY_LOCAL_MACHINE,
+            r"Software\Microsoft\Windows\CurrentVersion\Uninstall",
+        ),
+        (
+            HKEY_LOCAL_MACHINE,
+            r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
+        ),
+    ];
+    let mut entries = Vec::new();
+    for (hive, subkey) in roots {
+        let Ok(parent) = RegKey::predef(hive).open_subkey(subkey) else {
+            continue;
+        };
+        for name in parent.enum_keys().flatten() {
+            let Ok(item) = parent.open_subkey(&name) else {
+                continue;
+            };
+            let Ok(display_name) = item.get_value::<String, _>("DisplayName") else {
+                continue;
+            };
+            if !is_agy_desktop_display_name(&display_name) {
+                continue;
+            }
+            entries.push(WindowsUninstallEntry {
+                display_name,
+                display_version: item.get_value::<String, _>("DisplayVersion").ok(),
+                display_icon: item.get_value::<String, _>("DisplayIcon").ok(),
+                install_location: item.get_value::<String, _>("InstallLocation").ok(),
+                uninstall_string: item.get_value::<String, _>("UninstallString").ok(),
+            });
+        }
+    }
+    entries
+}
+
+fn detect_current_platform_desktop() -> Option<(PathBuf, Option<String>)> {
+    #[cfg(windows)]
+    {
+        let entries = read_windows_uninstall_entries();
+        let mut standard_exes = Vec::new();
+        if let Some(local_app_data) = dirs::data_local_dir() {
+            standard_exes.push(
+                local_app_data
+                    .join("Programs")
+                    .join("antigravity")
+                    .join("Antigravity.exe"),
+            );
+        }
+        if let Some(program_files) = std::env::var_os("ProgramFiles").filter(|v| !v.is_empty()) {
+            standard_exes.push(
+                PathBuf::from(program_files)
+                    .join("antigravity")
+                    .join("Antigravity.exe"),
+            );
+        }
+        detect_windows_desktop(&entries, &standard_exes)
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let bundles = [
+            PathBuf::from("/Applications/Antigravity.app"),
+            get_home_dir().join("Applications").join("Antigravity.app"),
+        ];
+        detect_macos_desktop(&bundles)
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let home = get_home_dir();
+        let bins = [
+            PathBuf::from("/opt/Antigravity/antigravity"),
+            PathBuf::from("/usr/bin/antigravity"),
+            PathBuf::from("/usr/local/bin/antigravity"),
+            home.join(".local/bin/antigravity"),
+            home.join(".local/share/antigravity/antigravity"),
+        ];
+        let mut user_data_dirs = Vec::new();
+        let in_flatpak = Path::new("/.flatpak-info").exists();
+        if !in_flatpak {
+            if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()) {
+                user_data_dirs.push(PathBuf::from(xdg).join("Antigravity"));
+            }
+        }
+        let default_cfg = home.join(".config").join("Antigravity");
+        if !user_data_dirs.contains(&default_cfg) {
+            user_data_dirs.push(default_cfg);
+        }
+        detect_linux_desktop(&bins, &user_data_dirs)
+    }
+
+    #[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
+    {
+        None
+    }
 }
 
 /// Key 模式各供应商私有 `--gemini_dir` 的上级目录。
@@ -588,6 +1069,245 @@ mod tests {
             format!("ab-{:016x}", fnv1a(b"a/b"))
         );
         assert_eq!(fnv1a(b"a"), 0xaf63_dc4c_8601_ec8c);
+    }
+
+    #[test]
+    fn config_dir_and_status_fall_back_to_desktop_and_shared_customizations() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cli = tmp.path().join("antigravity-cli");
+        let desktop = tmp.path().join("antigravity");
+        let shared = tmp.path().join("config");
+
+        // Nothing exists yet.
+        let empty = resolve_config_status_in(&cli, &desktop, &shared);
+        assert!(!empty.exists);
+        assert_eq!(PathBuf::from(&empty.path), shared);
+        assert_eq!(resolve_config_dir_in(&cli, &desktop, &shared), shared);
+
+        // Desktop-only install without ~/.gemini/config yet.
+        fs::create_dir_all(&desktop).unwrap();
+        let desktop_only = resolve_config_status_in(&cli, &desktop, &shared);
+        assert!(desktop_only.exists);
+        assert_eq!(PathBuf::from(&desktop_only.path), desktop);
+        assert_eq!(resolve_config_dir_in(&cli, &desktop, &shared), desktop);
+
+        // Desktop + shared ~/.gemini/config (normal desktop install).
+        fs::create_dir_all(&shared).unwrap();
+        let desktop_with_shared = resolve_config_status_in(&cli, &desktop, &shared);
+        assert!(desktop_with_shared.exists);
+        assert_eq!(PathBuf::from(&desktop_with_shared.path), shared);
+        assert_eq!(resolve_config_dir_in(&cli, &desktop, &shared), shared);
+
+        // Once CLI settings.json exists, CLI takes precedence.
+        fs::create_dir_all(&cli).unwrap();
+        fs::write(cli.join("settings.json"), "{}").unwrap();
+        let cli_present = resolve_config_status_in(&cli, &desktop, &shared);
+        assert!(cli_present.exists);
+        assert_eq!(PathBuf::from(&cli_present.path), cli);
+        assert_eq!(resolve_config_dir_in(&cli, &desktop, &shared), cli);
+    }
+
+    #[test]
+    fn config_status_recognizes_shared_customizations_without_cli_or_desktop_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cli = tmp.path().join("antigravity-cli");
+        let desktop = tmp.path().join("antigravity");
+        let shared = tmp.path().join("config");
+
+        // Empty shared directory alone does not count as configured.
+        fs::create_dir_all(&shared).unwrap();
+        assert!(!resolve_config_status_in(&cli, &desktop, &shared).exists);
+
+        // A managed file inside ~/.gemini/config counts as configured.
+        fs::write(shared.join("mcp_config.json"), "{}").unwrap();
+        let status = resolve_config_status_in(&cli, &desktop, &shared);
+        assert!(status.exists);
+        assert_eq!(PathBuf::from(&status.path), shared);
+    }
+
+    #[test]
+    fn windows_desktop_detection_matches_registry_and_ignores_ide_or_stale_entries() {
+        assert!(is_agy_desktop_display_name("Antigravity"));
+        assert!(is_agy_desktop_display_name("Antigravity 2.34.0"));
+        assert!(is_agy_desktop_display_name("Antigravity v2.34.0"));
+        assert!(is_agy_desktop_display_name("Antigravity Desktop"));
+        assert!(!is_agy_desktop_display_name("Antigravity IDE"));
+        assert!(!is_agy_desktop_display_name("Antigravity IDE 1.0.0"));
+        assert!(!is_agy_desktop_display_name("Antigravity CLI"));
+        assert!(!is_agy_desktop_display_name("Other App"));
+
+        let tmp = tempfile::tempdir().unwrap();
+        let custom_dir = tmp.path().join("custom");
+        fs::create_dir_all(&custom_dir).unwrap();
+        let custom_exe = custom_dir.join("Antigravity.exe");
+        fs::write(&custom_exe, b"mz").unwrap();
+        let ide_dir = tmp.path().join("ide");
+        fs::create_dir_all(ide_dir.join("resources/app")).unwrap();
+        let ide_exe = ide_dir.join("Antigravity.exe");
+        fs::write(&ide_exe, b"mz").unwrap();
+        fs::write(ide_dir.join("resources/app/product.json"), "{}").unwrap();
+        let stale_exe = tmp.path().join("gone").join("Antigravity.exe");
+
+        let entries = vec![
+            WindowsUninstallEntry {
+                display_name: "Antigravity IDE 1.0.0".into(),
+                display_version: Some("1.0.0".into()),
+                display_icon: Some(format!("{},0", custom_exe.display())),
+                install_location: None,
+                uninstall_string: None,
+            },
+            WindowsUninstallEntry {
+                display_name: "Antigravity".into(),
+                display_version: Some("1.9.0".into()),
+                display_icon: Some(format!("{},0", ide_exe.display())),
+                install_location: None,
+                uninstall_string: None,
+            },
+            WindowsUninstallEntry {
+                display_name: "Antigravity 2.33.0".into(),
+                display_version: Some("2.33.0".into()),
+                display_icon: Some(format!("{},0", stale_exe.display())),
+                install_location: None,
+                uninstall_string: None,
+            },
+            WindowsUninstallEntry {
+                display_name: "Antigravity 2.34.0".into(),
+                display_version: None,
+                display_icon: Some(format!("\"{}\",0", custom_exe.display())),
+                install_location: None,
+                uninstall_string: None,
+            },
+        ];
+
+        assert_eq!(
+            detect_windows_desktop(&entries, &[]),
+            Some((custom_exe.clone(), Some("2.34.0".into())))
+        );
+
+        // VS Code IDE installation (with resources/app/product.json) must not match Desktop.
+        assert_eq!(detect_windows_desktop(&entries[1..2], &[ide_exe]), None);
+
+        // Stale registry entry alone (no standard exe) must not report installed,
+        // and must not pollute standard_exe fallback with a stale version.
+        assert_eq!(detect_windows_desktop(&entries[2..3], &[]), None);
+        assert_eq!(
+            detect_windows_desktop(&entries[2..3], std::slice::from_ref(&custom_exe)),
+            Some((custom_exe.clone(), None))
+        );
+
+        // Standard exe fallback works without registry entry, and inherits version only from
+        // pathless registry entries.
+        let pathless_entry = WindowsUninstallEntry {
+            display_name: "Antigravity 2.34.0".into(),
+            display_version: Some("2.34.0".into()),
+            display_icon: None,
+            install_location: None,
+            uninstall_string: None,
+        };
+        assert_eq!(
+            detect_windows_desktop(&[], std::slice::from_ref(&custom_exe)),
+            Some((custom_exe.clone(), None))
+        );
+        assert_eq!(
+            detect_windows_desktop(&[pathless_entry], std::slice::from_ref(&custom_exe)),
+            Some((custom_exe, Some("2.34.0".into())))
+        );
+    }
+
+    #[test]
+    fn macos_desktop_detection_reads_info_plist_and_ignores_missing_or_ide_bundles() {
+        let tmp = tempfile::tempdir().unwrap();
+        let missing = tmp.path().join("Missing.app");
+        let empty_bundle = tmp.path().join("Empty.app");
+        fs::create_dir_all(&empty_bundle).unwrap();
+        let ide_bundle = tmp.path().join("Antigravity-IDE.app");
+        fs::create_dir_all(ide_bundle.join("Contents/Resources/app")).unwrap();
+        fs::write(
+            ide_bundle.join("Contents/Info.plist"),
+            "<plist><dict><key>CFBundleShortVersionString</key><string>1.0.0</string></dict></plist>",
+        )
+        .unwrap();
+        fs::write(ide_bundle.join("Contents/Resources/app/product.json"), "{}").unwrap();
+        let bundle = tmp.path().join("Antigravity.app");
+        fs::create_dir_all(bundle.join("Contents")).unwrap();
+        fs::write(
+            bundle.join("Contents/Info.plist"),
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+  <key>CFBundleName</key><string>Antigravity</string>
+  <key>CFBundleShortVersionString</key>
+  <string>2.34.0</string>
+</dict></plist>"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            detect_macos_desktop(&[missing, empty_bundle, ide_bundle, bundle.clone()]),
+            Some((bundle, Some("2.34.0".into())))
+        );
+        assert_eq!(parse_info_plist_version("bplist00..."), None);
+    }
+
+    #[test]
+    fn linux_desktop_detection_prefers_electron_binary_and_ignores_ide_or_cli() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cli_dir = tmp.path().join("usr-bin");
+        let cli_bin = cli_dir.join("antigravity");
+        fs::create_dir_all(&cli_dir).unwrap();
+        fs::write(&cli_bin, "#!/bin/sh\n").unwrap();
+
+        let ide_dir = tmp.path().join("ide-antigravity");
+        let ide_bin = ide_dir.join("antigravity");
+        fs::create_dir_all(ide_dir.join("resources/app")).unwrap();
+        fs::write(&ide_bin, "#!/bin/sh\n").unwrap();
+        fs::write(ide_dir.join("resources/app.asar"), b"asar").unwrap();
+        fs::write(ide_dir.join("resources/app/product.json"), "{}").unwrap();
+
+        let app_dir = tmp.path().join("opt-antigravity");
+        let bin = app_dir.join("antigravity");
+        fs::create_dir_all(app_dir.join("resources/app")).unwrap();
+        fs::write(&bin, "#!/bin/sh\n").unwrap();
+        fs::write(app_dir.join("resources/app.asar"), b"asar").unwrap();
+        fs::write(
+            app_dir.join("resources/app/package.json"),
+            r#"{"name":"antigravity","version":"2.34.0"}"#,
+        )
+        .unwrap();
+
+        let ide_user_data = tmp.path().join("config-ide");
+        fs::create_dir_all(ide_user_data.join("User")).unwrap();
+        fs::write(ide_user_data.join("Preferences"), "{}").unwrap();
+        fs::write(ide_user_data.join("app_storage.json"), "{}").unwrap();
+        fs::write(ide_user_data.join("User/settings.json"), "{}").unwrap();
+
+        let user_data = tmp.path().join("config-antigravity");
+        fs::create_dir_all(&user_data).unwrap();
+        fs::write(user_data.join("Preferences"), "{}").unwrap();
+
+        // Bare CLI binary, VS Code IDE binary, IDE user-data, and Preferences-only dir do not count.
+        assert_eq!(
+            detect_linux_desktop(
+                &[cli_bin.clone(), ide_bin.clone()],
+                &[ide_user_data.clone(), user_data.clone()],
+            ),
+            None
+        );
+
+        // Electron desktop binary wins and reads package.json version when present.
+        assert_eq!(
+            detect_linux_desktop(
+                &[cli_bin, ide_bin, bin.clone()],
+                &[ide_user_data.clone(), user_data.clone()],
+            ),
+            Some((bin, Some("2.34.0".into())))
+        );
+
+        // AppImage fallback via Antigravity Desktop's app_storage.json marker.
+        fs::write(user_data.join("app_storage.json"), "{}").unwrap();
+        assert_eq!(
+            detect_linux_desktop(&[], &[ide_user_data, user_data.clone()]),
+            Some((user_data, None))
+        );
     }
 }
 

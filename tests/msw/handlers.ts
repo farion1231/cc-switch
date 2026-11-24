@@ -548,6 +548,15 @@ export const handlers = [
       gatewayTokenConfigured: false,
     }),
   ),
+  http.post(`${TAURI_ENDPOINT}/get_agy_desktop_status`, () =>
+    success({
+      supported: true,
+      installed: false,
+      version: null,
+      installPath: null,
+      dataDirExists: false,
+    }),
+  ),
   http.post(`${TAURI_ENDPOINT}/get_hermes_memory`, async ({ request }) => {
     const { kind } = await withJson<{ kind: string }>(request);
     return success(kind === "user" ? "user profile" : "agent notes");

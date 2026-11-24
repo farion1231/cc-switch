@@ -17,6 +17,7 @@ export type ToolVersions = Awaited<
 export interface AppsPageMocks {
   getToolVersions: Mock;
   getConfigStatus: Mock;
+  getAgyDesktopStatus: Mock;
   probeToolInstallations: Mock;
   listToolInstallations: Mock;
   runToolLifecycleAction: Mock;
@@ -26,7 +27,10 @@ export interface AppsPageMocks {
   success: Mock;
   warning: Mock;
   error: Mock;
-  settings: { visibleApps?: undefined; appOrder?: string[] };
+  settings: {
+    visibleApps?: Record<string, boolean>;
+    appOrder?: string[];
+  };
   updateSettings: Mock;
   autoSaveSettings: Mock;
   dragEndHandlers: ((event: DragEndEvent) => void)[];
@@ -34,6 +38,13 @@ export interface AppsPageMocks {
     supported: boolean;
     installed: boolean;
     configured: boolean;
+  };
+  agyDesktopStatus: {
+    supported: boolean;
+    installed: boolean;
+    version: string | null;
+    installPath: string | null;
+    dataDirExists: boolean;
   };
 }
 
@@ -193,10 +204,20 @@ export function resetAppsPageMocks(
     installed: true,
     configured: true,
   };
+  mocks.agyDesktopStatus = {
+    supported: true,
+    installed: false,
+    version: null,
+    installPath: null,
+    dataDirExists: false,
+  };
   mocks.getConfigStatus.mockReset().mockResolvedValue({
     exists: true,
     path: "/home/me/.workbuddy",
   });
+  mocks.getAgyDesktopStatus
+    .mockReset()
+    .mockImplementation(async () => mocks.agyDesktopStatus);
   mocks.updateSettings.mockReset();
   mocks.autoSaveSettings.mockReset().mockResolvedValue(null);
   mocks.copyText.mockReset().mockResolvedValue(undefined);

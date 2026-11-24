@@ -530,9 +530,13 @@ export function SessionReader({
         ? t("sessionManager.noResumeHermes", {
             defaultValue: "暂不支持从命令行恢复 Hermes 会话",
           })
-        : t("sessionManager.noResumeCommand", {
-            defaultValue: "此会话无法恢复",
-          })
+        : session.providerId === "agy"
+          ? t("sessionManager.noResumeAgyDesktop", {
+              defaultValue: "请在 Antigravity 桌面应用中继续此会话",
+            })
+          : t("sessionManager.noResumeCommand", {
+              defaultValue: "此会话无法恢复",
+            })
     : null;
 
   const loadingFirst =

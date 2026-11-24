@@ -10,10 +10,14 @@ struct MemoryLogin {
     value: StdMutex<Option<String>>,
     writes: StdMutex<usize>,
     locked: StdMutex<bool>,
+    unavailable: StdMutex<bool>,
 }
 
 impl AgyLoginStore for MemoryLogin {
     fn read(&self) -> Result<Option<String>, AppError> {
+        if *self.unavailable.lock().unwrap() {
+            return Err(AppError::Config("test keychain is unavailable".into()));
+        }
         if *self.locked.lock().unwrap() {
             return Err(AppError::Config("test keychain is locked".into()));
         }
@@ -75,6 +79,159 @@ async fn add(manager: &AgyAccountManager, sub: &str) {
 #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 mod switching {
     use super::*;
+
+    #[test]
+    fn fallback_does_not_overwrite_a_keychain_entry_that_became_readable() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(STANDALONE_TOKEN_FILENAME);
+        let file_login = credential("alice", "file").to_string();
+        std::fs::write(&path, &file_login).unwrap();
+        let primary = Arc::new(MemoryLogin::default());
+        set_live(&primary, &credential("carol", "keychain"));
+        *primary.unavailable.lock().unwrap() = true;
+        let login = keychain::AgyLogin::with_keychain(path.clone(), primary.clone());
+        let snapshot = login.snapshot_for_switch().unwrap();
+        assert!(matches!(snapshot, keychain::LoginSnapshot::File(Some(_))));
+
+        *primary.unavailable.lock().unwrap() = false;
+        assert!(login
+            .write_if_unchanged(&snapshot, &credential("bob", "target"))
+            .is_err());
+        assert_eq!(live_sub(&primary).as_deref(), Some("carol"));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), file_login);
+    }
+
+    #[test]
+    fn fallback_does_not_overwrite_a_changed_standalone_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(STANDALONE_TOKEN_FILENAME);
+        std::fs::write(&path, credential("alice", "file").to_string()).unwrap();
+        let login =
+            keychain::AgyLogin::with_keychain(path.clone(), Arc::new(MemoryLogin::default()));
+        let snapshot = login.snapshot_for_switch().unwrap();
+        let newer = credential("carol", "file").to_string();
+        std::fs::write(&path, &newer).unwrap();
+
+        assert!(login
+            .write_if_unchanged(&snapshot, &credential("bob", "target"))
+            .is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), newer);
+    }
+
+    #[tokio::test]
+    async fn collects_and_switches_standalone_file_when_keychain_is_unavailable() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(STANDALONE_TOKEN_FILENAME);
+        std::fs::write(&path, credential("alice", "desktop").to_string()).unwrap();
+        let primary = Arc::new(MemoryLogin::default());
+        *primary.unavailable.lock().unwrap() = true;
+        let login = Arc::new(keychain::AgyLogin::with_keychain(
+            path.clone(),
+            primary.clone(),
+        ));
+        let manager = AgyAccountManager::with_login_store(dir.path().to_path_buf(), login);
+        add(&manager, "bob").await;
+        assert_eq!(
+            manager
+                .status()
+                .await
+                .unwrap()
+                .current_account_id
+                .as_deref(),
+            Some("alice")
+        );
+        manager.switch_to("bob").await.unwrap();
+        assert_eq!(
+            manager
+                .status()
+                .await
+                .unwrap()
+                .current_account_id
+                .as_deref(),
+            Some("bob")
+        );
+        assert_eq!(*primary.writes.lock().unwrap(), 0);
+        let stored: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(refresh_token_of(&stored), Some("refresh-bob"));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+        manager.switch_to("alice").await.unwrap();
+        assert_eq!(
+            manager
+                .status()
+                .await
+                .unwrap()
+                .current_account_id
+                .as_deref(),
+            Some("alice")
+        );
+
+        // When a keychain login exists, it takes precedence over the fallback file.
+        *primary.unavailable.lock().unwrap() = false;
+        set_live(&primary, &credential("keychain", "primary"));
+        manager.switch_to("bob").await.unwrap();
+        assert_eq!(live_sub(&primary).as_deref(), Some("bob"));
+        let stored: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(refresh_token_of(&stored), Some("refresh-alice"));
+    }
+
+    #[tokio::test]
+    async fn switch_creates_standalone_file_when_keychain_is_unavailable_and_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(STANDALONE_TOKEN_FILENAME);
+        let primary = Arc::new(MemoryLogin::default());
+        *primary.unavailable.lock().unwrap() = true;
+        let login = Arc::new(keychain::AgyLogin::with_keychain(
+            path.clone(),
+            primary.clone(),
+        ));
+        let manager = AgyAccountManager::with_login_store(dir.path().to_path_buf(), login);
+        add(&manager, "bob").await;
+
+        assert_eq!(manager.status().await.unwrap().current_account_id, None);
+        manager.switch_to("bob").await.unwrap();
+        assert_eq!(
+            manager
+                .status()
+                .await
+                .unwrap()
+                .current_account_id
+                .as_deref(),
+            Some("bob")
+        );
+        let stored: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(refresh_token_of(&stored), Some("refresh-bob"));
+        assert_eq!(*primary.writes.lock().unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn locked_keychain_without_fallback_file_stays_locked_on_status_and_unlocks_on_switch() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(STANDALONE_TOKEN_FILENAME);
+        let primary = Arc::new(MemoryLogin::default());
+        set_live(&primary, &credential("alice", "a1"));
+        *primary.locked.lock().unwrap() = true;
+        let login = Arc::new(keychain::AgyLogin::with_keychain(
+            path.clone(),
+            primary.clone(),
+        ));
+        let manager = AgyAccountManager::with_login_store(dir.path().to_path_buf(), login);
+        add(&manager, "bob").await;
+
+        let status = manager.status().await.unwrap();
+        assert!(status.current_account_id.is_none());
+        assert!(*primary.locked.lock().unwrap());
+
+        manager.switch_to("bob").await.unwrap();
+        assert_eq!(live_sub(&primary).as_deref(), Some("bob"));
+        assert!(!path.exists());
+    }
 
     #[tokio::test]
     async fn status_collects_the_login_agy_already_has() {
