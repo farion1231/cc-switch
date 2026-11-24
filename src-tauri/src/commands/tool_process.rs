@@ -539,37 +539,51 @@ mod tests {
 
     #[cfg(target_os = "windows")]
     #[test]
-    fn wsl_env_allows_spaces_in_unc_config_path() {
+    fn wsl_env_translates_unc_config_paths_and_skips_host_paths() {
         let extra_env = [
             (
                 "OPENCODE_CONFIG_DIR",
                 r"\\wsl$\Ubuntu\home\Jane Doe\.config\opencode".to_string(),
             ),
+            ("CODEX_HOME", r"\\wsl$\Ubuntu\home\jane\.codex".to_string()),
+            (
+                "CLAUDE_CONFIG_DIR",
+                r"\\wsl.localhost\Ubuntu\home\jane\claude-alt".to_string(),
+            ),
+            ("GROK_HOME", r"\\wsl$\Ubuntu\home\jane\.grok".to_string()),
+            (
+                "OPENCLAW_STATE_DIR",
+                r"\\wsl$\Ubuntu\home\jane\.openclaw".to_string(),
+            ),
+            (
+                "OPENCLAW_CONFIG_PATH",
+                r"\\wsl$\Ubuntu\home\jane\.openclaw\openclaw.json".to_string(),
+            ),
             ("OPENCODE_DISABLE_PROJECT_CONFIG", "true".to_string()),
         ];
-
         assert_eq!(
             build_wsl_env_argv(&extra_env).unwrap(),
             vec![
                 "OPENCODE_CONFIG_DIR=/home/Jane Doe/.config/opencode".to_string(),
+                "CODEX_HOME=/home/jane/.codex".to_string(),
+                "CLAUDE_CONFIG_DIR=/home/jane/claude-alt".to_string(),
+                "GROK_HOME=/home/jane/.grok".to_string(),
+                "OPENCLAW_STATE_DIR=/home/jane/.openclaw".to_string(),
+                "OPENCLAW_CONFIG_PATH=/home/jane/.openclaw/openclaw.json".to_string(),
                 "OPENCODE_DISABLE_PROJECT_CONFIG=true".to_string(),
             ]
         );
-    }
 
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn wsl_env_skips_host_config_path() {
-        let extra_env = [
+        let host_paths = [
             (
                 "OPENCODE_CONFIG_DIR",
                 r"C:\Users\Jane Doe\.config\opencode".to_string(),
             ),
+            ("CODEX_HOME", r"C:\Users\jane\.codex".to_string()),
             ("OPENCODE_DISABLE_PROJECT_CONFIG", "true".to_string()),
         ];
-
         assert_eq!(
-            build_wsl_env_argv(&extra_env).unwrap(),
+            build_wsl_env_argv(&host_paths).unwrap(),
             vec!["OPENCODE_DISABLE_PROJECT_CONFIG=true".to_string()]
         );
     }
@@ -611,48 +625,6 @@ mod tests {
             assert!(stdout.contains("helper-found"), "{stdout}");
             assert!(decode_command_output(&output.stderr).contains("captured-stderr"));
         }
-    }
-
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn wsl_env_translates_codex_and_claude_config_dirs() {
-        let extra_env = [
-            ("CODEX_HOME", r"\\wsl$\Ubuntu\home\jane\.codex".to_string()),
-            (
-                "CLAUDE_CONFIG_DIR",
-                r"\\wsl.localhost\Ubuntu\home\jane\claude-alt".to_string(),
-            ),
-        ];
-        assert_eq!(
-            build_wsl_env_argv(&extra_env).unwrap(),
-            vec![
-                "CODEX_HOME=/home/jane/.codex".to_string(),
-                "CLAUDE_CONFIG_DIR=/home/jane/claude-alt".to_string(),
-            ]
-        );
-
-        let host_only = [("CODEX_HOME", r"C:\Users\jane\.codex".to_string())];
-        assert!(build_wsl_env_argv(&host_only).unwrap().is_empty());
-
-        let plugin_dirs = [
-            ("GROK_HOME", r"\\wsl$\Ubuntu\home\jane\.grok".to_string()),
-            (
-                "OPENCLAW_STATE_DIR",
-                r"\\wsl$\Ubuntu\home\jane\.openclaw".to_string(),
-            ),
-            (
-                "OPENCLAW_CONFIG_PATH",
-                r"\\wsl$\Ubuntu\home\jane\.openclaw\openclaw.json".to_string(),
-            ),
-        ];
-        assert_eq!(
-            build_wsl_env_argv(&plugin_dirs).unwrap(),
-            vec![
-                "GROK_HOME=/home/jane/.grok".to_string(),
-                "OPENCLAW_STATE_DIR=/home/jane/.openclaw".to_string(),
-                "OPENCLAW_CONFIG_PATH=/home/jane/.openclaw/openclaw.json".to_string(),
-            ]
-        );
     }
 
     #[test]

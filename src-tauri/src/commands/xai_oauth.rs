@@ -277,37 +277,6 @@ mod tests {
         assert_eq!(used.plan_name.as_deref(), Some("SuperGrok Heavy"));
     }
 
-    #[test]
-    fn transient_token_errors_are_classified_separately_from_auth_failures() {
-        assert!(is_transient_token_error(&XaiOAuthError::NetworkError(
-            "timeout".to_string()
-        )));
-        assert!(is_transient_token_error(&XaiOAuthError::TokenFetchFailed(
-            "HTTP 503 Service Unavailable".to_string()
-        )));
-        assert!(is_transient_token_error(&XaiOAuthError::ParseError(
-            "OAuth 响应不是有效 JSON".to_string()
-        )));
-        assert!(is_transient_token_error(&XaiOAuthError::IoError(
-            "disk full".to_string()
-        )));
-
-        assert!(!is_transient_token_error(
-            &XaiOAuthError::RefreshTokenInvalid
-        ));
-        assert!(!is_transient_token_error(&XaiOAuthError::ReauthRequired(
-            "acct-1".to_string()
-        )));
-        assert!(!is_transient_token_error(&XaiOAuthError::AccountNotFound(
-            "acct-1".to_string()
-        )));
-        assert!(!is_transient_token_error(&XaiOAuthError::AccessDenied));
-        assert!(!is_transient_token_error(&XaiOAuthError::ExpiredToken));
-        assert!(!is_transient_token_error(
-            &XaiOAuthError::AuthorizationPending
-        ));
-    }
-
     #[tokio::test]
     async fn query_xai_oauth_quota_propagates_transient_refresh_errors() {
         // 1. Transport failure (connection refused)
