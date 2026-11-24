@@ -132,16 +132,14 @@ fn build_feedback_report(log_dir: &Path, env: &FeedbackEnv) -> FeedbackReport {
     let files = todays_log_files(log_dir, start_of_local_day(&env.now));
     let collected = collect_day_tail(&files, &date, MAX_TAIL_BYTES);
     // Issue 是公开的：无论代理侧隐私过滤开关是否打开，上传前都要脱敏。
-    // 先脱敏再按长度预算挑选行，占位符会改变行长。
+    // 必须先对整行脱敏再做 800 字符截断，避免密钥或邮箱跨过截断边界后残余前缀漏网；
+    // 之后再按 URL 长度预算挑选行（占位符会改变行长）。
     let filter = privacy_filter::global();
     let placeholders = Placeholders::for_language(ISSUE_LANGUAGE);
     let lines: Vec<String> = collected
         .lines
         .into_iter()
-        .map(|line| match filter.redact_cow(&line, placeholders).0 {
-            Cow::Borrowed(_) => line,
-            Cow::Owned(redacted) => redacted,
-        })
+        .map(|line| redact_and_truncate(line, filter, placeholders))
         .collect();
     let (issue_url, included_lines) = build_issue_url(env, &date, &lines, collected.total_lines);
 
@@ -247,10 +245,10 @@ fn collect_day_tail(files: &[PathBuf], day: &str, max_bytes: usize) -> DayTail {
             }
 
             total_lines += 1;
-            let line = truncate_chars(line, MAX_LOG_LINE_CHARS);
+            let line = line.to_string();
             total_bytes += line.len() + 1;
             lines.push_back(line);
-            while total_bytes > max_bytes {
+            while lines.len() > 1 && total_bytes > max_bytes {
                 match lines.pop_front() {
                     Some(dropped) => total_bytes -= dropped.len() + 1,
                     None => break,
@@ -260,6 +258,20 @@ fn collect_day_tail(files: &[PathBuf], day: &str, max_bytes: usize) -> DayTail {
     }
 
     DayTail { lines, total_lines }
+}
+
+fn redact_and_truncate(
+    line: String,
+    filter: &privacy_filter::Filter,
+    placeholders: &Placeholders,
+) -> String {
+    match filter.redact_cow(&line, placeholders).0 {
+        Cow::Borrowed(_) => match line.char_indices().nth(MAX_LOG_LINE_CHARS) {
+            Some((idx, _)) => format!("{}…", &line[..idx]),
+            None => line,
+        },
+        Cow::Owned(redacted) => truncate_chars(&redacted, MAX_LOG_LINE_CHARS),
+    }
 }
 
 fn truncate_chars(text: &str, max_chars: usize) -> String {
@@ -336,6 +348,26 @@ fn build_issue_url(
             lo = mid;
         } else {
             hi = mid - 1;
+        }
+    }
+    if lo == 0 {
+        if let Some(last) = lines.last() {
+            // 即使最后一行（如长中文）单行编码后就超出 URL 预算，也按剩余预算截短放入，避免 0 行反馈
+            let char_count = last.chars().count();
+            let (mut c_lo, mut c_hi) = (0usize, char_count.saturating_sub(1));
+            while c_lo < c_hi {
+                let mid = (c_lo + c_hi).div_ceil(2);
+                let candidate = [truncate_chars(last, mid)];
+                if issue_url_with(env, date, &candidate, total).len() <= MAX_ISSUE_URL_LEN {
+                    c_lo = mid;
+                } else {
+                    c_hi = mid - 1;
+                }
+            }
+            if c_lo > 0 {
+                let candidate = [truncate_chars(last, c_lo)];
+                return (issue_url_with(env, date, &candidate, total), 1);
+            }
         }
     }
     (issue_url_with(env, date, tail(lo), total), lo)
@@ -563,6 +595,59 @@ mod tests {
             "{context}"
         );
         assert!(context.contains("- Privacy: "), "{context}");
+    }
+
+    #[test]
+    fn redacts_sensitive_values_crossing_line_truncation_boundary() {
+        let dir = tempfile::tempdir().unwrap();
+        let prefix = "[2026-11-11][08:00:00][WARN][a] ";
+        let pad_key = "x".repeat(MAX_LOG_LINE_CHARS - prefix.len() - 29);
+        let key = format!("sk-ant-api03-{}AA", &"Ab3xK9pLmN".repeat(10)[..93]);
+        let pad_email = "y".repeat(MAX_LOG_LINE_CHARS - prefix.len() - 11);
+        let email = "alice.zhang@corp-mail.com";
+        std::fs::write(
+            dir.path().join(CURRENT_LOG_FILE),
+            format!("{prefix}{pad_key} {key}\n{prefix}{pad_email} {email}\n"),
+        )
+        .unwrap();
+
+        let report = build_feedback_report(dir.path(), &test_env());
+        assert_eq!((report.total_lines, report.included_lines), (2, 2));
+        let context = context_of(&report.issue_url);
+        assert!(!context.contains("sk-ant-api03-"), "{context}");
+        assert!(context.contains("[SECRET]"), "{context}");
+        assert!(!context.contains("alice.zhang"), "{context}");
+        assert!(context.contains("[EMAIL]"), "{context}");
+    }
+
+    #[test]
+    fn truncates_oversized_last_line_to_fit_url_budget() {
+        let dir = tempfile::tempdir().unwrap();
+        let long_cjk = format!("[2026-11-11][08:00:01][ERROR][a] {}", "中".repeat(900));
+        std::fs::write(
+            dir.path().join(CURRENT_LOG_FILE),
+            format!("[2026-11-11][08:00:00][INFO][a] earlier\n{long_cjk}\n"),
+        )
+        .unwrap();
+
+        let report = build_feedback_report(dir.path(), &test_env());
+        assert_eq!(report.total_lines, 2);
+        assert_eq!(report.included_lines, 1);
+        assert!(
+            report.issue_url.len() <= MAX_ISSUE_URL_LEN,
+            "len = {}",
+            report.issue_url.len()
+        );
+        let context = context_of(&report.issue_url);
+        assert!(
+            context.contains("last 1 of 2 lines from 2026-11-11"),
+            "{context}"
+        );
+        assert!(
+            context.contains("[2026-11-11][08:00:01][ERROR][a] 中"),
+            "{context}"
+        );
+        assert!(context.contains("中…\n"), "{context}");
     }
 
     #[test]
