@@ -1168,16 +1168,27 @@ pub async fn switch_route_locked(
     })
 }
 
-/// 开启故障转移时切到队列 P1（拿切换锁）。Stack 模式不做故障转移，拒绝：否则会换掉默认
-/// 那家。要在锁内、补完上次没做完的操作之后再看模式，锁外读到的可能是旧的。
-pub async fn switch_route_for_failover(
+/// 开启故障转移时切到队列 P1。调用方持有切换锁，直到开关写入完成。
+pub(crate) async fn switch_route_for_failover_locked(
     state: &AppState,
     app: &AppType,
     provider_id: &str,
 ) -> Result<(), String> {
-    switch_route_checked(state, app, provider_id, true).await
+    require_proxy_app(app)?;
+    let target =
+        provider(state, app, provider_id)?.ok_or_else(|| format!("供应商不存在: {provider_id}"))?;
+    reject_unsupported_official(app, &target)?;
+    if current::is_proxy(app) && settled_stack(app)?.enabled {
+        return Err(
+            "聚合模式不做故障转移，请先换回路由模式 (The Aggregation mode has no failover; switch back to the routing mode first)"
+                .to_string(),
+        );
+    }
+    switch_route_locked(state, app, &target).await.map(|_| ())
 }
 
+/// 调用方持有切换锁，`reject_stacked` 为真是开启故障转移时的切换（见
+/// [`switch_route_for_failover_locked`]）。
 async fn switch_route_checked(
     state: &AppState,
     app: &AppType,
@@ -1189,13 +1200,11 @@ async fn switch_route_checked(
         provider(state, app, provider_id)?.ok_or_else(|| format!("供应商不存在: {provider_id}"))?;
     reject_unsupported_official(app, &target)?;
     let _guard = lock_settled(state, app).await.map_err(|e| e.to_string())?;
-    if reject_stacked && current::is_proxy(app) && settled_stack(app)?.enabled {
-        return Err(
-            "聚合模式不做故障转移，请先换回路由模式 (The Aggregation mode has no failover; switch back to the routing mode first)"
-                .to_string(),
-        );
+    if reject_stacked {
+        switch_route_for_failover_locked(state, app, provider_id).await
+    } else {
+        switch_route_locked(state, app, &target).await.map(|_| ())
     }
-    switch_route_locked(state, app, &target).await.map(|_| ())
 }
 
 /// 指定代理路由（聚合模式下是默认那家），不管现在是什么模式。直连模式下只记下指针，下次进入
@@ -1721,6 +1730,7 @@ pub async fn record_failover_route(
     state: &AppState,
     app: &AppType,
     provider_id: &str,
+    route_revision: u64,
 ) -> Result<bool, String> {
     let _guard = lock_settled(state, app).await.map_err(|e| e.to_string())?;
     let mode = current::mode_state(app);
@@ -1732,6 +1742,15 @@ pub async fn record_failover_route(
             "[Failover] {} 在 Stack 模式，忽略进入之前的请求转移到 {provider_id} 的结果",
             app.as_str()
         );
+        return Ok(false);
+    }
+    if state.db.route_revision(app) != route_revision
+        || !state
+            .db
+            .get_proxy_config_for_app(app)
+            .await?
+            .auto_failover_enabled
+    {
         return Ok(false);
     }
     let Some(target) = provider(state, app, provider_id)? else {

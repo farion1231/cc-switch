@@ -177,6 +177,7 @@ pub struct RequestForwarder {
     app_handle: Option<tauri::AppHandle>,
     /// 请求开始时的"当前供应商 ID"（用于判断是否需要同步 UI/托盘）
     current_provider_id_at_start: String,
+    route_revision: Option<u64>,
     /// 代理会话 ID（用于 Gemini Native shadow replay）
     session_id: String,
     /// Session ID 是否由客户端提供；生成值不能作为上游缓存身份。
@@ -354,6 +355,7 @@ impl RequestForwarder {
             failover_manager,
             app_handle,
             current_provider_id_at_start,
+            route_revision: None,
             session_id,
             session_client_provided,
             rectifier_config,
@@ -481,6 +483,11 @@ impl RequestForwarder {
     /// 这个请求走故障转移队列（故障转移开着）。
     pub fn failover_chain(mut self, failover_chain: bool) -> Self {
         self.failover_chain = failover_chain;
+        self
+    }
+
+    pub(crate) fn route_revision(mut self, route_revision: u64) -> Self {
+        self.route_revision = Some(route_revision);
         self
     }
 
@@ -628,10 +635,15 @@ impl RequestForwarder {
 
         {
             let mut current_providers = self.current_providers.write().await;
-            current_providers.insert(
-                app_type.to_string(),
-                (provider.id.clone(), provider.name.clone()),
-            );
+            if self
+                .route_revision
+                .is_none_or(|revision| revision == self.router.route_revision(app_type))
+            {
+                current_providers.insert(
+                    app_type.to_string(),
+                    (provider.id.clone(), provider.name.clone()),
+                );
+            }
         }
 
         {
@@ -641,14 +653,18 @@ impl RequestForwarder {
             if self.current_provider_id_at_start.as_str() != provider.id.as_str() {
                 status.failover_count += 1;
 
-                let fm = self.failover_manager.clone();
-                let ah = self.app_handle.clone();
-                let pid = provider.id.clone();
-                let pname = provider.name.clone();
-                let at = app_type.to_string();
-                tokio::spawn(async move {
-                    let _ = fm.try_switch(ah.as_ref(), &at, &pid, &pname).await;
-                });
+                if let Some(revision) = self.route_revision.filter(|_| self.failover_chain) {
+                    let fm = self.failover_manager.clone();
+                    let ah = self.app_handle.clone();
+                    let pid = provider.id.clone();
+                    let pname = provider.name.clone();
+                    let at = app_type.to_string();
+                    tokio::spawn(async move {
+                        let _ = fm
+                            .try_switch(ah.as_ref(), &at, &pid, &pname, revision)
+                            .await;
+                    });
+                }
             }
             refresh_success_rate(&mut status);
         }

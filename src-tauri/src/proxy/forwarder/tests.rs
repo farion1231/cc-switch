@@ -196,6 +196,7 @@ fn test_forwarder(
         failover_manager: Arc::new(FailoverSwitchManager::new()),
         app_handle: None,
         current_provider_id_at_start: String::new(),
+        route_revision: None,
         session_id: String::new(),
         session_client_provided: false,
         rectifier_config: RectifierConfig::default(),

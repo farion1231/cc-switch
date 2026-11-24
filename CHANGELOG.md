@@ -5,6 +5,12 @@ All notable changes to CC Switch will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Late Proxy Failover Results**: An in-flight request can still finish on its selected upstream, but its result no longer replaces a newer route or changes the route after automatic failover has been disabled.
+
 ## [4.0.40] - 2026-11-23
 
 Grok Build's Grok Official cards can now be bound to xAI accounts in the Auth Center, so several Grok accounts can be switched like Claude and Codex official accounts. The Plugins page manages Antigravity CLI plugins. The usage page shows the cache hit rate per provider and per model, Xiaomi MiMo gets built-in balance and Token Plan queries, and Auth Center cards follow the sidebar app order. This release also hardens deep link MCP imports, usage scripts, SQL import and non-loopback proxy listeners, and speeds up the database, proxy hot path, usage sync, session search and the Apps page. Fixes cover Kimi Code Desktop main-agent usage, Antigravity output speed overstated since 4.0.38, Antigravity sessions from T3 Code and standalone ACP, Mistral's chunked thinking/text replies, Kimi native Responses 400s after parallel image tool calls, WorkBuddy enterprise credits, xAI quota and managed accounts in the tray, duplicate skills in Discover, and the Apps page waiting for version checks.
