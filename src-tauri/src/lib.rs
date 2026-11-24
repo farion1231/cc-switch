@@ -2397,10 +2397,11 @@ fn checkpoint_before_restart(app_handle: &tauri::AppHandle) {
 
 /// 清理托盘图标、释放 single-instance 锁后重启当前应用。
 ///
-/// 直接 spawn 新进程 + `exit(0)`（macOS 经 `open -n`，见 `relaunch_macos_bundle`），不经过事件
-/// 循环退出，因此 Tauri 内部的 `cleanup_before_exit` 和各插件的
-/// `RunEvent::Exit` 钩子都不会执行。需要的清理由调用方与本函数显式补偿：
-/// 窗口状态、代理/Live 恢复（调用方）；托盘图标、single-instance 锁（本函数）。
+/// 直接 spawn 新进程 + `exit(0)`（macOS 经脱离进程组的等待脚本在旧进程退出后再调
+/// `open -n`，见 `relaunch_macos_bundle`），不经过事件循环退出，因此 Tauri 内部的
+/// `cleanup_before_exit` 和各插件的 `RunEvent::Exit` 钩子都不会执行。需要的清理由
+/// 调用方与本函数显式补偿：窗口状态、代理/Live 恢复（调用方）；托盘图标、
+/// single-instance 锁（本函数）。
 ///
 /// 有意不调 `AppHandle::cleanup_before_exit()`：它会在调用线程上 Drop 托盘
 /// 图标，而 macOS 的 NSStatusItem 操作要求主线程；`set_visible(false)` 走
@@ -2415,35 +2416,96 @@ pub fn restart_process(app_handle: &tauri::AppHandle) -> ! {
     tauri::process::restart(&env);
 }
 
-/// macOS 经 LaunchServices（`open -n`）启动新实例，成功即退出；失败时返回，
-/// 由调用方回落到 `tauri::process::restart`。
+#[cfg(target_os = "macos")]
+const MACOS_WAIT_THEN_RELAUNCH_SCRIPT: &str = r#"pid=$1; opener=$2; bundle=$3; fallback=$4; shift 4
+i=0
+while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 100 ]; do
+    /bin/sleep 0.1
+    i=$((i + 1))
+done
+/bin/sleep 0.1
+if [ "$#" -gt 0 ]; then
+    "$opener" -n "$bundle" --args "$@" || exec "$fallback" "$@"
+else
+    "$opener" -n "$bundle" || exec "$fallback"
+fi"#;
+
+/// 从可执行文件路径定位其所属的 `.app` bundle（`<Name>.app/Contents/MacOS/<binary>`）。
+#[cfg(target_os = "macos")]
+fn macos_app_bundle_from_binary(binary: &std::path::Path) -> Option<std::path::PathBuf> {
+    let macos_dir = binary.parent()?;
+    let contents_dir = macos_dir.parent()?;
+    if macos_dir.file_name()? != "MacOS" || contents_dir.file_name()? != "Contents" {
+        return None;
+    }
+    let bundle = contents_dir.parent()?;
+    bundle
+        .extension()
+        .is_some_and(|ext| ext == "app")
+        .then(|| bundle.to_path_buf())
+}
+
+/// 构造脱离当前进程组、stdio 重定向到 `/dev/null` 的 `/bin/sh` 重启命令：
+/// 等待 `pid` 退出后再执行 `opener -n <bundle>`（失败时回落直接执行 `fallback_binary`）。
+#[cfg(target_os = "macos")]
+fn build_macos_relaunch_command(
+    pid: u32,
+    opener: &std::path::Path,
+    bundle: &std::path::Path,
+    fallback_binary: &std::path::Path,
+    args: &[std::ffi::OsString],
+) -> std::process::Command {
+    use std::os::unix::process::CommandExt;
+    use std::process::{Command, Stdio};
+
+    let mut command = Command::new("/bin/sh");
+    command
+        .arg("-c")
+        .arg(MACOS_WAIT_THEN_RELAUNCH_SCRIPT)
+        .arg("cc-switch-relaunch")
+        .arg(pid.to_string())
+        .arg(opener)
+        .arg(bundle)
+        .arg(fallback_binary)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .process_group(0);
+    command
+}
+
+/// macOS 等当前进程完全退出后再经 LaunchServices（`open -n`）启动新实例。
 ///
-/// `tauri::process::restart` 直接 spawn 可执行文件。macOS 14 起应用激活是协作式的：
-/// 新进程的 `activateIgnoringOtherApps` 会被系统拒绝，窗口留在其它应用后面。
-/// 由当前前台应用请求 LaunchServices 启动，新实例才能拿到前台。
+/// 1. `tauri::process::restart` 直接 spawn 可执行文件。macOS 14 起应用激活是协作式的：
+///    新进程的 `activateIgnoringOtherApps` 会被系统拒绝，窗口留在其它应用后面，
+///    必须经 LaunchServices 启动才能拿到前台。
+/// 2. 不能在当前进程仍存活时同步执行 `open -n`：此时旧进程仍占着 Dock 固定图标，
+///    新实例（尤其是更新器原地替换 `.app` bundle 之后）会被 Dock 分到第二个临时图标，
+///    旧进程退出后固定图标熄灭、运行中的新实例滞留在右侧（#8329）。
+///
+/// 先拉起一个脱离进程组的等待脚本，拉起成功后当前进程立即 `exit(0)`，待旧 PID 退出后再由
+/// 脚本调 `/usr/bin/open -n <bundle>`（失败时回落直接执行二进制）；仅当脚本本身拉起失败时
+/// 才回落到 `tauri::process::restart`。
 #[cfg(target_os = "macos")]
 fn relaunch_macos_bundle(env: &tauri::Env) {
     let Ok(binary) = tauri::process::current_binary(env) else {
         return;
     };
-    // <Name>.app/Contents/MacOS/<binary>
-    let Some(bundle) = binary
-        .ancestors()
-        .nth(3)
-        .filter(|p| p.extension().is_some_and(|ext| ext == "app"))
-    else {
+    let Some(bundle) = macos_app_bundle_from_binary(&binary) else {
         return;
     };
-    let mut command = std::process::Command::new("/usr/bin/open");
-    command.arg("-n").arg(bundle);
-    let args: Vec<_> = env.args_os.iter().skip(1).collect();
-    if !args.is_empty() {
-        command.arg("--args").args(args);
-    }
-    match command.status() {
-        Ok(status) if status.success() => std::process::exit(0),
-        Ok(status) => log::warn!("open -n 重启失败（{status}），回落直接启动"),
-        Err(err) => log::warn!("open -n 重启失败（{err}），回落直接启动"),
+    let args: Vec<_> = env.args_os.iter().skip(1).cloned().collect();
+    let mut command = build_macos_relaunch_command(
+        std::process::id(),
+        std::path::Path::new("/usr/bin/open"),
+        &bundle,
+        &binary,
+        &args,
+    );
+    match command.spawn() {
+        Ok(_) => std::process::exit(0),
+        Err(err) => log::warn!("启动 macOS 重启等待进程失败（{err}），回落直接启动"),
     }
 }
 
@@ -2601,6 +2663,79 @@ mod tests {
         assert_eq!(
             classify_exit_request(Some(1)),
             ExitRequestAction::CleanupAndExit
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_app_bundle_from_binary_requires_app_bundle_layout() {
+        use super::macos_app_bundle_from_binary;
+        use std::path::{Path, PathBuf};
+
+        assert_eq!(
+            macos_app_bundle_from_binary(Path::new(
+                "/Applications/CC Switch.app/Contents/MacOS/cc-switch"
+            )),
+            Some(PathBuf::from("/Applications/CC Switch.app"))
+        );
+        assert_eq!(
+            macos_app_bundle_from_binary(Path::new("/repo/src-tauri/target/debug/cc-switch")),
+            None
+        );
+        assert_eq!(
+            macos_app_bundle_from_binary(Path::new("/Users/alice/demo.app/target/debug/cc-switch")),
+            None
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_relaunch_waits_for_pid_exit_and_preserves_args() {
+        use super::build_macos_relaunch_command;
+        use std::ffi::OsString;
+        use std::os::unix::fs::PermissionsExt;
+        use std::path::Path;
+        use std::process::Command;
+        use std::time::Duration;
+
+        let dir = tempfile::tempdir().unwrap();
+        let record = dir.path().join("record");
+        let opener = dir.path().join("opener");
+        std::fs::write(
+            &opener,
+            format!(
+                "#!/bin/sh\nif kill -0 \"$OLD_PID\" 2>/dev/null; then state=running; else state=exited; fi\nprintf '%s\\n' \"$state\" \"$@\" > '{}'\n",
+                record.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&opener, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let mut old = Command::new("/bin/sleep").arg("30").spawn().unwrap();
+        let old_pid = old.id();
+        let args = [OsString::from("--flag"), OsString::from("two words")];
+
+        let mut waiter = build_macos_relaunch_command(
+            old_pid,
+            &opener,
+            Path::new("/Applications/CC Switch.app"),
+            Path::new("/usr/bin/false"),
+            &args,
+        )
+        .env("OLD_PID", old_pid.to_string())
+        .env("PATH", "")
+        .spawn()
+        .unwrap();
+
+        std::thread::sleep(Duration::from_millis(250));
+        assert!(waiter.try_wait().unwrap().is_none() && !record.exists());
+
+        old.kill().unwrap();
+        old.wait().unwrap();
+        assert!(waiter.wait().unwrap().success());
+        assert_eq!(
+            std::fs::read_to_string(&record).unwrap(),
+            "exited\n-n\n/Applications/CC Switch.app\n--args\n--flag\ntwo words\n"
         );
     }
 }
