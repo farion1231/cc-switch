@@ -40,6 +40,7 @@ import { RoutingSection } from "@/components/settings/sections/RoutingSection";
 import { PrivacyFilterConfigPanel } from "@/components/settings/PrivacyFilterConfigPanel";
 import { GlobalProxySettings } from "@/components/settings/GlobalProxySettings";
 import { IpDiagnostics } from "@/components/settings/IpDiagnostics";
+import { LanAccessSection } from "@/components/settings/LanAccessSection";
 import { LogConfigPanel } from "@/components/settings/LogConfigPanel";
 import { GeneralSection } from "@/components/settings/sections/GeneralSection";
 import { AppConfigSection } from "@/components/settings/sections/AppConfigSection";
@@ -396,6 +397,7 @@ export function SettingsPage({
       case "network":
         return (
           <>
+            <LanAccessSection />
             <SettingsBlock
               title={t("settings.advanced.globalProxy.title")}
               help={{
