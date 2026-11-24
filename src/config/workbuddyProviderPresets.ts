@@ -25,7 +25,7 @@ export interface WorkBuddyReasoning {
 
 /**
  * WorkBuddy 自定义模型（`~/.workbuddy/models.json`）里单个模型条目的字段，
- * 与 WorkBuddy / CodeBuddy Code 文档的 models.json 字段一致。
+ * 与 WorkBuddy / CodeBuddy 文档的 models.json 字段一致。
  */
 export interface WorkBuddyModel {
   id: string;

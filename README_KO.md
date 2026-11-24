@@ -367,7 +367,7 @@ paru -S cc-switch-bin
 | MiniMax Code | 공존 | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
 | Kimi Code | 공존 | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
 | Oh My Pi | 공존 | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | – |
-| CodeBuddy Code | 공존 | – | – | – | ✓ | ✓ | CODEBUDDY.md | ✓ | ✓ |
+| CodeBuddy | 공존 | – | – | – | ✓ | ✓ | CODEBUDDY.md | ✓ | ✓ |
 
 - **전환**: 한 번에 하나의 공급자만 활성화됩니다. **공존**: 여러 공급자가 동시에 도구 자체의 설정에 기록되며, 도구 안에서 하나를 선택합니다.
 - **로컬 라우팅**: CC Switch가 내 컴퓨터에서 요청을 전달하고 API 형식을 변환합니다. 아래 [로컬 라우팅 및 장애 조치](#로컬-라우팅-및-장애-조치)를 참고하세요. Claude Desktop 공급자는 "직접 연결" 또는 "모델 매핑"을 사용할 수 있으며, "모델 매핑"에서는 요청이 로컬 라우팅을 거칩니다.
@@ -406,7 +406,7 @@ paru -S cc-switch-bin
 
 ### MCP, 프롬프트, Skills
 
-- **통합 MCP 패널** — 모든 MCP 서버를 한곳에서 관리하고, 각각을 어떤 도구에 동기화할지 선택하며(Claude Code, Codex, Gemini CLI, Grok Build, OpenCode, Hermes, Pi, MiniMax Code, Kimi Code, Oh My Pi, CodeBuddy Code), 각 도구의 기존 설정을 가져오고, Deep Link로 가져올 수 있습니다
+- **통합 MCP 패널** — 모든 MCP 서버를 한곳에서 관리하고, 각각을 어떤 도구에 동기화할지 선택하며(Claude Code, Codex, Gemini CLI, Grok Build, OpenCode, Hermes, Pi, MiniMax Code, Kimi Code, Oh My Pi, CodeBuddy), 각 도구의 기존 설정을 가져오고, Deep Link로 가져올 수 있습니다
 - **프롬프트** — Markdown 편집기를 갖춘 도구별 프롬프트 라이브러리입니다. 프롬프트를 활성화하면 해당 도구의 프롬프트 파일(CLAUDE.md / AGENTS.md / GEMINI.md)에 기록되며, 파일의 기존 내용은 먼저 라이브러리에 저장되므로 아무것도 사라지지 않습니다. Pi는 SYSTEM.md, APPEND_SYSTEM.md, 프롬프트 템플릿도 편집할 수 있습니다
 - **Skills** — skills.sh를 검색하거나 GitHub 저장소 또는 ZIP 파일에서 원클릭으로 설치하고, 업데이트를 확인해 한 번에 모두 업데이트하세요. 각 도구에 자동으로, 심볼릭 링크로만, 또는 복사로만 동기화할 수 있으며, 원하면 `~/.agents/skills`에 저장할 수도 있습니다
 - 세 패널 모두 검색을 지원하고, MCP와 Skills는 도구별로 한 번에 모두 켜거나 끌 수도 있습니다. 공급자, MCP 서버, 프롬프트는 콘텐츠 영역에서 전체 페이지로 편집하며, 저장하지 않은 변경 사항이 있으면 나가기 전에 경고합니다

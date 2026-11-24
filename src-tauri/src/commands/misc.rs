@@ -299,7 +299,7 @@ static TOOLS: [ToolSpec; 15] = [
     // 那份上，pnpm/bun 各用自己的命令，原生版走官方 installer），装完核对版本；失败或认不出
     // 安装方式（会提示手动 `npm install -g`）时 exit 1，由 `|| <npm fallback>` 兜底。
     // 依赖没有 install 脚本，npm 12 不需要 `--allow-scripts`。
-    ToolSpec::npm("codebuddy", "CodeBuddy Code", "@tencent-ai/codebuddy-code")
+    ToolSpec::npm("codebuddy", "CodeBuddy", "@tencent-ai/codebuddy-code")
         .official_update("update"),
 ];
 

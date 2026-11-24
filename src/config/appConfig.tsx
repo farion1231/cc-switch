@@ -172,11 +172,11 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
       "bg-teal-500/10 text-teal-700 dark:text-teal-300 hover:bg-teal-500/20 border-0 gap-1.5",
   },
   codebuddy: {
-    label: "CodeBuddy Code",
+    label: "CodeBuddy",
     icon: (
       <ProviderIcon
         icon="codebuddy"
-        name="CodeBuddy Code"
+        name="CodeBuddy"
         size={14}
         showFallback={false}
       />

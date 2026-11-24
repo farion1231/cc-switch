@@ -1548,7 +1548,7 @@
     "selectSessionLabel": "选择 {{title}}",
     "agyDeleteHint": "请在 Antigravity 中删除会话，以同步清理运行状态",
     "mcodeDeleteHint": "请在 MiniMax Code 中删除",
-    "codebuddyDeleteHint": "请在 CodeBuddy Code 中管理此会话：后台任务、团队成员和文件历史都引用它的记录",
+    "codebuddyDeleteHint": "请在 CodeBuddy 中管理此会话：后台任务、团队成员和文件历史都引用它的记录",
     "groupMeta": "{{count}} 个会话 · {{time}}",
     "bucketToday": "今天",
     "bucketYesterday": "昨天",
@@ -5216,7 +5216,7 @@
       "chatgptHelp": "用于 Claude Code、Claude Desktop 的 ChatGPT 预设，以及 Codex 官方登录绑定。没指定账号的供应商用「默认」账号。",
       "xaiHelp": "用于 Claude Code、Claude Desktop、Codex 的 xAI 预设。没指定账号的供应商用「默认」账号。",
       "agyHelp": "Antigravity CLI（agy）的官方登录。agy 同时只能登录一个号，「切换」会把 agy 的登录换成选中的账号，之后新开的 agy 都用它。agy 里原来登着的号会自动收进这里，切走也不会丢。",
-      "codebuddyHelp": "CodeBuddy Code 的官方登录（国内版、国际版都在这里）。要切换账号，在账号的「…」里选「切换 CodeBuddy 到这个账号」，或在供应商列表里添加绑定了它的「CodeBuddy 官方登录」卡。「添加账号」会打开终端运行 codebuddy，登录后这里自动收录；已登录时会先让 CodeBuddy 暂时退出原来的登录，放弃可恢复。令牌由 CodeBuddy 自己续期。",
+      "codebuddyHelp": "CodeBuddy 的官方登录（国内版、国际版都在这里）。要切换账号，在账号的「…」里选「切换 CodeBuddy 到这个账号」，或在供应商列表里添加绑定了它的「CodeBuddy 官方登录」卡。「添加账号」会打开终端运行 codebuddy，登录后这里自动收录；已登录时会先让 CodeBuddy 暂时退出原来的登录，放弃可恢复。令牌由 CodeBuddy 自己续期。",
       "workbuddyHelp": "WorkBuddy 桌面端的官方登录。CC Switch 不能替 WorkBuddy 登录，只能收录它当前登着的账号（整组登录文件的快照）。要切换账号，在账号的「…」里选「切换 WorkBuddy 到这个账号」，或在供应商列表里添加绑定了它的「WorkBuddy 官方登录」卡（同一时间只有一张在「已添加」）。快照只在这台电脑上有效，不会随云同步。",
       "claudeHelpTerminal": "Claude Code 的官方订阅账号（Pro / Max / Team）。设置里覆盖了 Claude 配置目录，切卡不会切换 Claude Code 的登录；在官方卡上选一个账号，再从卡片「打开终端」使用。",
       "claudeHelpWsl": "Claude Code 的官方订阅账号（Pro / Max / Team）。Claude 配置目录在 WSL 里时暂不支持，后续会跟进。",
@@ -5455,7 +5455,7 @@
   "codebuddy": {
     "empty": {
       "title": "还没有添加自定义模型",
-      "description": "CodeBuddy 官方模型由 CodeBuddy Code 自行管理；要切换官方账号，给账号建一张「CodeBuddy 官方登录」卡，在这里点「添加」。~/.codebuddy/models.json 里已有的自定义模型会自动显示在这里。点击右上角 +，从预设或自定义配置添加模型。"
+      "description": "CodeBuddy 官方模型由 CodeBuddy 自行管理；要切换官方账号，给账号建一张「CodeBuddy 官方登录」卡，在这里点「添加」。~/.codebuddy/models.json 里已有的自定义模型会自动显示在这里。点击右上角 +，从预设或自定义配置添加模型。"
     },
     "modelsHint": "模型 ID 写入 models.json 的 id，也是 /model 里选择的名称，通常就是接口的模型名，添加后不可修改。显示名称与上方的「名称」是同一个值。",
     "modelIdDuplicate": "此模型 ID 已被使用，请更换",
@@ -5466,7 +5466,7 @@
     "apiKeyPlaceholder": "输入 API Key，或写成 ${MY_API_KEY} 引用环境变量",
     "maxInputTokens": "最大输入 Token",
     "maxOutputTokens": "最大输出 Token",
-    "jsonHint": "对应 models.json 中的一条模型配置（id 由上方模型 ID 决定）。保存后 CodeBuddy Code 会自动重新加载。",
+    "jsonHint": "对应 models.json 中的一条模型配置（id 由上方模型 ID 决定）。保存后 CodeBuddy 会自动重新加载。",
     "official": {
       "presetName": "CodeBuddy 官方登录",
       "account": "登录账号",

@@ -6,7 +6,7 @@ use std::{ffi::OsString, fs};
 
 use crate::support::{create_test_state, reset_test_fs, test_mutex};
 
-/// Points CodeBuddy Code at a private directory through `CODEBUDDY_CONFIG_DIR`.
+/// Points CodeBuddy at a private directory through `CODEBUDDY_CONFIG_DIR`.
 struct CodebuddyHome {
     directory: tempfile::TempDir,
     previous: Option<OsString>,

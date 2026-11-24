@@ -146,7 +146,7 @@ describe("CodebuddyAccountSection", () => {
 
     // 分组没有「删除全部账号」：只能逐个删除
     expect(
-      screen.queryByRole("button", { name: "CodeBuddy Code 的更多操作" }),
+      screen.queryByRole("button", { name: "CodeBuddy 的更多操作" }),
     ).not.toBeInTheDocument();
 
     // 和 WorkBuddy 一样，账号菜单里能把 CodeBuddy 切到这个号（走通用切号命令）

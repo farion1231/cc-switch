@@ -1336,7 +1336,7 @@ pub fn run() {
                 let manager = WorkBuddyAccountManager::new(crate::config::get_app_config_dir());
                 app.manage(commands::WorkBuddyAccountState(Arc::new(manager)));
             }
-            // CodeBuddy Code 官方账号（授权中心收录、切 CodeBuddy 的全局登录）
+            // CodeBuddy 官方账号（授权中心收录、切 CodeBuddy 的全局登录）
             {
                 use crate::services::codebuddy_account::CodebuddyAccountManager;
                 let manager = Arc::new(CodebuddyAccountManager::new(

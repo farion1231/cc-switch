@@ -3,7 +3,7 @@ import type { PresetTheme } from "./claudeProviderPresets";
 import type { PresetFamilyFields } from "./presetFamilies";
 
 /**
- * One entry of CodeBuddy Code's `~/.codebuddy/models.json` `models` array.
+ * One entry of CodeBuddy's `~/.codebuddy/models.json` `models` array.
  * See https://www.codebuddy.ai/docs/cli/models — the model `id` is the CC Switch
  * provider key, so it is not stored here.
  */

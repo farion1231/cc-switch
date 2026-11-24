@@ -1547,7 +1547,7 @@
     "selectSessionLabel": "{{title}} 선택",
     "agyDeleteHint": "런타임 상태도 제거하려면 Antigravity에서 이 세션을 삭제하세요.",
     "mcodeDeleteHint": "MiniMax Code에서 삭제하세요.",
-    "codebuddyDeleteHint": "이 세션은 CodeBuddy Code에서 관리하세요. 백그라운드 작업, 팀원, 파일 기록이 해당 대화 기록을 참조합니다",
+    "codebuddyDeleteHint": "이 세션은 CodeBuddy에서 관리하세요. 백그라운드 작업, 팀원, 파일 기록이 해당 대화 기록을 참조합니다",
     "groupMeta": "세션 {{count}}개 · {{time}}",
     "bucketToday": "오늘",
     "bucketYesterday": "어제",
@@ -5216,7 +5216,7 @@
       "chatgptHelp": "Claude Code와 Claude Desktop의 ChatGPT 프리셋 및 Codex의 공식 로그인 연결에 사용합니다. 계정을 선택하지 않은 공급자는 기본 계정을 사용합니다.",
       "xaiHelp": "Claude Code, Claude Desktop 및 Codex의 xAI 프리셋에서 사용합니다. 계정을 선택하지 않은 공급자는 기본 계정을 사용합니다.",
       "agyHelp": "Antigravity CLI(agy)의 공식 로그인입니다. agy는 한 번에 하나의 계정에만 로그인할 수 있습니다. 전환하면 agy의 로그인이 선택한 계정으로 교체되며 이후 시작한 agy 세션에서 사용됩니다. 기존에 agy에 로그인된 계정은 자동으로 여기에 추가되므로 다른 계정으로 전환해도 사라지지 않습니다.",
-      "codebuddyHelp": "CodeBuddy Code의 공식 로그인입니다(중국 사이트와 국제 사이트 모두). 계정을 전환하려면 계정의 ‘…’ 메뉴에서 ‘CodeBuddy에서 이 계정 사용’을 선택하거나, 공급자 목록에서 해당 계정에 연결된 \"CodeBuddy 공식 로그인\" 카드의 추가를 클릭하세요. \"계정 추가\"는 터미널에서 codebuddy를 열고, 로그인을 마치면 계정을 여기에 추가합니다. CodeBuddy가 이미 로그인되어 있으면 잠시 로그아웃되며, 중단하면 원래 로그인을 복원할 수 있습니다. 토큰은 CodeBuddy가 직접 갱신합니다.",
+      "codebuddyHelp": "CodeBuddy의 공식 로그인입니다(중국 사이트와 국제 사이트 모두). 계정을 전환하려면 계정의 ‘…’ 메뉴에서 ‘CodeBuddy에서 이 계정 사용’을 선택하거나, 공급자 목록에서 해당 계정에 연결된 \"CodeBuddy 공식 로그인\" 카드의 추가를 클릭하세요. \"계정 추가\"는 터미널에서 codebuddy를 열고, 로그인을 마치면 계정을 여기에 추가합니다. CodeBuddy가 이미 로그인되어 있으면 잠시 로그아웃되며, 중단하면 원래 로그인을 복원할 수 있습니다. 토큰은 CodeBuddy가 직접 갱신합니다.",
       "workbuddyHelp": "WorkBuddy 데스크톱 앱의 공식 로그인입니다. CC Switch는 사용자를 대신해 WorkBuddy에 로그인할 수 없으며, 현재 로그인된 계정의 로그인 파일 전체를 스냅샷으로 저장합니다. 계정을 전환하려면 계정의 ‘…’ 메뉴에서 ‘WorkBuddy에서 이 계정 사용’을 선택하거나, 공급자 목록에서 해당 계정에 연결된 ‘WorkBuddy 공식 로그인’ 카드의 ‘추가’를 클릭하세요. ‘추가됨’ 상태인 공식 카드는 동시에 하나만 유지됩니다. 스냅샷은 이 컴퓨터에서만 사용할 수 있으며 클라우드로 동기화되지 않습니다.",
       "claudeHelpTerminal": "Claude Code 공식 구독 계정(Pro / Max / Team)입니다. 설정에서 Claude 설정 디렉터리를 별도로 지정한 경우, 카드를 전환해도 Claude Code의 로그인 계정은 바뀌지 않습니다. Claude 공식 공급자 카드에서 계정을 선택한 다음, 해당 카드의 ‘터미널 열기’를 이용하세요.",
       "claudeHelpWsl": "Claude Code 공식 구독 계정(Pro / Max / Team)입니다. Claude 설정 디렉터리가 WSL에 있는 경우는 아직 지원하지 않습니다. 추후 지원할 예정입니다.",
@@ -5455,7 +5455,7 @@
   "codebuddy": {
     "empty": {
       "title": "아직 사용자 지정 모델이 없습니다",
-      "description": "CodeBuddy의 공식 모델은 CodeBuddy Code가 직접 관리합니다. 공식 계정을 전환하려면 해당 계정용 \"CodeBuddy 공식 로그인\" 카드를 만들고 여기에서 추가를 클릭하세요. ~/.codebuddy/models.json에 이미 있는 사용자 지정 모델은 자동으로 여기에 표시됩니다. 오른쪽 위의 + 버튼으로 프리셋 또는 사용자 지정 모델을 추가하세요."
+      "description": "CodeBuddy의 공식 모델은 CodeBuddy가 직접 관리합니다. 공식 계정을 전환하려면 해당 계정용 \"CodeBuddy 공식 로그인\" 카드를 만들고 여기에서 추가를 클릭하세요. ~/.codebuddy/models.json에 이미 있는 사용자 지정 모델은 자동으로 여기에 표시됩니다. 오른쪽 위의 + 버튼으로 프리셋 또는 사용자 지정 모델을 추가하세요."
     },
     "modelsHint": "모델 ID는 models.json에 기록되는 id이자 /model에서 선택하는 이름으로, 보통 엔드포인트의 모델 이름입니다. 추가한 후에는 변경할 수 없습니다. 표시 이름은 위의 이름과 같은 값입니다.",
     "modelIdDuplicate": "이 모델 ID는 이미 사용 중입니다",
@@ -5466,7 +5466,7 @@
     "apiKeyPlaceholder": "API 키를 입력하거나 ${MY_API_KEY} 형식으로 환경 변수를 참조하세요",
     "maxInputTokens": "최대 입력 토큰",
     "maxOutputTokens": "최대 출력 토큰",
-    "jsonHint": "models.json의 모델 항목 하나입니다(id는 위의 모델 ID에서 가져옵니다). 저장하면 CodeBuddy Code가 파일을 자동으로 다시 불러옵니다.",
+    "jsonHint": "models.json의 모델 항목 하나입니다(id는 위의 모델 ID에서 가져옵니다). 저장하면 CodeBuddy가 파일을 자동으로 다시 불러옵니다.",
     "official": {
       "presetName": "CodeBuddy 공식 로그인",
       "account": "계정",

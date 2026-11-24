@@ -1837,7 +1837,7 @@ mod tests {
         let requested = vec!["unsupported".to_string(), "codebuddy".to_string()];
         assert_eq!(normalize_requested_tools(&requested), vec!["codebuddy"]);
         let spec = tool_spec("codebuddy");
-        assert_eq!(spec.display_name, "CodeBuddy Code");
+        assert_eq!(spec.display_name, "CodeBuddy");
         assert_eq!(spec.npm_package, Some("@tencent-ai/codebuddy-code"));
         let npm = "npm i -g @tencent-ai/codebuddy-code@latest";
         // No dependency runs an install script, so npm 12 needs no `--allow-scripts`.

@@ -271,38 +271,36 @@ describe("AppsPage layout, grouping and diagnostics", () => {
     ).toBeEnabled();
   });
 
-  it("lists CodeBuddy Code last, like the sidebar, and upgrades it on its own", async () => {
+  it("lists CodeBuddy last, like the sidebar, and upgrades it on its own", async () => {
     outdated.add("codebuddy");
     const view = await renderApps();
     const names = Array.from(
       view.container.querySelectorAll("[data-tool-row]"),
       (row) => row.textContent ?? "",
     );
-    const codebuddy = names.findIndex((name) =>
-      name.includes("CodeBuddy Code"),
-    );
+    const codebuddy = names.findIndex((name) => name.includes("CodeBuddy"));
     expect(codebuddy).toBe(names.length - 1);
     expect(names[codebuddy - 1]).toContain("WorkBuddy");
-    expect(card("CodeBuddy Code").getByText("1.0.0")).toBeInTheDocument();
+    expect(card("CodeBuddy").getByText("1.0.0")).toBeInTheDocument();
 
-    fireEvent.click(updateButton("CodeBuddy Code"));
-    await waitFor(() => expect(isReady("CodeBuddy Code")).toBe(true));
+    fireEvent.click(updateButton("CodeBuddy"));
+    await waitFor(() => expect(isReady("CodeBuddy")).toBe(true));
     expect(mocks.probeToolInstallations).toHaveBeenCalledWith(["codebuddy"]);
     expect(
       mocks.runToolLifecycleAction.mock.calls.map(([tools]) => tools),
     ).toEqual([["codebuddy"]]);
   });
 
-  it("offers to install CodeBuddy Code when it is missing", async () => {
+  it("offers to install CodeBuddy when it is missing", async () => {
     missing.add("codebuddy");
     await renderApps();
     expect(
-      card("CodeBuddy Code").queryByRole("button", {
+      card("CodeBuddy").queryByRole("button", {
         name: "appPage.moreActions",
       }),
     ).toBeNull();
     fireEvent.click(
-      card("CodeBuddy Code").getByRole("button", {
+      card("CodeBuddy").getByRole("button", {
         name: "settings.toolInstall",
       }),
     );
@@ -612,12 +610,12 @@ describe("AppsPage visibility column", () => {
     ).toEqual([within(row).getByRole("button", { name: "WorkBuddy" })]);
   });
 
-  it("hides CodeBuddy Code from the sidebar with its own switch", async () => {
+  it("hides CodeBuddy from the sidebar with its own switch", async () => {
     vi.resetModules();
     mocks.updateSettings.mockReset();
     mocks.autoSaveSettings.mockReset().mockResolvedValue(null);
     await renderApps();
-    const toggle = card("CodeBuddy Code").getByRole("switch", {
+    const toggle = card("CodeBuddy").getByRole("switch", {
       name: /appsPage\.showInSidebar/,
     });
     expect(toggle).toBeChecked();
@@ -630,7 +628,7 @@ describe("AppsPage visibility column", () => {
     });
   });
 
-  it("keeps CodeBuddy Code on when it is the last visible app", async () => {
+  it("keeps CodeBuddy on when it is the last visible app", async () => {
     vi.resetModules();
     mocks.updateSettings.mockReset();
     mocks.settings = {
@@ -657,7 +655,7 @@ describe("AppsPage visibility column", () => {
     };
     try {
       await renderApps();
-      const toggle = card("CodeBuddy Code").getByRole("switch", {
+      const toggle = card("CodeBuddy").getByRole("switch", {
         name: /appsPage\.showInSidebar/,
       });
       expect(toggle).toBeChecked();

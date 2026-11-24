@@ -767,7 +767,7 @@ impl Database {
         }
     }
 
-    /// v27 -> v28 迁移：CodeBuddy Code 的 MCP 与 Skills 开关。
+    /// v27 -> v28 迁移：CodeBuddy 的 MCP 与 Skills 开关。
     ///
     /// CodeBuddy 早期开发版曾把 `enabled_codebuddy` 作为 v23（无 `enabled_omp`）、
     /// v24（无 `enabled_dsh`）、v25（无 `enabled_copilot`）、v26（无上游 v26 的

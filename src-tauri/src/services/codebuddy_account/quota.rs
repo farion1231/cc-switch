@@ -1,6 +1,6 @@
 //! CodeBuddy 账号的套餐与积分（只读查询）。
 //!
-//! CodeBuddy Code CLI 自己不显示额度；同一套账号体系下 WorkBuddy / CodeBuddy 桌面端读额度用的是
+//! CodeBuddy CLI 自己不显示额度；同一套账号体系下 WorkBuddy / CodeBuddy 桌面端读额度用的是
 //! `POST {站点}/billing/meter/get-user-resource-summary`（个人）和
 //! `POST {站点}/v2/billing/meter/get-enterprise-user-usage`（企业），两个都是空 body 的查询。
 //! 个人号再按汇总里有哪类套餐查 free / paid 套餐明细，补上各资源包的到期时间（请求与解析和

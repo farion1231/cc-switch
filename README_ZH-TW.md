@@ -367,7 +367,7 @@ paru -S cc-switch-bin
 | MiniMax Code | 共存 | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
 | Kimi Code | 共存 | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
 | Oh My Pi | 共存 | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | – |
-| CodeBuddy Code | 共存 | – | – | – | ✓ | ✓ | CODEBUDDY.md | ✓ | ✓ |
+| CodeBuddy | 共存 | – | – | – | ✓ | ✓ | CODEBUDDY.md | ✓ | ✓ |
 
 - **切換**：同一時間只有一個供應商生效；**共存**：多個供應商會同時寫入該工具自己的設定，由你在工具內挑選其中一個。
 - **本地路由**：CC Switch 在你的電腦上轉發請求並轉換 API 格式；詳見下方的[本地路由與故障轉移](#本地路由與故障轉移)。Claude Desktop 的供應商可使用「直連」或「模型映射」；使用「模型映射」時，請求會經過本地路由。
@@ -406,7 +406,7 @@ paru -S cc-switch-bin
 
 ### MCP、提示詞與 Skills
 
-- **統一的 MCP 面板** — 在同一處管理所有 MCP 伺服器，選擇每個伺服器要同步到哪些工具（Claude Code、Codex、Gemini CLI、Grok Build、OpenCode、Hermes、Pi、MiniMax Code、Kimi Code、Oh My Pi、CodeBuddy Code），從各工具匯入現有設定，並可透過 Deep Link 匯入
+- **統一的 MCP 面板** — 在同一處管理所有 MCP 伺服器，選擇每個伺服器要同步到哪些工具（Claude Code、Codex、Gemini CLI、Grok Build、OpenCode、Hermes、Pi、MiniMax Code、Kimi Code、Oh My Pi、CodeBuddy），從各工具匯入現有設定，並可透過 Deep Link 匯入
 - **提示詞** — 依工具分別建立的提示詞庫，附 Markdown 編輯器；啟用提示詞時會將其寫入該工具的提示詞檔案（CLAUDE.md / AGENTS.md / GEMINI.md），並先把檔案現有的內容存回提示詞庫，確保不會遺失任何內容。Pi 還可編輯 SYSTEM.md、APPEND_SYSTEM.md 與提示詞範本
 - **Skills** — 搜尋 skills.sh，或從 GitHub 儲存庫或 ZIP 檔案一鍵安裝；可檢查更新並一鍵全部更新；可自動同步到各工具、僅用符號連結，或僅用複本；也可選擇存放在 `~/.agents/skills`
 - 三個面板都支援搜尋，MCP 與 Skills 還可依工具一次全部啟用或停用；供應商、MCP 伺服器與提示詞都在內容區以整頁方式編輯，離開時若有未儲存的變更會先提醒你

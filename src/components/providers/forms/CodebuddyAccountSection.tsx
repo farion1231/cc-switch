@@ -39,7 +39,7 @@ interface CodebuddyAccountSectionProps {
 }
 
 /**
- * 授权中心的 CodeBuddy Code 账号组。CodeBuddy 只有一份全局登录（凭据文件），「在用」就是它现在
+ * 授权中心的 CodeBuddy 账号组。CodeBuddy 只有一份全局登录（凭据文件），「在用」就是它现在
  * 登着的那个号。切换账号：账号 ⋯ 里的「切换 CodeBuddy 到这个账号」，或供应商列表里「添加」
  * 绑定了这个账号的「CodeBuddy 官方登录」卡（两边落到同一个 `switch_to`）。删账号只删 CC Switch 的副本。
  * 「添加账号」在已登录时会先确认，再让 CodeBuddy 暂时退出登录（见 `useCodebuddyLogin`）。
@@ -198,11 +198,11 @@ export const CodebuddyAccountSection: React.FC<
   return (
     <ManagedAccountsGroup
       slug="codebuddy"
-      name="CodeBuddy Code"
+      name="CodeBuddy"
       iconName="codebuddy"
       help={t("authCenter.group.codebuddyHelp", {
         defaultValue:
-          "CodeBuddy Code 的官方登录（国内版、国际版都在这里）。要切换账号，在账号的「…」里选「切换 CodeBuddy 到这个账号」，或在供应商列表里添加绑定了它的「CodeBuddy 官方登录」卡。「添加账号」会打开终端运行 codebuddy，登录后这里自动收录；已登录时会先让 CodeBuddy 暂时退出原来的登录，放弃可恢复。令牌由 CodeBuddy 自己续期。",
+          "CodeBuddy 的官方登录（国内版、国际版都在这里）。要切换账号，在账号的「…」里选「切换 CodeBuddy 到这个账号」，或在供应商列表里添加绑定了它的「CodeBuddy 官方登录」卡。「添加账号」会打开终端运行 codebuddy，登录后这里自动收录；已登录时会先让 CodeBuddy 暂时退出原来的登录，放弃可恢复。令牌由 CodeBuddy 自己续期。",
       })}
       helpSide={helpSide}
       accounts={rows}
