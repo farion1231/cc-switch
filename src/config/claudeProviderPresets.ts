@@ -284,6 +284,33 @@ export const providerPresets: ProviderPreset[] = [
     icon: "pateway",
   },
   {
+    name: "Modelflare",
+    websiteUrl: "https://modelflare.dev",
+    apiKeyUrl:
+      "https://modelflare.dev/sign-up?utm_medium=referral&utm_source=ccswitch",
+    // 官方 Claude Code 文档（docs.modelflare.dev/guides/clients/claude-code，
+    // 2026-10-15 核对）：Anthropic 客户端 base 用站点根（不带 /v1）、Key 填
+    // AUTH_TOKEN。主模型与 Sonnet / Opus 跟随 Claude Code 默认；Haiku 档按
+    // 官方文档指向 Sonnet：claude-award / claude-tmp-cheap 两个分组没有
+    // claude-haiku-5-5（modelflare.dev/api/pricing），Key 在这两组时后台任务
+    // 会报找不到模型。origin.modelflare.dev 是面向国内的同一应用（EdgeOne 回源）
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://modelflare.dev",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-sonnet-5-5",
+      },
+    },
+    endpointCandidates: [
+      "https://modelflare.dev",
+      "https://origin.modelflare.dev",
+    ],
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "modelflare",
+    icon: "modelflare",
+  },
+  {
     name: "hao.ai",
     websiteUrl: "https://hao.ai",
     apiKeyUrl: "https://hao.ai/invite/DTBZS3OR",
@@ -301,6 +328,21 @@ export const providerPresets: ProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "haoai",
     icon: "haoai",
+  },
+  {
+    name: "StringAI",
+    websiteUrl: "https://www.string.ink",
+    apiKeyUrl: "https://www.string.ink/register?ref=661AE533A60AF110",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://www.string.ink",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "stringai",
+    icon: "stringai",
   },
   {
     name: "FennoAI",
@@ -428,10 +470,10 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://api.tokenfactory.cn/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "glm-5.3[1M]",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek-v4.1-flash[1M]",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "glm-5.3[1M]",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "kimi-k3[1M]",
+        ANTHROPIC_MODEL: "glm-5.3[1m]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek-v4.1-flash[1m]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "glm-5.3[1m]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "kimi-k3[1m]",
       },
     },
     endpointCandidates: ["https://api.tokenfactory.cn/anthropic"],
@@ -456,10 +498,10 @@ export const providerPresets: ProviderPreset[] = [
         ANTHROPIC_BASE_URL:
           "https://api.baiduqianfan.ai/anthropic/tokenplan/team",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "deepseek-v4.1-flash[1M]",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek-v4.1-flash[1M]",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek-v4.1-flash[1M]",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek-v4.1-flash[1M]",
+        ANTHROPIC_MODEL: "deepseek-v4.1-flash[1m]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek-v4.1-flash[1m]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek-v4.1-flash[1m]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek-v4.1-flash[1m]",
       },
     },
     endpointCandidates: [
@@ -616,8 +658,8 @@ export const providerPresets: ProviderPreset[] = [
   },
   {
     name: "9527CODE",
-    websiteUrl: "https://9527.codes",
-    apiKeyUrl: "https://9527.codes/register?aff=e5zI",
+    websiteUrl: "https://9527.codes/register?channel=ccs",
+    apiKeyUrl: "https://9527.codes/register?channel=ccs",
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL: "https://9527.codes",
@@ -685,10 +727,10 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://api.ppio.com/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "deepseek/deepseek-v4.1-flash[1M]",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek/deepseek-v4.1-flash[1M]",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek/deepseek-v4.1-flash[1M]",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek/deepseek-v4.1-flash[1M]",
+        ANTHROPIC_MODEL: "deepseek/deepseek-v4.1-flash[1m]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek/deepseek-v4.1-flash[1m]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek/deepseek-v4.1-flash[1m]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek/deepseek-v4.1-flash[1m]",
       },
     },
     category: "aggregator",
@@ -821,10 +863,10 @@ export const providerPresets: ProviderPreset[] = [
         ANTHROPIC_BASE_URL: "https://api.siliconflow.cn",
         ANTHROPIC_AUTH_TOKEN: "",
         // 国内站 M2.5 已于 2026-09-11 下线，与 Codex/OpenCode 同换 V4 Flash（1M）
-        ANTHROPIC_MODEL: "deepseek-ai/DeepSeek-V4-Flash[1M]",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek-ai/DeepSeek-V4-Flash[1M]",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek-ai/DeepSeek-V4-Flash[1M]",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek-ai/DeepSeek-V4-Flash[1M]",
+        ANTHROPIC_MODEL: "deepseek-ai/DeepSeek-V4-Flash[1m]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek-ai/DeepSeek-V4-Flash[1m]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek-ai/DeepSeek-V4-Flash[1m]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek-ai/DeepSeek-V4-Flash[1m]",
       },
     },
     category: "aggregator",
@@ -843,10 +885,10 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://api.siliconflow.com",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "MiniMaxAI/MiniMax-M3[1M]",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "MiniMaxAI/MiniMax-M3[1M]",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "MiniMaxAI/MiniMax-M3[1M]",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "MiniMaxAI/MiniMax-M3[1M]",
+        ANTHROPIC_MODEL: "MiniMaxAI/MiniMax-M3[1m]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "MiniMaxAI/MiniMax-M3[1m]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "MiniMaxAI/MiniMax-M3[1m]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "MiniMaxAI/MiniMax-M3[1m]",
       },
     },
     category: "aggregator",
@@ -1108,33 +1150,6 @@ export const providerPresets: ProviderPreset[] = [
     icon: "xycai",
   },
   {
-    name: "Modelflare",
-    websiteUrl: "https://modelflare.dev",
-    apiKeyUrl:
-      "https://modelflare.dev/sign-up?utm_medium=referral&utm_source=ccswitch",
-    // 官方 Claude Code 文档（docs.modelflare.dev/guides/clients/claude-code，
-    // 2026-10-15 核对）：Anthropic 客户端 base 用站点根（不带 /v1）、Key 填
-    // AUTH_TOKEN。主模型与 Sonnet / Opus 跟随 Claude Code 默认；Haiku 档按
-    // 官方文档指向 Sonnet：claude-award / claude-tmp-cheap 两个分组没有
-    // claude-haiku-5-5（modelflare.dev/api/pricing），Key 在这两组时后台任务
-    // 会报找不到模型。origin.modelflare.dev 是面向国内的同一应用（EdgeOne 回源）
-    settingsConfig: {
-      env: {
-        ANTHROPIC_BASE_URL: "https://modelflare.dev",
-        ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-sonnet-5-5",
-      },
-    },
-    endpointCandidates: [
-      "https://modelflare.dev",
-      "https://origin.modelflare.dev",
-    ],
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "modelflare",
-    icon: "modelflare",
-  },
-  {
     name: "AllTokens",
     websiteUrl: "https://alltokens.cc",
     apiKeyUrl: "https://alltokens.cc/register",
@@ -1276,10 +1291,10 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://api.deepseek.com/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "deepseek-flash[1M]",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek-flash[1M]",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek-flash[1M]",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek-flash[1M]",
+        ANTHROPIC_MODEL: "deepseek-flash[1m]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek-flash[1m]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek-flash[1m]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek-flash[1m]",
       },
     },
     category: "cn_official",
@@ -1304,10 +1319,10 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://opencode.ai/zen/go",
         ANTHROPIC_API_KEY: "",
-        ANTHROPIC_MODEL: "deepseek-v4.1-flash[1M]",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek-v4.1-flash[1M]",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek-v4.1-flash[1M]",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek-v4.1-flash[1M]",
+        ANTHROPIC_MODEL: "deepseek-v4.1-flash[1m]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek-v4.1-flash[1m]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek-v4.1-flash[1m]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek-v4.1-flash[1m]",
       },
     },
     category: "third_party",
@@ -1534,10 +1549,10 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://open.bigmodel.cn/api/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "glm-5.3[1M]",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "glm-5.3[1M]",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "glm-5.3[1M]",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "glm-5.3[1M]",
+        ANTHROPIC_MODEL: "glm-5.3[1m]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "glm-5.3[1m]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "glm-5.3[1m]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "glm-5.3[1m]",
       },
     },
     category: "cn_official",
@@ -1554,10 +1569,10 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://api.z.ai/api/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "glm-5.3[1M]",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "glm-5.3[1M]",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "glm-5.3[1M]",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "glm-5.3[1M]",
+        ANTHROPIC_MODEL: "glm-5.3[1m]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "glm-5.3[1m]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "glm-5.3[1m]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "glm-5.3[1m]",
       },
     },
     category: "cn_official",
@@ -1601,10 +1616,10 @@ export const providerPresets: ProviderPreset[] = [
         ANTHROPIC_BASE_URL:
           "https://qianfan.baidubce.com/anthropic/tokenplan/personal",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "deepseek-v4-flash[1M]",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek-v4-flash[1M]",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek-v4-flash[1M]",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek-v4-flash[1M]",
+        ANTHROPIC_MODEL: "deepseek-v4-flash[1m]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek-v4-flash[1m]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek-v4-flash[1m]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek-v4-flash[1m]",
       },
     },
     category: "cn_official",
@@ -1622,7 +1637,7 @@ export const providerPresets: ProviderPreset[] = [
     // not found，不带 Key 才报 Unauthorized）。各档只用 spark-x2.6：用户实测
     // 过的就是它，spark-x2.6-4b 的工具调用没验证过。Anthropic 接口输入加输出
     // 上限 256K（模型表写的 1M 不适用），非 claude-* id 的默认 200K 窗口在
-    // 上限内，不带 [1M] 也不钉窗口
+    // 上限内，不带 [1m] 也不钉窗口
     name: "Astron MaaS",
     family: "astron",
     planKey: "payg",
@@ -1681,12 +1696,12 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://maas.qianwenaiapi.com/apps/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "qwen3.8-max[1M]",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "qwen3.8-flash[1M]",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "qwen3.7-plus[1M]",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "qwen3.8-max[1M]",
+        ANTHROPIC_MODEL: "qwen3.8-max[1m]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "qwen3.8-flash[1m]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "qwen3.7-plus[1m]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "qwen3.8-max[1m]",
         // 模型 id 非 claude-* 时 Claude Code 按 200K 默认窗口处理：各档带
-        // [1M]（表单预勾，优先于下面的值）；这里保留官方钉的值兜底取消
+        // [1m]（表单预勾，优先于下面的值）；这里保留官方钉的值兜底取消
         // 勾选或换成未勾模型的档位：qwen3.8 系 context_window = 983616
         CLAUDE_CODE_MAX_CONTEXT_TOKENS: "983616",
       },
@@ -1728,12 +1743,12 @@ export const providerPresets: ProviderPreset[] = [
         ANTHROPIC_BASE_URL:
           "https://token-plan.maas.qianwenaiapi.com/apps/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "qwen3.8-max[1M]",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "qwen3.8-flash[1M]",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "qwen3.7-plus[1M]",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "qwen3.8-max[1M]",
+        ANTHROPIC_MODEL: "qwen3.8-max[1m]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "qwen3.8-flash[1m]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "qwen3.7-plus[1m]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "qwen3.8-max[1m]",
         // 官方 Token Plan 配置同样钉窗口：qwen3.8 系 context_window = 983616；
-        // 各档带 [1M] 时以标记为准，这里兜底未勾 1M 的档位
+        // 各档带 [1m] 时以标记为准，这里兜底未勾 1M 的档位
         CLAUDE_CODE_MAX_CONTEXT_TOKENS: "983616",
       },
     },
@@ -1760,10 +1775,10 @@ export const providerPresets: ProviderPreset[] = [
         ANTHROPIC_BASE_URL:
           "https://ap-southeast-1.maas.qwencloudapi.com/apps/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "qwen3.8-max[1M]",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "qwen3.8-flash[1M]",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "qwen3.7-plus[1M]",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "qwen3.8-max[1M]",
+        ANTHROPIC_MODEL: "qwen3.8-max[1m]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "qwen3.8-flash[1m]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "qwen3.7-plus[1m]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "qwen3.8-max[1m]",
       },
     },
     category: "cn_official",
@@ -1785,10 +1800,10 @@ export const providerPresets: ProviderPreset[] = [
         ANTHROPIC_BASE_URL:
           "https://coding-intl.dashscope.aliyuncs.com/apps/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "qwen3.7-plus[1M]",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "qwen3.7-plus[1M]",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "qwen3.7-plus[1M]",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "qwen3.7-plus[1M]",
+        ANTHROPIC_MODEL: "qwen3.7-plus[1m]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "qwen3.7-plus[1m]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "qwen3.7-plus[1m]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "qwen3.7-plus[1m]",
       },
     },
     category: "cn_official",
@@ -1807,12 +1822,12 @@ export const providerPresets: ProviderPreset[] = [
         ANTHROPIC_BASE_URL:
           "https://token-plan.maas.qwencloudapi.com/apps/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "qwen3.8-max[1M]",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "qwen3.8-flash[1M]",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "qwen3.7-plus[1M]",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "qwen3.8-max[1M]",
+        ANTHROPIC_MODEL: "qwen3.8-max[1m]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "qwen3.8-flash[1m]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "qwen3.7-plus[1m]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "qwen3.8-max[1m]",
         // 官方 Claude Code 配置钉的窗口：qwen3.8 系 context_window = 983616；
-        // 各档带 [1M] 时以标记为准，这里兜底未勾 1M 的档位
+        // 各档带 [1m] 时以标记为准，这里兜底未勾 1M 的档位
         CLAUDE_CODE_MAX_CONTEXT_TOKENS: "983616",
       },
     },
@@ -1873,10 +1888,10 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://api-inference.modelscope.cn",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "ZhipuAI/GLM-5.2[1M]",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "ZhipuAI/GLM-5.2[1M]",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "ZhipuAI/GLM-5.2[1M]",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "ZhipuAI/GLM-5.2[1M]",
+        ANTHROPIC_MODEL: "ZhipuAI/GLM-5.2[1m]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "ZhipuAI/GLM-5.2[1m]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "ZhipuAI/GLM-5.2[1m]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "ZhipuAI/GLM-5.2[1m]",
       },
     },
     category: "aggregator",
@@ -1932,11 +1947,11 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://api.longcat.chat/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "LongCat-2.0[1M]",
+        ANTHROPIC_MODEL: "LongCat-2.0[1m]",
         ANTHROPIC_SMALL_FAST_MODEL: "LongCat-2.0",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "LongCat-2.0[1M]",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "LongCat-2.0[1M]",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "LongCat-2.0[1M]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "LongCat-2.0[1m]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "LongCat-2.0[1m]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "LongCat-2.0[1m]",
         CLAUDE_CODE_MAX_OUTPUT_TOKENS: "131072",
       },
     },
@@ -1955,11 +1970,11 @@ export const providerPresets: ProviderPreset[] = [
         ANTHROPIC_BASE_URL: "https://api.minimax.cn/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
         CLAUDE_CODE_AUTO_COMPACT_WINDOW: "1000000",
-        ANTHROPIC_MODEL: "MiniMax-M3.1-Flash[1M]",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "MiniMax-M3.1-Flash[1M]",
+        ANTHROPIC_MODEL: "MiniMax-M3.1-Flash[1m]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "MiniMax-M3.1-Flash[1m]",
         // M3 stays selectable as Opus; a role slot also works through the local route
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "MiniMax-M3[1M]",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "MiniMax-M3.1-Flash[1M]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "MiniMax-M3[1m]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "MiniMax-M3.1-Flash[1m]",
       },
     },
     category: "cn_official",
@@ -1981,11 +1996,11 @@ export const providerPresets: ProviderPreset[] = [
         ANTHROPIC_BASE_URL: "https://api.minimax.io/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
         CLAUDE_CODE_AUTO_COMPACT_WINDOW: "1000000",
-        ANTHROPIC_MODEL: "MiniMax-M3.1-Flash[1M]",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "MiniMax-M3.1-Flash[1M]",
+        ANTHROPIC_MODEL: "MiniMax-M3.1-Flash[1m]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "MiniMax-M3.1-Flash[1m]",
         // M3 stays selectable as Opus; a role slot also works through the local route
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "MiniMax-M3[1M]",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "MiniMax-M3.1-Flash[1M]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "MiniMax-M3[1m]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "MiniMax-M3.1-Flash[1m]",
       },
     },
     category: "cn_official",
@@ -2130,10 +2145,10 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://inference.baseten.co",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "zai-org/GLM-5.3[1M]",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "zai-org/GLM-5.3-Flash[1M]",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "zai-org/GLM-5.3[1M]",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "moonshotai/Kimi-K3[1M]",
+        ANTHROPIC_MODEL: "zai-org/GLM-5.3[1m]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "zai-org/GLM-5.3-Flash[1m]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "zai-org/GLM-5.3[1m]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "moonshotai/Kimi-K3[1m]",
       },
     },
     category: "aggregator",
@@ -2177,10 +2192,10 @@ export const providerPresets: ProviderPreset[] = [
         ANTHROPIC_BASE_URL: "https://ollama.com",
         ANTHROPIC_AUTH_TOKEN: "",
         ANTHROPIC_API_KEY: "",
-        ANTHROPIC_MODEL: "glm-5.3[1M]",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "glm-5.3-flash[1M]",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "glm-5.3[1M]",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "kimi-k3[1M]",
+        ANTHROPIC_MODEL: "glm-5.3[1m]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "glm-5.3-flash[1m]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "glm-5.3[1m]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "kimi-k3[1m]",
       },
     },
     category: "cloud_provider",
@@ -2335,15 +2350,15 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://api.meta.ai",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "muse-wonder-1.0[1M]",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "muse-wonder-1.0[1M]",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "muse-spark-1.3[1M]",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "muse-spark-1.3[1M]",
-        CLAUDE_CODE_SUBAGENT_MODEL: "muse-spark-1.3[1M]",
+        ANTHROPIC_MODEL: "muse-wonder-1.0[1m]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "muse-wonder-1.0[1m]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "muse-spark-1.3[1m]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "muse-spark-1.3[1m]",
+        CLAUDE_CODE_SUBAGENT_MODEL: "muse-spark-1.3[1m]",
         // 非第一方 host 默认关闭 MCP 工具搜索，官方要求打开
         ENABLE_TOOL_SEARCH: "true",
         // 模型 id 非 claude-* 时 Claude Code 按 200K 默认窗口处理：两款模型
-        // 窗口均为 1048576（dev.meta.ai/docs/models.md），各档带 [1M]（表单
+        // 窗口均为 1048576（dev.meta.ai/docs/models.md），各档带 [1m]（表单
         // 预勾）；这里兜底未勾 1M 的档位
         CLAUDE_CODE_MAX_CONTEXT_TOKENS: "1048576",
       },
@@ -2368,12 +2383,12 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://api.deepinfra.com/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "deepseek-ai/DeepSeek-V4.1-Flash-1017[1M]",
+        ANTHROPIC_MODEL: "deepseek-ai/DeepSeek-V4.1-Flash-1017[1m]",
         ANTHROPIC_DEFAULT_HAIKU_MODEL: "inclusionAI/Ling-3.0-flash",
         ANTHROPIC_DEFAULT_SONNET_MODEL:
-          "deepseek-ai/DeepSeek-V4.1-Flash-1017[1M]",
+          "deepseek-ai/DeepSeek-V4.1-Flash-1017[1m]",
         ANTHROPIC_DEFAULT_OPUS_MODEL:
-          "deepseek-ai/DeepSeek-V4.1-Flash-1017[1M]",
+          "deepseek-ai/DeepSeek-V4.1-Flash-1017[1m]",
       },
     },
     category: "aggregator",
@@ -2425,10 +2440,10 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://api.tokenfactory.nebius.com",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "zai-org/GLM-5.3[1M]",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "zai-org/GLM-5.3-Flash[1M]",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "zai-org/GLM-5.3[1M]",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "zai-org/GLM-5.3[1M]",
+        ANTHROPIC_MODEL: "zai-org/GLM-5.3[1m]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "zai-org/GLM-5.3-Flash[1m]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "zai-org/GLM-5.3[1m]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "zai-org/GLM-5.3[1m]",
       },
     },
     category: "aggregator",
@@ -2453,10 +2468,10 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://api.cline.bot/api/v1",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "cline-pass/kimi-k3.1-pro[1M]",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "cline-pass/glm-5.3-flash[1M]",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "cline-pass/kimi-k3.1-pro[1M]",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "cline-pass/kimi-k3.1-pro[1M]",
+        ANTHROPIC_MODEL: "cline-pass/kimi-k3.1-pro[1m]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "cline-pass/glm-5.3-flash[1m]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "cline-pass/kimi-k3.1-pro[1m]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "cline-pass/kimi-k3.1-pro[1m]",
       },
     },
     category: "third_party",
@@ -2505,7 +2520,7 @@ export const providerPresets: ProviderPreset[] = [
     // /v1/messages 无 Key 401）。Bearer 与 x-api-key 都收，默认的 AUTH_TOKEN 即可。
     // 模型照官方文档全档 MiniMax-M3（Preview，官方说可能短期下架，届时改用
     // Production 的 gpt-oss-120b）；官方强调 haiku 档也要设，否则后台任务失败。
-    // 平台声明窗口 1048576，各档带 [1M]（表单预勾）。[1M] 会让 Claude
+    // 平台声明窗口 1048576，各档带 [1m]（表单预勾）。[1m] 会让 Claude
     // Code 多发 context-1m beta 头，但同一请求本就带着十来个 beta 头
     //（2.1.296 本地模拟接口实测，2026-10-15），多它一个不改变兼容性。
     // OpenAPI 写明 v1 的 thinking
@@ -2516,10 +2531,10 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://api.sambanova.ai",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "MiniMax-M3[1M]",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "MiniMax-M3[1M]",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "MiniMax-M3[1M]",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "MiniMax-M3[1M]",
+        ANTHROPIC_MODEL: "MiniMax-M3[1m]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "MiniMax-M3[1m]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "MiniMax-M3[1m]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "MiniMax-M3[1m]",
       },
     },
     category: "cloud_provider",
@@ -2569,17 +2584,17 @@ export const providerPresets: ProviderPreset[] = [
     // :baseten：文档说写明上游即确定路由，不写按吞吐挑选并自动切换，上游一变
     // prompt cache 前缀就丢；代价是没有故障转移，Baseten 挂了请求直接失败。
     // Baseten 同时提供这几款且窗口均为 1048576（公开 /v1/models 同日快照）。
-    // 非 claude- 前缀 ID 默认按 200K 算：各档带 [1M]（表单预勾），另照官方
+    // 非 claude- 前缀 ID 默认按 200K 算：各档带 [1m]（表单预勾），另照官方
     // hf-claude 启动器写 CLAUDE_CODE_MAX_CONTEXT_TOKENS 兜底未勾 1M 的档位。/v1/models 公开可读（返回的 ID 不带上游
     // 后缀），默认探测即可，不写 modelsUrl
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL: "https://router.huggingface.co",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "zai-org/GLM-5.3:baseten[1M]",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "zai-org/GLM-5.3-Flash:baseten[1M]",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "zai-org/GLM-5.3:baseten[1M]",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "zai-org/GLM-5.3:baseten[1M]",
+        ANTHROPIC_MODEL: "zai-org/GLM-5.3:baseten[1m]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "zai-org/GLM-5.3-Flash:baseten[1m]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "zai-org/GLM-5.3:baseten[1m]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "zai-org/GLM-5.3:baseten[1m]",
         CLAUDE_CODE_MAX_CONTEXT_TOKENS: "1048576",
       },
     },
@@ -2655,11 +2670,11 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://api.fireworks.ai/inference",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "accounts/fireworks/models/glm-5p3[1M]",
+        ANTHROPIC_MODEL: "accounts/fireworks/models/glm-5p3[1m]",
         ANTHROPIC_DEFAULT_HAIKU_MODEL:
-          "accounts/fireworks/models/deepseek-v4p1-flash[1M]",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "accounts/fireworks/models/glm-5p3[1M]",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "accounts/fireworks/models/kimi-k3[1M]",
+          "accounts/fireworks/models/deepseek-v4p1-flash[1m]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "accounts/fireworks/models/glm-5p3[1m]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "accounts/fireworks/models/kimi-k3[1m]",
       },
     },
     category: "cloud_provider",
@@ -2680,7 +2695,7 @@ export const providerPresets: ProviderPreset[] = [
     // /v1/chat/completions（同 Nebius）。模型取官方模型表（docs.mistral.ai/
     // models.md，2026-11-06 核对）：Medium 3.5 已于 10-31 弃用（2027-04-30
     // 下线，官方替代 Large 4），主力改 Mistral Large 4（GA，窗口 1M，标
-    // [1M]）；haiku 档仍是 Mistral Small 4（GA，256k，不标 1M，按 Claude Code
+    // [1m]）；haiku 档仍是 Mistral Small 4（GA，256k，不标 1M，按 Claude Code
     // 默认窗口算）。Codestral 定位补全 / FIM，不做 Agent 主力。
     // ChatCompletionRequest 不收额外字段且没有 stream_options，转换层给流式请求
     // 加的 stream_options.include_usage 会不会被 422 拒，未经真 Key 实测。
@@ -2692,10 +2707,10 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://api.mistral.ai",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "mistral-large-4[1M]",
+        ANTHROPIC_MODEL: "mistral-large-4[1m]",
         ANTHROPIC_DEFAULT_HAIKU_MODEL: "mistral-small-2603",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "mistral-large-4[1M]",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "mistral-large-4[1M]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "mistral-large-4[1m]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "mistral-large-4[1m]",
       },
     },
     category: "cn_official",
@@ -2899,10 +2914,10 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://api.xiaomimimo.com/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "mimo-v2.6-pro[1M]",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "mimo-v2.6-pro[1M]",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "mimo-v2.6-pro[1M]",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "mimo-v2.6-pro[1M]",
+        ANTHROPIC_MODEL: "mimo-v2.6-pro[1m]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "mimo-v2.6-pro[1m]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "mimo-v2.6-pro[1m]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "mimo-v2.6-pro[1m]",
       },
     },
     category: "cn_official",
@@ -2919,10 +2934,10 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://token-plan-cn.xiaomimimo.com/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "mimo-v2.6-pro[1M]",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "mimo-v2.6-pro[1M]",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "mimo-v2.6-pro[1M]",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "mimo-v2.6-pro[1M]",
+        ANTHROPIC_MODEL: "mimo-v2.6-pro[1m]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "mimo-v2.6-pro[1m]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "mimo-v2.6-pro[1m]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "mimo-v2.6-pro[1m]",
       },
     },
     category: "cn_official",
@@ -3046,10 +3061,10 @@ export const providerPresets: ProviderPreset[] = [
       env: {
         ANTHROPIC_BASE_URL: "https://api.commandcode.ai/provider",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "deepseek/deepseek-v4.1-flash[1M]",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek/deepseek-v4.1-flash[1M]",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek/deepseek-v4.1-flash[1M]",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek/deepseek-v4.1-flash[1M]",
+        ANTHROPIC_MODEL: "deepseek/deepseek-v4.1-flash[1m]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek/deepseek-v4.1-flash[1m]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek/deepseek-v4.1-flash[1m]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek/deepseek-v4.1-flash[1m]",
       },
     },
     category: "third_party",
@@ -3067,10 +3082,10 @@ export const providerPresets: ProviderPreset[] = [
         // 官方文档（CC Switch 快速配置）指定 Claude Code 走 Anthropic 原生入口
         ANTHROPIC_BASE_URL: "https://moark.com/anthropic",
         ANTHROPIC_AUTH_TOKEN: "",
-        ANTHROPIC_MODEL: "deepseek-v4.1-flash[1M]",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek-v4.1-flash[1M]",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek-v4.1-flash[1M]",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek-v4.1-flash[1M]",
+        ANTHROPIC_MODEL: "deepseek-v4.1-flash[1m]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek-v4.1-flash[1m]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek-v4.1-flash[1m]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek-v4.1-flash[1m]",
       },
     },
     category: "aggregator",

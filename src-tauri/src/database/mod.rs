@@ -26,6 +26,7 @@
 pub(crate) mod backup;
 mod dao;
 mod migration;
+mod read_cache;
 mod schema;
 
 #[cfg(test)]
@@ -40,18 +41,19 @@ pub(crate) use dao::providers_seed::{
 pub(crate) use dao::proxy::{PRICING_SOURCE_REQUEST, PRICING_SOURCE_RESPONSE};
 pub use dao::FailoverQueueItem;
 pub use dao::Profile;
+pub use dao::UnreadableEntry;
 
 use crate::config::get_app_config_dir;
 use crate::error::AppError;
 use rusqlite::{hooks::Action, Connection};
 use serde::Serialize;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, MutexGuard};
 
 // DAO 方法通过 impl Database 提供，无需额外导出
 
 /// 当前 Schema 版本号
 /// 每次修改表结构时递增，并在 schema.rs 中添加相应的迁移逻辑
-pub(crate) const SCHEMA_VERSION: i32 = 25;
+pub(crate) const SCHEMA_VERSION: i32 = 27;
 
 /// 安全地序列化 JSON，避免 unwrap panic
 pub(crate) fn to_json_string<T: Serialize>(value: &T) -> Result<String, AppError> {
@@ -59,34 +61,116 @@ pub(crate) fn to_json_string<T: Serialize>(value: &T) -> Result<String, AppError
         .map_err(|e| AppError::Config(format!("JSON serialization failed: {e}")))
 }
 
-/// 安全地获取 Mutex 锁，避免 unwrap panic
+/// 获取数据库的锁，锁中毒时清理后继续使用，见 [`lock_recovering`]。
 macro_rules! lock_conn {
     ($mutex:expr) => {
-        $mutex
-            .lock()
-            .map_err(|e| AppError::Database(format!("Mutex lock failed: {}", e)))?
+        $crate::database::lock_recovering(&$mutex)?
     };
 }
 
 // 导出宏供子模块使用
 pub(crate) use lock_conn;
 
+/// 持锁的任务 panic 后 `Mutex` 会中毒，之后每次 `lock()` 都失败。整个应用共用一条
+/// 数据库连接，中毒后托盘、供应商切换、退出时写回直连全都失败，只能重启进程。
+/// 这里取回锁内的值，清理成功后清除中毒标记照常返回；清理失败则保持中毒并报错。
+pub(crate) fn lock_recovering<T: RecoverPoisoned>(
+    mutex: &Mutex<T>,
+) -> Result<MutexGuard<'_, T>, AppError> {
+    mutex.lock().or_else(|poisoned| {
+        let mut guard = poisoned.into_inner();
+        guard.recover_poisoned()?;
+        mutex.clear_poison();
+        log::warn!("数据库锁因持锁任务 panic 而中毒，已清理后继续使用");
+        Ok(guard)
+    })
+}
+
+/// 锁中毒后、继续使用锁内的值之前要做的清理。
+pub(crate) trait RecoverPoisoned {
+    fn recover_poisoned(&mut self) -> Result<(), AppError>;
+}
+
+impl RecoverPoisoned for Connection {
+    /// rusqlite 的 `Transaction` 在 panic 展开时会自己回滚；这里兜底手写 `BEGIN` 等还停在
+    /// 事务里的情况，否则之后的写入都会落进一个永远不会提交的事务。
+    fn recover_poisoned(&mut self) -> Result<(), AppError> {
+        if !self.is_autocommit() {
+            if let Err(e) = self.execute_batch("ROLLBACK") {
+                log::error!("数据库锁中毒后回滚未完成的事务失败: {e}");
+            }
+        }
+        if self.is_autocommit() {
+            Ok(())
+        } else {
+            Err(AppError::Database(
+                "Mutex lock failed: connection is still in a transaction after poisoning".into(),
+            ))
+        }
+    }
+}
+
+impl RecoverPoisoned for Option<crate::services::usage_stats::LogCountCache> {
+    /// 只是加速用的缓存，清空后下次查询重新统计。
+    fn recover_poisoned(&mut self) -> Result<(), AppError> {
+        *self = None;
+        Ok(())
+    }
+}
+
 /// 数据库连接封装
 ///
 /// 使用 Mutex 包装 Connection 以支持在多线程环境（如 Tauri State）中共享。
 /// rusqlite::Connection 本身不是 Sync 的，因此需要这层包装。
+#[derive(Clone)]
 pub struct Database {
-    pub(crate) conn: Mutex<Connection>,
+    pub(crate) conn: Arc<Mutex<Connection>>,
+    pub(crate) read_cache: Arc<read_cache::ProxyReadCache>,
     /// 请求日志总数缓存，见 `services::usage_stats::LogCountCache`
-    pub(crate) log_count_cache: Mutex<Option<crate::services::usage_stats::LogCountCache>>,
+    pub(crate) log_count_cache: Arc<Mutex<Option<crate::services::usage_stats::LogCountCache>>>,
 }
 
-fn register_db_change_hook(conn: &Connection) {
+fn register_db_change_hook(conn: &Connection, cache: Arc<read_cache::ProxyReadCache>) {
+    // DELETE without WHERE normally skips row hooks. Disable only that optimization
+    // for cached tables, including when a prepared DELETE statement is reused.
+    let ddl_cache = cache.clone();
+    let mut dropping_table = None;
+    conn.authorizer(Some(
+        move |context: rusqlite::hooks::AuthContext<'_>| match context.action {
+            rusqlite::hooks::AuthAction::DropTable { table_name }
+            | rusqlite::hooks::AuthAction::DropTempTable { table_name } => {
+                ddl_cache.invalidate_table(table_name);
+                dropping_table = Some(table_name.to_owned());
+                rusqlite::hooks::Authorization::Allow
+            }
+            // SQLite also authorizes DELETE as part of DROP TABLE. IGNORE there
+            // would silently skip the DROP and break table-rebuilding migrations.
+            rusqlite::hooks::AuthAction::Delete { table_name }
+                if dropping_table.as_deref() == Some(table_name) =>
+            {
+                dropping_table = None;
+                rusqlite::hooks::Authorization::Allow
+            }
+            rusqlite::hooks::AuthAction::Delete {
+                table_name:
+                    "settings"
+                        | "proxy_config"
+                        | "model_pricing"
+                        | "providers"
+                        | "provider_endpoints",
+            } => rusqlite::hooks::Authorization::Ignore,
+            _ => rusqlite::hooks::Authorization::Allow,
+        },
+    ));
+    let rollback_cache = cache.clone();
+    conn.rollback_hook(Some(move || rollback_cache.invalidate_all()));
     conn.update_hook(Some(
-        |action: Action, _database: &str, table: &str, _row_id: i64| match action {
+        move |action: Action, _database: &str, table: &str, _row_id: i64| match action {
             Action::SQLITE_INSERT | Action::SQLITE_UPDATE | Action::SQLITE_DELETE => {
-                crate::services::webdav_auto_sync::notify_db_changed(table);
-                crate::services::s3_auto_sync::notify_db_changed(table);
+                cache.invalidate_table(table);
+                use crate::services::{auto_sync, s3_auto_sync, webdav_auto_sync};
+                auto_sync::notify_db_changed::<webdav_auto_sync::WebDavAutoSync>(table);
+                auto_sync::notify_db_changed::<s3_auto_sync::S3AutoSync>(table);
             }
             _ => {}
         },
@@ -94,6 +178,47 @@ fn register_db_change_hook(conn: &Connection) {
 }
 
 impl Database {
+    fn configure_connection(conn: &Connection) -> Result<(), AppError> {
+        conn.execute_batch(
+            "PRAGMA busy_timeout = 5000;
+            PRAGMA journal_mode = WAL;
+            PRAGMA synchronous = NORMAL;
+            PRAGMA temp_store = MEMORY;
+            PRAGMA cache_size = -16000;",
+        )
+        .map_err(|e| AppError::Database(format!("Configure SQLite connection: {e}")))
+    }
+
+    /// Run synchronous SQLite/file work away from async executor workers.
+    pub(crate) async fn run_blocking<T: Send + 'static>(
+        &self,
+        work: impl FnOnce(&Database) -> Result<T, AppError> + Send + 'static,
+    ) -> Result<T, AppError> {
+        let db = self.clone();
+        // Startup also calls these async DAOs through futures::executor::block_on
+        // before entering Tokio. Tauri provides a runtime for that synchronous caller.
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime
+                .spawn_blocking(move || work(&db))
+                .await
+                .map_err(|e| AppError::Database(format!("Database worker failed: {e}")))?
+        } else {
+            tauri::async_runtime::spawn_blocking(move || work(&db))
+                .await
+                .map_err(|e| AppError::Database(format!("Database worker failed: {e}")))?
+        }
+    }
+
+    /// Call after stopping proxy writes, before explicit process exit/restart.
+    pub fn checkpoint_wal(&self) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        let busy: i64 = conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| row.get(0))?;
+        if busy != 0 {
+            return Err(AppError::Database("WAL checkpoint is busy".into()));
+        }
+        Ok(())
+    }
+
     /// 初始化数据库连接并创建表
     ///
     /// 数据库文件位于 `~/.cc-switch/cc-switch.db`
@@ -117,11 +242,14 @@ impl Database {
             conn.execute("PRAGMA auto_vacuum = INCREMENTAL;", [])
                 .map_err(|e| AppError::Database(e.to_string()))?;
         }
-        register_db_change_hook(&conn);
+        Self::configure_connection(&conn)?;
+        let read_cache = Arc::new(read_cache::ProxyReadCache::default());
+        register_db_change_hook(&conn, read_cache.clone());
 
         let db = Self {
-            conn: Mutex::new(conn),
-            log_count_cache: Mutex::new(None),
+            conn: Arc::new(Mutex::new(conn)),
+            log_count_cache: Arc::new(Mutex::new(None)),
+            read_cache,
         };
         db.create_tables()?;
 
@@ -181,11 +309,14 @@ impl Database {
             .map_err(|e| AppError::Database(e.to_string()))?;
         conn.execute("PRAGMA auto_vacuum = INCREMENTAL;", [])
             .map_err(|e| AppError::Database(e.to_string()))?;
-        register_db_change_hook(&conn);
+        Self::configure_connection(&conn)?;
+        let read_cache = Arc::new(read_cache::ProxyReadCache::default());
+        register_db_change_hook(&conn, read_cache.clone());
 
         let db = Self {
-            conn: Mutex::new(conn),
-            log_count_cache: Mutex::new(None),
+            conn: Arc::new(Mutex::new(conn)),
+            log_count_cache: Arc::new(Mutex::new(None)),
+            read_cache,
         };
         db.create_tables()?;
         db.ensure_model_pricing_seeded()?;

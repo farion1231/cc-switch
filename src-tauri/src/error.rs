@@ -147,3 +147,56 @@ pub fn format_skill_error(
         format!("ERROR:{code}")
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::AppError;
+    use tauri::ipc::InvokeError;
+
+    fn every_variant() -> Vec<AppError> {
+        let io = || std::io::Error::new(std::io::ErrorKind::NotFound, "missing");
+        let json = || serde_json::from_str::<serde_json::Value>("{").unwrap_err();
+        vec![
+            AppError::Config("c".into()),
+            AppError::InvalidInput("i".into()),
+            AppError::Conflict("x".into()),
+            AppError::io("/tmp/a", io()),
+            AppError::IoContext {
+                context: "ctx".into(),
+                source: io(),
+            },
+            AppError::json("/tmp/a.json", json()),
+            AppError::JsonSerialize { source: json() },
+            AppError::toml(
+                "/tmp/a.toml",
+                toml::from_str::<toml::Value>("=").unwrap_err(),
+            ),
+            AppError::Lock("l".into()),
+            AppError::McpValidation("m".into()),
+            AppError::Message("{\"code\":\"SKILL_NOT_FOUND\"}".into()),
+            AppError::HttpStatus {
+                status: 502,
+                body: "bad".into(),
+            },
+            AppError::localized("k", "中文", "english"),
+            AppError::Database("d".into()),
+            AppError::OmoConfigNotFound,
+            AppError::AllProvidersCircuitOpen,
+            AppError::NoProvidersConfigured,
+        ]
+    }
+
+    /// Commands may return `AppError` or its `to_string()`; the frontend must
+    /// receive the same payload either way.
+    #[test]
+    fn command_error_payload_is_the_message_string() {
+        for err in every_variant() {
+            let message = err.to_string();
+            assert_eq!(
+                InvokeError::from(err).0,
+                InvokeError::from(message.clone()).0,
+                "{message}"
+            );
+        }
+    }
+}

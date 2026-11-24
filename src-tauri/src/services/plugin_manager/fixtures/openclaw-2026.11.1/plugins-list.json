@@ -1,0 +1,167 @@
+{
+  "workspaceDir": "C:\\fixture\\openclaw\\workspace",
+  "workspaceScope": "selected",
+  "registry": {
+    "source": "persisted",
+    "diagnostics": []
+  },
+  "plugins": [
+    {
+      "id": "a2a",
+      "name": "A2A",
+      "version": "2026.11.1",
+      "description": "A2A v1.0 Agent-to-Agent protocol channel plugin.",
+      "format": "openclaw",
+      "source": "C:\\fixture\\oc-prefix\\node_modules\\openclaw\\dist\\extensions\\a2a\\index.js",
+      "rootDir": "C:\\fixture\\oc-prefix\\node_modules\\openclaw\\dist\\extensions\\a2a",
+      "origin": "bundled",
+      "trust": {
+        "reason": "bundled",
+        "registryPath": "C:\\fixture\\openclaw\\state\\openclaw.sqlite",
+        "origin": "bundled"
+      },
+      "enabled": false,
+      "compat": [],
+      "syntheticAuthRefs": [],
+      "status": "disabled",
+      "toolNames": [],
+      "hookNames": [],
+      "channelIds": [
+        "a2a"
+      ],
+      "cliBackendIds": [],
+      "providerIds": [],
+      "embeddingProviderIds": [],
+      "speechProviderIds": [],
+      "realtimeTranscriptionProviderIds": [],
+      "realtimeVoiceProviderIds": [],
+      "mediaUnderstandingProviderIds": [],
+      "transcriptSourceProviderIds": [],
+      "imageGenerationProviderIds": [],
+      "videoGenerationProviderIds": [],
+      "musicGenerationProviderIds": [],
+      "webFetchProviderIds": [],
+      "webSearchProviderIds": [],
+      "migrationProviderIds": [],
+      "cliCommands": [],
+      "services": [],
+      "gatewayDiscoveryServiceIds": [],
+      "commands": [],
+      "httpRoutes": 0,
+      "hookCount": 0,
+      "configSchema": true
+    },
+    {
+      "id": "anthropic",
+      "name": "Anthropic",
+      "version": "2026.11.1",
+      "description": "Anthropic models, Claude CLI, and native Claude session catalog.",
+      "format": "openclaw",
+      "source": "C:\\fixture\\oc-prefix\\node_modules\\openclaw\\dist\\extensions\\anthropic\\index.js",
+      "rootDir": "C:\\fixture\\oc-prefix\\node_modules\\openclaw\\dist\\extensions\\anthropic",
+      "origin": "bundled",
+      "trust": {
+        "reason": "bundled",
+        "registryPath": "C:\\fixture\\openclaw\\state\\openclaw.sqlite",
+        "origin": "bundled"
+      },
+      "enabled": true,
+      "compat": [],
+      "syntheticAuthRefs": [
+        "claude-cli"
+      ],
+      "status": "loaded",
+      "toolNames": [],
+      "hookNames": [],
+      "channelIds": [],
+      "cliBackendIds": [
+        "claude-cli"
+      ],
+      "providerIds": [
+        "anthropic"
+      ],
+      "embeddingProviderIds": [],
+      "speechProviderIds": [],
+      "realtimeTranscriptionProviderIds": [],
+      "realtimeVoiceProviderIds": [],
+      "mediaUnderstandingProviderIds": [
+        "anthropic"
+      ],
+      "transcriptSourceProviderIds": [],
+      "imageGenerationProviderIds": [],
+      "videoGenerationProviderIds": [],
+      "musicGenerationProviderIds": [],
+      "webFetchProviderIds": [],
+      "webSearchProviderIds": [],
+      "migrationProviderIds": [],
+      "cliCommands": [],
+      "services": [],
+      "gatewayDiscoveryServiceIds": [],
+      "commands": [],
+      "httpRoutes": 0,
+      "hookCount": 0,
+      "configSchema": true,
+      "contracts": {
+        "mediaUnderstandingProviders": [
+          "anthropic"
+        ],
+        "usageProviders": [
+          "anthropic"
+        ]
+      }
+    },
+    {
+      "id": "airtable",
+      "name": "airtable",
+      "version": "1.0.1",
+      "description": "Bases, tables, and records from your Airtable workspace.",
+      "format": "bundle",
+      "bundleFormat": "claude",
+      "bundleCapabilities": [
+        "mcpServers"
+      ],
+      "source": "C:\\fixture\\openclaw\\extensions\\airtable",
+      "rootDir": "C:\\fixture\\openclaw\\extensions\\airtable",
+      "origin": "global",
+      "enabled": true,
+      "compat": [],
+      "syntheticAuthRefs": [],
+      "status": "loaded",
+      "toolNames": [],
+      "hookNames": [],
+      "channelIds": [],
+      "cliBackendIds": [],
+      "providerIds": [],
+      "embeddingProviderIds": [],
+      "speechProviderIds": [],
+      "realtimeTranscriptionProviderIds": [],
+      "realtimeVoiceProviderIds": [],
+      "mediaUnderstandingProviderIds": [],
+      "transcriptSourceProviderIds": [],
+      "imageGenerationProviderIds": [],
+      "videoGenerationProviderIds": [],
+      "musicGenerationProviderIds": [],
+      "webFetchProviderIds": [],
+      "webSearchProviderIds": [],
+      "migrationProviderIds": [],
+      "cliCommands": [],
+      "services": [],
+      "gatewayDiscoveryServiceIds": [],
+      "commands": [],
+      "httpRoutes": 0,
+      "hookCount": 0,
+      "configSchema": false,
+      "dependencyStatus": {
+        "hasDependencies": false,
+        "installed": true,
+        "requiredInstalled": true,
+        "optionalInstalled": true,
+        "missing": [],
+        "missingOptional": [],
+        "dependencies": [],
+        "optionalDependencies": []
+      }
+    }
+  ],
+  "diagnostics": []
+}

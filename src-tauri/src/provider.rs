@@ -4,6 +4,30 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 
+use crate::provider_kind::ProviderKind;
+
+pub(crate) fn parse_billing_multiplier(raw: &str) -> Result<rust_decimal::Decimal, String> {
+    let raw = raw.trim();
+    let syntax_ok = !raw.is_empty() && raw.bytes().all(|c| c.is_ascii_digit() || c == b'.');
+    raw.parse::<rust_decimal::Decimal>()
+        .ok()
+        .filter(|v| {
+            syntax_ok
+                && *v >= rust_decimal::Decimal::ZERO
+                && *v <= rust_decimal::Decimal::from(1000)
+        })
+        .ok_or_else(|| "Billing multiplier must be a decimal from 0 to 1000.".to_string())
+}
+
+pub(crate) fn billing_multiplier(provider: &Provider) -> rust_decimal::Decimal {
+    provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.billing_multiplier.as_deref())
+        .and_then(|raw| parse_billing_multiplier(raw).ok())
+        .unwrap_or(rust_decimal::Decimal::ONE)
+}
+
 // SSOT 模式：不再写供应商副本文件
 
 /// 供应商结构体
@@ -43,7 +67,17 @@ pub struct Provider {
     pub in_failover_queue: bool,
 }
 
+/// `category` 是否标着官方卡。这是唯一比较 `"official"` 的地方；各应用的
+/// `is_official*` 在此之外还各有自己的认法。
+pub fn is_official_category(category: Option<&str>) -> bool {
+    category == Some("official")
+}
+
 impl Provider {
+    pub fn has_official_category(&self) -> bool {
+        is_official_category(self.category.as_deref())
+    }
+
     /// 从现有ID创建供应商
     pub fn with_id(
         id: String,
@@ -68,16 +102,15 @@ impl Provider {
     }
 
     pub fn is_codex_oauth(&self) -> bool {
-        self.provider_type() == Some("codex_oauth")
+        ProviderKind::declared(self) == Some(ProviderKind::CodexOAuth)
     }
 
     pub fn is_xai_oauth(&self) -> bool {
-        self.provider_type() == Some("xai_oauth")
+        ProviderKind::declared(self) == Some(ProviderKind::XaiOAuth)
     }
 
     pub fn is_github_copilot(&self) -> bool {
-        self.provider_type() == Some("github_copilot")
-            || self.claude_base_url_contains("githubcopilot.com")
+        ProviderKind::of(self) == Some(ProviderKind::GitHubCopilot)
     }
 
     pub fn uses_managed_account_auth(&self) -> bool {
@@ -106,10 +139,6 @@ impl Provider {
             .and_then(|m| m.api_key_field.as_deref())
             .map(|field| field.eq_ignore_ascii_case("ANTHROPIC_API_KEY"))
             .unwrap_or(false)
-    }
-
-    fn provider_type(&self) -> Option<&str> {
-        self.meta.as_ref().and_then(|m| m.provider_type.as_deref())
     }
 
     /// The stored OpenCode source format; only native declarations record one.
@@ -245,6 +274,28 @@ impl Provider {
                 crate::pi_config::provider_base_url(settings).unwrap_or_default(),
                 crate::pi_config::resolve_usage_api_key(&str_at(settings.get("apiKey"))),
             ),
+            // WorkBuddy models.json: shared `url` / `apiKey`, or per-model overrides.
+            AppType::WorkBuddy => {
+                let first_model = settings
+                    .get("models")
+                    .and_then(Value::as_array)
+                    .and_then(|models| models.first());
+                let pick = |field: &str| {
+                    let shared = str_at(settings.get(field));
+                    if shared.is_empty() {
+                        str_at(first_model.and_then(|model| model.get(field)))
+                    } else {
+                        shared
+                    }
+                };
+                let url = pick("url");
+                let base_url = url
+                    .trim_end_matches('/')
+                    .strip_suffix("/chat/completions")
+                    .map(str::to_string)
+                    .unwrap_or(url);
+                (base_url, pick("apiKey"))
+            }
             // OpenCode (OMO) nests credentials under `options` (the SDK options object).
             AppType::OpenCode | AppType::Mcode => {
                 let options = settings.get("options");
@@ -528,6 +579,9 @@ pub struct ProviderMeta {
         skip_serializing_if = "Option::is_none"
     )]
     pub partner_promotion_key: Option<String>,
+    /// Explicit opt-in multiplier for future proxy cost estimates. Legacy costMultiplier remains inert.
+    #[serde(rename = "billingMultiplier", skip_serializing_if = "Option::is_none")]
+    pub billing_multiplier: Option<String>,
     /// 已停用：供应商级成本倍率。新版不再读取，只为与旧版设备同步时原样往返保留
     #[serde(rename = "costMultiplier", skip_serializing_if = "Option::is_none")]
     pub cost_multiplier: Option<String>,

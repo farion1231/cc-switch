@@ -15,9 +15,12 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Notice } from "@/components/ui/notice";
 import { authApi, providersApi, settingsApi } from "@/lib/api";
-import { resolveManagedAccountId } from "@/lib/authBinding";
-import { isMac } from "@/lib/platform";
+import {
+  canSwitchAgyAccount,
+  resolveManagedAccountId,
+} from "@/lib/authBinding";
 import type { AppId } from "@/lib/api/types";
+import { isLinux } from "@/lib/platform";
 import type { Provider } from "@/types";
 import { toast } from "@/lib/toast";
 import { extractErrorMessage } from "@/utils/errorUtils";
@@ -236,11 +239,15 @@ export function OpenTerminalDialog({
   const [opening, setOpening] = useState(false);
   const [skipPermissions, setSkipPermissions] = useState(false);
   const [extraArgs, setExtraArgs] = useState("");
+  const [agyUseCurrentLogin, setAgyUseCurrentLogin] = useState(false);
   const queryClient = useQueryClient();
 
   // Antigravity 官方卡绑了账号：打开前会把 agy 的全局登录切过去，先说清楚
   const boundAgyAccount =
-    appId === "agy" && provider && provider.category === "official" && isMac()
+    appId === "agy" &&
+    provider &&
+    provider.category === "official" &&
+    canSwitchAgyAccount()
       ? resolveManagedAccountId(provider.meta, "agy_oauth")
       : null;
   const { data: agyStatus } = useQuery({
@@ -248,9 +255,18 @@ export function OpenTerminalDialog({
     queryFn: () => authApi.authGetStatus("agy_oauth"),
     enabled: boundAgyAccount !== null,
   });
+  const canUseCurrentAgyLogin = boundAgyAccount !== null && isLinux();
+  const useCurrentAgyLogin = canUseCurrentAgyLogin && agyUseCurrentLogin;
+  const agyTargetAccount = agyStatus?.accounts.find(
+    (account) => account.id === boundAgyAccount,
+  );
+  const agyBindingMissing =
+    canUseCurrentAgyLogin && agyStatus !== undefined && !agyTargetAccount;
   const agyWillSwitch =
     boundAgyAccount !== null &&
     agyStatus !== undefined &&
+    !useCurrentAgyLogin &&
+    !agyBindingMissing &&
     agyStatus.default_account_id !== boundAgyAccount;
   const { data: agyRunning } = useQuery({
     queryKey: ["agy-running", provider?.id],
@@ -258,10 +274,6 @@ export function OpenTerminalDialog({
     enabled: agyWillSwitch,
     staleTime: 0,
   });
-  const agyTargetLogin = agyStatus?.accounts.find(
-    (account) => account.id === boundAgyAccount,
-  )?.login;
-
   useEffect(() => {
     if (!provider) return;
     const stored = readRecent();
@@ -269,6 +281,7 @@ export function OpenTerminalDialog({
     setDir(stored[0] ?? null);
     setSkipPermissions(readSkipPermissions(appId));
     setExtraArgs(readExtraArgs(appId));
+    setAgyUseCurrentLogin(false);
     setOpening(false);
   }, [provider, appId]);
 
@@ -299,6 +312,7 @@ export function OpenTerminalDialog({
         cwd: dir,
         skipPermissions,
         ...(args ? { extraArgs: args } : {}),
+        ...(useCurrentAgyLogin ? { agyUseCurrentLogin: true } : {}),
       });
       writeRecent(
         [dir, ...recent.filter((item) => item !== dir)].slice(0, MAX_RECENT),
@@ -342,7 +356,8 @@ export function OpenTerminalDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4 px-6 py-3">
+        {/* 正文单独滚动，确认按钮固定在底部：窗口矮、提示多、最近目录多时也点得到（#9478） */}
+        <div className="min-h-0 flex-auto space-y-4 overflow-y-auto px-6 py-3">
           {provider && terminalIsIsolated(provider, appId) && (
             <Notice title={t("provider.openTerminalDialog.isolationTitle")}>
               {/* Antigravity 没有「切换」，Claude Code 那句「之后切换不会影响它」对它不成立 */}
@@ -368,7 +383,7 @@ export function OpenTerminalDialog({
                 defaultValue:
                   "打开前把 agy 的登录切换到 {{account}}，之后新开的 agy 都用这个号。",
                 account:
-                  agyTargetLogin ??
+                  agyTargetAccount?.login ??
                   t("provider.form.agy.accountMissing", {
                     defaultValue: "不在这台电脑上的账号",
                   }),
@@ -380,6 +395,29 @@ export function OpenTerminalDialog({
                       "检测到 agy 正在运行：已打开的 agy 仍用原账号，还可能把原账号写回去，最好先退出它们。",
                   })}
             </Notice>
+          )}
+
+          {agyBindingMissing && !useCurrentAgyLogin && (
+            <Notice
+              tone="warning"
+              title={t("provider.openTerminalDialog.agyBindingMissing")}
+            />
+          )}
+
+          {canUseCurrentAgyLogin && (
+            <label className="flex cursor-pointer select-none items-start gap-2">
+              <Checkbox
+                checked={useCurrentAgyLogin}
+                disabled={opening}
+                onCheckedChange={(value) =>
+                  setAgyUseCurrentLogin(value === true)
+                }
+                className="mt-0.5"
+              />
+              <span className="min-w-0 text-body text-fg-1">
+                {t("provider.openTerminalDialog.agyUseCurrentLogin")}
+              </span>
+            </label>
           )}
 
           <div className="flex items-center gap-2">
@@ -473,6 +511,17 @@ export function OpenTerminalDialog({
               value={extraArgs}
               disabled={opening}
               onChange={(event) => setExtraArgs(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter") return;
+                // WebKit 输入法回车确认候选词时 isComposing 已是 false，只剩 keyCode 229 可辨认
+                if (
+                  event.nativeEvent.isComposing ||
+                  event.nativeEvent.keyCode === 229
+                )
+                  return;
+                event.preventDefault();
+                void handleOpen();
+              }}
               placeholder={t(
                 "provider.openTerminalDialog.extraArgsPlaceholder",
               )}

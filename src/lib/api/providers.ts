@@ -5,6 +5,7 @@ import type {
   ProviderMeta,
   UniversalProvider,
   UniversalProvidersMap,
+  UnreadableEntry,
 } from "@/types";
 import type { AppId } from "./types";
 import type { RouteSwitchResult } from "@/types/proxy";
@@ -43,6 +44,8 @@ export interface OpenTerminalOptions {
   skipPermissions?: boolean;
   /** 追加在生成的参数后面，后端按空白拆分、引号括起的算一个 */
   extraArgs?: string;
+  /** Linux 上本次启动使用 agy 当前登录。 */
+  agyUseCurrentLogin?: boolean;
 }
 
 export interface ClaudeDesktopStatus {
@@ -89,6 +92,12 @@ export interface ClaudeDesktopDefaultRoute {
   routeId: string;
   envKey: string;
   supports1m: boolean;
+}
+
+/** WorkBuddy models.json 里的一个模型 id 及归属（CC Switch 供应商 id；null 是用户自己加的）。 */
+export interface WorkBuddyModelOwner {
+  id: string;
+  owner: string | null;
 }
 
 export const providersApi = {
@@ -152,6 +161,11 @@ export const providersApi = {
     return await invoke("delete_provider", { id, app: appId });
   },
 
+  /** 库里读不出来的供应商：不在 getAll 里，只能删除 */
+  async getUnreadable(appId: AppId): Promise<UnreadableEntry[]> {
+    return await invoke("get_unreadable_providers", { app: appId });
+  },
+
   /** Kimi「添加」：写进 config.toml 但不改默认模型（「切换」才改） */
   async addToLiveConfig(id: string, appId: AppId): Promise<boolean> {
     return await invoke("add_provider_to_live_config", { id, app: appId });
@@ -179,10 +193,6 @@ export const providersApi = {
 
   async ensureClaudeDesktopOfficialProvider(): Promise<boolean> {
     return await invoke("ensure_claude_desktop_official_provider");
-  },
-
-  async ensureCodexOfficialProvider(): Promise<boolean> {
-    return await invoke("ensure_codex_official_provider");
   },
 
   async ensureGrokBuildOfficialProvider(): Promise<boolean> {
@@ -227,13 +237,15 @@ export const providersApi = {
     appId: AppId,
     options?: OpenTerminalOptions,
   ): Promise<boolean> {
-    const { cwd, skipPermissions, extraArgs } = options ?? {};
+    const { cwd, skipPermissions, extraArgs, agyUseCurrentLogin } =
+      options ?? {};
     return await invoke("open_provider_terminal", {
       providerId,
       app: appId,
       cwd,
       skipPermissions,
       extraArgs,
+      agyUseCurrentLogin,
     });
   },
 
@@ -293,6 +305,14 @@ export const providersApi = {
   async importHermesFromLive(): Promise<number> {
     return await invoke("import_hermes_providers_from_live");
   },
+
+  /**
+   * WorkBuddy models.json 里已有的模型 id 及归属。WorkBuddy 里一个模型 id 只能属于一张卡
+   * （id 既是唯一键又是发给上游的模型名），表单据此跳过或标出被占用的 id。
+   */
+  async getWorkBuddyModelOwners(): Promise<WorkBuddyModelOwner[]> {
+    return await invoke("workbuddy_model_owners");
+  },
 };
 
 // ============================================================================
@@ -305,13 +325,6 @@ export const universalProvidersApi = {
    */
   async getAll(): Promise<UniversalProvidersMap> {
     return await invoke("get_universal_providers");
-  },
-
-  /**
-   * 获取单个统一供应商
-   */
-  async get(id: string): Promise<UniversalProvider | null> {
-    return await invoke("get_universal_provider", { id });
   },
 
   /**

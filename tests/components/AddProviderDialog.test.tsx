@@ -473,6 +473,44 @@ context_window = 500000
     expect(submitted.iconColor).toBeUndefined();
   });
 
+  it.each([
+    ["绑了 xAI 账号时新建一张卡", "user-a", false],
+    ["不绑账号时补回固定的种子卡", undefined, true],
+  ] as const)("Grok Official：%s", async (_label, accountId, ensureSeed) => {
+    const handleSubmit = vi.fn().mockResolvedValue(undefined);
+    mockFormValues = {
+      name: "Grok Official",
+      websiteUrl: "https://x.ai/grok",
+      settingsConfig: JSON.stringify({ config: "" }),
+      presetId: "grokbuild-official",
+      presetCategory: "official",
+      meta: accountId
+        ? {
+            authBinding: {
+              source: "managed_account",
+              authProvider: "xai_oauth",
+              accountId,
+            },
+          }
+        : undefined,
+    };
+
+    render(
+      <AddProviderDialog
+        open
+        onOpenChange={vi.fn()}
+        appId="grokbuild"
+        onSubmit={handleSubmit}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "common.add" }));
+    await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
+    expect(handleSubmit.mock.calls[0][0].ensureGrokBuildOfficialSeed).toBe(
+      ensureSeed,
+    );
+  });
+
   it("Pi 添加供应商时仅提交供应商目录", async () => {
     const handleSubmit = vi.fn().mockResolvedValue(undefined);
     mockFormValues = {

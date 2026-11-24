@@ -159,6 +159,27 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     icon: "haoai",
   },
   {
+    name: "StringAI",
+    websiteUrl: "https://www.string.ink",
+    apiKeyUrl: "https://www.string.ink/register?ref=661AE533A60AF110",
+    // 原生 /v1beta 回 Google 格式的 401（2026-11-23）；可用的 Gemini 型号随
+    // Key 所属分组而定，未用真 Key 验证
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://www.string.ink",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3.8-flash",
+      },
+    },
+    baseURL: "https://www.string.ink",
+    model: "gemini-3.8-flash",
+    description: "StringAI",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "stringai",
+    icon: "stringai",
+  },
+  {
     name: "FennoAI",
     websiteUrl: "https://api.fenno.ai",
     apiKeyUrl:
@@ -461,8 +482,8 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
   },
   {
     name: "9527CODE",
-    websiteUrl: "https://9527.codes",
-    apiKeyUrl: "https://9527.codes/register?aff=e5zI",
+    websiteUrl: "https://9527.codes/register?channel=ccs",
+    apiKeyUrl: "https://9527.codes/register?channel=ccs",
     settingsConfig: {
       env: {
         GOOGLE_GEMINI_BASE_URL: "https://9527.codes",
@@ -1090,20 +1111,3 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     icon: "aicoming",
   },
 ];
-
-export function getGeminiPresetByName(
-  name: string,
-): GeminiProviderPreset | undefined {
-  return geminiProviderPresets.find((preset) => preset.name === name);
-}
-
-export function getGeminiPresetByUrl(
-  url: string,
-): GeminiProviderPreset | undefined {
-  if (!url) return undefined;
-  return geminiProviderPresets.find(
-    (preset) =>
-      preset.baseURL &&
-      url.toLowerCase().includes(preset.baseURL.toLowerCase()),
-  );
-}

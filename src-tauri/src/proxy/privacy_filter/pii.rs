@@ -4,17 +4,18 @@
 
 use super::secrets::{lookback_start, CONTEXT_LOOKBACK};
 use super::{Kind, Span};
-use once_cell::sync::Lazy;
 use regex::Regex;
 use std::net::Ipv4Addr;
+use std::sync::LazyLock;
 
-static RE_EMAIL: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}").unwrap());
-static RE_PHONE_CN: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?:\+?86[-\s]?)?1[3-9][0-9]{9}").unwrap());
-static RE_ID_CARD: Lazy<Regex> = Lazy::new(|| Regex::new(r"[1-9][0-9]{16}[0-9Xx]").unwrap());
-static RE_BANK_CARD: Lazy<Regex> = Lazy::new(|| Regex::new(r"[0-9]{13,19}").unwrap());
-static RE_IPV4: Lazy<Regex> = Lazy::new(|| {
+static RE_EMAIL: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}").unwrap());
+static RE_PHONE_CN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?:\+?86[-\s]?)?1[3-9][0-9]{9}").unwrap());
+static RE_ID_CARD: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"[1-9][0-9]{16}[0-9Xx]").unwrap());
+static RE_BANK_CARD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[0-9]{13,19}").unwrap());
+static RE_IPV4: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r"(?:(?:25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])",
     )
@@ -22,7 +23,7 @@ static RE_IPV4: Lazy<Regex> = Lazy::new(|| {
 });
 
 /// 紧贴在数字前面、说明它是卡号的词。不含单独的 card：UI 代码里 `card.createdAt: 1700000000000` 太常见
-static RE_CARD_CONTEXT: Lazy<Regex> = Lazy::new(|| {
+static RE_CARD_CONTEXT: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r"(?i)卡号|银行卡|信用卡|储蓄卡|借记卡|(?:bank|credit|debit|payment)[\s_-]?card|\bcard[\s_-]?(?:no|num|number)\b",
     )
@@ -121,20 +122,25 @@ fn is_bank_card(text: &str, start: usize, num: &str) -> bool {
 pub(super) fn detect(text: &str) -> Vec<Span> {
     let b = text.as_bytes();
     let mut spans = Vec::new();
-    for m in RE_EMAIL.find_iter(text) {
-        let (s, e) = (m.start(), m.end());
-        // SSH 风格 URL：user@host:path —— 紧接 ":" + 非空白字符 → 视作 git@ URL
-        if e + 1 < b.len() && b[e] == b':' && b[e + 1] != b' ' && b[e + 1] != b'\t' {
-            continue;
+    if b.contains(&b'@') {
+        for m in RE_EMAIL.find_iter(text) {
+            let (s, e) = (m.start(), m.end());
+            // SSH 风格 URL：user@host:path —— 紧接 ":" + 非空白字符 → 视作 git@ URL
+            if e + 1 < b.len() && b[e] == b':' && b[e + 1] != b' ' && b[e + 1] != b'\t' {
+                continue;
+            }
+            if is_in_ssh_command_context(text, s) {
+                continue;
+            }
+            spans.push(Span {
+                start: s,
+                end: e,
+                kind: Kind::Email,
+            });
         }
-        if is_in_ssh_command_context(text, s) {
-            continue;
-        }
-        spans.push(Span {
-            start: s,
-            end: e,
-            kind: Kind::Email,
-        });
+    }
+    if !b.iter().any(u8::is_ascii_digit) {
+        return spans;
     }
     for m in RE_PHONE_CN.find_iter(text) {
         if digit_bounded(b, m.start(), m.end()) {
@@ -154,13 +160,15 @@ pub(super) fn detect(text: &str) -> Vec<Span> {
             });
         }
     }
-    for m in RE_IPV4.find_iter(text) {
-        if ip_bounded(b, m.start(), m.end()) && !is_non_identifying_ip(m.as_str()) {
-            spans.push(Span {
-                start: m.start(),
-                end: m.end(),
-                kind: Kind::Ip,
-            });
+    if b.contains(&b'.') {
+        for m in RE_IPV4.find_iter(text) {
+            if ip_bounded(b, m.start(), m.end()) && !is_non_identifying_ip(m.as_str()) {
+                spans.push(Span {
+                    start: m.start(),
+                    end: m.end(),
+                    kind: Kind::Ip,
+                });
+            }
         }
     }
     for m in RE_BANK_CARD.find_iter(text) {

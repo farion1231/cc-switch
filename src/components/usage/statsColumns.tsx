@@ -2,11 +2,63 @@ import { useTranslation } from "react-i18next";
 import { HelpTip } from "@/components/ui/help-tip";
 import { cn } from "@/lib/utils";
 import {
+  fmtInt,
   formatFirstTokenSeconds,
   formatTokensPerSecond,
   getAggregateTokensPerSecond,
 } from "./format";
 import { usageTable } from "./usageTable";
+import { formatHitPercent } from "./RequestLogTable";
+
+/** 供应商 / 模型统计行共有的命中率分子分母，口径同指标卡。 */
+export interface CacheTotals {
+  cacheReadTokens: number;
+  cacheableInputTokens: number;
+}
+
+/** 「命中率」列表头，文案和说明沿用请求日志的命中率列。 */
+export function CacheHitRateHeader() {
+  const { t } = useTranslation();
+  return (
+    <th className={usageTable.th}>
+      <span className="inline-flex items-center gap-0.5">
+        {t("usage.logColumns.hitRate")}
+        <HelpTip title={t("usage.metrics.hitRateHelpTitle")} align="end">
+          {t("usage.metrics.hitRateHelp")}
+        </HelpTip>
+      </span>
+    </th>
+  );
+}
+
+/** 「命中率」单元格：没有可缓存的输入时写「—」，悬停显示分子分母。 */
+export function CacheHitRateCell({
+  stat,
+  locale,
+}: {
+  stat: CacheTotals;
+  locale: string;
+}) {
+  const { t } = useTranslation();
+  const known = stat.cacheableInputTokens > 0;
+  return (
+    <td
+      className={cn(usageTable.td, !known && usageTable.muted)}
+      title={
+        known
+          ? t("usage.logColumns.hitRateTip", {
+              read: fmtInt(stat.cacheReadTokens, locale),
+              total: fmtInt(stat.cacheableInputTokens, locale),
+            })
+          : undefined
+      }
+    >
+      {known
+        ? formatHitPercent(stat.cacheReadTokens / stat.cacheableInputTokens)
+        : "—"}
+    </td>
+  );
+}
 
 /** 供应商 / 模型统计行共有的速度分子分母与首字中位数（后端只统计满足条件的明细请求）。 */
 export interface SpeedTotals {

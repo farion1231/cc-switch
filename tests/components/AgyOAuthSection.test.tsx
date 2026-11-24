@@ -137,7 +137,9 @@ describe("AgyOAuthSection", () => {
     mocks.useManagedAuth.mockReturnValue(auth);
     render(<AgyOAuthSection />);
 
-    const quotas = screen.getAllByTestId("agy-quota").map((el) => el.textContent);
+    const quotas = screen
+      .getAllByTestId("agy-quota")
+      .map((el) => el.textContent);
     // 不只是 agy 在用的号，其他号也查；登录失效的不查
     expect(quotas).toEqual(["a", "c"]);
   });

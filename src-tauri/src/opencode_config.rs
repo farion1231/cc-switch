@@ -2,7 +2,7 @@ use crate::config::atomic_write;
 use crate::error::AppError;
 use crate::jsonc_document::JsoncDocument;
 use crate::provider::OpenCodeConfigFormat;
-use crate::settings::get_opencode_override_dir;
+use crate::settings::get_override_dir;
 use indexmap::IndexMap;
 use serde_json::{json, Map, Value};
 use std::path::{Path, PathBuf};
@@ -47,7 +47,7 @@ fn canonicalize_plugin_name(plugin_name: &str) -> String {
 }
 
 pub fn get_opencode_dir() -> PathBuf {
-    if let Some(override_dir) = get_opencode_override_dir() {
+    if let Some(override_dir) = get_override_dir(&crate::app_config::AppType::OpenCode) {
         return override_dir;
     }
 
@@ -102,11 +102,6 @@ fn get_opencode_data_dir() -> PathBuf {
         .join(".local")
         .join("share")
         .join("opencode")
-}
-
-#[allow(dead_code)]
-pub fn get_opencode_env_path() -> PathBuf {
-    get_opencode_dir().join(".env")
 }
 
 struct OpenCodeDocument {
@@ -176,7 +171,7 @@ fn try_edit_config(
     resolve_path: impl FnOnce() -> Result<PathBuf, AppError>,
     edit: impl FnOnce(&mut Value) -> Result<(), AppError>,
 ) -> Result<bool, AppError> {
-    let _guard = opencode_config_lock().lock()?;
+    let _guard = crate::sync_utils::lock_file_operation(opencode_config_lock());
     let path = resolve_path()?;
     let mut document = OpenCodeDocument::load(&path)?;
     let mut desired = document.document.value().clone();
@@ -703,25 +698,66 @@ fn remove_plugins(config: &mut Value, prefixes: &[&str]) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    #[serial_test::serial]
+    fn config_edits_recover_after_poison() {
+        if !crate::sync_utils::in_isolated_process(
+            "opencode_config::tests::config_edits_recover_after_poison",
+        ) {
+            return;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("opencode.json");
+        std::fs::write(&path, r#"{"model":"original"}"#).unwrap();
+        assert!(std::panic::catch_unwind(|| {
+            let _ = super::edit_config(
+                || Ok(path.clone()),
+                |value| {
+                    value["model"] = serde_json::json!("unfinished");
+                    panic!("config edit interrupted");
+                },
+            );
+        })
+        .is_err());
+        assert_eq!(
+            super::read_opencode_config_from_path(&path).unwrap()["model"],
+            "original"
+        );
+        super::edit_config(
+            || Ok(path.clone()),
+            |value| {
+                value["model"] = serde_json::json!("recovered");
+            },
+        )
+        .expect("write after panic");
+        assert_eq!(
+            super::read_opencode_config_from_path(&path).unwrap()["model"],
+            "recovered"
+        );
+        assert!(!super::opencode_config_lock().is_poisoned());
+    }
     use super::*;
+    use crate::test_support::EnvVars;
 
-    struct TestHomeGuard(Option<std::ffi::OsString>, crate::settings::AppSettings);
+    /// Restores the previous settings before the previous home comes back.
+    struct TestHomeGuard {
+        settings: crate::settings::AppSettings,
+        _env: EnvVars,
+    }
     impl TestHomeGuard {
         fn set(home: &std::path::Path) -> Self {
-            let previous_env = std::env::var_os("CC_SWITCH_TEST_HOME");
-            std::env::set_var("CC_SWITCH_TEST_HOME", home);
-            let guard = Self(previous_env, crate::settings::get_settings());
+            let env = EnvVars::new().set("CC_SWITCH_TEST_HOME", home);
+            let guard = Self {
+                settings: crate::settings::get_settings(),
+                _env: env,
+            };
             crate::settings::update_settings(Default::default()).unwrap();
             guard
         }
     }
     impl Drop for TestHomeGuard {
         fn drop(&mut self) {
-            crate::settings::update_settings(self.1.clone()).unwrap();
-            match self.0.take() {
-                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
-                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
-            }
+            crate::settings::update_settings(self.settings.clone()).unwrap();
         }
     }
 

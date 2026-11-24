@@ -1,5 +1,6 @@
 import { useCallback } from "react";
 import {
+  useIsMutating,
   useMutation,
   useQuery,
   useQueryClient,
@@ -16,7 +17,6 @@ import {
   type SkillDiscoveryResult,
   type SkillUpdateCheckResult,
   type SkillUpdateInfo,
-  type SkillsShSearchResult,
 } from "@/lib/api/skills";
 import type { AppId } from "@/lib/api/types";
 import {
@@ -37,6 +37,31 @@ export function useInstalledSkills() {
     queryFn: () => skillsApi.getInstalled(),
     staleTime: Infinity,
     placeholderData: keepPreviousData,
+  });
+}
+
+/**
+ * 后台刷新本地 Skill 的过期元数据（手动编辑 SSOT 的 SKILL.md 后同步描述与哈希）。
+ *
+ * 与列表查询分离：列表只读数据库并立即渲染，目录哈希在 Tauri 阻塞线程池里
+ * 计算；切换应用开关、安装等导致的列表失效不会重复触发扫描。进入技能页时
+ * 自动执行（缓存保持期间不重复扫描），有更新时才刷新列表（issue #7848）。
+ */
+export function useRefreshLocalSkillMetadata() {
+  const queryClient = useQueryClient();
+  return useQuery({
+    queryKey: ["skills", "localMetadataRefresh"],
+    queryFn: async () => {
+      const refreshed = await skillsApi.refreshLocalMetadata();
+      if (refreshed > 0) {
+        await queryClient.invalidateQueries({
+          queryKey: ["skills", "installed"],
+        });
+      }
+      return refreshed;
+    },
+    staleTime: Infinity,
+    retry: false,
   });
 }
 
@@ -426,6 +451,49 @@ export function useAddSkillRepo() {
   });
 }
 
+const REPO_TOKENS_QUERY_KEY = ["skills", "repoTokens"];
+
+/**
+ * 设置了访问令牌的主机（#9666）
+ */
+export function useSkillRepoTokens() {
+  return useQuery({
+    queryKey: REPO_TOKENS_QUERY_KEY,
+    queryFn: () => skillsApi.getRepoTokens(),
+  });
+}
+
+/**
+ * 保存或删除一台主机的访问令牌。
+ *
+ * 成功后重新发现一次：后端只缓存读成功的仓库，之前因为没令牌读不到的会重新下载，
+ * 读成功过的仍走缓存，不会把所有仓库再下一遍。
+ */
+export function useSkillRepoTokenActions() {
+  const queryClient = useQueryClient();
+  const onSuccess = () => {
+    void queryClient.invalidateQueries({ queryKey: REPO_TOKENS_QUERY_KEY });
+    void queryClient.invalidateQueries({
+      queryKey: DISCOVERABLE_QUERY_KEY,
+      exact: true,
+    });
+  };
+  const setToken = useMutation({
+    mutationFn: ({ host, token }: { host: string; token: string }) =>
+      skillsApi.setRepoToken(host, token),
+    onSuccess,
+  });
+  const deleteToken = useMutation({
+    mutationFn: (host: string) => skillsApi.deleteRepoToken(host),
+    onSuccess,
+  });
+  return {
+    setToken: (host: string, token: string) =>
+      setToken.mutateAsync({ host, token }),
+    deleteToken: (host: string) => deleteToken.mutateAsync(host),
+  };
+}
+
 /**
  * 删除仓库
  */
@@ -550,9 +618,10 @@ export type {
   ImportSkillSelection,
   SkillBackupEntry,
   SkillUpdateInfo,
-  SkillsShSearchResult,
   AppId,
 };
+
+const SKILLS_RESYNC_MUTATION_KEY = ["skills", "resyncToApps"] as const;
 
 /**
  * 立即重新同步：按开关和当前同步方式把 Skill 重新投影到各应用目录
@@ -560,10 +629,16 @@ export type {
 export function useResyncSkillsToApps() {
   const queryClient = useQueryClient();
   return useMutation({
+    mutationKey: SKILLS_RESYNC_MUTATION_KEY,
     mutationFn: () => skillsApi.resyncToApps(),
     onSettled: () =>
       queryClient.invalidateQueries({ queryKey: ["skills", "installed"] }),
   });
+}
+
+/** 任一入口（⋯ 菜单或「存储与同步」对话框）的重新同步是否在进行：两处共用，避免并发重建同一目录 */
+export function useIsResyncingSkills() {
+  return useIsMutating({ mutationKey: SKILLS_RESYNC_MUTATION_KEY }) > 0;
 }
 
 /**

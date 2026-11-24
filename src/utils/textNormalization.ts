@@ -1,22 +1,5 @@
 import { parse as parseToml } from "smol-toml";
 
-/**
- * 将常见的中文/全角/弯引号统一为 ASCII 引号，以避免 TOML 解析失败。
- * - 双引号：” “ „ ‟ ＂ → "
- * - 单引号：’ ‘ ＇ → '
- * 保守起见，不替换书名号/角引号（《》、「」等），避免误伤内容语义。
- */
-export const normalizeQuotes = (text: string): string => {
-  if (!text) return text;
-  return (
-    text
-      // 双引号族 → "
-      .replace(/[“”„‟＂]/g, '"')
-      // 单引号族 → '
-      .replace(/[‘’＇]/g, "'")
-  );
-};
-
 const SMART_DOUBLE_QUOTES = new Set(["“", "”", "„", "‟", "＂"]);
 const SMART_SINGLE_QUOTES = new Set(["‘", "’", "＇"]);
 

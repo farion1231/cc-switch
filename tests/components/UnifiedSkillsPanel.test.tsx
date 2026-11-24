@@ -12,6 +12,7 @@ import type {
   SkillRepoFailure,
   SkillUpdateInfo,
 } from "@/lib/api/skills";
+import { waitForOverlayTransition } from "../utils/overlayTransition";
 
 const m = vi.hoisted(() => ({
   scanUnmanaged: vi.fn(),
@@ -24,6 +25,7 @@ const m = vi.hoisted(() => ({
   restoreBackup: vi.fn(),
   checkUpdates: vi.fn(),
   updateSkill: vi.fn(),
+  resync: vi.fn(),
   refetchBackups: vi.fn(),
   toastError: vi.fn(),
   toastSuccess: vi.fn(),
@@ -63,6 +65,7 @@ vi.mock("@/hooks/useSkills", () => ({
     isError: false,
     refetch: vi.fn(),
   }),
+  useRefreshLocalSkillMetadata: () => ({}),
   useSkillBackups: () => ({
     data: m.backups,
     refetch: m.refetchBackups,
@@ -111,10 +114,17 @@ vi.mock("@/hooks/useSkills", () => ({
     mutateAsync: m.updateSkill,
     isPending: false,
   }),
+  useResyncSkillsToApps: () => ({ mutateAsync: m.resync, isPending: false }),
+  useIsResyncingSkills: () => false,
   useDiscoverableSkills: () => ({ data: [], refetch: vi.fn() }),
   useRefreshDiscoverableSkills: () => vi.fn(),
   useDiscoverableSkillsFailures: () => ({ data: [] }),
   useSkillRepos: () => ({ data: [], refetch: vi.fn() }),
+  useSkillRepoTokens: () => ({ data: { hosts: [], secureStorage: true } }),
+  useSkillRepoTokenActions: () => ({
+    setToken: vi.fn(),
+    deleteToken: vi.fn(),
+  }),
   useAddSkillRepo: () => ({ mutateAsync: vi.fn() }),
   useRemoveSkillRepo: () => ({ mutateAsync: vi.fn() }),
   useSearchSkillsSh: () => ({ data: undefined, isLoading: false }),
@@ -160,6 +170,7 @@ const columns = () =>
   screen.getAllByRole("button", { name: /appMatrix.columnAria/ });
 
 async function openMenu(trigger: string, item: string) {
+  await waitForOverlayTransition();
   await userEvent.click(screen.getByRole("button", { name: trigger }));
   await userEvent.click(await screen.findByRole("menuitem", { name: item }));
 }
@@ -195,6 +206,7 @@ describe("UnifiedSkillsPanel", () => {
       .mockReset()
       .mockResolvedValue({ data: { updates: [], failures: [] } });
     m.installFromZip.mockReset();
+    m.resync.mockReset().mockResolvedValue([]);
     m.updateSkill
       .mockReset()
       .mockImplementation(async (id: string) => makeSkill({ id }));
@@ -970,11 +982,25 @@ describe("UnifiedSkillsPanel", () => {
           mcode: false,
           kimi: false,
           dsh: false,
+          workbuddy: false,
           agy: false,
           copilot: false,
         },
       },
     ]);
+  });
+
+  it("resyncs Skills to the apps straight from the more menu", async () => {
+    m.installed = [makeSkill({ apps: { claude: true } })];
+    m.resync.mockResolvedValue([{ app: "claude", ok: true, failedSkills: [] }]);
+    renderPanel();
+    await openMenu("skills.moreActions", "skills.storageSheet.resync");
+    await waitFor(() => expect(m.resync).toHaveBeenCalledTimes(1));
+    expect(m.toastSuccess).toHaveBeenCalledWith(
+      "skills.storageSheet.resyncDone",
+      { closeButton: true },
+    );
+    expect(screen.queryByTestId("storage-sheet")).not.toBeInTheDocument();
   });
 
   it("closes the backup dialog and reports an explicit refresh failure", async () => {

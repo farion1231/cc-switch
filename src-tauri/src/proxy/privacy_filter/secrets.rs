@@ -1,9 +1,10 @@
 //! 密钥 / 凭证检测：gitleaks 规则（关键词预筛）+ 上下文口令 + 高熵兜底
 
 use super::{Kind, Span};
-use once_cell::sync::Lazy;
+use aho_corasick::{AhoCorasick, MatchKind};
 use regex::Regex;
 use serde::Deserialize;
+use std::sync::LazyLock;
 
 /// 高熵兜底默认阈值（贴近 gitleaks 经验值）
 const ENTROPY_MIN: f64 = 4.0;
@@ -13,7 +14,7 @@ const ENTROPY_MIN_STRICT: f64 = 4.8;
 pub(super) const CONTEXT_LOOKBACK: usize = 30;
 
 /// 上下文型口令：藏在句子里的密码/token，如「我的密码是 hunter2」「api_key: xxx」
-static RE_CONTEXT_SECRET: Lazy<Regex> = Lazy::new(|| {
+static RE_CONTEXT_SECRET: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r#"(?i)(密码|口令|密钥|password|passwd|pwd|secret|token|api[_\s-]?key)\s*['"]?\s*(?:是|为|:|：|=)\s*['"]?([^\s'"，。；;]{4,})"#,
     )
@@ -21,12 +22,12 @@ static RE_CONTEXT_SECRET: Lazy<Regex> = Lazy::new(|| {
 });
 
 /// 高熵兜底：赋值表达式只捕获 value，避免将字段名一起替换。
-static RE_ENTROPY_TOKEN: Lazy<Regex> = Lazy::new(|| {
+static RE_ENTROPY_TOKEN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?:[A-Za-z_][A-Za-z0-9_-]*=)?([A-Za-z0-9+/_\-]{20,}={0,3})").unwrap()
 });
 
 /// 密钥语义关键词。命中则保留 ENTROPY_MIN，否则收紧到 ENTROPY_MIN_STRICT。
-static RE_SECRET_CONTEXT: Lazy<Regex> = Lazy::new(|| {
+static RE_SECRET_CONTEXT: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r"(?i)(?:password|passwd|pwd|secret|token|api[_\s-]?key|access[_\s-]?key|bearer|authorization|credential|jwt|密码|口令|密钥|凭证|令牌|鉴权)",
     )
@@ -34,22 +35,22 @@ static RE_SECRET_CONTEXT: Lazy<Regex> = Lazy::new(|| {
 });
 
 /// HTTP Authorization 头标准形态：Authorization: <scheme> <value>
-static RE_AUTH_HEADER_PREFIX: Lazy<Regex> = Lazy::new(|| {
+static RE_AUTH_HEADER_PREFIX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)\bauthorization\s*:\s*(?:basic|bearer|digest|ntlm|hmac|token)\s+$").unwrap()
 });
 
 /// 以 host.tld: 开头的命中（generic-api-key 把域名+冒号+路径一起吃掉的情形）
-static RE_HOST_PORT_PREFIX: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"^[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z0-9-]+:").unwrap());
+static RE_HOST_PORT_PREFIX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z0-9-]+:").unwrap());
 
 /// 模板变量：{{ X }} / ${X} / %{X} / <X> / $X / %X%
-static RE_TEMPLATE_VAR: Lazy<Regex> = Lazy::new(|| {
+static RE_TEMPLATE_VAR: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r"^(?:\{\{[^{}]+\}\}|\$\{[^{}]+\}|%\{[^{}]+\}|<[^<>]+>|\$[A-Za-z_][A-Za-z0-9_]*|%[A-Za-z_][A-Za-z0-9_]*%)$",
     )
     .unwrap()
 });
-static RE_UUID: Lazy<Regex> = Lazy::new(|| {
+static RE_UUID: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
         .unwrap()
 });
@@ -250,8 +251,119 @@ impl RuleAllowlist {
 
 pub(super) struct SecretDetector {
     rules: Vec<SecretRule>,
-    /// 因正则语法不兼容被跳过的规则数
+    /// 正则编译失败被跳过的规则数（语法不兼容，或编译后超出 regex 默认的 10 MB 上限：
+    /// generic-api-key、pypi-upload-token、vault-batch-token 属于后者）
     skipped: usize,
+    /// 关键词预筛：所有规则的关键词共用一个自动机，一遍扫描得出哪些规则需要跑正则
+    gate: KeywordGate,
+}
+
+/// 关键词预筛，语义与「`text.to_lowercase()` 后逐条 `contains(keyword)`」完全一致。
+///
+/// ASCII 关键词直接扫描原文；只有会小写展开到 ASCII 的 K / İ 或非 ASCII 关键词
+/// 才需要 Unicode 小写副本。中文对话不因此分配整块副本。
+struct KeywordGate {
+    /// 由全部规则的关键词（小写、去重）构建的自动机；构建失败时为 None，退回逐条 contains
+    automaton: Option<AhoCorasick>,
+    ascii_keywords: bool,
+    /// 自动机里第 i 个关键词 → 带这个关键词的规则下标
+    keyword_rules: Vec<Vec<usize>>,
+    /// 没有关键词（或含空关键词）的规则，始终参与
+    always_active: Vec<usize>,
+}
+
+impl KeywordGate {
+    fn build(rules: &[SecretRule]) -> Self {
+        let mut keywords: Vec<String> = Vec::new();
+        let mut keyword_rules: Vec<Vec<usize>> = Vec::new();
+        let mut index: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+        let mut always_active = Vec::new();
+        for (rule_idx, rule) in rules.iter().enumerate() {
+            // 旧实现：keywords 为空 → 总是参与；`low.contains("")` 恒为真 → 同样总是参与
+            if rule.keywords.is_empty() || rule.keywords.iter().any(String::is_empty) {
+                always_active.push(rule_idx);
+                continue;
+            }
+            for keyword in &rule.keywords {
+                let id = *index.entry(keyword.as_str()).or_insert_with(|| {
+                    keywords.push(keyword.clone());
+                    keyword_rules.push(Vec::new());
+                    keywords.len() - 1
+                });
+                if keyword_rules[id].last() != Some(&rule_idx) {
+                    keyword_rules[id].push(rule_idx);
+                }
+            }
+        }
+        let automaton = if keywords.is_empty() {
+            None
+        } else {
+            match AhoCorasick::builder()
+                .match_kind(MatchKind::Standard)
+                .ascii_case_insensitive(true)
+                .build(&keywords)
+            {
+                Ok(ac) => Some(ac),
+                Err(e) => {
+                    log::warn!("[PrivacyFilter] Keyword automaton build failed, falling back: {e}");
+                    None
+                }
+            }
+        };
+        Self {
+            ascii_keywords: keywords.iter().all(|keyword| keyword.is_ascii()),
+            automaton,
+            keyword_rules,
+            always_active,
+        }
+    }
+
+    /// 返回每条规则是否需要跑正则
+    fn active_rules(&self, rules: &[SecretRule], text: &str) -> Vec<bool> {
+        /// 标记规则为活跃，返回是否所有规则都已活跃
+        fn mark(active: &mut [bool], remaining: &mut usize, i: usize) -> bool {
+            if !active[i] {
+                active[i] = true;
+                *remaining -= 1;
+            }
+            *remaining == 0
+        }
+
+        let mut active = vec![false; rules.len()];
+        let mut remaining = rules.len();
+        for &i in &self.always_active {
+            mark(&mut active, &mut remaining, i);
+        }
+        if remaining == 0 {
+            return active;
+        }
+        let Some(ac) = &self.automaton else {
+            // 自动机不可用：原样执行旧逻辑
+            let low = text.to_lowercase();
+            for (i, rule) in rules.iter().enumerate() {
+                if rule.keywords.iter().any(|k| low.contains(k.as_str())) {
+                    mark(&mut active, &mut remaining, i);
+                }
+            }
+            return active;
+        };
+        let lowered;
+        let haystack = if self.ascii_keywords && !text.contains(['K', 'İ']) {
+            text
+        } else {
+            lowered = text.to_lowercase();
+            lowered.as_str()
+        };
+        // Standard 语义下 overlapping 迭代报告每一处出现，互相包含的关键词也不会漏
+        'scan: for m in ac.find_overlapping_iter(haystack) {
+            for &i in &self.keyword_rules[m.pattern().as_usize()] {
+                if mark(&mut active, &mut remaining, i) {
+                    break 'scan;
+                }
+            }
+        }
+        active
+    }
 }
 
 /// gitleaks.toml 的文本检测配置；不使用文件路径等扫描器专用字段。
@@ -293,6 +405,7 @@ impl SecretDetector {
         let mut sd = Self {
             rules: Vec::new(),
             skipped: 0,
+            gate: KeywordGate::build(&[]),
         };
         match toml::from_str::<TomlConfig>(toml_text) {
             Ok(cfg) => {
@@ -328,6 +441,7 @@ impl SecretDetector {
         if sd.rules.is_empty() {
             sd.load_builtin();
         }
+        sd.gate = KeywordGate::build(&sd.rules);
         sd
     }
 
@@ -366,8 +480,48 @@ impl SecretDetector {
     }
 
     pub(super) fn detect(&self, text: &str) -> Vec<Span> {
-        let mut spans = Vec::new();
+        self.detect_with_active(text, &self.gate.active_rules(&self.rules, text))
+    }
+
+    /// 旧版预筛：整体小写后逐条 contains。只用于对拍测试，证明自动机预筛与它等价。
+    #[cfg(test)]
+    pub(super) fn active_rules_naive(&self, text: &str) -> Vec<bool> {
         let low = text.to_lowercase();
+        self.rules
+            .iter()
+            .map(|r| r.keywords.is_empty() || r.keywords.iter().any(|k| low.contains(k.as_str())))
+            .collect()
+    }
+
+    /// 旧版预筛下的 Route 1–3 原始命中（测试用：和 [`Self::detect`] 逐个区间对拍）
+    #[cfg(test)]
+    pub(super) fn detect_naive(&self, text: &str) -> Vec<Span> {
+        self.detect_with_active(text, &self.active_rules_naive(text))
+    }
+
+    /// 去掉自动机，强制走构建失败时的回退路径（测试用）
+    #[cfg(test)]
+    pub(super) fn without_automaton(mut self) -> Self {
+        self.gate.automaton = None;
+        self
+    }
+
+    #[cfg(test)]
+    pub(super) fn active_rules(&self, text: &str) -> Vec<bool> {
+        self.gate.active_rules(&self.rules, text)
+    }
+
+    /// 全部规则的小写关键词（测试用：拿来构造对拍语料）
+    #[cfg(test)]
+    pub(super) fn all_keywords(&self) -> Vec<String> {
+        let mut all: Vec<String> = self.rules.iter().flat_map(|r| r.keywords.clone()).collect();
+        all.sort();
+        all.dedup();
+        all
+    }
+
+    fn detect_with_active(&self, text: &str, active: &[bool]) -> Vec<Span> {
+        let mut spans = Vec::new();
         let push = |spans: &mut Vec<Span>, start, end| {
             spans.push(Span {
                 start,
@@ -377,10 +531,7 @@ impl SecretDetector {
         };
 
         // Route 1: gitleaks 规则，关键词预筛 —— 只对命中关键词的规则跑正则
-        for r in &self.rules {
-            if !r.keywords.is_empty() && !r.keywords.iter().any(|k| low.contains(k.as_str())) {
-                continue;
-            }
+        for (r, _) in self.rules.iter().zip(active).filter(|(_, &on)| on) {
             for caps in r.re.captures_iter(text) {
                 let whole = caps.get(0).unwrap();
                 let m = if r.whole_secret {
@@ -405,7 +556,7 @@ impl SecretDetector {
                 if r.allowlists.iter().any(|a| a.allows(text, whole, m)) {
                     continue;
                 }
-                if r.entropy > 0.0 && shannon_entropy(cand) < r.entropy {
+                if r.entropy > 0.0 && !entropy_at_least(cand, r.entropy) {
                     continue; // 复刻 gitleaks 的熵阈值
                 }
                 // 专用规则已识别凭证格式，不能再把 webhook URL、hex 或 UUID 密钥当误报。
@@ -440,10 +591,12 @@ impl SecretDetector {
             let m = caps.get(1).unwrap();
             let (s, e) = (m.start(), m.end());
             let cand = m.as_str();
-            let strong = has_strong_secret_context(text, s, e);
+            let context = secret_context(text, s, e);
             // 强上下文（Bearer / token= 等）凌驾于路径检查，避免 Bearer abc/xyz== 被误放
             // 边界从 name= 之前检查，避免将赋值号当成路径；替换范围仍只包含 value。
-            if !strong && is_on_path_or_url_boundary(text, whole.start(), e) {
+            if context != ContextStrength::Strong
+                && is_on_path_or_url_boundary(text, whole.start(), e)
+            {
                 continue;
             }
             if is_template_var(cand)
@@ -453,12 +606,12 @@ impl SecretDetector {
             {
                 continue;
             }
-            let threshold = if has_secret_context(text, s, e) {
+            let threshold = if context != ContextStrength::None {
                 ENTROPY_MIN
             } else {
                 ENTROPY_MIN_STRICT
             };
-            if shannon_entropy(cand) >= threshold {
+            if entropy_at_least(cand, threshold) {
                 push(&mut spans, s, e);
             }
         }
@@ -513,30 +666,33 @@ fn is_on_path_or_url_boundary(text: &str, start: usize, end: usize) -> bool {
     URL_PREFIXES.iter().any(|p| look.contains(p))
 }
 
-/// 回溯区间内是否出现密钥语义关键词
-fn has_secret_context(text: &str, start: usize, end: usize) -> bool {
-    RE_SECRET_CONTEXT.is_match(&text[lookback_start(text, start, CONTEXT_LOOKBACK)..end])
+#[derive(Debug, PartialEq, Eq)]
+enum ContextStrength {
+    None,
+    Weak,
+    Strong,
 }
 
-/// 比 has_secret_context 更严：关键词紧贴候选串，中间只能是赋值分隔字符。
-/// 命中时高熵兜底绕过路径检查，避免漏掉 Bearer xxx==/yyy 这类带 / 的真密钥。
-fn has_strong_secret_context(text: &str, start: usize, end: usize) -> bool {
+/// One context scan supplies both the entropy threshold and path exemption.
+fn secret_context(text: &str, start: usize, end: usize) -> ContextStrength {
     let lo = lookback_start(text, start, CONTEXT_LOOKBACK);
     if RE_AUTH_HEADER_PREFIX.is_match(&text[lo..start]) {
-        return true;
+        return ContextStrength::Strong;
     }
     let region = &text[lo..end];
     let Some(last) = RE_SECRET_CONTEXT.find_iter(region).last() else {
-        return false;
+        return ContextStrength::None;
     };
     let cand_start = start - lo;
-    // 关键词与候选串有交叠：整个落在候选串里（token=xxx），或跨过候选串起点（api key=xxx）→ 强
-    if last.end() > cand_start {
-        return true;
+    if last.end() > cand_start
+        || region.as_bytes()[last.end()..cand_start]
+            .iter()
+            .all(|c| ASSIGNMENT_CHARS.contains(c))
+    {
+        ContextStrength::Strong
+    } else {
+        ContextStrength::Weak
     }
-    region.as_bytes()[last.end()..cand_start]
-        .iter()
-        .all(|c| ASSIGNMENT_CHARS.contains(c))
 }
 
 fn is_template_var(s: &str) -> bool {
@@ -571,21 +727,95 @@ fn is_business_id_assignment(s: &str) -> bool {
     BENIGN_ID_SUFFIXES.iter().any(|suf| name.ends_with(suf))
 }
 
-/// 按字节计算香农熵（bits/byte）
-fn shannon_entropy(s: &str) -> f64 {
+/// Maximum byte entropy for each alphabet size, shared by all thresholds.
+static MAX_ENTROPY: LazyLock<[f64; 257]> =
+    LazyLock::new(|| std::array::from_fn(|n| if n == 0 { 0.0 } else { (n as f64).log2() }));
+
+fn entropy_at_least(s: &str, threshold: f64) -> bool {
     if s.is_empty() {
-        return 0.0;
+        return 0.0 >= threshold;
     }
     let mut freq = [0u32; 256];
+    let mut distinct = 0;
     for &c in s.as_bytes() {
-        freq[c as usize] += 1;
+        let count = &mut freq[c as usize];
+        distinct += usize::from(*count == 0);
+        *count += 1;
+    }
+    // H(X) <= log2(alphabet size): most code identifiers stop before any
+    // per-frequency floating point work. Keep the original sum at the boundary.
+    // Leave a rounding margin: an exactly uniform reference sum may round
+    // a few ulps above log2(distinct).
+    if MAX_ENTROPY[distinct] + 1e-12 < threshold {
+        return false;
     }
     let n = s.len() as f64;
-    freq.iter()
+    let entropy: f64 = freq
+        .iter()
         .filter(|&&c| c > 0)
         .map(|&c| {
             let p = f64::from(c) / n;
             -p * p.log2()
         })
-        .sum()
+        .sum();
+    entropy >= threshold
+}
+
+#[cfg(test)]
+mod optimization_tests {
+    use super::*;
+
+    #[test]
+    fn ascii_lowercase_expansions_use_the_unicode_fallback() {
+        for c in (128..=0x10ffff).filter_map(char::from_u32) {
+            if c.to_lowercase().any(|lower| lower.is_ascii()) {
+                assert!(matches!(c, 'K' | 'İ'), "new ASCII expansion: {c}");
+            }
+        }
+    }
+
+    #[test]
+    fn entropy_thresholds_match_reference_including_boundaries() {
+        for size in 1..=94 {
+            for repetitions in [1, 2, 7] {
+                let s: String = (0..size)
+                    .map(|i| char::from(b'!' + i))
+                    .collect::<String>()
+                    .repeat(repetitions);
+                let mut counts = [0usize; 256];
+                for b in s.bytes() {
+                    counts[b as usize] += 1;
+                }
+                let reference: f64 = counts
+                    .into_iter()
+                    .filter(|&n| n > 0)
+                    .map(|n| {
+                        let p = n as f64 / s.len() as f64;
+                        -p * p.log2()
+                    })
+                    .sum();
+                for threshold in [0.0, 3.0, 4.0, 4.8, 5.0, reference] {
+                    assert_eq!(
+                        entropy_at_least(&s, threshold),
+                        reference >= threshold,
+                        "size={size}, threshold={threshold}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn context_strength_retains_weak_and_strong_cases() {
+        for (prefix, expected) in [
+            ("ordinary ", ContextStrength::None),
+            ("token mentioned nearby ", ContextStrength::Weak),
+            ("token = ", ContextStrength::Strong),
+            ("Authorization: Basic ", ContextStrength::Strong),
+            ("密钥 = ", ContextStrength::Strong),
+        ] {
+            let text = format!("{prefix}abc/DEF0123456789xyz+");
+            assert_eq!(secret_context(&text, prefix.len(), text.len()), expected);
+        }
+    }
 }
