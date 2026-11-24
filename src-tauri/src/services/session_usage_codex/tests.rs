@@ -4426,26 +4426,84 @@ fn test_prune_codex_replay_caches_drops_deleted_and_oversized_entries() {
         assert!(caches.pending.is_empty());
     }
 
-    // Exceeding MAX_REPLAY_CACHE_ENTRIES clears the oversized map so long-lived
-    // processes never retain unbounded replay state.
-    let many_live: Vec<PathBuf> = (0..=MAX_REPLAY_CACHE_ENTRIES)
-        .map(|i| PathBuf::from(format!("/tmp/codex-live-{i}.jsonl")))
+    // Exceeding the cache caps evicts only the oldest excess entries from
+    // `parent_timelines` and `replay_prefixes`, while live `pending` entries
+    // stay intact to avoid repeated deferred re-parses and WARN spam.
+    let total_live = MAX_REPLAY_PREFIX_CACHE_ENTRIES + 88; // 600 live files
+    let many_live: Vec<PathBuf> = (0..total_live)
+        .map(|i| PathBuf::from(format!("/tmp/codex-live-{i:04}.jsonl")))
         .collect();
     {
         let mut caches = replay_caches().lock().unwrap();
-        for path in &many_live {
+        caches.replay_prefixes.clear();
+        for (i, path) in many_live.iter().enumerate() {
             caches.replay_prefixes.insert(
                 path.clone(),
                 CachedReplayPrefix {
-                    modified: 1,
+                    modified: i as i64,
                     size: 10,
                     prefix: 1,
                 },
             );
+            caches.pending.insert(
+                path.clone(),
+                PendingEntry {
+                    modified: i as i64,
+                    size: 10,
+                    reason: PendingReason::MissingParent(format!("parent-{i}")),
+                },
+            );
+            if i < MAX_PARENT_TIMELINE_CACHE_ENTRIES + 20 {
+                caches.parent_timelines.insert(
+                    path.clone(),
+                    CachedParentTimeline {
+                        stamp: ParentFileStamp {
+                            modified_nanos: i as i64,
+                            size: 10,
+                            #[cfg(unix)]
+                            device: 0,
+                            #[cfg(unix)]
+                            inode: i as u64,
+                            #[cfg(windows)]
+                            identity: None,
+                        },
+                        timeline: Arc::new(ParentTokenTimeline {
+                            events: Vec::new(),
+                            max_timestamp: None,
+                            has_token_without_timestamp: false,
+                            high_water: None,
+                        }),
+                    },
+                );
+            }
         }
     }
     prune_codex_replay_caches(&many_live);
-    assert!(replay_caches().lock().unwrap().replay_prefixes.is_empty());
+    {
+        let caches = replay_caches().lock().unwrap();
+        assert_eq!(caches.pending.len(), total_live);
+        assert_eq!(
+            caches.replay_prefixes.len(),
+            MAX_REPLAY_PREFIX_CACHE_ENTRIES
+        );
+        assert!(!caches.replay_prefixes.contains_key(&many_live[0]));
+        assert!(!caches.replay_prefixes.contains_key(&many_live[87]));
+        assert!(caches.replay_prefixes.contains_key(&many_live[88]));
+        assert!(caches
+            .replay_prefixes
+            .contains_key(&many_live[total_live - 1]));
+
+        assert_eq!(
+            caches.parent_timelines.len(),
+            MAX_PARENT_TIMELINE_CACHE_ENTRIES
+        );
+        assert!(!caches.parent_timelines.contains_key(&many_live[0]));
+        assert!(!caches.parent_timelines.contains_key(&many_live[19]));
+        assert!(caches.parent_timelines.contains_key(&many_live[20]));
+        assert!(caches
+            .parent_timelines
+            .contains_key(&many_live[MAX_PARENT_TIMELINE_CACHE_ENTRIES + 19]));
+    }
 
     clear_codex_replay_caches();
 }

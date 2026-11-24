@@ -1460,10 +1460,15 @@ pub fn run() {
                                     log::warn!("Usage cost startup backfill failed: {error}");
                                 }
                             }
-                            if !crate::settings::get_settings().session_auto_sync_enabled {
-                                return crate::services::session_usage::SessionSyncResult::default();
-                            }
-                            crate::services::session_usage::sync_all_unlocked(&db)
+                            let result = if crate::settings::get_settings().session_auto_sync_enabled {
+                                crate::services::session_usage::sync_all_unlocked(&db)
+                            } else {
+                                crate::services::session_usage::SessionSyncResult::default()
+                            };
+                            // 仅在低频后台定时同步与启动回填结束后回收 SQLite 页缓存，
+                            // 不影响前台用量页高频自动刷新的热缓存。
+                            db.shrink_memory();
+                            result
                         });
                         match task.await {
                             Ok(result) if !result.errors.is_empty() => {
