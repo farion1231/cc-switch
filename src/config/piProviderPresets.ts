@@ -165,6 +165,15 @@ const aiCodeMirrorModels = (): PiPresetModel[] => [
   }),
 ];
 
+const stringAiModels = (): PiPresetModel[] => [
+  piModel("openai/gpt-6-astra", {
+    id: "gpt-6-astra",
+  }),
+  piModel("openai/gpt-6.1-sol", {
+    id: "gpt-6.1-sol",
+  }),
+];
+
 const fennoAiModels = (): PiPresetModel[] => [
   piModel("openai/gpt-6.1-sol", {
     id: "gpt-6.1-sol",
@@ -496,6 +505,23 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "haoai",
     icon: "haoai",
+  },
+  {
+    name: "StringAI",
+    providerKey: "cc-switch-string-ai",
+    websiteUrl: "https://www.string.ink",
+    apiKeyUrl: "https://www.string.ink/register?ref=661AE533A60AF110",
+    settingsConfig: {
+      name: "StringAI",
+      baseUrl: "https://www.string.ink/v1",
+      api: "openai-completions",
+      apiKey: "",
+      models: stringAiModels(),
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "stringai",
+    icon: "stringai",
   },
   {
     name: "FennoAI",

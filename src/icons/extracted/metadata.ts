@@ -960,6 +960,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     category: "ai-provider",
     keywords: ["streamlake", "vanchin", "wanqing", "万擎", "快手", "kwai"],
   },
+  stringai: {
+    name: "stringai",
+    displayName: "StringAI",
+    category: "ai-provider",
+    shape: "tile",
+    keywords: ["stringai", "string ai", "string.ink", "弦界", "aggregator"],
+  },
   ppio: {
     name: "ppio",
     displayName: "PPIO",

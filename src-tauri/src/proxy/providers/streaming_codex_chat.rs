@@ -2,7 +2,10 @@
 
 use super::codex_responses_sse as sse;
 use super::{
-    codex_chat_common::{extract_reasoning_field_text, tool_call_extra_content},
+    codex_chat_common::{
+        chat_content_segments, extract_reasoning_field_text, tool_call_extra_content,
+        ChatContentSegment,
+    },
     codex_compaction,
     inline_think::InlineThinkSplitter,
     transform_codex_chat::{
@@ -138,9 +141,20 @@ impl ChatToResponsesState {
                 self.append_reasoning_to_active_tools(&reasoning);
             }
 
-            if let Some(content) = delta.get("content").and_then(|v| v.as_str()) {
-                if !content.is_empty() {
-                    events.extend(self.push_content_delta(content));
+            // content 可能是分段数组（Mistral 的 thinking / text 段，#9902），按顺序处理。
+            for segment in delta
+                .get("content")
+                .map(chat_content_segments)
+                .unwrap_or_default()
+            {
+                match segment {
+                    ChatContentSegment::Thinking(thinking) => {
+                        events.extend(self.push_reasoning_delta(&thinking));
+                        self.append_reasoning_to_active_tools(&thinking);
+                    }
+                    ChatContentSegment::Text(content) => {
+                        events.extend(self.push_content_delta(&content));
+                    }
                 }
             }
 
@@ -923,6 +937,32 @@ mod tests {
             })
             .unwrap();
         assert_eq!(done["item"]["id"], "msg_chatcmpl_1");
+    }
+
+    #[tokio::test]
+    async fn converts_mistral_chunked_content_to_reasoning_and_text() {
+        // #9902：Mistral 开思考后 delta.content 在分段数组和字符串之间切换，
+        // 修复前只按字符串读，数组段全部丢失，流式回复为空。
+        let output = collect(vec![
+            "data: {\"id\":\"c1\",\"created\":1,\"model\":\"mistral-large-4\",\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"\"}}]}\n\n",
+            "data: {\"id\":\"c1\",\"created\":1,\"model\":\"mistral-large-4\",\"choices\":[{\"delta\":{\"content\":[{\"type\":\"thinking\",\"thinking\":[{\"type\":\"text\",\"text\":\"We \"}]}]}}]}\n\n",
+            "data: {\"id\":\"c1\",\"created\":1,\"model\":\"mistral-large-4\",\"choices\":[{\"delta\":{\"content\":[{\"type\":\"thinking\",\"thinking\":[{\"type\":\"text\",\"text\":\"add\"}],\"closed\":true},{\"type\":\"text\",\"text\":\"39\"}]}}]}\n\n",
+            "data: {\"id\":\"c1\",\"created\":1,\"model\":\"mistral-large-4\",\"choices\":[{\"delta\":{\"content\":\"1\"},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+        let events = parse_sse_events(&output);
+        let completed = events
+            .iter()
+            .find(|event| event["type"] == "response.completed")
+            .unwrap();
+        let items = completed["response"]["output"].as_array().unwrap();
+
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["type"], "reasoning");
+        assert_eq!(items[0]["summary"][0]["text"], "We add");
+        assert_eq!(items[1]["type"], "message");
+        assert_eq!(items[1]["content"][0]["text"], "391");
     }
 
     #[tokio::test]
