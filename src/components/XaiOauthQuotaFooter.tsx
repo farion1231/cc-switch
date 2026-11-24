@@ -9,6 +9,7 @@ interface XaiOauthQuotaFooterProps {
   inline?: boolean;
   /** 是否为当前激活的供应商 */
   isCurrent?: boolean;
+  autoQueryInterval?: number;
 }
 
 /**
@@ -22,13 +23,18 @@ const XaiOauthQuotaFooter: React.FC<XaiOauthQuotaFooterProps> = ({
   meta,
   inline = false,
   isCurrent = false,
+  autoQueryInterval = 5,
 }) => {
   const display = useQuotaDisplay();
   const {
     data: quota,
     isFetching: loading,
     refetch,
-  } = useXaiOauthQuota(meta, { enabled: true, autoQuery: isCurrent });
+  } = useXaiOauthQuota(meta, {
+    enabled: true,
+    autoQuery: isCurrent && autoQueryInterval > 0,
+    autoQueryIntervalMinutes: autoQueryInterval,
+  });
 
   return (
     <SubscriptionQuotaView
