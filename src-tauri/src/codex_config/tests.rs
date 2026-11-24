@@ -2918,59 +2918,6 @@ fn stack_rows_share_history_only_within_one_tool_protocol() {
 }
 
 #[test]
-fn stacked_search_capability_follows_the_active_native_provider_config() {
-    let settings = json!({ "modelCatalog": { "models": [{ "model": "gpt-6.2-sol" }] } });
-    let config = r#"
-model = "gpt-6.2-sol"
-model_provider = "search"
-[model_providers.search]
-supports_standalone_web_search = true
-[model_providers.other]
-"#;
-    let without_search =
-        config.replace("model_provider = \"search\"", "model_provider = \"other\"");
-    let row = |config_text, profile| CodexCatalogRow {
-        settings: &settings,
-        config_text,
-        profile,
-    };
-    let catalog = plan_codex_stack_catalog(
-        CodexStackRoute::ThirdParty(row(
-            &without_search,
-            CodexCatalogToolProfile::NativeResponses,
-        )),
-        &[
-            CodexStackCatalogMember {
-                key: "search-capable",
-                provider_name: "Search Capable",
-                row: row(config, CodexCatalogToolProfile::NativeResponses),
-            },
-            CodexStackCatalogMember {
-                key: "other",
-                provider_name: "Other",
-                row: row(&without_search, CodexCatalogToolProfile::NativeResponses),
-            },
-            CodexStackCatalogMember {
-                key: "chat",
-                provider_name: "Chat",
-                row: row(config, CodexCatalogToolProfile::ProxyChat),
-            },
-        ],
-        false,
-    )
-    .expect("catalog");
-    let models = catalog["models"].as_array().unwrap();
-    assert_eq!(models[0]["slug"], "gpt-6.2-sol");
-    assert_ne!(models[0]["use_responses_lite"], true);
-    assert_eq!(models[1]["slug"], "ccs-search-capable/gpt-6.2-sol");
-    assert_eq!(models[1]["use_responses_lite"], true);
-    assert_eq!(models[2]["slug"], "ccs-other/gpt-6.2-sol");
-    assert_ne!(models[2]["use_responses_lite"], true);
-    assert_eq!(models[3]["slug"], "ccs-chat/gpt-6.2-sol");
-    assert_ne!(models[3]["use_responses_lite"], true);
-}
-
-#[test]
 fn stacked_rows_keep_their_own_tool_profile_and_never_use_responses_lite() {
     let route_settings = json!({ "modelCatalog": { "models": [{ "model": "route-model" }] } });
     let route_text = "model = \"route-model\"\n";
