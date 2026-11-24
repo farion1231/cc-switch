@@ -2450,6 +2450,12 @@ mod tests {
         use crate::services::provider::{initialize_dsh_profiles, ProviderService};
 
         let home = DshHome::new();
+        let _settings_home = crate::test_support::TestHome::new();
+        crate::settings::update_settings(crate::settings::AppSettings {
+            manage_mcp: true,
+            ..crate::settings::get_settings()
+        })
+        .unwrap();
         let root = home.dir.path();
         init_profiles(root, &["web"]);
         let web = profile_path("web");
@@ -2594,6 +2600,12 @@ mod tests {
         use crate::services::provider::initialize_dsh_profiles;
 
         let home = DshHome::new();
+        let _settings_home = crate::test_support::TestHome::new();
+        crate::settings::update_settings(crate::settings::AppSettings {
+            manage_mcp: true,
+            ..crate::settings::get_settings()
+        })
+        .unwrap();
         init_profiles(home.dir.path(), &["web"]);
         let state = seed_rows_with_one_unreadable_mcp(false);
 
@@ -2615,6 +2627,12 @@ mod tests {
         use crate::services::provider::initialize_dsh_profiles;
 
         let home = DshHome::new();
+        let _settings_home = crate::test_support::TestHome::new();
+        crate::settings::update_settings(crate::settings::AppSettings {
+            manage_mcp: true,
+            ..crate::settings::get_settings()
+        })
+        .unwrap();
         init_profiles(home.dir.path(), &["web"]);
         let web = profile_path("web");
         let before = read_text(&web).unwrap();

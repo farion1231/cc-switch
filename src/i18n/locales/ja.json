@@ -5459,12 +5459,12 @@
     },
     "skills": {
       "offTitle": "Skills 管理はオフです",
-      "offDescription": "オフの間、CC Switch は各アプリの Skills ディレクトリをスキャン・変更しません。手動編集や他のツールで自由に管理できます。",
+      "offDescription": "管理をオフにすると、CC Switch は Skills のインポートと各アプリへの同期を停止します。既存のファイルと記録は保持されます。クラウド同期では、共有ディレクトリ ~/.agents/skills の内容を含め、Skills のファイルと記録が引き続き転送されます。",
       "enableButton": "Skills 管理をオンにする",
       "headerSwitchAria": "Skills 管理をオフにする",
       "headerSwitchTip": "Skills 管理をオフにする（既存のファイルや記録は削除されません）",
       "toastEnabled": "Skills 管理をオンにしました",
-      "toastDisabled": "Skills 管理をオフにしました。CC Switch はローカル Skills を変更しません"
+      "toastDisabled": "Skills 管理をオフにしました。クラウド同期は引き続き有効です"
     }
   }
 }

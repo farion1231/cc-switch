@@ -287,8 +287,8 @@ function App() {
   const [mcpManagementBusy, setMcpManagementBusy] = useState(false);
   const [skillsNavigationBusy, setSkillsNavigationBusy] = useState(false);
   const [promptNavigationBusy, setPromptNavigationBusy] = useState(false);
-  const mcpManagement = useModuleManagement("mcp");
-  const skillsManagement = useModuleManagement("skills");
+  const mcpManagement = useModuleManagement("mcp", mcpManagementBusy);
+  const skillsManagement = useModuleManagement("skills", skillsNavigationBusy);
 
   useEffect(() => {
     storeView(currentView);

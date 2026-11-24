@@ -189,6 +189,12 @@ fn startup_database_commands_yield_during_session_sync_contention() {
 #[serial_test::serial]
 fn remaining_database_commands_yield_during_session_sync_contention() {
     let _home = TestHome::new();
+    crate::settings::update_settings(crate::settings::AppSettings {
+        manage_mcp: true,
+        manage_skills: true,
+        ..crate::settings::get_settings()
+    })
+    .unwrap();
     let db = Arc::new(Database::memory().unwrap());
     let provider = Provider::with_id(
         "test-provider".into(),

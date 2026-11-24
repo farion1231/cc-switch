@@ -5459,12 +5459,12 @@
     },
     "skills": {
       "offTitle": "Skills-Verwaltung ist aus",
-      "offDescription": "Im deaktivierten Zustand scannt oder ändert CC Switch keine Skills-Verzeichnisse Ihrer Apps. Sie können sie selbst bearbeiten oder mit anderen Tools verwalten.",
+      "offDescription": "Bei deaktivierter Verwaltung importiert CC Switch keine Skills mehr und synchronisiert sie nicht mit Apps. Vorhandene Dateien und Einträge bleiben erhalten. Die Cloud-Synchronisierung überträgt weiterhin Skills-Dateien und Einträge, auch im gemeinsamen Verzeichnis ~/.agents/skills.",
       "enableButton": "Skills-Verwaltung aktivieren",
       "headerSwitchAria": "Skills-Verwaltung ausschalten",
       "headerSwitchTip": "Skills-Verwaltung ausschalten (vorhandene Dateien bleiben erhalten)",
       "toastEnabled": "Skills-Verwaltung aktiviert",
-      "toastDisabled": "Skills-Verwaltung deaktiviert – CC Switch ändert Ihre lokalen Skills nicht mehr"
+      "toastDisabled": "Skills-Verwaltung deaktiviert; Cloud-Synchronisierung bleibt unverändert"
     }
   }
 }

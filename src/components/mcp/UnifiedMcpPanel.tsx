@@ -193,7 +193,8 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
     resyncMutation.isPending;
   const dialogOpen =
     drawer !== null || deleteId !== null || importReport !== null;
-  const interactionBlocked = writePending || mutationPending || dialogOpen;
+  const interactionBlocked =
+    writePending || mutationPending || dialogOpen || managementPending;
   // 外观上的禁用晚 300ms 才出现：点一个格子写得很快时不让整页按钮闪一下变灰。
   // 写入本身仍由写锁（writeLockRef / interactionBlocked）拦着。
   const controlsDisabled = useDelayedFlag(interactionBlocked);
@@ -206,6 +207,7 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
   const navigationBlocked =
     writePending ||
     mutationPending ||
+    managementPending ||
     editorSaving ||
     deleteId !== null ||
     importReport !== null;
@@ -222,6 +224,7 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
     if (
       writeLockRef.current ||
       mutationPending ||
+      managementPending ||
       (!allowOpenDialog && dialogOpen)
     ) {
       return false;

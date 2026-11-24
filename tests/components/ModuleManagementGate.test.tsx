@@ -1,5 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  render,
+  renderHook,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Server } from "lucide-react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -12,6 +18,7 @@ import {
 import { settingsApi } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { setSettings } from "../msw/state";
+import { createElement, type ReactNode } from "react";
 
 function TestHarness({
   module,
@@ -61,6 +68,85 @@ const renderHarness = (module: ManagedModule, switchDisabled = false) =>
 describe("ModuleManagementGate", () => {
   beforeEach(() => {
     setSettings({ manageMcp: false, manageSkills: false });
+  });
+
+  const hookWrapper = () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    return ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client }, children);
+  };
+
+  it("preserves both choices when module settings saves overlap", async () => {
+    const { result } = renderHook(
+      () => ({
+        mcp: useModuleManagement("mcp"),
+        skills: useModuleManagement("skills"),
+      }),
+      { wrapper: hookWrapper() },
+    );
+    let releaseSave!: () => void;
+    const heldSave = new Promise<void>((resolve) => {
+      releaseSave = resolve;
+    });
+    const originalSave = settingsApi.save;
+    const saveSpy = vi
+      .spyOn(settingsApi, "save")
+      .mockImplementationOnce(async (settings) => {
+        await heldSave;
+        return originalSave(settings);
+      });
+    try {
+      await act(async () => {
+        const first = result.current.mcp.setEnabled(true);
+        await waitFor(() => expect(saveSpy).toHaveBeenCalledTimes(1));
+        const second = result.current.skills.setEnabled(true);
+        // Let the second toggle reach the save boundary before releasing the
+        // first: it must read settings only after the first has been committed.
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        releaseSave();
+        await Promise.all([first, second]);
+      });
+      const saved = await settingsApi.get();
+      expect(saved.manageMcp).toBe(true);
+      expect(saved.manageSkills).toBe(true);
+    } finally {
+      releaseSave();
+      saveSpy.mockRestore();
+    }
+  });
+
+  it("does not let an earlier Undo bypass a module write in progress", async () => {
+    const successSpy = vi.spyOn(toast, "success");
+    const { result, rerender } = renderHook(
+      ({ blocked }) => useModuleManagement("skills", blocked),
+      { initialProps: { blocked: false }, wrapper: hookWrapper() },
+    );
+    try {
+      await act(async () => {
+        await result.current.setEnabled(true);
+      });
+      const undo = successSpy.mock.calls[0]?.[1]?.action as
+        | { onClick: () => void }
+        | undefined;
+      expect(undo).toBeDefined();
+      rerender({ blocked: true });
+      await act(async () => {
+        undo?.onClick();
+      });
+      expect((await settingsApi.get()).manageSkills).toBe(true);
+
+      rerender({ blocked: false });
+      await act(async () => {
+        undo?.onClick();
+      });
+      await waitFor(async () => {
+        expect((await settingsApi.get()).manageSkills).toBe(false);
+      });
+    } finally {
+      successSpy.mockRestore();
+    }
   });
 
   it("enables MCP management, emits undoable toast, and undo turns it back off", async () => {

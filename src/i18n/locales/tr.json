@@ -5459,12 +5459,12 @@
     },
     "skills": {
       "offTitle": "Skills yönetimi kapalı",
-      "offDescription": "Kapalıyken CC Switch hiçbir uygulamanın Skills klasörünü taramaz veya değiştirmez. Becerilerinizi elle ya da başka araçlarla yönetebilirsiniz.",
+      "offDescription": "Yönetim kapalıyken CC Switch, Skills içe aktarmayı ve uygulamalara eşitlemeyi durdurur. Mevcut dosyalar ve kayıtlar korunur. Bulut eşitlemesi, paylaşılan ~/.agents/skills klasöründekiler dahil Skills dosyalarını ve kayıtlarını aktarmaya devam eder.",
       "enableButton": "Skills yönetimini aç",
       "headerSwitchAria": "Skills yönetimini kapat",
       "headerSwitchTip": "Skills yönetimini kapat (mevcut dosyalar ve kayıtlar korunur)",
       "toastEnabled": "Skills yönetimi açıldı",
-      "toastDisabled": "Skills yönetimi kapatıldı — CC Switch artık yerel Skills klasörünüze dokunmayacak"
+      "toastDisabled": "Skills yönetimi kapatıldı; bulut eşitlemesi değişmedi"
     }
   }
 }

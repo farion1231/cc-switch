@@ -2732,7 +2732,13 @@ requires_openai_auth = true
     #[test]
     #[serial]
     fn additive_app_sync_reports_failed_provider_and_still_projects_mcp() {
+        let _settings_home = crate::test_support::TestHome::new();
         with_test_home(|state, _| {
+            crate::settings::update_settings(crate::settings::AppSettings {
+                manage_mcp: true,
+                ..crate::settings::get_settings()
+            })
+            .unwrap();
             // OpenCode 装了（配置目录在），MCP 才会投影过去。
             fs::create_dir_all(crate::opencode_config::get_opencode_dir()).unwrap();
             state

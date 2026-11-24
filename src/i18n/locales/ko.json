@@ -5459,12 +5459,12 @@
     },
     "skills": {
       "offTitle": "Skills 관리가 꺼져 있습니다",
-      "offDescription": "꺼져 있는 동안 CC Switch는 앱의 Skills 디렉터리를 스캔하거나 수정하지 않습니다. 직접 편집하거나 다른 도구로 자유롭게 관리할 수 있습니다.",
+      "offDescription": "관리를 끄면 CC Switch는 Skills 가져오기와 앱으로의 동기화를 중지합니다. 기존 파일과 기록은 유지됩니다. 클라우드 동기화는 공유 ~/.agents/skills 디렉터리의 내용을 포함하여 Skills 파일과 기록을 계속 전송합니다.",
       "enableButton": "Skills 관리 켜기",
       "headerSwitchAria": "Skills 관리 끄기",
       "headerSwitchTip": "Skills 관리 끄기 (기존 파일과 기록은 유지됩니다)",
       "toastEnabled": "Skills 관리가 켜졌습니다",
-      "toastDisabled": "Skills 관리가 꺼졌습니다. CC Switch가 더 이상 로컬 Skills를 수정하지 않습니다"
+      "toastDisabled": "Skills 관리가 꺼졌습니다. 클라우드 동기화는 변경되지 않습니다"
     }
   }
 }

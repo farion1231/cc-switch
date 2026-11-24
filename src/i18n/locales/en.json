@@ -5459,12 +5459,12 @@
     },
     "skills": {
       "offTitle": "Skills management is off",
-      "offDescription": "While turned off, CC Switch will not scan or modify any app's Skills directory. You can edit skills yourself or manage them with other tools.",
+      "offDescription": "When management is off, CC Switch stops importing Skills and syncing them to apps. Existing files and records remain. Cloud sync still transfers Skills files and records, including those in the shared ~/.agents/skills directory.",
       "enableButton": "Enable Skills management",
       "headerSwitchAria": "Turn off Skills management",
       "headerSwitchTip": "Turn off Skills management (keeps existing files and records)",
       "toastEnabled": "Skills management enabled",
-      "toastDisabled": "Skills management turned off — CC Switch will no longer touch your local Skills"
+      "toastDisabled": "Skills management turned off; cloud sync remains unchanged"
     }
   }
 }

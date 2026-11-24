@@ -687,11 +687,11 @@ pub struct AppSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proxy_client_host: Option<String>,
 
-    // ===== 选择性管理开关（默认不管理，需显式开启）=====
-    /// 是否由 CC Switch 管理各应用的 MCP 配置（默认 false）
+    // ===== 选择性管理开关（新安装默认关闭；旧设置缺键时保留原有管理行为）=====
+    /// 是否由 CC Switch 管理各应用的 MCP 配置
     #[serde(default)]
     pub manage_mcp: bool,
-    /// 是否由 CC Switch 管理各应用的 Skills 目录（默认 false）
+    /// 是否由 CC Switch 管理各应用的 Skills 目录
     #[serde(default)]
     pub manage_skills: bool,
 
@@ -973,7 +973,23 @@ fn load_settings_from_path(path: &Path) -> LoadedSettings {
         Ok(text) => (text, false),
         Err(err) => (String::from_utf8_lossy(err.as_bytes()).into_owned(), true),
     };
-    let (settings, parse_lossy) = parse_settings_lenient(&text);
+    let (mut settings, parse_lossy) = parse_settings_lenient(&text);
+    // A saved settings object without these keys predates opt-in management.
+    // Preserve the old installation's behavior, but never override an explicit
+    // choice (or treat an invalid value as consent). Missing/unreadable files
+    // keep the fresh-install defaults. The next save persists both keys.
+    let content = text.strip_prefix('\u{feff}').unwrap_or(&text);
+    if let Some(Ok(serde_json::Value::Object(fields))) = serde_json::Deserializer::from_str(content)
+        .into_iter::<serde_json::Value>()
+        .next()
+    {
+        if !fields.contains_key("manageMcp") {
+            settings.manage_mcp = true;
+        }
+        if !fields.contains_key("manageSkills") {
+            settings.manage_skills = true;
+        }
+    }
     LoadedSettings {
         settings,
         lossy: bad_utf8 || parse_lossy,
@@ -2103,6 +2119,56 @@ mod tests {
         );
         let entries = fs::read_dir(dir.path()).expect("read dir").count();
         assert_eq!(entries, 1, "no temp or backup files left behind");
+    }
+
+    #[test]
+    fn selective_management_migrates_only_missing_keys_in_saved_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+
+        let fresh = load_settings_from_path(&path).settings;
+        assert!(!fresh.manage_mcp && !fresh.manage_skills);
+        write_settings_to_path(&path, &fresh, &AtomicBool::new(false)).unwrap();
+        let restarted = load_settings_from_path(&path).settings;
+        assert!(!restarted.manage_mcp && !restarted.manage_skills);
+
+        for (json, mcp, skills) in [
+            (r#"{}"#, true, true),
+            (r#"{"manageMcp":false}"#, false, true),
+            (r#"{"manageSkills":false}"#, true, false),
+            (r#"{"manageMcp":false,"manageSkills":false}"#, false, false),
+            (r#"{"manageMcp":true,"manageSkills":false}"#, true, false),
+            (r#"{"manageMcp":false,"manageSkills":true}"#, false, true),
+            // Lenient recovery must retain explicit choices, including invalid
+            // values that fall back to off, while still migrating missing keys.
+            (
+                r#"{"manageMcp":false,"backupIntervalHours":-1}"#,
+                false,
+                true,
+            ),
+            (r#"{"manageSkills":"invalid"}"#, true, false),
+            (
+                "\u{feff}{\"manageSkills\":false} trailing garbage",
+                true,
+                false,
+            ),
+            ("not json", false, false),
+        ] {
+            fs::write(&path, json).unwrap();
+            let loaded = load_settings_from_path(&path).settings;
+            assert_eq!(
+                (loaded.manage_mcp, loaded.manage_skills),
+                (mcp, skills),
+                "{json}"
+            );
+            write_settings_to_path(&path, &loaded, &AtomicBool::new(false)).unwrap();
+            let reloaded = load_settings_from_path(&path).settings;
+            assert_eq!(
+                (reloaded.manage_mcp, reloaded.manage_skills),
+                (mcp, skills),
+                "{json}"
+            );
+        }
     }
 
     #[test]

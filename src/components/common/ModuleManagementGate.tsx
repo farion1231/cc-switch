@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Power } from "lucide-react";
 import { settingsApi } from "@/lib/api";
 import { useSettingsQuery } from "@/lib/query";
@@ -23,27 +23,45 @@ const SETTING_FIELD: Record<ManagedModule, "manageMcp" | "manageSkills"> = {
 /**
  * 读写本机 MCP / Skills 管理开关，并在开启 / 关闭时弹带撤销的轻提示以防误触。
  */
-export function useModuleManagement(module: ManagedModule) {
+export function useModuleManagement(
+  module: ManagedModule,
+  writeBlocked = false,
+) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const { data: settings } = useSettingsQuery();
   const [isPending, setIsPending] = useState(false);
   const pendingRef = useRef(false);
+  const writeBlockedRef = useRef(writeBlocked);
+  writeBlockedRef.current = writeBlocked;
 
   const field = SETTING_FIELD[module];
   const enabled = Boolean(settings?.[field]);
+  const { mutateAsync: saveManagement } = useMutation({
+    // Each save reads and writes the full settings object. Queue both modules
+    // together so a quick toggle/undo cannot overwrite the other module's choice.
+    scope: { id: "module-management" },
+    mutationFn: async (next: boolean) => {
+      const current = await settingsApi.get();
+      const updated: Settings = { ...current, [field]: next };
+      await settingsApi.save(updated);
+      return updated;
+    },
+    onSuccess: (updated) => {
+      queryClient.setQueryData(["settings"], updated);
+      void queryClient.invalidateQueries({ queryKey: ["settings"] });
+    },
+  });
 
   const setEnabled = useCallback(
     async (next: boolean, options?: { fromUndo?: boolean }) => {
-      if (pendingRef.current) return;
+      // Toast callbacks outlive the render that created them; consult the latest
+      // write state so Undo obeys the same guard as the page-header switch.
+      if (pendingRef.current || writeBlockedRef.current) return;
       pendingRef.current = true;
       setIsPending(true);
       try {
-        const current = await settingsApi.get();
-        const updated: Settings = { ...current, [field]: next };
-        await settingsApi.save(updated);
-        queryClient.setQueryData(["settings"], updated);
-        void queryClient.invalidateQueries({ queryKey: ["settings"] });
+        await saveManagement(next);
 
         const message = next
           ? t(`moduleManagement.${module}.toastEnabled`)
@@ -72,7 +90,7 @@ export function useModuleManagement(module: ManagedModule) {
         setIsPending(false);
       }
     },
-    [field, module, queryClient, t],
+    [module, saveManagement, t],
   );
 
   return { enabled, isPending, setEnabled };

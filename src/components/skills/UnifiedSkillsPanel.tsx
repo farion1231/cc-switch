@@ -228,7 +228,8 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     isUpdatingMany;
   const dialogOpen =
     importOpen || restoreOpen || confirm !== null || repoManagerOpen;
-  const navigationBlocked = writePending || mutationPending || dialogOpen;
+  const navigationBlocked =
+    writePending || mutationPending || dialogOpen || managementPending;
   const interactionBlocked = navigationBlocked || isCheckingUpdates;
   // 外观上的禁用晚 300ms 才出现：点一个格子写得很快时不让整页按钮闪一下变灰。
   // 写入本身仍由写锁（writeLockRef / interactionBlocked）拦着。
@@ -256,6 +257,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
       isCheckingUpdates ||
       writeLockRef.current ||
       mutationPending ||
+      managementPending ||
       (!allowOpenDialog && dialogOpen)
     ) {
       return false;

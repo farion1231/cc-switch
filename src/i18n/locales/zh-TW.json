@@ -5459,12 +5459,12 @@
     },
     "skills": {
       "offTitle": "Skills 管理未開啟",
-      "offDescription": "關閉狀態下 CC Switch 不會掃描或改動任何應用的 Skills 目錄，你可以自由手動調整或使用其他工具管理。",
+      "offDescription": "關閉後，CC Switch 停止匯入 Skills 和向各應用同步，保留現有檔案與記錄。雲端同步仍會傳輸 Skills 檔案和記錄，包括共用 ~/.agents/skills 目錄中的內容。",
       "enableButton": "開啟 Skills 管理",
       "headerSwitchAria": "關閉 Skills 管理",
       "headerSwitchTip": "點擊關閉 Skills 管理（不刪除現有目錄與記錄）",
       "toastEnabled": "已開啟 Skills 管理",
-      "toastDisabled": "已關閉 Skills 管理，CC Switch 不再改動你的本機 Skills"
+      "toastDisabled": "已關閉 Skills 管理，雲端同步不受影響"
     }
   }
 }
