@@ -192,6 +192,10 @@ pub fn sync_all_unlocked(db: &Database) -> SessionSyncResult {
                 crate::services::session_usage_workbuddy::sync_workbuddy_usage,
             ),
             (
+                "CodeBuddy Code",
+                crate::services::session_usage_codebuddy::sync_codebuddy_usage,
+            ),
+            (
                 "DeepSeek Harness",
                 crate::services::session_usage_dsh::sync_dsh_usage,
             ),

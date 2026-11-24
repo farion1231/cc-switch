@@ -840,6 +840,7 @@ export interface McpServerSpec {
 export interface McpApps {
   mcode?: boolean;
   kimi?: boolean;
+  codebuddy?: boolean;
   dsh?: boolean;
   workbuddy?: boolean;
   agy?: boolean;

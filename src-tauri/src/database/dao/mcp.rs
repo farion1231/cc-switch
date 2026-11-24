@@ -10,7 +10,7 @@ use indexmap::IndexMap;
 use rusqlite::{params, OptionalExtension, Row};
 
 const MCP_SERVER_SELECT: &str =
-    "SELECT id, name, server_config, description, homepage, docs, tags, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes, enabled_mcode, enabled_pi, enabled_agy, enabled_kimi, enabled_omp, enabled_dsh, enabled_copilot, enabled_workbuddy FROM mcp_servers";
+    "SELECT id, name, server_config, description, homepage, docs, tags, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes, enabled_mcode, enabled_pi, enabled_agy, enabled_kimi, enabled_omp, enabled_dsh, enabled_copilot, enabled_workbuddy, enabled_codebuddy FROM mcp_servers";
 
 fn row_to_mcp_server(row: &Row<'_>) -> rusqlite::Result<(String, McpServer)> {
     let id: String = row.get(0)?;
@@ -50,6 +50,7 @@ fn row_to_mcp_server(row: &Row<'_>) -> rusqlite::Result<(String, McpServer)> {
                 dsh: row.get(18)?,
                 copilot: row.get(19)?,
                 workbuddy: row.get(20)?,
+                codebuddy: row.get(21)?,
             },
             description,
             homepage,
@@ -76,6 +77,7 @@ fn mcp_flag_column(app: &AppType) -> Option<&'static str> {
         AppType::Pi => Some("enabled_pi"),
         AppType::Omp => Some("enabled_omp"),
         AppType::Agy => Some("enabled_agy"),
+        AppType::Codebuddy => Some("enabled_codebuddy"),
         AppType::ClaudeDesktop | AppType::OpenClaw => None,
     }
 }
@@ -190,8 +192,8 @@ impl Database {
         conn.execute(
             "INSERT OR REPLACE INTO mcp_servers (
                 id, name, server_config, description, homepage, docs, tags,
-                enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes, enabled_mcode, enabled_pi, enabled_agy, enabled_kimi, enabled_omp, enabled_dsh, enabled_copilot, enabled_workbuddy
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
+                enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes, enabled_mcode, enabled_pi, enabled_agy, enabled_kimi, enabled_omp, enabled_dsh, enabled_copilot, enabled_workbuddy, enabled_codebuddy
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
             params![
                 server.id,
                 server.name,
@@ -217,6 +219,7 @@ impl Database {
                 server.apps.dsh,
                 server.apps.copilot,
                 server.apps.workbuddy,
+                server.apps.codebuddy,
             ],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;

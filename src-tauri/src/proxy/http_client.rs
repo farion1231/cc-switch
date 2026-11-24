@@ -9,15 +9,22 @@ use std::net::IpAddr;
 use std::sync::{OnceLock, RwLock};
 use std::time::Duration;
 
-/// 全局代理 URL 与各客户端一起更新，避免请求读到不同批次的配置。
+/// 全局代理 URL、主客户端和辅助客户端缓存共享同一把锁。
 struct ProxyHttpState {
     proxy_url: Option<String>,
-    client: Client,
-    no_redirect: Client,
-    https_only: Client,
+    client: Option<Client>,
+    generation: u64,
+    no_redirect: Option<Client>,
+    https_only: Option<Client>,
 }
 
-static PROXY_STATE: RwLock<Option<ProxyHttpState>> = RwLock::new(None);
+static PROXY_STATE: RwLock<ProxyHttpState> = RwLock::new(ProxyHttpState {
+    proxy_url: None,
+    client: None,
+    generation: 0,
+    no_redirect: None,
+    https_only: None,
+});
 
 /// 不走任何代理的客户端：上游是本机地址（Ollama、LM Studio 等）时使用
 static DIRECT_CLIENT: OnceLock<Client> = OnceLock::new();
@@ -135,20 +142,20 @@ pub fn validate_proxy(proxy_url: Option<&str>) -> Result<(), String> {
 /// * `proxy_url` - 代理 URL，None 或空字符串表示直连
 pub fn apply_proxy(proxy_url: Option<&str>) -> Result<(), String> {
     let effective_url = proxy_url.filter(|s| !s.trim().is_empty());
+    let client = build_client(effective_url)?;
+    let mut state = PROXY_STATE.write().map_err(|e| {
+        log::error!("[GlobalProxy] [GP-001] Failed to acquire write lock: {e}");
+        "Failed to update proxy: lock poisoned".to_string()
+    })?;
     let next = ProxyHttpState {
         proxy_url: effective_url.map(str::to_owned),
-        client: build_client(effective_url)?,
-        no_redirect: build_no_redirect_client(effective_url)?,
-        https_only: build_https_only_client(effective_url)?,
+        client: Some(client),
+        generation: state.generation.wrapping_add(1),
+        no_redirect: None,
+        https_only: None,
     };
-
-    let previous = PROXY_STATE
-        .write()
-        .map_err(|e| {
-            log::error!("[GlobalProxy] [GP-001] Failed to acquire write lock: {e}");
-            "Failed to update proxy: lock poisoned".to_string()
-        })?
-        .replace(next);
+    let previous = std::mem::replace(&mut *state, next);
+    drop(state);
     drop(previous);
 
     log::info!(
@@ -161,10 +168,6 @@ pub fn apply_proxy(proxy_url: Option<&str>) -> Result<(), String> {
     Ok(())
 }
 
-fn read_proxy_state<T>(read: impl FnOnce(&ProxyHttpState) -> T) -> Option<T> {
-    PROXY_STATE.read().ok()?.as_ref().map(read)
-}
-
 fn fallback_client() -> Client {
     log::warn!("[GlobalProxy] [GP-004] Client not initialized, using fallback");
     build_client(None).unwrap_or_default()
@@ -172,7 +175,11 @@ fn fallback_client() -> Client {
 
 /// 获取配置了代理的客户端。未设置代理时，客户端跟随系统代理。
 pub fn get() -> Client {
-    read_proxy_state(|state| state.client.clone()).unwrap_or_else(fallback_client)
+    PROXY_STATE
+        .read()
+        .ok()
+        .and_then(|state| state.client.clone())
+        .unwrap_or_else(fallback_client)
 }
 
 /// 按目标地址取客户端：本机地址直连，其余同 [`get`]
@@ -193,7 +200,10 @@ pub(crate) fn upstream_for_url(url: &str) -> (Option<String>, Client) {
     if is_loopback_url(url) {
         return (None, direct_client());
     }
-    read_proxy_state(|state| (state.proxy_url.clone(), state.client.clone()))
+    PROXY_STATE
+        .read()
+        .ok()
+        .and_then(|state| Some((state.proxy_url.clone(), state.client.clone()?)))
         .unwrap_or_else(|| (None, fallback_client()))
 }
 
@@ -239,7 +249,10 @@ fn host_is_loopback(host: &str) -> bool {
 ///
 /// 返回当前配置的代理 URL，None 表示直连。
 pub fn get_current_proxy_url() -> Option<String> {
-    read_proxy_state(|state| state.proxy_url.clone()).flatten()
+    PROXY_STATE
+        .read()
+        .ok()
+        .and_then(|state| state.proxy_url.clone())
 }
 
 /// 两种客户端共用的参数
@@ -257,6 +270,12 @@ fn base_builder() -> reqwest::ClientBuilder {
         .no_zstd()
 }
 
+#[derive(Clone, Copy)]
+enum SecondarySlot {
+    NoRedirect,
+    HttpsOnly,
+}
+
 fn build_no_redirect_client(proxy_url: Option<&str>) -> Result<Client, String> {
     build_client_from(
         base_builder().redirect(reqwest::redirect::Policy::none()),
@@ -266,6 +285,42 @@ fn build_no_redirect_client(proxy_url: Option<&str>) -> Result<Client, String> {
 
 fn build_https_only_client(proxy_url: Option<&str>) -> Result<Client, String> {
     build_client_from(base_builder().https_only(true), proxy_url)
+}
+
+fn get_or_init_secondary(slot: SecondarySlot) -> Result<Client, String> {
+    loop {
+        let (generation, proxy_url) = {
+            let state = PROXY_STATE
+                .read()
+                .map_err(|_| "Failed to read HTTP client state: lock poisoned".to_string())?;
+            let cached = match slot {
+                SecondarySlot::NoRedirect => state.no_redirect.as_ref(),
+                SecondarySlot::HttpsOnly => state.https_only.as_ref(),
+            };
+            if let Some(client) = cached {
+                return Ok(client.clone());
+            }
+            (state.generation, state.proxy_url.clone())
+        };
+
+        let client = match slot {
+            SecondarySlot::NoRedirect => build_no_redirect_client(proxy_url.as_deref())?,
+            SecondarySlot::HttpsOnly => build_https_only_client(proxy_url.as_deref())?,
+        };
+
+        let mut state = PROXY_STATE
+            .write()
+            .map_err(|_| "Failed to update HTTP client state: lock poisoned".to_string())?;
+        if state.generation != generation {
+            // 构建期间代理配置已变更：丢弃旧实例并按新配置重试，避免暴露过期客户端或覆写新代际
+            continue;
+        }
+        let target = match slot {
+            SecondarySlot::NoRedirect => &mut state.no_redirect,
+            SecondarySlot::HttpsOnly => &mut state.https_only,
+        };
+        return Ok(target.get_or_insert(client).clone());
+    }
 }
 
 fn direct_no_redirect_client() -> Result<Client, String> {
@@ -284,16 +339,14 @@ fn direct_no_redirect_client() -> Result<Client, String> {
 /// 不跟随重定向的客户端，代理设置与全局客户端一致。带自定义凭据请求头（如 `x-dsh-auth-token`）
 /// 的请求用它：reqwest 跨主机重定向时只剥掉标准认证头，自定义头会被带到新主机。
 pub fn no_redirect() -> Result<Client, String> {
-    read_proxy_state(|state| state.no_redirect.clone())
-        .map_or_else(|| build_no_redirect_client(None), Ok)
+    get_or_init_secondary(SecondarySlot::NoRedirect)
 }
 
 /// 只走 https 的客户端（跳转到 http 直接报错），代理设置与全局客户端一致。
 /// 带 `Authorization` 的请求用它：reqwest 只在换主机或换端口时去掉认证头，同主机
 /// 同端口从 https 跳到 http（非默认端口时会发生）会把凭据明文发出去。
 pub fn https_only() -> Result<Client, String> {
-    read_proxy_state(|state| state.https_only.clone())
-        .map_or_else(|| build_https_only_client(None), Ok)
+    get_or_init_secondary(SecondarySlot::HttpsOnly)
 }
 
 /// A one-off no-redirect client for an explicit proxy (`None` follows the system
@@ -671,5 +724,58 @@ mod tests {
             accepts.load(Ordering::SeqCst) <= 2,
             "cached no_redirect_for_url client should reuse keep-alive TCP connection"
         );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_secondary_clients_lazy_init_and_invalidate_on_proxy_change() {
+        // 先确保全局客户端处于直连态；辅助槽位应保持未构建
+        apply_proxy(None).expect("reset proxy to direct");
+        let gen_before = {
+            let state = PROXY_STATE.read().unwrap();
+            assert!(state.no_redirect.is_none());
+            assert!(state.https_only.is_none());
+            state.generation
+        };
+
+        // 首次调用按需构建对应槽位，不触碰另一个槽位
+        let _ = no_redirect().expect("lazy build no_redirect");
+        {
+            let state = PROXY_STATE.read().unwrap();
+            assert!(state.no_redirect.is_some());
+            assert!(state.https_only.is_none());
+        }
+
+        let _ = https_only().expect("lazy build https_only");
+        {
+            let state = PROXY_STATE.read().unwrap();
+            assert!(state.no_redirect.is_some());
+            assert!(state.https_only.is_some());
+        }
+
+        // 无效代理 URL 不能破坏现有缓存与代理记录
+        assert!(apply_proxy(Some("://bad-proxy")).is_err());
+        {
+            let state = PROXY_STATE.read().unwrap();
+            assert_eq!(state.generation, gen_before);
+            assert!(state.no_redirect.is_some());
+            assert!(state.https_only.is_some());
+        }
+
+        // 切换有效代理后递增代际并清空辅助槽位，后续首次调用按新代理重建
+        apply_proxy(Some("http://127.0.0.1:7890")).expect("apply valid proxy");
+        {
+            let state = PROXY_STATE.read().unwrap();
+            assert_eq!(state.generation, gen_before.wrapping_add(1));
+            assert_eq!(state.proxy_url.as_deref(), Some("http://127.0.0.1:7890"));
+            assert!(state.no_redirect.is_none());
+            assert!(state.https_only.is_none());
+        }
+
+        let _ = no_redirect().expect("rebuild no_redirect with new proxy");
+        assert!(PROXY_STATE.read().unwrap().no_redirect.is_some());
+
+        // 还原直连状态，避免影响同进程其他测试
+        apply_proxy(None).expect("restore direct proxy");
     }
 }

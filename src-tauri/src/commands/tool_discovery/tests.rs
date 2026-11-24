@@ -257,6 +257,13 @@ mod anchored_upgrade {
                 "/Users/me/.minimax-code/bin/mcode",
                 Some(mcode_native.as_str()),
             ),
+            // `codebuddy install` puts a native build outside node_modules: its own updater only
+            (
+                "codebuddy",
+                "/Users/me/.local/bin/codebuddy",
+                "/Users/me/.local/bin/codebuddy",
+                Some("/Users/me/.local/bin/codebuddy update"),
+            ),
             (
                 "codex",
                 "/opt/tools/codex bin/codex",
@@ -306,6 +313,12 @@ mod anchored_upgrade {
                 "/Users/me/.nvm/versions/node/v22.19.0/bin/mcode",
                 "/Users/me/.nvm/versions/node/v22.19.0/lib/node_modules/@minimax-ai/code/cli.js",
                 Some("PATH='/Users/me/.nvm/versions/node/v22.19.0/bin':\"$PATH\" /Users/me/.nvm/versions/node/v22.19.0/bin/npm i -g @minimax-ai/code@latest --ignore-scripts=false --include=optional \"--allow-scripts=@minimax-ai/code,better-sqlite3\""),
+            ),
+            (
+                "codebuddy",
+                "/Users/me/.local/share/mise/installs/node/26.10.0/bin/codebuddy",
+                "/Users/me/.local/share/mise/installs/node/26.10.0/lib/node_modules/@tencent-ai/codebuddy-code/bin/codebuddy",
+                Some("/Users/me/.local/share/mise/installs/node/26.10.0/bin/codebuddy update || PATH='/Users/me/.local/share/mise/installs/node/26.10.0/bin':\"$PATH\" /Users/me/.local/share/mise/installs/node/26.10.0/bin/npm i -g @tencent-ai/codebuddy-code@latest"),
             ),
             (
                 "openclaw",
