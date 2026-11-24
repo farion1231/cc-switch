@@ -70,6 +70,11 @@ import {
   type SwitchModeInput,
 } from "@/components/providers/presentation";
 import { appHas } from "@/config/appSpecs";
+import {
+  canSwitchAgyAccount,
+  resolveManagedAccountId,
+} from "@/lib/authBinding";
+import { useManagedAuth } from "@/components/providers/forms/hooks/useManagedAuth";
 
 /** 切换式应用（Claude Code / Codex / Gemini CLI / Grok Build）的模式状态和动作，由供应商页传入。 */
 export type SwitchModeProps = Omit<SwitchModeInput, "app" | "t" | "providers">;
@@ -186,6 +191,64 @@ export function ProviderList({
     Object.values(providers).some((provider) => isWorkBuddyOfficial(provider));
   const { state: workbuddyOfficial, switchTo: switchWorkBuddyAccount } =
     useWorkBuddyOfficial(hasWorkBuddyOfficial);
+  // Antigravity 绑定了授权中心账号的官方卡：显示当前使用中状态并支持直接切号
+  const agyBoundAccounts = useMemo(() => {
+    const map = new Map<string, string>();
+    if (appId !== "agy" || !canSwitchAgyAccount()) return map;
+    for (const provider of Object.values(providers)) {
+      if (!isOfficialAccount(appId, provider)) continue;
+      const accountId = resolveManagedAccountId(
+        provider.meta,
+        "agy_oauth",
+      )?.trim();
+      if (accountId) {
+        map.set(provider.id, accountId);
+      }
+    }
+    return map;
+  }, [appId, providers]);
+  const hasAgyBoundOfficial = agyBoundAccounts.size > 0;
+  const agyAuth = useManagedAuth("agy_oauth", undefined, undefined, {
+    enabled: hasAgyBoundOfficial,
+  });
+  const agyAccounts = useMemo(() => {
+    if (!hasAgyBoundOfficial) return undefined;
+    const currentProviderIds = new Set<string>();
+    const switchableProviderIds = new Set<string>();
+    const requiresReauth = new Set<string>();
+    const usableAccounts = new Set(
+      agyAuth.accounts
+        .filter((account) => !account.requires_reauth)
+        .map(({ id }) => id),
+    );
+    for (const [providerId, accountId] of agyBoundAccounts) {
+      switchableProviderIds.add(providerId);
+      if (agyAuth.defaultAccountId && accountId === agyAuth.defaultAccountId) {
+        currentProviderIds.add(providerId);
+      }
+      if (agyAuth.isStatusSuccess && !usableAccounts.has(accountId)) {
+        requiresReauth.add(providerId);
+      }
+    }
+    return {
+      currentProviderIds,
+      switchableProviderIds,
+      switching: agyAuth.isSettingDefaultAccount,
+      requiresReauth,
+      onSwitch: (provider: Provider) => {
+        const accountId = agyBoundAccounts.get(provider.id);
+        if (accountId) agyAuth.setDefaultAccount(accountId);
+      },
+    };
+  }, [
+    hasAgyBoundOfficial,
+    agyBoundAccounts,
+    agyAuth.accounts,
+    agyAuth.defaultAccountId,
+    agyAuth.isStatusSuccess,
+    agyAuth.isSettingDefaultAccount,
+    agyAuth.setDefaultAccount,
+  ]);
   // 累加式应用要等 live 里有哪些供应商读回来（成功或失败）才知道卡片该进哪个分区；
   // 在那之前按加载中画骨架，不然卡片先全落进「可添加」，读回来再整体搬到「已添加」。
   // 一张卡都没有时不用等，直接出空状态
@@ -384,6 +447,7 @@ export function ProviderList({
         t,
         providers: filteredProviders,
         openTerminal: (provider) => onOpenTerminal?.(provider),
+        accounts: agyAccounts,
       });
     }
     const defaultPrimary =
@@ -449,6 +513,7 @@ export function ProviderList({
       },
     });
   }, [
+    agyAccounts,
     switchMode,
     appId,
     t,
@@ -572,6 +637,9 @@ export function ProviderList({
   // 「当前」只用来决定官方订阅 / OAuth 额度自动刷新：Pi 没有当前项，OMO / Hermes 各看自己的当前项；
   // Antigravity 没有「启用」，每张卡都随时能打开，额度一律照常显示；Copilot CLI 只有官方卡有额度，同理
   const isCurrentFor = (provider: Provider) => {
+    if (agyAccounts?.switchableProviderIds.has(provider.id)) {
+      return agyAccounts.currentProviderIds.has(provider.id);
+    }
     if (appHas(appId, "piFamily")) return false;
     if (appId === "agy" || appId === "copilot") return true;
     if (provider.category === "omo") return provider.id === currentOmoId;
@@ -595,9 +663,12 @@ export function ProviderList({
         onConfigureUsage ? (item) => onConfigureUsage(item) : () => undefined
       }
       onOpenWebsite={onOpenWebsite}
-      // Antigravity 和 Copilot CLI 官方卡的「打开终端」已经是主按钮，「更多」菜单里不再重复
+      // 卡片主操作已经是「打开终端」时不再重复放一个终端图标按钮
       onOpenTerminal={
-        appId === "agy" ||
+        (appId === "agy" &&
+          presentation.buttons.some(
+            (button) => button.key === "openTerminal",
+          )) ||
         (appId === "copilot" && isOfficialAccount(appId, provider))
           ? undefined
           : onOpenTerminal

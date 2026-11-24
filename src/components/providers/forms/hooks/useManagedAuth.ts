@@ -25,6 +25,11 @@ export function useManagedAuth(
   authProvider: ManagedAuthProvider,
   githubDomain?: string,
   loginMethod?: CodexLoginMethod,
+  {
+    enabled = true,
+  }: {
+    enabled?: boolean;
+  } = {},
 ) {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
@@ -53,6 +58,7 @@ export function useManagedAuth(
   } = useQuery<ManagedAuthStatus>({
     queryKey,
     queryFn: () => authApi.authGetStatus(authProvider),
+    enabled,
     staleTime: 30000,
     // A rejected xAI refresh token is persisted as `requires_reauth` by the
     // proxy hot path. Periodically refresh local status so an already-open Auth

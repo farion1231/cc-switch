@@ -617,6 +617,15 @@ describe("AppsPage visibility column", () => {
       '[data-tool-row="agy"] [data-agy-desktop-subrow]',
     ) as HTMLElement;
     expect(subRow).not.toBeNull();
+    const glyphs = Array.from(
+      document.querySelectorAll('[data-tool-row="agy"] [data-app-glyph="agy"]'),
+    );
+    expect(glyphs).toHaveLength(2);
+    expect(glyphs[0]).toHaveAttribute("data-app-glyph-badge", "terminal");
+    const desktopGlyph = subRow.querySelector('[data-app-glyph="agy"]');
+    expect(desktopGlyph).toBe(glyphs[1]);
+    expect(desktopGlyph).toHaveAttribute("data-app-glyph-badge", "desktop");
+    expect(subRow.firstElementChild?.className).not.toContain("ps-9");
     expect(within(subRow).getByText("Antigravity Desktop")).toBeInTheDocument();
     expect(within(subRow).getByText("2.34.0")).toBeInTheDocument();
     expect(

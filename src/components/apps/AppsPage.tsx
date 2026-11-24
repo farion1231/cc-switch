@@ -39,7 +39,6 @@ import {
   Info,
   LayoutGrid,
   Loader2,
-  Monitor,
   MoreHorizontal,
   RefreshCw,
   Trash2,
@@ -77,7 +76,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { AppPageHeader } from "@/components/shell/AppPageHeader";
-import { APP_DISPLAY_NAME, AppGlyph } from "@/components/shell/AppGlyph";
+import {
+  APP_DISPLAY_NAME,
+  AppGlyph,
+  type AppGlyphBadge,
+} from "@/components/shell/AppGlyph";
 import { ToolUpgradeConfirmDialog } from "@/components/settings/ToolUpgradeConfirmDialog";
 import { ToolInstallRow } from "@/components/settings/ToolInstallRow";
 import { ToolErrorMessage } from "@/components/settings/ToolErrorMessage";
@@ -391,12 +394,20 @@ export function AppsPage() {
   const agyDesktopSubRow = (
     <div
       data-agy-desktop-subrow
-      className={cn(APP_ROW_GRID, "mt-2.5 border-t border-border/60 pt-2.5")}
+      className={cn(
+        APP_ROW_GRID,
+        "mt-2.5 min-h-10 border-t border-border/60 pt-2.5",
+      )}
     >
-      <div className="flex min-w-0 items-center gap-2.5 ps-9">
-        <Monitor className="h-4 w-4 shrink-0 text-fg-2" strokeWidth={1.5} />
+      <div className="flex min-w-0 items-center gap-4">
+        <AppGlyph
+          app="agy"
+          size={20}
+          badge="desktop"
+          badgeClassName="bg-surface"
+        />
         <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 items-center gap-1.5 text-body font-medium text-fg-1">
+          <div className="flex min-w-0 items-center gap-1.5 text-strong text-fg-1">
             <span className="truncate">Antigravity Desktop</span>
           </div>
           {agyDesktopStatus?.installPath && (
@@ -749,6 +760,7 @@ export function AppsPage() {
 
 function AppRow({
   app,
+  badge,
   name,
   meta,
   version,
@@ -759,6 +771,7 @@ function AppRow({
   subRow,
 }: {
   app: AppId;
+  badge?: AppGlyphBadge;
   name: React.ReactNode;
   meta?: React.ReactNode;
   version?: React.ReactNode;
@@ -789,7 +802,12 @@ function AppRow({
       )}
       <div className={cn(APP_ROW_GRID, "min-h-10")}>
         <div className="flex min-w-0 items-center gap-4">
-          <AppGlyph app={app} size={20} badgeClassName="bg-surface" />
+          <AppGlyph
+            app={app}
+            size={20}
+            badge={badge}
+            badgeClassName="bg-surface"
+          />
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 items-center gap-1.5 text-strong text-fg-1">
               {name}
@@ -1077,6 +1095,7 @@ function ToolRow({
   return (
     <AppRow
       app={TOOL_APP_IDS[tool]}
+      badge={tool === "agy" ? "terminal" : undefined}
       name={
         <>
           <span className="truncate">{toolDisplayName(tool)}</span>
