@@ -25,8 +25,11 @@ pub async fn get_subscription_quota(
         Some(agy) if tool == "agy" => crate::commands::agy_account::agy_quota(&agy.0, None).await,
         _ if tool == "grokbuild" => {
             let xai = app.try_state::<crate::commands::XaiOAuthState>();
-            crate::commands::xai_oauth::query_grokbuild_quota_with_managed_fallback(xai.as_deref())
-                .await
+            crate::commands::xai_oauth::query_grokbuild_quota_with_managed_fallback(
+                xai.as_deref(),
+                true,
+            )
+            .await
         }
         _ => crate::services::subscription::get_subscription_quota(&tool).await,
     };

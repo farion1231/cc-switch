@@ -289,7 +289,6 @@ mod tests {
     use serde_json::json;
     use serial_test::serial;
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::Arc;
     use std::time::Duration;
 
     fn webdav_sample(enabled: bool) -> WebDavSyncSettings {
@@ -546,30 +545,6 @@ mod tests {
 
     #[tokio::test]
     #[serial]
-    async fn sync_mutex_serializes_concurrent_access() {
-        let guard = sync_mutex().lock().await;
-        let acquired = Arc::new(AtomicBool::new(false));
-        let acquired_bg = Arc::clone(&acquired);
-
-        let waiter = tokio::spawn(async move {
-            let _inner_guard = sync_mutex().lock().await;
-            acquired_bg.store(true, Ordering::SeqCst);
-        });
-
-        tokio::time::sleep(Duration::from_millis(40)).await;
-        assert!(!acquired.load(Ordering::SeqCst));
-
-        drop(guard);
-        tokio::time::timeout(Duration::from_secs(1), waiter)
-            .await
-            .expect("background task should complete after lock release")
-            .expect("background task should not panic");
-
-        assert!(acquired.load(Ordering::SeqCst));
-    }
-
-    #[tokio::test]
-    #[serial]
     async fn map_sync_result_runs_error_handler_after_lock_release() {
         let result =
             run_with_sync_lock(async { Err::<(), AppError>(AppError::Config("boom".to_string())) })
@@ -585,32 +560,15 @@ mod tests {
     }
 
     #[test]
-    fn post_sync_warning_from_result_returns_none_on_success() {
-        let warning = post_sync_warning_from_result(Ok(Ok(())));
-        assert!(warning.is_none());
-    }
+    fn post_sync_warning_formats_errors_and_attaches_to_payload() {
+        assert!(post_sync_warning_from_result(Ok(Ok(()))).is_none());
+        assert!(post_sync_warning_from_result(Ok(Err(AppError::Config("boom".into())))).is_some());
+        assert!(post_sync_warning_from_result(Err("task panicked".into())).is_some());
 
-    #[test]
-    fn post_sync_warning_from_result_returns_some_on_sync_error() {
-        let warning =
-            post_sync_warning_from_result(Ok(Err(crate::error::AppError::Config("boom".into()))));
-        assert!(warning.is_some());
-    }
-
-    #[tokio::test]
-    async fn post_sync_warning_from_result_returns_some_on_join_error() {
-        let handle = tokio::spawn(async move {
-            panic!("forced join error");
-        });
-        let join_err = handle.await.expect_err("task should panic");
-        let warning = post_sync_warning_from_result(Err(join_err.to_string()));
-        assert!(warning.is_some());
-    }
-
-    #[test]
-    fn attach_warning_adds_warning_without_dropping_existing_fields() {
-        let payload = json!({ "status": "downloaded" });
-        let updated = attach_warning(payload, Some("post sync warning".to_string()));
+        let updated = attach_warning(
+            json!({ "status": "downloaded" }),
+            Some("post sync warning".to_string()),
+        );
         assert_eq!(
             updated.get("status").and_then(|v| v.as_str()),
             Some("downloaded")

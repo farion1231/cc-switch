@@ -6,29 +6,11 @@ import type { ProviderCategory } from "../types";
 import type { PresetTheme, TemplateValueConfig } from "./claudeProviderPresets";
 import type { PresetFamilyFields } from "./presetFamilies";
 
-/**
- * Marker field and source values that `hermes_config.rs::get_providers`
- * injects onto each settings payload. Same values as the Rust constants
- * `PROVIDER_SOURCE_FIELD` / `PROVIDER_SOURCE_CUSTOM_LIST` / `PROVIDER_SOURCE_DICT`;
- * tests/config/backendConstants.test.ts checks both.
- */
-export const HERMES_PROVIDER_SOURCE_FIELD = "_cc_source";
-export const HERMES_PROVIDER_SOURCE_CUSTOM_LIST = "custom_providers";
-export const HERMES_PROVIDER_SOURCE_DICT = "providers_dict";
-
-/**
- * True when the provider was sourced from Hermes' v12+ `providers:` dict —
- * CC Switch renders those read-only and routes edits to Hermes Web UI.
- */
-export function isHermesReadOnlyProvider(settingsConfig: unknown): boolean {
-  if (!settingsConfig || typeof settingsConfig !== "object") {
-    return false;
-  }
-  const marker = (settingsConfig as Record<string, unknown>)[
-    HERMES_PROVIDER_SOURCE_FIELD
-  ];
-  return marker === HERMES_PROVIDER_SOURCE_DICT;
-}
+export {
+  HERMES_PROVIDER_SOURCE_CUSTOM_LIST,
+  HERMES_PROVIDER_SOURCE_DICT,
+  HERMES_PROVIDER_SOURCE_FIELD,
+} from "./hermesProviderMeta";
 
 /**
  * A model entry under a Hermes custom_provider.
@@ -490,6 +472,28 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "haoai",
     icon: "haoai",
+  },
+  {
+    name: "StringAI",
+    websiteUrl: "https://www.string.ink",
+    apiKeyUrl: "https://www.string.ink/register?ref=661AE533A60AF110",
+    settingsConfig: {
+      name: "stringai",
+      base_url: "https://www.string.ink/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        { id: "gpt-6-astra", name: "GPT-6 Astra" },
+        { id: "gpt-6.1-sol", name: "GPT-6.1 Sol" },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "stringai",
+    icon: "stringai",
+    suggestedDefaults: {
+      model: { default: "gpt-6-astra", provider: "stringai" },
+    },
   },
   {
     name: "FennoAI",

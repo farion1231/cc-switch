@@ -27,14 +27,14 @@ export function ProviderEmptyState({
   const emptyCopyNs =
     appId === "pi" ||
     appId === "mcode" ||
+    appId === "dsh" ||
     appId === "kimi" ||
     appId === "trae" ||
     appId === "omp" ||
-    appId === "workbuddy"
+    appId === "workbuddy" ||
+    appId === "codebuddy"
       ? appId
-      : appId === "dsh"
-        ? "dsh"
-        : null;
+      : null;
   // Antigravity 没有切换，这句「切换只替换关键字段」对它不成立
   const showKeyFieldsHint = appHas(appId, "editorView");
 

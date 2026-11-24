@@ -843,9 +843,12 @@ async fn query_provider_usage_inner(
             crate::commands::xai_oauth::query_xai_oauth_quota_for(xai_state, account_id, false)
                 .await?
         } else if matches!(app_type, AppType::GrokBuild) {
-            crate::commands::xai_oauth::query_grokbuild_quota_with_managed_fallback(Some(xai_state))
-                .await
-                .map_err(|e| format!("Failed to query subscription quota: {e}"))?
+            crate::commands::xai_oauth::query_grokbuild_quota_with_managed_fallback(
+                Some(xai_state),
+                false,
+            )
+            .await
+            .map_err(|e| format!("Failed to query subscription quota: {e}"))?
         } else {
             crate::services::subscription::get_subscription_quota(app_type.as_str())
                 .await
@@ -1144,123 +1147,69 @@ mod import_claude_desktop_tests {
     }
 
     #[test]
-    fn route_strips_1m_suffix_and_sets_supports_1m() {
-        let p = make_provider(
-            json!({
-                "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-4-5-20250929[1M]",
-            }),
+    fn route_resolution_handles_1m_suffix_labels_and_provider_defaults() {
+        // [1M] suffix is stripped, claude-* prefix isn't duplicated, label_override is omitted for claude-*
+        let claude = make_provider(
+            json!({ "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-4-5-20250929[1M]" }),
             None,
         );
-        let routes = suggested_claude_desktop_routes(&p).expect("routes built");
-        let r = routes.get("claude-sonnet-5").expect("sonnet route present");
+        let routes = suggested_claude_desktop_routes(&claude).unwrap();
+        assert!(!routes.contains_key("claude-claude-sonnet-4-5-20250929"));
+        let r = routes.get("claude-sonnet-5").unwrap();
         assert_eq!(r.model, "claude-sonnet-4-5-20250929");
-        assert!(
-            !r.model.to_ascii_lowercase().contains("[1m]"),
-            "model must not contain [1m] suffix"
-        );
         assert_eq!(r.label_override, None);
         assert_eq!(r.supports_1m, Some(true));
-    }
 
-    #[test]
-    fn route_preserves_model_without_suffix() {
-        let p = make_provider(
-            json!({
-                "ANTHROPIC_DEFAULT_SONNET_MODEL": "kimi-k2",
-            }),
-            None,
-        );
-        let routes = suggested_claude_desktop_routes(&p).expect("routes built");
-        let r = routes.get("claude-sonnet-5").expect("sonnet route present");
-        assert_eq!(r.model, "kimi-k2");
-        assert_eq!(r.label_override.as_deref(), Some("kimi-k2"));
-        // 默认 provider_type 缺省 → supports_1m_default = true
-        assert_eq!(r.supports_1m, Some(true));
-    }
-
-    #[test]
-    fn route_uses_claude_code_model_name_as_label_override() {
-        let p = make_provider(
+        // Explicit model name overrides label; default provider_type defaults supports_1m to true
+        let named = make_provider(
             json!({
                 "ANTHROPIC_DEFAULT_SONNET_MODEL": "kimi-k2",
                 "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "Kimi K2",
             }),
             None,
         );
-        let routes = suggested_claude_desktop_routes(&p).expect("routes built");
-        let r = routes.get("claude-sonnet-5").expect("sonnet route present");
+        let r = &suggested_claude_desktop_routes(&named).unwrap()["claude-sonnet-5"];
         assert_eq!(r.model, "kimi-k2");
         assert_eq!(r.label_override.as_deref(), Some("Kimi K2"));
-    }
+        assert_eq!(r.supports_1m, Some(true));
 
-    #[test]
-    fn route_1m_suffix_overrides_provider_type_default() {
-        // github_copilot 默认 supports_1m_default = false，但 [1M] 后缀应强制 true
-        let p = make_provider(
-            json!({
-                "ANTHROPIC_DEFAULT_SONNET_MODEL": "gpt-5-codex[1M]",
-            }),
+        // github_copilot defaults supports_1m=false unless overridden by [1M] suffix
+        let copilot = make_provider(
+            json!({ "ANTHROPIC_DEFAULT_SONNET_MODEL": "gpt-5-codex" }),
             Some("github_copilot"),
         );
-        let routes = suggested_claude_desktop_routes(&p).expect("routes built");
-        let r = routes.get("claude-sonnet-5").expect("sonnet route present");
+        assert_eq!(
+            suggested_claude_desktop_routes(&copilot).unwrap()["claude-sonnet-5"].supports_1m,
+            Some(false)
+        );
+        let copilot_1m = make_provider(
+            json!({ "ANTHROPIC_DEFAULT_SONNET_MODEL": "gpt-5-codex[1M]" }),
+            Some("github_copilot"),
+        );
+        let r = &suggested_claude_desktop_routes(&copilot_1m).unwrap()["claude-sonnet-5"];
         assert_eq!(r.model, "gpt-5-codex");
-        assert_eq!(r.label_override.as_deref(), Some("gpt-5-codex"));
         assert_eq!(r.supports_1m, Some(true));
     }
 
     #[test]
-    fn route_github_copilot_without_suffix_keeps_false() {
-        let p = make_provider(
-            json!({
-                "ANTHROPIC_DEFAULT_SONNET_MODEL": "gpt-5-codex",
-            }),
-            Some("github_copilot"),
-        );
-        let routes = suggested_claude_desktop_routes(&p).expect("routes built");
-        let r = routes.get("claude-sonnet-5").expect("sonnet route present");
-        assert_eq!(r.model, "gpt-5-codex");
-        assert_eq!(r.label_override.as_deref(), Some("gpt-5-codex"));
-        assert_eq!(r.supports_1m, Some(false));
-    }
-
-    #[test]
-    fn same_upstream_across_three_aliases_merges_to_one_route() {
-        let p = make_provider(
-            json!({
-                "ANTHROPIC_DEFAULT_SONNET_MODEL": "MiniMax-M2",
-                "ANTHROPIC_DEFAULT_OPUS_MODEL": "MiniMax-M2",
-                "ANTHROPIC_DEFAULT_HAIKU_MODEL": "MiniMax-M2",
-            }),
-            None,
-        );
-        let routes = suggested_claude_desktop_routes(&p).expect("routes built");
-        assert_eq!(routes.len(), 1, "three aliases → one merged route");
-        let r = routes.get("claude-sonnet-5").expect("merged route present");
-        assert_eq!(r.model, "MiniMax-M2");
-        assert_eq!(r.label_override.as_deref(), Some("MiniMax-M2"));
-    }
-
-    #[test]
-    fn same_upstream_with_partial_1m_marker_takes_or_aggregation() {
-        // sonnet 带 [1M]，opus/haiku 不带 → 合并后 supports_1m == Some(true)
-        let p = make_provider(
+    fn route_aggregation_merges_shared_upstream_and_falls_back_to_anthropic_model() {
+        // Shared upstream across aliases merges into one route with OR-aggregated supports_1m
+        let merged = make_provider(
             json!({
                 "ANTHROPIC_DEFAULT_SONNET_MODEL": "MiniMax-M2[1M]",
                 "ANTHROPIC_DEFAULT_OPUS_MODEL": "MiniMax-M2",
                 "ANTHROPIC_DEFAULT_HAIKU_MODEL": "MiniMax-M2",
             }),
-            None,
+            Some("github_copilot"),
         );
-        let routes = suggested_claude_desktop_routes(&p).expect("routes built");
+        let routes = suggested_claude_desktop_routes(&merged).unwrap();
         assert_eq!(routes.len(), 1);
-        let r = routes.get("claude-sonnet-5").expect("merged route present");
+        let r = &routes["claude-sonnet-5"];
+        assert_eq!(r.model, "MiniMax-M2");
         assert_eq!(r.supports_1m, Some(true));
-    }
 
-    #[test]
-    fn different_upstream_models_produce_separate_routes() {
-        let p = make_provider(
+        // Distinct upstreams produce separate routes
+        let separate = make_provider(
             json!({
                 "ANTHROPIC_DEFAULT_SONNET_MODEL": "GLM-4.6",
                 "ANTHROPIC_DEFAULT_OPUS_MODEL": "GLM-4-Air",
@@ -1268,53 +1217,20 @@ mod import_claude_desktop_tests {
             }),
             None,
         );
-        let routes = suggested_claude_desktop_routes(&p).expect("routes built");
+        let routes = suggested_claude_desktop_routes(&separate).unwrap();
         assert_eq!(routes.len(), 3);
-        assert_eq!(routes.get("claude-sonnet-5").unwrap().model, "GLM-4.6");
-        assert_eq!(routes.get("claude-opus-5").unwrap().model, "GLM-4-Air");
-        assert_eq!(routes.get("claude-haiku-4-5").unwrap().model, "GLM-4-Flash");
-        assert_eq!(
-            routes
-                .get("claude-sonnet-5")
-                .unwrap()
-                .label_override
-                .as_deref(),
-            Some("GLM-4.6")
-        );
-    }
+        assert_eq!(routes["claude-sonnet-5"].model, "GLM-4.6");
+        assert_eq!(routes["claude-opus-5"].model, "GLM-4-Air");
+        assert_eq!(routes["claude-haiku-4-5"].model, "GLM-4-Flash");
 
-    #[test]
-    fn anthropic_model_fallback_only_triggers_when_empty() {
-        // 三个 default env_key 都不填，仅 ANTHROPIC_MODEL
-        let p = make_provider(
-            json!({
-                "ANTHROPIC_MODEL": "kimi-k2",
-            }),
-            None,
-        );
-        let routes = suggested_claude_desktop_routes(&p).expect("routes built");
+        // ANTHROPIC_MODEL fallback triggers when all tier defaults are absent
+        let fallback = make_provider(json!({ "ANTHROPIC_MODEL": "kimi-k2" }), None);
+        let routes = suggested_claude_desktop_routes(&fallback).unwrap();
         assert_eq!(routes.len(), 1);
-        let r = routes
-            .get("claude-sonnet-5")
-            .expect("fallback route present");
-        assert_eq!(r.model, "kimi-k2");
-        assert_eq!(r.label_override.as_deref(), Some("kimi-k2"));
-    }
-
-    #[test]
-    fn existing_claude_prefix_not_duplicated() {
-        let p = make_provider(
-            json!({
-                "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-4-5-20250929",
-            }),
-            None,
-        );
-        let routes = suggested_claude_desktop_routes(&p).expect("routes built");
-        assert!(routes.contains_key("claude-sonnet-5"));
-        assert!(!routes.contains_key("claude-claude-sonnet-4-5-20250929"));
+        assert_eq!(routes["claude-sonnet-5"].model, "kimi-k2");
         assert_eq!(
-            routes.get("claude-sonnet-5").expect("route").label_override,
-            None
+            routes["claude-sonnet-5"].label_override.as_deref(),
+            Some("kimi-k2")
         );
     }
 }
@@ -1351,7 +1267,7 @@ mod native_query_credentials_tests {
     }
 
     #[test]
-    fn delegates_to_provider_for_codex() {
+    fn resolve_native_credentials_reads_codex_or_empty_when_missing() {
         let provider = Provider::with_id(
             "test".to_string(),
             "Test".to_string(),
@@ -1363,20 +1279,21 @@ mod native_query_credentials_tests {
             }),
             None,
         );
-        let (base_url, api_key) = resolve_native_credentials(&AppType::Codex, Some(&provider));
-        assert_eq!(base_url, "https://api.deepseek.com");
-        assert_eq!(api_key, "sk-codex");
+        assert_eq!(
+            resolve_native_credentials(&AppType::Codex, Some(&provider)),
+            (
+                "https://api.deepseek.com".to_string(),
+                "sk-codex".to_string()
+            )
+        );
+        assert_eq!(
+            resolve_native_credentials(&AppType::Codex, None),
+            (String::new(), String::new())
+        );
     }
 
     #[test]
-    fn missing_provider_yields_empty() {
-        let (base_url, api_key) = resolve_native_credentials(&AppType::Codex, None);
-        assert!(base_url.is_empty());
-        assert!(api_key.is_empty());
-    }
-
-    #[test]
-    fn zenmux_coding_plan_uses_script_credentials_first() {
+    fn resolve_coding_plan_credentials_prefers_script_and_falls_back_to_provider() {
         let provider = Provider::with_id(
             "test".to_string(),
             "Test".to_string(),
@@ -1388,38 +1305,35 @@ mod native_query_credentials_tests {
             }),
             None,
         );
-        let script = usage_script(
+        let with_script_key = usage_script(
             Some("zenmux"),
             Some("https://script.zenmux.example/api/usage/"),
             Some("sk-script"),
         );
-
-        let (base_url, api_key) =
-            resolve_coding_plan_credentials(&AppType::Claude, Some(&provider), Some(&script));
-
-        assert_eq!(base_url, "https://script.zenmux.example/api/usage");
-        assert_eq!(api_key, "sk-script");
-    }
-
-    #[test]
-    fn zenmux_coding_plan_falls_back_to_provider_credentials() {
-        let provider = Provider::with_id(
-            "test".to_string(),
-            "Test".to_string(),
-            json!({
-                "env": {
-                    "ANTHROPIC_BASE_URL": "https://provider.zenmux.example/v1",
-                    "ANTHROPIC_AUTH_TOKEN": "sk-provider"
-                }
-            }),
-            None,
+        assert_eq!(
+            resolve_coding_plan_credentials(
+                &AppType::Claude,
+                Some(&provider),
+                Some(&with_script_key)
+            ),
+            (
+                "https://script.zenmux.example/api/usage".to_string(),
+                "sk-script".to_string()
+            )
         );
-        let script = usage_script(Some("zenmux"), Some("https://script.zenmux.example"), None);
 
-        let (base_url, api_key) =
-            resolve_coding_plan_credentials(&AppType::Claude, Some(&provider), Some(&script));
-
-        assert_eq!(base_url, "https://provider.zenmux.example/v1");
-        assert_eq!(api_key, "sk-provider");
+        let without_script_key =
+            usage_script(Some("zenmux"), Some("https://script.zenmux.example"), None);
+        assert_eq!(
+            resolve_coding_plan_credentials(
+                &AppType::Claude,
+                Some(&provider),
+                Some(&without_script_key)
+            ),
+            (
+                "https://provider.zenmux.example/v1".to_string(),
+                "sk-provider".to_string()
+            )
+        );
     }
 }

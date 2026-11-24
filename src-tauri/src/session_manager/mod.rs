@@ -18,8 +18,8 @@ use std::time::{Duration, Instant};
 // 其余模型类型从 `session_manager::model` 引用
 pub use model::SessionMessage;
 use providers::{
-    agy, claude, codex, copilot, dsh, gemini, grokbuild, hermes, kimi, mcode, omp, openclaw,
-    opencode, pi, trae, workbuddy,
+    agy, claude, codebuddy, codex, copilot, dsh, gemini, grokbuild, hermes, kimi, mcode, omp,
+    openclaw, opencode, pi, trae, workbuddy,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -97,7 +97,7 @@ pub(crate) struct SessionScan {
 pub(crate) fn scan_sessions_with_status() -> SessionScan {
     use providers::utils::ScanStatus;
     type Scanner = fn(&mut ScanStatus) -> Vec<SessionMeta>;
-    let scanners: [(&str, Scanner); 16] = [
+    let scanners: [(&str, Scanner); 17] = [
         ("codex", codex::scan_sessions_with_status),
         ("claude", claude::scan_sessions_with_status),
         ("opencode", opencode::scan_sessions_with_status),
@@ -115,6 +115,7 @@ pub(crate) fn scan_sessions_with_status() -> SessionScan {
         ("agy", |_| agy::scan_sessions()),
         ("trae", |_| trae::scan_sessions()),
         ("workbuddy", |_| workbuddy::scan_sessions()),
+        ("codebuddy", |_| codebuddy::scan_sessions()),
     ];
     let mut scan = SessionScan {
         sessions: Vec::new(),
@@ -179,6 +180,7 @@ pub fn load_messages(provider_id: &str, source_path: &str) -> Result<Vec<Session
         "trae" => trae::load_messages(path),
         "omp" => omp::load_messages(path),
         "copilot" => copilot::load_messages(path),
+        "codebuddy" => codebuddy::load_messages(path),
         "dsh" => dsh::load_messages(path),
         "workbuddy" => workbuddy::load_messages(path),
         _ => Err(format!("Unsupported provider: {provider_id}")),
@@ -252,6 +254,12 @@ fn delete_session_source(
                 .into(),
         );
     }
+    if provider_id == "codebuddy" {
+        return Err(
+            "Manage this session in CodeBuddy Code: background jobs, teammates and file history refer to its transcript"
+                .into(),
+        );
+    }
     if provider_id == "mcode" {
         return Err(
             "Delete this session in MCode so its runtime state and history are removed together"
@@ -317,6 +325,7 @@ fn provider_roots(provider_id: &str) -> Result<Vec<PathBuf>, String> {
         "pi" => pi::session_roots(),
         "kimi" => kimi::session_roots(),
         "trae" => trae::session_roots(),
+        "codebuddy" => codebuddy::session_roots(),
         "dsh" => dsh::session_roots(),
         "workbuddy" => workbuddy::session_roots(),
         "agy" => agy::session_roots(),

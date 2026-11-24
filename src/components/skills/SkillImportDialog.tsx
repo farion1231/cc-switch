@@ -105,6 +105,7 @@ export function SkillImportDialog({
               mcode: chosen.has("mcode"),
               kimi: chosen.has("kimi"),
               trae: chosen.has("trae"),
+              codebuddy: chosen.has("codebuddy"),
               dsh: chosen.has("dsh"),
               workbuddy: chosen.has("workbuddy"),
               agy: chosen.has("agy"),

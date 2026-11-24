@@ -180,3 +180,36 @@ describe("findManagedAccountUsers — WorkBuddy", () => {
     ]);
   });
 });
+
+describe("findManagedAccountUsers — CodeBuddy", () => {
+  it("counts official sign-in cards bound to the account, never via default", () => {
+    const card = (id: string, accountId: string) =>
+      provider(id, {
+        category: "official",
+        meta: {
+          authBinding: {
+            source: "managed_account",
+            authProvider: "codebuddy_oauth",
+            accountId,
+          },
+        },
+      });
+    const codebuddy = byId(
+      card("cb-a", "100@www.codebuddy.cn"),
+      card("cb-b", "200@www.codebuddy.ai"),
+      provider("custom"),
+    );
+    const users = findManagedAccountUsers(
+      "codebuddy_oauth",
+      ["100@www.codebuddy.cn"],
+      "100@www.codebuddy.cn",
+      { codebuddy },
+    );
+    expect(users.map((u) => [u.appId, u.providerId, u.viaDefault])).toEqual([
+      ["codebuddy", "cb-a", false],
+    ]);
+    expect(groupUsersByApp(users)).toEqual([
+      { appId: "codebuddy", names: ["cb-a"] },
+    ]);
+  });
+});

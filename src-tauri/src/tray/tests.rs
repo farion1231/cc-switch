@@ -875,6 +875,61 @@ fn grok_bound_card_tray_quota_comes_from_the_account_cache_only() {
     .is_none());
 }
 
+fn xai_oauth_provider(account_id: Option<&str>, enabled: Option<bool>) -> Provider {
+    serde_json::from_value(serde_json::json!({
+        "id": "codex-xai",
+        "name": "xAI (Grok) OAuth",
+        "settingsConfig": {"auth": {}, "config": ""},
+        "category": "third_party",
+        "meta": {
+            "providerType": "xai_oauth",
+            "authBinding": account_id.map(|id| serde_json::json!({
+                "source": "managed_account",
+                "authProvider": "xai_oauth",
+                "accountId": id
+            })),
+            "usage_script": enabled.map(|enabled| serde_json::json!({
+                "enabled": enabled,
+                "language": "javascript",
+                "code": "",
+                "templateType": "official_subscription"
+            }))
+        }
+    }))
+    .unwrap()
+}
+
+/// #9899：Codex（含聚合成员）里的 xAI OAuth 卡，托盘按它的 xAI 账号读卡片查到的额度，
+/// 不再要求另开用量脚本。
+#[test]
+fn xai_oauth_card_tray_quota_reads_its_account_cache() {
+    for app in [AppType::Codex, AppType::Claude] {
+        for enabled in [None, Some(true)] {
+            assert_eq!(
+                tray_usage_source(&app, &xai_oauth_provider(Some(" xai-1 "), enabled)),
+                Some(TrayUsageSource::XaiAccount("xai-1".to_string()))
+            );
+        }
+        assert_eq!(
+            tray_usage_source(&app, &xai_oauth_provider(Some("xai-1"), Some(false))),
+            None
+        );
+    }
+
+    let cache = UsageCache::new();
+    let source = tray_usage_source(&AppType::Codex, &xai_oauth_provider(Some("xai-1"), None));
+    let view = || cached_usage_view(&cache, &en(), &AppType::Codex, "codex-xai", source.as_ref());
+    assert_eq!(view(), None);
+    cache.put_xai_account(
+        "xai-1".to_string(),
+        make_quota("xai_oauth", true, vec![tier(TIER_FIVE_HOUR, 25.0)]),
+    );
+    assert_eq!(
+        title(view()).map(|(text, _)| text).as_deref(),
+        Some("5-hour 75% left")
+    );
+}
+
 #[test]
 fn grok_official_card_hint_shows_only_its_bound_account() {
     let accounts = TrayAccountLabels {
@@ -1497,12 +1552,13 @@ fn cli_subscription_tray_reads_the_cache_the_card_writes() {
         Some("5-hour 75% left")
     );
 
-    // xAI OAuth 的额度属于绑定的 SuperGrok 账号：仍走脚本路径，也不沿用应用级订阅缓存。
+    // xAI OAuth 的额度属于 SuperGrok 账号：不沿用应用级订阅缓存（没绑账号时按授权中心的
+    // 默认账号取，一个账号都没有时退回脚本路径，取决于本机，这里不断言是哪一种）。
     let mut xai = codex_provider(None, Some(true));
     xai.meta.as_mut().unwrap().provider_type = Some("xai_oauth".to_string());
-    assert_eq!(
+    assert_ne!(
         tray_usage_source(&AppType::Claude, &xai),
-        Some(TrayUsageSource::Script)
+        Some(TrayUsageSource::Subscription)
     );
     assert_eq!(
         title(usage_view(&cache, &en(), &AppType::Claude, &xai, "xai")),
