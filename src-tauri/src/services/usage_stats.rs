@@ -204,6 +204,14 @@ fn est_first_token_eligible_sql(alias: &str) -> String {
     format!("{data_source} <> 'proxy' AND {alias}.first_token_ms IS NOT NULL")
 }
 
+/// Grouping key expression for [`first_token_medians`].
+/// `Pair` selects two columns separately and formats them into a reused scratch
+/// buffer with `\u{1f}` instead of doing SQLite `|| char(31) ||` per row.
+enum MedianKey<'a> {
+    Single(&'a str),
+    Pair(&'a str, &'a str),
+}
+
 /// Read exact and estimated samples together, then select each median in O(n).
 /// SQL need not sort either population or scan the same detail rows twice.
 /// Borrows the grouping key directly from SQLite and only allocates a `String`
@@ -212,7 +220,7 @@ fn est_first_token_eligible_sql(alias: &str) -> String {
 type MedianGroups = HashMap<String, u64>;
 fn first_token_medians(
     conn: &Connection,
-    key_sql: &str,
+    key: MedianKey<'_>,
     from_sql: &str,
     detail_where: &str,
     params: &[&dyn rusqlite::ToSql],
@@ -224,83 +232,50 @@ fn first_token_medians(
     };
     let exact = first_token_eligible_sql("l");
     let estimated = est_first_token_eligible_sql("l");
-    let sql = format!(
-        "SELECT {key_sql}, l.first_token_ms, ({exact}) {from_sql} {detail_where}
-         {connector} (({exact}) OR ({estimated}))"
-    );
+    let sql = match key {
+        MedianKey::Single(col_sql) => format!(
+            "SELECT {col_sql}, l.first_token_ms, ({exact}) {from_sql} {detail_where}
+             {connector} (({exact}) OR ({estimated}))"
+        ),
+        MedianKey::Pair(col1_sql, col2_sql) => format!(
+            "SELECT {col1_sql}, {col2_sql}, l.first_token_ms, ({exact}) {from_sql} {detail_where}
+             {connector} (({exact}) OR ({estimated}))"
+        ),
+    };
     let mut stmt = conn.prepare(&sql)?;
     let mut rows = stmt.query(params)?;
     let mut exact_groups: HashMap<String, Vec<u64>> = HashMap::new();
     let mut estimated_groups: HashMap<String, Vec<u64>> = HashMap::new();
+    let mut scratch = String::new();
     while let Some(row) = rows.next()? {
-        let key = row.get_ref(0)?.as_str().map_err(rusqlite::Error::from)?;
-        let ms = row.get::<_, i64>(1)?.max(0) as u64;
-        let is_exact = row.get::<_, bool>(2)?;
+        let (group_key, ms, is_exact) = match key {
+            MedianKey::Single(_) => {
+                let k = row.get_ref(0)?.as_str().map_err(rusqlite::Error::from)?;
+                let ms = row.get::<_, i64>(1)?.max(0) as u64;
+                let is_exact = row.get::<_, bool>(2)?;
+                (k, ms, is_exact)
+            }
+            MedianKey::Pair(_, _) => {
+                let part1 = row.get_ref(0)?.as_str().map_err(rusqlite::Error::from)?;
+                let part2 = row.get_ref(1)?.as_str().map_err(rusqlite::Error::from)?;
+                let ms = row.get::<_, i64>(2)?.max(0) as u64;
+                let is_exact = row.get::<_, bool>(3)?;
+                scratch.clear();
+                scratch.push_str(part1);
+                scratch.push('\u{1f}');
+                scratch.push_str(part2);
+                (scratch.as_str(), ms, is_exact)
+            }
+        };
         let groups = if is_exact {
             &mut exact_groups
         } else {
             &mut estimated_groups
         };
-        if let Some(bucket) = groups.get_mut(key) {
+        if let Some(bucket) = groups.get_mut(group_key) {
             bucket.push(ms);
         } else {
-            groups.insert(key.to_owned(), vec![ms]);
-        }
-    }
-    let medians = |groups: HashMap<String, Vec<u64>>| {
-        groups
-            .into_iter()
-            .map(|(key, mut values)| (key, select_median(&mut values)))
-            .collect()
-    };
-    Ok((medians(exact_groups), medians(estimated_groups)))
-}
-
-/// Two-column variant of [`first_token_medians`] that formats `(col1, col2)`
-/// into a single reused scratch buffer instead of performing SQLite string
-/// concatenation (`|| char(31) ||`) and Rust heap allocation on every row.
-fn first_token_medians_pair(
-    conn: &Connection,
-    col1_sql: &str,
-    col2_sql: &str,
-    from_sql: &str,
-    detail_where: &str,
-    params: &[&dyn rusqlite::ToSql],
-) -> Result<(MedianGroups, MedianGroups), AppError> {
-    let connector = if detail_where.is_empty() {
-        "WHERE"
-    } else {
-        "AND"
-    };
-    let exact = first_token_eligible_sql("l");
-    let estimated = est_first_token_eligible_sql("l");
-    let sql = format!(
-        "SELECT {col1_sql}, {col2_sql}, l.first_token_ms, ({exact}) {from_sql} {detail_where}
-         {connector} (({exact}) OR ({estimated}))"
-    );
-    let mut stmt = conn.prepare(&sql)?;
-    let mut rows = stmt.query(params)?;
-    let mut exact_groups: HashMap<String, Vec<u64>> = HashMap::new();
-    let mut estimated_groups: HashMap<String, Vec<u64>> = HashMap::new();
-    let mut scratch = String::with_capacity(64);
-    while let Some(row) = rows.next()? {
-        let part1 = row.get_ref(0)?.as_str().map_err(rusqlite::Error::from)?;
-        let part2 = row.get_ref(1)?.as_str().map_err(rusqlite::Error::from)?;
-        let ms = row.get::<_, i64>(2)?.max(0) as u64;
-        let is_exact = row.get::<_, bool>(3)?;
-        scratch.clear();
-        scratch.push_str(part1);
-        scratch.push('\u{1f}');
-        scratch.push_str(part2);
-        let groups = if is_exact {
-            &mut exact_groups
-        } else {
-            &mut estimated_groups
-        };
-        if let Some(bucket) = groups.get_mut(scratch.as_str()) {
-            bucket.push(ms);
-        } else {
-            groups.insert(scratch.clone(), vec![ms]);
+            groups.insert(group_key.to_owned(), vec![ms]);
         }
     }
     let medians = |groups: HashMap<String, Vec<u64>>| {
@@ -1916,16 +1891,15 @@ impl Database {
         );
 
         // 分组键用不会出现在 ID 里的 0x1F 拼接，和下面主查询的 (provider_id, app_type) 对上；
-        // 仅在按供应商名筛选时才 JOIN providers，避免无谓的逐行 B-tree 查找。
+        // 与 get_model_stats 保持一致，通过 filter.join("l", "p") 按需拼接 providers 表。
         let (first_token_ms, est_first_token_ms) = {
             let detail_refs: Vec<&dyn rusqlite::ToSql> =
                 detail_params.iter().map(|p| p.as_ref()).collect();
             let detail_join = filter.join("l", "p");
             let from_sql = format!("FROM proxy_request_logs l {detail_join}");
-            first_token_medians_pair(
+            first_token_medians(
                 &conn,
-                "l.provider_id",
-                "l.app_type",
+                MedianKey::Pair("l.provider_id", "l.app_type"),
                 &from_sql,
                 &detail_where,
                 &detail_refs,
@@ -2162,8 +2136,13 @@ impl Database {
         let detail_refs: Vec<&dyn rusqlite::ToSql> =
             detail_params.iter().map(|p| p.as_ref()).collect();
         let from_sql = format!("FROM proxy_request_logs l {detail_join}");
-        let (first_token_ms, est_first_token_ms) =
-            first_token_medians(&conn, &median_model, &from_sql, &detail_where, &detail_refs)?;
+        let (first_token_ms, est_first_token_ms) = first_token_medians(
+            &conn,
+            MedianKey::Single(&median_model),
+            &from_sql,
+            &detail_where,
+            &detail_refs,
+        )?;
         let mut stats: Vec<_> = grouped
             .into_values()
             .map(|(mut stat, cost, successes)| {
