@@ -42,6 +42,7 @@ pub(crate) fn provider_exists_in_live_config(
         AppType::Mcode => crate::mcode_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
         AppType::Omp => Ok(crate::omp_config::get_providers()?.contains_key(provider_id)),
+        AppType::Codebuddy => crate::codebuddy_config::provider_key_exists(provider_id),
         AppType::Copilot => crate::copilot_config::provider_key_exists(provider_id),
         AppType::WorkBuddy => crate::workbuddy_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
@@ -68,6 +69,7 @@ pub(crate) fn remove_provider_from_live(
         AppType::OpenClaw => remove_openclaw_provider_from_live(provider_id),
         AppType::Hermes => remove_hermes_provider_from_live(provider_id),
         AppType::Mcode => crate::mcode_config::remove_provider(provider_id),
+        AppType::Codebuddy => crate::codebuddy_config::remove_provider(provider_id),
         AppType::WorkBuddy => crate::workbuddy_config::remove_provider(provider_id),
         AppType::Claude
         | AppType::ClaudeDesktop
@@ -359,6 +361,7 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
         | AppType::Omp
         | AppType::Copilot
         | AppType::WorkBuddy
+        | AppType::Codebuddy
         | AppType::ClaudeDesktop => false,
     }
 }
@@ -442,7 +445,8 @@ pub(crate) fn remove_common_config_from_settings(
         | AppType::Agy
         | AppType::Omp
         | AppType::Copilot
-        | AppType::WorkBuddy => Ok(settings.clone()),
+        | AppType::WorkBuddy
+        | AppType::Codebuddy => Ok(settings.clone()),
     }
 }
 
@@ -799,6 +803,15 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             }
             crate::workbuddy_config::set_provider(&provider.id, &provider.settings_config)?
         }
+        AppType::Codebuddy => {
+            // 官方登录卡只绑定账号，不是 models.json 里的模型
+            if crate::codebuddy_config::is_official_provider(provider) {
+                return Err(AppError::InvalidInput(
+                    "CodeBuddy official sign-in cards are not written to models.json".into(),
+                ));
+            }
+            crate::codebuddy_config::set_provider(&provider.id, provider.settings_config.clone())?
+        }
         AppType::Pi => {
             return Err(AppError::InvalidInput(
                 "Pi providers use the Pi provider service".to_string(),
@@ -1018,6 +1031,7 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
                 | AppType::Kimi
                 | AppType::Dsh
                 | AppType::Omp
+                | AppType::Codebuddy
                 | AppType::Copilot
                 | AppType::LiveAgent
         ) {
@@ -1180,6 +1194,7 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
         AppType::Dsh => Ok(json!(crate::dsh_config::get_providers()?)),
         AppType::LiveAgent => crate::liveagent_config::read(),
         AppType::WorkBuddy => Ok(json!(crate::workbuddy_config::get_providers()?)),
+        AppType::Codebuddy => Ok(json!(crate::codebuddy_config::get_providers()?)),
         AppType::Pi => Err(AppError::InvalidInput(
             "Pi providers are read from Pi's native models file".to_string(),
         )),
@@ -1325,7 +1340,8 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         | AppType::Dsh
         | AppType::Omp
         | AppType::LiveAgent
-        | AppType::WorkBuddy => {
+        | AppType::WorkBuddy
+        | AppType::Codebuddy => {
             unreachable!("additive mode apps are handled by early return")
         }
     };

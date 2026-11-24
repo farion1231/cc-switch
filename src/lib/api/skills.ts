@@ -18,7 +18,8 @@ export type AppType =
   | "agy"
   | "omp"
   | "copilot"
-  | "liveagent";
+  | "liveagent"
+  | "codebuddy";
 
 /** Skill 应用启用状态 */
 export interface SkillApps {
@@ -39,6 +40,7 @@ export interface SkillApps {
   copilot?: boolean;
   liveagent?: boolean;
   workbuddy?: boolean;
+  codebuddy?: boolean;
 }
 
 /** 设置了访问令牌的主机（读私有仓库用，令牌本身不经前端读回） */

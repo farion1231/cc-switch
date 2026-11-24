@@ -129,7 +129,8 @@
     "omp": null,
     "copilot": null,
     "liveagent": null,
-    "workbuddy": null
+    "workbuddy": null,
+    "codebuddy": null
   },
   "userAgentValid": {
     "": true,

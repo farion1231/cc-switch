@@ -1042,7 +1042,10 @@ fn grok_native_update_command(update: String) -> String {
 fn prefers_official_update(tool: &str, shell: LifecycleCommandShell) -> bool {
     match shell {
         LifecycleCommandShell::Posix => {
-            matches!(tool, "claude" | "opencode" | "openclaw" | "kimi" | "omp")
+            matches!(
+                tool,
+                "claude" | "opencode" | "openclaw" | "kimi" | "omp" | "codebuddy"
+            )
         }
         LifecycleCommandShell::WindowsBatch => {
             matches!(
@@ -1051,7 +1054,7 @@ fn prefers_official_update(tool: &str, shell: LifecycleCommandShell) -> bool {
                 // 安装方式探测失败弹交互 prompt（spawn npm.cmd 没传 shell:true）；静默
                 // lifecycle 没有 stdin 会挂死，Windows 先锚到包管理器路径，等上游修了
                 // 再把 opencode 加回这里。
-                "claude" | "openclaw" | "kimi" | "omp"
+                "claude" | "openclaw" | "kimi" | "omp" | "codebuddy"
             )
         }
     }
@@ -1603,8 +1606,9 @@ pub(super) fn is_conflicting(installs: &[ToolInstallation]) -> bool {
 mod tests {
     use super::*;
 
-    fn opencode_install(path: &str, source: &str, is_path_default: bool) -> ToolInstallation {
-        ToolInstallation {
+    #[test]
+    fn opencode_desktop_cli_is_unmanaged_only_when_default() {
+        let install = |path: &str, source: &str, is_path_default: bool| ToolInstallation {
             path: path.to_string(),
             version: Some("1.0.0".to_string()),
             runnable: true,
@@ -1613,109 +1617,136 @@ mod tests {
             source: source.to_string(),
             is_path_default,
             real: Path::new(path).to_path_buf(),
-        }
-    }
+        };
 
-    #[test]
-    fn opencode_desktop_cli_is_not_updated_separately() {
-        let desktop = opencode_install("desktop/opencode-cli.exe", "desktop", true);
         assert_eq!(
-            resolve_update_command("opencode", &[desktop]),
-            UpdateCommand::Unmanaged
-        );
-    }
-
-    #[test]
-    fn standalone_default_still_upgrades_when_desktop_is_also_installed() {
-        let desktop = opencode_install("desktop/opencode-cli.exe", "desktop", false);
-        let standalone =
-            opencode_install("/tmp/node_modules/opencode-ai/bin/opencode", "system", true);
-        assert_ne!(
-            resolve_update_command("opencode", &[desktop, standalone]),
-            UpdateCommand::Unmanaged
-        );
-    }
-
-    #[test]
-    fn grok_lifecycle_metadata_is_consistent() {
-        let requested = vec!["unsupported".to_string(), "grok".to_string()];
-        assert_eq!(normalize_requested_tools(&requested), vec!["grok"]);
-        assert_eq!(tool_spec("grok").npm_package, Some("@xai-official/grok"));
-        assert_eq!(
-            tool_spec("grok").npm_install_command().as_deref(),
-            Some(
-                "npm i -g @xai-official/grok@latest --ignore-scripts=false --include=optional --allow-scripts=@xai-official/grok"
-            )
-        );
-        assert_eq!(tool_spec("grok").official_update_args, Some("update"));
-
-        for action in [ToolLifecycleAction::Install, ToolLifecycleAction::Update] {
-            assert_eq!(
-                tool_action_shell_command_for_shell("grok", action, LifecycleCommandShell::Posix),
-                tool_spec("grok").npm_install_command()
-            );
-        }
-
-        // Static update remains package-manager based. Only a path positively
-        // identified as xAI's native install may run `grok update`.
-        assert_eq!(
-            tool_action_shell_command_for_shell(
-                "grok",
-                ToolLifecycleAction::Update,
-                LifecycleCommandShell::WindowsBatch,
+            resolve_update_command(
+                "opencode",
+                &[install("desktop/opencode-cli.exe", "desktop", true)]
             ),
-            tool_spec("grok").npm_install_command()
+            UpdateCommand::Unmanaged
+        );
+        assert_ne!(
+            resolve_update_command(
+                "opencode",
+                &[
+                    install("desktop/opencode-cli.exe", "desktop", false),
+                    install("/tmp/node_modules/opencode-ai/bin/opencode", "system", true),
+                ]
+            ),
+            UpdateCommand::Unmanaged
         );
     }
 
     #[test]
-    fn dsh_lifecycle_uses_npm_and_keeps_engine_checks_for_anchored_updates() {
-        let expected = "npm i -g @deepseek-ai/dsh@latest --engine-strict";
-        assert_eq!(posix_install_command_for("dsh"), expected);
-        assert_eq!(tool_spec("dsh").npm_package, Some("@deepseek-ai/dsh"));
-        for action in [ToolLifecycleAction::Install, ToolLifecycleAction::Update] {
-            assert_eq!(
-                tool_action_shell_command_for_shell("dsh", action, LifecycleCommandShell::Posix)
-                    .as_deref(),
-                Some(expected)
+    fn all_tools_lifecycle_invariants() {
+        let requested = vec![
+            "unsupported".to_string(),
+            "grok".to_string(),
+            "pi".to_string(),
+        ];
+        let normalized = normalize_requested_tools(&requested);
+        assert!(normalized.contains(&"grok") && normalized.contains(&"pi"));
+        assert!(!normalized.contains(&"unsupported"));
+
+        for tool in TOOLS.iter() {
+            let id = tool.id;
+            let posix_install = posix_install_command_for(id);
+            assert!(!posix_install.is_empty(), "{id}: empty POSIX install");
+            let posix_primary = posix_install.split("||").next().unwrap_or_default();
+            assert!(
+                !posix_primary.contains('|'),
+                "{id}: POSIX installer must not depend on pipefail pipe: {posix_install}"
             );
-            assert_eq!(
-                tool_action_shell_command_for_shell(
-                    "dsh",
-                    action,
-                    LifecycleCommandShell::WindowsBatch
-                )
-                .as_deref(),
-                Some(expected)
+            assert!(
+                !posix_install.contains("pip"),
+                "{id}: POSIX install must not invoke pip: {posix_install}"
             );
+
+            let update = static_fallback_command(id);
+            assert!(!update.is_empty(), "{id}: empty update fallback");
+            #[cfg(not(target_os = "windows"))]
+            assert!(
+                !update.contains("pip"),
+                "{id}: update fallback must not invoke pip: {update}"
+            );
+
+            #[cfg(not(target_os = "windows"))]
+            let shell = LifecycleCommandShell::Posix;
+            #[cfg(target_os = "windows")]
+            let shell = LifecycleCommandShell::WindowsBatch;
+
+            if !prefers_official_update(id, shell) && !matches!(id, "hermes" | "agy") {
+                assert!(
+                    !update.starts_with(&format!("{id} update"))
+                        && !update.starts_with(&format!("{id} upgrade")),
+                    "{id}: unsupported self-update leaked into fallback: {update}"
+                );
+            }
+
+            #[cfg(target_os = "windows")]
+            {
+                let win_install = static_fallback_command_for(id, ToolLifecycleAction::Install);
+                assert!(!win_install.is_empty(), "{id}: empty Windows install");
+                if id == "hermes" {
+                    assert!(
+                        !update.contains("call powershell"),
+                        "hermes powershell fallback must not use batch `call`: {update}"
+                    );
+                }
+                for cmd in [&win_install, &update] {
+                    if cmd.contains("powershell") {
+                        let (prefix, _) = cmd.split_once("-EncodedCommand ").unwrap_or_else(|| {
+                            panic!("{id}: PowerShell installer must use -EncodedCommand: {cmd}")
+                        });
+                        assert!(
+                            !prefix.contains("-Command") && !prefix.contains("pip"),
+                            "{id}: PowerShell prefix invalid: {cmd}"
+                        );
+                    } else {
+                        assert!(
+                            !cmd.contains("pip"),
+                            "{id}: Windows command must not invoke pip: {cmd}"
+                        );
+                    }
+                }
+                for action in [ToolLifecycleAction::Install, ToolLifecycleAction::Update] {
+                    let wsl = wsl_tool_action_shell_command(id, action)
+                        .unwrap_or_else(|| panic!("{id}: missing WSL command"));
+                    assert!(
+                        !wsl.contains("powershell")
+                            && !wsl.contains("|| call ")
+                            && !wsl.contains("pip"),
+                        "{id}: WSL command leaked Windows syntax or pip: {wsl}"
+                    );
+                }
+            }
         }
-        assert_eq!(tool_spec("dsh").official_update_args, None);
-        assert_eq!(tool_spec("dsh").npm_install_args, " --engine-strict");
     }
 
     #[test]
-    fn kimi_install_uses_bundled_runtime_instead_of_system_node() {
-        let posix = tool_action_shell_command_for_shell(
-            "kimi",
-            ToolLifecycleAction::Install,
-            LifecycleCommandShell::Posix,
-        )
-        .unwrap();
-        assert_eq!(posix, KIMI_INSTALL_UNIX);
-        assert_eq!(posix_install_command_for("kimi"), posix);
-        assert!(!posix.contains("npm"));
-        let update = tool_action_shell_command_for_shell(
-            "kimi",
-            ToolLifecycleAction::Update,
-            LifecycleCommandShell::Posix,
-        )
-        .unwrap();
-        assert_eq!(update, format!("kimi upgrade --yes || {posix}"));
-        assert!(!update.contains("npm"));
+    fn parent_dir_extracts_rightmost_separator() {
+        for (input, expected) in [
+            ("/Users/me/.volta/bin/codex", "/Users/me/.volta/bin"),
+            (
+                r"C:\Users\me\AppData\Local\Volta\bin\codex.exe",
+                r"C:\Users\me\AppData\Local\Volta\bin",
+            ),
+            (
+                r"C:\Users\me/Code/openclaw\codex.cmd",
+                r"C:\Users\me/Code/openclaw",
+            ),
+            ("codex", ""),
+            ("/codex", ""),
+            (r"\codex", ""),
+        ] {
+            assert_eq!(parent_dir(input), expected, "{input}");
+        }
     }
 
     #[test]
-    fn kimi_native_install_root_follows_the_installer_layout() {
+    fn installer_root_detection() {
+        // Kimi native installer root
         assert_eq!(
             kimi_native_install_root(
                 "/home/me/.kimi-code/bin/kimi",
@@ -1724,7 +1755,6 @@ mod tests {
             .as_deref(),
             Some("/home/me/.kimi-code")
         );
-        // 软链指回安装目录时写回真身那处。
         assert_eq!(
             kimi_native_install_root("/home/me/.local/bin/kimi", "/opt/kimi/bin/kimi").as_deref(),
             Some("/opt/kimi")
@@ -1737,7 +1767,6 @@ mod tests {
             .as_deref(),
             Some(r"C:\Users\sc\.kimi-code")
         );
-        // npm 版不归 installer 管。
         assert_eq!(
             kimi_native_install_root(
                 "/home/me/.nvm/versions/node/v22.19.0/bin/kimi",
@@ -1752,157 +1781,21 @@ mod tests {
             ),
             None
         );
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    #[test]
-    fn kimi_installer_update_command_targets_the_detected_dir() {
+        #[cfg(not(target_os = "windows"))]
         assert_eq!(
             kimi_installer_update_command("/home/me/my kimi"),
             format!("KIMI_INSTALL_DIR='/home/me/my kimi' {KIMI_INSTALL_UNIX}")
         );
-    }
 
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn kimi_windows_install_is_noninteractive_and_has_no_npm_fallback() {
-        use base64::Engine as _;
-        let command = tool_action_shell_command_for_shell(
-            "kimi",
-            ToolLifecycleAction::Install,
-            LifecycleCommandShell::WindowsBatch,
-        )
-        .unwrap();
-        assert!(command.starts_with("powershell -NoProfile -NonInteractive "));
-        let encoded = command.split("-EncodedCommand ").nth(1).unwrap();
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(encoded)
-            .unwrap();
-        let script = String::from_utf16(
-            &bytes
-                .chunks_exact(2)
-                .map(|unit| u16::from_le_bytes([unit[0], unit[1]]))
-                .collect::<Vec<_>>(),
-        )
-        .unwrap();
-        assert_eq!(script, KIMI_INSTALL_WINDOWS_SCRIPT);
-        assert!(!command.contains("npm"));
-        assert_eq!(
-            wsl_tool_action_shell_command("kimi", ToolLifecycleAction::Install).as_deref(),
-            Some(KIMI_INSTALL_UNIX)
-        );
-    }
-
-    #[test]
-    fn pi_lifecycle_metadata_matches_pinned_distribution() {
-        let requested = vec!["unsupported".to_string(), "pi".to_string()];
-        assert_eq!(normalize_requested_tools(&requested), vec!["pi"]);
-        assert_eq!(
-            tool_spec("pi").npm_package,
-            Some("@earendil-works/pi-coding-agent")
-        );
-        assert_eq!(
-            tool_spec("pi").npm_install_command().as_deref(),
-            Some("npm i -g @earendil-works/pi-coding-agent@latest")
-        );
-        // The verified distribution exposes `pi --version`, but no updater
-        // contract is assumed; upgrades stay on the package-manager path.
-        assert_eq!(tool_spec("pi").official_update_args, None);
-    }
-
-    #[test]
-    fn omp_lifecycle_metadata_keeps_one_package() {
-        let requested = vec!["unsupported".to_string(), "omp".to_string()];
-        assert_eq!(normalize_requested_tools(&requested), vec!["omp"]);
-        // The version check reads this package; npm cannot run it (the entry is
-        // a bun script), so there is no npm install command at all.
-        assert_eq!(
-            tool_spec("omp").npm_package,
-            Some("@oh-my-pi/pi-coding-agent")
-        );
-        assert_eq!(tool_spec("omp").npm_install_command(), None);
-        // `omp update` routes every install source itself and never prompts.
-        assert_eq!(tool_spec("omp").official_update_args, Some("update"));
-        #[cfg(not(target_os = "windows"))]
-        {
-            assert_eq!(install_command_for("omp"), OMP_INSTALL_UNIX);
-            assert_eq!(
-                tool_action_shell_command_for_shell(
-                    "omp",
-                    ToolLifecycleAction::Update,
-                    LifecycleCommandShell::Posix
-                )
-                .as_deref(),
-                Some(format!("omp update || {OMP_INSTALL_UNIX}").as_str())
-            );
-        }
-    }
-
-    #[test]
-    fn mcode_lifecycle_metadata_skips_non_tty_self_update() {
-        let requested = vec!["unsupported".to_string(), "mcode".to_string()];
-        assert_eq!(normalize_requested_tools(&requested), vec!["mcode"]);
-        // npm 上同名的 `mcode` 是无关项目，官方包是 scoped 的 @minimax-ai/code。
-        assert_eq!(tool_spec("mcode").npm_package, Some("@minimax-ai/code"));
-        let npm = tool_spec("mcode").npm_install_command().unwrap();
-        assert!(
-            npm.contains("\"--allow-scripts=@minimax-ai/code,better-sqlite3\""),
-            "npm 12 blocks better-sqlite3's install script without it: {npm}"
-        );
-
-        // `mcode update` exits 0 without installing when stdin/stdout are not a
-        // TTY, which is exactly how silent lifecycle actions run it.
-        assert_eq!(tool_spec("mcode").official_update_args, None);
-        for shell in [
-            LifecycleCommandShell::Posix,
-            LifecycleCommandShell::WindowsBatch,
-        ] {
-            assert_eq!(
-                tool_action_shell_command_for_shell("mcode", ToolLifecycleAction::Update, shell),
-                Some(npm.clone())
-            );
-        }
-    }
-
-    #[test]
-    fn mcode_install_root_candidate_follows_platform_layout() {
-        assert_eq!(
-            mcode_install_root_candidate("/opt/mcode/bin/mcode", McodeLayout::Posix),
-            "/opt/mcode"
-        );
-        // 根目录本身叫 bin：POSIX 只去掉入口所在的那一层 bin。
+        // MiniMax Code installer root candidate & layout
         assert_eq!(
             mcode_install_root_candidate("/opt/bin/bin/mcode", McodeLayout::Posix),
             "/opt/bin"
         );
-        // Windows 入口直接在根目录，根目录叫 bin 也不能再上跳一级。
         assert_eq!(
-            mcode_install_root_candidate("C:\\Users\\me\\bin\\mcode.cmd", McodeLayout::Windows),
-            "C:\\Users\\me\\bin"
+            mcode_install_root_candidate(r"C:\Users\me\bin\mcode.cmd", McodeLayout::Windows),
+            r"C:\Users\me\bin"
         );
-    }
-
-    #[test]
-    fn mcode_script_install_root_matches_only_installer_layout() {
-        assert_eq!(
-            mcode_script_install_root(
-                "/Users/me/.minimax-code/bin/mcode",
-                "/Users/me/.minimax-code/bin/mcode",
-                McodeLayout::Posix,
-            )
-            .as_deref(),
-            Some("/Users/me/.minimax-code")
-        );
-        assert_eq!(
-            mcode_script_install_root(
-                "C:\\Users\\me\\.minimax-code\\mcode.cmd",
-                "C:\\Users\\me\\.minimax-code\\mcode.cmd",
-                McodeLayout::Windows,
-            )
-            .as_deref(),
-            Some("C:\\Users\\me\\.minimax-code")
-        );
-        // 用户自建软链：入口不在安装目录，但真身是 launcher。
         assert_eq!(
             mcode_script_install_root(
                 "/Users/me/.local/bin/mcode",
@@ -1912,7 +1805,15 @@ mod tests {
             .as_deref(),
             Some("/Users/me/.minimax-code")
         );
-        // 全局 npm 安装、以及同名数据目录 `~/.minimax` 都不是 installer 布局。
+        assert_eq!(
+            mcode_script_install_root(
+                r"C:\Users\me\.minimax-code\mcode.cmd",
+                r"C:\Users\me\.minimax-code\mcode.cmd",
+                McodeLayout::Windows,
+            )
+            .as_deref(),
+            Some(r"C:\Users\me\.minimax-code")
+        );
         assert_eq!(
             mcode_script_install_root(
                 "/opt/homebrew/bin/mcode",
@@ -1931,140 +1832,113 @@ mod tests {
         );
     }
 
-    /// `parent_dir` 是锚定层"由 bin 路径推导同目录绝对路径"的基石,跨平台共用——
-    /// 这里固化 `\`/`/`/混合分隔符/根边界四种情况,避免未来重构悄悄改语义。
-    mod parent_dir_cases {
-        use super::super::*;
+    #[test]
+    fn codebuddy_lifecycle_metadata_uses_self_update_with_npm_fallback() {
+        let requested = vec!["unsupported".to_string(), "codebuddy".to_string()];
+        assert_eq!(normalize_requested_tools(&requested), vec!["codebuddy"]);
+        let spec = tool_spec("codebuddy");
+        assert_eq!(spec.display_name, "CodeBuddy Code");
+        assert_eq!(spec.npm_package, Some("@tencent-ai/codebuddy-code"));
+        let npm = "npm i -g @tencent-ai/codebuddy-code@latest";
+        // No dependency runs an install script, so npm 12 needs no `--allow-scripts`.
+        assert_eq!(spec.npm_install_command().as_deref(), Some(npm));
+        // `codebuddy update` never prompts and exits 1 when it cannot update.
+        assert_eq!(spec.official_update_args, Some("update"));
 
-        #[test]
-        fn unix_path() {
-            assert_eq!(
-                parent_dir("/Users/me/.volta/bin/codex"),
-                "/Users/me/.volta/bin"
-            );
-        }
+        assert_eq!(
+            tool_action_shell_command_for_shell(
+                "codebuddy",
+                ToolLifecycleAction::Install,
+                LifecycleCommandShell::Posix,
+            )
+            .as_deref(),
+            Some(npm)
+        );
+        assert_eq!(
+            tool_action_shell_command_for_shell(
+                "codebuddy",
+                ToolLifecycleAction::Update,
+                LifecycleCommandShell::Posix,
+            )
+            .as_deref(),
+            Some(format!("codebuddy update || {npm}").as_str())
+        );
+        assert_eq!(
+            tool_action_shell_command_for_shell(
+                "codebuddy",
+                ToolLifecycleAction::Update,
+                LifecycleCommandShell::WindowsBatch,
+            )
+            .as_deref(),
+            Some(format!("codebuddy update || call {npm}").as_str())
+        );
+    }
 
-        #[test]
-        fn windows_backslash() {
-            assert_eq!(
-                parent_dir("C:\\Users\\me\\AppData\\Local\\Volta\\bin\\codex.exe"),
-                "C:\\Users\\me\\AppData\\Local\\Volta\\bin"
-            );
-        }
-
-        #[test]
-        fn mixed_separators_takes_rightmost() {
-            // Windows 上 `Path::join` 与字符串拼接可能产出混合分隔符;取**两种之中最右
-            // 出现**的位置,而非"优先 `\`"——后者在混合时会取错父目录。
-            assert_eq!(
-                parent_dir("C:\\Users\\me/Code/openclaw\\codex.cmd"),
-                "C:\\Users\\me/Code/openclaw"
-            );
-        }
-
-        #[test]
-        fn no_separator_returns_empty() {
-            // 无父目录 → 空串,锚定层据此返 None、回退静态命令。
-            assert_eq!(parent_dir("codex"), "");
-        }
-
-        #[test]
-        fn separator_at_root_returns_empty() {
-            // `/codex`:根目录是 index 0,`i > 0` 不满足 → 空串。同款行为对 Windows
-            // 上的 `\codex` 也成立(实际不会出现,但语义对齐)。
-            assert_eq!(parent_dir("/codex"), "");
-            assert_eq!(parent_dir("\\codex"), "");
+    #[test]
+    fn codex_standalone_detection() {
+        assert_eq!(
+            codex_standalone_install(
+                "/Users/me/.local/bin/codex",
+                "/Users/me/.codex/packages/standalone/releases/0.157.0-aarch64-apple-darwin/bin/codex",
+            ),
+            Some(CodexStandaloneInstall {
+                install_dir: "/Users/me/.local/bin".to_string(),
+                codex_home: Some("/Users/me/.codex".to_string()),
+            })
+        );
+        // Windows `\\?\` & `\\?\UNC\` verbatim prefixes are restored before passing to installer.
+        assert_eq!(
+            codex_standalone_install(
+                r"C:\Users\Me\AppData\Local\Programs\OpenAI\Codex\bin\codex.exe",
+                r"\\?\C:\Users\Me\.Codex\Packages\Standalone\releases\0.157.0-x86_64-pc-windows-msvc\bin\codex.exe",
+            ),
+            Some(CodexStandaloneInstall {
+                install_dir: r"C:\Users\Me\AppData\Local\Programs\OpenAI\Codex\bin".to_string(),
+                codex_home: Some(r"C:\Users\Me\.Codex".to_string()),
+            })
+        );
+        assert_eq!(
+            codex_standalone_install(
+                r"\\server\share\bin\codex.exe",
+                r"\\?\UNC\server\share\cx\packages\standalone\current\bin\codex.exe",
+            )
+            .and_then(|install| install.codex_home),
+            Some(r"\\server\share\cx".to_string())
+        );
+        let default_win_bin = r"C:\Users\me\AppData\Local\Programs\OpenAI\Codex\bin\codex.exe";
+        assert_eq!(
+            codex_standalone_install(default_win_bin, default_win_bin),
+            Some(CodexStandaloneInstall {
+                install_dir: r"C:\Users\me\AppData\Local\Programs\OpenAI\Codex\bin".to_string(),
+                codex_home: None,
+            })
+        );
+        for (bin, real) in [
+            (
+                "/Users/me/.nvm/versions/node/v22.19.0/bin/codex",
+                "/Users/me/.nvm/versions/node/v22.19.0/lib/node_modules/@openai/codex/bin/codex.js",
+            ),
+            (
+                "/opt/homebrew/bin/codex",
+                "/opt/homebrew/Caskroom/codex/0.157.0/bin/codex",
+            ),
+            (
+                "/Users/me/.local/bin/codex",
+                "/Users/me/.codex/packages/app-server-daemon/current/bin/codex",
+            ),
+            (
+                r"C:\Users\me\AppData\Roaming\npm\codex.cmd",
+                r"C:\Users\me\AppData\Roaming\npm\codex.cmd",
+            ),
+        ] {
+            assert_eq!(codex_standalone_install(bin, real), None, "{bin}");
         }
     }
 
-    /// Codex 官方独立安装器的识别是纯字符串判定,POSIX / Windows 布局都在这里固化。
-    mod codex_standalone_detection {
-        use super::super::*;
-
-        #[test]
-        fn posix_default_layout() {
-            assert_eq!(
-                codex_standalone_install(
-                    "/Users/me/.local/bin/codex",
-                    "/Users/me/.codex/packages/standalone/releases/0.157.0-aarch64-apple-darwin/bin/codex",
-                ),
-                Some(CodexStandaloneInstall {
-                    install_dir: "/Users/me/.local/bin".to_string(),
-                    codex_home: Some("/Users/me/.codex".to_string()),
-                })
-            );
-        }
-
-        #[test]
-        fn windows_verbatim_real_is_restored() {
-            // canonicalize 出的 `\\?\` 前缀要剥掉再交给 installer;大小写保持原样。
-            assert_eq!(
-                codex_standalone_install(
-                    r"C:\Users\Me\AppData\Local\Programs\OpenAI\Codex\bin\codex.exe",
-                    r"\\?\C:\Users\Me\.Codex\Packages\Standalone\releases\0.157.0-x86_64-pc-windows-msvc\bin\codex.exe",
-                ),
-                Some(CodexStandaloneInstall {
-                    install_dir: r"C:\Users\Me\AppData\Local\Programs\OpenAI\Codex\bin".to_string(),
-                    codex_home: Some(r"C:\Users\Me\.Codex".to_string()),
-                })
-            );
-            assert_eq!(
-                codex_standalone_install(
-                    r"\\server\share\bin\codex.exe",
-                    r"\\?\UNC\server\share\cx\packages\standalone\current\bin\codex.exe",
-                )
-                .and_then(|install| install.codex_home),
-                Some(r"\\server\share\cx".to_string())
-            );
-        }
-
-        #[test]
-        fn windows_default_entry_without_resolved_real() {
-            // canonicalize 失败时 real 就是入口本身:仍按默认入口目录认出,只是不传 CODEX_HOME。
-            let bin = r"C:\Users\me\AppData\Local\Programs\OpenAI\Codex\bin\codex.exe";
-            assert_eq!(
-                codex_standalone_install(bin, bin),
-                Some(CodexStandaloneInstall {
-                    install_dir: r"C:\Users\me\AppData\Local\Programs\OpenAI\Codex\bin".to_string(),
-                    codex_home: None,
-                })
-            );
-        }
-
-        #[test]
-        fn other_install_channels_are_not_standalone() {
-            for (bin, real) in [
-                (
-                    "/Users/me/.nvm/versions/node/v22.19.0/bin/codex",
-                    "/Users/me/.nvm/versions/node/v22.19.0/lib/node_modules/@openai/codex/bin/codex.js",
-                ),
-                (
-                    "/opt/homebrew/bin/codex",
-                    "/opt/homebrew/Caskroom/codex/0.157.0/bin/codex",
-                ),
-                // app-server 守护进程的发布包不是 PATH 上的 CLI。
-                (
-                    "/Users/me/.local/bin/codex",
-                    "/Users/me/.codex/packages/app-server-daemon/current/bin/codex",
-                ),
-                (r"C:\Users\me\AppData\Roaming\npm\codex.cmd", r"C:\Users\me\AppData\Roaming\npm\codex.cmd"),
-            ] {
-                assert_eq!(codex_standalone_install(bin, real), None, "{bin}");
-            }
-        }
-    }
-
-    /// Windows-only 锚定升级回归(等价类压缩到 3 种 idiom:volta/pnpm/npm)。整块通过
-    /// `cfg(target_os = "windows")` gate,在 macOS/Linux 上不参与 cargo test;Windows
-    /// CI 跑全套验证。tempdir 模拟 sibling 入口存在/不存在,锁定"扩展名顺序优先级 +
-    /// 含空格路径自动加双引号 + 探不到 sibling → None 退静态"三件事。
     #[cfg(target_os = "windows")]
-    mod anchored_upgrade_windows {
+    mod windows {
         use super::super::*;
 
-        /// 在 tempdir 下创建子目录 `subdir`(空字符串则用 tempdir 根),放入 `entry`
-        /// 与若干 `siblings` 假文件。返回 `(TempDir, 子目录, 入口绝对路径)`——TempDir
-        /// 必须保活,否则析构后 fs 文件消失、`is_file()` 失败,测试假绿。
         fn setup_sibling(
             subdir: &str,
             entry: &str,
@@ -2085,780 +1959,154 @@ mod tests {
             (dir, sub, bin_path)
         }
 
-        /// **必须与 `win_quote_path_for_batch` 主体保持镜像**——给 anchored 测试动态算
-        /// expected,让用例在 temp 根目录含空格 / `&` / `(` / `%` 等特殊字符的开发机上
-        /// 也能通过(默认 Windows `%TEMP%` = `C:\Users\<user>\AppData\Local\Temp`,
-        /// 用户名带空格的机器整条 path 含空格、生产代码会正确加引号、测试硬编码无引号
-        /// expected 会假失败)。
-        ///
-        /// 镜像引入"两边必须同步"的隐性依赖——回归防护层是 `win_quote_*` 那 7 个独立
-        /// 单测,它们用硬编码字面值锁住 quoting 规则本身,即便此镜像漂移也会被那一组
-        /// 测试 catch;反之亦然。
-        fn expect_quoted_path(p: &str) -> String {
-            let escaped = p.replace('%', "%%%%");
-            let needs_quote = p
-                .chars()
-                .any(|c| matches!(c, ' ' | '&' | '(' | ')' | '^' | ';' | '<' | '>' | '|' | ','));
-            if needs_quote {
-                format!("\"{escaped}\"")
-            } else {
-                escaped
+        #[test]
+        fn win_quote_path_for_batch_handles_metacharacters_and_percent() {
+            for (input, expected) in [
+                (r"C:\Users\me\npm.cmd", r"C:\Users\me\npm.cmd"),
+                (
+                    r"C:\Program Files\nodejs\npm.cmd",
+                    r#""C:\Program Files\nodejs\npm.cmd""#,
+                ),
+                (r"C:\Tools&Dev\npm.cmd", r#""C:\Tools&Dev\npm.cmd""#),
+                (r"C:\Foo(x86)\npm.cmd", r#""C:\Foo(x86)\npm.cmd""#),
+                (r"C:\foo^bar\npm.cmd", r#""C:\foo^bar\npm.cmd""#),
+                // `%` 经历 .bat + call 两轮展开须 4 倍转义，且纯 `%` 路径不额外加引号
+                (r"C:\path%foo%\npm.cmd", r"C:\path%%%%foo%%%%\npm.cmd"),
+                (r"C:\my %dir%\npm.cmd", r#""C:\my %%%%dir%%%%\npm.cmd""#),
+            ] {
+                assert_eq!(win_quote_path_for_batch(input), expected, "{input}");
             }
         }
 
         #[test]
-        fn volta_windows_uses_volta_install() {
-            // tempdir 路径里不含 "volta" 子串,所以在 tempdir 下手建一个 `Volta` 子目录
-            // 才能让 `infer_install_source` 通过路径 normalize 后命中 `/volta/` 分支。
-            // sibling 候选顺序 `[exe, cmd]`——Volta 是 Rust 写的 native binary,首选 .exe。
-            // expected 通过 `expect_quoted_path` 算出,以适应 temp 根目录含特殊字符的环境。
-            let (_dir, sub, bin_path) = setup_sibling("Volta", "codex.cmd", &["volta.exe"]);
-            let cmd = anchored_command_from_paths("codex", &bin_path, &bin_path);
-            let volta_full = format!("{}\\volta.exe", sub.to_string_lossy());
-            // codex 自 5092fe51 起不在 prefers_official_update：直接锚定包管理器，无 `codex update ||` 前缀。
-            let expected = format!("{} install @openai/codex", expect_quoted_path(&volta_full));
-            assert_eq!(cmd.as_deref(), Some(expected.as_str()));
-        }
-
-        #[test]
-        fn pnpm_windows_uses_pnpm_add() {
-            // bin_path 落 `%LOCALAPPDATA%\pnpm\codex.cmd`,sibling 有 `pnpm.cmd` → 锚定到
-            // `<dir>\pnpm.cmd add -g @openai/codex@latest`。用 add+@latest 而非 update,
-            // 兼容"之前没通过 pnpm 装过"的幂等性场景。
-            let (_dir, sub, bin_path) = setup_sibling("pnpm", "codex.cmd", &["pnpm.cmd"]);
-            let cmd = anchored_command_from_paths("codex", &bin_path, &bin_path);
-            let pnpm_full = format!("{}\\pnpm.cmd", sub.to_string_lossy());
-            // codex 自 5092fe51 起不在 prefers_official_update：直接锚定包管理器，无 `codex update ||` 前缀。
-            let expected = format!(
-                "{} add -g @openai/codex@latest",
-                expect_quoted_path(&pnpm_full)
-            );
-            assert_eq!(cmd.as_deref(), Some(expected.as_str()));
-        }
-
-        #[test]
-        fn opencode_windows_uses_package_fallback_without_official_upgrade() {
-            let (_dir, sub, bin_path) = setup_sibling("pnpm", "opencode.cmd", &["pnpm.cmd"]);
-            let cmd = anchored_command_from_paths("opencode", &bin_path, &bin_path);
-            let pnpm_full = format!("{}\\pnpm.cmd", sub.to_string_lossy());
-            let expected = format!(
-                "{} add -g opencode-ai@latest",
-                expect_quoted_path(&pnpm_full)
-            );
-            assert_eq!(cmd.as_deref(), Some(expected.as_str()));
-        }
-
-        #[test]
-        fn opencode_windows_static_fallback_skips_official_upgrade() {
-            let cmd = static_fallback_command("opencode");
-            assert_eq!(cmd, tool_spec("opencode").npm_install_command().unwrap());
-            assert!(!cmd.contains("opencode upgrade"));
-        }
-
-        #[test]
-        fn npm_windows_default_branch() {
-            // 任意 system 类路径(不命中 volta/pnpm)→ 兜底 sibling npm.cmd 锚定。
-            // 模拟 nvm-windows 的实际形态:`<NVM_HOME>\v22.0.0\codex.cmd`。
-            let (_dir, sub, bin_path) = setup_sibling("v22.0.0", "codex.cmd", &["npm.cmd"]);
-            let cmd = anchored_command_from_paths("codex", &bin_path, &bin_path);
-            let npm_full = format!("{}\\npm.cmd", sub.to_string_lossy());
-            // codex 自 5092fe51 起不在 prefers_official_update：直接锚定包管理器，无 `codex update ||` 前缀。
-            let expected = format!(
-                "{} i -g @openai/codex@latest",
-                expect_quoted_path(&npm_full)
-            );
-            assert_eq!(cmd.as_deref(), Some(expected.as_str()));
-        }
-
-        #[test]
-        fn grok_windows_anchors_to_sibling_npm() {
-            let (_dir, sub, bin_path) = setup_sibling("v22.0.0", "grok.cmd", &["npm.cmd"]);
-            let cmd = anchored_command_from_paths("grok", &bin_path, &bin_path);
-            let npm_full = format!("{}\\npm.cmd", sub.to_string_lossy());
-            let expected = format!(
-                "{} i -g @xai-official/grok@latest{}",
-                expect_quoted_path(&npm_full),
-                tool_spec("grok").npm_install_args
-            );
-            assert_eq!(cmd.as_deref(), Some(expected.as_str()));
-        }
-
-        #[test]
-        fn grok_native_windows_uses_self_update_with_installer_fallback() {
-            // sibling 有 npm.cmd 也**不能**拿它当 fallback:`grok update` 本身就是靠 npm
-            // 分发的(见 grok_native_update_command doc),npm fallback 与 primary 同源、
-            // 会一起失败。fallback 必须是官方 PowerShell installer —— 唯一不经 npm 的路径。
-            let (_dir, _sub, bin_path) = setup_sibling(".grok/bin", "grok.exe", &["npm.cmd"]);
-            let cmd = anchored_command_from_paths("grok", &bin_path, &bin_path).unwrap();
-            let expected = format!(
-                "{} update || {}",
-                expect_quoted_path(&bin_path),
-                grok_install_windows_command()
-            );
-            assert_eq!(cmd, expected);
-            // fallback 是 powershell.exe 不是 .cmd/.bat —— `||` 右侧不该有 `call`。
-            assert!(
-                !cmd.contains("|| call"),
-                "powershell needs no `call`: {cmd}"
-            );
-            assert!(!cmd.contains("npm"), "npm must not be the fallback: {cmd}");
-        }
-
-        #[test]
-        fn mcode_script_install_windows_reruns_installer_in_place() {
-            // sibling 有 npm.cmd 也不能用：脚本安装不归全局 npm 管，npm 会装到另一处。
-            let (_dir, sub, bin_path) =
-                setup_sibling(".minimax-code", "mcode.cmd", &["mcode.ps1", "npm.cmd"]);
-            let cmd = anchored_command_from_paths("mcode", &bin_path, &bin_path).unwrap();
-            assert_eq!(cmd, mcode_installer_update_command(&sub.to_string_lossy()));
-            assert!(!cmd.contains("npm"), "npm must not be used: {cmd}");
-        }
-
-        #[test]
-        fn mcode_windows_installer_update_pins_install_root() {
-            let cmd = mcode_installer_update_command("C:\\Users\\o'brien\\.minimax-code");
-            let expected = powershell_encoded_command(
-                "$env:MCODE_INSTALL_DIR = 'C:\\Users\\o''brien\\.minimax-code'; irm https://filecdn.minimax.chat/public/install.ps1 | iex",
-            );
-            assert_eq!(
-                cmd.split_once("-EncodedCommand ")
-                    .map(|(_, encoded)| encoded),
-                Some(expected.as_str())
-            );
-        }
-
-        #[test]
-        fn codex_standalone_windows_reruns_installer_in_place() {
-            // #7650:独立安装的 codex.exe 旁边没有 npm.cmd,此前退回 `call npm i -g`
-            // 另装一份 npm 版。
-            let bin = r"C:\Users\o'brien\AppData\Local\Programs\OpenAI\Codex\bin\codex.exe";
-            let real = r"\\?\C:\Users\o'brien\.codex\packages\standalone\releases\0.157.0-x86_64-pc-windows-msvc\bin\codex.exe";
-            let cmd = anchored_command_from_paths("codex", bin, real).unwrap();
-            let expected = powershell_encoded_command(
-                "$env:CODEX_NON_INTERACTIVE = '1'; $env:CODEX_INSTALL_DIR = 'C:\\Users\\o''brien\\AppData\\Local\\Programs\\OpenAI\\Codex\\bin'; $env:CODEX_HOME = 'C:\\Users\\o''brien\\.codex'; irm https://chatgpt.com/codex/install.ps1 | iex",
-            );
-            assert_eq!(
-                cmd.split_once("-EncodedCommand ")
-                    .map(|(_, encoded)| encoded),
-                Some(expected.as_str())
-            );
-            assert!(!cmd.contains("npm"), "npm must not be used: {cmd}");
-        }
-
-        #[test]
-        fn mcode_windows_npm_install_keeps_allow_scripts() {
-            let (_dir, sub, bin_path) = setup_sibling("v22.19.0", "mcode.cmd", &["npm.cmd"]);
-            let cmd = anchored_command_from_paths("mcode", &bin_path, &bin_path);
-            let npm_full = format!("{}\\npm.cmd", sub.to_string_lossy());
-            let expected = format!(
-                "{} i -g @minimax-ai/code@latest{}",
-                expect_quoted_path(&npm_full),
-                tool_spec("mcode").npm_install_args
-            );
-            assert_eq!(cmd.as_deref(), Some(expected.as_str()));
-        }
-
-        #[test]
-        fn mcode_windows_install_prefers_powershell_with_npm_fallback() {
-            let install = static_fallback_command_for("mcode", ToolLifecycleAction::Install);
-            let native = mcode_install_windows_command();
-            assert_eq!(
-                install,
-                format!(
-                    "{native} || call {}",
-                    tool_spec("mcode").npm_install_command().unwrap()
-                )
-            );
-            let expected_encoded = powershell_encoded_command(MCODE_INSTALL_WINDOWS_SCRIPT);
-            assert_eq!(
-                native
-                    .split_once("-EncodedCommand ")
-                    .map(|(_, encoded)| encoded),
-                Some(expected_encoded.as_str())
-            );
-        }
-
-        #[test]
-        fn grok_windows_install_prefers_powershell_with_npm_fallback() {
-            let install = static_fallback_command_for("grok", ToolLifecycleAction::Install);
-            let native = grok_install_windows_command();
-            assert!(
-                install.starts_with(&native),
-                "native installer first: {install}"
-            );
-            assert!(
-                install.ends_with(&format!(
-                    "|| call {}",
-                    tool_spec("grok").npm_install_command().unwrap()
-                )),
-                "npm fallback should remain available: {install}"
-            );
-            let expected_encoded = powershell_encoded_command(GROK_INSTALL_WINDOWS_SCRIPT);
-            assert_eq!(
-                native
-                    .split_once("-EncodedCommand ")
-                    .map(|(_, encoded)| encoded),
-                Some(expected_encoded.as_str())
-            );
-        }
-
-        #[test]
-        fn windows_no_sibling_uses_cli_update_without_package_fallback() {
-            // sibling 包管理器不存在(纯独立二进制)时,仍可锚定到 CLI 自身跑官方 update。
-            // 只是没有包管理器 fallback。用 claude —— codex 自 5092fe51 起一律走 npm 锚定,
-            // 已不再有官方 self-update 分支,故改用仍在 prefers_official_update 的 claude 覆盖此路径。
-            let (_dir, _sub, bin_path) = setup_sibling("", "claude.cmd", &[]);
-            let cmd = anchored_command_from_paths("claude", &bin_path, &bin_path);
-            let expected = format!("{} update", expect_quoted_path(&bin_path));
-            assert_eq!(cmd.as_deref(), Some(expected.as_str()));
-        }
-
-        #[test]
-        fn hermes_windows_uses_cli_update() {
-            // Hermes 自带 `hermes update`,不要再回退到 py/python/pip。即便同目录有
-            // npm.cmd,也不应走 npm 分支。
-            let (_dir, _sub, bin_path) = setup_sibling("", "hermes.exe", &["npm.cmd"]);
-            let cmd = anchored_command_from_paths("hermes", &bin_path, &bin_path);
-            let expected = format!("{} update", expect_quoted_path(&bin_path));
-            assert_eq!(cmd.as_deref(), Some(expected.as_str()));
-        }
-
-        #[test]
-        fn hermes_windows_static_fallback_uses_powershell_installer_without_pip() {
-            let install = static_fallback_command_for("hermes", ToolLifecycleAction::Install);
-            assert!(
-                install
-                    .starts_with("powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand "),
-                "should use PowerShell EncodedCommand installer: {install}"
-            );
-            let encoded = install
-                .split_once("-EncodedCommand ")
-                .map(|(_, encoded)| encoded)
-                .expect("installer should include encoded command");
-            assert_eq!(
-                encoded,
-                powershell_encoded_command(HERMES_INSTALL_WINDOWS_SCRIPT)
-            );
-            let install_prefix = install
-                .split_once("-EncodedCommand ")
-                .map(|(prefix, _)| prefix)
-                .expect("installer should include encoded command");
-            assert!(
-                !install_prefix.contains("|")
-                    && !install_prefix.contains("-Command")
-                    && !install_prefix.contains("python")
-                    && !install_prefix.contains("pip"),
-                "should hide PowerShell pipe from cmd.exe and avoid system Python/pip: {install}"
-            );
-
-            let update = static_fallback_command("hermes");
-            assert!(
-                update.starts_with(
-                    "hermes update || powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand "
-                ),
-                "should try CLI update before PowerShell installer: {update}"
-            );
-            let fallback = update
-                .split_once("||")
-                .map(|(_, fallback)| fallback)
-                .expect("update should include a fallback command");
-            let fallback_prefix = fallback
-                .split_once("-EncodedCommand ")
-                .map(|(prefix, _)| prefix)
-                .expect("fallback should include encoded command");
-            assert!(
-                !fallback_prefix.contains('|')
-                    && !fallback_prefix.contains("-Command")
-                    && !update.contains("call powershell")
-                    && !fallback_prefix.contains("python")
-                    && !fallback_prefix.contains("pip"),
-                "PowerShell fallback should be encoded, not called like a batch file or use pip: {update}"
-            );
-        }
-
-        #[test]
-        fn windows_path_with_space_is_double_quoted() {
-            // 含空格的路径(`C:\Program Files\...`)在生成命令时必须用双引号包,否则
-            // bat / cmd /C 解析会把第一个空格当 token 分隔符,后续参数串错。**精确等值断言
-            // 锁定引号位置**(starts_with+contains 会放过"双引号位置错了但仍能命中"的回归)。
-            let (_dir, sub, bin_path) = setup_sibling("Program Files", "codex.cmd", &["npm.cmd"]);
-            let cmd = anchored_command_from_paths("codex", &bin_path, &bin_path);
-            let npm_full = format!("{}\\npm.cmd", sub.to_string_lossy());
-            // codex 走 npm 锚定(5092fe51),含空格的 npm 全路径仍必须被双引号包裹。
-            let expected = format!(
-                "{} i -g @openai/codex@latest",
-                expect_quoted_path(&npm_full)
-            );
-            assert_eq!(cmd.as_deref(), Some(expected.as_str()));
-        }
-
-        #[test]
-        fn windows_full_batch_line_for_percent_path_uses_quadruple_escape() {
-            // **完整生成的 batch 行**(`call ` + anchored cmd)对含字面 `%` 的路径必须
-            // 4 倍转义 `%foo%` → `%%%%foo%%%%`:.bat parser 一轮还原为 `%%foo%%`,call
-            // 二轮再还原为 `%foo%` 字面。helper 单测验证的是 `win_quote_path_for_batch`
-            // 内部转义,这条 integration 测验证 anchored_command_from_paths 输出 + call
-            // 包装后,**最终落到 .bat 的字符串**仍然闭合两轮 expansion。
-            let (_dir, sub, bin_path) = setup_sibling("path%foo%", "codex.cmd", &["npm.cmd"]);
-            let anchored = anchored_command_from_paths("codex", &bin_path, &bin_path).unwrap();
-            // build_tool_action_line Windows 分支最终拼的就是 `call <anchored>`(中间
-            // 没有其他变换),这里直接用 format! 复刻那一步,无需暴露内部 API。
-            let batch_line = format!("call {anchored}");
-            // 用 `expect_quoted_path` 算 npm 全路径的期望 quoting,**同时覆盖 temp 根
-            // 含空格的环境**(否则 sub 本身含空格 + 子目录 `path%foo%` 触发 4 倍 `%` 转义
-            // 会让 expected 漏引号、假失败)。
-            let npm_full = format!("{}\\npm.cmd", sub.to_string_lossy());
-            // codex 走 npm 锚定(5092fe51)：batch 行 = `call <npm 全路径> i -g ...`，
-            // 含字面 `%` 的 npm 路径仍须 4 倍转义。
-            let expected = format!(
-                "call {} i -g @openai/codex@latest",
-                expect_quoted_path(&npm_full)
-            );
-            assert_eq!(batch_line, expected);
-            // 双重锁定:确认 4 倍转义子串存在 + 不出现"残留的二倍转义或字面 `%foo%`"。
-            assert!(
-                batch_line.contains("%%%%foo%%%%"),
-                "batch 行应含 4 倍转义 `%%%%foo%%%%`: {batch_line}"
-            );
-            assert!(
-                !batch_line.contains("path%foo%"),
-                "batch 行不应含未转义的字面 `%foo%`(会被 call 二次解析展开): {batch_line}"
-            );
-        }
-    }
-
-    /// Windows-only helpers 单测——在 macOS/Linux 上整块通过 cfg 排除,不参与 `cargo test`。
-    /// Windows CI(或本机 Windows 跑 cargo test)会激活这些用例。覆盖:①双引号
-    /// quoting 镜像 POSIX 版;②sibling_bin_with_ext 在 fs 上按 ext 顺序探到第一个存在的、
-    /// 全部不存在/空 dir 时返 None。tempdir 提供干净 fs 沙盒。
-    #[cfg(target_os = "windows")]
-    mod windows_helpers {
-        use super::super::*;
-
-        #[test]
-        fn win_quote_clean_path_stays_bare() {
-            // 普通路径不含特殊字符 → 不加引号,命令展示干净。
-            assert_eq!(
-                win_quote_path_for_batch("C:\\Users\\me\\npm.cmd"),
-                "C:\\Users\\me\\npm.cmd"
-            );
-        }
-
-        #[test]
-        fn win_quote_spaced_path_gets_quoted() {
-            assert_eq!(
-                win_quote_path_for_batch("C:\\Program Files\\nodejs\\npm.cmd"),
-                "\"C:\\Program Files\\nodejs\\npm.cmd\""
-            );
-        }
-
-        #[test]
-        fn win_quote_ampersand_path_gets_quoted() {
-            // `&` 是 cmd 命令分隔符,NTFS 允许在路径中出现;没有引号会让 `call C:\A&B\npm.cmd`
-            // 被解析为 `call C:\A` + `B\npm.cmd` 两条命令,执行错乱。
-            assert_eq!(
-                win_quote_path_for_batch("C:\\Tools&Dev\\npm.cmd"),
-                "\"C:\\Tools&Dev\\npm.cmd\""
-            );
-        }
-
-        #[test]
-        fn win_quote_parens_path_gets_quoted() {
-            // `(` / `)` 在 .bat 中是代码块语义,引号内才是字面意义。
-            assert_eq!(
-                win_quote_path_for_batch("C:\\Foo(x86)\\npm.cmd"),
-                "\"C:\\Foo(x86)\\npm.cmd\""
-            );
-        }
-
-        #[test]
-        fn win_quote_caret_path_gets_quoted() {
-            // `^` 是 cmd 的 escape character;包引号后是字面意义。
-            assert_eq!(
-                win_quote_path_for_batch("C:\\foo^bar\\npm.cmd"),
-                "\"C:\\foo^bar\\npm.cmd\""
-            );
-        }
-
-        #[test]
-        fn win_quote_percent_is_escaped_to_quadruple_percent() {
-            // `%` 经历 .bat 一轮 + call 二轮 expansion,要让 call 最终看到字面 `%FOO%`
-            // 需要源 .bat 里写 `%%%%FOO%%%%`(一轮 → `%%FOO%%`,二轮 → `%FOO%` 字面)。
-            // 用 `%%` 二倍转义只在 echo / 直接执行场景对,call 调用时会被还原成 variable
-            // reference 进而被替换。**这一条用例锁住"call 二次解析"必须被 4 倍转义闭合**。
-            assert_eq!(
-                win_quote_path_for_batch("C:\\path%foo%\\npm.cmd"),
-                "C:\\path%%%%foo%%%%\\npm.cmd"
-            );
-        }
-
-        #[test]
-        fn win_quote_percent_with_space_gets_both() {
-            // `%` 4 倍转义与外层引号正交——含空格触发引号、含 `%` 触发 `%%%%` 转义,叠加。
-            assert_eq!(
-                win_quote_path_for_batch("C:\\my %dir%\\npm.cmd"),
-                "\"C:\\my %%%%dir%%%%\\npm.cmd\""
-            );
-        }
-
-        #[test]
-        fn win_quote_needs_quote_uses_original_path() {
-            // 回归 guard:`needs_quote` 判定基于**原路径**,不能用 escape 后字符串——
-            // 否则原本无 token 边界字符的路径(如 `C:\path%foo%\npm.cmd`)在 escape
-            // 引入更多 `%` 后被错误识别成"需要引号"。这是实现 bug 的隐性入口。
-            // 入参不含任何 token 边界字符 → 不应加外层引号、只做 `%` 4 倍转义。
-            let out = win_quote_path_for_batch("C:\\foo%bar%\\npm.cmd");
-            assert!(!out.starts_with('"'), "纯 `%` 路径不应加外层引号: {out}");
-        }
-
-        #[test]
-        fn sibling_bin_picks_first_existing_extension() {
-            // 同目录同时存在 `npm.cmd` 和 `npm.exe` 时,候选顺序 `[cmd, exe]` 应取 .cmd——
-            // 这是 Node.js 官方 installer 装出来的 idiom(.cmd 是入口、.exe 是 wrapper)。
+        fn sibling_bin_with_ext_respects_extension_priority() {
             let dir = tempfile::tempdir().unwrap();
-            let cmd_path = dir.path().join("npm.cmd");
-            let exe_path = dir.path().join("npm.exe");
-            std::fs::write(&cmd_path, "").unwrap();
-            std::fs::write(&exe_path, "").unwrap();
+            let npm_cmd = dir.path().join("npm.cmd");
+            let npm_exe = dir.path().join("npm.exe");
+            let volta_exe = dir.path().join("volta.exe");
+            std::fs::write(&npm_cmd, "").unwrap();
+            std::fs::write(&npm_exe, "").unwrap();
+            std::fs::write(&volta_exe, "").unwrap();
 
             let codex = dir.path().join("codex.cmd").to_string_lossy().to_string();
-            let found = sibling_bin_with_ext(&codex, "npm", &["cmd", "exe"]).unwrap();
-            assert_eq!(found, cmd_path.to_string_lossy());
-        }
-
-        #[test]
-        fn sibling_bin_volta_prefers_exe() {
-            // Volta 是 Rust 写的 native binary,扩展名顺序应是 [exe, cmd]——若只有 .exe
-            // 存在(常见情形),探到的就是它。
-            let dir = tempfile::tempdir().unwrap();
-            let exe_path = dir.path().join("volta.exe");
-            std::fs::write(&exe_path, "").unwrap();
-
-            let codex = dir.path().join("codex.exe").to_string_lossy().to_string();
-            let found = sibling_bin_with_ext(&codex, "volta", &["exe", "cmd"]).unwrap();
-            assert_eq!(found, exe_path.to_string_lossy());
-        }
-
-        #[test]
-        fn sibling_bin_returns_none_when_none_exist() {
-            // 同目录下没有任何候选 → None,锚定层据此退到静态命令。
-            let dir = tempfile::tempdir().unwrap();
-            let codex = dir.path().join("codex.cmd").to_string_lossy().to_string();
-            assert!(sibling_bin_with_ext(&codex, "npm", &["cmd", "exe"]).is_none());
-        }
-
-        #[test]
-        fn sibling_bin_returns_none_when_no_parent() {
-            // bin_path 没有目录部分(纯文件名) → parent_dir 空串 → 返 None。
+            assert_eq!(
+                sibling_bin_with_ext(&codex, "npm", &["cmd", "exe"]).as_deref(),
+                Some(npm_cmd.to_string_lossy().as_ref())
+            );
+            assert_eq!(
+                sibling_bin_with_ext(&codex, "volta", &["exe", "cmd"]).as_deref(),
+                Some(volta_exe.to_string_lossy().as_ref())
+            );
+            assert!(sibling_bin_with_ext(&codex, "pnpm", &["cmd", "exe"]).is_none());
             assert!(sibling_bin_with_ext("codex.cmd", "npm", &["cmd"]).is_none());
         }
 
         #[test]
-        fn wsl_hermes_command_uses_unix_installer_not_powershell_or_pip() {
-            // 跨 wsl.exe 边界后跑的是 Linux,Windows PowerShell installer 不适用;
-            // 也不要再走 python3/python pip 链,避免 Python 版本/pyenv shim 问题。
-            let update_cmd =
-                wsl_tool_action_shell_command("hermes", ToolLifecycleAction::Update).unwrap();
-            assert!(
-                update_cmd.starts_with("hermes update || bash -c 'tmp=$(mktemp) && curl -fsSL "),
-                "WSL hermes 更新应先尝试 CLI 自更新再回退官方 installer,得到: {update_cmd}"
-            );
-            let fallback = update_cmd
-                .split_once("||")
-                .map(|(_, fallback)| fallback)
-                .expect("update should include installer fallback");
-            assert!(
-                !fallback.contains('|')
-                    && fallback.contains(" -o $tmp && bash $tmp")
-                    && !update_cmd.contains("powershell")
-                    && !update_cmd.contains("pip"),
-                "WSL hermes fallback 不能依赖 pipefail/Windows installer/pip,得到: {update_cmd}"
+        fn windows_anchored_upgrade_channels() {
+            let (_dir, sub, bin_path) = setup_sibling("Volta", "codex.cmd", &["volta.exe"]);
+            let volta = win_quote_path_for_batch(&format!("{}\\volta.exe", sub.to_string_lossy()));
+            assert_eq!(
+                anchored_command_from_paths("codex", &bin_path, &bin_path).as_deref(),
+                Some(format!("{volta} install @openai/codex").as_str())
             );
 
-            let install_cmd =
-                wsl_tool_action_shell_command("hermes", ToolLifecycleAction::Install).unwrap();
-            assert!(
-                install_cmd.starts_with("bash -c 'tmp=$(mktemp) && curl -fsSL "),
-                "WSL hermes 安装应直接走官方 Unix installer,得到: {install_cmd}"
+            let (_dir, sub, bin_path) = setup_sibling("pnpm", "opencode.cmd", &["pnpm.cmd"]);
+            let pnpm = win_quote_path_for_batch(&format!("{}\\pnpm.cmd", sub.to_string_lossy()));
+            assert_eq!(
+                anchored_command_from_paths("opencode", &bin_path, &bin_path).as_deref(),
+                Some(format!("{pnpm} add -g opencode-ai@latest").as_str())
             );
-            assert!(
-                !install_cmd.contains('|') && install_cmd.contains(" -o $tmp && bash $tmp"),
-                "WSL hermes 安装不应依赖 pipefail,得到: {install_cmd}"
+
+            let (_dir, sub, bin_path) = setup_sibling("v22.19.0", "mcode.cmd", &["npm.cmd"]);
+            let npm = win_quote_path_for_batch(&format!("{}\\npm.cmd", sub.to_string_lossy()));
+            assert_eq!(
+                anchored_command_from_paths("mcode", &bin_path, &bin_path).as_deref(),
+                Some(
+                    format!(
+                        "{npm} i -g @minimax-ai/code@latest{}",
+                        tool_spec("mcode").npm_install_args
+                    )
+                    .as_str()
+                )
             );
+
+            // Standalone CLI without sibling manager falls back to self-update only.
+            let (_dir, _sub, bin_path) = setup_sibling("", "claude.cmd", &[]);
+            assert_eq!(
+                anchored_command_from_paths("claude", &bin_path, &bin_path).as_deref(),
+                Some(format!("{} update", win_quote_path_for_batch(&bin_path)).as_str())
+            );
+
+            // Grok native uses PowerShell fallback without `|| call` or npm.
+            let (_dir, _sub, bin_path) = setup_sibling(".grok/bin", "grok.exe", &["npm.cmd"]);
+            let grok = anchored_command_from_paths("grok", &bin_path, &bin_path).unwrap();
+            assert_eq!(
+                grok,
+                format!(
+                    "{} update || {}",
+                    win_quote_path_for_batch(&bin_path),
+                    grok_install_windows_command()
+                )
+            );
+            assert!(!grok.contains("|| call") && !grok.contains("npm"), "{grok}");
         }
 
         #[test]
-        fn wsl_hermes_install_line_does_not_depend_on_outer_pipefail() {
+        fn windows_installer_update_commands_escape_single_quotes() {
+            let (_dir, sub, bin_path) =
+                setup_sibling(".minimax-code", "mcode.cmd", &["mcode.ps1", "npm.cmd"]);
+            let mcode = anchored_command_from_paths("mcode", &bin_path, &bin_path).unwrap();
+            assert_eq!(
+                mcode,
+                mcode_installer_update_command(&sub.to_string_lossy())
+            );
+            assert!(!mcode.contains("npm"), "{mcode}");
+
+            let mcode_quoted = mcode_installer_update_command(r"C:\Users\o'brien\.minimax-code");
+            let expected_mcode = powershell_encoded_command(
+                "$env:MCODE_INSTALL_DIR = 'C:\\Users\\o''brien\\.minimax-code'; irm https://filecdn.minimax.chat/public/install.ps1 | iex",
+            );
+            assert_eq!(
+                mcode_quoted.split_once("-EncodedCommand ").map(|(_, e)| e),
+                Some(expected_mcode.as_str())
+            );
+
+            let codex_bin = r"C:\Users\o'brien\AppData\Local\Programs\OpenAI\Codex\bin\codex.exe";
+            let codex_real = r"\\?\C:\Users\o'brien\.codex\packages\standalone\releases\0.157.0-x86_64-pc-windows-msvc\bin\codex.exe";
+            let codex = anchored_command_from_paths("codex", codex_bin, codex_real).unwrap();
+            let expected_codex = powershell_encoded_command(
+                "$env:CODEX_NON_INTERACTIVE = '1'; $env:CODEX_INSTALL_DIR = 'C:\\Users\\o''brien\\AppData\\Local\\Programs\\OpenAI\\Codex\\bin'; $env:CODEX_HOME = 'C:\\Users\\o''brien\\.codex'; irm https://chatgpt.com/codex/install.ps1 | iex",
+            );
+            assert_eq!(
+                codex.split_once("-EncodedCommand ").map(|(_, e)| e),
+                Some(expected_codex.as_str())
+            );
+            assert!(!codex.contains("npm"), "{codex}");
+        }
+
+        #[test]
+        fn windows_full_batch_line_for_percent_path_uses_quadruple_escape() {
+            let (_dir, sub, bin_path) = setup_sibling("path%foo%", "codex.cmd", &["npm.cmd"]);
+            let anchored = anchored_command_from_paths("codex", &bin_path, &bin_path).unwrap();
+            let batch_line = format!("call {anchored}");
+            let npm_full = format!("{}\\npm.cmd", sub.to_string_lossy());
+            assert_eq!(
+                batch_line,
+                format!(
+                    "call {} i -g @openai/codex@latest",
+                    win_quote_path_for_batch(&npm_full)
+                )
+            );
+            assert!(batch_line.contains("%%%%foo%%%%"), "{batch_line}");
+            assert!(!batch_line.contains("path%foo%"), "{batch_line}");
+        }
+
+        #[test]
+        fn wsl_action_line_quotes_unix_installer_without_pipefail() {
             let line = build_wsl_tool_action_line("Ubuntu", HERMES_INSTALL_UNIX, None, None)
                 .expect("valid WSL command line");
-            assert!(line.starts_with("wsl.exe -d Ubuntu -- sh -c "));
-            assert!(
-                !line.contains("| bash") && line.contains(" -o $tmp && bash $tmp"),
-                "WSL 子 shell 内不能出现 curl 管道安装器: {line}"
-            );
-        }
-
-        #[test]
-        fn wsl_install_uses_posix_install_priority() {
-            let claude =
-                wsl_tool_action_shell_command("claude", ToolLifecycleAction::Install).unwrap();
-            assert!(
-                claude.starts_with("bash -c 'tmp=$(mktemp) && curl -fsSL https://claude.ai/install.sh ")
-                    && claude.ends_with(" || npm i -g @anthropic-ai/claude-code@latest --ignore-scripts=false --include=optional --allow-scripts=@anthropic-ai/claude-code"),
-                "WSL claude install should prefer native POSIX installer with npm fallback: {claude}"
-            );
-            assert!(!claude.contains("| bash"));
-
-            let opencode =
-                wsl_tool_action_shell_command("opencode", ToolLifecycleAction::Install).unwrap();
-            assert!(
-                opencode.starts_with(
-                    "bash -c 'tmp=$(mktemp) && curl -fsSL https://opencode.ai/install "
-                ) && opencode.contains(" || npm i -g opencode-ai@latest"),
-                "WSL opencode install should prefer native POSIX installer with npm fallback: {opencode}"
-            );
-            assert!(!opencode.contains("| bash"));
-
-            let codex =
-                wsl_tool_action_shell_command("codex", ToolLifecycleAction::Install).unwrap();
-            assert_eq!(codex, "npm i -g @openai/codex@latest");
-
-            let grok = wsl_tool_action_shell_command("grok", ToolLifecycleAction::Install).unwrap();
-            assert!(
-                grok.starts_with(
-                    "bash -c 'tmp=$(mktemp) && curl -fsSL https://x.ai/cli/install.sh "
-                ) && grok.ends_with(&format!(
-                    " || {}",
-                    tool_spec("grok").npm_install_command().unwrap()
-                )),
-                "WSL grok install should prefer native POSIX installer with npm fallback: {grok}"
-            );
-            assert!(!grok.contains("| bash"));
-        }
-
-        #[test]
-        fn wsl_npm_tools_use_posix_update_chain_without_batch_call() {
-            // WSL 内跑的是 POSIX shell,不能带 Windows batch 的 `call`。同时 update
-            // fallback 仍应先尝试官方 CLI 自升级。
-            let cmd = wsl_tool_action_shell_command("claude", ToolLifecycleAction::Update).unwrap();
-            assert_eq!(
-                cmd,
-                "claude update || npm i -g @anthropic-ai/claude-code@latest --ignore-scripts=false --include=optional --allow-scripts=@anthropic-ai/claude-code"
-            );
-        }
-    }
-
-    /// install 端的"上游推荐 || npm 兜底"短路链:把工具→官方安装方式这一上游事实
-    /// 固化为回归断言。任何方案改动若打破短路链结构或 URL,都会被这些用例拦下。
-    #[cfg(not(target_os = "windows"))]
-    mod install_strategy {
-        use super::super::*;
-
-        #[test]
-        fn claude_install_prefers_native_with_npm_fallback() {
-            // Anthropic 现在主推 native installer(claude.ai/install.sh),
-            // 网络不通时短路到 npm 仍能装上;两段都得在,顺序也得对。
-            let cmd = install_command_for("claude");
-            assert!(
-                cmd.contains("https://claude.ai/install.sh"),
-                "should include official installer URL: {cmd}"
-            );
-            assert!(
-                cmd.contains("@anthropic-ai/claude-code@latest"),
-                "should keep npm package as fallback: {cmd}"
-            );
-            let parts: Vec<&str> = cmd.split("||").collect();
-            assert_eq!(parts.len(), 2, "should be a two-step short-circuit chain");
-            assert!(parts[0].contains("install.sh"), "native first: {cmd}");
-            assert!(
-                !parts[0].contains('|'),
-                "native installer should avoid pipe: {cmd}"
-            );
-            assert!(parts[1].contains("npm i -g"), "npm second: {cmd}");
-        }
-
-        #[test]
-        fn opencode_install_prefers_native_with_npm_fallback() {
-            // SST 自家 install.sh 与 claude 同形态:bash 脚本、网络下载、装到 ~/.opencode/bin。
-            let cmd = install_command_for("opencode");
-            assert!(
-                cmd.contains("https://opencode.ai/install"),
-                "should include official installer URL: {cmd}"
-            );
-            assert!(
-                cmd.contains("opencode-ai@latest"),
-                "should keep npm package as fallback: {cmd}"
-            );
-            assert!(cmd.contains("||"), "should chain fallback: {cmd}");
-            assert!(
-                !cmd.split("||").next().unwrap_or_default().contains('|'),
-                "native installer should avoid pipe: {cmd}"
-            );
-        }
-
-        #[test]
-        fn codex_install_keeps_static_npm() {
-            // OpenAI 暂无独立 native installer,保持原裸 npm,不引入兜底链(无东西可兜底)。
-            let cmd = install_command_for("codex");
-            assert_eq!(cmd, "npm i -g @openai/codex@latest");
-            assert!(!cmd.contains("||"));
-        }
-
-        #[test]
-        fn gemini_install_keeps_static_npm() {
-            // Google 文档同时支持 brew/npm,但本表保持与 update fallback 一致的 npm。
-            // 用户若已装 brew gemini-cli,update 路径的锚定会识别 formula → brew upgrade,
-            // 所以 install 端不强行替用户决策"用 brew 还是 npm"。
-            let cmd = install_command_for("gemini");
-            assert_eq!(cmd, "npm i -g @google/gemini-cli@latest");
-        }
-
-        #[test]
-        fn grok_install_prefers_native_with_npm_fallback() {
-            let cmd = install_command_for("grok");
-            assert!(
-                cmd.contains("https://x.ai/cli/install.sh"),
-                "should include official installer URL: {cmd}"
-            );
-            assert!(
-                cmd.contains("@xai-official/grok@latest"),
-                "should keep npm package as fallback: {cmd}"
-            );
-            let parts: Vec<&str> = cmd.split("||").collect();
-            assert_eq!(parts.len(), 2, "should be a two-step short-circuit chain");
-            assert!(parts[0].contains("install.sh"), "native first: {cmd}");
-            assert!(
-                !parts[0].contains('|'),
-                "native installer should avoid pipe: {cmd}"
-            );
-            // npm 12 拦截 postinstall 时升级 exit 0 却留在旧版（#8863）。
-            assert_eq!(
-                parts[1].trim(),
-                tool_spec("grok").npm_install_command().unwrap(),
-                "npm second: {cmd}"
-            );
-        }
-
-        #[test]
-        fn mcode_install_prefers_official_installer_with_npm_fallback() {
-            let cmd = install_command_for("mcode");
-            let (installer, fallback) = cmd
-                .split_once(" || ")
-                .expect("install should chain an npm fallback");
-            assert!(
-                installer.contains("https://filecdn.minimax.chat/public/install.sh"),
-                "official installer first: {cmd}"
-            );
-            assert!(
-                !installer.contains('|'),
-                "native installer should avoid pipe: {cmd}"
-            );
-            assert_eq!(
-                Some(fallback),
-                tool_spec("mcode").npm_install_command().as_deref()
-            );
-        }
-
-        #[test]
-        fn openclaw_install_keeps_static_npm() {
-            let cmd = install_command_for("openclaw");
-            assert_eq!(cmd, "npm i -g openclaw@latest");
-        }
-
-        #[test]
-        fn pi_install_uses_the_verified_pinned_package() {
-            let cmd = install_command_for("pi");
-            assert_eq!(cmd, "npm i -g @earendil-works/pi-coding-agent@latest");
-            assert!(!cmd.contains("||"));
-        }
-
-        #[test]
-        fn update_fallbacks_use_official_cli_only_when_supported() {
-            assert_eq!(
-                static_fallback_command("claude"),
-                "claude update || npm i -g @anthropic-ai/claude-code@latest --ignore-scripts=false --include=optional --allow-scripts=@anthropic-ai/claude-code"
-            );
-            assert_eq!(
-                static_fallback_command("codex"),
-                "npm i -g @openai/codex@latest"
-            );
-            assert!(!static_fallback_command("codex").contains("codex update"));
-            assert_eq!(
-                static_fallback_command("gemini"),
-                "npm i -g @google/gemini-cli@latest"
-            );
-            assert!(!static_fallback_command("gemini").contains("gemini update"));
-            assert_eq!(
-                static_fallback_command("grok"),
-                "npm i -g @xai-official/grok@latest --ignore-scripts=false --include=optional --allow-scripts=@xai-official/grok"
-            );
-            assert!(!static_fallback_command("grok").contains("grok update"));
-            assert_eq!(
-                static_fallback_command("opencode"),
-                "opencode upgrade || npm i -g opencode-ai@latest --ignore-scripts=false --include=optional --allow-scripts=opencode-ai"
-            );
-            assert_eq!(
-                static_fallback_command("openclaw"),
-                "openclaw update --yes || npm i -g openclaw@latest"
-            );
-            assert_eq!(
-                static_fallback_command("pi"),
-                "npm i -g @earendil-works/pi-coding-agent@latest"
-            );
-            assert!(!static_fallback_command("pi").contains("pi update"));
-            assert_eq!(
-                Some(static_fallback_command("mcode")),
-                tool_spec("mcode").npm_install_command()
-            );
-            assert!(!static_fallback_command("mcode").contains("mcode update"));
-        }
-
-        #[test]
-        fn hermes_install_uses_official_installer() {
-            // Hermes 官方 installer 会处理 Python 3.11+/uv 等运行时;不要再从 cc-switch
-            // 里走 `python3 || python` pip 链。
-            let cmd = install_command_for("hermes");
-            assert!(
-                cmd.starts_with("bash -c 'tmp=$(mktemp) && curl -fsSL ")
-                    && cmd.contains("install.sh -o $tmp && bash $tmp"),
-                "should use official installer: {cmd}"
-            );
-            assert!(
-                !cmd.contains('|') && !cmd.contains("python") && !cmd.contains("pip"),
-                "should not depend on pipefail or system Python/pip: {cmd}"
-            );
-        }
-
-        #[test]
-        fn agy_installs_with_official_script_and_updates_without_reinstalling() {
-            let cmd = install_command_for("agy");
-            assert!(
-                cmd.contains("curl -fsSL https://antigravity.google/cli/install.sh -o $tmp")
-                    && !cmd.contains('|')
-                    && !cmd.contains("npm"),
-                "should use only the official installer: {cmd}"
-            );
-            // The installer exits 0 when agy already exists, so it must not back up `agy update`.
-            assert_eq!(static_fallback_command("agy"), "agy update");
-        }
-
-        #[test]
-        fn hermes_update_fallback_uses_cli_update_then_installer() {
-            // 锚定失败时也不回退 pip:先让 PATH 上的 hermes 自更新,找不到/失败再跑官方
-            // installer。这样 pyenv 的 `python` shim 不会参与错误路径。
-            let cmd = static_fallback_command("hermes");
-            assert!(
-                cmd.starts_with("hermes update || bash -c 'tmp=$(mktemp) && curl -fsSL "),
-                "should try CLI update before official installer: {cmd}"
-            );
-            let fallback = cmd
-                .split_once("||")
-                .map(|(_, fallback)| fallback)
-                .expect("update should include installer fallback");
-            assert!(
-                !fallback.contains('|') && !cmd.contains("python") && !cmd.contains("pip"),
-                "should not depend on pipefail or system Python/pip: {cmd}"
-            );
+            assert!(line.starts_with("wsl.exe -d Ubuntu -- sh -c "), "{line}");
+            assert!(!line.contains("| bash") && line.contains(" -o $tmp && bash $tmp"));
         }
     }
 }

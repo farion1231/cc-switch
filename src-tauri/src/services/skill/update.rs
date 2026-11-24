@@ -473,6 +473,7 @@ impl SkillService {
             AppType::Copilot,
             AppType::LiveAgent,
             AppType::WorkBuddy,
+            AppType::Codebuddy,
         ] {
             if skill.apps.is_enabled_for(&app) {
                 let destination =
@@ -496,7 +497,8 @@ impl SkillService {
             || skill.apps.dsh
             || skill.apps.copilot
             || skill.apps.workbuddy
-            || skill.apps.liveagent;
+            || skill.apps.liveagent
+            || skill.apps.codebuddy;
         if !managed_native {
             Self::replace_dir_staged(&source, &dest)?;
         }
@@ -547,6 +549,7 @@ impl SkillService {
                 AppType::Copilot,
                 AppType::WorkBuddy,
                 AppType::LiveAgent,
+                AppType::Codebuddy,
             ]
             .iter()
             .filter(|app| skill.apps.is_enabled_for(app))
@@ -606,6 +609,7 @@ impl SkillService {
                     | AppType::Copilot
                     | AppType::LiveAgent
                     | AppType::WorkBuddy
+                    | AppType::Codebuddy
             ) {
                 continue;
             }

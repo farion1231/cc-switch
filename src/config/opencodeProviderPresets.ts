@@ -369,6 +369,11 @@ const aiCodeMirrorModels = (): OpenCodeProviderConfig["models"] => ({
   "claude-opus-5-5": { name: "Claude Opus 5.5", reasoning: true },
 });
 
+const stringAiModels = (): OpenCodeProviderConfig["models"] => ({
+  "gpt-6-astra": { name: "GPT-6 Astra", reasoning: true },
+  "gpt-6.1-sol": { name: "GPT-6.1 Sol", reasoning: true },
+});
+
 const fennoAiModels = (): OpenCodeProviderConfig["models"] => ({
   "gpt-6.1-sol": { name: "GPT-6.1 Sol", reasoning: true },
 });
@@ -935,6 +940,32 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "haoai",
     icon: "haoai",
+  },
+  {
+    name: "StringAI",
+    websiteUrl: "https://www.string.ink",
+    apiKeyUrl: "https://www.string.ink/register?ref=661AE533A60AF110",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "StringAI",
+      options: {
+        baseURL: "https://www.string.ink/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: stringAiModels(),
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "stringai",
+    icon: "stringai",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
   },
   {
     name: "FennoAI",

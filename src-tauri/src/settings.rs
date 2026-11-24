@@ -67,6 +67,8 @@ pub struct VisibleApps {
     pub liveagent: bool,
     #[serde(default = "default_true")]
     pub workbuddy: bool,
+    #[serde(default = "default_true")]
+    pub codebuddy: bool,
 }
 
 impl Default for VisibleApps {
@@ -89,6 +91,7 @@ impl Default for VisibleApps {
             copilot: true,
             liveagent: true,
             workbuddy: true,
+            codebuddy: true,
         }
     }
 }
@@ -114,6 +117,7 @@ impl VisibleApps {
             AppType::Copilot => self.copilot,
             AppType::LiveAgent => self.liveagent,
             AppType::WorkBuddy => self.workbuddy,
+            AppType::Codebuddy => self.codebuddy,
         }
     }
 }
@@ -1330,6 +1334,7 @@ pub fn get_override_dir(app: &AppType) -> Option<PathBuf> {
         | AppType::Agy
         | AppType::Copilot
         | AppType::LiveAgent
+        | AppType::Codebuddy
         | AppType::WorkBuddy => return None,
     };
     dir.as_deref().map(resolve_override_path)
@@ -1402,7 +1407,8 @@ pub fn get_current_provider(app_type: &AppType) -> Option<String> {
         | AppType::Dsh
         | AppType::Omp
         | AppType::LiveAgent
-        | AppType::WorkBuddy => None,
+        | AppType::WorkBuddy
+        | AppType::Codebuddy => None,
     }
 }
 
@@ -1429,7 +1435,8 @@ pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), 
         | AppType::Dsh
         | AppType::Omp
         | AppType::LiveAgent
-        | AppType::WorkBuddy => {}
+        | AppType::WorkBuddy
+        | AppType::Codebuddy => {}
     })
 }
 

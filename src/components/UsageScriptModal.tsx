@@ -343,6 +343,17 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
               ?.replace(/\/+$/, "")
               .replace(/\/chat\/completions$/, ""),
           };
+        } else if (appId === "codebuddy") {
+          // CodeBuddy models.json entry: url is the full chat/completions endpoint,
+          // same trim as the backend resolver.
+          const root = config as any;
+          const url: string | undefined = root.url;
+          return {
+            apiKey: root.apiKey,
+            baseUrl: url
+              ?.replace(/\/+$/, "")
+              .replace(/\/chat\/completions$/, ""),
+          };
         } else if (appId === "openclaw" || appId === "liveagent") {
           // OpenClaw / LiveAgent: settingsConfig 顶层扁平（camelCase baseUrl / apiKey），
           // 与后端 Provider::resolve_usage_credentials 一致。

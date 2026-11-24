@@ -32,6 +32,7 @@ fn commits_with_db(app: &AppType) -> bool {
             | AppType::Omp
             | AppType::Copilot
             | AppType::LiveAgent
+            | AppType::Codebuddy
             | AppType::WorkBuddy
     )
 }
@@ -119,15 +120,26 @@ impl McpService {
                 save_with_omp()
             }
         };
+        let save_with_codebuddy = || {
+            if server.apps.codebuddy || prev_apps.codebuddy {
+                mcp::codebuddy::sync_and_commit(
+                    &server.id,
+                    server.apps.codebuddy.then_some(&server.server),
+                    save_with_workbuddy,
+                )
+            } else {
+                save_with_workbuddy()
+            }
+        };
         let save_with_dsh = || {
             if server.apps.dsh || prev_apps.dsh {
                 mcp::dsh::sync_and_commit(
                     &server.id,
                     server.apps.dsh.then_some(&server.server),
-                    save_with_workbuddy,
+                    save_with_codebuddy,
                 )
             } else {
-                save_with_workbuddy()
+                save_with_codebuddy()
             }
         };
         let save_with_kimi = || {
@@ -220,11 +232,18 @@ impl McpService {
                     delete_with_copilot()
                 }
             };
-            let delete_with_dsh = || {
-                if server.apps.dsh {
-                    mcp::dsh::sync_and_commit(id, None, delete_with_workbuddy)
+            let delete_with_codebuddy = || {
+                if server.apps.codebuddy {
+                    mcp::codebuddy::sync_and_commit(id, None, delete_with_workbuddy)
                 } else {
                     delete_with_workbuddy()
+                }
+            };
+            let delete_with_dsh = || {
+                if server.apps.dsh {
+                    mcp::dsh::sync_and_commit(id, None, delete_with_codebuddy)
+                } else {
+                    delete_with_codebuddy()
                 }
             };
             let delete_with_kimi = || {
@@ -348,6 +367,8 @@ impl McpService {
                     mcp::copilot::sync_and_commit(server_id, spec, commit)?;
                 } else if app == AppType::WorkBuddy {
                     mcp::workbuddy::sync_and_commit(server_id, spec, commit)?;
+                } else if app == AppType::Codebuddy {
+                    mcp::codebuddy::sync_and_commit(server_id, spec, commit)?;
                 } else if app == AppType::Mcode {
                     mcp::mcode::sync_and_commit(server_id, spec, commit)?;
                 } else if app == AppType::Omp {
@@ -439,6 +460,7 @@ impl McpService {
             AppType::Agy => mcp::agy::sync(&server.id, Some(&server.server))?,
             AppType::Omp => mcp::sync_single_server_to_omp(&server.id, &server.server)?,
             AppType::WorkBuddy => mcp::workbuddy::sync(&server.id, Some(&server.server))?,
+            AppType::Codebuddy => mcp::codebuddy::sync(&server.id, Some(&server.server))?,
         }
         Ok(())
     }
@@ -488,6 +510,7 @@ impl McpService {
             AppType::Agy => mcp::agy::sync(id, None)?,
             AppType::Omp => mcp::remove_server_from_omp(id)?,
             AppType::WorkBuddy => mcp::workbuddy::sync(id, None)?,
+            AppType::Codebuddy => mcp::codebuddy::sync(id, None)?,
         }
         Ok(())
     }
@@ -643,6 +666,7 @@ impl McpService {
             AppType::Omp => return mcp::omp::import(state),
             AppType::Copilot => return mcp::copilot::import(state),
             AppType::LiveAgent => return mcp::liveagent::import(state),
+            AppType::Codebuddy => return mcp::codebuddy::import(state),
             AppType::ClaudeDesktop | AppType::OpenClaw => return Ok(0),
         };
 
@@ -700,6 +724,7 @@ impl McpService {
             AppType::Hermes,
             AppType::Mcode,
             AppType::Kimi,
+            AppType::Codebuddy,
             AppType::Dsh,
             AppType::WorkBuddy,
             AppType::Agy,

@@ -136,7 +136,8 @@ export function supportsConnectivityCheck(
     appId === "dsh" ||
     appId === "kimi" ||
     appId === "liveagent" ||
-    appId === "workbuddy"
+    appId === "workbuddy" ||
+    appId === "codebuddy"
   )
     return false;
   return (

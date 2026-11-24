@@ -85,6 +85,7 @@ const createDefaultProviders = (): ProvidersByApp => ({
   copilot: {},
   liveagent: {},
   workbuddy: {},
+  codebuddy: {},
 });
 
 const createDefaultCurrent = (): CurrentProviderState => ({
@@ -105,6 +106,7 @@ const createDefaultCurrent = (): CurrentProviderState => ({
   copilot: "",
   liveagent: "",
   workbuddy: "",
+  codebuddy: "",
 });
 
 let providers = createDefaultProviders();
