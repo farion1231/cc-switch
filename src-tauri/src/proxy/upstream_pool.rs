@@ -14,7 +14,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, PoisonError};
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
@@ -44,8 +44,8 @@ pub(crate) struct PoolKey {
 impl PoolKey {
     pub(crate) fn new(scheme: &str, host: &str, port: u16, proxy: Option<&str>) -> Self {
         Self {
-            scheme: scheme.to_string(),
-            host: host.to_string(),
+            scheme: scheme.to_ascii_lowercase(),
+            host: host.to_ascii_lowercase(),
             port,
             proxy: proxy.map(str::to_string),
         }
@@ -76,7 +76,7 @@ impl Default for PoolConfig {
         Self {
             max_idle_per_key: 4,
             max_idle_total: 64,
-            idle_ttl: Duration::from_secs(60),
+            idle_ttl: Duration::from_secs(30),
         }
     }
 }
@@ -106,6 +106,7 @@ struct PoolState {
 struct IdleEntry {
     stream: PooledStream,
     idle_since: Instant,
+    idle_ttl: Duration,
 }
 
 /// Marker owned by the running sweeper task; dropping it retires the task.
@@ -138,7 +139,7 @@ impl UpstreamPool {
     /// Take an idle connection for `key`, if the pool has one that is still usable.
     pub(crate) fn take(&self, key: &PoolKey) -> Taken {
         while let Some(mut entry) = self.pop_newest(key) {
-            let reason = if entry.idle_since.elapsed() >= self.config.idle_ttl {
+            let reason = if entry.idle_since.elapsed() >= entry.idle_ttl {
                 Some("idle longer than the TTL")
             } else {
                 unusable_reason(&mut entry.stream)
@@ -171,17 +172,18 @@ impl UpstreamPool {
 
     /// Return a connection whose response ended cleanly. Connections made surplus by
     /// the caps, and expired ones, are closed.
-    pub(crate) fn put(&self, key: PoolKey, stream: PooledStream) {
+    fn put(&self, key: PoolKey, stream: PooledStream, idle_limit: Duration) {
         let mut evicted = Vec::new();
         let token = {
             let mut pool = self.lock();
             let state = &mut *pool;
             let now = Instant::now();
-            state.remove_expired(self.config.idle_ttl, now, &mut evicted);
-            let queue = state.by_key.entry(key.clone()).or_default();
+            state.remove_expired(now, &mut evicted);
+            let queue = state.by_key.entry(key).or_default();
             queue.push_back(IdleEntry {
                 stream,
                 idle_since: now,
+                idle_ttl: self.config.idle_ttl.min(idle_limit),
             });
             state.total += 1;
             while queue.len() > self.config.max_idle_per_key {
@@ -228,7 +230,7 @@ impl UpstreamPool {
                 let mut expired = Vec::new();
                 let stop = {
                     let mut pool = shared.pool.lock().unwrap_or_else(PoisonError::into_inner);
-                    pool.remove_expired(ttl, Instant::now(), &mut expired);
+                    pool.remove_expired(Instant::now(), &mut expired);
                     if pool.total == 0 {
                         pool.sweeper = None;
                         true
@@ -260,27 +262,22 @@ impl UpstreamPool {
 }
 
 impl PoolState {
-    /// Drain the connections that have been idle for `ttl` or longer. Queues hold
-    /// entries from oldest to newest, so only a prefix can be expired.
-    fn remove_expired(&mut self, ttl: Duration, now: Instant, expired: &mut Vec<IdleEntry>) {
-        let keys: Vec<PoolKey> = self.by_key.keys().cloned().collect();
-        for key in keys {
-            let Some(queue) = self.by_key.get_mut(&key) else {
-                continue;
-            };
-            while queue
-                .front()
-                .is_some_and(|entry| now.duration_since(entry.idle_since) >= ttl)
-            {
-                if let Some(entry) = queue.pop_front() {
+    /// Drain expired entries. Each response can set a different idle limit, so
+    /// expired entries need not be at the front of a queue.
+    fn remove_expired(&mut self, now: Instant, expired: &mut Vec<IdleEntry>) {
+        let total = &mut self.total;
+        self.by_key.retain(|_, queue| {
+            for _ in 0..queue.len() {
+                let entry = queue.pop_front().expect("one entry per iteration");
+                if now.duration_since(entry.idle_since) >= entry.idle_ttl {
                     expired.push(entry);
-                    self.total -= 1;
+                    *total -= 1;
+                } else {
+                    queue.push_back(entry);
                 }
             }
-            if queue.is_empty() {
-                self.by_key.remove(&key);
-            }
-        }
+            !queue.is_empty()
+        });
     }
 
     /// Remove and return the connection that has been idle the longest, across all keys.
@@ -370,8 +367,11 @@ impl AsyncWrite for PooledStream {
 fn unusable_reason(stream: &mut PooledStream) -> Option<&'static str> {
     let mut scratch = [0u8; 1];
     let mut buf = ReadBuf::new(&mut scratch);
-    let read =
-        std::future::poll_fn(|cx| Pin::new(&mut *stream).poll_read(cx, &mut buf)).now_or_never();
+    // Budget exhaustion also returns Pending, but without checking socket readiness.
+    let read = tokio::task::coop::unconstrained(std::future::poll_fn(|cx| {
+        Pin::new(&mut *stream).poll_read(cx, &mut buf)
+    }))
+    .now_or_never();
     match read {
         None => None,
         Some(Ok(())) if buf.filled().is_empty() => Some("closed by the upstream"),
@@ -438,7 +438,11 @@ where
         pool: pool.clone(),
         key: key.clone(),
         state: Arc::new(ConnState {
-            keep_alive: AtomicBool::new(!request.connection_close),
+            idle_limit_secs: AtomicU64::new(if request.connection_close {
+                0
+            } else {
+                u64::MAX
+            }),
             unusable: AtomicBool::new(false),
             body: AtomicU8::new(BODY_OPEN),
             body_settled: Notify::new(),
@@ -484,7 +488,9 @@ impl PooledIo {
     /// Hand the connection back: to the pool when it is reusable, otherwise closed.
     fn release(self, reusable: bool) {
         if reusable {
-            self.pool.put(self.key, self.io);
+            let idle_limit =
+                Duration::from_secs(self.state.idle_limit_secs.load(Ordering::Acquire));
+            self.pool.put(self.key, self.io, idle_limit);
         } else {
             close_stream(self.io);
         }
@@ -565,9 +571,8 @@ const BODY_ABANDONED: u8 = 2;
 /// through, the response body the consumer reads, and the driver task that decides
 /// between pooling and closing.
 pub(crate) struct ConnState {
-    /// So far nothing rules the connection out for reuse. Turns false when the request
-    /// or the response forbids keep-alive.
-    keep_alive: AtomicBool,
+    /// Zero forbids reuse; `u64::MAX` leaves the idle limit up to the local pool.
+    idle_limit_secs: AtomicU64,
     /// The connection broke (read error or EOF seen by hyper's reads).
     unusable: AtomicBool,
     /// How the response body ended. The first verdict wins.
@@ -702,10 +707,14 @@ impl ConnectionHandle {
         let Some(state) = self.state.take() else {
             unreachable!("tracked_response is called once");
         };
-        state.keep_alive.store(
-            state.keep_alive.load(Ordering::Acquire) && response_allows_reuse(&response, method),
-            Ordering::Release,
-        );
+        if state.idle_limit_secs.load(Ordering::Relaxed) != 0 {
+            let idle_limit = if response_allows_reuse(&response, method) {
+                keep_alive_timeout(response.headers()).unwrap_or(u64::MAX)
+            } else {
+                0
+            };
+            state.idle_limit_secs.store(idle_limit, Ordering::Release);
+        }
         ProxyResponse::Hyper(response.map(|body| TrackedBody {
             inner: body,
             state: Some(state),
@@ -809,7 +818,7 @@ async fn drive_connection(mut conn: RawConnection, completion: DriverCompletion)
 fn reuse_blocker(state: &ConnState, read_buf_empty: bool) -> Result<(), &'static str> {
     if state.unusable.load(Ordering::Acquire) {
         Err("I/O error or EOF on the connection")
-    } else if !state.keep_alive.load(Ordering::Acquire) {
+    } else if state.idle_limit_secs.load(Ordering::Acquire) == 0 {
         Err("the exchange does not allow keep-alive")
     } else if !read_buf_empty {
         Err("bytes left over after the response")
@@ -846,14 +855,36 @@ fn response_allows_reuse(response: &hyper::Response<Incoming>, method: &http::Me
         _ => return false,
     }
 
-    // A body without Content-Length and without chunked encoding ends only when the
-    // upstream closes the connection, so it cannot be reused. Statuses without a body
-    // and HEAD responses are exempt.
+    // HEAD and statuses with no body ignore framing headers. Otherwise, hyper
+    // checks Transfer-Encoding first: if it isn't chunked, EOF delimits the body.
     let no_body = status.is_informational()
         || status == http::StatusCode::NO_CONTENT
         || status == http::StatusCode::NOT_MODIFIED
         || *method == http::Method::HEAD;
-    no_body || headers.contains_key(http::header::CONTENT_LENGTH) || is_chunked(headers)
+    no_body
+        || if headers.contains_key(http::header::TRANSFER_ENCODING) {
+            is_chunked(headers)
+        } else {
+            headers.contains_key(http::header::CONTENT_LENGTH)
+        }
+}
+
+/// Honor the shortest valid upstream idle hint; it can only tighten the local cap.
+fn keep_alive_timeout(headers: &http::HeaderMap) -> Option<u64> {
+    headers
+        .get_all("keep-alive")
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .filter_map(|param| {
+            let (name, value) = param.split_once('=')?;
+            if name.trim().eq_ignore_ascii_case("timeout") {
+                value.trim().parse().ok()
+            } else {
+                None
+            }
+        })
+        .min()
 }
 
 /// `value` is one `Connection` header value: does it carry `token`?
@@ -950,8 +981,7 @@ pub(crate) mod test_support {
         pub bytes: Vec<u8>,
     }
 
-    /// A local HTTP/1.1 upstream with one task per accepted connection, for the pool
-    /// tests. Plain TCP: the pool's `http` scheme path needs no TLS.
+    /// A local HTTP/1.1 upstream with one task per accepted connection.
     pub(crate) struct TestServer {
         port: u16,
         accepted: Arc<AtomicUsize>,
@@ -967,8 +997,22 @@ pub(crate) mod test_support {
             Self::start_script(move |request| Some(reply(request))).await
         }
 
+        pub(crate) async fn start_tls(
+            reply: impl Fn(&CapturedRequest) -> Reply + Send + Sync + 'static,
+        ) -> Self {
+            let acceptor = tokio_rustls::TlsAcceptor::from(tls_server_config());
+            Self::start_with_tls(Some(acceptor), move |request| Some(reply(request))).await
+        }
+
         /// Returning no reply closes the connection after capturing the request.
         pub(crate) async fn start_script(
+            reply: impl Fn(&CapturedRequest) -> Option<Reply> + Send + Sync + 'static,
+        ) -> Self {
+            Self::start_with_tls(None, reply).await
+        }
+
+        async fn start_with_tls(
+            acceptor: Option<tokio_rustls::TlsAcceptor>,
             reply: impl Fn(&CapturedRequest) -> Option<Reply> + Send + Sync + 'static,
         ) -> Self {
             let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
@@ -984,31 +1028,21 @@ pub(crate) mod test_support {
             let open_task = open.clone();
             let requests_task = requests.clone();
             tokio::spawn(async move {
-                while let Ok((mut socket, _)) = listener.accept().await {
+                while let Ok((socket, _)) = listener.accept().await {
                     accepted_task.fetch_add(1, Ordering::SeqCst);
                     open_task.fetch_add(1, Ordering::SeqCst);
                     let open_socket = open_task.clone();
                     let requests_socket = requests_task.clone();
                     let reply_socket = reply.clone();
+                    let acceptor = acceptor.clone();
                     tokio::spawn(async move {
-                        while let Some(bytes) = read_request(&mut socket).await {
-                            let captured = {
-                                let mut logged = requests_socket.lock().unwrap();
-                                let captured = CapturedRequest {
-                                    index: logged.len() + 1,
-                                    bytes: bytes.clone(),
-                                };
-                                logged.push(bytes);
-                                captured
-                            };
-                            let Some(reply) = reply_socket(&captured) else {
-                                break;
-                            };
-                            write_reply(&mut socket, &reply).await;
-                            match reply.after {
-                                AfterReply::KeepOpen | AfterReply::Send(_) => {}
-                                AfterReply::Close | AfterReply::CloseAfter(_) => break,
+                        if let Some(acceptor) = acceptor {
+                            if let Ok(socket) = acceptor.accept(socket).await {
+                                serve_requests(socket, &requests_socket, reply_socket.as_ref())
+                                    .await;
                             }
+                        } else {
+                            serve_requests(socket, &requests_socket, reply_socket.as_ref()).await;
                         }
                         open_socket.fetch_sub(1, Ordering::SeqCst);
                     });
@@ -1062,9 +1096,35 @@ pub(crate) mod test_support {
         }
     }
 
+    async fn serve_requests(
+        mut socket: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+        requests: &Mutex<Vec<Vec<u8>>>,
+        reply: &impl Fn(&CapturedRequest) -> Option<Reply>,
+    ) {
+        while let Some(bytes) = read_request(&mut socket).await {
+            let captured = {
+                let mut logged = requests.lock().unwrap();
+                let captured = CapturedRequest {
+                    index: logged.len() + 1,
+                    bytes: bytes.clone(),
+                };
+                logged.push(bytes);
+                captured
+            };
+            let Some(reply) = reply(&captured) else {
+                break;
+            };
+            write_reply(&mut socket, &reply).await;
+            match reply.after {
+                AfterReply::KeepOpen | AfterReply::Send(_) => {}
+                AfterReply::Close | AfterReply::CloseAfter(_) => break,
+            }
+        }
+    }
+
     /// Read one HTTP/1.1 request: head plus a `Content-Length` body.
     /// `None` when the peer closed or the request is not parseable.
-    async fn read_request(socket: &mut tokio::net::TcpStream) -> Option<Vec<u8>> {
+    async fn read_request(socket: &mut (impl tokio::io::AsyncRead + Unpin)) -> Option<Vec<u8>> {
         let mut buf = Vec::with_capacity(4096);
         let mut chunk = [0u8; 4096];
         let head_end = loop {
@@ -1102,7 +1162,7 @@ pub(crate) mod test_support {
         None
     }
 
-    async fn write_reply(socket: &mut tokio::net::TcpStream, reply: &Reply) {
+    async fn write_reply(socket: &mut (impl tokio::io::AsyncWrite + Unpin), reply: &Reply) {
         let mut head = format!("{}\r\n", reply.status_line);
         match &reply.body {
             Body::Fixed(bytes) => {
@@ -1139,6 +1199,9 @@ pub(crate) mod test_support {
                     if socket.write_all(b"\r\n").await.is_err() {
                         return;
                     }
+                    if socket.flush().await.is_err() {
+                        return;
+                    }
                 }
                 let _ = socket.write_all(b"0\r\n\r\n").await;
             }
@@ -1148,6 +1211,9 @@ pub(crate) mod test_support {
             Body::Short(_, bytes) => {
                 let _ = socket.write_all(bytes).await;
             }
+        }
+        if socket.flush().await.is_err() {
+            return;
         }
         match &reply.after {
             AfterReply::KeepOpen => {}
@@ -1222,7 +1288,7 @@ rERy1qBgzxDHJUp8Oh0mQQYVrzywIgW7iWdgm6KwN4XzvWVIsH2d5TH1
         Arc::new(config)
     }
 
-    fn tls_client_config() -> Arc<rustls::ClientConfig> {
+    pub(crate) fn tls_client_config() -> Arc<rustls::ClientConfig> {
         let provider = Arc::new(rustls::crypto::ring::default_provider());
         let mut roots = rustls::RootCertStore::empty();
         let cert = CertificateDer::from_pem_slice(TLS_TEST_CERT_PEM.as_bytes())
@@ -1279,8 +1345,8 @@ mod tests {
         let key = PoolKey::new("http", "lifo.example", 80, None);
         let (first, _first_peer) = tcp_pair().await;
         let (second, mut second_peer) = tcp_pair().await;
-        pool.put(key.clone(), first);
-        pool.put(key.clone(), second);
+        pool.put(key.clone(), first, Duration::MAX);
+        pool.put(key.clone(), second, Duration::MAX);
         assert_eq!(pool.idle_count(&key), 2);
 
         let Taken::Idle(mut stream) = pool.take(&key) else {
@@ -1314,7 +1380,7 @@ mod tests {
         let mut peers = Vec::new();
         for _ in 0..3 {
             let (stream, peer) = tcp_pair().await;
-            pool.put(key.clone(), stream);
+            pool.put(key.clone(), stream, Duration::MAX);
             peers.push(peer);
         }
         assert_eq!(pool.idle_count(&key), 2, "cap keeps two per key");
@@ -1338,12 +1404,12 @@ mod tests {
         let mut peers = Vec::new();
         for _ in 0..2 {
             let (stream, peer) = tcp_pair().await;
-            pool.put(a.clone(), stream);
+            pool.put(a.clone(), stream, Duration::MAX);
             peers.push(peer);
         }
         for _ in 0..2 {
             let (stream, peer) = tcp_pair().await;
-            pool.put(b.clone(), stream);
+            pool.put(b.clone(), stream, Duration::MAX);
             peers.push(peer);
         }
         assert_eq!(
@@ -1368,7 +1434,7 @@ mod tests {
         let pool = UpstreamPool::new(config(4, 10, Duration::from_millis(40)));
         let key = PoolKey::new("http", "ttl.example", 80, None);
         let (stream, mut peer) = tcp_pair().await;
-        pool.put(key.clone(), stream);
+        pool.put(key.clone(), stream, Duration::MAX);
 
         tokio::time::sleep(Duration::from_millis(120)).await;
         let Taken::None = pool.take(&key) else {
@@ -1391,7 +1457,7 @@ mod tests {
         let pool = UpstreamPool::new(config(4, 10, Duration::from_millis(40)));
         let key = PoolKey::new("http", "sweep.example", 80, None);
         let (stream, mut peer) = tcp_pair().await;
-        pool.put(key.clone(), stream);
+        pool.put(key.clone(), stream, Duration::MAX);
 
         let mut byte = [0u8; 1];
         let closed = tokio::time::timeout(Duration::from_secs(2), peer.read(&mut byte))
@@ -1403,6 +1469,51 @@ mod tests {
             "the sweeper must close an expired idle connection without a take"
         );
         assert_eq!(pool.idle_count(&key), 0);
+    }
+
+    #[tokio::test]
+    async fn sweeper_can_expire_a_newer_entry_before_an_older_one() {
+        let pool = UpstreamPool::new(PoolConfig::default());
+        let key = PoolKey::new("https", "EXAMPLE.com", 443, None);
+        let (older, _older_peer) = tcp_pair().await;
+        let (newer, _newer_peer) = tcp_pair().await;
+        pool.put(key.clone(), older, Duration::MAX);
+        pool.put(key, newer, Duration::from_secs(1));
+
+        let mut expired = Vec::new();
+        pool.lock()
+            .remove_expired(Instant::now() + Duration::from_secs(2), &mut expired);
+        let lower = PoolKey::new("https", "example.com", 443, None);
+        assert_eq!(expired.len(), 1);
+        assert_eq!(pool.idle_count(&lower), 1);
+    }
+
+    #[tokio::test]
+    async fn take_rejects_unsolicited_bytes_even_when_the_task_budget_is_exhausted() {
+        let pool = UpstreamPool::new(PoolConfig::default());
+        let key = PoolKey::new("http", "localhost", 80, None);
+        let (socket, mut peer) = tcp_sockets().await;
+        peer.write_all(b"unsolicited").await.unwrap();
+        tokio::time::timeout(Duration::from_secs(5), socket.readable())
+            .await
+            .expect("peer bytes should become readable")
+            .unwrap();
+        pool.put(
+            key.clone(),
+            PooledStream::Plain(ProxyStream::Tcp(socket)),
+            Duration::MAX,
+        );
+
+        tokio::spawn(async move {
+            use tokio::task::coop::{consume_budget, has_budget_remaining};
+
+            while has_budget_remaining() {
+                consume_budget().await;
+            }
+            assert!(matches!(pool.take(&key), Taken::None));
+        })
+        .await
+        .unwrap();
     }
 
     #[tokio::test]
@@ -1492,7 +1603,7 @@ mod tests {
     #[tokio::test]
     async fn release_decision_requires_every_condition() {
         let clean = || ConnState {
-            keep_alive: AtomicBool::new(true),
+            idle_limit_secs: AtomicU64::new(u64::MAX),
             unusable: AtomicBool::new(false),
             body: AtomicU8::new(BODY_READ_TO_END),
             body_settled: Notify::new(),
@@ -1508,7 +1619,7 @@ mod tests {
         assert!(reuse_blocker(&unusable, true).is_err(), "I/O error blocks");
 
         let no_keep_alive = ConnState {
-            keep_alive: AtomicBool::new(false),
+            idle_limit_secs: AtomicU64::new(0),
             ..clean()
         };
         assert!(
@@ -1574,7 +1685,7 @@ mod tests {
         let pool = UpstreamPool::new(config(4, 10, Duration::from_secs(60)));
         let key = PoolKey::new("https", "localhost", 443, None);
         let (client, mut server) = tls_pair().await;
-        pool.put(key.clone(), client);
+        pool.put(key.clone(), client, Duration::MAX);
 
         let Taken::Idle(mut client) = pool.take(&key) else {
             panic!("a healthy TLS connection must be handed out");

@@ -950,7 +950,9 @@ mod tests {
 
     // ===== upstream keep-alive pool (`upstream_pool`) =====
 
-    use crate::proxy::upstream_pool::test_support::{AfterReply, Body, Reply, TestServer};
+    use crate::proxy::upstream_pool::test_support::{
+        tls_client_config, AfterReply, Body, Reply, TestServer,
+    };
     use crate::proxy::upstream_pool::{PoolConfig, PoolKey, UpstreamPool};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
@@ -1141,7 +1143,7 @@ mod tests {
 
     /// A minimal HTTP CONNECT proxy: answers 200 and pipes both ways to the target.
     async fn spawn_connect_proxy() -> (u16, Arc<AtomicUsize>) {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
         let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
             .await
             .unwrap();
@@ -1152,9 +1154,9 @@ mod tests {
             while let Ok((mut client, _)) = listener.accept().await {
                 accepted_task.fetch_add(1, Ordering::SeqCst);
                 tokio::spawn(async move {
-                    let mut buf = [0u8; 2048];
-                    let n = client.read(&mut buf).await.expect("read CONNECT");
-                    let head = String::from_utf8_lossy(&buf[..n]).to_string();
+                    let mut reader = BufReader::new(&mut client);
+                    let mut head = String::new();
+                    reader.read_line(&mut head).await.expect("CONNECT line");
                     assert!(
                         head.starts_with("CONNECT "),
                         "not a CONNECT request: {head:?}"
@@ -1164,6 +1166,15 @@ mod tests {
                         .nth(1)
                         .expect("CONNECT target")
                         .to_string();
+                    loop {
+                        let mut line = String::new();
+                        let n = reader.read_line(&mut line).await.expect("CONNECT headers");
+                        assert!(n > 0, "CONNECT head ended early");
+                        if line == "\r\n" {
+                            break;
+                        }
+                    }
+                    drop(reader);
                     let mut upstream = tokio::net::TcpStream::connect(&target)
                         .await
                         .expect("tunnel target");
@@ -1614,6 +1625,107 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn tls_streaming_reuses_the_connection_directly_and_through_connect() {
+        const FIRST: &[u8] = b"event: message_start\ndata: {}\n\n";
+        const LAST: &[u8] = b"event: message_stop\ndata: {}\n\n";
+        let connector = tokio_rustls::TlsConnector::from(tls_client_config());
+        let raw = standard_raw_request_bytes();
+
+        for through_proxy in [false, true] {
+            let upstream = TestServer::start_tls(|_| Reply {
+                status_line: "HTTP/1.1 200 OK",
+                headers: vec!["Content-Type: text/event-stream".to_string()],
+                body: Body::Chunked(
+                    vec![FIRST.to_vec(), LAST.to_vec()],
+                    Duration::from_millis(1),
+                ),
+                after: AfterReply::KeepOpen,
+            })
+            .await;
+            let proxy = if through_proxy {
+                let (port, accepted) = spawn_connect_proxy().await;
+                Some((format!("http://127.0.0.1:{port}"), accepted))
+            } else {
+                None
+            };
+            let proxy_url = proxy.as_ref().map(|(url, _)| url.as_str());
+            let port = upstream.port();
+            let pool = UpstreamPool::new(PoolConfig::default());
+            let key = PoolKey::new("https", "127.0.0.1", port, proxy_url);
+
+            for _ in 0..2 {
+                let received = tokio::time::timeout(Duration::from_secs(10), async {
+                    let io = upstream_pool::write_raw_request(
+                        &pool,
+                        &key,
+                        RawRequest {
+                            bytes: &raw,
+                            connection_close: false,
+                        },
+                        async {
+                            let stream = if let Some(url) = proxy_url {
+                                connect_via_proxy(url, "127.0.0.1", port).await?
+                            } else {
+                                ProxyStream::Tcp(connect_direct("127.0.0.1", port).await?)
+                            };
+                            let name =
+                                rustls::pki_types::ServerName::try_from("127.0.0.1").unwrap();
+                            let tls = connector
+                                .connect(name, stream)
+                                .await
+                                .expect("TLS handshake");
+                            Ok(PooledStream::Tls(Box::new(tls)))
+                        },
+                    )
+                    .await
+                    .expect("raw request");
+                    let response = do_hyper_response(io, http::Method::POST)
+                        .await
+                        .expect("raw response");
+                    assert_eq!(response.status(), http::StatusCode::OK);
+                    let stream = response.bytes_stream();
+                    futures::pin_mut!(stream);
+                    let mut received = Vec::new();
+                    while let Some(chunk) = stream.next().await {
+                        received.extend_from_slice(&chunk.expect("SSE chunk"));
+                    }
+                    received
+                })
+                .await
+                .expect("TLS exchange in time");
+                assert_eq!(received, [FIRST, LAST].concat());
+                assert_eq!(pool.idle_count(&key), 1);
+            }
+
+            assert_eq!(upstream.requests(), vec![raw.clone(), raw.clone()]);
+            assert_eq!(
+                upstream.accepted(),
+                1,
+                "both requests must share one TLS connection"
+            );
+            if let Some((_, accepted)) = proxy {
+                assert_eq!(
+                    accepted.load(Ordering::SeqCst),
+                    1,
+                    "both requests must share one tunnel"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn keep_alive_timeout_zero_closes_an_otherwise_reusable_connection() {
+        let server = TestServer::start(|_| Reply {
+            headers: vec!["Keep-Alive: max=100, TimeOut = 0".to_string()],
+            ..Reply::fixed(b"body".to_vec())
+        })
+        .await;
+        let pool = UpstreamPool::new(PoolConfig::default());
+        assert_eq!(raw_exchange(&pool, &server).await.as_ref(), b"body");
+        assert_eq!(pool.idle_count(&pool_key_for(&server)), 0);
+    }
+
     /// R4: concurrent requests find no idle connection, so each opens its own; all
     /// responses arrive intact, and afterwards only the per-key cap stays pooled.
     #[tokio::test]
@@ -1623,11 +1735,21 @@ mod tests {
         let key = pool_key_for(&server);
         let pool = UpstreamPool::global();
         const N: usize = 8;
+        let in_flight = Arc::new(tokio::sync::Barrier::new(N));
 
         let tasks = (0..N)
             .map(|_| {
                 let url = url.clone();
-                tokio::spawn(async move { send_and_expect_echo(&url, None).await })
+                let in_flight = in_flight.clone();
+                tokio::spawn(async move {
+                    let response = send_raw(&url, None).await.expect("request failed");
+                    assert_eq!(response.status(), http::StatusCode::OK);
+                    // No task can drain its body and release a connection until
+                    // all N requests have reached the upstream.
+                    in_flight.wait().await;
+                    let echoed = response.bytes_with_limit(1 << 20).await.expect("body read");
+                    assert_eq!(echoed.as_ref(), standard_raw_request_bytes().as_slice());
+                })
             })
             .collect::<Vec<_>>();
         for task in tasks {
