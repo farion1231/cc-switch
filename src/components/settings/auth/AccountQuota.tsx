@@ -44,6 +44,7 @@ import { extractErrorMessage } from "@/utils/errorUtils";
 import type { WorkBuddyQuota } from "@/lib/api/auth";
 import {
   useWorkBuddyAccountQuota,
+  creditExpiryLine,
   workbuddyCreditsLine,
   workbuddyExpiryLine,
 } from "@/components/providers/workbuddyQuota";
@@ -551,6 +552,13 @@ export function codebuddyQuotaState(
   const showUsed = display === "used";
   const value =
     quota.remaining <= 0 ? t("quota.usedUp") : showUsed ? used : remaining;
+  // 和 WorkBuddy 一样：最早到期的积分另起一行（同一套计费后端）
+  const expiry = creditExpiryLine(
+    t,
+    quota.expiries,
+    locale,
+    "codebuddy_expiry",
+  );
   return {
     kind: "rows",
     rows: [
@@ -572,6 +580,7 @@ export function codebuddyQuotaState(
           }),
         },
       },
+      ...(expiry ? [{ label: t("workbuddy.quota.expiry"), line: expiry }] : []),
     ],
   };
 }

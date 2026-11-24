@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { authApi } from "@/lib/api";
 import { toast } from "@/lib/toast";
-import type { WorkBuddyQuota } from "@/lib/api/auth";
+import type { WorkBuddyCreditExpiry, WorkBuddyQuota } from "@/lib/api/auth";
 import {
   countdownStr,
   failedLines,
@@ -160,20 +160,37 @@ export function workbuddyCreditsLine(
   };
 }
 
-/**
- * 积分最早哪天到期：「496 积分 11月30日到期」，三天内到期时标橙。按日期合并，不止一个日期时
- * 可以点开逐条看。没有会到期的积分（或这次没查到套餐明细）时为 null。缓存的结果里已经过了
- * 到期时间的那几笔不再算。
- */
+/** WorkBuddy 账号最早到期的积分，见 {@link creditExpiryLine}。 */
 export function workbuddyExpiryLine(
   t: TFunction,
   quota: WorkBuddyQuota,
   locale: string,
   now = Date.now(),
 ): QuotaLine | null {
+  return creditExpiryLine(
+    t,
+    quota.snapshot?.expiries,
+    locale,
+    "workbuddy_expiry",
+    now,
+  );
+}
+
+/**
+ * 积分最早哪天到期：「496 积分 11月30日到期」，三天内到期时标橙。按日期合并，不止一个日期时
+ * 可以点开逐条看。没有会到期的积分（或这次没查到套餐明细）时为 null。缓存的结果里已经过了
+ * 到期时间的那几笔不再算。WorkBuddy 和 CodeBuddy 共用同一套计费后端，到期明细形状一样。
+ */
+export function creditExpiryLine(
+  t: TFunction,
+  expiries: readonly WorkBuddyCreditExpiry[] | null | undefined,
+  locale: string,
+  lineKey: string,
+  now = Date.now(),
+): QuotaLine | null {
   const groups: { key: string; at: number | null; credits: number }[] = [];
   // 后端已按到期先后排好，不会过期的在最后
-  for (const { credits, expiresAt } of quota.snapshot?.expiries ?? []) {
+  for (const { credits, expiresAt } of expiries ?? []) {
     if (expiresAt !== null && expiresAt <= now) continue;
     const key =
       expiresAt === null
@@ -204,7 +221,7 @@ export function workbuddyExpiryLine(
     };
   });
   return {
-    key: "workbuddy_expiry",
+    key: lineKey,
     left: Infinity,
     tone: soon(first.at) ? "warning" : "plain",
     emphasis: date,

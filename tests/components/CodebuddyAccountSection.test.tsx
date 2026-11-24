@@ -99,6 +99,7 @@ const quotaResult = (extra = {}) => ({
   total: 200,
   remaining: 150,
   used: 50,
+  expiries: null,
   error: null,
   queriedAt: Date.now(),
   ...extra,
@@ -373,9 +374,22 @@ describe("CodebuddyAccountSection", () => {
             credentialStatus: "refresh_pending",
             planName: null,
           })
-        : quotaResult(),
+        : quotaResult({
+            expiries: [
+              { credits: 120, expiresAt: Date.now() + 6 * 86_400_000 },
+              { credits: 30, expiresAt: Date.now() + 20 * 86_400_000 },
+            ],
+          }),
     );
     render(<CodebuddyAccountSection />);
+
+    // 和 WorkBuddy 一样：积分下面另起一行写最早到期的积分（多笔时可点开逐条看）
+    expect(
+      await screen.findByText("workbuddy.quota.expiry"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "workbuddy.quota.expiryShowAll" }),
+    ).toBeInTheDocument();
 
     // 套餐在账号行第二行，额度行标签只写「积分」
     expect(await screen.findByText(/体验版/)).toBeInTheDocument();
