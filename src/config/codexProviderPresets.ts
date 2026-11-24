@@ -624,6 +624,21 @@ requires_openai_auth = true`,
     icon: "haoai",
   },
   {
+    name: "StringAI",
+    websiteUrl: "https://www.string.ink",
+    apiKeyUrl: "https://www.string.ink/register?ref=661AE533A60AF110",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "stringai",
+      "https://www.string.ink/v1",
+      "gpt-6-astra",
+    ),
+    isPartner: true,
+    partnerPromotionKey: "stringai",
+    icon: "stringai",
+  },
+  {
     name: "FennoAI",
     websiteUrl: "https://api.fenno.ai",
     apiKeyUrl:

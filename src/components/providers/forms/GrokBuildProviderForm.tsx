@@ -44,7 +44,7 @@ import {
   extractCodexBaseUrl,
   extractCodexModelName,
   extractCodexWireApi,
-} from "@/utils/providerConfigUtils";
+} from "@/utils/codexConfigUtils";
 import {
   buildGrokBuildConfig,
   GROK_BUILD_DEFAULT_API_BACKEND,
@@ -55,6 +55,8 @@ import {
 import { resolveProviderIcon } from "@/utils/providerIcon";
 import { useDraftEditorProjection } from "./hooks/useDraftEditorProjection";
 import { GROKBUILD_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
+import { resolveManagedAccountId } from "@/lib/authBinding";
+import { GrokAccountSelect } from "./GrokOfficialAccount";
 
 type GrokBuildProviderFormProps = Omit<ProviderFormProps, "appId">;
 
@@ -81,6 +83,7 @@ export function GrokBuildProviderForm({
   showButtons = true,
   inactiveFields = [],
   onEditorBaseChange,
+  onManageAuthAccounts,
 }: GrokBuildProviderFormProps) {
   const { t } = useTranslation();
   const isDarkMode = useDarkMode();
@@ -99,6 +102,10 @@ export function GrokBuildProviderForm({
   const [category, setCategory] = useState<ProviderCategory | undefined>(
     initialData?.category ?? "custom",
   );
+  // 官方卡绑定的授权中心 xAI 账号（null = 跟随 Grok CLI 登录）
+  const [selectedXaiAccountId, setSelectedXaiAccountId] = useState<
+    string | null
+  >(() => resolveManagedAccountId(initialData?.meta, "xai_oauth"));
   const [isPartner, setIsPartner] = useState(
     initialData?.meta?.isPartner ?? false,
   );
@@ -335,6 +342,19 @@ export function GrokBuildProviderForm({
     // 官方条目：config 快照原样透传（新增时为空），不做自定义模型字段校验，
     // 也不重建 config —— 新增走 ensure seed，编辑只允许改名称/图标等元信息。
     if (category === "official") {
+      // 绑了账号的卡：切过来时 Grok CLI 的登录换成这个号；不绑就跟随 Grok CLI 自己的登录
+      const officialMeta: ProviderMeta | undefined = selectedXaiAccountId
+        ? {
+            ...(initialData?.meta ?? {}),
+            authBinding: {
+              source: "managed_account",
+              authProvider: "xai_oauth",
+              accountId: selectedXaiAccountId,
+            },
+          }
+        : initialData?.meta?.authBinding
+          ? { ...initialData.meta, authBinding: undefined }
+          : initialData?.meta;
       await onSubmit({
         ...values,
         name,
@@ -344,7 +364,7 @@ export function GrokBuildProviderForm({
         presetId: selectedPresetId ?? undefined,
         presetCategory: "official",
         isPartner: false,
-        meta: initialData?.meta,
+        meta: officialMeta,
       });
       return;
     }
@@ -476,6 +496,34 @@ export function GrokBuildProviderForm({
         )}
 
         <BasicFormFields form={form} />
+
+        {category === "official" && (
+          <GrokAccountSelect
+            value={selectedXaiAccountId}
+            onChange={(accountId, account) => {
+              setSelectedXaiAccountId(accountId);
+              // 新增时名字还是预设名：带上账号，几张官方卡一眼能分清
+              if (!initialData) {
+                const current = form.getValues("name").trim();
+                const presetName = grokBuildOfficialPreset.name;
+                if (
+                  current === presetName ||
+                  current.startsWith(`${presetName} (`)
+                ) {
+                  form.setValue(
+                    "name",
+                    account ? `${presetName} (${account.login})` : presetName,
+                  );
+                }
+              }
+            }}
+            onManageAccounts={
+              onManageAuthAccounts
+                ? () => onManageAuthAccounts("xai_oauth")
+                : undefined
+            }
+          />
+        )}
 
         {category !== "official" && (
           <>

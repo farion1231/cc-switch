@@ -60,7 +60,9 @@
   "apiKeyInput": {
     "placeholder": "API-Schlüssel eingeben",
     "show": "API-Schlüssel anzeigen",
-    "hide": "API-Schlüssel ausblenden"
+    "hide": "API-Schlüssel ausblenden",
+    "copied": "API-Schlüssel kopiert",
+    "copyFailed": "API-Schlüssel konnte nicht kopiert werden"
   },
   "jsonEditor": {
     "mustBeObject": "Die Konfiguration muss ein JSON-Objekt sein, kein Array oder anderer Typ",
@@ -241,17 +243,19 @@
         "oauthHint": "Google Official verwendet die persönliche OAuth-Authentifizierung; ein API-Schlüssel ist nicht nötig. Beim ersten Gebrauch öffnet sich automatisch der Browser zur Anmeldung.",
         "apiKeyPlaceholder": "Gemini-API-Schlüssel eingeben"
       },
-      "claudeAccount": {
+      "managedAccount": {
         "label": "Anmeldemethode",
+        "missing": "Konto nicht auf diesem Computer vorhanden",
+        "reauthBadge": "Erneute Anmeldung erforderlich"
+      },
+      "claudeAccount": {
         "default": "Claude-Code-Anmeldung folgen",
         "defaultDescription": "Das Konto ändert sich mit der aktuellen Claude-Code-Anmeldung",
-        "missing": "Konto nicht auf diesem Computer vorhanden",
         "manage": "Claude-Konten hinzufügen oder verwalten",
         "helpTerminal": "Der Claude-Konfigurationsordner ist in den Optionen überschrieben, daher ändert der Wechsel zu dieser Karte die Anmeldung von Claude Code nicht. Verwenden Sie „Terminal öffnen“ auf der Karte, um das ausgewählte Konto zu nutzen.",
         "helpWsl": "Der Claude-Konfigurationsordner liegt in WSL, wo Claude-Konten noch nicht unterstützt werden. Der Wechsel zu dieser Karte ändert die Anmeldung von Claude Code nicht.",
         "help": "Der Wechsel zu dieser Karte ändert die Anmeldung von Claude Code sofort auf das ausgewählte Konto, auch für bereits laufende Sitzungen. Um mehrere Konten gleichzeitig zu nutzen, verwenden Sie „Terminal öffnen“ auf der Karte.",
         "claudeAccount": "Claude-Konto",
-        "reauthBadge": "Erneute Anmeldung erforderlich",
         "terminalHint": "Über „Terminal öffnen“ nutzen",
         "wslHint": "In WSL nicht unterstützt",
         "plan": {
@@ -263,6 +267,13 @@
           "teamPremium": "Team Premium",
           "enterprise": "Enterprise"
         }
+      },
+      "grokAccount": {
+        "default": "Grok-CLI-Anmeldung folgen",
+        "defaultDescription": "Verwendet das Konto, mit dem Grok CLI angemeldet ist",
+        "manage": "xAI-Konten hinzufügen oder verwalten",
+        "help": "Wenn Sie zu dieser Karte wechseln, wird die Anmeldung von Grok CLI (~/.grok/auth.json) auf das ausgewählte Konto umgestellt. Das zuvor angemeldete Konto wird zuerst in der Kontoverwaltung gespeichert und kehrt zurück, wenn Sie zur Karte „Grok-CLI-Anmeldung folgen“ wechseln.",
+        "xaiAccount": "xAI-Konto"
       }
     },
     "duplicateLiveIdsLoadFailed": "Anbieterkennungen konnten nicht aus der Konfiguration gelesen werden. Bitte beheben Sie die Konfiguration und versuchen Sie es erneut",
@@ -597,6 +608,9 @@
       "safetyBackupId": "ID der Sicherheitskopie",
       "intervalLabel": "Intervall für automatische Sicherung",
       "retainLabel": "Aufbewahrung von Sicherungen",
+      "maxTotalLabel": "Größenlimit für Sicherungen",
+      "maxTotalUnlimited": "Kein Limit",
+      "maxTotalHint": "Standardmäßig deaktiviert. Wenn ein Limit gesetzt ist, werden die ältesten Sicherungen gelöscht, sobald der Sicherungsordner diese Größe überschreitet. Die neueste Sicherung und jede Sicherung, die eine Wiederherstellung verwendet, bleiben immer erhalten. Daher kann der Ordner über dem Limit bleiben, wenn eine einzelne Sicherung größer ist. Gilt ab der nächsten Sicherung oder der täglichen Wartung.",
       "intervalDisabled": "Deaktiviert",
       "intervalHours": "{{hours}} Stunden",
       "intervalDays": "{{days}} Tage",
@@ -1086,6 +1100,7 @@
     "toolUpgradeUnanchoredHint": "Es lässt sich nicht bestimmen, welche Installation Ihre Kommandozeile verwendet; der Standard-Upgrade-Befehl wird ausgeführt (installiert möglicherweise in das erste npm im PATH).",
     "toolUpgradeUnmanagedTitle": "Upgrade dieser Tools übersprungen",
     "toolUpgradeUnmanagedDetail": "{{tool}} ({{path}}) wurde weder per npm noch mit einem bekannten Installer installiert, daher kann CC Switch nicht erkennen, wie es zu aktualisieren ist. Aktualisieren Sie es auf dem Weg, auf dem Sie es installiert haben (z. B. winget, Scoop oder erneutes Ausführen des offiziellen Installationsskripts).",
+    "toolUpgradeDesktopManagedDetail": "Diese OpenCode-CLI ist in OpenCode Desktop enthalten und wird zusammen mit der Desktop-App aktualisiert.",
     "envBadge": {
       "wsl": "WSL",
       "windows": "Win",
@@ -1261,6 +1276,8 @@
       "credits": "Credits",
       "leftOf": "{{remaining}} / {{total}} übrig",
       "usedOf": "{{used}} / {{total}} verbraucht",
+      "unlimited": "Unbegrenzt",
+      "unlimitedUsed": "Unbegrenzt, {{used}} verbraucht",
       "usedUp": "Aufgebraucht (von {{total}})",
       "detail": "{{remaining}} von {{total}} Credits übrig, {{used}} verbraucht",
       "staleNotRunning": "WorkBuddy läuft nicht; letztes Ergebnis wird angezeigt",
@@ -1453,6 +1470,7 @@
     "contentSearchToggle": "Nachrichtentext durchsuchen",
     "contentSearchToggleFailed": "Die Einstellung für die Nachrichtentextsuche konnte nicht geändert werden: {{error}}",
     "contentIndexing": "Nachrichtentext wird indiziert ({{processed}}/{{total}}). Texttreffer sind möglicherweise unvollständig",
+    "contentSearchFailed": "Textsuche fehlgeschlagen; derzeit kann nur in Titeln, Ordnern und der ersten/letzten Nachricht gesucht werden",
     "contentHitPrefix": "Text: ",
     "contentHitMore": " ({{count}} Nachrichten passen)",
     "moreContentHits": "Weitere Texttreffer",
@@ -1815,6 +1833,7 @@
       "subrouter": "SubRouter ist ein KI-Relay-Aggregator, der mit einem Schlüssel Zugriff auf mehrere Modelle und Anbieter ermöglicht.",
       "qiniu": "Qiniu Cloud ist ein Multiprotokoll-KI-Relay: ein Schlüssel für native Claude-, GPT- und Gemini-Modelle, mit Unterstützung der Anthropic-, OpenAI- und Gemini-APIs.",
       "haoai": "hao.ai ist ein schnelles, stabiles, einheitliches LLM-API-Gateway für Entwickler und Teams: Mit einem Schlüssel erreichen Sie GPT, Claude, Grok und weitere führende Modelle über OpenAI- und Anthropic-kompatible APIs, mit Modell-Routing, Failover und vollständigen Anfrageprotokollen, zu Preisen ab 15 % der offiziellen Referenzpreise. CC-Switch-Nutzer, die sich über diesen Link registrieren, erhalten 5 % Bonusguthaben auf ihre erste Bestellung!",
+      "stringai": "StringAI ist eine preiswerte, schnelle und stabile Modell-API-Plattform mit Zugang zu KI-Coding, Bildgenerierung, Sprachsynthese und Videogenerierung aus einer Hand. Exklusives Angebot für CC-Switch-Nutzer: Registrieren Sie sich über diesen Link und erhalten Sie bei Ihrer ersten Aufladung von 3,74 $ zusätzlich 3,74 $ Bonusguthaben!",
       "fenno": "Fenno.ai ist ein stabiler, effizienter API-Relay mit Zugang zu zahlreichen gängigen Modellen. Exklusives Angebot für CC-Switch-Nutzer: Abonnieren Sie über diesen Link den Testtarif für 1,99 $ mit 50 $ Guthaben, gültig für 7 Tage!",
       "teamorouter": "TeamoRouter bietet Claude Code einen Schlüssel für Opus 5.5, Sonnet 5.5 und Fable 5.1, mit Opus 5.5 für etwa 28 % des offiziellen Preises, nutzungsbasiert abgerechnet, über das native Anthropic-Protokoll. CC-Switch-Nutzer, die sich über diesen Link registrieren, erhalten 10 % zusätzliches Guthaben auf eine erste Aufladung von 10 $, 20 $ oder 50 $!",
       "ppio": "PPIO ist ein führender unabhängiger Agentic-Cloud-Anbieter in China und stellt alle führenden Open-Source-Modelle über einen einzigen API-Schlüssel bereit. Registrieren Sie sich über diesen Link und schließen Sie die Identitätsprüfung ab, um einen Gutschein über ¥10 zu erhalten.",
@@ -2106,6 +2125,7 @@
     "selectAccount": "Konto auswählen",
     "selectAccountPlaceholder": "xAI-Konto auswählen",
     "useDefaultAccount": "Standardkonto verwenden",
+    "account": "xAI-Konto",
     "accounts": "xAI-Konten",
     "defaultAccount": "Standard",
     "expired": "Anmeldedaten abgelaufen",
@@ -2535,8 +2555,8 @@
     "input": "Eingabe",
     "output": "Ausgabe",
     "cacheWrite": "Erstellung",
-    "cacheWriteNotReported": "Das OpenAI-Protokoll unterscheidet die Cache-Erstellung nicht; nur Cache-Treffer werden gemeldet",
-    "cacheWritePartial": "Einige Protokolle (z. B. OpenAI) melden die Cache-Erstellung nicht; der Wert kann unvollständig sein",
+    "cacheWriteNotReported": "Gemini und Grok Build melden die Cache-Erstellung nicht; nur Cache-Treffer werden gemeldet",
+    "cacheWritePartial": "Einige Protokolle (z. B. Gemini) melden die Cache-Erstellung nicht; der Wert kann unvollständig sein",
     "cacheRead": "Treffer",
     "baseCost": "Basis",
     "costMultiplier": "Kostenmultiplikator",
@@ -2677,7 +2697,7 @@
       "label": "Kennzahlen",
       "more": "Weitere Kennzahlen",
       "realTotalHelpTitle": "Wie die Token-Gesamtzahl berechnet wird",
-      "realTotalHelp": "Neue Eingabe + Ausgabe + Cache-Schreibvorgänge + Cache-Treffer. Die neue Eingabe schließt den Cache aus; einige Protokolle (etwa OpenAI) melden keine Cache-Schreibvorgänge, daher kann dieser Anteil zu niedrig ausfallen.",
+      "realTotalHelp": "Neue Eingabe + Ausgabe + Cache-Schreibvorgänge + Cache-Treffer. Die neue Eingabe schließt den Cache aus; einige Protokolle (etwa Gemini) melden keine Cache-Schreibvorgänge, daher kann dieser Anteil zu niedrig ausfallen.",
       "hitRateHelpTitle": "Wie die Cache-Trefferquote berechnet wird",
       "hitRateHelp": "Cache-Treffer ÷ (neue Eingabe + Cache-Schreibvorgänge + Cache-Treffer)."
     },
@@ -3516,6 +3536,7 @@
       "skillDirNotFound": "Skill-Verzeichnis nicht gefunden: {{path}}",
       "directoryConflict": "Das Skill-Verzeichnis „{{directory}}“ ist bereits von {{existing_repo}} belegt und kann nicht aus {{new_repo}} installiert werden",
       "emptyArchive": "Das heruntergeladene Archiv ist leer",
+      "archiveInvalid": "Der Download ist kein ZIP-Archiv: Diese Seite ist möglicherweise kein GitHub-/GitLab-/Gitea-Repository und wird noch nicht unterstützt",
       "invalidRepoRef": "Ungültiger Repository-Verweis: {{owner}}/{{name}}",
       "archiveTooLarge": "Das Archiv überschreitet das Entpacklimit von {{limit_mb}} MB; abgebrochen",
       "archiveDownloadTooLarge": "Der Download des Repository-Archivs überschreitet das Limit von {{limit_mb}} MB; abgebrochen",
@@ -3744,7 +3765,10 @@
       "command": "Befehl",
       "args": "Argumente",
       "env": "Umgebung",
-      "url": "URL"
+      "url": "URL",
+      "type": "Typ",
+      "cwd": "Arbeitsverzeichnis",
+      "headers": "Header"
     },
     "prompt": {
       "title": "System-Prompt importieren",
@@ -3778,7 +3802,8 @@
     "risk": {
       "envHijack": "Diese Konfiguration setzt Umgebungsvariablen, die verändern, wie Prozesse Code laden (z. B. Bibliotheken einschleusen oder CA-Zertifikate ersetzen). Importieren Sie nur aus einer Quelle, der Sie vertrauen.",
       "privateEndpoint": "Diese Adresse zeigt auf localhost oder ein privates Netzwerk. Nur importieren, wenn es Ihr eigener lokaler Dienst ist.",
-      "shellCommand": "Diese Konfiguration führt eine vollständige Befehlszeile über eine Shell aus – was tatsächlich läuft, steht in den Argumenten. Prüfen Sie jede Zeile."
+      "shellCommand": "Diese Konfiguration führt eine vollständige Befehlszeile über eine Shell aus – was tatsächlich läuft, steht in den Argumenten. Prüfen Sie jede Zeile.",
+      "mcpDangerousField": "Diese MCP-Konfiguration enthält risikoreiche Felder, die Host-Umgebungsvariablen auslesen (z. B. bearer_token_env_var, env_http_headers, env_vars), Hilfsbefehle ausführen (http_headers_helper) oder das Arbeitsverzeichnis ändern (cwd) können. Nur aus vollständig vertrauenswürdigen Quellen importieren."
     }
   },
   "iconPicker": {
@@ -5048,7 +5073,7 @@
   "pluginsPage": {
     "title": "Plugins",
     "helpTitle": "Plugins",
-    "help": "Plugins für Claude Code, Codex, Grok Build, MiniMax Code, OpenClaw und Pi installieren, aktivieren und entfernen. CC Switch führt die jeweilige CLI der App aus, das Ergebnis ist also dasselbe wie beim Plugin-Befehl im Terminal. Bei Pi sind Plugins Pi-Pakete, und der Katalog stammt von npm.",
+    "help": "Plugins für Claude Code, Codex, Grok Build, MiniMax Code, OpenClaw, Pi und Antigravity CLI installieren, aktivieren und entfernen. CC Switch führt die jeweilige CLI der App aus, das Ergebnis ist also dasselbe wie beim Plugin-Befehl im Terminal. Bei Pi sind Plugins Pi-Pakete, und der Katalog stammt von npm.",
     "appAria": "App",
     "viewAria": "Plugin-Ansichten",
     "viewInstalled": "Installiert",
@@ -5108,9 +5133,11 @@
     "confirmRemoveMarketBody": "{{app}} listet keine Plugins aus diesem Marketplace mehr auf und deinstalliert möglicherweise die daraus installierten Plugins. Sie können ihn später erneut hinzufügen.",
     "toast": {
       "installed": "{{name}} installiert",
+      "installedNeedsConfig": "Deaktiviert installiert. Führen Sie in {{app}} /plugin aus, um die MCP-Server zu konfigurieren und es zu aktivieren.",
       "installFailed": "{{name}} konnte nicht installiert werden",
       "installNeedsTerminal": "Dieses Plugin führt bei der Installation einen vom Marketplace deklarierten Befehl auf Ihrem Rechner aus, und CC Switch bestätigt das nicht für Sie. Führen Sie {{command}} in einem Terminal aus, bestätigen Sie dort und aktualisieren Sie dann hier.",
       "authRequired": "{{app}} erfordert zuerst eine Anmeldung. Führen Sie {{command}} in einem Terminal aus und versuchen Sie es dann erneut.",
+      "pluginInUse": "Dieses Plugin wird derzeit von einem anderen {{app}}- / {{cli}}-Prozess verwendet (z. B. einer laufenden Sitzung, dem Hub oder einem Hintergrunddienst). Schließen Sie ihn und versuchen Sie es erneut.",
       "uninstalled": "{{name}} deinstalliert",
       "uninstallFailed": "{{name}} konnte nicht deinstalliert werden",
       "enabled": "{{name}} aktiviert",
@@ -5119,6 +5146,7 @@
       "updated": "{{name}} aktualisiert",
       "upToDate": "{{name}} ist bereits auf dem neuesten Stand",
       "updateFailed": "{{name}} konnte nicht aktualisiert werden",
+      "updateNeedsReinstall": "Dieses Plugin liegt in einem Ordner älterer Antigravity-Versionen, daher kann CC Switch es nicht aktualisieren. Deinstallieren Sie es und installieren Sie es unter „Entdecken“ erneut, um die neueste Version zu erhalten.",
       "refreshed": "Marketplaces aktualisiert",
       "refreshFailed": "Marketplaces konnten nicht aktualisiert werden",
       "marketAdded": "Marketplace {{source}} hinzugefügt",

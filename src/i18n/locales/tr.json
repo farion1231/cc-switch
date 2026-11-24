@@ -60,7 +60,9 @@
   "apiKeyInput": {
     "placeholder": "API Anahtarını Girin",
     "show": "API Anahtarını Göster",
-    "hide": "API Anahtarını Gizle"
+    "hide": "API Anahtarını Gizle",
+    "copied": "API anahtarı kopyalandı",
+    "copyFailed": "API anahtarı kopyalanamadı"
   },
   "jsonEditor": {
     "mustBeObject": "Yapılandırma bir dizi veya başka türde değil, JSON nesnesi olmalıdır",
@@ -241,17 +243,19 @@
         "oauthHint": "Google’ın resmî hizmeti kişisel OAuth kimlik doğrulaması kullanır; API anahtarı girmeniz gerekmez. İlk kullanımda oturum açmanız için tarayıcı otomatik açılır.",
         "apiKeyPlaceholder": "Gemini API Anahtarını girin"
       },
+      "managedAccount": {
+        "label": "Oturum açma yöntemi",
+        "missing": "Bu bilgisayarda bulunmayan hesap",
+        "reauthBadge": "Yeniden oturum açılması gerekiyor"
+      },
       "claudeAccount": {
-        "label": "Sign-in method",
         "default": "Follow Claude Code login",
         "defaultDescription": "The account changes with the current Claude Code login",
-        "missing": "Account not on this computer",
         "manage": "Add or manage Claude accounts",
         "helpTerminal": "The Claude config folder is overridden in Settings, so switching to this card doesn't change Claude Code's sign-in. Use Open Terminal on the card to use the selected account.",
         "helpWsl": "The Claude config folder is in WSL, where Claude accounts aren't supported yet. Switching to this card doesn't change Claude Code's sign-in.",
         "help": "Switching to this card changes Claude Code's sign-in to the selected account right away, including sessions already running. To use several accounts at once, use Open Terminal on the card.",
         "claudeAccount": "Claude account",
-        "reauthBadge": "Re-login required",
         "terminalHint": "Use via Open Terminal",
         "wslHint": "Not supported in WSL",
         "plan": {
@@ -263,6 +267,13 @@
           "teamPremium": "Team Premium",
           "enterprise": "Enterprise"
         }
+      },
+      "grokAccount": {
+        "default": "Grok CLI oturumunu kullan",
+        "defaultDescription": "Grok CLI'nin oturum açtığı hesap kullanılır",
+        "manage": "xAI hesaplarını ekle veya yönet",
+        "help": "Bu karta geçtiğinizde Grok CLI'nin oturumu (~/.grok/auth.json) seçilen hesaba geçer. Önceden oturum açılmış hesap önce Kimlik Doğrulama Merkezi'ne kaydedilir ve \"Grok CLI oturumunu kullan\" kartına geri döndüğünüzde geri yüklenir.",
+        "xaiAccount": "xAI hesabı"
       }
     },
     "duplicateLiveIdsLoadFailed": "Sağlayıcı tanımlayıcıları yapılandırmadan okunamadı. Lütfen yapılandırmayı düzeltip tekrar deneyin.",
@@ -597,6 +608,9 @@
       "safetyBackupId": "Güvenlik Yedekleme Kimliği",
       "intervalLabel": "Otomatik Yedekleme Aralığı",
       "retainLabel": "Yedekleme Saklama",
+      "maxTotalLabel": "Yedekleme Boyut Sınırı",
+      "maxTotalUnlimited": "Sınırsız",
+      "maxTotalHint": "Varsayılan olarak kapalıdır. Ayarlandığında, yedekleme klasörü bu boyutu aştığında en eski yedeklerden başlanarak silinir. En yeni yedek ve geri yüklemenin kullandığı yedek her zaman korunur; bu yüzden tek bir yedek sınırdan büyükse klasör sınırın üzerinde kalabilir. Bir sonraki yedeklemede veya günlük bakımda uygulanır.",
       "intervalDisabled": "Devre dışı",
       "intervalHours": "{{hours}} saat",
       "intervalDays": "{{days}} gün",
@@ -1086,6 +1100,7 @@
     "toolUpgradeUnanchoredHint": "Komut satırınızın hangi yüklemeyi kullandığı belirlenemiyor; varsayılan yükseltme komutunu çalıştıracaktır (PATH'deki ilk npm'ye yüklenebilir).",
     "toolUpgradeUnmanagedTitle": "Bu araçların yükseltilmesi atlandı",
     "toolUpgradeUnmanagedDetail": "{{tool}} ({{path}}), npm veya tanınan bir yükleyici tarafından kurulmadığından CC Switch, onu nasıl yükselteceğini söyleyemez. Kurulum şeklinizi yükseltin (örn. Winget, Scoop veya resmi kurulum betiğini yeniden çalıştırın).",
+    "toolUpgradeDesktopManagedDetail": "Bu OpenCode CLI, OpenCode Desktop ile birlikte gelir ve Desktop uygulamasıyla güncellenir.",
     "envBadge": {
       "wsl": "WSL",
       "windows": "Windows",
@@ -1384,6 +1399,7 @@
     "contentSearchToggle": "Mesaj metninde ara",
     "contentSearchToggleFailed": "Mesaj metni arama ayarı değiştirilemedi: {{error}}",
     "contentIndexing": "Mesaj metni dizinleniyor ({{processed}}/{{total}}). Metin eşleşmeleri eksik olabilir",
+    "contentSearchFailed": "Metin araması başarısız oldu; şu anda yalnızca başlık, klasör ve ilk/son mesajlarda arama yapılabiliyor",
     "contentHitPrefix": "Metin: ",
     "contentHitMore": " ({{count}} mesaj eşleşiyor)",
     "moreContentHits": "Daha fazla metin eşleşmesi",
@@ -1746,6 +1762,7 @@
       "subrouter": "SubRouter, bir anahtarın birden fazla modele ve sağlayıcıya erişmesine olanak tanıyan bir AI aktarma toplayıcıdır.",
       "qiniu": "Qiniu Cloud, çok protokollü bir yapay zeka aktarımıdır: yerel Claude, GPT ve Gemini modelleri için tek bir anahtar; Anthropic, OpenAI ve Gemini API'lerinin tümü desteklenir.",
       "haoai": "hao.ai; geliştiriciler ve ekipler için hızlı ve kararlı, birleşik bir LLM API ağ geçididir. Tek bir anahtarla, OpenAI ve Anthropic uyumlu API'ler üzerinden GPT, Claude, Grok ve diğer önde gelen modellere; model yönlendirme, otomatik yedek geçiş ve tüm isteklerin günlükleriyle erişebilirsiniz. Fiyatlar resmî referans ücretlerinin %15'i kadar düşük olabilir. Bu bağlantı üzerinden kaydolan CC Switch kullanıcıları ilk siparişlerinde %5 bonus bakiye kazanır!",
+      "stringai": "StringAI; yapay zekâ ile kodlama, görsel üretimi, metinden sese ve video üretimine tek noktadan erişim sunan, uygun maliyetli, hızlı ve istikrarlı bir model API platformudur. Özel CC Switch teklifi: Bu bağlantı aracılığıyla kaydolun, ilk 3,74 $'lık yüklemenize ek olarak 3,74 $ bonus kredi kazanın!",
       "fenno": "Fenno.ai, geniş bir ana akım model yelpazesine erişmenizi sağlayan istikrarlı, verimli bir API rölesidir. Özel CC Switch teklifi: Bu bağlantı aracılığıyla 7 gün geçerli, 50$ kredi değerindeki 1,99$ Deneme Planına abone olun!",
       "teamorouter": "TeamoRouter, %90'a varan indirimlerle kurumsal düzeyde bir Agentic LLM ağ geçididir. CC Switch kullanıcılarına özel avantajlar sunar: ilk yüklemenizde %10 indirim için bu bağlantı aracılığıyla yeni bir kullanıcı olarak kaydolun!",
       "ppio": "PPIO, Çin'in önde gelen bağımsız Aracı Bulut sağlayıcısıdır ve her amiral gemisi açık kaynak modeline tek bir API anahtarı aracılığıyla hizmet verir. 10 ¥ değerinde kredi kuponu almak için bu bağlantı aracılığıyla kaydolun ve kimlik doğrulamayı tamamlayın.",
@@ -2037,6 +2054,7 @@
     "selectAccount": "Hesap seçin",
     "selectAccountPlaceholder": "Bir xAI hesabı seçin",
     "useDefaultAccount": "Varsayılan hesabı kullan",
+    "account": "xAI hesabı",
     "accounts": "xAI hesapları",
     "defaultAccount": "Varsayılan",
     "expired": "Kimlik bilgilerinin süresi doldu",
@@ -2466,8 +2484,8 @@
     "input": "Girdi",
     "output": "Çıktı",
     "cacheWrite": "Yaratılış",
-    "cacheWriteNotReported": "OpenAI protokolü önbellek oluşturmayı ayırt etmez; yalnızca önbellek isabetleri raporlanır",
-    "cacheWritePartial": "Bazı protokoller (örneğin OpenAI) önbellek oluşturulmasını bildirmez; değer eksik olabilir",
+    "cacheWriteNotReported": "Gemini ve Grok Build önbellek oluşturmayı raporlamaz; yalnızca önbellek isabetleri raporlanır",
+    "cacheWritePartial": "Bazı protokoller (örneğin Gemini) önbellek oluşturulmasını bildirmez; değer eksik olabilir",
     "cacheRead": "Vur",
     "baseCost": "Baz",
     "costMultiplier": "Maliyet Çarpanı",
@@ -2608,7 +2626,7 @@
       "label": "Metrikler",
       "more": "Daha fazla metrik",
       "realTotalHelpTitle": "Toplam tokenlar nasıl sayılır?",
-      "realTotalHelp": "Yeni giriş + çıkış + önbellek yazma + önbellek isabetleri. Yeni giriş önbelleği hariç tutar; bazı protokoller (OpenAI gibi) önbellek yazma işlemlerini raporlamaz, dolayısıyla bu kısım düşük olabilir.",
+      "realTotalHelp": "Yeni giriş + çıkış + önbellek yazma + önbellek isabetleri. Yeni giriş önbelleği hariç tutar; bazı protokoller (Gemini gibi) önbellek yazma işlemlerini raporlamaz, dolayısıyla bu kısım düşük olabilir.",
       "hitRateHelpTitle": "Önbellek isabet oranı nasıl hesaplanır?",
       "hitRateHelp": "Önbellek isabetleri ÷ (yeni girdi + önbellek yazmaları + önbellek isabetleri)."
     },
@@ -3447,6 +3465,7 @@
       "skillDirNotFound": "Beceri dizini bulunamadı: {{path}}",
       "directoryConflict": "'{{directory}}' beceri dizini zaten {{existing_repo}} tarafından kullanılıyor, {{new_repo}}'den yüklenemiyor",
       "emptyArchive": "İndirilen arşiv boş",
+      "archiveInvalid": "İndirilen dosya bir ZIP arşivi değil: bu site bir GitHub / GitLab / Gitea deposu olmayabilir ve henüz desteklenmiyor",
       "invalidRepoRef": "Geçersiz depo referansı: {{owner}}/{{name}}",
       "archiveTooLarge": "Arşiv, {{limit_mb}} MB çıkarma sınırını aşıyor; iptal edildi",
       "archiveDownloadTooLarge": "Depo arşivi {{limit_mb}} MB sınırını aşıyor; indirme durduruldu.",
@@ -3675,7 +3694,10 @@
       "command": "Komut",
       "args": "Argümanlar",
       "env": "Zarf",
-      "url": "URL'si"
+      "url": "URL'si",
+      "type": "Tür",
+      "cwd": "Çalışma Dizini",
+      "headers": "Başlıklar"
     },
     "prompt": {
       "title": "Sistem İstemini İçe Aktar",
@@ -3709,7 +3731,8 @@
     "risk": {
       "envHijack": "Bu yapılandırma, yükleme kodunun işlenme biçimini değiştiren ortam değişkenlerini ayarlar (örneğin, kitaplıkları enjekte etme veya CA sertifikalarını değiştirme). Yalnızca güvendiğiniz bir kaynaktan içe aktarın.",
       "privateEndpoint": "Bu adres localhost'a veya özel bir ağa işaret eder. Kendi yerel hizmetiniz olmadığı sürece ithalat yapmayın.",
-      "shellCommand": "Bu yapılandırma, bir kabuk aracılığıyla tam bir komut satırı çalıştırır; gerçekte yürütülen şey argümanlardadır. Her satırı inceleyin."
+      "shellCommand": "Bu yapılandırma, bir kabuk aracılığıyla tam bir komut satırı çalıştırır; gerçekte yürütülen şey argümanlardadır. Her satırı inceleyin.",
+      "mcpDangerousField": "Bu MCP yapılandırması, ana makine ortam değişkenlerini okuyabilen (ör. bearer_token_env_var, env_http_headers, env_vars), yardımcı komutlar çalıştırabilen (http_headers_helper) veya çalışma dizinini değiştirebilen (cwd) yüksek riskli alanlar içeriyor. Yalnızca tamamen güvendiğiniz bir kaynaktan içe aktarın."
     }
   },
   "iconPicker": {
@@ -4979,7 +5002,7 @@
   "pluginsPage": {
     "title": "Eklentiler",
     "helpTitle": "Eklentiler",
-    "help": "Claude Code, Codex, Grok Build, MiniMax Code, OpenClaw ve Pi eklentilerini yükleyin, etkinleştirin ve kaldırın. CC Switch her uygulamanın kendi CLI'ını çalıştırır; sonuç terminalde eklenti komutunu kullanmakla aynıdır. Pi'de eklentiler Pi paketleridir ve katalog npm'den gelir.",
+    "help": "Claude Code, Codex, Grok Build, MiniMax Code, OpenClaw, Pi ve Antigravity CLI eklentilerini yükleyin, etkinleştirin ve kaldırın. CC Switch her uygulamanın kendi CLI'ını çalıştırır; sonuç terminalde eklenti komutunu kullanmakla aynıdır. Pi'de eklentiler Pi paketleridir ve katalog npm'den gelir.",
     "appAria": "Uygulama",
     "viewAria": "Eklenti görünümleri",
     "viewInstalled": "Yüklü",
@@ -5039,9 +5062,11 @@
     "confirmRemoveMarketBody": "{{app}} bu pazar yerindeki eklentileri artık listelemez ve buradan yüklediğiniz eklentileri de kaldırabilir. Daha sonra yeniden ekleyebilirsiniz.",
     "toast": {
       "installed": "{{name}} yüklendi",
+      "installedNeedsConfig": "Devre dışı olarak yüklendi. MCP sunucularını yapılandırıp etkinleştirmek için {{app}} içinde /plugin komutunu çalıştırın.",
       "installFailed": "{{name}} yüklenemedi",
       "installNeedsTerminal": "Bu eklenti kurulum sırasında pazar yerinin bildirdiği bir komutu bilgisayarınızda çalıştırır ve CC Switch bunu sizin yerinize onaylamaz. Bir terminalde {{command}} komutunu çalıştırıp orada onaylayın, ardından geri dönüp yenileyin.",
       "authRequired": "{{app}} önce oturum açmanızı istiyor. Bir terminalde {{command}} komutunu çalıştırıp oturum açın, ardından geri dönüp tekrar deneyin.",
+      "pluginInUse": "Bu eklenti şu anda başka bir {{app}} / {{cli}} işlemi tarafından kullanılıyor (örneğin çalışan bir oturum, Hub veya arka plan hizmeti). İlgili işlemi kapatıp yeniden deneyin.",
       "uninstalled": "{{name}} kaldırıldı",
       "uninstallFailed": "{{name}} kaldırılamadı",
       "enabled": "{{name}} etkinleştirildi",
@@ -5050,6 +5075,7 @@
       "updated": "{{name}} güncellendi",
       "upToDate": "{{name}} zaten güncel",
       "updateFailed": "{{name}} güncellenemedi",
+      "updateNeedsReinstall": "Bu eklenti Antigravity'nin eski sürümlerinin kullandığı bir klasörde olduğu için CC Switch onu güncelleyemez. En son sürümü almak için kaldırın, ardından Keşfet'ten yeniden yükleyin.",
       "refreshed": "Pazar yerleri yenilendi",
       "refreshFailed": "Pazar yerleri yenilenemedi",
       "marketAdded": "{{source}} pazar yeri eklendi",
@@ -5378,6 +5404,8 @@
       "credits": "Kredi",
       "leftOf": "{{remaining}} / {{total}} kaldı",
       "usedOf": "{{used}} / {{total}} kullanıldı",
+      "unlimited": "Sınırsız",
+      "unlimitedUsed": "Sınırsız, {{used}} kullanıldı",
       "usedUp": "Tükendi ({{total}} üzerinden)",
       "detail": "{{total}} kredinin {{remaining}} kadarı kaldı, {{used}} kullanıldı",
       "staleNotRunning": "WorkBuddy çalışmıyor; son sonuç gösteriliyor",

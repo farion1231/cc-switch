@@ -64,11 +64,7 @@ pub(crate) use live::{
     sync_additive_app_to_live, write_live_for_state, LiveSyncOutcome,
 };
 
-// Internal re-exports
-use live::{
-    remove_hermes_provider_from_live, remove_openclaw_provider_from_live,
-    remove_opencode_provider_from_live,
-};
+use live::remove_provider_from_live;
 use usage::validate_usage_script;
 
 /// Codex official providers are safe to select during takeover: Codex keeps
@@ -2826,6 +2822,118 @@ requires_openai_auth = true
                 .expect("enabling the variant itself succeeded");
 
             assert_eq!(result.warnings, vec!["omo_variant_cleanup_failed:omo-a"]);
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn switching_an_omo_provider_makes_it_the_current_one_of_its_variant() {
+        with_test_home(|state, _| {
+            for id in ["omo-a", "omo-b"] {
+                ProviderService::add(
+                    state,
+                    AppType::OpenCode,
+                    opencode_omo_provider(id, "omo"),
+                    false,
+                )
+                .unwrap();
+            }
+            let is_current = |id: &str| {
+                state
+                    .db
+                    .is_omo_provider_current(&AppType::OpenCode, id, "omo")
+                    .unwrap()
+            };
+
+            ProviderService::switch(state, AppType::OpenCode, "omo-a").unwrap();
+            assert!(is_current("omo-a"));
+
+            ProviderService::switch(state, AppType::OpenCode, "omo-b").unwrap();
+            assert!(is_current("omo-b"));
+            assert!(!is_current("omo-a"));
+        });
+    }
+
+    /// Claude Desktop 直连模式写不进要经本地路由的卡（模型映射 / 托管账号）：切换被拒绝，
+    /// 当前供应商不变。
+    #[test]
+    #[serial]
+    fn desktop_direct_switch_refuses_a_card_that_needs_routing() {
+        with_test_home(|state, _| {
+            let direct = Provider::with_id(
+                "direct".into(),
+                "Direct".into(),
+                json!({"env": {
+                    "ANTHROPIC_AUTH_TOKEN": "token-direct",
+                    "ANTHROPIC_BASE_URL": "https://direct.example"
+                }}),
+                None,
+            );
+            let mut mapping = Provider::with_id(
+                "mapping".into(),
+                "Mapping".into(),
+                json!({"env": {
+                    "ANTHROPIC_AUTH_TOKEN": "token-mapping",
+                    "ANTHROPIC_BASE_URL": "https://mapping.example"
+                }}),
+                None,
+            );
+            mapping.meta = Some(ProviderMeta {
+                claude_desktop_mode: Some(ClaudeDesktopMode::Proxy),
+                ..Default::default()
+            });
+            for row in [&direct, &mapping] {
+                state
+                    .db
+                    .save_provider(&AppType::ClaudeDesktop, row)
+                    .unwrap();
+            }
+            state
+                .db
+                .set_current_provider(&AppType::ClaudeDesktop, "direct")
+                .unwrap();
+
+            let err = ProviderService::switch(state, AppType::ClaudeDesktop, "mapping")
+                .expect_err("a card that needs routing cannot be written directly");
+
+            assert!(
+                matches!(
+                    err,
+                    AppError::Localized {
+                        key: "switch.desktop_needs_routing",
+                        ..
+                    }
+                ),
+                "{err:?}"
+            );
+            assert_eq!(
+                state
+                    .db
+                    .get_current_provider(&AppType::ClaudeDesktop)
+                    .unwrap()
+                    .as_deref(),
+                Some("direct")
+            );
+        });
+    }
+
+    /// Hermes 是累加式应用：切换不覆盖 live，而是把顶层 `model:` 指向这家和它声明的第一个
+    /// 模型，否则 Hermes 仍按原来的 `model.provider` 发请求。
+    #[test]
+    #[serial]
+    fn switching_hermes_points_the_model_section_at_the_new_provider() {
+        with_test_home(|state, _| {
+            let mut provider = hermes_provider("hermes-b");
+            provider.settings_config["models"] = json!([{ "id": "model-b" }]);
+            ProviderService::add(state, AppType::Hermes, provider, true).unwrap();
+
+            ProviderService::switch(state, AppType::Hermes, "hermes-b").unwrap();
+
+            let model = crate::hermes_config::get_model_config()
+                .unwrap()
+                .expect("model section written");
+            assert_eq!(model.provider.as_deref(), Some("hermes-b"));
+            assert_eq!(model.default.as_deref(), Some("model-b"));
         });
     }
 
@@ -6200,7 +6308,7 @@ impl ProviderService {
                 // Antigravity 的卡只用来打开终端，添加不写任何文件。
                 AppType::Agy => return Ok(true),
                 AppType::GrokBuild => {
-                    grok_direct::switch_to(state.db.as_ref(), None, &provider)?;
+                    grok_direct::switch_to(state, None, &provider)?;
                     return Ok(true);
                 }
                 AppType::ClaudeDesktop => {
@@ -6538,6 +6646,7 @@ impl ProviderService {
             ),
             Edits::Grok(edits) => grok_editor::write_live(
                 state.db.as_ref(),
+                &state.xai_oauth_manager,
                 edits,
                 key_fields.then_some((existing.as_ref(), &provider)),
                 set_pointer,
@@ -7089,16 +7198,7 @@ impl ProviderService {
                     .as_ref()
                     .is_some_and(crate::workbuddy_config::is_official_provider);
             if !workbuddy_official && Self::check_live_config_exists(&app_type, id, live_managed)? {
-                match app_type {
-                    AppType::OpenCode => remove_opencode_provider_from_live(id)?,
-                    AppType::OpenClaw => remove_openclaw_provider_from_live(id)?,
-                    AppType::Hermes => remove_hermes_provider_from_live(id)?,
-                    AppType::Mcode => crate::mcode_config::remove_provider(id)?,
-                    AppType::Kimi => crate::kimi_config::remove_provider(id)?,
-                    AppType::Dsh => crate::dsh_config::remove_provider(id)?,
-                    AppType::WorkBuddy => crate::workbuddy_config::remove_provider(id)?,
-                    _ => {}
-                }
+                remove_provider_from_live(&app_type, id)?;
             }
             state.db.delete_provider(&app_type, id)?;
             return Ok(());
@@ -7252,51 +7352,34 @@ impl ProviderService {
             }
         }
 
-        match app_type {
-            AppType::OpenCode => {
-                let provider_category = state
-                    .db
-                    .get_provider_by_id(id, &app_type)?
-                    .and_then(|p| p.category);
-
-                let omo_variant = match provider_category.as_deref() {
-                    Some("omo") => Some(&crate::services::omo::STANDARD),
-                    Some("omo-slim") => Some(&crate::services::omo::SLIM),
-                    _ => None,
-                };
-                if let Some(variant) = omo_variant {
-                    state
-                        .db
-                        .clear_omo_provider_current(&app_type, id, variant.category)?;
-                    let still_has_current = state
-                        .db
-                        .get_current_omo_provider(&AppType::OpenCode, variant.category)?
-                        .is_some();
-                    if still_has_current {
-                        crate::services::OmoService::write_config_to_file(state, variant)?;
-                    } else {
-                        crate::services::OmoService::delete_config_file(variant)?;
-                    }
-                } else {
-                    remove_opencode_provider_from_live(id)?;
-                }
+        let omo_variant = if app_type == AppType::OpenCode {
+            let provider_category = state
+                .db
+                .get_provider_by_id(id, &app_type)?
+                .and_then(|p| p.category);
+            match provider_category.as_deref() {
+                Some("omo") => Some(&crate::services::omo::STANDARD),
+                Some("omo-slim") => Some(&crate::services::omo::SLIM),
+                _ => None,
             }
-            AppType::OpenClaw => {
-                remove_openclaw_provider_from_live(id)?;
+        } else {
+            None
+        };
+        if let Some(variant) = omo_variant {
+            state
+                .db
+                .clear_omo_provider_current(&app_type, id, variant.category)?;
+            let still_has_current = state
+                .db
+                .get_current_omo_provider(&AppType::OpenCode, variant.category)?
+                .is_some();
+            if still_has_current {
+                crate::services::OmoService::write_config_to_file(state, variant)?;
+            } else {
+                crate::services::OmoService::delete_config_file(variant)?;
             }
-            AppType::Hermes => {
-                remove_hermes_provider_from_live(id)?;
-            }
-            AppType::Mcode => crate::mcode_config::remove_provider(id)?,
-            AppType::Kimi => crate::kimi_config::remove_provider(id)?,
-            AppType::Dsh => crate::dsh_config::remove_provider(id)?,
-            AppType::WorkBuddy => crate::workbuddy_config::remove_provider(id)?,
-            _ => {
-                return Err(AppError::Message(format!(
-                    "App {} does not support remove from live config",
-                    app_type.as_str()
-                )));
-            }
+        } else {
+            remove_provider_from_live(&app_type, id)?;
         }
 
         if let Some(mut provider) = state.db.get_provider_by_id(id, &app_type)? {
@@ -7568,13 +7651,8 @@ impl ProviderService {
 
         let mut result = SwitchResult::default();
 
-        // Additive mode apps skip setting is_current (no such concept).
-        if !app_type.spec().additive {
-            crate::settings::set_current_provider(&app_type, Some(id))?;
-            state.db.set_current_provider(&app_type, id)?;
-        }
-
-        // 写 live（Claude Desktop、累加式应用；切换式应用在上面各自的分支里写完了）。
+        // 走到这里的只有累加式应用（切换式应用都在上面各自的分支里返回了），它们没有
+        // “当前供应商”指针，只写 live。
         write_live_for_state(state, &app_type, provider)?;
 
         // Hermes is additive, so "switching" doesn't overwrite a live config file
@@ -7606,18 +7684,7 @@ impl ProviderService {
             let mut updated = provider.clone();
             Self::set_provider_live_config_managed(&mut updated, true);
             if let Err(e) = state.db.save_provider(&app_type, &updated) {
-                let rollback_result = match app_type {
-                    AppType::OpenCode => remove_opencode_provider_from_live(&provider.id),
-                    AppType::OpenClaw => remove_openclaw_provider_from_live(&provider.id),
-                    AppType::Hermes => remove_hermes_provider_from_live(&provider.id),
-                    AppType::Mcode => crate::mcode_config::remove_provider(&provider.id),
-                    AppType::Kimi => crate::kimi_config::remove_provider(&provider.id),
-                    AppType::Dsh => crate::dsh_config::remove_provider(&provider.id),
-                    AppType::WorkBuddy => crate::workbuddy_config::remove_provider(&provider.id),
-                    _ => Ok(()),
-                };
-
-                match rollback_result {
+                match remove_provider_from_live(&app_type, &provider.id) {
                     Ok(()) => {
                         return Err(AppError::Message(format!(
                             "Failed to persist live_config_managed for '{}' after writing live config; live changes were rolled back: {e}",
@@ -7752,7 +7819,7 @@ impl ProviderService {
         let live_owner = current_id
             .as_deref()
             .and_then(|current_id| providers.get(current_id));
-        grok_direct::switch_to(state.db.as_ref(), live_owner, provider)?;
+        grok_direct::switch_to(state, live_owner, provider)?;
         Ok(SwitchResult::default())
     }
 

@@ -60,7 +60,9 @@
   "apiKeyInput": {
     "placeholder": "请输入API Key",
     "show": "显示API Key",
-    "hide": "隐藏API Key"
+    "hide": "隐藏API Key",
+    "copied": "API Key 已复制",
+    "copyFailed": "API Key 复制失败"
   },
   "jsonEditor": {
     "mustBeObject": "配置必须是JSON对象，不能是数组或其他类型",
@@ -241,17 +243,19 @@
         "oauthHint": "Google 官方使用 OAuth 个人认证，无需填写 API Key。首次使用时会自动打开浏览器进行登录。",
         "apiKeyPlaceholder": "请输入 Gemini API Key"
       },
-      "claudeAccount": {
+      "managedAccount": {
         "label": "登录方式",
+        "missing": "不在这台电脑上的账号",
+        "reauthBadge": "需要重新登录"
+      },
+      "claudeAccount": {
         "default": "跟随 Claude Code 登录",
         "defaultDescription": "账号会随 Claude Code 当前登录变化",
-        "missing": "不在这台电脑上的账号",
         "manage": "添加或管理 Claude 账号",
         "helpTerminal": "设置里覆盖了 Claude 配置目录，切到这张卡不会切换 Claude Code 的登录，请从卡片「打开终端」使用选中的账号。",
         "helpWsl": "Claude 配置目录在 WSL 里，暂不支持 Claude 账号，切到这张卡不会切换 Claude Code 的登录。",
         "help": "切到这张卡后，Claude Code 的登录会实时换成选中的账号，正在运行的会话也一样。想同时用几个号，从卡片「打开终端」。",
         "claudeAccount": "Claude 账号",
-        "reauthBadge": "需要重新登录",
         "terminalHint": "从卡片打开终端使用",
         "wslHint": "WSL 暂不支持",
         "plan": {
@@ -263,6 +267,13 @@
           "teamPremium": "Team 高级席位",
           "enterprise": "Enterprise"
         }
+      },
+      "grokAccount": {
+        "default": "跟随 Grok CLI 登录",
+        "defaultDescription": "账号会随 Grok CLI 当前登录变化",
+        "manage": "添加或管理 xAI 账号",
+        "help": "切到这张卡后，Grok CLI 的登录（~/.grok/auth.json）会换成选中的账号；原来登录的号会先收进授权中心，切回「跟随 Grok CLI 登录」的卡时还原。",
+        "xaiAccount": "xAI 账号"
       }
     },
     "duplicateLiveIdsLoadFailed": "读取配置中的供应商标识失败，请先修复配置后再试",
@@ -597,6 +608,9 @@
       "safetyBackupId": "安全备份ID",
       "intervalLabel": "自动备份间隔",
       "retainLabel": "备份保留数量",
+      "maxTotalLabel": "备份总大小上限",
+      "maxTotalUnlimited": "不限制",
+      "maxTotalHint": "默认不限制。设置后，备份文件夹超过此大小时，会从最旧的备份开始删除。最新的一份备份和恢复正在使用的备份始终保留，所以单份备份比上限还大时，文件夹仍可能超过上限。在下次备份或每日维护时生效。",
       "intervalDisabled": "禁用",
       "intervalHours": "{{hours}} 小时",
       "intervalDays": "{{days}} 天",
@@ -1086,6 +1100,7 @@
     "toolUpgradeUnanchoredHint": "无法确定命令行实际使用哪处，将执行默认升级命令（可能装到 PATH 上第一个 npm）。",
     "toolUpgradeUnmanagedTitle": "以下工具已跳过升级",
     "toolUpgradeUnmanagedDetail": "{{tool}}（{{path}}）不是通过 npm 或可识别的安装器安装的，CC Switch 无法判断如何升级它。请用你原来的安装方式升级（例如 winget、Scoop 或重新运行官方安装脚本）。",
+    "toolUpgradeDesktopManagedDetail": "这个 OpenCode CLI 由 OpenCode Desktop 捆绑提供，并随 Desktop 应用更新。",
     "envBadge": {
       "wsl": "WSL",
       "windows": "Win",
@@ -1261,6 +1276,8 @@
       "credits": "积分",
       "leftOf": "剩余 {{remaining}} / {{total}}",
       "usedOf": "已用 {{used}} / {{total}}",
+      "unlimited": "不限量",
+      "unlimitedUsed": "不限量，已用 {{used}}",
       "usedUp": "已用完（共 {{total}}）",
       "detail": "积分剩余 {{remaining}} / 共 {{total}}，已用 {{used}}",
       "staleNotRunning": "WorkBuddy 没在运行，显示的是上次查到的结果",
@@ -1453,6 +1470,7 @@
     "contentSearchToggle": "搜索消息正文",
     "contentSearchToggleFailed": "无法更改正文搜索设置：{{error}}",
     "contentIndexing": "正在建立正文索引（{{processed}}/{{total}}），正文结果可能还不全",
+    "contentSearchFailed": "正文搜索失败，暂时只能按标题、目录和首末消息查找",
     "contentHitPrefix": "正文：",
     "contentHitMore": "（{{count}} 条消息命中）",
     "moreContentHits": "更多正文命中",
@@ -1815,6 +1833,7 @@
       "subrouter": "SubRouter 是中转站聚合平台，一个 Key 可接入多个模型与供应商。",
       "qiniu": "七牛云是多协议 AI 中转平台，一个 Key 即可调用原生 Claude、GPT、Gemini 模型，兼容 Anthropic、OpenAI、Gemini 多种接口。",
       "haoai": "hao.ai 是面向开发者与团队的高速、稳定大模型统一 API 网关：一个 Key 即可接入 GPT、Claude、Grok 等主流模型，兼容 OpenAI、Anthropic 协议，提供模型路由、故障回退与完整调用日志，价格低至官方参考价的 1.5 折。CC Switch 用户通过此链接注册，首单可享 5% 赠送额度！",
+      "stringai": "弦界 StringAI 是高性价比、高效稳定的模型 API 平台，一站式接入 AI 编程、图像生成、语音合成和视频生成四大能力。CC Switch 用户专属福利：通过此链接注册，首充 25 元送 25 元额外奖励额度！",
       "fenno": "Fenno.ai 是稳定高效的 API 中转服务商，可接入多种主流模型。CC Switch 用户专属福利：通过此链接订阅 1.99 刀 /50 刀额度的 Trial 计划，有效期 7 天！",
       "teamorouter": "TeamoRouter 让 Claude Code 一个 Key 直接用 Opus 5.5、Sonnet 5.5、Fable 5.1，Opus 5.5 约为官方价 2.8 折，按量计费，原生 Anthropic 协议。CC Switch 用户通过此链接注册，首充 $10 / $20 / $50 额外多送 10% 额度！",
       "ppio": "PPIO 是国内领先的独立 Agentic Cloud 服务商，一个 API Key 调用全部旗舰开源模型。通过此链接注册并完成实名认证，即可获得 ¥10 代金券。",
@@ -2106,6 +2125,7 @@
     "selectAccount": "选择账号",
     "selectAccountPlaceholder": "选择 xAI 账号",
     "useDefaultAccount": "使用默认账号",
+    "account": "xAI 账号",
     "accounts": "xAI 账号",
     "defaultAccount": "默认",
     "expired": "凭据已失效",
@@ -2535,8 +2555,8 @@
     "input": "Input",
     "output": "Output",
     "cacheWrite": "创建",
-    "cacheWriteNotReported": "OpenAI 协议不区分缓存写入，仅上报缓存命中",
-    "cacheWritePartial": "部分协议（如 OpenAI）不上报缓存写入，数值可能偏低",
+    "cacheWriteNotReported": "Gemini 和 Grok Build 不上报缓存写入，仅上报缓存命中",
+    "cacheWritePartial": "部分协议（如 Gemini）不上报缓存写入，数值可能偏低",
     "cacheRead": "命中",
     "baseCost": "基础",
     "costMultiplier": "成本倍率",
@@ -2677,7 +2697,7 @@
       "label": "指标",
       "more": "更多指标",
       "realTotalHelpTitle": "真实消耗 Tokens 怎么算",
-      "realTotalHelp": "新增输入 + 输出 + 缓存写入 + 缓存命中。新增输入不含缓存；部分协议（如 OpenAI）不上报缓存写入，这一项可能偏低。",
+      "realTotalHelp": "新增输入 + 输出 + 缓存写入 + 缓存命中。新增输入不含缓存；部分协议（如 Gemini）不上报缓存写入，这一项可能偏低。",
       "hitRateHelpTitle": "缓存命中率怎么算",
       "hitRateHelp": "缓存命中 ÷（新增输入 + 缓存写入 + 缓存命中）。"
     },
@@ -3516,6 +3536,7 @@
       "skillDirNotFound": "技能目录不存在：{{path}}",
       "directoryConflict": "技能目录 '{{directory}}' 已被 {{existing_repo}} 占用，无法从 {{new_repo}} 安装",
       "emptyArchive": "下载的压缩包为空",
+      "archiveInvalid": "下载到的不是压缩包：这个站点可能不是 GitHub / GitLab / Gitea 仓库，暂不支持",
       "invalidRepoRef": "仓库地址不合法：{{owner}}/{{name}}",
       "archiveTooLarge": "压缩包解压后超过 {{limit_mb}} MB 上限，已中止",
       "archiveDownloadTooLarge": "仓库压缩包下载超过 {{limit_mb}} MB 上限，已中止",
@@ -3744,7 +3765,10 @@
       "command": "命令",
       "args": "参数",
       "env": "环境",
-      "url": "地址"
+      "url": "地址",
+      "type": "类型",
+      "cwd": "工作目录",
+      "headers": "请求头"
     },
     "prompt": {
       "title": "导入系统提示词",
@@ -3778,7 +3802,8 @@
     "risk": {
       "envHijack": "该配置包含可改变进程加载行为的环境变量（如注入动态库、替换 CA 证书），请确认来源可信。",
       "privateEndpoint": "该地址指向本机或内网。若非你自建的本地服务，请勿导入。",
-      "shellCommand": "该配置通过 shell 执行一整段命令，实际运行的内容在参数里，请逐行核对。"
+      "shellCommand": "该配置通过 shell 执行一整段命令，实际运行的内容在参数里，请逐行核对。",
+      "mcpDangerousField": "该 MCP 配置包含高危扩展字段，可能会读取宿主机环境变量并外发（如 bearer_token_env_var、env_http_headers、env_vars）、执行辅助命令（http_headers_helper）或劫持工作目录（cwd）。请务必确认来源完全可信。"
     }
   },
   "iconPicker": {
@@ -5048,7 +5073,7 @@
   "pluginsPage": {
     "title": "插件",
     "helpTitle": "插件",
-    "help": "安装、启用、移除 Claude Code、Codex、Grok Build、MiniMax Code、OpenClaw 和 Pi 的插件。CC Switch 调用各应用自带的命令行，效果和在终端里执行它的插件命令一样。Pi 的插件就是 Pi 包，目录取自 npm。",
+    "help": "安装、启用、移除 Claude Code、Codex、Grok Build、MiniMax Code、OpenClaw、Pi 和 Antigravity CLI 的插件。CC Switch 调用各应用自带的命令行，效果和在终端里执行它的插件命令一样。Pi 的插件就是 Pi 包，目录取自 npm。",
     "appAria": "应用",
     "viewAria": "插件视图",
     "viewInstalled": "已安装",
@@ -5108,9 +5133,11 @@
     "confirmRemoveMarketBody": "{{app}} 将不再列出这个市场里的插件，从这个市场装的插件也可能被一并卸载。之后可以重新添加。",
     "toast": {
       "installed": "已安装 {{name}}",
+      "installedNeedsConfig": "已安装但默认停用。请在 {{app}} 中运行 /plugin 配置其 MCP 服务器后再启用。",
       "installFailed": "安装 {{name}} 失败",
       "installNeedsTerminal": "这个插件安装时要在本机运行市场声明的命令，CC Switch 不会替你同意。请在终端里运行 {{command}}，确认后再回来刷新。",
       "authRequired": "{{app}} 需要先登录账号。请在终端里运行 {{command}} 登录，再回来重试。",
+      "pluginInUse": "该插件正被其他 {{app}} / {{cli}} 进程占用（如运行中的会话、Hub 或后台服务）。请关闭正在运行的会话或相关进程后重试。",
       "uninstalled": "已卸载 {{name}}",
       "uninstallFailed": "卸载 {{name}} 失败",
       "enabled": "已启用 {{name}}",
@@ -5119,6 +5146,7 @@
       "updated": "已更新 {{name}}",
       "upToDate": "{{name}} 已是最新版本",
       "updateFailed": "更新 {{name}} 失败",
+      "updateNeedsReinstall": "这个插件装在旧版 Antigravity 用的目录里，CC Switch 无法替它更新。卸载后在「发现」里重新安装，就能装上最新版本。",
       "refreshed": "插件市场已刷新",
       "refreshFailed": "刷新插件市场失败",
       "marketAdded": "已添加市场 {{source}}",

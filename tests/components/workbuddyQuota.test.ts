@@ -36,6 +36,28 @@ describe("workbuddyCardLines", () => {
     expect(line.detail).toContain("体验版");
   });
 
+  it("shows an unlimited enterprise quota by what is used, not as used up", () => {
+    const [line] = workbuddyCardLines(
+      t,
+      quota({
+        snapshot: {
+          ...snapshot,
+          planName: null,
+          total: 0,
+          remaining: 0,
+          used: 12.5,
+          unlimited: true,
+        },
+      }),
+      "en",
+      "left",
+    )!;
+    expect(line.text).toBe('workbuddy.quota.unlimitedUsed:{"used":"12.5"}');
+    expect(line.value).toBe("workbuddy.quota.unlimited");
+    expect(line.left).toBe(Infinity);
+    expect(line.text).not.toContain("usedUp");
+  });
+
   it("writes what is used when the quota display says so", () => {
     const [line] = workbuddyCardLines(t, quota(), "en", "used")!;
     expect(line.text).toBe(

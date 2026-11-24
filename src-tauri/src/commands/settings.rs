@@ -1,5 +1,3 @@
-#![allow(non_snake_case)]
-
 use crate::error::AppError;
 use tauri::{AppHandle, Emitter};
 use tauri_plugin_updater::UpdaterExt;

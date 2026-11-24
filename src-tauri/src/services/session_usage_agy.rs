@@ -1,7 +1,7 @@
 //! Exact counters exported by agy; absent models remain unknown (never use today's provider).
 //! Amounts are the matching Gemini API prices, like every other session-log import.
 use super::{
-    session_usage::{cost_columns, load_sync_cursors, metadata_modified_nanos, SessionSyncResult},
+    session_usage::{cost_columns, metadata_modified_nanos, SessionSyncResult},
     sql_helpers::INPUT_TOKEN_SEMANTICS_FRESH,
 };
 use crate::proxy::usage::calculator::ModelPricing;
@@ -28,19 +28,39 @@ struct AgySyncCursorUpdate<'a> {
     native_state: &'a str,
 }
 
-pub fn sync_agy_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
-    sync_agy_usage_from_files(db, agy::transcript_files())
+#[cfg(test)]
+pub(crate) fn sync_agy_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
+    sync_agy_usage_with_cursors(db, &crate::services::session_usage::load_sync_cursors(db)?)
 }
 
+pub(crate) fn sync_agy_usage_with_cursors(
+    db: &Database,
+    cursors: &crate::services::session_usage::SyncCursors,
+) -> Result<SessionSyncResult, AppError> {
+    sync_agy_usage_from_files_with_cursors(db, agy::transcript_files(), cursors)
+}
+
+#[cfg(test)]
 fn sync_agy_usage_from_files(
     db: &Database,
     files: Vec<(String, PathBuf)>,
+) -> Result<SessionSyncResult, AppError> {
+    sync_agy_usage_from_files_with_cursors(
+        db,
+        files,
+        &crate::services::session_usage::load_sync_cursors(db)?,
+    )
+}
+
+fn sync_agy_usage_from_files_with_cursors(
+    db: &Database,
+    files: Vec<(String, PathBuf)>,
+    cursors: &crate::services::session_usage::SyncCursors,
 ) -> Result<SessionSyncResult, AppError> {
     let mut result = SessionSyncResult::default();
     if files.is_empty() {
         return Ok(result);
     }
-    let cursors = load_sync_cursors(db)?;
     for (session_id, path) in files {
         result.files_scanned += 1;
         let cursor_key = format!("agy:{}", path.to_string_lossy());
@@ -972,7 +992,7 @@ mod tests {
         .unwrap();
 
         let db = Database::memory().unwrap();
-        let roots = [(brain.clone(), None)];
+        let roots = [brain.clone()];
 
         // 1. Initial sync imports step 1 and records a cursor in session_log_sync.
         let r1 = sync_agy_usage_from_files(&db, agy::transcript_files_in_roots(&roots)).unwrap();
@@ -1049,7 +1069,7 @@ mod tests {
             std::fs::write(logs.join("transcript_full.jsonl"), lines).unwrap();
         }
         let db = Database::memory().unwrap();
-        let files = agy::transcript_files_in_roots(&[(root, None)]);
+        let files = agy::transcript_files_in_roots(&[root]);
         let res = sync_agy_usage_from_files(&db, files).unwrap();
         assert_eq!(res.files_scanned, 2);
         assert_eq!(res.imported, 2);
@@ -1063,5 +1083,102 @@ mod tests {
             )
             .unwrap();
         assert_eq!(total_input, 160);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn sync_agy_usage_imports_t3_code_acp_sessions_with_native_timing_and_dedup() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        let home = crate::test_support::TestHome::new();
+        let acp_root = home
+            .path()
+            .join(".t3/userdata/providers/antigravity/inst-hash-1/antigravity-acp");
+        let logs = acp_root.join("brain/acp-sess-1/.system_generated/logs");
+        let convs = acp_root.join("conversations");
+        std::fs::create_dir_all(&logs).unwrap();
+        std::fs::create_dir_all(&convs).unwrap();
+
+        let transcript = logs.join("transcript_full.jsonl");
+        std::fs::write(
+            &transcript,
+            concat!(
+                "{\"step_index\":0,\"type\":\"USER_INPUT\",\"created_at\":\"2026-11-21T10:00:00Z\",\"content\":\"<USER_REQUEST>\\n<t3_code_instructions>\\nrules\\n</t3_code_instructions>\\n\\n<user_request>\\ncheck usage\\n</user_request>\\n</USER_REQUEST>\"}\n",
+                "{\"step_index\":1,\"type\":\"PLANNER_RESPONSE\",\"status\":\"DONE\",\"created_at\":\"2026-11-21T10:00:05Z\",\"model\":\"gemini-4-neon-xhigh\",\"input_tokens\":500,\"output_tokens\":80,\"cache_read_tokens\":100}\n",
+            ),
+        )
+        .unwrap();
+        let native = native_models::write_test_database(
+            &convs.join("acp-sess-1.db"),
+            &[(1, 0, "gemini-4-neon")],
+        );
+        native_models::set_test_generation(
+            &native,
+            0,
+            "gemini-4-neon",
+            &native_models::test_timing(900, 1500),
+        );
+        drop(native);
+
+        let db = Database::memory().unwrap();
+        let first = sync_agy_usage(&db).unwrap();
+        assert_eq!(
+            (first.files_scanned, first.imported, first.skipped),
+            (1, 1, 0)
+        );
+        assert!(first.errors.is_empty());
+
+        // Second sync skips unchanged transcript + native DB via cursor.
+        let second = sync_agy_usage(&db).unwrap();
+        assert_eq!(
+            (second.files_scanned, second.imported, second.skipped),
+            (1, 0, 0)
+        );
+
+        // Even if sync cursors are cleared, session_usage_dedup prevents duplicate billing.
+        db.conn
+            .lock()
+            .unwrap()
+            .execute("DELETE FROM session_log_sync", [])
+            .unwrap();
+        let third = sync_agy_usage(&db).unwrap();
+        assert_eq!(
+            (third.files_scanned, third.imported, third.skipped),
+            (1, 0, 1)
+        );
+
+        let conn = db.conn.lock().unwrap();
+        let row: (String, i64, i64, i64, i64, Option<i64>, i64) = conn
+            .query_row(
+                "SELECT model, input_tokens, output_tokens, cache_read_tokens, latency_ms, first_token_ms,
+                    (SELECT COUNT(*) FROM proxy_request_logs WHERE app_type='agy')
+                 FROM proxy_request_logs WHERE request_id='agy:acp-sess-1:1'",
+                [],
+                |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get(2)?,
+                        r.get(3)?,
+                        r.get(4)?,
+                        r.get(5)?,
+                        r.get(6)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            row,
+            (
+                "gemini-4-neon-xhigh".into(),
+                500,
+                80,
+                100,
+                2400,
+                Some(900),
+                1
+            )
+        );
     }
 }
