@@ -5294,6 +5294,7 @@
       "pendingNote": "已在終端機開啟 codebuddy，依提示登入（沒有出現登入畫面就輸入 /login），完成後這裡會自動收錄。",
       "reopenTerminal": "重新開啟終端機",
       "removeNote": "只刪除 CC Switch 裡的副本，不會讓 CodeBuddy 登出。",
+      "localOnly": "帳號副本只儲存在這台電腦上，不會隨雲端同步，換電腦後需要重新收錄。",
       "quota": {
         "credits": "積分",
         "enterprise": "企業版",

@@ -5223,6 +5223,7 @@
       "pendingNote": "codebuddy bir terminalde açıldı. Oturum açmak için yönergeleri izleyin (oturum açma ekranı çıkmazsa /login yazın); bitince hesap buraya eklenir.",
       "reopenTerminal": "Terminali yeniden aç",
       "removeNote": "Yalnızca CC Switch'teki kopyayı siler. CodeBuddy oturumu açık kalır.",
+      "localOnly": "Hesap kopyaları yalnızca bu bilgisayarda saklanır ve eşitlenmez. Başka bir bilgisayarda hesapları yeniden ekleyin.",
       "quota": {
         "credits": "Kredi",
         "enterprise": "Kurumsal",

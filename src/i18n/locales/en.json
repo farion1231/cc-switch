@@ -5294,6 +5294,7 @@
       "pendingNote": "Opened codebuddy in a terminal. Follow the prompts to sign in (type /login if no sign-in screen appears); the account is added here once you finish.",
       "reopenTerminal": "Reopen terminal",
       "removeNote": "Only removes CC Switch's copy. CodeBuddy stays signed in.",
+      "localOnly": "Account copies are kept only on this computer and are not synced. Add accounts again on another computer.",
       "quota": {
         "credits": "Credits",
         "enterprise": "Enterprise",

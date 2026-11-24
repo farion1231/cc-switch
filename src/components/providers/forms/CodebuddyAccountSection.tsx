@@ -114,6 +114,12 @@ export const CodebuddyAccountSection: React.FC<
     (data) => (data as { planName?: string | null }).planName,
   );
 
+  // UID 只用来区分同名账号（比如两个号昵称一样），和 WorkBuddy 一样平时不显示
+  const loginCounts = new Map<string, number>();
+  for (const account of accounts) {
+    loginCounts.set(account.login, (loginCounts.get(account.login) ?? 0) + 1);
+  }
+
   const rows: GroupAccountRow[] = accounts.map((account) => {
     const uid = uidOf(account.id);
     const date = signedInDate(account.authenticated_at, i18n.language);
@@ -121,7 +127,9 @@ export const CodebuddyAccountSection: React.FC<
       account.requires_reauth ? null : plans[account.id],
       regionLabel(account.github_domain),
     ];
-    if (account.login !== uid) details.push(`UID ${uid}`);
+    if (account.login !== uid && (loginCounts.get(account.login) ?? 0) > 1) {
+      details.push(`UID ${uid}`);
+    }
     if (account.requires_reauth) {
       details.push(
         t("authCenter.codebuddy.expiredNote", {
@@ -246,6 +254,12 @@ export const CodebuddyAccountSection: React.FC<
         onReopen: login.reopenTerminal,
       }}
     >
+      <p className="m-0 border-t border-border py-2.5 pe-3 ps-4 text-caption text-fg-2">
+        {t("authCenter.codebuddy.localOnly", {
+          defaultValue:
+            "账号副本只保存在这台电脑上，不会随云同步，换电脑后需要重新收录。",
+        })}
+      </p>
       <CodebuddyLoginConfirmDialog {...login.confirmDialogProps} />
       <ManagedAccountRemoveDialog
         target={removeTarget}

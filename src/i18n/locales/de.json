@@ -5294,6 +5294,7 @@
       "pendingNote": "codebuddy wurde in einem Terminal geöffnet. Folgen Sie den Anweisungen zur Anmeldung (geben Sie /login ein, falls kein Anmeldebildschirm erscheint); das Konto wird hier hinzugefügt, sobald Sie fertig sind.",
       "reopenTerminal": "Terminal erneut öffnen",
       "removeNote": "Entfernt nur die Kopie in CC Switch. CodeBuddy bleibt angemeldet.",
+      "localOnly": "Kontokopien werden nur auf diesem Computer gespeichert und nicht synchronisiert. Fügen Sie die Konten auf einem anderen Computer erneut hinzu.",
       "quota": {
         "credits": "Credits",
         "enterprise": "Enterprise",

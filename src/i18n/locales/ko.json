@@ -5294,6 +5294,7 @@
       "pendingNote": "터미널에서 codebuddy를 열었습니다. 안내에 따라 로그인하세요(로그인 화면이 나타나지 않으면 /login 입력). 완료되면 계정이 여기에 추가됩니다.",
       "reopenTerminal": "터미널 다시 열기",
       "removeNote": "CC Switch의 사본만 삭제합니다. CodeBuddy는 로그인 상태로 유지됩니다.",
+      "localOnly": "계정 사본은 이 컴퓨터에만 저장되며 클라우드로 동기화되지 않습니다. 다른 컴퓨터에서는 계정을 다시 추가해야 합니다.",
       "quota": {
         "credits": "크레딧",
         "enterprise": "엔터프라이즈",

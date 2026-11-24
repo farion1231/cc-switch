@@ -137,7 +137,10 @@ describe("CodebuddyAccountSection", () => {
     const current = screen.getByText("alice").parentElement!;
     expect(within(current).getByText("CodeBuddy 在用")).toBeInTheDocument();
     expect(screen.getAllByText(/国内版/).length).toBeGreaterThan(0);
-    expect(screen.getByText(/UID 300/)).toBeInTheDocument();
+    // 名字各不相同：和 WorkBuddy 一样不显示 UID
+    expect(screen.queryByText(/UID/)).not.toBeInTheDocument();
+    // 底部说明副本只在本机
+    expect(screen.getByText(/账号副本只保存在这台电脑上/)).toBeInTheDocument();
     expect(screen.getByText(/登录已过期，需要重新登录/)).toBeInTheDocument();
 
     // 分组没有「删除全部账号」：只能逐个删除
@@ -339,6 +342,21 @@ describe("CodebuddyAccountSection", () => {
       within(dialog).getByRole("button", { name: "继续登录" }),
     );
     expect(auth.reauthAccount).toHaveBeenCalledWith("100@www.codebuddy.cn");
+  });
+
+  it("shows the UID only to tell accounts with the same name apart", async () => {
+    const auth = baseAuth();
+    auth.accounts = [
+      account("100", "www.codebuddy.cn", "131****9287"),
+      account("200", "www.codebuddy.cn", "131****9287"),
+      account("300", "www.codebuddy.cn", "carol"),
+    ];
+    mocks.useManagedAuth.mockReturnValue(auth);
+    render(<CodebuddyAccountSection />);
+
+    expect(screen.getByText(/UID 100/)).toBeInTheDocument();
+    expect(screen.getByText(/UID 200/)).toBeInTheDocument();
+    expect(screen.queryByText(/UID 300/)).not.toBeInTheDocument();
   });
 
   it("shows each account's plan and credits, and refreshes past the cache", async () => {

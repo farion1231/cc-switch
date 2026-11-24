@@ -5294,6 +5294,7 @@
       "pendingNote": "已在终端打开 codebuddy，按提示登录（没有出现登录界面就输入 /login），完成后这里会自动收录。",
       "reopenTerminal": "重新打开终端",
       "removeNote": "只删除 CC Switch 里的副本，不会让 CodeBuddy 退出登录。",
+      "localOnly": "账号副本只保存在这台电脑上，不会随云同步，换电脑后需要重新收录。",
       "quota": {
         "credits": "积分",
         "enterprise": "企业版",
