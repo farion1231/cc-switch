@@ -80,6 +80,11 @@ Claude Code / Codex / Gemini 공식 채널을 정가의 38% / 2% / 9%에 제공�
 </tr>
 
 <tr>
+<td width="180"><a href="https://www.string.ink/register?ref=661AE533A60AF110"><img src="assets/partners/logos/stringai-banner.png" alt="StringAI" width="150"></a></td>
+<td>이 프로젝트를 후원해 주신 StringAI에 감사드립니다! StringAI는 가성비 좋고 빠르며 안정적인 모델 API 플랫폼으로, AI 코딩, 이미지 생성, 음성 합성(TTS), 동영상 생성의 네 가지 기능을 한곳에서 이용할 수 있습니다. 전 세계의 다양한 유명 모델을 모아 셀프 호스팅, 클라우드 서비스 제공업체, 공식 API 등 여러 리소스를 선택할 수 있어 대학, 기업, 개인 개발자, 스타트업 팀의 요구를 충족하며, 전문 팀이 도입 안내와 기술 지원을 제공합니다. StringAI는 CC Switch 사용자를 위한 특별 혜택을 제공합니다: <a href="https://www.string.ink/register?ref=661AE533A60AF110">이 링크</a>로 가입하면 첫 충전 $3.74에 보너스 크레딧 $3.74를 추가로 드립니다!</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://api.fenno.ai/register?redirect=/purchase?tab=subscription%26group=16&aff=P9MR3D3PLCNL"><img src="assets/partners/logos/fenno-banner.png" alt="Fenno.ai" width="150"></a></td>
 <td>이 프로젝트를 후원해 주신 Fenno.ai에 감사드립니다! Fenno.ai는 안정적이고 효율적인 API 릴레이 서비스 제공업체로, 현재 Codex 릴레이에 집중하고 있습니다. OpenAI 및 Anthropic 프로토콜과 호환되어 Codex, Claude Code, OpenCode 등 주요 코딩 도구에서 유연하게 사용할 수 있습니다. 하루 수천억 토큰 규모의 엔터프라이즈급 워크로드를 안정적으로 지원하며, 국내외 법인을 위한 기업(B2B) 정산 및 세금계산서 발행을 제공합니다. Fenno.ai는 CC Switch 사용자에게 전용 혜택을 드립니다. <a href="https://api.fenno.ai/register?redirect=/purchase?tab=subscription%26group=16&aff=P9MR3D3PLCNL">이 링크</a>로 $50 상당의 크레딧(7일간 유효)이 제공되는 $1.99 체험 요금제에 가입하세요. 또한 최대 20%의 추천 보상을 받을 수 있으니, 더 많이 초대할수록 더 많이 받습니다!</td>
 </tr>

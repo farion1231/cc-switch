@@ -492,6 +492,28 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     icon: "haoai",
   },
   {
+    name: "StringAI",
+    websiteUrl: "https://www.string.ink",
+    apiKeyUrl: "https://www.string.ink/register?ref=661AE533A60AF110",
+    settingsConfig: {
+      name: "stringai",
+      base_url: "https://www.string.ink/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        { id: "gpt-6-astra", name: "GPT-6 Astra" },
+        { id: "gpt-6.1-sol", name: "GPT-6.1 Sol" },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "stringai",
+    icon: "stringai",
+    suggestedDefaults: {
+      model: { default: "gpt-6-astra", provider: "stringai" },
+    },
+  },
+  {
     name: "FennoAI",
     websiteUrl: "https://api.fenno.ai",
     apiKeyUrl:

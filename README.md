@@ -80,6 +80,11 @@ The platform also supports enterprise-grade concurrency, a dedicated admin conso
 </tr>
 
 <tr>
+<td width="180"><a href="https://www.string.ink/register?ref=661AE533A60AF110"><img src="assets/partners/logos/stringai-banner.png" alt="StringAI" width="150"></a></td>
+<td>Thanks to StringAI for sponsoring this project! StringAI is a cost-effective, fast, and stable model API platform that offers one-stop access to four capabilities: AI coding, image generation, text-to-speech (TTS), and video generation. It brings together many well-known models from around the world, with a choice of self-hosted, cloud-provider, and official API resources to fit universities, enterprises, individual developers, and startup teams, and a professional team provides onboarding guidance and technical support. StringAI offers CC Switch users a special perk: register via <a href="https://www.string.ink/register?ref=661AE533A60AF110">this link</a> and your first top-up of $3.74 earns an extra $3.74 in bonus credit!</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://api.fenno.ai/register?redirect=/purchase?tab=subscription%26group=16&aff=P9MR3D3PLCNL"><img src="assets/partners/logos/fenno-banner.png" alt="Fenno.ai" width="150"></a></td>
 <td>Thanks to Fenno.ai for sponsoring this project! Fenno.ai is a stable and efficient API relay service provider, currently focused on Codex relay. It is compatible with the OpenAI and Anthropic protocols and can be flexibly used from Codex, Claude Code, OpenCode, and other mainstream coding tools. It reliably supports enterprise-grade workloads of hundreds of billions of tokens per day, with corporate (B2B) settlement and invoicing for both domestic and overseas entities. Fenno.ai offers an exclusive benefit for CC Switch users: subscribe via <a href="https://api.fenno.ai/register?redirect=/purchase?tab=subscription%26group=16&aff=P9MR3D3PLCNL">this link</a> to the $1.99 Trial Plan worth $50 in credits (valid for 7 days), and earn up to 20% in referral rewards — invite more, earn more!</td>
 </tr>

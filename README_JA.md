@@ -80,6 +80,11 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 </tr>
 
 <tr>
+<td width="180"><a href="https://www.string.ink/register?ref=661AE533A60AF110"><img src="assets/partners/logos/stringai-banner.png" alt="StringAI" width="150"></a></td>
+<td>StringAI（弦界）のご支援に感謝します！StringAI はコストパフォーマンスに優れ、高速で安定したモデル API プラットフォームで、AI コーディング、画像生成、音声合成（TTS）、動画生成の 4 つの機能にワンストップでアクセスできます。世界の主要なモデルを幅広く集約し、セルフホスト、クラウドプロバイダー、公式 API など複数のリソースから選べるため、大学、企業、個人開発者、スタートアップのニーズに応えます。専門チームが導入支援と技術サポートを提供します。StringAI は CC Switch ユーザー向けに特別特典を用意しています：<a href="https://www.string.ink/register?ref=661AE533A60AF110">このリンク</a>から登録すると、初回チャージ $3.74 で $3.74 のボーナス額度がもらえます！</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://api.fenno.ai/register?redirect=/purchase?tab=subscription%26group=16&aff=P9MR3D3PLCNL"><img src="assets/partners/logos/fenno-banner.png" alt="Fenno.ai" width="150"></a></td>
 <td>Fenno.ai のご支援に感謝します！Fenno.ai は安定かつ高効率な API 中継サービスプロバイダーで、現在は主に Codex の中継を提供しています。OpenAI および Anthropic プロトコルに対応し、Codex・Claude Code・OpenCode などの主要なコーディングツールから柔軟に利用できます。1 日あたり数千億トークンというエンタープライズ級の呼び出し需要を安定して支え、国内外の法人による B2B 決済・請求書発行に対応しています。Fenno.ai は CC Switch 利用者限定の特典を用意しています：<a href="https://api.fenno.ai/register?redirect=/purchase?tab=subscription%26group=16&aff=P9MR3D3PLCNL">こちらのリンク</a>から 1.99 ドルで 50 ドル相当の Trial プラン（有効期間 7 日間）を購入でき、友達紹介で最大 20% の特典がもらえます。紹介すればするほどお得です！</td>
 </tr>

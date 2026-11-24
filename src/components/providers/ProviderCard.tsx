@@ -464,12 +464,16 @@ export function ProviderCard({
           ]
         : null
       : isXaiOauth
-        ? [
-            "xai_oauth",
-            "quota",
-            resolveManagedAccountId(provider.meta, PROVIDER_TYPES.XAI_OAUTH) ??
-              "default",
-          ]
+        ? !grokBoundAccountId || usageEnabled
+          ? [
+              "xai_oauth",
+              "quota",
+              resolveManagedAccountId(
+                provider.meta,
+                PROVIDER_TYPES.XAI_OAUTH,
+              ) ?? "default",
+            ]
+          : null
         : appId === "kimi" && isOfficial
           ? ["kimi_oauth", "quota", provider.id]
           : isOfficial && officialSubscriptionEnabled && appId !== "claude"
@@ -728,6 +732,7 @@ export function ProviderCard({
               accountId={grokBoundAccountId}
               providerName={provider.name}
               note={manualNote}
+              plan={subtitlePlan}
             />
           ) : claudeBoundAccountId ? (
             <ClaudeBoundAccountLine
@@ -863,6 +868,11 @@ export function ProviderCard({
                     meta={provider.meta}
                     inline={true}
                     isCurrent={isCurrent}
+                    autoQueryInterval={
+                      grokBoundAccountId
+                        ? (provider.meta?.usage_script?.autoQueryInterval ?? 5)
+                        : undefined
+                    }
                   />
                 ) : null
               ) : appId === "workbuddy" && isWorkBuddyOfficial(provider) ? (
@@ -978,7 +988,7 @@ export function ProviderCard({
                 !isCopilotCliOfficial) ||
               isCopilot ||
               (isCodexOauth && !isBoundCodexOfficial) ||
-              isXaiOauth
+              (isXaiOauth && !grokBoundAccountId)
                 ? undefined
                 : () => onConfigureUsage(provider)
             }
