@@ -843,9 +843,12 @@ async fn query_provider_usage_inner(
             crate::commands::xai_oauth::query_xai_oauth_quota_for(xai_state, account_id, false)
                 .await?
         } else if matches!(app_type, AppType::GrokBuild) {
-            crate::commands::xai_oauth::query_grokbuild_quota_with_managed_fallback(Some(xai_state))
-                .await
-                .map_err(|e| format!("Failed to query subscription quota: {e}"))?
+            crate::commands::xai_oauth::query_grokbuild_quota_with_managed_fallback(
+                Some(xai_state),
+                false,
+            )
+            .await
+            .map_err(|e| format!("Failed to query subscription quota: {e}"))?
         } else {
             crate::services::subscription::get_subscription_quota(app_type.as_str())
                 .await

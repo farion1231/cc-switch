@@ -220,15 +220,20 @@ export function useXaiOauthQuotaByAccountId(
   accountId: string | null,
   options: UseCodexOauthQuotaOptions = {},
 ) {
-  const { enabled = true, autoQuery = false } = options;
+  const {
+    enabled = true,
+    autoQuery = false,
+    autoQueryIntervalMinutes = 5,
+  } = options;
   const query = useQuery({
     queryKey: ["xai_oauth", "quota", accountId ?? "default"],
     queryFn: () => subscriptionApi.getXaiOauthQuota(accountId),
     enabled,
-    refetchInterval: autoQuery ? REFETCH_INTERVAL : false,
-    refetchIntervalInBackground: autoQuery,
-    refetchOnWindowFocus: autoQuery,
-    staleTime: REFETCH_INTERVAL,
+    ...autoRefetch(autoQuery, autoQueryIntervalMinutes),
+    staleTime:
+      autoQueryIntervalMinutes > 0
+        ? Math.max(autoQueryIntervalMinutes, 1) * 60 * 1000
+        : REFETCH_INTERVAL,
     retry: 1,
   });
 
