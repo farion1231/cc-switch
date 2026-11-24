@@ -9,6 +9,7 @@ mod support;
 mod app_config_load;
 mod app_type_parse;
 mod cline_commands;
+mod codebuddy_commands;
 mod copilot_commands;
 mod deeplink_import;
 mod dsh_commands;

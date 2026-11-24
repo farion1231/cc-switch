@@ -25,19 +25,13 @@ import { KNOWN_APP_TYPES, type AppTypeFilter } from "@/types/usage";
 import type { EnvConflict } from "@/types/env";
 import type { SubscriptionQuota } from "@/types/subscription";
 import { invalidateGrokCliLoginCaches } from "@/lib/query/subscription";
-import {
-  providersQueryOptions,
-  proxyKeys,
-  useProvidersQuery,
-  useSettingsQuery,
-} from "@/lib/query";
-import {
-  piApi,
-  providersApi,
-  settingsApi,
-  type AppId,
-  type ProviderSwitchEvent,
-} from "@/lib/api";
+import { providersQueryOptions, useProvidersQuery } from "@/lib/query/queries";
+import { useSettingsQuery } from "@/lib/query/settings";
+import { proxyKeys } from "@/lib/query/proxy";
+import { piApi } from "@/lib/api/pi";
+import { providersApi } from "@/lib/api/providers";
+import { settingsApi } from "@/lib/api/settings";
+import type { AppId, ProviderSwitchEvent } from "@/lib/api";
 import { checkAllEnvConflicts, checkEnvConflicts } from "@/lib/api/env";
 import { useProviderActions } from "@/hooks/useProviderActions";
 import { openclawKeys, useOpenClawHealth } from "@/hooks/useOpenClaw";
@@ -901,7 +895,8 @@ function App() {
           activeApp === "cline" ||
           activeApp === "agy" ||
           activeApp === "copilot" ||
-          activeApp === "workbuddy"
+          activeApp === "workbuddy" ||
+          activeApp === "codebuddy"
         )
           return;
         const conflicts = await checkEnvConflicts(activeApp);
@@ -1153,7 +1148,8 @@ function App() {
       app === "kimi" ||
       app === "cline" ||
       app === "copilot" ||
-      app === "workbuddy"
+      app === "workbuddy" ||
+      app === "codebuddy"
     ) {
       await queryClient.invalidateQueries({ queryKey: ["providers", app] });
       if (app === "cline") {
@@ -1226,6 +1222,10 @@ function App() {
   };
 
   const handleDuplicateProvider = async (provider: Provider) => {
+    // CodeBuddy's provider key is the model id sent upstream and is locked in
+    // the editor, so a "-copy" key would be an unusable model. Cards hide the
+    // action; this guards any other caller.
+    if (activeApp === "codebuddy") return;
     if (
       activeApp === "opencode" &&
       provider.category !== "omo" &&

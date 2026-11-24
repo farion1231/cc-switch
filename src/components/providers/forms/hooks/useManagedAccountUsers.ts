@@ -20,6 +20,7 @@ export function useManagedAccountUsers(
   const { data: grokbuild } = useProvidersQuery("grokbuild");
   const { data: copilot } = useProvidersQuery("copilot");
   const { data: workbuddy } = useProvidersQuery("workbuddy");
+  const { data: codebuddy } = useProvidersQuery("codebuddy");
 
   return useCallback(
     (accountIds: readonly string[]): ManagedAccountUser[] =>
@@ -31,6 +32,7 @@ export function useManagedAccountUsers(
         grokbuild: grokbuild?.providers,
         copilot: copilot?.providers,
         workbuddy: workbuddy?.providers,
+        codebuddy: codebuddy?.providers,
       }),
     [
       authProvider,
@@ -42,6 +44,7 @@ export function useManagedAccountUsers(
       grokbuild,
       copilot,
       workbuddy,
+      codebuddy,
     ],
   );
 }

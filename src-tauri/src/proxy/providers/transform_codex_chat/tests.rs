@@ -1811,6 +1811,34 @@ fn chat_response_to_responses_extracts_reasoning_details() {
 }
 
 #[test]
+fn chat_completion_to_response_reads_mistral_thinking_chunks() {
+    // #9902：Mistral 开思考后 content 是 thinking / text 分段数组
+    let input = json!({
+        "id": "chatcmpl_mistral",
+        "created": 123,
+        "model": "mistral-large-4",
+        "choices": [{
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": [{"type": "text", "text": "We "}, {"type": "text", "text": "add"}]},
+                    {"type": "text", "text": "391"}
+                ]
+            },
+            "finish_reason": "stop"
+        }]
+    });
+
+    let result =
+        chat_completion_to_response_with_context(input, &CodexToolContext::default()).unwrap();
+
+    assert_eq!(result["output"][0]["type"], "reasoning");
+    assert_eq!(result["output"][0]["summary"][0]["text"], "We add");
+    assert_eq!(result["output"][1]["content"][0]["text"], "391");
+    assert_eq!(result["output"].as_array().unwrap().len(), 2);
+}
+
+#[test]
 fn chat_completion_to_response_unwraps_data_envelope() {
     // #5658：ClinePass 把非流式 Chat 响应包在 data 里
     let input = json!({

@@ -26,7 +26,7 @@ export interface AppsPageMocks {
   success: Mock;
   warning: Mock;
   error: Mock;
-  settings: { visibleApps?: undefined; appOrder?: string[] };
+  settings: { visibleApps?: Record<string, boolean>; appOrder?: string[] };
   updateSettings: Mock;
   autoSaveSettings: Mock;
   dragEndHandlers: ((event: DragEndEvent) => void)[];

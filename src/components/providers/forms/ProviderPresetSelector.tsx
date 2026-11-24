@@ -19,6 +19,7 @@ import type { KimiProviderPreset } from "@/config/kimiProviderPresets";
 import type { ClineProviderPreset } from "@/config/clineProviderPresets";
 import type { CopilotProviderPreset } from "@/config/copilotProviderPresets";
 import type { WorkBuddyProviderPreset } from "@/config/workbuddyProviderPresets";
+import type { CodebuddyProviderPreset } from "@/config/codebuddyProviderPresets";
 import type { PiProviderPreset } from "@/config/piProviderPresets";
 import type { OmpProviderPreset } from "@/config/ompProviderPresets";
 import type { ProviderCategory } from "@/types";
@@ -81,7 +82,8 @@ export type AnyPreset =
   | ClineProviderPreset
   | OmpProviderPreset
   | CopilotProviderPreset
-  | WorkBuddyProviderPreset;
+  | WorkBuddyProviderPreset
+  | CodebuddyProviderPreset;
 
 export type PresetEntry = {
   id: string;

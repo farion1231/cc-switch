@@ -2,6 +2,7 @@
 //!
 //! 实现 OpenAI SSE → Anthropic SSE 格式转换
 
+use super::codex_chat_common::{chat_content_segments, ChatContentSegment};
 use super::inline_think::InlineThinkSplitter;
 use crate::proxy::sse::{strip_sse_field, SseBuffer};
 use bytes::Bytes;
@@ -32,8 +33,9 @@ struct StreamChoice {
 
 #[derive(Debug, Deserialize)]
 struct Delta {
+    /// 字符串或分段数组（Mistral 开思考后两者在同一条流里交替，#9902）。
     #[serde(default)]
-    content: Option<String>,
+    content: Option<Value>,
     // OpenRouter/Kimi/其它 使用 reasoning，DeepSeek 使用 reasoning_content
     #[serde(default, alias = "reasoning_content")]
     reasoning: Option<String>,
@@ -411,25 +413,38 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                             }
                                         }
 
-                                        // 处理文本内容。content 里流首内联的 <think>/<thinking>
-                                        // 块（DeepSeek 系、MiniMax M3 等 Chat 兼容上游）先剥离为
+                                        // 处理文本内容。content 可能是分段数组（Mistral 的
+                                        // thinking / text 段），按顺序拆开：thinking 段直接下发为
+                                        // thinking；正文里流首内联的 <think>/<thinking> 块
+                                        // （DeepSeek 系、MiniMax M3 等 Chat 兼容上游）先剥离为
                                         // thinking，剩余正文按原逻辑下发。
-                                        if let Some(content) = &choice.delta.content {
-                                            if !content.is_empty() {
-                                                let (thinking, text) = inline_think.push(content);
-                                                for (block_type, delta) in
-                                                    [("thinking", thinking), ("text", text)]
-                                                {
-                                                    if let Some(delta) = &delta {
-                                                        for sse_data in non_tool_block_events(
-                                                            block_type,
-                                                            delta,
-                                                            &mut next_content_index,
-                                                            &mut current_non_tool_block_type,
-                                                            &mut current_non_tool_block_index,
-                                                        ) {
-                                                            yield Ok(Bytes::from(sse_data));
-                                                        }
+                                        let segments = choice
+                                            .delta
+                                            .content
+                                            .as_ref()
+                                            .map(chat_content_segments)
+                                            .unwrap_or_default();
+                                        for segment in segments {
+                                            let (thinking, text) = match segment {
+                                                ChatContentSegment::Thinking(thinking) => {
+                                                    (Some(thinking), None)
+                                                }
+                                                ChatContentSegment::Text(content) => {
+                                                    inline_think.push(&content)
+                                                }
+                                            };
+                                            for (block_type, delta) in
+                                                [("thinking", thinking), ("text", text)]
+                                            {
+                                                if let Some(delta) = &delta {
+                                                    for sse_data in non_tool_block_events(
+                                                        block_type,
+                                                        delta,
+                                                        &mut next_content_index,
+                                                        &mut current_non_tool_block_type,
+                                                        &mut current_non_tool_block_index,
+                                                    ) {
+                                                        yield Ok(Bytes::from(sse_data));
                                                     }
                                                 }
                                             }
@@ -1503,6 +1518,40 @@ mod tests {
         assert!(!events
             .iter()
             .any(|e| e.get("type").and_then(|v| v.as_str()) == Some("message_stop")));
+    }
+
+    #[tokio::test]
+    async fn test_mistral_chunked_content_streams_thinking_and_text() {
+        // #9902：Mistral 开思考后 delta.content 在字符串和分段数组之间切换，
+        // 修复前数组 chunk 反序列化失败被整条丢弃，回复为空。
+        let input = concat!(
+            "data: {\"id\":\"c1\",\"model\":\"mistral-large-4\",\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"\"}}]}\n\n",
+            "data: {\"id\":\"c1\",\"model\":\"mistral-large-4\",\"choices\":[{\"delta\":{\"content\":[{\"type\":\"thinking\",\"thinking\":[{\"type\":\"text\",\"text\":\"We \"}]}]}}]}\n\n",
+            "data: {\"id\":\"c1\",\"model\":\"mistral-large-4\",\"choices\":[{\"delta\":{\"content\":[{\"type\":\"thinking\",\"thinking\":[{\"type\":\"text\",\"text\":\"add\"}],\"closed\":true},{\"type\":\"text\",\"text\":\"39\"}]}}]}\n\n",
+            "data: {\"id\":\"c1\",\"model\":\"mistral-large-4\",\"choices\":[{\"delta\":{\"content\":\"1\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":3}}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let events = collect_anthropic_events(input).await;
+
+        let block_starts: Vec<&str> = events
+            .iter()
+            .filter(|event| event_type(event) == Some("content_block_start"))
+            .filter_map(|event| {
+                event
+                    .pointer("/content_block/type")
+                    .and_then(|v| v.as_str())
+            })
+            .collect();
+        assert_eq!(block_starts, vec!["thinking", "text"]);
+        assert_eq!(
+            collect_delta_text(&events, "thinking_delta", "/delta/thinking"),
+            "We add"
+        );
+        assert_eq!(
+            collect_delta_text(&events, "text_delta", "/delta/text"),
+            "391"
+        );
     }
 
     #[tokio::test]

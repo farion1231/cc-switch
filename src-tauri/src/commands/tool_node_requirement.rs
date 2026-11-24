@@ -266,17 +266,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn openclaw_range_rejects_node_22_and_admits_24_and_26() {
-        let range = ">=24.16.0 <25 || >=26.1.0";
-        assert_eq!(node_range_satisfied(range, "22.23.2"), Some(false));
-        assert_eq!(node_range_satisfied(range, "v24.15.9"), Some(false));
-        assert_eq!(node_range_satisfied(range, "24.16.0"), Some(true));
-        assert_eq!(node_range_satisfied(range, "25.0.0"), Some(false));
-        assert_eq!(node_range_satisfied(range, "26.1.0"), Some(true));
-    }
-
-    #[test]
     fn common_engine_ranges() {
+        let openclaw = ">=24.16.0 <25 || >=26.1.0";
+        assert_eq!(node_range_satisfied(openclaw, "22.23.2"), Some(false));
+        assert_eq!(node_range_satisfied(openclaw, "v24.15.9"), Some(false));
+        assert_eq!(node_range_satisfied(openclaw, "24.16.0"), Some(true));
+        assert_eq!(node_range_satisfied(openclaw, "25.0.0"), Some(false));
+        assert_eq!(node_range_satisfied(openclaw, "26.1.0"), Some(true));
+
         assert_eq!(node_range_satisfied(">=20", "20.0.0"), Some(true));
         assert_eq!(node_range_satisfied(">=20", "18.20.8"), Some(false));
         assert_eq!(node_range_satisfied(">= 22.0.0", "22.1.0"), Some(true));

@@ -441,6 +441,40 @@ fn expand_env_chars_with_lookup(
 /// 构建某工具的候选搜索目录（原生安装优先，PATH 兜底）。
 /// 单探兜底 (`scan_cli_version`) 与全量枚举 (`enumerate_tool_installations`) 共用，
 /// 确保两条路径看到的是同一组安装位置。
+/// 在终端里启动 CLI 时用的可执行文件：按工具搜索路径找，跳过版本管理器的 shim 目录
+/// （mise/asdf/scoop 的 shim 可能已失效，例如 `mise ERROR codebuddy is not a valid shim`），
+/// 找不到真实安装时再退回 shim。都没有就返回 `None`，由调用方用裸命令名兜底。
+pub(crate) fn locate_cli_for_terminal(tool: &str) -> Option<std::path::PathBuf> {
+    let mut shim = None;
+    for dir in build_tool_search_paths(tool) {
+        let in_shims = dir.file_name().is_some_and(|name| name == "shims");
+        for candidate in tool_executable_candidates(tool, &dir) {
+            if !is_launchable_file(&candidate) {
+                continue;
+            }
+            if !in_shims {
+                return Some(candidate);
+            }
+            shim.get_or_insert(candidate);
+        }
+    }
+    shim
+}
+
+#[cfg(unix)]
+fn is_launchable_file(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    path.metadata()
+        .map(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
+}
+
+#[cfg(not(unix))]
+fn is_launchable_file(path: &Path) -> bool {
+    path.is_file()
+}
+
 pub(super) fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
     let home = crate::config::get_home_dir();
 
