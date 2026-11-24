@@ -9,23 +9,21 @@ use std::net::IpAddr;
 use std::sync::{OnceLock, RwLock};
 use std::time::Duration;
 
-/// 全局 HTTP 客户端实例
-static GLOBAL_CLIENT: OnceLock<RwLock<Client>> = OnceLock::new();
+/// 全局代理 URL 与各客户端一起更新，避免请求读到不同批次的配置。
+struct ProxyHttpState {
+    proxy_url: Option<String>,
+    client: Client,
+    no_redirect: Client,
+    https_only: Client,
+}
 
-/// 不跟随重定向的全局客户端（与 GLOBAL_CLIENT 共享代理配置，避免高频重建连接池）
-static NO_REDIRECT_CLIENT: OnceLock<RwLock<Client>> = OnceLock::new();
-
-/// 仅允许 HTTPS 的全局客户端（与 GLOBAL_CLIENT 共享代理配置）
-static HTTPS_ONLY_CLIENT: OnceLock<RwLock<Client>> = OnceLock::new();
+static PROXY_STATE: RwLock<Option<ProxyHttpState>> = RwLock::new(None);
 
 /// 不走任何代理的客户端：上游是本机地址（Ollama、LM Studio 等）时使用
 static DIRECT_CLIENT: OnceLock<Client> = OnceLock::new();
 
 /// 不走代理且不跟随重定向的本机直连客户端
 static DIRECT_NO_REDIRECT_CLIENT: OnceLock<Client> = OnceLock::new();
-
-/// 当前代理 URL（用于日志和状态查询）
-static CURRENT_PROXY_URL: OnceLock<RwLock<Option<String>>> = OnceLock::new();
 
 /// CC Switch 代理服务器当前监听的端口
 static CC_SWITCH_PROXY_PORT: OnceLock<RwLock<u16>> = OnceLock::new();
@@ -108,37 +106,7 @@ fn get_proxy_port() -> u16 {
 /// * `proxy_url` - 代理 URL，如 `http://127.0.0.1:7890` 或 `socks5://127.0.0.1:1080`
 ///   传入 None 或空字符串表示直连
 pub fn init(proxy_url: Option<&str>) -> Result<(), String> {
-    let effective_url = proxy_url.filter(|s| !s.trim().is_empty());
-    let client = build_client(effective_url)?;
-    let no_redirect_client = build_no_redirect_client(effective_url)?;
-    let https_only_client = build_https_only_client(effective_url)?;
-
-    // 尝试初始化全局客户端，如果已存在则记录警告并使用 apply_proxy 更新
-    if GLOBAL_CLIENT.set(RwLock::new(client.clone())).is_err() {
-        log::warn!(
-            "[GlobalProxy] [GP-003] Already initialized, updating instead: {}",
-            effective_url
-                .map(mask_url)
-                .unwrap_or_else(|| "direct connection".to_string())
-        );
-        // 已初始化，改用 apply_proxy 更新
-        return apply_proxy(proxy_url);
-    }
-
-    set_or_replace_client(&NO_REDIRECT_CLIENT, no_redirect_client)?;
-    set_or_replace_client(&HTTPS_ONLY_CLIENT, https_only_client)?;
-
-    // 初始化代理 URL 记录
-    let _ = CURRENT_PROXY_URL.set(RwLock::new(effective_url.map(|s| s.to_string())));
-
-    log::info!(
-        "[GlobalProxy] Initialized: {}",
-        effective_url
-            .map(mask_url)
-            .unwrap_or_else(|| "direct connection".to_string())
-    );
-
-    Ok(())
+    apply_proxy(proxy_url)
 }
 
 /// 验证代理配置（不应用）
@@ -167,33 +135,21 @@ pub fn validate_proxy(proxy_url: Option<&str>) -> Result<(), String> {
 /// * `proxy_url` - 代理 URL，None 或空字符串表示直连
 pub fn apply_proxy(proxy_url: Option<&str>) -> Result<(), String> {
     let effective_url = proxy_url.filter(|s| !s.trim().is_empty());
-    let new_client = build_client(effective_url)?;
-    let new_no_redirect = build_no_redirect_client(effective_url)?;
-    let new_https_only = build_https_only_client(effective_url)?;
+    let next = ProxyHttpState {
+        proxy_url: effective_url.map(str::to_owned),
+        client: build_client(effective_url)?,
+        no_redirect: build_no_redirect_client(effective_url)?,
+        https_only: build_https_only_client(effective_url)?,
+    };
 
-    // 更新客户端
-    if let Some(lock) = GLOBAL_CLIENT.get() {
-        let mut client = lock.write().map_err(|e| {
+    let previous = PROXY_STATE
+        .write()
+        .map_err(|e| {
             log::error!("[GlobalProxy] [GP-001] Failed to acquire write lock: {e}");
             "Failed to update proxy: lock poisoned".to_string()
-        })?;
-        *client = new_client;
-    } else {
-        // 如果还没初始化，则初始化
-        return init(proxy_url);
-    }
-
-    set_or_replace_client(&NO_REDIRECT_CLIENT, new_no_redirect)?;
-    set_or_replace_client(&HTTPS_ONLY_CLIENT, new_https_only)?;
-
-    // 更新代理 URL 记录
-    if let Some(lock) = CURRENT_PROXY_URL.get() {
-        let mut url = lock.write().map_err(|e| {
-            log::error!("[GlobalProxy] [GP-002] Failed to acquire URL write lock: {e}");
-            "Failed to update proxy URL record: lock poisoned".to_string()
-        })?;
-        *url = effective_url.map(|s| s.to_string());
-    }
+        })?
+        .replace(next);
+    drop(previous);
 
     log::info!(
         "[GlobalProxy] Applied: {}",
@@ -205,18 +161,18 @@ pub fn apply_proxy(proxy_url: Option<&str>) -> Result<(), String> {
     Ok(())
 }
 
-/// 获取全局 HTTP 客户端
-///
-/// 返回配置了代理的客户端（如果已配置代理），否则返回跟随系统代理的客户端。
+fn read_proxy_state<T>(read: impl FnOnce(&ProxyHttpState) -> T) -> Option<T> {
+    PROXY_STATE.read().ok()?.as_ref().map(read)
+}
+
+fn fallback_client() -> Client {
+    log::warn!("[GlobalProxy] [GP-004] Client not initialized, using fallback");
+    build_client(None).unwrap_or_default()
+}
+
+/// 获取配置了代理的客户端。未设置代理时，客户端跟随系统代理。
 pub fn get() -> Client {
-    GLOBAL_CLIENT
-        .get()
-        .and_then(|lock| lock.read().ok())
-        .map(|c| c.clone())
-        .unwrap_or_else(|| {
-            log::warn!("[GlobalProxy] [GP-004] Client not initialized, using fallback");
-            build_client(None).unwrap_or_default()
-        })
+    read_proxy_state(|state| state.client.clone()).unwrap_or_else(fallback_client)
 }
 
 /// 按目标地址取客户端：本机地址直连，其余同 [`get`]
@@ -232,17 +188,13 @@ pub fn get_for_url(url: &str) -> Client {
     }
 }
 
-/// 发往 `url` 时应使用的上游代理：本机地址返回 None（直连），其余返回当前全局代理
-pub fn proxy_url_for(url: &str) -> Option<String> {
-    upstream_proxy_for(url, get_current_proxy_url())
-}
-
-fn upstream_proxy_for(url: &str, current: Option<String>) -> Option<String> {
+/// 从同一份配置读取转发所需的代理 URL 和客户端。本机地址使用直连客户端。
+pub(crate) fn upstream_for_url(url: &str) -> (Option<String>, Client) {
     if is_loopback_url(url) {
-        None
-    } else {
-        current
+        return (None, direct_client());
     }
+    read_proxy_state(|state| (state.proxy_url.clone(), state.client.clone()))
+        .unwrap_or_else(|| (None, fallback_client()))
 }
 
 fn direct_client() -> Client {
@@ -287,10 +239,7 @@ fn host_is_loopback(host: &str) -> bool {
 ///
 /// 返回当前配置的代理 URL，None 表示直连。
 pub fn get_current_proxy_url() -> Option<String> {
-    CURRENT_PROXY_URL
-        .get()
-        .and_then(|lock| lock.read().ok())
-        .and_then(|url| url.clone())
+    read_proxy_state(|state| state.proxy_url.clone()).flatten()
 }
 
 /// 两种客户端共用的参数
@@ -306,26 +255,6 @@ fn base_builder() -> reqwest::ClientBuilder {
         .no_brotli()
         .no_deflate()
         .no_zstd()
-}
-
-fn set_or_replace_client(slot: &OnceLock<RwLock<Client>>, client: Client) -> Result<(), String> {
-    if let Some(lock) = slot.get() {
-        let mut guard = lock
-            .write()
-            .map_err(|_| "Failed to update HTTP client: lock poisoned".to_string())?;
-        *guard = client;
-    } else if let Err(existing) = slot.set(RwLock::new(client)) {
-        // 并发初始化竞争：改写已存在的槽位
-        if let Some(lock) = slot.get() {
-            let mut guard = lock
-                .write()
-                .map_err(|_| "Failed to update HTTP client: lock poisoned".to_string())?;
-            *guard = existing
-                .into_inner()
-                .map_err(|_| "Failed to update HTTP client: lock poisoned".to_string())?;
-        }
-    }
-    Ok(())
 }
 
 fn build_no_redirect_client(proxy_url: Option<&str>) -> Result<Client, String> {
@@ -355,36 +284,16 @@ fn direct_no_redirect_client() -> Result<Client, String> {
 /// 不跟随重定向的客户端，代理设置与全局客户端一致。带自定义凭据请求头（如 `x-dsh-auth-token`）
 /// 的请求用它：reqwest 跨主机重定向时只剥掉标准认证头，自定义头会被带到新主机。
 pub fn no_redirect() -> Result<Client, String> {
-    if let Some(lock) = NO_REDIRECT_CLIENT.get() {
-        if let Ok(client) = lock.read() {
-            return Ok(client.clone());
-        }
-    }
-    let client = build_no_redirect_client(get_current_proxy_url().as_deref())?;
-    let _ = NO_REDIRECT_CLIENT.set(RwLock::new(client.clone()));
-    Ok(NO_REDIRECT_CLIENT
-        .get()
-        .and_then(|lock| lock.read().ok())
-        .map(|c| c.clone())
-        .unwrap_or(client))
+    read_proxy_state(|state| state.no_redirect.clone())
+        .map_or_else(|| build_no_redirect_client(None), Ok)
 }
 
 /// 只走 https 的客户端（跳转到 http 直接报错），代理设置与全局客户端一致。
 /// 带 `Authorization` 的请求用它：reqwest 只在换主机或换端口时去掉认证头，同主机
 /// 同端口从 https 跳到 http（非默认端口时会发生）会把凭据明文发出去。
 pub fn https_only() -> Result<Client, String> {
-    if let Some(lock) = HTTPS_ONLY_CLIENT.get() {
-        if let Ok(client) = lock.read() {
-            return Ok(client.clone());
-        }
-    }
-    let client = build_https_only_client(get_current_proxy_url().as_deref())?;
-    let _ = HTTPS_ONLY_CLIENT.set(RwLock::new(client.clone()));
-    Ok(HTTPS_ONLY_CLIENT
-        .get()
-        .and_then(|lock| lock.read().ok())
-        .map(|c| c.clone())
-        .unwrap_or(client))
+    read_proxy_state(|state| state.https_only.clone())
+        .map_or_else(|| build_https_only_client(None), Ok)
 }
 
 /// A one-off no-redirect client for an explicit proxy (`None` follows the system
@@ -595,27 +504,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_upstream_proxy_for_skips_loopback() {
-        let current = Some("http://127.0.0.1:7890".to_string());
-        assert_eq!(
-            upstream_proxy_for("http://localhost:11434/v1/messages", current.clone()),
-            None
-        );
-        assert_eq!(
-            upstream_proxy_for("http://127.0.0.1:1234/v1/chat/completions", current.clone()),
-            None
-        );
-        assert_eq!(
-            upstream_proxy_for("https://api.example.com/v1/messages", current.clone()),
-            current
-        );
-        assert_eq!(
-            upstream_proxy_for("https://api.example.com/v1/messages", None),
-            None
-        );
-    }
-
     /// 起一个只回 200 的一次性本机 HTTP 服务，返回它的地址
     fn spawn_ok_server() -> String {
         use std::io::{Read, Write};
@@ -647,7 +535,9 @@ mod tests {
             .is_err());
         // 本机地址选到的直连客户端不受代理影响
         assert!(is_loopback_url(&url));
-        let resp = direct_client()
+        let (proxy_url, client) = upstream_for_url(&url);
+        assert!(proxy_url.is_none());
+        let resp = client
             .get(&url)
             .timeout(Duration::from_secs(5))
             .send()

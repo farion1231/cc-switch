@@ -40,7 +40,7 @@ impl RequestForwarder {
         };
 
         // 获取全局代理 URL（上游是本机地址时直连，不送进代理）
-        let upstream_proxy_url: Option<String> = crate::proxy::http_client::proxy_url_for(url);
+        let (upstream_proxy_url, client) = crate::proxy::http_client::upstream_for_url(url);
 
         // SOCKS5 代理不支持 CONNECT 隧道，需要用 reqwest
         let is_socks_proxy = upstream_proxy_url
@@ -55,7 +55,6 @@ impl RequestForwarder {
             log::debug!(
                 "[Forwarder] Using pooled reqwest client (preserve_exact_header_case={preserve_exact_header_case}, socks_proxy={is_socks_proxy})"
             );
-            let client = crate::proxy::http_client::get_for_url(url);
             let mut request = client.request(method.clone(), url);
             if request_is_streaming {
                 // reqwest 的 timeout 是整请求超时；流式请求交给 response_processor
