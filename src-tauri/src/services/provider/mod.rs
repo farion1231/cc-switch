@@ -47,6 +47,40 @@ pub use live::{
     should_import_default_config_on_startup, sync_current_to_live,
 };
 
+/// 跟随环境（见 `app_targets`）：在当前线程的目标作用域里把 `target` 写进那个目标的
+/// 客户端文件，不改指针、不回填。`prev` 是这个目标上次写入的那家，用来删它带进来的独有
+/// 字段；`None` 表示不知道（第一次写入）。OpenCode 是累加式应用，同步全部受管供应商。
+pub(crate) fn apply_to_follower(
+    state: &AppState,
+    app: &AppType,
+    target: Option<&Provider>,
+    prev: Option<&Provider>,
+) -> Result<(), AppError> {
+    use crate::mode::state::{op, PendingTarget};
+    match (app, target) {
+        (AppType::Claude, Some(target)) => {
+            claude_direct::reapply(state.db.as_ref(), prev, target)?;
+        }
+        (AppType::Codex, Some(target)) => {
+            let owner = prev.map_or(codex_direct::Owner::None, codex_direct::Owner::Provider);
+            codex_direct::write_direct(
+                state.db.as_ref(),
+                &state.codex_oauth_manager,
+                op::APPLY,
+                owner,
+                Some(target),
+                PendingTarget::default(),
+            )?;
+        }
+        (AppType::Gemini, Some(target)) => {
+            gemini_direct::reapply(state.db.as_ref(), target)?;
+        }
+        (AppType::OpenCode, _) => live::sync_all_providers_to_live(state, app)?,
+        _ => {}
+    }
+    Ok(())
+}
+
 pub fn import_pi_providers_from_live(state: &AppState) -> Result<usize, AppError> {
     pi::import_from_live(state)
 }
@@ -213,6 +247,10 @@ pub struct SwitchResult {
     /// while unified history is off, so newer Codex locks the old bucket.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub codex_history_split: Option<crate::codex_history_migration::CodexHistorySplitHint>,
+    /// 多环境写入：这次切换写到的其他环境的结果（各环境用自己的供应商，切换只改主环境，
+    /// 目前恒为空，保留给前端兼容）。
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub targets: Vec<crate::app_targets::sync::TargetReport>,
 }
 
 #[cfg(test)]
@@ -7426,6 +7464,24 @@ impl ProviderService {
     /// - 直连模式：切换式应用只替换客户端文件里的关键字段（不回填），文件和指针在同一个
     ///   操作里提交；累加式应用按各自的规则写入。
     pub fn switch(state: &AppState, app_type: AppType, id: &str) -> Result<SwitchResult, AppError> {
+        let mut result = Self::switch_primary(state, app_type.clone(), id)?;
+        // 主环境操作已提交并释放写锁，再把 Windows 的最新配置同步给 WSL。
+        // 单目标失败留在 targets 中，不回滚 Windows 或其他成功目标。
+        if crate::app_targets::sync::has_followers(&app_type) {
+            match crate::app_targets::service::sync_now(state, app_type.as_str(), None) {
+                Ok(sync) => result.targets = sync.targets,
+                Err(error) => result.warnings.push(error.to_string()),
+            }
+        }
+        Ok(result)
+    }
+
+    // 保存目标时已有冲突 / 暂缓决策，由调用方在保存完成后同步指定目标。
+    pub(crate) fn switch_primary(
+        state: &AppState,
+        app_type: AppType,
+        id: &str,
+    ) -> Result<SwitchResult, AppError> {
         let app = app_type.as_str().to_string();
         let result = Self::switch_inner(state, app_type, id);
         match &result {
@@ -7488,6 +7544,7 @@ impl ProviderService {
         let _provider = rows
             .get(id)?
             .ok_or_else(|| AppError::Message(format!("供应商 {id} 不存在")))?;
+        crate::app_targets::sync::ensure_provider_allowed(&app_type, _provider)?;
         let providers = &rows.readable;
         // WorkBuddy 官方登录卡不写 models.json，卡片的「添加」走账号切换（还原绑定账号的登录文件）
         if app_type == AppType::WorkBuddy

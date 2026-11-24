@@ -297,6 +297,17 @@ impl PromptService {
         Ok(())
     }
 
+    pub(crate) fn clear_live_in_scope(app: &AppType) -> Result<(), AppError> {
+        if matches!(app, AppType::ClaudeDesktop | AppType::Pi) {
+            return Ok(());
+        }
+        let target_path = prompt_file_path(app)?;
+        if target_path.exists() {
+            write_text_file(&target_path, "")?;
+        }
+        Ok(())
+    }
+
     /// Best-effort projection for every Prompt-capable application.
     pub fn sync_all_to_live(state: &AppState) -> Result<(), AppError> {
         let mut failures = Vec::new();

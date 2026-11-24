@@ -230,6 +230,13 @@ impl ProxyService {
 
     /// 构造写入 Live 的代理地址（处理 0.0.0.0 / IPv6 等特殊情况）
     pub(crate) async fn build_proxy_urls(&self) -> Result<(String, String), String> {
+        self.build_proxy_urls_for_app(None).await
+    }
+
+    pub(crate) async fn build_proxy_urls_for_app(
+        &self,
+        app: Option<&AppType>,
+    ) -> Result<(String, String), String> {
         let config = self
             .db
             .get_listen_config()
@@ -247,7 +254,8 @@ impl ProxyService {
             return Err("代理监听端口为 0，但代理服务器尚未运行，无法生成接管地址".to_string());
         }
 
-        let host = crate::settings::get_proxy_client_host().unwrap_or(config.listen_address);
+        let host =
+            crate::settings::get_proxy_client_host_for_app(app).unwrap_or(config.listen_address);
         let proxy_url = proxy_origin(&host, listen_port);
         let proxy_codex_base_url = format!("{proxy_url}/v1");
         Ok((proxy_url, proxy_codex_base_url))

@@ -484,7 +484,7 @@ describe("AppsPage layout, grouping and diagnostics", () => {
     expect(rowApps("appsPage.sectionInstalled")).toContain("codex");
   });
 
-  it("waits for the version probe before grouping a tool that runs in WSL", async () => {
+  it("keeps WSL shell management out of the application page", async () => {
     const pending = deferred<void>();
     const getVersions = mocks.getToolVersions.getMockImplementation()!;
     mocks.getToolVersions.mockImplementation(async (tools: string[]) => {
@@ -496,10 +496,9 @@ describe("AppsPage layout, grouping and diagnostics", () => {
     );
     const { AppsPage } = await import("@/components/apps/AppsPage");
     mountApps(AppsPage);
-    // 本机清单说明不了 WSL 里装没装：不把 gemini 归进「未安装」，但 shell 选择先出来
-    expect(
-      await card("Gemini CLI").findByText("appsPage.wslFlag"),
-    ).toBeInTheDocument();
+    // 即使读到旧的 WSL 状态，也不暴露 WSL shell 或安装入口。
+    expect(card("Gemini CLI").queryByText("appsPage.wslFlag")).toBeNull();
+    expect(screen.queryByRole("combobox")).toBeNull();
     expect(
       screen.queryByRole("region", { name: "appsPage.sectionNotInstalled" }),
     ).toBeNull();

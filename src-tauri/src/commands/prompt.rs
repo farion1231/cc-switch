@@ -30,7 +30,24 @@ pub async fn upsert_prompt(
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
     let app_type = AppType::from_str(&app)?;
-    PromptService::upsert_prompt(&state, app_type, &id, prompt)
+    let had_enabled = state
+        .db
+        .get_prompts(&app_type)
+        .ok()
+        .is_some_and(|m| m.values().any(|p| p.enabled));
+    PromptService::upsert_prompt(&state, app_type.clone(), &id, prompt)?;
+    let has_enabled = state
+        .db
+        .get_prompts(&app_type)
+        .ok()
+        .is_some_and(|m| m.values().any(|p| p.enabled));
+    let kind = if had_enabled && !has_enabled {
+        crate::app_targets::sync::SyncKind::PromptClear
+    } else {
+        crate::app_targets::sync::SyncKind::Prompt
+    };
+    crate::app_targets::sync::spawn_after_change(&state, vec![app_type], kind);
+    Ok(())
 }
 
 #[tauri::command]
@@ -40,7 +57,24 @@ pub async fn delete_prompt(
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
     let app_type = AppType::from_str(&app)?;
-    PromptService::delete_prompt(&state, app_type, &id)
+    let had_enabled = state
+        .db
+        .get_prompts(&app_type)
+        .ok()
+        .is_some_and(|m| m.values().any(|p| p.enabled));
+    PromptService::delete_prompt(&state, app_type.clone(), &id)?;
+    let has_enabled = state
+        .db
+        .get_prompts(&app_type)
+        .ok()
+        .is_some_and(|m| m.values().any(|p| p.enabled));
+    let kind = if had_enabled && !has_enabled {
+        crate::app_targets::sync::SyncKind::PromptClear
+    } else {
+        crate::app_targets::sync::SyncKind::Prompt
+    };
+    crate::app_targets::sync::spawn_after_change(&state, vec![app_type], kind);
+    Ok(())
 }
 
 #[tauri::command]
@@ -50,7 +84,13 @@ pub async fn enable_prompt(
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
     let app_type = AppType::from_str(&app)?;
-    PromptService::enable_prompt(&state, app_type, &id)
+    PromptService::enable_prompt(&state, app_type.clone(), &id)?;
+    crate::app_targets::sync::spawn_after_change(
+        &state,
+        vec![app_type],
+        crate::app_targets::sync::SyncKind::Prompt,
+    );
+    Ok(())
 }
 
 #[tauri::command]

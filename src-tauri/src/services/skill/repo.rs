@@ -78,7 +78,7 @@ impl SkillService {
     /// 只校验、不归一化：`sanitize_install_name` 会 `trim()`，若拿它的返回值替换
     /// 原值，磁盘上真实带空格的目录名就再也 join 不中。所以这里要求归一化结果与
     /// 原值逐字相同，否则一律视为非法。
-    pub(super) fn require_valid_directory(directory: &str) -> Result<String> {
+    pub(crate) fn require_valid_directory(directory: &str) -> Result<String> {
         match Self::sanitize_install_name(directory) {
             Some(normalized) if normalized == directory => Ok(normalized),
             _ => Err(anyhow!(

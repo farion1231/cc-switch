@@ -71,7 +71,7 @@ fn managed_account(provider: &Provider) -> Option<String> {
 
 /// 本地代理给 Codex 的地址（带 `/v1`），不需要代理在运行：官方直连时写休眠表用。
 pub(crate) fn configured_proxy_base_url(db: &Database) -> String {
-    let (address, port) = db.get_proxy_client_endpoint_sync();
+    let (address, port) = db.get_proxy_client_endpoint_for_app_sync(Some(&AppType::Codex));
     let port = if port == 0 {
         crate::proxy::types::ProxyConfig::default().listen_port
     } else {
@@ -85,7 +85,7 @@ pub(crate) fn configured_proxy_base_url(db: &Database) -> String {
 
 /// `config_text` 是不是代理的官方路由（指向本地代理，但不带占位 Key）。
 pub(crate) fn routes_official_to_proxy(db: &Database, config_text: &str) -> bool {
-    let (address, port) = db.get_proxy_client_endpoint_sync();
+    let (address, port) = db.get_proxy_client_endpoint_for_app_sync(Some(&AppType::Codex));
     crate::codex_config::codex_config_routes_official_to_proxy(config_text, |url| {
         is_proxy_base_url(url, &address, port)
     })
@@ -176,6 +176,15 @@ pub(crate) fn prepare(
     owner: &Owner<'_>,
     target: &Target<'_>,
 ) -> Result<Prepared, AppError> {
+    // 跟随环境不复制、不采纳也不轮换主环境的托管 OAuth token，只保留环境自己的登录或占位符。
+    if let Target::Direct(Some(provider)) = target {
+        crate::app_targets::sync::ensure_provider_allowed(&AppType::Codex, provider)?;
+    }
+    if crate::app_targets::scope::active()
+        || crate::app_targets::sync::is_wsl_target(&AppType::Codex)
+    {
+        return Ok(Prepared::default());
+    }
     let target_account = target_account(target);
     let target_login = match &target_account {
         Some(account) => Some((
@@ -221,6 +230,16 @@ pub(crate) async fn prepare_official_rows(
         return Ok(());
     };
     if !needs_official_rows(route, stack) {
+        return Ok(());
+    }
+    // 跟随目标（如 WSL）不读 Windows 钥匙串，也不切到阻塞池丢掉目标作用域；
+    // 直接只读复用主环境缓存的官方行（静态包装），避免跨环境强校验宿主登录。
+    if crate::app_targets::scope::active()
+        || crate::app_targets::sync::is_wsl_target(&AppType::Codex)
+    {
+        prepared.native = Some(codex_official_models::follower_rows(
+            !crate::app_targets::sync::is_wsl_target(&AppType::Codex),
+        ));
         return Ok(());
     }
     if matches!(
@@ -655,6 +674,13 @@ pub(crate) fn plan(
             if official {
                 let auth = match &managed_login {
                     Some(login) => AuthGoal::Managed(login.clone()),
+                    // 跟随环境（如 WSL）不复制 Windows 托管 OAuth token，保留目标原生登录。
+                    None if (crate::app_targets::scope::active()
+                        || crate::app_targets::sync::is_wsl_target(&AppType::Codex))
+                        && managed_account(route).is_some() =>
+                    {
+                        AuthGoal::KeepNative
+                    }
                     None => AuthGoal::Official(row_auth(route)),
                 };
                 // 暂停使用官方登录：官方路由也写成不要求登录的 custom 表（Codex 就不按登录

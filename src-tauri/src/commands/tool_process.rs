@@ -68,7 +68,7 @@ pub(super) fn isolate_child_process_group(cmd: &mut std::process::Command) {
     }
 }
 
-pub(super) fn wait_child_output(
+pub(crate) fn wait_child_output(
     mut child: std::process::Child,
     deadline: Option<CommandDeadline>,
 ) -> Result<std::process::Output, String> {

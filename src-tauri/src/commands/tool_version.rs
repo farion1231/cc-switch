@@ -674,7 +674,7 @@ fn try_get_version_wsl(
 }
 
 /// 非 Windows 平台的 WSL 版本检测存根
-/// 注意：此函数实际上不会被调用，因为 `wsl_distro_from_path` 在非 Windows 平台总是返回 None。
+/// 当前应用管理仅使用宿主客户端，此兼容分支不会由配置同步触发。
 /// 保留此函数是为了保持 API 一致性，防止未来重构时遗漏。
 #[cfg(not(target_os = "windows"))]
 fn try_get_version_wsl(

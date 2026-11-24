@@ -1,4 +1,5 @@
 mod agy_account;
+mod app_targets;
 mod auth;
 mod balance;
 mod claude_account;
@@ -49,6 +50,7 @@ mod provider_concurrency_tests;
 mod startup_tests;
 
 pub use agy_account::*;
+pub use app_targets::*;
 pub use auth::*;
 pub use balance::*;
 pub use claude_account::*;
@@ -117,4 +119,6 @@ pub(crate) use misc::tool_process::{
     detected_tool_command, is_safe_tool_command_arg, locate_detected_tool,
     run_detected_tool_command_with_timeout, terminate_child_tree,
 };
+#[cfg(windows)]
+pub(crate) use misc::tool_process::{wait_child_output, CommandDeadline};
 pub(crate) use misc::tool_version::local_tool_version;

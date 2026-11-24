@@ -68,13 +68,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+
 import { AppPageHeader } from "@/components/shell/AppPageHeader";
 import { APP_DISPLAY_NAME, AppGlyph } from "@/components/shell/AppGlyph";
 import { ToolUpgradeConfirmDialog } from "@/components/settings/ToolUpgradeConfirmDialog";
@@ -90,8 +84,6 @@ import {
   TOOL_NAMES,
   toolDisplayName,
   useToolManagement,
-  WSL_SHELL_FLAG_OPTIONS,
-  WSL_SHELL_OPTIONS,
   type ToolLifecycleAction,
   type ToolName,
 } from "./useToolManagement";
@@ -896,52 +888,6 @@ function ToolRow({
     </span>
   ) : null;
 
-  const wslControls =
-    info?.env_type === "wsl" || report?.is_wsl === true ? (
-      <div className="flex items-center gap-2 text-caption text-fg-2">
-        <span>Shell</span>
-        <Select
-          value={tools.wslShellByTool[tool]?.wslShell || "auto"}
-          onValueChange={(value) =>
-            void tools.handleToolShellChange(tool, value)
-          }
-          disabled={isVersionLoading || isBusy}
-        >
-          <SelectTrigger className="h-7 w-[82px] text-caption">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="auto">{t("common.auto")}</SelectItem>
-            {WSL_SHELL_OPTIONS.map((shell) => (
-              <SelectItem key={shell} value={shell}>
-                {shell}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <span>{t("appsPage.wslFlag")}</span>
-        <Select
-          value={tools.wslShellByTool[tool]?.wslShellFlag || "auto"}
-          onValueChange={(value) =>
-            void tools.handleToolShellFlagChange(tool, value)
-          }
-          disabled={isVersionLoading || isBusy}
-        >
-          <SelectTrigger className="h-7 w-[82px] text-caption">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="auto">{t("common.auto")}</SelectItem>
-            {WSL_SHELL_FLAG_OPTIONS.map((flag) => (
-              <SelectItem key={flag} value={flag}>
-                {flag}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-    ) : null;
-
   const errorLine =
     !isVersionLoading && !info?.version && info?.error ? (
       <ToolErrorMessage message={info.error} />
@@ -984,12 +930,11 @@ function ToolRow({
     ) : null;
 
   const footer =
-    wslControls || errorLine || nodeLine || desktopLine || conflictList ? (
+    errorLine || nodeLine || desktopLine || conflictList ? (
       <div className="space-y-2">
         {errorLine}
         {nodeLine}
         {desktopLine}
-        {wslControls}
         {conflictList}
       </div>
     ) : undefined;

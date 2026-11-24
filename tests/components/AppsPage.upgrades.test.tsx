@@ -277,7 +277,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
     expect(isReady("Claude Code")).toBe(true);
   });
 
-  it("preserves WSL execution and refresh parameters when confirming a mixed batch after remount", async () => {
+  it("keeps upgrades on the host without WSL shell preferences after remount", async () => {
     const preflight = deferred<ToolInstallationReport[]>();
     const getVersions = mocks.getToolVersions.getMockImplementation()!;
     mocks.getToolVersions.mockImplementation(async (tools: string[]) =>
@@ -299,18 +299,11 @@ describe("AppsPage concurrent CLI upgrades", () => {
       value: vi.fn(),
     });
     try {
-      const user = userEvent.setup();
       const view = await renderApps();
-      await user.click(card("Claude Code").getAllByRole("combobox")[0]);
-      await user.click(screen.getByRole("option", { name: "bash" }));
-      await waitFor(() => expect(updateButton("Claude Code")).toBeEnabled());
-      await user.click(card("Claude Code").getAllByRole("combobox")[1]);
-      await user.click(screen.getByRole("option", { name: "-lic" }));
-      await waitFor(() => expect(updateButton("Claude Code")).toBeEnabled());
+      expect(card("Claude Code").queryByRole("combobox")).toBeNull();
       fireEvent.click(updateAllButton());
       view.unmount();
-      // WSL tools do not request confirmation themselves; a native tool in
-      // the same batch can hold the whole batch pending confirmation.
+      // A native tool can hold the whole batch pending confirmation.
       await act(async () =>
         preflight.resolve([
           report("claude"),
@@ -324,9 +317,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
         screen.getByRole("button", { name: "settings.toolUpgradeConfirmBtn" }),
       );
       await waitFor(() => expect(mocks.success).toHaveBeenCalledTimes(1));
-      const preferences = {
-        claude: { wslShell: "bash", wslShellFlag: "-lic" },
-      };
+      const preferences = {};
       expect(mocks.runToolLifecycleAction).toHaveBeenCalledWith(
         ["claude"],
         "update",

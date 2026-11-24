@@ -61,12 +61,26 @@ pub async fn upsert_mcp_server(
     state: State<'_, AppState>,
     server: McpServer,
 ) -> Result<(), AppError> {
-    McpService::upsert_server(&state, server)
+    McpService::upsert_server(&state, server)?;
+    crate::app_targets::sync::spawn_after_change(
+        &state,
+        crate::app_targets::sync::all_supported(),
+        crate::app_targets::sync::SyncKind::Mcp,
+    );
+    Ok(())
 }
 
 #[tauri::command]
 pub async fn delete_mcp_server(state: State<'_, AppState>, id: String) -> Result<bool, AppError> {
-    McpService::delete_server(&state, &id)
+    let deleted = McpService::delete_server(&state, &id)?;
+    if deleted {
+        crate::app_targets::sync::spawn_remove_mcp(
+            &state,
+            id,
+            crate::app_targets::sync::all_supported(),
+        );
+    }
+    Ok(deleted)
 }
 
 /// 切换 MCP 服务器在指定应用的启用状态
@@ -78,7 +92,17 @@ pub async fn toggle_mcp_app(
     enabled: bool,
 ) -> Result<(), AppError> {
     let app_ty = AppType::from_str(&app)?;
-    McpService::toggle_app_locked(&state, &server_id, app_ty, enabled).await
+    McpService::toggle_app_locked(&state, &server_id, app_ty.clone(), enabled).await?;
+    if enabled {
+        crate::app_targets::sync::spawn_after_change(
+            &state,
+            vec![app_ty],
+            crate::app_targets::sync::SyncKind::Mcp,
+        );
+    } else {
+        crate::app_targets::sync::spawn_remove_mcp(&state, server_id, vec![app_ty]);
+    }
+    Ok(())
 }
 
 /// 从所有应用导入 MCP 服务器（复用已有的导入逻辑）
@@ -97,10 +121,16 @@ pub async fn resync_mcp_to_apps(
     apps: Option<Vec<String>>,
 ) -> Result<Vec<crate::services::mcp::McpAppSyncOutcome>, String> {
     let targets = McpService::resync_targets(apps.as_deref())?;
+    let sync_apps = targets.clone();
     let mut outcomes = Vec::with_capacity(targets.len());
     for app in targets {
         let _guard = state.proxy_service.lock_switch_for_app(app.as_str()).await;
         outcomes.push(McpService::resync_app(&state, &app));
     }
+    crate::app_targets::sync::spawn_after_change(
+        &state,
+        sync_apps,
+        crate::app_targets::sync::SyncKind::Mcp,
+    );
     Ok(outcomes)
 }

@@ -141,12 +141,18 @@ export async function renderApps() {
   const { AppsPage } = await import("@/components/apps/AppsPage");
   const view = mountApps(AppsPage);
   // Both header labels stay mounted to reserve their width. Wait for the idle
-  // label to be shown, including when a pending dialog hides the page itself.
-  await waitFor(() =>
+  // label to be shown, including when a pending dialog hides the page itself,
+  // and wait for initial Installed/NotInstalled section grouping to settle.
+  await waitFor(() => {
     expect(
       within(view.container).getByText("appsPage.checkUpdates"),
-    ).toHaveAttribute("aria-hidden", "false"),
-  );
+    ).toHaveAttribute("aria-hidden", "false");
+    expect(
+      within(view.container).queryByRole("heading", {
+        name: "appsPage.columnApp",
+      }),
+    ).toBeNull();
+  });
   return view;
 }
 

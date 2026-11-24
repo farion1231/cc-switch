@@ -11,6 +11,10 @@ import type {
 } from "@/types/proxy";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { getAppLabel } from "@/config/appConfig";
+import {
+  APP_TARGETS_QUERY_KEY,
+  WSL_ROUTE_INFO_QUERY_KEY,
+} from "@/hooks/useAppTargets";
 
 export const proxyKeys = {
   status: ["proxyStatus"] as const,
@@ -251,6 +255,8 @@ export function useUpdateGlobalProxyConfig() {
       toast.success(t("proxy.settings.toast.saved"), { closeButton: true });
       queryClient.invalidateQueries({ queryKey: proxyKeys.globalConfig });
       queryClient.invalidateQueries({ queryKey: proxyKeys.status });
+      queryClient.invalidateQueries({ queryKey: WSL_ROUTE_INFO_QUERY_KEY });
+      queryClient.invalidateQueries({ queryKey: APP_TARGETS_QUERY_KEY });
     },
     onError: (error: Error) => {
       toast.error(
@@ -290,6 +296,8 @@ export function useSetProxyClientHost() {
     // 重写失败时地址也已经存下了，两种情况都刷新
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: proxyKeys.clientHost });
+      queryClient.invalidateQueries({ queryKey: WSL_ROUTE_INFO_QUERY_KEY });
+      queryClient.invalidateQueries({ queryKey: APP_TARGETS_QUERY_KEY });
     },
   });
 }

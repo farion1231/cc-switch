@@ -181,6 +181,8 @@ export interface LocalProxyRequestOverrides {
 export interface ProviderMeta {
   /** Explicit multiplier for future local-proxy reference costs; absent means 1. */
   billingMultiplier?: string;
+  // 导入来源配置目标（如 wsl:Ubuntu），用于按 WSL 运行状态显示卡片
+  importedFromTarget?: string;
   // 自定义端点：以 URL 为键，值为端点信息
   custom_endpoints?: Record<string, CustomEndpoint>;
   // 是否在切换/同步到 live 时应用通用配置片段

@@ -401,9 +401,8 @@ fn cache_lock() -> &'static Mutex<()> {
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
-fn read_cache() -> Cache {
-    let path = DeviceStore::for_device().file(CACHE_FILENAME);
-    let Ok(bytes) = std::fs::read(&path) else {
+fn read_cache_at(path: &Path) -> Cache {
+    let Ok(bytes) = std::fs::read(path) else {
         return Cache::new();
     };
     serde_json::from_slice(&bytes).unwrap_or_else(|error| {
@@ -413,6 +412,10 @@ fn read_cache() -> Cache {
         );
         Cache::new()
     })
+}
+
+fn read_cache() -> Cache {
+    read_cache_at(&DeviceStore::for_device().file(CACHE_FILENAME))
 }
 
 fn store_entry(identity: &str, entry: Entry) {
@@ -604,6 +607,30 @@ pub(crate) fn rows_for_switch(login: &Result<OfficialLogin, OfficialSkip>) -> Na
     };
     *last_source_slot().lock_recover() = Some(source);
     rows
+}
+
+/// 只读地为多环境跟随目标取官方模型行：不读 Windows 钥匙串，不写缓存，也不改写
+/// 主环境的 `last_source` / `CLIENT_BEHIND` 全局状态。优先复用主环境缓存里最近
+/// 拉取的合格官方列表（非 WSL 跟随目标还可回退本机自带列表），按静态来源包装，
+/// 避免在跟随环境按宿主账号身份强校验。
+pub(crate) fn follower_rows(include_bundled: bool) -> NativeRows {
+    let primary_cache = crate::config::get_home_dir()
+        .join(".cc-switch")
+        .join(CACHE_FILENAME);
+    let cache = read_cache_at(&primary_cache);
+    if let Some(entry) = cache.values().max_by_key(|entry| entry.fetched_at) {
+        if let Some(rows) =
+            normalize_codex_native_rows(entry.models.clone()).filter(|rows| has_listed_model(rows))
+        {
+            return NativeRows::Bundled { rows };
+        }
+    }
+    if include_bundled {
+        if let Ok(rows) = bundled_rows(&env()) {
+            return rows;
+        }
+    }
+    NativeRows::Unavailable
 }
 
 /// 能用的官方列表。

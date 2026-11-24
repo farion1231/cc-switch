@@ -434,8 +434,11 @@ pub fn commit_target(
             }
         })?;
     }
+    // 跟随环境的模式只属于那个目标，不影响应用级的路由开关。
     if let Some(mode) = &target.state {
-        mirror_proxy_flag(db, app, mode.is_proxy())?;
+        if !crate::app_targets::scope::active() {
+            mirror_proxy_flag(db, app, mode.is_proxy())?;
+        }
     }
     Ok(())
 }

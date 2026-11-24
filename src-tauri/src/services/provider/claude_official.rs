@@ -67,6 +67,14 @@ pub fn with_login_switch<R>(
     target: Option<&Provider>,
     write: impl FnOnce() -> Result<R, AppError>,
 ) -> Result<R, AppError> {
+    if let Some(provider) = target {
+        crate::app_targets::sync::ensure_provider_allowed(&AppType::Claude, provider)?;
+    }
+    if crate::app_targets::scope::active()
+        || crate::app_targets::sync::is_wsl_target(&AppType::Claude)
+    {
+        return write();
+    }
     let previous = match target {
         Some(target) => switch_login(target)?,
         None => None,

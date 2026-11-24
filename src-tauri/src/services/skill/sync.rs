@@ -310,7 +310,7 @@ impl SkillService {
     }
 
     /// 删除路径（支持 symlink 和真实目录）
-    pub(super) fn remove_path(path: &Path) -> Result<()> {
+    pub(crate) fn remove_path(path: &Path) -> Result<()> {
         if Self::is_symlink(path) {
             // 符号链接：仅删除链接本身，不影响源文件
             #[cfg(unix)]
@@ -469,8 +469,16 @@ impl SkillService {
 
     /// 同步所有已启用的 Skills 到指定应用
     pub fn sync_to_app(db: &Arc<Database>, app: &AppType) -> Result<()> {
+        Self::sync_to_app_with_failures(db, app).map(|_| ())
+    }
+
+    /// 目标同步需要保留逐条失败，供状态展示和重试使用。
+    pub fn sync_to_app_with_failures(
+        db: &Arc<Database>,
+        app: &AppType,
+    ) -> Result<Vec<SkillSyncFailure>> {
         let _state_guard = skill_state_read_guard();
-        Self::sync_to_app_unlocked(db, app).map(|_| ())
+        Self::sync_to_app_unlocked(db, app)
     }
 
     /// Skills 不由 `sync_to_app` 投影的应用：Claude Desktop、OpenClaw 不支持 Skills，

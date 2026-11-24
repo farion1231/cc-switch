@@ -647,6 +647,12 @@ pub struct AppSettings {
     /// DeepSeek Harness 主目录（相当于 `DSH_HOME`，优先于环境变量）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dsh_config_dir: Option<String>,
+    /// Windows / WSL 多环境写入目标（按应用 ID，见 `app_targets`）。只经
+    /// `save_app_targets` 保存；有这一项的应用，旧 `*ConfigDir` 是主环境目录的兼容投影，
+    /// 也只由后端写。设备本地，不进数据库和云同步。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_targets:
+        Option<std::collections::BTreeMap<String, crate::app_targets::model::AppTargetsConfig>>,
 
     // ===== 当前供应商 ID（设备级）=====
     /// 当前 Claude 供应商 ID（本地存储，优先于数据库 is_current）
@@ -686,6 +692,10 @@ pub struct AppSettings {
     /// 只对这台机器有意义，所以不放在会随云同步覆盖的 proxy_config 表里。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proxy_client_host: Option<String>,
+    /// 接入路由的 WSL 发行版各自写给客户端的代理主机（发行版 → 主机）。没设时按发行版的
+    /// 网络模式推导（mirrored 用 127.0.0.1，NAT 用它的默认网关）。只经设置命令修改。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy_wsl_client_hosts: Option<std::collections::BTreeMap<String, String>>,
 
     // ===== Skill 同步设置 =====
     /// Skill 同步方式：auto（默认，优先 symlink）、symlink、copy
@@ -800,6 +810,7 @@ impl Default for AppSettings {
             pi_config_dir: None,
             omp_config_dir: None,
             dsh_config_dir: None,
+            app_targets: None,
             current_provider_claude: None,
             current_provider_claude_desktop: None,
             current_provider_codex: None,
@@ -811,6 +822,7 @@ impl Default for AppSettings {
             current_provider_agy: None,
             current_provider_copilot: None,
             proxy_client_host: None,
+            proxy_wsl_client_hosts: None,
             skill_sync_method: SyncMethod::default(),
             skill_storage_location: SkillStorageLocation::default(),
             webdav_sync: None,
@@ -1284,10 +1296,53 @@ pub fn set_lightweight_mode(enabled: bool) -> Result<(), AppError> {
 
 /// 客户端地址（见 [`AppSettings::proxy_client_host`]），去掉首尾空白；没设或为空时是 `None`。
 pub fn get_proxy_client_host() -> Option<String> {
+    // 接入路由的 WSL 目标用它自己的地址（见 app_targets）。
+    if let Some(host) = crate::app_targets::scope::client_host() {
+        return Some(host);
+    }
     get_settings()
         .proxy_client_host
         .map(|host| host.trim().to_string())
         .filter(|host| !host.is_empty())
+}
+
+/// 解析某个应用写给客户端的代理主机：跟随作用域优先用自己的主机；主环境本身在 WSL
+/// 里时，也优先用该发行版的 WSL 客户端主机（而非 `127.0.0.1`）。
+pub fn get_proxy_client_host_for_app(app: Option<&AppType>) -> Option<String> {
+    if let Some(host) = crate::app_targets::scope::client_host() {
+        return Some(host);
+    }
+    if let Some(host) = app.and_then(crate::app_targets::sync::primary_client_host) {
+        return Some(host);
+    }
+    get_proxy_client_host()
+}
+
+/// 某个 WSL 发行版保存的客户端主机（不区分大小写）。
+pub fn get_proxy_wsl_client_host(distro: &str) -> Option<String> {
+    get_settings()
+        .proxy_wsl_client_hosts?
+        .into_iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case(distro))
+        .map(|(_, host)| host.trim().to_string())
+        .filter(|host| !host.is_empty())
+}
+
+/// 保存（`host` 为空时清除）某个 WSL 发行版的客户端主机。
+pub fn set_proxy_wsl_client_host(distro: &str, host: &str) -> Result<(), AppError> {
+    let host = host.trim().to_string();
+    mutate_settings(|settings| {
+        let map = settings
+            .proxy_wsl_client_hosts
+            .get_or_insert_with(Default::default);
+        map.retain(|name, _| !name.eq_ignore_ascii_case(distro));
+        if !host.is_empty() {
+            map.insert(distro.to_string(), host);
+        }
+        if map.is_empty() {
+            settings.proxy_wsl_client_hosts = None;
+        }
+    })
 }
 
 pub fn set_proxy_client_host(host: &str) -> Result<(), AppError> {
@@ -1308,6 +1363,10 @@ pub fn reload_settings() -> Result<(), AppError> {
 
 /// 用户在设置里为该应用指定的配置目录。没有目录覆盖项的应用返回 `None`。
 pub fn get_override_dir(app: &AppType) -> Option<PathBuf> {
+    // 跟随环境的写入作用域里用那个目标的目录（见 app_targets::scope）。
+    if let Some(scoped) = crate::app_targets::scope::override_dir(app) {
+        return scoped;
+    }
     let settings = read_settings();
     let dir = match app {
         AppType::Claude => &settings.claude_config_dir,
@@ -1330,7 +1389,33 @@ pub fn get_override_dir(app: &AppType) -> Option<PathBuf> {
     dir.as_deref().map(resolve_override_path)
 }
 
+/// 保存一个应用的写入目标，同时把旧 `*ConfigDir` 更新成主环境目录（兼容投影）。
+pub fn set_app_targets(
+    app: &crate::app_config::AppType,
+    config: crate::app_targets::model::AppTargetsConfig,
+    legacy_dir: Option<String>,
+) -> Result<(), AppError> {
+    use crate::app_config::AppType;
+    mutate_settings(|settings| {
+        settings
+            .app_targets
+            .get_or_insert_with(Default::default)
+            .insert(app.as_str().to_string(), config);
+        match app {
+            AppType::Claude => settings.claude_config_dir = legacy_dir,
+            AppType::Codex => settings.codex_config_dir = legacy_dir,
+            AppType::Gemini => settings.gemini_config_dir = legacy_dir,
+            AppType::OpenCode => settings.opencode_config_dir = legacy_dir,
+            _ => {}
+        }
+    })
+}
+
 pub fn preserve_codex_official_auth_on_switch() -> bool {
+    // 跟随环境里的官方登录不归 CC Switch 管：切到第三方时一律保留，不迁走、不删除。
+    if crate::app_targets::scope::active() {
+        return true;
+    }
     read_settings().preserve_codex_official_auth_on_switch
 }
 

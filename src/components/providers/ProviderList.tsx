@@ -12,6 +12,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
@@ -56,6 +57,17 @@ import { isOfficialAccount } from "@/utils/providerCapabilities";
 import { isHermesReadOnlyProvider } from "@/config/hermesProviderPresets";
 import { isWorkBuddyOfficial } from "@/components/providers/workbuddyOfficial";
 import { useWorkBuddyOfficial } from "@/components/providers/useWorkBuddyOfficial";
+import { ProviderEnvSwitches } from "@/components/providers/ProviderEnvSwitches";
+import { targetLabel, useAppTargetsOverview } from "@/hooks/useAppTargets";
+import {
+  enabledTargetKeys,
+  isAppTargetApp,
+  isTargetProviderVisible,
+  isWindowsOnly,
+  recordFor,
+  sameTarget,
+  visibleTargetKeys,
+} from "@/lib/api/appTargets";
 import {
   DshAccountCard,
   accountName as dshAccountName,
@@ -132,11 +144,54 @@ export function ProviderList({
   searchSlot,
 }: ProviderListProps) {
   const { t } = useTranslation();
+  const targetsOverview = useAppTargetsOverview(isAppTargetApp(appId));
+  const targetView = targetsOverview.data?.apps.find(
+    (item) => item.app === appId,
+  );
+  // 本 PR 只显示已启用目标的跟随状态，Windows 负责选择供应商。
+  // 独立 WSL 选择留给后续 PR；OpenCode 始终同步同一组供应商。
+  const envSwitchView =
+    isAppTargetApp(appId) &&
+    appId !== "opencode" &&
+    switchMode?.view === "direct" &&
+    targetView?.source === "saved" &&
+    !isWindowsOnly(targetView.config) &&
+    visibleTargetKeys(targetView.config, targetsOverview.data?.inventory).some(
+      (key) => key !== "windows",
+    )
+      ? targetView
+      : undefined;
   const { checkProvider, isChecking } = useStreamCheck(appId);
   const { sortedProviders, sensors, handleDragEnd } = useDragSort(
     providers,
     appId,
   );
+  const visibleProviders = useMemo(() => {
+    const sharedIds = new Set(
+      [
+        ...(targetView?.config.windows.enabled
+          ? [currentProviderId, switchMode?.directId]
+          : []),
+        switchMode?.routeId,
+        ...(switchMode?.queue ?? []),
+        ...(switchMode?.stackMembers.keys() ?? []),
+      ].filter((id): id is string => Boolean(id)),
+    );
+    return sortedProviders.filter((provider) =>
+      isTargetProviderVisible(
+        provider,
+        targetView,
+        targetsOverview.data?.inventory,
+        sharedIds,
+      ),
+    );
+  }, [
+    sortedProviders,
+    targetView,
+    targetsOverview.data?.inventory,
+    currentProviderId,
+    switchMode,
+  ]);
 
   const {
     data: opencodeLiveIds,
@@ -326,7 +381,7 @@ export function ProviderList({
   // 每家可被搜到的文字：名称、备注、官网、请求地址（请求地址要解析配置，只随列表变化重算）
   const searchIndex = useMemo(
     () =>
-      sortedProviders.map((provider) => ({
+      visibleProviders.map((provider) => ({
         provider,
         text: [
           provider.name,
@@ -338,7 +393,7 @@ export function ProviderList({
           .join("\n")
           .toLowerCase(),
       })),
-    [sortedProviders],
+    [visibleProviders],
   );
 
   const searchKeyword = isSearchOpen ? searchTerm.trim().toLowerCase() : "";
@@ -359,11 +414,11 @@ export function ProviderList({
   // 关掉面板就不再过滤：搜索词留着，下次打开还在，但列表不会悄悄少几家
   const filteredProviders = useMemo(() => {
     const keyword = searchKeyword;
-    if (!keyword) return sortedProviders;
+    if (!keyword) return visibleProviders;
     return searchIndex
       .filter((entry) => entry.text.includes(keyword))
       .map((entry) => entry.provider);
-  }, [searchKeyword, searchIndex, sortedProviders]);
+  }, [searchKeyword, searchIndex, visibleProviders]);
 
   const sections = useMemo<ProviderSection[]>(() => {
     if (switchMode) {
@@ -546,7 +601,7 @@ export function ProviderList({
     );
   }
 
-  if (sortedProviders.length === 0 && !dshAccountCard) {
+  if (visibleProviders.length === 0 && !dshAccountCard) {
     return (
       <div className="space-y-4">
         {piStateErrorNotice}
@@ -581,31 +636,71 @@ export function ProviderList({
     return provider.id === currentProviderId;
   };
 
-  const renderCard = (provider: Provider, presentation: CardPresentation) => (
-    <SortableProviderCard
-      key={provider.id}
-      provider={provider}
-      appId={appId}
-      presentation={presentation}
-      isCurrent={isCurrentFor(provider)}
-      onEdit={onEdit}
-      onDelete={onDelete}
-      onDuplicate={onDuplicate}
-      onConfigureUsage={
-        onConfigureUsage ? (item) => onConfigureUsage(item) : () => undefined
+  const followerUsersFor = (providerId: string): string[] => {
+    if (appId === "opencode" || targetView?.source !== "saved") return [];
+    const users: string[] = [];
+    for (const key of enabledTargetKeys(targetView.config)) {
+      if (sameTarget(key, targetView.config.primary)) continue;
+      if (recordFor(targetView.records, key)?.providerId === providerId) {
+        users.push(targetLabel(key));
       }
-      onOpenWebsite={onOpenWebsite}
-      // Antigravity 和 Copilot CLI 官方卡的「打开终端」已经是主按钮，「更多」菜单里不再重复
-      onOpenTerminal={
-        appId === "agy" ||
-        (appId === "copilot" && isOfficialAccount(appId, provider))
-          ? undefined
-          : onOpenTerminal
-      }
-      onTest={handleTest}
-      isTesting={isChecking(provider.id)}
-    />
-  );
+    }
+    return users;
+  };
+
+  const renderCard = (provider: Provider, presentation: CardPresentation) => {
+    const followerUsers = followerUsersFor(provider.id);
+    const effectivePresentation =
+      !presentation.deleteDisabledReason && followerUsers.length > 0
+        ? {
+            ...presentation,
+            deleteDisabledReason: t("appTargets.switch.inUseCannotDelete", {
+              targets: followerUsers.join("、"),
+            }),
+          }
+        : presentation;
+    return (
+      <SortableProviderCard
+        key={provider.id}
+        provider={provider}
+        appId={appId}
+        presentation={
+          envSwitchView
+            ? { ...effectivePresentation, status: undefined, buttons: [] }
+            : effectivePresentation
+        }
+        extraActions={
+          envSwitchView && isAppTargetApp(appId) ? (
+            <ProviderEnvSwitches
+              app={appId}
+              provider={provider}
+              view={envSwitchView}
+              inventory={targetsOverview.data?.inventory}
+              mainActive={provider.id === switchMode?.directId}
+              mainAction={presentation.buttons[0]}
+            />
+          ) : undefined
+        }
+        isCurrent={isCurrentFor(provider)}
+        onEdit={onEdit}
+        onDelete={onDelete}
+        onDuplicate={onDuplicate}
+        onConfigureUsage={
+          onConfigureUsage ? (item) => onConfigureUsage(item) : () => undefined
+        }
+        onOpenWebsite={onOpenWebsite}
+        // Antigravity 和 Copilot CLI 官方卡的「打开终端」已经是主按钮，「更多」菜单里不再重复
+        onOpenTerminal={
+          appId === "agy" ||
+          (appId === "copilot" && isOfficialAccount(appId, provider))
+            ? undefined
+            : onOpenTerminal
+        }
+        onTest={handleTest}
+        isTesting={isChecking(provider.id)}
+      />
+    );
+  };
 
   // 搜索框放在列表上方第一行的最右端，不盖住卡片、打开时卡片也不下移
   const searchField = (
@@ -760,6 +855,7 @@ interface SortableProviderCardProps {
   appId: AppId;
   presentation: CardPresentation;
   isCurrent: boolean;
+  extraActions?: ReactNode;
   onEdit: (provider: Provider) => void;
   onDelete: (provider: Provider) => void;
   onDuplicate: (provider: Provider) => void;
