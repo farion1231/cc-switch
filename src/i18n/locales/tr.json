@@ -3987,7 +3987,29 @@
     "reachableSlow": "{{providerName}}'ye ulaşılabilir ancak yavaş ({{responseTimeMs}}ms)",
     "unreachable": "{{providerName}}'ye ulaşılamıyor: {{message}}",
     "unreachableHint": "Bağlantı kurulamadı (DNS / bağlantı / TLS / zaman aşımı). base_url'yi ve ağınızı kontrol edin.",
+    "hint": {
+      "blocked": "Sistem bağlantıyı reddetti. Bu genellikle bir güvenlik duvarının ya da güvenlik yazılımının CC Switch'i engellediği anlamına gelir. Güvenlik duvarında CC Switch'in ağ erişimine izin verin; yerel ağ adreslerine bağlanmak için de gereklidir.",
+      "refused": "Adrese ulaşılabiliyor ama bu bağlantı noktasında çalışan bir hizmet yok. Hizmetin başlatıldığından ve bağlantı noktasının doğru olduğundan emin olun.",
+      "timeout": "Bağlantı zaman aşımına uğradı. Ağınızı ve adresi kontrol edin; bir güvenlik duvarı ya da güvenlik yazılımı bağlantıyı yanıt vermeden engelliyor da olabilir.",
+      "dns": "Alan adı çözümlenemedi. Adresteki alan adında yazım hatası olup olmadığını, ağınızı ve DNS'i kontrol edin.",
+      "tls": "HTTPS bağlantısı başarısız oldu (sertifika ya da el sıkışma hatası). Adresin http mi https mi kullanması gerektiğini ve sunucu sertifikasının geçerli olup olmadığını kontrol edin."
+    },
     "error": "{{providerName}} kontrol hatası: {{error}}"
+  },
+  "backgroundTask": {
+    "updateCheckFailed": {
+      "title": "CC Switch güncellemeleri denetlenemedi",
+      "description": "CC Switch başlangıçta yeni sürüm olup olmadığını dl.ccswitch.io'ya (yedek olarak github.com'a) sorar; bu sefer başarısız oldu: {{detail}}. Diğer özellikler etkilenmez; ağınız ya da güvenlik duvarınız bunu engelliyorsa yok sayabilirsiniz."
+    },
+    "modelsDevSyncFailed": {
+      "title": "Model fiyatları eşitlenemedi",
+      "description": "CC Switch kullanım maliyetlerini hesaplamak için model fiyatlarını düzenli olarak models.dev'den alır; bu sefer başarısız oldu: {{detail}}. Diğer özellikler etkilenmez."
+    },
+    "networkError": "sunucuya ulaşılamadı",
+    "mute": "Bir daha gösterme",
+    "disableModelsDevSync": "Otomatik eşitlemeyi kapat",
+    "modelsDevSyncDisabled": "Model fiyatlarının otomatik eşitlenmesi kapatıldı. Kullanım İstatistikleri → Model Fiyatlandırması bölümünden yeniden açabilirsiniz.",
+    "disableFailed": "Kapatılamadı: {{error}}"
   },
   "proxyConfig": {
     "proxyEnabled": "Yönlendirme Ana Anahtarı",

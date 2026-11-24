@@ -4058,7 +4058,29 @@
     "reachableSlow": "{{providerName}} 連通但較慢 ({{responseTimeMs}}ms)",
     "unreachable": "{{providerName}} 無法連通: {{message}}",
     "unreachableHint": "無法建立連線（DNS / 連線 / TLS / 逾時）。請檢查 base_url 與網路。",
+    "hint": {
+      "blocked": "系統拒絕了這次連線，通常是防火牆或安全軟體攔截了 CC Switch。請在防火牆裡允許 CC Switch 連網，連線區域網路位址也需要放行。",
+      "refused": "位址可以到達，但這個連接埠上沒有服務在執行。請確認服務已經啟動、連接埠填寫正確。",
+      "timeout": "連線逾時。請檢查網路和位址是否正確；也可能是防火牆或安全軟體攔截了連線但沒有回應。",
+      "dns": "網域名稱解析失敗。請檢查位址裡的網域有沒有寫錯，或者網路、DNS 是否正常。",
+      "tls": "HTTPS 連線失敗（憑證或交握出錯）。請檢查位址該用 http 還是 https，以及伺服器憑證是否有效。"
+    },
     "error": "{{providerName}} 檢查出錯：{{error}}"
+  },
+  "backgroundTask": {
+    "updateCheckFailed": {
+      "title": "檢查 CC Switch 更新失敗",
+      "description": "CC Switch 啟動時會存取 dl.ccswitch.io（備用 github.com）查詢有沒有新版本，這次沒有成功：{{detail}}。不影響其他功能；如果是網路或防火牆攔截了，可以忽略。"
+    },
+    "modelsDevSyncFailed": {
+      "title": "同步模型定價失敗",
+      "description": "CC Switch 會定期從 models.dev 取得模型價格，用來計算用量費用，這次沒有成功：{{detail}}。不影響其他功能。"
+    },
+    "networkError": "連不上伺服器",
+    "mute": "不再提示",
+    "disableModelsDevSync": "關閉自動同步",
+    "modelsDevSyncDisabled": "已關閉模型定價自動同步，可以在「使用統計 → 模型定價」裡重新開啟。",
+    "disableFailed": "關閉失敗：{{error}}"
   },
   "proxyConfig": {
     "proxyEnabled": "路由總開關",

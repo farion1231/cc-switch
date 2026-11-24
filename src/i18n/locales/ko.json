@@ -4058,7 +4058,29 @@
     "reachableSlow": "{{providerName}}에 연결할 수 있지만 응답이 느립니다({{responseTimeMs}}ms).",
     "unreachable": "{{providerName}}에 연결할 수 없음: {{message}}",
     "unreachableHint": "연결할 수 없습니다(DNS/연결/TLS/시간 초과). base_url과 네트워크를 확인하세요.",
+    "hint": {
+      "blocked": "시스템이 연결을 거부했습니다. 대개 방화벽이나 보안 소프트웨어가 CC Switch를 차단한 경우입니다. 방화벽에서 CC Switch의 네트워크 연결을 허용하세요. 로컬 네트워크 주소에 연결할 때도 필요합니다.",
+      "refused": "주소에는 도달했지만 이 포트에서 실행 중인 서비스가 없습니다. 서비스가 시작되었는지, 포트가 올바른지 확인하세요.",
+      "timeout": "연결 시간이 초과되었습니다. 네트워크와 주소를 확인하세요. 방화벽이나 보안 소프트웨어가 응답 없이 연결을 막고 있을 수도 있습니다.",
+      "dns": "도메인 이름을 확인할 수 없습니다. 주소의 도메인에 오타가 없는지, 네트워크와 DNS가 정상인지 확인하세요.",
+      "tls": "HTTPS 연결에 실패했습니다(인증서 또는 핸드셰이크 오류). 주소가 http와 https 중 무엇을 써야 하는지, 서버 인증서가 유효한지 확인하세요."
+    },
     "error": "{{providerName}} 검사 오류: {{error}}"
+  },
+  "backgroundTask": {
+    "updateCheckFailed": {
+      "title": "CC Switch 업데이트를 확인하지 못했습니다",
+      "description": "CC Switch는 시작할 때 dl.ccswitch.io(예비로 github.com)에 새 버전이 있는지 확인하는데, 이번에는 실패했습니다: {{detail}}. 다른 기능에는 영향이 없습니다. 네트워크나 방화벽에서 막은 경우라면 무시해도 됩니다."
+    },
+    "modelsDevSyncFailed": {
+      "title": "모델 요금을 동기화하지 못했습니다",
+      "description": "CC Switch는 사용 비용을 계산하기 위해 주기적으로 models.dev에서 모델 요금을 가져오는데, 이번에는 실패했습니다: {{detail}}. 다른 기능에는 영향이 없습니다."
+    },
+    "networkError": "서버에 연결할 수 없습니다",
+    "mute": "다시 표시 안 함",
+    "disableModelsDevSync": "자동 동기화 끄기",
+    "modelsDevSyncDisabled": "모델 요금 자동 동기화를 껐습니다. '사용 통계 → 모델 요금'에서 다시 켤 수 있습니다.",
+    "disableFailed": "끄지 못했습니다: {{error}}"
   },
   "proxyConfig": {
     "proxyEnabled": "라우팅 마스터 스위치",

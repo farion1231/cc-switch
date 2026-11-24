@@ -4058,7 +4058,29 @@
     "reachableSlow": "{{providerName}} は接続可能だが低速 ({{responseTimeMs}}ms)",
     "unreachable": "{{providerName}} に接続できません: {{message}}",
     "unreachableHint": "接続を確立できませんでした（DNS / 接続 / TLS / タイムアウト）。base_url とネットワークを確認してください。",
+    "hint": {
+      "blocked": "システムが接続を拒否しました。多くの場合、ファイアウォールやセキュリティソフトが CC Switch をブロックしています。ファイアウォールで CC Switch のネットワーク接続を許可してください（ローカルネットワークのアドレスへの接続にも必要です）。",
+      "refused": "アドレスには到達できますが、このポートで動いているサービスがありません。サービスが起動しているか、ポートが正しいか確認してください。",
+      "timeout": "接続がタイムアウトしました。ネットワークとアドレスを確認してください。ファイアウォールやセキュリティソフトが応答せずに接続を遮断している可能性もあります。",
+      "dns": "ドメイン名を解決できませんでした。アドレスのドメインに誤りがないか、ネットワークと DNS が正常か確認してください。",
+      "tls": "HTTPS 接続に失敗しました（証明書またはハンドシェイクのエラー）。アドレスが http と https のどちらを使うべきか、サーバー証明書が有効か確認してください。"
+    },
     "error": "{{providerName}} のチェックでエラーが発生しました: {{error}}"
+  },
+  "backgroundTask": {
+    "updateCheckFailed": {
+      "title": "CC Switch の更新を確認できませんでした",
+      "description": "CC Switch は起動時に dl.ccswitch.io（予備として github.com）に新しいバージョンを問い合わせますが、今回は失敗しました：{{detail}}。ほかの機能には影響しません。ネットワークやファイアウォールで遮断している場合は無視してかまいません。"
+    },
+    "modelsDevSyncFailed": {
+      "title": "モデル料金を同期できませんでした",
+      "description": "CC Switch は利用料金の計算のため、定期的に models.dev からモデル料金を取得しますが、今回は失敗しました：{{detail}}。ほかの機能には影響しません。"
+    },
+    "networkError": "サーバーに接続できませんでした",
+    "mute": "今後表示しない",
+    "disableModelsDevSync": "自動同期をオフにする",
+    "modelsDevSyncDisabled": "モデル料金の自動同期をオフにしました。「利用統計 → モデル料金」で再びオンにできます。",
+    "disableFailed": "オフにできませんでした：{{error}}"
   },
   "proxyConfig": {
     "proxyEnabled": "ルーティング総スイッチ",

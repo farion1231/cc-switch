@@ -4058,7 +4058,29 @@
     "reachableSlow": "{{providerName}} ist erreichbar, aber langsam ({{responseTimeMs}} ms)",
     "unreachable": "{{providerName}} ist nicht erreichbar: {{message}}",
     "unreachableHint": "Es konnte keine Verbindung hergestellt werden (DNS / Verbindung / TLS / Zeitüberschreitung). Prüfen Sie die base_url und Ihr Netzwerk.",
+    "hint": {
+      "blocked": "Das System hat die Verbindung abgelehnt. Meist blockiert eine Firewall oder Sicherheitssoftware CC Switch. Erlaube CC Switch in der Firewall den Netzwerkzugriff; auch Adressen im lokalen Netz brauchen das.",
+      "refused": "Die Adresse ist erreichbar, aber auf diesem Port läuft kein Dienst. Prüfe, ob der Dienst gestartet ist und der Port stimmt.",
+      "timeout": "Zeitüberschreitung beim Verbinden. Prüfe Netzwerk und Adresse; möglicherweise verwirft auch eine Firewall oder Sicherheitssoftware die Verbindung stillschweigend.",
+      "dns": "Der Domainname konnte nicht aufgelöst werden. Prüfe die Domain in der Adresse auf Tippfehler sowie Netzwerk und DNS.",
+      "tls": "Die HTTPS-Verbindung ist fehlgeschlagen (Zertifikat- oder Handshake-Fehler). Prüfe, ob die Adresse http oder https verwenden muss und ob das Serverzertifikat gültig ist."
+    },
     "error": "Fehler bei der Prüfung von {{providerName}}: {{error}}"
+  },
+  "backgroundTask": {
+    "updateCheckFailed": {
+      "title": "Suche nach CC Switch-Updates fehlgeschlagen",
+      "description": "Beim Start fragt CC Switch dl.ccswitch.io (ersatzweise github.com) nach einer neuen Version, diesmal ohne Erfolg: {{detail}}. Alles andere funktioniert weiter; blockiert dein Netzwerk oder deine Firewall die Anfrage, kannst du das ignorieren."
+    },
+    "modelsDevSyncFailed": {
+      "title": "Modellpreise konnten nicht synchronisiert werden",
+      "description": "CC Switch lädt regelmäßig Modellpreise von models.dev, um Nutzungskosten zu berechnen, diesmal ohne Erfolg: {{detail}}. Alles andere funktioniert weiter."
+    },
+    "networkError": "Server nicht erreichbar",
+    "mute": "Nicht mehr anzeigen",
+    "disableModelsDevSync": "Automatische Synchronisierung ausschalten",
+    "modelsDevSyncDisabled": "Die automatische Synchronisierung der Modellpreise ist aus. Unter Nutzungsstatistik → Modellpreise kannst du sie wieder einschalten.",
+    "disableFailed": "Ausschalten fehlgeschlagen: {{error}}"
   },
   "proxyConfig": {
     "proxyEnabled": "Routing-Hauptschalter",

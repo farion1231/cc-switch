@@ -4058,7 +4058,29 @@
     "reachableSlow": "{{providerName}} reachable but slow ({{responseTimeMs}}ms)",
     "unreachable": "{{providerName}} unreachable: {{message}}",
     "unreachableHint": "Could not establish a connection (DNS / connect / TLS / timeout). Check the base_url and your network.",
+    "hint": {
+      "blocked": "The system refused the connection. This usually means a firewall or security software is blocking CC Switch. Allow CC Switch network access in your firewall; local network addresses need it too.",
+      "refused": "The address is reachable, but nothing is listening on that port. Make sure the service is running and the port is correct.",
+      "timeout": "The connection timed out. Check your network and the address; a firewall or security software may also be dropping the connection silently.",
+      "dns": "The domain name could not be resolved. Check the domain in the address for typos, and check your network and DNS.",
+      "tls": "The HTTPS connection failed (certificate or handshake error). Check whether the address should use http or https, and whether the server certificate is valid."
+    },
     "error": "{{providerName}} check error: {{error}}"
+  },
+  "backgroundTask": {
+    "updateCheckFailed": {
+      "title": "Couldn't check for CC Switch updates",
+      "description": "At startup CC Switch contacts dl.ccswitch.io (with github.com as a fallback) to look for a new version, and this time it failed: {{detail}}. Nothing else is affected; if your network or firewall blocks it, you can ignore this."
+    },
+    "modelsDevSyncFailed": {
+      "title": "Couldn't sync model pricing",
+      "description": "CC Switch periodically fetches model prices from models.dev to calculate usage costs, and this time it failed: {{detail}}. Nothing else is affected."
+    },
+    "networkError": "couldn't reach the server",
+    "mute": "Don't show again",
+    "disableModelsDevSync": "Turn off auto sync",
+    "modelsDevSyncDisabled": "Model pricing auto sync is off. You can turn it back on under Usage Statistics → Model Pricing.",
+    "disableFailed": "Couldn't turn it off: {{error}}"
   },
   "proxyConfig": {
     "proxyEnabled": "Routing Master Switch",
