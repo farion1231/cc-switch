@@ -110,8 +110,6 @@ fn get_proxy_port() -> u16 {
 pub fn init(proxy_url: Option<&str>) -> Result<(), String> {
     let effective_url = proxy_url.filter(|s| !s.trim().is_empty());
     let client = build_client(effective_url)?;
-    let no_redirect_client = build_no_redirect_client(effective_url)?;
-    let https_only_client = build_https_only_client(effective_url)?;
 
     // 尝试初始化全局客户端，如果已存在则记录警告并使用 apply_proxy 更新
     if GLOBAL_CLIENT.set(RwLock::new(client.clone())).is_err() {
@@ -125,10 +123,8 @@ pub fn init(proxy_url: Option<&str>) -> Result<(), String> {
         return apply_proxy(proxy_url);
     }
 
-    set_or_replace_client(&NO_REDIRECT_CLIENT, no_redirect_client)?;
-    set_or_replace_client(&HTTPS_ONLY_CLIENT, https_only_client)?;
-
-    // 初始化代理 URL 记录
+    // 记录当前代理 URL；NO_REDIRECT_CLIENT / HTTPS_ONLY_CLIENT 改为首次使用时按需构建，
+    // 避免启动阶段重复构造多份 TLS 根证书存储和连接池。
     let _ = CURRENT_PROXY_URL.set(RwLock::new(effective_url.map(|s| s.to_string())));
 
     log::info!(
@@ -168,8 +164,6 @@ pub fn validate_proxy(proxy_url: Option<&str>) -> Result<(), String> {
 pub fn apply_proxy(proxy_url: Option<&str>) -> Result<(), String> {
     let effective_url = proxy_url.filter(|s| !s.trim().is_empty());
     let new_client = build_client(effective_url)?;
-    let new_no_redirect = build_no_redirect_client(effective_url)?;
-    let new_https_only = build_https_only_client(effective_url)?;
 
     // 更新客户端
     if let Some(lock) = GLOBAL_CLIENT.get() {
@@ -183,16 +177,22 @@ pub fn apply_proxy(proxy_url: Option<&str>) -> Result<(), String> {
         return init(proxy_url);
     }
 
-    set_or_replace_client(&NO_REDIRECT_CLIENT, new_no_redirect)?;
-    set_or_replace_client(&HTTPS_ONLY_CLIENT, new_https_only)?;
-
-    // 更新代理 URL 记录
+    // 先更新代理 URL，再重建已懒初始化的辅助客户端；未初始化的会在首次使用时直接读到新代理
     if let Some(lock) = CURRENT_PROXY_URL.get() {
         let mut url = lock.write().map_err(|e| {
             log::error!("[GlobalProxy] [GP-002] Failed to acquire URL write lock: {e}");
             "Failed to update proxy URL record: lock poisoned".to_string()
         })?;
         *url = effective_url.map(|s| s.to_string());
+    }
+
+    if NO_REDIRECT_CLIENT.get().is_some() {
+        let client = build_no_redirect_client(effective_url)?;
+        set_or_replace_client(&NO_REDIRECT_CLIENT, client)?;
+    }
+    if HTTPS_ONLY_CLIENT.get().is_some() {
+        let client = build_https_only_client(effective_url)?;
+        set_or_replace_client(&HTTPS_ONLY_CLIENT, client)?;
     }
 
     log::info!(
@@ -360,8 +360,16 @@ pub fn no_redirect() -> Result<Client, String> {
             return Ok(client.clone());
         }
     }
-    let client = build_no_redirect_client(get_current_proxy_url().as_deref())?;
+    let proxy_before = get_current_proxy_url();
+    let client = build_no_redirect_client(proxy_before.as_deref())?;
     let _ = NO_REDIRECT_CLIENT.set(RwLock::new(client.clone()));
+    // 若构建期间并发执行了 apply_proxy，按最新代理刷新一次避免写入旧代理配置
+    let proxy_after = get_current_proxy_url();
+    if proxy_after != proxy_before {
+        let refreshed = build_no_redirect_client(proxy_after.as_deref())?;
+        set_or_replace_client(&NO_REDIRECT_CLIENT, refreshed.clone())?;
+        return Ok(refreshed);
+    }
     Ok(NO_REDIRECT_CLIENT
         .get()
         .and_then(|lock| lock.read().ok())
@@ -378,8 +386,15 @@ pub fn https_only() -> Result<Client, String> {
             return Ok(client.clone());
         }
     }
-    let client = build_https_only_client(get_current_proxy_url().as_deref())?;
+    let proxy_before = get_current_proxy_url();
+    let client = build_https_only_client(proxy_before.as_deref())?;
     let _ = HTTPS_ONLY_CLIENT.set(RwLock::new(client.clone()));
+    let proxy_after = get_current_proxy_url();
+    if proxy_after != proxy_before {
+        let refreshed = build_https_only_client(proxy_after.as_deref())?;
+        set_or_replace_client(&HTTPS_ONLY_CLIENT, refreshed.clone())?;
+        return Ok(refreshed);
+    }
     Ok(HTTPS_ONLY_CLIENT
         .get()
         .and_then(|lock| lock.read().ok())
