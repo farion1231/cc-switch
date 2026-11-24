@@ -4,9 +4,12 @@
 //! Supports HTTP CONNECT tunneling through upstream proxies.
 //! Falls back to hyper-util Client (title-case headers) when raw write is not feasible.
 //! Idle upstream connections are reused through `upstream_pool`.
+//! A failed pooled exchange gets one fresh raw attempt when no bytes reached TCP
+//! or when replacing the existing direct-path replay via hyper-util.
 
 use super::upstream_pool::{
-    self, PoolKey, PooledIo, PooledStream, RawRequest, TrackedBody, UpstreamPool,
+    self, PoolKey, PooledIo, PooledStream, ProxySocket, RawRequest, Taken, TrackedBody,
+    UpstreamPool,
 };
 use super::ProxyError;
 use bytes::Bytes;
@@ -14,6 +17,7 @@ use futures::{stream::Stream, StreamExt};
 use http_body_util::BodyExt;
 use hyper_rustls::HttpsConnectorBuilder;
 use hyper_util::{client::legacy::Client, rt::TokioExecutor};
+use std::future::Future;
 use std::sync::OnceLock;
 
 /// Our own header case map: maps lowercase header name → original wire-casing bytes.
@@ -303,11 +307,8 @@ pub async fn send_request(
 
         match result {
             Ok(resp) => return Ok(resp),
-            Err(e) => {
-                if proxy_url.is_some() {
-                    // Don't bypass configured proxy with direct connect fallback
-                    return Err(e);
-                }
+            Err(RawExchangeError::Final(e)) => return Err(e),
+            Err(RawExchangeError::DirectFallback(e)) => {
                 log::warn!("[HyperClient] Raw write failed, falling back to hyper-util: {e}");
                 // Fall through to hyper-util Client
             }
@@ -345,8 +346,21 @@ pub async fn send_request(
 /// TLS-wrapped before sending the CONNECT request.  The enum lets
 /// `send_raw_request` work with either variant generically.
 pub(crate) enum ProxyStream {
-    Tcp(tokio::net::TcpStream),
-    Tls(Box<tokio_rustls::client::TlsStream<tokio::net::TcpStream>>),
+    Tcp(ProxySocket),
+    Tls(Box<tokio_rustls::client::TlsStream<ProxySocket>>),
+}
+
+impl ProxyStream {
+    pub(crate) fn tcp(stream: tokio::net::TcpStream) -> Self {
+        Self::Tcp(ProxySocket::new(stream))
+    }
+
+    pub(crate) fn socket_mut(&mut self) -> &mut ProxySocket {
+        match self {
+            Self::Tcp(socket) => socket,
+            Self::Tls(stream) => stream.get_mut().0,
+        }
+    }
 }
 
 impl tokio::io::AsyncRead for ProxyStream {
@@ -395,6 +409,12 @@ impl tokio::io::AsyncWrite for ProxyStream {
     }
 }
 
+#[derive(Debug)]
+enum RawExchangeError {
+    DirectFallback(ProxyError),
+    Final(ProxyError),
+}
+
 /// Send request via raw TCP/TLS with exact original header casing.
 ///
 /// When `proxy_url` is provided, establishes an HTTP CONNECT tunnel through
@@ -411,11 +431,16 @@ async fn send_raw_request(
     original_cases: &OriginalHeaderCases,
     body: &[u8],
     proxy_url: Option<&str>,
-) -> Result<ProxyResponse, ProxyError> {
+) -> Result<ProxyResponse, RawExchangeError> {
     let scheme = uri.scheme_str().unwrap_or("https");
     let host = uri
         .host()
-        .ok_or_else(|| ProxyError::ForwardFailed("URI has no host".into()))?;
+        .ok_or_else(|| ProxyError::ForwardFailed("URI has no host".into()))
+        .map_err(if proxy_url.is_none() {
+            RawExchangeError::DirectFallback
+        } else {
+            RawExchangeError::Final
+        })?;
     let port = uri
         .port_u16()
         .unwrap_or(if scheme == "https" { 443 } else { 80 });
@@ -428,18 +453,20 @@ async fn send_raw_request(
     // usable one, otherwise over a connection established here — direct, or through an
     // HTTP CONNECT proxy.
     let key = PoolKey::new(scheme, host, port, proxy_url);
-    let io = upstream_pool::write_raw_request(
+    exchange_raw_request(
         &UpstreamPool::global(),
         &key,
         RawRequest {
             bytes: &raw,
             connection_close: upstream_pool::connection_forbids_reuse(headers),
         },
+        method,
+        proxy_url.is_none(),
         async {
             let stream = if let Some(proxy) = proxy_url {
                 connect_via_proxy(proxy, host, port).await?
             } else {
-                ProxyStream::Tcp(connect_direct(host, port).await?)
+                ProxyStream::tcp(connect_direct(host, port).await?)
             };
             if scheme == "https" {
                 let tls_connector = global_tls_connector();
@@ -455,9 +482,49 @@ async fn send_raw_request(
             }
         },
     )
-    .await?;
+    .await
+}
 
-    do_hyper_response(io, method.clone()).await
+async fn exchange_raw_request(
+    pool: &UpstreamPool,
+    key: &PoolKey,
+    request: RawRequest<'_>,
+    method: &http::Method,
+    direct: bool,
+    connect: impl Future<Output = Result<PooledStream, ProxyError>>,
+) -> Result<ProxyResponse, RawExchangeError> {
+    let fresh_error = if let Taken::Idle(stream) = pool.take(key) {
+        log::debug!("[UpstreamPool] upstream connection: reused idle connection");
+        let error = match upstream_pool::write_raw_request(pool, key, &request, stream).await {
+            Ok(io) => match do_hyper_response(io, method.clone()).await {
+                Ok(response) => return Ok(response),
+                Err(error) if direct => error,
+                Err(error) => return Err(RawExchangeError::Final(error)),
+            },
+            Err(failure) if direct || !failure.wrote_bytes => failure.error,
+            Err(failure) => return Err(RawExchangeError::Final(failure.error)),
+        };
+        log::debug!("[UpstreamPool] retrying on a new raw connection: {error}");
+        // For direct requests this replaces the existing hyper-util replay. A
+        // failure here must not fall through to a third attempt. Through a proxy
+        // we only get here if TCP did not accept any bytes of the failed write.
+        RawExchangeError::Final
+    } else {
+        log::debug!("[UpstreamPool] upstream connection: opened new connection (none idle)");
+        if direct {
+            RawExchangeError::DirectFallback
+        } else {
+            RawExchangeError::Final
+        }
+    };
+
+    let stream = connect.await.map_err(fresh_error)?;
+    let io = upstream_pool::write_raw_request(pool, key, &request, stream)
+        .await
+        .map_err(|failure| fresh_error(failure.error))?;
+    do_hyper_response(io, method.clone())
+        .await
+        .map_err(fresh_error)
 }
 
 /// Open a direct TCP connection to `host:port` with Happy Eyeballs.
@@ -528,6 +595,7 @@ async fn connect_via_proxy(
     let tcp = tokio::net::TcpStream::connect((proxy_host, proxy_port))
         .await
         .map_err(|e| ProxyError::ForwardFailed(format!("Proxy TCP connect failed: {e}")))?;
+    let tcp = ProxySocket::new(tcp);
 
     // Wrap with TLS if the proxy URL uses https://
     let mut stream: ProxyStream = if parsed.scheme() == "https" {
@@ -951,7 +1019,8 @@ mod tests {
     // ===== upstream keep-alive pool (`upstream_pool`) =====
 
     use crate::proxy::upstream_pool::test_support::{
-        tls_client_config, AfterReply, Body, Reply, TestServer,
+        put_idle_with_closed_write_half, tls_client_config, tls_pair, AfterReply, Body, Reply,
+        TestServer,
     };
     use crate::proxy::upstream_pool::{PoolConfig, PoolKey, UpstreamPool};
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -1122,22 +1191,23 @@ mod tests {
         let raw = build_raw_request(&method, "/v1/messages", &headers, &cases, &body);
         let key = pool_key_for(server);
         let port = server.port();
-        let io = upstream_pool::write_raw_request(
+        let response = exchange_raw_request(
             pool,
             &key,
             RawRequest {
                 bytes: &raw,
                 connection_close: false,
             },
+            &method,
+            true,
             async {
-                Ok(PooledStream::Plain(ProxyStream::Tcp(
+                Ok(PooledStream::Plain(ProxyStream::tcp(
                     connect_direct("127.0.0.1", port).await?,
                 )))
             },
         )
         .await
-        .expect("raw write");
-        let response = do_hyper_response(io, method).await.expect("raw response");
+        .expect("raw response");
         response.bytes_with_limit(1 << 20).await.expect("body read")
     }
 
@@ -1187,6 +1257,95 @@ mod tests {
             }
         });
         (port, accepted)
+    }
+
+    #[tokio::test]
+    async fn direct_replay_after_a_reused_connection_fails_stays_raw_and_runs_once() {
+        for retry_succeeds in [true, false] {
+            let server = TestServer::start_script(move |request| match request.index {
+                2 => None,
+                3 if !retry_succeeds => None,
+                _ => Some(Reply::fixed(request.bytes.clone())),
+            })
+            .await;
+            let url = server.url();
+            send_and_expect_echo(&url, None).await;
+            assert_pooled_again(&UpstreamPool::global(), &pool_key_for(&server)).await;
+
+            let result = send_raw(&url, None).await;
+            if retry_succeeds {
+                let response = result.expect("a fresh raw connection should recover the request");
+                let echoed = response.bytes_with_limit(1 << 20).await.unwrap();
+                assert_eq!(echoed.as_ref(), standard_raw_request_bytes().as_slice());
+            } else {
+                assert!(matches!(result, Err(ProxyError::ForwardFailed(_))));
+            }
+            assert_eq!(server.requests(), vec![standard_raw_request_bytes(); 3]);
+            assert_eq!(server.accepted(), 2);
+        }
+    }
+
+    #[tokio::test]
+    async fn connect_does_not_replay_a_reused_post_after_the_upstream_received_it() {
+        let server = TestServer::start_script(|request| {
+            (request.index != 2).then(|| Reply::fixed(request.bytes.clone()))
+        })
+        .await;
+        let (proxy_port, tunnels) = spawn_connect_proxy().await;
+        let proxy_url = format!("http://127.0.0.1:{proxy_port}");
+        let url = server.url();
+        send_and_expect_echo(&url, Some(&proxy_url)).await;
+        let key = PoolKey::new("http", "127.0.0.1", server.port(), Some(&proxy_url));
+        assert_pooled_again(&UpstreamPool::global(), &key).await;
+
+        let result = send_raw(&url, Some(&proxy_url)).await;
+        assert!(matches!(result, Err(ProxyError::ForwardFailed(_))));
+        assert_eq!(server.requests(), vec![standard_raw_request_bytes(); 2]);
+        assert_eq!(tunnels.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn connect_retries_a_pooled_tls_write_that_never_reached_tcp() {
+        let server = TestServer::start_tls(|request| Reply::fixed(request.bytes.clone())).await;
+        let (proxy_port, tunnels) = spawn_connect_proxy().await;
+        let proxy_url = format!("http://127.0.0.1:{proxy_port}");
+        let port = server.port();
+        let key = PoolKey::new("https", "127.0.0.1", port, Some(&proxy_url));
+        let pool = UpstreamPool::new(PoolConfig::default());
+        let (stale_tls, _peer) = tls_pair().await;
+        put_idle_with_closed_write_half(&pool, key.clone(), stale_tls).await;
+
+        let raw = standard_raw_request_bytes();
+        let response = tokio::time::timeout(
+            Duration::from_secs(10),
+            exchange_raw_request(
+                &pool,
+                &key,
+                RawRequest {
+                    bytes: &raw,
+                    connection_close: false,
+                },
+                &http::Method::POST,
+                false,
+                async {
+                    let stream = connect_via_proxy(&proxy_url, "127.0.0.1", port).await?;
+                    let connector = tokio_rustls::TlsConnector::from(tls_client_config());
+                    let name = rustls::pki_types::ServerName::try_from("127.0.0.1").unwrap();
+                    let tls = connector
+                        .connect(name, stream)
+                        .await
+                        .expect("TLS handshake");
+                    Ok(PooledStream::Tls(Box::new(tls)))
+                },
+            ),
+        )
+        .await
+        .expect("TLS exchange in time")
+        .expect("the write failed before TCP accepted any bytes");
+        let echoed = response.bytes_with_limit(1 << 20).await.unwrap();
+        assert_eq!(echoed.as_ref(), raw.as_slice());
+        assert_eq!(server.requests(), vec![raw]);
+        assert_eq!(tunnels.load(Ordering::SeqCst), 1);
     }
 
     /// R1 + R2: the wire bytes are exactly `build_raw_request`'s output, on fresh and
@@ -1656,18 +1815,20 @@ mod tests {
 
             for _ in 0..2 {
                 let received = tokio::time::timeout(Duration::from_secs(10), async {
-                    let io = upstream_pool::write_raw_request(
+                    let response = exchange_raw_request(
                         &pool,
                         &key,
                         RawRequest {
                             bytes: &raw,
                             connection_close: false,
                         },
+                        &http::Method::POST,
+                        !through_proxy,
                         async {
                             let stream = if let Some(url) = proxy_url {
                                 connect_via_proxy(url, "127.0.0.1", port).await?
                             } else {
-                                ProxyStream::Tcp(connect_direct("127.0.0.1", port).await?)
+                                ProxyStream::tcp(connect_direct("127.0.0.1", port).await?)
                             };
                             let name =
                                 rustls::pki_types::ServerName::try_from("127.0.0.1").unwrap();
@@ -1679,10 +1840,7 @@ mod tests {
                         },
                     )
                     .await
-                    .expect("raw request");
-                    let response = do_hyper_response(io, http::Method::POST)
-                        .await
-                        .expect("raw response");
+                    .expect("raw response");
                     assert_eq!(response.status(), http::StatusCode::OK);
                     let stream = response.bytes_stream();
                     futures::pin_mut!(stream);
@@ -1715,9 +1873,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn keep_alive_timeout_zero_closes_an_otherwise_reusable_connection() {
+    async fn keep_alive_timeout_within_margin_closes_an_otherwise_reusable_connection() {
         let server = TestServer::start(|_| Reply {
-            headers: vec!["Keep-Alive: max=100, TimeOut = 0".to_string()],
+            headers: vec!["Keep-Alive: max=100, TimeOut = 1".to_string()],
             ..Reply::fixed(b"body".to_vec())
         })
         .await;

@@ -10,6 +10,10 @@
 //! boundary: the consumer read the whole response body, the exchange allows keep-alive,
 //! no I/O error or EOF was seen and hyper's read buffer is empty (`drive_connection`).
 //! Everything else closes the stream.
+//!
+//! Idle entries expire on either monotonic or wall time so a suspend cannot hide
+//! elapsed idle time. An upstream `Keep-Alive` timeout tightens the local limit,
+//! with one second of margin before the peer is expected to close.
 
 use std::collections::{HashMap, VecDeque};
 use std::future::Future;
@@ -17,7 +21,7 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, PoisonError};
 use std::task::{Context, Poll};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use super::hyper_client::{ProxyResponse, ProxyStream};
 use super::ProxyError;
@@ -106,7 +110,19 @@ struct PoolState {
 struct IdleEntry {
     stream: PooledStream,
     idle_since: Instant,
+    idle_since_wall: SystemTime,
     idle_ttl: Duration,
+}
+
+impl IdleEntry {
+    fn is_expired(&self, now: Instant, wall_now: SystemTime) -> bool {
+        // Instant can stop during system suspend. Wall time catches that gap;
+        // a backward clock adjustment still leaves the monotonic limit in force.
+        now.duration_since(self.idle_since) >= self.idle_ttl
+            || wall_now
+                .duration_since(self.idle_since_wall)
+                .is_ok_and(|elapsed| elapsed >= self.idle_ttl)
+    }
 }
 
 /// Marker owned by the running sweeper task; dropping it retires the task.
@@ -139,7 +155,7 @@ impl UpstreamPool {
     /// Take an idle connection for `key`, if the pool has one that is still usable.
     pub(crate) fn take(&self, key: &PoolKey) -> Taken {
         while let Some(mut entry) = self.pop_newest(key) {
-            let reason = if entry.idle_since.elapsed() >= entry.idle_ttl {
+            let reason = if entry.is_expired(Instant::now(), SystemTime::now()) {
                 Some("idle longer than the TTL")
             } else {
                 unusable_reason(&mut entry.stream)
@@ -178,11 +194,13 @@ impl UpstreamPool {
             let mut pool = self.lock();
             let state = &mut *pool;
             let now = Instant::now();
-            state.remove_expired(now, &mut evicted);
+            let wall_now = SystemTime::now();
+            state.remove_expired(now, wall_now, &mut evicted);
             let queue = state.by_key.entry(key).or_default();
             queue.push_back(IdleEntry {
                 stream,
                 idle_since: now,
+                idle_since_wall: wall_now,
                 idle_ttl: self.config.idle_ttl.min(idle_limit),
             });
             state.total += 1;
@@ -230,7 +248,7 @@ impl UpstreamPool {
                 let mut expired = Vec::new();
                 let stop = {
                     let mut pool = shared.pool.lock().unwrap_or_else(PoisonError::into_inner);
-                    pool.remove_expired(Instant::now(), &mut expired);
+                    pool.remove_expired(Instant::now(), SystemTime::now(), &mut expired);
                     if pool.total == 0 {
                         pool.sweeper = None;
                         true
@@ -264,12 +282,12 @@ impl UpstreamPool {
 impl PoolState {
     /// Drain expired entries. Each response can set a different idle limit, so
     /// expired entries need not be at the front of a queue.
-    fn remove_expired(&mut self, now: Instant, expired: &mut Vec<IdleEntry>) {
+    fn remove_expired(&mut self, now: Instant, wall_now: SystemTime, expired: &mut Vec<IdleEntry>) {
         let total = &mut self.total;
         self.by_key.retain(|_, queue| {
             for _ in 0..queue.len() {
                 let entry = queue.pop_front().expect("one entry per iteration");
-                if now.duration_since(entry.idle_since) >= entry.idle_ttl {
+                if entry.is_expired(now, wall_now) {
                     expired.push(entry);
                     *total -= 1;
                 } else {
@@ -305,11 +323,86 @@ pub(crate) enum Taken {
     None,
 }
 
+/// Observe accepted bytes below both TLS layers. A TLS write can send records
+/// and then return an error without reporting that progress.
+pub(crate) struct ProxySocket {
+    tcp: tokio::net::TcpStream,
+    wrote_bytes: bool,
+}
+
+impl ProxySocket {
+    pub(crate) fn new(tcp: tokio::net::TcpStream) -> Self {
+        Self {
+            tcp,
+            wrote_bytes: false,
+        }
+    }
+}
+
+impl AsyncRead for ProxySocket {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.get_mut().tcp).poll_read(cx, buf)
+    }
+}
+
+impl AsyncWrite for ProxySocket {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        let socket = self.get_mut();
+        let result = Pin::new(&mut socket.tcp).poll_write(cx, buf);
+        if matches!(result, Poll::Ready(Ok(n)) if n > 0) {
+            socket.wrote_bytes = true;
+        }
+        result
+    }
+
+    fn poll_write_vectored(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &[std::io::IoSlice<'_>],
+    ) -> Poll<std::io::Result<usize>> {
+        let socket = self.get_mut();
+        let result = Pin::new(&mut socket.tcp).poll_write_vectored(cx, bufs);
+        if matches!(result, Poll::Ready(Ok(n)) if n > 0) {
+            socket.wrote_bytes = true;
+        }
+        result
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        self.tcp.is_write_vectored()
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.get_mut().tcp).poll_flush(cx)
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.get_mut().tcp).poll_shutdown(cx)
+    }
+}
+
 /// An upstream connection as the pool holds it: plaintext or TLS, direct or through an
 /// HTTP CONNECT tunnel.
 pub(crate) enum PooledStream {
     Plain(ProxyStream),
     Tls(Box<tokio_rustls::client::TlsStream<ProxyStream>>),
+}
+
+impl PooledStream {
+    fn socket_mut(&mut self) -> &mut ProxySocket {
+        match self {
+            Self::Plain(stream) => stream.socket_mut(),
+            Self::Tls(stream) => stream.get_mut().0.socket_mut(),
+        }
+    }
 }
 
 impl AsyncRead for PooledStream {
@@ -399,38 +492,31 @@ pub(crate) struct RawRequest<'a> {
     pub(crate) connection_close: bool,
 }
 
-/// Write `request` to an upstream connection for `key`: an idle one from `pool` if
-/// there is a usable one, otherwise one that `connect` establishes. The bytes go out
-/// as they are; nothing is re-encoded. A connection that failed to take the request is
-/// dropped and never pooled.
-pub(crate) async fn write_raw_request<F>(
+#[derive(Debug)]
+pub(crate) struct RawWriteError {
+    pub(crate) error: ProxyError,
+    pub(crate) wrote_bytes: bool,
+}
+
+/// Write the original request bytes. If writing fails, drop the socket without
+/// flushing buffered TLS records or returning the socket to the pool.
+pub(crate) async fn write_raw_request(
     pool: &UpstreamPool,
     key: &PoolKey,
-    request: RawRequest<'_>,
-    connect: F,
-) -> Result<PooledIo, ProxyError>
-where
-    F: Future<Output = Result<PooledStream, ProxyError>>,
-{
-    let mut stream = match pool.take(key) {
-        Taken::Idle(stream) => {
-            log::debug!("[UpstreamPool] upstream connection: reused idle connection");
-            stream
-        }
-        Taken::None => {
-            log::debug!("[UpstreamPool] upstream connection: opened new connection (none idle)");
-            connect.await?
-        }
+    request: &RawRequest<'_>,
+    mut stream: PooledStream,
+) -> Result<PooledIo, RawWriteError> {
+    stream.socket_mut().wrote_bytes = false;
+    let failure = match stream.write_all(request.bytes).await {
+        Err(error) => Some(("Write", error)),
+        Ok(()) => stream.flush().await.err().map(|error| ("Flush", error)),
     };
-
-    stream
-        .write_all(request.bytes)
-        .await
-        .map_err(|e| ProxyError::ForwardFailed(format!("Write failed: {e}")))?;
-    stream
-        .flush()
-        .await
-        .map_err(|e| ProxyError::ForwardFailed(format!("Flush failed: {e}")))?;
+    if let Some((stage, error)) = failure {
+        return Err(RawWriteError {
+            error: ProxyError::ForwardFailed(format!("{stage} failed: {error}")),
+            wrote_bytes: stream.socket_mut().wrote_bytes,
+        });
+    }
 
     Ok(PooledIo {
         io: stream,
@@ -869,7 +955,8 @@ fn response_allows_reuse(response: &hyper::Response<Incoming>, method: &http::Me
         }
 }
 
-/// Honor the shortest valid upstream idle hint; it can only tighten the local cap.
+/// Honor the shortest valid upstream idle hint, with one second of margin for
+/// the gap between the peer's idle timer and local pooling.
 fn keep_alive_timeout(headers: &http::HeaderMap) -> Option<u64> {
     headers
         .get_all("keep-alive")
@@ -879,12 +966,13 @@ fn keep_alive_timeout(headers: &http::HeaderMap) -> Option<u64> {
         .filter_map(|param| {
             let (name, value) = param.split_once('=')?;
             if name.trim().eq_ignore_ascii_case("timeout") {
-                value.trim().parse().ok()
+                value.trim().parse::<u64>().ok()
             } else {
                 None
             }
         })
         .min()
+        .map(|seconds| seconds.saturating_sub(1))
 }
 
 /// `value` is one `Connection` header value: does it carry `token`?
@@ -921,6 +1009,16 @@ pub(crate) mod test_support {
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    pub(crate) async fn put_idle_with_closed_write_half(
+        pool: &super::UpstreamPool,
+        key: super::PoolKey,
+        mut stream: PooledStream,
+    ) {
+        stream.socket_mut().shutdown().await.unwrap();
+        assert_eq!(super::unusable_reason(&mut stream), None);
+        pool.put(key, stream, Duration::MAX);
+    }
 
     /// What the test upstream sends for one request.
     #[derive(Clone)]
@@ -1243,7 +1341,7 @@ pub(crate) mod test_support {
     /// A plaintext client stream the pool can hold, paired with its server-side socket.
     pub(crate) async fn tcp_pair() -> (PooledStream, tokio::net::TcpStream) {
         let (client, peer) = tcp_sockets().await;
-        (PooledStream::Plain(ProxyStream::Tcp(client)), peer)
+        (PooledStream::Plain(ProxyStream::tcp(client)), peer)
     }
 
     /// Throwaway self-signed test certificate for `localhost` / `127.0.0.1`, generated
@@ -1314,7 +1412,7 @@ rERy1qBgzxDHJUp8Oh0mQQYVrzywIgW7iWdgm6KwN4XzvWVIsH2d5TH1
         let server_name = rustls::pki_types::ServerName::try_from("localhost".to_string())
             .expect("localhost is a valid server name");
         let (client, server) = tokio::join!(
-            connector.connect(server_name, ProxyStream::Tcp(client_tcp)),
+            connector.connect(server_name, ProxyStream::tcp(client_tcp)),
             acceptor.accept(server_tcp)
         );
         (
@@ -1481,11 +1579,38 @@ mod tests {
         pool.put(key, newer, Duration::from_secs(1));
 
         let mut expired = Vec::new();
-        pool.lock()
-            .remove_expired(Instant::now() + Duration::from_secs(2), &mut expired);
+        pool.lock().remove_expired(
+            Instant::now() + Duration::from_secs(2),
+            SystemTime::now(),
+            &mut expired,
+        );
         let lower = PoolKey::new("https", "example.com", 443, None);
         assert_eq!(expired.len(), 1);
         assert_eq!(pool.idle_count(&lower), 1);
+    }
+
+    #[tokio::test]
+    async fn suspended_time_expires_connections_on_take_and_sweep() {
+        let pool = UpstreamPool::new(PoolConfig::default());
+        let take_key = PoolKey::new("http", "take.example", 80, None);
+        let sweep_key = PoolKey::new("http", "sweep.example", 80, None);
+        let (take_stream, _take_peer) = tcp_pair().await;
+        let (sweep_stream, _sweep_peer) = tcp_pair().await;
+        pool.put(take_key.clone(), take_stream, Duration::MAX);
+        pool.put(sweep_key.clone(), sweep_stream, Duration::MAX);
+
+        // Simulate a suspend that advanced wall time but not the monotonic clock.
+        let wall_now = SystemTime::now();
+        for queue in pool.lock().by_key.values_mut() {
+            queue[0].idle_since_wall = wall_now - Duration::from_secs(600);
+        }
+        assert!(matches!(pool.take(&take_key), Taken::None));
+
+        let mut expired = Vec::new();
+        pool.lock()
+            .remove_expired(Instant::now(), wall_now, &mut expired);
+        assert_eq!(expired.len(), 1);
+        assert_eq!(pool.idle_count(&sweep_key), 0);
     }
 
     #[tokio::test]
@@ -1500,7 +1625,7 @@ mod tests {
             .unwrap();
         pool.put(
             key.clone(),
-            PooledStream::Plain(ProxyStream::Tcp(socket)),
+            PooledStream::Plain(ProxyStream::tcp(socket)),
             Duration::MAX,
         );
 
@@ -1553,15 +1678,15 @@ mod tests {
         let result = write_raw_request(
             &pool,
             &key,
-            RawRequest {
+            &RawRequest {
                 bytes: b"GET / HTTP/1.1\r\n\r\n",
                 connection_close: false,
             },
-            async { Ok(stream) },
+            stream,
         )
         .await;
         assert!(
-            matches!(result, Err(ProxyError::ForwardFailed(message)) if message.starts_with("Write failed:"))
+            matches!(result, Err(RawWriteError { error: ProxyError::ForwardFailed(message), wrote_bytes: false }) if message.starts_with("Write failed:"))
         );
         assert!(matches!(pool.take(&key), Taken::None));
     }
@@ -1579,11 +1704,11 @@ mod tests {
         let mut io = write_raw_request(
             &pool,
             &key,
-            RawRequest {
+            &RawRequest {
                 bytes: b"GET / HTTP/1.1\r\n\r\n",
                 connection_close: false,
             },
-            async { Ok(stream) },
+            stream,
         )
         .await
         .expect("write on a healthy TLS connection");
