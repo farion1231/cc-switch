@@ -20,7 +20,7 @@ use crate::live::engine::{AppWriteGuard, DeviceStore, LiveFile};
 use crate::live::patch::json::JsonPatch;
 use crate::live::patch::KeyPath;
 use crate::live::project::claude::{
-    direct_patch, tombstone_keys, tombstone_sweep, with_tombstones, ClaudeProjection,
+    direct_patch, tombstone_keys, tombstone_sweep, with_tombstones,
 };
 use crate::mode::operation::{AppWrite, FileChange, OperationReport};
 use crate::mode::state::{op, PendingTarget};
@@ -72,10 +72,10 @@ fn write(
     target: &Provider,
     pointer: Option<&str>,
 ) -> Result<OperationReport, AppError> {
-    let prev = prev.map(|provider| ClaudeProjection::of(&provider.settings_config));
+    let prev = prev.map(super::claude_official::projection_for);
     let mut patch = direct_patch(
         prev.as_ref(),
-        &ClaudeProjection::of(&target.settings_config),
+        &super::claude_official::projection_for(target),
     );
     // 删掉以前开发版写进去的账号目录（见 claude_official）
     super::claude_official::strip_from_patch(&mut patch);
@@ -423,6 +423,7 @@ fn sweep_tombstones(sweep: &Sweep) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::live::project::claude::ClaudeProjection;
     use crate::test_support::TestHome;
     use serde_json::{json, Value};
     use serial_test::serial;
@@ -515,6 +516,54 @@ mod tests {
                 "permissions": { "allow": ["Bash"] }
             })
         );
+    }
+
+    #[test]
+    #[serial]
+    fn switching_to_managed_official_card_strips_stale_setup_token() {
+        let _home = test_home();
+        let db = Database::memory().unwrap();
+        write_live(&json!({
+            "env": {
+                "CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-previous",
+                "API_TIMEOUT_MS": "300000"
+            }
+        }));
+
+        let prev_setup = provider(
+            "setup",
+            "official",
+            json!({ "env": { "CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-previous" } }),
+        );
+        let mut managed = provider(
+            "managed",
+            "official",
+            json!({ "env": { "CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-stale" } }),
+        );
+        managed.meta = Some(crate::provider::ProviderMeta {
+            auth_binding: Some(crate::provider::AuthBinding {
+                source: crate::provider::AuthBindingSource::ManagedAccount,
+                auth_provider: Some(super::super::claude_official::AUTH_PROVIDER.into()),
+                account_id: Some("acc:org".into()),
+            }),
+            ..Default::default()
+        });
+
+        switch_to(&db, Some(&prev_setup), &managed).expect("switch");
+
+        // 托管账号卡即使卡内残留了 CLAUDE_CODE_OAUTH_TOKEN，也不投影到 live，
+        // 上一张 Setup Token 卡留下的键会被写空墓碑并在随后清掉。
+        assert_eq!(
+            read_live()["env"],
+            json!({
+                "CLAUDE_CODE_OAUTH_TOKEN": "",
+                "API_TIMEOUT_MS": "300000"
+            })
+        );
+        let scheduled = take_scheduled();
+        assert_eq!(scheduled.len(), 1);
+        sweep_tombstones(&scheduled[0]).expect("sweep");
+        assert_eq!(read_live()["env"], json!({ "API_TIMEOUT_MS": "300000" }));
     }
 
     #[test]

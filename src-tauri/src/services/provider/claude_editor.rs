@@ -134,7 +134,7 @@ fn switched(state: &AppState, settings_config: &Value) -> Result<(Value, Value),
 }
 
 /// live 里有、切到这个供应商之后就没有的键（值是 live 里的）。
-#[derive(Debug, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct SwitchDrops {
     pub env: Map<String, Value>,
     pub top: Map<String, Value>,
@@ -403,12 +403,10 @@ pub(crate) fn write_live(
     // 改了当前卡绑的账号（或新增的第一张就是绑号卡）：和切换一样先换登录，写失败时换回去
     let login_target = key_fields.as_ref().map(|write| write.target);
     let key_patch = key_fields.map(|write| {
-        let prev = write
-            .prev
-            .map(|provider| ClaudeProjection::of(&provider.settings_config));
+        let prev = write.prev.map(super::claude_official::projection_for);
         let mut patch = direct_patch(
             prev.as_ref(),
-            &ClaudeProjection::of(&write.target.settings_config),
+            &super::claude_official::projection_for(write.target),
         );
         // 和切换一样：删掉以前开发版写进去的账号目录
         super::claude_official::strip_from_patch(&mut patch);

@@ -1993,6 +1993,13 @@ function ProviderFormFull({
       settingsConfig = JSON.stringify(omoConfig);
     } else {
       settingsConfig = values.settingsConfig.trim();
+      if (
+        appId === "claude" &&
+        category === "official" &&
+        !claudeSetupTokenMode
+      ) {
+        settingsConfig = clearClaudeSetupTokenInConfig(settingsConfig);
+      }
     }
 
     const payload: ProviderFormValues = {

@@ -2855,7 +2855,6 @@
     "balanceHint": "プロバイダーのAPI Keyを使用してアカウント残高を自動クエリ",
     "officialSubscriptionHint": "ローカル CLI の OAuth 認証情報を読み取り、公式 API でサブスクリプション枠を照会します。既定では無効で、有効化した後のみリクエストします。",
     "officialSubscriptionHintAgy": "agy 組み込みの /usage コマンドを実行して、ログイン中のアカウントの枠を照会します。ログイン認証情報は読み取りません。1 回の照会に約 10 秒かかります。既定では無効で、有効化した後のみ実行します。",
-    "officialSubscriptionHintSetupToken": "Setup Token 認証（CLAUDE_CODE_OAUTH_TOKEN）ではサブスクリプション枠を照会できませんが、セッション使用量統計は通常どおり自動で記録されます。",
     "resetDate": "リセット日",
     "premiumRequests": "Credits",
     "credentialsConfig": "認証情報",

@@ -2855,7 +2855,6 @@
     "balanceHint": "공급자의 API 키를 자동으로 사용하여 계정 잔액을 조회합니다.",
     "officialSubscriptionHint": "로컬 CLI OAuth 자격 증명을 읽고 공식 API를 호출하여 구독 할당량을 조회합니다. 기본적으로 비활성화되어 있으며 활성화한 후에만 요청합니다.",
     "officialSubscriptionHintAgy": "agy의 기본 제공 /usage 명령을 실행하여 로그인된 계정의 할당량을 확인합니다. 로그인 자격 증명은 읽혀지지 않습니다. 각 확인에는 약 10초가 소요됩니다. 기본적으로 비활성화되어 있으며 활성화한 후에만 실행됩니다.",
-    "officialSubscriptionHintSetupToken": "Setup Token 인증(CLAUDE_CODE_OAUTH_TOKEN)은 구독 할당량 조회를 지원하지 않지만, 세션 사용량 통계는 정상적으로 자동 기록됩니다.",
     "resetDate": "초기화 날짜",
     "premiumRequests": "크레딧",
     "credentialsConfig": "자격 증명",
