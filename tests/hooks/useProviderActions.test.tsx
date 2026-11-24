@@ -42,12 +42,16 @@ const useUpdateProviderMutationMock = vi.fn(() => updateProviderMutation);
 const useDeleteProviderMutationMock = vi.fn(() => deleteProviderMutation);
 const useSwitchProviderMutationMock = vi.fn(() => switchProviderMutation);
 
-vi.mock("@/lib/query", () => ({
-  useAddProviderMutation: () => useAddProviderMutationMock(),
-  useUpdateProviderMutation: () => useUpdateProviderMutationMock(),
-  useDeleteProviderMutation: () => useDeleteProviderMutationMock(),
-  useSwitchProviderMutation: () => useSwitchProviderMutationMock(),
-}));
+vi.mock("@/lib/query", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/query")>();
+  return {
+    ...actual,
+    useAddProviderMutation: () => useAddProviderMutationMock(),
+    useUpdateProviderMutation: () => useUpdateProviderMutationMock(),
+    useDeleteProviderMutation: () => useDeleteProviderMutationMock(),
+    useSwitchProviderMutation: () => useSwitchProviderMutationMock(),
+  };
+});
 
 const providersApiUpdateMock = vi.fn();
 const providersApiUpdateTrayMenuMock = vi.fn();
