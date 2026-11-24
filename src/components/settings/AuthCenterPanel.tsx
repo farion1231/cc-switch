@@ -5,6 +5,7 @@ import { CodexOAuthSection } from "@/components/providers/forms/CodexOAuthSectio
 import { XaiOAuthSection } from "@/components/providers/forms/XaiOAuthSection";
 import { AgyOAuthSection } from "@/components/providers/forms/AgyOAuthSection";
 import { ClaudeOfficialSection } from "@/components/providers/forms/ClaudeOfficialSection";
+import { CodebuddyAccountSection } from "@/components/providers/forms/CodebuddyAccountSection";
 import { KimiAccountLogin } from "@/components/providers/KimiAccountLogin";
 import { DshAccountLogin } from "@/components/providers/DshAccount";
 import { WorkBuddyAccountSection } from "@/components/settings/auth/WorkBuddyAccountSection";
@@ -119,6 +120,11 @@ const AUTH_CARDS: readonly AuthCard[] = [
     render: () => <DshAccountLogin helpSide="bottom" />,
   },
   {
+    target: "codebuddy_oauth",
+    apps: ["codebuddy"],
+    render: () => <CodebuddyAccountSection helpSide="bottom" />,
+  },
+  {
     target: "agy_oauth",
     apps: ["agy"],
     render: () => <AgyOAuthSection helpSide="bottom" />,
@@ -163,7 +169,7 @@ function useOrderedAuthCards(
 }
 
 /**
- * 授权中心：Claude 官方账号、GitHub Copilot、ChatGPT、xAI、Kimi Code、DeepSeek Harness、WorkBuddy，一组一张卡片；
+ * 授权中心：Claude 官方账号、GitHub Copilot、ChatGPT、xAI、Kimi Code、DeepSeek Harness、CodeBuddy Code、WorkBuddy，一组一张卡片；
  * macOS、Windows 上另有 Antigravity 一组（切 agy 的官方登录：macOS 钥匙串、Windows 凭据管理器）。
  * WorkBuddy 收录桌面端登录的快照再切换（macOS 已确认路径，Windows / Linux 按推断路径）。
  * 卡片的顺序和显示跟侧栏的应用设置走（见 `useOrderedAuthCards`）。

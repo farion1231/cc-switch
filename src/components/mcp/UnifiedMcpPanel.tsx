@@ -109,6 +109,10 @@ const IMPORT_SOURCE_FILES: Record<
   qwen: { file: "~/.qwen/settings.json" },
   copilot: { file: "~/.copilot/mcp-config.json" },
   workbuddy: { file: "~/.workbuddy/mcp.json" },
+  codebuddy: {
+    file: "~/.codebuddy/.mcp.json",
+    noteKey: "mcpPage.import.codebuddyNote",
+  },
   mcode: { file: "~/.minimax/mcp.json" },
   omp: { file: "~/.omp/agent/mcp.json" },
 };
@@ -118,6 +122,7 @@ const WRITE_THEN_SAVE_APPS: ReadonlySet<AppIdWith<"mcp">> = new Set([
   "mcode",
   "kimi",
   "qwen",
+  "codebuddy",
   "dsh",
   "workbuddy",
   "pi",

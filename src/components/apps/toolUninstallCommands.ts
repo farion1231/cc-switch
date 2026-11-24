@@ -35,6 +35,10 @@ const COMMANDS: Record<UninstallMethod, UninstallCommand[]> = {
     { tool: "kimi", command: "npm uninstall -g @moonshot-ai/kimi-code" },
     { tool: "qwen", command: "npm uninstall -g @qwen-code/qwen-code" },
     { tool: "copilot", command: "npm uninstall -g @github/copilot" },
+    {
+      tool: "codebuddy",
+      command: "npm uninstall -g @tencent-ai/codebuddy-code",
+    },
   ],
   pnpm: [
     { tool: "opencode", command: "pnpm remove -g opencode-ai" },

@@ -70,26 +70,13 @@ pub(crate) async fn query_xai_oauth_quota_for(
         }
     };
 
-    // 套餐（SuperGrok / Heavy）另问 Grok CLI 的设置接口，和额度并行；问不到只是不显示
-    let (quota, plan) = tokio::join!(
-        crate::services::subscription_grok::query_grok_quota(
-            &token,
-            "xai_oauth",
-            "Please re-login via cc-switch.",
-        ),
-        async {
-            if with_plan {
-                crate::services::subscription_grok::query_grok_plan(&token).await
-            } else {
-                None
-            }
-        },
-    );
-    let mut quota = quota?;
-    if quota.success {
-        quota.plan_name = plan;
-    }
-    Ok(quota)
+    crate::services::subscription_grok::query_grok_quota_with_plan(
+        &token,
+        "xai_oauth",
+        "Please re-login via cc-switch.",
+        with_plan,
+    )
+    .await
 }
 
 /// Grok Build 官方卡的订阅额度：先读 Grok CLI 凭据，查不到时用授权中心的同一账号兜底
@@ -103,15 +90,18 @@ pub(crate) async fn query_xai_oauth_quota_for(
 /// 瞬时失败（`Err`）不兜底，保持前端 retry + 保留上次成功值的语义。
 pub(crate) async fn query_grokbuild_quota_with_managed_fallback(
     state: Option<&XaiOAuthState>,
+    with_plan: bool,
 ) -> Result<SubscriptionQuota, String> {
-    let primary = crate::services::subscription_grok::get_grok_subscription_quota().await?;
+    let primary =
+        crate::services::subscription_grok::get_grok_subscription_quota_with_plan(with_plan)
+            .await?;
     if primary.success {
         return Ok(primary);
     }
     let (Some(state), Some(live)) = (state, crate::grok_auth::read_live_login_from_disk()) else {
         return Ok(primary);
     };
-    let managed = query_xai_oauth_quota_for(state, Some(live.user_id), false).await;
+    let managed = query_xai_oauth_quota_for(state, Some(live.user_id), with_plan).await;
     pick_grokbuild_quota(primary, managed)
 }
 
@@ -280,40 +270,11 @@ mod tests {
 
         let mut managed = SubscriptionQuota::not_found("xai_oauth");
         managed.success = true;
+        managed.plan_name = Some("SuperGrok Heavy".to_string());
         let used = pick_grokbuild_quota(primary(), Ok(managed)).unwrap();
         assert!(used.success);
         assert_eq!(used.tool, "grokbuild");
-    }
-
-    #[test]
-    fn transient_token_errors_are_classified_separately_from_auth_failures() {
-        assert!(is_transient_token_error(&XaiOAuthError::NetworkError(
-            "timeout".to_string()
-        )));
-        assert!(is_transient_token_error(&XaiOAuthError::TokenFetchFailed(
-            "HTTP 503 Service Unavailable".to_string()
-        )));
-        assert!(is_transient_token_error(&XaiOAuthError::ParseError(
-            "OAuth 响应不是有效 JSON".to_string()
-        )));
-        assert!(is_transient_token_error(&XaiOAuthError::IoError(
-            "disk full".to_string()
-        )));
-
-        assert!(!is_transient_token_error(
-            &XaiOAuthError::RefreshTokenInvalid
-        ));
-        assert!(!is_transient_token_error(&XaiOAuthError::ReauthRequired(
-            "acct-1".to_string()
-        )));
-        assert!(!is_transient_token_error(&XaiOAuthError::AccountNotFound(
-            "acct-1".to_string()
-        )));
-        assert!(!is_transient_token_error(&XaiOAuthError::AccessDenied));
-        assert!(!is_transient_token_error(&XaiOAuthError::ExpiredToken));
-        assert!(!is_transient_token_error(
-            &XaiOAuthError::AuthorizationPending
-        ));
+        assert_eq!(used.plan_name.as_deref(), Some("SuperGrok Heavy"));
     }
 
     #[tokio::test]

@@ -63,6 +63,7 @@ pub fn import_from_gemini(config: &mut MultiAppConfig) -> Result<usize, AppError
                         kimi: false,
                         qwen: false,
                         copilot: false,
+                        codebuddy: false,
                         dsh: false,
                         workbuddy: false,
                         pi: false,
