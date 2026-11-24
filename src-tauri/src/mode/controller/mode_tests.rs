@@ -622,9 +622,20 @@ async fn failover_moves_the_route_without_writing_client_files() {
 
 #[tokio::test]
 #[serial]
+async fn in_flight_failover_cannot_override_a_manual_route_while_enabled() {
+    check_in_flight_failover_preserves_manual_route(false).await;
+}
+
+#[tokio::test]
+#[serial]
 async fn in_flight_failover_cannot_override_a_manual_route_after_disabling() {
+    check_in_flight_failover_preserves_manual_route(true).await;
+}
+
+async fn check_in_flight_failover_preserves_manual_route(disable_failover: bool) {
     use crate::proxy::{
-        forwarder::ForwardBody, handler_context::RequestContext, server::ProxyState,
+        failover_switch::FailoverSwitchManager, forwarder::ForwardBody,
+        handler_context::RequestContext, server::ProxyState,
     };
     use axum::{http::StatusCode, routing::post, Json, Router};
     use std::time::Duration;
@@ -675,13 +686,11 @@ async fn in_flight_failover_cannot_override_a_manual_route_after_disabling() {
     let mut config = state.db.get_proxy_config_for_app(&app).await.unwrap();
     config.auto_failover_enabled = true;
     config.max_retries = 1;
-    state
-        .db
-        .update_proxy_config_for_app(config.clone())
-        .await
-        .unwrap();
+    state.db.update_proxy_config_for_app(config).await.unwrap();
 
-    let proxy = ProxyState::for_test(state.db.clone());
+    let (manager, mut completed) = FailoverSwitchManager::for_test(state.clone());
+    let mut proxy = ProxyState::for_test(state.db.clone());
+    proxy.failover_manager = Arc::new(manager);
     let body = json!({"model":"claude-sonnet-4-6","messages":[]});
     let headers = axum::http::HeaderMap::new();
     let context = || {
@@ -712,42 +721,60 @@ async fn in_flight_failover_cannot_override_a_manual_route_after_disabling() {
     };
     let old_context = context().await.unwrap();
     assert_eq!(old_context.current_provider_id, "a");
-    let old_response = async {
-        let result = forward(&old_context).await;
-        assert_eq!(result.provider.id, "b");
-        // Drive the same commit used by the background task without a Tauri window.
-        record_failover_route(
-            &state,
-            &app,
-            &result.provider.id,
-            old_context.route_revision,
-        )
-        .await
-        .unwrap()
-    };
+    assert!(old_context.app_config.auto_failover_enabled);
     let switch = async {
         reached_b.notified().await;
-        {
+        if disable_failover {
             let _guard = lock_settled(&state, &app).await.unwrap();
+            let mut config = state.db.get_proxy_config_for_app(&app).await.unwrap();
             config.auto_failover_enabled = false;
             state.db.update_proxy_config_for_app(config).await.unwrap();
         }
         set_route(&state, &app, "c").await.unwrap();
         release_b.notify_one();
     };
-    let (changed, ()) = tokio::time::timeout(Duration::from_secs(10), async {
-        tokio::join!(old_response, switch)
+    let (old_response, ()) = tokio::time::timeout(Duration::from_secs(10), async {
+        tokio::join!(forward(&old_context), switch)
     })
     .await
     .expect("B receives the old request before C is selected");
-    assert!(!changed, "B's success cannot replace C");
-    assert_eq!(in_use(&state, &app).as_deref(), Some("c"));
+    assert_eq!(old_response.provider.id, "b");
+    assert_eq!(old_response.response.status(), StatusCode::OK);
+
+    let mut writeback = async || {
+        tokio::time::timeout(Duration::from_secs(10), completed.recv())
+            .await
+            .expect("the forwarder runs the background route writeback")
+            .expect("writeback completion channel is open")
+            .expect("record failover route")
+    };
+    let changed = writeback().await;
+    assert_eq!(
+        mode(&app).proxy_route.as_deref(),
+        Some("c"),
+        "B's success cannot replace C"
+    );
+    assert!(!changed);
+
     let new_context = context().await.unwrap();
-    assert!(!new_context.app_config.auto_failover_enabled);
+    assert_eq!(
+        new_context.app_config.auto_failover_enabled,
+        !disable_failover
+    );
+    if !disable_failover {
+        // A fresh request may still fail over to B and persist its route.
+        release_b.notify_one();
+    }
     let next = tokio::time::timeout(Duration::from_secs(10), forward(&new_context))
         .await
-        .expect("next request reaches C");
-    assert_eq!(next.provider.id, "c");
+        .expect("forward the next request");
+    if disable_failover {
+        assert_eq!(next.provider.id, "c");
+    } else {
+        assert_eq!(next.provider.id, "b");
+        assert!(writeback().await, "fresh failover persists B");
+        assert_eq!(mode(&app).proxy_route.as_deref(), Some("b"));
+    }
     exit(&state, &app).await.unwrap();
     upstream.abort();
 }
