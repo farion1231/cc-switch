@@ -17,8 +17,7 @@ export const APP_DISPLAY_NAME: Record<AppId, string> = {
   mcode: "MiniMax Code",
   kimi: "Kimi Code",
   dsh: "DeepSeek Harness",
-  agy: "Antigravity CLI",
-  "agy-desktop": "Antigravity Desktop",
+  agy: "Antigravity",
   omp: "Oh My Pi",
   copilot: "Copilot CLI",
   workbuddy: "WorkBuddy",
@@ -38,18 +37,15 @@ const APP_ICON_NAME: Record<AppId, string> = {
   kimi: "kimi",
   dsh: "deepseek",
   agy: "antigravity",
-  "agy-desktop": "antigravity",
   omp: "omp",
   copilot: "githubcopilot",
   workbuddy: "workbuddy",
 };
 
-// 同品牌 CLI 与桌面版用同一个图标，靠右下角的小角标区分终端与桌面
+// Claude Code 和 Claude Desktop 用同一个图标，靠右下角的小角标区分终端与桌面
 const APP_BADGE_ICON: Partial<Record<AppId, typeof Terminal>> = {
   claude: Terminal,
   "claude-desktop": Monitor,
-  agy: Terminal,
-  "agy-desktop": Monitor,
 };
 
 interface AppGlyphProps {

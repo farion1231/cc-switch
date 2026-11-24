@@ -226,27 +226,6 @@ describe("AuthCenterPanel card order and visibility", () => {
     expect(cardOrder()).toContain("kimi");
   });
 
-  it("keeps the Antigravity card visible when only Antigravity Desktop is enabled", () => {
-    mocks.settings = {
-      visibleApps: {
-        agy: false,
-        "agy-desktop": true,
-      } as Settings["visibleApps"],
-    };
-    const { unmount } = render(<AuthCenterPanel />);
-    expect(cardOrder()).toContain("agy");
-    unmount();
-
-    mocks.settings = {
-      visibleApps: {
-        agy: false,
-        "agy-desktop": false,
-      } as Settings["visibleApps"],
-    };
-    render(<AuthCenterPanel />);
-    expect(cardOrder()).not.toContain("agy");
-  });
-
   it("omits Antigravity where account switching is unsupported", () => {
     mocks.canSwitchAgy = false;
     render(<AuthCenterPanel />);

@@ -23,7 +23,6 @@ import type { OpenClawProviderConfig, Provider } from "@/types";
 import { getOpencodeDeclaredModels } from "@/components/providers/forms/helpers/opencodeFormUtils";
 import type { AppId } from "@/lib/api";
 import { providersApi } from "@/lib/api/providers";
-import { invalidateProvidersQueries } from "@/lib/query";
 import {
   extractErrorMessage,
   translatePiProviderMutationError,
@@ -71,11 +70,6 @@ import {
   type SwitchModeInput,
 } from "@/components/providers/presentation";
 import { appHas } from "@/config/appSpecs";
-import {
-  canSwitchAgyAccount,
-  resolveManagedAccountId,
-} from "@/lib/authBinding";
-import { useManagedAuth } from "@/components/providers/forms/hooks/useManagedAuth";
 
 /** 切换式应用（Claude Code / Codex / Gemini CLI / Grok Build）的模式状态和动作，由供应商页传入。 */
 export type SwitchModeProps = Omit<SwitchModeInput, "app" | "t" | "providers">;
@@ -90,12 +84,12 @@ interface ProviderListProps {
   appId: AppId;
   /** 直连切换 / 共存式的添加 / Pi 的启用 / Claude Desktop 的切换 */
   onSwitch: (provider: Provider) => void;
-  onEdit?: (provider: Provider) => void;
+  onEdit: (provider: Provider) => void;
   onDelete: (provider: Provider) => void;
   onRemoveFromConfig?: (provider: Provider) => void;
   onDisableOmo?: () => void;
   onDisableOmoSlim?: () => void;
-  onDuplicate?: (provider: Provider) => void;
+  onDuplicate: (provider: Provider) => void;
   onConfigureUsage?: (provider: Provider) => void;
   onOpenWebsite: (url: string) => void;
   onOpenTerminal?: (provider: Provider) => void;
@@ -113,11 +107,6 @@ interface ProviderListProps {
    * 与第一个分组标题同行
    */
   searchSlot?: HTMLElement | null;
-  agyDesktopAccounts?: {
-    currentProviderIds: ReadonlySet<string>;
-    switching: boolean;
-    requiresReauth: ReadonlySet<string>;
-  };
 }
 
 export function ProviderList({
@@ -141,7 +130,6 @@ export function ProviderList({
   searchOpen,
   onSearchOpenChange,
   searchSlot,
-  agyDesktopAccounts,
 }: ProviderListProps) {
   const { t } = useTranslation();
   const { checkProvider, isChecking } = useStreamCheck(appId);
@@ -198,67 +186,6 @@ export function ProviderList({
     Object.values(providers).some((provider) => isWorkBuddyOfficial(provider));
   const { state: workbuddyOfficial, switchTo: switchWorkBuddyAccount } =
     useWorkBuddyOfficial(hasWorkBuddyOfficial);
-  // Antigravity CLI 绑定了授权中心账号的官方卡：显示当前使用中状态并支持直接切号
-  const agyBoundAccounts = useMemo(() => {
-    const map = new Map<string, string>();
-    if (appId !== "agy" || !canSwitchAgyAccount()) return map;
-    for (const provider of Object.values(providers)) {
-      if (!isOfficialAccount(appId, provider)) continue;
-      const accountId = resolveManagedAccountId(
-        provider.meta,
-        "agy_oauth",
-      )?.trim();
-      if (accountId) {
-        map.set(provider.id, accountId);
-      }
-    }
-    return map;
-  }, [appId, providers]);
-  const hasAgyBoundOfficial = agyBoundAccounts.size > 0;
-  const agyCliAuth = useManagedAuth("agy_oauth", undefined, undefined, {
-    enabled: hasAgyBoundOfficial,
-  });
-  const agyCliAccounts = useMemo(() => {
-    if (!hasAgyBoundOfficial) return undefined;
-    const currentProviderIds = new Set<string>();
-    const switchableProviderIds = new Set<string>();
-    const requiresReauth = new Set<string>();
-    const usableAccounts = new Set(
-      agyCliAuth.accounts
-        .filter((account) => !account.requires_reauth)
-        .map(({ id }) => id),
-    );
-    for (const [providerId, accountId] of agyBoundAccounts) {
-      switchableProviderIds.add(providerId);
-      if (
-        agyCliAuth.defaultAccountId &&
-        accountId === agyCliAuth.defaultAccountId
-      ) {
-        currentProviderIds.add(providerId);
-      }
-      if (agyCliAuth.isStatusSuccess && !usableAccounts.has(accountId)) {
-        requiresReauth.add(providerId);
-      }
-    }
-    return {
-      currentProviderIds,
-      switchableProviderIds,
-      switching: agyCliAuth.isSettingDefaultAccount,
-      requiresReauth,
-      onSwitch: (provider: Provider) => {
-        const accountId = agyBoundAccounts.get(provider.id);
-        if (accountId) agyCliAuth.setDefaultAccount(accountId);
-      },
-    };
-  }, [
-    hasAgyBoundOfficial,
-    agyBoundAccounts,
-    agyCliAuth.accounts,
-    agyCliAuth.defaultAccountId,
-    agyCliAuth.isStatusSuccess,
-    agyCliAuth.isSettingDefaultAccount,
-    agyCliAuth.setDefaultAccount,
-  ]);
   // 累加式应用要等 live 里有哪些供应商读回来（成功或失败）才知道卡片该进哪个分区；
   // 在那之前按加载中画骨架，不然卡片先全落进「可添加」，读回来再整体搬到「已添加」。
   // 一张卡都没有时不用等，直接出空状态
@@ -329,7 +256,7 @@ export function ProviderList({
     },
     onSuccess: (imported) => {
       if (imported) {
-        void invalidateProvidersQueries(queryClient, appId);
+        queryClient.invalidateQueries({ queryKey: ["providers", appId] });
         if (appId === "claude-desktop") {
           queryClient.invalidateQueries({ queryKey: ["claudeDesktopStatus"] });
         }
@@ -344,7 +271,7 @@ export function ProviderList({
       toast.error(extractErrorMessage(error) || t("settings.importFailed"));
       // 导入失败前也可能已产生需要上屏的副作用：GrokBuild 官方登录态下点
       // 导入，命令层会先补种官方条目、随后才因 live 不可导入而报错。
-      void invalidateProvidersQueries(queryClient, appId);
+      queryClient.invalidateQueries({ queryKey: ["providers", appId] });
     },
   });
 
@@ -451,20 +378,12 @@ export function ProviderList({
         queue: switchMode.queue.filter((id) => known.has(id)),
       });
     }
-    if (appId === "agy" || agyDesktopAccounts) {
+    if (appId === "agy") {
       return buildLaunchSections({
         app: appId,
         t,
         providers: filteredProviders,
         openTerminal: (provider) => onOpenTerminal?.(provider),
-        accounts: agyDesktopAccounts
-          ? {
-              currentProviderIds: agyDesktopAccounts.currentProviderIds,
-              onSwitch,
-              switching: agyDesktopAccounts.switching,
-              requiresReauth: agyDesktopAccounts.requiresReauth,
-            }
-          : agyCliAccounts,
       });
     }
     const defaultPrimary =
@@ -530,8 +449,6 @@ export function ProviderList({
       },
     });
   }, [
-    agyDesktopAccounts,
-    agyCliAccounts,
     switchMode,
     appId,
     t,
@@ -607,7 +524,7 @@ export function ProviderList({
   ) : null;
 
   // 库里读不出来的供应商不在 providers 里（不能编辑、切换），单独列出、只能删除
-  const unreadableNotice = appId !== "agy-desktop" && (
+  const unreadableNotice = (
     <UnreadableEntriesNotice
       queryKey={["providers", appId, "unreadable"]}
       load={() => providersApi.getUnreadable(appId)}
@@ -643,7 +560,6 @@ export function ProviderList({
             appId === "mcode" ||
             appId === "kimi" ||
             appId === "dsh" ||
-            appId === "agy-desktop" ||
             appId === "workbuddy"
               ? undefined
               : () => importMutation.mutate()
@@ -656,12 +572,6 @@ export function ProviderList({
   // 「当前」只用来决定官方订阅 / OAuth 额度自动刷新：Pi 没有当前项，OMO / Hermes 各看自己的当前项；
   // Antigravity 没有「启用」，每张卡都随时能打开，额度一律照常显示；Copilot CLI 只有官方卡有额度，同理
   const isCurrentFor = (provider: Provider) => {
-    if (agyDesktopAccounts) {
-      return agyDesktopAccounts.currentProviderIds.has(provider.id);
-    }
-    if (agyCliAccounts?.switchableProviderIds.has(provider.id)) {
-      return agyCliAccounts.currentProviderIds.has(provider.id);
-    }
     if (appHas(appId, "piFamily")) return false;
     if (appId === "agy" || appId === "copilot") return true;
     if (provider.category === "omo") return provider.id === currentOmoId;
@@ -681,14 +591,13 @@ export function ProviderList({
       onEdit={onEdit}
       onDelete={onDelete}
       onDuplicate={onDuplicate}
-      onConfigureUsage={onConfigureUsage}
+      onConfigureUsage={
+        onConfigureUsage ? (item) => onConfigureUsage(item) : () => undefined
+      }
       onOpenWebsite={onOpenWebsite}
-      // 卡片主操作已经是「打开终端」时不再重复放一个终端图标按钮
+      // Antigravity 和 Copilot CLI 官方卡的「打开终端」已经是主按钮，「更多」菜单里不再重复
       onOpenTerminal={
-        (appId === "agy" &&
-          presentation.buttons.some(
-            (button) => button.key === "openTerminal",
-          )) ||
+        appId === "agy" ||
         (appId === "copilot" && isOfficialAccount(appId, provider))
           ? undefined
           : onOpenTerminal
@@ -851,10 +760,10 @@ interface SortableProviderCardProps {
   appId: AppId;
   presentation: CardPresentation;
   isCurrent: boolean;
-  onEdit?: (provider: Provider) => void;
+  onEdit: (provider: Provider) => void;
   onDelete: (provider: Provider) => void;
-  onDuplicate?: (provider: Provider) => void;
-  onConfigureUsage?: (provider: Provider) => void;
+  onDuplicate: (provider: Provider) => void;
+  onConfigureUsage: (provider: Provider) => void;
   onOpenWebsite: (url: string) => void;
   onOpenTerminal?: (provider: Provider) => void;
   onTest?: (provider: Provider) => void;

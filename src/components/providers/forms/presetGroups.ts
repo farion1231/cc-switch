@@ -469,7 +469,6 @@ export function loginAccountKey(
       return "chatgpt";
     case "gemini":
     case "agy":
-    case "agy-desktop":
       return "google";
     case "grokbuild":
       return "xai";

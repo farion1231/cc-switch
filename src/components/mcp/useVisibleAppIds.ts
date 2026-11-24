@@ -12,8 +12,6 @@ export function useVisibleAppIds<T extends AppId>(appIds: readonly T[]): T[] {
   const visibleApps = settings?.visibleApps;
   return useMemo(() => {
     const visible = { ...DEFAULT_VISIBLE_APPS, ...visibleApps };
-    return appIds.filter(
-      (app) => visible[app] || (app === "agy" && visible["agy-desktop"]),
-    );
+    return appIds.filter((app) => visible[app]);
   }, [appIds, visibleApps]);
 }

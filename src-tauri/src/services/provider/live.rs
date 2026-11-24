@@ -48,8 +48,7 @@ pub(crate) fn provider_exists_in_live_config(
         | AppType::Codex
         | AppType::Gemini
         | AppType::GrokBuild
-        | AppType::Agy
-        | AppType::AgyDesktop => Ok(false),
+        | AppType::Agy => Ok(false),
     }
 }
 
@@ -76,7 +75,6 @@ pub(crate) fn remove_provider_from_live(
         | AppType::Kimi
         | AppType::Dsh
         | AppType::Agy
-        | AppType::AgyDesktop
         | AppType::Omp
         | AppType::Copilot => Err(AppError::Message(format!(
             "App {} does not support remove from live config",
@@ -353,7 +351,6 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
         | AppType::Kimi
         | AppType::Dsh
         | AppType::Agy
-        | AppType::AgyDesktop
         | AppType::Omp
         | AppType::Copilot
         | AppType::WorkBuddy
@@ -437,7 +434,6 @@ pub(crate) fn remove_common_config_from_settings(
         | AppType::Dsh
         | AppType::ClaudeDesktop
         | AppType::Agy
-        | AppType::AgyDesktop
         | AppType::Omp
         | AppType::Copilot
         | AppType::WorkBuddy => Ok(settings.clone()),
@@ -479,10 +475,7 @@ pub(crate) fn write_live_for_state(
         super::grok_direct::reapply(state, Some(provider), provider)?;
         return Ok(());
     }
-    if matches!(
-        app_type,
-        AppType::Agy | AppType::AgyDesktop | AppType::Copilot
-    ) {
+    if matches!(app_type, AppType::Agy | AppType::Copilot) {
         // Antigravity 的卡只作用于它打开的终端，全量同步不写真实 settings.json。Copilot 自带
         // 模型卡只经「添加 / 编辑」写进 providers.json（文件里的条目归 Copilot，列表从文件读回），
         // 全量同步不重写它；官方卡从不写文件。
@@ -616,13 +609,6 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
                 "claude_desktop.live.requires_db_context",
                 "Claude Desktop 配置写入需要通过供应商切换流程执行",
                 "Claude Desktop configuration must be written through the provider switch flow",
-            ));
-        }
-        AppType::AgyDesktop => {
-            return Err(AppError::localized(
-                "agy_desktop.live.unsupported",
-                "Antigravity Desktop 不支持写入供应商 live 配置",
-                "Antigravity Desktop does not support writing provider live configuration",
             ));
         }
         AppType::Codex => {
@@ -1009,7 +995,6 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
                 | AppType::Mcode
                 | AppType::Kimi
                 | AppType::Dsh
-                | AppType::AgyDesktop
                 | AppType::Omp
                 | AppType::Copilot
         ) {
@@ -1175,11 +1160,6 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
             "Pi providers are read from Pi's native models file".to_string(),
         )),
         AppType::Agy => crate::agy_config::read_live_settings(),
-        AppType::AgyDesktop => Err(AppError::localized(
-            "agy_desktop.live.read_unsupported",
-            "Antigravity Desktop 不支持作为供应商 live 配置读取",
-            "Antigravity Desktop does not support reading provider live configuration",
-        )),
         AppType::Omp => Err(AppError::InvalidInput(
             "Oh My Pi providers are read from Oh My Pi's native models file".to_string(),
         )),
@@ -1254,13 +1234,6 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
                 "claude_desktop.import_unsupported",
                 "Claude Desktop 3P 配置不能通过通用导入读取，请使用“从 Claude 导入兼容供应商”。",
                 "Claude Desktop 3P config cannot be imported through the generic import flow. Use 'Import compatible providers from Claude' instead.",
-            ));
-        }
-        AppType::AgyDesktop => {
-            return Err(AppError::localized(
-                "agy_desktop.import_unsupported",
-                "Antigravity Desktop 不支持供应商配置导入",
-                "Antigravity Desktop does not support importing provider configuration",
             ));
         }
         AppType::Gemini => {
@@ -1402,8 +1375,7 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
 /// 这个应用是否从 live 导入 `default` 供应商：切换式应用都导入；累加式应用里只有 Copilot
 /// （它的官方登录卡是启动式，从 settings.json 的模型导入，自带模型卡才是累加式）。
 pub(crate) fn imports_default_config(app_type: &AppType) -> bool {
-    (!app_type.spec().additive && !matches!(app_type, AppType::AgyDesktop))
-        || matches!(app_type, AppType::Copilot)
+    !app_type.spec().additive || matches!(app_type, AppType::Copilot)
 }
 
 /// Decide whether startup should auto-import the current live config as `default`.

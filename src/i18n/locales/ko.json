@@ -4379,17 +4379,6 @@
     "back": "뒤로",
     "plugins": "플러그인"
   },
-  "agyDesktop": {
-    "statusTitle": "설치 상태",
-    "overviewDescription": "Antigravity Desktop은 CC Switch의 공급자 전환 대신 앱 자체에서 로그인과 모델 전환을 관리합니다. 여기에서 로컬 설치 상태를 확인하고 Antigravity CLI와 공유하는 설정, 세션, 사용량을 바로 관리할 수 있습니다.",
-    "installPath": "설치 경로",
-    "configDir": "설정 디렉터리",
-    "openConfigFolder": "설정 폴더 열기",
-    "refreshStatus": "다시 감지",
-    "sharedFeaturesTitle": "연결된 기능",
-    "usageHint": "Antigravity 요청 기록 및 토큰 사용량 보기",
-    "authHint": "인증 센터에서 Antigravity 구독 계정 및 할당량 관리"
-  },
   "appsPage": {
     "showInSidebar": "사이드바에 {{name}} 표시",
     "lastChecked": "마지막 확인 {{time}}",
@@ -4409,7 +4398,7 @@
     "visibleHelp": "끄면 앱이 사이드바, 트레이 메뉴, MCP / 스킬의 앱 열, 프롬프트 및 세션의 앱 선택기에 표시되지 않습니다. 화면에서만 숨겨지며, 공급자와 MCP 서버 등의 설정 및 앱 자체 설정 파일은 변경되지 않습니다.",
     "desktopHelp": "Claude Desktop은 데스크톱 앱이므로 여기에서 설치하거나 업그레이드할 수 없습니다. CC Switch는 설정 파일을 통해 연결됩니다.",
     "workbuddyHelp": "WorkBuddy는 데스크톱 앱이므로 여기에서 설치하거나 업그레이드할 수 없으며, 자체 업데이트 기능을 사용합니다. CC Switch는 설정 파일(~/.workbuddy/models.json)을 통해 WorkBuddy와 연동됩니다.",
-    "agyDesktopHelp": "Antigravity 데스크톱 앱은 자체 업데이트되므로 여기에서 설치하거나 제거할 수 없습니다. ~/.gemini/config 아래의 MCP, Skills, 프롬프트 설정을 Antigravity CLI와 공유합니다.",
+    "agyDesktopHelp": "Antigravity 데스크톱 앱은 자체 업데이트되므로 여기에서 설치하거나 제거할 수 없습니다. ~/.gemini/config 아래의 MCP, Skills, 프롬프트 설정을 Antigravity CLI와 공유하며 사이드바의 Antigravity 항목도 함께 사용합니다.",
     "desktopUnsupported": "이 시스템에서는 지원되지 않습니다",
     "desktopConnected": "연결됨",
     "desktopNotConnected": "연결되지 않음",

@@ -368,11 +368,8 @@ impl McpService {
                     &crate::config::get_app_config_dir(),
                 );
             }
-            AppType::ClaudeDesktop | AppType::AgyDesktop => {
-                log::debug!(
-                    "{} does not use dedicated CC Switch MCP sync, skipping",
-                    app.as_str()
-                );
+            AppType::ClaudeDesktop => {
+                log::debug!("Claude Desktop 3P profiles do not use CC Switch MCP sync, skipping");
             }
             AppType::Codex => {
                 // Codex uses TOML format, must use the correct function
@@ -427,11 +424,8 @@ impl McpService {
                     &crate::config::get_app_config_dir(),
                 );
             }
-            AppType::ClaudeDesktop | AppType::AgyDesktop => {
-                log::debug!(
-                    "{} does not use dedicated CC Switch MCP sync, skipping",
-                    app.as_str()
-                );
+            AppType::ClaudeDesktop => {
+                log::debug!("Claude Desktop 3P profiles do not use CC Switch MCP sync, skipping");
             }
             AppType::Codex => mcp::remove_server_from_codex(id)?,
             AppType::Gemini => mcp::remove_server_from_gemini(id)?,
@@ -496,12 +490,7 @@ impl McpService {
     /// 由 CC Switch 管理 MCP 的应用（Claude Desktop、OpenClaw 不支持）
     pub fn live_sync_apps() -> Vec<AppType> {
         AppType::all()
-            .filter(|app| {
-                !matches!(
-                    app,
-                    AppType::OpenClaw | AppType::ClaudeDesktop | AppType::AgyDesktop
-                )
-            })
+            .filter(|app| !matches!(app, AppType::OpenClaw | AppType::ClaudeDesktop))
             .collect()
     }
 
@@ -552,10 +541,7 @@ impl McpService {
         servers: &IndexMap<String, McpServer>,
         app: &AppType,
     ) -> Result<(), AppError> {
-        if matches!(
-            app,
-            AppType::OpenClaw | AppType::ClaudeDesktop | AppType::AgyDesktop
-        ) {
+        if matches!(app, AppType::OpenClaw | AppType::ClaudeDesktop) {
             return Ok(());
         }
 
@@ -616,7 +602,7 @@ impl McpService {
             AppType::Pi => return mcp::pi::import(state),
             AppType::Omp => return mcp::omp::import(state),
             AppType::Copilot => return mcp::copilot::import(state),
-            AppType::ClaudeDesktop | AppType::AgyDesktop | AppType::OpenClaw => return Ok(0),
+            AppType::ClaudeDesktop | AppType::OpenClaw => return Ok(0),
         };
 
         let mut temp_config = MultiAppConfig::default();

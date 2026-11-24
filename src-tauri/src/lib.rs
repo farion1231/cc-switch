@@ -89,7 +89,6 @@ pub use services::{
     profile::{ProfilePayload, ProfileScope, ProfileService, NO_ACTIVE_PROMPT},
     provider::{
         reapply_current_codex_official_live, reapply_current_codex_third_party_live, EditorSave,
-        ProviderSortUpdate,
     },
     skill::{migrate_skills_to_ssot, ImportSkillSelection},
     ConfigService, McpService, PromptService, ProviderService, SkillService,

@@ -14,7 +14,6 @@ import type { Provider } from "@/types";
 import { providersApi, type AppId } from "@/lib/api";
 import { appHas } from "@/config/appSpecs";
 import { getLocaleFromLanguage } from "@/components/usage/format";
-import { invalidateProvidersQueries } from "@/lib/query";
 
 export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
   const queryClient = useQueryClient();
@@ -74,7 +73,9 @@ export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
 
       try {
         await providersApi.updateSortOrder(updates, appId);
-        await invalidateProvidersQueries(queryClient, appId);
+        await queryClient.invalidateQueries({
+          queryKey: ["providers", appId],
+        });
 
         // Routing apps derive failover order from sort_index.
         if (appHas(appId, "localProxy")) {
@@ -100,7 +101,7 @@ export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
       } catch (error) {
         console.error("Failed to update provider sort order", error);
         // 排序可能已经存下、只是聚合名单没发布成：按库里的顺序重画，再拖一次会重试发布。
-        void invalidateProvidersQueries(queryClient, appId);
+        void queryClient.invalidateQueries({ queryKey: ["providers", appId] });
         toast.error(
           t("provider.sortUpdateFailed", {
             defaultValue: "排序更新失败",

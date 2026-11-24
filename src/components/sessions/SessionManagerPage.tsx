@@ -225,7 +225,6 @@ export function SessionManagerPage({
       (app) =>
         visible[app] ||
         (app === "claude" && visible["claude-desktop"]) ||
-        (app === "agy" && visible["agy-desktop"]) ||
         app === appFilter,
     );
   }, [settings?.visibleApps, appFilter]);

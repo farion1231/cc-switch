@@ -120,7 +120,7 @@ const AUTH_CARDS: readonly AuthCard[] = [
   },
   {
     target: "agy_oauth",
-    apps: ["agy", "agy-desktop"],
+    apps: ["agy"],
     render: () => <AgyOAuthSection helpSide="bottom" />,
     available: canSwitchAgyAccount,
   },

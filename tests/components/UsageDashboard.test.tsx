@@ -388,7 +388,6 @@ describe("UsageDashboard", () => {
         kimi: false,
         dsh: false,
         agy: false,
-        "agy-desktop": false,
         omp: false,
         copilot: false,
         workbuddy: false,

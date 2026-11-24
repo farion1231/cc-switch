@@ -11,7 +11,6 @@ import {
 import { useTranslation } from "react-i18next";
 import { toast } from "@/lib/toast";
 import { invoke } from "@tauri-apps/api/core";
-import { canSwitchAgyAccount } from "@/lib/authBinding";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   ExternalLink,
@@ -95,7 +94,6 @@ import { WindowControls } from "@/components/shell/WindowControls";
 import { APP_DISPLAY_NAME, AppGlyph } from "@/components/shell/AppGlyph";
 import { ProfileSwitcher } from "@/components/profiles/ProfileSwitcher";
 import { ProviderList } from "@/components/providers/ProviderList";
-import { AgyDesktopPanel } from "@/components/apps/AgyDesktopPanel";
 import {
   hasOpencodeDefinition,
   isNativeOpencodeConfig,
@@ -1552,7 +1550,6 @@ function App() {
             activeApp !== "dsh" &&
             activeApp !== "kimi" &&
             activeApp !== "workbuddy" &&
-            activeApp !== "agy-desktop" &&
             (settingsData?.showProfileSwitcher ?? false) && (
               <ProfileSwitcher activeApp={activeApp} />
             )}
@@ -1585,17 +1582,16 @@ function App() {
                 </Button>
               </HoverTip>
             )}
-          {currentView === "providers" &&
-            (activeApp !== "agy-desktop" || canSwitchAgyAccount()) && (
-              <Button
-                variant="solid"
-                size="regular"
-                onClick={() => openAddProvider(currentModeView)}
-              >
-                <Plus className="h-4 w-4" />
-                {t("provider.addProvider")}
-              </Button>
-            )}
+          {currentView === "providers" && (
+            <Button
+              variant="solid"
+              size="regular"
+              onClick={() => openAddProvider(currentModeView)}
+            >
+              <Plus className="h-4 w-4" />
+              {t("provider.addProvider")}
+            </Button>
+          )}
           {currentView === "hermesMemory" && (
             <Suspense fallback={null}>
               <HermesMemorySaveButton />
@@ -1668,23 +1664,6 @@ function App() {
   };
 
   const renderProviderList = () => {
-    if (activeApp === "agy-desktop") {
-      return (
-        <AgyDesktopPanel
-          savedProviders={providers}
-          isLoading={isLoading}
-          scrollRef={providerScrollContainerRef}
-          onDelete={listCallbacks.onDelete}
-          onOpenWebsite={handleOpenWebsite}
-          onCreate={
-            canSwitchAgyAccount() ? () => openAddProvider(undefined) : undefined
-          }
-          searchOpen={providerSearchOpen}
-          onSearchOpenChange={setProviderSearchOpen}
-        />
-      );
-    }
-
     if (modeAppId) {
       const startupFailure = startupFailures.find(
         (failure) => failure.appType === modeAppId,
@@ -1900,7 +1879,6 @@ function App() {
                 (app) =>
                   visibleApps[app] ||
                   (app === "claude" && visibleApps["claude-desktop"]) ||
-                  (app === "agy" && visibleApps["agy-desktop"]) ||
                   app === promptsApp,
               )}
               onAppChange={setPromptsApp}

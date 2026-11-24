@@ -13,7 +13,6 @@ export type AppId =
   | "dsh"
   | "mcode"
   | "agy"
-  | "agy-desktop"
   | "omp"
   | "copilot"
   | "workbuddy";

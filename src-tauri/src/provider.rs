@@ -224,7 +224,6 @@ impl Provider {
                 let api_key = first_non_empty(env, &["GEMINI_API_KEY", "GOOGLE_API_KEY"]);
                 (base_url, api_key)
             }
-            AppType::AgyDesktop => (String::new(), String::new()),
             // GrokBuild 的 base_url 与 api_key 必须各自解析：extract_credentials 在
             // 凭据缺失时整个 Option 变 None，一并 unwrap_or_default 会把明明写在
             // 配置里的 base_url 也清成空串。凭据缺失是常态（env_key 指向的变量在

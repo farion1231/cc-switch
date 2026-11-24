@@ -31,7 +31,6 @@ mod usage;
 use indexmap::IndexMap;
 use serde::Deserialize;
 use serde_json::Value;
-use std::collections::{HashSet, VecDeque};
 
 use crate::app_config::AppType;
 use crate::database::UnreadableEntry;
@@ -5883,63 +5882,12 @@ impl ProviderService {
         base_url.trim().trim_end_matches('/').to_string()
     }
 
-    fn agy_bound_oauth_account_id(provider: &Provider) -> Option<String> {
-        provider
-            .meta
-            .as_ref()
-            .and_then(|meta| meta.managed_account_id_for("agy_oauth"))
-            .map(|id| id.trim().to_string())
-            .filter(|id| !id.is_empty())
-    }
-
-    fn is_agy_desktop_eligible(provider: &Provider) -> bool {
-        agy_direct::is_official(provider) && Self::agy_bound_oauth_account_id(provider).is_some()
-    }
-
-    fn migrate_legacy_agy_desktop_providers(
-        db: &crate::database::Database,
-    ) -> Result<(), AppError> {
-        let legacy = db.get_provider_rows(&AppType::AgyDesktop)?.readable;
-        if legacy.is_empty() {
-            return Ok(());
-        }
-        let mut existing = db.get_provider_rows(&AppType::Agy)?.readable;
-        for (id, provider) in legacy {
-            let duplicate_account =
-                Self::agy_bound_oauth_account_id(&provider).is_some_and(|acct| {
-                    existing
-                        .values()
-                        .filter(|p| Self::is_agy_desktop_eligible(p))
-                        .any(|p| {
-                            Self::agy_bound_oauth_account_id(p).as_deref() == Some(acct.as_str())
-                        })
-                });
-            if !existing.contains_key(&id) && !duplicate_account {
-                db.save_provider(&AppType::Agy, &provider)?;
-                existing.insert(id.clone(), provider);
-            }
-            db.delete_provider(&AppType::AgyDesktop, &id)?;
-        }
-        Ok(())
-    }
-
     /// List all providers for an app type
     pub fn list(
         state: &AppState,
         app_type: AppType,
     ) -> Result<IndexMap<String, Provider>, AppError> {
         let _native_guard = lock_native_provider_operations(state, &app_type);
-        if matches!(app_type, AppType::Agy | AppType::AgyDesktop) {
-            Self::migrate_legacy_agy_desktop_providers(&state.db)?;
-            let rows = state.db.get_provider_rows(&AppType::Agy)?.readable;
-            return Ok(if app_type == AppType::AgyDesktop {
-                rows.into_iter()
-                    .filter(|(_, provider)| Self::is_agy_desktop_eligible(provider))
-                    .collect()
-            } else {
-                rows
-            });
-        }
         if app_type == AppType::Dsh {
             // A profile can appear while CC Switch is running. Keep the provider list usable
             // when a native lock or an invalid profile prevents the initial sync; retry later.
@@ -6224,18 +6172,6 @@ impl ProviderService {
         provider: Provider,
         add_to_live: bool,
     ) -> Result<bool, AppError> {
-        if app_type == AppType::AgyDesktop {
-            Self::migrate_legacy_agy_desktop_providers(&state.db)?;
-            let mut provider = provider;
-            Self::prepare_new_provider(&AppType::AgyDesktop, &mut provider)?;
-            let _switch_guard =
-                crate::mode::controller::lock_settled_blocking(state, &AppType::Agy)?;
-            state.db.save_provider(&AppType::Agy, &provider)?;
-            return Ok(true);
-        }
-        if app_type == AppType::Agy {
-            Self::migrate_legacy_agy_desktop_providers(&state.db)?;
-        }
         let _native_guard = lock_native_provider_operations(state, &app_type);
         if app_type == AppType::Kimi
             && crate::kimi_config::is_official_provider(&provider.settings_config)
@@ -7179,22 +7115,6 @@ impl ProviderService {
         if state.db.get_unreadable_provider(&app_type, id)?.is_some() {
             return Self::delete_unreadable(state, &app_type, id);
         }
-        if app_type == AppType::AgyDesktop {
-            Self::migrate_legacy_agy_desktop_providers(&state.db)?;
-            if let Some(existing) = state.db.get_provider_by_id(id, &AppType::Agy)? {
-                if !Self::is_agy_desktop_eligible(&existing) {
-                    return Err(AppError::InvalidInput(
-                        "Antigravity Desktop can only delete bound Google OAuth providers".into(),
-                    ));
-                }
-                state.db.delete_provider(&AppType::Agy, id)?;
-            }
-            state.db.delete_provider(&AppType::AgyDesktop, id)?;
-            return Ok(());
-        }
-        if app_type == AppType::Agy {
-            Self::migrate_legacy_agy_desktop_providers(&state.db)?;
-        }
         if app_type == AppType::Pi {
             return pi::delete(state, id);
         }
@@ -8027,7 +7947,6 @@ impl ProviderService {
             | AppType::Kimi
             | AppType::Dsh
             | AppType::Agy
-            | AppType::AgyDesktop
             | AppType::Omp
             | AppType::Copilot
             | AppType::WorkBuddy => Ok(String::new()),
@@ -8053,7 +7972,6 @@ impl ProviderService {
             | AppType::Kimi
             | AppType::Dsh
             | AppType::Agy
-            | AppType::AgyDesktop
             | AppType::Omp
             | AppType::Copilot
             | AppType::WorkBuddy => Ok(String::new()),
@@ -8627,68 +8545,6 @@ impl ProviderService {
         app_type: AppType,
         updates: Vec<ProviderSortUpdate>,
     ) -> Result<bool, AppError> {
-        if app_type == AppType::AgyDesktop {
-            Self::migrate_legacy_agy_desktop_providers(&state.db)?;
-            let rows = state.db.get_provider_rows(&AppType::Agy)?.readable;
-            let mut ordered: Vec<(String, Provider)> = rows.into_iter().collect();
-            ordered.sort_by(|(id_a, a), (id_b, b)| {
-                (
-                    a.sort_index.unwrap_or(usize::MAX),
-                    a.created_at.unwrap_or(0),
-                    a.name.as_str(),
-                    id_a.as_str(),
-                )
-                    .cmp(&(
-                        b.sort_index.unwrap_or(usize::MAX),
-                        b.created_at.unwrap_or(0),
-                        b.name.as_str(),
-                        id_b.as_str(),
-                    ))
-            });
-
-            let eligible_ids: HashSet<&str> = ordered
-                .iter()
-                .filter(|(_, provider)| Self::is_agy_desktop_eligible(provider))
-                .map(|(id, _)| id.as_str())
-                .collect();
-
-            let mut sorted_updates = updates;
-            sorted_updates.sort_by_key(|update| update.sort_index);
-
-            let mut seen = HashSet::new();
-            let mut reordered_eligible = VecDeque::new();
-            for update in &sorted_updates {
-                if eligible_ids.contains(update.id.as_str()) && seen.insert(update.id.as_str()) {
-                    reordered_eligible.push_back(update.id.clone());
-                }
-            }
-            for (id, _) in &ordered {
-                if eligible_ids.contains(id.as_str()) && seen.insert(id.as_str()) {
-                    reordered_eligible.push_back(id.clone());
-                }
-            }
-
-            let merged: Vec<(String, usize)> = ordered
-                .iter()
-                .enumerate()
-                .map(|(index, (id, provider))| {
-                    let target_id = if Self::is_agy_desktop_eligible(provider) {
-                        reordered_eligible.pop_front().unwrap_or_else(|| id.clone())
-                    } else {
-                        id.clone()
-                    };
-                    (target_id, index)
-                })
-                .collect();
-
-            state
-                .db
-                .update_provider_sort_indexes(&AppType::Agy, &merged)?;
-            return Ok(true);
-        }
-        if app_type == AppType::Agy {
-            Self::migrate_legacy_agy_desktop_providers(&state.db)?;
-        }
         let updates: Vec<(String, usize)> = updates
             .into_iter()
             .map(|update| (update.id, update.sort_index))
@@ -8804,24 +8660,6 @@ impl ProviderService {
             AppType::Agy => {
                 use crate::gemini_config::validate_gemini_settings;
                 validate_gemini_settings(&provider.settings_config)?
-            }
-            AppType::AgyDesktop => {
-                let account_id = provider
-                    .meta
-                    .as_ref()
-                    .and_then(|meta| meta.managed_account_id_for("agy_oauth"));
-                if !provider.has_official_category()
-                    || !provider
-                        .settings_config
-                        .as_object()
-                        .is_some_and(serde_json::Map::is_empty)
-                    || account_id.as_deref() != Some(provider.id.as_str())
-                    || provider.id.trim().is_empty()
-                {
-                    return Err(AppError::InvalidInput(
-                        "Antigravity Desktop providers must bind a Google OAuth account".into(),
-                    ));
-                }
             }
             AppType::Copilot => {
                 crate::copilot_config::validate_provider(&provider.id, &provider.settings_config)?

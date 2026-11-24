@@ -27,7 +27,10 @@ export interface AppsPageMocks {
   success: Mock;
   warning: Mock;
   error: Mock;
-  settings: { visibleApps?: Record<string, boolean>; appOrder?: string[] };
+  settings: {
+    visibleApps?: Record<string, boolean>;
+    appOrder?: string[];
+  };
   updateSettings: Mock;
   autoSaveSettings: Mock;
   dragEndHandlers: ((event: DragEndEvent) => void)[];
@@ -203,19 +206,18 @@ export function resetAppsPageMocks(
   };
   mocks.agyDesktopStatus = {
     supported: true,
-    installed: true,
-    version: "2.34.0",
-    installPath:
-      "C:\\Users\\me\\AppData\\Local\\Programs\\antigravity\\Antigravity.exe",
-    dataDirExists: true,
+    installed: false,
+    version: null,
+    installPath: null,
+    dataDirExists: false,
   };
-  mocks.getAgyDesktopStatus
-    .mockReset()
-    .mockImplementation(async () => mocks.agyDesktopStatus);
   mocks.getConfigStatus.mockReset().mockResolvedValue({
     exists: true,
     path: "/home/me/.workbuddy",
   });
+  mocks.getAgyDesktopStatus
+    .mockReset()
+    .mockImplementation(async () => mocks.agyDesktopStatus);
   mocks.updateSettings.mockReset();
   mocks.autoSaveSettings.mockReset().mockResolvedValue(null);
   mocks.copyText.mockReset().mockResolvedValue(undefined);

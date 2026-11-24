@@ -172,26 +172,11 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
       "bg-teal-500/10 text-teal-700 dark:text-teal-300 hover:bg-teal-500/20 border-0 gap-1.5",
   },
   agy: {
-    label: "Antigravity CLI",
+    label: "Antigravity",
     icon: (
       <ProviderIcon
         icon="antigravity"
-        name="Antigravity CLI"
-        size={14}
-        showFallback={false}
-      />
-    ),
-    activeClass:
-      "bg-sky-500/10 ring-1 ring-sky-500/20 hover:bg-sky-500/20 text-sky-700 dark:text-sky-300",
-    badgeClass:
-      "bg-sky-500/10 text-sky-700 dark:text-sky-300 hover:bg-sky-500/20 border-0 gap-1.5",
-  },
-  "agy-desktop": {
-    label: "Antigravity Desktop",
-    icon: (
-      <ProviderIcon
-        icon="antigravity"
-        name="Antigravity Desktop"
+        name="Antigravity"
         size={14}
         showFallback={false}
       />

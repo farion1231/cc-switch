@@ -81,20 +81,20 @@ mod switching {
     use super::*;
 
     #[test]
-    fn desktop_does_not_overwrite_a_keychain_entry_that_became_readable() {
+    fn fallback_does_not_overwrite_a_keychain_entry_that_became_readable() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join(DESKTOP_TOKEN_FILENAME);
+        let path = dir.path().join(STANDALONE_TOKEN_FILENAME);
         let file_login = credential("alice", "file").to_string();
         std::fs::write(&path, &file_login).unwrap();
         let primary = Arc::new(MemoryLogin::default());
         set_live(&primary, &credential("carol", "keychain"));
         *primary.unavailable.lock().unwrap() = true;
-        let desktop = keychain::DesktopLogin::with_keychain(path.clone(), primary.clone());
-        let snapshot = desktop.snapshot_for_switch().unwrap();
+        let login = keychain::AgyLogin::with_keychain(path.clone(), primary.clone());
+        let snapshot = login.snapshot_for_switch().unwrap();
         assert!(matches!(snapshot, keychain::LoginSnapshot::File(Some(_))));
 
         *primary.unavailable.lock().unwrap() = false;
-        assert!(desktop
+        assert!(login
             .write_if_unchanged(&snapshot, &credential("bob", "target"))
             .is_err());
         assert_eq!(live_sub(&primary).as_deref(), Some("carol"));
@@ -102,59 +102,55 @@ mod switching {
     }
 
     #[test]
-    fn desktop_does_not_overwrite_a_changed_fallback_file() {
+    fn fallback_does_not_overwrite_a_changed_standalone_file() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join(DESKTOP_TOKEN_FILENAME);
+        let path = dir.path().join(STANDALONE_TOKEN_FILENAME);
         std::fs::write(&path, credential("alice", "file").to_string()).unwrap();
-        let desktop =
-            keychain::DesktopLogin::with_keychain(path.clone(), Arc::new(MemoryLogin::default()));
-        let snapshot = desktop.snapshot_for_switch().unwrap();
+        let login =
+            keychain::AgyLogin::with_keychain(path.clone(), Arc::new(MemoryLogin::default()));
+        let snapshot = login.snapshot_for_switch().unwrap();
         let newer = credential("carol", "file").to_string();
         std::fs::write(&path, &newer).unwrap();
 
-        assert!(desktop
+        assert!(login
             .write_if_unchanged(&snapshot, &credential("bob", "target"))
             .is_err());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), newer);
     }
 
     #[tokio::test]
-    async fn desktop_collects_and_switches_the_standalone_file_without_changing_cli_login() {
+    async fn collects_and_switches_standalone_file_when_keychain_is_unavailable() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join(DESKTOP_TOKEN_FILENAME);
+        let path = dir.path().join(STANDALONE_TOKEN_FILENAME);
         std::fs::write(&path, credential("alice", "desktop").to_string()).unwrap();
-        let cli = Arc::new(MemoryLogin::default());
-        set_live(&cli, &credential("cli", "cli"));
-        let desktop_keychain = Arc::new(MemoryLogin::default());
-        *desktop_keychain.unavailable.lock().unwrap() = true;
-        let desktop = Arc::new(keychain::DesktopLogin::with_keychain(
+        let primary = Arc::new(MemoryLogin::default());
+        *primary.unavailable.lock().unwrap() = true;
+        let login = Arc::new(keychain::AgyLogin::with_keychain(
             path.clone(),
-            desktop_keychain.clone(),
+            primary.clone(),
         ));
-        let manager =
-            AgyAccountManager::with_login_stores(dir.path().to_path_buf(), cli.clone(), desktop);
+        let manager = AgyAccountManager::with_login_store(dir.path().to_path_buf(), login);
         add(&manager, "bob").await;
         assert_eq!(
             manager
-                .status_for(true)
+                .status()
                 .await
                 .unwrap()
                 .current_account_id
                 .as_deref(),
             Some("alice")
         );
-        manager.switch_to_for("bob", true).await.unwrap();
+        manager.switch_to("bob").await.unwrap();
         assert_eq!(
             manager
-                .status_for(true)
+                .status()
                 .await
                 .unwrap()
                 .current_account_id
                 .as_deref(),
             Some("bob")
         );
-        assert_eq!(live_sub(&cli).as_deref(), Some("cli"));
-        assert_eq!(*desktop_keychain.writes.lock().unwrap(), 0);
+        assert_eq!(*primary.writes.lock().unwrap(), 0);
         let stored: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(refresh_token_of(&stored), Some("refresh-bob"));
         #[cfg(unix)]
@@ -165,10 +161,10 @@ mod switching {
                 0o600
             );
         }
-        manager.switch_to_for("alice", true).await.unwrap();
+        manager.switch_to("alice").await.unwrap();
         assert_eq!(
             manager
-                .status_for(true)
+                .status()
                 .await
                 .unwrap()
                 .current_account_id
@@ -177,12 +173,64 @@ mod switching {
         );
 
         // When a keychain login exists, it takes precedence over the fallback file.
-        *desktop_keychain.unavailable.lock().unwrap() = false;
-        set_live(&desktop_keychain, &credential("keychain", "primary"));
-        manager.switch_to_for("bob", true).await.unwrap();
-        assert_eq!(live_sub(&desktop_keychain).as_deref(), Some("bob"));
+        *primary.unavailable.lock().unwrap() = false;
+        set_live(&primary, &credential("keychain", "primary"));
+        manager.switch_to("bob").await.unwrap();
+        assert_eq!(live_sub(&primary).as_deref(), Some("bob"));
         let stored: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(refresh_token_of(&stored), Some("refresh-alice"));
+    }
+
+    #[tokio::test]
+    async fn switch_creates_standalone_file_when_keychain_is_unavailable_and_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(STANDALONE_TOKEN_FILENAME);
+        let primary = Arc::new(MemoryLogin::default());
+        *primary.unavailable.lock().unwrap() = true;
+        let login = Arc::new(keychain::AgyLogin::with_keychain(
+            path.clone(),
+            primary.clone(),
+        ));
+        let manager = AgyAccountManager::with_login_store(dir.path().to_path_buf(), login);
+        add(&manager, "bob").await;
+
+        assert_eq!(manager.status().await.unwrap().current_account_id, None);
+        manager.switch_to("bob").await.unwrap();
+        assert_eq!(
+            manager
+                .status()
+                .await
+                .unwrap()
+                .current_account_id
+                .as_deref(),
+            Some("bob")
+        );
+        let stored: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(refresh_token_of(&stored), Some("refresh-bob"));
+        assert_eq!(*primary.writes.lock().unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn locked_keychain_without_fallback_file_stays_locked_on_status_and_unlocks_on_switch() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(STANDALONE_TOKEN_FILENAME);
+        let primary = Arc::new(MemoryLogin::default());
+        set_live(&primary, &credential("alice", "a1"));
+        *primary.locked.lock().unwrap() = true;
+        let login = Arc::new(keychain::AgyLogin::with_keychain(
+            path.clone(),
+            primary.clone(),
+        ));
+        let manager = AgyAccountManager::with_login_store(dir.path().to_path_buf(), login);
+        add(&manager, "bob").await;
+
+        let status = manager.status().await.unwrap();
+        assert!(status.current_account_id.is_none());
+        assert!(*primary.locked.lock().unwrap());
+
+        manager.switch_to("bob").await.unwrap();
+        assert_eq!(live_sub(&primary).as_deref(), Some("bob"));
+        assert!(!path.exists());
     }
 
     #[tokio::test]

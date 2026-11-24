@@ -4379,17 +4379,6 @@
     "back": "返回",
     "plugins": "插件"
   },
-  "agyDesktop": {
-    "statusTitle": "安装状态",
-    "overviewDescription": "Antigravity Desktop 在应用内管理登录与模型切换，不通过 CC Switch 切换供应商；这里可查看本机安装状态，并直接管理它与 Antigravity CLI 共用的配置、会话与用量。",
-    "installPath": "安装位置",
-    "configDir": "配置目录",
-    "openConfigFolder": "打开配置目录",
-    "refreshStatus": "重新检测",
-    "sharedFeaturesTitle": "已接入能力",
-    "usageHint": "查看 Antigravity 的请求记录与 token 费用统计",
-    "authHint": "在授权中心管理 Antigravity 订阅账号与额度"
-  },
   "appsPage": {
     "showInSidebar": "在侧栏显示 {{name}}",
     "lastChecked": "上次检查 {{time}}",
@@ -4409,7 +4398,7 @@
     "visibleHelp": "关掉后，这个应用不再出现在侧栏、托盘菜单、MCP / Skills 的应用列，以及提示词和会话的应用下拉里。只是不显示：它的供应商、MCP 等配置都还在，它自己的配置文件也不会被改动。",
     "desktopHelp": "Claude Desktop 是桌面应用，不能在这里安装或升级；CC Switch 通过它的配置文件接入。",
     "workbuddyHelp": "WorkBuddy 是桌面应用，不能在这里安装或升级，它会自己更新；CC Switch 通过它的配置文件（~/.workbuddy/models.json）接入。",
-    "agyDesktopHelp": "Antigravity 桌面应用会自行更新，不能在这里安装或卸载；它与 Antigravity CLI 共用 ~/.gemini/config 下的 MCP、Skills 和提示词配置。",
+    "agyDesktopHelp": "Antigravity 桌面应用会自行更新，不能在这里安装或卸载；它与 Antigravity CLI 共用 ~/.gemini/config 下的 MCP、Skills 和提示词配置，并在侧栏共用同一个 Antigravity 入口。",
     "desktopUnsupported": "当前系统不支持",
     "desktopConnected": "已接入",
     "desktopNotConnected": "未接入",

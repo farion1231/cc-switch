@@ -11,8 +11,8 @@
 //! 认账号的办法见 `AgyAccountManager::read_live`。旧格式 agy 1.5 照样能读（切过去的号 agy
 //! 续期后会改写成新格式），这里不转换，原样读写。
 //!
-//! CLI 只读写钥匙串里的整条凭据。Desktop 在钥匙串没有凭据或不可用时还会读取
-//! `~/.gemini/jetski-standalone-oauth-token`。
+//! 优先读写系统钥匙串里的整条凭据；钥匙串没有凭据或不可用时，回退到 Desktop standalone
+//! language server 使用的 `~/.gemini/jetski-standalone-oauth-token`。
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde_json::Value;
@@ -76,20 +76,17 @@ pub trait AgyLoginStore: Send + Sync {
     }
 }
 
-/// Desktop's standalone language server checks the keychain first, then this file.
-pub(super) struct DesktopLogin {
+/// Antigravity 原生登录存储：优先读写系统钥匙串，钥匙串没有凭据或不可用时回退到
+/// `~/.gemini/jetski-standalone-oauth-token`（Desktop standalone language server 的凭据文件）。
+pub(super) struct AgyLogin {
     keychain: Arc<dyn AgyLoginStore>,
     file: PathBuf,
 }
 
-impl DesktopLogin {
+impl AgyLogin {
     pub(super) fn new(file: PathBuf) -> Self {
         Self {
-            keychain: Arc::new(SystemKeychain {
-                #[cfg(target_os = "linux")]
-                default_collection: true,
-                ..SystemKeychain::agy()
-            }),
+            keychain: Arc::new(SystemKeychain::agy()),
             file,
         }
     }
@@ -108,11 +105,15 @@ impl DesktopLogin {
     }
 }
 
-impl AgyLoginStore for DesktopLogin {
+impl AgyLoginStore for AgyLogin {
     fn read(&self) -> Result<Option<String>, AppError> {
         match self.keychain.read() {
             Ok(Some(raw)) => Ok(Some(raw)),
-            _ => self.read_file(),
+            Ok(None) => self.read_file(),
+            Err(error) => match self.read_file()? {
+                Some(raw) => Ok(Some(raw)),
+                None => Err(error),
+            },
         }
     }
 
@@ -253,8 +254,6 @@ fn encode_bare(credential: &Value) -> Result<String, AppError> {
 pub struct SystemKeychain {
     service: &'static str,
     account: &'static str,
-    #[cfg(target_os = "linux")]
-    default_collection: bool,
 }
 
 impl SystemKeychain {
@@ -263,8 +262,6 @@ impl SystemKeychain {
         Self {
             service: "gemini",
             account: "antigravity",
-            #[cfg(target_os = "linux")]
-            default_collection: false,
         }
     }
 
@@ -478,7 +475,7 @@ impl AgyLoginStore for SystemKeychain {
         }
         #[cfg(target_os = "linux")]
         {
-            linux::read(self.service, self.account, false, self.default_collection)
+            linux::read(self.service, self.account, false)
         }
         #[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
         {
@@ -488,7 +485,7 @@ impl AgyLoginStore for SystemKeychain {
 
     #[cfg(target_os = "linux")]
     fn read_for_switch(&self) -> Result<Option<String>, AppError> {
-        linux::read(self.service, self.account, true, self.default_collection)
+        linux::read(self.service, self.account, true)
     }
 
     fn write(&self, value: &str) -> Result<(), AppError> {
@@ -502,7 +499,7 @@ impl AgyLoginStore for SystemKeychain {
         }
         #[cfg(target_os = "linux")]
         {
-            linux::write(self.service, self.account, value, self.default_collection)
+            linux::write(self.service, self.account, value)
         }
         #[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
         {

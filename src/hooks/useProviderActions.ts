@@ -20,7 +20,6 @@ import type { OpenClawSuggestedDefaults } from "@/config/openclawProviderPresets
 import type { ProviderEditorSave } from "@/lib/api/providers";
 import { injectCodingPlanUsageScript } from "@/config/codingPlanProviders";
 import {
-  invalidateProvidersQueries,
   useAddProviderMutation,
   useUpdateProviderMutation,
   useDeleteProviderMutation,
@@ -343,7 +342,9 @@ export function useProviderActions(
         } else {
           await providersApi.update(updatedProvider, activeApp);
         }
-        await invalidateProvidersQueries(queryClient, activeApp);
+        await queryClient.invalidateQueries({
+          queryKey: ["providers", activeApp],
+        });
         // 🔧 保存用量脚本后，也应该失效该 provider 的用量查询缓存
         // 这样主页列表会使用新配置重新查询，而不是使用测试时的缓存
         await queryClient.invalidateQueries({

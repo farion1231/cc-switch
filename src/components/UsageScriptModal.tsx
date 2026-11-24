@@ -12,10 +12,7 @@ import {
 } from "@/lib/api/copilot";
 import { isCopilotByok } from "@/config/copilotConfig";
 import { useSettingsQuery } from "@/lib/query";
-import {
-  canSwitchAgyAccount,
-  resolveManagedAccountId,
-} from "@/lib/authBinding";
+import { resolveManagedAccountId } from "@/lib/authBinding";
 import { resolveCodexOfficialIdentity } from "@/utils/providerCapabilities";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { useDarkMode } from "@/hooks/useDarkMode";
@@ -406,17 +403,11 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           PROVIDER_TYPES.XAI_OAUTH,
         )?.trim() || null
       : null;
-  // 绑了授权中心账号的 Antigravity 官方卡：额度按这个号查（同 ProviderCard 的 agyBoundAccountId）
-  const agyBoundAccountId =
-    appId === "agy" && isOfficialSubscription && canSwitchAgyAccount()
-      ? resolveManagedAccountId(provider.meta, "agy_oauth")?.trim() || null
-      : null;
   // 绑了账号的官方卡没保存过开关时默认开（卡片和托盘同一规则）
   const defaultsToEnabled =
     isBoundCodexOfficial ||
     Boolean(claudeBoundAccountId) ||
-    Boolean(grokBoundAccountId) ||
-    Boolean(agyBoundAccountId);
+    Boolean(grokBoundAccountId);
 
   const [script, setScript] = useState<UsageScript>(() => {
     const savedScript = provider.meta?.usage_script;
@@ -634,9 +625,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
             ? await subscriptionApi.getClaudeAccountQuota(claudeBoundAccountId)
             : grokBoundAccountId
               ? await subscriptionApi.getXaiOauthQuota(grokBoundAccountId)
-              : agyBoundAccountId
-                ? await subscriptionApi.getAgyAccountQuota(agyBoundAccountId)
-                : await subscriptionApi.getQuota(appId);
+              : await subscriptionApi.getQuota(appId);
         if (quota.success && quota.tiers.length > 0) {
           const summary = quota.tiers
             .map((tier) => `${tier.name}: ${Math.round(tier.utilization)}%`)
@@ -652,9 +641,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                 ? ["claude_official", "quota", claudeBoundAccountId]
                 : grokBoundAccountId
                   ? ["xai_oauth", "quota", grokBoundAccountId]
-                  : agyBoundAccountId
-                    ? ["agy_oauth", "quota", agyBoundAccountId]
-                    : ["subscription", "quota", appId],
+                  : ["subscription", "quota", appId],
             quota,
           );
         } else {

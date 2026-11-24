@@ -32,7 +32,13 @@ const mocks = vi.hoisted(() => ({
     exists: true,
     path: "/home/me/.workbuddy",
   })),
-  getAgyDesktopStatus: vi.fn(async () => mocks.agyDesktopStatus),
+  getAgyDesktopStatus: vi.fn(async () => ({
+    supported: true,
+    installed: false,
+    version: null as string | null,
+    installPath: null as string | null,
+    dataDirExists: false,
+  })),
   probeToolInstallations: vi.fn(),
   listToolInstallations: vi.fn(),
   runToolLifecycleAction: vi.fn(),
@@ -52,13 +58,10 @@ const mocks = vi.hoisted(() => ({
   desktopStatus: { supported: true, installed: true, configured: true },
   agyDesktopStatus: {
     supported: true,
-    installed: true,
-    version: "2.34.0" as string | null,
-    installPath:
-      "C:\\Users\\me\\AppData\\Local\\Programs\\antigravity\\Antigravity.exe" as
-        | string
-        | null,
-    dataDirExists: true,
+    installed: false,
+    version: null as string | null,
+    installPath: null as string | null,
+    dataDirExists: false,
   },
 }));
 

@@ -123,7 +123,6 @@ const APP_SHORT_NAME: Record<AppId, string> = {
   kimi: "Kimi",
   dsh: "DSH",
   agy: "Antigravity",
-  "agy-desktop": "Desktop",
   omp: "omp",
   copilot: "Copilot",
   workbuddy: "WorkBuddy",

@@ -3,7 +3,6 @@ import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import { authApi } from "@/lib/api";
 import { Label } from "@/components/ui/label";
-import { Button } from "@/components/ui/button";
 import {
   Select,
   SelectContent,
@@ -177,29 +176,17 @@ export const AgyOAuthSection: React.FC<AgyOAuthSectionProps> = ({
 interface AgyAccountSelectProps {
   value: string | null;
   onChange: (accountId: string | null) => void;
-  desktop?: boolean;
-  onManage?: () => void;
 }
 
 /**
  * Antigravity 官方卡的账号：不选就跟着 agy 当前的登录；选了的话「打开终端」前先把 agy
  * 切到这个号。账号在授权中心添加。
  */
-export function AgyAccountSelect({
-  value,
-  onChange,
-  desktop = false,
-  onManage,
-}: AgyAccountSelectProps) {
+export function AgyAccountSelect({ value, onChange }: AgyAccountSelectProps) {
   const { t } = useTranslation();
   const { data } = useQuery({
-    queryKey: desktop
-      ? ["managed-auth-status", "agy_oauth", "desktop"]
-      : ["managed-auth-status", "agy_oauth"],
-    queryFn: () =>
-      desktop
-        ? authApi.authGetStatus("agy_oauth", true)
-        : authApi.authGetStatus("agy_oauth"),
+    queryKey: ["managed-auth-status", "agy_oauth"],
+    queryFn: () => authApi.authGetStatus("agy_oauth"),
     staleTime: 30000,
   });
   const accounts = data?.accounts ?? [];
@@ -208,23 +195,11 @@ export function AgyAccountSelect({
 
   return (
     <div className="space-y-2">
-      <div className="flex items-center justify-between">
-        <Label htmlFor="agy-account">
-          {t("provider.form.agy.account", { defaultValue: "账号" })}
-        </Label>
-        {onManage && (
-          <Button
-            type="button"
-            variant="quiet"
-            size="compact"
-            onClick={onManage}
-          >
-            {t("nav.auth")}
-          </Button>
-        )}
-      </div>
+      <Label htmlFor="agy-account">
+        {t("provider.form.agy.account", { defaultValue: "账号" })}
+      </Label>
       <Select
-        value={value ?? (desktop ? "" : FOLLOW)}
+        value={value ?? FOLLOW}
         onValueChange={(next) => {
           // Radix Select 在表单里可能回报空串，忽略
           if (!next) return;
@@ -232,18 +207,14 @@ export function AgyAccountSelect({
         }}
       >
         <SelectTrigger id="agy-account">
-          <SelectValue
-            placeholder={desktop ? t("codex.chooseAccount") : undefined}
-          />
+          <SelectValue />
         </SelectTrigger>
         <SelectContent>
-          {!desktop && (
-            <SelectItem value={FOLLOW}>
-              {t("provider.form.agy.accountFollow", {
-                defaultValue: "跟随 agy 当前登录",
-              })}
-            </SelectItem>
-          )}
+          <SelectItem value={FOLLOW}>
+            {t("provider.form.agy.accountFollow", {
+              defaultValue: "跟随 agy 当前登录",
+            })}
+          </SelectItem>
           {accounts.map((account) => (
             <SelectItem
               key={account.id}
@@ -262,14 +233,12 @@ export function AgyAccountSelect({
           )}
         </SelectContent>
       </Select>
-      {!desktop && (
-        <p className="text-caption text-fg-2">
-          {t("provider.form.agy.accountHelp", {
-            defaultValue:
-              "选了账号的话，「打开终端」前会先把 agy 的登录切到它（全局生效，之后新开的 agy 都用它）。账号在授权中心添加。",
-          })}
-        </p>
-      )}
+      <p className="text-caption text-fg-2">
+        {t("provider.form.agy.accountHelp", {
+          defaultValue:
+            "选了账号的话，「打开终端」前会先把 agy 的登录切到它（全局生效，之后新开的 agy 都用它）。账号在授权中心添加。",
+        })}
+      </p>
     </div>
   );
 }

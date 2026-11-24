@@ -29,7 +29,13 @@ const mocks = vi.hoisted(() => ({
     exists: true,
     path: "/home/me/.workbuddy",
   })),
-  getAgyDesktopStatus: vi.fn(async () => mocks.agyDesktopStatus),
+  getAgyDesktopStatus: vi.fn(async () => ({
+    supported: true,
+    installed: false,
+    version: null as string | null,
+    installPath: null as string | null,
+    dataDirExists: false,
+  })),
   probeToolInstallations: vi.fn(),
   listToolInstallations: vi.fn(),
   runToolLifecycleAction: vi.fn(),
@@ -49,13 +55,10 @@ const mocks = vi.hoisted(() => ({
   desktopStatus: { supported: true, installed: true, configured: true },
   agyDesktopStatus: {
     supported: true,
-    installed: true,
-    version: "2.34.0" as string | null,
-    installPath:
-      "C:\\Users\\me\\AppData\\Local\\Programs\\antigravity\\Antigravity.exe" as
-        | string
-        | null,
-    dataDirExists: true,
+    installed: false,
+    version: null as string | null,
+    installPath: null as string | null,
+    dataDirExists: false,
   },
 }));
 
@@ -581,11 +584,9 @@ describe("AppsPage visibility column", () => {
     ).toEqual([within(row).getByRole("button", { name: "WorkBuddy" })]);
   });
 
-  it("keeps Antigravity Desktop visibility and order independent from Antigravity CLI", async () => {
+  it("attaches Antigravity Desktop detection under Antigravity CLI and shares the single sidebar switch", async () => {
     vi.resetModules();
     missing.clear();
-    mocks.dragEndHandlers = [];
-    mocks.updateSettings.mockReset();
     missing.add("agy");
     mocks.agyDesktopStatus = {
       supported: true,
@@ -594,81 +595,50 @@ describe("AppsPage visibility column", () => {
       installPath: "/Applications/Antigravity.app",
       dataDirExists: true,
     };
-    mocks.settings = {
-      visibleApps: { claude: true, agy: true, "agy-desktop": true },
-    };
+    mocks.settings = { visibleApps: { claude: true, agy: true } };
 
     await renderApps();
 
-    // 仅安装桌面版时：Antigravity Desktop 在「已安装」，Antigravity CLI 在「未安装」
-    expect(rowApps("appsPage.sectionInstalled")).toContain("agy-desktop");
-    expect(rowApps("appsPage.sectionInstalled")).not.toContain("agy");
-    expect(rowApps("appsPage.sectionNotInstalled")).toEqual(["agy"]);
-
-    const desktopRow = card("Antigravity Desktop");
-    const cliRow = card("Antigravity CLI");
-    expect(desktopRow.getByText("2.34.0")).toBeInTheDocument();
+    // 仅安装桌面版时：Antigravity 共用行归入「已安装」，不拆成独立行
+    expect(rowApps("appsPage.sectionInstalled")).toContain("agy");
     expect(
-      desktopRow.getByText("/Applications/Antigravity.app"),
+      screen.queryByRole("region", { name: "appsPage.sectionNotInstalled" }),
+    ).toBeNull();
+
+    const agyRow = card("Antigravity CLI");
+    // 整行只有一个侧栏显示开关，控制 visibleApps.agy
+    const switches = agyRow.getAllByRole("switch");
+    expect(switches).toHaveLength(1);
+    // CLI 未安装仍保留安装入口，下方挂载 Antigravity Desktop 本机探测结果
+    expect(
+      agyRow.getByRole("button", { name: "settings.toolInstall" }),
     ).toBeInTheDocument();
-    // 桌面行没有安装 / 升级 / 卸载按钮，只有问号帮助按钮（和拖动把手）
+    const subRow = document.querySelector(
+      '[data-tool-row="agy"] [data-agy-desktop-subrow]',
+    ) as HTMLElement;
+    expect(subRow).not.toBeNull();
+    expect(within(subRow).getByText("Antigravity Desktop")).toBeInTheDocument();
+    expect(within(subRow).getByText("2.34.0")).toBeInTheDocument();
     expect(
-      desktopRow
-        .getAllByRole("button")
-        .filter(
-          (button) =>
-            button.getAttribute("aria-label") !== "appsPage.dragHandle",
-        ),
-    ).toEqual([
-      desktopRow.getByRole("button", { name: "Antigravity Desktop" }),
-    ]);
+      within(subRow).getByText("/Applications/Antigravity.app"),
+    ).toBeInTheDocument();
+    expect(
+      within(subRow).getByRole("button", { name: "Antigravity Desktop" }),
+    ).toBeInTheDocument();
 
-    // 关闭 Antigravity Desktop 开关时只更新 visibleApps["agy-desktop"]，不影响 visibleApps.agy
     const user = userEvent.setup();
-    await user.click(desktopRow.getByRole("switch"));
+    await user.click(switches[0]);
     expect(mocks.updateSettings).toHaveBeenCalledWith(
       expect.objectContaining({
-        visibleApps: expect.objectContaining({
-          agy: true,
-          "agy-desktop": false,
-        }),
+        visibleApps: expect.objectContaining({ agy: false }),
       }),
     );
-
-    // 关闭 Antigravity CLI 开关时只更新 visibleApps.agy，不影响 visibleApps["agy-desktop"]
-    await user.click(cliRow.getByRole("switch"));
-    expect(mocks.updateSettings).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        visibleApps: expect.objectContaining({
-          agy: false,
-          "agy-desktop": true,
-        }),
-      }),
-    );
-
-    // 拖动 Antigravity Desktop 独立更新它在 appOrder 中的位置
-    const onDragEnd = mocks.dragEndHandlers.at(-1);
-    expect(onDragEnd).toBeDefined();
-    act(() => {
-      onDragEnd?.({
-        active: { id: "agy-desktop" },
-        over: { id: "claude" },
-      } as unknown as DragEndEvent);
-    });
-    expect(mocks.updateSettings).toHaveBeenLastCalledWith({
-      appOrder: [
-        "agy-desktop",
-        ...APP_IDS.filter((app) => app !== "agy-desktop"),
-      ],
-    });
   });
 
-  it("places Antigravity Desktop under not installed when absent and refreshes on check updates", async () => {
+  it("groups Antigravity under not-installed when neither CLI nor Desktop is present and refreshes Desktop status on check", async () => {
     vi.resetModules();
     missing.clear();
-    mocks.settings = {};
-    mocks.dragEndHandlers = [];
-    mocks.updateSettings.mockReset();
+    missing.add("agy");
     mocks.agyDesktopStatus = {
       supported: true,
       installed: false,
@@ -679,12 +649,13 @@ describe("AppsPage visibility column", () => {
 
     await renderApps();
 
-    expect(rowApps("appsPage.sectionNotInstalled")).toEqual(["agy-desktop"]);
-    expect(
-      card("Antigravity Desktop").getByText("common.notInstalled"),
-    ).toBeInTheDocument();
+    expect(rowApps("appsPage.sectionNotInstalled")).toEqual(["agy"]);
+    const subRow = document.querySelector(
+      '[data-tool-row="agy"] [data-agy-desktop-subrow]',
+    ) as HTMLElement;
+    expect(subRow).not.toBeNull();
+    expect(within(subRow).getByText("common.notInstalled")).toBeInTheDocument();
 
-    // 点击「检查更新」也会重新读取本机 Antigravity 桌面版状态
     const callsBefore = mocks.getAgyDesktopStatus.mock.calls.length;
     await userEvent.click(
       screen.getByRole("button", { name: /appsPage\.checkUpdates/ }),

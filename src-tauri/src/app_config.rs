@@ -78,7 +78,7 @@ macro_rules! app_flags {
                     AppType::Agy => Some(&mut self.agy),
                     AppType::Copilot => Some(&mut self.copilot),
                     AppType::WorkBuddy => Some(&mut self.workbuddy),
-                    AppType::OpenClaw | AppType::ClaudeDesktop | AppType::AgyDesktop => None,
+                    AppType::OpenClaw | AppType::ClaudeDesktop => None,
                 }
             }
 
@@ -323,7 +323,6 @@ pub enum AppType {
     Kimi,
     Dsh,
     Agy,
-    AgyDesktop,
     Omp,
     Copilot,
     WorkBuddy,
@@ -446,13 +445,6 @@ impl AppType {
                 route_mode: false,
                 stack: false,
             },
-            AppType::AgyDesktop => AppSpec {
-                id: "agy-desktop",
-                additive: false,
-                local_proxy: false,
-                route_mode: false,
-                stack: false,
-            },
             AppType::Omp => AppSpec {
                 id: "omp",
                 additive: true,
@@ -482,7 +474,7 @@ impl AppType {
     }
 
     /// 所有应用，按默认顺序
-    pub const ALL: [AppType; 17] = [
+    pub const ALL: [AppType; 16] = [
         AppType::Claude,
         AppType::ClaudeDesktop,
         AppType::Codex,
@@ -496,7 +488,6 @@ impl AppType {
         AppType::Kimi,
         AppType::Dsh,
         AppType::Agy,
-        AppType::AgyDesktop,
         AppType::Omp,
         AppType::Copilot,
         AppType::WorkBuddy,
@@ -532,11 +523,6 @@ impl FromStr for AppType {
             "kimi" | "kimi-code" => Ok(AppType::Kimi),
             "dsh" | "deepseek-harness" => Ok(AppType::Dsh),
             "agy" | "antigravity" | "antigravity-cli" => Ok(AppType::Agy),
-            "agy-desktop"
-            | "agy_desktop"
-            | "agydesktop"
-            | "antigravity-desktop"
-            | "antigravity_desktop" => Ok(AppType::AgyDesktop),
             "omp" | "oh-my-pi" | "oh_my_pi" | "ohmypi" => Ok(AppType::Omp),
             "copilot" | "copilot-cli" | "github-copilot" | "github-copilot-cli" => {
                 Ok(AppType::Copilot)
@@ -544,8 +530,8 @@ impl FromStr for AppType {
             "workbuddy" | "work-buddy" | "work_buddy" => Ok(AppType::WorkBuddy),
             other => Err(AppError::localized(
                 "unsupported_app",
-                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, agy-desktop, omp, copilot, workbuddy。"),
-                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, agy-desktop, omp, copilot, workbuddy."),
+                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp, copilot, workbuddy。"),
+                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp, copilot, workbuddy."),
             )),
         }
     }
@@ -901,7 +887,6 @@ impl MultiAppConfig {
             | AppType::Kimi
             | AppType::Dsh
             | AppType::Agy
-            | AppType::AgyDesktop
             | AppType::Omp
             | AppType::Copilot
             | AppType::WorkBuddy => return Ok(false),
@@ -953,7 +938,6 @@ impl MultiAppConfig {
                 | AppType::Kimi
                 | AppType::Dsh
                 | AppType::Agy
-                | AppType::AgyDesktop
                 | AppType::Omp
                 | AppType::Copilot
                 | AppType::WorkBuddy => continue, // Pi didn't exist in v3.6.x, skip
