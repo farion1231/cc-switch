@@ -435,4 +435,51 @@ describe("ClaudeOfficialSection", () => {
     expect(screen.getAllByText("· Pro")).toHaveLength(1);
     expect(screen.getByText("额度关了")).toBeInTheDocument();
   });
+
+  it("renders Setup Token input and format hint when Setup Token mode is active", async () => {
+    const onAccountChange = vi.fn();
+    const onToggle = vi.fn();
+    const onTokenChange = vi.fn();
+    mocks.getStatus.mockResolvedValue({
+      accounts: [],
+      default_account_id: null,
+    });
+
+    const { rerender } = withQuery(
+      <ClaudeAccountSelect
+        value={null}
+        onChange={onAccountChange}
+        setupToken={{
+          enabled: true,
+          value: "sk-ant-api03-wrong-prefix",
+          onToggle,
+          onChange: onTokenChange,
+        }}
+      />,
+    );
+
+    expect(
+      screen.getByLabelText("Setup Token (CLAUDE_CODE_OAUTH_TOKEN)"),
+    ).toHaveValue("sk-ant-api03-wrong-prefix");
+    expect(screen.getByText(/sk-ant-oat01-/)).toBeInTheDocument();
+
+    rerender(
+      <QueryClientProvider client={createTestQueryClient()}>
+        <ClaudeAccountSelect
+          value={null}
+          onChange={onAccountChange}
+          setupToken={{
+            enabled: true,
+            value: "sk-ant-oat01-valid",
+            onToggle,
+            onChange: onTokenChange,
+          }}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(
+      screen.queryByText(/请确认粘贴完整|Please check that the full token/),
+    ).not.toBeInTheDocument();
+  });
 });

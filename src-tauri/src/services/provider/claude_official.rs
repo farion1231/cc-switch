@@ -25,6 +25,8 @@ use crate::store::AppState;
 /// 授权中心里 Claude 官方账号的认证供应商标识。
 pub const AUTH_PROVIDER: &str = "claude_official";
 pub const CONFIG_DIR_ENV: &str = "CLAUDE_CONFIG_DIR";
+/// `claude setup-token` 生成的长期 OAuth 令牌环境变量名。
+pub const OAUTH_TOKEN_ENV: &str = "CLAUDE_CODE_OAUTH_TOKEN";
 
 /// Claude 官方卡（预设标了 `category: "official"`）。
 pub fn is_official(provider: &Provider) -> bool {
@@ -41,6 +43,20 @@ pub fn bound_account(provider: &Provider) -> Option<String> {
         .as_ref()?
         .managed_account_id_for(AUTH_PROVIDER)
         .filter(|id| !id.is_empty())
+}
+
+/// Claude 官方卡是否使用 `claude setup-token` 生成的 `CLAUDE_CODE_OAUTH_TOKEN` 验证。
+/// 绑定了授权中心托管账号时以托管账号为准。
+pub fn has_setup_token(provider: &Provider) -> bool {
+    if !is_official(provider) || bound_account(provider).is_some() {
+        return false;
+    }
+    provider
+        .settings_config
+        .get("env")
+        .and_then(|env| env.get(OAUTH_TOKEN_ENV))
+        .and_then(Value::as_str)
+        .is_some_and(|token| !token.trim().is_empty())
 }
 
 fn config_dir_key() -> KeyPath {
@@ -242,7 +258,10 @@ pub fn ensure_default_terminal_is_official(db: &Database) -> Result<(), AppError
         crate::mode::current::provider_for(db, &app, crate::mode::current::Purpose::Direct)?
             .and_then(|id| db.get_provider_by_id(&id, &app).ok()?)
     };
-    if in_use.as_ref().is_some_and(is_official) {
+    if in_use
+        .as_ref()
+        .is_some_and(|provider| is_official(provider) && !has_setup_token(provider))
+    {
         return Ok(());
     }
     Err(AppError::localized(
@@ -415,5 +434,28 @@ mod tests {
         // 绑了但本机没有这个账号：打开终端报错，默认登录的卡不设目录
         assert!(terminal_account(&official(Some("missing:acc"))).is_err());
         assert!(terminal_account(&official(None)).unwrap().is_none());
+    }
+
+    #[test]
+    fn setup_token_detection_matches_only_unbound_official_cards_with_non_empty_token() {
+        let mut setup_card = official(None);
+        assert!(!has_setup_token(&setup_card));
+
+        setup_card.settings_config = json!({"env": {"CLAUDE_CODE_OAUTH_TOKEN": "   "}});
+        assert!(!has_setup_token(&setup_card));
+
+        setup_card.settings_config =
+            json!({"env": {"CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-example"}});
+        assert!(has_setup_token(&setup_card));
+
+        // 绑定托管账号时以托管账号为准
+        let mut bound = official(Some("acc:org"));
+        bound.settings_config = json!({"env": {"CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-example"}});
+        assert!(!has_setup_token(&bound));
+
+        // 非官方卡不算官方 Setup Token 卡
+        let mut third_party = setup_card.clone();
+        third_party.category = Some("third_party".into());
+        assert!(!has_setup_token(&third_party));
     }
 }

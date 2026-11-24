@@ -1156,6 +1156,13 @@ fn tray_usage_source(app_type: &AppType, provider: &Provider) -> Option<TrayUsag
             .unwrap_or(true);
         return enabled.then_some(source);
     }
+    // Claude 官方卡使用 `claude setup-token`（CLAUDE_CODE_OAUTH_TOKEN）验证时跳过
+    // 默认登录的订阅额度查询，避免错读 ~/.claude 钥匙串里其他账号的额度。
+    if matches!(app_type, AppType::Claude)
+        && crate::services::provider::claude_official::has_setup_token(provider)
+    {
+        return None;
+    }
     // xAI OAuth 的额度属于 SuperGrok 账号，不是所在应用的客户端登录：授权中心里一个账号都
     // 没有时退回脚本路径，不读应用级订阅缓存。
     if provider_uses_official_subscription(provider) && !provider.is_xai_oauth() {

@@ -35,6 +35,14 @@ export interface ManagedAccountSelectLabels {
   manage: string;
 }
 
+export interface ManagedAccountExtraOption {
+  value: string;
+  label: string;
+  description: string;
+  selected: boolean;
+  onSelect: () => void;
+}
+
 interface ManagedAccountSelectProps {
   authProvider: ManagedAuthProvider;
   value: string | null;
@@ -42,6 +50,8 @@ interface ManagedAccountSelectProps {
   /** 打开授权中心添加或管理账号 */
   onManageAccounts?: () => void;
   labels: ManagedAccountSelectLabels;
+  /** 附加登录方式（如 Claude 官方卡的 Setup Token） */
+  extraOption?: ManagedAccountExtraOption;
   /** 选择框下面的说明 */
   help: React.ReactNode;
 }
@@ -56,6 +66,7 @@ export function ManagedAccountSelect({
   onChange,
   onManageAccounts,
   labels,
+  extraOption,
   help,
 }: ManagedAccountSelectProps) {
   const { t } = useTranslation();
@@ -63,7 +74,7 @@ export function ManagedAccountSelect({
   const accounts = data?.accounts ?? [];
   const selected = accounts.find((a) => a.id === value);
   // 绑的号不在这台电脑上（别的设备同步来的、或已删掉）时也要显示出来，别悄悄改成跟随登录
-  const missing = value !== null && !selected;
+  const missing = !extraOption?.selected && value !== null && !selected;
   const missingLabel = t("provider.form.managedAccount.missing", {
     defaultValue: "不在这台电脑上的账号",
   });
@@ -72,17 +83,24 @@ export function ManagedAccountSelect({
   });
   const itemClass =
     "min-w-0 overflow-hidden py-2 pl-6 [&>span:last-child]:min-w-0 [&>span:last-child]:flex-1 [&>span:last-child]:overflow-hidden";
+  const selectValue = extraOption?.selected
+    ? extraOption.value
+    : (value ?? DEFAULT_LOGIN);
 
   return (
     <div className="space-y-2.5">
       <Label className="text-sm font-medium text-fg-1">{label}</Label>
       <Select
-        value={value ?? DEFAULT_LOGIN}
+        value={selectValue}
         onValueChange={(next) => {
           // Radix Select 在表单里可能回报空串，忽略
           if (!next) return;
           if (next === MANAGE_ACCOUNTS) {
             onManageAccounts?.();
+            return;
+          }
+          if (extraOption && next === extraOption.value) {
+            extraOption.onSelect();
             return;
           }
           if (next === DEFAULT_LOGIN) {
@@ -101,14 +119,16 @@ export function ManagedAccountSelect({
         >
           <span
             className="min-w-0 flex-1 truncate text-left text-sm font-medium tracking-tight"
-            title={selected?.login}
+            title={extraOption?.selected ? extraOption.label : selected?.login}
           >
             <SelectValue>
               {/* 加载中也给字符串：children 为 undefined 时 Radix 会把选项文字
                   portal 进来，之后换成文字会和 React 抢着删节点 */}
-              {value === null
-                ? labels.follow
-                : (selected?.login ?? (data ? missingLabel : ""))}
+              {extraOption?.selected
+                ? extraOption.label
+                : value === null
+                  ? labels.follow
+                  : (selected?.login ?? (data ? missingLabel : ""))}
             </SelectValue>
           </span>
         </SelectTrigger>
@@ -177,6 +197,22 @@ export function ManagedAccountSelect({
               </span>
             </div>
           </SelectItem>
+          {extraOption && (
+            <>
+              <SelectSeparator className="mx-2 my-0 bg-border/60" />
+              <SelectItem value={extraOption.value} className={itemClass}>
+                <div className="flex min-w-0 items-center gap-2">
+                  <span aria-hidden className="h-4 w-4 shrink-0" />
+                  <span className="shrink-0 text-sm font-medium leading-5">
+                    {extraOption.label}
+                  </span>
+                  <span className="min-w-0 truncate text-sm leading-5 text-fg-2">
+                    {extraOption.description}
+                  </span>
+                </div>
+              </SelectItem>
+            </>
+          )}
         </SelectContent>
       </Select>
       <p className="text-caption text-fg-2">{help}</p>

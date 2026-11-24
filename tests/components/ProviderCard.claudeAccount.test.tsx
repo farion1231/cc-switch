@@ -8,6 +8,7 @@ import { createTestQueryClient } from "../utils/testQueryClient";
 const claudeQuotaProps = vi.hoisted(() => vi.fn());
 const getClaudeDefaultPlan = vi.hoisted(() => vi.fn());
 const claudeLineProps = vi.hoisted(() => vi.fn());
+const cardActionProps = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/api/subscription", async (importOriginal) => {
   const actual =
@@ -18,7 +19,10 @@ vi.mock("@/lib/api/subscription", async (importOriginal) => {
 });
 
 vi.mock("@/components/providers/ProviderCardActions", () => ({
-  ProviderCardActions: () => null,
+  ProviderCardActions: (props: unknown) => {
+    cardActionProps(props);
+    return null;
+  },
 }));
 vi.mock("@/components/ProviderIcon", () => ({ ProviderIcon: () => null }));
 vi.mock("@/components/UsageFooter", () => ({ default: () => null }));
@@ -151,6 +155,36 @@ describe("ProviderCard with a Claude official account", () => {
     renderCard(boundCard(officialUsage(false)));
     expect(claudeLineProps.mock.calls.map(([props]) => props.showPlan)).toEqual(
       [true, false],
+    );
+  });
+
+  it("shows Setup Token subtitle and skips subscription quota and plan lookups", () => {
+    getClaudeDefaultPlan.mockReset();
+    cardActionProps.mockClear();
+    renderCard({
+      id: "claude-setup-token",
+      name: "Claude Official (Setup Token)",
+      category: "official",
+      websiteUrl: "https://www.anthropic.com/claude-code",
+      settingsConfig: {
+        env: { CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-example" },
+      },
+      meta: officialUsage(true),
+    });
+
+    expect(
+      screen.getByText(
+        /Setup Token · 仅统计用量|Setup Token · Usage stats only/,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("default-login-quota")).not.toBeInTheDocument();
+    expect(screen.queryByText("claude-account-quota")).not.toBeInTheDocument();
+    expect(getClaudeDefaultPlan).not.toHaveBeenCalled();
+    expect(cardActionProps).toHaveBeenCalledWith(
+      expect.objectContaining({
+        onConfigureUsage: undefined,
+        openTerminalIsolated: true,
+      }),
     );
   });
 });

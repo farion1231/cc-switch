@@ -14,6 +14,7 @@ import { isCopilotByok } from "@/config/copilotConfig";
 import { useSettingsQuery } from "@/lib/query";
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import { resolveCodexOfficialIdentity } from "@/utils/providerCapabilities";
+import { hasClaudeSetupToken } from "@/utils/claudeSetupToken";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import {
@@ -395,6 +396,11 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
       ? resolveManagedAccountId(provider.meta, "claude_official")?.trim() ||
         null
       : null;
+  const claudeHasSetupToken =
+    appId === "claude" &&
+    isOfficialSubscription &&
+    !claudeBoundAccountId &&
+    hasClaudeSetupToken(provider.settingsConfig);
   // 绑了授权中心 xAI 账号的 Grok 官方卡：额度按这个号查（同 ProviderCard 的 grokBoundAccountId）
   const grokBoundAccountId =
     appId === "grokbuild" && isOfficialSubscription
@@ -1158,9 +1164,11 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
             {selectedTemplate === TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION && (
               <div className="space-y-2 border-t border-white/10 pt-3">
                 <p className="text-sm text-fg-2">
-                  {appId === "agy"
-                    ? t("usageScript.officialSubscriptionHintAgy")
-                    : t("usageScript.officialSubscriptionHint")}
+                  {claudeHasSetupToken
+                    ? t("usageScript.officialSubscriptionHintSetupToken")
+                    : appId === "agy"
+                      ? t("usageScript.officialSubscriptionHintAgy")
+                      : t("usageScript.officialSubscriptionHint")}
                 </p>
               </div>
             )}

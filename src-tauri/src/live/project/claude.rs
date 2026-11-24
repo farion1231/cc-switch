@@ -129,6 +129,7 @@ pub const CLAUDE_HOT_UNSET_ENV: &[&str] = &[
     "ANTHROPIC_BASE_URL",
     "ANTHROPIC_AUTH_TOKEN",
     "ANTHROPIC_API_KEY",
+    "CLAUDE_CODE_OAUTH_TOKEN",
     "ANTHROPIC_CUSTOM_HEADERS",
     "ANTHROPIC_MODEL",
     "ANTHROPIC_SMALL_FAST_MODEL",
@@ -1450,5 +1451,45 @@ mod tests {
         for key in CLAUDE_HOT_UNSET_EXCLUSIVE_ENV {
             assert!(floor::claude_exclusive_env(key), "{key}");
         }
+    }
+
+    #[test]
+    fn claude_setup_token_is_projected_and_tombstoned_on_switch_out() {
+        let setup_token = ClaudeProjection::of(&json!({ "env": {
+            "CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-example"
+        }}));
+        let live_before = json!({ "env": { "CUSTOM_USER_VAR": "keep" } });
+        let switch_in = direct_patch(None, &setup_token);
+        let mut doc = live_before;
+        switch_in
+            .apply_to(Path::new("settings.json"), &mut doc)
+            .unwrap();
+        assert_eq!(
+            doc["env"],
+            json!({
+                "CUSTOM_USER_VAR": "keep",
+                "CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-example"
+            })
+        );
+
+        // 切回普通官方卡时先写空串墓碑让运行中的 Claude Code 会话清掉旧 token，随后清键。
+        let official = ClaudeProjection::of(&json!({ "env": {} }));
+        let switch_out = with_tombstones(direct_patch(Some(&setup_token), &official));
+        let keys = tombstone_keys(&switch_out, &doc);
+        assert_eq!(keys, ["CLAUDE_CODE_OAUTH_TOKEN"]);
+        switch_out
+            .apply_to(Path::new("settings.json"), &mut doc)
+            .unwrap();
+        assert_eq!(
+            doc["env"],
+            json!({
+                "CUSTOM_USER_VAR": "keep",
+                "CLAUDE_CODE_OAUTH_TOKEN": ""
+            })
+        );
+        tombstone_sweep(&keys)
+            .apply_to(Path::new("settings.json"), &mut doc)
+            .unwrap();
+        assert_eq!(doc["env"], json!({ "CUSTOM_USER_VAR": "keep" }));
     }
 }

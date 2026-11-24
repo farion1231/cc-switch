@@ -25,6 +25,12 @@ import {
   overlayClaudeProviderFields,
   withClaudeGatewayDefaults,
 } from "@/utils/claudeEditorOverlay";
+import {
+  clearClaudeSetupTokenInConfig,
+  getClaudeSetupTokenFromConfig,
+  hasClaudeSetupToken,
+  setClaudeSetupTokenInConfig,
+} from "@/utils/claudeSetupToken";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import type {
   ProviderCategory,
@@ -741,6 +747,40 @@ function ProviderFormFull({
   const [selectedClaudeAccountId, setSelectedClaudeAccountId] = useState<
     string | null
   >(() => resolveManagedAccountId(initialData?.meta, "claude_official"));
+  // Claude 官方卡的 `claude setup-token`（CLAUDE_CODE_OAUTH_TOKEN）验证方式
+  const [claudeSetupTokenMode, setClaudeSetupTokenMode] = useState<boolean>(
+    () =>
+      appId === "claude" &&
+      initialData?.category === "official" &&
+      !resolveManagedAccountId(initialData?.meta, "claude_official") &&
+      hasClaudeSetupToken(initialData?.settingsConfig),
+  );
+  const [claudeSetupToken, setClaudeSetupToken] = useState<string>(() =>
+    appId === "claude"
+      ? getClaudeSetupTokenFromConfig(initialData?.settingsConfig)
+      : "",
+  );
+  const handleClaudeSetupTokenToggle = useCallback(
+    (enabled: boolean) => {
+      setClaudeSetupTokenMode(enabled);
+      if (enabled) {
+        setSelectedClaudeAccountId(null);
+        return;
+      }
+      setClaudeSetupToken("");
+      const updated = clearClaudeSetupTokenInConfig(getSettingsConfig());
+      handleSettingsConfigChange(updated);
+    },
+    [getSettingsConfig, handleSettingsConfigChange],
+  );
+  const handleClaudeSetupTokenChange = useCallback(
+    (token: string) => {
+      setClaudeSetupToken(token);
+      const updated = setClaudeSetupTokenInConfig(getSettingsConfig(), token);
+      handleSettingsConfigChange(updated);
+    },
+    [getSettingsConfig, handleSettingsConfigChange],
+  );
   const [codexFastMode, setCodexFastMode] = useState<boolean>(
     () => initialData?.meta?.codexFastMode ?? false,
   );
@@ -785,6 +825,25 @@ function ProviderFormFull({
   // 按行里实际写的映射算（和后端一样），不用 useModelState 回填过的值。
   const claudeSettingsConfig =
     appId === "claude" ? form.watch("settingsConfig") : "";
+  useEffect(() => {
+    if (
+      appId !== "claude" ||
+      category !== "official" ||
+      !claudeSettingsConfig
+    ) {
+      return;
+    }
+    try {
+      JSON.parse(claudeSettingsConfig);
+    } catch {
+      return;
+    }
+    const extracted = getClaudeSetupTokenFromConfig(claudeSettingsConfig);
+    setClaudeSetupToken((prev) => (prev === extracted ? prev : extracted));
+    if (extracted.trim() && !selectedClaudeAccountId) {
+      setClaudeSetupTokenMode(true);
+    }
+  }, [appId, category, claudeSettingsConfig, selectedClaudeAccountId]);
   const mappedClaudeStackRows = useMemo(() => {
     let env: Record<string, unknown> | undefined;
     try {
@@ -1792,6 +1851,19 @@ function ProviderFormFull({
       }
     }
 
+    if (
+      appId === "claude" &&
+      category === "official" &&
+      claudeSetupTokenMode &&
+      !claudeSetupToken.trim()
+    ) {
+      issues.push(
+        t("provider.form.claudeAccount.setupTokenRequired", {
+          defaultValue: "使用 Setup Token 验证时请填写 CLAUDE_CODE_OAUTH_TOKEN",
+        }),
+      );
+    }
+
     if (issues.length > 0) {
       // 弹确认框让用户决定是否仍要保存
       setSoftIssues(issues);
@@ -2108,6 +2180,7 @@ function ProviderFormFull({
                   }
                 : appId === "claude" &&
                     category === "official" &&
+                    !claudeSetupTokenMode &&
                     selectedClaudeAccountId
                   ? {
                       source: "managed_account",
@@ -2528,6 +2601,9 @@ function ProviderFormFull({
 
     setLocalApiKeyField(preset.apiKeyField ?? "ANTHROPIC_AUTH_TOKEN");
     setLocalIsFullUrl(false);
+    setSelectedClaudeAccountId(null);
+    setClaudeSetupTokenMode(false);
+    setClaudeSetupToken("");
 
     form.reset({
       name: preset.nameKey ? t(preset.nameKey) : preset.name,
@@ -2876,6 +2952,12 @@ function ProviderFormFull({
                   ? () => onManageAuthAccounts("claude_official")
                   : undefined
               }
+              setupToken={{
+                enabled: claudeSetupTokenMode,
+                value: claudeSetupToken,
+                onToggle: handleClaudeSetupTokenToggle,
+                onChange: handleClaudeSetupTokenChange,
+              }}
             />
           )}
 

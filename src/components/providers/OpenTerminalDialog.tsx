@@ -207,8 +207,10 @@ export function terminalIsIsolated(
     return provider.category !== "official" && filled("GEMINI_API_KEY");
   }
   if (provider.category === "official") {
-    return Boolean(
-      resolveManagedAccountId(provider.meta, "claude_official")?.trim(),
+    return (
+      Boolean(
+        resolveManagedAccountId(provider.meta, "claude_official")?.trim(),
+      ) || filled("CLAUDE_CODE_OAUTH_TOKEN")
     );
   }
   return (
