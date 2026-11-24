@@ -9,6 +9,7 @@
 use crate::proxy::privacy_filter::{self, Placeholders};
 use chrono::{Local, TimeZone};
 use serde::Serialize;
+use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -137,7 +138,10 @@ fn build_feedback_report(log_dir: &Path, env: &FeedbackEnv) -> FeedbackReport {
     let lines: Vec<String> = collected
         .lines
         .into_iter()
-        .map(|line| filter.redact(&line, placeholders).redacted)
+        .map(|line| match filter.redact_cow(&line, placeholders).0 {
+            Cow::Borrowed(_) => line,
+            Cow::Owned(redacted) => redacted,
+        })
         .collect();
     let (issue_url, included_lines) = build_issue_url(env, &date, &lines, collected.total_lines);
 

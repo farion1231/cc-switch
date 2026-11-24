@@ -171,7 +171,7 @@ impl Filter {
     }
 
     /// 检测并脱敏文本，没有命中时不复制原文
-    fn redact_cow<'t>(
+    pub fn redact_cow<'t>(
         &self,
         text: &'t str,
         placeholders: &Placeholders,
