@@ -235,7 +235,7 @@
         "account": "Account",
         "accountFollow": "Follow agy's current sign-in",
         "accountMissing": "An account not on this computer",
-        "accountHelp": "With an account selected, Open Terminal first switches agy's sign-in to it (this applies globally: agy sessions started afterwards use it). Add accounts in the Auth Center."
+        "accountHelp": "Saving a new account binding switches the sign-in for new agy sessions. Opening a terminal from this card also switches to its bound account. Add accounts in the Auth Center."
       },
       "gemini": {
         "model": "Model",

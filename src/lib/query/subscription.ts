@@ -1,5 +1,6 @@
 import { useRef } from "react";
 import {
+  queryOptions,
   useQuery,
   useQueryClient,
   type QueryClient,
@@ -27,6 +28,20 @@ export const subscriptionKeys = {
   all: ["subscription"] as const,
   quota: (appId: AppId) => [...subscriptionKeys.all, "quota", appId] as const,
 };
+
+export const agyAuthStatusQuery = queryOptions({
+  queryKey: ["managed-auth-status", "agy_oauth"],
+  queryFn: () => authApi.authGetStatus("agy_oauth"),
+  staleTime: 30_000,
+});
+
+/** Refresh the actual agy login and the quota shown on cards that follow it. */
+export async function invalidateAgyLoginCaches(queryClient: QueryClient) {
+  await Promise.all([
+    queryClient.invalidateQueries({ queryKey: agyAuthStatusQuery.queryKey }),
+    queryClient.invalidateQueries({ queryKey: subscriptionKeys.quota("agy") }),
+  ]);
+}
 
 /**
  * Grok 的 CLI 登录（~/.grok/auth.json）可能被后端改写之后要重读的缓存：

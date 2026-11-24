@@ -235,7 +235,7 @@
         "account": "Hesap",
         "accountFollow": "agy'nin mevcut oturum açma hesabını kullan",
         "accountMissing": "Bu bilgisayarda bulunmayan hesap",
-        "accountHelp": "Bir hesap seçildiğinde Terminal Aç, önce agy'nin oturumunu bu hesaba geçirir (bu değişiklik genel olarak geçerlidir: bundan sonra başlatılan agy oturumları bu hesabı kullanır). Hesapları Kimlik Doğrulama Merkezi'ne ekleyin."
+        "accountHelp": "Yeni bir hesap bağlantısı kaydedildiğinde yeni agy oturumları bu hesabı kullanır. Bu karttan terminal açıldığında da bağlı hesaba geçilir. Hesapları Kimlik Doğrulama Merkezi'nden ekleyin."
       },
       "gemini": {
         "model": "Model",
