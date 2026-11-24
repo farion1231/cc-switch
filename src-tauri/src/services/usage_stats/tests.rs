@@ -2769,8 +2769,14 @@ fn test_stats_first_token_median_only_counts_successful_proxy_streams() -> Resul
     let p1 = providers.iter().find(|s| s.provider_id == "p1").unwrap();
     // 会话日志两条：50 和 3000
     assert_eq!(p1.est_first_token_median_ms, Some(1_525));
-    // 会话日志推出来的首字不算精确速度：进速度的只有路由的 a、b、c、err 四条
-    assert_eq!(p1.speed_output_tokens, 2_000);
+    // 会话日志推出来的首字与失败请求（err, status 500）都不算精确速度：只计 a、b、c 三条
+    assert_eq!(p1.speed_output_tokens, 1_500);
+    // a: 500 / 19s ≈ 26.32, b: 500 / 18s ≈ 27.78, c: 500 / 5s = 100 -> median = 500 / 18 ≈ 27.78
+    let p1_speed = p1.speed_median_tps.expect("p1 speed median");
+    assert!(
+        (p1_speed - (500.0 / 18.0)).abs() < 1e-6,
+        "p1_speed={p1_speed}"
+    );
 
     let models = db.get_model_stats(None, None, None, None, None)?;
     let median_of = |m: &str| {
@@ -2948,6 +2954,158 @@ fn test_get_provider_stats_speed_sums_only_eligible_requests() -> Result<(), App
     // 路由服务的行没有首字（非流式）也不算估算速度
     assert_eq!(stats[0].est_speed_output_tokens, 0);
     assert_eq!(stats[0].est_speed_duration_ms, 0);
+    assert_eq!(stats[0].speed_median_tps, Some(100.0));
+    assert_eq!(stats[0].est_speed_median_tps, None);
+
+    Ok(())
+}
+
+#[test]
+fn test_speed_median_resists_stalls_and_filters_bursts_and_errors() -> Result<(), AppError> {
+    let db = Database::memory()?;
+
+    {
+        let conn = lock_conn!(db.conn);
+        let insert = |id: &str,
+                      provider: &str,
+                      model: &str,
+                      output: i64,
+                      latency: i64,
+                      first: Option<i64>,
+                      status: i64,
+                      source: &str| {
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                        request_id, provider_id, app_type, model,
+                        input_tokens, output_tokens, total_cost_usd,
+                        latency_ms, first_token_ms, status_code, created_at, data_source
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    id, provider, "claude", model, 10, output, "0", latency, first, status, 1000,
+                    source
+                ],
+            )
+        };
+        // 3 normal ~100 tok/s proxy streams + 1 stalled 120s stream (2 tok/s):
+        // Summed ratio would drop to (200+200+200+240)/(2+2+2+120) = 6.7 tok/s,
+        // while median stays 100 tok/s!
+        insert("norm-1", "p1", "m1", 200, 2_500, Some(500), 200, "proxy")?;
+        insert("norm-2", "p1", "m1", 200, 2_500, Some(500), 200, "proxy")?;
+        insert("norm-3", "p1", "m1", 200, 2_500, Some(500), 200, "proxy")?;
+        insert(
+            "stalled",
+            "p1",
+            "m1",
+            240,
+            121_000,
+            Some(1_000),
+            200,
+            "proxy",
+        )?;
+        // Excluded: failed status_code = 500
+        insert("err-500", "p1", "m1", 500, 6_000, Some(1_000), 500, "proxy")?;
+        // Excluded: exceeds SPEED_MAX_TPS (10_000 tok/s): 2000 tokens in 150ms = 13_333 tok/s
+        insert(
+            "super-burst",
+            "p1",
+            "m1",
+            2_000,
+            350,
+            Some(200),
+            200,
+            "proxy",
+        )?;
+        // Excluded: held-short-window burst (gen_ms = 250ms < 1000ms, ttft = 8200ms > 4*250ms)
+        insert(
+            "held-burst",
+            "p1",
+            "m1",
+            392,
+            8_450,
+            Some(8_200),
+            200,
+            "proxy",
+        )?;
+        // Included: genuine short fast reply (gen_ms = 250ms, ttft = 500ms <= 4*250ms, 100 tok/s)
+        // Wait: 100 tokens / 0.25s = 400 tok/s, let's check median of [2, 100, 100, 100, 400] = 100!
+        insert("short-ok", "p1", "m1", 100, 750, Some(500), 200, "proxy")?;
+
+        // Session logs for p2 / m2:
+        // 2 normal (80, 120 tok/s) + 1 stalled (2 tok/s) -> median = 80 tok/s
+        insert(
+            "s-1",
+            "_session",
+            "m2",
+            800,
+            10_000,
+            None,
+            200,
+            "session_log",
+        )?;
+        insert(
+            "s-2",
+            "_session",
+            "m2",
+            1_200,
+            10_000,
+            None,
+            200,
+            "session_log",
+        )?;
+        insert(
+            "s-stall",
+            "_session",
+            "m2",
+            240,
+            120_000,
+            None,
+            200,
+            "session_log",
+        )?;
+        // Excluded session rows: non-2xx (499 aborted) & >10_000 tok/s burst
+        insert(
+            "s-err",
+            "_session",
+            "m2",
+            1_000,
+            10_000,
+            None,
+            499,
+            "session_log",
+        )?;
+        insert(
+            "s-burst",
+            "_session",
+            "m2",
+            20_000,
+            1_500,
+            None,
+            200,
+            "session_log",
+        )?;
+    }
+
+    let providers = db.get_provider_stats(None, None, None, None, None)?;
+    let p1 = providers.iter().find(|s| s.provider_id == "p1").unwrap();
+    assert_eq!(p1.speed_output_tokens, 940);
+    assert_eq!(p1.speed_generation_ms, 126_250);
+    let p1_med = p1.speed_median_tps.expect("p1 median");
+    assert!((p1_med - 100.0).abs() < 1e-6, "p1_med={p1_med}");
+
+    let p2 = providers
+        .iter()
+        .find(|s| s.provider_id == "_session")
+        .unwrap();
+    assert_eq!(p2.est_speed_output_tokens, 2_240);
+    assert_eq!(p2.est_speed_duration_ms, 140_000);
+    let p2_med = p2.est_speed_median_tps.expect("p2 est median");
+    assert!((p2_med - 80.0).abs() < 1e-6, "p2_med={p2_med}");
+
+    let models = db.get_model_stats(None, None, None, None, None)?;
+    let m1 = models.iter().find(|s| s.model == "m1").unwrap();
+    assert!((m1.speed_median_tps.unwrap() - 100.0).abs() < 1e-6);
+    let m2 = models.iter().find(|s| s.model == "m2").unwrap();
+    assert!((m2.est_speed_median_tps.unwrap() - 80.0).abs() < 1e-6);
 
     Ok(())
 }

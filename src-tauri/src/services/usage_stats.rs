@@ -142,6 +142,11 @@ pub struct ProviderStats {
     pub est_speed_output_tokens: u64,
     /// 估算速度的分母：同一批请求的 latency_ms 之和，单位毫秒。
     pub est_speed_duration_ms: u64,
+    /// 速度中位数（tok/s）：满足精确速度条件的路由明细请求逐条算出的 tok/s 的中位数，
+    /// 避免单次卡顿/休眠长尾拉低整行速度；没有合格样本时为 None。
+    pub speed_median_tps: Option<f64>,
+    /// 估算速度中位数（tok/s）：会话日志导入、满足估算速度条件的请求逐条 tok/s 的中位数。
+    pub est_speed_median_tps: Option<f64>,
     /// 首字时间中位数（毫秒）：经路由服务、成功的流式明细请求；没有这样的请求时为 None。
     pub first_token_median_ms: Option<u64>,
     /// 估算首字中位数（毫秒）：会话日志导入、按时间戳推出了首字的明细请求。
@@ -156,14 +161,31 @@ pub const SPEED_MIN_OUTPUT_TOKENS: i64 = 100;
 /// 或短回复整段落在同一个网络包里，算出来的是传输突发而不是生成速度。
 pub const SPEED_MIN_GENERATION_MS: i64 = 100;
 
+/// 速度上限（tok/s）：超过该值的样本属于整包突发或异常计时（如整段工具调用末帧一次吐出），
+/// 不应计入速度或拉高汇总。
+pub const SPEED_MAX_TPS: i64 = 10_000;
+
+/// 缓冲突发判定窗口（毫秒）：当生成窗口短于此值且首字等待超过生成窗口的
+/// [`SPEED_HELD_SHARE`] 倍时，视为上游先攒住再一次性吐出，不计入速度。
+pub const SPEED_HELD_WINDOW_MS: i64 = 1_000;
+
+/// 缓冲突发判定的等待/生成倍数阈值（见 [`SPEED_HELD_WINDOW_MS`]）。
+pub const SPEED_HELD_SHARE: i64 = 4;
+
 /// 明细行能不能计速度的 SQL 条件（和前端 `isSpeedEligible` 同口径）。会话日志导入的行
 /// 也可能有首字（按时间戳推出来的），所以先按来源分开，不能只看有没有首字。
 fn speed_eligible_sql(alias: &str) -> String {
     let data_source = data_source_expr(alias);
     format!(
-        "{data_source} = 'proxy' AND {alias}.first_token_ms IS NOT NULL \
+        "{data_source} = 'proxy' \
+         AND {alias}.status_code >= 200 AND {alias}.status_code < 300 \
+         AND {alias}.first_token_ms IS NOT NULL \
+         AND {alias}.first_token_ms >= 0 \
          AND {alias}.output_tokens >= {SPEED_MIN_OUTPUT_TOKENS} \
-         AND {alias}.latency_ms - {alias}.first_token_ms >= {SPEED_MIN_GENERATION_MS}"
+         AND ({alias}.latency_ms - {alias}.first_token_ms) >= {SPEED_MIN_GENERATION_MS} \
+         AND {alias}.output_tokens * 1000 <= {SPEED_MAX_TPS} * ({alias}.latency_ms - {alias}.first_token_ms) \
+         AND NOT (({alias}.latency_ms - {alias}.first_token_ms) < {SPEED_HELD_WINDOW_MS} \
+                  AND {alias}.first_token_ms > {SPEED_HELD_SHARE} * ({alias}.latency_ms - {alias}.first_token_ms))"
     )
 }
 
@@ -182,8 +204,10 @@ fn speed_estimate_eligible_sql(alias: &str) -> String {
     let data_source = data_source_expr(alias);
     format!(
         "{data_source} <> 'proxy' \
+         AND {alias}.status_code >= 200 AND {alias}.status_code < 300 \
          AND {alias}.output_tokens >= {SPEED_ESTIMATE_MIN_OUTPUT_TOKENS} \
-         AND {alias}.latency_ms >= {SPEED_ESTIMATE_MIN_DURATION_MS}"
+         AND {alias}.latency_ms >= {SPEED_ESTIMATE_MIN_DURATION_MS} \
+         AND {alias}.output_tokens * 1000 <= {SPEED_MAX_TPS} * {alias}.latency_ms"
     )
 }
 
@@ -201,10 +225,13 @@ fn first_token_eligible_sql(alias: &str) -> String {
 /// 组装请求的时间，系统性偏高。
 fn est_first_token_eligible_sql(alias: &str) -> String {
     let data_source = data_source_expr(alias);
-    format!("{data_source} <> 'proxy' AND {alias}.first_token_ms IS NOT NULL")
+    format!(
+        "{data_source} <> 'proxy' AND {alias}.first_token_ms IS NOT NULL \
+         AND {alias}.status_code >= 200 AND {alias}.status_code < 300"
+    )
 }
 
-/// Grouping key expression for [`first_token_medians`].
+/// Grouping key expression for [`performance_medians`].
 /// `Pair` selects two columns separately and formats them into a reused scratch
 /// buffer with `\u{1f}` instead of doing SQLite `|| char(31) ||` per row.
 enum MedianKey<'a> {
@@ -212,79 +239,138 @@ enum MedianKey<'a> {
     Pair(&'a str, &'a str),
 }
 
-/// Read exact and estimated samples together, then select each median in O(n).
-/// SQL need not sort either population or scan the same detail rows twice.
+struct PerformanceMedians {
+    first_token_ms: HashMap<String, u64>,
+    est_first_token_ms: HashMap<String, u64>,
+    speed_tps: HashMap<String, f64>,
+    est_speed_tps: HashMap<String, f64>,
+}
+
+/// Read exact and estimated first-token and per-request TPS samples together in
+/// a single table scan, then select each group's median in O(n).
 /// Borrows the grouping key directly from SQLite and only allocates a `String`
 /// the first time each distinct group is seen, avoiding tens of thousands of
 /// per-row heap allocations on large request logs.
-type MedianGroups = HashMap<String, u64>;
-fn first_token_medians(
+fn performance_medians(
     conn: &Connection,
     key: MedianKey<'_>,
     from_sql: &str,
     detail_where: &str,
     params: &[&dyn rusqlite::ToSql],
-) -> Result<(MedianGroups, MedianGroups), AppError> {
+) -> Result<PerformanceMedians, AppError> {
     let connector = if detail_where.is_empty() {
         "WHERE"
     } else {
         "AND"
     };
-    let exact = first_token_eligible_sql("l");
-    let estimated = est_first_token_eligible_sql("l");
+    let ft_exact = first_token_eligible_sql("l");
+    let ft_est = est_first_token_eligible_sql("l");
+    let spd_exact = speed_eligible_sql("l");
+    let spd_est = speed_estimate_eligible_sql("l");
     let sql = match key {
         MedianKey::Single(col_sql) => format!(
-            "SELECT {col_sql}, l.first_token_ms, ({exact}) {from_sql} {detail_where}
-             {connector} (({exact}) OR ({estimated}))"
+            "SELECT {col_sql}, l.first_token_ms, l.latency_ms, l.output_tokens, \
+                    ({ft_exact}), ({ft_est}), ({spd_exact}), ({spd_est}) \
+             {from_sql} {detail_where} \
+             {connector} (({ft_exact}) OR ({ft_est}) OR ({spd_exact}) OR ({spd_est}))"
         ),
         MedianKey::Pair(col1_sql, col2_sql) => format!(
-            "SELECT {col1_sql}, {col2_sql}, l.first_token_ms, ({exact}) {from_sql} {detail_where}
-             {connector} (({exact}) OR ({estimated}))"
+            "SELECT {col1_sql}, {col2_sql}, l.first_token_ms, l.latency_ms, l.output_tokens, \
+                    ({ft_exact}), ({ft_est}), ({spd_exact}), ({spd_est}) \
+             {from_sql} {detail_where} \
+             {connector} (({ft_exact}) OR ({ft_est}) OR ({spd_exact}) OR ({spd_est}))"
         ),
     };
     let mut stmt = conn.prepare(&sql)?;
     let mut rows = stmt.query(params)?;
-    let mut exact_groups: HashMap<String, Vec<u64>> = HashMap::new();
-    let mut estimated_groups: HashMap<String, Vec<u64>> = HashMap::new();
+    let mut ft_exact_groups: HashMap<String, Vec<u64>> = HashMap::new();
+    let mut ft_est_groups: HashMap<String, Vec<u64>> = HashMap::new();
+    let mut spd_exact_groups: HashMap<String, Vec<f64>> = HashMap::new();
+    let mut spd_est_groups: HashMap<String, Vec<f64>> = HashMap::new();
     let mut scratch = String::new();
+    let push_sample = |groups: &mut HashMap<String, Vec<u64>>, group_key: &str, value: u64| {
+        if let Some(bucket) = groups.get_mut(group_key) {
+            bucket.push(value);
+        } else {
+            groups.insert(group_key.to_owned(), vec![value]);
+        }
+    };
+    let push_f64 = |groups: &mut HashMap<String, Vec<f64>>, group_key: &str, value: f64| {
+        if let Some(bucket) = groups.get_mut(group_key) {
+            bucket.push(value);
+        } else {
+            groups.insert(group_key.to_owned(), vec![value]);
+        }
+    };
     while let Some(row) = rows.next()? {
-        let (group_key, ms, is_exact) = match key {
+        let (group_key, offset) = match key {
             MedianKey::Single(_) => {
                 let k = row.get_ref(0)?.as_str().map_err(rusqlite::Error::from)?;
-                let ms = row.get::<_, i64>(1)?.max(0) as u64;
-                let is_exact = row.get::<_, bool>(2)?;
-                (k, ms, is_exact)
+                (k, 1usize)
             }
             MedianKey::Pair(_, _) => {
                 let part1 = row.get_ref(0)?.as_str().map_err(rusqlite::Error::from)?;
                 let part2 = row.get_ref(1)?.as_str().map_err(rusqlite::Error::from)?;
-                let ms = row.get::<_, i64>(2)?.max(0) as u64;
-                let is_exact = row.get::<_, bool>(3)?;
                 scratch.clear();
                 scratch.push_str(part1);
                 scratch.push('\u{1f}');
                 scratch.push_str(part2);
-                (scratch.as_str(), ms, is_exact)
+                (scratch.as_str(), 2usize)
             }
         };
-        let groups = if is_exact {
-            &mut exact_groups
-        } else {
-            &mut estimated_groups
-        };
-        if let Some(bucket) = groups.get_mut(group_key) {
-            bucket.push(ms);
-        } else {
-            groups.insert(group_key.to_owned(), vec![ms]);
+        let first_token_ms: Option<i64> = row.get(offset)?;
+        let latency_ms: i64 = row.get(offset + 1)?;
+        let output_tokens: i64 = row.get(offset + 2)?;
+        let is_ft_exact: bool = row.get(offset + 3)?;
+        let is_ft_est: bool = row.get(offset + 4)?;
+        let is_spd_exact: bool = row.get(offset + 5)?;
+        let is_spd_est: bool = row.get(offset + 6)?;
+
+        if is_ft_exact {
+            if let Some(ms) = first_token_ms {
+                push_sample(&mut ft_exact_groups, group_key, ms.max(0) as u64);
+            }
+        } else if is_ft_est {
+            if let Some(ms) = first_token_ms {
+                push_sample(&mut ft_est_groups, group_key, ms.max(0) as u64);
+            }
+        }
+
+        if is_spd_exact {
+            if let Some(ft) = first_token_ms {
+                let gen_ms = latency_ms - ft;
+                if gen_ms > 0 && output_tokens > 0 {
+                    let tps = (output_tokens as f64) * 1000.0 / (gen_ms as f64);
+                    if tps.is_finite() && tps > 0.0 {
+                        push_f64(&mut spd_exact_groups, group_key, tps);
+                    }
+                }
+            }
+        } else if is_spd_est && latency_ms > 0 && output_tokens > 0 {
+            let tps = (output_tokens as f64) * 1000.0 / (latency_ms as f64);
+            if tps.is_finite() && tps > 0.0 {
+                push_f64(&mut spd_est_groups, group_key, tps);
+            }
         }
     }
-    let medians = |groups: HashMap<String, Vec<u64>>| {
+    let medians_u64 = |groups: HashMap<String, Vec<u64>>| -> HashMap<String, u64> {
         groups
             .into_iter()
             .map(|(key, mut values)| (key, select_median(&mut values)))
             .collect()
     };
-    Ok((medians(exact_groups), medians(estimated_groups)))
+    let medians_f64 = |groups: HashMap<String, Vec<f64>>| -> HashMap<String, f64> {
+        groups
+            .into_iter()
+            .map(|(key, mut values)| (key, select_median_f64(&mut values)))
+            .collect()
+    };
+    Ok(PerformanceMedians {
+        first_token_ms: medians_u64(ft_exact_groups),
+        est_first_token_ms: medians_u64(ft_est_groups),
+        speed_tps: medians_f64(spd_exact_groups),
+        est_speed_tps: medians_f64(spd_est_groups),
+    })
 }
 
 fn select_median(values: &mut [u64]) -> u64 {
@@ -294,6 +380,22 @@ fn select_median(values: &mut [u64]) -> u64 {
     if even {
         let low = *lower.iter().max().expect("nonempty lower half");
         low + (*middle - low) / 2
+    } else {
+        *middle
+    }
+}
+
+fn select_median_f64(values: &mut [f64]) -> f64 {
+    let mid = values.len() / 2;
+    let even = values.len() % 2 == 0;
+    let (lower, middle, _) = values.select_nth_unstable_by(mid, f64::total_cmp);
+    if even {
+        let low = lower
+            .iter()
+            .copied()
+            .max_by(f64::total_cmp)
+            .expect("nonempty lower half");
+        (low + *middle) / 2.0
     } else {
         *middle
     }
@@ -319,6 +421,9 @@ pub struct ModelStats {
     pub speed_generation_ms: u64,
     pub est_speed_output_tokens: u64,
     pub est_speed_duration_ms: u64,
+    /// 速度中位数（tok/s），口径同 [`ProviderStats`] 的那两个字段。
+    pub speed_median_tps: Option<f64>,
+    pub est_speed_median_tps: Option<f64>,
     /// 首字时间中位数，口径同 [`ProviderStats`] 的那两个字段。
     pub first_token_median_ms: Option<u64>,
     pub est_first_token_median_ms: Option<u64>,
@@ -1893,12 +1998,12 @@ impl Database {
 
         // 分组键用不会出现在 ID 里的 0x1F 拼接，和下面主查询的 (provider_id, app_type) 对上；
         // 与 get_model_stats 保持一致，通过 filter.join("l", "p") 按需拼接 providers 表。
-        let (first_token_ms, est_first_token_ms) = {
+        let medians = {
             let detail_refs: Vec<&dyn rusqlite::ToSql> =
                 detail_params.iter().map(|p| p.as_ref()).collect();
             let detail_join = filter.join("l", "p");
             let from_sql = format!("FROM proxy_request_logs l {detail_join}");
-            first_token_medians(
+            performance_medians(
                 &conn,
                 MedianKey::Pair("l.provider_id", "l.app_type"),
                 &from_sql,
@@ -1916,8 +2021,10 @@ impl Database {
             let provider_id: String = row.get(0)?;
             let app_type: String = row.get(1)?;
             let key = format!("{provider_id}\u{1f}{app_type}");
-            let first_token_median_ms = first_token_ms.get(&key).copied();
-            let est_first_token_median_ms = est_first_token_ms.get(&key).copied();
+            let first_token_median_ms = medians.first_token_ms.get(&key).copied();
+            let est_first_token_median_ms = medians.est_first_token_ms.get(&key).copied();
+            let speed_median_tps = medians.speed_tps.get(&key).copied();
+            let est_speed_median_tps = medians.est_speed_tps.get(&key).copied();
             let success_count: i64 = row.get(6)?;
             let success_rate = if request_count > 0 {
                 (success_count as f32 / request_count as f32) * 100.0
@@ -1940,6 +2047,8 @@ impl Database {
                 speed_generation_ms: row.get::<_, i64>(9)?.max(0) as u64,
                 est_speed_output_tokens: row.get::<_, i64>(10)?.max(0) as u64,
                 est_speed_duration_ms: row.get::<_, i64>(11)?.max(0) as u64,
+                speed_median_tps,
+                est_speed_median_tps,
                 first_token_median_ms,
                 est_first_token_median_ms,
             })
@@ -2106,6 +2215,8 @@ impl Database {
                             speed_generation_ms: 0,
                             est_speed_output_tokens: 0,
                             est_speed_duration_ms: 0,
+                            speed_median_tps: None,
+                            est_speed_median_tps: None,
                             first_token_median_ms: None,
                             est_first_token_median_ms: None,
                         },
@@ -2125,7 +2236,7 @@ impl Database {
             *success_count += successes;
         }
 
-        // 首字时间按合并后的全部样本取中位数，不能平均各档位的中位数。
+        // 首字时间与速度均按合并后的全部样本取中位数，不能平均各档位的中位数。
         let median_model = if model_cases.is_empty() {
             detail_model
         } else {
@@ -2137,7 +2248,7 @@ impl Database {
         let detail_refs: Vec<&dyn rusqlite::ToSql> =
             detail_params.iter().map(|p| p.as_ref()).collect();
         let from_sql = format!("FROM proxy_request_logs l {detail_join}");
-        let (first_token_ms, est_first_token_ms) = first_token_medians(
+        let medians = performance_medians(
             &conn,
             MedianKey::Single(&median_model),
             &from_sql,
@@ -2154,8 +2265,11 @@ impl Database {
                 } else {
                     stat.avg_cost_per_request = "0.000000".to_string();
                 }
-                stat.first_token_median_ms = first_token_ms.get(&stat.model).copied();
-                stat.est_first_token_median_ms = est_first_token_ms.get(&stat.model).copied();
+                stat.speed_median_tps = medians.speed_tps.get(&stat.model).copied();
+                stat.est_speed_median_tps = medians.est_speed_tps.get(&stat.model).copied();
+                stat.first_token_median_ms = medians.first_token_ms.get(&stat.model).copied();
+                stat.est_first_token_median_ms =
+                    medians.est_first_token_ms.get(&stat.model).copied();
                 (stat, cost)
             })
             .collect();

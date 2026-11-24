@@ -41,7 +41,26 @@ const speedCell = (row: HTMLElement) => row.children[row.children.length - 2];
 const firstTokenCell = (row: HTMLElement) => row.lastElementChild;
 
 describe("ProviderStatsTable", () => {
-  it("computes speed as total output over total generation time", () => {
+  it("prefers median speed over legacy summed output/duration ratio", () => {
+    expect(
+      getStatsSpeed(
+        stat({
+          speedMedianTps: 98.6,
+          speedOutputTokens: 1_200,
+          speedGenerationMs: 100_000,
+        }),
+      ),
+    ).toBe("99");
+    expect(
+      getStatsEstimatedSpeed(
+        stat({
+          estSpeedMedianTps: 74.2,
+          estSpeedOutputTokens: 2_500,
+          estSpeedDurationMs: 200_000,
+        }),
+      ),
+    ).toBe("74");
+    // 老后端没有中位数字段时，回落到 Σ输出 / Σ生成时间
     expect(
       getStatsSpeed(
         stat({ speedOutputTokens: 1_200, speedGenerationMs: 10_500 }),

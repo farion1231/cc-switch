@@ -430,6 +430,7 @@ async fn handle_messages_for_app(
     let connection_guard = result.connection_guard.take();
     ctx.outbound_model = result.outbound_model.take();
     ctx.provider = result.provider;
+    ctx.start_time = result.attempt_start;
     let resolved_api_format = result.claude_api_format.is_some();
     let api_format = result
         .claude_api_format
@@ -1109,6 +1110,7 @@ pub async fn handle_chat_completions(
     let connection_guard = result.connection_guard.take();
     ctx.outbound_model = result.outbound_model.take();
     ctx.provider = result.provider;
+    ctx.start_time = result.attempt_start;
     let response = result.response;
 
     process_response(
@@ -1260,6 +1262,7 @@ async fn handle_responses_for_app(
     let codex_upstream_format = result.codex_upstream_format;
     ctx.outbound_model = result.outbound_model.take();
     ctx.provider = result.provider;
+    ctx.start_time = result.attempt_start;
     let response = result.response;
 
     if codex_upstream_format == Some(CodexUpstreamFormat::Anthropic) {
@@ -1513,6 +1516,7 @@ async fn handle_codex_standalone_passthrough(
     let connection_guard = result.connection_guard.take();
     ctx.outbound_model = result.outbound_model.take();
     ctx.provider = result.provider;
+    ctx.start_time = result.attempt_start;
 
     process_response(
         result.response,
@@ -2645,6 +2649,7 @@ pub async fn handle_gemini(
     let connection_guard = result.connection_guard.take();
     ctx.outbound_model = result.outbound_model.take();
     ctx.provider = result.provider;
+    ctx.start_time = result.attempt_start;
     let response = result.response;
 
     process_response(

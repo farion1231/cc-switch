@@ -96,6 +96,16 @@ pub struct ForwardResult {
     /// 活跃连接 RAII guard：随响应一起流转到 response_processor / handle_claude_transform，
     /// 最终被 move 进流式 body future（或非流式响应作用域），覆盖整个响应生命周期。
     pub(crate) connection_guard: Option<ActiveConnectionGuard>,
+    /// 本次命中供应商实际发起上游请求的时刻：故障转移或整流重试成功后，
+    /// `first_token_ms` 与 `latency_ms` 只计入命中这次尝试的耗时，不被先前失败尝试污染。
+    pub attempt_start: std::time::Instant,
+}
+
+struct ForwardedAttempt {
+    response: ProxyResponse,
+    claude_api_format: Option<String>,
+    outbound_model: Option<String>,
+    attempt_start: std::time::Instant,
 }
 
 pub struct ForwardError {
@@ -602,13 +612,15 @@ impl RequestForwarder {
         provider: &Provider,
         app_type: &AppType,
         used_half_open_permit: bool,
-        (response, claude_api_format, outbound_model): (
-            ProxyResponse,
-            Option<String>,
-            Option<String>,
-        ),
+        forwarded: ForwardedAttempt,
         codex_upstream_format: Option<CodexUpstreamFormat>,
     ) -> ForwardResult {
+        let ForwardedAttempt {
+            response,
+            claude_api_format,
+            outbound_model,
+            attempt_start,
+        } = forwarded;
         let result = ForwardResult {
             response,
             provider: provider.clone(),
@@ -616,6 +628,7 @@ impl RequestForwarder {
             codex_upstream_format,
             outbound_model,
             connection_guard: None,
+            attempt_start,
         };
         if !self.routing_state_enabled() {
             return result;
@@ -1402,7 +1415,7 @@ impl RequestForwarder {
         attempt: &Attempt<'_>,
         body: Value,
         codex_upstream_format_out: &mut Option<CodexUpstreamFormat>,
-    ) -> Result<(ProxyResponse, Option<String>, Option<String>), ProxyError> {
+    ) -> Result<ForwardedAttempt, ProxyError> {
         let Attempt {
             app_type,
             method,
@@ -2460,6 +2473,7 @@ impl RequestForwarder {
             is_copilot,
         );
 
+        let attempt_start = std::time::Instant::now();
         let response = self
             .send_upstream(
                 &url,
@@ -2492,7 +2506,12 @@ impl RequestForwarder {
                     opaque_state_request.as_ref(),
                 )
                 .await?;
-            Ok((response, resolved_claude_api_format, outbound_model))
+            Ok(ForwardedAttempt {
+                response,
+                claude_api_format: resolved_claude_api_format,
+                outbound_model,
+                attempt_start,
+            })
         } else {
             Err(upstream_error(response).await?)
         }

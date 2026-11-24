@@ -163,7 +163,7 @@ describe("usage format helpers", () => {
     ).toBeNull();
   });
 
-  it("hides speed when the generation window is a transport burst", () => {
+  it("hides speed when the generation window is a transport or buffered burst", () => {
     // 2842 tps 实例：输出在首字后 19ms 内全部到达，算出来的是传输突发
     expect(
       getOutputTokensPerSecond({
@@ -172,13 +172,74 @@ describe("usage format helpers", () => {
         firstTokenMs: 3_425,
       }),
     ).toBeNull();
+    // 缓冲突发：等待 1000ms 后 100ms 内倾倒 150 token（gen < 1s 且 ttft > 4 * gen）
     expect(
       getOutputTokensPerSecond({
         outputTokens: 150,
         latencyMs: 1_100,
         firstTokenMs: 1_000,
       }),
+    ).toBeNull();
+    // 长等待 8.2s 后 250ms 内吐出 392 token：被缓冲突发守卫拦下
+    expect(
+      getOutputTokensPerSecond({
+        outputTokens: 392,
+        latencyMs: 8_450,
+        firstTokenMs: 8_200,
+      }),
+    ).toBeNull();
+    // 超过 10,000 tok/s 上限：1001 token / 100ms = 10,010 tok/s
+    expect(
+      getOutputTokensPerSecond({
+        outputTokens: 1_001,
+        latencyMs: 200,
+        firstTokenMs: 100,
+      }),
+    ).toBeNull();
+    // 正常短快回复：等待 200ms (<= 4 * 100ms)，100ms 生成 150 token -> 1500 tok/s
+    expect(
+      getOutputTokensPerSecond({
+        outputTokens: 150,
+        latencyMs: 300,
+        firstTokenMs: 200,
+      }),
     ).toBe(1500);
+  });
+
+  it("excludes non-2xx requests from exact and estimated speed", () => {
+    expect(
+      getOutputTokensPerSecond({
+        outputTokens: 500,
+        latencyMs: 6_000,
+        firstTokenMs: 1_000,
+        statusCode: 500,
+      }),
+    ).toBeNull();
+    expect(
+      getOutputTokensPerSecond({
+        outputTokens: 500,
+        latencyMs: 6_000,
+        firstTokenMs: 1_000,
+        statusCode: 200,
+      }),
+    ).toBe(100);
+    expect(
+      getEstimatedTokensPerSecond({
+        outputTokens: 1_000,
+        latencyMs: 10_000,
+        dataSource: "pi_session",
+        statusCode: 499,
+      }),
+    ).toBeNull();
+    // 估算速度也受 10,000 tok/s 上限保护
+    expect(
+      getEstimatedTokensPerSecond({
+        outputTokens: 20_000,
+        latencyMs: 1_500,
+        dataSource: "session_log",
+        statusCode: 200,
+      }),
+    ).toBeNull();
   });
 
   it("formats speed with integer or single-decimal precision", () => {
