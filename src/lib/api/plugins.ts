@@ -120,6 +120,8 @@ export interface PluginEntry {
   enabled: boolean;
   /** Claude Code 的安装范围（user / project / local / managed） */
   scope?: string | null;
+  /** Claude Code 项目 / 本地范围安装所属的项目目录 */
+  projectPath?: string | null;
   /** CC Switch 能否启停（Claude Code 只管 user 范围） */
   manageable: boolean;
   /** 能否卸载、更新（OpenClaw 自带的插件只能开关）；旧缓存里没有这个字段时按 manageable 算 */
