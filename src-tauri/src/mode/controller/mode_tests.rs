@@ -2097,7 +2097,7 @@ async fn codex_official_routes_for_different_accounts_swap_the_login() {
         json!("acct-b"),
         "Codex signs in as the route's account"
     );
-    switch_route_checked(&state, &AppType::Codex, "acct-a", false)
+    set_route(&state, &AppType::Codex, "acct-a")
         .await
         .expect("route back to a");
     assert_eq!(account(), json!("acct-a"));
@@ -6139,7 +6139,7 @@ async fn codex_a_broken_stacked_provider_is_skipped_and_cannot_be_stacked() {
         catalog_slugs(),
         vec!["gpt-a", "ccs-deepseek/deepseek-v4-pro"]
     );
-    switch_route_checked(&state, &AppType::Codex, "deepseek", false)
+    set_route(&state, &AppType::Codex, "deepseek")
         .await
         .expect("switch route");
     assert_eq!(

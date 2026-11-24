@@ -1187,26 +1187,6 @@ pub(crate) async fn switch_route_for_failover_locked(
     switch_route_locked(state, app, &target).await.map(|_| ())
 }
 
-/// 调用方持有切换锁，`reject_stacked` 为真是开启故障转移时的切换（见
-/// [`switch_route_for_failover_locked`]）。
-async fn switch_route_checked(
-    state: &AppState,
-    app: &AppType,
-    provider_id: &str,
-    reject_stacked: bool,
-) -> Result<(), String> {
-    require_proxy_app(app)?;
-    let target =
-        provider(state, app, provider_id)?.ok_or_else(|| format!("供应商不存在: {provider_id}"))?;
-    reject_unsupported_official(app, &target)?;
-    let _guard = lock_settled(state, app).await.map_err(|e| e.to_string())?;
-    if reject_stacked {
-        switch_route_for_failover_locked(state, app, provider_id).await
-    } else {
-        switch_route_locked(state, app, &target).await.map(|_| ())
-    }
-}
-
 /// 指定代理路由（聚合模式下是默认那家），不管现在是什么模式。直连模式下只记下指针，下次进入
 /// 路由 / 聚合模式时用它，客户端文件和模式都不动；已经在代理模式时就是换路由，当场生效。
 pub async fn set_route(
