@@ -824,6 +824,19 @@ async fn query_provider_usage_inner(
             });
         }
 
+        if matches!(app_type, AppType::Claude)
+            && provider.is_some_and(crate::services::provider::claude_official::has_setup_token)
+        {
+            return Ok(crate::provider::UsageResult {
+                success: false,
+                data: None,
+                error: Some(
+                    "Setup Token authentication does not support subscription quota queries; session usage statistics are still recorded automatically."
+                        .to_string(),
+                ),
+            });
+        }
+
         // xAI OAuth 托管供应商的额度属绑定的 SuperGrok 账号，而非所在 app 的
         // CLI 凭据（对 codex/claude 而言 CLI 凭据是 ChatGPT/Claude 订阅，跨了
         // 订阅体系，查出来的数字张冠李戴）。

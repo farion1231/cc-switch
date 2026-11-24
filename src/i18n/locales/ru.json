@@ -256,6 +256,13 @@
         "helpWsl": "Каталог конфигурации Claude находится в WSL, где аккаунты Claude пока не поддерживаются. Переключение на эту карточку не меняет вход Claude Code.",
         "help": "Переключение на эту карточку сразу меняет вход Claude Code на выбранный аккаунт, включая уже запущенные сессии. Чтобы использовать несколько аккаунтов одновременно, воспользуйтесь «Открыть терминал» на карточке.",
         "claudeAccount": "Аккаунт Claude",
+        "setupToken": "Setup Token",
+        "setupTokenDescription": "Токен из claude setup-token (без проверки квоты, статистика использования работает)",
+        "setupTokenHelp": "Выполните claude setup-token в терминале и вставьте долгоживущий токен ниже. При переключении карточки или через «Открыть терминал» автоматически передаётся CLAUDE_CODE_OAUTH_TOKEN без изменения текущего входа Claude Code. Проверка квоты подписки пропускается, а статистика использования сессий работает как обычно.",
+        "setupTokenFieldLabel": "Setup Token (CLAUDE_CODE_OAUTH_TOKEN)",
+        "setupTokenFormatHint": "Подсказка: токены из claude setup-token обычно начинаются с sk-ant-oat01-. Проверьте, что токен вставлен полностью.",
+        "setupTokenRequired": "Укажите CLAUDE_CODE_OAUTH_TOKEN при использовании аутентификации Setup Token",
+        "setupTokenSubtitle": "Setup Token · Только статистика",
         "terminalHint": "Через «Открыть терминал»",
         "wslHint": "Не поддерживается в WSL",
         "plan": {

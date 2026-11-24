@@ -256,6 +256,13 @@
         "helpWsl": "Der Claude-Konfigurationsordner liegt in WSL, wo Claude-Konten noch nicht unterstützt werden. Der Wechsel zu dieser Karte ändert die Anmeldung von Claude Code nicht.",
         "help": "Der Wechsel zu dieser Karte ändert die Anmeldung von Claude Code sofort auf das ausgewählte Konto, auch für bereits laufende Sitzungen. Um mehrere Konten gleichzeitig zu nutzen, verwenden Sie „Terminal öffnen“ auf der Karte.",
         "claudeAccount": "Claude-Konto",
+        "setupToken": "Setup Token",
+        "setupTokenDescription": "Token von claude setup-token nutzen (ohne Kontingentprüfung, mit Nutzungsstatistik)",
+        "setupTokenHelp": "Führen Sie claude setup-token im Terminal aus und fügen Sie das langlebige Token unten ein. Beim Kartenwechsel oder über „Terminal öffnen“ wird CLAUDE_CODE_OAUTH_TOKEN gesetzt, ohne die bestehende Claude-Code-Anmeldung zu ändern. Abo-Kontingente werden nicht abgefragt, die Sitzungs-Nutzungsstatistik funktioniert weiterhin normal.",
+        "setupTokenFieldLabel": "Setup Token (CLAUDE_CODE_OAUTH_TOKEN)",
+        "setupTokenFormatHint": "Hinweis: Von claude setup-token erzeugte Tokens beginnen meist mit sk-ant-oat01-. Bitte prüfen Sie, ob das Token vollständig eingefügt wurde.",
+        "setupTokenRequired": "Bitte geben Sie CLAUDE_CODE_OAUTH_TOKEN für die Setup-Token-Authentifizierung ein",
+        "setupTokenSubtitle": "Setup Token · Nur Nutzungsstatistik",
         "terminalHint": "Über „Terminal öffnen“ nutzen",
         "wslHint": "In WSL nicht unterstützt",
         "plan": {

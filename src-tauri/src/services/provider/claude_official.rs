@@ -25,6 +25,8 @@ use crate::store::AppState;
 /// 授权中心里 Claude 官方账号的认证供应商标识。
 pub const AUTH_PROVIDER: &str = "claude_official";
 pub const CONFIG_DIR_ENV: &str = "CLAUDE_CONFIG_DIR";
+/// `claude setup-token` 生成的长期 OAuth 令牌环境变量名。
+pub const OAUTH_TOKEN_ENV: &str = "CLAUDE_CODE_OAUTH_TOKEN";
 
 /// Claude 官方卡（预设标了 `category: "official"`）。
 pub fn is_official(provider: &Provider) -> bool {
@@ -41,6 +43,31 @@ pub fn bound_account(provider: &Provider) -> Option<String> {
         .as_ref()?
         .managed_account_id_for(AUTH_PROVIDER)
         .filter(|id| !id.is_empty())
+}
+
+/// Claude 官方卡是否使用 `claude setup-token` 生成的 `CLAUDE_CODE_OAUTH_TOKEN` 验证。
+/// 绑定了授权中心托管账号时以托管账号为准。
+pub fn has_setup_token(provider: &Provider) -> bool {
+    if !is_official(provider) || bound_account(provider).is_some() {
+        return false;
+    }
+    provider
+        .settings_config
+        .get("env")
+        .and_then(|env| env.get(OAUTH_TOKEN_ENV))
+        .and_then(Value::as_str)
+        .is_some_and(|token| !token.trim().is_empty())
+}
+
+/// 为 `provider` 计算写进 `~/.claude/settings.json` 的直连投影。
+/// 官方卡绑定了托管账号时以托管账号为准，不投影卡内可能残留的 `CLAUDE_CODE_OAUTH_TOKEN`。
+pub fn projection_for(provider: &Provider) -> crate::live::project::claude::ClaudeProjection {
+    let mut projection =
+        crate::live::project::claude::ClaudeProjection::of(&provider.settings_config);
+    if bound_account(provider).is_some() {
+        projection.env.shift_remove(OAUTH_TOKEN_ENV);
+    }
+    projection
 }
 
 fn config_dir_key() -> KeyPath {
@@ -242,8 +269,18 @@ pub fn ensure_default_terminal_is_official(db: &Database) -> Result<(), AppError
         crate::mode::current::provider_for(db, &app, crate::mode::current::Purpose::Direct)?
             .and_then(|id| db.get_provider_by_id(&id, &app).ok()?)
     };
-    if in_use.as_ref().is_some_and(is_official) {
+    if in_use
+        .as_ref()
+        .is_some_and(|provider| is_official(provider) && !has_setup_token(provider))
+    {
         return Ok(());
+    }
+    if in_use.as_ref().is_some_and(has_setup_token) {
+        return Err(AppError::localized(
+            "claude.account.default_taken_by_setup_token",
+            "这个账号现在在 Claude Code 的默认登录里，但当前启用的是使用 Setup Token 的官方卡，新开的终端会优先使用该 Setup Token。请先切到这张卡（或非 Setup Token 的官方卡）再打开终端",
+            "This account is Claude Code's current sign-in, but the active card uses a Setup Token, so a new terminal would authenticate with that Setup Token instead. Switch to this card (or an official card without a Setup Token) first, then open the terminal.",
+        ));
     }
     Err(AppError::localized(
         "claude.account.default_taken",
@@ -415,5 +452,79 @@ mod tests {
         // 绑了但本机没有这个账号：打开终端报错，默认登录的卡不设目录
         assert!(terminal_account(&official(Some("missing:acc"))).is_err());
         assert!(terminal_account(&official(None)).unwrap().is_none());
+    }
+
+    #[test]
+    fn setup_token_detection_matches_only_unbound_official_cards_with_non_empty_token() {
+        let mut setup_card = official(None);
+        assert!(!has_setup_token(&setup_card));
+
+        setup_card.settings_config = json!({"env": {"CLAUDE_CODE_OAUTH_TOKEN": "   "}});
+        assert!(!has_setup_token(&setup_card));
+
+        setup_card.settings_config =
+            json!({"env": {"CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-example"}});
+        assert!(has_setup_token(&setup_card));
+
+        // 绑定托管账号时以托管账号为准
+        let mut bound = official(Some("acc:org"));
+        bound.settings_config = json!({"env": {"CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-example"}});
+        assert!(!has_setup_token(&bound));
+
+        // 非官方卡不算官方 Setup Token 卡
+        let mut third_party = setup_card.clone();
+        third_party.category = Some("third_party".into());
+        assert!(!has_setup_token(&third_party));
+    }
+
+    #[test]
+    fn projection_for_strips_setup_token_when_managed_account_is_bound() {
+        let mut setup_card = official(None);
+        setup_card.settings_config =
+            json!({"env": {"CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-example"}});
+        assert_eq!(
+            projection_for(&setup_card).env.get(OAUTH_TOKEN_ENV),
+            Some(&json!("sk-ant-oat01-example"))
+        );
+
+        let mut bound = official(Some("acc:org"));
+        bound.settings_config = json!({"env": {"CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-stale"}});
+        assert!(!projection_for(&bound).env.contains_key(OAUTH_TOKEN_ENV));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn ensure_default_terminal_distinguishes_setup_token_from_other_providers() {
+        let _home = crate::test_support::TestHome::new();
+        let db = Database::memory().unwrap();
+        let app = AppType::Claude;
+
+        let plain_official = official(None);
+        db.save_provider(&app, &plain_official).unwrap();
+        db.set_current_provider(&app, &plain_official.id).unwrap();
+        assert!(ensure_default_terminal_is_official(&db).is_ok());
+
+        let mut setup_card = official(None);
+        setup_card.id = "official-setup".into();
+        setup_card.settings_config =
+            json!({"env": {"CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-example"}});
+        db.save_provider(&app, &setup_card).unwrap();
+        db.set_current_provider(&app, &setup_card.id).unwrap();
+        let err = ensure_default_terminal_is_official(&db).unwrap_err();
+        assert!(
+            matches!(err, AppError::Localized { key, .. } if key == "claude.account.default_taken_by_setup_token"),
+            "expected default_taken_by_setup_token, got {err:?}"
+        );
+
+        let mut third_party = official(None);
+        third_party.id = "custom".into();
+        third_party.category = Some("custom".into());
+        db.save_provider(&app, &third_party).unwrap();
+        db.set_current_provider(&app, &third_party.id).unwrap();
+        let err = ensure_default_terminal_is_official(&db).unwrap_err();
+        assert!(
+            matches!(err, AppError::Localized { key, .. } if key == "claude.account.default_taken"),
+            "expected default_taken, got {err:?}"
+        );
     }
 }

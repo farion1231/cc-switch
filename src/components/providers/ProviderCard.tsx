@@ -54,6 +54,7 @@ import {
   resolveCodexOfficialIdentity,
   supportsConnectivityCheck,
 } from "@/utils/providerCapabilities";
+import { hasClaudeSetupToken } from "@/utils/claudeSetupToken";
 import { useProviderHealth } from "@/lib/query/failover";
 import { useUsageQuery } from "@/lib/query/queries";
 import { resolveProviderIcon } from "@/utils/providerIcon";
@@ -310,6 +311,12 @@ export function ProviderCard({
       ? resolveManagedAccountId(provider.meta, "claude_official")?.trim() ||
         null
       : null;
+  // Claude 官方卡使用 `claude setup-token`（CLAUDE_CODE_OAUTH_TOKEN）：不查订阅额度，照常统计用量
+  const claudeHasSetupToken =
+    appId === "claude" &&
+    isOfficial &&
+    !claudeBoundAccountId &&
+    hasClaudeSetupToken(provider.settingsConfig);
   // Grok 官方卡绑了授权中心的 xAI 账号：额度按这个号查，和 xai_oauth 卡同一份缓存
   const grokBoundAccountId =
     appId === "grokbuild" && isOfficial
@@ -330,12 +337,16 @@ export function ProviderCard({
     provider.meta?.usage_script?.templateType ===
     TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION;
   const officialSubscriptionEnabled =
-    supportsOfficialSubscription && usageEnabled && isOfficialSubscriptionUsage;
-  // 没绑账号的 Claude 官方卡用 Claude Code 的默认登录：开了额度查询时，地址后面跟默认登录的套餐
+    supportsOfficialSubscription &&
+    usageEnabled &&
+    isOfficialSubscriptionUsage &&
+    !claudeHasSetupToken;
+  // 没绑账号且未配 Setup Token 的 Claude 官方卡用 Claude Code 的默认登录：开了额度查询时，地址后面跟默认登录的套餐
   const showClaudeDefaultPlan =
     appId === "claude" &&
     isOfficial &&
     !claudeBoundAccountId &&
+    !claudeHasSetupToken &&
     officialSubscriptionEnabled;
   const { data: claudeDefaultPlan } = useClaudeDefaultPlan(
     showClaudeDefaultPlan,
@@ -644,6 +655,23 @@ export function ProviderCard({
               note={manualNote}
               showPlan={usageEnabled}
             />
+          ) : claudeHasSetupToken ? (
+            <div className="mt-0.5 flex min-w-0 items-center gap-2 text-caption text-fg-2">
+              <span
+                className="min-w-0 truncate"
+                title={
+                  manualNote ??
+                  t("provider.form.claudeAccount.setupTokenSubtitle", {
+                    defaultValue: "Setup Token · 仅统计用量",
+                  })
+                }
+              >
+                {manualNote ??
+                  t("provider.form.claudeAccount.setupTokenSubtitle", {
+                    defaultValue: "Setup Token · 仅统计用量",
+                  })}
+              </span>
+            </div>
           ) : agyModel ? (
             <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-caption text-fg-2">
               <span className="min-w-0 truncate" title={agyModel}>
@@ -874,6 +902,7 @@ export function ProviderCard({
               (isOfficial &&
                 !supportsOfficialSubscription &&
                 !isCopilotCliOfficial) ||
+              claudeHasSetupToken ||
               isCopilot ||
               (isCodexOauth && !isBoundCodexOfficial) ||
               isXaiOauth

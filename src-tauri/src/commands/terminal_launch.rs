@@ -202,7 +202,9 @@ pub async fn open_provider_terminal(
         AppType::Codex => codex_terminal_launch(state.db.as_ref(), provider)?,
         AppType::GrokBuild => grok_terminal_launch(state.db.as_ref(), provider)?,
         AppType::Claude => {
-            use crate::services::provider::claude_official::{terminal_account, AccountTerminal};
+            use crate::services::provider::claude_official::{
+                has_setup_token, terminal_account, AccountTerminal,
+            };
             match terminal_account(provider)? {
                 Some(AccountTerminal::Dir(config_dir)) => {
                     crate::services::claude_account::sync_shared(&config_dir);
@@ -225,7 +227,16 @@ pub async fn open_provider_terminal(
                         log::warn!("计算终端要挡住的 live 键失败，按原样启动: {e}");
                         Default::default()
                     });
-                    claude_terminal_launch(&env_vars, &providerId, &provider.name, &drops)?
+                    if has_setup_token(provider) {
+                        claude_setup_token_terminal_launch(
+                            &env_vars,
+                            &providerId,
+                            &provider.name,
+                            &drops,
+                        )?
+                    } else {
+                        claude_terminal_launch(&env_vars, &providerId, &provider.name, &drops)?
+                    }
                 }
             }
         }
@@ -628,6 +639,58 @@ fn claude_terminal_launch(
         batch_vars: Vec::new(),
         cleanup: vec![config_file],
     })
+}
+
+/// Claude 官方 Setup Token 卡的隔离终端启动：
+/// - 进程环境清掉 `CLAUDE_ACCOUNT_UNSET`（防止父 shell 里的三方/协议变量干扰）并注入 `CLAUDE_CODE_OAUTH_TOKEN`；
+/// - 临时 `--settings` 同样固定这张卡的 `CLAUDE_CODE_OAUTH_TOKEN` 并主动将冲突的连接/鉴权/协议键置空，
+///   确保之后在 CC Switch 里切换到第三方卡、打开本地路由或写墓碑空串时，都不会漏进这个终端。
+fn claude_setup_token_terminal_launch(
+    env_vars: &[(String, String)],
+    provider_id: &str,
+    provider_name: &str,
+    drops: &crate::services::provider::SwitchDrops,
+) -> Result<ProviderLaunch, String> {
+    use crate::services::provider::claude_official::OAUTH_TOKEN_ENV;
+    use serde_json::Value;
+
+    let mut setup_drops = drops.clone();
+    for key in crate::live::project::claude::CLAUDE_HOT_UNSET_ENV
+        .iter()
+        .chain(crate::live::floor::CLAUDE_PROTOCOL_SELECTORS.iter())
+        .chain(
+            [
+                "CLAUDE_CODE_OAUTH_REFRESH_TOKEN",
+                "CLAUDE_CODE_OAUTH_SCOPES",
+            ]
+            .iter(),
+        )
+    {
+        setup_drops
+            .env
+            .entry((*key).to_string())
+            .or_insert_with(|| Value::String(String::new()));
+    }
+
+    let mut launch = claude_terminal_launch(env_vars, provider_id, provider_name, &setup_drops)?;
+    let token = env_vars
+        .iter()
+        .find(|(k, _)| k == OAUTH_TOKEN_ENV)
+        .map(|(_, v)| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+
+    launch.env = crate::services::claude_account::login::CLAUDE_ACCOUNT_UNSET
+        .iter()
+        .map(|name| {
+            if *name == OAUTH_TOKEN_ENV {
+                (*name, token.clone())
+            } else {
+                (*name, None)
+            }
+        })
+        .collect();
+
+    Ok(launch)
 }
 
 /// Claude 官方卡绑了账号：`CLAUDE_CONFIG_DIR` 放在启动环境里（不用 `--settings`）。
@@ -2704,6 +2767,54 @@ mod tests {
             value["modelPicker"],
             serde_json::json!({ "replaceBuiltInOptions": false, "options": [] })
         );
+    }
+
+    #[test]
+    fn claude_setup_token_terminal_launch_isolates_env_and_shields_future_switches() {
+        let launch = claude_setup_token_terminal_launch(
+            &[
+                (
+                    "CLAUDE_CODE_OAUTH_TOKEN".into(),
+                    "sk-ant-oat01-isolated".into(),
+                ),
+                ("ANTHROPIC_MODEL".into(), "claude-opus-4-6".into()),
+            ],
+            "setup-p",
+            "Claude Setup",
+            &Default::default(),
+        )
+        .unwrap();
+
+        // 进程环境：清掉 CLAUDE_ACCOUNT_UNSET 里的其他冲突键，并注入当前卡的 Setup Token
+        assert!(launch.env.contains(&(
+            "CLAUDE_CODE_OAUTH_TOKEN",
+            Some("sk-ant-oat01-isolated".into())
+        )));
+        assert!(launch.env.contains(&("ANTHROPIC_BASE_URL", None)));
+        assert!(launch.env.contains(&("ANTHROPIC_AUTH_TOKEN", None)));
+        assert!(launch.env.contains(&("ANTHROPIC_API_KEY", None)));
+        assert!(launch.env.contains(&("CLAUDE_CODE_USE_BEDROCK", None)));
+
+        // 临时 --settings：即使启动时 live 为空（drops 为空），也会主动置空冲突的连接/鉴权/协议键，
+        // 同时保留卡上自己的 Setup Token 与显式模型配置。
+        let file = &launch.cleanup[0];
+        let value: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(file).unwrap()).unwrap();
+        std::fs::remove_file(file).unwrap();
+
+        assert_eq!(
+            value["env"]["CLAUDE_CODE_OAUTH_TOKEN"],
+            "sk-ant-oat01-isolated"
+        );
+        assert_eq!(value["env"]["ANTHROPIC_MODEL"], "claude-opus-4-6");
+        assert_eq!(value["env"]["ANTHROPIC_BASE_URL"], "");
+        assert_eq!(value["env"]["ANTHROPIC_AUTH_TOKEN"], "");
+        assert_eq!(value["env"]["ANTHROPIC_API_KEY"], "");
+        assert_eq!(value["env"]["ANTHROPIC_CUSTOM_HEADERS"], "");
+        assert_eq!(value["env"]["CLAUDE_CODE_USE_BEDROCK"], "");
+        assert_eq!(value["env"]["CLAUDE_CODE_USE_VERTEX"], "");
+        assert_eq!(value["env"]["CLAUDE_CODE_OAUTH_REFRESH_TOKEN"], "");
+        assert_eq!(value["env"]["CLAUDE_CODE_OAUTH_SCOPES"], "");
     }
 
     #[test]

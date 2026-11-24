@@ -256,6 +256,13 @@
         "helpWsl": "Claude 配置目录在 WSL 里，暂不支持 Claude 账号，切到这张卡不会切换 Claude Code 的登录。",
         "help": "切到这张卡后，Claude Code 的登录会实时换成选中的账号，正在运行的会话也一样。想同时用几个号，从卡片「打开终端」。",
         "claudeAccount": "Claude 账号",
+        "setupToken": "Setup Token",
+        "setupTokenDescription": "使用 claude setup-token 令牌（不查额度，照常统计用量）",
+        "setupTokenHelp": "在终端运行 claude setup-token 获取长期令牌并粘贴到下方。切卡或从卡片「打开终端」时自动注入 CLAUDE_CODE_OAUTH_TOKEN，不改动 Claude Code 原有登录；此方式无法查询订阅额度，但用量统计照常生效。",
+        "setupTokenFieldLabel": "Setup Token (CLAUDE_CODE_OAUTH_TOKEN)",
+        "setupTokenFormatHint": "提示：claude setup-token 生成的令牌通常以 sk-ant-oat01- 开头，请确认粘贴完整。",
+        "setupTokenRequired": "使用 Setup Token 验证时请填写 CLAUDE_CODE_OAUTH_TOKEN",
+        "setupTokenSubtitle": "Setup Token · 仅统计用量",
         "terminalHint": "从卡片打开终端使用",
         "wslHint": "WSL 暂不支持",
         "plan": {

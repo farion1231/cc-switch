@@ -23,6 +23,8 @@ import {
 import { signedInDate } from "@/components/settings/auth/accountDetails";
 import { ClaudeAccountQuota } from "@/components/settings/auth/AccountQuota";
 import { claudePlanLabel } from "@/lib/claudePlan";
+import { looksLikeClaudeSetupToken } from "@/utils/claudeSetupToken";
+import ApiKeyInput from "./ApiKeyInput";
 
 /** 不在默认登录里的账号，过期前多久开始提示 */
 const EXPIRY_NOTICE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -332,58 +334,134 @@ export const ClaudeOfficialSection: React.FC<ClaudeOfficialSectionProps> = ({
   );
 };
 
+interface ClaudeSetupTokenProps {
+  enabled: boolean;
+  value: string;
+  onToggle: (enabled: boolean) => void;
+  onChange: (value: string) => void;
+}
+
 interface ClaudeAccountSelectProps {
   value: string | null;
   onChange: (accountId: string | null) => void;
   /** 打开授权中心添加或管理账号 */
   onManageAccounts?: () => void;
+  /** 可选：`claude setup-token`（CLAUDE_CODE_OAUTH_TOKEN）验证方式 */
+  setupToken?: ClaudeSetupTokenProps;
 }
+
+const SETUP_TOKEN_OPTION_VALUE = "__setup_token__";
 
 /**
  * Claude 官方卡的登录方式，和 Codex 官方卡同一套写法：托管的账号在上，「添加或管理」打开授权
- * 中心，最下面是跟随 Claude Code 登录（~/.claude，不绑号）。
+ * 中心，下面是跟随 Claude Code 登录（~/.claude，不绑号）和 Setup Token（CLAUDE_CODE_OAUTH_TOKEN）。
  */
 export function ClaudeAccountSelect({
   value,
   onChange,
   onManageAccounts,
+  setupToken,
 }: ClaudeAccountSelectProps) {
   const { t } = useTranslation();
   const blocked = useClaudeLoginBlocked();
+  const isSetupToken = Boolean(setupToken?.enabled);
+  const trimmedToken = setupToken?.value.trim() ?? "";
+  const showFormatHint =
+    isSetupToken &&
+    trimmedToken.length > 0 &&
+    !looksLikeClaudeSetupToken(trimmedToken);
+
   return (
-    <ManagedAccountSelect
-      authProvider="claude_official"
-      value={value}
-      onChange={(accountId) => onChange(accountId)}
-      onManageAccounts={onManageAccounts}
-      labels={{
-        follow: t("provider.form.claudeAccount.default", {
-          defaultValue: "跟随 Claude Code 登录",
-        }),
-        followDescription: t("provider.form.claudeAccount.defaultDescription", {
-          defaultValue: "账号会随 Claude Code 当前登录变化",
-        }),
-        manage: t("provider.form.claudeAccount.manage", {
-          defaultValue: "添加或管理 Claude 账号",
-        }),
-      }}
-      help={
-        blocked === "wsl"
-          ? t("provider.form.claudeAccount.helpWsl", {
-              defaultValue:
-                "Claude 配置目录在 WSL 里，暂不支持 Claude 账号，切到这张卡不会切换 Claude Code 的登录。",
-            })
-          : blocked === "overrideDir"
-            ? t("provider.form.claudeAccount.helpTerminal", {
+    <div className="space-y-3">
+      <ManagedAccountSelect
+        authProvider="claude_official"
+        value={isSetupToken ? null : value}
+        onChange={(accountId) => {
+          setupToken?.onToggle(false);
+          onChange(accountId);
+        }}
+        onManageAccounts={onManageAccounts}
+        labels={{
+          follow: t("provider.form.claudeAccount.default", {
+            defaultValue: "跟随 Claude Code 登录",
+          }),
+          followDescription: t(
+            "provider.form.claudeAccount.defaultDescription",
+            {
+              defaultValue: "账号会随 Claude Code 当前登录变化",
+            },
+          ),
+          manage: t("provider.form.claudeAccount.manage", {
+            defaultValue: "添加或管理 Claude 账号",
+          }),
+        }}
+        extraOption={
+          setupToken
+            ? {
+                value: SETUP_TOKEN_OPTION_VALUE,
+                label: t("provider.form.claudeAccount.setupToken", {
+                  defaultValue: "Setup Token",
+                }),
+                description: t(
+                  "provider.form.claudeAccount.setupTokenDescription",
+                  {
+                    defaultValue:
+                      "使用 claude setup-token 令牌（不查额度，照常统计用量）",
+                  },
+                ),
+                selected: isSetupToken,
+                onSelect: () => {
+                  onChange(null);
+                  setupToken.onToggle(true);
+                },
+              }
+            : undefined
+        }
+        help={
+          isSetupToken
+            ? t("provider.form.claudeAccount.setupTokenHelp", {
                 defaultValue:
-                  "设置里覆盖了 Claude 配置目录，切到这张卡不会切换 Claude Code 的登录，请从卡片「打开终端」使用选中的账号。",
+                  "在终端运行 claude setup-token 获取长期令牌并粘贴到下方。切卡或从卡片「打开终端」时自动注入 CLAUDE_CODE_OAUTH_TOKEN，不改动 Claude Code 原有登录；此方式无法在授权中心查询订阅额度，但用量统计照常生效。",
               })
-            : t("provider.form.claudeAccount.help", {
+            : blocked === "wsl"
+              ? t("provider.form.claudeAccount.helpWsl", {
+                  defaultValue:
+                    "Claude 配置目录在 WSL 里，暂不支持 Claude 账号，切到这张卡不会切换 Claude Code 的登录。",
+                })
+              : blocked === "overrideDir"
+                ? t("provider.form.claudeAccount.helpTerminal", {
+                    defaultValue:
+                      "设置里覆盖了 Claude 配置目录，切到这张卡不会切换 Claude Code 的登录，请从卡片「打开终端」使用选中的账号。",
+                  })
+                : t("provider.form.claudeAccount.help", {
+                    defaultValue:
+                      "切到这张卡后，Claude Code 的登录会实时换成选中的账号，正在运行的会话也一样。想同时用几个号，从卡片「打开终端」。",
+                  })
+        }
+      />
+      {isSetupToken && setupToken && (
+        <div className="space-y-1.5">
+          <ApiKeyInput
+            id="claude-setup-token"
+            label={t("provider.form.claudeAccount.setupTokenFieldLabel", {
+              defaultValue: "Setup Token (CLAUDE_CODE_OAUTH_TOKEN)",
+            })}
+            value={setupToken.value}
+            onChange={setupToken.onChange}
+            placeholder="sk-ant-oat01-..."
+            required
+          />
+          {showFormatHint && (
+            <p className="text-caption text-warning-text">
+              {t("provider.form.claudeAccount.setupTokenFormatHint", {
                 defaultValue:
-                  "切到这张卡后，Claude Code 的登录会实时换成选中的账号，正在运行的会话也一样。想同时用几个号，从卡片「打开终端」。",
-              })
-      }
-    />
+                  "提示：claude setup-token 生成的令牌通常以 sk-ant-oat01- 开头，请确认粘贴完整。",
+              })}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 

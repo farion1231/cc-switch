@@ -782,6 +782,21 @@ fn managed_codex_tray_refresh_respects_binding_and_usage_toggle() {
     );
 }
 
+#[test]
+fn claude_setup_token_card_skips_tray_subscription_quota() {
+    let mut setup_token_card = claude_bound_provider(None, Some(true));
+    setup_token_card.settings_config =
+        serde_json::json!({"env": {"CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-example"}});
+    assert_eq!(tray_usage_source(&AppType::Claude, &setup_token_card), None);
+
+    // 没填 setup-token 的普通官方卡照旧走订阅缓存
+    let default_official = claude_bound_provider(None, Some(true));
+    assert_eq!(
+        tray_usage_source(&AppType::Claude, &default_official),
+        Some(TrayUsageSource::Subscription)
+    );
+}
+
 fn claude_bound_provider(account_id: Option<&str>, enabled: Option<bool>) -> Provider {
     serde_json::from_value(serde_json::json!({
         "id": "claude-bound",

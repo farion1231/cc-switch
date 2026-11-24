@@ -256,6 +256,13 @@
         "helpWsl": "Claude の設定フォルダーが WSL にあるため、Claude アカウントにはまだ対応していません。このカードに切り替えても Claude Code のログインは変わりません。",
         "help": "このカードに切り替えると、実行中のセッションも含めて Claude Code のログインがすぐに選んだアカウントに変わります。複数のアカウントを同時に使うには、カードの「ターミナルを開く」を使ってください。",
         "claudeAccount": "Claude アカウント",
+        "setupToken": "Setup Token",
+        "setupTokenDescription": "claude setup-token のトークンを使用（枠照会なし・使用量統計は有効）",
+        "setupTokenHelp": "ターミナルで claude setup-token を実行して取得した長期トークンを下に貼り付けてください。カード切替や「ターミナルを開く」で CLAUDE_CODE_OAUTH_TOKEN を自動注入し、Claude Code の既存ログインには影響しません。サブスクリプション枠の照会は行いませんが、使用量統計は通常どおり記録されます。",
+        "setupTokenFieldLabel": "Setup Token (CLAUDE_CODE_OAUTH_TOKEN)",
+        "setupTokenFormatHint": "ヒント：claude setup-token で生成されたトークンは通常 sk-ant-oat01- で始まります。最後まで貼り付けられているか確認してください。",
+        "setupTokenRequired": "Setup Token 認証を使用する場合は CLAUDE_CODE_OAUTH_TOKEN を入力してください",
+        "setupTokenSubtitle": "Setup Token · 使用量統計のみ",
         "terminalHint": "ターミナルを開いて使用",
         "wslHint": "WSL は未対応",
         "plan": {
