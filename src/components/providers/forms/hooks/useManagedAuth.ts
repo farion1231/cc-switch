@@ -27,8 +27,10 @@ export function useManagedAuth(
   loginMethod?: CodexLoginMethod,
   {
     agyDesktop = false,
+    enabled = true,
   }: {
     agyDesktop?: boolean;
+    enabled?: boolean;
   } = {},
 ) {
   const queryClient = useQueryClient();
@@ -61,6 +63,7 @@ export function useManagedAuth(
       agyDesktop
         ? authApi.authGetStatus(authProvider, true)
         : authApi.authGetStatus(authProvider),
+    enabled,
     staleTime: 30000,
     // A rejected xAI refresh token is persisted as `requires_reauth` by the
     // proxy hot path. Periodically refresh local status so an already-open Auth

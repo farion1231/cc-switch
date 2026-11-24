@@ -1094,4 +1094,55 @@ describe("buildLaunchSections", () => {
     );
     expect(section.items[1].presentation.chips).toEqual([]);
   });
+
+  it("marks bound Antigravity CLI OAuth cards as in-use or switchable while keeping others on Open Terminal", () => {
+    const openTerminal = vi.fn();
+    const onSwitch = vi.fn();
+    const activeBound: Provider = { ...official, id: "bound-active" };
+    const idleBound: Provider = { ...official, id: "bound-idle" };
+    const expiredBound: Provider = { ...official, id: "bound-expired" };
+    const [section] = buildLaunchSections({
+      app: "agy",
+      t,
+      providers: [activeBound, idleBound, expiredBound, official, relay],
+      openTerminal,
+      accounts: {
+        currentProviderIds: new Set(["bound-active"]),
+        switchableProviderIds: new Set([
+          "bound-active",
+          "bound-idle",
+          "bound-expired",
+        ]),
+        onSwitch,
+        switching: false,
+        requiresReauth: new Set(["bound-expired"]),
+      },
+    });
+
+    const byId = Object.fromEntries(
+      section.items.map((item) => [item.provider.id, item.presentation]),
+    );
+    expect(byId["bound-active"].tone).toBe("direct");
+    expect(byId["bound-active"].status).toEqual({
+      label: "providerCard.status.inUse",
+      dot: "direct",
+    });
+    expect(byId["bound-active"].buttons).toEqual([]);
+
+    expect(byId["bound-idle"].tone).toBeUndefined();
+    expect(byId["bound-idle"].status).toBeUndefined();
+    expect(byId["bound-idle"].buttons.map((b) => b.key)).toEqual(["switch"]);
+    byId["bound-idle"].buttons[0].onClick();
+    expect(onSwitch).toHaveBeenCalledWith(idleBound);
+
+    expect(byId["bound-expired"].buttons[0].disabledReason).toBe(
+      "authCenter.agy.reauthNote",
+    );
+
+    for (const id of ["official", "relay"]) {
+      expect(byId[id].tone).toBeUndefined();
+      expect(byId[id].status).toBeUndefined();
+      expect(byId[id].buttons.map((b) => b.key)).toEqual(["openTerminal"]);
+    }
+  });
 });

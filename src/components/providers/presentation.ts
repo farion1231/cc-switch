@@ -645,30 +645,41 @@ function buildSwitchSectionsByView(input: SwitchModeInput): ProviderSection[] {
 
 // ─── 启动器式应用（Antigravity）──────────────────────────────────────────────
 
+export interface LaunchAccountsInput {
+  currentProviderIds: ReadonlySet<string>;
+  /** 哪些卡支持切换账号（不传表示全部，如 Antigravity Desktop；CLI 只含绑定了 OAuth 账号的官方卡） */
+  switchableProviderIds?: ReadonlySet<string>;
+  onSwitch: (provider: Provider) => void;
+  switching: boolean;
+  requiresReauth: ReadonlySet<string>;
+}
+
 export interface LaunchInput {
   app: AppId;
   t: TFunction;
   providers: Provider[];
   openTerminal: (provider: Provider) => void;
-  desktop?: {
-    currentProviderIds: ReadonlySet<string>;
-    onSwitch: (provider: Provider) => void;
-    switching: boolean;
-    requiresReauth: ReadonlySet<string>;
-  };
+  accounts?: LaunchAccountsInput;
 }
 
 /**
  * Antigravity：第三方 Key 只能经环境变量交给 CC Switch 打开的那个 agy，管不到用户自己敲的
- * `agy`，所以没有「启用 / 使用中」，每张卡的主操作就是「打开终端」，哪张都能删。
+ * `agy`，所以没有「启用 / 使用中」，主操作是「打开终端」；绑定了官方 OAuth 账号的卡可显示
+ * 当前登录状态并切换全局登录（CLI 仍保留卡片右侧的「打开终端」图标按钮）。
  */
 export function buildLaunchSections(input: LaunchInput): ProviderSection[] {
-  const { app, t, providers, openTerminal, desktop } = input;
+  const { app, t, providers, openTerminal, accounts } = input;
   return [
     {
       key: "all",
       items: providers.map((p) => {
-        const current = desktop ? desktop.currentProviderIds.has(p.id) : false;
+        const switchable = accounts
+          ? accounts.switchableProviderIds
+            ? accounts.switchableProviderIds.has(p.id)
+            : true
+          : false;
+        const current =
+          switchable && Boolean(accounts?.currentProviderIds.has(p.id));
         return {
           provider: p,
           presentation: {
@@ -688,14 +699,14 @@ export function buildLaunchSections(input: LaunchInput): ProviderSection[] {
             buttons: current
               ? []
               : [
-                  desktop
+                  switchable && accounts
                     ? {
                         key: "switch",
                         label: t("providerCard.action.switch"),
-                        onClick: () => desktop.onSwitch(p),
-                        disabledReason: desktop.requiresReauth.has(p.id)
+                        onClick: () => accounts.onSwitch(p),
+                        disabledReason: accounts.requiresReauth.has(p.id)
                           ? t("authCenter.agy.reauthNote")
-                          : desktop.switching
+                          : accounts.switching
                             ? t("common.loading")
                             : undefined,
                       }

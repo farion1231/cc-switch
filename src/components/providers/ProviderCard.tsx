@@ -321,18 +321,27 @@ export function ProviderCard({
           PROVIDER_TYPES.XAI_OAUTH,
         )?.trim() || null
       : null;
-  // 绑了账号的官方卡（Codex / Claude / Grok）默认查额度，和 Kimi、agy 的账号卡一样（同托盘）
+  // 支持 agy 切号的平台上，Antigravity 官方卡查询所绑定账号的额度。
+  const agyBoundAccountId =
+    (appId === "agy" || appId === "agy-desktop") &&
+    isOfficial &&
+    canSwitchAgyAccount()
+      ? resolveManagedAccountId(provider.meta, "agy_oauth")?.trim() || null
+      : null;
+  // 绑了账号的官方卡（Codex / Claude / Grok / Antigravity）默认查额度，和 Kimi 账号卡一样（同托盘）
   const usageEnabled =
     appId === "agy-desktop" ||
     (provider.meta?.usage_script?.enabled ??
       (isBoundCodexOfficial ||
         Boolean(claudeBoundAccountId) ||
-        Boolean(grokBoundAccountId)));
+        Boolean(grokBoundAccountId) ||
+        Boolean(agyBoundAccountId)));
   const supportsOfficialSubscription =
     isOfficial &&
     (appHas(appId, "officialSubscription") || appId === "agy-desktop");
   const isOfficialSubscriptionUsage =
     appId === "agy-desktop" ||
+    Boolean(agyBoundAccountId) ||
     provider.meta?.usage_script?.templateType ===
       TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION;
   const officialSubscriptionEnabled =
@@ -415,13 +424,6 @@ export function ProviderCard({
   const providerNameIncludesXaiLogin = Boolean(
     xaiAccount?.login && provider.name.includes(xaiAccount.login),
   );
-  // 支持 agy 切号的平台上，Antigravity 官方卡查询所绑定账号的额度。
-  const agyBoundAccountId =
-    (appId === "agy" || appId === "agy-desktop") &&
-    isOfficial &&
-    canSwitchAgyAccount()
-      ? resolveManagedAccountId(provider.meta, "agy_oauth")?.trim() || null
-      : null;
   // 副标题末尾的套餐：读右边额度那个查询的缓存（键和各额度 footer 一致），额度查到才有。
   // Claude 官方卡另有写法（claudeDefaultPlanLabel / ClaudeBoundAccountLine）
   const quotaPlanKey: QueryKey | null = isCopilot

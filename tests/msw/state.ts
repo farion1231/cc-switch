@@ -7,7 +7,6 @@ import type {
   Settings,
 } from "@/types";
 import { deepClone } from "@/utils/deepClone";
-import { resolveManagedAccountId } from "@/lib/authBinding";
 import {
   createHighlightedSnippet,
   findTextMatches,
@@ -271,10 +270,17 @@ export const resetProviderState = () => {
   appConfigDirOverride = null;
 };
 
-const isAgyDesktopEligible = (provider: Provider): boolean =>
-  (provider.category === "official" ||
-    provider.meta?.partnerPromotionKey === "google-official") &&
-  Boolean(resolveManagedAccountId(provider.meta, "agy_oauth")?.trim());
+// 避免在 setupTests 阶段静态导入 @/lib/authBinding（会提前加载 @/lib/platform，影响单测的 vi.mock）
+const isAgyDesktopEligible = (provider: Provider): boolean => {
+  const binding = provider.meta?.authBinding;
+  return (
+    (provider.category === "official" ||
+      provider.meta?.partnerPromotionKey === "google-official") &&
+    binding?.source === "managed_account" &&
+    binding.authProvider === "agy_oauth" &&
+    Boolean(binding.accountId?.trim())
+  );
+};
 
 export const getProviders = (appType: AppId) => {
   if (appType === "agy-desktop") {
