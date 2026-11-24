@@ -265,7 +265,7 @@ impl ToolSpec {
 static UNKNOWN_TOOL: ToolSpec = ToolSpec::not_on_npm("", "Unknown");
 
 /// 顺序即「应用」页与批量安装 / 升级的顺序。
-static TOOLS: [ToolSpec; 14] = [
+static TOOLS: [ToolSpec; 15] = [
     ToolSpec::npm("claude", "Claude Code", "@anthropic-ai/claude-code")
         .npm_install_args(
             " --ignore-scripts=false --include=optional --allow-scripts=@anthropic-ai/claude-code",
@@ -295,6 +295,12 @@ static TOOLS: [ToolSpec; 14] = [
         .not_npm_installable()
         .official_update("update"),
     ToolSpec::npm("copilot", "GitHub Copilot CLI", "@github/copilot"),
+    // `codebuddy update` 无交互确认：按自身安装方式升级（npm 会用 `--prefix` 钉在正在运行的
+    // 那份上，pnpm/bun 各用自己的命令，原生版走官方 installer），装完核对版本；失败或认不出
+    // 安装方式（会提示手动 `npm install -g`）时 exit 1，由 `|| <npm fallback>` 兜底。
+    // 依赖没有 install 脚本，npm 12 不需要 `--allow-scripts`。
+    ToolSpec::npm("codebuddy", "CodeBuddy Code", "@tencent-ai/codebuddy-code")
+        .official_update("update"),
 ];
 
 fn known_tool(id: &str) -> Option<&'static ToolSpec> {

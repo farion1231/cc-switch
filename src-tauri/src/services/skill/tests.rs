@@ -1672,6 +1672,7 @@ fn agy_and_kimi_skill_toggle_rolls_back_on_database_failure() {
         AppType::Kimi,
         AppType::Dsh,
         AppType::WorkBuddy,
+        AppType::Codebuddy,
     ] {
         let temp = tempdir().unwrap();
         let _home = TestHomeGuard::set(temp.path());
@@ -1766,12 +1767,14 @@ fn mcode_unmanaged_copy_survives_sync_migration_and_uninstall() {
 
 #[test]
 #[serial_test::serial]
-fn kimi_and_workbuddy_unmanaged_copy_survives_resync_migration_and_uninstall() {
+fn kimi_workbuddy_and_codebuddy_unmanaged_copy_survives_resync_migration_and_uninstall() {
     for (app, native_content) in [
         (AppType::Kimi, "same-content"),
         (AppType::Kimi, "external"),
         (AppType::WorkBuddy, "same-content"),
         (AppType::WorkBuddy, "external"),
+        (AppType::Codebuddy, "same-content"),
+        (AppType::Codebuddy, "external"),
     ] {
         let temp = tempdir().unwrap();
         let _home = TestHomeGuard::set(temp.path());
@@ -1809,8 +1812,9 @@ fn kimi_and_workbuddy_unmanaged_copy_survives_resync_migration_and_uninstall() {
 
 #[test]
 #[serial_test::serial]
-fn kimi_and_workbuddy_skill_enable_rejects_external_directory_without_changing_files_or_flags() {
-    for app in [AppType::Kimi, AppType::WorkBuddy] {
+fn kimi_workbuddy_and_codebuddy_skill_enable_rejects_external_directory_without_changing_files_or_flags(
+) {
+    for app in [AppType::Kimi, AppType::WorkBuddy, AppType::Codebuddy] {
         let temp = tempdir().unwrap();
         let _home = TestHomeGuard::set(temp.path());
         let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
@@ -2448,6 +2452,7 @@ fn mcode_and_kimi_uninstall_keep_modified_copy_and_record_until_cleanup_succeeds
         AppType::Kimi,
         AppType::Dsh,
         AppType::WorkBuddy,
+        AppType::Codebuddy,
     ] {
         let temp = tempdir().unwrap();
         let _home = TestHomeGuard::set(temp.path());
@@ -3251,6 +3256,7 @@ fn migrate_storage_retargets_managed_pi_mcode_and_kimi_symlinks() {
         AppType::Kimi,
         AppType::Dsh,
         AppType::WorkBuddy,
+        AppType::Codebuddy,
     ] {
         let temp = tempdir().expect("tempdir");
         let _home = TestHomeGuard::set(temp.path());

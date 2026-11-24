@@ -888,7 +888,8 @@ function App() {
           activeApp === "kimi" ||
           activeApp === "agy" ||
           activeApp === "copilot" ||
-          activeApp === "workbuddy"
+          activeApp === "workbuddy" ||
+          activeApp === "codebuddy"
         )
           return;
         const conflicts = await checkEnvConflicts(activeApp);
@@ -1139,7 +1140,8 @@ function App() {
       app === "dsh" ||
       app === "kimi" ||
       app === "copilot" ||
-      app === "workbuddy"
+      app === "workbuddy" ||
+      app === "codebuddy"
     ) {
       await queryClient.invalidateQueries({ queryKey: ["providers", app] });
     }
@@ -1209,6 +1211,10 @@ function App() {
   };
 
   const handleDuplicateProvider = async (provider: Provider) => {
+    // CodeBuddy's provider key is the model id sent upstream and is locked in
+    // the editor, so a "-copy" key would be an unusable model. Cards hide the
+    // action; this guards any other caller.
+    if (activeApp === "codebuddy") return;
     if (
       activeApp === "opencode" &&
       provider.category !== "omo" &&

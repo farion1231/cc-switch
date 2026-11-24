@@ -171,6 +171,21 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
     badgeClass:
       "bg-teal-500/10 text-teal-700 dark:text-teal-300 hover:bg-teal-500/20 border-0 gap-1.5",
   },
+  codebuddy: {
+    label: "CodeBuddy Code",
+    icon: (
+      <ProviderIcon
+        icon="codebuddy"
+        name="CodeBuddy Code"
+        size={14}
+        showFallback={false}
+      />
+    ),
+    activeClass:
+      "bg-blue-500/10 ring-1 ring-blue-500/20 hover:bg-blue-500/20 text-blue-600 dark:text-blue-400",
+    badgeClass:
+      "bg-blue-500/10 text-blue-700 dark:text-blue-300 hover:bg-blue-500/20 border-0 gap-1.5",
+  },
   agy: {
     label: "Antigravity",
     icon: (
